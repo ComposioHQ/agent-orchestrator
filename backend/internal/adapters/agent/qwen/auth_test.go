@@ -4,10 +4,8 @@ import (
 	"context"
 	"os"
 	"path/filepath"
-	"reflect"
 	"testing"
 
-	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/authprobe"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
@@ -69,6 +67,52 @@ func TestQwenAuthStatusFromSettingsAuthorizedWithSecurityAuthAPIKey(t *testing.T
 	}
 }
 
+func TestQwenAuthStatusFromSettingsAuthorizedWithConfiguredEnvKey(t *testing.T) {
+	t.Setenv("CUSTOM_QWEN_KEY", "configured-key")
+	path := filepath.Join(t.TempDir(), "settings.json")
+	if err := os.WriteFile(path, []byte(`{"modelProviders":{"custom":{"envKey":"CUSTOM_QWEN_KEY"}}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	status, ok, err := qwenAuthStatusFromSettings(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok || status != ports.AgentAuthStatusAuthorized {
+		t.Fatalf("status = (%q, %v), want (%q, true)", status, ok, ports.AgentAuthStatusAuthorized)
+	}
+}
+
+func TestQwenEnvFileAuthStatusAuthorizedWithDocumentedProviderKey(t *testing.T) {
+	path := filepath.Join(t.TempDir(), ".env")
+	if err := os.WriteFile(path, []byte("OPENROUTER_API_KEY=router-key\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	status, ok, err := qwenEnvFileAuthStatus(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok || status != ports.AgentAuthStatusAuthorized {
+		t.Fatalf("status = (%q, %v), want (%q, true)", status, ok, ports.AgentAuthStatusAuthorized)
+	}
+}
+
+func TestQwenEnvFileAuthStatusAuthorizedWithConfiguredProviderKey(t *testing.T) {
+	path := filepath.Join(t.TempDir(), ".env")
+	if err := os.WriteFile(path, []byte("CUSTOM_QWEN_KEY=custom-key\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	status, ok, err := qwenEnvFileAuthStatus(path, "CUSTOM_QWEN_KEY")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok || status != ports.AgentAuthStatusAuthorized {
+		t.Fatalf("status = (%q, %v), want (%q, true)", status, ok, ports.AgentAuthStatusAuthorized)
+	}
+}
+
 func TestQwenAuthStatusFromSettingsUnknownWhenMissing(t *testing.T) {
 	status, ok, err := qwenAuthStatusFromSettings(filepath.Join(t.TempDir(), "missing.json"))
 	if err != nil {
@@ -79,27 +123,16 @@ func TestQwenAuthStatusFromSettingsUnknownWhenMissing(t *testing.T) {
 	}
 }
 
-func TestAuthStatusUsesQwenDoctor(t *testing.T) {
-	restore := mockQwenAuthProbeRunner(t, func(_ context.Context, name string, arg ...string) ([]byte, error) {
-		if name != "qwen" || !reflect.DeepEqual(arg, []string{"doctor"}) {
-			t.Fatalf("command = %s %#v, want qwen doctor", name, arg)
-		}
-		return []byte("Authentication: authenticated"), nil
-	})
-	defer restore()
-
+func TestAuthStatusWithoutLocalEvidenceStaysUnknown(t *testing.T) {
+	for _, name := range qwenAPIKeyEnvVars {
+		t.Setenv(name, "")
+	}
+	t.Chdir(t.TempDir())
 	status, err := (&Plugin{resolvedBinary: "qwen"}).AuthStatus(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if status != ports.AgentAuthStatusAuthorized {
-		t.Fatalf("status = %q, want %q", status, ports.AgentAuthStatusAuthorized)
+	if status != ports.AgentAuthStatusUnknown {
+		t.Fatalf("status = %q, want %q", status, ports.AgentAuthStatusUnknown)
 	}
-}
-
-func mockQwenAuthProbeRunner(t *testing.T, runner func(context.Context, string, ...string) ([]byte, error)) func() {
-	t.Helper()
-	previous := authprobe.CmdRunner
-	authprobe.CmdRunner = runner
-	return func() { authprobe.CmdRunner = previous }
 }

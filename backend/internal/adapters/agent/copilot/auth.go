@@ -2,6 +2,7 @@ package copilot
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -37,7 +38,7 @@ func copilotLocalAuthStatus(ctx context.Context) (ports.AgentAuthStatus, bool, e
 		return ports.AgentAuthStatusUnknown, false, err
 	}
 	for _, name := range copilotTokenEnvVars {
-		if strings.TrimSpace(os.Getenv(name)) != "" {
+		if copilotUsableToken(os.Getenv(name)) {
 			return ports.AgentAuthStatusAuthorized, true, nil
 		}
 	}
@@ -56,9 +57,6 @@ func copilotLocalAuthStatus(ctx context.Context) (ports.AgentAuthStatus, bool, e
 	if configOK {
 		return configStatus, true, nil
 	}
-	if status, ok, err := copilotSessionStateAuthStatus(ctx, filepath.Join(home, ".copilot", "session-state")); err != nil || ok {
-		return status, ok, err
-	}
 	if status, ok, err := copilotGHAuthStatus(ctx); err != nil || ok {
 		return status, ok, err
 	}
@@ -73,46 +71,23 @@ func copilotConfigAuthStatus(path string) (ports.AgentAuthStatus, bool, error) {
 	if err != nil {
 		return ports.AgentAuthStatusUnknown, false, err
 	}
-	text := strings.TrimSpace(string(data))
-	if text == "" {
+	if strings.TrimSpace(string(data)) == "" {
 		return ports.AgentAuthStatusUnknown, false, nil
 	}
-	if textContainsTokenAssignment(text) {
-		return ports.AgentAuthStatusAuthorized, true, nil
+	var config map[string]json.RawMessage
+	if err := json.Unmarshal(data, &config); err != nil {
+		return ports.AgentAuthStatusUnknown, false, nil
 	}
-	return ports.AgentAuthStatusUnknown, false, nil
-}
-
-func copilotSessionStateAuthStatus(ctx context.Context, dir string) (ports.AgentAuthStatus, bool, error) {
-	if err := ctx.Err(); err != nil {
-		return ports.AgentAuthStatusUnknown, false, err
-	}
-	paths, err := filepath.Glob(filepath.Join(dir, "*", "events.jsonl"))
-	if err != nil {
-		return ports.AgentAuthStatusUnknown, false, err
-	}
-	for _, path := range paths {
-		if err := ctx.Err(); err != nil {
-			return ports.AgentAuthStatusUnknown, false, err
-		}
-		data, err := os.ReadFile(path)
-		if os.IsNotExist(err) {
-			continue
-		}
-		if err != nil {
-			return ports.AgentAuthStatusUnknown, false, err
-		}
-		if copilotEventsShowModelUse(string(data)) {
+	for _, key := range []string{"authToken", "accessToken", "token"} {
+		var token string
+		if err := json.Unmarshal(config[key], &token); err == nil && copilotUsableToken(token) {
 			return ports.AgentAuthStatusAuthorized, true, nil
 		}
 	}
+	if copilotLoggedInUser(config) {
+		return ports.AgentAuthStatusAuthorized, true, nil
+	}
 	return ports.AgentAuthStatusUnknown, false, nil
-}
-
-func copilotEventsShowModelUse(text string) bool {
-	return strings.Contains(text, `"model":`) ||
-		strings.Contains(text, `"type":"tool.execution_complete"`) ||
-		strings.Contains(text, `"type":"message"`)
 }
 
 func copilotGHAuthStatus(ctx context.Context) (ports.AgentAuthStatus, bool, error) {
@@ -128,25 +103,19 @@ func copilotGHAuthStatus(ctx context.Context) (ports.AgentAuthStatus, bool, erro
 	return ports.AgentAuthStatusUnknown, false, nil
 }
 
-func textContainsTokenAssignment(text string) bool {
-	for _, line := range strings.Split(text, "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" || strings.HasPrefix(line, "//") || strings.HasPrefix(line, "#") {
-			continue
-		}
-		lower := strings.ToLower(line)
-		if !strings.Contains(lower, "token") && !strings.Contains(lower, "auth") {
-			continue
-		}
-		for _, sep := range []string{":", "="} {
-			_, after, ok := strings.Cut(line, sep)
-			if !ok {
-				continue
-			}
-			value := strings.Trim(strings.TrimSpace(strings.TrimRight(after, ",")), `"'`)
-			if value != "" && !strings.EqualFold(value, "null") && !strings.EqualFold(value, "none") {
-				return true
-			}
+func copilotUsableToken(value string) bool {
+	value = strings.TrimSpace(value)
+	return value != "" && !strings.HasPrefix(value, "ghp_")
+}
+
+func copilotLoggedInUser(config map[string]json.RawMessage) bool {
+	var users map[string]json.RawMessage
+	if err := json.Unmarshal(config["loggedInUsers"], &users); err != nil {
+		return false
+	}
+	for _, user := range users {
+		if len(user) > 0 && string(user) != "null" && string(user) != `""` {
+			return true
 		}
 	}
 	return false

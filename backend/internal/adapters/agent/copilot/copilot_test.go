@@ -422,6 +422,19 @@ func TestAuthStatusAuthorizedFromEnv(t *testing.T) {
 	}
 }
 
+func TestCopilotClassicPATIsNotAnAuthorizationSignal(t *testing.T) {
+	clearCopilotAuthEnv(t)
+	t.Setenv("GH_TOKEN", "ghp_classic_token")
+
+	status, ok, err := copilotLocalAuthStatus(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ok || status != ports.AgentAuthStatusUnknown {
+		t.Fatalf("status = (%q, %v), want (%q, false)", status, ok, ports.AgentAuthStatusUnknown)
+	}
+}
+
 func TestCopilotConfigAuthStatusAuthorizedWithPlainTextToken(t *testing.T) {
 	configPath := filepath.Join(t.TempDir(), "config.json")
 	if err := os.WriteFile(configPath, []byte(`{"authToken":"token"}`), 0o600); err != nil {
@@ -452,22 +465,18 @@ func TestCopilotConfigAuthStatusUnknownWithEmptyConfig(t *testing.T) {
 	}
 }
 
-func TestCopilotSessionStateAuthStatusAuthorizedWithModelEvent(t *testing.T) {
-	dir := t.TempDir()
-	sessionDir := filepath.Join(dir, "session-1")
-	if err := os.MkdirAll(sessionDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(sessionDir, "events.jsonl"), []byte(`{"type":"tool.execution_complete","data":{"model":"claude-sonnet-4.5"}}`), 0o600); err != nil {
+func TestCopilotConfigAuthStatusDoesNotTreatAuthModeAsCredential(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	if err := os.WriteFile(configPath, []byte(`{"authMode":"github"}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
-	status, ok, err := copilotSessionStateAuthStatus(context.Background(), dir)
+	status, ok, err := copilotConfigAuthStatus(configPath)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !ok || status != ports.AgentAuthStatusAuthorized {
-		t.Fatalf("status = (%q, %v), want (%q, true)", status, ok, ports.AgentAuthStatusAuthorized)
+	if ok || status != ports.AgentAuthStatusUnknown {
+		t.Fatalf("status = (%q, %v), want (%q, false)", status, ok, ports.AgentAuthStatusUnknown)
 	}
 }
 
