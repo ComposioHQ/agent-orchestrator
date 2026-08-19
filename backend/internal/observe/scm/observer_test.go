@@ -209,6 +209,7 @@ func (p *fakeProvider) ListPRsByRepo(_ context.Context, repo ports.SCMRepo, _ ti
 func (p *fakeProvider) CommitChecksGuard(_ context.Context, repo ports.SCMRepo, sha, _ string) (ports.SCMGuardResult, error) {
 	return p.checkGuards[commitKey(repo, sha)], nil
 }
+
 // FetchPullRequests honors the positional-alignment contract: out[i] answers
 // refs[i], with a zero-value Fetched=false placeholder for refs the fake has
 // no observation for.
