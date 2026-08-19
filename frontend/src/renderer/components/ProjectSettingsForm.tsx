@@ -11,7 +11,7 @@ import {
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
 import { useEffect, useState } from "react";
-import { Pencil, RefreshCw } from "lucide-react";
+import { Info, Pencil, RefreshCw } from "lucide-react";
 import type { components } from "../../api/schema";
 import {
 	agentModelsQueryKey,
@@ -540,9 +540,13 @@ function SettingsBody({
 								size="sm"
 							/>
 						</SettingsRow>
-						<p className="px-1 text-xs leading-row text-settings-muted" role="note">
-							{t("settings.project.autoReviewDescription")}
-						</p>
+						<div
+							className="mx-3 mb-2 -mt-1 flex items-start gap-2 rounded-md bg-settings-menu-selected/50 px-3 py-2 text-xs leading-5 text-settings-muted"
+							role="note"
+						>
+							<Info className="mt-0.5 size-icon-sm shrink-0 text-settings-muted" aria-hidden="true" />
+							<span>{t("settings.project.autoReviewDescription")}</span>
+						</div>
 					</ProjectSettingsSection>
 				)}
 				</>
