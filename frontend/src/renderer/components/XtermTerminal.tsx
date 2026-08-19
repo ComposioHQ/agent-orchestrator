@@ -269,7 +269,11 @@ function forceSelectionMode(term: Terminal): void {
 
 function removeHiddenScrollbarReservation(term: Terminal): void {
 	const viewport = (term as XtermInternal)._core?.viewport;
-	if (viewport) viewport.scrollBarWidth = 0;
+	if (!viewport) return;
+	viewport.scrollBarWidth = 0;
+	// Pin the value so FitAddon can't re-read the DOM and reintroduce the 15px
+	// reservation on subsequent fits.
+	Object.defineProperty(viewport, "scrollBarWidth", { value: 0, writable: false, configurable: true });
 }
 
 export function XtermTerminal(props: XtermTerminalProps) {
@@ -619,14 +623,16 @@ export function XtermTerminal(props: XtermTerminalProps) {
 		// ResizeObserver fires for every intermediate box during native fullscreen,
 		// sidebar drags and other animated application layout. Fitting on every
 		// callback repeatedly reallocates xterm's WebGL surface, so those changes
-		// normally settle through the debounce below. A short, explicit live-resize
-		// marker lets controlled layout animations keep xterm visually in step.
+		// normally settle through the debounce below. During live-resize animations
+		// we CSS-scale the existing canvas to match the container and do one real
+		// fit() when the animation ends, avoiding the WebGL realloc storm entirely.
 		const FIT_QUIET_MS = 120;
 		const FIT_CAP_MS = 500;
 		let fitQuietTimer: ReturnType<typeof setTimeout> | null = null;
 		let fitCapTimer: ReturnType<typeof setTimeout> | null = null;
 		let fitAllowsHidden = false;
 		let disposed = false;
+		let debounceInFlight = false;
 		const fitSettledListeners = new Set<() => void>();
 		const flushScheduledFit = () => {
 			if (disposed) return;
@@ -638,6 +644,7 @@ export function XtermTerminal(props: XtermTerminalProps) {
 				clearTimeout(fitCapTimer);
 				fitCapTimer = null;
 			}
+			debounceInFlight = false;
 			if (fitAllowsHidden || callbacksRef.current.isVisible !== false) {
 				try {
 					fit.fit();
@@ -656,6 +663,7 @@ export function XtermTerminal(props: XtermTerminalProps) {
 			fitAllowsHidden ||= allowHidden;
 			if (onSettled) fitSettledListeners.add(onSettled);
 			if (fitQuietTimer !== null) clearTimeout(fitQuietTimer);
+			debounceInFlight = true;
 			fitQuietTimer = setTimeout(flushScheduledFit, FIT_QUIET_MS);
 			if (fitCapTimer === null) fitCapTimer = setTimeout(flushScheduledFit, FIT_CAP_MS);
 		};
@@ -667,21 +675,48 @@ export function XtermTerminal(props: XtermTerminalProps) {
 
 		const raf = requestAnimationFrame(fitTerminal);
 		// 50/250ms catch the common settle; 600/1200ms are a session-bounded
-		// backstop. By 600ms the WebGL atlas and font metrics are unambiguously
-		// warm, so even if the convergence loop below detached at a briefly-stable
-		// wrong measurement, this re-measures the real cell box and corrects,
-		// firing the PTY resize that makes the pane repaint cleanly (clearing
-		// any ghost frame). fit() is idempotent: a no-op when the grid is already
-		// right, so a correct terminal never reflows.
-		const settleTimers = [50, 250, 600, 1200].map((ms) => window.setTimeout(scheduleVisibleFit, ms));
+		// backstop that get cancelled once the ResizeObserver produces a stable
+		// frame. fit() is idempotent: a no-op when the grid is already right.
+		let observerFiredStable = false;
+		const settleTimerIds = [50, 250, 600, 1200].map((ms) => window.setTimeout(() => {
+			if (observerFiredStable && ms >= 600) return;
+			scheduleVisibleFit();
+		}, ms));
 		if (document.fonts?.ready) {
 			void document.fonts.ready.then(() => scheduleStableFit());
 		}
-		const observer = new ResizeObserver(() => {
+		// During live-resize animations, CSS-scale the existing canvas to fill the
+		// container instead of calling fit() on every frame. This avoids the WebGL
+		// surface realloc storm that causes visible flicker. One real fit() runs
+		// when the animation attribute is removed (the debounce picks it up).
+		let liveResizeBaseRect: { width: number; height: number } | null = null;
+		const screenEl = () => host.querySelector<HTMLElement>(".xterm-screen");
+		const observer = new ResizeObserver((entries) => {
 			if (host.closest('[data-terminal-live-resize="true"]')) {
-				fitTerminal();
+				const entry = entries[0];
+				if (!entry) return;
+				const screen = screenEl();
+				if (!screen) return;
+				if (!liveResizeBaseRect) {
+					liveResizeBaseRect = { width: screen.offsetWidth, height: screen.offsetHeight };
+				}
+				const hostBox = entry.contentRect;
+				const scaleX = liveResizeBaseRect.width > 0 ? hostBox.width / liveResizeBaseRect.width : 1;
+				const scaleY = liveResizeBaseRect.height > 0 ? hostBox.height / liveResizeBaseRect.height : 1;
+				screen.style.transform = `scale(${scaleX}, ${scaleY})`;
+				screen.style.transformOrigin = "top left";
 				return;
 			}
+			// Clear CSS-scale when the animation ends and schedule a real fit.
+			if (liveResizeBaseRect) {
+				liveResizeBaseRect = null;
+				const screen = screenEl();
+				if (screen) {
+					screen.style.transform = "";
+					screen.style.transformOrigin = "";
+				}
+			}
+			observerFiredStable = true;
 			scheduleVisibleFit();
 		});
 		observer.observe(host);
@@ -716,6 +751,9 @@ export function XtermTerminal(props: XtermTerminalProps) {
 		let refits = 0;
 		let pending: { cols: number; rows: number } | null = null;
 		const stabilizer = term.onRender(() => {
+			// Don't run the convergence loop while a debounced fit is pending.
+			// The two mechanisms can fight, causing oscillating grid sizes.
+			if (debounceInFlight) return;
 			const proposed = fit.proposeDimensions();
 			if (!proposed || !proposed.cols || !proposed.rows) return;
 			if (proposed.cols !== term.cols || proposed.rows !== term.rows) {
@@ -934,11 +972,16 @@ export function XtermTerminal(props: XtermTerminalProps) {
 			termRef.current = null;
 			fitRef.current = null;
 			cancelAnimationFrame(raf);
-			for (const timer of settleTimers) window.clearTimeout(timer);
+			for (const timer of settleTimerIds) window.clearTimeout(timer);
 			if (fitQuietTimer !== null) clearTimeout(fitQuietTimer);
 			if (fitCapTimer !== null) clearTimeout(fitCapTimer);
 			fitSettledListeners.clear();
 			observer.disconnect();
+			const screen = screenEl();
+			if (screen) {
+				screen.style.transform = "";
+				screen.style.transformOrigin = "";
+			}
 			stabilizer.dispose();
 			window.removeEventListener("resize", scheduleVisibleFit);
 			host.removeEventListener("copy", copyInput);
