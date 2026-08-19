@@ -964,7 +964,7 @@ func (m *Manager) refreshDefaultBranchesBestEffort(ctx context.Context, project 
 	}
 	baseRefs := make(map[string]string)
 	targets := []defaultBranchRefreshTarget{{
-		repoPath:         project.Path,
+		repoPath: project.Path,
 		// Translate the automatic-default sentinel before handing it to the
 		// adapter. An empty branch tells the resolver to inspect this
 		// repository's own remote HEAD; "auto" is not a Git branch name.
