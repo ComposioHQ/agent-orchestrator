@@ -2,6 +2,7 @@
 import { describe, expect, it } from "vitest";
 import {
 	dockBounceType,
+	shouldReplaceBounce,
 	shouldSignalAttention,
 	shouldToast,
 	type NotificationType,
@@ -37,6 +38,17 @@ describe("shouldSignalAttention", () => {
 	it("does not signal for unknown or missing types", () => {
 		expect(shouldSignalAttention("some_future_type")).toBe(false);
 		expect(shouldSignalAttention(undefined)).toBe(false);
+	});
+});
+
+describe("shouldReplaceBounce", () => {
+	it("replaces no bounce or a pending informational bounce", () => {
+		expect(shouldReplaceBounce(null)).toBe(true);
+		expect(shouldReplaceBounce({ critical: false })).toBe(true);
+	});
+
+	it("never replaces a pending critical bounce, so a blocked agent stays loud", () => {
+		expect(shouldReplaceBounce({ critical: true })).toBe(false);
 	});
 });
 

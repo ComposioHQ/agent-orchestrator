@@ -89,7 +89,7 @@ import { connectBrowserRuntime, type BrowserRuntimeLinkHandle } from "./main/bro
 import { keepDaemonAlive, shouldLinkOnAttach } from "./main/daemon-owner";
 import { readMigrationState, updateMigration, writeAppStateMarker, type MigrationState } from "./main/app-state";
 import { isAllowedAppExternalURL, openAllowedAppExternalURL } from "./main/external-open";
-import { dockBounceType, shouldSignalAttention, shouldToast } from "./main/notification-signals";
+import { dockBounceType, shouldReplaceBounce, shouldSignalAttention, shouldToast } from "./main/notification-signals";
 import { buildWindowsAppMenuTemplate } from "./main/menu";
 import { ancestorRepositorySetupWarning, scanImportFolder } from "./main/import-folder-scan";
 
@@ -167,9 +167,11 @@ let terminalFocused = false;
 let supervisorLink: SupervisorLinkHandle | null = null;
 // Guard: prevents stacking multiple flashFrame(true) calls when notifications arrive rapidly.
 let isFlashing = false;
-// macOS: id of the in-flight dock bounce, cancelled once the window regains focus
-// so a "critical" bounce stops as soon as the user looks at the app.
-let pendingDockBounceId: number | null = null;
+// macOS: the in-flight dock bounce, cancelled once the window regains focus
+// so a "critical" bounce stops as soon as the user looks at the app. Held as
+// one object so the id and its criticality can never drift apart; a pending
+// critical bounce is not replaced by a later informational notification.
+let pendingBounce: { id: number; critical: boolean } | null = null;
 
 const isDev = !app.isPackaged;
 
@@ -1711,9 +1713,9 @@ ipcMain.handle("updates:install", () => {
 });
 
 function cancelDockBounce(): void {
-	if (pendingDockBounceId === null) return;
-	const id = pendingDockBounceId;
-	pendingDockBounceId = null;
+	if (pendingBounce === null) return;
+	const { id } = pendingBounce;
+	pendingBounce = null;
 	app.dock?.cancelBounce(id);
 }
 
@@ -1752,14 +1754,20 @@ ipcMain.handle(
 		// Windows/Linux only the actionable types flash (see
 		// shouldSignalAttention), preserving the pre-existing behavior there.
 		if (process.platform === "darwin" && app.dock) {
-			// A focus listener from an earlier un-cancelled bounce still works for
-			// the new id, so only attach one at a time.
-			const hadPendingBounce = pendingDockBounceId !== null;
-			cancelDockBounce();
-			const id = app.dock.bounce(dockBounceType(notification.type));
-			if (typeof id === "number" && id >= 0) {
-				pendingDockBounceId = id;
-				if (!hadPendingBounce) mainWindow.once("focus", cancelDockBounce);
+			// A pending critical bounce (agent blocked on the user) is never
+			// replaced: a later informational notification must not downgrade it
+			// to a one-shot bounce.
+			if (shouldReplaceBounce(pendingBounce)) {
+				// A focus listener from an earlier un-cancelled bounce still works for
+				// the new id, so only attach one at a time.
+				const hadPendingBounce = pendingBounce !== null;
+				cancelDockBounce();
+				const bounceType = dockBounceType(notification.type);
+				const id = app.dock.bounce(bounceType);
+				if (typeof id === "number" && id >= 0) {
+					pendingBounce = { id, critical: bounceType === "critical" };
+					if (!hadPendingBounce) mainWindow.once("focus", cancelDockBounce);
+				}
 			}
 		} else if ((process.platform === "win32" || process.platform === "linux") && shouldSignalAttention(notification.type)) {
 			if (!isFlashing) {

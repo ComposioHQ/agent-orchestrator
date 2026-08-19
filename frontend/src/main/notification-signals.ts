@@ -27,6 +27,16 @@ export function shouldSignalAttention(type: string | undefined): boolean {
 }
 
 /**
+ * Whether a new macOS dock bounce should replace the pending one. A pending
+ * "critical" bounce (agent blocked on the user) is never replaced: a later
+ * informational notification must not downgrade it to a one-shot bounce, or
+ * the blocked-agent signal would stop lasting until the user returns.
+ */
+export function shouldReplaceBounce(pending: { critical: boolean } | null): boolean {
+	return pending === null || !pending.critical;
+}
+
+/**
  * Whether to fire an OS toast. Deliberately independent of the type list: every
  * backend notification type gets a toast, so adding a new type in
  * `notification.go` can never silently drop its toast (the bug this replaced).
