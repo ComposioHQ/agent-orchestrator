@@ -12,17 +12,18 @@
 export type NotificationType = "needs_input" | "ready_to_merge" | "pr_merged" | "pr_closed_unmerged";
 
 /**
- * Whether to fire an *active* attention signal (macOS dock bounce / Windows &
- * Linux taskbar flash). Every notification gets one: if it was worth telling the
- * user about, it is worth pulling their eye to the app they are not looking at.
+ * Whether to fire the Windows/Linux taskbar flash. Restricted to the
+ * actionable types: a merged or closed PR is worth a toast, but should not
+ * demand attention as insistently as an agent blocked waiting on the user.
  *
- * Deliberately default-on rather than an allowlist, for the same reason as
- * {@link shouldToast}: adding a type in `notification.go` can never silently
- * lose its signal. Urgency is expressed by {@link dockBounceType}, not by
- * withholding the signal.
+ * The macOS dock bounce is deliberately NOT gated by this allowlist — every
+ * notification bounces there, with urgency carried by {@link dockBounceType}.
  */
-export function shouldSignalAttention(_type: string | undefined): boolean {
-	return true;
+const ATTENTION_TYPES: ReadonlySet<string> = new Set<NotificationType>(["needs_input", "ready_to_merge"]);
+
+/** Whether this notification type should flash the Windows/Linux taskbar. */
+export function shouldSignalAttention(type: string | undefined): boolean {
+	return type !== undefined && ATTENTION_TYPES.has(type);
 }
 
 /**

@@ -1746,29 +1746,29 @@ ipcMain.handle(
 			toast.show();
 		}
 
-		// Dock (macOS) / taskbar (Windows/Linux) attention signal. Every
-		// notification signals — urgency is carried by the bounce type, so a
-		// merged PR bounces once while a blocked agent keeps bouncing.
-		if (shouldSignalAttention(notification.type)) {
-			if (process.platform === "darwin" && app.dock) {
-				// A focus listener from an earlier un-cancelled bounce still works for
-				// the new id, so only attach one at a time.
-				const hadPendingBounce = pendingDockBounceId !== null;
-				cancelDockBounce();
-				const id = app.dock.bounce(dockBounceType(notification.type));
-				if (typeof id === "number" && id >= 0) {
-					pendingDockBounceId = id;
-					if (!hadPendingBounce) mainWindow.once("focus", cancelDockBounce);
-				}
-			} else if (process.platform === "win32" || process.platform === "linux") {
-				if (!isFlashing) {
-					isFlashing = true;
-					mainWindow.flashFrame(true);
-					mainWindow.once("focus", () => {
-						isFlashing = false;
-						mainWindow?.flashFrame(false);
-					});
-				}
+		// Dock (macOS) / taskbar (Windows/Linux) attention signal. On macOS every
+		// notification bounces the dock — urgency is carried by the bounce type,
+		// so a merged PR bounces once while a blocked agent keeps bouncing. On
+		// Windows/Linux only the actionable types flash (see
+		// shouldSignalAttention), preserving the pre-existing behavior there.
+		if (process.platform === "darwin" && app.dock) {
+			// A focus listener from an earlier un-cancelled bounce still works for
+			// the new id, so only attach one at a time.
+			const hadPendingBounce = pendingDockBounceId !== null;
+			cancelDockBounce();
+			const id = app.dock.bounce(dockBounceType(notification.type));
+			if (typeof id === "number" && id >= 0) {
+				pendingDockBounceId = id;
+				if (!hadPendingBounce) mainWindow.once("focus", cancelDockBounce);
+			}
+		} else if ((process.platform === "win32" || process.platform === "linux") && shouldSignalAttention(notification.type)) {
+			if (!isFlashing) {
+				isFlashing = true;
+				mainWindow.flashFrame(true);
+				mainWindow.once("focus", () => {
+					isFlashing = false;
+					mainWindow?.flashFrame(false);
+				});
 			}
 		}
 	},
