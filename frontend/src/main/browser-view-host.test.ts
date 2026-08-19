@@ -206,7 +206,11 @@ function setupHost(agentBrowserRuntime?: import("./agent-browser-runtime").Agent
 	};
 }
 
-function setupTabHost(browserProfileStore?: BrowserProfileStore, failViewConstruction = false) {
+function setupTabHost(
+	browserProfileStore?: BrowserProfileStore,
+	failViewConstruction = false,
+	loadURLHook?: (viewIndex: number, url: string) => Promise<void>,
+) {
 	const constructorOptions: Array<{ webPreferences: { partition?: string } }> = [];
 	const handlers = new Map<string, InvokeHandler>();
 	const eventHandlers = new Map<string, EventHandler>();
@@ -224,14 +228,16 @@ function setupTabHost(browserProfileStore?: BrowserProfileStore, failViewConstru
 				setPermissionCheckHandler: ReturnType<typeof vi.fn>;
 				setPermissionRequestHandler: ReturnType<typeof vi.fn>;
 			};
-			};
-			setBounds: ReturnType<typeof vi.fn>;
-			setBorderRadius: ReturnType<typeof vi.fn>;
-			setVisible: ReturnType<typeof vi.fn>;
-		}> = [];
+		};
+		listeners: Map<string, (...args: never[]) => void>;
+		setBounds: ReturnType<typeof vi.fn>;
+		setBorderRadius: ReturnType<typeof vi.fn>;
+		setVisible: ReturnType<typeof vi.fn>;
+	}> = [];
 	let nextID = 100;
 	const debuggerCommands: Array<{ method: string; params?: Record<string, unknown> }> = [];
 	const makeView = () => {
+		const viewIndex = views.length;
 		let currentURL = "";
 		let windowOpenHandler:
 			| ((details: { url: string }) => {
@@ -256,8 +262,8 @@ function setupTabHost(browserProfileStore?: BrowserProfileStore, failViewConstru
 				},
 				isAttached: () => debuggerAttached,
 				on: () => undefined,
-					sendCommand: async (method: string, params?: Record<string, unknown>) => {
-						debuggerCommands.push({ method, params });
+				sendCommand: async (method: string, params?: Record<string, unknown>) => {
+					debuggerCommands.push({ method, params });
 					if (method === "Page.navigate" && typeof params?.url === "string") currentURL = params.url;
 					return {};
 				},
@@ -269,6 +275,7 @@ function setupTabHost(browserProfileStore?: BrowserProfileStore, failViewConstru
 			isLoading: () => false,
 			loadURL: vi.fn(async (url: string) => {
 				currentURL = url;
+				await loadURLHook?.(viewIndex, url);
 			}),
 			on: (event: string, listener: (...args: never[]) => void) => listeners.set(event, listener),
 			reload: () => undefined,
@@ -297,7 +304,7 @@ function setupTabHost(browserProfileStore?: BrowserProfileStore, failViewConstru
 				}
 			},
 		};
-		const view = { webContents, setBounds: vi.fn(), setBorderRadius: vi.fn(), setVisible: vi.fn() };
+		const view = { webContents, listeners, setBounds: vi.fn(), setBorderRadius: vi.fn(), setVisible: vi.fn() };
 		views.push(view);
 		return view;
 	};
@@ -334,7 +341,9 @@ function setupTabHost(browserProfileStore?: BrowserProfileStore, failViewConstru
 			return {};
 		}),
 		screenshot: vi.fn(async () => ({ data: "", width: 0, height: 0, untrustedExternalContent: true as const })),
-		closeSession: vi.fn(async () => undefined),
+		closeSession: vi.fn(async (sessionId: string) => {
+			activeTargets.delete(sessionId);
+		}),
 		dispose: vi.fn(async () => undefined),
 	} as unknown as import("./agent-browser-runtime").AgentBrowserRuntime;
 	const host = createBrowserViewHost({
@@ -381,6 +390,7 @@ function fakeBrowserProfileStore(profile: BrowserProfile, bindings: Record<strin
 			else bindings[sessionId] = profileId;
 		}),
 		isProfileOperationInProgress: () => false,
+		waitForProfileOperation: async () => undefined,
 		partitionForProfile: (profileId: string) => browserProfilePartition(profileId),
 	} as unknown as BrowserProfileStore;
 }
@@ -595,13 +605,76 @@ describe("browser profile partitions and replacement", () => {
 				),
 			),
 		).toBe(true);
+
+		const activeURL = await host.execute("worker-1", "get", { property: "url" });
+		expect(activeURL).toMatchObject({ value: "https://example.com/" });
+		expect(runtime.runAction).toHaveBeenCalledWith(
+			"worker-1",
+			"tab-select",
+			{ tabId: "t2" },
+			expect.anything(),
+			undefined,
+		);
+
+		const sentBeforeStaleEvent = sent.length;
+		const oldActiveDidNavigate = views[1]!.listeners.get("did-navigate") as
+			| ((event: unknown, url: string) => void)
+			| undefined;
+		oldActiveDidNavigate?.({}, "https://stale.example/");
+		expect(
+			sent.slice(sentBeforeStaleEvent).filter(({ channel }) =>
+				channel === "browser:navState" || channel === "browser:tabsState",
+			),
+		).toEqual([]);
+	});
+
+	it("defers a bound worker until an in-flight profile data operation finishes", async () => {
+		const store = fakeBrowserProfileStore(profile, { "worker-1": profile.id });
+		let operationInProgress = true;
+		let release!: () => void;
+		const held = new Promise<void>((resolve) => {
+			release = resolve;
+		});
+		store.isProfileOperationInProgress = vi.fn(() => operationInProgress);
+		store.waitForProfileOperation = vi.fn(async () => {
+			await held;
+			operationInProgress = false;
+		});
+		const { constructorOptions, invoke } = setupTabHost(store);
+
+		const ensuring = invoke("browser:ensure", "worker-1");
+		await new Promise<void>((resolve) => setImmediate(resolve));
+		expect(constructorOptions).toHaveLength(0);
+		release();
+		await ensuring;
+		expect(constructorOptions[0]!.webPreferences.partition).toBe(browserProfilePartition(profile.id));
+	});
+
+	it("refuses switching while renderer navigation is still in flight", async () => {
+		const store = fakeBrowserProfileStore(profile, { "worker-1": profile.id });
+		const { host, invoke, views } = setupTabHost(store);
+		const nav = (await invoke("browser:ensure", "worker-1")) as BrowserNavState;
+		let release!: () => void;
+		const held = new Promise<void>((resolve) => {
+			release = resolve;
+		});
+		views[0]!.webContents.loadURL.mockImplementationOnce(async () => held);
+
+		const navigation = invoke("browser:navigate", { viewId: nav.viewId, url: "https://example.com/" });
+		await new Promise<void>((resolve) => setImmediate(resolve));
+		expect(host.getProfileSwitchInfo(nav.viewId)).toMatchObject({ agentActive: true });
+		await expect(host.switchProfile(nav.viewId, null)).rejects.toMatchObject({ code: "BROWSER_PROFILE_ACTIVE" });
+		release();
+		await navigation;
 	});
 
 	it("releases profile usage when worker tab startup fails", async () => {
 		const store = fakeBrowserProfileStore(profile, { "worker-1": profile.id });
 		const failing = setupTabHost(store, true);
 
-		expect(() => failing.invoke("browser:ensure", "worker-1")).toThrow("browser view startup failed");
+		await expect(failing.invoke("browser:ensure", "worker-1")).rejects.toThrow(
+			"browser view startup failed",
+		);
 		expect(failing.host.isProfileLive(profile.id)).toBe(false);
 		expect(failing.host.getProfileState("1:worker-1")).toBeNull();
 	});
@@ -623,6 +696,38 @@ describe("browser profile partitions and replacement", () => {
 		await third.invoke("browser:ensure", "worker-1");
 		await third.host.dispose();
 		expect(third.host.isProfileLive(profile.id)).toBe(false);
+	});
+
+	it("does not recreate tabs after a worker is destroyed during profile replacement", async () => {
+		const bindings = { "worker-1": profile.id };
+		const store = fakeBrowserProfileStore(profile, bindings);
+		let releaseReload!: () => void;
+		let replacementReloadStarted!: () => void;
+		const reloadHeld = new Promise<void>((resolve) => {
+			releaseReload = resolve;
+		});
+		const replacementStarted = new Promise<void>((resolve) => {
+			replacementReloadStarted = resolve;
+		});
+		const fixture = setupTabHost(store, false, async (viewIndex, url) => {
+			if (viewIndex > 0 && url === "https://example.com/") {
+				replacementReloadStarted();
+				await reloadHeld;
+			}
+		});
+		const nav = (await fixture.invoke("browser:ensure", "worker-1")) as BrowserNavState;
+		await fixture.invoke("browser:navigate", { viewId: nav.viewId, url: "https://example.com/" });
+
+		const switching = fixture.host.switchProfile(nav.viewId, null);
+		await replacementStarted;
+		expect(fixture.views).toHaveLength(2);
+		fixture.host.destroy(nav.viewId);
+		releaseReload();
+
+		await expect(switching).rejects.toMatchObject({ code: "BROWSER_TARGET_UNAVAILABLE" });
+		expect(fixture.views).toHaveLength(2);
+		expect(fixture.views[1]!.webContents.close).toHaveBeenCalled();
+		expect(bindings["worker-1"]).toBe(profile.id);
 	});
 
 	it("refuses a profile switch while agent-browser activity is still running", async () => {
@@ -1431,6 +1536,43 @@ describe("browser annotation IPC", () => {
 		const forwarded = sent.find((entry) => entry.channel === "browser:annotation:submitted");
 		expect(forwarded).toBeDefined();
 		expect((forwarded?.payload as { snapshot?: unknown }).snapshot).toBeUndefined();
+	});
+
+	it("drops an in-flight annotation submission after its browser view is destroyed", async () => {
+		const { host, invoke, invokeFromTab, sent, webContents } = setupHost();
+		await invoke("browser:ensure", "sess-1");
+		let releaseCapture!: (image: Awaited<ReturnType<typeof webContents.capturePage>>) => void;
+		const capture = new Promise<Awaited<ReturnType<typeof webContents.capturePage>>>((resolve) => {
+			releaseCapture = resolve;
+		});
+		webContents.capturePage.mockReturnValueOnce(capture);
+
+		const submit = invokeFromTab("browser:annotation:submit", 99, {
+			instruction: "Make this button blue.",
+			selection: {
+				kind: "element",
+				context: {
+					url: "http://localhost:5173/",
+					tag: "button",
+					classes: [],
+					selector: "button",
+					size: { width: 80, height: 30 },
+					computedStyle: {},
+				},
+			},
+		}) as Promise<void>;
+		await new Promise<void>((resolve) => setImmediate(resolve));
+		host.destroy("1:sess-1");
+		releaseCapture({
+			isEmpty: () => false,
+			toJPEG: () => Buffer.from("snapshot"),
+			toPNG: () => Buffer.from("png-snapshot"),
+			getSize: () => ({ width: 640, height: 480 }),
+			resize: vi.fn(),
+		});
+		await submit;
+
+		expect(sent.some((entry) => entry.channel === "browser:annotation:submitted")).toBe(false);
 	});
 
 	it("forwards a multi-element preview annotation submission to the renderer-owned view", async () => {

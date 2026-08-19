@@ -82,6 +82,8 @@ describe("BrowserProfileStore", () => {
 		await expect(store.createProfile(" work ")).rejects.toMatchObject({ code: "BROWSER_PROFILE_NAME_TAKEN" });
 		await expect(store.createProfile("\u0000bad")).rejects.toMatchObject({ code: "INVALID_ARGUMENT" });
 		await expect(store.renameProfile("not-a-uuid", "Other")).rejects.toMatchObject({ code: "INVALID_ARGUMENT" });
+		await expect(store.bindSession("__proto__", profile.id)).rejects.toMatchObject({ code: "INVALID_ARGUMENT" });
+		await expect(store.bindSession("toString", profile.id)).rejects.toMatchObject({ code: "INVALID_ARGUMENT" });
 
 		const partition = browserProfilePartition(profile.id);
 		await store.renameProfile(profile.id, "Personal");
@@ -134,21 +136,40 @@ describe("BrowserProfileStore", () => {
 		expect(store.getSessionProfileId("worker-1")).toBeUndefined();
 	});
 
-	it("serializes profile data operations and releases the live-operation marker", async () => {
+	it("serializes profile data operations and keeps the live-operation marker until the full queue drains", async () => {
 		const store = new BrowserProfileStore({ stateDir: await makeStateDir() });
 		const profile = await store.createProfile("Work");
-		let release!: () => void;
-		const held = new Promise<void>((resolve) => {
-			release = resolve;
+		let releaseFirst!: () => void;
+		let releaseSecond!: () => void;
+		const firstHeld = new Promise<void>((resolve) => {
+			releaseFirst = resolve;
+		});
+		const secondHeld = new Promise<void>((resolve) => {
+			releaseSecond = resolve;
 		});
 		const first = store.runProfileOperation(profile.id, () => false, async () => {
-			await held;
-			return "done";
+			await firstHeld;
+			return "first";
+		});
+		const second = store.runProfileOperation(profile.id, () => false, async () => {
+			await secondHeld;
+			return "second";
 		});
 		await new Promise<void>((resolve) => setImmediate(resolve));
 		expect(store.isProfileOperationInProgress(profile.id)).toBe(true);
-		release();
-		expect(await first).toBe("done");
+		releaseFirst();
+		expect(await first).toBe("first");
+		await new Promise<void>((resolve) => setImmediate(resolve));
+		expect(store.isProfileOperationInProgress(profile.id)).toBe(true);
+		let queueDrained = false;
+		const drain = store.waitForProfileOperation(profile.id).then(() => {
+			queueDrained = true;
+		});
+		await new Promise<void>((resolve) => setImmediate(resolve));
+		expect(queueDrained).toBe(false);
+		releaseSecond();
+		expect(await second).toBe("second");
+		await drain;
 		expect(store.isProfileOperationInProgress(profile.id)).toBe(false);
 	});
 });

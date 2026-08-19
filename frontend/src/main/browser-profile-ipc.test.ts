@@ -30,7 +30,7 @@ async function setup(confirmSwitch = vi.fn(async () => true)) {
 	const store = new BrowserProfileStore({ stateDir });
 	await store.load();
 	const shell = {};
-	const renderer = {};
+	const renderer = { getZoomFactor: vi.fn(() => 1) };
 	const handlers = new Map<string, Handler>();
 	const menuPopup = vi.fn();
 	let menuItems: BrowserProfileMenuItem[] = [];
@@ -84,12 +84,18 @@ describe("browser profile IPC", () => {
 		expect(() => invoke("browser:profile:menu", renderer, { viewId: "1:worker-1", bounds: {}, labels })).toThrow(
 			"Browser profile menu bounds are invalid.",
 		);
+		expect(() => invoke("browser:profile:menu", renderer, {
+			viewId: "1:worker-1",
+			bounds: { x: 100_001, y: 0, width: 40, height: 20 },
+			labels,
+		})).toThrow("Browser profile menu bounds are invalid.");
 		expect(host.switchProfile).not.toHaveBeenCalled();
 	});
 
 	it("builds a native menu with bounded coordinates and switches only through menu actions", async () => {
 		const { invoke, renderer, store, menuItems: getMenuItems, menuPopup, host } = await setup();
 		const profile = await store.createProfile("Work");
+		renderer.getZoomFactor.mockReturnValue(1.5);
 
 		await invoke("browser:profile:menu", renderer, {
 			viewId: "1:worker-1",
@@ -97,7 +103,11 @@ describe("browser profile IPC", () => {
 			labels,
 		});
 		expect(getMenuItems().map((item) => item.label ?? item.type)).toEqual(["Temporary", "Work", "separator", "Manage profiles"]);
-		expect(menuPopup).toHaveBeenCalledWith({ window: {}, x: 12, y: 63 });
+		expect(getMenuItems().slice(0, 2)).toEqual([
+			expect.objectContaining({ type: "radio", checked: true, enabled: true }),
+			expect.objectContaining({ type: "radio", checked: false, enabled: true }),
+		]);
+		expect(menuPopup).toHaveBeenCalledWith({ window: {}, x: 19, y: 94 });
 		await getMenuItems()[1]!.click?.();
 		await new Promise<void>((resolve) => setImmediate(resolve));
 		expect(host.switchProfile).toHaveBeenCalledWith("1:worker-1", profile.id);
@@ -127,6 +137,7 @@ describe("browser profile IPC", () => {
 			bounds: { x: 1, y: 1, width: 40, height: 20 },
 			labels,
 		});
+		expect(getMenuItems().slice(0, 2).every((item) => item.enabled === false)).toBe(true);
 		await getMenuItems().find((item) => item.label === profile.name)!.click?.();
 		await new Promise<void>((resolve) => setImmediate(resolve));
 		expect(host.switchProfile).not.toHaveBeenCalled();

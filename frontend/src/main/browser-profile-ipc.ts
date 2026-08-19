@@ -11,8 +11,9 @@ import { BrowserProfileStore, BrowserProfileStoreError as StoreError } from "./b
 
 export type BrowserProfileMenuItem = {
 	label?: string;
-	type?: "separator";
+	type?: "separator" | "radio";
 	checked?: boolean;
+	enabled?: boolean;
 	click?: () => void;
 };
 
@@ -88,6 +89,8 @@ function menuBoundsFromInput(value: unknown): BrowserMenuBounds {
 		!Number.isFinite(height) ||
 		x < 0 ||
 		y < 0 ||
+		x > 100_000 ||
+		y > 100_000 ||
 		width <= 0 ||
 		height <= 0 ||
 		width > 2_000 ||
@@ -95,7 +98,7 @@ function menuBoundsFromInput(value: unknown): BrowserMenuBounds {
 	) {
 		throw invalid("Browser profile menu bounds are invalid.");
 	}
-	return { x: Math.round(x), y: Math.round(y), width: Math.round(width), height: Math.round(height) };
+	return { x, y, width, height };
 }
 
 function labelsFromInput(value: unknown): BrowserProfileMenuInput["labels"] {
@@ -177,16 +180,22 @@ export function registerBrowserProfileIpc(options: BrowserProfileIpcOptions): Br
 		const labels = labelsFromInput(input.labels);
 		const current = options.host.getProfileState(viewId);
 		if (!current) return undefined;
+		const switchInfo = options.host.getProfileSwitchInfo(viewId);
+		const switchBlocked = !switchInfo || switchInfo.agentActive;
 		const profiles = options.store.profiles;
 		const items: BrowserProfileMenuItem[] = [
 			{
 				label: labels.temporary,
+				type: "radio",
 				checked: current.profileId === null,
+				enabled: !switchBlocked,
 				click: () => void selectFromMenu(viewId, null, labels, options),
 			},
 			...profiles.map((profile) => ({
 				label: profileLabel(profile),
+				type: "radio" as const,
 				checked: current.profileId === profile.id,
+				enabled: !switchBlocked && !options.store.isProfileOperationInProgress(profile.id),
 				click: () => void selectFromMenu(viewId, profile.id, labels, options),
 			})),
 			{ type: "separator" },
@@ -195,10 +204,12 @@ export function registerBrowserProfileIpc(options: BrowserProfileIpcOptions): Br
 				click: () => options.shellWebContents.send("browser:profileManage", { viewId }),
 			},
 		];
+		const rawZoomFactor = (event.sender as Partial<Pick<WebContents, "getZoomFactor">>).getZoomFactor?.() ?? 1;
+		const zoomFactor = Number.isFinite(rawZoomFactor) && rawZoomFactor > 0 ? rawZoomFactor : 1;
 		options.buildMenu(items).popup({
 			window: options.mainWindow,
-			x: bounds.x,
-			y: bounds.y + bounds.height,
+			x: Math.round(bounds.x * zoomFactor),
+			y: Math.round((bounds.y + bounds.height) * zoomFactor),
 		});
 		return undefined;
 	});

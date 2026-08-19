@@ -45,9 +45,9 @@ export function GlobalSettingsForm({
 								onClick={() => onOpenKeyboardShortcuts?.()}
 							/>
 						</SettingsSection>
-						<BrowserProfilesSection titleHidden={leadingTitleHidden} />
 					</>
 				)}
+				{section === "all" && <BrowserProfilesSection titleHidden={leadingTitleHidden} />}
 				{section === "browserProfiles" && <BrowserProfilesSection titleHidden={leadingTitleHidden} />}
 				{(section === "all" || section === "updates") && <UpdatesSection titleHidden={leadingTitleHidden} />}
 				{(section === "all" || section === "help") && (

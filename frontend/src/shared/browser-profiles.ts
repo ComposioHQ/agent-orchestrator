@@ -12,6 +12,7 @@ export const BROWSER_PROFILE_REGISTRY_FILE_NAME = "browser-profiles.json";
 
 const UUID_PATTERN =
 	/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const UNSAFE_RECORD_KEYS = new Set(["__proto__", "constructor", "prototype"]);
 
 export type BrowserProfileId = string;
 
@@ -105,6 +106,8 @@ export function isValidBrowserProfileSessionId(value: unknown): value is string 
 		typeof value === "string" &&
 		value.length > 0 &&
 		value.length <= BROWSER_PROFILE_MAX_SESSION_ID_LENGTH &&
+		!UNSAFE_RECORD_KEYS.has(value) &&
+		!Object.hasOwn(Object.prototype, value) &&
 		!/[\u0000-\u001f\u007f]/u.test(value)
 	);
 }

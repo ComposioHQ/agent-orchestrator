@@ -47,8 +47,12 @@ describe("BrowserProfilesSection", () => {
 		await waitFor(() => expect(bridge.rename).toHaveBeenCalledWith({ id: profile.id, name: "Office" }));
 
 		await userEvent.click(screen.getByRole("button", { name: "Clear data for Office" }));
+		expect(bridge.clear).not.toHaveBeenCalled();
+		await userEvent.click(await screen.findByRole("button", { name: "Clear data" }));
 		await waitFor(() => expect(bridge.clear).toHaveBeenCalledWith(profile.id));
 		await userEvent.click(screen.getByRole("button", { name: "Delete Office" }));
+		expect(bridge.delete).not.toHaveBeenCalled();
+		await userEvent.click(await screen.findByRole("button", { name: "Delete profile" }));
 		await waitFor(() => expect(bridge.delete).toHaveBeenCalledWith(profile.id));
 	});
 

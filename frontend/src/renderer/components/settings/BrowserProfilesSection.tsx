@@ -4,12 +4,15 @@ import { useTranslation } from "react-i18next";
 import type { AoBridge } from "../../../preload";
 import { aoBridge } from "../../lib/bridge";
 import { cn } from "../../lib/utils";
+import { ConfirmDialog } from "../ConfirmDialog";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { SettingsRow } from "./SettingsRow";
 import { SettingsSection } from "./SettingsSection";
 
 type ProfileBridge = AoBridge["browserProfiles"];
+type Profile = Awaited<ReturnType<ProfileBridge["list"]>>["profiles"][number];
+type DestructiveAction = { kind: "clear" | "delete"; profile: Profile };
 
 export function BrowserProfilesSection({ titleHidden }: { titleHidden?: boolean }) {
 	const { t } = useTranslation();
@@ -19,6 +22,9 @@ export function BrowserProfilesSection({ titleHidden }: { titleHidden?: boolean 
 	const [error, setError] = useState("");
 	const [name, setName] = useState("");
 	const [editing, setEditing] = useState<Record<string, string>>({});
+	const [pendingAction, setPendingAction] = useState<DestructiveAction | null>(null);
+	const [actionBusy, setActionBusy] = useState(false);
+	const [actionError, setActionError] = useState("");
 
 	const refresh = async () => {
 		if (!bridge) return;
@@ -71,34 +77,42 @@ export function BrowserProfilesSection({ titleHidden }: { titleHidden?: boolean 
 		}
 	};
 
-	const clear = async (id: string) => {
-		if (!bridge) return;
+	const confirmAction = async () => {
+		if (!bridge || !pendingAction) return;
+		setActionBusy(true);
+		setActionError("");
 		try {
-			await bridge.clear(id);
+			if (pendingAction.kind === "clear") {
+				await bridge.clear(pendingAction.profile.id);
+			} else {
+				await bridge.delete(pendingAction.profile.id);
+				setProfiles((current) => current.filter((profile) => profile.id !== pendingAction.profile.id));
+			}
 			setError("");
+			setPendingAction(null);
 		} catch (reason) {
-			setError(reason instanceof Error ? reason.message : t("settings.browserProfiles.clearFailed"));
-		}
-	};
-
-	const remove = async (id: string) => {
-		if (!bridge) return;
-		try {
-			await bridge.delete(id);
-			setProfiles((current) => current.filter((profile) => profile.id !== id));
-			setError("");
-		} catch (reason) {
-			setError(reason instanceof Error ? reason.message : t("settings.browserProfiles.deleteFailed"));
+			setActionError(
+				reason instanceof Error
+					? reason.message
+					: t(
+							pendingAction.kind === "clear"
+								? "settings.browserProfiles.clearFailed"
+								: "settings.browserProfiles.deleteFailed",
+						),
+			);
+		} finally {
+			setActionBusy(false);
 		}
 	};
 
 	return (
-		<SettingsSection
-			title={t("settings.browserProfiles")}
-			sectionId="browserProfiles"
-			titleHidden={titleHidden}
-			grouped
-		>
+		<>
+			<SettingsSection
+				title={t("settings.browserProfiles")}
+				sectionId="browserProfiles"
+				titleHidden={titleHidden}
+				grouped
+			>
 			<p className="px-3 text-xs leading-relaxed text-muted-foreground">
 				{t("settings.browserProfiles.description")}
 			</p>
@@ -151,10 +165,16 @@ export function BrowserProfilesSection({ titleHidden }: { titleHidden?: boolean 
 							>
 								{editing[profile.id] === undefined ? <Pencil aria-hidden="true" className="size-icon-base" /> : <Check aria-hidden="true" className="size-icon-base" />}
 							</Button>
-							<Button aria-label={t("settings.browserProfiles.clear", { profile: profile.name })} onClick={() => void clear(profile.id)} size="icon-sm" type="button" variant="ghost">
+							<Button aria-label={t("settings.browserProfiles.clear", { profile: profile.name })} onClick={() => {
+								setActionError("");
+								setPendingAction({ kind: "clear", profile });
+							}} size="icon-sm" type="button" variant="ghost">
 								<Eraser aria-hidden="true" className="size-icon-base" />
 							</Button>
-							<Button aria-label={t("settings.browserProfiles.delete", { profile: profile.name })} onClick={() => void remove(profile.id)} size="icon-sm" type="button" variant="ghost">
+							<Button aria-label={t("settings.browserProfiles.delete", { profile: profile.name })} onClick={() => {
+								setActionError("");
+								setPendingAction({ kind: "delete", profile });
+							}} size="icon-sm" type="button" variant="ghost">
 								<Trash2 aria-hidden="true" className="size-icon-base" />
 							</Button>
 						</div>
@@ -162,6 +182,37 @@ export function BrowserProfilesSection({ titleHidden }: { titleHidden?: boolean 
 				))
 			)}
 			{error ? <p className="px-3 py-2 text-xs text-destructive" role="alert">{error}</p> : null}
-		</SettingsSection>
+			</SettingsSection>
+			<ConfirmDialog
+				open={pendingAction !== null}
+				onOpenChange={(open) => {
+					if (open || actionBusy) return;
+					setPendingAction(null);
+					setActionError("");
+				}}
+				title={pendingAction
+					? t(
+							pendingAction.kind === "clear"
+								? "settings.browserProfiles.clearTitle"
+								: "settings.browserProfiles.deleteTitle",
+							{ profile: pendingAction.profile.name },
+						)
+					: ""}
+				description={pendingAction
+					? t(
+							pendingAction.kind === "clear"
+								? "settings.browserProfiles.clearDescription"
+								: "settings.browserProfiles.deleteDescription",
+						)
+					: ""}
+				confirmLabel={pendingAction?.kind === "clear"
+					? t("settings.browserProfiles.clearConfirm")
+					: t("settings.browserProfiles.deleteConfirm")}
+				destructive
+				busy={actionBusy}
+				error={actionError || null}
+				onConfirm={() => void confirmAction()}
+			/>
+		</>
 	);
 }

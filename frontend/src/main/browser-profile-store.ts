@@ -213,6 +213,10 @@ export class BrowserProfileStore {
 		return this.profileOperationsPending.has(profileId) || this.profileOperationsInProgress.has(profileId);
 	}
 
+	waitForProfileOperation(profileId: string): Promise<void> {
+		return this.profileOperationQueues.get(profileId) ?? Promise.resolve();
+	}
+
 	private ensureUsable(): void {
 		if (this.loadError) {
 			throw new BrowserProfileStoreError(this.loadError.code, this.loadError.message);
@@ -373,11 +377,15 @@ export class BrowserProfileStore {
 		);
 		this.profileOperationQueues.set(profileId, tail);
 		void tail.then(() => {
-			this.profileOperationsPending.delete(profileId);
-			if (this.profileOperationQueues.get(profileId) === tail) this.profileOperationQueues.delete(profileId);
+			if (this.profileOperationQueues.get(profileId) === tail) {
+				this.profileOperationsPending.delete(profileId);
+				this.profileOperationQueues.delete(profileId);
+			}
 		}, () => {
-			this.profileOperationsPending.delete(profileId);
-			if (this.profileOperationQueues.get(profileId) === tail) this.profileOperationQueues.delete(profileId);
+			if (this.profileOperationQueues.get(profileId) === tail) {
+				this.profileOperationsPending.delete(profileId);
+				this.profileOperationQueues.delete(profileId);
+			}
 		});
 		return queued;
 	}
