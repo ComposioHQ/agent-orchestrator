@@ -83,7 +83,6 @@ import {
 	activeTurn,
 	activityPlan,
 	brokenMcpServers,
-	can,
 	isCompaction,
 	isSteer,
 	queuedTurnIds,
@@ -533,7 +532,7 @@ export function ChatWorkspace({
 	const discarded = snapshot.turns.filter((t) => t.rolledBack).length;
 
 	const brokenServers = useMemo(() => brokenMcpServers(snapshot), [snapshot]);
-	const editHumanMessage = can(snapshot, "fork") ? onEditMessage : undefined;
+	const editHumanMessage = onEditMessage;
 
 	return (
 		<section
