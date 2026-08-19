@@ -16,7 +16,9 @@ alone is not sufficient.
   only after provider deletion is observed.
 - [x] Concurrent session creation cannot exceed the organization sandbox quota.
 - [x] Provider auto-pause is disabled. Heartbeats record liveness only.
-- [x] Local Docker and hosted NodeOps use the same provider lifecycle contract.
+- [x] Local Docker and hosted Daytona use the same provider lifecycle contract.
+- [x] Daytona ownership is verified from AO labels, unknown states fail closed,
+  and only an explicit provider not-found response proves absence.
 
 ## Worker and execution
 
@@ -60,8 +62,8 @@ alone is not sufficient.
   first and follow-up turn dispatch, workspace transport, worker replacement,
   restart recovery, and teardown; cancellation is covered by the fenced worker
   integration suite.
-- [ ] Hosted NodeOps acceptance passes against the live provider.
+- [ ] Hosted Daytona acceptance passes against the live provider.
 
-The final item may remain unchecked only when NodeOps credentials are
+The final item may remain unchecked only when Daytona credentials are
 unavailable. In that case the provider conformance suite, deployment
 configuration, and all local acceptance checks remain mandatory.

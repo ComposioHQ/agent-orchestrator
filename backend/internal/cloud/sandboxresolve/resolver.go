@@ -13,12 +13,13 @@ import (
 // Resolver maps a sandbox row onto the provider that owns its compute.
 type Resolver struct {
 	nodeOps sandbox.Provider
+	daytona sandbox.Provider
 	docker  sandbox.Provider
 }
 
 // New creates a resolver backed by the providers enabled for this deployment.
-func New(nodeOps, docker sandbox.Provider) *Resolver {
-	return &Resolver{nodeOps: nodeOps, docker: docker}
+func New(nodeOps, daytona, docker sandbox.Provider) *Resolver {
+	return &Resolver{nodeOps: nodeOps, daytona: daytona, docker: docker}
 }
 
 // Resolve returns the provider authorized for sandbox. The reconciler never
@@ -47,7 +48,15 @@ func (r *Resolver) Resolve(_ context.Context, record domain.Sandbox) (sandbox.Pr
 			return nil, fmt.Errorf("docker sandbox provider is not configured")
 		}
 		return r.docker, nil
-	case sandbox.ProviderDaytona, sandbox.ProviderECS:
+	case sandbox.ProviderDaytona:
+		if record.ProviderConnectionID != "" {
+			return nil, fmt.Errorf("per-organization Daytona connections are not supported")
+		}
+		if r.daytona == nil {
+			return nil, fmt.Errorf("daytona sandbox provider is not configured")
+		}
+		return r.daytona, nil
+	case sandbox.ProviderECS:
 		return nil, fmt.Errorf("sandbox provider %q is not configured", record.Provider)
 	default:
 		return nil, fmt.Errorf("unsupported sandbox provider %q", record.Provider)

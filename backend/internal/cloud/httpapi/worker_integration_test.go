@@ -198,7 +198,7 @@ func TestWorkerBootstrapAndHeartbeatLoop(t *testing.T) {
 	}
 
 	provider := newRecordingProvider("sbx-loop")
-	reconciler := reconcile.New(store, sandboxresolve.New(provider, nil), reconcile.Options{
+	reconciler := reconcile.New(store, sandboxresolve.New(provider, nil, nil), reconcile.Options{
 		PublicURL:    server.URL,
 		WorkerBinary: []byte("fake-ao-worker"),
 	})

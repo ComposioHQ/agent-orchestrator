@@ -44,6 +44,19 @@ func main() {
 	started := time.Now()
 	release := strings.TrimSpace(os.Getenv("AO_CLOUD_RELEASE"))
 	logger.Info("AO Cloud database migrations started", "release", release, "timeout", timeout)
+	runtimeUser := strings.TrimSpace(os.Getenv("AO_CLOUD_RUNTIME_DATABASE_USER"))
+	runtimePassword := os.Getenv("AO_CLOUD_RUNTIME_DATABASE_PASSWORD")
+	if runtimeUser != "" || runtimePassword != "" {
+		if err := postgres.EnsureRuntimeRole(
+			migrationContext,
+			databaseURL,
+			runtimeUser,
+			runtimePassword,
+		); err != nil {
+			logger.Error("ensure runtime database role", "error", err)
+			os.Exit(1)
+		}
+	}
 	if err := postgres.Migrate(migrationContext, databaseURL); err != nil {
 		if !errors.Is(err, context.Canceled) {
 			logger.Error(
@@ -58,7 +71,6 @@ func main() {
 		}
 		os.Exit(1)
 	}
-	runtimeUser := strings.TrimSpace(os.Getenv("AO_CLOUD_RUNTIME_DATABASE_USER"))
 	if runtimeUser != "" {
 		if err := postgres.GrantRuntimeRole(migrationContext, databaseURL, runtimeUser); err != nil {
 			logger.Error("grant runtime database privileges", "error", err)

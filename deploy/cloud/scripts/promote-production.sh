@@ -1,7 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-REGION="${AWS_REGION:-eu-north-1}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
+cd "$REPO_ROOT"
+
+REGION="${AWS_REGION:-ap-south-1}"
 STAGING_CLUSTER="${AO_CLOUD_STAGING_CLUSTER:-ao-cloud-staging}"
 STAGING_SERVICE="${AO_CLOUD_STAGING_SERVICE:-ao-cloud-staging-api}"
 STAGING_ROLLBACK_ALARM="${AO_CLOUD_STAGING_ROLLBACK_ALARM:-ao-cloud-staging-target-5xx}"
@@ -9,12 +13,10 @@ PRODUCTION_CLUSTER="${AO_CLOUD_PRODUCTION_CLUSTER:-ao-cloud-production}"
 PRODUCTION_SERVICE="${AO_CLOUD_PRODUCTION_SERVICE:-ao-cloud-production-api}"
 PRODUCTION_API_FAMILY="${AO_CLOUD_PRODUCTION_API_FAMILY:-ao-cloud-production-api}"
 PRODUCTION_MIGRATION_FAMILY="${AO_CLOUD_PRODUCTION_MIGRATION_FAMILY:-ao-cloud-production-migrate}"
-PRODUCTION_ALB="${AO_CLOUD_PRODUCTION_ALB:-ao-cloud-production-public}"
-PRODUCTION_TARGET_GROUP="${AO_CLOUD_PRODUCTION_TARGET_GROUP:-ao-cloud-production-public-cp}"
-PRODUCTION_TASK_SECURITY_GROUP="${AO_CLOUD_PRODUCTION_TASK_SECURITY_GROUP:-ao-cloud-production-task-sg}"
 ROLLBACK_ALARM="${AO_CLOUD_PRODUCTION_ROLLBACK_ALARM:-ao-cloud-production-target-5xx}"
 RUNTIME_DATABASE_USER="${AO_CLOUD_RUNTIME_DATABASE_USER:-ao_cloud_app}"
-NODEOPS_SECRET_ID="${AO_CLOUD_NODEOPS_SECRET_ID:-ao-cloud/production/nodeops}"
+DAYTONA_SECRET_ID="${AO_CLOUD_DAYTONA_SECRET_ID:-ao-cloud/production/daytona}"
+AUTH_SECRET_ID="${AO_CLOUD_AUTH_SECRET_ID:-ao-cloud/production/auth}"
 WORKER_SECRET_ID="${AO_CLOUD_WORKER_SECRET_ID:-ao-cloud/production/worker}"
 
 AWS_OPTIONS=(--region "$REGION")
@@ -63,18 +65,12 @@ if [[ "$release" != "$staging_release" ]]; then
 	echo "Release ${release} is not the healthy staging release ${staging_release}." >&2
 	exit 1
 fi
-./scripts/verify-ecs-service.py \
+"$SCRIPT_DIR/verify-ecs-service.py" \
 	--region "$REGION" \
 	--cluster "$STAGING_CLUSTER" \
 	--service "$STAGING_SERVICE" \
 	--alarm "$STAGING_ROLLBACK_ALARM" \
 	--expected-task-definition "$staging_task" >/dev/null
-./scripts/verify-ecs-service.py \
-	--region "$REGION" \
-	--cluster "$PRODUCTION_CLUSTER" \
-	--service "$PRODUCTION_SERVICE" \
-	--alarm "$ROLLBACK_ALARM" >/dev/null
-
 control_image="$(
 	SOURCE="$staging_source" python3 - <<'PY'
 import json
@@ -104,7 +100,7 @@ if [[ "$control_image" != *@sha256:* || "$worker_image" != *@sha256:* ]]; then
 	exit 1
 fi
 
-./scripts/verify-ecs-service.py \
+"$SCRIPT_DIR/verify-ecs-service.py" \
 	--region "$REGION" \
 	--cluster "$STAGING_CLUSTER" \
 	--service "$STAGING_SERVICE" \
@@ -166,12 +162,20 @@ secret_arn() {
 		--output text
 }
 
-nodeops_secret_arn="$(secret_arn "$NODEOPS_SECRET_ID")"
+daytona_secret_arn="$(secret_arn "$DAYTONA_SECRET_ID")"
+auth_secret_arn="$(secret_arn "$AUTH_SECRET_ID")"
 worker_secret_arn="$(secret_arn "$WORKER_SECRET_ID")"
 provider_secret_arn="$(secret_arn ao-cloud/production/provider-secret-key)"
-nodeops_settings="$(
+runtime_database_secret_arn="$(secret_arn ao-cloud/production/database-runtime)"
+daytona_settings="$(
 	aws_cli secretsmanager get-secret-value \
-		--secret-id "$NODEOPS_SECRET_ID" \
+		--secret-id "$DAYTONA_SECRET_ID" \
+		--query SecretString \
+		--output text
+)"
+auth_settings="$(
+	aws_cli secretsmanager get-secret-value \
+		--secret-id "$AUTH_SECRET_ID" \
 		--query SecretString \
 		--output text
 )"
@@ -181,10 +185,11 @@ worker_settings="$(
 		--query SecretString \
 		--output text
 )"
-./scripts/validate-hosted-settings.py \
-	--nodeops <(printf '%s' "$nodeops_settings") \
+"$SCRIPT_DIR/validate-hosted-settings.py" \
+	--daytona <(printf '%s' "$daytona_settings") \
+	--auth <(printf '%s' "$auth_settings") \
 	--worker <(printf '%s' "$worker_settings")
-unset nodeops_settings worker_settings
+unset daytona_settings auth_settings worker_settings
 
 aws_cli iam get-role --role-name ao-cloud-production-execution-role >/dev/null
 aws_cli iam get-role --role-name ao-cloud-production-task-role >/dev/null
@@ -192,10 +197,8 @@ aws_cli secretsmanager describe-secret \
 	--secret-id ao-cloud/production/database-url >/dev/null
 aws_cli secretsmanager describe-secret \
 	--secret-id ao-cloud/production/migration-database-url >/dev/null
-aws_cli secretsmanager describe-secret \
-	--secret-id ao-cloud/production/workos >/dev/null
 github_secret_arn="$(secret_arn ao-cloud/production/github)"
-broker_secret_arn="$(secret_arn "${AO_CLOUD_REPOSITORY_BROKER_SECRET_ID:-ao-cloud/repository-broker}")"
+broker_secret_arn="$(secret_arn "${AO_CLOUD_REPOSITORY_BROKER_SECRET_ID:-ao-cloud/production/repository-broker}")"
 
 register_api_task() {
 	local source payload
@@ -206,7 +209,7 @@ register_api_task() {
 	)"
 	payload="$(
 		printf '%s' "$source" |
-			./scripts/render-task-definition.py \
+			"$SCRIPT_DIR/render-task-definition.py" \
 				--family "$PRODUCTION_API_FAMILY" \
 				--container control-plane \
 				--image "$control_image" \
@@ -225,14 +228,15 @@ register_api_task() {
 				--set-secret "AO_CLOUD_GITHUB_STATE_KEY=${github_secret_arn}:state_key::" \
 				--set-secret "AO_CLOUD_REPOSITORY_BROKER_TOKEN=${broker_secret_arn}:auth_token::" \
 				--set-secret "AO_CLOUD_PROVIDER_SECRET_KEY=${provider_secret_arn}" \
-				--set-secret "AO_CLOUD_NODEOPS_BASE_URL=${nodeops_secret_arn}:base_url::" \
-				--set-secret "AO_CLOUD_NODEOPS_API_KEY=${nodeops_secret_arn}:api_key::" \
-				--set-secret "AO_CLOUD_NODEOPS_DEFAULT_SHAPE=${nodeops_secret_arn}:default_shape::" \
-				--set-secret "AO_CLOUD_NODEOPS_DEFAULT_ROOTFS=${nodeops_secret_arn}:default_rootfs::" \
-				--set-secret "AO_CLOUD_NODEOPS_INGRESS=${nodeops_secret_arn}:ingress::" \
-				--set-secret "AO_CLOUD_NODEOPS_SSH_KEY_PATH=${nodeops_secret_arn}:ssh_key_path::" \
-				--set-secret "AO_CLOUD_NODEOPS_REGION=${nodeops_secret_arn}:region::" \
-				--set-secret "AO_CLOUD_NODEOPS_WORKER_TOKEN_TTL=${nodeops_secret_arn}:worker_token_ttl::" \
+				--set-secret "AO_CLOUD_DAYTONA_API_URL=${daytona_secret_arn}:api_url::" \
+				--set-secret "AO_CLOUD_DAYTONA_API_KEY=${daytona_secret_arn}:api_key::" \
+				--set-secret "AO_CLOUD_DAYTONA_TARGET=${daytona_secret_arn}:target::" \
+				--set-secret "AO_CLOUD_DAYTONA_SNAPSHOT=${daytona_secret_arn}:snapshot::" \
+				--set-secret "AO_CLOUD_DAYTONA_USER=${daytona_secret_arn}:user::" \
+				--set-secret "AO_CLOUD_DAYTONA_DOMAIN_ALLOW_LIST=${daytona_secret_arn}:domain_allow_list::" \
+				--set-secret "AO_CLOUD_DAYTONA_WORKER_TOKEN_TTL=${daytona_secret_arn}:worker_token_ttl::" \
+				--set-secret "AO_CLOUD_GOOGLE_CLIENT_IDS=${auth_secret_arn}:google_client_ids::" \
+				--set-secret "AO_CLOUD_AUTH_SIGNING_KEY=${auth_secret_arn}:signing_key::" \
 				--set-secret "AO_CLOUD_WORKER_SIGNING_KEY=${worker_secret_arn}:signing_key::" \
 				--set-secret "AO_CLOUD_MAX_ACTIVE_SANDBOXES_PER_ORG=${worker_secret_arn}:max_active_sandboxes_per_org::" \
 				--set-secret "AO_CLOUD_SANDBOX_RECONCILE_INTERVAL=${worker_secret_arn}:sandbox_reconcile_interval::" \
@@ -254,7 +258,7 @@ register_migration_task() {
 	)"
 	payload="$(
 		printf '%s' "$source" |
-			./scripts/render-task-definition.py \
+			"$SCRIPT_DIR/render-task-definition.py" \
 				--family "$PRODUCTION_MIGRATION_FAMILY" \
 				--container migration \
 				--image "$control_image" \
@@ -262,7 +266,8 @@ register_migration_task() {
 				--environment production \
 				--log-group /ao-cloud/production/control-plane \
 				--region "$REGION" \
-				--runtime-database-user "$RUNTIME_DATABASE_USER"
+				--runtime-database-user "$RUNTIME_DATABASE_USER" \
+				--set-secret "AO_CLOUD_RUNTIME_DATABASE_PASSWORD=${runtime_database_secret_arn}:password::"
 	)"
 	aws_cli ecs register-task-definition \
 		--cli-input-json "$payload" \
@@ -272,38 +277,13 @@ register_migration_task() {
 
 api_task="$(register_api_task)"
 migration_task="$(register_migration_task)"
-load_balancer="$(
-	aws_cli elbv2 describe-load-balancers \
-		--names "$PRODUCTION_ALB" \
-		--query 'LoadBalancers[0]' \
+network_configuration="$(
+	aws_cli ecs describe-services \
+		--cluster "$PRODUCTION_CLUSTER" \
+		--services "$PRODUCTION_SERVICE" \
+		--query 'services[0].networkConfiguration' \
 		--output json
 )"
-subnets="$(
-	LOAD_BALANCER="$load_balancer" python3 - <<'PY'
-import json
-import os
-
-load_balancer = json.loads(os.environ["LOAD_BALANCER"])
-print(",".join(zone["SubnetId"] for zone in load_balancer["AvailabilityZones"]))
-PY
-)"
-vpc_id="$(
-	LOAD_BALANCER="$load_balancer" python3 - <<'PY'
-import json
-import os
-
-print(json.loads(os.environ["LOAD_BALANCER"])["VpcId"])
-PY
-)"
-task_security_group="$(
-	aws_cli ec2 describe-security-groups \
-		--filters \
-			"Name=vpc-id,Values=${vpc_id}" \
-			"Name=group-name,Values=${PRODUCTION_TASK_SECURITY_GROUP}" \
-		--query 'SecurityGroups[0].GroupId' \
-		--output text
-)"
-network_configuration="awsvpcConfiguration={subnets=[${subnets}],securityGroups=[${task_security_group}],assignPublicIp=ENABLED}"
 
 migration_result="$(
 	aws_cli ecs run-task \
@@ -360,12 +340,6 @@ if [[ "$migration_exit" != "0" ]]; then
 fi
 migration_complete=true
 
-target_group="$(
-	aws_cli elbv2 describe-target-groups \
-		--names "$PRODUCTION_TARGET_GROUP" \
-		--query 'TargetGroups[0].TargetGroupArn' \
-		--output text
-)"
 deployment_configuration="{\"maximumPercent\":200,\"minimumHealthyPercent\":100,\"deploymentCircuitBreaker\":{\"enable\":true,\"rollback\":true},\"alarms\":{\"alarmNames\":[\"${ROLLBACK_ALARM}\"],\"enable\":true,\"rollback\":true}}"
 service_status="$(
 	aws_cli ecs describe-services \
@@ -374,35 +348,18 @@ service_status="$(
 		--query 'services[0].status' \
 		--output text 2>/dev/null || true
 )"
-if [[ "$service_status" == "ACTIVE" ]]; then
-	aws_cli ecs update-service \
-		--cluster "$PRODUCTION_CLUSTER" \
-		--service "$PRODUCTION_SERVICE" \
-		--task-definition "$api_task" \
-		--desired-count 2 \
-		--health-check-grace-period-seconds 60 \
-		--deployment-configuration "$deployment_configuration" \
-		>/dev/null
-else
-	aws_cli ecs create-service \
-		--cluster "$PRODUCTION_CLUSTER" \
-		--service-name "$PRODUCTION_SERVICE" \
-		--task-definition "$api_task" \
-		--desired-count 2 \
-		--launch-type FARGATE \
-		--platform-version LATEST \
-		--network-configuration "$network_configuration" \
-		--load-balancers \
-			"targetGroupArn=${target_group},containerName=control-plane,containerPort=8080" \
-		--deployment-configuration "$deployment_configuration" \
-		--health-check-grace-period-seconds 60 \
-		--enable-ecs-managed-tags \
-		--propagate-tags TASK_DEFINITION \
-		--tags \
-			key=Project,value=ao-cloud \
-			key=Environment,value=production \
-		>/dev/null
+if [[ "$service_status" != "ACTIVE" ]]; then
+	echo "Terraform-managed production ECS service is not active." >&2
+	exit 1
 fi
+aws_cli ecs update-service \
+	--cluster "$PRODUCTION_CLUSTER" \
+	--service "$PRODUCTION_SERVICE" \
+	--task-definition "$api_task" \
+	--desired-count 2 \
+	--health-check-grace-period-seconds 60 \
+	--deployment-configuration "$deployment_configuration" \
+	>/dev/null
 
 aws_cli application-autoscaling register-scalable-target \
 	--service-namespace ecs \
@@ -463,7 +420,7 @@ fi
 verification_error=""
 for _ in $(seq 1 18); do
 	if verification_error="$(
-		./scripts/verify-ecs-service.py \
+		"$SCRIPT_DIR/verify-ecs-service.py" \
 			--region "$REGION" \
 			--cluster "$PRODUCTION_CLUSTER" \
 			--service "$PRODUCTION_SERVICE" \

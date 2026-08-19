@@ -1,7 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-REGION="${AWS_REGION:-eu-north-1}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
+cd "$REPO_ROOT"
+
+REGION="${AWS_REGION:-ap-south-1}"
 CLUSTER="${AO_CLOUD_ECS_CLUSTER:-ao-cloud-staging}"
 SERVICE="${AO_CLOUD_ECS_SERVICE:-ao-cloud-staging-api}"
 CONTROL_REPOSITORY="${AO_CLOUD_ECR_REPOSITORY:-ao-cloud-control-plane}"
@@ -10,7 +14,8 @@ API_FAMILY="${AO_CLOUD_API_TASK_FAMILY:-ao-cloud-staging-api}"
 MIGRATION_FAMILY="${AO_CLOUD_MIGRATION_TASK_FAMILY:-ao-cloud-staging-migrate}"
 ROLLBACK_ALARM="${AO_CLOUD_ROLLBACK_ALARM:-ao-cloud-staging-target-5xx}"
 RUNTIME_DATABASE_USER="${AO_CLOUD_RUNTIME_DATABASE_USER:-ao_cloud_app}"
-NODEOPS_SECRET_ID="${AO_CLOUD_NODEOPS_SECRET_ID:-ao-cloud/staging/nodeops}"
+DAYTONA_SECRET_ID="${AO_CLOUD_DAYTONA_SECRET_ID:-ao-cloud/staging/daytona}"
+AUTH_SECRET_ID="${AO_CLOUD_AUTH_SECRET_ID:-ao-cloud/staging/auth}"
 WORKER_SECRET_ID="${AO_CLOUD_WORKER_SECRET_ID:-ao-cloud/staging/worker}"
 HEAD_SHA="$(git rev-parse HEAD)"
 RELEASE="${1:-$HEAD_SHA}"
@@ -49,12 +54,6 @@ if ! resolved_release="$(git rev-parse "${RELEASE}^{commit}" 2>/dev/null)" ||
 	exit 1
 fi
 
-./scripts/verify-ecs-service.py \
-	--region "$REGION" \
-	--cluster "$CLUSTER" \
-	--service "$SERVICE" \
-	--alarm "$ROLLBACK_ALARM" >/dev/null
-
 secret_arn() {
 	aws_cli secretsmanager describe-secret \
 		--secret-id "$1" \
@@ -63,12 +62,20 @@ secret_arn() {
 }
 
 provider_secret_arn="$(secret_arn ao-cloud/staging/provider-secret-key)"
-nodeops_secret_arn="$(secret_arn "$NODEOPS_SECRET_ID")"
+runtime_database_secret_arn="$(secret_arn ao-cloud/staging/database-runtime)"
+daytona_secret_arn="$(secret_arn "$DAYTONA_SECRET_ID")"
+auth_secret_arn="$(secret_arn "$AUTH_SECRET_ID")"
 worker_secret_arn="$(secret_arn "$WORKER_SECRET_ID")"
-broker_secret_arn="$(secret_arn "${AO_CLOUD_REPOSITORY_BROKER_SECRET_ID:-ao-cloud/repository-broker}")"
-nodeops_settings="$(
+broker_secret_arn="$(secret_arn "${AO_CLOUD_REPOSITORY_BROKER_SECRET_ID:-ao-cloud/staging/repository-broker}")"
+daytona_settings="$(
 	aws_cli secretsmanager get-secret-value \
-		--secret-id "$NODEOPS_SECRET_ID" \
+		--secret-id "$DAYTONA_SECRET_ID" \
+		--query SecretString \
+		--output text
+)"
+auth_settings="$(
+	aws_cli secretsmanager get-secret-value \
+		--secret-id "$AUTH_SECRET_ID" \
 		--query SecretString \
 		--output text
 )"
@@ -78,10 +85,11 @@ worker_settings="$(
 		--query SecretString \
 		--output text
 )"
-./scripts/validate-hosted-settings.py \
-	--nodeops <(printf '%s' "$nodeops_settings") \
+"$SCRIPT_DIR/validate-hosted-settings.py" \
+	--daytona <(printf '%s' "$daytona_settings") \
+	--auth <(printf '%s' "$auth_settings") \
 	--worker <(printf '%s' "$worker_settings")
-unset nodeops_settings worker_settings
+unset daytona_settings auth_settings worker_settings
 
 publish_image() {
 	local repository="$1"
@@ -101,6 +109,7 @@ publish_image() {
 		docker build \
 			--platform linux/amd64 \
 			--provenance=false \
+			--file deploy/cloud/Dockerfile \
 			--target "$target" \
 			--tag "${PUBLISHED_URI}:${IMAGE_TAG}" \
 			.
@@ -176,7 +185,7 @@ worker_image="$PUBLISHED_IMAGE"
 worker_image_digest="$PUBLISHED_DIGEST"
 docker pull "$control_image" >/dev/null
 docker pull "$worker_image" >/dev/null
-./scripts/verify-image-contract.sh "$control_image" "$worker_image"
+"$SCRIPT_DIR/verify-image-contract.sh" "$control_image" "$worker_image"
 scan_image "$CONTROL_REPOSITORY" "$control_image_digest"
 scan_image "$WORKER_REPOSITORY" "$worker_image_digest"
 
@@ -202,14 +211,15 @@ register_task_definition() {
 			--set-secret "AO_CLOUD_PROVIDER_SECRET_KEY=${provider_secret_arn}"
 			--set-secret "AO_CLOUD_REPOSITORY_BROKER_TOKEN=${broker_secret_arn}:auth_token::"
 			--set-secret "AO_CLOUD_ENV_CONTROL_TOKEN=${broker_secret_arn}:staging_control_token::"
-			--set-secret "AO_CLOUD_NODEOPS_BASE_URL=${nodeops_secret_arn}:base_url::"
-			--set-secret "AO_CLOUD_NODEOPS_API_KEY=${nodeops_secret_arn}:api_key::"
-			--set-secret "AO_CLOUD_NODEOPS_DEFAULT_SHAPE=${nodeops_secret_arn}:default_shape::"
-			--set-secret "AO_CLOUD_NODEOPS_DEFAULT_ROOTFS=${nodeops_secret_arn}:default_rootfs::"
-			--set-secret "AO_CLOUD_NODEOPS_INGRESS=${nodeops_secret_arn}:ingress::"
-			--set-secret "AO_CLOUD_NODEOPS_SSH_KEY_PATH=${nodeops_secret_arn}:ssh_key_path::"
-			--set-secret "AO_CLOUD_NODEOPS_REGION=${nodeops_secret_arn}:region::"
-			--set-secret "AO_CLOUD_NODEOPS_WORKER_TOKEN_TTL=${nodeops_secret_arn}:worker_token_ttl::"
+			--set-secret "AO_CLOUD_DAYTONA_API_URL=${daytona_secret_arn}:api_url::"
+			--set-secret "AO_CLOUD_DAYTONA_API_KEY=${daytona_secret_arn}:api_key::"
+			--set-secret "AO_CLOUD_DAYTONA_TARGET=${daytona_secret_arn}:target::"
+			--set-secret "AO_CLOUD_DAYTONA_SNAPSHOT=${daytona_secret_arn}:snapshot::"
+			--set-secret "AO_CLOUD_DAYTONA_USER=${daytona_secret_arn}:user::"
+			--set-secret "AO_CLOUD_DAYTONA_DOMAIN_ALLOW_LIST=${daytona_secret_arn}:domain_allow_list::"
+			--set-secret "AO_CLOUD_DAYTONA_WORKER_TOKEN_TTL=${daytona_secret_arn}:worker_token_ttl::"
+			--set-secret "AO_CLOUD_GOOGLE_CLIENT_IDS=${auth_secret_arn}:google_client_ids::"
+			--set-secret "AO_CLOUD_AUTH_SIGNING_KEY=${auth_secret_arn}:signing_key::"
 			--set-secret "AO_CLOUD_WORKER_SIGNING_KEY=${worker_secret_arn}:signing_key::"
 			--set-secret "AO_CLOUD_MAX_ACTIVE_SANDBOXES_PER_ORG=${worker_secret_arn}:max_active_sandboxes_per_org::"
 			--set-secret "AO_CLOUD_SANDBOX_RECONCILE_INTERVAL=${worker_secret_arn}:sandbox_reconcile_interval::"
@@ -217,9 +227,12 @@ register_task_definition() {
 			--set-secret "AO_CLOUD_WORKER_HEARTBEAT_TIMEOUT=${worker_secret_arn}:worker_heartbeat_timeout::"
 		)
 	else
-		render_args+=(--runtime-database-user "$RUNTIME_DATABASE_USER")
+		render_args+=(
+			--runtime-database-user "$RUNTIME_DATABASE_USER"
+			--set-secret "AO_CLOUD_RUNTIME_DATABASE_PASSWORD=${runtime_database_secret_arn}:password::"
+		)
 	fi
-	payload="$(printf '%s' "$source" | ./scripts/render-task-definition.py "${render_args[@]}")"
+	payload="$(printf '%s' "$source" | "$SCRIPT_DIR/render-task-definition.py" "${render_args[@]}")"
 	aws_cli ecs register-task-definition \
 		--cli-input-json "$payload" \
 		--query 'taskDefinition.taskDefinitionArn' \
@@ -313,7 +326,7 @@ fi
 verification_error=""
 for _ in $(seq 1 18); do
 	if verification_error="$(
-		./scripts/verify-ecs-service.py \
+		"$SCRIPT_DIR/verify-ecs-service.py" \
 			--region "$REGION" \
 			--cluster "$CLUSTER" \
 			--service "$SERVICE" \

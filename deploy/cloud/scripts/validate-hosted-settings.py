@@ -16,10 +16,13 @@ def load_secret(path: str) -> dict[str, object]:
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--nodeops", required=True)
+    parser.add_argument("--daytona", required=True)
+    parser.add_argument("--auth", required=True)
     parser.add_argument("--worker", required=True)
     args = parser.parse_args()
-    validate_hosted_settings(load_secret(args.nodeops), load_secret(args.worker))
+    validate_hosted_settings(
+        load_secret(args.daytona), load_secret(args.auth), load_secret(args.worker)
+    )
 
 
 if __name__ == "__main__":

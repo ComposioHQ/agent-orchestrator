@@ -1,3 +1,4 @@
+import base64
 import copy
 import sys
 import unittest
@@ -6,7 +7,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parents[1]))
 
 from lib.deployment import (
-    NODEOPS_SECRET_ENV,
+    AUTH_SECRET_ENV,
+    DAYTONA_SECRET_ENV,
     WORKER_SECRET_ENV,
     build_task_definition,
     secret_environment,
@@ -23,7 +25,9 @@ WORKER_IMAGE = f"registry/ao-cloud-worker@sha256:{'b' * 64}"
 
 def hosted_secret_overrides(environment="production"):
     return secret_environment(
-        f"arn:secret:ao-cloud/{environment}/nodeops", NODEOPS_SECRET_ENV
+        f"arn:secret:ao-cloud/{environment}/daytona", DAYTONA_SECRET_ENV
+    ) | secret_environment(
+        f"arn:secret:ao-cloud/{environment}/auth", AUTH_SECRET_ENV
     ) | secret_environment(
         f"arn:secret:ao-cloud/{environment}/worker", WORKER_SECRET_ENV
     )
@@ -32,14 +36,17 @@ def hosted_secret_overrides(environment="production"):
 def hosted_settings():
     return (
         {
-            "base_url": "https://api.sb.createos.sh",
-            "api_key": "nodeops-secret",
-            "default_shape": "s-4vcpu-8gb",
-            "default_rootfs": "devbox:1",
-            "ingress": "disabled",
-            "ssh_key_path": "",
-            "region": "eu-north-1",
+            "api_url": "https://app.daytona.io/api",
+            "api_key": "daytona-secret",
+            "target": "us",
+            "snapshot": "ao-worker-v1",
+            "user": "root",
+            "domain_allow_list": "api.aoagents.dev,api.anthropic.com,github.com",
             "worker_token_ttl": "15m",
+        },
+        {
+            "google_client_ids": "desktop-client,web-client",
+            "signing_key": base64.b64encode(b"a" * 32).decode(),
         },
         {
             "signing_key": "w" * 64,
@@ -133,8 +140,11 @@ class TaskDefinitionTests(unittest.TestCase):
         )
         container = payload["containerDefinitions"][0]
         self.assertEqual(container["image"], CONTROL_IMAGE)
+        secret_values = {
+            item["name"]: item["valueFrom"] for item in container["secrets"]
+        }
         self.assertEqual(
-            container["secrets"][0]["valueFrom"],
+            secret_values["AO_CLOUD_DATABASE_URL"],
             "arn:secret:ao-cloud/production/database-url",
         )
         environment = {
@@ -151,8 +161,8 @@ class TaskDefinitionTests(unittest.TestCase):
             secrets["AO_CLOUD_GITHUB_APP_ID"],
             "arn:secret:ao-cloud/production/github:app_id::",
         )
-        self.assertNotIn("AO_CLOUD_NODEOPS_AUTO_PAUSE_MINUTES", environment)
-        self.assertNotIn("AO_CLOUD_NODEOPS_AUTO_PAUSE_MINUTES", secrets)
+        self.assertNotIn("AO_CLOUD_DAYTONA_AUTO_PAUSE_INTERVAL", environment)
+        self.assertNotIn("AO_CLOUD_DAYTONA_AUTO_PAUSE_INTERVAL", secrets)
         tags = {item["key"]: item["value"] for item in payload["tags"]}
         self.assertEqual(tags["WorkerImage"], WORKER_IMAGE)
 
@@ -207,7 +217,7 @@ class TaskDefinitionTests(unittest.TestCase):
                 log_group="/ao-cloud/production/control-plane",
                 region="eu-north-1",
                 secret_overrides=hosted_secret_overrides()
-                | {"AO_CLOUD_NODEOPS_AUTO_PAUSE_MINUTES": "arn:secret:field::"},
+                | {"AO_CLOUD_DAYTONA_AUTO_PAUSE_INTERVAL": "arn:secret:field::"},
             )
 
     def test_validates_rendered_artifact_contract(self):
@@ -230,29 +240,51 @@ class TaskDefinitionTests(unittest.TestCase):
             worker_image=WORKER_IMAGE,
         )
 
+    def test_migration_requires_runtime_login_secret(self):
+        source = task_source()
+        source["taskDefinition"]["containerDefinitions"][0]["name"] = "migration"
+        with self.assertRaisesRegex(ValueError, "runtime database password"):
+            build_task_definition(
+                source,
+                family="ao-cloud-production-migrate",
+                container_name="migration",
+                image=CONTROL_IMAGE,
+                release="abc123",
+                environment="production",
+                log_group="/ao-cloud/production/control-plane",
+                region="ap-south-1",
+                runtime_database_user="ao_cloud_app",
+            )
+
 
 class HostedSettingsTests(unittest.TestCase):
     def test_accepts_complete_environment_scoped_settings(self):
-        nodeops, worker = hosted_settings()
-        validate_hosted_settings(nodeops, worker)
+        daytona, auth, worker = hosted_settings()
+        validate_hosted_settings(daytona, auth, worker)
 
     def test_rejects_missing_worker_setting(self):
-        nodeops, worker = hosted_settings()
+        daytona, auth, worker = hosted_settings()
         del worker["worker_heartbeat_timeout"]
         with self.assertRaisesRegex(ValueError, "worker_heartbeat_timeout"):
-            validate_hosted_settings(nodeops, worker)
+            validate_hosted_settings(daytona, auth, worker)
 
     def test_rejects_provider_auto_pause_setting(self):
-        nodeops, worker = hosted_settings()
-        nodeops["auto_pause_minutes"] = "30"
-        with self.assertRaisesRegex(ValueError, "auto-pause"):
-            validate_hosted_settings(nodeops, worker)
+        daytona, auth, worker = hosted_settings()
+        daytona["auto_pause_interval"] = "30"
+        with self.assertRaisesRegex(ValueError, "lifecycle timers"):
+            validate_hosted_settings(daytona, auth, worker)
 
     def test_rejects_invalid_startup_timeout(self):
-        nodeops, worker = hosted_settings()
+        daytona, auth, worker = hosted_settings()
         worker["sandbox_startup_timeout"] = "10s"
         with self.assertRaisesRegex(ValueError, "at least 30s"):
-            validate_hosted_settings(nodeops, worker)
+            validate_hosted_settings(daytona, auth, worker)
+
+    def test_rejects_short_auth_signing_key(self):
+        daytona, auth, worker = hosted_settings()
+        auth["signing_key"] = base64.b64encode(b"short").decode()
+        with self.assertRaisesRegex(ValueError, "32 decoded bytes"):
+            validate_hosted_settings(daytona, auth, worker)
 
 
 class ServiceValidationTests(unittest.TestCase):

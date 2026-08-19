@@ -10,3 +10,12 @@ func TestGrantRuntimeRoleRequiresRole(t *testing.T) {
 		t.Fatal("GrantRuntimeRole succeeded without a role")
 	}
 }
+
+func TestEnsureRuntimeRoleRequiresCredentials(t *testing.T) {
+	if err := EnsureRuntimeRole(context.Background(), "unused", " ", "secret"); err == nil {
+		t.Fatal("EnsureRuntimeRole succeeded without a role")
+	}
+	if err := EnsureRuntimeRole(context.Background(), "unused", "ao_cloud_app", ""); err == nil {
+		t.Fatal("EnsureRuntimeRole succeeded without a password")
+	}
+}

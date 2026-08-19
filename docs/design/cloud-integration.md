@@ -1,6 +1,7 @@
 # Cloud integration: one AO, local and hosted execution
 
-Status: proposed
+Status: accepted foundation; control-plane bootstrap implemented on PR #4116,
+desktop project routing remains staged work
 
 Research snapshot: `Untrivial-ai/ao-cloud@41f2f755ca815aca6df3ee310b1e7c79b041e4b0`, inspected 2026-08-18
 
@@ -29,6 +30,31 @@ flowchart LR
 A project has one durable execution placement, `local` or `cloud`. Placement is chosen before a session is created. It does not change for a live session, and a local session is never silently moved into a hosted sandbox. The control plane is authoritative for cloud project/session/workspace/SCM facts; local SQLite is authoritative for local facts and stores only cloud identity links and replay cursors, not a second copy of cloud status.
 
 This supersedes the public/private ownership split described in [`docs/cloud-development.md`](../cloud-development.md) and [`docs/cloud-refactor.md`](../cloud-refactor.md). Their extracted contract and presentation boundaries remain useful; their separate-repository and separate-Cloud-UI conclusions do not.
+
+### Bootstrap implementation in this PR
+
+The source snapshot described below is now imported under
+[`backend/internal/cloud`](../../backend/internal/cloud), with its binaries under
+[`backend/cmd`](../../backend/cmd) and PostgreSQL history under
+[`backend/internal/cloud/postgres/migrations`](../../backend/internal/cloud/postgres/migrations).
+The separate Next.js product UI was not imported.
+
+This PR also implements the locked hosted choices:
+
+- Google OIDC identity exchange and AO-issued short access/rotating refresh
+  sessions in [`backend/internal/cloud/auth`](../../backend/internal/cloud/auth);
+- native AO organizations and database-authoritative membership checks;
+- the official Daytona Go SDK behind the existing sandbox provider and
+  reconciler in
+  [`backend/internal/cloud/sandbox/daytona`](../../backend/internal/cloud/sandbox/daytona);
+- AWS bootstrap infrastructure and migration-first ECS rollout in
+  [`deploy/cloud/terraform`](../../deploy/cloud/terraform) and
+  [`docs/cloud/deployment.md`](../cloud/deployment.md).
+
+The Electron-to-daemon cloud placement/resolver and renderer-neutral terminal
+proxy remain deliberately outside this bootstrap. Until those seams land, the
+new service plane is buildable and independently testable but local projects do
+not call it.
 
 ## Research method and security note
 
@@ -124,9 +150,16 @@ The older headless `workerexec.Supervisor`/`OSRunner` path still exists and stre
 
 ### Authentication, tenancy, and credential custody
 
-Current behavior is WorkOS-specific. The desktop implementation in [`frontend/src/main/cloud-auth.ts`](../../frontend/src/main/cloud-auth.ts) performs WorkOS/AuthKit PKCE and keeps refresh/access tokens in Electron main using `safeStorage`; the renderer receives only account identity. The control plane's [`internal/auth/auth.go`](https://github.com/Untrivial-ai/ao-cloud/blob/41f2f755ca815aca6df3ee310b1e7c79b041e4b0/internal/auth/auth.go) verifies WorkOS OIDC and maps WorkOS organization claims, with development-only local email/password auth.
+The reviewed source behavior was WorkOS-specific. Its desktop implementation in [`frontend/src/main/cloud-auth.ts`](../../frontend/src/main/cloud-auth.ts) performed WorkOS/AuthKit PKCE and kept refresh/access tokens in Electron main using `safeStorage`; the renderer received only account identity. The source control plane's [`internal/auth/auth.go`](https://github.com/Untrivial-ai/ao-cloud/blob/41f2f755ca815aca6df3ee310b1e7c79b041e4b0/internal/auth/auth.go) verified WorkOS OIDC and mapped WorkOS organization claims, with development-only local email/password auth.
 
-That is not the locked Google-auth decision. Preserve the generic `Verify(context.Context, token)` shape and safe-storage behavior, but replace provider-specific naming and profile calls with Google OIDC and AO-native organizations. Use Authorization Code + PKCE; Google explicitly recommends PKCE for desktop apps in its [OAuth best practices](https://developers.google.com/identity/protocols/oauth2/resources/best-practices), and its [OIDC discovery document](https://developers.google.com/identity/openid-connect/reference) supplies issuer/endpoints/JWKS metadata.
+The integrated server now replaces that hosted path with Google token
+verification plus AO sessions; WorkOS remains only as development compatibility
+code and hosted config rejects it. The desktop Authorization Code + PKCE and
+protected Electron-main refresh-token broker remain the next client-side seam.
+Google explicitly recommends PKCE for desktop apps in its [OAuth best
+practices](https://developers.google.com/identity/protocols/oauth2/resources/best-practices),
+and its [OIDC reference](https://developers.google.com/identity/openid-connect/reference)
+defines the issuer/audience/JWKS validation used here.
 
 Coding-agent and sandbox credentials are encrypted with AES-GCM and associated data by cloud [`internal/secrets/cipher.go`](https://github.com/Untrivial-ai/ao-cloud/blob/41f2f755ca815aca6df3ee310b1e7c79b041e4b0/internal/secrets/cipher.go). Worker bootstrap tickets are random/hashed/single-use; worker JWTs are short-lived and epoch-scoped; GitHub tokens are repository-scoped and minted on demand. These are good foundations.
 
@@ -141,7 +174,7 @@ The cloud code is substantial rather than a prototype: about 29k non-test Go lin
 | PostgreSQL schema history and RLS transaction pattern | WorkOS identity into Google identity and AO-native org membership | Next `Cloud*` product screens and direct Cloud UI polling |
 | Desired/observed sandbox state, reconciler leases, epoch fencing, and conservative probes | NodeOps provider into a Daytona provider while retaining `sandbox.Provider` conformance tests | NodeOps/CreateOS adapter and image after Daytona cutover |
 | One-time bootstrap, short worker JWTs, outbound-only workers | Worker launch around the main agent/chat adapter registry; separate `interface_mode` from `permission_mode` | Unused headless `workerexec.Supervisor` once tests are retained |
-| Durable commands/events/turns/terminal replay and bounded workspace RPC | Cloud HTTP DTOs into canonical main read models; add missing route/spec parity | Placeholder `ecs`/`daytona` configuration that cannot resolve |
+| Durable commands/events/turns/terminal replay and bounded workspace RPC | Cloud HTTP DTOs into canonical main read models; add missing route/spec parity | Placeholder `ecs` configuration that cannot resolve |
 | GitHub App grants, webhook inbox, scoped checkout/push tokens | PR/review projections into main lifecycle reactions and action interfaces | Private-submodule update workflow and nested-checkout build assumptions |
 | Shared `backend/pkg/contract`, `backend/pkg/agentruntime`, `packages/cloud-client`, and `packages/product-ui` | Go versions and dependencies: cloud is Go 1.26.5, main backend is Go 1.25.7 at this snapshot | Duplicated Cloud presentation helpers that cannot be made transport-neutral |
 | Migration-first, exact-digest deployment discipline | Stale documentation: cloud `docs/control-plane.md` still describes the now-implemented reconciler and agent terminal as future/excluded | Any local `.env`, generated secret output, or developer data |

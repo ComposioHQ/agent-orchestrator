@@ -30,6 +30,11 @@ const DefaultMaxSandboxesPerOrg = 10
 type Store interface {
 	Ping(context.Context) error
 	UpsertWorkOSUser(context.Context, domain.Principal) (domain.Principal, error)
+	UpsertGoogleUser(context.Context, domain.Principal) (domain.Principal, error)
+	PrincipalByID(context.Context, string) (domain.Principal, error)
+	CreateRefreshSession(context.Context, string, []byte, time.Time) error
+	RotateRefreshSession(context.Context, []byte, []byte, time.Time) (domain.Principal, error)
+	RevokeRefreshSession(context.Context, []byte) error
 	RegisterLocal(context.Context, domain.LocalRegistration, []byte, time.Time) (domain.Principal, string, error)
 	LocalUserByEmail(context.Context, string) (domain.Principal, string, error)
 	CreateLocalSession(context.Context, string, []byte, time.Time) error
@@ -112,6 +117,10 @@ type WorkerTokens interface {
 	Verify(string) (worker.Claims, error)
 }
 
+type GoogleIdentityVerifier interface {
+	Verify(context.Context, string) (domain.Principal, error)
+}
+
 type CheckoutBroker interface {
 	IssueCheckoutGrant(context.Context, string, string) (githubapp.CheckoutGrant, error)
 	IssuePushGrant(context.Context, string, string) (githubapp.CheckoutGrant, error)
@@ -123,6 +132,9 @@ type CheckoutBroker interface {
 type Server struct {
 	store            Store
 	workos           auth.WorkOSVerifier
+	google           GoogleIdentityVerifier
+	accessTokens     *auth.AccessTokenManager
+	refreshTokenTTL  time.Duration
 	localAuthEnabled bool
 	localSessionTTL  time.Duration
 	localAuthLimiter *fixedWindowLimiter
@@ -153,6 +165,9 @@ type Server struct {
 type Options struct {
 	Store                   Store
 	WorkOS                  auth.WorkOSVerifier
+	Google                  GoogleIdentityVerifier
+	AccessTokens            *auth.AccessTokenManager
+	RefreshTokenTTL         time.Duration
 	LocalAuthEnabled        bool
 	LocalSessionTTL         time.Duration
 	SandboxProvider         string
@@ -207,6 +222,9 @@ func New(options Options) *Server {
 	server := &Server{
 		store:                   options.Store,
 		workos:                  options.WorkOS,
+		google:                  options.Google,
+		accessTokens:            options.AccessTokens,
+		refreshTokenTTL:         options.RefreshTokenTTL,
 		localAuthEnabled:        options.LocalAuthEnabled,
 		localSessionTTL:         options.LocalSessionTTL,
 		localAuthLimiter:        newFixedWindowLimiter(10, time.Minute, 4096),
@@ -227,6 +245,9 @@ func New(options Options) *Server {
 		secretCipher:            options.SecretCipher,
 		credentialValidator:     options.CredentialValidator,
 		webhookMaxBody:          webhookMaxBody,
+	}
+	if server.refreshTokenTTL <= 0 {
+		server.refreshTokenTTL = 30 * 24 * time.Hour
 	}
 	if server.credentialValidator == nil {
 		server.credentialValidator = newAgentCredentialValidator(nil)
@@ -266,6 +287,9 @@ func New(options Options) *Server {
 		router.Post("/api/cloud/v1/control/github/scratch-projects", server.createEnvironmentScratchProject)
 	}
 	router.Route("/api/cloud/v1", func(router chi.Router) {
+		router.Post("/auth/google", server.exchangeGoogleIdentity)
+		router.Post("/auth/refresh", server.refreshAOAccess)
+		router.Post("/auth/logout", server.logoutAO)
 		router.Post("/auth/local/register", server.registerLocal)
 		router.Post("/auth/local/login", server.loginLocal)
 		router.With(server.authenticate).Post("/auth/local/logout", server.logoutLocal)
@@ -491,6 +515,16 @@ func (s *Server) principalForBearer(
 			return domain.Principal{}, auth.ErrInvalidToken
 		}
 		return s.store.PrincipalFromLocalToken(ctx, auth.HashToken(token))
+	}
+	if auth.IsAccessToken(token) {
+		if s.accessTokens == nil {
+			return domain.Principal{}, auth.ErrInvalidToken
+		}
+		claims, err := s.accessTokens.Verify(token)
+		if err != nil {
+			return domain.Principal{}, err
+		}
+		return s.store.PrincipalByID(ctx, claims.Subject)
 	}
 	if s.workos == nil {
 		return domain.Principal{}, auth.ErrInvalidToken

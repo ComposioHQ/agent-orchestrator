@@ -22,6 +22,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/cloud/reconcile"
 	"github.com/aoagents/agent-orchestrator/backend/internal/cloud/sandbox"
 	"github.com/aoagents/agent-orchestrator/backend/internal/cloud/sandbox/createos"
+	daytonaprovider "github.com/aoagents/agent-orchestrator/backend/internal/cloud/sandbox/daytona"
 	dockerprovider "github.com/aoagents/agent-orchestrator/backend/internal/cloud/sandbox/docker"
 	"github.com/aoagents/agent-orchestrator/backend/internal/cloud/sandboxresolve"
 	"github.com/aoagents/agent-orchestrator/backend/internal/cloud/secrets"
@@ -65,6 +66,15 @@ func provisioningDefaults(cfg config.Config) sandbox.ProvisioningDefaults {
 			WorkerTokenTTL:   cfg.NodeOpsWorkerTokenTTL,
 			AutoPauseSeconds: cfg.NodeOpsAutoPauseSeconds,
 		},
+		Daytona: sandbox.DaytonaConfig{
+			APIURL:          cfg.DaytonaAPIURL,
+			APIKey:          cfg.DaytonaAPIKey,
+			Target:          cfg.DaytonaTarget,
+			Snapshot:        cfg.DaytonaSnapshot,
+			User:            cfg.DaytonaUser,
+			DomainAllowList: cfg.DaytonaDomainAllowList,
+			WorkerTokenTTL:  cfg.DaytonaWorkerTokenTTL,
+		},
 		Docker: sandbox.DockerConfig{
 			Host:           cfg.DockerHost,
 			WorkerImage:    cfg.DockerWorkerImage,
@@ -85,17 +95,19 @@ func newSandboxReconciler(
 	logger *slog.Logger,
 ) (*reconcile.Reconciler, error) {
 	if cfg.SandboxProvider != sandbox.ProviderNodeOps &&
+		cfg.SandboxProvider != sandbox.ProviderDaytona &&
 		cfg.SandboxProvider != sandbox.ProviderDocker {
 		return nil, nil
 	}
 	var (
 		nodeOpsProvider    sandbox.Provider
+		daytonaProvider    sandbox.Provider
 		dockerProvider     sandbox.Provider
 		workerBinary       []byte
 		workerHelperBinary []byte
 	)
 	switch cfg.SandboxProvider {
-	case sandbox.ProviderNodeOps:
+	case sandbox.ProviderNodeOps, sandbox.ProviderDaytona:
 		// The worker binary is read once, at startup. Reading it per provision
 		// would let a mid-flight deploy hand two sandboxes different builds.
 		var err error
@@ -113,18 +125,33 @@ func newSandboxReconciler(
 		if len(workerHelperBinary) == 0 {
 			return nil, fmt.Errorf("worker helper binary %s is empty", cfg.WorkerHelperBinaryPath)
 		}
-		sshPubKeys, err := readSSHPubKeys(cfg.NodeOpsSSHKeyPath)
-		if err != nil {
-			return nil, err
+		if cfg.SandboxProvider == sandbox.ProviderNodeOps {
+			sshPubKeys, err := readSSHPubKeys(cfg.NodeOpsSSHKeyPath)
+			if err != nil {
+				return nil, err
+			}
+			nodeOpsProvider = createos.New(createos.Config{
+				BaseURL:      cfg.NodeOpsBaseURL,
+				APIKey:       cfg.NodeOpsAPIKey,
+				DefaultShape: cfg.NodeOpsDefaultShape,
+				DefaultRoot:  cfg.NodeOpsDefaultRootFS,
+				Region:       cfg.NodeOpsRegion,
+				SSHPubKeys:   sshPubKeys,
+			})
+		} else {
+			daytonaProvider, err = daytonaprovider.New(daytonaprovider.Config{
+				APIURL:          cfg.DaytonaAPIURL,
+				APIKey:          cfg.DaytonaAPIKey,
+				Target:          cfg.DaytonaTarget,
+				Snapshot:        cfg.DaytonaSnapshot,
+				User:            cfg.DaytonaUser,
+				DomainAllowList: cfg.DaytonaDomainAllowList,
+				WorkerTokenTTL:  cfg.DaytonaWorkerTokenTTL,
+			})
+			if err != nil {
+				return nil, err
+			}
 		}
-		nodeOpsProvider = createos.New(createos.Config{
-			BaseURL:      cfg.NodeOpsBaseURL,
-			APIKey:       cfg.NodeOpsAPIKey,
-			DefaultShape: cfg.NodeOpsDefaultShape,
-			DefaultRoot:  cfg.NodeOpsDefaultRootFS,
-			Region:       cfg.NodeOpsRegion,
-			SSHPubKeys:   sshPubKeys,
-		})
 	case sandbox.ProviderDocker:
 		provider, err := dockerprovider.New(dockerprovider.Config{
 			Host:        cfg.DockerHost,
@@ -137,7 +164,7 @@ func newSandboxReconciler(
 		}
 		dockerProvider = provider
 	}
-	return reconcile.New(store, sandboxresolve.New(nodeOpsProvider, dockerProvider), reconcile.Options{
+	return reconcile.New(store, sandboxresolve.New(nodeOpsProvider, daytonaProvider, dockerProvider), reconcile.Options{
 		PublicURL:          cfg.PublicURL,
 		WorkerBinary:       workerBinary,
 		WorkerHelperBinary: workerHelperBinary,
@@ -209,6 +236,28 @@ func run(logger *slog.Logger) error {
 			cfg.WorkOSJWKSURL,
 			profiles,
 			organizations,
+		)
+		if err != nil {
+			return err
+		}
+	}
+	var googleVerifier httpapi.GoogleIdentityVerifier
+	var accessTokens *auth.AccessTokenManager
+	if len(cfg.GoogleClientIDs) > 0 {
+		googleVerifier, err = auth.NewGoogleVerifier(
+			ctx,
+			cfg.GoogleIssuer,
+			cfg.GoogleJWKSURL,
+			cfg.GoogleClientIDs,
+		)
+		if err != nil {
+			return err
+		}
+		accessTokens, err = auth.NewAccessTokenManager(
+			cfg.AuthSigningKey,
+			cfg.AuthIssuer,
+			cfg.AuthAudience,
+			cfg.AccessTokenTTL,
 		)
 		if err != nil {
 			return err
@@ -298,6 +347,9 @@ func run(logger *slog.Logger) error {
 	apiOptions := httpapi.Options{
 		Store:                   store,
 		WorkOS:                  workosVerifier,
+		Google:                  googleVerifier,
+		AccessTokens:            accessTokens,
+		RefreshTokenTTL:         cfg.RefreshTokenTTL,
 		LocalAuthEnabled:        cfg.LocalAuthEnabled,
 		LocalSessionTTL:         cfg.LocalSessionTTL,
 		SandboxProvider:         cfg.SandboxProvider,

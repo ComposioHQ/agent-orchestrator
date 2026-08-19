@@ -766,7 +766,7 @@ func TestStuckProviderProvisioningFailsWithoutReplacingTheSandbox(t *testing.T) 
 	if got.state != domain.SandboxObservedFailed {
 		t.Fatalf("observed state = %q, want failed so the retry backs off", got.state)
 	}
-	if !strings.Contains(got.lastError, "AO kept the existing VM and will retry") {
+	if !strings.Contains(got.lastError, "AO kept the existing environment and will retry") {
 		t.Fatalf("failure = %q, want provider provisioning timeout", got.lastError)
 	}
 }
@@ -1055,6 +1055,12 @@ func TestWorkerSpecReadsShapeFromTheStoredProfile(t *testing.T) {
 	}
 	if spec.Shape != "s-4vcpu-8gb" || spec.RootFS != "devbox:1" {
 		t.Errorf("spec shape/rootfs = %q/%q, want the values stored on the row", spec.Shape, spec.RootFS)
+	}
+	if spec.Environment["AO_DATA_DIR"] != "/dev/shm/ao-worker" {
+		t.Errorf("AO_DATA_DIR = %q, want volatile worker credential storage", spec.Environment["AO_DATA_DIR"])
+	}
+	if spec.Environment["CLAUDE_CONFIG_DIR"] != "/workspace/.ao/home/.claude" {
+		t.Errorf("CLAUDE_CONFIG_DIR = %q, want persistent conversation storage", spec.Environment["CLAUDE_CONFIG_DIR"])
 	}
 	gotScopes := make(map[string]bool)
 	for _, scope := range store.ticketScopes[0] {

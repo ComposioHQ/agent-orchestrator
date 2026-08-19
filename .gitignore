@@ -45,6 +45,16 @@ frontend/.tanstack/
 .env.*
 !.env.example
 
+# Terraform caches, state, plans, and populated variable files may contain
+# generated database/signing credentials. Commit only lock files and examples.
+**/.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+*.tfvars
+*.tfvars.json
+!*.tfvars.example
+
 # Editor / IDE
 .vscode/
 .idea/

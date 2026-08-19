@@ -12,12 +12,11 @@ import (
 func nodeOpsEnvironment(t *testing.T) {
 	t.Helper()
 	setProviderSecretKey(t)
-	t.Setenv("AO_CLOUD_ENV", "staging")
+	setGoogleIdentity(t)
+	t.Setenv("AO_CLOUD_ENV", "development")
 	t.Setenv("AO_CLOUD_DATABASE_URL", "postgres://localhost/ao")
-	t.Setenv("AO_CLOUD_WORKOS_ISSUER", "https://api.workos.com/")
-	t.Setenv("AO_CLOUD_WORKOS_CLIENT_ID", "client_123")
-	t.Setenv("AO_CLOUD_WORKOS_API_KEY", "secret")
 	t.Setenv("AO_CLOUD_LOCAL_AUTH", "false")
+	t.Setenv("AO_CLOUD_SANDBOX_PROVIDER", "nodeops")
 	t.Setenv("AO_CLOUD_NODEOPS_BASE_URL", "https://api.sb.createos.sh")
 	t.Setenv("AO_CLOUD_NODEOPS_API_KEY", "nodeops-secret")
 	t.Setenv("AO_CLOUD_NODEOPS_DEFAULT_SHAPE", "s-4vcpu-8gb")
@@ -31,6 +30,15 @@ func nodeOpsEnvironment(t *testing.T) {
 	t.Setenv("AO_CLOUD_REPOSITORY_BROKER_URL", "https://api.aoagents.dev")
 	t.Setenv("AO_CLOUD_REPOSITORY_BROKER_TOKEN", strings.Repeat("b", 48))
 	t.Setenv("AO_CLOUD_ENV_CONTROL_TOKEN", strings.Repeat("c", 48))
+}
+
+func setGoogleIdentity(t *testing.T) {
+	t.Helper()
+	t.Setenv("AO_CLOUD_GOOGLE_CLIENT_IDS", "desktop-client,web-client")
+	t.Setenv(
+		"AO_CLOUD_AUTH_SIGNING_KEY",
+		base64.StdEncoding.EncodeToString([]byte("0123456789abcdef0123456789abcdef")),
+	)
 }
 
 func TestLoadLocalDevelopmentConfiguration(t *testing.T) {
@@ -129,17 +137,16 @@ func TestLoadRequiresCompleteWorkOSConfiguration(t *testing.T) {
 }
 
 func TestLoadStagingConfiguration(t *testing.T) {
+	setGoogleIdentity(t)
 	t.Setenv("AO_CLOUD_ENV", "staging")
 	t.Setenv("AO_CLOUD_DATABASE_URL", "postgres://localhost/ao")
-	t.Setenv("AO_CLOUD_WORKOS_ISSUER", "https://api.workos.com/")
-	t.Setenv("AO_CLOUD_WORKOS_CLIENT_ID", "client_123")
-	t.Setenv("AO_CLOUD_WORKOS_API_KEY", "secret")
 	t.Setenv("AO_CLOUD_LOCAL_AUTH", "false")
-	t.Setenv("AO_CLOUD_NODEOPS_BASE_URL", "https://nodeops.example.com")
-	t.Setenv("AO_CLOUD_NODEOPS_API_KEY", "nodeops-secret")
-	t.Setenv("AO_CLOUD_NODEOPS_DEFAULT_SHAPE", "s-1vcpu-1gb")
-	t.Setenv("AO_CLOUD_NODEOPS_DEFAULT_ROOTFS", "devbox:1")
-	t.Setenv("AO_CLOUD_NODEOPS_WORKER_TOKEN_TTL", "15m")
+	t.Setenv("AO_CLOUD_DAYTONA_API_KEY", "daytona-secret")
+	t.Setenv("AO_CLOUD_DAYTONA_TARGET", "us")
+	t.Setenv("AO_CLOUD_DAYTONA_SNAPSHOT", "ao-worker-v1")
+	t.Setenv("AO_CLOUD_DAYTONA_USER", "root")
+	t.Setenv("AO_CLOUD_DAYTONA_DOMAIN_ALLOW_LIST", "cloud.example.com,api.anthropic.com,github.com")
+	t.Setenv("AO_CLOUD_DAYTONA_WORKER_TOKEN_TTL", "15m")
 	t.Setenv("AO_CLOUD_PUBLIC_URL", "https://cloud.example.com/")
 	t.Setenv("AO_CLOUD_WORKER_SIGNING_KEY", strings.Repeat("a", 64))
 	t.Setenv("AO_CLOUD_WORKER_BINARY_PATH", "/srv/ao-worker")
@@ -156,10 +163,11 @@ func TestLoadStagingConfiguration(t *testing.T) {
 	}
 	if !cfg.Hosted() ||
 		cfg.MigrateOnStartup ||
-		cfg.SandboxProvider != "nodeops" ||
+		cfg.SandboxProvider != "daytona" ||
 		cfg.Release != "sha-staging" ||
 		cfg.HTTPAddress != ":8080" ||
-		cfg.NodeOpsBaseURL != "https://nodeops.example.com" {
+		cfg.DaytonaSnapshot != "ao-worker-v1" ||
+		len(cfg.GoogleClientIDs) != 2 || len(cfg.AuthSigningKey) != 32 {
 		t.Fatalf("config = %#v", cfg)
 	}
 }
@@ -195,7 +203,7 @@ func TestLoadRejectsInvalidRelease(t *testing.T) {
 }
 
 func TestLoadDerivesWorkOSJWKSURL(t *testing.T) {
-	t.Setenv("AO_CLOUD_ENV", "production")
+	t.Setenv("AO_CLOUD_ENV", "development")
 	t.Setenv("AO_CLOUD_DATABASE_URL", "postgres://localhost/ao")
 	t.Setenv("AO_CLOUD_WORKOS_ISSUER", "https://api.workos.com/")
 	t.Setenv("AO_CLOUD_WORKOS_CLIENT_ID", "client_123")
@@ -221,6 +229,17 @@ func TestLoadDerivesWorkOSJWKSURL(t *testing.T) {
 	if cfg.WorkOSIssuer != "https://api.workos.com/user_management/client_123" ||
 		cfg.WorkOSJWKSURL != "https://api.workos.com/sso/jwks/client_123" {
 		t.Fatalf("WorkOS config = issuer %q, JWKS URL %q", cfg.WorkOSIssuer, cfg.WorkOSJWKSURL)
+	}
+}
+
+func TestLoadRequiresSigningKeyWithGoogleIdentity(t *testing.T) {
+	t.Setenv("AO_CLOUD_ENV", "development")
+	t.Setenv("AO_CLOUD_DATABASE_URL", "postgres://localhost/ao")
+	t.Setenv("AO_CLOUD_GOOGLE_CLIENT_IDS", "desktop-client")
+	t.Setenv("AO_CLOUD_AUTH_SIGNING_KEY", "")
+
+	if _, err := Load(); err == nil || !strings.Contains(err.Error(), "AUTH_SIGNING_KEY") {
+		t.Fatalf("Load error = %v", err)
 	}
 }
 
@@ -414,11 +433,6 @@ func TestLoadRejectsIncompleteNodeOpsConfiguration(t *testing.T) {
 			value: strings.Repeat("a", minWorkerSigningKeyLength-1),
 		},
 		{
-			name:  "plaintext worker callback origin",
-			key:   "AO_CLOUD_PUBLIC_URL",
-			value: "http://cloud.example.com",
-		},
-		{
 			name:  "startup budget shorter than a cold boot",
 			key:   "AO_CLOUD_SANDBOX_STARTUP_TIMEOUT",
 			value: "5s",
@@ -442,12 +456,35 @@ func TestLoadRejectsIncompleteNodeOpsConfiguration(t *testing.T) {
 	}
 }
 
-func TestLoadRejectsNonNodeOpsProviderInHostedEnvironments(t *testing.T) {
+func TestLoadRejectsNonDaytonaProviderInHostedEnvironments(t *testing.T) {
 	nodeOpsEnvironment(t)
+	t.Setenv("AO_CLOUD_ENV", "staging")
 	t.Setenv("AO_CLOUD_SANDBOX_PROVIDER", "docker")
 
 	if _, err := Load(); err == nil {
 		t.Fatal("Load succeeded with a docker sandbox provider in staging")
+	}
+}
+
+func TestLoadRejectsPlaintextHostedWorkerCallback(t *testing.T) {
+	setGoogleIdentity(t)
+	setProviderSecretKey(t)
+	t.Setenv("AO_CLOUD_ENV", "staging")
+	t.Setenv("AO_CLOUD_DATABASE_URL", "postgres://localhost/ao")
+	t.Setenv("AO_CLOUD_DAYTONA_API_KEY", "daytona-secret")
+	t.Setenv("AO_CLOUD_DAYTONA_SNAPSHOT", "ao-worker-v1")
+	t.Setenv("AO_CLOUD_DAYTONA_DOMAIN_ALLOW_LIST", "cloud.example.com,api.anthropic.com")
+	t.Setenv("AO_CLOUD_PUBLIC_URL", "http://cloud.example.com")
+	t.Setenv("AO_CLOUD_WORKER_SIGNING_KEY", strings.Repeat("a", 64))
+	t.Setenv("AO_CLOUD_WORKER_BINARY_PATH", "/srv/ao-worker")
+	t.Setenv("AO_CLOUD_WORKER_HELPER_BINARY_PATH", "/srv/ao")
+	t.Setenv("AO_CLOUD_RELEASE", "sha-123")
+	t.Setenv("AO_CLOUD_REPOSITORY_BROKER_URL", "https://api.aoagents.dev")
+	t.Setenv("AO_CLOUD_REPOSITORY_BROKER_TOKEN", strings.Repeat("b", 48))
+	t.Setenv("AO_CLOUD_ENV_CONTROL_TOKEN", strings.Repeat("c", 48))
+
+	if _, err := Load(); err == nil {
+		t.Fatal("Load succeeded with a plaintext hosted worker callback URL")
 	}
 }
 

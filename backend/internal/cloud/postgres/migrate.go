@@ -101,3 +101,42 @@ func GrantRuntimeRole(ctx context.Context, databaseURL, role string) error {
 	}
 	return nil
 }
+
+// EnsureRuntimeRole creates or rotates the login used by the hosted API before
+// migrations grant it access. The password is quoted by PostgreSQL itself so
+// neither the role nor the credential can alter the DDL statement.
+func EnsureRuntimeRole(ctx context.Context, databaseURL, role, password string) error {
+	role = strings.TrimSpace(role)
+	if role == "" {
+		return errors.New("runtime database role is required")
+	}
+	if password == "" {
+		return errors.New("runtime database password is required")
+	}
+	db, err := sql.Open("pgx", databaseURL)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+
+	var exists bool
+	var quotedPassword string
+	if err := db.QueryRowContext(
+		ctx,
+		`SELECT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = $1), quote_literal($2)`,
+		role,
+		password,
+	).Scan(&exists, &quotedPassword); err != nil {
+		return fmt.Errorf("prepare runtime database role: %w", err)
+	}
+	quotedRole := pgx.Identifier{role}.Sanitize()
+	statement := "CREATE ROLE " + quotedRole + " LOGIN PASSWORD " + quotedPassword
+	if exists {
+		statement = "ALTER ROLE " + quotedRole + " LOGIN PASSWORD " + quotedPassword
+	}
+	statement += " NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS"
+	if _, err := db.ExecContext(ctx, statement); err != nil {
+		return fmt.Errorf("ensure runtime database role: %w", err)
+	}
+	return nil
+}

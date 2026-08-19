@@ -30,6 +30,14 @@ type Config struct {
 	WorkOSClientID          string
 	WorkOSAPIKey            string
 	WorkOSJWKSURL           string
+	GoogleIssuer            string
+	GoogleJWKSURL           string
+	GoogleClientIDs         []string
+	AuthSigningKey          []byte
+	AuthIssuer              string
+	AuthAudience            string
+	AccessTokenTTL          time.Duration
+	RefreshTokenTTL         time.Duration
 	LocalAuthEnabled        bool
 	LocalSessionTTL         time.Duration
 	SandboxProvider         string
@@ -75,6 +83,14 @@ type Config struct {
 	NodeOpsRegion           string
 	NodeOpsWorkerTokenTTL   time.Duration
 	NodeOpsAutoPauseSeconds int
+
+	DaytonaAPIURL          string
+	DaytonaAPIKey          string
+	DaytonaTarget          string
+	DaytonaSnapshot        string
+	DaytonaUser            string
+	DaytonaDomainAllowList string
+	DaytonaWorkerTokenTTL  time.Duration
 
 	DockerHost           string
 	DockerWorkerImage    string
@@ -137,6 +153,13 @@ func Load() (Config, error) {
 		WorkOSClientID:       strings.TrimSpace(os.Getenv("AO_CLOUD_WORKOS_CLIENT_ID")),
 		WorkOSAPIKey:         strings.TrimSpace(os.Getenv("AO_CLOUD_WORKOS_API_KEY")),
 		WorkOSJWKSURL:        strings.TrimSpace(os.Getenv("AO_CLOUD_WORKOS_JWKS_URL")),
+		GoogleIssuer:         envOrDefault("AO_CLOUD_GOOGLE_ISSUER", "https://accounts.google.com"),
+		GoogleJWKSURL:        envOrDefault("AO_CLOUD_GOOGLE_JWKS_URL", "https://www.googleapis.com/oauth2/v3/certs"),
+		GoogleClientIDs:      csvEnv("AO_CLOUD_GOOGLE_CLIENT_IDS"),
+		AuthIssuer:           envOrDefault("AO_CLOUD_AUTH_ISSUER", "ao-cloud"),
+		AuthAudience:         envOrDefault("AO_CLOUD_AUTH_AUDIENCE", "ao-desktop"),
+		AccessTokenTTL:       durationEnv("AO_CLOUD_ACCESS_TOKEN_TTL", 15*time.Minute),
+		RefreshTokenTTL:      durationEnv("AO_CLOUD_REFRESH_TOKEN_TTL", 30*24*time.Hour),
 		LocalAuthEnabled:     boolEnv("AO_CLOUD_LOCAL_AUTH", false),
 		LocalSessionTTL:      durationEnv("AO_CLOUD_LOCAL_SESSION_TTL", 24*time.Hour),
 		SandboxProvider: strings.ToLower(
@@ -176,6 +199,15 @@ func Load() (Config, error) {
 			"AO_CLOUD_NODEOPS_AUTO_PAUSE_SECONDS", defaultNodeOpsAutoPauseSeconds),
 		NodeOpsWorkerTokenTTL: durationEnv(
 			"AO_CLOUD_NODEOPS_WORKER_TOKEN_TTL", sandbox.DefaultWorkerTokenTTL,
+		),
+		DaytonaAPIURL:          envOrDefault("AO_CLOUD_DAYTONA_API_URL", "https://app.daytona.io/api"),
+		DaytonaAPIKey:          strings.TrimSpace(os.Getenv("AO_CLOUD_DAYTONA_API_KEY")),
+		DaytonaTarget:          strings.TrimSpace(os.Getenv("AO_CLOUD_DAYTONA_TARGET")),
+		DaytonaSnapshot:        strings.TrimSpace(os.Getenv("AO_CLOUD_DAYTONA_SNAPSHOT")),
+		DaytonaUser:            envOrDefault("AO_CLOUD_DAYTONA_USER", "root"),
+		DaytonaDomainAllowList: strings.TrimSpace(os.Getenv("AO_CLOUD_DAYTONA_DOMAIN_ALLOW_LIST")),
+		DaytonaWorkerTokenTTL: durationEnv(
+			"AO_CLOUD_DAYTONA_WORKER_TOKEN_TTL", sandbox.DefaultWorkerTokenTTL,
 		),
 
 		DockerHost:        envOrDefault("AO_CLOUD_DOCKER_HOST", "unix:///var/run/docker.sock"),
@@ -217,6 +249,16 @@ func Load() (Config, error) {
 			)
 		}
 		cfg.ProviderSecretKey = decoded
+	}
+	authSigningKey := strings.TrimSpace(os.Getenv("AO_CLOUD_AUTH_SIGNING_KEY"))
+	if authSigningKey != "" {
+		decoded, err := base64.StdEncoding.DecodeString(authSigningKey)
+		if err != nil || len(decoded) < 32 {
+			return Config{}, errors.New(
+				"AO_CLOUD_AUTH_SIGNING_KEY must be base64-encoded and contain at least 32 bytes",
+			)
+		}
+		cfg.AuthSigningKey = decoded
 	}
 	if value := strings.TrimSpace(os.Getenv("AO_CLOUD_MIGRATION_TIMEOUT")); value != "" {
 		timeout, err := time.ParseDuration(value)
@@ -263,14 +305,27 @@ func Load() (Config, error) {
 			}
 		}
 	}
-	if cfg.WorkOSIssuer == "" && !cfg.LocalAuthEnabled {
-		return Config{}, errors.New("configure WorkOS or enable AO_CLOUD_LOCAL_AUTH")
+	googleConfigured := len(cfg.GoogleClientIDs) > 0
+	if !googleConfigured && cfg.WorkOSIssuer == "" && !cfg.LocalAuthEnabled {
+		return Config{}, errors.New("configure Google authentication or enable AO_CLOUD_LOCAL_AUTH")
 	}
 	if cfg.LocalAuthEnabled && cfg.Hosted() {
 		return Config{}, errors.New("AO_CLOUD_LOCAL_AUTH cannot be enabled in staging or production")
 	}
-	if cfg.LocalAuthEnabled && cfg.WorkOSIssuer != "" {
-		return Config{}, errors.New("AO_CLOUD_LOCAL_AUTH cannot be combined with WorkOS")
+	if cfg.LocalAuthEnabled && (cfg.WorkOSIssuer != "" || googleConfigured) {
+		return Config{}, errors.New("AO_CLOUD_LOCAL_AUTH cannot be combined with hosted identity")
+	}
+	if cfg.Hosted() && !googleConfigured {
+		return Config{}, errors.New("AO_CLOUD_GOOGLE_CLIENT_IDS is required in hosted environments")
+	}
+	if cfg.Hosted() && cfg.WorkOSIssuer != "" {
+		return Config{}, errors.New("WorkOS authentication is not supported in hosted environments")
+	}
+	if googleConfigured && len(cfg.AuthSigningKey) < 32 {
+		return Config{}, errors.New("AO_CLOUD_AUTH_SIGNING_KEY is required with Google authentication")
+	}
+	if cfg.AccessTokenTTL <= 0 || cfg.RefreshTokenTTL <= 0 {
+		return Config{}, errors.New("AO access-token and refresh-token lifetimes must be positive")
 	}
 	if cfg.Hosted() && len(cfg.ProviderSecretKey) != 32 {
 		return Config{}, errors.New(
@@ -285,8 +340,8 @@ func Load() (Config, error) {
 	default:
 		return Config{}, errors.New("AO_CLOUD_SANDBOX_PROVIDER must be ecs, daytona, docker, or nodeops")
 	}
-	if cfg.Hosted() && cfg.SandboxProvider != "nodeops" {
-		return Config{}, errors.New("AO_CLOUD_SANDBOX_PROVIDER must be nodeops in staging and production")
+	if cfg.Hosted() && cfg.SandboxProvider != sandbox.ProviderDaytona {
+		return Config{}, errors.New("AO_CLOUD_SANDBOX_PROVIDER must be daytona in staging and production")
 	}
 	if cfg.SandboxProvider == "docker" {
 		if err := (sandbox.DockerConfig{
@@ -299,7 +354,7 @@ func Load() (Config, error) {
 			return Config{}, err
 		}
 	}
-	if cfg.SandboxProvider == "nodeops" || cfg.Hosted() {
+	if cfg.SandboxProvider == sandbox.ProviderNodeOps {
 		if err := (sandbox.NodeOpsConfig{
 			BaseURL:          cfg.NodeOpsBaseURL,
 			APIKey:           cfg.NodeOpsAPIKey,
@@ -313,7 +368,22 @@ func Load() (Config, error) {
 			return Config{}, err
 		}
 	}
-	if cfg.SandboxProvider == "nodeops" || cfg.SandboxProvider == "docker" {
+	if cfg.SandboxProvider == sandbox.ProviderDaytona {
+		if err := (sandbox.DaytonaConfig{
+			APIURL:          cfg.DaytonaAPIURL,
+			APIKey:          cfg.DaytonaAPIKey,
+			Target:          cfg.DaytonaTarget,
+			Snapshot:        cfg.DaytonaSnapshot,
+			User:            cfg.DaytonaUser,
+			DomainAllowList: cfg.DaytonaDomainAllowList,
+			WorkerTokenTTL:  cfg.DaytonaWorkerTokenTTL,
+		}).Validate(); err != nil {
+			return Config{}, err
+		}
+	}
+	if cfg.SandboxProvider == sandbox.ProviderNodeOps ||
+		cfg.SandboxProvider == sandbox.ProviderDaytona ||
+		cfg.SandboxProvider == sandbox.ProviderDocker {
 		// A worker can only dial home if it is told where home is, and can only
 		// be trusted if its token is signed by a key strong enough to matter.
 		if cfg.PublicURL == "" {
@@ -340,12 +410,12 @@ func Load() (Config, error) {
 			)
 		}
 	}
-	if cfg.SandboxProvider == "nodeops" {
+	if cfg.SandboxProvider == sandbox.ProviderNodeOps || cfg.SandboxProvider == sandbox.ProviderDaytona {
 		if cfg.WorkerBinaryPath == "" {
-			return Config{}, errors.New("AO_CLOUD_WORKER_BINARY_PATH is required when AO_CLOUD_SANDBOX_PROVIDER=nodeops")
+			return Config{}, errors.New("AO_CLOUD_WORKER_BINARY_PATH is required for hosted sandbox providers")
 		}
 		if cfg.WorkerHelperBinaryPath == "" {
-			return Config{}, errors.New("AO_CLOUD_WORKER_HELPER_BINARY_PATH is required when AO_CLOUD_SANDBOX_PROVIDER=nodeops")
+			return Config{}, errors.New("AO_CLOUD_WORKER_HELPER_BINARY_PATH is required for hosted sandbox providers")
 		}
 	}
 	if cfg.ReconcileInterval <= 0 {
@@ -462,6 +532,9 @@ func (c Config) WorkerTokenTTL() time.Duration {
 	if c.SandboxProvider == sandbox.ProviderDocker {
 		return c.DockerWorkerTokenTTL
 	}
+	if c.SandboxProvider == sandbox.ProviderDaytona {
+		return c.DaytonaWorkerTokenTTL
+	}
 	return c.NodeOpsWorkerTokenTTL
 }
 
@@ -470,6 +543,16 @@ func envOrDefault(key, fallback string) string {
 		return value
 	}
 	return fallback
+}
+
+func csvEnv(key string) []string {
+	var values []string
+	for _, value := range strings.Split(os.Getenv(key), ",") {
+		if value = strings.TrimSpace(value); value != "" {
+			values = append(values, value)
+		}
+	}
+	return values
 }
 
 func boolEnv(key string, fallback bool) bool {
@@ -497,12 +580,12 @@ func durationEnv(key string, fallback time.Duration) time.Duration {
 }
 
 // defaultSandboxProvider picks the provider an unconfigured deployment gets.
-// Hosted environments run on NodeOps, which is also the only provider they are
+// Hosted environments run on Daytona, which is also the only provider they are
 // allowed to run on; locally there is no NodeOps account, so the default is the
 // provider a developer can actually reach.
 func defaultSandboxProvider(hosted bool) string {
 	if hosted {
-		return sandbox.ProviderNodeOps
+		return sandbox.ProviderDaytona
 	}
 	return sandbox.DefaultProvider
 }
@@ -537,9 +620,11 @@ func int64EnvOrDefault(key string, fallback int64) int64 {
 }
 
 func (c Config) String() string {
-	authMode := "workos"
+	authMode := "google"
 	if c.LocalAuthEnabled {
 		authMode = "local"
+	} else if len(c.GoogleClientIDs) == 0 {
+		authMode = "workos"
 	}
 	return fmt.Sprintf("environment=%s address=%s auth=%s release=%s", c.Environment, c.HTTPAddress, authMode, c.Release)
 }

@@ -14,7 +14,7 @@ type fakeProvider struct {
 
 func TestResolveDockerProvider(t *testing.T) {
 	docker := &fakeProvider{}
-	resolved, err := New(nil, docker).Resolve(context.Background(), domain.Sandbox{
+	resolved, err := New(nil, nil, docker).Resolve(context.Background(), domain.Sandbox{
 		Provider: sandbox.ProviderDocker,
 	})
 	if err != nil {
@@ -26,9 +26,22 @@ func TestResolveDockerProvider(t *testing.T) {
 }
 
 func TestResolveDockerFailsClosedWithoutProvider(t *testing.T) {
-	if _, err := New(nil, nil).Resolve(context.Background(), domain.Sandbox{
+	if _, err := New(nil, nil, nil).Resolve(context.Background(), domain.Sandbox{
 		Provider: sandbox.ProviderDocker,
 	}); err == nil {
 		t.Fatal("Resolve() accepted Docker without a configured provider")
+	}
+}
+
+func TestResolveDaytonaProvider(t *testing.T) {
+	daytona := &fakeProvider{}
+	resolved, err := New(nil, daytona, nil).Resolve(context.Background(), domain.Sandbox{
+		Provider: sandbox.ProviderDaytona,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolved != daytona {
+		t.Fatal("Resolve() did not return the configured Daytona provider")
 	}
 }

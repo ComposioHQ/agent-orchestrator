@@ -18,10 +18,13 @@ services:
       timeout: 3s
       retries: 30
     restart: unless-stopped
+    labels:
+      ao.session: "${AO_SESSION_ID:-manual}"
 
   migrate:
     build:
-      context: .
+      context: ../..
+      dockerfile: deploy/cloud/Dockerfile
       target: control-plane
     entrypoint: ["/ao-cloud-migrate"]
     environment:
@@ -31,10 +34,13 @@ services:
       postgres:
         condition: service_healthy
     restart: "no"
+    labels:
+      ao.session: "${AO_SESSION_ID:-manual}"
 
   control-plane:
     build:
-      context: .
+      context: ../..
+      dockerfile: deploy/cloud/Dockerfile
       target: control-plane
     environment:
       AO_CLOUD_ENV: development
@@ -75,10 +81,15 @@ services:
       retries: 20
       start_period: 5s
     restart: unless-stopped
+    labels:
+      ao.session: "${AO_SESSION_ID:-manual}"
 
   worker-image:
     profiles: ["worker-image"]
     image: "${AO_CLOUD_DOCKER_WORKER_IMAGE:-ao-cloud-worker:local}"
     build:
-      context: .
+      context: ../..
+      dockerfile: deploy/cloud/Dockerfile
       target: worker
+    labels:
+      ao.session: "${AO_SESSION_ID:-manual}"

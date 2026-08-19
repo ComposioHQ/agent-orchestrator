@@ -1,0 +1,33 @@
+aws_region       = "ap-south-1"
+environment      = "staging"
+public_hostname  = "staging-api.aoagents.dev"
+route53_zone_id  = "Z0000000000000000000"
+certificate_arn  = "arn:aws:acm:ap-south-1:123456789012:certificate/00000000-0000-0000-0000-000000000000"
+
+google_client_ids           = "000000000000-example.apps.googleusercontent.com"
+daytona_api_key             = "replace-in-a-private-tfvars-file"
+daytona_target              = "us"
+daytona_snapshot            = "ao-worker-v1"
+daytona_domain_allow_list   = "staging-api.aoagents.dev,api.aoagents.dev,api.anthropic.com,github.com,api.github.com,objects.githubusercontent.com,registry.npmjs.org"
+
+# Generate once and share the same values with the production stack.
+repository_broker_token   = "replace-with-at-least-32-random-characters"
+environment_control_token = "replace-with-at-least-32-random-characters"
+
+# Production only: use a separate GitHub App per environment where possible.
+# github_app_id         = "123456"
+# github_app_slug       = "ao-cloud"
+# github_client_id      = "Iv1.example"
+# github_client_secret  = "replace"
+# github_private_key    = <<-PEM
+# -----BEGIN RSA PRIVATE KEY-----
+# ...
+# -----END RSA PRIVATE KEY-----
+# PEM
+# github_webhook_secret = "replace"
+
+# Set true only after deploy/cloud/scripts/deploy-staging.sh succeeds once.
+deployment_enabled = false
+
+# Production reuses staging's digest-pinned images in the same AWS account.
+# manage_ecr_repositories = false

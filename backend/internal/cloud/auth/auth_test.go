@@ -201,3 +201,114 @@ func TestWorkOSCachesAreBounded(t *testing.T) {
 		t.Fatalf("cache length = %d", len(cache))
 	}
 }
+
+func TestGoogleVerifierRequiresAudienceIssuerAndVerifiedEmail(t *testing.T) {
+	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const keyID = "google-test-key"
+	publicKey := jose.JSONWebKey{
+		Key:       &privateKey.PublicKey,
+		KeyID:     keyID,
+		Algorithm: string(jose.RS256),
+		Use:       "sig",
+	}
+	jwksServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(jose.JSONWebKeySet{Keys: []jose.JSONWebKey{publicKey}})
+	}))
+	defer jwksServer.Close()
+	signer, err := jose.NewSigner(
+		jose.SigningKey{Algorithm: jose.RS256, Key: jose.JSONWebKey{
+			Key: privateKey, KeyID: keyID, Algorithm: string(jose.RS256), Use: "sig",
+		}},
+		(&jose.SignerOptions{}).WithType("JWT"),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	issue := func(audience string, verified bool) string {
+		t.Helper()
+		token, err := jwt.Signed(signer).
+			Claims(jwt.Claims{
+				Issuer:   GoogleIssuer,
+				Subject:  "google-subject",
+				Audience: jwt.Audience{audience},
+				IssuedAt: jwt.NewNumericDate(time.Now().Add(-time.Minute)),
+				Expiry:   jwt.NewNumericDate(time.Now().Add(time.Hour)),
+			}).
+			Claims(map[string]any{
+				"email":          "Person@Example.com",
+				"email_verified": verified,
+				"name":           "Person Example",
+				"azp":            audience,
+			}).
+			Serialize()
+		if err != nil {
+			t.Fatal(err)
+		}
+		return token
+	}
+	verifier, err := NewGoogleVerifier(
+		context.Background(), GoogleIssuer, jwksServer.URL, []string{"desktop-client"},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	principal, err := verifier.Verify(context.Background(), issue("desktop-client", true))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if principal.Provider != "google" || principal.ExternalID != "google-subject" ||
+		principal.Email != "person@example.com" || principal.DisplayName != "Person Example" {
+		t.Fatalf("principal = %#v", principal)
+	}
+	for _, token := range []string{
+		issue("other-client", true),
+		issue("desktop-client", false),
+	} {
+		if _, err := verifier.Verify(context.Background(), token); !errors.Is(err, ErrInvalidToken) {
+			t.Fatalf("invalid Google token error = %v", err)
+		}
+	}
+}
+
+func TestAccessTokenManagerValidatesSignatureAudienceAndExpiry(t *testing.T) {
+	now := time.Date(2026, 8, 19, 12, 0, 0, 0, time.UTC)
+	manager, err := NewAccessTokenManager(
+		[]byte("0123456789abcdef0123456789abcdef"),
+		"https://cloud.aoagents.dev",
+		"ao-desktop",
+		15*time.Minute,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager.now = func() time.Time { return now }
+	token, expiresAt, err := manager.Issue("user-id")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if expiresAt != now.Add(15*time.Minute) || !IsAccessToken(token) {
+		t.Fatalf("token expiry = %s, token = %q", expiresAt, token)
+	}
+	claims, err := manager.Verify(token)
+	if err != nil || claims.Subject != "user-id" {
+		t.Fatalf("claims = %#v, error = %v", claims, err)
+	}
+	manager.now = func() time.Time { return now.Add(16 * time.Minute) }
+	if _, err := manager.Verify(token); !errors.Is(err, ErrInvalidToken) {
+		t.Fatalf("expired token error = %v", err)
+	}
+	other, _ := NewAccessTokenManager(
+		[]byte("0123456789abcdef0123456789abcdef"),
+		"https://cloud.aoagents.dev",
+		"other-client",
+		15*time.Minute,
+	)
+	other.now = func() time.Time { return now }
+	if _, err := other.Verify(token); !errors.Is(err, ErrInvalidToken) {
+		t.Fatalf("wrong audience error = %v", err)
+	}
+}

@@ -41,6 +41,41 @@ func (s *Store) UpsertWorkOSUser(
 	return principal, nil
 }
 
+func (s *Store) UpsertGoogleUser(
+	ctx context.Context,
+	principal domain.Principal,
+) (domain.Principal, error) {
+	principal.Provider = "google"
+	principal.ExternalID = strings.TrimSpace(principal.ExternalID)
+	principal.Email = strings.ToLower(strings.TrimSpace(principal.Email))
+	principal.DisplayName = strings.TrimSpace(principal.DisplayName)
+	if principal.DisplayName == "" {
+		principal.DisplayName = principal.Email
+	}
+	err := s.pool.QueryRow(
+		ctx,
+		`INSERT INTO ao_users (
+			auth_provider, external_user_id, email, display_name
+		) VALUES ('google', $1, $2, $3)
+		ON CONFLICT (auth_provider, external_user_id)
+		DO UPDATE SET
+			email = EXCLUDED.email,
+			display_name = EXCLUDED.display_name,
+			updated_at = now()
+		RETURNING id`,
+		principal.ExternalID,
+		principal.Email,
+		principal.DisplayName,
+	).Scan(&principal.UserID)
+	if err != nil {
+		return domain.Principal{}, normalizeConstraintError(err)
+	}
+	if err := s.ensurePersonalOrganization(ctx, principal); err != nil {
+		return domain.Principal{}, err
+	}
+	return principal, nil
+}
+
 func (s *Store) ensureWorkOSOrganization(
 	ctx context.Context,
 	principal domain.Principal,
@@ -181,8 +216,9 @@ func (s *Store) ensurePersonalOrganization(
 		ctx,
 		`INSERT INTO ao_organizations (
 			id, auth_provider, slug, display_name, kind, owner_user_id, created_by_user_id
-		) VALUES ($1, 'workos', $2, $3, 'personal', $4, $4)`,
+		) VALUES ($1, $2, $3, $4, 'personal', $5, $5)`,
 		orgID,
+		principal.Provider,
 		slug,
 		displayName,
 		principal.UserID,
@@ -369,6 +405,112 @@ func (s *Store) PrincipalFromLocalToken(
 	}
 	principal.Provider = "local"
 	return principal, nil
+}
+
+func (s *Store) PrincipalByID(
+	ctx context.Context,
+	userID string,
+) (domain.Principal, error) {
+	var principal domain.Principal
+	err := s.pool.QueryRow(
+		ctx,
+		`SELECT id, auth_provider, external_user_id, email, display_name
+		FROM ao_users
+		WHERE id = $1`,
+		userID,
+	).Scan(
+		&principal.UserID,
+		&principal.Provider,
+		&principal.ExternalID,
+		&principal.Email,
+		&principal.DisplayName,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return domain.Principal{}, ErrNotFound
+	}
+	return principal, err
+}
+
+func (s *Store) CreateRefreshSession(
+	ctx context.Context,
+	userID string,
+	tokenHash []byte,
+	expiresAt time.Time,
+) error {
+	_, err := s.pool.Exec(
+		ctx,
+		`INSERT INTO ao_auth_sessions (user_id, token_hash, expires_at, kind)
+		VALUES ($1, $2, $3, 'refresh')`,
+		userID,
+		tokenHash,
+		expiresAt,
+	)
+	return err
+}
+
+// RotateRefreshSession consumes oldHash and inserts its replacement in one
+// transaction. Concurrent replays race on the DELETE; exactly one can win.
+func (s *Store) RotateRefreshSession(
+	ctx context.Context,
+	oldHash []byte,
+	newHash []byte,
+	expiresAt time.Time,
+) (domain.Principal, error) {
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return domain.Principal{}, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	var userID string
+	if err := tx.QueryRow(
+		ctx,
+		`DELETE FROM ao_auth_sessions
+		WHERE token_hash = $1 AND kind = 'refresh' AND expires_at > now()
+		RETURNING user_id`,
+		oldHash,
+	).Scan(&userID); errors.Is(err, pgx.ErrNoRows) {
+		return domain.Principal{}, ErrNotFound
+	} else if err != nil {
+		return domain.Principal{}, err
+	}
+	if _, err := tx.Exec(
+		ctx,
+		`INSERT INTO ao_auth_sessions (user_id, token_hash, expires_at, kind)
+		VALUES ($1, $2, $3, 'refresh')`,
+		userID,
+		newHash,
+		expiresAt,
+	); err != nil {
+		return domain.Principal{}, err
+	}
+	var principal domain.Principal
+	if err := tx.QueryRow(
+		ctx,
+		`SELECT id, auth_provider, external_user_id, email, display_name
+		FROM ao_users WHERE id = $1`,
+		userID,
+	).Scan(
+		&principal.UserID,
+		&principal.Provider,
+		&principal.ExternalID,
+		&principal.Email,
+		&principal.DisplayName,
+	); err != nil {
+		return domain.Principal{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return domain.Principal{}, err
+	}
+	return principal, nil
+}
+
+func (s *Store) RevokeRefreshSession(ctx context.Context, tokenHash []byte) error {
+	_, err := s.pool.Exec(
+		ctx,
+		`DELETE FROM ao_auth_sessions WHERE token_hash = $1 AND kind = 'refresh'`,
+		tokenHash,
+	)
+	return err
 }
 
 func (s *Store) RevokeLocalSession(ctx context.Context, tokenHash []byte) error {

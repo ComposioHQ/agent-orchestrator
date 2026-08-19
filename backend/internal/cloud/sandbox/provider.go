@@ -26,6 +26,9 @@ type Spec struct {
 	ResourceProfile   domain.ResourceProfile
 	Shape             string
 	RootFS            string
+	Target            string
+	User              string
+	DomainAllowList   string
 	Ingress           string
 	Environment       map[string]string
 	Labels            map[string]string

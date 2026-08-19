@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 environment="${1:-}"
 target_task="${2:-}"
-region="${AWS_REGION:-eu-north-1}"
+region="${AWS_REGION:-ap-south-1}"
 if [[ "$environment" != "staging" && "$environment" != "production" ]]; then
 	echo "Usage: rollback-release.sh <staging|production> <task-definition>" >&2
 	exit 2
@@ -30,7 +31,7 @@ aws_cli() {
 	aws "${aws_options[@]}" "$@"
 }
 
-./scripts/verify-ecs-service.py \
+"$SCRIPT_DIR/verify-ecs-service.py" \
 	--region "$region" \
 	--cluster "$cluster" \
 	--service "$service" \
@@ -81,7 +82,7 @@ aws_cli ecs update-service \
 	"{\"maximumPercent\":200,\"minimumHealthyPercent\":100,\"deploymentCircuitBreaker\":{\"enable\":true,\"rollback\":true},\"alarms\":{\"alarmNames\":[\"${alarm}\"],\"enable\":true,\"rollback\":true}}" \
 	>/dev/null
 aws_cli ecs wait services-stable --cluster "$cluster" --services "$service"
-./scripts/verify-ecs-service.py \
+"$SCRIPT_DIR/verify-ecs-service.py" \
 	--region "$region" \
 	--cluster "$cluster" \
 	--service "$service" \

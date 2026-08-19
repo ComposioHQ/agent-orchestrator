@@ -38,6 +38,39 @@ type DockerConfig struct {
 	WorkerTokenTTL time.Duration
 }
 
+type DaytonaConfig struct {
+	APIURL          string
+	APIKey          string
+	Target          string
+	Snapshot        string
+	User            string
+	DomainAllowList string
+	WorkerTokenTTL  time.Duration
+}
+
+func (c DaytonaConfig) Validate() error {
+	apiURL, err := url.Parse(strings.TrimSpace(c.APIURL))
+	if err != nil || apiURL.Scheme != "https" || apiURL.Host == "" || apiURL.User != nil {
+		return errors.New("AO_CLOUD_DAYTONA_API_URL must be an absolute HTTPS URL")
+	}
+	if strings.TrimSpace(c.APIKey) == "" {
+		return errors.New("AO_CLOUD_DAYTONA_API_KEY is required")
+	}
+	if strings.TrimSpace(c.Snapshot) == "" {
+		return errors.New("AO_CLOUD_DAYTONA_SNAPSHOT is required")
+	}
+	if strings.TrimSpace(c.User) == "" {
+		return errors.New("AO_CLOUD_DAYTONA_USER is required")
+	}
+	if strings.TrimSpace(c.DomainAllowList) == "" {
+		return errors.New("AO_CLOUD_DAYTONA_DOMAIN_ALLOW_LIST is required")
+	}
+	if c.WorkerTokenTTL <= 0 {
+		return errors.New("AO_CLOUD_DAYTONA_WORKER_TOKEN_TTL must be positive")
+	}
+	return nil
+}
+
 func (c DockerConfig) Validate() error {
 	if !strings.HasPrefix(strings.TrimSpace(c.Host), "unix:///") {
 		return errors.New("AO_CLOUD_DOCKER_HOST must be an absolute unix:// path")
@@ -83,6 +116,7 @@ type ProvisioningDefaults struct {
 	Provider string
 	Release  string
 	NodeOps  NodeOpsConfig
+	Daytona  DaytonaConfig
 	Docker   DockerConfig
 }
 
@@ -130,6 +164,22 @@ func (d ProvisioningDefaults) SessionPlan() (Plan, error) {
 			"sshKeyPath":            strings.TrimSpace(d.NodeOps.SSHKeyPath),
 			"workerTokenTtlSeconds": int64(d.NodeOps.WorkerTokenTTL / time.Second),
 			"autoPauseSeconds":      d.NodeOps.AutoPauseSeconds,
+		}
+	} else if provider == ProviderDaytona {
+		if err := d.Daytona.Validate(); err != nil {
+			return Plan{}, err
+		}
+		resourceProfile["daytona"] = map[string]any{
+			"target":                strings.TrimSpace(d.Daytona.Target),
+			"snapshot":              strings.TrimSpace(d.Daytona.Snapshot),
+			"user":                  strings.TrimSpace(d.Daytona.User),
+			"domainAllowList":       strings.TrimSpace(d.Daytona.DomainAllowList),
+			"workerTokenTtlSeconds": int64(d.Daytona.WorkerTokenTTL / time.Second),
+		}
+		bootstrapContext["daytona"] = map[string]any{
+			"target":   strings.TrimSpace(d.Daytona.Target),
+			"snapshot": strings.TrimSpace(d.Daytona.Snapshot),
+			"user":     strings.TrimSpace(d.Daytona.User),
 		}
 	} else if provider == ProviderDocker {
 		if err := d.Docker.Validate(); err != nil {

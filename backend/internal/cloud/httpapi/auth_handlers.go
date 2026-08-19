@@ -51,6 +51,149 @@ type authResponse struct {
 	Organizations []organizationResponse `json:"organizations"`
 }
 
+type aoAuthResponse struct {
+	AccessToken   string                 `json:"accessToken"`
+	RefreshToken  string                 `json:"refreshToken"`
+	ExpiresAt     time.Time              `json:"expiresAt"`
+	User          userResponse           `json:"user"`
+	Organizations []organizationResponse `json:"organizations"`
+}
+
+type refreshTokenRequest struct {
+	RefreshToken string `json:"refreshToken"`
+}
+
+func (s *Server) exchangeGoogleIdentity(w http.ResponseWriter, r *http.Request) {
+	if s.google == nil || s.accessTokens == nil {
+		writeError(w, r, http.StatusServiceUnavailable, "authentication_unavailable", "Google authentication is not configured.")
+		return
+	}
+	if !s.allowLocalAuthAttempt(w, r) {
+		return
+	}
+	var request struct {
+		IDToken string `json:"idToken"`
+	}
+	if err := decodeJSON(w, r, &request); err != nil ||
+		len(strings.TrimSpace(request.IDToken)) == 0 || len(request.IDToken) > 64<<10 {
+		writeError(w, r, http.StatusBadRequest, "invalid_request", "A Google ID token is required.")
+		return
+	}
+	principal, err := s.google.Verify(r.Context(), request.IDToken)
+	if err != nil {
+		if errors.Is(err, auth.ErrInvalidToken) {
+			writeError(w, r, http.StatusUnauthorized, "unauthorized", "The Google identity token is invalid or expired.")
+			return
+		}
+		s.logger.Error("verify Google identity", "error", err, "request_id", requestID(r))
+		writeError(w, r, http.StatusServiceUnavailable, "authentication_unavailable", "Google authentication is temporarily unavailable.")
+		return
+	}
+	principal, err = s.store.UpsertGoogleUser(r.Context(), principal)
+	if err != nil {
+		s.writeStoreError(w, r, err)
+		return
+	}
+	s.issueAOAuth(w, r, principal, nil)
+}
+
+func (s *Server) refreshAOAccess(w http.ResponseWriter, r *http.Request) {
+	if s.accessTokens == nil {
+		writeError(w, r, http.StatusServiceUnavailable, "authentication_unavailable", "AO authentication is not configured.")
+		return
+	}
+	if !s.allowLocalAuthAttempt(w, r) {
+		return
+	}
+	var request refreshTokenRequest
+	if err := decodeJSON(w, r, &request); err != nil ||
+		!strings.HasPrefix(request.RefreshToken, "ao_refresh_") {
+		writeError(w, r, http.StatusUnauthorized, "unauthorized", "The refresh token is invalid or expired.")
+		return
+	}
+	newToken, newHash, err := auth.NewRefreshToken()
+	if err != nil {
+		s.writeStoreError(w, r, err)
+		return
+	}
+	principal, err := s.store.RotateRefreshSession(
+		r.Context(),
+		auth.HashToken(request.RefreshToken),
+		newHash,
+		time.Now().UTC().Add(s.refreshTokenTTL),
+	)
+	if err != nil {
+		if errors.Is(err, postgres.ErrNotFound) {
+			writeError(w, r, http.StatusUnauthorized, "unauthorized", "The refresh token is invalid or expired.")
+			return
+		}
+		s.writeStoreError(w, r, err)
+		return
+	}
+	s.issueAOAuth(w, r, principal, &newToken)
+}
+
+func (s *Server) logoutAO(w http.ResponseWriter, r *http.Request) {
+	var request refreshTokenRequest
+	if err := decodeJSON(w, r, &request); err != nil ||
+		!strings.HasPrefix(request.RefreshToken, "ao_refresh_") {
+		writeError(w, r, http.StatusBadRequest, "invalid_request", "A refresh token is required.")
+		return
+	}
+	if err := s.store.RevokeRefreshSession(r.Context(), auth.HashToken(request.RefreshToken)); err != nil {
+		s.writeStoreError(w, r, err)
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) issueAOAuth(
+	w http.ResponseWriter,
+	r *http.Request,
+	principal domain.Principal,
+	rotatedRefreshToken *string,
+) {
+	accessToken, expiresAt, err := s.accessTokens.Issue(principal.UserID)
+	if err != nil {
+		s.writeStoreError(w, r, err)
+		return
+	}
+	var refreshToken string
+	if rotatedRefreshToken != nil {
+		refreshToken = *rotatedRefreshToken
+	} else {
+		var refreshHash []byte
+		refreshToken, refreshHash, err = auth.NewRefreshToken()
+		if err != nil {
+			s.writeStoreError(w, r, err)
+			return
+		}
+		if err := s.store.CreateRefreshSession(
+			r.Context(),
+			principal.UserID,
+			refreshHash,
+			time.Now().UTC().Add(s.refreshTokenTTL),
+		); err != nil {
+			s.writeStoreError(w, r, err)
+			return
+		}
+	}
+	memberships, err := s.store.ListMemberships(r.Context(), principal)
+	if err != nil {
+		s.writeStoreError(w, r, err)
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, http.StatusOK, aoAuthResponse{
+		AccessToken:   accessToken,
+		RefreshToken:  refreshToken,
+		ExpiresAt:     expiresAt,
+		User:          toUserResponse(principal),
+		Organizations: toOrganizations(memberships),
+	})
+}
+
 func (s *Server) registerLocal(w http.ResponseWriter, r *http.Request) {
 	if !s.localAuthEnabled {
 		writeError(w, r, http.StatusNotFound, "not_found", "Local authentication is disabled.")

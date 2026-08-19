@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import base64
 import copy
 import re
 from typing import Any
@@ -25,15 +26,18 @@ TASK_KEYS = {
     "runtimePlatform",
 }
 
-NODEOPS_SECRET_ENV = {
-    "AO_CLOUD_NODEOPS_BASE_URL": "base_url",
-    "AO_CLOUD_NODEOPS_API_KEY": "api_key",
-    "AO_CLOUD_NODEOPS_DEFAULT_SHAPE": "default_shape",
-    "AO_CLOUD_NODEOPS_DEFAULT_ROOTFS": "default_rootfs",
-    "AO_CLOUD_NODEOPS_INGRESS": "ingress",
-    "AO_CLOUD_NODEOPS_SSH_KEY_PATH": "ssh_key_path",
-    "AO_CLOUD_NODEOPS_REGION": "region",
-    "AO_CLOUD_NODEOPS_WORKER_TOKEN_TTL": "worker_token_ttl",
+DAYTONA_SECRET_ENV = {
+    "AO_CLOUD_DAYTONA_API_URL": "api_url",
+    "AO_CLOUD_DAYTONA_API_KEY": "api_key",
+    "AO_CLOUD_DAYTONA_TARGET": "target",
+    "AO_CLOUD_DAYTONA_SNAPSHOT": "snapshot",
+    "AO_CLOUD_DAYTONA_USER": "user",
+    "AO_CLOUD_DAYTONA_DOMAIN_ALLOW_LIST": "domain_allow_list",
+    "AO_CLOUD_DAYTONA_WORKER_TOKEN_TTL": "worker_token_ttl",
+}
+AUTH_SECRET_ENV = {
+    "AO_CLOUD_GOOGLE_CLIENT_IDS": "google_client_ids",
+    "AO_CLOUD_AUTH_SIGNING_KEY": "signing_key",
 }
 WORKER_SECRET_ENV = {
     "AO_CLOUD_WORKER_SIGNING_KEY": "signing_key",
@@ -42,10 +46,11 @@ WORKER_SECRET_ENV = {
     "AO_CLOUD_SANDBOX_STARTUP_TIMEOUT": "sandbox_startup_timeout",
     "AO_CLOUD_WORKER_HEARTBEAT_TIMEOUT": "worker_heartbeat_timeout",
 }
-HOSTED_SECRET_ENV = NODEOPS_SECRET_ENV | WORKER_SECRET_ENV
-PROVIDER_AUTO_PAUSE_ENV = "AO_CLOUD_NODEOPS_AUTO_PAUSE_MINUTES"
+HOSTED_SECRET_ENV = DAYTONA_SECRET_ENV | AUTH_SECRET_ENV | WORKER_SECRET_ENV
+PROVIDER_AUTO_PAUSE_ENV = "AO_CLOUD_DAYTONA_AUTO_PAUSE_INTERVAL"
 WORKER_BINARY_PATH = "/ao-worker"
 WORKER_HELPER_BINARY_PATH = "/ao"
+RUNTIME_DATABASE_PASSWORD_ENV = "AO_CLOUD_RUNTIME_DATABASE_PASSWORD"
 _DIGEST_IMAGE = re.compile(r"^.+@sha256:[0-9a-f]{64}$")
 _DURATION_PART = re.compile(r"(\d+)(ms|s|m|h)")
 
@@ -60,23 +65,32 @@ def secret_environment(secret_arn: str, fields: dict[str, str]) -> dict[str, str
 
 
 def validate_hosted_settings(
-    nodeops: dict[str, Any], worker: dict[str, Any]
+    daytona: dict[str, Any], auth: dict[str, Any], worker: dict[str, Any]
 ) -> None:
-    _require_secret_strings("NodeOps", nodeops, NODEOPS_SECRET_ENV.values())
+    _require_secret_strings("Daytona", daytona, DAYTONA_SECRET_ENV.values())
+    _require_secret_strings("auth", auth, AUTH_SECRET_ENV.values())
     _require_secret_strings("worker", worker, WORKER_SECRET_ENV.values())
-    if "auto_pause_minutes" in nodeops:
-        raise ValueError("NodeOps settings must not configure provider auto-pause")
+    for forbidden in ("auto_stop_interval", "auto_pause_interval", "auto_delete_interval"):
+        if forbidden in daytona:
+            raise ValueError("Daytona lifecycle timers must be controlled by AO")
 
-    base_url = urlparse(nodeops["base_url"])
+    base_url = urlparse(daytona["api_url"])
     if base_url.scheme != "https" or not base_url.netloc:
-        raise ValueError("NodeOps base_url must be an absolute HTTPS URL")
-    for key in ("api_key", "default_shape", "default_rootfs"):
-        if not nodeops[key].strip():
-            raise ValueError(f"NodeOps {key} must not be empty")
-    if nodeops["ingress"].strip().lower() not in ("", "enabled", "disabled"):
-        raise ValueError("NodeOps ingress must be enabled, disabled, or empty")
-    if _duration_seconds(nodeops["worker_token_ttl"]) <= 0:
-        raise ValueError("NodeOps worker_token_ttl must be positive")
+        raise ValueError("Daytona api_url must be an absolute HTTPS URL")
+    for key in ("api_key", "snapshot", "user", "domain_allow_list"):
+        if not daytona[key].strip():
+            raise ValueError(f"Daytona {key} must not be empty")
+    if _duration_seconds(daytona["worker_token_ttl"]) <= 0:
+        raise ValueError("Daytona worker_token_ttl must be positive")
+
+    if not auth["google_client_ids"].strip():
+        raise ValueError("auth google_client_ids must not be empty")
+    try:
+        signing_key = base64.b64decode(auth["signing_key"], validate=True)
+    except ValueError as error:
+        raise ValueError("auth signing_key must be valid base64") from error
+    if len(signing_key) < 32:
+        raise ValueError("auth signing_key must contain at least 32 decoded bytes")
 
     if len(worker["signing_key"].strip()) < 32:
         raise ValueError("worker signing_key must contain at least 32 characters")
@@ -183,12 +197,14 @@ def build_task_definition(
                 "AO_CLOUD_HTTP_ADDRESS": ":8080",
                 "AO_CLOUD_LOCAL_AUTH": "false",
                 "AO_CLOUD_MIGRATE_ON_STARTUP": "false",
-                "AO_CLOUD_SANDBOX_PROVIDER": "nodeops",
+                "AO_CLOUD_SANDBOX_PROVIDER": "daytona",
                 "AO_CLOUD_WORKER_BINARY_PATH": WORKER_BINARY_PATH,
                 "AO_CLOUD_WORKER_HELPER_BINARY_PATH": WORKER_HELPER_BINARY_PATH,
             }
         )
     elif container_name == "migration":
+        if not runtime_database_user.strip():
+            raise ValueError("migration task requires a runtime database user")
         values["AO_CLOUD_RUNTIME_DATABASE_USER"] = runtime_database_user
     values.update(environment_overrides)
     container["environment"] = [
@@ -214,6 +230,11 @@ def build_task_definition(
                 "hosted settings must not be plaintext environment values: "
                 + ", ".join(plaintext)
             )
+    elif container_name == "migration":
+        if RUNTIME_DATABASE_PASSWORD_ENV not in secrets:
+            raise ValueError("migration task is missing the runtime database password")
+        if RUNTIME_DATABASE_PASSWORD_ENV in values:
+            raise ValueError("runtime database password must not be plaintext")
     container["secrets"] = [
         {"name": name, "valueFrom": value}
         for name, value in sorted(secrets.items())

@@ -90,6 +90,18 @@ linters:
 
   exclusions:
     generated: lax # skip sqlc/codegen ("Code generated ... DO NOT EDIT")
+    # ao-cloud was imported with history in PR #4116. Its existing test suite
+    # and go vet run in CI, but it predates this repository's much stricter
+    # lint baseline (mostly exported-doc and unchecked-close findings). Keep
+    # the initial merge reviewable; remove these paths package-by-package as
+    # the cloud code converges on main's style.
+    paths:
+      - internal/cloud/
+      - cmd/ao-cloud/
+      - cmd/ao-cloud-agent/
+      - cmd/ao-cloud-healthcheck/
+      - cmd/ao-cloud-migrate/
+      - cmd/ao-worker/
     rules:
       # Tests: relax the noisiest checks (deliberate error-drops, repeated setup,
       # preallocation, and upgrade-response bodies that don't need closing).
@@ -114,3 +126,11 @@ formatters:
     goimports:
       local-prefixes:
         - github.com/aoagents/agent-orchestrator
+  exclusions:
+    paths:
+      - internal/cloud/
+      - cmd/ao-cloud/
+      - cmd/ao-cloud-agent/
+      - cmd/ao-cloud-healthcheck/
+      - cmd/ao-cloud-migrate/
+      - cmd/ao-worker/

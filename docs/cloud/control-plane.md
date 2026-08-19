@@ -18,10 +18,10 @@ Creating a session commits one PostgreSQL transaction containing:
 6. an audit event; and
 7. the completed command result.
 
-The sandbox row is desired-state intent only. This service does not call ECS,
-Daytona, Docker, or any worker API. A future reconciler can claim requested
-sandboxes and update their observed state without changing the client-facing
-creation flow.
+The sandbox row is desired-state intent only. The reconciler leases requested
+rows with `SKIP LOCKED`, calls the configured provider, and records conservative
+observations without changing the client-facing creation flow. Daytona is the
+only hosted provider; Docker remains the local conformance provider.
 
 `AO_CLOUD_SANDBOX_PROVIDER` selects the default provider recorded on new
 sandboxes. An explicit provider connection, when supplied, determines the
@@ -83,9 +83,10 @@ Workspace shells are supported. Attaching to the coding agent's native TUI is
 deliberately not implemented, so `kind=agent` is rejected instead of being
 silently mapped to a different process. Because arbitrary shell input cannot
 faithfully enforce prefix-style denied-command rules, terminal tickets fail
-closed unless the session is trusted and has no denied commands. The current
-Next.js gateway cannot proxy a WebSocket upgrade; the web UI therefore leaves
-Terminal disabled while direct API clients can use workspace terminals.
+closed unless the session is trusted and has no denied commands. There is no
+Cloud-specific web gateway in the integrated repository. Electron will connect
+through the daemon's authenticated cloud backend/proxy so the renderer does not
+own AO tokens and terminal components remain backend-agnostic.
 
 ## Replica lifecycle
 
@@ -123,8 +124,12 @@ Separate staging/production ECS services, ALB target groups, Secrets Manager
 paths, RDS databases, image promotion, canary percentages, and rollback rules
 belong to deployment infrastructure rather than application branching.
 
-## Deliberate exclusions
+## Source control
 
-GitHub issue and pull-request synchronization remains outside this slice.
-Native agent-TUI attachment and terminal WebSocket proxying through the
-Next.js gateway are also deliberate exclusions described above.
+The control plane includes GitHub App installation/user grants, repository
+discovery, checkout and push grants, PR create/claim/review operations, webhook
+inbox processing, and a PR status scanner. Production holds the GitHub App
+credentials; staging obtains repository-scoped capabilities through the
+authenticated repository broker. The remaining integration work is projecting
+these facts through the main daemon's SCM ports so the existing inspector UI
+does not branch on project placement.

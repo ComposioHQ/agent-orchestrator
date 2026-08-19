@@ -694,7 +694,7 @@ func (r *Reconciler) startupDeadlineElapsed(record domain.Sandbox) bool {
 
 func (r *Reconciler) providerStartupTimeoutError() error {
 	return fmt.Errorf(
-		"The NodeOps VM did not become ready within %s. AO kept the existing VM and will retry.",
+		"The sandbox did not become ready within %s. AO kept the existing environment and will retry.",
 		r.options.StartupTimeout,
 	)
 }
@@ -811,16 +811,22 @@ func (r *Reconciler) recreate(
 	return r.observe(ctx, record, string(recreated.ID), domain.SandboxObservedBootstrapping, "", 2*time.Second)
 }
 
-// nodeOpsProfile is the subset of the stored resource profile the provider
+// provisioningProfile is the subset of the stored resource profile the provider
 // needs. Reading the shape from the durable row rather than from configuration
 // means a config change never disturbs an in-flight session.
-type nodeOpsProfile struct {
+type provisioningProfile struct {
 	NodeOps struct {
 		DefaultShape     string `json:"defaultShape"`
 		DefaultRootFS    string `json:"defaultRootFs"`
 		Ingress          string `json:"ingress"`
 		AutoPauseSeconds int    `json:"autoPauseSeconds"`
 	} `json:"nodeOps"`
+	Daytona struct {
+		Target          string `json:"target"`
+		Snapshot        string `json:"snapshot"`
+		User            string `json:"user"`
+		DomainAllowList string `json:"domainAllowList"`
+	} `json:"daytona"`
 }
 
 func (r *Reconciler) workerSpec(ctx context.Context, record domain.Sandbox) (sandbox.Spec, error) {
@@ -846,7 +852,7 @@ func (r *Reconciler) workerSpec(ctx context.Context, record domain.Sandbox) (san
 		return sandbox.Spec{}, err
 	}
 
-	var profile nodeOpsProfile
+	var profile provisioningProfile
 	if len(record.ResourceProfile) > 0 {
 		_ = json.Unmarshal(record.ResourceProfile, &profile)
 	}
@@ -855,14 +861,22 @@ func (r *Reconciler) workerSpec(ctx context.Context, record domain.Sandbox) (san
 		"AO_CLOUD_SESSION_ID":       record.SessionID,
 		"AO_WORKER_BOOTSTRAP_TOKEN": ticket,
 		"AO_WORKSPACE_DIR":          "/workspace/repository",
-		"AO_DATA_DIR":               "/workspace/.ao/worker",
-		"HOME":                      "/workspace/.ao/home",
-		"CLAUDE_CONFIG_DIR":         "/workspace/.ao/home/.claude",
-		"CODEX_HOME":                "/workspace/.ao/home/.codex",
-		"DISABLE_AUTOUPDATER":       "1",
+		// Rotating worker and repository-grant credentials live only in tmpfs.
+		// Conversation state remains below CLAUDE_CONFIG_DIR so pausing a
+		// sandbox preserves the user's real Claude session without preserving
+		// AO bearer material in the filesystem layer.
+		"AO_DATA_DIR":         "/dev/shm/ao-worker",
+		"HOME":                "/workspace/.ao/home",
+		"CLAUDE_CONFIG_DIR":   "/workspace/.ao/home/.claude",
+		"CODEX_HOME":          "/workspace/.ao/home/.codex",
+		"DISABLE_AUTOUPDATER": "1",
 	}
 	if record.Provider == sandbox.ProviderDocker {
 		workerEnvironment["AO_CLOUD_ALLOW_ANONYMOUS_GITHUB_CHECKOUT"] = "true"
+	}
+	rootFS := profile.NodeOps.DefaultRootFS
+	if record.Provider == sandbox.ProviderDaytona {
+		rootFS = profile.Daytona.Snapshot
 	}
 	return sandbox.Spec{
 		Name:             "ao-" + record.SessionID,
@@ -870,7 +884,10 @@ func (r *Reconciler) workerSpec(ctx context.Context, record domain.Sandbox) (san
 		OrgID:            record.OrgID,
 		ResourceProfile:  domain.ResourceProfile{CPU: 4, Memory: 8, Disk: 10},
 		Shape:            profile.NodeOps.DefaultShape,
-		RootFS:           profile.NodeOps.DefaultRootFS,
+		RootFS:           rootFS,
+		Target:           profile.Daytona.Target,
+		User:             profile.Daytona.User,
+		DomainAllowList:  profile.Daytona.DomainAllowList,
 		Ingress:          profile.NodeOps.Ingress,
 		AutoPauseSeconds: profile.NodeOps.AutoPauseSeconds,
 		Environment:      workerEnvironment,
