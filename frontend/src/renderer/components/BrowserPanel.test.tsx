@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { BrowserPanel, BrowserPanelView, useBrowserAnnotationQueue } from "./BrowserPanel";
 import { useBrowserView, type BrowserNavState } from "../hooks/useBrowserView";
+import { OPEN_BROWSER_OVERLAY_SELECTOR } from "../lib/dom-selectors";
 import type { WorkspaceSession } from "../types/workspace";
 import type {
 	BrowserAnnotationCancelPayload,
@@ -992,5 +993,93 @@ describe("BrowserPanel", () => {
 		} finally {
 			Object.defineProperty(window, "ao", { configurable: true, value: ao });
 		}
+	});
+
+	describe("pinned rail", () => {
+		const pinRail = () => window.localStorage.setItem("ao.browserTabs.railPinned", "1");
+
+		beforeEach(() => {
+			window.localStorage.removeItem("ao.browserTabs.railPinned");
+		});
+
+		it("does not open the flyout when hovering the pinned rail", () => {
+			// Pinned already shows every tab as a favicon row, so the flyout would
+			// just cover the live page with a duplicate of what's on screen.
+			pinRail();
+			hookState.tabs = [
+				{ id: "t1", url: "http://localhost:3000/", title: "First app", active: false },
+				{ id: "t2", url: "http://localhost:4173/", title: "Second app", active: true },
+			];
+			hookState.activeTabId = "t2";
+			render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
+
+			vi.useFakeTimers();
+			try {
+				fireEvent.pointerEnter(screen.getByTestId("browser-tabs-rail"));
+				act(() => {
+					vi.advanceTimersByTime(300);
+				});
+			} finally {
+				vi.useRealTimers();
+			}
+
+			expect(screen.getByTestId("browser-tabs-flyout")).toHaveAttribute("data-state", "closed");
+		});
+
+		it("still opens the flyout on hover while the rail is collapsed", () => {
+			hookState.tabs = [
+				{ id: "t1", url: "http://localhost:3000/", title: "First app", active: false },
+				{ id: "t2", url: "http://localhost:4173/", title: "Second app", active: true },
+			];
+			hookState.activeTabId = "t2";
+			render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
+
+			vi.useFakeTimers();
+			try {
+				fireEvent.pointerEnter(screen.getByTestId("browser-tabs-rail"));
+				act(() => {
+					vi.advanceTimersByTime(300);
+				});
+			} finally {
+				vi.useRealTimers();
+			}
+
+			expect(screen.getByTestId("browser-tabs-flyout")).toHaveAttribute("data-state", "open");
+		});
+
+		it("names the site in a tooltip when a pinned favicon takes focus", async () => {
+			pinRail();
+			hookState.tabs = [
+				{ id: "t1", url: "http://localhost:3000/", title: "First app", active: false },
+				{ id: "t2", url: "http://localhost:4173/", title: "Second app", active: true },
+			];
+			hookState.activeTabId = "t2";
+			render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
+
+			fireEvent.focus(screen.getByRole("button", { name: "First app — localhost:3000" }));
+
+			const tooltip = await screen.findByRole("tooltip");
+			expect(tooltip).toHaveTextContent("First app");
+			expect(tooltip).toHaveTextContent("localhost:3000");
+		});
+
+		it("marks the tooltip as a browser overlay so it paints above the live page", async () => {
+			// The live page is a native view above the transparent shell; the shell
+			// is only raised for elements matching OPEN_BROWSER_OVERLAY_SELECTOR, so
+			// an unmarked tooltip would render behind the page and be invisible.
+			pinRail();
+			hookState.tabs = [
+				{ id: "t1", url: "http://localhost:3000/", title: "First app", active: false },
+				{ id: "t2", url: "http://localhost:4173/", title: "Second app", active: true },
+			];
+			hookState.activeTabId = "t2";
+			render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
+
+			fireEvent.focus(screen.getByRole("button", { name: "First app — localhost:3000" }));
+
+			const tooltip = await screen.findByRole("tooltip");
+			expect(tooltip.closest('[data-browser-native-overlay="true"]')).not.toBeNull();
+			expect(document.querySelector(OPEN_BROWSER_OVERLAY_SELECTOR)).not.toBeNull();
+		});
 	});
 });
