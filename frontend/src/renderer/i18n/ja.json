@@ -1102,7 +1102,7 @@
 	"zone.pending": "レビュー中",
 	"zone.working": "作業中",
 	"settings.developer": "Developer",
-	"settings.browserProfiles": "ブラウザプロファイル",
+	"settings.browserProfiles": "ブラウザ",
 	"settings.browserProfiles.description": "一時プロファイルはワーカーごとに分離され、破棄されます。名前付きプロファイルはログイン情報とサイト状態を保持し、同じプロファイルに明示的にバインドしたワーカーだけが共有します。",
 	"settings.browserProfiles.create": "プロファイルを作成",
 	"settings.browserProfiles.name": "プロファイル名",

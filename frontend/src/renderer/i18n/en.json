@@ -541,7 +541,7 @@
 	"settings.developerMode": "Developer Mode",
 	"settings.general": "General",
 	"settings.developer": "Developer",
-	"settings.browserProfiles": "Browser Profiles",
+	"settings.browserProfiles": "Browser",
 	"settings.browserProfiles.description": "Temporary is isolated per worker and discarded. Named profiles retain sign-ins and site state and are shared only by workers you explicitly bind to the same profile.",
 	"settings.browserProfiles.create": "Create profile",
 	"settings.browserProfiles.name": "Profile name",

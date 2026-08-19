@@ -48,16 +48,17 @@ export function BrowserProfileButton({
 		<Button
 			aria-haspopup="menu"
 			aria-label={t("browser.profile.select", { profile: label })}
-			className="max-w-36 min-w-0 gap-1 px-1.5 text-xs"
+			className="browser-profile-button max-w-36 min-w-0 gap-1 px-1.5 text-xs"
 			onClick={openMenu}
 			ref={buttonRef}
+			size="sm"
 			title={label}
 			type="button"
 			variant="ghost"
 		>
 			<UserRound aria-hidden="true" className="size-3.5 shrink-0" />
-			<span className="truncate">{label}</span>
-			<ChevronDown aria-hidden="true" className="size-3 shrink-0 opacity-60" />
+			<span className="browser-profile-button__label truncate">{label}</span>
+			<ChevronDown aria-hidden="true" className="browser-profile-button__chevron size-3 shrink-0 opacity-60" />
 		</Button>
 	);
 }

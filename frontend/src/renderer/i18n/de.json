@@ -1102,7 +1102,7 @@
 	"zone.pending": "In Review",
 	"zone.working": "In Arbeit",
 	"settings.developer": "Developer",
-	"settings.browserProfiles": "Browserprofile",
+	"settings.browserProfiles": "Browser",
 	"settings.browserProfiles.description": "Das temporäre Profil ist pro Worker isoliert und wird verworfen. Benannte Profile behalten Anmeldungen und Website-Zustände und werden nur von Workern geteilt, die ausdrücklich an dasselbe Profil gebunden sind.",
 	"settings.browserProfiles.create": "Profil erstellen",
 	"settings.browserProfiles.name": "Profilname",

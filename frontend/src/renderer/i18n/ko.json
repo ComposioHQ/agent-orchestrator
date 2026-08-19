@@ -1102,7 +1102,7 @@
 	"zone.pending": "리뷰 중",
 	"zone.working": "작업 중",
 	"settings.developer": "Developer",
-	"settings.browserProfiles": "브라우저 프로필",
+	"settings.browserProfiles": "브라우저",
 	"settings.browserProfiles.description": "임시 프로필은 작업자별로 격리되며 삭제됩니다. 이름이 지정된 프로필은 로그인 및 사이트 상태를 유지하고, 동일한 프로필을 명시적으로 선택한 작업자끼리만 공유됩니다.",
 	"settings.browserProfiles.create": "프로필 만들기",
 	"settings.browserProfiles.name": "프로필 이름",

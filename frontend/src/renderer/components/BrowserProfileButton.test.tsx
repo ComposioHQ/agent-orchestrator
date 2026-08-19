@@ -32,7 +32,11 @@ describe("BrowserProfileButton", () => {
 		};
 
 		render(<BrowserProfileButton profileState={profileState} viewId="1:worker-1" />);
-		await userEvent.click(screen.getByRole("button", { name: "Browser profile: Work" }));
+		const button = screen.getByRole("button", { name: "Browser profile: Work" });
+		expect(button).toHaveClass("browser-profile-button");
+		expect(button).toHaveAttribute("title", "Work");
+		expect(screen.getByText("Work")).toHaveClass("browser-profile-button__label");
+		await userEvent.click(button);
 
 		expect(showProfileMenu).toHaveBeenCalledWith(
 			expect.objectContaining({
@@ -43,7 +47,7 @@ describe("BrowserProfileButton", () => {
 		);
 	});
 
-	it("opens Browser Profiles settings from the native menu's manage action", () => {
+	it("opens Browser settings from the native menu's manage action", () => {
 		const original = window.ao!;
 		originalShowMenu = original.browser.showProfileMenu;
 		originalOnManage = original.browser.onProfileManage;

@@ -1097,7 +1097,7 @@
 	"zone.pending": "评审中",
 	"zone.working": "工作中",
 	"settings.developer": "开发者",
-	"settings.browserProfiles": "浏览器配置文件",
+	"settings.browserProfiles": "浏览器",
 	"settings.browserProfiles.description": "临时配置文件按工作线程隔离并会被丢弃。命名配置文件会保留登录状态和站点数据，只有明确绑定到同一配置文件的工作线程才会共享这些数据。",
 	"settings.browserProfiles.create": "创建配置文件",
 	"settings.browserProfiles.name": "配置文件名称",

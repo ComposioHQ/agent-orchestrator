@@ -147,10 +147,10 @@ beforeEach(async () => {
 });
 
 describe("GlobalSettingsForm", () => {
-	it("keeps Browser Profiles in its dedicated settings page", async () => {
+	it("keeps Browser in its dedicated settings page", async () => {
 		renderForm("general");
 		expect(await screen.findByLabelText("Settings")).toBeInTheDocument();
-		expect(screen.queryByText("Browser Profiles")).not.toBeInTheDocument();
+		expect(document.querySelector('[data-section="browserProfiles"]')).not.toBeInTheDocument();
 	});
 
 	it("renders the Figma settings sections", async () => {

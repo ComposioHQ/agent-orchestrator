@@ -1116,7 +1116,7 @@
 	"zone.pending": "En revue",
 	"zone.working": "En cours",
 	"settings.developer": "Developer",
-	"settings.browserProfiles": "Profils du navigateur",
+	"settings.browserProfiles": "Navigateur",
 	"settings.browserProfiles.description": "Le profil temporaire est isolé par worker et supprimé. Les profils nommés conservent les connexions et l’état des sites, et ne sont partagés qu’entre les workers explicitement liés au même profil.",
 	"settings.browserProfiles.create": "Créer un profil",
 	"settings.browserProfiles.name": "Nom du profil",
