@@ -36,6 +36,7 @@ import { ReviewerSelect, reviewerTrustWarning } from "./ReviewerSelect";
 import { AgentModelCombobox } from "./settings/AgentModelCombobox";
 import { SettingsOptionMenu } from "./settings/SettingsOptionMenu";
 import { SettingsRow } from "./settings/SettingsRow";
+import { Switch } from "./ui/switch";
 
 type Project = components["schemas"]["Project"];
 type ProjectConfig = components["schemas"]["ProjectConfig"];
@@ -149,6 +150,7 @@ function SettingsBody({
 		orchestratorMode: config.orchestrator?.agentConfig?.mode ?? config.agentConfig?.mode ?? "",
 		permissions: config.agentConfig?.permissions ?? "",
 		reviewerHarness: config.reviewers?.[0]?.harness ?? "",
+		autoReview: config.autoReview ?? false,
 		intakeEnabled: intake.enabled ?? false,
 		intakeRepo: intake.repo ?? "",
 		intakeAssignee: intake.assignee ?? "",
@@ -239,6 +241,7 @@ function SettingsBody({
 						}),
 						reviewers: form.reviewerHarness ? [{ harness: form.reviewerHarness }] : undefined,
 						trackerIntake: buildIntake(intakeForm),
+						autoReview: form.autoReview,
 					};
 			const { error } = await apiClient.PUT("/api/v1/projects/{id}", {
 				params: { path: { id: projectId } },
@@ -551,6 +554,20 @@ function SettingsBody({
 								}
 								reviewerWarning={reviewerWarning}
 							/>
+							<ProjectSettingsSection title={t("settings.project.autoReview")} grouped>
+								<SettingsRow label={t("settings.project.autoReviewToggle")}>
+									<Switch
+										aria-label={t("settings.project.autoReviewToggle")}
+										checked={form.autoReview}
+										id="project-auto-review"
+										onCheckedChange={(checked) => setForm((f) => ({ ...f, autoReview: checked }))}
+										size="sm"
+									/>
+								</SettingsRow>
+								<p className="px-1 text-xs leading-row text-settings-muted" role="note">
+									{t("settings.project.autoReviewDescription")}
+								</p>
+							</ProjectSettingsSection>
 						</>
 					) : (
 						<p className="px-1 text-xs text-settings-muted">{t("settings.project.workflow")}</p>
@@ -823,7 +840,7 @@ function scratchSupportedConfig(config: ProjectConfig): ProjectConfig {
 		autoReview: _legacyAutoReview,
 		trackerIntake: _trackerIntake,
 		...supported
-	} = config as ProjectConfig & { autoReview?: unknown };
+	} = config as ProjectConfig;
 	return supported;
 }
 

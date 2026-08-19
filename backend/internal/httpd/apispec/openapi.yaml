@@ -7046,6 +7046,8 @@ components:
           type: string
         agentRulesFile:
           type: string
+        autoReview:
+          type: boolean
         containerReap:
           $ref: '#/components/schemas/ContainerReapConfig'
         defaultBranch:

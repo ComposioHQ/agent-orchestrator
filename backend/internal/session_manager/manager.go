@@ -744,7 +744,7 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	promptBytes := len(prompt)
 	systemPromptBytes := len(systemPrompt)
 
-	rec, err := m.store.CreateSession(ctx, seedRecord(cfg, m.clock()))
+	rec, err := m.store.CreateSession(ctx, seedRecord(cfg, project.Config, m.clock()))
 	if err != nil {
 		return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn: create: %w", err)
 	}
@@ -3168,7 +3168,7 @@ func (m *Manager) cleanupRecords(ctx context.Context, project domain.ProjectID) 
 
 // ---- helpers ----
 
-func seedRecord(cfg ports.SpawnConfig, now time.Time) domain.SessionRecord {
+func seedRecord(cfg ports.SpawnConfig, projectConfig domain.ProjectConfig, now time.Time) domain.SessionRecord {
 	return domain.SessionRecord{
 		ProjectID:   cfg.ProjectID,
 		IssueID:     cfg.IssueID,
@@ -3180,9 +3180,10 @@ func seedRecord(cfg ports.SpawnConfig, now time.Time) domain.SessionRecord {
 		Activity:    domain.Activity{State: domain.ActivityIdle, LastActivityAt: now},
 		// Resolved before this point and persisted here. There is no UPDATE
 		// statement that can change it afterwards.
-		Mode:             domain.NormalizeSessionMode(cfg.RequestedMode),
-		AutoInjectReview: true,
-		AutoInjectCI:     true,
+		Mode:              domain.NormalizeSessionMode(cfg.RequestedMode),
+		AutoReviewEnabled: projectConfig.AutoReview,
+		AutoInjectReview:  true,
+		AutoInjectCI:      true,
 	}
 }
 

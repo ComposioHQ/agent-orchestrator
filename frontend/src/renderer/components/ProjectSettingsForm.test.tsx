@@ -459,6 +459,36 @@ describe("ProjectSettingsForm", () => {
 		expect(reviewerAgent).toHaveTextContent("Claude Code");
 	});
 
+	it("loads and saves the project auto review setting", async () => {
+		mockProject({
+			id: "proj-1",
+			name: "Project One",
+			kind: "single_repo",
+			path: "/repo/project-one",
+			repo: "git@github.com:acme/project-one.git",
+			defaultBranch: "main",
+			config: {
+				worker: { agent: "codex" },
+				orchestrator: { agent: "claude-code" },
+				autoReview: true,
+			},
+		});
+
+		renderSettings("proj-1", undefined, "workflow");
+
+		const toggle = await screen.findByRole("switch", { name: "Enable for new sessions" });
+		expect(toggle).toBeChecked();
+
+		await userEvent.click(toggle);
+		expect(toggle).not.toBeChecked();
+
+		submitSettings();
+
+		await waitFor(() => expect(putMock).toHaveBeenCalledTimes(1));
+		const request = putMock.mock.calls[0]?.[1];
+		expect(request?.body.config.autoReview).toBe(false);
+	});
+
 	it("keeps the automatic default branch unpinned when saving other settings", async () => {
 		mockProject({
 			id: "proj-1",

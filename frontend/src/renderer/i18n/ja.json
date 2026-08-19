@@ -1178,5 +1178,8 @@
 	"inspector.usage.totalTokens": "合計トークン",
 	"inspector.usage.totalTokensAria": "合計 {{count}} トークン",
 	"inspector.usage.totalTokensUnavailable": "合計トークンを利用できません",
-	"inspector.usage.uncachedInputTokens": "未キャッシュ入力トークン"
+	"inspector.usage.uncachedInputTokens": "未キャッシュ入力トークン",
+	"settings.project.autoReview": "Auto review",
+	"settings.project.autoReviewToggle": "Enable for new sessions",
+	"settings.project.autoReviewDescription": "When enabled, new worker sessions will automatically review their pull requests. This can still be toggled per session after spawn."
 }

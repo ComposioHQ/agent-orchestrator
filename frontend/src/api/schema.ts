@@ -2414,6 +2414,7 @@ export interface components {
             agentConfig?: components["schemas"]["AgentConfig"];
             agentRules?: string;
             agentRulesFile?: string;
+            autoReview?: boolean;
             containerReap?: components["schemas"]["ContainerReapConfig"];
             defaultBranch?: string;
             env?: {
