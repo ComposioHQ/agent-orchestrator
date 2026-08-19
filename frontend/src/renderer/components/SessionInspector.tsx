@@ -219,7 +219,7 @@ export function SessionInspector({
 				) : undefined
 			}
 			filesView={session ? <FilesView filesView={filesView} onOpenFiles={onOpenFiles} /> : undefined}
-			emulatorView={session && emulatorAvailable ? <EmulatorPanel active={isInspectorVisible} /> : undefined}
+			emulatorView={session && emulatorAvailable ? <EmulatorPanel active={isInspectorVisible} sessionId={session.id} /> : undefined}
 			headerActions={<span aria-hidden="true" className="session-inspector-actions-spacer" />}
 			isVisible={isInspectorVisible}
 			loadingText={session ? undefined : t("inspector.loadingSession")}

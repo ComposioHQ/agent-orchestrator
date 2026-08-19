@@ -18,21 +18,30 @@ type StreamMessage = { data?: string; mimeType?: string; width?: number; height?
 const WS_RECONNECT_BASE_MS = 1000;
 const WS_RECONNECT_MAX_MS = 8000;
 
-export function useIOSSimulator(enabled: boolean) {
+export function useIOSSimulator(enabled: boolean, sessionId?: string) {
 	const queryClient = useQueryClient();
+	const query = sessionId ? { query: { sessionId } } : undefined;
 	const [streamFrame, setStreamFrame] = useState<StreamFrame | null>(null);
 	const [streamState, setStreamState] = useState<StreamState>("idle");
 	const [streamError, setStreamError] = useState<string | null>(null);
 
 	const status = useQuery({
-		queryKey: ["ios-device", "status"],
+		queryKey: ["ios-device", "status", sessionId],
 		queryFn: async () => {
-			const response = await apiClient.GET("/api/v1/ios-device/status");
+			const response = await apiClient.GET("/api/v1/ios-device/status", { params: query });
 			if (response.error) throw new Error(apiErrorMessage(response.error, "Failed to read iOS Simulator status"));
 			return response.data;
 		},
 		enabled,
 		refetchInterval: 2000,
+	});
+	const devices = useQuery({
+		queryKey: ["ios-device", "devices"],
+		queryFn: async () => {
+			const response = await apiClient.GET("/api/v1/ios-device/devices", { params: query });
+			if (response.error) throw new Error(apiErrorMessage(response.error, "Failed to list iOS Simulator devices"));
+			return response.data;
+		}, enabled, staleTime: 10_000,
 	});
 	// Toolchain (Xcode/runtime) state drives the "load needed dependencies"
 	// flow — without Xcode there is nothing to boot.
@@ -57,28 +66,28 @@ export function useIOSSimulator(enabled: boolean) {
 		},
 	});
 	const start = useMutation({
-		mutationFn: async () => {
-			const response = await apiClient.POST("/api/v1/ios-device/start");
+		mutationFn: async (deviceId?: string) => {
+			const response = await apiClient.POST("/api/v1/ios-device/start", { params: { query: { ...(query?.query ?? {}), ...(deviceId ? { deviceId } : {}) } } });
 			if (response.error) throw new Error(apiErrorMessage(response.error, "Failed to start iOS Simulator"));
 			return response.data;
 		},
-		onSuccess: () => void queryClient.invalidateQueries({ queryKey: ["ios-device", "status"] }),
+		onSuccess: () => void queryClient.invalidateQueries({ queryKey: ["ios-device", "status", sessionId] }),
 	});
 	const stop = useMutation({
 		mutationFn: async () => {
-			const response = await apiClient.POST("/api/v1/ios-device/stop");
+			const response = await apiClient.POST("/api/v1/ios-device/stop", { params: query });
 			if (response.error) throw new Error(apiErrorMessage(response.error, "Failed to stop iOS Simulator"));
 			return response.data;
 		},
-		onSuccess: () => void queryClient.invalidateQueries({ queryKey: ["ios-device", "status"] }),
+		onSuccess: () => void queryClient.invalidateQueries({ queryKey: ["ios-device", "status", sessionId] }),
 	});
 	// Screenshot poll is only the fallback: live frames arrive over the
 	// WebSocket; the 1s REST poll keeps the panel usable where ScreenCaptureKit
 	// is unavailable (headless helpers, restricted environments).
 	const screenshot = useQuery({
-		queryKey: ["ios-device", "screenshot"],
+		queryKey: ["ios-device", "screenshot", sessionId],
 		queryFn: async () => {
-			const response = await apiClient.GET("/api/v1/ios-device/screenshot");
+			const response = await apiClient.GET("/api/v1/ios-device/screenshot", { params: query });
 			if (response.error) throw new Error(apiErrorMessage(response.error, "Failed to capture iOS Simulator"));
 			return response.data;
 		},
@@ -138,7 +147,8 @@ export function useIOSSimulator(enabled: boolean) {
 			}
 			setStreamError(null);
 			setStreamState((current) => (current === "live" ? current : "connecting"));
-			socket = new WebSocket(`${base.replace(/^http/, "ws")}/api/v1/ios-device/stream`);
+			const streamQuery = sessionId ? `?sessionId=${encodeURIComponent(sessionId)}` : "";
+			socket = new WebSocket(`${base.replace(/^http/, "ws")}/api/v1/ios-device/stream${streamQuery}`);
 			socket.onopen = () => {
 				if (disposed) return;
 				retryCount = 0;
@@ -186,7 +196,7 @@ export function useIOSSimulator(enabled: boolean) {
 			if (reconnectTimer !== undefined) clearTimeout(reconnectTimer);
 			closeSocket();
 		};
-	}, [enabled]);
+	}, [enabled, sessionId]);
 
 	const input = useMutation({
 		mutationFn: async (
@@ -196,13 +206,14 @@ export function useIOSSimulator(enabled: boolean) {
 				| { action: "key"; keyCode: number }
 				| { action: "home" | "lock" | "rotateLeft" | "rotateRight" },
 		) => {
-			const response = await apiClient.POST("/api/v1/ios-device/input", { body: request });
+			const response = await apiClient.POST("/api/v1/ios-device/input", { params: query, body: request });
 			if (response.error) throw new Error(apiErrorMessage(response.error, "Failed to send iOS Simulator input"));
 			return response.data;
 		},
 	});
 	return {
 		status,
+		devices,
 		toolchain,
 		recheck,
 		start,

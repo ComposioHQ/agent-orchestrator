@@ -22,14 +22,15 @@ import { Button } from "./ui/button";
  * wire are device framebuffer pixels; the backend owns the Simulator window
  * mapping.
  */
-export function EmulatorPanel({ active }: { active: boolean }) {
+export function EmulatorPanel({ active, sessionId }: { active: boolean; sessionId?: string }) {
 	const { t } = useTranslation();
 	const activeMac = active && isMacPlatform();
 	const [text, setText] = useState("");
+	const [selectedDevice, setSelectedDevice] = useState("");
 	const [edgeHint, setEdgeHint] = useState(false);
 	const edgeHintTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 	const pointerStart = useRef<FramePoint | null>(null);
-	const ios = useIOSSimulator(activeMac);
+	const ios = useIOSSimulator(activeMac, sessionId);
 	const status = ios.status.data;
 	const booted = status?.state === "Booted";
 	const screenshot = ios.screenshot.data;
@@ -86,7 +87,11 @@ export function EmulatorPanel({ active }: { active: boolean }) {
 					</span>
 				</div>
 				<div className="flex shrink-0 gap-1.5">
-					<Button size="sm" type="button" onClick={() => ios.start.mutate()} disabled={ios.start.isPending || booted} aria-label={t("emulator.start")} title={t("emulator.start")}>
+					<select aria-label={t("emulator.deviceLabel")} className="max-w-28 rounded border border-border bg-background px-1 text-2xs" value={selectedDevice || status?.deviceId || ""} onChange={(event) => setSelectedDevice(event.target.value)} disabled={booted}>
+						<option value="">{t("emulator.deviceLabel")}</option>
+						{ios.devices.data?.map((device) => <option key={device.deviceId} value={device.deviceId}>{device.name}</option>)}
+					</select>
+					<Button size="sm" type="button" onClick={() => ios.start.mutate(selectedDevice || undefined)} disabled={ios.start.isPending || booted} aria-label={t("emulator.start")} title={t("emulator.start")}>
 						<Play aria-hidden="true" />{t("emulator.start")}
 					</Button>
 					<Button size="sm" type="button" variant="outline" onClick={() => ios.stop.mutate()} disabled={ios.stop.isPending || !booted} aria-label={t("emulator.stop")} title={t("emulator.stop")}>
