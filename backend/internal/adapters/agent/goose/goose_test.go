@@ -250,7 +250,7 @@ func TestAuthStatusAuthorizedFromGooseConfig(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(configPath, []byte("providers:\n  openrouter:\n    configured: true\n    model: anthropic/claude-sonnet-4\n"), 0o600); err != nil {
+	if err := os.WriteFile(configPath, []byte("GOOSE_PROVIDER__API_KEY: test-key\nproviders:\n  openrouter:\n    model: anthropic/claude-sonnet-4\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	plugin := &Plugin{resolvedBinary: "goose"}

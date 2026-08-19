@@ -39,6 +39,17 @@ func TestAmpSettingsAuthStatusAuthorizedWithAPIKey(t *testing.T) {
 	}
 }
 
+func TestAmpSecretsAuthStatusAuthorizedWithDocumentedSecretsFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "secrets.json")
+	if err := os.WriteFile(path, []byte(`{"accessToken":"amp-token"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	status, ok, err := ampSecretsAuthStatus(path)
+	if err != nil || !ok || status != ports.AgentAuthStatusAuthorized {
+		t.Fatalf("status = (%q, %v, %v), want (authorized, true, nil)", status, ok, err)
+	}
+}
+
 func TestAmpSettingsAuthStatusUnknownWithEmptyAPIKey(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "settings.json")
 	if err := os.WriteFile(path, []byte(`{"amp.apiKey":""}`), 0o600); err != nil {

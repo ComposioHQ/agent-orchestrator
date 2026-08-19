@@ -197,7 +197,7 @@ func (p *Plugin) AuthStatus(ctx context.Context) (ports.AgentAuthStatus, error) 
 		return ports.AgentAuthStatusUnknown, probeCtx.Err()
 	}
 	text := strings.ToLower(string(out))
-	if strings.Contains(text, "0 credentials") {
+	if strings.Contains(text, "0 credentials") || strings.Contains(text, "no credentials") || strings.Contains(text, "not authenticated") {
 		return ports.AgentAuthStatusUnknown, nil
 	}
 	if strings.Contains(text, "credential") && err == nil {

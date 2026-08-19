@@ -56,6 +56,22 @@ func TestPrimeLocalAuthStatusUnknownForEmptyAuthFile(t *testing.T) {
 	}
 }
 
+func TestPrimeLocalAuthStatusIgnoresModelsFileCredentials(t *testing.T) {
+	clearPrimeCredentialEnv(t)
+	dir := t.TempDir()
+	t.Setenv(primeAgentCodingAgentDirEnv, dir)
+	if err := os.WriteFile(filepath.Join(dir, "models.json"), []byte(`{"providers":{"custom":{"apiKey":"looks-like-a-key"}}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	status, ok, err := primeLocalAuthStatus(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ok || status != ports.AgentAuthStatusUnknown {
+		t.Fatalf("status = (%q, %v), want (%q, false)", status, ok, ports.AgentAuthStatusUnknown)
+	}
+}
+
 func TestPrimeCredentialJSONIgnoresMCPOnlyCredentials(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "auth.json")
 	if err := os.WriteFile(path, []byte(`{"mcp:notion":{"accessToken":"mcp-token"}}`), 0o600); err != nil {

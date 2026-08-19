@@ -29,6 +29,8 @@ func (p *Plugin) AuthStatus(ctx context.Context) (ports.AgentAuthStatus, error) 
 
 var gooseAPIKeyEnvVars = []string{
 	"GOOSE_API_KEY",
+	"GOOSE_PROVIDER__API_KEY",
+	"GOOSE_EDITOR_API_KEY",
 	"OPENAI_API_KEY",
 	"ANTHROPIC_API_KEY",
 	"GEMINI_API_KEY",
@@ -104,7 +106,7 @@ func gooseAuthStatusFromConfig(path string) (ports.AgentAuthStatus, bool, error)
 	if err := yaml.Unmarshal(data, &root); err != nil {
 		return ports.AgentAuthStatusUnknown, false, err
 	}
-	if gooseConfigHasCredential(&root) || gooseConfigHasConfiguredProvider(&root) {
+	if gooseConfigHasCredential(&root) {
 		return ports.AgentAuthStatusAuthorized, true, nil
 	}
 	return ports.AgentAuthStatusUnknown, false, nil
@@ -132,32 +134,6 @@ func gooseConfigHasCredential(node *yaml.Node) bool {
 				return true
 			}
 			if gooseConfigHasCredential(node.Content[i+1]) {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-func gooseConfigHasConfiguredProvider(node *yaml.Node) bool {
-	if node == nil {
-		return false
-	}
-	switch node.Kind {
-	case yaml.DocumentNode, yaml.SequenceNode:
-		for _, child := range node.Content {
-			if gooseConfigHasConfiguredProvider(child) {
-				return true
-			}
-		}
-	case yaml.MappingNode:
-		for i := 0; i+1 < len(node.Content); i += 2 {
-			key := strings.ToLower(strings.TrimSpace(node.Content[i].Value))
-			value := strings.ToLower(strings.Trim(strings.TrimSpace(node.Content[i+1].Value), `"'`))
-			if key == "configured" && (value == "true" || value == "yes" || value == "1") {
-				return true
-			}
-			if gooseConfigHasConfiguredProvider(node.Content[i+1]) {
 				return true
 			}
 		}

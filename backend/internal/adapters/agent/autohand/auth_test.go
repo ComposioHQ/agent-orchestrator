@@ -4,14 +4,12 @@ import (
 	"context"
 	"os"
 	"path/filepath"
-	"reflect"
 	"testing"
 
-	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/authprobe"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
-func TestAutohandAuthStatusUsesDocumentedStatusCommand(t *testing.T) {
+func TestAutohandAuthStatusUnknownWithoutDocumentedLocalCredential(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("AUTOHAND_CONFIG", "")
 	for _, name := range []string{
@@ -20,21 +18,12 @@ func TestAutohandAuthStatusUsesDocumentedStatusCommand(t *testing.T) {
 	} {
 		t.Setenv(name, "")
 	}
-	previous := authprobe.CmdRunner
-	authprobe.CmdRunner = func(_ context.Context, name string, args ...string) ([]byte, error) {
-		if name != "autohand" || !reflect.DeepEqual(args, []string{"auth", "status"}) {
-			t.Fatalf("command = %s %#v, want autohand auth status", name, args)
-		}
-		return []byte("Authenticated as agent@example.com"), nil
-	}
-	defer func() { authprobe.CmdRunner = previous }()
-
 	status, err := (&Plugin{resolvedBinary: "autohand"}).AuthStatus(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if status != ports.AgentAuthStatusAuthorized {
-		t.Fatalf("status = %q, want %q", status, ports.AgentAuthStatusAuthorized)
+	if status != ports.AgentAuthStatusUnknown {
+		t.Fatalf("status = %q, want %q", status, ports.AgentAuthStatusUnknown)
 	}
 }
 

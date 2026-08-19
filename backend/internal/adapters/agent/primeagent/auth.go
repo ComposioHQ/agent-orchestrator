@@ -79,11 +79,9 @@ func primeLocalAuthStatus(ctx context.Context) (ports.AgentAuthStatus, bool, err
 	if !ok {
 		return ports.AgentAuthStatusUnknown, false, nil
 	}
-	for _, name := range []string{"auth.json", "models.json"} {
-		status, found, err := primeCredentialJSONStatus(filepath.Join(dir, name), name == "auth.json")
-		if err != nil || found {
-			return status, found, err
-		}
+	status, found, err := primeCredentialJSONStatus(filepath.Join(dir, "auth.json"), true)
+	if err != nil || found {
+		return status, found, err
 	}
 	return ports.AgentAuthStatusUnknown, false, nil
 }

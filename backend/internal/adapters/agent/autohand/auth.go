@@ -7,7 +7,6 @@ import (
 	"os"
 	"strings"
 
-	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/authprobe"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
@@ -18,8 +17,7 @@ func (p *Plugin) AuthStatus(ctx context.Context) (ports.AgentAuthStatus, error) 
 	if err := ctx.Err(); err != nil {
 		return ports.AgentAuthStatusUnknown, err
 	}
-	binary, err := p.ResolveBinary(ctx)
-	if err != nil {
+	if _, err := p.ResolveBinary(ctx); err != nil {
 		return ports.AgentAuthStatusUnknown, err
 	}
 	for _, name := range []string{
@@ -34,7 +32,9 @@ func (p *Plugin) AuthStatus(ctx context.Context) (ports.AgentAuthStatus, error) 
 	if err != nil || status != ports.AgentAuthStatusUnknown {
 		return status, err
 	}
-	return authprobe.CLIStatus(ctx, binary, [][]string{{"auth", "status"}})
+	// The documented CLI flow prompts for browser sign-in on first use; it does
+	// not expose a stable non-interactive `auth status` command.
+	return ports.AgentAuthStatusUnknown, nil
 }
 
 func autohandConfigAuthStatus(configPath string) (ports.AgentAuthStatus, error) {

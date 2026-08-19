@@ -2,7 +2,6 @@ package crush
 
 import (
 	"context"
-	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -54,11 +53,10 @@ func crushLocalAuthStatus(ctx context.Context) (ports.AgentAuthStatus, bool, err
 		crushGoogleCredentialConfigured() {
 		return ports.AgentAuthStatusAuthorized, true, nil
 	}
-	dataDir, ok := crushDataDir()
-	if !ok {
-		return ports.AgentAuthStatusUnknown, false, nil
-	}
-	return crushProvidersAuthStatus(filepath.Join(dataDir, "providers.json"))
+	// providers.json is Crush's downloaded model/provider catalog, not a
+	// credential store. It can contain provider metadata and must not be used
+	// as evidence that a user is authenticated.
+	return ports.AgentAuthStatusUnknown, false, nil
 }
 
 func crushGoogleCredentialConfigured() bool {
@@ -81,49 +79,4 @@ func crushGoogleCredentialConfigured() bool {
 func crushNonEmptyRegularFile(path string) bool {
 	info, err := os.Stat(path)
 	return err == nil && info.Mode().IsRegular() && info.Size() > 0
-}
-
-func crushDataDir() (string, bool) {
-	if dataDir := strings.TrimSpace(os.Getenv("CRUSH_DATA_DIR")); dataDir != "" {
-		return dataDir, true
-	}
-	if dataHome := strings.TrimSpace(os.Getenv("XDG_DATA_HOME")); dataHome != "" {
-		return filepath.Join(dataHome, "crush"), true
-	}
-	home, err := os.UserHomeDir()
-	if err != nil || home == "" {
-		return "", false
-	}
-	return filepath.Join(home, ".local", "share", "crush"), true
-}
-
-type crushProviderAuth struct {
-	APIKey string `json:"api_key"`
-}
-
-func crushProvidersAuthStatus(path string) (ports.AgentAuthStatus, bool, error) {
-	data, err := os.ReadFile(path)
-	if os.IsNotExist(err) {
-		return ports.AgentAuthStatusUnknown, false, nil
-	}
-	if err != nil {
-		return ports.AgentAuthStatusUnknown, false, err
-	}
-	if strings.TrimSpace(string(data)) == "" {
-		return ports.AgentAuthStatusUnknown, false, nil
-	}
-
-	var providers []crushProviderAuth
-	if err := json.Unmarshal(data, &providers); err != nil {
-		return ports.AgentAuthStatusUnknown, false, err
-	}
-	if len(providers) == 0 {
-		return ports.AgentAuthStatusUnknown, false, nil
-	}
-	for _, provider := range providers {
-		if strings.TrimSpace(provider.APIKey) != "" {
-			return ports.AgentAuthStatusAuthorized, true, nil
-		}
-	}
-	return ports.AgentAuthStatusUnknown, false, nil
 }
