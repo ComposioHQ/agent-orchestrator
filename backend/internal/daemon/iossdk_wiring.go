@@ -5,8 +5,9 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/iossimulator"
 )
 
-// IOSDevice is kept as a singleton so the daemon and future lifecycle manager
-// share one toolchain boundary.
+// IOSDevice shares the toolchain boundary while keeping one simulator manager
+// per AO session. The default manager remains for old clients that do not send
+// a session id.
 func IOSDevice() *controllers.IOSDeviceController {
-	return &controllers.IOSDeviceController{Simulator: iossimulator.New()}
+	return &controllers.IOSDeviceController{Simulator: iossimulator.New(), Sessions: iossimulator.NewSessionRegistry(nil)}
 }

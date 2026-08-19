@@ -243,6 +243,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/ios-device/devices": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List available iOS Simulator devices */
+        get: operations["listIOSDevices"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/ios-device/input": {
         parameters: {
             query?: never;
@@ -2108,6 +2125,12 @@ export interface components {
         };
         ControllersSetSessionAutoReviewRequest: {
             enabled: boolean;
+        };
+        ControllersSimulatorDeviceResponse: {
+            deviceId: string;
+            name: string;
+            runtime?: string;
+            state: string;
         };
         ConversationAccountPayload: {
             authMode?: string;
@@ -4087,9 +4110,44 @@ export interface operations {
             };
         };
     };
+    listIOSDevices: {
+        parameters: {
+            query?: {
+                /** @description AO session owning this simulator. */
+                sessionId?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ControllersSimulatorDeviceResponse"][];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
     sendIOSDeviceInput: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description AO session owning this simulator. */
+                sessionId?: string;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -4151,7 +4209,10 @@ export interface operations {
     };
     getIOSDeviceScreenshot: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description AO session owning this simulator. */
+                sessionId?: string;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -4180,7 +4241,12 @@ export interface operations {
     };
     startIOSDevice: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description AO session owning this simulator. */
+                sessionId?: string;
+                /** @description Explicit simulator UDID to attach and boot. */
+                deviceId?: string;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -4209,7 +4275,10 @@ export interface operations {
     };
     getIOSDeviceStatus: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description AO session owning this simulator. */
+                sessionId?: string;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -4238,7 +4307,10 @@ export interface operations {
     };
     stopIOSDevice: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description AO session owning this simulator. */
+                sessionId?: string;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -4267,7 +4339,10 @@ export interface operations {
     };
     streamIOSDevice: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description AO session owning this simulator. */
+                sessionId?: string;
+            };
             header?: never;
             path?: never;
             cookie?: never;

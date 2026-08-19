@@ -29,7 +29,17 @@ type Status struct {
 	ScreenHeight int    `json:"screenHeight,omitempty"`
 }
 
-// Manager owns the single shared iOS Simulator instance.
+// Device is a simulator available to AO, including devices it did not create.
+type Device struct {
+	DeviceID string `json:"deviceId"`
+	Name     string `json:"name"`
+	State    string `json:"state"`
+	Runtime  string `json:"runtime,omitempty"`
+}
+
+// Manager owns one iOS Simulator instance. A manager is intentionally scoped
+// to an AO session by SessionRegistry; this prevents input and frame streams
+// from one worker being routed to another worker's device.
 type Manager struct {
 	mu               sync.Mutex
 	run              CommandRunner
@@ -42,6 +52,36 @@ type Manager struct {
 	windowBounds     func() (windowBounds, error)
 	post             func(Input) error
 	postPtr          func(action string, x, y, x2, y2 float64) error
+}
+
+// SessionRegistry keeps simulator ownership explicit. The registry does not
+// shut down devices when a manager is discarded: callers may attach to a
+// pre-existing simulator and must not affect devices they did not create.
+type SessionRegistry struct {
+	mu      sync.Mutex
+	items   map[string]*Manager
+	newFunc func() *Manager
+}
+
+func NewSessionRegistry(newFunc func() *Manager) *SessionRegistry {
+	if newFunc == nil {
+		newFunc = New
+	}
+	return &SessionRegistry{items: make(map[string]*Manager), newFunc: newFunc}
+}
+
+func (r *SessionRegistry) For(sessionID string) *Manager {
+	if sessionID == "" {
+		return r.newFunc()
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if manager := r.items[sessionID]; manager != nil {
+		return manager
+	}
+	manager := r.newFunc()
+	r.items[sessionID] = manager
+	return manager
 }
 
 // NativeScreenshot invokes the optional ScreenCaptureKit helper in single-shot
@@ -160,6 +200,61 @@ func NewWithRunner(run CommandRunner) *Manager {
 		post:         defaultPostInput,
 		postPtr:      defaultPostPointer,
 	}
+}
+
+// ListDevices returns all available iOS simulator devices without changing
+// session ownership or boot state.
+func (m *Manager) ListDevices() ([]Device, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out, err := m.run("xcrun", "simctl", "list", "devices", "-j")
+	if err != nil {
+		return nil, fmt.Errorf("list simulator devices: %w", err)
+	}
+	var payload struct {
+		Devices map[string][]struct {
+			UDID  string `json:"udid"`
+			Name  string `json:"name"`
+			State string `json:"state"`
+		} `json:"devices"`
+	}
+	if err := json.Unmarshal(out, &payload); err != nil {
+		return nil, fmt.Errorf("decode simulator devices: %w", err)
+	}
+	devices := make([]Device, 0)
+	for runtime, entries := range payload.Devices {
+		for _, d := range entries {
+			devices = append(devices, Device{DeviceID: d.UDID, Name: d.Name, State: d.State, Runtime: runtime})
+		}
+	}
+	sort.Slice(devices, func(i, j int) bool { return devices[i].Name < devices[j].Name })
+	return devices, nil
+}
+
+// StartDevice attaches this manager to an explicit UDID and boots it. It is
+// the session-safe alternative to Start, which creates AO's default device.
+func (m *Manager) StartDevice(deviceID string) (Status, error) {
+	if strings.TrimSpace(deviceID) == "" {
+		return Status{}, fmt.Errorf("device id is required")
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	state, err := m.deviceState(deviceID)
+	if err != nil {
+		return Status{}, err
+	}
+	m.device = Status{Available: true, DeviceID: deviceID, State: state}
+	if state != "Booted" {
+		if _, err := m.run("xcrun", "simctl", "boot", deviceID); err != nil && !strings.Contains(err.Error(), "already booted") {
+			return m.device, err
+		}
+		if _, err := m.run("xcrun", "simctl", "bootstatus", deviceID, "-b"); err != nil {
+			return m.device, fmt.Errorf("wait for simulator boot: %w", err)
+		}
+	}
+	m.device.State = "Booted"
+	m.device.ScreenWidth, m.device.ScreenHeight = m.captureSize()
+	return m.device, nil
 }
 
 func defaultRunner(name string, args ...string) ([]byte, error) {

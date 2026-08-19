@@ -43,6 +43,24 @@ type SimulatorStatusResponse struct {
 	ScreenHeight int    `json:"screenHeight,omitempty"`
 }
 
+// SimulatorDeviceResponse is a selectable CoreSimulator device. Devices are
+// listed separately from a session's attached status so selecting a device
+// never changes another worker's simulator.
+type SimulatorDeviceResponse struct {
+	DeviceID string `json:"deviceId"`
+	Name     string `json:"name"`
+	State    string `json:"state"`
+	Runtime  string `json:"runtime,omitempty"`
+}
+
+type SimulatorSessionQuery struct {
+	SessionID string `query:"sessionId,omitempty" description:"AO session owning this simulator."`
+}
+
+type SimulatorDeviceQuery struct {
+	DeviceID string `query:"deviceId,omitempty" description:"Explicit simulator UDID to attach and boot."`
+}
+
 // SimulatorScreenshotResponse contains an encoded simulator screenshot.
 // Width/Height are the framebuffer pixel dimensions — the coordinate space the
 // input endpoints expect — so the panel can map pointer events exactly without

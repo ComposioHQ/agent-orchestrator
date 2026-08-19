@@ -587,9 +587,44 @@ paths:
       summary: Terminate an iOS app
       tags:
       - ios-device
+  /api/v1/ios-device/devices:
+    get:
+      operationId: listIOSDevices
+      parameters:
+      - description: AO session owning this simulator.
+        in: query
+        name: sessionId
+        schema:
+          description: AO session owning this simulator.
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/ControllersSimulatorDeviceResponse'
+                type: array
+          description: OK
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+      summary: List available iOS Simulator devices
+      tags:
+      - ios-device
   /api/v1/ios-device/input:
     post:
       operationId: sendIOSDeviceInput
+      parameters:
+      - description: AO session owning this simulator.
+        in: query
+        name: sessionId
+        schema:
+          description: AO session owning this simulator.
+          type: string
       requestBody:
         content:
           application/json:
@@ -634,6 +669,13 @@ paths:
   /api/v1/ios-device/screenshot:
     get:
       operationId: getIOSDeviceScreenshot
+      parameters:
+      - description: AO session owning this simulator.
+        in: query
+        name: sessionId
+        schema:
+          description: AO session owning this simulator.
+          type: string
       responses:
         "200":
           content:
@@ -653,6 +695,19 @@ paths:
   /api/v1/ios-device/start:
     post:
       operationId: startIOSDevice
+      parameters:
+      - description: AO session owning this simulator.
+        in: query
+        name: sessionId
+        schema:
+          description: AO session owning this simulator.
+          type: string
+      - description: Explicit simulator UDID to attach and boot.
+        in: query
+        name: deviceId
+        schema:
+          description: Explicit simulator UDID to attach and boot.
+          type: string
       responses:
         "200":
           content:
@@ -672,6 +727,13 @@ paths:
   /api/v1/ios-device/status:
     get:
       operationId: getIOSDeviceStatus
+      parameters:
+      - description: AO session owning this simulator.
+        in: query
+        name: sessionId
+        schema:
+          description: AO session owning this simulator.
+          type: string
       responses:
         "200":
           content:
@@ -691,6 +753,13 @@ paths:
   /api/v1/ios-device/stop:
     post:
       operationId: stopIOSDevice
+      parameters:
+      - description: AO session owning this simulator.
+        in: query
+        name: sessionId
+        schema:
+          description: AO session owning this simulator.
+          type: string
       responses:
         "200":
           content:
@@ -710,6 +779,13 @@ paths:
   /api/v1/ios-device/stream:
     get:
       operationId: streamIOSDevice
+      parameters:
+      - description: AO session owning this simulator.
+        in: query
+        name: sessionId
+        schema:
+          description: AO session owning this simulator.
+          type: string
       responses:
         "101":
           content:
@@ -5924,6 +6000,21 @@ components:
           type: boolean
       required:
       - enabled
+      type: object
+    ControllersSimulatorDeviceResponse:
+      properties:
+        deviceId:
+          type: string
+        name:
+          type: string
+        runtime:
+          type: string
+        state:
+          type: string
+      required:
+      - deviceId
+      - name
+      - state
       type: object
     ConversationAccountPayload:
       properties:

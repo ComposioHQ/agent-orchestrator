@@ -17,7 +17,38 @@ import (
 )
 
 // IOSDeviceController exposes the iOS Simulator HTTP API.
-type IOSDeviceController struct{ Simulator *iossimulator.Manager }
+type IOSDeviceController struct {
+	Simulator *iossimulator.Manager
+	Sessions  *iossimulator.SessionRegistry
+}
+
+func (c *IOSDeviceController) manager(r *http.Request) *iossimulator.Manager {
+	if c.Sessions != nil {
+		if id := r.URL.Query().Get("sessionId"); id != "" {
+			return c.Sessions.For(id)
+		}
+	}
+	return c.Simulator
+}
+
+// Devices lists selectable simulator devices without changing boot state.
+func (c *IOSDeviceController) Devices(w http.ResponseWriter, r *http.Request) {
+	m := c.manager(r)
+	if m == nil {
+		envelope.WriteJSON(w, http.StatusNotImplemented, map[string]string{"error": "iOS Simulator is not wired"})
+		return
+	}
+	devices, err := m.ListDevices()
+	if err != nil {
+		envelope.WriteAPIError(w, r, http.StatusConflict, "conflict", "IOS_SIMULATOR_DEVICES", err.Error(), nil)
+		return
+	}
+	response := make([]SimulatorDeviceResponse, len(devices))
+	for i, device := range devices {
+		response[i] = SimulatorDeviceResponse{DeviceID: device.DeviceID, Name: device.Name, State: device.State, Runtime: device.Runtime}
+	}
+	envelope.WriteJSON(w, http.StatusOK, response)
+}
 
 // Status reports the detected iOS toolchain.
 func (c *IOSDeviceController) Status(w http.ResponseWriter, r *http.Request) {
@@ -43,20 +74,28 @@ func (c *IOSDeviceController) FetchRuntime(w http.ResponseWriter, r *http.Reques
 
 // SimulatorStatus reports the managed simulator state.
 func (c *IOSDeviceController) SimulatorStatus(w http.ResponseWriter, r *http.Request) {
-	if c.Simulator == nil {
+	m := c.manager(r)
+	if m == nil {
 		envelope.WriteJSON(w, http.StatusNotImplemented, map[string]string{"error": "iOS Simulator is not wired"})
 		return
 	}
-	envelope.WriteJSON(w, http.StatusOK, simulatorStatusResponse(c.Simulator.Status()))
+	envelope.WriteJSON(w, http.StatusOK, simulatorStatusResponse(m.Status()))
 }
 
 // StartSimulator boots the managed simulator.
 func (c *IOSDeviceController) StartSimulator(w http.ResponseWriter, r *http.Request) {
-	if c.Simulator == nil {
+	m := c.manager(r)
+	if m == nil {
 		envelope.WriteJSON(w, http.StatusNotImplemented, map[string]string{"error": "iOS Simulator is not wired"})
 		return
 	}
-	status, err := c.Simulator.Start()
+	var status iossimulator.Status
+	var err error
+	if deviceID := r.URL.Query().Get("deviceId"); deviceID != "" {
+		status, err = m.StartDevice(deviceID)
+	} else {
+		status, err = m.Start()
+	}
 	if err != nil {
 		envelope.WriteAPIError(w, r, http.StatusInternalServerError, "internal", "IOS_SIMULATOR_START", err.Error(), nil)
 		return
@@ -66,11 +105,12 @@ func (c *IOSDeviceController) StartSimulator(w http.ResponseWriter, r *http.Requ
 
 // StopSimulator shuts down the managed simulator.
 func (c *IOSDeviceController) StopSimulator(w http.ResponseWriter, r *http.Request) {
-	if c.Simulator == nil {
+	m := c.manager(r)
+	if m == nil {
 		envelope.WriteJSON(w, http.StatusNotImplemented, map[string]string{"error": "iOS Simulator is not wired"})
 		return
 	}
-	status, err := c.Simulator.Stop()
+	status, err := m.Stop()
 	if err != nil {
 		envelope.WriteAPIError(w, r, http.StatusInternalServerError, "internal", "IOS_SIMULATOR_STOP", err.Error(), nil)
 		return
@@ -80,16 +120,17 @@ func (c *IOSDeviceController) StopSimulator(w http.ResponseWriter, r *http.Reque
 
 // Screenshot captures the managed simulator display.
 func (c *IOSDeviceController) Screenshot(w http.ResponseWriter, r *http.Request) {
-	if c.Simulator == nil {
+	m := c.manager(r)
+	if m == nil {
 		envelope.WriteJSON(w, http.StatusNotImplemented, map[string]string{"error": "iOS Simulator is not wired"})
 		return
 	}
-	data, err := c.Simulator.Screenshot()
+	data, err := m.Screenshot()
 	if err != nil {
 		envelope.WriteAPIError(w, r, http.StatusConflict, "conflict", "IOS_SIMULATOR_SCREENSHOT", err.Error(), nil)
 		return
 	}
-	width, height := c.Simulator.Frames().Size()
+	width, height := m.Frames().Size()
 	envelope.WriteJSON(w, http.StatusOK, SimulatorScreenshotResponse{Data: base64.StdEncoding.EncodeToString(data), MimeType: "image/png", Width: width, Height: height})
 }
 
@@ -101,7 +142,8 @@ func (c *IOSDeviceController) Permissions(w http.ResponseWriter, r *http.Request
 
 // Input sends tap, swipe, text, or key input to the simulator.
 func (c *IOSDeviceController) Input(w http.ResponseWriter, r *http.Request) {
-	if c.Simulator == nil {
+	m := c.manager(r)
+	if m == nil {
 		envelope.WriteJSON(w, http.StatusNotImplemented, map[string]string{"error": "iOS Simulator is not wired"})
 		return
 	}
@@ -110,7 +152,7 @@ func (c *IOSDeviceController) Input(w http.ResponseWriter, r *http.Request) {
 		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "INVALID_JSON", "Invalid JSON body", nil)
 		return
 	}
-	err := c.Simulator.Input(iossimulator.Input{Action: request.Action, X: request.X, Y: request.Y, X2: request.X2, Y2: request.Y2, Text: request.Text, KeyCode: request.KeyCode})
+	err := m.Input(iossimulator.Input{Action: request.Action, X: request.X, Y: request.Y, X2: request.X2, Y2: request.Y2, Text: request.Text, KeyCode: request.KeyCode})
 	if err != nil {
 		envelope.WriteAPIError(w, r, http.StatusConflict, "conflict", "IOS_SIMULATOR_INPUT", err.Error(), nil)
 		return
@@ -125,7 +167,8 @@ func (c *IOSDeviceController) Input(w http.ResponseWriter, r *http.Request) {
 // their framebuffer pixel size; error frames keep the panel's connection state
 // distinguishable from a dead socket while the capture helper restarts.
 func (c *IOSDeviceController) Stream(w http.ResponseWriter, r *http.Request) {
-	if c.Simulator == nil {
+	m := c.manager(r)
+	if m == nil {
 		http.Error(w, "iOS Simulator is not wired", http.StatusNotImplemented)
 		return
 	}
@@ -135,7 +178,7 @@ func (c *IOSDeviceController) Stream(w http.ResponseWriter, r *http.Request) {
 	}
 	defer func() { _ = conn.Close(websocket.StatusNormalClosure, "stream ended") }()
 
-	frames, unsubscribe := c.Simulator.Frames().Subscribe()
+	frames, unsubscribe := m.Frames().Subscribe()
 	defer unsubscribe()
 
 	stall := time.NewTicker(2 * time.Second)
@@ -158,7 +201,7 @@ func (c *IOSDeviceController) Stream(w http.ResponseWriter, r *http.Request) {
 			// the reason so the panel can show a disconnected state instead of
 			// a frozen frame.
 			reason := "capture stalled"
-			if lastErr := c.Simulator.Frames().LastError(); lastErr != nil {
+			if lastErr := m.Frames().LastError(); lastErr != nil {
 				reason = lastErr.Error()
 			}
 			_ = wsjson.Write(context.Background(), conn, map[string]string{"error": reason})
@@ -168,12 +211,17 @@ func (c *IOSDeviceController) Stream(w http.ResponseWriter, r *http.Request) {
 
 // InstallApp installs an app bundle on the managed simulator.
 func (c *IOSDeviceController) InstallApp(w http.ResponseWriter, r *http.Request) {
+	m := c.manager(r)
 	var q SimulatorAppRequest
 	if json.NewDecoder(r.Body).Decode(&q) != nil || q.AppPath == "" {
 		envelope.WriteAPIError(w, r, 400, "bad_request", "INVALID_APP", "appPath is required", nil)
 		return
 	}
-	if err := c.Simulator.Install(q.AppPath); err != nil {
+	if m == nil {
+		http.Error(w, "not wired", http.StatusNotImplemented)
+		return
+	}
+	if err := m.Install(q.AppPath); err != nil {
 		envelope.WriteAPIError(w, r, 409, "conflict", "IOS_INSTALL", err.Error(), nil)
 		return
 	}
@@ -182,12 +230,17 @@ func (c *IOSDeviceController) InstallApp(w http.ResponseWriter, r *http.Request)
 
 // LaunchApp launches an installed app by bundle identifier.
 func (c *IOSDeviceController) LaunchApp(w http.ResponseWriter, r *http.Request) {
+	m := c.manager(r)
 	var q SimulatorAppRequest
 	if json.NewDecoder(r.Body).Decode(&q) != nil || q.BundleID == "" {
 		envelope.WriteAPIError(w, r, 400, "bad_request", "INVALID_BUNDLE_ID", "bundleId is required", nil)
 		return
 	}
-	if err := c.Simulator.Launch(q.BundleID); err != nil {
+	if m == nil {
+		http.Error(w, "not wired", http.StatusNotImplemented)
+		return
+	}
+	if err := m.Launch(q.BundleID); err != nil {
 		envelope.WriteAPIError(w, r, 409, "conflict", "IOS_LAUNCH", err.Error(), nil)
 		return
 	}
@@ -196,12 +249,17 @@ func (c *IOSDeviceController) LaunchApp(w http.ResponseWriter, r *http.Request) 
 
 // TerminateApp stops an app by bundle identifier.
 func (c *IOSDeviceController) TerminateApp(w http.ResponseWriter, r *http.Request) {
+	m := c.manager(r)
 	var q SimulatorAppRequest
 	if json.NewDecoder(r.Body).Decode(&q) != nil || q.BundleID == "" {
 		envelope.WriteAPIError(w, r, 400, "bad_request", "INVALID_BUNDLE_ID", "bundleId is required", nil)
 		return
 	}
-	if err := c.Simulator.Terminate(q.BundleID); err != nil {
+	if m == nil {
+		http.Error(w, "not wired", http.StatusNotImplemented)
+		return
+	}
+	if err := m.Terminate(q.BundleID); err != nil {
 		envelope.WriteAPIError(w, r, 409, "conflict", "IOS_TERMINATE", err.Error(), nil)
 		return
 	}
@@ -210,6 +268,7 @@ func (c *IOSDeviceController) TerminateApp(w http.ResponseWriter, r *http.Reques
 
 // BuildApp builds, installs, and optionally launches an iOS app.
 func (c *IOSDeviceController) BuildApp(w http.ResponseWriter, r *http.Request) {
+	m := c.manager(r)
 	var q SimulatorBuildRequest
 	if json.NewDecoder(r.Body).Decode(&q) != nil || q.Scheme == "" {
 		envelope.WriteAPIError(w, r, 400, "bad_request", "INVALID_BUILD", "scheme is required", nil)
@@ -220,16 +279,16 @@ func (c *IOSDeviceController) BuildApp(w http.ResponseWriter, r *http.Request) {
 		envelope.WriteAPIError(w, r, 409, "conflict", "IOS_BUILD", err.Error(), nil)
 		return
 	}
-	if c.Simulator == nil {
+	if m == nil {
 		http.Error(w, "not wired", http.StatusNotImplemented)
 		return
 	}
-	if err := c.Simulator.Install(app); err != nil {
+	if err := m.Install(app); err != nil {
 		envelope.WriteAPIError(w, r, 409, "conflict", "IOS_INSTALL", err.Error(), nil)
 		return
 	}
 	if q.BundleID != "" {
-		if err := c.Simulator.Launch(q.BundleID); err != nil {
+		if err := m.Launch(q.BundleID); err != nil {
 			envelope.WriteAPIError(w, r, 409, "conflict", "IOS_LAUNCH", err.Error(), nil)
 			return
 		}
@@ -255,6 +314,7 @@ func iosStatusResponse(status iossdk.ToolchainStatus) StatusResponse {
 // surfaces such as the frame stream stay out of this REST group (see
 // RegisterStream) so the REST timeout middleware cannot kill them.
 func (c *IOSDeviceController) Register(r chi.Router) {
+	r.Get("/ios-device/devices", c.Devices)
 	r.Get("/ios-device/toolchain/status", c.Status)
 	r.Post("/ios-device/toolchain/recheck", c.Recheck)
 	r.Post("/ios-device/toolchain/fetch-runtime", c.FetchRuntime)
