@@ -489,8 +489,13 @@ describe("portable inspector presentations", () => {
     fireEvent.click(
       screen.getByRole("button", { name: /maya.*Changes requested/ }),
     );
+    const viewPR = screen.getByRole("link", { name: "View on PR" });
+    const rereview = screen.getByRole("button", {
+      name: "Request to re-review PR",
+    });
+    expect(viewPR.className).toBe(rereview.className);
     fireEvent.click(
-      screen.getByRole("button", { name: "Request to re-review PR" }),
+      rereview,
     );
 
     await waitFor(() => {

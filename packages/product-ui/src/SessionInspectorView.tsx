@@ -861,6 +861,9 @@ function GithubReviewHistory({
 	);
 }
 
+const reviewHeaderActionClass =
+	"inline-flex h-7 min-w-0 max-w-full items-center justify-center rounded-md border border-border-strong px-1.5 text-center text-micro font-medium tracking-tight text-muted-foreground no-underline transition-colors hover:bg-interactive-hover hover:text-foreground @max-[300px]/inspector:w-full";
+
 function ExternalReviewCard({
 	defaultOpen,
 	entry,
@@ -909,7 +912,7 @@ function ExternalReviewCard({
 					) : <span aria-hidden="true" />}
 					<div className="flex min-w-0 flex-wrap items-center justify-end gap-2 @max-[300px]/inspector:w-full">
 						{reviewUrl ? (
-							<ExternalLink className="inline-flex h-7 items-center rounded-md border border-border/70 px-2 text-2xs font-medium text-muted-foreground no-underline transition-colors hover:border-border-strong hover:bg-interactive-hover hover:text-foreground" href={reviewUrl}>
+							<ExternalLink className={reviewHeaderActionClass} href={reviewUrl}>
 								{labels.viewOnPR}
 							</ExternalLink>
 						) : null}
@@ -921,7 +924,7 @@ function ExternalReviewCard({
 								</span>
 							) : (
 								<button
-									className="inline-flex h-7 min-w-0 max-w-full items-center justify-center rounded-md border border-border-strong px-1.5 text-center text-micro font-medium tracking-tight text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground @max-[300px]/inspector:w-full"
+									className={reviewHeaderActionClass}
 									onClick={async () => {
 										setRereviewError(false);
 										try {
