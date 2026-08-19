@@ -1785,9 +1785,8 @@ body.is-resizing-x [data-slot="inspector-container"] {
 /* Conversation minimap: each dash is a real turn anchor. The rail forwards
    pointer, wheel, and keyboard navigation to the conversation viewport. */
 .cursor-chat-surface {
-	background:
-		radial-gradient(circle at 50% 0%, color-mix(in srgb, var(--color-logo-accent) 3%, transparent), transparent 34rem),
-		var(--color-bg-primary);
+	/* Same canvas as the kanban board (`bg-background` → `--color-bg-primary`). */
+	background: var(--color-bg-primary);
 }
 
 /* Chat: no accent focus rings. Hover/active already cue interactivity; the blue
@@ -1809,7 +1808,7 @@ body.is-resizing-x [data-slot="inspector-container"] {
 
 .cursor-chat-header {
 	border-bottom: 1px solid var(--color-border);
-	background: color-mix(in srgb, var(--color-bg-sidebar) 72%, var(--color-bg-primary));
+	background: transparent;
 }
 
 .cursor-chat-role-icon {
@@ -1830,7 +1829,7 @@ body.is-resizing-x [data-slot="inspector-container"] {
 .cursor-chat-timeline {
 	--chat-readable-font-size: var(--chat-font-size, var(--font-size-md));
 	--chat-readable-code-font-size: max(10px, calc(var(--chat-readable-font-size) - 1.5px));
-	background: linear-gradient(to bottom, color-mix(in srgb, var(--color-bg-secondary) 16%, transparent), transparent 7rem);
+	background: transparent;
 }
 
 .cursor-chat-timeline .chat-md,
@@ -1886,8 +1885,9 @@ body.is-resizing-x [data-slot="inspector-container"] {
    restates the four colors instead of repeating the state selectors — and the
    drag highlight cannot be outranked by a theme's plain border-color. */
 .cursor-chat-composer {
-	--composer-bg: #1c1c1c;
-	--composer-bg-active: #1c1c1c;
+	/* Same fill as a kanban session card (`bg-surface` → `--color-bg-secondary`). */
+	--composer-bg: var(--color-bg-secondary);
+	--composer-bg-active: var(--color-bg-secondary);
 	--composer-border: color-mix(in oklch, var(--color-border-strong) 36%, transparent);
 	--composer-border-hover: color-mix(in oklch, var(--color-border-strong) 68%, transparent);
 	--composer-border-focus: color-mix(in oklch, var(--color-border-strong) 88%, transparent);
@@ -1965,9 +1965,7 @@ body.is-resizing-x [data-slot="inspector-container"] {
 }
 
 :root[data-theme="light"] .cursor-chat-surface {
-	background:
-		radial-gradient(circle at 50% 0%, color-mix(in srgb, var(--color-logo-accent) 5%, transparent), transparent 34rem),
-		var(--color-bg-primary);
+	background: var(--color-bg-primary);
 }
 
 :root[data-theme="light"] .cursor-chat-surface .text-foreground,
@@ -1989,12 +1987,12 @@ body.is-resizing-x [data-slot="inspector-container"] {
 }
 
 :root[data-theme="light"] .cursor-chat-header {
-	background: color-mix(in srgb, var(--color-bg-sidebar) 86%, var(--color-bg-primary));
+	background: transparent;
 }
 
 :root[data-theme="light"] .cursor-chat-composer {
-	--composer-bg: color-mix(in srgb, var(--color-bg-primary) 88%, var(--color-bg-secondary));
-	--composer-bg-active: color-mix(in srgb, var(--color-bg-primary) 72%, var(--color-bg-secondary));
+	--composer-bg: var(--color-bg-secondary);
+	--composer-bg-active: var(--color-bg-secondary);
 	--composer-border: color-mix(in oklch, var(--color-text-primary) 10%, transparent);
 	--composer-border-hover: color-mix(in oklch, var(--color-text-primary) 16%, transparent);
 	--composer-border-focus: color-mix(in oklch, var(--color-text-primary) 24%, transparent);
