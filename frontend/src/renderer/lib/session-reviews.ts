@@ -36,11 +36,11 @@ export function sessionReviewsQueryOptions(session: WorkspaceSession, enabled: b
 	});
 }
 
-/** Review states for a session's open (non-draft) PRs, matching ReviewPanel semantics. */
+/** Review states for a session's active PRs. Open and draft PRs can be reviewed; merged/closed PRs cannot. */
 export function openReviewStatesFor(session: WorkspaceSession, reviewStates: PRReviewState[]): PRReviewState[] {
 	const openPRURLs = new Set(
 		sortedPRs(session)
-			.filter((pr) => pr.state === "open")
+			.filter((pr) => pr.state === "open" || pr.state === "draft")
 			.map((pr) => pr.url),
 	);
 	return reviewStates.filter((reviewState) => openPRURLs.has(reviewState.prUrl));

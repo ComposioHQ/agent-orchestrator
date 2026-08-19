@@ -5,22 +5,24 @@ import { describe, expect, it, vi } from "vitest";
 import { agentsQueryKey } from "../hooks/useAgentsQuery";
 import { CreateProjectAgentSheet, defaultAuthorizedAgent, RequiredAgentField } from "./CreateProjectAgentSheet";
 
-function renderSheet(onSubmit = vi.fn().mockResolvedValue(undefined)) {
-	const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-	queryClient.setQueryData(agentsQueryKey, {
-		supported: [
-			{ id: "claude-code", label: "claude-code" },
-			{ id: "codex", label: "codex" },
-		],
-		installed: [
-			{ id: "claude-code", label: "claude-code", authStatus: "authorized" },
-			{ id: "codex", label: "codex", authStatus: "authorized" },
-		],
-		authorized: [
-			{ id: "claude-code", label: "claude-code", authStatus: "authorized" },
-			{ id: "codex", label: "codex", authStatus: "authorized" },
-		],
-	});
+function renderSheet(onSubmit = vi.fn().mockResolvedValue(undefined), queryClient?: QueryClient) {
+	queryClient ??= new QueryClient({ defaultOptions: { queries: { retry: false } } });
+	if (queryClient.getQueryData(agentsQueryKey) === undefined) {
+		queryClient.setQueryData(agentsQueryKey, {
+			supported: [
+				{ id: "claude-code", label: "claude-code" },
+				{ id: "codex", label: "codex" },
+			],
+			installed: [
+				{ id: "claude-code", label: "claude-code", authStatus: "authorized" },
+				{ id: "codex", label: "codex", authStatus: "authorized" },
+			],
+			authorized: [
+				{ id: "claude-code", label: "claude-code", authStatus: "authorized" },
+				{ id: "codex", label: "codex", authStatus: "authorized" },
+			],
+		});
+	}
 	render(
 		<QueryClientProvider client={queryClient}>
 			<CreateProjectAgentSheet
@@ -96,6 +98,12 @@ describe("CreateProjectAgentSheet", () => {
 			orchestratorAgent: "claude-code",
 			trackerIntake: undefined,
 		});
+	});
+
+	it("does not show a manual agent catalog refresh action", () => {
+		renderSheet();
+
+		expect(screen.queryByRole("button", { name: "Refresh agents" })).not.toBeInTheDocument();
 	});
 
 	it("blocks submit when intake is enabled with no assignee, then passes the intake payload once one is set", async () => {

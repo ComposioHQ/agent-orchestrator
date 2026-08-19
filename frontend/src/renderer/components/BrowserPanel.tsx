@@ -269,7 +269,10 @@ export function BrowserPanelView({
 		window.localStorage.setItem(RAIL_PINNED_STORAGE_KEY, next ? "1" : "0");
 	}, []);
 
-	const canUseDevTools = hasNativeBrowser && Boolean(viewId);
+	// Docked DevTools belongs to the native page view, which is intentionally
+	// hidden while the active target is blank. Keep close available for any
+	// in-flight state update, but do not offer an open action with no page.
+	const canUseDevTools = hasNativeBrowser && Boolean(viewId) && Boolean(navState.url || devtoolsState.open);
 
 	useEffect(() => {
 		setUrlInput(navState.url);
@@ -537,22 +540,6 @@ export function BrowserPanelView({
 				) : null}
 			</form>
 			<div className="browser-panel__body flex min-h-0 flex-1 overflow-hidden">
-				{/* Docked keeps the rail on the right (out of the way of the toolbar/
-				    address bar); popped-out keeps it on the left. */}
-				{poppedOut ? (
-					<BrowserTabsRail
-						activeTabId={activeTabId}
-						onCloseTab={closeTab}
-						onOpenTab={handleOpenTab}
-						onPinnedChange={handlePinnedChange}
-						onReorderTabs={reorderTabs}
-						onSelectTab={handleSelectTab}
-						pinned={pinned}
-						poppedOut={poppedOut}
-						ref={railRef}
-						tabs={tabs}
-					/>
-				) : null}
 				<div
 					className="browser-panel__viewport relative min-h-0 flex-1 overflow-hidden bg-background"
 					data-testid="browser-viewport"
@@ -576,20 +563,20 @@ export function BrowserPanelView({
 						</p>
 					) : null}
 				</div>
-				{!poppedOut ? (
-					<BrowserTabsRail
-						activeTabId={activeTabId}
-						onCloseTab={closeTab}
-						onOpenTab={handleOpenTab}
-						onPinnedChange={handlePinnedChange}
-						onReorderTabs={reorderTabs}
-						onSelectTab={handleSelectTab}
-						pinned={pinned}
-						poppedOut={poppedOut}
-						ref={railRef}
-						tabs={tabs}
-					/>
-				) : null}
+				{/* Keep tabs on the right in both docked and popped-out layouts so
+				    maximizing the browser preserves their spatial origin. */}
+				<BrowserTabsRail
+					activeTabId={activeTabId}
+					onCloseTab={closeTab}
+					onOpenTab={handleOpenTab}
+					onPinnedChange={handlePinnedChange}
+					onReorderTabs={reorderTabs}
+					onSelectTab={handleSelectTab}
+					pinned={pinned}
+					poppedOut={poppedOut}
+					ref={railRef}
+					tabs={tabs}
+				/>
 			</div>
 		</div>
 	);

@@ -48,6 +48,7 @@ export function createEventTransport(queryClient: QueryClient): EventTransport {
 		connect() {
 			let debounce: ReturnType<typeof setTimeout> | undefined;
 			const pendingConversationSessions = new Set<string>();
+			const pendingInterfaceTransitionSessions = new Set<string>();
 			let workspaceInvalidationPending = false;
 			let retryTimer: ReturnType<typeof setTimeout> | undefined;
 			let source: EventSource | undefined;
@@ -67,8 +68,19 @@ export function createEventTransport(queryClient: QueryClient): EventTransport {
 						// sidebar but leaves a Chat timeline frozen on its pre-turn snapshot.
 						const payload =
 							typeof decoded.payload === "object" && decoded.payload !== null
-								? (decoded.payload as { conversationId?: unknown })
+								? (decoded.payload as {
+										conversationId?: unknown;
+										interfaceTransitionId?: unknown;
+								  })
 								: undefined;
+						if (
+							typeof decoded.sessionId === "string" &&
+							decoded.sessionId &&
+							typeof payload?.interfaceTransitionId === "string" &&
+							payload.interfaceTransitionId
+						) {
+							pendingInterfaceTransitionSessions.add(decoded.sessionId);
+						}
 						if (
 							typeof decoded.sessionId === "string" &&
 							decoded.sessionId &&
@@ -97,6 +109,12 @@ export function createEventTransport(queryClient: QueryClient): EventTransport {
 						void queryClient.invalidateQueries({ queryKey: conversationQueryKey(sessionId) });
 					}
 					pendingConversationSessions.clear();
+					for (const sessionId of pendingInterfaceTransitionSessions) {
+						void queryClient.invalidateQueries({
+							queryKey: ["session-interface-transition", sessionId],
+						});
+					}
+					pendingInterfaceTransitionSessions.clear();
 				}, INVALIDATE_DEBOUNCE_MS);
 			};
 

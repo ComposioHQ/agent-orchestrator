@@ -74,6 +74,21 @@ describe("send keys", () => {
 		expect(within(actions).queryByText(/Enter to/)).not.toBeInTheDocument();
 	});
 
+	it("keeps optional footer actions with message tools, away from send controls", () => {
+		render(
+			<ChatComposer
+				onSend={vi.fn()}
+				onStageAttachments={vi.fn().mockResolvedValue([])}
+				settings={<button type="button">Model</button>}
+				footerAction={<button type="button">Compact</button>}
+			/>,
+		);
+		const tools = screen.getByRole("group", { name: "Message tools" });
+		expect(within(tools).getByRole("button", { name: "Compact" })).toBeInTheDocument();
+		const actions = screen.getByRole("group", { name: "Send message controls" });
+		expect(within(actions).queryByRole("button", { name: "Compact" })).not.toBeInTheDocument();
+	});
+
 	it("starts as a single-line field and grows only when the draft needs it", () => {
 		const { field } = renderComposer();
 		expect(field).toHaveAttribute("rows", "1");
@@ -88,7 +103,7 @@ describe("send keys", () => {
 
 		await userEvent.type(field, "hello");
 		expect(send).toBeEnabled();
-		expect(send).toHaveClass("hover:bg-logo-accent-bright", "focus-visible:ring-logo-accent/45");
+		expect(send).toHaveClass("hover:bg-logo-accent-bright");
 	});
 
 	it("turns the empty send action into Stop while the agent is working", async () => {

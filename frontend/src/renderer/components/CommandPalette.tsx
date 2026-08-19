@@ -51,7 +51,7 @@ export function CommandPalette() {
 	const restoreSessionById = useRestoreSession();
 	const params = useParams({ strict: false }) as { projectId?: string; sessionId?: string };
 	const workspaces = useWorkspaceQuery().data ?? [];
-	const { createProject, initializeProjectRepository } = useShell();
+	const { cloneProject, createProject, initializeProjectRepository } = useShell();
 	const resolvedTheme = useUiStore((s) => s.resolvedTheme);
 	const setThemePreference = useUiStore((s) => s.setThemePreference);
 	const isOpen = useUiStore((s) => s.isCommandPaletteOpen);
@@ -588,6 +588,7 @@ export function CommandPalette() {
 
 			<CreateProjectFlow
 				mode="choose"
+				onCloneProject={cloneProject}
 				onCreateProject={createProject}
 				onInitializeProject={initializeProjectRepository}
 			>
