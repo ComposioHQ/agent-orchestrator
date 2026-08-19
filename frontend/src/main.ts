@@ -73,6 +73,7 @@ import {
 import { browserDaemonOwnershipDecision, shouldReplacePortHolder } from "./shared/daemon-takeover";
 import { buildDaemonEnv, resolveShellEnv, type ShellRunner } from "./shared/shell-env";
 import {
+	findCloudDeepLinkArg,
 	handleCloudDeepLink,
 	installCloudIPC,
 	registerCloudProtocol,
@@ -1851,7 +1852,7 @@ app.on("open-url", (event, url) => {
 });
 
 app.on("second-instance", (_event, argv) => {
-	const deepLink = argv.find((value) => value.startsWith("ao-app://"));
+	const deepLink = findCloudDeepLinkArg(argv);
 	if (deepLink) {
 		void handleCloudDeepLinkAndFocus(deepLink);
 		return;
@@ -1992,9 +1993,8 @@ app.whenReady().then(async () => {
 	void startDaemon();
 	initAutoUpdates();
 
-	// Windows/Linux: on first launch, the deep-link URL may arrive as a
-	// process.argv entry (e.g. ao-app://callback?token=...).
-	const deepLinkArg = process.argv.find((a) => a.startsWith("ao-app://"));
+	// Some OS/browser launchers deliver the deep-link URL as a process.argv entry.
+	const deepLinkArg = findCloudDeepLinkArg(process.argv);
 	if (deepLinkArg) {
 		void handleCloudDeepLinkAndFocus(deepLinkArg);
 	}

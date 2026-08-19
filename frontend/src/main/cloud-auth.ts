@@ -7,17 +7,26 @@ import {
   rm,
   writeFile,
 } from "node:fs/promises";
+import { createServer, type Server, type ServerResponse } from "node:http";
+import type { AddressInfo } from "node:net";
 import path from "node:path";
 import type { CloudAccount } from "../shared/cloud-account";
 
 const CLIENT_ID =
   import.meta.env.VITE_WORKOS_CLIENT_ID?.trim() ||
   (process.env.VITEST ? "client_test" : "");
-const REDIRECT_URI = "ao-app://callback";
+const LOOPBACK_HOST = "127.0.0.1";
+const LOOPBACK_CALLBACK_PATH = "/callback";
+const LOOPBACK_CALLBACK_PORTS = [5174, 3000, 3001];
 const AUTH_STORE_FILE = "cloud-auth.bin";
 const LEGACY_SESSION_FILE = "cloud-session.json";
 const PKCE_TTL_MS = 10 * 60 * 1000;
 const workos = CLIENT_ID ? createWorkOS({ clientId: CLIENT_ID }) : null;
+const CALLBACK_PROTOCOL = "ao-app:";
+const CALLBACK_HOST = "callback";
+const CALLBACK_COMPLETE_HOST = "complete";
+const CALLBACK_COMPLETE_URL = "ao-app://complete";
+let activeCallbackServer: Server | null = null;
 
 interface StoredSession extends CloudAccount {
   accessToken: string;
@@ -128,6 +137,95 @@ async function removeAuthStore(dataDir: string): Promise<void> {
     rm(storePath(dataDir), { force: true }),
     rm(path.join(dataDir, LEGACY_SESSION_FILE), { force: true }),
   ]);
+}
+
+function closeActiveCallbackServer(): void {
+  const server = activeCallbackServer;
+  activeCallbackServer = null;
+  if (server?.listening) server.close();
+}
+
+function escapeHtml(value: string): string {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+}
+
+function callbackPage(
+  title: string,
+  message: string,
+  openApp = false,
+): string {
+  const escapedTitle = escapeHtml(title);
+  const escapedMessage = escapeHtml(message);
+  const openAppScript = openApp
+    ? `<script>
+    window.setTimeout(() => {
+      window.location.href = "${CALLBACK_COMPLETE_URL}";
+    }, 300);
+  </script>`
+    : "";
+  return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>${escapedTitle}</title>
+  <style>
+    :root { color-scheme: light dark; }
+    body {
+      align-items: center;
+      background: #0f1014;
+      color: #f4f4f5;
+      display: flex;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      justify-content: center;
+      margin: 0;
+      min-height: 100vh;
+    }
+    main { max-width: 28rem; padding: 2rem; text-align: center; }
+    h1 { font-size: 1.5rem; margin: 0 0 0.75rem; }
+    p { color: #b9bbc6; line-height: 1.5; margin: 0; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>${escapedTitle}</h1>
+    <p>${escapedMessage}</p>
+  </main>
+  ${openAppScript}
+</body>
+</html>`;
+}
+
+function sendCallbackPage(
+  response: ServerResponse,
+  statusCode: number,
+  title: string,
+  message: string,
+  openApp = false,
+): void {
+  response.writeHead(statusCode, {
+    "content-type": "text/html; charset=utf-8",
+    "cache-control": "no-store",
+  });
+  response.end(callbackPage(title, message, openApp));
+}
+
+function loopbackCallbackURL(port: number): string {
+  return `http://${LOOPBACK_HOST}:${port}${LOOPBACK_CALLBACK_PATH}`;
+}
+
+function isAddressInUse(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    error.code === "EADDRINUSE"
+  );
 }
 
 function displayName(user: User): string {
@@ -280,46 +378,18 @@ async function refreshCloudSession(
   }
 }
 
-export async function beginCloudSignIn(dataDir: string): Promise<void> {
-  if (!workos) {
-    throw new Error("WorkOS is not configured.");
-  }
-  const { url, state, codeVerifier } =
-    await workos.userManagement.getAuthorizationUrlWithPKCE({
-      clientId: CLIENT_ID,
-      provider: "authkit",
-      prompt: "login",
-      maxAge: 0,
-      redirectUri: REDIRECT_URI,
-    });
-  invalidateAuthOperations(dataDir);
-  const store = await readAuthStore(dataDir);
-  await writeAuthStore(dataDir, {
-    ...store,
-    pkce: {
-      codeVerifier,
-      state,
-      expiresAt: Date.now() + PKCE_TTL_MS,
-    },
-  });
-  await shell.openExternal(url);
-}
-
-export async function handleCloudDeepLink(
-  rawURL: string,
+async function completeCloudCallback(
+  params: URLSearchParams,
   dataDir: string,
-): Promise<CloudAccount | null> {
-  if (!workos) throw new Error("WorkOS is not configured.");
-  const url = new URL(rawURL);
-  if (url.protocol !== "ao-app:" || url.hostname !== "callback") return null;
-  const error = url.searchParams.get("error");
+): Promise<CloudAccount> {
+  const error = params.get("error");
   if (error) {
     throw new Error(
-      url.searchParams.get("error_description") || `WorkOS sign-in failed: ${error}`,
+      params.get("error_description") || `WorkOS sign-in failed: ${error}`,
     );
   }
-  const code = url.searchParams.get("code");
-  const callbackState = url.searchParams.get("state");
+  const code = params.get("code");
+  const callbackState = params.get("state");
   if (!code || !callbackState) throw new Error("WorkOS callback is incomplete.");
 
   const store = await readAuthStore(dataDir);
@@ -332,7 +402,7 @@ export async function handleCloudDeepLink(
     throw new Error("WorkOS callback state did not match.");
   }
 
-  const result = await workos.userManagement.authenticateWithCode({
+  const result = await workos!.userManagement.authenticateWithCode({
     clientId: CLIENT_ID,
     code,
     codeVerifier: store.pkce.codeVerifier,
@@ -346,7 +416,178 @@ export async function handleCloudDeepLink(
   return publicAccount(session);
 }
 
+async function startLoopbackCallbackServer(
+  dataDir: string,
+  notifyRenderers?: (session: CloudAccount | null) => void,
+): Promise<string> {
+  closeActiveCallbackServer();
+  for (const port of LOOPBACK_CALLBACK_PORTS) {
+    const server = createLoopbackCallbackServer(dataDir, notifyRenderers);
+    try {
+      await listenOnLoopbackPort(server, port);
+    } catch (error) {
+      server.close();
+      if (isAddressInUse(error)) continue;
+      throw error;
+    }
+    activeCallbackServer = server;
+    return loopbackCallbackURL(port);
+  }
+  throw new Error("No configured AO Cloud callback port is available.");
+}
+
+function createLoopbackCallbackServer(
+  dataDir: string,
+  notifyRenderers?: (session: CloudAccount | null) => void,
+): Server {
+  const server = createServer((request, response) => {
+    void (async () => {
+      try {
+        const url = new URL(
+          request.url ?? "/",
+          `http://${LOOPBACK_HOST}`,
+        );
+        if (url.pathname !== LOOPBACK_CALLBACK_PATH) {
+          sendCallbackPage(
+            response,
+            404,
+            "Not found",
+            "This AO Cloud sign-in callback URL is not valid.",
+          );
+          return;
+        }
+        const session = await completeCloudCallback(url.searchParams, dataDir);
+        notifyRenderers?.(session);
+        sendCallbackPage(
+          response,
+          200,
+          "Signed in to Agent Orchestrator",
+          "You can close this tab and return to Agent Orchestrator.",
+          true,
+        );
+      } catch (error) {
+        sendCallbackPage(
+          response,
+          400,
+          "Agent Orchestrator sign-in failed",
+          signInFailureDetail(error),
+        );
+      } finally {
+        setTimeout(() => {
+          if (activeCallbackServer === server) closeActiveCallbackServer();
+        }, 250);
+      }
+    })();
+  });
+  return server;
+}
+
+async function listenOnLoopbackPort(
+  server: Server,
+  port: number,
+): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(port, LOOPBACK_HOST, () => {
+      server.off("error", reject);
+      resolve();
+    });
+  });
+  const address = server.address() as AddressInfo | null;
+  if (!address) {
+    server.close();
+    throw new Error("AO Cloud callback server did not start.");
+  }
+}
+
+export async function beginCloudSignIn(
+  dataDir: string,
+  notifyRenderers?: (session: CloudAccount | null) => void,
+): Promise<CloudAccount | null> {
+  if (!workos) {
+    throw new Error("WorkOS is not configured.");
+  }
+  const existingSession = await getCloudSession(dataDir);
+  if (existingSession) return existingSession;
+  const redirectUri = await startLoopbackCallbackServer(
+    dataDir,
+    notifyRenderers,
+  );
+
+  let url: string;
+  let state: string;
+  let codeVerifier: string;
+  try {
+    ({ url, state, codeVerifier } =
+      await workos.userManagement.getAuthorizationUrlWithPKCE({
+        clientId: CLIENT_ID,
+        provider: "authkit",
+        prompt: "login",
+        maxAge: 0,
+        redirectUri,
+      }));
+  } catch (error) {
+    closeActiveCallbackServer();
+    throw error;
+  }
+  invalidateAuthOperations(dataDir);
+  const store = await readAuthStore(dataDir);
+  await writeAuthStore(dataDir, {
+    ...store,
+    pkce: {
+      codeVerifier,
+      state,
+      expiresAt: Date.now() + PKCE_TTL_MS,
+    },
+  });
+  await shell.openExternal(url);
+  return null;
+}
+
+export async function handleCloudDeepLink(
+  rawURL: string,
+  dataDir: string,
+): Promise<CloudAccount | null> {
+  const url = new URL(rawURL);
+  if (url.protocol !== CALLBACK_PROTOCOL) {
+    return null;
+  }
+  if (url.hostname === CALLBACK_COMPLETE_HOST) return null;
+  if (url.hostname !== CALLBACK_HOST) return null;
+  if (!workos) throw new Error("WorkOS is not configured.");
+  const account = await completeCloudCallback(url.searchParams, dataDir);
+  closeActiveCallbackServer();
+  return account;
+}
+
+export function findCloudDeepLinkArg(argv: readonly string[]): string | null {
+  for (const rawValue of argv) {
+    const value = rawValue.trim();
+    const callbackStart = value.toLowerCase().indexOf("ao-app://");
+    if (callbackStart < 0) continue;
+    const candidate = value
+      .slice(callbackStart)
+      .replace(/^["']+/, "")
+      .split(/\s+/)[0]
+      .replace(/[)"']+$/, "");
+    try {
+      const url = new URL(candidate);
+      if (
+        url.protocol === CALLBACK_PROTOCOL &&
+        (url.hostname === CALLBACK_HOST ||
+          url.hostname === CALLBACK_COMPLETE_HOST)
+      ) {
+        return candidate;
+      }
+    } catch {
+      // Keep scanning other argv entries; OS/browser wrappers vary here.
+    }
+  }
+  return null;
+}
+
 export async function signOutCloud(dataDir: string): Promise<void> {
+  closeActiveCallbackServer();
   invalidateAuthOperations(dataDir);
   await withAuthMutation(dataDir, () => removeAuthStore(dataDir));
 }
@@ -407,7 +648,11 @@ export function installCloudIPC(
       });
       return;
     }
-    await beginCloudSignIn(getDataDir());
+    const existingSession = await beginCloudSignIn(
+      getDataDir(),
+      notifyRenderers,
+    );
+    if (existingSession) notifyRenderers(existingSession);
   });
   ipcMain.handle("cloud:signOut", async () => {
     await signOutCloud(getDataDir());

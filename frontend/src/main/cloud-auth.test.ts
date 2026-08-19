@@ -18,6 +18,7 @@ const mocks = vi.hoisted(() => ({
   encryptionAvailable: true,
   selectedStorageBackend: "gnome_libsecret",
   getAuthorizationUrlWithPKCE: vi.fn(),
+  ipcHandle: vi.fn(),
   openExternal: vi.fn(),
   showMessageBox: vi.fn(),
 }));
@@ -37,7 +38,7 @@ vi.mock("electron", () => ({
     setAsDefaultProtocolClient: vi.fn(),
   },
   dialog: { showMessageBox: mocks.showMessageBox },
-  ipcMain: { handle: vi.fn() },
+  ipcMain: { handle: mocks.ipcHandle },
   safeStorage: {
     decryptString: mocks.decryptString,
     encryptString: mocks.encryptString,
@@ -49,8 +50,10 @@ vi.mock("electron", () => ({
 
 import {
   beginCloudSignIn,
+  findCloudDeepLinkArg,
   getCloudSession,
   handleCloudDeepLink,
+  installCloudIPC,
   showCloudSignInFailure,
   signOutCloud,
 } from "./cloud-auth";
@@ -86,24 +89,40 @@ describe("native WorkOS authentication", () => {
     await rm(dataDir, { recursive: true, force: true });
   });
 
-  it("starts PKCE and exchanges the callback without an AO website", async () => {
-    await beginCloudSignIn(dataDir);
+  it("starts PKCE and completes sign-in on a loopback callback page", async () => {
+    const notifyRenderers = vi.fn();
+    await beginCloudSignIn(dataDir, notifyRenderers);
     expect(mocks.openExternal).toHaveBeenCalledWith(
       "https://workos.example/authorize",
     );
+    const authOptions = mocks.getAuthorizationUrlWithPKCE.mock.calls[0]?.[0] as
+      | { redirectUri: string }
+      | undefined;
+    expect(authOptions).toBeDefined();
     expect(mocks.getAuthorizationUrlWithPKCE).toHaveBeenCalledWith(
       expect.objectContaining({
         provider: "authkit",
         prompt: "login",
         maxAge: 0,
-        redirectUri: "ao-app://callback",
+        redirectUri: expect.stringMatching(
+          /^http:\/\/127\.0\.0\.1:(5174|3000|3001)\/callback$/,
+        ),
       }),
     );
 
-    const session = await handleCloudDeepLink(
-      "ao-app://callback?code=code_123&state=state_123",
-      dataDir,
+    const response = await fetch(
+      `${authOptions!.redirectUri}?code=code_123&state=state_123`,
     );
+    expect(response.status).toBe(200);
+    const page = await response.text();
+    expect(page).toContain("You can close this tab");
+    expect(page).toContain("ao-app://complete");
+    expect(notifyRenderers).toHaveBeenCalledWith(
+      expect.objectContaining({
+        user: expect.objectContaining({ email: "person@example.com" }),
+      }),
+    );
+    const session = await getCloudSession(dataDir);
     expect(session).toMatchObject({
       authProvider: "workos",
       user: {
@@ -117,6 +136,92 @@ describe("native WorkOS authentication", () => {
     await expect(getCloudSession(dataDir)).resolves.toMatchObject({
       user: { email: "person@example.com" },
     });
+  });
+
+  it("still accepts the legacy ao-app callback", async () => {
+    await beginCloudSignIn(dataDir);
+
+    const session = await handleCloudDeepLink(
+      "ao-app://callback?code=code_123&state=state_123",
+      dataDir,
+    );
+
+    expect(session).toMatchObject({
+      user: { email: "person@example.com" },
+    });
+  });
+
+  it("accepts the focus-only completion deep link without exchanging a code", async () => {
+    await expect(
+      handleCloudDeepLink("ao-app://complete", dataDir),
+    ).resolves.toBeNull();
+    expect(mocks.authenticateWithCode).not.toHaveBeenCalled();
+  });
+
+  it("finds callback URLs inside OS/browser argv wrappers", () => {
+    expect(findCloudDeepLinkArg(["ao-app://callback?code=c&state=s"])).toBe(
+      "ao-app://callback?code=c&state=s",
+    );
+    expect(
+      findCloudDeepLinkArg([
+        "/Applications/Agent Orchestrator.app",
+        "\"ao-app://callback?code=c&state=s\"",
+      ]),
+    ).toBe("ao-app://callback?code=c&state=s");
+    expect(
+      findCloudDeepLinkArg([
+        "agent-orchestrator",
+        "--open-url=ao-app://callback?code=c&state=s",
+      ]),
+    ).toBe("ao-app://callback?code=c&state=s");
+    expect(findCloudDeepLinkArg(["--open-url=ao-app://complete"])).toBe(
+      "ao-app://complete",
+    );
+    expect(findCloudDeepLinkArg(["ao-app://ignored?code=c&state=s"])).toBeNull();
+  });
+
+  it("does not launch WorkOS again when a Cloud session already exists", async () => {
+    await beginCloudSignIn(dataDir);
+    await handleCloudDeepLink(
+      "ao-app://callback?code=code_123&state=state_123",
+      dataDir,
+    );
+    mocks.openExternal.mockClear();
+    mocks.getAuthorizationUrlWithPKCE.mockClear();
+
+    const session = await beginCloudSignIn(dataDir);
+
+    expect(session).toMatchObject({
+      user: { email: "person@example.com" },
+    });
+    expect(mocks.openExternal).not.toHaveBeenCalled();
+    expect(mocks.getAuthorizationUrlWithPKCE).not.toHaveBeenCalled();
+  });
+
+  it("notifies the renderer instead of launching WorkOS from IPC when already signed in", async () => {
+    await beginCloudSignIn(dataDir);
+    await handleCloudDeepLink(
+      "ao-app://callback?code=code_123&state=state_123",
+      dataDir,
+    );
+    mocks.openExternal.mockClear();
+    mocks.getAuthorizationUrlWithPKCE.mockClear();
+
+    const notifyRenderers = vi.fn();
+    installCloudIPC(() => dataDir, notifyRenderers);
+    const signInHandler = mocks.ipcHandle.mock.calls.find(
+      ([channel]) => channel === "cloud:signIn",
+    )?.[1];
+
+    await signInHandler?.();
+
+    expect(notifyRenderers).toHaveBeenCalledWith(
+      expect.objectContaining({
+        user: expect.objectContaining({ email: "person@example.com" }),
+      }),
+    );
+    expect(mocks.openExternal).not.toHaveBeenCalled();
+    expect(mocks.getAuthorizationUrlWithPKCE).not.toHaveBeenCalled();
   });
 
   it("rejects callbacks whose OAuth state does not match", async () => {
