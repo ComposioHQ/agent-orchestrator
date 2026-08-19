@@ -165,9 +165,9 @@ export const BrowserTabsRail = forwardRef<BrowserTabsRailHandle, BrowserTabsRail
 		clearCloseTimer();
 	}, [clearCloseTimer, clearOpenTimer]);
 
-	// Selecting/closing a tab closes the flyout immediately rather than waiting
-	// for the hover-close delay, so the menu doesn't linger open over the newly
-	// active tab. The toolbar's new-tab button gets the same treatment via the
+	// Selecting a tab closes the flyout immediately rather than waiting for the
+	// hover-close delay, so the menu doesn't linger open over the newly active
+	// tab. The toolbar's new-tab button gets the same treatment via the
 	// closeFlyout handle exposed above.
 	const handleSelectTab = useCallback(
 		(tabId: string) => {
@@ -177,12 +177,16 @@ export const BrowserTabsRail = forwardRef<BrowserTabsRailHandle, BrowserTabsRail
 		[closeFlyout, onSelectTab],
 	);
 
+	// Closing a tab does NOT force the flyout shut — the cursor is still over
+	// it (that's how the close button got clicked), so the normal
+	// onPointerLeave-driven hover-close already handles dismissal once the
+	// cursor actually leaves. Force-closing here made the flyout vanish out
+	// from under the cursor on every close, active tab or not.
 	const handleCloseTab = useCallback(
 		(tabId: string) => {
-			closeFlyout(true);
 			void onCloseTab(tabId);
 		},
-		[closeFlyout, onCloseTab],
+		[onCloseTab],
 	);
 
 	const sensors = useSensors(

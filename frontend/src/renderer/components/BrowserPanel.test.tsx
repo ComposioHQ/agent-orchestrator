@@ -440,6 +440,30 @@ describe("BrowserPanel", () => {
 		expect(hookState.closeTab).toHaveBeenCalledWith("t1");
 	});
 
+	it("keeps the hover flyout open after closing a tab, since the cursor is still over it", async () => {
+		hookState.tabs = [
+			{ id: "t1", url: "http://localhost:3000/", title: "First app", active: false },
+			{ id: "t2", url: "http://localhost:4173/", title: "Second app", active: true },
+		];
+		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
+		const flyout = screen.getByTestId("browser-tabs-flyout");
+
+		vi.useFakeTimers();
+		try {
+			fireEvent.pointerEnter(screen.getByTestId("browser-tabs-rail"));
+			act(() => {
+				vi.advanceTimersByTime(300);
+			});
+			expect(flyout).toHaveAttribute("data-state", "open");
+		} finally {
+			vi.useRealTimers();
+		}
+
+		await userEvent.click(screen.getByRole("button", { name: "Close tab First app" }));
+
+		expect(flyout).toHaveAttribute("data-state", "open");
+	});
+
 	it("surfaces a popup-created tab notice alongside the rail", () => {
 		hookState.tabNotice = "Opened new tab";
 		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
