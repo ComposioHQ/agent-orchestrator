@@ -511,6 +511,40 @@ function SettingsBody({
 							missingRequiredAgent ? t("settings.project.agentsRequired") : null
 						}
 					/>
+				{!isScratchProject && (
+					<ProjectSettingsSection title={t("settings.project.reviewer")} grouped>
+						<SettingsRow label={t("settings.project.defaultReviewer")}>
+							<ReviewerSelect
+								value={form.reviewerHarness}
+								onChange={(v) => setForm((f) => ({ ...f, reviewerHarness: v }))}
+								ariaLabel={t("settings.project.defaultReviewer")}
+								authorized={agentCatalog?.authorized}
+								defaultOptionLabel={t("settings.project.default")}
+								defaultTriggerLabel={t("settings.project.default")}
+								installed={agentCatalog?.installed}
+								supported={agentCatalog?.supported}
+								disabled={agentsQuery.isFetching && agentCatalog === undefined}
+							/>
+						</SettingsRow>
+						{reviewerWarning && (
+							<p className="px-1 text-xs leading-row text-warning" role="status">
+								{reviewerWarning}
+							</p>
+						)}
+						<SettingsRow label={t("settings.project.autoReviewToggle")}>
+							<Switch
+								aria-label={t("settings.project.autoReviewToggle")}
+								checked={form.autoReview}
+								id="project-auto-review"
+								onCheckedChange={(checked) => setForm((f) => ({ ...f, autoReview: checked }))}
+								size="sm"
+							/>
+						</SettingsRow>
+						<p className="px-1 text-xs leading-row text-settings-muted" role="note">
+							{t("settings.project.autoReviewDescription")}
+						</p>
+					</ProjectSettingsSection>
+				)}
 				</>
 			)}
 
@@ -539,35 +573,7 @@ function SettingsBody({
 										label: t("settings.project.sessionPrefix"),
 									}),
 								}}
-								reviewerControl={
-									<ReviewerSelect
-										value={form.reviewerHarness}
-										onChange={(v) => setForm((f) => ({ ...f, reviewerHarness: v }))}
-										ariaLabel={t("settings.project.defaultReviewer")}
-										authorized={agentCatalog?.authorized}
-										defaultOptionLabel={t("settings.project.default")}
-										defaultTriggerLabel={t("settings.project.default")}
-										installed={agentCatalog?.installed}
-										supported={agentCatalog?.supported}
-										disabled={agentsQuery.isFetching && agentCatalog === undefined}
-									/>
-								}
-								reviewerWarning={reviewerWarning}
 							/>
-							<ProjectSettingsSection title={t("settings.project.autoReview")} grouped>
-								<SettingsRow label={t("settings.project.autoReviewToggle")}>
-									<Switch
-										aria-label={t("settings.project.autoReviewToggle")}
-										checked={form.autoReview}
-										id="project-auto-review"
-										onCheckedChange={(checked) => setForm((f) => ({ ...f, autoReview: checked }))}
-										size="sm"
-									/>
-								</SettingsRow>
-								<p className="px-1 text-xs leading-row text-settings-muted" role="note">
-									{t("settings.project.autoReviewDescription")}
-								</p>
-							</ProjectSettingsSection>
 						</>
 					) : (
 						<p className="px-1 text-xs text-settings-muted">{t("settings.project.workflow")}</p>

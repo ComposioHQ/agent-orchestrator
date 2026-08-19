@@ -1163,5 +1163,6 @@
 	"inspector.usage.totalTokens": "Total tokens",
 	"inspector.usage.totalTokensAria": "{{count}} total tokens",
 	"inspector.usage.totalTokensUnavailable": "Total tokens unavailable",
-	"inspector.usage.uncachedInputTokens": "Uncached input tokens"
+	"inspector.usage.uncachedInputTokens": "Uncached input tokens",
+	"settings.project.reviewer": "Reviewer"
 }

@@ -664,7 +664,7 @@ export function ProjectWorkflowSettingsView({
 	onBranchChange: (value: string) => void;
 	onPrefixChange: (value: string) => void;
 	prefix: string;
-	reviewerControl: ReactNode;
+	reviewerControl?: ReactNode;
 	reviewerWarning?: string | null;
 }) {
 	return (
@@ -691,16 +691,18 @@ export function ProjectWorkflowSettingsView({
 					onChange={onPrefixChange}
 				/>
 			</ProjectSettingsSection>
-			<ProjectSettingsSection title={labels.reviewers} grouped>
-				<ProjectSettingsRow icon={icons?.reviewer} label={labels.defaultReviewer}>
-					{reviewerControl}
-				</ProjectSettingsRow>
-				{reviewerWarning && (
-					<p className="px-1 text-xs leading-row text-warning" role="status">
-						{reviewerWarning}
-					</p>
-				)}
-			</ProjectSettingsSection>
+			{reviewerControl && (
+				<ProjectSettingsSection title={labels.reviewers} grouped>
+					<ProjectSettingsRow icon={icons?.reviewer} label={labels.defaultReviewer}>
+						{reviewerControl}
+					</ProjectSettingsRow>
+					{reviewerWarning && (
+						<p className="px-1 text-xs leading-row text-warning" role="status">
+							{reviewerWarning}
+						</p>
+					)}
+				</ProjectSettingsSection>
+			)}
 		</>
 	);
 }
