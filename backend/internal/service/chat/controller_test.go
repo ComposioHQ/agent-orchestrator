@@ -652,6 +652,50 @@ func TestInterfaceHandoffWaitsForNativeHistoryToSettleBeforeStartingChat(t *test
 	}
 }
 
+func TestInterfaceHandoffImportsInterruptedUserOnlyNativeHistory(t *testing.T) {
+	st := openStore(t)
+	conv := &nativeHistoryConversation{
+		fakeConversation: newFakeConversation(),
+		events: []ports.ChatEvent{
+			{Kind: ports.ChatEventTurnStarted, ProviderEventID: "history-start", ProviderTurnID: "native-turn-1"},
+			{
+				Kind: ports.ChatEventUserMessageCompleted, ProviderEventID: "history-user",
+				ProviderTurnID: "native-turn-1", ProviderItemID: "native-user-1",
+				Text: "AO transferred the previous agent's context in hidden system instructions.",
+			},
+			{
+				Kind: ports.ChatEventTurnCompleted, ProviderEventID: "history-interrupted",
+				ProviderTurnID: "native-turn-1", TurnState: domain.TurnStateInterrupted,
+			},
+		},
+	}
+	svc := chatsvc.New(chatsvc.Options{
+		Store: st, Sessions: st,
+		Drivers: fakeRegistry{driver: fakeDriver{conv: conv}},
+		Log:     slog.New(slog.DiscardHandler),
+		NewID:   func() string { return fmt.Sprintf("interrupted-history-%d", time.Now().UnixNano()) },
+	})
+	t.Cleanup(func() { _ = svc.Stop(context.Background(), testSession) })
+
+	ctrl, err := svc.Start(context.Background(), chatsvc.StartConfig{
+		SessionID: testSession, ProjectID: testProject, Harness: domain.HarnessCodex,
+		WorkspacePath: t.TempDir(), ProviderConversationID: "thread-1", RequireNativeHistory: true,
+	})
+	if err != nil {
+		t.Fatalf("Start handoff: %v", err)
+	}
+	snapshot, err := st.LoadConversationSnapshot(context.Background(), ctrl.ConversationID())
+	if err != nil {
+		t.Fatalf("LoadConversationSnapshot: %v", err)
+	}
+	if len(snapshot.Messages) != 1 || snapshot.Messages[0].Text != conv.events[1].Text {
+		t.Fatalf("messages = %#v, want preserved interrupted handoff prompt", snapshot.Messages)
+	}
+	if len(snapshot.Turns) != 1 || snapshot.Turns[0].State != domain.TurnStateInterrupted {
+		t.Fatalf("turns = %#v, want one interrupted native turn", snapshot.Turns)
+	}
+}
+
 func TestInterfaceHandoffRejectsAProviderWithoutNativeHistoryReplay(t *testing.T) {
 	st := openStore(t)
 	conv := newFakeConversation()

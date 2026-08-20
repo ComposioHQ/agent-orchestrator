@@ -691,7 +691,7 @@ func TestACPDriverLoadsSettledHistoryWhenTheAgentCanReplayIt(t *testing.T) {
 	}
 }
 
-func TestACPDriverRejectsTrailingUserOnlyHistoryAsUnsettled(t *testing.T) {
+func TestACPDriverImportsTrailingUserOnlyHistoryAsInterrupted(t *testing.T) {
 	userID := "55555555-5555-4555-8555-555555555555"
 	user := acpsdk.UpdateUserMessageText("Work that has not produced a provider event yet")
 	user.UserMessageChunk.MessageId = &userID
@@ -721,8 +721,31 @@ func TestACPDriverRejectsTrailingUserOnlyHistoryAsUnsettled(t *testing.T) {
 	}
 	defer conv.Close()
 
-	if _, err := conv.(ports.ChatHistoryReader).ReadHistory(context.Background()); !errors.Is(err, ports.ErrChatHistoryUnsettled) {
-		t.Fatalf("ReadHistory error = %v, want ErrChatHistoryUnsettled", err)
+	history, err := conv.(ports.ChatHistoryReader).ReadHistory(context.Background())
+	if err != nil {
+		t.Fatalf("ReadHistory: %v", err)
+	}
+	wantKinds := []ports.ChatEventKind{
+		ports.ChatEventTurnStarted,
+		ports.ChatEventUserMessageCompleted,
+		ports.ChatEventTurnCompleted,
+	}
+	if len(history) != len(wantKinds) {
+		t.Fatalf("history = %d events, want %d: %#v", len(history), len(wantKinds), history)
+	}
+	for i, event := range history {
+		if event.Kind != wantKinds[i] {
+			t.Errorf("history event %d kind = %q, want %q", i, event.Kind, wantKinds[i])
+		}
+		if event.ProviderEventID == "" {
+			t.Errorf("history event %d has no stable identity", i)
+		}
+	}
+	if history[1].Text != "Work that has not produced a provider event yet" {
+		t.Fatalf("user message = %q", history[1].Text)
+	}
+	if history[2].TurnState != domain.TurnStateInterrupted {
+		t.Fatalf("turn state = %q, want %q", history[2].TurnState, domain.TurnStateInterrupted)
 	}
 }
 
