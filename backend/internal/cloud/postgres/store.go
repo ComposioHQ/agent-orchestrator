@@ -17,6 +17,8 @@ var (
 	ErrNotFound = errors.New("cloud record not found")
 	// ErrInvalid means persisted input violates the foundation schema.
 	ErrInvalid = errors.New("invalid cloud record")
+	// ErrConflict means a persisted value violates a uniqueness constraint.
+	ErrConflict = errors.New("cloud record conflicts with an existing record")
 )
 
 // Store owns the restricted runtime connection pool used by the control plane.
@@ -97,6 +99,8 @@ func normalizeError(err error) error {
 	var pgErr *pgconn.PgError
 	if errors.As(err, &pgErr) {
 		switch pgErr.Code {
+		case "23505":
+			return fmt.Errorf("%w: %s", ErrConflict, pgErr.ConstraintName)
 		case "22P02", "23502", "23514":
 			return fmt.Errorf("%w: %s", ErrInvalid, pgErr.ConstraintName)
 		}
