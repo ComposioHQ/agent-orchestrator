@@ -104,6 +104,41 @@ func (l *recordingLauncher) HasLiveChatController(domain.SessionID) bool {
 	return l.live
 }
 
+func TestReconcileLive_ChatRelaunchesInExistingWorktree(t *testing.T) {
+	launcher := &recordingLauncher{}
+	m, st, rt := newChatManager(launcher)
+	ws := m.workspace.(*fakeWorkspace)
+	lcm := m.lcm.(*fakeLCM)
+	rec := domain.SessionRecord{
+		ID: "mer-1", ProjectID: chatTestProject, Kind: domain.KindWorker,
+		Harness: domain.HarnessCodex, Mode: domain.SessionModeChat,
+		Metadata: domain.SessionMetadata{
+			Branch: "ao/mer-1/root", WorkspacePath: "/ws/mer-1",
+			ProviderConversationID: "thread-existing",
+		},
+	}
+	st.sessions[rec.ID] = rec
+
+	if err := m.reconcileLive(context.Background(), rec); err != nil {
+		t.Fatalf("reconcileLive: %v", err)
+	}
+	if len(launcher.started) != 1 || launcher.started[0].ProviderConversationID != "thread-existing" {
+		t.Fatalf("chat starts = %+v, want one native resume", launcher.started)
+	}
+	if rt.created != 0 {
+		t.Fatalf("terminal runtime Create calls = %d, want 0 for Chat", rt.created)
+	}
+	if ws.stashCalls != 0 {
+		t.Fatalf("StashUncommitted calls = %d, want 0", ws.stashCalls)
+	}
+	if lcm.terminated[rec.ID] != 0 || st.sessions[rec.ID].IsTerminated {
+		t.Fatalf("chat session was terminated during in-place recovery: calls=%d row=%+v", lcm.terminated[rec.ID], st.sessions[rec.ID])
+	}
+	if len(ws.restoreConfigs) != 1 || ws.restoreConfigs[0].Path != rec.Metadata.WorkspacePath {
+		t.Fatalf("Restore configs = %+v, want existing Chat worktree", ws.restoreConfigs)
+	}
+}
+
 func seedChatResumeSession(store *fakeStore, state domain.ActivityState) {
 	store.sessions["mer-1"] = domain.SessionRecord{
 		ID:        "mer-1",

@@ -283,44 +283,71 @@ func (s *Service) workspaceComparePRs(ctx context.Context, id domain.SessionID) 
 func resolveWorkspaceCompare(ctx context.Context, root, recordedSHA, recordedRef, defaultBranch string, prs []domain.PullRequest) workspaceCompareTarget {
 	recordedSHA = strings.TrimSpace(recordedSHA)
 	recordedRef = strings.TrimSpace(recordedRef)
-	var refBased *workspaceCompareTarget
+
+	// The best available local candidate: the live, ref-derived merge base
+	// (e.g. origin/main) when it resolves, else the session's spawn-time
+	// recorded base. Both are re-derived through git merge-base — never used
+	// as a raw revision — so a rewritten or unrelated commit can't become the
+	// diff base outright.
+	var localTarget *workspaceCompareTarget
 	if recordedRef != "" && recordedRef != "HEAD" {
 		for _, ref := range workspaceBaseRefCandidates(recordedRef) {
-			if sha, ok := gitMergeBase(ctx, root, ref); ok {
+			if sha, ok := mergeBaseCandidate(ctx, root, ref); ok {
 				target := workspaceCompareTarget{BaseSHA: sha, BaseRef: ref, Mode: WorkspaceCompareBase}
-				refBased = &target
+				localTarget = &target
 				break
 			}
 		}
 	}
-	// A local remote-tracking ref (e.g. origin/main) can go stale: nothing in
-	// AO fetches a session worktree, so if the branch later merges a newer
-	// main in (e.g. to resolve a conflict) without that ref moving, the merge
-	// base above still resolves but lands earlier than the branch's true fork
-	// point, pulling unrelated main commits into the diff. Prefer the PR's
-	// own, independently-synced base commit whenever it's at least as
-	// advanced as the ref-based candidate.
-	if pr, ok := selectWorkspaceComparePR(prs, defaultBranch); ok {
-		if baseSHA := strings.TrimSpace(pr.BaseSHA); baseSHA != "" && gitCommitExists(ctx, root, baseSHA) {
-			// pr.BaseSHA is the target branch's current tip, not the commit the
-			// session forked from. If the target branch has advanced since, diff
-			// straight against it would also surface every base-only change
-			// (reversed) as if the session had touched it. Compare against the
-			// merge base instead so only the session's own changes show up.
-			if merged, ok := gitMergeBase(ctx, root, baseSHA); ok {
-				baseSHA = merged
-			}
-			if refBased == nil || gitIsAncestor(ctx, root, refBased.BaseSHA, baseSHA) {
-				return workspaceCompareTarget{BaseSHA: baseSHA, BaseRef: strings.TrimSpace(pr.TargetBranch), Mode: WorkspaceCompareBase}
-			}
+	if localTarget == nil {
+		if sha, ok := mergeBaseCandidate(ctx, root, recordedSHA); ok {
+			target := workspaceCompareTarget{BaseSHA: sha, BaseRef: recordedRef, Mode: WorkspaceCompareBase}
+			localTarget = &target
 		}
 	}
-	if refBased != nil {
-		return *refBased
+
+	// The provider PR's own, independently-synced base. A local
+	// remote-tracking ref can go stale (AO never fetches a session
+	// worktree), so this can be more advanced than the local candidate above
+	// — but it's equally re-derived through merge-base rather than trusted as
+	// a raw revision, since pr.BaseSHA is the target branch's current tip,
+	// not necessarily an ancestor of HEAD.
+	var prTarget *workspaceCompareTarget
+	var prHeadSHA string
+	if pr, ok := selectWorkspaceComparePR(prs, defaultBranch); ok {
+		if sha, ok := mergeBaseCandidate(ctx, root, pr.BaseSHA); ok {
+			target := workspaceCompareTarget{BaseSHA: sha, BaseRef: strings.TrimSpace(pr.TargetBranch), Mode: WorkspaceCompareBase}
+			prTarget = &target
+			prHeadSHA = strings.TrimSpace(pr.HeadSHA)
+		}
 	}
-	if recordedSHA != "" && gitCommitExists(ctx, root, recordedSHA) {
-		return workspaceCompareTarget{BaseSHA: recordedSHA, BaseRef: recordedRef, Mode: WorkspaceCompareBase}
+
+	switch {
+	case localTarget != nil && prTarget != nil:
+		if localTarget.BaseSHA == prTarget.BaseSHA {
+			return *localTarget
+		}
+		if gitIsAncestor(ctx, root, localTarget.BaseSHA, prTarget.BaseSHA) {
+			return *prTarget // PR candidate is the more advanced descendant.
+		}
+		if gitIsAncestor(ctx, root, prTarget.BaseSHA, localTarget.BaseSHA) {
+			return *localTarget // Local candidate is the more advanced descendant.
+		}
+		// Neither candidate is an ancestor of the other — divergent
+		// histories, e.g. the target branch was force-pushed to a
+		// replacement line. Only trust the PR snapshot when it describes the
+		// exact commit the Files tab is displaying; otherwise a stale
+		// snapshot could silently outrank a valid local candidate.
+		if head, ok := gitRevision(ctx, root, "HEAD"); ok && prHeadSHA != "" && prHeadSHA == head {
+			return *prTarget
+		}
+		return *localTarget
+	case prTarget != nil:
+		return *prTarget
+	case localTarget != nil:
+		return *localTarget
 	}
+
 	for _, ref := range workspaceBaseRefCandidates(defaultBranch) {
 		if sha, ok := gitMergeBase(ctx, root, ref); ok {
 			return workspaceCompareTarget{BaseSHA: sha, BaseRef: ref, Mode: WorkspaceCompareBase}
@@ -451,6 +478,29 @@ func gitMergeBase(ctx context.Context, root, ref string) (string, bool) {
 func gitIsAncestor(ctx context.Context, root, ancestor, descendant string) bool {
 	_, err := gitWorkspaceOutput(ctx, root, "merge-base", "--is-ancestor", ancestor, descendant)
 	return err == nil
+}
+
+// mergeBaseCandidate validates a revision-derived compare-base candidate: the
+// revision must exist locally and share a common ancestor with HEAD. It
+// always returns the merge-base SHA, never the raw revision, so a rewritten
+// or unrelated commit can never be used directly as a two-tree diff base.
+func mergeBaseCandidate(ctx context.Context, root, revision string) (string, bool) {
+	revision = strings.TrimSpace(revision)
+	if revision == "" || !gitCommitExists(ctx, root, revision) {
+		return "", false
+	}
+	return gitMergeBase(ctx, root, revision)
+}
+
+// gitRevision resolves rev to its full SHA, or ok=false if it cannot be
+// resolved.
+func gitRevision(ctx context.Context, root, rev string) (string, bool) {
+	out, err := gitWorkspaceOutput(ctx, root, "rev-parse", "--verify", rev)
+	if err != nil {
+		return "", false
+	}
+	sha := strings.TrimSpace(out)
+	return sha, sha != ""
 }
 
 func (s *Service) listWorkspaceProjectFiles(ctx context.Context, rec domain.SessionRecord, project domain.ProjectRecord) (WorkspaceFiles, error) {

@@ -127,6 +127,7 @@ func (f *fakeStore) CommitSessionControllerEpoch(
 	rec.Metadata.RuntimeHandleID = ""
 	rec.Metadata.RuntimeLaunchID = ""
 	rec.Metadata.AgentSessionID = nativeConversationID
+	rec.Metadata.AgentSessionIDLaunchID = ""
 	rec.Metadata.ProviderConversationID = nativeConversationID
 	rec.Metadata.ControllerGeneration = ""
 	rec.Activity = domain.Activity{State: domain.ActivityIdle, LastActivityAt: now}
@@ -227,6 +228,7 @@ func (f *fakeAgentSwitchLifecycleStore) UpdateSessionFromActivitySignal(_ contex
 	current.Activity = rec.Activity
 	current.FirstSignalAt = rec.FirstSignalAt
 	current.Metadata.AgentSessionID = rec.Metadata.AgentSessionID
+	current.Metadata.AgentSessionIDLaunchID = rec.Metadata.AgentSessionIDLaunchID
 	current.Metadata.LatestUserPrompt = rec.Metadata.LatestUserPrompt
 	current.Metadata.LatestAssistantUpdate = rec.Metadata.LatestAssistantUpdate
 	current.Metadata.NativeTranscriptPath = rec.Metadata.NativeTranscriptPath
@@ -280,6 +282,7 @@ func (f *fakeAgentSwitchLifecycleStore) ActivateAgentSwitchTarget(_ context.Cont
 	rec.FirstSignalAt = time.Time{}
 	rec.Metadata.RuntimeHandleID = activation.RuntimeHandleID
 	rec.Metadata.RuntimeLaunchID = string(activation.TargetGenerationID)
+	rec.Metadata.AgentSessionIDLaunchID = string(activation.TargetGenerationID)
 	rec.UpdatedAt = activation.ActivatedAt
 	f.sessions[activation.SessionID] = rec
 	f.activeSwitch.State = domain.AgentSwitchTargetReady
@@ -728,15 +731,21 @@ func TestActivity_InvalidIsIgnored(t *testing.T) {
 func TestActivity_MetadataOnlyStoresAgentSessionIDWithoutChangingActivity(t *testing.T) {
 	m, st, _ := newManager()
 	rec := working("mer-1")
+	rec.Metadata.RuntimeLaunchID = "launch-1"
 	rec.FirstSignalAt = time.Now().Add(-time.Minute)
 	st.sessions["mer-1"] = rec
 
-	if err := m.ApplyActivitySignal(ctx, "mer-1", ports.ActivitySignal{AgentSessionID: "native-session-1"}); err != nil {
+	if err := m.ApplyActivitySignal(ctx, "mer-1", ports.ActivitySignal{
+		LaunchID: "launch-1", AgentSessionID: "native-session-1",
+	}); err != nil {
 		t.Fatal(err)
 	}
 	got := st.sessions["mer-1"]
 	if got.Metadata.AgentSessionID != "native-session-1" {
 		t.Fatalf("AgentSessionID = %q, want native-session-1", got.Metadata.AgentSessionID)
+	}
+	if got.Metadata.AgentSessionIDLaunchID != "launch-1" {
+		t.Fatalf("AgentSessionIDLaunchID = %q, want launch-1", got.Metadata.AgentSessionIDLaunchID)
 	}
 	if got.Activity != rec.Activity {
 		t.Fatalf("metadata-only hook changed activity: got %+v, want %+v", got.Activity, rec.Activity)
@@ -746,15 +755,41 @@ func TestActivity_MetadataOnlyStoresAgentSessionIDWithoutChangingActivity(t *tes
 	}
 }
 
+func TestActivity_MetadataOnlyConfirmsIdentityWithoutCreatingActivityReceipt(t *testing.T) {
+	m, st, _ := newManager()
+	rec := working("mer-1")
+	rec.Metadata.RuntimeLaunchID = "launch-1"
+	rec.FirstSignalAt = time.Time{}
+	st.sessions["mer-1"] = rec
+
+	if err := m.ApplyActivitySignal(ctx, "mer-1", ports.ActivitySignal{
+		Event: "session-start", LaunchID: "launch-1", AgentSessionID: "native-session-1",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	got := st.sessions["mer-1"]
+	if got.Metadata.AgentSessionID != "native-session-1" || got.Metadata.AgentSessionIDLaunchID != "launch-1" {
+		t.Fatalf("metadata-only hook did not confirm current native identity: %+v", got.Metadata)
+	}
+	if !got.FirstSignalAt.IsZero() {
+		t.Fatalf("metadata-only hook created an activity receipt: %v", got.FirstSignalAt)
+	}
+	if got.Activity != rec.Activity {
+		t.Fatalf("metadata-only hook changed activity: got %+v, want %+v", got.Activity, rec.Activity)
+	}
+}
+
 func TestActivity_SameStateSignalStillStoresAgentSessionID(t *testing.T) {
 	m, st, _ := newManager()
 	rec := working("mer-1")
+	rec.Metadata.RuntimeLaunchID = "launch-1"
 	rec.FirstSignalAt = time.Now().Add(-time.Minute)
 	st.sessions["mer-1"] = rec
 
 	if err := m.ApplyActivitySignal(ctx, "mer-1", ports.ActivitySignal{
 		Valid:          true,
 		State:          rec.Activity.State,
+		LaunchID:       "launch-1",
 		AgentSessionID: "native-session-1",
 	}); err != nil {
 		t.Fatal(err)
@@ -762,6 +797,9 @@ func TestActivity_SameStateSignalStillStoresAgentSessionID(t *testing.T) {
 	got := st.sessions["mer-1"]
 	if got.Metadata.AgentSessionID != "native-session-1" {
 		t.Fatalf("AgentSessionID = %q, want native-session-1", got.Metadata.AgentSessionID)
+	}
+	if got.Metadata.AgentSessionIDLaunchID != "launch-1" {
+		t.Fatalf("AgentSessionIDLaunchID = %q, want launch-1", got.Metadata.AgentSessionIDLaunchID)
 	}
 	if got.Activity != rec.Activity {
 		t.Fatalf("same-state metadata signal changed activity: got %+v, want %+v", got.Activity, rec.Activity)
@@ -1592,6 +1630,7 @@ func TestCommitControllerEpochOwnsModeAndActivityFacts(t *testing.T) {
 	}
 	if got.Metadata.RuntimeHandleID != "" || got.Metadata.RuntimeLaunchID != "" ||
 		got.Metadata.AgentSessionID != "native-1" ||
+		got.Metadata.AgentSessionIDLaunchID != "" ||
 		got.Metadata.ProviderConversationID != "native-1" ||
 		got.Metadata.ControllerGeneration != "" {
 		t.Fatalf("controller metadata = %+v", got.Metadata)
@@ -2767,16 +2806,26 @@ func TestActivity_SameStateRepeatAfterReceiptIsNoOp(t *testing.T) {
 	}
 }
 
-func TestMarkSpawnedClearsFirstSignal(t *testing.T) {
+func TestMarkSpawnedClearsFirstSignalAndLeavesResumeIdentityUnverified(t *testing.T) {
 	m, st, _ := newManager()
 	rec := working("mer-1")
 	rec.FirstSignalAt = time.Now().Add(-time.Hour)
+	rec.Metadata.RuntimeLaunchID = "launch-old"
+	rec.Metadata.AgentSessionID = "native-1"
+	rec.Metadata.AgentSessionIDLaunchID = "launch-old"
 	st.sessions["mer-1"] = rec
-	if err := m.MarkSpawned(ctx, "mer-1", domain.SessionMetadata{}); err != nil {
+	if err := m.MarkSpawned(ctx, "mer-1", domain.SessionMetadata{RuntimeLaunchID: "launch-new"}); err != nil {
 		t.Fatal(err)
 	}
-	if got := st.sessions["mer-1"]; !got.FirstSignalAt.IsZero() {
+	got := st.sessions["mer-1"]
+	if !got.FirstSignalAt.IsZero() {
 		t.Fatalf("spawn/restore must clear the receipt, got %+v", got)
+	}
+	if got.Metadata.AgentSessionID != "native-1" || got.Metadata.AgentSessionIDLaunchID != "launch-old" {
+		t.Fatalf("spawn/restore must retain the resume hint without re-proving it, got %+v", got.Metadata)
+	}
+	if got.Metadata.AgentSessionIDLaunchID == got.Metadata.RuntimeLaunchID {
+		t.Fatalf("new launch unexpectedly inherited native identity proof: %+v", got.Metadata)
 	}
 }
 

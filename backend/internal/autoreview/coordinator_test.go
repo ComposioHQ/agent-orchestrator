@@ -62,7 +62,7 @@ func TestEvaluateSessionEligibility(t *testing.T) {
 		{name: "waiting input", mutate: func(f *fakeStore) { f.session.Activity.State = domain.ActivityWaitingInput }},
 		{name: "blocked", mutate: func(f *fakeStore) { f.session.Activity.State = domain.ActivityBlocked }},
 		{name: "terminated", mutate: func(f *fakeStore) { f.session.IsTerminated = true }},
-		{name: "draft", mutate: func(f *fakeStore) { f.prs[0].Draft = true }},
+		{name: "draft", want: true, mutate: func(f *fakeStore) { f.prs[0].Draft = true }},
 		{name: "closed", mutate: func(f *fakeStore) { f.prs[0].Closed = true }},
 		{name: "merged", mutate: func(f *fakeStore) { f.prs[0].Merged = true }},
 		{name: "missing head", mutate: func(f *fakeStore) { f.prs[0].HeadSHA = "" }},

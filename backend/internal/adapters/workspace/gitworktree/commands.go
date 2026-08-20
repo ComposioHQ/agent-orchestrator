@@ -10,6 +10,14 @@ func revParseVerifyArgs(repo, ref string) []string {
 	return []string{"-C", repo, "rev-parse", "--verify", "--quiet", ref}
 }
 
+func remoteListArgs(repo string) []string {
+	return []string{"-C", repo, "remote"}
+}
+
+func fetchBranchArgs(repo, remote, branch string) []string {
+	return []string{"-C", repo, "fetch", remote, "+refs/heads/" + branch + ":refs/remotes/" + remote + "/" + branch}
+}
+
 // worktreeAddForce is git's documented override for "<path> is a missing but
 // already registered worktree" (git's own hint for that failure is "use
 // 'add -f' to override"). It re-registers a path whose registration outlived

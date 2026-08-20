@@ -179,6 +179,36 @@ describe("createEventTransport", () => {
 		}
 	});
 
+	it("invalidates the named interface transition status for transition CDC", () => {
+		vi.useFakeTimers();
+		try {
+			const queryClient = fakeQueryClient();
+			createEventTransport(queryClient).connect();
+			EventSourceStub.instances[0].emit(
+				"session_updated",
+				JSON.stringify({
+					seq: 43,
+					projectId: "proj-1",
+					sessionId: "session-1",
+					type: "session_updated",
+					payload: {
+						id: "session-1",
+						interfaceTransitionId: "transition-1",
+						interfaceTransitionPhase: "recovery_required",
+					},
+					createdAt: "2026-08-13T08:00:00Z",
+				}),
+			);
+
+			vi.advanceTimersByTime(200);
+			expect(queryClient.invalidateQueries).toHaveBeenCalledWith({
+				queryKey: ["session-interface-transition", "session-1"],
+			});
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
 	it("tears down the source and the daemon listener on disconnect", () => {
 		const disconnect = createEventTransport(fakeQueryClient()).connect();
 
