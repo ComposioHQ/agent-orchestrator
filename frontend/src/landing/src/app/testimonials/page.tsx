@@ -50,6 +50,24 @@ export default function TestimonialsPage() {
                 </p>
               </div>
 
+              <div className="mt-auto hidden border-t border-border/70 pt-6 lg:block">
+                <div className="grid grid-cols-2 gap-6">
+                  {testimonialExamples.slice(1, 3).map((example) => (
+                    <blockquote
+                      key={example}
+                      className="text-sm leading-6 text-foreground/80"
+                    >
+                      “{example}”
+                    </blockquote>
+                  ))}
+                </div>
+                <a
+                  href="#testimonial-examples"
+                  className="mt-6 inline-flex text-sm font-medium text-foreground underline decoration-border underline-offset-4 transition-colors hover:decoration-foreground"
+                >
+                  More examples below ↓
+                </a>
+              </div>
             </div>
           </div>
 
@@ -63,7 +81,10 @@ export default function TestimonialsPage() {
           </aside>
         </div>
 
-        <section className="mx-auto mt-6 max-w-7xl overflow-hidden rounded-2xl border border-border bg-card p-6 sm:p-8 lg:p-10">
+        <section
+          id="testimonial-examples"
+          className="mx-auto mt-6 max-w-7xl scroll-mt-20 overflow-hidden rounded-2xl border border-border bg-card p-6 sm:p-8 lg:p-10"
+        >
           <div className="border-b border-border pb-7">
             <h2 className="text-2xl font-semibold text-foreground sm:text-3xl">
               Examples of good testimonials
