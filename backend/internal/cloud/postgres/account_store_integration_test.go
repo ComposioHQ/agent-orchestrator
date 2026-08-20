@@ -147,7 +147,16 @@ func TestAccountFoundationAgainstPostgres(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := store.CreateRefreshSession(ctx, alice.UserID, refreshHash, time.Now().Add(time.Hour)); err != nil {
+	absoluteExpiry := time.Now().UTC().Add(time.Hour)
+	if err := store.CreateRefreshSession(ctx, alice.UserID, refreshHash, absoluteExpiry); err != nil {
+		t.Fatal(err)
+	}
+	var originalCreatedAt, originalExpiresAt time.Time
+	if err := store.pool.QueryRow(
+		ctx,
+		`SELECT created_at, expires_at FROM ao_auth_sessions WHERE token_hash = $1`,
+		refreshHash,
+	).Scan(&originalCreatedAt, &originalExpiresAt); err != nil {
 		t.Fatal(err)
 	}
 	_, replacementHash, err := auth.NewRefreshToken()
@@ -158,16 +167,31 @@ func TestAccountFoundationAgainstPostgres(t *testing.T) {
 		ctx,
 		auth.HashToken(refreshToken),
 		replacementHash,
-		time.Now().Add(time.Hour),
 	)
 	if err != nil || rotated.UserID != alice.UserID {
 		t.Fatalf("rotated principal = %#v, error = %v", rotated, err)
+	}
+	var rotatedCreatedAt, rotatedExpiresAt time.Time
+	if err := store.pool.QueryRow(
+		ctx,
+		`SELECT created_at, expires_at FROM ao_auth_sessions WHERE token_hash = $1`,
+		replacementHash,
+	).Scan(&rotatedCreatedAt, &rotatedExpiresAt); err != nil {
+		t.Fatal(err)
+	}
+	if !rotatedCreatedAt.Equal(originalCreatedAt) || !rotatedExpiresAt.Equal(originalExpiresAt) {
+		t.Fatalf(
+			"rotated session lifetime = (%s, %s), want (%s, %s)",
+			rotatedCreatedAt,
+			rotatedExpiresAt,
+			originalCreatedAt,
+			originalExpiresAt,
+		)
 	}
 	if _, err := store.RotateRefreshSession(
 		ctx,
 		auth.HashToken(refreshToken),
 		replacementHash,
-		time.Now().Add(time.Hour),
 	); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("refresh replay error = %v", err)
 	}

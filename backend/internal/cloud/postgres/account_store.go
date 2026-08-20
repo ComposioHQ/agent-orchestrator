@@ -139,11 +139,12 @@ func (s *Store) CreateRefreshSession(ctx context.Context, userID string, tokenHa
 }
 
 // RotateRefreshSession consumes an old refresh token and inserts its
-// replacement in one transaction. Concurrent replay attempts cannot both win.
+// replacement in one transaction. The replacement retains the chain's
+// original creation time and absolute expiry. Concurrent replay attempts
+// cannot both win.
 func (s *Store) RotateRefreshSession(
 	ctx context.Context,
 	oldHash, newHash []byte,
-	expiresAt time.Time,
 ) (domain.Principal, error) {
 	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
@@ -151,21 +152,23 @@ func (s *Store) RotateRefreshSession(
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	var userID string
+	var createdAt, expiresAt time.Time
 	if err := tx.QueryRow(
 		ctx,
 		`DELETE FROM ao_auth_sessions
 		 WHERE token_hash = $1 AND expires_at > now()
-		 RETURNING user_id`,
+		 RETURNING user_id, created_at, expires_at`,
 		oldHash,
-	).Scan(&userID); err != nil {
+	).Scan(&userID, &createdAt, &expiresAt); err != nil {
 		return domain.Principal{}, normalizeError(err)
 	}
 	if _, err := tx.Exec(
 		ctx,
-		`INSERT INTO ao_auth_sessions (user_id, token_hash, expires_at)
-		 VALUES ($1, $2, $3)`,
+		`INSERT INTO ao_auth_sessions (user_id, token_hash, created_at, expires_at)
+		 VALUES ($1, $2, $3, $4)`,
 		userID,
 		newHash,
+		createdAt,
 		expiresAt,
 	); err != nil {
 		return domain.Principal{}, normalizeError(err)

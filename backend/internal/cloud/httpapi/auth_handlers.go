@@ -123,7 +123,6 @@ func (s *Server) refresh(w http.ResponseWriter, r *http.Request) {
 		r.Context(),
 		auth.HashToken(input.RefreshToken),
 		newHash,
-		time.Now().UTC().Add(s.refreshTokenTTL),
 	)
 	if err != nil {
 		if errors.Is(err, postgres.ErrNotFound) {

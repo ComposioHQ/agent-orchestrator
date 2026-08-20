@@ -64,7 +64,7 @@ paths:
               $ref: "#/components/schemas/RefreshTokenInput"
       responses:
         "200":
-          description: The refresh token was consumed and replaced atomically.
+          description: The refresh token was consumed and replaced atomically without extending the session's absolute expiry.
           headers:
             Cache-Control:
               schema:

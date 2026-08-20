@@ -35,7 +35,7 @@ type AccountStore interface {
 	UpsertGoogleUser(context.Context, domain.Principal) (domain.Principal, error)
 	PrincipalByID(context.Context, string) (domain.Principal, error)
 	CreateRefreshSession(context.Context, string, []byte, time.Time) error
-	RotateRefreshSession(context.Context, []byte, []byte, time.Time) (domain.Principal, error)
+	RotateRefreshSession(context.Context, []byte, []byte) (domain.Principal, error)
 	RevokeRefreshSession(context.Context, []byte) error
 	ListMemberships(context.Context, domain.Principal) ([]domain.Membership, error)
 }
