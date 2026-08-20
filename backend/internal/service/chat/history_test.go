@@ -841,6 +841,118 @@ func TestActivateBranchResumesWithoutSending(t *testing.T) {
 	}
 }
 
+func TestProviderBoundaryRejectsSourceProviderBranchAndEdit(t *testing.T) {
+	ctx := context.Background()
+	st := openStore(t)
+	now := time.Date(2026, 8, 18, 14, 0, 0, 0, time.UTC)
+	record, found, err := st.GetSession(ctx, testSession)
+	if err != nil || !found {
+		t.Fatalf("GetSession: found=%v err=%v", found, err)
+	}
+	record.Metadata.ProviderConversationID = "source-provider-thread"
+	record.Metadata.ControllerGeneration = "source-generation"
+	if err := st.UpdateSession(ctx, record); err != nil {
+		t.Fatalf("seed source controller identity: %v", err)
+	}
+	conversation, err := st.CreateConversation(ctx, "provider-boundary-conversation",
+		domain.ConversationScopeProject, testProject, testSession, now)
+	if err != nil {
+		t.Fatalf("CreateConversation: %v", err)
+	}
+	created, err := st.AppendUserMessage(ctx, conversation.ID, testSession, "source-generation",
+		domain.ConversationMessage{
+			ID: "source-message", Origin: domain.MessageOriginHuman, Text: "source task",
+			ClientMessageID: "source-client-message",
+		}, "source-turn", now)
+	if err != nil || !created {
+		t.Fatalf("AppendUserMessage: created=%v err=%v", created, err)
+	}
+	if err := st.BindTurnToProvider(ctx, "source-turn", "source-provider-turn", now); err != nil {
+		t.Fatalf("BindTurnToProvider: %v", err)
+	}
+	conversation, err = st.ConversationForSession(ctx, testSession)
+	if err != nil {
+		t.Fatalf("reload source conversation: %v", err)
+	}
+
+	target := newHistoryRecorder()
+	target.providerConversationID = "target-provider-thread"
+	startCalls := 0
+	resumeCalls := 0
+	driver := fakeDriver{conv: target}
+	driver.start = func(ports.ChatStartConfig) (ports.ChatConversation, error) {
+		startCalls++
+		if startCalls == 1 {
+			return target, nil
+		}
+		return nil, errors.New("source-provider edit reached target driver")
+	}
+	driver.resume = func(ports.ChatResumeConfig) (ports.ChatConversation, error) {
+		resumeCalls++
+		return nil, errors.New("source-provider branch reached target driver")
+	}
+	nextID := 0
+	svc := chatsvc.New(chatsvc.Options{
+		Store: st, Sessions: st,
+		Drivers: fakeRegistry{driver: driver},
+		Log:     slog.New(slog.DiscardHandler),
+		NewID: func() string {
+			nextID++
+			return fmt.Sprintf("provider-boundary-%d", nextID)
+		},
+		Now: func() time.Time { return now.Add(time.Minute) },
+	})
+	t.Cleanup(func() { _ = svc.Stop(context.Background(), testSession) })
+
+	_, err = svc.Start(ctx, chatsvc.StartConfig{
+		SessionID: testSession, ProjectID: testProject, Kind: domain.KindOrchestrator,
+		Harness: domain.HarnessCodex, WorkspacePath: t.TempDir(),
+		ControllerGeneration: "target-generation",
+		ControllerReady: func(started chatsvc.StartResult) (chatsvc.ControllerCommit, error) {
+			if err := st.CreateAndActivateConversationBranch(ctx, testSession, domain.ConversationBranch{
+				ID: "target-provider-boundary", ConversationID: conversation.ID, SessionID: testSession,
+				ProviderConversationID: started.ProviderConversationID,
+				ParentBranchID:         conversation.ActiveBranchID, ForkAfterSequence: conversation.LatestSequence,
+				CreatedAt: now.Add(time.Minute),
+			}, started.ControllerGeneration, now.Add(time.Minute)); err != nil {
+				return chatsvc.ControllerCommit{}, err
+			}
+			committed := started.Conversation
+			committed.ActiveBranchID = "target-provider-boundary"
+			committed.UpdatedAt = now.Add(time.Minute)
+			return chatsvc.ControllerCommit{Conversation: committed}, nil
+		},
+	})
+	if err != nil {
+		t.Fatalf("Start target controller: %v", err)
+	}
+
+	if _, err := svc.EditMessage(ctx, testSession, "source-turn", ports.ChatUserMessage{
+		Text: "rewrite source task", Origin: domain.MessageOriginHuman,
+	}); !errors.Is(err, chatsvc.ErrEditTurnInvalid) {
+		t.Fatalf("source-provider edit error = %v, want ErrEditTurnInvalid", err)
+	}
+	if startCalls != 1 {
+		t.Fatalf("driver starts = %d, want source-provider edit rejected before target driver", startCalls)
+	}
+	if _, err := svc.Rollback(ctx, testSession, "source-turn"); !errors.Is(err, chatsvc.ErrTurnProviderMismatch) {
+		t.Fatalf("source-provider rollback error = %v, want ErrTurnProviderMismatch", err)
+	}
+	target.mu.Lock()
+	rollbackCalls := append([]string(nil), target.rolledBack...)
+	target.mu.Unlock()
+	if len(rollbackCalls) != 0 {
+		t.Fatalf("target provider rollback calls = %v, want source turn rejected before target driver", rollbackCalls)
+	}
+
+	if _, err := svc.ActivateBranch(ctx, testSession, conversation.ActiveBranchID); !errors.Is(err, chatsvc.ErrBranchProviderMismatch) {
+		t.Fatalf("source-provider branch activation error = %v, want ErrBranchProviderMismatch", err)
+	}
+	if resumeCalls != 0 {
+		t.Fatalf("driver resumes = %d, want source-provider branch rejected before target driver", resumeCalls)
+	}
+}
+
 // The contract from the automatic-semantic-task-titles design, applied to whatever
 // the provider says rather than trusted.
 func TestNormalizeTitle(t *testing.T) {

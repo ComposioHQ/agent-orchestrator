@@ -188,6 +188,7 @@ type lifecycleRecorder interface {
 	CommitControllerEpoch(ctx context.Context, id domain.SessionID, source, target domain.SessionMode, nativeConversationID string, startFresh bool) (bool, error)
 	ConfirmAgentSwitchSourceStopped(ctx context.Context, confirmation domain.AgentSwitchSourceStopConfirmation) (bool, error)
 	ActivateAgentSwitchTarget(ctx context.Context, activation domain.AgentSwitchTargetActivation) (bool, error)
+	ActivateChatAgentSwitchTarget(ctx context.Context, activation domain.AgentSwitchChatTargetActivation) (bool, error)
 	MarkTerminated(ctx context.Context, id domain.SessionID) error
 }
 
@@ -1891,7 +1892,7 @@ func (m *Manager) relaunchSessionWithPolicy(ctx context.Context, operation strin
 		} else if strings.TrimSpace(rec.Metadata.ProviderConversationID) == "" {
 			return RestoreResult{}, fmt.Errorf("%s %s: %w", operation, rec.ID, ErrIncompleteHandle)
 		}
-		return m.resumeChatController(ctx, operation, rec, project, ws, requireNativeHistory)
+		return m.resumeChatController(ctx, operation, rec, project, ws, requireNativeHistory, "")
 	}
 
 	agent, ok := m.agents.Agent(rec.Harness)

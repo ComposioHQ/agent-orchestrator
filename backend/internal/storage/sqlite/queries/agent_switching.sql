@@ -298,6 +298,18 @@ WHERE id = sqlc.arg(session_id)
   AND runtime_launch_id = sqlc.arg(expected_source_runtime_launch_id)
   AND activity_last_at <= sqlc.arg(stopped_at);
 
+-- name: MarkChatSessionAgentSwitchSourceStopped :execrows
+UPDATE sessions SET
+    activity_state = 'exited',
+    activity_last_at = sqlc.arg(stopped_at),
+    updated_at = sqlc.arg(stopped_at)
+WHERE id = sqlc.arg(session_id)
+  AND is_terminated = 0
+  AND session_mode = 'chat'
+  AND harness = sqlc.arg(expected_source_harness)
+  AND controller_generation = sqlc.arg(expected_source_controller_generation)
+  AND activity_last_at <= sqlc.arg(stopped_at);
+
 -- name: MarkAgentSwitchSourceStopped :execrows
 UPDATE agent_switches SET
     state = 'source_stopped',
@@ -329,6 +341,28 @@ WHERE id = sqlc.arg(session_id)
   AND activity_state = 'exited'
   AND harness = sqlc.arg(expected_source_harness)
   AND runtime_launch_id = sqlc.arg(expected_source_runtime_launch_id)
+  AND activity_last_at <= sqlc.arg(activated_at);
+
+-- name: ActivateChatSessionAgentSwitchTarget :execrows
+UPDATE sessions SET
+    harness = sqlc.arg(target_harness),
+    activity_state = 'idle',
+    activity_last_at = sqlc.arg(activated_at),
+    first_signal_at = NULL,
+    runtime_handle_id = '',
+    runtime_launch_id = '',
+    agent_session_id = sqlc.arg(target_native_session_id),
+    agent_session_id_launch_id = '',
+    native_transcript_path = '',
+    provider_conversation_id = sqlc.arg(provider_conversation_id),
+    controller_generation = sqlc.arg(controller_generation),
+    updated_at = sqlc.arg(activated_at)
+WHERE id = sqlc.arg(session_id)
+  AND is_terminated = 0
+  AND session_mode = 'chat'
+  AND activity_state = 'exited'
+  AND harness = sqlc.arg(expected_source_harness)
+  AND controller_generation = sqlc.arg(controller_generation)
   AND activity_last_at <= sqlc.arg(activated_at);
 
 -- name: MarkAgentSwitchTargetReady :execrows
