@@ -12,6 +12,7 @@ import (
 	acpsdk "github.com/coder/acp-go-sdk"
 	"github.com/google/uuid"
 
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/chatdriver/commanddetail"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
@@ -82,7 +83,7 @@ func (c *conversation) RequestPermission(
 	c.emit(ports.ChatEvent{
 		Kind:           ports.ChatEventApprovalRequested,
 		ProviderTurnID: turnID,
-		ProviderItemID: string(params.ToolCall.ToolCallId),
+		ProviderItemID: requestID,
 		ActivityKind:   activityKindFromTool(pointerValue(params.ToolCall.Kind)),
 		ActivityStatus: domain.ActivityStatusPending,
 		Summary:        summary,
@@ -575,6 +576,20 @@ func (c *conversation) toolEvent(turnID string, tool *toolState, completed bool)
 		copyDetail(detailMap, terminal, "exit_code", "exitCode")
 		copyDetail(detailMap, terminal, "signal", "signal")
 	}
+	if activityKindFromTool(tool.kind) == domain.ActivityKindCommand {
+		if rawCommand := rawCommandFromInput(tool.rawInput); rawCommand != "" {
+			// The neutral command-detail contract (`detail.command`) is what the
+			// chat timeline renders as the row's subject. rawInput is a
+			// provider-shaped object (claude-code Bash: {"command": "..."}); the
+			// codex driver sets this key directly, and ACP-backed harnesses must
+			// too or the UI can only ever say "Ran command".
+			detailMap["command"] = commanddetail.UnwrapShell(rawCommand)
+			// Keep the exact provider value beside the display form. The timeline is
+			// an audit surface, so callers must be able to recover what actually ran
+			// even when a provider wraps it in a shell invocation.
+			detailMap["rawCommand"] = rawCommand
+		}
+	}
 	detail, _ := json.Marshal(detailMap)
 	status := activityStatusFromTool(tool.status)
 	kind := ports.ChatEventActivityStarted
@@ -620,6 +635,25 @@ func toolOutputText(raw any) string {
 		return ""
 	}
 	return string(encoded)
+}
+
+// rawCommandFromInput extracts the verbatim shell command from a tool's
+// provider-defined rawInput so execute activities can carry AO's neutral command
+// detail without making the provider object itself part of that contract.
+// Providers wrap the command differently (claude-code Bash uses
+// {"command": "..."}); anything unrecognizable stays empty rather than putting
+// a provider DTO on the wire as if it were the command.
+func rawCommandFromInput(raw any) string {
+	value, ok := raw.(map[string]any)
+	if !ok {
+		return ""
+	}
+	for _, key := range []string{"command", "cmd"} {
+		if text, ok := value[key].(string); ok && strings.TrimSpace(text) != "" {
+			return text
+		}
+	}
+	return ""
 }
 
 func parentToolUseID(meta map[string]any) string {

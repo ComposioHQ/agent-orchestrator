@@ -39,15 +39,19 @@ function DialogOverlay({ className, ...props }: React.ComponentProps<typeof Dial
 function DialogContent({
 	className,
 	children,
+	overlay,
+	portalContainer,
 	showCloseButton = true,
 	...props
 }: React.ComponentProps<typeof DialogPrimitive.Content> & {
+	overlay?: React.ReactNode | false;
+	portalContainer?: HTMLElement | null;
 	showCloseButton?: boolean;
 }) {
 	const { t } = useTranslation();
 	return (
-		<DialogPortal>
-			<DialogOverlay />
+		<DialogPortal container={portalContainer}>
+			{overlay === undefined ? <DialogOverlay /> : overlay}
 			<DialogPrimitive.Content
 				data-slot="dialog-content"
 				className={cn(
@@ -58,7 +62,7 @@ function DialogContent({
 			>
 				{children}
 				{showCloseButton && (
-					<DialogPrimitive.Close className="absolute top-4 right-4 rounded-xs opacity-70 ring-offset-background transition-opacity hover:opacity-100 focus:ring-2 focus:ring-ring focus:ring-offset-2 focus:outline-hidden disabled:pointer-events-none data-[state=open]:bg-secondary">
+					<DialogPrimitive.Close className="absolute top-4 right-4 rounded-xs opacity-70 transition-opacity hover:opacity-100 focus:outline-hidden disabled:pointer-events-none data-[state=open]:bg-secondary">
 						<XIcon className="size-4" />
 						<span className="sr-only">{t("common.close")}</span>
 					</DialogPrimitive.Close>

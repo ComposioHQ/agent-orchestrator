@@ -226,6 +226,14 @@ func TestActivateConversationBranchRouteReportsMissingBranch(t *testing.T) {
 	assertErrorCode(t, body, status, http.StatusNotFound, "CHAT_BRANCH_NOT_FOUND")
 }
 
+func TestActivateConversationBranchRouteRejectsPreviousAgentProvider(t *testing.T) {
+	svc := &fakeChatService{activateErr: chatsvc.ErrBranchProviderMismatch}
+	srv := newChatTestServer(t, svc)
+	body, status, _ := doRequest(t, srv, http.MethodPost,
+		"/api/v1/sessions/ao-1/conversation/branches/source-agent-branch/activate", "")
+	assertErrorCode(t, body, status, http.StatusConflict, "CHAT_BRANCH_PROVIDER_MISMATCH")
+}
+
 // Every refusal maps to a stable code and a status the client can branch on. A 500
 // anywhere in this table would mean AO reported its own bug for someone else's
 // ordinary situation.
@@ -239,6 +247,7 @@ func TestConversationHistoryRefusalsAreTypedNeverInternalErrors(t *testing.T) {
 		{"turn running", chatsvc.ErrTurnRunning, http.StatusConflict, "CHAT_TURN_RUNNING"},
 		{"unknown turn", fmt.Errorf("look up: %w", domain.ErrNoConversationTurn), http.StatusNotFound, "CHAT_TURN_NOT_FOUND"},
 		{"never dispatched", chatsvc.ErrTurnNotRollbackable, http.StatusConflict, "CHAT_TURN_NOT_ROLLBACKABLE"},
+		{"previous agent provider", chatsvc.ErrTurnProviderMismatch, http.StatusConflict, "CHAT_TURN_PROVIDER_MISMATCH"},
 		{"unsupported", chatsvc.ErrRollbackUnsupported, http.StatusConflict, "CHAT_ROLLBACK_UNSUPPORTED"},
 		{"provider refused", fmt.Errorf("%w: no", chatsvc.ErrProviderRefused), http.StatusConflict, "CHAT_PROVIDER_REFUSED"},
 		{"no controller", chatsvc.ErrNoController, http.StatusConflict, "CHAT_CONTROLLER_NOT_READY"},

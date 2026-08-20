@@ -54,10 +54,12 @@ import { HighlightedCode } from "./HighlightedCode";
 import { CopyButton } from "./CopyButton";
 import { HumanMessageEditor } from "./HumanMessageEditor";
 import { ConversationBranchNavigator } from "./ConversationBranchNavigator";
+import { ConversationContentItems } from "./ConversationContentItems";
 import {
 	ACTIVITY_SUMMARY_BUTTON_CLASS,
 	commandCategory,
 	exploredFileCount,
+	isNonzeroCommandExit,
 } from "./activity-command";
 import { Button } from "../ui/button";
 import {
@@ -210,7 +212,7 @@ export function HumanMessage({
 							: "border-border bg-raised text-foreground",
 					)}
 				>
-					{body ? <p className="whitespace-pre-wrap text-pretty">{body}</p> : null}
+					{body ? <p className="break-words whitespace-pre-wrap text-pretty">{body}</p> : null}
 					{attachments.length > 0 ? (
 						<ul aria-label="Attached files" className={cn("flex max-w-full flex-wrap gap-2", body && "mt-2")}>
 							{attachments.map((path) => {
@@ -257,7 +259,9 @@ export function HumanMessage({
 				</div>
 			)}
 			{queued ? (
-				<span className="text-[11px] text-muted-foreground">Queued · sends when the agent finishes</span>
+				<div className="flex items-center gap-2 text-[11px] text-muted-foreground">
+					<span>Queued · sends when the agent finishes</span>
+				</div>
 			) : null}
 			{message.delivery && message.delivery !== "accepted" ? (
 				<DeliveryNote state={message.delivery} />
@@ -401,6 +405,7 @@ export function ActivityRow({ activity }: { activity: ConversationActivity }) {
 	if (activity.activityKind === "mcp_tool") return <McpToolRow activity={activity} />;
 	if (activity.activityKind === "auto_review") return <AutoReviewRow activity={activity} />;
 	if (activity.activityKind === "reasoning") return <ReasoningBlock activity={activity} />;
+	if (activity.activityKind === "error") return <ErrorActivityRow activity={activity} />;
 	if (activity.detail?.event === "model.rerouted") return <RerouteRow activity={activity} />;
 	if (activity.detail?.event === "auth.reauth_required") return <ReauthRow activity={activity} />;
 	return <GenericActivityRow activity={activity} />;
@@ -422,7 +427,8 @@ function GenericActivityRow({ activity }: { activity: ConversationActivity }) {
 	const detail = activity.detail;
 	const files = fileChangeFiles(activity);
 	const hasBody = Boolean(
-		detail?.output || detail?.reason || detail?.text || detail?.terminalInput || files.length,
+		detail?.command ||
+			detail?.output || detail?.reason || detail?.text || detail?.terminalInput || files.length,
 	);
 	const { label, path } = splitSummary(activity);
 	const compactCommand = activity.activityKind === "command";
@@ -433,7 +439,12 @@ function GenericActivityRow({ activity }: { activity: ConversationActivity }) {
 	const open = override ?? streamingOutput;
 
 	return (
-		<div className={compactCommand ? "flex flex-col" : "group/activity border-t border-border first:border-t-0"}>
+		<div
+			className={cn(
+				"min-w-0 max-w-full",
+				compactCommand ? "flex flex-col" : "group/activity border-t border-border first:border-t-0",
+			)}
+		>
 			<button
 				type="button"
 				onClick={() => setOverride(!open)}
@@ -442,7 +453,7 @@ function GenericActivityRow({ activity }: { activity: ConversationActivity }) {
 				className={cn(
 					compactCommand
 						? ACTIVITY_SUMMARY_BUTTON_CLASS
-						: "flex min-h-[35px] w-full items-center gap-[9px] px-[11px] py-2 text-left text-[11px] transition-colors",
+						: "flex min-h-[35px] w-full min-w-0 items-center gap-[9px] px-[11px] py-2 text-left text-[11px] transition-colors",
 					hasBody && !compactCommand && "hover:bg-interactive-hover",
 					!hasBody && "cursor-default",
 				)}
@@ -459,13 +470,13 @@ function GenericActivityRow({ activity }: { activity: ConversationActivity }) {
 				)}
 				<strong
 					className={cn(
-						"shrink-0",
 						compactCommand
-							? "text-[11.5px] font-normal text-muted-foreground"
-							: "font-medium",
+							? "shrink-0 text-[11.5px] font-normal text-muted-foreground"
+							: "min-w-0 truncate font-medium",
 						!compactCommand &&
 							(activity.status === "failed" ? "text-destructive" : "text-foreground"),
 					)}
+					title={compactCommand ? undefined : label}
 				>
 					{label}
 				</strong>
@@ -499,6 +510,14 @@ function GenericActivityRow({ activity }: { activity: ConversationActivity }) {
 			{open && hasBody ? (
 				<div className="flex flex-col gap-1.5 px-[11px] pb-2.5">
 					{files.length ? <FileChangeList files={files} /> : null}
+					{detail?.command ? (
+						// Said explicitly rather than implied by the label: "Ran command"
+						// alone never tells the reader what ran, and the collapsed row
+						// deliberately keeps only the category.
+						<pre className="overflow-x-auto rounded-md border border-border bg-background px-2.5 py-1.5 font-mono text-[10.5px] leading-relaxed text-foreground">
+							{detail.command}
+						</pre>
+					) : null}
 					{detail?.reason || detail?.text ? (
 						<p className="whitespace-pre-wrap text-[11px] leading-relaxed text-muted-foreground">
 							{detail.reason ?? detail.text}
@@ -559,10 +578,6 @@ function TerminalInput({ text, truncated }: { text: string; truncated?: boolean 
  * the viewport of someone reading back through a build log is worse than making
  * them scroll down once.
  *
- * The caveat below it is not boilerplate. The provider drops output, and it does
- * so differently per source, so the note says which source this is and why it may
- * be incomplete rather than hedging the same way about both.
- *
  * The text is what a terminal would have shown, not the bytes: output arrives with
  * its escape sequences intact — nothing in the stack strips them — so a colourized
  * test run rendered here verbatim is a wall of `[0m`, and a progress bar is a
@@ -604,13 +619,6 @@ function CommandOutput({ activity }: { activity: ConversationActivity }) {
 				<p className="text-[10px] leading-relaxed text-warning">
 					This command printed more than AO stores, so the output above stops early. Open a shell in
 					the worktree to see the rest.
-				</p>
-			) : detail?.outputMayBePartial ? (
-				<p className="text-[10px] leading-relaxed text-muted-foreground/70">
-					{detail.outputSource === "stream"
-						? "Streamed live as the command runs. The provider drops the first chunk, so the beginning may be missing."
-						: "Rolled up by the provider after the command finished, and observed to drop the beginning."}{" "}
-					Open a shell in the worktree for the full run.
 				</p>
 			) : null}
 		</>
@@ -690,7 +698,12 @@ function ActivityState({
 	}
 	if (status === "failed") {
 		return (
-			<span className="shrink-0 font-mono text-[10px] tabular-nums text-destructive">
+			<span
+				className={cn(
+					"shrink-0 font-mono text-[10px] tabular-nums",
+					isNonzeroCommandExit(activity) ? "text-muted-foreground/70" : "text-destructive",
+				)}
+			>
 				{detail?.exitCode !== undefined ? `exit ${detail.exitCode}` : "failed"}
 			</span>
 		);
@@ -1242,6 +1255,115 @@ function RerouteRow({ activity }: { activity: ConversationActivity }) {
 }
 
 /**
+ * A provider error item — reconnect storms, credit exhaustion, and similar.
+ *
+ * Codex (and peers) often put the whole JSON envelope in `message` / `summary`.
+ * Rendering that as a generic activity label made one long unbreakable line that
+ * widened the chat column under the sidebars, and five reconnect attempts painted
+ * five walls of red JSON. This row unwraps the human parts and always wraps inside
+ * the column.
+ *
+ * Not a live region: the enclosing timeline is already a `role="log"`, and the
+ * controller banner announces a terminal failure. Marking every historical
+ * reconnect row as `role="alert"` would interrupt a screen reader once per attempt.
+ */
+function ErrorActivityRow({ activity }: { activity: ConversationActivity }) {
+	const { headline, detail } = providerErrorCopy(activity);
+	return (
+		<div className="flex min-w-0 max-w-full items-start gap-2.5 overflow-hidden rounded-md border border-destructive/40 bg-surface px-3 py-2">
+			<AlertTriangle aria-hidden="true" className="mt-0.5 size-3.5 shrink-0 text-destructive" />
+			<div className="flex min-w-0 flex-1 flex-col gap-0.5">
+				<strong className="wrap-anywhere text-[11px] font-medium leading-snug text-destructive">
+					{headline}
+				</strong>
+				{detail ? (
+					<p className="wrap-anywhere text-[10.5px] leading-snug text-muted-foreground">{detail}</p>
+				) : null}
+			</div>
+		</div>
+	);
+}
+
+/**
+ * Prefer the provider's short status line and `additionalDetails` over a raw JSON
+ * dump. Falls back to the stored text when it is already plain language.
+ */
+export function providerErrorCopy(activity: ConversationActivity): {
+	headline: string;
+	detail?: string;
+} {
+	const candidates = [activity.detail?.message, activity.summary, activity.detail?.error];
+	for (const candidate of candidates) {
+		const raw = String(candidate ?? "").trim();
+		if (!raw) continue;
+		const unwrapped = unwrapProviderErrorJson(raw);
+		if (unwrapped) return unwrapped;
+	}
+
+	const headline = String(activity.detail?.message ?? activity.summary ?? "").trim();
+	const extra = String(activity.detail?.error ?? "").trim();
+	if (!headline) return { headline: extra || "Provider error" };
+	if (extra && extra !== headline) return { headline, detail: extra };
+	return { headline };
+}
+
+function unwrapProviderErrorJson(raw: string): { headline: string; detail?: string } | undefined {
+	const parsed = parseJsonObjectSuffix(raw);
+	const err = parsed
+		? parsed.error && typeof parsed.error === "object" && !Array.isArray(parsed.error)
+			? (parsed.error as Record<string, unknown>)
+			: parsed
+		: undefined;
+	const message =
+		typeof err?.message === "string"
+			? err.message.trim()
+			: readJsonStringField(raw, "message");
+	const additional =
+		typeof err?.additionalDetails === "string"
+			? err.additionalDetails.trim()
+			: readJsonStringField(raw, "additionalDetails");
+	if (!message && !additional) return undefined;
+	if (message && additional && additional !== message) {
+		return { headline: message, detail: additional };
+	}
+	return { headline: message || additional };
+}
+
+/** Read a complete string field from an envelope whose trailing JSON was truncated. */
+function readJsonStringField(raw: string, field: "message" | "additionalDetails"): string {
+	const match = new RegExp(`"${field}"\\s*:\\s*("(?:\\\\.|[^"\\\\])*")`).exec(raw);
+	if (!match?.[1]) return "";
+	try {
+		const value = JSON.parse(match[1]) as unknown;
+		return typeof value === "string" ? value.trim() : "";
+	} catch {
+		return "";
+	}
+}
+
+/** AO used to persist `provider error: {…}`; parse the JSON object even when prefixed. */
+function parseJsonObjectSuffix(raw: string): Record<string, unknown> | undefined {
+	const start = raw.indexOf("{");
+	if (start < 0) return undefined;
+	const slice = raw.slice(start).trim();
+	const asObject = (value: unknown): Record<string, unknown> | undefined => {
+		if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+		return value as Record<string, unknown>;
+	};
+	try {
+		return asObject(JSON.parse(slice));
+	} catch {
+		const end = slice.lastIndexOf("}");
+		if (end <= 0) return undefined;
+		try {
+			return asObject(JSON.parse(slice.slice(0, end + 1)));
+		} catch {
+			return undefined;
+		}
+	}
+}
+
+/**
  * Where the provider stopped accepting work until someone signs in.
  *
  * The banner above the timeline is what the user acts on; this row is the record of
@@ -1279,8 +1401,15 @@ export function SteerMessage({ activity }: { activity: ConversationActivity }) {
 	const text = activity.detail?.text ?? activity.summary;
 	return (
 		<div className="flex flex-col items-end gap-1">
-			<div className="w-fit max-w-[min(78%,560px)] whitespace-pre-wrap rounded-[10px] border border-accent-dim bg-raised px-3 py-2.5 text-sm leading-[1.55] text-foreground">
-				{text}
+			<div className="w-fit max-w-[min(78%,560px)] break-words whitespace-pre-wrap rounded-[10px] border border-accent-dim bg-raised px-3 py-2.5 text-sm leading-[1.55] text-foreground">
+				{text ? <p>{text}</p> : null}
+				<ConversationContentItems
+					content={activity.detail?.content ?? []}
+					ariaLabel="Steered attachments"
+					imageLabel="Image"
+					imageAlt={(position) => `Steered attachment ${position}`}
+					className={cn(text && "mt-2")}
+				/>
 			</div>
 			<span className="flex items-center gap-1 text-[11px] text-muted-foreground">
 				<CornerDownRight aria-hidden="true" className="size-3" />

@@ -130,6 +130,25 @@ func hookAgentSessionID(payload []byte) string {
 	return id
 }
 
+// hookLaunchID extracts the runtime launch id a plugin embeds in its payload.
+// It is a fallback for AO_RUNTIME_LAUNCH_ID when child-process env inheritance
+// is trimmed by the agent runtime.
+func hookLaunchID(payload []byte) string {
+	var p struct {
+		LaunchID      string `json:"launch_id"`
+		LaunchIDCamel string `json:"launchId"`
+	}
+	_ = json.Unmarshal(payload, &p)
+	id := strings.TrimSpace(p.LaunchID)
+	if id == "" {
+		id = strings.TrimSpace(p.LaunchIDCamel)
+	}
+	if len(id) > maxActivityMetaLen {
+		return ""
+	}
+	return id
+}
+
 // hookUsageMetadata extracts provider-native usage metadata. It deliberately
 // decodes separately from conversation facts because hook producers may emit
 // a malformed field in one projection while the other remains useful.
@@ -255,6 +274,11 @@ func newHooksCommand(ctx *commandContext) *cobra.Command {
 }
 
 func (c *commandContext) runHook(ctx context.Context, agent, event string) error {
+	if isAgyModernHookEvent(agent, event) {
+		// AGY requires every modern hook handler to return a JSON object, even
+		// when the command is running outside an AO-managed session.
+		_, _ = fmt.Fprintln(c.deps.Out, "{}")
+	}
 	reviewSessionID := strings.TrimSpace(os.Getenv("AO_REVIEW_SESSION_ID"))
 	if reviewSessionID != "" {
 		if !sessionIDPattern.MatchString(reviewSessionID) {
@@ -292,6 +316,11 @@ func (c *commandContext) runHook(ctx context.Context, agent, event string) error
 		return nil
 	}
 
+	launchID := validLaunchID(os.Getenv("AO_RUNTIME_LAUNCH_ID"))
+	if launchID == "" {
+		launchID = validLaunchID(hookLaunchID(payload))
+	}
+
 	toolName, toolUseID := activityMeta(payload)
 	conversation := hookConversationSnapshot{}
 	switch domain.AgentHarness(agent) {
@@ -307,7 +336,7 @@ func (c *commandContext) runHook(ctx context.Context, agent, event string) error
 		LatestUserPrompt:      conversation.LatestUserPrompt,
 		LatestAssistantUpdate: conversation.LatestAssistantUpdate,
 		TranscriptPath:        conversation.TranscriptPath,
-		LaunchID:              validLaunchID(os.Getenv("AO_RUNTIME_LAUNCH_ID")),
+		LaunchID:              launchID,
 		Usage:                 usage,
 	}
 	if hasActivity {
@@ -319,6 +348,18 @@ func (c *commandContext) runHook(ctx context.Context, agent, event string) error
 		c.reportHookFailure(agent, event, sessionID, err)
 	}
 	return nil
+}
+
+func isAgyModernHookEvent(agent, event string) bool {
+	if domain.AgentHarness(agent) != domain.HarnessAgy {
+		return false
+	}
+	switch event {
+	case "pre-invocation", "post-tool-use", "stop":
+		return true
+	default:
+		return false
+	}
 }
 
 func (c *commandContext) runReviewHook(ctx context.Context, agent, event, reviewSessionID string) error {
@@ -334,11 +375,15 @@ func (c *commandContext) runReviewHook(ctx context.Context, agent, event, review
 	if !hasActivity && agentSessionID == "" {
 		return nil
 	}
+	launchID := validLaunchID(os.Getenv("AO_RUNTIME_LAUNCH_ID"))
+	if launchID == "" {
+		launchID = validLaunchID(hookLaunchID(payload))
+	}
 	path := "reviews/" + url.PathEscape(reviewSessionID) + "/activity"
 	req := setReviewActivityAPIRequest{
 		Event:          event,
 		AgentSessionID: agentSessionID,
-		LaunchID:       validLaunchID(os.Getenv("AO_RUNTIME_LAUNCH_ID")),
+		LaunchID:       launchID,
 	}
 	if hasActivity {
 		req.State = string(state)

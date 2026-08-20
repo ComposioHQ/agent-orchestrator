@@ -56,6 +56,14 @@ var (
 	// ErrChatConfigOptionInvalid means a client named an unknown option, sent the
 	// wrong value type, or selected a value the provider did not advertise.
 	ErrChatConfigOptionInvalid = errors.New("chat config option value is invalid")
+	// ErrChatHistoryUnsettled means the native conversation history is not safe
+	// to project as complete. Only a ChatHistoryRefresher promises that another
+	// provider observation may make progress; rereading a snapshot need not.
+	ErrChatHistoryUnsettled = errors.New("chat conversation history is not settled")
+	// ErrChatHistoryUnavailable means the provider can resume its model context
+	// but cannot replay that context as typed history. ACP session/resume has this
+	// property; session/load is required when a caller needs a transcript replay.
+	ErrChatHistoryUnavailable = errors.New("chat conversation history replay is unavailable")
 )
 
 // ChatCapability names something a driver may or may not be able to do. AO gates
@@ -192,7 +200,9 @@ type ChatResumeConfig struct {
 	DataDir                string
 	WorkspacePath          string
 	Env                    map[string]string
-	Permissions            PermissionMode
+	// Model is optional; empty keeps the provider conversation's current model.
+	Model       string
+	Permissions PermissionMode
 	// SystemPrompt is recomputed by the session manager on restore and reapplied
 	// to the provider process. It is not persisted in the conversation transcript.
 	SystemPrompt string
@@ -722,6 +732,11 @@ type ChatEvent struct {
 
 	// ProviderTurnID is set on every event that belongs to a turn.
 	ProviderTurnID string
+	// ProviderConversationID identifies the native thread/session the event came
+	// from. It may differ from ChatConversation.ProviderConversationID for nested
+	// agent work. Empty preserves compatibility with providers whose protocol has
+	// no nested-conversation identity.
+	ProviderConversationID string
 	// ProviderItemID identifies the message or activity being reported.
 	ProviderItemID string
 	// ClientMessageID is the provider-carried idempotency key for a recovered user
@@ -838,6 +853,15 @@ type ChatConversation interface {
 // into the Chat service.
 type ChatHistoryReader interface {
 	ReadHistory(ctx context.Context) ([]ChatEvent, error)
+}
+
+// ChatHistoryRefresher refines ChatHistoryReader for a provider that can make a
+// new authoritative history observation. RefreshHistory must perform provider
+// I/O or wait for a real provider signal; returning the previous capture does not
+// qualify. Callers may use it for bounded convergence after an unsettled read.
+type ChatHistoryRefresher interface {
+	ChatHistoryReader
+	RefreshHistory(ctx context.Context) ([]ChatEvent, error)
 }
 
 // ChatDriverRegistry resolves the driver for a harness.

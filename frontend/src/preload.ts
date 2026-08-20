@@ -1,5 +1,5 @@
-import { contextBridge, ipcRenderer } from "electron";
-import { CLOSE_SHELL_TERMINAL_SHORTCUT_CHANNEL, FOCUS_TERMINAL_SHORTCUT_CHANNEL, KEYBOARD_SHORTCUTS_HELP_CHANNEL, NEXT_SESSION_SHORTCUT_CHANNEL, NEXT_TAB_SHORTCUT_CHANNEL, NEW_SESSION_SHORTCUT_CHANNEL, NEW_SHELL_TERMINAL_SHORTCUT_CHANNEL, OPEN_SETTINGS_SHORTCUT_CHANNEL, PREVIOUS_SESSION_SHORTCUT_CHANNEL, PREVIOUS_TAB_SHORTCUT_CHANNEL, SET_CLOSE_SHELL_TERMINAL_SHORTCUT_ENABLED_CHANNEL, type KeybindingOverrides } from "./shared/shortcuts";
+import { contextBridge, ipcRenderer, webUtils } from "electron";
+import { CLOSE_SHELL_TERMINAL_SHORTCUT_CHANNEL, FOCUS_TERMINAL_SHORTCUT_CHANNEL, KEYBOARD_SHORTCUTS_HELP_CHANNEL, NEXT_SESSION_SHORTCUT_CHANNEL, NEXT_TAB_SHORTCUT_CHANNEL, NEW_SESSION_SHORTCUT_CHANNEL, NEW_SHELL_TERMINAL_SHORTCUT_CHANNEL, OPEN_SETTINGS_SHORTCUT_CHANNEL, PREVIOUS_SESSION_SHORTCUT_CHANNEL, PREVIOUS_TAB_SHORTCUT_CHANNEL, SET_CLOSE_SHELL_TERMINAL_SHORTCUT_ENABLED_CHANNEL, SET_TERMINAL_FOCUSED_CHANNEL, TERMINAL_FONT_SIZE_SHORTCUT_CHANNEL, type KeybindingOverrides } from "./shared/shortcuts";
 import type {
 	BrowserAgentActivityState,
 	BrowserDevToolsInput,
@@ -67,6 +67,7 @@ export type ImportRepoScan = {
 	hasRemote: boolean;
 	status?: "ok" | "error";
 	reason?: string;
+	needsGitInit?: boolean;
 };
 
 export type ImportFolderScan = {
@@ -74,6 +75,25 @@ export type ImportFolderScan = {
 	repos: ImportRepoScan[];
 	setupWarning?: string;
 };
+
+// A folder-drop path can arrive (cold start, or an early second-instance)
+// before ShellLayout's own effect has registered app.onOpenFolderPath's
+// listener below — React mounts TrayRuntime's child effect (which pings
+// main.ts's readiness flush) before ShellLayout's parent effect that installs
+// this listener. One dispatcher registered here, at preload module load
+// (guaranteed to run before any renderer/React code), either forwards
+// directly to the active listener or buffers a path that arrives too early —
+// never both, so a normally delivered path can never be left in the buffer
+// to be replayed by a later resubscription.
+let bufferedOpenFolderPath: string | null = null;
+let activeOpenFolderPathListener: ((path: string) => void) | null = null;
+ipcRenderer.on("app:openFolderPath", (_event, path: string) => {
+	if (activeOpenFolderPathListener) {
+		activeOpenFolderPathListener(path);
+	} else {
+		bufferedOpenFolderPath = path;
+	}
+});
 
 const api = {
 	app: {
@@ -84,6 +104,24 @@ const api = {
 			ipcRenderer.invoke("app:scanImportFolder", input) as Promise<ImportFolderScan>,
 		checkAncestorRepo: (path: string) =>
 			ipcRenderer.invoke("app:checkAncestorRepo", path) as Promise<string | undefined>,
+		// Resolves a dropped File's real filesystem path. Synchronous passthrough
+		// (not ipcRenderer.invoke — a File can't cross that boundary) so it must be
+		// called directly on the File from a drop event, in the same tick, per
+		// Electron's documented webUtils usage.
+		getPathForFile: (file: File) => webUtils.getPathForFile(file),
+		// Fired by the main process when a folder is dropped onto the app's
+		// taskbar icon/shortcut (cold start or an already-running instance).
+		onOpenFolderPath: (listener: (path: string) => void) => {
+			activeOpenFolderPathListener = listener;
+			if (bufferedOpenFolderPath) {
+				const path = bufferedOpenFolderPath;
+				bufferedOpenFolderPath = null;
+				listener(path);
+			}
+			return () => {
+				if (activeOpenFolderPathListener === listener) activeOpenFolderPathListener = null;
+			};
+		},
 		// Fired by the main process when the app-level new-session shortcut
 		// (⌘N / Ctrl+Shift+N) is pressed in any web contents.
 		onNewSessionShortcut: (listener: () => void) => {
@@ -165,10 +203,24 @@ const api = {
 	terminal: {
 		saveDroppedFile: (input: { name: string; bytes: Uint8Array }) =>
 			ipcRenderer.invoke("terminal:saveDroppedFile", input) as Promise<string>,
+		setFocused: (focused: boolean) => ipcRenderer.send(SET_TERMINAL_FOCUSED_CHANNEL, focused),
+		onFontSizeShortcut: (listener: (delta: -1 | 1) => void) => {
+			const wrapped = (_event: Electron.IpcRendererEvent, delta: -1 | 1) => listener(delta);
+			ipcRenderer.on(TERMINAL_FONT_SIZE_SHORTCUT_CHANNEL, wrapped);
+			return () => {
+				ipcRenderer.off(TERMINAL_FONT_SIZE_SHORTCUT_CHANNEL, wrapped);
+			};
+		},
 	},
 	window: {
-		setOverlay: (overlay: { color: string; symbolColor: string }) =>
-			ipcRenderer.invoke("window:setOverlay", overlay) as Promise<void>,
+		isMaximized: () => ipcRenderer.invoke("window:isMaximized") as Promise<boolean>,
+		onMaximized: (listener: (maximized: boolean) => void) => {
+			const wrapped = (_event: Electron.IpcRendererEvent, maximized: boolean) => listener(maximized);
+			ipcRenderer.on("window:maximized", wrapped);
+			return () => {
+				ipcRenderer.off("window:maximized", wrapped);
+			};
+		},
 		isFullScreen: () => ipcRenderer.invoke("window:isFullScreen") as Promise<boolean>,
 		onFullScreen: (listener: (fullScreen: boolean) => void) => {
 			const wrapped = (_event: Electron.IpcRendererEvent, fullScreen: boolean) => listener(fullScreen);
@@ -310,7 +362,7 @@ const api = {
 	},
 	uiSettings: {
 		get: () => ipcRenderer.invoke("uiSettings:get") as Promise<UiSettings>,
-		set: (settings: UiSettings) => ipcRenderer.invoke("uiSettings:set", settings) as Promise<UiSettings>,
+		set: (settings: Partial<UiSettings>) => ipcRenderer.invoke("uiSettings:set", settings) as Promise<UiSettings>,
 	},
 	keybindings: {
 		get: () => ipcRenderer.invoke("keybindings:get") as Promise<KeybindingOverrides>,

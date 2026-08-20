@@ -29,11 +29,16 @@ type Runtime interface {
 var _ Runtime = (*tmux.Runtime)(nil)
 var _ Runtime = (*conpty.Runtime)(nil)
 
-// New returns the per-platform runtime: tmux on Darwin/Linux, conpty on Windows.
-// log is accepted for signature stability with callers but is currently unused.
-func New(_ *slog.Logger) Runtime {
+// New returns the per-platform runtime: tmux on Darwin/Linux, conpty on
+// Windows. log is accepted for signature stability with callers but is
+// currently unused. runFilePath is this daemon instance's running.json path
+// (config.Config.RunFilePath); on Windows it scopes the conpty pty-host
+// registry to the same instance, so two AO daemons on one machine with
+// different AO_RUN_FILE/AO_DATA_DIR overrides never share one registry — see
+// ptyregistry.SetRunFilePath.
+func New(_ *slog.Logger, runFilePath string) Runtime {
 	if runtime.GOOS != "windows" {
 		return tmux.New(tmux.Options{})
 	}
-	return conpty.New(conpty.Options{})
+	return conpty.New(conpty.Options{RunFilePath: runFilePath})
 }

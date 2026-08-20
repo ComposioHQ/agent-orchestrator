@@ -55,6 +55,31 @@ func TestClaudeSessionOptionsUseACPConfigIDs(t *testing.T) {
 	}
 }
 
+func TestValidateClaudeACPExecutableRejectsWindowsCommandShims(t *testing.T) {
+	tests := []struct {
+		name    string
+		binary  string
+		goos    string
+		wantErr bool
+	}{
+		{name: "native executable", binary: `C:\\npm\\claude.exe`, goos: "windows"},
+		{name: "cmd shim", binary: `C:\\npm\\claude.cmd`, goos: "windows", wantErr: true},
+		{name: "bat shim", binary: `C:\\npm\\claude.BAT`, goos: "windows", wantErr: true},
+		{name: "non-Windows shim", binary: "/tmp/claude.cmd", goos: "linux"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			err := validateClaudeACPExecutable(tc.binary, tc.goos)
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("validateClaudeACPExecutable(%q, %q) error = %v, wantErr %v", tc.binary, tc.goos, err, tc.wantErr)
+			}
+			if tc.wantErr && !strings.Contains(err.Error(), "native claude.exe") {
+				t.Fatalf("error = %q, want actionable native executable guidance", err)
+			}
+		})
+	}
+}
+
 func TestRuntimeCommandOverride(t *testing.T) {
 	executable, err := os.Executable()
 	if err != nil {

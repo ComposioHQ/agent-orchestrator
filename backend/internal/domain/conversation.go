@@ -430,6 +430,9 @@ type ConversationSettings struct {
 type ConversationTurn struct {
 	ID             string `json:"id"`
 	ConversationID string `json:"conversationId"`
+	// BranchID is durable provider-lineage metadata used to keep opaque turn ids
+	// inside the provider ownership epoch that created them.
+	BranchID string `json:"-"`
 	// HandledBySessionID is the AO session whose controller ran the turn. For a
 	// project-scoped conversation this changes when the orchestrator is
 	// replaced; the conversation identity does not.

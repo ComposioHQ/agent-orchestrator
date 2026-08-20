@@ -48,9 +48,15 @@ type recordingLauncher struct {
 	turns       []string
 	// relayed is what arrived through Manager.Send rather than as an initial
 	// prompt, kept separate so a test can tell the two apart.
-	relayed []string
-	stopped []domain.SessionID
+	relayed  []string
+	relayIDs []string
+	stopped  []domain.SessionID
+	armed    []domain.SessionID
+	prepared []domain.SessionID
+	aborted  []domain.SessionID
 }
+
+func (l *recordingLauncher) SupportsChat(_ domain.AgentHarness) bool { return true }
 
 func (l *recordingLauncher) PreflightChat(_ context.Context, harness domain.AgentHarness) error {
 	l.preflighted = append(l.preflighted, harness)
@@ -66,8 +72,11 @@ func (l *recordingLauncher) StartChat(_ context.Context, cfg ChatStart) (ChatSta
 		ProviderConversationID: "thread-1",
 		ControllerGeneration:   "gen-1",
 	}
+	if cfg.ControllerGeneration != "" {
+		started.ControllerGeneration = cfg.ControllerGeneration
+	}
 	if cfg.ControllerReady != nil {
-		if err := cfg.ControllerReady(started); err != nil {
+		if _, err := cfg.ControllerReady(started); err != nil {
 			return ChatStarted{}, err
 		}
 	}
@@ -84,11 +93,13 @@ func (l *recordingLauncher) StartChatTurn(_ context.Context, _ domain.SessionID,
 
 func (l *recordingLauncher) RelayChatTurn(_ context.Context, _ domain.SessionID, text string) (string, error) {
 	l.relayed = append(l.relayed, text)
+	l.relayIDs = append(l.relayIDs, "")
 	return "turn-relay", l.turnErr
 }
 
-func (l *recordingLauncher) RelayChatTurnWithID(_ context.Context, _ domain.SessionID, text, _ string) (string, error) {
+func (l *recordingLauncher) RelayChatTurnWithID(_ context.Context, _ domain.SessionID, text, clientMessageID string) (string, error) {
 	l.relayed = append(l.relayed, text)
+	l.relayIDs = append(l.relayIDs, clientMessageID)
 	return "turn-relay", l.turnErr
 }
 
@@ -100,6 +111,55 @@ func (l *recordingLauncher) StopChat(_ context.Context, id domain.SessionID) err
 
 func (l *recordingLauncher) HasLiveChatController(domain.SessionID) bool {
 	return l.live
+}
+
+func (l *recordingLauncher) ArmChatHandoff(_ context.Context, id domain.SessionID, _ domain.SessionInterfaceTransitionPolicy) error {
+	l.armed = append(l.armed, id)
+	return nil
+}
+
+func (l *recordingLauncher) PrepareChatHandoff(_ context.Context, id domain.SessionID, _ domain.SessionInterfaceTransitionPolicy) error {
+	l.prepared = append(l.prepared, id)
+	return nil
+}
+
+func (l *recordingLauncher) AbortChatHandoff(id domain.SessionID) {
+	l.aborted = append(l.aborted, id)
+}
+
+func TestReconcileLive_ChatRelaunchesInExistingWorktree(t *testing.T) {
+	launcher := &recordingLauncher{}
+	m, st, rt := newChatManager(launcher)
+	ws := m.workspace.(*fakeWorkspace)
+	lcm := m.lcm.(*fakeLCM)
+	rec := domain.SessionRecord{
+		ID: "mer-1", ProjectID: chatTestProject, Kind: domain.KindWorker,
+		Harness: domain.HarnessCodex, Mode: domain.SessionModeChat,
+		Metadata: domain.SessionMetadata{
+			Branch: "ao/mer-1/root", WorkspacePath: "/ws/mer-1",
+			ProviderConversationID: "thread-existing",
+		},
+	}
+	st.sessions[rec.ID] = rec
+
+	if err := m.reconcileLive(context.Background(), rec); err != nil {
+		t.Fatalf("reconcileLive: %v", err)
+	}
+	if len(launcher.started) != 1 || launcher.started[0].ProviderConversationID != "thread-existing" {
+		t.Fatalf("chat starts = %+v, want one native resume", launcher.started)
+	}
+	if rt.created != 0 {
+		t.Fatalf("terminal runtime Create calls = %d, want 0 for Chat", rt.created)
+	}
+	if ws.stashCalls != 0 {
+		t.Fatalf("StashUncommitted calls = %d, want 0", ws.stashCalls)
+	}
+	if lcm.terminated[rec.ID] != 0 || st.sessions[rec.ID].IsTerminated {
+		t.Fatalf("chat session was terminated during in-place recovery: calls=%d row=%+v", lcm.terminated[rec.ID], st.sessions[rec.ID])
+	}
+	if len(ws.restoreConfigs) != 1 || ws.restoreConfigs[0].Path != rec.Metadata.WorkspacePath {
+		t.Fatalf("Restore configs = %+v, want existing Chat worktree", ws.restoreConfigs)
+	}
 }
 
 func seedChatResumeSession(store *fakeStore, state domain.ActivityState) {
@@ -387,6 +447,31 @@ func TestChatSpawnStartsControllerAndNoRuntime(t *testing.T) {
 
 	if len(launcher.turns) != 1 || launcher.turns[0] == "" {
 		t.Fatalf("initial prompt was not delivered as a turn: %v", launcher.turns)
+	}
+}
+
+func TestChatSpawnAppliesRequestAgentConfigOverProjectDefaults(t *testing.T) {
+	launcher := &recordingLauncher{}
+	mgr, store, _ := newChatManager(launcher)
+	project := store.projects[string(chatTestProject)]
+	project.Config.AgentConfig.Model = "project-model"
+	store.projects[string(chatTestProject)] = project
+
+	_, _, _, err := mgr.Spawn(context.Background(), ports.SpawnConfig{
+		ProjectID:     chatTestProject,
+		Kind:          domain.KindWorker,
+		Harness:       domain.HarnessCodex,
+		AgentConfig:   ports.AgentConfig{Model: "request-model"},
+		RequestedMode: domain.SessionModeChat,
+	})
+	if err != nil {
+		t.Fatalf("Spawn: %v", err)
+	}
+	if len(launcher.started) != 1 {
+		t.Fatalf("started %d controllers, want 1", len(launcher.started))
+	}
+	if got := launcher.started[0].Model; got != "request-model" {
+		t.Fatalf("controller model = %q, want request-model", got)
 	}
 }
 

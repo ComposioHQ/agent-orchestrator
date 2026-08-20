@@ -1,26 +1,40 @@
 import { useQuery } from "@tanstack/react-query";
-import type { components } from "../../api/schema";
 import { apiClient, apiErrorMessage } from "../lib/api-client";
 import { usesPreviewWorkspaceData } from "../lib/preview-mode";
+import type { AgentSwitchSummary } from "../types/workspace";
 
-type GeneratedAgentSwitch = components["schemas"]["AgentSwitch"];
-
-// Keep forward compatibility with newer daemons so unknown errors can fall
-// back to a generic label instead of becoming impossible to represent.
-export type AgentSwitch = Omit<GeneratedAgentSwitch, "errorCode"> & {
-	errorCode?: string;
-};
+export type AgentSwitch = AgentSwitchSummary;
 
 const terminalAgentSwitchStates = new Set<AgentSwitch["state"]>(["completed", "failed"]);
 
-export const agentSwitchesQueryKey = (sessionId: string) => ["session-agent-switches", sessionId] as const;
+export const agentSwitchesQueryRoot = ["session-agent-switches"] as const;
+export const agentSwitchesQueryKey = (sessionId: string) => [...agentSwitchesQueryRoot, sessionId] as const;
 
 export function isTerminalAgentSwitch(agentSwitch: AgentSwitch): boolean {
 	return terminalAgentSwitchStates.has(agentSwitch.state);
 }
 
 export function agentSwitchNeedsRecovery(agentSwitch: AgentSwitch): boolean {
+	return (
+		agentSwitchNeedsTargetStartRecovery(agentSwitch) ||
+		agentSwitchNeedsSourceStopRecovery(agentSwitch) ||
+		agentSwitchNeedsSourceRestore(agentSwitch)
+	);
+}
+
+export function agentSwitchNeedsTargetStartRecovery(agentSwitch: AgentSwitch): boolean {
 	return agentSwitch.state === "starting_target" && agentSwitch.errorCode === "target_start_unconfirmed";
+}
+
+export function agentSwitchNeedsSourceStopRecovery(agentSwitch: AgentSwitch): boolean {
+	return agentSwitch.state === "stopping_source" && agentSwitch.errorCode === "source_stop_unconfirmed";
+}
+
+export function agentSwitchNeedsSourceRestore(agentSwitch: AgentSwitch): boolean {
+	return (
+		(agentSwitch.state === "source_stopped" || agentSwitch.state === "starting_target") &&
+		agentSwitch.errorCode === "source_restore_unconfirmed"
+	);
 }
 
 export function findActiveAgentSwitch(agentSwitches: AgentSwitch[]): AgentSwitch | undefined {
@@ -31,6 +45,25 @@ export function findActiveAgentSwitch(agentSwitches: AgentSwitch[]): AgentSwitch
 
 export function findRecoveryRequiredAgentSwitch(agentSwitches: AgentSwitch[]): AgentSwitch | undefined {
 	return agentSwitches.find(agentSwitchNeedsRecovery);
+}
+
+// Selects the durable switch that owns the session interaction lock. The
+// workspace snapshot is fastest, while the switch-history query survives a
+// renderer reload and carries recovery details that the compact summary may not
+// have observed yet.
+export function selectDurableAgentSwitch(
+	sessionAgentSwitch: AgentSwitchSummary | undefined,
+	agentSwitches: AgentSwitch[],
+): AgentSwitch | undefined {
+	const detailed = sessionAgentSwitch
+		? agentSwitches.find((entry) => entry.id === sessionAgentSwitch.id)
+		: undefined;
+	return (
+		detailed ??
+		sessionAgentSwitch ??
+		findRecoveryRequiredAgentSwitch(agentSwitches) ??
+		findActiveAgentSwitch(agentSwitches)
+	);
 }
 
 export function agentSwitchesRefetchInterval(agentSwitches: AgentSwitch[]): 1_000 | false {

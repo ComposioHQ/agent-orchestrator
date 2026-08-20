@@ -34,6 +34,7 @@ type ConversationService interface {
 	ResolveInput(ctx context.Context, session domain.SessionID, requestID string, response ports.ChatInputResponse) error
 	Interrupt(ctx context.Context, session domain.SessionID) error
 	Steer(ctx context.Context, session domain.SessionID, msg ports.ChatUserMessage) (chatsvc.SteerResult, error)
+	PromoteQueuedTurn(ctx context.Context, session domain.SessionID, turnID string) (chatsvc.PromoteQueuedTurnResult, error)
 	Models(ctx context.Context, session domain.SessionID) ([]ports.ChatModel, domain.ConversationSettings, error)
 	ConfigOptions(ctx context.Context, session domain.SessionID) ([]ports.ChatConfigOption, error)
 	SetConfigOption(ctx context.Context, session domain.SessionID, configID string, value ports.ChatConfigOptionValue) ([]ports.ChatConfigOption, error)
@@ -66,6 +67,7 @@ func (c *ConversationsController) Register(r chi.Router) {
 	r.Post("/sessions/{sessionId}/conversation/inputs/{requestId}/resolve", c.resolveInput)
 	r.Post("/sessions/{sessionId}/conversation/interrupt", c.interrupt)
 	r.Post("/sessions/{sessionId}/conversation/steer", c.steer)
+	r.Post("/sessions/{sessionId}/conversation/turns/{turnId}/steer", c.promoteQueuedTurn)
 	r.Post("/sessions/{sessionId}/conversation/compact", c.compact)
 	r.Get("/sessions/{sessionId}/conversation/models", c.models)
 	r.Get("/sessions/{sessionId}/conversation/config-options", c.configOptions)
@@ -127,6 +129,12 @@ func (c *ConversationsController) activateBranch(w http.ResponseWriter, r *http.
 	if errors.Is(err, chatsvc.ErrTurnRunning) || errors.Is(err, chatsvc.ErrControllerHandoff) {
 		envelope.WriteAPIError(w, r, http.StatusConflict, "conflict",
 			"CHAT_EDIT_BUSY", "stop the current turn before switching conversation branches", nil)
+		return
+	}
+	if errors.Is(err, chatsvc.ErrBranchProviderMismatch) {
+		envelope.WriteAPIError(w, r, http.StatusConflict, "conflict",
+			"CHAT_BRANCH_PROVIDER_MISMATCH",
+			"that branch belongs to the agent that handled this session before the last switch", nil)
 		return
 	}
 	if err != nil {
@@ -689,6 +697,11 @@ func writeConversationError(w http.ResponseWriter, r *http.Request, err error) {
 		envelope.WriteAPIError(w, r, http.StatusConflict, "conflict",
 			"CHAT_TURN_NOT_ROLLBACKABLE",
 			"that turn never reached the agent, so there is nothing to undo", nil)
+
+	case errors.Is(err, chatsvc.ErrTurnProviderMismatch):
+		envelope.WriteAPIError(w, r, http.StatusConflict, "conflict",
+			"CHAT_TURN_PROVIDER_MISMATCH",
+			"that turn belongs to the agent that handled this session before the last switch", nil)
 
 	case errors.Is(err, chatsvc.ErrRollbackUnsupported):
 		envelope.WriteAPIError(w, r, http.StatusConflict, "conflict",

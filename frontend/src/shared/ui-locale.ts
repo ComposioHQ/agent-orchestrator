@@ -7,9 +7,11 @@ export const DEFAULT_LOCALE: AppLocale = "en";
 
 export interface UiSettings {
 	locale: AppLocale;
+	/** Whether attention-worthy notifications (needs input, ready to merge) also play a sound. */
+	soundNotificationsEnabled: boolean;
 }
 
-export const DEFAULT_UI_SETTINGS: UiSettings = { locale: DEFAULT_LOCALE };
+export const DEFAULT_UI_SETTINGS: UiSettings = { locale: DEFAULT_LOCALE, soundNotificationsEnabled: true };
 
 /** Normalize an unknown value to a supported UI locale. */
 export function coerceLocale(raw: unknown): AppLocale {
@@ -21,7 +23,11 @@ export function coerceLocale(raw: unknown): AppLocale {
 
 /** Normalize unknown persisted or IPC data to the supported UI-settings schema. */
 export function coerceUiSettings(raw: unknown): UiSettings {
-	const locale =
-		typeof raw === "object" && raw !== null ? coerceLocale((raw as Record<string, unknown>).locale) : DEFAULT_LOCALE;
-	return { locale };
+	if (typeof raw !== "object" || raw === null) return { ...DEFAULT_UI_SETTINGS };
+	const record = raw as Record<string, unknown>;
+	const soundNotificationsEnabled =
+		typeof record.soundNotificationsEnabled === "boolean"
+			? record.soundNotificationsEnabled
+			: DEFAULT_UI_SETTINGS.soundNotificationsEnabled;
+	return { locale: coerceLocale(record.locale), soundNotificationsEnabled };
 }

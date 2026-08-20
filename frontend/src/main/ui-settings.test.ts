@@ -26,9 +26,18 @@ describe("ui-settings", () => {
 
 	it("round-trips written locale", async () => {
 		await writeUiSettings(dir, { locale: "zh-CN" });
-		expect(await readUiSettings(dir)).toEqual({ locale: "zh-CN" });
+		expect(await readUiSettings(dir)).toEqual({ locale: "zh-CN", soundNotificationsEnabled: true });
 		await writeUiSettings(dir, { locale: "en" });
-		expect(await readUiSettings(dir)).toEqual({ locale: "en" });
+		expect(await readUiSettings(dir)).toEqual({ locale: "en", soundNotificationsEnabled: true });
+	});
+
+	it("merges a partial write with previously persisted settings instead of replacing them", async () => {
+		await writeUiSettings(dir, { locale: "zh-CN" });
+		await writeUiSettings(dir, { soundNotificationsEnabled: false });
+		expect(await readUiSettings(dir)).toEqual({ locale: "zh-CN", soundNotificationsEnabled: false });
+
+		await writeUiSettings(dir, { locale: "ja" });
+		expect(await readUiSettings(dir)).toEqual({ locale: "ja", soundNotificationsEnabled: false });
 	});
 
 	it("falls back to defaults on garbage", async () => {
@@ -37,13 +46,13 @@ describe("ui-settings", () => {
 	});
 
 	it("coerces unknown locale to en and accepts supported locales", () => {
-		expect(coerceUiSettings({ locale: "xx" })).toEqual({ locale: "en" });
-		expect(coerceUiSettings({ locale: "zh" })).toEqual({ locale: "en" });
-		expect(coerceUiSettings({})).toEqual({ locale: "en" });
-		expect(coerceUiSettings(null)).toEqual({ locale: "en" });
-		expect(coerceUiSettings({ locale: "zh-CN" })).toEqual({ locale: "zh-CN" });
-		expect(coerceUiSettings({ locale: "fr" })).toEqual({ locale: "fr" });
-		expect(coerceUiSettings({ locale: "pt-BR" })).toEqual({ locale: "pt-BR" });
+		expect(coerceUiSettings({ locale: "xx" })).toEqual({ locale: "en", soundNotificationsEnabled: true });
+		expect(coerceUiSettings({ locale: "zh" })).toEqual({ locale: "en", soundNotificationsEnabled: true });
+		expect(coerceUiSettings({})).toEqual({ locale: "en", soundNotificationsEnabled: true });
+		expect(coerceUiSettings(null)).toEqual({ locale: "en", soundNotificationsEnabled: true });
+		expect(coerceUiSettings({ locale: "zh-CN" })).toEqual({ locale: "zh-CN", soundNotificationsEnabled: true });
+		expect(coerceUiSettings({ locale: "fr" })).toEqual({ locale: "fr", soundNotificationsEnabled: true });
+		expect(coerceUiSettings({ locale: "pt-BR" })).toEqual({ locale: "pt-BR", soundNotificationsEnabled: true });
 	});
 
 	it("atomic write leaves no temp file behind", async () => {

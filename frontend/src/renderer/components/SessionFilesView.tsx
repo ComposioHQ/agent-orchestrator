@@ -1193,7 +1193,7 @@ function FileAnnotationComposer({ annotation }: { annotation: FileAnnotationMode
 			<textarea
 				aria-label={t("files.feedbackLabel", { target: targetLabel })}
 				autoFocus
-				className="min-h-20 w-full resize-y rounded-md border border-input bg-background px-2.5 py-2 text-sm text-foreground outline-none placeholder:text-passive focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/30 disabled:opacity-60"
+				className="min-h-20 w-full resize-y rounded-md border border-input bg-background px-2.5 py-2 text-sm text-foreground outline-none placeholder:text-passive focus-visible:outline-none disabled:opacity-60"
 				disabled={annotation.status === "sending" || annotation.status === "sent"}
 				onChange={(event) => annotation.setDraft(event.target.value)}
 				onKeyDown={(event) => {

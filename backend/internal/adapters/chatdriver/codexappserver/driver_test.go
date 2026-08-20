@@ -508,6 +508,42 @@ func TestNotificationsBecomeNeutralEvents(t *testing.T) {
 	}
 }
 
+// app-server multiplexes child-agent thread notifications over the root
+// connection. The adapter's fallback target must remain the root turn; otherwise
+// an interrupt without an explicit id can stop a child and leave the requested
+// root work running.
+func TestNestedThreadDoesNotReplaceRootActiveTurn(t *testing.T) {
+	d, srv := newTestDriver(t)
+	conv, err := d.Start(context.Background(), ports.ChatStartConfig{WorkspacePath: "/tmp/ws"})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer func() { _ = conv.Close() }()
+
+	srv.push(`{"method":"turn/started","params":{"threadId":"thread-1","turn":{"id":"root-turn","status":"inProgress","items":[]}}}`)
+	srv.push(`{"method":"turn/started","params":{"threadId":"child-thread-1","turn":{"id":"child-turn","status":"inProgress","items":[]}}}`)
+	root := nextEvent(t, conv.Events(), ports.ChatEventTurnStarted)
+	child := nextEvent(t, conv.Events(), ports.ChatEventTurnStarted)
+	if root.ProviderConversationID != "thread-1" || child.ProviderConversationID != "child-thread-1" {
+		t.Fatalf("normalized lifecycle threads = root %q child %q", root.ProviderConversationID, child.ProviderConversationID)
+	}
+
+	if err := conv.Interrupt(context.Background(), ""); err != nil {
+		t.Fatalf("Interrupt: %v", err)
+	}
+	sent := srv.awaitFrame(func(f frame) bool { return f.Method == "turn/interrupt" })
+	var params struct {
+		ThreadID string `json:"threadId"`
+		TurnID   string `json:"turnId"`
+	}
+	if err := json.Unmarshal(sent.Params, &params); err != nil {
+		t.Fatalf("decode turn/interrupt params: %v", err)
+	}
+	if params.ThreadID != "thread-1" || params.TurnID != "root-turn" {
+		t.Fatalf("interrupt target = %q/%q, want thread-1/root-turn", params.ThreadID, params.TurnID)
+	}
+}
+
 // Resume must not quietly become a fresh thread: that would present unrelated
 // history as continuous.
 func TestResumeFailureDoesNotFallBackToStart(t *testing.T) {
@@ -546,6 +582,7 @@ func TestResumeReappliesWorkspaceAndStandingInstructions(t *testing.T) {
 		SessionID:              "ao-1",
 		ProviderConversationID: "thread-1",
 		WorkspacePath:          "/tmp/ws",
+		Model:                  "selected-resume-model",
 		SystemPrompt:           "current AO standing instructions",
 	})
 	if err != nil {
@@ -557,6 +594,7 @@ func TestResumeReappliesWorkspaceAndStandingInstructions(t *testing.T) {
 	var params struct {
 		ThreadID              string `json:"threadId"`
 		Cwd                   string `json:"cwd"`
+		Model                 string `json:"model"`
 		DeveloperInstructions string `json:"developerInstructions"`
 	}
 	if err := json.Unmarshal(resume.Params, &params); err != nil {
@@ -564,6 +602,9 @@ func TestResumeReappliesWorkspaceAndStandingInstructions(t *testing.T) {
 	}
 	if params.ThreadID != "thread-1" || params.Cwd != "/tmp/ws" {
 		t.Fatalf("thread resume identity = %#v", params)
+	}
+	if params.Model != "selected-resume-model" {
+		t.Fatalf("thread resume model = %q, want selected-resume-model", params.Model)
 	}
 	if params.DeveloperInstructions != "current AO standing instructions" {
 		t.Fatalf("developerInstructions = %q", params.DeveloperInstructions)
