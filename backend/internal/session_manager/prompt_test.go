@@ -89,6 +89,9 @@ func TestBuildSystemPrompt_OrchestratorRequiresConfirmationAndAOOnlyDelegation(t
 		"You may coordinate multiple workers, but AO workers only",
 		"ao session claim-pr <worker-session-id> <pr-ref>",
 		"must pass the target worker session explicitly",
+		"Add `--model <id>` when the human or task explicitly requests a specific model",
+		"retry the same spawn without `--model`",
+		"tell the human you fell back to the default model",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("orchestrator prompt missing %q:\n%s", want, got)

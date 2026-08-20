@@ -269,10 +269,23 @@ export function BrowserPanelView({
 		window.localStorage.setItem(RAIL_PINNED_STORAGE_KEY, next ? "1" : "0");
 	}, []);
 
-	const canUseDevTools = hasNativeBrowser && Boolean(viewId);
+	// Docked DevTools belongs to the native page view, which is intentionally
+	// hidden while the active target is blank. Keep close available for any
+	// in-flight state update, but do not offer an open action with no page.
+	const canUseDevTools = hasNativeBrowser && Boolean(viewId) && Boolean(navState.url || devtoolsState.open);
 
 	useEffect(() => {
 		setUrlInput(navState.url);
+		// A prior submit (typed, or pasted, then Enter) leaves the caret at the
+		// end of the old value; the browser keeps that same horizontal scroll
+		// position for the new value, scrolling the scheme/host off the left
+		// edge (e.g. showing "://example.com" instead of "https://example.com").
+		// Reset it once the DOM has the new value committed, so the address is
+		// readable from the start like a real address bar after navigating.
+		const frame = window.requestAnimationFrame(() => {
+			if (urlInputRef.current) urlInputRef.current.scrollLeft = 0;
+		});
+		return () => window.cancelAnimationFrame(frame);
 	}, [navState.url]);
 
 	useEffect(() => {
@@ -411,28 +424,38 @@ export function BrowserPanelView({
 								: t("browser.annotate")
 					}
 					aria-pressed={annotationMode || status === "picking"}
-					className="browser-panel__annotate-btn"
+					className="browser-panel__annotate-btn relative"
 					disabled={!canAnnotate || status === "sending"}
 					onClick={() => void toggleAnnotationMode()}
 					size="icon-sm"
-					title={canRetryAnnotation ? t("browser.retryAnnotation") : t("browser.annotate")}
+					// Status is available on hover/focus (native title tooltip on the same
+					// button, plus the corner dot below) rather than permanently-visible
+					// on-screen text — mirrors the design note on annotate-preload.ts's
+					// on-page hint banner. Falls back to the button's own static label
+					// when there's no live status to report.
+					title={annotationStatusLabel || agentStatusLabel || (canRetryAnnotation ? t("browser.retryAnnotation") : t("browser.annotate"))}
 					type="button"
 					variant="ghost"
 				>
 					<MousePointer2 aria-hidden="true" className="h-4 w-4" />
+					{annotationStatusLabel ? (
+						<span
+							aria-hidden="true"
+							className={cn(
+								"pointer-events-none absolute -right-0.5 -top-0.5 size-1.5 rounded-full",
+								status === "error" ? "bg-destructive" : "bg-accent",
+							)}
+						/>
+					) : agentStatusLabel ? (
+						<span aria-hidden="true" className="pointer-events-none absolute -right-0.5 -top-0.5 size-1.5 rounded-full bg-accent" />
+					) : null}
 				</Button>
 				{annotationStatusLabel ? (
-					<span
-						className={
-							status === "error"
-								? "browser-panel__annotation-status browser-panel__annotation-status--error"
-								: "browser-panel__annotation-status"
-						}
-					>
+					<span className="sr-only" role="status">
 						{annotationStatusLabel}
 					</span>
 				) : agentStatusLabel ? (
-					<span className="browser-panel__annotation-status" role="status" aria-live="polite">
+					<span aria-live="polite" className="sr-only" role="status">
 						{agentStatusLabel}
 					</span>
 				) : null}
@@ -458,7 +481,11 @@ export function BrowserPanelView({
 				) : null}
 				<Button
 					aria-label={t(devtoolsState.open ? "browser.closeDevTools" : "browser.openDevTools")}
-					className={cn(devtoolsState.open && "bg-accent-weak text-accent")}
+					aria-pressed={devtoolsState.open}
+					className={cn(
+						devtoolsState.open &&
+							"bg-accent-strong text-accent-foreground hover:bg-accent-strong dark:hover:bg-accent-strong",
+					)}
 					disabled={!canUseDevTools}
 					onClick={() => void (devtoolsState.open ? closeDevTools() : openDevTools())}
 					size="icon-sm"
@@ -533,24 +560,21 @@ export function BrowserPanelView({
 				) : null}
 			</form>
 			<div className="browser-panel__body flex min-h-0 flex-1 overflow-hidden">
-				{/* Docked keeps the rail on the right (out of the way of the toolbar/
-				    address bar); popped-out keeps it on the left. */}
-				{poppedOut ? (
-					<BrowserTabsRail
-						activeTabId={activeTabId}
-						onCloseTab={closeTab}
-						onOpenTab={handleOpenTab}
-						onPinnedChange={handlePinnedChange}
-						onReorderTabs={reorderTabs}
-						onSelectTab={handleSelectTab}
-						pinned={pinned}
-						poppedOut={poppedOut}
-						ref={railRef}
-						tabs={tabs}
-					/>
-				) : null}
 				<div
-					className="browser-panel__viewport relative min-h-0 flex-1 overflow-hidden bg-background"
+					className="browser-panel__viewport relative min-h-0 flex-1 overflow-hidden"
+					// The live page paints as a separate native WebContentsView, not inside
+					// this div. Opening any overlay (e.g. the tabs-rail flyout,
+					// BrowserTabsRail.tsx's data-browser-native-overlay) briefly raises the
+					// transparent shell above that native view so the overlay can paint on
+					// top — if this div painted an opaque background here, it would blank
+					// the live page for the duration. `.browser-panel__viewport` in
+					// styles.css carries its own plain-CSS background (a decorative
+					// gradient for the empty/no-bridge placeholder states) that is NOT a
+					// Tailwind utility and so can't be toggled via className — Tailwind
+					// utilities live in a lower-priority cascade layer and can never
+					// override plain author CSS. Gate that CSS rule with this data
+					// attribute instead, so there's exactly one place deciding opacity.
+					data-placeholder={!hasNativeBrowser || navState.url === "" ? "true" : undefined}
 					data-testid="browser-viewport"
 				>
 					<div className="browser-panel__slot absolute inset-0 min-h-px min-w-px" ref={slotRef} />
@@ -572,20 +596,20 @@ export function BrowserPanelView({
 						</p>
 					) : null}
 				</div>
-				{!poppedOut ? (
-					<BrowserTabsRail
-						activeTabId={activeTabId}
-						onCloseTab={closeTab}
-						onOpenTab={handleOpenTab}
-						onPinnedChange={handlePinnedChange}
-						onReorderTabs={reorderTabs}
-						onSelectTab={handleSelectTab}
-						pinned={pinned}
-						poppedOut={poppedOut}
-						ref={railRef}
-						tabs={tabs}
-					/>
-				) : null}
+				{/* Both docked and popped-out keep the rail on the right of the
+				    viewport (out of the way of the toolbar/address bar). */}
+				<BrowserTabsRail
+					activeTabId={activeTabId}
+					onCloseTab={closeTab}
+					onOpenTab={handleOpenTab}
+					onPinnedChange={handlePinnedChange}
+					onReorderTabs={reorderTabs}
+					onSelectTab={handleSelectTab}
+					pinned={pinned}
+					poppedOut={poppedOut}
+					ref={railRef}
+					tabs={tabs}
+				/>
 			</div>
 		</div>
 	);

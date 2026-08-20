@@ -30,6 +30,11 @@ vi.mock("electron", () => ({
 
 await import("./preload");
 
+// Captured once, before any test's beforeEach clears the listeners map: this
+// is the always-on buffering listener preload.ts registers at module load,
+// not the per-call listener onOpenFolderPath registers when invoked.
+const openFolderPathBufferListener = electronMocks.listeners.get("app:openFolderPath");
+
 function exposedBridge(): AoBridge {
 	const call = electronMocks.exposeInMainWorld.mock.calls.find(([key]) => key === "ao");
 	if (!call) throw new Error("preload bridge was not exposed");
@@ -55,6 +60,43 @@ describe("preload getPathForFile bridge", () => {
 		expect(path).toBe("/Users/x/dropped-folder");
 		expect(electronMocks.getPathForFile).toHaveBeenCalledWith(file);
 		expect(electronMocks.invoke).not.toHaveBeenCalled();
+	});
+});
+
+describe("preload openFolderPath bridge", () => {
+	it("replays a folder path that arrived before onOpenFolderPath was called", () => {
+		// Regression: cold start / an early second-instance can flush
+		// app:openFolderPath before ShellLayout's own effect has run to call
+		// onOpenFolderPath and register its listener (React mounts TrayRuntime's
+		// child effect, whose ready-ping triggers the main-process flush, before
+		// ShellLayout's own parent effect). Without buffering, that path was lost.
+		openFolderPathBufferListener?.({}, "/dropped/via-icon");
+
+		const listener = vi.fn();
+		exposedBridge().app.onOpenFolderPath(listener);
+
+		expect(listener).toHaveBeenCalledWith("/dropped/via-icon");
+	});
+
+	it("does not replay an already-consumed buffered path a second time", () => {
+		openFolderPathBufferListener?.({}, "/dropped/first");
+		const firstListener = vi.fn();
+		exposedBridge().app.onOpenFolderPath(firstListener);
+		expect(firstListener).toHaveBeenCalledTimes(1);
+
+		const secondListener = vi.fn();
+		exposedBridge().app.onOpenFolderPath(secondListener);
+		expect(secondListener).not.toHaveBeenCalled();
+	});
+
+	it("delivers a path that arrives normally, after the listener is already registered", () => {
+		const listener = vi.fn();
+		exposedBridge().app.onOpenFolderPath(listener);
+		const wrapped = electronMocks.listeners.get("app:openFolderPath");
+
+		wrapped?.({}, "/dropped/normal");
+
+		expect(listener).toHaveBeenCalledWith("/dropped/normal");
 	});
 });
 

@@ -68,7 +68,14 @@ export function TerminalSwitchAgentButton({
 							warning && "text-warning hover:bg-warning/10 hover:text-warning",
 						)}
 						disabled={blocksNewSwitch}
-						onClick={() => handleOpenChange(true)}
+						onClick={() => {
+							if (!open) handleOpenChange(true);
+						}}
+						onPointerDown={(event) => {
+							if (!open) return;
+							event.preventDefault();
+							event.stopPropagation();
+						}}
 						type="button"
 						variant="icon"
 					>

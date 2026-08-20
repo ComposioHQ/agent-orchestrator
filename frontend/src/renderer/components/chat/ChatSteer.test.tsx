@@ -1,9 +1,12 @@
-import { render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { ChatComposer } from "./ChatComposer";
 import { ChatWorkspace } from "./ChatWorkspace";
 import { chatFixture } from "../../lib/chat-fixture";
+
+const png = (name = "shot.png") =>
+	new File([new Uint8Array([137, 80, 78, 71])], name, { type: "image/png" });
 
 // Steering sends guidance INTO the running turn instead of queueing behind it. The
 // thing these tests protect is that the choice is legible: Enter changing meaning
@@ -102,6 +105,38 @@ describe("ChatComposer steering", () => {
 			"aria-pressed",
 			"true",
 		);
+	});
+
+	it("keeps attachment-only drafts out of steer and available to queue", async () => {
+		const onSteer = vi.fn().mockResolvedValue(undefined);
+		const onSend = vi.fn();
+		const stage = vi.fn().mockResolvedValue([".ao/attachments/shot.png"]);
+		composer({ onSteer, onSend, onStageAttachments: stage });
+
+		await userEvent.click(screen.getByRole("button", { name: "Steer this turn" }));
+
+		const field = screen.getByRole("combobox");
+		await userEvent.click(field);
+		fireEvent.paste(field, { clipboardData: { files: [png()], items: [] } });
+		await waitFor(() => expect(screen.getAllByRole("listitem")).toHaveLength(1));
+
+		expect(screen.getByRole("button", { name: "Steer the running turn" })).toBeDisabled();
+		await userEvent.keyboard("{Enter}");
+		expect(onSteer).not.toHaveBeenCalled();
+		expect(onSend).not.toHaveBeenCalled();
+		expect(stage).not.toHaveBeenCalled();
+		expect(screen.getAllByRole("listitem")).toHaveLength(1);
+
+		await userEvent.click(screen.getByRole("button", { name: "Queue for next" }));
+		expect(screen.getByRole("button", { name: "Send message" })).toBeEnabled();
+		await userEvent.click(field);
+		await userEvent.keyboard("{Enter}");
+
+		await waitFor(() => expect(stage).toHaveBeenCalledOnce());
+		expect(onSend).toHaveBeenCalledWith(
+			"Attached files (read these files in the workspace):\n- .ao/attachments/shot.png",
+		);
+		await waitFor(() => expect(screen.queryAllByRole("listitem")).toHaveLength(0));
 	});
 
 	it("reports the daemon's refusal without a second message of its own", () => {

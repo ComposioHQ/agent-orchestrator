@@ -124,6 +124,10 @@ func (f *fakeProjectManager) Add(_ context.Context, in projectsvc.AddInput) (pro
 	return projectsvc.Project{ID: id, Path: in.Path}, nil
 }
 
+func (f *fakeProjectManager) Clone(_ context.Context, in projectsvc.CloneInput) (projectsvc.Project, error) {
+	return projectsvc.Project{ID: "cloned", Repo: in.RemoteURL}, nil
+}
+
 func (f *fakeProjectManager) InitializeRepository(_ context.Context, in projectsvc.InitializeRepositoryInput) (projectsvc.InitializeRepositoryResult, error) {
 	return projectsvc.InitializeRepositoryResult(in), nil
 }
@@ -187,6 +191,7 @@ func TestE2E_SpawnAndProjectAddDTORoundTrip(t *testing.T) {
 			"--prompt", "hi",
 			"--issue", "ISS-1",
 			"--name", "my worker",
+			"--model", "gpt-5.6-sol",
 		})
 		if err := root.Execute(); err != nil {
 			t.Fatalf("spawn execute: %v\noutput: %s", err, out.String())
@@ -210,6 +215,9 @@ func TestE2E_SpawnAndProjectAddDTORoundTrip(t *testing.T) {
 		}
 		if got.DisplayName != "my worker" {
 			t.Errorf("DisplayName = %q, want %q (CLI json:\"displayName\" vs SpawnSessionRequest)", got.DisplayName, "my worker")
+		}
+		if got.AgentConfig.Model != "gpt-5.6-sol" {
+			t.Errorf("AgentConfig.Model = %q, want %q (CLI json:\"model\" vs SpawnSessionRequest)", got.AgentConfig.Model, "gpt-5.6-sol")
 		}
 		if !bytes.Contains(out.Bytes(), []byte("spawned session")) {
 			t.Errorf("output missing %q; got: %s", "spawned session", out.String())

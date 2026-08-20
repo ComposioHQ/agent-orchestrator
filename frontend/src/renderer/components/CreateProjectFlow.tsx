@@ -1,28 +1,46 @@
 import * as Dialog from "@radix-ui/react-dialog";
-import { ProjectModePickerView } from "@aoagents/product-ui";
+import { ProjectSourcePickerView, type ProjectSource } from "@aoagents/product-ui";
 import { useTranslation } from "react-i18next";
-import { CheckCircle2, ChevronRight, Folder, FolderPlus, X, XCircle } from "lucide-react";
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import {
+	ArrowRight,
+	CheckCircle2,
+	ChevronRight,
+	Folder,
+	FolderOpen,
+	FolderPlus,
+	Folders,
+	GitFork,
+	X,
+	XCircle,
+} from "lucide-react";
+import { lazy, Suspense, useEffect, useRef, useState, type ReactNode } from "react";
 import type { ImportFolderScan } from "../../preload";
 import { aoBridge } from "../lib/bridge";
 import { cn } from "../lib/utils";
 import type { ProjectKind } from "../types/workspace";
 import { CreateProjectAgentSheet, type CreateProjectAgentSelection } from "./CreateProjectAgentSheet";
+import type { CloneRepositoryDetails, CloneRepositorySelection } from "./CloneRepositoryDialog";
 import { Button } from "./ui/button";
 
 export type CreateProjectInput = { path: string; asWorkspace?: boolean } & CreateProjectAgentSelection;
+export type CloneProjectInput = Pick<CloneRepositorySelection, "remoteUrl" | "destinationParent"> &
+	CreateProjectAgentSelection;
+
+const CloneRepositoryDialog = lazy(() => import("./CloneRepositoryDialog"));
+const LAST_CLONE_DESTINATION_KEY = "ao.clone.lastDestinationParent";
 
 type CreateProjectFlowMode = ProjectKind | "choose";
 
-// Shared create-project flow (native folder picker -> agent sheet -> create).
-// Sidebar opens the import-type picker as a dialog; the first-run board embeds
-// the same picker inline. Both still share the Git setup recovery path.
+// Shared create-project flow. Local projects/workspaces use the native folder
+// picker; remote projects progressively reveal a lazily loaded clone form.
+// Every source converges on the same agent sheet and project-start behavior.
 export function CreateProjectFlow({
 	children,
 	droppedPath,
 	embedded = false,
 	idleLabel,
 	mode = "single_repo",
+	onCloneProject,
 	onCreateProject,
 	onInitializeProject,
 	openSignal,
@@ -37,6 +55,7 @@ export function CreateProjectFlow({
 	embedded?: boolean;
 	idleLabel?: string;
 	mode?: CreateProjectFlowMode;
+	onCloneProject: (input: CloneProjectInput) => Promise<void>;
 	onCreateProject: (input: CreateProjectInput) => Promise<void>;
 	onInitializeProject: (path: string) => Promise<void>;
 	// Monotonic counter: each new value opens the flow programmatically (the ⌘N
@@ -48,6 +67,13 @@ export function CreateProjectFlow({
 	const resolvedIdleLabel = idleLabel ?? t("createProject.newProject");
 	const [error, setError] = useState<string | null>(null);
 	const [modePickerOpen, setModePickerOpen] = useState(false);
+	const [cloneDialogOpen, setCloneDialogOpen] = useState(false);
+	const [cloneDetails, setCloneDetails] = useState<CloneRepositoryDetails>(() => ({
+		remoteUrl: "",
+		destinationParent:
+			typeof window === "undefined" ? "" : (window.localStorage.getItem(LAST_CLONE_DESTINATION_KEY) ?? ""),
+	}));
+	const [cloneSelection, setCloneSelection] = useState<CloneRepositorySelection | null>(null);
 	const [folderPickerOpen, setFolderPickerOpen] = useState(false);
 	const [selectedKind, setSelectedKind] = useState<ProjectKind>(mode === "workspace" ? "workspace" : "single_repo");
 	const [selectedPath, setSelectedPath] = useState<string | null>(null);
@@ -64,12 +90,20 @@ export function CreateProjectFlow({
 	const hasModePicker = mode === "choose";
 	const isBusy = isChoosingPath || isCreating || isInitializing;
 
-	const openFolderStep = (kind: ProjectKind) => {
+	const selectSource = (source: ProjectSource) => {
 		const presetPath = pendingDropPath;
 		setPendingDropPath(null);
+		setError(null);
+		setValidationScan(null);
+		if (source === "clone") {
+			setModePickerOpen(false);
+			setCloneDialogOpen(true);
+			return;
+		}
+		setCloneSelection(null);
 		// Keep the selector mounted behind the native picker. Closing it first
 		// exposes a blank compositor frame on Windows before Explorer takes focus.
-		void chooseDirectory(kind, presetPath ?? undefined);
+		void chooseDirectory(source === "workspace" ? "workspace" : "single_repo", presetPath ?? undefined);
 	};
 
 	const chooseDirectory = async (kind: ProjectKind, presetPath?: string) => {
@@ -124,6 +158,7 @@ export function CreateProjectFlow({
 		setPendingDropPath(presetPath ?? null);
 		if (hasModePicker) {
 			setError(null);
+			setCloneSelection(null);
 			setModePickerOpen(true);
 			return;
 		}
@@ -153,6 +188,16 @@ export function CreateProjectFlow({
 		setError(null);
 		setIsCreating(true);
 		try {
+			if (cloneSelection) {
+				await onCloneProject({
+					remoteUrl: cloneSelection.remoteUrl,
+					destinationParent: cloneSelection.destinationParent,
+					...selection,
+				});
+				setSelectedPath(null);
+				setCloneSelection(null);
+				return;
+			}
 			if (selectedKind === "single_repo" && repositorySetup) {
 				setIsCreating(false);
 				setIsInitializing(true);
@@ -167,9 +212,11 @@ export function CreateProjectFlow({
 		} catch (err) {
 			const code = err instanceof Error && "code" in err ? (err.code as string | undefined) : undefined;
 			const message = err instanceof Error ? err.message : t("createProject.couldNotAdd");
-			if (selectedKind === "single_repo" && isRepositorySetupRecoveryCode(code)) setRepositorySetup(code);
+			if (!cloneSelection && selectedKind === "single_repo" && isRepositorySetupRecoveryCode(code)) {
+				setRepositorySetup(code);
+			}
 			setError(message);
-			if (hasModePicker) {
+			if (hasModePicker && !cloneSelection) {
 				if (shouldScanCreateFailure(message)) {
 					try {
 						const scan = await aoBridge.app.scanImportFolder({
@@ -214,9 +261,9 @@ export function CreateProjectFlow({
 					error,
 					label,
 				})}
-			{hasModePicker && embedded && !modePickerOpen && (
+			{hasModePicker && embedded && !modePickerOpen && !cloneDialogOpen && selectedPath === null && (
 				<div className="flex w-full flex-col items-center gap-3">
-					<ImportModePicker disabled={isBusy} onSelect={openFolderStep} />
+					<ImportSourcePicker disabled={isBusy} onSelect={selectSource} />
 					{error && !folderPickerOpen && selectedPath === null && (
 						<p className="text-caption leading-body text-error" role="status">
 							{error}
@@ -226,7 +273,7 @@ export function CreateProjectFlow({
 			)}
 			{hasModePicker && (
 				<>
-					<CreateProjectModeDialog
+					<CreateProjectSourceDialog
 						disabled={isBusy}
 						open={modePickerOpen}
 						onOpenChange={(open) => {
@@ -236,8 +283,37 @@ export function CreateProjectFlow({
 							// path hijack the next manual "New Project" click.
 							if (!open) setPendingDropPath(null);
 						}}
-						onSelect={openFolderStep}
+						onSelect={selectSource}
 					/>
+					{cloneDialogOpen ? (
+						<Suspense fallback={<CloneRepositoryDialogSkeleton />}>
+							<CloneRepositoryDialog
+								disabled={isBusy}
+								error={error}
+								onBack={() => {
+									setError(null);
+									setCloneDialogOpen(false);
+									if (!embedded) window.requestAnimationFrame(() => setModePickerOpen(true));
+								}}
+								onChange={(next) => {
+									setCloneDetails(next);
+									setError(null);
+								}}
+								onClose={() => {
+									setCloneDialogOpen(false);
+									setError(null);
+								}}
+								onContinue={(next) => {
+									setCloneSelection(next);
+									setSelectedKind("single_repo");
+									setSelectedPath(next.targetPath);
+									setCloneDialogOpen(false);
+								}}
+								open
+								value={cloneDetails}
+							/>
+						</Suspense>
+					) : null}
 					<CreateProjectFolderDialog
 						disabled={isBusy}
 						error={error}
@@ -266,6 +342,7 @@ export function CreateProjectFlow({
 				</>
 			)}
 			<CreateProjectAgentSheet
+				action={cloneSelection ? "clone" : "create"}
 				error={error}
 				isCreating={isCreating}
 				isInitializing={isInitializing}
@@ -273,11 +350,20 @@ export function CreateProjectFlow({
 				onOpenChange={(open) => {
 					if (!open) {
 						setSelectedPath(null);
+						setCloneSelection(null);
 						if (!folderPickerOpen) {
 							setError(null);
 						}
 					}
 				}}
+				onBack={
+					cloneSelection
+						? () => {
+								setSelectedPath(null);
+								setCloneDialogOpen(true);
+							}
+						: undefined
+				}
 				onSubmit={createProject}
 				open={selectedPath !== null}
 				path={selectedPath}
@@ -339,7 +425,7 @@ function shouldScanCreateFailure(message: string): boolean {
 	return /workspace|repo|repository|git|path|folder|worktree|bare|branch|commit|remote/i.test(message);
 }
 
-function CreateProjectModeDialog({
+function CreateProjectSourceDialog({
 	disabled,
 	onOpenChange,
 	onSelect,
@@ -347,7 +433,7 @@ function CreateProjectModeDialog({
 }: {
 	disabled: boolean;
 	onOpenChange: (open: boolean) => void;
-	onSelect: (kind: ProjectKind) => void;
+	onSelect: (source: ProjectSource) => void;
 	open: boolean;
 }) {
 	return (
@@ -355,15 +441,15 @@ function CreateProjectModeDialog({
 			<Dialog.Portal>
 				<Dialog.Overlay className="dialog-overlay data-[state=open]:animate-overlay-in" />
 				<Dialog.Content className="fixed left-1/2 top-1/2 z-overlay w-[min(var(--size-import-modal-max),calc(100vw-24px))] -translate-x-1/2 -translate-y-1/2 border-0 bg-transparent p-0 shadow-none outline-none data-[state=open]:animate-modal-in">
-					<ImportModePicker disabled={disabled} onClose={() => onOpenChange(false)} onSelect={onSelect} dialog />
+					<ImportSourcePicker disabled={disabled} onClose={() => onOpenChange(false)} onSelect={onSelect} dialog />
 				</Dialog.Content>
 			</Dialog.Portal>
 		</Dialog.Root>
 	);
 }
 
-/** Figma "Dialog - ModalContainer" — Workspace vs Project import chooser. */
-function ImportModePicker({
+/** Shared source chooser for first-run and subsequent project creation. */
+function ImportSourcePicker({
 	dialog = false,
 	disabled,
 	onClose,
@@ -372,39 +458,67 @@ function ImportModePicker({
 	dialog?: boolean;
 	disabled: boolean;
 	onClose?: () => void;
-	onSelect: (kind: ProjectKind) => void;
+	onSelect: (source: ProjectSource) => void;
 }) {
 	const { t } = useTranslation();
 	return (
 		<>
 			{dialog && (
 				<>
-					<Dialog.Title className="sr-only">{t("createProject.importTitle")}</Dialog.Title>
-					<Dialog.Description className="sr-only">{t("createProject.importWhat")}</Dialog.Description>
+					<Dialog.Title className="sr-only">{t("createProject.addCodeTitle")}</Dialog.Title>
+					<Dialog.Description className="sr-only">{t("createProject.addCodeDescription")}</Dialog.Description>
 				</>
 			)}
-			<ProjectModePickerView
+			<ProjectSourcePickerView
 				dialog={dialog}
 				disabled={disabled}
 				onClose={onClose}
 				onSelect={onSelect}
 				closeIcon={<X className="size-5" aria-hidden="true" strokeWidth={1.67} />}
-				folderIcon={<Folder className="size-[14px] shrink-0" aria-hidden="true" />}
+				arrowIcon={<ArrowRight className="size-4" aria-hidden="true" />}
+				cloneIcon={<GitFork className="size-[14px] shrink-0" aria-hidden="true" />}
+				folderIcon={<FolderOpen className="size-[14px] shrink-0" aria-hidden="true" />}
+				workspaceIcon={<Folders className="size-5" aria-hidden="true" />}
 				labels={{
-					title: t("createProject.importTitle"),
-					description: t("createProject.importWhat"),
-					workspace: t("createProject.workspace"),
+					title: t("createProject.addCodeTitle"),
+					description: t("createProject.addCodeDescription"),
+					clone: t("createProject.cloneFromGit"),
+					cloneDescription: t("createProject.cloneFromGitDesc"),
+					cloneExample: "github.com/acme/web-app",
+					cloneBranchExample: "origin / main",
+					local: t("createProject.openLocal"),
+					localDescription: t("createProject.openLocalDesc"),
+					localExample: "~/Development/web-app",
+					localBranchExample: "main",
+					workspace: t("createProject.addWorkspace"),
 					workspaceDescription: t("createProject.workspaceDesc"),
-					project: t("createProject.project"),
-					projectDescription: t("createProject.projectDesc"),
 					close: t("createProject.closeDialog"),
-					workspaceExample: "my-workspace/",
-					workspaceRepositories: ["web-app", "api-server", "shared-libs"],
-					projectExample: "web-app",
-					projectBranchExample: "main",
 				}}
 			/>
 		</>
+	);
+}
+
+function CloneRepositoryDialogSkeleton() {
+	const { t } = useTranslation();
+	return (
+		<Dialog.Root open>
+			<Dialog.Portal>
+				<Dialog.Overlay className="dialog-overlay" />
+				<Dialog.Content className="fixed left-1/2 top-1/2 z-overlay w-[min(var(--size-import-folder-dialog),calc(100vw-24px))] -translate-x-1/2 -translate-y-1/2 overflow-hidden rounded-welcome-panel border border-[var(--color-border-import-modal)] bg-[var(--color-bg-import-modal)] p-0 shadow-[var(--shadow-import-modal)]">
+					<Dialog.Title className="sr-only">{t("createProject.cloneTitle")}</Dialog.Title>
+					<Dialog.Description className="sr-only">{t("createProject.cloneDescription")}</Dialog.Description>
+					<div className="border-b border-[var(--color-border-import-modal)] p-(--size-import-dialog-padding)">
+						<div className="h-5 w-40 rounded bg-[var(--color-bg-import-chip)]" />
+						<div className="mt-2 h-3 w-72 max-w-full rounded bg-[var(--color-bg-import-chip)]" />
+					</div>
+					<div className="space-y-5 p-(--size-import-dialog-padding)">
+						<div className="h-11 rounded-md bg-[var(--color-bg-import-card)]" />
+						<div className="h-11 rounded-md bg-[var(--color-bg-import-card)]" />
+					</div>
+				</Dialog.Content>
+			</Dialog.Portal>
+		</Dialog.Root>
 	);
 }
 

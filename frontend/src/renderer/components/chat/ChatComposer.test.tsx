@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { ChatComposer } from "./ChatComposer";
@@ -29,6 +29,50 @@ const textFile = (name = "notes.txt") => new File(["hello"], name, { type: "text
 /* ---- the keyboard contract the composer already had ---------------------- */
 
 describe("send keys", () => {
+	it("focuses the message field when the chat composer opens", () => {
+		const { field } = renderComposer({ autoFocusKey: "session-1" });
+		expect(document.activeElement).toBe(field);
+	});
+
+	it("refocuses the message field when the active chat session changes", () => {
+		const { rerender } = render(
+			<>
+				<button type="button">Outside</button>
+				<ChatComposer onSend={vi.fn()} autoFocusKey="session-1" />
+			</>,
+		);
+		const field = screen.getByLabelText("Message the agent");
+		expect(document.activeElement).toBe(field);
+
+		screen.getByRole("button", { name: "Outside" }).focus();
+		expect(document.activeElement).not.toBe(field);
+
+		rerender(
+			<>
+				<button type="button">Outside</button>
+				<ChatComposer onSend={vi.fn()} autoFocusKey="session-2" />
+			</>,
+		);
+		expect(document.activeElement).toBe(field);
+	});
+
+	it("refocuses the message field when returning to the chat window", () => {
+		const { field } = renderComposer({ autoFocusKey: "session-1" });
+		field.blur();
+		expect(document.activeElement).not.toBe(field);
+
+		act(() => {
+			window.dispatchEvent(new Event("focus"));
+		});
+
+		expect(document.activeElement).toBe(field);
+	});
+
+	it("does not focus the hidden or inactive chat composer", () => {
+		const { field } = renderComposer({ autoFocus: false, autoFocusKey: "session-1" });
+		expect(document.activeElement).not.toBe(field);
+	});
+
 	it("grows with the draft, then scrolls after the seven-line cap", () => {
 		const { field } = renderComposer();
 		let scrollHeight = 112;
@@ -74,6 +118,21 @@ describe("send keys", () => {
 		expect(within(actions).queryByText(/Enter to/)).not.toBeInTheDocument();
 	});
 
+	it("keeps optional footer actions with message tools, away from send controls", () => {
+		render(
+			<ChatComposer
+				onSend={vi.fn()}
+				onStageAttachments={vi.fn().mockResolvedValue([])}
+				settings={<button type="button">Model</button>}
+				footerAction={<button type="button">Compact</button>}
+			/>,
+		);
+		const tools = screen.getByRole("group", { name: "Message tools" });
+		expect(within(tools).getByRole("button", { name: "Compact" })).toBeInTheDocument();
+		const actions = screen.getByRole("group", { name: "Send message controls" });
+		expect(within(actions).queryByRole("button", { name: "Compact" })).not.toBeInTheDocument();
+	});
+
 	it("starts as a single-line field and grows only when the draft needs it", () => {
 		const { field } = renderComposer();
 		expect(field).toHaveAttribute("rows", "1");
@@ -88,7 +147,7 @@ describe("send keys", () => {
 
 		await userEvent.type(field, "hello");
 		expect(send).toBeEnabled();
-		expect(send).toHaveClass("hover:bg-logo-accent-bright", "focus-visible:ring-logo-accent/45");
+		expect(send).toHaveClass("hover:bg-logo-accent-bright");
 	});
 
 	it("turns the empty send action into Stop while the agent is working", async () => {

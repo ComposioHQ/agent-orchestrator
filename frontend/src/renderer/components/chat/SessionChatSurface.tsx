@@ -8,8 +8,10 @@
  */
 
 import { AlertTriangle, Loader2 } from "lucide-react";
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { ChatWorkspace } from "./ChatWorkspace";
+import { useSwitchAgentState } from "../../hooks/useSwitchAgent";
+import { TerminalSwitchAgentButton } from "../TerminalSwitchAgentButton";
 import {
 	useConversation,
 	useConversationCommands,
@@ -20,7 +22,9 @@ import {
 	useWorkspaceFilePaths,
 } from "../../hooks/useConversation";
 import { useSessionBrowserLink } from "../../hooks/useSessionBrowserLink";
+import type { ShellTerminal } from "../../hooks/useShellTerminals";
 import { can } from "../../types/conversation";
+import type { ConversationSnapshot } from "../../types/conversation";
 import type { Theme } from "../../stores/ui-store";
 import type { TerminalTarget } from "../../types/terminal";
 import type { WorkspaceSession } from "../../types/workspace";
@@ -31,6 +35,11 @@ export function SessionChatSurface({
 	onOpenReviewerTerminal,
 	reviewerTarget,
 	onSelectChat,
+	shellTerminals,
+	shellTarget,
+	onSelectShellTerminal,
+	onCloseShellTerminal,
+	onRenameShellTerminal,
 	daemonReady,
 	theme,
 	onOpenShell,
@@ -44,6 +53,13 @@ export function SessionChatSurface({
 	onOpenReviewerTerminal?: (target: { handleId: string; harness: string }) => void;
 	reviewerTarget?: Extract<TerminalTarget, { kind: "reviewer" }>;
 	onSelectChat?: () => void;
+	/** This session's standalone shells, rendered as tabs in the chat header. */
+	shellTerminals?: ShellTerminal[];
+	/** The selected shell pane, if any. Mirrors reviewerTarget. */
+	shellTarget?: Extract<TerminalTarget, { kind: "shell" }>;
+	onSelectShellTerminal?: (handleId: string) => void;
+	onCloseShellTerminal?: (handleId: string) => void;
+	onRenameShellTerminal?: (handleId: string, title: string) => void;
 	daemonReady?: boolean;
 	theme?: Theme;
 	onOpenShell?: () => void;
@@ -87,8 +103,21 @@ export function SessionChatSurface({
 	const { paths, truncated } = useWorkspaceFilePaths(session.id, Boolean(snapshot));
 	const stageAttachments = useStageAttachments(session.id);
 	const openLinkInBrowser = useSessionBrowserLink(session);
+	// In-place agent switching is the same session-level operation in either
+	// interface; the chat header offers the same entry point the terminal pane's
+	// tab strip does. Mirrors CenterPane: dialog open flag plus the element the
+	// dialog anchors to (the workspace body, handed up by ChatWorkspace).
+	const [switchSelectorOpen, setSwitchSelectorOpen] = useState(false);
+	const [switchSelectorContainer, setSwitchSelectorContainer] = useState<HTMLDivElement | null>(null);
+	const switchMutation = useSwitchAgentState(session.id);
+	const renderShellFallback = Boolean(shellTarget && session);
+	const renderSnapshot =
+		snapshot ??
+		(renderShellFallback
+			? unavailableConversationSnapshot(session)
+			: undefined);
 
-	if (isLoading) {
+	if (isLoading && !renderShellFallback) {
 		return (
 			<Centered>
 				<Loader2 aria-hidden="true" className="size-4 animate-spin text-muted-foreground" />
@@ -101,7 +130,7 @@ export function SessionChatSurface({
 	// run Chat is a state to explain rather than an error to spin on. A compatible
 	// session may switch interfaces, but retrying this failed controller by itself
 	// cannot change the answer.
-	if (unavailable) {
+	if (unavailable && !renderShellFallback) {
 		return (
 			<Centered>
 				<AlertTriangle aria-hidden="true" className="size-4 text-warning" />
@@ -116,7 +145,7 @@ export function SessionChatSurface({
 		);
 	}
 
-	if (error || !snapshot) {
+	if (error || !renderSnapshot) {
 		return (
 			<Centered>
 				<AlertTriangle aria-hidden="true" className="size-4 text-destructive" />
@@ -129,7 +158,7 @@ export function SessionChatSurface({
 
 	return (
 		<ChatWorkspace
-			snapshot={snapshot}
+			snapshot={renderSnapshot}
 			onLinkOpen={openLinkInBrowser}
 			sessionTitle={session.title}
 			sessionRole={session.kind}
@@ -138,6 +167,23 @@ export function SessionChatSurface({
 			onOpenReviewerTerminal={onOpenReviewerTerminal}
 			reviewerTarget={reviewerTarget}
 			onSelectChat={onSelectChat}
+			shellTerminals={shellTerminals}
+			shellTarget={shellTarget}
+			onSelectShellTerminal={onSelectShellTerminal}
+			onCloseShellTerminal={onCloseShellTerminal}
+			onRenameShellTerminal={onRenameShellTerminal}
+			switchAgentControl={
+				session.terminalHandleId ? (
+					<TerminalSwitchAgentButton
+						container={switchSelectorContainer}
+						onOpenChange={setSwitchSelectorOpen}
+						open={switchSelectorOpen}
+						session={session}
+						switchError={switchMutation.error}
+					/>
+				) : undefined
+			}
+			switchDialogContainer={setSwitchSelectorContainer}
 			daemonReady={daemonReady}
 			theme={theme}
 			headerActions={headerActions}
@@ -181,21 +227,21 @@ export function SessionChatSurface({
 			filePaths={paths}
 			filePathsTruncated={truncated}
 			onStageAttachments={stageAttachments}
-			nativeImages={can(snapshot, "images")}
+			nativeImages={can(renderSnapshot, "images")}
 			// Gated on what the daemon advertises, so the control is never drawn for a
 			// harness that cannot steer. The refusal check stays as a backstop: it
 			// covers the window before the controller reports, and it is the last word
 			// afterwards, since the capability is a property of the driver.
-			onSteer={can(snapshot, "steer") && !commands.steerUnsupported ? commands.steer : undefined}
+			onSteer={can(renderSnapshot, "steer") && !commands.steerUnsupported ? commands.steer : undefined}
 			onPromoteQueuedTurn={
-				can(snapshot, "steer") && !commands.steerUnsupported
+				can(renderSnapshot, "steer") && !commands.steerUnsupported
 					? commands.promoteQueuedTurn
 					: undefined
 			}
 			steerPending={commands.steerPending}
 			steerRefusal={commands.steerRefusal}
 			onReloadMcpServers={
-				!can(snapshot, "mcp_reload") || commands.mcpReloadUnsupported
+				!can(renderSnapshot, "mcp_reload") || commands.mcpReloadUnsupported
 					? undefined
 					: () => {
 							// The rejection is already held by the mutation and rendered from
@@ -207,6 +253,26 @@ export function SessionChatSurface({
 			mcpReloadError={commands.mcpReloadError}
 		/>
 	);
+}
+
+function unavailableConversationSnapshot(session: WorkspaceSession): ConversationSnapshot {
+	return {
+		conversationId: session.id,
+		sessionId: session.id,
+		harness: session.provider,
+		mode: "chat",
+		controller: { state: "stopped", error: "Conversation unavailable" },
+		latestSequence: 0,
+		oldestSequence: 0,
+		hasMoreBefore: false,
+		activeBranchId: "branch-root",
+		branchPoints: [],
+		settings: {},
+		mcpServers: [],
+		capabilities: [],
+		turns: [],
+		items: [],
+	};
 }
 
 function Centered({ children }: { children: React.ReactNode }) {

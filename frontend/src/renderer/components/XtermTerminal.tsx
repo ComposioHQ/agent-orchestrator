@@ -840,7 +840,11 @@ export function XtermTerminal(props: XtermTerminalProps) {
 			const files = Array.from(event.dataTransfer?.files ?? []);
 			if (files.length === 0) return;
 			event.preventDefault();
-			event.stopPropagation();
+			// Deliberately no stopPropagation: _shell.tsx's window-level listener
+			// still needs this drop to reset its drag-depth counter (bumped by the
+			// dragenter that already bubbled past this host, unseen by this
+			// handler), or the next folder drag inherits a stale nonzero depth and
+			// never shows the overlay.
 			void (async () => {
 				const paths: string[] = [];
 				for (const file of files) {

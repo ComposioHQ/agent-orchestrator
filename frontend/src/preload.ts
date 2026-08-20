@@ -76,6 +76,18 @@ export type ImportFolderScan = {
 	setupWarning?: string;
 };
 
+// A folder-drop path can arrive (cold start, or an early second-instance)
+// before ShellLayout's own effect has registered app.onOpenFolderPath's
+// listener below — React mounts TrayRuntime's child effect (which pings
+// main.ts's readiness flush) before ShellLayout's parent effect that installs
+// this listener. Registering this raw listener here, at preload module load
+// (guaranteed to run before any renderer/React code), buffers a path that
+// arrives too early so onOpenFolderPath can still replay it once called.
+let bufferedOpenFolderPath: string | null = null;
+ipcRenderer.on("app:openFolderPath", (_event, path: string) => {
+	bufferedOpenFolderPath = path;
+});
+
 const api = {
 	app: {
 		getVersion: () => ipcRenderer.invoke("app:getVersion") as Promise<string>,
@@ -95,6 +107,11 @@ const api = {
 		onOpenFolderPath: (listener: (path: string) => void) => {
 			const wrapped = (_event: Electron.IpcRendererEvent, path: string) => listener(path);
 			ipcRenderer.on("app:openFolderPath", wrapped);
+			if (bufferedOpenFolderPath) {
+				const path = bufferedOpenFolderPath;
+				bufferedOpenFolderPath = null;
+				listener(path);
+			}
 			return () => {
 				ipcRenderer.off("app:openFolderPath", wrapped);
 			};
@@ -190,8 +207,14 @@ const api = {
 		},
 	},
 	window: {
-		setOverlay: (overlay: { color: string; symbolColor: string }) =>
-			ipcRenderer.invoke("window:setOverlay", overlay) as Promise<void>,
+		isMaximized: () => ipcRenderer.invoke("window:isMaximized") as Promise<boolean>,
+		onMaximized: (listener: (maximized: boolean) => void) => {
+			const wrapped = (_event: Electron.IpcRendererEvent, maximized: boolean) => listener(maximized);
+			ipcRenderer.on("window:maximized", wrapped);
+			return () => {
+				ipcRenderer.off("window:maximized", wrapped);
+			};
+		},
 		isFullScreen: () => ipcRenderer.invoke("window:isFullScreen") as Promise<boolean>,
 		onFullScreen: (listener: (fullScreen: boolean) => void) => {
 			const wrapped = (_event: Electron.IpcRendererEvent, fullScreen: boolean) => listener(fullScreen);

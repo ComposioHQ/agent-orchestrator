@@ -711,6 +711,24 @@ describe("shell folder drag-and-drop", () => {
 
 		expect(useUiStore.getState().folderDropRequest).toEqual({ nonce: 2, path: "/dropped/second" });
 	});
+
+	// Regression: XtermTerminal used to stopPropagation() on a plain (non-folder)
+	// file drop, so this drop event never reached the window and dragDepthRef
+	// was never reset. The next folder drag then bumped from a stale nonzero
+	// depth, missed the === 1 branch, and never showed the overlay. Xterm no
+	// longer stops propagation for a non-directory drop, so this event now
+	// always reaches the window; this test locks in that the window's own
+	// reset logic correctly recovers once it does.
+	it("does not suppress the next folder drag's overlay after a plain file drop resets the counter", async () => {
+		await renderShell();
+
+		fireEvent.dragEnter(window, { dataTransfer: fileDragTransfer({ isDirectory: false }) });
+		fireEvent.drop(window, { dataTransfer: fileDragTransfer({ isDirectory: false }) });
+		expect(screen.queryByTestId("folder-drop-overlay")).not.toBeInTheDocument();
+
+		fireEvent.dragEnter(window, { dataTransfer: fileDragTransfer({ isDirectory: true }) });
+		expect(screen.getByTestId("folder-drop-overlay")).toBeInTheDocument();
+	});
 });
 
 describe("shell taskbar-icon folder drop subscription", () => {

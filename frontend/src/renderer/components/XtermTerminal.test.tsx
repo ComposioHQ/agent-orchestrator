@@ -1041,7 +1041,7 @@ describe("XtermTerminal", () => {
 		return { items: [{ webkitGetAsEntry: () => entry }], files, types: ["Files"] };
 	}
 
-	it("attaches a real dropped file's saved path instead of letting it bubble", async () => {
+	it("attaches a real dropped file's saved path, and still lets the drop bubble to the window", async () => {
 		const saveDroppedFile = vi.fn().mockResolvedValue("/tmp/ao-dropped/notes.txt");
 		window.ao!.terminal.saveDroppedFile = saveDroppedFile;
 		const onInput = vi.fn();
@@ -1058,7 +1058,11 @@ describe("XtermTerminal", () => {
 		await waitFor(() => expect(onInput).toHaveBeenCalledWith("/tmp/ao-dropped/notes.txt ", "paste"));
 
 		window.removeEventListener("drop", bubbled);
-		expect(bubbled).not.toHaveBeenCalled();
+		// Regression: no stopPropagation here — _shell.tsx's window-level listener
+		// still needs this drop to reset the drag-depth counter its preceding
+		// dragenter bumped, or the next folder drag inherits a stale depth and
+		// never shows the overlay.
+		expect(bubbled).toHaveBeenCalledTimes(1);
 	});
 
 	// Regression: a dropped folder is the app-wide "open as project" gesture
