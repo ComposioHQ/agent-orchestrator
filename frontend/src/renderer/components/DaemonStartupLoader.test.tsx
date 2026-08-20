@@ -8,9 +8,10 @@ import { DaemonStartupLoader } from "./DaemonStartupLoader";
 type Requirement = components["schemas"]["SystemRequirement"];
 type InstallJob = components["schemas"]["InstallJob"];
 
-const { getMock, postMock } = vi.hoisted(() => ({
+const { getMock, postMock, writeTextMock } = vi.hoisted(() => ({
 	getMock: vi.fn(),
 	postMock: vi.fn(),
+	writeTextMock: vi.fn(),
 }));
 
 vi.mock("../lib/api-client", () => ({
@@ -23,6 +24,13 @@ vi.mock("../lib/api-client", () => ({
 			return String((error as { message: unknown }).message);
 		}
 		return fallback;
+	},
+}));
+
+vi.mock("../lib/bridge", () => ({
+	aoBridge: {
+		clipboard: { writeText: (...args: unknown[]) => writeTextMock(...args) },
+		menu: { action: vi.fn() },
 	},
 }));
 
@@ -53,6 +61,8 @@ function renderLoader() {
 beforeEach(() => {
 	getMock.mockReset();
 	postMock.mockReset();
+	writeTextMock.mockReset();
+	writeTextMock.mockResolvedValue(undefined);
 });
 
 afterEach(() => {
@@ -96,7 +106,67 @@ describe("DaemonStartupLoader", () => {
 		renderLoader();
 
 		expect(await screen.findByRole("dialog", { name: "Missing dependency" })).toBeInTheDocument();
-		expect(screen.getByRole("button", { name: "Install tmux" })).toBeInTheDocument();
+		expect(await screen.findByRole("button", { name: "Install tmux" })).toBeInTheDocument();
+	});
+
+	it("checks again after a manual install and closes when the requirement is now satisfied", async () => {
+		let requirementsCalls = 0;
+		getMock.mockImplementation(async (path: string) => {
+			if (path === "/api/v1/system/requirements") {
+				requirementsCalls += 1;
+				return {
+					data:
+						requirementsCalls === 1
+								? requirementsResponse({ tmux: { satisfied: false, detail: "tmux was not found on PATH." } })
+								: requirementsResponse(),
+					error: undefined,
+				};
+			}
+			if (path === "/api/v1/system/install/{target}") {
+				return { data: { target: "tmux", status: "idle", command: "brew install tmux" }, error: undefined };
+			}
+			throw new Error(`unexpected GET ${path}`);
+		});
+
+		renderLoader();
+		const user = userEvent.setup();
+
+		await screen.findByRole("dialog", { name: "Missing dependency" });
+		await user.click(screen.getByRole("button", { name: "Check again" }));
+
+		await waitFor(() => expect(requirementsCalls).toBe(2));
+		await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+	});
+
+	it("shows and copies Linux's exact manual command before offering a doomed install", async () => {
+		getMock.mockImplementation(async (path: string) => {
+			if (path === "/api/v1/system/requirements") {
+				return {
+					data: requirementsResponse({ tmux: { satisfied: false, detail: "tmux was not found on PATH." } }),
+					error: undefined,
+				};
+			}
+			if (path === "/api/v1/system/install/{target}") {
+				return {
+					data: {
+						target: "tmux",
+						status: "unsupported",
+						command: "sudo apt-get install -y tmux",
+						error: "AO does not run installers as root.",
+					},
+					error: undefined,
+				};
+			}
+			throw new Error(`unexpected GET ${path}`);
+		});
+
+		renderLoader();
+		const user = userEvent.setup();
+
+		await screen.findByText("sudo apt-get install -y tmux");
+		expect(screen.queryByRole("button", { name: "Install tmux" })).not.toBeInTheDocument();
+		await user.click(screen.getByRole("button", { name: "Copy command" }));
+		expect(writeTextMock).toHaveBeenCalledWith("sudo apt-get install -y tmux");
 	});
 
 	it("titles the blocking modal 'No coding agent found' when the harness check fails, even if tmux also fails", async () => {
@@ -117,7 +187,7 @@ describe("DaemonStartupLoader", () => {
 
 		expect(await screen.findByRole("dialog", { name: "No coding agent found" })).toBeInTheDocument();
 		// Both issues still surface in the body.
-		expect(screen.getByRole("button", { name: "Install tmux" })).toBeInTheDocument();
+		expect(await screen.findByRole("button", { name: "Install tmux" })).toBeInTheDocument();
 		expect(screen.getByRole("button", { name: "Install selected" })).toBeInTheDocument();
 	});
 
@@ -167,7 +237,7 @@ describe("DaemonStartupLoader", () => {
 		expect(installButton).toBeDisabled();
 
 		await user.click(screen.getByRole("radio", { name: /Claude Code/ }));
-		expect(installButton).toBeEnabled();
+		await waitFor(() => expect(screen.getByRole("button", { name: "Install selected" })).toBeEnabled());
 	});
 
 	it("closes the modal and falls through to phrase rotation once a running install succeeds", async () => {
@@ -221,6 +291,7 @@ describe("DaemonStartupLoader", () => {
 
 	it("shows the error and output, and offers a retry, when the install job fails", async () => {
 		vi.useFakeTimers();
+		let statusCalls = 0;
 		getMock.mockImplementation(async (path: string) => {
 			if (path === "/api/v1/system/requirements") {
 				return {
@@ -229,6 +300,10 @@ describe("DaemonStartupLoader", () => {
 				};
 			}
 			if (path === "/api/v1/system/install/{target}") {
+				statusCalls += 1;
+				if (statusCalls === 1) {
+					return { data: { target: "tmux", status: "idle", command: "brew install tmux" }, error: undefined };
+				}
 				const job: InstallJob = {
 					target: "tmux",
 					status: "failed",

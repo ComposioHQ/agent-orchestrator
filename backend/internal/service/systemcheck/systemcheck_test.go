@@ -13,7 +13,7 @@ type fakeHarnessCatalog struct {
 	err       error
 }
 
-func (f *fakeHarnessCatalog) Refresh(context.Context) (agentsvc.Inventory, error) {
+func (f *fakeHarnessCatalog) RefreshFresh(context.Context) (agentsvc.Inventory, error) {
 	return f.inventory, f.err
 }
 

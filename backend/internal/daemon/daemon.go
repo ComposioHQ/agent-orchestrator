@@ -19,6 +19,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/modelcatalog"
 	chatdriverregistry "github.com/aoagents/agent-orchestrator/backend/internal/adapters/chatdriver/registry"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/runtime/runtimeselect"
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/systemexec"
 	"github.com/aoagents/agent-orchestrator/backend/internal/autoreview"
 	"github.com/aoagents/agent-orchestrator/backend/internal/browserruntime"
 	"github.com/aoagents/agent-orchestrator/backend/internal/config"
@@ -275,8 +276,9 @@ func Run() error {
 			log.Warn("initial agent catalog refresh failed", "err", err)
 		}
 	}()
-	systemChecks := systemcheck.New(agentSvc)
-	systemInstall := systeminstall.New()
+	hostCommands := systemexec.Adapter{}
+	systemChecks := systemcheck.New(agentSvc, hostCommands)
+	systemInstall := systeminstall.New(hostCommands, hostCommands)
 
 	// Connect Mobile: the bridge service needs the LAN listener, but the LAN
 	// listener needs the built router's handler, which only exists once srv is

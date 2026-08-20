@@ -29,7 +29,7 @@ func (f *fakeInstaller) Start(context.Context, systeminstall.Target) (systeminst
 	return f.startJob, f.startErr
 }
 
-func (f *fakeInstaller) Status(target systeminstall.Target) (systeminstall.Job, error) {
+func (f *fakeInstaller) Status(_ context.Context, target systeminstall.Target) (systeminstall.Job, error) {
 	f.lastTarget = target
 	return f.statusJob, f.statusErr
 }
@@ -153,5 +153,18 @@ func TestSystemInstallController_ServiceError(t *testing.T) {
 	body, status, _ := doRequest(t, srv, http.MethodPost, "/api/v1/system/install/tmux", "")
 	if status != http.StatusInternalServerError {
 		t.Fatalf("POST /system/install/tmux = %d, want %d, body=%s", status, http.StatusInternalServerError, body)
+	}
+	for _, want := range []string{
+		`"error":"internal"`,
+		`"code":"INTERNAL_ERROR"`,
+		`"message":"Internal server error"`,
+		`"requestId":"`,
+	} {
+		if !strings.Contains(string(body), want) {
+			t.Fatalf("body missing %s: %s", want, body)
+		}
+	}
+	if strings.Contains(string(body), "boom") {
+		t.Fatalf("body leaked internal service error: %s", body)
 	}
 }

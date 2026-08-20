@@ -154,6 +154,17 @@ func (s *Service) List(ctx context.Context) (Inventory, error) {
 // inventory, and returns the new snapshot. Refreshes are serialized and
 // rate-limited so repeated frontend reloads cannot stampede agent CLIs.
 func (s *Service) Refresh(ctx context.Context) (Inventory, error) {
+	return s.refresh(ctx, false)
+}
+
+// RefreshFresh runs the full inventory probe even when a recent Refresh would
+// normally return the rate-limited cache. Use it for explicit user recovery
+// checks after an install may have changed PATH-visible binaries.
+func (s *Service) RefreshFresh(ctx context.Context) (Inventory, error) {
+	return s.refresh(ctx, true)
+}
+
+func (s *Service) refresh(ctx context.Context, force bool) (Inventory, error) {
 	if err := ctx.Err(); err != nil {
 		return Inventory{}, err
 	}
@@ -161,7 +172,7 @@ func (s *Service) Refresh(ctx context.Context) (Inventory, error) {
 	defer s.refreshMu.Unlock()
 
 	s.mu.RLock()
-	if !s.lastRefresh.IsZero() && time.Since(s.lastRefresh) < agentRefreshMinInterval {
+	if !force && !s.lastRefresh.IsZero() && time.Since(s.lastRefresh) < agentRefreshMinInterval {
 		cached := cloneInventory(s.inventory)
 		s.mu.RUnlock()
 		return cached, nil

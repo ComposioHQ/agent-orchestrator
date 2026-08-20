@@ -15,7 +15,7 @@ import (
 // against the fixed systeminstall.Target allowlist.
 type Installer interface {
 	Start(ctx context.Context, target systeminstall.Target) (systeminstall.Job, error)
-	Status(target systeminstall.Target) (systeminstall.Job, error)
+	Status(ctx context.Context, target systeminstall.Target) (systeminstall.Job, error)
 }
 
 // SystemInstallController owns the /system/install routes.
@@ -55,7 +55,7 @@ func (c *SystemInstallController) status(w http.ResponseWriter, r *http.Request)
 	if !ok {
 		return
 	}
-	job, err := c.Installer.Status(target)
+	job, err := c.Installer.Status(r.Context(), target)
 	if err != nil {
 		envelope.WriteError(w, r, err)
 		return

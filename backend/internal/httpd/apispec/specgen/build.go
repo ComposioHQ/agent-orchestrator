@@ -483,6 +483,7 @@ func systemOperations() []operation {
 			resps: []respUnit{
 				{http.StatusAccepted, controllers.StartInstallResponse{}},
 				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
 				{http.StatusNotImplemented, envelope.APIError{}},
 			},
 		},
@@ -493,6 +494,7 @@ func systemOperations() []operation {
 			resps: []respUnit{
 				{http.StatusOK, controllers.InstallStatusResponse{}},
 				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
 				{http.StatusNotImplemented, envelope.APIError{}},
 			},
 		},

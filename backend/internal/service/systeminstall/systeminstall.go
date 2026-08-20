@@ -11,11 +11,12 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"os/exec"
 	"runtime"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
 // Target is one of the fixed install targets AO knows how to install.
@@ -49,23 +50,20 @@ func Valid(target Target) bool {
 // Resolve reports how target would be installed on goos, without running
 // anything and without constructing a Service.
 //
-// This is the package's answer to "how is this installed here?", split out from
-// the daemon's answer to "may I install it?" so both the daemon and the CLI
-// resolve the argv through the same table. The CLI needs exactly this and none
-// of the Job machinery: it has a real terminal, so it can supply the privilege
-// the daemon cannot and run a Plan the daemon must refuse. Keeping one resolver
-// is what stops the two surfaces from drifting into different ideas of how to
-// install tmux. lookPath is injected so callers and tests can substitute a PATH;
-// nil means the real exec.LookPath.
+// This is the package's answer to "how is this installed here?" Keeping one
+// resolver lets the daemon expose a plan preview and lets the bootstrap CLI
+// print the same manual tmux remedy without either caller executing arbitrary
+// input. The caller supplies the PATH lookup boundary explicitly.
 func Resolve(goos string, lookPath func(string) (string, error), target Target) Plan {
 	if !Valid(target) {
 		return Plan{Target: target, Unsupported: true, Reason: "unknown install target"}
 	}
-	if lookPath == nil {
-		lookPath = exec.LookPath
-	}
-	return (&Service{goos: goos, lookPath: lookPath}).planFor(target)
+	return (&Service{goos: goos, executables: executableFinderFunc(lookPath)}).planFor(target)
 }
+
+type executableFinderFunc func(string) (string, error)
+
+func (f executableFinderFunc) LookPath(file string) (string, error) { return f(file) }
 
 // Plan is the resolved install command for a Target on the current platform.
 //
@@ -73,11 +71,10 @@ func Resolve(goos string, lookPath func(string) (string, error), target Target) 
 // including when Unsupported is true. Those two are independent on purpose:
 // "we know exactly how to install this" and "this daemon is allowed to run it"
 // are different questions. On Linux every package manager needs root, so the
-// daemon refuses (Unsupported) while still reporting the argv, which is what
-// lets the CLI — which has a real terminal and can prompt for a sudo password —
-// run the very same command successfully. Callers that intend to execute a
-// Plan must branch on Unsupported; callers that only need to know whether a
-// route exists should test len(Command).
+// daemon refuses (Unsupported) while still reporting the argv for the desktop
+// to display as a manual command. Callers that intend to execute a Plan must
+// branch on Unsupported; callers that only need to know whether a route exists
+// should test len(Command).
 type Plan struct {
 	Target      Target
 	Command     []string // argv, e.g. ["brew", "install", "tmux"]
@@ -133,12 +130,8 @@ type Service struct {
 	mu   sync.Mutex
 	jobs map[Target]*Job
 
-	lookPath func(string) (string, error)
-	// commandFunc builds the *exec.Cmd for a resolved argv against ctx (which
-	// carries the run's timeout — see installTimeout). Real installs use
-	// exec.CommandContext; tests override it with a fast, deterministic
-	// command so they never hit the network.
-	commandFunc func(ctx context.Context, argv []string) *exec.Cmd
+	executables ports.ExecutableFinder
+	commands    ports.CommandRunner
 	// goos selects the platform branch in planFor. Real use is always
 	// runtime.GOOS; tests override it to exercise every OS branch from one
 	// machine, the same seam lookPath provides for PATH probing.
@@ -149,20 +142,15 @@ type Service struct {
 	installTimeout time.Duration
 }
 
-// New returns a Service backed by the real exec.LookPath and exec.Command.
-func New() *Service {
+// New returns a Service backed by explicit host-operation ports. The daemon
+// supplies their concrete adapter; core service code never invokes os/exec.
+func New(executables ports.ExecutableFinder, commands ports.CommandRunner) *Service {
 	return &Service{
 		jobs:           make(map[Target]*Job),
-		lookPath:       exec.LookPath,
+		executables:    executables,
+		commands:       commands,
 		goos:           runtime.GOOS,
 		installTimeout: defaultInstallTimeout,
-		commandFunc: func(ctx context.Context, argv []string) *exec.Cmd {
-			// ctx here is a timeout rooted in context.Background(), not the
-			// HTTP request's ctx: an install kicked off by a request must
-			// keep running (and stay queryable) after that request returns —
-			// the one deliberate exception to always threading ctx through.
-			return exec.CommandContext(ctx, argv[0], argv[1:]...) //nolint:gosec // G204: fixed allowlist, argv is never caller-derived.
-		},
 	}
 }
 
@@ -186,7 +174,7 @@ func (s *Service) Start(ctx context.Context, target Target) (Job, error) {
 	}
 
 	plan := s.planFor(target)
-	command := strings.Join(plan.Command, " ")
+	command := displayCommand(plan)
 	now := time.Now()
 	if plan.Unsupported {
 		job := &Job{
@@ -209,15 +197,19 @@ func (s *Service) Start(ctx context.Context, target Target) (Job, error) {
 	}
 	s.jobs[target] = job
 
-	go s.run(plan.Command, job) //nolint:gosec // G118: run() deliberately roots its own timeout in context.Background(), not ctx — see the commandFunc field doc above.
+	go s.run(plan.Command, job) //nolint:gosec // G118: the async job deliberately outlives the starting HTTP request and owns a bounded timeout.
 
 	return *job, nil
 }
 
 // Status returns the current or last known Job for target. A target that has
-// never been started returns a zero-value StatusIdle job — that is not an
-// error; error is returned only when target is not a known install target.
-func (s *Service) Status(target Target) (Job, error) {
+// never been started returns a plan preview: Idle when the daemon can run it,
+// or Unsupported with a manual command/reason when it cannot. An error is
+// returned only when target is not a known install target.
+func (s *Service) Status(ctx context.Context, target Target) (Job, error) {
+	if err := ctx.Err(); err != nil {
+		return Job{}, err
+	}
 	if !Valid(target) {
 		return Job{}, fmt.Errorf("systeminstall: unknown target %q", target)
 	}
@@ -227,7 +219,17 @@ func (s *Service) Status(target Target) (Job, error) {
 
 	job, ok := s.jobs[target]
 	if !ok {
-		return Job{Target: target, Status: StatusIdle}, nil
+		plan := s.planFor(target)
+		status := StatusIdle
+		if plan.Unsupported {
+			status = StatusUnsupported
+		}
+		return Job{
+			Target:  target,
+			Status:  status,
+			Command: displayCommand(plan),
+			Error:   plan.Reason,
+		}, nil
 	}
 	return *job, nil
 }
@@ -241,12 +243,8 @@ func (s *Service) run(argv []string, job *Job) {
 	ctx, cancel := context.WithTimeout(context.Background(), s.installTimeout)
 	defer cancel()
 
-	cmd := s.commandFunc(ctx, argv)
 	out := &capturedOutput{max: maxOutputBytes}
-	cmd.Stdout = out
-	cmd.Stderr = out
-
-	runErr := cmd.Run()
+	runErr := s.commands.Run(ctx, argv, out, out)
 	now := time.Now()
 
 	s.mu.Lock()
@@ -263,19 +261,33 @@ func (s *Service) run(argv []string, job *Job) {
 		job.Error = runErr.Error()
 		return
 	}
+	if path, err := s.executables.LookPath(string(job.Target)); err != nil || path == "" {
+		job.Status = StatusFailed
+		job.Error = fmt.Sprintf("install command finished but %s is still not in PATH", job.Target)
+		return
+	}
 	job.Status = StatusSucceeded
 }
 
+func displayCommand(plan Plan) string {
+	argv := plan.Command
+	if plan.NeedsRoot && len(argv) > 0 {
+		argv = append([]string{"sudo"}, argv...)
+	}
+	return strings.Join(argv, " ")
+}
+
 // capturedOutput is an io.Writer that keeps only the last max bytes written,
-// trimming from the front. It is passed as both Stdout and Stderr on the same
-// Cmd, and exec.Cmd guarantees at most one goroutine writes at a time when
-// Stdout and Stderr are the same comparable Writer, so no lock is needed here.
+// trimming from the front.
 type capturedOutput struct {
+	mu  sync.Mutex
 	buf bytes.Buffer
 	max int
 }
 
 func (c *capturedOutput) Write(p []byte) (int, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	c.buf.Write(p)
 	if c.buf.Len() > c.max {
 		tail := c.buf.String()[c.buf.Len()-c.max:]
@@ -285,10 +297,14 @@ func (c *capturedOutput) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
-func (c *capturedOutput) String() string { return c.buf.String() }
+func (c *capturedOutput) String() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.buf.String()
+}
 
 // planFor resolves the install Plan for target on the current platform,
-// probing PATH via s.lookPath so tests can inject deterministic results.
+// probing PATH via s.executables so tests can inject deterministic results.
 func (s *Service) planFor(target Target) Plan {
 	switch target {
 	case TargetTmux:
@@ -317,8 +333,10 @@ func (s *Service) planTmux() Plan {
 		}
 	case "darwin":
 		return s.planBrew(TargetTmux, "tmux")
-	default:
+	case "linux":
 		return s.planLinuxPackage(TargetTmux, func(string) string { return "tmux" })
+	default:
+		return Plan{Target: TargetTmux, Unsupported: true, Reason: "tmux installation is not supported on this platform."}
 	}
 }
 
@@ -328,18 +346,20 @@ func (s *Service) planGH() Plan {
 		return s.planWinget(TargetGH, "GitHub.cli")
 	case "darwin":
 		return s.planBrew(TargetGH, "gh")
-	default:
+	case "linux":
 		return s.planLinuxPackage(TargetGH, func(mgr string) string {
 			if mgr == "pacman" {
 				return "github-cli"
 			}
 			return "gh"
 		})
+	default:
+		return Plan{Target: TargetGH, Unsupported: true, Reason: "gh installation is not supported on this platform."}
 	}
 }
 
 func (s *Service) planNPM(target Target, pkg string) Plan {
-	if _, err := s.lookPath("npm"); err != nil {
+	if _, err := s.executables.LookPath("npm"); err != nil {
 		return Plan{
 			Target: target, Unsupported: true,
 			Reason: "npm was not found on PATH. Install Node.js from https://nodejs.org first, then retry.",
@@ -352,7 +372,7 @@ func (s *Service) planOpencode() Plan {
 	if s.goos == "windows" {
 		return s.planWinget(TargetOpencode, "SST.opencode")
 	}
-	if _, err := s.lookPath("curl"); err != nil {
+	if _, err := s.executables.LookPath("curl"); err != nil {
 		return Plan{Target: TargetOpencode, Unsupported: true, Reason: "curl was not found on PATH."}
 	}
 	// opencode's official installer is documented as a bash script
@@ -360,14 +380,14 @@ func (s *Service) planOpencode() Plan {
 	// fallback here because sh piping into "| bash" still requires bash to
 	// actually exist, so probing for sh and then unconditionally invoking
 	// bash anyway would silently fail the moment the pipe reaches it.
-	if _, err := s.lookPath("bash"); err != nil {
+	if _, err := s.executables.LookPath("bash"); err != nil {
 		return Plan{Target: TargetOpencode, Unsupported: true, Reason: "bash was not found on PATH."}
 	}
 	return Plan{Target: TargetOpencode, Command: []string{"bash", "-c", "curl -fsSL https://opencode.ai/install | bash"}}
 }
 
 func (s *Service) planBrew(target Target, pkg string) Plan {
-	if _, err := s.lookPath("brew"); err != nil {
+	if _, err := s.executables.LookPath("brew"); err != nil {
 		return Plan{
 			Target: target, Unsupported: true,
 			Reason: "Homebrew was not found on PATH. Install it from https://brew.sh first, then retry.",
@@ -377,7 +397,7 @@ func (s *Service) planBrew(target Target, pkg string) Plan {
 }
 
 func (s *Service) planWinget(target Target, id string) Plan {
-	if _, err := s.lookPath("winget"); err != nil {
+	if _, err := s.executables.LookPath("winget"); err != nil {
 		return Plan{Target: target, Unsupported: true, Reason: "winget was not found on PATH."}
 	}
 	return Plan{Target: target, Command: []string{"winget", "install", "-e", "--id", id}}
@@ -395,20 +415,17 @@ var linuxPackageManagers = []string{"apt-get", "dnf", "pacman", "zypper", "apk"}
 // sudo, no pkexec): every one of apt-get/dnf/pacman/zypper install requires
 // root, so running the resolved command as the desktop user is guaranteed to
 // fail with a permission error. Rather than expose a button that always
-// fails, this always resolves as Unsupported on Linux, with Reason carrying
-// the exact sudo-prefixed command for the user to run themselves.
+// fails, this always resolves as Unsupported on Linux. Command carries the
+// exact argv and displayCommand adds sudo for the user-facing manual remedy.
 func (s *Service) planLinuxPackage(target Target, pkgFor func(mgr string) string) Plan {
 	for _, mgr := range linuxPackageManagers {
-		if _, err := s.lookPath(mgr); err != nil {
+		if _, err := s.executables.LookPath(mgr); err != nil {
 			continue
 		}
 		argv := linuxInstallArgv(mgr, pkgFor(mgr))
 		return Plan{
 			Target: target, Command: argv, Manager: mgr, NeedsRoot: true, Unsupported: true,
-			Reason: fmt.Sprintf(
-				"AO does not run installers as root. Run this yourself in a terminal: sudo %s",
-				strings.Join(argv, " "),
-			),
+			Reason: "AO cannot ask for your administrator password. Run the command below in a terminal.",
 		}
 	}
 	return Plan{

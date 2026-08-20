@@ -5060,6 +5060,12 @@ paths:
               schema:
                 $ref: '#/components/schemas/APIError'
           description: Bad Request
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
         "501":
           content:
             application/json:
@@ -5094,6 +5100,12 @@ paths:
               schema:
                 $ref: '#/components/schemas/APIError'
           description: Bad Request
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
         "501":
           content:
             application/json:

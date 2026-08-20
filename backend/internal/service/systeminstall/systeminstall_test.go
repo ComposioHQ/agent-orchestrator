@@ -3,11 +3,27 @@ package systeminstall
 import (
 	"context"
 	"errors"
+	"io"
 	"os/exec"
 	"strings"
 	"testing"
 	"time"
 )
+
+type commandRunnerFunc func(context.Context, []string, io.Writer, io.Writer) error
+
+func (f commandRunnerFunc) Run(ctx context.Context, argv []string, stdout, stderr io.Writer) error {
+	return f(ctx, argv, stdout, stderr)
+}
+
+func testCommandRunner(command func(context.Context, []string) *exec.Cmd) commandRunnerFunc {
+	return func(ctx context.Context, argv []string, stdout, stderr io.Writer) error {
+		cmd := command(ctx, argv)
+		cmd.Stdout = stdout
+		cmd.Stderr = stderr
+		return cmd.Run()
+	}
+}
 
 // lookPathFound returns a lookPath fake that resolves only the names present
 // in paths (defaulting each found name to "/usr/bin/<name>" when the map
@@ -28,13 +44,13 @@ func lookPathFound(names ...string) func(string) (string, error) {
 
 func newTestService(goos string, found ...string) *Service {
 	return &Service{
-		jobs:           make(map[Target]*Job),
-		lookPath:       lookPathFound(found...),
+		jobs:        make(map[Target]*Job),
+		executables: executableFinderFunc(lookPathFound(found...)),
+		commands: testCommandRunner(func(ctx context.Context, argv []string) *exec.Cmd {
+			return exec.CommandContext(ctx, argv[0], argv[1:]...) //nolint:gosec // test-only, deterministic argv
+		}),
 		goos:           goos,
 		installTimeout: 2 * time.Second,
-		commandFunc: func(ctx context.Context, argv []string) *exec.Cmd {
-			return exec.CommandContext(ctx, argv[0], argv[1:]...) //nolint:gosec // test-only, deterministic argv
-		},
 	}
 }
 
@@ -62,19 +78,19 @@ func TestPlanFor(t *testing.T) {
 		},
 		{
 			name: "tmux linux apt-get is unsupported with instructions", target: TargetTmux, goos: "linux", found: []string{"apt-get", "dnf"},
-			wantUnsupported: true, wantReasonHas: "sudo apt-get install -y tmux",
+			wantUnsupported: true, wantReasonHas: "administrator password",
 		},
 		{
 			name: "tmux linux dnf is unsupported with instructions", target: TargetTmux, goos: "linux", found: []string{"dnf", "zypper"},
-			wantUnsupported: true, wantReasonHas: "sudo dnf install -y tmux",
+			wantUnsupported: true, wantReasonHas: "administrator password",
 		},
 		{
 			name: "tmux linux pacman is unsupported with instructions", target: TargetTmux, goos: "linux", found: []string{"pacman"},
-			wantUnsupported: true, wantReasonHas: "sudo pacman -S --noconfirm tmux",
+			wantUnsupported: true, wantReasonHas: "administrator password",
 		},
 		{
 			name: "tmux linux zypper is unsupported with instructions", target: TargetTmux, goos: "linux", found: []string{"zypper"},
-			wantUnsupported: true, wantReasonHas: "sudo zypper install -y tmux",
+			wantUnsupported: true, wantReasonHas: "administrator password",
 		},
 		{
 			name: "tmux linux no package manager is unsupported", target: TargetTmux, goos: "linux",
@@ -94,11 +110,11 @@ func TestPlanFor(t *testing.T) {
 		},
 		{
 			name: "gh linux apt-get is unsupported with instructions for the gh package", target: TargetGH, goos: "linux", found: []string{"apt-get"},
-			wantUnsupported: true, wantReasonHas: "sudo apt-get install -y gh",
+			wantUnsupported: true, wantReasonHas: "administrator password",
 		},
 		{
 			name: "gh linux pacman is unsupported with instructions for the github-cli package", target: TargetGH, goos: "linux", found: []string{"pacman"},
-			wantUnsupported: true, wantReasonHas: "sudo pacman -S --noconfirm github-cli",
+			wantUnsupported: true, wantReasonHas: "administrator password",
 		},
 		{
 			name: "claude uses npm on every platform", target: TargetClaude, goos: "darwin", found: []string{"npm"},
@@ -169,8 +185,8 @@ func TestValid(t *testing.T) {
 }
 
 func TestStartAndStatus_Succeeded(t *testing.T) {
-	s := newTestService("darwin", "brew")
-	s.commandFunc = func(context.Context, []string) *exec.Cmd { return exec.Command("true") }
+	s := newTestService("darwin", "brew", "tmux")
+	s.commands = testCommandRunner(func(context.Context, []string) *exec.Cmd { return exec.Command("true") })
 
 	job, err := s.Start(context.Background(), TargetTmux)
 	if err != nil {
@@ -185,7 +201,7 @@ func TestStartAndStatus_Succeeded(t *testing.T) {
 
 	waitForStatus(t, s, TargetTmux, StatusSucceeded)
 
-	final, err := s.Status(TargetTmux)
+	final, err := s.Status(context.Background(), TargetTmux)
 	if err != nil {
 		t.Fatalf("Status() error = %v", err)
 	}
@@ -197,9 +213,27 @@ func TestStartAndStatus_Succeeded(t *testing.T) {
 	}
 }
 
+func TestStart_ExitZeroWithoutTargetOnPATHFails(t *testing.T) {
+	s := newTestService("darwin", "brew")
+	s.commands = testCommandRunner(func(context.Context, []string) *exec.Cmd { return exec.Command("true") })
+
+	if _, err := s.Start(context.Background(), TargetTmux); err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+	waitForStatus(t, s, TargetTmux, StatusFailed)
+
+	final, err := s.Status(context.Background(), TargetTmux)
+	if err != nil {
+		t.Fatalf("Status() error = %v", err)
+	}
+	if !strings.Contains(final.Error, "tmux is still not in PATH") {
+		t.Fatalf("Error = %q, want failed PATH verification", final.Error)
+	}
+}
+
 func TestStartAndStatus_Failed(t *testing.T) {
 	s := newTestService("darwin", "brew")
-	s.commandFunc = func(context.Context, []string) *exec.Cmd { return exec.Command("false") }
+	s.commands = testCommandRunner(func(context.Context, []string) *exec.Cmd { return exec.Command("false") })
 
 	if _, err := s.Start(context.Background(), TargetTmux); err != nil {
 		t.Fatalf("Start() error = %v", err)
@@ -207,7 +241,7 @@ func TestStartAndStatus_Failed(t *testing.T) {
 
 	waitForStatus(t, s, TargetTmux, StatusFailed)
 
-	final, _ := s.Status(TargetTmux)
+	final, _ := s.Status(context.Background(), TargetTmux)
 	if final.Error == "" {
 		t.Fatalf("Error is empty, want the exec failure")
 	}
@@ -240,14 +274,14 @@ func TestStart_UnknownTarget(t *testing.T) {
 
 func TestStatus_UnknownTarget(t *testing.T) {
 	s := newTestService("darwin")
-	if _, err := s.Status(Target("bogus")); err == nil {
+	if _, err := s.Status(context.Background(), Target("bogus")); err == nil {
 		t.Fatalf("Status(bogus) error = nil, want an error")
 	}
 }
 
 func TestStatus_NeverStartedIsIdle(t *testing.T) {
-	s := newTestService("darwin")
-	job, err := s.Status(TargetGH)
+	s := newTestService("darwin", "brew")
+	job, err := s.Status(context.Background(), TargetGH)
 	if err != nil {
 		t.Fatalf("Status() error = %v", err)
 	}
@@ -256,6 +290,23 @@ func TestStatus_NeverStartedIsIdle(t *testing.T) {
 	}
 	if job.Target != TargetGH {
 		t.Fatalf("Target = %q, want %q", job.Target, TargetGH)
+	}
+	if job.Command != "brew install gh" {
+		t.Fatalf("Command = %q, want install preview", job.Command)
+	}
+}
+
+func TestStatus_LinuxReturnsManualCommandBeforeStart(t *testing.T) {
+	s := newTestService("linux", "apt-get")
+	job, err := s.Status(context.Background(), TargetTmux)
+	if err != nil {
+		t.Fatalf("Status() error = %v", err)
+	}
+	if job.Status != StatusUnsupported {
+		t.Fatalf("Status = %q, want %q", job.Status, StatusUnsupported)
+	}
+	if job.Command != "sudo apt-get install -y tmux" {
+		t.Fatalf("Command = %q, want exact sudo command", job.Command)
 	}
 }
 
@@ -266,14 +317,14 @@ func TestStart_IdempotentWhileRunning(t *testing.T) {
 	release := make(chan struct{})
 	started := make(chan struct{}, 2)
 
-	s := newTestService("darwin", "brew")
+	s := newTestService("darwin", "brew", "tmux")
 	callCount := 0
-	s.commandFunc = func(context.Context, []string) *exec.Cmd {
+	s.commands = testCommandRunner(func(context.Context, []string) *exec.Cmd {
 		callCount++
 		started <- struct{}{}
 		<-release
 		return exec.Command("true")
-	}
+	})
 
 	first, err := s.Start(context.Background(), TargetTmux)
 	if err != nil {
@@ -297,7 +348,7 @@ func TestStart_IdempotentWhileRunning(t *testing.T) {
 	waitForStatus(t, s, TargetTmux, StatusSucceeded)
 
 	if callCount != 1 {
-		t.Fatalf("commandFunc called %d times, want 1 (Start must be idempotent while running)", callCount)
+		t.Fatalf("command runner called %d times, want 1 (Start must be idempotent while running)", callCount)
 	}
 }
 
@@ -309,9 +360,9 @@ func TestStart_IdempotentWhileRunning(t *testing.T) {
 func TestRun_Timeout(t *testing.T) {
 	s := newTestService("darwin", "brew")
 	s.installTimeout = 50 * time.Millisecond
-	s.commandFunc = func(ctx context.Context, _ []string) *exec.Cmd {
+	s.commands = testCommandRunner(func(ctx context.Context, _ []string) *exec.Cmd {
 		return exec.CommandContext(ctx, "sleep", "5") //nolint:gosec // test-only, fixed argv
-	}
+	})
 
 	if _, err := s.Start(context.Background(), TargetTmux); err != nil {
 		t.Fatalf("Start() error = %v", err)
@@ -319,7 +370,7 @@ func TestRun_Timeout(t *testing.T) {
 
 	waitForStatus(t, s, TargetTmux, StatusFailed)
 
-	final, _ := s.Status(TargetTmux)
+	final, _ := s.Status(context.Background(), TargetTmux)
 	if !strings.Contains(final.Error, "timed out") {
 		t.Fatalf("Error = %q, want it to mention the timeout", final.Error)
 	}
@@ -332,7 +383,7 @@ func waitForStatus(t *testing.T, s *Service, target Target, want Status) {
 	t.Helper()
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
-		job, err := s.Status(target)
+		job, err := s.Status(context.Background(), target)
 		if err != nil {
 			t.Fatalf("Status() error = %v", err)
 		}
@@ -387,10 +438,10 @@ func TestLinuxPlanExposesArgvWhileStayingUnsupported(t *testing.T) {
 // the behavioural half of the invariant asserted above.
 func TestStartRefusesLinuxRootInstall(t *testing.T) {
 	s := newTestService("linux", "apt-get")
-	s.commandFunc = func(context.Context, []string) *exec.Cmd {
+	s.commands = commandRunnerFunc(func(context.Context, []string, io.Writer, io.Writer) error {
 		t.Fatal("the daemon must not execute a root install")
 		return nil
-	}
+	})
 	job, err := s.Start(context.Background(), TargetTmux)
 	if err != nil {
 		t.Fatalf("Start: %v", err)
@@ -405,7 +456,7 @@ func TestStartRefusesLinuxRootInstall(t *testing.T) {
 func TestResolveMatchesServicePlan(t *testing.T) {
 	lookPath := lookPathFound("brew")
 	got := Resolve("darwin", lookPath, TargetTmux)
-	want := (&Service{goos: "darwin", lookPath: lookPath}).planFor(TargetTmux)
+	want := (&Service{goos: "darwin", executables: executableFinderFunc(lookPath)}).planFor(TargetTmux)
 	if strings.Join(got.Command, " ") != strings.Join(want.Command, " ") {
 		t.Fatalf("Resolve Command = %v, want %v", got.Command, want.Command)
 	}

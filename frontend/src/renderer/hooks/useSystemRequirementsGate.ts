@@ -30,12 +30,17 @@ export const systemRequirementsQueryOptions = {
 export function useSystemRequirementsGate() {
 	const query = useQuery(systemRequirementsQueryOptions);
 	const requirements = query.data?.requirements ?? [];
-	const blocked =
+	const requirementsBlocked =
 		!usesPreviewWorkspaceData && query.isSuccess && requirements.some((r) => r.required && !r.satisfied);
-	const ready = usesPreviewWorkspaceData || (query.isSuccess && !blocked);
+	const checking = !usesPreviewWorkspaceData && query.isPending;
+	// The board must stay behind the startup loader until the probe resolves.
+	// `blocked` is the mount gate; `requirementsBlocked` is narrower and only
+	// controls the dependency dialog once there is real missing-item data.
+	const blocked = checking || requirementsBlocked;
+	const ready = usesPreviewWorkspaceData || (query.isSuccess && !requirementsBlocked);
 	// The daemon is already confirmed reachable by the time either consumer
 	// mounts — if the readiness probe itself errors out, fail open rather than
 	// wedging the user on the checking state forever.
 	const probeFailed = query.isError;
-	return { query, requirements, blocked, ready, probeFailed };
+	return { query, requirements, blocked, requirementsBlocked, checking, ready, probeFailed };
 }

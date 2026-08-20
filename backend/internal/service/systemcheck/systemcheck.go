@@ -9,10 +9,10 @@ package systemcheck
 
 import (
 	"context"
-	"os/exec"
 	"runtime"
 	"strings"
 
+	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 	agentsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/agent"
 )
 
@@ -32,31 +32,32 @@ type Report struct {
 }
 
 // HarnessCatalog is the subset of agent.Service the harness requirement needs.
-// agent.Service already satisfies this via its existing Refresh method.
+// agent.Service satisfies this with a forced refresh so a user-triggered
+// recheck cannot be answered by the normal short-lived inventory cache.
 type HarnessCatalog interface {
-	Refresh(ctx context.Context) (agentsvc.Inventory, error)
+	RefreshFresh(ctx context.Context) (agentsvc.Inventory, error)
 }
 
 // Service runs the startup requirements gate.
 type Service struct {
-	harnesses HarnessCatalog
-	lookPath  func(string) (string, error)
+	harnesses   HarnessCatalog
+	executables ports.ExecutableFinder
 }
 
-// New returns a Service backed by the real exec.LookPath and the given
+// New returns a Service backed by the supplied host executable adapter and
 // harness catalog (an *agent.Service in production).
-func New(harnesses HarnessCatalog) *Service {
-	return &Service{harnesses: harnesses, lookPath: exec.LookPath}
+func New(harnesses HarnessCatalog, executables ports.ExecutableFinder) *Service {
+	return &Service{harnesses: harnesses, executables: executables}
 }
+
+type executableFinderFunc func(string) (string, error)
+
+func (f executableFinderFunc) LookPath(file string) (string, error) { return f(file) }
 
 // NewWithLookPath returns a Service with an injected lookPath, for tests that
 // need deterministic binary-resolution results without touching the real PATH.
 func NewWithLookPath(harnesses HarnessCatalog, lookPath func(string) (string, error)) *Service {
-	s := New(harnesses)
-	if lookPath != nil {
-		s.lookPath = lookPath
-	}
-	return s
+	return New(harnesses, executableFinderFunc(lookPath))
 }
 
 // Check runs the four startup requirement probes and reports whether the
@@ -85,7 +86,7 @@ func (s *Service) Check(ctx context.Context) (Report, error) {
 }
 
 func (s *Service) checkGit() Requirement {
-	path, err := s.lookPath("git")
+	path, err := s.executables.LookPath("git")
 	if err != nil || path == "" {
 		return Requirement{ID: "git", Label: "git", Required: true, Detail: "git was not found on PATH."}
 	}
@@ -101,7 +102,7 @@ func (s *Service) checkTmux() Requirement {
 			Detail: "Not required on Windows — AO uses the built-in ConPTY terminal runtime instead of tmux.",
 		}
 	}
-	path, err := s.lookPath("tmux")
+	path, err := s.executables.LookPath("tmux")
 	if err != nil || path == "" {
 		return Requirement{
 			ID: "tmux", Label: "tmux", Required: true,
@@ -113,7 +114,7 @@ func (s *Service) checkTmux() Requirement {
 
 func (s *Service) checkHarness(ctx context.Context) Requirement {
 	const label = "agent harness"
-	inv, err := s.harnesses.Refresh(ctx)
+	inv, err := s.harnesses.RefreshFresh(ctx)
 	if err != nil {
 		return Requirement{ID: "harness", Label: label, Required: true, Detail: err.Error()}
 	}
@@ -134,7 +135,7 @@ func (s *Service) checkHarness(ctx context.Context) Requirement {
 // agent sessions use it to open pull requests and read issues, but AO itself
 // never depends on it, so its absence must never block Ready.
 func (s *Service) checkGH() Requirement {
-	path, err := s.lookPath("gh")
+	path, err := s.executables.LookPath("gh")
 	if err != nil || path == "" {
 		return Requirement{
 			ID: "gh", Label: "gh",

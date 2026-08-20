@@ -136,6 +136,25 @@ beforeEach(() => {
 });
 
 describe("global board first launch", () => {
+	it("keeps the startup loader mounted while the requirements check is pending", async () => {
+		getMock.mockImplementation(async (url: string) => {
+			if (url === "/api/v1/projects") return { data: { projects: [] }, error: undefined };
+			if (url === "/api/v1/sessions") return { data: { sessions: [] }, error: undefined };
+			if (url === "/api/v1/system/requirements") return new Promise(() => {});
+			return { data: undefined, error: undefined };
+		});
+
+		renderBoard(<SessionsBoard />);
+
+		await waitFor(() => {
+			expect(getMock.mock.calls.some(([url]) => url === "/api/v1/projects")).toBe(true);
+			expect(getMock.mock.calls.some(([url]) => url === "/api/v1/sessions")).toBe(true);
+		});
+		expect(await screen.findByTestId("daemon-startup-loader")).toBeInTheDocument();
+		expect(screen.getByText("Checking your setup")).toBeInTheDocument();
+		expect(screen.queryByText("Add code to Agent Orchestrator")).not.toBeInTheDocument();
+	});
+
 	it("shows the startup loader instead of import while the daemon is booting", async () => {
 		respondWith([], []);
 		lastQueryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });

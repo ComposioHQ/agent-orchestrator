@@ -26,7 +26,14 @@ export function DaemonStartupLoader() {
 	// Shared with SessionsBoard's showStartup gate (same react-query cache
 	// entry) so this component and the mount decision that keeps it on screen
 	// never disagree about whether the machine is actually ready.
-	const { query: requirementsQuery, requirements, blocked, ready, probeFailed } = useSystemRequirementsGate();
+	const {
+		query: requirementsQuery,
+		requirements,
+		blocked,
+		requirementsBlocked,
+		ready,
+		probeFailed,
+	} = useSystemRequirementsGate();
 
 	// Once every required check passes (or the probe itself failed), hold the
 	// state briefly, then fall through to the pre-existing phrase-rotation loader.
@@ -84,8 +91,8 @@ export function DaemonStartupLoader() {
 					<span />
 				</div>
 			</div>
-			{blocked ? (
-				<InstallDependencyDialog requirements={requirements} onRefetchRequirements={() => void requirementsQuery.refetch()} />
+			{requirementsBlocked ? (
+				<InstallDependencyDialog requirements={requirements} onRefetchRequirements={() => requirementsQuery.refetch()} />
 			) : null}
 		</div>
 	);

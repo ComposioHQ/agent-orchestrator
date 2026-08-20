@@ -12,22 +12,15 @@ import (
 
 // ensureTmux satisfies the tmux runtime prerequisite before the desktop app is
 // launched, instead of letting the user discover it as an opaque
-// RUNTIME_PREREQUISITE_MISSING error on their first spawn. On an interactive
-// terminal it offers to run the platform package manager for them; otherwise it
-// prints the exact command to run by hand.
-//
-// This is the CLI complement to the daemon's install surface, not a duplicate
-// of it. Both resolve the argv through systeminstall.Resolve, but on Linux
-// every package manager needs root, and the daemon runs inside the desktop app
-// with no terminal to prompt on, so it can only ever print the command. Here
-// there is a real tty, so sudo can actually ask for a password and the install
-// completes. This is the only place a Linux install can genuinely happen.
+// RUNTIME_PREREQUISITE_MISSING error on their first spawn. It only prints the
+// exact command to run by hand; installation belongs to the daemon-owned
+// desktop flow, never to this bootstrap CLI.
 //
 // It never blocks `ao start`. Back when ensureTmux() ran in the CLI, `ao start`
 // WAS the daemon, so no tmux meant nothing could work. It is now only the
 // desktop-app launcher, and the app is still usable without a session runtime,
 // so an unmet prerequisite is a warning here and remains a hard error at spawn.
-func (c *commandContext) ensureTmux(ctx context.Context, goos string, in io.Reader, out io.Writer) {
+func (c *commandContext) ensureTmux(_ context.Context, goos string, _ io.Reader, out io.Writer) {
 	// Windows uses the ConPTY runtime, which needs no tmux. This mirrors
 	// systemcheck's Windows branch so the CLI and the desktop gate agree.
 	if goos == "windows" || c.haveTmux() {
@@ -41,44 +34,13 @@ func (c *commandContext) ensureTmux(ctx context.Context, goos string, in io.Read
 	}
 	pretty := strings.Join(argv, " ")
 
-	if !stdinIsInteractive(in) {
-		c.warnTmuxMissing(out, goos, fmt.Sprintf("install it with `%s`", pretty))
-		return
-	}
-
-	_, _ = fmt.Fprintf(out, "tmux is required to run agent sessions on %s, but it is not in your PATH.\n", goos)
-	ok, err := confirm(in, out, fmt.Sprintf("Install it now with `%s`?", pretty), true)
-	if err != nil || !ok {
-		c.warnTmuxMissing(out, goos, fmt.Sprintf("install it with `%s`", pretty))
-		return
-	}
-	if err := c.installTmux(ctx, out, argv); err != nil {
-		_, _ = fmt.Fprintf(out, "Warning: %v\n", err)
-		c.warnTmuxMissing(out, goos, fmt.Sprintf("install it with `%s`", pretty))
-	}
+	c.warnTmuxMissing(out, goos, fmt.Sprintf("install it with `%s`", pretty))
 }
 
 // warnTmuxMissing states the consequence and the remedy, and is the only thing
 // a user gets when we cannot install for them.
 func (c *commandContext) warnTmuxMissing(out io.Writer, goos, remedy string) {
 	_, _ = fmt.Fprintf(out, "Warning: tmux is not in PATH, so agent sessions will fail to start on %s. To fix it, %s.\n", goos, remedy)
-}
-
-// installTmux runs the resolved install command and verifies tmux actually
-// landed on PATH afterwards. A package manager can exit 0 and still leave
-// nothing runnable (wrong repo, install into a dir not on PATH), so the
-// re-check is the real success signal.
-func (c *commandContext) installTmux(ctx context.Context, out io.Writer, argv []string) error {
-	pretty := strings.Join(argv, " ")
-	_, _ = fmt.Fprintf(out, "Running %s...\n", pretty)
-	if err := c.deps.RunInteractive(ctx, argv[0], argv[1:]...); err != nil {
-		return fmt.Errorf("install tmux with `%s`: %w", pretty, err)
-	}
-	if !c.haveTmux() {
-		return fmt.Errorf("`%s` finished but tmux is still not in PATH; install it manually, then re-run `ao start`", pretty)
-	}
-	_, _ = fmt.Fprintln(out, "tmux installed.")
-	return nil
 }
 
 func (c *commandContext) haveTmux() bool {
@@ -89,8 +51,7 @@ func (c *commandContext) haveTmux() bool {
 }
 
 // tmuxInstallCommand returns the install argv for the first known package
-// manager present on PATH, or nil when there is none or we cannot get the
-// privilege it needs.
+// manager present on PATH, or nil when there is none.
 //
 // It deliberately keys off len(Command) rather than Plan.Unsupported: on Linux
 // the daemon marks every package-manager plan Unsupported because it must not
@@ -100,20 +61,15 @@ func (c *commandContext) tmuxInstallCommand(goos string) []string {
 	if len(plan.Command) == 0 {
 		return nil
 	}
-	return c.withPrivilege(plan)
+	return manualInstallCommand(plan)
 }
 
-// withPrivilege prefixes sudo for the package managers that write to system
-// paths. Homebrew must not run as root. It returns nil when the command needs
-// root that we cannot get: an unprivileged account in an image with no sudo
-// (the CLI smoke container is exactly this) would otherwise run a doomed
-// `apt-get install` and fail on the dpkg lock.
-func (c *commandContext) withPrivilege(plan systeminstall.Plan) []string {
+// manualInstallCommand prefixes sudo when the resolved package manager writes
+// to system paths. The command is advice, not something this process executes,
+// so it remains exact even when sudo itself is not currently on PATH.
+func manualInstallCommand(plan systeminstall.Plan) []string {
 	if !plan.NeedsRoot || os.Geteuid() == 0 {
 		return plan.Command
-	}
-	if path, err := c.deps.LookPath("sudo"); err != nil || path == "" {
-		return nil
 	}
 	return append([]string{"sudo"}, plan.Command...)
 }
