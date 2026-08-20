@@ -541,8 +541,9 @@ func (m *Manager) ApplyActivitySignal(ctx context.Context, id domain.SessionID, 
 		return nil
 	}
 	// A normalized stop hook is the cheapest reliable signal that a worker turn
-	// may just have created or pushed a PR. The observer coalesces these calls,
-	// so this must remain a non-blocking hint rather than lifecycle work.
+	// may just have mutated PR state (create, ready, close, reopen, or push). The
+	// observer coalesces these calls, so this remains a non-blocking hint rather
+	// than lifecycle work or command-pattern matching.
 	if s.Event == "stop" && m.scmNudger != nil {
 		m.scmNudger.Nudge()
 	}

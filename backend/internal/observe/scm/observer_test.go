@@ -104,6 +104,25 @@ func (s *fakeStore) pollStats() (calls, maxActive int) {
 	return s.listCalls, s.maxActive
 }
 
+func (s *fakeStore) latestWrite() (fakeWrite, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if len(s.writes) == 0 {
+		return fakeWrite{}, false
+	}
+	return s.writes[len(s.writes)-1], true
+}
+
+func (s *fakeStore) trackPRAndClearWrites(sessionID domain.SessionID, pr domain.PullRequest) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.prs == nil {
+		s.prs = map[domain.SessionID][]domain.PullRequest{}
+	}
+	s.prs[sessionID] = []domain.PullRequest{pr}
+	s.writes = nil
+}
+
 func (s *fakeStore) GetProject(_ context.Context, id string) (domain.ProjectRecord, bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -318,6 +337,20 @@ func waitForPollCalls(t *testing.T, store *fakeStore, want int) {
 	t.Fatalf("poll calls = %d, want at least %d", calls, want)
 }
 
+func waitForWrite(t *testing.T, store *fakeStore, matches func(fakeWrite) bool) fakeWrite {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if write, ok := store.latestWrite(); ok && matches(write) {
+			return write
+		}
+		time.Sleep(time.Millisecond)
+	}
+	write, _ := store.latestWrite()
+	t.Fatalf("timed out waiting for matching SCM write; latest = %#v", write)
+	return fakeWrite{}
+}
+
 func TestObserverNudgeCoalescesConcurrentCalls(t *testing.T) {
 	store := &fakeStore{}
 	provider := &fakeProvider{}
@@ -373,6 +406,59 @@ func TestObserverNudgeDoesNotRacePollAndTickerContinues(t *testing.T) {
 	waitForPollCalls(t, store, 3)
 	if _, maxActive := store.pollStats(); maxActive != 1 {
 		t.Fatalf("maximum concurrent polls = %d, want 1", maxActive)
+	}
+
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("observer did not stop")
+	}
+}
+
+func TestObserverNudgeRefreshesDraftPRBecomingReady(t *testing.T) {
+	store := testStoreWithSession()
+	draft := testObs(1)
+	draft.PR.Draft = true
+	draft.PR.State = "draft"
+	draft.PR.HeadRepo = "o/r"
+	provider := &fakeProvider{
+		repoGuards:   map[string]ports.SCMGuardResult{prKey(testRepo, 0): {ETag: "draft-v1"}},
+		openPRs:      map[string][]ports.SCMPRObservation{prKey(testRepo, 0): {draft.PR}},
+		observations: map[string]ports.SCMObservation{prKey(testRepo, 1): draft},
+	}
+	observer := New(provider, store, &fakeLifecycle{}, Config{
+		Tick:          time.Hour,
+		NudgeDebounce: 5 * time.Millisecond,
+		Logger:        quietSlog(),
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	done := observer.Start(ctx)
+
+	// Establish the draft baseline from the observer's immediate startup poll.
+	draftWrite := waitForWrite(t, store, func(write fakeWrite) bool {
+		return write.pr.Draft && write.pr.MetadataHash == metadataSemanticHash(draft)
+	})
+	store.trackPRAndClearWrites("p-1", draftWrite.pr)
+
+	ready := draft
+	ready.PR.Draft = false
+	ready.PR.State = "open"
+	provider.mu.Lock()
+	provider.repoGuards[prKey(testRepo, 0)] = ports.SCMGuardResult{ETag: "ready-v2"}
+	provider.openPRs[prKey(testRepo, 0)] = []ports.SCMPRObservation{ready.PR}
+	provider.observations[prKey(testRepo, 1)] = ready
+	provider.mu.Unlock()
+
+	observer.Nudge()
+	readyWrite := waitForWrite(t, store, func(write fakeWrite) bool {
+		return !write.pr.Draft && write.pr.MetadataHash == metadataSemanticHash(ready)
+	})
+	if readyWrite.pr.Draft || readyWrite.pr.ProviderState == "draft" {
+		t.Fatalf("nudged poll kept PR in draft state: %#v", readyWrite.pr)
+	}
+	if calls, _ := store.pollStats(); calls != 2 {
+		t.Fatalf("poll calls = %d, want startup + one nudged ready-state refresh", calls)
 	}
 
 	cancel()
