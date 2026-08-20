@@ -69,22 +69,18 @@ func (c *conversation) abortHistoryReplay() {
 // idempotent import path.
 func (c *conversation) finishHistoryReplay() {
 	c.historyMu.Lock()
-	unsettled := c.history != nil && c.history.turnID != "" &&
+	interrupted := c.history != nil && c.history.turnID != "" &&
 		c.history.turnUserID != "" && !c.history.turnHasProvider
-	if unsettled {
-		c.historyEvents = nil
-		c.historyErr = fmt.Errorf("%w: final replayed user turn has no provider output",
-			ports.ErrChatHistoryUnsettled)
-		c.historyLoaded = true
-		c.history = nil
-	}
 	c.historyMu.Unlock()
-	if unsettled {
-		c.resetHistoryItems("")
-		return
-	}
 
-	c.finishHistoryTurn()
+	turnState := domain.TurnStateCompleted
+	if interrupted {
+		// session/load has finished, so this user-only turn cannot still be
+		// producing output. It represents a prompt interrupted before the agent
+		// emitted a provider event and remains valid replayable history.
+		turnState = domain.TurnStateInterrupted
+	}
+	c.finishHistoryTurn(turnState)
 
 	c.historyMu.Lock()
 	if c.history != nil {
@@ -179,7 +175,7 @@ func (c *conversation) captureHistoryUserChunk(chunk *acpsdk.SessionUpdateUserMe
 	c.historyMu.Unlock()
 
 	if finishPrevious {
-		c.finishHistoryTurn()
+		c.finishHistoryTurn(domain.TurnStateCompleted)
 		startTurn = true
 	}
 	if startTurn {
@@ -250,7 +246,7 @@ func (c *conversation) flushHistoryUserMessage() {
 	})
 }
 
-func (c *conversation) finishHistoryTurn() {
+func (c *conversation) finishHistoryTurn(state domain.TurnState) {
 	c.flushHistoryUserMessage()
 
 	c.historyMu.Lock()
@@ -265,7 +261,7 @@ func (c *conversation) finishHistoryTurn() {
 	c.emit(ports.ChatEvent{
 		Kind:           ports.ChatEventTurnCompleted,
 		ProviderTurnID: turnID,
-		TurnState:      domain.TurnStateCompleted,
+		TurnState:      state,
 	})
 
 	c.historyMu.Lock()

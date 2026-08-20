@@ -120,8 +120,11 @@ spawn remains the authoritative runtime validation point. Use
 
 `ao preview` resolves its session from the `AO_SESSION_ID` environment variable
 (it is meant to run inside a session), not a flag. With no argument it
-autodetects an `index.html` in the session workspace; with a URL argument it
-opens that URL verbatim (`file://`, `http`, `https`).
+autodetects an `index.html` in the session workspace. Relative file targets are
+resolved from the session workspace root, regardless of the shell's current
+directory, and served through AO's confined loopback preview origin. Absolute
+paths and `file://` URLs must resolve inside that workspace; explicit HTTP and
+HTTPS targets remain regular browser URLs.
 
 `ao preview start [configuration]` loads `.ao/launch.json` from the session
 workspace, starts that exact command under a session-owned supervisor, selects

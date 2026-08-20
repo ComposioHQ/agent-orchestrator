@@ -220,6 +220,12 @@ describe("HumanMessage attachments", () => {
 });
 
 describe("ChatWorkspace timeline", () => {
+	it("makes composer and history controls inert while a durable agent switch owns input", () => {
+		render(<ChatWorkspace snapshot={idleSnapshot()} agentInputDisabled />);
+
+		expect(screen.getByTestId("chat-conversation-panel")).toHaveAttribute("inert");
+	});
+
 	it("uses the shared session topbar chrome for workers and orchestrators", () => {
 		const view = render(<ChatWorkspace snapshot={chatFixture} sessionRole="worker" />);
 

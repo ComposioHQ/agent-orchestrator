@@ -99,6 +99,8 @@ export function ChatComposer({
 	compacting,
 	compactUnavailable,
 	compactBlocked,
+	autoFocusKey,
+	autoFocus = true,
 }: {
 	onSend: (text: string, attachments?: FileAttachmentPayload[]) => void | Promise<unknown>;
 	/**
@@ -153,6 +155,10 @@ export function ChatComposer({
 	compactUnavailable?: string;
 	/** A running turn must be stopped before its history can be compacted. */
 	compactBlocked?: boolean;
+	/** Changes when the owning chat surface should reclaim composer focus. */
+	autoFocusKey?: string;
+	/** Whether this composer is currently visible and should take focus. */
+	autoFocus?: boolean;
 }) {
 	const [text, setText] = useState("");
 	const [caret, setCaret] = useState(0);
@@ -249,6 +255,31 @@ export function ChatComposer({
 				: "Enter to send";
 	const draftSeedId = draftSeed?.id;
 	const draftSeedText = draftSeed?.text;
+
+	const focusTextarea = useCallback(() => {
+		if (!autoFocus || disabled) return;
+		textarea.current?.focus();
+	}, [autoFocus, disabled]);
+
+	useEffect(() => {
+		focusTextarea();
+	}, [autoFocusKey, focusTextarea]);
+
+	useEffect(() => {
+		if (!autoFocus) return;
+
+		const onWindowFocus = () => focusTextarea();
+		const onVisibilityChange = () => {
+			if (document.visibilityState === "visible") focusTextarea();
+		};
+
+		window.addEventListener("focus", onWindowFocus);
+		document.addEventListener("visibilitychange", onVisibilityChange);
+		return () => {
+			window.removeEventListener("focus", onWindowFocus);
+			document.removeEventListener("visibilitychange", onVisibilityChange);
+		};
+	}, [autoFocus, focusTextarea]);
 
 	// A steer choice belongs to one running turn. Once that turn disappears, return
 	// Enter to the durable queue path so the next turn cannot be steered by accident.
