@@ -38,7 +38,26 @@ INSERT INTO conversation_branches (
 );
 
 -- name: SelectConversationBranch :one
-SELECT b.*, b.id = c.active_branch_id AS active
+WITH RECURSIVE lineage(id, parent_branch_id, replaced_turn_id, depth) AS (
+    SELECT branch.id, branch.parent_branch_id, branch.replaced_turn_id, 0
+    FROM conversation_branches AS branch
+    WHERE branch.conversation_id = sqlc.arg(conversation_id)
+      AND branch.id = sqlc.arg(branch_id)
+    UNION ALL
+    SELECT parent.id, parent.parent_branch_id, parent.replaced_turn_id, lineage.depth + 1
+    FROM lineage
+    JOIN conversation_branches AS parent ON parent.id = lineage.parent_branch_id
+    WHERE parent.conversation_id = sqlc.arg(conversation_id)
+)
+SELECT b.*, b.id = c.active_branch_id AS active,
+       CAST(COALESCE((
+           SELECT lineage.id
+           FROM lineage
+           WHERE lineage.parent_branch_id IS NULL
+              OR lineage.replaced_turn_id IS NULL
+           ORDER BY lineage.depth
+           LIMIT 1
+       ), '') AS TEXT) AS provider_scope_id
 FROM conversation_branches AS b
 JOIN conversations AS c ON c.id = b.conversation_id
 WHERE b.conversation_id = sqlc.arg(conversation_id)
@@ -46,19 +65,41 @@ WHERE b.conversation_id = sqlc.arg(conversation_id)
 LIMIT 1;
 
 -- name: SelectConversationBranches :many
-SELECT b.*, b.id = c.active_branch_id AS active
+WITH RECURSIVE lineages(branch_id, id, parent_branch_id, replaced_turn_id, depth) AS (
+    SELECT branch.id, branch.id, branch.parent_branch_id, branch.replaced_turn_id, 0
+    FROM conversation_branches AS branch
+    WHERE branch.conversation_id = sqlc.arg(conversation_id)
+    UNION ALL
+    SELECT lineage.branch_id, parent.id, parent.parent_branch_id,
+           parent.replaced_turn_id, lineage.depth + 1
+    FROM lineages AS lineage
+    JOIN conversation_branches AS parent ON parent.id = lineage.parent_branch_id
+    WHERE parent.conversation_id = sqlc.arg(conversation_id)
+)
+SELECT b.*, b.id = c.active_branch_id AS active,
+       CAST(COALESCE((
+           SELECT lineage.id
+           FROM lineages AS lineage
+           WHERE lineage.branch_id = b.id
+             AND (lineage.parent_branch_id IS NULL OR lineage.replaced_turn_id IS NULL)
+           ORDER BY lineage.depth
+           LIMIT 1
+       ), '') AS TEXT) AS provider_scope_id
 FROM conversation_branches AS b
 JOIN conversations AS c ON c.id = b.conversation_id
-WHERE b.conversation_id = ?
+WHERE b.conversation_id = sqlc.arg(conversation_id)
 ORDER BY b.created_at, b.id;
 
 -- The selected human prompt must belong to the active lineage. Its immutable
 -- sequence determines one ancestry boundary for turns, messages, activities and
 -- provider events. The previous provider turn is the fork target; it is empty for
 -- the first prompt, which tells the service to start a fresh provider thread.
+-- A provider boundary is the nearest ancestor that is either the root or has no
+-- replaced turn. Agent switching creates the latter kind: older AO history stays
+-- visible, but its provider turn ids can never be sent to the new driver.
 -- name: SelectConversationEditAnchor :one
-WITH RECURSIVE active_path(branch_id, max_sequence) AS (
-    SELECT conversations.active_branch_id, CAST(NULL AS INTEGER)
+WITH RECURSIVE active_path(branch_id, max_sequence, depth) AS (
+    SELECT conversations.active_branch_id, CAST(NULL AS INTEGER), 0
     FROM conversations
     WHERE conversations.id = sqlc.arg(conversation_id)
     UNION ALL
@@ -67,10 +108,19 @@ WITH RECURSIVE active_path(branch_id, max_sequence) AS (
                WHEN path.max_sequence IS NULL THEN branch.fork_after_sequence
                WHEN branch.fork_after_sequence < path.max_sequence THEN branch.fork_after_sequence
                ELSE path.max_sequence
-           END
+           END,
+           path.depth + 1
     FROM active_path AS path
     JOIN conversation_branches AS branch ON branch.id = path.branch_id
     WHERE branch.parent_branch_id IS NOT NULL
+), active_provider_scope AS (
+    SELECT branch.id, branch.fork_after_sequence
+    FROM active_path AS path
+    JOIN conversation_branches AS branch ON branch.id = path.branch_id
+    WHERE branch.parent_branch_id IS NULL
+       OR branch.replaced_turn_id IS NULL
+    ORDER BY path.depth
+    LIMIT 1
 ), active_branch AS (
     SELECT branch.*
     FROM conversations AS conversation
@@ -81,16 +131,19 @@ WITH RECURSIVE active_path(branch_id, max_sequence) AS (
            message.turn_id,
            message.sequence,
            message.delivery_content_json,
+           active_provider_scope.fork_after_sequence AS provider_floor_sequence,
            active_branch.parent_branch_id IS NOT NULL
                AND active_branch.replaced_turn_id = message.turn_id
                AND active_branch.replacement_turn_id IS NULL AS retry_active_branch
     FROM conversation_messages AS message
     JOIN active_path AS path ON path.branch_id = message.branch_id
     CROSS JOIN active_branch
+    CROSS JOIN active_provider_scope
     WHERE message.conversation_id = sqlc.arg(conversation_id)
       AND message.turn_id = sqlc.arg(replaced_turn_id)
       AND message.role = 'user'
       AND message.origin = 'human'
+      AND message.sequence > active_provider_scope.fork_after_sequence
       AND (
           path.max_sequence IS NULL
           OR message.sequence <= path.max_sequence
@@ -114,6 +167,7 @@ SELECT selected_message.conversation_id,
            WHERE previous_message.conversation_id = selected_message.conversation_id
              AND previous_message.role = 'user'
              AND previous_message.sequence < selected_message.sequence
+             AND previous_message.sequence > selected_message.provider_floor_sequence
              AND previous_turn.provider_turn_id <> ''
              AND previous_turn.rolled_back_at IS NULL
              AND (previous_path.max_sequence IS NULL

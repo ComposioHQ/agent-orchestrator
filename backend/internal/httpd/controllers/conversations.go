@@ -131,6 +131,12 @@ func (c *ConversationsController) activateBranch(w http.ResponseWriter, r *http.
 			"CHAT_EDIT_BUSY", "stop the current turn before switching conversation branches", nil)
 		return
 	}
+	if errors.Is(err, chatsvc.ErrBranchProviderMismatch) {
+		envelope.WriteAPIError(w, r, http.StatusConflict, "conflict",
+			"CHAT_BRANCH_PROVIDER_MISMATCH",
+			"that branch belongs to the agent that handled this session before the last switch", nil)
+		return
+	}
 	if err != nil {
 		writeConversationError(w, r, err)
 		return
@@ -691,6 +697,11 @@ func writeConversationError(w http.ResponseWriter, r *http.Request, err error) {
 		envelope.WriteAPIError(w, r, http.StatusConflict, "conflict",
 			"CHAT_TURN_NOT_ROLLBACKABLE",
 			"that turn never reached the agent, so there is nothing to undo", nil)
+
+	case errors.Is(err, chatsvc.ErrTurnProviderMismatch):
+		envelope.WriteAPIError(w, r, http.StatusConflict, "conflict",
+			"CHAT_TURN_PROVIDER_MISMATCH",
+			"that turn belongs to the agent that handled this session before the last switch", nil)
 
 	case errors.Is(err, chatsvc.ErrRollbackUnsupported):
 		envelope.WriteAPIError(w, r, http.StatusConflict, "conflict",

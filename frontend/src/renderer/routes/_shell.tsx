@@ -732,7 +732,12 @@ function ShellLayout() {
           render inside the center panel when the shell topbar is hidden. */}
 			<div
 				className={cn(
-					"flex h-screen min-h-0 flex-col bg-sidebar text-foreground",
+					// `app-shell-root` is the platform-independent hook the native-composition
+					// cascade needs to clear this opaque `bg-sidebar` while the live browser
+					// page shows through. Windows/Linux were already covered by their
+					// platform classes; macOS adds none, so without this the shell painted
+					// over the live page whenever an overlay raised it.
+					"app-shell-root flex h-screen min-h-0 flex-col bg-sidebar text-foreground",
 					isWindows && "platform-windows",
 					isLinux && "platform-linux",
 					isFullScreen && "native-fullscreen",

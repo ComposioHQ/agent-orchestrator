@@ -152,6 +152,8 @@ export interface ChatWorkspaceProps {
 	headerActions?: ReactNode;
 	/** Suppress a transient stopped snapshot while a mode handoff installs Chat. */
 	controllerTransitioning?: boolean;
+	/** Freeze agent-owned Chat controls while a durable session mutation owns input. */
+	agentInputDisabled?: boolean;
 	reviewerTerminal?: { handleId: string; harness: string };
 	onOpenReviewerTerminal?: (target: { handleId: string; harness: string }) => void;
 	/** Older durable history is available but not loaded into the DOM yet. */
@@ -272,6 +274,7 @@ export function ChatWorkspace({
 	sessionRole = "worker",
 	headerActions,
 	controllerTransitioning,
+	agentInputDisabled = false,
 	reviewerTerminal,
 	onOpenReviewerTerminal,
 	session,
@@ -624,7 +627,7 @@ export function ChatWorkspace({
 				className="flex min-h-0 flex-1 flex-col"
 				data-testid="chat-conversation-panel"
 				hidden={reviewerActive || shellActive}
-				inert={reviewerActive || shellActive ? true : undefined}
+				inert={reviewerActive || shellActive || agentInputDisabled ? true : undefined}
 				role="tabpanel"
 			>
 				{/* Ordered by what blocks what. A session that needs credentials cannot make
@@ -725,6 +728,8 @@ export function ChatWorkspace({
 							filePathsTruncated={filePathsTruncated}
 							onStageAttachments={onStageAttachments}
 							nativeImages={nativeImages}
+							autoFocus={!reviewerActive}
+							autoFocusKey={snapshot.sessionId}
 							// Steering is only meaningful into a turn that is running. A queued turn
 							// has not reached the provider, so there is nothing to steer.
 							onSteer={onSteer}

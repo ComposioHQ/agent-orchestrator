@@ -1225,7 +1225,7 @@
 	"inspector.usage.totalTokensUnavailable": "Total des jetons indisponible",
 	"inspector.usage.uncachedInputTokens": "Jetons d'entrée non mis en cache",
 	"settings.project.autoReview": "Auto review",
-	"settings.project.autoReviewToggle": "Enable for new sessions",
+	"settings.project.autoReviewToggle": "Auto review PRs",
 	"settings.project.autoReviewDescription": "When enabled, new worker sessions will automatically review their pull requests. This can still be toggled per session after spawn.",
 	"settings.project.reviewer": "Reviewer"
 }
