@@ -709,8 +709,6 @@ function UsageMetrics({ totals }: { totals: SessionUsage["totals"] }) {
 			<UsageMetric label={t("inspector.usage.freshInputTokens")} metric={totals.uncachedInputTokens} />
 			<UsageMetric label={t("inspector.usage.outputTokens")} metric={totals.outputTokens} />
 			<UsageMetric label={t("inspector.usage.cacheReadTokens")} metric={totals.cacheReadTokens} />
-			<UsageMetric label={t("inspector.usage.cacheWriteTokens")} metric={totals.cacheWriteTokens} />
-			<UsageMetric label={t("inspector.usage.reasoningTokens")} metric={totals.reasoningTokens} />
 			<UsageRateMetric
 				description={t("inspector.usage.cacheHitRateDescription")}
 				label={t("inspector.usage.cacheHitRate")}

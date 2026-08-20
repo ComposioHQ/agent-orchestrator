@@ -791,10 +791,11 @@ describe("SessionInspector usage", () => {
 		expect(screen.getByText("Tokens processed")).toBeInTheDocument();
 		expect(screen.getByLabelText("1,500 tokens processed")).toBeInTheDocument();
 		expect(screen.getAllByText("Fresh input").length).toBeGreaterThan(0);
-		expect(screen.getAllByText("Reasoning (included in output)").length).toBeGreaterThan(0);
 		expect(screen.getAllByText("Cache hit rate").length).toBeGreaterThan(0);
 		expect(screen.getAllByLabelText("Cache hit rate: 83%. Cache reads ÷ (fresh input + cache reads).").length).toBeGreaterThan(0);
 		expect(screen.queryByText("Input tokens")).not.toBeInTheDocument();
+		expect(screen.queryByText("Cache write tokens")).not.toBeInTheDocument();
+		expect(screen.queryByText("Reasoning (included in output)")).not.toBeInTheDocument();
 		expect(screen.getByText("Codex")).toBeInTheDocument();
 	});
 });
