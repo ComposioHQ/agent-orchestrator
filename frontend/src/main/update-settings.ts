@@ -42,6 +42,11 @@ export interface UpdateStatus {
 	// network-stack error (net::ERR_*). The renderer localizes restart guidance
 	// from this flag instead of receiving pre-built English prose (#3526).
 	netError?: boolean;
+	// Present only when state === "downloaded" but the install cannot proceed
+	// yet: not enough free disk space for Squirrel's extract+stage+backup
+	// (#3528). Prose from the main process (same policy as the install blocker
+	// dialogs); the renderer shows it instead of a bare "restart to update".
+	installBlockedReason?: string;
 }
 
 /** File holding the user's auto-update preferences under the ~/.ao state dir. */

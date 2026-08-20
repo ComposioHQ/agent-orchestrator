@@ -1,8 +1,24 @@
 // @vitest-environment node
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { chmodSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import os from "node:os";
 import nodePath from "node:path";
+
+// node:fs's ESM namespace is not configurable, so statfsSync is mocked at the
+// module level instead of via spyOn.
+const statfsMock = vi.hoisted(() => vi.fn());
+vi.mock("node:fs", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs")>();
+  return { ...actual, statfsSync: statfsMock as unknown as typeof actual.statfsSync };
+});
 
 type UpdateSettings = {
   enabled: boolean;
@@ -21,6 +37,9 @@ type ImportOptions = {
     settings: UpdateSettings,
   ) => Promise<{ settings: UpdateSettings; cleared: boolean }>;
   isPackaged?: boolean;
+  // Backs app.getPath in the electron mock; unset makes getPath throw, which
+  // the updater's marker/preflight paths must tolerate (fail open).
+  getPath?: (name: string) => string;
 };
 
 type AutoUpdaterMock = {
@@ -93,6 +112,9 @@ async function importAutoUpdater(
     app: {
       isPackaged: options.isPackaged ?? true,
       getVersion: () => "1.0.0",
+      getPath: options.getPath ?? (() => {
+        throw new Error("getPath not available in test");
+      }),
     },
     BrowserWindow,
     dialog,
@@ -1651,3 +1673,206 @@ describe("install-on-quit policy", () => {
     }
   });
 });
+
+// #3528: a full disk truncated Squirrel's extraction into a bogus
+// "The file ... doesn't exist" install failure no UI ever saw. The preflight
+// below turns that into an actionable dialog plus install-phase telemetry; a
+// persisted install-attempt marker makes the post-quit failure reportable on
+// the next launch.
+function stubStatfs(freeBytes: number | "throw"): void {
+  statfsMock.mockReset();
+  if (freeBytes === "throw") {
+    statfsMock.mockImplementation(() => {
+      throw new Error("statfs unavailable");
+    });
+  } else {
+    const bsize = 4096;
+    statfsMock.mockImplementation(() => ({ bsize, bavail: Math.floor(freeBytes / bsize) }));
+  }
+}
+
+const AMPLE_BYTES = 3 * 1024 * 1024 * 1024;
+
+// Real userData/cache dirs behind the electron getPath mock, so the marker and
+// ShipIt log tests exercise the filesystem rather than stubs.
+function makeElectronPaths(): {
+  userData: string;
+  cache: string;
+  getPath: (name: string) => string;
+  cleanup: () => void;
+} {
+  const base = mkdtempSync(nodePath.join(os.tmpdir(), "ao-updater-paths-"));
+  const userData = nodePath.join(base, "userData");
+  const cache = nodePath.join(base, "cache");
+  mkdirSync(userData, { recursive: true });
+  mkdirSync(cache, { recursive: true });
+  return {
+    userData,
+    cache,
+    getPath: (name: string) => {
+      if (name === "userData") return userData;
+      if (name === "cache") return cache;
+      throw new Error(`unexpected getPath("${name}")`);
+    },
+    cleanup: () => rmSync(base, { recursive: true, force: true }),
+  };
+}
+
+describe("disk-space install preflight (#3528)", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.resetModules();
+  });
+
+  it("blocks quitAndInstall with an actionable dialog and install-phase telemetry when free space is low", async () => {
+    const { root, execPath } = makeBundle();
+    const restore = stubProcess("darwin", execPath);
+    const paths = makeElectronPaths();
+    stubStatfs(50 * 1024 * 1024); // 50MB << ~1.5GB reserve
+    try {
+      const { module, autoUpdater, dialog, telemetryMessages } =
+        await importAutoUpdater(undefined, { getPath: paths.getPath });
+
+      module.quitAndInstallUpdate();
+
+      expect(autoUpdater.quitAndInstall).not.toHaveBeenCalled();
+      expect(dialog.showMessageBox).toHaveBeenCalledTimes(1);
+      const box = dialog.showMessageBox.mock.calls[0][0] as { message: string; detail: string };
+      expect(box.message).toContain("disk space");
+      expect(box.detail).toContain("Free up");
+      const install = telemetryMessages().filter(
+        (m) => (m.payload as { phase?: string }).phase === "install",
+      );
+      expect(install).toHaveLength(1);
+      expect((install[0].payload as { error_category?: string }).error_category).toBe("disk_space");
+    } finally {
+      restore();
+      rmSync(root, { recursive: true, force: true });
+      paths.cleanup();
+    }
+  });
+
+  it("installs and persists the attempt marker when free space is ample", async () => {
+    const { root, execPath } = makeBundle();
+    const restore = stubProcess("darwin", execPath);
+    const paths = makeElectronPaths();
+    stubStatfs(AMPLE_BYTES);
+    try {
+      const { module, autoUpdater, updaterEvents } = await importAutoUpdater(undefined, {
+        getPath: paths.getPath,
+      });
+      // Wire the updater event handlers (a check path does this) before
+      // simulating the staged download that quitAndInstallUpdate marks.
+      await module.checkForUpdatesNow(paths.userData);
+      updaterEvents.get("update-downloaded")?.({ version: "2.0.0" });
+
+      module.quitAndInstallUpdate();
+
+      expect(autoUpdater.quitAndInstall).toHaveBeenCalledWith(false, true);
+      const marker = nodePath.join(paths.userData, "update-install-attempt.json");
+      expect(existsSync(marker)).toBe(true);
+      expect(JSON.parse(readFileSync(marker, "utf8")).version).toBe("2.0.0");
+    } finally {
+      restore();
+      rmSync(root, { recursive: true, force: true });
+      paths.cleanup();
+    }
+  });
+
+  it("fails open (installs anyway) when statfs errors", async () => {
+    const { root, execPath } = makeBundle();
+    const restore = stubProcess("darwin", execPath);
+    const paths = makeElectronPaths();
+    stubStatfs("throw");
+    try {
+      const { module, autoUpdater } = await importAutoUpdater(undefined, {
+        getPath: paths.getPath,
+      });
+
+      module.quitAndInstallUpdate();
+
+      expect(autoUpdater.quitAndInstall).toHaveBeenCalledWith(false, true);
+    } finally {
+      restore();
+      rmSync(root, { recursive: true, force: true });
+      paths.cleanup();
+    }
+  });
+});
+
+describe("post-quit install failure surfacing (#3528)", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.resetModules();
+  });
+
+  it("reports a failed install attempt on next launch, with the ShipIt log tail", async () => {
+    const paths = makeElectronPaths();
+    stubStatfs(AMPLE_BYTES);
+    mkdirSync(nodePath.join(`${paths.cache}.ShipIt`), { recursive: true });
+    writeFileSync(
+      nodePath.join(`${paths.cache}.ShipIt`, "ShipIt_stderr.log"),
+      '2026-08-03 15:05:43 SQRLInstallerErrorDomain Code=-1 Failed to copy bundle: The file "af.lproj" doesn\'t exist.\n',
+    );
+    writeFileSync(
+      nodePath.join(paths.userData, "update-install-attempt.json"),
+      `${JSON.stringify({ version: "9.9.9", attemptedAt: 1754235943000 })}\n`,
+    );
+    try {
+      const { module, dialog, telemetryMessages } = await importAutoUpdater(undefined, {
+        getPath: paths.getPath,
+      });
+
+      await module.startAutoUpdates(paths.userData);
+
+      expect(dialog.showMessageBox).toHaveBeenCalledTimes(1);
+      const box = dialog.showMessageBox.mock.calls[0][0] as { message: string; detail?: string };
+      expect(box.message).toBe("The last update didn't install");
+      expect(box.detail).toContain("af.lproj");
+      // Reported exactly once: the marker is cleared.
+      expect(existsSync(nodePath.join(paths.userData, "update-install-attempt.json"))).toBe(false);
+      const install = telemetryMessages().filter(
+        (m) => (m.payload as { phase?: string }).phase === "install",
+      );
+      expect(install).toHaveLength(1);
+      expect((install[0].payload as { to_version?: string }).to_version).toBe("9.9.9");
+    } finally {
+      paths.cleanup();
+    }
+  });
+
+  it("stays silent when the attempted version is now the running version", async () => {
+    const paths = makeElectronPaths();
+    stubStatfs(AMPLE_BYTES);
+    writeFileSync(
+      nodePath.join(paths.userData, "update-install-attempt.json"),
+      `${JSON.stringify({ version: "1.0.0", attemptedAt: Date.now() })}\n`,
+    );
+    try {
+      const { module, dialog } = await importAutoUpdater(undefined, { getPath: paths.getPath });
+
+      await module.startAutoUpdates(paths.userData);
+
+      expect(dialog.showMessageBox).not.toHaveBeenCalled();
+      // Marker still cleared so it cannot resurface.
+      expect(existsSync(nodePath.join(paths.userData, "update-install-attempt.json"))).toBe(false);
+    } finally {
+      paths.cleanup();
+    }
+  });
+
+  it("does nothing on a clean launch (no marker)", async () => {
+    const paths = makeElectronPaths();
+    stubStatfs(AMPLE_BYTES);
+    try {
+      const { module, dialog } = await importAutoUpdater(undefined, { getPath: paths.getPath });
+
+      await module.startAutoUpdates(paths.userData);
+
+      expect(dialog.showMessageBox).not.toHaveBeenCalled();
+    } finally {
+      paths.cleanup();
+    }
+  });
+});
+

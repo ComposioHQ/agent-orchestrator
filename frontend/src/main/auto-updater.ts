@@ -1,8 +1,36 @@
 import { autoUpdater } from "electron-updater";
 import { app, BrowserWindow, dialog } from "electron";
-import { accessSync, constants as fsConstants, existsSync } from "node:fs";
+import {
+  accessSync,
+  constants as fsConstants,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
+import {
+  DOWNLOAD_RESERVE_BYTES,
+  INSTALL_RESERVE_BYTES,
+  freeBytesOnVolume,
+  gbRoundedUp,
+  minFreeBytes,
+} from "./update-disk-space";
+
+// Electron's getPath type union omits "cache" even though it is a valid runtime
+// name (~/Library/Caches/<bundle-id> on macOS); Squirrel stages ShipIt data
+// next to it, so that is the volume the preflight must statfs (#3528).
+const CACHE_PATH_NAME = "cache" as Parameters<typeof app.getPath>[0];
+
+function cacheDirPath(): string | undefined {
+  try {
+    return app.getPath(CACHE_PATH_NAME);
+  } catch {
+    return undefined;
+  }
+}
 import {
   readUpdateSettings,
   updateUpdateSettings,
@@ -16,7 +44,9 @@ import { reconcileFeaturePin } from "./feature-builds";
 import { evaluateEscalation } from "./escalation-evaluator";
 import {
   isNetErrorMessage,
+  updateFailureCategory,
   updateFailureOutcome,
+  type UpdateFailureCategory,
   type UpdateOutcome,
   type UpdatePhase,
   type UpdateTrigger,
@@ -143,6 +173,22 @@ function emitUpdateFailure(err: unknown): void {
   );
 }
 
+// emitInstallBlockedOutcome reports an install attempt that was stopped by a
+// preflight blocker, so the install phase stops being a telemetry blind spot
+// (#3528: UpdatePhase was previously only check|download).
+function emitInstallBlockedOutcome(
+  reason: string,
+  category: UpdateFailureCategory = updateFailureCategory(reason),
+): void {
+  emitUpdateOutcome({
+    event: "ao.renderer.update_failed",
+    phase: "install",
+    trigger: "manual",
+    error_category: category,
+    ...(stagedVersion ? { to_version: stagedVersion } : {}),
+  });
+}
+
 // broadcast pushes the latest update status to every renderer window so the
 // Global Settings Updates section can reflect check/download progress live.
 function broadcast(
@@ -252,13 +298,17 @@ async function fetchNightlyImportant(
 
 // stagedDownloadedStatus rebuilds the enriched downloaded status from module
 // state, so transient check states can restore the row without recomputing.
+// When an install blocker is active the status carries the reason (#3528):
+// "restart to update" would otherwise promise an install that cannot land.
 function stagedDownloadedStatus(): UpdateStatus {
+  const blockedReason = installBlockerReason();
   return {
     state: "downloaded",
     version: stagedVersion,
     stagedAt: stagedAtMs,
     escalated: stagedEscalated,
     ...(stagedRequestId === undefined ? {} : { requestId: stagedRequestId }),
+    ...(blockedReason === undefined ? {} : { installBlockedReason: blockedReason }),
   };
 }
 
@@ -607,7 +657,20 @@ async function runAutomaticUpdateCheck(stateDir: string): Promise<boolean> {
       escalationStateDir = stateDir;
       wireUpdaterEvents();
       configureFeed(settings);
-      autoUpdater.autoDownload = true;
+      // Disk preflight (#3528): with no room for the ~110MB zip, an automatic
+      // download truncates and the failure only surfaces after quit. Still run
+      // the check (statuses stay live); the download waits for space.
+      const downloadBlocker = getDiskSpaceDownloadBlocker();
+      autoUpdater.autoDownload = downloadBlocker === undefined;
+      if (downloadBlocker !== undefined) {
+        console.warn("automatic update download skipped:", downloadBlocker);
+        emitUpdateOutcome({
+          event: "ao.renderer.update_failed",
+          phase: "download",
+          trigger: "automatic",
+          error_category: "disk_space",
+        });
+      }
       applyInstallOnQuitPolicy();
       try {
         const result = await autoUpdater.checkForUpdates();
@@ -668,6 +731,10 @@ async function requestAutomaticUpdateCheck(
 // It is a thin shell: all policy (channel, opt-in) comes from update-settings.
 // Caller guards on app.isPackaged.
 export async function startAutoUpdates(stateDir: string): Promise<void> {
+  // First, close the loop on any install attempted last session: ShipIt runs
+  // after quit, so this launch is the first moment that can report its failure
+  // (#3528).
+  reportFailedInstallAttempt();
   startRetirementPollTimer(stateDir);
   const shouldSchedule = await requestAutomaticUpdateCheck(stateDir);
   if (shouldSchedule === true) schedulePeriodicAutomaticUpdateCheck(stateDir);
@@ -831,6 +898,20 @@ export async function downloadUpdateNow(requestId?: string): Promise<void> {
     });
     return;
   }
+  // Disk preflight (#3528): fail the download up front with an actionable
+  // message instead of letting it truncate on a full disk.
+  const downloadBlocker = getDiskSpaceDownloadBlocker();
+  if (downloadBlocker !== undefined) {
+    emitUpdateOutcome({
+      event: "ao.renderer.update_failed",
+      phase: "download",
+      trigger: "manual",
+      error_category: "disk_space",
+      ...(pendingUpdateVersion ? { to_version: pendingUpdateVersion } : {}),
+    });
+    broadcast({ state: "error", message: downloadBlocker, requestId });
+    return;
+  }
   try {
     await runSerializedUpdaterOperation(
       "manual-download",
@@ -909,14 +990,153 @@ export function getMacInstallBlocker(): string | undefined {
   return undefined;
 }
 
+// getDiskSpaceInstallBlocker is the disk-space half of the install preflight
+// (#3528). Squirrel needs roughly 3x the app size for extraction + staging +
+// the old-bundle backup (~1.5GB ballpark); below that, extraction truncates
+// and ShipIt fails AFTER the app has quit with a bogus "The file ...
+// doesn't exist" error no UI ever shows. Returns the user-facing message when
+// free space is below the reserve; undefined to proceed. Fails open: a statfs
+// problem never blocks the install.
+export function getDiskSpaceInstallBlocker(): string | undefined {
+  const dirs = [path.dirname(process.execPath)];
+  const cacheDir = cacheDirPath();
+  if (cacheDir !== undefined) dirs.push(cacheDir);
+  const free = minFreeBytes(dirs);
+  if (free === undefined || free >= INSTALL_RESERVE_BYTES) return undefined;
+  const gbNeeded = gbRoundedUp(INSTALL_RESERVE_BYTES);
+  return (
+    "Installing the update needs room to extract and stage it on this disk " +
+    `(about ${gbNeeded} GB), but only ${(free / (1024 * 1024 * 1024)).toFixed(1)} GB ` +
+    `is free. Free up at least ${gbNeeded} GB of space, then restart to update again.`
+  );
+}
+
+// getDiskSpaceDownloadBlocker is the pre-download preflight (#3528): the
+// ~110MB zip (plus temp headroom) must fit on the cache volume. Fails open.
+export function getDiskSpaceDownloadBlocker(): string | undefined {
+  const cacheDir = cacheDirPath();
+  if (cacheDir === undefined) return undefined;
+  const free = freeBytesOnVolume(cacheDir);
+  if (free === undefined || free >= DOWNLOAD_RESERVE_BYTES) return undefined;
+  const gbNeeded = gbRoundedUp(DOWNLOAD_RESERVE_BYTES);
+  return (
+    "Downloading the update needs about " +
+    `${gbNeeded} GB of free disk space, but only ` +
+    `${(free / (1024 * 1024 * 1024)).toFixed(2)} GB is free. Free up space, then check ` +
+    "for updates again."
+  );
+}
+
+// installBlockerReason is whatever currently prevents quitAndInstall from
+// landing: the macOS location blocker (#3527) or low disk space (#3528).
+// Used both for the install-on-quit policy and the "downloaded" status so the
+// restart row stops promising an install that cannot work.
+function installBlockerReason(): string | undefined {
+  return getMacInstallBlocker() ?? getDiskSpaceInstallBlocker();
+}
+
+// --- Post-quit install-failure surfacing (#3528) ---
+// ShipIt installs AFTER the app quits, so an ENOSPC-truncated extraction fails
+// where no in-app UI exists to report it. quitAndInstallUpdate persists a
+// marker first; on the next launch, a marker whose version is still newer than
+// the running app proves the install never landed, and the user finally hears
+// about it, with the ShipIt stderr tail that says why.
+const INSTALL_ATTEMPT_MARKER_FILE = "update-install-attempt.json";
+
+function installAttemptMarkerPath(): string | undefined {
+  try {
+    return path.join(app.getPath("userData"), INSTALL_ATTEMPT_MARKER_FILE);
+  } catch {
+    return undefined;
+  }
+}
+
+function writeInstallAttemptMarker(version: string | undefined): void {
+  const file = installAttemptMarkerPath();
+  if (file === undefined || version === undefined) return;
+  try {
+    mkdirSync(path.dirname(file), { recursive: true });
+    writeFileSync(
+      file,
+      `${JSON.stringify({ version, attemptedAt: Date.now() })}\n`,
+    );
+  } catch (err) {
+    // Marker is best-effort; losing it only loses failure *reporting*, which
+    // is exactly the status quo before this change.
+    console.debug("could not write install-attempt marker:", err);
+  }
+}
+
+// shipItLogTail reads the tail of Squirrel.Mac's ShipIt stderr log, where
+// install failures land (#3528; e.g. SQRLInstallerErrorDomain "The file
+// \"af.lproj\" doesn't exist", the tell of a truncated extraction). Returns
+// undefined off macOS, when absent, or on any read error.
+function shipItLogTail(maxChars = 400): string | undefined {
+  if (process.platform !== "darwin") return undefined;
+  const cacheDir = cacheDirPath();
+  if (cacheDir === undefined) return undefined;
+  try {
+    const logPath = path.join(`${cacheDir}.ShipIt`, "ShipIt_stderr.log");
+    if (!existsSync(logPath)) return undefined;
+    const text = readFileSync(logPath, "utf8").trimEnd();
+    if (text === "") return undefined;
+    return text.length > maxChars ? `…${text.slice(-maxChars)}` : text;
+  } catch {
+    return undefined;
+  }
+}
+
+// reportFailedInstallAttempt surfaces a failed post-quit install on launch
+// (#3528). Cleared in every path so a single failure reports exactly once.
+export function reportFailedInstallAttempt(): void {
+  const file = installAttemptMarkerPath();
+  if (file === undefined || !existsSync(file)) return;
+  let attemptedVersion: string | undefined;
+  try {
+    attemptedVersion = (
+      JSON.parse(readFileSync(file, "utf8")) as { version?: string }
+    ).version;
+  } catch {
+    attemptedVersion = undefined;
+  }
+  try {
+    rmSync(file, { force: true });
+  } catch {
+    // If the marker cannot be removed it is re-read next launch; harmless.
+  }
+  if (attemptedVersion === undefined) return;
+  // If the app now runs the attempted version, the install succeeded.
+  if (attemptedVersion === app.getVersion()) return;
+  const detail = shipItLogTail();
+  emitUpdateOutcome({
+    event: "ao.renderer.update_failed",
+    phase: "install",
+    // quitAndInstall is only reachable from the user-facing restart flow.
+    trigger: "manual",
+    error_category: updateFailureCategory(detail),
+    to_version: attemptedVersion,
+  });
+  void dialog.showMessageBox({
+    type: "warning",
+    message: "The last update didn't install",
+    detail:
+      detail ??
+      `Version ${attemptedVersion} was downloaded but could not be installed. ` +
+        "This is often caused by not enough free disk space. Free up a few GB, " +
+        "then check for updates again.",
+    buttons: ["OK"],
+  });
+}
+
 // applyInstallOnQuitPolicy keeps autoInstallOnAppQuit honest. Every check path
 // sets it to true, and the "downloaded" status row tells the user the build
 // installs on quit. When the install cannot work from this location that is a
 // lie in both directions: the quit-time install fails as silently as the button
 // did, and #3527's dialog only ever covered the button. Turning it off makes
-// the staged build wait for a location it can actually install from.
+// the staged build wait for a location it can actually install from. The same
+// applies to a disk too full for Squirrel's extract+stage+backup (#3528).
 function applyInstallOnQuitPolicy(): void {
-  const blocker = getMacInstallBlocker();
+  const blocker = installBlockerReason();
   autoUpdater.autoInstallOnAppQuit = blocker === undefined;
   if (blocker !== undefined) {
     console.warn(
@@ -938,6 +1158,7 @@ export function quitAndInstallUpdate(): void {
     // retry affordance) without guaranteeing the user ever sees the message.
     // The staged build stays staged; after the user moves the app the same
     // row installs it.
+    emitInstallBlockedOutcome(blocker);
     void dialog.showMessageBox({
       type: "warning",
       message: "The update can't be installed from this location",
@@ -946,6 +1167,25 @@ export function quitAndInstallUpdate(): void {
     });
     return;
   }
+  const diskBlocker = getDiskSpaceInstallBlocker();
+  if (diskBlocker !== undefined) {
+    // Same dialog-not-broadcast policy as the location blocker, for the same
+    // reasons (#3528: a full disk must fail visibly and actionably, never as
+    // the post-quit invisible ShipIt failure).
+    console.warn("update install blocked:", diskBlocker);
+    emitInstallBlockedOutcome(diskBlocker, "disk_space");
+    void dialog.showMessageBox({
+      type: "warning",
+      message: "The update can't be installed. Not enough disk space",
+      detail: diskBlocker,
+      buttons: ["OK"],
+    });
+    return;
+  }
+  // Persist the attempt BEFORE handing off: ShipIt runs after this process is
+  // gone, so the marker is the only way the next launch can tell "install
+  // failed" from "user never restarted" (#3528).
+  writeInstallAttemptMarker(stagedVersion);
   autoUpdater.quitAndInstall(false, true);
 }
 

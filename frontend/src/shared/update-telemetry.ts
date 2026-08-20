@@ -29,8 +29,13 @@ export type UpdateFailureCategory =
 	| "not_supported"
 	| "unknown";
 
-/** Which stage of the update was running when the outcome occurred. */
-export type UpdatePhase = "check" | "download";
+/**
+ * Which stage of the update was running when the outcome occurred. "install"
+ * covers quit-time and post-quit install failures (#3528): Squirrel's install
+ * runs after the app exits, so this phase is reported either pre-quit (disk
+ * preflight) or on the next launch (persisted install-attempt marker).
+ */
+export type UpdatePhase = "check" | "download" | "install";
 
 /** Whether the update ran on the hourly timer or because the user asked. */
 export type UpdateTrigger = "automatic" | "manual";
