@@ -14,6 +14,7 @@ const testimonialExamples = [
   "With AO Mobile, I’m able to ship things on the fly, and my agents are never blocked on my input anymore.",
   "Before AO, I would ship at most 2–3 PRs a day. Now I consistently ship 5+ PRs every day at work.",
   "There hasn’t been a day in the last two months when I opened another IDE or ran a coding agent in a terminal app. AO really changes how you think about work. It’s a mindset shift you can’t go back from.",
+  "AO automatically gets the right agent to address CI failures and review comments. My agents are much more autonomous now, and with the orchestrator + kanban, I’m able to manage more and more of them.",
 ];
 
 export default function TestimonialsPage() {
