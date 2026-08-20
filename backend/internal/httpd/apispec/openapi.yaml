@@ -4741,6 +4741,76 @@ paths:
       summary: Read one session workspace file and its git diff
       tags:
       - sessions
+  /api/v1/sessions/{sessionId}/workspace/file/blob:
+    get:
+      operationId: getSessionWorkspaceFileBlob
+      parameters:
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      - description: Session-worktree-relative file path.
+        in: query
+        name: path
+        schema:
+          description: Session-worktree-relative file path.
+          type: string
+      - description: 'Which revision to read: the compare base (before) or the session
+          worktree (after). Defaults to after.'
+        in: query
+        name: side
+        schema:
+          description: 'Which revision to read: the compare base (before) or the session
+            worktree (after). Defaults to after.'
+          enum:
+          - before
+          - after
+          type: string
+      - description: Cache-busting token. Ignored by the server; the response is never
+          cached.
+        in: query
+        name: v
+        schema:
+          description: Cache-busting token. Ignored by the server; the response is
+            never cached.
+          type: string
+      responses:
+        "200":
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Read one side of a session workspace image file
+      tags:
+      - sessions
   /api/v1/sessions/{sessionId}/workspace/files:
     get:
       operationId: listSessionWorkspaceFiles
@@ -8681,6 +8751,8 @@ components:
           type: string
         diffTruncated:
           type: boolean
+        imageMediaType:
+          type: string
         path:
           type: string
         previousPath:

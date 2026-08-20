@@ -785,6 +785,95 @@ describe("SessionFilesView", () => {
 		});
 	});
 
+	describe("image diffs", () => {
+		function mockImageFile(status: "modified" | "added" | "deleted") {
+			getMock.mockImplementation(async (path: string) => {
+				if (path === "/api/v1/sessions/{sessionId}/workspace/files") {
+					return {
+						data: {
+							sessionId: "sess-1",
+							truncated: false,
+							files: [{ path: "docs/logo.png", status, additions: 0, deletions: 0, size: 4096, binary: true }],
+						},
+					};
+				}
+				if (path === "/api/v1/sessions/{sessionId}/workspace/file") {
+					return {
+						data: {
+							sessionId: "sess-1",
+							path: "docs/logo.png",
+							status,
+							additions: 0,
+							deletions: 0,
+							size: 4096,
+							binary: status !== "deleted",
+							deleted: status === "deleted",
+							content: "",
+							contentTruncated: false,
+							diff: "",
+							diffTruncated: false,
+							imageMediaType: "image/png",
+							compareBaseSha: "base-sha",
+							compareBaseRef: "main",
+							compareMode: "base",
+						},
+					};
+				}
+				return { data: undefined };
+			});
+		}
+
+		it("renders both sides of a changed image instead of the binary placeholder", async () => {
+			mockImageFile("modified");
+
+			renderWithQuery(<SessionFilesView sessionId="sess-1" />);
+			await userEvent.click(await screen.findByRole("button", { name: "Expand docs/logo.png" }));
+
+			const before = await screen.findByAltText("Before version of docs/logo.png");
+			const after = await screen.findByAltText("After version of docs/logo.png");
+			expect(before).toHaveAttribute(
+				"src",
+				expect.stringContaining("/api/v1/sessions/sess-1/workspace/file/blob?path=docs%2Flogo.png&side=before"),
+			);
+			expect(after).toHaveAttribute(
+				"src",
+				expect.stringContaining("/api/v1/sessions/sess-1/workspace/file/blob?path=docs%2Flogo.png&side=after"),
+			);
+			expect(screen.queryByText("Binary file preview is not available.")).not.toBeInTheDocument();
+		});
+
+		it("shows only the after side for an added image", async () => {
+			mockImageFile("added");
+
+			renderWithQuery(<SessionFilesView sessionId="sess-1" />);
+			await userEvent.click(await screen.findByRole("button", { name: "Expand docs/logo.png" }));
+
+			expect(await screen.findByAltText("After version of docs/logo.png")).toBeInTheDocument();
+			expect(screen.queryByAltText("Before version of docs/logo.png")).not.toBeInTheDocument();
+		});
+
+		it("shows only the before side for a deleted image", async () => {
+			mockImageFile("deleted");
+
+			renderWithQuery(<SessionFilesView sessionId="sess-1" />);
+			await userEvent.click(await screen.findByRole("button", { name: "Expand docs/logo.png" }));
+
+			expect(await screen.findByAltText("Before version of docs/logo.png")).toBeInTheDocument();
+			expect(screen.queryByAltText("After version of docs/logo.png")).not.toBeInTheDocument();
+		});
+
+		it("falls back to a message when an image side fails to load", async () => {
+			mockImageFile("modified");
+
+			renderWithQuery(<SessionFilesView sessionId="sess-1" />);
+			await userEvent.click(await screen.findByRole("button", { name: "Expand docs/logo.png" }));
+			fireEvent.error(await screen.findByAltText("Before version of docs/logo.png"));
+
+			expect(await screen.findByText("Image preview could not be loaded.")).toBeInTheDocument();
+			expect(screen.getByAltText("After version of docs/logo.png")).toBeInTheDocument();
+		});
+	});
+
 	describe("large diff virtualization", () => {
 		// jsdom has no real layout engine — getBoundingClientRect/clientHeight
 		// are 0 for every element by default, which would make the virtualizer
