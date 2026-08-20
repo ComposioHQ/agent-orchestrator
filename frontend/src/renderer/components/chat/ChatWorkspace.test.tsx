@@ -78,6 +78,10 @@ function idleSnapshot(snapshot: ConversationSnapshot = chatFixture): Conversatio
 	return {
 		...snapshot,
 		controller: { state: "ready" },
+		items: snapshot.items.filter(
+			(item) =>
+				!(item.kind === "activity" && item.activityKind === "approval" && item.status === "pending"),
+		),
 		turns: snapshot.turns.map((turn) =>
 			turn.state === "running"
 				? { ...turn, state: "completed" as const, completedAt: turn.requestedAt }
@@ -276,7 +280,7 @@ describe("ChatWorkspace timeline", () => {
 	});
 
 	it("keeps the composer aligned to the readable conversation width", () => {
-		render(<ChatWorkspace snapshot={chatFixture} />);
+		render(<ChatWorkspace snapshot={idleSnapshot(chatFixtureSettled)} />);
 		const composer = screen.getByLabelText("Message the agent").closest("form");
 		expect(composer?.parentElement).toHaveClass("mx-auto", "w-full", "max-w-3xl");
 	});
@@ -304,7 +308,7 @@ describe("ChatWorkspace timeline", () => {
 		expect(onInterrupt).toHaveBeenCalledOnce();
 	});
 
-	it("does not duplicate blocked approval state below the approval card", async () => {
+	it("moves a pending approval into the chat composer", async () => {
 		const user = userEvent.setup();
 		const onDecide = vi.fn();
 		const snapshot = structuredClone(chatFixture);
@@ -330,10 +334,14 @@ describe("ChatWorkspace timeline", () => {
 		render(<ChatWorkspace snapshot={snapshot} onDecide={onDecide} onInterrupt={vi.fn()} />);
 
 		expect(screen.getByRole("alert")).toHaveTextContent("The agent is waiting for your decision.");
-		expect(screen.getAllByText("Do you want to run this command?").length).toBeGreaterThan(0);
+		expect(screen.getByText("Do you want to run this command?")).toBeInTheDocument();
 		expect(screen.queryByText("Waiting for your decision")).not.toBeInTheDocument();
 		expect(screen.queryByText(/^Working for /)).not.toBeInTheDocument();
 		const approval = screen.getByRole("group", { name: "Approval request approval-1" });
+		const composer = approval.closest("form");
+		expect(composer).toHaveClass("cursor-chat-composer", "border-border-strong");
+		expect(screen.getByRole("log", { name: "Conversation" })).not.toContainElement(approval);
+		expect(screen.queryByLabelText("Message the agent")).not.toBeInTheDocument();
 		expect(within(approval).queryByText("Terminal")).not.toBeInTheDocument();
 		expect(within(approval).getByRole("button", { name: /Deny/ })).toHaveTextContent("DenyEsc");
 		expect(within(approval).getByRole("button", { name: /Allow once/ })).toBeInTheDocument();

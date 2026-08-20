@@ -1443,10 +1443,13 @@ export function ApprovalCard({
 	activity,
 	onDecide,
 	busy,
+	embedded,
 }: {
 	activity: ConversationActivity;
 	onDecide?: (requestId: string, decisionId: string) => void;
 	busy?: boolean;
+	/** Render inside the shared chat composer instead of drawing another card shell. */
+	embedded?: boolean;
 }) {
 	const resolved = activity.status !== "pending";
 	const decisions = orderedApprovalDecisions(activity.decisions ?? []);
@@ -1504,7 +1507,10 @@ export function ApprovalCard({
 		<div
 			role="group"
 			aria-label={`Approval request ${requestId}`.trim()}
-			className="cursor-chat-activity-panel rounded-lg border border-border px-3 py-2.5"
+			className={cn(
+				"cursor-chat-activity-panel",
+				embedded ? "px-1 py-0.5" : "rounded-lg border border-border px-3 py-2.5",
+			)}
 			onKeyDown={(event) => {
 				if (event.key !== "Escape" || !denyDecision || busy || event.defaultPrevented) return;
 				event.preventDefault();

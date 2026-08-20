@@ -538,6 +538,22 @@ export function ChatWorkspace({
 
 	const brokenServers = useMemo(() => brokenMcpServers(snapshot), [snapshot]);
 	const editHumanMessage = can(snapshot, "fork") ? onEditMessage : undefined;
+	const pendingApproval = useMemo(
+		() =>
+			snapshot.items.reduce<ConversationActivity | undefined>((latest, item) => {
+				if (
+					!turn ||
+					item.kind !== "activity" ||
+					item.activityKind !== "approval" ||
+					item.status !== "pending" ||
+					item.turnId !== turn.id
+				) {
+					return latest;
+				}
+				return !latest || item.sequence > latest.sequence ? item : latest;
+			}, undefined),
+		[snapshot.items, turn],
+	);
 
 	return (
 		<section
@@ -691,6 +707,16 @@ export function ChatWorkspace({
 						) : null}
 						<ChatComposer
 							attachedTop={turn?.state === "running" && queuedMessages.length > 0}
+							approval={
+								pendingApproval ? (
+									<ApprovalCard
+										activity={pendingApproval}
+										onDecide={onDecide}
+										busy={busy}
+										embedded
+									/>
+								) : undefined
+							}
 							onSend={(text, attachments) => onSend?.(text, attachments)}
 							onInterrupt={turn ? onInterrupt : undefined}
 							commandError={commandError}
@@ -1901,6 +1927,9 @@ function TimelineItem({
 		return <OriginMessage message={item} />;
 	}
 	if (item.activityKind === "approval") {
+		// Pending approval owns the composer. Keeping it in the grouping model still
+		// marks the live turn as blocked, while omitting the timeline card itself.
+		if (item.status === "pending") return null;
 		return <ApprovalCard activity={item} onDecide={onDecide} busy={busy} />;
 	}
 	if (item.activityKind === "user_input") {
