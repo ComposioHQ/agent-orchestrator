@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { appI18n } from "../i18n";
 import { GlobalSettingsForm } from "./GlobalSettingsForm";
 import { useLocaleStore } from "../stores/locale-store";
+import { useSoundNotificationsStore } from "../stores/sound-notifications-store";
 import { useUiStore } from "../stores/ui-store";
 
 const {
@@ -120,9 +121,11 @@ beforeEach(async () => {
 	}
 	getUpdate.mockResolvedValue({ enabled: true, channel: "latest", nightlyAck: false, feature: null });
 	setUpdate.mockResolvedValue(undefined);
-	getUiSettings.mockResolvedValue({ locale: "en" });
-	setUiSettings.mockImplementation(async (settings: { locale: string }) => ({
-		locale: settings.locale,
+	getUiSettings.mockResolvedValue({ locale: "en", soundNotificationsEnabled: true });
+	setUiSettings.mockImplementation(async (settings: { locale?: string; soundNotificationsEnabled?: boolean }) => ({
+		locale: "en",
+		soundNotificationsEnabled: true,
+		...settings,
 	}));
 	updGetStatus.mockResolvedValue({ state: "idle" });
 	updCheck.mockResolvedValue(undefined);
@@ -142,6 +145,7 @@ beforeEach(async () => {
 	// Locale defaults to English so existing copy assertions stay green.
 	await appI18n.changeLanguage("en");
 	useLocaleStore.setState({ locale: "en", loaded: false, saving: false, saveError: false });
+	useSoundNotificationsStore.setState({ enabled: true, loaded: false, saving: false, saveError: false });
 	useUiStore.setState({ developerMode: false });
 	document.documentElement.lang = "en";
 });
@@ -208,6 +212,31 @@ describe("GlobalSettingsForm", () => {
 		expect(screen.getByText("主题")).toBeInTheDocument();
 		expect(document.documentElement.lang).toBe("zh-CN");
 		expect(useLocaleStore.getState().locale).toBe("zh-CN");
+	});
+
+	it("toggles sound notifications on and persists the change", async () => {
+		const user = userEvent.setup();
+		renderForm();
+		const toggle = await screen.findByRole("switch", { name: "Sound notifications" });
+		expect(toggle).toBeChecked();
+
+		await user.click(toggle);
+
+		await waitFor(() => expect(setUiSettings).toHaveBeenCalledWith({ soundNotificationsEnabled: false }));
+		expect(toggle).not.toBeChecked();
+	});
+
+	it("keeps the current sound notifications value and reports a persistence failure", async () => {
+		setUiSettings.mockRejectedValue(new Error("disk full"));
+		const user = userEvent.setup();
+		renderForm();
+		const toggle = await screen.findByRole("switch", { name: "Sound notifications" });
+
+		await user.click(toggle);
+
+		expect(await screen.findByRole("alert")).toHaveTextContent("Could not save the sound notifications preference.");
+		expect(useSoundNotificationsStore.getState().enabled).toBe(true);
+		expect(toggle).toBeChecked();
 	});
 
 	it("keeps the current language and reports a persistence failure", async () => {

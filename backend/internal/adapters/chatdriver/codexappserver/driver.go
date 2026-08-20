@@ -302,6 +302,9 @@ func (d *Driver) Resume(ctx context.Context, cfg ports.ChatResumeConfig) (ports.
 		"approvalPolicy": policy,
 		"sandbox":        sandbox,
 	}
+	if cfg.Model != "" {
+		params["model"] = cfg.Model
+	}
 	// Developer instructions are launch context, not durable conversation
 	// history. Reapply AO's current standing role when app-server reconstructs a
 	// native thread, just as the TUI adapter does with its resume command.

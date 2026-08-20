@@ -35,7 +35,13 @@ import {
 	inspectInstalledBundle,
 	installedBundlePath,
 } from "./main/relocation";
-import { coerceUiSettings, readUiSettings, writeUiSettings, type UiSettings } from "./main/ui-settings";
+import {
+	coerceUiSettings,
+	DEFAULT_UI_SETTINGS,
+	readUiSettings,
+	writeUiSettings,
+	type UiSettings,
+} from "./main/ui-settings";
 import { spawn, type ChildProcess } from "node:child_process";
 import { randomBytes, randomUUID } from "node:crypto";
 import { closeSync, existsSync, openSync, readFileSync } from "node:fs";
@@ -92,6 +98,7 @@ import { isAllowedAppExternalURL, openAllowedAppExternalURL } from "./main/exter
 import { shouldSignalAttention, shouldToast } from "./main/notification-signals";
 import { buildWindowsAppMenuTemplate } from "./main/menu";
 import { ancestorRepositorySetupWarning, scanImportFolder } from "./main/import-folder-scan";
+import { parseOpenFolderPathArg } from "./main/open-folder-arg";
 
 // Globals injected at compile time by @electron-forge/plugin-vite.
 declare const MAIN_WINDOW_VITE_DEV_SERVER_URL: string | undefined;
@@ -143,6 +150,13 @@ const trayLifecycle = createTrayLifecycle({
 	getTrayController: () => trayController,
 	focusWindow: () => focusMainWindow(),
 });
+// Icon/taskbar-shortcut folder drop, mirroring VS Code: relayed to the
+// renderer's global drop handling so it opens the same create-project flow.
+const OPEN_FOLDER_PATH_CHANNEL = "app:openFolderPath";
+// Folder path from a cold-start launch (icon/shortcut drop while not running)
+// whose renderer isn't mounted yet. Flushed once the shell signals readiness
+// via TRAY_RENDERER_READY_CHANNEL — see the OPEN_FOLDER_PATH_CHANNEL handler.
+let pendingFolderPath: string | null = null;
 let daemonProcess: ChildProcess | null = null;
 let daemonStoppingProcess: ChildProcess | null = null;
 let daemonRestartAfterExitProcess: ChildProcess | null = null;
@@ -167,6 +181,9 @@ let terminalFocused = false;
 let supervisorLink: SupervisorLinkHandle | null = null;
 // Guard: prevents stacking multiple flashFrame(true) calls when notifications arrive rapidly.
 let isFlashing = false;
+// Live mirror of the persisted `soundNotificationsEnabled` UI setting, kept in sync by the
+// uiSettings:set handler so a toggle flip takes effect without an app restart.
+let soundNotificationsEnabled = DEFAULT_UI_SETTINGS.soundNotificationsEnabled;
 
 const isDev = !app.isPackaged;
 
@@ -1660,13 +1677,14 @@ ipcMain.handle("updateSettings:set", async (_event, settings: UpdateSettings) =>
 
 ipcMain.handle("uiSettings:get", async (): Promise<UiSettings> => {
 	const runFile = runFilePath();
-	if (!runFile) return { locale: "en" };
+	if (!runFile) return { ...DEFAULT_UI_SETTINGS };
 	return readUiSettings(path.dirname(runFile));
 });
-	ipcMain.handle("uiSettings:set", async (_event, settings: UiSettings): Promise<UiSettings> => {
+	ipcMain.handle("uiSettings:set", async (_event, settings: Partial<UiSettings>): Promise<UiSettings> => {
 		const runFile = runFilePath();
 	const result = !runFile ? coerceUiSettings(settings) : await writeUiSettings(path.dirname(runFile), settings);
 	trayController?.setLocale(result.locale);
+	soundNotificationsEnabled = result.soundNotificationsEnabled;
 	return result;
 	});
 
@@ -1748,6 +1766,9 @@ ipcMain.handle(
 					});
 				}
 			}
+			if (soundNotificationsEnabled) {
+				shell.beep();
+			}
 		}
 	},
 );
@@ -1766,6 +1787,9 @@ if (!app.isPackaged) {
 			setTimeout(() => {
 				mainWindow?.flashFrame(false);
 			}, 2000);
+		}
+		if (soundNotificationsEnabled) {
+			shell.beep();
 		}
 	});
 }
@@ -1804,7 +1828,13 @@ ipcMain.handle("notifications:setBadge", (_event, count: number) => {
 
 ipcMain.on(TRAY_SET_ATTENTION_STATE_CHANNEL, (event, state) => trayLifecycle.handleSetAttentionState(event, state));
 
-ipcMain.on(TRAY_RENDERER_READY_CHANNEL, (event) => trayLifecycle.handleRendererReady(event));
+ipcMain.on(TRAY_RENDERER_READY_CHANNEL, (event) => {
+	trayLifecycle.handleRendererReady(event);
+	if (pendingFolderPath && event.sender === getShellWebContents()) {
+		event.sender.send(OPEN_FOLDER_PATH_CHANNEL, pendingFolderPath);
+		pendingFolderPath = null;
+	}
+});
 
 // Cloud auth IPC — cloud:getSession, cloud:signIn, cloud:signOut.
 // Data dir resolves to ~/.ao (prod) or ~/.ao/dev (dev) matching daemon conventions.
@@ -1854,6 +1884,28 @@ app.on("second-instance", (_event, argv) => {
 	const deepLink = argv.find((value) => value.startsWith("ao-app://"));
 	if (deepLink) {
 		void handleCloudDeepLinkAndFocus(deepLink);
+		return;
+	}
+	// A folder dropped on the taskbar icon/shortcut while already running.
+	// Usually the renderer is already mounted and listening, so send directly
+	// — but this can still fire while the first instance is early in
+	// app.whenReady() or creating its window, before any shell WebContents
+	// exists. Fall back to the same pendingFolderPath queue the cold-start
+	// path uses rather than silently dropping it.
+	const folderPath = parseOpenFolderPathArg(argv);
+	if (folderPath) {
+		const window = BaseWindow.getAllWindows()[0];
+		if (window) {
+			if (window.isMinimized()) window.restore();
+			window.show();
+			window.focus();
+		}
+		const contents = getShellWebContents();
+		if (contents) {
+			contents.send(OPEN_FOLDER_PATH_CHANNEL, folderPath);
+		} else {
+			pendingFolderPath = folderPath;
+		}
 		return;
 	}
 	const window = BaseWindow.getAllWindows()[0];
@@ -1980,8 +2032,11 @@ app.whenReady().then(async () => {
 
 	registerRendererProtocol();
 	applyRuntimeAppIcon();
+	const initialUiSettings = keybindingRunFile
+		? await readUiSettings(path.dirname(keybindingRunFile))
+		: { ...DEFAULT_UI_SETTINGS };
+	soundNotificationsEnabled = initialUiSettings.soundNotificationsEnabled;
 	if (isTrayEnabled(process.platform, app.isPackaged, app.getVersion())) {
-		const initialUiSettings = keybindingRunFile ? await readUiSettings(path.dirname(keybindingRunFile)) : { locale: "en" as const };
 		trayController = createTrayController({
 			focusWindow: focusMainWindow,
 			openSession: trayLifecycle.openSession,
@@ -1997,6 +2052,14 @@ app.whenReady().then(async () => {
 	const deepLinkArg = process.argv.find((a) => a.startsWith("ao-app://"));
 	if (deepLinkArg) {
 		void handleCloudDeepLinkAndFocus(deepLinkArg);
+	}
+
+	// Windows/Linux: a folder dropped on the taskbar icon/shortcut while the
+	// app was not running launches it with the folder's path in argv. The
+	// renderer isn't mounted yet — queue it, flushed on TRAY_RENDERER_READY_CHANNEL.
+	const folderPathArg = parseOpenFolderPathArg(process.argv);
+	if (folderPathArg) {
+		pendingFolderPath = folderPathArg;
 	}
 
 	app.on("activate", () => {

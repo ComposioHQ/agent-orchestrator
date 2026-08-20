@@ -47,6 +47,25 @@ export function findRecoveryRequiredAgentSwitch(agentSwitches: AgentSwitch[]): A
 	return agentSwitches.find(agentSwitchNeedsRecovery);
 }
 
+// Selects the durable switch that owns the session interaction lock. The
+// workspace snapshot is fastest, while the switch-history query survives a
+// renderer reload and carries recovery details that the compact summary may not
+// have observed yet.
+export function selectDurableAgentSwitch(
+	sessionAgentSwitch: AgentSwitchSummary | undefined,
+	agentSwitches: AgentSwitch[],
+): AgentSwitch | undefined {
+	const detailed = sessionAgentSwitch
+		? agentSwitches.find((entry) => entry.id === sessionAgentSwitch.id)
+		: undefined;
+	return (
+		detailed ??
+		sessionAgentSwitch ??
+		findRecoveryRequiredAgentSwitch(agentSwitches) ??
+		findActiveAgentSwitch(agentSwitches)
+	);
+}
+
 export function agentSwitchesRefetchInterval(agentSwitches: AgentSwitch[]): 1_000 | false {
 	return findActiveAgentSwitch(agentSwitches) ? 1_000 : false;
 }

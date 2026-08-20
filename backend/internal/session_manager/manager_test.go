@@ -232,6 +232,15 @@ func (l *fakeLCM) ActivateAgentSwitchTarget(ctx context.Context, activation doma
 	}
 	return store.ActivateAgentSwitchTarget(ctx, activation)
 }
+func (l *fakeLCM) ActivateChatAgentSwitchTarget(ctx context.Context, activation domain.AgentSwitchChatTargetActivation) (bool, error) {
+	store, ok := l.store.agentSwitchStore.(interface {
+		ActivateChatAgentSwitchTarget(context.Context, domain.AgentSwitchChatTargetActivation) (bool, error)
+	})
+	if !ok {
+		return false, errors.New("fake lifecycle: Chat agent-switch target activation persistence unavailable")
+	}
+	return store.ActivateChatAgentSwitchTarget(ctx, activation)
+}
 func (l *fakeLCM) MarkTerminated(_ context.Context, id domain.SessionID) error {
 	if l.terminated == nil {
 		l.terminated = map[domain.SessionID]int{}
