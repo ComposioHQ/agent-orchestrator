@@ -767,6 +767,16 @@ func TestACPDriverClosesTrailingUserOnlyHistoryAsRecovered(t *testing.T) {
 	}
 }
 
+func TestConversationCapabilitiesTreatLoadSessionAsResume(t *testing.T) {
+	configured := ports.ChatCapabilities{ports.ChatCapabilityResume: true}
+	init := acpsdk.InitializeResponse{AgentCapabilities: acpsdk.AgentCapabilities{
+		LoadSession: true,
+	}}
+	if !conversationCapabilities(configured, init)[ports.ChatCapabilityResume] {
+		t.Fatal("loadSession-only ACP agent was reported as non-resumable")
+	}
+}
+
 func TestACPDriverParksAndResolvesStructuredElicitation(t *testing.T) {
 	request := acpsdk.NewUnstableCreateElicitationRequestForm(acpsdk.UnstableElicitationSchema{
 		Type:       acpsdk.UnstableElicitationSchemaTypeObject,

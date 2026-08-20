@@ -188,7 +188,7 @@ func (d *Driver) Resume(ctx context.Context, cfg ports.ChatResumeConfig) (ports.
 	if err != nil {
 		return nil, err
 	}
-	if !init.AgentCapabilities.LoadSession && init.AgentCapabilities.SessionCapabilities.Resume == nil {
+	if !supportsSessionRestore(init) {
 		_ = conv.Close()
 		return nil, fmt.Errorf("%w: ACP agent supports neither session/load nor session/resume", ports.ErrChatResumeFailed)
 	}
@@ -326,7 +326,7 @@ func conversationCapabilities(
 	init acpsdk.InitializeResponse,
 ) ports.ChatCapabilities {
 	caps := cloneCapabilities(configured)
-	if init.AgentCapabilities.SessionCapabilities.Resume == nil {
+	if !supportsSessionRestore(init) {
 		caps[ports.ChatCapabilityResume] = false
 	}
 	caps[ports.ChatCapabilityHistory] = init.AgentCapabilities.LoadSession
@@ -341,6 +341,11 @@ func conversationCapabilities(
 	caps[ports.ChatCapabilityNestedAgents] = true
 	caps[ports.ChatCapabilityTerminalOutput] = true
 	return caps
+}
+
+func supportsSessionRestore(init acpsdk.InitializeResponse) bool {
+	return init.AgentCapabilities.LoadSession ||
+		init.AgentCapabilities.SessionCapabilities.Resume != nil
 }
 
 func extensionSupported(meta map[string]any, name string) bool {
