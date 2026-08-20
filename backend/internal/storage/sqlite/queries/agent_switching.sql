@@ -257,6 +257,7 @@ UPDATE sessions SET
     activity_last_at = sqlc.arg(activity_last_at),
     first_signal_at = sqlc.arg(first_signal_at),
     agent_session_id = sqlc.arg(agent_session_id),
+    agent_session_id_launch_id = sqlc.arg(agent_session_id_launch_id),
     latest_user_prompt = sqlc.arg(latest_user_prompt),
     latest_assistant_update = sqlc.arg(latest_assistant_update),
     native_transcript_path = sqlc.arg(native_transcript_path),
@@ -320,6 +321,7 @@ UPDATE sessions SET
     runtime_handle_id = sqlc.arg(runtime_handle_id),
     runtime_launch_id = sqlc.arg(target_generation_id),
     agent_session_id = sqlc.arg(target_native_session_id),
+    agent_session_id_launch_id = sqlc.arg(target_generation_id),
     native_transcript_path = sqlc.arg(target_native_transcript_path),
     updated_at = sqlc.arg(activated_at)
 WHERE id = sqlc.arg(session_id)

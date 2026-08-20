@@ -5,9 +5,9 @@ import { ActivityRow, TurnChangedFiles } from "./ChatTimelineItems";
 import { ActivityRun } from "./ActivityRun";
 import type { ConversationActivity, TurnDiff } from "../../types/conversation";
 
-// These cover the two honesty rules this surface exists to keep: a changed-file
-// list never claims to be complete when it was cut, and command output always says
-// which channel it came from and why it may be missing its beginning.
+// These cover the two signal rules this surface exists to keep: a changed-file
+// list never claims to be complete when it was cut, and command output only adds
+// a warning when AO actually stopped storing it.
 
 function diff(overrides: Partial<TurnDiff> = {}): TurnDiff {
 	return {
@@ -108,7 +108,7 @@ describe("ActivityRow command output", () => {
 		expect(pre?.textContent).toBe("ok  pkg/a\n");
 	});
 
-	it("explains a streamed partial as a dropped beginning, not a generic caveat", () => {
+	it("does not add provider provenance below streamed output", () => {
 		render(
 			<ActivityRow
 				activity={commandActivity(
@@ -117,10 +117,11 @@ describe("ActivityRow command output", () => {
 				)}
 			/>,
 		);
-		expect(screen.getByText(/Streamed live as the command runs/i)).toBeInTheDocument();
+		expect(screen.getByText("tick-2")).toBeInTheDocument();
+		expect(screen.queryByText(/Streamed live as the command runs/i)).not.toBeInTheDocument();
 	});
 
-	it("names the aggregate as the provider's post-hoc roll-up", async () => {
+	it("does not add provider provenance below aggregate output", async () => {
 		render(
 			<ActivityRow
 				activity={commandActivity({
@@ -131,7 +132,8 @@ describe("ActivityRow command output", () => {
 			/>,
 		);
 		await userEvent.click(screen.getByRole("button"));
-		expect(screen.getByText(/Rolled up by the provider after the command finished/i)).toBeInTheDocument();
+		expect(screen.getByText("done")).toBeInTheDocument();
+		expect(screen.queryByText(/Rolled up by the provider after the command finished/i)).not.toBeInTheDocument();
 	});
 
 	it("warns when output hit the storage cap", async () => {
@@ -213,6 +215,45 @@ describe("ActivityRun with a streaming command", () => {
 		);
 		expect(container.querySelector("pre")).toBeNull();
 	});
+
+	it("summarizes grouped non-zero command exits without destructive styling", () => {
+		const secondCommand = commandActivity(
+			{ command: "npm run typecheck", exitCode: 2 },
+			"failed",
+		);
+		secondCommand.id = "act-2";
+		secondCommand.sequence = 2;
+
+		render(
+			<ActivityRun
+				activities={[
+					commandActivity({ command: "npm test", exitCode: 1 }, "failed"),
+					secondCommand,
+				]}
+			/>,
+		);
+
+		expect(screen.getByText("2 exited")).toHaveClass("text-muted-foreground/70");
+		expect(screen.getByText("2 exited")).not.toHaveClass("text-destructive");
+		expect(screen.queryByText("2 failed")).not.toBeInTheDocument();
+	});
+
+	it("keeps real grouped failures destructive when mixed with a command exit", () => {
+		const failedPlan = plan("act-2");
+		failedPlan.status = "failed";
+
+		render(
+			<ActivityRun
+				activities={[
+					commandActivity({ command: "npm test", exitCode: 1 }, "failed"),
+					failedPlan,
+				]}
+			/>,
+		);
+
+		expect(screen.getByText("1 exited")).toHaveClass("text-muted-foreground/70");
+		expect(screen.getByText("1 failed")).toHaveClass("text-destructive");
+	});
 });
 
 describe("ActivityRow command labels", () => {
@@ -233,7 +274,8 @@ describe("ActivityRow command labels", () => {
 		expect(screen.queryByText(/sed -n/)).not.toBeInTheDocument();
 	});
 
-	it("describes execution as a command", () => {
+	it("describes execution compactly, then reveals the exact command", async () => {
+		const user = userEvent.setup();
 		render(
 			<ActivityRow
 				activity={commandActivity({ command: "go test ./...", output: "ok" }, "completed")}
@@ -241,6 +283,26 @@ describe("ActivityRow command labels", () => {
 		);
 		expect(screen.getByText("Ran command")).toBeInTheDocument();
 		expect(screen.queryByText("go test ./...")).not.toBeInTheDocument();
+
+		await user.click(screen.getByRole("button", { name: /Ran command/ }));
+		expect(screen.getByText("go test ./...")).toBeInTheDocument();
+		expect(screen.getByText("ok")).toBeInTheDocument();
+	});
+
+	it("keeps a command-only row expandable when the provider reports no output", async () => {
+		const user = userEvent.setup();
+		render(
+			<ActivityRow
+				activity={commandActivity({ command: `printf "%s" "hello world"` }, "completed")}
+			/>,
+		);
+
+		const row = screen.getByRole("button", { name: /Ran command/ });
+		expect(row).toBeEnabled();
+		expect(screen.queryByText(`printf "%s" "hello world"`)).not.toBeInTheDocument();
+
+		await user.click(row);
+		expect(screen.getByText(`printf "%s" "hello world"`)).toBeInTheDocument();
 	});
 
 	it("uses the same compact treatment as a grouped command summary", () => {
@@ -259,10 +321,22 @@ describe("ActivityRow command labels", () => {
 			"font-normal",
 			"text-muted-foreground",
 		);
-		expect(screen.getByText("exit 1")).toHaveClass("text-destructive");
+		expect(screen.getByText("exit 1")).toHaveClass("text-muted-foreground/70");
+		expect(screen.getByText("exit 1")).not.toHaveClass("text-destructive");
 		expect(container.querySelector(".lucide-square-terminal")).toBeNull();
 		expect(row.querySelector(".flex-1")).toBeNull();
 		expect(row.textContent).toMatch(/^Checked repositoryexit 1/);
+	});
+
+	it("keeps command failures without exit metadata destructive", () => {
+		render(
+			<ActivityRow
+				activity={commandActivity({ command: "search the web", reason: "provider error" }, "failed")}
+			/>,
+		);
+
+		expect(screen.getByText("failed")).toHaveClass("text-destructive");
+		expect(screen.getByText("failed")).not.toHaveClass("text-muted-foreground/70");
 	});
 
 	it("shows an interrupted command as stopped instead of leaving a live spinner", () => {

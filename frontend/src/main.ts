@@ -46,6 +46,10 @@ import { pathToFileURL } from "node:url";
 import { type DaemonLaunchSpec, bundledDaemonIdentityError, resolveDaemonLaunch } from "./shared/daemon-launch";
 import { createListenPortScanner, defaultRunFilePath, parseRunFile } from "./shared/daemon-discovery";
 import type { DaemonStatus } from "./shared/daemon-status";
+import {
+	refreshSlowDaemonStartupDetails,
+	slowDaemonStartupStatus,
+} from "./shared/daemon-startup-status";
 import { attachAppShortcuts } from "./main/app-shortcuts";
 import {
 	KEYBOARD_SHORTCUTS_HELP_CHANNEL,
@@ -305,6 +309,8 @@ const MAX_DAEMON_OUTPUT_CHARS = 12_000;
 
 function appendDaemonOutput(text: string): void {
 	daemonOutput = (daemonOutput + text).slice(-MAX_DAEMON_OUTPUT_CHARS);
+	const nextStatus = refreshSlowDaemonStartupDetails(daemonStatus, daemonOutput);
+	if (nextStatus !== daemonStatus) setDaemonStatus(nextStatus);
 }
 
 // Menu installed on Windows where the native menu bar is hidden. The bar stays
@@ -1317,30 +1323,22 @@ async function startDaemonInner(startEpoch: number): Promise<DaemonStatus> {
 		}, RUN_FILE_POLL_MS);
 	}
 
-	// Neither source confirmed startup. Surface the captured process output so
-	// the renderer can explain why boot stalled instead of spinning forever or
-	// attempting workspace requests against an assumed port.
+	// Neither source confirmed startup yet. The child is still alive and both
+	// discovery mechanisms remain active, so surface this as slow progress rather
+	// than a failure. A later listen line or running.json handshake still moves
+	// the same launch to ready.
 	fallbackTimer = setTimeout(() => {
 		if (portConfirmed || daemonProcess !== child || daemonStoppingProcess === child) return;
-		// Keep running.json polling alive after surfacing the timeout. In
+		// Keep running.json polling alive after surfacing slow startup. In
 		// keep-daemon mode there are no stdout/stderr scanners, so the run file is
 		// the only way a slow-but-successful boot can still recover to ready.
 		fallbackTimer = undefined;
-		setDaemonStatus({
-			state: "error",
-			message: "AO daemon did not finish starting within 30 seconds.",
-			details:
-				daemonOutput.trim() ||
-				[
-					"No startup output was captured.",
-					`Executable: ${launch.command}`,
-					`Working directory: ${launch.cwd}`,
-					`Expected port confirmation from: ${handshakePath ?? "running.json"}`,
-				].join("\n"),
-			code: "not_ready",
+		setDaemonStatus(slowDaemonStartupStatus({
+			output: daemonOutput,
 			executablePath: launch.command,
 			workingDirectory: launch.cwd,
-		});
+			handshakePath,
+		}));
 	}, PORT_DISCOVERY_TIMEOUT_MS);
 
 	child.once("error", (error) => {

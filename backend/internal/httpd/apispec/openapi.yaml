@@ -1244,6 +1244,43 @@ paths:
       summary: Replace a project's per-project config
       tags:
       - projects
+  /api/v1/projects/clone:
+    post:
+      operationId: cloneProject
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CloneProjectInput'
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProjectResponse'
+          description: Created
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+      summary: Clone and register a project from a git repository URL
+      tags:
+      - projects
   /api/v1/projects/initialize:
     post:
       operationId: initializeProjectRepository
@@ -3234,6 +3271,58 @@ paths:
       summary: Switch a live session between its TUI and Chat controllers
       tags:
       - sessions
+  /api/v1/sessions/{sessionId}/interface-transition/{transitionId}/notice-acknowledgement:
+    put:
+      operationId: acknowledgeSessionInterfaceTransitionNotice
+      parameters:
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      - description: Durable interface-transition identifier.
+        in: path
+        name: transitionId
+        required: true
+        schema:
+          description: Durable interface-transition identifier.
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AcknowledgeSessionInterfaceTransitionNoticeResponse'
+          description: OK
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Acknowledge a failed or recovered interface handoff notice
+      tags:
+      - sessions
   /api/v1/sessions/{sessionId}/kill:
     post:
       operationId: killSession
@@ -5036,6 +5125,19 @@ components:
       - code
       - message
       type: object
+    AcknowledgeSessionInterfaceTransitionNoticeResponse:
+      properties:
+        ok:
+          type: boolean
+        sessionId:
+          type: string
+        transition:
+          $ref: '#/components/schemas/SessionInterfaceTransition'
+      required:
+      - ok
+      - sessionId
+      - transition
+      type: object
     ActivateConversationBranchResponse:
       properties:
         activeBranchId:
@@ -5370,6 +5472,28 @@ components:
       - sessionId
       - reason
       type: object
+    CloneProjectInput:
+      properties:
+        config:
+          $ref: '#/components/schemas/ProjectConfig'
+        destinationParent:
+          minLength: 1
+          type: string
+        name:
+          type:
+          - "null"
+          - string
+        projectId:
+          type:
+          - "null"
+          - string
+        remoteUrl:
+          minLength: 1
+          type: string
+      required:
+      - remoteUrl
+      - destinationParent
+      type: object
     CompactConversationResponse:
       properties:
         tokensAfter:
@@ -5494,6 +5618,8 @@ components:
           enum:
           - chat
           - tui
+          type: string
+        model:
           type: string
         pinnedAt:
           format: date-time
@@ -6981,6 +7107,8 @@ components:
           type: string
         agentRulesFile:
           type: string
+        autoReview:
+          type: boolean
         containerReap:
           $ref: '#/components/schemas/ContainerReapConfig'
         defaultBranch:
@@ -7427,6 +7555,11 @@ components:
           type: string
         id:
           type: string
+        noticeAcknowledgedAt:
+          format: date-time
+          type:
+          - "null"
+          - string
         phase:
           enum:
           - requested
@@ -7666,6 +7799,10 @@ components:
           type: string
         hasUnresolvedHumanComments:
           type: boolean
+        resolvedBy:
+          items:
+            $ref: '#/components/schemas/SessionPRUnresolvedReviewer'
+          type: array
         reviews:
           items:
             $ref: '#/components/schemas/SessionPRReviewEntry'
@@ -8159,6 +8296,9 @@ components:
           enum:
           - chat
           - tui
+          type: string
+        model:
+          maxLength: 256
           type: string
         projectId:
           type: string

@@ -33,6 +33,10 @@ type Manager interface {
 	// Add registers a new project from a git repository path.
 	Add(ctx context.Context, in AddInput) (Project, error)
 
+	// Clone checks out a remote git repository and registers the resulting
+	// local repository as a project.
+	Clone(ctx context.Context, in CloneInput) (Project, error)
+
 	// InitializeRepository prepares a selected folder for project registration.
 	InitializeRepository(ctx context.Context, in InitializeRepositoryInput) (InitializeRepositoryResult, error)
 

@@ -207,6 +207,8 @@ describe("normalizeApiOperation", () => {
 		// These match an exact OpenAPI template, so the trailing segment must not
 		// be collapsed to :id (which would break aggregation and hide the route).
 		expect(normalizeApiOperation("POST", "/api/v1/notifications/read-all")).toBe("POST /api/v1/notifications/read-all");
+		expect(normalizeApiOperation("POST", "/api/v1/projects/clone")).toBe("POST /api/v1/projects/clone");
+		expect(normalizeApiOperation("POST", "/api/v1/projects/initialize")).toBe("POST /api/v1/projects/initialize");
 		expect(normalizeApiOperation("POST", "/api/v1/sessions/cleanup")).toBe("POST /api/v1/sessions/cleanup");
 	});
 
@@ -335,5 +337,13 @@ describe("apiErrorMessage", () => {
 				message: "tmux required (RUNTIME_PREREQUISITE_MISSING)",
 			}),
 		).toBe("tmux required (RUNTIME_PREREQUISITE_MISSING)");
+	});
+
+	it("reads the nested daemon error envelope", () => {
+		expect(
+			apiErrorMessage({
+				error: { code: "REVIEWER_NOT_FOUND", message: "reviewer has not reviewed this PR" },
+			}),
+		).toBe("reviewer has not reviewed this PR (REVIEWER_NOT_FOUND)");
 	});
 });

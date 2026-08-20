@@ -236,6 +236,7 @@ var schemaNames = map[string]string{
 	"ControllersSessionInterfaceTransitionStatusResponse": "SessionInterfaceTransitionStatusResponse",
 	"ControllersStartSessionInterfaceTransitionResponse":  "StartSessionInterfaceTransitionResponse",
 	"ControllersCancelSessionInterfaceTransitionResponse": "CancelSessionInterfaceTransitionResponse",
+	"ControllersInterfaceTransitionNoticeAckResponse":     "AcknowledgeSessionInterfaceTransitionNoticeResponse",
 	"ControllersCleanupSessionsResponse":                  "CleanupSessionsResponse",
 	"ControllersCleanupSkippedSession":                    "CleanupSkippedSession",
 	"ControllersWorkspaceFileQuery":                       "WorkspaceFileQuery",
@@ -346,6 +347,7 @@ var schemaNames = map[string]string{
 	"ProjectSummary":                    "ProjectSummary",
 	"ProjectDegraded":                   "DegradedProject",
 	"ProjectAddInput":                   "AddProjectInput",
+	"ProjectCloneInput":                 "CloneProjectInput",
 	"ProjectInitializeRepositoryInput":  "InitializeRepositoryInput",
 	"ProjectInitializeRepositoryResult": "InitializeRepositoryResult",
 	"ProjectRemoveResult":               "RemoveProjectResult",
@@ -1269,6 +1271,17 @@ func projectOperations() []operation {
 			},
 		},
 		{
+			method: http.MethodPost, path: "/api/v1/projects/clone", id: "cloneProject", tag: "projects",
+			summary: "Clone and register a project from a git repository URL",
+			reqBody: projectsvc.CloneInput{},
+			resps: []respUnit{
+				{http.StatusCreated, controllers.ProjectResponse{}},
+				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusConflict, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+			},
+		},
+		{
 			method: http.MethodPost, path: "/api/v1/projects/initialize", id: "initializeProjectRepository", tag: "projects",
 			summary: "Initialize a selected folder as a Git repository with an initial commit",
 			reqBody: projectsvc.InitializeRepositoryInput{},
@@ -1740,6 +1753,18 @@ func sessionOperations() []operation {
 			pathParams: []any{controllers.SessionIDParam{}},
 			resps: []respUnit{
 				{http.StatusAccepted, controllers.CancelSessionInterfaceTransitionResponse{}},
+				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusConflict, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodPut, path: "/api/v1/sessions/{sessionId}/interface-transition/{transitionId}/notice-acknowledgement", id: "acknowledgeSessionInterfaceTransitionNotice", tag: "sessions",
+			summary:    "Acknowledge a failed or recovered interface handoff notice",
+			pathParams: []any{controllers.SessionIDParam{}, controllers.SessionInterfaceTransitionIDParam{}},
+			resps: []respUnit{
+				{http.StatusOK, controllers.InterfaceTransitionNoticeAckResponse{}},
 				{http.StatusNotFound, envelope.APIError{}},
 				{http.StatusConflict, envelope.APIError{}},
 				{http.StatusInternalServerError, envelope.APIError{}},

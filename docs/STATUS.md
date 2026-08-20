@@ -181,11 +181,13 @@ surface (`npm run sqlc`, `npm run api`).
   sanitized network observer and temporary highlight cleanup as safety/UI
   plumbing. Focused checks and a fresh Windows x64 package pass; macOS/Linux
   packaging and manual lifecycle acceptance remain release verification work.
-- **Cross-interface visual history import**: provider-native context continues
-  across a compatible handoff, and Chat history already recorded by AO remains
-  durable. A first TUI→Chat switch does not reconstruct terminal screen output
-  as structured AO messages/tool cards; doing so requires a provider history
-  import contract with stable identities and deduplication.
+- **Cross-interface raw terminal history import**: compatible providers now
+  replay settled native history with stable identities (`thread/read` for Codex,
+  ACP `session/load` where advertised), and AO imports it idempotently before
+  activating Chat. ACP `session/resume` preserves model context but does not
+  replay history, so a TUI→Chat handoff fails closed for resume-only agents.
+  AO deliberately does not reconstruct PTY scrollback as messages/tool cards;
+  arbitrary terminal bytes are redraw artifacts, not canonical provider events.
 - **In-flight tool portability**: drain can finish accepted work and interrupt
   can cancel it, but no common provider protocol serializes a currently executing
   tool call or detached background process for adoption by another controller.
