@@ -302,7 +302,10 @@ describe("useBrowserView", () => {
 		await waitFor(() =>
 			expect(bridge.setBounds).toHaveBeenCalledWith({
 				viewId: "42:sess-1",
-				rect: { x: 100, y: 34, width: 150, height: 240 },
+				// Left edge is inset by the resize handle's reserved 6px (see
+				// RESIZE_HANDLE_RESERVE_PX in useBrowserView.ts) so the handle's
+				// hit area, inside this same column, is never covered by the view.
+				rect: { x: 106, y: 34, width: 144, height: 240 },
 				visible: true,
 			}),
 		);
