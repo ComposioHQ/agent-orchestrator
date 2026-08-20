@@ -1769,6 +1769,34 @@ func TestCollectorDiscoversCopilotShutdownSource(t *testing.T) {
 	}
 }
 
+func TestCollectorRetriesCopilotSourceCreatedAfterSessionStart(t *testing.T) {
+	const nativeID = "11111111-1111-4111-8111-111111111111"
+	store := collectorTestStore(t)
+	session := collectorTestSession(t, store, domain.HarnessCopilot, nativeID, false)
+	root := filepath.Join(t.TempDir(), "session-state")
+	collector := NewCollector(store, SourceRoots{CopilotSessions: root}, nil)
+
+	mustNoError(t, collector.RecordHook(context.Background(), session.ID, HookSignal{
+		Harness: domain.HarnessCopilot, Event: "session-start", NativeSessionID: nativeID,
+	}))
+	pending, err := store.HasPendingUsageDiscovery(context.Background())
+	if err != nil || !pending {
+		t.Fatalf("pending=%v err=%v, want durable discovery retry", pending, err)
+	}
+	path := filepath.Join(root, nativeID, "events.jsonl")
+	writeUsageFixture(t, path, `{"type":"session.shutdown","data":{"modelMetrics":{}}}`+"\n")
+	mustNoError(t, collector.ReconcileSources(context.Background(), -1))
+
+	bindings, err := store.ListUsageBindingsForSession(context.Background(), session.ID)
+	if err != nil || len(bindings) != 1 {
+		t.Fatalf("bindings=%+v err=%v", bindings, err)
+	}
+	sources, err := store.ListUsageSourcesForBinding(context.Background(), bindings[0].ID)
+	if err != nil || len(sources) != 1 || sources[0].ArtifactPath != canonicalUsagePath(t, path) {
+		t.Fatalf("sources=%+v err=%v", sources, err)
+	}
+}
+
 func TestCollectorRejectsCopilotSourceForDifferentNativeSession(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "session-state")
 	path := filepath.Join(root, "other-native", "events.jsonl")
