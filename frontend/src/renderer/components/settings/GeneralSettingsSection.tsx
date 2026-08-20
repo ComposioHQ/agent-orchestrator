@@ -99,6 +99,7 @@ export function GeneralSettingsSection({
 	const soundNotificationsEnabled = useSoundNotificationsStore((state) => state.enabled);
 	const setSoundNotificationsEnabled = useSoundNotificationsStore((state) => state.setEnabled);
 	const soundNotificationsSaving = useSoundNotificationsStore((state) => state.saving);
+	const soundNotificationsSaveError = useSoundNotificationsStore((state) => state.saveError);
 	const developerMode = useUiStore((state) => state.developerMode);
 	const setDeveloperMode = useUiStore((state) => state.setDeveloperMode);
 
@@ -167,6 +168,11 @@ export function GeneralSettingsSection({
 					}}
 				/>
 			</SettingsRow>
+			{soundNotificationsSaveError ? (
+				<p role="alert" className="px-3 text-caption leading-4 text-error">
+					{t("settings.soundNotifications.saveFailed")}
+				</p>
+			) : null}
 			<SettingsRow label={t("settings.developerMode")}>
 				<Switch
 					aria-label={t("settings.developerMode")}

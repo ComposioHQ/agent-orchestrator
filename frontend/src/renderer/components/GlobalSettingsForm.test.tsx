@@ -226,6 +226,19 @@ describe("GlobalSettingsForm", () => {
 		expect(toggle).not.toBeChecked();
 	});
 
+	it("keeps the current sound notifications value and reports a persistence failure", async () => {
+		setUiSettings.mockRejectedValue(new Error("disk full"));
+		const user = userEvent.setup();
+		renderForm();
+		const toggle = await screen.findByRole("switch", { name: "Sound notifications" });
+
+		await user.click(toggle);
+
+		expect(await screen.findByRole("alert")).toHaveTextContent("Could not save the sound notifications preference.");
+		expect(useSoundNotificationsStore.getState().enabled).toBe(true);
+		expect(toggle).toBeChecked();
+	});
+
 	it("keeps the current language and reports a persistence failure", async () => {
 		setUiSettings.mockRejectedValue(new Error("disk full"));
 		const user = userEvent.setup();
