@@ -214,6 +214,10 @@ fi
 terraform_apply "$image_reference" true
 
 service="$(terraform_output ecs_service)"
+aws ecs update-service \
+  --cluster "$cluster" \
+  --service "$service" \
+  --force-new-deployment >/dev/null
 aws ecs wait services-stable --cluster "$cluster" --services "$service"
 api_url="$(terraform_output api_url)"
 api_url="${api_url%/}"

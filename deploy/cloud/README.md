@@ -40,7 +40,8 @@ The script:
 3. generates secrets outside Terraform state;
 4. builds and pushes the exact current commit in CodeBuild;
 5. runs the migration task before enabling the API service; and
-6. verifies health, readiness, invalid Google identity, and malformed refresh
+6. forces a fresh ECS rollout so updated secret values are loaded; and
+7. verifies health, readiness, invalid Google identity, and malformed refresh
    and logout behavior through the public HTTPS endpoint.
 
 The script intentionally scales staging to zero during migration. Production
