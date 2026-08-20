@@ -198,8 +198,14 @@ type ConversationBranch struct {
 	ReplacedTurnID         string    `json:"replacedTurnId,omitempty"`
 	ReplacementTurnID      string    `json:"replacementTurnId,omitempty"`
 	ForkAfterSequence      int64     `json:"-"`
-	Active                 bool      `json:"active"`
-	CreatedAt              time.Time `json:"createdAt"`
+	// Strategy distinguishes native anchored forks from approximate user-context
+	// branches.
+	Strategy             string    `json:"strategy,omitempty"`
+	ReplayCutoffSequence int64     `json:"-"`
+	ReplayTruncated      bool      `json:"replayTruncated,omitempty"`
+	ProviderScopeID      string    `json:"-"`
+	Active               bool      `json:"active"`
+	CreatedAt            time.Time `json:"createdAt"`
 }
 
 // ConversationBranchPoint describes the sibling continuations available at one

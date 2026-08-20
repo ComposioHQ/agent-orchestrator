@@ -495,12 +495,14 @@ const insertConversationBranch = `-- name: InsertConversationBranch :exec
 INSERT INTO conversation_branches (
     id, conversation_id, session_id, provider_conversation_id,
     parent_branch_id, fork_after_turn_id, replaced_turn_id,
-    replacement_turn_id, fork_after_sequence, created_at
+    replacement_turn_id, fork_after_sequence, strategy, replay_cutoff_sequence,
+    replay_truncated, provider_scope_id, created_at
 ) VALUES (
     ?1, ?2, ?3,
     ?4, ?5,
     ?6, ?7,
-    ?8, ?9, ?10
+    ?8, ?9, ?10,
+    ?11, ?12, ?13, ?14
 )
 `
 
@@ -514,6 +516,10 @@ type InsertConversationBranchParams struct {
 	ReplacedTurnID         sql.NullString
 	ReplacementTurnID      sql.NullString
 	ForkAfterSequence      int64
+	Strategy               string
+	ReplayCutoffSequence   int64
+	ReplayTruncated        int64
+	ProviderScopeID        string
 	CreatedAt              time.Time
 }
 
@@ -528,6 +534,10 @@ func (q *Queries) InsertConversationBranch(ctx context.Context, arg InsertConver
 		arg.ReplacedTurnID,
 		arg.ReplacementTurnID,
 		arg.ForkAfterSequence,
+		arg.Strategy,
+		arg.ReplayCutoffSequence,
+		arg.ReplayTruncated,
+		arg.ProviderScopeID,
 		arg.CreatedAt,
 	)
 	return err
@@ -993,7 +1003,7 @@ func (q *Queries) SelectConversationActivityByProviderItem(ctx context.Context, 
 }
 
 const selectConversationBranch = `-- name: SelectConversationBranch :one
-SELECT b.id, b.conversation_id, b.session_id, b.provider_conversation_id, b.parent_branch_id, b.fork_after_turn_id, b.replaced_turn_id, b.replacement_turn_id, b.fork_after_sequence, b.created_at, b.id = c.active_branch_id AS active
+SELECT b.id, b.conversation_id, b.session_id, b.provider_conversation_id, b.parent_branch_id, b.fork_after_turn_id, b.replaced_turn_id, b.replacement_turn_id, b.fork_after_sequence, b.created_at, b.strategy, b.replay_cutoff_sequence, b.replay_truncated, b.provider_scope_id, b.id = c.active_branch_id AS active
 FROM conversation_branches AS b
 JOIN conversations AS c ON c.id = b.conversation_id
 WHERE b.conversation_id = ?1
@@ -1017,6 +1027,10 @@ type SelectConversationBranchRow struct {
 	ReplacementTurnID      sql.NullString
 	ForkAfterSequence      int64
 	CreatedAt              time.Time
+	Strategy               string
+	ReplayCutoffSequence   int64
+	ReplayTruncated        int64
+	ProviderScopeID        string
 	Active                 bool
 }
 
@@ -1034,13 +1048,17 @@ func (q *Queries) SelectConversationBranch(ctx context.Context, arg SelectConver
 		&i.ReplacementTurnID,
 		&i.ForkAfterSequence,
 		&i.CreatedAt,
+		&i.Strategy,
+		&i.ReplayCutoffSequence,
+		&i.ReplayTruncated,
+		&i.ProviderScopeID,
 		&i.Active,
 	)
 	return i, err
 }
 
 const selectConversationBranches = `-- name: SelectConversationBranches :many
-SELECT b.id, b.conversation_id, b.session_id, b.provider_conversation_id, b.parent_branch_id, b.fork_after_turn_id, b.replaced_turn_id, b.replacement_turn_id, b.fork_after_sequence, b.created_at, b.id = c.active_branch_id AS active
+SELECT b.id, b.conversation_id, b.session_id, b.provider_conversation_id, b.parent_branch_id, b.fork_after_turn_id, b.replaced_turn_id, b.replacement_turn_id, b.fork_after_sequence, b.created_at, b.strategy, b.replay_cutoff_sequence, b.replay_truncated, b.provider_scope_id, b.id = c.active_branch_id AS active
 FROM conversation_branches AS b
 JOIN conversations AS c ON c.id = b.conversation_id
 WHERE b.conversation_id = ?
@@ -1058,6 +1076,10 @@ type SelectConversationBranchesRow struct {
 	ReplacementTurnID      sql.NullString
 	ForkAfterSequence      int64
 	CreatedAt              time.Time
+	Strategy               string
+	ReplayCutoffSequence   int64
+	ReplayTruncated        int64
+	ProviderScopeID        string
 	Active                 bool
 }
 
@@ -1081,6 +1103,10 @@ func (q *Queries) SelectConversationBranches(ctx context.Context, conversationID
 			&i.ReplacementTurnID,
 			&i.ForkAfterSequence,
 			&i.CreatedAt,
+			&i.Strategy,
+			&i.ReplayCutoffSequence,
+			&i.ReplayTruncated,
+			&i.ProviderScopeID,
 			&i.Active,
 		); err != nil {
 			return nil, err
@@ -1200,7 +1226,7 @@ WITH RECURSIVE active_path(branch_id, max_sequence) AS (
     JOIN conversation_branches AS branch ON branch.id = path.branch_id
     WHERE branch.parent_branch_id IS NOT NULL
 ), active_branch AS (
-    SELECT branch.id, branch.conversation_id, branch.session_id, branch.provider_conversation_id, branch.parent_branch_id, branch.fork_after_turn_id, branch.replaced_turn_id, branch.replacement_turn_id, branch.fork_after_sequence, branch.created_at
+    SELECT branch.id, branch.conversation_id, branch.session_id, branch.provider_conversation_id, branch.parent_branch_id, branch.fork_after_turn_id, branch.replaced_turn_id, branch.replacement_turn_id, branch.fork_after_sequence, branch.created_at, branch.strategy, branch.replay_cutoff_sequence, branch.replay_truncated, branch.provider_scope_id
     FROM conversations AS conversation
     JOIN conversation_branches AS branch ON branch.id = conversation.active_branch_id
     WHERE conversation.id = ?1

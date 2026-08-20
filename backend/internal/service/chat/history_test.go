@@ -522,6 +522,7 @@ func newEditHarness(t *testing.T, replay ...bool) (*harness, *historyRecorder, *
 	if len(replay) > 0 && replay[0] {
 		sourceCapabilities := productionCaps()
 		sourceCapabilities[ports.ChatCapabilityPromptReplay] = true
+		sourceCapabilities[ports.ChatCapabilityEmbeddedContext] = true
 		source.capabilities = sourceCapabilities
 	}
 	fresh := newFakeConversation()
@@ -643,11 +644,12 @@ func TestEditMessageReplaysDurableContextWhenNativeForkIsUnavailable(t *testing.
 	if len(starts) != 2 {
 		t.Fatalf("start calls = %d, want initial plus replay", len(starts))
 	}
-	if !strings.Contains(starts[1].ReplayContext, "User: A") || !strings.Contains(starts[1].ReplayContext, "Assistant: reply to A") {
-		t.Fatalf("replay context = %q", starts[1].ReplayContext)
+	if starts[1].SystemPrompt != "preserved prompt" || starts[1].ProviderScopeID == "" {
+		t.Fatalf("approximate start config = %#v", starts[1])
 	}
-	if strings.Contains(starts[1].ReplayContext, "User: B") || strings.Contains(starts[1].ReplayContext, "answer B") {
-		t.Fatalf("replay context included edited branch: %q", starts[1].ReplayContext)
+	sent := driver.fresh.sentMessages()
+	if len(sent) != 1 || len(sent[0].Content) != 1 || !strings.Contains(sent[0].Content[0].Text, "reply to A") || strings.Contains(sent[0].Content[0].Text, "answer B") {
+		t.Fatalf("replay content = %#v", sent)
 	}
 }
 

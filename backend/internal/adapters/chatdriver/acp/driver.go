@@ -33,14 +33,14 @@ type Launch struct {
 // construct its process. It intentionally contains no install mechanism: binary
 // ownership stays with the existing agent plugin.
 type LaunchConfig struct {
-	SessionID     domain.SessionID
-	DataDir       string
-	WorkspacePath string
-	Env           map[string]string
-	Model         string
-	Permissions   ports.PermissionMode
-	SystemPrompt  string
-	ReplayContext string
+	SessionID       domain.SessionID
+	DataDir         string
+	WorkspacePath   string
+	Env             map[string]string
+	Model           string
+	Permissions     ports.PermissionMode
+	SystemPrompt    string
+	ProviderScopeID string
 }
 
 // Config binds one harness to an ACP agent implementation.
@@ -107,7 +107,7 @@ func (d *Driver) Start(ctx context.Context, cfg ports.ChatStartConfig) (ports.Ch
 	launchCfg := LaunchConfig{
 		SessionID: cfg.SessionID, DataDir: cfg.DataDir, WorkspacePath: cfg.WorkspacePath,
 		Env: cfg.Env, Model: cfg.Model, Permissions: cfg.Permissions, SystemPrompt: cfg.SystemPrompt,
-		ReplayContext: cfg.ReplayContext,
+		ProviderScopeID: cfg.ProviderScopeID,
 	}
 	conv, init, err := d.connect(ctx, launchCfg)
 	if err != nil {
@@ -172,7 +172,7 @@ func (d *Driver) Resume(ctx context.Context, cfg ports.ChatResumeConfig) (ports.
 	}
 	launchCfg := LaunchConfig{
 		SessionID: cfg.SessionID, DataDir: cfg.DataDir, WorkspacePath: cfg.WorkspacePath,
-		Env: cfg.Env, Permissions: cfg.Permissions, SystemPrompt: cfg.SystemPrompt,
+		Env: cfg.Env, Permissions: cfg.Permissions, SystemPrompt: cfg.SystemPrompt, ProviderScopeID: cfg.ProviderScopeID,
 	}
 	conv, init, err := d.connect(ctx, launchCfg)
 	if err != nil {

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -153,7 +154,7 @@ func (s *Service) EditMessage(
 		return EditMessageResult{}, err
 	}
 	forker, canFork := source.conv.(ports.ChatForker)
-	canReplay := source.conv.Capabilities().Has(ports.ChatCapabilityPromptReplay)
+	canReplay := source.conv.Capabilities().Has(ports.ChatCapabilityPromptReplay) && source.conv.Capabilities().Has(ports.ChatCapabilityEmbeddedContext)
 	anchor, err := s.store.ConversationEditAnchor(ctx, source.conversation.ID, turnID)
 	if err != nil {
 		return EditMessageResult{}, fmt.Errorf("%w: %w", ErrEditTurnInvalid, err)
@@ -191,6 +192,9 @@ func (s *Service) EditMessage(
 	}
 	var providerConversationID string
 	var provider ports.ChatConversation
+	var replayContent ports.ChatContent
+	var replayTruncated bool
+	var providerScopeID string
 	if anchor.PreviousProviderTurnID == "" {
 		provider, err = driver.Start(ctx, ports.ChatStartConfig{
 			SessionID: cfg.SessionID, DataDir: cfg.DataDir, WorkspacePath: cfg.WorkspacePath,
@@ -212,19 +216,22 @@ func (s *Service) EditMessage(
 				AdditionalDirectories: cfg.AdditionalDirectories, MCPServers: cfg.MCPServers,
 			})
 		}
-	} else {
-		replayContext, replayErr := s.editReplayContext(ctx, source.conversation.ID, anchor.ForkAfterSequence)
+	} else if canReplay {
+		providerScopeID = s.newID()
+		seed, truncated, replayErr := s.editReplayContext(ctx, source.conversation.ID, anchor.ForkAfterSequence)
 		if replayErr != nil {
 			return EditMessageResult{}, fmt.Errorf("prepare edited conversation: %w", replayErr)
 		}
+		replayTruncated = truncated
 		provider, err = driver.Start(ctx, ports.ChatStartConfig{
 			SessionID: cfg.SessionID, DataDir: cfg.DataDir, WorkspacePath: cfg.WorkspacePath,
 			Env: cfg.Env, Model: cfg.Model, Permissions: cfg.Permissions,
-			SystemPrompt: cfg.SystemPrompt, ReplayContext: replayContext,
-			AdditionalDirectories: cfg.AdditionalDirectories, MCPServers: cfg.MCPServers,
+			SystemPrompt: cfg.SystemPrompt, AdditionalDirectories: cfg.AdditionalDirectories,
+			MCPServers: cfg.MCPServers, ProviderScopeID: providerScopeID,
 		})
 		if err == nil {
 			providerConversationID = provider.ProviderConversationID()
+			replayContent = ports.ChatContent{Type: "resource", URI: "ao://conversation/edit-replay", Name: "approximate conversation context", MIMEType: "application/json", Text: seed}
 		}
 	}
 	if err != nil {
@@ -243,7 +250,13 @@ func (s *Service) EditMessage(
 		ID: branchID, ConversationID: source.conversation.ID, SessionID: id,
 		ProviderConversationID: providerConversationID, ParentBranchID: anchor.SourceBranchID,
 		ReplacedTurnID: anchor.ReplacedTurnID, ForkAfterSequence: anchor.ForkAfterSequence,
-		CreatedAt: s.now(),
+		CreatedAt: s.now(), Strategy: "native",
+	}
+	if replayContent.Type != "" {
+		branch.Strategy = "approximate_context"
+		branch.ReplayCutoffSequence = anchor.ForkAfterSequence
+		branch.ReplayTruncated = replayTruncated
+		branch.ProviderScopeID = providerScopeID
 	}
 	conversation := source.conversation
 	conversation.ActiveBranchID = branchID
@@ -257,6 +270,9 @@ func (s *Service) EditMessage(
 	}
 	abortSource = false
 
+	if replayContent.Type != "" {
+		msg.Content = append([]ports.ChatContent{replayContent}, msg.Content...)
+	}
 	return s.sendEditedMessage(ctx, anchor.SourceBranchID, branchID, replacement, msg)
 }
 
@@ -264,34 +280,57 @@ func (s *Service) EditMessage(
 // edited prompt. Tool calls, approvals, and file changes are intentionally not
 // replayed: doing so could repeat side effects. Providers that support native
 // fork remain on that exact-history path instead.
-func (s *Service) editReplayContext(ctx context.Context, conversationID string, cutoff int64) (string, error) {
+const approximateReplayBudget = 24 * 1024
+
+func (s *Service) editReplayContext(ctx context.Context, conversationID string, cutoff int64) (string, bool, error) {
 	if s.reader == nil {
-		return "", errors.New("conversation snapshot reader is unavailable")
+		return "", false, errors.New("conversation snapshot reader is unavailable")
 	}
 	rows, err := s.reader.LoadConversationSnapshot(ctx, conversationID)
 	if err != nil {
-		return "", fmt.Errorf("load conversation for replay: %w", err)
+		return "", false, fmt.Errorf("load conversation for replay: %w", err)
 	}
-	var replay strings.Builder
-	for _, message := range rows.Messages {
+	return buildApproximateReplayContext(rows.Messages, cutoff)
+}
+
+func buildApproximateReplayContext(rows []domain.ConversationMessage, cutoff int64) (string, bool, error) {
+	type replayMessage struct {
+		Sequence int64              `json:"sequence"`
+		Role     domain.MessageRole `json:"role"`
+		Text     string             `json:"text"`
+	}
+	messages := make([]replayMessage, 0, len(rows))
+	for _, message := range rows {
 		if message.Sequence > cutoff || message.Streaming || strings.TrimSpace(message.Text) == "" {
 			continue
 		}
-		var role string
 		switch message.Role {
-		case domain.MessageRoleUser:
-			role = "User"
-		case domain.MessageRoleAssistant:
-			role = "Assistant"
+		case domain.MessageRoleUser, domain.MessageRoleAssistant:
 		default:
 			continue
 		}
-		if replay.Len() > 0 {
-			replay.WriteByte('\n')
-		}
-		fmt.Fprintf(&replay, "%s: %s", role, strings.TrimSpace(message.Text))
+		messages = append(messages, replayMessage{message.Sequence, message.Role, strings.TrimSpace(message.Text)})
 	}
-	return replay.String(), nil
+	sort.SliceStable(messages, func(i, j int) bool { return messages[i].Sequence < messages[j].Sequence })
+	selected := make([]replayMessage, 0, len(messages))
+	truncated := false
+	for _, message := range messages {
+		candidate := append(append([]replayMessage(nil), selected...), message)
+		encoded, marshalErr := json.Marshal(candidate)
+		if marshalErr != nil {
+			return "", false, fmt.Errorf("encode replay context: %w", marshalErr)
+		}
+		if len(encoded) > approximateReplayBudget {
+			truncated = true
+			break
+		}
+		selected = candidate
+	}
+	encoded, err := json.Marshal(map[string]any{"kind": "approximate_conversation_context", "messages": selected, "truncated": truncated})
+	if err != nil {
+		return "", false, fmt.Errorf("encode replay context: %w", err)
+	}
+	return string(encoded), truncated, nil
 }
 
 // sendEditedMessage commits the branch replacement only after the provider has
@@ -365,7 +404,7 @@ func (s *Service) ActivateBranch(ctx context.Context, id domain.SessionID, branc
 	provider, err := driver.Resume(ctx, ports.ChatResumeConfig{
 		SessionID: cfg.SessionID, ProviderConversationID: branch.ProviderConversationID,
 		DataDir: cfg.DataDir, WorkspacePath: cfg.WorkspacePath, Env: cfg.Env,
-		Permissions: cfg.Permissions, SystemPrompt: cfg.SystemPrompt,
+		Permissions: cfg.Permissions, SystemPrompt: cfg.SystemPrompt, ProviderScopeID: branch.ProviderScopeID,
 		AdditionalDirectories: cfg.AdditionalDirectories, MCPServers: cfg.MCPServers,
 	})
 	if err != nil {

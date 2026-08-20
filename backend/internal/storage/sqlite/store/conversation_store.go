@@ -190,6 +190,10 @@ func insertConversationBranchTx(
 		ReplacedTurnID:         nullableString(branch.ReplacedTurnID),
 		ReplacementTurnID:      nullableString(branch.ReplacementTurnID),
 		ForkAfterSequence:      branch.ForkAfterSequence,
+		Strategy:               branch.Strategy,
+		ReplayCutoffSequence:   branch.ReplayCutoffSequence,
+		ReplayTruncated:        boolInt64(branch.ReplayTruncated),
+		ProviderScopeID:        branch.ProviderScopeID,
 		CreatedAt:              now,
 	}); err != nil {
 		return fmt.Errorf("insert conversation branch %s: %w", branch.ID, err)
@@ -1922,9 +1926,20 @@ func conversationBranchToDomain(row gen.SelectConversationBranchRow) domain.Conv
 		ReplacedTurnID:         row.ReplacedTurnID.String,
 		ReplacementTurnID:      row.ReplacementTurnID.String,
 		ForkAfterSequence:      row.ForkAfterSequence,
+		Strategy:               row.Strategy,
+		ReplayCutoffSequence:   row.ReplayCutoffSequence,
+		ReplayTruncated:        row.ReplayTruncated != 0,
+		ProviderScopeID:        row.ProviderScopeID,
 		Active:                 row.Active,
 		CreatedAt:              row.CreatedAt,
 	}
+}
+
+func boolInt64(value bool) int64 {
+	if value {
+		return 1
+	}
+	return 0
 }
 
 func conversationBranchListToDomain(row gen.SelectConversationBranchesRow) domain.ConversationBranch {
@@ -1938,6 +1953,10 @@ func conversationBranchListToDomain(row gen.SelectConversationBranchesRow) domai
 		ReplacedTurnID:         row.ReplacedTurnID.String,
 		ReplacementTurnID:      row.ReplacementTurnID.String,
 		ForkAfterSequence:      row.ForkAfterSequence,
+		Strategy:               row.Strategy,
+		ReplayCutoffSequence:   row.ReplayCutoffSequence,
+		ReplayTruncated:        row.ReplayTruncated != 0,
+		ProviderScopeID:        row.ProviderScopeID,
 		Active:                 row.Active,
 		CreatedAt:              row.CreatedAt,
 	}

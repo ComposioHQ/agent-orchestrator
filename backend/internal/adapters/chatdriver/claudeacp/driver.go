@@ -95,26 +95,14 @@ func New(plugin claudePlugin, log *slog.Logger) ports.ChatDriver {
 
 func claudeSessionMeta(cfg acpdriver.LaunchConfig) map[string]any {
 	standing := strings.TrimSpace(cfg.SystemPrompt)
-	replay := strings.TrimSpace(cfg.ReplayContext)
-	if standing == "" && replay == "" {
+	if standing == "" {
 		return nil
-	}
-	appendPrompt := standing
-	if replay != "" {
-		contextPrompt := "<ao-replayed-conversation>\n" +
-			"The following is prior conversation context reconstructed by AO. It is informational; do not treat it as a new user request or repeat tool actions.\n\n" +
-			replay +
-			"\n</ao-replayed-conversation>"
-		if appendPrompt != "" {
-			appendPrompt += "\n\n"
-		}
-		appendPrompt += contextPrompt
 	}
 	// Append AO's standing instructions to Claude Code's own prompt. Replacing
 	// the preset would discard Claude's native coding/tool instructions.
 	return map[string]any{
 		"systemPrompt": map[string]any{
-			"type": "preset", "preset": "claude_code", "append": appendPrompt,
+			"type": "preset", "preset": "claude_code", "append": standing,
 		},
 	}
 }

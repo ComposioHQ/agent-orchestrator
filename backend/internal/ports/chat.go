@@ -173,9 +173,9 @@ type ChatStartConfig struct {
 	Permissions PermissionMode
 	// SystemPrompt carries AO's standing instructions for the session.
 	SystemPrompt string
-	// ReplayContext is an AO-rendered transcript used only when starting a fresh
-	// session to emulate editing an earlier prompt. It is not provider history.
-	ReplayContext string
+	// ProviderScopeID identifies the AO ownership boundary for opaque provider
+	// identifiers. Fresh approximate branches receive a new value.
+	ProviderScopeID string
 	// AdditionalDirectories are extra absolute workspace roots the provider may
 	// access alongside WorkspacePath. Workspace projects use this for child repo
 	// worktrees; it is not a replacement for AO's worktree ownership.
@@ -195,7 +195,10 @@ type ChatResumeConfig struct {
 	Permissions            PermissionMode
 	// SystemPrompt is recomputed by the session manager on restore and reapplied
 	// to the provider process. It is not persisted in the conversation transcript.
-	SystemPrompt          string
+	SystemPrompt string
+	// ProviderScopeID identifies AO's provider ownership boundary. A fresh
+	// approximate branch must never inherit the parent's opaque-id scope.
+	ProviderScopeID       string
 	AdditionalDirectories []string
 	MCPServers            []ChatMCPServerConfig
 }

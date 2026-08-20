@@ -25,19 +25,11 @@ func TestClaudeSessionMetaAppendsWithoutReplacingPreset(t *testing.T) {
 	}
 }
 
-func TestClaudeSessionMetaIncludesAOReplayContext(t *testing.T) {
-	meta := claudeSessionMeta(acpdriver.LaunchConfig{ReplayContext: "User: inspect the failing test"})
-	prompt, ok := meta["systemPrompt"].(map[string]any)
-	if !ok {
-		t.Fatalf("systemPrompt = %#v", meta["systemPrompt"])
-	}
-	appendPrompt, ok := prompt["append"].(string)
-	if !ok {
-		t.Fatalf("append = %#v", prompt["append"])
-	}
-	if !strings.Contains(appendPrompt, "<ao-replayed-conversation>") ||
-		!strings.Contains(appendPrompt, "User: inspect the failing test") {
-		t.Fatalf("append = %q", appendPrompt)
+func TestClaudeSessionMetaNeverIncludesReplayContext(t *testing.T) {
+	meta := claudeSessionMeta(acpdriver.LaunchConfig{SystemPrompt: "AO standing instructions"})
+	prompt := meta["systemPrompt"].(map[string]any)
+	if strings.Contains(prompt["append"].(string), "replayed-conversation") {
+		t.Fatal("replay context entered the system prompt")
 	}
 }
 
