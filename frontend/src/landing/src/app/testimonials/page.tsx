@@ -70,14 +70,14 @@ export default function TestimonialsPage() {
             </h2>
           </div>
 
-          <div className="grid md:grid-cols-2">
+          <div className="grid sm:grid-cols-2">
             {testimonialExamples.map((example, index) => (
               <blockquote
                 key={example}
                 className={`group relative border-border py-7 first:pt-8 ${
                   index > 0 ? "border-t" : ""
-                } ${index < 2 ? "md:border-t-0" : "md:border-t"} ${
-                  index % 2 === 1 ? "md:border-l md:pl-8" : "md:pr-8"
+                } ${index < 2 ? "sm:border-t-0" : "sm:border-t"} ${
+                  index % 2 === 1 ? "sm:border-l sm:pl-8" : "sm:pr-8"
                 }`}
               >
                 <div className="flex items-center justify-between gap-4">
