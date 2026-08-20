@@ -16,6 +16,18 @@ jobs:
         with:
           fetch-depth: 0
 
+      # gitleaks-action v1 scans the symmetric base...HEAD range, which also
+      # includes new base-branch commits when a queued PR merge ref is stale.
+      # Rewind only the runner's tracking ref to the merge-base so the action
+      # scans the proposed PR commits and not unrelated commits from main.
+      - name: Restrict pull request scan to proposed commits
+        if: github.event_name == 'pull_request'
+        shell: bash
+        run: |
+          base_ref="refs/remotes/origin/${GITHUB_BASE_REF}"
+          merge_base="$(git merge-base HEAD "${base_ref}")"
+          git update-ref "${base_ref}" "${merge_base}"
+
       # gitleaks-action v1 scans for committed secrets and needs no license
       # key (v2 requires GITLEAKS_LICENSE for organization repos).
       - name: Scan for secrets
