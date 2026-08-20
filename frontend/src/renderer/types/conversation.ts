@@ -168,6 +168,16 @@ export interface DecisionOption {
 	label: string;
 }
 
+/** Provider context retained before and after a human approval decision. */
+export interface ApprovalDetail {
+	/** The provider request shape, used to choose command or file-change copy. */
+	method?: string;
+	/** The provider decision id AO successfully returned. */
+	decision?: string;
+	/** Present when another connected client resolved the request. */
+	resolvedBy?: string;
+}
+
 export interface CommandDetail {
 	/**
 	 * Free text payload: a plan body, a reasoning summary, a message.
@@ -454,6 +464,7 @@ export interface ConversationActivity {
 	 * something a provider may not report.
 	 */
 	detail?: CommandDetail &
+		ApprovalDetail &
 		FileChangeDetail &
 		UsageDetail &
 		CompactionDetail &

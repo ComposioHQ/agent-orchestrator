@@ -12,8 +12,10 @@ import {
 	AlertTriangle,
 	Archive,
 	Brain,
+	ChevronDown,
 	ChevronRight,
 	CircleAlert,
+	CornerDownLeft,
 	CornerDownRight,
 	File as FileIcon,
 	FileDiff,
@@ -61,7 +63,12 @@ import {
 	exploredFileCount,
 	isNonzeroCommandExit,
 } from "./activity-command";
-import { Button } from "../ui/button";
+import {
+	DropdownMenu,
+	DropdownMenuContent,
+	DropdownMenuItem,
+	DropdownMenuTrigger,
+} from "../ui/dropdown-menu";
 import {
 	fileChangeFiles,
 	reviewedPaths,
@@ -1423,13 +1430,14 @@ export function SteerMessage({ activity }: { activity: ConversationActivity }) {
 /* approval                                                                    */
 /* -------------------------------------------------------------------------- */
 
+let activeApprovalShortcutRequestId: string | null = null;
+
 /**
  * A decision the agent is blocked on.
  *
- * Buttons come from `activity.decisions` — the provider's own list — never from a
- * fixed set. A real captured approval offered `accept`, an object-shaped
- * `acceptWithExecpolicyAmendment`, and `cancel`, and offered **no decline**: a
- * hardcoded three-button row would have drawn a control that cannot be honored.
+ * Decisions come from `activity.decisions` — the provider's own list — never from
+ * a fixed set. The UI still presents common permission choices with AO/Codex copy
+ * so provider-flavored labels do not leak into the chat surface.
  */
 export function ApprovalCard({
 	activity,
@@ -1441,73 +1449,219 @@ export function ApprovalCard({
 	busy?: boolean;
 }) {
 	const resolved = activity.status !== "pending";
-	const decisions: DecisionOption[] = activity.decisions ?? [];
+	const decisions = orderedApprovalDecisions(activity.decisions ?? []);
 	const detail = activity.detail;
+	const command = detail?.command ?? activity.summary;
+	const denyDecision = decisions.find((decision) => approvalDecisionRank(decision) === 10);
+	const allowOnceDecision =
+		decisions.find((decision) => approvalDecisionRank(decision) === 20) ??
+		decisions.find((decision) => approvalDecisionRank(decision) === 25);
+	const alternateAllowDecisions = decisions.filter(
+		(decision) => decision !== denyDecision && decision !== allowOnceDecision,
+	);
+	const requestId = activity.requestId ?? "";
+
+	useEffect(() => {
+		if (resolved || busy || !requestId) return;
+		activeApprovalShortcutRequestId = requestId;
+		return () => {
+			if (activeApprovalShortcutRequestId === requestId) activeApprovalShortcutRequestId = null;
+		};
+	}, [busy, requestId, resolved]);
+
+	useEffect(() => {
+		if (resolved || busy || !requestId) return;
+		const handleKeyDown = (event: KeyboardEvent) => {
+			if (activeApprovalShortcutRequestId !== requestId) return;
+			if (event.defaultPrevented || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
+			const target = event.target;
+			if (
+				target instanceof HTMLElement &&
+				(target.closest("[data-approval-menu]") ||
+					target.closest("input, textarea, select, [contenteditable='true']"))
+			) {
+				return;
+			}
+			if (event.key === "Enter" && allowOnceDecision) {
+				event.preventDefault();
+				onDecide?.(requestId, allowOnceDecision.id);
+				return;
+			}
+			if (event.key === "Escape" && denyDecision) {
+				event.preventDefault();
+				onDecide?.(requestId, denyDecision.id);
+			}
+		};
+		window.addEventListener("keydown", handleKeyDown, true);
+		return () => window.removeEventListener("keydown", handleKeyDown, true);
+	}, [allowOnceDecision, busy, denyDecision, onDecide, requestId, resolved]);
+
+	if (resolved) {
+		return <ResolvedApprovalRow activity={activity} command={command} />;
+	}
 
 	return (
 		<div
-			className={cn(
-				"rounded-lg border bg-surface",
-				resolved ? "border-border" : "border-warning/40 ring-1 ring-warning/10",
-			)}
+			role="group"
+			aria-label={`Approval request ${requestId}`.trim()}
+			className="cursor-chat-activity-panel rounded-lg border border-border px-3 py-2.5"
+			onKeyDown={(event) => {
+				if (event.key !== "Escape" || !denyDecision || busy || event.defaultPrevented) return;
+				event.preventDefault();
+				onDecide?.(requestId, denyDecision.id);
+			}}
 		>
-			<div className="flex items-center gap-2 border-b border-border px-3.5 py-2.5">
-				<ShieldQuestion
-					aria-hidden="true"
-					className={cn("size-4 shrink-0", resolved ? "text-muted-foreground" : "text-warning")}
-				/>
-				<strong className="text-xs font-semibold text-foreground">
-					{resolved ? "Approval resolved" : "Approval required"}
-				</strong>
-				<span className="ml-auto shrink-0 font-mono text-[11px] text-muted-foreground">
-					req {activity.requestId}
-				</span>
-			</div>
+			<div className="flex flex-col">
+				<p className="whitespace-pre-wrap text-[13.5px] leading-[1.4] text-foreground/90">
+					{detail?.reason ?? approvalPrompt(detail?.method)}
+				</p>
 
-			<div className="flex flex-col gap-2.5 px-3.5 py-3">
-				{detail?.reason ? (
-					<p className="text-sm leading-relaxed text-muted-foreground">{detail.reason}</p>
-				) : null}
+				<pre className="mt-2 max-h-32 overflow-auto whitespace-pre-wrap break-words rounded-md border border-border/70 bg-background/45 px-2.5 py-1.5 font-mono text-[12px] leading-[1.45] text-muted-foreground">
+					{detail?.rawCommand ?? command}
+				</pre>
 
-				<dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1 rounded bg-background px-2.5 py-2 font-mono text-[11px] leading-relaxed">
-					<dt className="text-muted-foreground">command</dt>
-					<dd className="min-w-0 break-all text-foreground">{detail?.command ?? activity.summary}</dd>
-					{detail?.cwd ? (
-						<>
-							<dt className="text-muted-foreground">cwd</dt>
-							<dd className="min-w-0 break-all text-muted-foreground">{detail.cwd}</dd>
-						</>
+				<div className="mt-2 flex flex-wrap justify-end gap-1.5">
+					{denyDecision ? (
+						<button
+							type="button"
+							className="inline-flex h-7 items-center gap-1.5 rounded-full border border-border-strong bg-background/20 px-2.5 text-[12.5px] text-foreground/90 transition-colors hover:bg-interactive-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40 disabled:pointer-events-none disabled:opacity-50"
+							disabled={busy}
+							onClick={() => onDecide?.(requestId, denyDecision.id)}
+						>
+							Deny
+							<kbd className="rounded-full bg-foreground/10 px-1.5 py-0.5 font-sans text-[10.5px] leading-none text-muted-foreground">
+								Esc
+							</kbd>
+						</button>
 					) : null}
-				</dl>
 
-				{resolved ? (
-					<p className="text-[11px] text-muted-foreground">
-						Already answered. This card is kept for the record.
-					</p>
-				) : (
-					<div className="flex flex-wrap gap-2 pt-0.5">
-						{decisions.map((decision, index) => (
-							<Button
-								key={decision.id}
+					{allowOnceDecision ? (
+						<div className="flex h-7 overflow-hidden rounded-full bg-logo-accent text-logo-accent-foreground shadow-sm">
+							<button
 								type="button"
-								size="sm"
-								variant={index === 0 ? "primary" : "outline"}
+								className="inline-flex items-center gap-1.5 px-2.5 text-[12.5px] transition-colors hover:bg-logo-accent-bright focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50"
 								disabled={busy}
-								onClick={() => onDecide?.(activity.requestId ?? "", decision.id)}
+								onClick={() => onDecide?.(requestId, allowOnceDecision.id)}
 							>
-								{decision.label}
-							</Button>
-						))}
-						{decisions.length === 0 ? (
-							<p className="text-[11px] text-warning">
-								The agent offered no decisions AO can present. Open diagnostics.
-							</p>
-						) : null}
-					</div>
-				)}
+								Allow once
+								<kbd className="rounded-full bg-logo-accent-foreground/15 p-0.5" aria-label="Press Return">
+									<CornerDownLeft aria-hidden="true" className="size-3" />
+								</kbd>
+							</button>
+							{alternateAllowDecisions.length > 0 ? (
+								<DropdownMenu>
+									<DropdownMenuTrigger asChild>
+										<button
+											type="button"
+											aria-label="More approval options"
+											className="flex w-7 items-center justify-center border-l border-logo-accent-foreground/20 transition-colors hover:bg-logo-accent-bright focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50"
+											disabled={busy}
+										>
+											<ChevronDown aria-hidden="true" className="size-3.5" />
+										</button>
+									</DropdownMenuTrigger>
+									<DropdownMenuContent
+										align="end"
+										side="bottom"
+										className="min-w-52"
+										data-approval-menu=""
+										onEscapeKeyDown={(event) => event.stopPropagation()}
+									>
+										{alternateAllowDecisions.map((decision) => (
+											<DropdownMenuItem
+												key={decision.id}
+												disabled={busy}
+												onSelect={() => onDecide?.(activity.requestId ?? "", decision.id)}
+											>
+												{approvalDecisionLabel(decision)}
+											</DropdownMenuItem>
+										))}
+									</DropdownMenuContent>
+								</DropdownMenu>
+							) : null}
+						</div>
+					) : null}
+					{decisions.length === 0 ? (
+						<p className="text-[11px] text-warning">
+							The agent offered no decisions AO can present. Open diagnostics.
+						</p>
+					) : null}
+				</div>
 			</div>
 		</div>
 	);
+}
+
+function approvalPrompt(method?: string): string {
+	return method === "item/fileChange/requestApproval"
+		? "Do you want to allow these file changes?"
+		: "Do you want to run this command?";
+}
+
+function approvalDecisionRank(decision: DecisionOption): number {
+	const value = `${decision.id} ${decision.label}`.toLowerCase();
+	if (/(deny|decline|reject|cancel)/.test(value)) return 10;
+	if (/(remember|always|amendment|policy)/.test(value)) return 30;
+	if (/(allow|approve|accept)/.test(value)) return 20;
+	return 25;
+}
+
+function approvalDecisionLabel(decision: DecisionOption): string {
+	const value = `${decision.id} ${decision.label}`.toLowerCase();
+	if (/(remember|always|amendment|policy)/.test(value)) return "Always allow this command";
+	if (/(allow|approve|accept)/.test(value)) return "Allow once";
+	if (/(deny|decline|reject|cancel)/.test(value)) return "Deny";
+	return decision.label;
+}
+
+function orderedApprovalDecisions(decisions: DecisionOption[]): DecisionOption[] {
+	return decisions
+		.map((decision, index) => ({ decision, index }))
+		.sort((left, right) => {
+			const byRank = approvalDecisionRank(left.decision) - approvalDecisionRank(right.decision);
+			return byRank || left.index - right.index;
+		})
+		.map(({ decision }) => decision);
+}
+
+function ResolvedApprovalRow({
+	activity,
+	command,
+}: {
+	activity: ConversationActivity;
+	command: string;
+}) {
+	const detail = activity.detail;
+	const decision = typeof detail?.decision === "string" ? detail.decision : undefined;
+	const outcome = resolvedApprovalOutcome(activity.status, decision, detail?.resolvedBy);
+	const title = detail?.cwd ? `${command}\n${detail.cwd}` : command;
+
+	return (
+		<div className="grid min-w-0 grid-cols-[auto_minmax(0,1fr)] items-center gap-3 rounded-md border border-border/80 bg-surface/45 px-2.5 py-1.5 text-[11.5px] text-muted-foreground">
+			<strong className="shrink-0 font-medium text-foreground">{outcome.label}</strong>
+			<span className="min-w-0 truncate text-right font-mono" title={title}>
+				{command}
+			</span>
+		</div>
+	);
+}
+
+function resolvedApprovalOutcome(
+	status: ConversationActivity["status"],
+	decision?: string,
+	resolvedBy?: string,
+): { label: string; success: boolean } {
+	const value = decision?.toLowerCase() ?? "";
+	if (status === "failed") return { label: "Approval expired", success: false };
+	if (status === "cancelled" || /(deny|decline|reject|cancel)/.test(value)) {
+		return { label: "Cancelled", success: false };
+	}
+	if (/(remember|always|amendment|policy)/.test(value)) {
+		return { label: "Approved and remembered", success: true };
+	}
+	if (/(allow|approve|accept)/.test(value)) return { label: "Approved", success: true };
+	if (resolvedBy === "provider") return { label: "Resolved elsewhere", success: false };
+	return { label: "Resolved", success: false };
 }
 
 /* -------------------------------------------------------------------------- */

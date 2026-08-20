@@ -1767,27 +1767,26 @@ function TurnLiveStatus({ startedAt, blocked }: { startedAt?: string; blocked?: 
 		return () => clearInterval(timer);
 	}, [blocked, startedAt]);
 
+	if (blocked) {
+		return (
+			<span role="alert" className="sr-only">
+				The agent is waiting for your decision.
+			</span>
+		);
+	}
+
 	return (
 		<div className="flex min-h-6 items-center gap-2 px-1 py-0.5" data-testid="live-turn-status">
-			{blocked ? (
-				<span role="alert" className="sr-only">
-					The agent is waiting for your decision.
-				</span>
-			) : null}
-			{blocked ? (
-				<TriangleAlert aria-hidden="true" className="size-3.5 shrink-0 text-warning" />
-			) : (
-				<Loader2
-					aria-hidden="true"
-					className="size-3 shrink-0 animate-spin text-status-working opacity-100"
-				/>
-			)}
+			<Loader2
+				aria-hidden="true"
+				className="size-3 shrink-0 animate-spin text-status-working opacity-100"
+			/>
 			<span
-				role={blocked ? undefined : "status"}
-				aria-live={blocked ? undefined : "polite"}
-				className={cn("text-xs font-medium", blocked ? "text-warning" : "text-muted-foreground")}
+				role="status"
+				aria-live="polite"
+				className="text-xs font-medium text-muted-foreground"
 			>
-				{blocked ? "Waiting for your decision" : `Working for ${elapsed}`}
+				Working for {elapsed}
 			</span>
 		</div>
 	);

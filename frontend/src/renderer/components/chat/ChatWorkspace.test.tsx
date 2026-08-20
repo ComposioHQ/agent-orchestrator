@@ -304,7 +304,9 @@ describe("ChatWorkspace timeline", () => {
 		expect(onInterrupt).toHaveBeenCalledOnce();
 	});
 
-	it("shows blocked turn state inline with the current turn", () => {
+	it("does not duplicate blocked approval state below the approval card", async () => {
+		const user = userEvent.setup();
+		const onDecide = vi.fn();
 		const snapshot = structuredClone(chatFixture);
 		snapshot.items.push({
 			kind: "activity",
@@ -316,16 +318,99 @@ describe("ChatWorkspace timeline", () => {
 			status: "pending",
 			summary: "Run command",
 			requestId: "approval-1",
-			decisions: [{ id: "accept", label: "Approve" }],
+			decisions: [
+				{ id: "deny", label: "Deny" },
+				{ id: "allow_once", label: "Allow Once" },
+				{ id: "always_allow", label: "Always Allow" },
+			],
 			detail: { command: "npm test" },
 			createdAt: "2026-08-08T00:00:00Z",
 		});
 
-		render(<ChatWorkspace snapshot={snapshot} onInterrupt={vi.fn()} />);
+		render(<ChatWorkspace snapshot={snapshot} onDecide={onDecide} onInterrupt={vi.fn()} />);
 
 		expect(screen.getByRole("alert")).toHaveTextContent("The agent is waiting for your decision.");
-		expect(screen.getByText("Waiting for your decision")).toBeInTheDocument();
+		expect(screen.getAllByText("Do you want to run this command?").length).toBeGreaterThan(0);
+		expect(screen.queryByText("Waiting for your decision")).not.toBeInTheDocument();
 		expect(screen.queryByText(/^Working for /)).not.toBeInTheDocument();
+		const approval = screen.getByRole("group", { name: "Approval request approval-1" });
+		expect(within(approval).queryByText("Terminal")).not.toBeInTheDocument();
+		expect(within(approval).getByRole("button", { name: /Deny/ })).toHaveTextContent("DenyEsc");
+		expect(within(approval).getByRole("button", { name: /Allow once/ })).toBeInTheDocument();
+		expect(within(approval).getByRole("button", { name: "More approval options" })).toBeInTheDocument();
+		expect(within(approval).queryByRole("button", { name: "Allow Once" })).not.toBeInTheDocument();
+		expect(within(approval).queryByRole("button", { name: "Always Allow" })).not.toBeInTheDocument();
+		expect(within(approval).queryByRole("button", { name: "Deny" })).not.toBeInTheDocument();
+		await user.click(within(approval).getByRole("button", { name: "More approval options" }));
+		await user.keyboard("{Escape}");
+		expect(onDecide).not.toHaveBeenCalled();
+
+		fireEvent.keyDown(window, { key: "Enter" });
+		expect(onDecide).toHaveBeenCalledWith("approval-1", "allow_once");
+		fireEvent.keyDown(window, { key: "Escape" });
+		expect(onDecide).toHaveBeenCalledWith("approval-1", "deny");
+		onDecide.mockClear();
+
+		await user.click(within(approval).getByRole("button", { name: /Allow once/ }));
+		expect(onDecide).toHaveBeenCalledWith("approval-1", "allow_once");
+
+		await user.click(within(approval).getByRole("button", { name: "More approval options" }));
+		await user.click(screen.getByRole("menuitem", { name: "Always allow this command" }));
+		expect(onDecide).toHaveBeenCalledWith("approval-1", "always_allow");
+	});
+
+	it.each([
+		["accept", "Approved"],
+		["acceptWithExecpolicyAmendment", "Approved and remembered"],
+		["cancel", "Cancelled"],
+	] as const)("keeps a resolved %s approval compact and explicit", (decision, label) => {
+		const snapshot = structuredClone(chatFixture);
+		snapshot.items = [
+			{
+				kind: "activity",
+				id: "approval-resolved-1",
+				sequence: 99,
+				revision: 2,
+				turnId: "turn-2",
+				activityKind: "approval",
+				status: "resolved",
+				summary: "Run gh pr create --base main --head ao/example",
+				requestId: "approval-resolved-1",
+				detail: { decision },
+				createdAt: "2026-08-08T00:00:00Z",
+			},
+		];
+
+		render(<ChatWorkspace snapshot={snapshot} />);
+
+		expect(screen.getByText(label)).toBeInTheDocument();
+		expect(screen.getByText("Run gh pr create --base main --head ao/example")).toBeInTheDocument();
+		expect(screen.queryByText(/req approval-resolved-1/)).not.toBeInTheDocument();
+		expect(screen.queryByText("Already answered. This card is kept for the record.")).not.toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: "Approve" })).not.toBeInTheDocument();
+	});
+
+	it("does not describe an expired approval as approved", () => {
+		const snapshot = structuredClone(chatFixture);
+		snapshot.items = [
+			{
+				kind: "activity",
+				id: "approval-expired-1",
+				sequence: 99,
+				revision: 2,
+				turnId: "turn-2",
+				activityKind: "approval",
+				status: "failed",
+				summary: "Run npm test",
+				requestId: "approval-expired-1",
+				createdAt: "2026-08-08T00:00:00Z",
+			},
+		];
+
+		render(<ChatWorkspace snapshot={snapshot} />);
+
+		expect(screen.getByText("Approval expired")).toBeInTheDocument();
+		expect(screen.queryByText("Approved")).not.toBeInTheDocument();
 	});
 
 	it("lets readers select conversation text", () => {
