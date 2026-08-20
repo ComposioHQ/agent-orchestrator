@@ -33,6 +33,7 @@ type memoryAccountStore struct {
 	memberships []domain.Membership
 	refreshes   map[string]string
 	pingErr     error
+	upsertErr   error
 }
 
 func (s *memoryAccountStore) Ping(context.Context) error {
@@ -40,6 +41,9 @@ func (s *memoryAccountStore) Ping(context.Context) error {
 }
 
 func (s *memoryAccountStore) UpsertGoogleUser(_ context.Context, principal domain.Principal) (domain.Principal, error) {
+	if s.upsertErr != nil {
+		return domain.Principal{}, s.upsertErr
+	}
 	principal.UserID = s.principal.UserID
 	s.principal = principal
 	return principal, nil
@@ -185,6 +189,27 @@ func TestGoogleExchangeRejectsUnverifiedIdentity(t *testing.T) {
 	response := httptest.NewRecorder()
 	server.Handler().ServeHTTP(response, request)
 	if response.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d: %s", response.Code, response.Body.String())
+	}
+}
+
+func TestGoogleExchangeReturnsConflictForDuplicateAccountState(t *testing.T) {
+	store := &memoryAccountStore{
+		refreshes: make(map[string]string),
+		upsertErr: postgres.ErrConflict,
+	}
+	server := newTestServer(t, store, &staticIdentityVerifier{principal: domain.Principal{
+		ExternalID: "google-subject",
+		Email:      "person@example.com",
+	}})
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"/api/cloud/v1/auth/google",
+		bytes.NewBufferString(`{"idToken":"google-id-token"}`),
+	)
+	response := httptest.NewRecorder()
+	server.Handler().ServeHTTP(response, request)
+	if response.Code != http.StatusConflict {
 		t.Fatalf("status = %d: %s", response.Code, response.Body.String())
 	}
 }

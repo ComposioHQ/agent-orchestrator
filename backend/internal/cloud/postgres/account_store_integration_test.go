@@ -45,6 +45,64 @@ func TestAccountFoundationAgainstPostgres(t *testing.T) {
 		t.Fatalf("Alice memberships = %#v", aliceMemberships)
 	}
 
+	disableTx, err := store.pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := disableTx.Exec(
+		ctx,
+		`SELECT set_config('ao.user_id', $1, true),
+		        set_config('ao.org_id', $2, true)`,
+		alice.UserID,
+		aliceMemberships[0].OrgID,
+	); err != nil {
+		_ = disableTx.Rollback(ctx)
+		t.Fatal(err)
+	}
+	if _, err := disableTx.Exec(
+		ctx,
+		`UPDATE ao_org_memberships
+		 SET status = 'disabled'
+		 WHERE user_id = $1 AND org_id = $2`,
+		alice.UserID,
+		aliceMemberships[0].OrgID,
+	); err != nil {
+		_ = disableTx.Rollback(ctx)
+		t.Fatal(err)
+	}
+	if err := disableTx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.UpsertGoogleUser(ctx, domain.Principal{
+		ExternalID:  "google-alice",
+		Email:       "alice@example.com",
+		DisplayName: "Alice",
+	}); err != nil {
+		t.Fatalf("sign in with disabled personal membership: %v", err)
+	}
+	countTx, err := store.pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = countTx.Rollback(ctx) }()
+	if _, err := countTx.Exec(ctx, `SELECT set_config('ao.user_id', $1, true)`, alice.UserID); err != nil {
+		t.Fatal(err)
+	}
+	var aliceMembershipCount int
+	if err := countTx.QueryRow(
+		ctx,
+		`SELECT count(*) FROM ao_org_memberships WHERE user_id = $1`,
+		alice.UserID,
+	).Scan(&aliceMembershipCount); err != nil {
+		t.Fatal(err)
+	}
+	if aliceMembershipCount != 1 {
+		t.Fatalf("Alice membership count = %d, want 1", aliceMembershipCount)
+	}
+	if err := countTx.Rollback(ctx); err != nil {
+		t.Fatal(err)
+	}
+
 	bob, err := store.UpsertGoogleUser(ctx, domain.Principal{
 		Provider:    "google",
 		ExternalID:  "google-bob",

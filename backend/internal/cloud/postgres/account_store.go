@@ -55,18 +55,18 @@ func (s *Store) UpsertGoogleUser(ctx context.Context, principal domain.Principal
 	); err != nil {
 		return domain.Principal{}, err
 	}
-	var hasMembership bool
+	var hasAnyMembership bool
 	if err := tx.QueryRow(
 		ctx,
 		`SELECT EXISTS (
 			SELECT 1 FROM ao_org_memberships
-			WHERE user_id = $1 AND status = 'active'
+			WHERE user_id = $1
 		)`,
 		principal.UserID,
-	).Scan(&hasMembership); err != nil {
+	).Scan(&hasAnyMembership); err != nil {
 		return domain.Principal{}, err
 	}
-	if !hasMembership {
+	if !hasAnyMembership {
 		orgID := uuid.NewString()
 		if _, err := tx.Exec(ctx, `SELECT set_config('ao.org_id', $1, true)`, orgID); err != nil {
 			return domain.Principal{}, err

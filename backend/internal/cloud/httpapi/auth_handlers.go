@@ -67,6 +67,10 @@ func (s *Server) exchangeGoogle(w http.ResponseWriter, r *http.Request) {
 	}
 	principal, err = s.store.UpsertGoogleUser(r.Context(), principal)
 	if err != nil {
+		if errors.Is(err, postgres.ErrConflict) {
+			writeError(w, r, http.StatusConflict, "conflict", "ACCOUNT_CONFLICT", "account conflicts with an existing record")
+			return
+		}
 		s.internalError(w, r, "upsert Google user", err)
 		return
 	}
