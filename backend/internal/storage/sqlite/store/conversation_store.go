@@ -1872,15 +1872,18 @@ func (s *Store) LoadConversationSnapshotPage(
 		return ConversationSnapshot{}, fmt.Errorf("select turn page: %w", err)
 	}
 
+	presentation := s.conversationHistoryPresentation(ctx, conversationID)
 	snapshot := ConversationSnapshot{
 		Conversation:               conversationToDomain(conv),
-		BranchPoints:               s.conversationBranchPoints(ctx, conversationID),
-		BranchedFromEarlierMessage: s.conversationBranchedFromEarlierMessage(ctx, conversationID, conv.ActiveBranchID),
+		BranchPoints:               presentation.branchPoints,
+		BranchedFromEarlierMessage: presentation.branchedFromEarlierMessage,
 		OldestSequence:             oldest,
 		HasMoreBefore:              hasMore,
 	}
 	for _, row := range turnRows {
-		snapshot.Turns = append(snapshot.Turns, turnToDomain(row))
+		turn := turnToDomain(row)
+		presentation.filterInactiveProviderTurn(&turn)
+		snapshot.Turns = append(snapshot.Turns, turn)
 	}
 	// SQL returns newest-first so LIMIT is useful; the API contract remains
 	// oldest-first inside each page.
@@ -1927,13 +1930,16 @@ func (s *Store) LoadConversationSnapshot(
 		return ConversationSnapshot{}, fmt.Errorf("select activities: %w", err)
 	}
 
+	presentation := s.conversationHistoryPresentation(ctx, conversationID)
 	snapshot := ConversationSnapshot{
 		Conversation:               conversationToDomain(conv),
-		BranchPoints:               s.conversationBranchPoints(ctx, conversationID),
-		BranchedFromEarlierMessage: s.conversationBranchedFromEarlierMessage(ctx, conversationID, conv.ActiveBranchID),
+		BranchPoints:               presentation.branchPoints,
+		BranchedFromEarlierMessage: presentation.branchedFromEarlierMessage,
 	}
 	for _, row := range turnRows {
-		snapshot.Turns = append(snapshot.Turns, turnToDomain(row))
+		turn := turnToDomain(row)
+		presentation.filterInactiveProviderTurn(&turn)
+		snapshot.Turns = append(snapshot.Turns, turn)
 	}
 	for _, row := range messageRows {
 		snapshot.Messages = append(snapshot.Messages, messageToDomain(row))
@@ -1944,25 +1950,57 @@ func (s *Store) LoadConversationSnapshot(
 	return snapshot, nil
 }
 
-func (s *Store) conversationBranchedFromEarlierMessage(
-	ctx context.Context,
-	conversationID, activeBranchID string,
-) bool {
-	branch, err := s.ConversationBranch(ctx, conversationID, activeBranchID)
-	return err == nil && branch.ParentBranchID != ""
+type conversationHistoryPresentation struct {
+	activeProviderScopeID      string
+	branchProviderScopes       map[string]string
+	branchPoints               []domain.ConversationBranchPoint
+	branchedFromEarlierMessage bool
 }
 
-// conversationBranchPoints builds prompt-local sibling navigation from durable
-// branch rows. Reads cannot fail merely because navigation metadata does, so a
-// branch-list error leaves the timeline intact and returns no points.
-func (s *Store) conversationBranchPoints(
+func (p conversationHistoryPresentation) filterInactiveProviderTurn(turn *domain.ConversationTurn) {
+	if p.activeProviderScopeID == "" || turn.BranchID == "" {
+		return
+	}
+	providerScopeID, known := p.branchProviderScopes[turn.BranchID]
+	if known && providerScopeID != p.activeProviderScopeID {
+		// The opaque id remains durable in SQLite, but exposing it on the active
+		// snapshot would draw rollback/edit controls that the current provider can
+		// never honor.
+		turn.ProviderTurnID = ""
+	}
+}
+
+// conversationHistoryPresentation scopes edit affordances to the provider that
+// currently owns the conversation. Provider boundaries are parented lineage
+// nodes, but unlike an edit branch they replace no human prompt.
+func (s *Store) conversationHistoryPresentation(
 	ctx context.Context,
 	conversationID string,
-) []domain.ConversationBranchPoint {
+) conversationHistoryPresentation {
 	branches, err := s.ConversationBranches(ctx, conversationID)
 	if err != nil {
-		return nil
+		return conversationHistoryPresentation{}
 	}
+	presentation := conversationHistoryPresentation{
+		branchProviderScopes: make(map[string]string, len(branches)),
+	}
+	for _, branch := range branches {
+		presentation.branchProviderScopes[branch.ID] = branch.ProviderScopeID
+		if branch.Active {
+			presentation.activeProviderScopeID = branch.ProviderScopeID
+			presentation.branchedFromEarlierMessage =
+				branch.ParentBranchID != "" && branch.ReplacedTurnID != ""
+		}
+	}
+	presentation.branchPoints = conversationBranchPointsForProviderScope(
+		branches, presentation.activeProviderScopeID)
+	return presentation
+}
+
+func conversationBranchPointsForProviderScope(
+	branches []domain.ConversationBranch,
+	activeProviderScopeID string,
+) []domain.ConversationBranchPoint {
 	type groupKey struct {
 		sourceBranchID string
 		replacedTurnID string
@@ -1975,7 +2013,8 @@ func (s *Store) conversationBranchPoints(
 	groupByReplacement := make(map[string]groupKey)
 	order := make([]groupKey, 0)
 	for _, branch := range branches {
-		if branch.ParentBranchID == "" || branch.ReplacedTurnID == "" || branch.ReplacementTurnID == "" {
+		if branch.ProviderScopeID != activeProviderScopeID ||
+			branch.ParentBranchID == "" || branch.ReplacedTurnID == "" || branch.ReplacementTurnID == "" {
 			continue
 		}
 		key := groupKey{sourceBranchID: branch.ParentBranchID, replacedTurnID: branch.ReplacedTurnID}
@@ -2070,6 +2109,7 @@ func conversationBranchToDomain(row gen.SelectConversationBranchRow) domain.Conv
 		ConversationID:         row.ConversationID,
 		SessionID:              domain.SessionID(row.SessionID.String),
 		ProviderConversationID: row.ProviderConversationID,
+		ProviderScopeID:        row.ProviderScopeID,
 		ParentBranchID:         row.ParentBranchID.String,
 		ForkAfterTurnID:        row.ForkAfterTurnID.String,
 		ReplacedTurnID:         row.ReplacedTurnID.String,
@@ -2086,6 +2126,7 @@ func conversationBranchListToDomain(row gen.SelectConversationBranchesRow) domai
 		ConversationID:         row.ConversationID,
 		SessionID:              domain.SessionID(row.SessionID.String),
 		ProviderConversationID: row.ProviderConversationID,
+		ProviderScopeID:        row.ProviderScopeID,
 		ParentBranchID:         row.ParentBranchID.String,
 		ForkAfterTurnID:        row.ForkAfterTurnID.String,
 		ReplacedTurnID:         row.ReplacedTurnID.String,
@@ -2170,6 +2211,7 @@ func turnToDomain(row gen.ConversationTurn) domain.ConversationTurn {
 	turn := domain.ConversationTurn{
 		ID:                 row.ID,
 		ConversationID:     row.ConversationID,
+		BranchID:           row.BranchID,
 		HandledBySessionID: row.HandledBySessionID,
 		ProviderTurnID:     row.ProviderTurnID,
 		State:              row.State,

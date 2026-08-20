@@ -1634,6 +1634,21 @@ func (c *Controller) Rollback(ctx context.Context, turnID string) (int, error) {
 		return 0, fmt.Errorf("%w: turn %s is not in this session's conversation",
 			ErrTurnNotRollbackable, turnID)
 	}
+	if turn.BranchID != "" {
+		turnBranch, branchErr := c.store.ConversationBranch(
+			ctx, c.conversation.ID, turn.BranchID)
+		if branchErr != nil {
+			return 0, fmt.Errorf("load rollback turn branch: %w", branchErr)
+		}
+		activeBranch, branchErr := c.store.ConversationBranch(
+			ctx, c.conversation.ID, c.conversation.ActiveBranchID)
+		if branchErr != nil {
+			return 0, fmt.Errorf("load active rollback branch: %w", branchErr)
+		}
+		if turnBranch.ProviderScopeID != activeBranch.ProviderScopeID {
+			return 0, ErrTurnProviderMismatch
+		}
+	}
 	if turn.ProviderTurnID == "" {
 		// The provider never accepted this turn, so it holds no history to discard.
 		// Hiding AO's rows anyway would leave the agent remembering more than the

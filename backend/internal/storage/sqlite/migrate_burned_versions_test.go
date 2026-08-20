@@ -104,8 +104,9 @@ var shippedMigrations = map[int64]string{
 	98:  "0098_session_native_identity_generation.sql",
 	99:  "0099_interface_transition_notice_acknowledgement.sql",
 	100: "0100_session_model.sql",
-	101: "0101_usage_cost_estimation.sql",
-	102: "0102_usage_cost_candidate_canonical_index.sql",
+	101: "0101_conversation_provider_ownership_epochs.sql",
+	102: "0102_usage_cost_estimation.sql",
+	103: "0103_usage_cost_candidate_canonical_index.sql",
 }
 
 // burnedVersion reports version numbers that must never be (re)used: they
