@@ -200,7 +200,7 @@ func (c *Collector) ReactivateSession(
 	if err != nil {
 		return err
 	}
-	nativeID := boundedUsageMetadata(session.Metadata.AgentSessionID)
+	nativeID := usageNativeSessionID(session)
 	var current *domain.UsageBindingRecord
 	for index := len(bindings) - 1; index >= 0; index-- {
 		binding := &bindings[index]
@@ -238,7 +238,7 @@ func (c *Collector) RecordHook(ctx context.Context, sessionID domain.SessionID, 
 	signal.ProviderHint = trustedClaudeProviderHint(session.Harness, signal.ProviderHint)
 	signal.NativeSessionID = boundedUsageMetadata(signal.NativeSessionID)
 	if signal.NativeSessionID == "" {
-		signal.NativeSessionID = boundedUsageMetadata(session.Metadata.AgentSessionID)
+		signal.NativeSessionID = usageNativeSessionID(session)
 	}
 	if signal.NativeSessionID == "" {
 		signal.NativeSessionID = nativeIDFromTranscript(signal.TranscriptPath)
@@ -496,7 +496,7 @@ func (c *Collector) BackfillActive(ctx context.Context) error {
 		if session.IsTerminated || !SupportedHarness(session.Harness) {
 			continue
 		}
-		nativeID := boundedUsageMetadata(session.Metadata.AgentSessionID)
+		nativeID := usageNativeSessionID(session)
 		if nativeID == "" || !nativeUsageIDPattern.MatchString(nativeID) {
 			continue
 		}
@@ -505,6 +505,21 @@ func (c *Collector) BackfillActive(ctx context.Context) error {
 		}
 	}
 	return errors.Join(errs...)
+}
+
+// usageNativeSessionID returns the provider transcript identity for the
+// session's committed interface. Chat controllers persist that identity as the
+// provider conversation id because they have no terminal hook to populate the
+// agent session id. TUI controllers populate the agent session id through their
+// native hook pipeline. Prefer the Chat field only when it is present so older
+// migrated records can still fall back to their hook-derived identity.
+func usageNativeSessionID(session domain.SessionRecord) string {
+	nativeID := session.Metadata.AgentSessionID
+	if domain.NormalizeSessionMode(session.Mode) == domain.SessionModeChat &&
+		strings.TrimSpace(session.Metadata.ProviderConversationID) != "" {
+		nativeID = session.Metadata.ProviderConversationID
+	}
+	return boundedUsageMetadata(nativeID)
 }
 
 func (c *Collector) backfillSession(ctx context.Context, session domain.SessionRecord, nativeID string) error {

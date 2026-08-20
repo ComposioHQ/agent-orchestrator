@@ -22,10 +22,11 @@ func TestCostBackfillerProcessesExact256RowPages(t *testing.T) {
 		count       int
 		want        string
 		wantAfterID string
+		wantLists   int
 	}{
-		{count: 256, want: "[256]", wantAfterID: "[0 256]"},
-		{count: 257, want: "[256 1]", wantAfterID: "[0 256]"},
-		{count: 513, want: "[256 256 1]", wantAfterID: "[0 256 512]"},
+		{count: 256, want: "[256]", wantAfterID: "[0 256]", wantLists: 2},
+		{count: 257, want: "[256 1]", wantAfterID: "[0 256]", wantLists: 2},
+		{count: 513, want: "[256 256 1]", wantAfterID: "[0 256 512]", wantLists: 3},
 	}
 	for _, test := range tests {
 		t.Run(fmt.Sprintf("rows_%d", test.count), func(t *testing.T) {
@@ -48,6 +49,9 @@ func TestCostBackfillerProcessesExact256RowPages(t *testing.T) {
 				t.Fatalf("Enqueue: %v", err)
 			}
 			<-store.complete
+			for range test.wantLists {
+				<-store.listed
+			}
 			cancel()
 			backfiller.Wait()
 
@@ -336,6 +340,7 @@ type fakeBackfillStore struct {
 	batchVersions     []string
 	listVersions      []string
 	listAfterIDs      []int64
+	listed            chan int64
 	complete          chan struct{}
 	applied           chan string
 	doneOnce          sync.Once
@@ -363,6 +368,7 @@ func (c *backfillFenceAdmissionContext) Err() error {
 func newFakeBackfillStore(count int) *fakeBackfillStore {
 	store := &fakeBackfillStore{
 		complete:   make(chan struct{}),
+		listed:     make(chan int64, 16),
 		applied:    make(chan string, 16),
 		totalKnown: make(map[int64]bool),
 	}
@@ -401,6 +407,7 @@ func (s *fakeBackfillStore) ListUsageCostCandidates(
 	defer s.mu.Unlock()
 	s.listVersions = append(s.listVersions, version)
 	s.listAfterIDs = append(s.listAfterIDs, afterID)
+	s.listed <- afterID
 	if s.listFailures > 0 {
 		s.listFailures--
 		return nil, errors.New("transient list failure")

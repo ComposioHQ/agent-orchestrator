@@ -24,7 +24,7 @@ Add a canonical-repo-only daily/manual sync workflow (`17 3 * * *` UTC) and a re
 
 ## Task 2: Provider attribution, cache-write splits, and durable pricing schema
 
-Create migration `0095_usage_cost_estimation.sql` (or the next free number after a fresh main sync), append it to the shipped ledger, and never edit migration 0052. Add `usage_bindings.provider_hint`. Add nullable event `provider_id`, nullable 5m/1h cache-write token splits, nullable four component costs, nullable total, and non-null empty-default `pricing_version`, plus the provider/version candidate index. Existing rows remain null-attributed and unpriced.
+Create migrations `0101_usage_cost_estimation.sql` and `0102_usage_cost_candidate_canonical_index.sql`, append them to the shipped ledger, and never edit migration 0052. Add `usage_bindings.provider_hint`. Add nullable event `provider_id`, nullable 5m/1h cache-write token splits, nullable four component costs, nullable total, and non-null empty-default `pricing_version`, plus the provider/version candidate index. Existing rows remain null-attributed and unpriced.
 
 Extend hook/domain/store contracts. Claude hook route hints: default/API Anthropic -> `anthropic`; official `api.z.ai` -> `zai`; Bedrock -> `bedrock`; Vertex -> `vertex_ai`; conflicting/unknown custom routing -> empty. Persist only the canonical ID, never a URL. Claude event precedence is message provider, record provider, retained native provider, trusted hook hint, then `unknown`. Codex retains `session_meta.payload.model_provider` for subsequent events in parser-state v1. Lookup canonicalization trims/lowercases and strips at most one exact provider prefix; explicit alias `z.ai` -> `zai`; observation retains source facts.
 

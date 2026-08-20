@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { useNavigate } from "@tanstack/react-router";
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useId, useState, type ReactNode } from "react";
 import type { TFunction } from "i18next";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -15,6 +15,7 @@ import {
 	inspectorEmptyClass,
 	type InspectorPullRequest,
 	type InspectorInlineComment,
+	type InspectorGithubReview,
 	type InspectorReviewGroup,
 	type InspectorReviewLabels,
 	type InspectorTimelineEvent,
@@ -22,6 +23,8 @@ import {
 } from "@aoagents/product-ui";
 import {
 	ArrowUpRight,
+	ChevronDown,
+	ChevronRight,
 	Files as FilesIcon,
 	GitPullRequest,
 	GitMerge,
@@ -43,10 +46,12 @@ import {
 	useSessionScmSummary,
 	type SessionPRSummary,
 } from "../hooks/useSessionScmSummary";
+import { useSessionUsage, type SessionUsage } from "../hooks/useSessionUsage";
 import { useSessionWorkspaceFilesChangedCount } from "../hooks/useSessionWorkspaceFiles";
-import { useSessionUsage } from "../hooks/useSessionUsageSummaries";
 import { clearTerminateSessionState, useTerminateSession } from "../hooks/useTerminateSession";
+import { formatCostNanos, formatEstimatedCost, type EstimatedCost } from "../lib/format-cost";
 import { prBrowserUrl, prCardPresentation, prNounKeys, sessionPRDisplaySummaries } from "../lib/pr-display";
+import { formatTokenCount } from "../lib/format-token-count";
 import type { WorkspaceSession, WorkspaceSummary } from "../types/workspace";
 import { findProjectOrchestrator, sortedPRs } from "../types/workspace";
 import { getAgentActivityView, getSessionTimelinePillView } from "../lib/session-presentation";
@@ -65,7 +70,6 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "./ui/t
 import { appI18n } from "../i18n";
 import type { MessageKey } from "../i18n";
 import { usesPreviewWorkspaceData as usePreviewData } from "../lib/preview-mode";
-import { formatCostNanos, formatEstimatedCost, type EstimatedCost } from "../lib/format-cost";
 import {
 	openReviewStatesFor,
 	reviewIsRunning,
@@ -172,8 +176,19 @@ export function SessionInspector({
 		onViewChange?.(next);
 		if (next === "files") onOpenFiles?.();
 	};
-	const view: InspectorView = requestedView;
-	const tabs = VIEW_DEFS.map((entry) => {
+	// A persisted/controlled Reviews selection can outlive the last reviewable PR.
+	// Keep the shell on a real, visible tab instead of rendering an empty, unlabelled body.
+	const reviewsAvailable = reviewsTabVisible(session);
+	const availableViewDefs = reviewsAvailable
+		? VIEW_DEFS
+		: VIEW_DEFS.filter((entry) => entry.id !== "reviews");
+	const view: InspectorView = availableViewDefs.some((entry) => entry.id === requestedView) ? requestedView : "summary";
+	useEffect(() => {
+		if (view === requestedView) return;
+		setInternalView(view);
+		onViewChange?.(view);
+	}, [onViewChange, requestedView, view]);
+	const tabs = availableViewDefs.map((entry) => {
 		const label = t(entry.labelKey);
 		return {
 			...entry,
@@ -186,41 +201,80 @@ export function SessionInspector({
 		};
 	});
 	return (
-		<SessionInspectorShellView
-			activeView={view}
-			ariaLabel={t("inspector.aria")}
-			browserPoppedOut={browserPoppedOut}
-			browserView={
-				session ? (
-					<BrowserView
-						browserPoppedOut={browserPoppedOut}
-						browserAnnotationQueue={browserAnnotationQueue}
-						browserView={browserView}
-						isActive={isInspectorVisible && !browserPoppedOut}
-						onTogglePopOut={onToggleBrowserPopOut}
-						session={session}
-					/>
-				) : undefined
-			}
-			filesView={session ? <FilesView filesView={filesView} onOpenFiles={onOpenFiles} /> : undefined}
-			headerActions={<span aria-hidden="true" className="session-inspector-actions-spacer" />}
-			isVisible={isInspectorVisible}
-			loadingText={session ? undefined : t("inspector.loadingSession")}
-			onViewChange={setView}
-			reviewsView={
-				session ? <ReviewsView onOpenReviewerTerminal={onOpenReviewerTerminal} session={session} /> : undefined
-			}
-			summaryView={
-				session ? <SummaryView session={session} /> : undefined
-			}
-			tabs={tabs}
-		/>
+		// SessionInspectorShellView (packages/product-ui) doesn't accept a
+		// className, but styles.css's native-composition transparency cascade
+		// targets a `.session-inspector` ancestor around it (to punch a
+		// see-through hole for the live browser page when the compositor's
+		// shell is raised for an overlay). `contents` keeps this wrapper out of
+		// layout/flex entirely — it exists purely as a CSS selector anchor.
+		<div className="session-inspector contents">
+			<SessionInspectorShellView
+				activeView={view}
+				ariaLabel={t("inspector.aria")}
+				browserPoppedOut={browserPoppedOut}
+				browserView={
+					session ? (
+						<BrowserView
+							browserPoppedOut={browserPoppedOut}
+							browserAnnotationQueue={browserAnnotationQueue}
+							browserView={browserView}
+							isActive={isInspectorVisible && !browserPoppedOut}
+							onTogglePopOut={onToggleBrowserPopOut}
+							session={session}
+						/>
+					) : undefined
+				}
+				filesView={session ? <FilesView filesView={filesView} onOpenFiles={onOpenFiles} /> : undefined}
+				headerActions={<span aria-hidden="true" className="session-inspector-actions-spacer" />}
+				isVisible={isInspectorVisible}
+				loadingText={session ? undefined : t("inspector.loadingSession")}
+				onViewChange={setView}
+				reviewsView={
+					session ? <ReviewsView onOpenReviewerTerminal={onOpenReviewerTerminal} session={session} /> : undefined
+				}
+				summaryView={
+					session ? <SummaryView canOpenReviews={reviewsAvailable} onOpenReviews={() => setView("reviews")} session={session} /> : undefined
+				}
+				tabs={tabs}
+			/>
+		</div>
 	);
 }
 
-function SummaryView({ session }: { session: WorkspaceSession }) {
+function reviewsTabVisible(session: WorkspaceSession | undefined): boolean {
+	if (!session) return true;
+	return sortedPRs(session).some((pr) => pr.state === "open" || pr.state === "draft");
+}
+
+function externalReviewActorMatchesPRAuthor(actor: string | undefined, author: string | undefined): boolean {
+	const normalizedActor = normalizeReviewerId(actor);
+	const normalizedAuthor = normalizeReviewerId(author);
+	return normalizedActor !== "" && normalizedActor === normalizedAuthor;
+}
+
+function normalizeReviewerId(value: string | undefined): string {
+	return value?.trim().replace(/^@+/, "").toLowerCase() ?? "";
+}
+
+function SummaryView({
+	canOpenReviews,
+	onOpenReviews,
+	session,
+}: {
+	canOpenReviews: boolean;
+	onOpenReviews: () => void;
+	session: WorkspaceSession;
+}) {
 	const { t } = useTranslation();
 	const query = useSessionScmSummary(session.id);
+	const developerMode = useUiStore((state) => state.developerMode);
+	const usageQuery = useSessionUsage(session.id, developerMode);
+	const showUsage =
+		developerMode &&
+		!usageQuery.isLoading &&
+		!usageQuery.isError &&
+		hasMeaningfulSessionUsage(usageQuery.data);
+	const showUsageError = developerMode && usageQuery.isError;
 	const prSummaries = sessionPRDisplaySummaries(session, query.data);
 	const prSectionTitle = prSummaries.length > 1 ? t("inspector.pullRequests", { count: prSummaries.length }) : t("inspector.pullRequest");
 	const hasPRs = prSummaries.length > 0;
@@ -238,7 +292,13 @@ function SummaryView({ session }: { session: WorkspaceSession }) {
 				<div className="flex flex-col gap-1.5">
 					{hasPRs ? (
 						prSummaries.map((pr) => (
-							<PRSummaryCard key={pr.url || pr.htmlUrl || pr.number} pr={pr} sessionId={session.id} />
+							<PRSummaryCard
+								canOpenReviews={canOpenReviews}
+								key={pr.url || pr.htmlUrl || pr.number}
+								onOpenReviews={onOpenReviews}
+								pr={pr}
+								sessionId={session.id}
+							/>
 						))
 					) : (
 						<p className={inspectorEmptyClass}>{t("inspector.noPROpened")}</p>
@@ -246,69 +306,20 @@ function SummaryView({ session }: { session: WorkspaceSession }) {
 				</div>
 			}
 			pullRequestTitle={prSectionTitle}
-			usage={<EstimatedCostSection sessionId={session.id} />}
+			usage={
+				showUsageError ? (
+					<Section title={t("inspector.usage.title")}>
+						<p className={inspectorEmptyClass} role="alert">
+							{t("inspector.usage.totalTokensUnavailable")}
+						</p>
+					</Section>
+				) : showUsage && usageQuery.data ? (
+					<Section title={t("inspector.usage.title")}>
+						<UsageCostTelemetry usage={usageQuery.data} />
+					</Section>
+				) : null
+			}
 		/>
-	);
-}
-
-function EstimatedCostSection({ sessionId }: { sessionId: string }) {
-	const { t } = useTranslation();
-	const query = useSessionUsage(sessionId);
-	const cost = query.data?.totals?.estimatedCost;
-	const total = formatEstimatedCost(cost);
-	const models =
-		query.data?.harnesses?.flatMap((harness) =>
-			harness.models.map((model) => ({ harness: harness.harness, model })),
-		) ?? [];
-
-	return (
-		<Section title={t("usage.estimatedCost")}>
-			{query.isPending ? (
-				<p className={inspectorEmptyClass}>{t("usage.loadingEstimatedCost")}</p>
-			) : query.isError ? (
-				<p className="text-xs text-error" role="status">
-					{t("usage.unableLoadEstimatedCost")}
-				</p>
-			) : (
-				<div className="space-y-2.5">
-					<div className="font-mono text-sm font-semibold tabular-nums text-settings-label">
-						{total ?? "—"}
-					</div>
-					<dl className="grid grid-cols-[1fr_auto] gap-x-4 gap-y-1 text-xs">
-						<InspectorCostRow label={t("usage.input")} nanos={cost?.uncachedInputNanos ?? null} />
-						<InspectorCostRow label={t("usage.cacheRead")} nanos={cost?.cacheReadNanos ?? null} />
-						<InspectorCostRow label={t("usage.cacheWrite")} nanos={cost?.cacheWriteNanos ?? null} />
-						<InspectorCostRow label={t("usage.output")} nanos={cost?.outputNanos ?? null} />
-					</dl>
-					{models.length > 0 ? (
-						<div className="border-t border-border pt-2">
-							{models.map(({ harness, model }) => (
-								<div
-									className="flex min-w-0 items-center justify-between gap-3 py-0.5 text-2xs"
-									key={`${harness}:${model.providerId}:${model.modelId}`}
-								>
-									<span className="min-w-0 truncate font-mono text-muted-foreground">
-										{model.providerId} · {model.modelId}
-									</span>
-									<span className="shrink-0 font-mono tabular-nums text-settings-label">
-										{formatEstimatedCost(model.totals.estimatedCost) ?? "—"}
-									</span>
-								</div>
-							))}
-						</div>
-					) : null}
-				</div>
-			)}
-		</Section>
-	);
-}
-
-function InspectorCostRow({ label, nanos }: { label: string; nanos: EstimatedCost["totalNanos"] | null }) {
-	return (
-		<>
-			<dt className="text-muted-foreground">{label}</dt>
-			<dd className="text-right font-mono tabular-nums text-settings-label">{formatCostNanos(nanos) ?? "—"}</dd>
-		</>
 	);
 }
 
@@ -378,6 +389,83 @@ function InspectorPolicyRow({
 	);
 }
 
+function UsageCostTelemetry({ usage }: { usage: SessionUsage }) {
+	const { t } = useTranslation();
+	const totalTokens = usageTokenTotal(usage.totals);
+	const exactTotal = totalTokens?.toLocaleString("en-US");
+	const estimatedCost = formatEstimatedCost(usage.totals.estimatedCost);
+
+	return (
+		<div>
+			<div className="grid grid-cols-2 gap-4">
+				<div className="min-w-0">
+					<p className="text-2xs text-settings-muted">{t("inspector.usage.totalTokens")}</p>
+					<p
+						aria-label={
+							totalTokens === null
+								? t("inspector.usage.totalTokensUnavailable")
+								: t("inspector.usage.totalTokensAria", { count: exactTotal })
+						}
+						className="mt-0.5 truncate font-mono text-md-sm font-medium text-settings-label"
+						title={totalTokens === null ? undefined : t("inspector.usage.tokensExact", { count: exactTotal })}
+					>
+						{totalTokens === null ? t("inspector.usage.noUsageYet") : formatTelemetryTokenValue(totalTokens)}
+					</p>
+				</div>
+				<div className="min-w-0 text-right">
+					<p className="text-2xs text-settings-muted">{t("usage.estimatedCost")}</p>
+					<p className="mt-0.5 truncate font-mono text-sm-md font-medium text-settings-label">
+						{estimatedCost ?? "—"}
+					</p>
+				</div>
+			</div>
+
+			<div className="mt-3">
+				<div
+					className="rounded-lg border border-(--color-border-settings-input) bg-(--color-bg-settings-input) px-2.5 py-2.5"
+					data-testid="session-usage-metrics"
+				>
+					<UsageMetrics totals={usage.totals} />
+				</div>
+			</div>
+
+			<div className="mt-3 rounded-lg border border-(--color-border-settings-input) bg-(--color-bg-settings-input) px-2.5 py-2.5">
+				<dl className="grid grid-cols-[1fr_auto] gap-x-4 gap-y-1 text-xs">
+					<InspectorCostRow label={t("usage.input")} nanos={usage.totals.estimatedCost?.uncachedInputNanos ?? null} />
+					<InspectorCostRow label={t("usage.cacheRead")} nanos={usage.totals.estimatedCost?.cacheReadNanos ?? null} />
+					<InspectorCostRow label={t("usage.cacheWrite")} nanos={usage.totals.estimatedCost?.cacheWriteNanos ?? null} />
+					<InspectorCostRow label={t("usage.output")} nanos={usage.totals.estimatedCost?.outputNanos ?? null} />
+				</dl>
+			</div>
+
+			{usage.harnesses.length > 0 ? (
+				<div className="mt-3 border-t border-(--color-border-settings-input) pt-2">
+					<div className="grid grid-cols-[minmax(0,1fr)_4.5rem_5.5rem] items-center gap-2 px-1 pb-1 text-2xs text-settings-muted">
+						<span>{t("inspector.usage.agent")}</span>
+						<span className="text-right">{t("inspector.usage.tokens")}</span>
+						<span className="text-right">{t("inspector.usage.cost")}</span>
+					</div>
+					{usage.harnesses.map((harness, index) => (
+						<UsageProviderRow
+							harness={harness}
+							key={`${harness.harness}:${index}`}
+						/>
+					))}
+				</div>
+			) : null}
+		</div>
+	);
+}
+
+function InspectorCostRow({ label, nanos }: { label: string; nanos: EstimatedCost["totalNanos"] | null }) {
+	return (
+		<>
+			<dt className="text-settings-muted">{label}</dt>
+			<dd className="text-right font-mono tabular-nums text-settings-label">{formatCostNanos(nanos) ?? "—"}</dd>
+		</>
+	);
+}
+
 function AutoInjectCIPolicyControl({ session }: { session: WorkspaceSession }) {
 	const { t } = useTranslation();
 	const queryClient = useQueryClient();
@@ -431,6 +519,50 @@ function AutoInjectCIPolicyControl({ session }: { session: WorkspaceSession }) {
 					{error}
 				</p>
 			) : null}
+		</>
+	);
+}
+
+function UsageProviderRow({ harness }: { harness: SessionUsage["harnesses"][number] }) {
+	const { t } = useTranslation();
+	const harnessName = formatHarnessName(harness.harness);
+
+	return (
+		<UsageDisclosureRow
+			detailsLabel={t("inspector.usage.providerDetails", { name: harnessName })}
+			name={harnessName}
+			nameClassName="text-sm-md"
+			regionLabel={t("inspector.usage.providerPeek", { name: harnessName })}
+			totals={harness.totals}
+		>
+			<ProviderUsageDetails harness={harness} />
+		</UsageDisclosureRow>
+	);
+}
+
+function ProviderUsageDetails({ harness }: { harness: SessionUsage["harnesses"][number] }) {
+	const { t } = useTranslation();
+
+	return (
+		<>
+			<div className="pb-2">
+				<UsageMetrics totals={harness.totals} />
+			</div>
+
+			<div className="border-t border-(--color-border-settings-input) pt-2">
+				<div className="grid grid-cols-[minmax(0,1fr)_4.5rem_5.5rem] items-center gap-2 px-1 pb-1 text-2xs text-settings-muted">
+					<span>{t("inspector.usage.models", { count: harness.models.length })}</span>
+					<span className="text-right">{t("inspector.usage.tokens")}</span>
+					<span className="text-right">{t("inspector.usage.cost")}</span>
+				</div>
+				{harness.models.length > 0 ? (
+					harness.models.map((model, index) => (
+						<UsageModelRow key={`${model.providerId}:${model.modelId}:${index}`} model={model} />
+					))
+				) : (
+					<p className="px-1 py-2 text-2xs text-settings-muted">{t("inspector.usage.noModelTelemetry")}</p>
+				)}
+			</div>
 		</>
 	);
 }
@@ -493,6 +625,195 @@ function updateSessionAutoInjectCI(
 			candidate.id === sessionId ? { ...candidate, autoInjectCI } : candidate,
 		),
 	}));
+}
+
+function UsageModelRow({
+	model,
+}: {
+	model: SessionUsage["harnesses"][number]["models"][number];
+}) {
+	const { t } = useTranslation();
+	const modelName = `${model.providerId} · ${model.modelId}`;
+
+	return (
+		<UsageDisclosureRow
+			detailsLabel={t("inspector.usage.modelDetails", { name: modelName })}
+			name={modelName}
+			nameClassName="font-mono text-2xs"
+			regionLabel={t("inspector.usage.modelPeek", { name: modelName })}
+			totals={model.totals}
+		>
+			<UsageMetrics totals={model.totals} />
+		</UsageDisclosureRow>
+	);
+}
+
+function UsageDisclosureRow({
+	children,
+	detailsLabel,
+	name,
+	nameClassName,
+	regionLabel,
+	totals,
+}: {
+	children: ReactNode;
+	detailsLabel: string;
+	name: string;
+	nameClassName: string;
+	regionLabel: string;
+	totals: SessionUsage["totals"];
+}) {
+	const { t } = useTranslation();
+	const [open, setOpen] = useState(false);
+	const detailID = useId();
+	const totalTokens = usageTokenTotal(totals);
+	const exactTotal = totalTokens?.toLocaleString("en-US");
+
+	return (
+		<div className="p-2">
+			<button
+				aria-controls={detailID}
+				aria-expanded={open}
+				aria-label={detailsLabel}
+				className="grid w-full grid-cols-[minmax(0,1fr)_4.5rem_5.5rem] items-center gap-2 rounded-md px-1 py-2 text-left outline-none transition-colors hover:bg-interactive-hover focus-visible:bg-interactive-hover focus-visible:ring-1 focus-visible:ring-ring"
+				onClick={() => setOpen((current) => !current)}
+				type="button"
+			>
+				<span className={`flex min-w-0 items-center gap-1 text-settings-label ${nameClassName}`}>
+					{open ? (
+						<ChevronDown aria-hidden="true" className="size-3 shrink-0 text-settings-muted" />
+					) : (
+						<ChevronRight aria-hidden="true" className="size-3 shrink-0 text-settings-muted" />
+					)}
+					<span className="truncate">{name}</span>
+				</span>
+				<span
+					className="text-right font-mono text-2xs text-settings-label"
+					title={totalTokens === null ? undefined : t("inspector.usage.tokensExact", { count: exactTotal })}
+				>
+					{totalTokens === null ? "—" : formatTelemetryTokenValue(totalTokens)}
+				</span>
+				<UsageCostValue cost={totals.estimatedCost} />
+			</button>
+			{open ? (
+				<div
+					aria-label={regionLabel}
+					className="mx-1 mb-2 border-l border-(--color-border-settings-input) py-1.5 pl-2.5"
+					id={detailID}
+					role="region"
+				>
+					{children}
+				</div>
+			) : null}
+		</div>
+	);
+}
+
+function UsageCostValue({ cost }: { cost: EstimatedCost | null }) {
+	const { t } = useTranslation();
+	const value = formatEstimatedCost(cost);
+	const label = value ?? t("inspector.usage.metricUnavailable", { label: t("inspector.usage.cost") });
+	return (
+		<span aria-label={label} className="text-right font-mono text-2xs text-settings-label" title={label}>
+			{value ?? "—"}
+		</span>
+	);
+}
+
+function UsageMetrics({ totals }: { totals: SessionUsage["totals"] }) {
+	const { t } = useTranslation();
+	return (
+		<dl className="grid grid-cols-2 gap-x-4 gap-y-2 @max-[300px]/inspector:grid-cols-1">
+			<UsageMetric label={t("inspector.usage.inputTokens")} metric={totals.inputTokens} />
+			<UsageMetric label={t("inspector.usage.outputTokens")} metric={totals.outputTokens} />
+			<UsageMetric label={t("inspector.usage.cacheReadTokens")} metric={totals.cacheReadTokens} />
+			<UsageMetric label={t("inspector.usage.cacheWriteTokens")} metric={totals.cacheWriteTokens} />
+			<UsageMetric label={t("inspector.usage.reasoningTokens")} metric={totals.reasoningTokens} />
+			<UsageMetric label={t("inspector.usage.uncachedInputTokens")} metric={totals.uncachedInputTokens} />
+		</dl>
+	);
+}
+
+function UsageMetric({
+	label,
+	metric,
+}: {
+	label: string;
+	metric: SessionUsage["totals"]["inputTokens"];
+}) {
+	const { t } = useTranslation();
+	const exactValue = metric?.toLocaleString("en-US");
+	const accessibleLabel =
+		metric === null
+			? t("inspector.usage.metricUnavailable", { label })
+			: t("inspector.usage.metricAria", { label, count: exactValue });
+	return (
+		<div className="min-w-0">
+			<dt className="truncate text-2xs text-settings-muted">{label}</dt>
+			<dd
+				aria-label={accessibleLabel}
+				className="mt-0.5 truncate font-mono text-sm-md text-settings-label"
+				title={
+					metric === null
+						? t("inspector.usage.metricUnavailable", { label })
+						: t("inspector.usage.tokensExact", { count: exactValue })
+				}
+			>
+				{metric === null ? "—" : formatTelemetryTokenValue(metric)}
+			</dd>
+		</div>
+	);
+}
+
+const usageMetricKeys = [
+	"inputTokens",
+	"uncachedInputTokens",
+	"cacheReadTokens",
+	"cacheWriteTokens",
+	"outputTokens",
+	"reasoningTokens",
+] as const;
+
+function usageScopes(usage: SessionUsage): SessionUsage["totals"][] {
+	return [
+		usage.totals,
+		...usage.harnesses.flatMap((harness) => [
+			harness.totals,
+			...harness.models.map((model) => model.totals),
+		]),
+	];
+}
+
+function hasMeaningfulSessionUsage(usage?: SessionUsage): usage is SessionUsage {
+	if (!usage) return false;
+	return usageScopes(usage).some((totals) =>
+		totals.estimatedCost !== null || usageMetricKeys.some((key) => (totals[key] ?? 0) > 0),
+	);
+}
+
+function formatTelemetryTokenValue(totalTokens: number): string {
+	return formatTokenCount(totalTokens).replace(/ tok$/, "");
+}
+
+function usageTokenTotal(totals: SessionUsage["totals"]): number | null {
+	if (totals.inputTokens === null && totals.outputTokens === null) return null;
+	return (totals.inputTokens ?? 0) + (totals.outputTokens ?? 0);
+}
+
+function formatHarnessName(harness: string): string {
+	const knownNames: Record<string, string> = {
+		"claude-code": "Claude",
+		claude: "Claude",
+		codex: "Codex",
+		glm: "GLM",
+		kimi: "Kimi",
+	};
+	if (knownNames[harness]) return knownNames[harness];
+	return harness
+		.split(/[-_]/)
+		.filter(Boolean)
+		.map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+		.join(" ");
 }
 
 function ResumeAgentControl({ session }: { session: WorkspaceSession }) {
@@ -601,6 +922,7 @@ function SessionControls({ session }: { session: WorkspaceSession }) {
 	return (
 		<Section title={t("inspector.sessionControls")}>
 			<AutoInjectCIPolicyControl session={session} />
+			<AutoInjectReviewPolicyControl session={session} />
 			{session.kind === "orchestrator" ? null : canTerminateNow ? (
 				<div className="flex items-center justify-between gap-3 py-1">
 					<span className="min-w-0 text-xs font-medium text-settings-label">{t("inspector.terminateShort")}</span>
@@ -657,14 +979,25 @@ function updateSessionMergePolicy(
 	}));
 }
 
-function PRSummaryCard({ pr, sessionId }: { pr: SessionPRSummary; sessionId: string }) {
+function PRSummaryCard({
+	canOpenReviews,
+	onOpenReviews,
+	pr,
+	sessionId,
+}: {
+	canOpenReviews: boolean;
+	onOpenReviews: () => void;
+	pr: SessionPRSummary;
+	sessionId: string;
+}) {
 	const { t } = useTranslation();
 	const queryClient = useQueryClient();
 	const presentation = prCardPresentation(pr);
 	const canMerge =
 		pr.state === "open" &&
-		presentation.primary.key === "merge" &&
-		presentation.primary.tone === "success" &&
+		pr.ci.state === "passing" &&
+		pr.review.decision === "approved" &&
+		pr.mergeability.state === "mergeable" &&
 		Boolean(pr.url && pr.headSha);
 	const mergePr = useMutation({
 		mutationFn: async () => {
@@ -688,6 +1021,11 @@ function PRSummaryCard({ pr, sessionId }: { pr: SessionPRSummary; sessionId: str
 		card: presentation,
 		href: prBrowserUrl(pr),
 		stateLabel: t(prStateLabelKeys[pr.state]),
+		reviewDetailsAction: canOpenReviews && pr.review.decision !== "none" ? (
+			<button className="whitespace-nowrap text-2xs text-settings-muted underline-offset-2 hover:underline" onClick={onOpenReviews} type="button">
+				{t("pr.review.viewDetails")} ↗
+			</button>
+		) : undefined,
 	};
 	return (
 		<InspectorPullRequestCardView
@@ -698,7 +1036,7 @@ function PRSummaryCard({ pr, sessionId }: { pr: SessionPRSummary; sessionId: str
 				canMerge ? (
 					<Button
 						aria-label={t("pr.merge.actionFor", { number: pr.number })}
-						className="gap-1 px-2"
+						className="gap-1 bg-success px-2 text-xs text-background hover:bg-success/80"
 						disabled={mergePr.isPending}
 						onClick={() => mergePr.mutate()}
 						size="sm"
@@ -717,13 +1055,6 @@ function PRSummaryCard({ pr, sessionId }: { pr: SessionPRSummary; sessionId: str
 			openLabel={t("inspector.openPR", { number: pr.number })}
 			pr={viewModel}
 			pullRequestIcon={<GitPullRequest className="size-icon-sm shrink-0" aria-hidden="true" />}
-			statusNotice={
-				pr.ci.state === "failing" && !pr.ci.autoInjectCI ? (
-					<p className="mt-2 text-2xs font-medium leading-normal text-warning">
-						{t("inspector.ci.notInjected")}
-					</p>
-				) : undefined
-			}
 		/>
 	);
 }
@@ -1061,19 +1392,12 @@ function ReviewsSection({
 	const prSummaries = sessionPRDisplaySummaries(session, scmSummary.data);
 	const githubReviews = prSummaries.filter(
 		(pr) =>
-			pr.state === "open" &&
+			(pr.state === "open" || pr.state === "draft") &&
 			((pr.review?.reviews?.length ?? 0) > 0 ||
 				(pr.review?.unresolvedBy ?? []).some((reviewer) => reviewer.count > 0)),
 	);
-	const hasPRs = sortedPRs(session).length > 0;
-
 	return (
 		<div className="p-2">
-			{hasPRs ? null : (
-				<Section surface title={t("inspector.review.controls")}>
-					<AutoInjectReviewPolicyControl session={session} />
-				</Section>
-			)}
 			{/* Running a review is an action; reading them is a list. The action stays
 			    on top, then one list carrying both sources keyed by PR. */}
 			<ReviewPanel
@@ -1140,6 +1464,7 @@ function MergedReviewsSection({
 	session: WorkspaceSession;
 }) {
 	const { t } = useTranslation();
+	const queryClient = useQueryClient();
 	const openReviewStates = openReviewStatesFor(session, reviewStates);
 	const runsByPR = runsByPRFrom(openReviewStates, runs);
 	const aoStates = triggeredReviewStatesFrom(openReviewStates, runs);
@@ -1154,6 +1479,22 @@ function MergedReviewsSection({
 	}
 	const rows = [...byNumber.entries()].sort(([a], [b]) => b - a);
 	const labels = reviewLabels(t);
+	const requestRereview = async (review: InspectorGithubReview) => {
+		const { error } = await apiClient.POST("/api/v1/sessions/{sessionId}/reviews/rerequest", {
+			params: { path: { sessionId: session.id } },
+			body: { pullRequestUrl: review.pullRequestUrl, reviewerId: review.reviewerId },
+		});
+		if (error) throw new Error(apiErrorMessage(error, "Unable to request re-review"));
+	};
+	const resolveInlineComment = async (comment: InspectorInlineComment) => {
+		const { error } = await apiClient.POST("/api/v1/sessions/{sessionId}/reviews/comments/resolve", {
+			params: { path: { sessionId: session.id } },
+			body: { pullRequestUrl: comment.pullRequestUrl, commentUrl: comment.url ?? "" },
+		});
+		if (error) throw new Error(apiErrorMessage(error, "Unable to resolve review comment"));
+		void queryClient.invalidateQueries({ queryKey: sessionScmSummaryQueryKey(session.id) });
+		void queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
+	};
 	const sendInlineCommentToWorker = async (comment: InspectorInlineComment & { reviewerId?: string }) => {
 		const { error } = await apiClient.POST("/api/v1/sessions/{sessionId}/send", {
 			params: { path: { sessionId: session.id } },
@@ -1163,11 +1504,20 @@ function MergedReviewsSection({
 	};
 	const groups: InspectorReviewGroup[] = rows.map(([number, { ao, github }]) => {
 		const aoRuns = ao ? [...(runsByPR.get(ao.prUrl) ?? [])].sort((a, b) => b.createdAt.localeCompare(a.createdAt)) : [];
-		const entries = github?.review?.reviews ?? [];
-		const unresolved = (github?.review?.unresolvedBy ?? []).reduce((count, reviewer) => count + reviewer.count, 0);
+		const entries = (github?.review?.reviews ?? []).filter(
+			(entry) => !externalReviewActorMatchesPRAuthor(entry.reviewerId, github?.author),
+		);
+		const unresolvedReviewers = (github?.review?.unresolvedBy ?? []).filter(
+			(reviewer) => !externalReviewActorMatchesPRAuthor(reviewer.reviewerId, github?.author),
+		);
+		const resolvedReviewers = (github?.review?.resolvedBy ?? []).filter(
+			(reviewer) => !externalReviewActorMatchesPRAuthor(reviewer.reviewerId, github?.author),
+		);
+		const unresolved = unresolvedReviewers.reduce((count, reviewer) => count + reviewer.count, 0);
 		const reviewRuns = aoRuns.map((run) => {
 			const reviewUrl = aoReviewCommentUrl(run);
 			return {
+				autoInjectReview: run.autoInjectReview,
 				body: run.body,
 				createdAtLabel: formatTimeCompact(run.createdAt),
 				harness: run.harness || "reviewer",
@@ -1178,20 +1528,37 @@ function MergedReviewsSection({
 			};
 		});
 		const unresolvedByReviewer = new Map(
-			(github?.review?.unresolvedBy ?? []).map((reviewer) => [reviewer.reviewerId, reviewer]),
+			unresolvedReviewers.map((reviewer) => [reviewer.reviewerId, reviewer]),
+		);
+		const resolvedByReviewer = new Map(
+			resolvedReviewers.map((reviewer) => [reviewer.reviewerId, reviewer]),
 		);
 		const externalEntries = entries.map((entry) => {
 			const reviewer = unresolvedByReviewer.get(entry.reviewerId);
+			const resolvedReviewer = resolvedByReviewer.get(entry.reviewerId);
 			unresolvedByReviewer.delete(entry.reviewerId);
+			resolvedByReviewer.delete(entry.reviewerId);
 			return {
 				body: entry.body,
+				canRequestRereview: canRequestPRRereview(entry.verdict, github?.url),
 				id: entry.reviewUrl || `${entry.reviewerId}:${entry.submittedAt}`,
+				pullRequestUrl: github?.url,
 				inlineComments: (reviewer?.links ?? []).map((link) => ({
 					autoInjectReview: link.autoInjectReview,
 					body: link.body,
 					file: link.file,
 					line: link.line,
+					pullRequestUrl: github?.url,
 					url: link.url || reviewer?.reviewUrl,
+				})),
+				resolvedComments: (resolvedReviewer?.links ?? []).map((link) => ({
+					autoInjectReview: link.autoInjectReview,
+					body: link.body,
+					file: link.file,
+					line: link.line,
+					pullRequestUrl: github?.url,
+					resolved: true,
+					url: link.url || resolvedReviewer?.reviewUrl,
 				})),
 				isBot: entry.isBot,
 				reviewerId: entry.reviewerId,
@@ -1202,14 +1569,52 @@ function MergedReviewsSection({
 			};
 		});
 		for (const reviewer of unresolvedByReviewer.values()) {
+			const resolvedReviewer = resolvedByReviewer.get(reviewer.reviewerId);
+			resolvedByReviewer.delete(reviewer.reviewerId);
 			externalEntries.push({
 				body: undefined,
+				canRequestRereview: canRequestPRRereview("changes_requested", github?.url),
 				id: `unresolved:${reviewer.reviewerId}:${number}`,
+				pullRequestUrl: github?.url,
 				inlineComments: reviewer.links.map((link) => ({
 					autoInjectReview: link.autoInjectReview,
 					body: link.body,
 					file: link.file,
 					line: link.line,
+					pullRequestUrl: github?.url,
+					url: link.url || reviewer.reviewUrl,
+				})),
+				resolvedComments: (resolvedReviewer?.links ?? []).map((link) => ({
+					autoInjectReview: link.autoInjectReview,
+					body: link.body,
+					file: link.file,
+					line: link.line,
+					pullRequestUrl: github?.url,
+					resolved: true,
+					url: link.url || resolvedReviewer?.reviewUrl,
+				})),
+				isBot: reviewer.isBot,
+				reviewerId: reviewer.reviewerId,
+				reviewUrl: reviewer.reviewUrl,
+				submittedAt: "",
+				submittedAtLabel: "",
+				verdict: githubVerdict("none", t),
+			});
+		}
+		for (const reviewer of resolvedByReviewer.values()) {
+			externalEntries.push({
+				body: undefined,
+				canRequestRereview: false,
+				id: `resolved:${reviewer.reviewerId}:${number}`,
+				pullRequestUrl: github?.url,
+				inlineComments: [],
+				resolvedComments: reviewer.links.map((link) => ({
+					autoInjectReview: link.autoInjectReview,
+					body: link.body,
+					file: link.file,
+					line: link.line,
+					pullRequestUrl: github?.url,
+					resolved: true,
 					url: link.url || reviewer.reviewUrl,
 				})),
 				isBot: reviewer.isBot,
@@ -1237,11 +1642,11 @@ function MergedReviewsSection({
 						entries: externalEntries,
 						notInjected:
 							entries.some((review) => review.autoInjectReview === false) ||
-							(github.review?.unresolvedBy ?? []).some((reviewer) =>
+							unresolvedReviewers.some((reviewer) =>
 								reviewer.links.some((link) => link.autoInjectReview === false),
 							),
 						unresolved,
-						unresolvedBy: (github.review?.unresolvedBy ?? []).map((reviewer) => ({
+						unresolvedBy: unresolvedReviewers.map((reviewer) => ({
 							count: reviewer.count,
 							isBot: reviewer.isBot,
 							links: reviewer.links.map((link) => ({
@@ -1249,6 +1654,7 @@ function MergedReviewsSection({
 								body: link.body,
 								file: link.file,
 								line: link.line,
+								pullRequestUrl: github?.url,
 								url: link.url,
 							})),
 							reviewerId: reviewer.reviewerId,
@@ -1266,20 +1672,29 @@ function MergedReviewsSection({
 			title: (ao?.title ?? github?.title)?.trim() || `PR #${number}`,
 			verdict: ao ? reviewVerdict(ao) : undefined,
 		};
-	});
+	}).filter((group) =>
+		Boolean(group.ao || (group.github && (group.github.entries.length > 0 || group.github.unresolved > 0))),
+	);
 	return (
 		<InspectorReviewsView
 			externalLink={ProductExternalLink}
 			groups={groups}
 			isLoading={isLoading}
 			labels={labels}
+			onRequestRereview={requestRereview}
+			onResolveInlineComment={resolveInlineComment}
 			onSendInlineComment={sendInlineCommentToWorker}
 			renderAvatar={(harness) => (
-				<AgentAvatar className="size-icon-sm shrink-0" decorative provider={harness} />
+				<AgentAvatar className="size-5 shrink-0" decorative provider={harness} />
 			)}
 			renderMarkdown={renderReviewMarkdown}
 		/>
 	);
+}
+
+function canRequestPRRereview(verdict: string | undefined, pullRequestUrl: string | undefined): boolean {
+	if (!pullRequestUrl) return false;
+	return verdict !== "approved";
 }
 
 function reviewLabels(t: TFunction): InspectorReviewLabels {
@@ -1294,18 +1709,26 @@ function reviewLabels(t: TFunction): InspectorReviewLabels {
 		notInjected: t("inspector.review.notInjected"),
 		openComments: t("inspector.openComments"),
 		openInlineComments: (count) => t("inspector.openInlineComments", { count }),
+		requestRereviewPR: t("inspector.requestRereviewPR"),
 		reviews: t("inspector.reviews"),
 		reviewedAt: (time) => t("inspector.reviewedAt", { time }),
 		resolvedComments: (count) => t("inspector.resolvedComments", { count }),
+		rereviewRequested: t("inspector.rereviewRequested"),
+		rereviewRequestFailed: t("inspector.rereviewRequestFailed"),
+		resolveComment: t("inspector.resolveComment"),
+		resolvedReview: t("inspector.resolvedReview"),
+		resolveReviewFailed: t("inspector.resolveReviewFailed"),
 		sendToWorkerAgent: t("inspector.sendToWorkerAgent"),
 		sentToWorkerAgent: t("inspector.sentToWorkerAgent"),
 		sendToWorkerAgentError: t("inspector.sendToWorkerAgentError"),
+		workerAgentWorkingOnFeedback: t("inspector.workerAgentWorkingOnFeedback"),
 		showLatestReviewOnly: t("inspector.showLatestReviewOnly"),
 		showLess: t("inspector.showLess"),
 		showMore: t("inspector.showMore"),
 		commentNumber: (number) => t("inspector.commentNumber", { number }),
 		unresolvedCount: (count) => t("inspector.unresolvedCount", { count }),
 		viewInFile: t("inspector.viewInFile"),
+		viewInFileWorkInProgress: t("inspector.viewInFileWorkInProgress"),
 		viewOnPR: t("inspector.viewOnPR"),
 	};
 }
@@ -1569,8 +1992,7 @@ function ReviewPanel({
 							) : null}
 						</div>
 					</div>
-					<AutoInjectReviewPolicyControl session={session} />
-					</div>
+				</div>
 				{reviewRunning ? (
 					<div className="mt-3 flex items-center gap-2 border-t border-border pt-3">
 						<Loader2 aria-hidden="true" className="size-icon-sm shrink-0 animate-spin text-muted-foreground" />

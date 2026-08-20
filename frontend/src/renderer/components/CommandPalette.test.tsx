@@ -106,7 +106,7 @@ vi.mock("../hooks/useWorkspaceQuery", () => ({
 }));
 
 vi.mock("../lib/shell-context", () => ({
-	useShell: () => ({ createProject: vi.fn(), initializeProjectRepository: vi.fn(), daemonStatus: {} }),
+	useShell: () => ({ cloneProject: vi.fn(), createProject: vi.fn(), initializeProjectRepository: vi.fn(), daemonStatus: {} }),
 }));
 
 vi.mock("../lib/spawn-orchestrator", () => ({ spawnOrchestrator: spawnMock }));

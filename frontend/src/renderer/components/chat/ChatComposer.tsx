@@ -81,6 +81,7 @@ export function ChatComposer({
 	willQueue,
 	disabled,
 	settings,
+	footerAction,
 	skills = [],
 	filePaths = [],
 	filePathsTruncated,
@@ -98,10 +99,14 @@ export function ChatComposer({
 	compacting,
 	compactUnavailable,
 	compactBlocked,
+	autoFocusKey,
+	autoFocus = true,
 }: {
 	onSend: (text: string, attachments?: FileAttachmentPayload[]) => void | Promise<unknown>;
 	/** The next-turn controls, rendered inline. Omitted in the fixture preview. */
 	settings?: ReactNode;
+	/** Optional secondary action rendered with message tools in the lower input row. */
+	footerAction?: ReactNode;
 	/** A send is in flight. */
 	busy?: boolean;
 	/** The agent is mid-turn, so this message is held until the turn ends. */
@@ -147,6 +152,10 @@ export function ChatComposer({
 	compactUnavailable?: string;
 	/** A running turn must be stopped before its history can be compacted. */
 	compactBlocked?: boolean;
+	/** Changes when the owning chat surface should reclaim composer focus. */
+	autoFocusKey?: string;
+	/** Whether this composer is currently visible and should take focus. */
+	autoFocus?: boolean;
 }) {
 	const [text, setText] = useState("");
 	const [caret, setCaret] = useState(0);
@@ -228,10 +237,39 @@ export function ChatComposer({
 	// with it: a steer with nothing in flight is refused, so it must never be what
 	// Enter is still pointing at.
 	const steering = Boolean(canSteer && onSteer) && delivery === "steer";
-	const canSend = hasDraft && !busy && !disabled && !steerPending;
+	// Attachments cannot be steered: the steer branch delivers text only and refuses
+	// an empty body. A staged file must not light up the send button on its own while
+	// steering is armed, or Enter would silently do nothing.
+	const canSend =
+		(text.trim().length > 0 || (staged && !steering)) && !busy && !disabled && !steerPending;
 	const canStopTurn = Boolean(willQueue && onInterrupt && !disabled && !hasDraft);
 	const draftSeedId = draftSeed?.id;
 	const draftSeedText = draftSeed?.text;
+
+	const focusTextarea = useCallback(() => {
+		if (!autoFocus || disabled) return;
+		textarea.current?.focus();
+	}, [autoFocus, disabled]);
+
+	useEffect(() => {
+		focusTextarea();
+	}, [autoFocusKey, focusTextarea]);
+
+	useEffect(() => {
+		if (!autoFocus) return;
+
+		const onWindowFocus = () => focusTextarea();
+		const onVisibilityChange = () => {
+			if (document.visibilityState === "visible") focusTextarea();
+		};
+
+		window.addEventListener("focus", onWindowFocus);
+		document.addEventListener("visibilitychange", onVisibilityChange);
+		return () => {
+			window.removeEventListener("focus", onWindowFocus);
+			document.removeEventListener("visibilitychange", onVisibilityChange);
+		};
+	}, [autoFocus, focusTextarea]);
 
 	// A steer choice belongs to one running turn. Once that turn disappears, return
 	// Enter to the durable queue path so the next turn cannot be steered by accident.
@@ -631,6 +669,14 @@ export function ChatComposer({
 						<span aria-hidden="true" className="mx-1 h-4 w-px shrink-0 bg-border" />
 					) : null}
 					{settings}
+					{footerAction ? (
+						<>
+							{canAttach || settings ? (
+								<span aria-hidden="true" className="mx-1 h-4 w-px shrink-0 bg-border" />
+							) : null}
+							{footerAction}
+						</>
+					) : null}
 				</div>
 
 				<div
@@ -645,7 +691,7 @@ export function ChatComposer({
 						onClick={canStopTurn ? onInterrupt : undefined}
 						aria-label={canStopTurn ? "Stop turn" : steering ? "Steer the running turn" : "Send message"}
 						title={canStopTurn ? "Stop turn" : undefined}
-						className="size-8 rounded-lg border-logo-accent bg-logo-accent text-logo-accent-foreground hover:bg-logo-accent-bright focus-visible:ring-logo-accent/45"
+						className="size-8 rounded-lg border-logo-accent bg-logo-accent text-logo-accent-foreground hover:bg-logo-accent-bright"
 					>
 						{canStopTurn ? (
 							<Square aria-hidden="true" className="size-2.5 fill-current" />

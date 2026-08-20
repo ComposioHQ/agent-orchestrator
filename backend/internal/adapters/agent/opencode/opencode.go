@@ -509,6 +509,10 @@ func ResolveOpenCodeBinary(ctx context.Context) (string, error) {
 				filepath.Join(appData, "npm", "opencode.exe"),
 			)
 		}
+		candidates = append(candidates, binaryutil.WindowsPackageManagerBinCandidates("opencode")...)
+		if home, err := os.UserHomeDir(); err == nil {
+			candidates = append(candidates, filepath.Join(home, ".opencode", "bin", "opencode.exe"))
+		}
 		for _, candidate := range candidates {
 			if hookutil.IsExecutableFile(candidate) {
 				return candidate, nil
@@ -529,6 +533,7 @@ func ResolveOpenCodeBinary(ctx context.Context) (string, error) {
 			filepath.Join(home, ".local", "bin", "opencode"),
 			filepath.Join(home, ".opencode", "bin", "opencode"),
 		)
+		candidates = append(candidates, binaryutil.UnixPackageManagerBinCandidates(home, "opencode")...)
 		nodeManagerCandidates, err := binaryutil.UnixNodeManagerBinCandidates(ctx, home, "opencode")
 		if err != nil {
 			return "", err

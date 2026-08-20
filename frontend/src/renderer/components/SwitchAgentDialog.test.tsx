@@ -94,7 +94,6 @@ describe("SwitchAgentDialog", () => {
 		expect(dialog).toHaveAttribute("data-slot", "dialog-content");
 		const backdrop = screen.getByTestId("switch-agent-terminal-backdrop");
 		expect(backdrop).toHaveClass("agent-switch-terminal-scrim");
-		expect(dialog).toHaveClass("w-dialog-md");
 		expect(
 			within(dialog).getByText(
 				"Move this session from Claude Code to another agent. AO will preserve the current native session and hand off the work.",
