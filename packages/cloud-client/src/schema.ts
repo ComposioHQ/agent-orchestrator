@@ -2059,7 +2059,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description The refresh token was consumed and replaced atomically. */
+            /** @description The refresh token was consumed and replaced atomically without extending the session's absolute expiry. */
             200: {
                 headers: {
                     /** @description Always `no-store`. */

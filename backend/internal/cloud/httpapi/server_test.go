@@ -71,7 +71,6 @@ func (s *memoryAccountStore) CreateRefreshSession(
 func (s *memoryAccountStore) RotateRefreshSession(
 	_ context.Context,
 	oldHash, newHash []byte,
-	_ time.Time,
 ) (domain.Principal, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

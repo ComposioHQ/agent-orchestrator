@@ -41,7 +41,10 @@ membership takes effect without waiting for an access token to expire.
 
 Refresh tokens are random opaque values. PostgreSQL stores only SHA-256
 digests. Rotation deletes the old digest and inserts its replacement in one
-transaction, so concurrent replay has at most one winner.
+transaction, so concurrent replay has at most one winner. A rotated token keeps
+the refresh session's original creation time and absolute expiry;
+`AO_CLOUD_REFRESH_TOKEN_TTL` therefore caps the entire session lifetime and is
+never extended by refresh activity.
 
 ## PostgreSQL boundaries
 
