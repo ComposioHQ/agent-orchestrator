@@ -1286,6 +1286,9 @@ func mergeMetadata(base, in domain.SessionMetadata) domain.SessionMetadata {
 	// resume and the conversation is stranded — the provider still holds it, but
 	// AO no longer knows its id.
 	set(&base.ProviderConversationID, in.ProviderConversationID)
+	if in.Permissions != "" {
+		base.Permissions = in.Permissions
+	}
 	// Assigned rather than set: a relaunch rotates the generation, and the whole
 	// point is that the new value replaces the old one so events from the
 	// controller this one superseded can be told apart.

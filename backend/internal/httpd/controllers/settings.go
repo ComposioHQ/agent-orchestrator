@@ -17,6 +17,7 @@ type SettingsService interface {
 	Get(ctx context.Context) (settingssvc.Snapshot, error)
 	SetDefaultSessionMode(ctx context.Context, mode domain.SessionMode) (settingssvc.Snapshot, error)
 	ChatHarnesses(candidates []domain.AgentHarness) []domain.AgentHarness
+	PreventiveReadOnlyChatHarnesses(candidates []domain.AgentHarness) []domain.AgentHarness
 }
 
 // SettingsController owns the daemon-owned preference routes.
@@ -82,8 +83,14 @@ func (c *SettingsController) response(snapshot settingssvc.Snapshot) SettingsRes
 	for _, harness := range chatHarnesses {
 		names = append(names, string(harness))
 	}
+	readOnlyHarnesses := c.Svc.PreventiveReadOnlyChatHarnesses(domain.AllHarnesses)
+	readOnlyNames := make([]string, 0, len(readOnlyHarnesses))
+	for _, harness := range readOnlyHarnesses {
+		readOnlyNames = append(readOnlyNames, string(harness))
+	}
 	return SettingsResponse{
-		DefaultSessionMode: string(snapshot.DefaultSessionMode),
-		ChatHarnesses:      names,
+		DefaultSessionMode:              string(snapshot.DefaultSessionMode),
+		ChatHarnesses:                   names,
+		PreventiveReadOnlyChatHarnesses: readOnlyNames,
 	}
 }

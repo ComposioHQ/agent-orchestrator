@@ -399,7 +399,7 @@ describe("ProjectSettingsForm", () => {
 		await userEvent.type(screen.getByLabelText("Worker model"), "openai/gpt-5.4");
 		await userEvent.type(screen.getByLabelText("Orchestrator model"), "anthropic/claude-sonnet");
 		await userEvent.click(permissionMode);
-		await userEvent.click(await screen.findByRole("menuitem", { name: "Bypass permissions" }));
+		await userEvent.click(await screen.findByRole("menuitem", { name: "Read only" }));
 
 		submitSettings();
 
@@ -424,7 +424,7 @@ describe("ProjectSettingsForm", () => {
 						agentConfig: { model: "anthropic/claude-sonnet" },
 					},
 					agentConfig: {
-						permissions: "bypass-permissions",
+						permissions: "read-only",
 					},
 				}),
 			},

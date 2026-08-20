@@ -1003,6 +1003,8 @@ func toAPIError(err error) error {
 		return apierr.Invalid("AGENT_BINARY_NOT_FOUND", err.Error(), nil)
 	case errors.Is(err, ports.ErrRuntimePrerequisite):
 		return apierr.Invalid("RUNTIME_PREREQUISITE_MISSING", err.Error(), nil)
+	case errors.Is(err, ports.ErrPermissionModeUnsupported):
+		return apierr.Conflict("PERMISSION_MODE_UNSUPPORTED", err.Error(), nil)
 	case errors.Is(err, ports.ErrChatUnsupported):
 		return apierr.Conflict("SESSION_MODE_UNSUPPORTED", err.Error(), nil)
 	case errors.Is(err, ports.ErrChatDriverUnavailable):

@@ -482,7 +482,12 @@ export interface ConversationActivity {
 export type ConversationItem = ConversationMessage | ConversationActivity;
 
 /** AO's permission vocabulary, applied per turn in chat mode. */
-export type ApprovalMode = "default" | "accept-edits" | "auto" | "bypass-permissions";
+export type ApprovalMode =
+	| "default"
+	| "read-only"
+	| "accept-edits"
+	| "auto"
+	| "bypass-permissions";
 
 /**
  * The provider choices for the next turn.

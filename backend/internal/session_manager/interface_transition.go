@@ -625,25 +625,28 @@ func (m *Manager) preflightInterfaceTarget(
 	rec domain.SessionRecord,
 	transition domain.SessionInterfaceTransition,
 ) error {
+	project, err := m.loadProject(ctx, rec.ProjectID)
+	if err != nil {
+		return err
+	}
+	config := effectiveSessionAgentConfig(rec, project.Config)
 	if transition.TargetMode == domain.SessionModeChat {
 		if m.chat == nil {
 			return ports.ErrChatUnsupported
 		}
-		return m.chat.PreflightChat(ctx, rec.Harness)
+		return m.chat.PreflightChat(ctx, rec.Harness, config.Permissions)
 	}
 	agent, ok := m.agents.Agent(rec.Harness)
 	if !ok {
 		return ErrUnknownHarness
 	}
-	project, err := m.loadProject(ctx, rec.ProjectID)
-	if err != nil {
+	if err := validateTUIPermissionMode(config.Permissions); err != nil {
 		return err
 	}
 	systemPrompt, err := m.buildSystemPrompt(ctx, rec.Kind, rec.ProjectID)
 	if err != nil {
 		return err
 	}
-	config := effectiveAgentConfig(rec.Kind, project.Config)
 	var cmd []string
 	if transition.NativeConversationID == "" {
 		cmd, _, _, err = freshLaunchArgv(ctx, agent, rec.ID, rec.Metadata.WorkspacePath,
@@ -1403,6 +1406,8 @@ func interfaceTransitionErrorCode(err error) string {
 	switch {
 	case errors.Is(err, ports.ErrChatUnsupported), errors.Is(err, ErrInterfaceHandoffUnsupported):
 		return "INTERFACE_HANDOFF_UNSUPPORTED"
+	case errors.Is(err, ports.ErrPermissionModeUnsupported):
+		return "PERMISSION_MODE_UNSUPPORTED"
 	case errors.Is(err, ports.ErrChatDriverUnavailable), errors.Is(err, ports.ErrAgentBinaryNotFound):
 		return "TARGET_UNAVAILABLE"
 	case errors.Is(err, ports.ErrChatDriverIncompatible):

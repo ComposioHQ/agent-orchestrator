@@ -253,6 +253,11 @@ func (c *SessionsController) spawn(w http.ResponseWriter, r *http.Request) {
 		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "PROMPT_TOO_LONG", "prompt is too long", nil)
 		return
 	}
+	if !in.Permissions.Valid() {
+		envelope.WriteAPIError(w, r, http.StatusBadRequest, "validation", "PERMISSION_MODE_INVALID",
+			fmt.Sprintf("unknown permission mode %q", in.Permissions), nil)
+		return
+	}
 	// displayName is optional at the API (the desktop new-task dialog omits it
 	// and the read model falls back to the session id). `ao spawn` makes it
 	// required CLI-side. When present, it is held to the same length cap here so
@@ -270,7 +275,7 @@ func (c *SessionsController) spawn(w http.ResponseWriter, r *http.Request) {
 		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", attachErr.code, attachErr.message, nil)
 		return
 	}
-	sess, promptBytes, systemPromptBytes, err := c.Svc.Spawn(r.Context(), ports.SpawnConfig{ProjectID: in.ProjectID, IssueID: in.IssueID, TrackerProvider: in.TrackerProvider, Kind: in.Kind, Harness: in.Harness, Branch: in.Branch, RequestedMode: in.Mode, Prompt: in.Prompt, DisplayName: displayName, Attachments: attachments, AgentConfig: ports.AgentConfig{Model: in.Model}})
+	sess, promptBytes, systemPromptBytes, err := c.Svc.Spawn(r.Context(), ports.SpawnConfig{ProjectID: in.ProjectID, IssueID: in.IssueID, TrackerProvider: in.TrackerProvider, Kind: in.Kind, Harness: in.Harness, Branch: in.Branch, RequestedMode: in.Mode, Prompt: in.Prompt, DisplayName: displayName, Attachments: attachments, AgentConfig: ports.AgentConfig{Model: in.Model, Permissions: in.Permissions}})
 	if err != nil {
 		envelope.WriteError(w, r, err)
 		return
@@ -1750,6 +1755,7 @@ func sessionView(s domain.Session) SessionView {
 		PreviewURL:      s.Metadata.PreviewURL,
 		PreviewRevision: s.Metadata.PreviewRevision,
 		Model:           s.Metadata.Model,
+		Permissions:     s.Metadata.Permissions,
 		PRs:             sessionPRFacts(s.PRs),
 	}
 	if s.ActiveAgentSwitch != nil {

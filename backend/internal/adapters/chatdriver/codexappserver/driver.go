@@ -83,6 +83,10 @@ var _ ports.ChatDriver = (*Driver)(nil)
 // Harness reports which agent this driver serves.
 func (d *Driver) Harness() domain.AgentHarness { return domain.HarnessCodex }
 
+// Capabilities reports the contract this driver can enforce without probing a
+// particular install. Probe performs the binary/auth/version checks separately.
+func (d *Driver) Capabilities() ports.ChatCapabilities { return capabilities() }
+
 // capabilities is what a Codex app-server of a supported version provides. Each
 // entry here was exercised against a live app-server rather than read off a doc.
 func capabilities() ports.ChatCapabilities {
@@ -125,6 +129,9 @@ func capabilities() ports.ChatCapabilities {
 		// interrupt-and-resend, which throws the turn's context and in-flight work
 		// away.
 		ports.ChatCapabilitySteer: true,
+		// Codex app-server accepts approvalPolicy=never together with a read-only
+		// sandbox at both thread/start and turn/start.
+		ports.ChatCapabilityPreventiveReadOnly: true,
 	}
 }
 
@@ -377,6 +384,8 @@ func (d *Driver) connect(ctx context.Context, workdir string, env map[string]str
 // become stricter than the terminal path for the same setting.
 func approvalSettings(mode ports.PermissionMode) (policy, sandbox string) {
 	switch ports.NormalizePermissionMode(mode) {
+	case ports.PermissionModeReadOnly:
+		return "never", "read-only"
 	case ports.PermissionModeAcceptEdits, ports.PermissionModeAuto:
 		// on-request lets the provider decide when to ask; workspace-write keeps
 		// edits inside the worktree. approvalsReviewer is deliberately not set:

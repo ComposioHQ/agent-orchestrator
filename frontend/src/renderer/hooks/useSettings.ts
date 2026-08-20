@@ -17,6 +17,8 @@ export interface Settings {
 	defaultSessionMode: SessionMode;
 	/** Agents that can run in chat mode today. Empty means chat is unavailable. */
 	chatHarnesses: string[];
+	/** Chat agents that technically enforce AO's preventive read-only profile. */
+	preventiveReadOnlyChatHarnesses: string[];
 }
 
 export function useSettings() {
@@ -28,6 +30,7 @@ export function useSettings() {
 			return {
 				defaultSessionMode: (data?.defaultSessionMode ?? "tui") as SessionMode,
 				chatHarnesses: data?.chatHarnesses ?? [],
+				preventiveReadOnlyChatHarnesses: data?.preventiveReadOnlyChatHarnesses ?? [],
 			};
 		},
 	});

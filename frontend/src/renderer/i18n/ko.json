@@ -640,6 +640,7 @@
 	"settings.project.permissionAuto": "자동",
 	"settings.project.permissionBypass": "권한 우회",
 	"settings.project.permissionDefault": "기본값",
+	"settings.project.permissionReadOnly": "읽기 전용",
 	"settings.project.permissionMode": "권한 모드",
 	"settings.project.refresh": "새로고침",
 	"settings.project.refreshAgents": "에이전트 새로고침",

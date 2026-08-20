@@ -18,6 +18,7 @@ ao spawn [flags]
 | `--issue string` | Issue id to associate with the session | - |
 | `--name string` | Display name shown in the sidebar (max 20 characters) | Required |
 | `--no-takeover` | Refuse if another active session owns the claimed PR (requires `--claim-pr`) | - |
+| `--permission string` | Permission override for this session only: `default`, `read-only`, `accept-edits`, `auto`, `bypass-permissions` | Project/role config |
 | `--project string` | Project id to spawn the session in | Required |
 | `--prompt string` | Initial prompt for the agent | - |
 

@@ -216,6 +216,14 @@ var ErrNoActiveTurn = errors.New("no active turn")
 // session_updated event announces the target mode.
 var ErrControllerHandoff = errors.New("chat controller is switching interfaces")
 
+func validatePermissionMode(caps ports.ChatCapabilities, mode ports.PermissionMode) error {
+	if ports.SupportsChatPermissionMode(caps, mode) {
+		return nil
+	}
+	return fmt.Errorf("%w: %q requires the %s capability",
+		ports.ErrPermissionModeUnsupported, mode, ports.ChatCapabilityPreventiveReadOnly)
+}
+
 func newController(
 	sessionID domain.SessionID,
 	conversation domain.ConversationRecord,
@@ -838,6 +846,9 @@ func (c *Controller) Send(ctx context.Context, msg ports.ChatUserMessage) (domai
 	if handoff {
 		return domain.ConversationTurn{}, ErrControllerHandoff
 	}
+	if err := validatePermissionMode(c.conv.Capabilities(), c.turnSettings().Approval); err != nil {
+		return domain.ConversationTurn{}, err
+	}
 
 	now := c.now()
 	turnID := c.newID()
@@ -897,6 +908,9 @@ func (c *Controller) Settings() domain.ConversationSettings {
 // The row is written first: if that fails, the in-memory copy must not move, or a
 // restart would silently revert a choice the user watched take effect.
 func (c *Controller) SetSettings(ctx context.Context, settings domain.ConversationSettings) error {
+	if err := validatePermissionMode(c.conv.Capabilities(), settings.ApprovalMode); err != nil {
+		return err
+	}
 	if err := c.store.SetConversationSettings(ctx, c.conversation.ID, settings, c.now()); err != nil {
 		return fmt.Errorf("record conversation settings: %w", err)
 	}

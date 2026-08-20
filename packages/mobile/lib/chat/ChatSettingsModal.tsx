@@ -8,6 +8,7 @@ import type { ChatConfigOption, ChatModel, ConversationSnapshot, TurnSettings } 
 import { can } from "./types";
 
 const APPROVALS = [
+	{ id: "read-only", label: "Read only", hint: "Filesystem writes are technically blocked" },
 	{ id: "default", label: "Default", hint: "The worktree is the safety boundary" },
 	{ id: "accept-edits", label: "Ask outside worktree", hint: "Edits here are allowed; anything else asks" },
 	{ id: "auto", label: "Ask when unsure", hint: "The agent decides when to check with you" },
@@ -45,6 +46,9 @@ export function ChatSettingsSheet({
 	);
 	const hasProviderMode = options.some(
 		(option) => option.category === "mode" || option.id === "mode");
+	const approvals = can(snapshot, "preventive_read_only")
+		? APPROVALS
+		: APPROVALS.filter((mode) => mode.id !== "read-only");
 	return (
 		<ScrollView style={styles.screen} contentContainerStyle={styles.content}>
 			<SheetHeader title="Turn settings" subtitle="Changes apply to the next message." right={<Pressable accessibilityRole="button" accessibilityLabel="Refresh turn settings" disabled={refreshing} onPress={() => { haptics.tap(); onRefresh(); }} style={styles.refresh}>{refreshing ? <ActivityIndicator size="small" color={t.blue} /> : <><Feather name="refresh-cw" size={13} color={t.blue} /><Text style={styles.refreshText}>Refresh</Text></>}</Pressable>} />
@@ -57,7 +61,7 @@ export function ChatSettingsSheet({
 						{efforts.map((effort) => <Choice key={effort} label={capitalize(effort)} selected={effort === (snapshot.settings.reasoningEffort ?? selected?.defaultEffort)} disabled={disabled} onPress={() => onSettings({ ...snapshot.settings, reasoningEffort: effort })} />)}
 					</SettingsSection> : null}
 					{(!usesProviderOptions || !hasProviderMode) ? <SettingsSection icon="shield" title="Approvals">
-						{APPROVALS.map((mode) => <Choice key={mode.id} label={mode.label} hint={mode.hint} selected={mode.id === (snapshot.settings.approvalMode ?? "default")} disabled={disabled} onPress={() => onSettings({ ...snapshot.settings, approvalMode: mode.id })} />)}
+						{approvals.map((mode) => <Choice key={mode.id} label={mode.label} hint={mode.hint} selected={mode.id === (snapshot.settings.approvalMode ?? "default")} disabled={disabled} onPress={() => onSettings({ ...snapshot.settings, approvalMode: mode.id })} />)}
 					</SettingsSection> : null}
 					{options.map((option) => <SettingsSection key={option.id} icon={configOptionIcon(option)} title={option.name} description={option.description}>
 						{option.type === "boolean" ? <View style={styles.switchRow}><Text style={styles.choiceLabel}>{option.currentBoolean ? "On" : "Off"}</Text><Switch disabled={disabled} value={Boolean(option.currentBoolean)} onValueChange={(enabled) => onOption(option.id, { enabled })} trackColor={{ true: t.blue }} /></View> : <GroupedChoices option={option} disabled={disabled} onOption={onOption} />}

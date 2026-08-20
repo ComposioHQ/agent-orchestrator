@@ -257,6 +257,30 @@ func TestStartRejectsRelativeWorkspacePath(t *testing.T) {
 	}
 }
 
+func TestStartUsesPreventiveReadOnlyPosture(t *testing.T) {
+	d, srv := newTestDriver(t)
+	conv, err := d.Start(context.Background(), ports.ChatStartConfig{
+		WorkspacePath: "/tmp/ws",
+		Permissions:   ports.PermissionModeReadOnly,
+	})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer func() { _ = conv.Close() }()
+
+	start := srv.awaitFrame(func(f frame) bool { return f.Method == "thread/start" })
+	var params struct {
+		ApprovalPolicy string `json:"approvalPolicy"`
+		Sandbox        string `json:"sandbox"`
+	}
+	if err := json.Unmarshal(start.Params, &params); err != nil {
+		t.Fatalf("thread/start params: %v", err)
+	}
+	if params.ApprovalPolicy != "never" || params.Sandbox != "read-only" {
+		t.Fatalf("read-only posture = %q/%q, want never/read-only", params.ApprovalPolicy, params.Sandbox)
+	}
+}
+
 func TestSendTurnCarriesIdempotencyKey(t *testing.T) {
 	d, srv := newTestDriver(t)
 	conv, err := d.Start(context.Background(), ports.ChatStartConfig{WorkspacePath: "/tmp/ws"})
@@ -583,6 +607,7 @@ func TestResumeReappliesWorkspaceAndStandingInstructions(t *testing.T) {
 		ProviderConversationID: "thread-1",
 		WorkspacePath:          "/tmp/ws",
 		Model:                  "selected-resume-model",
+		Permissions:            ports.PermissionModeReadOnly,
 		SystemPrompt:           "current AO standing instructions",
 	})
 	if err != nil {
@@ -595,6 +620,8 @@ func TestResumeReappliesWorkspaceAndStandingInstructions(t *testing.T) {
 		ThreadID              string `json:"threadId"`
 		Cwd                   string `json:"cwd"`
 		Model                 string `json:"model"`
+		ApprovalPolicy        string `json:"approvalPolicy"`
+		Sandbox               string `json:"sandbox"`
 		DeveloperInstructions string `json:"developerInstructions"`
 	}
 	if err := json.Unmarshal(resume.Params, &params); err != nil {
@@ -605,6 +632,9 @@ func TestResumeReappliesWorkspaceAndStandingInstructions(t *testing.T) {
 	}
 	if params.Model != "selected-resume-model" {
 		t.Fatalf("thread resume model = %q, want selected-resume-model", params.Model)
+	}
+	if params.ApprovalPolicy != "never" || params.Sandbox != "read-only" {
+		t.Fatalf("resume posture = %q/%q, want never/read-only", params.ApprovalPolicy, params.Sandbox)
 	}
 	if params.DeveloperInstructions != "current AO standing instructions" {
 		t.Fatalf("developerInstructions = %q", params.DeveloperInstructions)
@@ -705,6 +735,7 @@ func TestApprovalSettingsMirrorTUIPosture(t *testing.T) {
 		policy, sandbox string
 	}{
 		{ports.PermissionModeDefault, "never", "danger-full-access"},
+		{ports.PermissionModeReadOnly, "never", "read-only"},
 		{ports.PermissionModeBypassPermissions, "never", "danger-full-access"},
 		{ports.PermissionModeAcceptEdits, "on-request", "workspace-write"},
 		{ports.PermissionModeAuto, "on-request", "workspace-write"},
@@ -714,6 +745,35 @@ func TestApprovalSettingsMirrorTUIPosture(t *testing.T) {
 		if policy != tc.policy || sandbox != tc.sandbox {
 			t.Errorf("approvalSettings(%q) = %q/%q, want %q/%q", tc.mode, policy, sandbox, tc.policy, tc.sandbox)
 		}
+	}
+}
+
+func TestReadOnlyTurnUsesTaggedSandboxPolicy(t *testing.T) {
+	d, srv := newTestDriver(t)
+	conv, err := d.Start(context.Background(), ports.ChatStartConfig{WorkspacePath: "/tmp/ws"})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer func() { _ = conv.Close() }()
+
+	if _, err := conv.SendTurn(context.Background(), ports.ChatUserMessage{
+		Text:     "inspect",
+		Settings: ports.ChatTurnSettings{Approval: ports.PermissionModeReadOnly},
+	}); err != nil {
+		t.Fatalf("SendTurn: %v", err)
+	}
+	sent := srv.awaitFrame(func(f frame) bool { return f.Method == "turn/start" })
+	var params struct {
+		ApprovalPolicy string `json:"approvalPolicy"`
+		SandboxPolicy  struct {
+			Type string `json:"type"`
+		} `json:"sandboxPolicy"`
+	}
+	if err := json.Unmarshal(sent.Params, &params); err != nil {
+		t.Fatalf("turn/start params: %v", err)
+	}
+	if params.ApprovalPolicy != "never" || params.SandboxPolicy.Type != "readOnly" {
+		t.Fatalf("read-only turn posture = %q/%q, want never/readOnly", params.ApprovalPolicy, params.SandboxPolicy.Type)
 	}
 }
 

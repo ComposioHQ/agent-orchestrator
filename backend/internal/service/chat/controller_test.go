@@ -60,6 +60,7 @@ func openStore(t *testing.T) *sqlite.Store {
 type fakeConversation struct {
 	events                 chan ports.ChatEvent
 	providerConversationID string
+	capabilities           ports.ChatCapabilities
 
 	mu        sync.Mutex
 	sent      []ports.ChatUserMessage
@@ -174,12 +175,13 @@ func newFakeConversation() *fakeConversation {
 	return &fakeConversation{
 		events:                 make(chan ports.ChatEvent, 64),
 		providerConversationID: "thread-1",
+		capabilities:           productionCaps(),
 		resolved:               map[string]ports.ChatDecision{},
 	}
 }
 
 func (f *fakeConversation) ProviderConversationID() string       { return f.providerConversationID }
-func (f *fakeConversation) Capabilities() ports.ChatCapabilities { return productionCaps() }
+func (f *fakeConversation) Capabilities() ports.ChatCapabilities { return f.capabilities }
 func (f *fakeConversation) Events() <-chan ports.ChatEvent       { return f.events }
 
 func (f *fakeConversation) SendTurn(_ context.Context, msg ports.ChatUserMessage) (ports.ChatTurnRef, error) {
@@ -249,6 +251,7 @@ func (f *fakeConversation) decisionFor(id string) (ports.ChatDecision, bool) {
 // streams.
 type fakeDriver struct {
 	conv      ports.ChatConversation
+	caps      ports.ChatCapabilities
 	startCfg  *ports.ChatStartConfig
 	resumeCfg *ports.ChatResumeConfig
 	probe     func() error
@@ -261,7 +264,8 @@ type sequenceDriver struct {
 	conversations []ports.ChatConversation
 }
 
-func (d *sequenceDriver) Harness() domain.AgentHarness { return domain.HarnessCodex }
+func (d *sequenceDriver) Harness() domain.AgentHarness         { return domain.HarnessCodex }
+func (d *sequenceDriver) Capabilities() ports.ChatCapabilities { return productionCaps() }
 func (d *sequenceDriver) Probe(context.Context) (ports.ChatCapabilities, error) {
 	return productionCaps(), nil
 }
@@ -283,13 +287,19 @@ func (d *sequenceDriver) Resume(context.Context, ports.ChatResumeConfig) (ports.
 }
 
 func (d fakeDriver) Harness() domain.AgentHarness { return domain.HarnessCodex }
+func (d fakeDriver) Capabilities() ports.ChatCapabilities {
+	if d.caps != nil {
+		return d.caps
+	}
+	return productionCaps()
+}
 func (d fakeDriver) Probe(context.Context) (ports.ChatCapabilities, error) {
 	if d.probe != nil {
 		if err := d.probe(); err != nil {
 			return nil, err
 		}
 	}
-	return productionCaps(), nil
+	return d.Capabilities(), nil
 }
 func (d fakeDriver) Start(_ context.Context, cfg ports.ChatStartConfig) (ports.ChatConversation, error) {
 	if d.startCfg != nil {
@@ -346,6 +356,147 @@ func productionCaps() ports.ChatCapabilities {
 	}
 }
 
+func readOnlyCaps() ports.ChatCapabilities {
+	caps := productionCaps()
+	caps[ports.ChatCapabilityPreventiveReadOnly] = true
+	return caps
+}
+
+func TestPreflightRejectsPreventiveReadOnlyWithoutCapability(t *testing.T) {
+	driver := fakeDriver{caps: productionCaps()}
+	svc := chatsvc.New(chatsvc.Options{Drivers: fakeRegistry{driver: driver}})
+
+	err := svc.PreflightChat(context.Background(), domain.HarnessCodex, ports.PermissionModeReadOnly)
+	if !errors.Is(err, ports.ErrPermissionModeUnsupported) {
+		t.Fatalf("PreflightChat error = %v, want ErrPermissionModeUnsupported", err)
+	}
+}
+
+func TestStartRejectsPreventiveReadOnlyWhenNegotiatedCapabilitiesNarrow(t *testing.T) {
+	st := openStore(t)
+	conv := newFakeConversation()
+	// Probe says the installed driver supports the profile, but the live
+	// conversation is authoritative and negotiated a narrower contract.
+	conv.capabilities = productionCaps()
+	svc := chatsvc.New(chatsvc.Options{
+		Store: st, Sessions: st,
+		Drivers: fakeRegistry{driver: fakeDriver{conv: conv, caps: readOnlyCaps()}},
+		NewID:   func() string { return "read-only-negotiation" },
+	})
+
+	_, err := svc.Start(context.Background(), chatsvc.StartConfig{
+		SessionID: testSession, ProjectID: testProject, Harness: domain.HarnessCodex,
+		WorkspacePath: t.TempDir(), Permissions: ports.PermissionModeReadOnly,
+	})
+	if !errors.Is(err, ports.ErrPermissionModeUnsupported) {
+		t.Fatalf("Start error = %v, want ErrPermissionModeUnsupported", err)
+	}
+	select {
+	case <-conv.Events():
+		// Close closes the fake stream. Reaching this case proves the provider
+		// process was released after the negotiated capability check failed.
+	default:
+		t.Fatal("conversation was not closed after negotiated read-only support disappeared")
+	}
+}
+
+func TestStartRejectsStoredPreventiveReadOnlyWhenNegotiatedCapabilitiesNarrow(t *testing.T) {
+	st := openStore(t)
+	existing, err := st.CreateConversation(context.Background(), "stored-read-only",
+		domain.ConversationScopeSession, testProject, testSession, time.Now().UTC())
+	if err != nil {
+		t.Fatalf("CreateConversation: %v", err)
+	}
+	if err := st.SetConversationSettings(context.Background(), existing.ID, domain.ConversationSettings{
+		ApprovalMode: domain.PermissionModeReadOnly,
+	}, time.Now().UTC()); err != nil {
+		t.Fatalf("SetConversationSettings: %v", err)
+	}
+
+	conv := newFakeConversation()
+	conv.capabilities = productionCaps()
+	svc := chatsvc.New(chatsvc.Options{
+		Store: st, Sessions: st,
+		Drivers: fakeRegistry{driver: fakeDriver{conv: conv, caps: readOnlyCaps()}},
+		NewID:   func() string { return "must-not-replace-existing" },
+	})
+
+	_, err = svc.Start(context.Background(), chatsvc.StartConfig{
+		SessionID: testSession, ProjectID: testProject, Harness: domain.HarnessCodex,
+		WorkspacePath: t.TempDir(),
+	})
+	if !errors.Is(err, ports.ErrPermissionModeUnsupported) {
+		t.Fatalf("Start error = %v, want ErrPermissionModeUnsupported", err)
+	}
+	select {
+	case <-conv.Events():
+	default:
+		t.Fatal("conversation was not closed after negotiated support for the stored setting disappeared")
+	}
+}
+
+func TestTurnSettingsRejectPreventiveReadOnlyBeforePersistence(t *testing.T) {
+	st := openStore(t)
+	conv := newFakeConversation()
+	svc := chatsvc.New(chatsvc.Options{
+		Store: st, Sessions: st,
+		Drivers: fakeRegistry{driver: fakeDriver{conv: conv}},
+		NewID:   func() string { return "read-only-settings" },
+	})
+	t.Cleanup(func() { _ = svc.Stop(context.Background(), testSession) })
+
+	if _, err := svc.Start(context.Background(), chatsvc.StartConfig{
+		SessionID: testSession, ProjectID: testProject, Harness: domain.HarnessCodex,
+		WorkspacePath: t.TempDir(),
+	}); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	_, err := svc.SetTurnSettings(context.Background(), testSession, domain.ConversationSettings{
+		ApprovalMode: domain.PermissionModeReadOnly,
+	})
+	if !errors.Is(err, ports.ErrPermissionModeUnsupported) {
+		t.Fatalf("SetTurnSettings error = %v, want ErrPermissionModeUnsupported", err)
+	}
+	conversation, err := st.ConversationForSession(context.Background(), testSession)
+	if err != nil {
+		t.Fatalf("ConversationForSession: %v", err)
+	}
+	if conversation.Settings.ApprovalMode != "" {
+		t.Fatalf("unsupported setting was persisted as %q", conversation.Settings.ApprovalMode)
+	}
+}
+
+func TestPreventiveReadOnlySettingReachesSupportedTurn(t *testing.T) {
+	st := openStore(t)
+	conv := newFakeConversation()
+	conv.capabilities = readOnlyCaps()
+	svc := chatsvc.New(chatsvc.Options{
+		Store: st, Sessions: st,
+		Drivers: fakeRegistry{driver: fakeDriver{conv: conv, caps: readOnlyCaps()}},
+		NewID:   func() string { return "read-only-supported" },
+	})
+	t.Cleanup(func() { _ = svc.Stop(context.Background(), testSession) })
+
+	if _, err := svc.Start(context.Background(), chatsvc.StartConfig{
+		SessionID: testSession, ProjectID: testProject, Harness: domain.HarnessCodex,
+		WorkspacePath: t.TempDir(), Permissions: ports.PermissionModeReadOnly,
+	}); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if _, err := svc.SetTurnSettings(context.Background(), testSession, domain.ConversationSettings{
+		ApprovalMode: domain.PermissionModeReadOnly,
+	}); err != nil {
+		t.Fatalf("SetTurnSettings: %v", err)
+	}
+	if _, err := svc.Send(context.Background(), testSession, ports.ChatUserMessage{Text: "inspect"}); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	sent := conv.sentMessages()
+	if len(sent) != 1 || sent[0].Settings.Approval != ports.PermissionModeReadOnly {
+		t.Fatalf("provider messages = %+v, want one read-only turn", sent)
+	}
+}
+
 func TestSuccessfulChatProbeIsReusedByStart(t *testing.T) {
 	st := openStore(t)
 	probes := 0
@@ -367,7 +518,7 @@ func TestSuccessfulChatProbeIsReusedByStart(t *testing.T) {
 	})
 	t.Cleanup(func() { _ = svc.Stop(context.Background(), testSession) })
 
-	if err := svc.PreflightChat(context.Background(), domain.HarnessCodex); err != nil {
+	if err := svc.PreflightChat(context.Background(), domain.HarnessCodex, ""); err != nil {
 		t.Fatalf("PreflightChat: %v", err)
 	}
 	if _, err := svc.Start(context.Background(), chatsvc.StartConfig{
@@ -392,13 +543,13 @@ func TestFailedChatProbeCanBeRetriedThenCached(t *testing.T) {
 	}}
 	svc := chatsvc.New(chatsvc.Options{Drivers: fakeRegistry{driver: driver}})
 
-	if err := svc.PreflightChat(context.Background(), domain.HarnessCodex); err == nil {
+	if err := svc.PreflightChat(context.Background(), domain.HarnessCodex, ""); err == nil {
 		t.Fatal("first PreflightChat must surface the transient probe failure")
 	}
-	if err := svc.PreflightChat(context.Background(), domain.HarnessCodex); err != nil {
+	if err := svc.PreflightChat(context.Background(), domain.HarnessCodex, ""); err != nil {
 		t.Fatalf("second PreflightChat: %v", err)
 	}
-	if err := svc.PreflightChat(context.Background(), domain.HarnessCodex); err != nil {
+	if err := svc.PreflightChat(context.Background(), domain.HarnessCodex, ""); err != nil {
 		t.Fatalf("cached PreflightChat: %v", err)
 	}
 	if attempts != 2 {

@@ -1160,17 +1160,54 @@ func TestSessionsAPI_SpawnRejectsUnknownExplicitMode(t *testing.T) {
 	}
 }
 
-func TestSessionsAPI_SpawnPassesModelToService(t *testing.T) {
+func TestSessionsAPI_SpawnRejectsUnknownPermissionMode(t *testing.T) {
 	svc := newFakeSessionService()
 	srv := newSessionTestServer(t, svc)
 
 	body, status, _ := doRequest(t, srv, "POST", "/api/v1/sessions",
-		`{"projectId":"ao","kind":"worker","harness":"codex","prompt":"fix","displayName":"my worker","model":"sonnet"}`)
+		`{"projectId":"ao","kind":"worker","harness":"codex","prompt":"fix","permissions":"advisory-only"}`)
+	assertErrorCode(t, body, status, http.StatusBadRequest, "PERMISSION_MODE_INVALID")
+	if len(svc.sessions) != 1 {
+		t.Fatalf("invalid permission mode created a session: %#v", svc.sessions)
+	}
+}
+
+func TestSessionsAPI_SpawnPassesAgentOverridesToService(t *testing.T) {
+	svc := newFakeSessionService()
+	srv := newSessionTestServer(t, svc)
+
+	body, status, _ := doRequest(t, srv, "POST", "/api/v1/sessions",
+		`{"projectId":"ao","kind":"worker","harness":"codex","prompt":"fix","displayName":"my worker","model":"sonnet","permissions":"read-only"}`)
 	if status != http.StatusCreated {
 		t.Fatalf("POST session = %d, want 201; body=%s", status, body)
 	}
 	if svc.lastSpawn.AgentConfig.Model != "sonnet" {
 		t.Fatalf("service AgentConfig.Model = %q, want sonnet", svc.lastSpawn.AgentConfig.Model)
+	}
+	if svc.lastSpawn.AgentConfig.Permissions != domain.PermissionModeReadOnly {
+		t.Fatalf("service AgentConfig.Permissions = %q, want read-only", svc.lastSpawn.AgentConfig.Permissions)
+	}
+}
+
+func TestSessionsAPI_ExposesDurablePermissionMode(t *testing.T) {
+	svc := newFakeSessionService()
+	session := svc.sessions["ao-1"]
+	session.Metadata.Permissions = domain.PermissionModeReadOnly
+	svc.sessions["ao-1"] = session
+	srv := newSessionTestServer(t, svc)
+
+	body, status, _ := doRequest(t, srv, "GET", "/api/v1/sessions/ao-1", "")
+	if status != http.StatusOK {
+		t.Fatalf("GET session = %d; body=%s", status, body)
+	}
+	var response struct {
+		Session struct {
+			Permissions domain.PermissionMode `json:"permissions"`
+		} `json:"session"`
+	}
+	mustJSON(t, body, &response)
+	if response.Session.Permissions != domain.PermissionModeReadOnly {
+		t.Fatalf("session permission mode = %q, want read-only", response.Session.Permissions)
 	}
 }
 

@@ -125,6 +125,10 @@ const (
 	// terminal identity/output metadata. It is read-only transcript richness, not
 	// permission for the provider to execute through AO's terminal runtime.
 	ChatCapabilityTerminalOutput ChatCapability = "terminal_output"
+	// ChatCapabilityPreventiveReadOnly means the driver can run a turn with no
+	// approval prompts while technically preventing workspace writes. Prompt-only
+	// guidance and provider "plan" modes do not qualify.
+	ChatCapabilityPreventiveReadOnly ChatCapability = "preventive_read_only"
 )
 
 // ChatCapabilities is the set a driver reports from Probe.
@@ -154,6 +158,17 @@ func MissingProductionCapabilities(caps ChatCapabilities) []ChatCapability {
 		}
 	}
 	return missing
+}
+
+// SupportsChatPermissionMode reports whether caps can enforce the requested
+// permission profile. Existing modes are part of Chat's production floor;
+// preventive read-only is separately advertised because support is rarer and a
+// false positive would silently broaden filesystem access.
+func SupportsChatPermissionMode(caps ChatCapabilities, mode PermissionMode) bool {
+	if NormalizePermissionMode(mode) == PermissionModeReadOnly {
+		return caps.Has(ChatCapabilityPreventiveReadOnly)
+	}
+	return true
 }
 
 // ChatStartConfig is what a driver needs to open a new provider conversation.
@@ -796,6 +811,10 @@ type ChatEvent struct {
 type ChatDriver interface {
 	// Harness is the agent this driver serves.
 	Harness() domain.AgentHarness
+	// Capabilities is the driver's declared feature set without probing the local
+	// install. It lets callers capability-check a permission contract before
+	// creating a session. A live conversation may negotiate a narrower set.
+	Capabilities() ChatCapabilities
 	// Probe checks the local install without creating anything: is the binary
 	// present, is it authenticated, what can it do. It must be safe to call
 	// before any durable session or worktree exists, so an unsupported request

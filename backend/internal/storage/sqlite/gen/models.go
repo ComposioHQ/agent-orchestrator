@@ -421,6 +421,7 @@ type Session struct {
 	AutoReviewEnabled         bool
 	AgentSessionIDLaunchID    string
 	Model                     string
+	PermissionMode            string
 }
 
 type SessionCleanupFact struct {

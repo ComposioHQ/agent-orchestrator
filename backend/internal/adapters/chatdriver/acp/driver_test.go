@@ -356,6 +356,43 @@ func TestACPDriverDefersPromptUntilDurableTurnBinding(t *testing.T) {
 	}
 }
 
+func TestACPDriverRejectsPreventiveReadOnlyBeforeLaunch(t *testing.T) {
+	launches := 0
+	driver := New(Config{
+		Harness: domain.HarnessClaudeCode,
+		Capabilities: ports.ChatCapabilities{
+			ports.ChatCapabilityStreaming: true,
+			ports.ChatCapabilityApprovals: true,
+			ports.ChatCapabilityInterrupt: true,
+			ports.ChatCapabilityResume:    true,
+		},
+		Launch: func(context.Context, LaunchConfig) (Launch, error) {
+			launches++
+			return Launch{Command: "must-not-launch"}, nil
+		},
+	}, slog.New(slog.DiscardHandler))
+
+	_, startErr := driver.Start(context.Background(), ports.ChatStartConfig{
+		WorkspacePath: t.TempDir(),
+		Permissions:   ports.PermissionModeReadOnly,
+	})
+	if !errors.Is(startErr, ports.ErrPermissionModeUnsupported) {
+		t.Fatalf("Start error = %v, want ErrPermissionModeUnsupported", startErr)
+	}
+
+	_, resumeErr := driver.Resume(context.Background(), ports.ChatResumeConfig{
+		ProviderConversationID: "session-1",
+		WorkspacePath:          t.TempDir(),
+		Permissions:            ports.PermissionModeReadOnly,
+	})
+	if !errors.Is(resumeErr, ports.ErrPermissionModeUnsupported) {
+		t.Fatalf("Resume error = %v, want ErrPermissionModeUnsupported", resumeErr)
+	}
+	if launches != 0 {
+		t.Fatalf("unsupported read-only request launched %d provider processes", launches)
+	}
+}
+
 func TestACPInterruptCancelsTheLocalPromptAfterNotifyingTheAgent(t *testing.T) {
 	agent := &fakeAgent{promptBlock: true, promptStarted: make(chan struct{}, 1)}
 	driver := New(Config{

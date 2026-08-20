@@ -79,6 +79,8 @@ The role selects what a session does; the interface selects how you interact wit
 
 Choose the default interface in desktop project settings. Override it for a single CLI spawn with `--mode chat` or `--mode tui`.
 
+Codex Chat also supports the preventive `read-only` permission mode. Configure it in `agentConfig` or pass `ao spawn --permission read-only` for one session. It runs without approval prompts while the provider sandbox blocks filesystem writes. AO rejects this mode for other Chat drivers and Terminal UI sessions instead of silently granting broader access.
+
 ## Setup and rules
 
 Use `env`, `symlinks`, and `postCreate` for repeatable workspace setup. A failing `postCreate` command prevents the agent from starting, so keep setup deterministic.

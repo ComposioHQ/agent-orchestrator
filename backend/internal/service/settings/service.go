@@ -31,6 +31,7 @@ type Snapshot struct {
 // discover it at spawn time.
 type ChatCapability interface {
 	SupportsChat(harness domain.AgentHarness) bool
+	SupportsPermissionMode(harness domain.AgentHarness, mode ports.PermissionMode) bool
 }
 
 // Service reads and writes preferences.
@@ -86,6 +87,21 @@ func (s *Service) ChatHarnesses(candidates []domain.AgentHarness) []domain.Agent
 	var out []domain.AgentHarness
 	for _, harness := range candidates {
 		if s.chat.SupportsChat(harness) {
+			out = append(out, harness)
+		}
+	}
+	return out
+}
+
+// PreventiveReadOnlyChatHarnesses lists the Chat harnesses that can technically
+// prevent workspace writes without relying on approval prompts or instructions.
+func (s *Service) PreventiveReadOnlyChatHarnesses(candidates []domain.AgentHarness) []domain.AgentHarness {
+	if s.chat == nil {
+		return nil
+	}
+	var out []domain.AgentHarness
+	for _, harness := range candidates {
+		if s.chat.SupportsPermissionMode(harness, ports.PermissionModeReadOnly) {
 			out = append(out, harness)
 		}
 	}
