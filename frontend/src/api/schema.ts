@@ -1728,6 +1728,13 @@ export interface components {
             authStatus?: "authorized" | "unauthorized" | "unknown";
             id: string;
             label: string;
+            /**
+             * Format: date-time
+             * @description Creation time of the newest retained session currently attributed to this agent.
+             */
+            lastUsedAt?: null | string;
+            /** @description Number of retained sessions currently attributed to this agent. */
+            usageCount?: number;
         };
         AgentModelInfo: {
             id: string;

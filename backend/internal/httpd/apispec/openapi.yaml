@@ -5187,6 +5187,16 @@ components:
           type: string
         label:
           type: string
+        lastUsedAt:
+          description: Creation time of the newest retained session currently attributed
+            to this agent.
+          format: date-time
+          type:
+          - "null"
+          - string
+        usageCount:
+          description: Number of retained sessions currently attributed to this agent.
+          type: integer
       required:
       - id
       - label
