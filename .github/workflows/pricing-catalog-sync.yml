@@ -52,10 +52,10 @@ jobs:
           REVISION: ${{ steps.source.outputs.revision }}
         run: |
           set -euo pipefail
-          go run ./backend/cmd/pricingcatalog sync -root . \
+          (cd backend && go run ./cmd/pricingcatalog sync -root .. \
             -source "$RUNNER_TEMP/model_prices_and_context_window.json" \
-            -revision "$REVISION"
-          go run ./backend/cmd/pricingcatalog validate -root .
+            -revision "$REVISION")
+          (cd backend && go run ./cmd/pricingcatalog validate -root ..)
           if git diff --quiet -- pricing/catalog/v1; then
             echo "changed=false" >> "$GITHUB_OUTPUT"
           else
