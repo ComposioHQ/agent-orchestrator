@@ -142,9 +142,6 @@ export function TestimonialForm() {
           onChange={(event) => setLinkedinUrl(event.target.value)}
           className="min-h-12 w-full rounded-xl border border-border bg-background px-4 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
         />
-        <p className="text-xs leading-5 text-muted-foreground">
-          We&apos;ll use your public profile photo, company, and role for attribution.
-        </p>
       </div>
 
       <div className="grid gap-2">
