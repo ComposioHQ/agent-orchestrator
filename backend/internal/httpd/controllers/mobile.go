@@ -321,6 +321,20 @@ func (b *BridgeService) Enable() (MobileStatusResponse, error) {
 	return b.enableWithPassword(pw)
 }
 
+// EnableReusingPassword is Enable for headless boots (ao headless): when the
+// persisted state already holds an enabled bridge with a password, it re-arms
+// with that password so already-paired desktop/mobile clients keep working
+// across restarts. Otherwise (first boot, or a disabled bridge) it behaves
+// exactly like Enable and generates one. All persistence, rollback, and
+// secure-pairing proxy re-application come from enableWithPassword either way.
+func (b *BridgeService) EnableReusingPassword() (MobileStatusResponse, error) {
+	st, _ := mobilebridge.Load(b.ConfigPath)
+	if st.Enabled && st.Password != "" {
+		return b.enableWithPassword(st.Password)
+	}
+	return b.Enable()
+}
+
 // Regenerate rotates the connection password on the running listener, which
 // drops the currently paired phone (it authenticates against the new hash).
 func (b *BridgeService) Regenerate() (MobileStatusResponse, error) {

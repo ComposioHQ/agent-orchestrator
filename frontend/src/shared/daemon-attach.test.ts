@@ -121,6 +121,17 @@ describe("parseDaemonProbe", () => {
 		expect(parseDaemonProbe("healthz", healthBody)?.appImagePath).toBeUndefined();
 		expect(parseDaemonProbe("healthz", { ...healthBody, appImagePath: 42 })?.appImagePath).toBeUndefined();
 	});
+
+	it("carries apiVersion when the daemon reports an integer one", () => {
+		const probe = parseDaemonProbe("readyz", { ...readyBody, apiVersion: 1 });
+		expect(probe?.apiVersion).toBe(1);
+	});
+
+	it("drops apiVersion when absent, fractional, or not a number", () => {
+		expect(parseDaemonProbe("healthz", healthBody)?.apiVersion).toBeUndefined();
+		expect(parseDaemonProbe("healthz", { ...healthBody, apiVersion: 1.5 })?.apiVersion).toBeUndefined();
+		expect(parseDaemonProbe("healthz", { ...healthBody, apiVersion: "1" })?.apiVersion).toBeUndefined();
+	});
 });
 
 describe("resolveDaemonFromRunFile", () => {

@@ -3,6 +3,7 @@ import { ChevronLeft, Folder, GitBranch, Link2, X } from "lucide-react";
 import { type FormEvent, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { aoBridge } from "../lib/bridge";
+import { useShellMaybe } from "../lib/shell-context";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { Label } from "./ui/label";
@@ -41,6 +42,9 @@ export default function CloneRepositoryDialog({
 	const [submitted, setSubmitted] = useState(false);
 	const [choosingDestination, setChoosingDestination] = useState(false);
 	const [destinationPickerError, setDestinationPickerError] = useState<string | null>(null);
+	// Remote daemon: the clone runs on the daemon host, so the destination is an
+	// explicit absolute path there — the native picker browses the wrong machine.
+	const isRemote = useShellMaybe()?.daemonStatus.connection === "remote";
 	const repositoryName = repositoryNameFromGitUrl(value.remoteUrl);
 	const targetPath = repositoryName && value.destinationParent
 		? joinCloneDestination(value.destinationParent, repositoryName)
@@ -169,21 +173,24 @@ export default function CloneRepositoryDialog({
 											id="cloneDestination"
 											aria-describedby={destinationError ? "cloneDestinationError" : undefined}
 											aria-invalid={destinationError ? true : undefined}
-											className="cursor-default bg-[var(--color-bg-import-card)] pl-10 font-mono text-[13px]"
+											className="bg-[var(--color-bg-import-card)] pl-10 font-mono text-[13px] read-only:cursor-default"
 											placeholder={t("createProject.cloneDestinationPlaceholder")}
-											readOnly
+											readOnly={!isRemote}
 											value={value.destinationParent}
+											onChange={isRemote ? (event) => onChange({ ...value, destinationParent: event.target.value }) : undefined}
 										/>
 									</div>
-									<Button
-										type="button"
-										variant="footer"
-										className="h-control-form! px-4"
-										disabled={disabled || choosingDestination}
-										onClick={() => void chooseDestination()}
-									>
-										{choosingDestination ? t("createProject.opening") : t("createProject.cloneChoose")}
-									</Button>
+									{!isRemote && (
+										<Button
+											type="button"
+											variant="footer"
+											className="h-control-form! px-4"
+											disabled={disabled || choosingDestination}
+											onClick={() => void chooseDestination()}
+										>
+											{choosingDestination ? t("createProject.opening") : t("createProject.cloneChoose")}
+										</Button>
+									)}
 								</div>
 								{destinationError ? (
 									<p id="cloneDestinationError" className="text-pretty text-[12px] leading-5 text-destructive" role="alert">

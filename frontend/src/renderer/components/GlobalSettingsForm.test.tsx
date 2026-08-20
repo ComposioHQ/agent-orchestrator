@@ -28,6 +28,10 @@ const {
 	getKeybindings,
 	setKeybindings,
 	setKeybindingRecording,
+	remoteGetConfig,
+	remoteTestAndConnect,
+	remoteDisconnect,
+	remoteForget,
 } = vi.hoisted(() => ({
 	getUpdate: vi.fn(),
 	setUpdate: vi.fn(),
@@ -49,6 +53,10 @@ const {
 	getKeybindings: vi.fn(),
 	setKeybindings: vi.fn(),
 	setKeybindingRecording: vi.fn(),
+	remoteGetConfig: vi.fn(),
+	remoteTestAndConnect: vi.fn(),
+	remoteDisconnect: vi.fn(),
+	remoteForget: vi.fn(),
 }));
 
 vi.mock("@tanstack/react-router", async (importOriginal) => {
@@ -80,6 +88,12 @@ vi.mock("../lib/bridge", () => ({
 			onStatus: updOnStatus,
 		},
 		featureBuilds: { list: featListBuilds, getActive: featGetActive },
+		remote: {
+			getConfig: remoteGetConfig,
+			testAndConnect: remoteTestAndConnect,
+			disconnect: remoteDisconnect,
+			forget: remoteForget,
+		},
 	},
 }));
 
@@ -115,6 +129,10 @@ beforeEach(async () => {
 		getKeybindings,
 		setKeybindings,
 		setKeybindingRecording,
+		remoteGetConfig,
+		remoteTestAndConnect,
+		remoteDisconnect,
+		remoteForget,
 	]) {
 		m.mockReset();
 	}
@@ -139,6 +157,10 @@ beforeEach(async () => {
 	getKeybindings.mockResolvedValue({});
 	setKeybindings.mockImplementation(async (overrides) => overrides);
 	setKeybindingRecording.mockResolvedValue(undefined);
+	remoteGetConfig.mockResolvedValue({ mode: "local", url: undefined, hasPassword: false, passwordPersistent: false });
+	remoteTestAndConnect.mockResolvedValue({ ok: false, code: "remote_unreachable", message: "not connected" });
+	remoteDisconnect.mockResolvedValue({ state: "stopped" });
+	remoteForget.mockResolvedValue({ state: "stopped" });
 	// Locale defaults to English so existing copy assertions stay green.
 	await appI18n.changeLanguage("en");
 	useLocaleStore.setState({ locale: "en", loaded: false, saving: false, saveError: false });

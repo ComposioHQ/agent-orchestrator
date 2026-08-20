@@ -37,6 +37,7 @@ import { aoBridge } from "../lib/bridge";
 import { TERMINAL_FONT_SIZE_DEFAULT } from "../lib/design-tokens";
 import { isWebLink, openLinkInSystemBrowser } from "../lib/external-link-policy";
 import { isMacPlatform } from "../lib/platform";
+import { useShellMaybe } from "../lib/shell-context";
 import { applyDocumentTheme, applyDocumentThemeStyle } from "../lib/theme";
 import { buildTerminalThemes } from "../lib/terminal-themes";
 import { useUiStore, type Theme } from "../stores/ui-store";
@@ -294,6 +295,11 @@ export function XtermTerminal(props: XtermTerminalProps) {
 	// never tear down and recreate the terminal because a handler identity
 	// changed between renders.
 	const callbacksRef = useRef(props);
+	// Remote daemon: a dropped file's path is Mac-local and does not exist on
+	// the daemon host, so the drop handler below reads this ref and no-ops.
+	const isRemote = useShellMaybe()?.daemonStatus.connection === "remote";
+	const isRemoteRef = useRef(isRemote);
+	isRemoteRef.current = isRemote;
 
 	const setContextMenuOpen = useCallback((open: boolean) => {
 		setContextMenu((current) => ({ ...current, open }));
@@ -825,7 +831,7 @@ export function XtermTerminal(props: XtermTerminalProps) {
 		// a temp file by the main process and that path is inserted instead.
 		const isFileDrag = (event: DragEvent) => Array.from(event.dataTransfer?.types ?? []).includes("Files");
 		const dragOverInput = (event: DragEvent) => {
-			if (!isFileDrag(event)) return;
+			if (!isFileDrag(event) || isRemoteRef.current) return;
 			event.preventDefault();
 			if (event.dataTransfer) event.dataTransfer.dropEffect = "copy";
 		};
@@ -834,6 +840,9 @@ export function XtermTerminal(props: XtermTerminalProps) {
 			if (files.length === 0) return;
 			event.preventDefault();
 			event.stopPropagation();
+			// Remote mode: swallow the drop — pasting a Mac-local path would
+			// reference a file the remote daemon host cannot see.
+			if (isRemoteRef.current) return;
 			void (async () => {
 				const paths: string[] = [];
 				for (const file of files) {
@@ -1004,6 +1013,7 @@ export function XtermTerminal(props: XtermTerminalProps) {
 				ref={hostRef}
 				aria-label={props.ariaLabel}
 				className={props.className}
+				title={isRemote ? t("terminal.remoteDropUnavailable") : undefined}
 				style={{
 					backgroundColor: "var(--color-bg-terminal-opaque)",
 					height: "100%",

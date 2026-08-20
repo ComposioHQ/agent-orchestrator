@@ -16,6 +16,7 @@ import {
 	type TrayOpenSessionTarget,
 } from "./shared/tray";
 import type { DaemonStatus } from "./shared/daemon-status";
+import type { RemoteConnectResult, RemoteDaemonConfigView } from "./shared/remote-url";
 import type { TelemetryBootstrap } from "./shared/telemetry";
 import type { MigrationState } from "./main/app-state";
 import type { UpdateSettings, UpdateStatus } from "./main/update-settings";
@@ -219,6 +220,13 @@ const api = {
 				ipcRenderer.off("daemon:status", wrapped);
 			};
 		},
+	},
+	remote: {
+		getConfig: () => ipcRenderer.invoke("remote:getConfig") as Promise<RemoteDaemonConfigView>,
+		testAndConnect: (url: string, password: string) =>
+			ipcRenderer.invoke("remote:testAndConnect", url, password) as Promise<RemoteConnectResult>,
+		disconnect: () => ipcRenderer.invoke("remote:disconnect") as Promise<DaemonStatus>,
+		forget: () => ipcRenderer.invoke("remote:forget") as Promise<DaemonStatus>,
 	},
 	telemetry: {
 		getBootstrap: () => ipcRenderer.invoke("telemetry:getBootstrap") as Promise<TelemetryBootstrap | null>,

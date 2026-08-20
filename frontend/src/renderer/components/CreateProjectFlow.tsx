@@ -17,10 +17,12 @@ import { lazy, Suspense, useEffect, useRef, useState, type ReactNode } from "rea
 import type { ImportFolderScan } from "../../preload";
 import { aoBridge } from "../lib/bridge";
 import { cn } from "../lib/utils";
+import { useShellMaybe } from "../lib/shell-context";
 import type { ProjectKind } from "../types/workspace";
 import { CreateProjectAgentSheet, type CreateProjectAgentSelection } from "./CreateProjectAgentSheet";
 import type { CloneRepositoryDetails, CloneRepositorySelection } from "./CloneRepositoryDialog";
 import { Button } from "./ui/button";
+import { Input } from "./ui/input";
 
 export type CreateProjectInput = { path: string; asWorkspace?: boolean } & CreateProjectAgentSelection;
 export type CloneProjectInput = Pick<CloneRepositorySelection, "remoteUrl" | "destinationParent"> &
@@ -78,6 +80,11 @@ export function CreateProjectFlow({
 	const [isInitializing, setIsInitializing] = useState(false);
 	const [repositorySetup, setRepositorySetup] = useState<"NOT_A_GIT_REPO" | "PROJECT_UNBORN" | null>(null);
 	const [repositorySetupWarning, setRepositorySetupWarning] = useState<string | null>(null);
+	// Remote daemon: the filesystem being imported into lives on the daemon
+	// host, so the native picker/scan (both local) are replaced by an explicit
+	// absolute-path entry.
+	const isRemote = useShellMaybe()?.daemonStatus.connection === "remote";
+	const [remotePathEntry, setRemotePathEntry] = useState<{ kind: ProjectKind } | null>(null);
 
 	const hasModePicker = mode === "choose";
 	const isBusy = isChoosingPath || isCreating || isInitializing;
@@ -102,6 +109,11 @@ export function CreateProjectFlow({
 		setRepositorySetup(null);
 		setRepositorySetupWarning(null);
 		setSelectedKind(kind);
+		if (isRemote) {
+			setModePickerOpen(false);
+			setRemotePathEntry({ kind });
+			return;
+		}
 		setIsChoosingPath(true);
 		try {
 			const path = await aoBridge.app.chooseDirectory(
@@ -194,7 +206,7 @@ export function CreateProjectFlow({
 			}
 			setError(message);
 			if (hasModePicker && !cloneSelection) {
-				if (shouldScanCreateFailure(message)) {
+				if (shouldScanCreateFailure(message) && !isRemote) {
 					try {
 						const scan = await aoBridge.app.scanImportFolder({
 							path: selectedPath,
@@ -309,6 +321,18 @@ export function CreateProjectFlow({
 					/>
 				</>
 			)}
+			<RemotePathEntryDialog
+				disabled={isBusy}
+				kind={remotePathEntry?.kind ?? selectedKind}
+				onOpenChange={(open) => {
+					if (!open) setRemotePathEntry(null);
+				}}
+				onSubmit={(path) => {
+					setRemotePathEntry(null);
+					setSelectedPath(path);
+				}}
+				open={remotePathEntry !== null}
+			/>
 			<CreateProjectAgentSheet
 				action={cloneSelection ? "clone" : "create"}
 				error={error}
@@ -687,4 +711,96 @@ function remoteDisplay(remote: string) {
 	} catch {
 		return remote.replace(/^https?:\/\//, "").replace(/\.git$/, "");
 	}
+}
+
+/** Remote-mode replacement for the native folder picker: an explicit absolute
+ * path on the daemon host (the renderer cannot browse a remote filesystem). */
+function RemotePathEntryDialog({
+	disabled,
+	kind,
+	onOpenChange,
+	onSubmit,
+	open,
+}: {
+	disabled: boolean;
+	kind: ProjectKind;
+	onOpenChange: (open: boolean) => void;
+	onSubmit: (path: string) => void;
+	open: boolean;
+}) {
+	const { t } = useTranslation();
+	const [value, setValue] = useState("");
+	const [pathError, setPathError] = useState<string | null>(null);
+
+	useEffect(() => {
+		if (open) {
+			setValue("");
+			setPathError(null);
+		}
+	}, [open]);
+
+	const submit = () => {
+		const path = value.trim();
+		if (!path) {
+			setPathError(t("createProject.remotePathRequired"));
+			return;
+		}
+		onSubmit(path);
+	};
+
+	const pathLabel =
+		kind === "workspace" ? t("createProject.remotePathWorkspace") : t("createProject.remotePathProject");
+
+	return (
+		<Dialog.Root open={open} onOpenChange={(next) => !disabled && onOpenChange(next)}>
+			<Dialog.Portal>
+				<Dialog.Overlay className="dialog-overlay data-[state=open]:animate-overlay-in" />
+				<Dialog.Content className="fixed left-1/2 top-1/2 z-overlay flex w-[min(var(--size-import-modal-max),calc(100vw-24px))] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-welcome-panel border border-[var(--color-border-import-modal)] bg-[var(--color-bg-import-modal)] p-0 text-[var(--color-text-import-title)] shadow-[var(--shadow-import-modal)] data-[state=open]:animate-modal-in">
+					<div className="flex shrink-0 flex-col gap-1 border-b border-[var(--color-border-import-modal)] p-(--size-import-dialog-padding)">
+						<Dialog.Title className="text-[18px] font-semibold text-[var(--color-text-import-title)]">
+							{t("createProject.remotePathTitle")}
+						</Dialog.Title>
+						<Dialog.Description className="max-w-[520px] text-[13px] font-medium leading-5 text-[var(--color-text-import-muted)]">
+							{t("createProject.remotePathDescription")}
+						</Dialog.Description>
+					</div>
+					<div className="flex flex-col gap-2 p-(--size-import-dialog-padding)">
+						<label className="flex flex-col gap-1.5">
+							<span className="text-[12px] font-medium text-[var(--color-text-import-muted)]">{pathLabel}</span>
+							<Input
+								aria-label={pathLabel}
+								value={value}
+								onChange={(event) => {
+									setValue(event.target.value);
+									setPathError(null);
+								}}
+								onKeyDown={(event) => {
+									if (event.key === "Enter") {
+										event.preventDefault();
+										submit();
+									}
+								}}
+								placeholder={t("createProject.remotePathPlaceholder")}
+								autoComplete="off"
+								spellCheck={false}
+							/>
+						</label>
+						{pathError && (
+							<p role="alert" className="text-[12px] leading-5 text-destructive">
+								{pathError}
+							</p>
+						)}
+					</div>
+					<div className="flex shrink-0 items-center justify-end gap-3 border-t border-[var(--color-border-import-modal)] p-(--size-import-dialog-padding)">
+						<Button type="button" variant="footer" disabled={disabled} onClick={() => onOpenChange(false)}>
+							{t("createProject.cancel")}
+						</Button>
+						<Button type="button" variant="footer-primary" disabled={disabled} onClick={submit}>
+							{t("createProject.remotePathContinue")}
+						</Button>
+					</div>
+				</Dialog.Content>
+			</Dialog.Portal>
+		</Dialog.Root>
+	);
 }

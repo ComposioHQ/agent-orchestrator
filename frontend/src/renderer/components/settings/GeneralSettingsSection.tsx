@@ -3,6 +3,7 @@ import type { ThemePreference, ThemeStyle } from "../../lib/theme";
 import type { AppLocale } from "../../i18n";
 import { useLocaleStore } from "../../stores/locale-store";
 import { useUiStore } from "../../stores/ui-store";
+import { useShellMaybe } from "../../lib/shell-context";
 import { SettingsOptionMenu, type SettingsOption } from "./SettingsOptionMenu";
 import { SettingsLinkRow, SettingsRow } from "./SettingsRow";
 import { SettingsSection } from "./SettingsSection";
@@ -97,6 +98,9 @@ export function GeneralSettingsSection({
 	const localeSaveError = useLocaleStore((state) => state.saveError);
 	const developerMode = useUiStore((state) => state.developerMode);
 	const setDeveloperMode = useUiStore((state) => state.setDeveloperMode);
+	// The mobile bridge routes are 404 through the remote daemon listener by
+	// design, so remote mode swaps the pairing row for a pointer to the CLI.
+	const isRemote = useShellMaybe()?.daemonStatus.connection === "remote";
 
 	const themeOptions = [
 		{ value: "light", label: t("settings.theme.light") },
@@ -160,7 +164,11 @@ export function GeneralSettingsSection({
 					onCheckedChange={setDeveloperMode}
 				/>
 			</SettingsRow>
-			<SettingsLinkRow label={t("settings.connectMobile")} onClick={onConnectMobile} />
+			{isRemote ? (
+				<p className="px-3 text-xs leading-relaxed text-muted-foreground">{t("settings.connectMobileRemoteNote")}</p>
+			) : (
+				<SettingsLinkRow label={t("settings.connectMobile")} onClick={onConnectMobile} />
+			)}
 		</SettingsSection>
 	);
 }

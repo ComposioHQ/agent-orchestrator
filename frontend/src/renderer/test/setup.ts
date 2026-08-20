@@ -109,6 +109,12 @@ if (typeof window !== "undefined") {
 			restart: async () => ({ state: "starting" }),
 			onStatus: () => () => undefined,
 		},
+		remote: {
+			getConfig: async () => ({ mode: "local" as const, url: undefined, hasPassword: false, passwordPersistent: false }),
+			testAndConnect: async () => ({ ok: false as const, code: "remote_unreachable", message: "not connected" }),
+			disconnect: async () => ({ state: "stopped" as const }),
+			forget: async () => ({ state: "stopped" as const }),
+		},
 		telemetry: {
 			getBootstrap: async () => null,
 		},

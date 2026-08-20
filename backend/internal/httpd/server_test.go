@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/config"
+	"github.com/aoagents/agent-orchestrator/backend/internal/daemonmeta"
 	"github.com/aoagents/agent-orchestrator/backend/internal/runfile"
 )
 
@@ -31,12 +32,21 @@ func TestHealthProbes(t *testing.T) {
 		if err != nil {
 			t.Fatalf("GET %s: %v", path, err)
 		}
+		var body struct {
+			APIVersion int `json:"apiVersion"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+			t.Fatalf("GET %s: decode body: %v", path, err)
+		}
 		resp.Body.Close()
 		if resp.StatusCode != http.StatusOK {
 			t.Errorf("GET %s = %d, want 200", path, resp.StatusCode)
 		}
 		if ct := resp.Header.Get("Content-Type"); ct != "application/json; charset=utf-8" {
 			t.Errorf("GET %s Content-Type = %q, want JSON", path, ct)
+		}
+		if body.APIVersion != daemonmeta.APIVersion {
+			t.Errorf("GET %s apiVersion = %d, want %d", path, body.APIVersion, daemonmeta.APIVersion)
 		}
 	}
 }

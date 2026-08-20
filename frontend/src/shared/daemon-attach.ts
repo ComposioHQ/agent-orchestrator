@@ -34,6 +34,8 @@ export type DaemonProbe = {
 	startupWorkingDirectory?: string;
 	/** Stable outer .AppImage path (AO_APPIMAGE), present only when the daemon's launcher runs under AppImage. */
 	appImagePath?: string;
+	/** Daemon API compatibility version (backend daemonmeta.APIVersion); absent on daemons that predate it. */
+	apiVersion?: number;
 };
 
 /** A /healthz|/readyz probe of a loopback port; resolves null when nothing valid answers. */
@@ -69,6 +71,10 @@ export function parseDaemonProbe(endpoint: "healthz" | "readyz", body: unknown):
 		startupWorkingDirectory:
 			typeof candidate.startupWorkingDirectory === "string" ? candidate.startupWorkingDirectory : undefined,
 		appImagePath: typeof candidate.appImagePath === "string" ? candidate.appImagePath : undefined,
+		apiVersion:
+			typeof candidate.apiVersion === "number" && Number.isInteger(candidate.apiVersion)
+				? candidate.apiVersion
+				: undefined,
 	};
 }
 

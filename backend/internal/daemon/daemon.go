@@ -53,6 +53,10 @@ import (
 // Run starts the daemon and blocks until it exits. SIGINT/SIGTERM drive
 // graceful shutdown through the HTTP server and background workers.
 func Run() error {
+	return run(runOptions{})
+}
+
+func run(opts runOptions) error {
 	cfg, err := config.Load()
 	if err != nil {
 		return err
@@ -469,7 +473,15 @@ func Run() error {
 	// port Start actually bound. Routed through bs, not lan directly, so the
 	// proxy never gets pinned to a dead port after an ephemeral fallback.
 	// Best-effort: never blocks boot.
-	if err := restoreMobileOnBoot(mobilebridge.Path(cfg.DataDir), bs); err != nil {
+	//
+	// A headless boot supersedes this: setupHeadlessRemote brings the same
+	// listener and proxy up (reusing the persisted password) but verifies
+	// secure pairing and fails closed instead of logging and continuing.
+	if opts.headless != nil {
+		if err := setupHeadlessRemote(ctx, bs, *opts.headless, log); err != nil {
+			return err
+		}
+	} else if err := restoreMobileOnBoot(mobilebridge.Path(cfg.DataDir), bs); err != nil {
 		log.Warn("restore mobile bridge on boot failed", "err", err)
 	}
 

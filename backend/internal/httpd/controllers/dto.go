@@ -1174,8 +1174,10 @@ type ResolveCommentsResponse struct {
 }
 
 // MobileStatusResponse is the body of the Connect Mobile status/enable/disable/
-// regenerate endpoints. Password is populated only transiently, on enable and
-// regenerate responses (empty otherwise) — it is never persisted in plaintext.
+// regenerate endpoints. Password is populated whenever the bridge is enabled
+// (the status route is loopback-only, so the plaintext never reaches a LAN
+// client); it is persisted in plaintext in ~/.ao/mobile/config.json by
+// deliberate decision — see mobilebridge.State.
 type MobileStatusResponse struct {
 	Enabled bool   `json:"enabled"`
 	Host    string `json:"host"`

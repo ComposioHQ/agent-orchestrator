@@ -10,6 +10,7 @@ import type {
 } from "../../main/browser-view-host";
 import type { BrowserAnnotationCancelPayload, BrowserAnnotationSubmitPayload } from "../../shared/browser-annotations";
 import { OPEN_BROWSER_OVERLAY_SELECTOR } from "../lib/dom-selectors";
+import { useShellMaybe } from "../lib/shell-context";
 
 export type { BrowserNavState };
 
@@ -165,7 +166,10 @@ export function useBrowserView({
 	const previewTriggerRef = useRef<{ revision: number | null; target: string } | null>(null);
 	const overlayOpenRef = useRef(false);
 	const tabNoticeTimerRef = useRef<number | null>(null);
-	const hasNativeBrowser = Boolean(window.ao?.browser);
+	// Remote mode: the daemon's preview URLs are loopback on the daemon host and
+	// unreachable from here, so the native browser surface stays disabled.
+	const isRemote = useShellMaybe()?.daemonStatus.connection === "remote";
+	const hasNativeBrowser = Boolean(window.ao?.browser) && !isRemote;
 
 	useEffect(() => {
 		activeRef.current = active;
