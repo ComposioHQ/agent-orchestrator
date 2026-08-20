@@ -114,7 +114,7 @@ export function TestimonialForm() {
           placeholder="What changed in the way you work after using AO? A specific outcome or moment is especially helpful."
           value={testimonial}
           onChange={(event) => setTestimonial(limitWords(event.target.value))}
-          className="min-h-44 w-full resize-y rounded-xl border border-border bg-background px-4 py-3 text-sm leading-6 text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+          className="min-h-44 w-full resize-y rounded-xl border border-border bg-background px-4 py-3 text-sm leading-6 text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:ring-2 focus:ring-ring"
         />
         <p id={testimonialHelpId} className="text-xs leading-5 text-muted-foreground">
           100–300 words recommended. Concrete details make the strongest stories.
