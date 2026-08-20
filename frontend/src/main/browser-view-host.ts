@@ -502,11 +502,25 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 			session.devtools = undefined;
 			pushDevToolsState(session);
 		});
-		hardenWebContents(view.webContents, options, entry, () => {
-			const popup = createTab(session, true, true);
-			pushTabsState(options, session, { kind: "popup", tabId: popup.tabId });
-			return popup.view.webContents;
-		}, () => session.tabs.size < MAX_BROWSER_TABS);
+		hardenWebContents(
+			view.webContents,
+			options,
+			entry,
+			(url) => {
+				// Deliberately not the setWindowOpenHandler createWindow path: Electron's
+				// openGuestWindow requires the returned webContents to be one IT created
+				// from the options it computed for this exact guest-window-open event.
+				// AO's tabs are WebContentsViews created through its own createTab/openTab,
+				// with no such linkage — returning one there throws "Invalid webContents.
+				// Created window should be connected to webContents passed with options
+				// object" and crashes the whole app on every link click. Deny the guest
+				// window outright and open (and navigate) our own tab instead; openTab
+				// already handles URL validation, tab-limit, and the "popup" tabs-state
+				// event this used to push manually.
+				void openTab(session, url, true, "popup", true).catch(() => undefined);
+			},
+			() => session.tabs.size < MAX_BROWSER_TABS,
+		);
 		wireNavEvents(
 			view.webContents,
 			options,
@@ -634,6 +648,12 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		url: string | undefined,
 		activate: boolean,
 		reason: "opened" | "popup" = "opened",
+		// A popup opened mid-automation (an agent clicked a link that opens a new
+		// tab) must sync the automation runtime's own active-target tracking too,
+		// the same way the old direct createTab(..., true) call for popups did —
+		// otherwise the runtime keeps issuing further actions against the tab the
+		// agent was on before the link, not the one it's actually looking at now.
+		syncNativeOnActivate = false,
 	): Promise<BrowserEntry> => {
 		let normalizedURL: string | undefined;
 		if (url) {
@@ -643,7 +663,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 			}
 			normalizedURL = normalized.href;
 		}
-		const entry = createTab(session, activate);
+		const entry = createTab(session, activate, syncNativeOnActivate);
 		await entry.ready;
 		if (normalizedURL) {
 			const navigation = navigateEntry(entry, normalizedURL);
@@ -1553,17 +1573,18 @@ function hardenWebContents(
 	contents: BrowserWebContents,
 	options: BrowserViewHostOptions,
 	entry: BrowserEntry,
-	createPopup: () => BrowserWebContents,
+	openPopup: (url: string) => void,
 	canCreatePopup: () => boolean,
 ): void {
 	contents.setWindowOpenHandler(({ url }) => {
 		if (!isAllowedBrowserURL(url, options.rendererOrigin) || !canCreatePopup()) {
 			return { action: "deny" };
 		}
-		return {
-			action: "allow",
-			createWindow: () => createPopup() as WebContents,
-		};
+		// Always deny — never return createWindow. See the call site's comment for
+		// why: Electron's own guest-window linkage check crashes the process
+		// otherwise. Open our own tab instead, outside Electron's guest-window flow.
+		openPopup(url);
+		return { action: "deny" };
 	});
 	const blockUnsafeNavigation = (event: Electron.Event, url: string) => {
 		if (!isAllowedBrowserURL(url, options.rendererOrigin)) {

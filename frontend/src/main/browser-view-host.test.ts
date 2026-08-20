@@ -846,16 +846,20 @@ describe("agent browser runtime", () => {
 		await host.execute("sess-1", "open", { url: "http://localhost:3000" });
 
 		views[0].webContents.openWindow("http://localhost:3000/popup");
-		await Promise.resolve();
 
-		const listed = (await host.execute("sess-1", "tabs")) as {
-			activeTabId: string;
-			tabs: Array<{ id: string; url: string }>;
-		};
-		expect(listed.activeTabId).toBe("t2");
-		expect(listed.tabs[1]).toEqual(
-			expect.objectContaining({ id: "t2", url: "http://localhost:3000/popup" }),
-		);
+		// Popups now open through the real async openTab (createTab, then await
+		// navigation) instead of the old synchronous createWindow path, so give
+		// it room to actually finish navigating before asserting on the result.
+		await vi.waitFor(async () => {
+			const listed = (await host.execute("sess-1", "tabs")) as {
+				activeTabId: string;
+				tabs: Array<{ id: string; url: string }>;
+			};
+			expect(listed.activeTabId).toBe("t2");
+			expect(listed.tabs[1]).toEqual(
+				expect.objectContaining({ id: "t2", url: "http://localhost:3000/popup" }),
+			);
+		});
 
 		await host.execute("sess-1", "tab-close");
 		await expect(host.execute("sess-1", "tab-close")).rejects.toMatchObject({
