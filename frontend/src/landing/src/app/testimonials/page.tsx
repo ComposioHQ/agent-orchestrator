@@ -38,7 +38,7 @@ export default function TestimonialsPage() {
               aria-hidden="true"
             />
 
-            <div className="relative flex min-h-[680px] flex-col justify-between p-5 sm:min-h-[650px] sm:p-8 lg:h-full lg:min-h-0 lg:p-10">
+            <div className="relative flex min-h-[420px] flex-col justify-between p-5 sm:min-h-[460px] sm:p-8 lg:h-full lg:min-h-0 lg:p-10">
               <div className="max-w-3xl">
                 <h1 className="max-w-4xl text-4xl font-semibold leading-[1.02] text-foreground sm:text-5xl lg:text-6xl">
                   Put your AO experience into words.
