@@ -8,7 +8,7 @@ import type {
 	WebContents,
 	OpenDevToolsOptions,
 } from "electron";
-import { nativeImage } from "electron";
+import { nativeImage, net } from "electron";
 import { randomUUID } from "node:crypto";
 import type {
 	BrowserAnnotationCancelPayload,
@@ -165,7 +165,7 @@ type BrowserWebContents = Pick<
 	openDevTools?: (options?: Pick<OpenDevToolsOptions, "mode" | "activate">) => void;
 	closeDevTools?: () => void;
 	close?: () => void;
-	session?: Pick<Session, "setPermissionCheckHandler" | "setPermissionRequestHandler">;
+	session?: Pick<Session, "setPermissionCheckHandler" | "setPermissionRequestHandler" | "webRequest">;
 };
 
 type BrowserViewLike = View & {
@@ -206,6 +206,10 @@ export type BrowserViewHostOptions = {
 	isKeybindingRecording?: () => boolean;
 	agentBrowserRuntime?: AgentBrowserRuntime;
 	isCloseShellTerminalShortcutEnabled?: () => boolean;
+	// Lets browser-view-host report console errors / failed requests to the
+	// session's agent via the daemon's own HTTP API (see recordBrowserSignal).
+	// Undefined/no port yet (daemon not ready) just means signals are dropped.
+	getDaemonPort?: () => number | undefined;
 };
 
 export type BrowserViewHost = {
@@ -257,6 +261,13 @@ type BrowserSessionEntry = {
 	nativeActiveTabId?: string;
 	nativeOperationQueue: Promise<void>;
 	devtoolsPlacement: BrowserDevToolsPlacement;
+	// Buffered console-error / failed-request signals awaiting a debounced
+	// flush to the session's agent. See recordBrowserSignal/flushBrowserSignals.
+	signals: {
+		pending: BrowserSignalEntry[];
+		flushTimer: NodeJS.Timeout | null;
+		webRequestRegistered: boolean;
+	};
 	devtools?: {
 		contents: BrowserWebContents;
 		placement: BrowserDevToolsPlacement;
@@ -275,6 +286,13 @@ type BrowserLogEntry = {
 	source?: string;
 	line?: number;
 	timestamp: string;
+};
+
+// Text only — never a request/response body, matching the existing on-demand
+// network capture's privacy stance (see MAX_NETWORK_REQUESTS below).
+type BrowserSignalEntry = {
+	kind: "console-error" | "network-failure";
+	message: string;
 };
 
 type BrowserNetworkRequest = {
@@ -327,6 +345,13 @@ const BROWSER_VIEW_BORDER_RADIUS = 10;
 const DEFAULT_NETWORK_CAPTURE_SECONDS = 60;
 const MAX_NETWORK_CAPTURE_SECONDS = 300;
 const MAX_NETWORK_REQUESTS = 200;
+// Always-on console-error/failed-request reporting (distinct from the
+// on-demand capture above, which stays opt-in): same cap philosophy — bounded
+// buffer, no bodies — but debounced into a single message per burst instead
+// of accumulated for on-demand query.
+const MAX_BROWSER_SIGNALS = MAX_NETWORK_REQUESTS;
+const BROWSER_SIGNAL_FLUSH_DELAY_MS = 5_000;
+const MAX_BROWSER_SIGNALS_PER_MESSAGE = 10;
 const FAVICON_SIZE = 32;
 const MAX_FAVICON_BYTES = 256 * 1024;
 const DEFAULT_NATIVE_DEVTOOLS_PLACEMENT: BrowserDevToolsPlacement = "right";
@@ -502,6 +527,17 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 			session.devtools = undefined;
 			pushDevToolsState(session);
 		});
+		// Always-on: level 0-2 are verbose/info/warning, 3 is error. This is a
+		// native WebContents event, not a CDP domain, so it never competes with
+		// agent-browser's own debugger attachment for this tab.
+		view.webContents.on("console-message", (_event, level, message, line, sourceId) => {
+			if (level < 3) return;
+			const location = sourceId ? `${sourceId}${typeof line === "number" ? `:${line}` : ""}` : "";
+			recordBrowserSignal(session, {
+				kind: "console-error",
+				message: location ? `${message} (${location})` : message,
+			});
+		});
 		hardenWebContents(
 			view.webContents,
 			options,
@@ -590,6 +626,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 				agentBrowserCommands: 0,
 				nativeOperationQueue: Promise.resolve(),
 				devtoolsPlacement: DEFAULT_NATIVE_DEVTOOLS_PLACEMENT,
+				signals: { pending: [], flushTimer: null, webRequestRegistered: false },
 			};
 			entries.set(viewId, session);
 			viewIdsBySessionId.set(sessionId, viewId);
@@ -598,6 +635,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 			// that invariant avoids an unnecessary tab command before the first action;
 			// later human selections and popups explicitly invalidate it.
 			session.nativeActiveTabId = session.activeTabId;
+			registerBrowserSignalWatcher(session);
 		}
 		if (rendererId !== undefined) {
 			const owners = rendererOwnersByViewId.get(viewId) ?? new Set<number>();
@@ -616,6 +654,78 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 			() => undefined,
 		);
 		return result;
+	};
+
+	// Failed XHR/fetch calls are session-partition-scoped (Electron's webRequest
+	// lives on the Session object, shared by every tab in this browser session),
+	// so this registers once per session rather than once per tab. resourceType
+	// "xhr" is Electron's classification for both real XHR and fetch() — there
+	// is no separate "fetch" resourceType in this Electron version.
+	const registerBrowserSignalWatcher = (session: BrowserSessionEntry): void => {
+		if (session.signals.webRequestRegistered) return;
+		const firstTab = session.tabs.values().next().value;
+		const electronSession = firstTab?.view.webContents.session;
+		// Optional in BrowserWebContents (real Electron always provides it; test
+		// doubles that don't care about network-failure signals can omit it).
+		if (!electronSession?.webRequest) return;
+		session.signals.webRequestRegistered = true;
+		const filter = { urls: ["*://*/*"] };
+		electronSession.webRequest.onCompleted(filter, (details) => {
+			if (details.resourceType !== "xhr" || details.statusCode < 400) return;
+			recordBrowserSignal(session, {
+				kind: "network-failure",
+				message: `${details.method} ${details.url} → ${details.statusCode}`,
+			});
+		});
+		electronSession.webRequest.onErrorOccurred(filter, (details) => {
+			if (details.resourceType !== "xhr") return;
+			recordBrowserSignal(session, {
+				kind: "network-failure",
+				message: `${details.method} ${details.url} failed: ${details.error}`,
+			});
+		});
+	};
+
+	// Debounces a burst of errors (a broken page often fires several at once)
+	// into a single agent-facing message instead of one message per error.
+	const recordBrowserSignal = (session: BrowserSessionEntry, entry: BrowserSignalEntry): void => {
+		const { pending } = session.signals;
+		pending.push(entry);
+		if (pending.length > MAX_BROWSER_SIGNALS) pending.splice(0, pending.length - MAX_BROWSER_SIGNALS);
+		if (session.signals.flushTimer) return;
+		session.signals.flushTimer = setTimeout(() => {
+			session.signals.flushTimer = null;
+			void flushBrowserSignals(session);
+		}, BROWSER_SIGNAL_FLUSH_DELAY_MS);
+	};
+
+	const flushBrowserSignals = async (session: BrowserSessionEntry): Promise<void> => {
+		const queued = session.signals.pending.splice(0, session.signals.pending.length);
+		if (queued.length === 0) return;
+		const port = options.getDaemonPort?.();
+		if (!port) return;
+		const shown = queued.slice(0, MAX_BROWSER_SIGNALS_PER_MESSAGE);
+		const omitted = queued.length - shown.length;
+		const lines = shown.map(
+			(entry) => `- [${entry.kind === "console-error" ? "console" : "network"}] ${entry.message}`,
+		);
+		const message = [
+			`Browser detected ${queued.length} issue${queued.length === 1 ? "" : "s"} on this page:`,
+			...lines,
+			omitted > 0 ? `…and ${omitted} more` : null,
+		]
+			.filter((line): line is string => line !== null)
+			.join("\n");
+		try {
+			await net.fetch(`http://127.0.0.1:${port}/api/v1/sessions/${encodeURIComponent(session.sessionId)}/send`, {
+				method: "POST",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify({ message }),
+			});
+		} catch {
+			// Best-effort notification. A delivery failure here must not surface as
+			// a browser error itself or disrupt the tab that triggered it.
+		}
 	};
 
 	const ensureNativeActiveTab = async (session: BrowserSessionEntry, signal?: AbortSignal): Promise<void> => {

@@ -220,6 +220,12 @@ function setupTabHost() {
 			closeDevTools: ReturnType<typeof vi.fn>;
 			openWindow: (url: string) => void;
 			close: ReturnType<typeof vi.fn>;
+			session: {
+				webRequest: {
+					onCompleted: ReturnType<typeof vi.fn>;
+					onErrorOccurred: ReturnType<typeof vi.fn>;
+				};
+			};
 			};
 			setBounds: ReturnType<typeof vi.fn>;
 			setBorderRadius: ReturnType<typeof vi.fn>;
@@ -285,6 +291,18 @@ function setupTabHost() {
 				if (result?.action === "allow") {
 					void result.createWindow?.().loadURL(url);
 				}
+			},
+			emitConsoleMessage: (level: number, message: string, line = 0, sourceId = "") => {
+				const listener = listeners.get("console-message") as
+					| ((event: unknown, level: number, message: string, line: number, sourceId: string) => void)
+					| undefined;
+				listener?.({}, level, message, line, sourceId);
+			},
+			session: {
+				webRequest: {
+					onCompleted: vi.fn(),
+					onErrorOccurred: vi.fn(),
+				},
 			},
 		};
 		const view = { webContents, setBounds: vi.fn(), setBorderRadius: vi.fn(), setVisible: vi.fn() };
@@ -865,6 +883,20 @@ describe("agent browser runtime", () => {
 		await expect(host.execute("sess-1", "tab-close")).rejects.toMatchObject({
 			code: "CANNOT_CLOSE_LAST_TAB",
 		});
+	});
+
+	it("registers a session-scoped webRequest watcher for failed requests exactly once, not per tab", async () => {
+		const { host, views } = setupTabHost();
+		await host.execute("sess-1", "open", { url: "http://localhost:3000" });
+		await host.execute("sess-1", "tab-new");
+
+		// One registration for the whole session, not one per tab created within it.
+		expect(views[0].webContents.session.webRequest.onCompleted).toHaveBeenCalledTimes(1);
+		expect(views[0].webContents.session.webRequest.onCompleted).toHaveBeenCalledWith(
+			{ urls: ["*://*/*"] },
+			expect.any(Function),
+		);
+		expect(views[0].webContents.session.webRequest.onErrorOccurred).toHaveBeenCalledTimes(1);
 	});
 
 	it("exposes owned tab state and manual tab actions to the renderer", async () => {

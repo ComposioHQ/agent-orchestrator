@@ -462,6 +462,7 @@ async function createWindowInternal(): Promise<void> {
 		isKeybindingRecording: () => keybindingRecordingActive,
 		agentBrowserRuntime,
 		isCloseShellTerminalShortcutEnabled: () => closeShellTerminalShortcutEnabled,
+		getDaemonPort: () => (daemonStatus.state === "ready" ? daemonStatus.port : undefined),
 	});
 	if (daemonStatus.state === "ready") establishBrowserRuntimeLink();
 
