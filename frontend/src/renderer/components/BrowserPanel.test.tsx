@@ -212,6 +212,24 @@ describe("BrowserPanel", () => {
 		expect(hookState.navigate).toHaveBeenCalledWith("localhost:5173");
 	});
 
+	it("constrains the device frame to a preset width, and clears it back to fit", async () => {
+		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
+		const frame = screen.getByTestId("browser-device-frame").parentElement as HTMLElement;
+		expect(frame.style.width).toBe("");
+
+		await userEvent.click(screen.getByRole("button", { name: "Device preset" }));
+		await userEvent.click(screen.getByRole("menuitem", { name: /Mobile/ }));
+		expect(frame.style.width).toBe("375px");
+
+		await userEvent.click(screen.getByRole("button", { name: "Device preset" }));
+		await userEvent.click(screen.getByRole("menuitem", { name: /Tablet/ }));
+		expect(frame.style.width).toBe("768px");
+
+		await userEvent.click(screen.getByRole("button", { name: "Device preset" }));
+		await userEvent.click(screen.getByRole("menuitem", { name: "Fit panel" }));
+		expect(frame.style.width).toBe("");
+	});
+
 	it("keeps the URL input editable while the browser is maximized", async () => {
 		hookState.navState = { ...hookState.navState, url: "http://localhost:5173/" };
 		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut session={session} />);

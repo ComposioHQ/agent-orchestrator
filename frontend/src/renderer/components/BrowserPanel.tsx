@@ -4,13 +4,17 @@ import {
 	ArrowLeft,
 	ArrowRight,
 	Bug,
+	Check,
 	Globe2,
 	Layers3,
 	Maximize2,
 	Minimize2,
+	Monitor,
 	MousePointer2,
 	Plus,
 	RefreshCw,
+	Smartphone,
+	Tablet,
 	X,
 } from "lucide-react";
 import { apiClient, apiErrorMessage } from "../lib/api-client";
@@ -19,10 +23,22 @@ import { formatBrowserAnnotationMessage, type BrowserAnnotationSubmitPayload } f
 import { MAX_BROWSER_TABS } from "../../shared/browser-tabs";
 import type { WorkspaceSession } from "../types/workspace";
 import { Button } from "./ui/button";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "./ui/dropdown-menu";
 import { Input } from "./ui/input";
 import { BrowserTabsRail, type BrowserTabsRailHandle } from "./BrowserTabsRail";
 import { cn } from "../lib/utils";
 import { appI18n, type MessageKey } from "../i18n";
+
+// One-click viewport width presets for responsive testing — height always
+// fills the available panel height, only width is constrained. Chosen widths
+// match common device-testing conventions (iPhone-class, iPad portrait,
+// a common laptop breakpoint) rather than any exact device's real resolution.
+const DEVICE_PRESETS = [
+	{ id: "mobile", icon: Smartphone, labelKey: "browser.deviceMobile", width: 375 },
+	{ id: "tablet", icon: Tablet, labelKey: "browser.deviceTablet", width: 768 },
+	{ id: "desktop", icon: Monitor, labelKey: "browser.deviceDesktop", width: 1440 },
+] as const;
+type DevicePresetId = (typeof DEVICE_PRESETS)[number]["id"];
 
 type BrowserPanelProps = {
 	session: WorkspaceSession;
@@ -259,6 +275,8 @@ export function BrowserPanelView({
 	const canAnnotate = Boolean(window.ao?.browser && viewId && navState.url);
 	const canRetryAnnotation = status === "error" && queuedCount > 0;
 	const canOpenTab = tabs.length < MAX_BROWSER_TABS;
+	const [devicePreset, setDevicePreset] = useState<DevicePresetId | null>(null);
+	const deviceFrameWidth = DEVICE_PRESETS.find((preset) => preset.id === devicePreset)?.width;
 	const railRef = useRef<BrowserTabsRailHandle>(null);
 	const urlInputRef = useRef<HTMLInputElement>(null);
 	const [pinned, setPinned] = useState(() => window.localStorage.getItem(RAIL_PINNED_STORAGE_KEY) === "1");
@@ -479,6 +497,45 @@ export function BrowserPanelView({
 						{tabNotice}
 					</span>
 				) : null}
+				<DropdownMenu>
+					<DropdownMenuTrigger asChild>
+						<Button
+							aria-label={t("browser.devicePreset")}
+							aria-pressed={devicePreset !== null}
+							className={cn(devicePreset !== null && "bg-accent-weak text-accent")}
+							size="icon-sm"
+							title={t("browser.devicePreset")}
+							type="button"
+							variant="ghost"
+						>
+							{(() => {
+								const ActiveIcon = DEVICE_PRESETS.find((preset) => preset.id === devicePreset)?.icon ?? Monitor;
+								return <ActiveIcon aria-hidden="true" className="size-icon-base" />;
+							})()}
+						</Button>
+					</DropdownMenuTrigger>
+					<DropdownMenuContent align="end">
+						<DropdownMenuItem className="gap-1.5" onSelect={() => setDevicePreset(null)}>
+							<span className="flex size-4 shrink-0 items-center justify-center">
+								{devicePreset === null ? <Check aria-hidden="true" className="text-accent" /> : null}
+							</span>
+							{t("browser.deviceFit")}
+						</DropdownMenuItem>
+						{DEVICE_PRESETS.map((preset) => (
+							<DropdownMenuItem
+								className="gap-1.5"
+								key={preset.id}
+								onSelect={() => setDevicePreset(preset.id)}
+							>
+								<span className="flex size-4 shrink-0 items-center justify-center">
+									{devicePreset === preset.id ? <Check aria-hidden="true" className="text-accent" /> : null}
+								</span>
+								{t(preset.labelKey)}
+								<span className="ml-auto font-mono text-caption text-passive">{preset.width}px</span>
+							</DropdownMenuItem>
+						))}
+					</DropdownMenuContent>
+				</DropdownMenu>
 				<Button
 					aria-label={t(devtoolsState.open ? "browser.closeDevTools" : "browser.openDevTools")}
 					aria-pressed={devtoolsState.open}
@@ -577,7 +634,20 @@ export function BrowserPanelView({
 					data-placeholder={!hasNativeBrowser || navState.url === "" ? "true" : undefined}
 					data-testid="browser-viewport"
 				>
-					<div className="browser-panel__slot absolute inset-0 min-h-px min-w-px" ref={slotRef} />
+					{/* Only the native-view slot is width-constrained for a device
+					    preset — the empty/error placeholders below stay full-width
+					    overlays. maxWidth caps it to whatever room the panel actually
+					    has instead of overflowing a narrow docked panel. */}
+					<div
+						className={cn("relative mx-auto h-full", deviceFrameWidth && "border-x border-border shadow-(--shadow-popover)")}
+						style={deviceFrameWidth ? { maxWidth: "100%", width: deviceFrameWidth } : undefined}
+					>
+						<div
+							className="browser-panel__slot absolute inset-0 min-h-px min-w-px"
+							data-testid="browser-device-frame"
+							ref={slotRef}
+						/>
+					</div>
 					{showStaticPreview ? <StaticPreview url={navState.url} /> : null}
 					{navState.url === "" ? (
 						<div className="pointer-events-none absolute inset-0 grid place-items-center p-5 text-center font-mono text-xs text-passive">
