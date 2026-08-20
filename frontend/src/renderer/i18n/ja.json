@@ -33,6 +33,8 @@
 	"browser.popOut": "別ウィンドウで開く",
 	"browser.queued": "キュー待ち",
 	"browser.queuedCount": "キュー待ち ({{count}})",
+	"browser.recentlyClosed": "最近閉じたタブ",
+	"browser.reopenTab": "{{title}} を再度開く",
 	"browser.reload": "再読み込み",
 	"browser.retryAnnotation": "注釈を再試行",
 	"browser.returnToPanel": "パネルに戻る",

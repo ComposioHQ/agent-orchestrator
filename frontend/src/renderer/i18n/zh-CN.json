@@ -33,6 +33,8 @@
 	"browser.popOut": "弹出",
 	"browser.queued": "已排队",
 	"browser.queuedCount": "已排队（{{count}}）",
+	"browser.recentlyClosed": "最近关闭",
+	"browser.reopenTab": "重新打开 {{title}}",
 	"browser.reload": "重新加载",
 	"browser.retryAnnotation": "重试标注",
 	"browser.returnToPanel": "返回面板",

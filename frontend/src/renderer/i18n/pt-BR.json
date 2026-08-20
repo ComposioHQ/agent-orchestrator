@@ -33,6 +33,8 @@
 	"browser.popOut": "Abrir em janela",
 	"browser.queued": "Na fila",
 	"browser.queuedCount": "Na fila ({{count}})",
+	"browser.recentlyClosed": "Fechadas recentemente",
+	"browser.reopenTab": "Reabrir {{title}}",
 	"browser.reload": "Recarregar",
 	"browser.retryAnnotation": "Tentar anotação novamente",
 	"browser.returnToPanel": "Voltar ao painel",

@@ -33,6 +33,8 @@
 	"browser.popOut": "Auskoppeln",
 	"browser.queued": "In Warteschlange",
 	"browser.queuedCount": "In Warteschlange ({{count}})",
+	"browser.recentlyClosed": "Kürzlich geschlossen",
+	"browser.reopenTab": "{{title}} erneut öffnen",
 	"browser.reload": "Neu laden",
 	"browser.retryAnnotation": "Annotation erneut versuchen",
 	"browser.returnToPanel": "Zurück zum Panel",
