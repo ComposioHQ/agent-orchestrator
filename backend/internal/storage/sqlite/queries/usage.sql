@@ -375,6 +375,10 @@ SELECT CAST(COALESCE((
 -- name: ListCompactSessionUsage :many
 SELECT
     ub.session_id,
+    CAST(SUM(
+        mue.uncached_input_tokens + mue.cache_read_tokens +
+        mue.cache_write_tokens + mue.output_tokens
+    ) AS INTEGER) AS processed_tokens,
     CAST(SUM(mue.input_tokens + mue.output_tokens) AS INTEGER) AS total_tokens,
     CAST(COALESCE(integrity.incomplete, 0) AS INTEGER) AS incomplete
 FROM model_usage_events mue

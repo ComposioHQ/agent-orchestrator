@@ -969,9 +969,10 @@ type ListUsageSessionsQuery struct {
 
 // CompactSessionUsageResponse is one session card's token-only usage summary.
 type CompactSessionUsageResponse struct {
-	SessionID   domain.SessionID `json:"sessionId"`
-	TotalTokens int64            `json:"totalTokens" minimum:"0"`
-	Incomplete  bool             `json:"incomplete"`
+	SessionID       domain.SessionID `json:"sessionId"`
+	ProcessedTokens int64            `json:"processedTokens" minimum:"0" description:"Tokens processed exactly once: fresh input plus cache reads, cache writes, and output."`
+	TotalTokens     int64            `json:"totalTokens" minimum:"0" description:"Deprecated compatibility field using inclusive input plus output. Use processedTokens."`
+	Incomplete      bool             `json:"incomplete"`
 }
 
 // ListCompactSessionUsageResponse is the batch dashboard usage response.
@@ -981,12 +982,13 @@ type ListCompactSessionUsageResponse struct {
 
 // UsageTotalsResponse is the normalized telemetry aggregate for one scope.
 type UsageTotalsResponse struct {
-	InputTokens         *int64 `json:"inputTokens"`
-	UncachedInputTokens *int64 `json:"uncachedInputTokens"`
+	InputTokens         *int64 `json:"inputTokens" description:"Deprecated inclusive input count retained for compatibility. Use uncachedInputTokens for fresh input and processedTokens for processed volume."`
+	UncachedInputTokens *int64 `json:"uncachedInputTokens" description:"Fresh input tokens that were not read from or written to cache."`
 	CacheReadTokens     *int64 `json:"cacheReadTokens"`
 	CacheWriteTokens    *int64 `json:"cacheWriteTokens"`
-	OutputTokens        *int64 `json:"outputTokens"`
-	ReasoningTokens     *int64 `json:"reasoningTokens"`
+	OutputTokens        *int64 `json:"outputTokens" description:"Output tokens, including reasoning tokens."`
+	ReasoningTokens     *int64 `json:"reasoningTokens" description:"Informational subset included in outputTokens."`
+	ProcessedTokens     *int64 `json:"processedTokens" description:"Tokens processed exactly once: fresh input plus cache reads, cache writes, and output."`
 }
 
 // UsageModelResponse is telemetry grouped by exact model id.

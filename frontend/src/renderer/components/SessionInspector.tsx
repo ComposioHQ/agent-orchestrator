@@ -309,7 +309,7 @@ function SummaryView({
 				showUsageError ? (
 					<Section title={t("inspector.usage.title")}>
 						<p className={inspectorEmptyClass} role="alert">
-							{t("inspector.usage.totalTokensUnavailable")}
+							{t("inspector.usage.processedTokensUnavailable")}
 						</p>
 					</Section>
 				) : showUsage && usageQuery.data ? (
@@ -390,28 +390,28 @@ function InspectorPolicyRow({
 
 function UsageCostTelemetry({ usage }: { usage: SessionUsage }) {
 	const { t } = useTranslation();
-	const totalTokens = usageTokenTotal(usage.totals);
-	const exactTotal = totalTokens?.toLocaleString("en-US");
+	const processedTokens = usageProcessedTokens(usage.totals);
+	const exactProcessed = processedTokens?.toLocaleString("en-US");
 
 	return (
 		<div>
 			<div className="grid grid-cols-2 gap-4">
 				<div className="min-w-0">
-					<p className="text-2xs text-settings-muted">{t("inspector.usage.totalTokens")}</p>
+					<p className="text-2xs text-settings-muted">{t("inspector.usage.processedTokens")}</p>
 					<p
 						aria-label={
-							totalTokens === null
-								? t("inspector.usage.totalTokensUnavailable")
-								: t("inspector.usage.totalTokensAria", { count: exactTotal })
+							processedTokens === null
+								? t("inspector.usage.processedTokensUnavailable")
+								: t("inspector.usage.processedTokensAria", { count: exactProcessed })
 						}
 						className="mt-0.5 truncate font-mono text-md-sm font-medium text-settings-label"
-						title={totalTokens === null ? undefined : t("inspector.usage.tokensExact", { count: exactTotal })}
+						title={processedTokens === null ? undefined : t("inspector.usage.processedTokensAria", { count: exactProcessed })}
 					>
-						{totalTokens === null ? t("inspector.usage.noUsageYet") : formatTelemetryTokenValue(totalTokens)}
+						{processedTokens === null ? t("inspector.usage.noUsageYet") : formatTelemetryTokenValue(processedTokens)}
 					</p>
 				</div>
 				<div className="min-w-0 text-right">
-					<p className="text-2xs text-settings-muted">{t("inspector.usage.totalCost")}</p>
+					<p className="text-2xs text-settings-muted">{t("inspector.usage.estimatedCost")}</p>
 					<p
 						className="mt-0.5 truncate text-sm-md text-settings-muted"
 						title={t("inspector.usage.costComingSoon")}
@@ -649,8 +649,8 @@ function UsageDisclosureRow({
 	const { t } = useTranslation();
 	const [open, setOpen] = useState(false);
 	const detailID = useId();
-	const totalTokens = usageTokenTotal(totals);
-	const exactTotal = totalTokens?.toLocaleString("en-US");
+	const processedTokens = usageProcessedTokens(totals);
+	const exactProcessed = processedTokens?.toLocaleString("en-US");
 
 	return (
 		<div className="p-2">
@@ -672,9 +672,9 @@ function UsageDisclosureRow({
 				</span>
 				<span
 					className="text-right font-mono text-2xs text-settings-label"
-					title={totalTokens === null ? undefined : t("inspector.usage.tokensExact", { count: exactTotal })}
+					title={processedTokens === null ? undefined : t("inspector.usage.processedTokensAria", { count: exactProcessed })}
 				>
-					{totalTokens === null ? "—" : formatTelemetryTokenValue(totalTokens)}
+					{processedTokens === null ? "—" : formatTelemetryTokenValue(processedTokens)}
 				</span>
 				<UsageCostPlaceholder />
 			</button>
@@ -706,12 +706,16 @@ function UsageMetrics({ totals }: { totals: SessionUsage["totals"] }) {
 	const { t } = useTranslation();
 	return (
 		<dl className="grid grid-cols-2 gap-x-4 gap-y-2 @max-[300px]/inspector:grid-cols-1">
-			<UsageMetric label={t("inspector.usage.inputTokens")} metric={totals.inputTokens} />
+			<UsageMetric label={t("inspector.usage.freshInputTokens")} metric={totals.uncachedInputTokens} />
 			<UsageMetric label={t("inspector.usage.outputTokens")} metric={totals.outputTokens} />
 			<UsageMetric label={t("inspector.usage.cacheReadTokens")} metric={totals.cacheReadTokens} />
 			<UsageMetric label={t("inspector.usage.cacheWriteTokens")} metric={totals.cacheWriteTokens} />
 			<UsageMetric label={t("inspector.usage.reasoningTokens")} metric={totals.reasoningTokens} />
-			<UsageMetric label={t("inspector.usage.uncachedInputTokens")} metric={totals.uncachedInputTokens} />
+			<UsageRateMetric
+				description={t("inspector.usage.cacheHitRateDescription")}
+				label={t("inspector.usage.cacheHitRate")}
+				metric={usageCacheHitRate(totals)}
+			/>
 		</dl>
 	);
 }
@@ -721,7 +725,7 @@ function UsageMetric({
 	metric,
 }: {
 	label: string;
-	metric: SessionUsage["totals"]["inputTokens"];
+	metric: number | null;
 }) {
 	const { t } = useTranslation();
 	const exactValue = metric?.toLocaleString("en-US");
@@ -747,7 +751,38 @@ function UsageMetric({
 	);
 }
 
+function UsageRateMetric({
+	description,
+	label,
+	metric,
+}: {
+	description: string;
+	label: string;
+	metric: number | null;
+}) {
+	const { t } = useTranslation();
+	const accessibleLabel =
+		metric === null
+			? t("inspector.usage.metricUnavailable", { label })
+			: t("inspector.usage.rateAria", { label, count: metric, description });
+	return (
+		<div className="min-w-0">
+			<dt className="truncate text-2xs text-settings-muted" title={description}>
+				{label}
+			</dt>
+			<dd
+				aria-label={accessibleLabel}
+				className="mt-0.5 truncate font-mono text-sm-md text-settings-label"
+				title={metric === null ? t("inspector.usage.metricUnavailable", { label }) : description}
+			>
+				{metric === null ? "—" : `${metric}%`}
+			</dd>
+		</div>
+	);
+}
+
 const usageMetricKeys = [
+	"processedTokens",
 	"inputTokens",
 	"uncachedInputTokens",
 	"cacheReadTokens",
@@ -777,9 +812,17 @@ function formatTelemetryTokenValue(totalTokens: number): string {
 	return formatTokenCount(totalTokens).replace(/ tok$/, "");
 }
 
-function usageTokenTotal(totals: SessionUsage["totals"]): number | null {
-	if (totals.inputTokens === null && totals.outputTokens === null) return null;
-	return (totals.inputTokens ?? 0) + (totals.outputTokens ?? 0);
+function usageProcessedTokens(totals: SessionUsage["totals"]): number | null {
+	return totals.processedTokens;
+}
+
+// Cache writes populate the cache rather than satisfy the current input, so the
+// hit-rate denominator is reusable input: fresh input plus cache reads.
+function usageCacheHitRate(totals: SessionUsage["totals"]): number | null {
+	if (totals.uncachedInputTokens === null || totals.cacheReadTokens === null) return null;
+	const reusableInput = totals.uncachedInputTokens + totals.cacheReadTokens;
+	if (reusableInput === 0) return null;
+	return Math.round((totals.cacheReadTokens / reusableInput) * 100);
 }
 
 function formatHarnessName(harness: string): string {

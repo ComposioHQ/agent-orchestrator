@@ -721,8 +721,8 @@ func TestListCompactSessionUsageAggregatesAndFiltersByProject(t *testing.T) {
 		State:      domain.UsageSourceComplete,
 		UpdatedAt:  now,
 	}, []domain.ModelUsageEvent{
-		usageEvent("event-1", domain.UsageTokenMetrics{InputTokens: 100, UncachedInputTokens: 100, OutputTokens: 20}),
-		usageEvent("event-2", domain.UsageTokenMetrics{InputTokens: 50, UncachedInputTokens: 50, OutputTokens: 10}),
+		usageEvent("event-1", domain.UsageTokenMetrics{InputTokens: 100, UncachedInputTokens: 40, CacheReadTokens: 50, OutputTokens: 20}),
+		usageEvent("event-2", domain.UsageTokenMetrics{InputTokens: 50, UncachedInputTokens: 20, CacheReadTokens: 20, CacheWriteTokens: 5, OutputTokens: 10}),
 	}); err != nil {
 		t.Fatalf("apply usage events: %v", err)
 	}
@@ -748,7 +748,7 @@ func TestListCompactSessionUsageAggregatesAndFiltersByProject(t *testing.T) {
 		t.Fatalf("filtered rows = %+v, want only %s (not %s)", got, usageSession.ID, otherSession.ID)
 	}
 	row := got[0]
-	if row.TotalTokens != 180 || row.Incomplete {
+	if row.ProcessedTokens != 165 || row.TotalTokens != 180 || row.Incomplete {
 		t.Fatalf("aggregate = %+v", row)
 	}
 	all, err := s.ListCompactSessionUsage(ctx, "")
@@ -889,7 +889,7 @@ func TestUsageSessionAggregatesParentChildAndMultipleBindingsExactlyOnce(t *test
 		t.Fatalf("compact rows = %+v, want one", compact)
 	}
 	row := compact[0]
-	if row.TotalTokens != 215 || row.Incomplete {
+	if row.ProcessedTokens != 215 || row.TotalTokens != 215 || row.Incomplete {
 		t.Fatalf("compact aggregate = %+v", row)
 	}
 }

@@ -530,6 +530,10 @@ func (q *Queries) InsertUsageSource(ctx context.Context, arg InsertUsageSourcePa
 const listCompactSessionUsage = `-- name: ListCompactSessionUsage :many
 SELECT
     ub.session_id,
+    CAST(SUM(
+        mue.uncached_input_tokens + mue.cache_read_tokens +
+        mue.cache_write_tokens + mue.output_tokens
+    ) AS INTEGER) AS processed_tokens,
     CAST(SUM(mue.input_tokens + mue.output_tokens) AS INTEGER) AS total_tokens,
     CAST(COALESCE(integrity.incomplete, 0) AS INTEGER) AS incomplete
 FROM model_usage_events mue
@@ -542,9 +546,10 @@ ORDER BY s.project_id, s.num
 `
 
 type ListCompactSessionUsageRow struct {
-	SessionID   domain.SessionID
-	TotalTokens int64
-	Incomplete  int64
+	SessionID       domain.SessionID
+	ProcessedTokens int64
+	TotalTokens     int64
+	Incomplete      int64
 }
 
 func (q *Queries) ListCompactSessionUsage(ctx context.Context, projectID interface{}) ([]ListCompactSessionUsageRow, error) {
@@ -556,7 +561,12 @@ func (q *Queries) ListCompactSessionUsage(ctx context.Context, projectID interfa
 	items := []ListCompactSessionUsageRow{}
 	for rows.Next() {
 		var i ListCompactSessionUsageRow
-		if err := rows.Scan(&i.SessionID, &i.TotalTokens, &i.Incomplete); err != nil {
+		if err := rows.Scan(
+			&i.SessionID,
+			&i.ProcessedTokens,
+			&i.TotalTokens,
+			&i.Incomplete,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)

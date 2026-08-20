@@ -461,7 +461,8 @@ func (s *Store) ListCompactSessionUsage(ctx context.Context, projectID domain.Pr
 	out := make([]domain.CompactSessionUsage, 0, len(rows))
 	for _, row := range rows {
 		out = append(out, domain.CompactSessionUsage{
-			SessionID: row.SessionID, TotalTokens: row.TotalTokens, Incomplete: row.Incomplete != 0,
+			SessionID: row.SessionID, ProcessedTokens: row.ProcessedTokens,
+			TotalTokens: row.TotalTokens, Incomplete: row.Incomplete != 0,
 		})
 	}
 	return out, nil

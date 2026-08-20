@@ -5614,14 +5614,23 @@ components:
       properties:
         incomplete:
           type: boolean
+        processedTokens:
+          description: 'Tokens processed exactly once: fresh input plus cache reads,
+            cache writes, and output.'
+          format: int64
+          minimum: 0
+          type: integer
         sessionId:
           type: string
         totalTokens:
+          description: Deprecated compatibility field using inclusive input plus output.
+            Use processedTokens.
           format: int64
           minimum: 0
           type: integer
       required:
       - sessionId
+      - processedTokens
       - totalTokens
       - incomplete
       type: object
@@ -8831,18 +8840,30 @@ components:
           - "null"
           - integer
         inputTokens:
+          description: Deprecated inclusive input count retained for compatibility.
+            Use uncachedInputTokens for fresh input and processedTokens for processed
+            volume.
           type:
           - "null"
           - integer
         outputTokens:
+          description: Output tokens, including reasoning tokens.
+          type:
+          - "null"
+          - integer
+        processedTokens:
+          description: 'Tokens processed exactly once: fresh input plus cache reads,
+            cache writes, and output.'
           type:
           - "null"
           - integer
         reasoningTokens:
+          description: Informational subset included in outputTokens.
           type:
           - "null"
           - integer
         uncachedInputTokens:
+          description: Fresh input tokens that were not read from or written to cache.
           type:
           - "null"
           - integer
@@ -8853,6 +8874,7 @@ components:
       - cacheWriteTokens
       - outputTokens
       - reasoningTokens
+      - processedTokens
       type: object
     WorkspaceFileResponse:
       properties:

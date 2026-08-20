@@ -108,8 +108,9 @@ type UsageSourceContext struct {
 	BindingState   UsageBindingState
 }
 
-// UsageTokenMetrics is the normalized token vector stored on every usage event
-// and returned in aggregate summaries.
+// UsageTokenMetrics is the normalized token vector stored on every usage event.
+// InputTokens retains the provider-compatible inclusive input count; user-facing
+// summaries derive processed volume from the mutually exclusive token classes.
 type UsageTokenMetrics struct {
 	InputTokens         int64
 	UncachedInputTokens int64
@@ -137,9 +138,10 @@ type UsageModelAggregate struct {
 
 // CompactSessionUsage is the token-only dashboard read model.
 type CompactSessionUsage struct {
-	SessionID   SessionID
-	TotalTokens int64
-	Incomplete  bool
+	SessionID       SessionID
+	ProcessedTokens int64
+	TotalTokens     int64
+	Incomplete      bool
 }
 
 // UsageMetricTotals is the aggregate metric block used by session, harness,
@@ -151,6 +153,7 @@ type UsageMetricTotals struct {
 	CacheWriteTokens    *int64
 	OutputTokens        *int64
 	ReasoningTokens     *int64
+	ProcessedTokens     *int64
 }
 
 // ModelUsageSummary is a per-exact-model aggregate.

@@ -42,7 +42,7 @@ func newUsageTestServer(t *testing.T, svc *fakeUsageSummaryService) *httptest.Se
 
 func TestUsageAPIListsCompactProjectUsage(t *testing.T) {
 	svc := &fakeUsageSummaryService{items: []domain.CompactSessionUsage{{
-		SessionID: "reverb-12", TotalTokens: 12400, Incomplete: true,
+		SessionID: "reverb-12", ProcessedTokens: 12300, TotalTokens: 12400, Incomplete: true,
 	}}}
 	srv := newUsageTestServer(t, svc)
 
@@ -55,26 +55,32 @@ func TestUsageAPIListsCompactProjectUsage(t *testing.T) {
 	}
 	var got struct {
 		Sessions []struct {
-			SessionID   string `json:"sessionId"`
-			TotalTokens int64  `json:"totalTokens"`
-			Incomplete  bool   `json:"incomplete"`
+			SessionID       string `json:"sessionId"`
+			ProcessedTokens int64  `json:"processedTokens"`
+			TotalTokens     int64  `json:"totalTokens"`
+			Incomplete      bool   `json:"incomplete"`
 		} `json:"sessions"`
 	}
 	mustJSON(t, body, &got)
 	if len(got.Sessions) != 1 || got.Sessions[0].SessionID != "reverb-12" ||
-		got.Sessions[0].TotalTokens != 12400 || !got.Sessions[0].Incomplete {
+		got.Sessions[0].ProcessedTokens != 12300 || got.Sessions[0].TotalTokens != 12400 ||
+		!got.Sessions[0].Incomplete {
 		t.Fatalf("response = %+v", got)
 	}
 }
 
 func TestUsageAPIShowsDetailedSessionTokenTelemetryWithoutCost(t *testing.T) {
 	input := int64(1000)
+	uncached := int64(500)
 	output := int64(200)
 	cacheRead := int64(400)
+	cacheWrite := int64(100)
+	processed := int64(1200)
 	svc := &fakeUsageSummaryService{detail: domain.SessionUsageSummary{
 		SessionID: "reverb-12", Incomplete: true,
 		Totals: domain.UsageMetricTotals{
-			InputTokens: &input, CacheReadTokens: &cacheRead, OutputTokens: &output,
+			InputTokens: &input, UncachedInputTokens: &uncached, CacheReadTokens: &cacheRead,
+			CacheWriteTokens: &cacheWrite, OutputTokens: &output, ProcessedTokens: &processed,
 		},
 		Harnesses: []domain.HarnessUsageSummary{{
 			Harness: domain.HarnessCodex,
@@ -99,7 +105,8 @@ func TestUsageAPIShowsDetailedSessionTokenTelemetryWithoutCost(t *testing.T) {
 		SessionID  string `json:"sessionId"`
 		Incomplete bool   `json:"incomplete"`
 		Totals     struct {
-			InputTokens int64 `json:"inputTokens"`
+			InputTokens     int64 `json:"inputTokens"`
+			ProcessedTokens int64 `json:"processedTokens"`
 		} `json:"totals"`
 		Harnesses []struct {
 			Models []struct {
@@ -109,6 +116,7 @@ func TestUsageAPIShowsDetailedSessionTokenTelemetryWithoutCost(t *testing.T) {
 	}
 	mustJSON(t, body, &got)
 	if got.SessionID != "reverb-12" || !got.Incomplete || got.Totals.InputTokens != 1000 ||
+		got.Totals.ProcessedTokens != 1200 ||
 		len(got.Harnesses) != 1 || len(got.Harnesses[0].Models) != 1 ||
 		got.Harnesses[0].Models[0].ModelID != "gpt-5.6" {
 		t.Fatalf("response = %+v", got)

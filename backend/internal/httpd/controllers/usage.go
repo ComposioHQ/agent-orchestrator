@@ -41,7 +41,8 @@ func (c *UsageController) listSessions(w http.ResponseWriter, r *http.Request) {
 	out := make([]CompactSessionUsageResponse, 0, len(items))
 	for _, item := range items {
 		out = append(out, CompactSessionUsageResponse{
-			SessionID: item.SessionID, TotalTokens: item.TotalTokens, Incomplete: item.Incomplete,
+			SessionID: item.SessionID, ProcessedTokens: item.ProcessedTokens,
+			TotalTokens: item.TotalTokens, Incomplete: item.Incomplete,
 		})
 	}
 	envelope.WriteJSON(w, http.StatusOK, ListCompactSessionUsageResponse{Sessions: out})
@@ -84,5 +85,6 @@ func usageTotalsResponse(totals domain.UsageMetricTotals) UsageTotalsResponse {
 		InputTokens: totals.InputTokens, UncachedInputTokens: totals.UncachedInputTokens,
 		CacheReadTokens: totals.CacheReadTokens, CacheWriteTokens: totals.CacheWriteTokens,
 		OutputTokens: totals.OutputTokens, ReasoningTokens: totals.ReasoningTokens,
+		ProcessedTokens: totals.ProcessedTokens,
 	}
 }

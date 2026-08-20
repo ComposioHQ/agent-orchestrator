@@ -1877,8 +1877,16 @@ export interface components {
         };
         CompactSessionUsageResponse: {
             incomplete: boolean;
+            /**
+             * Format: int64
+             * @description Tokens processed exactly once: fresh input plus cache reads, cache writes, and output.
+             */
+            processedTokens: number;
             sessionId: string;
-            /** Format: int64 */
+            /**
+             * Format: int64
+             * @description Deprecated compatibility field using inclusive input plus output. Use processedTokens.
+             */
             totalTokens: number;
         };
         ContainerReapConfig: {
@@ -3108,9 +3116,15 @@ export interface components {
         UsageTotalsResponse: {
             cacheReadTokens: null | number;
             cacheWriteTokens: null | number;
+            /** @description Deprecated inclusive input count retained for compatibility. Use uncachedInputTokens for fresh input and processedTokens for processed volume. */
             inputTokens: null | number;
+            /** @description Output tokens, including reasoning tokens. */
             outputTokens: null | number;
+            /** @description Tokens processed exactly once: fresh input plus cache reads, cache writes, and output. */
+            processedTokens: null | number;
+            /** @description Informational subset included in outputTokens. */
             reasoningTokens: null | number;
+            /** @description Fresh input tokens that were not read from or written to cache. */
             uncachedInputTokens: null | number;
         };
         WorkspaceFileResponse: {

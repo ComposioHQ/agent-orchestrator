@@ -777,8 +777,8 @@ describe("SessionInspector usage", () => {
 					data: {
 						sessionId: "sess-1",
 						incomplete: false,
-						totals: { inputTokens: 1200, outputTokens: 300, cacheReadTokens: 12, cacheWriteTokens: 0, reasoningTokens: 5, uncachedInputTokens: 20 },
-						harnesses: [{ harness: "codex", totals: { inputTokens: 1200, outputTokens: 300, cacheReadTokens: 12, cacheWriteTokens: 0, reasoningTokens: 5, uncachedInputTokens: 20 }, models: [] }],
+						totals: { inputTokens: 1200, outputTokens: 300, cacheReadTokens: 1000, cacheWriteTokens: 0, reasoningTokens: 5, uncachedInputTokens: 200, processedTokens: 1500 },
+						harnesses: [{ harness: "codex", totals: { inputTokens: 1200, outputTokens: 300, cacheReadTokens: 1000, cacheWriteTokens: 0, reasoningTokens: 5, uncachedInputTokens: 200, processedTokens: 1500 }, models: [] }],
 					},
 					error: undefined,
 				};
@@ -788,7 +788,13 @@ describe("SessionInspector usage", () => {
 
 		renderWithQuery(<SessionInspector session={session([])} />);
 		expect(await screen.findByText("Usage & cost")).toBeInTheDocument();
-		expect(screen.getByText("Total tokens")).toBeInTheDocument();
+		expect(screen.getByText("Tokens processed")).toBeInTheDocument();
+		expect(screen.getByLabelText("1,500 tokens processed")).toBeInTheDocument();
+		expect(screen.getAllByText("Fresh input").length).toBeGreaterThan(0);
+		expect(screen.getAllByText("Reasoning (included in output)").length).toBeGreaterThan(0);
+		expect(screen.getAllByText("Cache hit rate").length).toBeGreaterThan(0);
+		expect(screen.getAllByLabelText("Cache hit rate: 83%. Cache reads ÷ (fresh input + cache reads).").length).toBeGreaterThan(0);
+		expect(screen.queryByText("Input tokens")).not.toBeInTheDocument();
 		expect(screen.getByText("Codex")).toBeInTheDocument();
 	});
 });

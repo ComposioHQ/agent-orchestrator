@@ -37,15 +37,16 @@ func (s *usageSummaryStoreStub) GetUsageSessionIncomplete(context.Context, domai
 func TestSummaryReaderListCompactUsesOneBatchRead(t *testing.T) {
 	store := &usageSummaryStoreStub{rows: []domain.CompactSessionUsage{
 		{SessionID: "empty"},
-		{SessionID: "used", TotalTokens: 120},
-		{SessionID: "incomplete", TotalTokens: 60, Incomplete: true},
+		{SessionID: "used", ProcessedTokens: 110, TotalTokens: 120},
+		{SessionID: "incomplete", ProcessedTokens: 55, TotalTokens: 60, Incomplete: true},
 	}}
 	got, err := NewSummaryReader(store).ListCompact(context.Background(), "reverb")
 	mustNoError(t, err)
 	if store.calls[0] != 1 || store.projectID != "reverb" || len(got) != 3 {
 		t.Fatalf("read=%d project=%q items=%+v", store.calls[0], store.projectID, got)
 	}
-	if got[1].TotalTokens != 120 || got[1].Incomplete || !got[2].Incomplete {
+	if got[1].ProcessedTokens != 110 || got[1].TotalTokens != 120 || got[1].Incomplete ||
+		got[2].ProcessedTokens != 55 || !got[2].Incomplete {
 		t.Fatalf("compact summaries = %+v", got)
 	}
 }
@@ -59,7 +60,7 @@ func TestSummaryReaderGetAggregatesModelsAndIntegrity(t *testing.T) {
 		models: []domain.UsageModelAggregate{
 			{
 				Harness: domain.HarnessCodex, ModelID: "gpt-5.6",
-				Tokens:              domain.UsageTokenMetrics{InputTokens: 1000, UncachedInputTokens: 600, CacheReadTokens: 400, OutputTokens: 200, ReasoningTokens: &reasoning},
+				Tokens:              domain.UsageTokenMetrics{InputTokens: 1000, UncachedInputTokens: 500, CacheReadTokens: 400, CacheWriteTokens: 100, OutputTokens: 200, ReasoningTokens: &reasoning},
 				ReasoningEventCount: 2,
 			},
 			{
@@ -76,11 +77,17 @@ func TestSummaryReaderGetAggregatesModelsAndIntegrity(t *testing.T) {
 	}
 	if got.Totals.InputTokens == nil || *got.Totals.InputTokens != 1100 ||
 		got.Totals.OutputTokens == nil || *got.Totals.OutputTokens != 225 ||
-		got.Totals.ReasoningTokens == nil || *got.Totals.ReasoningTokens != 40 {
+		got.Totals.ReasoningTokens == nil || *got.Totals.ReasoningTokens != 40 ||
+		got.Totals.ProcessedTokens == nil || *got.Totals.ProcessedTokens != 1325 {
 		t.Fatalf("totals = %+v", got.Totals)
 	}
 	if len(got.Harnesses) != 2 || got.Harnesses[0].Models[0].ModelID != "gpt-5.6" {
 		t.Fatalf("harnesses = %+v", got.Harnesses)
+	}
+	if got.Harnesses[0].Totals.ProcessedTokens == nil || *got.Harnesses[0].Totals.ProcessedTokens != 1200 ||
+		got.Harnesses[0].Models[0].Totals.ProcessedTokens == nil || *got.Harnesses[0].Models[0].Totals.ProcessedTokens != 1200 ||
+		got.Harnesses[1].Totals.ProcessedTokens == nil || *got.Harnesses[1].Totals.ProcessedTokens != 125 {
+		t.Fatalf("processed totals by scope = %+v", got.Harnesses)
 	}
 	if store.calls != [4]int{0, 1, 1, 1} {
 		t.Fatalf("store calls = %v", store.calls)
@@ -91,7 +98,8 @@ func TestSummaryReaderGetReturnsUnavailableMetricsWithoutEvents(t *testing.T) {
 	store := &usageSummaryStoreStub{found: true, session: domain.SessionRecord{ID: "empty"}}
 	got, err := NewSummaryReader(store).Get(context.Background(), "empty")
 	mustNoError(t, err)
-	if got.Totals.InputTokens != nil || got.Totals.OutputTokens != nil || len(got.Harnesses) != 0 {
+	if got.Totals.InputTokens != nil || got.Totals.OutputTokens != nil ||
+		got.Totals.ProcessedTokens != nil || len(got.Harnesses) != 0 {
 		t.Fatalf("empty usage = %+v", got)
 	}
 }

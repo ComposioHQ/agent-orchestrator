@@ -55,13 +55,15 @@ func (r *SummaryReader) Get(ctx context.Context, sessionID domain.SessionID) (do
 }
 
 func usageTotals(models []domain.UsageModelAggregate) domain.UsageMetricTotals {
-	var input, uncached, cacheRead, cacheWrite, output, reasoning, reasoningEvents int64
+	var input, uncached, cacheRead, cacheWrite, output, reasoning, processed, reasoningEvents int64
 	for _, model := range models {
 		input += model.Tokens.InputTokens
 		uncached += model.Tokens.UncachedInputTokens
 		cacheRead += model.Tokens.CacheReadTokens
 		cacheWrite += model.Tokens.CacheWriteTokens
 		output += model.Tokens.OutputTokens
+		processed += model.Tokens.UncachedInputTokens + model.Tokens.CacheReadTokens +
+			model.Tokens.CacheWriteTokens + model.Tokens.OutputTokens
 		if model.Tokens.ReasoningTokens != nil {
 			reasoning += *model.Tokens.ReasoningTokens
 		}
@@ -72,7 +74,7 @@ func usageTotals(models []domain.UsageModelAggregate) domain.UsageMetricTotals {
 	}
 	totals := domain.UsageMetricTotals{
 		InputTokens: &input, UncachedInputTokens: &uncached, CacheReadTokens: &cacheRead,
-		CacheWriteTokens: &cacheWrite, OutputTokens: &output,
+		CacheWriteTokens: &cacheWrite, OutputTokens: &output, ProcessedTokens: &processed,
 	}
 	if reasoningEvents > 0 {
 		totals.ReasoningTokens = &reasoning
