@@ -1,8 +1,8 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ChatWorkspace } from "./ChatWorkspace";
-import { OriginMessage } from "./ChatTimelineItems";
+import { HumanMessage, OriginMessage } from "./ChatTimelineItems";
 import {
 	chatFixture,
 	chatFixtureEmpty,
@@ -12,20 +12,78 @@ import {
 	chatFixtureThreadError,
 } from "../../lib/chat-fixture";
 import type { ConversationMessage, ConversationSnapshot } from "../../types/conversation";
+import { setApiBaseUrl } from "../../lib/api-client";
+import { useUiStore } from "../../stores/ui-store";
+import type { WorkspaceSession } from "../../types/workspace";
 
 const writeText = vi.fn(async (_text: string) => undefined);
 const menuAction = vi.fn(async (_action: string) => undefined);
+const previousTabListeners = new Set<() => void>();
+const nextTabListeners = new Set<() => void>();
+const closeShellTerminalListeners = new Set<() => void>();
+const closeShellTerminalShortcutStates: boolean[] = [];
+type TerminalPaneTestProps = {
+	fontSize?: number;
+	isFullscreen?: boolean;
+	onChangeFontSize?: (delta: number) => void;
+	onToggleFullscreen?: () => Promise<void> | void;
+};
+const terminalPaneState = vi.hoisted(() => ({
+	props: undefined as TerminalPaneTestProps | undefined,
+}));
 
 vi.mock("../../lib/bridge", () => ({
 	aoBridge: {
+		app: {
+			onPreviousTabShortcut: (listener: () => void) => {
+				previousTabListeners.add(listener);
+				return () => previousTabListeners.delete(listener);
+			},
+			onNextTabShortcut: (listener: () => void) => {
+				nextTabListeners.add(listener);
+				return () => nextTabListeners.delete(listener);
+			},
+			onCloseShellTerminalShortcut: (listener: () => void) => {
+				closeShellTerminalListeners.add(listener);
+				return () => closeShellTerminalListeners.delete(listener);
+			},
+			setCloseShellTerminalShortcutEnabled: (enabled: boolean) => {
+				closeShellTerminalShortcutStates.push(enabled);
+			},
+		},
 		clipboard: { writeText: (text: string) => writeText(text) },
 		menu: { action: (action: string) => menuAction(action) },
 	},
 }));
 
+vi.mock("../TerminalPane", () => ({
+	TerminalPane: (props: NonNullable<typeof terminalPaneState.props>) => {
+		terminalPaneState.props = props;
+		return <div data-testid="terminal-pane" />;
+	},
+}));
+
+vi.mock("../../lib/platform", () => ({
+	isMacPlatform: () => true,
+	isLinuxPlatform: () => false,
+	isWindowsPlatform: () => false,
+}));
+
 /** A refetch: identical content, all-new objects, which is what JSON parsing gives. */
 function poll(snapshot: ConversationSnapshot): ConversationSnapshot {
 	return structuredClone(snapshot);
+}
+
+function idleSnapshot(snapshot: ConversationSnapshot = chatFixture): ConversationSnapshot {
+	return {
+		...snapshot,
+		controller: { state: "ready" },
+		turns: snapshot.turns.map((turn) =>
+			turn.state === "running"
+				? { ...turn, state: "completed" as const, completedAt: turn.requestedAt }
+				: turn,
+		),
+	};
 }
 
 /** jsdom has no layout, so the scroller's geometry has to be stated. */
@@ -42,9 +100,132 @@ function stubGeometry(node: HTMLElement, { scrollHeight, clientHeight, scrollTop
 beforeEach(() => {
 	writeText.mockClear();
 	menuAction.mockClear();
+	previousTabListeners.clear();
+	nextTabListeners.clear();
+	closeShellTerminalListeners.clear();
+	closeShellTerminalShortcutStates.length = 0;
+	terminalPaneState.props = undefined;
+	window.localStorage.clear();
+	setApiBaseUrl("http://127.0.0.1:3001");
+	useUiStore.setState({ isSidebarOpen: true });
+});
+
+afterEach(() => setApiBaseUrl(null));
+
+function humanMessage(text: string): ConversationMessage {
+	return {
+		kind: "message",
+		id: "message-with-attachment",
+		sequence: 1,
+		revision: 1,
+		role: "user",
+		origin: "human",
+		text,
+		streaming: false,
+		createdAt: "2026-08-08T00:00:00Z",
+	};
+}
+
+const chatSession = {
+	id: chatFixture.sessionId,
+	workspaceId: "project-1",
+	workspaceName: "agent-orchestrator",
+	title: "Reviewer chat",
+	provider: "codex",
+	kind: "worker",
+	mode: "chat",
+	status: "working",
+	updatedAt: "2026-08-15T00:00:00Z",
+	prs: [],
+} satisfies WorkspaceSession;
+
+describe("HumanMessage attachments", () => {
+	function renderImageAttachment(header: string, name: string) {
+		render(
+			<HumanMessage
+				message={humanMessage(`check again\n\n${header}\n- .ao/attachments/${name}`)}
+				sessionId="ao session/1"
+			/>,
+		);
+
+		const image = screen.getByRole("img", { name });
+		expect(image).toHaveAttribute(
+			"src",
+			`http://127.0.0.1:3001/api/v1/sessions/ao%20session%2F1/preview/files/.ao/attachments/${name}`,
+		);
+		expect(screen.getByText("check again")).toBeInTheDocument();
+		expect(screen.queryByText(/Attached (?:files|images) \(read these files/)).not.toBeInTheDocument();
+	}
+
+	it("renders staged image references in human messages as images", () => {
+		renderImageAttachment(
+			"Attached files (read these files in the workspace):",
+			"attachment-d9014f798f.png",
+		);
+	});
+
+	it.each([
+		[
+			"spawn",
+			"Attached files (read these files in the workspace for context):",
+			"attachment-1.jpg",
+		],
+		[
+			"legacy chat",
+			"Attached images (read these files in the workspace for visual context):",
+			"image-a1b2c3d4.webp",
+		],
+	])("renders an AO-generated %s image reference as an image", (_source, header, name) => {
+		renderImageAttachment(header, name);
+	});
+
+	it("preserves authored trailing whitespace before generated references", () => {
+		const authoredBody = "keep my spacing  \n";
+		const { container } = render(
+			<HumanMessage
+				message={humanMessage(
+					`${authoredBody}\n\nAttached files (read these files in the workspace):\n- .ao/attachments/attachment-ab12.png`,
+				)}
+				sessionId="ao-1"
+			/>,
+		);
+
+		expect(container.querySelector(".cursor-chat-human-message > p")?.textContent).toBe(authoredBody);
+	});
+
+	it("shows non-image attachments as file labels instead of internal prompt text", () => {
+		render(
+			<HumanMessage
+				message={humanMessage(
+					"inspect these\n\nAttached files (read these files in the workspace):\n- .ao/attachments/attachment-ab12.png\n- .ao/attachments/attachment-cd34.pdf",
+				)}
+				sessionId="ao-1"
+			/>,
+		);
+
+		expect(screen.getByRole("img", { name: "attachment-ab12.png" })).toBeInTheDocument();
+		expect(screen.getByText("attachment-cd34.pdf")).toBeInTheDocument();
+		expect(screen.getByRole("list", { name: "Attached files" })).toBeInTheDocument();
+		expect(screen.queryByText(/Attached files \(read these files/)).not.toBeInTheDocument();
+	});
+
+	it("leaves ordinary user-authored path lists untouched", () => {
+		const text =
+			"Document this example:\n\nAttached files (read these files in the workspace):\n- docs/screenshot.png";
+		render(<HumanMessage message={humanMessage(text)} sessionId="ao-1" />);
+
+		expect(screen.queryByRole("img")).not.toBeInTheDocument();
+		expect(document.body.textContent).toContain(text);
+	});
 });
 
 describe("ChatWorkspace timeline", () => {
+	it("makes composer and history controls inert while a durable agent switch owns input", () => {
+		render(<ChatWorkspace snapshot={idleSnapshot()} agentInputDisabled />);
+
+		expect(screen.getByTestId("chat-conversation-panel")).toHaveAttribute("inert");
+	});
+
 	it("uses the shared session topbar chrome for workers and orchestrators", () => {
 		const view = render(<ChatWorkspace snapshot={chatFixture} sessionRole="worker" />);
 
@@ -60,32 +241,113 @@ describe("ChatWorkspace timeline", () => {
 		expect(screen.getByTestId("session-action-region")).toBeInTheDocument();
 	});
 
-	it("routes chat zoom buttons through the native zoom actions", () => {
-		render(<ChatWorkspace snapshot={chatFixture} />);
+	it("clears the fixed titlebar nav when the sidebar is collapsed, like the terminal session", () => {
+		useUiStore.setState({ isSidebarOpen: false });
+		const { rerender } = render(<ChatWorkspace snapshot={chatFixture} />);
 
-		fireEvent.click(screen.getByRole("button", { name: "Decrease font size" }));
-		fireEvent.click(screen.getByRole("button", { name: "Increase font size" }));
+		expect(screen.getByTestId("session-terminal-region")).toHaveClass(
+			"session-topbar-titlebar-clearance-mac",
+		);
 
-		expect(menuAction).toHaveBeenNthCalledWith(1, "view.zoomOut");
-		expect(menuAction).toHaveBeenNthCalledWith(2, "view.zoomIn");
+		useUiStore.setState({ isSidebarOpen: true });
+		rerender(<ChatWorkspace snapshot={chatFixture} />);
+
+		expect(screen.getByTestId("session-terminal-region")).not.toHaveClass(
+			"session-topbar-titlebar-clearance-mac",
+		);
 	});
 
-	it("starts chat zoom at 12px and updates the displayed size with the zoom buttons", () => {
+	it("leaves new-terminal and display controls out of the chat strip, like the terminal session", () => {
+		render(<ChatWorkspace snapshot={chatFixture} onOpenShell={vi.fn()} />);
+
+		const terminalRegion = screen.getByTestId("session-terminal-region");
+		expect(terminalRegion).toContainElement(screen.getByRole("tablist", { name: "Chat tabs" }));
+		expect(terminalRegion).not.toContainElement(screen.queryByRole("button", { name: "New terminal" }));
+		expect(screen.queryByRole("toolbar", { name: "Chat display controls" })).not.toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: "Decrease font size" })).not.toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: "Fullscreen" })).not.toBeInTheDocument();
+	});
+
+	it("starts chat text at 12px without a topbar font control", () => {
 		render(<ChatWorkspace snapshot={chatFixture} />);
+		const chat = screen.getByLabelText("Chat");
 
-		expect(screen.getByLabelText("Chat font size: 12 pixels")).toHaveTextContent("12px");
-
-		fireEvent.click(screen.getByRole("button", { name: "Increase font size" }));
-		expect(screen.getByLabelText("Chat font size: 13 pixels")).toHaveTextContent("13px");
-
-		fireEvent.click(screen.getByRole("button", { name: "Decrease font size" }));
-		expect(screen.getByLabelText("Chat font size: 12 pixels")).toHaveTextContent("12px");
+		expect(chat.style.getPropertyValue("--chat-font-size")).toBe("12px");
 	});
 
 	it("keeps the composer aligned to the readable conversation width", () => {
 		render(<ChatWorkspace snapshot={chatFixture} />);
 		const composer = screen.getByLabelText("Message the agent").closest("form");
 		expect(composer?.parentElement).toHaveClass("mx-auto", "w-full", "max-w-3xl");
+	});
+
+	it("shows live working state inline with the current turn while the composer owns the stop action", async () => {
+		const user = userEvent.setup();
+		const onInterrupt = vi.fn();
+		const snapshot = structuredClone(chatFixture);
+		snapshot.items = snapshot.items.filter(
+			(item) => !(item.kind === "activity" && item.activityKind === "approval" && item.status === "pending"),
+		);
+
+		render(<ChatWorkspace snapshot={snapshot} onInterrupt={onInterrupt} />);
+
+		const status = screen.getByTestId("live-turn-status");
+		expect(screen.getByRole("log", { name: "Conversation" })).toContainElement(status);
+		expect(status).toHaveClass("min-h-6", "px-1");
+		expect(status).not.toHaveClass("border", "bg-surface", "rounded-md");
+		expect(status).toHaveTextContent(/^Working for /);
+		expect(within(status).queryByRole("button")).not.toBeInTheDocument();
+
+		const stop = screen.getByRole("button", { name: "Stop turn" });
+		expect(screen.getByLabelText("Message the agent").closest("form")).toContainElement(stop);
+		await user.click(stop);
+		expect(onInterrupt).toHaveBeenCalledOnce();
+	});
+
+	it("shows blocked turn state inline with the current turn", () => {
+		const snapshot = structuredClone(chatFixture);
+		snapshot.items.push({
+			kind: "activity",
+			id: "approval-1",
+			sequence: 99,
+			revision: 1,
+			turnId: "turn-2",
+			activityKind: "approval",
+			status: "pending",
+			summary: "Run command",
+			requestId: "approval-1",
+			decisions: [{ id: "accept", label: "Approve" }],
+			detail: { command: "npm test" },
+			createdAt: "2026-08-08T00:00:00Z",
+		});
+
+		render(<ChatWorkspace snapshot={snapshot} onInterrupt={vi.fn()} />);
+
+		expect(screen.getByRole("alert")).toHaveTextContent("The agent is waiting for your decision.");
+		expect(screen.getByText("Waiting for your decision")).toBeInTheDocument();
+		expect(screen.queryByText(/^Working for /)).not.toBeInTheDocument();
+	});
+
+	it("lets readers select conversation text", () => {
+		render(<ChatWorkspace snapshot={chatFixture} />);
+
+		expect(screen.getByRole("log", { name: "Conversation" })).toHaveClass("select-text");
+	});
+
+	it("routes rendered message links through the session link handler", async () => {
+		const user = userEvent.setup();
+		const snapshot = structuredClone(chatFixtureSettled);
+		const message = snapshot.items.find(
+			(item): item is ConversationMessage => item.kind === "message" && item.role === "assistant",
+		);
+		if (!message) throw new Error("fixture has no assistant message");
+		message.text = "Open the [local preview](http://localhost:5173).";
+		const onLinkOpen = vi.fn();
+
+		render(<ChatWorkspace snapshot={snapshot} onLinkOpen={onLinkOpen} />);
+		await user.click(screen.getByRole("link", { name: "local preview" }));
+
+		expect(onLinkOpen).toHaveBeenCalledWith("http://localhost:5173");
 	});
 
 	it("offers real recovery actions when the controller stops", async () => {
@@ -183,6 +445,33 @@ describe("ChatWorkspace timeline", () => {
 		expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
 	});
 
+	it("limits conversation minimap navigation to human prompts", () => {
+		const snapshot = structuredClone(chatFixtureLongHistory(2));
+		snapshot.items.splice(1, 0, {
+			kind: "activity",
+			id: "loose-status",
+			sequence: 1.5,
+			revision: 1,
+			activityKind: "system",
+			status: "completed",
+			summary: "Automatic compaction completed",
+			createdAt: "2026-08-08T00:00:00Z",
+		});
+		render(<ChatWorkspace snapshot={snapshot} />);
+		const log = screen.getByRole("log");
+		const scrollbar = screen.getByRole("scrollbar", { name: "Conversation scrollbar" });
+		stubGeometry(log, { scrollHeight: 1800, clientHeight: 600, scrollTop: 0 });
+		stubGeometry(scrollbar, { scrollHeight: 600, clientHeight: 600, scrollTop: 0 });
+		fireEvent.scroll(log);
+
+		const markers = Array.from(
+			scrollbar.querySelectorAll<HTMLElement>("[data-chat-scroll-marker]"),
+		);
+		expect(markers).toHaveLength(2);
+		fireEvent.pointerEnter(markers[1]!);
+		expect(screen.getByRole("tooltip")).not.toHaveTextContent("Automatic compaction completed");
+	});
+
 	it("explains itself instead of showing an empty scroller", () => {
 		render(<ChatWorkspace snapshot={chatFixtureEmpty} />);
 		expect(screen.getByText("Start the conversation")).toBeInTheDocument();
@@ -219,6 +508,16 @@ describe("ChatWorkspace timeline", () => {
 		stubGeometry(log, { scrollHeight: 4000, clientHeight: 800, scrollTop: 100 });
 		log.dispatchEvent(new Event("scroll"));
 		const jump = await screen.findByRole("button", { name: /jump to latest/i });
+		expect(jump).toHaveAttribute("title", "Jump to latest");
+		expect(jump).not.toHaveTextContent("Jump to latest");
+		expect(jump).toHaveClass(
+			"bg-raised",
+			"dark:bg-raised",
+			"hover:bg-surface",
+			"dark:hover:bg-surface",
+		);
+		expect(jump).not.toHaveClass("dark:bg-transparent");
+		expect(jump).not.toHaveClass("dark:hover:bg-input/30");
 
 		// Taking the jump re-arms following, so the control retires itself.
 		await user.click(jump);
@@ -300,6 +599,140 @@ describe("automation reports", () => {
 });
 
 describe("ChatWorkspace message actions", () => {
+	it("copies a human message as the exact text the user sent", async () => {
+		const user = userEvent.setup();
+		render(<ChatWorkspace snapshot={chatFixture} />);
+
+		await user.click(screen.getAllByRole("button", { name: "Copy user message" })[0]!);
+
+		expect(writeText).toHaveBeenCalledTimes(1);
+		expect(writeText).toHaveBeenCalledWith(
+			"Check the worktree state and tell me what changed since the base commit.",
+		);
+	});
+
+	it("edits a human message through the branch endpoint without touching the composer", async () => {
+		const user = userEvent.setup();
+		const onRollback = vi.fn();
+		const onEditMessage = vi.fn(async () => undefined);
+		render(
+			<ChatWorkspace
+				snapshot={idleSnapshot()}
+				onRollback={onRollback}
+				onEditMessage={onEditMessage}
+			/>,
+		);
+		const composer = screen.getByLabelText("Message the agent");
+		await user.type(composer, "unsent composer draft");
+
+		await user.click(screen.getAllByRole("button", { name: "Edit user message" })[0]!);
+		expect(composer).toHaveValue("unsent composer draft");
+
+		const editor = screen.getByRole("textbox", { name: "Edit message" });
+		expect(editor).toHaveFocus();
+		expect(editor).toHaveValue("Check the worktree state and tell me what changed since the base commit.");
+
+		await user.clear(editor);
+		await user.type(editor, "Check worktree state, including staged files.");
+		fireEvent.keyDown(editor, { key: "Enter", metaKey: true });
+
+		await waitFor(() =>
+			expect(onEditMessage).toHaveBeenCalledWith(
+				"turn-1",
+				"Check worktree state, including staged files.",
+			),
+		);
+		expect(onRollback).not.toHaveBeenCalled();
+		expect(composer).toHaveValue("unsent composer draft");
+	});
+
+	it("keeps edit available while another turn is active", async () => {
+		const user = userEvent.setup();
+		render(
+			<ChatWorkspace
+				snapshot={chatFixture}
+				onEditMessage={vi.fn(async () => undefined)}
+			/>,
+		);
+
+		const editButtons = screen.getAllByRole("button", { name: "Edit user message" });
+		expect(editButtons.length).toBeGreaterThan(0);
+
+		await user.click(editButtons[0]!);
+		expect(screen.getByRole("textbox", { name: "Edit message" })).toHaveValue(
+			"Check the worktree state and tell me what changed since the base commit.",
+		);
+		expect(screen.getByRole("button", { name: "Send edited message" })).toBeDisabled();
+		expect(screen.getByText("Stop the current turn before branching")).toBeVisible();
+	});
+
+	it("retains the inline draft when branch creation fails", async () => {
+		const user = userEvent.setup();
+		const onEditMessage = vi.fn(async () => {
+			throw new Error("branch failed");
+		});
+		const view = render(
+			<ChatWorkspace
+				snapshot={idleSnapshot()}
+				onEditMessage={onEditMessage}
+				editMessageError="branch failed"
+			/>,
+		);
+
+		await user.click(screen.getAllByRole("button", { name: "Edit user message" })[0]!);
+		const editor = screen.getByRole("textbox", { name: "Edit message" });
+		await user.clear(editor);
+		await user.type(editor, "keep this draft");
+		fireEvent.keyDown(editor, { key: "Enter", ctrlKey: true });
+
+		await waitFor(() => expect(onEditMessage).toHaveBeenCalledWith("turn-1", "keep this draft"));
+		expect(screen.getByRole("textbox", { name: "Edit message" })).toHaveValue("keep this draft");
+		expect(screen.getByRole("alert")).toHaveTextContent("branch failed");
+
+		view.rerender(
+			<ChatWorkspace
+				snapshot={{
+					...idleSnapshot(),
+					activeBranchId: "branch-failed",
+					branchedFromEarlierMessage: true,
+					items: [],
+					turns: [],
+				}}
+				onEditMessage={onEditMessage}
+				editMessageError="branch failed"
+			/>,
+		);
+		expect(screen.getByRole("textbox", { name: "Edit message" })).toHaveValue("keep this draft");
+		expect(screen.getByRole("alert")).toHaveTextContent("branch failed");
+	});
+
+	it("navigates prompt branches and explains that files are unchanged", async () => {
+		const user = userEvent.setup();
+		const onActivateBranch = vi.fn(async () => undefined);
+		const snapshot = {
+			...idleSnapshot(),
+			activeBranchId: "branch-current",
+			branchedFromEarlierMessage: true,
+			branchPoints: [
+				{
+					turnId: "turn-1",
+					position: 2,
+					total: 3,
+					previousBranchId: "branch-previous",
+					nextBranchId: "branch-next",
+				},
+			],
+		};
+		render(<ChatWorkspace snapshot={snapshot} onActivateBranch={onActivateBranch} />);
+
+		expect(screen.getByText("2 / 3")).toBeVisible();
+		await user.click(screen.getByRole("button", { name: "Previous conversation branch" }));
+		expect(onActivateBranch).toHaveBeenCalledWith("branch-previous");
+		expect(
+			screen.getByText("Conversation branched; worktree files were left unchanged."),
+		).toBeVisible();
+	});
+
 	it("copies an assistant message as the markdown the agent wrote", async () => {
 		const user = userEvent.setup();
 		const snapshot = structuredClone(chatFixture);
@@ -339,5 +772,358 @@ describe("ChatWorkspace message actions", () => {
 	it("does not leave a writing caret behind prose followed by tool activity", () => {
 		render(<ChatWorkspace snapshot={chatFixture} />);
 		expect(screen.queryByLabelText("still writing")).not.toBeInTheDocument();
+	});
+});
+
+describe("ChatWorkspace reviewer tabs", () => {
+	const reviewerTerminal = { handleId: "review-1", harness: "codex" };
+	const reviewerTarget = {
+		kind: "reviewer" as const,
+		...reviewerTerminal,
+		sessionId: chatSession.id,
+	};
+
+	it("keeps the chat draft, attachments, edit, and scroll state mounted while Reviewer is selected", async () => {
+		const user = userEvent.setup();
+		const common = {
+			snapshot: idleSnapshot(),
+			session: chatSession,
+			reviewerTerminal,
+			onOpenReviewerTerminal: vi.fn(),
+			onSelectChat: vi.fn(),
+			onEditMessage: vi.fn(async () => undefined),
+			onStageAttachments: vi.fn(async () => []),
+		};
+		const view = render(<ChatWorkspace {...common} />);
+		const composer = screen.getByRole("combobox", { name: "Message the agent" });
+		await user.type(composer, "unsent reviewer-switch draft");
+		fireEvent.paste(composer, {
+			clipboardData: {
+				files: [new File([new Uint8Array([137, 80, 78, 71])], "review.png", { type: "image/png" })],
+				items: [],
+			},
+		});
+		await waitFor(() => expect(screen.getByLabelText("Remove review.png")).toBeInTheDocument());
+		const attachment = screen.getByLabelText("Remove review.png");
+		await user.click(screen.getAllByRole("button", { name: "Edit user message" })[0]!);
+		const editor = screen.getByRole("textbox", { name: "Edit message" });
+		await user.clear(editor);
+		await user.type(editor, "in-progress branch edit");
+		const timeline = screen.getByRole("log", { name: "Conversation" });
+		stubGeometry(timeline, { scrollHeight: 2_000, clientHeight: 500, scrollTop: 417 });
+
+		view.rerender(<ChatWorkspace {...common} reviewerTarget={reviewerTarget} />);
+
+		expect(composer).toBeInTheDocument();
+		expect(attachment).toBeInTheDocument();
+		expect(editor).toBeInTheDocument();
+		expect(timeline).toBeInTheDocument();
+		expect(screen.getByTestId("chat-conversation-panel")).toHaveAttribute("hidden");
+		expect(screen.getByTestId("chat-conversation-panel")).toHaveAttribute("inert");
+
+		view.rerender(<ChatWorkspace {...common} />);
+
+		expect(screen.getByRole("combobox", { name: "Message the agent" })).toBe(composer);
+		expect(composer).toHaveValue("unsent reviewer-switch draft");
+		expect(screen.getByLabelText("Remove review.png")).toBe(attachment);
+		expect(screen.getByRole("textbox", { name: "Edit message" })).toBe(editor);
+		expect(editor).toHaveValue("in-progress branch edit");
+		expect(screen.getByRole("log", { name: "Conversation" })).toBe(timeline);
+		expect(timeline.scrollTop).toBe(417);
+	});
+
+	it("keeps the selected reviewer pane through temporary terminal unavailability", () => {
+		const common = {
+			snapshot: idleSnapshot(),
+			session: chatSession,
+			reviewerTarget,
+			onSelectChat: vi.fn(),
+		};
+		const view = render(<ChatWorkspace {...common} reviewerTerminal={reviewerTerminal} />);
+		expect(screen.getByTestId("chat-reviewer-terminal")).toBeInTheDocument();
+
+		view.rerender(<ChatWorkspace {...common} reviewerTerminal={undefined} />);
+
+		expect(screen.getByTestId("chat-reviewer-terminal")).toBeInTheDocument();
+		expect(screen.queryByRole("tab", { name: "Reviewer" })).not.toBeInTheDocument();
+	});
+
+	it("gives the reviewer terminal working zoom and fullscreen controls", async () => {
+		window.localStorage.setItem("ao.terminal.fontSize", "14");
+		render(
+			<ChatWorkspace
+				snapshot={idleSnapshot()}
+				session={chatSession}
+				reviewerTerminal={reviewerTerminal}
+				reviewerTarget={reviewerTarget}
+			/>,
+		);
+
+		expect(terminalPaneState.props).toMatchObject({ fontSize: 14, isFullscreen: false });
+		expect(terminalPaneState.props?.onChangeFontSize).toEqual(expect.any(Function));
+		expect(terminalPaneState.props?.onToggleFullscreen).toEqual(expect.any(Function));
+
+		act(() => terminalPaneState.props?.onChangeFontSize?.(2));
+		expect(window.localStorage.getItem("ao.terminal.fontSize")).toBe("16");
+		expect(terminalPaneState.props?.fontSize).toBe(16);
+
+		fireEvent.wheel(screen.getByTestId("chat-reviewer-panel"), {
+			ctrlKey: true,
+			deltaY: -80,
+		});
+		expect(window.localStorage.getItem("ao.terminal.fontSize")).toBe("17");
+		expect(terminalPaneState.props?.fontSize).toBe(17);
+
+		const surface = screen.getByLabelText("Chat");
+		const requestFullscreen = vi.fn(async () => undefined);
+		Object.defineProperty(surface, "requestFullscreen", { configurable: true, value: requestFullscreen });
+		await act(async () => terminalPaneState.props?.onToggleFullscreen?.());
+		expect(requestFullscreen).toHaveBeenCalledOnce();
+	});
+
+	it("supports arrow, Home/End, and desktop previous/next tab shortcuts", () => {
+		const onOpenReviewerTerminal = vi.fn();
+		const onSelectChat = vi.fn();
+		const common = {
+			snapshot: idleSnapshot(),
+			session: chatSession,
+			reviewerTerminal,
+			onOpenReviewerTerminal,
+			onSelectChat,
+		};
+		const view = render(<ChatWorkspace {...common} />);
+		const chatTab = screen.getByRole("tab", { name: chatFixture.sessionId });
+		const reviewerTab = screen.getByRole("tab", { name: "Reviewer" });
+		expect(chatTab).toHaveAttribute("tabindex", "0");
+		expect(reviewerTab).toHaveAttribute("tabindex", "-1");
+
+		chatTab.focus();
+		fireEvent.keyDown(chatTab, { key: "End" });
+		expect(reviewerTab).toHaveFocus();
+		expect(onOpenReviewerTerminal).toHaveBeenCalledWith(reviewerTerminal);
+
+		onOpenReviewerTerminal.mockClear();
+		chatTab.focus();
+		fireEvent.keyDown(chatTab, { key: "ArrowRight" });
+		expect(reviewerTab).toHaveFocus();
+		expect(onOpenReviewerTerminal).toHaveBeenCalledWith(reviewerTerminal);
+
+		onOpenReviewerTerminal.mockClear();
+		expect(nextTabListeners.size).toBe(1);
+		act(() => [...nextTabListeners][0]?.());
+		expect(onOpenReviewerTerminal).toHaveBeenCalledWith(reviewerTerminal);
+
+		view.rerender(<ChatWorkspace {...common} reviewerTarget={reviewerTarget} />);
+		const activeReviewerTab = screen.getByRole("tab", { name: "Reviewer" });
+		expect(screen.getByRole("tab", { name: chatFixture.sessionId })).toHaveAttribute("tabindex", "-1");
+		expect(activeReviewerTab).toHaveAttribute("tabindex", "0");
+
+		activeReviewerTab.focus();
+		fireEvent.keyDown(activeReviewerTab, { key: "Home" });
+		expect(onSelectChat).toHaveBeenCalledOnce();
+		expect(screen.getByRole("tab", { name: chatFixture.sessionId })).toHaveFocus();
+
+		onSelectChat.mockClear();
+		activeReviewerTab.focus();
+		fireEvent.keyDown(activeReviewerTab, { key: "ArrowLeft" });
+		expect(onSelectChat).toHaveBeenCalledOnce();
+
+		onSelectChat.mockClear();
+		expect(previousTabListeners.size).toBe(1);
+		act(() => [...previousTabListeners][0]?.());
+		expect(onSelectChat).toHaveBeenCalledOnce();
+	});
+});
+
+describe("ChatWorkspace shell tabs", () => {
+	const shells = [
+		{
+			handleId: "shell-1",
+			sessionId: chatFixture.sessionId,
+			title: "chat worktree shell",
+			workingDir: "/p",
+			createdAt: "2026-08-04T00:00:00Z",
+		},
+		{
+			handleId: "shell-2",
+			sessionId: chatFixture.sessionId,
+			title: "second shell",
+			workingDir: "/p",
+			createdAt: "2026-08-04T00:10:00Z",
+		},
+	];
+	const shellTarget = (handleId: string) => {
+		const shell = shells.find((candidate) => candidate.handleId === handleId)!;
+		return {
+			kind: "shell" as const,
+			generation: shell.createdAt,
+			handleId,
+			sessionId: chatFixture.sessionId,
+			title: shell.title,
+		};
+	};
+
+	// Shells are tabs inside the chat surface (#4033): opening one must not cost
+	// the conversation — the conversation panel hides instead of unmounting,
+	// exactly like the reviewer pane.
+	it("renders a selected shell as the tab body and hides, not unmounts, the conversation", () => {
+		render(
+			<ChatWorkspace
+				snapshot={idleSnapshot()}
+				session={chatSession}
+				shellTerminals={shells}
+				shellTarget={shellTarget("shell-1")}
+				onSelectChat={vi.fn()}
+			/>,
+		);
+		expect(screen.getByTestId("chat-shell-terminal")).toBeInTheDocument();
+		expect(screen.getByTestId("chat-conversation-panel")).toHaveAttribute("hidden");
+		expect(screen.getByTestId("chat-conversation-panel")).toHaveAttribute("inert");
+
+		expect(screen.getByRole("tab", { name: "chat worktree shell" })).toHaveAttribute(
+			"aria-selected",
+			"true",
+		);
+		expect(screen.getByRole("tab", { name: "second shell" })).toHaveAttribute(
+			"aria-selected",
+			"false",
+		);
+	});
+
+	it("passes the routed shell target straight to the terminal pane", () => {
+		render(
+			<ChatWorkspace
+				snapshot={idleSnapshot()}
+				session={chatSession}
+				shellTerminals={shells}
+				shellTarget={shellTarget("shell-2")}
+			/>,
+		);
+		expect(terminalPaneState.props).toMatchObject({ terminalTarget: shellTarget("shell-2") });
+	});
+
+	it("cycles chat → reviewer → shells → chat on the desktop next-tab shortcut", () => {
+		const onOpenReviewerTerminal = vi.fn();
+		const onSelectShellTerminal = vi.fn();
+		const onSelectChat = vi.fn();
+		const common = {
+			snapshot: idleSnapshot(),
+			session: chatSession,
+			shellTerminals: shells,
+			onSelectShellTerminal,
+			onSelectChat,
+		};
+		const view = render(
+			<ChatWorkspace
+				{...common}
+				reviewerTerminal={{ handleId: "review-1", harness: "codex" }}
+				onOpenReviewerTerminal={onOpenReviewerTerminal}
+			/>,
+		);
+
+		// From chat: the reviewer comes first.
+		act(() => [...nextTabListeners][0]?.());
+		expect(onOpenReviewerTerminal).toHaveBeenCalledOnce();
+
+		// From the reviewer: the first shell.
+		view.rerender(
+			<ChatWorkspace
+				{...common}
+				reviewerTerminal={{ handleId: "review-1", harness: "codex" }}
+				onOpenReviewerTerminal={onOpenReviewerTerminal}
+				reviewerTarget={{
+					kind: "reviewer",
+					handleId: "review-1",
+					harness: "codex",
+					sessionId: chatFixture.sessionId,
+				}}
+			/>,
+		);
+		act(() => [...nextTabListeners][0]?.());
+		expect(onSelectShellTerminal).toHaveBeenCalledWith("shell-1");
+
+		// From the last shell: wraps to chat.
+		view.rerender(<ChatWorkspace {...common} shellTarget={shellTarget("shell-2")} />);
+		act(() => [...nextTabListeners][0]?.());
+		expect(onSelectChat).toHaveBeenCalledOnce();
+	});
+
+	it("cycles from the focused worker tab on Ctrl+Tab", () => {
+		const onSelectShellTerminal = vi.fn();
+		render(
+			<ChatWorkspace
+				snapshot={idleSnapshot()}
+				session={chatSession}
+				shellTerminals={shells}
+				onSelectShellTerminal={onSelectShellTerminal}
+				onSelectChat={vi.fn()}
+			/>,
+		);
+
+		const workerTab = screen.getByRole("tab", { name: "ao-14" });
+		workerTab.focus();
+		fireEvent.keyDown(workerTab, { key: "Tab", ctrlKey: true });
+
+		expect(onSelectShellTerminal).toHaveBeenCalledWith("shell-1");
+	});
+
+	it("cycles shell → reviewer → chat on the desktop previous-tab shortcut", () => {
+		const onOpenReviewerTerminal = vi.fn();
+		const onSelectShellTerminal = vi.fn();
+		const onSelectChat = vi.fn();
+		const common = {
+			snapshot: idleSnapshot(),
+			session: chatSession,
+			reviewerTerminal: { handleId: "review-1", harness: "codex" },
+			onOpenReviewerTerminal,
+			shellTerminals: shells,
+			onSelectShellTerminal,
+			onSelectChat,
+		};
+		const view = render(<ChatWorkspace {...common} shellTarget={shellTarget("shell-1")} />);
+
+		act(() => [...previousTabListeners][0]?.());
+		expect(onOpenReviewerTerminal).toHaveBeenCalledWith({ handleId: "review-1", harness: "codex" });
+
+		view.rerender(
+			<ChatWorkspace
+				{...common}
+				reviewerTarget={{
+					kind: "reviewer",
+					handleId: "review-1",
+					harness: "codex",
+					sessionId: chatFixture.sessionId,
+				}}
+			/>,
+		);
+		act(() => [...previousTabListeners][0]?.());
+		expect(onSelectChat).toHaveBeenCalledOnce();
+	});
+
+	it("enables the close-shell shortcut and closes the active shell tab", () => {
+		const onCloseShellTerminal = vi.fn();
+		const view = render(
+			<ChatWorkspace
+				snapshot={idleSnapshot()}
+				session={chatSession}
+				shellTerminals={shells}
+				shellTarget={shellTarget("shell-2")}
+				onCloseShellTerminal={onCloseShellTerminal}
+			/>,
+		);
+
+		expect(closeShellTerminalShortcutStates.at(-1)).toBe(true);
+		act(() => [...closeShellTerminalListeners][0]?.());
+		expect(onCloseShellTerminal).toHaveBeenCalledWith("shell-2");
+
+		view.rerender(
+			<ChatWorkspace
+				snapshot={idleSnapshot()}
+				session={chatSession}
+				shellTerminals={shells}
+				onCloseShellTerminal={onCloseShellTerminal}
+			/>,
+		);
+		expect(closeShellTerminalShortcutStates.at(-1)).toBe(false);
 	});
 });

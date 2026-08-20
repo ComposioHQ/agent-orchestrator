@@ -36,7 +36,15 @@ import Markdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { WrapText } from "lucide-react";
 import { cn } from "../../lib/utils";
+import { aoBridge } from "../../lib/bridge";
 import { canonicalLanguage } from "../../lib/code-highlight";
+import { isWebLink, openLinkInSystemBrowser } from "../../lib/external-link-policy";
+import {
+	ContextMenu,
+	ContextMenuContent,
+	ContextMenuItem,
+	ContextMenuTrigger,
+} from "../ui/context-menu";
 import { HighlightedCode } from "./HighlightedCode";
 import { CopyButton } from "./CopyButton";
 import "./code-theme.css";
@@ -52,6 +60,17 @@ const PLUGINS = [remarkGfm];
  * and re-parse every message on every poll.
  */
 const StreamingProse = createContext(false);
+const OpenChatLink = createContext<((url: string) => void) | undefined>(undefined);
+
+export function ChatLinkProvider({
+	onLinkOpen,
+	children,
+}: {
+	onLinkOpen?: (url: string) => void;
+	children: ReactNode;
+}) {
+	return <OpenChatLink.Provider value={onLinkOpen}>{children}</OpenChatLink.Provider>;
+}
 
 export const ChatMarkdown = memo(function ChatMarkdown({
 	text,
@@ -196,6 +215,50 @@ function compactEmoji(children: ReactNode): ReactNode {
 	return children;
 }
 
+function MarkdownLink({ href, children }: { href?: string; children?: ReactNode }) {
+	const onLinkOpen = useContext(OpenChatLink);
+	const anchor = (
+		<a
+			href={href}
+			target="_blank"
+			rel="noreferrer noopener"
+			onClick={(event) => {
+				if (!href) return;
+				event.preventDefault();
+				// Cmd/Ctrl-click (the VS Code/Slack convention) and Option/Alt-click
+				// escape the in-app panel and go straight to the system browser.
+				const toSystemBrowser = event.metaKey || event.ctrlKey || event.altKey;
+				if (!toSystemBrowser && onLinkOpen && isWebLink(href)) {
+					onLinkOpen(href);
+					return;
+				}
+				void openLinkInSystemBrowser(href);
+			}}
+			className="text-markdown-link underline decoration-markdown-link/45 underline-offset-2 transition-colors hover:text-markdown-link-hover hover:decoration-markdown-link-hover/75"
+		>
+			{children}
+		</a>
+	);
+	if (!href) return anchor;
+	return (
+		<ContextMenu>
+			<ContextMenuTrigger asChild>{anchor}</ContextMenuTrigger>
+			<ContextMenuContent className="min-w-44">
+				{/* Only http(s) may reach shell.openExternal from here; other schemes
+				    still get their address copied. */}
+				{isWebLink(href) ? (
+					<ContextMenuItem onSelect={() => void openLinkInSystemBrowser(href)}>
+						Open in system browser
+					</ContextMenuItem>
+				) : null}
+				<ContextMenuItem onSelect={() => void aoBridge.clipboard.writeText(href)}>
+					Copy link address
+				</ContextMenuItem>
+			</ContextMenuContent>
+		</ContextMenu>
+	);
+}
+
 const COMPONENTS: Components = {
 	// Headings step down in size but stay in the conversation's voice — an agent's
 	// "## Findings" is a paragraph label, not a page title.
@@ -286,18 +349,10 @@ const COMPONENTS: Components = {
 	strong: ({ children }) => <strong className="font-semibold text-foreground">{children}</strong>,
 	del: ({ children }) => <del className="text-muted-foreground">{children}</del>,
 
-	// Links open in the user's browser, not inside the app: a chat surface is not a
-	// web view, and navigating the renderer away would lose the session.
-	a: ({ href, children }) => (
-		<a
-			href={href}
-			target="_blank"
-			rel="noreferrer noopener"
-			className="text-markdown-link underline decoration-markdown-link/45 underline-offset-2 transition-colors hover:text-markdown-link-hover hover:decoration-markdown-link-hover/75"
-		>
-			{children}
-		</a>
-	),
+	// Match terminal links: a plain HTTP(S) click uses the session's AO Browser;
+	// Cmd/Ctrl- or Option/Alt-click and non-web schemes use the system browser,
+	// and right-click offers the system browser and copying the address.
+	a: MarkdownLink,
 
 	img: ({ src, alt }) => (
 		<img src={typeof src === "string" ? src : undefined} alt={alt ?? ""} className="my-2 max-w-full rounded-md border border-border" />

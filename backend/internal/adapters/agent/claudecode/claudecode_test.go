@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -28,6 +29,38 @@ func TestNativeConversationIDUsesTheSameClaudeUUIDAcrossInterfaces(t *testing.T)
 	}, domain.SessionModeChat, tuiID)
 	if err != nil || !ok || chatID != tuiID {
 		t.Fatalf("Chat native id = %q ok=%v err=%v", chatID, ok, err)
+	}
+}
+
+func TestWindowsNativeClaudeCandidatesForNPMShim(t *testing.T) {
+	shim := filepath.Join("prefix", "claude.cmd")
+	want := []string{
+		filepath.Join("prefix", "claude.exe"),
+		filepath.Join("prefix", "node_modules", "@anthropic-ai", "claude-code", "bin", "claude.exe"),
+	}
+	if got := windowsNativeClaudeCandidatesForShim(shim); !reflect.DeepEqual(got, want) {
+		t.Fatalf("candidates = %#v, want %#v", got, want)
+	}
+}
+
+func TestResolveNativeWindowsClaudeFindsNPMExecutable(t *testing.T) {
+	prefix := t.TempDir()
+	shim := filepath.Join(prefix, "claude.cmd")
+	if err := os.WriteFile(shim, []byte("@echo off\r\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	want := filepath.Join(prefix, "node_modules", "@anthropic-ai", "claude-code", "bin", "claude.exe")
+	if err := os.MkdirAll(filepath.Dir(want), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(want, []byte("native claude"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got := resolveNativeWindowsClaude(shim, "windows"); got != want {
+		t.Fatalf("resolved binary = %q, want %q", got, want)
+	}
+	if got := resolveNativeWindowsClaude(shim, "linux"); got != shim {
+		t.Fatalf("non-Windows resolution = %q, want unchanged shim %q", got, shim)
 	}
 }
 
@@ -142,7 +175,7 @@ func TestGetLaunchCommandAppendsSystemPromptFromFile(t *testing.T) {
 
 	want := []string{
 		"claude",
-		"--append-system-prompt", "You are an orchestrator.",
+		"--append-system-prompt-file", promptFile,
 		"--", "do the thing",
 	}
 	if !reflect.DeepEqual(cmd, want) {
@@ -150,9 +183,9 @@ func TestGetLaunchCommandAppendsSystemPromptFromFile(t *testing.T) {
 	}
 }
 
-func TestGetLaunchCommandInlineSystemPrompt(t *testing.T) {
+func TestGetLaunchCommandSystemPromptFileTakesPrecedenceOverInline(t *testing.T) {
 	promptFile := filepath.Join(t.TempDir(), "system.md")
-	if err := os.WriteFile(promptFile, []byte("file ignored\n"), 0600); err != nil {
+	if err := os.WriteFile(promptFile, []byte("file instructions\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -164,12 +197,28 @@ func TestGetLaunchCommandInlineSystemPrompt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !containsSubsequence(cmd, []string{"--append-system-prompt", "inline instructions"}) {
-		t.Fatalf("command %#v does not append inline system prompt", cmd)
+	if !containsSubsequence(cmd, []string{"--append-system-prompt-file", promptFile}) {
+		t.Fatalf("command %#v does not use the system prompt file", cmd)
+	}
+	if contains(cmd, "inline instructions") {
+		t.Fatalf("command %#v unexpectedly embeds the inline system prompt", cmd)
 	}
 }
 
-func TestGetLaunchCommandMissingSystemPromptFileErrors(t *testing.T) {
+func TestGetLaunchCommandInlineSystemPromptFallback(t *testing.T) {
+	p := &Plugin{resolvedBinary: "claude"}
+	cmd, err := p.GetLaunchCommand(context.Background(), ports.LaunchConfig{
+		SystemPrompt: "inline instructions",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !containsSubsequence(cmd, []string{"--append-system-prompt", "inline instructions"}) {
+		t.Fatalf("command %#v does not append the inline system prompt fallback", cmd)
+	}
+}
+
+func TestGetLaunchCommandRejectsMissingSystemPromptFile(t *testing.T) {
 	p := &Plugin{resolvedBinary: "claude"}
 	_, err := p.GetLaunchCommand(context.Background(), ports.LaunchConfig{
 		SystemPromptFile: filepath.Join(t.TempDir(), "does-not-exist.md"),
@@ -200,6 +249,128 @@ func TestGetLaunchCommandInjectsSessionID(t *testing.T) {
 	}
 	if contains(cmd, "--session-id") {
 		t.Fatalf("command %#v unexpectedly contains --session-id", cmd)
+	}
+}
+
+func TestGetLaunchCommandUsesRequestedNativeSessionID(t *testing.T) {
+	p := &Plugin{resolvedBinary: "claude"}
+	requested := "019f9f7c-53c0-7f10-8d56-a8a979dd7001"
+	cmd, err := p.GetLaunchCommand(context.Background(), ports.LaunchConfig{
+		SessionID:       "stable-ao-session",
+		NativeSessionID: requested,
+		Prompt:          "continue",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !containsSubsequence(cmd, []string{"--session-id", requested}) {
+		t.Fatalf("command %#v missing requested native session id", cmd)
+	}
+	if contains(cmd, claudeSessionUUID("stable-ao-session")) {
+		t.Fatalf("command %#v used AO-derived id despite explicit native id", cmd)
+	}
+}
+
+func TestGetLaunchCommandRejectsInvalidRequestedNativeSessionID(t *testing.T) {
+	p := &Plugin{resolvedBinary: "claude"}
+	if _, err := p.GetLaunchCommand(context.Background(), ports.LaunchConfig{
+		NativeSessionID: "not-a-uuid",
+	}); err == nil {
+		t.Fatal("expected invalid native session id error")
+	}
+}
+
+func TestNewNativeSessionIDReturnsDistinctClaudeUUIDs(t *testing.T) {
+	p := &Plugin{}
+	first := p.NewNativeSessionID()
+	second := p.NewNativeSessionID()
+	if first == second {
+		t.Fatalf("fresh native ids collided: %q", first)
+	}
+	if _, err := uuid.Parse(first); err != nil {
+		t.Fatalf("first native id %q is not a UUID: %v", first, err)
+	}
+	if _, err := uuid.Parse(second); err != nil {
+		t.Fatalf("second native id %q is not a UUID: %v", second, err)
+	}
+}
+
+func TestNativeSessionConfigDirUsesRuntimeOverride(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "claude-profile")
+	got, err := (&Plugin{}).NativeSessionConfigDir(context.Background(), map[string]string{
+		claudeConfigDirEnv: dir,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != dir {
+		t.Fatalf("config dir = %q, want %q", got, dir)
+	}
+}
+
+func TestNativeSessionConfigDirExplicitEmptyIgnoresDaemonOverride(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv(claudeConfigDirEnv, filepath.Join(t.TempDir(), "daemon-claude-profile"))
+
+	got, err := (&Plugin{}).NativeSessionConfigDir(context.Background(), map[string]string{
+		claudeConfigDirEnv: "",
+		"HOME":             home,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := filepath.Join(home, ".claude"); got != want {
+		t.Fatalf("config dir = %q, want provider default %q", got, want)
+	}
+}
+
+func TestLocateAndProbeNativeSessionTranscript(t *testing.T) {
+	configDir := t.TempDir()
+	sessionID := "019f9f7c-53c0-7f10-8d56-a8a979dd7001"
+	transcript := filepath.Join(configDir, "projects", "encoded-workspace", sessionID+".jsonl")
+	if err := os.MkdirAll(filepath.Dir(transcript), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(transcript, []byte("{}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	ref := ports.NativeSessionRef{NativeSessionID: sessionID, ConfigDir: configDir}
+	p := &Plugin{}
+	path, ok, err := p.LocateTranscript(context.Background(), ref)
+	if err != nil || !ok {
+		t.Fatalf("LocateTranscript = (%q, %v, %v), want transcript", path, ok, err)
+	}
+	if path != transcript {
+		t.Fatalf("path = %q, want %q", path, transcript)
+	}
+	availability, err := p.ProbeNativeSession(context.Background(), ref)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if availability != ports.NativeSessionAvailabilityAvailable {
+		t.Fatalf("availability = %q, want available", availability)
+	}
+
+	ref.NativeSessionID = "019f9f7c-53c0-7f10-8d56-a8a979dd7002"
+	availability, err = p.ProbeNativeSession(context.Background(), ref)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if availability != ports.NativeSessionAvailabilityUnavailable {
+		t.Fatalf("missing availability = %q, want unavailable", availability)
+	}
+}
+
+func TestProbeNativeSessionUnknownWithoutConfigDir(t *testing.T) {
+	availability, err := (&Plugin{}).ProbeNativeSession(context.Background(), ports.NativeSessionRef{
+		NativeSessionID: "019f9f7c-53c0-7f10-8d56-a8a979dd7001",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if availability != ports.NativeSessionAvailabilityUnknown {
+		t.Fatalf("availability = %q, want unknown", availability)
 	}
 }
 
@@ -434,6 +605,7 @@ func matcherForCommand(groups []hooksjson.MatcherGroup, command string) *string 
 func TestGetRestoreCommandReadsAgentSessionID(t *testing.T) {
 	cmd, ok, err := (&Plugin{resolvedBinary: "claude"}).GetRestoreCommand(context.Background(), ports.RestoreConfig{
 		Permissions: ports.PermissionModeBypassPermissions,
+		Prompt:      "continue from AO",
 		Session: ports.SessionRef{
 			ID:       "sess-r",
 			Metadata: map[string]string{ports.MetadataKeyAgentSessionID: "claude-native-1"},
@@ -443,7 +615,7 @@ func TestGetRestoreCommandReadsAgentSessionID(t *testing.T) {
 		t.Fatalf("restore = (ok=%v, err=%v), want ok", ok, err)
 	}
 	// The hook-captured native id wins over the derived fallback.
-	want := []string{"claude", "--permission-mode", "bypassPermissions", "--resume", "claude-native-1"}
+	want := []string{"claude", "--permission-mode", "bypassPermissions", "--resume", "claude-native-1", "--", "continue from AO"}
 	if !reflect.DeepEqual(cmd, want) {
 		t.Fatalf("restore cmd\nwant: %#v\n got: %#v", want, cmd)
 	}
@@ -477,7 +649,8 @@ func TestGetRestoreCommandReappendsSystemPromptFromFile(t *testing.T) {
 
 	cmd, ok, err := (&Plugin{resolvedBinary: "claude"}).GetRestoreCommand(context.Background(), ports.RestoreConfig{
 		Permissions:      ports.PermissionModeBypassPermissions,
-		SystemPrompt:     "inline wins",
+		Prompt:           "continue from AO",
+		SystemPrompt:     "inline fallback",
 		SystemPromptFile: promptFile,
 		Session: ports.SessionRef{
 			ID:       "sess-r",
@@ -487,9 +660,26 @@ func TestGetRestoreCommandReappendsSystemPromptFromFile(t *testing.T) {
 	if err != nil || !ok {
 		t.Fatalf("restore = (ok=%v, err=%v), want ok", ok, err)
 	}
-	want := []string{"claude", "--permission-mode", "bypassPermissions", "--append-system-prompt", "inline wins", "--resume", "claude-native-1"}
+	want := []string{
+		"claude", "--permission-mode", "bypassPermissions",
+		"--append-system-prompt-file", promptFile,
+		"--resume", "claude-native-1",
+		"--", "continue from AO",
+	}
 	if !reflect.DeepEqual(cmd, want) {
 		t.Fatalf("restore cmd\nwant: %#v\n got: %#v", want, cmd)
+	}
+}
+
+func TestGetRestoreCommandRejectsNonRegularSystemPromptFile(t *testing.T) {
+	_, ok, err := (&Plugin{resolvedBinary: "claude"}).GetRestoreCommand(context.Background(), ports.RestoreConfig{
+		SystemPromptFile: t.TempDir(),
+		Session: ports.SessionRef{
+			Metadata: map[string]string{ports.MetadataKeyAgentSessionID: "claude-native-1"},
+		},
+	})
+	if err == nil || ok {
+		t.Fatalf("restore = (ok=%v, err=%v), want non-regular-file error", ok, err)
 	}
 }
 
@@ -668,6 +858,13 @@ func TestClaudeAuthStatusFromOutputUnauthorized(t *testing.T) {
 	}
 }
 
+func TestClaudeAuthStatusFromOutputUnknownForUnrecognizedFailure(t *testing.T) {
+	status, ok := claudeAuthStatusFromOutput([]byte("unsupported subcommand on this version"))
+	if ok || status != ports.AgentAuthStatusUnknown {
+		t.Fatalf("status = (%q, %v), want (%q, false)", status, ok, ports.AgentAuthStatusUnknown)
+	}
+}
+
 func TestEnsureWorkspaceTrustedCreatesEntry(t *testing.T) {
 	dir := t.TempDir()
 	cfgPath := filepath.Join(dir, ".claude.json")
@@ -787,6 +984,161 @@ func TestGetLaunchCommandOmitsToolFlagsWhenUnset(t *testing.T) {
 	}
 	if contains(cmd, "--allowedTools") || contains(cmd, "--disallowedTools") {
 		t.Fatalf("unrestricted launch should emit no tool flags; got %#v", cmd)
+	}
+}
+
+func TestComposerIsEmptyUsesClaudePromptMarker(t *testing.T) {
+	plugin := &Plugin{}
+	if !plugin.ComposerIsEmpty("\x1b[39m❯\u00a0") {
+		t.Fatal("blank Claude composer was not recognized")
+	}
+	rule := "\x1b[38;5;244m" + strings.Repeat("─", 48) + "\x1b[39m"
+	footer := "\x1b[38;5;220mUpdate available!\x1b[39m\n\x1b[38;5;211m⏵⏵ bypass permissions on\x1b[39m"
+	if !plugin.ComposerIsEmpty(rule + "\n\x1b[39m❯\u00a0\x1b[7m \x1b[0m\n" + rule + "\n" + footer) {
+		t.Fatal("blank bordered Claude composer above status footer was not recognized")
+	}
+}
+
+func TestInspectTerminalSurfaceSeparatesClaudeWorkFromComposer(t *testing.T) {
+	plugin := &Plugin{}
+	rule := "\x1b[38;5;244m" + strings.Repeat("─", 48) + "\x1b[39m"
+	tests := []struct {
+		name       string
+		output     string
+		wantWork   ports.TerminalSurfaceWorkState
+		wantEditor ports.TerminalComposerState
+	}{
+		{
+			name:       "idle empty composer",
+			output:     rule + "\n\x1b[39m❯\u00a0\x1b[7m \x1b[0m\n" + rule + "\n⏵⏵ bypass permissions on",
+			wantWork:   ports.TerminalSurfaceWorkIdle,
+			wantEditor: ports.TerminalComposerEmpty,
+		},
+		{
+			name:       "idle draft",
+			output:     rule + "\n❯ keep this draft\n" + rule + "\n⏵⏵ bypass permissions on",
+			wantWork:   ports.TerminalSurfaceWorkIdle,
+			wantEditor: ports.TerminalComposerDraft,
+		},
+		{
+			name:       "active wording inside draft is not current chrome",
+			output:     rule + "\n❯ quote ✶ Generating… (esc to interrupt · 2s)\n" + rule + "\n⏵⏵ bypass permissions on",
+			wantWork:   ports.TerminalSurfaceWorkIdle,
+			wantEditor: ports.TerminalComposerDraft,
+		},
+		{
+			name:       "active with empty composer",
+			output:     "✶ Generating… (esc to interrupt · 2s)\n" + rule + "\n❯\n" + rule,
+			wantWork:   ports.TerminalSurfaceWorkActive,
+			wantEditor: ports.TerminalComposerEmpty,
+		},
+		{
+			name: "active with interrupt hint in footer",
+			output: "✻ Computing… (24s · ↓ 114 tokens)\n" + rule + "\n❯\n" + rule +
+				"\n⏵⏵ auto mode on (shift+tab to cycle) · esc to interrupt · ← for agents",
+			wantWork:   ports.TerminalSurfaceWorkActive,
+			wantEditor: ports.TerminalComposerEmpty,
+		},
+		{
+			name: "spinner transcript above idle composer without active footer",
+			output: "✻ Computing… (24s · ↓ 114 tokens)\n" + rule + "\n❯\n" + rule +
+				"\n⏵⏵ auto mode on (shift+tab to cycle) · ← for agents",
+			wantWork:   ports.TerminalSurfaceWorkIdle,
+			wantEditor: ports.TerminalComposerEmpty,
+		},
+		{
+			name:       "permission dialog",
+			output:     "Do you want to proceed?\n❯ 1. Yes\n  2. No\nPress enter to confirm",
+			wantWork:   ports.TerminalSurfaceWorkBlocked,
+			wantEditor: ports.TerminalComposerUnknown,
+		},
+		{
+			name: "permission dialog with provider-specific question and modern footer",
+			output: "Claude wants to run Bash\n" +
+				"❯ 1. Yes\n" +
+				"  2. No\n" +
+				"Esc to cancel · Tab to amend",
+			wantWork:   ports.TerminalSurfaceWorkBlocked,
+			wantEditor: ports.TerminalComposerUnknown,
+		},
+		{
+			name: "permission dialog with a non-first selected option",
+			output: "Claude wants to run Bash\n" +
+				"  1. Yes\n" +
+				"❯ 2. No\n" +
+				"Esc to cancel · Tab to amend",
+			wantWork:   ports.TerminalSurfaceWorkBlocked,
+			wantEditor: ports.TerminalComposerUnknown,
+		},
+		{
+			name: "permissions menu without a selected prompt marker",
+			output: "❯ /permissions\n" + rule + "\n" +
+				"  Permissions  Recently denied   Allow   Ask   Deny   Workspace\n\n" +
+				"  Claude Code won't ask before using allowed tools.\n" +
+				"  ╭───────────────────────────────────────────────╮\n" +
+				"  │ ⌕ Search…                                     │\n" +
+				"  ╰───────────────────────────────────────────────╯\n\n" +
+				"    1. Add a new rule…\n\n" +
+				"  ←/→ to switch · ↓ to select · Esc to cancel",
+			wantWork:   ports.TerminalSurfaceWorkBlocked,
+			wantEditor: ports.TerminalComposerUnknown,
+		},
+		{
+			name: "completed permissions menu above current composer is not blocked",
+			output: "  ╭─── Search… ───╮\n" +
+				"  │ ⌕ Search… │\n" +
+				"  ╰────────────╯\n" +
+				"    1. Add a new rule…\n" +
+				"  ←/→ to switch · ↓ to select · Esc to cancel\n" +
+				rule + "\n❯\u00a0\x1b[7m \x1b[0m\n" + rule + "\n⏵⏵ auto mode on",
+			wantWork:   ports.TerminalSurfaceWorkIdle,
+			wantEditor: ports.TerminalComposerEmpty,
+		},
+		{
+			name: "completed permission menu above the current composer is not blocked",
+			output: "Claude wanted to run Bash\n" +
+				"❯ 1. Yes\n" +
+				"  2. No\n" +
+				"Esc to cancel · Tab to amend\n" + rule + "\n❯\u00a0\x1b[7m \x1b[0m\n" + rule,
+			wantWork:   ports.TerminalSurfaceWorkIdle,
+			wantEditor: ports.TerminalComposerEmpty,
+		},
+		{
+			name: "permission wording in completed response is not current chrome",
+			output: "The command asked: Do you want to proceed?\n" +
+				"It then said: Press enter to confirm.\n" + rule + "\n❯\u00a0\x1b[7m \x1b[0m\n" + rule + "\n⏵⏵ bypass permissions on",
+			wantWork:   ports.TerminalSurfaceWorkIdle,
+			wantEditor: ports.TerminalComposerEmpty,
+		},
+		{
+			name: "interrupt wording in completed response is not active chrome",
+			output: "The status previously read esc to interrupt while the command ran.\n" +
+				rule + "\n❯\u00a0\x1b[7m \x1b[0m\n" + rule + "\n⏵⏵ bypass permissions on",
+			wantWork:   ports.TerminalSurfaceWorkIdle,
+			wantEditor: ports.TerminalComposerEmpty,
+		},
+		{
+			name: "old active row separated from composer is not current chrome",
+			output: "✶ Generating… (esc to interrupt · 2s)\nThe work finished.\n" +
+				rule + "\n❯\u00a0\x1b[7m \x1b[0m\n" + rule + "\n⏵⏵ bypass permissions on",
+			wantWork:   ports.TerminalSurfaceWorkIdle,
+			wantEditor: ports.TerminalComposerEmpty,
+		},
+		{
+			name: "transcript marker is outside current surface",
+			output: "Earlier output mentioned esc to interrupt\n1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n" +
+				"❯\u00a0",
+			wantWork:   ports.TerminalSurfaceWorkIdle,
+			wantEditor: ports.TerminalComposerEmpty,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := plugin.InspectTerminalSurface(tt.output)
+			if got.Work != tt.wantWork || got.Composer != tt.wantEditor {
+				t.Fatalf("InspectTerminalSurface() = %+v, want work=%v composer=%v", got, tt.wantWork, tt.wantEditor)
+			}
+		})
 	}
 }
 

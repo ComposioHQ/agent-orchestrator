@@ -11,7 +11,7 @@ import { SettingsDialog } from "../components/SettingsDialog";
 import { KeyboardShortcutsDialog } from "../components/KeyboardShortcutsDialog";
 import { KeyboardShortcutsSettingsDialog } from "../components/settings/KeyboardShortcutsSettingsDialog";
 import { ShellTopbar } from "../components/ShellTopbar";
-import { SessionTopbarHost, SessionTopbarProvider } from "../components/SessionTopbarPortal";
+import { SessionTopbarProvider } from "../components/SessionTopbarPortal";
 import { OrchestratorReplacementDialog } from "../components/OrchestratorReplacementDialog";
 import { Sidebar } from "../components/Sidebar";
 import { SidebarProvider } from "../components/ui/sidebar";
@@ -19,6 +19,7 @@ import { TitlebarNav } from "../components/TitlebarNav";
 import { WindowTitlebar } from "../components/WindowTitlebar";
 import { TerminalCacheProvider } from "../components/TerminalPane";
 import { agentsQueryKey, agentsQueryOptions, refreshAgents } from "../hooks/useAgentsQuery";
+import { agentModelsQueryOptions } from "../hooks/useAgentModelsQuery";
 import { useDaemonStatus } from "../hooks/useDaemonStatus";
 import { useOpenShellTerminal } from "../hooks/useShellTerminals";
 import { useWindowFullScreen } from "../hooks/useWindowFullScreen";
@@ -152,6 +153,32 @@ function ShellLayout() {
 		: routeParams.sessionId
 			? workspaces.find((workspace) => workspace.sessions.some((session) => session.id === routeParams.sessionId))?.id
 			: undefined;
+	// Warms the New Task composer's model-catalog cache while the user is just
+	// looking at the project, so the picker never shows a loading flash the
+	// first time they actually open the dialog.
+	useEffect(() => {
+		if (!scopedProjectId) return;
+		const projectQueryKey = ["project", scopedProjectId];
+		void queryClient
+			.prefetchQuery({
+				queryKey: projectQueryKey,
+				queryFn: async () => {
+					const { data, error: apiError } = await apiClient.GET("/api/v1/projects/{id}", {
+						params: { path: { id: scopedProjectId } },
+					});
+					if (apiError) throw new Error(apiErrorMessage(apiError));
+					if (data?.status !== "ok") throw new Error("Project config unavailable");
+					return data.project as components["schemas"]["Project"];
+				},
+			})
+			.then(() => {
+				const project = queryClient.getQueryData<components["schemas"]["Project"]>(projectQueryKey);
+				const defaultWorkerAgent = project?.config?.worker?.agent || project?.agent || "";
+				if (defaultWorkerAgent) {
+					void queryClient.prefetchQuery(agentModelsQueryOptions(defaultWorkerAgent, scopedProjectId));
+				}
+			});
+	}, [queryClient, scopedProjectId]);
 	// First-launch root board only (no projects in scope).
 	const isWelcomeBoard =
 		Boolean(matchRoute({ to: "/" })) &&
@@ -227,6 +254,71 @@ function ShellLayout() {
 		[queryClient],
 	);
 
+	const completeProjectCreation = useCallback(
+		async (
+			project: components["schemas"]["Project"],
+			input: CreateProjectConfigInput,
+			source: "project_add" | "project_clone",
+		) => {
+			const workspace: WorkspaceSummary = {
+				id: project.id,
+				name: project.name,
+				kind: toProjectKind(project.kind),
+				path: project.path,
+				workspaceRepos: project.workspaceRepos,
+				type: "main",
+				orchestratorAgent: input.orchestratorAgent as WorkspaceSummary["orchestratorAgent"],
+				sessions: [],
+			};
+			void captureRendererEvent(`ao.renderer.${source}_succeeded`, { project_id: workspace.id });
+			updateWorkspaces((current) => [workspace, ...current.filter((item) => item.id !== workspace.id)]);
+			setOrchestratorStartupError(workspace.id, null);
+			try {
+				void captureRendererEvent("ao.renderer.orchestrator_spawn_requested", {
+					project_id: workspace.id,
+					source,
+				});
+				const {
+					data: spawnData,
+					error: spawnError,
+					response: spawnResponse,
+				} = await apiClient.POST("/api/v1/sessions", {
+					body: {
+						projectId: workspace.id,
+						kind: "orchestrator",
+						harness: input.orchestratorAgent as components["schemas"]["SpawnSessionRequest"]["harness"],
+					},
+				});
+				if (spawnError || !spawnData?.session?.id) {
+					const message = spawnError
+						? apiErrorMessage(spawnError, `Failed to spawn orchestrator (${spawnResponse.status})`)
+						: `Failed to spawn orchestrator (${spawnResponse.status})`;
+					throw new Error(message);
+				}
+				void captureRendererEvent("ao.renderer.orchestrator_spawn_succeeded", {
+					project_id: workspace.id,
+					source,
+				});
+				const sessionId = spawnData.session.id;
+				await queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
+				void navigate({
+					to: "/projects/$projectId/sessions/$sessionId",
+					params: { projectId: workspace.id, sessionId },
+				});
+			} catch (spawnError) {
+				void captureRendererEvent("ao.renderer.orchestrator_spawn_failed", {
+					project_id: workspace.id,
+					source,
+				});
+				void navigate({ to: "/projects/$projectId", params: { projectId: workspace.id } });
+				const message = spawnError instanceof Error ? spawnError.message : "Could not start orchestrator";
+				const startupMessage = `Project added, but orchestrator did not start: ${message}`;
+				setOrchestratorStartupError(workspace.id, startupMessage);
+			}
+		},
+		[navigate, queryClient, setOrchestratorStartupError, updateWorkspaces],
+	);
+
 	const createProject = useCallback(
 		async (input: {
 			path: string;
@@ -259,68 +351,54 @@ function ShellLayout() {
 					source: "project-add",
 					operation: "project_add",
 					surface: "project_board",
+					});
+					throw failure;
+			}
+			if (!data?.project) throw new Error("Project creation returned no project");
+			await completeProjectCreation(data.project, input, "project_add");
+		},
+		[completeProjectCreation],
+	);
+
+	const cloneProject = useCallback(
+		async (input: {
+			remoteUrl: string;
+			destinationParent: string;
+			workerAgent: string;
+			orchestratorAgent: string;
+			trackerIntake?: components["schemas"]["TrackerIntakeConfig"];
+		}) => {
+			void addRendererExceptionStep("Project clone requested", {
+				source: "project-clone",
+				operation: "project_clone",
+				surface: "project_board",
+			});
+			void captureRendererEvent("ao.renderer.project_clone_requested");
+			const status = await refreshDaemonStatus();
+			if (status.state !== "ready" || !status.port) {
+				throw new Error(status.message || "AO daemon is not ready.");
+			}
+			const { data, error } = await apiClient.POST("/api/v1/projects/clone", {
+				body: {
+					remoteUrl: input.remoteUrl,
+					destinationParent: input.destinationParent,
+					config: createProjectConfig(input),
+				},
+			});
+			if (error) {
+				const failure = new Error(apiErrorMessage(error)) as Error & { code?: string };
+				failure.code = apiErrorCode(error);
+				void captureRendererException(failure, {
+					source: "project-clone",
+					operation: "project_clone",
+					surface: "project_board",
 				});
 				throw failure;
 			}
-			if (!data?.project) throw new Error("Project creation returned no project");
-
-			const workspace: WorkspaceSummary = {
-				id: data.project.id,
-				name: data.project.name,
-				kind: toProjectKind(data.project.kind),
-				path: data.project.path,
-				workspaceRepos: data.project.workspaceRepos,
-				type: "main",
-				orchestratorAgent: input.orchestratorAgent as WorkspaceSummary["orchestratorAgent"],
-				sessions: [],
-			};
-			void captureRendererEvent("ao.renderer.project_add_succeeded", { project_id: workspace.id });
-			updateWorkspaces((current) => [workspace, ...current.filter((item) => item.id !== workspace.id)]);
-			setOrchestratorStartupError(workspace.id, null);
-			try {
-				void captureRendererEvent("ao.renderer.orchestrator_spawn_requested", {
-					project_id: workspace.id,
-					source: "project_add",
-				});
-				const {
-					data: spawnData,
-					error: spawnError,
-					response: spawnResponse,
-				} = await apiClient.POST("/api/v1/sessions", {
-					body: {
-						projectId: workspace.id,
-						kind: "orchestrator",
-						harness: input.orchestratorAgent as components["schemas"]["SpawnSessionRequest"]["harness"],
-					},
-				});
-				if (spawnError || !spawnData?.session?.id) {
-					const message = spawnError
-						? apiErrorMessage(spawnError, `Failed to spawn orchestrator (${spawnResponse.status})`)
-						: `Failed to spawn orchestrator (${spawnResponse.status})`;
-					throw new Error(message);
-				}
-				void captureRendererEvent("ao.renderer.orchestrator_spawn_succeeded", {
-					project_id: workspace.id,
-					source: "project_add",
-				});
-				const sessionId = spawnData.session.id;
-				await queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
-				void navigate({
-					to: "/projects/$projectId/sessions/$sessionId",
-					params: { projectId: workspace.id, sessionId },
-				});
-			} catch (spawnError) {
-				void captureRendererEvent("ao.renderer.orchestrator_spawn_failed", {
-					project_id: workspace.id,
-					source: "project_add",
-				});
-				void navigate({ to: "/projects/$projectId", params: { projectId: workspace.id } });
-				const message = spawnError instanceof Error ? spawnError.message : "Could not start orchestrator";
-				const startupMessage = `Project added, but orchestrator did not start: ${message}`;
-				setOrchestratorStartupError(workspace.id, startupMessage);
-			}
+			if (!data?.project) throw new Error("Project clone returned no project");
+			await completeProjectCreation(data.project, input, "project_clone");
 		},
-		[navigate, queryClient, setOrchestratorStartupError, updateWorkspaces],
+		[completeProjectCreation],
 	);
 
 	const initializeProjectRepository = useCallback(async (path: string) => {
@@ -336,6 +414,8 @@ function ShellLayout() {
 
 	const removeProject = useCallback(
 		async (projectId: string) => {
+			const isLastWorkspace =
+              workspaces.length === 1 && workspaces[0]?.id === projectId;
 			void addRendererExceptionStep("Project removal requested", {
 				source: "project-remove",
 				operation: "project_remove",
@@ -358,8 +438,11 @@ function ShellLayout() {
 			}
 			void captureRendererEvent("ao.renderer.project_removed", { project_id: projectId });
 			updateWorkspaces((current) => current.filter((item) => item.id !== projectId));
+			if (isLastWorkspace) {
+              void navigate({ to: "/" });
+}
 		},
-		[updateWorkspaces],
+		[navigate, updateWorkspaces, workspaces],
 	);
 
 	const restartOrchestrator = useCallback(
@@ -591,7 +674,10 @@ function ShellLayout() {
 		setActiveShellTerminal,
 	]);
 
-	useEffect(() => aoBridge.app.onOpenSettingsShortcut(() => void navigate({ to: "/settings" })), [navigate]);
+	useEffect(
+		() => aoBridge.app.onOpenSettingsShortcut(() => useUiStore.getState().openGlobalSettings()),
+		[],
+	);
 
 	useEffect(() => {
 		const disposePrevious = aoBridge.app.onPreviousSessionShortcut(() => navigateSession(-1));
@@ -616,7 +702,9 @@ function ShellLayout() {
 	);
 
 	return (
-		<ShellProvider value={{ daemonStatus, workspaceStartupState, createProject, initializeProjectRepository }}>
+		<ShellProvider
+			value={{ daemonStatus, workspaceStartupState, cloneProject, createProject, initializeProjectRepository }}
+		>
 			<SessionTopbarProvider>
 				<NotificationRuntime />
 				<TrayRuntime />
@@ -644,7 +732,12 @@ function ShellLayout() {
           render inside the center panel when the shell topbar is hidden. */}
 			<div
 				className={cn(
-					"flex h-screen min-h-0 flex-col bg-sidebar text-foreground",
+					// `app-shell-root` is the platform-independent hook the native-composition
+					// cascade needs to clear this opaque `bg-sidebar` while the live browser
+					// page shows through. Windows/Linux were already covered by their
+					// platform classes; macOS adds none, so without this the shell painted
+					// over the live page whenever an overlay raised it.
+					"app-shell-root flex h-screen min-h-0 flex-col bg-sidebar text-foreground",
 					isWindows && "platform-windows",
 					isLinux && "platform-linux",
 					isFullScreen && "native-fullscreen",
@@ -684,7 +777,8 @@ function ShellLayout() {
 					isOverlay={isSidebarPeekOpen && !isSidebarOpen}
 					onPreviewLeave={scheduleSidebarPeekClose}
 					underTopbar={isMac || isWindows || isLinux}
-					topbarOffset={isWindows ? "titlebar" : hideShellTopbar ? "trafficLights" : "toolbar"}
+						topbarOffset={isWindows ? "titlebar" : hideShellTopbar ? "trafficLights" : "toolbar"}
+						onCloneProject={cloneProject}
 						onCreateProject={createProject}
 						onInitializeProject={initializeProjectRepository}
 						onRemoveProject={removeProject}
@@ -700,12 +794,6 @@ function ShellLayout() {
 								) : (
 							// Platform hides shell topbar: full-height panel; session mounts actions in-panel.
 							<CenterPanelShell className={routeParams.sessionId ? "center-panel-shell--session" : undefined}>
-								{routeParams.sessionId ? (
-									<SessionTopbarHost
-										className="relative z-chrome flex h-inspector-tabs w-full shrink-0 overflow-hidden"
-										data-testid="session-topbar-host"
-									/>
-								) : null}
 								<div className="flex min-h-0 flex-1 flex-col">
 									<Outlet />
 								</div>
@@ -713,12 +801,7 @@ function ShellLayout() {
 						)
 					) : framedAppTopbar ? (
 						<CenterPanelShell className={routeParams.sessionId ? "center-panel-shell--session" : undefined}>
-							{routeParams.sessionId ? (
-								<SessionTopbarHost
-									className="relative z-chrome flex h-inspector-tabs w-full shrink-0 overflow-hidden"
-									data-testid="session-topbar-host"
-								/>
-							) : (
+							{routeParams.sessionId ? null : (
 								<ShellTopbar />
 							)}
 							<div className="flex min-h-0 flex-1 flex-col">
@@ -727,12 +810,6 @@ function ShellLayout() {
 						</CenterPanelShell>
 					) : (
 						<CenterPanelShell className={routeParams.sessionId ? "center-panel-shell--session" : undefined}>
-							{routeParams.sessionId ? (
-								<SessionTopbarHost
-									className="relative z-chrome flex h-inspector-tabs w-full shrink-0 overflow-hidden"
-									data-testid="session-topbar-host"
-								/>
-							) : null}
 							<div className="flex min-h-0 flex-1 flex-col">
 								<Outlet />
 							</div>

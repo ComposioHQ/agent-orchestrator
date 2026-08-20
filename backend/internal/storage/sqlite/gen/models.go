@@ -21,6 +21,44 @@ type AgentModelCatalog struct {
 	FetchedAt     time.Time
 }
 
+type AgentNativeSession struct {
+	ID               domain.AgentNativeSessionID
+	AoSessionID      domain.SessionID
+	Harness          domain.AgentHarness
+	ConfigDir        string
+	NativeSessionID  string
+	TranscriptPath   string
+	LastGenerationID domain.AgentGenerationID
+	CreatedAt        time.Time
+	LastUsedAt       time.Time
+}
+
+type AgentSwitch struct {
+	ID                      domain.AgentSwitchID
+	SessionID               domain.SessionID
+	IdempotencyKey          string
+	RequestFingerprint      domain.AgentSwitchRequestFingerprint
+	FromHarness             domain.AgentHarness
+	TargetHarness           domain.AgentHarness
+	TargetNativeSessionRef  *domain.AgentNativeSessionID
+	TargetStartMode         domain.AgentSwitchTargetStartMode
+	State                   domain.AgentSwitchState
+	AgentHandoffStatus      domain.AgentHandoffStatus
+	SourceTranscriptStatus  domain.AgentSwitchSourceTranscriptStatus
+	SemanticHandoffIncluded bool
+	AgentHandoffPath        string
+	AgentHandoffHash        string
+	SourceGenerationID      domain.AgentGenerationID
+	TargetGenerationID      domain.AgentGenerationID
+	TargetRuntimeHandleID   string
+	TargetAcknowledgedAt    sql.NullTime
+	ErrorCode               string
+	RequestedAt             time.Time
+	UpdatedAt               time.Time
+	FinalHandoffPath        string
+	FinalHandoffHash        string
+}
+
 type AppSetting struct {
 	ID                 int64
 	DefaultSessionMode domain.SessionMode
@@ -68,6 +106,7 @@ type Conversation struct {
 	McpServersJson             sql.NullString
 	UsageCost                  sql.NullFloat64
 	UsageCurrency              sql.NullString
+	ActiveBranchID             string
 }
 
 type ConversationActivity struct {
@@ -88,6 +127,20 @@ type ConversationActivity struct {
 	CommandOutputTruncated int64
 	StreamedText           string
 	StreamedTextTruncated  int64
+	BranchID               string
+}
+
+type ConversationBranch struct {
+	ID                     string
+	ConversationID         string
+	SessionID              sql.NullString
+	ProviderConversationID string
+	ParentBranchID         sql.NullString
+	ForkAfterTurnID        sql.NullString
+	ReplacedTurnID         sql.NullString
+	ReplacementTurnID      sql.NullString
+	ForkAfterSequence      int64
+	CreatedAt              time.Time
 }
 
 type ConversationMessage struct {
@@ -105,6 +158,7 @@ type ConversationMessage struct {
 	CreatedAt           time.Time
 	UpdatedAt           time.Time
 	DeliveryContentJson string
+	BranchID            string
 }
 
 type ConversationProviderEvent struct {
@@ -115,6 +169,7 @@ type ConversationProviderEvent struct {
 	Method          string
 	PayloadJson     string
 	ReceivedAt      time.Time
+	BranchID        string
 }
 
 type ConversationTurn struct {
@@ -131,6 +186,9 @@ type ConversationTurn struct {
 	DiffJson             string
 	RolledBackAt         sql.NullTime
 	PlanJson             string
+	BranchID             string
+	PromotionStartedAt   sql.NullTime
+	PromotedToTurnID     sql.NullString
 }
 
 type ModelUsageEvent struct {
@@ -201,6 +259,8 @@ type PR struct {
 	ReviewObservedAt         sql.NullTime
 	LastNudgeSignature       string
 	StateChangedAt           sql.NullTime
+	AutoInjectCI             bool
+	ProviderID               string
 }
 
 type PRCheck struct {
@@ -216,28 +276,31 @@ type PRCheck struct {
 }
 
 type PRComment struct {
-	PRURL     string
-	CommentID string
-	Author    string
-	File      string
-	Line      int64
-	Body      string
-	Resolved  bool
-	CreatedAt time.Time
-	ThreadID  string
-	URL       string
-	IsBot     int64
+	PRURL            string
+	CommentID        string
+	Author           string
+	File             string
+	Line             int64
+	Body             string
+	Resolved         bool
+	CreatedAt        time.Time
+	ThreadID         string
+	URL              string
+	IsBot            int64
+	AutoInjectReview bool
 }
 
 type PRReview struct {
-	PRURL       string
-	ReviewID    string
-	Author      string
-	State       string
-	URL         string
-	IsBot       int64
-	SubmittedAt time.Time
-	Body        string
+	PRURL            string
+	ReviewID         string
+	Author           string
+	State            string
+	URL              string
+	IsBot            int64
+	SubmittedAt      time.Time
+	Body             string
+	AutoInjectReview bool
+	TargetSha        string
 }
 
 type PRReviewThread struct {
@@ -249,6 +312,11 @@ type PRReviewThread struct {
 	IsBot        int64
 	SemanticHash string
 	UpdatedAt    time.Time
+}
+
+type PRURLAlias struct {
+	AliasURL     string
+	CanonicalURL string
 }
 
 type Project struct {
@@ -269,59 +337,71 @@ type Review struct {
 	Harness          domain.ReviewerHarness
 	PRURL            string
 	ReviewerHandleID string
+	AgentSessionID   string
 	CreatedAt        time.Time
 	UpdatedAt        time.Time
 }
 
 type ReviewRun struct {
-	ID             string
-	ReviewID       string
-	SessionID      domain.SessionID
-	Harness        domain.ReviewerHarness
-	PRURL          string
-	TargetSha      string
-	Status         domain.ReviewRunStatus
-	Verdict        domain.ReviewVerdict
-	Body           string
-	CreatedAt      time.Time
-	GithubReviewID string
-	DeliveredAt    sql.NullTime
-	BatchID        string
+	ID               string
+	ReviewID         string
+	SessionID        domain.SessionID
+	Harness          domain.ReviewerHarness
+	PRURL            string
+	TargetSha        string
+	Status           domain.ReviewRunStatus
+	Verdict          domain.ReviewVerdict
+	Body             string
+	CreatedAt        time.Time
+	GithubReviewID   string
+	DeliveredAt      sql.NullTime
+	BatchID          string
+	AutoInjectReview bool
+	TriggerSource    domain.ReviewTriggerSource
 }
 
 type Session struct {
-	ID                     domain.SessionID
-	ProjectID              domain.ProjectID
-	Num                    int64
-	IssueID                domain.IssueID
-	Kind                   domain.SessionKind
-	Harness                domain.AgentHarness
-	ActivityState          domain.ActivityState
-	ActivityLastAt         time.Time
-	IsTerminated           bool
-	Branch                 string
-	WorkspacePath          string
-	RuntimeHandleID        string
-	AgentSessionID         string
-	Prompt                 string
-	CreatedAt              time.Time
-	UpdatedAt              time.Time
-	DisplayName            string
-	FirstSignalAt          sql.NullTime
-	PreviewURL             string
-	PreviewRevision        int64
-	CleanupGeneration      int64
-	RuntimeLaunchID        string
-	WorkspaceRepoPath      string
-	TerminateOnPRMerge     bool
-	DiffBaseSha            string
-	DiffBaseRef            string
-	ReviewerHarness        domain.ReviewerHarness
-	IsPinned               bool
-	PinnedAt               sql.NullTime
-	SessionMode            domain.SessionMode
-	ProviderConversationID string
-	ControllerGeneration   string
+	ID                        domain.SessionID
+	ProjectID                 domain.ProjectID
+	Num                       int64
+	IssueID                   domain.IssueID
+	Kind                      domain.SessionKind
+	Harness                   domain.AgentHarness
+	ActivityState             domain.ActivityState
+	ActivityLastAt            time.Time
+	IsTerminated              bool
+	Branch                    string
+	WorkspacePath             string
+	RuntimeHandleID           string
+	AgentSessionID            string
+	Prompt                    string
+	CreatedAt                 time.Time
+	UpdatedAt                 time.Time
+	DisplayName               string
+	FirstSignalAt             sql.NullTime
+	PreviewURL                string
+	PreviewRevision           int64
+	CleanupGeneration         int64
+	RuntimeLaunchID           string
+	WorkspaceRepoPath         string
+	TerminateOnPRMerge        bool
+	DiffBaseSha               string
+	DiffBaseRef               string
+	ReviewerHarness           domain.ReviewerHarness
+	IsPinned                  bool
+	PinnedAt                  sql.NullTime
+	SessionMode               domain.SessionMode
+	ProviderConversationID    string
+	ControllerGeneration      string
+	BrowserCapabilityVerifier string
+	AutoInjectReview          bool
+	LatestUserPrompt          string
+	LatestAssistantUpdate     string
+	NativeTranscriptPath      string
+	AutoInjectCI              bool
+	AutoReviewEnabled         bool
+	AgentSessionIDLaunchID    string
+	Model                     string
 }
 
 type SessionCleanupFact struct {
@@ -348,6 +428,7 @@ type SessionInterfaceTransition struct {
 	CreatedAt            time.Time
 	UpdatedAt            time.Time
 	CompletedAt          sql.NullTime
+	NoticeAcknowledgedAt sql.NullTime
 }
 
 type SessionInterfaceTransitionMessage struct {
@@ -367,6 +448,7 @@ type SessionWorktree struct {
 	WorktreePath string
 	PreservedRef string
 	State        string
+	BaseRef      string
 }
 
 type ShellTerminal struct {
@@ -445,4 +527,6 @@ type WorkspaceRepo struct {
 	RelativePath  string
 	RepoOriginURL string
 	RegisteredAt  time.Time
+	DefaultBranch string
+	GitStatus     string
 }

@@ -14,6 +14,8 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"golang.org/x/sync/errgroup"
+
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/apierr"
 	aoprocess "github.com/aoagents/agent-orchestrator/backend/internal/process"
@@ -123,6 +125,14 @@ func (s *Service) WorkspaceWatchPaths(ctx context.Context, id domain.SessionID) 
 	return paths, nil
 }
 
+// InvalidateWorkspaceCache purges cached compare-base and git-status data for
+// a session. Called from the workspace SSE stream the instant its filesystem
+// watcher observes a real change, so a list/detail request racing a fresh
+// git mutation never returns stale cached state.
+func (s *Service) InvalidateWorkspaceCache(id domain.SessionID) {
+	s.workspaceCache.invalidateSession(id)
+}
+
 // ListWorkspaceFiles returns all tracked and untracked, non-ignored files in a
 // session worktree, annotated with their current git status against the
 // session's recorded base when available.
@@ -153,8 +163,10 @@ func (s *Service) ListWorkspaceFiles(ctx context.Context, id domain.SessionID) (
 	if err != nil {
 		return WorkspaceFiles{}, err
 	}
-	compare := resolveWorkspaceCompare(ctx, rec.Metadata.WorkspacePath, rec.Metadata.DiffBaseSHA, rec.Metadata.DiffBaseRef, defaultBranchForProject(project, projectOK), prs)
-	files, truncated, err := workspaceFileSummaries(ctx, rec.Metadata.WorkspacePath, "", nil, compare)
+	resolve := func(rctx context.Context) workspaceCompareTarget {
+		return resolveWorkspaceCompare(rctx, rec.Metadata.WorkspacePath, rec.Metadata.DiffBaseSHA, rec.Metadata.DiffBaseRef, defaultBranchForProject(project, projectOK), prs)
+	}
+	files, truncated, compare, err := s.workspaceFileSummariesCached(ctx, id, rec.Metadata.WorkspacePath, "", nil, resolve)
 	if err != nil {
 		return WorkspaceFiles{}, err
 	}
@@ -198,8 +210,14 @@ func (s *Service) GetWorkspaceFile(ctx context.Context, id domain.SessionID, raw
 	if err != nil {
 		return WorkspaceFileDetail{}, err
 	}
-	compare := resolveWorkspaceCompare(ctx, rec.Metadata.WorkspacePath, rec.Metadata.DiffBaseSHA, rec.Metadata.DiffBaseRef, defaultBranchForProject(project, projectOK), prs)
-	return workspaceFileDetail(ctx, id, rec.Metadata.WorkspacePath, "", rel, compare)
+	resolve := func(rctx context.Context) workspaceCompareTarget {
+		return resolveWorkspaceCompare(rctx, rec.Metadata.WorkspacePath, rec.Metadata.DiffBaseSHA, rec.Metadata.DiffBaseRef, defaultBranchForProject(project, projectOK), prs)
+	}
+	compare, changes, err := s.resolveWorkspaceChanges(ctx, id, rec.Metadata.WorkspacePath, resolve)
+	if err != nil {
+		return WorkspaceFileDetail{}, err
+	}
+	return workspaceFileDetail(ctx, id, rec.Metadata.WorkspacePath, "", rel, compare, changes)
 }
 
 func (s *Service) sessionWorkspaceRecord(ctx context.Context, id domain.SessionID) (domain.SessionRecord, error) {
@@ -233,9 +251,9 @@ func (s *Service) sessionProject(ctx context.Context, rec domain.SessionRecord) 
 
 func defaultBranchForProject(project domain.ProjectRecord, ok bool) string {
 	if !ok {
-		return domain.DefaultBranchName
+		return ""
 	}
-	return project.Config.WithDefaults().DefaultBranch
+	return project.Config.WorktreeBaseBranch()
 }
 
 type workspaceCompareTarget struct {
@@ -265,22 +283,71 @@ func (s *Service) workspaceComparePRs(ctx context.Context, id domain.SessionID) 
 func resolveWorkspaceCompare(ctx context.Context, root, recordedSHA, recordedRef, defaultBranch string, prs []domain.PullRequest) workspaceCompareTarget {
 	recordedSHA = strings.TrimSpace(recordedSHA)
 	recordedRef = strings.TrimSpace(recordedRef)
+
+	// The best available local candidate: the live, ref-derived merge base
+	// (e.g. origin/main) when it resolves, else the session's spawn-time
+	// recorded base. Both are re-derived through git merge-base — never used
+	// as a raw revision — so a rewritten or unrelated commit can't become the
+	// diff base outright.
+	var localTarget *workspaceCompareTarget
 	if recordedRef != "" && recordedRef != "HEAD" {
 		for _, ref := range workspaceBaseRefCandidates(recordedRef) {
-			if sha, ok := gitMergeBase(ctx, root, ref); ok {
-				return workspaceCompareTarget{BaseSHA: sha, BaseRef: ref, Mode: WorkspaceCompareBase}
+			if sha, ok := mergeBaseCandidate(ctx, root, ref); ok {
+				target := workspaceCompareTarget{BaseSHA: sha, BaseRef: ref, Mode: WorkspaceCompareBase}
+				localTarget = &target
+				break
 			}
 		}
 	}
-	if recordedSHA != "" && gitCommitExists(ctx, root, recordedSHA) {
-		return workspaceCompareTarget{BaseSHA: recordedSHA, BaseRef: recordedRef, Mode: WorkspaceCompareBase}
-	}
-	if pr, ok := selectWorkspaceComparePR(prs, defaultBranch); ok {
-		baseSHA := strings.TrimSpace(pr.BaseSHA)
-		if gitCommitExists(ctx, root, baseSHA) {
-			return workspaceCompareTarget{BaseSHA: baseSHA, BaseRef: strings.TrimSpace(pr.TargetBranch), Mode: WorkspaceCompareBase}
+	if localTarget == nil {
+		if sha, ok := mergeBaseCandidate(ctx, root, recordedSHA); ok {
+			target := workspaceCompareTarget{BaseSHA: sha, BaseRef: recordedRef, Mode: WorkspaceCompareBase}
+			localTarget = &target
 		}
 	}
+
+	// The provider PR's own, independently-synced base. A local
+	// remote-tracking ref can go stale (AO never fetches a session
+	// worktree), so this can be more advanced than the local candidate above
+	// — but it's equally re-derived through merge-base rather than trusted as
+	// a raw revision, since pr.BaseSHA is the target branch's current tip,
+	// not necessarily an ancestor of HEAD.
+	var prTarget *workspaceCompareTarget
+	var prHeadSHA string
+	if pr, ok := selectWorkspaceComparePR(prs, defaultBranch); ok {
+		if sha, ok := mergeBaseCandidate(ctx, root, pr.BaseSHA); ok {
+			target := workspaceCompareTarget{BaseSHA: sha, BaseRef: strings.TrimSpace(pr.TargetBranch), Mode: WorkspaceCompareBase}
+			prTarget = &target
+			prHeadSHA = strings.TrimSpace(pr.HeadSHA)
+		}
+	}
+
+	switch {
+	case localTarget != nil && prTarget != nil:
+		if localTarget.BaseSHA == prTarget.BaseSHA {
+			return *localTarget
+		}
+		if gitIsAncestor(ctx, root, localTarget.BaseSHA, prTarget.BaseSHA) {
+			return *prTarget // PR candidate is the more advanced descendant.
+		}
+		if gitIsAncestor(ctx, root, prTarget.BaseSHA, localTarget.BaseSHA) {
+			return *localTarget // Local candidate is the more advanced descendant.
+		}
+		// Neither candidate is an ancestor of the other — divergent
+		// histories, e.g. the target branch was force-pushed to a
+		// replacement line. Only trust the PR snapshot when it describes the
+		// exact commit the Files tab is displaying; otherwise a stale
+		// snapshot could silently outrank a valid local candidate.
+		if head, ok := gitRevision(ctx, root, "HEAD"); ok && prHeadSHA != "" && prHeadSHA == head {
+			return *prTarget
+		}
+		return *localTarget
+	case prTarget != nil:
+		return *prTarget
+	case localTarget != nil:
+		return *localTarget
+	}
+
 	for _, ref := range workspaceBaseRefCandidates(defaultBranch) {
 		if sha, ok := gitMergeBase(ctx, root, ref); ok {
 			return workspaceCompareTarget{BaseSHA: sha, BaseRef: ref, Mode: WorkspaceCompareBase}
@@ -289,22 +356,25 @@ func resolveWorkspaceCompare(ctx context.Context, root, recordedSHA, recordedRef
 	return workspaceCompareTarget{Mode: WorkspaceCompareHeadFallback}
 }
 
-func resolveWorkspaceProjectCompare(ctx context.Context, root, recordedSHA, defaultBranch string) workspaceCompareTarget {
-	defaultBranch = workspaceDefaultBranch(defaultBranch)
-	for _, ref := range workspaceBaseRefCandidates(defaultBranch) {
+func resolveWorkspaceProjectCompare(ctx context.Context, root, recordedSHA, recordedRef string) workspaceCompareTarget {
+	recordedRef = workspaceDefaultBranch(recordedRef)
+	for _, ref := range workspaceBaseRefCandidates(recordedRef) {
 		if sha, ok := gitMergeBase(ctx, root, ref); ok {
 			return workspaceCompareTarget{BaseSHA: sha, BaseRef: ref, Mode: WorkspaceCompareBase}
 		}
 	}
 	recordedSHA = strings.TrimSpace(recordedSHA)
 	if recordedSHA != "" && gitCommitExists(ctx, root, recordedSHA) {
-		return workspaceCompareTarget{BaseSHA: recordedSHA, BaseRef: defaultBranch, Mode: WorkspaceCompareBase}
+		return workspaceCompareTarget{BaseSHA: recordedSHA, BaseRef: recordedRef, Mode: WorkspaceCompareBase}
 	}
 	return workspaceCompareTarget{Mode: WorkspaceCompareHeadFallback}
 }
 
 func workspaceBaseRefCandidates(defaultBranch string) []string {
 	defaultBranch = workspaceDefaultBranch(defaultBranch)
+	if defaultBranch == "" {
+		return nil
+	}
 	seen := map[string]struct{}{}
 	var refs []string
 	add := func(ref string) {
@@ -328,8 +398,8 @@ func workspaceBaseRefCandidates(defaultBranch string) []string {
 
 func workspaceDefaultBranch(defaultBranch string) string {
 	defaultBranch = strings.TrimSpace(defaultBranch)
-	if defaultBranch == "" {
-		return domain.DefaultBranchName
+	if defaultBranch == domain.DefaultBranchAuto {
+		return ""
 	}
 	return defaultBranch
 }
@@ -403,6 +473,36 @@ func gitMergeBase(ctx context.Context, root, ref string) (string, bool) {
 	return sha, sha != ""
 }
 
+// gitIsAncestor reports whether ancestor is reachable from descendant
+// (including ancestor == descendant).
+func gitIsAncestor(ctx context.Context, root, ancestor, descendant string) bool {
+	_, err := gitWorkspaceOutput(ctx, root, "merge-base", "--is-ancestor", ancestor, descendant)
+	return err == nil
+}
+
+// mergeBaseCandidate validates a revision-derived compare-base candidate: the
+// revision must exist locally and share a common ancestor with HEAD. It
+// always returns the merge-base SHA, never the raw revision, so a rewritten
+// or unrelated commit can never be used directly as a two-tree diff base.
+func mergeBaseCandidate(ctx context.Context, root, revision string) (string, bool) {
+	revision = strings.TrimSpace(revision)
+	if revision == "" || !gitCommitExists(ctx, root, revision) {
+		return "", false
+	}
+	return gitMergeBase(ctx, root, revision)
+}
+
+// gitRevision resolves rev to its full SHA, or ok=false if it cannot be
+// resolved.
+func gitRevision(ctx context.Context, root, rev string) (string, bool) {
+	out, err := gitWorkspaceOutput(ctx, root, "rev-parse", "--verify", rev)
+	if err != nil {
+		return "", false
+	}
+	sha := strings.TrimSpace(out)
+	return sha, sha != ""
+}
+
 func (s *Service) listWorkspaceProjectFiles(ctx context.Context, rec domain.SessionRecord, project domain.ProjectRecord) (WorkspaceFiles, error) {
 	rows, err := s.store.ListSessionWorktrees(ctx, rec.ID)
 	if err != nil {
@@ -413,8 +513,10 @@ func (s *Service) listWorkspaceProjectFiles(ctx context.Context, rec domain.Sess
 		if err != nil {
 			return WorkspaceFiles{}, err
 		}
-		compare := resolveWorkspaceCompare(ctx, rec.Metadata.WorkspacePath, rec.Metadata.DiffBaseSHA, rec.Metadata.DiffBaseRef, defaultBranchForProject(project, true), prs)
-		files, truncated, err := workspaceFileSummaries(ctx, rec.Metadata.WorkspacePath, "", nil, compare)
+		resolve := func(rctx context.Context) workspaceCompareTarget {
+			return resolveWorkspaceCompare(rctx, rec.Metadata.WorkspacePath, rec.Metadata.DiffBaseSHA, rec.Metadata.DiffBaseRef, defaultBranchForProject(project, true), prs)
+		}
+		files, truncated, compare, err := s.workspaceFileSummariesCached(ctx, rec.ID, rec.Metadata.WorkspacePath, "", nil, resolve)
 		if err != nil {
 			return WorkspaceFiles{}, err
 		}
@@ -440,12 +542,20 @@ func (s *Service) listWorkspaceProjectFiles(ctx context.Context, rec domain.Sess
 		if prefix == "" {
 			exclude = childPrefixes
 		}
-		compare := resolveWorkspaceProjectCompare(ctx, row.WorktreePath, row.BaseSHA, defaultBranch)
-		compares = append(compares, compare)
-		repoFiles, repoTruncated, err := workspaceFileSummaries(ctx, row.WorktreePath, prefix, exclude, compare)
+		baseRef := row.BaseRef
+		if strings.TrimSpace(baseRef) == "" {
+			// Compatibility for sessions created before per-repository base refs
+			// were persisted. New rows always use their adapter-resolved ref.
+			baseRef = defaultBranch
+		}
+		resolve := func(rctx context.Context) workspaceCompareTarget {
+			return resolveWorkspaceProjectCompare(rctx, row.WorktreePath, row.BaseSHA, baseRef)
+		}
+		repoFiles, repoTruncated, compare, err := s.workspaceFileSummariesCached(ctx, rec.ID, row.WorktreePath, prefix, exclude, resolve)
 		if err != nil {
 			return WorkspaceFiles{}, err
 		}
+		compares = append(compares, compare)
 		files, truncated = appendWorkspaceFilesWithCap(files, repoFiles, truncated)
 		truncated = truncated || repoTruncated
 	}
@@ -471,15 +581,32 @@ func (s *Service) getWorkspaceProjectFile(ctx context.Context, rec domain.Sessio
 		if err != nil {
 			return WorkspaceFileDetail{}, err
 		}
-		compare := resolveWorkspaceCompare(ctx, rec.Metadata.WorkspacePath, rec.Metadata.DiffBaseSHA, rec.Metadata.DiffBaseRef, defaultBranchForProject(project, true), prs)
-		return workspaceFileDetail(ctx, rec.ID, rec.Metadata.WorkspacePath, "", rel, compare)
+		resolve := func(rctx context.Context) workspaceCompareTarget {
+			return resolveWorkspaceCompare(rctx, rec.Metadata.WorkspacePath, rec.Metadata.DiffBaseSHA, rec.Metadata.DiffBaseRef, defaultBranchForProject(project, true), prs)
+		}
+		compare, changes, err := s.resolveWorkspaceChanges(ctx, rec.ID, rec.Metadata.WorkspacePath, resolve)
+		if err != nil {
+			return WorkspaceFileDetail{}, err
+		}
+		return workspaceFileDetail(ctx, rec.ID, rec.Metadata.WorkspacePath, "", rel, compare, changes)
 	}
 	row, prefix, repoRel, ok := workspaceProjectFileTarget(rec.Metadata.WorkspacePath, rows, rel)
 	if !ok {
 		return WorkspaceFileDetail{}, apierr.NotFound("WORKSPACE_FILE_NOT_FOUND", "Workspace file not found")
 	}
-	compare := resolveWorkspaceProjectCompare(ctx, row.WorktreePath, row.BaseSHA, defaultBranchForProject(project, true))
-	return workspaceFileDetail(ctx, rec.ID, row.WorktreePath, prefix, repoRel, compare)
+	defaultBranch := defaultBranchForProject(project, true)
+	baseRef := row.BaseRef
+	if strings.TrimSpace(baseRef) == "" {
+		baseRef = defaultBranch
+	}
+	resolve := func(rctx context.Context) workspaceCompareTarget {
+		return resolveWorkspaceProjectCompare(rctx, row.WorktreePath, row.BaseSHA, baseRef)
+	}
+	compare, changes, err := s.resolveWorkspaceChanges(ctx, rec.ID, row.WorktreePath, resolve)
+	if err != nil {
+		return WorkspaceFileDetail{}, err
+	}
+	return workspaceFileDetail(ctx, rec.ID, row.WorktreePath, prefix, repoRel, compare, changes)
 }
 
 func appendWorkspaceFilesWithCap(files, repoFiles []WorkspaceFileSummary, truncated bool) ([]WorkspaceFileSummary, bool) {
@@ -497,15 +624,37 @@ func appendWorkspaceFilesWithCap(files, repoFiles []WorkspaceFileSummary, trunca
 	return append(files, repoFiles...), truncated
 }
 
-func workspaceFileSummaries(ctx context.Context, root, prefix string, excludePrefixes []string, compare workspaceCompareTarget) ([]WorkspaceFileSummary, bool, error) {
-	changes, err := workspaceChangeMaps(ctx, root, compare.gitBase())
-	if err != nil {
-		return nil, false, err
+// workspaceFileSummariesCached resolves the changed-file list for one
+// worktree root, reusing a cached compare+status result when a recent
+// ListWorkspaceFiles/GetWorkspaceFile call for the same session/root already
+// computed it (see workspaceCache). On a cache miss it resolves the compare
+// base, computes git status/diff/numstat, and lists working-tree files
+// concurrently, since none of those git calls depend on each other.
+func (s *Service) workspaceFileSummariesCached(
+	ctx context.Context, id domain.SessionID, root, prefix string, excludePrefixes []string,
+	resolve func(ctx context.Context) workspaceCompareTarget,
+) ([]WorkspaceFileSummary, bool, workspaceCompareTarget, error) {
+	var compare workspaceCompareTarget
+	var changes workspaceChangeSet
+	var lsParts []string
+	g, gctx := errgroup.WithContext(ctx)
+	g.Go(func() (err error) {
+		compare, changes, err = s.resolveWorkspaceChanges(gctx, id, root, resolve)
+		return err
+	})
+	g.Go(func() (err error) {
+		lsParts, err = gitLsFilesParts(gctx, root)
+		return err
+	})
+	if err := g.Wait(); err != nil {
+		return nil, false, workspaceCompareTarget{}, err
 	}
-	paths, truncated, err := workspaceGitFiles(ctx, root, changes.changedPaths())
-	if err != nil {
-		return nil, false, err
-	}
+	paths, truncated := mergeWorkspaceFilePaths(lsParts, changes.changedPaths())
+	files := buildWorkspaceFileSummaries(root, prefix, excludePrefixes, paths, changes)
+	return files, truncated, compare, nil
+}
+
+func buildWorkspaceFileSummaries(root, prefix string, excludePrefixes, paths []string, changes workspaceChangeSet) []WorkspaceFileSummary {
 	files := make([]WorkspaceFileSummary, 0, len(paths))
 	for _, rel := range paths {
 		if workspacePathExcluded(rel, excludePrefixes) {
@@ -527,14 +676,52 @@ func workspaceFileSummaries(ctx context.Context, root, prefix string, excludePre
 			Binary:       binary,
 		})
 	}
-	return files, truncated, nil
+	return files
 }
 
-func workspaceFileDetail(ctx context.Context, id domain.SessionID, root, prefix, rel string, compare workspaceCompareTarget) (WorkspaceFileDetail, error) {
-	changes, err := workspaceChangeMaps(ctx, root, compare.gitBase())
-	if err != nil {
-		return WorkspaceFileDetail{}, err
+// resolveWorkspaceChanges resolves the compare base and git status/diff maps
+// for one worktree root, reusing a cached result from a recent list/detail
+// call for the same session/root instead of re-running resolve+
+// workspaceChangeMaps from scratch. On a cache miss, concurrent callers for
+// the same (session, root) — e.g. "Expand All" firing GetWorkspaceFile for
+// every changed file in the same instant — share a single in-flight
+// resolve+workspaceChangeMaps call via singleflight instead of each spawning
+// its own redundant set of git subprocesses.
+func (s *Service) resolveWorkspaceChanges(
+	ctx context.Context, id domain.SessionID, root string,
+	resolve func(ctx context.Context) workspaceCompareTarget,
+) (workspaceCompareTarget, workspaceChangeSet, error) {
+	key := workspaceCacheKey{session: id, root: root}
+	if cached, ok := s.workspaceCache.get(key); ok {
+		return cached.compare, cached.changes, nil
 	}
+	v, err, _ := s.workspaceGroup.Do(key.String(), func() (any, error) {
+		// A concurrent caller may have already populated the cache while this
+		// call was queued behind the singleflight lock — re-check before
+		// doing the work again.
+		if cached, ok := s.workspaceCache.get(key); ok {
+			return cached, nil
+		}
+		compare := resolve(ctx)
+		changes, err := workspaceChangeMaps(ctx, root, compare.gitBase())
+		if err != nil {
+			return nil, err
+		}
+		entry := workspaceCacheEntry{at: s.now(), compare: compare, changes: changes}
+		s.workspaceCache.set(key, entry)
+		return entry, nil
+	})
+	if err != nil {
+		return workspaceCompareTarget{}, workspaceChangeSet{}, err
+	}
+	entry, ok := v.(workspaceCacheEntry)
+	if !ok {
+		return workspaceCompareTarget{}, workspaceChangeSet{}, fmt.Errorf("resolveWorkspaceChanges: unexpected singleflight result type %T", v)
+	}
+	return entry.compare, entry.changes, nil
+}
+
+func workspaceFileDetail(ctx context.Context, id domain.SessionID, root, prefix, rel string, compare workspaceCompareTarget, changes workspaceChangeSet) (WorkspaceFileDetail, error) {
 	status := changes.statuses[rel]
 	if status == "" {
 		status = WorkspaceFileUnmodified
@@ -569,7 +756,8 @@ func workspaceFileDetail(ctx context.Context, id domain.SessionID, root, prefix,
 			detail.Content = content
 		}
 	}
-	diff, truncated, err := workspaceFileDiff(ctx, root, compare.gitBase(), rel, status, previousPath, detail.Content, detail.Binary)
+	_, untracked := changes.untracked[rel]
+	diff, truncated, err := workspaceFileDiff(ctx, root, compare.gitBase(), rel, status, previousPath, detail.Content, detail.Binary, untracked)
 	if err != nil {
 		return WorkspaceFileDetail{}, err
 	}
@@ -860,12 +1048,18 @@ func resolvedScratchPath(filePath string) (string, bool) {
 	return resolved, err == nil
 }
 
-func workspaceGitFiles(ctx context.Context, root string, extraPaths map[string]struct{}) ([]string, bool, error) {
+// gitLsFilesParts runs the `git ls-files` subprocess, kept separate from the
+// (pure, no I/O) merge step in mergeWorkspaceFilePaths so callers can run it
+// concurrently with other independent git calls (see workspaceFileSummariesCached).
+func gitLsFilesParts(ctx context.Context, root string) ([]string, error) {
 	out, err := gitWorkspaceOutput(ctx, root, "ls-files", "-z", "-co", "--exclude-standard")
 	if err != nil {
-		return nil, false, err
+		return nil, err
 	}
-	parts := splitNUL(out)
+	return splitNUL(out), nil
+}
+
+func mergeWorkspaceFilePaths(parts []string, extraPaths map[string]struct{}) ([]string, bool) {
 	paths := make([]string, 0, len(parts))
 	seen := map[string]struct{}{}
 	truncated := false
@@ -895,13 +1089,18 @@ func workspaceGitFiles(ctx context.Context, root string, extraPaths map[string]s
 	for _, part := range parts {
 		addPath(part)
 	}
-	return paths, truncated, nil
+	return paths, truncated
 }
 
 type workspaceChangeSet struct {
 	statuses map[string]WorkspaceFileStatus
 	counts   map[string][2]int
 	previous map[string]string
+	// untracked holds paths git diff's machinery doesn't know about relative
+	// to base (status "??" from `git status`, absent from `git diff
+	// --name-status`) — computed once here so workspaceFileDiff can tell
+	// whether to synthesize a diff without its own extra git spawn.
+	untracked map[string]struct{}
 }
 
 func (c workspaceChangeSet) changedPaths() map[string]struct{} {
@@ -916,16 +1115,25 @@ func (c workspaceChangeSet) changedPaths() map[string]struct{} {
 }
 
 func workspaceChangeMaps(ctx context.Context, root, base string) (workspaceChangeSet, error) {
-	diffStatuses, diffPrevious, err := workspaceDiffStatuses(ctx, root, base)
-	if err != nil {
-		return workspaceChangeSet{}, err
-	}
-	statusStatuses, statusPrevious, err := workspaceStatuses(ctx, root)
-	if err != nil {
-		return workspaceChangeSet{}, err
-	}
-	counts, err := workspaceNumstat(ctx, root, base)
-	if err != nil {
+	var (
+		diffStatuses, statusStatuses map[string]WorkspaceFileStatus
+		diffPrevious, statusPrevious map[string]string
+		counts                       map[string][2]int
+	)
+	g, gctx := errgroup.WithContext(ctx)
+	g.Go(func() (err error) {
+		diffStatuses, diffPrevious, err = workspaceDiffStatuses(gctx, root, base)
+		return err
+	})
+	g.Go(func() (err error) {
+		statusStatuses, statusPrevious, err = workspaceStatuses(gctx, root)
+		return err
+	})
+	g.Go(func() (err error) {
+		counts, err = workspaceNumstat(gctx, root, base)
+		return err
+	})
+	if err := g.Wait(); err != nil {
 		return workspaceChangeSet{}, err
 	}
 	statuses := map[string]WorkspaceFileStatus{}
@@ -948,10 +1156,21 @@ func workspaceChangeMaps(ctx context.Context, root, base string) (workspaceChang
 		}
 		previous[rel] = prev
 	}
+	untracked := map[string]struct{}{}
 	for rel, status := range statuses {
 		if status != WorkspaceFileAdded {
 			continue
 		}
+		// diffStatuses (git diff --name-status against base) is the correct
+		// "does git diff machinery know this path" signal — unlike counts
+		// (git diff --numstat), which deliberately omits binary files
+		// ("-\t-\tpath") even when they ARE tracked relative to base, so
+		// counts membership alone would misclassify a tracked binary Added
+		// file as untracked.
+		if _, ok := diffStatuses[rel]; ok {
+			continue
+		}
+		untracked[rel] = struct{}{}
 		if _, ok := counts[rel]; ok {
 			continue
 		}
@@ -960,7 +1179,7 @@ func workspaceChangeMaps(ctx context.Context, root, base string) (workspaceChang
 			counts[rel] = [2]int{additions, 0}
 		}
 	}
-	return workspaceChangeSet{statuses: statuses, counts: counts, previous: previous}, nil
+	return workspaceChangeSet{statuses: statuses, counts: counts, previous: previous, untracked: untracked}, nil
 }
 
 func workspaceStatuses(ctx context.Context, root string) (map[string]WorkspaceFileStatus, map[string]string, error) {
@@ -1129,11 +1348,11 @@ func workspaceFileSizeAndBinary(root, rel string, status WorkspaceFileStatus) (i
 	return info.Size(), binary
 }
 
-func workspaceFileDiff(ctx context.Context, root, base, rel string, status WorkspaceFileStatus, previousPath, content string, binary bool) (string, bool, error) {
+func workspaceFileDiff(ctx context.Context, root, base, rel string, status WorkspaceFileStatus, previousPath, content string, binary, untracked bool) (string, bool, error) {
 	if status == WorkspaceFileUnmodified {
 		return "", false, nil
 	}
-	if status == WorkspaceFileAdded && !gitTracked(ctx, root, rel) {
+	if status == WorkspaceFileAdded && untracked {
 		if binary {
 			return "", false, nil
 		}
@@ -1152,11 +1371,6 @@ func workspaceFileDiff(ctx context.Context, root, base, rel string, status Works
 	}
 	truncatedDiff, truncated := truncateUTF8(out, maxWorkspaceDiffBytes)
 	return truncatedDiff, truncated, nil
-}
-
-func gitTracked(ctx context.Context, root, rel string) bool {
-	_, err := gitWorkspaceOutput(ctx, root, "ls-files", "--error-unmatch", "--", rel)
-	return err == nil
 }
 
 func syntheticAddedFileDiff(rel, content string) string {

@@ -22,7 +22,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 	projectsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/project"
 	sessionmanager "github.com/aoagents/agent-orchestrator/backend/internal/session_manager"
-	"github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite"
+	"github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite/sqlitetest"
 )
 
 // TestWiring_WriteFlowsToBroadcaster exercises the real boot path end to end:
@@ -30,7 +30,7 @@ import (
 // broadcaster, through the same cdc.Source implementation the daemon uses.
 func TestWiring_WriteFlowsToBroadcaster(t *testing.T) {
 	ctx := context.Background()
-	store, err := sqlite.Open(t.TempDir())
+	store, err := sqlitetest.Open(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -102,6 +102,7 @@ func TestWiring_AgentResolverResolvesRealAdapters(t *testing.T) {
 		{domain.HarnessQwen, "qwen"},
 		{domain.HarnessCopilot, "copilot"},
 		{domain.HarnessKimi, "kimi"},
+		{domain.HarnessMuse, "muse"},
 		{domain.HarnessDroid, "droid"},
 		{domain.HarnessAmp, "amp"},
 		{domain.HarnessAgy, "agy"},
@@ -116,6 +117,7 @@ func TestWiring_AgentResolverResolvesRealAdapters(t *testing.T) {
 		{domain.HarnessKilocode, "kilocode"},
 		{domain.HarnessVibe, "vibe"},
 		{domain.HarnessPi, "pi"},
+		{domain.HarnessPrimeAgent, "prime-agent"},
 		{domain.HarnessAutohand, "autohand"},
 	} {
 		agent, ok := resolver.Agent(tc.harness)
@@ -155,6 +157,9 @@ func TestWiring_ActiveTurnSteeringComesFromAdapters(t *testing.T) {
 	if !steers(domain.HarnessCodex) {
 		t.Error("codex declares SteersActiveTurn; want true from the adapter-backed policy")
 	}
+	if !steers(domain.HarnessPrimeAgent) {
+		t.Error("prime-agent declares SteersActiveTurn; want true from the adapter-backed policy")
+	}
 	for _, harness := range []domain.AgentHarness{domain.HarnessClaudeCode, domain.HarnessAider, "definitely-not-an-agent", ""} {
 		if steers(harness) {
 			t.Errorf("harness %q must not be steerable mid-turn", harness)
@@ -170,7 +175,7 @@ func TestWiring_ActiveTurnSteeringComesFromAdapters(t *testing.T) {
 // gitworktree workspace + session manager over the shared store/LCM), which is
 // what gets mounted at httpd APIDeps.Sessions.
 func TestWiring_StartSessionBuildsSessionService(t *testing.T) {
-	store, err := sqlite.Open(t.TempDir())
+	store, err := sqlitetest.Open(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -180,13 +185,13 @@ func TestWiring_StartSessionBuildsSessionService(t *testing.T) {
 	lcm := lifecycle.New(store, nil)
 	cfg := config.Config{DataDir: t.TempDir()}
 
-	rt := runtimeselect.New(nil)
+	rt := runtimeselect.New(nil, cfg.RunFilePath)
 	messenger := newSessionMessenger(store, rt, log)
 	agents, err := buildAgentResolver(config.DefaultAgent, log)
 	if err != nil {
 		t.Fatalf("buildAgentResolver: %v", err)
 	}
-	svc, reviewSvc, lc, err := startSession(cfg, rt, store, lcm, messenger, telemetryadapter.NoopSink{}, agents, nil, nil, nil, nil, nil, log)
+	svc, reviewSvc, lc, err := startSession(context.Background(), cfg, rt, store, lcm, messenger, telemetryadapter.NoopSink{}, agents, nil, nil, nil, nil, nil, log)
 	if err != nil {
 		t.Fatalf("startSession: %v", err)
 	}
@@ -203,7 +208,7 @@ func TestWiring_StartSessionBuildsSessionService(t *testing.T) {
 
 func TestWiring_StartSessionSpawnsScratchWithoutGitRepo(t *testing.T) {
 	ctx := context.Background()
-	store, err := sqlite.Open(t.TempDir())
+	store, err := sqlitetest.Open(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -247,7 +252,7 @@ func TestWiring_StartSessionSpawnsScratchWithoutGitRepo(t *testing.T) {
 	if err != nil {
 		t.Fatalf("buildAgentResolver: %v", err)
 	}
-	svc, _, _, err := startSession(cfg, runtime, store, lcm, messenger, telemetryadapter.NoopSink{}, agents, nil, nil, nil, nil, nil, log)
+	svc, _, _, err := startSession(context.Background(), cfg, runtime, store, lcm, messenger, telemetryadapter.NoopSink{}, agents, nil, nil, nil, nil, nil, log)
 	if err != nil {
 		t.Fatalf("startSession: %v", err)
 	}
@@ -283,7 +288,7 @@ func TestStartSession_SpawnDoesNotPanicWhenNoTrackerToken(t *testing.T) {
 	t.Setenv("GITHUB_TOKEN", "")
 
 	ctx := context.Background()
-	store, err := sqlite.Open(t.TempDir())
+	store, err := sqlitetest.Open(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -296,13 +301,13 @@ func TestStartSession_SpawnDoesNotPanicWhenNoTrackerToken(t *testing.T) {
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	lcm := lifecycle.New(store, nil)
 	cfg := config.Config{DataDir: t.TempDir()}
-	rt := runtimeselect.New(nil)
+	rt := runtimeselect.New(nil, cfg.RunFilePath)
 	messenger := newSessionMessenger(store, rt, log)
 	agents, agentsErr := buildAgentResolver(config.DefaultAgent, log)
 	if agentsErr != nil {
 		t.Fatalf("buildAgentResolver: %v", agentsErr)
 	}
-	svc, _, _, err := startSession(cfg, rt, store, lcm, messenger, telemetryadapter.NoopSink{}, agents, nil, nil, nil, nil, nil, log)
+	svc, _, _, err := startSession(context.Background(), cfg, rt, store, lcm, messenger, telemetryadapter.NoopSink{}, agents, nil, nil, nil, nil, nil, log)
 	if err != nil {
 		t.Fatalf("startSession: %v", err)
 	}
@@ -315,7 +320,7 @@ func TestStartSession_SpawnDoesNotPanicWhenNoTrackerToken(t *testing.T) {
 
 func TestWiring_SeedScratchProjectOnBootUsesDataDir(t *testing.T) {
 	ctx := context.Background()
-	store, err := sqlite.Open(t.TempDir())
+	store, err := sqlitetest.Open(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -346,7 +351,7 @@ func TestWiring_SeedScratchProjectOnBootUsesDataDir(t *testing.T) {
 // intake after daemon boot was silently never picked up until a restart. The
 // loop must always start; Poll is what decides whether there's work to do.
 func TestStartTrackerIntake_RunsEvenWithoutEnabledProjects(t *testing.T) {
-	store, err := sqlite.Open(t.TempDir())
+	store, err := sqlitetest.Open(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -355,13 +360,13 @@ func TestStartTrackerIntake_RunsEvenWithoutEnabledProjects(t *testing.T) {
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	lcm := lifecycle.New(store, nil)
 	cfg := config.Config{DataDir: t.TempDir()}
-	rt := runtimeselect.New(nil)
+	rt := runtimeselect.New(nil, cfg.RunFilePath)
 	messenger := newSessionMessenger(store, rt, log)
 	agents, agentsErr := buildAgentResolver(config.DefaultAgent, log)
 	if agentsErr != nil {
 		t.Fatalf("buildAgentResolver: %v", agentsErr)
 	}
-	svc, _, _, err := startSession(cfg, rt, store, lcm, messenger, telemetryadapter.NoopSink{}, agents, nil, nil, nil, nil, nil, log)
+	svc, _, _, err := startSession(context.Background(), cfg, rt, store, lcm, messenger, telemetryadapter.NoopSink{}, agents, nil, nil, nil, nil, nil, log)
 	if err != nil {
 		t.Fatalf("startSession: %v", err)
 	}
@@ -409,7 +414,7 @@ func (c *captureRuntimeSender) SendMessage(_ context.Context, handle ports.Runti
 // TestWiring_SessionMessengerSendsToRuntimePane asserts the daemon wires ao
 // send to the live runtime pane and resolves the handle from the shared store.
 func TestWiring_SessionMessengerSendsToRuntimePane(t *testing.T) {
-	store, err := sqlite.Open(t.TempDir())
+	store, err := sqlitetest.Open(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -442,7 +447,7 @@ func TestWiring_SessionMessengerSendsToRuntimePane(t *testing.T) {
 }
 
 func TestWiring_SessionMessengerWrapsLookupErrors(t *testing.T) {
-	store, err := sqlite.Open(t.TempDir())
+	store, err := sqlitetest.Open(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -456,7 +461,7 @@ func TestWiring_SessionMessengerWrapsLookupErrors(t *testing.T) {
 }
 
 func TestWiring_SessionMessengerRequiresRuntimeHandle(t *testing.T) {
-	store, err := sqlite.Open(t.TempDir())
+	store, err := sqlitetest.Open(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -481,7 +486,7 @@ func TestWiring_SessionMessengerRequiresRuntimeHandle(t *testing.T) {
 }
 
 func TestWiring_SessionMessengerRejectsTerminatedSession(t *testing.T) {
-	store, err := sqlite.Open(t.TempDir())
+	store, err := sqlitetest.Open(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -533,7 +538,7 @@ func TestWiring_StartLifecycleThreadsMessengerIntoLCM(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	// Cancel must run BEFORE Stop so the reaper goroutine's ctx.Done() fires;
 	// Stop is a no-op otherwise. Cleanup is LIFO, so register Stop first.
-	store, err := sqlite.Open(t.TempDir())
+	store, err := sqlitetest.Open(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -543,8 +548,10 @@ func TestWiring_StartLifecycleThreadsMessengerIntoLCM(t *testing.T) {
 		t.Fatal(err)
 	}
 	rec, err := store.CreateSession(ctx, domain.SessionRecord{
-		ProjectID: "p", Kind: domain.KindWorker,
-		Activity: domain.Activity{State: domain.ActivityIdle, LastActivityAt: time.Now()},
+		ProjectID:    "p",
+		Kind:         domain.KindWorker,
+		Activity:     domain.Activity{State: domain.ActivityIdle, LastActivityAt: time.Now()},
+		AutoInjectCI: true,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -565,6 +572,15 @@ func TestWiring_StartLifecycleThreadsMessengerIntoLCM(t *testing.T) {
 			FailedChecks: []ports.SCMCheckObservation{{Name: "build", Status: string(domain.PRCheckFailed), LogTail: "boom"}},
 		},
 	}
+	if err := store.WriteSCMObservation(ctx, domain.PullRequest{
+		URL:       obs.PR.URL,
+		SessionID: rec.ID,
+		Number:    obs.PR.Number,
+		HeadSHA:   obs.PR.HeadSHA,
+		UpdatedAt: time.Now(),
+	}, nil, nil, nil, nil, ports.ReviewWritePreserve); err != nil {
+		t.Fatalf("persist PR before lifecycle: %v", err)
+	}
 	if err := stack.LCM.ApplySCMObservation(ctx, rec.ID, obs); err != nil {
 		t.Fatalf("ApplySCMObservation: %v", err)
 	}
@@ -580,7 +596,7 @@ func TestWiring_StartLifecycleThreadsMessengerIntoLCM(t *testing.T) {
 // resolver turns a registered project into its on-disk repo path (so spawns
 // materialise a worktree), and fails loudly for an unregistered project.
 func TestProjectRepoResolver_ResolvesRegisteredProject(t *testing.T) {
-	store, err := sqlite.Open(t.TempDir())
+	store, err := sqlitetest.Open(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -619,7 +635,9 @@ type fakeSessionLifecycle struct {
 	restoreErr       error
 }
 
-func (f *fakeSessionLifecycle) Send(context.Context, domain.SessionID, string) error { return nil }
+func (f *fakeSessionLifecycle) Send(context.Context, domain.SessionID, string, *ports.SpawnAttachment) error {
+	return nil
+}
 
 func (f *fakeSessionLifecycle) Kill(_ context.Context, _ domain.SessionID) (bool, error) {
 	return false, nil
@@ -635,8 +653,16 @@ func (f *fakeSessionLifecycle) RestoreAll(_ context.Context) error {
 	return f.restoreErr
 }
 
+func (*fakeSessionLifecycle) WaitAgentSwitchWorkers(context.Context) error { return nil }
+
 func (f *fakeSessionLifecycle) SetShellTerminalCloser(sessionmanager.ShellTerminalCloser) {}
 func (f *fakeSessionLifecycle) SetTerminalInputGate(sessionmanager.TerminalInputGate)     {}
+func (f *fakeSessionLifecycle) AcquireSessionInput(domain.SessionID) (func(), bool) {
+	return func() {}, true
+}
+
+func (f *fakeSessionLifecycle) SessionMutationInProgress(domain.SessionID) bool         { return false }
+func (f *fakeSessionLifecycle) SetReviewerTerminator(sessionmanager.ReviewerTerminator) {}
 
 // TestWiring_SessionLifecycleInterfaceInvokedByDaemon asserts the
 // sessionLifecycle interface is satisfied by *sessionmanager.Manager (compile
@@ -692,9 +718,53 @@ func (r *selectableRuntime) Attach(context.Context, ports.RuntimeHandle, uint16,
 }
 
 func (r *selectableRuntime) Interrupt(context.Context, ports.RuntimeHandle) error { return nil }
+func (r *selectableRuntime) SendInput(context.Context, ports.RuntimeHandle, string) error {
+	return nil
+}
 
 func (r *selectableRuntime) SendMessage(context.Context, ports.RuntimeHandle, string) error {
 	return nil
+}
+
+// TestWiring_NewMultiTracker_NeverTypedNilWhenNoGitHubToken verifies the
+// typed-nil guard from issue #2685 at the multi-tracker wiring level. When
+// the GitHub tracker fails to construct (no token), newMultiTracker must
+// return either a true nil interface (when GitLab also has no token) or a
+// non-nil, usable ports.Tracker (when GitLab has a token via glab CLI). In
+// neither case may it return a typed-nil (non-nil interface wrapping a nil
+// pointer), which would bypass the session service's `tracker == nil` guard.
+func TestWiring_NewMultiTracker_NeverTypedNilWhenNoGitHubToken(t *testing.T) {
+	t.Setenv("AO_GITHUB_TOKEN", "")
+	t.Setenv("GITHUB_TOKEN", "")
+
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	tracker := newMultiTracker(config.GitLabConfig{}, log)
+	// The key assertion: tracker is either truly nil or truly non-nil — never
+	// a typed-nil. Go's interface == nil check covers both cases correctly here
+	// because newMultiTracker returns a bare nil or a *trackermulti.Tracker.
+	if tracker == nil {
+		// Both trackers failed: expected when no glab CLI is available.
+		return
+	}
+	// If GitLab succeeded via glab CLI, the tracker must be usable (not a
+	// typed-nil that panics on first call). A Preflight call should not panic.
+	_ = tracker.Preflight(context.Background())
+}
+
+// TestWiring_NewMultiTracker_ReturnsNonNilWhenGitHubHasToken verifies the
+// degrade-gracefully pattern: when only the GitHub tracker can construct
+// (GitLab token missing), the multi-tracker still returns a non-nil
+// ports.Tracker that serves GitHub issue lookups.
+func TestWiring_NewMultiTracker_ReturnsNonNilWhenGitHubHasToken(t *testing.T) {
+	t.Setenv("AO_GITHUB_TOKEN", "gh-test-token")
+	t.Setenv("AO_GITLAB_TOKEN", "")
+	t.Setenv("GITLAB_TOKEN", "")
+
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	tracker := newMultiTracker(config.GitLabConfig{}, log)
+	if tracker == nil {
+		t.Fatal("newMultiTracker = nil, want non-nil when GitHub token is available")
+	}
 }
 
 func writeFakeExecutable(t *testing.T, path string) {

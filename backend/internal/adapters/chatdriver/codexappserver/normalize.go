@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/chatdriver/codexappserver/codexproto"
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/chatdriver/commanddetail"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
@@ -136,8 +137,9 @@ func normalizeNotification(n notification, now time.Time) []ports.ChatEvent {
 			return nil
 		}
 		return []ports.ChatEvent{{
-			Kind:           ports.ChatEventTurnStarted,
-			ProviderTurnID: firstNonEmpty(p.Turn.ID, turnIDFallback(n.Params)),
+			Kind:                   ports.ChatEventTurnStarted,
+			ProviderTurnID:         firstNonEmpty(p.Turn.ID, turnIDFallback(n.Params)),
+			ProviderConversationID: p.ThreadID,
 		}}
 
 	case codexproto.MethodTurnCompleted:
@@ -146,9 +148,10 @@ func normalizeNotification(n notification, now time.Time) []ports.ChatEvent {
 			return nil
 		}
 		ev := ports.ChatEvent{
-			Kind:           ports.ChatEventTurnCompleted,
-			ProviderTurnID: firstNonEmpty(p.Turn.ID, turnIDFallback(n.Params)),
-			TurnState:      turnStateFrom(string(p.Turn.Status)),
+			Kind:                   ports.ChatEventTurnCompleted,
+			ProviderTurnID:         firstNonEmpty(p.Turn.ID, turnIDFallback(n.Params)),
+			ProviderConversationID: p.ThreadID,
+			TurnState:              turnStateFrom(string(p.Turn.Status)),
 		}
 		if p.Turn.Error != nil && p.Turn.Error.Message != "" {
 			ev.Err = fmt.Errorf("%s", p.Turn.Error.Message)
@@ -895,7 +898,7 @@ func autoReviewDetail(
 		detail["targetItemId"] = *targetItemID
 	}
 	if action.Command != nil && *action.Command != "" {
-		detail["command"] = unwrapShell(*action.Command)
+		detail["command"] = commanddetail.UnwrapShell(*action.Command)
 		detail["rawCommand"] = *action.Command
 	}
 	if action.Cwd != nil && *action.Cwd != "" {
@@ -1148,7 +1151,7 @@ func fileChangeVerb(status string) string {
 // commandSummary produces a one-line label. Codex wraps commands in a shell
 // invocation (`/bin/zsh -lc '…'`); the wrapper is noise in a timeline.
 func commandSummary(command string) string {
-	cmd := unwrapShell(strings.TrimSpace(command))
+	cmd := commanddetail.UnwrapShell(strings.TrimSpace(command))
 	if cmd == "" {
 		return "Ran a command"
 	}
@@ -1165,36 +1168,12 @@ func truncateLabel(value string) string {
 	return value[:limit] + "…"
 }
 
-// unwrapShell strips a leading `<shell> -lc '<cmd>'` wrapper when present.
-func unwrapShell(command string) string {
-	for _, flag := range []string{" -lc ", " -c "} {
-		if idx := strings.Index(command, flag); idx > 0 && looksLikeShell(command[:idx]) {
-			inner := strings.TrimSpace(command[idx+len(flag):])
-			return strings.Trim(inner, `"'`)
-		}
-	}
-	return command
-}
-
-func looksLikeShell(prefix string) bool {
-	base := prefix
-	if idx := strings.LastIndex(prefix, "/"); idx >= 0 {
-		base = prefix[idx+1:]
-	}
-	switch base {
-	case "sh", "bash", "zsh", "dash", "fish":
-		return true
-	default:
-		return false
-	}
-}
-
 // activityDetail is the provider-neutral payload AO persists for an activity.
 // Provider DTOs are not passed through: only named fields AO renders.
 func activityDetail(it threadItem) []byte {
 	detail := map[string]any{}
 	if cmd := deref(it.Command); cmd != "" {
-		detail["command"] = unwrapShell(cmd)
+		detail["command"] = commanddetail.UnwrapShell(cmd)
 		detail["rawCommand"] = cmd
 	}
 	if it.Cwd != nil && *it.Cwd != "" {

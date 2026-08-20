@@ -80,6 +80,60 @@ beforeEach(() => {
 });
 
 describe("useConversation snapshot mapping", () => {
+	it("maps branch metadata and lightweight prompt content", async () => {
+		getMock.mockResolvedValue({
+			data: {
+				...WIRE,
+				activeBranchId: "branch-child",
+				branchedFromEarlierMessage: true,
+				branchPoints: [
+					{
+						turnId: "turn-1",
+						position: 2,
+						total: 3,
+						previousBranchId: "branch-previous",
+						nextBranchId: "branch-next",
+					},
+				],
+				messages: [
+					{
+						id: "message-1",
+						turnId: "turn-1",
+						sequence: 1,
+						revision: 1,
+						role: "user",
+						origin: "human",
+						text: "inspect this",
+						streaming: false,
+						createdAt: "2026-08-03T00:00:00Z",
+						editAvailable: true,
+						content: [
+							{ type: "image", mimeType: "image/png" },
+							{ type: "resource", name: "notes.md", uri: "file:///notes.md" },
+						],
+					},
+				],
+			},
+			error: undefined,
+		});
+
+		const { result } = renderHook(() => useConversation("ao-1"), { wrapper });
+		await waitFor(() => expect(result.current.snapshot).toBeDefined());
+
+		expect(result.current.snapshot).toMatchObject({
+			activeBranchId: "branch-child",
+			branchedFromEarlierMessage: true,
+			branchPoints: [{ turnId: "turn-1", position: 2, total: 3 }],
+		});
+		expect(result.current.snapshot!.items[0]).toMatchObject({
+			editAvailable: true,
+			content: [
+				{ type: "image", mimeType: "image/png" },
+				{ type: "resource", name: "notes.md", uri: "file:///notes.md" },
+			],
+		});
+	});
+
 	it("maps the provider state the timeline cannot express", async () => {
 		getMock.mockResolvedValue({ data: WIRE, error: undefined });
 
@@ -126,7 +180,58 @@ describe("useConversation snapshot mapping", () => {
 	});
 });
 
+describe("conversation branching commands", () => {
+	it("edits through the dedicated endpoint without rolling back", async () => {
+		postMock.mockResolvedValue({ data: {}, error: undefined });
+		const { result } = renderHook(() => useConversationCommands("ao-1"), { wrapper });
+
+		await act(async () => {
+			await result.current.editMessage("turn-2", "edited prompt");
+		});
+
+		expect(postMock).toHaveBeenCalledWith(
+			"/api/v1/sessions/{sessionId}/conversation/turns/{turnId}/edit",
+			expect.objectContaining({
+				params: { path: { sessionId: "ao-1", turnId: "turn-2" } },
+				body: expect.objectContaining({ text: "edited prompt" }),
+			}),
+		);
+		expect(
+			postMock.mock.calls.some(([path]) => String(path).endsWith("/rollback")),
+		).toBe(false);
+	});
+
+	it("activates an existing branch", async () => {
+		postMock.mockResolvedValue({ data: {}, error: undefined });
+		const { result } = renderHook(() => useConversationCommands("ao-1"), { wrapper });
+
+		await act(async () => {
+			await result.current.activateBranch("branch-previous");
+		});
+
+		expect(postMock).toHaveBeenCalledWith(
+			"/api/v1/sessions/{sessionId}/conversation/branches/{branchId}/activate",
+			{ params: { path: { sessionId: "ao-1", branchId: "branch-previous" } } },
+		);
+	});
+});
+
 describe("steering refusals", () => {
+	it("promotes the selected durable queued turn through the turn-scoped route", async () => {
+		postMock.mockResolvedValue({
+			data: { sourceTurnId: "queued-2", providerTurnId: "provider-1", activityId: "activity-1" },
+			error: undefined,
+		});
+		const { result } = renderHook(() => useConversationCommands("ao-1"), { wrapper });
+		await act(async () => {
+			await result.current.promoteQueuedTurn("queued-2");
+		});
+		expect(postMock).toHaveBeenCalledWith(
+			"/api/v1/sessions/{sessionId}/conversation/turns/{turnId}/steer",
+			{ params: { path: { sessionId: "ao-1", turnId: "queued-2" } } },
+		);
+	});
+
 	async function steerFailingWith(code: string) {
 		apiErrorCodeMock.mockReturnValue(code);
 		apiErrorMessageMock.mockReturnValue("a compaction turn is running.");
@@ -201,6 +306,29 @@ describe("tool server reload refusals", () => {
 });
 
 describe("controller recovery", () => {
+	it("refreshes the conversation after Stop reports stale turn state", async () => {
+		postMock.mockResolvedValue({
+			data: undefined,
+			error: { code: "CHAT_NO_ACTIVE_TURN" },
+			response: { status: 409 },
+		});
+		const invalidateSpy = vi.spyOn(QueryClient.prototype, "invalidateQueries");
+
+		const { result } = renderHook(() => useConversationCommands("ao-1"), { wrapper });
+		act(() => {
+			result.current.interrupt();
+		});
+
+		await waitFor(() => {
+			expect(postMock).toHaveBeenCalledWith(
+				"/api/v1/sessions/{sessionId}/conversation/interrupt",
+				{ params: { path: { sessionId: "ao-1" } } },
+			);
+			expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ["conversation", "ao-1"] });
+		});
+		invalidateSpy.mockRestore();
+	});
+
 	it("resumes the agent and refreshes both chat and task state", async () => {
 		postMock.mockResolvedValue({ data: {}, error: undefined, response: { status: 200 } });
 		const invalidateSpy = vi.spyOn(QueryClient.prototype, "invalidateQueries");

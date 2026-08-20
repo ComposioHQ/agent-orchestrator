@@ -15,12 +15,14 @@ import {
 	ChevronRight,
 	CircleAlert,
 	CornerDownRight,
+	File as FileIcon,
 	FileDiff,
 	Gauge,
 	KeyRound,
 	Keyboard,
 	ListChecks,
 	Loader2,
+	Pencil,
 	Plug,
 	Shuffle,
 	ShieldCheck,
@@ -46,13 +48,18 @@ const activityIcon: Record<ActivityKind, typeof SquareTerminal> = {
 };
 import { cn } from "../../lib/utils";
 import { caretNotation, stripAnsi } from "../../lib/ansi";
+import { getApiBaseUrl } from "../../lib/api-client";
 import { ChatMarkdown } from "./ChatMarkdown";
 import { HighlightedCode } from "./HighlightedCode";
 import { CopyButton } from "./CopyButton";
+import { HumanMessageEditor } from "./HumanMessageEditor";
+import { ConversationBranchNavigator } from "./ConversationBranchNavigator";
+import { ConversationContentItems } from "./ConversationContentItems";
 import {
 	ACTIVITY_SUMMARY_BUTTON_CLASS,
 	commandCategory,
 	exploredFileCount,
+	isNonzeroCommandExit,
 } from "./activity-command";
 import { Button } from "../ui/button";
 import {
@@ -60,6 +67,7 @@ import {
 	reviewedPaths,
 	type ActivityKind,
 	type ConversationActivity,
+	type ConversationBranchPoint,
 	type ConversationMessage,
 	type DecisionOption,
 	type DeliveryState,
@@ -75,6 +83,45 @@ const timeFormatter = new Intl.DateTimeFormat(undefined, {
 
 const ORIGIN_REPORT_COLLAPSE_AT = 600;
 const ORIGIN_REPORT_PREVIEW_LENGTH = 240;
+
+// These are AO-owned prompt suffixes, not general markdown. Chat and spawn used
+// slightly different wording, and older conversations used "Attached images";
+// accepting every shipped form lets the transcript improve without rewriting
+// its durable history.
+const ATTACHMENT_REFERENCE_BLOCK =
+	/(?:^|\n\n)(?:Attached files \(read these files in the workspace(?: for context)?\)|Attached images \(read these files in the workspace for visual context\)):\n((?:- [^\n]+(?:\n|$))+)$/;
+const STAGED_ATTACHMENT_PATH = /^\.ao\/attachments\/(?:attachment|image)-[A-Za-z0-9][A-Za-z0-9._-]*$/;
+const IMAGE_ATTACHMENT_PATH = /\.(?:png|jpe?g|gif|webp|bmp)$/i;
+
+function humanMessageParts(text: string): { body: string; attachments: string[] } {
+	const match = ATTACHMENT_REFERENCE_BLOCK.exec(text);
+	if (!match?.[1]) return { body: text, attachments: [] };
+
+	const attachments = match[1]
+		.trimEnd()
+		.split("\n")
+		.map((line) => line.slice(2));
+	// Only reinterpret paths AO itself stages. A user can write an identically
+	// worded example about docs/screenshot.png; that prose must remain untouched.
+	if (attachments.length === 0 || attachments.some((path) => !STAGED_ATTACHMENT_PATH.test(path))) {
+		return { body: text, attachments: [] };
+	}
+	// The match begins at the generated separator, so slicing at its index
+	// removes only AO-owned text and preserves the authored body byte-for-byte.
+	return { body: text.slice(0, match.index), attachments };
+}
+
+function attachmentName(path: string): string {
+	return path.slice(path.lastIndexOf("/") + 1);
+}
+
+function attachmentURL(apiBaseUrl: string, sessionId: string, path: string): string {
+	const route = `/api/v1/sessions/${encodeURIComponent(sessionId)}/preview/files/${path
+		.split("/")
+		.map(encodeURIComponent)
+		.join("/")}`;
+	return apiBaseUrl ? new URL(route, apiBaseUrl).toString() : route;
+}
 
 /** Collapse the home directory so a long absolute path does not eat the row. */
 function shortenPaths(text: string): string {
@@ -99,28 +146,122 @@ function formatTime(iso: string): string {
 /** What the user typed. Right-aligned and enclosed so it reads as theirs. */
 export function HumanMessage({
 	message,
+	sessionId,
+	apiBaseUrl = getApiBaseUrl(),
 	queued,
+	onEdit,
+	editing = false,
+	editText,
+	onEditStart,
+	onEditDraftChange,
+	onEditCancel,
+	editPending = false,
+	editBusy = false,
+	editError,
+	branchPoint,
+	onActivateBranch,
+	activateBranchPending = false,
+	activateBranchError,
 }: {
 	message: ConversationMessage;
+	/** The staged paths are relative to this session's workspace. */
+	sessionId: string;
+	/** The live daemon origin; passed by the timeline so daemon restarts refresh images. */
+	apiBaseUrl?: string;
 	/** Typed while the agent was busy, and not sent yet. */
 	queued?: boolean;
+	onEdit?: (turnId: string, text: string) => Promise<unknown> | void;
+	editing?: boolean;
+	editText?: string;
+	onEditStart?: () => void;
+	onEditDraftChange?: (text: string) => void;
+	onEditCancel?: () => void;
+	editPending?: boolean;
+	editBusy?: boolean;
+	editError?: string;
+	branchPoint?: ConversationBranchPoint;
+	onActivateBranch?: (branchId: string) => Promise<unknown> | void;
+	activateBranchPending?: boolean;
+	activateBranchError?: string;
 }) {
+	const { body, attachments } = humanMessageParts(message.text);
 	return (
-		<div className="flex flex-col items-end gap-1">
+		<div className="group/message flex flex-col items-end gap-1">
 			{/* A queued message reads as not-yet-sent rather than as sent-and-ignored:
 			    the agent has not seen it, and the timeline should not imply it has. */}
-			<div
-				className={cn(
-					"cursor-chat-human-message w-fit max-w-[min(78%,560px)] whitespace-pre-wrap rounded-[10px] border px-3 py-2.5 text-sm leading-[1.55]",
-					queued
-						? "border-dashed border-border-strong bg-transparent text-muted-foreground"
-						: "border-border bg-raised text-foreground",
-				)}
-			>
-				{message.text}
-			</div>
+			{editing ? (
+				<HumanMessageEditor
+					text={editText ?? message.text}
+					content={message.content ?? []}
+					pending={editPending}
+					busy={editBusy}
+					error={editError}
+					onDraftChange={onEditDraftChange}
+					onCancel={() => onEditCancel?.()}
+					onSend={(text) => {
+						if (!message.turnId || !onEdit) return;
+						return onEdit(message.turnId, text);
+					}}
+				/>
+			) : (
+				<div
+					className={cn(
+						"cursor-chat-human-message w-fit max-w-[min(78%,560px)] rounded-[10px] border px-3 py-2.5 text-sm leading-[1.55]",
+						queued
+							? "border-dashed border-border-strong bg-transparent text-muted-foreground"
+							: "border-border bg-raised text-foreground",
+					)}
+				>
+					{body ? <p className="break-words whitespace-pre-wrap text-pretty">{body}</p> : null}
+					{attachments.length > 0 ? (
+						<ul aria-label="Attached files" className={cn("flex max-w-full flex-wrap gap-2", body && "mt-2")}>
+							{attachments.map((path) => {
+								const name = attachmentName(path);
+								return IMAGE_ATTACHMENT_PATH.test(path) ? (
+									<li key={path} className="max-w-full overflow-hidden rounded-md border border-border bg-background">
+										<img src={attachmentURL(apiBaseUrl, sessionId, path)} alt={name} loading="lazy" className="block h-auto max-h-80 max-w-full object-contain" />
+									</li>
+								) : (
+									<li key={path} title={path} className="flex max-w-full items-center gap-1.5 rounded-md border border-border bg-background px-2 py-1.5 text-xs text-muted-foreground">
+										<FileIcon aria-hidden="true" className="size-3.5 shrink-0" />
+										<span className="truncate">{name}</span>
+									</li>
+								);
+							})}
+						</ul>
+					) : null}
+				</div>
+			)}
+			{editing ? null : (
+				<div className="flex h-[18px] items-center gap-0.5">
+					<div className="flex items-center opacity-0 transition-opacity duration-150 focus-within:opacity-100 group-hover/message:opacity-100">
+						<CopyButton text={message.text} label="Copy user message" compact className="-mr-1" />
+						{onEdit && onEditStart && message.turnId ? (
+							<button
+								type="button"
+								onClick={onEditStart}
+								aria-label="Edit user message"
+								title="Edit user message"
+								className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[10.5px] text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground"
+							>
+								<Pencil aria-hidden="true" className="size-3" />
+							</button>
+						) : null}
+					</div>
+					{branchPoint && onActivateBranch ? (
+						<ConversationBranchNavigator
+							point={branchPoint}
+							pending={activateBranchPending}
+							error={activateBranchError}
+							onActivate={onActivateBranch}
+						/>
+					) : null}
+				</div>
+			)}
 			{queued ? (
-				<span className="text-[11px] text-muted-foreground">Queued · sends when the agent finishes</span>
+				<div className="flex items-center gap-2 text-[11px] text-muted-foreground">
+					<span>Queued · sends when the agent finishes</span>
+				</div>
 			) : null}
 			{message.delivery && message.delivery !== "accepted" ? (
 				<DeliveryNote state={message.delivery} />
@@ -264,6 +405,7 @@ export function ActivityRow({ activity }: { activity: ConversationActivity }) {
 	if (activity.activityKind === "mcp_tool") return <McpToolRow activity={activity} />;
 	if (activity.activityKind === "auto_review") return <AutoReviewRow activity={activity} />;
 	if (activity.activityKind === "reasoning") return <ReasoningBlock activity={activity} />;
+	if (activity.activityKind === "error") return <ErrorActivityRow activity={activity} />;
 	if (activity.detail?.event === "model.rerouted") return <RerouteRow activity={activity} />;
 	if (activity.detail?.event === "auth.reauth_required") return <ReauthRow activity={activity} />;
 	return <GenericActivityRow activity={activity} />;
@@ -285,7 +427,8 @@ function GenericActivityRow({ activity }: { activity: ConversationActivity }) {
 	const detail = activity.detail;
 	const files = fileChangeFiles(activity);
 	const hasBody = Boolean(
-		detail?.output || detail?.reason || detail?.text || detail?.terminalInput || files.length,
+		detail?.command ||
+			detail?.output || detail?.reason || detail?.text || detail?.terminalInput || files.length,
 	);
 	const { label, path } = splitSummary(activity);
 	const compactCommand = activity.activityKind === "command";
@@ -296,7 +439,12 @@ function GenericActivityRow({ activity }: { activity: ConversationActivity }) {
 	const open = override ?? streamingOutput;
 
 	return (
-		<div className={compactCommand ? "flex flex-col" : "group/activity border-t border-border first:border-t-0"}>
+		<div
+			className={cn(
+				"min-w-0 max-w-full",
+				compactCommand ? "flex flex-col" : "group/activity border-t border-border first:border-t-0",
+			)}
+		>
 			<button
 				type="button"
 				onClick={() => setOverride(!open)}
@@ -305,7 +453,7 @@ function GenericActivityRow({ activity }: { activity: ConversationActivity }) {
 				className={cn(
 					compactCommand
 						? ACTIVITY_SUMMARY_BUTTON_CLASS
-						: "flex min-h-[35px] w-full items-center gap-[9px] px-[11px] py-2 text-left text-[11px] transition-colors",
+						: "flex min-h-[35px] w-full min-w-0 items-center gap-[9px] px-[11px] py-2 text-left text-[11px] transition-colors",
 					hasBody && !compactCommand && "hover:bg-interactive-hover",
 					!hasBody && "cursor-default",
 				)}
@@ -322,13 +470,13 @@ function GenericActivityRow({ activity }: { activity: ConversationActivity }) {
 				)}
 				<strong
 					className={cn(
-						"shrink-0",
 						compactCommand
-							? "text-[11.5px] font-normal text-muted-foreground"
-							: "font-medium",
+							? "shrink-0 text-[11.5px] font-normal text-muted-foreground"
+							: "min-w-0 truncate font-medium",
 						!compactCommand &&
 							(activity.status === "failed" ? "text-destructive" : "text-foreground"),
 					)}
+					title={compactCommand ? undefined : label}
 				>
 					{label}
 				</strong>
@@ -362,6 +510,14 @@ function GenericActivityRow({ activity }: { activity: ConversationActivity }) {
 			{open && hasBody ? (
 				<div className="flex flex-col gap-1.5 px-[11px] pb-2.5">
 					{files.length ? <FileChangeList files={files} /> : null}
+					{detail?.command ? (
+						// Said explicitly rather than implied by the label: "Ran command"
+						// alone never tells the reader what ran, and the collapsed row
+						// deliberately keeps only the category.
+						<pre className="overflow-x-auto rounded-md border border-border bg-background px-2.5 py-1.5 font-mono text-[10.5px] leading-relaxed text-foreground">
+							{detail.command}
+						</pre>
+					) : null}
 					{detail?.reason || detail?.text ? (
 						<p className="whitespace-pre-wrap text-[11px] leading-relaxed text-muted-foreground">
 							{detail.reason ?? detail.text}
@@ -422,10 +578,6 @@ function TerminalInput({ text, truncated }: { text: string; truncated?: boolean 
  * the viewport of someone reading back through a build log is worse than making
  * them scroll down once.
  *
- * The caveat below it is not boilerplate. The provider drops output, and it does
- * so differently per source, so the note says which source this is and why it may
- * be incomplete rather than hedging the same way about both.
- *
  * The text is what a terminal would have shown, not the bytes: output arrives with
  * its escape sequences intact — nothing in the stack strips them — so a colourized
  * test run rendered here verbatim is a wall of `[0m`, and a progress bar is a
@@ -467,13 +619,6 @@ function CommandOutput({ activity }: { activity: ConversationActivity }) {
 				<p className="text-[10px] leading-relaxed text-warning">
 					This command printed more than AO stores, so the output above stops early. Open a shell in
 					the worktree to see the rest.
-				</p>
-			) : detail?.outputMayBePartial ? (
-				<p className="text-[10px] leading-relaxed text-muted-foreground/70">
-					{detail.outputSource === "stream"
-						? "Streamed live as the command runs. The provider drops the first chunk, so the beginning may be missing."
-						: "Rolled up by the provider after the command finished, and observed to drop the beginning."}{" "}
-					Open a shell in the worktree for the full run.
 				</p>
 			) : null}
 		</>
@@ -553,7 +698,12 @@ function ActivityState({
 	}
 	if (status === "failed") {
 		return (
-			<span className="shrink-0 font-mono text-[10px] tabular-nums text-destructive">
+			<span
+				className={cn(
+					"shrink-0 font-mono text-[10px] tabular-nums",
+					isNonzeroCommandExit(activity) ? "text-muted-foreground/70" : "text-destructive",
+				)}
+			>
 				{detail?.exitCode !== undefined ? `exit ${detail.exitCode}` : "failed"}
 			</span>
 		);
@@ -1105,6 +1255,115 @@ function RerouteRow({ activity }: { activity: ConversationActivity }) {
 }
 
 /**
+ * A provider error item — reconnect storms, credit exhaustion, and similar.
+ *
+ * Codex (and peers) often put the whole JSON envelope in `message` / `summary`.
+ * Rendering that as a generic activity label made one long unbreakable line that
+ * widened the chat column under the sidebars, and five reconnect attempts painted
+ * five walls of red JSON. This row unwraps the human parts and always wraps inside
+ * the column.
+ *
+ * Not a live region: the enclosing timeline is already a `role="log"`, and the
+ * controller banner announces a terminal failure. Marking every historical
+ * reconnect row as `role="alert"` would interrupt a screen reader once per attempt.
+ */
+function ErrorActivityRow({ activity }: { activity: ConversationActivity }) {
+	const { headline, detail } = providerErrorCopy(activity);
+	return (
+		<div className="flex min-w-0 max-w-full items-start gap-2.5 overflow-hidden rounded-md border border-destructive/40 bg-surface px-3 py-2">
+			<AlertTriangle aria-hidden="true" className="mt-0.5 size-3.5 shrink-0 text-destructive" />
+			<div className="flex min-w-0 flex-1 flex-col gap-0.5">
+				<strong className="wrap-anywhere text-[11px] font-medium leading-snug text-destructive">
+					{headline}
+				</strong>
+				{detail ? (
+					<p className="wrap-anywhere text-[10.5px] leading-snug text-muted-foreground">{detail}</p>
+				) : null}
+			</div>
+		</div>
+	);
+}
+
+/**
+ * Prefer the provider's short status line and `additionalDetails` over a raw JSON
+ * dump. Falls back to the stored text when it is already plain language.
+ */
+export function providerErrorCopy(activity: ConversationActivity): {
+	headline: string;
+	detail?: string;
+} {
+	const candidates = [activity.detail?.message, activity.summary, activity.detail?.error];
+	for (const candidate of candidates) {
+		const raw = String(candidate ?? "").trim();
+		if (!raw) continue;
+		const unwrapped = unwrapProviderErrorJson(raw);
+		if (unwrapped) return unwrapped;
+	}
+
+	const headline = String(activity.detail?.message ?? activity.summary ?? "").trim();
+	const extra = String(activity.detail?.error ?? "").trim();
+	if (!headline) return { headline: extra || "Provider error" };
+	if (extra && extra !== headline) return { headline, detail: extra };
+	return { headline };
+}
+
+function unwrapProviderErrorJson(raw: string): { headline: string; detail?: string } | undefined {
+	const parsed = parseJsonObjectSuffix(raw);
+	const err = parsed
+		? parsed.error && typeof parsed.error === "object" && !Array.isArray(parsed.error)
+			? (parsed.error as Record<string, unknown>)
+			: parsed
+		: undefined;
+	const message =
+		typeof err?.message === "string"
+			? err.message.trim()
+			: readJsonStringField(raw, "message");
+	const additional =
+		typeof err?.additionalDetails === "string"
+			? err.additionalDetails.trim()
+			: readJsonStringField(raw, "additionalDetails");
+	if (!message && !additional) return undefined;
+	if (message && additional && additional !== message) {
+		return { headline: message, detail: additional };
+	}
+	return { headline: message || additional };
+}
+
+/** Read a complete string field from an envelope whose trailing JSON was truncated. */
+function readJsonStringField(raw: string, field: "message" | "additionalDetails"): string {
+	const match = new RegExp(`"${field}"\\s*:\\s*("(?:\\\\.|[^"\\\\])*")`).exec(raw);
+	if (!match?.[1]) return "";
+	try {
+		const value = JSON.parse(match[1]) as unknown;
+		return typeof value === "string" ? value.trim() : "";
+	} catch {
+		return "";
+	}
+}
+
+/** AO used to persist `provider error: {…}`; parse the JSON object even when prefixed. */
+function parseJsonObjectSuffix(raw: string): Record<string, unknown> | undefined {
+	const start = raw.indexOf("{");
+	if (start < 0) return undefined;
+	const slice = raw.slice(start).trim();
+	const asObject = (value: unknown): Record<string, unknown> | undefined => {
+		if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+		return value as Record<string, unknown>;
+	};
+	try {
+		return asObject(JSON.parse(slice));
+	} catch {
+		const end = slice.lastIndexOf("}");
+		if (end <= 0) return undefined;
+		try {
+			return asObject(JSON.parse(slice.slice(0, end + 1)));
+		} catch {
+			return undefined;
+		}
+	}
+}
+
+/**
  * Where the provider stopped accepting work until someone signs in.
  *
  * The banner above the timeline is what the user acts on; this row is the record of
@@ -1142,8 +1401,15 @@ export function SteerMessage({ activity }: { activity: ConversationActivity }) {
 	const text = activity.detail?.text ?? activity.summary;
 	return (
 		<div className="flex flex-col items-end gap-1">
-			<div className="w-fit max-w-[min(78%,560px)] whitespace-pre-wrap rounded-[10px] border border-accent-dim bg-raised px-3 py-2.5 text-sm leading-[1.55] text-foreground">
-				{text}
+			<div className="w-fit max-w-[min(78%,560px)] break-words whitespace-pre-wrap rounded-[10px] border border-accent-dim bg-raised px-3 py-2.5 text-sm leading-[1.55] text-foreground">
+				{text ? <p>{text}</p> : null}
+				<ConversationContentItems
+					content={activity.detail?.content ?? []}
+					ariaLabel="Steered attachments"
+					imageLabel="Image"
+					imageAlt={(position) => `Steered attachment ${position}`}
+					className={cn(text && "mt-2")}
+				/>
 			</div>
 			<span className="flex items-center gap-1 text-[11px] text-muted-foreground">
 				<CornerDownRight aria-hidden="true" className="size-3" />

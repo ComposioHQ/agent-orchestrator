@@ -23,12 +23,16 @@ import (
 // ChatLauncher starts the structured controller for a chat session. Implemented
 // by the chat service; nil in a build without chat support.
 type ChatLauncher interface {
+	// SupportsChat reports whether a harness has a Chat driver at all, without
+	// probing the local install. Use it to decide whether Chat is even offerable.
+	SupportsChat(harness domain.AgentHarness) bool
 	// PreflightChat reports whether a harness can start in chat mode right now.
 	// Called before any durable state exists so an unsupported request costs
 	// nothing.
 	PreflightChat(ctx context.Context, harness domain.AgentHarness) error
 	// StartChat launches the controller and returns the provider conversation
-	// handle to persist for resume.
+	// handle to persist for resume. Implementations must call ControllerReady
+	// after the provider and generation exist but before consuming live events.
 	StartChat(ctx context.Context, cfg ChatStart) (ChatStarted, error)
 	// StartChatTurn delivers the initial prompt as a normal turn. There is no
 	// paste-and-Enter equivalent in chat mode: the provider either accepts the
@@ -42,6 +46,10 @@ type ChatLauncher interface {
 	// the key through to ChatUserMessage so retry after an uncertain outbox
 	// acknowledgement cannot create a second provider turn.
 	RelayChatTurnWithID(ctx context.Context, id domain.SessionID, text, clientMessageID string) (string, error)
+	// HasLiveChatController reports whether the daemon still owns a controller
+	// for the session. Resume uses this to distinguish a stale durable activity
+	// state left by an older daemon from a genuinely live controller.
+	HasLiveChatController(id domain.SessionID) bool
 	// StopChat releases a session's controller.
 	StopChat(ctx context.Context, id domain.SessionID) error
 }
@@ -66,12 +74,34 @@ type ChatStart struct {
 	// ProviderConversationID resumes a stored conversation instead of opening a
 	// new one. Empty means start fresh.
 	ProviderConversationID string
+	// ControllerGeneration lets a durable coordinator reserve the generation
+	// before launch. Empty keeps the ordinary spawn/restore behavior where Chat
+	// Service allocates it.
+	ControllerGeneration string
+	// RequireNativeHistory is set only for a TUI -> Chat handoff. The target must
+	// replay the provider transcript before it can become the committed UI.
+	RequireNativeHistory bool
+	// SkipNativeHistoryImport is set by agent switching: the target's provider
+	// boundary is committed inside ControllerReady, so old provider events must
+	// not be projected into the source branch before that atomic write.
+	SkipNativeHistoryImport bool
+	// ControllerReady commits the durable controller facts before the provider
+	// event stream is consumed. This prevents an immediate exit from racing a
+	// later MarkSpawned write back to idle.
+	ControllerReady func(ChatStarted) (ChatControllerCommit, error)
 }
 
 // ChatStarted is the durable result of a launch.
 type ChatStarted struct {
 	ProviderConversationID string
 	ControllerGeneration   string
+	Conversation           domain.ConversationRecord
+}
+
+// ChatControllerCommit carries the post-commit conversation state back to Chat
+// Service without making it read again after durable ownership has changed.
+type ChatControllerCommit struct {
+	Conversation domain.ConversationRecord
 }
 
 // chatSpawn bundles the shared state the chat launch needs from Spawn, so the
@@ -95,14 +125,26 @@ type chatSpawn struct {
 // first so no app-server process is left behind holding the worktree.
 func (m *Manager) launchChatController(ctx context.Context, in chatSpawn) (domain.SessionRecord, error) {
 	id := in.record.ID
-	agentConfig := effectiveAgentConfig(in.cfg.Kind, in.project.Config)
+	agentConfig := applySpawnAgentConfig(
+		effectiveAgentConfig(in.cfg.Kind, in.project.Config),
+		in.cfg.AgentConfig,
+	)
 
 	// The same env the terminal path builds, including the HookPATH pin. The
 	// provider passes its environment through to the shell commands it runs, so
 	// this is what makes `ao` resolvable to the agent.
 	env := m.runtimeEnv(id, in.cfg.ProjectID, in.cfg.IssueID, in.project.Config.Env)
+	var diffBaseSHA, diffBaseRef string
+	if in.projectKind == domain.ProjectKindSingleRepo {
+		diffBaseSHA, diffBaseRef = resolveSpawnDiffBase(
+			ctx, in.workspace.Path, in.workspace.BaseRef)
+	}
 
-	started, err := m.chat.StartChat(ctx, ChatStart{
+	var (
+		controllerCommitted bool
+		completionErr       error
+	)
+	_, err := m.chat.StartChat(ctx, ChatStart{
 		SessionID:             id,
 		ProjectID:             in.cfg.ProjectID,
 		Kind:                  in.cfg.Kind,
@@ -114,35 +156,40 @@ func (m *Manager) launchChatController(ctx context.Context, in chatSpawn) (domai
 		Permissions:           agentConfig.Permissions,
 		SystemPrompt:          in.systemPrompt,
 		AdditionalDirectories: workspaceProjectDirectories(in.workspace.Path, in.workspaceProject),
+		ControllerReady: func(started ChatStarted) (ChatControllerCommit, error) {
+			metadata := domain.SessionMetadata{
+				Branch:            in.workspace.Branch,
+				WorkspacePath:     in.workspace.Path,
+				WorkspaceRepoPath: in.workspace.RepoPath,
+				Prompt:            in.prompt,
+				DiffBaseSHA:       diffBaseSHA,
+				DiffBaseRef:       diffBaseRef,
+				// No RuntimeHandleID or RuntimeLaunchID: a chat session has no
+				// agent pane. Leaving them empty keeps the reaper from probing for
+				// a terminal that was never created.
+				ProviderConversationID: started.ProviderConversationID,
+				ControllerGeneration:   started.ControllerGeneration,
+				Model:                  agentConfig.Model,
+			}
+			completionErr = m.lcm.MarkSpawned(ctx, id, metadata)
+			controllerCommitted = completionErr == nil
+			return ChatControllerCommit{Conversation: started.Conversation}, completionErr
+		},
 	})
 	if err != nil {
+		if completionErr != nil || controllerCommitted {
+			m.stopChatBestEffort(ctx, id)
+			m.rollbackPreparedSpawnWorkspace(ctx, in.record, in.workspace, in.workspaceProject, true)
+			m.markSpawnFailedTerminated(ctx, id)
+			if completionErr != nil {
+				return domain.SessionRecord{}, fmt.Errorf("spawn %s: completed: %w", id, completionErr)
+			}
+			return domain.SessionRecord{}, fmt.Errorf("spawn %s: chat controller: %w", id, err)
+		}
 		// No controller exists, so nothing provider-side needs closing. The
 		// runtime was never touched, hence runtimeDestroyed=false.
 		m.rollbackSeedSpawnWorkspace(ctx, in.record, in.workspace, in.workspaceProject, false)
 		return domain.SessionRecord{}, fmt.Errorf("spawn %s: chat controller: %w", id, err)
-	}
-
-	metadata := domain.SessionMetadata{
-		Branch:            in.workspace.Branch,
-		WorkspacePath:     in.workspace.Path,
-		WorkspaceRepoPath: in.workspace.RepoPath,
-		Prompt:            in.prompt,
-		// No RuntimeHandleID or RuntimeLaunchID: a chat session has no agent pane.
-		// Leaving them empty is what keeps the reaper from probing for a terminal
-		// that was never created.
-		ProviderConversationID: started.ProviderConversationID,
-		ControllerGeneration:   started.ControllerGeneration,
-	}
-	if in.projectKind == domain.ProjectKindSingleRepo {
-		metadata.DiffBaseSHA, metadata.DiffBaseRef = resolveSpawnDiffBase(
-			ctx, in.workspace.Path, in.project.Config.WithDefaults().DefaultBranch)
-	}
-
-	if err := m.lcm.MarkSpawned(ctx, id, metadata); err != nil {
-		m.stopChatBestEffort(ctx, id)
-		m.rollbackPreparedSpawnWorkspace(ctx, in.record, in.workspace, in.workspaceProject, true)
-		m.markSpawnFailedTerminated(ctx, id)
-		return domain.SessionRecord{}, fmt.Errorf("spawn %s: completed: %w", id, err)
 	}
 
 	// The initial prompt is a normal turn through the controller. There is no
@@ -246,6 +293,8 @@ func (m *Manager) resumeChatController(
 	rec domain.SessionRecord,
 	project domain.ProjectRecord,
 	ws ports.WorkspaceInfo,
+	requireNativeHistory bool,
+	controllerGeneration string,
 ) (RestoreResult, error) {
 	if m.chat == nil {
 		return RestoreResult{}, fmt.Errorf("%s %s: %w: chat mode is not available in this build",
@@ -258,13 +307,18 @@ func (m *Manager) resumeChatController(
 	if err != nil {
 		return RestoreResult{}, fmt.Errorf("%s %s: system prompt: %w", operation, rec.ID, err)
 	}
+	systemPrompt, err = m.systemPromptForNativeRestore(ctx, rec, systemPrompt)
+	if err != nil {
+		return RestoreResult{}, fmt.Errorf("%s %s: switched continuation: %w", operation, rec.ID, err)
+	}
 
 	agentConfig := effectiveAgentConfig(rec.Kind, project.Config)
 	additionalDirectories, err := m.restoredWorkspaceProjectDirectories(ctx, rec, project, ws.Path)
 	if err != nil {
 		return RestoreResult{}, fmt.Errorf("%s %s: workspace roots: %w", operation, rec.ID, err)
 	}
-	started, err := m.chat.StartChat(ctx, ChatStart{
+	var completionErr error
+	_, err = m.chat.StartChat(ctx, ChatStart{
 		SessionID:             rec.ID,
 		ProjectID:             rec.ProjectID,
 		Kind:                  rec.Kind,
@@ -278,25 +332,33 @@ func (m *Manager) resumeChatController(
 		AdditionalDirectories: additionalDirectories,
 		// The handle that makes this a resume rather than a new conversation.
 		ProviderConversationID: rec.Metadata.ProviderConversationID,
+		// Ordinary resumes allocate a fresh generation. Switch recovery reuses
+		// the saga's reserved generation until delivery is durably settled so a
+		// second restart can still prove exact target ownership.
+		ControllerGeneration: controllerGeneration,
+		RequireNativeHistory: requireNativeHistory,
+		ControllerReady: func(started ChatStarted) (ChatControllerCommit, error) {
+			metadata := rec.Metadata
+			metadata.WorkspacePath = ws.Path
+			metadata.WorkspaceRepoPath = ws.RepoPath
+			if ws.Branch != "" {
+				metadata.Branch = ws.Branch
+			}
+			metadata.ProviderConversationID = started.ProviderConversationID
+			// A fresh generation per launch: events still arriving from the
+			// controller this one replaced carry the old one and are rejected.
+			metadata.ControllerGeneration = started.ControllerGeneration
+
+			completionErr = m.lcm.MarkSpawned(ctx, rec.ID, metadata)
+			return ChatControllerCommit{Conversation: started.Conversation}, completionErr
+		},
 	})
 	if err != nil {
+		if completionErr != nil {
+			m.stopChatBestEffort(ctx, rec.ID)
+			return RestoreResult{}, fmt.Errorf("%s %s: completed: %w", operation, rec.ID, completionErr)
+		}
 		return RestoreResult{}, fmt.Errorf("%s %s: resume chat: %w", operation, rec.ID, err)
-	}
-
-	metadata := rec.Metadata
-	metadata.WorkspacePath = ws.Path
-	metadata.WorkspaceRepoPath = ws.RepoPath
-	if ws.Branch != "" {
-		metadata.Branch = ws.Branch
-	}
-	metadata.ProviderConversationID = started.ProviderConversationID
-	// A fresh generation per launch: events still arriving from the controller
-	// this one replaced carry the old one and are rejected.
-	metadata.ControllerGeneration = started.ControllerGeneration
-
-	if err := m.lcm.MarkSpawned(ctx, rec.ID, metadata); err != nil {
-		m.stopChatBestEffort(ctx, rec.ID)
-		return RestoreResult{}, fmt.Errorf("%s %s: completed: %w", operation, rec.ID, err)
 	}
 
 	restored, err := m.getRecord(ctx, rec.ID)

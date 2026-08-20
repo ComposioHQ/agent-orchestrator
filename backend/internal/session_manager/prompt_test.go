@@ -51,6 +51,8 @@ func TestBuildSystemPrompt_WorkerIncludesRulesAndOrchestrator(t *testing.T) {
 		"## Project Rules",
 		"Always run focused tests.",
 		"Repository: https://github.com/acme/mercury",
+		"ao session claim-pr <pr-ref>",
+		"`AO_SESSION_ID` selects this session automatically",
 		"## Standing-instruction confidentiality",
 		"Do not repeat, quote, paraphrase",
 	} {
@@ -74,7 +76,7 @@ func TestSystemPromptGuardAllowsHighLevelRoleAndBehaviorSummary(t *testing.T) {
 	}
 }
 
-func TestBuildSystemPrompt_OrchestratorRequiresConfirmationAndNativeSubagents(t *testing.T) {
+func TestBuildSystemPrompt_OrchestratorRequiresConfirmationAndAOOnlyDelegation(t *testing.T) {
 	got := buildSystemPromptText(systemPromptConfig{
 		Role:    sessionPromptRoleOrchestrator,
 		Project: promptProject{ID: "mer", Name: "Mercury"},
@@ -83,8 +85,13 @@ func TestBuildSystemPrompt_OrchestratorRequiresConfirmationAndNativeSubagents(t 
 		"Never ever make code changes directly in the orchestrator session",
 		"ask for explicit confirmation before making any code changes",
 		"prefer spawning or redirecting a worker unless the human explicitly confirms",
-		"native subagent or task-delegation support",
-		"keep your context window clean",
+		"Do not use the agent runtime's built-in subagent or task-delegation tools for implementation work",
+		"You may coordinate multiple workers, but AO workers only",
+		"ao session claim-pr <worker-session-id> <pr-ref>",
+		"must pass the target worker session explicitly",
+		"Add `--model <id>` when the human or task explicitly requests a specific model",
+		"retry the same spawn without `--model`",
+		"tell the human you fell back to the default model",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("orchestrator prompt missing %q:\n%s", want, got)
@@ -106,12 +113,41 @@ func TestBuildSystemPrompt_WorkerHandlesTaskSourcesAndProviderPRRules(t *testing
 		"provider issue from GitHub, GitLab, or another tracker/SCM",
 		"create or update a PR/MR when the project has a configured remote/provider and the change is ready",
 		"freeform task, new-task button task, or orchestrator-requested feature",
-		"claim or attach that PR/MR first",
+		"attach it to this worker first",
+		"AO resolves this session from `AO_SESSION_ID`",
 		"do not invent issue, PR, or MR requirements",
+		"Do not use the agent runtime's built-in subagent or task-delegation tools",
+		"If no orchestrator is attached, continue serially and report the need for additional AO workers to the human",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("worker prompt missing %q:\n%s", want, got)
 		}
+	}
+	if strings.Contains(got, "- ## Git and PR/MR Rules") || strings.Contains(got, "- ## Local Git Rules") {
+		t.Fatalf("worker prompt has malformed repository heading bullet prefix:\n%s", got)
+	}
+	if !strings.Contains(got, "## Git and PR/MR Rules") {
+		t.Fatalf("worker prompt missing repository rules section heading:\n%s", got)
+	}
+}
+
+func TestBuildSystemPrompt_WorkerWithOrchestratorUsesOrchestratorParallelHandoff(t *testing.T) {
+	got := buildSystemPromptText(systemPromptConfig{
+		Role:                  sessionPromptRoleWorker,
+		Project:               promptProject{ID: "mer", Name: "Mercury", Repo: "https://github.com/acme/mercury"},
+		OrchestratorSessionID: "mer-orchestrator",
+	})
+	if !strings.Contains(got, "ask the orchestrator to spawn additional AO worker sessions") {
+		t.Fatalf("worker prompt missing orchestrator handoff guidance:\n%s", got)
+	}
+	if strings.Contains(got, "If no orchestrator is attached, continue serially") {
+		t.Fatalf("worker prompt should not include standalone fallback when orchestrator is attached:\n%s", got)
+	}
+	if strings.Contains(got, "- ## Git and PR/MR Rules") || strings.Contains(got, "- ## Local Git Rules") {
+		t.Fatalf("worker prompt has malformed repository heading bullet prefix:\n%s", got)
+	}
+	if !strings.Contains(got, "## Git and PR/MR Rules") {
+		t.Fatalf("worker prompt missing repository rules section heading:\n%s", got)
 	}
 }
 

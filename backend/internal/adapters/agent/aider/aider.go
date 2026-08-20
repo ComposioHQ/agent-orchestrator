@@ -19,6 +19,7 @@ import (
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/agentbase"
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/binaryutil"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/hookutil"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
@@ -149,6 +150,14 @@ func ResolveAiderBinary(ctx context.Context) (string, error) {
 				return "", err
 			}
 		}
+		for _, candidate := range binaryutil.WindowsPackageManagerBinCandidates("aider") {
+			if hookutil.IsExecutableFile(candidate) {
+				return candidate, nil
+			}
+			if err := ctx.Err(); err != nil {
+				return "", err
+			}
+		}
 		return "", fmt.Errorf("aider: %w", ports.ErrAgentBinaryNotFound)
 	}
 
@@ -162,10 +171,11 @@ func ResolveAiderBinary(ctx context.Context) (string, error) {
 	}
 	if home, err := os.UserHomeDir(); err == nil {
 		candidates = append([]string{filepath.Join(home, ".local", "bin", "aider")}, candidates...)
+		candidates = append(candidates, binaryutil.UnixPackageManagerBinCandidates(home, "aider")...)
 	}
 
 	for _, candidate := range candidates {
-		if hookutil.FileExists(candidate) {
+		if hookutil.IsExecutableFile(candidate) {
 			return candidate, nil
 		}
 		if err := ctx.Err(); err != nil {

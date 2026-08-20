@@ -27,12 +27,24 @@ const cancellablePhases = new Set<SessionInterfaceTransition["phase"]>([
 	"draining",
 ]);
 
+const nativeSessionReadinessPoll = 1_000;
+
 export function interfaceTransitionIsActive(transition?: SessionInterfaceTransition): boolean {
 	return Boolean(transition && activePhases.has(transition.phase));
 }
 
 export function interfaceTransitionIsCancellable(transition?: SessionInterfaceTransition): boolean {
 	return Boolean(transition && cancellablePhases.has(transition.phase));
+}
+
+export function interfaceTransitionHasUnacknowledgedNotice(
+	transition?: SessionInterfaceTransition,
+): boolean {
+	return Boolean(
+		transition &&
+			!transition.noticeAcknowledgedAt &&
+			(transition.phase === "failed" || transition.phase === "recovery_required"),
+	);
 }
 
 export function sessionInterfaceTransitionQueryKey(sessionId: string) {
@@ -60,8 +72,18 @@ export function useSessionInterfaceTransition(sessionId: string | undefined) {
 			if (error) throw error;
 			return data as SessionInterfaceTransitionStatus;
 		},
-		refetchInterval: (state) =>
-			interfaceTransitionIsActive(state.state.data?.transition) ? 250 : false,
+		refetchInterval: (state) => {
+			const status = state.state.data;
+			if (interfaceTransitionIsActive(status?.transition)) return 250;
+			// A missing or not-yet-current native identity is transient while the
+			// terminal's session-start hook is arriving. Recheck only those readiness
+			// states so supported switches enable without polling permanently
+			// unsupported harnesses or ordinary idle sessions.
+			return status?.reasonCode === "NATIVE_SESSION_MISSING" ||
+				status?.reasonCode === "NATIVE_SESSION_UNVERIFIED"
+				? nativeSessionReadinessPoll
+				: false;
+		},
 		retry: 1,
 	});
 
@@ -98,6 +120,38 @@ export function useSessionInterfaceTransition(sessionId: string | undefined) {
 			if (error) throw error;
 		},
 		onSuccess: () => {
+			if (sessionId) {
+				void queryClient.invalidateQueries({
+					queryKey: sessionInterfaceTransitionQueryKey(sessionId),
+				});
+			}
+		},
+	});
+
+	const acknowledgeNotice = useMutation({
+		mutationFn: async (transitionId: string) => {
+			const { data, error } = await apiClient.PUT(
+				"/api/v1/sessions/{sessionId}/interface-transition/{transitionId}/notice-acknowledgement",
+				{
+					params: {
+						path: { sessionId: sessionId as string, transitionId },
+					},
+				},
+			);
+			if (error) throw error;
+			return data;
+		},
+		onSuccess: (response) => {
+			if (!sessionId) return;
+			queryClient.setQueryData<SessionInterfaceTransitionStatus>(
+				sessionInterfaceTransitionQueryKey(sessionId),
+				(current) =>
+					current?.transition?.id === response.transition.id
+						? { ...current, transition: response.transition }
+						: current,
+			);
+		},
+		onSettled: () => {
 			if (sessionId) {
 				void queryClient.invalidateQueries({
 					queryKey: sessionInterfaceTransitionQueryKey(sessionId),
@@ -153,5 +207,10 @@ export function useSessionInterfaceTransition(sessionId: string | undefined) {
 		cancel: cancel.mutateAsync,
 		cancelling: cancel.isPending,
 		cancelError: cancel.error ? apiErrorMessage(cancel.error) : undefined,
+		acknowledgeNotice: acknowledgeNotice.mutateAsync,
+		acknowledgingNotice: acknowledgeNotice.isPending,
+		acknowledgeNoticeError: acknowledgeNotice.error
+			? apiErrorMessage(acknowledgeNotice.error)
+			: undefined,
 	};
 }

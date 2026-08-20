@@ -55,6 +55,19 @@ surface (`npm run sqlc`, `npm run api`).
   `/prs/{id}/resolve-comments`.
 - Review routes registered: `GET /reviews`, `POST /reviews/execute`,
   `POST /reviews/{id}/send`.
+- Interactive reviewer panes for Aider, Agy, Amp, Auggie, Autohand,
+  Claude Code, Cline, Codex, Continue, GitHub Copilot, Crush, Cursor, Devin,
+  Droid, Goose, Grok, Kilo Code, Kimchi, Kiro, Kimi, OpenCode, Pi, Qwen, and Vibe. Pi uses an AO-data-owned extension with built-in/project
+  resources disabled, structured read-only inspection/reporting tools, and
+  Escape-based turn cancellation. Kiro also uses its native Escape
+  cancellation. Continue, Qwen, and Vibe also use Escape cancellation. Agy,
+  Continue, Devin, Droid, Goose, Kimchi, Kimi, Qwen, and Vibe are explicitly experimental and host-trusted. Grok, Crush, Auggie, Cline, and Autohand are experimental user-approved reviewers that retain their native approval prompts instead of receiving broad unattended flags:
+  native modes, autonomous settings, and prompts are not OS or network containment.
+- The provider-neutral interactive-reviewer capability gateway and neutral
+  AO-owned working-directory contract are available. The experimental
+  host-trusted adapters remain candidates for future contained execution once
+  their documented sandbox, environment-replacement, broker, and gateway
+  prerequisites are implemented.
 - Durable dashboard notifications for `needs_input`, `ready_to_merge`,
   `pr_merged`, and `pr_closed_unmerged`: backend enrichment/persistence,
   cursor-paginated read/unread history, live notification stream, and read
@@ -69,7 +82,7 @@ surface (`npm run sqlc`, `npm run api`).
 - Terminal mux over WebSocket (`/mux`): per-client `tmux attach` PTY on
   Darwin/Linux; conpty loopback pty-host on Windows.
 - Lifecycle reducer plus reaper (`internal/observe/reaper`).
-- Agent adapter platform under `internal/adapters/agent/` (23 adapters) with a
+- Agent adapter platform under `internal/adapters/agent/` (25 adapters) with a
   registry and `ao hooks` activity dispatch.
 - OpenAPI spec generated from Go DTOs; frontend TS types generated from it and
   drift-checked in CI.
@@ -89,9 +102,18 @@ surface (`npm run sqlc`, `npm run api`).
   the Browser panel is hidden. Network capture is off by default, tab-scoped,
   bounded, automatically expires, and omits bodies and sensitive values. Tabs
   within one worker share an ephemeral Electron profile; different workers
-  have isolated cookies and web storage. The toolbar activity signal is scoped
-  to actual agent browser commands; annotation progress is separate and its
+  have isolated cookies and web storage. The browser tab menu is only a tab
+  navigation control: it does not render a global activity pill or a
+  tab-specific agent marker. Annotation progress is separate and its
   successful-delivery confirmation clears automatically.
+- Chromium's official DevTools frontend is available from the direct Browser
+  toolbar button, `Ctrl+Shift+I` (Cmd+Option+I on macOS), the titlebar View menu,
+  and `ao browser devtools`. It opens in a detached desktop window with normal
+  OS close controls and is attached through the same worker-scoped CDP
+  multiplexer as the agent, so Elements, Console, Network, Sources, and other
+  DevTools panels can remain open while agent automation continues. The
+  user-facing DevTools connection is unrestricted; agent CDP commands remain
+  policy-limited.
 - Preview targets are explicit: `ao preview`, `ao preview <target>`, or
   `ao preview start` selects what the panel shows. The desktop poller no longer
   auto-discovers a static entry point merely because a fresh worker exists.
@@ -105,9 +127,10 @@ surface (`npm run sqlc`, `npm run api`).
   surface for TUI, or the durable Chat timeline/composer for Chat. Chat retains
   access to session-scoped worktree shells without creating an agent tmux pane.
 - Compatible Claude Code and Codex sessions expose an in-session “Open Chat” /
-  “Open Terminal UI” action. Idle sessions switch directly; busy sessions offer
-  an explicit finish-and-drain or stop-and-interrupt policy and show durable
-  progress/recovery state.
+  “Open Terminal UI” action. Chat→TUI is the recovery path and always fences
+  queued work before interrupting the active turn; a busy TUI→Chat switch offers
+  the explicit finish-and-drain or stop-and-interrupt choice. Both directions
+  show durable progress/recovery state.
 - Desktop status and SCM summary V1: session status comes from
   `GET /api/v1/sessions`; visible/active PR context comes from
   `GET /api/v1/sessions/{sessionId}/pr`; `GET /api/v1/events` is kept open as
@@ -148,11 +171,23 @@ surface (`npm run sqlc`, `npm run api`).
 
 ## In flight / not yet a runtime feature
 
-- **Cross-interface visual history import**: provider-native context continues
-  across a compatible handoff, and Chat history already recorded by AO remains
-  durable. A first TUI→Chat switch does not reconstruct terminal screen output
-  as structured AO messages/tool cards; doing so requires a provider history
-  import contract with stable identities and deduplication.
+- **Browser automation acceptance**: the runtime implementation is complete.
+  AO packages one
+  checksum-pinned Vercel `agent-browser` Rust binary and routes a deliberately
+  limited semantic command set through an authenticated, worker-scoped CDP
+  bridge to the existing AO Preview. The binary is prepared automatically for
+  desktop development and releases and is the single engine behind ordinary
+  `ao browser` inspection and interaction commands. AO retains only its
+  sanitized network observer and temporary highlight cleanup as safety/UI
+  plumbing. Focused checks and a fresh Windows x64 package pass; macOS/Linux
+  packaging and manual lifecycle acceptance remain release verification work.
+- **Cross-interface raw terminal history import**: compatible providers now
+  replay settled native history with stable identities (`thread/read` for Codex,
+  ACP `session/load` where advertised), and AO imports it idempotently before
+  activating Chat. ACP `session/resume` preserves model context but does not
+  replay history, so a TUI→Chat handoff fails closed for resume-only agents.
+  AO deliberately does not reconstruct PTY scrollback as messages/tool cards;
+  arbitrary terminal bytes are redraw artifacts, not canonical provider events.
 - **In-flight tool portability**: drain can finish accepted work and interrupt
   can cancel it, but no common provider protocol serializes a currently executing
   tool call or detached background process for adoption by another controller.

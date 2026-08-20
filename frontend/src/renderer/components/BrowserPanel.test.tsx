@@ -1,8 +1,9 @@
-import { act, render, renderHook, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, renderHook, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { BrowserPanel, BrowserPanelView, useBrowserAnnotationQueue } from "./BrowserPanel";
 import { useBrowserView, type BrowserNavState } from "../hooks/useBrowserView";
+import { OPEN_BROWSER_OVERLAY_SELECTOR } from "../lib/dom-selectors";
 import type { WorkspaceSession } from "../types/workspace";
 import type {
 	BrowserAnnotationCancelPayload,
@@ -28,8 +29,11 @@ const hookState = vi.hoisted(() => ({
 	stop: vi.fn(),
 	selectTab: vi.fn(),
 	closeTab: vi.fn(),
-	prepareForOverlay: vi.fn(async () => undefined),
-	finishOverlay: vi.fn(),
+	openTab: vi.fn(),
+	reorderTabs: vi.fn(),
+	openDevTools: vi.fn(),
+	closeDevTools: vi.fn(),
+	devtoolsState: { viewId: "42:sess-1", open: false, activeTabId: "t1" },
 	setAnnotationMode: vi.fn(),
 	tabs: [{ id: "t1", url: "", title: "", active: true }],
 	activeTabId: "t1",
@@ -62,12 +66,15 @@ vi.mock("../hooks/useBrowserView", () => ({
 			tabs: hookState.tabs,
 			activeTabId: hookState.activeTabId,
 			tabNotice: hookState.tabNotice,
-			agentBrowserActive: hookState.agentBrowserActive,
-			agentBrowserActivity: hookState.agentBrowserActivity,
 			selectTab: hookState.selectTab,
 			closeTab: hookState.closeTab,
-			prepareForOverlay: hookState.prepareForOverlay,
-			finishOverlay: hookState.finishOverlay,
+			openTab: hookState.openTab,
+			reorderTabs: hookState.reorderTabs,
+			agentBrowserActive: hookState.agentBrowserActive,
+			agentBrowserActivity: hookState.agentBrowserActivity,
+			devtoolsState: hookState.devtoolsState,
+			openDevTools: hookState.openDevTools,
+			closeDevTools: hookState.closeDevTools,
 			annotationMode: false,
 			setAnnotationMode: hookState.setAnnotationMode,
 		};
@@ -102,8 +109,7 @@ function annotationPayload(instruction: string): ElementAnnotationPayload {
 				tag: "button",
 				classes: [],
 				selector: "button",
-				rect: { x: 0, y: 0, width: 80, height: 30 },
-				nearbyText: [],
+				size: { width: 80, height: 30 },
 				computedStyle: {},
 			},
 		},
@@ -153,8 +159,17 @@ describe("BrowserPanel", () => {
 		hookState.stop.mockReset();
 		hookState.selectTab.mockReset();
 		hookState.closeTab.mockReset();
-		hookState.prepareForOverlay.mockReset();
-		hookState.finishOverlay.mockReset();
+		hookState.openDevTools.mockReset();
+		hookState.closeDevTools.mockReset();
+		hookState.devtoolsState = { viewId: "42:sess-1", open: false, activeTabId: "t1" };
+		hookState.navState = {
+			viewId: "42:sess-1",
+			url: "",
+			title: "",
+			canGoBack: false,
+			canGoForward: false,
+			isLoading: false,
+		};
 		hookState.setAnnotationMode.mockReset();
 		hookState.setAnnotationMode.mockResolvedValue(undefined);
 		postMock.mockReset();
@@ -177,8 +192,6 @@ describe("BrowserPanel", () => {
 		hookState.tabs = [{ id: "t1", url: "", title: "", active: true }];
 		hookState.activeTabId = "t1";
 		hookState.tabNotice = "";
-		hookState.agentBrowserActive = false;
-		hookState.agentBrowserActivity = null;
 		hookState.navState = {
 			viewId: "42:sess-1",
 			url: "",
@@ -210,6 +223,27 @@ describe("BrowserPanel", () => {
 		expect(input).toHaveValue("http://localhost:4173/");
 	});
 
+	it("keeps the maximized tab rail on the right side of the viewport", () => {
+		window.localStorage.removeItem("ao-browser-tabs-w");
+		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut session={session} />);
+
+		const viewport = screen.getByTestId("browser-viewport");
+		const rail = screen.getByTestId("browser-tabs-rail");
+		const resizeHandle = screen.getByTestId("browser-tabs-resize-handle");
+		expect(viewport.nextElementSibling).toBe(rail);
+		expect(rail).toHaveClass("border-l");
+		expect(rail).not.toHaveClass("border-r");
+		expect(resizeHandle).toHaveClass("left-0");
+
+		fireEvent.pointerDown(resizeHandle, { clientX: 220 });
+		fireEvent.pointerMove(window, { clientX: 190 });
+		fireEvent.pointerUp(window);
+
+		expect(document.documentElement.style.getPropertyValue("--ao-browser-tabs-w")).toBe("250px");
+		expect(window.localStorage.getItem("ao-browser-tabs-w")).toBe("250");
+		window.localStorage.removeItem("ao-browser-tabs-w");
+	});
+
 	it("threads the session preview URL into the browser view (which drives navigation)", () => {
 		render(
 			<BrowserPanel
@@ -221,6 +255,20 @@ describe("BrowserPanel", () => {
 		);
 
 		expect(hookState.previewUrl).toBe("file:///tmp/preview/index.html");
+	});
+
+	it("uses the active app theme for the static browser preview", () => {
+		hookState.navState = { ...hookState.navState, url: "http://localhost:5173/" };
+		const ao = window.ao;
+		Object.defineProperty(window, "ao", { configurable: true, value: undefined });
+		try {
+			render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
+
+			const preview = screen.getByText("Demo app preview").closest(".bg-preview, .bg-background");
+			expect(preview).toHaveClass("bg-background", "text-foreground");
+		} finally {
+			Object.defineProperty(window, "ao", { configurable: true, value: ao });
+		}
 	});
 
 	it("binds navigation controls to nav state", async () => {
@@ -242,7 +290,7 @@ describe("BrowserPanel", () => {
 		expect(hookState.stop).toHaveBeenCalled();
 	});
 
-	it("shows a compact tab count and lets the user select and close tabs", async () => {
+	it("lets the user select a tab from the hover flyout", async () => {
 		hookState.tabs = [
 			{ id: "t1", url: "http://localhost:3000/", title: "First app", active: false },
 			{ id: "t2", url: "http://localhost:4173/", title: "Second app", active: true },
@@ -250,17 +298,93 @@ describe("BrowserPanel", () => {
 		hookState.activeTabId = "t2";
 		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
 
-		const tabsButton = screen.getByRole("button", { name: "Browser tabs (2)" });
-		expect(tabsButton).toHaveClass("bg-accent-weak");
-		await userEvent.click(tabsButton);
-		await userEvent.click(screen.getByText("First app"));
-		await waitFor(() => expect(hookState.selectTab).toHaveBeenCalledWith("t1"));
-		expect(hookState.finishOverlay).toHaveBeenCalledTimes(1);
-		expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+		// Docked defaults to a collapsed (0px) rail once there's more than one
+		// tab, so tabs are only reachable through the hover flyout unless the
+		// user has pinned the rail — same open sequence as the flyout tests below.
+		vi.useFakeTimers();
+		try {
+			fireEvent.pointerEnter(screen.getByTestId("browser-tabs-rail"));
+			act(() => {
+				vi.advanceTimersByTime(300);
+			});
+		} finally {
+			vi.useRealTimers();
+		}
 
-		await userEvent.click(tabsButton);
-		await userEvent.click(screen.getByRole("menuitem", { name: "Close tab First app" }));
-		expect(hookState.closeTab).toHaveBeenCalledWith("t1");
+		await userEvent.click(screen.getByRole("button", { name: "First app" }));
+
+		await waitFor(() => expect(hookState.selectTab).toHaveBeenCalledWith("t1"));
+	});
+
+	it("does not render a tab-specific agent marker", async () => {
+		hookState.navState = { ...hookState.navState, url: "http://localhost:5173/" };
+		hookState.tabs = [
+			{ id: "t1", url: "http://localhost:3000/", title: "First app", active: false },
+			{ id: "t2", url: "http://localhost:4173/", title: "Second app", active: true },
+		];
+		hookState.activeTabId = "t2";
+		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
+
+		vi.useFakeTimers();
+		try {
+			fireEvent.pointerEnter(screen.getByTestId("browser-tabs-rail"));
+			act(() => {
+				vi.advanceTimersByTime(300);
+			});
+		} finally {
+			vi.useRealTimers();
+		}
+
+		expect(screen.queryByText("Agent", { exact: true })).not.toBeInTheDocument();
+	});
+
+	it("opens DevTools from a direct toolbar control", async () => {
+		hookState.navState = { ...hookState.navState, url: "http://localhost:3000/" };
+		const { rerender } = render(
+			<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />,
+		);
+		const toolbarButtonCount = screen.getAllByRole("button").length;
+
+		const openButton = screen.getByRole("button", { name: "Open DevTools" });
+		expect(openButton).toHaveAttribute("aria-pressed", "false");
+		await userEvent.click(openButton);
+		expect(hookState.openDevTools).toHaveBeenCalledOnce();
+
+		hookState.devtoolsState = { viewId: "42:sess-1", open: true, activeTabId: "t1" };
+		rerender(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
+		expect(screen.getAllByRole("button")).toHaveLength(toolbarButtonCount);
+		const closeButton = screen.getByRole("button", { name: "Close DevTools" });
+		expect(closeButton).toHaveAttribute("aria-pressed", "true");
+		expect(closeButton).toHaveClass(
+			"bg-accent-strong",
+			"text-accent-foreground",
+			"hover:bg-accent-strong",
+			"dark:hover:bg-accent-strong",
+		);
+		await userEvent.click(closeButton);
+		expect(hookState.closeDevTools).toHaveBeenCalledOnce();
+	});
+
+	it("disables DevTools until the active tab has a page", () => {
+		const { rerender } = render(
+			<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />,
+		);
+		expect(screen.getByRole("button", { name: "Open DevTools" })).toBeDisabled();
+
+		hookState.navState = { ...hookState.navState, url: "http://localhost:3000/" };
+		rerender(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
+		expect(screen.getByRole("button", { name: "Open DevTools" })).toBeEnabled();
+	});
+
+	it("marks blank native panels as opaque and loaded panels as live", () => {
+		const { rerender } = render(
+			<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />,
+		);
+		expect(screen.getByTestId("browser-panel")).toHaveAttribute("data-browser-native-page", "empty");
+
+		hookState.navState = { ...hookState.navState, url: "http://localhost:3000/" };
+		rerender(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
+		expect(screen.getByTestId("browser-panel")).toHaveAttribute("data-browser-native-page", "live");
 	});
 
 	it("releases the tabs overlay when tab selection fails", async () => {
@@ -271,36 +395,126 @@ describe("BrowserPanel", () => {
 		hookState.selectTab.mockRejectedValueOnce(new Error("selection failed"));
 		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
 
-		await userEvent.click(screen.getByRole("button", { name: "Browser tabs (2)" }));
-		await userEvent.click(screen.getByText("Second app"));
+		vi.useFakeTimers();
+		try {
+			fireEvent.pointerEnter(screen.getByTestId("browser-tabs-rail"));
+			act(() => {
+				vi.advanceTimersByTime(300);
+			});
+		} finally {
+			vi.useRealTimers();
+		}
 
-		await waitFor(() => expect(hookState.finishOverlay).toHaveBeenCalled());
-		expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+		await userEvent.click(screen.getByRole("button", { name: "Second app" }));
+
+		await waitFor(() => expect(hookState.selectTab).toHaveBeenCalledWith("t2"));
 	});
 
-	it("releases the tabs overlay when the menu is dismissed", async () => {
+	it("opens the flyout on hover, after the hover-intent delay", () => {
 		hookState.tabs = [
 			{ id: "t1", url: "http://localhost:3000/", title: "First app", active: true },
 			{ id: "t2", url: "http://localhost:4173/", title: "Second app", active: false },
 		];
 		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
+		const rail = screen.getByTestId("browser-tabs-rail");
+		const flyout = screen.getByTestId("browser-tabs-flyout");
 
-		await userEvent.click(screen.getByRole("button", { name: "Browser tabs (2)" }));
-		expect(await screen.findByRole("menu")).toBeInTheDocument();
-		hookState.finishOverlay.mockClear();
+		vi.useFakeTimers();
+		try {
+			fireEvent.pointerEnter(rail);
+			expect(flyout).toHaveAttribute("data-state", "closed");
 
-		await userEvent.keyboard("{Escape}");
+			act(() => {
+				vi.advanceTimersByTime(300);
+			});
+			expect(flyout).toHaveAttribute("data-state", "open");
+			expect(flyout).toHaveTextContent("First app");
 
-		await waitFor(() => expect(hookState.finishOverlay).toHaveBeenCalledTimes(1));
-		expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+			fireEvent.pointerLeave(rail);
+			act(() => {
+				vi.advanceTimersByTime(300);
+			});
+			expect(flyout).toHaveAttribute("data-state", "closed");
+		} finally {
+			vi.useRealTimers();
+		}
 	});
 
-	it("surfaces a popup-created tab without adding a full tab strip", () => {
+	it("lets the user close a tab from the hover flyout", async () => {
+		hookState.tabs = [
+			{ id: "t1", url: "http://localhost:3000/", title: "First app", active: false },
+			{ id: "t2", url: "http://localhost:4173/", title: "Second app", active: true },
+		];
+		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
+
+		vi.useFakeTimers();
+		try {
+			fireEvent.pointerEnter(screen.getByTestId("browser-tabs-rail"));
+			act(() => {
+				vi.advanceTimersByTime(300);
+			});
+		} finally {
+			vi.useRealTimers();
+		}
+
+		await userEvent.click(screen.getByRole("button", { name: "Close tab First app" }));
+
+		expect(hookState.closeTab).toHaveBeenCalledWith("t1");
+	});
+
+	it("keeps the hover flyout open after closing a tab, since the cursor is still over it", async () => {
+		hookState.tabs = [
+			{ id: "t1", url: "http://localhost:3000/", title: "First app", active: false },
+			{ id: "t2", url: "http://localhost:4173/", title: "Second app", active: true },
+		];
+		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
+		const flyout = screen.getByTestId("browser-tabs-flyout");
+
+		vi.useFakeTimers();
+		try {
+			fireEvent.pointerEnter(screen.getByTestId("browser-tabs-rail"));
+			act(() => {
+				vi.advanceTimersByTime(300);
+			});
+			expect(flyout).toHaveAttribute("data-state", "open");
+		} finally {
+			vi.useRealTimers();
+		}
+
+		await userEvent.click(screen.getByRole("button", { name: "Close tab First app" }));
+
+		expect(flyout).toHaveAttribute("data-state", "open");
+	});
+
+	it("surfaces a popup-created tab notice alongside the rail", () => {
 		hookState.tabNotice = "Opened new tab";
 		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
 
-		expect(screen.getByRole("status")).toHaveTextContent("Opened new tab");
-		expect(screen.getByRole("button", { name: "Browser tabs (1)" })).toBeInTheDocument();
+		// Not getByRole("status"): the rail's DndContext renders its own
+		// role="status" live region for drag accessibility announcements.
+		expect(screen.getByText("Opened new tab")).toBeInTheDocument();
+		expect(screen.getByTestId("browser-tabs-rail")).toBeInTheDocument();
+	});
+
+	it("keeps the tabs rail on the right of the viewport whether docked or popped out", () => {
+		hookState.tabs = [
+			{ id: "t1", url: "http://a.test", title: "A", active: true },
+			{ id: "t2", url: "http://b.test", title: "B", active: false },
+		];
+
+		const { rerender } = render(
+			<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />,
+		);
+		let viewport = screen.getByTestId("browser-viewport");
+		let rail = screen.getByTestId("browser-tabs-rail");
+		expect(viewport.compareDocumentPosition(rail) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+
+		rerender(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut session={session} />);
+		viewport = screen.getByTestId("browser-viewport");
+		rail = screen.getByTestId("browser-tabs-rail");
+		expect(viewport.compareDocumentPosition(rail) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+		expect(rail).toHaveClass("border-l");
+		expect(rail).not.toHaveClass("border-r");
 	});
 
 	it("shows empty and error states", () => {
@@ -321,15 +535,15 @@ describe("BrowserPanel", () => {
 		expect(onTogglePopOut).toHaveBeenCalledWith(true);
 	});
 
-	it("does not pop out an empty browser", async () => {
+	it("pops out an empty browser", async () => {
 		const onTogglePopOut = vi.fn();
 		render(<BrowserPanel active onTogglePopOut={onTogglePopOut} poppedOut={false} session={session} />);
 
 		const popOut = screen.getByRole("button", { name: /pop out/i });
-		expect(popOut).toBeDisabled();
+		expect(popOut).not.toBeDisabled();
 		await userEvent.click(popOut);
 
-		expect(onTogglePopOut).not.toHaveBeenCalled();
+		expect(onTogglePopOut).toHaveBeenCalledWith(true);
 	});
 
 	it("enables annotation mode from the toolbar when a page is loaded", async () => {
@@ -341,52 +555,14 @@ describe("BrowserPanel", () => {
 		expect(hookState.setAnnotationMode).toHaveBeenCalledWith(true);
 	});
 
-	it("shows browser activity only for browser commands, not general worker activity", () => {
+	it("does not render a global browser activity status", () => {
 		hookState.navState = { ...hookState.navState, url: "http://localhost:5173/" };
-		const first = render(
-			<BrowserPanel
-				active
-				onTogglePopOut={() => undefined}
-				poppedOut={false}
-				session={{
-					...session,
-					status: "idle",
-					activity: { state: "active", lastActivityAt: "2026-06-15T00:00:00Z" },
-				}}
-			/>,
-		);
-
-		expect(screen.getByRole("button", { name: /annotate/i })).toBeEnabled();
-		expect(screen.queryByText("Agent using browser")).not.toBeInTheDocument();
-
-		first.unmount();
-		hookState.agentBrowserActive = true;
-		render(
-			<BrowserPanel
-				active
-				onTogglePopOut={() => undefined}
-				poppedOut={false}
-				session={{
-					...session,
-					status: "working",
-					activity: { state: "idle", lastActivityAt: "2026-06-15T00:00:00Z" },
-				}}
-			/>,
-		);
-
-		expect(screen.getByRole("button", { name: /annotate/i })).toBeEnabled();
-		expect(screen.getByText("Agent using browser")).toBeInTheDocument();
-	});
-
-	it("shows the concrete browser action while the agent controls the page", () => {
-		hookState.navState = { ...hookState.navState, url: "http://localhost:5173/" };
-		hookState.agentBrowserActive = true;
-		hookState.agentBrowserActivity = { active: true, action: "click", phase: "started" };
 
 		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
 
-		expect(screen.getByText("Agent clicking")).toBeInTheDocument();
+		expect(screen.queryByText("Agent clicking")).not.toBeInTheDocument();
 		expect(screen.queryByText("Agent using browser")).not.toBeInTheDocument();
+		expect(screen.queryByTestId("browser-agent-status")).not.toBeInTheDocument();
 	});
 
 	it("renders the premium browser shell hooks in the default view", () => {
@@ -404,23 +580,6 @@ describe("BrowserPanel", () => {
 		expect(icon).not.toHaveClass("top-1/2");
 		expect(icon).not.toHaveClass("-translate-y-1/2");
 	});
-
-	it("warms the browser tabs menu before opening it above the native browser", async () => {
-		hookState.navState = { ...hookState.navState, url: "http://localhost:5173/" };
-		hookState.tabs = [
-			{ id: "t1", url: "http://localhost:3000/", title: "First app", active: true },
-			{ id: "t2", url: "http://localhost:4173/", title: "Second app", active: false },
-		];
-		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
-
-		await userEvent.click(screen.getByRole("button", { name: /browser tabs/i }));
-
-		expect(hookState.prepareForOverlay).toHaveBeenCalled();
-		expect(await screen.findByRole("menu")).not.toHaveAttribute("data-ao-browser-native-overlay");
-		expect(screen.getByText("First app").closest('[role="menuitem"]')).toHaveClass("cursor-pointer");
-		expect(screen.getByRole("menuitem", { name: "Close tab First app" })).toHaveClass("cursor-pointer");
-	});
-
 	it("disables annotation mode when no page is loaded", () => {
 		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
 
@@ -452,9 +611,8 @@ describe("BrowserPanel", () => {
 							id: "save",
 							classes: ["primary"],
 							selector: "button#save",
-							rect: { x: 16, y: 24, width: 140, height: 36 },
+							size: { width: 140, height: 36 },
 							visibleText: "Save changes",
-							nearbyText: ["Profile settings"],
 							computedStyle: {},
 						},
 					},
@@ -472,6 +630,41 @@ describe("BrowserPanel", () => {
 		const body = postMock.mock.calls[0][1].body as { message: string };
 		expect(body.message).toContain("button#save");
 		expect(body.message.length).toBeLessThanOrEqual(4096);
+	});
+
+	it("forwards the captured snapshot as the /send body's attachment field", async () => {
+		hookState.navState = { ...hookState.navState, url: "http://localhost:5173/" };
+		render(
+			<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={{ ...session, status: "idle" }} />,
+		);
+
+		act(() => {
+			annotationSubmitListeners.forEach((listener) =>
+				listener({
+					...annotationPayload("Make this button blue."),
+					snapshot: { mimeType: "image/png", data: "cG5nLWJ5dGVz" },
+				}),
+			);
+		});
+
+		expect(await screen.findByText("Sent")).toBeInTheDocument();
+		const body = postMock.mock.calls[0][1].body as { attachment?: { mimeType: string; data: string } };
+		expect(body.attachment).toEqual({ mimeType: "image/png", data: "cG5nLWJ5dGVz" });
+	});
+
+	it("omits the attachment field when the payload has no snapshot", async () => {
+		hookState.navState = { ...hookState.navState, url: "http://localhost:5173/" };
+		render(
+			<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={{ ...session, status: "idle" }} />,
+		);
+
+		act(() => {
+			annotationSubmitListeners.forEach((listener) => listener(annotationPayload("Make this button blue.")));
+		});
+
+		expect(await screen.findByText("Sent")).toBeInTheDocument();
+		const body = postMock.mock.calls[0][1].body as { attachment?: unknown };
+		expect(body.attachment).toBeUndefined();
 	});
 
 	it("sends a follow-up annotation without waiting for an activity-state cycle", async () => {
@@ -538,7 +731,7 @@ describe("BrowserPanel", () => {
 		expect(postMock).toHaveBeenCalledTimes(3);
 		expect(
 			postMock.mock.calls.map(
-				(call) => (call[1].body as { message: string }).message.match(/Change request:\n(.+)/)?.[1],
+				(call) => (call[1].body as { message: string }).message.match(/Request: (.+)/)?.[1],
 			),
 		).toEqual(instructions);
 	});
@@ -602,8 +795,7 @@ describe("BrowserPanel", () => {
 					tag: "button",
 					classes: [],
 					selector: "button",
-					rect: { x: 0, y: 0, width: 80, height: 30 },
-					nearbyText: [],
+					size: { width: 80, height: 30 },
 					computedStyle: {},
 				},
 			},
@@ -661,8 +853,7 @@ describe("BrowserPanel", () => {
 							tag: "section",
 							classes: [],
 							selector: "section",
-							rect: { x: 0, y: 0, width: 320, height: 180 },
-							nearbyText: [],
+							size: { width: 320, height: 180 },
 							computedStyle: {},
 						},
 					},
@@ -724,8 +915,7 @@ describe("BrowserPanel", () => {
 							tag: "button",
 							classes: [],
 							selector: "button",
-							rect: { x: 0, y: 0, width: 80, height: 30 },
-							nearbyText: [],
+							size: { width: 80, height: 30 },
 							computedStyle: {},
 						},
 					},
@@ -780,5 +970,116 @@ describe("BrowserPanel", () => {
 		});
 
 		expect(screen.queryByText("Pick element")).not.toBeInTheDocument();
+	});
+
+	it("keeps the browser viewport transparent once a native page is loaded, so overlays don't blank it", () => {
+		hookState.navState = { ...hookState.navState, url: "http://localhost:5173/" };
+		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
+		expect(screen.getByTestId("browser-viewport")).not.toHaveAttribute("data-placeholder");
+	});
+
+	it("keeps an opaque background behind the empty-URL placeholder", () => {
+		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
+		expect(screen.getByTestId("browser-viewport")).toHaveAttribute("data-placeholder", "true");
+	});
+
+	it("keeps an opaque background for the static preview fallback when there is no native browser bridge", () => {
+		hookState.navState = { ...hookState.navState, url: "http://localhost:5173/" };
+		const ao = window.ao;
+		Object.defineProperty(window, "ao", { configurable: true, value: undefined });
+		try {
+			render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
+			expect(screen.getByTestId("browser-viewport")).toHaveAttribute("data-placeholder", "true");
+		} finally {
+			Object.defineProperty(window, "ao", { configurable: true, value: ao });
+		}
+	});
+
+	describe("pinned rail", () => {
+		const pinRail = () => window.localStorage.setItem("ao.browserTabs.railPinned", "1");
+
+		beforeEach(() => {
+			window.localStorage.removeItem("ao.browserTabs.railPinned");
+		});
+
+		it("does not open the flyout when hovering the pinned rail", () => {
+			// Pinned already shows every tab as a favicon row, so the flyout would
+			// just cover the live page with a duplicate of what's on screen.
+			pinRail();
+			hookState.tabs = [
+				{ id: "t1", url: "http://localhost:3000/", title: "First app", active: false },
+				{ id: "t2", url: "http://localhost:4173/", title: "Second app", active: true },
+			];
+			hookState.activeTabId = "t2";
+			render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
+
+			vi.useFakeTimers();
+			try {
+				fireEvent.pointerEnter(screen.getByTestId("browser-tabs-rail"));
+				act(() => {
+					vi.advanceTimersByTime(300);
+				});
+			} finally {
+				vi.useRealTimers();
+			}
+
+			expect(screen.getByTestId("browser-tabs-flyout")).toHaveAttribute("data-state", "closed");
+		});
+
+		it("still opens the flyout on hover while the rail is collapsed", () => {
+			hookState.tabs = [
+				{ id: "t1", url: "http://localhost:3000/", title: "First app", active: false },
+				{ id: "t2", url: "http://localhost:4173/", title: "Second app", active: true },
+			];
+			hookState.activeTabId = "t2";
+			render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
+
+			vi.useFakeTimers();
+			try {
+				fireEvent.pointerEnter(screen.getByTestId("browser-tabs-rail"));
+				act(() => {
+					vi.advanceTimersByTime(300);
+				});
+			} finally {
+				vi.useRealTimers();
+			}
+
+			expect(screen.getByTestId("browser-tabs-flyout")).toHaveAttribute("data-state", "open");
+		});
+
+		it("names the site in a tooltip when a pinned favicon takes focus", async () => {
+			pinRail();
+			hookState.tabs = [
+				{ id: "t1", url: "http://localhost:3000/", title: "First app", active: false },
+				{ id: "t2", url: "http://localhost:4173/", title: "Second app", active: true },
+			];
+			hookState.activeTabId = "t2";
+			render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
+
+			fireEvent.focus(screen.getByRole("button", { name: "First app — localhost:3000" }));
+
+			const tooltip = await screen.findByRole("tooltip");
+			expect(tooltip).toHaveTextContent("First app");
+			expect(tooltip).toHaveTextContent("localhost:3000");
+		});
+
+		it("marks the tooltip as a browser overlay so it paints above the live page", async () => {
+			// The live page is a native view above the transparent shell; the shell
+			// is only raised for elements matching OPEN_BROWSER_OVERLAY_SELECTOR, so
+			// an unmarked tooltip would render behind the page and be invisible.
+			pinRail();
+			hookState.tabs = [
+				{ id: "t1", url: "http://localhost:3000/", title: "First app", active: false },
+				{ id: "t2", url: "http://localhost:4173/", title: "Second app", active: true },
+			];
+			hookState.activeTabId = "t2";
+			render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
+
+			fireEvent.focus(screen.getByRole("button", { name: "First app — localhost:3000" }));
+
+			const tooltip = await screen.findByRole("tooltip");
+			expect(tooltip.closest('[data-browser-native-overlay="true"]')).not.toBeNull();
+			expect(document.querySelector(OPEN_BROWSER_OVERLAY_SELECTOR)).not.toBeNull();
+		});
 	});
 });

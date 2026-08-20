@@ -104,6 +104,22 @@ func TestReadHistoryMakesMissingItemIDsUniqueAcrossTurns(t *testing.T) {
 	}
 }
 
+func TestReadHistoryRejectsAnUnsettledNativeTurnInsteadOfOmittingIt(t *testing.T) {
+	conv, srv := openConversation(t)
+	srv.reply("thread/read", `{"thread":{"id":"thread-1","turns":[`+
+		`{"id":"turn-a","status":"completed","items":[{"type":"agentMessage","text":"settled"}]},`+
+		`{"id":"turn-b","status":"inProgress","items":[{"type":"agentMessage","text":"partial"}]}`+
+		`]}}`)
+
+	events, err := conv.ReadHistory(context.Background())
+	if !errors.Is(err, ports.ErrChatHistoryUnsettled) {
+		t.Fatalf("ReadHistory error = %v, want ErrChatHistoryUnsettled", err)
+	}
+	if len(events) != 0 {
+		t.Fatalf("ReadHistory returned %d partial events with an unsettled turn", len(events))
+	}
+}
+
 // The provider takes a COUNT from the end of the thread, not a turn id, so the whole
 // correctness of rollback rests on turning the named turn into the right number.
 // Naming the middle of three turns must discard that turn and the one after it.
@@ -224,7 +240,7 @@ func TestForkReturnsTheNewThreadIDAndInheritsTheWorkingDirectory(t *testing.T) {
 	conv, srv := openConversation(t)
 	srv.reply("thread/fork", `{"thread":{"id":"thread-2","forkedFromId":"thread-1"},"cwd":"/tmp/ws"}`)
 
-	forked, err := conv.Fork(context.Background())
+	forked, err := conv.Fork(context.Background(), nil)
 	if err != nil {
 		t.Fatalf("Fork: %v", err)
 	}
@@ -252,11 +268,36 @@ func TestForkReturnsTheNewThreadIDAndInheritsTheWorkingDirectory(t *testing.T) {
 	}
 }
 
+func TestForkThroughTurnSendsLastTurnID(t *testing.T) {
+	conv, srv := openConversation(t)
+	srv.reply("thread/fork", `{"thread":{"id":"thread-2"},"cwd":"/tmp/ws"}`)
+	anchor := "turn-before-edit"
+
+	forked, err := conv.Fork(context.Background(), &anchor)
+	if err != nil {
+		t.Fatalf("Fork: %v", err)
+	}
+	if forked != "thread-2" {
+		t.Fatalf("forked thread = %q, want thread-2", forked)
+	}
+	frame := srv.awaitFrame(func(f frame) bool { return f.Method == "thread/fork" })
+	var params map[string]any
+	if err := json.Unmarshal(frame.Params, &params); err != nil {
+		t.Fatalf("decode params: %v", err)
+	}
+	if params["lastTurnId"] != anchor {
+		t.Fatalf("lastTurnId = %#v, want %q", params["lastTurnId"], anchor)
+	}
+	if _, present := params["cwd"]; present {
+		t.Fatal("fork must inherit the source cwd")
+	}
+}
+
 func TestForkRejectsAResponseWithNoThreadID(t *testing.T) {
 	conv, srv := openConversation(t)
 	srv.reply("thread/fork", `{"thread":{}}`)
 
-	if _, err := conv.Fork(context.Background()); err == nil {
+	if _, err := conv.Fork(context.Background(), nil); err == nil {
 		t.Fatal("Fork accepted a response carrying no thread id")
 	}
 }
