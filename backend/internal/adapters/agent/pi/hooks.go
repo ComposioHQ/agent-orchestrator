@@ -77,7 +77,7 @@ func (p *Plugin) piAgentSettledSupported(ctx context.Context) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	probeCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	probeCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 	out, err := exec.CommandContext(probeCtx, binary, "--version").CombinedOutput() //nolint:gosec // binary is adapter-resolved, args are static.
 	if err != nil {
