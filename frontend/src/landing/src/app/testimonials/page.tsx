@@ -58,10 +58,7 @@ export default function TestimonialsPage() {
 
           <aside className="order-1 flex w-full flex-col rounded-2xl border border-border bg-card p-6 sm:p-8 lg:order-2 lg:min-h-[760px]">
             <div className="mb-6">
-              <p className="text-xs font-medium uppercase tracking-[0.22em] text-muted-foreground">
-                Your perspective
-              </p>
-              <h2 className="mt-3 text-2xl font-semibold text-foreground">
+              <h2 className="text-2xl font-semibold text-foreground">
                 Submit a testimonial
               </h2>
               <p className="mt-3 text-sm leading-6 text-muted-foreground">
