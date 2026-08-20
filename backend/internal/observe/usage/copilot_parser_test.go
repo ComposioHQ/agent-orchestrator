@@ -63,6 +63,67 @@ func TestParseCopilotTracksModelsIndependently(t *testing.T) {
 	}
 }
 
+func TestParseCopilotAssistantMessageOutputTokens(t *testing.T) {
+	source := usageSource(domain.UsageSourceCopilotShutdown)
+	records := []jsonlRecord{
+		{Data: []byte(`{"type":"assistant.message","id":"message-1","data":{"model":"gpt-5-mini","outputTokens":944}}`)},
+		{Data: []byte(`{"type":"assistant.message","id":"message-2","data":{"model":"gpt-5-mini","outputTokens":17}}`)},
+	}
+	result := parseRecords(source, records, 200, time.Unix(1700000000, 0).UTC())
+	if result.err != nil {
+		t.Fatal(result.err)
+	}
+	if len(result.Events) != 2 {
+		t.Fatalf("events = %+v, want one usage event per assistant message", result.Events)
+	}
+	if got := result.Events[0].Tokens; got.InputTokens != 0 || got.OutputTokens != 944 || got.ReasoningTokens != nil {
+		t.Fatalf("first tokens = %+v", got)
+	}
+	if got := result.Events[1].Tokens; got.InputTokens != 0 || got.OutputTokens != 17 || got.ReasoningTokens != nil {
+		t.Fatalf("second tokens = %+v", got)
+	}
+	if result.Events[0].SourceEventKey == "" || result.Events[0].SourceEventKey == result.Events[1].SourceEventKey {
+		t.Fatalf("event keys = %q/%q", result.Events[0].SourceEventKey, result.Events[1].SourceEventKey)
+	}
+}
+
+func TestParseCopilotPrefersShutdownRollupOverAssistantMessages(t *testing.T) {
+	source := usageSource(domain.UsageSourceCopilotShutdown)
+	records := []jsonlRecord{
+		{Data: []byte(`{"type":"assistant.message","id":"message-1","data":{"model":"gpt-5-mini","outputTokens":17}}`)},
+		{Data: copilotShutdownLine("gpt-5-mini", 100, 60, 10, 17, 5)},
+	}
+	result := parseRecords(source, records, 200, time.Unix(1700000000, 0).UTC())
+	if result.err != nil || len(result.Events) != 1 {
+		t.Fatalf("result = %+v", result)
+	}
+	if got := result.Events[0].Tokens; got.InputTokens != 100 || got.OutputTokens != 17 || got.ReasoningTokens == nil || *got.ReasoningTokens != 5 {
+		t.Fatalf("tokens = %+v", got)
+	}
+}
+
+func TestParseCopilotLaterShutdownSuppressesAlreadyParsedAssistantMessage(t *testing.T) {
+	source := usageSource(domain.UsageSourceCopilotShutdown)
+	first := parseRecords(source, []jsonlRecord{
+		{Offset: 0, Data: []byte(`{"type":"assistant.message","id":"message-1","data":{"model":"gpt-5-mini","outputTokens":17}}`)},
+	}, 100, time.Unix(1700000000, 0).UTC())
+	if first.err != nil || len(first.Events) != 1 {
+		t.Fatalf("first result = %+v", first)
+	}
+
+	source.Source.ParserStateJSON = first.Cursor.ParserStateJSON
+	second := parseRecords(source, []jsonlRecord{
+		{Offset: 100, Data: copilotShutdownLine("gpt-5-mini", 100, 60, 10, 17, 5)},
+	}, 200, time.Unix(1700000001, 0).UTC())
+	if second.err != nil || len(second.Events) != 1 {
+		t.Fatalf("second result = %+v", second)
+	}
+	if got := second.Events[0].Tokens; got.InputTokens != 100 || got.OutputTokens != 0 ||
+		got.ReasoningTokens == nil || *got.ReasoningTokens != 0 {
+		t.Fatalf("shutdown delta tokens = %+v", got)
+	}
+}
+
 // TestParseCopilotCounterRegressionResetsBaseline catches negative usage deltas
 // after Copilot starts a new cumulative epoch.
 func TestParseCopilotCounterRegressionResetsBaseline(t *testing.T) {
