@@ -1,4 +1,4 @@
-export const MAX_TESTIMONIAL_WORDS = 500;
+export const MAX_TESTIMONIAL_WORDS = 350;
 
 export function countWords(value: string) {
 	return value.trim() ? value.trim().split(/\s+/u).length : 0;

@@ -31,7 +31,7 @@ describe("testimonial word limits", () => {
 
 	it("rejects pasted text above the submission cap", () => {
 		const currentValue = "An existing testimonial.";
-		const pastedText = Array.from({ length: 501 }, (_, index) => `word-${index}`).join(" ");
+		const pastedText = Array.from({ length: 351 }, (_, index) => `word-${index}`).join(" ");
 		expect(keepWithinWordLimit(pastedText, currentValue)).toBe(currentValue);
 	});
 });

@@ -5,7 +5,7 @@ type Env = {
 };
 
 const MAX_BODY_BYTES = 32_768;
-const MAX_TESTIMONIAL_WORDS = 500;
+const MAX_TESTIMONIAL_WORDS = 350;
 const RATE_LIMIT_WINDOW_MS = 60_000;
 const RATE_LIMIT_MAX_REQUESTS = 20;
 const buckets = new Map<string, { count: number; resetAt: number }>();
