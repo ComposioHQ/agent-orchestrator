@@ -74,7 +74,7 @@ export default function TestimonialsPage() {
                   href="#testimonial-examples"
                   className="mt-6 inline-flex text-sm font-medium text-foreground underline decoration-border underline-offset-4 transition-colors hover:decoration-foreground"
                 >
-                  More examples below ↓
+                  More testimonials below ↓
                 </a>
               </div>
             </div>
@@ -98,7 +98,7 @@ export default function TestimonialsPage() {
             <h2
               className={`${testimonialDisplay.className} text-2xl font-semibold text-foreground sm:text-3xl`}
             >
-              Examples of good testimonials
+              Some testimonials from existing users
             </h2>
           </div>
 
@@ -119,7 +119,7 @@ export default function TestimonialsPage() {
               >
                 <div className="flex items-center justify-between gap-4">
                   <span className="font-mono text-[10px] uppercase tracking-[0.2em] text-muted-foreground">
-                    Example {String(index + 1).padStart(2, "0")}
+                    Testimonial {String(index + 1).padStart(2, "0")}
                   </span>
                   <Quote
                     className="size-5 text-foreground/10 transition-colors group-hover:text-foreground/20"
