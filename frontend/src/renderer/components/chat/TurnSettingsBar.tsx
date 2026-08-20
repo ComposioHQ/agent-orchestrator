@@ -10,9 +10,11 @@
  * hardcoded list would be wrong within a week. An agent whose provider cannot
  * enumerate models reports none and the model control hides itself.
  *
- * Model and effort share one left-hand control; approvals sit on the right. The
- * lists inside the menus are the same ones the separate pickers used to show —
- * only the grouping of the triggers changed.
+ * ACP agents advertise those same dimensions as live session options. They share
+ * this chrome rather than each growing a row of pickers: model and thought level
+ * club into the left-hand control, mode sits on the right where Codex approvals
+ * live, and anything else nests under More. The lists inside are still the
+ * provider's; only the grouping of the triggers is AO's.
  */
 
 import { Fragment, useCallback, useLayoutEffect, useRef, useState, type ReactNode } from "react";
@@ -117,12 +119,24 @@ export function TurnSettingsBar({
 	const modelGroupLabel = effortLabel
 		? `${modelLabel} ${capitalize(effortLabel)}`
 		: modelLabel;
+	const grouped = partitionConfigOptions(configOptions ?? []);
+	const modeOption = grouped.mode;
+	const optionDisabled = Boolean(disabled || configPending);
+	const applyOption = (optionId: string, value: ChatConfigOptionValue) => {
+		if (!onChangeConfigOption) return;
+		// The hook owns and renders any rejection. Swallowing here avoids an
+		// unhandled promise without pretending the selection succeeded.
+		void Promise.resolve(onChangeConfigOption(optionId, value)).catch(() => {});
+	};
+	const nativeModelMenu = Boolean(onChange && models.length > 0 && grouped.model.length === 0);
+	const clubbedLeft = grouped.model.length > 0 || grouped.effort.length > 0 || grouped.extra.length > 0;
+	const showRight = Boolean(onChange || beforeApprovals || modeOption);
 
 	return (
 		<div role="group" aria-label="Turn settings" className="flex min-w-0 flex-1 flex-col gap-0.5">
 			<div className="flex h-7 min-w-0 flex-1 items-center justify-between gap-2">
 				<div className="flex h-7 min-w-0 flex-wrap items-center gap-0.5">
-					{onChange && models.length > 0 ? (
+					{nativeModelMenu && onChange ? (
 						<ModelEffortPicker
 							models={models}
 							settings={settings}
@@ -135,33 +149,34 @@ export function TurnSettingsBar({
 							reroute={reroute}
 							rerouted={rerouted}
 							chosenLabel={chosenLabel}
+							extraOptions={grouped.extra}
+							onChangeConfigOption={onChangeConfigOption ? applyOption : undefined}
 						/>
 					) : null}
 
 					{children}
 
-					{onChangeConfigOption
-						? (configOptions ?? []).map((option) => (
-								<ConfigOptionPicker
-									key={option.id}
-									option={option}
-									disabled={disabled || configPending}
-									onChange={(value) => {
-										// The hook owns and renders any rejection. Swallowing here avoids an
-										// unhandled promise without pretending the selection succeeded.
-										void Promise.resolve(onChangeConfigOption(option.id, value)).catch(
-											() => {},
-										);
-									}}
-								/>
-							))
-						: null}
+					{onChangeConfigOption && clubbedLeft && !nativeModelMenu ? (
+						<ClubbedConfigPicker
+							modelOptions={grouped.model}
+							effortOptions={grouped.effort}
+							extraOptions={grouped.extra}
+							disabled={optionDisabled}
+							onChange={applyOption}
+						/>
+					) : null}
 				</div>
 
-				{(onChange || beforeApprovals) ? (
+				{showRight ? (
 					<div className="flex h-7 shrink-0 items-center gap-1">
 						{beforeApprovals}
-						{onChange ? (
+						{modeOption && onChangeConfigOption ? (
+							<ConfigOptionPicker
+								option={modeOption}
+								disabled={optionDisabled}
+								onChange={(value) => applyOption(modeOption.id, value)}
+							/>
+						) : onChange ? (
 							<Picker
 								label={approvalLabel}
 								title="What the agent may do without asking"
@@ -222,6 +237,8 @@ function ModelEffortPicker({
 	reroute,
 	rerouted,
 	chosenLabel,
+	extraOptions = [],
+	onChangeConfigOption,
 }: {
 	models: ChatModel[];
 	settings: TurnSettings;
@@ -234,6 +251,8 @@ function ModelEffortPicker({
 	reroute?: ModelReroute;
 	rerouted?: string;
 	chosenLabel: string;
+	extraOptions?: ChatConfigOption[];
+	onChangeConfigOption?: (optionId: string, value: ChatConfigOptionValue) => void;
 }) {
 	const modelScrollRef = useRef<HTMLDivElement>(null);
 	const [modelSubOpen, setModelSubOpen] = useState(false);
@@ -412,8 +431,146 @@ function ModelEffortPicker({
 						</DropdownMenuSubContent>
 					</DropdownMenuSub>
 				) : null}
+				{extraOptions.length > 0 && onChangeConfigOption ? (
+					<MoreOptionsSubmenu options={extraOptions} onChange={onChangeConfigOption} />
+				) : null}
 			</DropdownMenuContent>
 		</DropdownMenu>
+	);
+}
+
+function ClubbedConfigPicker({
+	modelOptions,
+	effortOptions,
+	extraOptions,
+	disabled,
+	onChange,
+}: {
+	modelOptions: ChatConfigOption[];
+	effortOptions: ChatConfigOption[];
+	extraOptions: ChatConfigOption[];
+	disabled?: boolean;
+	onChange: (optionId: string, value: ChatConfigOptionValue) => void;
+}) {
+	const primaryModel = modelOptions[0];
+	const primaryEffort = effortOptions[0];
+	const modelLabel = primaryModel ? optionCurrentLabel(primaryModel) : undefined;
+	const effortLabel = primaryEffort ? optionCurrentLabel(primaryEffort) : undefined;
+	const groupLabel = [modelLabel, effortLabel].filter(Boolean).join(" ") || "More";
+	const leftCount = modelOptions.length + effortOptions.length + extraOptions.length;
+	if (leftCount === 1) {
+		const option = primaryModel ?? primaryEffort ?? extraOptions[0];
+		if (!option) return null;
+		return (
+			<ConfigOptionPicker
+				option={option}
+				disabled={disabled}
+				onChange={(value) => onChange(option.id, value)}
+			/>
+		);
+	}
+
+	return (
+		<DropdownMenu>
+			<DropdownMenuTrigger asChild disabled={disabled}>
+				<SettingsMenuTrigger
+					aria-label="Model and reasoning effort for the next turn"
+					title="Model and reasoning effort for the next turn"
+					className={TRIGGER_CLASS}
+				>
+					<span className="min-w-0 max-w-[22ch] truncate">{groupLabel}</span>
+				</SettingsMenuTrigger>
+			</DropdownMenuTrigger>
+			<DropdownMenuContent align="start" side="top" className={SETTINGS_MENU_SURFACE}>
+				{modelOptions.map((option) => (
+					<OptionSubmenu key={option.id} option={option} onChange={onChange} scrollable />
+				))}
+				{effortOptions.map((option) => (
+					<OptionSubmenu key={option.id} option={option} onChange={onChange} />
+				))}
+				{extraOptions.length > 0 ? (
+					<MoreOptionsSubmenu options={extraOptions} onChange={onChange} />
+				) : null}
+			</DropdownMenuContent>
+		</DropdownMenu>
+	);
+}
+
+function MoreOptionsSubmenu({
+	options,
+	onChange,
+}: {
+	options: ChatConfigOption[];
+	onChange: (optionId: string, value: ChatConfigOptionValue) => void;
+}) {
+	return (
+		<DropdownMenuSub>
+			<DropdownMenuSubTrigger
+				className={cn(SETTINGS_MENU_ROW, "justify-between gap-3 text-xs text-foreground")}
+			>
+				<span>More</span>
+				<span className="flex min-w-0 items-center gap-1 text-muted-foreground">
+					<ChevronRight aria-hidden="true" className="size-3.5 shrink-0" />
+				</span>
+			</DropdownMenuSubTrigger>
+			<DropdownMenuSubContent className={SETTINGS_MENU_SURFACE}>
+				{options.map((option) => (
+					<OptionSubmenu key={option.id} option={option} onChange={onChange} />
+				))}
+			</DropdownMenuSubContent>
+		</DropdownMenuSub>
+	);
+}
+
+function OptionSubmenu({
+	option,
+	onChange,
+	scrollable,
+}: {
+	option: ChatConfigOption;
+	onChange: (optionId: string, value: ChatConfigOptionValue) => void;
+	scrollable?: boolean;
+}) {
+	const current = optionCurrentLabel(option);
+	return (
+		<DropdownMenuSub>
+			<DropdownMenuSubTrigger
+				className={cn(SETTINGS_MENU_ROW, "justify-between gap-3 text-xs text-foreground")}
+			>
+				<span>{option.name}</span>
+				<span className="flex min-w-0 items-center gap-1 text-muted-foreground">
+					<span className="min-w-0 truncate">{current}</span>
+					<ChevronRight aria-hidden="true" className="size-3.5 shrink-0" />
+				</span>
+			</DropdownMenuSubTrigger>
+			<DropdownMenuSubContent
+				className={cn(SETTINGS_MENU_SURFACE, scrollable && "max-h-select-menu-max! overflow-hidden!")}
+			>
+				<DropdownMenuLabel className={cn(SETTINGS_MENU_LABEL, "flex flex-col gap-0.5")}>
+					<span>{option.name}</span>
+					{option.description ? (
+						<span className="text-[11px] font-normal leading-snug text-muted-foreground">
+							{option.description}
+						</span>
+					) : null}
+				</DropdownMenuLabel>
+				{scrollable ? (
+					<div className="relative grid min-h-0 flex-1 grid-rows-[minmax(0,1fr)] overflow-hidden">
+						<div className="model-menu-scroll min-h-0 overflow-y-auto overscroll-contain pb-1">
+							<ConfigOptionChoices
+								option={option}
+								onChange={(value) => onChange(option.id, value)}
+							/>
+						</div>
+					</div>
+				) : (
+					<ConfigOptionChoices
+						option={option}
+						onChange={(value) => onChange(option.id, value)}
+					/>
+				)}
+			</DropdownMenuSubContent>
+		</DropdownMenuSub>
 	);
 }
 
@@ -426,16 +583,12 @@ function ConfigOptionPicker({
 	onChange: (value: ChatConfigOptionValue) => void;
 	disabled?: boolean;
 }) {
-	const currentChoice = option.choices.find((choice) => choice.value === option.currentValue);
-	const label =
-		option.type === "boolean"
-			? option.currentBoolean
-				? "On"
-				: "Off"
-			: currentChoice?.name ?? option.currentValue ?? option.name;
-
 	return (
-		<Picker label={label} title={option.description || option.name} disabled={disabled}>
+		<Picker
+			label={optionCurrentLabel(option)}
+			title={option.description || option.name}
+			disabled={disabled}
+		>
 			<DropdownMenuLabel className={cn(SETTINGS_MENU_LABEL, "flex flex-col gap-0.5")}>
 				<span>{option.name}</span>
 				{option.description ? (
@@ -444,8 +597,22 @@ function ConfigOptionPicker({
 					</span>
 				) : null}
 			</DropdownMenuLabel>
-			{option.type === "boolean" ? (
-				[true, false].map((enabled) => (
+			<ConfigOptionChoices option={option} onChange={onChange} />
+		</Picker>
+	);
+}
+
+function ConfigOptionChoices({
+	option,
+	onChange,
+}: {
+	option: ChatConfigOption;
+	onChange: (value: ChatConfigOptionValue) => void;
+}) {
+	if (option.type === "boolean") {
+		return (
+			<>
+				{[true, false].map((enabled) => (
 					<DropdownMenuItem
 						key={String(enabled)}
 						onSelect={() => onChange({ enabled })}
@@ -464,47 +631,51 @@ function ConfigOptionPicker({
 							<span className="ml-auto text-[10px] text-accent">selected</span>
 						) : null}
 					</DropdownMenuItem>
-				))
-			) : (
-				option.choices.map((choice, index) => {
-					const previousGroup = index > 0 ? option.choices[index - 1]?.group : undefined;
-					return (
-						<Fragment key={choice.value}>
-							{choice.group && choice.group !== previousGroup ? (
-								<DropdownMenuLabel className="px-3 pb-1 pt-2 text-[10px] uppercase tracking-wide text-muted-foreground">
-									{choice.groupName || choice.group}
-								</DropdownMenuLabel>
-							) : null}
-							<DropdownMenuItem
-								onSelect={() => onChange({ value: choice.value })}
-								className={cn(SETTINGS_MENU_ROW, "flex-col items-start gap-0.5")}
-							>
-								<span className="flex w-full items-baseline gap-2">
-									<span
-										className={cn(
-											"text-xs",
-											choice.value === option.currentValue
-												? "text-foreground"
-												: "text-muted-foreground",
-										)}
-									>
-										{choice.name}
-									</span>
-									{choice.value === option.currentValue ? (
-										<span className="ml-auto text-[10px] text-accent">selected</span>
-									) : null}
+				))}
+			</>
+		);
+	}
+
+	return (
+		<>
+			{option.choices.map((choice, index) => {
+				const previousGroup = index > 0 ? option.choices[index - 1]?.group : undefined;
+				return (
+					<Fragment key={choice.value}>
+						{choice.group && choice.group !== previousGroup ? (
+							<DropdownMenuLabel className="px-3 pb-1 pt-2 text-[10px] uppercase tracking-wide text-muted-foreground">
+								{choice.groupName || choice.group}
+							</DropdownMenuLabel>
+						) : null}
+						<DropdownMenuItem
+							onSelect={() => onChange({ value: choice.value })}
+							className={cn(SETTINGS_MENU_ROW, "flex-col items-start gap-0.5")}
+						>
+							<span className="flex w-full items-baseline gap-2">
+								<span
+									className={cn(
+										"text-xs",
+										choice.value === option.currentValue
+											? "text-foreground"
+											: "text-muted-foreground",
+									)}
+								>
+									{choice.name}
 								</span>
-								{choice.description ? (
-									<span className="text-[11px] leading-snug text-muted-foreground">
-										{choice.description}
-									</span>
+								{choice.value === option.currentValue ? (
+									<span className="ml-auto text-[10px] text-accent">selected</span>
 								) : null}
-							</DropdownMenuItem>
-						</Fragment>
-					);
-				})
-			)}
-		</Picker>
+							</span>
+							{choice.description ? (
+								<span className="text-[11px] leading-snug text-muted-foreground">
+									{choice.description}
+								</span>
+							) : null}
+						</DropdownMenuItem>
+					</Fragment>
+				);
+			})}
+		</>
 	);
 }
 
@@ -545,4 +716,53 @@ function Picker({
 
 function capitalize(value: string): string {
 	return value.charAt(0).toUpperCase() + value.slice(1);
+}
+
+function isModelOption(option: ChatConfigOption): boolean {
+	return option.category === "model" || option.id === "model" || option.id === "agent";
+}
+
+function isEffortOption(option: ChatConfigOption): boolean {
+	return option.category === "thought_level" || option.id === "effort";
+}
+
+function isModeOption(option: ChatConfigOption): boolean {
+	return option.category === "mode" || option.id === "mode";
+}
+
+function partitionConfigOptions(options: ChatConfigOption[]): {
+	model: ChatConfigOption[];
+	effort: ChatConfigOption[];
+	mode: ChatConfigOption | undefined;
+	extra: ChatConfigOption[];
+} {
+	const primaryModel: ChatConfigOption[] = [];
+	const otherModel: ChatConfigOption[] = [];
+	const effort: ChatConfigOption[] = [];
+	const extra: ChatConfigOption[] = [];
+	let mode: ChatConfigOption | undefined;
+	for (const option of options) {
+		if (isModelOption(option)) {
+			if (option.category === "model" || option.id === "model") primaryModel.push(option);
+			else otherModel.push(option);
+			continue;
+		}
+		if (isEffortOption(option)) {
+			effort.push(option);
+			continue;
+		}
+		if (isModeOption(option) && !mode) {
+			mode = option;
+			continue;
+		}
+		extra.push(option);
+	}
+	return { model: [...primaryModel, ...otherModel], effort, mode, extra };
+}
+
+function optionCurrentLabel(option: ChatConfigOption): string {
+	if (option.type === "boolean") return option.currentBoolean ? "On" : "Off";
+	return option.choices.find((choice) => choice.value === option.currentValue)?.name
+		?? option.currentValue
+		?? option.name;
 }
