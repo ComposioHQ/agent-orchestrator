@@ -41,6 +41,10 @@ type fakeStore struct {
 
 	listEntered chan struct{}
 	listRelease chan struct{}
+	pollDelay   time.Duration
+	listCalls   int
+	pollActive  int
+	maxActive   int
 }
 
 type fakeWrite struct {
@@ -53,6 +57,19 @@ type fakeWrite struct {
 }
 
 func (s *fakeStore) ListAllSessions(ctx context.Context) ([]domain.SessionRecord, error) {
+	s.mu.Lock()
+	s.listCalls++
+	s.pollActive++
+	if s.pollActive > s.maxActive {
+		s.maxActive = s.pollActive
+	}
+	delay := s.pollDelay
+	s.mu.Unlock()
+	defer func() {
+		s.mu.Lock()
+		s.pollActive--
+		s.mu.Unlock()
+	}()
 	if s.listEntered != nil {
 		select {
 		case <-s.listEntered:
@@ -67,9 +84,24 @@ func (s *fakeStore) ListAllSessions(ctx context.Context) ([]domain.SessionRecord
 		case <-s.listRelease:
 		}
 	}
+	if delay > 0 {
+		timer := time.NewTimer(delay)
+		defer timer.Stop()
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-timer.C:
+		}
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return append([]domain.SessionRecord(nil), s.sessions...), nil
+}
+
+func (s *fakeStore) pollStats() (calls, maxActive int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.listCalls, s.maxActive
 }
 
 func (s *fakeStore) GetProject(_ context.Context, id string) (domain.ProjectRecord, bool, error) {
@@ -271,6 +303,84 @@ func (l *fakeLifecycle) ApplySCMObservation(_ context.Context, _ domain.SessionI
 func newTestObserver(store *fakeStore, provider *fakeProvider, lc Lifecycle, now time.Time) *Observer {
 	cfg := Config{Clock: func() time.Time { return now }, Tick: time.Hour, Logger: quietSlog(), CacheMax: 128, IdentityResolver: provider}
 	return New(provider, store, lc, cfg)
+}
+
+func waitForPollCalls(t *testing.T, store *fakeStore, want int) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if calls, _ := store.pollStats(); calls >= want {
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
+	calls, _ := store.pollStats()
+	t.Fatalf("poll calls = %d, want at least %d", calls, want)
+}
+
+func TestObserverNudgeCoalescesConcurrentCalls(t *testing.T) {
+	store := &fakeStore{}
+	provider := &fakeProvider{}
+	observer := New(provider, store, &fakeLifecycle{}, Config{
+		Tick:          time.Hour,
+		NudgeDebounce: 25 * time.Millisecond,
+		Logger:        quietSlog(),
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	done := observer.Start(ctx)
+	waitForPollCalls(t, store, 1)
+
+	var callers sync.WaitGroup
+	for range 32 {
+		callers.Add(1)
+		go func() {
+			defer callers.Done()
+			observer.Nudge()
+		}()
+	}
+	callers.Wait()
+	waitForPollCalls(t, store, 2)
+	time.Sleep(2 * observer.nudgeDebounce)
+	if calls, _ := store.pollStats(); calls != 2 {
+		t.Fatalf("poll calls after concurrent nudges = %d, want initial + one nudged poll", calls)
+	}
+
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("observer did not stop")
+	}
+}
+
+func TestObserverNudgeDoesNotRacePollAndTickerContinues(t *testing.T) {
+	store := &fakeStore{pollDelay: 20 * time.Millisecond}
+	provider := &fakeProvider{}
+	observer := New(provider, store, &fakeLifecycle{}, Config{
+		Tick:          70 * time.Millisecond,
+		NudgeDebounce: 5 * time.Millisecond,
+		Logger:        quietSlog(),
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	done := observer.Start(ctx)
+	waitForPollCalls(t, store, 1)
+
+	for range 16 {
+		observer.Nudge()
+	}
+	waitForPollCalls(t, store, 2)
+	// The regular ticker is not reset by the out-of-band poll.
+	waitForPollCalls(t, store, 3)
+	if _, maxActive := store.pollStats(); maxActive != 1 {
+		t.Fatalf("maximum concurrent polls = %d, want 1", maxActive)
+	}
+
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("observer did not stop")
+	}
 }
 
 func TestDispatchOrderIsDeterministic(t *testing.T) {

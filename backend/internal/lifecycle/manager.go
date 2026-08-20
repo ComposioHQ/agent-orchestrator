@@ -109,6 +109,11 @@ type sessionOperationGate interface {
 	SessionMutationInProgress(id domain.SessionID) bool
 }
 
+// scmNudger is the non-blocking wake boundary for prompt SCM discovery.
+type scmNudger interface {
+	Nudge()
+}
+
 type pendingLaunch struct {
 	launchID string
 	ready    chan struct{}
@@ -169,6 +174,7 @@ type Manager struct {
 	projects         projectConfigLoader
 	operationGateMu  sync.RWMutex
 	operationGate    sessionOperationGate
+	scmNudger        scmNudger
 
 	mu        sync.Mutex
 	window    time.Duration
@@ -248,6 +254,14 @@ func (m *Manager) SetSessionOperationGate(gate sessionOperationGate) {
 	m.operationGateMu.Lock()
 	m.operationGate = gate
 	m.operationGateMu.Unlock()
+}
+
+// SetSCMNudger late-binds the observer because lifecycle is constructed before
+// SCM providers during daemon startup.
+func (m *Manager) SetSCMNudger(nudger scmNudger) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.scmNudger = nudger
 }
 
 func (m *Manager) sessionMutationInProgress(id domain.SessionID) bool {
@@ -525,6 +539,12 @@ func (m *Manager) ApplyActivitySignal(ctx context.Context, id domain.SessionID, 
 		(s.State != domain.ActivityActive || s.Event != "user-prompt-submit") {
 		m.mu.Unlock()
 		return nil
+	}
+	// A normalized stop hook is the cheapest reliable signal that a worker turn
+	// may just have created or pushed a PR. The observer coalesces these calls,
+	// so this must remain a non-blocking hint rather than lifecycle work.
+	if s.Event == "stop" && m.scmNudger != nil {
+		m.scmNudger.Nudge()
 	}
 	// Event-tagged signals fold through the session's tool-flight state first:
 	// they may be suppressed (state write skipped) by the blocked-precedence
