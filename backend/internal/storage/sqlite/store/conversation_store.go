@@ -124,6 +124,127 @@ func (s *Store) CreateConversation(
 	}, nil
 }
 
+// CreateProjectConversationWithContextReset rebinds an existing project
+// conversation and records the fresh-context boundary in the same transaction.
+// The boundary is written before provider startup so paged readers never expose
+// the previous orchestrator's rows under the replacement session.
+func (s *Store) CreateProjectConversationWithContextReset(
+	ctx context.Context,
+	id string,
+	project domain.ProjectID,
+	session domain.SessionID,
+	reset domain.ConversationActivity,
+	now time.Time,
+) (domain.ConversationRecord, error) {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+
+	if existing, err := s.qw.SelectProjectConversation(ctx, project); err == nil {
+		detail := string(reset.Detail)
+		err = s.inTx(ctx, "rebind project conversation with reset", func(q *gen.Queries) error {
+			if err := q.BindProjectConversationSession(ctx, gen.BindProjectConversationSessionParams{
+				CurrentSessionID: &session,
+				UpdatedAt:        now,
+				ID:               existing.ID,
+			}); err != nil {
+				return fmt.Errorf("bind project conversation %s to %s: %w", existing.ID, session, err)
+			}
+			if existing.LatestSequence <= 0 || reset.ProviderItemID == "" {
+				return nil
+			}
+			_, lookupErr := q.SelectConversationActivityByProviderItem(ctx,
+				gen.SelectConversationActivityByProviderItemParams{
+					ConversationID: existing.ID,
+					ProviderItemID: reset.ProviderItemID,
+				})
+			if lookupErr == nil {
+				return q.SettleConversationActivity(ctx, gen.SettleConversationActivityParams{
+					Status:         reset.Status,
+					Summary:        reset.Summary,
+					DetailJson:     detail,
+					UpdatedAt:      now,
+					ConversationID: existing.ID,
+					ProviderItemID: reset.ProviderItemID,
+				})
+			}
+			if !errors.Is(lookupErr, sql.ErrNoRows) {
+				return fmt.Errorf("lookup reset boundary %s: %w", reset.ProviderItemID, lookupErr)
+			}
+			sequence, seqErr := q.NextConversationSequence(ctx, gen.NextConversationSequenceParams{
+				UpdatedAt: now,
+				ID:        existing.ID,
+			})
+			if seqErr != nil {
+				return fmt.Errorf("allocate reset boundary sequence: %w", seqErr)
+			}
+			existing.LatestSequence = sequence
+			return q.InsertConversationActivity(ctx, gen.InsertConversationActivityParams{
+				ID:             reset.ID,
+				ConversationID: existing.ID,
+				TurnID:         sql.NullString{},
+				Sequence:       sequence,
+				Kind:           reset.Kind,
+				Status:         reset.Status,
+				Summary:        reset.Summary,
+				DetailJson:     detail,
+				RequestID:      reset.RequestID,
+				ProviderItemID: reset.ProviderItemID,
+				CreatedAt:      now,
+				UpdatedAt:      now,
+			})
+		})
+		if err != nil {
+			return domain.ConversationRecord{}, err
+		}
+		existing.CurrentSessionID = &session
+		existing.UpdatedAt = now
+		return conversationToDomain(existing), nil
+	} else if !errors.Is(err, sql.ErrNoRows) {
+		return domain.ConversationRecord{}, fmt.Errorf("select project conversation for %s: %w", project, err)
+	}
+
+	rootBranchID := id + ":root"
+	err := s.inTx(ctx, "insert project conversation", func(q *gen.Queries) error {
+		owner, getErr := q.GetSession(ctx, session)
+		if getErr != nil {
+			return fmt.Errorf("select controller session %s: %w", session, getErr)
+		}
+		if insertErr := q.InsertConversation(ctx, gen.InsertConversationParams{
+			ID:               id,
+			Scope:            domain.ConversationScopeProject,
+			ProjectID:        project,
+			SessionID:        nil,
+			CurrentSessionID: &session,
+			ActiveBranchID:   rootBranchID,
+			CreatedAt:        now,
+			UpdatedAt:        now,
+		}); insertErr != nil {
+			return insertErr
+		}
+		return q.InsertConversationBranch(ctx, gen.InsertConversationBranchParams{
+			ID:                     rootBranchID,
+			ConversationID:         id,
+			SessionID:              nullableString(string(session)),
+			ProviderConversationID: owner.ProviderConversationID,
+			ForkAfterSequence:      0,
+			CreatedAt:              now,
+		})
+	})
+	if err != nil {
+		return domain.ConversationRecord{}, fmt.Errorf("insert project conversation %s: %w", id, err)
+	}
+
+	return domain.ConversationRecord{
+		ID:             id,
+		Scope:          domain.ConversationScopeProject,
+		ProjectID:      project,
+		SessionID:      session,
+		ActiveBranchID: rootBranchID,
+		CreatedAt:      now,
+		UpdatedAt:      now,
+	}, nil
+}
+
 // CreateConversationBranch records a provider-thread child without changing the
 // active controller. Activation is a separate transaction after the replacement
 // provider controller is ready.
@@ -1904,7 +2025,9 @@ func (s *Store) LoadConversationSnapshotPage(
 		HasMoreBefore:              hasMore,
 	}
 	for _, row := range turnRows {
-		snapshot.Turns = append(snapshot.Turns, turnToDomain(row))
+		if conversationTurnVisibleAfterSequence(row, conv, visibleAfterSequence) {
+			snapshot.Turns = append(snapshot.Turns, turnToDomain(row))
+		}
 	}
 	// SQL returns newest-first so LIMIT is useful; the API contract remains
 	// oldest-first inside each page.
@@ -1935,7 +2058,53 @@ func (s *Store) conversationVisibleAfterSequence(
 	if err != nil {
 		return 0, fmt.Errorf("select context reset boundary for conversation %s: %w", conv.ID, err)
 	}
+	if sequence == 0 {
+		pending, pendingErr := s.projectConversationResetPending(ctx, conv)
+		if pendingErr != nil {
+			return 0, pendingErr
+		}
+		if pending {
+			return conv.LatestSequence, nil
+		}
+	}
 	return sequence, nil
+}
+
+func (s *Store) projectConversationResetPending(ctx context.Context, conv gen.Conversation) (bool, error) {
+	if conv.Scope != domain.ConversationScopeProject ||
+		conv.CurrentSessionID == nil ||
+		*conv.CurrentSessionID == "" ||
+		conv.LatestSequence <= 0 {
+		return false, nil
+	}
+	current, err := s.qr.GetSession(ctx, *conv.CurrentSessionID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("select current session %s: %w", *conv.CurrentSessionID, err)
+	}
+	if current.ProviderConversationID != "" {
+		return false, nil
+	}
+	active, err := s.qr.SelectConversationBranch(ctx, gen.SelectConversationBranchParams{
+		ConversationID: conv.ID,
+		BranchID:       conv.ActiveBranchID,
+	})
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("select active branch %s: %w", conv.ActiveBranchID, err)
+	}
+	return active.SessionID.Valid && active.SessionID.String != string(*conv.CurrentSessionID), nil
+}
+
+func conversationTurnVisibleAfterSequence(row gen.ConversationTurn, conv gen.Conversation, visibleAfterSequence int64) bool {
+	if visibleAfterSequence <= 0 || conv.CurrentSessionID == nil {
+		return true
+	}
+	return row.HandledBySessionID == *conv.CurrentSessionID
 }
 
 // LoadConversationSnapshot reads a whole conversation. Items come back ordered by

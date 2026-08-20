@@ -62,6 +62,14 @@ func activitySummaries(activities []domain.ConversationActivity) []string {
 	return out
 }
 
+func turnIDs(turns []domain.ConversationTurn) []string {
+	out := make([]string, 0, len(turns))
+	for _, turn := range turns {
+		out = append(out, turn.ID)
+	}
+	return out
+}
+
 func TestProjectConversationRebindsAcrossOrchestratorReplacement(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
@@ -384,6 +392,14 @@ func TestProjectConversationPageStartsAtCurrentContextReset(t *testing.T) {
 	if rebound.ID != conversation.ID {
 		t.Fatalf("rebound conversation = %q, want %q", rebound.ID, conversation.ID)
 	}
+	pending, err := s.LoadConversationSnapshotPage(ctx, conversation.ID, 0, 10)
+	if err != nil {
+		t.Fatalf("pending reset page: %v", err)
+	}
+	if len(pending.Messages) != 0 || len(pending.Activities) != 0 || len(pending.Turns) != 0 || pending.HasMoreBefore {
+		t.Fatalf("pending reset page = messages %#v activities %#v turns %#v hasMore %v, want empty",
+			pending.Messages, pending.Activities, pending.Turns, pending.HasMoreBefore)
+	}
 	if err := s.UpsertActivity(ctx, conversation.ID, "", domain.ConversationActivity{
 		ID: "context-reset", Kind: domain.ActivityKindSystem, Status: domain.ActivityStatusCompleted,
 		Summary:        "Started a fresh agent context.",
@@ -407,6 +423,9 @@ func TestProjectConversationPageStartsAtCurrentContextReset(t *testing.T) {
 	if got := activitySummaries(page.Activities); len(got) != 0 {
 		t.Fatalf("page activities = %v", got)
 	}
+	if got := turnIDs(page.Turns); !reflect.DeepEqual(got, []string{"fresh-turn"}) {
+		t.Fatalf("page turns = %v", got)
+	}
 	if page.HasMoreBefore {
 		t.Fatalf("page HasMoreBefore = true; old orchestrator history must not be pageable from replacement")
 	}
@@ -418,6 +437,58 @@ func TestProjectConversationPageStartsAtCurrentContextReset(t *testing.T) {
 	if len(older.Messages) != 0 || len(older.Activities) != 0 || older.HasMoreBefore {
 		t.Fatalf("older page = messages %#v activities %#v hasMore %v, want empty at reset boundary",
 			older.Messages, older.Activities, older.HasMoreBefore)
+	}
+}
+
+func TestProjectConversationFreshContextRebindWritesResetBoundaryAtomically(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	seedProject(t, s, "project-atomic-reset")
+
+	firstRecord := sampleRecord("project-atomic-reset")
+	firstRecord.Kind = domain.KindOrchestrator
+	firstRecord.Mode = domain.SessionModeChat
+	first, err := s.CreateSession(ctx, firstRecord)
+	if err != nil {
+		t.Fatalf("create first orchestrator: %v", err)
+	}
+	conversation, err := s.CreateConversation(ctx, "project-atomic-conversation", domain.ConversationScopeProject,
+		"project-atomic-reset", first.ID, histClock)
+	if err != nil {
+		t.Fatalf("create project conversation: %v", err)
+	}
+	if _, err := s.AppendUserMessage(ctx, conversation.ID, first.ID, "gen-1", domain.ConversationMessage{
+		ID: "old-message", Text: "old orchestrator history", Origin: domain.MessageOriginHuman,
+	}, "old-turn", histClock.Add(time.Second)); err != nil {
+		t.Fatalf("append old message: %v", err)
+	}
+
+	secondRecord := sampleRecord("project-atomic-reset")
+	secondRecord.Kind = domain.KindOrchestrator
+	secondRecord.Mode = domain.SessionModeChat
+	second, err := s.CreateSession(ctx, secondRecord)
+	if err != nil {
+		t.Fatalf("create replacement orchestrator: %v", err)
+	}
+	rebound, err := s.CreateProjectConversationWithContextReset(ctx, "unused-atomic-conversation",
+		"project-atomic-reset", second.ID, domain.ConversationActivity{
+			ID: "context-reset", Kind: domain.ActivityKindSystem, Status: domain.ActivityStatusCompleted,
+			Summary:        "Agent context reset.",
+			ProviderItemID: "ao-context-reset:" + string(second.ID),
+		}, histClock.Add(2*time.Second))
+	if err != nil {
+		t.Fatalf("atomic rebind: %v", err)
+	}
+	if rebound.ID != conversation.ID {
+		t.Fatalf("rebound conversation = %q, want %q", rebound.ID, conversation.ID)
+	}
+	page, err := s.LoadConversationSnapshotPage(ctx, conversation.ID, 0, 10)
+	if err != nil {
+		t.Fatalf("LoadConversationSnapshotPage: %v", err)
+	}
+	if len(page.Messages) != 0 || len(page.Activities) != 0 || len(page.Turns) != 0 || page.HasMoreBefore {
+		t.Fatalf("page after atomic reset = messages %#v activities %#v turns %#v hasMore %v, want empty",
+			page.Messages, page.Activities, page.Turns, page.HasMoreBefore)
 	}
 }
 
