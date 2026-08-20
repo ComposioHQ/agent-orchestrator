@@ -29,16 +29,28 @@ import { BrowserTabsRail, type BrowserTabsRailHandle } from "./BrowserTabsRail";
 import { cn } from "../lib/utils";
 import { appI18n, type MessageKey } from "../i18n";
 
-// One-click viewport width presets for responsive testing — height always
-// fills the available panel height, only width is constrained. Chosen widths
-// match common device-testing conventions (iPhone-class, iPad portrait,
-// a common laptop breakpoint) rather than any exact device's real resolution.
-const DEVICE_PRESETS = [
-	{ id: "mobile", icon: Smartphone, labelKey: "browser.deviceMobile", width: 375 },
-	{ id: "tablet", icon: Tablet, labelKey: "browser.deviceTablet", width: 768 },
-	{ id: "desktop", icon: Monitor, labelKey: "browser.deviceDesktop", width: 1440 },
-] as const;
-type DevicePresetId = (typeof DEVICE_PRESETS)[number]["id"];
+// One-click viewport width presets for responsive testing — height is shown
+// for reference but not enforced (only width drives CSS breakpoints, and
+// this is a docked panel of limited, variable height, not a device
+// emulator). No "Desktop" entry: the panel is already viewed on desktop, so
+// that preset was always a no-op. "Custom" covers anything these named
+// devices don't — you're never stuck with only this list.
+const DEVICE_PRESETS: { id: string; label: string; width: number; height: number; category: "phone" | "tablet" }[] = [
+	{ id: "iphone-se", label: "iPhone SE", width: 375, height: 667, category: "phone" },
+	{ id: "iphone-14-pro", label: "iPhone 14 Pro", width: 393, height: 852, category: "phone" },
+	{ id: "pixel-7", label: "Pixel 7", width: 412, height: 915, category: "phone" },
+	{ id: "galaxy-s22", label: "Galaxy S22", width: 360, height: 780, category: "phone" },
+	{ id: "ipad-mini", label: "iPad Mini", width: 768, height: 1024, category: "tablet" },
+	{ id: "ipad-pro-11", label: 'iPad Pro 11"', width: 834, height: 1194, category: "tablet" },
+];
+const CUSTOM_DEVICE_PRESET_ID = "custom";
+const MIN_DEVICE_FRAME_WIDTH = 240;
+const MAX_DEVICE_FRAME_WIDTH = 2560;
+
+function clampDeviceFrameWidth(width: number): number | undefined {
+	if (!Number.isFinite(width)) return undefined;
+	return Math.min(MAX_DEVICE_FRAME_WIDTH, Math.max(MIN_DEVICE_FRAME_WIDTH, Math.round(width)));
+}
 
 type BrowserPanelProps = {
 	session: WorkspaceSession;
@@ -275,8 +287,12 @@ export function BrowserPanelView({
 	const canAnnotate = Boolean(window.ao?.browser && viewId && navState.url);
 	const canRetryAnnotation = status === "error" && queuedCount > 0;
 	const canOpenTab = tabs.length < MAX_BROWSER_TABS;
-	const [devicePreset, setDevicePreset] = useState<DevicePresetId | null>(null);
-	const deviceFrameWidth = DEVICE_PRESETS.find((preset) => preset.id === devicePreset)?.width;
+	const [devicePreset, setDevicePreset] = useState<string | null>(null);
+	const [customDeviceWidth, setCustomDeviceWidth] = useState("390");
+	const deviceFrameWidth =
+		devicePreset === CUSTOM_DEVICE_PRESET_ID
+			? clampDeviceFrameWidth(Number(customDeviceWidth))
+			: DEVICE_PRESETS.find((preset) => preset.id === devicePreset)?.width;
 	const railRef = useRef<BrowserTabsRailHandle>(null);
 	const urlInputRef = useRef<HTMLInputElement>(null);
 	const [pinned, setPinned] = useState(() => window.localStorage.getItem(RAIL_PINNED_STORAGE_KEY) === "1");
@@ -509,31 +525,66 @@ export function BrowserPanelView({
 							variant="ghost"
 						>
 							{(() => {
-								const ActiveIcon = DEVICE_PRESETS.find((preset) => preset.id === devicePreset)?.icon ?? Monitor;
+								const active = DEVICE_PRESETS.find((preset) => preset.id === devicePreset);
+								const ActiveIcon = active ? (active.category === "tablet" ? Tablet : Smartphone) : Monitor;
 								return <ActiveIcon aria-hidden="true" className="size-icon-base" />;
 							})()}
 						</Button>
 					</DropdownMenuTrigger>
-					<DropdownMenuContent align="end">
+					{/* Opens directly over the live page (the toolbar sits right above the
+					    native browser view), so without this it renders behind the native
+					    view — Electron always paints native view pixels above the
+					    renderer. Marked as a browser overlay so useBrowserView.ts's
+					    MutationObserver raises the transparent shell above the native view
+					    for as long as this stays mounted+open. See the matching comment on
+					    BrowserTabsRail's flyout for the full mechanism. */}
+					<DropdownMenuContent align="end" className="w-64" data-browser-native-overlay="true">
 						<DropdownMenuItem className="gap-1.5" onSelect={() => setDevicePreset(null)}>
 							<span className="flex size-4 shrink-0 items-center justify-center">
 								{devicePreset === null ? <Check aria-hidden="true" className="text-accent" /> : null}
 							</span>
 							{t("browser.deviceFit")}
 						</DropdownMenuItem>
-						{DEVICE_PRESETS.map((preset) => (
-							<DropdownMenuItem
-								className="gap-1.5"
-								key={preset.id}
-								onSelect={() => setDevicePreset(preset.id)}
-							>
-								<span className="flex size-4 shrink-0 items-center justify-center">
-									{devicePreset === preset.id ? <Check aria-hidden="true" className="text-accent" /> : null}
-								</span>
-								{t(preset.labelKey)}
-								<span className="ml-auto font-mono text-caption text-passive">{preset.width}px</span>
-							</DropdownMenuItem>
-						))}
+						<div className="my-1 h-px bg-border" role="separator" />
+						{DEVICE_PRESETS.map((preset) => {
+							const PresetIcon = preset.category === "tablet" ? Tablet : Smartphone;
+							return (
+								<DropdownMenuItem
+									className="gap-1.5"
+									key={preset.id}
+									onSelect={() => setDevicePreset(preset.id)}
+								>
+									<span className="flex size-4 shrink-0 items-center justify-center">
+										{devicePreset === preset.id ? <Check aria-hidden="true" className="text-accent" /> : null}
+									</span>
+									<PresetIcon aria-hidden="true" className="size-3.5 shrink-0 text-passive" />
+									<span className="flex-1 truncate">{preset.label}</span>
+									<span className="shrink-0 font-mono text-caption text-passive">
+										{preset.width}×{preset.height}
+									</span>
+								</DropdownMenuItem>
+							);
+						})}
+						<div className="my-1 h-px bg-border" role="separator" />
+						<label className="flex items-center gap-1.5 px-2 py-1.5 text-body">
+							<span className="flex size-4 shrink-0 items-center justify-center">
+								{devicePreset === CUSTOM_DEVICE_PRESET_ID ? <Check aria-hidden="true" className="text-accent" /> : null}
+							</span>
+							<span className="flex-1">{t("browser.deviceCustomWidth")}</span>
+							<Input
+								className="h-6 w-16 shrink-0 px-1.5 text-right font-mono text-caption"
+								inputMode="numeric"
+								max={MAX_DEVICE_FRAME_WIDTH}
+								min={MIN_DEVICE_FRAME_WIDTH}
+								onChange={(event) => {
+									setCustomDeviceWidth(event.target.value);
+									setDevicePreset(CUSTOM_DEVICE_PRESET_ID);
+								}}
+								onClick={(event) => event.stopPropagation()}
+								type="number"
+								value={customDeviceWidth}
+							/>
+						</label>
 					</DropdownMenuContent>
 				</DropdownMenu>
 				<Button

@@ -212,22 +212,46 @@ describe("BrowserPanel", () => {
 		expect(hookState.navigate).toHaveBeenCalledWith("localhost:5173");
 	});
 
-	it("constrains the device frame to a preset width, and clears it back to fit", async () => {
+	it("constrains the device frame to a named preset's width, and clears it back to fit", async () => {
 		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
 		const frame = screen.getByTestId("browser-device-frame").parentElement as HTMLElement;
 		expect(frame.style.width).toBe("");
 
 		await userEvent.click(screen.getByRole("button", { name: "Device preset" }));
-		await userEvent.click(screen.getByRole("menuitem", { name: /Mobile/ }));
+		await userEvent.click(screen.getByRole("menuitem", { name: /iPhone SE/ }));
 		expect(frame.style.width).toBe("375px");
 
 		await userEvent.click(screen.getByRole("button", { name: "Device preset" }));
-		await userEvent.click(screen.getByRole("menuitem", { name: /Tablet/ }));
+		await userEvent.click(screen.getByRole("menuitem", { name: /iPad Mini/ }));
 		expect(frame.style.width).toBe("768px");
 
 		await userEvent.click(screen.getByRole("button", { name: "Device preset" }));
 		await userEvent.click(screen.getByRole("menuitem", { name: "Fit panel" }));
 		expect(frame.style.width).toBe("");
+	});
+
+	it("applies a custom device-frame width typed into the dropdown, clamped to a sane range", async () => {
+		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
+		const frame = screen.getByTestId("browser-device-frame").parentElement as HTMLElement;
+
+		await userEvent.click(screen.getByRole("button", { name: "Device preset" }));
+		const customWidthInput = screen.getByLabelText("Custom width") as HTMLInputElement;
+		await userEvent.clear(customWidthInput);
+		await userEvent.type(customWidthInput, "600");
+		expect(frame.style.width).toBe("600px");
+
+		await userEvent.clear(customWidthInput);
+		await userEvent.type(customWidthInput, "10");
+		expect(frame.style.width).toBe("240px");
+	});
+
+	it("marks the device-preset dropdown as a browser overlay so it paints above the live page", async () => {
+		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
+
+		await userEvent.click(screen.getByRole("button", { name: "Device preset" }));
+
+		const menu = screen.getByRole("menu");
+		expect(menu.getAttribute("data-browser-native-overlay")).toBe("true");
 	});
 
 	it("keeps the URL input editable while the browser is maximized", async () => {
