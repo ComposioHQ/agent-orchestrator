@@ -290,6 +290,38 @@ describe("SessionsBoard", () => {
 		expect(within(idleCard).getByText("brand-font-pipeline")).toHaveClass("font-semibold", "line-clamp-2");
 	});
 
+	it("insets the lane grid so it does not touch the framed panel border", () => {
+		workspaceQueryMock.mockReturnValue({
+			data: [
+				{
+					id: "p1",
+					name: "radic",
+					path: "/tmp/radic",
+					sessions: [
+						{
+							id: "s1",
+							workspaceId: "p1",
+							workspaceName: "radic",
+							title: "brand-font-pipeline",
+							provider: "claude-code",
+							branch: "ao/radic-5",
+							status: "idle",
+							activity: { state: "idle", lastActivityAt: "2026-01-01T00:00:00Z" },
+							updatedAt: "2026-01-01T00:00:00Z",
+							prs: [],
+						},
+					],
+				},
+			],
+			isError: false,
+		});
+
+		renderBoard("p1");
+
+		const grid = screen.getByTestId("board-horizontal-scroll");
+		expect(grid.parentElement).toHaveClass("px-2", "pb-2", "pt-1.5");
+	});
+
 	it("shows compact token usage on active and archived cards and hides empty totals", async () => {
 		workspaceQueryMock.mockReturnValue({
 			data: [
