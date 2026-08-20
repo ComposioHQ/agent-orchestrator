@@ -1,4 +1,4 @@
-import { render, screen, within } from "@testing-library/react";
+import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import type { ChatConfigOption } from "../../types/conversation";
@@ -49,8 +49,7 @@ const OPTIONS: ChatConfigOption[] = [
 ];
 
 describe("ACP session config options", () => {
-	it("clubs model, effort, and extras into the Codex two-trigger chrome", async () => {
-		const user = userEvent.setup();
+	it("renders every advertised control without inventing a Claude-specific list", () => {
 		render(
 			<TurnSettingsBar
 				models={[]}
@@ -60,25 +59,15 @@ describe("ACP session config options", () => {
 			/>,
 		);
 
-		const tools = screen.getByRole("group", { name: "Turn settings" });
-		expect(
-			within(tools).getByRole("button", { name: "Model and reasoning effort for the next turn" }),
-		).toHaveTextContent("Opus 5 High");
-		expect(within(tools).getByRole("button", { name: "Permission mode" })).toHaveTextContent(
-			"Ask before edits",
-		);
-		expect(within(tools).queryByRole("button", { name: "Fast mode" })).not.toBeInTheDocument();
-		expect(within(tools).queryByRole("button", { name: "Agent" })).not.toBeInTheDocument();
-		expect(screen.queryByText("Default")).not.toBeInTheDocument();
+		for (const label of ["Opus 5", "High", "Ask before edits", "Off", "Code reviewer"]) {
+			expect(screen.getByText(label)).toBeInTheDocument();
+		}
+		for (const name of ["Model", "Effort", "Permission mode", "Fast mode", "Agent"]) {
+			expect(screen.getByRole("button", { name }).querySelectorAll("svg")).toHaveLength(1);
+		}
+		// The generic permission option owns this choice; AO's separate approval
+		// picker must not be duplicated beside it.
 		expect(screen.queryByText("Provider default")).not.toBeInTheDocument();
-
-		await user.click(
-			screen.getByRole("button", { name: "Model and reasoning effort for the next turn" }),
-		);
-		expect(screen.getByText("Model")).toBeInTheDocument();
-		expect(screen.getByText("Effort")).toBeInTheDocument();
-		expect(screen.getByText("Agent")).toBeInTheDocument();
-		expect(screen.getByText("More")).toBeInTheDocument();
 	});
 
 	it("sends the provider's opaque value id when a selection changes", async () => {
@@ -115,20 +104,5 @@ describe("ACP session config options", () => {
 		expect(screen.getByRole("button", { name: "What the agent may do without asking" })).toHaveTextContent(
 			"Default",
 		);
-	});
-	it("keeps a lone extra option as its own picker rather than inventing a model menu", () => {
-		render(
-			<TurnSettingsBar
-				models={[]}
-				settings={{}}
-				configOptions={[OPTIONS[3]]}
-				onChangeConfigOption={vi.fn()}
-			/>,
-		);
-
-		expect(screen.getByRole("button", { name: "Fast mode" })).toHaveTextContent("Off");
-		expect(
-			screen.queryByRole("button", { name: "Model and reasoning effort for the next turn" }),
-		).not.toBeInTheDocument();
 	});
 });
