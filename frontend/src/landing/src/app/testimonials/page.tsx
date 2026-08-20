@@ -26,7 +26,7 @@ const testimonialExamples = [
 export default function TestimonialsPage() {
   return (
     <main
-      className={`${testimonialSans.className} min-h-[100dvh] bg-background text-foreground`}
+      className={`${testimonialSans.className} min-h-[100dvh] bg-background font-[450] text-foreground`}
     >
       <section className="px-4 py-10 sm:px-8 sm:py-14 lg:px-[30px] lg:py-20">
         <div className="mx-auto grid max-w-7xl gap-6 lg:grid-cols-2 lg:items-start xl:gap-8">
