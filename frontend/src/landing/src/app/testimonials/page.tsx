@@ -1,10 +1,11 @@
 import type { Metadata } from "next";
 import Image from "next/image";
-import { Onest } from "next/font/google";
+import { Bricolage_Grotesque } from "next/font/google";
 import { Quote } from "lucide-react";
 import { TestimonialForm } from "./TestimonialForm";
 
-const testimonialSans = Onest({
+const testimonialDisplay = Bricolage_Grotesque({
+  weight: "600",
   subsets: ["latin"],
   display: "swap",
 });
@@ -25,9 +26,7 @@ const testimonialExamples = [
 
 export default function TestimonialsPage() {
   return (
-    <main
-      className={`${testimonialSans.className} min-h-[100dvh] bg-background font-[450] text-foreground`}
-    >
+    <main className="min-h-[100dvh] bg-background text-foreground">
       <section className="px-4 py-10 sm:px-8 sm:py-14 lg:px-[30px] lg:py-20">
         <div className="mx-auto grid max-w-7xl gap-6 lg:grid-cols-2 lg:items-start xl:gap-8">
           <div className="relative overflow-hidden rounded-2xl border border-border bg-card lg:h-[760px]">
@@ -48,7 +47,9 @@ export default function TestimonialsPage() {
 
             <div className="relative flex flex-col justify-between p-5 sm:p-8 lg:h-full lg:p-10">
               <div className="max-w-3xl">
-                <h1 className="max-w-4xl text-4xl font-semibold leading-[1.02] text-foreground sm:text-5xl lg:text-6xl">
+                <h1
+                  className={`${testimonialDisplay.className} max-w-4xl text-4xl font-semibold leading-[1.02] text-foreground sm:text-5xl lg:text-6xl`}
+                >
                   Put your AO experience into words.
                 </h1>
                 <p className="mt-5 max-w-2xl text-base leading-7 text-muted-foreground sm:text-lg">
@@ -94,7 +95,9 @@ export default function TestimonialsPage() {
           className="mx-auto mt-6 max-w-7xl scroll-mt-20 overflow-hidden rounded-2xl border border-border bg-card p-6 sm:p-8 lg:p-10"
         >
           <div className="border-b border-border pb-7">
-            <h2 className="text-2xl font-semibold text-foreground sm:text-3xl">
+            <h2
+              className={`${testimonialDisplay.className} text-2xl font-semibold text-foreground sm:text-3xl`}
+            >
               Examples of good testimonials
             </h2>
           </div>
