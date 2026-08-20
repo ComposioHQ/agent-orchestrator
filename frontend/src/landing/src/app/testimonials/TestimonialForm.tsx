@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { ExternalLink } from "lucide-react";
 import { useId, useState } from "react";
 import {
@@ -188,14 +187,6 @@ export function TestimonialForm() {
         </p>
       ) : null}
 
-      <p className="text-xs leading-relaxed text-muted-foreground">
-        By submitting, you give AO permission to feature your testimonial and
-        public LinkedIn attribution on our website. See our{" "}
-        <Link className="underline underline-offset-2" href="/privacy/">
-          privacy policy
-        </Link>
-        .
-      </p>
     </form>
   );
 }
