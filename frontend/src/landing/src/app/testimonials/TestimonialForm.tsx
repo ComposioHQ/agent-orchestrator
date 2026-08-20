@@ -140,7 +140,7 @@ export function TestimonialForm() {
           placeholder="https://www.linkedin.com/in/your-name"
           value={linkedinUrl}
           onChange={(event) => setLinkedinUrl(event.target.value)}
-          className="min-h-12 w-full rounded-xl border border-border bg-background px-4 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+          className="min-h-12 w-full rounded-xl border border-border bg-background px-4 text-sm text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:ring-2 focus:ring-ring"
         />
       </div>
 
@@ -167,7 +167,7 @@ export function TestimonialForm() {
           placeholder="https://x.com/your-name/status/..."
           value={tweetUrl}
           onChange={(event) => setTweetUrl(event.target.value)}
-          className="min-h-12 w-full rounded-xl border border-border bg-background px-4 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+          className="min-h-12 w-full rounded-xl border border-border bg-background px-4 text-sm text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:ring-2 focus:ring-ring"
         />
         <p className="text-xs leading-5 text-muted-foreground">
           Tweet your experience, then paste the link so we can embed it directly.
