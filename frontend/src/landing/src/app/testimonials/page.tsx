@@ -1,7 +1,13 @@
 import type { Metadata } from "next";
 import Image from "next/image";
+import { Onest } from "next/font/google";
 import { Quote } from "lucide-react";
 import { TestimonialForm } from "./TestimonialForm";
+
+const testimonialSans = Onest({
+  subsets: ["latin"],
+  display: "swap",
+});
 
 export const metadata: Metadata = {
   title: "Share Your AO Story",
@@ -19,7 +25,9 @@ const testimonialExamples = [
 
 export default function TestimonialsPage() {
   return (
-    <main className="min-h-[100dvh] bg-background text-foreground">
+    <main
+      className={`${testimonialSans.className} min-h-[100dvh] bg-background text-foreground`}
+    >
       <section className="px-4 py-10 sm:px-8 sm:py-14 lg:px-[30px] lg:py-20">
         <div className="mx-auto grid max-w-7xl gap-6 lg:grid-cols-2 lg:items-start xl:gap-8">
           <div className="relative overflow-hidden rounded-2xl border border-border bg-card lg:h-[760px]">
