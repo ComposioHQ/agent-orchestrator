@@ -99,6 +99,16 @@ export function resetConsumedPreviewTriggersForTest(): void {
 
 const HIDDEN_RECT: BrowserRect = { x: 0, y: 0, width: 0, height: 0 };
 
+// ResizeHandle.tsx sits at the inspector panel's left edge with a
+// `--size-resize-handle-offset` (6px) negative inset, so only its right half
+// (0 to 6px, inside the panel) survives the panel's `overflow-hidden` — the
+// left half is clipped away. That surviving 6px is inside `[data-panel]`, the
+// same territory the browser view fills, so without this reserve the native
+// view covers the handle at rest and a drag can never start once a page is
+// loaded (only continuing an already-started drag is handled elsewhere, via
+// the `is-resizing-x` watcher below). Keep in sync with tokens.css.
+const RESIZE_HANDLE_RESERVE_PX = 6;
+
 // The native WebContentsView is a window-level overlay, so DOM `overflow:
 // hidden` never clips it — it paints wherever the slot's bounding box lands.
 // During inspector open/close the column slides on a transform (the slot box
@@ -106,10 +116,17 @@ const HIDDEN_RECT: BrowserRect = { x: 0, y: 0, width: 0, height: 0 };
 function visibleSlotRect(node: HTMLElement): BrowserRect {
 	const rect = node.getBoundingClientRect();
 	let { left, top, right, bottom } = rect;
-	const clips = [node.closest<HTMLElement>("[data-panel]"), node.closest<HTMLElement>(".session-split")];
-	for (const clip of clips) {
-		if (!clip) continue;
-		const bounds = clip.getBoundingClientRect();
+	const panel = node.closest<HTMLElement>("[data-panel]");
+	if (panel) {
+		const bounds = panel.getBoundingClientRect();
+		left = Math.max(left, bounds.left + RESIZE_HANDLE_RESERVE_PX);
+		top = Math.max(top, bounds.top);
+		right = Math.min(right, bounds.right);
+		bottom = Math.min(bottom, bounds.bottom);
+	}
+	const split = node.closest<HTMLElement>(".session-split");
+	if (split) {
+		const bounds = split.getBoundingClientRect();
 		left = Math.max(left, bounds.left);
 		top = Math.max(top, bounds.top);
 		right = Math.min(right, bounds.right);
