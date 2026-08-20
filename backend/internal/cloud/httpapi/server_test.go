@@ -213,6 +213,35 @@ func TestGoogleExchangeReturnsConflictForDuplicateAccountState(t *testing.T) {
 	}
 }
 
+func TestRefreshAndLogoutRejectMalformedRefreshTokenConsistently(t *testing.T) {
+	store := &memoryAccountStore{refreshes: make(map[string]string)}
+	server := newTestServer(t, store, &staticIdentityVerifier{})
+	for _, path := range []string{
+		"/api/cloud/v1/auth/refresh",
+		"/api/cloud/v1/auth/logout",
+	} {
+		t.Run(path, func(t *testing.T) {
+			request := httptest.NewRequest(
+				http.MethodPost,
+				path,
+				bytes.NewBufferString(`{"refreshToken":"malformed"}`),
+			)
+			response := httptest.NewRecorder()
+			server.Handler().ServeHTTP(response, request)
+			if response.Code != http.StatusUnauthorized {
+				t.Fatalf("status = %d: %s", response.Code, response.Body.String())
+			}
+			var responseError errorEnvelope
+			if err := json.Unmarshal(response.Body.Bytes(), &responseError); err != nil {
+				t.Fatal(err)
+			}
+			if responseError.Code != "INVALID_REFRESH_TOKEN" {
+				t.Fatalf("code = %q, want INVALID_REFRESH_TOKEN", responseError.Code)
+			}
+		})
+	}
+}
+
 func TestReadinessFailsClosedWhenPostgresIsUnavailable(t *testing.T) {
 	store := &memoryAccountStore{refreshes: make(map[string]string), pingErr: errors.New("unavailable")}
 	server := newTestServer(t, store, &staticIdentityVerifier{})
