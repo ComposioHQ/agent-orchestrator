@@ -675,6 +675,18 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		return next;
 	}
 
+	// Re-verified 2026-08-19: a long-session report claimed tab close buttons
+	// eventually "stop working" (tab stays in the rail / count badge doesn't
+	// decrement). An accelerated stress repro -- open to MAX_BROWSER_TABS and
+	// close back to one, 20 cycles, interleaving selectTab/DevTools
+	// open-close/annotation-mode toggles -- against this real closeTab/
+	// destroyTabView path (see "browser tab lifecycle stress" in
+	// browser-view-host.test.ts) completed cleanly with no stuck or leaked
+	// tab. Several stabilization fixes already landed on main since the
+	// original report and likely already covered it: 73aa2c9bc (stabilize
+	// browser tab controls), 7d80f4a32 (prevent wrong tab content after
+	// switching), b00aa0414 (cancel stale overlay captures), and 4a98e4a92
+	// (release tab menu mirror on selection).
 	function closeTab(session: BrowserSessionEntry, tabId = session.activeTabId): BrowserTabsState {
 		if (session.tabs.size === 1) {
 			throw browserError("CANNOT_CLOSE_LAST_TAB", "The only browser tab cannot be closed");

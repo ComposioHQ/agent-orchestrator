@@ -18,7 +18,6 @@ import {
 	type InspectorGithubReview,
 	type InspectorReviewGroup,
 	type InspectorReviewLabels,
-	type InspectorReviewRun,
 	type InspectorTimelineEvent,
 	type InspectorView,
 } from "@aoagents/product-ui";
@@ -201,35 +200,43 @@ export function SessionInspector({
 		};
 	});
 	return (
-		<SessionInspectorShellView
-			activeView={view}
-			ariaLabel={t("inspector.aria")}
-			browserPoppedOut={browserPoppedOut}
-			browserView={
-				session ? (
-					<BrowserView
-						browserPoppedOut={browserPoppedOut}
-						browserAnnotationQueue={browserAnnotationQueue}
-						browserView={browserView}
-						isActive={isInspectorVisible && !browserPoppedOut}
-						onTogglePopOut={onToggleBrowserPopOut}
-						session={session}
-					/>
-				) : undefined
-			}
-			filesView={session ? <FilesView filesView={filesView} onOpenFiles={onOpenFiles} /> : undefined}
-			headerActions={<span aria-hidden="true" className="session-inspector-actions-spacer" />}
-			isVisible={isInspectorVisible}
-			loadingText={session ? undefined : t("inspector.loadingSession")}
-			onViewChange={setView}
-			reviewsView={
-				session ? <ReviewsView onOpenReviewerTerminal={onOpenReviewerTerminal} session={session} /> : undefined
-			}
-			summaryView={
-				session ? <SummaryView canOpenReviews={reviewsAvailable} onOpenReviews={() => setView("reviews")} session={session} /> : undefined
-			}
-			tabs={tabs}
-		/>
+		// SessionInspectorShellView (packages/product-ui) doesn't accept a
+		// className, but styles.css's native-composition transparency cascade
+		// targets a `.session-inspector` ancestor around it (to punch a
+		// see-through hole for the live browser page when the compositor's
+		// shell is raised for an overlay). `contents` keeps this wrapper out of
+		// layout/flex entirely — it exists purely as a CSS selector anchor.
+		<div className="session-inspector contents">
+			<SessionInspectorShellView
+				activeView={view}
+				ariaLabel={t("inspector.aria")}
+				browserPoppedOut={browserPoppedOut}
+				browserView={
+					session ? (
+						<BrowserView
+							browserPoppedOut={browserPoppedOut}
+							browserAnnotationQueue={browserAnnotationQueue}
+							browserView={browserView}
+							isActive={isInspectorVisible && !browserPoppedOut}
+							onTogglePopOut={onToggleBrowserPopOut}
+							session={session}
+						/>
+					) : undefined
+				}
+				filesView={session ? <FilesView filesView={filesView} onOpenFiles={onOpenFiles} /> : undefined}
+				headerActions={<span aria-hidden="true" className="session-inspector-actions-spacer" />}
+				isVisible={isInspectorVisible}
+				loadingText={session ? undefined : t("inspector.loadingSession")}
+				onViewChange={setView}
+				reviewsView={
+					session ? <ReviewsView onOpenReviewerTerminal={onOpenReviewerTerminal} session={session} /> : undefined
+				}
+				summaryView={
+					session ? <SummaryView canOpenReviews={reviewsAvailable} onOpenReviews={() => setView("reviews")} session={session} /> : undefined
+				}
+				tabs={tabs}
+			/>
+		</div>
 	);
 }
 
@@ -1477,13 +1484,6 @@ function MergedReviewsSection({
 		});
 		if (error) throw new Error(apiErrorMessage(error, "Unable to send review comment to worker agent"));
 	};
-	const sendAgentReviewToWorker = async (run: InspectorReviewRun) => {
-		const { error } = await apiClient.POST("/api/v1/sessions/{sessionId}/send", {
-			params: { path: { sessionId: session.id } },
-			body: { message: formatAgentReviewMessage(run) },
-		});
-		if (error) throw new Error(apiErrorMessage(error, "Unable to send agent review to worker agent"));
-	};
 	const groups: InspectorReviewGroup[] = rows.map(([number, { ao, github }]) => {
 		const aoRuns = ao ? [...(runsByPR.get(ao.prUrl) ?? [])].sort((a, b) => b.createdAt.localeCompare(a.createdAt)) : [];
 		const entries = (github?.review?.reviews ?? []).filter(
@@ -1665,7 +1665,6 @@ function MergedReviewsSection({
 			labels={labels}
 			onRequestRereview={requestRereview}
 			onResolveInlineComment={resolveInlineComment}
-			onSendAgentReview={sendAgentReviewToWorker}
 			onSendInlineComment={sendInlineCommentToWorker}
 			renderAvatar={(harness) => (
 				<AgentAvatar className="size-5 shrink-0" decorative provider={harness} />
@@ -1751,25 +1750,6 @@ function formatInlineReviewCommentMessage(comment: InspectorInlineComment & { re
 	if (url) {
 		lines.push("", `Comment URL: ${url}`);
 	}
-	lines.push("", "You should not need to re-fetch review data unless you need additional context beyond what AO has provided here.");
-	return lines.join("\n");
-}
-
-function formatAgentReviewMessage(run: InspectorReviewRun): string {
-	const reviewer = sanitizeWorkerMessagePart(run.harness.trim() || "reviewer");
-	const verdict = sanitizeWorkerMessagePart(run.verdict.label.trim() || "Review complete");
-	const body = sanitizeWorkerMessagePart(run.body?.trim() || "No review summary provided.");
-	const url = sanitizeWorkerMessagePart(run.url?.trim() || "");
-	const lines = [
-		"An AO reviewer completed a review of your PR. Address any requested changes, commit the fixes, and push the branch to GitHub.",
-		"",
-		`Reviewer: ${reviewer}`,
-		`Verdict: ${verdict}`,
-		"",
-		"Review:",
-		body,
-	];
-	if (url) lines.push("", `Review URL: ${url}`);
 	lines.push("", "You should not need to re-fetch review data unless you need additional context beyond what AO has provided here.");
 	return lines.join("\n");
 }

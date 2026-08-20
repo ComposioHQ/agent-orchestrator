@@ -474,7 +474,7 @@ describe("ProjectSettingsForm", () => {
 
 		renderSettings("proj-1", undefined, "agents");
 
-		const toggle = await screen.findByRole("switch", { name: "Enable for new sessions" });
+		const toggle = await screen.findByRole("switch", { name: "Auto review PRs" });
 		expect(toggle).toBeChecked();
 
 		await userEvent.click(toggle);

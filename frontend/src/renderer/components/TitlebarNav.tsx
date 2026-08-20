@@ -61,9 +61,9 @@ export function TitlebarNav({
   // 12px hit target (centerline 18); the 40px clearance band is items-centered,
   // so top: -2px puts the toggle/arrows on that same centerline. Linux: no
   // traffic lights, so it sits at the sidebar's top-left within the reserved
-  // titlebar band.
+  // titlebar band (cluster-left-linux, not flush to the window edge).
   const leftClass = !isMac
-    ? "left-0"
+    ? "left-titlebar-cluster-left-linux"
     : isFullScreen
       ? "left-titlebar-cluster-left-fullscreen"
       : "left-titlebar-cluster-left";

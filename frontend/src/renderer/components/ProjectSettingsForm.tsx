@@ -11,7 +11,7 @@ import {
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
 import { useEffect, useState } from "react";
-import { Pencil, RefreshCw } from "lucide-react";
+import { Info, Pencil, RefreshCw } from "lucide-react";
 import type { components } from "../../api/schema";
 import {
 	agentModelsQueryKey,
@@ -37,6 +37,7 @@ import { AgentModelCombobox } from "./settings/AgentModelCombobox";
 import { SettingsOptionMenu } from "./settings/SettingsOptionMenu";
 import { SettingsRow } from "./settings/SettingsRow";
 import { Switch } from "./ui/switch";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "./ui/tooltip";
 
 type Project = components["schemas"]["Project"];
 type ProjectConfig = components["schemas"]["ProjectConfig"];
@@ -531,18 +532,38 @@ function SettingsBody({
 								{reviewerWarning}
 							</p>
 						)}
-						<SettingsRow label={t("settings.project.autoReviewToggle")}>
-							<Switch
-								aria-label={t("settings.project.autoReviewToggle")}
-								checked={form.autoReview}
-								id="project-auto-review"
-								onCheckedChange={(checked) => setForm((f) => ({ ...f, autoReview: checked }))}
-								size="sm"
-							/>
-						</SettingsRow>
-						<p className="px-1 text-xs leading-row text-settings-muted" role="note">
-							{t("settings.project.autoReviewDescription")}
-						</p>
+						<div className="settings-row-bar">
+							<div className="flex shrink-0 items-center gap-1.5">
+								<span className="whitespace-nowrap text-sm leading-5 text-settings-label">
+									{t("settings.project.autoReviewToggle")}
+								</span>
+								<TooltipProvider delayDuration={0}>
+									<Tooltip>
+										<TooltipTrigger asChild>
+											<button
+												type="button"
+												className="inline-flex size-5 items-center justify-center rounded-md text-settings-muted transition-colors hover:bg-settings-menu-selected hover:text-settings-label focus-visible:ring-1 focus-visible:ring-ring focus-visible:outline-none"
+												aria-label={t("settings.project.autoReviewDescription")}
+											>
+												<Info className="size-icon-sm" aria-hidden="true" />
+											</button>
+										</TooltipTrigger>
+										<TooltipContent className="max-w-72 leading-normal" side="top">
+											{t("settings.project.autoReviewDescription")}
+										</TooltipContent>
+									</Tooltip>
+								</TooltipProvider>
+							</div>
+							<div className="flex min-w-0 flex-1 items-center justify-end">
+								<Switch
+									aria-label={t("settings.project.autoReviewToggle")}
+									checked={form.autoReview}
+									id="project-auto-review"
+									onCheckedChange={(checked) => setForm((f) => ({ ...f, autoReview: checked }))}
+									size="sm"
+								/>
+							</div>
+						</div>
 					</ProjectSettingsSection>
 				)}
 				</>

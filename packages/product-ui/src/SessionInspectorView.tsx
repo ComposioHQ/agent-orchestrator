@@ -498,7 +498,6 @@ export function InspectorReviewsView({
 	labels,
 	onRequestRereview,
 	onResolveInlineComment,
-	onSendAgentReview,
 	onSendInlineComment,
 	renderAvatar,
 	renderMarkdown,
@@ -509,7 +508,6 @@ export function InspectorReviewsView({
 	labels: InspectorReviewLabels;
 	onRequestRereview?: (review: InspectorGithubReview) => Promise<void> | void;
 	onResolveInlineComment?: (comment: InspectorInlineComment & { reviewerId?: string }) => Promise<void> | void;
-	onSendAgentReview?: (run: InspectorReviewRun) => Promise<void> | void;
 	onSendInlineComment?: (comment: InspectorInlineComment & { reviewerId?: string }) => Promise<void> | void;
 	renderAvatar: (harness: string) => ReactNode;
 	renderMarkdown: (body: string) => ReactNode;
@@ -545,7 +543,6 @@ export function InspectorReviewsView({
 									dimmed={group.ao.dimmed}
 									historical={group.ao.historical}
 									labels={labels}
-									onSendAgentReview={onSendAgentReview}
 									renderAvatar={renderAvatar}
 									renderMarkdown={renderMarkdown}
 									runs={group.ao.runs}
@@ -696,7 +693,6 @@ function ReviewRuns({
 	dimmed,
 	historical,
 	labels,
-	onSendAgentReview,
 	renderAvatar,
 	renderMarkdown,
 	runs,
@@ -704,7 +700,6 @@ function ReviewRuns({
 	dimmed?: boolean;
 	historical?: boolean;
 	labels: InspectorReviewLabels;
-	onSendAgentReview?: (run: InspectorReviewRun) => Promise<void> | void;
 	renderAvatar: (harness: string) => ReactNode;
 	renderMarkdown: (body: string) => ReactNode;
 	runs: InspectorReviewRun[];
@@ -717,7 +712,6 @@ function ReviewRuns({
 			dimmed={dimmed}
 			historical={historical}
 			labels={labels}
-			onSendAgentReview={onSendAgentReview}
 			renderAvatar={renderAvatar}
 			renderMarkdown={renderMarkdown}
 			runs={runs}
@@ -729,7 +723,6 @@ function ReviewRunHistory({
 	dimmed,
 	historical,
 	labels,
-	onSendAgentReview,
 	renderAvatar,
 	renderMarkdown,
 	runs,
@@ -737,7 +730,6 @@ function ReviewRunHistory({
 	dimmed?: boolean;
 	historical?: boolean;
 	labels: InspectorReviewLabels;
-	onSendAgentReview?: (run: InspectorReviewRun) => Promise<void> | void;
 	renderAvatar: (harness: string) => ReactNode;
 	renderMarkdown: (body: string) => ReactNode;
 	runs: InspectorReviewRun[];
@@ -756,7 +748,6 @@ function ReviewRunHistory({
 					isEarlier={historical || index > 0}
 					key={run.id}
 					labels={labels}
-					onSend={onSendAgentReview ? () => onSendAgentReview(run) : undefined}
 					renderAvatar={renderAvatar}
 					renderMarkdown={renderMarkdown}
 					testId="review-run-summary"
@@ -1151,7 +1142,8 @@ function ReviewSummaryCard({
 	body: rawBody,
 	isBot = false,
 	isEarlier = false,
-	labels,	onSend,	renderAvatar,
+	labels,
+	renderAvatar,
 	renderMarkdown,
 	testId,
 	timestamp,
@@ -1162,7 +1154,6 @@ function ReviewSummaryCard({
 	isBot?: boolean;
 	isEarlier?: boolean;
 	labels: InspectorReviewLabels;
-	onSend?: () => Promise<void> | void;
 	renderAvatar: (harness: string) => ReactNode;
 	renderMarkdown: (body: string) => ReactNode;
 	testId: string;
@@ -1173,9 +1164,6 @@ function ReviewSummaryCard({
 	const trimmed = rawBody?.trim();
 	const body = trimmed ? trimmed.replace(/\n{3,}/g, "\n\n") : trimmed;
 	const clamped = body ? isClampedSummary(body) : false;
-	const [sent, setSent] = useState(false);
-	const [sending, setSending] = useState(false);
-	const [sendError, setSendError] = useState(false);
 	return (
 		<article className="flex min-w-0 flex-col gap-1 rounded-md bg-overlay/50 px-2.5 py-2.5">
 			<span className="flex min-w-0 items-center gap-1.5">
@@ -1188,32 +1176,6 @@ function ReviewSummaryCard({
 				<span className="ml-auto inline-flex shrink-0 items-center gap-1.5 text-micro text-passive">
 					{isEarlier ? <span>{labels.earlierPass}</span> : null}
 					<span className="font-mono">{timestamp}</span>
-					{onSend ? sent ? (
-						<span className="inline-flex items-center gap-1.5 text-success" title={labels.workerAgentWorkingOnFeedback}>
-							<CheckIcon className="size-icon-xs shrink-0" />
-							{labels.sentToWorkerAgent}
-						</span>
-					) : (
-						<button
-							className="inline-flex h-control-md items-center justify-center gap-1.5 rounded-md bg-secondary px-2.5 text-xs font-normal text-secondary-foreground transition-colors hover:bg-[color-mix(in_oklch,var(--secondary),var(--foreground)_5%)] disabled:pointer-events-none disabled:opacity-50"
-							disabled={sending}
-							onClick={async () => {
-								setSending(true);
-								setSendError(false);
-								try {
-									await onSend();
-									setSent(true);
-								} catch {
-									setSendError(true);
-								} finally {
-									setSending(false);
-								}
-							}}
-							type="button"
-						>
-							{labels.sendToWorkerAgent}
-						</button>
-					) : null}
 				</span>
 			</span>
 			{body ? (
@@ -1224,7 +1186,6 @@ function ReviewSummaryCard({
 					testId={testId}
 				/>
 			) : null}
-			{sendError ? <p className="m-0 text-2xs font-medium text-error">{labels.sendToWorkerAgentError}</p> : null}
 			<ReviewLinks
 				clamped={clamped}
 				expanded={expanded}

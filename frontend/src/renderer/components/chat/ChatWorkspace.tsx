@@ -725,6 +725,8 @@ export function ChatWorkspace({
 							filePathsTruncated={filePathsTruncated}
 							onStageAttachments={onStageAttachments}
 							nativeImages={nativeImages}
+							autoFocus={!reviewerActive}
+							autoFocusKey={snapshot.sessionId}
 							// Steering is only meaningful into a turn that is running. A queued turn
 							// has not reached the provider, so there is nothing to steer.
 							onSteer={onSteer}

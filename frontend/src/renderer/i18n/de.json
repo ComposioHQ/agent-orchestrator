@@ -1209,7 +1209,7 @@
 	"inspector.usage.totalTokensUnavailable": "Token insgesamt nicht verfügbar",
 	"inspector.usage.uncachedInputTokens": "Nicht zwischengespeicherte Eingabe-Token",
 	"settings.project.autoReview": "Auto review",
-	"settings.project.autoReviewToggle": "Enable for new sessions",
+	"settings.project.autoReviewToggle": "Auto review PRs",
 	"settings.project.autoReviewDescription": "When enabled, new worker sessions will automatically review their pull requests. This can still be toggled per session after spawn.",
 	"settings.project.reviewer": "Reviewer"
 }
