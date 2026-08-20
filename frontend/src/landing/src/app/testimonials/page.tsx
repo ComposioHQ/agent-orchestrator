@@ -77,7 +77,12 @@ export default function TestimonialsPage() {
                 className={`group relative border-border py-7 first:pt-8 ${
                   index > 0 ? "border-t" : ""
                 } ${index < 2 ? "sm:border-t-0" : "sm:border-t"} ${
-                  index % 2 === 1 ? "sm:border-l sm:pl-8" : "sm:pr-8"
+                  index === testimonialExamples.length - 1 &&
+                  testimonialExamples.length % 2 === 1
+                    ? "sm:col-span-2"
+                    : index % 2 === 1
+                      ? "sm:border-l sm:pl-8"
+                      : "sm:pr-8"
                 }`}
               >
                 <div className="flex items-center justify-between gap-4">
