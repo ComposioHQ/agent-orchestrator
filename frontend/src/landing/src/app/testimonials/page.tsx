@@ -21,7 +21,7 @@ export default function TestimonialsPage() {
   return (
     <main className="min-h-[100dvh] bg-background text-foreground">
       <section className="px-4 py-10 sm:px-8 sm:py-14 lg:px-[30px] lg:py-20">
-        <div className="mx-auto grid max-w-7xl gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(400px,480px)] lg:items-start xl:gap-8">
+        <div className="mx-auto grid max-w-7xl gap-6 lg:grid-cols-2 lg:items-start xl:gap-8">
           <div className="relative overflow-hidden rounded-2xl border border-border bg-card lg:h-[760px]">
             <Image
               src="/optimized/feature2.webp"
