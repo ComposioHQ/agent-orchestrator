@@ -27,6 +27,13 @@ const notes = [
   },
 ];
 
+const testimonialExamples = [
+  "AO really changes the way you develop. The orchestrator and kanban have been a game changer. I’m no longer confused about what agent is doing what; scoping tasks and spawning them off has been a breeze.",
+  "With AO Mobile, I’m able to ship things on the fly, and my agents are never blocked on my input anymore.",
+  "Before AO, I would ship at most 2–3 PRs a day. Now I consistently ship 5+ PRs every day at work.",
+  "There hasn’t been a day in the last two months when I opened another IDE or ran a coding agent in a terminal app. AO really changes how you think about work. It’s a mindset shift you can’t go back from.",
+];
+
 export default function TestimonialsPage() {
   return (
     <main className="min-h-[100dvh] bg-background text-foreground">
@@ -105,6 +112,49 @@ export default function TestimonialsPage() {
             <TestimonialForm />
           </aside>
         </div>
+
+        <section className="mx-auto mt-6 max-w-7xl overflow-hidden rounded-2xl border border-border bg-card p-6 sm:p-8 lg:p-10">
+          <div className="grid gap-4 border-b border-border pb-7 sm:grid-cols-[minmax(0,1fr)_minmax(280px,420px)] sm:items-end">
+            <div>
+              <p className="text-xs font-medium uppercase tracking-[0.22em] text-muted-foreground">
+                A useful starting point
+              </p>
+              <h2 className="mt-3 text-2xl font-semibold text-foreground sm:text-3xl">
+                Examples of good testimonials
+              </h2>
+            </div>
+            <p className="text-sm leading-6 text-muted-foreground sm:text-right">
+              Specific outcomes, honest before-and-after moments, and concrete
+              changes are more useful than generic praise.
+            </p>
+          </div>
+
+          <div className="grid md:grid-cols-2">
+            {testimonialExamples.map((example, index) => (
+              <blockquote
+                key={example}
+                className={`group relative border-border py-7 first:pt-8 ${
+                  index > 0 ? "border-t" : ""
+                } ${index < 2 ? "md:border-t-0" : "md:border-t"} ${
+                  index % 2 === 1 ? "md:border-l md:pl-8" : "md:pr-8"
+                }`}
+              >
+                <div className="flex items-center justify-between gap-4">
+                  <span className="font-mono text-[10px] uppercase tracking-[0.2em] text-muted-foreground">
+                    Example {String(index + 1).padStart(2, "0")}
+                  </span>
+                  <Quote
+                    className="size-5 text-foreground/10 transition-colors group-hover:text-foreground/20"
+                    aria-hidden="true"
+                  />
+                </div>
+                <p className="mt-5 max-w-2xl text-base leading-7 text-foreground/90 sm:text-lg sm:leading-8">
+                  “{example}”
+                </p>
+              </blockquote>
+            ))}
+          </div>
+        </section>
       </section>
     </main>
   );
