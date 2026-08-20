@@ -50,12 +50,12 @@ export default function TestimonialsPage() {
                 </p>
               </div>
 
-              <div className="mt-auto hidden border-t border-border/70 pt-6 lg:block">
-                <div className="grid grid-cols-2 gap-6">
-                  {testimonialExamples.slice(1, 3).map((example) => (
+              <div className="mt-10 border-t border-border/70 pt-6 lg:mt-auto">
+                <div className="grid gap-x-6 gap-y-5 lg:grid-cols-2">
+                  {testimonialExamples.slice(1, 5).map((example, index) => (
                     <blockquote
                       key={example}
-                      className="text-sm leading-6 text-foreground/80"
+                      className={`${index > 0 ? "hidden lg:block" : ""} text-sm leading-6 text-foreground/80`}
                     >
                       “{example}”
                     </blockquote>
