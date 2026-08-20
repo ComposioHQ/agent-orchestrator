@@ -365,14 +365,25 @@ func readWorkspaceFileBytes(root, rel string, limit int64) ([]byte, error) {
 	return data, nil
 }
 
-// gitWorkspaceBlob reads one path out of a revision.
+// gitWorkspaceBlob reads one path out of a revision. The object size is asked
+// for first so an oversized blob is refused rather than buffered, matching how
+// readWorkspaceFileBytes stats the worktree copy before reading it.
 func gitWorkspaceBlob(ctx context.Context, root, rev, rel string, limit int64) ([]byte, error) {
-	out, err := gitWorkspaceOutput(ctx, root, "cat-file", "blob", rev+":"+rel)
+	spec := rev + ":" + rel
+	sizeOut, err := gitWorkspaceOutput(ctx, root, "cat-file", "-s", spec)
 	if err != nil {
 		return nil, apierr.NotFound("WORKSPACE_BLOB_NOT_FOUND", "File does not exist in the compare base")
 	}
-	if int64(len(out)) > limit {
+	size, err := strconv.ParseInt(strings.TrimSpace(sizeOut), 10, 64)
+	if err != nil {
+		return nil, apierr.NotFound("WORKSPACE_BLOB_NOT_FOUND", "File does not exist in the compare base")
+	}
+	if size > limit {
 		return nil, apierr.Invalid("WORKSPACE_BLOB_TOO_LARGE", "File is too large to preview", map[string]any{"limitBytes": limit})
+	}
+	out, err := gitWorkspaceOutput(ctx, root, "cat-file", "blob", spec)
+	if err != nil {
+		return nil, apierr.NotFound("WORKSPACE_BLOB_NOT_FOUND", "File does not exist in the compare base")
 	}
 	return []byte(out), nil
 }

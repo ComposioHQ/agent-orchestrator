@@ -26,6 +26,10 @@ function workspaceImageUrl(sessionId: string, path: string, side: ImageDiffSide,
  * before and after — instead of the "binary file" placeholder a text diff falls
  * back to. Added files have no before side and deleted files have no after
  * side, so those render a single pane.
+ *
+ * Each pane is keyed by the source it points at, so re-saving a broken image
+ * remounts the pane instead of leaving its failed/dimension state stuck on the
+ * previous load.
  */
 export function ImageDiffView({
 	path,
@@ -50,10 +54,24 @@ export function ImageDiffView({
 	return (
 		<div className={cn("grid gap-2 p-2.5", bothSides && split ? "grid-cols-2" : "grid-cols-1")}>
 			{showBefore ? (
-				<ImageDiffPane label={t("files.imageBefore")} path={path} side="before" sessionId={sessionId} version={version} />
+				<ImageDiffPane
+					key={`before:${path}:${version}`}
+					label={t("files.imageBefore")}
+					path={path}
+					side="before"
+					sessionId={sessionId}
+					version={version}
+				/>
 			) : null}
 			{showAfter ? (
-				<ImageDiffPane label={t("files.imageAfter")} path={path} side="after" sessionId={sessionId} version={version} />
+				<ImageDiffPane
+					key={`after:${path}:${version}`}
+					label={t("files.imageAfter")}
+					path={path}
+					side="after"
+					sessionId={sessionId}
+					version={version}
+				/>
 			) : null}
 		</div>
 	);

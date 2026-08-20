@@ -662,6 +662,27 @@ func TestGetWorkspaceFileBlobReturnsBothSides(t *testing.T) {
 	}
 }
 
+// gitWorkspaceBlob asks git for the object size before it asks for the bytes,
+// so a blob past the limit is refused instead of buffered into memory.
+func TestGitWorkspaceBlobRefusesOversizedObjectBeforeReadingIt(t *testing.T) {
+	repo := newWorkspaceRepo(t)
+	writeWorkspaceFile(t, repo, "docs/logo.png", pngBytes(strings.Repeat("x", 4096)))
+	runGit(t, repo, "add", ".")
+	runGit(t, repo, "commit", "-m", "add logo")
+
+	if _, err := gitWorkspaceBlob(context.Background(), repo, "HEAD", "docs/logo.png", 64); err == nil {
+		t.Fatal("oversized blob: want error, got nil")
+	} else {
+		var e *apierr.Error
+		if !errors.As(err, &e) || e.Kind != apierr.KindInvalid || e.Code != "WORKSPACE_BLOB_TOO_LARGE" {
+			t.Fatalf("err = %v, want apierr.Invalid WORKSPACE_BLOB_TOO_LARGE", err)
+		}
+	}
+	if _, err := gitWorkspaceBlob(context.Background(), repo, "HEAD", "docs/logo.png", 1<<20); err != nil {
+		t.Fatalf("blob within the limit: %v", err)
+	}
+}
+
 func TestGetWorkspaceFileBlobHasNoBeforeSideForAddedFile(t *testing.T) {
 	repo := newWorkspaceRepo(t)
 	writeWorkspaceFile(t, repo, "docs/logo.png", pngBytes("new"))
