@@ -88,7 +88,7 @@ type cachedInventory struct {
 type Service struct {
 	agents         []agentregistry.HarnessAgent
 	cache          ports.AgentModelCatalogCache
-	inventoryCache InventoryCache
+	inventoryCache ports.AgentInventoryCache
 	discoverer     ports.AgentModelDiscoverer
 	projects       ProjectLookup
 	resolverMu     map[string]*sync.Mutex
@@ -106,15 +106,9 @@ type Service struct {
 // Deps contains optional durable dependencies for the agent catalog service.
 type Deps struct {
 	Cache          ports.AgentModelCatalogCache
-	InventoryCache InventoryCache
+	InventoryCache ports.AgentInventoryCache
 	Discoverer     ports.AgentModelDiscoverer
 	Projects       ProjectLookup
-}
-
-// InventoryCache persists the last successful advisory installation/auth probe.
-type InventoryCache interface {
-	GetAgentInventoryCache(ctx context.Context) (inventoryJSON string, observedAt time.Time, ok bool, err error)
-	UpsertAgentInventoryCache(ctx context.Context, inventoryJSON string, observedAt time.Time) error
 }
 
 // ProjectLookup resolves the registered working directory used for model
