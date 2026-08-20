@@ -21,7 +21,7 @@ export default function TestimonialsPage() {
     <main className="min-h-[100dvh] bg-background text-foreground">
       <section className="px-4 py-10 sm:px-8 sm:py-14 lg:px-[30px] lg:py-20">
         <div className="mx-auto grid max-w-7xl gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(400px,480px)] lg:items-start xl:gap-8">
-          <div className="relative order-2 overflow-hidden rounded-2xl border border-border bg-card lg:order-1 lg:h-[760px]">
+          <div className="relative overflow-hidden rounded-2xl border border-border bg-card lg:h-[760px]">
             <Image
               src="/optimized/feature2.webp"
               alt="AO desktop showing agent work moving toward review"
@@ -52,7 +52,7 @@ export default function TestimonialsPage() {
             </div>
           </div>
 
-          <aside className="order-1 flex w-full flex-col rounded-2xl border border-border bg-card p-6 sm:p-8 lg:order-2 lg:min-h-[760px]">
+          <aside className="flex w-full flex-col rounded-2xl border border-border bg-card p-6 sm:p-8 lg:min-h-[760px]">
             <div className="mb-6">
               <h2 className="text-2xl font-semibold text-foreground">
                 Submit a testimonial
