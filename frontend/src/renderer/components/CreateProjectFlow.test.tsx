@@ -34,6 +34,13 @@ vi.mock("./CreateProjectAgentSheet", () => ({
 	}) => (open ? <div data-kind={kind} data-path={path ?? ""} data-testid="agent-sheet" /> : null),
 }));
 
+// Probe stand-in: the real dialog needs its own form state and validation.
+// These tests only care whether the clone flow is on screen and that the
+// droppedPath guard leaves it alone, so a thin stub keeps the suite focused.
+vi.mock("./CloneRepositoryDialog", () => ({
+	default: ({ open }: { open: boolean }) => (open ? <div data-testid="clone-dialog" /> : null),
+}));
+
 function okScan(path: string) {
 	return {
 		path,
@@ -130,5 +137,26 @@ describe("CreateProjectFlow droppedPath", () => {
 
 		expect(screen.getByTestId("agent-sheet")).toHaveAttribute("data-path", "/dropped/first");
 		expect(screen.queryByRole("button", { name: "Open local repository" })).not.toBeInTheDocument();
+	});
+
+	it("ignores a drop while the clone-from-Git dialog is open", async () => {
+		const user = userEvent.setup();
+		const { rerender } = render(
+			<CreateProjectFlow mode="choose" {...noop} droppedPath={null} openSignal={0} />,
+		);
+
+		// Open the mode picker manually and switch to the clone flow.
+		rerender(<CreateProjectFlow mode="choose" {...noop} droppedPath={null} openSignal={1} />);
+		await user.click(await screen.findByRole("button", { name: "Clone from Git" }));
+		expect(await screen.findByTestId("clone-dialog")).toBeInTheDocument();
+
+		// A folder is dropped while the clone dialog is on screen.
+		rerender(
+			<CreateProjectFlow mode="choose" {...noop} droppedPath={{ nonce: 1, path: "/dropped/proj" }} openSignal={1} />,
+		);
+
+		expect(screen.getByTestId("clone-dialog")).toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: "Open local repository" })).not.toBeInTheDocument();
+		expect(bridgeMocks.chooseDirectory).not.toHaveBeenCalled();
 	});
 });

@@ -179,7 +179,7 @@ export function CreateProjectFlow({
 	useEffect(() => {
 		if (!droppedPath || droppedPath.nonce === lastDropNonce.current) return;
 		lastDropNonce.current = droppedPath.nonce;
-		if (isBusy || modePickerOpen || folderPickerOpen || selectedPath !== null) return;
+		if (isBusy || modePickerOpen || cloneDialogOpen || folderPickerOpen || selectedPath !== null) return;
 		startFlow(droppedPath.path);
 	}, [droppedPath]);
 

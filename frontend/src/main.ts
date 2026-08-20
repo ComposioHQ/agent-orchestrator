@@ -1870,9 +1870,12 @@ app.on("second-instance", (_event, argv) => {
 		void handleCloudDeepLinkAndFocus(deepLink);
 		return;
 	}
-	// A folder dropped on the taskbar icon/shortcut while already running. The
-	// app was already running, so its renderer is already mounted and listening
-	// — send directly rather than queuing via pendingFolderPath.
+	// A folder dropped on the taskbar icon/shortcut while already running.
+	// Usually the renderer is already mounted and listening, so send directly
+	// — but this can still fire while the first instance is early in
+	// app.whenReady() or creating its window, before any shell WebContents
+	// exists. Fall back to the same pendingFolderPath queue the cold-start
+	// path uses rather than silently dropping it.
 	const folderPath = parseOpenFolderPathArg(argv);
 	if (folderPath) {
 		const window = BaseWindow.getAllWindows()[0];
@@ -1881,7 +1884,12 @@ app.on("second-instance", (_event, argv) => {
 			window.show();
 			window.focus();
 		}
-		getShellWebContents()?.send(OPEN_FOLDER_PATH_CHANNEL, folderPath);
+		const contents = getShellWebContents();
+		if (contents) {
+			contents.send(OPEN_FOLDER_PATH_CHANNEL, folderPath);
+		} else {
+			pendingFolderPath = folderPath;
+		}
 		return;
 	}
 	const window = BaseWindow.getAllWindows()[0];

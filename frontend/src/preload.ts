@@ -80,12 +80,19 @@ export type ImportFolderScan = {
 // before ShellLayout's own effect has registered app.onOpenFolderPath's
 // listener below — React mounts TrayRuntime's child effect (which pings
 // main.ts's readiness flush) before ShellLayout's parent effect that installs
-// this listener. Registering this raw listener here, at preload module load
-// (guaranteed to run before any renderer/React code), buffers a path that
-// arrives too early so onOpenFolderPath can still replay it once called.
+// this listener. One dispatcher registered here, at preload module load
+// (guaranteed to run before any renderer/React code), either forwards
+// directly to the active listener or buffers a path that arrives too early —
+// never both, so a normally delivered path can never be left in the buffer
+// to be replayed by a later resubscription.
 let bufferedOpenFolderPath: string | null = null;
+let activeOpenFolderPathListener: ((path: string) => void) | null = null;
 ipcRenderer.on("app:openFolderPath", (_event, path: string) => {
-	bufferedOpenFolderPath = path;
+	if (activeOpenFolderPathListener) {
+		activeOpenFolderPathListener(path);
+	} else {
+		bufferedOpenFolderPath = path;
+	}
 });
 
 const api = {
@@ -105,15 +112,14 @@ const api = {
 		// Fired by the main process when a folder is dropped onto the app's
 		// taskbar icon/shortcut (cold start or an already-running instance).
 		onOpenFolderPath: (listener: (path: string) => void) => {
-			const wrapped = (_event: Electron.IpcRendererEvent, path: string) => listener(path);
-			ipcRenderer.on("app:openFolderPath", wrapped);
+			activeOpenFolderPathListener = listener;
 			if (bufferedOpenFolderPath) {
 				const path = bufferedOpenFolderPath;
 				bufferedOpenFolderPath = null;
 				listener(path);
 			}
 			return () => {
-				ipcRenderer.off("app:openFolderPath", wrapped);
+				if (activeOpenFolderPathListener === listener) activeOpenFolderPathListener = null;
 			};
 		},
 		// Fired by the main process when the app-level new-session shortcut
