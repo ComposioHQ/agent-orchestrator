@@ -4,7 +4,7 @@ import {
 	countWords,
 	isLinkedInProfileUrl,
 	isTweetUrl,
-	limitWords,
+	keepWithinWordLimit,
 } from "./testimonial-submission";
 
 describe("testimonial word limits", () => {
@@ -13,16 +13,26 @@ describe("testimonial word limits", () => {
 	});
 
 	it("leaves submissions within the limit unchanged", () => {
-		expect(limitWords("one  two\nthree", 3)).toBe("one  two\nthree");
+		expect(keepWithinWordLimit("one  two\nthree", "", 3)).toBe("one  two\nthree");
 	});
 
-	it("truncates text after the final allowed word", () => {
-		expect(limitWords("one  two\nthree four", 3)).toBe("one  two\nthree");
+	it("preserves whitespace while the submission is at the limit", () => {
+		expect(keepWithinWordLimit("one  two\nthree  ", "one  two\nthree", 3)).toBe(
+			"one  two\nthree  ",
+		);
 	});
 
-	it("enforces the submission cap for pasted text", () => {
+	it("rejects edits above the limit without rewriting the current text", () => {
+		const currentValue = "one  two\nthree  ";
+		expect(keepWithinWordLimit(`${currentValue}four`, currentValue, 3)).toBe(
+			currentValue,
+		);
+	});
+
+	it("rejects pasted text above the submission cap", () => {
+		const currentValue = "An existing testimonial.";
 		const pastedText = Array.from({ length: 501 }, (_, index) => `word-${index}`).join(" ");
-		expect(countWords(limitWords(pastedText))).toBe(500);
+		expect(keepWithinWordLimit(pastedText, currentValue)).toBe(currentValue);
 	});
 });
 
