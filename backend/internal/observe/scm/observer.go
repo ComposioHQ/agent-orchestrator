@@ -789,13 +789,12 @@ func (o *Observer) discoverSubjects(ctx context.Context) (map[string]*subject, [
 				o.logger.Warn("scm observer: tracked PR repo no longer belongs to project", "session", sess.ID, "pr", pr.URL, "repo", pr.Repo)
 				continue
 			}
-			// Identity-keyed: two rows for the same provider-native PR (e.g.
-			// observed under both the pre- and post-transfer repo name)
-			// resolve to one subject here instead of becoming two subjects
-			// that fight over the same PR downstream.
+			// Provider-native identity keeps this subject's key stable across
+			// repository renames; legacy id-less rows retain the name-based key
+			// until their first successful detail fetch stamps an identity.
 			key := keyForTrackedPR(pr, prRepo)
 			if existing, ok := out[key]; ok {
-				o.logger.Warn("scm observer: duplicate tracked PR ownership skipped", "pr", key, "kept_session", existing.session.ID, "skipped_session", sess.ID)
+				o.logger.Warn("scm observer: duplicate tracked PR subject skipped", "pr", key, "kept_session", existing.session.ID, "skipped_session", sess.ID)
 				continue
 			}
 			out[key] = &subject{session: sess, repo: prRepo, branch: branch, known: pr, hasPR: true}

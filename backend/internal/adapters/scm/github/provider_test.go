@@ -1319,6 +1319,41 @@ func TestSCMMergeabilityBlocksReviewRequiredAndDraft(t *testing.T) {
 	}
 }
 
+func TestFetchPullRequestsMarksMissingPRNotFound(t *testing.T) {
+	fake := newFakeGH(t)
+	fx := basePRFixture()
+	var pr map[string]any
+	fx.prData(func(m map[string]any) { pr = m })
+	fake.on(http.MethodPost, "/graphql", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"data": map[string]any{
+				"pr0": map[string]any{"pullRequest": nil},
+				"pr1": map[string]any{"pullRequest": pr},
+			},
+		})
+	})
+	p := newProviderForTest(t, fake)
+	repo := ports.SCMRepo{Provider: "github", Host: "github.com", Owner: "octocat", Name: "hello", Repo: "octocat/hello"}
+
+	obs, err := p.FetchPullRequests(ctx(), []ports.SCMPRRef{
+		{Repo: repo, Number: 404},
+		{Repo: repo, Number: 42},
+	})
+	if err != nil {
+		t.Fatalf("FetchPullRequests: %v", err)
+	}
+	if len(obs) != 2 {
+		t.Fatalf("observations = %d, want 2", len(obs))
+	}
+	if obs[0].Fetched || !errors.Is(obs[0].Error, ports.ErrSCMNotFound) {
+		t.Fatalf("missing observation = %+v, want Fetched=false ErrSCMNotFound", obs[0])
+	}
+	if !obs[1].Fetched || obs[1].PR.Number != 42 {
+		t.Fatalf("second observation = %+v, want fetched PR 42", obs[1])
+	}
+}
+
 func TestFetchPullRequestsDoesNotFallbackWhenContextPageComplete(t *testing.T) {
 	fake := newFakeGH(t)
 	fx := basePRFixture()

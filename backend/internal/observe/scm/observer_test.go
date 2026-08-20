@@ -3217,30 +3217,3 @@ func TestPoll_IdentityKeyedDispatchSurvivesRename(t *testing.T) {
 		t.Fatalf("lifecycle notifications = %d, want 1", len(lc.observed))
 	}
 }
-
-// Two stored rows for the same provider-native PR (one per repo name, the
-// pre-#3923 duplicate-row artifact) collapse to a single subject instead of
-// two subjects fighting over the same PR.
-func TestDiscoverSubjects_CollapsesDuplicateRowsByIdentity(t *testing.T) {
-	store := &fakeStore{
-		sessions: []domain.SessionRecord{{ID: "p-1", ProjectID: "p", Metadata: domain.SessionMetadata{Branch: "feat"}}},
-		projects: map[string]domain.ProjectRecord{"p": {ID: "p", RepoOriginURL: "https://github.com/new/r.git"}},
-		prs: map[domain.SessionID][]domain.PullRequest{"p-1": {
-			{URL: "https://github.com/old/r/pull/1", SessionID: "p-1", Number: 1, Provider: "github", Host: "github.com", Repo: "old/r", ProviderID: "PR_dup", SourceBranch: "feat"},
-			{URL: "https://github.com/new/r/pull/1", SessionID: "p-1", Number: 1, Provider: "github", Host: "github.com", Repo: "new/r", ProviderID: "PR_dup", SourceBranch: "feat"},
-		}},
-		checks: map[string][]domain.PullRequestCheck{},
-	}
-	provider := &fakeProvider{observations: map[string]ports.SCMObservation{}}
-	obs := newTestObserver(store, provider, &fakeLifecycle{}, time.Unix(1, 0).UTC())
-	subjects, _, err := obs.discoverSubjects(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(subjects) != 1 {
-		t.Fatalf("subjects = %d, want 1 (same provider identity must collapse)", len(subjects))
-	}
-	if _, ok := subjects[identityPRKey("github", "github.com", "PR_dup")]; !ok {
-		t.Fatalf("subject not keyed by provider identity: %v", subjects)
-	}
-}

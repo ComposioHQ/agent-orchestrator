@@ -280,12 +280,11 @@ and migration 0097 already enforces their uniqueness in storage.
    `commitETags`, candidate/refresh bookkeeping).
 2. **Subjects carry ProviderID.** `repoForTrackedPR` keeps resolving the repo
    to *poll under* (refs still need an owner/name to build a GraphQL query),
-   but the subject's identity comes from the row's `provider_id`. Two subjects
-   with the same identity are the same PR regardless of which repo name each
-   was tracked under — the duplicate-ownership guard and discovery's
-   "already tracked?" check both switch to identity, which kills the
-   two-scan-repos-create-two-subjects class (#3922) at the source instead of
-   collapsing it later in the store.
+   but the subject's identity comes from the row's `provider_id`. Discovery's
+   "already tracked?" check uses that identity, so listing an already tracked
+   PR through a second scan name cannot create another row. Existing legacy
+   id-less duplicates remain the store-level identity/alias machinery's
+   responsibility.
 3. **Observations are attributed positionally, never re-derived.**
    `FetchPullRequests` returns results aligned 1:1 with the requested refs
    (`result[i]` answers `refs[i]`, `Fetched=false` placeholder for gaps —

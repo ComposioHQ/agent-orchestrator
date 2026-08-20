@@ -219,14 +219,13 @@ func stableCheckFingerprint(parts []string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// FetchPullRequests fetches normalized PR/check metadata for up to 25 PR refs in
-// one GraphQL request. The observer owns chunking; this method rejects larger
-// batches so tests catch accidental over-batching.
-// FetchPullRequests returns observations positionally aligned with refs:
-// out[i] answers refs[i]. A PR the batch query could not resolve (deleted
-// repo, permissions) leaves a zero-value Fetched=false placeholder at its
-// index so the observer marks that ref refresh-incomplete without guessing
-// which response belonged to which request.
+// FetchPullRequests fetches normalized PR/check metadata for up to 25 PR refs
+// in one GraphQL request, positionally aligned with refs: out[i] answers
+// refs[i]. A PR the batch query could not resolve (deleted repo, permissions)
+// leaves a Fetched=false placeholder at its index so the observer marks that
+// ref refresh-incomplete without guessing which response belonged to which
+// request. The observer owns chunking; this method rejects larger batches so
+// tests catch accidental over-batching.
 func (p *Provider) FetchPullRequests(ctx context.Context, refs []ports.SCMPRRef) ([]ports.SCMObservation, error) {
 	if len(refs) == 0 {
 		return nil, nil
@@ -244,6 +243,7 @@ func (p *Provider) FetchPullRequests(ctx context.Context, refs []ports.SCMPRRef)
 		repoData, _ := data[aliases[i]].(map[string]any)
 		pr, _ := repoData["pullRequest"].(map[string]any)
 		if pr == nil {
+			out[i].Error = ports.ErrSCMNotFound
 			continue
 		}
 		if scmContextsPaginated(pr) {
