@@ -56,9 +56,9 @@ var (
 	// ErrChatConfigOptionInvalid means a client named an unknown option, sent the
 	// wrong value type, or selected a value the provider did not advertise.
 	ErrChatConfigOptionInvalid = errors.New("chat config option value is invalid")
-	// ErrChatHistoryUnsettled means the native conversation still contains a
-	// running or queued turn. Callers may retry until the provider reaches a
-	// settled boundary; they must not project a partial replay as complete.
+	// ErrChatHistoryUnsettled means the native conversation history is not safe
+	// to project as complete. Only a ChatHistoryRefresher promises that another
+	// provider observation may make progress; rereading a snapshot need not.
 	ErrChatHistoryUnsettled = errors.New("chat conversation history is not settled")
 	// ErrChatHistoryUnavailable means the provider can resume its model context
 	// but cannot replay that context as typed history. ACP session/resume has this
@@ -843,6 +843,15 @@ type ChatConversation interface {
 // into the Chat service.
 type ChatHistoryReader interface {
 	ReadHistory(ctx context.Context) ([]ChatEvent, error)
+}
+
+// ChatHistoryRefresher refines ChatHistoryReader for a provider that can make a
+// new authoritative history observation. RefreshHistory must perform provider
+// I/O or wait for a real provider signal; returning the previous capture does not
+// qualify. Callers may use it for bounded convergence after an unsettled read.
+type ChatHistoryRefresher interface {
+	ChatHistoryReader
+	RefreshHistory(ctx context.Context) ([]ChatEvent, error)
 }
 
 // ChatDriverRegistry resolves the driver for a harness.
