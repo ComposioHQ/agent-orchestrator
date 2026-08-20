@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import Image from "next/image";
-import { MessageSquareQuote, Quote } from "lucide-react";
+import { Quote } from "lucide-react";
 import { TestimonialForm } from "./TestimonialForm";
 
 export const metadata: Metadata = {
@@ -39,11 +39,7 @@ export default function TestimonialsPage() {
 
             <div className="relative flex min-h-[680px] flex-col justify-between p-5 sm:min-h-[650px] sm:p-8 lg:h-full lg:min-h-0 lg:p-10">
               <div className="max-w-3xl">
-                <p className="inline-flex items-center gap-2 rounded-full border border-border bg-background/80 px-3 py-1 text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground backdrop-blur">
-                  <MessageSquareQuote className="size-3.5" aria-hidden="true" />
-                  Community stories
-                </p>
-                <h1 className="mt-5 max-w-4xl text-4xl font-semibold leading-[1.02] text-foreground sm:mt-6 sm:text-5xl lg:text-6xl">
+                <h1 className="max-w-4xl text-4xl font-semibold leading-[1.02] text-foreground sm:text-5xl lg:text-6xl">
                   Put your AO experience into words.
                 </h1>
                 <p className="mt-5 max-w-2xl text-base leading-7 text-muted-foreground sm:text-lg">
@@ -61,29 +57,16 @@ export default function TestimonialsPage() {
               <h2 className="text-2xl font-semibold text-foreground">
                 Submit a testimonial
               </h2>
-              <p className="mt-3 text-sm leading-6 text-muted-foreground">
-                The most useful testimonials name a before, an after, and one
-                concrete result.
-              </p>
             </div>
             <TestimonialForm />
           </aside>
         </div>
 
         <section className="mx-auto mt-6 max-w-7xl overflow-hidden rounded-2xl border border-border bg-card p-6 sm:p-8 lg:p-10">
-          <div className="grid gap-4 border-b border-border pb-7 sm:grid-cols-[minmax(0,1fr)_minmax(280px,420px)] sm:items-end">
-            <div>
-              <p className="text-xs font-medium uppercase tracking-[0.22em] text-muted-foreground">
-                A useful starting point
-              </p>
-              <h2 className="mt-3 text-2xl font-semibold text-foreground sm:text-3xl">
-                Examples of good testimonials
-              </h2>
-            </div>
-            <p className="text-sm leading-6 text-muted-foreground sm:text-right">
-              Specific outcomes, honest before-and-after moments, and concrete
-              changes are more useful than generic praise.
-            </p>
+          <div className="border-b border-border pb-7">
+            <h2 className="text-2xl font-semibold text-foreground sm:text-3xl">
+              Examples of good testimonials
+            </h2>
           </div>
 
           <div className="grid md:grid-cols-2">
