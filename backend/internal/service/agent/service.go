@@ -164,7 +164,12 @@ func (s *Service) List(ctx context.Context) (Inventory, error) {
 		return Inventory{}, err
 	}
 	if err := s.loadCachedInventory(ctx); err != nil {
-		return Inventory{}, err
+		// Inventory is advisory cache data. A corrupt row or transient SQLite
+		// failure must not hide the adapters supported by this daemon build; the
+		// background refresh can repair the persisted snapshot.
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return Inventory{}, err
+		}
 	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -228,11 +233,6 @@ func (s *Service) Refresh(ctx context.Context) (Inventory, error) {
 		Installed:  installed,
 		Authorized: authorized,
 	}
-	s.mu.Lock()
-	s.inventory = cloneInventory(next)
-	s.inventoryLoaded = true
-	s.lastRefresh = time.Now()
-	s.mu.Unlock()
 	if s.inventoryCache != nil {
 		data, err := json.Marshal(cachedInventory{Installed: next.Installed, Authorized: next.Authorized})
 		if err != nil {
@@ -242,6 +242,11 @@ func (s *Service) Refresh(ctx context.Context) (Inventory, error) {
 			return next, err
 		}
 	}
+	s.mu.Lock()
+	s.inventory = cloneInventory(next)
+	s.inventoryLoaded = true
+	s.lastRefresh = time.Now()
+	s.mu.Unlock()
 	return next, nil
 }
 
