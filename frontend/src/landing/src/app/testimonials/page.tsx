@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import Image from "next/image";
-import { Linkedin, MessageSquareQuote, Quote } from "lucide-react";
+import { MessageSquareQuote, Quote } from "lucide-react";
 import { TestimonialForm } from "./TestimonialForm";
 
 export const metadata: Metadata = {
@@ -8,24 +8,6 @@ export const metadata: Metadata = {
   description:
     "Submit your Agent Orchestrator testimonial for the AO website.",
 };
-
-const notes = [
-  {
-    icon: MessageSquareQuote,
-    label: "Tell the real story",
-    text: "Share the moment AO changed how you run or review agent work.",
-  },
-  {
-    icon: Linkedin,
-    label: "Add your attribution",
-    text: "Your public LinkedIn profile gives the story a face, company, and role.",
-  },
-  {
-    icon: Quote,
-    label: "Join the website",
-    text: "Selected stories will appear in the testimonials section on aoagents.dev.",
-  },
-];
 
 const testimonialExamples = [
   "AO really changes the way you develop. The orchestrator and kanban have been a game changer. I’m no longer confused about what agent is doing what; scoping tasks and spawning them off has been a breeze.",
@@ -71,28 +53,6 @@ export default function TestimonialsPage() {
                 </p>
               </div>
 
-              <div className="mt-8 grid gap-3 sm:mt-10 sm:grid-cols-3 lg:mt-12">
-                {notes.map((note) => {
-                  const Icon = note.icon;
-                  return (
-                    <div
-                      key={note.label}
-                      className="rounded-xl border border-border bg-background/80 p-3 backdrop-blur sm:p-4"
-                    >
-                      <Icon
-                        className="size-4 text-muted-foreground"
-                        aria-hidden="true"
-                      />
-                      <h2 className="mt-3 text-sm font-semibold text-foreground">
-                        {note.label}
-                      </h2>
-                      <p className="mt-1 text-xs leading-5 text-muted-foreground">
-                        {note.text}
-                      </p>
-                    </div>
-                  );
-                })}
-              </div>
             </div>
           </div>
 
