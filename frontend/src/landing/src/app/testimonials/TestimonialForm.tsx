@@ -96,12 +96,12 @@ export function TestimonialForm() {
         <div className="flex items-end justify-between gap-4">
           <label
             htmlFor={testimonialId}
-            className="text-sm font-medium text-foreground"
+            className="text-sm font-medium text-foreground lg:text-base"
           >
             Your testimonial
           </label>
           {wordCount > 0 ? (
-            <span className="text-xs tabular-nums text-muted-foreground">
+            <span className="text-xs tabular-nums text-muted-foreground lg:text-sm">
               {wordCount} {wordCount === 1 ? "word" : "words"}
             </span>
           ) : null}
@@ -115,9 +115,9 @@ export function TestimonialForm() {
           placeholder="What changed in the way you work after using AO? A specific outcome or moment is especially helpful."
           value={testimonial}
           onChange={(event) => setTestimonial(limitWords(event.target.value))}
-          className="min-h-44 w-full resize-y rounded-xl border border-border bg-background px-4 py-3 text-sm leading-6 text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:ring-2 focus:ring-ring"
+          className="min-h-44 w-full resize-y rounded-xl border border-border bg-background px-4 py-3 text-sm leading-6 text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:ring-2 focus:ring-ring lg:text-base lg:leading-7"
         />
-        <p id={testimonialHelpId} className="text-xs leading-5 text-muted-foreground">
+        <p id={testimonialHelpId} className="text-xs leading-5 text-muted-foreground lg:text-sm lg:leading-6">
           100–300 words recommended. Concrete details make the strongest stories.
         </p>
       </div>
@@ -125,7 +125,7 @@ export function TestimonialForm() {
       <div className="grid gap-2">
         <label
           htmlFor={linkedinId}
-          className="text-sm font-medium text-foreground"
+          className="text-sm font-medium text-foreground lg:text-base"
         >
           LinkedIn profile
         </label>
@@ -139,20 +139,20 @@ export function TestimonialForm() {
           placeholder="https://www.linkedin.com/in/your-name"
           value={linkedinUrl}
           onChange={(event) => setLinkedinUrl(event.target.value)}
-          className="min-h-12 w-full rounded-xl border border-border bg-background px-4 text-sm text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:ring-2 focus:ring-ring"
+          className="min-h-12 w-full rounded-xl border border-border bg-background px-4 text-sm text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:ring-2 focus:ring-ring lg:text-base"
         />
       </div>
 
       <div className="grid gap-2">
         <div className="flex items-center justify-between gap-4">
-          <label htmlFor={tweetId} className="text-sm font-medium text-foreground">
+          <label htmlFor={tweetId} className="text-sm font-medium text-foreground lg:text-base">
             Tweet about AO <span className="font-normal text-muted-foreground">(optional)</span>
           </label>
           <a
             href={TWEET_INTENT_URL}
             target="_blank"
             rel="noreferrer"
-            className="inline-flex items-center gap-1 text-xs font-medium text-foreground underline decoration-border underline-offset-4 transition-colors hover:decoration-foreground"
+            className="inline-flex items-center gap-1 text-xs font-medium text-foreground underline decoration-border underline-offset-4 transition-colors hover:decoration-foreground lg:text-sm"
           >
             Draft a tweet
             <ExternalLink className="size-3" aria-hidden="true" />
@@ -166,9 +166,9 @@ export function TestimonialForm() {
           placeholder="https://x.com/your-name/status/..."
           value={tweetUrl}
           onChange={(event) => setTweetUrl(event.target.value)}
-          className="min-h-12 w-full rounded-xl border border-border bg-background px-4 text-sm text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:ring-2 focus:ring-ring"
+          className="min-h-12 w-full rounded-xl border border-border bg-background px-4 text-sm text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:ring-2 focus:ring-ring lg:text-base"
         />
-        <p className="text-xs leading-5 text-muted-foreground">
+        <p className="text-xs leading-5 text-muted-foreground lg:text-sm lg:leading-6">
           Tweet your experience, then paste the link so we can embed it directly.
         </p>
       </div>
@@ -176,7 +176,7 @@ export function TestimonialForm() {
       <button
         type="submit"
         disabled={isSubmitting}
-        className="mt-1 inline-flex min-h-12 w-full items-center justify-center rounded-xl bg-foreground px-5 text-sm font-semibold text-background transition-opacity hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:cursor-not-allowed disabled:opacity-60"
+        className="mt-1 inline-flex min-h-12 w-full items-center justify-center rounded-xl bg-foreground px-5 text-sm font-semibold text-background transition-opacity hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:cursor-not-allowed disabled:opacity-60 lg:text-base"
       >
         {isSubmitting ? "Submitting..." : "Submit testimonial"}
       </button>

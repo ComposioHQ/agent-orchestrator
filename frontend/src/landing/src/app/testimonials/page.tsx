@@ -55,7 +55,7 @@ export default function TestimonialsPage() {
 
           <aside className="flex w-full flex-col rounded-2xl border border-border bg-card p-6 sm:p-8 lg:min-h-[760px]">
             <div className="mb-6">
-              <h2 className="text-2xl font-semibold text-foreground">
+              <h2 className="text-2xl font-semibold text-foreground lg:text-3xl">
                 Submit a testimonial
               </h2>
             </div>
