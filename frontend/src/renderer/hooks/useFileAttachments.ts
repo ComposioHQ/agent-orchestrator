@@ -145,8 +145,11 @@ export function useFileAttachments() {
 				break;
 			}
 			if (total + a.bytes > MAX_ATTACHMENTS_BYTES) {
+				// Only this file is refused: the remaining budget cannot absorb it,
+				// but a later file in the same batch still can. Aborting here (break)
+				// would silently drop every smaller file staged after it.
 				errors.add(`Attachments must total under ${mb(MAX_ATTACHMENTS_BYTES)} MB.`);
-				break;
+				continue;
 			}
 			accepted.push(a);
 			total += a.bytes;

@@ -28,30 +28,53 @@ func (f *fakeTelemetrySink) Emit(_ context.Context, ev ports.TelemetryEvent) {
 func (f *fakeTelemetrySink) Close(context.Context) error { return nil }
 
 type fakeStore struct {
-	sessions  map[domain.SessionID]domain.SessionRecord
-	pr        map[domain.SessionID]domain.PRFacts
-	prs       map[domain.SessionID][]domain.PullRequest
-	projects  map[string]domain.ProjectRecord
-	worktrees map[domain.SessionID][]domain.SessionWorktreeRecord
-	checks    map[string][]domain.PullRequestCheck
-	reviews   map[string][]domain.PullRequestReview
-	threads   map[string][]domain.PullRequestReviewThread
-	comments  map[string][]domain.PullRequestComment
-	num       int
+	sessions            map[domain.SessionID]domain.SessionRecord
+	activeSwitches      map[domain.SessionID]domain.AgentSwitch
+	activeSwitchGetErr  error
+	activeSwitchListErr error
+	pr                  map[domain.SessionID]domain.PRFacts
+	prs                 map[domain.SessionID][]domain.PullRequest
+	projects            map[string]domain.ProjectRecord
+	worktrees           map[domain.SessionID][]domain.SessionWorktreeRecord
+	checks              map[string][]domain.PullRequestCheck
+	reviews             map[string][]domain.PullRequestReview
+	threads             map[string][]domain.PullRequestReviewThread
+	comments            map[string][]domain.PullRequestComment
+	num                 int
 }
 
 func newFakeStore() *fakeStore {
 	return &fakeStore{
-		sessions:  map[domain.SessionID]domain.SessionRecord{},
-		pr:        map[domain.SessionID]domain.PRFacts{},
-		prs:       map[domain.SessionID][]domain.PullRequest{},
-		projects:  map[string]domain.ProjectRecord{},
-		worktrees: map[domain.SessionID][]domain.SessionWorktreeRecord{},
-		checks:    map[string][]domain.PullRequestCheck{},
-		reviews:   map[string][]domain.PullRequestReview{},
-		threads:   map[string][]domain.PullRequestReviewThread{},
-		comments:  map[string][]domain.PullRequestComment{},
+		sessions:       map[domain.SessionID]domain.SessionRecord{},
+		activeSwitches: map[domain.SessionID]domain.AgentSwitch{},
+		pr:             map[domain.SessionID]domain.PRFacts{},
+		prs:            map[domain.SessionID][]domain.PullRequest{},
+		projects:       map[string]domain.ProjectRecord{},
+		worktrees:      map[domain.SessionID][]domain.SessionWorktreeRecord{},
+		checks:         map[string][]domain.PullRequestCheck{},
+		reviews:        map[string][]domain.PullRequestReview{},
+		threads:        map[string][]domain.PullRequestReviewThread{},
+		comments:       map[string][]domain.PullRequestComment{},
 	}
+}
+
+func (f *fakeStore) GetActiveAgentSwitch(_ context.Context, id domain.SessionID) (domain.AgentSwitch, bool, error) {
+	if f.activeSwitchGetErr != nil {
+		return domain.AgentSwitch{}, false, f.activeSwitchGetErr
+	}
+	sw, ok := f.activeSwitches[id]
+	return sw, ok, nil
+}
+
+func (f *fakeStore) ListActiveAgentSwitches(context.Context) ([]domain.AgentSwitch, error) {
+	if f.activeSwitchListErr != nil {
+		return nil, f.activeSwitchListErr
+	}
+	out := make([]domain.AgentSwitch, 0, len(f.activeSwitches))
+	for _, sw := range f.activeSwitches {
+		out = append(out, sw)
+	}
+	return out, nil
 }
 
 func newWorkspaceRepo(t *testing.T) string {
@@ -189,12 +212,34 @@ func (f *fakeStore) SetSessionAutoInjectReview(_ context.Context, id domain.Sess
 	return true, nil
 }
 
+func (f *fakeStore) SetSessionAutoInjectCI(_ context.Context, id domain.SessionID, autoInject bool, updatedAt time.Time) (bool, error) {
+	r, ok := f.sessions[id]
+	if !ok {
+		return false, nil
+	}
+	r.AutoInjectCI = autoInject
+	r.UpdatedAt = updatedAt
+	f.sessions[id] = r
+	return true, nil
+}
+
 func (f *fakeStore) SetSessionReviewerHarness(_ context.Context, id domain.SessionID, harness domain.ReviewerHarness, updatedAt time.Time) (bool, error) {
 	r, ok := f.sessions[id]
 	if !ok {
 		return false, nil
 	}
 	r.ReviewerHarness = harness
+	r.UpdatedAt = updatedAt
+	f.sessions[id] = r
+	return true, nil
+}
+
+func (f *fakeStore) SetSessionAutoReview(_ context.Context, id domain.SessionID, enabled bool, updatedAt time.Time) (bool, error) {
+	r, ok := f.sessions[id]
+	if !ok {
+		return false, nil
+	}
+	r.AutoReviewEnabled = enabled
 	r.UpdatedAt = updatedAt
 	f.sessions[id] = r
 	return true, nil
@@ -271,6 +316,43 @@ func TestSessionListAppliesActivityBeforePRFacts(t *testing.T) {
 				t.Fatalf("got %+v, want status %q", list, tt.want)
 			}
 		})
+	}
+}
+
+func TestSessionListProjectsActiveAgentSwitch(t *testing.T) {
+	st := newFakeStore()
+	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer", Activity: domain.Activity{State: domain.ActivityExited}}
+	st.sessions["other-1"] = domain.SessionRecord{ID: "other-1", ProjectID: "other", Activity: domain.Activity{State: domain.ActivityIdle}}
+	st.activeSwitches["mer-1"] = domain.AgentSwitch{
+		ID: "switch-1", SessionID: "mer-1", FromHarness: domain.HarnessClaudeCode,
+		TargetHarness: domain.HarnessCodex, State: domain.AgentSwitchPreparingHandoff,
+	}
+	st.activeSwitches["other-1"] = domain.AgentSwitch{ID: "switch-other", SessionID: "other-1", State: domain.AgentSwitchPreparingHandoff}
+
+	list, err := (&Service{store: st}).List(context.Background(), ListFilter{ProjectID: "mer"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 1 || list[0].ActiveAgentSwitch == nil || list[0].ActiveAgentSwitch.ID != "switch-1" {
+		t.Fatalf("list active switch projection = %+v", list)
+	}
+	if list[0].Status != domain.StatusExited {
+		t.Fatalf("session status = %q, want durable activity-derived exited", list[0].Status)
+	}
+	got, err := (&Service{store: st}).Get(context.Background(), "mer-1")
+	if err != nil || got.ActiveAgentSwitch == nil || got.ActiveAgentSwitch.ID != "switch-1" {
+		t.Fatalf("get active switch projection = %+v, err=%v", got.ActiveAgentSwitch, err)
+	}
+
+	st.activeSwitchListErr = errors.New("active switch read failed")
+	if _, err := (&Service{store: st}).List(context.Background(), ListFilter{ProjectID: "mer"}); err == nil || !strings.Contains(err.Error(), "active switch") {
+		t.Fatalf("active switch list error = %v", err)
+	}
+
+	st.activeSwitchListErr = nil
+	st.activeSwitchGetErr = errors.New("active switch read failed")
+	if _, err := (&Service{store: st}).Get(context.Background(), "mer-1"); err == nil || !strings.Contains(err.Error(), "active switch") {
+		t.Fatalf("active switch get error = %v", err)
 	}
 }
 
@@ -387,6 +469,25 @@ func TestSessionSetAutoInjectReviewUnknownSession(t *testing.T) {
 	}
 }
 
+func TestSessionSetAutoInjectCIPersistsDefault(t *testing.T) {
+	st := newFakeStore()
+	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer", Kind: domain.KindWorker, AutoInjectCI: true}
+
+	sess, err := (&Service{store: st}).SetAutoInjectCI(context.Background(), "mer-1", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sess.AutoInjectCI || st.sessions["mer-1"].AutoInjectCI {
+		t.Fatalf("auto-inject CI default was not disabled: returned=%+v stored=%+v", sess, st.sessions["mer-1"])
+	}
+}
+
+func TestSessionSetAutoInjectCIUnknownSession(t *testing.T) {
+	if _, err := (&Service{store: newFakeStore()}).SetAutoInjectCI(context.Background(), "ghost-1", false); err == nil {
+		t.Fatal("expected missing session error")
+	}
+}
+
 func TestSessionSetReviewerHarnessPersistsPerSession(t *testing.T) {
 	st := newFakeStore()
 	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer", Kind: domain.KindWorker}
@@ -409,6 +510,22 @@ func TestSessionSetReviewerHarnessRejectsUnknownHarness(t *testing.T) {
 	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1"}
 	if _, err := (&Service{store: st}).SetReviewerHarness(context.Background(), "mer-1", "unknown"); err == nil {
 		t.Fatal("expected invalid harness error")
+	}
+}
+
+func TestSessionSetAutoReviewPersistsToggle(t *testing.T) {
+	st := newFakeStore()
+	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer", Kind: domain.KindWorker}
+	svc := &Service{store: st}
+
+	for _, enabled := range []bool{true, false} {
+		sess, err := svc.SetAutoReview(context.Background(), "mer-1", enabled)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if sess.AutoReviewEnabled != enabled || st.sessions["mer-1"].AutoReviewEnabled != enabled {
+			t.Fatalf("auto review=%v, want %v", sess.AutoReviewEnabled, enabled)
+		}
 	}
 }
 
@@ -642,6 +759,321 @@ func TestWorkspaceFilesExcludeMainChangesMergedInAfterStaleOriginRef(t *testing.
 	}
 	if got, ok := byPath["unrelated-2.go"]; ok && got.Status != WorkspaceFileUnmodified {
 		t.Fatalf("unrelated-2.go leaked into the diff via a stale origin/main tracking ref: %#v (compare base %q)", got, files.CompareBaseSHA)
+	}
+}
+
+// newDivergentForcePushRepo builds a repo shaped like a target-branch
+// force-push: the session's stale tracking ref (B) and the PR's
+// provider-observed replacement base (X) descend from a common ancestor but
+// neither is an ancestor of the other, while the session branch HEAD has
+// incorporated both — B through its own fork point, X through a later merge.
+func newDivergentForcePushRepo(t *testing.T) (repo, head, staleRef, replacementBase string) {
+	t.Helper()
+	repo = newWorkspaceRepo(t)
+	runGit(t, repo, "branch", "-M", "main")
+
+	// B: main's tip before the force-push. The session's tracking ref is
+	// fetched here and never refreshed.
+	writeWorkspaceFile(t, repo, "old-main.go", "package main\n")
+	runGit(t, repo, "add", "old-main.go")
+	runGit(t, repo, "commit", "-m", "old main line")
+	b := strings.TrimSpace(runGit(t, repo, "rev-parse", "HEAD"))
+	runGit(t, repo, "update-ref", "refs/remotes/origin/main", b)
+
+	// The session forks from B and makes its own change.
+	runGit(t, repo, "switch", "-c", "ao/work")
+	writeWorkspaceFile(t, repo, "pr-file.go", "package main\n")
+	runGit(t, repo, "add", "pr-file.go")
+	runGit(t, repo, "commit", "-m", "pr change")
+
+	// X: main is force-pushed to a replacement line rooted at the same
+	// initial commit as B, not descended from B.
+	runGit(t, repo, "switch", "main")
+	initial := strings.TrimSpace(runGit(t, repo, "rev-list", "--max-parents=0", "HEAD"))
+	runGit(t, repo, "reset", "--hard", initial)
+	writeWorkspaceFile(t, repo, "new-main.go", "package main\n")
+	runGit(t, repo, "add", "new-main.go")
+	runGit(t, repo, "commit", "-m", "replacement main line (force-pushed)")
+	x := strings.TrimSpace(runGit(t, repo, "rev-parse", "HEAD"))
+
+	// The session merges the force-pushed main in, so HEAD now retains B
+	// (through its own fork point) and X (through this merge) without B and
+	// X being ancestors of each other.
+	runGit(t, repo, "switch", "ao/work")
+	runGit(t, repo, "merge", "main", "-m", "merge force-pushed main")
+	h := strings.TrimSpace(runGit(t, repo, "rev-parse", "HEAD"))
+
+	return repo, h, b, x
+}
+
+func TestWorkspaceFilesCompareForcePushDivergentHistoryPrefersPRWhenHeadMatches(t *testing.T) {
+	repo, head, _, replacementBase := newDivergentForcePushRepo(t)
+
+	st := newFakeStore()
+	st.projects["proj"] = domain.ProjectRecord{ID: "proj", Config: domain.ProjectConfig{DefaultBranch: "main"}}
+	st.sessions["ao-1"] = domain.SessionRecord{
+		ID:        "ao-1",
+		ProjectID: "proj",
+		Metadata:  domain.SessionMetadata{WorkspacePath: repo, DiffBaseRef: "origin/main"},
+	}
+	// The PR sync has observed the exact commit the Files tab is displaying.
+	st.prs["ao-1"] = []domain.PullRequest{
+		{URL: "pr", SessionID: "ao-1", Number: 1, TargetBranch: "main", BaseSHA: replacementBase, HeadSHA: head},
+	}
+
+	files, err := (&Service{store: st}).ListWorkspaceFiles(context.Background(), "ao-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if files.CompareBaseSHA != replacementBase {
+		t.Fatalf("compare base = %q, want the PR's replacement base %q when pr.HeadSHA matches local HEAD", files.CompareBaseSHA, replacementBase)
+	}
+	byPath := map[string]WorkspaceFileSummary{}
+	for _, file := range files.Files {
+		byPath[file.Path] = file
+	}
+	if byPath["pr-file.go"].Status != WorkspaceFileAdded {
+		t.Fatalf("pr-file.go status = %q, want added", byPath["pr-file.go"].Status)
+	}
+	if got, ok := byPath["new-main.go"]; ok && got.Status != WorkspaceFileUnmodified {
+		t.Fatalf("new-main.go leaked into the diff: %#v", got)
+	}
+}
+
+func TestWorkspaceFilesCompareForcePushDivergentHistoryKeepsLocalWhenPRHeadStale(t *testing.T) {
+	repo, _, staleRef, replacementBase := newDivergentForcePushRepo(t)
+
+	st := newFakeStore()
+	st.projects["proj"] = domain.ProjectRecord{ID: "proj", Config: domain.ProjectConfig{DefaultBranch: "main"}}
+	st.sessions["ao-1"] = domain.SessionRecord{
+		ID:        "ao-1",
+		ProjectID: "proj",
+		Metadata:  domain.SessionMetadata{WorkspacePath: repo, DiffBaseRef: "origin/main"},
+	}
+	// The persisted PR snapshot is stale: it still names an earlier local
+	// commit, not the branch's current HEAD (which has since merged the
+	// force-pushed main).
+	st.prs["ao-1"] = []domain.PullRequest{
+		{URL: "pr", SessionID: "ao-1", Number: 1, TargetBranch: "main", BaseSHA: replacementBase, HeadSHA: "0000000000000000000000000000000000dead"},
+	}
+
+	files, err := (&Service{store: st}).ListWorkspaceFiles(context.Background(), "ao-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if files.CompareBaseSHA != staleRef {
+		t.Fatalf("compare base = %q, want the local ref candidate %q when the PR snapshot's head doesn't match local HEAD", files.CompareBaseSHA, staleRef)
+	}
+	byPath := map[string]WorkspaceFileSummary{}
+	for _, file := range files.Files {
+		byPath[file.Path] = file
+	}
+	if byPath["pr-file.go"].Status != WorkspaceFileAdded {
+		t.Fatalf("pr-file.go status = %q, want added", byPath["pr-file.go"].Status)
+	}
+	// old-main.go predates the stale local candidate itself, so it must not
+	// show up as changed against it.
+	if got, ok := byPath["old-main.go"]; ok && got.Status != WorkspaceFileUnmodified {
+		t.Fatalf("old-main.go = %#v, want unmodified against the stale local candidate", got)
+	}
+	// new-main.go legitimately postdates the stale local candidate, so
+	// falling back to it (rather than trusting the unmatched PR snapshot)
+	// correctly reports it as added — this is the expected cost of rejecting
+	// a PR snapshot that doesn't describe local HEAD, not a leak.
+	if byPath["new-main.go"].Status != WorkspaceFileAdded {
+		t.Fatalf("new-main.go = %#v, want added against the stale local candidate", byPath["new-main.go"])
+	}
+}
+
+func TestWorkspaceFilesCompareKeepsNewerRefCandidateOverOlderPR(t *testing.T) {
+	repo := newWorkspaceRepo(t)
+	runGit(t, repo, "branch", "-M", "main")
+	older := strings.TrimSpace(runGit(t, repo, "rev-parse", "HEAD"))
+
+	writeWorkspaceFile(t, repo, "newer-main.go", "package main\n")
+	runGit(t, repo, "add", "newer-main.go")
+	runGit(t, repo, "commit", "-m", "main advanced further than the PR snapshot knows")
+	newer := strings.TrimSpace(runGit(t, repo, "rev-parse", "HEAD"))
+	runGit(t, repo, "update-ref", "refs/remotes/origin/main", newer)
+
+	runGit(t, repo, "switch", "-c", "ao/work")
+	writeWorkspaceFile(t, repo, "pr-file.go", "package main\n")
+	runGit(t, repo, "add", "pr-file.go")
+	runGit(t, repo, "commit", "-m", "pr change")
+
+	st := newFakeStore()
+	st.projects["proj"] = domain.ProjectRecord{ID: "proj", Config: domain.ProjectConfig{DefaultBranch: "main"}}
+	st.sessions["ao-1"] = domain.SessionRecord{
+		ID:        "ao-1",
+		ProjectID: "proj",
+		Metadata:  domain.SessionMetadata{WorkspacePath: repo, DiffBaseRef: "origin/main"},
+	}
+	// The PR sync hasn't caught up to main's latest commit yet.
+	st.prs["ao-1"] = []domain.PullRequest{
+		{URL: "pr", SessionID: "ao-1", Number: 1, TargetBranch: "main", BaseSHA: older},
+	}
+
+	files, err := (&Service{store: st}).ListWorkspaceFiles(context.Background(), "ao-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if files.CompareBaseSHA != newer {
+		t.Fatalf("compare base = %q, want the newer ref-based candidate %q regardless of candidate order", files.CompareBaseSHA, newer)
+	}
+	byPath := map[string]WorkspaceFileSummary{}
+	for _, file := range files.Files {
+		byPath[file.Path] = file
+	}
+	if got, ok := byPath["newer-main.go"]; ok && got.Status != WorkspaceFileUnmodified {
+		t.Fatalf("newer-main.go leaked into the diff via a stale PR base: %#v", got)
+	}
+}
+
+func TestWorkspaceFilesCompareMissingRefKeepsRecordedSHAOverOlderPR(t *testing.T) {
+	repo := newWorkspaceRepo(t)
+	runGit(t, repo, "branch", "-M", "main")
+
+	writeWorkspaceFile(t, repo, "older.go", "package main\n")
+	runGit(t, repo, "add", "older.go")
+	runGit(t, repo, "commit", "-m", "older main point")
+	older := strings.TrimSpace(runGit(t, repo, "rev-parse", "HEAD"))
+
+	writeWorkspaceFile(t, repo, "newer.go", "package main\n")
+	runGit(t, repo, "add", "newer.go")
+	runGit(t, repo, "commit", "-m", "newer recorded point")
+	recorded := strings.TrimSpace(runGit(t, repo, "rev-parse", "HEAD"))
+
+	runGit(t, repo, "switch", "-c", "ao/work")
+	writeWorkspaceFile(t, repo, "pr-file.go", "package main\n")
+	runGit(t, repo, "add", "pr-file.go")
+	runGit(t, repo, "commit", "-m", "pr change")
+
+	st := newFakeStore()
+	st.projects["proj"] = domain.ProjectRecord{ID: "proj", Config: domain.ProjectConfig{DefaultBranch: "main"}}
+	// No DiffBaseRef recorded — only the spawn-time recorded SHA.
+	st.sessions["ao-1"] = domain.SessionRecord{
+		ID:        "ao-1",
+		ProjectID: "proj",
+		Metadata:  domain.SessionMetadata{WorkspacePath: repo, DiffBaseSHA: recorded},
+	}
+	// A stale PR snapshot whose base predates the session's recorded base.
+	st.prs["ao-1"] = []domain.PullRequest{
+		{URL: "pr", SessionID: "ao-1", Number: 1, TargetBranch: "main", BaseSHA: older},
+	}
+
+	files, err := (&Service{store: st}).ListWorkspaceFiles(context.Background(), "ao-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if files.CompareBaseSHA != recorded {
+		t.Fatalf("compare base = %q, want recordedSHA %q (newer than the stale PR base) even with no recorded ref", files.CompareBaseSHA, recorded)
+	}
+	byPath := map[string]WorkspaceFileSummary{}
+	for _, file := range files.Files {
+		byPath[file.Path] = file
+	}
+	if got, ok := byPath["newer.go"]; ok && got.Status != WorkspaceFileUnmodified {
+		t.Fatalf("newer.go leaked into the diff via a stale PR base: %#v", got)
+	}
+}
+
+func TestWorkspaceFilesCompareRejectsPRBaseWithNoCommonAncestor(t *testing.T) {
+	repo := newWorkspaceRepo(t)
+	runGit(t, repo, "branch", "-M", "main")
+	base := strings.TrimSpace(runGit(t, repo, "rev-parse", "HEAD"))
+
+	// An orphan commit sharing no history with main: it exists locally (as if
+	// fetched for some unrelated reason) but has no common ancestor with HEAD.
+	runGit(t, repo, "checkout", "--orphan", "unrelated-history")
+	runGit(t, repo, "rm", "-rf", ".")
+	writeWorkspaceFile(t, repo, "unrelated-root.go", "package main\n")
+	runGit(t, repo, "add", "unrelated-root.go")
+	runGit(t, repo, "commit", "-m", "unrelated root commit")
+	unrelated := strings.TrimSpace(runGit(t, repo, "rev-parse", "HEAD"))
+
+	runGit(t, repo, "checkout", "main")
+	runGit(t, repo, "switch", "-c", "ao/work")
+	writeWorkspaceFile(t, repo, "pr-file.go", "package main\n")
+	runGit(t, repo, "add", "pr-file.go")
+	runGit(t, repo, "commit", "-m", "pr change")
+
+	st := newFakeStore()
+	st.projects["proj"] = domain.ProjectRecord{ID: "proj", Config: domain.ProjectConfig{DefaultBranch: "main"}}
+	st.sessions["ao-1"] = domain.SessionRecord{
+		ID:        "ao-1",
+		ProjectID: "proj",
+		Metadata:  domain.SessionMetadata{WorkspacePath: repo, DiffBaseSHA: base, DiffBaseRef: "main"},
+	}
+	st.prs["ao-1"] = []domain.PullRequest{
+		{URL: "pr", SessionID: "ao-1", Number: 1, TargetBranch: "main", BaseSHA: unrelated},
+	}
+
+	files, err := (&Service{store: st}).ListWorkspaceFiles(context.Background(), "ao-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if files.CompareBaseSHA == unrelated {
+		t.Fatalf("compare base resolved to the unrelated PR SHA %q, which shares no history with HEAD", unrelated)
+	}
+	byPath := map[string]WorkspaceFileSummary{}
+	for _, file := range files.Files {
+		byPath[file.Path] = file
+	}
+	if byPath["pr-file.go"].Status != WorkspaceFileAdded {
+		t.Fatalf("pr-file.go status = %q, want added", byPath["pr-file.go"].Status)
+	}
+	// A raw two-tree diff against the unrelated commit would make the
+	// orphan's file appear "added" in the session's diff.
+	if got, ok := byPath["unrelated-root.go"]; ok && got.Status != WorkspaceFileUnmodified {
+		t.Fatalf("unrelated-root.go leaked into the diff via the rejected PR base: %#v", got)
+	}
+}
+
+// TestWorkspaceFilesCompareRejectsPRBaseWithNoCommonAncestorAndNoLocalCandidate
+// is the sharpest form of the no-common-ancestor problem: with no recorded
+// ref or recorded SHA to fall back on, a PR base whose merge-base derivation
+// fails must not be returned as a raw, unrelated SHA.
+func TestWorkspaceFilesCompareRejectsPRBaseWithNoCommonAncestorAndNoLocalCandidate(t *testing.T) {
+	repo := newWorkspaceRepo(t)
+	runGit(t, repo, "branch", "-M", "main")
+
+	runGit(t, repo, "checkout", "--orphan", "unrelated-history")
+	runGit(t, repo, "rm", "-rf", ".")
+	writeWorkspaceFile(t, repo, "unrelated-root.go", "package main\n")
+	runGit(t, repo, "add", "unrelated-root.go")
+	runGit(t, repo, "commit", "-m", "unrelated root commit")
+	unrelated := strings.TrimSpace(runGit(t, repo, "rev-parse", "HEAD"))
+
+	runGit(t, repo, "checkout", "main")
+	writeWorkspaceFile(t, repo, "pr-file.go", "package main\n")
+	runGit(t, repo, "add", "pr-file.go")
+	runGit(t, repo, "commit", "-m", "pr change")
+
+	st := newFakeStore()
+	st.projects["proj"] = domain.ProjectRecord{ID: "proj", Config: domain.ProjectConfig{DefaultBranch: "does-not-exist"}}
+	// No recorded ref, no recorded SHA: the PR base is the only candidate.
+	st.sessions["ao-1"] = domain.SessionRecord{
+		ID:        "ao-1",
+		ProjectID: "proj",
+		Metadata:  domain.SessionMetadata{WorkspacePath: repo},
+	}
+	st.prs["ao-1"] = []domain.PullRequest{
+		{URL: "pr", SessionID: "ao-1", Number: 1, TargetBranch: "does-not-exist", BaseSHA: unrelated},
+	}
+
+	files, err := (&Service{store: st}).ListWorkspaceFiles(context.Background(), "ao-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if files.CompareBaseSHA == unrelated {
+		t.Fatalf("compare base resolved to the unrelated, raw PR SHA %q with no local candidate to fall back on", files.CompareBaseSHA)
+	}
+	byPath := map[string]WorkspaceFileSummary{}
+	for _, file := range files.Files {
+		byPath[file.Path] = file
+	}
+	if got, ok := byPath["unrelated-root.go"]; ok && got.Status != WorkspaceFileUnmodified {
+		t.Fatalf("unrelated-root.go leaked into the diff via the rejected raw PR base: %#v", got)
 	}
 }
 
@@ -903,8 +1335,8 @@ func TestWorkspaceFilesIncludeWorkspaceProjectChildRepoDiffs(t *testing.T) {
 	if detail.CompareMode != WorkspaceCompareBase || detail.CompareBaseSHA != childBase {
 		t.Fatalf("child detail compare = mode:%q sha:%q, want base %s", detail.CompareMode, detail.CompareBaseSHA, childBase)
 	}
-	if detail.CompareBaseRef != "main" {
-		t.Fatalf("child detail compare ref = %q, want main", detail.CompareBaseRef)
+	if detail.CompareBaseRef != "" {
+		t.Fatalf("child detail compare ref = %q, want empty when only the recorded SHA is authoritative", detail.CompareBaseRef)
 	}
 }
 
@@ -936,7 +1368,7 @@ func TestWorkspaceProjectChildRepoRecomputesBaseAfterRebase(t *testing.T) {
 	runGit(t, child, "rebase", "main")
 
 	st := newFakeStore()
-	st.projects["ws"] = domain.ProjectRecord{ID: "ws", Kind: domain.ProjectKindWorkspace, Config: domain.ProjectConfig{DefaultBranch: "main"}}
+	st.projects["ws"] = domain.ProjectRecord{ID: "ws", Kind: domain.ProjectKindWorkspace}
 	st.sessions["ws-1"] = domain.SessionRecord{
 		ID:        "ws-1",
 		ProjectID: "ws",
@@ -944,7 +1376,7 @@ func TestWorkspaceProjectChildRepoRecomputesBaseAfterRebase(t *testing.T) {
 	}
 	st.worktrees["ws-1"] = []domain.SessionWorktreeRecord{
 		{SessionID: "ws-1", RepoName: domain.RootWorkspaceRepoName, WorktreePath: root, BaseSHA: rootBase},
-		{SessionID: "ws-1", RepoName: "api", WorktreePath: child, BaseSHA: oldChildBase},
+		{SessionID: "ws-1", RepoName: "api", WorktreePath: child, BaseSHA: oldChildBase, BaseRef: "refs/heads/main"},
 	}
 
 	files, err := (&Service{store: st}).ListWorkspaceFiles(context.Background(), "ws-1")
@@ -966,8 +1398,8 @@ func TestWorkspaceProjectChildRepoRecomputesBaseAfterRebase(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if detail.CompareMode != WorkspaceCompareBase || detail.CompareBaseSHA != newChildBase || detail.CompareBaseRef != "main" {
-		t.Fatalf("child detail compare = mode:%q sha:%q ref:%q, want base %s main", detail.CompareMode, detail.CompareBaseSHA, detail.CompareBaseRef, newChildBase)
+	if detail.CompareMode != WorkspaceCompareBase || detail.CompareBaseSHA != newChildBase || detail.CompareBaseRef != "refs/heads/main" {
+		t.Fatalf("child detail compare = mode:%q sha:%q ref:%q, want base %s refs/heads/main", detail.CompareMode, detail.CompareBaseSHA, detail.CompareBaseRef, newChildBase)
 	}
 }
 
@@ -1035,8 +1467,8 @@ func TestWorkspaceBaseRefCandidatesPreferRemoteDefault(t *testing.T) {
 	}
 
 	got = workspaceBaseRefCandidates("")
-	if strings.Join(got, ",") != strings.Join(want, ",") {
-		t.Fatalf("empty workspace base candidates = %#v, want %#v", got, want)
+	if len(got) != 0 {
+		t.Fatalf("empty workspace base candidates = %#v, want none rather than a guessed main", got)
 	}
 }
 
@@ -1258,6 +1690,10 @@ func (f *fakeCommander) Spawn(_ context.Context, cfg ports.SpawnConfig) (domain.
 	return domain.SessionRecord{ID: "mer-9", ProjectID: cfg.ProjectID, Kind: cfg.Kind, Harness: cfg.Harness}, len(cfg.Prompt), 0, nil
 }
 func (*fakeCommander) SwitchAgent(context.Context, domain.SessionID, sessionmanager.SwitchAgentConfig) (domain.AgentSwitch, error) {
+	return domain.AgentSwitch{}, nil
+}
+
+func (*fakeCommander) RecoverAgentSwitch(context.Context, domain.SessionID, domain.AgentSwitchID) (domain.AgentSwitch, error) {
 	return domain.AgentSwitch{}, nil
 }
 func (*fakeCommander) ListAgentSwitches(context.Context, domain.SessionID) ([]domain.AgentSwitch, error) {
@@ -1661,6 +2097,141 @@ func TestSpawnIssueContextSkipsUnresolvableIssueRef(t *testing.T) {
 	}
 }
 
+// TestSpawnIssueContextRoutesGitLabProviderToGitLabTracker covers the
+// GitLab SCM-origin routing: when the project's SCM origin resolves to
+// GitLab, trackerIDForIssue constructs a GitLab TrackerID (not a GitHub one)
+// and the multi-tracker dispatches it to the GitLab adapter. The tracker IS
+// called — the old behavior (skip, no GitHub fallback) is replaced by
+// correct GitLab routing. fakeSCM.ParseRepository routes gitlab.com to
+// provider "gitlab" via providerKey.
+func TestSpawnIssueContextRoutesGitLabProviderToGitLabTracker(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", RepoOriginURL: "https://gitlab.com/acme/repo.git"}
+	fc := &fakeCommander{}
+	tracker := &fakeTracker{issue: domain.Issue{
+		ID:    domain.TrackerID{Provider: domain.TrackerProviderGitLab, Native: "acme/repo#42"},
+		Title: "GitLab issue",
+		Body:  "This should appear in a GitLab project's prompt.",
+		State: domain.IssueOpen,
+		URL:   "https://gitlab.com/acme/repo/-/issues/42",
+	}}
+	svc := NewWithDeps(Deps{Manager: fc, Store: st, Tracker: tracker, SCM: fakeSCM{}})
+
+	if _, _, _, err := svc.Spawn(context.Background(), ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, IssueID: "42"}); err != nil {
+		t.Fatalf("Spawn: %v", err)
+	}
+	// The tracker must be called with a GitLab TrackerID — not skipped.
+	if len(tracker.ids) != 1 {
+		t.Fatalf("tracker calls = %d, want 1 (GitLab project must route to GitLab tracker)", len(tracker.ids))
+	}
+	if tracker.ids[0].Provider != domain.TrackerProviderGitLab {
+		t.Fatalf("tracker id provider = %q, want %q", tracker.ids[0].Provider, domain.TrackerProviderGitLab)
+	}
+	if tracker.ids[0].Native != "acme/repo#42" {
+		t.Fatalf("tracker id native = %q, want %q", tracker.ids[0].Native, "acme/repo#42")
+	}
+	// Issue context must be enriched with GitLab issue content.
+	if fc.spawnedCfg.IssueContext == "" {
+		t.Fatal("IssueContext empty, want GitLab issue enrichment")
+	}
+	for _, want := range []string{
+		"Issue: acme/repo#42",
+		"Title: GitLab issue",
+		"State: open",
+		"URL: https://gitlab.com/acme/repo/-/issues/42",
+		"Body:",
+	} {
+		if !strings.Contains(fc.spawnedCfg.IssueContext, want) {
+			t.Fatalf("IssueContext missing %q:\n%s", want, fc.spawnedCfg.IssueContext)
+		}
+	}
+}
+
+// TestSpawnIssueContextFromGitLabTracker verifies end-to-end enrichment when
+// the issue ID is a full GitLab issue URL
+// (https://gitlab.com/owner/repo/-/issues/N). The URL is parsed to the native
+// "owner/repo#N" form and dispatched to the GitLab tracker adapter.
+func TestSpawnIssueContextFromGitLabTracker(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", RepoOriginURL: "https://gitlab.com/acme/repo.git"}
+	fc := &fakeCommander{}
+	tracker := &fakeTracker{issue: domain.Issue{
+		ID:        domain.TrackerID{Provider: domain.TrackerProviderGitLab, Native: "acme/repo#42"},
+		Title:     "Fix GitLab CI",
+		Body:      "Pipeline is broken.",
+		State:     domain.IssueInProgress,
+		URL:       "https://gitlab.com/acme/repo/-/issues/42",
+		Labels:    []string{"bug", "ci"},
+		Assignees: []string{"dev"},
+	}}
+	svc := NewWithDeps(Deps{Manager: fc, Store: st, Tracker: tracker, SCM: fakeSCM{}})
+
+	if _, _, _, err := svc.Spawn(context.Background(), ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, IssueID: "https://gitlab.com/acme/repo/-/issues/42"}); err != nil {
+		t.Fatalf("Spawn: %v", err)
+	}
+	if len(tracker.ids) != 1 {
+		t.Fatalf("tracker calls = %d, want 1", len(tracker.ids))
+	}
+	if tracker.ids[0].Provider != domain.TrackerProviderGitLab {
+		t.Fatalf("tracker id provider = %q, want %q", tracker.ids[0].Provider, domain.TrackerProviderGitLab)
+	}
+	if tracker.ids[0].Native != "acme/repo#42" {
+		t.Fatalf("tracker id native = %q, want %q", tracker.ids[0].Native, "acme/repo#42")
+	}
+	if tracker.ids[0].Host != "" {
+		t.Fatalf("tracker id host = %q, want empty (gitlab.com zero value)", tracker.ids[0].Host)
+	}
+	issueContext := fc.spawnedCfg.IssueContext
+	for _, want := range []string{
+		"Issue: acme/repo#42",
+		"Title: Fix GitLab CI",
+		"State: in_progress",
+		"URL: https://gitlab.com/acme/repo/-/issues/42",
+		"Labels: bug, ci",
+		"Assignees: dev",
+		"Body:",
+		"Pipeline is broken.",
+	} {
+		if !strings.Contains(issueContext, want) {
+			t.Fatalf("IssueContext missing %q:\n%s", want, issueContext)
+		}
+	}
+}
+
+// TestSpawnIssueContextFromSelfManagedGitLabTracker verifies that a
+// self-managed GitLab URL (https://gitlab.internal/...) produces a
+// TrackerID with Host set to "gitlab.internal" and is dispatched to the
+// GitLab tracker.
+func TestSpawnIssueContextFromSelfManagedGitLabTracker(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", RepoOriginURL: "https://gitlab.internal/acme/repo.git"}
+	fc := &fakeCommander{}
+	tracker := &fakeTracker{issue: domain.Issue{
+		ID:    domain.TrackerID{Provider: domain.TrackerProviderGitLab, Native: "acme/repo#42", Host: "gitlab.internal"},
+		Title: "Self-managed issue",
+		Body:  "Body text.",
+		State: domain.IssueOpen,
+		URL:   "https://gitlab.internal/acme/repo/-/issues/42",
+	}}
+	svc := NewWithDeps(Deps{Manager: fc, Store: st, Tracker: tracker, SCM: fakeSCM{}})
+
+	if _, _, _, err := svc.Spawn(context.Background(), ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, IssueID: "https://gitlab.internal/acme/repo/-/issues/42"}); err != nil {
+		t.Fatalf("Spawn: %v", err)
+	}
+	if len(tracker.ids) != 1 {
+		t.Fatalf("tracker calls = %d, want 1", len(tracker.ids))
+	}
+	if tracker.ids[0].Provider != domain.TrackerProviderGitLab {
+		t.Fatalf("tracker id provider = %q, want %q", tracker.ids[0].Provider, domain.TrackerProviderGitLab)
+	}
+	if tracker.ids[0].Native != "acme/repo#42" {
+		t.Fatalf("tracker id native = %q, want %q", tracker.ids[0].Native, "acme/repo#42")
+	}
+	if tracker.ids[0].Host != "gitlab.internal" {
+		t.Fatalf("tracker id host = %q, want %q", tracker.ids[0].Host, "gitlab.internal")
+	}
+}
+
 func TestSpawnFailedEmitsDuration(t *testing.T) {
 	st := newFakeStore()
 	st.projects["mer"] = domain.ProjectRecord{ID: "mer"}
@@ -1826,6 +2397,7 @@ func TestToAPIErrorMapsWorkspaceBranchSentinels(t *testing.T) {
 		wantCode string
 	}{
 		{"checked out elsewhere", fmt.Errorf("spawn mer-1: workspace: %w: \"x\" is checked out at \"/tmp\"", ports.ErrWorkspaceBranchCheckedOutElsewhere), apierr.KindConflict, "BRANCH_CHECKED_OUT_ELSEWHERE"},
+		{"default branch unresolved", fmt.Errorf("spawn mer-1: %w: configure defaultBranch", ports.ErrWorkspaceDefaultBranchUnresolved), apierr.KindInvalid, "DEFAULT_BRANCH_UNRESOLVED"},
 		{"not fetched", fmt.Errorf("spawn mer-1: workspace: %w: \"x\" has no local head", ports.ErrWorkspaceBranchNotFetched), apierr.KindInvalid, "BRANCH_NOT_FETCHED"},
 		{"invalid branch", fmt.Errorf("spawn mer-1: workspace: %w: \"bad!!\" (exit 1)", ports.ErrWorkspaceBranchInvalid), apierr.KindInvalid, "INVALID_BRANCH"},
 		{"agent binary not found", fmt.Errorf("spawn mer-1: %w", ports.ErrAgentBinaryNotFound), apierr.KindInvalid, "AGENT_BINARY_NOT_FOUND"},
@@ -1847,12 +2419,17 @@ func TestToAPIErrorMapsWorkspaceBranchSentinels(t *testing.T) {
 		{"invalid handoff", fmt.Errorf("submit handoff: %w", sessionmanager.ErrInvalidAgentHandoff), apierr.KindInvalid, "INVALID_AGENT_HANDOFF"},
 		{"switch delivery unconfirmed", fmt.Errorf("switch agent mer-1: %w", sessionmanager.ErrSwitchDeliveryUnconfirmed), apierr.KindConflict, "AGENT_SWITCH_DELIVERY_UNCONFIRMED"},
 		{"manager switch in progress", fmt.Errorf("switch agent mer-1: %w", sessionmanager.ErrSwitchInProgress), apierr.KindConflict, "AGENT_SWITCH_IN_PROGRESS"},
+		{"manager switch shutting down", fmt.Errorf("switch agent mer-1: %w", sessionmanager.ErrSwitchShuttingDown), apierr.KindConflict, "AGENT_SWITCH_UNAVAILABLE"},
+		{"manager switch unavailable", fmt.Errorf("switch agent mer-1: %w", sessionmanager.ErrSwitchUnavailable), apierr.KindConflict, "AGENT_SWITCH_UNAVAILABLE"},
 		{"switch in progress", fmt.Errorf("switch agent mer-1: %w", domain.ErrAgentSwitchInProgress), apierr.KindConflict, "AGENT_SWITCH_IN_PROGRESS"},
 		{"switch idempotency conflict", fmt.Errorf("switch agent mer-1: %w", domain.ErrAgentSwitchIdempotencyConflict), apierr.KindConflict, "AGENT_SWITCH_IDEMPOTENCY_CONFLICT"},
 		{"chat mode unsupported", fmt.Errorf("spawn: %w", ports.ErrChatUnsupported), apierr.KindConflict, "SESSION_MODE_UNSUPPORTED"},
 		{"chat driver unavailable", fmt.Errorf("spawn: %w", ports.ErrChatDriverUnavailable), apierr.KindConflict, "CHAT_DRIVER_UNAVAILABLE"},
 		{"chat driver incompatible", fmt.Errorf("spawn: %w", ports.ErrChatDriverIncompatible), apierr.KindConflict, "CHAT_DRIVER_INCOMPATIBLE"},
 		{"chat auth required", fmt.Errorf("spawn: %w", ports.ErrChatAuthRequired), apierr.KindConflict, "CHAT_AUTH_REQUIRED"},
+		{"interface notice not acknowledgeable", fmt.Errorf("acknowledge interface notice: %w", sessionmanager.ErrInterfaceTransitionNoticeNotAcknowledgeable), apierr.KindConflict, "INTERFACE_TRANSITION_NOTICE_NOT_ACKNOWLEDGEABLE"},
+		{"native conversation missing", fmt.Errorf("switch interface: %w", sessionmanager.ErrNativeConversationMissing), apierr.KindConflict, "NATIVE_SESSION_MISSING"},
+		{"native conversation unverified", fmt.Errorf("switch interface: %w", sessionmanager.ErrNativeConversationUnverified), apierr.KindConflict, "NATIVE_SESSION_UNVERIFIED"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -2228,15 +2805,21 @@ func TestDelegateTaskPassesAttachmentsToSpawnConfig(t *testing.T) {
 }
 
 type fakePRClaimer struct {
-	out errorFreeClaimOutcome
-	err error
+	out        errorFreeClaimOutcome
+	err        error
+	gotMode    ports.ReviewWriteMode
+	gotThreads []domain.PullRequestReviewThread
+	called     bool
 }
 
 type errorFreeClaimOutcome struct {
 	ports.ClaimOutcome
 }
 
-func (f fakePRClaimer) ClaimPR(context.Context, domain.PullRequest, []domain.PullRequestCheck, []domain.PullRequestReview, []domain.PullRequestReviewThread, []domain.PullRequestComment, ports.ReviewWriteMode, bool) (ports.ClaimOutcome, error) {
+func (f *fakePRClaimer) ClaimPR(_ context.Context, _ domain.PullRequest, _ []domain.PullRequestCheck, _ []domain.PullRequestReview, threads []domain.PullRequestReviewThread, _ []domain.PullRequestComment, mode ports.ReviewWriteMode, _ bool) (ports.ClaimOutcome, error) {
+	f.gotMode = mode
+	f.gotThreads = threads
+	f.called = true
 	return f.out.ClaimOutcome, f.err
 }
 
@@ -2269,12 +2852,24 @@ func TestClaimRowsFromSCMSnapshotsSessionReviewPolicy(t *testing.T) {
 	}
 }
 
+// noopSCMProvider implements scmProvider but always fails ParseRepository
+// to exercise the scmRepoForClaim fallback path.
+type noopSCMProvider struct{}
+
+func (noopSCMProvider) ParseRepository(string) (ports.SCMRepo, bool) { return ports.SCMRepo{}, false }
+func (noopSCMProvider) FetchPullRequests(context.Context, []ports.SCMPRRef) ([]ports.SCMObservation, error) {
+	return nil, nil
+}
+func (noopSCMProvider) FetchReviewThreads(context.Context, ports.SCMPRRef) (ports.SCMReviewObservation, error) {
+	return ports.SCMReviewObservation{}, nil
+}
+
 func (f fakeSCM) ParseRepository(remote string) (ports.SCMRepo, bool) {
-	owner, repo, err := githubRepoFromURL(remote)
+	host, owner, repo, err := repoFromURL(remote)
 	if err != nil {
 		return ports.SCMRepo{}, false
 	}
-	return ports.SCMRepo{Provider: "github", Host: "github.com", Owner: owner, Name: repo, Repo: owner + "/" + repo}, true
+	return ports.SCMRepo{Provider: providerKey(host), Host: host, Owner: owner, Name: repo, Repo: owner + "/" + repo}, true
 }
 
 func (f fakeSCM) FetchPullRequests(context.Context, []ports.SCMPRRef) ([]ports.SCMObservation, error) {
@@ -2302,7 +2897,7 @@ func TestClaimPRRejectsScratchProject(t *testing.T) {
 	st.projects["scratch"] = domain.ProjectRecord{ID: "scratch", Kind: domain.ProjectKindScratch}
 	svc := NewWithDeps(Deps{
 		Store:     st,
-		PRClaimer: fakePRClaimer{},
+		PRClaimer: &fakePRClaimer{},
 		SCM: fakeSCM{
 			obs: ports.SCMObservation{
 				Fetched:  true,
@@ -2336,9 +2931,9 @@ func TestClaimPRMapsObserverAndStoreErrors(t *testing.T) {
 		want error
 	}{
 		{"missing scm", NewWithDeps(Deps{Store: st}), ErrSCMUnavailable},
-		{"not found", NewWithDeps(Deps{Store: st, PRClaimer: fakePRClaimer{}, SCM: fakeSCM{fetchErr: ports.ErrSCMNotFound}}), ErrPRNotFound},
-		{"closed", NewWithDeps(Deps{Store: st, PRClaimer: fakePRClaimer{}, SCM: fakeSCM{obs: ports.SCMObservation{Fetched: true, Provider: "github", Host: "github.com", Repo: "acme/repo", PR: ports.SCMPRObservation{URL: "https://github.com/acme/repo/pull/7", Number: 7, Closed: true}}}}), ErrPRNotOpen},
-		{"active owner", NewWithDeps(Deps{Store: st, PRClaimer: fakePRClaimer{err: ports.PRClaimedByActiveSessionError{Owner: "mer-2"}}, SCM: fakeSCM{obs: ports.SCMObservation{Fetched: true, Provider: "github", Host: "github.com", Repo: "acme/repo", PR: ports.SCMPRObservation{URL: "https://github.com/acme/repo/pull/7", Number: 7}}}}), ports.ErrPRClaimedByActiveSession},
+		{"not found", NewWithDeps(Deps{Store: st, PRClaimer: &fakePRClaimer{}, SCM: fakeSCM{fetchErr: ports.ErrSCMNotFound}}), ErrPRNotFound},
+		{"closed", NewWithDeps(Deps{Store: st, PRClaimer: &fakePRClaimer{}, SCM: fakeSCM{obs: ports.SCMObservation{Fetched: true, Provider: "github", Host: "github.com", Repo: "acme/repo", PR: ports.SCMPRObservation{URL: "https://github.com/acme/repo/pull/7", Number: 7, Closed: true}}}}), ErrPRNotOpen},
+		{"active owner", NewWithDeps(Deps{Store: st, PRClaimer: &fakePRClaimer{err: ports.PRClaimedByActiveSessionError{Owner: "mer-2"}}, SCM: fakeSCM{obs: ports.SCMObservation{Fetched: true, Provider: "github", Host: "github.com", Repo: "acme/repo", PR: ports.SCMPRObservation{URL: "https://github.com/acme/repo/pull/7", Number: 7}}}}), ports.ErrPRClaimedByActiveSession},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -2350,13 +2945,232 @@ func TestClaimPRMapsObserverAndStoreErrors(t *testing.T) {
 	}
 
 	st.pr["mer-1"] = domain.PRFacts{URL: "https://github.com/acme/repo/pull/7", Number: 7, CI: domain.CIPassing, UpdatedAt: now}
-	svc := NewWithDeps(Deps{Store: st, PRClaimer: fakePRClaimer{out: errorFreeClaimOutcome{ports.ClaimOutcome{PreviousOwner: "mer-2"}}}, SCM: fakeSCM{obs: ports.SCMObservation{Fetched: true, Provider: "github", Host: "github.com", Repo: "acme/repo", PR: ports.SCMPRObservation{URL: "https://github.com/acme/repo/pull/7", Number: 7}}}})
+	svc := NewWithDeps(Deps{Store: st, PRClaimer: &fakePRClaimer{out: errorFreeClaimOutcome{ports.ClaimOutcome{PreviousOwner: "mer-2"}}}, SCM: fakeSCM{obs: ports.SCMObservation{Fetched: true, Provider: "github", Host: "github.com", Repo: "acme/repo", PR: ports.SCMPRObservation{URL: "https://github.com/acme/repo/pull/7", Number: 7}}}})
 	res, err := svc.ClaimPR(context.Background(), "mer-1", "7", ClaimPROptions{AllowTakeover: true})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(res.TakenOverFrom) != 1 || res.TakenOverFrom[0] != "mer-2" || len(res.PRs) != 1 || res.PRs[0].URL == "" {
 		t.Fatalf("claim result = %+v", res)
+	}
+}
+
+func TestClaimPRGitLabMR(t *testing.T) {
+	st := newFakeStore()
+	st.sessions["gl-1"] = domain.SessionRecord{ID: "gl-1", ProjectID: "gl", Kind: domain.KindWorker, Metadata: domain.SessionMetadata{WorkspacePath: "/ws"}}
+	st.projects["gl"] = domain.ProjectRecord{ID: "gl", RepoOriginURL: "https://gitlab.com/castai/ctxd"}
+	st.pr["gl-1"] = domain.PRFacts{URL: "https://gitlab.com/castai/ctxd/-/merge_requests/9", Number: 9, CI: domain.CIPassing, UpdatedAt: time.Date(2026, 6, 4, 12, 0, 0, 0, time.UTC)}
+
+	obs := ports.SCMObservation{
+		Fetched:  true,
+		Provider: "gitlab",
+		Host:     "gitlab.com",
+		Repo:     "castai/ctxd",
+		PR:       ports.SCMPRObservation{URL: "https://gitlab.com/castai/ctxd/-/merge_requests/9", Number: 9},
+	}
+	svc := NewWithDeps(Deps{Store: st, PRClaimer: &fakePRClaimer{out: errorFreeClaimOutcome{ports.ClaimOutcome{}}}, SCM: fakeSCM{obs: obs}})
+	res, err := svc.ClaimPR(context.Background(), "gl-1", "https://gitlab.com/castai/ctxd/-/merge_requests/9", ClaimPROptions{AllowTakeover: true})
+	if err != nil {
+		t.Fatalf("claim gitlab MR: %v", err)
+	}
+	if len(res.PRs) != 1 || res.PRs[0].URL != "https://gitlab.com/castai/ctxd/-/merge_requests/9" {
+		t.Fatalf("claim result = %+v", res)
+	}
+}
+
+func TestClaimPRReviewFetchFailureProceedsWithPreserve(t *testing.T) {
+	st := newFakeStore()
+	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer", Kind: domain.KindWorker, Metadata: domain.SessionMetadata{WorkspacePath: "/ws"}}
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", RepoOriginURL: "https://github.com/acme/repo"}
+	st.pr["mer-1"] = domain.PRFacts{URL: "https://github.com/acme/repo/pull/7", Number: 7, CI: domain.CIPassing, UpdatedAt: time.Date(2026, 6, 4, 12, 0, 0, 0, time.UTC)}
+	obs := ports.SCMObservation{
+		Fetched:  true,
+		Provider: "github",
+		Host:     "github.com",
+		Repo:     "acme/repo",
+		PR:       ports.SCMPRObservation{URL: "https://github.com/acme/repo/pull/7", Number: 7},
+	}
+	claimer := &fakePRClaimer{out: errorFreeClaimOutcome{ports.ClaimOutcome{}}}
+	svc := NewWithDeps(Deps{
+		Store:     st,
+		PRClaimer: claimer,
+		SCM: fakeSCM{
+			obs:       obs,
+			reviewErr: errors.New("review API down"),
+		},
+	})
+	res, err := svc.ClaimPR(context.Background(), "mer-1", "7", ClaimPROptions{})
+	if err != nil {
+		t.Fatalf("claim should succeed when FetchReviewThreads fails: %v", err)
+	}
+	if !claimer.called {
+		t.Fatalf("ClaimPR was not called")
+	}
+	if claimer.gotMode != ports.ReviewWritePreserve {
+		t.Fatalf("review mode = %v, want ReviewWritePreserve", claimer.gotMode)
+	}
+	if len(claimer.gotThreads) != 0 {
+		t.Fatalf("no threads should be persisted on fetch failure, got %#v", claimer.gotThreads)
+	}
+	if len(res.PRs) != 1 || res.PRs[0].URL != "https://github.com/acme/repo/pull/7" {
+		t.Fatalf("claim result = %+v", res)
+	}
+}
+
+func TestClaimPRReviewFetchNotFoundErrors(t *testing.T) {
+	st := newFakeStore()
+	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer", Kind: domain.KindWorker, Metadata: domain.SessionMetadata{WorkspacePath: "/ws"}}
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", RepoOriginURL: "https://github.com/acme/repo"}
+	obs := ports.SCMObservation{
+		Fetched:  true,
+		Provider: "github",
+		Host:     "github.com",
+		Repo:     "acme/repo",
+		PR:       ports.SCMPRObservation{URL: "https://github.com/acme/repo/pull/7", Number: 7},
+	}
+	claimer := &fakePRClaimer{out: errorFreeClaimOutcome{ports.ClaimOutcome{}}}
+	svc := NewWithDeps(Deps{
+		Store:     st,
+		PRClaimer: claimer,
+		SCM: fakeSCM{
+			obs:       obs,
+			reviewErr: ports.ErrSCMNotFound,
+		},
+	})
+	_, err := svc.ClaimPR(context.Background(), "mer-1", "7", ClaimPROptions{})
+	if !errors.Is(err, ErrPRNotFound) {
+		t.Fatalf("err = %v, want ErrPRNotFound", err)
+	}
+	if claimer.called {
+		t.Fatalf("ClaimPR should not be called when PR was deleted")
+	}
+}
+
+func TestNormalizePRRefGitLab(t *testing.T) {
+	cases := []struct {
+		name       string
+		ref        string
+		repoOrigin string
+		wantURL    string
+		wantNum    int
+		wantErr    bool
+	}{
+		{
+			name:       "gitlab MR URL",
+			ref:        "https://gitlab.com/castai/ctxd/-/merge_requests/9",
+			repoOrigin: "https://gitlab.com/castai/ctxd",
+			wantURL:    "https://gitlab.com/castai/ctxd/-/merge_requests/9",
+			wantNum:    9,
+		},
+		{
+			name:       "gitlab MR URL with nested groups",
+			ref:        "https://gitlab.com/group/subgroup/repo/-/merge_requests/42",
+			repoOrigin: "https://gitlab.com/group/subgroup/repo",
+			wantURL:    "https://gitlab.com/group/subgroup/repo/-/merge_requests/42",
+			wantNum:    42,
+		},
+		{
+			name:       "numeric ref with gitlab repo",
+			ref:        "9",
+			repoOrigin: "https://gitlab.com/castai/ctxd",
+			wantURL:    "https://gitlab.com/castai/ctxd/-/merge_requests/9",
+			wantNum:    9,
+		},
+		{
+			name:       "github PR URL unchanged",
+			ref:        "https://github.com/owner/repo/pull/42",
+			repoOrigin: "https://github.com/owner/repo",
+			wantURL:    "https://github.com/owner/repo/pull/42",
+			wantNum:    42,
+		},
+		{
+			name:       "numeric ref with github repo unchanged",
+			ref:        "7",
+			repoOrigin: "https://github.com/acme/repo",
+			wantURL:    "https://github.com/acme/repo/pull/7",
+			wantNum:    7,
+		},
+		{
+			name:       "invalid URL",
+			ref:        "https://example.com/foo",
+			repoOrigin: "",
+			wantErr:    true,
+		},
+		{
+			name:       "empty ref",
+			ref:        "",
+			repoOrigin: "",
+			wantErr:    true,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			url, n, err := normalizePRRef(tc.ref, tc.repoOrigin)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("expected error, got url=%s n=%d", url, n)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if url != tc.wantURL || n != tc.wantNum {
+				t.Fatalf("got url=%s n=%d, want url=%s n=%d", url, n, tc.wantURL, tc.wantNum)
+			}
+		})
+	}
+}
+
+func TestRequireSameRepoGitLab(t *testing.T) {
+	cases := []struct {
+		name       string
+		prURL      string
+		repoOrigin string
+		wantErr    error
+	}{
+		{"matching gitlab", "https://gitlab.com/castai/ctxd/-/merge_requests/9", "https://gitlab.com/castai/ctxd", nil},
+		{"matching github", "https://github.com/owner/repo/pull/42", "https://github.com/owner/repo", nil},
+		{"empty origin allows any", "https://gitlab.com/castai/ctxd/-/merge_requests/9", "", nil},
+		{"mismatch", "https://gitlab.com/castai/ctxd/-/merge_requests/9", "https://github.com/other/repo", ErrProjectMismatch},
+		{"gitlab mismatch repo", "https://gitlab.com/castai/ctxd/-/merge_requests/9", "https://gitlab.com/other/repo", ErrProjectMismatch},
+		// Cross-provider mismatch: same owner/repo name on GitHub and GitLab
+		// must not validate
+		{"cross-provider github origin vs gitlab mr", "https://gitlab.com/owner/repo/-/merge_requests/1", "https://github.com/owner/repo.git", ErrProjectMismatch},
+		{"cross-provider gitlab origin vs github pr", "https://github.com/owner/repo/pull/1", "https://gitlab.com/owner/repo.git", ErrProjectMismatch},
+		// Cross-host mismatch: gitlab.com origin vs self-managed gitlab MR
+		// must not validate even though both are GitLab
+		{"cross-host gitlab.com origin vs self-managed mr", "https://gitlab.mycompany.com/owner/repo/-/merge_requests/1", "https://gitlab.com/owner/repo.git", ErrProjectMismatch},
+		{"matching self-managed gitlab", "https://gitlab.mycompany.com/eng/team/-/merge_requests/3", "https://gitlab.mycompany.com/eng/team.git", nil},
+		// Nested namespaces must match end-to-end
+		{"matching nested namespace gitlab", "https://gitlab.com/group/subgroup/repo/-/merge_requests/5", "https://gitlab.com/group/subgroup/repo.git", nil},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := requireSameRepo(tc.prURL, tc.repoOrigin)
+			if tc.wantErr == nil {
+				if err != nil {
+					t.Fatalf("unexpected error: %v", err)
+				}
+				return
+			}
+			if !errors.Is(err, tc.wantErr) {
+				t.Fatalf("err=%v, want %v", err, tc.wantErr)
+			}
+		})
+	}
+}
+
+func TestScmRepoForClaimGitLab(t *testing.T) {
+	// When the provider cannot parse the origin, the fallback should detect
+	// GitLab from the PR URL and set Provider="gitlab".
+	var noopProvider noopSCMProvider
+	repo, err := scmRepoForClaim(noopProvider, "", "https://gitlab.com/castai/ctxd/-/merge_requests/9")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if repo.Provider != "gitlab" || repo.Host != "gitlab.com" || repo.Owner != "castai" || repo.Name != "ctxd" {
+		t.Fatalf("repo = %+v", repo)
 	}
 }
 
@@ -2415,6 +3229,7 @@ func TestListPRSummariesExposesReviewSummariesButKeepsRawLogsAndCommentBodiesPri
 	stList.comments[prURL] = []domain.PullRequestComment{
 		{Author: "reviewer-a", File: "main.go", Line: 12, Body: "raw body must stay private", URL: "https://github.com/acme/repo/pull/7#discussion_r1", AutoInjectReview: false},
 		{Author: "ci-bot", File: "main.go", Line: 13, Body: "bot body", URL: "https://github.com/acme/repo/pull/7#discussion_r2", IsBot: true},
+		{Author: "reviewer-a", File: "main.go", Line: 14, Body: "resolved body", URL: "https://github.com/acme/repo/pull/7#discussion_r4", Resolved: true},
 		{Author: "reviewer-a", File: "test.go", Line: 22, Body: "another raw body", URL: "https://github.com/acme/repo/pull/7#discussion_r3", AutoInjectReview: true},
 	}
 
@@ -2441,6 +3256,11 @@ func TestListPRSummariesExposesReviewSummariesButKeepsRawLogsAndCommentBodiesPri
 		t.Fatalf("review url = %q", reviewer.ReviewURL)
 	} else if reviewer.Links[0].AutoInjectReview || !reviewer.Links[1].AutoInjectReview {
 		t.Fatalf("comment injection decisions = %+v, want false then true", reviewer.Links)
+	} else if reviewer.Links[0].Body != "raw body must stay private" || reviewer.Links[1].Body != "another raw body" {
+		t.Fatalf("comment bodies = %+v", reviewer.Links)
+	}
+	if len(pr.Review.ResolvedBy) != 1 || pr.Review.ResolvedBy[0].Count != 1 || pr.Review.ResolvedBy[0].Links[0].Body != "resolved body" {
+		t.Fatalf("resolved comments = %+v", pr.Review.ResolvedBy)
 	}
 	if pr.Mergeability.State != domain.MergeConflicting || len(pr.Mergeability.ConflictFiles) != 0 || !containsString(pr.Mergeability.Reasons, "conflicts") {
 		t.Fatalf("mergeability = %+v", pr.Mergeability)
@@ -2453,10 +3273,15 @@ func TestListPRSummariesExposesReviewSummariesButKeepsRawLogsAndCommentBodiesPri
 		entry.URL != "https://github.com/acme/repo/pull/7#pullrequestreview-1" || entry.AutoInjectReview {
 		t.Fatalf("review summary entry = %+v", entry)
 	}
-	// The review summary body is surfaced, but inline comment bodies and CI log
-	// tails must never leak into the PR summary.
+	// Human inline review comment bodies are surfaced for display, but bot bodies
+	// and CI log tails must still stay out of the PR summary.
 	blob := fmt.Sprintf("%+v", got)
-	for _, secret := range []string{"raw body must stay private", "another raw body", "bot body", "panic: secret"} {
+	for _, text := range []string{"raw body must stay private", "another raw body"} {
+		if !strings.Contains(blob, text) {
+			t.Fatalf("summary omitted review comment body %q", text)
+		}
+	}
+	for _, secret := range []string{"bot body", "panic: secret"} {
 		if strings.Contains(blob, secret) {
 			t.Fatalf("summary leaked private text %q", secret)
 		}
@@ -2548,6 +3373,35 @@ func TestListPRSummariesSuppressesFailingChecksUnlessCIFailing(t *testing.T) {
 	}
 	if got[0].CI.State != domain.CIPassing || len(got[0].CI.FailingChecks) != 0 {
 		t.Fatalf("ci summary = %+v", got[0].CI)
+	}
+}
+
+func TestListPRSummariesExposesPerPRAutoInjectCIPolicy(t *testing.T) {
+	st := newFakeStore()
+	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer", Kind: domain.KindWorker}
+	stList := &multiPRFakeStore{fakeStore: st, prs: []domain.PullRequest{
+		{URL: "enabled-failing", SessionID: "mer-1", CI: domain.CIFailing, AutoInjectCI: true},
+		{URL: "disabled-failing", SessionID: "mer-1", CI: domain.CIFailing, AutoInjectCI: false},
+		{URL: "enabled-passing", SessionID: "mer-1", CI: domain.CIPassing, AutoInjectCI: true},
+		{URL: "enabled-merged", SessionID: "mer-1", CI: domain.CIPassing, Merged: true, AutoInjectCI: true},
+	}}
+
+	got, err := (&Service{store: stList}).ListPRSummaries(context.Background(), "mer-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	byURL := map[string]PRSummary{}
+	for _, pr := range got {
+		byURL[pr.URL] = pr
+	}
+	if !byURL["enabled-failing"].CI.AutoInjectCI || byURL["disabled-failing"].CI.AutoInjectCI {
+		t.Fatalf("failing CI policies = enabled:%v disabled:%v", byURL["enabled-failing"].CI.AutoInjectCI, byURL["disabled-failing"].CI.AutoInjectCI)
+	}
+	if !byURL["enabled-passing"].CI.AutoInjectCI {
+		t.Fatal("passing PR lost its enabled CI injection policy")
+	}
+	if !byURL["enabled-merged"].CI.AutoInjectCI {
+		t.Fatal("terminal PR lost its enabled CI injection policy")
 	}
 }
 

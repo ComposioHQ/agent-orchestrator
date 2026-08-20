@@ -1,12 +1,14 @@
 import { describe, expect, it, vi } from "vitest";
 import {
 	type BrowserNavState,
+	type BrowserTabsState,
 	clampBoundsToWindow,
 	createBrowserViewHost,
 	isAllowedBrowserURL,
 	normalizeBrowserURL,
 	scaleBoundsForZoom,
 } from "./browser-view-host";
+import { MAX_BROWSER_TABS } from "../shared/browser-tabs";
 import { NEW_SESSION_SHORTCUT_CHANNEL } from "../shared/shortcuts";
 
 type InvokeHandler = (event: unknown, ...args: unknown[]) => unknown;
@@ -214,6 +216,8 @@ function setupTabHost() {
 			id: number;
 			getURL: () => string;
 			loadURL: ReturnType<typeof vi.fn>;
+			openDevTools: ReturnType<typeof vi.fn>;
+			closeDevTools: ReturnType<typeof vi.fn>;
 			openWindow: (url: string) => void;
 			close: ReturnType<typeof vi.fn>;
 			};
@@ -252,6 +256,7 @@ function setupTabHost() {
 					return {};
 				},
 			},
+			focus: vi.fn(),
 			getTitle: () => (currentURL ? `Title ${currentURL}` : ""),
 			getURL: () => currentURL,
 			goBack: () => undefined,
@@ -273,6 +278,8 @@ function setupTabHost() {
 			},
 			stop: () => undefined,
 			close: vi.fn(),
+			openDevTools: vi.fn(),
+			closeDevTools: vi.fn(),
 			openWindow: (url: string) => {
 				const result = windowOpenHandler?.({ url });
 				if (result?.action === "allow") {
@@ -408,10 +415,22 @@ describe("native Chromium DevTools host", () => {
 		expect(openDevTools).toHaveBeenLastCalledWith({ mode: "undocked", activate: true });
 	});
 
+	it("does not open DevTools for a blank browser target", async () => {
+		const { invoke, openDevTools } = setupHost();
+		const nav = await invoke("browser:ensure", "sess-1");
+		const viewId = (nav as BrowserNavState).viewId;
+
+		const state = await invoke("browser:devtools", { viewId, operation: "open" });
+
+		expect(state).toMatchObject({ open: false, placement: "right" });
+		expect(openDevTools).not.toHaveBeenCalled();
+	});
+
 	it("reflects a manual native DevTools close in the browser toolbar state", async () => {
 		const { invoke, sent, webContentsListeners } = setupHost();
 		const nav = await invoke("browser:ensure", "sess-1");
 		const viewId = (nav as BrowserNavState).viewId;
+		await invoke("browser:navigate", { viewId, url: "http://localhost:3000/" });
 
 		await invoke("browser:devtools", { viewId, operation: "open" });
 		expect(sent.filter((entry) => entry.channel === "browser:devtoolsState").at(-1)?.payload).toMatchObject({
@@ -435,6 +454,32 @@ describe("native Chromium DevTools host", () => {
 			viewId,
 			open: false,
 		});
+	});
+
+	it("closes DevTools when the active page is cleared", async () => {
+		const { closeDevTools, invoke } = setupHost();
+		const nav = await invoke("browser:ensure", "sess-1");
+		const viewId = (nav as BrowserNavState).viewId;
+		await invoke("browser:navigate", { viewId, url: "http://localhost:3000/" });
+		await invoke("browser:devtools", { viewId, operation: "open" });
+
+		await invoke("browser:clear", viewId);
+
+		expect(closeDevTools).toHaveBeenCalledOnce();
+		expect(await invoke("browser:devtools", { viewId, operation: "open" })).toMatchObject({ open: false });
+	});
+
+	it("closes DevTools when switching to a blank tab", async () => {
+		const { invoke, views } = setupTabHost();
+		const nav = (await invoke("browser:ensure", "sess-1")) as BrowserNavState;
+		await invoke("browser:navigate", { viewId: nav.viewId, url: "http://localhost:3000/" });
+		await invoke("browser:devtools", { viewId: nav.viewId, operation: "open" });
+
+		await invoke("browser:openTab", { viewId: nav.viewId });
+
+		expect(views[0].webContents.closeDevTools).toHaveBeenCalledOnce();
+		expect(views[1].webContents.openDevTools).not.toHaveBeenCalled();
+		expect(await invoke("browser:devtools", { viewId: nav.viewId, operation: "open" })).toMatchObject({ open: false });
 	});
 
 });
@@ -696,6 +741,25 @@ describe("agent browser runtime", () => {
 		expect(debuggerSendCommand).toHaveBeenCalledWith("Page.navigate", { url: "http://localhost:4173/" });
 	});
 
+	it("keeps UI-created tabs in the native registry after the daemon has connected", async () => {
+		const { host, invoke, runtime, views } = setupTabHost();
+		await host.execute("sess-1", "snapshot");
+		const state = (await invoke("browser:ensure", "sess-1")) as { viewId: string };
+
+		for (let index = 0; index < 6; index += 1) {
+			await invoke("browser:openTab", { viewId: state.viewId });
+		}
+
+		const nativeNewTabCalls = vi
+			.mocked(runtime.runAction)
+			.mock.calls.filter(([, action]) => action === "tab-new");
+		expect(nativeNewTabCalls).toHaveLength(6);
+		expect(views).toHaveLength(7);
+
+		await invoke("browser:closeTab", { viewId: state.viewId, tabId: "t7" });
+
+		expect(views[6].webContents.close).toHaveBeenCalledTimes(1);
+	});
 
 	it("keeps stable logical tab IDs, separate targets, and the selected tab active", async () => {
 		const { emit, host, invoke, views } = setupTabHost();
@@ -850,6 +914,120 @@ describe("agent browser runtime", () => {
 			expect.anything(),
 		);
 		expect(views[1].webContents.close).toHaveBeenCalled();
+	});
+});
+
+describe("browser tab lifecycle stress (tabs stop closing regression guard)", () => {
+	// Re-verifies the historically reported "tabs stop closing" bug against the
+	// REAL closeTab/destroyTabView code paths (not a mock of them), by driving
+	// the IPC handlers exactly as the renderer rail does: open to the tab cap,
+	// close back down to one, repeatedly, interleaving tab selection plus a
+	// DevTools open/close and an annotation-mode toggle each cycle -- the two
+	// failure modes ("wrong tab content after switching", "stale overlay
+	// captures") called out by the stabilization commits already on main.
+	it("opens to the tab cap and closes back to one tab across many churn cycles without a stuck or leaked tab", async () => {
+		const { invoke, views } = setupTabHost();
+		const ensured = (await invoke("browser:ensure", "sess-1")) as BrowserNavState;
+		const { viewId } = ensured;
+
+		// Counts closes that were made to hit closeTab's "wasActive"
+		// reactivation branch (browser-view-host.ts:696 -- the path that calls
+		// activateTab/applySessionBounds/pushNavState/pushDevToolsState/
+		// retargetDevTools) versus its plain non-active-tab deletion branch, so
+		// the final assertion has real evidence both paths actually ran.
+		//
+		// These counters are ground truth BY CONSTRUCTION, not by inference:
+		// each iteration below explicitly selects a tab X and then either closes
+		// that same X (wasActive true by direct equality, tabId ===
+		// activeTabId) or closes a different Y (wasActive false by direct
+		// inequality). Which id we pass to closeTab is exactly what determines
+		// the branch -- there is nothing to derive from closeTab's internal
+		// reactivation-promotes-the-tail behavior, unlike a prior version of
+		// this test that tried to infer wasActive from close order/parity and,
+		// by induction on that promotion behavior, ended up hitting the
+		// reactivation branch on every single close.
+		let reactivatingCloses = 0;
+		let nonReactivatingCloses = 0;
+
+		for (let cycle = 0; cycle < 20; cycle += 1) {
+			for (let i = 0; i < MAX_BROWSER_TABS - 1; i += 1) {
+				await invoke("browser:openTab", { viewId });
+			}
+			let tabs = (await invoke("browser:getTabs", viewId)) as BrowserTabsState;
+			expect(tabs.tabs).toHaveLength(MAX_BROWSER_TABS);
+
+			// Interleave the two related failure modes named in the brief: a
+			// DevTools open/close cycle and an annotation-mode toggle.
+			await invoke("browser:devtools", { viewId, operation: "open" });
+			await invoke("browser:devtools", { viewId, operation: "close" });
+			await invoke("browser:annotation:setMode", { viewId, enabled: true });
+			await invoke("browser:annotation:setMode", { viewId, enabled: false });
+
+			// Re-fetch (rather than reusing the pre-interleave `tabs` snapshot)
+			// so any corruption introduced by the DevTools/annotation-mode calls
+			// above surfaces here directly, instead of only indirectly on the
+			// next close below.
+			tabs = (await invoke("browser:getTabs", viewId)) as BrowserTabsState;
+			expect(tabs.tabs).toHaveLength(MAX_BROWSER_TABS);
+
+			let closeCount = 0;
+			while (tabs.tabs.length > 1) {
+				const before = tabs.tabs.length;
+				// Always select a tab first (X), fetched fresh from the current
+				// `tabs.tabs` list rather than a remembered index or position,
+				// since positions shift as tabs close. Then, by construction:
+				//   - reactivating close: close that SAME id X.
+				//   - non-reactivating close: close a DIFFERENT id Y != X that
+				//     was not the one just selected.
+				// Each branch is verifiable by inspection right here -- no
+				// induction over closeTab's internal promotion behavior required.
+				const wantsReactivation = closeCount % 2 === 0;
+				const selectedId = tabs.tabs[0].id;
+				await invoke("browser:selectTab", { viewId, tabId: selectedId });
+				const closingId = wantsReactivation
+					? selectedId
+					: tabs.tabs.find((tab) => tab.id !== selectedId)!.id;
+
+				const result = (await invoke("browser:closeTab", { viewId, tabId: closingId })) as BrowserTabsState;
+
+				expect(result.tabs.some((tab) => tab.id === closingId)).toBe(false);
+				expect(result.tabs).toHaveLength(before - 1);
+				// The reported active tab must always be one that's still present
+				// -- a broken reactivation would otherwise pass silently, as it
+				// did before this assertion existed.
+				expect(result.tabs.some((tab) => tab.id === result.activeTabId)).toBe(true);
+				if (wantsReactivation) {
+					reactivatingCloses += 1;
+				} else {
+					nonReactivatingCloses += 1;
+				}
+
+				tabs = result;
+				closeCount += 1;
+			}
+
+			expect(tabs.tabs).toHaveLength(1);
+			expect((await invoke("browser:getTabs", viewId)) as BrowserTabsState).toMatchObject({ tabs: [{ id: tabs.tabs[0].id }] });
+		}
+
+		// Both branches must have real coverage -- these counters are ground
+		// truth by construction (see the comment above the loop), not derived
+		// from closeTab's behavior, so this assertion can't pass by accident
+		// the way the prior induction-based version did. The thresholds are
+		// deliberately loose (the actual split is a deterministic 160
+		// reactivating / 140 non-reactivating for MAX_BROWSER_TABS=16 across 20
+		// cycles) since what matters is that neither branch has zero coverage.
+		expect(reactivatingCloses).toBeGreaterThanOrEqual(5);
+		expect(nonReactivatingCloses).toBeGreaterThanOrEqual(5);
+
+		const final = (await invoke("browser:getTabs", viewId)) as BrowserTabsState;
+		expect(final.tabs).toHaveLength(1);
+		// Every WebContentsView ever created (16 tabs x 20 cycles, plus the
+		// original) must have had its underlying webContents closed except the
+		// one tab still alive at the end -- otherwise a leaked view is exactly
+		// what "tabs stop closing" would look like under the hood.
+		const stillOpen = views.filter((view) => view.webContents.close.mock.calls.length === 0);
+		expect(stillOpen).toHaveLength(1);
 	});
 });
 
