@@ -155,5 +155,7 @@ describe("WindowTitlebar", () => {
     expect(tokens).toMatch(
       /--size-center-panel-inset: 24px;\s*--size-center-panel-inline-inset: 16px;\s*--size-center-panel-bottom-inset: 14px;/s,
     );
+    expect(tokens).toContain("--size-titlebar-content-offset-linux");
+    expect(css).toContain(".center-panel-shell--titlebar-clearance-linux .center-panel-titlebar");
   });
 });

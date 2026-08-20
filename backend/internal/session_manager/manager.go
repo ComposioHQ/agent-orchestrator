@@ -19,6 +19,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/modelcatalog"
 	"github.com/aoagents/agent-orchestrator/backend/internal/attachmentstore"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
@@ -46,6 +47,10 @@ var (
 	// ErrMissingHarness means neither the spawn request nor the project's role
 	// config selected an agent. Worker/orchestrator spawns must be explicit.
 	ErrMissingHarness = errors.New("session: agent harness required")
+	// ErrUnsupportedModel means the requested model is not supported by the
+	// selected harness's catalog and the harness does not accept arbitrary model
+	// ids. The API maps it to a 400.
+	ErrUnsupportedModel = errors.New("session: model is not supported by the selected harness")
 	// ErrScratchBranchUnsupported means a caller tried to force git branch
 	// semantics onto a scratch project.
 	ErrScratchBranchUnsupported = errors.New("session: scratch projects do not support branches")
@@ -183,6 +188,7 @@ type lifecycleRecorder interface {
 	CommitControllerEpoch(ctx context.Context, id domain.SessionID, source, target domain.SessionMode, nativeConversationID string, startFresh bool) (bool, error)
 	ConfirmAgentSwitchSourceStopped(ctx context.Context, confirmation domain.AgentSwitchSourceStopConfirmation) (bool, error)
 	ActivateAgentSwitchTarget(ctx context.Context, activation domain.AgentSwitchTargetActivation) (bool, error)
+	ActivateChatAgentSwitchTarget(ctx context.Context, activation domain.AgentSwitchChatTargetActivation) (bool, error)
 	MarkTerminated(ctx context.Context, id domain.SessionID) error
 }
 
@@ -713,6 +719,19 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 		return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn: %w: %q", ErrUnknownHarness, cfg.Harness)
 	}
 
+	// Resolve the effective agent config (project base + role override + spawn
+	// override) and validate the model before any durable state is created. A
+	// model the harness cannot honor should not leave a seed row behind.
+	agentConfig := applySpawnAgentConfig(effectiveAgentConfig(cfg.Kind, project.Config), cfg.AgentConfig)
+	if err := validateSpawnModel(cfg.Harness, agentConfig.Model); err != nil {
+		return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn: %w: %s", ErrUnsupportedModel, err.Error())
+	}
+	// Adapters whose model picker is an agent-owned mode list (e.g. Amp) keep
+	// their selectable values in AgentConfig.Mode. Normalize a copy for the
+	// adapter so `ao spawn --agent amp --model high` launches Amp with `--mode
+	// high`, while metadata keeps the original resolved Model for the API view.
+	adapterConfig := normalizeAgentConfigForHarness(cfg.Harness, agentConfig)
+
 	// Resolve the controller mode here, before anything durable is created, for
 	// the same reason an unknown harness is rejected above: a chat request AO
 	// cannot honor should cost nothing, not leave a terminated row and a worktree
@@ -744,7 +763,7 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	promptBytes := len(prompt)
 	systemPromptBytes := len(systemPrompt)
 
-	rec, err := m.store.CreateSession(ctx, seedRecord(cfg, m.clock()))
+	rec, err := m.store.CreateSession(ctx, seedRecord(cfg, project.Config, m.clock()))
 	if err != nil {
 		return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn: create: %w", err)
 	}
@@ -820,7 +839,6 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 		m.rollbackSeedSpawnWorkspace(ctx, rec, ws, workspaceProject, false)
 		return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn %s: no agent adapter for harness %q", id, cfg.Harness)
 	}
-	agentConfig := applySpawnAgentConfig(effectiveAgentConfig(cfg.Kind, project.Config), cfg.AgentConfig)
 	env, browserCapabilityVerifier, err := m.launchRuntimeEnv(id, cfg.ProjectID, cfg.IssueID, project.Config.Env)
 	if err != nil {
 		m.rollbackSeedSpawnWorkspace(ctx, rec, ws, workspaceProject, true)
@@ -832,7 +850,7 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 		return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn %s: persist browser capability: %w", id, err)
 	}
 	m.augmentAgentRuntimeEnv(agent, env)
-	if err := m.prepareWorkspace(ctx, agent, id, ws.Path, systemPrompt, systemPromptFile, agentConfig, env); err != nil {
+	if err := m.prepareWorkspace(ctx, agent, id, ws.Path, systemPrompt, systemPromptFile, adapterConfig, env); err != nil {
 		m.rollbackSeedSpawnWorkspace(ctx, rec, ws, workspaceProject, false)
 		return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn %s: %w", id, err)
 	}
@@ -845,8 +863,8 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 		SystemPrompt:     systemPrompt,
 		SystemPromptFile: systemPromptFile,
 		IssueID:          string(cfg.IssueID),
-		Config:           agentConfig,
-		Permissions:      agentConfig.Permissions,
+		Config:           adapterConfig,
+		Permissions:      adapterConfig.Permissions,
 	}
 	delivery, err := agent.GetPromptDeliveryStrategy(ctx, launchCfg)
 	if err != nil {
@@ -900,6 +918,10 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 		Prompt:                    prompt,
 		LatestUserPrompt:          prompt,
 		BrowserCapabilityVerifier: browserCapabilityVerifier,
+		// The user-visible resolved selection is Model for regular harnesses and
+		// Mode for adapters whose catalog is a mode list (e.g. Amp). If an explicit
+		// Model override exists it wins; otherwise fall back to the resolved Mode.
+		Model: resolvedModelForMetadata(cfg.Harness, agentConfig, adapterConfig),
 	}
 	if projectKind == domain.ProjectKindSingleRepo {
 		metadata.DiffBaseSHA, metadata.DiffBaseRef = resolveSpawnDiffBase(ctx, ws.Path, ws.BaseRef)
@@ -964,8 +986,11 @@ func (m *Manager) refreshDefaultBranchesBestEffort(ctx context.Context, project 
 	}
 	baseRefs := make(map[string]string)
 	targets := []defaultBranchRefreshTarget{{
-		repoPath:         project.Path,
-		configuredBranch: project.Config.WithDefaults().DefaultBranch,
+		repoPath: project.Path,
+		// Translate the automatic-default sentinel before handing it to the
+		// adapter. An empty branch tells the resolver to inspect this
+		// repository's own remote HEAD; "auto" is not a Git branch name.
+		configuredBranch: project.Config.WorktreeBaseBranch(),
 	}}
 	if project.Kind.WithDefault() == domain.ProjectKindWorkspace {
 		repos, err := m.store.ListWorkspaceRepos(ctx, project.ID)
@@ -1254,6 +1279,63 @@ func applySpawnAgentConfig(base, override ports.AgentConfig) ports.AgentConfig {
 	return base
 }
 
+// normalizeAgentConfigForHarness returns a copy of cfg with any effective
+// Model value moved into Mode for adapters that expose selectable values as
+// agent-owned modes rather than raw model ids. This keeps the spawn API's
+// single `model` field usable while ensuring the adapter's launch command
+// receives the value in the field it actually reads (e.g. Amp's `--mode` flag
+// reads Config.Mode). The original cfg is left unchanged so callers can still
+// persist the resolved Model separately.
+func normalizeAgentConfigForHarness(harness domain.AgentHarness, cfg ports.AgentConfig) ports.AgentConfig {
+	model := strings.TrimSpace(cfg.Model)
+	if model == "" {
+		return cfg
+	}
+	catalog := modelcatalog.Base(string(harness))
+	if catalog.SelectionMode != ports.ModelSelectionModeList {
+		return cfg
+	}
+	out := cfg
+	out.Mode = model
+	out.Model = ""
+	return out
+}
+
+// resolvedModelForMetadata returns the user-visible resolved model selection to
+// persist on the session. Model-based adapters use Config.Model; mode-list
+// adapters like Amp store the selection in Config.Mode. An explicit Model value
+// always wins so spawn overrides are reported exactly as requested.
+func resolvedModelForMetadata(harness domain.AgentHarness, effective, adapter ports.AgentConfig) string {
+	if model := strings.TrimSpace(effective.Model); model != "" {
+		return model
+	}
+	catalog := modelcatalog.Base(string(harness))
+	if catalog.SelectionMode == ports.ModelSelectionModeList {
+		return strings.TrimSpace(adapter.Mode)
+	}
+	return ""
+}
+
+// validateSpawnModel rejects a model when the selected harness has a fixed
+// catalog that does not include it and the harness does not accept arbitrary
+// model ids. Harnesses with custom-model support (including full snapshot ids)
+// or no reliable catalog defer the check to the adapter at launch time.
+func validateSpawnModel(harness domain.AgentHarness, model string) error {
+	if strings.TrimSpace(model) == "" {
+		return nil
+	}
+	catalog := modelcatalog.Base(string(harness))
+	if catalog.AllowCustom {
+		return nil
+	}
+	for _, item := range catalog.Models {
+		if strings.EqualFold(item.ID, model) {
+			return nil
+		}
+	}
+	return fmt.Errorf("model %q is not supported by harness %q", model, harness)
+}
+
 func roleOverride(kind domain.SessionKind, cfg domain.ProjectConfig) domain.RoleOverride {
 	if kind == domain.KindOrchestrator {
 		return cfg.Orchestrator
@@ -1390,6 +1472,9 @@ func (m *Manager) Kill(ctx context.Context, id domain.SessionID) (bool, error) {
 		workspaceProjectRows = rows
 		workspaceProject = true
 	}
+	if err := m.terminateNativeSession(ctx, rec); err != nil {
+		return false, fmt.Errorf("kill %s: native session: %w", id, err)
+	}
 	// Attachments are deliberately ignored by git, so stash cannot preserve
 	// legacy worktree-only files. Import them before any controller or worktree
 	// teardown; a failed import leaves the live session intact.
@@ -1516,6 +1601,9 @@ func (m *Manager) RetireForReplacement(ctx context.Context, id domain.SessionID)
 			return fmt.Errorf("retire replacement %s: clear restore markers: %w", id, err)
 		}
 		handle := runtimeHandle(rec.Metadata)
+		if err := m.terminateNativeSession(ctx, rec); err != nil {
+			return fmt.Errorf("retire replacement %s: native session: %w", id, err)
+		}
 		if handle.ID != "" {
 			if err := m.runtime.Destroy(ctx, handle); err != nil {
 				return fmt.Errorf("retire replacement %s: runtime: %w", id, err)
@@ -1538,6 +1626,9 @@ func (m *Manager) RetireForReplacement(ctx context.Context, id domain.SessionID)
 	}
 	if release != nil {
 		defer release()
+	}
+	if err := m.terminateNativeSession(ctx, rec); err != nil {
+		return fmt.Errorf("retire replacement %s: native session: %w", id, err)
 	}
 	if err := m.importAttachments(ctx, rec); err != nil {
 		return fmt.Errorf("retire replacement %s: preserve attachments: %w", id, err)
@@ -1587,6 +1678,31 @@ func (m *Manager) stopPreviewBestEffort(ctx context.Context, id domain.SessionID
 	if err := m.preview.StopSession(ctx, id); err != nil {
 		m.logger.Warn("session preview cleanup failed", "sessionID", id, "error", err)
 	}
+}
+
+func (m *Manager) terminateNativeSession(ctx context.Context, rec domain.SessionRecord) error {
+	if domain.NormalizeSessionMode(rec.Mode) != domain.SessionModeTUI || strings.TrimSpace(rec.Metadata.AgentSessionID) == "" {
+		return nil
+	}
+	if m.agents == nil {
+		return fmt.Errorf("%w: %s", ErrUnknownHarness, rec.Harness)
+	}
+	agent, ok := m.agents.Agent(rec.Harness)
+	if !ok {
+		return nil
+	}
+	terminator, ok := agent.(ports.AgentNativeSessionTerminator)
+	if !ok {
+		return nil
+	}
+	return terminator.TerminateNativeSession(ctx, ports.SessionRef{
+		ID:            string(rec.ID),
+		WorkspacePath: rec.Metadata.WorkspacePath,
+		DataDir:       m.dataDir,
+		Metadata: map[string]string{
+			ports.MetadataKeyAgentSessionID: rec.Metadata.AgentSessionID,
+		},
+	})
 }
 
 func (m *Manager) destroyBrowserBestEffort(ctx context.Context, id domain.SessionID) {
@@ -1776,7 +1892,7 @@ func (m *Manager) relaunchSessionWithPolicy(ctx context.Context, operation strin
 		} else if strings.TrimSpace(rec.Metadata.ProviderConversationID) == "" {
 			return RestoreResult{}, fmt.Errorf("%s %s: %w", operation, rec.ID, ErrIncompleteHandle)
 		}
-		return m.resumeChatController(ctx, operation, rec, project, ws, requireNativeHistory)
+		return m.resumeChatController(ctx, operation, rec, project, ws, requireNativeHistory, "")
 	}
 
 	agent, ok := m.agents.Agent(rec.Harness)
@@ -1987,6 +2103,9 @@ func (m *Manager) saveAndTeardownOne(ctx context.Context, rec domain.SessionReco
 	}
 	if release != nil {
 		defer release()
+	}
+	if err := m.terminateNativeSession(ctx, rec); err != nil {
+		return fmt.Errorf("save %s: native session: %w", rec.ID, err)
 	}
 	if err := m.importAttachments(ctx, rec); err != nil {
 		return fmt.Errorf("save %s: preserve attachments: %w", rec.ID, err)
@@ -3131,7 +3250,7 @@ func (m *Manager) cleanupRecords(ctx context.Context, project domain.ProjectID) 
 
 // ---- helpers ----
 
-func seedRecord(cfg ports.SpawnConfig, now time.Time) domain.SessionRecord {
+func seedRecord(cfg ports.SpawnConfig, projectConfig domain.ProjectConfig, now time.Time) domain.SessionRecord {
 	return domain.SessionRecord{
 		ProjectID:   cfg.ProjectID,
 		IssueID:     cfg.IssueID,
@@ -3143,9 +3262,10 @@ func seedRecord(cfg ports.SpawnConfig, now time.Time) domain.SessionRecord {
 		Activity:    domain.Activity{State: domain.ActivityIdle, LastActivityAt: now},
 		// Resolved before this point and persisted here. There is no UPDATE
 		// statement that can change it afterwards.
-		Mode:             domain.NormalizeSessionMode(cfg.RequestedMode),
-		AutoInjectReview: true,
-		AutoInjectCI:     true,
+		Mode:              domain.NormalizeSessionMode(cfg.RequestedMode),
+		AutoReviewEnabled: projectConfig.AutoReview,
+		AutoInjectReview:  true,
+		AutoInjectCI:      true,
 	}
 }
 
@@ -3403,7 +3523,7 @@ func (m *Manager) aoSkillPointer() string {
 	return "\n\n" + "## Using the ao CLI\n\n" +
 		"When using `ao`, read `" + skillFile + "` and only the relevant file under `" + commandsGlob + "`; do not load unrelated command guides.\n\n" +
 		"## AO desktop Browser panel\n\n" +
-		"For frontend work, read `" + previewFile + "` before previewing or starting an app: open static HTML or Markdown directly; Never create or modify `package.json` or install dependencies solely to display static files. Do not create `.ao/launch.json` unless the user asks. Automatically open the primary requested browser-displayable artifact immediately after creating or materially updating it, but do not replace an active application preview with a supporting asset. " +
+		"For frontend work, read `" + previewFile + "` before previewing or starting an app. Static file targets passed to `ao preview` are relative to the session workspace root, regardless of the shell's current directory: use `ao preview README.md`, not `../README.md`. AO serves workspace files through its existing confined loopback preview; do not use `file://` or start a server just to display static files. Never create or modify `package.json` or install dependencies solely to display static files. Do not create `.ao/launch.json` unless the user asks. Automatically open the primary requested browser-displayable artifact immediately after creating or materially updating it, but do not replace an active application preview with a supporting asset. " +
 		"For page inspection or interaction, read `" + browserFile + "` and use `ao browser` from this AO session. Browser network capture is optional and off by default; follow that guide and never enable it for routine browser actions. " +
 		"Do not use Codex/host in-app browser connectors, `agent.browsers.get(\"iab\")`, or a browser MCP for the AO Browser panel: those are separate browser runtimes and cannot see or control AO's session-owned page. " +
 		"`ao browser` operates the same live page the user sees in that panel."

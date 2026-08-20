@@ -193,6 +193,7 @@
 	--spacing-window-titlebar: var(--size-window-titlebar);
 	--spacing-titlebar-content-offset: var(--size-titlebar-content-offset);
 	--spacing-titlebar-cluster-left: var(--size-titlebar-cluster-left);
+	--spacing-titlebar-cluster-left-linux: var(--size-titlebar-cluster-left-linux);
 	/* Fullscreen has no traffic lights — align the cluster to sidebar content. */
 	--spacing-titlebar-cluster-left-fullscreen: var(--space-2);
 	--spacing-traffic-light-clearance: var(--size-traffic-light-clearance);
@@ -521,7 +522,9 @@
 }
 
 .session-topbar-titlebar-clearance-linux {
-	padding-left: var(--size-titlebar-content-offset-linux);
+	/* Subtract the framed-panel inset: unlike macOS, Linux keeps
+	 * --size-center-panel-inline-inset when the sidebar is off-canvas. */
+	padding-left: calc(var(--size-titlebar-content-offset-linux) - var(--size-center-panel-inline-inset));
 }
 
 .center-panel-shell.center-panel-shell--session {
@@ -570,6 +573,12 @@
  * drops the traffic-light reserve so title sits next to the left-edge buttons. */
 .center-panel-shell--titlebar-clearance .center-panel-titlebar {
 	padding-left: calc(var(--size-titlebar-content-offset) - var(--size-center-panel-inset-mac));
+}
+
+/* Linux: same cluster clearance without the traffic-light reserve. Keep the
+ * framed inset in the subtract so Board/title text clears the arrows. */
+.center-panel-shell--titlebar-clearance-linux .center-panel-titlebar {
+	padding-left: calc(var(--size-titlebar-content-offset-linux) - var(--size-center-panel-inline-inset));
 }
 
 /* Fullscreen: the shell is flush, so measure from the cluster's own left edge. */
@@ -740,8 +749,8 @@ button.settings-link-row:active {
 	}
 
 	&:focus-visible {
-		border-color: var(--bridge-accent);
-		box-shadow: 0 0 0 2px var(--bridge-accent-weak);
+		border-color: var(--color-border-settings-input);
+		box-shadow: none;
 	}
 }
 
@@ -769,7 +778,7 @@ button.settings-link-row:active {
 
 	&:focus-visible {
 		border-radius: var(--radius-md);
-		box-shadow: 0 0 0 2px var(--bridge-accent-weak);
+		box-shadow: none;
 	}
 
 	& .settings-row-value {
@@ -812,8 +821,8 @@ button.settings-link-row:active {
 	}
 
 	&:focus-visible {
-		border-color: var(--bridge-accent);
-		box-shadow: 0 0 0 2px var(--bridge-accent-weak);
+		border-color: var(--color-border-settings-input);
+		box-shadow: none;
 		color: var(--color-text-settings-row);
 		outline: none;
 	}
@@ -847,8 +856,8 @@ button.settings-link-row:active {
 	}
 
 	&:focus-visible {
-		border-color: var(--bridge-accent);
-		box-shadow: 0 0 0 2px var(--bridge-accent-weak);
+		border-color: var(--color-border-settings-input);
+		box-shadow: none;
 		color: var(--color-text-settings-row);
 		outline: none;
 	}
@@ -946,7 +955,7 @@ button.settings-link-row:active {
 }
 
 .composer-toolbar .composer-toolbar-option:focus-visible {
-	box-shadow: inset 0 0 0 2px var(--bridge-accent-weak);
+	box-shadow: none;
 }
 
 /* Inline value control inside the task composer's bottom toolbar. Reads as a
@@ -977,7 +986,7 @@ button.settings-link-row:active {
 
 	&:focus-visible {
 		border-color: transparent;
-		box-shadow: 0 0 0 2px var(--bridge-accent-weak);
+		box-shadow: none;
 		outline: none;
 	}
 
@@ -1042,8 +1051,8 @@ button.settings-link-row:active {
 	}
 
 	&:focus-visible {
-		border-color: var(--bridge-accent);
-		box-shadow: 0 0 0 2px var(--bridge-accent-weak);
+		border-color: var(--color-border-settings-input);
+		box-shadow: none;
 		color: var(--color-text-settings-row);
 		outline: none;
 	}
@@ -1087,7 +1096,7 @@ button.settings-link-row:active {
 	}
 
 	&:focus-visible {
-		box-shadow: 0 0 0 2px var(--bridge-accent-weak);
+		box-shadow: none;
 	}
 }
 
@@ -1139,7 +1148,7 @@ button.settings-link-row:active {
 	}
 
 	&:focus-visible {
-		box-shadow: 0 0 0 2px var(--bridge-accent-weak);
+		box-shadow: none;
 	}
 
 	&[data-state="checked"] {
@@ -1184,7 +1193,7 @@ button.settings-link-row:active {
 
 	&:focus-visible {
 		outline: none;
-		box-shadow: 0 0 0 2px var(--bridge-accent-weak);
+		box-shadow: none;
 	}
 }
 
@@ -1754,6 +1763,20 @@ body.is-resizing-x [data-slot="inspector-container"] {
 .sidebar-focusless :focus-visible {
 	background-color: var(--color-interactive-hover) !important;
 	outline: none !important;
+	box-shadow: none !important;
+}
+
+/* No blue focus rings anywhere — hover/active carry interaction feedback.
+   !important beats Tailwind focus / focus-visible ring and outline utilities. */
+:focus,
+:focus-visible {
+	outline: none !important;
+	outline-offset: 0 !important;
+	--tw-ring-shadow: 0 0 #0000 !important;
+	--tw-ring-offset-shadow: 0 0 #0000 !important;
+	--tw-ring-color: transparent !important;
+}
+:focus-visible {
 	box-shadow: none !important;
 }
 
@@ -3656,25 +3679,6 @@ body:has(#root .platform-windows) > .files-popout-overlay {
 	color: var(--fg);
 }
 
-.browser-panel__annotation-status {
-	max-width: 96px;
-	overflow: hidden;
-	color: var(--fg-muted);
-	font-size: 11px;
-	font-weight: 650;
-	line-height: 1;
-	text-overflow: ellipsis;
-	white-space: nowrap;
-	transition:
-		color var(--duration-fast) ease,
-		opacity var(--duration-fast) ease;
-}
-
-.browser-panel__annotation-status--error {
-	max-width: 160px;
-	color: var(--red);
-}
-
 .browser-panel__url-icon {
 	position: absolute;
 	left: 10px;
@@ -3703,8 +3707,8 @@ body:has(#root .platform-windows) > .files-popout-overlay {
 
 .browser-panel__url-input:focus {
 	box-shadow:
-		0 0 0 3px color-mix(in srgb, var(--color-accent) 18%, transparent),
-		inset 0 1px 0 color-mix(in srgb, white 6%, transparent);
+		inset 0 1px 0 color-mix(in srgb, white 6%, transparent),
+		0 1px 8px color-mix(in srgb, black 9%, transparent);
 }
 
 .browser-panel__content {
@@ -3723,13 +3727,21 @@ body:has(#root .platform-windows) > .files-popout-overlay {
 	overflow: hidden;
 	border: 0;
 	border-radius: 8px;
-	background:
-		radial-gradient(circle at 50% 0%, color-mix(in srgb, var(--color-accent) 8%, transparent), transparent 34%),
-		var(--bg);
 	box-shadow:
 		inset 0 0 0 1px color-mix(in srgb, var(--color-border) 28%, transparent),
 		inset 0 1px 0 color-mix(in srgb, white 3%, transparent),
 		0 12px 26px color-mix(in srgb, black 14%, transparent);
+}
+
+/* Opaque only when there's no live native page expected to show through
+   (no native bridge, or no URL loaded yet) — see the data-placeholder
+   comment in BrowserPanel.tsx. Any other state must stay transparent so the
+   native WebContentsView (or, briefly, the raised transparent shell during
+   an overlay) is what's actually visible here, not this div's own paint. */
+.browser-panel__viewport[data-placeholder="true"] {
+	background:
+		radial-gradient(circle at 50% 0%, color-mix(in srgb, var(--color-accent) 8%, transparent), transparent 34%),
+		var(--bg);
 }
 
 .browser-popout-overlay .browser-panel__viewport {
@@ -3784,6 +3796,12 @@ html[data-native-browser-composition="true"] #root:has(.browser-panel[data-brows
 	background: transparent;
 }
 
+/* `.app-shell-root` is the same element as the `.platform-*` selectors below —
+ * those classes are only applied on Windows/Linux, so macOS had no hook here
+ * and this opaque `bg-sidebar` wrapper painted over the live native page
+ * whenever an overlay raised the shell. Match it by its own class so every
+ * platform is covered. */
+html[data-native-browser-composition="true"] .app-shell-root:has(.browser-panel[data-browser-native-page="live"]),
 html[data-native-browser-composition="true"] .platform-windows:has(.browser-panel[data-browser-native-page="live"]),
 html[data-native-browser-composition="true"] .platform-linux:has(.browser-panel[data-browser-native-page="live"]) {
 	background: transparent;
@@ -3837,7 +3855,14 @@ html[data-native-browser-composition="true"] .browser-panel[data-browser-native-
  * when the transparent shell is raised for a menu. Other inspector tabs keep
  * their existing surface unchanged. */
 html[data-native-browser-composition="true"] .session-inspector:has(.browser-panel[data-browser-native-page="live"]),
-html[data-native-browser-composition="true"] .session-inspector:has(.browser-panel[data-browser-native-page="live"]) .session-inspector__body {
+html[data-native-browser-composition="true"] .session-inspector:has(.browser-panel[data-browser-native-page="live"]) .session-inspector__body,
+/* The element that actually paints is SessionView.tsx's inspector container,
+ * which carries an opaque `bg-background` utility. `.session-inspector` alone is
+ * NOT enough: that class sits on a `display: contents` wrapper which generates
+ * no box, and product-ui's SessionInspectorShellView `<aside>` carries only
+ * layout classes. Verified by measuring the live paint stack at the blanked
+ * pixel — this container and the app shell root were the only opaque layers. */
+html[data-native-browser-composition="true"] [data-slot="inspector-container"]:has(.browser-panel[data-browser-native-page="live"]) {
 	background: transparent;
 }
 
@@ -3862,7 +3887,6 @@ html[data-native-browser-composition="true"] .browser-popout-overlay {
 	}
 
 	.browser-panel,
-	.browser-panel__annotation-status,
 	.browser-panel__toolbar button {
 		transition: none;
 	}

@@ -2,12 +2,13 @@ import { useTranslation } from "react-i18next";
 import type { ThemePreference, ThemeStyle } from "../../lib/theme";
 import type { AppLocale } from "../../i18n";
 import { useLocaleStore } from "../../stores/locale-store";
+import { useSoundNotificationsStore } from "../../stores/sound-notifications-store";
 import { useUiStore } from "../../stores/ui-store";
+import { Switch } from "../ui/switch";
 import { SettingsOptionMenu, type SettingsOption } from "./SettingsOptionMenu";
 import { SettingsLinkRow, SettingsRow } from "./SettingsRow";
 import { SettingsSection } from "./SettingsSection";
 import { cn } from "../../lib/utils";
-import { Switch } from "../ui/switch";
 import { useSettings, useUpdateSessionInterface } from "../../hooks/useSettings";
 import type { SessionMode } from "../../types/workspace";
 
@@ -95,6 +96,10 @@ export function GeneralSettingsSection({
 	const setLocale = useLocaleStore((state) => state.setLocale);
 	const localeSaving = useLocaleStore((state) => state.saving);
 	const localeSaveError = useLocaleStore((state) => state.saveError);
+	const soundNotificationsEnabled = useSoundNotificationsStore((state) => state.enabled);
+	const setSoundNotificationsEnabled = useSoundNotificationsStore((state) => state.setEnabled);
+	const soundNotificationsSaving = useSoundNotificationsStore((state) => state.saving);
+	const soundNotificationsSaveError = useSoundNotificationsStore((state) => state.saveError);
 	const developerMode = useUiStore((state) => state.developerMode);
 	const setDeveloperMode = useUiStore((state) => state.setDeveloperMode);
 
@@ -153,6 +158,21 @@ export function GeneralSettingsSection({
 				</p>
 			) : null}
 			<SessionInterfaceRow />
+			<SettingsRow label={t("settings.soundNotifications")}>
+				<Switch
+					aria-label={t("settings.soundNotifications")}
+					checked={soundNotificationsEnabled}
+					disabled={soundNotificationsSaving}
+					onCheckedChange={(next) => {
+						void setSoundNotificationsEnabled(next);
+					}}
+				/>
+			</SettingsRow>
+			{soundNotificationsSaveError ? (
+				<p role="alert" className="px-3 text-caption leading-4 text-error">
+					{t("settings.soundNotifications.saveFailed")}
+				</p>
+			) : null}
 			<SettingsRow label={t("settings.developerMode")}>
 				<Switch
 					aria-label={t("settings.developerMode")}

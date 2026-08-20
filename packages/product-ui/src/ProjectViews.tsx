@@ -9,10 +9,7 @@ import {
 	useState,
 } from "react";
 import { cn } from "./utils";
-import type {
-	ProjectKind,
-	ProjectRepositorySummary,
-} from "./project-models";
+import type { ProjectRepositorySummary } from "./project-models";
 
 type ProjectExternalLink = ComponentType<{
 	children: ReactNode;
@@ -21,31 +18,40 @@ type ProjectExternalLink = ComponentType<{
 	title?: string;
 }>;
 
-export type ProjectModePickerLabels = {
+export type ProjectSource = "clone" | "local" | "workspace";
+
+export type ProjectSourcePickerLabels = {
 	title: string;
 	description: string;
+	clone: string;
+	cloneDescription: string;
+	cloneExample: string;
+	cloneBranchExample: string;
+	local: string;
+	localDescription: string;
+	localExample: string;
+	localBranchExample: string;
 	workspace: string;
 	workspaceDescription: string;
-	project: string;
-	projectDescription: string;
 	close: string;
-	workspaceExample: string;
-	workspaceRepositories: [string, string, string];
-	projectExample: string;
-	projectBranchExample: string;
 };
 
-export type ProjectModePickerViewProps = {
+export type ProjectSourcePickerViewProps = {
+	arrowIcon?: ReactNode;
+	cloneIcon?: ReactNode;
 	closeIcon?: ReactNode;
 	dialog?: boolean;
 	disabled: boolean;
 	folderIcon?: ReactNode;
-	labels: ProjectModePickerLabels;
+	labels: ProjectSourcePickerLabels;
 	onClose?: () => void;
-	onSelect: (kind: Exclude<ProjectKind, "scratch">) => void;
+	onSelect: (source: ProjectSource) => void;
+	workspaceIcon?: ReactNode;
 };
 
-export function ProjectModePickerView({
+export function ProjectSourcePickerView({
+	arrowIcon,
+	cloneIcon,
 	closeIcon,
 	dialog = false,
 	disabled,
@@ -53,34 +59,58 @@ export function ProjectModePickerView({
 	labels,
 	onClose,
 	onSelect,
-}: ProjectModePickerViewProps) {
+	workspaceIcon,
+}: ProjectSourcePickerViewProps) {
 	return (
 		<div
-			className="relative isolate flex w-full max-w-(--size-import-modal-max) flex-col items-stretch gap-8 rounded-welcome-panel border border-[var(--color-border-import-modal)] bg-[var(--color-bg-import-modal)] p-(--size-import-modal-padding) shadow-[var(--shadow-import-modal)]"
+			className="relative isolate flex w-full max-w-(--size-import-modal-max) flex-col items-stretch gap-6 rounded-welcome-panel border border-[var(--color-border-import-modal)] bg-[var(--color-bg-import-modal)] p-(--size-import-modal-padding) shadow-[var(--shadow-import-modal)]"
 			role={dialog ? undefined : "group"}
 			aria-label={dialog ? undefined : labels.title}
 		>
 			<div className={cn("relative z-[1] flex flex-col items-start gap-1", onClose && "pr-10")}>
-				<h2 className="import-title">{labels.title}</h2>
-				<p className="import-description">{labels.description}</p>
+				<h2 className="import-title text-balance">{labels.title}</h2>
+				<p className="import-description text-pretty">{labels.description}</p>
 			</div>
-			<div className="relative z-[2] flex flex-row items-stretch justify-center gap-6 self-stretch">
-				<ProjectModeButton
-					description={labels.workspaceDescription}
+			<div className="relative z-[2] grid grid-cols-1 gap-4 self-stretch sm:grid-cols-2 sm:gap-6">
+				<ProjectSourceButton
+					description={labels.cloneDescription}
 					disabled={disabled}
-					folderIcon={folderIcon}
-					kind="workspace"
+					icon={cloneIcon}
+					kind="clone"
 					labels={labels}
-					onClick={() => onSelect("workspace")}
+					onClick={() => onSelect("clone")}
 				/>
-				<ProjectModeButton
-					description={labels.projectDescription}
+				<ProjectSourceButton
+					description={labels.localDescription}
 					disabled={disabled}
-					kind="single_repo"
+					icon={folderIcon}
+					kind="local"
 					labels={labels}
-					onClick={() => onSelect("single_repo")}
+					onClick={() => onSelect("local")}
 				/>
 			</div>
+			<button
+				type="button"
+				aria-label={labels.workspace}
+				className="relative z-[2] flex min-h-18 w-full items-center gap-4 rounded-welcome-panel border border-[var(--color-border-import-modal)] bg-[var(--color-bg-import-card)] px-5 py-4 text-left transition-colors hover:bg-[var(--color-bg-import-card-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 disabled:pointer-events-none disabled:opacity-50"
+				disabled={disabled}
+				onClick={() => onSelect("workspace")}
+			>
+				<span className="grid size-10 shrink-0 place-items-center rounded-lg border border-[var(--color-border-import-modal)] bg-[var(--color-bg-import-chip)] text-[var(--color-text-import-muted)]">
+					{workspaceIcon}
+				</span>
+				<span className="min-w-0 flex-1">
+					<span className="block text-[15px] font-bold leading-5 text-[var(--color-text-import-title)]">
+						{labels.workspace}
+					</span>
+					<span className="mt-1 block text-pretty text-[13px] leading-5 text-[var(--color-text-import-muted)]">
+						{labels.workspaceDescription}
+					</span>
+				</span>
+				<span className="shrink-0 text-[var(--color-text-import-muted)]" aria-hidden="true">
+					{arrowIcon}
+				</span>
+			</button>
 			{onClose && (
 				<button
 					type="button"
@@ -96,76 +126,52 @@ export function ProjectModePickerView({
 	);
 }
 
-function ProjectModeButton({
+function ProjectSourceButton({
 	description,
 	disabled,
-	folderIcon,
+	icon,
 	kind,
 	labels,
 	onClick,
 }: {
 	description: string;
 	disabled: boolean;
-	folderIcon?: ReactNode;
-	kind: Exclude<ProjectKind, "scratch">;
-	labels: ProjectModePickerLabels;
+	icon?: ReactNode;
+	kind: Exclude<ProjectSource, "workspace">;
+	labels: ProjectSourcePickerLabels;
 	onClick: () => void;
 }) {
-	const isWorkspace = kind === "workspace";
-	const title = isWorkspace ? labels.workspace : labels.project;
+	const isClone = kind === "clone";
+	const title = isClone ? labels.clone : labels.local;
+	const example = isClone ? labels.cloneExample : labels.localExample;
+	const branch = isClone ? labels.cloneBranchExample : labels.localBranchExample;
 	return (
 		<button
 			type="button"
 			aria-label={title}
-			className="flex min-h-(--size-import-mode-card-min) w-full flex-1 flex-col justify-start gap-6 self-stretch rounded-welcome-panel border border-[var(--color-border-import-modal)] bg-[var(--color-bg-import-card)] p-6 text-left transition-colors hover:bg-[var(--color-bg-import-card-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 disabled:pointer-events-none disabled:opacity-50 sm:min-h-(--size-import-mode-card-min-sm)"
+			className="flex min-h-56 w-full flex-col justify-start gap-5 rounded-welcome-panel border border-[var(--color-border-import-modal)] bg-[var(--color-bg-import-card)] p-6 text-left transition-colors hover:bg-[var(--color-bg-import-card-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 disabled:pointer-events-none disabled:opacity-50"
 			disabled={disabled}
 			onClick={onClick}
 		>
-			<span className="flex w-full flex-col items-start">
-				<span
-					className={cn(
-						"flex h-(--size-import-mode-illustration) w-full justify-center",
-						isWorkspace ? "items-start" : "items-center",
-					)}
-				>
-					{isWorkspace ? (
-						<span className="flex h-(--size-import-mode-illustration) w-full max-w-[240px] flex-col items-start gap-3 rounded-lg border border-[var(--color-border-import-modal)] bg-[var(--color-bg-import-illustration)] p-4">
-							<span className="flex items-center gap-2 text-[14px] leading-5 text-[var(--color-text-import-muted)]">
-								{folderIcon}
-								{labels.workspaceExample}
-							</span>
-							<span className="flex w-full flex-col items-start gap-2">
-								{labels.workspaceRepositories.map((repo) => (
-									<span key={repo} className="flex w-full items-center px-3 py-2">
-										<span className="mr-2 size-2 shrink-0 rounded-full bg-accent-strong" aria-hidden="true" />
-										<span className="text-[12px] font-bold leading-4 text-[var(--color-text-import-title)]">
-											{repo}
-										</span>
-									</span>
-								))}
-							</span>
+			<span className="flex min-h-24 w-full items-center justify-center">
+				<span className="flex w-full max-w-[300px] flex-col overflow-hidden rounded-lg border border-[var(--color-border-import-modal)] bg-[var(--color-bg-import-illustration)]">
+					<span className="flex min-w-0 items-center gap-2 border-b border-[var(--color-border-import-modal)] px-4 py-3 text-[var(--color-text-import-muted)]">
+						<span className="shrink-0">{icon}</span>
+						<span className="truncate font-mono text-[12px] leading-4">{example}</span>
+					</span>
+					<span className="flex items-center gap-2 px-4 py-3">
+						<span className="size-2 shrink-0 rounded-full bg-accent-strong" aria-hidden="true" />
+						<span className="font-mono text-[12px] font-bold leading-4 text-[var(--color-text-import-title)]">
+							{branch}
 						</span>
-					) : (
-						<span className="flex h-[50px] w-fit items-center rounded-lg border border-[var(--color-border-import-modal)] bg-[var(--color-bg-import-chip)] px-4 py-3">
-							<span className="mr-2 size-2 shrink-0 rounded-full bg-accent-strong" aria-hidden="true" />
-							<span className="text-[14px] font-bold leading-5 text-[var(--color-text-import-title)]">
-								{labels.projectExample}
-							</span>
-							<span className="px-1 text-[16px] leading-6 text-[var(--color-text-import-muted)]" aria-hidden="true">
-								·
-							</span>
-							<span className="text-[14px] font-normal leading-5 text-[var(--color-text-import-muted)]">
-								{labels.projectBranchExample}
-							</span>
-						</span>
-					)}
+					</span>
 				</span>
 			</span>
 			<span className="mt-auto flex w-full flex-col items-start gap-2">
 				<span className="text-[16px] font-bold leading-6 text-[var(--color-text-import-title)]">
 					{title}
 				</span>
-				<span className="text-[14px] font-normal leading-[23px] text-[var(--color-text-import-muted)]">
+				<span className="text-pretty text-[14px] font-normal leading-[23px] text-[var(--color-text-import-muted)]">
 					{description}
 				</span>
 			</span>
@@ -185,6 +191,7 @@ export function ProjectSetupHeaderView({
 	closeIcon,
 	closeLabel,
 	disabled,
+	leadingAction,
 	path,
 	title,
 }: {
@@ -194,11 +201,13 @@ export function ProjectSetupHeaderView({
 	closeIcon: ReactNode;
 	closeLabel: string;
 	disabled: boolean;
+	leadingAction?: ReactNode;
 	path: string;
 	title: string;
 }) {
 	return (
 		<div className="flex items-start justify-between gap-4 border-b border-[var(--color-border-agents-sheet)] p-(--size-import-dialog-padding)">
+			{leadingAction}
 			<div className="min-w-0">
 				<Title className="text-subtitle font-semibold text-[var(--color-text-agents-sheet-title)]">
 					{title}
@@ -240,8 +249,9 @@ export function ProjectSetupFormView({
 		error?: string | null;
 		loading: boolean;
 		loadingMessage: string;
-		onRefresh: () => void;
-		refreshLabel: string;
+		onRefresh?: () => void;
+		onRetry?: () => void;
+		refreshLabel?: string;
 		refreshing: boolean;
 		retryLabel: string;
 	};
@@ -274,14 +284,16 @@ export function ProjectSetupFormView({
 
 			<div className="flex items-center justify-between gap-3 text-xs leading-row text-[var(--color-text-agents-sheet-description)]">
 				<span>{agents.cacheMessage}</span>
-				<button
-					type="button"
-					className="shrink-0 rounded text-[var(--color-text-agents-sheet-title)] underline-offset-2 hover:underline disabled:pointer-events-none disabled:opacity-50"
-					disabled={agents.refreshing}
-					onClick={agents.onRefresh}
-				>
-					{agents.refreshLabel}
-				</button>
+				{agents.onRefresh && agents.refreshLabel && (
+					<button
+						type="button"
+						className="shrink-0 rounded text-[var(--color-text-agents-sheet-title)] underline-offset-2 hover:underline disabled:pointer-events-none disabled:opacity-50"
+						disabled={agents.refreshing}
+						onClick={agents.onRefresh}
+					>
+						{agents.refreshLabel}
+					</button>
+				)}
 			</div>
 
 			{agents.error && (
@@ -290,14 +302,16 @@ export function ProjectSetupFormView({
 					role="alert"
 				>
 					<span>{agents.error}</span>
-					<button
-						type="button"
-						className="shrink-0 rounded text-[var(--color-text-agents-sheet-title)] underline-offset-2 hover:underline disabled:pointer-events-none disabled:opacity-50"
-						disabled={agents.refreshing}
-						onClick={agents.onRefresh}
-					>
-						{agents.retryLabel}
-					</button>
+					{(agents.onRetry ?? agents.onRefresh) && (
+						<button
+							type="button"
+							className="shrink-0 rounded text-[var(--color-text-agents-sheet-title)] underline-offset-2 hover:underline disabled:pointer-events-none disabled:opacity-50"
+							disabled={agents.refreshing}
+							onClick={agents.onRetry ?? agents.onRefresh}
+						>
+							{agents.retryLabel}
+						</button>
+					)}
 				</div>
 			)}
 
@@ -664,7 +678,7 @@ export function ProjectWorkflowSettingsView({
 	onBranchChange: (value: string) => void;
 	onPrefixChange: (value: string) => void;
 	prefix: string;
-	reviewerControl: ReactNode;
+	reviewerControl?: ReactNode;
 	reviewerWarning?: string | null;
 }) {
 	return (
@@ -691,16 +705,18 @@ export function ProjectWorkflowSettingsView({
 					onChange={onPrefixChange}
 				/>
 			</ProjectSettingsSection>
-			<ProjectSettingsSection title={labels.reviewers} grouped>
-				<ProjectSettingsRow icon={icons?.reviewer} label={labels.defaultReviewer}>
-					{reviewerControl}
-				</ProjectSettingsRow>
-				{reviewerWarning && (
-					<p className="px-1 text-xs leading-row text-warning" role="status">
-						{reviewerWarning}
-					</p>
-				)}
-			</ProjectSettingsSection>
+			{reviewerControl && (
+				<ProjectSettingsSection title={labels.reviewers} grouped>
+					<ProjectSettingsRow icon={icons?.reviewer} label={labels.defaultReviewer}>
+						{reviewerControl}
+					</ProjectSettingsRow>
+					{reviewerWarning && (
+						<p className="px-1 text-xs leading-row text-warning" role="status">
+							{reviewerWarning}
+						</p>
+					)}
+				</ProjectSettingsSection>
+			)}
 		</>
 	);
 }

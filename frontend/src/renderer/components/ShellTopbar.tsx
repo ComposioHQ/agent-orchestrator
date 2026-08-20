@@ -25,7 +25,7 @@ import { useUiStore } from "../stores/ui-store";
 import { OrchestratorIcon } from "./icons";
 import { OrchestratorActivityIndicator } from "./OrchestratorActivityIndicator";
 import { getAgentActivityView } from "../lib/session-presentation";
-import { isMacPlatform, usesBoardActionsInPanel } from "../lib/platform";
+import { isLinuxPlatform, isMacPlatform, usesBoardActionsInPanel } from "../lib/platform";
 import { cn } from "../lib/utils";
 import { SHELL_PANEL_SPRING } from "../lib/motion-spring";
 import { useWindowFullScreen } from "../hooks/useWindowFullScreen";
@@ -57,9 +57,12 @@ const noDragStyle = isMac ? ({ WebkitAppRegion: "no-drag" } as React.CSSProperti
 // --size-titlebar-cluster-left (72) + --size-titlebar-cluster-width (3×28+2×4=92)
 // + --size-titlebar-content-gap (12) = 176; minus --size-center-panel-inset-mac (6) = 170.
 // Fullscreen: --space-2 (8) + 92 + 12 = 112.
+// Linux: --size-titlebar-cluster-left-linux (6) + 92 + 12 = 110; minus
+// --size-center-panel-inline-inset (16) because the framed panel keeps that gutter.
 const PADDING_DEFAULT = 18; // 1.125rem
 const PADDING_CLEARANCE = 170;
 const PADDING_CLEARANCE_FULLSCREEN = 112;
+const PADDING_CLEARANCE_LINUX = 94;
 
 export function ShellTopbar({
 	embedded = false,
@@ -82,12 +85,15 @@ export function ShellTopbar({
 	const isFullScreen = useWindowFullScreen();
 	const prefersReducedMotion = useReducedMotion();
 	const mac = isMacPlatform();
+	const linux = isLinuxPlatform();
 	const targetPaddingLeft =
-		!embedded && mac && !isSidebarOpen
+		!embedded && !isSidebarOpen && mac
 			? isFullScreen
 				? PADDING_CLEARANCE_FULLSCREEN
 				: PADDING_CLEARANCE
-			: PADDING_DEFAULT;
+			: !embedded && !isSidebarOpen && linux
+				? PADDING_CLEARANCE_LINUX
+				: PADDING_DEFAULT;
 	const paddingLeft = useMotionValue(targetPaddingLeft);
 	useEffect(() => {
 		const controls = animate(

@@ -402,6 +402,7 @@ func rowToRecord(row gen.GetSessionRow) domain.SessionRecord {
 			BrowserCapabilityVerifier: row.BrowserCapabilityVerifier,
 			ProviderConversationID:    row.ProviderConversationID,
 			ControllerGeneration:      row.ControllerGeneration,
+			Model:                     row.Model,
 		},
 		CleanupGeneration: row.CleanupGeneration,
 		CreatedAt:         row.CreatedAt,
@@ -462,6 +463,7 @@ func recordToInsert(rec domain.SessionRecord, num int64) gen.InsertSessionParams
 		SessionMode:               domain.NormalizeSessionMode(rec.Mode),
 		ProviderConversationID:    rec.Metadata.ProviderConversationID,
 		ControllerGeneration:      rec.Metadata.ControllerGeneration,
+		Model:                     rec.Metadata.Model,
 		CreatedAt:                 rec.CreatedAt,
 		UpdatedAt:                 rec.UpdatedAt,
 	}
@@ -505,6 +507,7 @@ func recordToUpdate(rec domain.SessionRecord) gen.UpdateSessionParams {
 		BrowserCapabilityVerifier: rec.Metadata.BrowserCapabilityVerifier,
 		ProviderConversationID:    rec.Metadata.ProviderConversationID,
 		ControllerGeneration:      rec.Metadata.ControllerGeneration,
+		Model:                     rec.Metadata.Model,
 		UpdatedAt:                 rec.UpdatedAt,
 	}
 }
