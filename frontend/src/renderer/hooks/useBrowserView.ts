@@ -422,7 +422,9 @@ export function useBrowserView({
 	useEffect(() => {
 		if (!hasNativeBrowser) return;
 		const update = () => {
-			const open = document.querySelector(OPEN_BROWSER_OVERLAY_SELECTOR) !== null;
+			const open =
+				document.body.classList.contains("is-resizing-x") ||
+				document.querySelector(OPEN_BROWSER_OVERLAY_SELECTOR) !== null;
 			if (open === overlayOpenRef.current) return;
 			overlayOpenRef.current = open;
 			// The live page never moves or becomes a bitmap. Reordering the explicit
@@ -446,8 +448,19 @@ export function useBrowserView({
 			attributes: true,
 			attributeFilter: ["data-state"],
 		});
+		// useResizable.ts toggles `is-resizing-x` on <body> (outside React) while the
+		// inspector's own drag handle is held — that handle sits right at the edge of
+		// the browser panel, and the WebContentsView swallows every pointer event the
+		// instant the cursor crosses into it, killing the drag dead mid-resize. Raise
+		// the shell for the same duration so the drag keeps receiving events there too.
+		// A dedicated, non-subtree observer keeps this cheap: unlike `data-state` above,
+		// `class` churns on nearly every render throughout the app, so watching it
+		// subtree-wide would run `update()` far more often than the dialog/menu case.
+		const resizeObserver = new MutationObserver(update);
+		resizeObserver.observe(document.body, { attributes: true, attributeFilter: ["class"] });
 		return () => {
 			observer.disconnect();
+			resizeObserver.disconnect();
 			window.ao?.browser.setOverlayOpen(false);
 			overlayOpenRef.current = false;
 		};
