@@ -151,7 +151,7 @@ func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !strings.HasPrefix(input.RefreshToken, "ao_refresh_") {
-		writeError(w, r, http.StatusBadRequest, "bad_request", "REFRESH_TOKEN_REQUIRED", "refreshToken is invalid")
+		writeError(w, r, http.StatusUnauthorized, "unauthorized", "INVALID_REFRESH_TOKEN", "refresh token is invalid or expired")
 		return
 	}
 	if err := s.store.RevokeRefreshSession(r.Context(), auth.HashToken(input.RefreshToken)); err != nil {
