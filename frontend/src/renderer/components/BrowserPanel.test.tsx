@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { BrowserPanel, BrowserPanelView, useBrowserAnnotationQueue } from "./BrowserPanel";
 import { useBrowserView, type BrowserNavState } from "../hooks/useBrowserView";
 import { OPEN_BROWSER_OVERLAY_SELECTOR } from "../lib/dom-selectors";
+import { MAX_BROWSER_TABS } from "../../shared/browser-tabs";
 import type { WorkspaceSession } from "../types/workspace";
 import type {
 	BrowserAnnotationCancelPayload,
@@ -495,6 +496,58 @@ describe("BrowserPanel", () => {
 	it("does not show a recently closed section when nothing has been closed", () => {
 		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
 		expect(screen.queryByText("Recently closed")).not.toBeInTheDocument();
+	});
+
+	// Regression: ClosedBrowserTab.favicon was captured, populated, and asserted
+	// in useBrowserView's tests, but the recently-closed row always rendered a
+	// generic icon and never actually read it.
+	it("renders a recently closed tab's favicon when it has one", async () => {
+		hookState.closedTabs = [
+			{ id: "t3", url: "http://localhost:5173/", title: "Closed app", favicon: "http://localhost:5173/favicon.ico" },
+		];
+		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
+
+		vi.useFakeTimers();
+		try {
+			fireEvent.pointerEnter(screen.getByTestId("browser-tabs-rail"));
+			act(() => {
+				vi.advanceTimersByTime(300);
+			});
+		} finally {
+			vi.useRealTimers();
+		}
+
+		const row = screen.getByRole("button", { name: "Reopen Closed app" });
+		expect(row.querySelector("img")).toHaveAttribute("src", "http://localhost:5173/favicon.ico");
+	});
+
+	// Regression: reopening a closed tab at the cap used to silently drop it
+	// from the list and open nothing — gate the row the same way the "+"
+	// button already gates new tabs.
+	it("disables reopening a recently closed tab once the tab cap is reached", async () => {
+		hookState.tabs = Array.from({ length: MAX_BROWSER_TABS }, (_, i) => ({
+			id: `t${i}`,
+			url: `http://localhost:3000/${i}`,
+			title: `Tab ${i}`,
+			active: i === 0,
+		}));
+		hookState.closedTabs = [{ id: "closed", url: "http://localhost:5173/", title: "Closed app" }];
+		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
+
+		vi.useFakeTimers();
+		try {
+			fireEvent.pointerEnter(screen.getByTestId("browser-tabs-rail"));
+			act(() => {
+				vi.advanceTimersByTime(300);
+			});
+		} finally {
+			vi.useRealTimers();
+		}
+
+		const row = screen.getByRole("button", { name: "Reopen Closed app" });
+		expect(row).toBeDisabled();
+		await userEvent.click(row, { pointerEventsCheck: 0 });
+		expect(hookState.reopenClosedTab).not.toHaveBeenCalled();
 	});
 
 	it("keeps the hover flyout open after closing a tab, since the cursor is still over it", async () => {

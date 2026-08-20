@@ -41,6 +41,7 @@
 	"browser.sending": "Enviando",
 	"browser.sent": "Enviado",
 	"browser.stop": "Detener",
+	"browser.tabLimitReached": "Se alcanzó el límite de pestañas",
 	"browser.tabs": "Pestañas del navegador",
 	"browser.tabsAria": "Pestañas del navegador ({{count}})",
 	"browser.tabsPinned": "Anclado",

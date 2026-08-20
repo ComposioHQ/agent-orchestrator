@@ -9,6 +9,7 @@ import type {
 	BrowserTabsState,
 } from "../../main/browser-view-host";
 import type { BrowserAnnotationCancelPayload, BrowserAnnotationSubmitPayload } from "../../shared/browser-annotations";
+import { MAX_BROWSER_TABS } from "../../shared/browser-tabs";
 import { OPEN_BROWSER_OVERLAY_SELECTOR } from "../lib/dom-selectors";
 
 export type { BrowserNavState };
@@ -185,6 +186,7 @@ export function useBrowserView({
 	const previewTriggerRef = useRef<{ revision: number | null; target: string } | null>(null);
 	const overlayOpenRef = useRef(false);
 	const tabNoticeTimerRef = useRef<number | null>(null);
+	const tabsStateRef = useRef(tabsState);
 	const hasNativeBrowser = Boolean(window.ao?.browser);
 
 	useEffect(() => {
@@ -192,8 +194,21 @@ export function useBrowserView({
 	}, [active]);
 
 	useEffect(() => {
+		tabsStateRef.current = tabsState;
+	}, [tabsState]);
+
+	useEffect(() => {
 		annotationModeRef.current = annotationMode;
 	}, [annotationMode]);
+
+	const showTabNotice = useCallback((message: string) => {
+		setTabNotice(message);
+		if (tabNoticeTimerRef.current !== null) window.clearTimeout(tabNoticeTimerRef.current);
+		tabNoticeTimerRef.current = window.setTimeout(() => {
+			tabNoticeTimerRef.current = null;
+			setTabNotice("");
+		}, 3_000);
+	}, []);
 
 	const sendHiddenBounds = useCallback((id = viewIdRef.current) => {
 		if (!id) return;
@@ -367,14 +382,9 @@ export function useBrowserView({
 			if (state.viewId !== viewIdRef.current) return;
 			setTabsState(state);
 			if (state.change?.kind !== "popup") return;
-			setTabNotice("Opened new tab");
-			if (tabNoticeTimerRef.current !== null) window.clearTimeout(tabNoticeTimerRef.current);
-			tabNoticeTimerRef.current = window.setTimeout(() => {
-				tabNoticeTimerRef.current = null;
-				setTabNotice("");
-			}, 3_000);
+			showTabNotice("Opened new tab");
 		});
-	}, []);
+	}, [showTabNotice]);
 
 	// Re-project the persisted display order onto every incoming tabsState push:
 	// browser:tabsState fires on every nav/title-update/loading-state change for
@@ -520,33 +530,48 @@ export function useBrowserView({
 		async (tabId: string) => {
 			const viewId = viewIdRef.current;
 			if (!viewId || !hasNativeBrowser) return;
-			const state = await window.ao!.browser.selectTab({ viewId, tabId });
-			if (viewIdRef.current === state.viewId) setTabsState(state);
+			try {
+				const state = await window.ao!.browser.selectTab({ viewId, tabId });
+				if (viewIdRef.current === state.viewId) setTabsState(state);
+			} catch {
+				// Fire-and-forget from the rail (`void onSelectTab(...)`) — without
+				// this the click just silently does nothing, with no way to tell a
+				// slow response from a dead button.
+				showTabNotice("Couldn't switch to that tab");
+			}
 		},
-		[hasNativeBrowser],
+		[hasNativeBrowser, showTabNotice],
 	);
 
 	const closeTab = useCallback(
 		async (tabId: string) => {
 			const viewId = viewIdRef.current;
 			if (!viewId || !hasNativeBrowser) return;
-			const closing = tabsState.tabs.find((tab) => tab.id === tabId);
-			const state = await window.ao!.browser.closeTab({ viewId, tabId });
-			if (viewIdRef.current !== state.viewId) return;
-			setTabsState(state);
-			// Only remember it once the main process confirms it's actually gone —
-			// closeTab can silently no-op (the tab stays in state.tabs), and
-			// recording it as "closed" anyway would show it in Recently Closed
-			// while it's still sitting right there in the live tab list. Only real,
-			// distinguishable tabs are worth keeping — a blank tab has nothing to
-			// reopen.
-			const stillOpen = state.tabs.some((tab) => tab.id === tabId);
-			if (closing && !stillOpen && !isBlankTabUrl(closing.url)) {
-				const { id, title, url, favicon } = closing;
-				setClosedTabs((current) => [{ id, title, url, favicon }, ...current.filter((t) => t.id !== id)].slice(0, MAX_CLOSED_TABS));
+			// Read from the ref, not the tabsState closure, so this callback's
+			// identity stays stable across tab updates instead of churning on
+			// every nav/title-update/loading-state push (it cascades into
+			// handleCloseTab in BrowserTabsRail.tsx otherwise).
+			const closing = tabsStateRef.current.tabs.find((tab) => tab.id === tabId);
+			try {
+				const state = await window.ao!.browser.closeTab({ viewId, tabId });
+				if (viewIdRef.current !== state.viewId) return;
+				setTabsState(state);
+				// Only remember it once the main process confirms it's actually gone —
+				// closeTab can silently no-op (the tab stays in state.tabs), and
+				// recording it as "closed" anyway would show it in Recently Closed
+				// while it's still sitting right there in the live tab list. Only real,
+				// distinguishable tabs are worth keeping — a blank tab has nothing to
+				// reopen.
+				const stillOpen = state.tabs.some((tab) => tab.id === tabId);
+				if (closing && !stillOpen && !isBlankTabUrl(closing.url)) {
+					const { id, title, url, favicon } = closing;
+					setClosedTabs((current) => [{ id, title, url, favicon }, ...current.filter((t) => t.id !== id)].slice(0, MAX_CLOSED_TABS));
+				}
+			} catch {
+				showTabNotice("Couldn't close that tab");
 			}
 		},
-		[hasNativeBrowser, tabsState.tabs],
+		[hasNativeBrowser, showTabNotice],
 	);
 
 	const openTab = useCallback(
@@ -563,10 +588,24 @@ export function useBrowserView({
 		async (tabId: string) => {
 			const entry = closedTabs.find((tab) => tab.id === tabId);
 			if (!entry) return;
+			// Gate on the same cap the "+" button already respects, instead of
+			// discovering BROWSER_TAB_LIMIT only after the entry is gone.
+			if (tabsStateRef.current.tabs.length >= MAX_BROWSER_TABS) {
+				showTabNotice("Reached the tab limit");
+				return;
+			}
 			setClosedTabs((current) => current.filter((tab) => tab.id !== tabId));
-			await openTab(entry.url);
+			try {
+				await openTab(entry.url);
+			} catch {
+				// Still possible to race the cap (e.g. the agent opens a tab between
+				// this row rendering and the click) — restore instead of losing the
+				// entry silently.
+				setClosedTabs((current) => [entry, ...current.filter((tab) => tab.id !== tabId)].slice(0, MAX_CLOSED_TABS));
+				showTabNotice("Couldn't reopen that tab");
+			}
 		},
-		[closedTabs, openTab],
+		[closedTabs, openTab, showTabNotice],
 	);
 
 	const runDevtools = useCallback(

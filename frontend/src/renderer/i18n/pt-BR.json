@@ -41,6 +41,7 @@
 	"browser.sending": "Enviando",
 	"browser.sent": "Enviado",
 	"browser.stop": "Parar",
+	"browser.tabLimitReached": "Limite de abas atingido",
 	"browser.tabs": "Abas do navegador",
 	"browser.tabsAria": "Abas do navegador ({{count}})",
 	"browser.tabsPinned": "Fixado",

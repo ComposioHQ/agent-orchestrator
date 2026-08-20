@@ -41,6 +41,7 @@
 	"browser.sending": "Wird gesendet",
 	"browser.sent": "Gesendet",
 	"browser.stop": "Stoppen",
+	"browser.tabLimitReached": "Tab-Limit erreicht",
 	"browser.tabs": "Browser-Tabs",
 	"browser.tabsAria": "Browser-Tabs ({{count}})",
 	"browser.tabsPinned": "Angeheftet",

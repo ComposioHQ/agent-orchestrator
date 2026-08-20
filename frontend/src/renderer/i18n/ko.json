@@ -41,6 +41,7 @@
 	"browser.sending": "전송 중",
 	"browser.sent": "전송됨",
 	"browser.stop": "중지",
+	"browser.tabLimitReached": "탭 한도에 도달했습니다",
 	"browser.tabs": "브라우저 탭",
 	"browser.tabsAria": "브라우저 탭 ({{count}})",
 	"browser.tabsPinned": "고정됨",

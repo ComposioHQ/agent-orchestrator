@@ -331,7 +331,7 @@ export const BrowserTabsRail = forwardRef<BrowserTabsRailHandle, BrowserTabsRail
 						</SortableContext>
 					</DndContext>
 				)}
-				{expanded ? <ClosedTabsSection closedTabs={closedTabs} onReopen={handleReopenClosedTab} /> : null}
+				{expanded ? <ClosedTabsSection canOpenTab={canOpenTab} closedTabs={closedTabs} onReopen={handleReopenClosedTab} /> : null}
 			</nav>
 			{expanded ? (
 				<div
@@ -402,7 +402,7 @@ export const BrowserTabsRail = forwardRef<BrowserTabsRailHandle, BrowserTabsRail
 								tab={tab}
 							/>
 						))}
-						<ClosedTabsSection closedTabs={closedTabs} onReopen={handleReopenClosedTab} />
+						<ClosedTabsSection canOpenTab={canOpenTab} closedTabs={closedTabs} onReopen={handleReopenClosedTab} />
 					</div>
 				</div>
 			) : null}
@@ -439,9 +439,11 @@ function TabFavicon({ className, tab }: { className: string; tab: BrowserTabStat
 // and closed tabs are inherently distinct from "click to switch to this open
 // tab," so they don't belong crammed into the icon list.
 function ClosedTabsSection({
+	canOpenTab,
 	closedTabs,
 	onReopen,
 }: {
+	canOpenTab: boolean;
 	closedTabs: ClosedBrowserTab[];
 	onReopen: (tabId: string) => void;
 }) {
@@ -461,13 +463,19 @@ function ClosedTabsSection({
 						className={cn(
 							"flex h-8 w-full items-center gap-1.5 p-1.5 text-left text-sm text-muted-foreground opacity-70 transition-[opacity,background-color,color]",
 							"hover:bg-interactive-hover hover:text-foreground hover:opacity-100",
+							"disabled:pointer-events-none disabled:opacity-40",
 						)}
+						disabled={!canOpenTab}
 						key={tab.id}
 						onClick={() => onReopen(tab.id)}
-						title={reopenLabel}
+						title={canOpenTab ? reopenLabel : t("browser.tabLimitReached")}
 						type="button"
 					>
-						<History aria-hidden="true" className="size-icon-base shrink-0" />
+						{tab.favicon ? (
+							<img alt="" className="size-icon-base shrink-0 object-cover" src={tab.favicon} />
+						) : (
+							<History aria-hidden="true" className="size-icon-base shrink-0" />
+						)}
 						<span className="min-w-0 flex-1 truncate">{label.title}</span>
 					</button>
 				);

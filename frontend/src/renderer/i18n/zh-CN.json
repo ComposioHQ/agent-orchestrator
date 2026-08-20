@@ -41,6 +41,7 @@
 	"browser.sending": "发送中",
 	"browser.sent": "已发送",
 	"browser.stop": "停止",
+	"browser.tabLimitReached": "已达到标签页上限",
 	"browser.tabs": "浏览器标签",
 	"browser.tabsAria": "浏览器标签（{{count}}）",
 	"browser.tabsPinned": "已固定",

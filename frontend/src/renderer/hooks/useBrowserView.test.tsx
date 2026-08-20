@@ -247,6 +247,96 @@ describe("useBrowserView", () => {
 		expect(result.current.closedTabs).toEqual([]);
 	});
 
+	// Regression: reopenClosedTab used to drop the entry from closedTabs before
+	// awaiting openTab, which throws BROWSER_TAB_LIMIT at the cap — losing the
+	// entry with no rollback and opening nothing.
+	it("refuses to reopen a closed tab at the tab cap, keeping the entry instead of losing it", async () => {
+		const bridge = setupBridge();
+		const { result } = renderHook(() => useBrowserView({ sessionId: "sess-1", active: true, poppedOut: false }));
+
+		await waitFor(() => expect(result.current.tabs.map((tab) => tab.id)).toEqual(["t1"]));
+		act(() =>
+			bridge.emitTabs({
+				viewId: "42:sess-1",
+				activeTabId: "t2",
+				tabs: [
+					{ id: "t1", url: "http://localhost:3000/", title: "First", active: false },
+					{ id: "t2", url: "http://localhost:4173/", title: "Second", active: true },
+				],
+				change: { kind: "popup", tabId: "t2" },
+			}),
+		);
+		await act(() => result.current.closeTab("t2"));
+		expect(result.current.closedTabs).toHaveLength(1);
+
+		// Simulate 16 other tabs having opened since (e.g. via agent activity),
+		// hitting MAX_BROWSER_TABS.
+		act(() =>
+			bridge.emitTabs({
+				viewId: "42:sess-1",
+				activeTabId: "t1",
+				tabs: Array.from({ length: 16 }, (_, i) => ({
+					id: `t${i + 10}`,
+					url: `http://localhost:3000/${i}`,
+					title: `Tab ${i}`,
+					active: i === 0,
+				})),
+			}),
+		);
+
+		await act(() => result.current.reopenClosedTab("t2"));
+
+		expect(bridge.openTab).not.toHaveBeenCalled();
+		expect(result.current.closedTabs).toHaveLength(1);
+		expect(result.current.tabNotice).toBe("Reached the tab limit");
+	});
+
+	// Regression: the same drop-before-await bug also loses the entry on any
+	// other openTab failure (e.g. a race where the cap is hit between the row
+	// rendering and the click) — restore it instead.
+	it("restores a closed-tab entry if reopening it fails", async () => {
+		const bridge = setupBridge();
+		const { result } = renderHook(() => useBrowserView({ sessionId: "sess-1", active: true, poppedOut: false }));
+
+		await waitFor(() => expect(result.current.tabs.map((tab) => tab.id)).toEqual(["t1"]));
+		act(() =>
+			bridge.emitTabs({
+				viewId: "42:sess-1",
+				activeTabId: "t2",
+				tabs: [
+					{ id: "t1", url: "http://localhost:3000/", title: "First", active: false },
+					{ id: "t2", url: "http://localhost:4173/", title: "Second", active: true },
+				],
+				change: { kind: "popup", tabId: "t2" },
+			}),
+		);
+		await act(() => result.current.closeTab("t2"));
+		expect(result.current.closedTabs).toHaveLength(1);
+
+		bridge.openTab.mockRejectedValueOnce(Object.assign(new Error("Browser tab limit reached"), { code: "BROWSER_TAB_LIMIT" }));
+		await act(() => result.current.reopenClosedTab("t2"));
+
+		expect(result.current.closedTabs).toHaveLength(1);
+		expect(result.current.tabNotice).toBe("Couldn't reopen that tab");
+	});
+
+	// Regression: closeTab/selectTab are invoked fire-and-forget (`void
+	// onCloseTab(...)`) from the tabs rail, so a rejection used to become a
+	// silent unhandled rejection with zero user feedback.
+	it("surfaces a notice instead of throwing when closing or selecting a tab fails", async () => {
+		const bridge = setupBridge();
+		const { result } = renderHook(() => useBrowserView({ sessionId: "sess-1", active: true, poppedOut: false }));
+		await waitFor(() => expect(result.current.tabs.map((tab) => tab.id)).toEqual(["t1"]));
+
+		bridge.closeTab.mockRejectedValueOnce(new Error("boom"));
+		await expect(act(() => result.current.closeTab("t1"))).resolves.toBeUndefined();
+		expect(result.current.tabNotice).toBe("Couldn't close that tab");
+
+		bridge.selectTab.mockRejectedValueOnce(new Error("boom"));
+		await expect(act(() => result.current.selectTab("t1"))).resolves.toBeUndefined();
+		expect(result.current.tabNotice).toBe("Couldn't switch to that tab");
+	});
+
 	// Regression: closeTab can silently no-op — the underlying native close
 	// fails and the tab stays in session.tabs — and the recently-closed
 	// capture used to run before ever checking the response, so a tab that

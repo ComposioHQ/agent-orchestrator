@@ -614,13 +614,46 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 			// The human-facing BrowserView state is authoritative. Selecting through
 			// agent-browser updates its independent active_page_index before another
 			// native command is allowed to run.
-			await options.agentBrowserRuntime.runAction(
-				session.sessionId,
-				"tab-select",
-				{ tabId },
-				agentBrowserTargets(session),
-				signal,
-			);
+			try {
+				await options.agentBrowserRuntime.runAction(
+					session.sessionId,
+					"tab-select",
+					{ tabId },
+					agentBrowserTargets(session),
+					signal,
+				);
+			} catch (error) {
+				// The runtime keeps its own tab registry (a real, separate process —
+				// not derived live from session.tabs), which can drift after enough
+				// tab churn: observed live as "Tab tX not found; run `agent-browser
+				// tab` to list open tabs" for a tabId session.tabs still has. Retrying
+				// the exact same tab-select would fail identically forever, and every
+				// native browser operation for this session (select, close, click,
+				// snapshot, ...) routes through this loop — so a bare retry
+				// permanently wedges the whole session, not just this one call.
+				// Do what the runtime's own error message suggests: ask it to
+				// re-list tabs (which re-derives from session.tabs) before trying
+				// the select once more.
+				if (!isAgentBrowserCommandFailure(error)) throw error;
+				try {
+					await options.agentBrowserRuntime.runAction(session.sessionId, "tabs", {}, agentBrowserTargets(session), signal);
+					await options.agentBrowserRuntime.runAction(
+						session.sessionId,
+						"tab-select",
+						{ tabId },
+						agentBrowserTargets(session),
+						signal,
+					);
+				} catch (resyncError) {
+					if (!isAgentBrowserCommandFailure(resyncError)) throw resyncError;
+					// Still desynced after asking it to refresh — accept the drift
+					// rather than wedge the session forever. AO's own tab state
+					// (WebContentsView activation/close) doesn't depend on this and is
+					// unaffected either way; only the automation runtime's targeting of
+					// *this* tab stays stale until a future tab-new/tab-close resyncs
+					// it from its side.
+				}
+			}
 			session.nativeActiveTabId = tabId;
 		}
 	};

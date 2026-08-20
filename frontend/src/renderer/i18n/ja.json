@@ -41,6 +41,7 @@
 	"browser.sending": "送信中",
 	"browser.sent": "送信済み",
 	"browser.stop": "停止",
+	"browser.tabLimitReached": "タブの上限に達しました",
 	"browser.tabs": "ブラウザタブ",
 	"browser.tabsAria": "ブラウザタブ ({{count}})",
 	"browser.tabsPinned": "固定済み",

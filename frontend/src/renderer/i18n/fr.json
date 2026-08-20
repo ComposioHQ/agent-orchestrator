@@ -41,6 +41,7 @@
 	"browser.sending": "Envoi",
 	"browser.sent": "Envoyé",
 	"browser.stop": "Arrêter",
+	"browser.tabLimitReached": "Limite d'onglets atteinte",
 	"browser.tabs": "Onglets du navigateur",
 	"browser.tabsAria": "Onglets du navigateur ({{count}})",
 	"browser.tabsPinned": "Épinglé",
