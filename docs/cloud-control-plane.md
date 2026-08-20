@@ -56,10 +56,12 @@ Migration and runtime credentials are intentionally separate:
   role named by `AO_CLOUD_RUNTIME_DATABASE_ROLE` during migration.
 - Runtime startup rejects roles with `SUPERUSER` or `BYPASSRLS`.
 
-The migration command expects the runtime login role to already exist. It
-applies the embedded Goose migration and grants that role only the tables and
-tenant helper functions in this foundation. It does not create or rotate
-database passwords; deployment automation will own that later.
+When `AO_CLOUD_RUNTIME_DATABASE_PASSWORD` is set, the migration command creates
+the restricted runtime login role if it does not exist. An existing role is
+validated but never altered or elevated. It then applies the embedded Goose
+migration and grants that role only the tables and tenant helper functions in
+this foundation. The AWS deployment generates and stores the runtime password
+outside Terraform state.
 
 `ao_organizations` and `ao_org_memberships` have forced row-level security.
 Tenant reads are authorized through the current AO user. Writes additionally
@@ -91,17 +93,19 @@ Run migrations and start the service:
 ```bash
 export AO_CLOUD_MIGRATION_DATABASE_URL='postgres://migration_owner:...@127.0.0.1:5432/ao_cloud'
 export AO_CLOUD_RUNTIME_DATABASE_ROLE='ao_cloud_runtime'
+export AO_CLOUD_RUNTIME_DATABASE_PASSWORD='generate-and-store-this-securely'
 cd backend
 go run ./cmd/ao-cloud-migrate
 go run ./cmd/ao-cloud
 ```
 
-The service intentionally speaks plain HTTP at this stage. A later deployment
-PR will place it behind managed TLS; do not expose this listener directly.
+The service intentionally speaks plain HTTP inside its task network. The AWS
+staging deployment terminates public TLS at API Gateway and reaches the service
+through a VPC link and internal load balancer. See
+[`deploy/cloud/README.md`](../deploy/cloud/README.md).
 
 ## Explicitly not in this PR
 
-- AWS infrastructure or deployment scripts
 - Daytona or any sandbox provider
 - project, session, lifecycle, worker, event, terminal, or workspace handlers
 - GitHub App, SCM synchronization, or credential brokering

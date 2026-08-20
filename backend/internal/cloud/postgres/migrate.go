@@ -17,6 +17,55 @@ import (
 //go:embed migrations/*.sql
 var migrationFS embed.FS
 
+// EnsureRuntimeRole creates the restricted login role used by ao-cloud when a
+// deployment initializes a new PostgreSQL instance. Existing roles are never
+// altered; they are only validated so a deployment cannot silently elevate or
+// rotate a live runtime credential.
+func EnsureRuntimeRole(ctx context.Context, databaseURL, runtimeRole, runtimePassword string) error {
+	databaseURL = strings.TrimSpace(databaseURL)
+	runtimeRole = strings.TrimSpace(runtimeRole)
+	if databaseURL == "" || runtimeRole == "" || runtimePassword == "" {
+		return errors.New("migration database URL, runtime role, and runtime password are required")
+	}
+	conn, err := pgx.Connect(ctx, databaseURL)
+	if err != nil {
+		return fmt.Errorf("connect for runtime role bootstrap: %w", err)
+	}
+	defer func() { _ = conn.Close(ctx) }()
+
+	var migrationRole string
+	if err := conn.QueryRow(ctx, `SELECT current_user`).Scan(&migrationRole); err != nil {
+		return err
+	}
+	var canLogin, superuser, bypassRLS, createRole, createDB, replication bool
+	err = conn.QueryRow(
+		ctx,
+		`SELECT rolcanlogin, rolsuper, rolbypassrls,
+		        rolcreaterole, rolcreatedb, rolreplication
+		 FROM pg_roles WHERE rolname = $1`,
+		runtimeRole,
+	).Scan(&canLogin, &superuser, &bypassRLS, &createRole, &createDB, &replication)
+	if err == nil {
+		if !canLogin || superuser || bypassRLS || createRole || createDB || replication || runtimeRole == migrationRole {
+			return fmt.Errorf("runtime role %q must be a separate, unprivileged login role", runtimeRole)
+		}
+		return nil
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return err
+	}
+
+	var quotedPassword string
+	if err := conn.QueryRow(ctx, `SELECT quote_literal($1)`, runtimePassword).Scan(&quotedPassword); err != nil {
+		return fmt.Errorf("quote runtime role password: %w", err)
+	}
+	statement := "CREATE ROLE " + pgx.Identifier{runtimeRole}.Sanitize() + " LOGIN PASSWORD " + quotedPassword
+	if _, err := conn.Exec(ctx, statement); err != nil {
+		return fmt.Errorf("create runtime role %q: %w", runtimeRole, err)
+	}
+	return nil
+}
+
 // Migrate applies embedded Cloud migrations with a privileged migration URL,
 // then grants the existing restricted runtime role access to the foundation.
 func Migrate(ctx context.Context, databaseURL, runtimeRole string) error {
