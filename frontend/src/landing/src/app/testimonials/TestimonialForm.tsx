@@ -101,9 +101,11 @@ export function TestimonialForm() {
           >
             Your testimonial
           </label>
-          <span className="text-xs tabular-nums text-muted-foreground">
-            {wordCount} {wordCount === 1 ? "word" : "words"}
-          </span>
+          {wordCount > 0 ? (
+            <span className="text-xs tabular-nums text-muted-foreground">
+              {wordCount} {wordCount === 1 ? "word" : "words"}
+            </span>
+          ) : null}
         </div>
         <textarea
           id={testimonialId}
