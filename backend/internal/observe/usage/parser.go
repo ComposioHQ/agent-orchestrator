@@ -559,7 +559,7 @@ func parseCodexEvent(source domain.UsageSourceContext, envelope codexEnvelope, s
 		total.CacheWriteInputTokens < state.Baseline.CacheWriteInputTokens ||
 		total.OutputTokens < state.Baseline.OutputTokens ||
 		total.ReasoningOutputTokens < state.Baseline.ReasoningOutputTokens ||
-		total.TotalTokens < state.Baseline.TotalTokens {
+		(total.TotalTokens != 0 && state.Baseline.TotalTokens != 0 && total.TotalTokens < state.Baseline.TotalTokens) {
 		result.Cursor.AnomalyCount++
 		result.Cursor.LastErrorCode = domain.UsageErrorNonMonotonicCumulativeUsage
 		state.Baseline = total
@@ -570,21 +570,53 @@ func parseCodexEvent(source domain.UsageSourceContext, envelope codexEnvelope, s
 	cacheWrite := total.CacheWriteInputTokens - state.Baseline.CacheWriteInputTokens
 	output := total.OutputTokens - state.Baseline.OutputTokens
 	reasoning := total.ReasoningOutputTokens - state.Baseline.ReasoningOutputTokens
-	reportedTotal := total.TotalTokens - state.Baseline.TotalTokens
-	state.Baseline = total
-	if input == 0 && cached == 0 && output == 0 && cacheWrite == 0 && reasoning == 0 {
+	reportedTotal := int64(0)
+	if total.TotalTokens != 0 {
+		if state.Baseline.TotalTokens != 0 {
+			reportedTotal = total.TotalTokens - state.Baseline.TotalTokens
+		} else {
+			reportedTotal = input + output
+		}
+	}
+	delta := codexTokenVector{
+		InputTokens: input, CachedInputTokens: cached, CacheWriteInputTokens: cacheWrite,
+		OutputTokens: output, ReasoningOutputTokens: reasoning, TotalTokens: reportedTotal,
+	}
+	selected := delta
+	if payload.Info.Last != nil {
+		last := *payload.Info.Last
+		if !validCodexTotal(last) {
+			result.Cursor.AnomalyCount++
+			result.Cursor.LastErrorCode = domain.UsageErrorNonMonotonicCumulativeUsage
+			return
+		}
+		if !codexVectorMatchesDelta(last, input, cached, cacheWrite, output, reasoning, reportedTotal) {
+			result.Cursor.AnomalyCount++
+			result.Cursor.LastErrorCode = domain.UsageErrorNonMonotonicCumulativeUsage
+			selected = last
+		} else if selected.TotalTokens == 0 && last.TotalTokens != 0 {
+			selected.TotalTokens = last.TotalTokens
+		}
+	}
+	if selected.InputTokens == 0 && selected.CachedInputTokens == 0 && selected.OutputTokens == 0 &&
+		selected.CacheWriteInputTokens == 0 && selected.ReasoningOutputTokens == 0 {
+		state.Baseline = total
 		return
 	}
-	tokens, details, ok := normalizeOpenAIUsage(input, cached, cacheWrite, output, reasoning, reportedTotal)
+	tokens, details, ok := normalizeOpenAIUsage(
+		selected.InputTokens,
+		selected.CachedInputTokens,
+		selected.CacheWriteInputTokens,
+		selected.OutputTokens,
+		selected.ReasoningOutputTokens,
+		selected.TotalTokens,
+	)
 	if !ok {
 		result.Cursor.AnomalyCount++
 		result.Cursor.LastErrorCode = domain.UsageErrorNonMonotonicCumulativeUsage
 		return
 	}
-	if payload.Info.Last != nil && !codexVectorMatchesDelta(*payload.Info.Last, input, cached, cacheWrite, output, reasoning, reportedTotal) {
-		result.Cursor.AnomalyCount++
-		result.Cursor.LastErrorCode = domain.UsageErrorNonMonotonicCumulativeUsage
-	}
+	state.Baseline = total
 	model := firstNonEmpty(state.ModelID, source.InitialModelID, "unknown")
 	state.ModelID = model
 	event := domain.ModelUsageEvent{
@@ -705,7 +737,8 @@ func validAnthropicCacheCreation(total int64, creation5m, creation1h *int64) boo
 func codexVectorMatchesDelta(last codexTokenVector, input, cachedInput, cacheWriteInput, output, reasoningOutput, total int64) bool {
 	return validCodexTotal(last) && last.InputTokens == input && last.CachedInputTokens == cachedInput &&
 		last.CacheWriteInputTokens == cacheWriteInput && last.OutputTokens == output &&
-		last.ReasoningOutputTokens == reasoningOutput && (last.TotalTokens == 0 || last.TotalTokens == total)
+		last.ReasoningOutputTokens == reasoningOutput &&
+		(last.TotalTokens == 0 || total == 0 || last.TotalTokens == total)
 }
 
 func parseUsageTimestamp(raw string) time.Time {

@@ -176,6 +176,84 @@ func TestParseCodexReferenceUsageReconcilesLastAndCumulativeTotals(t *testing.T)
 	}
 }
 
+func TestParseCodexOptionalReportedTotalDoesNotDropDeltas(t *testing.T) {
+	source := usageSource(domain.UsageSourceCodexRollout)
+	records := []jsonlRecord{
+		{Data: []byte(`{"type":"turn_context","payload":{"model":"gpt-5.6"}}`)},
+		{Data: codexTokenLineWithTotal("2026-08-20T10:00:00Z", codexTokenVector{InputTokens: 100, CachedInputTokens: 60, OutputTokens: 20, ReasoningOutputTokens: 5, TotalTokens: 120})},
+		{Data: codexTokenLineWithTotal("2026-08-20T10:01:00Z", codexTokenVector{InputTokens: 160, CachedInputTokens: 90, OutputTokens: 35, ReasoningOutputTokens: 8})},
+		{Data: codexTokenLineWithTotal("2026-08-20T10:02:00Z", codexTokenVector{InputTokens: 200, CachedInputTokens: 100, OutputTokens: 50, ReasoningOutputTokens: 10, TotalTokens: 250})},
+	}
+
+	result := parseRecords(source, records, 1000, time.Unix(1700000000, 0).UTC())
+	if len(result.Events) != 3 || result.Cursor.AnomalyCount != 0 {
+		t.Fatalf("result = %+v, want three clean events", result)
+	}
+	assertCanonicalEventTotals(t, result.Events, 200, 100, 100, 0, 50)
+	if first := result.Events[0].ProviderDetails.OpenAI.ReportedTotalTokens; first == nil || *first != 120 {
+		t.Fatalf("first reported total = %v, want 120", first)
+	}
+	if middle := result.Events[1].ProviderDetails.OpenAI.ReportedTotalTokens; middle != nil {
+		t.Fatalf("missing reported total persisted as %v, want nil", *middle)
+	}
+	if last := result.Events[2].ProviderDetails.OpenAI.ReportedTotalTokens; last == nil || *last != 55 {
+		t.Fatalf("reported total after missing value = %v, want event delta 55", last)
+	}
+	state := parserStateFromResult(t, result, domain.UsageSourceCodexRollout)
+	if state.Codex.Baseline.TotalTokens != 250 {
+		t.Fatalf("baseline = %+v, want latest cumulative total", state.Codex.Baseline)
+	}
+}
+
+func TestParseCodexRejectedDeltaDoesNotAdvanceBaseline(t *testing.T) {
+	source := usageSource(domain.UsageSourceCodexRollout)
+	records := []jsonlRecord{
+		{Data: codexTokenLineWithTotal("2026-08-20T10:00:00Z", codexTokenVector{InputTokens: 100, CachedInputTokens: 90, OutputTokens: 20, ReasoningOutputTokens: 5, TotalTokens: 120})},
+		{Data: codexTokenLineWithTotal("2026-08-20T10:01:00Z", codexTokenVector{InputTokens: 110, CachedInputTokens: 105, OutputTokens: 21, ReasoningOutputTokens: 5, TotalTokens: 131})},
+		{Data: codexTokenLineWithTotal("2026-08-20T10:02:00Z", codexTokenVector{InputTokens: 120, CachedInputTokens: 100, OutputTokens: 25, ReasoningOutputTokens: 6, TotalTokens: 145})},
+	}
+
+	result := parseRecords(source, records, 1000, time.Unix(1700000000, 0).UTC())
+	if len(result.Events) != 2 || result.Cursor.AnomalyCount != 1 {
+		t.Fatalf("result = %+v, want the invalid middle delta skipped", result)
+	}
+	assertCanonicalEventTotals(t, result.Events, 120, 100, 20, 0, 25)
+	state := parserStateFromResult(t, result, domain.UsageSourceCodexRollout)
+	if state.Codex.Baseline.InputTokens != 120 || state.Codex.Baseline.CachedInputTokens != 100 {
+		t.Fatalf("baseline = %+v, want recovery from the last valid baseline", state.Codex.Baseline)
+	}
+}
+
+func TestParseCodexLastMismatchPrefersLastUsage(t *testing.T) {
+	source := usageSource(domain.UsageSourceCodexRollout)
+	records := []jsonlRecord{
+		{Data: codexTokenLineWithTotal("2026-08-20T10:00:00Z", codexTokenVector{InputTokens: 100, CachedInputTokens: 60, OutputTokens: 20, ReasoningOutputTokens: 5, TotalTokens: 120})},
+		{Data: codexTokenLineWithLast(
+			"2026-08-20T10:01:00Z",
+			codexTokenVector{InputTokens: 55, CachedInputTokens: 25, OutputTokens: 14, ReasoningOutputTokens: 2, TotalTokens: 69},
+			codexTokenVector{InputTokens: 160, CachedInputTokens: 90, OutputTokens: 35, ReasoningOutputTokens: 8, TotalTokens: 195},
+		)},
+	}
+
+	result := parseRecords(source, records, 1000, time.Unix(1700000000, 0).UTC())
+	if len(result.Events) != 2 || result.Cursor.AnomalyCount != 1 {
+		t.Fatalf("result = %+v, want last usage persisted with an integrity anomaly", result)
+	}
+	got := result.Events[1]
+	if tokenValue(got.Tokens.InputTokens) != 55 || tokenValue(got.Tokens.CachedInputTokens) != 25 ||
+		tokenValue(got.Tokens.UncachedInputTokens) != 30 || tokenValue(got.Tokens.OutputTokens) != 14 {
+		t.Fatalf("mismatched event tokens = %+v, want last_token_usage", got.Tokens)
+	}
+	if details := got.ProviderDetails.OpenAI; details == nil || tokenValue(details.ReasoningOutputTokens) != 2 ||
+		tokenValue(details.ReportedTotalTokens) != 69 {
+		t.Fatalf("mismatched event details = %+v, want last_token_usage", details)
+	}
+	state := parserStateFromResult(t, result, domain.UsageSourceCodexRollout)
+	if state.Codex.Baseline.InputTokens != 160 || state.Codex.Baseline.TotalTokens != 195 {
+		t.Fatalf("baseline = %+v, want cumulative total", state.Codex.Baseline)
+	}
+}
+
 func TestParseCodexCounterResetNeverEmitsNegativeUsage(t *testing.T) {
 	now := time.Unix(1700000000, 0).UTC()
 	source := usageSource(domain.UsageSourceCodexRollout)
@@ -659,6 +737,13 @@ func codexTokenLineWithLast(timestamp string, last, total codexTokenVector) []by
 	return []byte(fmt.Sprintf(
 		`{"timestamp":%q,"type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":%s,"total_token_usage":%s}}}`,
 		timestamp, mustJSONTokenVector(last), mustJSONTokenVector(total),
+	))
+}
+
+func codexTokenLineWithTotal(timestamp string, total codexTokenVector) []byte {
+	return []byte(fmt.Sprintf(
+		`{"timestamp":%q,"type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":%s}}}`,
+		timestamp, mustJSONTokenVector(total),
 	))
 }
 
