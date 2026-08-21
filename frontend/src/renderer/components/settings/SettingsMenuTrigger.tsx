@@ -13,6 +13,7 @@
 import { ChevronDown } from "lucide-react";
 import { forwardRef, type ButtonHTMLAttributes } from "react";
 import { cn } from "../../lib/utils";
+import { MENU_TRIGGER_CHROME } from "../ui/option-menu";
 
 /**
  * The panel. bg-settings-menu / border-settings-menu / the panel radius have to
@@ -39,8 +40,7 @@ export const SETTINGS_MENU_ROW =
 export const SETTINGS_MENU_LABEL =
 	"px-3 pb-1 text-[length:var(--font-size-base)] font-normal tracking-normal text-settings-muted";
 
-const TRIGGER =
-	"group/settings-option-trigger settings-option-trigger max-w-full min-w-0 bg-[var(--color-bg-settings-trigger)] text-[var(--color-text-settings-trigger)] transition-colors hover:bg-[var(--color-bg-settings-trigger-hover)] hover:text-[var(--color-text-settings-trigger)] data-[state=open]:bg-[var(--color-bg-settings-trigger-hover)] focus:outline-none focus-visible:outline-none focus-visible:ring-0 data-[state=open]:outline-none data-[state=open]:ring-0 disabled:cursor-not-allowed disabled:opacity-50";
+const TRIGGER = cn("group/settings-option-trigger", MENU_TRIGGER_CHROME);
 
 /**
  * The trigger. Pass it to DropdownMenuTrigger with `asChild`; the chevron is

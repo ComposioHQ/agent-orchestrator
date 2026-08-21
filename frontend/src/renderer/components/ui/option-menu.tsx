@@ -12,8 +12,16 @@ const ROW =
 const LABEL =
 	"px-3 py-2 text-[length:var(--font-size-base)] font-normal tracking-normal text-settings-muted";
 
-const TRIGGER =
-	"group/option-menu-trigger settings-option-trigger max-w-full min-w-0 bg-[var(--color-bg-settings-trigger)] text-[var(--color-text-settings-trigger)] transition-colors hover:bg-[var(--color-bg-settings-trigger-hover)] hover:text-[var(--color-text-settings-trigger)] data-[state=open]:bg-[var(--color-bg-settings-trigger-hover)] focus:outline-none focus-visible:outline-none focus-visible:ring-0 data-[state=open]:outline-none data-[state=open]:ring-0 disabled:cursor-not-allowed disabled:opacity-50";
+/**
+ * The quiet filled trigger both this menu and the Settings pickers wear —
+ * everything except the `group/*` token, which each owner names for itself so
+ * its own chevron can key off it. Shared because the two are meant to be the
+ * same control: a visual tweak here should never need making twice.
+ */
+export const MENU_TRIGGER_CHROME =
+	"settings-option-trigger max-w-full min-w-0 bg-[var(--color-bg-settings-trigger)] text-[var(--color-text-settings-trigger)] transition-colors hover:bg-[var(--color-bg-settings-trigger-hover)] hover:text-[var(--color-text-settings-trigger)] data-[state=open]:bg-[var(--color-bg-settings-trigger-hover)] focus:outline-none focus-visible:outline-none focus-visible:ring-0 data-[state=open]:outline-none data-[state=open]:ring-0 disabled:cursor-not-allowed disabled:opacity-50";
+
+const TRIGGER = cn("group/option-menu-trigger", MENU_TRIGGER_CHROME);
 
 // ---------------------------------------------------------------------------
 // Root — re-export for convenience
