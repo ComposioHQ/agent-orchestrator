@@ -118,6 +118,7 @@ func (p *Provider) bootstrap(ctx context.Context, sandbox *daytonasdk.Sandbox, w
 	}
 	binPath := filepath.Join(home, "bin", "ao")
 	claudePath := filepath.Join(home, ".claude", ".credentials.json")
+	claudeConfigPath := filepath.Join(home, ".claude.json")
 	githubTokenPath := filepath.Join(home, ".ao", "github-token")
 	askpassPath := filepath.Join(home, ".ao", "github-askpass")
 	workspacePath := filepath.Join(home, "workspace", "ao-"+strings.ReplaceAll(workspace.ID, "-", "")[:12])
@@ -138,6 +139,13 @@ func (p *Provider) bootstrap(ctx context.Context, sandbox *daytonasdk.Sandbox, w
 	if err := sandbox.FileSystem.UploadFile(ctx, p.claudeCredentials, claudePath); err != nil {
 		return fmt.Errorf("upload Claude credentials: %w", err)
 	}
+	// Credentials alone do not suppress Claude Code's first-run theme and login
+	// wizard. That interactive wizard blocks AO's initial prompt indefinitely in
+	// an unattended sandbox. Workspace trust remains additive and is written by
+	// the existing Claude adapter immediately before each launch.
+	if err := sandbox.FileSystem.UploadFile(ctx, []byte("{\"hasCompletedOnboarding\":true}\n"), claudeConfigPath); err != nil {
+		return fmt.Errorf("initialize Claude profile: %w", err)
+	}
 	if len(p.githubToken) > 0 {
 		if err := sandbox.FileSystem.UploadFile(ctx, p.githubToken, githubTokenPath); err != nil {
 			return fmt.Errorf("upload GitHub credential: %w", err)
@@ -149,7 +157,7 @@ func (p *Provider) bootstrap(ctx context.Context, sandbox *daytonasdk.Sandbox, w
 	}
 	if _, err := run(ctx, sandbox,
 		"chmod 0755 "+shellQuote(binPath)+" "+shellQuote(askpassPath)+" && chmod 0600 "+
-			shellQuote(claudePath)+" "+shellQuote(githubTokenPath), time.Minute); err != nil {
+			shellQuote(claudePath)+" "+shellQuote(claudeConfigPath)+" "+shellQuote(githubTokenPath), time.Minute); err != nil {
 		return err
 	}
 
