@@ -43,17 +43,17 @@ func (s *Service) reviewSnapshot(ctx context.Context, rec domain.SessionRecord, 
 				continue
 			}
 			if _, ok := aoReviewIDs[review.ID]; ok {
-				prSnapshot.AOReviews = append(prSnapshot.AOReviews, review)
+				prSnapshot.AOReviewCount++
 				continue
 			}
-			prSnapshot.ExternalReviews = append(prSnapshot.ExternalReviews, review)
+			prSnapshot.ExternalReviewCount++
 		}
 		for _, comment := range comments {
 			if comment.AutoInjectReview {
-				prSnapshot.AOComments = append(prSnapshot.AOComments, comment)
+				prSnapshot.AOCommentCount++
 				continue
 			}
-			prSnapshot.ExternalComments = append(prSnapshot.ExternalComments, comment)
+			prSnapshot.ExternalCommentCount++
 		}
 		snapshot.PRs = append(snapshot.PRs, prSnapshot)
 	}

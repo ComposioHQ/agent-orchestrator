@@ -464,17 +464,17 @@ func TestSessionListPopulatesReviewSnapshotWithSourceAwareFacts(t *testing.T) {
 	if len(pr.ReviewRuns) != 1 || pr.ReviewRuns[0].GithubReviewID != "review-ao" || pr.ReviewRuns[0].TargetSHA != "sha-1" {
 		t.Fatalf("review runs = %+v", pr.ReviewRuns)
 	}
-	if len(pr.AOReviews) != 1 || pr.AOReviews[0].ID != "review-ao" {
-		t.Fatalf("AO reviews = %+v", pr.AOReviews)
+	if pr.AOReviewCount != 1 {
+		t.Fatalf("AO review count = %d, want 1", pr.AOReviewCount)
 	}
-	if len(pr.ExternalReviews) != 1 || pr.ExternalReviews[0].ID != "review-human" {
-		t.Fatalf("external reviews = %+v", pr.ExternalReviews)
+	if pr.ExternalReviewCount != 1 {
+		t.Fatalf("external review count = %d, want 1", pr.ExternalReviewCount)
 	}
-	if len(pr.AOComments) != 1 || pr.AOComments[0].ID != "c-ao" {
-		t.Fatalf("AO comments = %+v", pr.AOComments)
+	if pr.AOCommentCount != 1 {
+		t.Fatalf("AO comment count = %d, want 1", pr.AOCommentCount)
 	}
-	if len(pr.ExternalComments) != 1 || pr.ExternalComments[0].ID != "c-human" {
-		t.Fatalf("external comments = %+v", pr.ExternalComments)
+	if pr.ExternalCommentCount != 1 {
+		t.Fatalf("external comment count = %d, want 1", pr.ExternalCommentCount)
 	}
 }
 
