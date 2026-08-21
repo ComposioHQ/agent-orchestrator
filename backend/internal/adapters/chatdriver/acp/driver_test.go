@@ -623,6 +623,9 @@ func TestACPDriverLoadsSettledHistoryWhenTheAgentCanReplayIt(t *testing.T) {
 		t.Fatalf("Resume: %v", err)
 	}
 	defer conv.Close()
+	if _, ok := conv.(ports.ChatHistoryRefresher); ok {
+		t.Fatal("ACP session/load replay is a frozen snapshot, not refreshable history")
+	}
 
 	agent.mu.Lock()
 	loadCalls, resumeCalls := agent.loadCalls, agent.resumeCalls

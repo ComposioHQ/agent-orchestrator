@@ -309,7 +309,7 @@ function SummaryView({
 				showUsageError ? (
 					<Section title={t("inspector.usage.title")}>
 						<p className={inspectorEmptyClass} role="alert">
-							{t("inspector.usage.totalTokensUnavailable")}
+							{t("inspector.usage.processedTokensUnavailable")}
 						</p>
 					</Section>
 				) : showUsage && usageQuery.data ? (
@@ -390,28 +390,28 @@ function InspectorPolicyRow({
 
 function UsageCostTelemetry({ usage }: { usage: SessionUsage }) {
 	const { t } = useTranslation();
-	const totalTokens = usageTokenTotal(usage.totals);
-	const exactTotal = totalTokens?.toLocaleString("en-US");
+	const processedTokens = usageProcessedTokens(usage.totals);
+	const exactProcessed = processedTokens?.toLocaleString("en-US");
 
 	return (
 		<div>
 			<div className="grid grid-cols-2 gap-4">
 				<div className="min-w-0">
-					<p className="text-2xs text-settings-muted">{t("inspector.usage.totalTokens")}</p>
+					<p className="text-2xs text-settings-muted">{t("inspector.usage.processedTokens")}</p>
 					<p
 						aria-label={
-							totalTokens === null
-								? t("inspector.usage.totalTokensUnavailable")
-								: t("inspector.usage.totalTokensAria", { count: exactTotal })
+							processedTokens === null
+								? t("inspector.usage.processedTokensUnavailable")
+								: t("inspector.usage.processedTokensAria", { count: exactProcessed })
 						}
 						className="mt-0.5 truncate font-mono text-md-sm font-medium text-settings-label"
-						title={totalTokens === null ? undefined : t("inspector.usage.tokensExact", { count: exactTotal })}
+						title={processedTokens === null ? undefined : t("inspector.usage.processedTokensAria", { count: exactProcessed })}
 					>
-						{totalTokens === null ? t("inspector.usage.noUsageYet") : formatTelemetryTokenValue(totalTokens)}
+						{processedTokens === null ? t("inspector.usage.noUsageYet") : formatTelemetryTokenValue(processedTokens)}
 					</p>
 				</div>
 				<div className="min-w-0 text-right">
-					<p className="text-2xs text-settings-muted">{t("inspector.usage.totalCost")}</p>
+					<p className="text-2xs text-settings-muted">{t("inspector.usage.estimatedCost")}</p>
 					<p
 						className="mt-0.5 truncate text-sm-md text-settings-muted"
 						title={t("inspector.usage.costComingSoon")}
@@ -430,9 +430,11 @@ function UsageCostTelemetry({ usage }: { usage: SessionUsage }) {
 				</div>
 			</div>
 
-			{usage.harnesses.length > 0 ? (
-				<div className="mt-3 border-t border-(--color-border-settings-input) pt-2">
-					<div className="grid grid-cols-[minmax(0,1fr)_4.5rem_5.5rem] items-center gap-2 px-1 pb-1 text-2xs text-settings-muted">
+			{usage.harnesses.length === 1 ? (
+				<UsageAgentAttribution harness={usage.harnesses[0]} />
+			) : usage.harnesses.length > 1 ? (
+				<div className="mt-2 border-t border-(--color-border-settings-input) pt-1.5">
+					<div className="grid grid-cols-[minmax(0,1fr)_4.5rem_5.5rem] items-center gap-2 px-1 pb-0.5 text-2xs text-settings-muted">
 						<span>{t("inspector.usage.agent")}</span>
 						<span className="text-right">{t("inspector.usage.tokens")}</span>
 						<span className="text-right">{t("inspector.usage.cost")}</span>
@@ -445,6 +447,73 @@ function UsageCostTelemetry({ usage }: { usage: SessionUsage }) {
 					))}
 				</div>
 			) : null}
+		</div>
+	);
+}
+
+function UsageAgentAttribution({ harness }: { harness: SessionUsage["harnesses"][number] }) {
+	const { t } = useTranslation();
+	const [open, setOpen] = useState(false);
+	const detailID = useId();
+	const harnessName = formatHarnessName(harness.harness);
+	const canExpand = harness.models.length > 1;
+	const modelSummary =
+		harness.models.length === 1
+			? formatModelName(harness.models[0].modelId)
+			: harness.models.length > 1
+				? t("inspector.usage.models", { count: harness.models.length })
+				: null;
+	const modelSummaryTitle = harness.models.length === 1 ? harness.models[0].modelId : modelSummary;
+	const attribution = (
+		<>
+			<AgentAvatar className="size-4" decorative provider={harness.harness} />
+			<span className="shrink-0 text-sm-md text-settings-label">{harnessName}</span>
+			{modelSummary ? (
+				<>
+					<span aria-hidden="true" className="text-settings-muted">
+						·
+					</span>
+					<span className="truncate text-2xs text-settings-muted" title={modelSummaryTitle ?? undefined}>
+						{modelSummary}
+					</span>
+				</>
+			) : null}
+		</>
+	);
+
+	return (
+		<div className="mt-2 border-t border-(--color-border-settings-input) pt-1.5">
+			{canExpand ? (
+				<>
+					<button
+						aria-controls={detailID}
+						aria-expanded={open}
+						aria-label={t("inspector.usage.providerDetails", { name: harnessName })}
+						className="flex w-full min-w-0 items-center gap-1.5 rounded-md px-1 py-0.5 text-left outline-none transition-colors hover:bg-interactive-hover focus-visible:bg-interactive-hover focus-visible:ring-1 focus-visible:ring-ring"
+						onClick={() => setOpen((current) => !current)}
+						type="button"
+					>
+						{open ? (
+							<ChevronDown aria-hidden="true" className="size-3 shrink-0 text-settings-muted" />
+						) : (
+							<ChevronRight aria-hidden="true" className="size-3 shrink-0 text-settings-muted" />
+						)}
+						{attribution}
+					</button>
+					{open ? (
+						<div
+							aria-label={t("inspector.usage.providerPeek", { name: harnessName })}
+							className="mx-1 my-0.5 border-l border-(--color-border-settings-input) py-0.5 pl-2"
+							id={detailID}
+							role="region"
+						>
+							<ProviderUsageDetails harness={harness} />
+						</div>
+					) : null}
+				</>
+			) : (
+				<div className="flex min-w-0 items-center gap-1.5 px-1 py-0.5">{attribution}</div>
+			)}
 		</div>
 	);
 }
@@ -513,6 +582,7 @@ function UsageProviderRow({ harness }: { harness: SessionUsage["harnesses"][numb
 	return (
 		<UsageDisclosureRow
 			detailsLabel={t("inspector.usage.providerDetails", { name: harnessName })}
+			icon={<AgentAvatar className="size-4" decorative provider={harness.harness} />}
 			name={harnessName}
 			nameClassName="text-sm-md"
 			regionLabel={t("inspector.usage.providerPeek", { name: harnessName })}
@@ -527,26 +597,15 @@ function ProviderUsageDetails({ harness }: { harness: SessionUsage["harnesses"][
 	const { t } = useTranslation();
 
 	return (
-		<>
-			<div className="pb-2">
-				<UsageMetrics totals={harness.totals} />
-			</div>
-
-			<div className="border-t border-(--color-border-settings-input) pt-2">
-				<div className="grid grid-cols-[minmax(0,1fr)_4.5rem_5.5rem] items-center gap-2 px-1 pb-1 text-2xs text-settings-muted">
-					<span>{t("inspector.usage.models", { count: harness.models.length })}</span>
-					<span className="text-right">{t("inspector.usage.tokens")}</span>
-					<span className="text-right">{t("inspector.usage.cost")}</span>
-				</div>
-				{harness.models.length > 0 ? (
-					harness.models.map((model, index) => (
-						<UsageModelRow key={`${model.modelId}:${index}`} model={model} />
-					))
-				) : (
-					<p className="px-1 py-2 text-2xs text-settings-muted">{t("inspector.usage.noModelTelemetry")}</p>
-				)}
-			</div>
-		</>
+		<div>
+			{harness.models.length > 0 ? (
+				harness.models.map((model, index) => (
+					<UsageModelRow key={`${model.modelId}:${index}`} model={model} />
+				))
+			) : (
+				<p className="px-1 py-1 text-2xs text-settings-muted">{t("inspector.usage.noModelTelemetry")}</p>
+			)}
+		</div>
 	);
 }
 
@@ -616,13 +675,14 @@ function UsageModelRow({
 	model: SessionUsage["harnesses"][number]["models"][number];
 }) {
 	const { t } = useTranslation();
-	const modelName = model.modelId;
+	const modelName = formatModelName(model.modelId);
 
 	return (
 		<UsageDisclosureRow
 			detailsLabel={t("inspector.usage.modelDetails", { name: modelName })}
 			name={modelName}
-			nameClassName="font-mono text-2xs"
+			nameClassName="text-2xs"
+			nameTitle={model.modelId}
 			regionLabel={t("inspector.usage.modelPeek", { name: modelName })}
 			totals={model.totals}
 		>
@@ -634,31 +694,35 @@ function UsageModelRow({
 function UsageDisclosureRow({
 	children,
 	detailsLabel,
+	icon,
 	name,
 	nameClassName,
+	nameTitle,
 	regionLabel,
 	totals,
 }: {
 	children: ReactNode;
 	detailsLabel: string;
+	icon?: ReactNode;
 	name: string;
 	nameClassName: string;
+	nameTitle?: string;
 	regionLabel: string;
 	totals: SessionUsage["totals"];
 }) {
 	const { t } = useTranslation();
 	const [open, setOpen] = useState(false);
 	const detailID = useId();
-	const totalTokens = usageTokenTotal(totals);
-	const exactTotal = totalTokens?.toLocaleString("en-US");
+	const processedTokens = usageProcessedTokens(totals);
+	const exactProcessed = processedTokens?.toLocaleString("en-US");
 
 	return (
-		<div className="p-2">
+		<div className="px-1 py-0.5">
 			<button
 				aria-controls={detailID}
 				aria-expanded={open}
 				aria-label={detailsLabel}
-				className="grid w-full grid-cols-[minmax(0,1fr)_4.5rem_5.5rem] items-center gap-2 rounded-md px-1 py-2 text-left outline-none transition-colors hover:bg-interactive-hover focus-visible:bg-interactive-hover focus-visible:ring-1 focus-visible:ring-ring"
+				className="grid w-full grid-cols-[minmax(0,1fr)_4.5rem_5.5rem] items-center gap-2 rounded-md px-1 py-1 text-left outline-none transition-colors hover:bg-interactive-hover focus-visible:bg-interactive-hover focus-visible:ring-1 focus-visible:ring-ring"
 				onClick={() => setOpen((current) => !current)}
 				type="button"
 			>
@@ -668,20 +732,21 @@ function UsageDisclosureRow({
 					) : (
 						<ChevronRight aria-hidden="true" className="size-3 shrink-0 text-settings-muted" />
 					)}
-					<span className="truncate">{name}</span>
+					{icon}
+					<span className="truncate" title={nameTitle}>{name}</span>
 				</span>
 				<span
 					className="text-right font-mono text-2xs text-settings-label"
-					title={totalTokens === null ? undefined : t("inspector.usage.tokensExact", { count: exactTotal })}
+					title={processedTokens === null ? undefined : t("inspector.usage.processedTokensAria", { count: exactProcessed })}
 				>
-					{totalTokens === null ? "—" : formatTelemetryTokenValue(totalTokens)}
+					{processedTokens === null ? "—" : formatTelemetryTokenValue(processedTokens)}
 				</span>
 				<UsageCostPlaceholder />
 			</button>
 			{open ? (
 				<div
 					aria-label={regionLabel}
-					className="mx-1 mb-2 border-l border-(--color-border-settings-input) py-1.5 pl-2.5"
+					className="mx-1 mb-0.5 border-l border-(--color-border-settings-input) py-0.5 pl-2"
 					id={detailID}
 					role="region"
 				>
@@ -704,29 +769,44 @@ function UsageCostPlaceholder() {
 
 function UsageMetrics({ totals }: { totals: SessionUsage["totals"] }) {
 	const { t } = useTranslation();
+	const cacheHitRate = formatCacheHitRate(totals.cachedInputTokens, totals.inputTokens);
 	return (
-		<dl className="grid grid-cols-2 gap-x-4 gap-y-2 @max-[300px]/inspector:grid-cols-1">
-			<UsageMetric label={t("inspector.usage.inputTokens")} metric={totals.inputTokens} />
-			<UsageMetric label={t("inspector.usage.outputTokens")} metric={totals.outputTokens} />
-			<UsageMetric label={t("inspector.usage.cacheReadTokens")} metric={totals.cacheReadTokens} />
-			<UsageMetric label={t("inspector.usage.cacheWriteTokens")} metric={totals.cacheWriteTokens} />
-			<UsageMetric label={t("inspector.usage.reasoningTokens")} metric={totals.reasoningTokens} />
+		<dl className="grid grid-cols-2 gap-x-4 gap-y-2 @max-[300px]/inspector:grid-cols-1" data-testid="session-usage-metrics">
 			<UsageMetric label={t("inspector.usage.uncachedInputTokens")} metric={totals.uncachedInputTokens} />
+			<UsageMetric label={t("inspector.usage.cachedInputTokens")} metric={totals.cachedInputTokens} />
+			<UsageMetric label={t("inspector.usage.outputTokens")} metric={totals.outputTokens} />
+			<UsageRateMetric rate={cacheHitRate} />
 		</dl>
 	);
 }
 
-function UsageMetric({
-	label,
-	metric,
-}: {
-	label: string;
-	metric: SessionUsage["totals"]["inputTokens"];
-}) {
+function UsageRateMetric({ rate }: { rate: string | null }) {
 	const { t } = useTranslation();
-	const exactValue = metric?.toLocaleString("en-US");
+	const label = t("inspector.usage.cacheHitRate");
+	const description =
+		rate === null
+			? t("inspector.usage.metricUnavailable", { label })
+			: t("inspector.usage.cacheHitRateDescription", { rate });
+	return (
+		<div className="min-w-0">
+			<dt className="truncate text-2xs text-settings-muted">{label}</dt>
+			<dd
+				aria-label={description}
+				className="mt-0.5 truncate font-mono text-sm-md text-settings-label"
+				title={description}
+			>
+				{rate === null ? "—" : `${rate}%`}
+			</dd>
+		</div>
+	);
+}
+
+function UsageMetric({ label, metric }: { label: string; metric: number | null | undefined }) {
+	const { t } = useTranslation();
+	const value = typeof metric === "number" && Number.isFinite(metric) ? metric : null;
+	const exactValue = value?.toLocaleString("en-US");
 	const accessibleLabel =
-		metric === null
+		value === null
 			? t("inspector.usage.metricUnavailable", { label })
 			: t("inspector.usage.metricAria", { label, count: exactValue });
 	return (
@@ -736,24 +816,40 @@ function UsageMetric({
 				aria-label={accessibleLabel}
 				className="mt-0.5 truncate font-mono text-sm-md text-settings-label"
 				title={
-					metric === null
+					value === null
 						? t("inspector.usage.metricUnavailable", { label })
 						: t("inspector.usage.tokensExact", { count: exactValue })
 				}
 			>
-				{metric === null ? "—" : formatTelemetryTokenValue(metric)}
+				{value === null ? "—" : formatTelemetryTokenValue(value)}
 			</dd>
 		</div>
 	);
 }
 
+function formatCacheHitRate(
+	cachedInputTokens: number | null | undefined,
+	inputTokens: number | null | undefined,
+): string | null {
+	if (
+		typeof cachedInputTokens !== "number" ||
+		!Number.isFinite(cachedInputTokens) ||
+		typeof inputTokens !== "number" ||
+		!Number.isFinite(inputTokens) ||
+		inputTokens <= 0
+	) {
+		return null;
+	}
+	const percentage = Math.min(100, Math.max(0, (cachedInputTokens / inputTokens) * 100));
+	return percentage.toFixed(1).replace(/\.0$/, "");
+}
+
 const usageMetricKeys = [
+	"processedTokens",
 	"inputTokens",
+	"cachedInputTokens",
 	"uncachedInputTokens",
-	"cacheReadTokens",
-	"cacheWriteTokens",
 	"outputTokens",
-	"reasoningTokens",
 ] as const;
 
 function usageScopes(usage: SessionUsage): SessionUsage["totals"][] {
@@ -777,9 +873,8 @@ function formatTelemetryTokenValue(totalTokens: number): string {
 	return formatTokenCount(totalTokens).replace(/ tok$/, "");
 }
 
-function usageTokenTotal(totals: SessionUsage["totals"]): number | null {
-	if (totals.inputTokens === null && totals.outputTokens === null) return null;
-	return (totals.inputTokens ?? 0) + (totals.outputTokens ?? 0);
+function usageProcessedTokens(totals: SessionUsage["totals"]): number | null {
+	return totals.processedTokens;
 }
 
 function formatHarnessName(harness: string): string {
@@ -796,6 +891,34 @@ function formatHarnessName(harness: string): string {
 		.filter(Boolean)
 		.map((part) => part.charAt(0).toUpperCase() + part.slice(1))
 		.join(" ");
+}
+
+function formatModelName(modelID: string): string {
+	let parts = modelID.trim().split(/[-_]+/).filter(Boolean);
+	const isClaude = parts[0]?.toLowerCase() === "claude";
+	if (isClaude) {
+		parts = parts.slice(1);
+		if (/^\d{8}$/.test(parts.at(-1) ?? "")) parts = parts.slice(0, -1);
+		const familyIndex = parts.findIndex((part) => ["haiku", "sonnet", "opus"].includes(part.toLowerCase()));
+		if (familyIndex >= 0) {
+			const family = parts[familyIndex];
+			parts = [family, ...parts.slice(0, familyIndex), ...parts.slice(familyIndex + 1)];
+		}
+	}
+
+	const formatted: string[] = [];
+	for (let index = 0; index < parts.length; index += 1) {
+		const part = parts[index];
+		const next = parts[index + 1];
+		if (/^\d+$/.test(part) && /^\d+$/.test(next ?? "")) {
+			formatted.push(`${part}.${next}`);
+			index += 1;
+			continue;
+		}
+		const normalized = part.toLowerCase();
+		formatted.push(normalized === "gpt" || normalized === "glm" ? normalized.toUpperCase() : `${part.charAt(0).toUpperCase()}${part.slice(1)}`);
+	}
+	return formatted.join(" ") || modelID;
 }
 
 function ResumeAgentControl({ session }: { session: WorkspaceSession }) {

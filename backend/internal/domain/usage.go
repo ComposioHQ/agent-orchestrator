@@ -108,49 +108,105 @@ type UsageSourceContext struct {
 	BindingState   UsageBindingState
 }
 
-// UsageTokenMetrics is the normalized token vector stored on every usage event
-// and returned in aggregate summaries.
+// UsageProviderID identifies the provider vocabulary normalized into a usage
+// event. Provider-specific counters remain separate from the canonical totals.
+type UsageProviderID string
+
+// Usage provider identifiers.
+const (
+	UsageProviderOpenAI    UsageProviderID = "openai"
+	UsageProviderAnthropic UsageProviderID = "anthropic"
+)
+
+// UsageMetricProvenance describes how one canonical metric was obtained.
+type UsageMetricProvenance string
+
+// Usage metric provenance values.
+const (
+	UsageMetricReported    UsageMetricProvenance = "reported"
+	UsageMetricDerived     UsageMetricProvenance = "derived"
+	UsageMetricUnsupported UsageMetricProvenance = "unsupported"
+	UsageMetricUnknown     UsageMetricProvenance = "unknown"
+)
+
+// UsageMetricProvenanceSet records provenance independently for each canonical
+// metric so a known zero is distinguishable from unavailable data.
+type UsageMetricProvenanceSet struct {
+	InputTokens         UsageMetricProvenance
+	CachedInputTokens   UsageMetricProvenance
+	UncachedInputTokens UsageMetricProvenance
+	OutputTokens        UsageMetricProvenance
+}
+
+// UsageTokenMetrics is the provider-neutral token vector stored on every usage
+// event. Nil means unknown; a non-nil zero is a known zero.
 type UsageTokenMetrics struct {
-	InputTokens         int64
-	UncachedInputTokens int64
-	CacheReadTokens     int64
-	CacheWriteTokens    int64
-	OutputTokens        int64
-	ReasoningTokens     *int64
+	InputTokens         *int64
+	CachedInputTokens   *int64
+	UncachedInputTokens *int64
+	OutputTokens        *int64
+	Provenance          UsageMetricProvenanceSet
+}
+
+// OpenAIUsageDetails retains provider counters that are not part of the shared
+// four-metric vocabulary.
+type OpenAIUsageDetails struct {
+	ReasoningOutputTokens *int64
+	CacheWriteInputTokens *int64
+	ReportedTotalTokens   *int64
+}
+
+// AnthropicUsageDetails retains direct input and cache-creation counters. The
+// TTL buckets can be nil when an older transcript did not report them.
+type AnthropicUsageDetails struct {
+	DirectUncachedInputTokens  *int64
+	CacheCreationInputTokens   *int64
+	CacheCreation5mInputTokens *int64
+	CacheCreation1hInputTokens *int64
+}
+
+// UsageProviderDetails contains at most the detail block matching ProviderID.
+type UsageProviderDetails struct {
+	OpenAI    *OpenAIUsageDetails
+	Anthropic *AnthropicUsageDetails
 }
 
 // ModelUsageEvent is one append-only normalized usage fact.
 type ModelUsageEvent struct {
-	ModelID        string
-	Tokens         UsageTokenMetrics
-	SourceEventKey string
+	ProviderID      UsageProviderID
+	ModelID         string
+	Tokens          UsageTokenMetrics
+	ProviderDetails UsageProviderDetails
+	CreatedAt       time.Time
+	SourceEventKey  string
 }
 
 // UsageModelAggregate is the raw model-level aggregate read from storage before
 // the service applies user-facing coverage rules.
 type UsageModelAggregate struct {
-	Harness             AgentHarness
-	ModelID             string
-	Tokens              UsageTokenMetrics
-	ReasoningEventCount int64
+	Harness         AgentHarness
+	ModelID         string
+	Tokens          UsageTokenMetrics
+	ProviderDetails UsageProviderDetails
 }
 
 // CompactSessionUsage is the token-only dashboard read model.
 type CompactSessionUsage struct {
-	SessionID   SessionID
-	TotalTokens int64
-	Incomplete  bool
+	SessionID       SessionID
+	ProcessedTokens *int64
+	Incomplete      bool
 }
 
 // UsageMetricTotals is the aggregate metric block used by session, harness,
 // and model summaries.
 type UsageMetricTotals struct {
 	InputTokens         *int64
+	CachedInputTokens   *int64
 	UncachedInputTokens *int64
-	CacheReadTokens     *int64
-	CacheWriteTokens    *int64
 	OutputTokens        *int64
-	ReasoningTokens     *int64
+	ProcessedTokens     *int64
+	Provenance          UsageMetricProvenanceSet
+	ProviderDetails     UsageProviderDetails
 }
 
 // ModelUsageSummary is a per-exact-model aggregate.
