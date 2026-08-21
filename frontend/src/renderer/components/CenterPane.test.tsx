@@ -558,24 +558,24 @@ describe("CenterPane toolbar session label", () => {
 
 		const sessionTab = screen.getByRole("tab", { name: /^Claude Code/ });
 		expect(sessionTab).toHaveAttribute("aria-selected", "true");
-		expect(sessionTab.parentElement).toHaveClass(
+		expect(sessionTab).toHaveClass(
 			"self-stretch",
 			"bg-overlay",
 			"after:h-0.5",
 			"after:bg-foreground/80",
 		);
-		expect(sessionTab.parentElement).not.toHaveClass("session-primary-tab");
-		expect(sessionTab.parentElement).not.toHaveClass("rounded-md");
+		expect(sessionTab).not.toHaveClass("session-primary-tab");
+		expect(sessionTab).not.toHaveClass("rounded-md");
 		expect(sessionTab).toHaveAccessibleName("Claude Code · Working");
 		expect(sessionTab.querySelector('[title="Working"]')).toBeInTheDocument();
-		expect(sessionTab.parentElement?.querySelector('img[aria-hidden="true"]')).toBeInTheDocument();
+		expect(sessionTab.querySelector('img[aria-hidden="true"]')).toBeInTheDocument();
 		expect(screen.queryByRole("tab", { name: "review the change" })).not.toBeInTheDocument();
 	});
 
 	it("places the active session indicator along the bottom edge", () => {
 		renderCenterPane({ session: worker });
 
-		const classes = screen.getByRole("tab", { name: /^Claude Code/ }).parentElement?.classList;
+		const classes = screen.getByRole("tab", { name: /^Claude Code/ }).classList;
 		expect(classes?.contains("after:bottom-0")).toBe(true);
 		expect(classes?.contains("after:top-0")).toBe(false);
 	});
@@ -594,7 +594,7 @@ describe("CenterPane toolbar session label", () => {
 		});
 
 		const mainTab = screen.getByRole("tab", { name: /^Claude Code/ });
-		const mainContainer = mainTab.parentElement;
+		const mainContainer = mainTab;
 		expect(mainContainer).toHaveAttribute("data-terminal-role", "primary");
 		expect(mainContainer).toHaveClass("self-stretch", "bg-surface");
 		expect(mainContainer).not.toHaveClass("session-primary-tab");
@@ -620,7 +620,7 @@ describe("CenterPane toolbar session label", () => {
 		renderCenterPane({ session: worker, shellTerminals: [shell] });
 
 		const ownerTab = screen.getByRole("tab", { name: /^Claude Code/ });
-		const ownerCard = ownerTab.parentElement;
+		const ownerCard = ownerTab;
 		const scrollRegion = document.querySelector(".overflow-x-auto");
 		const avatar = ownerCard?.querySelector('img[aria-hidden="true"]');
 
@@ -717,7 +717,7 @@ describe("CenterPane toolbar session label", () => {
 		const shellTab = screen.getByRole("tab", { name: shell.title });
 		expect(reviewerTab).toHaveAttribute("aria-current", "true");
 		expect(reviewerTab.querySelector("img")).toHaveClass("size-terminal-agent-icon");
-		expect(reviewerTab.parentElement).toHaveClass(
+		expect(reviewerTab).toHaveClass(
 			"min-w-shell-tab-min",
 			"shrink-0",
 			"self-stretch",
@@ -732,13 +732,13 @@ describe("CenterPane toolbar session label", () => {
 			"self-stretch",
 			"w-shell-tab-connected",
 		);
-		expect(reviewerTab.parentElement).not.toHaveAttribute("data-terminal-role", "primary");
+		expect(reviewerTab).not.toHaveAttribute("data-terminal-role", "primary");
 		expect(screen.getByRole("tab", { name: /^Claude Code/ })).not.toHaveAttribute("aria-current", "true");
 		expect(reviewerTab.querySelector("img")).toHaveAttribute("src");
 		expect(screen.queryByRole("button", { name: "Back to agent" })).not.toBeInTheDocument();
 	});
 
-	it("opens reviewer from the tab strip when a reviewer handle exists", () => {
+	it("makes the full reviewer tile the interactive selection target", () => {
 		const onSelectReviewerTerminal = vi.fn();
 		renderCenterPane({
 			session: worker,
@@ -746,7 +746,12 @@ describe("CenterPane toolbar session label", () => {
 			onSelectReviewerTerminal,
 		});
 
-		fireEvent.click(screen.getByRole("tab", { name: "Reviewer" }));
+		const reviewerTab = screen.getByRole("tab", { name: "Reviewer" });
+		expect(reviewerTab).toHaveClass("self-stretch", "w-shell-tab-connected", "px-2", "cursor-pointer");
+		expect(reviewerTab).toHaveClass("focus-visible:outline-2", "focus-visible:outline-accent/50");
+		expect(reviewerTab.parentElement).not.toHaveClass("px-2", "w-shell-tab-connected");
+
+		fireEvent.click(reviewerTab);
 		expect(onSelectReviewerTerminal).toHaveBeenCalledWith({ handleId: "review-sess-1", harness: "codex" });
 	});
 
