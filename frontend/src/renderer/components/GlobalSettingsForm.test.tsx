@@ -157,7 +157,7 @@ describe("GlobalSettingsForm", () => {
 		// "Settings" heading is now in the modal dialog header, not in the form body
 		expect(screen.getByText("General")).toBeInTheDocument();
 		expect(screen.getByText("Language")).toBeInTheDocument();
-		expect(screen.getByText("Updates")).toBeInTheDocument();
+		expect(await screen.findByText("Updates")).toBeInTheDocument();
 		expect(screen.getByText("Get help")).toBeInTheDocument();
 		expect(screen.getByRole("button", { name: "Report a problem" })).toBeInTheDocument();
 	});
@@ -297,12 +297,11 @@ describe("GlobalSettingsForm", () => {
 
 	it("auto-saves when automatic updates are toggled", async () => {
 		renderForm();
-		await screen.findByLabelText("Automatic Updates");
-		await userEvent.click(screen.getByLabelText("Automatic Updates"));
-		await userEvent.click(await screen.findByRole("menuitem", { name: "Disabled" }));
+		await userEvent.click(await screen.findByRole("switch", { name: "Automatic Updates" }));
 		await waitFor(() =>
 			expect(setUpdate).toHaveBeenCalledWith(expect.objectContaining({ enabled: false, channel: "latest" })),
 		);
+		expect(screen.queryByLabelText("Updates channel")).not.toBeInTheDocument();
 	});
 
 	it("hides the nightly warning on the stable channel", async () => {
@@ -316,11 +315,43 @@ describe("GlobalSettingsForm", () => {
 		expect(await screen.findByText(/Current version - v1\.4\.0/)).toBeInTheDocument();
 	});
 
-	it("Check for updates icon triggers a manual check", async () => {
+	it("shows an explicit idle update state and triggers a manual check", async () => {
 		renderForm();
 		expect(await screen.findByText(/Current version - v1\.4\.0/)).toBeInTheDocument();
+		expect(screen.getByText("No update check yet.")).toBeInTheDocument();
 		await userEvent.click(screen.getByRole("button", { name: "Check for updates" }));
 		expect(updCheck).toHaveBeenCalled();
+	});
+
+	it("shows immediate animated feedback while a manual check is pending", async () => {
+		let finishCheck: () => void = () => undefined;
+		updCheck.mockReturnValue(
+			new Promise<void>((resolve) => {
+				finishCheck = resolve;
+			}),
+		);
+		renderForm();
+		const button = await screen.findByRole("button", { name: "Check for updates" });
+
+		await userEvent.click(button);
+
+		expect(button).toBeDisabled();
+		expect(button).toHaveTextContent("Checking for updates…");
+		expect(button.querySelector("svg")).toHaveClass("animate-spin");
+		expect(screen.getByRole("status")).toHaveTextContent("Checking for updates…");
+
+		act(() => finishCheck());
+		await waitFor(() => expect(button).toBeEnabled());
+	});
+
+	it("shows when the updater last completed a check", async () => {
+		const checkedAt = new Date("2026-08-19T12:51:00.000Z").getTime();
+		updGetStatus.mockResolvedValue({ state: "not-available", checkedAt });
+		renderForm();
+
+		const formatted = new Intl.DateTimeFormat("en", { dateStyle: "medium", timeStyle: "short" }).format(checkedAt);
+		expect(await screen.findByTestId("update-checked-at")).toHaveTextContent(`Last checked ${formatted}`);
+		expect(screen.getByRole("status")).toHaveTextContent("You're on the latest version.");
 	});
 
 	it("offers an Update button when an update is available and downloads it", async () => {

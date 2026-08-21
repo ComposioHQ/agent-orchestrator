@@ -698,8 +698,13 @@ export function SessionView({ sessionId }: SessionViewProps) {
 			setBrowserUnseen(sessionId, false);
 			return;
 		}
-		setInspectorViewForSession(sessionId, "browser");
-		setInspectorOpenForSession(sessionId, true);
+		// A new preview target used to force-switch the inspector to the Browser
+		// tab and pop it open, even if the user was looking at something else
+		// entirely (Reviews, a different session's Files tab, mid-typing in
+		// chat). Match the agent-activity effect below: badge it as unseen and
+		// let the user open Browser themselves when they're ready, instead of
+		// grabbing focus out from under them.
+		setBrowserUnseen(sessionId, true);
 	}, [
 		browserPoppedOut,
 		hasInspector,
@@ -708,8 +713,6 @@ export function SessionView({ sessionId }: SessionViewProps) {
 		sessionId,
 		setBrowserContentRevealed,
 		setBrowserUnseen,
-		setInspectorOpenForSession,
-		setInspectorViewForSession,
 	]);
 
 	// Agent browser commands are genuine browser activity even when they do not

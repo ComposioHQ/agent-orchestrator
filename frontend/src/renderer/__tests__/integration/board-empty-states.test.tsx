@@ -47,6 +47,18 @@ function respondWith(projects: Project[], sessions: Session[]) {
 	getMock.mockImplementation(async (url: string) => {
 		if (url === "/api/v1/projects") return { data: { projects }, error: undefined };
 		if (url === "/api/v1/sessions") return { data: { sessions }, error: undefined };
+		if (url === "/api/v1/system/requirements") {
+			// DaemonStartupLoader gates its phrase rotation on this readiness probe
+			// first; report a fully satisfied machine so board tests exercise the
+			// pre-existing phrase-rotation behavior instead of the install gate.
+			const requirements = [
+				{ id: "git", label: "git", satisfied: true, required: true, detail: "/usr/bin/git" },
+				{ id: "tmux", label: "tmux", satisfied: true, required: true, detail: "/usr/bin/tmux" },
+				{ id: "harness", label: "agent harness", satisfied: true, required: true, detail: "Claude Code" },
+				{ id: "gh", label: "gh", satisfied: true, required: false, detail: "/usr/bin/gh" },
+			];
+			return { data: { ready: true, requirements }, error: undefined };
+		}
 		return { data: undefined, error: undefined };
 	});
 }
@@ -124,6 +136,25 @@ beforeEach(() => {
 });
 
 describe("global board first launch", () => {
+	it("keeps the startup loader mounted while the requirements check is pending", async () => {
+		getMock.mockImplementation(async (url: string) => {
+			if (url === "/api/v1/projects") return { data: { projects: [] }, error: undefined };
+			if (url === "/api/v1/sessions") return { data: { sessions: [] }, error: undefined };
+			if (url === "/api/v1/system/requirements") return new Promise(() => {});
+			return { data: undefined, error: undefined };
+		});
+
+		renderBoard(<SessionsBoard />);
+
+		await waitFor(() => {
+			expect(getMock.mock.calls.some(([url]) => url === "/api/v1/projects")).toBe(true);
+			expect(getMock.mock.calls.some(([url]) => url === "/api/v1/sessions")).toBe(true);
+		});
+		expect(await screen.findByTestId("daemon-startup-loader")).toBeInTheDocument();
+		expect(screen.getByText("Checking your setup")).toBeInTheDocument();
+		expect(screen.queryByText("Add code to Agent Orchestrator")).not.toBeInTheDocument();
+	});
+
 	it("shows the startup loader instead of import while the daemon is booting", async () => {
 		respondWith([], []);
 		lastQueryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -145,7 +176,10 @@ describe("global board first launch", () => {
 		expect(await screen.findByTestId("daemon-startup-loader")).toHaveClass("ao-startup-screen");
 		expect(screen.getByRole("status", { name: "Agent Orchestrator is starting" })).toBeInTheDocument();
 		expect(screen.getByText("Agent Orchestrator")).toBeInTheDocument();
-		expect(screen.getByText("Starting local services")).toHaveAttribute("aria-hidden", "true");
+		// The loader gates on the system-requirements readiness check before its
+		// phrase rotation starts; the machine is fully satisfied here, so it
+		// briefly shows "All checks passed" and then falls through.
+		expect(await screen.findByText("Starting local services")).toHaveAttribute("aria-hidden", "true");
 		expect(screen.queryByText("Add code to Agent Orchestrator")).not.toBeInTheDocument();
 		expect(columnCount()).toBe(0);
 	});
