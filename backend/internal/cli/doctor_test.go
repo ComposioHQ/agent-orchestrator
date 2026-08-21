@@ -360,6 +360,7 @@ func TestDoctorProbesSelfManagedGitLabHost(t *testing.T) {
 	})
 	t.Setenv("AO_GITLAB_TOKEN", "env-token")
 	t.Setenv("AO_GITLAB_ALLOWED_HOSTS", "GitLab.Internal:8443")
+	t.Setenv("AO_GITLAB_HOST_TOKENS", "gitlab.internal:8443=host-pat")
 	c.deps.HTTPClient = srv.Client()
 	c.deps.DoctorGitLabRESTBase = dotCom.URL
 	c.deps.DoctorGitLabHostRESTBase = func(host string) string {
@@ -374,13 +375,49 @@ func TestDoctorProbesSelfManagedGitLabHost(t *testing.T) {
 	if check.Level != doctorPass || !strings.Contains(check.Message, "self-hosted-user") {
 		t.Fatalf("gitlab-token check = %+v, want PASS for the self-managed host", check)
 	}
-	if got := tokens(); len(got) != 1 || got[0] != "env-token" {
-		t.Fatalf("self-managed probe tokens = %v, want the default token once", got)
+	if got := tokens(); len(got) != 1 || got[0] != "host-pat" {
+		t.Fatalf("self-managed probe tokens = %v, want the host's own token once", got)
 	}
-	// The default token is also the self-managed host's token here, so it must
-	// never leave for gitlab.com.
-	if got := dotComTokens(); len(got) != 0 {
-		t.Fatalf("gitlab.com probe tokens = %v, want no gitlab.com request for a shared credential", got)
+	// The host has its own credential, so the global default is attributable to
+	// gitlab.com and is validated there.
+	if got := dotComTokens(); len(got) != 1 || got[0] != "env-token" {
+		t.Fatalf("gitlab.com probe tokens = %v, want the global default once", got)
+	}
+}
+
+// TestDoctorNeverSendsTheGlobalDefaultToASelfManagedHost covers the other half
+// of the credential boundary: an allowlisted host with nothing bound to it is
+// reached only by AO_GITLAB_TOKEN/GITLAB_TOKEN, which nothing attributes to
+// that instance. Sending it would hand a likely-gitlab.com credential to
+// whoever operates the server, so doctor reports the host instead of probing
+// it — and gitlab.com, whose token this most likely is, is still validated.
+func TestDoctorNeverSendsTheGlobalDefaultToASelfManagedHost(t *testing.T) {
+	setConfigEnv(t)
+	clearDoctorGitLabEnv(t)
+	selfHosted, hostTokens := gitlabDoctorHostServer(t, http.StatusOK, `{"username":"self-hosted-user"}`)
+	dotCom, dotComTokens := gitlabDoctorHostServer(t, http.StatusOK, `{"username":"dotcom-user"}`)
+	c := doctorContext(t, map[string]string{"git": "/bin/git"}, func(context.Context, string, ...string) ([]byte, error) {
+		return []byte("git version 2.43.0\n"), nil
+	})
+	t.Setenv("AO_GITLAB_TOKEN", "dotcom-pat")
+	t.Setenv("AO_GITLAB_ALLOWED_HOSTS", "gitlab.internal")
+	c.deps.HTTPClient = dotCom.Client()
+	c.deps.DoctorGitLabRESTBase = dotCom.URL
+	c.deps.DoctorGitLabHostRESTBase = func(string) string { return selfHosted.URL }
+
+	checks := c.runDoctor(context.Background())
+	check := findDoctorCheck(t, checks, "gitlab-token:gitlab.internal")
+	if check.Level != doctorWarn || !strings.Contains(check.Message, "not probed") {
+		t.Fatalf("self-managed check = %+v, want WARN reporting the skipped probe", check)
+	}
+	if got := hostTokens(); len(got) != 0 {
+		t.Fatalf("self-managed probe tokens = %v, want the global default never sent to an internal host", got)
+	}
+	if check := findDoctorCheck(t, checks, "gitlab-token"); check.Level != doctorPass {
+		t.Fatalf("gitlab.com check = %+v, want PASS: nothing else claims that token", check)
+	}
+	if got := dotComTokens(); len(got) != 1 || got[0] != "dotcom-pat" {
+		t.Fatalf("gitlab.com probe tokens = %v, want the global default once", got)
 	}
 }
 
@@ -399,6 +436,9 @@ func TestDoctorNeverSendsSelfManagedTokenToDotCom(t *testing.T) {
 	})
 	t.Setenv("AO_GITLAB_TOKEN", "self-managed-token")
 	t.Setenv("AO_GITLAB_ALLOWED_HOSTS", "gitlab.internal")
+	// The host binds that same value, so the credential is attributable to the
+	// internal instance and gitlab.com's claim on it is ambiguous.
+	t.Setenv("AO_GITLAB_HOST_TOKENS", "gitlab.internal=self-managed-token")
 	c.deps.HTTPClient = dotCom.Client()
 	c.deps.DoctorGitLabRESTBase = dotCom.URL
 	c.deps.DoctorGitLabHostRESTBase = func(string) string { return selfHosted.URL }
@@ -492,7 +532,9 @@ func TestDoctorProbesDotComWithItsOwnToken(t *testing.T) {
 // TestDoctorIgnoresEmptyPerHostGitLabToken covers `host=` in
 // AO_GITLAB_HOST_TOKENS: an empty override is not a credential. Doctor must
 // fall back to the default token chain, exactly as the daemon's
-// gitlabHostTokenSources does, instead of validating an empty token.
+// gitlabHostTokenSources does, instead of validating an empty token — and it
+// must say so, because an entry the user believes is in use being read by
+// nobody is exactly the silent misconfiguration doctor exists to surface.
 func TestDoctorIgnoresEmptyPerHostGitLabToken(t *testing.T) {
 	setConfigEnv(t)
 	clearDoctorGitLabEnv(t)
@@ -508,12 +550,19 @@ func TestDoctorIgnoresEmptyPerHostGitLabToken(t *testing.T) {
 	c.deps.DoctorGitLabRESTBase = dotCom.URL
 	c.deps.DoctorGitLabHostRESTBase = func(string) string { return srv.URL }
 
-	check := findDoctorCheck(t, c.runDoctor(context.Background()), "gitlab-token:gitlab.internal")
-	if check.Level != doctorPass || !strings.Contains(check.Message, "AO_GITLAB_TOKEN") {
-		t.Fatalf("gitlab-token check = %+v, want PASS sourced from the default token", check)
+	checks := c.runDoctor(context.Background())
+	// Nothing is bound to the host, so the global default is all that is left
+	// for it — reported, not sent.
+	check := findDoctorCheck(t, checks, "gitlab-token:gitlab.internal")
+	if check.Level != doctorWarn || !strings.Contains(check.Message, "AO_GITLAB_TOKEN") {
+		t.Fatalf("gitlab-token check = %+v, want WARN naming the global default", check)
 	}
-	if got := tokens(); len(got) != 1 || got[0] != "env-token" {
-		t.Fatalf("probe tokens = %v, want the default token, not an empty override", got)
+	if got := tokens(); len(got) != 0 {
+		t.Fatalf("probe tokens = %v, want no request from an empty override", got)
+	}
+	unused := findDoctorCheck(t, checks, "gitlab-host-tokens")
+	if unused.Level != doctorWarn || !strings.Contains(unused.Message, "no token value") {
+		t.Fatalf("gitlab-host-tokens check = %+v, want WARN flagging the valueless entry", unused)
 	}
 }
 
@@ -532,6 +581,9 @@ func TestDoctorWarnsWhenSelfManagedHostUnreachable(t *testing.T) {
 	})
 	t.Setenv("AO_GITLAB_TOKEN", "env-token")
 	t.Setenv("AO_GITLAB_ALLOWED_HOSTS", "gitlab.internal")
+	// The host needs a credential of its own, or doctor reports it as unprobed
+	// before it ever reaches the network.
+	t.Setenv("AO_GITLAB_HOST_TOKENS", "gitlab.internal=host-pat")
 	c.deps.HTTPClient = dotCom.Client()
 	c.deps.DoctorGitLabRESTBase = dotCom.URL
 	c.deps.DoctorGitLabHostRESTBase = func(string) string { return unreachableURL }
@@ -604,15 +656,16 @@ func TestDoctorProbesEveryAllowedGitLabHost(t *testing.T) {
 	})
 	t.Setenv("AO_GITLAB_TOKEN", "env-token")
 	t.Setenv("AO_GITLAB_ALLOWED_HOSTS", "gitlab.com, www.gitlab.com, GitLab.Internal , gitlab.internal,")
+	t.Setenv("AO_GITLAB_HOST_TOKENS", "gitlab.internal=host-token")
 	c.deps.HTTPClient = dotCom.Client()
 	c.deps.DoctorGitLabRESTBase = dotCom.URL
 	c.deps.DoctorGitLabHostRESTBase = func(string) string { return selfHosted.URL }
 
 	checks := c.runDoctor(context.Background())
-	// The default token is shared with gitlab.internal, so gitlab.com is
-	// reported as skipped rather than probed with a possibly-internal token.
-	if check := findDoctorCheck(t, checks, "gitlab-token"); check.Level != doctorWarn || !strings.Contains(check.Message, "not probed") {
-		t.Fatalf("gitlab.com check = %+v, want WARN reporting the skipped probe", check)
+	// The internal host carries its own credential, so the default token is
+	// gitlab.com's and is probed there.
+	if check := findDoctorCheck(t, checks, "gitlab-token"); check.Level != doctorPass {
+		t.Fatalf("gitlab.com check = %+v, want PASS for the default token", check)
 	}
 	check := findDoctorCheck(t, checks, "gitlab-token:gitlab.internal")
 	if check.Level != doctorFail || !strings.Contains(check.Message, "HTTP 401") {

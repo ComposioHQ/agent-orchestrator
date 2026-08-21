@@ -472,6 +472,48 @@ func TestGLabAuthTokenFallsBackToAttributedUnscopedToken(t *testing.T) {
 	}
 }
 
+// TestGLabAuthTokenReadsAUsableBlockFromAFailedRun covers a multi-instance
+// glab: `glab auth status` exits non-zero when *any* configured instance is
+// unauthenticated, while still printing a usable block for the ones that are.
+// Gating on the exit code would leave a perfectly good instance without a
+// credential because some unrelated host has a stale session.
+func TestGLabAuthTokenReadsAUsableBlockFromAFailedRun(t *testing.T) {
+	run := func(_ context.Context, args ...string) (string, error) {
+		for _, a := range args {
+			if a == "--hostname" {
+				return "", errors.New("exit status 1")
+			}
+		}
+		return glabModernFormatMultiHost, errors.New("exit status 1")
+	}
+	tok, err := glabAuthTokenWith(context.Background(), "gitlab.internal:8443", run)
+	if err != nil {
+		t.Fatalf("glabAuthTokenWith: %v", err)
+	}
+	if tok != "glpat-internal" {
+		t.Fatalf("token = %q, want the host's token despite the non-zero exit", tok)
+	}
+}
+
+// TestGLabAuthTokenRejectsANonCredentialTokenLine covers the line a status
+// block prints next to the credential: "Token expires: <date>" names a date,
+// not a token, and sending it as a PRIVATE-TOKEN would 401 every call while
+// looking like a rejected credential rather than a parse bug.
+func TestGLabAuthTokenRejectsANonCredentialTokenLine(t *testing.T) {
+	const expiryFirst = "gitlab.internal\n" +
+		"  ✓ Logged in to gitlab.internal as alice (keyring)\n" +
+		"  ✓ Token expires: 2026-01-01\n" +
+		"  ✓ Token: glpat-internal\n"
+	run := func(_ context.Context, _ ...string) (string, error) { return expiryFirst, nil }
+	tok, err := glabAuthTokenWith(context.Background(), "gitlab.internal", run)
+	if err != nil {
+		t.Fatalf("glabAuthTokenWith: %v", err)
+	}
+	if tok != "glpat-internal" {
+		t.Fatalf("token = %q, want the credential rather than the expiry date", tok)
+	}
+}
+
 // TestGLabAuthTokenRejectsAnotherInstancesToken is the credential boundary: a
 // glab whose own default host is a self-managed instance must never hand that
 // instance's token to a caller asking about gitlab.com.

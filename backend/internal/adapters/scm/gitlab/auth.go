@@ -262,25 +262,23 @@ func glabAuthToken(ctx context.Context, hostname string) (string, error) {
 func glabAuthTokenWith(ctx context.Context, hostname string, run glabRunner) (string, error) {
 	args := []string{"auth", "status", "--show-token"}
 	host := NormalizeHost(hostname)
+	// The exit code is not the gate on the output: `glab auth status` exits
+	// non-zero when *any* configured instance is unauthenticated, while still
+	// printing a usable block for every instance that is. Gating on it would
+	// drop a valid token because some unrelated host has a stale session.
 	if host == "" {
-		out, err := run(ctx, args...)
-		if err != nil {
-			return "", ErrNoToken
-		}
+		out, _ := run(ctx, args...)
 		if token := ParseGLabTokenLine(out); token != "" {
 			return token, nil
 		}
 		return "", ErrNoToken
 	}
-	if out, err := run(ctx, append(append([]string{}, args...), "--hostname", host)...); err == nil {
-		if token := ParseGLabTokenLine(out); token != "" {
+	if out, _ := run(ctx, append(append([]string{}, args...), "--hostname", host)...); out != "" {
+		if token := GLabScopedToken(out, host); token != "" {
 			return token, nil
 		}
 	}
-	out, err := run(ctx, args...)
-	if err != nil {
-		return "", ErrNoToken
-	}
+	out, _ := run(ctx, args...)
 	if token := GLabTokenForHost(out, host); token != "" {
 		return token, nil
 	}
@@ -295,23 +293,15 @@ func glabAuthTokenWith(ctx context.Context, hostname string, run glabRunner) (st
 // and the token value (e.g. "✓ Token found: glpat-xxx"). The function scans
 // all lines so it is robust against reordering of fields or checkmark prefixes
 // in future glab versions.
+//
+// Only "Token:" and "Token found:" name the credential itself
+// (glabTokenLineValue): a line such as "Token expires: 2026-01-01" carries a
+// value that is not a token, and returning it would send a date to GitLab as
+// a PRIVATE-TOKEN.
 func ParseGLabTokenLine(output string) string {
 	for _, line := range strings.Split(output, "\n") {
-		line = strings.TrimSpace(line)
-		// Match any line containing "Token" — handles both "Token: xxx"
-		// and "✓ Token found: xxx" formats across glab versions.
-		tokenIdx := strings.Index(line, "Token")
-		if tokenIdx < 0 {
-			continue
-		}
-		// Find the colon after "Token" and take everything after it.
-		colonIdx := strings.Index(line[tokenIdx:], ":")
-		if colonIdx < 0 {
-			continue
-		}
-		val := strings.TrimSpace(line[tokenIdx+colonIdx+1:])
-		if val != "" {
-			return val
+		if token := glabTokenLineValue(strings.TrimSpace(line)); token != "" {
+			return token
 		}
 	}
 	return ""
@@ -374,6 +364,23 @@ func glabHasHost(pairs []glabHostToken, host string) bool {
 		}
 	}
 	return false
+}
+
+// GLabScopedToken reads the token out of `glab auth status --show-token
+// --hostname <host>` output. The `--hostname` flag is a request, not a
+// guarantee: a glab that does not support it (or does not honor it) prints the
+// full multi-instance block, and taking the first token line there would
+// attribute another instance's credential to host. So the host-attributed
+// token wins, and the unattributed first-token reading is only used when the
+// output names no instance at all.
+func GLabScopedToken(output, host string) string {
+	if token := GLabTokenForHost(output, host); token != "" {
+		return token
+	}
+	if len(parseGLabHostTokens(output)) > 0 {
+		return ""
+	}
+	return ParseGLabTokenLine(output)
 }
 
 // GLabTokenForHost returns the token `glab auth status --show-token` output
@@ -446,6 +453,11 @@ func glabBareHostLine(line string) string {
 // glabTokenLineValue returns the token a status line carries, or "" when the
 // line is not the token line. Lines such as "Token expires: <date>" are
 // rejected: only "Token:" and "Token found:" name the credential itself.
+//
+// A value containing whitespace is rejected too. No GitLab token contains a
+// space, so such a value is prose — "error: Token: expired or revoked" is a
+// diagnostic, not a credential, and this is what keeps a failing glab's output
+// from being read as one now that the exit code no longer gates parsing.
 func glabTokenLineValue(line string) string {
 	idx := strings.Index(line, "Token")
 	if idx < 0 {
@@ -459,7 +471,11 @@ func glabTokenLineValue(line string) string {
 	if label := strings.ToLower(strings.TrimSpace(rest[:colon])); label != "" && label != "found" {
 		return ""
 	}
-	return strings.TrimSpace(rest[colon+1:])
+	token := strings.TrimSpace(rest[colon+1:])
+	if strings.ContainsAny(token, " \t") {
+		return ""
+	}
+	return token
 }
 
 // HostTokenSource is the token chain for one self-managed GitLab host: the
