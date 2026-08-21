@@ -178,6 +178,11 @@ Download the latest AO desktop app for your platform. AO checks for updates auto
 | Linux (Debian/Ubuntu) | [Download](https://github.com/Untrivial-ai/agent-orchestrator/releases/latest/download/agent-orchestrator-linux-x64.deb)      |
 | Linux (Fedora/RHEL)   | [Download](https://github.com/Untrivial-ai/agent-orchestrator/releases/latest/download/agent-orchestrator-linux-x64.rpm)      |
 
+On Linux, the deb and rpm packages also put the bundled `ao` CLI on your PATH as
+`/usr/bin/ao`, so `ao --version` and `ao preview <url>` work in any terminal. The
+AppImage is a single file and cannot add anything to your PATH: run `ao start`
+from the app, or link the CLI out of an extracted AppImage yourself.
+
 Open Agent Orchestrator and point it at the repository you want AO to manage. The desktop app runs the daemon for you, so no CLI is required. See the [installation guide](https://aoagents.dev/docs/installation) for agent CLI setup and troubleshooting.
 
 ## Report a bug

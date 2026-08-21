@@ -164,12 +164,18 @@ The AppImage keeps updating itself. It is the file the `ao start` bootstrapper d
 
 *Why: so `ao --version` and `ao preview` work after installing AO.*
 
-- [ ] Unpack a real released `.deb` and `.rpm` and list what is inside. The Go binary is expected at `usr/lib/agent-orchestrator/resources/daemon/ao`, but confirm it. Every step below depends on the real path, not that guess.
-- [ ] Confirm the bundled binary is the full CLI, not just the daemon: `ao --help` should list `preview`, `start` and the rest.
-- [ ] Add a `/usr/bin/ao` link to the deb and rpm payloads. `electron-installer-debian` supports extra links through maker options; if it cannot express this, do it in a Forge `postMake` hook instead.
-- [ ] Decide whether `ao` is too generic a name to claim. Check the Debian, Fedora and Arch official repositories for a package that already installs `/usr/bin/ao`. If one exists, ship `agent-orchestrator-cli` and only link `ao` where it is free.
-- [ ] AppImage users cannot get a PATH entry from a single file. Document the workaround (extract the binary, or use `ao start`).
-- [ ] **Verify:** on a fresh deb install and a fresh rpm install, `ao --version` and `ao preview https://example.com` both work in a new shell.
+- [x] Unpack a real released `.deb` and `.rpm` and list what is inside. Both (v0.12.6) have the same layout, and the guessed path was right:
+  - `/usr/lib/agent-orchestrator/resources/daemon/ao` (the Go binary, 30 MB)
+  - `/usr/bin/agent-orchestrator` (symlink to `../lib/agent-orchestrator/agent-orchestrator`)
+  - `/usr/share/applications/agent-orchestrator.desktop`
+  - `/usr/share/pixmaps/agent-orchestrator.png` (a single pixmap, **not** `hicolor`, because the makers are passed one icon file rather than a size map)
+- [x] Confirm the bundled binary is the full CLI, not just the daemon: `ao --help` lists `preview`, `start`, `session`, `spawn` and the rest. (`ao --version` prints `ao version dev` in the released deb, so the release build is not stamping a version. Separate bug, not this plan.)
+- [x] Add a `/usr/bin/ao` link to the deb and rpm payloads. Neither maker can carry it in the payload: `electron-installer-debian` emits exactly one `/usr/bin` symlink (the launcher, from the `bin` option) with no option for a second, and `electron-installer-redhat` generates a spec whose `%files` list is fixed, so an extra file in the buildroot fails the build as unpackaged. Done with maintainer scripts instead (`frontend/packaging/linux/`), wired through `LINUX_CLI_SCRIPTS` in `forge.config.ts`: `postinst`/`postrm` for the deb, `%post`/`%postun` for the rpm. Each one refuses to touch a `/usr/bin/ao` that points somewhere else, and removal only fires on a real uninstall, not on the upgrade half of a reinstall.
+- [x] Decide whether `ao` is too generic a name to claim. Nothing owns `/usr/bin/ao` in Debian trixie (contents search), Arch `core` or `extra` (their `.files` databases), or the rpmfind index of Fedora and friends. Claimed as `ao`; `agent-orchestrator-cli` not needed.
+- [x] AppImage users cannot get a PATH entry from a single file. Documented in `README.md` under the download table: use `ao start`, or link the CLI out of an extracted AppImage.
+- [x] **Verify:** done in containers, against the released v0.12.6 packages with the new scripts grafted on.
+  - `debian:trixie`: `apt-get install ./ao-test.deb` creates the link; `ao --version` and `ao --help` work; a reinstall keeps the link; `apt-get remove` deletes it.
+  - `fedora:latest`: the released rpm installed with `dnf`, then the two scriptlet bodies run exactly as rpm runs them (`$1` = 1, 2, then 0). Link appears, survives the upgrade-shaped `%postun`, disappears on erase, and a foreign `/usr/bin/ao` is left untouched.
 
 ### A2. Stop package-manager installs from self-updating
 
