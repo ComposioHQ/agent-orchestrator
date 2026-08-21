@@ -752,8 +752,11 @@ export function DeliveryChoice({
 	disabled?: boolean;
 }) {
 	return (
+		// A group, not a status: these chips label what each keystroke will do,
+		// they are not a live region announcing an event. `status` also made this
+		// shadow the steer refusal below, which is the real one.
 		<div
-			role="status"
+			role="group"
 			aria-label="Where this message goes while the agent is working"
 			className="flex h-7 shrink-0 items-center gap-1"
 		>

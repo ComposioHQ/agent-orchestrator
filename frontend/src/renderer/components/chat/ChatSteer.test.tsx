@@ -18,9 +18,9 @@ describe("ChatComposer steering", () => {
 
 	it("shows delivery indicators while a turn is running", () => {
 		composer();
-		const status = screen.getByRole("status");
-		expect(within(status).getByText("Queue")).toBeInTheDocument();
-		expect(within(status).getByText("Steer")).toBeInTheDocument();
+		const delivery = screen.getByRole("group", { name: /where this message goes/i });
+		expect(within(delivery).getByText("Queue")).toBeInTheDocument();
+		expect(within(delivery).getByText("Steer")).toBeInTheDocument();
 	});
 
 	it("queues by default while a turn is running", async () => {
@@ -35,7 +35,7 @@ describe("ChatComposer steering", () => {
 
 	it("reports the daemon's refusal without a second message of its own", () => {
 		composer({ steerRefusal: "A compaction turn is running. Try again once it finishes." });
-		expect(screen.getAllByRole("status")[0]).toHaveTextContent(/compaction turn is running/);
+		expect(screen.getByRole("status")).toHaveTextContent(/compaction turn is running/);
 	});
 
 	it("hides delivery indicators when the harness cannot steer", () => {
