@@ -2106,6 +2106,7 @@ export interface components {
         ConversationThreadStatePayload: {
             archivedAt?: null | string;
             closedAt?: null | string;
+            connectionLostAt?: null | string;
             /** @enum {string} */
             status?: "active" | "idle" | "not_loaded" | "system_error" | "closed";
             waitingOn?: string[];
