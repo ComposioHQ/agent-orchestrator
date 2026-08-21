@@ -704,29 +704,37 @@ function UsageCostPlaceholder() {
 
 function UsageMetrics({ totals }: { totals: SessionUsage["totals"] }) {
 	const { t } = useTranslation();
+	const cacheHitRate = formatCacheHitRate(totals.cachedInputTokens, totals.inputTokens);
 	return (
 		<dl className="grid grid-cols-2 gap-x-4 gap-y-2 @max-[300px]/inspector:grid-cols-1" data-testid="session-usage-metrics">
 			<UsageMetric label={t("inspector.usage.uncachedInputTokens")} metric={totals.uncachedInputTokens} />
 			<UsageMetric label={t("inspector.usage.inputTokens")} metric={totals.inputTokens} />
-			<UsageMetric label={t("inspector.usage.cachedInputTokens")} metric={totals.cachedInputTokens} />
+			<UsageMetric
+				detail={cacheHitRate === null ? undefined : t("inspector.usage.cacheHitRate", { rate: cacheHitRate })}
+				label={t("inspector.usage.cachedInputTokens")}
+				metric={totals.cachedInputTokens}
+			/>
 			<UsageMetric label={t("inspector.usage.outputTokens")} metric={totals.outputTokens} />
 		</dl>
 	);
 }
 
 function UsageMetric({
+	detail,
 	label,
 	metric,
 }: {
+	detail?: string;
 	label: string;
-	metric: number | null;
+	metric: number | null | undefined;
 }) {
 	const { t } = useTranslation();
-	const exactValue = metric?.toLocaleString("en-US");
+	const value = typeof metric === "number" && Number.isFinite(metric) ? metric : null;
+	const exactValue = value?.toLocaleString("en-US");
 	const accessibleLabel =
-		metric === null
+		value === null
 			? t("inspector.usage.metricUnavailable", { label })
-			: t("inspector.usage.metricAria", { label, count: exactValue });
+			: [t("inspector.usage.metricAria", { label, count: exactValue }), detail].filter(Boolean).join("; ");
 	return (
 		<div className="min-w-0">
 			<dt className="truncate text-2xs text-settings-muted">{label}</dt>
@@ -734,15 +742,33 @@ function UsageMetric({
 				aria-label={accessibleLabel}
 				className="mt-0.5 truncate font-mono text-sm-md text-settings-label"
 				title={
-					metric === null
+					value === null
 						? t("inspector.usage.metricUnavailable", { label })
-						: t("inspector.usage.tokensExact", { count: exactValue })
+						: [t("inspector.usage.tokensExact", { count: exactValue }), detail].filter(Boolean).join(" · ")
 				}
 			>
-				{metric === null ? "—" : formatTelemetryTokenValue(metric)}
+				{value === null ? "—" : formatTelemetryTokenValue(value)}
+				{value !== null && detail ? <span className="text-2xs text-settings-muted"> · {detail}</span> : null}
 			</dd>
 		</div>
 	);
+}
+
+function formatCacheHitRate(
+	cachedInputTokens: number | null | undefined,
+	inputTokens: number | null | undefined,
+): string | null {
+	if (
+		typeof cachedInputTokens !== "number" ||
+		!Number.isFinite(cachedInputTokens) ||
+		typeof inputTokens !== "number" ||
+		!Number.isFinite(inputTokens) ||
+		inputTokens <= 0
+	) {
+		return null;
+	}
+	const percentage = Math.min(100, Math.max(0, (cachedInputTokens / inputTokens) * 100));
+	return percentage.toFixed(1).replace(/\.0$/, "");
 }
 
 const usageMetricKeys = [

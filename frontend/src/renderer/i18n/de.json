@@ -1220,6 +1220,7 @@
 	"inspector.usage.agent": "Agent",
 	"inspector.usage.inputTokens": "Eingabe gesamt",
 	"inspector.usage.cachedInputTokens": "Zwischengespeicherte Eingabe",
+	"inspector.usage.cacheHitRate": "{{rate}} % Treffer",
 	"inspector.usage.uncachedInputTokens": "Nicht zwischengespeicherte Eingabe",
 	"inspector.usage.outputTokens": "Ausgabe gesamt",
 	"inspector.usage.comingSoon": "Bald verfügbar",

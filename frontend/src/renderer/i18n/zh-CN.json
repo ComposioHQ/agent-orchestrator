@@ -1202,6 +1202,7 @@
 	"inspector.usage.agent": "代理",
 	"inspector.usage.inputTokens": "总输入",
 	"inspector.usage.cachedInputTokens": "缓存输入",
+	"inspector.usage.cacheHitRate": "命中率 {{rate}}%",
 	"inspector.usage.uncachedInputTokens": "未缓存输入",
 	"inspector.usage.outputTokens": "总输出",
 	"inspector.usage.comingSoon": "即将推出",

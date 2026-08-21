@@ -1235,6 +1235,7 @@
 	"inspector.usage.agent": "Agent",
 	"inspector.usage.inputTokens": "Entrée totale",
 	"inspector.usage.cachedInputTokens": "Entrée en cache",
+	"inspector.usage.cacheHitRate": "{{rate}} % de hits",
 	"inspector.usage.uncachedInputTokens": "Entrée hors cache",
 	"inspector.usage.outputTokens": "Sortie totale",
 	"inspector.usage.comingSoon": "Bientôt disponible",

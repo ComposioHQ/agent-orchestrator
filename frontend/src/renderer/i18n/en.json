@@ -1205,6 +1205,7 @@
 	"inspector.usage.agent": "Agent",
 	"inspector.usage.inputTokens": "Total Input",
 	"inspector.usage.cachedInputTokens": "Cached Input",
+	"inspector.usage.cacheHitRate": "{{rate}}% hit",
 	"inspector.usage.uncachedInputTokens": "Uncached Input",
 	"inspector.usage.outputTokens": "Total Output",
 	"inspector.usage.comingSoon": "Coming soon",
