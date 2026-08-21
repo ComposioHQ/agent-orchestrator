@@ -49,7 +49,7 @@ import {
 import { useSessionUsage, type SessionUsage } from "../hooks/useSessionUsage";
 import { useSessionWorkspaceFilesChangedCount } from "../hooks/useSessionWorkspaceFiles";
 import { clearTerminateSessionState, useTerminateSession } from "../hooks/useTerminateSession";
-import { formatCostNanos, formatEstimatedCost, type EstimatedCost } from "../lib/format-cost";
+import { formatEstimatedCost, type EstimatedCost } from "../lib/format-cost";
 import { prBrowserUrl, prCardPresentation, prNounKeys, sessionPRDisplaySummaries } from "../lib/pr-display";
 import { formatTokenCount } from "../lib/format-token-count";
 import type { WorkspaceSession, WorkspaceSummary } from "../types/workspace";
@@ -429,18 +429,6 @@ function UsageCostTelemetry({ usage }: { usage: SessionUsage }) {
 				</div>
 			</div>
 
-			<div
-				className="mt-3 rounded-lg border border-(--color-border-settings-input) bg-(--color-bg-settings-input) px-2.5 py-2.5"
-				data-testid="session-estimated-cost"
-			>
-				<dl className="grid grid-cols-[1fr_auto] gap-x-4 gap-y-1 text-xs">
-					<InspectorCostRow label={t("usage.input")} nanos={usage.totals.estimatedCost?.uncachedInputNanos ?? null} />
-					<InspectorCostRow label={t("usage.cacheRead")} nanos={usage.totals.estimatedCost?.cacheReadNanos ?? null} />
-					<InspectorCostRow label={t("usage.cacheWrite")} nanos={usage.totals.estimatedCost?.cacheWriteNanos ?? null} />
-					<InspectorCostRow label={t("usage.output")} nanos={usage.totals.estimatedCost?.outputNanos ?? null} />
-				</dl>
-			</div>
-
 			{usage.harnesses.length === 1 ? (
 				<UsageAgentAttribution harness={usage.harnesses[0]} />
 			) : usage.harnesses.length > 1 ? (
@@ -459,15 +447,6 @@ function UsageCostTelemetry({ usage }: { usage: SessionUsage }) {
 				</div>
 			) : null}
 		</div>
-	);
-}
-
-function InspectorCostRow({ label, nanos }: { label: string; nanos: EstimatedCost["totalNanos"] | null }) {
-	return (
-		<>
-			<dt className="text-settings-muted">{label}</dt>
-			<dd className="text-right font-mono tabular-nums text-settings-label">{formatCostNanos(nanos) ?? "—"}</dd>
-		</>
 	);
 }
 

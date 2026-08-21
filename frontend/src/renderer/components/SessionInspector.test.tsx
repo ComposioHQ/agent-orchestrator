@@ -873,7 +873,7 @@ describe("SessionInspector usage", () => {
 		);
 	});
 
-	it("renders complete costs, components, and provider/model attribution", async () => {
+	it("renders complete costs and provider/model attribution", async () => {
 		useUiStore.getState().setDeveloperMode(true);
 		const completeCost = {
 			cacheReadNanos: 100_000_000,
@@ -903,16 +903,11 @@ describe("SessionInspector usage", () => {
 			"[data-testid='inspector-section']",
 		) as HTMLElement;
 		expect(within(section).getAllByText("≈$1.24").length).toBeGreaterThan(0);
-		const breakdown = within(section).getByTestId("session-estimated-cost");
-		expect(within(breakdown).getByText("Input").nextElementSibling).toHaveTextContent("$0.40");
-		expect(within(breakdown).getByText("Cache read").nextElementSibling).toHaveTextContent("$0.10");
-		expect(within(breakdown).getByText("Cache write").nextElementSibling).toHaveTextContent("$0.14");
-		expect(within(breakdown).getByText("Output").nextElementSibling).toHaveTextContent("$0.60");
 		expect(within(section).getByText("anthropic · Sonnet 4")).toBeInTheDocument();
 		expect(section).not.toHaveTextContent(/lower bound/i);
 	});
 
-	it("renders partial coverage and dashes for unknown components", async () => {
+	it("renders a lower-bound total when coverage is partial", async () => {
 		useUiStore.getState().setDeveloperMode(true);
 		mockUsage({
 			cacheReadNanos: null,
@@ -929,9 +924,6 @@ describe("SessionInspector usage", () => {
 			"[data-testid='inspector-section']",
 		) as HTMLElement;
 		expect(within(section).getAllByText("≥$0.007").length).toBeGreaterThan(0);
-		const breakdown = within(section).getByTestId("session-estimated-cost");
-		expect(within(breakdown).getByText("Input").nextElementSibling).toHaveTextContent("—");
-		expect(within(breakdown).getByText("Cache read").nextElementSibling).toHaveTextContent("—");
 	});
 });
 
