@@ -412,6 +412,7 @@ function ClubbedConfigPicker({
 		<OptionMenu>
 			
 				<OptionMenuTrigger
+					disabled={disabled}
 					aria-label="Model and reasoning effort for the next turn"
 					title="Model and reasoning effort for the next turn"
 					className={TRIGGER_CLASS}

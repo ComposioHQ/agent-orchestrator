@@ -5,7 +5,6 @@ export const DropdownMenu = DropdownMenuPrimitive.Root;
 export const DropdownMenuTrigger = DropdownMenuPrimitive.Trigger;
 export const DropdownMenuGroup = DropdownMenuPrimitive.Group;
 export const DropdownMenuPortal = DropdownMenuPrimitive.Portal;
-export const DropdownMenuSub = DropdownMenuPrimitive.Sub;
 
 export function DropdownMenuContent({
 	className,
@@ -29,47 +28,6 @@ export function DropdownMenuContent({
 				{...props}
 			/>
 		</DropdownMenuPrimitive.Portal>
-	);
-}
-
-export function DropdownMenuSubTrigger({
-	className,
-	inset,
-	children,
-	...props
-}: React.ComponentProps<typeof DropdownMenuPrimitive.SubTrigger> & { inset?: boolean }) {
-	return (
-		<DropdownMenuPrimitive.SubTrigger
-			className={cn(
-				"relative flex cursor-default select-none items-center gap-2.5 rounded-md px-2 py-1.5 text-control outline-none transition-colors",
-				"text-muted-foreground focus:bg-interactive-hover focus:text-foreground data-[state=open]:bg-interactive-hover data-[state=open]:text-foreground data-[disabled]:pointer-events-none data-[disabled]:opacity-50",
-				inset && "pl-8",
-				className,
-			)}
-			{...props}
-		>
-			{children}
-		</DropdownMenuPrimitive.SubTrigger>
-	);
-}
-
-export function DropdownMenuSubContent({
-	className,
-	sideOffset = 6,
-	...props
-}: React.ComponentProps<typeof DropdownMenuPrimitive.SubContent>) {
-	return (
-		<DropdownMenuPrimitive.SubContent
-			sideOffset={sideOffset}
-			className={cn(
-				"z-overlay min-w-[10rem] overflow-hidden rounded-lg border border-border bg-card p-1 text-popover-foreground",
-				"flex flex-col gap-px",
-				"origin-(--radix-dropdown-menu-content-transform-origin)",
-				"data-[state=open]:animate-popover-in data-[state=closed]:animate-popover-out",
-				className,
-			)}
-			{...props}
-		/>
 	);
 }
 

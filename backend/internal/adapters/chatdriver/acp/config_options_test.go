@@ -8,9 +8,16 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
-func selectOption(id, name, current string) acpsdk.SessionConfigOption {
-	ungrouped := acpsdk.SessionConfigSelectOptionsUngrouped{
-		{Value: acpsdk.SessionConfigValueId(current), Name: current},
+func selectOption(id, name, current string, values ...string) acpsdk.SessionConfigOption {
+	if len(values) == 0 {
+		values = []string{current}
+	}
+	ungrouped := make(acpsdk.SessionConfigSelectOptionsUngrouped, 0, len(values))
+	for _, value := range values {
+		ungrouped = append(ungrouped, acpsdk.SessionConfigSelectOption{
+			Value: acpsdk.SessionConfigValueId(value),
+			Name:  value,
+		})
 	}
 	return acpsdk.SessionConfigOption{
 		Select: &acpsdk.SessionConfigOptionSelect{
@@ -22,38 +29,38 @@ func selectOption(id, name, current string) acpsdk.SessionConfigOption {
 	}
 }
 
-// An agent that answers session/set_config_option without echoing the rebuilt
-// catalog must not erase the one we already hold. ACP declares configOptions as
-// the full, required set, so an empty list alongside a populated catalog is a
-// partial answer rather than a real "this session now has no options" — and
-// treating it as the latter made the entire turn-settings picker disappear
-// mid-session until the agent happened to push a ConfigOptionUpdate.
-func TestReplaceConfigOptionsKeepsCatalogWhenUpdateIsEmpty(t *testing.T) {
+func boolOption(id, name string, current bool) acpsdk.SessionConfigOption {
+	return acpsdk.SessionConfigOption{
+		Boolean: &acpsdk.SessionConfigOptionBoolean{
+			Id:           acpsdk.SessionConfigId(id),
+			Name:         name,
+			CurrentValue: current,
+		},
+	}
+}
+
+// The session/update notification documents itself as a complete replacement
+// "including removing an option", so an empty catalog from that channel is a
+// real statement about the session and must apply verbatim. Swallowing it would
+// leave a picker offering options the agent has withdrawn.
+func TestReplaceConfigOptionsAppliesEmptyCatalogVerbatim(t *testing.T) {
 	c := &conversation{capabilities: make(ports.ChatCapabilities)}
 	c.replaceConfigOptions([]acpsdk.SessionConfigOption{selectOption("model", "Model", "sonnet")})
-
 	if got := len(c.configOptions); got != 1 {
 		t.Fatalf("seed catalog: got %d options, want 1", got)
 	}
 
 	c.replaceConfigOptions(nil)
-	if got := len(c.configOptions); got != 1 {
-		t.Fatalf("nil update wiped the catalog: got %d options, want 1", got)
-	}
 
-	c.replaceConfigOptions([]acpsdk.SessionConfigOption{})
-	if got := len(c.configOptions); got != 1 {
-		t.Fatalf("empty update wiped the catalog: got %d options, want 1", got)
-	}
-	if c.configOptions[0].ID != "model" {
-		t.Fatalf("kept the wrong option: got %q, want %q", c.configOptions[0].ID, "model")
+	if got := len(c.configOptions); got != 0 {
+		t.Fatalf("authoritative empty replacement was ignored: got %d options, want 0", got)
 	}
 }
 
-// A non-empty replacement is still authoritative: switching models can add,
+// A non-empty replacement is authoritative too: switching models can add,
 // change, or remove the other controls, so the new catalog replaces the old one
 // wholesale rather than merging into it.
-func TestReplaceConfigOptionsReplacesOnNonEmptyUpdate(t *testing.T) {
+func TestReplaceConfigOptionsReplacesWholesale(t *testing.T) {
 	c := &conversation{capabilities: make(ports.ChatCapabilities)}
 	c.replaceConfigOptions([]acpsdk.SessionConfigOption{
 		selectOption("model", "Model", "sonnet"),
@@ -73,17 +80,59 @@ func TestReplaceConfigOptionsReplacesOnNonEmptyUpdate(t *testing.T) {
 	}
 }
 
-// An empty catalog on a conversation that never had one is a legitimate answer
-// and must pass through, or an agent with genuinely no config options would look
-// like a bug in the guard above.
-func TestReplaceConfigOptionsAllowsEmptyWhenNoCatalogYet(t *testing.T) {
+// The bug this guards: an agent accepts session/set_config_option but answers
+// without the rebuilt catalog. Wiping made the picker vanish; returning the
+// pre-change catalog would show the old value for a change the agent already
+// applied. Neither is acceptable — record the accepted value and keep the rest.
+func TestApplyAcceptedConfigOptionRecordsSelectWithoutLosingCatalog(t *testing.T) {
 	c := &conversation{capabilities: make(ports.ChatCapabilities)}
-	c.replaceConfigOptions(nil)
+	c.replaceConfigOptions([]acpsdk.SessionConfigOption{
+		selectOption("model", "Model", "sonnet", "sonnet", "opus"),
+		selectOption("effort", "Effort", "high", "high", "low"),
+	})
 
-	if got := len(c.configOptions); got != 0 {
-		t.Fatalf("got %d options, want 0", got)
+	c.applyAcceptedConfigOption("model", ports.ChatConfigOptionValue{Select: "opus"})
+
+	if got := len(c.configOptions); got != 2 {
+		t.Fatalf("catalog lost entries: got %d options, want 2", got)
 	}
-	if c.capabilities[ports.ChatCapabilityConfigOptions] {
-		t.Fatal("an empty catalog must not advertise the config-options capability")
+	if got := c.configOptions[0].Current.Select; got != "opus" {
+		t.Fatalf("accepted value not recorded: got %q, want %q", got, "opus")
+	}
+	if got := c.configOptions[1].Current.Select; got != "high" {
+		t.Fatalf("unrelated option was disturbed: got %q, want %q", got, "high")
+	}
+	if got := len(c.configOptions[0].Choices); got != 2 {
+		t.Fatalf("choices dropped: got %d, want 2", got)
 	}
 }
+
+func TestApplyAcceptedConfigOptionRecordsBoolean(t *testing.T) {
+	c := &conversation{capabilities: make(ports.ChatCapabilities)}
+	c.replaceConfigOptions([]acpsdk.SessionConfigOption{boolOption("fast", "Fast mode", false)})
+
+	c.applyAcceptedConfigOption("fast", ports.ChatConfigOptionValue{Boolean: boolPtr(true)})
+
+	current := c.configOptions[0].Current.Boolean
+	if current == nil || !*current {
+		t.Fatalf("accepted boolean not recorded: got %v, want true", current)
+	}
+}
+
+// An id with no matching entry must leave the catalog untouched rather than
+// inventing a row for an option the session never advertised.
+func TestApplyAcceptedConfigOptionIgnoresUnknownID(t *testing.T) {
+	c := &conversation{capabilities: make(ports.ChatCapabilities)}
+	c.replaceConfigOptions([]acpsdk.SessionConfigOption{selectOption("model", "Model", "sonnet")})
+
+	c.applyAcceptedConfigOption("nope", ports.ChatConfigOptionValue{Select: "whatever"})
+
+	if got := len(c.configOptions); got != 1 {
+		t.Fatalf("got %d options, want 1", got)
+	}
+	if got := c.configOptions[0].Current.Select; got != "sonnet" {
+		t.Fatalf("catalog mutated by unknown id: got %q, want %q", got, "sonnet")
+	}
+}
+
+func boolPtr(v bool) *bool { return &v }

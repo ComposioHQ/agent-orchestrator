@@ -256,8 +256,6 @@ export interface ChatWorkspaceProps {
 	 * is worse than none.
 	 */
 	onSteer?: (text: string) => Promise<unknown>;
-	/** Promote one already queued turn into the running turn. */
-	onPromoteQueuedTurn?: (turnId: string) => Promise<unknown>;
 	steerPending?: boolean;
 	/** Why the last steer was refused, from the daemon's typed answer. */
 	steerRefusal?: string;
@@ -328,7 +326,6 @@ export function ChatWorkspace({
 	onStageAttachments,
 	nativeImages,
 	onSteer,
-	onPromoteQueuedTurn: _onPromoteQueuedTurn,
 	steerPending,
 	steerRefusal,
 	onReloadMcpServers,

@@ -235,9 +235,14 @@ export function ChatComposer({
 	const canSend =
 		(text.trim().length > 0 || staged) && !busy && !disabled && !steerPending;
 	const canStopTurn = Boolean(willQueue && onInterrupt && !disabled && !hasDraft);
+	// Steering delivers text only, so a draft carrying files cannot take that
+	// path. Treating it as unavailable — rather than steering the text and
+	// dropping the files, or refusing on an empty body with attachments staged —
+	// keeps the armed state something the composer can actually honour.
+	const canSteerDraft = Boolean(canSteer && onSteer) && !staged;
 	const sendHint = menuOpen
 		? "Enter to insert"
-		: willQueue && canSteer && onSteer
+		: willQueue && canSteerDraft
 			? "⏎ queue · ⌘⏎ steer"
 			: willQueue
 				? "⏎ queue"
@@ -470,7 +475,7 @@ export function ChatComposer({
 		if (event.key !== "Enter") return;
 		if (event.shiftKey) return;
 		event.preventDefault();
-		const wantsSteer = (event.metaKey || event.ctrlKey) && canSteer && Boolean(onSteer);
+		const wantsSteer = (event.metaKey || event.ctrlKey) && canSteerDraft;
 		void submit(undefined, wantsSteer);
 	}
 
@@ -529,7 +534,7 @@ export function ChatComposer({
 			window.removeEventListener("blur", onBlur);
 		};
 	}, []);
-	const activeDelivery = metaHeld && canSteer && onSteer ? "steer" : "queue";
+	const activeDelivery = metaHeld && canSteerDraft ? "steer" : "queue";
 
 	const attachmentError = fileAttachments.error ?? sendError ?? commandError;
 	const deliveryChoice =
@@ -543,7 +548,10 @@ export function ChatComposer({
 		{deliveryChoice}
 		{queuedDock}
 		<form
-			onSubmit={(event) => void submit(event)}
+			// Clicking send while Cmd/Ctrl is held has to mean what the indicator
+			// beside it says. Reading the same armed state the chip paints keeps the
+			// pointer and keyboard paths from disagreeing about where the message goes.
+			onSubmit={(event) => void submit(event, activeDelivery === "steer")}
 			onDragOver={(event) => {
 				if (!canAttach) return;
 				event.preventDefault();

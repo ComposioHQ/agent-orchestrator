@@ -125,7 +125,10 @@ export function OptionMenuSubTrigger({
 	return (
 		<DropdownMenuPrimitive.SubTrigger
 			className={cn(ROW, "flex items-center justify-between gap-3 text-xs text-foreground data-[state=open]:bg-settings-menu-selected data-[state=open]:text-foreground", className)}
-			onClick={(e) => { e.preventDefault(); e.stopPropagation(); }}
+			// Stop the click reaching the composer's click-to-focus handler without
+			// calling preventDefault, which Radix's composeEventHandlers reads as a
+			// signal to skip its own open/close handling.
+			onClick={(e) => e.stopPropagation()}
 			{...props}
 		>
 			{children ?? (
