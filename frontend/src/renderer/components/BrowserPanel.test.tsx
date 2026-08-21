@@ -39,6 +39,7 @@ const hookState = vi.hoisted(() => ({
 	tabNotice: "",
 	agentBrowserActive: false,
 	agentBrowserActivity: null as { active: boolean; action?: string; phase?: "started" | "finished" } | null,
+	profileState: { viewId: "42:sess-1", profileId: null as string | null, temporary: true },
 	previewUrl: undefined as string | undefined,
 	navState: {
 		viewId: "42:sess-1",
@@ -71,6 +72,7 @@ vi.mock("../hooks/useBrowserView", () => ({
 			reorderTabs: hookState.reorderTabs,
 			agentBrowserActive: hookState.agentBrowserActive,
 			agentBrowserActivity: hookState.agentBrowserActivity,
+			profileState: hookState.profileState,
 			devtoolsState: hookState.devtoolsState,
 			openDevTools: hookState.openDevTools,
 			closeDevTools: hookState.closeDevTools,
@@ -187,7 +189,9 @@ describe("BrowserPanel", () => {
 				annotationCancelListeners.delete(listener);
 			};
 		});
+		window.ao!.browser.historySuggestions = vi.fn(async () => []);
 		hookState.previewUrl = undefined;
+		hookState.profileState = { viewId: "42:sess-1", profileId: null, temporary: true };
 		hookState.tabs = [{ id: "t1", url: "", title: "", active: true }];
 		hookState.activeTabId = "t1";
 		hookState.tabNotice = "";
@@ -209,6 +213,31 @@ describe("BrowserPanel", () => {
 		await userEvent.type(input, "localhost:5173{Enter}");
 
 		expect(hookState.navigate).toHaveBeenCalledWith("localhost:5173");
+	});
+
+	it("shows imported history through native address-bar suggestions without adding an overlay", async () => {
+		hookState.profileState = {
+			viewId: "42:sess-1",
+			profileId: "11111111-1111-4111-8111-111111111111",
+			temporary: false,
+		};
+		window.ao!.browser.historySuggestions = vi.fn(async () => [
+			{ url: "https://github.com/openai", title: "OpenAI" },
+		]);
+		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
+		const input = screen.getByRole("textbox", { name: /browser url/i });
+
+		await userEvent.type(input, "git");
+
+		await waitFor(() => expect(window.ao!.browser.historySuggestions).toHaveBeenCalledWith({
+			viewId: "42:sess-1",
+			query: "git",
+		}));
+		await waitFor(() => expect(document.querySelector("datalist option")).not.toBeNull());
+		const option = document.querySelector("datalist option")!;
+		expect(option).toHaveValue("https://github.com/openai");
+		expect(input).toHaveAttribute("list", option.closest("datalist")?.id);
+		expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
 	});
 
 	it("keeps the URL input editable while the browser is maximized", async () => {

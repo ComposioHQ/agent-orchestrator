@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useId, useRef, useState, type FormEvent } from "react";
 import { useTranslation } from "react-i18next";
 import {
 	ArrowLeft,
@@ -254,6 +254,8 @@ export function BrowserPanelView({
 		setAnnotationMode,
 	} = browserView;
 	const [urlInput, setUrlInput] = useState(navState.url);
+	const [historySuggestions, setHistorySuggestions] = useState<Array<{ url: string; title?: string }>>([]);
+	const historyListId = useId();
 	const { beginPicking, cancelPicking, enqueue, error, failPicking, queuedCount, retryQueued, status } =
 		annotationQueue;
 	const hasNativeBrowser = Boolean(window.ao?.browser);
@@ -279,6 +281,24 @@ export function BrowserPanelView({
 	useEffect(() => {
 		setUrlInput(navState.url);
 	}, [navState.url]);
+
+	useEffect(() => {
+		if (!window.ao?.browser || !viewId || !profileState.profileId || urlInput.trim().length < 2) {
+			setHistorySuggestions([]);
+			return;
+		}
+		let current = true;
+		const timer = window.setTimeout(() => {
+			void window.ao!.browser.historySuggestions({ viewId, query: urlInput }).then(
+				(suggestions) => current && setHistorySuggestions(suggestions),
+				() => current && setHistorySuggestions([]),
+			);
+		}, 120);
+		return () => {
+			current = false;
+			window.clearTimeout(timer);
+		};
+	}, [profileState.profileId, urlInput, viewId]);
 
 	useEffect(() => {
 		const offSubmit = window.ao?.browser.onAnnotationSubmit((payload) => {
@@ -450,11 +470,19 @@ export function BrowserPanelView({
 					<Input
 						aria-label={t("browser.url")}
 						className="browser-panel__url-input h-browser-url pl-browser-url font-mono text-xs"
+						list={historySuggestions.length > 0 ? historyListId : undefined}
 						onChange={(event) => setUrlInput(event.target.value)}
 						placeholder={t("browser.urlPlaceholder")}
 						ref={urlInputRef}
 						value={urlInput}
 					/>
+					<datalist id={historyListId}>
+						{historySuggestions.map((suggestion) => (
+							<option key={suggestion.url} value={suggestion.url}>
+								{suggestion.title}
+							</option>
+						))}
+					</datalist>
 				</div>
 				{tabNotice ? (
 					<span className="max-w-24 truncate text-caption text-accent" role="status">

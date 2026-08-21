@@ -1,4 +1,4 @@
-import { Check, Eraser, Pencil, Plus, Trash2 } from "lucide-react";
+import { Check, Eraser, Import, Pencil, Plus, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { AoBridge } from "../../../preload";
@@ -9,6 +9,7 @@ import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { SettingsRow } from "./SettingsRow";
 import { SettingsSection } from "./SettingsSection";
+import { BrowserImportDialog } from "./BrowserImportDialog";
 
 type ProfileBridge = AoBridge["browserProfiles"];
 type Profile = Awaited<ReturnType<ProfileBridge["list"]>>["profiles"][number];
@@ -25,6 +26,7 @@ export function BrowserProfilesSection({ titleHidden }: { titleHidden?: boolean 
 	const [pendingAction, setPendingAction] = useState<DestructiveAction | null>(null);
 	const [actionBusy, setActionBusy] = useState(false);
 	const [actionError, setActionError] = useState("");
+	const [importOpen, setImportOpen] = useState(false);
 
 	const refresh = async () => {
 		if (!bridge) return;
@@ -116,6 +118,12 @@ export function BrowserProfilesSection({ titleHidden }: { titleHidden?: boolean 
 			<p className="px-3 text-xs leading-relaxed text-muted-foreground">
 				{t("settings.browserProfiles.description")}
 			</p>
+			<SettingsRow label={t("settings.browserImport.rowLabel")}>
+				<Button disabled={!bridge} onClick={() => setImportOpen(true)} size="sm" type="button" variant="outline">
+					<Import aria-hidden="true" className="size-icon-base" />
+					{t("settings.browserImport.action")}
+				</Button>
+			</SettingsRow>
 			<SettingsRow label={t("settings.browserProfiles.create")}>
 				<form
 					className="flex min-w-0 max-w-full items-center gap-1.5"
@@ -212,6 +220,11 @@ export function BrowserProfilesSection({ titleHidden }: { titleHidden?: boolean 
 				busy={actionBusy}
 				error={actionError || null}
 				onConfirm={() => void confirmAction()}
+			/>
+			<BrowserImportDialog
+				onImported={() => void refresh()}
+				onOpenChange={setImportOpen}
+				open={importOpen}
 			/>
 		</>
 	);
