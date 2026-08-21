@@ -132,7 +132,9 @@ type GLabTokenSource struct {
 
 // Token returns the cached glab token, re-fetching via `glab auth status` when
 // the cache expires. Failures are memoized too, for a shorter window, so a
-// source glab can never satisfy does not fork a process per call.
+// source glab can never satisfy does not fork a process per call — except a
+// failure caused by the caller's own context, which is not evidence about the
+// credential and is therefore never cached.
 func (s *GLabTokenSource) Token(ctx context.Context) (string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -149,10 +151,20 @@ func (s *GLabTokenSource) Token(ctx context.Context) (string, error) {
 	}
 	out, err := run(ctx)
 	if err != nil {
+		// A lookup the caller ended is not evidence about the credential:
+		// memoizing it would answer the next caller — one with a live context
+		// — out of a stale failure. Daemon startup probes several hosts under
+		// one deadline and cancels the losers, so this is the common case.
+		if ctx.Err() != nil {
+			return "", err
+		}
 		return "", s.cacheFailure(err, now)
 	}
 	token := strings.TrimSpace(out)
 	if token == "" {
+		if ctx.Err() != nil {
+			return "", ErrNoToken
+		}
 		return "", s.cacheFailure(ErrNoToken, now)
 	}
 	s.token = token

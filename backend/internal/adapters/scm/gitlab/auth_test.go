@@ -534,3 +534,38 @@ func TestHostTokenSourcePrefersHostScopedGLabOverGlobalEnv(t *testing.T) {
 		t.Fatalf("chain[1] = %T, want *EnvTokenSource", chain[1])
 	}
 }
+
+// TestGLabTokenSourceDoesNotMemoizeACancelledLookup covers the negative cache's
+// boundary: a lookup the *caller* ended says nothing about whether glab holds a
+// credential, so remembering it as a failure would answer later callers — ones
+// with a perfectly good context — out of a stale cache.
+func TestGLabTokenSourceDoesNotMemoizeACancelledLookup(t *testing.T) {
+	calls := 0
+	src := &GLabTokenSource{
+		GLab: func(ctx context.Context) (string, error) {
+			calls++
+			if err := ctx.Err(); err != nil {
+				return "", ErrNoToken
+			}
+			return "glpat-live", nil
+		},
+		TokenTTL: time.Hour,
+	}
+
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := src.Token(cancelled); !errors.Is(err, ErrNoToken) {
+		t.Fatalf("Token(cancelled) err = %v, want ErrNoToken", err)
+	}
+
+	tok, err := src.Token(context.Background())
+	if err != nil {
+		t.Fatalf("Token after the cancelled lookup: %v", err)
+	}
+	if tok != "glpat-live" {
+		t.Fatalf("token = %q, want the source to re-run rather than answer from the failure cache", tok)
+	}
+	if calls != 2 {
+		t.Fatalf("glab called %d times, want the cancelled lookup not to be memoized", calls)
+	}
+}

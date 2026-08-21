@@ -516,12 +516,14 @@ func (c *commandContext) githubToken(ctx context.Context) (token, source string,
 // never reaches gitlab.com, so a gitlab.com-only probe reports a token verdict
 // about a host AO will never call.
 //
-// A credential is only ever sent to the instance doctor can attribute it to.
-// Sending an internal instance's token to gitlab.com would disclose it to a
-// third party, and sending gitlab.com's token to a self-managed instance hands
-// it to whoever runs that server — `ao doctor` must never do either. Every
-// token is therefore resolved before any request is issued, so a probe whose
-// credential cannot be attributed to its own host is skipped rather than run.
+// A credential is only ever sent to the instance it belongs to. Sending an
+// internal instance's token to gitlab.com would disclose it to a third party,
+// and sending gitlab.com's token to a self-managed instance hands it to whoever
+// runs that server — `ao doctor` must never do either. gitlabToken resolves
+// each probe's credential from that instance's own sources, and every token is
+// resolved before any request is issued, so the one credential that could still
+// be ambiguous — a global default shared with an allowlisted host — can be
+// spotted and its probe skipped (checkGitLabDotComToken).
 //
 // Host -> REST base + token resolution mirrors the SCM provider's
 // clientForHost (adapters/scm/gitlab/provider.go).

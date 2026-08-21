@@ -113,7 +113,7 @@ type Tracker struct {
 // daemons crash at startup rather than at first issue lookup. "No token" means
 // no instance can authenticate: a self-managed-only setup keeps its credential
 // in HostTokens and has nothing for gitlab.com, and disabling the tracker there
-// would leave issue intake dead for the only instance the user talks to.
+// would leave issue lookup dead for the only instance the user talks to.
 func New(opts Options) (*Tracker, error) {
 	src := opts.Token
 	if src == nil {
