@@ -990,3 +990,47 @@ func TestGet_HostCaseInsensitive(t *testing.T) {
 		t.Fatalf("Get: %v", err)
 	}
 }
+
+// deadlineRecordingTokenSource records whether the context it was resolved
+// with carried a deadline.
+type deadlineRecordingTokenSource struct {
+	token       string
+	err         error
+	hasDeadline bool
+}
+
+func (s *deadlineRecordingTokenSource) Token(ctx context.Context) (string, error) {
+	_, ok := ctx.Deadline()
+	s.hasDeadline = ok
+	return s.token, s.err
+}
+
+// TestNewBoundsTheStartupTokenProbe covers daemon startup: resolving a token
+// can shell out to `glab auth status`, and New runs before the daemon is
+// serving. An unbounded probe would hang boot forever if glab hangs, once per
+// allowlisted host.
+func TestNewBoundsTheStartupTokenProbe(t *testing.T) {
+	src := &deadlineRecordingTokenSource{token: "glpat-default"}
+	if _, err := New(Options{Token: src}); err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if !src.hasDeadline {
+		t.Fatal("New resolved the default token with an unbounded context")
+	}
+}
+
+// TestNewBoundsTheStartupProbeOfEveryHost covers the same hazard on the
+// per-host fallback path, which resolves one token source per allowlisted host.
+func TestNewBoundsTheStartupProbeOfEveryHost(t *testing.T) {
+	host := &deadlineRecordingTokenSource{token: "glpat-internal"}
+	if _, err := New(Options{
+		Token:        scmgitlab.StaticTokenSource(""),
+		AllowedHosts: []string{"gitlab.internal"},
+		HostTokens:   map[string]scmgitlab.TokenSource{"gitlab.internal": host},
+	}); err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if !host.hasDeadline {
+		t.Fatal("New resolved a host token with an unbounded context")
+	}
+}

@@ -449,8 +449,8 @@ func TestDoctorNeverSendsGLabHostTokenToDotCom(t *testing.T) {
 
 	checks := c.runDoctor(context.Background())
 	check := findDoctorCheck(t, checks, "gitlab-token")
-	if check.Level != doctorWarn || !strings.Contains(check.Message, "not probed") {
-		t.Fatalf("gitlab.com check = %+v, want WARN reporting the skipped probe", check)
+	if check.Level != doctorWarn || !strings.Contains(check.Message, "no token for gitlab.com") {
+		t.Fatalf("gitlab.com check = %+v, want WARN reporting no gitlab.com credential", check)
 	}
 	if got := dotComTokens(); len(got) != 0 {
 		t.Fatalf("gitlab.com probe tokens = %v, want the internal glab token never sent to gitlab.com", got)
@@ -673,12 +673,13 @@ func TestDoctorScopesGLabLookupToHost(t *testing.T) {
 	}
 }
 
-// TestDoctorNeverSendsUnattributedGLabTokenToHost covers the other half of the
+// TestDoctorNeverSendsAnotherHostsGLabTokenToHost covers the other half of the
 // credential boundary: when the host-scoped glab query yields nothing, the
-// unscoped fallback token belongs to glab's default host, which may well be
-// gitlab.com. Doctor must not hand that credential to a self-managed instance
-// just because the daemon's chain would fall back to it.
-func TestDoctorNeverSendsUnattributedGLabTokenToHost(t *testing.T) {
+// unscoped fallback names gitlab.com as the owner of the only token glab has.
+// Doctor must not hand that credential to a self-managed instance just because
+// the daemon's chain also falls back to the unscoped lookup — while gitlab.com,
+// which the token is attributed to, is still validated with it.
+func TestDoctorNeverSendsAnotherHostsGLabTokenToHost(t *testing.T) {
 	setConfigEnv(t)
 	clearDoctorGitLabEnv(t)
 	srv, tokens := gitlabDoctorHostServer(t, http.StatusOK, `{"username":"self-hosted-user"}`)
@@ -701,48 +702,19 @@ func TestDoctorNeverSendsUnattributedGLabTokenToHost(t *testing.T) {
 
 	checks := c.runDoctor(context.Background())
 	check := findDoctorCheck(t, checks, "gitlab-token:gitlab.internal")
-	if check.Level != doctorWarn || !strings.Contains(check.Message, "not probed") {
-		t.Fatalf("self-managed check = %+v, want WARN reporting the skipped probe", check)
+	if check.Level != doctorWarn || !strings.Contains(check.Message, "no token for gitlab.internal") {
+		t.Fatalf("self-managed check = %+v, want WARN reporting no credential for the host", check)
 	}
 	if got := tokens(); len(got) != 0 {
 		t.Fatalf("self-managed probe tokens = %v, want glab's default-host token never sent to gitlab.internal", got)
 	}
-	// The same token is unattributable in the other direction, and a
-	// self-managed host is configured, so gitlab.com is skipped too.
-	if check := findDoctorCheck(t, checks, "gitlab-token"); check.Level != doctorWarn || !strings.Contains(check.Message, "not probed") {
-		t.Fatalf("gitlab.com check = %+v, want WARN reporting the skipped probe", check)
-	}
-	if got := dotComTokens(); len(got) != 0 {
-		t.Fatalf("gitlab.com probe tokens = %v, want no request for an unattributable credential", got)
-	}
-}
-
-// TestDoctorProbesDotComWithUnscopedGLabTokenWhenNoHostsConfigured covers the
-// plain gitlab.com setup on a glab too old for `--hostname`: with no
-// self-managed host configured, gitlab.com is the only instance AO can reach,
-// so the unscoped token is still validated rather than reported as skipped.
-func TestDoctorProbesDotComWithUnscopedGLabTokenWhenNoHostsConfigured(t *testing.T) {
-	setConfigEnv(t)
-	clearDoctorGitLabEnv(t)
-	dotCom, dotComTokens := gitlabDoctorHostServer(t, http.StatusOK, `{"username":"dotcom-user"}`)
-	c := doctorContext(t, map[string]string{"git": "/bin/git", "glab": "/bin/glab"}, func(_ context.Context, name string, args ...string) ([]byte, error) {
-		if name != "/bin/glab" {
-			return []byte("git version 2.43.0\n"), nil
-		}
-		if slices.Contains(args, "--hostname") {
-			return nil, errors.New("unknown flag: --hostname")
-		}
-		return []byte("Hostname: gitlab.com\n✓ Token found: glpat-default\n"), nil
-	})
-	c.deps.HTTPClient = dotCom.Client()
-	c.deps.DoctorGitLabRESTBase = dotCom.URL
-
-	check := findDoctorCheck(t, c.runDoctor(context.Background()), "gitlab-token")
-	if check.Level != doctorPass || !strings.Contains(check.Message, "dotcom-user") {
-		t.Fatalf("gitlab.com check = %+v, want PASS from the unscoped glab fallback", check)
+	// The very same output attributes that token to gitlab.com, so gitlab.com
+	// is validated with it rather than left unchecked.
+	if check := findDoctorCheck(t, checks, "gitlab-token"); check.Level != doctorPass {
+		t.Fatalf("gitlab.com check = %+v, want PASS from the token attributed to gitlab.com", check)
 	}
 	if got := dotComTokens(); len(got) != 1 || got[0] != "glpat-default" {
-		t.Fatalf("gitlab.com probe tokens = %v, want glab's default-host token", got)
+		t.Fatalf("gitlab.com probe tokens = %v, want gitlab.com's own token once", got)
 	}
 }
 
@@ -1094,5 +1066,140 @@ func writeHooksLogLines(t *testing.T, dataDir string, lines ...string) {
 	content := strings.Join(lines, "\n") + "\n"
 	if err := os.WriteFile(filepath.Join(dataDir, hooksLogName), []byte(content), 0o600); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// glabSelfManagedStatus is `glab auth status --show-token` output for a glab
+// whose only (and therefore default) instance is self-managed.
+const glabSelfManagedStatus = "gitlab.internal\n" +
+	"  ✓ Logged in to gitlab.internal as alice (keyring)\n" +
+	"  ✓ Token: glpat-internal\n"
+
+// TestDoctorNeverSendsGLabDefaultHostTokenToDotCom covers the credential
+// boundary for the default probe: glab's own default host is independent of
+// AO's allowlist, so a token it reports without being asked about gitlab.com
+// may belong to an internal instance. Sending it to gitlab.com would disclose
+// it to a third party, so the probe must be skipped instead.
+func TestDoctorNeverSendsGLabDefaultHostTokenToDotCom(t *testing.T) {
+	setConfigEnv(t)
+	clearDoctorGitLabEnv(t)
+	dotCom, dotComTokens := gitlabDoctorHostServer(t, http.StatusOK, `{"username":"dotcom-user"}`)
+	c := doctorContext(t, map[string]string{"git": "/bin/git", "glab": "/bin/glab"}, func(_ context.Context, name string, args ...string) ([]byte, error) {
+		if name == "/bin/glab" {
+			if slices.Contains(args, "--hostname") {
+				return []byte("unknown host\n"), errors.New("exit status 1")
+			}
+			return []byte(glabSelfManagedStatus), nil
+		}
+		return []byte("git version 2.43.0\n"), nil
+	})
+	c.deps.HTTPClient = dotCom.Client()
+	c.deps.DoctorGitLabRESTBase = dotCom.URL
+
+	check := findDoctorCheck(t, c.runDoctor(context.Background()), "gitlab-token")
+	if check.Level != doctorWarn || !strings.Contains(check.Message, "no token for gitlab.com") {
+		t.Fatalf("gitlab-token check = %+v, want WARN reporting no gitlab.com credential", check)
+	}
+	if got := dotComTokens(); len(got) != 0 {
+		t.Fatalf("gitlab.com probe tokens = %v, want another instance's token never sent to gitlab.com", got)
+	}
+}
+
+// TestDoctorProbesDotComWithAttributedGLabDefaultHostToken covers a glab too
+// old for `auth status --hostname`: the unscoped status block still names the
+// instance each token belongs to, so a token it attributes to gitlab.com is
+// safe to validate against gitlab.com.
+func TestDoctorProbesDotComWithAttributedGLabDefaultHostToken(t *testing.T) {
+	setConfigEnv(t)
+	clearDoctorGitLabEnv(t)
+	dotCom, dotComTokens := gitlabDoctorHostServer(t, http.StatusOK, `{"username":"dotcom-user"}`)
+	c := doctorContext(t, map[string]string{"git": "/bin/git", "glab": "/bin/glab"}, func(_ context.Context, name string, args ...string) ([]byte, error) {
+		if name == "/bin/glab" {
+			if slices.Contains(args, "--hostname") {
+				return []byte("unknown flag: --hostname\n"), errors.New("exit status 1")
+			}
+			return []byte("Hostname: gitlab.com\n✓ Token found: glpat-dotcom\n"), nil
+		}
+		return []byte("git version 2.43.0\n"), nil
+	})
+	c.deps.HTTPClient = dotCom.Client()
+	c.deps.DoctorGitLabRESTBase = dotCom.URL
+
+	check := findDoctorCheck(t, c.runDoctor(context.Background()), "gitlab-token")
+	if check.Level != doctorPass || !strings.Contains(check.Message, "dotcom-user") {
+		t.Fatalf("gitlab-token check = %+v, want PASS from the attributed glab token", check)
+	}
+	if got := dotComTokens(); len(got) != 1 || got[0] != "glpat-dotcom" {
+		t.Fatalf("gitlab.com probe tokens = %v, want gitlab.com's own token once", got)
+	}
+}
+
+// TestDoctorPrefersHostScopedGLabTokenOverGlobalEnv covers credential
+// precedence for a self-managed host: the credential glab holds for that
+// instance wins over the global default, which belongs to gitlab.com and would
+// both fail there and disclose itself to the internal server.
+func TestDoctorPrefersHostScopedGLabTokenOverGlobalEnv(t *testing.T) {
+	setConfigEnv(t)
+	clearDoctorGitLabEnv(t)
+	selfHosted, hostTokens := gitlabDoctorHostServer(t, http.StatusOK, `{"username":"self-hosted-user"}`)
+	dotCom, dotComTokens := gitlabDoctorHostServer(t, http.StatusOK, `{"username":"dotcom-user"}`)
+	c := doctorContext(t, map[string]string{"git": "/bin/git", "glab": "/bin/glab"}, func(_ context.Context, name string, args ...string) ([]byte, error) {
+		if name == "/bin/glab" {
+			if slices.Contains(args, "gitlab.internal") {
+				return []byte(glabSelfManagedStatus), nil
+			}
+			if slices.Contains(args, "--hostname") {
+				return []byte("unknown host\n"), errors.New("exit status 1")
+			}
+			return []byte(glabSelfManagedStatus), nil
+		}
+		return []byte("git version 2.43.0\n"), nil
+	})
+	t.Setenv("GITLAB_TOKEN", "dotcom-pat")
+	t.Setenv("AO_GITLAB_ALLOWED_HOSTS", "gitlab.internal")
+	c.deps.HTTPClient = dotCom.Client()
+	c.deps.DoctorGitLabRESTBase = dotCom.URL
+	c.deps.DoctorGitLabHostRESTBase = func(string) string { return selfHosted.URL }
+
+	checks := c.runDoctor(context.Background())
+	if check := findDoctorCheck(t, checks, "gitlab-token:gitlab.internal"); check.Level != doctorPass {
+		t.Fatalf("self-managed check = %+v, want PASS", check)
+	}
+	if got := hostTokens(); len(got) != 1 || got[0] != "glpat-internal" {
+		t.Fatalf("self-managed probe tokens = %v, want the host's own glab token", got)
+	}
+	// The global default is no longer the self-managed host's credential, so
+	// gitlab.com is validated with it instead of being skipped.
+	if check := findDoctorCheck(t, checks, "gitlab-token"); check.Level != doctorPass {
+		t.Fatalf("gitlab.com check = %+v, want PASS from the global default token", check)
+	}
+	if got := dotComTokens(); len(got) != 1 || got[0] != "dotcom-pat" {
+		t.Fatalf("gitlab.com probe tokens = %v, want the global default token once", got)
+	}
+}
+
+// TestDoctorIgnoresTokensPrintedByAFailedGLabRun covers a glab that exits
+// non-zero: its diagnostics are not a credential, however much the text looks
+// like one, and doctor must not send a scrap of an error message to GitLab as a
+// token.
+func TestDoctorIgnoresTokensPrintedByAFailedGLabRun(t *testing.T) {
+	setConfigEnv(t)
+	clearDoctorGitLabEnv(t)
+	dotCom, dotComTokens := gitlabDoctorHostServer(t, http.StatusOK, `{"username":"dotcom-user"}`)
+	c := doctorContext(t, map[string]string{"git": "/bin/git", "glab": "/bin/glab"}, func(_ context.Context, name string, args ...string) ([]byte, error) {
+		if name == "/bin/glab" {
+			return []byte("Hostname: gitlab.com\nerror: Token: expired or revoked\n"), errors.New("exit status 1")
+		}
+		return []byte("git version 2.43.0\n"), nil
+	})
+	c.deps.HTTPClient = dotCom.Client()
+	c.deps.DoctorGitLabRESTBase = dotCom.URL
+
+	check := findDoctorCheck(t, c.runDoctor(context.Background()), "gitlab-token")
+	if check.Level != doctorWarn {
+		t.Fatalf("gitlab-token check = %+v, want WARN rather than a probe with error text", check)
+	}
+	if got := dotComTokens(); len(got) != 0 {
+		t.Fatalf("gitlab.com probe tokens = %v, want no request from a failed glab run", got)
 	}
 }

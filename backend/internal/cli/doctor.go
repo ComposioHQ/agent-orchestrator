@@ -19,6 +19,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/codex"
+	scmgitlab "github.com/aoagents/agent-orchestrator/backend/internal/adapters/scm/gitlab"
 	"github.com/aoagents/agent-orchestrator/backend/internal/config"
 )
 
@@ -546,13 +547,8 @@ func (c *commandContext) checkGitLabTokens(ctx context.Context, gitlabCfg config
 
 	defaultProbe := gitlabProbe{
 		name:      "gitlab-token",
-		tokenHost: gitlabDotComHost,
+		tokenHost: scmgitlab.DotComHost,
 		restBase:  c.deps.DoctorGitLabRESTBase,
-		// With no self-managed host configured, gitlab.com is the only
-		// instance AO can reach, so an unattributed glab token can only be the
-		// one the daemon would send there anyway. Configure an allowlist and
-		// the credential has to be attributable before it leaves the machine.
-		unattributedOK: len(hosts) == 0,
 	}
 	defaultCred := c.gitlabCredential(ctx, defaultProbe, glabRuns)
 
@@ -565,13 +561,17 @@ func (c *commandContext) checkGitLabTokens(ctx context.Context, gitlabCfg config
 }
 
 // checkGitLabDotComToken runs the default-instance probe unless its credential
-// is also used for an allowlisted self-managed host. A token the user declared
-// as the global default (AO_GITLAB_TOKEN/GITLAB_TOKEN) is attributable to
-// every instance by configuration, so the generic attribution gate lets it
-// through; but when an allowlisted host authenticates with that same value,
-// doctor still cannot tell whether it is gitlab.com's token or the internal
-// one, and probing would ship a possibly-internal credential to gitlab.com —
-// so the check reports what it skipped and why instead.
+// is also what authenticates an allowlisted self-managed host. A token the user
+// declared as the global default (AO_GITLAB_TOKEN/GITLAB_TOKEN) belongs to
+// every instance by configuration, so gitlabToken hands it over for gitlab.com;
+// but when an allowlisted host authenticates with that same value, doctor
+// cannot tell whether it is gitlab.com's token or the internal one, and probing
+// would ship a possibly-internal credential to a third party — so the check
+// reports what it skipped and why instead.
+//
+// This is the one credential doctor holds back that the daemon would still use:
+// AO does send the global default to gitlab.com. It sends it there only for a
+// gitlab.com repository, though, while doctor probes gitlab.com on every run.
 func (c *commandContext) checkGitLabDotComToken(ctx context.Context, probe gitlabProbe, cred gitlabCredential, hosts []string, hostCreds []gitlabCredential) doctorCheck {
 	if shared := gitlabHostsSharingToken(cred, hosts, hostCreds); len(shared) > 0 {
 		return doctorCheck{
@@ -609,8 +609,8 @@ func gitlabDoctorHosts(allowed []string) []string {
 	hosts := make([]string, 0, len(allowed))
 	seen := make(map[string]bool, len(allowed))
 	for _, raw := range allowed {
-		host := normalizeGitLabHost(raw)
-		if host == "" || seen[host] || isGitLabDotCom(host) {
+		host := scmgitlab.NormalizeHost(raw)
+		if host == "" || seen[host] || scmgitlab.IsGitLabDotCom(host) {
 			continue
 		}
 		seen[host] = true
@@ -631,29 +631,13 @@ func gitlabDoctorHosts(allowed []string) []string {
 func gitlabDoctorHostTokens(hostTokens map[string]string) map[string]string {
 	normalized := make(map[string]string, len(hostTokens))
 	for host, token := range hostTokens {
-		host = normalizeGitLabHost(host)
+		host = scmgitlab.NormalizeHost(host)
 		if host == "" || strings.TrimSpace(token) == "" {
 			continue
 		}
 		normalized[host] = token
 	}
 	return normalized
-}
-
-// normalizeGitLabHost mirrors gitlab.NormalizeHost without importing the SCM
-// adapter into the CLI (the same boundary parseGLabTokenLine already respects).
-func normalizeGitLabHost(host string) string {
-	return strings.ToLower(strings.TrimSpace(host))
-}
-
-// gitlabDotComHost is the canonical name of the default instance, used to
-// scope the default probe's glab lookup so its token is attributable.
-const gitlabDotComHost = "gitlab.com"
-
-// isGitLabDotCom mirrors gitlab.IsGitLabDotCom.
-func isGitLabDotCom(host string) bool {
-	host = normalizeGitLabHost(host)
-	return host == "" || host == gitlabDotComHost || host == "www.gitlab.com"
 }
 
 // gitlabProbe describes one GitLab instance doctor validates a token against.
@@ -674,24 +658,20 @@ type gitlabProbe struct {
 	// hostToken is the AO_GITLAB_HOST_TOKENS override for this host; empty
 	// means the default token (AO_GITLAB_TOKEN / GITLAB_TOKEN / glab) applies.
 	hostToken string
-	// unattributedOK allows this probe to run with a credential doctor could
-	// not attribute to any instance. Only the default probe sets it, and only
-	// when no self-managed host is configured.
-	unattributedOK bool
 }
 
 // gitlabCredential is the token doctor validates for one probe, plus where it
-// came from and which instance it belongs to. Credentials are resolved for
-// every probe before any request is issued so a probe can be skipped when its
-// token turns out to belong to another instance.
+// came from. Credentials are resolved for every probe before any request is
+// issued so a probe can be skipped when its token turns out to belong to
+// another instance.
+//
+// Every credential here belongs to the instance it was resolved for: an
+// AO_GITLAB_HOST_TOKENS entry and a glab lookup are both host-attributed
+// (gitlabToken), and the env vars are the user's declared default for every
+// instance AO talks to.
 type gitlabCredential struct {
 	token  string
 	source string
-	// host is the instance this credential is known to belong to: the probe's
-	// host for an AO_GITLAB_HOST_TOKENS override or a host-scoped glab lookup.
-	// Empty means unattributed — glab answered for its own default host and
-	// doctor cannot tell which instance the token is for.
-	host string
 	// shared marks the user-configured global default token
 	// (AO_GITLAB_TOKEN/GITLAB_TOKEN). The daemon sends it to every instance it
 	// talks to, so doctor may validate it against any of them.
@@ -699,30 +679,14 @@ type gitlabCredential struct {
 	err    error
 }
 
-// attributedTo reports whether cred may be sent to probe's instance.
-func (cred gitlabCredential) attributedTo(probe gitlabProbe) bool {
-	return cred.shared || cred.host == probe.tokenHost || (cred.host == "" && probe.unattributedOK)
-}
-
 // gitlabCredential resolves the credential for one probe: the explicit
-// per-host override when configured, otherwise the default chain scoped to the
-// probe's host.
+// per-host override when configured, otherwise the default chain for the
+// probe's instance.
 func (c *commandContext) gitlabCredential(ctx context.Context, probe gitlabProbe, glabRuns map[string]glabResult) gitlabCredential {
 	if token := strings.TrimSpace(probe.hostToken); token != "" {
-		return gitlabCredential{token: token, source: "AO_GITLAB_HOST_TOKENS", host: probe.tokenHost}
+		return gitlabCredential{token: token, source: "AO_GITLAB_HOST_TOKENS"}
 	}
-	return c.gitlabToken(ctx, probe.tokenHost, glabRuns)
-}
-
-// gitlabUnattributedMessage explains why cred must not be sent to probe's
-// instance, or returns "" when it may be. glab answered for its own default
-// host, so the token belongs to whichever instance that is — not necessarily
-// this one.
-func gitlabUnattributedMessage(probe gitlabProbe) string {
-	if probe.host == "" {
-		return "not probed: glab answered for its own default host rather than gitlab.com, so doctor cannot tell which instance that token belongs to and will not send a possibly self-managed credential to gitlab.com; run `glab auth login --hostname gitlab.com` or set AO_GITLAB_TOKEN to validate gitlab.com"
-	}
-	return fmt.Sprintf("not probed: glab has no token scoped to %s, and doctor will not send another instance's credential there; run `glab auth login --hostname %s` or set AO_GITLAB_HOST_TOKENS for it (AO itself falls back to glab's default-host token for this host)", probe.host, probe.host)
+	return c.gitlabToken(ctx, probe, glabRuns)
 }
 
 // checkGitLabToken probes one GitLab instance described by probe, using the
@@ -732,9 +696,6 @@ func (c *commandContext) checkGitLabToken(ctx context.Context, probe gitlabProbe
 	token, source := cred.token, cred.source
 	if cred.err != nil {
 		return doctorCheck{Level: doctorWarn, Section: doctorSectionGitLab, Name: name, Message: cred.err.Error()}
-	}
-	if !cred.attributedTo(probe) {
-		return doctorCheck{Level: doctorWarn, Section: doctorSectionGitLab, Name: name, Message: gitlabUnattributedMessage(probe)}
 	}
 
 	reqCtx, cancel := context.WithTimeout(ctx, probeTimeout)
@@ -783,58 +744,100 @@ func (c *commandContext) checkGitLabToken(ctx context.Context, probe gitlabProbe
 	return doctorCheck{Level: doctorPass, Section: doctorSectionGitLab, Name: name, Message: fmt.Sprintf("%s token valid for %s", source, login)}
 }
 
-// gitlabToken resolves the default token for one host: the shared env vars
-// first, then glab. host scopes the glab lookup to that instance
-// (`--hostname`), because a glab authenticated against several instances
-// otherwise reports whichever it lists first — doctor would then validate one
-// instance's token against another's API. Only a scoped lookup attributes its
-// token to a host; the unscoped fallback (which keeps older glab builds and
-// single-instance setups working) yields an unattributed credential that
-// callers must not send anywhere they cannot justify.
-func (c *commandContext) gitlabToken(ctx context.Context, host string, glabRuns map[string]glabResult) gitlabCredential {
+// gitlabToken resolves the default credential for one probe's instance,
+// mirroring the chain the daemon wires for it (HostTokenSource and
+// DotComTokenSource in adapters/scm/gitlab/auth.go):
+//
+//   - gitlab.com keeps the documented env-vars-first precedence, then glab.
+//   - a self-managed host prefers the credential glab holds for that instance,
+//     because the env vars are a global default whose value belongs to
+//     gitlab.com; sending it to an internal server would disclose it there and
+//     fail with 401 even though the host had its own credential.
+//
+// Every glab lookup is host-attributed: `--hostname` scopes the query, and the
+// unscoped fallback (which keeps a glab too old for that flag working) is only
+// trusted for the host its output names. Doctor therefore never validates one
+// instance's token against another's API.
+func (c *commandContext) gitlabToken(ctx context.Context, probe gitlabProbe, glabRuns map[string]glabResult) gitlabCredential {
+	env := gitlabEnvCredential()
+	if probe.host == "" && env.token != "" {
+		return env
+	}
+	token, err := c.glabHostToken(ctx, probe.tokenHost, glabRuns)
+	if token != "" {
+		return gitlabCredential{token: token, source: "glab"}
+	}
+	if env.token != "" {
+		return env
+	}
+	return gitlabCredential{err: err}
+}
+
+// gitlabEnvCredential returns the global default token, or the zero value when
+// neither env var is set.
+func gitlabEnvCredential() gitlabCredential {
 	for _, name := range []string{"AO_GITLAB_TOKEN", "GITLAB_TOKEN"} {
 		if v := strings.TrimSpace(os.Getenv(name)); v != "" {
 			return gitlabCredential{token: v, source: name, shared: true}
 		}
 	}
+	return gitlabCredential{}
+}
+
+// glabHostToken asks glab for the token it holds for host, or explains why it
+// has none. The error is what `ao doctor` prints, so it names the remedy.
+func (c *commandContext) glabHostToken(ctx context.Context, host string, glabRuns map[string]glabResult) (string, error) {
+	host = scmgitlab.NormalizeHost(host)
 	path, lookErr := c.deps.LookPath("glab")
-	if lookErr != nil || path == "" {
-		return gitlabCredential{err: errors.New("no GitLab token found (set AO_GITLAB_TOKEN/GITLAB_TOKEN or run `glab auth login`)")}
+	if lookErr != nil || path == "" || host == "" {
+		return "", errors.New("no GitLab token found (set AO_GITLAB_TOKEN/GITLAB_TOKEN or run `glab auth login`)")
 	}
-	var scopedErr error
-	if host = normalizeGitLabHost(host); host != "" {
-		scoped := c.glabToken(ctx, path, host, glabRuns)
-		if scoped.token != "" {
-			return gitlabCredential{token: scoped.token, source: "glab", host: host}
+	// Only a run that succeeded carries a credential: a failing glab prints
+	// diagnostics, and a diagnostic that happens to mention a token must never
+	// be sent to GitLab as one.
+	scoped := c.glabStatus(ctx, path, host, glabRuns)
+	if scoped.err == nil {
+		if token := scmgitlab.ParseGLabTokenLine(scoped.output); token != "" {
+			return token, nil
 		}
-		scopedErr = scoped.err
 	}
-	run := c.glabToken(ctx, path, "", glabRuns)
-	if run.token != "" {
-		return gitlabCredential{token: run.token, source: "glab"}
+	// A glab too old for `--hostname` (or one that knows the instance under
+	// another name) still prints a status block naming every host it is
+	// authenticated against; take this host's token from it, and nothing else.
+	unscoped := c.glabStatus(ctx, path, "", glabRuns)
+	if unscoped.err == nil {
+		if token := scmgitlab.GLabTokenForHost(unscoped.output, host); token != "" {
+			return token, nil
+		}
 	}
 	// Surface why glab failed — "no token" and "glab could not run at all" are
 	// very different problems for whoever is reading `ao doctor`.
-	cmdErr := run.err
-	if cmdErr == nil {
-		cmdErr = scopedErr
+	if cmdErr := firstErr(unscoped.err, scoped.err); cmdErr != nil {
+		return "", fmt.Errorf("glab is installed but has no token for %s (`glab auth status --show-token` failed: %w); run `glab auth login --hostname %s`", host, cmdErr, host)
 	}
-	if cmdErr != nil {
-		return gitlabCredential{err: fmt.Errorf("glab is installed but no token was available (`glab auth status --show-token` failed: %w)", cmdErr)}
+	return "", fmt.Errorf("glab is installed but has no token for %s; run `glab auth login --hostname %s` or set AO_GITLAB_HOST_TOKENS for it", host, host)
+}
+
+func firstErr(errs ...error) error {
+	for _, err := range errs {
+		if err != nil {
+			return err
+		}
 	}
-	return gitlabCredential{err: errors.New("glab is installed but returned no auth token (`glab auth status --show-token`)")}
+	return nil
 }
 
 // glabResult is one memoized `glab auth status --show-token` invocation: the
-// parsed token (empty when glab printed none) and the command failure, if any.
+// raw output (glab prints status to stderr, so this is the combined output the
+// CommandOutput dep returns) and the command failure, if any.
 type glabResult struct {
-	token string
-	err   error
+	output string
+	err    error
 }
 
-// glabToken runs `glab auth status --show-token`, optionally scoped to one
+// glabStatus runs `glab auth status --show-token`, optionally scoped to one
 // host, memoizing the result per hostname for the caller's doctor run.
-func (c *commandContext) glabToken(ctx context.Context, path, host string, glabRuns map[string]glabResult) glabResult {
+func (c *commandContext) glabStatus(ctx context.Context, path, host string, glabRuns map[string]glabResult) glabResult {
 	if run, ok := glabRuns[host]; ok {
 		return run
 	}
@@ -845,38 +848,11 @@ func (c *commandContext) glabToken(ctx context.Context, path, host string, glabR
 	reqCtx, cancel := context.WithTimeout(ctx, probeTimeout)
 	defer cancel()
 	out, cmdErr := c.deps.CommandOutput(reqCtx, path, args...)
-	run := glabResult{err: cmdErr}
-	if cmdErr == nil {
-		run.token = parseGLabTokenLine(string(out))
-	}
+	run := glabResult{output: string(out), err: cmdErr}
 	if glabRuns != nil {
 		glabRuns[host] = run
 	}
 	return run
-}
-
-// parseGLabTokenLine extracts the token value from `glab auth status --show-token`
-// output. The token appears on a line containing "Token" followed by a colon
-// and the token value (e.g. "✓ Token found: glpat-xxx"). This mirrors the
-// parsing logic in the GitLab SCM adapter (gitlab/auth.go) without importing
-// the adapter package into the CLI.
-func parseGLabTokenLine(output string) string {
-	for _, line := range strings.Split(output, "\n") {
-		line = strings.TrimSpace(line)
-		tokenIdx := strings.Index(line, "Token")
-		if tokenIdx < 0 {
-			continue
-		}
-		colonIdx := strings.Index(line[tokenIdx:], ":")
-		if colonIdx < 0 {
-			continue
-		}
-		val := strings.TrimSpace(line[tokenIdx+colonIdx+1:])
-		if val != "" {
-			return val
-		}
-	}
-	return ""
 }
 
 var (

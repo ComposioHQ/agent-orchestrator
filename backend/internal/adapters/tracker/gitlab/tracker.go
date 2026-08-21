@@ -146,7 +146,7 @@ func New(opts Options) (*Tracker, error) {
 	// Fail fast only when no instance can authenticate. When gitlab.com has no
 	// credential but an allowlisted host does, the tracker stays up and
 	// gitlab.com lookups fail per request instead.
-	if _, err := src.Token(context.Background()); err != nil && !anyHostUsable(hosts) {
+	if _, err := resolveTokenAtStartup(src); err != nil && !anyHostUsable(hosts) {
 		return nil, err
 	}
 
@@ -170,11 +170,25 @@ func anyHostUsable(hosts map[string]hostEntry) bool {
 		if he.tokens == nil {
 			continue
 		}
-		if tok, err := he.tokens.Token(context.Background()); err == nil && tok != "" {
+		if tok, err := resolveTokenAtStartup(he.tokens); err == nil && tok != "" {
 			return true
 		}
 	}
 	return false
+}
+
+// startupTokenProbeTimeout bounds one credential resolution during New.
+const startupTokenProbeTimeout = 5 * time.Second
+
+// resolveTokenAtStartup resolves one token source under its own deadline.
+// Resolution can shell out to `glab auth status`, and New runs during daemon
+// startup — once for the default source and once per allowlisted host — so a
+// glab that hangs must not hang boot. Each source gets its own budget rather
+// than sharing one, so a slow host cannot starve the rest.
+func resolveTokenAtStartup(src scmgitlab.TokenSource) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), startupTokenProbeTimeout)
+	defer cancel()
+	return src.Token(ctx)
 }
 
 // configForHost returns the per-host config (base URL + token) for the given

@@ -11,7 +11,9 @@ Use `ao doctor` to inspect local GitLab readiness.
 
 ## Authentication
 
-The token is resolved in order from `AO_GITLAB_TOKEN`, `GITLAB_TOKEN`, then `glab auth status --show-token`. A personal access token needs `api` scope.
+For gitlab.com the token is resolved in order from `AO_GITLAB_TOKEN`, `GITLAB_TOKEN`, then the credential `glab` holds for gitlab.com. A personal access token needs `api` scope.
+
+For an allowlisted self-managed host the order is the other way around: the host's `AO_GITLAB_HOST_TOKENS` entry first, then the credential `glab` holds for that host, and only then `AO_GITLAB_TOKEN`/`GITLAB_TOKEN`. Those env vars are a global default — the same value is offered to every instance — so the credential you bound to the instance wins, and a gitlab.com token is never sent to an internal server that has its own.
 
 ## Self-managed instances
 
@@ -21,7 +23,7 @@ gitlab.com works with no configuration. Self-managed hosts must be allowlisted �
 export AO_GITLAB_ALLOWED_HOSTS="gitlab.example.com,gitlab.internal:8443"
 ```
 
-Each host may carry a port. When one instance needs its own token, map it per host; hosts without an entry fall back to the default token above:
+Each host may carry a port. When one instance needs its own token, map it per host; a host without an entry uses whatever `glab` holds for it, and falls back to the global default only when `glab` has nothing:
 
 ```bash
 export AO_GITLAB_HOST_TOKENS="gitlab.example.com=glpat-xxx,gitlab.internal:8443=glpat-yyy"
@@ -31,9 +33,9 @@ Both variables are read once at daemon startup, so restart the daemon after chan
 
 `ao doctor` reports one check per instance — `gitlab-token` for gitlab.com and `gitlab-token:<host>` for each allowlisted host — so a token that is valid on one instance and rejected on another is visible per host. A self-managed host that is unreachable from where you are (VPN down, split DNS) is a warning, not a failure: it says nothing about the credential.
 
-Doctor only sends a token to the instance it can attribute it to, and reports the probe as skipped otherwise — it never validates one instance's credential against another's API. A token counts as attributed when it comes from that host's `AO_GITLAB_HOST_TOKENS` entry, from `glab auth status --hostname <host>`, or from `AO_GITLAB_TOKEN`/`GITLAB_TOKEN` (which you declared as the default for every instance). Two cases are therefore reported rather than probed: the shared default token also authenticating an allowlisted host, and `glab` answering for its own default host instead of the one being checked. Give each instance its own credential — `glab auth login --hostname <host>`, or an `AO_GITLAB_HOST_TOKENS` entry — to have every host validated.
+A token is only ever sent to the instance it belongs to — by AO at runtime and by `ao doctor` when it probes. A credential belongs to an instance when it comes from that host's `AO_GITLAB_HOST_TOKENS` entry, from `glab auth status --hostname <host>`, or from a `glab` status block that names the host as the token's owner (which keeps a `glab` too old for `--hostname` working). `AO_GITLAB_TOKEN`/`GITLAB_TOKEN` belong to every instance, because that is what declaring a global default means. Anything else — notably `glab`'s own default host when it is a different instance — is used for nothing: AO leaves that host without a token rather than disclosing another instance's credential to it, and doctor reports the probe as skipped.
 
-The daemon applies the same rule to gitlab.com: once a self-managed host is allowlisted, gitlab.com is authenticated only with `AO_GITLAB_TOKEN`/`GITLAB_TOKEN` or with `glab auth login --hostname gitlab.com` — never with `glab`'s default-host token, which may belong to your internal instance. For the self-managed hosts themselves the daemon is less strict than doctor: a host with no credential of its own still falls back to `glab`'s default-host token at runtime, which is why doctor flags that setup instead of silently confirming it.
+One case is reported rather than probed even though the credential is usable: when the global default token is also what authenticates an allowlisted self-managed host, doctor cannot tell whether it is gitlab.com's token or the internal one, and validating it would send a possibly-internal credential to a third party. Give each instance its own credential — `glab auth login --hostname <host>`, or an `AO_GITLAB_HOST_TOKENS` entry — to have every host validated.
 
 <Callout type="warn">
 	Self-managed API traffic is always `https://<host>/api/v4`. Instances served over plain HTTP, or under a path prefix such as `https://host/gitlab`, are not supported. A private certificate authority must be trusted by the operating system — AO has no separate CA setting.

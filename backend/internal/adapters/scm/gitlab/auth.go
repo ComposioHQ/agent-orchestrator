@@ -206,45 +206,84 @@ func (s *GLabTokenSource) failureTTL() time.Duration {
 	return defaultGLabFailureCacheTTL
 }
 
-// glabAuthToken runs `glab auth status --show-token` and parses the token from
-// the output. Unlike `gh auth token` (which prints just the token), glab does not
-// have a token-only subcommand — `glab auth status --show-token` prints a
-// multi-line status block that includes a line like:
+// glabRunner runs one `glab auth status` invocation and returns its combined
+// output. It exists so the host-attribution logic can be tested without a glab
+// binary on PATH.
+type glabRunner func(ctx context.Context, args ...string) (string, error)
+
+// runGLab is the production glabRunner.
+//
+// glab writes auth status output to stderr, not stdout — use CombinedOutput so
+// the token is not lost. The output is returned even when glab exits non-zero,
+// because an older glab rejecting `--hostname` still prints usable status.
+func runGLab(ctx context.Context, args ...string) (string, error) {
+	out, err := aoprocess.CommandContext(ctx, "glab", args...).CombinedOutput()
+	return string(out), err
+}
+
+// glabAuthToken resolves the token glab holds for hostname.
+//
+// Unlike `gh auth token` (which prints just the token), glab has no token-only
+// subcommand — `glab auth status --show-token` prints a multi-line status block
+// that includes a line like:
 //
 //	✓ Token found: glpat-xxxxxxxxxxxxxxxx
-//
-// hostname, when non-empty, scopes the query to one instance via
-// `--hostname`; a glab authenticated against several instances otherwise
-// reports them all and the first token line wins, which is not necessarily the
-// host being asked about.
 //
 // If glab is not installed, not authenticated, or exits non-zero for any other
 // reason, ErrNoToken is returned so the GitLab provider is silently disabled
 // rather than erroring on every poll.
 func glabAuthToken(ctx context.Context, hostname string) (string, error) {
+	return glabAuthTokenWith(ctx, hostname, runGLab)
+}
+
+// glabAuthTokenWith asks glab for hostname's token, scoping the query with
+// `--hostname` first. When that yields nothing — a glab too old for the flag,
+// or an instance it knows under a different name — it falls back to the
+// unscoped status block, but accepts only the token that block attributes to
+// hostname. A glab authenticated against several instances (or against one
+// instance that is not the one being asked about) therefore never hands its
+// default host's credential to another host.
+//
+// An empty hostname asks glab for its own default host and takes whatever it
+// reports; no caller in the daemon does this, because a token that cannot be
+// attributed to an instance must not be sent to one.
+func glabAuthTokenWith(ctx context.Context, hostname string, run glabRunner) (string, error) {
 	args := []string{"auth", "status", "--show-token"}
-	if h := strings.TrimSpace(hostname); h != "" {
-		args = append(args, "--hostname", h)
+	host := NormalizeHost(hostname)
+	if host == "" {
+		out, err := run(ctx, args...)
+		if err != nil {
+			return "", ErrNoToken
+		}
+		if token := ParseGLabTokenLine(out); token != "" {
+			return token, nil
+		}
+		return "", ErrNoToken
 	}
-	// glab writes auth status output to stderr, not stdout — use CombinedOutput
-	// to capture both streams so the token is not lost.
-	out, err := aoprocess.CommandContext(ctx, "glab", args...).CombinedOutput()
+	if out, err := run(ctx, append(append([]string{}, args...), "--hostname", host)...); err == nil {
+		if token := ParseGLabTokenLine(out); token != "" {
+			return token, nil
+		}
+	}
+	out, err := run(ctx, args...)
 	if err != nil {
 		return "", ErrNoToken
 	}
-	token := parseGLabTokenLine(string(out))
-	if token == "" {
-		return "", ErrNoToken
+	if token := GLabTokenForHost(out, host); token != "" {
+		return token, nil
 	}
-	return token, nil
+	return "", ErrNoToken
 }
 
-// parseGLabTokenLine extracts the token value from `glab auth status --show-token`
-// output. The token appears on a line containing "Token" followed by a colon
+// ParseGLabTokenLine extracts the token value from `glab auth status --show-token`
+// output. It takes the first token line it finds, so it is only safe on output
+// that covers a single instance — use GLabTokenForHost on unscoped output.
+//
+// The token appears on a line containing "Token" followed by a colon
 // and the token value (e.g. "✓ Token found: glpat-xxx"). The function scans
 // all lines so it is robust against reordering of fields or checkmark prefixes
 // in future glab versions.
-func parseGLabTokenLine(output string) string {
+func ParseGLabTokenLine(output string) string {
 	for _, line := range strings.Split(output, "\n") {
 		line = strings.TrimSpace(line)
 		// Match any line containing "Token" — handles both "Token: xxx"
@@ -266,39 +305,183 @@ func parseGLabTokenLine(output string) string {
 	return ""
 }
 
-// HostTokenSource is the token chain for one GitLab host: the shared env vars
-// first, then glab scoped to that host, then glab's own default host. The last
-// step keeps a single-instance glab setup working when its configured hostname
-// does not literally match the remote (and when the installed glab predates
-// `--hostname`), which is how this chain behaved before it became host-aware.
+// glabHostToken pairs one host named in `glab auth status` output with the
+// token glab reported for it.
+type glabHostToken struct {
+	host  string
+	token string
+}
+
+// parseGLabHostTokens attributes every token in `glab auth status --show-token`
+// output to the host it belongs to. glab prints one block per authenticated
+// instance, so an unscoped invocation on a multi-instance setup contains
+// several tokens; taking the first one (ParseGLabTokenLine) would answer with
+// whichever instance glab happened to list first. A token printed before any
+// host is named is dropped: an unattributable credential must never be sent
+// anywhere, because it may belong to a different instance than the caller asks
+// about.
+//
+// Both known glab layouts are recognized: the older
+//
+//	Hostname: gitlab.com
+//	✓ Token found: glpat-xxx
+//
+// and the current per-host block
+//
+//	gitlab.com
+//	  ✓ Logged in to gitlab.com as alice (keyring)
+//	  ✓ Token: glpat-xxx
+func parseGLabHostTokens(output string) []glabHostToken {
+	var pairs []glabHostToken
+	host := ""
+	for _, line := range strings.Split(output, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		if h := glabHostLine(line); h != "" {
+			host = h
+			continue
+		}
+		if host == "" {
+			continue
+		}
+		token := glabTokenLineValue(line)
+		if token == "" || glabHasHost(pairs, host) {
+			continue
+		}
+		pairs = append(pairs, glabHostToken{host: host, token: token})
+	}
+	return pairs
+}
+
+func glabHasHost(pairs []glabHostToken, host string) bool {
+	for _, p := range pairs {
+		if p.host == host {
+			return true
+		}
+	}
+	return false
+}
+
+// GLabTokenForHost returns the token `glab auth status --show-token` output
+// attributes to host, or "" when it attributes none to it. Callers outside this
+// package use it to check that a credential belongs to the instance they are
+// about to send it to.
+func GLabTokenForHost(output, host string) string {
+	h := NormalizeHost(host)
+	if h == "" {
+		return ""
+	}
+	for _, p := range parseGLabHostTokens(output) {
+		if p.host == h {
+			return p.token
+		}
+	}
+	return ""
+}
+
+// glabHostLine returns the host a status line names, or "" when the line does
+// not introduce one.
+func glabHostLine(line string) string {
+	trimmed := strings.TrimLeft(line, "✓✗•*- \t")
+	if rest, ok := cutPrefixFold(trimmed, "logged in to "); ok {
+		host, _, _ := strings.Cut(rest, " ")
+		return NormalizeHost(host)
+	}
+	if rest, ok := cutPrefixFold(trimmed, "hostname:"); ok {
+		return NormalizeHost(rest)
+	}
+	return glabBareHostLine(trimmed)
+}
+
+func cutPrefixFold(s, prefix string) (string, bool) {
+	if len(s) < len(prefix) || !strings.EqualFold(s[:len(prefix)], prefix) {
+		return "", false
+	}
+	return strings.TrimSpace(s[len(prefix):]), true
+}
+
+// glabBareHostLine recognizes the bare `<host>` section header of the current
+// glab layout. It is deliberately strict — a line only counts as a host when it
+// looks like one (optional numeric port, dotted name, host characters only) —
+// so a stray value is never mistaken for an instance name.
+func glabBareHostLine(line string) string {
+	if line == "" || strings.ContainsAny(line, " \t/\\") {
+		return ""
+	}
+	name := line
+	if i := strings.LastIndex(name, ":"); i >= 0 {
+		port := name[i+1:]
+		if port == "" || strings.TrimLeft(port, "0123456789") != "" {
+			return ""
+		}
+		name = name[:i]
+	}
+	if !strings.Contains(name, ".") {
+		return ""
+	}
+	for _, r := range name {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '.', r == '-':
+		default:
+			return ""
+		}
+	}
+	return NormalizeHost(line)
+}
+
+// glabTokenLineValue returns the token a status line carries, or "" when the
+// line is not the token line. Lines such as "Token expires: <date>" are
+// rejected: only "Token:" and "Token found:" name the credential itself.
+func glabTokenLineValue(line string) string {
+	idx := strings.Index(line, "Token")
+	if idx < 0 {
+		return ""
+	}
+	rest := line[idx+len("Token"):]
+	colon := strings.Index(rest, ":")
+	if colon < 0 {
+		return ""
+	}
+	if label := strings.ToLower(strings.TrimSpace(rest[:colon])); label != "" && label != "found" {
+		return ""
+	}
+	return strings.TrimSpace(rest[colon+1:])
+}
+
+// HostTokenSource is the token chain for one self-managed GitLab host: the
+// credential glab holds for that instance first, then the shared env vars.
+//
+// The host-scoped lookup outranks AO_GITLAB_TOKEN/GITLAB_TOKEN on purpose. The
+// env vars are a global default — the same value is offered to every instance
+// AO talks to — so letting them win would send a gitlab.com token to a
+// self-managed server (disclosing it to whoever runs it, and failing every call
+// with 401) even though the user had authenticated that instance separately.
+// AO_GITLAB_HOST_TOKENS still overrides both; it is applied by the wiring layer
+// instead of this chain.
+//
+// gitlab.com is not a self-managed host: it falls through to DotComTokenSource,
+// which keeps the documented env-var-first precedence for the default instance.
 func HostTokenSource(host string) TokenSource {
-	sources := FallbackTokenSource{
+	h := NormalizeHost(host)
+	if IsGitLabDotCom(h) {
+		return DotComTokenSource()
+	}
+	return FallbackTokenSource{
+		&GLabTokenSource{Hostname: h},
 		&EnvTokenSource{EnvVars: []string{"AO_GITLAB_TOKEN"}},
 	}
-	if h := NormalizeHost(host); h != "" {
-		sources = append(sources, &GLabTokenSource{Hostname: h})
-	}
-	return append(sources, &GLabTokenSource{})
 }
 
 // DotComTokenSource is the token chain for gitlab.com: the shared env vars
-// first, then glab scoped to gitlab.com.
-//
-// allowUnscopedGLab appends glab's own default host as a last resort. It is
-// safe only when no self-managed instance is configured: an unscoped
-// `glab auth status --show-token` on a glab authenticated against several
-// instances answers with whichever host it lists first, and sending that
-// token to gitlab.com would disclose a self-managed credential to a third
-// party. With gitlab.com as the only reachable instance the unscoped token
-// can only be the one AO would send there anyway, and the fallback is what
-// keeps a glab too old for `--hostname` working.
-func DotComTokenSource(allowUnscopedGLab bool) TokenSource {
-	sources := FallbackTokenSource{
+// first (the documented precedence for the default instance), then glab scoped
+// to gitlab.com. There is no unattributed fallback — GLabTokenSource itself
+// falls back to glab's unscoped status output, but only ever accepts the token
+// that output attributes to gitlab.com.
+func DotComTokenSource() TokenSource {
+	return FallbackTokenSource{
 		&EnvTokenSource{EnvVars: []string{"AO_GITLAB_TOKEN"}},
 		&GLabTokenSource{Hostname: DotComHost},
 	}
-	if allowUnscopedGLab {
-		sources = append(sources, &GLabTokenSource{})
-	}
-	return sources
 }

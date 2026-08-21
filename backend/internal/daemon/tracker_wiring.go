@@ -21,7 +21,7 @@ func newGitHubTracker() (ports.Tracker, error) {
 // token. This mirrors the SCM provider's wiring in newGitLabSCMProvider.
 func newGitLabTracker(gitlabCfg config.GitLabConfig) (ports.Tracker, error) {
 	return trackergitlab.New(trackergitlab.Options{
-		Token:        gitlabDotComTokenSource(gitlabCfg),
+		Token:        gitlabDotComTokenSource(),
 		AllowedHosts: gitlabCfg.AllowedHosts,
 		HostTokens:   gitlabHostTokenSources(gitlabCfg),
 	})

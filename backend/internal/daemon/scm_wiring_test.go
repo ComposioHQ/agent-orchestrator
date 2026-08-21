@@ -140,50 +140,32 @@ func TestGitLabHostTokenSourcesIgnoresEmptyOverride(t *testing.T) {
 	}
 }
 
-// TestGitLabDotComTokenSourceDropsUnscopedGLabForSelfManagedSetups covers the
-// credential boundary for gitlab.com: once a self-managed instance is
-// allowlisted, glab may be authenticated against several hosts, and an
-// unscoped `glab auth status --show-token` answers with whichever it lists
-// first. Falling back to it would send a self-managed token to gitlab.com.
-func TestGitLabDotComTokenSourceDropsUnscopedGLabForSelfManagedSetups(t *testing.T) {
-	chain, ok := gitlabDotComTokenSource(config.GitLabConfig{
-		AllowedHosts: []string{"gitlab.internal:8443"},
-	}).(scmgitlab.FallbackTokenSource)
-	if !ok {
-		t.Fatal("gitlabDotComTokenSource did not return a fallback chain")
-	}
-	for _, src := range chain {
-		gl, isGLab := src.(*scmgitlab.GLabTokenSource)
-		if isGLab && gl.Hostname == "" {
-			t.Fatal("gitlab.com chain keeps an unscoped glab lookup despite a self-managed host")
+// TestGitLabDotComTokenSourceIsIndependentOfTheAllowlist covers the credential
+// boundary for gitlab.com: the default chain never contains an unscoped glab
+// lookup, whatever the allowlist says. An unscoped `glab auth status
+// --show-token` answers with whichever host glab lists first, so falling back
+// to it would send a self-managed token to gitlab.com.
+func TestGitLabDotComTokenSourceIsIndependentOfTheAllowlist(t *testing.T) {
+	for _, allowed := range [][]string{nil, {"gitlab.com"}, {"gitlab.internal:8443"}} {
+		chain, ok := gitlabDotComTokenSource().(scmgitlab.FallbackTokenSource)
+		if !ok {
+			t.Fatalf("allowlist %v: gitlab.com token source is not a fallback chain", allowed)
+		}
+		scoped := false
+		for _, src := range chain {
+			gl, isGLab := src.(*scmgitlab.GLabTokenSource)
+			if !isGLab {
+				continue
+			}
+			if gl.Hostname == "" {
+				t.Fatalf("allowlist %v: gitlab.com chain keeps an unscoped glab lookup", allowed)
+			}
+			if gl.Hostname == "gitlab.com" {
+				scoped = true
+			}
+		}
+		if !scoped {
+			t.Fatalf("allowlist %v: gitlab.com chain has no glab source scoped to gitlab.com", allowed)
 		}
 	}
-	scoped := false
-	for _, src := range chain {
-		if gl, isGLab := src.(*scmgitlab.GLabTokenSource); isGLab && gl.Hostname == "gitlab.com" {
-			scoped = true
-		}
-	}
-	if !scoped {
-		t.Fatal("gitlab.com chain has no glab source scoped to gitlab.com")
-	}
-}
-
-// TestGitLabDotComTokenSourceKeepsUnscopedGLabWithoutSelfManagedHosts covers
-// the plain setup: gitlab.com aliases in the allowlist are not self-managed
-// instances, so the unscoped fallback — which keeps a glab too old for
-// `--hostname` working — must stay.
-func TestGitLabDotComTokenSourceKeepsUnscopedGLabWithoutSelfManagedHosts(t *testing.T) {
-	chain, ok := gitlabDotComTokenSource(config.GitLabConfig{
-		AllowedHosts: []string{"gitlab.com", " WWW.GitLab.com ", ""},
-	}).(scmgitlab.FallbackTokenSource)
-	if !ok {
-		t.Fatal("gitlabDotComTokenSource did not return a fallback chain")
-	}
-	for _, src := range chain {
-		if gl, isGLab := src.(*scmgitlab.GLabTokenSource); isGLab && gl.Hostname == "" {
-			return
-		}
-	}
-	t.Fatal("gitlab.com chain lost its unscoped glab fallback with no self-managed host configured")
 }
