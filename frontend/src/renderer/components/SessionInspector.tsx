@@ -18,6 +18,7 @@ import {
 	type InspectorGithubReview,
 	type InspectorReviewGroup,
 	type InspectorReviewLabels,
+	type InspectorReviewSummaryAction,
 	type InspectorTimelineEvent,
 	type InspectorView,
 } from "@aoagents/product-ui";
@@ -48,6 +49,7 @@ import {
 } from "../hooks/useSessionScmSummary";
 import { useSessionUsage, type SessionUsage } from "../hooks/useSessionUsage";
 import { useSessionWorkspaceFilesChangedCount } from "../hooks/useSessionWorkspaceFiles";
+import { useSessionBrowserLink } from "../hooks/useSessionBrowserLink";
 import { clearTerminateSessionState, useTerminateSession } from "../hooks/useTerminateSession";
 import { prBrowserUrl, prCardPresentation, prNounKeys, sessionPRDisplaySummaries } from "../lib/pr-display";
 import { formatTokenCount } from "../lib/format-token-count";
@@ -144,6 +146,7 @@ export function SessionInspector({
 	isInspectorVisible = true,
 	onToggleBrowserPopOut,
 	onOpenFiles,
+	onOpenReviewFile,
 	filesView,
 	browserView,
 	view: viewProp,
@@ -156,6 +159,7 @@ export function SessionInspector({
 	isInspectorVisible?: boolean;
 	onToggleBrowserPopOut?: (next: boolean) => void;
 	onOpenFiles?: () => void;
+	onOpenReviewFile?: (target: { line?: number; path: string }) => void;
 	filesView?: ReactNode;
 	browserView?: BrowserViewModel;
 	/** Controlled active tab. Omit to let the inspector own its own selection. */
@@ -229,7 +233,7 @@ export function SessionInspector({
 				loadingText={session ? undefined : t("inspector.loadingSession")}
 				onViewChange={setView}
 				reviewsView={
-					session ? <ReviewsView onOpenReviewerTerminal={onOpenReviewerTerminal} session={session} /> : undefined
+					session ? <ReviewsView onOpenReviewFile={onOpenReviewFile} onOpenReviewerTerminal={onOpenReviewerTerminal} session={session} /> : undefined
 				}
 				summaryView={
 					session ? <SummaryView canOpenReviews={reviewsAvailable} onOpenReviews={() => setView("reviews")} session={session} /> : undefined
@@ -324,14 +328,16 @@ function SummaryView({
 
 function ReviewsView({
 	session,
+	onOpenReviewFile,
 	onOpenReviewerTerminal,
 }: {
 	session: WorkspaceSession;
+	onOpenReviewFile?: (target: { line?: number; path: string }) => void;
 	onOpenReviewerTerminal?: OpenReviewerTerminal;
 }) {
 	return (
 		<div role="tabpanel">
-			<ReviewsSection onOpenReviewerTerminal={onOpenReviewerTerminal} session={session} />
+			<ReviewsSection onOpenReviewFile={onOpenReviewFile} onOpenReviewerTerminal={onOpenReviewerTerminal} session={session} />
 		</div>
 	);
 }
@@ -1366,9 +1372,11 @@ function resolveDefaultReviewerHarness(config: ProjectConfig | undefined, worker
 
 function ReviewsSection({
 	session,
+	onOpenReviewFile,
 	onOpenReviewerTerminal,
 }: {
 	session: WorkspaceSession;
+	onOpenReviewFile?: (target: { line?: number; path: string }) => void;
 	onOpenReviewerTerminal?: OpenReviewerTerminal;
 }) {
 	const { t } = useTranslation();
@@ -1540,6 +1548,7 @@ function ReviewsSection({
 			<MergedReviewsSection
 				githubPRs={githubReviews}
 				isLoading={scmSummary.isLoading}
+				onOpenReviewFile={onOpenReviewFile}
 				reviewStates={reviewStates}
 				runs={reviewsQuery.data?.runs ?? []}
 				session={session}
@@ -1558,18 +1567,21 @@ function ReviewsSection({
 function MergedReviewsSection({
 	githubPRs,
 	isLoading,
+	onOpenReviewFile,
 	reviewStates,
 	runs,
 	session,
 }: {
 	githubPRs: SessionPRSummary[];
 	isLoading: boolean;
+	onOpenReviewFile?: (target: { line?: number; path: string }) => void;
 	reviewStates: PRReviewState[];
 	runs: ReviewRunFacts[];
 	session: WorkspaceSession;
 }) {
 	const { t } = useTranslation();
 	const queryClient = useQueryClient();
+	const openInAOBrowser = useSessionBrowserLink(session);
 	const openReviewStates = openReviewStatesFor(session, reviewStates);
 	const runsByPR = runsByPRFrom(openReviewStates, runs);
 	const aoStates = triggeredReviewStatesFrom(openReviewStates, runs);
@@ -1606,6 +1618,13 @@ function MergedReviewsSection({
 			body: { message: formatInlineReviewCommentMessage(comment) },
 		});
 		if (error) throw new Error(apiErrorMessage(error, "Unable to send review comment to worker agent"));
+	};
+	const sendReviewSummaryToWorker = async (summary: InspectorReviewSummaryAction) => {
+		const { error } = await apiClient.POST("/api/v1/sessions/{sessionId}/send", {
+			params: { path: { sessionId: session.id } },
+			body: { message: formatReviewSummaryMessage(summary) },
+		});
+		if (error) throw new Error(apiErrorMessage(error, "Unable to send review summary to worker agent"));
 	};
 	const groups: InspectorReviewGroup[] = rows.map(([number, { ao, github }]) => {
 		const aoRuns = ao ? [...(runsByPR.get(ao.prUrl) ?? [])].sort((a, b) => b.createdAt.localeCompare(a.createdAt)) : [];
@@ -1788,7 +1807,12 @@ function MergedReviewsSection({
 			labels={labels}
 			onRequestRereview={requestRereview}
 			onResolveInlineComment={resolveInlineComment}
+			onOpenInAOBrowser={openInAOBrowser}
 			onSendInlineComment={sendInlineCommentToWorker}
+			onSendReviewSummary={sendReviewSummaryToWorker}
+			onViewInlineCommentInFile={(comment) => {
+				if (comment.file) onOpenReviewFile?.({ line: comment.line, path: comment.file });
+			}}
 			renderAvatar={(harness) => (
 				<AgentAvatar className="size-5 shrink-0" decorative provider={harness} />
 			)}
@@ -1813,6 +1837,8 @@ function reviewLabels(t: TFunction): InspectorReviewLabels {
 		noPastReviewSummaries: t("inspector.noPastReviewSummaries"),
 		notInjected: t("inspector.review.notInjected"),
 		openComments: t("inspector.openComments"),
+		openInAOBrowser: t("inspector.openInAOBrowser"),
+		openInSystemBrowser: t("inspector.openInSystemBrowser"),
 		openInlineComments: (count) => t("inspector.openInlineComments", { count }),
 		requestRereviewPR: t("inspector.requestRereviewPR"),
 		reviews: t("inspector.reviews"),
@@ -1874,6 +1900,21 @@ function formatInlineReviewCommentMessage(comment: InspectorInlineComment & { re
 		lines.push("", `Comment URL: ${url}`);
 	}
 	lines.push("", "You should not need to re-fetch review data unless you need additional context beyond what AO has provided here.");
+	return lines.join("\n");
+}
+
+function formatReviewSummaryMessage(summary: InspectorReviewSummaryAction): string {
+	const reviewer = sanitizeWorkerMessagePart(summary.reviewerId.trim() || "reviewer");
+	const body = sanitizeWorkerMessagePart(summary.body.trim());
+	const url = sanitizeWorkerMessagePart((summary.url || summary.pullRequestUrl || "").trim());
+	const source = summary.source === "agent" ? "AO agent review" : "external PR review";
+	const lines = [
+		`A ${source} from ${reviewer} has feedback for your pull request. Address the actionable items, run relevant tests, commit the fixes, and push the branch.`,
+		"",
+		"Review summary:",
+		body,
+	];
+	if (url) lines.push("", `Review URL: ${url}`);
 	return lines.join("\n");
 }
 

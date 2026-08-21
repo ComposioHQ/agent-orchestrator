@@ -293,6 +293,8 @@
 	"inspector.reviewBySource.github": "Revisiones externas",
 	"inspector.unresolvedCount": "{{count}} sin resolver",
 	"inspector.openComments": "Comentarios abiertos",
+	"inspector.openInAOBrowser": "Abrir en el navegador de AO",
+	"inspector.openInSystemBrowser": "Abrir en el navegador del sistema",
 	"inspector.openInlineComments": "{{count}} comentarios inline abiertos",
 	"inspector.requestRereviewPR": "Solicitar nueva revisión del PR",
 	"inspector.reviewedAt": "Revisado hace {{time}}",

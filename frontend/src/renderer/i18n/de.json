@@ -291,6 +291,8 @@
 	"inspector.reviewBySource.github": "Externe Reviews",
 	"inspector.unresolvedCount": "{{count}} offen",
 	"inspector.openComments": "Offene Kommentare",
+	"inspector.openInAOBrowser": "Im AO-Browser öffnen",
+	"inspector.openInSystemBrowser": "Im Systembrowser öffnen",
 	"inspector.openInlineComments": "{{count}} offene Inline-Kommentare",
 	"inspector.requestRereviewPR": "Erneute PR-Review anfragen",
 	"inspector.reviewedAt": "Geprüft vor {{time}}",
