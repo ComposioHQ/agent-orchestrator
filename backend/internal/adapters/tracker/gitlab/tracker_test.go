@@ -1034,3 +1034,52 @@ func TestNewBoundsTheStartupProbeOfEveryHost(t *testing.T) {
 		t.Fatal("New resolved a host token with an unbounded context")
 	}
 }
+
+// barrierTokenSource reports whether its peer had already started resolving by
+// the time this source ran. Serial probing leaves the first source waiting for
+// a peer that has not started yet.
+type barrierTokenSource struct {
+	started chan struct{}
+	peer    chan struct{}
+	err     error
+}
+
+func (s *barrierTokenSource) Token(ctx context.Context) (string, error) {
+	close(s.started)
+	select {
+	case <-s.peer:
+		// Report "no credential" so the probe of the other host is never
+		// cancelled out from under this assertion.
+		return "", nil
+	case <-time.After(2 * time.Second):
+		s.err = errors.New("peer host never started: host probes ran serially")
+		return "", s.err
+	case <-ctx.Done():
+		s.err = ctx.Err()
+		return "", s.err
+	}
+}
+
+// TestNewProbesEveryHostConcurrently covers daemon startup latency: New runs on
+// the synchronous boot path, and resolving a host credential can shell out to
+// glab. Probing the allowlisted hosts one after another makes boot wait for the
+// sum of their timeouts instead of the slowest one.
+func TestNewProbesEveryHostConcurrently(t *testing.T) {
+	first := &barrierTokenSource{started: make(chan struct{})}
+	second := &barrierTokenSource{started: make(chan struct{})}
+	first.peer, second.peer = second.started, first.started
+
+	if _, err := New(Options{
+		Token:        scmgitlab.StaticTokenSource(""),
+		AllowedHosts: []string{"gitlab.one", "gitlab.two"},
+		HostTokens: map[string]scmgitlab.TokenSource{
+			"gitlab.one": first,
+			"gitlab.two": second,
+		},
+	}); !errors.Is(err, ErrNoToken) {
+		t.Fatalf("New err = %v, want ErrNoToken when no host has a credential", err)
+	}
+	if first.err != nil || second.err != nil {
+		t.Fatalf("host probes = (%v, %v), want both resolved concurrently", first.err, second.err)
+	}
+}

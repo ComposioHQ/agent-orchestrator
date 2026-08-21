@@ -11,6 +11,8 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	scmgitlab "github.com/aoagents/agent-orchestrator/backend/internal/adapters/scm/gitlab"
@@ -165,26 +167,45 @@ func New(opts Options) (*Tracker, error) {
 // anyHostUsable reports whether at least one allowlisted self-managed host can
 // authenticate. Consulted only when the default (gitlab.com) source yields
 // nothing, so the common path still costs a single token resolution.
+//
+// The hosts are probed concurrently under one deadline. Each probe can shell
+// out to `glab auth status`, and New blocks daemon startup, so a serial sweep
+// would make boot wait for the sum of the hosts' timeouts rather than for the
+// slowest one. The first host that answers cancels the rest — one usable
+// instance is all this needs to know.
 func anyHostUsable(hosts map[string]hostEntry) bool {
+	if len(hosts) == 0 {
+		return false
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), startupTokenProbeTimeout)
+	defer cancel()
+
+	var usable atomic.Bool
+	var wg sync.WaitGroup
 	for _, he := range hosts {
 		if he.tokens == nil {
 			continue
 		}
-		if tok, err := resolveTokenAtStartup(he.tokens); err == nil && tok != "" {
-			return true
-		}
+		wg.Add(1)
+		go func(src scmgitlab.TokenSource) {
+			defer wg.Done()
+			if tok, err := src.Token(ctx); err == nil && tok != "" {
+				usable.Store(true)
+				cancel()
+			}
+		}(he.tokens)
 	}
-	return false
+	wg.Wait()
+	return usable.Load()
 }
 
-// startupTokenProbeTimeout bounds one credential resolution during New.
+// startupTokenProbeTimeout bounds credential resolution during New: one budget
+// for the default source, one shared by the per-host probes.
 const startupTokenProbeTimeout = 5 * time.Second
 
-// resolveTokenAtStartup resolves one token source under its own deadline.
-// Resolution can shell out to `glab auth status`, and New runs during daemon
-// startup — once for the default source and once per allowlisted host — so a
-// glab that hangs must not hang boot. Each source gets its own budget rather
-// than sharing one, so a slow host cannot starve the rest.
+// resolveTokenAtStartup resolves the default token source under its own
+// deadline. Resolution can shell out to `glab auth status`, and New runs during
+// daemon startup, so a glab that hangs must not hang boot.
 func resolveTokenAtStartup(src scmgitlab.TokenSource) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), startupTokenProbeTimeout)
 	defer cancel()

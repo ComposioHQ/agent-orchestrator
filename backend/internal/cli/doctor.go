@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -552,12 +553,50 @@ func (c *commandContext) checkGitLabTokens(ctx context.Context, gitlabCfg config
 	}
 	defaultCred := c.gitlabCredential(ctx, defaultProbe, glabRuns)
 
-	checks := make([]doctorCheck, 0, len(hosts)+1)
+	checks := make([]doctorCheck, 0, len(hosts)+2)
+	if check, ok := checkGitLabUnusedHostTokens(hostTokens, hosts); ok {
+		checks = append(checks, check)
+	}
 	checks = append(checks, c.checkGitLabDotComToken(ctx, defaultProbe, defaultCred, hosts, creds))
 	for i, probe := range probes {
 		checks = append(checks, c.checkGitLabToken(ctx, probe, creds[i]))
 	}
 	return checks
+}
+
+// checkGitLabUnusedHostTokens reports AO_GITLAB_HOST_TOKENS entries that no
+// GitLab client will ever read, and returns false when there are none — a
+// correct configuration must not add noise to `ao doctor`.
+//
+// An entry is silently inert in two ways, and both leave the user with a
+// credential they believe is in use: a host missing from AO_GITLAB_ALLOWED_HOSTS
+// is rejected before any credential is attached (isHostAllowed in
+// adapters/scm/gitlab/provider.go), so its merge requests are skipped while
+// every other check reads green; and gitlab.com is served by the default token
+// chain, which never consults the per-host map.
+func checkGitLabUnusedHostTokens(hostTokens map[string]string, hosts []string) (doctorCheck, bool) {
+	allowed := make(map[string]bool, len(hosts))
+	for _, host := range hosts {
+		allowed[host] = true
+	}
+	unused := make([]string, 0, len(hostTokens))
+	for host := range hostTokens {
+		switch {
+		case allowed[host]:
+		case scmgitlab.IsGitLabDotCom(host):
+			unused = append(unused, host+" (the default instance authenticates with AO_GITLAB_TOKEN/GITLAB_TOKEN or glab)")
+		default:
+			unused = append(unused, host+" (not in AO_GITLAB_ALLOWED_HOSTS, so AO rejects the host before attaching any credential)")
+		}
+	}
+	if len(unused) == 0 {
+		return doctorCheck{}, false
+	}
+	slices.Sort(unused)
+	return doctorCheck{
+		Level: doctorWarn, Section: doctorSectionGitLab, Name: "gitlab-host-tokens",
+		Message: fmt.Sprintf("unused AO_GITLAB_HOST_TOKENS entries: %s", strings.Join(unused, "; ")),
+	}, true
 }
 
 // checkGitLabDotComToken runs the default-instance probe unless its credential

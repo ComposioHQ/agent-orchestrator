@@ -1203,3 +1203,53 @@ func TestDoctorIgnoresTokensPrintedByAFailedGLabRun(t *testing.T) {
 		t.Fatalf("gitlab.com probe tokens = %v, want no request from a failed glab run", got)
 	}
 }
+
+// TestDoctorFlagsHostTokensForUnallowlistedHosts covers the misconfiguration
+// doctor exists to catch: a per-host token whose host is not allowlisted is
+// dropped by the provider before any request, so GitLab observation is dead for
+// that instance while every check still reads green.
+func TestDoctorFlagsHostTokensForUnallowlistedHosts(t *testing.T) {
+	setConfigEnv(t)
+	clearDoctorGitLabEnv(t)
+	dotCom, _ := gitlabDoctorHostServer(t, http.StatusOK, `{"username":"dotcom-user"}`)
+	c := doctorContext(t, map[string]string{"git": "/bin/git"}, func(context.Context, string, ...string) ([]byte, error) {
+		return []byte("git version 2.43.0\n"), nil
+	})
+	t.Setenv("AO_GITLAB_TOKEN", "env-token")
+	t.Setenv("AO_GITLAB_ALLOWED_HOSTS", "gitlab.internal")
+	t.Setenv("AO_GITLAB_HOST_TOKENS", "gitlab.internal=glpat-ok,gitlab.typo=glpat-unused")
+	c.deps.HTTPClient = dotCom.Client()
+	c.deps.DoctorGitLabRESTBase = dotCom.URL
+	c.deps.DoctorGitLabHostRESTBase = func(string) string { return dotCom.URL }
+
+	check := findDoctorCheck(t, c.runDoctor(context.Background()), "gitlab-host-tokens")
+	if check.Level != doctorWarn || !strings.Contains(check.Message, "gitlab.typo") {
+		t.Fatalf("gitlab-host-tokens check = %+v, want WARN naming the unallowlisted host", check)
+	}
+	if strings.Contains(check.Message, "gitlab.internal=") || strings.Contains(check.Message, "glpat-") {
+		t.Fatalf("gitlab-host-tokens message = %q, want no token values in doctor output", check.Message)
+	}
+}
+
+// TestDoctorStaysQuietWhenEveryHostTokenIsAllowlisted covers the other side:
+// a correct AO_GITLAB_HOST_TOKENS must not add noise to `ao doctor`.
+func TestDoctorStaysQuietWhenEveryHostTokenIsAllowlisted(t *testing.T) {
+	setConfigEnv(t)
+	clearDoctorGitLabEnv(t)
+	dotCom, _ := gitlabDoctorHostServer(t, http.StatusOK, `{"username":"dotcom-user"}`)
+	c := doctorContext(t, map[string]string{"git": "/bin/git"}, func(context.Context, string, ...string) ([]byte, error) {
+		return []byte("git version 2.43.0\n"), nil
+	})
+	t.Setenv("AO_GITLAB_TOKEN", "env-token")
+	t.Setenv("AO_GITLAB_ALLOWED_HOSTS", "gitlab.internal")
+	t.Setenv("AO_GITLAB_HOST_TOKENS", "GitLab.Internal=glpat-ok")
+	c.deps.HTTPClient = dotCom.Client()
+	c.deps.DoctorGitLabRESTBase = dotCom.URL
+	c.deps.DoctorGitLabHostRESTBase = func(string) string { return dotCom.URL }
+
+	for _, check := range c.runDoctor(context.Background()) {
+		if check.Name == "gitlab-host-tokens" {
+			t.Fatalf("unexpected check for a correct configuration: %+v", check)
+		}
+	}
+}
