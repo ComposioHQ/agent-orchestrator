@@ -245,6 +245,43 @@ describe("BrowserPanel", () => {
 		expect(frame.style.width).toBe("240px");
 	});
 
+	// Regression: the reviewer flagged that the original 6-device list should
+	// match Chrome DevTools' own "Standard" device list rather than a
+	// hand-picked subset.
+	it("offers Chrome DevTools' own standard device list", async () => {
+		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
+		await userEvent.click(screen.getByRole("button", { name: "Device preset" }));
+
+		for (const name of [
+			"iPhone SE",
+			"iPhone XR",
+			"iPhone 12 Pro",
+			"iPhone 14 Pro Max",
+			"iPhone 15 Pro Max",
+			"iPhone 16 Pro Max",
+			"Pixel 7",
+			"Pixel 8",
+			"Pixel 9",
+			"Pixel 10",
+			"Samsung Galaxy S8+",
+			"Samsung Galaxy S20 Ultra",
+			"Samsung Galaxy A51/71",
+			"iPad Mini",
+			"iPad Air",
+			"iPad Pro",
+			"Surface Pro 7",
+			"Surface Duo",
+			"Galaxy Z Fold 5",
+			"Asus Zenbook Fold",
+			"Nest Hub Max",
+		]) {
+			expect(screen.getByRole("menuitem", { name: new RegExp(name.replace(/[+.]/g, "\\$&")) })).toBeInTheDocument();
+		}
+		// "Nest Hub" alone is a prefix of "Nest Hub Max" — assert it separately
+		// with a negative lookahead so the two rows aren't ambiguous.
+		expect(screen.getByRole("menuitem", { name: /Nest Hub(?! Max)/ })).toBeInTheDocument();
+	});
+
 	it("marks the device-preset dropdown as a browser overlay so it paints above the live page", async () => {
 		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
 
