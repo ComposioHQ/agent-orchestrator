@@ -324,6 +324,9 @@ type fakeRegistry struct{ driver ports.ChatDriver }
 
 func (r fakeRegistry) Driver(domain.AgentHarness) (ports.ChatDriver, error) { return r.driver, nil }
 func (r fakeRegistry) SupportsChat(domain.AgentHarness) bool                { return true }
+func (r fakeRegistry) SupportsPermissionMode(_ domain.AgentHarness, mode ports.PermissionMode) bool {
+	return r.driver != nil && ports.SupportsChatPermissionMode(r.driver.Capabilities(), mode)
+}
 
 type recordingActivity struct {
 	mu      sync.Mutex

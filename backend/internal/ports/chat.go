@@ -880,4 +880,7 @@ type ChatDriverRegistry interface {
 	// SupportsChat reports whether a harness has a Chat driver registered at
 	// all, without probing the local install.
 	SupportsChat(harness domain.AgentHarness) bool
+	// SupportsPermissionMode reports whether that driver's static capabilities
+	// can enforce mode, without probing the local install.
+	SupportsPermissionMode(harness domain.AgentHarness, mode PermissionMode) bool
 }

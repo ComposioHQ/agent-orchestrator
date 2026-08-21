@@ -174,13 +174,14 @@ export function ChatSessionScreen({ session }: { session: MobileChatSession }) {
 			snapshot: current,
 			models: catalog.models,
 			options: catalog.configOptions,
+			permissionFloor: session.permissions,
 			disabled: current.controller.state === "stopped" || conversation.pendingActions.includes("settings") || conversation.pendingActions.includes("config"),
 			error: catalogError,
 			onSettings: conversation.chooseSettings,
 			onOption: conversation.setConfigOption,
 			onRefresh: () => conversation.loadTurnOptions({ refresh: true }),
 		}));
-	}, [conversation, router]);
+	}, [conversation, router, session.permissions]);
 
 	const openShell = useCallback(async () => {
 		if (!config || openingShell) return;

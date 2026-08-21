@@ -880,11 +880,7 @@ func (s *Service) SupportsChat(harness domain.AgentHarness) bool {
 // can enforce mode. It performs no local binary/auth probe, so settings and
 // machine callers can capability-check before creating durable session state.
 func (s *Service) SupportsPermissionMode(harness domain.AgentHarness, mode ports.PermissionMode) bool {
-	driver, err := s.drivers.Driver(harness)
-	if err != nil {
-		return false
-	}
-	return ports.SupportsChatPermissionMode(driver.Capabilities(), mode)
+	return s.drivers.SupportsPermissionMode(harness, mode)
 }
 
 // PreflightChat reports whether a harness can start in chat mode right now.

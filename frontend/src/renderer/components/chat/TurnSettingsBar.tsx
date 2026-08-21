@@ -67,6 +67,7 @@ export function TurnSettingsBar({
 	error,
 	disabled,
 	supportsPreventiveReadOnly,
+	permissionFloor,
 }: {
 	models: ChatModel[];
 	settings: TurnSettings;
@@ -89,6 +90,8 @@ export function TurnSettingsBar({
 	disabled?: boolean;
 	/** Whether this exact driver technically enforces the read-only profile. */
 	supportsPreventiveReadOnly?: boolean;
+	/** Immutable permission contract captured by the AO session. */
+	permissionFloor?: ApprovalMode;
 }) {
 	const selected = models.find((model) => model.id === settings.model);
 	const fallback = models.find((model) => model.default);
@@ -101,10 +104,15 @@ export function TurnSettingsBar({
 	const efforts = (selected ?? fallback)?.efforts ?? [];
 	const effortLabel =
 		settings.reasoningEffort ?? (selected ?? fallback)?.defaultEffort ?? undefined;
-	const approvalLabel = APPROVAL_COPY[settings.approvalMode ?? "default"].label;
-	const approvalModes = supportsPreventiveReadOnly
-		? APPROVAL_ORDER
-		: APPROVAL_ORDER.filter((mode) => mode !== "read-only");
+	const approvalMode = permissionFloor === "read-only"
+		? "read-only"
+		: settings.approvalMode ?? "default";
+	const approvalLabel = APPROVAL_COPY[approvalMode].label;
+	const approvalModes = permissionFloor === "read-only"
+		? (["read-only"] satisfies ApprovalMode[])
+		: supportsPreventiveReadOnly
+			? APPROVAL_ORDER
+			: APPROVAL_ORDER.filter((mode) => mode !== "read-only");
 
 	return (
 		<div role="group" aria-label="Turn settings" className="flex min-w-0 flex-col gap-0.5">
@@ -243,7 +251,7 @@ export function TurnSettingsBar({
 								<span
 									className={cn(
 										"text-xs",
-										mode === (settings.approvalMode ?? "default")
+										mode === approvalMode
 											? "text-foreground"
 											: "text-muted-foreground",
 									)}

@@ -10,6 +10,7 @@ import {
 } from "@aoagents/product-ui";
 
 import type { ReviewerHarnessId } from "../lib/reviewer-harnesses";
+import type { ApprovalMode } from "./conversation";
 
 export { toSessionActivity, toSessionStatus };
 export type { SessionActivity, SessionActivityState, SessionStatus };
@@ -78,6 +79,8 @@ export type WorkspaceSession = {
 	 * Only the daemon's durable interface-transition coordinator may change it.
 	 */
 	mode?: SessionMode;
+	/** Immutable permission contract captured when this session was created. */
+	permissions?: ApprovalMode;
 	branch?: string;
 	status: SessionStatus;
 	/** Stack-aware PR context derived by the daemon independently of runtime activity. */

@@ -43,11 +43,11 @@ describe("mobile Chat API boundaries", () => {
 
 	it("preserves daemon pin facts used by the Agents ordering", async () => {
 		vi.mocked(fetch)
-			.mockResolvedValueOnce(response({ sessions: [{ id: "w-1", projectId: "p-1", mode: "chat", activity: { state: "idle", lastActivityAt: "2026-08-08T10:00:00Z" }, updatedAt: "2026-08-09T10:00:00Z", isPinned: true, pinnedAt: "2026-08-09T10:00:00Z" }] }))
+			.mockResolvedValueOnce(response({ sessions: [{ id: "w-1", projectId: "p-1", mode: "chat", permissions: "read-only", activity: { state: "idle", lastActivityAt: "2026-08-08T10:00:00Z" }, updatedAt: "2026-08-09T10:00:00Z", isPinned: true, pinnedAt: "2026-08-09T10:00:00Z" }] }))
 			.mockResolvedValueOnce(response({ sessions: [] }))
 			.mockResolvedValueOnce(response({ projects: [] }));
 		const result = await getSessions(cfg);
-		expect(result.sessions[0]).toMatchObject({ isPinned: true, pinnedAt: "2026-08-09T10:00:00Z", lastActivityAt: "2026-08-08T10:00:00Z" });
+		expect(result.sessions[0]).toMatchObject({ permissions: "read-only", isPinned: true, pinnedAt: "2026-08-09T10:00:00Z", lastActivityAt: "2026-08-08T10:00:00Z" });
 	});
 
 	it("delegates an optional empty task with explicit interface and model", async () => {

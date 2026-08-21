@@ -706,6 +706,7 @@ export function ChatWorkspace({
 										configPending={configOptionPending}
 										error={configOptionError}
 										supportsPreventiveReadOnly={can(snapshot, "preventive_read_only")}
+										permissionFloor={session?.permissions}
 										disabled={
 											snapshot.controller.state === "stopped" || configOptionPending
 										}

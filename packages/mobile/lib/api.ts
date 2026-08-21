@@ -5,6 +5,7 @@ import type { AttentionLevel } from "./theme";
 // ---- Types (subset of AO's DashboardSession we use on the phone) ------------
 
 export type SessionMode = "chat" | "tui";
+export type PermissionMode = "default" | "read-only" | "accept-edits" | "auto" | "bypass-permissions";
 
 export type DashboardPR = {
 	number: number;
@@ -42,6 +43,8 @@ export type DashboardSession = {
 	harness?: string | null;
 	/** Controller currently committed for this AO session. */
 	mode: SessionMode;
+	/** Immutable permission contract captured when this session was created. */
+	permissions?: PermissionMode;
 	branch: string | null;
 	issueId: string | null;
 	issueUrl?: string | null;
@@ -75,6 +78,7 @@ export type OrchestratorLink = {
 	/** Agent CLI driving this orchestrator — drives its brand mark. */
 	harness?: string | null;
 	mode: SessionMode;
+	permissions?: PermissionMode;
 	updatedAt?: string | null;
 	runtimeState?: string | null;
 	hasRuntime?: boolean;
@@ -139,6 +143,7 @@ type WireSession = {
 	kind?: string; // worker | orchestrator
 	harness?: string;
 	mode?: SessionMode;
+	permissions?: PermissionMode;
 	displayName?: string;
 	activity?: unknown;
 	isTerminated?: boolean;
@@ -216,6 +221,7 @@ function mapSession(s: WireSession): DashboardSession {
 		activity: activityString(s.activity),
 		harness: s.harness ?? null,
 		mode: s.mode === "chat" ? "chat" : "tui",
+		permissions: s.permissions,
 		branch: s.branch ?? null,
 		issueId: s.issueId ?? null,
 		issueTitle: null,
@@ -242,6 +248,7 @@ function mapOrchestrator(s: WireSession, projectName: string): OrchestratorLink 
 		activity: activityString(s.activity),
 		harness: s.harness ?? null,
 		mode: s.mode === "chat" ? "chat" : "tui",
+		permissions: s.permissions,
 		updatedAt: s.updatedAt ?? null,
 		hasRuntime: !s.isTerminated,
 		isTerminal: !!s.isTerminated,
