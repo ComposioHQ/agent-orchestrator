@@ -792,9 +792,9 @@ describe("SessionInspector usage", () => {
 		expect(screen.getByLabelText("1,500 tokens processed")).toBeInTheDocument();
 		const metrics = screen.getAllByTestId("session-usage-metrics")[0];
 		expect(within(metrics).getAllByRole("term").map((term) => term.textContent)).toEqual([
-			"Input", "Cached Input", "Uncached Input", "Cached Output", "Output",
+			"Uncached Input", "Total Input", "Cached Input", "Total Output",
 		]);
-		expect(within(metrics).getByLabelText("Cached Output: 0 tokens")).toBeInTheDocument();
+		expect(within(metrics).queryByText("Cached Output")).not.toBeInTheDocument();
 		expect(screen.queryByText("Cache hit rate")).not.toBeInTheDocument();
 		expect(screen.queryByText("Cache write tokens")).not.toBeInTheDocument();
 		expect(screen.queryByText("Reasoning (included in output)")).not.toBeInTheDocument();

@@ -112,6 +112,7 @@ type UsageSourceContext struct {
 // event. Provider-specific counters remain separate from the canonical totals.
 type UsageProviderID string
 
+// Usage provider identifiers.
 const (
 	UsageProviderOpenAI    UsageProviderID = "openai"
 	UsageProviderAnthropic UsageProviderID = "anthropic"
@@ -120,6 +121,7 @@ const (
 // UsageMetricProvenance describes how one canonical metric was obtained.
 type UsageMetricProvenance string
 
+// Usage metric provenance values.
 const (
 	UsageMetricReported    UsageMetricProvenance = "reported"
 	UsageMetricDerived     UsageMetricProvenance = "derived"
