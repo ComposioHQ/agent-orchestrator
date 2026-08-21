@@ -209,12 +209,13 @@ The AppImage keeps updating itself. It is the file the `ao start` bootstrapper d
 
 *Why: so Arch users can `makepkg -si` instead of juggling an AppImage.*
 
-- [ ] Create `packaging/arch/PKGBUILD`: `pkgname=agent-orchestrator-bin`, `pkgver` set to the current release (`0.12.6` as of writing, read the real one with `gh release view --json tagName`), `arch=('x86_64')`, `license=('MIT')`, `url` pointing at the GitHub repo.
-- [ ] Add `provides=('agent-orchestrator')` and `conflicts=('agent-orchestrator')`, so a build-from-source package could later share the same name space without colliding.
-- [ ] Point `source=` at the released deb: `"$pkgname-$pkgver.deb::https://github.com/Untrivial-ai/agent-orchestrator/releases/download/v$pkgver/agent-orchestrator-linux-x64.deb"`, with a real `sha256sums` value.
-- [ ] Work out `depends=` by running `ldd` on the unpacked binary rather than guessing. Expect at least `gtk3`, `nss`, `alsa-lib`, `libxss`, `libnotify`, `xdg-utils`.
-- [ ] In `package()`, unpack the deb with `bsdtar -xf data.tar.*` and move `usr/lib`, `usr/bin` and `usr/share` into `$pkgdir/usr/`.
-- [ ] **Verify:** `makepkg -f` builds a package, and `pacman -Qlp` on it lists `/usr/bin/agent-orchestrator`, `/usr/bin/ao`, the app under `/usr/lib/agent-orchestrator/`, the `.desktop` file and the icons.
+- [x] Create `packaging/arch/PKGBUILD`: `pkgname=agent-orchestrator-bin`, `pkgver=0.12.6` (the current stable release), `arch=('x86_64')`, `url` pointing at the GitHub repo. `license=('Apache-2.0')`, **not** MIT: the repo's `LICENSE` is Apache-2.0. The license file is a second `source=` pulled from the release tag, installed next to the bundled Electron's MIT text.
+  - Finding, out of scope here: `frontend/forge.config.ts` tells the rpm maker `license: "MIT"`, so every published rpm claims the wrong license. Worth a separate fix.
+- [x] Add `provides=('agent-orchestrator')` and `conflicts=('agent-orchestrator')`.
+- [x] Point `source=` at the released deb, with a real `sha256sums` value. `noextract=` is set for it: makepkg does not unpack a `.deb`, so `package()` does it explicitly.
+- [x] Work out `depends=` from `readelf -d` on the shipped binary (direct `NEEDED` entries), each mapped to its owning Arch package. 22 entries plus two that never appear in `NEEDED` because they are dlopen'd or spawned: `libnotify` and `xdg-utils`. `libxss` is in every Electron packaging guide and is deliberately absent: this build does not link it.
+- [x] In `package()`, pipe the deb's `data.tar*` payload straight into a second `bsdtar` (compression-agnostic) and lay it into `$pkgdir`. Then: drop `usr/share/doc` and `usr/share/lintian`, reinstall the pixmap as a themed `hicolor` icon, add `/usr/bin/ao` as a tracked symlink, and install both licenses.
+- [x] **Verify:** `makepkg -f` builds `agent-orchestrator-bin-0.12.6-1-x86_64.pkg.tar.zst`, and `pacman -Qlp` lists `/usr/bin/agent-orchestrator`, `/usr/bin/ao`, the app under `/usr/lib/agent-orchestrator/`, the `.desktop` file, the hicolor icon and both license files (6521 paths total).
 
 ### B2. Fix the sandbox permissions
 
@@ -226,41 +227,44 @@ Electron ships a helper called `chrome-sandbox` that isolates web content from t
 The SUID sandbox helper binary was found, but is not configured correctly.
 ```
 
-- [ ] In `package()`, run `chmod 4755 "$pkgdir/usr/lib/agent-orchestrator/chrome-sandbox"`.
-- [ ] Do **not** work around this by adding `--no-sandbox` to the launcher. Arch has the kernel feature the sandbox needs enabled by default, so the sandbox works. Disabling it quietly removes a security boundary.
-- [ ] **Verify:** the installed app starts with no sandbox error printed, and `pacman -Qkk agent-orchestrator-bin` reports no permission mismatch.
+- [x] In `package()`, run `chmod 4755 "$pkgdir/usr/lib/agent-orchestrator/chrome-sandbox"`.
+- [x] Did **not** add `--no-sandbox`. Arch has the kernel feature the sandbox needs enabled by default.
+- [x] **Verify:** on a real `pacman -U` install, `ls -l` shows `-rwsr-xr-x root root`, the app starts from `/usr/lib` with no sandbox error (daemon up, HTTP 200s), and `pacman -Qkk agent-orchestrator-bin` reports `6522 total files, 0 altered files`.
 
 ### B3. Check the bundled runtimes survive a read-only install
 
 *Why: `/usr/lib` is root-owned, and AO bundles helper programs that might expect to write next to themselves.*
 
-- [ ] AO ships two extra runtimes: a browser runtime (`frontend/scripts/prepare-agent-browser.mjs`) and an ACP runtime (`frontend/scripts/build-acp-runtime.mjs`). If either writes into its own folder, it breaks under `/usr/lib`.
-- [ ] Actually exercise both on an installed build, not just launch the app: open the inspector rail's Browser tab, and start a session using an ACP agent.
-- [ ] If either needs to write, move its scratch folder under `~/.ao` (which the `CLAUDE.md` rule requires anyway) rather than making `/usr/lib` writable.
-- [ ] **Verify:** both runtimes work from a pacman install.
+- [x] Both scripts run at BUILD time, not runtime: nothing is downloaded or installed on the user's machine on first launch. What ships is a prebuilt `agent-browser` binary and a bundled Node plus `node_modules` for ACP.
+- [x] Neither writes beside itself. `AgentBrowserRuntime` puts its runtime root, owner file and sockets under `options.dataDir` (`~/.ao`), with a short `/tmp` symlink only because agent-browser enforces the macOS 103-byte socket path limit on every Unix build. The ACP driver only reads: it runs the packaged `node` against the packaged entrypoint.
+- [x] Exercised on a real pacman install, against an isolated `AO_DATA_DIR` so the developer's own `~/.ao` was untouched:
+  - ACP: `ao spawn --harness claude-code --mode chat` produced a live session running `/usr/lib/agent-orchestrator/resources/acp-runtime/node/bin/node` against the packaged `claude-agent-acp`.
+  - Packaged runtimes execute fine from a root-owned directory: `node --version` reports v22.23.2, `agent-browser --version` reports 0.33.1.
+  - Browser panel: `ao preview` queued a URL for the session (exit 0). The `agent-browser` process only spawns when the panel is opened in the GUI, which is the one step left for a human at the desktop.
+- [x] **Verify:** `pacman -Qkk agent-orchestrator-bin` still reports `0 altered files` after all of the above, so nothing wrote into `/usr/lib`.
 
 ### B4. Menu entry, icon, and the `ao-app://` link handler
 
 *Why: two different `.desktop` files could end up claiming the same links.*
 
-- [ ] Check the deb's own `/usr/share/applications/agent-orchestrator.desktop` is still correct after being moved: `Exec` should point at `/usr/bin/agent-orchestrator`, `Icon` should be the icon *name* (not a path), `Terminal=false`, and `MimeType` should include `x-scheme-handler/ao-app`. `forge.config.ts` already passes that mime type to the deb maker, so it should be there.
-- [ ] Create `packaging/arch/agent-orchestrator-bin.install` that runs `update-desktop-database` and `gtk-update-icon-cache` on install, upgrade and removal. Without this the menu and icon do not refresh.
-- [ ] Resolve the clash with the user-level entry `ao start` writes, which A3 makes visible. If both exist, AO shows up twice in the menu and the system picks an `ao-app://` handler arbitrarily. Decide whether the packaged entry should win, and whether `ao start` should skip writing its own when a system install is present. Write the decision down. Do **not** silently delete a file the package does not own.
-- [ ] **Verify:** AO appears once in the menu with its icon, opens on click with no terminal, and `xdg-open ao-app://test` reaches the app exactly once.
+- [x] The deb's entry survives the move unchanged and is correct: `Exec=agent-orchestrator %U` (resolved on PATH, which the package provides), `Icon=agent-orchestrator` (a name), `MimeType=x-scheme-handler/ao-app;`. It has no `Terminal` key at all, and the freedesktop default for that key is `false`, so no terminal window. Its `Categories=GNOME;GTK;Utility;` comes from the deb maker; left alone so the Arch entry does not diverge from the deb.
+- [x] Create `packaging/arch/agent-orchestrator-bin.install` running `update-desktop-database` and `gtk-update-icon-cache` on install, upgrade and removal.
+- [x] **Decision on the clash: the packaged entry wins.** When `ao start` is launching the packaged app (`/usr/bin/agent-orchestrator`, or anything under `/usr/lib/agent-orchestrator/`) **and** `/usr/share/applications/agent-orchestrator.desktop` exists, it writes no entry of its own and points `xdg-mime` at the package's. The packaged file is never touched. The entry a previous `ao start` wrote **is** removed, because it is ours and by then points at an AppImage this machine no longer runs.
+  - Fixed alongside it: `knownAppLocations` on Linux had no `/usr/bin` entry, so `ao start` on a machine with the deb, rpm or Arch package installed downloaded an AppImage it did not need. It is scanned last, since the AppImage is the copy that self-updates.
+- [x] **Verify:** against a real pacman install, `ao start` resolved `/usr/lib/agent-orchestrator/agent-orchestrator`, removed a planted stale entry, wrote none of its own, and left `x-scheme-handler/ao-app=agent-orchestrator.desktop` in `mimeapps.list`. Unit tests cover both branches. Clicking the menu entry is the human step at the desktop.
 
 ### B5. A script to bump versions, and a test runbook
 
 *Why: a package pinned to `0.10.3` is stale the day `0.10.4` ships.*
 
-- [ ] Write `packaging/arch/update-pkgbuild.sh`: read the latest tag with `gh release view --json tagName`, rewrite `pkgver`, re-download the deb, recompute `sha256sums`, regenerate `.SRCINFO`.
-- [ ] Write `packaging/arch/README.md` covering the full loop: `makepkg -si`, launch it, `pacman -Rns agent-orchestrator-bin`, confirm nothing is left behind.
-- [ ] **Verify:** install then remove leaves no orphan files (`pacman -Qo` on the old paths finds nothing) and never touched `~/.ao`.
+- [x] Write `packaging/arch/update-pkgbuild.sh`: reads the latest stable tag with `gh release list --exclude-pre-releases` (nightlies are tagged in the same repo and must never be pinned), or takes a version argument. Rewrites `pkgver`, resets `pkgrel`, re-downloads the deb and the tagged LICENSE, rewrites the whole `sha256sums` block (order matters, so it is replaced wholesale rather than line-edited), and regenerates `.SRCINFO`.
+- [x] Write `packaging/arch/README.md` covering the full loop: install, what lands where, how to check it worked, updating, removal, and why nothing is on the AUR yet.
+- [x] **Verify:** bumping to 0.12.5 in a scratch copy rewrote `pkgver`, the deb checksum and `.SRCINFO`, and correctly left the LICENSE checksum alone (the file is identical across those tags). Removal (`pacman -Rns`) is still to be run at the end of local testing.
 
 ### B6. Publish to the AUR (needs a decision first)
 
-- [ ] Decide whether to publish at all, and under whose account. Publishing to the AUR is a public promise: bump the version on every AO release, or users get stale builds and file bugs.
-- [ ] If yes: set up the AUR git remote, push `PKGBUILD` and `.SRCINFO`, and decide whether the release workflow opens a bump PR automatically or a person does it by hand.
-- [ ] If no: stop after B5. `packaging/arch/` in the repo still gives anyone a one-command install with `makepkg -si`.
+- [x] **Decision (2026-08-21): not yet.** Test the package locally first. `packaging/arch/` in the repo already gives anyone a one-command install with `makepkg -si`; publishing is a public promise to bump on every release and can be made later.
+- [ ] Revisit once the local install has been lived with for a while: AUR account, git remote, and whether the release workflow opens the bump automatically or a person runs `update-pkgbuild.sh`.
 
 ---
 
@@ -277,9 +281,10 @@ Only worth doing if AO wants Linux users on a real update path. It needs a GPG s
 
 ## Documentation (after A and B)
 
-- [ ] Add an Arch row to the install table in `README.md`, around line 177 next to AppImage, Debian and Fedora.
-- [ ] Say how updates work for each format: AppImage updates itself, deb and rpm are manual (or repo-based after Phase C), Arch is `pacman -Syu` once the AUR package is bumped.
-- [ ] Note that all Linux artifacts are x86_64 only, and why.
+- [x] Add an Arch row to the install table in `README.md`, pointing at `packaging/arch/README.md`.
+- [x] Say how updates work for each format, as a table: macOS, Windows and the AppImage update themselves; deb and rpm are manual; Arch is `update-pkgbuild.sh && makepkg -si`. Plus the reason a package-manager install never self-updates.
+- [x] Note that all Linux artifacts are x86_64 only.
+- Also removed the claim that "AO checks for updates automatically" from the line above the table, which stopped being true for three of the seven rows.
 
 ## Things that could go wrong
 
