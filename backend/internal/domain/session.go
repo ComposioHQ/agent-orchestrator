@@ -139,4 +139,7 @@ type Session struct {
 	// They feed status derivation and are surfaced on the API read model. Not
 	// serialized here: the HTTP boundary maps them to the curated wire shape.
 	PRs []PRFacts `json:"-"`
+	// ReviewSnapshot is the internal reducer-facing review snapshot for the
+	// session. It is never serialized on the public API.
+	ReviewSnapshot SessionReviewSnapshot `json:"-"`
 }

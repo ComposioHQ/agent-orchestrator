@@ -34,6 +34,7 @@ type fakeStore struct {
 	activeSwitchListErr error
 	pr                  map[domain.SessionID]domain.PRFacts
 	prs                 map[domain.SessionID][]domain.PullRequest
+	reviewRuns          map[domain.SessionID][]domain.ReviewRun
 	projects            map[string]domain.ProjectRecord
 	worktrees           map[domain.SessionID][]domain.SessionWorktreeRecord
 	checks              map[string][]domain.PullRequestCheck
@@ -49,6 +50,7 @@ func newFakeStore() *fakeStore {
 		activeSwitches: map[domain.SessionID]domain.AgentSwitch{},
 		pr:             map[domain.SessionID]domain.PRFacts{},
 		prs:            map[domain.SessionID][]domain.PullRequest{},
+		reviewRuns:     map[domain.SessionID][]domain.ReviewRun{},
 		projects:       map[string]domain.ProjectRecord{},
 		worktrees:      map[domain.SessionID][]domain.SessionWorktreeRecord{},
 		checks:         map[string][]domain.PullRequestCheck{},
@@ -269,6 +271,10 @@ func (f *fakeStore) ListPRFactsForSession(_ context.Context, id domain.SessionID
 	return []domain.PRFacts{pr}, nil
 }
 
+func (f *fakeStore) ListReviewRunsBySession(_ context.Context, id domain.SessionID) ([]domain.ReviewRun, error) {
+	return append([]domain.ReviewRun(nil), f.reviewRuns[id]...), nil
+}
+
 func (f *fakeStore) ListChecks(_ context.Context, prURL string) ([]domain.PullRequestCheck, error) {
 	return append([]domain.PullRequestCheck(nil), f.checks[prURL]...), nil
 }
@@ -353,6 +359,122 @@ func TestSessionListProjectsActiveAgentSwitch(t *testing.T) {
 	st.activeSwitchGetErr = errors.New("active switch read failed")
 	if _, err := (&Service{store: st}).Get(context.Background(), "mer-1"); err == nil || !strings.Contains(err.Error(), "active switch") {
 		t.Fatalf("active switch get error = %v", err)
+	}
+}
+
+func TestSessionListPopulatesReviewSnapshotWithSourceAwareFacts(t *testing.T) {
+	st := newFakeStore()
+	st.sessions["mer-1"] = domain.SessionRecord{
+		ID:                "mer-1",
+		ProjectID:         "mer",
+		Activity:          domain.Activity{State: domain.ActivityActive},
+		AutoReviewEnabled: true,
+		AutoInjectReview:  false,
+		AutoInjectCI:      true,
+	}
+	st.pr["mer-1"] = domain.PRFacts{URL: "https://example/pr/1", HeadSHA: "sha-1"}
+	st.reviewRuns["mer-1"] = []domain.ReviewRun{
+		{
+			ID:               "run-ao",
+			ReviewID:         "review-ao",
+			SessionID:        "mer-1",
+			PRURL:            "https://example/pr/1",
+			TargetSHA:        "sha-1",
+			Status:           domain.ReviewRunComplete,
+			Verdict:          domain.VerdictApproved,
+			TriggerSource:    domain.ReviewTriggerAuto,
+			GithubReviewID:   "review-ao",
+			AutoInjectReview: true,
+		},
+		{
+			ID:            "run-stale",
+			ReviewID:      "review-stale",
+			SessionID:     "mer-1",
+			PRURL:         "https://example/pr/1",
+			TargetSHA:     "sha-old",
+			Status:        domain.ReviewRunCancelled,
+			Verdict:       domain.VerdictNone,
+			TriggerSource: domain.ReviewTriggerManual,
+		},
+	}
+	st.reviews["https://example/pr/1"] = []domain.PullRequestReview{
+		{
+			ID:               "review-ao",
+			Author:           "ao-bot",
+			State:            domain.ReviewApproved,
+			URL:              "https://example/pr/1/review/ao",
+			Body:             "ao review",
+			IsBot:            true,
+			TargetSHA:        "sha-1",
+			AutoInjectReview: true,
+		},
+		{
+			ID:        "review-human",
+			Author:    "alice",
+			State:     domain.ReviewChangesRequest,
+			URL:       "https://example/pr/1/review/human",
+			Body:      "please update",
+			IsBot:     false,
+			TargetSHA: "sha-1",
+		},
+		{
+			ID:        "review-stale",
+			Author:    "bob",
+			State:     domain.ReviewApproved,
+			URL:       "https://example/pr/1/review/stale",
+			Body:      "old head",
+			IsBot:     false,
+			TargetSHA: "sha-old",
+		},
+	}
+	st.comments["https://example/pr/1"] = []domain.PullRequestComment{
+		{
+			ID:               "c-ao",
+			Author:           "ao-bot",
+			Body:             "ao comment",
+			URL:              "https://example/pr/1#c-ao",
+			AutoInjectReview: true,
+		},
+		{
+			ID:     "c-human",
+			Author: "alice",
+			Body:   "human comment",
+			URL:    "https://example/pr/1#c-human",
+		},
+	}
+
+	list, err := (&Service{store: st}).List(context.Background(), ListFilter{ProjectID: "mer"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 1 {
+		t.Fatalf("list length = %d, want 1", len(list))
+	}
+	snapshot := list[0].ReviewSnapshot
+	if !snapshot.AutoReviewEnabled || snapshot.AutoInjectReview || !snapshot.AutoInjectCI {
+		t.Fatalf("session review policies = %+v, want auto-review on, auto-inject review off, auto-inject ci on", snapshot)
+	}
+	if len(snapshot.PRs) != 1 {
+		t.Fatalf("review PR count = %d, want 1", len(snapshot.PRs))
+	}
+	pr := snapshot.PRs[0]
+	if pr.PR.URL != "https://example/pr/1" || pr.PR.HeadSHA != "sha-1" {
+		t.Fatalf("review PR facts = %+v", pr.PR)
+	}
+	if len(pr.ReviewRuns) != 1 || pr.ReviewRuns[0].GithubReviewID != "review-ao" || pr.ReviewRuns[0].TargetSHA != "sha-1" {
+		t.Fatalf("review runs = %+v", pr.ReviewRuns)
+	}
+	if len(pr.AOReviews) != 1 || pr.AOReviews[0].ID != "review-ao" {
+		t.Fatalf("AO reviews = %+v", pr.AOReviews)
+	}
+	if len(pr.ExternalReviews) != 1 || pr.ExternalReviews[0].ID != "review-human" {
+		t.Fatalf("external reviews = %+v", pr.ExternalReviews)
+	}
+	if len(pr.AOComments) != 1 || pr.AOComments[0].ID != "c-ao" {
+		t.Fatalf("AO comments = %+v", pr.AOComments)
+	}
+	if len(pr.ExternalComments) != 1 || pr.ExternalComments[0].ID != "c-human" {
+		t.Fatalf("external comments = %+v", pr.ExternalComments)
 	}
 }
 
