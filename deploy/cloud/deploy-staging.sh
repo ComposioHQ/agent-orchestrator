@@ -9,6 +9,7 @@ AWS_RETRY_MODE="${AWS_RETRY_MODE:-standard}"
 AWS_MAX_ATTEMPTS="${AWS_MAX_ATTEMPTS:-10}"
 ENVIRONMENT="${AO_CLOUD_ENVIRONMENT:-staging}"
 GOOGLE_CLIENT_IDS="${AO_CLOUD_GOOGLE_CLIENT_IDS:-}"
+ALLOWED_EMAILS="${AO_CLOUD_ALLOWED_EMAILS:-}"
 DAYTONA_API_KEY_VALUE="${DAYTONA_API_KEY:-}"
 DAYTONA_API_URL_VALUE="${DAYTONA_API_URL:-https://app.daytona.io/api}"
 DAYTONA_TARGET_VALUE="${DAYTONA_TARGET:-us}"
@@ -26,6 +27,10 @@ export AWS_REGION AWS_DEFAULT_REGION AWS_RETRY_MODE AWS_MAX_ATTEMPTS
 
 if [[ -z "$GOOGLE_CLIENT_IDS" ]]; then
   echo "AO_CLOUD_GOOGLE_CLIENT_IDS is required" >&2
+  exit 2
+fi
+if [[ -z "$ALLOWED_EMAILS" ]]; then
+  echo "AO_CLOUD_ALLOWED_EMAILS is required" >&2
   exit 2
 fi
 for command_name in aws curl git jq openssl terraform; do
@@ -155,13 +160,14 @@ if [[ -z "$DAYTONA_API_KEY_VALUE" || -z "$CLAUDE_CREDENTIALS_BASE64" || -z "$GIT
 fi
 jq -n \
   --arg googleClientIds "$GOOGLE_CLIENT_IDS" \
+  --arg allowedEmails "$ALLOWED_EMAILS" \
   --arg accessTokenKeyBase64 "$access_token_key" \
   --arg daytonaApiKey "$DAYTONA_API_KEY_VALUE" \
   --arg daytonaApiUrl "$DAYTONA_API_URL_VALUE" \
   --arg daytonaTarget "$DAYTONA_TARGET_VALUE" \
   --arg claudeCredentialsBase64 "$CLAUDE_CREDENTIALS_BASE64" \
   --arg githubTokenBase64 "$GITHUB_TOKEN_BASE64" \
-  '{googleClientIds:$googleClientIds,accessTokenKeyBase64:$accessTokenKeyBase64,daytonaApiKey:$daytonaApiKey,daytonaApiUrl:$daytonaApiUrl,daytonaTarget:$daytonaTarget,claudeCredentialsBase64:$claudeCredentialsBase64,githubTokenBase64:$githubTokenBase64}' \
+  '{googleClientIds:$googleClientIds,allowedEmails:$allowedEmails,accessTokenKeyBase64:$accessTokenKeyBase64,daytonaApiKey:$daytonaApiKey,daytonaApiUrl:$daytonaApiUrl,daytonaTarget:$daytonaTarget,claudeCredentialsBase64:$claudeCredentialsBase64,githubTokenBase64:$githubTokenBase64}' \
   >"$temporary_directory/application.json"
 aws secretsmanager put-secret-value \
   --secret-id "$application_secret_arn" \

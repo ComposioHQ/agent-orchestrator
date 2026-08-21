@@ -89,7 +89,12 @@ func (p *Provider) Provision(ctx context.Context, workspace domain.Workspace) (s
 		return "", fmt.Errorf("create Daytona sandbox: %w", err)
 	}
 	if err := p.bootstrap(ctx, sandbox, workspace); err != nil {
-		return sandbox.ID, err
+		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Minute)
+		defer cancel()
+		if cleanupErr := sandbox.Delete(cleanupCtx); cleanupErr != nil {
+			return "", errors.Join(err, fmt.Errorf("delete failed Daytona sandbox %q: %w", sandbox.ID, cleanupErr))
+		}
+		return "", err
 	}
 	return sandbox.ID, nil
 }

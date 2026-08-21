@@ -25,6 +25,7 @@ type Config struct {
 	GoogleIssuer        string
 	GoogleJWKSURL       string
 	GoogleClientIDs     []string
+	AllowedEmails       []string
 	AccessTokenKey      []byte
 	AccessTokenIssuer   string
 	AccessTokenAudience string
@@ -70,6 +71,7 @@ func load(getenv func(string) string) (Config, error) {
 		GoogleIssuer:        valueOrDefault(getenv("AO_CLOUD_GOOGLE_ISSUER"), auth.GoogleIssuer),
 		GoogleJWKSURL:       valueOrDefault(getenv("AO_CLOUD_GOOGLE_JWKS_URL"), auth.GoogleJWKSURL),
 		GoogleClientIDs:     splitValues(getenv("AO_CLOUD_GOOGLE_CLIENT_IDS")),
+		AllowedEmails:       normalizedEmails(getenv("AO_CLOUD_ALLOWED_EMAILS")),
 		AccessTokenKey:      key,
 		AccessTokenIssuer:   valueOrDefault(getenv("AO_CLOUD_ACCESS_TOKEN_ISSUER"), "ao-cloud"),
 		AccessTokenAudience: valueOrDefault(getenv("AO_CLOUD_ACCESS_TOKEN_AUDIENCE"), "ao-desktop"),
@@ -88,10 +90,21 @@ func load(getenv func(string) string) (Config, error) {
 	if len(cfg.GoogleClientIDs) == 0 {
 		return Config{}, errors.New("AO_CLOUD_GOOGLE_CLIENT_IDS is required")
 	}
+	if len(cfg.AllowedEmails) == 0 {
+		return Config{}, errors.New("AO_CLOUD_ALLOWED_EMAILS is required")
+	}
 	if len(cfg.AccessTokenKey) < 32 {
 		return Config{}, errors.New("AO_CLOUD_ACCESS_TOKEN_KEY_BASE64 must decode to at least 32 bytes")
 	}
 	return cfg, nil
+}
+
+func normalizedEmails(raw string) []string {
+	values := splitValues(raw)
+	for index := range values {
+		values[index] = strings.ToLower(values[index])
+	}
+	return values
 }
 
 func optionalBase64(raw string) ([]byte, error) {

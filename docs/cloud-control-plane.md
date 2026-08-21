@@ -82,6 +82,7 @@ The API requires:
 ```bash
 export AO_CLOUD_DATABASE_URL='postgres://ao_runtime:...@127.0.0.1:5432/ao_cloud'
 export AO_CLOUD_GOOGLE_CLIENT_IDS='desktop-oauth-client.apps.googleusercontent.com'
+export AO_CLOUD_ALLOWED_EMAILS='maintainer@example.com'
 export AO_CLOUD_ACCESS_TOKEN_KEY_BASE64="$(openssl rand -base64 32)"
 ```
 

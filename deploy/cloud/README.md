@@ -30,6 +30,7 @@ client ID, then run:
 
 ```bash
 export AO_CLOUD_GOOGLE_CLIENT_IDS='123456789-example.apps.googleusercontent.com'
+export AO_CLOUD_ALLOWED_EMAILS='maintainer@example.com'
 export DAYTONA_API_KEY='...'
 export AO_CLOUD_CLAUDE_CREDENTIALS_BASE64="$(base64 < ~/.claude/.credentials.json | tr -d '\n')"
 export AO_CLOUD_GITHUB_TOKEN_BASE64="$(gh auth token | base64 | tr -d '\n')"
@@ -38,6 +39,13 @@ deploy/cloud/deploy-staging.sh
 
 These values are written to AWS Secrets Manager and injected into ECS; they are
 not Terraform variables, image layers, logs, or committed files.
+
+`AO_CLOUD_ALLOWED_EMAILS` is a required, comma-separated staging signup gate.
+Because this POC injects shared operator credentials into permitted sandboxes,
+use a fine-grained GitHub token limited to the test repositories and set the
+shortest practical expiration. Rotate both shared credentials after each test
+period; do not broaden the email allowlist until per-user credential custody is
+implemented.
 
 The script:
 

@@ -57,6 +57,7 @@ type WorkspaceProvisioner interface {
 type Options struct {
 	Store           AccountStore
 	Google          IdentityVerifier
+	AllowedEmails   []string
 	AccessTokens    *auth.AccessTokenManager
 	RefreshTokenTTL time.Duration
 	Logger          *slog.Logger
@@ -68,6 +69,7 @@ type Options struct {
 type Server struct {
 	store           AccountStore
 	google          IdentityVerifier
+	allowedEmails   map[string]struct{}
 	accessTokens    *auth.AccessTokenManager
 	refreshTokenTTL time.Duration
 	logger          *slog.Logger
@@ -81,6 +83,9 @@ func New(options Options) (*Server, error) {
 	if options.Store == nil || options.Google == nil || options.AccessTokens == nil {
 		return nil, errors.New("cloud HTTP store, Google verifier, and access-token manager are required")
 	}
+	if len(emailSet(options.AllowedEmails)) == 0 {
+		return nil, errors.New("at least one cloud account email must be allowed")
+	}
 	if options.Workspaces != nil && options.WorkspaceStore == nil {
 		return nil, errors.New("cloud workspace store is required when a workspace provisioner is configured")
 	}
@@ -93,6 +98,7 @@ func New(options Options) (*Server, error) {
 	server := &Server{
 		store:           options.Store,
 		google:          options.Google,
+		allowedEmails:   emailSet(options.AllowedEmails),
 		accessTokens:    options.AccessTokens,
 		refreshTokenTTL: options.RefreshTokenTTL,
 		logger:          options.Logger,
@@ -101,6 +107,21 @@ func New(options Options) (*Server, error) {
 	}
 	server.handler = server.routes()
 	return server, nil
+}
+
+func emailSet(emails []string) map[string]struct{} {
+	result := make(map[string]struct{}, len(emails))
+	for _, email := range emails {
+		if normalized := strings.ToLower(strings.TrimSpace(email)); normalized != "" {
+			result[normalized] = struct{}{}
+		}
+	}
+	return result
+}
+
+func (s *Server) emailAllowed(email string) bool {
+	_, allowed := s.allowedEmails[strings.ToLower(strings.TrimSpace(email))]
+	return allowed
 }
 
 // Handler returns the complete HTTP handler for the Cloud foundation.

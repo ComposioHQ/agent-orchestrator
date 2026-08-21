@@ -81,6 +81,7 @@ func TestWorkspaceProvisioningRequiresAuthAndReturnsSignedAOConnection(t *testin
 	}
 	server, err := New(Options{
 		Store: accountStore, Google: &staticIdentityVerifier{}, AccessTokens: tokens,
+		AllowedEmails:   []string{"person@example.com"},
 		RefreshTokenTTL: time.Hour, WorkspaceStore: workspaceStore,
 		Workspaces: fakeWorkspaceProvisioner{},
 	})

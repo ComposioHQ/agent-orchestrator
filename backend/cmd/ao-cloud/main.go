@@ -51,6 +51,15 @@ func run(logger *slog.Logger) error {
 	if err != nil {
 		return err
 	}
+	options := httpapi.Options{
+		Store:           store,
+		Google:          google,
+		AllowedEmails:   cfg.AllowedEmails,
+		AccessTokens:    accessTokens,
+		RefreshTokenTTL: cfg.RefreshTokenTTL,
+		Logger:          logger,
+		WorkspaceStore:  store,
+	}
 	var workspaceProvider *cloudruntime.Provider
 	if cfg.DaytonaAPIKey != "" {
 		workspaceProvider, err = cloudruntime.New(cloudruntime.Config{
@@ -64,21 +73,14 @@ func run(logger *slog.Logger) error {
 		if err != nil {
 			return err
 		}
+		options.Workspaces = workspaceProvider
 		defer func() {
 			closeCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
 			_ = workspaceProvider.Close(closeCtx)
 		}()
 	}
-	api, err := httpapi.New(httpapi.Options{
-		Store:           store,
-		Google:          google,
-		AccessTokens:    accessTokens,
-		RefreshTokenTTL: cfg.RefreshTokenTTL,
-		Logger:          logger,
-		Workspaces:      workspaceProvider,
-		WorkspaceStore:  store,
-	})
+	api, err := httpapi.New(options)
 	if err != nil {
 		return err
 	}

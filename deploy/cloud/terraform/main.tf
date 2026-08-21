@@ -319,6 +319,7 @@ resource "aws_ecs_task_definition" "api" {
     secrets = [
       { name = "AO_CLOUD_DATABASE_URL", valueFrom = "${aws_secretsmanager_secret.database.arn}:runtimeUrl::" },
       { name = "AO_CLOUD_GOOGLE_CLIENT_IDS", valueFrom = "${aws_secretsmanager_secret.application.arn}:googleClientIds::" },
+      { name = "AO_CLOUD_ALLOWED_EMAILS", valueFrom = "${aws_secretsmanager_secret.application.arn}:allowedEmails::" },
       { name = "AO_CLOUD_ACCESS_TOKEN_KEY_BASE64", valueFrom = "${aws_secretsmanager_secret.application.arn}:accessTokenKeyBase64::" },
       { name = "DAYTONA_API_KEY", valueFrom = "${aws_secretsmanager_secret.application.arn}:daytonaApiKey::" },
       { name = "DAYTONA_API_URL", valueFrom = "${aws_secretsmanager_secret.application.arn}:daytonaApiUrl::" },
