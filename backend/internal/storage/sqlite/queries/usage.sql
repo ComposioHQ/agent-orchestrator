@@ -339,7 +339,6 @@ SELECT
     event.input_tokens, event.input_provenance,
     event.cached_input_tokens, event.cached_input_provenance,
     event.uncached_input_tokens, event.uncached_input_provenance,
-    event.cached_output_tokens, event.cached_output_provenance,
     event.output_tokens, event.output_provenance,
     event.created_at,
     openai.openai_reasoning_output_tokens,
@@ -360,10 +359,9 @@ INSERT INTO model_usage_events (
     input_tokens, input_provenance,
     cached_input_tokens, cached_input_provenance,
     uncached_input_tokens, uncached_input_provenance,
-    cached_output_tokens, cached_output_provenance,
     output_tokens, output_provenance,
     source_event_key, created_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 RETURNING id;
 
 -- name: UpsertOpenAIUsageEventDetails :execrows
@@ -416,10 +414,6 @@ SELECT
     CAST(CASE WHEN COUNT(mue.uncached_input_tokens) <> COUNT(*) THEN 'unknown'
          WHEN COUNT(DISTINCT mue.uncached_input_provenance) = 1 THEN MIN(mue.uncached_input_provenance)
          ELSE 'derived' END AS TEXT) AS uncached_input_provenance,
-    CAST(COALESCE(SUM(mue.cached_output_tokens), 0) AS INTEGER) AS cached_output_tokens,
-    CAST(CASE WHEN COUNT(mue.cached_output_tokens) <> COUNT(*) THEN 'unknown'
-         WHEN COUNT(DISTINCT mue.cached_output_provenance) = 1 THEN MIN(mue.cached_output_provenance)
-         ELSE 'derived' END AS TEXT) AS cached_output_provenance,
     CAST(COALESCE(SUM(mue.output_tokens), 0) AS INTEGER) AS output_tokens,
     CAST(CASE WHEN COUNT(mue.output_tokens) <> COUNT(*) THEN 'unknown'
          WHEN COUNT(DISTINCT mue.output_provenance) = 1 THEN MIN(mue.output_provenance)

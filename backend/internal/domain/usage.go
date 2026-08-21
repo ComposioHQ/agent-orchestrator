@@ -135,7 +135,6 @@ type UsageMetricProvenanceSet struct {
 	InputTokens         UsageMetricProvenance
 	CachedInputTokens   UsageMetricProvenance
 	UncachedInputTokens UsageMetricProvenance
-	CachedOutputTokens  UsageMetricProvenance
 	OutputTokens        UsageMetricProvenance
 }
 
@@ -145,13 +144,12 @@ type UsageTokenMetrics struct {
 	InputTokens         *int64
 	CachedInputTokens   *int64
 	UncachedInputTokens *int64
-	CachedOutputTokens  *int64
 	OutputTokens        *int64
 	Provenance          UsageMetricProvenanceSet
 }
 
 // OpenAIUsageDetails retains provider counters that are not part of the shared
-// five-metric vocabulary.
+// four-metric vocabulary.
 type OpenAIUsageDetails struct {
 	ReasoningOutputTokens *int64
 	CacheWriteInputTokens *int64
@@ -205,7 +203,6 @@ type UsageMetricTotals struct {
 	InputTokens         *int64
 	CachedInputTokens   *int64
 	UncachedInputTokens *int64
-	CachedOutputTokens  *int64
 	OutputTokens        *int64
 	ProcessedTokens     *int64
 	Provenance          UsageMetricProvenanceSet

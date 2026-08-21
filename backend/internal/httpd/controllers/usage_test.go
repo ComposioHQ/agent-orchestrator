@@ -75,7 +75,6 @@ func TestUsageAPIShowsDetailedSessionTokenTelemetryWithoutCost(t *testing.T) {
 	uncached := int64(600)
 	output := int64(200)
 	cachedInput := int64(400)
-	cachedOutput := int64(0)
 	cacheWrite := int64(100)
 	reasoning := int64(40)
 	processed := int64(1200)
@@ -83,11 +82,11 @@ func TestUsageAPIShowsDetailedSessionTokenTelemetryWithoutCost(t *testing.T) {
 		SessionID: "reverb-12", Incomplete: true,
 		Totals: domain.UsageMetricTotals{
 			InputTokens: &input, CachedInputTokens: &cachedInput, UncachedInputTokens: &uncached,
-			CachedOutputTokens: &cachedOutput, OutputTokens: &output, ProcessedTokens: &processed,
+			OutputTokens: &output, ProcessedTokens: &processed,
 			Provenance: domain.UsageMetricProvenanceSet{
 				InputTokens: domain.UsageMetricReported, CachedInputTokens: domain.UsageMetricReported,
-				UncachedInputTokens: domain.UsageMetricDerived, CachedOutputTokens: domain.UsageMetricUnsupported,
-				OutputTokens: domain.UsageMetricReported,
+				UncachedInputTokens: domain.UsageMetricDerived,
+				OutputTokens:        domain.UsageMetricReported,
 			},
 			ProviderDetails: domain.UsageProviderDetails{OpenAI: &domain.OpenAIUsageDetails{
 				ReasoningOutputTokens: &reasoning, CacheWriteInputTokens: &cacheWrite,
@@ -119,7 +118,6 @@ func TestUsageAPIShowsDetailedSessionTokenTelemetryWithoutCost(t *testing.T) {
 			InputTokens         int64 `json:"inputTokens"`
 			CachedInputTokens   int64 `json:"cachedInputTokens"`
 			UncachedInputTokens int64 `json:"uncachedInputTokens"`
-			CachedOutputTokens  int64 `json:"cachedOutputTokens"`
 			OutputTokens        int64 `json:"outputTokens"`
 			ProcessedTokens     int64 `json:"processedTokens"`
 			CacheReadTokens     int64 `json:"cacheReadTokens"`
@@ -141,7 +139,7 @@ func TestUsageAPIShowsDetailedSessionTokenTelemetryWithoutCost(t *testing.T) {
 	mustJSON(t, body, &got)
 	if got.SessionID != "reverb-12" || !got.Incomplete || got.Totals.InputTokens != 1000 ||
 		got.Totals.CachedInputTokens != 400 || got.Totals.UncachedInputTokens != 600 ||
-		got.Totals.CachedOutputTokens != 0 || got.Totals.OutputTokens != 200 ||
+		got.Totals.OutputTokens != 200 ||
 		got.Totals.ProcessedTokens != 1200 || got.Totals.CacheReadTokens != 400 ||
 		got.Totals.CacheWriteTokens != 100 || got.Totals.ReasoningTokens != 40 ||
 		got.Totals.ProviderDetails.OpenAI.Reasoning != 40 ||

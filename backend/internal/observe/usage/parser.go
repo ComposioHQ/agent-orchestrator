@@ -676,17 +676,15 @@ func normalizeOpenAIUsage(input, cachedInput, cacheWriteInput, output, reasoning
 		return domain.UsageTokenMetrics{}, domain.OpenAIUsageDetails{}, false
 	}
 	uncachedInput := input - cachedInput
-	cachedOutput := int64(0)
 	metrics := domain.UsageTokenMetrics{
 		InputTokens:         int64Ptr(input),
 		CachedInputTokens:   int64Ptr(cachedInput),
 		UncachedInputTokens: int64Ptr(uncachedInput),
-		CachedOutputTokens:  int64Ptr(cachedOutput),
 		OutputTokens:        int64Ptr(output),
 		Provenance: domain.UsageMetricProvenanceSet{
 			InputTokens: domain.UsageMetricReported, CachedInputTokens: domain.UsageMetricReported,
-			UncachedInputTokens: domain.UsageMetricDerived, CachedOutputTokens: domain.UsageMetricUnsupported,
-			OutputTokens: domain.UsageMetricReported,
+			UncachedInputTokens: domain.UsageMetricDerived,
+			OutputTokens:        domain.UsageMetricReported,
 		},
 	}
 	details := domain.OpenAIUsageDetails{
@@ -707,17 +705,15 @@ func normalizeAnthropicUsage(directInput, cacheCreationInput, cachedInput, outpu
 	if !ok || output < 0 || !validAnthropicCacheCreation(cacheCreationInput, creation5m, creation1h) {
 		return domain.UsageTokenMetrics{}, domain.AnthropicUsageDetails{}, false
 	}
-	cachedOutput := int64(0)
 	return domain.UsageTokenMetrics{
 			InputTokens:         int64Ptr(input),
 			CachedInputTokens:   int64Ptr(cachedInput),
 			UncachedInputTokens: int64Ptr(uncachedInput),
-			CachedOutputTokens:  int64Ptr(cachedOutput),
 			OutputTokens:        int64Ptr(output),
 			Provenance: domain.UsageMetricProvenanceSet{
 				InputTokens: domain.UsageMetricDerived, CachedInputTokens: domain.UsageMetricReported,
-				UncachedInputTokens: domain.UsageMetricDerived, CachedOutputTokens: domain.UsageMetricUnsupported,
-				OutputTokens: domain.UsageMetricReported,
+				UncachedInputTokens: domain.UsageMetricDerived,
+				OutputTokens:        domain.UsageMetricReported,
 			},
 		}, domain.AnthropicUsageDetails{
 			DirectUncachedInputTokens: int64Ptr(directInput), CacheCreationInputTokens: int64Ptr(cacheCreationInput),

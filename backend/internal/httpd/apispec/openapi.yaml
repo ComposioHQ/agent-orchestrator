@@ -8872,13 +8872,6 @@ components:
           - unsupported
           - unknown
           type: string
-        cachedOutputTokens:
-          enum:
-          - reported
-          - derived
-          - unsupported
-          - unknown
-          type: string
         inputTokens:
           enum:
           - reported
@@ -8904,7 +8897,6 @@ components:
       - inputTokens
       - cachedInputTokens
       - uncachedInputTokens
-      - cachedOutputTokens
       - outputTokens
       type: object
     UsageModelResponse:
@@ -8942,12 +8934,6 @@ components:
         cachedInputTokens:
           description: Input read from an existing provider cache. Cache hit percentage
             uses cachedInputTokens divided by inclusive inputTokens.
-          minimum: 0
-          type:
-          - "null"
-          - integer
-        cachedOutputTokens:
-          description: Output served from a provider output cache.
           minimum: 0
           type:
           - "null"
@@ -8993,7 +8979,6 @@ components:
       - inputTokens
       - cachedInputTokens
       - uncachedInputTokens
-      - cachedOutputTokens
       - outputTokens
       - processedTokens
       - cacheReadTokens

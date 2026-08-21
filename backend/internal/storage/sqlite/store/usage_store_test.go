@@ -1124,14 +1124,13 @@ func anthropicUsageEvent(key string, directInput, cacheCreationInput, cachedInpu
 }
 
 func canonicalUsageTokens(input, cachedInput, uncachedInput, output int64) domain.UsageTokenMetrics {
-	cachedOutput := int64(0)
 	return domain.UsageTokenMetrics{
 		InputTokens: &input, CachedInputTokens: &cachedInput, UncachedInputTokens: &uncachedInput,
-		CachedOutputTokens: &cachedOutput, OutputTokens: &output,
+		OutputTokens: &output,
 		Provenance: domain.UsageMetricProvenanceSet{
 			InputTokens: domain.UsageMetricReported, CachedInputTokens: domain.UsageMetricReported,
-			UncachedInputTokens: domain.UsageMetricDerived, CachedOutputTokens: domain.UsageMetricUnsupported,
-			OutputTokens: domain.UsageMetricReported,
+			UncachedInputTokens: domain.UsageMetricDerived,
+			OutputTokens:        domain.UsageMetricReported,
 		},
 	}
 }

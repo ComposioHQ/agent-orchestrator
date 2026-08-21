@@ -114,14 +114,14 @@ func usageTotalsResponse(totals domain.UsageMetricTotals) UsageTotalsResponse {
 	}
 	return UsageTotalsResponse{
 		InputTokens: totals.InputTokens, CachedInputTokens: totals.CachedInputTokens,
-		UncachedInputTokens: totals.UncachedInputTokens, CachedOutputTokens: totals.CachedOutputTokens,
-		OutputTokens: totals.OutputTokens, ProcessedTokens: totals.ProcessedTokens,
+		UncachedInputTokens: totals.UncachedInputTokens,
+		OutputTokens:        totals.OutputTokens, ProcessedTokens: totals.ProcessedTokens,
 		CacheReadTokens: totals.CachedInputTokens, CacheWriteTokens: cacheWriteTokens,
 		ReasoningTokens: reasoningTokens,
 		Provenance: UsageMetricProvenanceResponse{
 			InputTokens: totals.Provenance.InputTokens, CachedInputTokens: totals.Provenance.CachedInputTokens,
-			UncachedInputTokens: totals.Provenance.UncachedInputTokens, CachedOutputTokens: totals.Provenance.CachedOutputTokens,
-			OutputTokens: totals.Provenance.OutputTokens,
+			UncachedInputTokens: totals.Provenance.UncachedInputTokens,
+			OutputTokens:        totals.Provenance.OutputTokens,
 		},
 		ProviderDetails: usageProviderDetailsResponse(totals.ProviderDetails),
 	}

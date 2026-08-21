@@ -578,8 +578,6 @@ func usageEventInsertParams(source gen.GetUsageSourceWithBindingAndSessionRow, e
 		CachedInputProvenance:   string(ev.Tokens.Provenance.CachedInputTokens),
 		UncachedInputTokens:     ptrInt64ToNull(ev.Tokens.UncachedInputTokens),
 		UncachedInputProvenance: string(ev.Tokens.Provenance.UncachedInputTokens),
-		CachedOutputTokens:      ptrInt64ToNull(ev.Tokens.CachedOutputTokens),
-		CachedOutputProvenance:  string(ev.Tokens.Provenance.CachedOutputTokens),
 		OutputTokens:            ptrInt64ToNull(ev.Tokens.OutputTokens),
 		OutputProvenance:        string(ev.Tokens.Provenance.OutputTokens),
 		SourceEventKey:          ev.SourceEventKey,
@@ -595,8 +593,6 @@ func usageEventMatches(existing gen.GetModelUsageEventByKeyRow, event domain.Mod
 		existing.CachedInputProvenance == string(event.Tokens.Provenance.CachedInputTokens) &&
 		existing.UncachedInputTokens == ptrInt64ToNull(event.Tokens.UncachedInputTokens) &&
 		existing.UncachedInputProvenance == string(event.Tokens.Provenance.UncachedInputTokens) &&
-		existing.CachedOutputTokens == ptrInt64ToNull(event.Tokens.CachedOutputTokens) &&
-		existing.CachedOutputProvenance == string(event.Tokens.Provenance.CachedOutputTokens) &&
 		existing.OutputTokens == ptrInt64ToNull(event.Tokens.OutputTokens) &&
 		existing.OutputProvenance == string(event.Tokens.Provenance.OutputTokens)
 }
@@ -609,13 +605,11 @@ func usageAggregateFromGen(row gen.AggregateUsageBySessionHarnessModelRow) domai
 			InputTokens:         int64PtrWhen(row.InputTokens, row.InputProvenance != string(domain.UsageMetricUnknown)),
 			CachedInputTokens:   int64PtrWhen(row.CachedInputTokens, row.CachedInputProvenance != string(domain.UsageMetricUnknown)),
 			UncachedInputTokens: int64PtrWhen(row.UncachedInputTokens, row.UncachedInputProvenance != string(domain.UsageMetricUnknown)),
-			CachedOutputTokens:  int64PtrWhen(row.CachedOutputTokens, row.CachedOutputProvenance != string(domain.UsageMetricUnknown)),
 			OutputTokens:        int64PtrWhen(row.OutputTokens, row.OutputProvenance != string(domain.UsageMetricUnknown)),
 			Provenance: domain.UsageMetricProvenanceSet{
 				InputTokens:         domain.UsageMetricProvenance(row.InputProvenance),
 				CachedInputTokens:   domain.UsageMetricProvenance(row.CachedInputProvenance),
 				UncachedInputTokens: domain.UsageMetricProvenance(row.UncachedInputProvenance),
-				CachedOutputTokens:  domain.UsageMetricProvenance(row.CachedOutputProvenance),
 				OutputTokens:        domain.UsageMetricProvenance(row.OutputProvenance),
 			},
 		},
@@ -649,16 +643,12 @@ func validateUsageEvent(harness domain.AgentHarness, event domain.ModelUsageEven
 	if !validUsageMetric(metrics.InputTokens, metrics.Provenance.InputTokens) ||
 		!validUsageMetric(metrics.CachedInputTokens, metrics.Provenance.CachedInputTokens) ||
 		!validUsageMetric(metrics.UncachedInputTokens, metrics.Provenance.UncachedInputTokens) ||
-		!validUsageMetric(metrics.CachedOutputTokens, metrics.Provenance.CachedOutputTokens) ||
 		!validUsageMetric(metrics.OutputTokens, metrics.Provenance.OutputTokens) {
 		return errors.New("invalid usage event metric provenance")
 	}
 	if metrics.InputTokens != nil && metrics.CachedInputTokens != nil && metrics.UncachedInputTokens != nil &&
 		*metrics.InputTokens != *metrics.CachedInputTokens+*metrics.UncachedInputTokens {
 		return errors.New("usage input does not equal cached plus uncached input")
-	}
-	if metrics.OutputTokens != nil && metrics.CachedOutputTokens != nil && *metrics.CachedOutputTokens > *metrics.OutputTokens {
-		return errors.New("cached output exceeds output")
 	}
 	if event.ProviderID == domain.UsageProviderOpenAI && (event.ProviderDetails.OpenAI == nil || event.ProviderDetails.Anthropic != nil) {
 		return errors.New("invalid OpenAI usage details")

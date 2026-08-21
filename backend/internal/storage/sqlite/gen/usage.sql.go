@@ -30,10 +30,6 @@ SELECT
     CAST(CASE WHEN COUNT(mue.uncached_input_tokens) <> COUNT(*) THEN 'unknown'
          WHEN COUNT(DISTINCT mue.uncached_input_provenance) = 1 THEN MIN(mue.uncached_input_provenance)
          ELSE 'derived' END AS TEXT) AS uncached_input_provenance,
-    CAST(COALESCE(SUM(mue.cached_output_tokens), 0) AS INTEGER) AS cached_output_tokens,
-    CAST(CASE WHEN COUNT(mue.cached_output_tokens) <> COUNT(*) THEN 'unknown'
-         WHEN COUNT(DISTINCT mue.cached_output_provenance) = 1 THEN MIN(mue.cached_output_provenance)
-         ELSE 'derived' END AS TEXT) AS cached_output_provenance,
     CAST(COALESCE(SUM(mue.output_tokens), 0) AS INTEGER) AS output_tokens,
     CAST(CASE WHEN COUNT(mue.output_tokens) <> COUNT(*) THEN 'unknown'
          WHEN COUNT(DISTINCT mue.output_provenance) = 1 THEN MIN(mue.output_provenance)
@@ -71,8 +67,6 @@ type AggregateUsageBySessionHarnessModelRow struct {
 	CachedInputProvenance                   string
 	UncachedInputTokens                     int64
 	UncachedInputProvenance                 string
-	CachedOutputTokens                      int64
-	CachedOutputProvenance                  string
 	OutputTokens                            int64
 	OutputProvenance                        string
 	OpenaiEventCount                        int64
@@ -110,8 +104,6 @@ func (q *Queries) AggregateUsageBySessionHarnessModel(ctx context.Context, sessi
 			&i.CachedInputProvenance,
 			&i.UncachedInputTokens,
 			&i.UncachedInputProvenance,
-			&i.CachedOutputTokens,
-			&i.CachedOutputProvenance,
 			&i.OutputTokens,
 			&i.OutputProvenance,
 			&i.OpenaiEventCount,
@@ -283,7 +275,6 @@ SELECT
     event.input_tokens, event.input_provenance,
     event.cached_input_tokens, event.cached_input_provenance,
     event.uncached_input_tokens, event.uncached_input_provenance,
-    event.cached_output_tokens, event.cached_output_provenance,
     event.output_tokens, event.output_provenance,
     event.created_at,
     openai.openai_reasoning_output_tokens,
@@ -314,8 +305,6 @@ type GetModelUsageEventByKeyRow struct {
 	CachedInputProvenance               string
 	UncachedInputTokens                 sql.NullInt64
 	UncachedInputProvenance             string
-	CachedOutputTokens                  sql.NullInt64
-	CachedOutputProvenance              string
 	OutputTokens                        sql.NullInt64
 	OutputProvenance                    string
 	CreatedAt                           sql.NullTime
@@ -341,8 +330,6 @@ func (q *Queries) GetModelUsageEventByKey(ctx context.Context, arg GetModelUsage
 		&i.CachedInputProvenance,
 		&i.UncachedInputTokens,
 		&i.UncachedInputProvenance,
-		&i.CachedOutputTokens,
-		&i.CachedOutputProvenance,
 		&i.OutputTokens,
 		&i.OutputProvenance,
 		&i.CreatedAt,
@@ -526,10 +513,9 @@ INSERT INTO model_usage_events (
     input_tokens, input_provenance,
     cached_input_tokens, cached_input_provenance,
     uncached_input_tokens, uncached_input_provenance,
-    cached_output_tokens, cached_output_provenance,
     output_tokens, output_provenance,
     source_event_key, created_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 RETURNING id
 `
 
@@ -544,8 +530,6 @@ type InsertModelUsageEventParams struct {
 	CachedInputProvenance   string
 	UncachedInputTokens     sql.NullInt64
 	UncachedInputProvenance string
-	CachedOutputTokens      sql.NullInt64
-	CachedOutputProvenance  string
 	OutputTokens            sql.NullInt64
 	OutputProvenance        string
 	SourceEventKey          string
@@ -564,8 +548,6 @@ func (q *Queries) InsertModelUsageEvent(ctx context.Context, arg InsertModelUsag
 		arg.CachedInputProvenance,
 		arg.UncachedInputTokens,
 		arg.UncachedInputProvenance,
-		arg.CachedOutputTokens,
-		arg.CachedOutputProvenance,
 		arg.OutputTokens,
 		arg.OutputProvenance,
 		arg.SourceEventKey,

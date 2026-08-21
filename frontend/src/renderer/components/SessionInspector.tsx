@@ -773,37 +773,42 @@ function UsageMetrics({ totals }: { totals: SessionUsage["totals"] }) {
 	return (
 		<dl className="grid grid-cols-2 gap-x-4 gap-y-2 @max-[300px]/inspector:grid-cols-1" data-testid="session-usage-metrics">
 			<UsageMetric label={t("inspector.usage.uncachedInputTokens")} metric={totals.uncachedInputTokens} />
-			<UsageMetric label={t("inspector.usage.inputTokens")} metric={totals.inputTokens} />
-			<UsageMetric
-				detail={cacheHitRate === null ? undefined : t("inspector.usage.cacheHitRate", { rate: cacheHitRate })}
-				detailDescription={cacheHitRate === null ? undefined : t("inspector.usage.cacheHitRateDescription", { rate: cacheHitRate })}
-				label={t("inspector.usage.cachedInputTokens")}
-				metric={totals.cachedInputTokens}
-			/>
+			<UsageMetric label={t("inspector.usage.cachedInputTokens")} metric={totals.cachedInputTokens} />
 			<UsageMetric label={t("inspector.usage.outputTokens")} metric={totals.outputTokens} />
+			<UsageRateMetric rate={cacheHitRate} />
 		</dl>
 	);
 }
 
-function UsageMetric({
-	detail,
-	detailDescription,
-	label,
-	metric,
-}: {
-	detail?: string;
-	detailDescription?: string;
-	label: string;
-	metric: number | null | undefined;
-}) {
+function UsageRateMetric({ rate }: { rate: string | null }) {
+	const { t } = useTranslation();
+	const label = t("inspector.usage.cacheHitRate");
+	const description =
+		rate === null
+			? t("inspector.usage.metricUnavailable", { label })
+			: t("inspector.usage.cacheHitRateDescription", { rate });
+	return (
+		<div className="min-w-0">
+			<dt className="truncate text-2xs text-settings-muted">{label}</dt>
+			<dd
+				aria-label={description}
+				className="mt-0.5 truncate font-mono text-sm-md text-settings-label"
+				title={description}
+			>
+				{rate === null ? "—" : `${rate}%`}
+			</dd>
+		</div>
+	);
+}
+
+function UsageMetric({ label, metric }: { label: string; metric: number | null | undefined }) {
 	const { t } = useTranslation();
 	const value = typeof metric === "number" && Number.isFinite(metric) ? metric : null;
 	const exactValue = value?.toLocaleString("en-US");
-	const accessibleDetail = detailDescription ?? detail;
 	const accessibleLabel =
 		value === null
 			? t("inspector.usage.metricUnavailable", { label })
-			: [t("inspector.usage.metricAria", { label, count: exactValue }), accessibleDetail].filter(Boolean).join("; ");
+			: t("inspector.usage.metricAria", { label, count: exactValue });
 	return (
 		<div className="min-w-0">
 			<dt className="truncate text-2xs text-settings-muted">{label}</dt>
@@ -813,11 +818,10 @@ function UsageMetric({
 				title={
 					value === null
 						? t("inspector.usage.metricUnavailable", { label })
-						: [t("inspector.usage.tokensExact", { count: exactValue }), accessibleDetail].filter(Boolean).join(" · ")
+						: t("inspector.usage.tokensExact", { count: exactValue })
 				}
 			>
 				{value === null ? "—" : formatTelemetryTokenValue(value)}
-				{value !== null && detail ? <span className="text-2xs text-settings-muted"> · {detail}</span> : null}
 			</dd>
 		</div>
 	);
@@ -845,7 +849,6 @@ const usageMetricKeys = [
 	"inputTokens",
 	"cachedInputTokens",
 	"uncachedInputTokens",
-	"cachedOutputTokens",
 	"outputTokens",
 ] as const;
 

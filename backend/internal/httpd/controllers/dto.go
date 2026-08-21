@@ -985,12 +985,11 @@ type UsageMetricProvenanceResponse struct {
 	InputTokens         domain.UsageMetricProvenance `json:"inputTokens" enum:"reported,derived,unsupported,unknown"`
 	CachedInputTokens   domain.UsageMetricProvenance `json:"cachedInputTokens" enum:"reported,derived,unsupported,unknown"`
 	UncachedInputTokens domain.UsageMetricProvenance `json:"uncachedInputTokens" enum:"reported,derived,unsupported,unknown"`
-	CachedOutputTokens  domain.UsageMetricProvenance `json:"cachedOutputTokens" enum:"reported,derived,unsupported,unknown"`
 	OutputTokens        domain.UsageMetricProvenance `json:"outputTokens" enum:"reported,derived,unsupported,unknown"`
 }
 
 // OpenAIUsageDetailsResponse exposes namespaced counters outside the shared
-// five-metric vocabulary.
+// four-metric vocabulary.
 type OpenAIUsageDetailsResponse struct {
 	OpenAIReasoningOutputTokens *int64 `json:"openaiReasoningOutputTokens" minimum:"0"`
 	OpenAICacheWriteInputTokens *int64 `json:"openaiCacheWriteInputTokens" minimum:"0"`
@@ -1015,7 +1014,6 @@ type UsageTotalsResponse struct {
 	InputTokens         *int64                        `json:"inputTokens" minimum:"0" description:"Total input, including cached and uncached input."`
 	CachedInputTokens   *int64                        `json:"cachedInputTokens" minimum:"0" description:"Input read from an existing provider cache. Cache hit percentage uses cachedInputTokens divided by inclusive inputTokens."`
 	UncachedInputTokens *int64                        `json:"uncachedInputTokens" minimum:"0" description:"Input not read from an existing provider cache."`
-	CachedOutputTokens  *int64                        `json:"cachedOutputTokens" minimum:"0" description:"Output served from a provider output cache."`
 	OutputTokens        *int64                        `json:"outputTokens" minimum:"0" description:"Total output, including provider-specific subsets such as reasoning output."`
 	ProcessedTokens     *int64                        `json:"processedTokens" minimum:"0" description:"Canonical input plus output. Null when either component is unknown."`
 	CacheReadTokens     *int64                        `json:"cacheReadTokens" minimum:"0" description:"Deprecated compatibility alias for cachedInputTokens."`

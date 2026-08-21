@@ -3120,8 +3120,6 @@ export interface components {
             /** @enum {string} */
             cachedInputTokens: "reported" | "derived" | "unsupported" | "unknown";
             /** @enum {string} */
-            cachedOutputTokens: "reported" | "derived" | "unsupported" | "unknown";
-            /** @enum {string} */
             inputTokens: "reported" | "derived" | "unsupported" | "unknown";
             /** @enum {string} */
             outputTokens: "reported" | "derived" | "unsupported" | "unknown";
@@ -3143,8 +3141,6 @@ export interface components {
             cacheWriteTokens: null | number;
             /** @description Input read from an existing provider cache. Cache hit percentage uses cachedInputTokens divided by inclusive inputTokens. */
             cachedInputTokens: null | number;
-            /** @description Output served from a provider output cache. */
-            cachedOutputTokens: null | number;
             /** @description Total input, including cached and uncached input. */
             inputTokens: null | number;
             /** @description Total output, including provider-specific subsets such as reasoning output. */

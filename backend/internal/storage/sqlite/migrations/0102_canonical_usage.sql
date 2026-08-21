@@ -70,8 +70,6 @@ CREATE TABLE model_usage_events_next (
     cached_input_provenance     TEXT NOT NULL CHECK (cached_input_provenance IN ('reported', 'derived', 'unsupported', 'unknown')),
     uncached_input_tokens       INTEGER,
     uncached_input_provenance   TEXT NOT NULL CHECK (uncached_input_provenance IN ('reported', 'derived', 'unsupported', 'unknown')),
-    cached_output_tokens        INTEGER,
-    cached_output_provenance    TEXT NOT NULL CHECK (cached_output_provenance IN ('reported', 'derived', 'unsupported', 'unknown')),
     output_tokens               INTEGER,
     output_provenance           TEXT NOT NULL CHECK (output_provenance IN ('reported', 'derived', 'unsupported', 'unknown')),
     source_event_key            TEXT NOT NULL CHECK (trim(source_event_key) <> ''),
@@ -80,10 +78,8 @@ CREATE TABLE model_usage_events_next (
     CHECK ((input_tokens IS NULL AND input_provenance = 'unknown') OR (input_tokens >= 0 AND input_provenance <> 'unknown')),
     CHECK ((cached_input_tokens IS NULL AND cached_input_provenance = 'unknown') OR (cached_input_tokens >= 0 AND cached_input_provenance <> 'unknown')),
     CHECK ((uncached_input_tokens IS NULL AND uncached_input_provenance = 'unknown') OR (uncached_input_tokens >= 0 AND uncached_input_provenance <> 'unknown')),
-    CHECK ((cached_output_tokens IS NULL AND cached_output_provenance = 'unknown') OR (cached_output_tokens >= 0 AND cached_output_provenance <> 'unknown')),
     CHECK ((output_tokens IS NULL AND output_provenance = 'unknown') OR (output_tokens >= 0 AND output_provenance <> 'unknown')),
-    CHECK (input_tokens IS NULL OR cached_input_tokens IS NULL OR uncached_input_tokens IS NULL OR input_tokens = cached_input_tokens + uncached_input_tokens),
-    CHECK (output_tokens IS NULL OR cached_output_tokens IS NULL OR cached_output_tokens <= output_tokens)
+    CHECK (input_tokens IS NULL OR cached_input_tokens IS NULL OR uncached_input_tokens IS NULL OR input_tokens = cached_input_tokens + uncached_input_tokens)
 );
 
 INSERT INTO model_usage_events_next (
@@ -91,7 +87,6 @@ INSERT INTO model_usage_events_next (
     input_tokens, input_provenance,
     cached_input_tokens, cached_input_provenance,
     uncached_input_tokens, uncached_input_provenance,
-    cached_output_tokens, cached_output_provenance,
     output_tokens, output_provenance,
     source_event_key, created_at
 )
@@ -103,7 +98,6 @@ SELECT
     CASE binding.harness WHEN 'codex' THEN 'reported' ELSE 'derived' END,
     event.cache_read_tokens, 'reported',
     event.uncached_input_tokens + event.cache_write_tokens, 'derived',
-    0, 'unsupported',
     event.output_tokens, 'reported',
     event.source_event_key, NULL
 FROM model_usage_events event

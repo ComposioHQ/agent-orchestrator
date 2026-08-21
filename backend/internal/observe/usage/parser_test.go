@@ -29,7 +29,7 @@ func TestParseClaudeFinalUsageAndSkipMainSidechain(t *testing.T) {
 	}
 	got := result.Events[0]
 	if tokenValue(got.Tokens.InputTokens) != 20 || tokenValue(got.Tokens.UncachedInputTokens) != 13 ||
-		tokenValue(got.Tokens.CachedInputTokens) != 7 || tokenValue(got.Tokens.CachedOutputTokens) != 0 ||
+		tokenValue(got.Tokens.CachedInputTokens) != 7 ||
 		tokenValue(got.Tokens.OutputTokens) != 4 {
 		t.Fatalf("tokens = %+v", got.Tokens)
 	}
@@ -95,7 +95,7 @@ func TestParseClaudeReferenceUsageDeduplicatesLogicalResponses(t *testing.T) {
 	if len(result.Events) != 4 || result.Cursor.AnomalyCount != 0 {
 		t.Fatalf("result = %+v, want four logical events", result)
 	}
-	assertCanonicalEventTotals(t, result.Events, 148625, 75376, 73249, 0, 24993)
+	assertCanonicalEventTotals(t, result.Events, 148625, 75376, 73249, 24993)
 	var direct, creation, creation5m, creation1h int64
 	for _, event := range result.Events {
 		details := event.ProviderDetails.Anthropic
@@ -127,7 +127,7 @@ func TestParseCodexCumulativeDeltasAndRepeats(t *testing.T) {
 		t.Fatalf("events = %d, want 2", len(result.Events))
 	}
 	if got := result.Events[0].Tokens; tokenValue(got.InputTokens) != 100 || tokenValue(got.UncachedInputTokens) != 40 ||
-		tokenValue(got.CachedInputTokens) != 60 || tokenValue(got.CachedOutputTokens) != 0 || tokenValue(got.OutputTokens) != 20 {
+		tokenValue(got.CachedInputTokens) != 60 || tokenValue(got.OutputTokens) != 20 {
 		t.Fatalf("first tokens = %+v", got)
 	}
 	if details := result.Events[0].ProviderDetails.OpenAI; details == nil ||
@@ -160,7 +160,7 @@ func TestParseCodexReferenceUsageReconcilesLastAndCumulativeTotals(t *testing.T)
 	if len(result.Events) != 3 || result.Cursor.AnomalyCount != 0 {
 		t.Fatalf("result = %+v, want three reconciled events", result)
 	}
-	assertCanonicalEventTotals(t, result.Events, 63566, 30848, 32718, 0, 5058)
+	assertCanonicalEventTotals(t, result.Events, 63566, 30848, 32718, 5058)
 	var reasoning, cacheWrite, reportedTotal int64
 	for _, event := range result.Events {
 		details := event.ProviderDetails.OpenAI
@@ -189,7 +189,7 @@ func TestParseCodexOptionalReportedTotalDoesNotDropDeltas(t *testing.T) {
 	if len(result.Events) != 3 || result.Cursor.AnomalyCount != 0 {
 		t.Fatalf("result = %+v, want three clean events", result)
 	}
-	assertCanonicalEventTotals(t, result.Events, 200, 100, 100, 0, 50)
+	assertCanonicalEventTotals(t, result.Events, 200, 100, 100, 50)
 	if first := result.Events[0].ProviderDetails.OpenAI.ReportedTotalTokens; first == nil || *first != 120 {
 		t.Fatalf("first reported total = %v, want 120", first)
 	}
@@ -217,7 +217,7 @@ func TestParseCodexRejectedDeltaDoesNotAdvanceBaseline(t *testing.T) {
 	if len(result.Events) != 2 || result.Cursor.AnomalyCount != 1 {
 		t.Fatalf("result = %+v, want the invalid middle delta skipped", result)
 	}
-	assertCanonicalEventTotals(t, result.Events, 120, 100, 20, 0, 25)
+	assertCanonicalEventTotals(t, result.Events, 120, 100, 20, 25)
 	state := parserStateFromResult(t, result, domain.UsageSourceCodexRollout)
 	if state.Codex.Baseline.InputTokens != 120 || state.Codex.Baseline.CachedInputTokens != 100 {
 		t.Fatalf("baseline = %+v, want recovery from the last valid baseline", state.Codex.Baseline)
@@ -782,18 +782,17 @@ func mustJSONTokenVector(vector codexTokenVector) string {
 	return string(encoded)
 }
 
-func assertCanonicalEventTotals(t *testing.T, events []domain.ModelUsageEvent, input, cachedInput, uncachedInput, cachedOutput, output int64) {
+func assertCanonicalEventTotals(t *testing.T, events []domain.ModelUsageEvent, input, cachedInput, uncachedInput, output int64) {
 	t.Helper()
-	var gotInput, gotCachedInput, gotUncachedInput, gotCachedOutput, gotOutput int64
+	var gotInput, gotCachedInput, gotUncachedInput, gotOutput int64
 	for _, event := range events {
 		gotInput += tokenValue(event.Tokens.InputTokens)
 		gotCachedInput += tokenValue(event.Tokens.CachedInputTokens)
 		gotUncachedInput += tokenValue(event.Tokens.UncachedInputTokens)
-		gotCachedOutput += tokenValue(event.Tokens.CachedOutputTokens)
 		gotOutput += tokenValue(event.Tokens.OutputTokens)
 	}
-	if gotInput != input || gotCachedInput != cachedInput || gotUncachedInput != uncachedInput || gotCachedOutput != cachedOutput || gotOutput != output {
-		t.Fatalf("canonical totals = (%d, %d, %d, %d, %d), want (%d, %d, %d, %d, %d)", gotInput, gotCachedInput, gotUncachedInput, gotCachedOutput, gotOutput, input, cachedInput, uncachedInput, cachedOutput, output)
+	if gotInput != input || gotCachedInput != cachedInput || gotUncachedInput != uncachedInput || gotOutput != output {
+		t.Fatalf("canonical totals = (%d, %d, %d, %d), want (%d, %d, %d, %d)", gotInput, gotCachedInput, gotUncachedInput, gotOutput, input, cachedInput, uncachedInput, output)
 	}
 }
 

@@ -211,8 +211,6 @@ type ModelUsageEvent struct {
 	CachedInputProvenance   string
 	UncachedInputTokens     sql.NullInt64
 	UncachedInputProvenance string
-	CachedOutputTokens      sql.NullInt64
-	CachedOutputProvenance  string
 	OutputTokens            sql.NullInt64
 	OutputProvenance        string
 	SourceEventKey          string

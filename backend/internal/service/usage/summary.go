@@ -76,19 +76,16 @@ func usageTotals(models []domain.UsageModelAggregate) domain.UsageMetricTotals {
 	uncachedInput, uncachedInputProvenance := aggregateMetric(models, func(model domain.UsageModelAggregate) (*int64, domain.UsageMetricProvenance) {
 		return model.Tokens.UncachedInputTokens, model.Tokens.Provenance.UncachedInputTokens
 	})
-	cachedOutput, cachedOutputProvenance := aggregateMetric(models, func(model domain.UsageModelAggregate) (*int64, domain.UsageMetricProvenance) {
-		return model.Tokens.CachedOutputTokens, model.Tokens.Provenance.CachedOutputTokens
-	})
 	output, outputProvenance := aggregateMetric(models, func(model domain.UsageModelAggregate) (*int64, domain.UsageMetricProvenance) {
 		return model.Tokens.OutputTokens, model.Tokens.Provenance.OutputTokens
 	})
 	totals := domain.UsageMetricTotals{
 		InputTokens: input, CachedInputTokens: cachedInput, UncachedInputTokens: uncachedInput,
-		CachedOutputTokens: cachedOutput, OutputTokens: output,
+		OutputTokens: output,
 		Provenance: domain.UsageMetricProvenanceSet{
 			InputTokens: inputProvenance, CachedInputTokens: cachedInputProvenance,
-			UncachedInputTokens: uncachedInputProvenance, CachedOutputTokens: cachedOutputProvenance,
-			OutputTokens: outputProvenance,
+			UncachedInputTokens: uncachedInputProvenance,
+			OutputTokens:        outputProvenance,
 		},
 		ProviderDetails: aggregateProviderDetails(models),
 	}
@@ -163,8 +160,8 @@ func sumOptionalMetrics[T any](values []*T, selectMetric func(*T) *int64) *int64
 func unknownUsageProvenance() domain.UsageMetricProvenanceSet {
 	return domain.UsageMetricProvenanceSet{
 		InputTokens: domain.UsageMetricUnknown, CachedInputTokens: domain.UsageMetricUnknown,
-		UncachedInputTokens: domain.UsageMetricUnknown, CachedOutputTokens: domain.UsageMetricUnknown,
-		OutputTokens: domain.UsageMetricUnknown,
+		UncachedInputTokens: domain.UsageMetricUnknown,
+		OutputTokens:        domain.UsageMetricUnknown,
 	}
 }
 

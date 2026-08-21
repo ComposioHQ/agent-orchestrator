@@ -114,14 +114,13 @@ func TestSummaryReaderGetAggregatesModelsAndIntegrity(t *testing.T) {
 }
 
 func testUsageMetrics(input, cachedInput, uncachedInput, output int64, inputProvenance domain.UsageMetricProvenance) domain.UsageTokenMetrics {
-	cachedOutput := int64(0)
 	return domain.UsageTokenMetrics{
 		InputTokens: &input, CachedInputTokens: &cachedInput, UncachedInputTokens: &uncachedInput,
-		CachedOutputTokens: &cachedOutput, OutputTokens: &output,
+		OutputTokens: &output,
 		Provenance: domain.UsageMetricProvenanceSet{
 			InputTokens: inputProvenance, CachedInputTokens: domain.UsageMetricReported,
-			UncachedInputTokens: domain.UsageMetricDerived, CachedOutputTokens: domain.UsageMetricUnsupported,
-			OutputTokens: domain.UsageMetricReported,
+			UncachedInputTokens: domain.UsageMetricDerived,
+			OutputTokens:        domain.UsageMetricReported,
 		},
 	}
 }

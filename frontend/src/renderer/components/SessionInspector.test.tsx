@@ -775,10 +775,9 @@ describe("SessionInspector usage", () => {
 			inputTokens: 1200,
 			cachedInputTokens: 1000,
 			uncachedInputTokens: 200,
-			cachedOutputTokens: 0,
 			outputTokens: 300,
 			processedTokens: 1500,
-			provenance: { inputTokens: "reported", cachedInputTokens: "reported", uncachedInputTokens: "derived", cachedOutputTokens: "unsupported", outputTokens: "reported" },
+			provenance: { inputTokens: "reported", cachedInputTokens: "reported", uncachedInputTokens: "derived", outputTokens: "reported" },
 			providerDetails: { openai: { openaiReasoningOutputTokens: 5, openaiCacheWriteInputTokens: 0 } },
 		};
 		getMock.mockImplementation(async (path: string) => {
@@ -802,11 +801,10 @@ describe("SessionInspector usage", () => {
 		expect(screen.getByLabelText("1,500 tokens processed")).toBeInTheDocument();
 		const metrics = screen.getAllByTestId("session-usage-metrics")[0];
 		expect(within(metrics).getAllByRole("term").map((term) => term.textContent)).toEqual([
-			"Fresh Input", "Total Input", "Cached Input", "Total Output",
+			"Fresh Input", "Cache Reads", "Output", "Cache Hit Rate",
 		]);
-		expect(within(metrics).getByLabelText("Cached Input: 1,000 tokens; 83.3% hit (cached input / total input)")).toHaveTextContent(
-			"1K · 83.3% hit",
-		);
+		expect(within(metrics).getByLabelText("Cache Reads: 1,000 tokens")).toHaveTextContent("1K");
+		expect(within(metrics).getByLabelText("83.3% cache hit rate (cache reads / total input)")).toHaveTextContent("83.3%");
 		expect(within(metrics).queryByText("Cached Output")).not.toBeInTheDocument();
 		expect(screen.queryByText("Cache write tokens")).not.toBeInTheDocument();
 		expect(screen.queryByText("Reasoning (included in output)")).not.toBeInTheDocument();
@@ -828,10 +826,9 @@ describe("SessionInspector usage", () => {
 			inputTokens: 1200,
 			cachedInputTokens: 1000,
 			uncachedInputTokens: 200,
-			cachedOutputTokens: 0,
 			outputTokens: 300,
 			processedTokens: 1500,
-			provenance: { inputTokens: "reported", cachedInputTokens: "reported", uncachedInputTokens: "derived", cachedOutputTokens: "unsupported", outputTokens: "reported" },
+			provenance: { inputTokens: "reported", cachedInputTokens: "reported", uncachedInputTokens: "derived", outputTokens: "reported" },
 			providerDetails: {},
 		};
 		getMock.mockImplementation(async (path: string) => {
