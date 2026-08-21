@@ -229,7 +229,12 @@ func knownAppLocations() []string {
 		if home, err := os.UserHomeDir(); err == nil {
 			paths = append(paths, filepath.Join(home, "Applications", "agent-orchestrator.AppImage"))
 		}
-		return paths
+		// A deb, rpm or Arch install. Scanned last: when both exist, the
+		// AppImage under ~/.ao is the copy that keeps itself current, and the
+		// packaged one is updated by the package manager on its own schedule.
+		// Without this entry, `ao start` on a machine with AO already installed
+		// downloads an AppImage it does not need.
+		return append(paths, linuxSystemAppPath)
 	default:
 		return nil
 	}
@@ -265,7 +270,17 @@ const (
 	// this same file), so the two sizes stay in step by construction.
 	linuxAppImageIconPath = "usr/share/icons/hicolor/1024x1024/apps/agent-orchestrator.png"
 	linuxIconThemeDir     = "icons/hicolor/1024x1024/apps"
+	// What a distro package (deb, rpm, or the Arch package in packaging/arch)
+	// installs: the launcher symlink it puts on PATH, and the menu entry it
+	// owns. Both names come from EXECUTABLE_NAME in frontend/forge.config.ts.
+	linuxSystemAppPath          = "/usr/bin/agent-orchestrator"
+	linuxSystemDesktopEntryName = "agent-orchestrator.desktop"
 )
+
+// linuxSystemDesktopEntryPath is where a distro package installs its entry. A
+// package var for the same reason as appScanLocations: tests point it at a temp
+// file instead of a real system path.
+var linuxSystemDesktopEntryPath = "/usr/share/applications/" + linuxSystemDesktopEntryName
 
 // linuxDataDir returns a subdirectory of XDG_DATA_HOME. Desktop entries and
 // icons are OS integration metadata, not AO runtime state: freedesktop.org
@@ -347,11 +362,28 @@ func (c *commandContext) installLinuxMenuIcon(ctx context.Context, appPath strin
 	return nil
 }
 
+// systemDesktopEntryOwns reports whether a distro package already owns the menu
+// entry for the app about to be launched: the app is the packaged one under
+// /usr, and the package's desktop entry is on disk.
+func systemDesktopEntryOwns(appPath string) bool {
+	if appPath != linuxSystemAppPath && !strings.HasPrefix(appPath, "/usr/lib/agent-orchestrator/") {
+		return false
+	}
+	_, err := os.Stat(linuxSystemDesktopEntryPath)
+	return err == nil
+}
+
 // installLinuxDesktopEntry writes the user-level .desktop file for the AppImage
 // and registers it as the ao-app:// URL handler. The entry is a REAL menu entry:
 // it used to carry NoDisplay=true, which exists to hide an entry from the
 // applications menu, so an AppImage never appeared there and people hand-wrote
 // their own launchers pointing at wherever the file happened to be downloaded.
+//
+// When a distro package is what is being launched, the package's own entry wins
+// and this writes nothing: two entries would show AO twice in the menu and leave
+// two candidates for ao-app://. The packaged file is never touched (the package
+// manager owns it); only the entry a previous `ao start` wrote is cleared, and
+// only because it is ours and points at an AppImage that is no longer in use.
 //
 // Best-effort steps (the icon, refreshing the desktop database) report to w and
 // do not fail the launch: a missing icon or a stale menu cache is worth a line
@@ -364,6 +396,18 @@ func (c *commandContext) installLinuxDesktopEntry(
 	applicationsDir, err := linuxApplicationsDir()
 	if err != nil {
 		return err
+	}
+	if systemDesktopEntryOwns(appPath) {
+		stale := filepath.Join(applicationsDir, linuxDesktopEntryName)
+		if err := os.Remove(stale); err == nil {
+			_, _ = fmt.Fprintf(
+				w,
+				"ao start: removed the AppImage menu entry; %s owns this install\n",
+				linuxSystemDesktopEntryPath,
+			)
+			c.refreshDesktopDatabase(ctx, w, applicationsDir)
+		}
+		return c.registerAoAppHandler(ctx, linuxSystemDesktopEntryName)
 	}
 	if err := os.MkdirAll(applicationsDir, 0o750); err != nil {
 		return fmt.Errorf("create Linux applications directory: %w", err)
@@ -398,11 +442,16 @@ StartupWMClass=Agent Orchestrator
 		_ = os.Remove(temporary)
 		return fmt.Errorf("install Linux desktop entry: %w", err)
 	}
-	// Menus read a cache built from this directory, so a new entry can stay
-	// invisible until something rebuilds it. Not every system ships the tool,
-	// and desktops that watch the directory do not need it, so a failure here
-	// is reported and ignored.
-	if out, err := c.deps.CommandOutput(ctx, "update-desktop-database", applicationsDir); err != nil {
+	c.refreshDesktopDatabase(ctx, w, applicationsDir)
+	return c.registerAoAppHandler(ctx, linuxDesktopEntryName)
+}
+
+// refreshDesktopDatabase rebuilds the menu cache for dir. Menus read that cache,
+// so a new entry can stay invisible until something rebuilds it. Not every
+// system ships the tool, and desktops that watch the directory do not need it,
+// so a failure is reported and ignored.
+func (c *commandContext) refreshDesktopDatabase(ctx context.Context, w io.Writer, dir string) {
+	if out, err := c.deps.CommandOutput(ctx, "update-desktop-database", dir); err != nil {
 		_, _ = fmt.Fprintf(
 			w,
 			"ao start: could not refresh the applications menu (install desktop-file-utils to fix): %v: %s\n",
@@ -410,11 +459,17 @@ StartupWMClass=Agent Orchestrator
 			out,
 		)
 	}
+}
+
+// registerAoAppHandler points ao-app:// at entryName and proves it took. Which
+// entry that is depends on how AO got here: the package's when a distro package
+// owns this install, ours when it is the AppImage.
+func (c *commandContext) registerAoAppHandler(ctx context.Context, entryName string) error {
 	if out, err := c.deps.CommandOutput(
 		ctx,
 		"xdg-mime",
 		"default",
-		linuxDesktopEntryName,
+		entryName,
 		"x-scheme-handler/ao-app",
 	); err != nil {
 		return fmt.Errorf(
@@ -433,11 +488,11 @@ StartupWMClass=Agent Orchestrator
 	if err != nil {
 		return fmt.Errorf("verify ao-app URL handler: %w: %s", err, out)
 	}
-	if strings.TrimSpace(string(out)) != linuxDesktopEntryName {
+	if strings.TrimSpace(string(out)) != entryName {
 		return fmt.Errorf(
 			"verify ao-app URL handler: xdg-mime selected %q instead of %q",
 			strings.TrimSpace(string(out)),
-			linuxDesktopEntryName,
+			entryName,
 		)
 	}
 	return nil

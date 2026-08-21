@@ -224,6 +224,24 @@ func TestKnownAppLocations_HostOS(t *testing.T) {
 	}
 }
 
+// A deb, rpm or pacman install must be resolvable, or `ao start` downloads an
+// AppImage onto a machine that already has AO installed. It is scanned last:
+// when both exist, the AppImage under ~/.ao is the copy that self-updates.
+func TestKnownAppLocations_LinuxIncludesPackagedInstallLast(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("Linux-only scan order")
+	}
+	paths := knownAppLocations()
+	if got := paths[len(paths)-1]; got != linuxSystemAppPath {
+		t.Fatalf("last scan location = %q, want %q", got, linuxSystemAppPath)
+	}
+	for _, p := range paths[:len(paths)-1] {
+		if p == linuxSystemAppPath {
+			t.Fatalf("packaged install scanned before the AppImage: %#v", paths)
+		}
+	}
+}
+
 func TestIsUsableBundle_RegularFileVsDir(t *testing.T) {
 	dir := t.TempDir()
 	file := filepath.Join(dir, "agent-orchestrator.AppImage")
@@ -369,6 +387,97 @@ func TestInstallLinuxDesktopEntry(t *testing.T) {
 	}
 	if !reflect.DeepEqual(commands, wantCommands) {
 		t.Fatalf("commands = %#v, want %#v", commands, wantCommands)
+	}
+}
+
+// B4's decision, in code: when a distro package owns this install, its entry is
+// the one in the menu and the one ao-app:// resolves to. `ao start` writes none
+// of its own, and never touches the packaged file.
+func TestInstallLinuxDesktopEntry_PackagedInstallOwnsTheMenu(t *testing.T) {
+	dataHome := t.TempDir()
+	t.Setenv("XDG_DATA_HOME", dataHome)
+
+	systemEntry := filepath.Join(t.TempDir(), linuxSystemDesktopEntryName)
+	if err := os.WriteFile(systemEntry, []byte("[Desktop Entry]\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	original := linuxSystemDesktopEntryPath
+	linuxSystemDesktopEntryPath = systemEntry
+	t.Cleanup(func() { linuxSystemDesktopEntryPath = original })
+
+	// An entry from an earlier AppImage launch, pointing at an AppImage this
+	// machine no longer runs.
+	userEntry := filepath.Join(dataHome, "applications", linuxDesktopEntryName)
+	if err := os.MkdirAll(filepath.Dir(userEntry), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(userEntry, []byte("[Desktop Entry]\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var commands [][]string
+	c := &commandContext{deps: Deps{
+		CommandOutput: func(_ context.Context, name string, args ...string) ([]byte, error) {
+			commands = append(commands, append([]string{name}, args...))
+			if len(args) > 0 && args[0] == "query" {
+				return []byte(linuxSystemDesktopEntryName + "\n"), nil
+			}
+			return nil, nil
+		},
+		CommandOutputInDir: func(_ context.Context, _, _ string, _ ...string) ([]byte, error) {
+			t.Fatal("packaged install must not extract an icon from an AppImage")
+			return nil, nil
+		},
+	}.withDefaults()}
+
+	var stderr bytes.Buffer
+	if err := c.installLinuxDesktopEntry(context.Background(), &stderr, linuxSystemAppPath); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(userEntry); !os.IsNotExist(err) {
+		t.Fatalf("stale AppImage entry still present: %v", err)
+	}
+	if _, err := os.Stat(systemEntry); err != nil {
+		t.Fatalf("packaged entry was disturbed: %v", err)
+	}
+	wantCommands := [][]string{
+		{"update-desktop-database", filepath.Join(dataHome, "applications")},
+		{"xdg-mime", "default", linuxSystemDesktopEntryName, "x-scheme-handler/ao-app"},
+		{"xdg-mime", "query", "default", "x-scheme-handler/ao-app"},
+	}
+	if !reflect.DeepEqual(commands, wantCommands) {
+		t.Fatalf("commands = %#v, want %#v", commands, wantCommands)
+	}
+}
+
+// The same appPath without the package's entry on disk is not a packaged
+// install (a bare /usr/bin symlink someone made by hand, say), so the normal
+// path still applies.
+func TestInstallLinuxDesktopEntry_NoSystemEntryMeansNoHandoff(t *testing.T) {
+	dataHome := t.TempDir()
+	t.Setenv("XDG_DATA_HOME", dataHome)
+	original := linuxSystemDesktopEntryPath
+	linuxSystemDesktopEntryPath = filepath.Join(t.TempDir(), "absent.desktop")
+	t.Cleanup(func() { linuxSystemDesktopEntryPath = original })
+
+	c := &commandContext{deps: Deps{
+		CommandOutput: func(_ context.Context, _ string, args ...string) ([]byte, error) {
+			if len(args) > 0 && args[0] == "query" {
+				return []byte(linuxDesktopEntryName + "\n"), nil
+			}
+			return nil, nil
+		},
+		CommandOutputInDir: func(_ context.Context, _, _ string, _ ...string) ([]byte, error) {
+			return []byte("no such file"), errors.New("exec: --appimage-extract")
+		},
+	}.withDefaults()}
+
+	var stderr bytes.Buffer
+	if err := c.installLinuxDesktopEntry(context.Background(), &stderr, linuxSystemAppPath); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(dataHome, "applications", linuxDesktopEntryName)); err != nil {
+		t.Fatalf("desktop entry not written: %v", err)
 	}
 }
 
