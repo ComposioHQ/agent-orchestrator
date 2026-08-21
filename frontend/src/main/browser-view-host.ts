@@ -1237,6 +1237,14 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 				// back to AO's own close path, which only depends on session.tabs and
 				// the real WebContentsView, not the runtime's registry.
 				if (!isAgentBrowserCommandFailure(error)) throw error;
+				// runAction("tab-close") can partially succeed: the CDP bridge's own
+				// Target.closeTarget handling calls this same internal closeTab
+				// before the runtime reports the overall command as failed (observed
+				// live — the tab was already gone by the time this catch ran). Calling
+				// closeTab again here would throw TAB_NOT_FOUND for a tab that's
+				// already closed, exactly the outcome the user wanted — so treat
+				// "already gone" as success instead of retrying the close.
+				if (!session.tabs.has(input.tabId)) return listTabs(session);
 				return closeTab(session, input.tabId);
 			}
 			session.nativeActiveTabId = undefined;

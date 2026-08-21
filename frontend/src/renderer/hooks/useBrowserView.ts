@@ -117,6 +117,17 @@ export function resetConsumedPreviewTriggersForTest(): void {
 	consumedPreviewTriggers.clear();
 }
 
+// Recently Closed has no main-process backing (unlike live tabs, which
+// survive a session switch because they're kept alive in the main process
+// and simply re-fetched) — it's built up purely from this hook's own
+// bookkeeping. Without this, switching sessions and back lost the list for
+// good, even though nothing about it actually changed.
+const closedTabsBySession = new Map<string, ClosedBrowserTab[]>();
+
+export function resetClosedTabsForTest(): void {
+	closedTabsBySession.clear();
+}
+
 const HIDDEN_RECT: BrowserRect = { x: 0, y: 0, width: 0, height: 0 };
 
 // The native WebContentsView is a window-level overlay, so DOM `overflow:
@@ -209,6 +220,20 @@ export function useBrowserView({
 			setTabNotice("");
 		}, 3_000);
 	}, []);
+
+	// Single choke point for every closedTabs mutation, so the module-level
+	// per-session cache (closedTabsBySession) can never drift from what's
+	// actually shown.
+	const updateClosedTabs = useCallback(
+		(updater: (current: ClosedBrowserTab[]) => ClosedBrowserTab[]) => {
+			setClosedTabs((current) => {
+				const next = updater(current);
+				closedTabsBySession.set(sessionId, next);
+				return next;
+			});
+		},
+		[sessionId],
+	);
 
 	const sendHiddenBounds = useCallback((id = viewIdRef.current) => {
 		if (!id) return;
@@ -315,7 +340,10 @@ export function useBrowserView({
 		setTabOrder([]);
 		setDevtoolsState(EMPTY_DEVTOOLS_STATE);
 		setTabNotice("");
-		setClosedTabs([]);
+		// Restore this session's own Recently Closed list rather than wiping it —
+		// switching away and back should find it exactly as it was, same as the
+		// live tabs the native view already keeps.
+		setClosedTabs(closedTabsBySession.get(sessionId) ?? []);
 		setAgentBrowserActive(false);
 		setAgentBrowserActivity(null);
 		if (tabNoticeTimerRef.current !== null) {
@@ -565,13 +593,25 @@ export function useBrowserView({
 				const stillOpen = state.tabs.some((tab) => tab.id === tabId);
 				if (closing && !stillOpen && !isBlankTabUrl(closing.url)) {
 					const { id, title, url, favicon } = closing;
-					setClosedTabs((current) => [{ id, title, url, favicon }, ...current.filter((t) => t.id !== id)].slice(0, MAX_CLOSED_TABS));
+					updateClosedTabs((current) => [{ id, title, url, favicon }, ...current.filter((t) => t.id !== id)].slice(0, MAX_CLOSED_TABS));
 				}
 			} catch {
 				showTabNotice("Couldn't close that tab");
+				// The main process can mutate its own tab state before reporting a
+				// close as failed (e.g. the automation runtime's own closeTarget
+				// callback already removed the tab, then the overall command still
+				// reports failure) — resync instead of leaving this tab's row
+				// showing in the rail after it's genuinely gone, which just
+				// re-fails identically on every retry.
+				window.ao?.browser
+					.getTabs(viewId)
+					.then((state) => {
+						if (viewIdRef.current === state.viewId) setTabsState(state);
+					})
+					.catch(() => undefined);
 			}
 		},
-		[hasNativeBrowser, showTabNotice],
+		[hasNativeBrowser, showTabNotice, updateClosedTabs],
 	);
 
 	const openTab = useCallback(
@@ -594,18 +634,18 @@ export function useBrowserView({
 				showTabNotice("Reached the tab limit");
 				return;
 			}
-			setClosedTabs((current) => current.filter((tab) => tab.id !== tabId));
+			updateClosedTabs((current) => current.filter((tab) => tab.id !== tabId));
 			try {
 				await openTab(entry.url);
 			} catch {
 				// Still possible to race the cap (e.g. the agent opens a tab between
 				// this row rendering and the click) — restore instead of losing the
 				// entry silently.
-				setClosedTabs((current) => [entry, ...current.filter((tab) => tab.id !== tabId)].slice(0, MAX_CLOSED_TABS));
+				updateClosedTabs((current) => [entry, ...current.filter((tab) => tab.id !== tabId)].slice(0, MAX_CLOSED_TABS));
 				showTabNotice("Couldn't reopen that tab");
 			}
 		},
-		[closedTabs, openTab, showTabNotice],
+		[closedTabs, openTab, showTabNotice, updateClosedTabs],
 	);
 
 	const runDevtools = useCallback(
@@ -713,6 +753,7 @@ export function useBrowserView({
 	useEffect(() => {
 		if (!terminated || !viewId) return;
 		consumedPreviewTriggers.delete(sessionId);
+		closedTabsBySession.delete(sessionId);
 		destroy();
 	}, [destroy, sessionId, terminated, viewId]);
 

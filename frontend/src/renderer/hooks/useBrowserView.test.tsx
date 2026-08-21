@@ -1,4 +1,9 @@
-import { resetConsumedPreviewTriggersForTest, useBrowserView, type BrowserNavState } from "./useBrowserView";
+import {
+	resetClosedTabsForTest,
+	resetConsumedPreviewTriggersForTest,
+	useBrowserView,
+	type BrowserNavState,
+} from "./useBrowserView";
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { useEffect } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -147,6 +152,7 @@ describe("useBrowserView", () => {
 		setFullscreenElement(null);
 		document.body.replaceChildren();
 		resetConsumedPreviewTriggersForTest();
+		resetClosedTabsForTest();
 	});
 
 	it("ensures a scoped browser view and reports the measured slot bounds", async () => {
@@ -337,6 +343,41 @@ describe("useBrowserView", () => {
 		expect(result.current.tabNotice).toBe("Couldn't switch to that tab");
 	});
 
+	// Regression: the main process can mutate its own tab state (e.g. the
+	// automation runtime's closeTarget callback removes the tab) before still
+	// reporting the close as failed. Without a resync, the renderer kept
+	// showing the already-closed tab's row forever — every retry re-failed
+	// identically since the main process had nothing left to close.
+	it("resyncs tab state from the main process after a failed close, instead of leaving a ghost row", async () => {
+		const bridge = setupBridge();
+		const { result } = renderHook(() => useBrowserView({ sessionId: "sess-1", active: true, poppedOut: false }));
+		await waitFor(() => expect(result.current.tabs.map((tab) => tab.id)).toEqual(["t1"]));
+		act(() =>
+			bridge.emitTabs({
+				viewId: "42:sess-1",
+				activeTabId: "t2",
+				tabs: [
+					{ id: "t1", url: "http://localhost:3000/", title: "First", active: false },
+					{ id: "t2", url: "http://localhost:4173/", title: "Second", active: true },
+				],
+				change: { kind: "popup", tabId: "t2" },
+			}),
+		);
+
+		// The close call rejects, but the main process actually removed t2
+		// already — getTabs reflects that reality.
+		bridge.closeTab.mockRejectedValueOnce(new Error("agent-browser lost the connection mid-command"));
+		bridge.getTabs.mockResolvedValueOnce({
+			viewId: "42:sess-1",
+			activeTabId: "t1",
+			tabs: [{ id: "t1", url: "http://localhost:3000/", title: "First", active: true }],
+		});
+
+		await act(() => result.current.closeTab("t2"));
+
+		await waitFor(() => expect(result.current.tabs.map((tab) => tab.id)).toEqual(["t1"]));
+	});
+
 	// Regression: closeTab can silently no-op — the underlying native close
 	// fails and the tab stays in session.tabs — and the recently-closed
 	// capture used to run before ever checking the response, so a tab that
@@ -427,6 +468,69 @@ describe("useBrowserView", () => {
 		});
 		await act(() => result.current.closeTab("t1"));
 		expect(result.current.closedTabs).toEqual([]);
+	});
+
+	// Regression: unlike live tabs (kept alive in the main process and simply
+	// re-fetched), Recently Closed was built up purely from this hook's own
+	// state — so switching sessions and back lost the list for good, even
+	// though nothing about that session actually changed.
+	it("keeps a session's Recently Closed list across switching away and back", async () => {
+		const bridge = setupBridge();
+		const { result, rerender } = renderHook(
+			({ sessionId }) => useBrowserView({ sessionId, active: true, poppedOut: false }),
+			{ initialProps: { sessionId: "sess-1" } },
+		);
+		await waitFor(() => expect(result.current.tabs.map((tab) => tab.id)).toEqual(["t1"]));
+		act(() =>
+			bridge.emitTabs({
+				viewId: "42:sess-1",
+				activeTabId: "t2",
+				tabs: [
+					{ id: "t1", url: "http://localhost:3000/", title: "First", active: false },
+					{ id: "t2", url: "http://localhost:4173/", title: "Second", active: true },
+				],
+				change: { kind: "popup", tabId: "t2" },
+			}),
+		);
+		await act(() => result.current.closeTab("t2"));
+		expect(result.current.closedTabs).toEqual([{ id: "t2", url: "http://localhost:4173/", title: "Second", favicon: undefined }]);
+
+		rerender({ sessionId: "sess-2" });
+		await waitFor(() => expect(result.current.viewId).toBe("42:sess-2"));
+		expect(result.current.closedTabs).toEqual([]);
+
+		rerender({ sessionId: "sess-1" });
+		await waitFor(() => expect(result.current.viewId).toBe("42:sess-1"));
+		expect(result.current.closedTabs).toEqual([{ id: "t2", url: "http://localhost:4173/", title: "Second", favicon: undefined }]);
+	});
+
+	it("forgets a session's Recently Closed list once the session is genuinely terminated", async () => {
+		const bridge = setupBridge();
+		const { result, rerender } = renderHook(
+			({ terminated }) => useBrowserView({ sessionId: "sess-1", active: true, poppedOut: false, terminated }),
+			{ initialProps: { terminated: false } },
+		);
+		await waitFor(() => expect(result.current.tabs.map((tab) => tab.id)).toEqual(["t1"]));
+		act(() =>
+			bridge.emitTabs({
+				viewId: "42:sess-1",
+				activeTabId: "t2",
+				tabs: [
+					{ id: "t1", url: "http://localhost:3000/", title: "First", active: false },
+					{ id: "t2", url: "http://localhost:4173/", title: "Second", active: true },
+				],
+				change: { kind: "popup", tabId: "t2" },
+			}),
+		);
+		await act(() => result.current.closeTab("t2"));
+		expect(result.current.closedTabs).toHaveLength(1);
+
+		rerender({ terminated: true });
+		await waitFor(() => expect(result.current.viewId).toBe(""));
+
+		const revived = renderHook(() => useBrowserView({ sessionId: "sess-1", active: true, poppedOut: false }));
+		await waitFor(() => expect(revived.result.current.tabs.map((tab) => tab.id)).toEqual(["t1"]));
+		expect(revived.result.current.closedTabs).toEqual([]);
 	});
 
 	it("remeasures the live native view while moving between panel and maximized browser slots", async () => {

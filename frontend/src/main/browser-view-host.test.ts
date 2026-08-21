@@ -395,6 +395,35 @@ describe("browser:closeTab automation-runtime fallback", () => {
 		expect(result.tabs.map((tab) => tab.id)).toEqual(["t1"]);
 	});
 
+	// Regression, reported live: the runtime's Target.closeTarget handling
+	// (invoked from inside runAction) can call AO's own internal closeTab
+	// before the runtime still reports the overall tab-close command as
+	// failed. The fallback used to call closeTab a second time regardless,
+	// which threw TAB_NOT_FOUND for a tab that had already, genuinely closed —
+	// the exact outcome the user wanted, reported as an error.
+	it("treats a tab-close as successful when the runtime already removed the tab before reporting failure", async () => {
+		const { invoke, runtime } = setupTabHost();
+		const ensure = (await invoke("browser:ensure", "sess-1")) as { viewId: string };
+		const viewId = ensure.viewId;
+		await invoke("browser:openTab", { viewId });
+
+		const runAction = runtime.runAction as unknown as ReturnType<typeof vi.fn>;
+		runAction.mockImplementation(async (_sessionId: string, action: string, args: Record<string, unknown>, provider: import("./agent-browser-cdp-bridge").AgentBrowserTargetProvider) => {
+			if (action === "tab-close" && String(args.tabId) === "t2") {
+				// The bridge's own Target.closeTarget calls this before reporting
+				// the command as failed — mirrors the real, observed sequence.
+				await provider.closeTarget("t2");
+				throw Object.assign(new Error("agent-browser lost the connection mid-command"), {
+					code: "AGENT_BROWSER_COMMAND_FAILED",
+				});
+			}
+			return {};
+		});
+
+		const result = (await invoke("browser:closeTab", { viewId, tabId: "t2" })) as { tabs: { id: string }[] };
+		expect(result.tabs.map((tab) => tab.id)).toEqual(["t1"]);
+	});
+
 	it("still surfaces an unrelated automation-runtime failure instead of silently closing the tab", async () => {
 		const { invoke, runtime } = setupTabHost();
 		const ensure = (await invoke("browser:ensure", "sess-1")) as { viewId: string };
