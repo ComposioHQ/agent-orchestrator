@@ -83,6 +83,8 @@ import { DEFAULT_POSTHOG_HOST, DEFAULT_POSTHOG_PROJECT_KEY } from "./shared/post
 import { buildTelemetryBootstrap } from "./shared/telemetry";
 import { createBrowserViewHost, type BrowserViewHost } from "./main/browser-view-host";
 import { createBrowserProfileStore } from "./main/browser-profile-store";
+import { BrowserHistoryStore } from "./main/browser-history-store";
+import { BrowserProfileImportService } from "./main/browser-profile-import";
 import {
 	registerBrowserProfileIpc,
 	type BrowserProfileIpc,
@@ -392,6 +394,13 @@ async function createWindowInternal(): Promise<void> {
 		return;
 	}
 	const browserProfileStore = await createBrowserProfileStore({ stateDir: browserProfileStateDir() });
+	const browserHistoryStore = new BrowserHistoryStore({ stateDir: browserProfileStateDir() });
+	const browserProfileImporter = new BrowserProfileImportService({
+		stateDir: browserProfileStateDir(),
+		profileStore: browserProfileStore,
+		historyStore: browserHistoryStore,
+		fromPartition: (partition) => session.fromPartition(partition),
+	});
 	const windowOptions: Electron.BaseWindowConstructorOptions = {
 		width: 1320,
 		height: 860,
@@ -486,6 +495,7 @@ async function createWindowInternal(): Promise<void> {
 		agentBrowserRuntime,
 		isCloseShellTerminalShortcutEnabled: () => closeShellTerminalShortcutEnabled,
 		browserProfileStore,
+		browserHistoryStore,
 		clearBrowserProfileData: clearElectronBrowserProfileData,
 	});
 	browserProfileIpc = registerBrowserProfileIpc({
@@ -493,6 +503,7 @@ async function createWindowInternal(): Promise<void> {
 		shellWebContents,
 		mainWindow,
 		store: browserProfileStore,
+		importer: browserProfileImporter,
 		host: browserViewHost,
 		buildMenu: (items: BrowserProfileMenuItem[]) => {
 			const menu = Menu.buildFromTemplate(items as Electron.MenuItemConstructorOptions[]);

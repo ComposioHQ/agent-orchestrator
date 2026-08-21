@@ -1,4 +1,5 @@
 import type { ForgeConfig } from "@electron-forge/shared-types";
+import { AutoUnpackNativesPlugin } from "@electron-forge/plugin-auto-unpack-natives";
 import { VitePlugin } from "@electron-forge/plugin-vite";
 import MakerNSIS from "./makers/maker-nsis";
 import MakerDMG, { sealDmg, verifyDmg } from "./makers/maker-dmg";
@@ -216,6 +217,7 @@ const config: ForgeConfig = {
 		},
 	],
 	plugins: [
+		new AutoUnpackNativesPlugin({}),
 		new VitePlugin({
 			build: [
 				{ entry: "src/main.ts", config: "vite.main.config.ts", target: "main" },

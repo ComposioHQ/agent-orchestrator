@@ -7,6 +7,8 @@ import {
 	type BrowserProfileMenuInput,
 	type BrowserProfileViewState,
 } from "../shared/browser-profiles";
+import type { BrowserImportRequest } from "../shared/browser-profile-import";
+import type { BrowserProfileImportService } from "./browser-profile-import";
 import { BrowserProfileStore, BrowserProfileStoreError as StoreError } from "./browser-profile-store";
 
 export type BrowserProfileMenuItem = {
@@ -37,6 +39,7 @@ export type BrowserProfileIpcOptions = {
 	mainWindow: unknown;
 	store: BrowserProfileStore;
 	host: BrowserProfileIpcHost;
+	importer: BrowserProfileImportService;
 	buildMenu: (items: BrowserProfileMenuItem[]) => BrowserProfileMenu;
 	confirmSwitch: (labels: BrowserProfileMenuInput["labels"]) => Promise<boolean>;
 };
@@ -165,6 +168,16 @@ export function registerBrowserProfileIpc(options: BrowserProfileIpcOptions): Br
 		return options.store.runProfileOperation(profileId, () => options.host.isProfileLive(profileId), async () => {
 			await options.host.clearProfileData(profileId);
 			await options.store.deleteProfile(profileId);
+		});
+	});
+	handle("browserProfiles:import:discover", async (event) => {
+		if (!trustedShellSender(event, options.shellWebContents)) return { sources: [] };
+		return options.importer.discover();
+	});
+	handle("browserProfiles:import:start", async (event, input: unknown) => {
+		if (!trustedShellSender(event, options.shellWebContents)) throw invalid("Untrusted browser profile sender.");
+		return options.importer.import(input as BrowserImportRequest, (progress) => {
+			options.shellWebContents.send("browserProfiles:import:progress", progress);
 		});
 	});
 	handle("browser:profile:get", (event, rawViewId: unknown) => {

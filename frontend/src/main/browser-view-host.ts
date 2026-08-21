@@ -33,6 +33,7 @@ import type { KeybindingOverrides } from "../shared/shortcuts";
 import type { AgentBrowserRuntime } from "./agent-browser-runtime";
 import type { AgentBrowserTarget, AgentBrowserTargetProvider } from "./agent-browser-cdp-bridge";
 import type { BrowserProfileStore } from "./browser-profile-store";
+import type { BrowserHistoryStore } from "./browser-history-store";
 
 function isValidAnnotationContext(value: unknown): value is BrowserAnnotationContext {
 	if (typeof value !== "object" || value === null) return false;
@@ -137,6 +138,11 @@ type BrowserNavigateInput = {
 	url: string;
 };
 
+type BrowserHistorySuggestInput = {
+	viewId: string;
+	query: string;
+};
+
 type BrowserTabInput = {
 	viewId: string;
 	tabId: string;
@@ -215,6 +221,7 @@ export type BrowserViewHostOptions = {
 	agentBrowserRuntime?: AgentBrowserRuntime;
 	isCloseShellTerminalShortcutEnabled?: () => boolean;
 	browserProfileStore?: BrowserProfileStore;
+	browserHistoryStore?: BrowserHistoryStore;
 	clearBrowserProfileData?: (partition: string) => Promise<void>;
 };
 
@@ -564,6 +571,11 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 			},
 			() => {
 				if (isCurrentEntry()) pushTabsState(options, session);
+			},
+			(url, title, incrementVisit) => {
+				const profileId = session.profileId;
+				if (!isCurrentEntry() || !profileId || !options.browserHistoryStore) return;
+				void options.browserHistoryStore.record(profileId, url, title, incrementVisit).catch(() => undefined);
 			},
 		);
 		wireFaviconEvents(view.webContents, entry, () => {
@@ -1343,7 +1355,10 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 			throw browserError("BROWSER_PROFILE_UNAVAILABLE", "Browser profile storage is unavailable");
 		}
 		const partition = store.partitionForProfile(profileId);
-		await options.clearBrowserProfileData(partition);
+		await Promise.all([
+			options.clearBrowserProfileData(partition),
+			options.browserHistoryStore?.clear(profileId) ?? Promise.resolve(),
+		]);
 	};
 
 	const invokeNav = (
@@ -1450,6 +1465,20 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 	handle("browser:navigate", (event, input: BrowserNavigateInput) =>
 		isRendererOwned(event, input.viewId) ? navigate(input) : emptyNavState(input.viewId),
 	);
+	handle("browser:history:suggest", (event, input: BrowserHistorySuggestInput) => {
+		if (
+			!input ||
+			typeof input.viewId !== "string" ||
+			typeof input.query !== "string" ||
+			input.query.length > 512 ||
+			!isRendererOwned(event, input.viewId)
+		) {
+			return [];
+		}
+		const profileId = entries.get(input.viewId)?.profileId;
+		if (!profileId || !options.browserHistoryStore) return [];
+		return options.browserHistoryStore.suggest(profileId, input.query);
+	});
 	handle("browser:clear", (event, viewId: string) =>
 		isRendererOwned(event, viewId) ? clear(viewId) : emptyNavState(viewId),
 	);
@@ -1923,6 +1952,7 @@ function wireNavEvents(
 	isActive: () => boolean,
 	syncActiveBounds: () => void,
 	syncTabs: () => void,
+	recordHistory: (url: string, title: string, incrementVisit: boolean) => void,
 ): void {
 	const update = () => {
 		syncTabs();
@@ -1931,15 +1961,20 @@ function wireNavEvents(
 	contents.on("did-navigate", (_event, url) => {
 		clearStaleFavicon(entry, url);
 		if (isActive()) syncActiveBounds();
+		recordHistory(url, contents.getTitle(), true);
 		update();
 	});
-	contents.on("did-navigate-in-page", update);
+	contents.on("did-navigate-in-page", (_event, url) => {
+		recordHistory(url, contents.getTitle(), true);
+		update();
+	});
 	contents.on("page-title-updated", update);
 	contents.on("did-start-loading", () => {
 		cancelAnnotation(options, entry, "navigation");
 		update();
 	});
 	contents.on("did-stop-loading", () => {
+		recordHistory(contents.getURL(), contents.getTitle(), false);
 		update();
 	});
 	contents.on("did-fail-load", (_event, errorCode, errorDescription) => {

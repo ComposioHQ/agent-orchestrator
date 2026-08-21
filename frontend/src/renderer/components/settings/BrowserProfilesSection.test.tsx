@@ -25,6 +25,9 @@ describe("BrowserProfilesSection", () => {
 			rename: vi.fn(async (input: { id: string; name: string }) => ({ ...profile, ...input })),
 			clear: vi.fn(async () => undefined),
 			delete: vi.fn(async () => undefined),
+			discoverImportSources: vi.fn(async () => ({ sources: [] })),
+			import: vi.fn(async () => ({ sourceName: "", entries: [] })),
+			onImportProgress: vi.fn(() => () => undefined),
 		};
 		originalBridge = window.ao!.browserProfiles;
 		window.ao!.browserProfiles = bridge;
@@ -65,6 +68,9 @@ describe("BrowserProfilesSection", () => {
 			rename: vi.fn(),
 			clear: vi.fn(),
 			delete: vi.fn(),
+			discoverImportSources: vi.fn(async () => ({ sources: [] })),
+			import: vi.fn(async () => ({ sourceName: "", entries: [] })),
+			onImportProgress: vi.fn(() => () => undefined),
 		};
 		originalBridge = window.ao!.browserProfiles;
 		window.ao!.browserProfiles = bridge;

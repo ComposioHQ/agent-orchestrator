@@ -10,6 +10,7 @@ import {
 import { NEW_SESSION_SHORTCUT_CHANNEL } from "../shared/shortcuts";
 import { browserProfilePartition, type BrowserProfile } from "../shared/browser-profiles";
 import type { BrowserProfileStore } from "./browser-profile-store";
+import type { BrowserHistoryStore } from "./browser-history-store";
 
 type InvokeHandler = (event: unknown, ...args: unknown[]) => unknown;
 type EventHandler = (event: { sender: { id: number; getZoomFactor?: () => number } }, ...args: unknown[]) => unknown;
@@ -210,6 +211,7 @@ function setupTabHost(
 	browserProfileStore?: BrowserProfileStore,
 	failViewConstruction = false,
 	loadURLHook?: (viewIndex: number, url: string) => Promise<void>,
+	browserHistoryStore?: BrowserHistoryStore,
 ) {
 	const constructorOptions: Array<{ webPreferences: { partition?: string } }> = [];
 	const handlers = new Map<string, InvokeHandler>();
@@ -372,6 +374,7 @@ function setupTabHost(
 		rendererOrigin: "http://localhost:5173",
 		agentBrowserRuntime: runtime,
 		browserProfileStore,
+		browserHistoryStore,
 	});
 	const invoke = (channel: string, ...args: unknown[]) =>
 		handlers.get(channel)!({ sender: { id: 1 } }, ...args) as Promise<unknown>;
@@ -562,6 +565,39 @@ describe("browser profile partitions and replacement", () => {
 		const reconstructed = setupTabHost(store);
 		await reconstructed.invoke("browser:ensure", "worker-1");
 		expect(reconstructed.constructorOptions[0]!.webPreferences.partition).toBe(browserProfilePartition(profile.id));
+	});
+
+	it("records and suggests history only for an explicitly selected named profile", async () => {
+		const history = {
+			record: vi.fn(async () => undefined),
+			suggest: vi.fn(async () => [{ url: "https://github.com/openai", title: "OpenAI" }]),
+		} as unknown as BrowserHistoryStore;
+		const named = setupTabHost(fakeBrowserProfileStore(profile, { "worker-1": profile.id }), false, undefined, history);
+		const namedNav = (await named.invoke("browser:ensure", "worker-1")) as BrowserNavState;
+		await named.invoke("browser:navigate", { viewId: namedNav.viewId, url: "https://github.com/openai" });
+		(named.views[0]!.listeners.get("did-navigate") as ((event: unknown, url: string) => void))(
+			{},
+			"https://github.com/openai",
+		);
+		expect(history.record).toHaveBeenCalledWith(
+			profile.id,
+			"https://github.com/openai",
+			"Title https://github.com/openai",
+			true,
+		);
+		await expect(named.invoke("browser:history:suggest", { viewId: namedNav.viewId, query: "openai" })).resolves.toEqual([
+			{ url: "https://github.com/openai", title: "OpenAI" },
+		]);
+
+		const temporary = setupTabHost(undefined, false, undefined, history);
+		const temporaryNav = (await temporary.invoke("browser:ensure", "worker-2")) as BrowserNavState;
+		await temporary.invoke("browser:navigate", { viewId: temporaryNav.viewId, url: "https://example.com" });
+		(temporary.views[0]!.listeners.get("did-navigate") as ((event: unknown, url: string) => void))(
+			{},
+			"https://example.com",
+		);
+		expect(await temporary.invoke("browser:history:suggest", { viewId: temporaryNav.viewId, query: "example" })).toEqual([]);
+		expect(history.record).toHaveBeenCalledTimes(1);
 	});
 
 	it("cleans the old runtime before rebuilding tabs and preserves hardening on new views", async () => {

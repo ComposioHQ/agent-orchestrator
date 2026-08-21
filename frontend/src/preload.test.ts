@@ -144,19 +144,33 @@ describe("preload browser profile bridge", () => {
 				confirm: "Yes",
 			},
 		});
+		await bridge.browser.historySuggestions({ viewId: "1:worker-1", query: "git" });
 		await bridge.browserProfiles.list();
 		await bridge.browserProfiles.create("Work");
 		await bridge.browserProfiles.rename({ id: "profile-id", name: "Personal" });
 		await bridge.browserProfiles.clear("profile-id");
 		await bridge.browserProfiles.delete("profile-id");
+		await bridge.browserProfiles.discoverImportSources();
+		await bridge.browserProfiles.import({
+			requestId: "11111111-1111-4111-8111-111111111111",
+			sourceId: "a".repeat(32),
+			profileIds: ["b".repeat(32)],
+			includeCookies: true,
+			includeHistory: true,
+			domains: [],
+			destination: { mode: "merge", name: "Work" },
+		});
 
 		expect(electronMocks.invoke).toHaveBeenNthCalledWith(1, "browser:profile:get", "1:worker-1");
 		expect(electronMocks.invoke).toHaveBeenNthCalledWith(2, "browser:profile:menu", expect.objectContaining({ viewId: "1:worker-1" }));
-		expect(electronMocks.invoke).toHaveBeenNthCalledWith(3, "browserProfiles:list");
-		expect(electronMocks.invoke).toHaveBeenNthCalledWith(4, "browserProfiles:create", { name: "Work" });
-		expect(electronMocks.invoke).toHaveBeenNthCalledWith(5, "browserProfiles:rename", { id: "profile-id", name: "Personal" });
-		expect(electronMocks.invoke).toHaveBeenNthCalledWith(6, "browserProfiles:clear", { id: "profile-id" });
-		expect(electronMocks.invoke).toHaveBeenNthCalledWith(7, "browserProfiles:delete", { id: "profile-id" });
+		expect(electronMocks.invoke).toHaveBeenNthCalledWith(3, "browser:history:suggest", { viewId: "1:worker-1", query: "git" });
+		expect(electronMocks.invoke).toHaveBeenNthCalledWith(4, "browserProfiles:list");
+		expect(electronMocks.invoke).toHaveBeenNthCalledWith(5, "browserProfiles:create", { name: "Work" });
+		expect(electronMocks.invoke).toHaveBeenNthCalledWith(6, "browserProfiles:rename", { id: "profile-id", name: "Personal" });
+		expect(electronMocks.invoke).toHaveBeenNthCalledWith(7, "browserProfiles:clear", { id: "profile-id" });
+		expect(electronMocks.invoke).toHaveBeenNthCalledWith(8, "browserProfiles:delete", { id: "profile-id" });
+		expect(electronMocks.invoke).toHaveBeenNthCalledWith(9, "browserProfiles:import:discover");
+		expect(electronMocks.invoke).toHaveBeenNthCalledWith(10, "browserProfiles:import:start", expect.objectContaining({ destination: { mode: "merge", name: "Work" } }));
 	});
 
 	it("validates profile-management event payloads and removes wrapped listeners", () => {
@@ -178,5 +192,13 @@ describe("preload browser profile bridge", () => {
 		expect(manageListener).toHaveBeenCalledWith("1:worker-1");
 		manageDispose();
 		expect(electronMocks.off).toHaveBeenCalledWith("browser:profileManage", manageWrapped);
+
+		const progressListener = vi.fn();
+		const progressDispose = bridge.browserProfiles.onImportProgress(progressListener);
+		const progressWrapped = electronMocks.listeners.get("browserProfiles:import:progress");
+		progressWrapped?.({}, { requestId: "request", phase: "reading", completed: 1, total: 2 });
+		expect(progressListener).toHaveBeenCalledWith({ requestId: "request", phase: "reading", completed: 1, total: 2 });
+		progressDispose();
+		expect(electronMocks.off).toHaveBeenCalledWith("browserProfiles:import:progress", progressWrapped);
 	});
 });

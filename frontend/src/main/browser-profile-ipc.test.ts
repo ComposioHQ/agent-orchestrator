@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { BrowserProfileViewState } from "../shared/browser-profiles";
+import type { BrowserImportProgress, BrowserImportRequest } from "../shared/browser-profile-import";
 import { BrowserProfileStore } from "./browser-profile-store";
 import { registerBrowserProfileIpc, type BrowserProfileMenuItem } from "./browser-profile-ipc";
 
@@ -29,7 +30,7 @@ async function setup(confirmSwitch = vi.fn(async () => true)) {
 	tempDirectories.push(stateDir);
 	const store = new BrowserProfileStore({ stateDir });
 	await store.load();
-	const shell = {};
+	const shell = { send: vi.fn() };
 	const renderer = { getZoomFactor: vi.fn(() => 1) };
 	const handlers = new Map<string, Handler>();
 	const menuPopup = vi.fn();
@@ -51,11 +52,19 @@ async function setup(confirmSwitch = vi.fn(async () => true)) {
 		handle: (channel: string, handler: Handler) => handlers.set(channel, handler),
 		removeHandler: (channel: string) => handlers.delete(channel),
 	};
+	const importer = {
+		discover: vi.fn(async () => ({ sources: [] })),
+		import: vi.fn(async (request: BrowserImportRequest, onProgress: (progress: BrowserImportProgress) => void) => {
+			onProgress({ requestId: request.requestId, phase: "reading", completed: 1, total: 1 });
+			return { sourceName: "Chrome", entries: [] };
+		}),
+	};
 	const ipc = registerBrowserProfileIpc({
 		ipcMain: ipcMain as never,
 		shellWebContents: shell as never,
 		mainWindow: {},
 		store,
+		importer: importer as never,
 		host,
 		buildMenu: (items) => {
 			menuItems = items;
@@ -64,7 +73,7 @@ async function setup(confirmSwitch = vi.fn(async () => true)) {
 		confirmSwitch,
 	});
 	const invoke = (channel: string, sender: object, ...args: unknown[]) => handlers.get(channel)!({ sender }, ...args);
-	return { host, invoke, ipc, menuItems: () => menuItems, menuPopup, renderer, shell, state: () => state, store };
+	return { host, importer, invoke, ipc, menuItems: () => menuItems, menuPopup, renderer, shell, state: () => state, store };
 }
 
 describe("browser profile IPC", () => {
@@ -162,6 +171,37 @@ describe("browser profile IPC", () => {
 		await invoke("browserProfiles:delete", shell, { id: profile.id });
 		expect(host.clearProfileData).toHaveBeenCalledWith(profile.id);
 		expect(store.getProfile(profile.id)).toBeUndefined();
+	});
+
+	it("allows import only from the trusted shell and forwards scoped progress", async () => {
+		const { importer, invoke, renderer, shell } = await setup();
+		const request = {
+			requestId: "11111111-1111-4111-8111-111111111111",
+			sourceId: "a".repeat(32),
+			profileIds: ["b".repeat(32)],
+			includeCookies: true,
+			includeHistory: true,
+			domains: [],
+			destination: { mode: "merge", name: "Imported" },
+		};
+
+		expect(await invoke("browserProfiles:import:discover", renderer)).toEqual({ sources: [] });
+		await expect(invoke("browserProfiles:import:start", renderer, request)).rejects.toThrow("Untrusted");
+		expect(importer.discover).not.toHaveBeenCalled();
+		expect(importer.import).not.toHaveBeenCalled();
+
+		await expect(invoke("browserProfiles:import:discover", shell)).resolves.toEqual({ sources: [] });
+		await expect(invoke("browserProfiles:import:start", shell, request)).resolves.toEqual({
+			sourceName: "Chrome",
+			entries: [],
+		});
+		expect(importer.import).toHaveBeenCalledWith(request, expect.any(Function));
+		expect(shell.send).toHaveBeenCalledWith("browserProfiles:import:progress", {
+			requestId: request.requestId,
+			phase: "reading",
+			completed: 1,
+			total: 1,
+		});
 	});
 
 	it("disposes every registered handler", async () => {

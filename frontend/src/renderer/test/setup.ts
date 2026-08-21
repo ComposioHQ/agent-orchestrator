@@ -132,6 +132,7 @@ if (typeof window !== "undefined") {
 				canGoForward: false,
 				isLoading: false,
 			}),
+			historySuggestions: async () => [],
 			clear: async (viewId: string) => ({
 				viewId,
 				url: "",
@@ -206,6 +207,9 @@ if (typeof window !== "undefined") {
 			},
 			clear: async () => undefined,
 			delete: async () => undefined,
+			discoverImportSources: async () => ({ sources: [] }),
+			import: async () => ({ sourceName: "", entries: [] }),
+			onImportProgress: () => () => undefined,
 		},
 		notifications: {
 			show: async () => undefined,

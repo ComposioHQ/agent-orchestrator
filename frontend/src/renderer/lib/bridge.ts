@@ -84,6 +84,7 @@ export const aoBridge: AoBridge =
 				canGoForward: false,
 				isLoading: false,
 			}),
+			historySuggestions: async () => [],
 			clear: async (viewId: string) => ({
 				viewId,
 				url: "",
@@ -158,6 +159,9 @@ export const aoBridge: AoBridge =
 			},
 			clear: async () => undefined,
 			delete: async () => undefined,
+			discoverImportSources: async () => ({ sources: [] }),
+			import: async () => ({ sourceName: "", entries: [] }),
+			onImportProgress: () => () => undefined,
 		},
 		notifications: {
 			show: async () => undefined,

@@ -35,6 +35,13 @@ import type {
 	BrowserProfileMenuInput,
 	BrowserProfileViewState,
 } from "./shared/browser-profiles";
+import type {
+	BrowserHistorySuggestion,
+	BrowserImportDiscovery,
+	BrowserImportProgress,
+	BrowserImportRequest,
+	BrowserImportResult,
+} from "./shared/browser-profile-import";
 
 if (typeof document !== "undefined") {
 	const markNativeBrowserComposition = () => {
@@ -236,6 +243,8 @@ const api = {
 		setOverlayOpen: (open: boolean) => ipcRenderer.send("browser:overlay", open),
 		navigate: (input: BrowserNavigateInput) =>
 			ipcRenderer.invoke("browser:navigate", input) as Promise<BrowserNavState>,
+		historySuggestions: (input: { viewId: string; query: string }) =>
+			ipcRenderer.invoke("browser:history:suggest", input) as Promise<BrowserHistorySuggestion[]>,
 		clear: (viewId: string) => ipcRenderer.invoke("browser:clear", viewId) as Promise<BrowserNavState>,
 		goBack: (viewId: string) => ipcRenderer.invoke("browser:goBack", viewId) as Promise<BrowserNavState>,
 		goForward: (viewId: string) => ipcRenderer.invoke("browser:goForward", viewId) as Promise<BrowserNavState>,
@@ -323,6 +332,17 @@ const api = {
 			ipcRenderer.invoke("browserProfiles:rename", input) as Promise<BrowserProfile>,
 		clear: (id: string) => ipcRenderer.invoke("browserProfiles:clear", { id }) as Promise<void>,
 		delete: (id: string) => ipcRenderer.invoke("browserProfiles:delete", { id }) as Promise<void>,
+		discoverImportSources: () =>
+			ipcRenderer.invoke("browserProfiles:import:discover") as Promise<BrowserImportDiscovery>,
+		import: (input: BrowserImportRequest) =>
+			ipcRenderer.invoke("browserProfiles:import:start", input) as Promise<BrowserImportResult>,
+		onImportProgress: (listener: (progress: BrowserImportProgress) => void) => {
+			const wrapped = (_event: Electron.IpcRendererEvent, progress: BrowserImportProgress) => listener(progress);
+			ipcRenderer.on("browserProfiles:import:progress", wrapped);
+			return () => {
+				ipcRenderer.off("browserProfiles:import:progress", wrapped);
+			};
+		},
 	},
 	notifications: {
 		show: (notification: { id: string; title: string; body?: string; type?: string }) =>
