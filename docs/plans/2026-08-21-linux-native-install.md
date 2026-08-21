@@ -240,8 +240,8 @@ The SUID sandbox helper binary was found, but is not configured correctly.
 - [x] Exercised on a real pacman install, against an isolated `AO_DATA_DIR` so the developer's own `~/.ao` was untouched:
   - ACP: `ao spawn --harness claude-code --mode chat` produced a live session running `/usr/lib/agent-orchestrator/resources/acp-runtime/node/bin/node` against the packaged `claude-agent-acp`.
   - Packaged runtimes execute fine from a root-owned directory: `node --version` reports v22.23.2, `agent-browser --version` reports 0.33.1.
-  - Browser panel: `ao preview` queued a URL for the session (exit 0). The `agent-browser` process only spawns when the panel is opened in the GUI, which is the one step left for a human at the desktop.
-- [x] **Verify:** `pacman -Qkk agent-orchestrator-bin` still reports `0 altered files` after all of the above, so nothing wrote into `/usr/lib`.
+  - Browser: opening the inspector rail's Browser tab on that session rendered the `ao preview` URL, so `agent-browser` ran from `/usr/lib` and drove a live page. Screenshot confirmed by the developer at the desktop.
+- [x] **Verify:** both runtimes work from a pacman install, and `pacman -Qkk agent-orchestrator-bin` reported `0 altered files` throughout, so nothing wrote into `/usr/lib`.
 
 ### B4. Menu entry, icon, and the `ao-app://` link handler
 
@@ -259,7 +259,8 @@ The SUID sandbox helper binary was found, but is not configured correctly.
 
 - [x] Write `packaging/arch/update-pkgbuild.sh`: reads the latest stable tag with `gh release list --exclude-pre-releases` (nightlies are tagged in the same repo and must never be pinned), or takes a version argument. Rewrites `pkgver`, resets `pkgrel`, re-downloads the deb and the tagged LICENSE, rewrites the whole `sha256sums` block (order matters, so it is replaced wholesale rather than line-edited), and regenerates `.SRCINFO`.
 - [x] Write `packaging/arch/README.md` covering the full loop: install, what lands where, how to check it worked, updating, removal, and why nothing is on the AUR yet.
-- [x] **Verify:** bumping to 0.12.5 in a scratch copy rewrote `pkgver`, the deb checksum and `.SRCINFO`, and correctly left the LICENSE checksum alone (the file is identical across those tags). Removal (`pacman -Rns`) is still to be run at the end of local testing.
+- [x] **Verify:** bumping to 0.12.5 in a scratch copy rewrote `pkgver`, the deb checksum and `.SRCINFO`, and correctly left the LICENSE checksum alone (the file is identical across those tags).
+- [x] **Verify:** `pacman -Rns agent-orchestrator-bin` left nothing behind. `/usr/lib/agent-orchestrator`, both `/usr/bin` links, the desktop entry, the hicolor icon and the license directory are all gone, `pacman -Qo /usr/bin/ao` finds no owner, and `~/.ao` is intact (the package never wrote there; the test ran against an isolated `AO_DATA_DIR`).
 
 ### B6. Publish to the AUR (needs a decision first)
 
