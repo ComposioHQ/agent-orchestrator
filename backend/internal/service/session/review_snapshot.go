@@ -48,13 +48,7 @@ func (s *Service) reviewSnapshot(ctx context.Context, rec domain.SessionRecord, 
 			}
 			prSnapshot.ExternalReviewCount++
 		}
-		for _, comment := range comments {
-			if comment.AutoInjectReview {
-				prSnapshot.AOCommentCount++
-				continue
-			}
-			prSnapshot.ExternalCommentCount++
-		}
+		prSnapshot.CommentCount = len(comments)
 		snapshot.PRs = append(snapshot.PRs, prSnapshot)
 	}
 	return snapshot, nil

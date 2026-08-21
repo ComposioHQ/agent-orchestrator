@@ -35,12 +35,15 @@ type fakeStore struct {
 	pr                  map[domain.SessionID]domain.PRFacts
 	prs                 map[domain.SessionID][]domain.PullRequest
 	reviewRuns          map[domain.SessionID][]domain.ReviewRun
+	reviewRunsErr       error
 	projects            map[string]domain.ProjectRecord
 	worktrees           map[domain.SessionID][]domain.SessionWorktreeRecord
 	checks              map[string][]domain.PullRequestCheck
 	reviews             map[string][]domain.PullRequestReview
+	reviewsErr          error
 	threads             map[string][]domain.PullRequestReviewThread
 	comments            map[string][]domain.PullRequestComment
+	commentsErr         error
 	num                 int
 }
 
@@ -272,6 +275,9 @@ func (f *fakeStore) ListPRFactsForSession(_ context.Context, id domain.SessionID
 }
 
 func (f *fakeStore) ListReviewRunsBySession(_ context.Context, id domain.SessionID) ([]domain.ReviewRun, error) {
+	if f.reviewRunsErr != nil {
+		return nil, f.reviewRunsErr
+	}
 	return append([]domain.ReviewRun(nil), f.reviewRuns[id]...), nil
 }
 
@@ -280,6 +286,9 @@ func (f *fakeStore) ListChecks(_ context.Context, prURL string) ([]domain.PullRe
 }
 
 func (f *fakeStore) ListPRReviews(_ context.Context, prURL string) ([]domain.PullRequestReview, error) {
+	if f.reviewsErr != nil {
+		return nil, f.reviewsErr
+	}
 	return append([]domain.PullRequestReview(nil), f.reviews[prURL]...), nil
 }
 
@@ -288,6 +297,9 @@ func (f *fakeStore) ListPRReviewThreads(_ context.Context, prURL string) ([]doma
 }
 
 func (f *fakeStore) ListPRComments(_ context.Context, prURL string) ([]domain.PullRequestComment, error) {
+	if f.commentsErr != nil {
+		return nil, f.commentsErr
+	}
 	return append([]domain.PullRequestComment(nil), f.comments[prURL]...), nil
 }
 
@@ -470,11 +482,37 @@ func TestSessionListPopulatesReviewSnapshotWithSourceAwareFacts(t *testing.T) {
 	if pr.ExternalReviewCount != 1 {
 		t.Fatalf("external review count = %d, want 1", pr.ExternalReviewCount)
 	}
-	if pr.AOCommentCount != 1 {
-		t.Fatalf("AO comment count = %d, want 1", pr.AOCommentCount)
+	if pr.CommentCount != 2 {
+		t.Fatalf("comment count = %d, want 2", pr.CommentCount)
 	}
-	if pr.ExternalCommentCount != 1 {
-		t.Fatalf("external comment count = %d, want 1", pr.ExternalCommentCount)
+}
+
+func TestSessionListIgnoresReviewSnapshotFailures(t *testing.T) {
+	st := newFakeStore()
+	st.sessions["mer-1"] = domain.SessionRecord{
+		ID:                "mer-1",
+		ProjectID:         "mer",
+		AutoReviewEnabled: true,
+		AutoInjectReview:  true,
+		AutoInjectCI:      true,
+		Activity:          domain.Activity{State: domain.ActivityIdle},
+	}
+	st.pr["mer-1"] = domain.PRFacts{URL: "https://example/pr/1", HeadSHA: "sha-1"}
+	st.commentsErr = errors.New("comments unavailable")
+
+	list, err := (&Service{store: st}).List(context.Background(), ListFilter{ProjectID: "mer"})
+	if err != nil {
+		t.Fatalf("List returned review snapshot error: %v", err)
+	}
+	if len(list) != 1 {
+		t.Fatalf("list length = %d, want 1", len(list))
+	}
+	snapshot := list[0].ReviewSnapshot
+	if !snapshot.AutoReviewEnabled || !snapshot.AutoInjectReview || !snapshot.AutoInjectCI {
+		t.Fatalf("fallback session review policies = %+v", snapshot)
+	}
+	if len(snapshot.PRs) != 0 {
+		t.Fatalf("fallback review snapshot PRs = %+v, want none", snapshot.PRs)
 	}
 }
 

@@ -19,12 +19,11 @@ type ReviewRunFacts struct {
 // SessionPRReviewSnapshot captures the durable current-head facts a future
 // Kanban reducer needs for one PR owned by a session.
 type SessionPRReviewSnapshot struct {
-	PR                   PRFacts          `json:"-"`
-	ReviewRuns           []ReviewRunFacts `json:"-"`
-	AOReviewCount        int              `json:"-"`
-	ExternalReviewCount  int              `json:"-"`
-	AOCommentCount       int              `json:"-"`
-	ExternalCommentCount int              `json:"-"`
+	PR                  PRFacts          `json:"-"`
+	ReviewRuns          []ReviewRunFacts `json:"-"`
+	AOReviewCount       int              `json:"-"`
+	ExternalReviewCount int              `json:"-"`
+	CommentCount        int              `json:"-"`
 }
 
 // SessionReviewSnapshot is the read-only session-level snapshot used by the

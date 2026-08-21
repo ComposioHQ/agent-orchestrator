@@ -1035,7 +1035,14 @@ func (s *Service) toSession(ctx context.Context, rec domain.SessionRecord) (doma
 	if s.store != nil {
 		reviewSnapshot, err = s.reviewSnapshot(ctx, rec, prs)
 		if err != nil {
-			return domain.Session{}, err
+			reviewSnapshot = domain.SessionReviewSnapshot{
+				AutoReviewEnabled: rec.AutoReviewEnabled,
+				AutoInjectReview:  rec.AutoInjectReview,
+				AutoInjectCI:      rec.AutoInjectCI,
+			}
+			if s.logger != nil {
+				s.logger.Warn("session review snapshot unavailable", "session_id", rec.ID, "error", err)
+			}
 		}
 	}
 	return domain.Session{
