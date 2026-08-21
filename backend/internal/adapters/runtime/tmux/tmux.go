@@ -459,13 +459,6 @@ func (r *Runtime) Destroy(ctx context.Context, handle ports.RuntimeHandle) error
 	// not block the kill-session below.
 	sessionIDs := r.paneSessionIDs(ctx, id)
 
-	// Create sets this on every session it makes, but sessions outlive the app,
-	// so a session created before this shipped still carries the user's global
-	// `detach-on-destroy off`. Setting it here too retrofits those. Best-effort
-	// for the same reason as paneSessionIDs: an already-gone session must not
-	// block the kill below.
-	_, _ = r.run(ctx, setDetachOnDestroyOnArgs(id)...)
-
 	out, err := r.run(ctx, killSessionArgs(id)...)
 	// Reap regardless of the kill-session result: orphaned children outlive the
 	// session, so they must be cleaned up even when the session was already
@@ -718,6 +711,18 @@ func (r *Runtime) Attach(ctx context.Context, handle ports.RuntimeHandle, rows, 
 	argv, err := r.attachCommand(handle)
 	if err != nil {
 		return nil, err
+	}
+	// Create already sets this on sessions it makes, but tmux sessions outlive
+	// the app: one created by an older build still carries the user's global
+	// `detach-on-destroy off`, and would keep handing this client to one of
+	// their own sessions on every teardown until it was recreated. Attaching is
+	// the exact precondition for that leak — with no client of ours attached
+	// there is nothing for tmux to reparent — so retrofitting here covers those
+	// sessions for every way they can end, not just the ones AO destroys.
+	// Best-effort: a session we cannot set an option on is one that is already
+	// gone, and Spawn below will report that far more usefully than this would.
+	if id, idErr := handleID(handle); idErr == nil {
+		_, _ = r.run(ctx, setDetachOnDestroyOnArgs(id)...)
 	}
 	return ptyexec.Spawn(ctx, argv, attachEnv(os.Environ()), rows, cols)
 }
