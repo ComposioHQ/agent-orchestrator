@@ -28,9 +28,10 @@ func TestParseClaudeFinalUsageAndSkipMainSidechain(t *testing.T) {
 		t.Fatalf("events = %d, want 1", len(result.Events))
 	}
 	got := result.Events[0]
-	if tokenValue(got.Tokens.InputTokens) != 20 || tokenValue(got.Tokens.UncachedInputTokens) != 13 ||
+	if tokenValue(got.Tokens.InputTokens) != 20 || tokenValue(got.Tokens.UncachedInputTokens) != 10 ||
 		tokenValue(got.Tokens.CachedInputTokens) != 7 || tokenValue(got.Tokens.CachedOutputTokens) != 0 ||
-		tokenValue(got.Tokens.OutputTokens) != 4 {
+		tokenValue(got.Tokens.OutputTokens) != 4 ||
+		got.Tokens.Provenance.UncachedInputTokens != domain.UsageMetricReported {
 		t.Fatalf("tokens = %+v", got.Tokens)
 	}
 	if details := got.ProviderDetails.Anthropic; details == nil ||
@@ -95,7 +96,7 @@ func TestParseClaudeReferenceUsageDeduplicatesLogicalResponses(t *testing.T) {
 	if len(result.Events) != 4 || result.Cursor.AnomalyCount != 0 {
 		t.Fatalf("result = %+v, want four logical events", result)
 	}
-	assertCanonicalEventTotals(t, result.Events, 148625, 75376, 73249, 0, 24993)
+	assertCanonicalEventTotals(t, result.Events, 148625, 75376, 40, 0, 24993)
 	var direct, creation, creation5m, creation1h int64
 	for _, event := range result.Events {
 		details := event.ProviderDetails.Anthropic
@@ -126,8 +127,9 @@ func TestParseCodexCumulativeDeltasAndRepeats(t *testing.T) {
 	if len(result.Events) != 2 {
 		t.Fatalf("events = %d, want 2", len(result.Events))
 	}
-	if got := result.Events[0].Tokens; tokenValue(got.InputTokens) != 100 || tokenValue(got.UncachedInputTokens) != 40 ||
-		tokenValue(got.CachedInputTokens) != 60 || tokenValue(got.CachedOutputTokens) != 0 || tokenValue(got.OutputTokens) != 20 {
+	if got := result.Events[0].Tokens; tokenValue(got.InputTokens) != 100 || tokenValue(got.UncachedInputTokens) != 30 ||
+		tokenValue(got.CachedInputTokens) != 60 || tokenValue(got.CachedOutputTokens) != 0 || tokenValue(got.OutputTokens) != 20 ||
+		got.Provenance.UncachedInputTokens != domain.UsageMetricDerived {
 		t.Fatalf("first tokens = %+v", got)
 	}
 	if details := result.Events[0].ProviderDetails.OpenAI; details == nil ||

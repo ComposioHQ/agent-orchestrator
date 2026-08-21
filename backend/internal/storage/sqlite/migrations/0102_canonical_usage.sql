@@ -79,7 +79,7 @@ CREATE TABLE model_usage_events_next (
     CHECK ((uncached_input_tokens IS NULL AND uncached_input_provenance = 'unknown') OR (uncached_input_tokens >= 0 AND uncached_input_provenance <> 'unknown')),
     CHECK ((cached_output_tokens IS NULL AND cached_output_provenance = 'unknown') OR (cached_output_tokens >= 0 AND cached_output_provenance <> 'unknown')),
     CHECK ((output_tokens IS NULL AND output_provenance = 'unknown') OR (output_tokens >= 0 AND output_provenance <> 'unknown')),
-    CHECK (input_tokens IS NULL OR cached_input_tokens IS NULL OR uncached_input_tokens IS NULL OR input_tokens = cached_input_tokens + uncached_input_tokens),
+    CHECK (input_tokens IS NULL OR cached_input_tokens IS NULL OR uncached_input_tokens IS NULL OR input_tokens >= cached_input_tokens + uncached_input_tokens),
     CHECK (output_tokens IS NULL OR cached_output_tokens IS NULL OR cached_output_tokens <= output_tokens)
 );
 
@@ -99,7 +99,8 @@ SELECT
     event.input_tokens,
     CASE binding.harness WHEN 'codex' THEN 'reported' ELSE 'derived' END,
     event.cache_read_tokens, 'reported',
-    event.uncached_input_tokens + event.cache_write_tokens, 'derived',
+    event.uncached_input_tokens,
+    CASE binding.harness WHEN 'codex' THEN 'derived' ELSE 'reported' END,
     0, 'unsupported',
     event.output_tokens, 'reported',
     NULL, event.source_event_key, NULL
@@ -181,7 +182,7 @@ CREATE TABLE model_usage_events_previous (
 INSERT INTO model_usage_events_previous
 SELECT event.id, event.binding_id, event.usage_source_id, event.model_id,
        COALESCE(event.input_tokens, 0),
-       MAX(COALESCE(event.uncached_input_tokens, 0) - COALESCE(openai.openai_cache_write_input_tokens, anthropic.anthropic_cache_creation_input_tokens, 0), 0),
+       COALESCE(event.uncached_input_tokens, 0),
        COALESCE(event.cached_input_tokens, 0),
        COALESCE(openai.openai_cache_write_input_tokens, anthropic.anthropic_cache_creation_input_tokens, 0),
        COALESCE(event.output_tokens, 0), openai.openai_reasoning_output_tokens,

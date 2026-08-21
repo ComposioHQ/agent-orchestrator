@@ -430,7 +430,7 @@ func TestApplyUsageChunkAtomicReplayAndTokenAggregates(t *testing.T) {
 	source := seedUsageSource(t, s, sess, now)
 
 	reasoning := int64(3)
-	event := usageEvent("event-1", canonicalUsageTokens(100, 50, 50, 20))
+	event := usageEvent("event-1", canonicalUsageTokens(100, 50, 40, 20))
 	event.ProviderDetails.OpenAI.ReasoningOutputTokens = &reasoning
 	cacheWrite := int64(10)
 	event.ProviderDetails.OpenAI.CacheWriteInputTokens = &cacheWrite
@@ -459,8 +459,10 @@ func TestApplyUsageChunkAtomicReplayAndTokenAggregates(t *testing.T) {
 		t.Fatalf("aggregates = %+v, want one row", aggs)
 	}
 	got := aggs[0]
-	if usageTokenValue(got.Tokens.InputTokens) != 100 || usageTokenValue(got.Tokens.OutputTokens) != 20 ||
-		got.ProviderDetails.OpenAI == nil || usageTokenValue(got.ProviderDetails.OpenAI.ReasoningOutputTokens) != 3 {
+	if usageTokenValue(got.Tokens.InputTokens) != 100 || usageTokenValue(got.Tokens.CachedInputTokens) != 50 ||
+		usageTokenValue(got.Tokens.UncachedInputTokens) != 40 || usageTokenValue(got.Tokens.OutputTokens) != 20 ||
+		got.ProviderDetails.OpenAI == nil || usageTokenValue(got.ProviderDetails.OpenAI.ReasoningOutputTokens) != 3 ||
+		usageTokenValue(got.ProviderDetails.OpenAI.CacheWriteInputTokens) != 10 {
 		t.Fatalf("aggregate tokens = %+v", got.Tokens)
 	}
 

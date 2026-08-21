@@ -675,7 +675,7 @@ func normalizeOpenAIUsage(input, cachedInput, cacheWriteInput, output, reasoning
 		reportedTotal < 0 || (reportedTotal != 0 && reportedTotal != input+output) {
 		return domain.UsageTokenMetrics{}, domain.OpenAIUsageDetails{}, false
 	}
-	uncachedInput := input - cachedInput
+	uncachedInput := input - cachedInput - cacheWriteInput
 	cachedOutput := int64(0)
 	metrics := domain.UsageTokenMetrics{
 		InputTokens:         int64Ptr(input),
@@ -699,11 +699,11 @@ func normalizeOpenAIUsage(input, cachedInput, cacheWriteInput, output, reasoning
 }
 
 func normalizeAnthropicUsage(directInput, cacheCreationInput, cachedInput, output int64, creation5m, creation1h *int64) (domain.UsageTokenMetrics, domain.AnthropicUsageDetails, bool) {
-	uncachedInput, ok := sumNonNegative(directInput, cacheCreationInput)
+	uncachedAndCacheWrite, ok := sumNonNegative(directInput, cacheCreationInput)
 	if !ok {
 		return domain.UsageTokenMetrics{}, domain.AnthropicUsageDetails{}, false
 	}
-	input, ok := sumNonNegative(cachedInput, uncachedInput)
+	input, ok := sumNonNegative(cachedInput, uncachedAndCacheWrite)
 	if !ok || output < 0 || !validAnthropicCacheCreation(cacheCreationInput, creation5m, creation1h) {
 		return domain.UsageTokenMetrics{}, domain.AnthropicUsageDetails{}, false
 	}
@@ -711,12 +711,12 @@ func normalizeAnthropicUsage(directInput, cacheCreationInput, cachedInput, outpu
 	return domain.UsageTokenMetrics{
 			InputTokens:         int64Ptr(input),
 			CachedInputTokens:   int64Ptr(cachedInput),
-			UncachedInputTokens: int64Ptr(uncachedInput),
+			UncachedInputTokens: int64Ptr(directInput),
 			CachedOutputTokens:  int64Ptr(cachedOutput),
 			OutputTokens:        int64Ptr(output),
 			Provenance: domain.UsageMetricProvenanceSet{
 				InputTokens: domain.UsageMetricDerived, CachedInputTokens: domain.UsageMetricReported,
-				UncachedInputTokens: domain.UsageMetricDerived, CachedOutputTokens: domain.UsageMetricUnsupported,
+				UncachedInputTokens: domain.UsageMetricReported, CachedOutputTokens: domain.UsageMetricUnsupported,
 				OutputTokens: domain.UsageMetricReported,
 			},
 		}, domain.AnthropicUsageDetails{
