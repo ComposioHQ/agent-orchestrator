@@ -497,6 +497,132 @@ func TestPreventiveReadOnlySettingReachesSupportedTurn(t *testing.T) {
 	}
 }
 
+func TestReadOnlyResumeDoesNotDispatchStoredBroaderTurnSettings(t *testing.T) {
+	st := openStore(t)
+	prior, err := st.CreateSession(context.Background(), domain.SessionRecord{
+		ProjectID: testProject, Kind: domain.KindOrchestrator,
+		Harness: domain.HarnessCodex, Mode: domain.SessionModeChat,
+		CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC(),
+	})
+	if err != nil {
+		t.Fatalf("seed prior orchestrator session: %v", err)
+	}
+	existing, err := st.CreateConversation(context.Background(), "project-conversation",
+		domain.ConversationScopeProject, testProject, prior.ID, time.Now().UTC())
+	if err != nil {
+		t.Fatalf("CreateConversation: %v", err)
+	}
+	if err := st.SetConversationSettings(context.Background(), existing.ID, domain.ConversationSettings{
+		ApprovalMode: domain.PermissionModeBypassPermissions,
+	}, time.Now().UTC()); err != nil {
+		t.Fatalf("SetConversationSettings: %v", err)
+	}
+
+	conv := newFakeConversation()
+	conv.capabilities = readOnlyCaps()
+	var resumed ports.ChatResumeConfig
+	svc := chatsvc.New(chatsvc.Options{
+		Store: st, Sessions: st,
+		Drivers: fakeRegistry{driver: fakeDriver{
+			conv: conv, caps: readOnlyCaps(), resumeCfg: &resumed,
+		}},
+		NewID: func() string { return "read-only-resume" },
+	})
+	t.Cleanup(func() { _ = svc.Stop(context.Background(), testSession) })
+
+	controller, err := svc.Start(context.Background(), chatsvc.StartConfig{
+		SessionID: testSession, ProjectID: testProject, Kind: domain.KindOrchestrator,
+		Harness: domain.HarnessCodex, WorkspacePath: t.TempDir(),
+		Permissions: ports.PermissionModeReadOnly, ProviderConversationID: "provider-thread",
+	})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if resumed.ProviderConversationID != "provider-thread" || resumed.Permissions != ports.PermissionModeReadOnly {
+		t.Fatalf("Resume config = %+v, want existing provider thread under read-only", resumed)
+	}
+	if got := controller.Settings().ApprovalMode; got != domain.PermissionModeReadOnly {
+		t.Fatalf("controller approval = %q, want read-only", got)
+	}
+	stored, err := st.ConversationForSession(context.Background(), testSession)
+	if err != nil {
+		t.Fatalf("ConversationForSession: %v", err)
+	}
+	if stored.Settings.ApprovalMode != domain.PermissionModeReadOnly {
+		t.Fatalf("stored approval = %q, want read-only", stored.Settings.ApprovalMode)
+	}
+	if _, err := svc.Send(context.Background(), testSession, ports.ChatUserMessage{Text: "inspect"}); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+
+	sent := conv.sentMessages()
+	if len(sent) != 1 || sent[0].Settings.Approval != ports.PermissionModeReadOnly {
+		t.Fatalf("provider messages = %+v, want stored broader mode constrained to read-only", sent)
+	}
+}
+
+func TestReadOnlySessionRejectsBroaderTurnSettings(t *testing.T) {
+	for _, mode := range []domain.PermissionMode{
+		"",
+		domain.PermissionModeDefault,
+		domain.PermissionModeAcceptEdits,
+		domain.PermissionModeAuto,
+		domain.PermissionModeBypassPermissions,
+	} {
+		name := string(mode)
+		if name == "" {
+			name = "empty"
+		}
+		t.Run(name, func(t *testing.T) {
+			st := openStore(t)
+			existing, err := st.CreateConversation(context.Background(), "read-only-conversation",
+				domain.ConversationScopeProject, testProject, testSession, time.Now().UTC())
+			if err != nil {
+				t.Fatalf("CreateConversation: %v", err)
+			}
+			if err := st.SetConversationSettings(context.Background(), existing.ID, domain.ConversationSettings{
+				ApprovalMode: domain.PermissionModeReadOnly,
+			}, time.Now().UTC()); err != nil {
+				t.Fatalf("SetConversationSettings: %v", err)
+			}
+
+			conv := newFakeConversation()
+			conv.capabilities = readOnlyCaps()
+			svc := chatsvc.New(chatsvc.Options{
+				Store: st, Sessions: st,
+				Drivers: fakeRegistry{driver: fakeDriver{conv: conv, caps: readOnlyCaps()}},
+				NewID:   func() string { return "read-only-settings-floor" },
+			})
+			t.Cleanup(func() { _ = svc.Stop(context.Background(), testSession) })
+
+			controller, err := svc.Start(context.Background(), chatsvc.StartConfig{
+				SessionID: testSession, ProjectID: testProject, Kind: domain.KindOrchestrator,
+				Harness: domain.HarnessCodex, WorkspacePath: t.TempDir(),
+				Permissions: ports.PermissionModeReadOnly,
+			})
+			if err != nil {
+				t.Fatalf("Start: %v", err)
+			}
+			_, err = svc.SetTurnSettings(context.Background(), testSession, domain.ConversationSettings{
+				ApprovalMode: mode,
+			})
+			if !errors.Is(err, ports.ErrPermissionModeUnsupported) {
+				t.Fatalf("SetTurnSettings(%q) error = %v, want ErrPermissionModeUnsupported", mode, err)
+			}
+			stored, err := st.ConversationForSession(context.Background(), testSession)
+			if err != nil {
+				t.Fatalf("ConversationForSession: %v", err)
+			}
+			if stored.Settings.ApprovalMode != domain.PermissionModeReadOnly {
+				t.Fatalf("stored approval = %q after rejected %q, want read-only", stored.Settings.ApprovalMode, mode)
+			}
+			if controller.Settings().ApprovalMode != domain.PermissionModeReadOnly {
+				t.Fatalf("controller approval changed after rejected %q", mode)
+			}
+		})
+	}
+}
+
 func TestSuccessfulChatProbeIsReusedByStart(t *testing.T) {
 	st := openStore(t)
 	probes := 0

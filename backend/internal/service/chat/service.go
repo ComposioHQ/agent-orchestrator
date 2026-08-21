@@ -298,6 +298,15 @@ func (s *Service) Start(ctx context.Context, cfg StartConfig) (*Controller, erro
 	if err != nil {
 		return nil, fmt.Errorf("open conversation: %w", err)
 	}
+	settings, constrained := applyPermissionFloor(cfg.Permissions, conversation.Settings)
+	if constrained {
+		now := s.now()
+		if err := s.store.SetConversationSettings(ctx, conversation.ID, settings, now); err != nil {
+			return nil, fmt.Errorf("enforce session permission floor: %w", err)
+		}
+		conversation.Settings = settings
+		conversation.UpdatedAt = now
+	}
 	if err := validatePermissionMode(caps, conversation.Settings.ApprovalMode); err != nil {
 		return nil, fmt.Errorf("%s: stored conversation settings: %w", cfg.Harness, err)
 	}
@@ -389,7 +398,8 @@ func (s *Service) Start(ctx context.Context, cfg StartConfig) (*Controller, erro
 	// A fresh generation per launch, so events from the controller this one
 	// replaced can be told apart from the current one's.
 	controller := newController(
-		cfg.SessionID, conversation, generation, conv, s.store, s.activity, s.log, s.newID, s.now)
+		cfg.SessionID, conversation, generation, conv, cfg.Permissions,
+		s.store, s.activity, s.log, s.newID, s.now)
 	if cfg.ProviderConversationID != "" && !cfg.SkipNativeHistoryImport {
 		// The provider's native thread is the continuity authority across TUI and
 		// Chat. Import it before the live projector starts so the first notification
@@ -433,9 +443,10 @@ func (s *Service) Start(ctx context.Context, cfg StartConfig) (*Controller, erro
 		// after ControllerReady commits ownership, synchronization must be an
 		// infallible assignment rather than another operation that can strand it.
 		controller.conversation.ActiveBranchID = commit.Conversation.ActiveBranchID
-		controller.conversation.Settings = commit.Conversation.Settings
+		settings, _ := applyPermissionFloor(cfg.Permissions, commit.Conversation.Settings)
+		controller.conversation.Settings = settings
 		controller.conversation.UpdatedAt = commit.Conversation.UpdatedAt
-		controller.settings = commit.Conversation.Settings
+		controller.settings = settings
 	}
 	s.mu.Lock()
 	s.controllers[cfg.SessionID] = controller
