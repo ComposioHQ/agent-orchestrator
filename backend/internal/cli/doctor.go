@@ -530,6 +530,7 @@ func (c *commandContext) checkGitLabTokens(ctx context.Context, gitlabCfg config
 	for _, host := range hosts {
 		checks = append(checks, c.checkGitLabToken(ctx, gitlabProbe{
 			name:      "gitlab-token:" + host,
+			host:      host,
 			restBase:  c.deps.DoctorGitLabHostRESTBase(host),
 			hostToken: hostTokens[host],
 		}))
@@ -588,6 +589,9 @@ type gitlabProbe struct {
 	// name is the doctor check name ("gitlab-token" for the default instance,
 	// "gitlab-token:<host>" for an allowlisted self-managed host).
 	name string
+	// host is the GitLab host this probe validates, empty for the default
+	// instance. It scopes the glab token lookup to the same instance.
+	host string
 	// restBase is the API base the /user probe is issued against.
 	restBase string
 	// hostToken is the AO_GITLAB_HOST_TOKENS override for this host; empty
@@ -606,7 +610,7 @@ func (c *commandContext) checkGitLabToken(ctx context.Context, probe gitlabProbe
 	token, source := strings.TrimSpace(probe.hostToken), "AO_GITLAB_HOST_TOKENS"
 	if token == "" {
 		var err error
-		token, source, err = c.gitlabToken(ctx)
+		token, source, err = c.gitlabToken(ctx, probe.host)
 		if err != nil {
 			return doctorCheck{Level: doctorWarn, Section: doctorSectionGitLab, Name: name, Message: err.Error()}
 		}
@@ -653,7 +657,14 @@ func (c *commandContext) checkGitLabToken(ctx context.Context, probe gitlabProbe
 	return doctorCheck{Level: doctorPass, Section: doctorSectionGitLab, Name: name, Message: fmt.Sprintf("%s token valid for %s", source, login)}
 }
 
-func (c *commandContext) gitlabToken(ctx context.Context) (token, source string, err error) {
+// gitlabToken resolves the default token for one host: the shared env vars
+// first, then glab. host scopes the glab lookup to that instance
+// (`--hostname`), because a glab authenticated against several instances
+// otherwise reports whichever it lists first — doctor would then validate one
+// instance's token against another's API. A scoped lookup that yields nothing
+// falls back to the unscoped one, matching the provider's HostTokenSource
+// chain (adapters/scm/gitlab/auth.go) and keeping older glab builds working.
+func (c *commandContext) gitlabToken(ctx context.Context, host string) (token, source string, err error) {
 	for _, name := range []string{"AO_GITLAB_TOKEN", "GITLAB_TOKEN"} {
 		if v := strings.TrimSpace(os.Getenv(name)); v != "" {
 			return v, name, nil
@@ -663,17 +674,33 @@ func (c *commandContext) gitlabToken(ctx context.Context) (token, source string,
 	if lookErr != nil || path == "" {
 		return "", "", errors.New("no GitLab token found (set AO_GITLAB_TOKEN/GITLAB_TOKEN or run `glab auth login`)")
 	}
-	reqCtx, cancel := context.WithTimeout(ctx, probeTimeout)
-	defer cancel()
-	out, cmdErr := c.deps.CommandOutput(reqCtx, path, "auth", "status", "--show-token")
-	if cmdErr != nil {
-		return "", "", fmt.Errorf("glab is installed but no token was available (`glab auth status --show-token` failed: %w)", cmdErr)
+	if host = normalizeGitLabHost(host); host != "" {
+		if token, ok := c.glabToken(ctx, path, host); ok {
+			return token, "glab", nil
+		}
 	}
-	token = parseGLabTokenLine(string(out))
-	if token == "" {
-		return "", "", errors.New("glab is installed but returned no auth token")
+	token, ok := c.glabToken(ctx, path, "")
+	if !ok {
+		return "", "", errors.New("glab is installed but returned no auth token (`glab auth status --show-token`)")
 	}
 	return token, "glab", nil
+}
+
+// glabToken runs `glab auth status --show-token`, optionally scoped to one
+// host, and reports whether a token came back.
+func (c *commandContext) glabToken(ctx context.Context, path, host string) (string, bool) {
+	args := []string{"auth", "status", "--show-token"}
+	if host != "" {
+		args = append(args, "--hostname", host)
+	}
+	reqCtx, cancel := context.WithTimeout(ctx, probeTimeout)
+	defer cancel()
+	out, cmdErr := c.deps.CommandOutput(reqCtx, path, args...)
+	if cmdErr != nil {
+		return "", false
+	}
+	token := parseGLabTokenLine(string(out))
+	return token, token != ""
 }
 
 // parseGLabTokenLine extracts the token value from `glab auth status --show-token`

@@ -162,3 +162,51 @@ func TestGLabTokenSourceParsesHookOutput(t *testing.T) {
 		t.Fatalf("token = %q, want glpat-parsed", tok)
 	}
 }
+
+// TestHostTokenSourceScopesGLabToHost covers the per-host chain: glab must be
+// asked about the specific instance before it is asked about its default one,
+// so a glab authenticated against several hosts cannot hand back a token that
+// belongs to a different instance.
+func TestHostTokenSourceScopesGLabToHost(t *testing.T) {
+	chain, ok := HostTokenSource(" GitLab.Internal:8443 ").(FallbackTokenSource)
+	if !ok {
+		t.Fatalf("HostTokenSource returned %T, want FallbackTokenSource", HostTokenSource("gitlab.internal"))
+	}
+	if len(chain) != 3 {
+		t.Fatalf("chain length = %d, want env + scoped glab + default glab", len(chain))
+	}
+	if _, ok := chain[0].(*EnvTokenSource); !ok {
+		t.Fatalf("chain[0] = %T, want *EnvTokenSource", chain[0])
+	}
+	scoped, ok := chain[1].(*GLabTokenSource)
+	if !ok {
+		t.Fatalf("chain[1] = %T, want *GLabTokenSource", chain[1])
+	}
+	if scoped.Hostname != "gitlab.internal:8443" {
+		t.Fatalf("scoped hostname = %q, want the normalized host", scoped.Hostname)
+	}
+	fallback, ok := chain[2].(*GLabTokenSource)
+	if !ok {
+		t.Fatalf("chain[2] = %T, want *GLabTokenSource", chain[2])
+	}
+	if fallback.Hostname != "" {
+		t.Fatalf("fallback hostname = %q, want glab's own default host", fallback.Hostname)
+	}
+}
+
+// TestHostTokenSourceWithoutHostSkipsScopedLookup covers the gitlab.com case:
+// with no host there is nothing to scope to, so only the default glab lookup
+// is used.
+func TestHostTokenSourceWithoutHostSkipsScopedLookup(t *testing.T) {
+	chain, ok := HostTokenSource("").(FallbackTokenSource)
+	if !ok {
+		t.Fatalf("HostTokenSource returned %T, want FallbackTokenSource", HostTokenSource(""))
+	}
+	if len(chain) != 2 {
+		t.Fatalf("chain length = %d, want env + default glab", len(chain))
+	}
+	src, ok := chain[1].(*GLabTokenSource)
+	if !ok || src.Hostname != "" {
+		t.Fatalf("chain[1] = %#v, want an unscoped *GLabTokenSource", chain[1])
+	}
+}

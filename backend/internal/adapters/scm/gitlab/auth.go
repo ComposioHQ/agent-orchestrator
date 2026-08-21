@@ -104,6 +104,12 @@ const defaultGLabTokenCacheTTL = 5 * time.Minute
 // GLabTokenSource shells out to `glab auth status --show-token` when env vars
 // are not configured. It memoizes the result for TokenTTL.
 type GLabTokenSource struct {
+	// Hostname scopes the lookup to one GitLab instance
+	// (`glab auth status --hostname <host>`). Empty asks glab for its own
+	// default host. Without it a glab configured for several instances
+	// reports whichever host it lists first, so a self-managed host can end up
+	// probed with another instance's token.
+	Hostname string
 	GLab     func(ctx context.Context) (string, error)
 	TokenTTL time.Duration
 	Clock    func() time.Time
@@ -124,7 +130,7 @@ func (s *GLabTokenSource) Token(ctx context.Context) (string, error) {
 	}
 	run := s.GLab
 	if run == nil {
-		run = glabAuthToken
+		run = func(ctx context.Context) (string, error) { return glabAuthToken(ctx, s.Hostname) }
 	}
 	out, err := run(ctx)
 	if err != nil {
@@ -168,13 +174,22 @@ func (s *GLabTokenSource) ttl() time.Duration {
 //
 //	✓ Token found: glpat-xxxxxxxxxxxxxxxx
 //
+// hostname, when non-empty, scopes the query to one instance via
+// `--hostname`; a glab authenticated against several instances otherwise
+// reports them all and the first token line wins, which is not necessarily the
+// host being asked about.
+//
 // If glab is not installed, not authenticated, or exits non-zero for any other
 // reason, ErrNoToken is returned so the GitLab provider is silently disabled
 // rather than erroring on every poll.
-func glabAuthToken(ctx context.Context) (string, error) {
+func glabAuthToken(ctx context.Context, hostname string) (string, error) {
+	args := []string{"auth", "status", "--show-token"}
+	if h := strings.TrimSpace(hostname); h != "" {
+		args = append(args, "--hostname", h)
+	}
 	// glab writes auth status output to stderr, not stdout — use CombinedOutput
 	// to capture both streams so the token is not lost.
-	out, err := aoprocess.CommandContext(ctx, "glab", "auth", "status", "--show-token").CombinedOutput()
+	out, err := aoprocess.CommandContext(ctx, "glab", args...).CombinedOutput()
 	if err != nil {
 		return "", ErrNoToken
 	}
@@ -210,4 +225,19 @@ func parseGLabTokenLine(output string) string {
 		}
 	}
 	return ""
+}
+
+// HostTokenSource is the token chain for one GitLab host: the shared env vars
+// first, then glab scoped to that host, then glab's own default host. The last
+// step keeps a single-instance glab setup working when its configured hostname
+// does not literally match the remote (and when the installed glab predates
+// `--hostname`), which is how this chain behaved before it became host-aware.
+func HostTokenSource(host string) TokenSource {
+	sources := FallbackTokenSource{
+		&EnvTokenSource{EnvVars: []string{"AO_GITLAB_TOKEN"}},
+	}
+	if h := NormalizeHost(host); h != "" {
+		sources = append(sources, &GLabTokenSource{Hostname: h})
+	}
+	return append(sources, &GLabTokenSource{})
 }

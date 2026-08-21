@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"testing"
 
+	scmgitlab "github.com/aoagents/agent-orchestrator/backend/internal/adapters/scm/gitlab"
 	scmmulti "github.com/aoagents/agent-orchestrator/backend/internal/adapters/scm/multi"
 	"github.com/aoagents/agent-orchestrator/backend/internal/config"
 	scmobserve "github.com/aoagents/agent-orchestrator/backend/internal/observe/scm"
@@ -84,4 +85,35 @@ func TestSCMWiring_ObserverConfigHasScopedResolver(t *testing.T) {
 
 func testGitLabConfig() config.GitLabConfig {
 	return config.GitLabConfig{}
+}
+
+// TestGitLabHostTokenSources covers per-host credential selection: an explicit
+// AO_GITLAB_HOST_TOKENS entry wins, an allowlisted host without one gets a
+// chain that asks glab about that host, and host keys are normalized so a
+// mixed-case entry still matches the allowlist.
+func TestGitLabHostTokenSources(t *testing.T) {
+	sources := gitlabHostTokenSources(config.GitLabConfig{
+		AllowedHosts: []string{"gitlab.internal:8443", " GitLab.Example.com ", ""},
+		HostTokens:   map[string]string{"GitLab.Example.COM": "host-pat"},
+	})
+
+	if len(sources) != 2 {
+		t.Fatalf("sources = %v, want one entry per allowlisted host", sources)
+	}
+	if _, ok := sources["gitlab.example.com"].(scmgitlab.StaticTokenSource); !ok {
+		t.Fatalf("gitlab.example.com source = %T, want the configured override", sources["gitlab.example.com"])
+	}
+	chain, ok := sources["gitlab.internal:8443"].(scmgitlab.FallbackTokenSource)
+	if !ok {
+		t.Fatalf("gitlab.internal:8443 source = %T, want a fallback chain", sources["gitlab.internal:8443"])
+	}
+	scoped := false
+	for _, src := range chain {
+		if gl, isGLab := src.(*scmgitlab.GLabTokenSource); isGLab && gl.Hostname == "gitlab.internal:8443" {
+			scoped = true
+		}
+	}
+	if !scoped {
+		t.Fatal("host chain has no glab source scoped to the host")
+	}
 }

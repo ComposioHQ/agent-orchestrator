@@ -57,10 +57,7 @@ func newGitLabSCMProvider(gitlabCfg config.GitLabConfig, logger *slog.Logger) (*
 		scmgitlab.EnvTokenSource{EnvVars: []string{"AO_GITLAB_TOKEN"}},
 		&scmgitlab.GLabTokenSource{},
 	}
-	hostTokens := make(map[string]scmgitlab.TokenSource, len(gitlabCfg.HostTokens))
-	for host, token := range gitlabCfg.HostTokens {
-		hostTokens[host] = scmgitlab.StaticTokenSource(token)
-	}
+	hostTokens := gitlabHostTokenSources(gitlabCfg)
 	return scmgitlab.NewProvider(scmgitlab.ProviderOptions{
 		Token:              tokens,
 		SkipTokenPreflight: true,
@@ -68,6 +65,26 @@ func newGitLabSCMProvider(gitlabCfg config.GitLabConfig, logger *slog.Logger) (*
 		AllowedHosts:       gitlabCfg.AllowedHosts,
 		HostTokens:         hostTokens,
 	})
+}
+
+// gitlabHostTokenSources maps every allowlisted self-managed host to the token
+// source the provider should use for it: the explicit AO_GITLAB_HOST_TOKENS
+// override when configured, otherwise a chain that asks glab for that host
+// specifically. Without the per-host entry a multi-instance glab setup answers
+// with whichever host it happens to list first.
+func gitlabHostTokenSources(gitlabCfg config.GitLabConfig) map[string]scmgitlab.TokenSource {
+	hostTokens := make(map[string]scmgitlab.TokenSource, len(gitlabCfg.HostTokens)+len(gitlabCfg.AllowedHosts))
+	for _, host := range gitlabCfg.AllowedHosts {
+		if host = scmgitlab.NormalizeHost(host); host != "" {
+			hostTokens[host] = scmgitlab.HostTokenSource(host)
+		}
+	}
+	for host, token := range gitlabCfg.HostTokens {
+		if host = scmgitlab.NormalizeHost(host); host != "" {
+			hostTokens[host] = scmgitlab.StaticTokenSource(token)
+		}
+	}
+	return hostTokens
 }
 
 func logSCMProviderDisabled(logger *slog.Logger, provider string, err error) {

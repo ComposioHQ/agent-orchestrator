@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -465,6 +466,81 @@ func TestDoctorProbesEveryAllowedGitLabHost(t *testing.T) {
 	}
 	if gitlabChecks != 2 {
 		t.Fatalf("gitlab-token checks = %d, want 2 (gitlab.com aliases and duplicate hosts collapsed)", gitlabChecks)
+	}
+}
+
+// TestDoctorScopesGLabLookupToHost covers the glab fallback for a self-managed
+// host: the lookup must name the host, otherwise a glab authenticated against
+// several instances returns whichever it lists first.
+func TestDoctorScopesGLabLookupToHost(t *testing.T) {
+	setConfigEnv(t)
+	clearDoctorGitLabEnv(t)
+	srv, tokens := gitlabDoctorHostServer(t, http.StatusOK, `{"username":"self-hosted-user"}`)
+	dotCom := gitlabDoctorServer(t, http.StatusOK, `{"username":"dotcom-user"}`)
+	var glabArgs [][]string
+	c := doctorContext(t, map[string]string{"git": "/bin/git", "glab": "/bin/glab"}, func(_ context.Context, name string, args ...string) ([]byte, error) {
+		if name != "/bin/glab" {
+			return []byte("git version 2.43.0\n"), nil
+		}
+		glabArgs = append(glabArgs, args)
+		for i, arg := range args {
+			if arg == "--hostname" && i+1 < len(args) && args[i+1] == "gitlab.internal" {
+				return []byte("Hostname: gitlab.internal\n✓ Token found: glpat-self-hosted\n"), nil
+			}
+		}
+		return []byte("Hostname: gitlab.com\n✓ Token found: glpat-dotcom\n"), nil
+	})
+	t.Setenv("AO_GITLAB_ALLOWED_HOSTS", "gitlab.internal")
+	c.deps.HTTPClient = srv.Client()
+	c.deps.DoctorGitLabRESTBase = dotCom.URL
+	c.deps.DoctorGitLabHostRESTBase = func(string) string { return srv.URL }
+
+	check := findDoctorCheck(t, c.runDoctor(context.Background()), "gitlab-token:gitlab.internal")
+	if check.Level != doctorPass || !strings.Contains(check.Message, "glab token valid") {
+		t.Fatalf("gitlab-token check = %+v, want PASS from a host-scoped glab lookup", check)
+	}
+	if got := tokens(); len(got) != 1 || got[0] != "glpat-self-hosted" {
+		t.Fatalf("probe tokens = %v, want the token glab reports for the host", got)
+	}
+	scoped := false
+	for _, args := range glabArgs {
+		if slices.Contains(args, "--hostname") {
+			scoped = true
+		}
+	}
+	if !scoped {
+		t.Fatalf("glab invocations = %v, want one scoped with --hostname", glabArgs)
+	}
+}
+
+// TestDoctorFallsBackToUnscopedGLabLookup covers glab builds or setups where
+// the host-scoped query yields nothing: doctor must still use glab's default
+// host rather than reporting no token at all.
+func TestDoctorFallsBackToUnscopedGLabLookup(t *testing.T) {
+	setConfigEnv(t)
+	clearDoctorGitLabEnv(t)
+	srv, tokens := gitlabDoctorHostServer(t, http.StatusOK, `{"username":"self-hosted-user"}`)
+	dotCom := gitlabDoctorServer(t, http.StatusOK, `{"username":"dotcom-user"}`)
+	c := doctorContext(t, map[string]string{"git": "/bin/git", "glab": "/bin/glab"}, func(_ context.Context, name string, args ...string) ([]byte, error) {
+		if name != "/bin/glab" {
+			return []byte("git version 2.43.0\n"), nil
+		}
+		if slices.Contains(args, "--hostname") {
+			return nil, errors.New("unknown flag: --hostname")
+		}
+		return []byte("Hostname: gitlab.internal\n✓ Token found: glpat-default\n"), nil
+	})
+	t.Setenv("AO_GITLAB_ALLOWED_HOSTS", "gitlab.internal")
+	c.deps.HTTPClient = srv.Client()
+	c.deps.DoctorGitLabRESTBase = dotCom.URL
+	c.deps.DoctorGitLabHostRESTBase = func(string) string { return srv.URL }
+
+	check := findDoctorCheck(t, c.runDoctor(context.Background()), "gitlab-token:gitlab.internal")
+	if check.Level != doctorPass {
+		t.Fatalf("gitlab-token check = %+v, want PASS from the unscoped glab fallback", check)
+	}
+	if got := tokens(); len(got) != 1 || got[0] != "glpat-default" {
+		t.Fatalf("probe tokens = %v, want glab's default-host token", got)
 	}
 }
 
