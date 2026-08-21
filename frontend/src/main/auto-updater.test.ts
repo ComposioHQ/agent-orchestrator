@@ -1651,3 +1651,151 @@ describe("install-on-quit policy", () => {
     }
   });
 });
+
+// Builds a Linux-shaped install tree (an app directory holding the launcher)
+// so the writability check runs against a real filesystem, not a stub.
+function makeLinuxInstall(): { root: string; appDir: string; execPath: string } {
+  const root = mkdtempSync(nodePath.join(os.tmpdir(), "ao-updater-linux-"));
+  const appDir = nodePath.join(root, "agent-orchestrator");
+  mkdirSync(appDir, { recursive: true });
+  return {
+    root,
+    appDir,
+    execPath: nodePath.join(appDir, "agent-orchestrator"),
+  };
+}
+
+// stubAppImage sets (or clears) the env var the AppImage runtime exports.
+function stubAppImage(value: string | undefined): () => void {
+  const original = process.env.APPIMAGE;
+  if (value === undefined) delete process.env.APPIMAGE;
+  else process.env.APPIMAGE = value;
+  return () => {
+    if (original === undefined) delete process.env.APPIMAGE;
+    else process.env.APPIMAGE = original;
+  };
+}
+
+describe("isPackageManagedInstall", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.resetModules();
+  });
+
+  // The case this whole check exists for: /usr/lib is root-owned and dpkg, rpm
+  // or pacman tracks every file under it.
+  it("is true for a root-owned app directory on Linux", async () => {
+    const { root, appDir, execPath } = makeLinuxInstall();
+    chmodSync(appDir, 0o555);
+    const restoreProcess = stubProcess("linux", execPath);
+    const restoreEnv = stubAppImage(undefined);
+    try {
+      const { module } = await importAutoUpdater();
+
+      expect(module.isPackageManagedInstall()).toBe(true);
+    } finally {
+      restoreEnv();
+      restoreProcess();
+      chmodSync(appDir, 0o755);
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  // The AppImage is what `ao start` downloads and the only Linux build with a
+  // working update feed, so it must keep updating itself. Its mount point is
+  // read-only too, which is why APPIMAGE is checked before writability.
+  it("is false for an AppImage even though its mount is read-only", async () => {
+    const { root, appDir, execPath } = makeLinuxInstall();
+    chmodSync(appDir, 0o555);
+    const restoreProcess = stubProcess("linux", execPath);
+    const restoreEnv = stubAppImage("/home/user/Downloads/ao.AppImage");
+    try {
+      const { module } = await importAutoUpdater();
+
+      expect(module.isPackageManagedInstall()).toBe(false);
+    } finally {
+      restoreEnv();
+      restoreProcess();
+      chmodSync(appDir, 0o755);
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("is false for a writable app directory on Linux", async () => {
+    const { root, execPath } = makeLinuxInstall();
+    const restoreProcess = stubProcess("linux", execPath);
+    const restoreEnv = stubAppImage(undefined);
+    try {
+      const { module } = await importAutoUpdater();
+
+      expect(module.isPackageManagedInstall()).toBe(false);
+    } finally {
+      restoreEnv();
+      restoreProcess();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  // Other platforms have unwritable installs that update fine: Program Files
+  // through the elevated NSIS installer, and /Applications via ShipIt, whose
+  // own preflight is getMacInstallBlocker.
+  it("is false off Linux regardless of permissions", async () => {
+    const { root, appDir, execPath } = makeLinuxInstall();
+    chmodSync(appDir, 0o555);
+    const restoreEnv = stubAppImage(undefined);
+    try {
+      for (const platform of ["darwin", "win32"] as const) {
+        const restoreProcess = stubProcess(platform, execPath);
+        try {
+          const { module } = await importAutoUpdater();
+          expect(module.isPackageManagedInstall()).toBe(false);
+        } finally {
+          restoreProcess();
+        }
+      }
+    } finally {
+      restoreEnv();
+      chmodSync(appDir, 0o755);
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("update operations on a package-manager install", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.resetModules();
+  });
+
+  // Failing quietly is the old behaviour this replaces: the download starts and
+  // dies somewhere inside /usr/lib. Say what is going on instead, and let the
+  // renderer localize it (hence the flag, not a message).
+  it("reports the reason and touches nothing", async () => {
+    const { root, appDir, execPath } = makeLinuxInstall();
+    chmodSync(appDir, 0o555);
+    const restoreProcess = stubProcess("linux", execPath);
+    const restoreEnv = stubAppImage(undefined);
+    try {
+      const { module, autoUpdater, statusMessages, writeUpdateSettings } =
+        await importAutoUpdater();
+
+      await module.checkForUpdatesNow("/tmp/ao-state", { requestId: "req-1" });
+      await module.downloadUpdateNow("req-2");
+      await module.returnToHome("/tmp/ao-state", "req-3");
+
+      expect(autoUpdater.checkForUpdates).not.toHaveBeenCalled();
+      expect(autoUpdater.downloadUpdate).not.toHaveBeenCalled();
+      expect(writeUpdateSettings).not.toHaveBeenCalled();
+      expect(statusMessages().map((m) => m.payload)).toEqual([
+        { state: "unsupported", packageManaged: true, requestId: "req-1" },
+        { state: "unsupported", packageManaged: true, requestId: "req-2" },
+        { state: "unsupported", packageManaged: true, requestId: "req-3" },
+      ]);
+    } finally {
+      restoreEnv();
+      restoreProcess();
+      chmodSync(appDir, 0o755);
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});

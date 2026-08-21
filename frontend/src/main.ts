@@ -17,6 +17,7 @@ import {
 	type OpenDialogOptions,
 } from "electron";
 import {
+	isPackageManagedInstall,
 	startAutoUpdates,
 	ensureUpdatePrefs,
 	checkForUpdatesNow,
@@ -1961,6 +1962,14 @@ app.on("second-instance", (_event, argv) => {
 // frontend/docs/desktop-release.md.
 function initAutoUpdates(): void {
 	if (!app.isPackaged) return;
+	// A deb/rpm/pacman install is owned by the package manager: the updater
+	// cannot write into /usr/lib, and trying would leave the package database
+	// disagreeing with the disk. The Settings panel says so when the user asks
+	// for a check; the automatic schedule just never starts.
+	if (isPackageManagedInstall()) {
+		console.info("[updates] package-manager install; auto-updates disabled");
+		return;
+	}
 	const runFile = runFilePath();
 	if (!runFile) return;
 	const stateDir = path.dirname(runFile);

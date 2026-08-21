@@ -42,6 +42,11 @@ export interface UpdateStatus {
 	// network-stack error (net::ERR_*). The renderer localizes restart guidance
 	// from this flag instead of receiving pre-built English prose (#3526).
 	netError?: boolean;
+	// Present only when state === "unsupported" and the app was installed by a
+	// system package manager (deb/rpm/pacman), where the updater must not write.
+	// A flag, not prose, for the same reason as netError above: the renderer
+	// owns the wording and its translations.
+	packageManaged?: boolean;
 }
 
 /** File holding the user's auto-update preferences under the ~/.ao state dir. */

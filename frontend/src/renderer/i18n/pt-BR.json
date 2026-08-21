@@ -703,6 +703,7 @@
 	"settings.updates.featureTracking": "As atualizações automáticas, se ativadas, continuam acompanhando o PR #{{pr}} até você voltar à versão principal ou o build ser retirado.",
 	"settings.updates.latest": "Você está na versão mais recente.",
 	"settings.updates.needInstalledApp": "As atualizações exigem o app instalado.",
+	"settings.updates.packageManaged": "Instalado pelo gerenciador de pacotes do sistema. Atualize pelo gerenciador de pacotes.",
 	"settings.updates.noFeatureReleases": "Nenhum release de feature ativo.",
 	"settings.updates.networkStale": "Não foi possível verificar atualizações por um tempo — reiniciar o app geralmente resolve.",
 	"settings.updates.netErrorRestartGuidance": "Não foi possível acessar o servidor de atualização — a conexão de rede do app parece travada. Reiniciar o app geralmente resolve.",

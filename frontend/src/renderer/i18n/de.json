@@ -694,6 +694,7 @@
 	"settings.updates.featureTracking": "Automatische Updates (falls aktiviert) verfolgen weiterhin PR #{{pr}}, bis Sie zurückkehren oder der Build eingestellt wird.",
 	"settings.updates.latest": "Sie verwenden die neueste Version.",
 	"settings.updates.needInstalledApp": "Updates erfordern die installierte App.",
+	"settings.updates.packageManaged": "Über die Paketverwaltung deines Systems installiert. Aktualisiere mit deiner Paketverwaltung.",
 	"settings.updates.noFeatureReleases": "Keine aktiven Feature-Releases.",
 	"settings.updates.networkStale": "Updates konnten seit einiger Zeit nicht geprüft werden — ein Neustart der App behebt das Problem meist.",
 	"settings.updates.netErrorRestartGuidance": "Der Update-Server ist nicht erreichbar — die Netzwerkverbindung der App scheint blockiert zu sein. Ein Neustart der App behebt das Problem meist.",

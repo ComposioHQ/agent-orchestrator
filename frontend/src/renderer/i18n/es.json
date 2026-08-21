@@ -703,6 +703,7 @@
 	"settings.updates.featureTracking": "Las actualizaciones automáticas, si están activadas, seguirán el PR #{{pr}} hasta que vuelvas a la versión principal o se retire la compilación.",
 	"settings.updates.latest": "Estás en la última versión.",
 	"settings.updates.needInstalledApp": "Las actualizaciones requieren la aplicación instalada.",
+	"settings.updates.packageManaged": "Instalado por el gestor de paquetes de tu sistema. Actualízalo con tu gestor de paquetes.",
 	"settings.updates.noFeatureReleases": "No hay versiones de funciones activas.",
 	"settings.updates.networkStale": "No se han podido buscar actualizaciones desde hace un tiempo; reiniciar la aplicación suele solucionarlo.",
 	"settings.updates.netErrorRestartGuidance": "No se puede llegar al servidor de actualizaciones: la conexión de red de la aplicación parece bloqueada. Reiniciar la aplicación suele solucionarlo.",

@@ -181,11 +181,13 @@ The AppImage keeps updating itself. It is the file the `ao start` bootstrapper d
 
 *Why: so a `.deb` install does not try to overwrite root-owned files (problem 3).*
 
-- [ ] Add a check to `frontend/src/main/auto-updater.ts`: this is a package-manager install when `process.env.APPIMAGE` is unset **and** the app's own folder is not writable by the current user. Keep it as a small exported function so it can be unit tested.
-- [ ] Call it from `initAutoUpdates()` in `frontend/src/main.ts:1963`, next to the existing `!app.isPackaged` early return.
-- [ ] Add tests in `frontend/src/main/auto-updater.test.ts` for three cases: AppImage (updates), writable folder such as macOS `/Applications` or a Windows per-user install (updates), root-owned folder (does not update).
-- [ ] Show it in the app's update panel instead of failing quietly: "Installed by your system package manager. Update with your package manager." Add that string to all 8 files under `frontend/src/renderer/i18n/`.
-- [ ] **Verify:** tests pass; a real deb install shows the message instead of downloading; an AppImage run still self-updates exactly as before.
+- [x] Add a check to `frontend/src/main/auto-updater.ts`: `isPackageManagedInstall()` is true when `process.env.APPIMAGE` is unset **and** `dirname(process.execPath)` is not writable by the current user. Gated to Linux: an unwritable `Program Files` install updates fine through the elevated NSIS installer, and a read-only macOS bundle has its own preflight (`getMacInstallBlocker`).
+- [x] Call it from `initAutoUpdates()` in `frontend/src/main.ts`, next to the existing `!app.isPackaged` early return. Also called by the three manual entry points (`checkForUpdatesNow`, `downloadUpdateNow`, `returnToHome`), which otherwise start a download that dies inside `/usr/lib`.
+- [x] Add tests in `frontend/src/main/auto-updater.test.ts`: root-owned folder (does not update), AppImage with an equally read-only mount (updates), writable folder (updates), non-Linux regardless of permissions (updates), plus one that the three manual operations broadcast the reason and call nothing.
+- [x] Show it in the app's update panel instead of failing quietly. The status carries a `packageManaged` flag rather than English prose, matching how `netError` is handled (#3526), and `UpdatesSection.tsx` renders `settings.updates.packageManaged`, added to all 8 files under `frontend/src/renderer/i18n/`.
+- [x] **Verify:** the frontend suite and `tsc --noEmit` pass. On a real deb install in `debian:trixie`, a non-root user gets `/usr/lib/agent-orchestrator` unwritable and `APPIMAGE` unset (updater suppressed), while a home-directory folder is writable (updater runs).
+  - Known and accepted: running the app as root makes the directory writable, so the check falls open and the updater runs. Root can overwrite those files anyway, so no check placed here would help.
+  - Not covered: an end-to-end run of a freshly built deb, which needs a full Electron release build. The signals it depends on are the two verified above.
 
 ### A3. Give the AppImage a real menu entry
 
