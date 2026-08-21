@@ -170,7 +170,7 @@ func (m *Manager) launchChatController(ctx context.Context, in chatSpawn) (domai
 				ProviderConversationID: started.ProviderConversationID,
 				ControllerGeneration:   started.ControllerGeneration,
 				Model:                  agentConfig.Model,
-				Permissions:            agentConfig.Permissions,
+				Permissions:            permissionModeForFreshSession(agentConfig.Permissions),
 			}
 			completionErr = m.lcm.MarkSpawned(ctx, id, metadata)
 			controllerCommitted = completionErr == nil

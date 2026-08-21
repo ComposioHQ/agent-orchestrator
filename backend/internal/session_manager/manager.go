@@ -924,7 +924,7 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 		// Mode for adapters whose catalog is a mode list (e.g. Amp). If an explicit
 		// Model override exists it wins; otherwise fall back to the resolved Mode.
 		Model:       resolvedModelForMetadata(cfg.Harness, agentConfig, adapterConfig),
-		Permissions: agentConfig.Permissions,
+		Permissions: permissionModeForFreshSession(agentConfig.Permissions),
 	}
 	if projectKind == domain.ProjectKindSingleRepo {
 		metadata.DiffBaseSHA, metadata.DiffBaseRef = resolveSpawnDiffBase(ctx, ws.Path, ws.BaseRef)
@@ -1279,6 +1279,17 @@ func effectiveSessionAgentConfig(rec domain.SessionRecord, cfg domain.ProjectCon
 		config.Permissions = rec.Metadata.Permissions
 	}
 	return config
+}
+
+// permissionModeForFreshSession reserves empty durable permissions for sessions
+// created before the permission contract was persisted. New sessions with no
+// explicit selection store default so restore cannot mistake them for migrated
+// rows and re-resolve a mutable project setting.
+func permissionModeForFreshSession(mode ports.PermissionMode) ports.PermissionMode {
+	if mode == "" {
+		return ports.PermissionModeDefault
+	}
+	return mode
 }
 
 func validateTUIPermissionMode(mode ports.PermissionMode) error {

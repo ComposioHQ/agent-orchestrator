@@ -391,6 +391,22 @@ func TestPreventiveReadOnlyTUISpawnFailsBeforeDurableState(t *testing.T) {
 	}
 }
 
+func TestOmittedPermissionTUISpawnPersistsExplicitDefault(t *testing.T) {
+	launcher := &recordingLauncher{}
+	mgr, _, _ := newChatManager(launcher)
+
+	rec, _, _, err := mgr.Spawn(context.Background(), ports.SpawnConfig{
+		ProjectID: chatTestProject, Kind: domain.KindWorker,
+		Harness: domain.HarnessCodex, RequestedMode: domain.SessionModeTUI,
+	})
+	if err != nil {
+		t.Fatalf("Spawn: %v", err)
+	}
+	if rec.Metadata.Permissions != domain.PermissionModeDefault {
+		t.Fatalf("persisted permissions = %q, want explicit default", rec.Metadata.Permissions)
+	}
+}
+
 // Chat mode with no launcher wired must fail, never silently become a TUI session
 // in a terminal the user did not ask for.
 func TestChatSpawnWithoutLauncherIsRefusedNotDowngraded(t *testing.T) {
@@ -652,6 +668,42 @@ func TestRestoreResumesChatRatherThanRelaunchingATerminal(t *testing.T) {
 	// replayed prompt.
 	if result.Mode != RestoreModeNative {
 		t.Errorf("restore mode = %q, want native", result.Mode)
+	}
+}
+
+func TestRestoreOmittedChatPermissionDoesNotAdoptChangedProjectDefault(t *testing.T) {
+	launcher := &recordingLauncher{}
+	mgr, store, _ := newChatManager(launcher)
+	ctx := context.Background()
+
+	rec, _, _, err := mgr.Spawn(ctx, ports.SpawnConfig{
+		ProjectID: chatTestProject, Kind: domain.KindWorker,
+		Harness: domain.HarnessCodex, RequestedMode: domain.SessionModeChat,
+	})
+	if err != nil {
+		t.Fatalf("Spawn: %v", err)
+	}
+	if _, err := mgr.Kill(ctx, rec.ID); err != nil {
+		t.Fatalf("Kill: %v", err)
+	}
+
+	stored, _, err := store.GetSession(ctx, rec.ID)
+	if err != nil {
+		t.Fatalf("GetSession: %v", err)
+	}
+	if stored.Metadata.Permissions != domain.PermissionModeDefault {
+		t.Fatalf("spawn stored permissions = %q, want explicit default", stored.Metadata.Permissions)
+	}
+	project := store.projects[string(chatTestProject)]
+	project.Config.AgentConfig.Permissions = domain.PermissionModeBypassPermissions
+	store.projects[string(chatTestProject)] = project
+
+	if _, err := mgr.RestoreWithMode(ctx, rec.ID); err != nil {
+		t.Fatalf("RestoreWithMode: %v", err)
+	}
+	resumed := launcher.started[len(launcher.started)-1]
+	if resumed.Permissions != ports.PermissionModeDefault {
+		t.Fatalf("restore permissions = %q, want persisted default after project changed to bypass", resumed.Permissions)
 	}
 }
 
