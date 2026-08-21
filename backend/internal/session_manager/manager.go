@@ -742,9 +742,11 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 		if m.chat == nil {
 			return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn: %w: chat mode is not available in this build", ports.ErrChatUnsupported)
 		}
-		if err := m.chat.PreflightChat(ctx, cfg.Harness); err != nil {
+		if err := m.chat.PreflightChat(ctx, cfg.Harness, agentConfig.Permissions); err != nil {
 			return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn: %w", err)
 		}
+	} else if err := validateTUIPermissionMode(agentConfig.Permissions); err != nil {
+		return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn: %w", err)
 	}
 	cfg.RequestedMode = mode
 
@@ -921,7 +923,8 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 		// The user-visible resolved selection is Model for regular harnesses and
 		// Mode for adapters whose catalog is a mode list (e.g. Amp). If an explicit
 		// Model override exists it wins; otherwise fall back to the resolved Mode.
-		Model: resolvedModelForMetadata(cfg.Harness, agentConfig, adapterConfig),
+		Model:       resolvedModelForMetadata(cfg.Harness, agentConfig, adapterConfig),
+		Permissions: permissionModeForFreshSession(agentConfig.Permissions),
 	}
 	if projectKind == domain.ProjectKindSingleRepo {
 		metadata.DiffBaseSHA, metadata.DiffBaseRef = resolveSpawnDiffBase(ctx, ws.Path, ws.BaseRef)
@@ -1264,6 +1267,37 @@ func effectiveAgentConfig(kind domain.SessionKind, cfg domain.ProjectConfig) por
 		merged.Permissions = override.Permissions
 	}
 	return merged
+}
+
+// effectiveSessionAgentConfig keeps the permission contract chosen when a
+// session was created. Empty is the compatibility marker for sessions created
+// before permissions were durable, so those continue resolving project config
+// on restore exactly as they did before the migration.
+func effectiveSessionAgentConfig(rec domain.SessionRecord, cfg domain.ProjectConfig) ports.AgentConfig {
+	config := effectiveAgentConfig(rec.Kind, cfg)
+	if rec.Metadata.Permissions != "" {
+		config.Permissions = rec.Metadata.Permissions
+	}
+	return config
+}
+
+// permissionModeForFreshSession reserves empty durable permissions for sessions
+// created before the permission contract was persisted. New sessions with no
+// explicit selection store default so restore cannot mistake them for migrated
+// rows and re-resolve a mutable project setting.
+func permissionModeForFreshSession(mode ports.PermissionMode) ports.PermissionMode {
+	if mode == "" {
+		return ports.PermissionModeDefault
+	}
+	return mode
+}
+
+func validateTUIPermissionMode(mode ports.PermissionMode) error {
+	if ports.NormalizePermissionMode(mode) != ports.PermissionModeReadOnly {
+		return nil
+	}
+	return fmt.Errorf("%w: %q requires a Chat driver that advertises %s",
+		ports.ErrPermissionModeUnsupported, mode, ports.ChatCapabilityPreventiveReadOnly)
 }
 
 func applySpawnAgentConfig(base, override ports.AgentConfig) ports.AgentConfig {
@@ -1917,7 +1951,10 @@ func (m *Manager) relaunchSessionWithPolicy(ctx context.Context, operation strin
 
 	// Restore re-applies the project's resolved agent config so a configured
 	// model/permissions carry across a restore, matching fresh spawn.
-	agentConfig := effectiveAgentConfig(rec.Kind, project.Config)
+	agentConfig := effectiveSessionAgentConfig(rec, project.Config)
+	if err := validateTUIPermissionMode(agentConfig.Permissions); err != nil {
+		return RestoreResult{}, fmt.Errorf("%s %s: %w", operation, rec.ID, err)
+	}
 	env, browserCapabilityVerifier, err := m.launchRuntimeEnv(rec.ID, rec.ProjectID, rec.IssueID, project.Config.Env)
 	if err != nil {
 		return RestoreResult{}, fmt.Errorf("%s %s: browser capability: %w", operation, rec.ID, err)

@@ -13,7 +13,11 @@ const (
 	// PermissionModeDefault is special: adapters choose their own baseline
 	// behavior for it. Most defer to the agent's own config; some managed
 	// adapters may map it to a safer non-interactive default.
-	PermissionModeDefault           PermissionMode = "default"
+	PermissionModeDefault PermissionMode = "default"
+	// PermissionModeReadOnly requires preventive filesystem enforcement. A
+	// harness that cannot prove that boundary must reject the mode rather than
+	// treating it as its default approval posture.
+	PermissionModeReadOnly          PermissionMode = "read-only"
 	PermissionModeAcceptEdits       PermissionMode = "accept-edits"
 	PermissionModeAuto              PermissionMode = "auto"
 	PermissionModeBypassPermissions PermissionMode = "bypass-permissions"
@@ -30,7 +34,7 @@ type AgentConfig struct {
 	Mode string `json:"mode,omitempty"`
 	// Permissions sets the agent's starting permission mode. Empty is treated
 	// like the adapter's default mode.
-	Permissions PermissionMode `json:"permissions,omitempty"`
+	Permissions PermissionMode `json:"permissions,omitempty" enum:"default,read-only,accept-edits,auto,bypass-permissions"`
 }
 
 // IsZero reports whether the config carries no settings, so storage can persist
@@ -44,7 +48,7 @@ func (c AgentConfig) IsZero() bool {
 // one.
 func (m PermissionMode) Valid() bool {
 	switch m {
-	case "", PermissionModeDefault, PermissionModeAcceptEdits,
+	case "", PermissionModeDefault, PermissionModeReadOnly, PermissionModeAcceptEdits,
 		PermissionModeAuto, PermissionModeBypassPermissions:
 		return true
 	default:
@@ -63,5 +67,5 @@ func (c AgentConfig) Validate() error {
 	if c.Permissions.Valid() {
 		return nil
 	}
-	return fmt.Errorf("invalid permissions %q: want one of default, accept-edits, auto, bypass-permissions", c.Permissions)
+	return fmt.Errorf("invalid permissions %q: want one of default, read-only, accept-edits, auto, bypass-permissions", c.Permissions)
 }

@@ -80,6 +80,18 @@ beforeEach(() => {
 });
 
 describe("useConversation snapshot mapping", () => {
+	it("maps the controller-resolved permission floor for migrated sessions", async () => {
+		getMock.mockResolvedValue({
+			data: { ...WIRE, permissionFloor: "read-only" },
+			error: undefined,
+		});
+
+		const { result } = renderHook(() => useConversation("ao-1"), { wrapper });
+		await waitFor(() => expect(result.current.snapshot).toBeDefined());
+
+		expect(result.current.snapshot!.permissionFloor).toBe("read-only");
+	});
+
 	it("maps branch metadata and lightweight prompt content", async () => {
 		getMock.mockResolvedValue({
 			data: {

@@ -1753,7 +1753,8 @@ export interface components {
         AgentConfig: {
             mode?: string;
             model?: string;
-            permissions?: string;
+            /** @enum {string} */
+            permissions?: "default" | "read-only" | "accept-edits" | "auto" | "bypass-permissions";
         };
         AgentInfo: {
             /**
@@ -1940,6 +1941,8 @@ export interface components {
             /** @enum {string} */
             mode: "chat" | "tui";
             model?: string;
+            /** @enum {string} */
+            permissions?: "default" | "read-only" | "accept-edits" | "auto" | "bypass-permissions";
             /** Format: date-time */
             pinnedAt?: null | string;
             /** Format: int64 */
@@ -2141,6 +2144,8 @@ export interface components {
             modelReroute?: components["schemas"]["ConversationModelReroutePayload"];
             /** Format: int64 */
             oldestSequence?: number;
+            /** @enum {string} */
+            permissionFloor?: "default" | "read-only" | "accept-edits" | "auto" | "bypass-permissions";
             rateLimits?: components["schemas"]["ConversationRateLimitsPayload"];
             sessionId: string;
             settings: components["schemas"]["ConversationTurnSettingsPayload"];
@@ -2175,7 +2180,7 @@ export interface components {
         };
         ConversationTurnSettingsPayload: {
             /** @enum {string} */
-            approvalMode?: "default" | "accept-edits" | "auto" | "bypass-permissions";
+            approvalMode?: "default" | "read-only" | "accept-edits" | "auto" | "bypass-permissions";
             model?: string;
             reasoningEffort?: string;
         };
@@ -2935,6 +2940,7 @@ export interface components {
             chatHarnesses: string[];
             /** @enum {string} */
             defaultSessionMode: "chat" | "tui";
+            preventiveReadOnlyChatHarnesses: string[];
         };
         ShellTerminalEnvelope: {
             shellTerminal: components["schemas"]["ShellTerminalResponse"];
@@ -2969,6 +2975,8 @@ export interface components {
             /** @enum {string} */
             mode?: "chat" | "tui";
             model?: string;
+            /** @enum {string} */
+            permissions?: "default" | "read-only" | "accept-edits" | "auto" | "bypass-permissions";
             projectId: string;
             prompt?: string;
             /** @enum {string} */

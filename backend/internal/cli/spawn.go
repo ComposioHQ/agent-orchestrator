@@ -30,6 +30,7 @@ type spawnOptions struct {
 	issue           string
 	name            string
 	model           string
+	permission      string
 	claimPR         string
 	noTakeover      bool
 	skipAgentCheck  bool
@@ -48,6 +49,7 @@ type spawnRequest struct {
 	Branch          string `json:"branch,omitempty"`
 	Prompt          string `json:"prompt,omitempty"`
 	Model           string `json:"model,omitempty"`
+	Permissions     string `json:"permissions,omitempty"`
 	DisplayName     string `json:"displayName"`
 }
 
@@ -94,6 +96,9 @@ func newSpawnCommand(ctx *commandContext) *cobra.Command {
 			}
 			if opts.kind != "" && opts.kind != "worker" && opts.kind != "orchestrator" {
 				return usageError{fmt.Errorf(`--kind must be "worker" or "orchestrator"`)}
+			}
+			if opts.permission != "" && !validPermissionMode(opts.permission) {
+				return usageError{fmt.Errorf("--permission must be default, read-only, accept-edits, auto, or bypass-permissions")}
 			}
 
 			tp := strings.TrimSpace(opts.trackerProvider)
@@ -148,6 +153,7 @@ func newSpawnCommand(ctx *commandContext) *cobra.Command {
 				Branch:          opts.branch,
 				Prompt:          opts.prompt,
 				Model:           strings.TrimSpace(opts.model),
+				Permissions:     opts.permission,
 				DisplayName:     name,
 			}
 			var res spawnResult
@@ -196,6 +202,7 @@ func newSpawnCommand(ctx *commandContext) *cobra.Command {
 	f.StringVar(&opts.branch, "branch", "", "Branch for git project sessions (default: ao/<session-id>/root; unsupported for Scratch)")
 	f.StringVar(&opts.prompt, "prompt", "", "Initial prompt for the agent")
 	f.StringVar(&opts.model, "model", "", "Agent model override for this session only (e.g. sonnet, gpt-5.6-sol); overrides project/role config without changing it")
+	f.StringVar(&opts.permission, "permission", "", "Permission override for this session only: default, read-only, accept-edits, auto, or bypass-permissions")
 	f.StringVar(&opts.issue, "issue", "", "Issue id to associate with the session")
 	f.StringVar(&opts.trackerProvider, "tracker-provider", "github", "Issue tracker provider: github or gitlab (default: github)")
 	f.StringVar(&opts.name, "name", "", "Display name shown in the sidebar (required, max 20 characters)")
@@ -203,6 +210,15 @@ func newSpawnCommand(ctx *commandContext) *cobra.Command {
 	f.BoolVar(&opts.noTakeover, "no-takeover", false, "Refuse if another active session owns the claimed PR (requires --claim-pr)")
 	f.BoolVar(&opts.skipAgentCheck, "skip-agent-check", false, "Skip advisory agent catalog install/auth preflight before spawning")
 	return cmd
+}
+
+func validPermissionMode(mode string) bool {
+	switch mode {
+	case "default", "read-only", "accept-edits", "auto", "bypass-permissions":
+		return true
+	default:
+		return false
+	}
 }
 
 func (c *commandContext) fetchAgentInventory(ctx context.Context, refresh bool) (agentInventory, error) {

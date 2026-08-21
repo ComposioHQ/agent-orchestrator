@@ -159,9 +159,12 @@ type SessionView struct {
 	PreviewRevision int64 `json:"previewRevision,omitempty"`
 	// Model is the agent model this session resolved to at spawn time. Empty
 	// means the agent's default model. Pulled from the json:"-" domain Metadata.
-	Model             string           `json:"model,omitempty"`
-	PRs               []SessionPRFacts `json:"prs"`
-	ActiveAgentSwitch *AgentSwitchView `json:"activeAgentSwitch,omitempty"`
+	Model string `json:"model,omitempty"`
+	// Permissions is the preventive permission contract resolved at spawn. It is
+	// durable across resume and may be empty only for pre-migration sessions.
+	Permissions       domain.PermissionMode `json:"permissions,omitempty" enum:"default,read-only,accept-edits,auto,bypass-permissions"`
+	PRs               []SessionPRFacts      `json:"prs"`
+	ActiveAgentSwitch *AgentSwitchView      `json:"activeAgentSwitch,omitempty"`
 }
 
 // ListSessionsResponse is the body of GET /api/v1/sessions.
@@ -190,6 +193,9 @@ type SpawnSessionRequest struct {
 	// keeps the resolved project/role default. The daemon validates that the
 	// selected harness can honor the model before launching.
 	Model string `json:"model,omitempty" maxLength:"256"`
+	// Permissions is an optional override for this session only. Unsupported
+	// preventive profiles fail before AO creates a worktree or session row.
+	Permissions domain.PermissionMode `json:"permissions,omitempty" enum:"default,read-only,accept-edits,auto,bypass-permissions"`
 
 	// DisplayName is the sidebar label for the session, capped at 20 characters.
 	// `ao spawn --name` always sets it; other clients (e.g. the desktop new-task
@@ -1471,7 +1477,7 @@ type ConversationSkillResponse struct {
 type ConversationTurnSettingsPayload struct {
 	Model           string `json:"model,omitempty"`
 	ReasoningEffort string `json:"reasoningEffort,omitempty"`
-	ApprovalMode    string `json:"approvalMode,omitempty" enum:"default,accept-edits,auto,bypass-permissions"`
+	ApprovalMode    string `json:"approvalMode,omitempty" enum:"default,read-only,accept-edits,auto,bypass-permissions"`
 }
 
 // ResolveConversationApprovalRequest answers a pending approval. DecisionID must
@@ -1651,14 +1657,18 @@ type ConversationSnapshotResponse struct {
 	Mode                       string `json:"mode" enum:"chat,tui"`
 	// Controller is reported separately from history so a client can tell "no
 	// messages yet" apart from "the agent is not running".
-	Controller     string                            `json:"controller" enum:"connecting,ready,busy,recovering,stopped"`
-	LatestSequence int64                             `json:"latestSequence"`
-	OldestSequence int64                             `json:"oldestSequence,omitempty"`
-	HasMoreBefore  bool                              `json:"hasMoreBefore"`
-	Turns          []ConversationTurnResponse        `json:"turns"`
-	Messages       []ConversationMessageResponse     `json:"messages"`
-	Activities     []ConversationActivityResponse    `json:"activities"`
-	BranchPoints   []ConversationBranchPointResponse `json:"branchPoints,omitempty"`
+	Controller string `json:"controller" enum:"connecting,ready,busy,recovering,stopped"`
+	// PermissionFloor is the effective immutable contract enforced by the live
+	// controller. It is omitted while no controller is running. Unlike the raw
+	// session marker, migrated sessions have already resolved project policy here.
+	PermissionFloor domain.PermissionMode             `json:"permissionFloor,omitempty" enum:"default,read-only,accept-edits,auto,bypass-permissions"`
+	LatestSequence  int64                             `json:"latestSequence"`
+	OldestSequence  int64                             `json:"oldestSequence,omitempty"`
+	HasMoreBefore   bool                              `json:"hasMoreBefore"`
+	Turns           []ConversationTurnResponse        `json:"turns"`
+	Messages        []ConversationMessageResponse     `json:"messages"`
+	Activities      []ConversationActivityResponse    `json:"activities"`
+	BranchPoints    []ConversationBranchPointResponse `json:"branchPoints,omitempty"`
 	// Settings are the provider choices for the next turn. Carried on the snapshot
 	// the client already polls so the composer can label itself without a second
 	// request, and so a choice made on another client shows up here.
@@ -1865,6 +1875,10 @@ type SettingsResponse struct {
 	// ChatHarnesses are the agents that can run in chat mode today. Empty means
 	// chat cannot be used yet, which a client should say plainly.
 	ChatHarnesses []string `json:"chatHarnesses"`
+	// PreventiveReadOnlyChatHarnesses is the subset that can enforce the
+	// read-only permission profile. Presence here is a technical guarantee, not
+	// an advisory prompt convention.
+	PreventiveReadOnlyChatHarnesses []string `json:"preventiveReadOnlyChatHarnesses"`
 }
 
 // UpdateSessionInterfaceRequest changes the default interface for new sessions.

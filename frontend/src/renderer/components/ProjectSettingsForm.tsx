@@ -43,7 +43,8 @@ type Project = components["schemas"]["Project"];
 type ProjectConfig = components["schemas"]["ProjectConfig"];
 type TrackerIntakeConfig = components["schemas"]["TrackerIntakeConfig"];
 
-const PERMISSION_MODE_VALUES = ["default", "accept-edits", "auto", "bypass-permissions"] as const;
+const PERMISSION_MODE_VALUES = ["default", "read-only", "accept-edits", "auto", "bypass-permissions"] as const;
+type PermissionModeValue = (typeof PERMISSION_MODE_VALUES)[number] | "";
 const DEFAULT_BRANCH_AUTO = "auto";
 
 const projectQueryKey = (id: string) => ["project", id] as const;
@@ -149,7 +150,7 @@ function SettingsBody({
 		orchestratorModel: config.orchestrator?.agentConfig?.model ?? config.agentConfig?.model ?? "",
 		workerMode: config.worker?.agentConfig?.mode ?? config.agentConfig?.mode ?? "",
 		orchestratorMode: config.orchestrator?.agentConfig?.mode ?? config.agentConfig?.mode ?? "",
-		permissions: config.agentConfig?.permissions ?? "",
+		permissions: (config.agentConfig?.permissions ?? "") as PermissionModeValue,
 		reviewerHarness: config.reviewers?.[0]?.harness ?? "",
 		autoReview: config.autoReview ?? false,
 		intakeEnabled: intake.enabled ?? false,
@@ -803,7 +804,13 @@ function ModelRefreshButton({
 	);
 }
 
-function PermissionModeSelect({ value, onChange }: { value: string; onChange: (value: string) => void }) {
+function PermissionModeSelect({
+	value,
+	onChange,
+}: {
+	value: PermissionModeValue;
+	onChange: (value: PermissionModeValue) => void;
+}) {
 	const { t } = useTranslation();
 	const options = [
 		{ value: "__default__", label: t("settings.project.default") },
@@ -812,7 +819,9 @@ function PermissionModeSelect({ value, onChange }: { value: string; onChange: (v
 			label:
 				value === "default"
 					? t("settings.project.permissionDefault")
-					: value === "accept-edits"
+					: value === "read-only"
+						? t("settings.project.permissionReadOnly")
+						: value === "accept-edits"
 						? t("settings.project.permissionAcceptEdits")
 						: value === "auto"
 							? t("settings.project.permissionAuto")
@@ -825,7 +834,7 @@ function PermissionModeSelect({ value, onChange }: { value: string; onChange: (v
 			aria-label={t("settings.project.permissionMode")}
 			value={value || "__default__"}
 			options={options}
-			onChange={(v) => onChange(v === "__default__" ? "" : v)}
+			onChange={(v) => onChange(v === "__default__" ? "" : (v as PermissionModeValue))}
 		/>
 	);
 }

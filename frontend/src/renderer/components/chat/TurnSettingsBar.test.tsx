@@ -87,3 +87,53 @@ describe("ACP session config options", () => {
 		expect(onChange).toHaveBeenCalledWith("model", { value: "sonnet" });
 	});
 });
+
+describe("preventive read-only approval mode", () => {
+	it("hides read-only when the live driver cannot enforce it", async () => {
+		const user = userEvent.setup();
+		render(<TurnSettingsBar models={[]} settings={{}} onChange={vi.fn()} />);
+
+		await user.click(screen.getByRole("button", { name: "What the agent may do without asking" }));
+		expect(screen.queryByRole("menuitem", { name: /Read only/i })).not.toBeInTheDocument();
+	});
+
+	it("offers and sends read-only when enforcement is advertised", async () => {
+		const onChange = vi.fn();
+		const user = userEvent.setup();
+		render(
+			<TurnSettingsBar
+				models={[]}
+				settings={{}}
+				onChange={onChange}
+				supportsPreventiveReadOnly
+			/>,
+		);
+
+		await user.click(screen.getByRole("button", { name: "What the agent may do without asking" }));
+		await user.click(screen.getByRole("menuitem", { name: /Read only/i }));
+		expect(onChange).toHaveBeenCalledWith({ approvalMode: "read-only" });
+	});
+
+	it("does not expose broader approvals under a durable read-only floor", async () => {
+		const user = userEvent.setup();
+		const props = {
+			models: [],
+			settings: { approvalMode: "default" as const },
+			onChange: vi.fn(),
+			supportsPreventiveReadOnly: true,
+			permissionFloor: "read-only" as const,
+		};
+
+		render(<TurnSettingsBar {...props} />);
+
+		const trigger = screen.getByRole("button", {
+			name: "What the agent may do without asking",
+		});
+		expect(trigger).toHaveTextContent("Read only");
+		await user.click(trigger);
+		expect(screen.getByRole("menuitem", { name: /Read only/i })).toBeInTheDocument();
+		for (const broader of [/Default/i, /Ask outside worktree/i, /Ask when unsure/i, /Never ask/i]) {
+			expect(screen.queryByRole("menuitem", { name: broader })).not.toBeInTheDocument();
+		}
+	});
+});

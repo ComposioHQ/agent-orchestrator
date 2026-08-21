@@ -35,17 +35,21 @@ import type {
 } from "../../types/conversation";
 
 /**
- * AO's four approval modes, in increasing order of what the agent may do without
- * asking. The hints say what each actually permits rather than naming a policy.
+ * AO's approval modes, in increasing order of what the agent may do without
+ * asking. Preventive read-only is offered only when the live driver advertises
+ * technical enforcement. The hints say what each actually permits rather than
+ * naming a policy.
  */
 const APPROVAL_COPY: Record<ApprovalMode, { label: string; hint: string }> = {
 	default: { label: "Default", hint: "Never asks — the worktree is the boundary" },
+	"read-only": { label: "Read only", hint: "Inspect and reason, but filesystem writes are blocked" },
 	"accept-edits": { label: "Ask outside worktree", hint: "Edits here are free; anything else asks" },
 	auto: { label: "Ask when unsure", hint: "The agent decides when to check with you" },
 	"bypass-permissions": { label: "Never ask", hint: "No approvals, no sandbox" },
 };
 
 const APPROVAL_ORDER: ApprovalMode[] = [
+	"read-only",
 	"default",
 	"accept-edits",
 	"auto",
@@ -62,6 +66,8 @@ export function TurnSettingsBar({
 	configPending,
 	error,
 	disabled,
+	supportsPreventiveReadOnly,
+	permissionFloor,
 }: {
 	models: ChatModel[];
 	settings: TurnSettings;
@@ -82,6 +88,10 @@ export function TurnSettingsBar({
 	configPending?: boolean;
 	error?: string;
 	disabled?: boolean;
+	/** Whether this exact driver technically enforces the read-only profile. */
+	supportsPreventiveReadOnly?: boolean;
+	/** Immutable permission contract captured by the AO session. */
+	permissionFloor?: ApprovalMode;
 }) {
 	const selected = models.find((model) => model.id === settings.model);
 	const fallback = models.find((model) => model.default);
@@ -94,7 +104,15 @@ export function TurnSettingsBar({
 	const efforts = (selected ?? fallback)?.efforts ?? [];
 	const effortLabel =
 		settings.reasoningEffort ?? (selected ?? fallback)?.defaultEffort ?? undefined;
-	const approvalLabel = APPROVAL_COPY[settings.approvalMode ?? "default"].label;
+	const approvalMode = permissionFloor === "read-only"
+		? "read-only"
+		: settings.approvalMode ?? "default";
+	const approvalLabel = APPROVAL_COPY[approvalMode].label;
+	const approvalModes = permissionFloor === "read-only"
+		? (["read-only"] satisfies ApprovalMode[])
+		: supportsPreventiveReadOnly
+			? APPROVAL_ORDER
+			: APPROVAL_ORDER.filter((mode) => mode !== "read-only");
 
 	return (
 		<div role="group" aria-label="Turn settings" className="flex min-w-0 flex-col gap-0.5">
@@ -224,7 +242,7 @@ export function TurnSettingsBar({
 								Applies to the next turn
 							</span>
 						</DropdownMenuLabel>
-						{APPROVAL_ORDER.map((mode) => (
+						{approvalModes.map((mode) => (
 							<DropdownMenuItem
 								key={mode}
 								onSelect={() => onChange({ ...settings, approvalMode: mode })}
@@ -233,7 +251,7 @@ export function TurnSettingsBar({
 								<span
 									className={cn(
 										"text-xs",
-										mode === (settings.approvalMode ?? "default")
+										mode === approvalMode
 											? "text-foreground"
 											: "text-muted-foreground",
 									)}

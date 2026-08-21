@@ -49,7 +49,7 @@ type Service struct {
 	gateMu       sync.Mutex
 	gates        map[domain.SessionID]controllerGate
 	probeMu      sync.Mutex
-	probed       map[domain.AgentHarness]struct{}
+	probed       map[domain.AgentHarness]ports.ChatCapabilities
 }
 
 // controllerGate serializes start/stop for one session without making provider
@@ -106,7 +106,7 @@ func New(opts Options) *Service {
 		controllers:  make(map[domain.SessionID]*Controller),
 		startConfigs: make(map[domain.SessionID]StartConfig),
 		gates:        make(map[domain.SessionID]controllerGate),
-		probed:       make(map[domain.AgentHarness]struct{}),
+		probed:       make(map[domain.AgentHarness]ports.ChatCapabilities),
 	}
 }
 
@@ -281,8 +281,12 @@ func (s *Service) Start(ctx context.Context, cfg StartConfig) (*Controller, erro
 		return nil, fmt.Errorf("chat driver for %s: %w", cfg.Harness, err)
 	}
 
-	if err := s.ensureDriverReady(ctx, cfg.Harness, driver); err != nil {
+	caps, err := s.ensureDriverReady(ctx, cfg.Harness, driver)
+	if err != nil {
 		return nil, err
+	}
+	if err := validatePermissionMode(caps, cfg.Permissions); err != nil {
+		return nil, fmt.Errorf("%s: %w", cfg.Harness, err)
 	}
 
 	scope := domain.ConversationScopeSession
@@ -293,6 +297,18 @@ func (s *Service) Start(ctx context.Context, cfg StartConfig) (*Controller, erro
 		ctx, s.newID(), scope, cfg.ProjectID, cfg.SessionID, s.now())
 	if err != nil {
 		return nil, fmt.Errorf("open conversation: %w", err)
+	}
+	settings, constrained := applyPermissionFloor(cfg.Permissions, conversation.Settings)
+	if constrained {
+		now := s.now()
+		if err := s.store.SetConversationSettings(ctx, conversation.ID, settings, now); err != nil {
+			return nil, fmt.Errorf("enforce session permission floor: %w", err)
+		}
+		conversation.Settings = settings
+		conversation.UpdatedAt = now
+	}
+	if err := validatePermissionMode(caps, conversation.Settings.ApprovalMode); err != nil {
+		return nil, fmt.Errorf("%s: stored conversation settings: %w", cfg.Harness, err)
 	}
 
 	var conv ports.ChatConversation
@@ -324,6 +340,14 @@ func (s *Service) Start(ctx context.Context, cfg StartConfig) (*Controller, erro
 	}
 	if err != nil {
 		return nil, err
+	}
+	if err := validatePermissionMode(conv.Capabilities(), cfg.Permissions); err != nil {
+		_ = conv.Close()
+		return nil, fmt.Errorf("%s: negotiated capabilities: %w", cfg.Harness, err)
+	}
+	if err := validatePermissionMode(conv.Capabilities(), conversation.Settings.ApprovalMode); err != nil {
+		_ = conv.Close()
+		return nil, fmt.Errorf("%s: negotiated capabilities for stored conversation settings: %w", cfg.Harness, err)
 	}
 
 	// Claim the durable fence before the controller starts consuming events. An
@@ -374,7 +398,8 @@ func (s *Service) Start(ctx context.Context, cfg StartConfig) (*Controller, erro
 	// A fresh generation per launch, so events from the controller this one
 	// replaced can be told apart from the current one's.
 	controller := newController(
-		cfg.SessionID, conversation, generation, conv, s.store, s.activity, s.log, s.newID, s.now)
+		cfg.SessionID, conversation, generation, conv, cfg.Permissions,
+		s.store, s.activity, s.log, s.newID, s.now)
 	if cfg.ProviderConversationID != "" && !cfg.SkipNativeHistoryImport {
 		// The provider's native thread is the continuity authority across TUI and
 		// Chat. Import it before the live projector starts so the first notification
@@ -418,9 +443,10 @@ func (s *Service) Start(ctx context.Context, cfg StartConfig) (*Controller, erro
 		// after ControllerReady commits ownership, synchronization must be an
 		// infallible assignment rather than another operation that can strand it.
 		controller.conversation.ActiveBranchID = commit.Conversation.ActiveBranchID
-		controller.conversation.Settings = commit.Conversation.Settings
+		settings, _ := applyPermissionFloor(cfg.Permissions, commit.Conversation.Settings)
+		controller.conversation.Settings = settings
 		controller.conversation.UpdatedAt = commit.Conversation.UpdatedAt
-		controller.settings = commit.Conversation.Settings
+		controller.settings = settings
 	}
 	s.mu.Lock()
 	s.controllers[cfg.SessionID] = controller
@@ -648,11 +674,15 @@ func (s *Service) StopAll(ctx context.Context) {
 
 // Snapshot is the durable read model a client bootstraps from.
 type Snapshot struct {
-	Conversation               domain.ConversationRecord
-	SessionID                  domain.SessionID
-	Harness                    domain.AgentHarness
-	Mode                       domain.SessionMode
-	Controller                 ports.ChatControllerState
+	Conversation domain.ConversationRecord
+	SessionID    domain.SessionID
+	Harness      domain.AgentHarness
+	Mode         domain.SessionMode
+	Controller   ports.ChatControllerState
+	// PermissionFloor is the effective immutable contract held by the live
+	// controller. It is empty when no controller is running; importantly, it is
+	// already resolved for migrated sessions whose durable marker is empty.
+	PermissionFloor            ports.PermissionMode
 	Turns                      []domain.ConversationTurn
 	Messages                   []domain.ConversationMessage
 	Activities                 []domain.ConversationActivity
@@ -738,9 +768,11 @@ func (s *Service) Snapshot(ctx context.Context, id domain.SessionID) (Snapshot, 
 
 	state := ports.ChatControllerStopped
 	var caps ports.ChatCapabilities
+	var permissionFloor ports.PermissionMode
 	if controller, err := s.Controller(id); err == nil {
 		state = controller.State()
 		caps = controller.Capabilities()
+		permissionFloor = ports.NormalizePermissionMode(controller.permissionFloor)
 	}
 
 	return Snapshot{
@@ -749,6 +781,7 @@ func (s *Service) Snapshot(ctx context.Context, id domain.SessionID) (Snapshot, 
 		Harness:                    record.Harness,
 		Mode:                       domain.NormalizeSessionMode(record.Mode),
 		Controller:                 state,
+		PermissionFloor:            permissionFloor,
 		Turns:                      rows.Turns,
 		Messages:                   rows.Messages,
 		Activities:                 rows.Activities,
@@ -790,9 +823,11 @@ func (s *Service) SnapshotPage(ctx context.Context, id domain.SessionID, beforeS
 	}
 	state := ports.ChatControllerStopped
 	var caps ports.ChatCapabilities
+	var permissionFloor ports.PermissionMode
 	if controller, err := s.Controller(id); err == nil {
 		state = controller.State()
 		caps = controller.Capabilities()
+		permissionFloor = ports.NormalizePermissionMode(controller.permissionFloor)
 	}
 	return Snapshot{
 		Conversation:               rows.Conversation,
@@ -800,6 +835,7 @@ func (s *Service) SnapshotPage(ctx context.Context, id domain.SessionID, beforeS
 		Harness:                    record.Harness,
 		Mode:                       domain.NormalizeSessionMode(record.Mode),
 		Controller:                 state,
+		PermissionFloor:            permissionFloor,
 		Turns:                      rows.Turns,
 		Messages:                   rows.Messages,
 		Activities:                 rows.Activities,
@@ -850,17 +886,31 @@ func (s *Service) SupportsChat(harness domain.AgentHarness) bool {
 	return s.drivers.SupportsChat(harness)
 }
 
+// SupportsPermissionMode reports whether the registered driver declares that it
+// can enforce mode. It performs no local binary/auth probe, so settings and
+// machine callers can capability-check before creating durable session state.
+func (s *Service) SupportsPermissionMode(harness domain.AgentHarness, mode ports.PermissionMode) bool {
+	return s.drivers.SupportsPermissionMode(harness, mode)
+}
+
 // PreflightChat reports whether a harness can start in chat mode right now.
 //
 // Called before any durable state exists, so an unsupported request costs nothing
 // — no terminated orphan row, no wasted worktree. It never downgrades to TUI:
 // that would put the user in a terminal they did not ask for.
-func (s *Service) PreflightChat(ctx context.Context, harness domain.AgentHarness) error {
+func (s *Service) PreflightChat(ctx context.Context, harness domain.AgentHarness, permissions ports.PermissionMode) error {
 	driver, err := s.drivers.Driver(harness)
 	if err != nil {
 		return fmt.Errorf("%w: %s has no chat driver", ports.ErrChatUnsupported, harness)
 	}
-	return s.ensureDriverReady(ctx, harness, driver)
+	caps, err := s.ensureDriverReady(ctx, harness, driver)
+	if err != nil {
+		return err
+	}
+	if err := validatePermissionMode(caps, permissions); err != nil {
+		return fmt.Errorf("%s: %w", harness, err)
+	}
+	return nil
 }
 
 // ensureDriverReady performs the provider capability probe once per harness for
@@ -869,21 +919,21 @@ func (s *Service) PreflightChat(ctx context.Context, harness domain.AgentHarness
 // startup scale with twice the number of sessions. Only successful production-
 // capable probes are cached, so a repaired install can be retried without a
 // daemon restart.
-func (s *Service) ensureDriverReady(ctx context.Context, harness domain.AgentHarness, driver ports.ChatDriver) error {
+func (s *Service) ensureDriverReady(ctx context.Context, harness domain.AgentHarness, driver ports.ChatDriver) (ports.ChatCapabilities, error) {
 	s.probeMu.Lock()
 	defer s.probeMu.Unlock()
-	if _, ok := s.probed[harness]; ok {
-		return nil
+	if caps, ok := s.probed[harness]; ok {
+		return caps, nil
 	}
 	caps, err := driver.Probe(ctx)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if missing := ports.MissingProductionCapabilities(caps); len(missing) > 0 {
-		return fmt.Errorf("%w: %s lacks %v", ports.ErrChatUnsupported, harness, missing)
+		return nil, fmt.Errorf("%w: %s lacks %v", ports.ErrChatUnsupported, harness, missing)
 	}
-	s.probed[harness] = struct{}{}
-	return nil
+	s.probed[harness] = caps
+	return caps, nil
 }
 
 // StartChat launches the controller for a freshly created session.

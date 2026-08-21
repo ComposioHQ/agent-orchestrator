@@ -5278,6 +5278,12 @@ components:
         model:
           type: string
         permissions:
+          enum:
+          - default
+          - read-only
+          - accept-edits
+          - auto
+          - bypass-permissions
           type: string
       type: object
     AgentInfo:
@@ -5764,6 +5770,14 @@ components:
           - tui
           type: string
         model:
+          type: string
+        permissions:
+          enum:
+          - default
+          - read-only
+          - accept-edits
+          - auto
+          - bypass-permissions
           type: string
         pinnedAt:
           format: date-time
@@ -6330,6 +6344,14 @@ components:
         oldestSequence:
           format: int64
           type: integer
+        permissionFloor:
+          enum:
+          - default
+          - read-only
+          - accept-edits
+          - auto
+          - bypass-permissions
+          type: string
         rateLimits:
           $ref: '#/components/schemas/ConversationRateLimitsPayload'
         sessionId:
@@ -6435,6 +6457,7 @@ components:
         approvalMode:
           enum:
           - default
+          - read-only
           - accept-edits
           - auto
           - bypass-permissions
@@ -8400,9 +8423,14 @@ components:
           - chat
           - tui
           type: string
+        preventiveReadOnlyChatHarnesses:
+          items:
+            type: string
+          type: array
       required:
       - defaultSessionMode
       - chatHarnesses
+      - preventiveReadOnlyChatHarnesses
       type: object
     ShellTerminalEnvelope:
       properties:
@@ -8507,6 +8535,14 @@ components:
           type: string
         model:
           maxLength: 256
+          type: string
+        permissions:
+          enum:
+          - default
+          - read-only
+          - accept-edits
+          - auto
+          - bypass-permissions
           type: string
         projectId:
           type: string

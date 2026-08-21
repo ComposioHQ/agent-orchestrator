@@ -73,6 +73,11 @@ type SessionMetadata struct {
 	// Model is the agent model this session resolved to at spawn time, including
 	// any per-spawn --model override. Empty means the agent's default model.
 	Model string `json:"model,omitempty"`
+	// Permissions is the resolved permission contract for this session. It is
+	// persisted so a one-spawn override cannot broaden silently on resume.
+	// Empty identifies sessions created before this fact was durable; those keep
+	// the compatibility behavior of resolving the current project setting.
+	Permissions PermissionMode `json:"permissions,omitempty"`
 	// BrowserCapabilityVerifier is a one-way verifier for the random browser
 	// capability held by this session's worker process. The bearer token itself
 	// is never persisted, so reading the database cannot grant access to another

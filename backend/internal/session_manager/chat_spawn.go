@@ -29,7 +29,7 @@ type ChatLauncher interface {
 	// PreflightChat reports whether a harness can start in chat mode right now.
 	// Called before any durable state exists so an unsupported request costs
 	// nothing.
-	PreflightChat(ctx context.Context, harness domain.AgentHarness) error
+	PreflightChat(ctx context.Context, harness domain.AgentHarness, permissions ports.PermissionMode) error
 	// StartChat launches the controller and returns the provider conversation
 	// handle to persist for resume. Implementations must call ControllerReady
 	// after the provider and generation exist but before consuming live events.
@@ -170,6 +170,7 @@ func (m *Manager) launchChatController(ctx context.Context, in chatSpawn) (domai
 				ProviderConversationID: started.ProviderConversationID,
 				ControllerGeneration:   started.ControllerGeneration,
 				Model:                  agentConfig.Model,
+				Permissions:            permissionModeForFreshSession(agentConfig.Permissions),
 			}
 			completionErr = m.lcm.MarkSpawned(ctx, id, metadata)
 			controllerCommitted = completionErr == nil
@@ -312,7 +313,7 @@ func (m *Manager) resumeChatController(
 		return RestoreResult{}, fmt.Errorf("%s %s: switched continuation: %w", operation, rec.ID, err)
 	}
 
-	agentConfig := effectiveAgentConfig(rec.Kind, project.Config)
+	agentConfig := effectiveSessionAgentConfig(rec, project.Config)
 	additionalDirectories, err := m.restoredWorkspaceProjectDirectories(ctx, rec, project, ws.Path)
 	if err != nil {
 		return RestoreResult{}, fmt.Errorf("%s %s: workspace roots: %w", operation, rec.ID, err)

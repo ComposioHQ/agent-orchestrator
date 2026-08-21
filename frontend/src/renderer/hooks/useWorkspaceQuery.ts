@@ -110,6 +110,7 @@ async function fetchWorkspaces(): Promise<WorkspaceSummary[]> {
 						// the mode this session was created with, not from whatever the
 						// current default happens to be.
 						mode: session.mode === "chat" ? "chat" : "tui",
+						permissions: session.permissions,
 						branch: session.branch || undefined,
 						status,
 						scmStatus,

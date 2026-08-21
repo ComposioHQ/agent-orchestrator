@@ -482,7 +482,12 @@ export interface ConversationActivity {
 export type ConversationItem = ConversationMessage | ConversationActivity;
 
 /** AO's permission vocabulary, applied per turn in chat mode. */
-export type ApprovalMode = "default" | "accept-edits" | "auto" | "bypass-permissions";
+export type ApprovalMode =
+	| "default"
+	| "read-only"
+	| "accept-edits"
+	| "auto"
+	| "bypass-permissions";
 
 /**
  * The provider choices for the next turn.
@@ -657,6 +662,9 @@ export interface ConversationSnapshot {
 	harness: string;
 	mode: SessionMode;
 	controller: { state: ControllerState; error?: string };
+	/** The effective immutable contract enforced by the live controller. Unlike
+	 *  the durable session marker, this is resolved for migrated sessions. */
+	permissionFloor?: ApprovalMode;
 	turns: ConversationTurn[];
 	/** Already ordered by sequence. The renderer does not re-sort. */
 	items: ConversationItem[];

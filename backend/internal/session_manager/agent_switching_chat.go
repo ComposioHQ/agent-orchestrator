@@ -130,7 +130,15 @@ func (m *Manager) executeChatAgentSwitch(
 	if m.chat == nil {
 		return result, fmt.Errorf("switch Chat agent %s: %w", id, ports.ErrChatUnsupported)
 	}
-	if err := m.chat.PreflightChat(ctx, cfg.TargetHarness); err != nil {
+	agentConfig := effectiveSessionAgentConfig(rec, project.Config)
+	if roleOverride(rec.Kind, project.Config).Harness != cfg.TargetHarness {
+		agentConfig.Model = ""
+		agentConfig.Mode = ""
+	}
+	if model := strings.TrimSpace(cfg.Model); model != "" {
+		agentConfig.Model = model
+	}
+	if err := m.chat.PreflightChat(ctx, cfg.TargetHarness, agentConfig.Permissions); err != nil {
 		return result, fmt.Errorf("switch Chat agent %s: target preflight: %w", id, err)
 	}
 	handoff, ok := m.chat.(chatHandoffLauncher)
@@ -143,14 +151,6 @@ func (m *Manager) executeChatAgentSwitch(
 		return result, fmt.Errorf("switch Chat agent %s: system prompt: %w", id, err)
 	}
 	systemPrompt = appendAgentContinuationProtocol(systemPrompt)
-	agentConfig := effectiveAgentConfig(rec.Kind, project.Config)
-	if roleOverride(rec.Kind, project.Config).Harness != cfg.TargetHarness {
-		agentConfig.Model = ""
-		agentConfig.Mode = ""
-	}
-	if model := strings.TrimSpace(cfg.Model); model != "" {
-		agentConfig.Model = model
-	}
 	targetConfigDir, err := nativeConfigDir(ctx, targetAgent, targetEnv)
 	if err != nil {
 		return result, fmt.Errorf("switch Chat agent %s: target config: %w", id, err)
@@ -489,7 +489,7 @@ func (m *Manager) rollbackStoppedChatAgentSwitchSource(
 	if err != nil {
 		return err
 	}
-	agentConfig := effectiveAgentConfig(rec.Kind, project.Config)
+	agentConfig := effectiveSessionAgentConfig(rec, project.Config)
 	env := m.runtimeEnv(rec.ID, rec.ProjectID, rec.IssueID, project.Config.Env)
 	m.augmentAgentRuntimeEnv(sourceAgent, env)
 	if err := m.prepareWorkspace(

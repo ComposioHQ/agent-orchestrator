@@ -3569,6 +3569,7 @@ func TestMarkSpawnedPersistsChatControllerFacts(t *testing.T) {
 		WorkspacePath:          "/ws",
 		ProviderConversationID: "thread-abc",
 		ControllerGeneration:   "gen-1",
+		Permissions:            domain.PermissionModeReadOnly,
 	}); err != nil {
 		t.Fatalf("MarkSpawned: %v", err)
 	}
@@ -3584,6 +3585,9 @@ func TestMarkSpawnedPersistsChatControllerFacts(t *testing.T) {
 	if got.Metadata.ControllerGeneration != "gen-1" {
 		t.Fatalf("controller generation = %q", got.Metadata.ControllerGeneration)
 	}
+	if got.Metadata.Permissions != domain.PermissionModeReadOnly {
+		t.Fatalf("permission mode = %q; a restore could silently broaden read-only", got.Metadata.Permissions)
+	}
 
 	// A relaunch rotates the generation: the new value must replace the old, or
 	// events from the superseded controller could not be told apart.
@@ -3597,6 +3601,9 @@ func TestMarkSpawnedPersistsChatControllerFacts(t *testing.T) {
 	got, _, _ = st.GetSession(ctx, "mer-1")
 	if got.Metadata.ControllerGeneration != "gen-2" {
 		t.Fatalf("generation = %q after relaunch, want it rotated to gen-2", got.Metadata.ControllerGeneration)
+	}
+	if got.Metadata.Permissions != domain.PermissionModeReadOnly {
+		t.Fatalf("permission mode = %q after relaunch, want read-only preserved", got.Metadata.Permissions)
 	}
 }
 

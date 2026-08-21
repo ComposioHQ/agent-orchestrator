@@ -44,3 +44,22 @@ func TestShippedChatDrivers(t *testing.T) {
 		}
 	}
 }
+
+func TestPreventiveReadOnlyIsAdvertisedOnlyByCodexChat(t *testing.T) {
+	r := Build(nil)
+
+	if !r.SupportsPermissionMode(domain.HarnessCodex, ports.PermissionModeReadOnly) {
+		t.Fatal("Codex Chat does not advertise preventive read-only enforcement")
+	}
+	for _, harness := range []domain.AgentHarness{
+		domain.HarnessClaudeCode,
+		domain.HarnessOpenCode,
+		domain.HarnessDroid,
+		domain.HarnessKimchi,
+		domain.HarnessAider,
+	} {
+		if r.SupportsPermissionMode(harness, ports.PermissionModeReadOnly) {
+			t.Errorf("%s advertises preventive read-only without an enforcing driver", harness)
+		}
+	}
+}

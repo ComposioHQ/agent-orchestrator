@@ -147,7 +147,7 @@ ao project set-config <id> [flags]
 | `--model string` | Agent model override (e.g. `claude-opus-4-5`) | - |
 | `--orchestrator-agent string` | Harness override for orchestrator sessions | - |
 | `--orchestrator-rules string` | Project-specific standing instructions appended to orchestrator session prompts | - |
-| `--permission string` | Permission mode: `default`, `accept-edits`, `auto`, `bypass-permissions` | - |
+| `--permission string` | Permission mode: `default`, `read-only`, `accept-edits`, `auto`, `bypass-permissions` | - |
 | `--post-create stringArray` | Command to run after workspace creation (repeatable) | - |
 | `--session-prefix string` | Displayed session-id prefix | - |
 | `--symlink stringArray` | Repo-relative path to symlink into workspaces (repeatable) | - |

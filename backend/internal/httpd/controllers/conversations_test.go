@@ -44,6 +44,8 @@ type fakeConversationService struct {
 	mcpServers     []domain.ConversationMCPServer
 	reloadErr      error
 	sent           ports.ChatUserMessage
+	settings       domain.ConversationSettings
+	settingsErr    error
 	inputRequestID string
 	inputResponse  ports.ChatInputResponse
 }
@@ -91,8 +93,9 @@ func (f *fakeConversationService) SetConfigOption(_ context.Context, _ domain.Se
 	return f.configOptions, f.configErr
 }
 
-func (f *fakeConversationService) SetTurnSettings(context.Context, domain.SessionID, domain.ConversationSettings) (domain.ConversationSettings, error) {
-	return domain.ConversationSettings{}, nil
+func (f *fakeConversationService) SetTurnSettings(_ context.Context, _ domain.SessionID, settings domain.ConversationSettings) (domain.ConversationSettings, error) {
+	f.settings = settings
+	return settings, f.settingsErr
 }
 
 func (f *fakeConversationService) Compact(context.Context, domain.SessionID) (ports.ChatCompactionResult, error) {
@@ -146,6 +149,44 @@ func conversationSnapshotBody(t *testing.T, snapshot chatsvc.Snapshot) map[strin
 		t.Fatalf("decode: %v", err)
 	}
 	return decoded
+}
+
+func TestConversationSettingsAcceptPreventiveReadOnlyOrReturnTypedUnsupportedError(t *testing.T) {
+	t.Run("supported", func(t *testing.T) {
+		service := &fakeConversationService{}
+		server := conversationTestServer(t, service)
+		body, status, headers := doRequest(t, server, http.MethodPatch,
+			"/api/v1/sessions/p1-1/conversation/settings", `{"approvalMode":"read-only"}`)
+
+		assertJSON(t, headers)
+		if status != http.StatusOK {
+			t.Fatalf("status = %d, want %d; body=%s", status, http.StatusOK, body)
+		}
+		if service.settings.ApprovalMode != domain.PermissionModeReadOnly {
+			t.Fatalf("approval mode = %q, want %q", service.settings.ApprovalMode, domain.PermissionModeReadOnly)
+		}
+	})
+
+	t.Run("unsupported", func(t *testing.T) {
+		service := &fakeConversationService{settingsErr: ports.ErrPermissionModeUnsupported}
+		server := conversationTestServer(t, service)
+		body, status, headers := doRequest(t, server, http.MethodPatch,
+			"/api/v1/sessions/p1-1/conversation/settings", `{"approvalMode":"read-only"}`)
+
+		assertJSON(t, headers)
+		assertErrorCode(t, body, status, http.StatusConflict, "CHAT_APPROVAL_MODE_UNSUPPORTED")
+	})
+}
+
+func TestConversationSnapshotExposesEffectivePermissionFloor(t *testing.T) {
+	body := conversationSnapshotBody(t, chatsvc.Snapshot{
+		SessionID:       domain.SessionID("p1-1"),
+		Mode:            domain.SessionModeChat,
+		PermissionFloor: ports.PermissionModeReadOnly,
+	})
+	if body["permissionFloor"] != "read-only" {
+		t.Fatalf("permissionFloor = %#v, want read-only", body["permissionFloor"])
+	}
 }
 
 func TestConversationSnapshotExposesSafeEditContentAndBranchMetadata(t *testing.T) {

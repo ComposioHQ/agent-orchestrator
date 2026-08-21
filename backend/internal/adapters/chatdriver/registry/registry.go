@@ -82,6 +82,17 @@ func (r *Registry) SupportsChat(harness domain.AgentHarness) bool {
 	return ok
 }
 
+// SupportsPermissionMode reports whether the registered driver declares that it
+// can enforce mode. This is static capability discovery; local install/auth
+// readiness remains the spawn preflight's responsibility.
+func (r *Registry) SupportsPermissionMode(harness domain.AgentHarness, mode ports.PermissionMode) bool {
+	driver, ok := r.drivers[harness]
+	if !ok {
+		return false
+	}
+	return ports.SupportsChatPermissionMode(driver.Capabilities(), mode)
+}
+
 // Harnesses lists the harnesses with a registered driver, for diagnostics and for
 // telling a user which agents can run in chat mode.
 func (r *Registry) Harnesses() []domain.AgentHarness {

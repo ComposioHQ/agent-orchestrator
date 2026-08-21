@@ -649,6 +649,7 @@
 	"settings.project.permissionAuto": "Automático",
 	"settings.project.permissionBypass": "Ignorar permissões",
 	"settings.project.permissionDefault": "Padrão",
+	"settings.project.permissionReadOnly": "Somente leitura",
 	"settings.project.permissionMode": "Modo de permissão",
 	"settings.project.refresh": "Atualizar",
 	"settings.project.refreshAgents": "Atualizar agentes",

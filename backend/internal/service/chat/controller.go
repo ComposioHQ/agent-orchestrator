@@ -147,6 +147,11 @@ type Controller struct {
 	sessionID    domain.SessionID
 	conversation domain.ConversationRecord
 	generation   string
+	// permissionFloor is the immutable permission contract of the AO session.
+	// Per-turn settings may narrow ordinary sessions, but a preventive read-only
+	// session must never be broadened by settings retained on a reused project
+	// conversation.
+	permissionFloor ports.PermissionMode
 
 	conv     ports.ChatConversation
 	store    Store
@@ -216,31 +221,63 @@ var ErrNoActiveTurn = errors.New("no active turn")
 // session_updated event announces the target mode.
 var ErrControllerHandoff = errors.New("chat controller is switching interfaces")
 
+func validatePermissionMode(caps ports.ChatCapabilities, mode ports.PermissionMode) error {
+	if ports.SupportsChatPermissionMode(caps, mode) {
+		return nil
+	}
+	return fmt.Errorf("%w: %q requires the %s capability",
+		ports.ErrPermissionModeUnsupported, mode, ports.ChatCapabilityPreventiveReadOnly)
+}
+
+func validatePermissionFloor(floor, mode ports.PermissionMode) error {
+	if ports.NormalizePermissionMode(floor) != ports.PermissionModeReadOnly ||
+		ports.NormalizePermissionMode(mode) == ports.PermissionModeReadOnly {
+		return nil
+	}
+	return fmt.Errorf("%w: %q would broaden a %q session",
+		ports.ErrPermissionModeUnsupported, mode, ports.PermissionModeReadOnly)
+}
+
+func applyPermissionFloor(
+	floor ports.PermissionMode,
+	settings domain.ConversationSettings,
+) (domain.ConversationSettings, bool) {
+	if validatePermissionFloor(floor, settings.ApprovalMode) == nil {
+		return settings, false
+	}
+	settings.ApprovalMode = domain.PermissionModeReadOnly
+	return settings, true
+}
+
 func newController(
 	sessionID domain.SessionID,
 	conversation domain.ConversationRecord,
 	generation string,
 	conv ports.ChatConversation,
+	permissionFloor ports.PermissionMode,
 	store Store,
 	activity ActivityRecorder,
 	log *slog.Logger,
 	newID IDFactory,
 	now Clock,
 ) *Controller {
+	settings, _ := applyPermissionFloor(permissionFloor, conversation.Settings)
+	conversation.Settings = settings
 	c := &Controller{
-		sessionID:    sessionID,
-		conversation: conversation,
-		generation:   generation,
-		conv:         conv,
-		store:        store,
-		activity:     activity,
-		log:          log,
-		newID:        newID,
-		now:          now,
-		state:        ports.ChatControllerReady,
-		settings:     conversation.Settings,
-		mcpServers:   map[string]domain.ConversationMCPServer{},
-		stopped:      make(chan struct{}),
+		sessionID:       sessionID,
+		conversation:    conversation,
+		generation:      generation,
+		permissionFloor: permissionFloor,
+		conv:            conv,
+		store:           store,
+		activity:        activity,
+		log:             log,
+		newID:           newID,
+		now:             now,
+		state:           ports.ChatControllerReady,
+		settings:        settings,
+		mcpServers:      map[string]domain.ConversationMCPServer{},
+		stopped:         make(chan struct{}),
 	}
 	// Seeded from the durable row so a reconnect merges onto what is already known
 	// rather than starting from blank and reporting a conversation as having no
@@ -838,6 +875,9 @@ func (c *Controller) Send(ctx context.Context, msg ports.ChatUserMessage) (domai
 	if handoff {
 		return domain.ConversationTurn{}, ErrControllerHandoff
 	}
+	if err := validatePermissionMode(c.conv.Capabilities(), c.turnSettings().Approval); err != nil {
+		return domain.ConversationTurn{}, err
+	}
 
 	now := c.now()
 	turnID := c.newID()
@@ -897,6 +937,12 @@ func (c *Controller) Settings() domain.ConversationSettings {
 // The row is written first: if that fails, the in-memory copy must not move, or a
 // restart would silently revert a choice the user watched take effect.
 func (c *Controller) SetSettings(ctx context.Context, settings domain.ConversationSettings) error {
+	if err := validatePermissionFloor(c.permissionFloor, settings.ApprovalMode); err != nil {
+		return err
+	}
+	if err := validatePermissionMode(c.conv.Capabilities(), settings.ApprovalMode); err != nil {
+		return err
+	}
 	if err := c.store.SetConversationSettings(ctx, c.conversation.ID, settings, c.now()); err != nil {
 		return fmt.Errorf("record conversation settings: %w", err)
 	}
@@ -909,6 +955,7 @@ func (c *Controller) SetSettings(ctx context.Context, settings domain.Conversati
 // turnSettings converts the stored choices into what a driver takes per turn.
 func (c *Controller) turnSettings() ports.ChatTurnSettings {
 	current := c.Settings()
+	current, _ = applyPermissionFloor(c.permissionFloor, current)
 	return ports.ChatTurnSettings{
 		Model:    current.Model,
 		Effort:   current.ReasoningEffort,

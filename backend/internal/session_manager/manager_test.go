@@ -3688,7 +3688,7 @@ func TestSpawn_ForwardsResolvedAgentConfigPermissions(t *testing.T) {
 	}
 }
 
-func TestRestore_ForwardsResolvedAgentConfigPermissions(t *testing.T) {
+func TestRestore_PreMigrationEmptyPermissionsResolveProjectConfig(t *testing.T) {
 	st := newFakeStore()
 	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: domain.ProjectConfig{
 		AgentConfig: domain.AgentConfig{Permissions: domain.PermissionModeBypassPermissions},

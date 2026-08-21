@@ -622,6 +622,7 @@
 	"settings.project.permissionAuto": "自动",
 	"settings.project.permissionBypass": "绕过权限",
 	"settings.project.permissionDefault": "默认",
+	"settings.project.permissionReadOnly": "只读",
 	"settings.project.permissionMode": "权限模式",
 	"settings.project.refresh": "刷新",
 	"settings.project.refreshAgents": "刷新代理列表",

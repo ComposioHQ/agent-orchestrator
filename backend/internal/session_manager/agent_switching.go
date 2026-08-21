@@ -1139,7 +1139,10 @@ func (m *Manager) prepareTargetActivation(ctx context.Context, store ports.Agent
 	if err != nil {
 		return preparedTargetActivation{}, fmt.Errorf("system prompt file: %w", err)
 	}
-	config := effectiveAgentConfig(rec.Kind, project.Config)
+	config := effectiveSessionAgentConfig(rec, project.Config)
+	if err := validateTUIPermissionMode(config.Permissions); err != nil {
+		return preparedTargetActivation{}, err
+	}
 	if roleOverride(rec.Kind, project.Config).Harness != harness {
 		config.Model = ""
 		config.Mode = ""

@@ -268,6 +268,13 @@ func TestSpawnCommand_RejectsOverlongName(t *testing.T) {
 	}
 }
 
+func TestSpawnCommand_RejectsUnknownPermission(t *testing.T) {
+	_, _, err := executeCLI(t, Deps{}, "spawn", "--project", "demo", "--name", "worker", "--permission", "advisory-only")
+	if err == nil || ExitCode(err) != 2 || !strings.Contains(err.Error(), "--permission must be") {
+		t.Fatalf("err=%v exit=%d, want permission usage error", err, ExitCode(err))
+	}
+}
+
 func TestSpawnResolvesProjectFromEnvAndDefaultAgent(t *testing.T) {
 	cfg := setConfigEnv(t)
 	var requests []string
@@ -293,7 +300,7 @@ func TestSpawnResolvesProjectFromEnvAndDefaultAgent(t *testing.T) {
 	writeRunFileFor(t, cfg, srv)
 	t.Setenv("AO_PROJECT_ID", "demo")
 
-	out, errOut, err := executeCLI(t, Deps{ProcessAlive: func(int) bool { return true }}, "spawn", "--prompt", "Fix failing tests in auth", "--name", "worker")
+	out, errOut, err := executeCLI(t, Deps{ProcessAlive: func(int) bool { return true }}, "spawn", "--prompt", "Fix failing tests in auth", "--name", "worker", "--permission", "read-only")
 	if err != nil {
 		t.Fatalf("spawn failed: %v stderr=%s", err, errOut)
 	}
@@ -305,6 +312,9 @@ func TestSpawnResolvesProjectFromEnvAndDefaultAgent(t *testing.T) {
 	}
 	if req.ProjectID != "demo" || req.Harness != "codex" || req.DisplayName != "worker" {
 		t.Fatalf("spawn request = %#v", req)
+	}
+	if req.Permissions != "read-only" {
+		t.Fatalf("spawn permission = %q, want read-only", req.Permissions)
 	}
 	want := []string{"GET /api/v1/projects/demo", "POST /api/v1/agents/refresh", "POST /api/v1/sessions"}
 	if !reflect.DeepEqual(requests, want) {

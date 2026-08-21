@@ -748,6 +748,10 @@ func writeConversationError(w http.ResponseWriter, r *http.Request, err error) {
 		envelope.WriteAPIError(w, r, http.StatusBadRequest, "validation",
 			"CHAT_CONFIG_OPTION_INVALID", err.Error(), nil)
 
+	case errors.Is(err, ports.ErrPermissionModeUnsupported):
+		envelope.WriteAPIError(w, r, http.StatusConflict, "conflict",
+			"CHAT_APPROVAL_MODE_UNSUPPORTED", err.Error(), nil)
+
 	case errors.Is(err, ports.ErrChatUnsupported):
 		envelope.WriteAPIError(w, r, http.StatusConflict, "conflict",
 			"SESSION_MODE_UNSUPPORTED", err.Error(), nil)
@@ -787,6 +791,7 @@ func conversationSnapshotResponse(s chatsvc.Snapshot) ConversationSnapshotRespon
 		Harness:                    string(s.Harness),
 		Mode:                       string(s.Mode),
 		Controller:                 string(s.Controller),
+		PermissionFloor:            s.PermissionFloor,
 		LatestSequence:             s.Conversation.LatestSequence,
 		OldestSequence:             s.OldestSequence,
 		HasMoreBefore:              s.HasMoreBefore,

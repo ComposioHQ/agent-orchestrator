@@ -15,6 +15,11 @@ import (
 // for a live session.
 var ErrAgentBinaryNotFound = errors.New("agent: binary not found on PATH")
 
+// ErrPermissionModeUnsupported means the requested preventive permission
+// contract cannot be enforced by the selected controller. Callers must surface
+// this refusal rather than launching with broader permissions.
+var ErrPermissionModeUnsupported = errors.New("permission mode unsupported")
+
 // AgentAuthStatus describes the result of a short local auth probe for an
 // installed agent. It is advisory only: credentials, quota, selected model
 // availability, or CLI state can still fail at session spawn/model-call time.
@@ -444,18 +449,20 @@ type PermissionMode = domain.PermissionMode
 // These re-export the domain constants so existing adapter code is unchanged.
 const (
 	PermissionModeDefault           = domain.PermissionModeDefault
+	PermissionModeReadOnly          = domain.PermissionModeReadOnly
 	PermissionModeAcceptEdits       = domain.PermissionModeAcceptEdits
 	PermissionModeAuto              = domain.PermissionModeAuto
 	PermissionModeBypassPermissions = domain.PermissionModeBypassPermissions
 )
 
 // NormalizePermissionMode collapses an empty or unrecognized mode to
-// PermissionModeDefault, leaving the four known modes unchanged. Adapters call
+// PermissionModeDefault, leaving the five known modes unchanged. Adapters call
 // it so a stored value they don't recognize defers to the agent's own config
 // (usually by emitting no flag) rather than mapping onto a bogus one.
 func NormalizePermissionMode(mode PermissionMode) PermissionMode {
 	switch mode {
 	case PermissionModeDefault,
+		PermissionModeReadOnly,
 		PermissionModeAcceptEdits,
 		PermissionModeAuto,
 		PermissionModeBypassPermissions:

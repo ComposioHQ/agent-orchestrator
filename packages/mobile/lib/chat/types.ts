@@ -16,7 +16,7 @@ export type ActivityKind =
 	| "auto_review"
 	| "user_input";
 
-export type ApprovalMode = "default" | "accept-edits" | "auto" | "bypass-permissions";
+export type ApprovalMode = "default" | "read-only" | "accept-edits" | "auto" | "bypass-permissions";
 export type TurnSettings = { model?: string; reasoningEffort?: string; approvalMode?: ApprovalMode };
 
 export type PlanStep = { text: string; status: "pending" | "in_progress" | "completed" };
@@ -208,6 +208,9 @@ export type ConversationSnapshot = {
 	harness: string;
 	mode: SessionMode;
 	controller: { state: ControllerState; error?: string };
+	/** Effective immutable contract enforced by the live controller. This is
+	 * resolved even when a migrated session's durable marker is empty. */
+	permissionFloor?: ApprovalMode;
 	latestSequence: number;
 	oldestSequence: number;
 	hasMoreBefore: boolean;

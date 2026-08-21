@@ -49,7 +49,9 @@ surface (`npm run sqlc`, `npm run api`).
   activities, approvals, structured input, usage, compaction, and rollback.
 - Chat drivers for the user's installed Codex (native app-server), Claude Code
   (claude-agent-acp), OpenCode, and Droid. AO reuses each harness's existing
-  binary/auth resolution and does not bundle provider CLIs.
+  binary/auth resolution and does not bundle provider CLIs. Codex Chat advertises
+  and enforces the preventive `read-only` permission profile; unsupported Chat
+  drivers and TUI sessions reject that profile rather than broadening it.
 - Project CRUD plus per-project config (`PUT /projects/{id}/config`).
 - PR action engine wired into the API: `POST /prs/{id}/merge` and
   `/prs/{id}/resolve-comments`.

@@ -43,9 +43,10 @@ type recordingLauncher struct {
 	live         bool
 	afterReady   func()
 
-	preflighted []domain.AgentHarness
-	started     []ChatStart
-	turns       []string
+	preflighted          []domain.AgentHarness
+	preflightPermissions []ports.PermissionMode
+	started              []ChatStart
+	turns                []string
 	// relayed is what arrived through Manager.Send rather than as an initial
 	// prompt, kept separate so a test can tell the two apart.
 	relayed  []string
@@ -58,8 +59,9 @@ type recordingLauncher struct {
 
 func (l *recordingLauncher) SupportsChat(_ domain.AgentHarness) bool { return true }
 
-func (l *recordingLauncher) PreflightChat(_ context.Context, harness domain.AgentHarness) error {
+func (l *recordingLauncher) PreflightChat(_ context.Context, harness domain.AgentHarness, permissions ports.PermissionMode) error {
 	l.preflighted = append(l.preflighted, harness)
+	l.preflightPermissions = append(l.preflightPermissions, permissions)
 	return l.preflightErr
 }
 
@@ -336,6 +338,75 @@ func TestChatSpawnRejectedBeforeDurableStateWhenUnsupported(t *testing.T) {
 	}
 }
 
+func TestPreventiveReadOnlyChatSpawnIsPreflightedAndPersisted(t *testing.T) {
+	launcher := &recordingLauncher{}
+	mgr, _, runtime := newChatManager(launcher)
+
+	rec, _, _, err := mgr.Spawn(context.Background(), ports.SpawnConfig{
+		ProjectID:     chatTestProject,
+		Kind:          domain.KindWorker,
+		Harness:       domain.HarnessCodex,
+		RequestedMode: domain.SessionModeChat,
+		AgentConfig:   ports.AgentConfig{Permissions: ports.PermissionModeReadOnly},
+	})
+	if err != nil {
+		t.Fatalf("Spawn: %v", err)
+	}
+	if runtime.created != 0 {
+		t.Fatalf("read-only Chat spawn created %d terminal runtimes", runtime.created)
+	}
+	if len(launcher.preflightPermissions) != 1 || launcher.preflightPermissions[0] != ports.PermissionModeReadOnly {
+		t.Fatalf("preflight permissions = %v, want [read-only]", launcher.preflightPermissions)
+	}
+	if len(launcher.started) != 1 || launcher.started[0].Permissions != ports.PermissionModeReadOnly {
+		t.Fatalf("Chat starts = %+v, want read-only", launcher.started)
+	}
+	if rec.Metadata.Permissions != domain.PermissionModeReadOnly {
+		t.Fatalf("persisted permissions = %q, want read-only", rec.Metadata.Permissions)
+	}
+}
+
+func TestPreventiveReadOnlyTUISpawnFailsBeforeDurableState(t *testing.T) {
+	launcher := &recordingLauncher{}
+	mgr, store, runtime := newChatManager(launcher)
+
+	_, _, _, err := mgr.Spawn(context.Background(), ports.SpawnConfig{
+		ProjectID:     chatTestProject,
+		Kind:          domain.KindWorker,
+		Harness:       domain.HarnessCodex,
+		RequestedMode: domain.SessionModeTUI,
+		AgentConfig:   ports.AgentConfig{Permissions: ports.PermissionModeReadOnly},
+	})
+	if !errors.Is(err, ports.ErrPermissionModeUnsupported) {
+		t.Fatalf("Spawn error = %v, want ErrPermissionModeUnsupported", err)
+	}
+	if runtime.created != 0 {
+		t.Fatalf("unsupported TUI read-only spawn created %d runtimes", runtime.created)
+	}
+	if len(store.sessions) != 0 {
+		t.Fatalf("unsupported TUI read-only spawn persisted sessions: %+v", store.sessions)
+	}
+	if len(launcher.preflighted) != 0 || len(launcher.started) != 0 {
+		t.Fatalf("TUI refusal reached Chat launcher: preflight=%v starts=%d", launcher.preflighted, len(launcher.started))
+	}
+}
+
+func TestOmittedPermissionTUISpawnPersistsExplicitDefault(t *testing.T) {
+	launcher := &recordingLauncher{}
+	mgr, _, _ := newChatManager(launcher)
+
+	rec, _, _, err := mgr.Spawn(context.Background(), ports.SpawnConfig{
+		ProjectID: chatTestProject, Kind: domain.KindWorker,
+		Harness: domain.HarnessCodex, RequestedMode: domain.SessionModeTUI,
+	})
+	if err != nil {
+		t.Fatalf("Spawn: %v", err)
+	}
+	if rec.Metadata.Permissions != domain.PermissionModeDefault {
+		t.Fatalf("persisted permissions = %q, want explicit default", rec.Metadata.Permissions)
+	}
+}
+
 // Chat mode with no launcher wired must fail, never silently become a TUI session
 // in a terminal the user did not ask for.
 func TestChatSpawnWithoutLauncherIsRefusedNotDowngraded(t *testing.T) {
@@ -544,6 +615,7 @@ func TestRestoreResumesChatRatherThanRelaunchingATerminal(t *testing.T) {
 		Kind:          domain.KindWorker,
 		Harness:       domain.HarnessCodex,
 		RequestedMode: domain.SessionModeChat,
+		AgentConfig:   ports.AgentConfig{Permissions: ports.PermissionModeReadOnly},
 	})
 	if err != nil {
 		t.Fatalf("Spawn: %v", err)
@@ -564,6 +636,14 @@ func TestRestoreResumesChatRatherThanRelaunchingATerminal(t *testing.T) {
 	if stored.Metadata.ProviderConversationID == "" {
 		t.Fatal("spawn stored no provider conversation id; a restart could not resume")
 	}
+	if stored.Metadata.Permissions != domain.PermissionModeReadOnly {
+		t.Fatalf("spawn stored permission mode %q, want read-only", stored.Metadata.Permissions)
+	}
+	// A one-spawn permission contract belongs to the session. A later project
+	// default must not broaden it when the daemon resumes the provider thread.
+	project := store.projects[string(chatTestProject)]
+	project.Config.AgentConfig.Permissions = domain.PermissionModeBypassPermissions
+	store.projects[string(chatTestProject)] = project
 
 	result, err := mgr.RestoreWithMode(ctx, rec.ID)
 	if err != nil {
@@ -581,10 +661,83 @@ func TestRestoreResumesChatRatherThanRelaunchingATerminal(t *testing.T) {
 		t.Errorf("restore passed provider conversation %q, want the stored %q — without it this is a new conversation, not a resume",
 			resumed.ProviderConversationID, stored.Metadata.ProviderConversationID)
 	}
+	if resumed.Permissions != ports.PermissionModeReadOnly {
+		t.Errorf("restore permissions = %q, want persisted read-only despite changed project config", resumed.Permissions)
+	}
 	// The provider still holds the history, so continuity is native rather than a
 	// replayed prompt.
 	if result.Mode != RestoreModeNative {
 		t.Errorf("restore mode = %q, want native", result.Mode)
+	}
+}
+
+func TestRestoreOmittedChatPermissionDoesNotAdoptChangedProjectDefault(t *testing.T) {
+	launcher := &recordingLauncher{}
+	mgr, store, _ := newChatManager(launcher)
+	ctx := context.Background()
+
+	rec, _, _, err := mgr.Spawn(ctx, ports.SpawnConfig{
+		ProjectID: chatTestProject, Kind: domain.KindWorker,
+		Harness: domain.HarnessCodex, RequestedMode: domain.SessionModeChat,
+	})
+	if err != nil {
+		t.Fatalf("Spawn: %v", err)
+	}
+	if _, err := mgr.Kill(ctx, rec.ID); err != nil {
+		t.Fatalf("Kill: %v", err)
+	}
+
+	stored, _, err := store.GetSession(ctx, rec.ID)
+	if err != nil {
+		t.Fatalf("GetSession: %v", err)
+	}
+	if stored.Metadata.Permissions != domain.PermissionModeDefault {
+		t.Fatalf("spawn stored permissions = %q, want explicit default", stored.Metadata.Permissions)
+	}
+	project := store.projects[string(chatTestProject)]
+	project.Config.AgentConfig.Permissions = domain.PermissionModeBypassPermissions
+	store.projects[string(chatTestProject)] = project
+
+	if _, err := mgr.RestoreWithMode(ctx, rec.ID); err != nil {
+		t.Fatalf("RestoreWithMode: %v", err)
+	}
+	resumed := launcher.started[len(launcher.started)-1]
+	if resumed.Permissions != ports.PermissionModeDefault {
+		t.Fatalf("restore permissions = %q, want persisted default after project changed to bypass", resumed.Permissions)
+	}
+}
+
+func TestRestorePreMigrationChatPermissionResolvesCurrentProjectReadOnlyFloor(t *testing.T) {
+	launcher := &recordingLauncher{}
+	mgr, store, _ := newChatManager(launcher)
+	ctx := context.Background()
+
+	rec, _, _, err := mgr.Spawn(ctx, ports.SpawnConfig{
+		ProjectID: chatTestProject, Kind: domain.KindWorker,
+		Harness: domain.HarnessCodex, RequestedMode: domain.SessionModeChat,
+	})
+	if err != nil {
+		t.Fatalf("Spawn: %v", err)
+	}
+	if _, err := mgr.Kill(ctx, rec.ID); err != nil {
+		t.Fatalf("Kill: %v", err)
+	}
+
+	// Rows created before session permissions became durable have no marker.
+	// They intentionally continue to resolve the current project contract.
+	legacy := store.sessions[rec.ID]
+	legacy.Metadata.Permissions = ""
+	store.sessions[rec.ID] = legacy
+	project := store.projects[string(chatTestProject)]
+	project.Config.AgentConfig.Permissions = domain.PermissionModeReadOnly
+	store.projects[string(chatTestProject)] = project
+
+	if _, err := mgr.RestoreWithMode(ctx, rec.ID); err != nil {
+		t.Fatalf("RestoreWithMode: %v", err)
+	}
+	resumed := launcher.started[len(launcher.started)-1]
+	if resumed.Permissions != ports.PermissionModeReadOnly {
+		t.Fatalf("restore permissions = %q, want project-resolved read-only floor", resumed.Permissions)
 	}
 }
 
