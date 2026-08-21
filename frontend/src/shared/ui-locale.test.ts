@@ -24,10 +24,34 @@ describe("shared UI locale schema", () => {
 	});
 
 	it("normalizes persisted settings through the shared locale validator", () => {
-		expect(coerceUiSettings({ locale: "zh-CN" })).toEqual({ locale: "zh-CN" });
-		expect(coerceUiSettings({ locale: "ja" })).toEqual({ locale: "ja" });
-		expect(coerceUiSettings({ locale: "pt-BR" })).toEqual({ locale: "pt-BR" });
+		expect(coerceUiSettings({ locale: "zh-CN" })).toEqual({ locale: "zh-CN", soundNotificationsEnabled: true });
+		expect(coerceUiSettings({ locale: "ja" })).toEqual({ locale: "ja", soundNotificationsEnabled: true });
+		expect(coerceUiSettings({ locale: "pt-BR" })).toEqual({ locale: "pt-BR", soundNotificationsEnabled: true });
 		expect(coerceUiSettings({ locale: "pt" })).toEqual(DEFAULT_UI_SETTINGS);
 		expect(coerceUiSettings(null)).toEqual(DEFAULT_UI_SETTINGS);
+	});
+
+	it("defaults soundNotificationsEnabled to true and accepts a persisted boolean", () => {
+		expect(DEFAULT_UI_SETTINGS).toEqual({ locale: "en", soundNotificationsEnabled: true });
+		expect(coerceUiSettings({ locale: "en", soundNotificationsEnabled: false })).toEqual({
+			locale: "en",
+			soundNotificationsEnabled: false,
+		});
+		expect(coerceUiSettings({ locale: "en", soundNotificationsEnabled: true })).toEqual({
+			locale: "en",
+			soundNotificationsEnabled: true,
+		});
+	});
+
+	it("coerces a non-boolean or missing soundNotificationsEnabled to the default (true)", () => {
+		expect(coerceUiSettings({ locale: "en" })).toEqual({ locale: "en", soundNotificationsEnabled: true });
+		expect(coerceUiSettings({ locale: "en", soundNotificationsEnabled: "false" })).toEqual({
+			locale: "en",
+			soundNotificationsEnabled: true,
+		});
+		expect(coerceUiSettings({ locale: "en", soundNotificationsEnabled: null })).toEqual({
+			locale: "en",
+			soundNotificationsEnabled: true,
+		});
 	});
 });

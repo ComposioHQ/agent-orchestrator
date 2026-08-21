@@ -328,6 +328,7 @@ describe("startAutoUpdates", () => {
     expect(module.getUpdateStatus()).toEqual({
       state: "available",
       version: "2.0.0",
+      checkedAt: expect.any(Number),
     });
 
     autoUpdater.checkForUpdates.mockImplementationOnce(() => {
@@ -345,6 +346,7 @@ describe("startAutoUpdates", () => {
     expect(module.getUpdateStatus()).toEqual({
       state: "available",
       version: "2.0.0",
+      checkedAt: expect.any(Number),
     });
   });
 
@@ -361,6 +363,7 @@ describe("startAutoUpdates", () => {
     expect(module.getUpdateStatus()).toEqual({
       state: "available",
       version: "2.0.0",
+      checkedAt: expect.any(Number),
     });
 
     autoUpdater.checkForUpdates.mockImplementationOnce(() => {
@@ -373,7 +376,9 @@ describe("startAutoUpdates", () => {
     await flushMicrotasks();
     expect(module.getUpdateStatus()).toEqual({
       state: "downloading",
+      version: "2.1.0",
       percent: 42,
+      checkedAt: expect.any(Number),
     });
 
     updaterEvents.get("error")?.(err);
@@ -387,6 +392,7 @@ describe("startAutoUpdates", () => {
     expect(module.getUpdateStatus()).toEqual({
       state: "available",
       version: "2.0.0",
+      checkedAt: expect.any(Number),
     });
   });
 
@@ -516,7 +522,9 @@ describe("startAutoUpdates", () => {
     updaterEvents.get("download-progress")?.({ percent: 64 });
     expect(module.getUpdateStatus()).toEqual({
       state: "downloading",
+      version: "2.2.0",
       percent: 64,
+      checkedAt: expect.any(Number),
     });
 
     updaterEvents.get("error")?.(err);
@@ -532,6 +540,7 @@ describe("startAutoUpdates", () => {
       version: "2.1.0",
       stagedAt,
       escalated: true,
+      checkedAt: expect.any(Number),
     });
   });
 
@@ -614,6 +623,7 @@ describe("startAutoUpdates", () => {
     expect(module.getUpdateStatus()).toEqual({
       state: "error",
       message: "manual feed failed",
+      checkedAt: expect.any(Number),
     });
   });
 
@@ -631,6 +641,7 @@ describe("startAutoUpdates", () => {
       state: "error",
       message:
         "Couldn't check for updates — the update information was not found on the server.",
+      checkedAt: expect.any(Number),
     });
   });
 
@@ -667,6 +678,7 @@ describe("startAutoUpdates", () => {
       state: "error",
       message:
         "Couldn't check for updates — the update information was not found on the server.",
+      checkedAt: expect.any(Number),
     });
   });
 
@@ -737,6 +749,7 @@ describe("startAutoUpdates", () => {
     expect(module.getUpdateStatus()).toEqual({
       state: "error",
       message: err.message,
+      checkedAt: expect.any(Number),
     });
   });
 
@@ -750,6 +763,7 @@ describe("startAutoUpdates", () => {
       state: "error",
       message: "net::ERR_FAILED",
       netError: true,
+      checkedAt: expect.any(Number),
     });
   });
 
@@ -763,6 +777,7 @@ describe("startAutoUpdates", () => {
       state: "error",
       message: "net::ERR_FAILED",
       netError: true,
+      checkedAt: expect.any(Number),
     });
   });
 
@@ -775,6 +790,7 @@ describe("startAutoUpdates", () => {
     expect(module.getUpdateStatus()).toEqual({
       state: "error",
       message: "boom",
+      checkedAt: expect.any(Number),
     });
   });
 
@@ -933,7 +949,7 @@ describe("startAutoUpdates", () => {
     });
     await module.startAutoUpdates(stateDir);
 
-    expect(module.getUpdateStatus()).toEqual({ state: "not-available" });
+    expect(module.getUpdateStatus()).toEqual({ state: "not-available", checkedAt: expect.any(Number) });
   });
 
   it("logs settings failures during automatic checks and retries on later ticks", async () => {
@@ -1202,6 +1218,7 @@ describe("startAutoUpdates", () => {
     expect(module.getUpdateStatus()).toEqual({
       state: "available",
       version: "1.9.0",
+      checkedAt: expect.any(Number),
     });
 
     automaticCheck.resolve();
@@ -1211,6 +1228,7 @@ describe("startAutoUpdates", () => {
       state: "available",
       version: "2.0.0-pr2709.1",
       requestId: "feature-2709",
+      checkedAt: expect.any(Number),
     });
   });
 

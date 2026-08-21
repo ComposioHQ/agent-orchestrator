@@ -1268,18 +1268,10 @@ function RerouteRow({ activity }: { activity: ConversationActivity }) {
  * reconnect row as `role="alert"` would interrupt a screen reader once per attempt.
  */
 function ErrorActivityRow({ activity }: { activity: ConversationActivity }) {
-	const { headline, detail } = providerErrorCopy(activity);
+	const { headline } = providerErrorCopy(activity);
 	return (
-		<div className="flex min-w-0 max-w-full items-start gap-2.5 overflow-hidden rounded-md border border-destructive/40 bg-surface px-3 py-2">
-			<AlertTriangle aria-hidden="true" className="mt-0.5 size-3.5 shrink-0 text-destructive" />
-			<div className="flex min-w-0 flex-1 flex-col gap-0.5">
-				<strong className="wrap-anywhere text-[11px] font-medium leading-snug text-destructive">
-					{headline}
-				</strong>
-				{detail ? (
-					<p className="wrap-anywhere text-[10.5px] leading-snug text-muted-foreground">{detail}</p>
-				) : null}
-			</div>
+		<div className="flex min-w-0 max-w-full items-baseline overflow-hidden py-0.5 text-[11.5px] leading-snug text-muted-foreground">
+			<span className="wrap-anywhere min-w-0">{headline}</span>
 		</div>
 	);
 }

@@ -295,6 +295,8 @@ export function BrowserPanelView({
 		closeTab,
 		openTab,
 		reorderTabs,
+		closedTabs,
+		reopenClosedTab,
 		agentBrowserActive,
 		agentBrowserActivity,
 		devtoolsState = { viewId: "", open: false, activeTabId: "" },
@@ -750,9 +752,11 @@ export function BrowserPanelView({
 				    viewport (out of the way of the toolbar/address bar). */}
 				<BrowserTabsRail
 					activeTabId={activeTabId}
+					closedTabs={closedTabs}
 					onCloseTab={closeTab}
 					onOpenTab={handleOpenTab}
 					onPinnedChange={handlePinnedChange}
+					onReopenClosedTab={reopenClosedTab}
 					onReorderTabs={reorderTabs}
 					onSelectTab={handleSelectTab}
 					pinned={pinned}

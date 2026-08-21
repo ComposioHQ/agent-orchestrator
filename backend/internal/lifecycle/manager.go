@@ -72,6 +72,10 @@ type agentSwitchTargetActivationStore interface {
 	ActivateAgentSwitchTarget(context.Context, domain.AgentSwitchTargetActivation) (bool, error)
 }
 
+type agentSwitchChatTargetActivationStore interface {
+	ActivateChatAgentSwitchTarget(context.Context, domain.AgentSwitchChatTargetActivation) (bool, error)
+}
+
 // notificationSink is the optional lifecycle-to-notification-producer boundary.
 type notificationSink interface {
 	Notify(ctx context.Context, intent ports.NotificationIntent) error
@@ -1097,6 +1101,21 @@ func (m *Manager) ActivateAgentSwitchTarget(
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return writer.ActivateAgentSwitchTarget(ctx, activation)
+}
+
+// ActivateChatAgentSwitchTarget atomically transfers a stopped Chat session to
+// the structured controller generation that Chat Service already claimed.
+func (m *Manager) ActivateChatAgentSwitchTarget(
+	ctx context.Context,
+	activation domain.AgentSwitchChatTargetActivation,
+) (bool, error) {
+	writer, ok := m.store.(agentSwitchChatTargetActivationStore)
+	if !ok {
+		return false, fmt.Errorf("lifecycle: Chat agent-switch target activation persistence is unavailable")
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return writer.ActivateChatAgentSwitchTarget(ctx, activation)
 }
 
 // MarkTerminated marks a session terminated. Runtime/workspace teardown is the

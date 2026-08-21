@@ -1,6 +1,8 @@
 import { createFileRoute, Outlet, useMatchRoute, useNavigate, useParams } from "@tanstack/react-router";
 import { isCancelledError, useQueryClient } from "@tanstack/react-query";
 import { type CSSProperties, useCallback, useEffect, useRef, useState } from "react";
+import { FolderPlus } from "lucide-react";
+import { useTranslation } from "react-i18next";
 import { CommandPalette } from "../components/CommandPalette";
 import { CenterPanelShell } from "../components/CenterPanelShell";
 import { DaemonFailureBanner } from "../components/DaemonFailureBanner";
@@ -91,6 +93,7 @@ const shellTopbarHiddenByPlatform = hidesShellTopbar();
 function ShellLayout() {
 	// Reports how many agents this install has available, once per launch.
 	useAgentInventoryTelemetry();
+	const { t } = useTranslation();
 	const navigate = useNavigate();
 	const matchRoute = useMatchRoute();
 	const queryClient = useQueryClient();
@@ -104,6 +107,7 @@ function ShellLayout() {
 	const syncSystemTheme = useUiStore((state) => state.syncSystemTheme);
 	const requestNewTask = useUiStore((state) => state.requestNewTask);
 	const requestCreateProject = useUiStore((state) => state.requestCreateProject);
+	const requestCreateProjectFromPath = useUiStore((state) => state.requestCreateProjectFromPath);
 	const requestNewShellTerminal = useUiStore((state) => state.requestNewShellTerminal);
 	const newShellTerminalNonce = useUiStore((state) => state.newShellTerminalNonce);
 	const setActiveShellTerminal = useUiStore((state) => state.setActiveShellTerminal);
@@ -145,6 +149,62 @@ function ShellLayout() {
 		document.addEventListener("click", handleModifierLinkClick);
 		return () => document.removeEventListener("click", handleModifierLinkClick);
 	}, []);
+	// Drop a folder anywhere in the app window to add it as a project, mirroring
+	// VS Code's "drop a folder to open it". A depth counter (not a relatedTarget
+	// check) tracks dragenter/dragleave so the overlay doesn't flicker as the
+	// pointer crosses child-element boundaries. XtermTerminal's own drop handler
+	// only swallows (preventDefault/stopPropagation) a drop that is NOT a
+	// directory — a dropped folder is left untouched so it bubbles here even
+	// when it lands on an active terminal pane.
+	const [isDragActive, setIsDragActive] = useState(false);
+	const dragDepthRef = useRef(0);
+	useEffect(() => {
+		const isFileDrag = (event: DragEvent) => Array.from(event.dataTransfer?.types ?? []).includes("Files");
+		const firstEntryIsDirectory = (event: DragEvent) => {
+			const item = event.dataTransfer?.items?.[0];
+			return item?.webkitGetAsEntry?.()?.isDirectory ?? false;
+		};
+		const handleDragEnter = (event: DragEvent) => {
+			if (!isFileDrag(event)) return;
+			event.preventDefault();
+			dragDepthRef.current += 1;
+			if (dragDepthRef.current === 1 && firstEntryIsDirectory(event)) setIsDragActive(true);
+		};
+		const handleDragOver = (event: DragEvent) => {
+			if (!isFileDrag(event)) return;
+			event.preventDefault();
+			if (event.dataTransfer) event.dataTransfer.dropEffect = "copy";
+		};
+		const handleDragLeave = (event: DragEvent) => {
+			if (!isFileDrag(event)) return;
+			dragDepthRef.current = Math.max(0, dragDepthRef.current - 1);
+			if (dragDepthRef.current === 0) setIsDragActive(false);
+		};
+		const handleDrop = (event: DragEvent) => {
+			if (!isFileDrag(event)) return;
+			event.preventDefault();
+			dragDepthRef.current = 0;
+			setIsDragActive(false);
+			const item = event.dataTransfer?.items?.[0];
+			if (!item?.webkitGetAsEntry?.()?.isDirectory) return;
+			const file = item.getAsFile();
+			if (!file) return;
+			// Must be synchronous, on the File taken directly from dataTransfer, in
+			// the same tick as the native drop event — see preload.ts's comment.
+			const path = aoBridge.app.getPathForFile(file);
+			if (path) requestCreateProjectFromPath(path);
+		};
+		window.addEventListener("dragenter", handleDragEnter);
+		window.addEventListener("dragover", handleDragOver);
+		window.addEventListener("dragleave", handleDragLeave);
+		window.addEventListener("drop", handleDrop);
+		return () => {
+			window.removeEventListener("dragenter", handleDragEnter);
+			window.removeEventListener("dragover", handleDragOver);
+			window.removeEventListener("dragleave", handleDragLeave);
+			window.removeEventListener("drop", handleDrop);
+		};
+	}, [requestCreateProjectFromPath]);
 	// Project in scope for a new-session shortcut: the route's project, or the
 	// workspace owning the open session (so the shortcut works from a worker's
 	// detail view, where the URL carries only a sessionId).
@@ -636,6 +696,14 @@ function ShellLayout() {
 
 	useEffect(() => aoBridge.app.onKeyboardShortcutsHelp(() => setIsKeyboardShortcutsOpen(true)), []);
 
+	// A folder was dropped on the app's taskbar icon/shortcut (main process,
+	// cold start or an already-running instance) — feeds the same drop flow as
+	// dragging a folder into the open window.
+	useEffect(
+		() => aoBridge.app.onOpenFolderPath((path) => requestCreateProjectFromPath(path)),
+		[requestCreateProjectFromPath],
+	);
+
 	// New standalone terminal (⌘T / Ctrl+T), also detected in the main process so it
 	// fires from inside a terminal pane. It raises the same store signal as the
 	// tab-strip + button so the two cannot drift apart.
@@ -708,6 +776,22 @@ function ShellLayout() {
 			<SessionTopbarProvider>
 				<NotificationRuntime />
 				<TrayRuntime />
+				{isDragActive ? (
+					<div
+						aria-hidden="true"
+						className="dialog-overlay pointer-events-none flex items-center justify-center"
+						data-testid="folder-drop-overlay"
+					>
+						<div className="relative isolate flex w-[min(420px,calc(100vw-48px))] flex-col items-center gap-3 rounded-welcome-panel border border-dashed border-[var(--color-border-import-modal)] bg-[var(--color-bg-import-modal)] p-8 text-center shadow-[var(--shadow-import-modal)]">
+							<span className="grid size-11 place-items-center rounded-xl bg-[var(--color-bg-import-chip)] text-[var(--color-text-import-muted)]">
+								<FolderPlus className="size-5" aria-hidden="true" />
+							</span>
+							<p className="text-[15px] font-semibold text-[var(--color-text-import-title)]">
+								{t("createProject.dropToAdd")}
+							</p>
+						</div>
+					</div>
+				) : null}
 				<GlobalNewTaskDialog />
 				<SettingsDialog />
 				<KeyboardShortcutsDialog

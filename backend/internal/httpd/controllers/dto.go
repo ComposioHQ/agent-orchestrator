@@ -13,6 +13,8 @@ import (
 	agentsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/agent"
 	projectsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/project"
 	sessionsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/session"
+	"github.com/aoagents/agent-orchestrator/backend/internal/service/systemcheck"
+	"github.com/aoagents/agent-orchestrator/backend/internal/service/systeminstall"
 )
 
 // HTTP response envelopes for the projects surface — the SINGLE definition of
@@ -967,9 +969,10 @@ type ListUsageSessionsQuery struct {
 
 // CompactSessionUsageResponse is one session card's token-only usage summary.
 type CompactSessionUsageResponse struct {
-	SessionID   domain.SessionID `json:"sessionId"`
-	TotalTokens int64            `json:"totalTokens" minimum:"0"`
-	Incomplete  bool             `json:"incomplete"`
+	SessionID       domain.SessionID `json:"sessionId"`
+	ProcessedTokens *int64           `json:"processedTokens" minimum:"0" description:"Canonical input plus output. Null when either component is unknown."`
+	TotalTokens     int64            `json:"totalTokens" minimum:"0" description:"Deprecated compatibility alias for processedTokens."`
+	Incomplete      bool             `json:"incomplete"`
 }
 
 // ListCompactSessionUsageResponse is the batch dashboard usage response.
@@ -977,14 +980,47 @@ type ListCompactSessionUsageResponse struct {
 	Sessions []CompactSessionUsageResponse `json:"sessions"`
 }
 
-// UsageTotalsResponse is the normalized telemetry aggregate for one scope.
+// UsageMetricProvenanceResponse records how each canonical metric was obtained.
+type UsageMetricProvenanceResponse struct {
+	InputTokens         domain.UsageMetricProvenance `json:"inputTokens" enum:"reported,derived,unsupported,unknown"`
+	CachedInputTokens   domain.UsageMetricProvenance `json:"cachedInputTokens" enum:"reported,derived,unsupported,unknown"`
+	UncachedInputTokens domain.UsageMetricProvenance `json:"uncachedInputTokens" enum:"reported,derived,unsupported,unknown"`
+	OutputTokens        domain.UsageMetricProvenance `json:"outputTokens" enum:"reported,derived,unsupported,unknown"`
+}
+
+// OpenAIUsageDetailsResponse exposes namespaced counters outside the shared
+// four-metric vocabulary.
+type OpenAIUsageDetailsResponse struct {
+	OpenAIReasoningOutputTokens *int64 `json:"openaiReasoningOutputTokens" minimum:"0"`
+	OpenAICacheWriteInputTokens *int64 `json:"openaiCacheWriteInputTokens" minimum:"0"`
+}
+
+// AnthropicUsageDetailsResponse exposes namespaced prompt-cache components.
+type AnthropicUsageDetailsResponse struct {
+	AnthropicDirectUncachedInputTokens  *int64 `json:"anthropicDirectUncachedInputTokens" minimum:"0"`
+	AnthropicCacheCreationInputTokens   *int64 `json:"anthropicCacheCreationInputTokens" minimum:"0"`
+	AnthropicCacheCreation5mInputTokens *int64 `json:"anthropicCacheCreation5mInputTokens" minimum:"0"`
+	AnthropicCacheCreation1hInputTokens *int64 `json:"anthropicCacheCreation1hInputTokens" minimum:"0"`
+}
+
+// UsageProviderDetailsResponse groups optional provider-native counters.
+type UsageProviderDetailsResponse struct {
+	OpenAI    *OpenAIUsageDetailsResponse    `json:"openai,omitempty"`
+	Anthropic *AnthropicUsageDetailsResponse `json:"anthropic,omitempty"`
+}
+
+// UsageTotalsResponse is the canonical telemetry aggregate for one scope.
 type UsageTotalsResponse struct {
-	InputTokens         *int64 `json:"inputTokens"`
-	UncachedInputTokens *int64 `json:"uncachedInputTokens"`
-	CacheReadTokens     *int64 `json:"cacheReadTokens"`
-	CacheWriteTokens    *int64 `json:"cacheWriteTokens"`
-	OutputTokens        *int64 `json:"outputTokens"`
-	ReasoningTokens     *int64 `json:"reasoningTokens"`
+	InputTokens         *int64                        `json:"inputTokens" minimum:"0" description:"Total input, including cached and uncached input."`
+	CachedInputTokens   *int64                        `json:"cachedInputTokens" minimum:"0" description:"Input read from an existing provider cache. Cache hit percentage uses cachedInputTokens divided by inclusive inputTokens."`
+	UncachedInputTokens *int64                        `json:"uncachedInputTokens" minimum:"0" description:"Input not read from an existing provider cache."`
+	OutputTokens        *int64                        `json:"outputTokens" minimum:"0" description:"Total output, including provider-specific subsets such as reasoning output."`
+	ProcessedTokens     *int64                        `json:"processedTokens" minimum:"0" description:"Canonical input plus output. Null when either component is unknown."`
+	CacheReadTokens     *int64                        `json:"cacheReadTokens" minimum:"0" description:"Deprecated compatibility alias for cachedInputTokens."`
+	CacheWriteTokens    *int64                        `json:"cacheWriteTokens" minimum:"0" description:"Deprecated compatibility aggregate of provider cache-write input counters."`
+	ReasoningTokens     *int64                        `json:"reasoningTokens" minimum:"0" description:"Deprecated compatibility alias for the OpenAI reasoning-output subset."`
+	Provenance          UsageMetricProvenanceResponse `json:"provenance"`
+	ProviderDetails     UsageProviderDetailsResponse  `json:"providerDetails"`
 }
 
 // UsageModelResponse is telemetry grouped by exact model id.
@@ -1007,6 +1043,20 @@ type SessionUsageResponse struct {
 	Totals     UsageTotalsResponse    `json:"totals"`
 	Harnesses  []UsageHarnessResponse `json:"harnesses"`
 }
+
+// SystemRequirementsResponse is the body of GET /api/v1/system/requirements.
+type SystemRequirementsResponse = systemcheck.Report
+
+// InstallTargetParam is the {target} path parameter for /system/install routes.
+type InstallTargetParam struct {
+	Target string `path:"target" description:"Install target identifier: tmux, gh, claude, codex, opencode, or copilot."`
+}
+
+// StartInstallResponse is the body of POST /api/v1/system/install/{target} (202).
+type StartInstallResponse = systeminstall.Job
+
+// InstallStatusResponse is the body of GET /api/v1/system/install/{target}.
+type InstallStatusResponse = systeminstall.Job
 
 // ListNotificationsQuery is the query string accepted by GET /api/v1/notifications.
 type ListNotificationsQuery struct {

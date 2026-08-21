@@ -385,8 +385,12 @@ func testCollectorCodexBudgetFinalizationWaitsThenPersistsPartialAcrossRestart(t
 		State:           domain.UsageSourceActive,
 		UpdatedAt:       now,
 	}, []domain.ModelUsageEvent{{
-		ModelID:        "gpt-5",
-		Tokens:         domain.UsageTokenMetrics{InputTokens: 10, UncachedInputTokens: 10, OutputTokens: 2},
+		ProviderID: domain.UsageProviderOpenAI,
+		ModelID:    "gpt-5",
+		Tokens:     testUsageMetrics(10, 0, 10, 2, domain.UsageMetricReported),
+		ProviderDetails: domain.UsageProviderDetails{OpenAI: &domain.OpenAIUsageDetails{
+			ReasoningOutputTokens: int64Pointer(0), CacheWriteInputTokens: int64Pointer(0),
+		}},
 		SourceEventKey: "budget-root-event",
 	}}); err != nil {
 		t.Fatal(err)
@@ -427,7 +431,7 @@ func testCollectorCodexBudgetFinalizationWaitsThenPersistsPartialAcrossRestart(t
 	if err != nil || len(compact) != 1 {
 		t.Fatalf("compact=%+v err=%v", compact, err)
 	}
-	if compact[0].TotalTokens != 12 || !compact[0].Incomplete {
+	if compact[0].ProcessedTokens == nil || *compact[0].ProcessedTokens != 12 || !compact[0].Incomplete {
 		t.Fatalf("compact summary=%+v", compact[0])
 	}
 	detail, err := reader.Get(ctx, session.ID)
