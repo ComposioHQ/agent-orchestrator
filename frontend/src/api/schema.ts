@@ -2290,6 +2290,7 @@ export interface components {
             /** @enum {string} */
             compareMode?: "base" | "head_fallback";
             files: components["schemas"]["WorkspaceFileSummary"][];
+            groups?: components["schemas"]["WorkspaceFileGroupSummary"][];
             sessionId: string;
             truncated: boolean;
         };
@@ -3032,6 +3033,10 @@ export interface components {
             reasoningTokens: null | number;
             uncachedInputTokens: null | number;
         };
+        WorkspaceFileGroupSummary: {
+            prUrl?: string;
+            repoName: string;
+        };
         WorkspaceFileResponse: {
             additions: number;
             binary: boolean;
@@ -3059,6 +3064,7 @@ export interface components {
             deletions: number;
             path: string;
             previousPath?: string;
+            repoName?: string;
             /** Format: int64 */
             size: number;
             /** @enum {string} */

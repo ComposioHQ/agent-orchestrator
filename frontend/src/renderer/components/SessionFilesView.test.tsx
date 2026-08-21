@@ -252,6 +252,114 @@ describe("SessionFilesView", () => {
 		expect(screen.getByRole("button", { name: "Collapse src/App.tsx" })).toBeInTheDocument();
 	});
 
+	describe("multi-repo workspace grouping", () => {
+		const groupedPRs = [
+			{
+				url: "https://github.com/acme/api/pull/42",
+				number: 42,
+				state: "open" as const,
+				ci: "unknown" as const,
+				review: "none" as const,
+				mergeability: "unknown" as const,
+				reviewComments: false,
+				updatedAt: "2026-01-01T00:00:00Z",
+			},
+		];
+
+		function mockGroupedFiles() {
+			getMock.mockImplementation(async (path: string, options?: unknown) => {
+				if (path === "/api/v1/sessions/{sessionId}/workspace/files") {
+					return {
+						data: {
+							sessionId: "sess-1",
+							truncated: false,
+							compareMode: "base",
+							files: [
+								{ path: "api/service.go", status: "modified", additions: 2, deletions: 1, size: 10, binary: false, repoName: "api" },
+								{ path: "web/index.ts", status: "added", additions: 5, deletions: 0, size: 20, binary: false, repoName: "web" },
+								{ path: "README.md", status: "modified", additions: 1, deletions: 0, size: 5, binary: false, repoName: "" },
+							],
+							groups: [
+								{ repoName: "" },
+								{ repoName: "api", prUrl: "https://github.com/acme/api/pull/42" },
+								{ repoName: "web" },
+							],
+						},
+					};
+				}
+				if (path === "/api/v1/sessions/{sessionId}/workspace/file") {
+					const query = options as { params?: { query?: { path?: string } } };
+					return {
+						data: {
+							sessionId: "sess-1",
+							path: query.params?.query?.path ?? "api/service.go",
+							status: "modified",
+							additions: 1,
+							deletions: 0,
+							size: 10,
+							binary: false,
+							deleted: false,
+							content: "package api\n",
+							contentTruncated: false,
+							diff: "@@\n-old\n+new\n",
+							diffTruncated: false,
+							compareMode: "base",
+						},
+					};
+				}
+				return { data: undefined };
+			});
+		}
+
+		it("sections files by repo, labeling each with its tracked PR or 'No PR yet'", async () => {
+			mockGroupedFiles();
+			renderWithQuery(<SessionFilesView prs={groupedPRs} sessionId="sess-1" />);
+
+			expect(await screen.findByRole("button", { name: "Collapse PR #42 · api" })).toBeInTheDocument();
+			expect(screen.getByRole("button", { name: "Collapse web · No PR yet" })).toBeInTheDocument();
+			expect(screen.getByRole("button", { name: "Collapse Workspace root · No PR yet" })).toBeInTheDocument();
+			expect(screen.getByRole("button", { name: "Expand api/service.go" })).toBeInTheDocument();
+			expect(screen.getByRole("button", { name: "Expand web/index.ts" })).toBeInTheDocument();
+			expect(screen.getByRole("button", { name: "Expand README.md" })).toBeInTheDocument();
+		});
+
+		it("collapsing one group's header hides only that group's files", async () => {
+			mockGroupedFiles();
+			renderWithQuery(<SessionFilesView prs={groupedPRs} sessionId="sess-1" />);
+
+			await userEvent.click(await screen.findByRole("button", { name: "Collapse PR #42 · api" }));
+
+			expect(screen.queryByRole("button", { name: "Expand api/service.go" })).not.toBeInTheDocument();
+			expect(screen.getByRole("button", { name: "Expand web/index.ts" })).toBeInTheDocument();
+			expect(screen.getByRole("button", { name: "Expand README.md" })).toBeInTheDocument();
+
+			await userEvent.click(screen.getByRole("button", { name: "Expand PR #42 · api" }));
+			expect(await screen.findByRole("button", { name: "Expand api/service.go" })).toBeInTheDocument();
+		});
+
+		it("keeps a file expanded in one group when a file in another group expands", async () => {
+			mockGroupedFiles();
+			renderWithQuery(<SessionFilesView prs={groupedPRs} sessionId="sess-1" />);
+
+			await userEvent.click(await screen.findByRole("button", { name: "Expand api/service.go" }));
+			await userEvent.click(await screen.findByRole("button", { name: "Expand web/index.ts" }));
+
+			expect(await screen.findByRole("button", { name: "Collapse web/index.ts" })).toBeInTheDocument();
+			expect(screen.getByRole("button", { name: "Collapse api/service.go" })).toBeInTheDocument();
+		});
+
+		it("falls back to a flat list, with no group headers, once a search narrows to a single group", async () => {
+			mockGroupedFiles();
+			renderWithQuery(<SessionFilesView prs={groupedPRs} sessionId="sess-1" />);
+
+			await userEvent.type(await screen.findByPlaceholderText("Search 3 files"), "service");
+
+			expect(screen.getByRole("button", { name: "Expand api/service.go" })).toBeInTheDocument();
+			expect(screen.queryByRole("button", { name: "Collapse PR #42 · api" })).not.toBeInTheDocument();
+			expect(screen.queryByRole("button", { name: "Collapse web · No PR yet" })).not.toBeInTheDocument();
+		});
+	});
+
 	it("renders previous and current paths for renamed files", async () => {
 		getMock.mockImplementation(async (path: string) => {
 			if (path === "/api/v1/sessions/{sessionId}/workspace/files") {

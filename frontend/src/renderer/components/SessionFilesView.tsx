@@ -1,4 +1,5 @@
 import {
+	Fragment,
 	memo,
 	useCallback,
 	useEffect,
@@ -35,8 +36,10 @@ import {
 	isChangedWorkspaceFile,
 	sessionWorkspaceFilesQueryOptions,
 	type WorkspaceCompareMode,
+	type WorkspaceFileGroup,
 	type WorkspaceFileSummary,
 } from "../hooks/useSessionWorkspaceFiles";
+import type { PullRequestFacts } from "../types/workspace";
 import { useParsedDiff } from "../hooks/useParsedDiff";
 import { cn } from "../lib/utils";
 import type { DiffRow, DiffRowKind, DiffSegment } from "../lib/diff-parser";
@@ -70,9 +73,24 @@ type SessionFilesViewProps = {
 	sessionId: string;
 	isMaximized?: boolean;
 	onToggleMaximized?: (next: boolean) => void;
+	// The session's tracked PRs, used only to label a multi-repo workspace's
+	// file groups (see FileGroupSection) with their PR number/state.
+	prs?: PullRequestFacts[];
+};
+
+// One repo's section of the file list in a multi-repo workspace session
+// (root plus each child repo AO tracked a Groups entry for). Built from the
+// same post-search-filter file list SessionFilesView already computes, so
+// grouping never hides a file the flat view would have shown.
+type FileGroupSection = {
+	key: string;
+	pr?: PullRequestFacts;
+	files: WorkspaceFileSummary[];
 };
 
 const emptyFiles: WorkspaceFileSummary[] = [];
+const emptyGroups: WorkspaceFileGroup[] = [];
+const emptyPRs: PullRequestFacts[] = [];
 
 const statusLabel: Record<WorkspaceFileStatus, string> = {
 	added: "A",
@@ -102,12 +120,14 @@ export function SessionFilesView({
 	sessionId,
 	isMaximized = false,
 	onToggleMaximized,
+	prs = emptyPRs,
 }: SessionFilesViewProps) {
 	const { t } = useTranslation();
 	const queryClient = useQueryClient();
 	const [filter, setFilter] = useState("");
 	const [split, setSplit] = useState(false);
 	const [expandedPaths, setExpandedPaths] = useState<Set<string>>(() => new Set());
+	const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(() => new Set());
 	const [annotationTarget, setAnnotationTarget] = useState<ActiveFileAnnotationTarget | null>(null);
 	const [annotationDraft, setAnnotationDraft] = useState("");
 	const [annotationStatus, setAnnotationStatus] = useState<FileAnnotationStatus>("idle");
@@ -124,6 +144,7 @@ export function SessionFilesView({
 	useEffect(() => {
 		annotationGenerationRef.current += 1;
 		setExpandedPaths(new Set());
+		setCollapsedGroups(new Set());
 		setFilter("");
 		setAnnotationTarget(null);
 		setAnnotationDraft("");
@@ -223,6 +244,42 @@ export function SessionFilesView({
 	);
 	const changedCount = changedFiles.length;
 	const expandedVisibleCount = visibleFiles.filter((file) => expandedPaths.has(file.path)).length;
+
+	// Sections a multi-repo workspace session's file list by repo/PR (see
+	// FileGroupSection) so files aren't a single undifferentiated list. Built
+	// from the already-filtered visibleFiles, so search still searches across
+	// every group. Falls back to the flat list (null) whenever the session
+	// isn't a multi-repo workspace, or a search narrowed the result down to a
+	// single group's files — grouping UI with only one section to show would
+	// add a header without adding any clarity.
+	const rawGroups = filesQuery.data?.groups ?? emptyGroups;
+	const groupSections = useMemo<FileGroupSection[] | null>(() => {
+		if (rawGroups.length < 2) return null;
+		const filesByRepo = new Map<string, WorkspaceFileSummary[]>();
+		for (const file of visibleFiles) {
+			const key = file.repoName ?? "";
+			const existing = filesByRepo.get(key);
+			if (existing) existing.push(file);
+			else filesByRepo.set(key, [file]);
+		}
+		const sections = rawGroups
+			.map((group) => ({
+				key: group.repoName,
+				pr: group.prUrl ? prs.find((pr) => pr.url === group.prUrl) : undefined,
+				files: filesByRepo.get(group.repoName) ?? [],
+			}))
+			.filter((section) => section.files.length > 0);
+		return sections.length >= 2 ? sections : null;
+	}, [prs, rawGroups, visibleFiles]);
+
+	const toggleGroup = (key: string) => {
+		setCollapsedGroups((current) => {
+			const next = new Set(current);
+			if (next.has(key)) next.delete(key);
+			else next.add(key);
+			return next;
+		});
+	};
 
 	const toggleVisibleFiles = () => {
 		setExpandedPaths((current) => {
@@ -331,6 +388,7 @@ export function SessionFilesView({
 				<div className={cn("flex w-full flex-col px-0", !isMaximized && "mx-auto max-w-[1200px]")}>
 					<ReviewFileList
 						annotation={annotation}
+						collapsedGroups={collapsedGroups}
 						compareMode={filesQuery.data?.compareMode}
 						error={filesQuery.error}
 						expandedPaths={expandedPaths}
@@ -338,6 +396,8 @@ export function SessionFilesView({
 						isLoading={filesQuery.isPending}
 						onExpandedPathsChange={setExpandedPaths}
 						onRetry={() => void filesQuery.refetch()}
+						onToggleGroup={toggleGroup}
+						sections={groupSections}
 						sessionId={sessionId}
 						split={split}
 						wrap={true}
@@ -350,6 +410,7 @@ export function SessionFilesView({
 
 function ReviewFileList({
 	annotation,
+	collapsedGroups,
 	compareMode,
 	error,
 	expandedPaths,
@@ -357,11 +418,14 @@ function ReviewFileList({
 	isLoading,
 	onExpandedPathsChange,
 	onRetry,
+	onToggleGroup,
+	sections,
 	sessionId,
 	split,
 	wrap,
 }: {
 	annotation: FileAnnotationModel;
+	collapsedGroups: Set<string>;
 	compareMode?: WorkspaceCompareMode;
 	error: Error | null;
 	expandedPaths: Set<string>;
@@ -369,6 +433,8 @@ function ReviewFileList({
 	isLoading: boolean;
 	onExpandedPathsChange: (next: Set<string>) => void;
 	onRetry: () => void;
+	onToggleGroup: (key: string) => void;
+	sections: FileGroupSection[] | null;
 	sessionId: string;
 	split: boolean;
 	wrap: boolean;
@@ -393,19 +459,82 @@ function ReviewFileList({
 			value={Array.from(expandedPaths)}
 		>
 			<ul className="session-files-review-list flex flex-col gap-0.5">
-				{files.map((file) => (
-					<ReviewFileCard
-						annotation={annotation}
-						expanded={expandedPaths.has(file.path)}
-						file={file}
-						key={file.path}
-						sessionId={sessionId}
-						split={split}
-						wrap={wrap}
-					/>
-				))}
+				{sections
+					? sections.map((section) => (
+							<Fragment key={section.key || "__root__"}>
+								<GroupHeaderRow
+									collapsed={collapsedGroups.has(section.key)}
+									onToggle={() => onToggleGroup(section.key)}
+									section={section}
+								/>
+								{collapsedGroups.has(section.key)
+									? null
+									: section.files.map((file) => (
+											<ReviewFileCard
+												annotation={annotation}
+												expanded={expandedPaths.has(file.path)}
+												file={file}
+												key={file.path}
+												sessionId={sessionId}
+												split={split}
+												wrap={wrap}
+											/>
+										))}
+							</Fragment>
+						))
+					: files.map((file) => (
+							<ReviewFileCard
+								annotation={annotation}
+								expanded={expandedPaths.has(file.path)}
+								file={file}
+								key={file.path}
+								sessionId={sessionId}
+								split={split}
+								wrap={wrap}
+							/>
+						))}
 			</ul>
 		</Accordion>
+	);
+}
+
+function GroupHeaderRow({
+	collapsed,
+	onToggle,
+	section,
+}: {
+	collapsed: boolean;
+	onToggle: () => void;
+	section: FileGroupSection;
+}) {
+	const { t } = useTranslation();
+	const repoLabel = section.key || t("files.groupRoot");
+	const summary = section.pr
+		? t("files.groupHeaderWithPr", { number: section.pr.number, repo: repoLabel })
+		: t("files.groupHeaderNoPr", { repo: repoLabel });
+	return (
+		<li className="session-files-group-header">
+			<button
+				aria-expanded={!collapsed}
+				aria-label={t(collapsed ? "files.expandGroup" : "files.collapseGroup", { group: summary })}
+				className="flex w-full items-center gap-1.5 border-y border-border/60 bg-surface-faint px-2.5 py-1 text-left hover:bg-interactive-hover/40"
+				onClick={onToggle}
+				type="button"
+			>
+				{collapsed ? (
+					<ChevronRight className="size-icon-sm shrink-0 text-passive" aria-hidden="true" />
+				) : (
+					<ChevronDown className="size-icon-sm shrink-0 text-passive" aria-hidden="true" />
+				)}
+				{section.pr ? (
+					<span className="shrink-0 font-mono text-xs font-medium text-foreground">
+						{t("files.groupPrNumber", { number: section.pr.number })}
+					</span>
+				) : null}
+				<span className="min-w-0 truncate font-mono text-xs font-medium text-foreground">{repoLabel}</span>
+				{!section.pr ? <span className="shrink-0 text-caption text-passive">{t("files.groupNoPr")}</span> : null}
+			</button>
+		</li>
 	);
 }
 

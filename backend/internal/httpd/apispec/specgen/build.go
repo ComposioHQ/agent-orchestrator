@@ -245,6 +245,7 @@ var schemaNames = map[string]string{
 	"ControllersAttachmentInput":                          "AttachmentInput",
 	"ControllersListWorkspaceFilesResponse":               "ListWorkspaceFilesResponse",
 	"ControllersWorkspaceFileSummary":                     "WorkspaceFileSummary",
+	"ControllersWorkspaceFileGroupSummary":                "WorkspaceFileGroupSummary",
 	"ControllersWorkspaceFileResponse":                    "WorkspaceFileResponse",
 	"ControllersKillSessionResponse":                      "KillSessionResponse",
 	"ControllersRollbackSessionResponse":                  "RollbackSessionResponse",
