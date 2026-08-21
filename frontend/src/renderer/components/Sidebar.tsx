@@ -1315,11 +1315,13 @@ const ProjectItemContent = memo(function ProjectItemContent({
 									>
 										{expanded ? <FolderOpen className="size-5" strokeWidth={1.75} /> : <Folder className="size-5" strokeWidth={1.75} />}
 									</span>
-									<span
-										className="sidebar-expanded-chrome min-w-0 flex-1 translate-y-px truncate group-data-[collapsible=icon]:hidden"
-										data-project-label=""
-									>
-										{workspace.name}
+									{/* Orchestrator activity sits left of the project name, mirroring worker rows.
+									    gap-1.5 matches SessionRow's dot-to-title spacing (the row itself uses gap-2). */}
+									<span className="sidebar-expanded-chrome flex min-w-0 flex-1 items-center gap-1.5 group-data-[collapsible=icon]:hidden">
+										{orchestratorStatus ? <SessionStatusDot session={orchestratorStatus} /> : null}
+										<span className="min-w-0 flex-1 translate-y-px truncate" data-project-label="">
+											{workspace.name}
+										</span>
 									</span>
 									{workspace.kind === "cloud" && (
 										<Badge
@@ -1370,16 +1372,11 @@ const ProjectItemContent = memo(function ProjectItemContent({
 															name: workspace.name,
 														})
 											}
-											className={cn(
-												HOVER_ACTION_CLASS,
-												orchestratorStatus && "w-7 gap-0.5",
-												orchestratorActive && "text-foreground",
-											)}
+											className={cn(HOVER_ACTION_CLASS, orchestratorActive && "text-foreground")}
 											disabled={isSpawning || isProjectRestarting}
 											onClick={() => void openOrchestrator()}
 											type="button"
 										>
-											{orchestratorStatus ? <SessionStatusDot session={orchestratorStatus} /> : null}
 											<OrchestratorIcon aria-hidden="true" strokeWidth={orchestratorActive ? 2.5 : 2} />
 										</button>
 									</TooltipTrigger>
