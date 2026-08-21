@@ -140,6 +140,16 @@ type WorkspaceFileQuery struct {
 	Path string `query:"path" description:"Session-worktree-relative file path."`
 }
 
+// WorkspaceFileBlobQuery is the query string accepted by GET /api/v1/sessions/{sessionId}/workspace/file/blob.
+type WorkspaceFileBlobQuery struct {
+	// The handler rejects a missing path with WORKSPACE_PATH_REQUIRED, so mark it
+	// required: query params carry no json tag, and requiredFromJSONTag only
+	// derives `required` from those.
+	Path string `query:"path" required:"true" description:"Session-worktree-relative file path."`
+	Side string `query:"side,omitempty" enum:"before,after" description:"Which revision to read: the compare base (before) or the session worktree (after). Defaults to after."`
+	V    string `query:"v,omitempty" description:"Cache-busting token. Ignored by the server; the response is never cached."`
+}
+
 // SessionView is the session wire shape: the domain read model plus the
 // display-safe branch name and the session's attributed pull requests in the
 // curated SessionPRFacts shape. One session can own many PRs (e.g. a stack), so
@@ -324,6 +334,7 @@ type WorkspaceFileResponse struct {
 	Size             int64                           `json:"size"`
 	Binary           bool                            `json:"binary"`
 	Deleted          bool                            `json:"deleted"`
+	ImageMediaType   string                          `json:"imageMediaType,omitempty"`
 	Content          string                          `json:"content"`
 	ContentTruncated bool                            `json:"contentTruncated"`
 	Diff             string                          `json:"diff"`

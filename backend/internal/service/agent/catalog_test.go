@@ -71,6 +71,15 @@ type fakeProjectLookup struct {
 	err     error
 }
 
+type fakeSessionUsageLookup struct {
+	records []domain.SessionRecord
+	err     error
+}
+
+func (f fakeSessionUsageLookup) ListAllSessions(context.Context) ([]domain.SessionRecord, error) {
+	return f.records, f.err
+}
+
 type fakeModelDiscoverer struct {
 	version                string
 	catalog                ports.AgentModelCatalog
@@ -380,6 +389,45 @@ func TestRefreshDoesNotWaitForSlowAgentProbe(t *testing.T) {
 	}
 	if len(got.Installed) != 1 || got.Installed[0].ID != "codex" {
 		t.Fatalf("installed = %#v, want only codex", got.Installed)
+	}
+}
+
+func TestListRanksAgentsByRetainedSessionUsage(t *testing.T) {
+	older := time.Date(2026, time.August, 18, 10, 0, 0, 0, time.UTC)
+	newer := older.Add(24 * time.Hour)
+	svc := NewWithAgents([]agentregistry.HarnessAgent{
+		harnessAgent("claude-code", "Claude Code", nil),
+		harnessAgent("codex", "Codex", nil),
+		harnessAgent("goose", "Goose", nil),
+	})
+	svc.sessions = fakeSessionUsageLookup{records: []domain.SessionRecord{
+		{Harness: domain.AgentHarness("claude-code"), CreatedAt: newer},
+		{Harness: domain.AgentHarness("codex"), CreatedAt: older},
+		{Harness: domain.AgentHarness("codex"), CreatedAt: newer},
+	}}
+
+	got, err := svc.List(context.Background())
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if ids := []string{got.Supported[0].ID, got.Supported[1].ID, got.Supported[2].ID}; !reflect.DeepEqual(ids, []string{"codex", "claude-code", "goose"}) {
+		t.Fatalf("supported order = %v, want frequency then unused fallback", ids)
+	}
+	if got.Supported[0].UsageCount != 2 || got.Supported[0].LastUsedAt == nil || !got.Supported[0].LastUsedAt.Equal(newer) {
+		t.Fatalf("codex usage = %#v, want count 2 and latest use %s", got.Supported[0], newer)
+	}
+	if got.Supported[2].UsageCount != 0 || got.Supported[2].LastUsedAt != nil {
+		t.Fatalf("unused agent usage = %#v, want empty usage metadata", got.Supported[2])
+	}
+}
+
+func TestListReturnsSessionUsageReadFailure(t *testing.T) {
+	svc := NewWithAgents([]agentregistry.HarnessAgent{harnessAgent("codex", "Codex", nil)})
+	svc.sessions = fakeSessionUsageLookup{err: errors.New("database unavailable")}
+
+	_, err := svc.List(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "list sessions for agent usage") {
+		t.Fatalf("List error = %v, want session usage context", err)
 	}
 }
 

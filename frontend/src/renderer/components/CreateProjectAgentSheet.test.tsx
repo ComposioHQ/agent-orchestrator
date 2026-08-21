@@ -54,6 +54,15 @@ describe("CreateProjectAgentSheet", () => {
 		).toBe("codex");
 	});
 
+	it("chooses the most frequently used authorized agent by default", () => {
+		expect(
+			defaultAuthorizedAgent([
+				{ id: "claude-code", label: "Claude Code", authStatus: "authorized", usageCount: 1 },
+				{ id: "codex", label: "Codex", authStatus: "authorized", usageCount: 3 },
+			]),
+		).toBe("codex");
+	});
+
 	it("falls back to the alphabetically first authorized agent when no priority agent is authorized", () => {
 		expect(
 			defaultAuthorizedAgent([

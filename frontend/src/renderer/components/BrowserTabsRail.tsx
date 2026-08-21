@@ -26,8 +26,9 @@ import {
 	verticalListSortingStrategy,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { Globe2, Pin, PinOff, Plus, X } from "lucide-react";
+import { Globe2, History, Pin, PinOff, Plus, X } from "lucide-react";
 import type { BrowserTabState } from "../../main/browser-view-host";
+import type { ClosedBrowserTab } from "../hooks/useBrowserView";
 import { MAX_BROWSER_TABS } from "../../shared/browser-tabs";
 import { browserTabLabel } from "../lib/browser-tab-label";
 import { useResizable } from "../hooks/useResizable";
@@ -61,10 +62,24 @@ type BrowserTabsRailProps = {
 	onCloseTab: (tabId: string) => Promise<void>;
 	onOpenTab: () => Promise<void>;
 	onReorderTabs: (orderedIds: string[]) => void;
+	closedTabs: ClosedBrowserTab[];
+	onReopenClosedTab: (tabId: string) => Promise<void>;
 };
 
 export const BrowserTabsRail = forwardRef<BrowserTabsRailHandle, BrowserTabsRailProps>(function BrowserTabsRail(
-	{ tabs, activeTabId, poppedOut, pinned, onPinnedChange, onSelectTab, onCloseTab, onOpenTab, onReorderTabs },
+	{
+		tabs,
+		activeTabId,
+		poppedOut,
+		pinned,
+		onPinnedChange,
+		onSelectTab,
+		onCloseTab,
+		onOpenTab,
+		onReorderTabs,
+		closedTabs,
+		onReopenClosedTab,
+	},
 	ref,
 ) {
 	const { t } = useTranslation();
@@ -190,6 +205,14 @@ export const BrowserTabsRail = forwardRef<BrowserTabsRailHandle, BrowserTabsRail
 		[onCloseTab],
 	);
 
+	const handleReopenClosedTab = useCallback(
+		(tabId: string) => {
+			closeFlyout(true);
+			void onReopenClosedTab(tabId);
+		},
+		[closeFlyout, onReopenClosedTab],
+	);
+
 	const sensors = useSensors(
 		useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
 		useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
@@ -308,6 +331,7 @@ export const BrowserTabsRail = forwardRef<BrowserTabsRailHandle, BrowserTabsRail
 						</SortableContext>
 					</DndContext>
 				)}
+				{expanded ? <ClosedTabsSection canOpenTab={canOpenTab} closedTabs={closedTabs} onReopen={handleReopenClosedTab} /> : null}
 			</nav>
 			{expanded ? (
 				<div
@@ -378,6 +402,7 @@ export const BrowserTabsRail = forwardRef<BrowserTabsRailHandle, BrowserTabsRail
 								tab={tab}
 							/>
 						))}
+						<ClosedTabsSection canOpenTab={canOpenTab} closedTabs={closedTabs} onReopen={handleReopenClosedTab} />
 					</div>
 				</div>
 			) : null}
@@ -407,6 +432,56 @@ function TabFavicon({ className, tab }: { className: string; tab: BrowserTabStat
 	// never spill past its box into the row next to it.
 	if (tab.favicon) return <img alt="" className={cn("shrink-0 object-cover", className)} src={tab.favicon} />;
 	return <Globe2 aria-hidden="true" className={cn("shrink-0 text-passive", className)} />;
+}
+
+// Only rendered where there's room for a label (expanded rail, docked flyout)
+// — the icon-only pinned rail has no space for a second, distinct row style,
+// and closed tabs are inherently distinct from "click to switch to this open
+// tab," so they don't belong crammed into the icon list.
+function ClosedTabsSection({
+	canOpenTab,
+	closedTabs,
+	onReopen,
+}: {
+	canOpenTab: boolean;
+	closedTabs: ClosedBrowserTab[];
+	onReopen: (tabId: string) => void;
+}) {
+	const { t } = useTranslation();
+	if (closedTabs.length === 0) return null;
+	return (
+		<div className="border-t border-border">
+			<div className="flex h-6 shrink-0 items-center px-1.5 font-mono text-[10px] font-semibold uppercase tracking-wide text-passive">
+				{t("browser.recentlyClosed")}
+			</div>
+			{closedTabs.map((tab) => {
+				const label = browserTabLabel(tab.title, tab.url);
+				const reopenLabel = t("browser.reopenTab", { title: label.title });
+				return (
+					<button
+						aria-label={reopenLabel}
+						className={cn(
+							"flex h-8 w-full items-center gap-1.5 p-1.5 text-left text-sm text-muted-foreground opacity-70 transition-[opacity,background-color,color]",
+							"hover:bg-interactive-hover hover:text-foreground hover:opacity-100",
+							"disabled:pointer-events-none disabled:opacity-40",
+						)}
+						disabled={!canOpenTab}
+						key={tab.id}
+						onClick={() => onReopen(tab.id)}
+						title={canOpenTab ? reopenLabel : t("browser.tabLimitReached")}
+						type="button"
+					>
+						{tab.favicon ? (
+							<img alt="" className="size-icon-base shrink-0 object-cover" src={tab.favicon} />
+						) : (
+							<History aria-hidden="true" className="size-icon-base shrink-0" />
+						)}
+						<span className="min-w-0 flex-1 truncate">{label.title}</span>
+					</button>
+				);
+			})}
+		</div>
+	);
 }
 
 function IconTabRow({ active, chrome, onSelect, tab }: TabRowProps) {
