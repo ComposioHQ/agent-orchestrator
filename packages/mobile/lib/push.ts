@@ -7,7 +7,8 @@ import * as Device from "expo-device";
 import * as Notifications from "expo-notifications";
 import * as SecureStore from "expo-secure-store";
 import { Linking, Platform } from "react-native";
-import { ApiError, registerPushDevice, unregisterPushDevice } from "./api";
+import { ApiError, registerPushDevice, unpairFromDaemon, unregisterPushDevice } from "./api";
+import { getInstallId } from "./installId";
 import type { ServerConfig } from "./config";
 import { classifyServerFailure, hasServer, type PushRegisterResult, type PushStatus } from "./pushStatus";
 
@@ -137,13 +138,23 @@ function easProjectId(): string | undefined {
 	return extra?.eas?.projectId ?? Constants.easConfig?.projectId;
 }
 
-// Request permission (once), acquire the Expo push token, and register it with
-// the daemon. Returns the token on success, or a typed reason on failure so the
-// UI can say something accurate — notably distinguishing "this build can't mint a
-// token" from "the server wasn't reachable", which are very different problems.
-// Idempotent: the daemon upserts by token, so this is also the foreground-refresh
-// path (D7).
-export async function registerForPush(cfg: ServerConfig): Promise<PushRegisterResult> {
+// Acquire the Expo push token and register it with the daemon. Returns the token
+// on success, or a typed reason on failure so the UI can say something accurate —
+// notably distinguishing "this build can't mint a token" from "the server wasn't
+// reachable", which are very different problems. Idempotent: the daemon upserts
+// by token, so this is also the foreground-refresh path (D7).
+//
+// `ask` decides whether this call may spend the user's one-shot OS permission
+// prompt. Automatic callers (post-connect, foreground refresh) pass false and
+// register only if permission was already granted; only a call the user
+// deliberately initiated — where the app has just explained what notifications
+// are for — passes true. Without this the prompt fires milliseconds after the
+// first successful connect, while the user is still reading the result, with
+// nothing having framed it.
+export async function registerForPush(
+	cfg: ServerConfig,
+	{ ask }: { ask: boolean } = { ask: true },
+): Promise<PushRegisterResult> {
 	// Nothing to register with until the app is paired. Checked first, and here
 	// rather than only in the UI, so no call site can spend the user's one-shot
 	// permission prompt on a request that could only fail (an unpaired app still
@@ -160,7 +171,7 @@ export async function registerForPush(cfg: ServerConfig): Promise<PushRegisterRe
 
 	const current = await Notifications.getPermissionsAsync();
 	let status = current.status;
-	if (status !== "granted" && current.canAskAgain) {
+	if (status !== "granted" && ask && current.canAskAgain) {
 		status = (await Notifications.requestPermissionsAsync()).status;
 	}
 	if (status !== "granted") return { ok: false, reason: "denied" };
@@ -255,6 +266,35 @@ export async function openNotificationSettings(): Promise<void> {
 // unregister fails (daemon unreachable), the target is queued for retry instead
 // of being dropped — so the old daemon can't keep pushing to this device. Never
 // throws — the caller must not be blocked.
+// Tell the daemon this phone has unpaired, so it drops the row rather than just
+// clearing the token. Used by "Disconnect & forget server" and by the unpair
+// effect in PushManager — the two places where the phone is genuinely leaving,
+// as opposed to merely switching notifications off.
+//
+// Sends the install id when we have one and the token otherwise, so a daemon can
+// find the row either way. Best-effort like unregisterFromPush: local state is
+// cleared regardless, since a phone that cannot reach the old daemon must still
+// be able to disconnect from it.
+export async function unpairFromServer(): Promise<void> {
+	const reg = await loadRegistration();
+	await clearRegistration();
+	if (!reg) return;
+	let id = reg.token;
+	try {
+		id = (await getInstallId()) || reg.token;
+	} catch {
+		// Fall back to the token; an unreadable install id must not block unpairing.
+	}
+	try {
+		await unpairFromDaemon(configOf(reg), id);
+	} catch {
+		// The daemon may be unreachable (that is often *why* the user is
+		// disconnecting). Nothing to retry against: the phone is forgetting this
+		// server's address and credentials, so a queued call could never be sent.
+		// The row is left for the desktop to remove.
+	}
+}
+
 export async function unregisterFromPush(): Promise<void> {
 	const reg = await loadRegistration();
 	// Clear the active registration up front: the device is disconnecting, so it

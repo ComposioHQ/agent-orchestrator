@@ -19,6 +19,7 @@ import (
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/agentbase"
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/binaryutil"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/hookutil"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
@@ -54,6 +55,11 @@ func (p *Plugin) Manifest() adapters.Manifest {
 	}
 }
 
+// GetConfigSpec reports Aider's optional model override.
+func (p *Plugin) GetConfigSpec(ctx context.Context) (ports.ConfigSpec, error) {
+	return agentbase.ModelConfigSpec(ctx, "Model override passed to `aider --model`.")
+}
+
 // GetLaunchCommand builds the argv to start an interactive Aider session:
 //
 //	aider [permission flags] --no-check-update --no-stream --no-pretty [--read <context file>]
@@ -75,6 +81,7 @@ func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (
 
 	cmd = []string{binary}
 	appendApprovalFlags(&cmd, cfg.Permissions)
+	agentbase.AppendModelFlag(&cmd, cfg.Config, "--model")
 	cmd = append(cmd, "--no-check-update", "--no-stream", "--no-pretty")
 	if cfg.SystemPromptFile != "" {
 		cmd = append(cmd, "--read", cfg.SystemPromptFile)
@@ -143,6 +150,14 @@ func ResolveAiderBinary(ctx context.Context) (string, error) {
 				return "", err
 			}
 		}
+		for _, candidate := range binaryutil.WindowsPackageManagerBinCandidates("aider") {
+			if hookutil.IsExecutableFile(candidate) {
+				return candidate, nil
+			}
+			if err := ctx.Err(); err != nil {
+				return "", err
+			}
+		}
 		return "", fmt.Errorf("aider: %w", ports.ErrAgentBinaryNotFound)
 	}
 
@@ -156,10 +171,11 @@ func ResolveAiderBinary(ctx context.Context) (string, error) {
 	}
 	if home, err := os.UserHomeDir(); err == nil {
 		candidates = append([]string{filepath.Join(home, ".local", "bin", "aider")}, candidates...)
+		candidates = append(candidates, binaryutil.UnixPackageManagerBinCandidates(home, "aider")...)
 	}
 
 	for _, candidate := range candidates {
-		if hookutil.FileExists(candidate) {
+		if hookutil.IsExecutableFile(candidate) {
 			return candidate, nil
 		}
 		if err := ctx.Err(); err != nil {

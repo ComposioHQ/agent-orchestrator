@@ -1,4 +1,12 @@
 import "@testing-library/jest-dom/vitest";
+import * as jestDomMatchers from "@testing-library/jest-dom/matchers";
+import { expect } from "vitest";
+import "../i18n";
+import { coerceUiSettings, DEFAULT_UI_SETTINGS } from "../../shared/ui-locale";
+
+// Vitest 4 can load the convenience entry against a different matcher
+// instance. Register the matchers on the active test runtime as well.
+expect.extend(jestDomMatchers);
 
 // Guard: src/main/** tests run in the Node.js environment (no DOM). vitest still
 // routes setupFiles here, so only install the DOM stubs when a DOM exists.
@@ -61,19 +69,28 @@ if (typeof window !== "undefined") {
 			openExternal: async () => undefined,
 			scanImportFolder: async ({ path }: { path: string }) => ({ path, repos: [] }),
 			checkAncestorRepo: async () => undefined,
+			getPathForFile: () => "",
+			onOpenFolderPath: () => () => undefined,
 			onNewSessionShortcut: () => () => undefined,
 			onKeyboardShortcutsHelp: () => () => undefined,
 			onNewShellTerminalShortcut: () => () => undefined,
+			onCloseShellTerminalShortcut: () => () => undefined,
+			setCloseShellTerminalShortcutEnabled: () => undefined,
 			onOpenSettingsShortcut: () => () => undefined,
 			onPreviousSessionShortcut: () => () => undefined,
 			onNextSessionShortcut: () => () => undefined,
+			onPreviousTabShortcut: () => () => undefined,
+			onNextTabShortcut: () => () => undefined,
 			onFocusTerminalShortcut: () => () => undefined,
 		},
 		terminal: {
 			saveDroppedFile: async () => "",
+			setFocused: () => undefined,
+			onFontSizeShortcut: () => () => undefined,
 		},
 		window: {
-			setOverlay: async () => undefined,
+			isMaximized: async () => false,
+			onMaximized: () => () => undefined,
 			isFullScreen: async () => false,
 			onFullScreen: () => () => undefined,
 		},
@@ -99,6 +116,7 @@ if (typeof window !== "undefined") {
 			getBootstrap: async () => null,
 		},
 		browser: {
+			nativeCompositionEnabled: true,
 			ensure: async (sessionId: string) => ({
 				viewId: `test:${sessionId}`,
 				url: "",
@@ -108,8 +126,7 @@ if (typeof window !== "undefined") {
 				isLoading: false,
 			}),
 			setBounds: () => undefined,
-			capture: async () => "",
-			requestMirror: async () => false,
+			setOverlayOpen: () => undefined,
 			navigate: async ({ viewId }: { viewId: string }) => ({
 				viewId,
 				url: "",
@@ -161,17 +178,30 @@ if (typeof window !== "undefined") {
 			getTabs: async (viewId: string) => ({ viewId, activeTabId: "t1", tabs: [] }),
 			selectTab: async ({ viewId, tabId }) => ({ viewId, activeTabId: tabId, tabs: [] }),
 			closeTab: async ({ viewId }) => ({ viewId, activeTabId: "", tabs: [] }),
+			openTab: async ({ viewId }) => ({ viewId, activeTabId: "", tabs: [] }),
+			devtools: async ({ viewId, operation }) => ({
+				viewId,
+				open: operation !== "close",
+				activeTabId: "",
+			}),
 			destroy: () => undefined,
 			setAnnotationMode: async () => undefined,
 			onNavState: () => () => undefined,
 			onTabsState: () => () => undefined,
 			onAgentActivity: () => () => undefined,
+			onDevToolsState: () => () => undefined,
 			onAnnotationSubmit: () => () => undefined,
 			onAnnotationCancel: () => () => undefined,
 		},
 		notifications: {
 			show: async () => undefined,
+			setBadge: async () => undefined,
+			devBounce: async () => undefined,
 			onClick: () => () => undefined,
+		},
+		tray: {
+			setAttentionState: () => undefined,
+			onOpenSession: () => () => undefined,
 		},
 		appState: {
 			getMigration: async () => ({ status: "pending" }),
@@ -180,6 +210,10 @@ if (typeof window !== "undefined") {
 		updateSettings: {
 			get: async () => ({ enabled: false, channel: "latest", nightlyAck: false, feature: null }),
 			set: async () => undefined,
+		},
+		uiSettings: {
+			get: async () => ({ ...DEFAULT_UI_SETTINGS }),
+			set: async (settings) => coerceUiSettings({ ...DEFAULT_UI_SETTINGS, ...settings }),
 		},
 		keybindings: {
 			get: async () => ({}),
@@ -193,10 +227,17 @@ if (typeof window !== "undefined") {
 			download: async () => undefined,
 			install: async () => undefined,
 			onStatus: () => () => undefined,
+		onTelemetry: () => () => undefined,
 		},
 		featureBuilds: {
 			list: async () => [],
 			getActive: async () => null,
+		},
+		cloud: {
+			getSession: async () => null,
+			signIn: async () => undefined,
+			signOut: async () => undefined,
+			onSessionChanged: () => () => undefined,
 		},
 	};
 } // end if (typeof window !== "undefined")

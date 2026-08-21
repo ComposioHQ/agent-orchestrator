@@ -4,9 +4,6 @@ import { useWindowFullScreen } from "../hooks/useWindowFullScreen";
 import { isLinuxPlatform, isMacPlatform } from "../lib/platform";
 import { useUiStore } from "../stores/ui-store";
 
-const isMac = isMacPlatform();
-const isLinux = isLinuxPlatform();
-
 /**
  * Shared inset center panel: sidebar-colored outer frame with a bordered inner
  * surface. Used by the shell's app routes (kanban / session), the welcome board,
@@ -14,7 +11,8 @@ const isLinux = isLinuxPlatform();
  * `center-panel-surface`).
  *
  * `titlebarAlign` (default true) pulls Board/Terminal titles up level with the
- * fixed TitlebarNav cluster (macOS + Linux).
+ * fixed TitlebarNav cluster on macOS and Linux. Windows keeps those controls in
+ * its custom titlebar, so it does not need this clearance.
  */
 export function CenterPanelShell({
 	className,
@@ -29,19 +27,20 @@ export function CenterPanelShell({
 }) {
 	const isSidebarOpen = useUiStore((state) => state.isSidebarOpen);
 	const isFullScreen = useWindowFullScreen();
-	const align = titlebarAlign && (isMac || isLinux);
+	const isMac = isMacPlatform();
+	const isLinux = isLinuxPlatform();
+	const align = titlebarAlign && isMac;
 	const titlebarClearance = align && !isSidebarOpen;
+	const linuxTitlebarClearance = titlebarAlign && isLinux && !isSidebarOpen;
 
 	return (
 		<div
 			className={cn(
 				"center-panel-shell",
 				align && "center-panel-shell--mac",
-				// Linux has no traffic lights, so the sidebar-closed title clears the
-				// cluster at its own left edge rather than the macOS offset.
-				isLinux && "center-panel-shell--linux",
 				titlebarClearance && "center-panel-shell--titlebar-clearance",
 				titlebarClearance && isFullScreen && "center-panel-shell--titlebar-clearance-fullscreen",
+				linuxTitlebarClearance && "center-panel-shell--titlebar-clearance-linux",
 				align && isFullScreen && "center-panel-shell--fullscreen",
 				className,
 			)}

@@ -15,6 +15,7 @@ const shellMocks = vi.hoisted(() => {
 		previousSessionListener: undefined as (() => void) | undefined,
 		nextSessionListener: undefined as (() => void) | undefined,
 		focusTerminalListener: undefined as (() => void) | undefined,
+		openFolderPathListener: undefined as ((path: string) => void) | undefined,
 		routeParams: {} as { projectId?: string; sessionId?: string },
 		routeSearch: {} as Record<string, unknown>,
 		workspaces: [] as WorkspaceSummary[],
@@ -62,6 +63,11 @@ const shellMocks = vi.hoisted(() => {
 			state.focusTerminalListener = listener;
 			return vi.fn();
 		}),
+		getPathForFile: vi.fn((file: File) => `/dropped/${file.name}`),
+		onOpenFolderPath: vi.fn((listener: (path: string) => void) => {
+			state.openFolderPathListener = listener;
+			return vi.fn();
+		}),
 		getKeybindings: vi.fn(async () => ({})),
 		setKeybindings: vi.fn(async (overrides: KeybindingOverrides) => overrides),
 		setKeybindingRecording: vi.fn(async () => undefined),
@@ -69,7 +75,9 @@ const shellMocks = vi.hoisted(() => {
 			ensureQueryData: vi.fn(),
 			fetchQuery: vi.fn(),
 			getQueryState: vi.fn(),
+			getQueryData: vi.fn(),
 			invalidateQueries: vi.fn(),
+			prefetchQuery: vi.fn(async () => undefined),
 			setQueryData: vi.fn(),
 		},
 		state,
@@ -79,6 +87,9 @@ const shellMocks = vi.hoisted(() => {
 vi.mock("@tanstack/react-query", async (importOriginal) => ({
 	...(await importOriginal<typeof import("@tanstack/react-query")>()),
 	useQueryClient: () => shellMocks.queryClient,
+	// TerminalCacheProvider owns reviewer queries in production. This shell-only
+	// harness has no routed terminal children and intentionally omits a provider.
+	useQueries: () => [],
 }));
 
 vi.mock("@tanstack/react-router", async (importOriginal) => ({
@@ -101,6 +112,8 @@ vi.mock("../lib/bridge", () => ({
 			onPreviousSessionShortcut: shellMocks.onPreviousSessionShortcut,
 			onNextSessionShortcut: shellMocks.onNextSessionShortcut,
 			onFocusTerminalShortcut: shellMocks.onFocusTerminalShortcut,
+			getPathForFile: shellMocks.getPathForFile,
+			onOpenFolderPath: shellMocks.onOpenFolderPath,
 		},
 		keybindings: {
 			get: shellMocks.getKeybindings,
@@ -108,6 +121,10 @@ vi.mock("../lib/bridge", () => ({
 			setRecording: shellMocks.setKeybindingRecording,
 		},
 		window: {},
+		tray: {
+			setAttentionState: () => undefined,
+			onOpenSession: () => () => undefined,
+		},
 	},
 }));
 
@@ -124,6 +141,7 @@ vi.mock("../hooks/useDaemonStatus", () => ({
 // The shell layout opens standalone terminals; this suite only covers the
 // shortcut subscriptions, so the mutation is stubbed rather than driven.
 vi.mock("../hooks/useShellTerminals", () => ({
+	useShellTerminals: () => ({ data: [], isSuccess: true }),
 	useOpenShellTerminal: () => ({ mutate: shellMocks.openShellTerminal }),
 }));
 
@@ -131,6 +149,10 @@ vi.mock("../hooks/useAgentsQuery", () => ({
 	agentsQueryKey: ["agents"],
 	agentsQueryOptions: {},
 	refreshAgents: vi.fn(),
+	// The shell reports the install's agent inventory once per launch, so the
+	// mock has to answer this too. Undefined data means the hook reports nothing,
+	// which keeps these shortcut tests free of telemetry side effects.
+	useAgentsQuery: () => ({ data: undefined }),
 }));
 
 vi.mock("../components/NotificationCenter", () => ({ NotificationRuntime: () => null }));
@@ -155,6 +177,7 @@ vi.mock("../components/TitlebarNav", async () => {
 	};
 });
 vi.mock("../components/WindowTitlebar", () => ({ WindowTitlebar: () => null }));
+vi.mock("../components/SettingsDialog", () => ({ SettingsDialog: () => null }));
 vi.mock("../components/KeyboardShortcutsDialog", () => ({
 	KeyboardShortcutsDialog: ({ open }: { open: boolean }) => (open ? <div data-testid="keyboard-shortcuts" /> : null),
 }));
@@ -185,11 +208,14 @@ vi.mock("../components/GlobalNewTaskDialog", async () => {
 vi.mock("../components/Sidebar", async () => {
 	const { useUiStore: useStore } = await vi.importActual<typeof import("../stores/ui-store")>("../stores/ui-store");
 	return {
-		Sidebar: ({ isOverlay, onPreviewLeave }: { isOverlay?: boolean; onPreviewLeave?: () => void }) => {
+		Sidebar: ({ isOverlay, onPreviewLeave, topbarOffset }: { isOverlay?: boolean; onPreviewLeave?: () => void; topbarOffset?: string }) => {
 			const nonce = useStore((state) => state.createProjectNonce);
+			const folderDropRequest = useStore((state) => state.folderDropRequest);
 			return (
-				<div data-overlay={isOverlay ? "true" : "false"} data-testid="sidebar" onPointerLeave={onPreviewLeave}>
-					{nonce > 0 ? <div data-testid="create-project-flow" /> : null}
+				<div data-overlay={isOverlay ? "true" : "false"} data-testid="sidebar" data-topbar-offset={topbarOffset} onPointerLeave={onPreviewLeave}>
+					{nonce > 0 || folderDropRequest ? (
+						<div data-path={folderDropRequest?.path} data-testid="create-project-flow" />
+					) : null}
 				</div>
 			);
 		},
@@ -255,12 +281,15 @@ beforeEach(() => {
 	shellMocks.onPreviousSessionShortcut.mockClear();
 	shellMocks.onNextSessionShortcut.mockClear();
 	shellMocks.onFocusTerminalShortcut.mockClear();
+	shellMocks.getPathForFile.mockClear();
+	shellMocks.onOpenFolderPath.mockClear();
 	shellMocks.state.newSessionListener = undefined;
 	shellMocks.state.keyboardShortcutsListener = undefined;
 	shellMocks.state.openSettingsListener = undefined;
 	shellMocks.state.previousSessionListener = undefined;
 	shellMocks.state.nextSessionListener = undefined;
 	shellMocks.state.focusTerminalListener = undefined;
+	shellMocks.state.openFolderPathListener = undefined;
 	shellMocks.state.routeParams = {};
 	shellMocks.state.routeSearch = {};
 	shellMocks.state.workspaces = workspaces;
@@ -276,13 +305,27 @@ beforeEach(() => {
 	shellMocks.queryClient.getQueryState.mockReset().mockReturnValue({ dataUpdatedAt: 0 });
 	useUiStore.setState({
 		createProjectNonce: 0,
+		folderDropRequest: null,
 		isSidebarOpen: true,
 		newTaskRequest: null,
 		newShellTerminalNonce: 0,
+		settingsModal: null,
 	});
 });
 
 describe("shell workspace startup", () => {
+	it("leaves the session topbar row to the session split instead of reserving a full-width shell row", async () => {
+		shellMocks.state.routeParams = { sessionId: "sess-1" };
+		await renderShell();
+
+		const sidebar = screen.getByTestId("sidebar");
+		expect(screen.queryByTestId("session-topbar-host")).not.toBeInTheDocument();
+		// The route shell owns only the frame. SessionView places its topbar host
+		// inside the terminal panel so the inspector header can occupy this row too.
+		expect(sidebar).not.toHaveAttribute("data-topbar-offset", "session");
+		expect(document.querySelector(".center-panel-shell--session > .center-panel-surface")).toBeInTheDocument();
+	});
+
 	it("forces a confirmed fetch and preserves a collapsed sidebar preference", async () => {
 		let resolveFetch: ((value: WorkspaceSummary[]) => void) | undefined;
 		useUiStore.setState({ isSidebarOpen: false });
@@ -536,7 +579,8 @@ describe("shell application shortcut subscriptions", () => {
 
 		act(() => shellMocks.state.openSettingsListener?.());
 
-		expect(shellMocks.navigate).toHaveBeenCalledWith({ to: "/settings" });
+		expect(useUiStore.getState().settingsModal).toEqual({ scope: "global" });
+		expect(shellMocks.navigate).not.toHaveBeenCalled();
 	});
 
 	it("moves to the next active session in the current project", async () => {
@@ -563,15 +607,140 @@ describe("shell application shortcut subscriptions", () => {
 		});
 	});
 
-	it("focuses the mounted terminal", async () => {
-		const terminalInput = document.createElement("textarea");
-		terminalInput.className = "xterm-helper-textarea";
-		document.body.appendChild(terminalInput);
+	it("focuses the active terminal without targeting an earlier parked xterm", async () => {
+		const parked = document.createElement("div");
+		parked.dataset.terminalActivationPhase = "parked";
+		parked.inert = true;
+		const parkedInput = document.createElement("textarea");
+		parkedInput.className = "xterm-helper-textarea";
+		parked.appendChild(parkedInput);
+		const active = document.createElement("div");
+		active.dataset.terminalActivationPhase = "visible";
+		const activeInput = document.createElement("textarea");
+		activeInput.className = "xterm-helper-textarea";
+		active.appendChild(activeInput);
+		document.body.append(parked, active);
 		await renderShell();
 
 		act(() => shellMocks.state.focusTerminalListener?.());
 
-		expect(document.activeElement).toBe(terminalInput);
-		terminalInput.remove();
+		expect(document.activeElement).toBe(activeInput);
+		parked.remove();
+		active.remove();
+	});
+});
+
+describe("shell folder drag-and-drop", () => {
+	function fileDragTransfer(options: { fileName?: string; isDirectory: boolean }) {
+		const file = new File([], options.fileName ?? "dropped-folder");
+		return {
+			dropEffect: "none",
+			items: [
+				{
+					getAsFile: () => file,
+					kind: "file",
+					webkitGetAsEntry: () => ({ isDirectory: options.isDirectory }),
+				},
+			],
+			types: ["Files"],
+		};
+	}
+
+	it("does not show the overlay for a plain-file drag", async () => {
+		await renderShell();
+
+		fireEvent.dragEnter(window, { dataTransfer: fileDragTransfer({ isDirectory: false }) });
+		expect(screen.queryByTestId("folder-drop-overlay")).not.toBeInTheDocument();
+	});
+
+	it("shows the drop overlay while a folder is dragged over the window, and hides it on leave", async () => {
+		await renderShell();
+
+		fireEvent.dragEnter(window, { dataTransfer: fileDragTransfer({ isDirectory: true }) });
+		expect(screen.getByTestId("folder-drop-overlay")).toBeInTheDocument();
+
+		fireEvent.dragLeave(window, { dataTransfer: fileDragTransfer({ isDirectory: true }) });
+		expect(screen.queryByTestId("folder-drop-overlay")).not.toBeInTheDocument();
+	});
+
+	// Regression: dragenter/dragleave fire again for every child-element boundary
+	// the pointer crosses while hovering inside the window, not just at the
+	// window's own edge. A relatedTarget-blind counter is what keeps the overlay
+	// from flickering off mid-drag.
+	it("does not flicker the overlay when the pointer crosses a child element", async () => {
+		await renderShell();
+
+		fireEvent.dragEnter(window, { dataTransfer: fileDragTransfer({ isDirectory: true }) });
+		fireEvent.dragEnter(window, { dataTransfer: fileDragTransfer({ isDirectory: true }) });
+		expect(screen.getByTestId("folder-drop-overlay")).toBeInTheDocument();
+
+		fireEvent.dragLeave(window, { dataTransfer: fileDragTransfer({ isDirectory: true }) });
+		expect(screen.getByTestId("folder-drop-overlay")).toBeInTheDocument();
+
+		fireEvent.dragLeave(window, { dataTransfer: fileDragTransfer({ isDirectory: true }) });
+		expect(screen.queryByTestId("folder-drop-overlay")).not.toBeInTheDocument();
+	});
+
+	it("resolves the dropped folder's real path and opens the create-project flow", async () => {
+		await renderShell();
+
+		fireEvent.dragEnter(window, { dataTransfer: fileDragTransfer({ isDirectory: true }) });
+		fireEvent.drop(window, { dataTransfer: fileDragTransfer({ fileName: "my-project", isDirectory: true }) });
+
+		expect(shellMocks.getPathForFile).toHaveBeenCalledTimes(1);
+		expect(screen.queryByTestId("folder-drop-overlay")).not.toBeInTheDocument();
+		expect(screen.getByTestId("create-project-flow")).toHaveAttribute("data-path", "/dropped/my-project");
+		expect(useUiStore.getState().folderDropRequest).toEqual({ nonce: 1, path: "/dropped/my-project" });
+	});
+
+	it("ignores a drop that is not a folder", async () => {
+		await renderShell();
+
+		fireEvent.drop(window, { dataTransfer: fileDragTransfer({ isDirectory: false }) });
+
+		expect(shellMocks.getPathForFile).not.toHaveBeenCalled();
+		expect(useUiStore.getState().folderDropRequest).toBeNull();
+		expect(screen.queryByTestId("create-project-flow")).not.toBeInTheDocument();
+	});
+
+	it("re-fires on a repeated drop so a second folder can be added", async () => {
+		await renderShell();
+
+		fireEvent.drop(window, { dataTransfer: fileDragTransfer({ fileName: "first", isDirectory: true }) });
+		fireEvent.drop(window, { dataTransfer: fileDragTransfer({ fileName: "second", isDirectory: true }) });
+
+		expect(useUiStore.getState().folderDropRequest).toEqual({ nonce: 2, path: "/dropped/second" });
+	});
+
+	// Regression: XtermTerminal used to stopPropagation() on a plain (non-folder)
+	// file drop, so this drop event never reached the window and dragDepthRef
+	// was never reset. The next folder drag then bumped from a stale nonzero
+	// depth, missed the === 1 branch, and never showed the overlay. Xterm no
+	// longer stops propagation for a non-directory drop, so this event now
+	// always reaches the window; this test locks in that the window's own
+	// reset logic correctly recovers once it does.
+	it("does not suppress the next folder drag's overlay after a plain file drop resets the counter", async () => {
+		await renderShell();
+
+		fireEvent.dragEnter(window, { dataTransfer: fileDragTransfer({ isDirectory: false }) });
+		fireEvent.drop(window, { dataTransfer: fileDragTransfer({ isDirectory: false }) });
+		expect(screen.queryByTestId("folder-drop-overlay")).not.toBeInTheDocument();
+
+		fireEvent.dragEnter(window, { dataTransfer: fileDragTransfer({ isDirectory: true }) });
+		expect(screen.getByTestId("folder-drop-overlay")).toBeInTheDocument();
+	});
+});
+
+describe("shell taskbar-icon folder drop subscription", () => {
+	it("opens the create-project flow for a folder dropped on the app's icon/shortcut", async () => {
+		await renderShell();
+		expect(shellMocks.onOpenFolderPath).toHaveBeenCalledTimes(1);
+
+		const listener = shellMocks.state.openFolderPathListener;
+		if (!listener) throw new Error("open-folder-path listener was not registered");
+		act(() => listener("/dropped-on-icon/my-project"));
+
+		expect(useUiStore.getState().folderDropRequest).toEqual({ nonce: 1, path: "/dropped-on-icon/my-project" });
+		expect(screen.getByTestId("create-project-flow")).toHaveAttribute("data-path", "/dropped-on-icon/my-project");
 	});
 });

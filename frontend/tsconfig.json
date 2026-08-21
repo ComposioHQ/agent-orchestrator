@@ -8,6 +8,7 @@
 		"jsx": "react-jsx",
 		"types": ["vite/client", "vitest/globals"],
 		"strict": true,
+		"resolveJsonModule": true,
 		"esModuleInterop": true,
 		"allowSyntheticDefaultImports": true,
 		"isolatedModules": true,
@@ -20,7 +21,8 @@
 		"noFallthroughCasesInSwitch": true,
 		"baseUrl": ".",
 		"paths": {
-			"@/*": ["./src/renderer/*"]
+			"@/*": ["./src/renderer/*"],
+			"@aoagents/product-ui": ["../packages/product-ui/src/index.ts"]
 		}
 	},
 	"include": [

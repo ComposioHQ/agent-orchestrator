@@ -3,10 +3,12 @@ package conpty
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -26,6 +28,115 @@ func livePID() int { return os.Getpid() }
 // used in Destroy tests so the force-kill step is a safe no-op.
 // ponytail: PID 2147483647 (MaxInt32) is never a real process; signal-0 returns ESRCH.
 func deadPID() int { return 2147483647 }
+
+func TestRuntimeProvidesStyledRenderedTerminalOutput(t *testing.T) {
+	isolateRegistry(t)
+	hosts := map[string]*inProcHost{}
+	runtime := New(Options{Spawner: fakeSpawnerFor(t, hosts, livePID())})
+	var candidate any = runtime
+	if _, ok := candidate.(ports.StyledTerminalOutputReader); !ok {
+		t.Fatal("ConPTY runtime must expose its rendered current surface")
+	}
+
+	handle, err := runtime.Create(context.Background(), ports.RuntimeConfig{
+		SessionID:     "sess-styled",
+		WorkspacePath: "/tmp/w",
+		Argv:          []string{"sh"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	host := hosts[handle.ID]
+	defer host.cleanup(t)
+
+	if _, err := host.pty.WriteOutput([]byte("\x1b[2J\x1b[HOLD TRANSCRIPT\n")); err != nil {
+		t.Fatal(err)
+	}
+	current := "\x1b[2J\x1b[H────────────────\n❯ \x1b[2mAsk a question\x1b[0m\n────────────────\n"
+	if _, err := host.pty.WriteOutput([]byte(current)); err != nil {
+		t.Fatal(err)
+	}
+
+	deadline := time.Now().Add(time.Second)
+	for {
+		output, outputErr := runtime.GetStyledOutput(context.Background(), handle, 10)
+		if outputErr != nil {
+			t.Fatal(outputErr)
+		}
+		if strings.Contains(output, "Ask a question") {
+			if strings.Contains(output, "OLD TRANSCRIPT") {
+				t.Fatalf("styled output retained overwritten history: %q", output)
+			}
+			if !strings.Contains(output, "\x1b[") {
+				t.Fatalf("styled output lost ANSI cell styling: %q", output)
+			}
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("rendered current surface never became observable: %q", output)
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
+func TestRuntimeRejectsStyledOutputFromARecoveredLegacyHost(t *testing.T) {
+	isolateRegistry(t)
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = listener.Close() })
+	requestType := make(chan byte, 1)
+	serverDone := make(chan error, 1)
+	go func() {
+		conn, acceptErr := listener.Accept()
+		if acceptErr != nil {
+			serverDone <- acceptErr
+			return
+		}
+		defer func() { _ = conn.Close() }()
+		header := make([]byte, 5)
+		if _, readErr := io.ReadFull(conn, header); readErr != nil {
+			serverDone <- readErr
+			return
+		}
+		requestType <- header[0]
+		payload := []byte(fmt.Sprintf(`{"alive":true,"pid":%d}`, livePID()))
+		frame, encodeErr := EncodeMessage(MsgStatusRes, payload)
+		if encodeErr != nil {
+			serverDone <- encodeErr
+			return
+		}
+		_, writeErr := conn.Write(frame)
+		serverDone <- writeErr
+	}()
+
+	if err := ptyregistry.Register(ptyregistry.Entry{
+		SessionID: "sess-legacy", PtyHostPID: livePID(), PipePath: listener.Addr().String(),
+		RegisteredAt: time.Now().UTC().Format(time.RFC3339),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	runtime := New(Options{})
+	_, err = runtime.GetStyledOutput(context.Background(), ports.RuntimeHandle{ID: "sess-legacy"}, 10)
+	if !errors.Is(err, ports.ErrStyledTerminalOutputUnavailable) {
+		t.Fatalf("GetStyledOutput error = %v, want ErrStyledTerminalOutputUnavailable", err)
+	}
+	if got := <-requestType; got != MsgStatusReq {
+		t.Fatalf("legacy host request = 0x%02x, want capability-safe MsgStatusReq", got)
+	}
+	if serverErr := <-serverDone; serverErr != nil {
+		t.Fatal(serverErr)
+	}
+	_ = listener.Close()
+
+	// The negotiated legacy result is cached per adopted host. A second call
+	// must return the capability sentinel without dialing the now-closed socket.
+	_, err = runtime.GetStyledOutput(context.Background(), ports.RuntimeHandle{ID: "sess-legacy"}, 10)
+	if !errors.Is(err, ports.ErrStyledTerminalOutputUnavailable) {
+		t.Fatalf("cached GetStyledOutput error = %v, want ErrStyledTerminalOutputUnavailable", err)
+	}
+}
 
 // ---------------------------------------------------------------------------
 // Test harness: in-process pty-host backed by a fakePTY.
@@ -159,6 +270,39 @@ func TestCreate_RegistersSession(t *testing.T) {
 	hosts["sess-abc"].cleanup(t)
 }
 
+// TestCreate_RunFilePathScopesRegistryToInstanceDir verifies Create honors
+// Options.RunFilePath, registering into that instance's own registry file
+// instead of the ~/.ao default. This is the fix for two AO daemon instances
+// on one machine (e.g. a headless dev daemon and the desktop app) silently
+// sharing one pty-host registry and cross-wiring same-named sessions.
+func TestCreate_RunFilePathScopesRegistryToInstanceDir(t *testing.T) {
+	isolateRegistry(t)
+	instanceDir := t.TempDir()
+	hosts := map[string]*inProcHost{}
+	rt := New(Options{
+		Spawner:     fakeSpawnerFor(t, hosts, livePID()),
+		RunFilePath: filepath.Join(instanceDir, "running.json"),
+	})
+
+	handle, err := rt.Create(context.Background(), ports.RuntimeConfig{
+		SessionID:     domain.SessionID("sess-scoped"),
+		WorkspacePath: "/tmp/workspace",
+		Argv:          []string{"claude-code"},
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if handle.ID != "sess-scoped" {
+		t.Fatalf("handle.ID = %q, want %q", handle.ID, "sess-scoped")
+	}
+	defer hosts["sess-scoped"].cleanup(t)
+
+	wantPath := filepath.Join(instanceDir, "windows-pty-hosts.json")
+	if _, err := os.Stat(wantPath); err != nil {
+		t.Fatalf("expected registry at instance dir %s: %v", wantPath, err)
+	}
+}
+
 // TestCreate_DuplicateErrors verifies a second Create for the same session id fails.
 func TestCreate_DuplicateErrors(t *testing.T) {
 	isolateRegistry(t)
@@ -266,6 +410,38 @@ func TestSendMessage_DeliversChunkedTextAndEnter(t *testing.T) {
 	}
 	if !bytes.Contains(received, []byte("\r")) {
 		t.Fatalf("PTY input = %q, missing trailing \\r", received)
+	}
+}
+
+func TestSendInputDeliversEscapeByte(t *testing.T) {
+	isolateRegistry(t)
+	hosts := map[string]*inProcHost{}
+	rt := New(Options{Spawner: fakeSpawnerFor(t, hosts, livePID())})
+	handle, err := rt.Create(context.Background(), ports.RuntimeConfig{
+		SessionID: "sess-escape", WorkspacePath: "/tmp/w", Argv: []string{"sh"},
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	h := hosts["sess-escape"]
+	defer h.cleanup(t)
+
+	if err := rt.SendInput(context.Background(), handle, "\x1b"); err != nil {
+		t.Fatalf("SendInput: %v", err)
+	}
+	inputC := make(chan []byte, 1)
+	go func() {
+		buf := make([]byte, 8)
+		n, _ := h.pty.inR.Read(buf)
+		inputC <- append([]byte(nil), buf[:n]...)
+	}()
+	select {
+	case got := <-inputC:
+		if string(got) != "\x1b" {
+			t.Fatalf("input = %q, want Escape", got)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for Escape input")
 	}
 }
 
@@ -407,6 +583,7 @@ func TestSupervisedProcessExitKeepsHostAlive(t *testing.T) {
 		SessionID:     "sess-supervised",
 		WorkspacePath: "/tmp/w",
 		Argv:          []string{"ao", "agent-process", "supervise"},
+		Env:           map[string]string{runtimeLaunchIDEnv: "launch-current"},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -416,6 +593,18 @@ func TestSupervisedProcessExitKeepsHostAlive(t *testing.T) {
 
 	if alive, err := rt.IsSupervisedProcessAlive(ctx, handle, ports.SupervisedProcessRef{}); err != nil || !alive {
 		t.Fatalf("supervised process before exit = (%v, %v), want (true, nil)", alive, err)
+	}
+	if alive, err := rt.IsSupervisedProcessAlive(ctx, handle, ports.SupervisedProcessRef{SessionID: "sess-supervised", LaunchID: "launch-stale"}); err != nil || alive {
+		t.Fatalf("stale supervised generation = (%v, %v), want (false, nil)", alive, err)
+	}
+	if alive, err := rt.IsSupervisedProcessAlive(ctx, handle, ports.SupervisedProcessRef{SessionID: "sess-supervised", LaunchID: "launch-current"}); err != nil || !alive {
+		t.Fatalf("current supervised generation = (%v, %v), want (true, nil)", alive, err)
+	}
+	if alive, err := rt.IsExactSupervisedProcessAlive(ctx, handle, ports.SupervisedProcessRef{SessionID: "sess-supervised", LaunchID: "launch-current"}); err != nil || !alive {
+		t.Fatalf("exact current supervised generation = (%v, %v), want (true, nil)", alive, err)
+	}
+	if alive, err := rt.IsExactSupervisedProcessAlive(ctx, handle, ports.SupervisedProcessRef{SessionID: "sess-supervised", LaunchID: "launch-stale"}); err != nil || alive {
+		t.Fatalf("exact stale supervised generation = (%v, %v), want (false, nil)", alive, err)
 	}
 	h.pty.signalExit(42)
 
@@ -516,9 +705,36 @@ func TestDestroy_KillsHostAndCleansUp(t *testing.T) {
 	}
 }
 
+type processKillerFunc func() error
+
+func (f processKillerFunc) Kill() error { return f() }
+
+func TestDestroyRetainsSessionWhenPIDCannotBeStopped(t *testing.T) {
+	isolateRegistry(t)
+	rt := New(Options{})
+	rt.sessions["sess-stuck"] = &hostSession{addr: "127.0.0.1:1", pid: 424242}
+	rt.killHost = func(string) error { return errors.New("graceful transport failed") }
+	rt.pidIsAlive = func(int) bool { return true }
+	rt.processFinder = func(int) (processKiller, error) {
+		return processKillerFunc(func() error { return errors.New("access denied") }), nil
+	}
+	rt.destroyWait = 0
+
+	err := rt.Destroy(context.Background(), ports.RuntimeHandle{ID: "sess-stuck"})
+	if err == nil || !strings.Contains(err.Error(), "still alive") || !strings.Contains(err.Error(), "access denied") {
+		t.Fatalf("Destroy error = %v, want force-kill and final-liveness evidence", err)
+	}
+	rt.mu.Lock()
+	_, retained := rt.sessions["sess-stuck"]
+	rt.mu.Unlock()
+	if !retained {
+		t.Fatal("Destroy removed a session whose PID may still be alive")
+	}
+}
+
 // TestResolveViaRegistry verifies that with an empty in-memory map but a
-// registry entry pointing at a live in-process host, IsAlive and SendMessage
-// still work (simulates a daemon restart).
+// registry entry pointing at a live in-process host, status, styled output, and
+// input still work (simulates a daemon restart).
 func TestResolveViaRegistry(t *testing.T) {
 	isolateRegistry(t)
 
@@ -550,6 +766,24 @@ func TestResolveViaRegistry(t *testing.T) {
 	}
 	if !alive {
 		t.Fatal("expected IsAlive=true via registry resolution")
+	}
+
+	if _, err := h.pty.WriteOutput([]byte("\x1b[2J\x1b[H\x1b[2mrecovered current screen\x1b[0m")); err != nil {
+		t.Fatal(err)
+	}
+	styledDeadline := time.Now().Add(time.Second)
+	for {
+		styled, styledErr := rt.GetStyledOutput(ctx, ports.RuntimeHandle{ID: "sess-reg"}, 10)
+		if styledErr != nil {
+			t.Fatalf("GetStyledOutput via registry: %v", styledErr)
+		}
+		if strings.Contains(styled, "recovered current screen") {
+			break
+		}
+		if time.Now().After(styledDeadline) {
+			t.Fatalf("recovered host styled surface never became observable: %q", styled)
+		}
+		time.Sleep(time.Millisecond)
 	}
 
 	// SendMessage must work via registry resolution.
@@ -602,13 +836,54 @@ func TestClientGetOutput_HappyPath(t *testing.T) {
 
 	f.ring.Append([]byte("alpha\nbeta\ngamma\n"))
 
-	text, err := clientGetOutput(f.addr, 2)
+	text, err := clientGetOutput(context.Background(), f.addr, 2)
 	if err != nil {
 		t.Fatalf("clientGetOutput: %v", err)
 	}
 	want := f.ring.Tail(2)
 	if text != want {
 		t.Fatalf("clientGetOutput = %q, want %q", text, want)
+	}
+}
+
+func TestClientStatusContext_CancellationStopsProbe(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = listener.Close() }()
+
+	accepted := make(chan struct{})
+	go func() {
+		conn, acceptErr := listener.Accept()
+		if acceptErr != nil {
+			return
+		}
+		defer func() { _ = conn.Close() }()
+		close(accepted)
+		_, _ = io.Copy(io.Discard, conn) // consume the request without replying
+	}()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	result := make(chan error, 1)
+	go func() {
+		_, _, statusErr := clientStatusContext(ctx, listener.Addr().String())
+		result <- statusErr
+	}()
+
+	select {
+	case <-accepted:
+	case <-time.After(time.Second):
+		t.Fatal("status probe did not connect")
+	}
+	cancel()
+	select {
+	case statusErr := <-result:
+		if !errors.Is(statusErr, context.Canceled) {
+			t.Fatalf("clientStatusContext error = %v, want context.Canceled", statusErr)
+		}
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("status probe ignored context cancellation")
 	}
 }
 

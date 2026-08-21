@@ -8,7 +8,6 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -46,6 +45,7 @@ type ControlDeps struct {
 // REST routes, never long-lived terminal streams or health probes.
 func NewRouterWithControl(cfg config.Config, log *slog.Logger, termMgr *terminal.Manager, deps APIDeps, control ControlDeps) chi.Router {
 	log = loggerOrDefault(log)
+	deps = normalizeAPIDeps(deps, log)
 	r := chi.NewRouter()
 	api := NewAPI(cfg, deps)
 
@@ -67,6 +67,7 @@ func NewRouterWithControl(cfg config.Config, log *slog.Logger, termMgr *terminal
 	mountControl(r, control)
 	mountTelemetry(r, cfg, deps.Telemetry)
 	mountMobile(r, deps.Mobile)
+	mountMobileDevices(r, &controllers.MobileDevicesController{Registry: deps.DeviceRoster, Presence: deps.DeviceLive})
 	api.Register(r)
 
 	return r
@@ -137,6 +138,28 @@ func mountMobile(r chi.Router, c *controllers.MobileController) {
 	r.Post("/api/v1/mobile/enable", c.Enable)
 	r.Post("/api/v1/mobile/disable", c.Disable)
 	r.Post("/api/v1/mobile/regenerate", c.Regenerate)
+	r.Post("/api/v1/mobile/secure-pairing", c.SecurePairing)
+}
+
+// mountMobileDevices registers the desktop-only mobile device roster. These sit
+// under /api/v1/mobile deliberately: lanControlBlock already 404s that prefix on
+// the LAN socket, so the "a phone must not manage the roster" invariant is
+// enforced by the transport rather than by a spoofable header.
+//
+// The routes are mounted unconditionally, even when c.Registry is nil (a
+// corrupt ~/.ao/data/mobile/push-devices.json failed to load): each handler
+// answers 503 DEVICE_REGISTRY_UNAVAILABLE in that case, so the desktop can tell
+// "the registry failed to load" apart from "this route doesn't exist / talking
+// to an old daemon" (a 404 would be ambiguous with both). Only a nil controller
+// pointer — meaning the roster surface was never wired into APIDeps at all —
+// skips mounting, matching mountMobile's convention for an absent controller.
+func mountMobileDevices(r chi.Router, c *controllers.MobileDevicesController) {
+	if c == nil {
+		return
+	}
+	r.Get("/api/v1/mobile/devices", c.List)
+	r.Patch("/api/v1/mobile/devices/{installId}", c.Mute)
+	r.Delete("/api/v1/mobile/devices/{installId}", c.Remove)
 }
 
 type cliInvokedRequest struct {
@@ -155,8 +178,8 @@ func mountTelemetry(r chi.Router, cfg config.Config, sink ports.EventSink) {
 	if sink == nil {
 		return
 	}
-	// CLI telemetry is capped to bounded uniques: ao.app.active once per UTC
-	// six-hour slot for user-context CLI activity (matching the renderer
+	// CLI telemetry is capped to bounded uniques: ao.app.active once per UTC day
+	// for user-context CLI activity (matching the renderer
 	// heartbeat) and ao.cli.invoked once per actor type + command path per UTC
 	// day. Scripts and agent sessions invoke read-only commands (status, ls,
 	// get) in polling loops, so raw invocation counts measure automation, not
@@ -184,17 +207,18 @@ func mountTelemetry(r chi.Router, cfg config.Config, sink ports.EventSink) {
 			envelope.WriteAPIError(w, req, http.StatusBadRequest, "bad_request", "COMMAND_PATH_REQUIRED", "commandPath is required", nil)
 			return
 		}
-		actorType := cliActorType(body.ActorType, body.CommandPath)
+		commandPath := telemetrymeta.NormalizeCommandPath(body.CommandPath)
+		actorType := telemetrymeta.CLIActorType(body.ActorType, commandPath)
 		if actorType == "system" {
 			w.WriteHeader(http.StatusAccepted)
 			return
 		}
-		if isRoutineInternalCLICommand(body.CommandPath) {
+		if telemetrymeta.IsRoutineInternalCLICommand(commandPath) {
 			w.WriteHeader(http.StatusAccepted)
 			return
 		}
 
-		if now := time.Now(); cliTelemetry.reserveInvoked(now, actorType, body.CommandPath) {
+		if now := time.Now(); cliTelemetry.reserveInvoked(now, actorType, commandPath) {
 			sink.Emit(req.Context(), ports.TelemetryEvent{
 				Name:       "ao.cli.invoked",
 				Source:     "cli",
@@ -203,7 +227,7 @@ func mountTelemetry(r chi.Router, cfg config.Config, sink ports.EventSink) {
 				RequestID:  middleware.GetReqID(req.Context()),
 				Payload: map[string]any{
 					"command":      body.Command,
-					"command_path": body.CommandPath,
+					"command_path": commandPath,
 					"actor_type":   actorType,
 				},
 			})
@@ -219,7 +243,7 @@ func mountTelemetry(r chi.Router, cfg config.Config, sink ports.EventSink) {
 					Payload: map[string]any{
 						"channel":      "cli",
 						"command":      body.Command,
-						"command_path": body.CommandPath,
+						"command_path": commandPath,
 						"actor_type":   actorType,
 					},
 				})
@@ -267,39 +291,6 @@ func mountTelemetry(r chi.Router, cfg config.Config, sink ports.EventSink) {
 	})
 }
 
-func isRoutineInternalCLICommand(commandPath string) bool {
-	switch strings.TrimSpace(commandPath) {
-	case "ao status",
-		"ao session ls",
-		"ao session get",
-		"ao project ls",
-		"ao project get",
-		"ao orchestrator ls",
-		"ao hooks",
-		"ao pty-host":
-		return true
-	default:
-		return false
-	}
-}
-
-func cliActorType(actorType, commandPath string) string {
-	switch actorType {
-	case "agent", "user":
-		return actorType
-	case "system":
-		return "system"
-	}
-	switch commandPath {
-	case "ao hooks":
-		return "agent"
-	case "ao daemon", "ao start", "ao completion", "ao help", "ao pty-host":
-		return "system"
-	default:
-		return "user"
-	}
-}
-
 // localControlRequest reports whether a control request is a trusted local
 // caller. The Go CLI client addresses the daemon by its loopback host and
 // never sets an Origin header; a cross-site browser fetch always carries an
@@ -340,6 +331,13 @@ func daemonProbePayload(status string, cfg config.Config) map[string]any {
 	}
 	if cfg.StartupWorkingDirectory != "" {
 		payload["startupWorkingDirectory"] = cfg.StartupWorkingDirectory
+	}
+	// AO_APPIMAGE is set by the Electron app at spawn time when it runs from an
+	// AppImage. The value is the stable outer .AppImage file path, which the
+	// app's daemon identity check compares instead of the transient
+	// /tmp/.mount_* executable path (regenerated on every AppImage launch).
+	if appImage := os.Getenv("AO_APPIMAGE"); appImage != "" {
+		payload["appImagePath"] = appImage
 	}
 	return payload
 }

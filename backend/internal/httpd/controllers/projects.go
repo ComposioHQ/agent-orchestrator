@@ -26,11 +26,30 @@ type ProjectsController struct {
 func (c *ProjectsController) Register(r chi.Router) {
 	r.Get("/projects", c.list)
 	r.Post("/projects", c.add)
+	r.Post("/projects/clone", c.clone)
 	r.Post("/projects/initialize", c.initialize)
 	r.Get("/projects/{id}", c.get)
 	r.Put("/projects/{id}", c.updateSettings)
 	r.Put("/projects/{id}/config", c.setConfig)
 	r.Delete("/projects/{id}", c.remove)
+}
+
+func (c *ProjectsController) clone(w http.ResponseWriter, r *http.Request) {
+	if c.Mgr == nil {
+		apispec.NotImplemented(w, r, "POST", "/api/v1/projects/clone")
+		return
+	}
+	var in projectsvc.CloneInput
+	if err := decodeJSONStrict(r, &in); err != nil {
+		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "INVALID_JSON", "Invalid JSON body", nil)
+		return
+	}
+	p, err := c.Mgr.Clone(r.Context(), in)
+	if err != nil {
+		envelope.WriteError(w, r, err)
+		return
+	}
+	envelope.WriteJSON(w, http.StatusCreated, ProjectResponse{Project: p})
 }
 
 func (c *ProjectsController) list(w http.ResponseWriter, r *http.Request) {
@@ -160,8 +179,8 @@ func decodeJSON(r *http.Request, out any) error {
 }
 
 // decodeJSONStrict rejects request bodies that include keys outside the target
-// type. Used on project add/set-config so a misspelled or removed config field
-// surfaces as a 400 instead of being silently dropped.
+// type. It is used where misspelled or retired fields must surface as a 400
+// instead of being silently dropped.
 func decodeJSONStrict(r *http.Request, out any) error {
 	dec := json.NewDecoder(r.Body)
 	dec.DisallowUnknownFields()

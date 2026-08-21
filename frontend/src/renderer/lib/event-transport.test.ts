@@ -40,12 +40,17 @@ class EventSourceStub {
 	onerror: (() => void) | null = null;
 	onmessage: (() => void) | null = null;
 	listeners: string[] = [];
+	handlers = new Map<string, (event: Event) => void>();
 	constructor(url: string) {
 		this.url = url;
 		EventSourceStub.instances.push(this);
 	}
-	addEventListener(type: string) {
+	addEventListener(type: string, listener: (event: Event) => void) {
 		this.listeners.push(type);
+		this.handlers.set(type, listener);
+	}
+	emit(type: string, data: string) {
+		this.handlers.get(type)?.({ data } as unknown as Event);
 	}
 	close() {
 		this.closed = true;
@@ -119,7 +124,7 @@ describe("createEventTransport", () => {
 		expect(getEventsConnectionState()).toBe("disconnected");
 	});
 
-	it("debounces workspace and SCM summary invalidation after a status change", () => {
+	it("debounces workspace and session invalidation after a status change", () => {
 		vi.useFakeTimers();
 		try {
 			const queryClient = fakeQueryClient();
@@ -130,7 +135,75 @@ describe("createEventTransport", () => {
 			expect(queryClient.invalidateQueries).not.toHaveBeenCalled();
 			vi.advanceTimersByTime(200);
 			expect(queryClient.invalidateQueries).toHaveBeenCalledWith({ queryKey: ["workspaces"] });
+			expect(queryClient.invalidateQueries).toHaveBeenCalledWith({ queryKey: ["session-agent-switches"] });
 			expect(queryClient.invalidateQueries).toHaveBeenCalledWith({ queryKey: ["session-scm-summary"] });
+			expect(queryClient.invalidateQueries).toHaveBeenCalledWith({ queryKey: ["session-usage"] });
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it("invalidates only the named conversation for conversation CDC", () => {
+		vi.useFakeTimers();
+		try {
+			const queryClient = fakeQueryClient();
+			createEventTransport(queryClient).connect();
+			EventSourceStub.instances[0].emit(
+				"session_updated",
+				JSON.stringify({
+					seq: 42,
+					projectId: "proj-1",
+					sessionId: "chat-1",
+					type: "session_updated",
+					payload: {
+						id: "chat-1",
+						sessionId: "chat-1",
+						conversationId: "conv-1",
+						activity: "active",
+						isTerminated: false,
+					},
+					createdAt: "2026-08-04T15:15:14Z",
+				}),
+			);
+
+			vi.advanceTimersByTime(200);
+			expect(queryClient.invalidateQueries).toHaveBeenCalledWith({
+				queryKey: ["conversation", "chat-1"],
+			});
+			expect(queryClient.invalidateQueries).not.toHaveBeenCalledWith({ queryKey: ["workspaces"] });
+			expect(queryClient.invalidateQueries).not.toHaveBeenCalledWith({
+				queryKey: ["session-scm-summary"],
+			});
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it("invalidates the named interface transition status for transition CDC", () => {
+		vi.useFakeTimers();
+		try {
+			const queryClient = fakeQueryClient();
+			createEventTransport(queryClient).connect();
+			EventSourceStub.instances[0].emit(
+				"session_updated",
+				JSON.stringify({
+					seq: 43,
+					projectId: "proj-1",
+					sessionId: "session-1",
+					type: "session_updated",
+					payload: {
+						id: "session-1",
+						interfaceTransitionId: "transition-1",
+						interfaceTransitionPhase: "recovery_required",
+					},
+					createdAt: "2026-08-13T08:00:00Z",
+				}),
+			);
+
+			vi.advanceTimersByTime(200);
+			expect(queryClient.invalidateQueries).toHaveBeenCalledWith({
+				queryKey: ["session-interface-transition", "session-1"],
+			});
 		} finally {
 			vi.useRealTimers();
 		}

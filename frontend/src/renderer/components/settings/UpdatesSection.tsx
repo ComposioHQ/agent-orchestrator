@@ -1,39 +1,25 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
-import { AlertTriangle, Check, GitPullRequest, HardDriveDownload, History, Loader2, RefreshCw } from "lucide-react";
+import { AlertTriangle, Loader2, RefreshCw } from "lucide-react";
+import { useTranslation } from "react-i18next";
 import { aoBridge } from "../../lib/bridge";
-import { formatTimeCompact } from "../../lib/format-time";
-import { useUpdateStatus } from "../../hooks/useUpdateStatus";
 import { useUiStore } from "../../stores/ui-store";
+import { useUpdateStatus } from "../../hooks/useUpdateStatus";
 import type { UpdateChannel, UpdateSettings, UpdateState, UpdateStatus } from "../../../main/update-settings";
-import { ConfirmDialog } from "../ConfirmDialog";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
+import { ConfirmDialog } from "../ConfirmDialog";
 import { SettingsOptionMenu } from "./SettingsOptionMenu";
 import { SettingsRow } from "./SettingsRow";
 import { SettingsSection } from "./SettingsSection";
+import { captureRendererEvent, releaseChannelFrom, setReleaseChannelContext } from "../../lib/telemetry";
 
 export const updateSettingsQueryKey = ["update-settings"] as const;
 
 type PrimaryValue = UpdateChannel | "feature";
 
-const ENABLED_OPTIONS = [
-	{ value: "on" as const, label: "Enabled" },
-	{ value: "off" as const, label: "Disabled" },
-];
-
-const CHANNEL_OPTIONS: { value: PrimaryValue; label: string }[] = [
-	{ value: "latest", label: "Stable (Latest)" },
-	{ value: "nightly", label: "Nightly (Pre-release)" },
-	{ value: "feature", label: "Feature Releases" },
-];
-
-// Feature Releases is developer-only; hide it entirely unless Developer Mode is on.
-const NON_FEATURE_CHANNEL_OPTIONS = CHANNEL_OPTIONS.filter((option) => option.value !== "feature");
-
 const DEFAULT_SETTINGS: UpdateSettings = { enabled: false, channel: "latest", nightlyAck: false, feature: null };
 
-const STALE_THRESHOLD_MS = 5 * 24 * 60 * 60 * 1000; // 5 days
 let updateRequestSequence = 0;
 
 function nextUpdateRequestId(): string {
@@ -41,7 +27,8 @@ function nextUpdateRequestId(): string {
 	return `feature-update-${updateRequestSequence}`;
 }
 
-export function UpdatesSection() {
+export function UpdatesSection({ titleHidden }: { titleHidden?: boolean } = {}) {
+	const { t } = useTranslation();
 	const queryClient = useQueryClient();
 	const query = useQuery({
 		queryKey: updateSettingsQueryKey,
@@ -51,12 +38,8 @@ export function UpdatesSection() {
 	const [form, setForm] = useState<UpdateSettings>(DEFAULT_SETTINGS);
 	const formRef = useRef(form);
 	formRef.current = form;
-
-	// Reveals the feature-build picker when the user selects "Feature Releases"
-	// but has not pinned a build yet (form.feature is still null).
 	const [showFeature, setShowFeature] = useState(false);
 	const [pendingPin, setPendingPin] = useState<{ pr: number; title: string } | null>(null);
-
 	const developerMode = useUiStore((state) => state.developerMode);
 
 	const status = useUpdateStatus();
@@ -99,9 +82,17 @@ export function UpdatesSection() {
 		},
 	});
 
-	// With Developer Mode off the "feature" value has no matching option, so fall
-	// back to the home channel to keep the dropdown showing a valid selection.
-	const primaryValue: PrimaryValue = developerMode && (form.feature != null || showFeature) ? "feature" : form.channel;
+	const enabledOptions = [
+		{ value: "on" as const, label: t("settings.updates.enabled") },
+		{ value: "off" as const, label: t("settings.updates.disabled") },
+	];
+
+	const channelOptions: { value: PrimaryValue; label: string }[] = [
+		{ value: "latest", label: t("settings.updates.channel.stable") },
+		{ value: "nightly", label: t("settings.updates.channel.nightly") },
+		{ value: "feature", label: t("settings.updates.channel.feature") },
+	];
+	const primaryValue: PrimaryValue = developerMode && (form.feature !== null || showFeature) ? "feature" : form.channel;
 
 	const setEnabled = (enabled: boolean) => {
 		const next = { ...formRef.current, enabled };
@@ -122,12 +113,17 @@ export function UpdatesSection() {
 			nightlyAck: value === "nightly",
 			feature: null,
 		};
+		const from = releaseChannelFrom(formRef.current);
+		const to = releaseChannelFrom(next);
 		setForm(next);
 		save.mutate(next);
-	};
-
-	const handlePinBuild = async (pr: number, title: string) => {
-		setPendingPin({ pr, title });
+		if (from !== to) {
+			// Reported on the switch rather than inferred later, because someone who
+			// moves to nightly and does not update yet is on nightly by intent while
+			// still running a stable build.
+			setReleaseChannelContext(to);
+			void captureRendererEvent("ao.renderer.update_channel_changed", { from_channel: from, to_channel: to });
+		}
 	};
 
 	const confirmPinBuild = async () => {
@@ -144,7 +140,6 @@ export function UpdatesSection() {
 			void queryClient.invalidateQueries({ queryKey: updateSettingsQueryKey });
 		} catch {
 			if (autoProgressRef.current === requestId) autoProgressRef.current = null;
-			// The optimistic form update may now disagree with disk; re-sync to truth.
 			void queryClient.invalidateQueries({ queryKey: updateSettingsQueryKey });
 		}
 	};
@@ -173,89 +168,89 @@ export function UpdatesSection() {
 		queryFn: () => aoBridge.featureBuilds.getActive(),
 	});
 	const activeBuild = activeQuery.data ?? null;
-	// Show the escape hatch whenever a feature build is running. When Developer Mode
-	// is off, also surface a merely-pinned build: the pin stays effective in the
-	// main-process updater while the picker is hidden, so it must never be silent.
-	// With Developer Mode on the visible picker already shows the pin, so Updates
-	// behaves exactly as before (banner only for a running build).
+	// Show the escape hatch whenever a feature build is running or pinned.
 	const featurePr = activeBuild?.pr ?? (developerMode ? null : (form.feature?.pr ?? null));
 
 	return (
 		<>
-			<SettingsSection title="Updates" sectionId="updates">
+			<SettingsSection title={t("settings.updates")} sectionId="updates" titleHidden={titleHidden} grouped>
 				{featurePr != null && (
 					<div className="flex flex-col gap-2">
 						<div className="settings-row-bar h-auto min-h-(--size-settings-row) flex-wrap gap-2">
 							<Badge variant="accent">PR #{featurePr}</Badge>
 							<span className="min-w-0 flex-1 text-sm leading-5 text-settings-label">
 								{activeBuild
-									? `You are on PR #${featurePr}'s build.`
-									: `PR #${featurePr} is pinned but not yet installed.`}
+									? t("settings.updates.onFeatureBuild", { pr: featurePr })
+									: t("settings.updates.featurePinned", { pr: featurePr })}
 							</span>
 							<Button type="button" variant="outline" size="sm" onClick={() => void handleReturnToHome()}>
-								Return to {form.channel === "nightly" ? "Nightly" : "Stable"}
+								{form.channel === "nightly" ? t("settings.updates.returnToNightly") : t("settings.updates.returnToStable")}
 							</Button>
 						</div>
-						<p className="px-1 text-xs text-settings-muted">
-							Automatic updates, if enabled, keep tracking PR #{featurePr} until you return home or the build retires.
-						</p>
+					<p className="px-(--size-settings-row-padding) text-xs text-settings-muted">
+						{t("settings.updates.featureTracking", { pr: featurePr })}
+					</p>
 					</div>
 				)}
 
-				<SettingsRow icon={History} label="Automatic Updates">
+				<SettingsRow label={t("settings.updates.automatic")}>
 					<SettingsOptionMenu
-						aria-label="Automatic Updates"
+						aria-label={t("settings.updates.automatic")}
 						value={form.enabled ? "on" : "off"}
-						options={ENABLED_OPTIONS}
+						options={enabledOptions}
 						onChange={(next) => setEnabled(next === "on")}
 						disabled={save.isPending}
 					/>
 				</SettingsRow>
 
-				<SettingsRow icon={HardDriveDownload} label="Updates channel">
-					<SettingsOptionMenu
-						aria-label="Updates channel"
-						value={primaryValue}
-						options={developerMode ? CHANNEL_OPTIONS : NON_FEATURE_CHANNEL_OPTIONS}
-						onChange={handlePrimaryChannel}
-						disabled={!form.enabled || save.isPending}
-					/>
-				</SettingsRow>
+				<div className="w-full">
+					<SettingsRow label={t("settings.updates.channel")} className="rounded-none">
+						<SettingsOptionMenu
+							aria-label={t("settings.updates.channel")}
+							value={primaryValue}
+							options={developerMode ? channelOptions : channelOptions.filter((option) => option.value !== "feature")}
+							onChange={handlePrimaryChannel}
+							disabled={!form.enabled || save.isPending}
+						/>
+					</SettingsRow>
 
-				{primaryValue === "feature" && (
-					<FeatureBuildsSelect currentPr={form.feature?.pr ?? null} onPin={handlePinBuild} />
-				)}
+					{primaryValue === "feature" && (
+						<FeatureBuildsSelect
+							currentPr={form.feature?.pr ?? null}
+							onPin={(pr, title) => setPendingPin({ pr, title })}
+						/>
+					)}
 
-				{primaryValue === "nightly" && form.enabled && (
-					<p className="flex items-center gap-2 px-1 text-xs leading-row text-warning">
+					{primaryValue === "nightly" && form.enabled && (
+						<p className="nightly-warning px-(--size-settings-row-padding) pb-(--size-settings-row-padding) text-xs leading-row text-warning">
+							<span className="mr-2 inline-flex align-middle" aria-hidden="true">
+								<AlertTriangle className="size-icon-sm" />
+							</span>
+							{t("settings.updates.nightlyWarning")}
+						</p>
+					)}
+				</div>
+
+				{status.staleCheckNudge && (
+					<p className="flex items-center gap-2 px-(--size-settings-row-padding) text-xs leading-row text-warning">
 						<AlertTriangle className="size-icon-sm shrink-0" aria-hidden="true" />
-						<span>
-							Nightly builds are cut every day and can be unstable or lose data. Only use Nightly if you are comfortable
-							with that.
-						</span>
+						<span>{t("settings.updates.networkStale")}</span>
 					</p>
 				)}
 
-				{save.isError && (
-					<p className="px-1 text-xs text-error">{save.error instanceof Error ? save.error.message : "Save failed"}</p>
-				)}
+			{save.isError && (
+				<p className="px-(--size-settings-row-padding) text-xs text-error">{save.error instanceof Error ? save.error.message : t("settings.updates.saveFailed")}</p>
+			)}
 
-				<UpdateActions status={status} />
+				<UpdateActions status={status} suppressTopBorder={primaryValue === "nightly" && form.enabled} />
 			</SettingsSection>
-
 			<ConfirmDialog
 				open={pendingPin !== null}
-				title="Switch feature build?"
-				description={
-					pendingPin
-						? `Switch to PR #${pendingPin.pr}: ${pendingPin.title}? The app will download the feature build and restart.`
-						: null
-				}
-				confirmLabel="Confirm"
+				title={t("settings.updates.switchFeatureTitle")}
+				description={pendingPin ? t("settings.updates.switchFeatureBody", pendingPin) : null}
+				confirmLabel={t("settings.updates.confirm")}
 				onConfirm={() => void confirmPinBuild()}
-				onOpenChange={(open) => {
-					if (!open) setPendingPin(null);
-				}}
+				onOpenChange={(open) => !open && setPendingPin(null)}
 			/>
 		</>
 	);
@@ -266,72 +261,35 @@ function FeatureBuildsSelect({
 	onPin,
 }: {
 	currentPr: number | null;
-	onPin: (pr: number, title: string) => Promise<void>;
+	onPin: (pr: number, title: string) => void;
 }) {
-	const buildsQuery = useQuery({
-		queryKey: ["feature-builds"],
-		queryFn: () => aoBridge.featureBuilds.list(),
-	});
-
+	const { t } = useTranslation();
+	const buildsQuery = useQuery({ queryKey: ["feature-builds"], queryFn: () => aoBridge.featureBuilds.list() });
 	const builds = buildsQuery.data ?? [];
 
 	if (!buildsQuery.isLoading && builds.length === 0) {
-		return (
-			<div className="px-1 text-xs text-settings-muted">
-				<span className="sr-only">Feature build</span>
-				No live feature releases.
-			</div>
-		);
+		return <p className="px-3 text-xs text-settings-muted">{t("settings.updates.noFeatureReleases")}</p>;
 	}
 
-	const options = builds.map((build) => ({
-		value: build.pr.toString(),
-		label: `PR #${build.pr}`,
-	}));
-
 	return (
-		<SettingsRow icon={GitPullRequest} label="Feature build">
+		<SettingsRow label={t("settings.updates.featureBuild")}>
 			<SettingsOptionMenu
-				aria-label="Feature build"
+				aria-label={t("settings.updates.featureBuild")}
 				value={currentPr === null ? "__none__" : currentPr.toString()}
-				placeholder="Select a feature build..."
-				options={options}
+				placeholder={t("settings.updates.selectFeature")}
+				options={builds.map((build) => ({ value: build.pr.toString(), label: `PR #${build.pr}: ${build.title}` }))}
 				disabled={buildsQuery.isLoading}
-				onChange={(nextPr) => {
-					const pr = Number(nextPr);
-					const build = builds.find((b) => b.pr === pr);
-					if (!build) return;
-					void onPin(build.pr, build.title);
-				}}
-				renderMenuItem={(option) => {
-					const pr = Number(option.value);
-					const build = builds.find((b) => b.pr === pr);
-					if (!build) return null;
-
-					const ageMs = Date.now() - new Date(build.publishedAt).getTime();
-					const isStale = ageMs > STALE_THRESHOLD_MS;
-					const ageLabel = formatTimeCompact(build.publishedAt);
-
-					return (
-						<div className="flex w-full min-w-0 flex-col gap-0.5">
-							<span className="line-clamp-2 break-words">
-								PR #{build.pr}: {build.title}
-							</span>
-							<div className="flex min-w-0 items-center gap-1.5">
-								<span className="min-w-0 truncate font-mono text-caption text-passive">{build.buildId}</span>
-								<Badge variant={isStale ? "warning" : "neutral"} className="h-3.5 px-1 text-[9px] leading-none">
-									{ageLabel}
-								</Badge>
-							</div>
-						</div>
-					);
+				onChange={(value) => {
+					const build = builds.find((item) => item.pr === Number(value));
+					if (build) onPin(build.pr, build.title);
 				}}
 			/>
 		</SettingsRow>
 	);
 }
 
-function UpdateActions({ status }: { status: UpdateStatus }) {
+function UpdateActions({ status, suppressTopBorder = false }: { status: UpdateStatus; suppressTopBorder?: boolean }) {
+	const { t } = useTranslation();
 	const version = useQuery({ queryKey: ["app-version"], queryFn: () => aoBridge.app.getVersion() });
 
 	const checking = status.state === "checking";
@@ -348,14 +306,14 @@ function UpdateActions({ status }: { status: UpdateStatus }) {
 
 	return (
 		<>
-			<SettingsRow icon={Check} label="Checks for Updates">
+			<SettingsRow label={t("settings.updates.checksForUpdates")} className={suppressTopBorder ? "!border-t-0" : undefined}>
 				<div className="flex items-center gap-2">
 					<span className="text-control text-settings-muted" data-testid="app-version">
-						Current version - {version.data ? `v${version.data}` : "…"}
+						{t("settings.updates.currentVersion", { version: version.data ? `v${version.data}` : "…" })}
 					</span>
 					<button
 						type="button"
-						aria-label="Check for updates"
+						aria-label={t("settings.updates.check")}
 						className="inline-flex size-7 shrink-0 items-center justify-center rounded-md text-settings-muted transition-colors hover:text-settings-label disabled:cursor-not-allowed disabled:opacity-50"
 						onClick={() => void aoBridge.updates.check()}
 						disabled={busy}
@@ -373,12 +331,12 @@ function UpdateActions({ status }: { status: UpdateStatus }) {
 				<div className="settings-row-bar h-auto min-h-0 flex-wrap justify-start gap-3 py-3">
 					{status.state === "available" && (
 						<Button type="button" variant="primary" onClick={() => void aoBridge.updates.download()}>
-							Update to {status.version ? `v${status.version}` : "latest"}
+							{status.version ? t("settings.updates.updateTo", { version: `v${status.version}` }) : t("settings.updates.updateToLatest")}
 						</Button>
 					)}
 					{status.state === "downloaded" && (
 						<Button type="button" variant="primary" onClick={() => void aoBridge.updates.install()}>
-							Restart &amp; install
+							{t("settings.updates.restartInstall")}
 						</Button>
 					)}
 					<UpdateStatusLine status={status} />
@@ -389,25 +347,32 @@ function UpdateActions({ status }: { status: UpdateStatus }) {
 }
 
 function UpdateStatusLine({ status }: { status: UpdateStatus }) {
+	const { t } = useTranslation();
 	switch (status.state) {
 		case "checking":
-			return <span className="text-xs text-settings-muted">Checking for updates…</span>;
+			return <span className="text-xs text-settings-muted">{t("settings.updates.checking")}</span>;
 		case "available":
 			return (
 				<span className="text-xs text-settings-muted">
-					Update available{status.version ? ` (v${status.version})` : ""}.
+					{t("settings.updates.available", { version: status.version ? ` (v${status.version})` : "" })}
 				</span>
 			);
 		case "downloading":
-			return <span className="text-xs text-settings-muted">Downloading… {status.percent ?? 0}%</span>;
+			return <span className="text-xs text-settings-muted">{t("settings.updates.downloading", { percent: status.percent ?? 0 })}</span>;
 		case "downloaded":
-			return <span className="text-xs text-success">Downloaded. Restart to finish updating.</span>;
+			return <span className="text-xs text-success">{t("settings.updates.downloaded")}</span>;
 		case "not-available":
-			return <span className="text-xs text-settings-muted">You're on the latest version.</span>;
+			return <span className="text-xs text-settings-muted">{t("settings.updates.latest")}</span>;
 		case "unsupported":
-			return <span className="text-xs text-settings-muted">{status.message ?? "Updates need the installed app."}</span>;
+			return <span className="text-xs text-settings-muted">{status.message ?? t("settings.updates.needInstalledApp")}</span>;
 		case "error":
-			return <span className="text-xs text-error">{status.message ?? "Update failed."}</span>;
+			return (
+				<span className="text-xs text-error">
+				{status.netError
+					? t("settings.updates.netErrorRestartGuidance")
+					: status.message ?? t("settings.updates.updateFailed")}
+				</span>
+			);
 		default:
 			return null;
 	}

@@ -1,8 +1,11 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { AttachableTerminal } from "../hooks/useTerminalSession";
+import { useUiStore } from "../stores/ui-store";
 import { XtermTerminal } from "./XtermTerminal";
 
 const state = vi.hoisted(() => ({
+	fit: vi.fn(),
 	linkHandler: null as null | ((event: MouseEvent, uri: string) => void),
 	lastTerminal: null as null | {
 		keyHandler?: (event: KeyboardEvent) => boolean;
@@ -12,6 +15,8 @@ const state = vi.hoisted(() => ({
 		modes: { bracketedPasteMode: boolean; mouseTrackingMode: string };
 		buffer: { active: { type: string } };
 		scrollLines: ReturnType<typeof vi.fn>;
+		scrollToBottom: ReturnType<typeof vi.fn>;
+		refresh: ReturnType<typeof vi.fn>;
 		clear: ReturnType<typeof vi.fn>;
 		focus: ReturnType<typeof vi.fn>;
 		selectAll: ReturnType<typeof vi.fn>;
@@ -20,6 +25,7 @@ const state = vi.hoisted(() => ({
 		selectionListeners: Set<() => void>;
 		_core: {
 			element: { classList: { add: ReturnType<typeof vi.fn>; remove: ReturnType<typeof vi.fn> } };
+			viewport: { scrollBarWidth: number };
 			_selectionService: {
 				enable: ReturnType<typeof vi.fn>;
 				shouldForceSelection: (event: MouseEvent) => boolean;
@@ -39,6 +45,8 @@ vi.mock("@xterm/xterm", () => ({
 		modes = { bracketedPasteMode: false, mouseTrackingMode: "vt200" };
 		buffer = { active: { type: "normal" } };
 		scrollLines = vi.fn();
+		scrollToBottom = vi.fn();
+		refresh = vi.fn();
 		clear = vi.fn();
 		focus = vi.fn();
 		selectAll = vi.fn();
@@ -47,6 +55,7 @@ vi.mock("@xterm/xterm", () => ({
 		selectionListeners = new Set<() => void>();
 		_core = {
 			element: { classList: { add: vi.fn(), remove: vi.fn() } },
+			viewport: { scrollBarWidth: 15 },
 			_selectionService: {
 				enable: vi.fn(),
 				shouldForceSelection: () => false,
@@ -101,7 +110,9 @@ vi.mock("@xterm/xterm", () => ({
 
 vi.mock("@xterm/addon-fit", () => ({
 	FitAddon: class FakeFitAddon {
-		fit() {}
+		fit() {
+			state.fit();
+		}
 	},
 }));
 
@@ -145,11 +156,73 @@ function setNavigatorPlatform(platform: string) {
 
 describe("XtermTerminal", () => {
 	beforeEach(() => {
+		state.fit.mockReset();
 		state.lastTerminal = null;
 		state.linkHandler = null;
 		setNavigatorPlatform("Linux x86_64");
 		window.ao!.clipboard.writeText = vi.fn().mockResolvedValue(undefined);
 		window.ao!.clipboard.readText = vi.fn().mockResolvedValue("");
+		window.ao!.terminal.setFocused = vi.fn();
+		window.ao!.terminal.onFontSizeShortcut = () => () => undefined;
+	});
+
+	it("fits on each observed frame while an ancestor requests live terminal resizing", () => {
+		const callbacks: ResizeObserverCallback[] = [];
+		const originalResizeObserver = window.ResizeObserver;
+		class CapturingResizeObserver implements ResizeObserver {
+			constructor(callback: ResizeObserverCallback) {
+				callbacks.push(callback);
+			}
+			disconnect() {}
+			observe() {}
+			unobserve() {}
+		}
+		Object.defineProperty(window, "ResizeObserver", {
+			configurable: true,
+			writable: true,
+			value: CapturingResizeObserver,
+		});
+		try {
+			render(
+				<div data-terminal-live-resize="true">
+					<XtermTerminal theme="dark" />
+				</div>,
+			);
+			state.fit.mockClear();
+
+			act(() => callbacks.at(-1)?.([], {} as ResizeObserver));
+
+			expect(state.fit).toHaveBeenCalledTimes(1);
+		} finally {
+			Object.defineProperty(window, "ResizeObserver", {
+				configurable: true,
+				writable: true,
+				value: originalResizeObserver,
+			});
+		}
+	});
+
+	it("finishes retained activation when xterm emits no render event", async () => {
+		vi.useFakeTimers();
+		vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) =>
+			window.setTimeout(() => callback(performance.now()), 0),
+		);
+		vi.stubGlobal("cancelAnimationFrame", (id: number) => window.clearTimeout(id));
+		try {
+			let terminal: AttachableTerminal | undefined;
+			render(<XtermTerminal theme="dark" onReady={(ready) => { terminal = ready; }} />);
+			const preparation = terminal!.prepareForActivation();
+			await act(async () => {
+				vi.advanceTimersByTime(250);
+				vi.runAllTimers();
+				await preparation;
+			});
+			expect(state.lastTerminal!.scrollToBottom).toHaveBeenCalled();
+			expect(state.lastTerminal!.refresh).not.toHaveBeenCalled();
+		} finally {
+			vi.useRealTimers();
+			vi.unstubAllGlobals();
+		}
 	});
 
 	it("preserves the agent TUI palette without contrast remapping", () => {
@@ -157,6 +230,84 @@ describe("XtermTerminal", () => {
 
 		expect(state.lastTerminal!.options.drawBoldTextInBrightColors).toBe(true);
 		expect(state.lastTerminal!.options.minimumContrastRatio).toBe(1);
+	});
+
+	it("focuses the terminal when human input is requested", async () => {
+		const { rerender } = render(<XtermTerminal theme="dark" />);
+
+		rerender(<XtermTerminal focusRequested theme="dark" />);
+
+		await waitFor(() => expect(state.lastTerminal!.focus).toHaveBeenCalled());
+	});
+
+	it("updates the live terminal palette when the named color theme changes", () => {
+		const style = document.createElement("style");
+		style.textContent = `
+			:root {
+				--color-bg-terminal-opaque: #101317;
+				--color-text-terminal: #d7d7d2;
+				--color-working: #60a5fa;
+			}
+			:root[data-style-theme="github"] {
+				--background: #0d1117;
+				--foreground: #ccd3d8;
+				--primary: #58a6ff;
+			}
+		`;
+		document.head.appendChild(style);
+		delete document.documentElement.dataset.styleTheme;
+		useUiStore.setState({ themeStyle: "orchestrate" });
+
+		try {
+			render(<XtermTerminal theme="dark" />);
+			expect(state.lastTerminal!.options.theme).toMatchObject({ background: "#101317" });
+
+			act(() => useUiStore.getState().setThemeStyle("github"));
+
+			expect(state.lastTerminal!.options.theme).toMatchObject({
+				background: "#0d1117",
+				cursor: "#58a6ff",
+				foreground: "#ccd3d8",
+			});
+		} finally {
+			style.remove();
+			delete document.documentElement.dataset.styleTheme;
+			act(() => useUiStore.setState({ themeStyle: "orchestrate" }));
+		}
+	});
+
+	it("uses the terminal foreground for the light-mode block cursor", () => {
+		const style = document.createElement("style");
+		style.textContent = `
+			:root {
+				--color-bg-terminal-opaque: #f5f5f4;
+				--color-text-terminal: #24292f;
+				--color-working: #2563eb;
+			}
+		`;
+		document.head.appendChild(style);
+		delete document.documentElement.dataset.styleTheme;
+		useUiStore.setState({ themeStyle: "orchestrate" });
+
+		try {
+			render(<XtermTerminal theme="light" />);
+			expect(state.lastTerminal!.options.theme).toMatchObject({
+				background: "#f5f5f4",
+				foreground: "#24292f",
+				cursor: "#24292f",
+				cursorAccent: "#f5f5f4",
+			});
+		} finally {
+			style.remove();
+			delete document.documentElement.dataset.styleTheme;
+			act(() => useUiStore.setState({ themeStyle: "orchestrate" }));
+		}
+	});
+
+	it("does not reserve width for the hidden terminal scrollbar", () => {
+		render(<XtermTerminal theme="dark" />);
+
+		expect(state.lastTerminal!._core.viewport.scrollBarWidth).toBe(0);
 	});
 
 	it("copies selected terminal text on the terminal copy shortcut", () => {
@@ -176,6 +327,67 @@ describe("XtermTerminal", () => {
 		expect(allowed).toBe(false);
 		expect(event.preventDefault).toHaveBeenCalled();
 		expect(window.ao!.clipboard.writeText).toHaveBeenCalledWith("copied selection");
+	});
+
+	it.each([
+		["Command", "MacIntel", false, true],
+		["Ctrl", "Linux x86_64", true, false],
+	])("uses %s plus/minus for terminal font size on %s", (_label, platform, ctrlKey, metaKey) => {
+		setNavigatorPlatform(platform);
+		const onChangeFontSize = vi.fn();
+		render(<XtermTerminal onChangeFontSize={onChangeFontSize} theme="dark" />);
+
+		const increase = {
+			altKey: false,
+			code: "Equal",
+			ctrlKey,
+			key: "=",
+			metaKey,
+			preventDefault: vi.fn(),
+			shiftKey: false,
+			stopPropagation: vi.fn(),
+			type: "keydown",
+		} as unknown as KeyboardEvent;
+		const decrease = {
+			...increase,
+			code: "Minus",
+			key: "-",
+			preventDefault: vi.fn(),
+			stopPropagation: vi.fn(),
+		} as unknown as KeyboardEvent;
+		const otherPlatformModifier = { ...increase, ctrlKey: !ctrlKey, metaKey: !metaKey };
+
+		expect(state.lastTerminal!.keyHandler!(increase)).toBe(false);
+		expect(state.lastTerminal!.keyHandler!(decrease)).toBe(false);
+		expect(state.lastTerminal!.keyHandler!(otherPlatformModifier)).toBe(true);
+		expect(onChangeFontSize).toHaveBeenNthCalledWith(1, 1);
+		expect(onChangeFontSize).toHaveBeenNthCalledWith(2, -1);
+		expect(increase.preventDefault).toHaveBeenCalledOnce();
+		expect(decrease.preventDefault).toHaveBeenCalledOnce();
+	});
+
+	it("reports terminal focus and applies main-process font-size shortcuts only there", () => {
+		let fontSizeShortcut: ((delta: -1 | 1) => void) | undefined;
+		window.ao!.terminal.onFontSizeShortcut = (listener) => {
+			fontSizeShortcut = listener;
+			return () => undefined;
+		};
+		const onChangeFontSize = vi.fn();
+		const { container } = render(<XtermTerminal onChangeFontSize={onChangeFontSize} theme="dark" />);
+		const textarea = container.querySelector("textarea")!;
+
+		textarea.focus();
+		expect(window.ao!.terminal.setFocused).toHaveBeenLastCalledWith(true);
+		fontSizeShortcut?.(1);
+		expect(onChangeFontSize).toHaveBeenCalledWith(1);
+
+		const outside = document.createElement("button");
+		document.body.appendChild(outside);
+		outside.focus();
+		expect(window.ao!.terminal.setFocused).toHaveBeenLastCalledWith(false);
+		fontSizeShortcut?.(-1);
+		expect(onChangeFontSize).toHaveBeenCalledTimes(1);
+		outside.remove();
 	});
 
 	it("handles native copy events from inside the terminal", () => {
@@ -224,7 +436,32 @@ describe("XtermTerminal", () => {
 		expect(trigger.style.top).toBe("88px");
 	});
 
-	it("runs context menu copy, select all, and clear against the xterm instance", async () => {
+	it("toggles terminal fullscreen from the right-click menu", async () => {
+		const onToggleFullscreen = vi.fn();
+		const { container, rerender } = render(
+			<div className="terminal-pane-frame">
+				<XtermTerminal isFullscreen={false} onToggleFullscreen={onToggleFullscreen} theme="dark" />
+			</div>,
+		);
+
+		fireEvent.contextMenu(container.querySelector(".terminal-pane-frame")!.firstElementChild!);
+		fireEvent.click(await screen.findByText("Fullscreen terminal"));
+		expect(onToggleFullscreen).toHaveBeenCalledOnce();
+
+		const pane = container.querySelector(".terminal-pane-frame") as HTMLElement;
+		Object.defineProperty(document, "fullscreenElement", { configurable: true, value: pane });
+		rerender(
+			<div className="terminal-pane-frame">
+				<XtermTerminal isFullscreen onToggleFullscreen={onToggleFullscreen} theme="dark" />
+			</div>,
+		);
+		fireEvent.contextMenu(pane.firstElementChild!);
+		const exitFullscreenItem = await screen.findByText("Exit fullscreen");
+		expect(pane.contains(exitFullscreenItem.closest<HTMLElement>("[role='menu']"))).toBe(true);
+		Object.defineProperty(document, "fullscreenElement", { configurable: true, value: null });
+	});
+
+	it("runs context menu copy and select all against the xterm instance", async () => {
 		const { container } = render(<XtermTerminal theme="dark" />);
 		const host = container.firstElementChild!;
 		state.lastTerminal!.selection = "menu copy";
@@ -237,10 +474,6 @@ describe("XtermTerminal", () => {
 		fireEvent.contextMenu(host);
 		fireEvent.click(await screen.findByText("Select All"));
 		expect(state.lastTerminal!.selectAll).toHaveBeenCalled();
-
-		fireEvent.contextMenu(host);
-		fireEvent.click(await screen.findByText("Clear"));
-		expect(state.lastTerminal!.clear).toHaveBeenCalled();
 	});
 
 	it("pastes from the context menu through the terminal paste path", async () => {
@@ -802,5 +1035,52 @@ describe("XtermTerminal", () => {
 		expect(state.lastTerminal!._core._selectionService.enable).toHaveBeenCalled();
 		expect(state.lastTerminal!._core.element.classList.remove).toHaveBeenCalledWith("enable-mouse-events");
 		expect(state.lastTerminal!._core._selectionService.shouldForceSelection({} as MouseEvent)).toBe(true);
+	});
+
+	function dropTransfer(entry: { isDirectory: boolean }, files: File[]) {
+		return { items: [{ webkitGetAsEntry: () => entry }], files, types: ["Files"] };
+	}
+
+	it("attaches a real dropped file's saved path, and still lets the drop bubble to the window", async () => {
+		const saveDroppedFile = vi.fn().mockResolvedValue("/tmp/ao-dropped/notes.txt");
+		window.ao!.terminal.saveDroppedFile = saveDroppedFile;
+		const onInput = vi.fn();
+		const { container } = render(
+			<XtermTerminal theme="dark" onReady={(terminal) => terminal.onUserInput(onInput)} />,
+		);
+		const host = container.firstElementChild!;
+		const bubbled = vi.fn();
+		window.addEventListener("drop", bubbled);
+		const file = new File(["hello"], "notes.txt", { type: "text/plain" });
+
+		fireEvent.drop(host, { dataTransfer: dropTransfer({ isDirectory: false }, [file]) });
+		await waitFor(() => expect(saveDroppedFile).toHaveBeenCalledWith({ name: "notes.txt", bytes: expect.any(Uint8Array) }));
+		await waitFor(() => expect(onInput).toHaveBeenCalledWith("/tmp/ao-dropped/notes.txt ", "paste"));
+
+		window.removeEventListener("drop", bubbled);
+		// Regression: no stopPropagation here — _shell.tsx's window-level listener
+		// still needs this drop to reset the drag-depth counter its preceding
+		// dragenter bumped, or the next folder drag inherits a stale depth and
+		// never shows the overlay.
+		expect(bubbled).toHaveBeenCalledTimes(1);
+	});
+
+	// Regression: a dropped folder is the app-wide "open as project" gesture
+	// (_shell.tsx's window-level drop handler), not a file to attach — dropping
+	// one over an active terminal pane must not be swallowed as a file-attach.
+	it("lets a dropped folder bubble to the window instead of attaching it as a file", () => {
+		const saveDroppedFile = vi.fn();
+		window.ao!.terminal.saveDroppedFile = saveDroppedFile;
+		const { container } = render(<XtermTerminal theme="dark" />);
+		const host = container.firstElementChild!;
+		const bubbled = vi.fn();
+		window.addEventListener("drop", bubbled);
+		const folder = new File([], "my-project");
+
+		fireEvent.drop(host, { dataTransfer: dropTransfer({ isDirectory: true }, [folder]) });
+
+		window.removeEventListener("drop", bubbled);
+		expect(bubbled).toHaveBeenCalledTimes(1);
+		expect(saveDroppedFile).not.toHaveBeenCalled();
 	});
 });

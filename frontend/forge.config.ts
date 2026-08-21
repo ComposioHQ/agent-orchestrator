@@ -1,19 +1,28 @@
 import type { ForgeConfig } from "@electron-forge/shared-types";
 import { VitePlugin } from "@electron-forge/plugin-vite";
 import MakerNSIS from "./makers/maker-nsis";
-import MakerDMG, { sealDmg } from "./makers/maker-dmg";
+import MakerDMG, { sealDmg, verifyDmg } from "./makers/maker-dmg";
 import MakerAppImage from "./makers/maker-appimage";
 import { writeFileSync } from "node:fs";
 
-// Default GitHub release target (production). aoagents was the temporary rewrite
-// home; releases land on AgentWrapper (spec §1.1).
-const DEFAULT_RELEASE_REPO = "AgentWrapper/agent-orchestrator";
+// Default GitHub release target (production). Releases land on Untrivial-ai
+// (the org the repo was transferred to in July 2026; AgentWrapper and aoagents
+// are prior homes). Builds cut by CI must NOT rely on this fallback: the
+// workflows set AO_RELEASE_REPO to the repo they run in, and build-artifacts.yml
+// asserts the baked app-update.yml matches it, so a future org/repo rename
+// fails the build instead of stranding the fleet on a redirect (#3523).
+const DEFAULT_RELEASE_REPO = "Untrivial-ai/agent-orchestrator";
 
 // The packaged binary name (no extension). Single source of truth: the packager
 // names the exe/ELF from this, and the NSIS + deb makers must point their
 // shortcut/launcher at the SAME name. Drift here means a broken Start menu
 // shortcut on Windows (#2414) or "could not find the Electron app binary" on deb.
 const EXECUTABLE_NAME = "agent-orchestrator";
+const AUTH_PROTOCOL = {
+	name: "Agent Orchestrator authentication callback",
+	schemes: ["ao-app"],
+};
+const AUTH_PROTOCOL_MIME_TYPE = "x-scheme-handler/ao-app";
 
 // parseReleaseRepo turns an "owner/repo" string (from AO_RELEASE_REPO) into the
 // publisher-github { owner, name } shape, falling back to the production default
@@ -33,12 +42,22 @@ const config: ForgeConfig = {
 		appBundleId: "dev.agent-orchestrator.desktop",
 		name: "Agent Orchestrator",
 		executableName: EXECUTABLE_NAME,
+		protocols: [AUTH_PROTOCOL],
 		appCategoryType: "public.app-category.developer-tools",
 		// App icon. electron-packager appends the per-platform extension
 		// (.icns on macOS, .ico on Windows); Linux menu icons come from the
 		// deb/rpm makers below, and the runtime window icon from src/main.ts.
 		icon: "assets/icon",
-		extraResource: ["daemon", "assets/icon.png", "assets/icon.ico", "app-update.yml"],
+		extraResource: [
+			"daemon",
+				"agent-browser",
+				"resources/acp-runtime",
+			"assets/icon.png",
+			"assets/icon.ico",
+			"assets/trayIconTemplate.png",
+			"assets/trayIconTemplate@2x.png",
+			"app-update.yml",
+		],
 		// Notarization. Two paths:
 		//  - CI: an App Store Connect API key. APPLE_API_KEY is a PATH to the .p8
 		//    (the workflow decodes APPLE_API_KEY_BASE64 to a temp file), plus the
@@ -88,11 +107,20 @@ const config: ForgeConfig = {
 		// same credentials packagerConfig already consumes (#3267 decision 3).
 		// The .app inside was already signed + notarized + stapled by
 		// packagerConfig above, before any maker ran; nothing here touches it.
+		//
+		// Then PROVE the seal. sealDmg exiting 0 only says three commands ran on
+		// this machine; it does not say Gatekeeper accepts the published bytes with
+		// a stapled ticket. verify-mac-artifact.sh is the canonical gate for that
+		// (#3288 workstreams 1 and 2), and #3267 decision 3 step 4 asks for exactly
+		// this check on the dmg. Run only when sealDmg actually sealed: an unsigned
+		// local or desktop-testing build has nothing to verify and must keep
+		// producing its dmg.
 		postMake: async (_forgeConfig, makeResults) => {
 			for (const result of makeResults) {
 				if (result.platform !== "darwin") continue;
 				for (const artifact of result.artifacts) {
-					if (artifact.endsWith(".dmg")) await sealDmg(artifact);
+					if (!artifact.endsWith(".dmg")) continue;
+					if (await sealDmg(artifact)) await verifyDmg(artifact);
 				}
 			}
 			return makeResults;
@@ -138,6 +166,7 @@ const config: ForgeConfig = {
 				appId: "dev.agent-orchestrator.desktop",
 				productName: "Agent Orchestrator",
 				icon: "assets/icon.png",
+				protocols: [AUTH_PROTOCOL],
 			},
 			["linux"],
 		),
@@ -152,6 +181,7 @@ const config: ForgeConfig = {
 					icon: "assets/icon.png",
 					maintainer: "Agent Orchestrator",
 					homepage: "https://github.com/aoagents/agent-orchestrator",
+					mimeType: [AUTH_PROTOCOL_MIME_TYPE],
 				},
 			},
 		},
@@ -163,6 +193,7 @@ const config: ForgeConfig = {
 					// rpmbuild rejects a spec with an empty License field.
 					license: "MIT",
 					homepage: "https://github.com/aoagents/agent-orchestrator",
+					mimeType: [AUTH_PROTOCOL_MIME_TYPE],
 				},
 			},
 		},
@@ -174,8 +205,9 @@ const config: ForgeConfig = {
 			// fork without a source edit. AO_RELEASE_REPO is "owner/repo"; it defaults
 			// to the production target. The dev/test loop sets
 			// AO_RELEASE_REPO=harshitsinghbhandari/agent-orchestrator (spec §1.1, §8).
-			// Note: aoagents/agent-orchestrator was the temporary rewrite home and is
-			// intentionally NOT the default; releases land on AgentWrapper.
+			// Note: aoagents/agent-orchestrator and AgentWrapper/agent-orchestrator
+			// are prior homes and intentionally NOT the default; releases land on
+			// Untrivial-ai.
 			config: {
 				repository: parseReleaseRepo(process.env.AO_RELEASE_REPO),
 				prerelease: process.env.AO_RELEASE_PRERELEASE === "true",

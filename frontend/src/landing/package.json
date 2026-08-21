@@ -6,18 +6,21 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
+    "postbuild": "node scripts/generate-markdown-twins.mjs",
     "start": "next start"
   },
   "workspaces": [
     "packages/*"
   ],
   "dependencies": {
-    "@paper-design/shaders-react": "workspace:*",
-    "@sentry/nextjs": "10.46.0",
     "@ao/auth": "workspace:*",
     "@ao/email": "workspace:*",
     "@ao/shared": "workspace:*",
     "@ao/ui": "workspace:*",
+    "@mux/mux-player-react": "^3.13.2",
+    "@neondatabase/serverless": "^1.1.0",
+    "@paper-design/shaders-react": "workspace:*",
+    "@sentry/nextjs": "10.46.0",
     "@t3-oss/env-nextjs": "0.13.11",
     "@xterm/xterm": "^6.0.0",
     "clsx": "^2.1.1",
@@ -30,6 +33,7 @@
     "next-mdx-remote": "6.0.0",
     "next-themes": "0.4.6",
     "posthog-js": "1.310.1",
+    "qrcode.react": "^4.2.0",
     "react": "19.2.3",
     "react-dom": "19.2.3",
     "react-fast-marquee": "1.6.5",
@@ -50,6 +54,8 @@
     "@types/react": "19.2.14",
     "@types/react-dom": "19.2.3",
     "@types/three": "^0.181.0",
+    "cheerio": "1.2.0",
+    "node-html-markdown": "2.0.0",
     "tailwindcss": "4.2.2",
     "three": "^0.181.2",
     "typescript": "6.0.3"

@@ -59,6 +59,11 @@ export function setApiDaemonStatus(nextStatus: DaemonStatus): void {
 // still normalizes IDs for every resource, including ones a segment heuristic
 // would miss (orchestrators/{id}). Keep in sync with schema.ts.
 const ROUTE_TEMPLATES = [
+	"/api/v1/agents",
+	"/api/v1/agents/refresh",
+	"/api/v1/agents/{agent}/models",
+	"/api/v1/agents/{agent}/models/refresh",
+	"/api/v1/agents/{agent}/probe",
 	"/api/v1/events",
 	"/api/v1/import",
 	"/api/v1/notifications",
@@ -68,6 +73,8 @@ const ROUTE_TEMPLATES = [
 	"/api/v1/orchestrators",
 	"/api/v1/orchestrators/{id}",
 	"/api/v1/projects",
+	"/api/v1/projects/clone",
+	"/api/v1/projects/initialize",
 	"/api/v1/projects/{id}",
 	"/api/v1/projects/{id}/config",
 	"/api/v1/prs/{id}/merge",
@@ -75,6 +82,10 @@ const ROUTE_TEMPLATES = [
 	"/api/v1/sessions",
 	"/api/v1/sessions/{sessionId}",
 	"/api/v1/sessions/{sessionId}/activity",
+	"/api/v1/sessions/{sessionId}/agent-switches",
+	"/api/v1/sessions/{sessionId}/agent-switches/{switchId}/handoff",
+	"/api/v1/sessions/{sessionId}/agent-switches/{switchId}/recover",
+	"/api/v1/sessions/{sessionId}/interface-transition",
 	"/api/v1/sessions/{sessionId}/kill",
 	"/api/v1/sessions/{sessionId}/pr",
 	"/api/v1/sessions/{sessionId}/pr/claim",
@@ -83,12 +94,15 @@ const ROUTE_TEMPLATES = [
 	"/api/v1/sessions/{sessionId}/preview/server",
 	"/api/v1/sessions/{sessionId}/resume-agent",
 	"/api/v1/sessions/{sessionId}/restore",
+	"/api/v1/sessions/{sessionId}/switch-agent",
 	"/api/v1/sessions/{sessionId}/reviews",
 	"/api/v1/sessions/{sessionId}/reviews/cancel",
+	"/api/v1/sessions/{sessionId}/reviews/comments/resolve",
 	"/api/v1/sessions/{sessionId}/reviews/submit",
 	"/api/v1/sessions/{sessionId}/reviews/trigger",
 	"/api/v1/sessions/{sessionId}/rollback",
 	"/api/v1/sessions/{sessionId}/send",
+	"/api/v1/sessions/{sessionId}/workspace/events",
 	"/api/v1/sessions/{sessionId}/workspace/file",
 	"/api/v1/sessions/{sessionId}/workspace/files",
 	"/api/v1/sessions/cleanup",
@@ -97,7 +111,15 @@ const ROUTE_TEMPLATES = [
 // Resource collections whose next path segment is an identifier. Only used as a
 // defensive fallback for paths not covered by ROUTE_TEMPLATES; keeps IDs out of
 // telemetry for known collections even if a route is ever missed above.
-const RESOURCE_SEGMENTS = new Set(["projects", "sessions", "notifications", "workspaces", "prs", "orchestrators"]);
+const RESOURCE_SEGMENTS = new Set([
+	"agents",
+	"projects",
+	"sessions",
+	"notifications",
+	"workspaces",
+	"prs",
+	"orchestrators",
+]);
 
 // Match a path against one template. `{param}` matches any single segment
 // (reported as `:id`), a trailing `*` matches the remaining path, and every
@@ -249,11 +271,23 @@ export function apiErrorCode(error: unknown): string | undefined {
 	return undefined;
 }
 
+/** Correlation id from the daemon's stable error envelope. */
+export function apiErrorRequestId(error: unknown): string | undefined {
+	if (typeof error === "object" && error !== null) {
+		const body = error as { requestId?: unknown };
+		if (typeof body.requestId === "string" && body.requestId !== "") return body.requestId;
+	}
+	return undefined;
+}
+
 export function apiErrorMessage(error: unknown, fallback = "Request failed"): string {
 	if (error instanceof Error) return error.message;
 	if (typeof error === "string" && error !== "") return error;
 	if (typeof error === "object" && error !== null) {
 		const body = error as { code?: unknown; message?: unknown; error?: unknown };
+		if (typeof body.error === "object" && body.error !== null) {
+			return apiErrorMessage(body.error, fallback);
+		}
 		const code = typeof body.code === "string" && body.code !== "" ? body.code : "";
 		if (typeof body.message === "string" && body.message !== "") {
 			return code && !body.message.includes(code) ? `${body.message} (${code})` : body.message;

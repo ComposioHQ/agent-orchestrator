@@ -1,12 +1,15 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type {
+	BrowserAgentActivityState,
+	BrowserDevToolsPlacement,
+	BrowserDevToolsState,
 	BrowserNavState,
 	BrowserRect,
 	BrowserTabState,
 	BrowserTabsState,
 } from "../../main/browser-view-host";
 import type { BrowserAnnotationCancelPayload, BrowserAnnotationSubmitPayload } from "../../shared/browser-annotations";
-import { OPEN_DIALOG_OR_MENU_SELECTOR } from "../lib/dom-selectors";
+import { OPEN_BROWSER_OVERLAY_SELECTOR } from "../lib/dom-selectors";
 
 export type { BrowserNavState };
 
@@ -37,8 +40,6 @@ type UseBrowserViewOptions = {
 export type BrowserViewModel = {
 	viewId: string;
 	navState: BrowserNavState;
-	mirrorUrl: string;
-	mirrorStream: MediaStream | null;
 	slotRef: (node: HTMLDivElement | null) => void;
 	navigate: (url: string) => Promise<void>;
 	goBack: () => Promise<void>;
@@ -50,7 +51,14 @@ export type BrowserViewModel = {
 	tabNotice: string;
 	selectTab: (tabId: string) => Promise<void>;
 	closeTab: (tabId: string) => Promise<void>;
+	openTab: () => Promise<void>;
+	reorderTabs: (orderedIds: string[]) => void;
+	devtoolsState: BrowserDevToolsState;
+	openDevTools: () => Promise<void>;
+	closeDevTools: () => Promise<void>;
+	setDevToolsPlacement: (placement: BrowserDevToolsPlacement) => Promise<void>;
 	agentBrowserActive: boolean;
+	agentBrowserActivity: BrowserAgentActivityState | null;
 	destroy: () => void;
 	annotationMode: boolean;
 	setAnnotationMode: (enabled: boolean) => Promise<void>;
@@ -71,20 +79,54 @@ const EMPTY_TABS_STATE: BrowserTabsState = {
 	tabs: [],
 };
 
+const EMPTY_DEVTOOLS_STATE: BrowserDevToolsState = {
+	viewId: "",
+	open: false,
+	activeTabId: "",
+	placement: "undocked",
+};
+
+type PreviewTrigger = { revision: number | null; target: string };
+
+// The native view survives React session switches, so remember which preview
+// trigger was already consumed for each session. This prevents switching back
+// from reasserting previewUrl over a URL the user manually navigated to.
+const consumedPreviewTriggers = new Map<string, PreviewTrigger>();
+
+export function resetConsumedPreviewTriggersForTest(): void {
+	consumedPreviewTriggers.clear();
+}
+
 const HIDDEN_RECT: BrowserRect = { x: 0, y: 0, width: 0, height: 0 };
+
+// ResizeHandle.tsx sits at the inspector panel's left edge with a
+// `--size-resize-handle-offset` (6px) negative inset, so only its right half
+// (0 to 6px, inside the panel) survives the panel's `overflow-hidden` — the
+// left half is clipped away. That surviving 6px is inside `[data-panel]`, the
+// same territory the browser view fills, so without this reserve the native
+// view covers the handle at rest and a drag can never start once a page is
+// loaded (only continuing an already-started drag is handled elsewhere, via
+// the `is-resizing-x` watcher below). Keep in sync with tokens.css.
+const RESIZE_HANDLE_RESERVE_PX = 6;
 
 // The native WebContentsView is a window-level overlay, so DOM `overflow:
 // hidden` never clips it — it paints wherever the slot's bounding box lands.
-// Inside the collapsible inspector the slot sits in a `min-w-[280px]` wrapper,
-// so on a narrow panel (small window, or mid-collapse) the slot's box spills
-// past its resizable-panel column. Intersect the slot box with that column so
-// the view can only ever paint inside it, never over the terminal/sidebar.
+// During inspector open/close the column slides on a transform (the slot box
+// moves without a ResizeObserver size change), so also clip to `.session-split`.
 function visibleSlotRect(node: HTMLElement): BrowserRect {
 	const rect = node.getBoundingClientRect();
 	let { left, top, right, bottom } = rect;
-	const column = node.closest<HTMLElement>("[data-panel]");
-	if (column) {
-		const bounds = column.getBoundingClientRect();
+	const panel = node.closest<HTMLElement>("[data-panel]");
+	if (panel) {
+		const bounds = panel.getBoundingClientRect();
+		left = Math.max(left, bounds.left + RESIZE_HANDLE_RESERVE_PX);
+		top = Math.max(top, bounds.top);
+		right = Math.min(right, bounds.right);
+		bottom = Math.min(bottom, bounds.bottom);
+	}
+	const split = node.closest<HTMLElement>(".session-split");
+	if (split) {
+		const bounds = split.getBoundingClientRect();
 		left = Math.max(left, bounds.left);
 		top = Math.max(top, bounds.top);
 		right = Math.min(right, bounds.right);
@@ -118,35 +160,33 @@ export function useBrowserView({
 }: UseBrowserViewOptions): BrowserViewModel {
 	const [viewId, setViewId] = useState("");
 	const [navState, setNavState] = useState<BrowserNavState>(EMPTY_NAV_STATE);
-	const [mirrorUrl, setMirrorUrl] = useState("");
-	const [mirrorStream, setMirrorStream] = useState<MediaStream | null>(null);
 	const [annotationMode, setAnnotationModeState] = useState(false);
 	const [tabsState, setTabsState] = useState<BrowserTabsState>(EMPTY_TABS_STATE);
+	// Display-only tab order (drag-to-reorder). Re-projected onto every incoming
+	// tabsState push below, since the main process's own tab order is not
+	// authoritative and browser:tabsState pushes on every nav/title event.
+	const [tabOrder, setTabOrder] = useState<string[]>([]);
+	const [devtoolsState, setDevtoolsState] = useState<BrowserDevToolsState>(EMPTY_DEVTOOLS_STATE);
 	const [tabNotice, setTabNotice] = useState("");
 	const [agentBrowserActive, setAgentBrowserActive] = useState(false);
+	const [agentBrowserActivity, setAgentBrowserActivity] = useState<BrowserAgentActivityState | null>(null);
+	const [stateSessionId, setStateSessionId] = useState(sessionId);
 	const slotNodeRef = useRef<HTMLDivElement | null>(null);
 	const viewIdRef = useRef("");
 	const annotationModeRef = useRef(false);
 	const activeRef = useRef(active);
+	const poppedOutRef = useRef(poppedOut);
 	const frameRef = useRef<number | null>(null);
 	const settleTimerRef = useRef<number | null>(null);
 	const observerRef = useRef<ResizeObserver | null>(null);
 	const previewTriggerRef = useRef<{ revision: number | null; target: string } | null>(null);
-	const hasUrlRef = useRef(false);
-	const modalOpenRef = useRef(false);
-	const mirrorTokenRef = useRef(0);
-	const mirrorTimerRef = useRef<number | null>(null);
+	const overlayOpenRef = useRef(false);
 	const tabNoticeTimerRef = useRef<number | null>(null);
-	const mirrorStreamRef = useRef<MediaStream | null>(null);
 	const hasNativeBrowser = Boolean(window.ao?.browser);
 
 	useEffect(() => {
 		activeRef.current = active;
 	}, [active]);
-
-	useEffect(() => {
-		hasUrlRef.current = Boolean(navState.url);
-	}, [navState.url]);
 
 	useEffect(() => {
 		annotationModeRef.current = annotationMode;
@@ -172,19 +212,11 @@ export function useBrowserView({
 		const id = viewIdRef.current;
 		const node = slotNodeRef.current;
 		if (!id) return;
-		if (!activeRef.current || !node || !node.isConnected || !hasUrlRef.current || hiddenByFullscreen(node)) {
+		if (!activeRef.current || !node || !node.isConnected || hiddenByFullscreen(node)) {
 			sendHiddenBounds(id);
 			return;
 		}
 		const rect = visibleSlotRect(node);
-		if (modalOpenRef.current) {
-			if (rect.width > 0 && rect.height > 0) {
-				window.ao?.browser.setBounds({ viewId: id, rect, visible: true, parked: true });
-			} else {
-				sendHiddenBounds(id);
-			}
-			return;
-		}
 		const payload = {
 			viewId: id,
 			rect,
@@ -230,32 +262,43 @@ export function useBrowserView({
 		(node: HTMLDivElement | null) => {
 			observerRef.current?.disconnect();
 			slotNodeRef.current = node;
-			if (node) {
-				const observer = new ResizeObserver(scheduleMeasure);
-				observer.observe(node);
-				// Also track the resizable-panel column: while the inspector
-				// collapse/expand animates, the slot's own width stays pinned by
-				// `min-w-[280px]` (so a slot-only observer never fires), but the
-				// column's width changes every frame. Observing it re-measures
-				// through the whole animation so the view never lags behind.
-				const column = node.closest("[data-panel]");
-				if (column) observer.observe(column);
-				observerRef.current = observer;
+			if (!node) {
+				sendHiddenBounds();
+				return;
 			}
+			const observer = new ResizeObserver(scheduleMeasure);
+			observer.observe(node);
+			// The inspector column keeps a stable width and slides on `x`; the
+			// layout gap's width is what actually changes every spring frame.
+			// Observing it re-measures through the whole animation so the native
+			// view tracks the sliding rail instead of lagging at the last size.
+			const column = node.closest("[data-panel]");
+			if (column) observer.observe(column);
+			const gap = node.closest(".session-split")?.querySelector("[data-slot='inspector-gap']");
+			if (gap) observer.observe(gap);
+			observerRef.current = observer;
 			scheduleMeasure();
 		},
-		[scheduleMeasure],
+		[scheduleMeasure, sendHiddenBounds],
 	);
 
 	useEffect(() => {
 		let disposed = false;
-		// Preview revisions are scoped to a session. Reset the trigger before
-		// ensuring a different worker so equal revision numbers cannot suppress
-		// that worker's own target.
-		previewTriggerRef.current = null;
+		// Preview revisions are scoped to a session. A native view survives session
+		// switches, so seed from the per-session consumed trigger to avoid
+		// reasserting previewUrl over manual navigation on switch-back.
+		previewTriggerRef.current = hasNativeBrowser ? (consumedPreviewTriggers.get(sessionId) ?? null) : null;
+		setStateSessionId(sessionId);
+		setViewId("");
+		setNavState(EMPTY_NAV_STATE);
 		setTabsState(EMPTY_TABS_STATE);
+		// Tab ids (`t1`, `t2`, ...) restart per session, so a stale order from the
+		// previous session could otherwise silently reapply to the new one.
+		setTabOrder([]);
+		setDevtoolsState(EMPTY_DEVTOOLS_STATE);
 		setTabNotice("");
 		setAgentBrowserActive(false);
+		setAgentBrowserActivity(null);
 		if (tabNoticeTimerRef.current !== null) {
 			window.clearTimeout(tabNoticeTimerRef.current);
 			tabNoticeTimerRef.current = null;
@@ -270,6 +313,7 @@ export function useBrowserView({
 			viewIdRef.current = state.viewId;
 			setViewId(state.viewId);
 			setNavState(state);
+			setDevtoolsState((current) => ({ ...current, viewId: state.viewId, activeTabId: "" }));
 			return () => {
 				disposed = true;
 				viewIdRef.current = "";
@@ -300,7 +344,12 @@ export function useBrowserView({
 			}
 			viewIdRef.current = "";
 		};
-	}, [hasNativeBrowser, scheduleSettleMeasure, sendHiddenBounds, sessionId]);
+	}, [
+		hasNativeBrowser,
+		scheduleSettleMeasure,
+		sendHiddenBounds,
+		sessionId,
+	]);
 
 	useEffect(() => {
 		return window.ao?.browser.onNavState((state) => {
@@ -323,10 +372,38 @@ export function useBrowserView({
 		});
 	}, []);
 
+	// Re-project the persisted display order onto every incoming tabsState push:
+	// browser:tabsState fires on every nav/title-update/loading-state change for
+	// any tab, so a one-shot local reorder would otherwise be clobbered by the
+	// very next push. New tabs (via "+", popups, agent tab-new) append at the end.
+	useEffect(() => {
+		const incomingIds = tabsState.tabs.map((tab) => tab.id);
+		setTabOrder((prev) => {
+			const kept = prev.filter((id) => incomingIds.includes(id));
+			const added = incomingIds.filter((id) => !kept.includes(id));
+			return kept.length === prev.length && added.length === 0 ? prev : [...kept, ...added];
+		});
+	}, [tabsState.tabs]);
+
+	const tabs = useMemo(() => {
+		const byId = new Map(tabsState.tabs.map((tab) => [tab.id, tab]));
+		return tabOrder.map((id) => byId.get(id)).filter((tab): tab is BrowserTabState => Boolean(tab));
+	}, [tabOrder, tabsState.tabs]);
+
+	const reorderTabs = useCallback((orderedIds: string[]) => setTabOrder(orderedIds), []);
+
+	useEffect(() => {
+		return window.ao?.browser.onDevToolsState((state) => {
+			if (state.viewId !== viewIdRef.current) return;
+			setDevtoolsState(state);
+		});
+	}, []);
+
 	useEffect(() => {
 		return window.ao?.browser.onAgentActivity((state) => {
 			if (state.viewId !== viewIdRef.current) return;
 			setAgentBrowserActive(state.active);
+			setAgentBrowserActivity(state);
 		});
 	}, []);
 
@@ -337,101 +414,46 @@ export function useBrowserView({
 		[],
 	);
 
-	useEffect(() => {
-		if (navState.url && active) {
+	useLayoutEffect(() => {
+		if (active) {
 			scheduleSettleMeasure();
 		} else {
 			sendHiddenBounds();
 		}
 	}, [active, navState.url, poppedOut, scheduleSettleMeasure, sendHiddenBounds]);
 
-	const stopMirrorStream = useCallback(() => {
-		mirrorStreamRef.current?.getTracks().forEach((track) => track.stop());
-		mirrorStreamRef.current = null;
-		setMirrorStream(null);
-	}, []);
-
-	const runMirror = useCallback(
-		(id: string) => {
-			const token = ++mirrorTokenRef.current;
-			const live = () => mirrorTokenRef.current === token && modalOpenRef.current && viewIdRef.current === id;
-			const streamMirror = async (): Promise<boolean> => {
-				if (!navigator.mediaDevices?.getDisplayMedia) return false;
-				const granted = await window.ao?.browser.requestMirror?.(id).catch(() => false);
-				if (!granted || !live()) return false;
-				const stream = await navigator.mediaDevices.getDisplayMedia({ audio: false, video: true });
-				if (!live()) {
-					stream.getTracks().forEach((track) => track.stop());
-					return true;
-				}
-				stopMirrorStream();
-				mirrorStreamRef.current = stream;
-				setMirrorStream(stream);
-				return true;
-			};
-			const frameMirror = async () => {
-				while (live()) {
-					const pending = window.ao?.browser.capture?.(id) ?? Promise.resolve("");
-					const frame = await pending.catch(() => "");
-					if (!live()) return;
-					if (frame) setMirrorUrl(frame);
-					await new Promise((resolve) => {
-						window.setTimeout(resolve, 66);
-					});
-				}
-			};
-			const tick = async () => {
-				const streamed = await streamMirror().catch(() => false);
-				if (streamed || !live()) return;
-				await frameMirror();
-			};
-			void tick();
-		},
-		[stopMirrorStream],
-	);
+	useEffect(() => {
+		if (poppedOutRef.current === poppedOut) return;
+		poppedOutRef.current = poppedOut;
+		if (!hasNativeBrowser || !activeRef.current) {
+			scheduleSettleMeasure();
+			return;
+		}
+		measureAndSend();
+		window.setTimeout(() => {
+			measureAndSend();
+		}, 0);
+		scheduleSettleMeasure();
+	}, [hasNativeBrowser, measureAndSend, poppedOut, scheduleSettleMeasure]);
 
 	useEffect(() => {
 		if (!hasNativeBrowser) return;
-		const clearMirrorTimer = () => {
-			if (mirrorTimerRef.current === null) return;
-			window.clearTimeout(mirrorTimerRef.current);
-			mirrorTimerRef.current = null;
-		};
 		const update = () => {
-			const open = document.querySelector(OPEN_DIALOG_OR_MENU_SELECTOR) !== null;
-			if (open === modalOpenRef.current) return;
-			modalOpenRef.current = open;
-			if (open) {
-				clearMirrorTimer();
-				const id = viewIdRef.current;
-				if (id && activeRef.current && hasUrlRef.current) {
-					runMirror(id);
-					// Park the native view synchronously, in the same tick the overlay
-					// opened. `modalOpenRef` is already true, so measureAndSend() emits
-					// the `parked: true` bounds now instead of a frame later — deferring
-					// to rAF leaves a ~16ms window where the live view paints over the
-					// freshly-opened dropdown, which stacks into a stuck overlay under
-					// rapid toggling. rAF still refines geometry on later resize/scroll.
-					measureAndSend();
-				} else {
-					sendHiddenBounds();
-				}
-			} else {
-				mirrorTokenRef.current += 1;
-				scheduleSettleMeasure();
-				clearMirrorTimer();
-				mirrorTimerRef.current = window.setTimeout(() => {
-					mirrorTimerRef.current = null;
-					setMirrorUrl("");
-					stopMirrorStream();
-				}, 320);
-			}
+			const open =
+				document.body.classList.contains("is-resizing-x") ||
+				document.querySelector(OPEN_BROWSER_OVERLAY_SELECTOR) !== null;
+			if (open === overlayOpenRef.current) return;
+			overlayOpenRef.current = open;
+			// The live page never moves or becomes a bitmap. Reordering the explicit
+			// transparent shell is the complete overlay handoff.
+			window.ao?.browser.setOverlayOpen(open);
+			if (!open) scheduleSettleMeasure();
 		};
 		update();
 		const observer = new MutationObserver(update);
 		// Radix reuses its portal node and flips `data-state` in place rather than
 		// adding/removing a body child, so a `childList`-only observer misses the
-		// open/close transition under rapid toggling and `modalOpenRef` desyncs.
+		// open/close transition under rapid toggling and the overlay state desyncs.
 		// Watch subtree attribute flips on `data-state` too so the transition is
 		// always observed. This widens the firing rate a lot — `data-state` is used
 		// across Radix (tooltips, accordions, selects, switches, …), so `update()`
@@ -443,13 +465,23 @@ export function useBrowserView({
 			attributes: true,
 			attributeFilter: ["data-state"],
 		});
+		// useResizable.ts toggles `is-resizing-x` on <body> (outside React) while the
+		// inspector's own drag handle is held — that handle sits right at the edge of
+		// the browser panel, and the WebContentsView swallows every pointer event the
+		// instant the cursor crosses into it, killing the drag dead mid-resize. Raise
+		// the shell for the same duration so the drag keeps receiving events there too.
+		// A dedicated, non-subtree observer keeps this cheap: unlike `data-state` above,
+		// `class` churns on nearly every render throughout the app, so watching it
+		// subtree-wide would run `update()` far more often than the dialog/menu case.
+		const resizeObserver = new MutationObserver(update);
+		resizeObserver.observe(document.body, { attributes: true, attributeFilter: ["class"] });
 		return () => {
 			observer.disconnect();
-			clearMirrorTimer();
-			mirrorTokenRef.current += 1;
-			stopMirrorStream();
+			resizeObserver.disconnect();
+			window.ao?.browser.setOverlayOpen(false);
+			overlayOpenRef.current = false;
 		};
-	}, [hasNativeBrowser, measureAndSend, runMirror, scheduleSettleMeasure, sendHiddenBounds, stopMirrorStream]);
+	}, [hasNativeBrowser, scheduleSettleMeasure]);
 
 	useEffect(() => {
 		const handle = () => scheduleMeasure();
@@ -513,6 +545,29 @@ export function useBrowserView({
 		[hasNativeBrowser],
 	);
 
+	const openTab = useCallback(async () => {
+		const viewId = viewIdRef.current;
+		if (!viewId || !hasNativeBrowser) return;
+		const state = await window.ao!.browser.openTab({ viewId });
+		if (viewIdRef.current === state.viewId) setTabsState(state);
+	}, [hasNativeBrowser]);
+
+	const runDevtools = useCallback(
+		async (operation: "open" | "close" | "setPlacement", placement?: BrowserDevToolsPlacement) => {
+			const id = viewIdRef.current;
+			if (!id || !hasNativeBrowser) return;
+			try {
+				const next = await window.ao!.browser.devtools({ viewId: id, operation, placement });
+				if (viewIdRef.current === next.viewId) setDevtoolsState(next);
+			} catch {
+				// The main process reports the unavailable state through the normal
+				// browser lifecycle; a failed optional DevTools action should not
+				// become an unhandled renderer rejection.
+			}
+		},
+		[hasNativeBrowser],
+	);
+
 	useEffect(() => {
 		const handleDone = (payload: BrowserAnnotationSubmitPayload | BrowserAnnotationCancelPayload) => {
 			if (payload.viewId !== viewIdRef.current) return;
@@ -569,13 +624,15 @@ export function useBrowserView({
 		const previous = previewTriggerRef.current;
 		if (previous?.revision === revision && previous.target === target) return;
 		if (revision !== null && previous?.revision === revision) return;
-		previewTriggerRef.current = { revision, target };
+		const consumed: PreviewTrigger = { revision, target };
+		previewTriggerRef.current = consumed;
+		if (hasNativeBrowser) consumedPreviewTriggers.set(sessionId, consumed);
 		if (target) {
 			void navigate(target);
 		} else if ((revision !== null && revision > 0) || previous?.target) {
 			void clear();
 		}
-	}, [clear, navigate, previewRevision, previewUrl, terminated, viewId]);
+	}, [clear, hasNativeBrowser, navigate, previewRevision, previewUrl, sessionId, terminated, viewId]);
 
 	const destroy = useCallback(() => {
 		const id = viewIdRef.current;
@@ -584,42 +641,52 @@ export function useBrowserView({
 			void window.ao?.browser.setAnnotationMode({ viewId: id, enabled: false });
 			setAnnotationModeState(false);
 		}
-		mirrorTokenRef.current += 1;
-		stopMirrorStream();
-		setMirrorUrl("");
+		overlayOpenRef.current = false;
 		sendHiddenBounds(id);
 		window.ao?.browser.destroy(id);
 		viewIdRef.current = "";
 		setViewId("");
 		setNavState(EMPTY_NAV_STATE);
 		setTabsState(EMPTY_TABS_STATE);
-	}, [sendHiddenBounds, stopMirrorStream]);
+	}, [sendHiddenBounds]);
 
 	// Termination invalidates the complete session-owned browser, including all
 	// tabs, captures, profile state, and target mappings. `clear` remains the
 	// explicit preview-reset operation.
 	useEffect(() => {
 		if (!terminated || !viewId) return;
+		consumedPreviewTriggers.delete(sessionId);
 		destroy();
-	}, [destroy, terminated, viewId]);
+	}, [destroy, sessionId, terminated, viewId]);
+
+	// Hook state survives a `sessionId` prop change until the reset effect above
+	// commits. Keep navigation, tab, and activity state hidden during that
+	// intervening render so consumers can never interpret the departed session's
+	// state as belonging to the destination session.
+	const stateBelongsToSession = stateSessionId === sessionId;
 
 	return {
-		viewId,
-		navState,
-		mirrorUrl,
-		mirrorStream,
+		viewId: stateBelongsToSession ? viewId : "",
+		navState: stateBelongsToSession ? navState : EMPTY_NAV_STATE,
 		slotRef,
 		navigate,
 		goBack: () => (hasNativeBrowser ? withView((id) => window.ao!.browser.goBack(id)) : Promise.resolve()),
 		goForward: () => (hasNativeBrowser ? withView((id) => window.ao!.browser.goForward(id)) : Promise.resolve()),
 		reload: () => (hasNativeBrowser ? withView((id) => window.ao!.browser.reload(id)) : Promise.resolve()),
 		stop: () => (hasNativeBrowser ? withView((id) => window.ao!.browser.stop(id)) : Promise.resolve()),
-		tabs: tabsState.tabs,
-		activeTabId: tabsState.activeTabId,
-		tabNotice,
+		tabs: stateBelongsToSession ? tabs : [],
+		activeTabId: stateBelongsToSession ? tabsState.activeTabId : "",
+		tabNotice: stateBelongsToSession ? tabNotice : "",
 		selectTab,
 		closeTab,
-		agentBrowserActive,
+		openTab,
+		reorderTabs,
+		devtoolsState: stateBelongsToSession ? devtoolsState : EMPTY_DEVTOOLS_STATE,
+		openDevTools: () => runDevtools("open"),
+		closeDevTools: () => runDevtools("close"),
+		setDevToolsPlacement: (placement) => runDevtools("setPlacement", placement),
+		agentBrowserActive: stateBelongsToSession && agentBrowserActive,
+		agentBrowserActivity: stateBelongsToSession ? agentBrowserActivity : null,
 		destroy,
 		annotationMode,
 		setAnnotationMode,

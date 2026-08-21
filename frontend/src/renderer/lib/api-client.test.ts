@@ -190,6 +190,12 @@ describe("normalizeApiOperation", () => {
 		expect(normalizeApiOperation("get", "/api/v1/projects/my project id")).toBe("GET /api/v1/projects/:id");
 		expect(normalizeApiOperation("POST", "/api/v1/sessions/ao-42/kill")).toBe("POST /api/v1/sessions/:id/kill");
 		expect(normalizeApiOperation("PUT", "/api/v1/projects/p1/config")).toBe("PUT /api/v1/projects/:id/config");
+		expect(normalizeApiOperation("GET", "/api/v1/agents/claude-code/models")).toBe(
+			"GET /api/v1/agents/:id/models",
+		);
+		expect(normalizeApiOperation("POST", "/api/v1/agents/codex/models/refresh")).toBe(
+			"POST /api/v1/agents/:id/models/refresh",
+		);
 	});
 
 	it("leaves collection and non-resource paths untouched", () => {
@@ -201,6 +207,8 @@ describe("normalizeApiOperation", () => {
 		// These match an exact OpenAPI template, so the trailing segment must not
 		// be collapsed to :id (which would break aggregation and hide the route).
 		expect(normalizeApiOperation("POST", "/api/v1/notifications/read-all")).toBe("POST /api/v1/notifications/read-all");
+		expect(normalizeApiOperation("POST", "/api/v1/projects/clone")).toBe("POST /api/v1/projects/clone");
+		expect(normalizeApiOperation("POST", "/api/v1/projects/initialize")).toBe("POST /api/v1/projects/initialize");
 		expect(normalizeApiOperation("POST", "/api/v1/sessions/cleanup")).toBe("POST /api/v1/sessions/cleanup");
 	});
 
@@ -329,5 +337,13 @@ describe("apiErrorMessage", () => {
 				message: "tmux required (RUNTIME_PREREQUISITE_MISSING)",
 			}),
 		).toBe("tmux required (RUNTIME_PREREQUISITE_MISSING)");
+	});
+
+	it("reads the nested daemon error envelope", () => {
+		expect(
+			apiErrorMessage({
+				error: { code: "REVIEWER_NOT_FOUND", message: "reviewer has not reviewed this PR" },
+			}),
+		).toBe("reviewer has not reviewed this PR (REVIEWER_NOT_FOUND)");
 	});
 });

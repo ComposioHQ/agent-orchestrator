@@ -86,6 +86,23 @@ type Runtime interface {
 	IsAlive(ctx context.Context, handle RuntimeHandle) (bool, error)
 }
 
+// StyledTerminalOutputReader is an optional runtime capability for safety
+// checks that must distinguish dim placeholder text from a human-authored
+// draft. Implementations return a bounded excerpt of the rendered current
+// viewport with ANSI cell styles preserved; raw terminal history is not valid
+// evidence for this contract. Callers must fail closed when unavailable.
+type StyledTerminalOutputReader interface {
+	GetStyledOutput(ctx context.Context, handle RuntimeHandle, lines int) (string, error)
+}
+
+// ErrStyledTerminalOutputUnavailable reports that a runtime implementation can
+// provide styled current-screen output in general, but not for this particular
+// handle. This occurs when a detached runtime host survives an AO upgrade from
+// a protocol version that predates rendered-surface support. Callers may use
+// their conservative no-surface fallback; every other read error remains an
+// inconclusive probe and must fail closed.
+var ErrStyledTerminalOutputUnavailable = errors.New("runtime: styled terminal output unavailable for handle")
+
 // RuntimeRestarter is an optional runtime capability for replacing the process
 // inside an existing terminal session. Implementations should preserve the
 // handle when possible so attached clients do not need a new terminal identity.
@@ -125,6 +142,30 @@ type SupervisedProcessRef struct {
 // as exit.
 type SupervisedProcessInspector interface {
 	IsSupervisedProcessAlive(ctx context.Context, handle RuntimeHandle, ref SupervisedProcessRef) (bool, error)
+}
+
+// ExactSupervisedProcessInspector is the strict launch-generation probe used
+// at agent-switch ownership boundaries. Unlike SupervisedProcessInspector it
+// must never treat an arbitrary child of a preserved shell as the requested
+// AO supervisor. A true result proves the exact session/launch pair and the
+// supervisor's managed agent child are both alive.
+type ExactSupervisedProcessInspector interface {
+	IsExactSupervisedProcessAlive(ctx context.Context, handle RuntimeHandle, ref SupervisedProcessRef) (bool, error)
+}
+
+// ContainerReaper removes Docker containers a worker session owns, identified
+// by the ao.session=<id> label convention (see EnvSessionID). It is an
+// optional capability: nil wiring means container reaping is a no-op, not an
+// error. Implementations MUST treat a container's ao.spare=true label as an
+// unconditional skip, and MUST bias toward sparing on any ambiguity (e.g. a
+// docker CLI probe failure reaps nothing rather than guessing) -- a wrongly
+// reaped container can cost a live worker its database.
+type ContainerReaper interface {
+	// ReapSessionContainers force-removes every non-spared container labeled
+	// for session id. removed is the count actually removed; err is non-nil
+	// only for a genuine adapter failure, never for "docker not installed" or
+	// "nothing found" (both return removed=0, err=nil).
+	ReapSessionContainers(ctx context.Context, id domain.SessionID) (removed int, err error)
 }
 
 // Stream is one live terminal attach: PTY-like bytes plus resize. Returned
@@ -174,6 +215,61 @@ type Workspace interface {
 	AddExclude(ctx context.Context, info WorkspaceInfo, patterns ...string) error
 }
 
+// WorkspaceDefaultBranchRefresher is an optional capability for Git-backed
+// workspaces. Resolution is local-only so callers can retain the canonical ref
+// even when the subsequent best-effort network refresh fails.
+type WorkspaceDefaultBranchRefresher interface {
+	ResolveDefaultBranch(ctx context.Context, repoPath, configuredBranch string) (WorkspaceDefaultBranch, error)
+	FetchDefaultBranch(ctx context.Context, repoPath string, target WorkspaceDefaultBranch) error
+}
+
+// WorkspaceDefaultBranch is a locally resolved default-branch target. BaseRef
+// is canonical (for example refs/remotes/upstream/main), so materialization
+// never has to reconstruct the remote decision from an ambiguous slash.
+type WorkspaceDefaultBranch struct {
+	Remote  string
+	Branch  string
+	BaseRef string
+}
+
+// WorkspaceObserver is an optional read-only capability implemented by
+// workspace adapters that can describe the durable state an agent handoff
+// must treat as authoritative. The session manager consumes it before and
+// after replacing an agent process; it never infers Git state from terminal
+// prose supplied by a model.
+type WorkspaceObserver interface {
+	ObserveWorkspace(ctx context.Context, info WorkspaceInfo) (WorkspaceObservation, error)
+}
+
+// WorkspaceObservation is a bounded, provider-neutral snapshot of one
+// materialized workspace. Git-backed adapters populate repository facts;
+// scratch adapters return the path with Git fields empty.
+type WorkspaceObservation struct {
+	Path      string
+	Branch    string
+	HeadSHA   string
+	Dirty     bool
+	Staged    bool
+	Untracked bool
+	Changes   []WorkspaceChange
+	Commits   []WorkspaceCommit
+}
+
+// WorkspaceChange is one changed path reported by the workspace adapter.
+// Status is Git's two-column porcelain status (for example " M", "A ", or
+// "??") so callers retain staged/worktree provenance without reparsing prose.
+type WorkspaceChange struct {
+	Path   string `json:"path"`
+	Status string `json:"status"`
+}
+
+// WorkspaceCommit is one recent commit reachable from the workspace HEAD.
+type WorkspaceCommit struct {
+	SHA        string `json:"sha"`
+	Subject    string `json:"subject"`
+	AuthoredAt string `json:"authoredAt"`
+}
+
 // WorkspaceProject is an optional extension for projects composed from a
 // root-as-repo parent plus child repositories. It materialises the parent
 // worktree at the session root and each child repo at its registered relative
@@ -193,6 +289,10 @@ var (
 	// ErrWorkspaceBranchNotFetched reports the requested branch exists nowhere
 	// reachable (no local head, no remote-tracking branch, no tag).
 	ErrWorkspaceBranchNotFetched = errors.New("workspace: branch is not fetched")
+	// ErrWorkspaceDefaultBranchUnresolved reports that automatic branch
+	// selection found no authoritative repository default. Callers should ask
+	// the user to configure a branch instead of guessing from the checkout.
+	ErrWorkspaceDefaultBranchUnresolved = errors.New("workspace: default branch is unresolved")
 	// ErrWorkspaceBranchInvalid reports the requested branch name is not a valid
 	// git ref (rejected by `git check-ref-format`).
 	ErrWorkspaceBranchInvalid = errors.New("workspace: invalid branch name")
@@ -229,6 +329,14 @@ var (
 	// actionable apierr instead of letting it fall through to an opaque 500
 	// with no message (issue #2775).
 	ErrRuntimeWorkspaceCwdMismatch = errors.New("runtime: session working directory mismatch")
+	// ErrRuntimeUnavailable reports that a liveness probe could not reach the
+	// runtime infrastructure at all (e.g. tmux "no server running" or "error
+	// connecting"). It says nothing about any individual session, so callers
+	// must treat it as an inconclusive probe, never as per-session death
+	// (issue #3475: reading a server-level outage as N session deaths archived
+	// every session on the board). Adapters wrap this sentinel via fmt.Errorf
+	// so callers can match it with errors.Is.
+	ErrRuntimeUnavailable = errors.New("runtime: infrastructure unavailable")
 )
 
 // WorkspaceConfig is the spec for creating or restoring a session's workspace.
@@ -240,9 +348,13 @@ type WorkspaceConfig struct {
 	// orchestrator worktree. Defaults to a truncation of ProjectID when empty.
 	SessionPrefix string
 	Branch        string
-	// BaseBranch is the per-project default branch new session branches are
-	// created from. Empty falls back to the workspace adapter's own default.
+	// BaseBranch is the explicitly configured branch new session branches are
+	// created from. Empty asks the workspace adapter to resolve an authoritative
+	// repository default; it must never infer from the checked-out branch.
 	BaseBranch string
+	// BaseRef is the exact canonical ref selected before any best-effort fetch.
+	// Restore carries it forward without re-resolving repository defaults.
+	BaseRef string
 	// RepoPath optionally overrides ProjectID-based repo resolution.
 	RepoPath string
 	// Path optionally supplies an existing managed worktree path for restore.
@@ -251,8 +363,11 @@ type WorkspaceConfig struct {
 
 // WorkspaceInfo describes a created workspace — where it lives and its branch.
 type WorkspaceInfo struct {
-	Path      string
-	Branch    string
+	Path   string
+	Branch string
+	// BaseRef is the repository-default ref selected for session comparisons.
+	// It can differ from the remote session ref used to seed the worktree.
+	BaseRef   string
 	SessionID domain.SessionID
 	ProjectID domain.ProjectID
 	// RepoPath optionally overrides ProjectID-based repo resolution. It is used
@@ -270,8 +385,11 @@ type WorkspaceProjectConfig struct {
 	SessionPrefix string
 	Branch        string
 	RootRepoPath  string
-	BaseBranch    string
-	Repos         []WorkspaceProjectRepoConfig
+	// BaseBranch applies only to RootRepoPath. Empty asks the workspace adapter
+	// to resolve that repository's default independently from every child.
+	BaseBranch string
+	BaseRef    string
+	Repos      []WorkspaceProjectRepoConfig
 }
 
 // WorkspaceProjectRepoConfig describes one registered child repo in a
@@ -280,7 +398,10 @@ type WorkspaceProjectRepoConfig struct {
 	Name         string
 	RelativePath string
 	RepoPath     string
-	BaseBranch   string
+	// BaseBranch applies only to RepoPath. Empty asks the workspace adapter to
+	// resolve this repository's default independently from the workspace root.
+	BaseBranch string
+	BaseRef    string
 }
 
 // WorkspaceProjectInfo returns the root worktree plus every child worktree.
@@ -293,11 +414,15 @@ type WorkspaceProjectInfo struct {
 // WorkspaceRepoInfo describes one materialized repo worktree in a workspace
 // project session.
 type WorkspaceRepoInfo struct {
-	RepoName     string
-	RepoPath     string
-	Path         string
-	Branch       string
-	BaseSHA      string
+	RepoName string
+	RepoPath string
+	Path     string
+	Branch   string
+	BaseSHA  string
+	// BaseRef is the repository-default ref persisted with BaseSHA so comparisons
+	// can recompute a merge base after that default advances or the session is
+	// rebased. It can differ from the remote session ref used to seed the worktree.
+	BaseRef      string
 	SessionID    domain.SessionID
 	ProjectID    domain.ProjectID
 	RelativePath string

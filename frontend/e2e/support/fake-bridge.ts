@@ -2,6 +2,7 @@ import type { Page } from "@playwright/test";
 
 import type { AoBridge } from "../../src/preload";
 import type { DaemonStatus } from "../../src/shared/daemon-status";
+import { coerceUiSettings, DEFAULT_UI_SETTINGS } from "../../src/shared/ui-locale";
 
 // The e2e suite runs the renderer under `dev:web` (VITE_NO_ELECTRON=1) with no
 // Electron preload, so `window.ao` is undefined and lib/bridge.ts falls back to
@@ -64,17 +65,28 @@ export async function installFakeBridge(page: Page, opts: FakeBridgeOptions = {}
 					openExternal: async () => undefined,
 					scanImportFolder: async ({ path }: { path: string }) => ({ path, repos: [] }),
 					checkAncestorRepo: async () => undefined,
+					getPathForFile: () => "",
+					onOpenFolderPath: () => () => undefined,
 					onNewSessionShortcut: unsubscribe,
 					onKeyboardShortcutsHelp: unsubscribe,
 					onNewShellTerminalShortcut: unsubscribe,
+					onCloseShellTerminalShortcut: unsubscribe,
+					setCloseShellTerminalShortcutEnabled: () => undefined,
 					onOpenSettingsShortcut: unsubscribe,
 					onPreviousSessionShortcut: unsubscribe,
 					onNextSessionShortcut: unsubscribe,
+					onPreviousTabShortcut: unsubscribe,
+					onNextTabShortcut: unsubscribe,
 					onFocusTerminalShortcut: unsubscribe,
 				},
-				terminal: { saveDroppedFile: async () => "" },
+				terminal: {
+					saveDroppedFile: async () => "",
+					setFocused: () => undefined,
+					onFontSizeShortcut: () => () => undefined,
+				},
 				window: {
-					setOverlay: async () => undefined,
+					isMaximized: async () => false,
+					onMaximized: () => () => undefined,
 					isFullScreen: async () => false,
 					onFullScreen: () => () => undefined,
 				},
@@ -98,12 +110,12 @@ export async function installFakeBridge(page: Page, opts: FakeBridgeOptions = {}
 					getBootstrap: async () => null,
 				},
 				browser: {
+					nativeCompositionEnabled: true,
 					ensure: async (sessionId: string) => navState(`preview:${sessionId}`),
 					setBounds: () => undefined,
+					setOverlayOpen: () => undefined,
 					navigate: async ({ viewId }: { viewId: string }) => navState(viewId),
 					clear: async (viewId: string) => navState(viewId),
-					capture: async () => "",
-					requestMirror: async () => false,
 					goBack: async (viewId: string) => navState(viewId),
 					goForward: async (viewId: string) => navState(viewId),
 					reload: async (viewId: string) => navState(viewId),
@@ -123,6 +135,12 @@ export async function installFakeBridge(page: Page, opts: FakeBridgeOptions = {}
 						activeTabId: "t1",
 						tabs: [{ id: "t1", url: "", title: "", active: true }],
 					}),
+					openTab: async ({ viewId }: { viewId: string; url?: string }) => ({
+						viewId,
+						activeTabId: "t1",
+						tabs: [{ id: "t1", url: "", title: "", active: true }],
+					}),
+					devtools: async (input: { viewId: string }) => ({ viewId: input.viewId, open: false, activeTabId: "" }),
 					destroy: () => undefined,
 					// Annotation contract (mirrors src/preload.ts): useBrowserView subscribes
 					// to these whenever SessionView mounts with window.ao.browser present, so
@@ -133,10 +151,17 @@ export async function installFakeBridge(page: Page, opts: FakeBridgeOptions = {}
 					onNavState: unsubscribe,
 					onTabsState: unsubscribe,
 					onAgentActivity: unsubscribe,
+					onDevToolsState: unsubscribe,
 				},
 				notifications: {
 					show: async () => undefined,
+					setBadge: async (_count: number) => undefined,
+					devBounce: async () => undefined,
 					onClick: unsubscribe,
+				},
+				tray: {
+					setAttentionState: () => undefined,
+					onOpenSession: unsubscribe,
 				},
 				appState: {
 					getMigration: async () => ({ status: "completed" }),
@@ -145,6 +170,10 @@ export async function installFakeBridge(page: Page, opts: FakeBridgeOptions = {}
 				updateSettings: {
 					get: async () => ({ enabled: false, channel: "latest", nightlyAck: false, feature: null }),
 					set: async () => undefined,
+				},
+				uiSettings: {
+					get: async () => ({ ...DEFAULT_UI_SETTINGS }),
+					set: async (settings) => coerceUiSettings({ ...DEFAULT_UI_SETTINGS, ...settings }),
 				},
 				keybindings: {
 					get: async () => ({}),
@@ -158,12 +187,19 @@ export async function installFakeBridge(page: Page, opts: FakeBridgeOptions = {}
 					download: async () => undefined,
 					install: async () => undefined,
 					onStatus: unsubscribe,
+					onTelemetry: unsubscribe,
 				},
 				// UpdatesSection calls featureBuilds.getActive() immediately on mount; an
 				// omitted namespace would surface as a swallowed React Query error.
 				featureBuilds: {
 					list: async () => [],
 					getActive: async () => null,
+				},
+				cloud: {
+					getSession: async () => null,
+					signIn: async () => undefined,
+					signOut: async () => undefined,
+					onSessionChanged: unsubscribe,
 				},
 			} satisfies AoBridge;
 			(window as unknown as { ao: unknown }).ao = ao;
@@ -198,6 +234,7 @@ export async function installFakeBridge(page: Page, opts: FakeBridgeOptions = {}
 export type FakeWorker = {
 	id: string;
 	title: string;
+	mode?: "chat" | "tui";
 	provider?: string;
 	branch?: string;
 	status?: string;
@@ -225,7 +262,9 @@ export type FakeAgentOptions = {
 export type FakeAgentController = {
 	snapshot: () => unknown[];
 	createWorker: (worker: FakeWorker) => void;
+	removeWorker: (id: string) => void;
 	setStatus: (id: string, status: string, activity?: string) => void;
+	setTerminalHandle: (id: string, handleId: string) => void;
 	setPreview: (id: string, previewUrl: string, previewRevision?: number) => void;
 	setBrowserError: (message: string | null) => void;
 	notify: (n: { id: string; type: string; title: string; body?: string; sessionId?: string }) => void;
@@ -264,12 +303,13 @@ export async function installFakeAgent(page: Page, opts: FakeAgentOptions = {}):
 			type Session = Record<string, unknown>;
 			const makeWorker = (w: (typeof workers)[number]): Session => ({
 				id: w.id,
-				terminalHandleId: `${w.id}/terminal_0`,
+				terminalHandleId: (w.mode ?? "tui") === "tui" ? `${w.id}/terminal_0` : undefined,
 				workspaceId: projectId,
 				workspaceName: projectName,
 				title: w.title,
 				provider: w.provider ?? "codex",
 				kind: "worker",
+				mode: w.mode ?? "tui",
 				branch: w.branch ?? `session/${w.id}`,
 				status: w.status ?? "working",
 				createdAt: nowIso,
@@ -392,12 +432,25 @@ export async function installFakeAgent(page: Page, opts: FakeAgentOptions = {}):
 					if (!findSession(w.id)) (project.sessions as Session[]).push(makeWorker(w));
 					pushWorkspaces("session_created");
 				},
+				removeWorker: (id) => {
+					const sessions = project.sessions as Session[];
+					const index = sessions.findIndex((session) => session.id === id);
+					if (index >= 0) sessions.splice(index, 1);
+					pushWorkspaces();
+				},
 				setStatus: (id, status, activity) => {
 					const s = findSession(id);
 					if (!s) return;
 					s.status = status;
 					s.displayStatus = undefined;
 					if (activity) s.activity = { state: activity, lastActivityAt: new Date().toISOString() };
+					touch(s);
+					pushWorkspaces();
+				},
+				setTerminalHandle: (id, handleId) => {
+					const s = findSession(id);
+					if (!s) return;
+					s.terminalHandleId = handleId;
 					touch(s);
 					pushWorkspaces();
 				},
@@ -447,17 +500,28 @@ export async function installFakeAgent(page: Page, opts: FakeAgentOptions = {}):
 					openExternal: async () => undefined,
 					scanImportFolder: async ({ path }: { path: string }) => ({ path, repos: [] }),
 					checkAncestorRepo: async () => undefined,
+					getPathForFile: () => "",
+					onOpenFolderPath: () => () => undefined,
 					onNewSessionShortcut: unsubscribe,
 					onKeyboardShortcutsHelp: unsubscribe,
 					onNewShellTerminalShortcut: unsubscribe,
+					onCloseShellTerminalShortcut: unsubscribe,
+					setCloseShellTerminalShortcutEnabled: () => undefined,
 					onOpenSettingsShortcut: unsubscribe,
 					onPreviousSessionShortcut: unsubscribe,
 					onNextSessionShortcut: unsubscribe,
+					onPreviousTabShortcut: unsubscribe,
+					onNextTabShortcut: unsubscribe,
 					onFocusTerminalShortcut: unsubscribe,
 				},
-				terminal: { saveDroppedFile: async () => "" },
+				terminal: {
+					saveDroppedFile: async () => "",
+					setFocused: () => undefined,
+					onFontSizeShortcut: () => () => undefined,
+				},
 				window: {
-					setOverlay: async () => undefined,
+					isMaximized: async () => false,
+					onMaximized: () => () => undefined,
 					isFullScreen: async () => false,
 					onFullScreen: () => () => undefined,
 				},
@@ -476,13 +540,13 @@ export async function installFakeAgent(page: Page, opts: FakeAgentOptions = {}):
 				},
 				telemetry: { getBootstrap: async () => null },
 				browser: {
+					nativeCompositionEnabled: true,
 					ensure: async (sessionId: string) => navState(`preview:${sessionId}`),
 					setBounds: () => undefined,
+					setOverlayOpen: () => undefined,
 					navigate: async ({ viewId, url }: { viewId: string; url: string }) =>
 						state.browserError ? navState(viewId, "", state.browserError) : navState(viewId, url),
 					clear: async (viewId: string) => navState(viewId),
-					capture: async () => "",
-					requestMirror: async () => false,
 					goBack: async (viewId: string) => navState(viewId),
 					goForward: async (viewId: string) => navState(viewId),
 					reload: async (viewId: string) => navState(viewId),
@@ -502,6 +566,12 @@ export async function installFakeAgent(page: Page, opts: FakeAgentOptions = {}):
 						activeTabId: "t1",
 						tabs: [{ id: "t1", url: "", title: "", active: true }],
 					}),
+					openTab: async ({ viewId }: { viewId: string; url?: string }) => ({
+						viewId,
+						activeTabId: "t1",
+						tabs: [{ id: "t1", url: "", title: "", active: true }],
+					}),
+					devtools: async (input: { viewId: string }) => ({ viewId: input.viewId, open: false, activeTabId: "" }),
 					destroy: () => undefined,
 					// Annotation contract (mirrors src/preload.ts): useBrowserView subscribes
 					// to these whenever SessionView mounts with window.ao.browser present, so
@@ -512,12 +582,23 @@ export async function installFakeAgent(page: Page, opts: FakeAgentOptions = {}):
 					onNavState: unsubscribe,
 					onTabsState: unsubscribe,
 					onAgentActivity: unsubscribe,
+					onDevToolsState: unsubscribe,
 				},
-				notifications: { show: async () => undefined, onClick: unsubscribe },
+				notifications: {
+					show: async () => undefined,
+					setBadge: async (_count: number) => undefined,
+					devBounce: async () => undefined,
+					onClick: unsubscribe,
+				},
+				tray: { setAttentionState: () => undefined, onOpenSession: unsubscribe },
 				appState: { getMigration: async () => ({ status: "completed" }), setMigration: async () => undefined },
 				updateSettings: {
 					get: async () => ({ enabled: false, channel: "latest", nightlyAck: false, feature: null }),
 					set: async () => undefined,
+				},
+				uiSettings: {
+					get: async () => ({ ...DEFAULT_UI_SETTINGS }),
+					set: async (settings) => coerceUiSettings({ ...DEFAULT_UI_SETTINGS, ...settings }),
 				},
 				keybindings: {
 					get: async () => ({}),
@@ -531,12 +612,19 @@ export async function installFakeAgent(page: Page, opts: FakeAgentOptions = {}):
 					download: async () => undefined,
 					install: async () => undefined,
 					onStatus: unsubscribe,
+					onTelemetry: unsubscribe,
 				},
 				// UpdatesSection calls featureBuilds.getActive() immediately on mount; an
 				// omitted namespace would surface as a swallowed React Query error.
 				featureBuilds: {
 					list: async () => [],
 					getActive: async () => null,
+				},
+				cloud: {
+					getSession: async () => null,
+					signIn: async () => undefined,
+					signOut: async () => undefined,
+					onSessionChanged: unsubscribe,
 				},
 			} satisfies AoBridge;
 			(window as unknown as { ao: unknown }).ao = ao;

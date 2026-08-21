@@ -15,9 +15,15 @@ type ProjectStore interface {
 	GetProject(ctx context.Context, id string) (domain.ProjectRecord, bool, error)
 }
 
+// GitWorkspace is the Git-specific capability set required by the router.
+type GitWorkspace interface {
+	ports.Workspace
+	ports.WorkspaceDefaultBranchRefresher
+}
+
 // Deps configures a workspace router.
 type Deps struct {
-	Git      ports.Workspace
+	Git      GitWorkspace
 	Scratch  ports.Workspace
 	Projects ProjectStore
 }
@@ -25,13 +31,15 @@ type Deps struct {
 // Workspace delegates workspace operations to the adapter that matches the
 // session's project kind.
 type Workspace struct {
-	git      ports.Workspace
+	git      GitWorkspace
 	scratch  ports.Workspace
 	projects ProjectStore
 }
 
 var _ ports.Workspace = (*Workspace)(nil)
+var _ ports.WorkspaceDefaultBranchRefresher = (*Workspace)(nil)
 var _ ports.WorkspaceProject = (*Workspace)(nil)
+var _ ports.WorkspaceObserver = (*Workspace)(nil)
 
 // New returns a router over git and scratch workspace implementations.
 func New(deps Deps) *Workspace {
@@ -40,6 +48,16 @@ func New(deps Deps) *Workspace {
 		scratch:  deps.Scratch,
 		projects: deps.Projects,
 	}
+}
+
+// ResolveDefaultBranch delegates local default-branch resolution to the git workspace adapter.
+func (w *Workspace) ResolveDefaultBranch(ctx context.Context, repoPath, configuredBranch string) (ports.WorkspaceDefaultBranch, error) {
+	return w.git.ResolveDefaultBranch(ctx, repoPath, configuredBranch)
+}
+
+// FetchDefaultBranch delegates default-branch fetching to the git workspace adapter.
+func (w *Workspace) FetchDefaultBranch(ctx context.Context, repoPath string, target ports.WorkspaceDefaultBranch) error {
+	return w.git.FetchDefaultBranch(ctx, repoPath, target)
 }
 
 // Create delegates session workspace creation to the project-appropriate
@@ -110,6 +128,21 @@ func (w *Workspace) AddExclude(ctx context.Context, info ports.WorkspaceInfo, pa
 		return err
 	}
 	return adapter.AddExclude(ctx, info, patterns...)
+}
+
+// ObserveWorkspace delegates the read-only handoff snapshot to the selected
+// project adapter. Adapters that cannot observe state return a clear error
+// instead of fabricating repository facts.
+func (w *Workspace) ObserveWorkspace(ctx context.Context, info ports.WorkspaceInfo) (ports.WorkspaceObservation, error) {
+	adapter, err := w.adapterForProject(ctx, info.ProjectID)
+	if err != nil {
+		return ports.WorkspaceObservation{}, err
+	}
+	observer, ok := adapter.(ports.WorkspaceObserver)
+	if !ok {
+		return ports.WorkspaceObservation{}, errors.New("workspace router: selected workspace does not support observation")
+	}
+	return observer.ObserveWorkspace(ctx, info)
 }
 
 // CreateWorkspaceProject delegates root-as-repo workspace project creation to

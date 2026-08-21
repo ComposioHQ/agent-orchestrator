@@ -17,6 +17,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/daemon"
 	aoprocess "github.com/aoagents/agent-orchestrator/backend/internal/process"
 	"github.com/aoagents/agent-orchestrator/backend/internal/processalive"
+	"github.com/aoagents/agent-orchestrator/backend/internal/telemetrymeta"
 )
 
 // Execute runs the ao CLI with process stdio.
@@ -73,6 +74,9 @@ type Deps struct {
 	// DoctorGitHubRESTBase lets tests point the doctor GitHub token probe at
 	// httptest without mutating package-global state.
 	DoctorGitHubRESTBase string
+	// DoctorGitLabRESTBase lets tests point the doctor GitLab token probe at
+	// httptest without mutating package-global state.
+	DoctorGitLabRESTBase string
 	Now                  func() time.Time
 	Sleep                func(time.Duration)
 }
@@ -91,6 +95,7 @@ func DefaultDeps() Deps {
 		CommandOutput:        commandOutput,
 		CommandOutputInDir:   commandOutputInDir,
 		DoctorGitHubRESTBase: defaultDoctorGitHubRESTBase,
+		DoctorGitLabRESTBase: defaultDoctorGitLabRESTBase,
 		Now:                  time.Now,
 		Sleep:                time.Sleep,
 	}
@@ -140,6 +145,9 @@ func (d Deps) withDefaults() Deps {
 	}
 	if d.DoctorGitHubRESTBase == "" {
 		d.DoctorGitHubRESTBase = def.DoctorGitHubRESTBase
+	}
+	if d.DoctorGitLabRESTBase == "" {
+		d.DoctorGitLabRESTBase = def.DoctorGitLabRESTBase
 	}
 	if d.Now == nil {
 		d.Now = def.Now
@@ -211,8 +219,8 @@ type commandContext struct {
 }
 
 func shouldEmitCLIInvocation(cmd *cobra.Command) bool {
-	commandPath := strings.TrimSpace(cmd.CommandPath())
-	if isRoutineInternalCLICommand(commandPath) {
+	commandPath := telemetrymeta.NormalizeCommandPath(cmd.CommandPath())
+	if telemetrymeta.IsRoutineInternalCLICommand(commandPath) {
 		return false
 	}
 	switch commandPath {
@@ -224,22 +232,6 @@ func shouldEmitCLIInvocation(cmd *cobra.Command) bool {
 		return false
 	default:
 		return true
-	}
-}
-
-func isRoutineInternalCLICommand(commandPath string) bool {
-	switch strings.TrimSpace(commandPath) {
-	case "ao status",
-		"ao session ls",
-		"ao session get",
-		"ao project ls",
-		"ao project get",
-		"ao orchestrator ls",
-		"ao hooks",
-		"ao pty-host":
-		return true
-	default:
-		return false
 	}
 }
 
