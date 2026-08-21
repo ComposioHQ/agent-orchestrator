@@ -886,12 +886,12 @@ function CompactButton({
 		<Button
 			type="button"
 			size="sm"
-			variant="ghost"
+			variant="none"
 			onClick={onCompact}
 			disabled={compacting || turnInFlight}
 			title={title}
 			aria-label="Compact conversation history"
-			className="h-5 gap-1 px-1.5 text-[11px]"
+			className="h-7 gap-1 rounded-lg px-3 text-xs leading-none text-muted-foreground transition-colors hover:bg-white/5 hover:text-foreground"
 		>
 			{compacting ? <Loader2 aria-hidden="true" className="size-3 animate-spin" /> : <Archive aria-hidden="true" className="size-3" />}
 			{compacting ? "Compacting…" : "Compact"}

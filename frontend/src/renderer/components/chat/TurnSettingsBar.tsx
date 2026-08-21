@@ -18,23 +18,17 @@
  */
 
 import { Fragment, useCallback, useLayoutEffect, useRef, useState, type ReactNode } from "react";
-import { ChevronRight, Shuffle } from "lucide-react";
+import { Shuffle } from "lucide-react";
 import {
-	DropdownMenu,
-	DropdownMenuContent,
-	DropdownMenuItem,
-	DropdownMenuLabel,
-	DropdownMenuSub,
-	DropdownMenuSubContent,
-	DropdownMenuSubTrigger,
-	DropdownMenuTrigger,
-} from "../ui/dropdown-menu";
-import {
-	SETTINGS_MENU_LABEL,
-	SETTINGS_MENU_ROW,
-	SETTINGS_MENU_SURFACE,
-	SettingsMenuTrigger,
-} from "../settings/SettingsMenuTrigger";
+	OptionMenu,
+	OptionMenuContent,
+	OptionMenuItem,
+	OptionMenuLabel,
+	OptionMenuSub,
+	OptionMenuSubContent,
+	OptionMenuSubTrigger,
+	OptionMenuTrigger,
+} from "../ui/option-menu";
 import { cn } from "../../lib/utils";
 import type {
 	ApprovalMode,
@@ -64,7 +58,7 @@ const APPROVAL_ORDER: ApprovalMode[] = [
 ];
 
 const TRIGGER_CLASS =
-	"h-7 gap-1 bg-transparent px-1.5 text-xs leading-none text-muted-foreground hover:bg-transparent hover:text-foreground data-[state=open]:bg-transparent data-[state=open]:text-foreground";
+	"h-7 gap-1 bg-transparent rounded-lg px-3 text-xs leading-none text-muted-foreground hover:bg-white/5 hover:text-foreground data-[state=open]:bg-white/5 data-[state=open]:text-foreground";
 
 export function TurnSettingsBar({
 	models,
@@ -120,16 +114,18 @@ export function TurnSettingsBar({
 		? `${modelLabel} ${capitalize(effortLabel)}`
 		: modelLabel;
 	const grouped = partitionConfigOptions(configOptions ?? []);
-	const modeOption = grouped.mode;
 	const optionDisabled = Boolean(disabled || configPending);
 	const applyOption = (optionId: string, value: ChatConfigOptionValue) => {
 		if (!onChangeConfigOption) return;
-		// The hook owns and renders any rejection. Swallowing here avoids an
-		// unhandled promise without pretending the selection succeeded.
 		void Promise.resolve(onChangeConfigOption(optionId, value)).catch(() => {});
 	};
 	const nativeModelMenu = Boolean(onChange && models.length > 0 && grouped.model.length === 0);
 	const clubbedLeft = grouped.model.length > 0 || grouped.effort.length > 0 || grouped.extra.length > 0;
+	const lastConfigOptions = useRef(configOptions);
+	if (configOptions && configOptions.length > 0) lastConfigOptions.current = configOptions;
+	const stableGrouped = clubbedLeft ? grouped : partitionConfigOptions(lastConfigOptions.current ?? []);
+	const stableClubbed = stableGrouped.model.length > 0 || stableGrouped.effort.length > 0 || stableGrouped.extra.length > 0;
+	const modeOption = grouped.mode ?? stableGrouped.mode;
 	const showRight = Boolean(onChange || beforeApprovals || modeOption);
 
 	return (
@@ -156,11 +152,11 @@ export function TurnSettingsBar({
 
 					{children}
 
-					{onChangeConfigOption && clubbedLeft && !nativeModelMenu ? (
+					{onChangeConfigOption && stableClubbed && !nativeModelMenu ? (
 						<ClubbedConfigPicker
-							modelOptions={grouped.model}
-							effortOptions={grouped.effort}
-							extraOptions={grouped.extra}
+							modelOptions={stableGrouped.model}
+							effortOptions={stableGrouped.effort}
+							extraOptions={stableGrouped.extra}
 							disabled={optionDisabled}
 							onChange={applyOption}
 						/>
@@ -182,19 +178,19 @@ export function TurnSettingsBar({
 								title="What the agent may do without asking"
 								disabled={disabled}
 							>
-								<DropdownMenuLabel
-									className={cn(SETTINGS_MENU_LABEL, "flex items-baseline justify-between gap-2")}
+								<OptionMenuLabel
+									className={cn("flex items-baseline justify-between gap-2")}
 								>
 									<span>Approvals</span>
 									<span className="text-[11px] font-normal text-muted-foreground">
 										Applies to the next turn
 									</span>
-								</DropdownMenuLabel>
+								</OptionMenuLabel>
 								{APPROVAL_ORDER.map((mode) => (
-									<DropdownMenuItem
+									<OptionMenuItem
 										key={mode}
 										onSelect={() => onChange({ ...settings, approvalMode: mode })}
-										className={cn(SETTINGS_MENU_ROW, "flex-col items-start gap-0.5")}
+										className={cn("flex-col items-start gap-0.5")}
 									>
 										<span
 											className={cn(
@@ -209,7 +205,7 @@ export function TurnSettingsBar({
 										<span className="text-[11px] leading-snug text-muted-foreground">
 											{APPROVAL_COPY[mode].hint}
 										</span>
-									</DropdownMenuItem>
+									</OptionMenuItem>
 								))}
 							</Picker>
 						) : null}
@@ -277,9 +273,10 @@ function ModelEffortPicker({
 	}, [modelSubOpen, updateScrollCue, models.length, reroute]);
 
 	return (
-		<DropdownMenu>
-			<DropdownMenuTrigger asChild disabled={disabled}>
-				<SettingsMenuTrigger
+		<OptionMenu>
+			
+				<OptionMenuTrigger
+					disabled={disabled}
 					aria-label="Model and reasoning effort for the next turn"
 					title={
 						reroute
@@ -300,60 +297,27 @@ function ModelEffortPicker({
 							aria-label={`Substituted for ${reroute.fromModel ?? chosenLabel}`}
 						/>
 					) : null}
-				</SettingsMenuTrigger>
-			</DropdownMenuTrigger>
-			<DropdownMenuContent align="start" side="top" className={SETTINGS_MENU_SURFACE}>
-				<DropdownMenuSub onOpenChange={setModelSubOpen}>
-					<DropdownMenuSubTrigger
-						className={cn(SETTINGS_MENU_ROW, "justify-between gap-3 text-xs text-foreground")}
-					>
-						<span>Model</span>
-						<span className="flex min-w-0 items-center gap-1 text-muted-foreground">
-							<span className="min-w-0 truncate">{modelLabel}</span>
-							<ChevronRight aria-hidden="true" className="size-3.5 shrink-0" />
-						</span>
-					</DropdownMenuSubTrigger>
+				</OptionMenuTrigger>
+			<OptionMenuContent align="start" side="bottom">
+				<OptionMenuSub onOpenChange={setModelSubOpen}>
+					<OptionMenuSubTrigger label="Model" value={modelLabel} />
 					{/* Scroll on an inner strip: the surface utility caps height but wheel
 					    events do not reliably reach an outer overflow on nested submenus. */}
-					<DropdownMenuSubContent
-						className={cn(SETTINGS_MENU_SURFACE, "max-h-select-menu-max! overflow-hidden!")}
-					>
-						<DropdownMenuLabel
-							className={cn(
-								SETTINGS_MENU_LABEL,
-								"flex shrink-0 items-baseline justify-between gap-2",
-							)}
-						>
-							<span>Model</span>
-							<span className="text-[11px] font-normal text-muted-foreground">
-								Applies to the next turn
-							</span>
-						</DropdownMenuLabel>
-						{/* Said inside the menu as well as on the trigger: this is where a user
-						    goes to change the model, and it is where the fact that their last
-						    choice was overridden matters most. */}
-						{reroute ? (
-							<p className="shrink-0 px-3 pb-1.5 text-[11px] leading-snug text-warning">
-								The provider answered with {rerouted} instead of{" "}
-								{reroute.fromModel ?? chosenLabel}
-								{reroute.reason ? ` — ${reroute.reason}` : "."}
-							</p>
-						) : null}
+					<OptionMenuSubContent scrollable>
 						<div className="relative grid min-h-0 flex-1 grid-rows-[minmax(0,1fr)] overflow-hidden">
 							<div
 								ref={modelScrollRef}
-								className="model-menu-scroll min-h-0 overflow-y-auto overscroll-contain pb-1"
+								className="model-menu-scroll flex min-h-0 flex-col gap-px overflow-y-auto overscroll-contain pb-1"
 								onScroll={updateScrollCue}
 							>
 								{models.map((model) => (
-									<DropdownMenuItem
+									<OptionMenuItem
 										key={model.id}
+										active={model.id === settings.model}
 										onSelect={() =>
-											// Effort is cleared with the model: a level one model supports is
-											// not necessarily one the next model does.
 											onChange({ ...settings, model: model.id, reasoningEffort: undefined })
 										}
-										className={cn(SETTINGS_MENU_ROW, "flex-col items-start gap-0.5")}
+										className={cn("flex-col items-start gap-0.5")}
 									>
 										<span className="flex w-full items-baseline gap-2">
 											<span
@@ -371,16 +335,13 @@ function ModelEffortPicker({
 													default
 												</span>
 											) : null}
-											{model.id === settings.model ? (
-												<span className="ml-auto text-[10px] text-accent">selected</span>
-											) : null}
 										</span>
 										{model.description ? (
 											<span className="text-[11px] leading-snug text-muted-foreground">
 												{model.description}
 											</span>
 										) : null}
-									</DropdownMenuItem>
+									</OptionMenuItem>
 								))}
 							</div>
 							<div
@@ -388,31 +349,19 @@ function ModelEffortPicker({
 								aria-hidden="true"
 							/>
 						</div>
-					</DropdownMenuSubContent>
-				</DropdownMenuSub>
+					</OptionMenuSubContent>
+				</OptionMenuSub>
 
 				{efforts.length > 0 ? (
-					<DropdownMenuSub>
-						<DropdownMenuSubTrigger
-							className={cn(SETTINGS_MENU_ROW, "justify-between gap-3 text-xs text-foreground")}
-						>
-							<span>Effort</span>
-							<span className="flex min-w-0 items-center gap-1 text-muted-foreground">
-								<span className="min-w-0 truncate">
-									{effortLabel ? capitalize(effortLabel) : "Effort"}
-								</span>
-								<ChevronRight aria-hidden="true" className="size-3.5 shrink-0" />
-							</span>
-						</DropdownMenuSubTrigger>
-						<DropdownMenuSubContent className={SETTINGS_MENU_SURFACE}>
-							<DropdownMenuLabel className={SETTINGS_MENU_LABEL}>
-								Reasoning effort
-							</DropdownMenuLabel>
+					<OptionMenuSub>
+						<OptionMenuSubTrigger label="Effort" value={effortLabel ? capitalize(effortLabel) : "Effort"} />
+						<OptionMenuSubContent>
 							{efforts.map((effort) => (
-								<DropdownMenuItem
+								<OptionMenuItem
 									key={effort}
+									active={effort === settings.reasoningEffort}
 									onSelect={() => onChange({ ...settings, reasoningEffort: effort })}
-									className={cn(SETTINGS_MENU_ROW, "text-xs")}
+									className={cn("text-xs")}
 								>
 									<span
 										className={cn(
@@ -423,19 +372,16 @@ function ModelEffortPicker({
 									>
 										{capitalize(effort)}
 									</span>
-									{effort === settings.reasoningEffort ? (
-										<span className="ml-auto text-[10px] text-accent">selected</span>
-									) : null}
-								</DropdownMenuItem>
+								</OptionMenuItem>
 							))}
-						</DropdownMenuSubContent>
-					</DropdownMenuSub>
+						</OptionMenuSubContent>
+					</OptionMenuSub>
 				) : null}
 				{extraOptions.length > 0 && onChangeConfigOption ? (
 					<MoreOptionsSubmenu options={extraOptions} onChange={onChangeConfigOption} />
 				) : null}
-			</DropdownMenuContent>
-		</DropdownMenu>
+			</OptionMenuContent>
+		</OptionMenu>
 	);
 }
 
@@ -471,17 +417,16 @@ function ClubbedConfigPicker({
 	}
 
 	return (
-		<DropdownMenu>
-			<DropdownMenuTrigger asChild disabled={disabled}>
-				<SettingsMenuTrigger
+		<OptionMenu>
+			
+				<OptionMenuTrigger
 					aria-label="Model and reasoning effort for the next turn"
 					title="Model and reasoning effort for the next turn"
 					className={TRIGGER_CLASS}
 				>
 					<span className="min-w-0 max-w-[22ch] truncate">{groupLabel}</span>
-				</SettingsMenuTrigger>
-			</DropdownMenuTrigger>
-			<DropdownMenuContent align="start" side="top" className={SETTINGS_MENU_SURFACE}>
+				</OptionMenuTrigger>
+			<OptionMenuContent align="start" side="bottom">
 				{modelOptions.map((option) => (
 					<OptionSubmenu key={option.id} option={option} onChange={onChange} scrollable />
 				))}
@@ -491,8 +436,8 @@ function ClubbedConfigPicker({
 				{extraOptions.length > 0 ? (
 					<MoreOptionsSubmenu options={extraOptions} onChange={onChange} />
 				) : null}
-			</DropdownMenuContent>
-		</DropdownMenu>
+			</OptionMenuContent>
+		</OptionMenu>
 	);
 }
 
@@ -504,21 +449,14 @@ function MoreOptionsSubmenu({
 	onChange: (optionId: string, value: ChatConfigOptionValue) => void;
 }) {
 	return (
-		<DropdownMenuSub>
-			<DropdownMenuSubTrigger
-				className={cn(SETTINGS_MENU_ROW, "justify-between gap-3 text-xs text-foreground")}
-			>
-				<span>More</span>
-				<span className="flex min-w-0 items-center gap-1 text-muted-foreground">
-					<ChevronRight aria-hidden="true" className="size-3.5 shrink-0" />
-				</span>
-			</DropdownMenuSubTrigger>
-			<DropdownMenuSubContent className={SETTINGS_MENU_SURFACE}>
+		<OptionMenuSub>
+			<OptionMenuSubTrigger label="More" />
+			<OptionMenuSubContent >
 				{options.map((option) => (
 					<OptionSubmenu key={option.id} option={option} onChange={onChange} />
 				))}
-			</DropdownMenuSubContent>
-		</DropdownMenuSub>
+			</OptionMenuSubContent>
+		</OptionMenuSub>
 	);
 }
 
@@ -533,30 +471,12 @@ function OptionSubmenu({
 }) {
 	const current = optionCurrentLabel(option);
 	return (
-		<DropdownMenuSub>
-			<DropdownMenuSubTrigger
-				className={cn(SETTINGS_MENU_ROW, "justify-between gap-3 text-xs text-foreground")}
-			>
-				<span>{option.name}</span>
-				<span className="flex min-w-0 items-center gap-1 text-muted-foreground">
-					<span className="min-w-0 truncate">{current}</span>
-					<ChevronRight aria-hidden="true" className="size-3.5 shrink-0" />
-				</span>
-			</DropdownMenuSubTrigger>
-			<DropdownMenuSubContent
-				className={cn(SETTINGS_MENU_SURFACE, scrollable && "max-h-select-menu-max! overflow-hidden!")}
-			>
-				<DropdownMenuLabel className={cn(SETTINGS_MENU_LABEL, "flex flex-col gap-0.5")}>
-					<span>{option.name}</span>
-					{option.description ? (
-						<span className="text-[11px] font-normal leading-snug text-muted-foreground">
-							{option.description}
-						</span>
-					) : null}
-				</DropdownMenuLabel>
+		<OptionMenuSub>
+			<OptionMenuSubTrigger label={option.name} value={current} />
+			<OptionMenuSubContent scrollable={scrollable}>
 				{scrollable ? (
 					<div className="relative grid min-h-0 flex-1 grid-rows-[minmax(0,1fr)] overflow-hidden">
-						<div className="model-menu-scroll min-h-0 overflow-y-auto overscroll-contain pb-1">
+						<div className="model-menu-scroll flex min-h-0 flex-col gap-px overflow-y-auto overscroll-contain pb-1">
 							<ConfigOptionChoices
 								option={option}
 								onChange={(value) => onChange(option.id, value)}
@@ -569,8 +489,8 @@ function OptionSubmenu({
 						onChange={(value) => onChange(option.id, value)}
 					/>
 				)}
-			</DropdownMenuSubContent>
-		</DropdownMenuSub>
+			</OptionMenuSubContent>
+		</OptionMenuSub>
 	);
 }
 
@@ -589,14 +509,6 @@ function ConfigOptionPicker({
 			title={option.description || option.name}
 			disabled={disabled}
 		>
-			<DropdownMenuLabel className={cn(SETTINGS_MENU_LABEL, "flex flex-col gap-0.5")}>
-				<span>{option.name}</span>
-				{option.description ? (
-					<span className="text-[11px] font-normal leading-snug text-muted-foreground">
-						{option.description}
-					</span>
-				) : null}
-			</DropdownMenuLabel>
 			<ConfigOptionChoices option={option} onChange={onChange} />
 		</Picker>
 	);
@@ -613,10 +525,11 @@ function ConfigOptionChoices({
 		return (
 			<>
 				{[true, false].map((enabled) => (
-					<DropdownMenuItem
+					<OptionMenuItem
 						key={String(enabled)}
+						active={enabled === option.currentBoolean}
 						onSelect={() => onChange({ enabled })}
-						className={cn(SETTINGS_MENU_ROW, "text-xs")}
+						className={cn("text-xs")}
 					>
 						<span
 							className={cn(
@@ -627,10 +540,7 @@ function ConfigOptionChoices({
 						>
 							{enabled ? "On" : "Off"}
 						</span>
-						{enabled === option.currentBoolean ? (
-							<span className="ml-auto text-[10px] text-accent">selected</span>
-						) : null}
-					</DropdownMenuItem>
+					</OptionMenuItem>
 				))}
 			</>
 		);
@@ -643,13 +553,14 @@ function ConfigOptionChoices({
 				return (
 					<Fragment key={choice.value}>
 						{choice.group && choice.group !== previousGroup ? (
-							<DropdownMenuLabel className="px-3 pb-1 pt-2 text-[10px] uppercase tracking-wide text-muted-foreground">
+							<OptionMenuLabel className="px-3 pb-1 pt-2 text-[10px] uppercase tracking-wide text-muted-foreground">
 								{choice.groupName || choice.group}
-							</DropdownMenuLabel>
+							</OptionMenuLabel>
 						) : null}
-						<DropdownMenuItem
+						<OptionMenuItem
+							active={choice.value === option.currentValue}
 							onSelect={() => onChange({ value: choice.value })}
-							className={cn(SETTINGS_MENU_ROW, "flex-col items-start gap-0.5")}
+							className={cn("flex-col items-start gap-0.5")}
 						>
 							<span className="flex w-full items-baseline gap-2">
 								<span
@@ -662,16 +573,13 @@ function ConfigOptionChoices({
 								>
 									{choice.name}
 								</span>
-								{choice.value === option.currentValue ? (
-									<span className="ml-auto text-[10px] text-accent">selected</span>
-								) : null}
 							</span>
 							{choice.description ? (
 								<span className="text-[11px] leading-snug text-muted-foreground">
 									{choice.description}
 								</span>
 							) : null}
-						</DropdownMenuItem>
+						</OptionMenuItem>
 					</Fragment>
 				);
 			})}
@@ -700,17 +608,16 @@ function Picker({
 	children: React.ReactNode;
 }) {
 	return (
-		<DropdownMenu>
-			<DropdownMenuTrigger asChild disabled={disabled}>
-				<SettingsMenuTrigger aria-label={title} title={title} className={TRIGGER_CLASS}>
+		<OptionMenu>
+			
+				<OptionMenuTrigger aria-label={title} title={title} disabled={disabled} className={TRIGGER_CLASS}>
 					<span className="min-w-0 max-w-[16ch] truncate">{label}</span>
 					{badge}
-				</SettingsMenuTrigger>
-			</DropdownMenuTrigger>
-			<DropdownMenuContent align="end" side="top" className={SETTINGS_MENU_SURFACE}>
+				</OptionMenuTrigger>
+			<OptionMenuContent align="end" side="bottom">
 				{children}
-			</DropdownMenuContent>
-		</DropdownMenu>
+			</OptionMenuContent>
+		</OptionMenu>
 	);
 }
 

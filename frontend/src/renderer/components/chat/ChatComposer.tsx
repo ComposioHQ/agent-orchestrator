@@ -561,7 +561,12 @@ export function ChatComposer({
 			// here and half there.
 			data-dragging={dragging || undefined}
 			data-attached-top={attachedTop || undefined}
-			className="cursor-chat-composer relative flex flex-col gap-1.5 border px-4 py-3 transition-[background,border-color,box-shadow]"
+			onClick={(e) => {
+				if (e.target === e.currentTarget || !(e.target as HTMLElement).closest("button, a, [role='option'], ul")) {
+					textarea.current?.focus();
+				}
+			}}
+			className="cursor-chat-composer relative flex cursor-text flex-col gap-1.5 border px-3 pt-3 pb-3 transition-[background,border-color,box-shadow]"
 		>
 			{menuOpen && trigger ? (
 				<ComposerSuggestMenu
@@ -634,7 +639,7 @@ export function ChatComposer({
 								? "Agent is working — this sends when it finishes"
 								: "Message the agent…"
 				}
-				className="chat-composer-scrollbar max-h-40 min-h-[4.5rem] w-full resize-none overflow-y-hidden overscroll-contain bg-transparent px-0 py-1 text-sm leading-relaxed text-foreground outline-none placeholder:text-passive disabled:opacity-50"
+				className="chat-composer-scrollbar max-h-40 min-h-[4.5rem] w-full resize-none overflow-y-hidden overscroll-contain bg-transparent pl-[7px] pr-0 py-1 text-base! leading-relaxed text-foreground outline-none placeholder:text-passive disabled:opacity-50"
 			/>
 
 			{attachmentError ? (
@@ -673,30 +678,20 @@ export function ChatComposer({
 							/>
 							<Button
 								type="button"
-								variant="ghost"
+								variant="none"
 								size="icon-sm"
 								disabled={disabled}
 								onClick={() => filePicker.current?.click()}
 								aria-label="Attach a file"
 								title="Attach a file"
-								className="size-7 shrink-0 rounded-full p-0"
+								className="size-7 shrink-0 rounded-full p-0 text-muted-foreground transition-colors hover:bg-white/5 hover:text-foreground"
 							>
 								<Plus aria-hidden="true" className="size-3.5 text-muted-foreground" />
 							</Button>
 						</>
 					) : null}
-					{canAttach && settingsNode ? (
-						<span aria-hidden="true" className="mx-1 h-4 w-px shrink-0 bg-border" />
-					) : null}
 					{settingsNode}
-					{footerAction ? (
-						<>
-							{canAttach || settingsNode ? (
-								<span aria-hidden="true" className="mx-1 h-4 w-px shrink-0 bg-border" />
-							) : null}
-							{footerAction}
-						</>
-					) : null}
+					{footerAction ?? null}
 				</div>
 
 				<div
