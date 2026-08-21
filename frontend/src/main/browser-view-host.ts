@@ -223,6 +223,12 @@ export type BrowserViewHost = {
 	toggleDevToolsForLastFocused: () => Promise<BrowserDevToolsState | null>;
 	// Drop the remembered panel; call when the shell gains focus for a real reason so a stale panel stops absorbing menu actions.
 	forgetLastFocusedPanel: () => void;
+	// Same "identical bounds are a no-op, so nudge and restore" trick
+	// window-composition.ts uses for the shell's own stale-surface bug, applied
+	// to the live page's own view. Call right after raising the transparent
+	// shell for an overlay (see the caller in main.ts) — see the comment above
+	// this method's implementation for why the live view needs it too.
+	refreshLastFocusedPanelSurface: () => void;
 };
 
 type BrowserEntry = {
@@ -1566,6 +1572,29 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		},
 		forgetLastFocusedPanel: () => {
 			lastFocusedViewId = null;
+		},
+		// Reported live (macOS, maximized/popped-out panel): opening an overlay
+		// (e.g. a toolbar dropdown) over the browser panel blanked the live page
+		// to black instead of showing it behind the dropdown. window-composition.ts
+		// documents the same class of bug for its own shell view — re-adding a
+		// WebContentsView to reorder it above others can leave its *previous*
+		// compositor surface on screen until some real geometry change rebuilds
+		// it, and applying identical bounds is a no-op Electron ignores. That
+		// fix only refreshed the shell; the live page's own view needs the same
+		// nudge whenever the shell is raised above it.
+		refreshLastFocusedPanelSurface: () => {
+			if (lastFocusedViewId === null) return;
+			const session = entries.get(lastFocusedViewId);
+			if (!session || !session.visible) return;
+			const entry = activeEntry(session);
+			const bounds = session.bounds;
+			if (bounds.width <= 0 || bounds.height <= 0) return;
+			applyBrowserViewBounds(entry.view, { ...bounds, height: Math.max(1, bounds.height - 1) });
+			setTimeout(() => {
+				const current = lastFocusedViewId !== null ? entries.get(lastFocusedViewId) : undefined;
+				if (!current || !current.visible) return;
+				applyBrowserViewBounds(activeEntry(current).view, current.bounds);
+			}, 0);
 		},
 	};
 }

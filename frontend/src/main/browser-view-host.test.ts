@@ -584,6 +584,38 @@ describe("native browser visibility", () => {
 		expect(view.setVisible).toHaveBeenLastCalledWith(true);
 	});
 
+	// Regression, reported live (macOS, maximized/popped-out panel): opening a
+	// toolbar dropdown over the browser blanked the live page to black.
+	// window-composition.ts documents the same class of bug for its own shell
+	// view — re-adding a view to reorder it can leave its *previous*
+	// compositor surface on screen until a real geometry change rebuilds it,
+	// and identical bounds are a no-op Electron ignores. refreshLastFocusedPanelSurface
+	// applies that same "shrink by 1px, restore next tick" nudge to the live
+	// page's own view; main.ts calls it right after raising the shell.
+	it("nudges the last-focused panel's bounds to force a real resize, then restores them", async () => {
+		const { emit, host, invoke, view } = setupHost();
+		await invoke("browser:ensure", "sess-1");
+		emit("browser:setBounds", 1, {
+			viewId: "1:sess-1",
+			rect: { x: 10, y: 20, width: 320, height: 240 },
+			visible: true,
+		});
+		await invoke("browser:navigate", { viewId: "1:sess-1", url: "http://localhost:3000" });
+		view.setBounds.mockClear();
+
+		host.refreshLastFocusedPanelSurface();
+		expect(view.setBounds).toHaveBeenLastCalledWith({ x: 10, y: 20, width: 320, height: 239 });
+
+		await new Promise((resolve) => setTimeout(resolve, 0));
+		expect(view.setBounds).toHaveBeenLastCalledWith({ x: 10, y: 20, width: 320, height: 240 });
+	});
+
+	it("does nothing when nothing has been focused yet, or the panel is hidden", async () => {
+		const { host, view } = setupHost();
+		host.refreshLastFocusedPanelSurface();
+		expect(view.setBounds).not.toHaveBeenCalled();
+	});
+
 	it("keeps rounded native geometry across page zoom", async () => {
 		const { emit, invoke, view } = setupHost();
 		await invoke("browser:ensure", "sess-1");
