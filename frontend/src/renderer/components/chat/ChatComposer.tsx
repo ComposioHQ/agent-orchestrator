@@ -42,7 +42,7 @@ import {
 	type KeyboardEvent,
 	type ReactNode,
 } from "react";
-import { ArrowUp, CornerDownRight, Loader2, Plus, Square, X } from "lucide-react";
+import { ArrowUp, Command, CornerDownLeft, CornerDownRight, Loader2, Plus, Square, X } from "lucide-react";
 import { Button } from "../ui/button";
 import { cn } from "../../lib/utils";
 import { ComposerSuggestMenu } from "./ComposerSuggestMenu";
@@ -81,7 +81,7 @@ export function ChatComposer({
 	willQueue,
 	disabled,
 	settings,
-	footerAction,
+
 	skills = [],
 	filePaths = [],
 	filePathsTruncated,
@@ -95,6 +95,7 @@ export function ChatComposer({
 	draftSeed,
 	commandError,
 	attachedTop = false,
+	queuedDock,
 	onCompact,
 	compacting,
 	compactUnavailable,
@@ -108,8 +109,6 @@ export function ChatComposer({
 	 * queue/steer addon so those controls can sit immediately before Approvals.
 	 */
 	settings?: ReactNode | ((slots: { delivery: ReactNode | null }) => ReactNode);
-	/** Optional secondary action rendered with message tools in the lower input row. */
-	footerAction?: ReactNode;
 	/** A send is in flight. */
 	busy?: boolean;
 	/** The agent is mid-turn, so this message is held until the turn ends. */
@@ -147,6 +146,8 @@ export function ChatComposer({
 	commandError?: string;
 	/** A queued-message dock owns the shared rounded top edge. */
 	attachedTop?: boolean;
+	/** Queued messages rendered above the composer, below the delivery choice. */
+	queuedDock?: ReactNode;
 	/** Run AO's built-in `/compact` command instead of sending it to the agent. */
 	onCompact?: () => void | Promise<unknown>;
 	/** The provider is already compacting this conversation. */
@@ -177,7 +178,6 @@ export function ChatComposer({
 	 * message durably and dispatches it when the current turn finishes. Steering is
 	 * timing-sensitive and changes the running turn, so it stays an explicit choice.
 	 */
-	const [delivery, setDelivery] = useState<"steer" | "queue">("queue");
 
 	const textarea = useRef<HTMLTextAreaElement>(null);
 	const filePicker = useRef<HTMLInputElement>(null);
@@ -239,7 +239,7 @@ export function ChatComposer({
 	// The control disappears the moment the turn ends, and the armed mode degrades
 	// with it: a steer with nothing in flight is refused, so it must never be what
 	// Enter is still pointing at.
-	const steering = Boolean(canSteer && onSteer) && delivery === "steer";
+	const steering = false;
 	// Attachments cannot be steered: the steer branch delivers text only and refuses
 	// an empty body. A staged file must not light up the send button on its own while
 	// steering is armed, or Enter would silently do nothing.
@@ -248,11 +248,9 @@ export function ChatComposer({
 	const canStopTurn = Boolean(willQueue && onInterrupt && !disabled && !hasDraft);
 	const sendHint = menuOpen
 		? "Enter to insert"
-		: steering
-			? "Enter to steer"
-			: willQueue
-				? "Enter to queue"
-				: "Enter to send";
+		: willQueue
+			? "⏎ queue · ⌘⏎ steer"
+			: "Enter to send";
 	const draftSeedId = draftSeed?.id;
 	const draftSeedText = draftSeed?.text;
 
@@ -281,11 +279,6 @@ export function ChatComposer({
 		};
 	}, [autoFocus, focusTextarea]);
 
-	// A steer choice belongs to one running turn. Once that turn disappears, return
-	// Enter to the durable queue path so the next turn cannot be steered by accident.
-	useEffect(() => {
-		if (!canSteer) setDelivery("queue");
-	}, [canSteer]);
 
 	/**
 	 * Write text and caret back into the field.
@@ -348,11 +341,12 @@ export function ChatComposer({
 		[applyText, text, trigger],
 	);
 
-	async function submit(event?: FormEvent) {
+	async function submit(event?: FormEvent, forceSteer?: boolean) {
 		event?.preventDefault();
 		if (!canSend) return;
 		setSendError(null);
 
+		const shouldSteer = forceSteer ?? steering;
 		const body = text.trim();
 
 		if (body === "/compact" && onCompact) {
@@ -383,7 +377,7 @@ export function ChatComposer({
 		// Steering keeps the text in the box until the provider has taken it. The turn
 		// is already running, so a refusal is a real possibility — and a refusal that
 		// had already cleared the composer would lose what the user typed.
-		if (steering && onSteer) {
+		if (shouldSteer && onSteer) {
 			if (body === "") return;
 			try {
 				await onSteer(body);
@@ -391,7 +385,6 @@ export function ChatComposer({
 				// The refusal is the daemon's typed answer and the surface renders it from
 				// `steerRefusal`; keep the draft, but arm the reliable queue path for the
 				// next Enter in case the turn ended while the user was typing.
-				setDelivery("queue");
 				return;
 			}
 			applyText("", 0);
@@ -482,11 +475,12 @@ export function ChatComposer({
 			}
 		}
 
-		// Enter sends; Shift+Enter makes a newline.
+		// Enter queues; Shift+Enter makes a newline; Cmd/Ctrl+Enter steers.
 		if (event.key !== "Enter") return;
 		if (event.shiftKey) return;
 		event.preventDefault();
-		void submit();
+		const wantsSteer = (event.metaKey || event.ctrlKey) && canSteer && Boolean(onSteer);
+		void submit(undefined, wantsSteer);
 	}
 
 	function onChange(event: ChangeEvent<HTMLTextAreaElement>) {
@@ -531,22 +525,30 @@ export function ChatComposer({
 		void fileAttachments.addFiles(files);
 	}
 
+	const [metaHeld, setMetaHeld] = useState(false);
+	useEffect(() => {
+		const onKey = (e: globalThis.KeyboardEvent) => setMetaHeld(e.metaKey || e.ctrlKey);
+		window.addEventListener("keydown", onKey);
+		window.addEventListener("keyup", onKey);
+		return () => {
+			window.removeEventListener("keydown", onKey);
+			window.removeEventListener("keyup", onKey);
+		};
+	}, []);
+	const activeDelivery = metaHeld && canSteer && onSteer ? "steer" : "queue";
+
 	const attachmentError = fileAttachments.error ?? sendError ?? commandError;
 	const deliveryChoice =
 		canSteer && onSteer ? (
-			<DeliveryChoice value={delivery} onChange={setDelivery} disabled={steerPending} />
+			<DeliveryChoice value={activeDelivery} disabled={steerPending} />
 		) : null;
 	const settingsNode =
-		typeof settings === "function" ? (
-			settings({ delivery: deliveryChoice })
-		) : (
-			<>
-				{settings}
-				{deliveryChoice}
-			</>
-		);
+		typeof settings === "function" ? settings({ delivery: null }) : settings;
 
 	return (
+		<>
+		{deliveryChoice}
+		{queuedDock}
 		<form
 			onSubmit={(event) => void submit(event)}
 			onDragOver={(event) => {
@@ -678,20 +680,19 @@ export function ChatComposer({
 							/>
 							<Button
 								type="button"
-								variant="none"
+								variant="ghost"
 								size="icon-sm"
 								disabled={disabled}
 								onClick={() => filePicker.current?.click()}
 								aria-label="Attach a file"
 								title="Attach a file"
-								className="size-7 shrink-0 rounded-full p-0 text-muted-foreground transition-colors hover:bg-white/5 hover:text-foreground"
+								className="size-7 shrink-0 rounded-full p-0 text-muted-foreground hover:bg-white/5! hover:text-foreground"
 							>
 								<Plus aria-hidden="true" className="size-3.5 text-muted-foreground" />
 							</Button>
 						</>
 					) : null}
 					{settingsNode}
-					{footerAction ?? null}
 				</div>
 
 				<div
@@ -733,6 +734,7 @@ export function ChatComposer({
 				</div>
 			</div>
 		</form>
+		</>
 	);
 }
 
@@ -747,43 +749,44 @@ export function ChatComposer({
  * asked for the wrong thing, that is the whole difference, so both are named and the
  * active choice is exposed visually and through `aria-pressed`.
  */
-function DeliveryChoice({
+export function DeliveryChoice({
 	value,
-	onChange,
 	disabled,
 }: {
 	value: "steer" | "queue";
-	onChange: (next: "steer" | "queue") => void;
 	disabled?: boolean;
 }) {
 	return (
 		<div
-			role="group"
+			role="status"
 			aria-label="Where this message goes while the agent is working"
 			className="flex h-7 shrink-0 items-center gap-1"
 		>
-			{(["queue", "steer"] as const).map((option) => (
-				<button
-					key={option}
-					type="button"
-					onClick={() => onChange(option)}
-					disabled={disabled}
-					aria-pressed={value === option}
-					title={
-						option === "steer"
-							? "Send this into the running turn. The agent keeps its context and its work in flight."
-							: "Hold this until the turn ends, then send it as a new message."
-					}
-					className={cn(
-						"text-[11px] leading-none transition-colors disabled:opacity-50",
-						value === option
-							? "h-7 rounded-lg border border-transparent bg-secondary px-2.5 text-foreground"
-							: "rounded px-1.5 py-0.5 text-muted-foreground hover:bg-interactive-hover hover:text-foreground",
-					)}
-				>
-					{option === "steer" ? "Steer this turn" : "Queue for next"}
-				</button>
-			))}
+			<span
+				className={cn(
+					"inline-flex h-7 items-center gap-1.5 rounded-lg px-3 text-xs leading-none transition-colors",
+					disabled && "opacity-50",
+					value === "queue" ? "bg-white/5 text-foreground" : "text-muted-foreground",
+				)}
+			>
+				<span className="inline-flex items-center gap-0.5 text-muted-foreground">
+					<CornerDownLeft aria-hidden="true" className="size-3" />
+				</span>
+				Queue
+			</span>
+			<span
+				className={cn(
+					"inline-flex h-7 items-center gap-1.5 rounded-lg px-3 text-xs leading-none transition-colors",
+					disabled && "opacity-50",
+					value === "steer" ? "bg-white/5 text-foreground" : "text-muted-foreground",
+				)}
+			>
+				<span className="inline-flex items-center gap-1 text-muted-foreground">
+					<Command aria-hidden="true" className="size-2.5" />
+					<CornerDownLeft aria-hidden="true" className="size-3" />
+				</span>
+				Steer
+			</span>
 		</div>
 	);
 }

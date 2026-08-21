@@ -56,6 +56,7 @@ export function OptionMenuContent({
 		<DropdownMenuPrimitive.Portal>
 			<DropdownMenuPrimitive.Content
 				sideOffset={sideOffset}
+				collisionPadding={16}
 				className={cn(
 					"z-overlay",
 					SURFACE,
@@ -123,7 +124,8 @@ export function OptionMenuSubTrigger({
 }) {
 	return (
 		<DropdownMenuPrimitive.SubTrigger
-			className={cn(ROW, "flex items-center justify-between gap-3 text-xs text-foreground", className)}
+			className={cn(ROW, "flex items-center justify-between gap-3 text-xs text-foreground data-[state=open]:bg-settings-menu-selected data-[state=open]:text-foreground", className)}
+			onClick={(e) => { e.preventDefault(); e.stopPropagation(); }}
 			{...props}
 		>
 			{children ?? (
@@ -142,7 +144,7 @@ export function OptionMenuSubTrigger({
 export function OptionMenuSubContent({
 	className,
 	sideOffset = 6,
-	alignOffset = -999,
+	alignOffset = -4,
 	scrollable,
 	children,
 	...props
@@ -153,11 +155,12 @@ export function OptionMenuSubContent({
 		<DropdownMenuPrimitive.SubContent
 			sideOffset={sideOffset}
 			alignOffset={alignOffset}
+			collisionPadding={16}
 			className={cn(
 				"z-overlay",
 				SURFACE,
 				"origin-(--radix-dropdown-menu-content-transform-origin)",
-				"data-[state=open]:animate-popover-in data-[state=closed]:animate-popover-out",
+				"data-[state=open]:animate-popover-in",
 				scrollable && "max-h-select-menu-max! overflow-hidden!",
 				className,
 			)}

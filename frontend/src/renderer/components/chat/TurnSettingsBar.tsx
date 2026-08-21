@@ -298,7 +298,7 @@ function ModelEffortPicker({
 						/>
 					) : null}
 				</OptionMenuTrigger>
-			<OptionMenuContent align="start" side="bottom">
+			<OptionMenuContent align="start" >
 				<OptionMenuSub onOpenChange={setModelSubOpen}>
 					<OptionMenuSubTrigger label="Model" value={modelLabel} />
 					{/* Scroll on an inner strip: the surface utility caps height but wheel
@@ -426,7 +426,7 @@ function ClubbedConfigPicker({
 				>
 					<span className="min-w-0 max-w-[22ch] truncate">{groupLabel}</span>
 				</OptionMenuTrigger>
-			<OptionMenuContent align="start" side="bottom">
+			<OptionMenuContent align="start" >
 				{modelOptions.map((option) => (
 					<OptionSubmenu key={option.id} option={option} onChange={onChange} scrollable />
 				))}
@@ -614,7 +614,7 @@ function Picker({
 					<span className="min-w-0 max-w-[16ch] truncate">{label}</span>
 					{badge}
 				</OptionMenuTrigger>
-			<OptionMenuContent align="end" side="bottom">
+			<OptionMenuContent align="end" >
 				{children}
 			</OptionMenuContent>
 		</OptionMenu>

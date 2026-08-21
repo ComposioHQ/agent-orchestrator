@@ -128,7 +128,7 @@ describe("send keys", () => {
 				onSend={vi.fn()}
 				onStageAttachments={vi.fn().mockResolvedValue([])}
 				settings={<button type="button">Model</button>}
-				footerAction={<button type="button">Compact</button>}
+
 			/>,
 		);
 		const tools = screen.getByRole("group", { name: "Message tools" });

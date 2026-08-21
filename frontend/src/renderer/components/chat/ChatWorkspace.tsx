@@ -28,7 +28,6 @@ import {
 	type WheelEvent as ReactWheelEvent,
 } from "react";
 import {
-	Archive,
 	ArrowDown,
 	CornerDownRight,
 	GitBranch,
@@ -329,7 +328,7 @@ export function ChatWorkspace({
 	onStageAttachments,
 	nativeImages,
 	onSteer,
-	onPromoteQueuedTurn,
+	onPromoteQueuedTurn: _onPromoteQueuedTurn,
 	steerPending,
 	steerRefusal,
 	onReloadMcpServers,
@@ -747,7 +746,10 @@ export function ChatWorkspace({
 						ref={composerDockRef}
 						className="cursor-chat-composer-dock shrink-0 px-4 pb-3 pt-2"
 					>
-						<div className="mx-auto flex w-full max-w-3xl flex-col gap-2">
+						<div
+							data-empty={conversationEmpty || undefined}
+							className="mx-auto flex w-full max-w-3xl flex-col gap-2 transition-[max-width] duration-500 ease-out data-[empty]:max-w-2xl"
+						>
 							{discarded > 0 ? <RolledBackNotice count={discarded} /> : null}
 							{snapshot.branchedFromEarlierMessage ? (
 								<p className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
@@ -755,14 +757,13 @@ export function ChatWorkspace({
 									Conversation branched; worktree files were left unchanged.
 								</p>
 							) : null}
-							{turn?.state === "running" && queuedMessages.length > 0 ? (
-								<QueuedMessageDock
-									messages={queuedMessages}
-									onSteer={onPromoteQueuedTurn}
-								/>
-							) : null}
 							<ChatComposer
 								attachedTop={turn?.state === "running" && queuedMessages.length > 0}
+								queuedDock={
+									turn?.state === "running" && queuedMessages.length > 0 ? (
+										<QueuedMessageDock messages={queuedMessages} />
+									) : null
+								}
 								onSend={(text, attachments) => onSend?.(text, attachments)}
 								onInterrupt={turn ? onInterrupt : undefined}
 								commandError={commandError}
@@ -785,15 +786,6 @@ export function ChatWorkspace({
 												/>
 											)
 										: null
-								}
-								footerAction={
-									<CompactButton
-										onCompact={onCompact}
-										compacting={compacting}
-										unavailable={compactUnavailable}
-										turnInFlight={Boolean(turn)}
-										compactedAt={snapshot.compactedAt}
-									/>
 								}
 								busy={busy}
 								willQueue={Boolean(turn)}
@@ -860,44 +852,6 @@ export function ChatWorkspace({
 	);
 }
 
-function CompactButton({
-	onCompact,
-	compacting,
-	unavailable,
-	turnInFlight,
-	compactedAt,
-}: {
-	onCompact?: () => void;
-	compacting?: boolean;
-	unavailable?: string;
-	turnInFlight?: boolean;
-	compactedAt?: string;
-}) {
-	if (!onCompact) return null;
-	if (unavailable === "This agent cannot compact its history") {
-		return <span className="text-[11px] text-muted-foreground">{unavailable}</span>;
-	}
-	const title = turnInFlight
-		? "Finish or stop the current turn before compacting"
-		: compactedAt
-			? `Summarize earlier history to reclaim context. Last compacted ${new Date(compactedAt).toLocaleString()}.`
-			: "Summarize earlier history to reclaim context";
-	return (
-		<Button
-			type="button"
-			size="sm"
-			variant="none"
-			onClick={onCompact}
-			disabled={compacting || turnInFlight}
-			title={title}
-			aria-label="Compact conversation history"
-			className="h-7 gap-1 rounded-lg px-3 text-xs leading-none text-muted-foreground transition-colors hover:bg-white/5 hover:text-foreground"
-		>
-			{compacting ? <Loader2 aria-hidden="true" className="size-3 animate-spin" /> : <Archive aria-hidden="true" className="size-3" />}
-			{compacting ? "Compacting…" : "Compact"}
-		</Button>
-	);
-}
 
 /**
  * What an undo took away.
@@ -2300,73 +2254,43 @@ function groupByTurn(snapshot: ConversationSnapshot): TimelineGroup[] {
 
 function QueuedMessageDock({
 	messages,
-	onSteer,
 }: {
 	messages: Array<{ turnId: string; message: ConversationMessage }>;
-	onSteer?: (turnId: string) => Promise<unknown>;
 }) {
-	const [steeringTurnId, setSteeringTurnId] = useState<string>();
-	const [errors, setErrors] = useState<Record<string, string>>({});
+	const [errors] = useState<Record<string, string>>({});
 
-	async function steer(turnId: string) {
-		if (!onSteer || steeringTurnId) return;
-		setSteeringTurnId(turnId);
-		setErrors((current) => {
-			const next = { ...current };
-			delete next[turnId];
-			return next;
-		});
-		try {
-			await onSteer(turnId);
-		} catch {
-			setErrors((current) => ({
-				...current,
-				[turnId]: "Could not steer this message. It remains queued.",
-			}));
-		} finally {
-			setSteeringTurnId(undefined);
-		}
-	}
+	const reversed = [...messages].reverse();
+	const lastIndex = reversed.length - 1;
 
 	return (
 		<div
 			className="-mb-2 max-h-40 overflow-y-auto rounded-t-[var(--radius-chat-composer)] border border-b-0 border-border-strong bg-surface"
 			data-testid="queued-message-dock"
 		>
-			{messages.map(({ turnId, message }) => {
-				const steering = steeringTurnId === turnId;
-				return (
-					<div
-						key={turnId}
-						className="border-b border-border px-3 py-2 last:border-b-0"
-						data-testid={`queued-message-${turnId}`}
-					>
-						<div className="flex min-h-7 min-w-0 items-center gap-2">
-							<CornerDownRight aria-hidden="true" className="size-3.5 shrink-0 text-muted-foreground" />
-							<span className="min-w-0 flex-1 truncate text-sm text-foreground" title={message.text}>
-								{message.text}
-							</span>
-							{onSteer ? (
-								<Button
-									type="button"
-									size="sm"
-									variant="ghost"
-									disabled={Boolean(steeringTurnId)}
-									onClick={() => void steer(turnId)}
-								>
-									<CornerDownRight aria-hidden="true" className="size-3" />
-									{steering ? "Steering…" : "Steer"}
-								</Button>
+			{reversed.map(({ turnId, message }, index) => {
+					const isNext = index === lastIndex;
+					return (
+						<div
+							key={turnId}
+							className="border-b border-border last:border-b-0"
+							data-testid={`queued-message-${turnId}`}
+						>
+							<div className="flex h-8 min-w-0 items-center gap-2 px-3">
+								<span className="min-w-0 flex-1 truncate text-xs text-muted-foreground" title={message.text}>
+									{message.text}
+								</span>
+								{isNext ? (
+									<CornerDownRight aria-hidden="true" className="size-3 shrink-0 text-muted-foreground" />
+								) : null}
+							</div>
+							{errors[turnId] ? (
+								<p role="status" className="px-3 pb-1 text-[11px] text-warning">
+									{errors[turnId]}
+								</p>
 							) : null}
 						</div>
-						{errors[turnId] ? (
-							<p role="status" className="mt-1 text-[11px] text-warning">
-								{errors[turnId]}
-							</p>
-						) : null}
-					</div>
-				);
-			})}
+					);
+				})}
 		</div>
 	);
 }
