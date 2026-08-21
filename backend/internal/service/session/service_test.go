@@ -593,6 +593,238 @@ func TestGetWorkspaceFileReturnsContentAndDiff(t *testing.T) {
 	}
 }
 
+// pngBytes is a byte sequence that reads as binary (it carries a NUL) and
+// carries a PNG signature, standing in for a real image in workspace tests.
+func pngBytes(tail string) string {
+	return "\x89PNG\r\n\x1a\n\x00" + tail
+}
+
+func TestGetWorkspaceFileReportsImageMediaType(t *testing.T) {
+	repo := newWorkspaceRepo(t)
+	writeWorkspaceFile(t, repo, "docs/logo.png", pngBytes("before"))
+	runGit(t, repo, "add", ".")
+	runGit(t, repo, "commit", "-m", "add logo")
+	writeWorkspaceFile(t, repo, "docs/logo.png", pngBytes("after"))
+	st := newFakeStore()
+	st.sessions["ao-1"] = domain.SessionRecord{ID: "ao-1", Metadata: domain.SessionMetadata{WorkspacePath: repo}}
+
+	got, err := (&Service{store: st}).GetWorkspaceFile(context.Background(), "ao-1", "docs/logo.png")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.Binary || got.ImageMediaType != "image/png" {
+		t.Fatalf("binary = %v, imageMediaType = %q, want true and image/png", got.Binary, got.ImageMediaType)
+	}
+	if got.Content != "" {
+		t.Fatalf("content = %q, want empty for a binary file", got.Content)
+	}
+}
+
+func TestGetWorkspaceFileLeavesTextFilesWithoutImageMediaType(t *testing.T) {
+	repo := newWorkspaceRepo(t)
+	// An SVG is text, so it keeps its line diff instead of an image preview.
+	writeWorkspaceFile(t, repo, "docs/icon.svg", "<svg></svg>\n")
+	st := newFakeStore()
+	st.sessions["ao-1"] = domain.SessionRecord{ID: "ao-1", Metadata: domain.SessionMetadata{WorkspacePath: repo}}
+
+	got, err := (&Service{store: st}).GetWorkspaceFile(context.Background(), "ao-1", "docs/icon.svg")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.ImageMediaType != "" {
+		t.Fatalf("imageMediaType = %q, want empty for a text file", got.ImageMediaType)
+	}
+}
+
+func TestGetWorkspaceFileBlobReturnsBothSides(t *testing.T) {
+	repo := newWorkspaceRepo(t)
+	writeWorkspaceFile(t, repo, "docs/logo.png", pngBytes("before"))
+	runGit(t, repo, "add", ".")
+	runGit(t, repo, "commit", "-m", "add logo")
+	writeWorkspaceFile(t, repo, "docs/logo.png", pngBytes("after"))
+	st := newFakeStore()
+	st.sessions["ao-1"] = domain.SessionRecord{ID: "ao-1", Metadata: domain.SessionMetadata{WorkspacePath: repo}}
+	svc := &Service{store: st}
+
+	before, err := svc.GetWorkspaceFileBlob(context.Background(), "ao-1", "docs/logo.png", WorkspaceBlobBefore)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(before.Data) != pngBytes("before") || before.MediaType != "image/png" {
+		t.Fatalf("before blob = %q (%s)", before.Data, before.MediaType)
+	}
+	after, err := svc.GetWorkspaceFileBlob(context.Background(), "ao-1", "docs/logo.png", WorkspaceBlobAfter)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(after.Data) != pngBytes("after") || after.Path != "docs/logo.png" {
+		t.Fatalf("after blob = %q (%s)", after.Data, after.Path)
+	}
+}
+
+// gitWorkspaceBlob asks git for the object size before it asks for the bytes,
+// so a blob past the limit is refused instead of buffered into memory.
+func TestGitWorkspaceBlobRefusesOversizedObjectBeforeReadingIt(t *testing.T) {
+	repo := newWorkspaceRepo(t)
+	writeWorkspaceFile(t, repo, "docs/logo.png", pngBytes(strings.Repeat("x", 4096)))
+	runGit(t, repo, "add", ".")
+	runGit(t, repo, "commit", "-m", "add logo")
+
+	if _, err := gitWorkspaceBlob(context.Background(), repo, "HEAD", "docs/logo.png", 64); err == nil {
+		t.Fatal("oversized blob: want error, got nil")
+	} else {
+		var e *apierr.Error
+		if !errors.As(err, &e) || e.Kind != apierr.KindInvalid || e.Code != "WORKSPACE_BLOB_TOO_LARGE" {
+			t.Fatalf("err = %v, want apierr.Invalid WORKSPACE_BLOB_TOO_LARGE", err)
+		}
+	}
+	if _, err := gitWorkspaceBlob(context.Background(), repo, "HEAD", "docs/logo.png", 1<<20); err != nil {
+		t.Fatalf("blob within the limit: %v", err)
+	}
+}
+
+func TestGetWorkspaceFileBlobHasNoBeforeSideForAddedFile(t *testing.T) {
+	repo := newWorkspaceRepo(t)
+	writeWorkspaceFile(t, repo, "docs/logo.png", pngBytes("new"))
+	st := newFakeStore()
+	st.sessions["ao-1"] = domain.SessionRecord{ID: "ao-1", Metadata: domain.SessionMetadata{WorkspacePath: repo}}
+	svc := &Service{store: st}
+
+	if _, err := svc.GetWorkspaceFileBlob(context.Background(), "ao-1", "docs/logo.png", WorkspaceBlobBefore); err == nil {
+		t.Fatal("before blob for an added file: want error, got nil")
+	} else {
+		var e *apierr.Error
+		if !errors.As(err, &e) || e.Kind != apierr.KindNotFound || e.Code != "WORKSPACE_BLOB_NOT_FOUND" {
+			t.Fatalf("err = %v, want apierr.NotFound WORKSPACE_BLOB_NOT_FOUND", err)
+		}
+	}
+	after, err := svc.GetWorkspaceFileBlob(context.Background(), "ao-1", "docs/logo.png", WorkspaceBlobAfter)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(after.Data) != pngBytes("new") {
+		t.Fatalf("after blob = %q", after.Data)
+	}
+}
+
+func TestGetWorkspaceFileBlobHasNoAfterSideForDeletedFile(t *testing.T) {
+	repo := newWorkspaceRepo(t)
+	writeWorkspaceFile(t, repo, "docs/logo.png", pngBytes("before"))
+	runGit(t, repo, "add", ".")
+	runGit(t, repo, "commit", "-m", "add logo")
+	if err := os.Remove(filepath.Join(repo, "docs", "logo.png")); err != nil {
+		t.Fatal(err)
+	}
+	st := newFakeStore()
+	st.sessions["ao-1"] = domain.SessionRecord{ID: "ao-1", Metadata: domain.SessionMetadata{WorkspacePath: repo}}
+	svc := &Service{store: st}
+
+	before, err := svc.GetWorkspaceFileBlob(context.Background(), "ao-1", "docs/logo.png", WorkspaceBlobBefore)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(before.Data) != pngBytes("before") {
+		t.Fatalf("before blob = %q", before.Data)
+	}
+	if _, err := svc.GetWorkspaceFileBlob(context.Background(), "ao-1", "docs/logo.png", WorkspaceBlobAfter); err == nil {
+		t.Fatal("after blob for a deleted file: want error, got nil")
+	}
+	detail, err := svc.GetWorkspaceFile(context.Background(), "ao-1", "docs/logo.png")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !detail.Deleted || detail.ImageMediaType != "image/png" {
+		t.Fatalf("deleted = %v, imageMediaType = %q", detail.Deleted, detail.ImageMediaType)
+	}
+}
+
+func TestGetWorkspaceFileBlobReadsRenamedFileFromPreviousPath(t *testing.T) {
+	repo := newWorkspaceRepo(t)
+	writeWorkspaceFile(t, repo, "docs/logo.png", pngBytes("before"))
+	runGit(t, repo, "add", ".")
+	runGit(t, repo, "commit", "-m", "add logo")
+	runGit(t, repo, "mv", "docs/logo.png", "docs/brand.png")
+	st := newFakeStore()
+	st.sessions["ao-1"] = domain.SessionRecord{ID: "ao-1", Metadata: domain.SessionMetadata{WorkspacePath: repo}}
+
+	before, err := (&Service{store: st}).GetWorkspaceFileBlob(context.Background(), "ao-1", "docs/brand.png", WorkspaceBlobBefore)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(before.Data) != pngBytes("before") {
+		t.Fatalf("before blob = %q", before.Data)
+	}
+}
+
+func TestGetWorkspaceFileBlobTypesRenamedBeforeSideByItsOwnPath(t *testing.T) {
+	repo := newWorkspaceRepo(t)
+	writeWorkspaceFile(t, repo, "docs/logo.png", pngBytes("before"))
+	runGit(t, repo, "add", ".")
+	runGit(t, repo, "commit", "-m", "add logo")
+	runGit(t, repo, "mv", "docs/logo.png", "docs/logo.gif")
+	st := newFakeStore()
+	st.sessions["ao-1"] = domain.SessionRecord{ID: "ao-1", Metadata: domain.SessionMetadata{WorkspacePath: repo}}
+	svc := &Service{store: st}
+
+	// A rename that changes the extension must not type the historical bytes by
+	// the new path: the controller sends nosniff, so a PNG labelled image/gif
+	// never renders.
+	before, err := svc.GetWorkspaceFileBlob(context.Background(), "ao-1", "docs/logo.gif", WorkspaceBlobBefore)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if before.MediaType != "image/png" {
+		t.Fatalf("before mediaType = %q, want image/png", before.MediaType)
+	}
+	after, err := svc.GetWorkspaceFileBlob(context.Background(), "ao-1", "docs/logo.gif", WorkspaceBlobAfter)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.MediaType != "image/gif" {
+		t.Fatalf("after mediaType = %q, want image/gif", after.MediaType)
+	}
+}
+
+func TestGetWorkspaceFileBlobRejectsRenameFromANonImagePath(t *testing.T) {
+	repo := newWorkspaceRepo(t)
+	writeWorkspaceFile(t, repo, "docs/logo.bin", pngBytes("before"))
+	runGit(t, repo, "add", ".")
+	runGit(t, repo, "commit", "-m", "add blob")
+	runGit(t, repo, "mv", "docs/logo.bin", "docs/logo.png")
+	st := newFakeStore()
+	st.sessions["ao-1"] = domain.SessionRecord{ID: "ao-1", Metadata: domain.SessionMetadata{WorkspacePath: repo}}
+
+	_, err := (&Service{store: st}).GetWorkspaceFileBlob(context.Background(), "ao-1", "docs/logo.png", WorkspaceBlobBefore)
+	var e *apierr.Error
+	if !errors.As(err, &e) || e.Kind != apierr.KindInvalid || e.Code != "UNSUPPORTED_WORKSPACE_BLOB" {
+		t.Fatalf("err = %v, want apierr.Invalid UNSUPPORTED_WORKSPACE_BLOB", err)
+	}
+}
+
+func TestGetWorkspaceFileBlobRejectsNonImagePaths(t *testing.T) {
+	repo := newWorkspaceRepo(t)
+	st := newFakeStore()
+	st.sessions["ao-1"] = domain.SessionRecord{ID: "ao-1", Metadata: domain.SessionMetadata{WorkspacePath: repo}}
+
+	_, err := (&Service{store: st}).GetWorkspaceFileBlob(context.Background(), "ao-1", "README.md", WorkspaceBlobAfter)
+	var e *apierr.Error
+	if !errors.As(err, &e) || e.Kind != apierr.KindInvalid || e.Code != "UNSUPPORTED_WORKSPACE_BLOB" {
+		t.Fatalf("err = %v, want apierr.Invalid UNSUPPORTED_WORKSPACE_BLOB", err)
+	}
+}
+
+func TestGetWorkspaceFileBlobRejectsUnknownSide(t *testing.T) {
+	repo := newWorkspaceRepo(t)
+	st := newFakeStore()
+	st.sessions["ao-1"] = domain.SessionRecord{ID: "ao-1", Metadata: domain.SessionMetadata{WorkspacePath: repo}}
+
+	_, err := (&Service{store: st}).GetWorkspaceFileBlob(context.Background(), "ao-1", "docs/logo.png", "sideways")
+	var e *apierr.Error
+	if !errors.As(err, &e) || e.Kind != apierr.KindInvalid || e.Code != "INVALID_WORKSPACE_BLOB_SIDE" {
+		t.Fatalf("err = %v, want apierr.Invalid INVALID_WORKSPACE_BLOB_SIDE", err)
+	}
+}
+
 func TestWorkspaceFilesIncludeCommittedBranchDiffAgainstRecordedBase(t *testing.T) {
 	repo := newWorkspaceRepo(t)
 	base := strings.TrimSpace(runGit(t, repo, "rev-parse", "HEAD"))

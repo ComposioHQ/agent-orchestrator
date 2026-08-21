@@ -771,14 +771,23 @@ describe("SessionInspector PR section", () => {
 describe("SessionInspector usage", () => {
 	it("shows detailed token statistics only when Developer Mode is enabled", async () => {
 		useUiStore.getState().setDeveloperMode(true);
+		const totals = {
+			inputTokens: 1200,
+			cachedInputTokens: 1000,
+			uncachedInputTokens: 200,
+			outputTokens: 300,
+			processedTokens: 1500,
+			provenance: { inputTokens: "reported", cachedInputTokens: "reported", uncachedInputTokens: "derived", outputTokens: "reported" },
+			providerDetails: { openai: { openaiReasoningOutputTokens: 5, openaiCacheWriteInputTokens: 0 } },
+		};
 		getMock.mockImplementation(async (path: string) => {
 			if (path === "/api/v1/usage/sessions/{sessionId}") {
 				return {
 					data: {
 						sessionId: "sess-1",
 						incomplete: false,
-						totals: { inputTokens: 1200, outputTokens: 300, cacheReadTokens: 12, cacheWriteTokens: 0, reasoningTokens: 5, uncachedInputTokens: 20 },
-						harnesses: [{ harness: "codex", totals: { inputTokens: 1200, outputTokens: 300, cacheReadTokens: 12, cacheWriteTokens: 0, reasoningTokens: 5, uncachedInputTokens: 20 }, models: [] }],
+						totals,
+						harnesses: [{ harness: "codex", totals, models: [{ modelId: "gpt-5.5", totals }, { modelId: "gpt-5.5-mini", totals }] }],
 					},
 					error: undefined,
 				};
@@ -788,8 +797,77 @@ describe("SessionInspector usage", () => {
 
 		renderWithQuery(<SessionInspector session={session([])} />);
 		expect(await screen.findByText("Usage & cost")).toBeInTheDocument();
-		expect(screen.getByText("Total tokens")).toBeInTheDocument();
-		expect(screen.getByText("Codex")).toBeInTheDocument();
+		expect(screen.getByText("Tokens processed")).toBeInTheDocument();
+		expect(screen.getByLabelText("1,500 tokens processed")).toBeInTheDocument();
+		const metrics = screen.getAllByTestId("session-usage-metrics")[0];
+		expect(within(metrics).getAllByRole("term").map((term) => term.textContent)).toEqual([
+			"Fresh Input", "Cache Reads", "Output", "Cache Hit Rate",
+		]);
+		expect(within(metrics).getByLabelText("Cache Reads: 1,000 tokens")).toHaveTextContent("1K");
+		expect(within(metrics).getByLabelText("83.3% cache hit rate (cache reads / total input)")).toHaveTextContent("83.3%");
+		expect(within(metrics).queryByText("Cached Output")).not.toBeInTheDocument();
+		expect(screen.queryByText("Cache write tokens")).not.toBeInTheDocument();
+		expect(screen.queryByText("Reasoning (included in output)")).not.toBeInTheDocument();
+		const agentAttribution = screen.getByText("Codex").parentElement;
+		expect(agentAttribution?.querySelector("img")).toBeInTheDocument();
+		const agentDisclosure = screen.getByRole("button", { name: "Codex usage details" });
+		await userEvent.click(agentDisclosure);
+		const details = screen.getByRole("region", { name: "Codex usage peek" });
+		expect(within(details).getByRole("button", { name: "GPT 5.5 usage details" })).toBeInTheDocument();
+		expect(within(details).getByRole("button", { name: "GPT 5.5 Mini usage details" })).toBeInTheDocument();
+		expect(within(details).queryByText("2 models")).not.toBeInTheDocument();
+		expect(within(details).queryByText("Processed")).not.toBeInTheDocument();
+		expect(within(details).queryByText("Cost")).not.toBeInTheDocument();
+	});
+
+	it("shows icon disclosures without repeated metrics when multiple agents contributed", async () => {
+		useUiStore.getState().setDeveloperMode(true);
+		const totals = {
+			inputTokens: 1200,
+			cachedInputTokens: 1000,
+			uncachedInputTokens: 200,
+			outputTokens: 300,
+			processedTokens: 1500,
+			provenance: { inputTokens: "reported", cachedInputTokens: "reported", uncachedInputTokens: "derived", outputTokens: "reported" },
+			providerDetails: {},
+		};
+		getMock.mockImplementation(async (path: string) => {
+			if (path === "/api/v1/usage/sessions/{sessionId}") {
+				return {
+					data: {
+						sessionId: "sess-1",
+						incomplete: false,
+						totals,
+						harnesses: [
+							{ harness: "codex", totals, models: [{ modelId: "gpt-5.5", totals }] },
+							{ harness: "claude-code", totals, models: [{ modelId: "claude-haiku-4-5-20251001", totals }] },
+						],
+					},
+					error: undefined,
+				};
+			}
+			return { data: undefined };
+		});
+
+		renderWithQuery(<SessionInspector session={session([])} />);
+		const codexDisclosure = await screen.findByRole("button", { name: "Codex usage details" });
+		expect(codexDisclosure.querySelector("img")).toBeInTheDocument();
+
+		await userEvent.click(codexDisclosure);
+		const details = screen.getByRole("region", { name: "Codex usage peek" });
+		expect(within(details).getByRole("button", { name: "GPT 5.5 usage details" })).toBeInTheDocument();
+		expect(within(details).queryByText("1 model")).not.toBeInTheDocument();
+		expect(within(details).queryByText("Processed")).not.toBeInTheDocument();
+		expect(within(details).queryByText("Cost")).not.toBeInTheDocument();
+		expect(within(details).queryByText("Fresh Input")).not.toBeInTheDocument();
+
+		await userEvent.click(screen.getByRole("button", { name: "Claude usage details" }));
+		const claudeDetails = screen.getByRole("region", { name: "Claude usage peek" });
+		const haikuDisclosure = within(claudeDetails).getByRole("button", { name: "Haiku 4.5 usage details" });
+		expect(within(haikuDisclosure).getByText("Haiku 4.5")).toHaveAttribute(
+			"title",
+			"claude-haiku-4-5-20251001",
+		);
 	});
 });
 
