@@ -1,0 +1,38 @@
+---
+title: GitLab SCM
+description: Merge request observation, lifecycle feedback, and self-managed instance support.
+---
+
+AO observes GitLab merge requests through the same provider-neutral SCM lane as GitHub. Both providers run side by side: a repository is routed by its remote, and a provider without usable credentials is skipped rather than breaking the other.
+
+The provider tracks merge request identity and state (including drafts), CI pipeline status and failing job names, approval state, and mergeability with conflict reasons. Explicit actions are merge, request review, and resolve review threads.
+
+Use `ao doctor` to inspect local GitLab readiness.
+
+## Authentication
+
+The token is resolved in order from `AO_GITLAB_TOKEN`, `GITLAB_TOKEN`, then `glab auth status --show-token`. A personal access token needs `api` scope.
+
+## Self-managed instances
+
+gitlab.com works with no configuration. Self-managed hosts must be allowlisted — an unlisted host is rejected before any credential is attached, so AO never sends your gitlab.com token to an arbitrary server:
+
+```bash
+export AO_GITLAB_ALLOWED_HOSTS="gitlab.example.com,gitlab.internal:8443"
+```
+
+Each host may carry a port. When one instance needs its own token, map it per host; hosts without an entry fall back to the default token above:
+
+```bash
+export AO_GITLAB_HOST_TOKENS="gitlab.example.com=glpat-xxx,gitlab.internal:8443=glpat-yyy"
+```
+
+Both variables are read once at daemon startup, so restart the daemon after changing them. Export them from your shell profile (`~/.zshrc`, `~/.zprofile`, or the equivalent): the desktop app resolves your login-shell environment before spawning the daemon, so a profile export reaches a Finder or Dock launch too. Setting them only in an ad-hoc terminal leaves a desktop-launched daemon without them.
+
+`ao doctor` reports one check per instance — `gitlab-token` for gitlab.com and `gitlab-token:<host>` for each allowlisted host — so a token that is valid on one instance and rejected on another is visible per host. With self-managed hosts configured, a gitlab.com rejection is reported as a warning rather than a failure, since a token scoped to your own instance is expected to fail there.
+
+<Callout type="warn">
+	Self-managed API traffic is always `https://<host>/api/v4`. Instances served over plain HTTP, or under a path prefix such as `https://host/gitlab`, are not supported. A private certificate authority must be trusted by the operating system — AO has no separate CA setting.
+</Callout>
+
+Agents running inside a worker use their own tooling. If your agent shells out to `glab`, configure it for your instance (`glab auth login --hostname gitlab.example.com`, or export `GLAB_HOST`); AO does not set that for the session.
