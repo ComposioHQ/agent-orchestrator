@@ -281,7 +281,7 @@ func (s *Service) Start(ctx context.Context, cfg StartConfig) (*Controller, erro
 		return nil, fmt.Errorf("chat driver for %s: %w", cfg.Harness, err)
 	}
 
-	if err := s.ensureDriverReady(ctx, cfg.Harness, driver); err != nil {
+	if err := s.ensureDriverReady(ctx, cfg.Harness, driver, cfg.Permissions); err != nil {
 		return nil, err
 	}
 
@@ -320,6 +320,19 @@ func (s *Service) Start(ctx context.Context, cfg StartConfig) (*Controller, erro
 	}
 	if err != nil {
 		return nil, fmt.Errorf("open conversation: %w", err)
+	}
+	if cfg.ProviderConversationID != "" && conversation.Settings.ApprovalMode != "" {
+		cfg.Permissions = conversation.Settings.ApprovalMode
+	}
+	if missing := ports.MissingCapabilitiesForPermissions(caps, cfg.Permissions); len(missing) > 0 {
+		return nil, fmt.Errorf("%w: %s lacks %v", ports.ErrChatUnsupported, cfg.Harness, missing)
+	}
+	if cfg.ProviderConversationID == "" {
+		conversation.Settings.Model = cfg.Model
+		conversation.Settings.ApprovalMode = cfg.Permissions
+		if err := s.store.SetConversationSettings(ctx, conversation.ID, conversation.Settings, s.now()); err != nil {
+			return nil, fmt.Errorf("record initial conversation settings: %w", err)
+		}
 	}
 
 	var conv ports.ChatConversation
@@ -859,12 +872,16 @@ func (s *Service) SupportsChat(harness domain.AgentHarness) bool {
 // Called before any durable state exists, so an unsupported request costs nothing
 // — no terminated orphan row, no wasted worktree. It never downgrades to TUI:
 // that would put the user in a terminal they did not ask for.
-func (s *Service) PreflightChat(ctx context.Context, harness domain.AgentHarness) error {
+func (s *Service) PreflightChat(
+	ctx context.Context,
+	harness domain.AgentHarness,
+	permissions ports.PermissionMode,
+) error {
 	driver, err := s.drivers.Driver(harness)
 	if err != nil {
 		return fmt.Errorf("%w: %s has no chat driver", ports.ErrChatUnsupported, harness)
 	}
-	return s.ensureDriverReady(ctx, harness, driver)
+	return s.ensureDriverReady(ctx, harness, driver, permissions)
 }
 
 // ensureDriverReady performs the provider capability probe once per harness for
@@ -873,7 +890,12 @@ func (s *Service) PreflightChat(ctx context.Context, harness domain.AgentHarness
 // startup scale with twice the number of sessions. Only successful production-
 // capable probes are cached, so a repaired install can be retried without a
 // daemon restart.
-func (s *Service) ensureDriverReady(ctx context.Context, harness domain.AgentHarness, driver ports.ChatDriver) error {
+func (s *Service) ensureDriverReady(
+	ctx context.Context,
+	harness domain.AgentHarness,
+	driver ports.ChatDriver,
+	permissions ports.PermissionMode,
+) error {
 	s.probeMu.Lock()
 	defer s.probeMu.Unlock()
 	if _, ok := s.probed[harness]; ok {
@@ -883,7 +905,7 @@ func (s *Service) ensureDriverReady(ctx context.Context, harness domain.AgentHar
 	if err != nil {
 		return err
 	}
-	if missing := ports.MissingProductionCapabilities(caps); len(missing) > 0 {
+	if missing := ports.MissingCapabilitiesForPermissions(caps, permissions); len(missing) > 0 {
 		return fmt.Errorf("%w: %s lacks %v", ports.ErrChatUnsupported, harness, missing)
 	}
 	s.probed[harness] = struct{}{}
