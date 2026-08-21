@@ -92,10 +92,16 @@ func Run() error {
 	// PID for unrelated processes. So a "live" PID is verified against an actual
 	// /healthz probe; a run-file left by a crashed/hard-killed/reused-PID
 	// predecessor is treated as stale and overwritten when the new server starts.
+	ownershipClient := &http.Client{Timeout: staleProbeTimeout}
 	if live, err := runfile.CheckStale(cfg.RunFilePath); err != nil {
 		return fmt.Errorf("inspect run-file: %w", err)
-	} else if live != nil && runFileOwnerServing(&http.Client{Timeout: staleProbeTimeout}, config.LoopbackHost, live) {
+	} else if live != nil && runFileOwnerServing(ownershipClient, config.LoopbackHost, live) {
 		return fmt.Errorf("daemon already running (pid %d, port %d); refusing to start", live.PID, live.Port)
+	}
+	if live, err := conventionalDataDirOwner(ownershipClient, config.LoopbackHost, cfg.DataDir, cfg.RunFilePath); err != nil {
+		return fmt.Errorf("inspect data-dir owner run-file: %w", err)
+	} else if live != nil {
+		return fmt.Errorf("data directory %q is already in use by daemon pid %d on port %d; stop it or choose a different AO_DATA_DIR", cfg.DataDir, live.PID, live.Port)
 	}
 
 	// Acquire durable mutation authority after the normal same-run-file diagnostic
