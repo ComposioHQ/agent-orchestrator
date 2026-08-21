@@ -52,11 +52,97 @@ async function createChromeFixture(root: string): Promise<{ localAppData: string
 	return { localAppData, profileRoot };
 }
 
+async function createLiveFirefoxFixture(root: string): Promise<{
+	appData: string;
+	close: () => void;
+}> {
+	const appData = path.join(root, "roaming");
+	const profileRoot = path.join(appData, "Mozilla", "Firefox", "Profiles", "fixture.default-release");
+	await mkdir(profileRoot, { recursive: true });
+
+	const cookies = new Database(path.join(profileRoot, "cookies.sqlite"));
+	cookies.pragma("journal_mode = WAL");
+	cookies.pragma("wal_autocheckpoint = 0");
+	cookies.exec(`
+		CREATE TABLE moz_cookies (
+			host TEXT, name TEXT, value TEXT, path TEXT, expiry INTEGER,
+			isSecure INTEGER, isHttpOnly INTEGER, sameSite INTEGER
+		);
+		INSERT INTO moz_cookies VALUES ('.example.com', 'session', 'firefox', '/', 1893456000, 1, 1, 1);
+	`);
+
+	const history = new Database(path.join(profileRoot, "places.sqlite"));
+	history.pragma("journal_mode = WAL");
+	history.pragma("wal_autocheckpoint = 0");
+	history.exec(`
+		CREATE TABLE moz_places (url TEXT, title TEXT, visit_count INTEGER, last_visit_date INTEGER);
+		INSERT INTO moz_places VALUES ('https://example.com/from-firefox', 'Firefox fixture', 3, 1767225600000000);
+	`);
+
+	return {
+		appData,
+		close: () => {
+			cookies.close();
+			history.close();
+		},
+	};
+}
+
 function chromiumMicros(iso: string): number {
 	return Math.round((Date.parse(iso) / 1_000 + 11_644_473_600) * 1_000_000);
 }
 
 describe("BrowserProfileImportService", () => {
+	it("imports a transaction-consistent Firefox snapshot while the source databases are open", async () => {
+		const root = await fixtureRoot();
+		const fixture = await createLiveFirefoxFixture(root);
+		try {
+			const stateDir = path.join(root, "ao-state");
+			const profileStore = new BrowserProfileStore({ stateDir });
+			await profileStore.load();
+			const historyStore = new BrowserHistoryStore({ stateDir });
+			const cookies = vi.fn(async () => undefined);
+			const service = new BrowserProfileImportService({
+				stateDir,
+				profileStore,
+				historyStore,
+				platform: "win32",
+				homeDir: root,
+				env: { APPDATA: fixture.appData },
+				now: () => new Date("2026-01-01T00:00:00.000Z"),
+				fromPartition: () => ({
+					cookies: { set: cookies },
+					clearStorageData: async () => undefined,
+					clearCache: async () => undefined,
+				}),
+			});
+			const source = (await service.discover()).sources[0]!;
+			expect(source).toMatchObject({ name: "Firefox", family: "firefox" });
+
+			const result = await service.import({
+				requestId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+				sourceId: source.id,
+				profileIds: [source.profiles[0]!.id],
+				includeCookies: true,
+				includeHistory: true,
+				domains: ["example.com"],
+				destination: { mode: "merge", name: "Imported Firefox" },
+			}, vi.fn());
+
+			expect(result.entries[0]).toMatchObject({
+				importedCookies: 1,
+				importedHistoryEntries: 1,
+				skippedCookies: 0,
+			});
+			expect(cookies).toHaveBeenCalledWith(expect.objectContaining({
+				name: "session",
+				value: "firefox",
+			}));
+		} finally {
+			fixture.close();
+		}
+	});
+
 	it("discovers path-hidden profiles and atomically imports filtered cookies and history", async () => {
 		const root = await fixtureRoot();
 		const { localAppData } = await createChromeFixture(root);

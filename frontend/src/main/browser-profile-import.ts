@@ -1,19 +1,19 @@
 import { createDecipheriv, createHash, pbkdf2Sync, randomUUID } from "node:crypto";
-import { constants, createWriteStream } from "node:fs";
+import { constants } from "node:fs";
 import {
-	access,
+	chmod,
 	lstat,
 	mkdir,
 	open,
 	readdir,
 	realpath,
 	rm,
+	stat,
 } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { execFile, spawn } from "node:child_process";
 import { promisify } from "node:util";
-import { pipeline } from "node:stream/promises";
 import Database from "better-sqlite3";
 import type { CookiesSetDetails } from "electron";
 import {
@@ -625,42 +625,50 @@ async function snapshotSQLite(
 	budget: SourceBudget,
 ): Promise<string> {
 	const destination = path.join(staging, `${randomUUID()}-${path.basename(database)}`);
-	await copyContainedFile(database, profileRoot, destination, SOURCE_FILE_MAX_BYTES, budget);
+	const canonical = await preflightContainedFile(database, profileRoot, SOURCE_FILE_MAX_BYTES, budget);
 	for (const suffix of ["-wal", "-shm"]) {
-		const sidecar = `${database}${suffix}`;
 		try {
-			await access(sidecar, constants.F_OK);
-			await copyContainedFile(sidecar, profileRoot, `${destination}${suffix}`, SOURCE_SIDECAR_MAX_BYTES, budget);
+			await preflightContainedFile(`${database}${suffix}`, profileRoot, SOURCE_SIDECAR_MAX_BYTES, budget);
 		} catch (error) {
 			if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
 		}
 	}
-	return destination;
+	const source = new Database(canonical, { readonly: true, fileMustExist: true, timeout: 5_000 });
+	try {
+		source.pragma("query_only = ON");
+		await source.backup(destination);
+		const output = await stat(destination);
+		if (!output.isFile() || output.size > SOURCE_FILE_MAX_BYTES + SOURCE_SIDECAR_MAX_BYTES) {
+			throw new Error("Browser source database exceeds the snapshot size limit.");
+		}
+		await chmod(destination, 0o600);
+		return destination;
+	} catch (error) {
+		await rm(destination, { force: true }).catch(() => undefined);
+		throw error;
+	} finally {
+		source.close();
+	}
 }
 
-async function copyContainedFile(
+async function preflightContainedFile(
 	source: string,
 	root: string,
-	destination: string,
 	maxBytes: number,
 	budget: SourceBudget,
-): Promise<void> {
+): Promise<string> {
 	const metadata = await lstat(source);
 	if (!metadata.isFile() || metadata.isSymbolicLink() || metadata.size > maxBytes) {
 		throw new Error("Browser source database is invalid or exceeds the size limit.");
 	}
 	const canonical = await realpath(source);
 	if (!contained(root, canonical)) throw new Error("Browser source database is outside its profile directory.");
-	const noFollow = "O_NOFOLLOW" in constants ? constants.O_NOFOLLOW : 0;
-	const sourceHandle = await open(source, constants.O_RDONLY | noFollow);
-	try {
-		const opened = await sourceHandle.stat();
-		if (!opened.isFile() || opened.size > maxBytes) throw new Error("Browser source database exceeds the size limit.");
-		budget.consume(opened.size);
-		await pipeline(sourceHandle.createReadStream(), createWriteStream(destination, { flags: "wx", mode: 0o600 }));
-	} finally {
-		await sourceHandle.close().catch(() => undefined);
+	const canonicalMetadata = await lstat(canonical);
+	if (!canonicalMetadata.isFile() || canonicalMetadata.isSymbolicLink() || canonicalMetadata.size > maxBytes) {
+		throw new Error("Browser source database exceeds the size limit.");
 	}
+	budget.consume(canonicalMetadata.size);
+	return canonical;
 }
 
 function withReadOnlyDatabase<T>(file: string, read: (database: Database) => T): T {
@@ -675,6 +683,7 @@ function withReadOnlyDatabase<T>(file: string, read: (database: Database) => T):
 
 function readFirefoxCookies(file: string, domains: string[], now: Date): { cookies: ImportedCookie[]; skipped: number; warnings: BrowserImportWarning[] } {
 	return withReadOnlyDatabase(file, (database) => {
+		requireTable(database, "moz_cookies", "The selected Firefox profile does not contain supported cookie data.");
 		const rows = database.prepare(`
 			SELECT host, name, value, path, expiry, isSecure, isHttpOnly, sameSite
 			FROM moz_cookies
@@ -700,6 +709,7 @@ function readChromiumCookies(
 	now: Date,
 ): { cookies: ImportedCookie[]; skipped: number; warnings: BrowserImportWarning[] } {
 	return withReadOnlyDatabase(file, (database) => {
+		requireTable(database, "cookies", "The selected Chromium profile does not contain supported cookie data.");
 		const rows = database.prepare(`
 			SELECT host_key, name, value, encrypted_value, path, expires_utc, is_secure, is_httponly, samesite
 			FROM cookies
@@ -787,8 +797,9 @@ function normalizeCookieRows(
 }
 
 function readFirefoxHistory(file: string, domains: string[]): BrowserHistoryEntry[] {
-	return withReadOnlyDatabase(file, (database) =>
-		(database.prepare(`
+	return withReadOnlyDatabase(file, (database) => {
+		requireTable(database, "moz_places", "The selected Firefox profile does not contain supported history data.");
+		return (database.prepare(`
 			SELECT url, title, visit_count, last_visit_date
 			FROM moz_places
 			WHERE url LIKE 'http%'
@@ -797,13 +808,14 @@ function readFirefoxHistory(file: string, domains: string[]): BrowserHistoryEntr
 		`).all() as Record<string, unknown>[]).flatMap((row) => {
 			const timestamp = numberValue(row.last_visit_date) / 1_000;
 			return normalizeHistoryRow(row.url, row.title, row.visit_count, timestamp, domains);
-		}),
-	);
+		});
+	});
 }
 
 function readChromiumHistory(file: string, domains: string[]): BrowserHistoryEntry[] {
-	return withReadOnlyDatabase(file, (database) =>
-		(database.prepare(`
+	return withReadOnlyDatabase(file, (database) => {
+		requireTable(database, "urls", "The selected Chromium profile does not contain supported history data.");
+		return (database.prepare(`
 			SELECT url, title, visit_count, last_visit_time
 			FROM urls
 			WHERE url LIKE 'http%'
@@ -811,8 +823,13 @@ function readChromiumHistory(file: string, domains: string[]): BrowserHistoryEnt
 			LIMIT ${BROWSER_IMPORT_MAX_HISTORY_ENTRIES}
 		`).all() as Record<string, unknown>[]).flatMap((row) =>
 			normalizeHistoryRow(row.url, row.title, row.visit_count, chromiumTimestamp(numberValue(row.last_visit_time)) * 1_000, domains),
-		),
-	);
+		);
+	});
+}
+
+function requireTable(database: Database, table: string, message: string): void {
+	const row = database.prepare("SELECT 1 AS present FROM sqlite_master WHERE type = 'table' AND name = ?").get(table);
+	if (!row) throw new Error(message);
 }
 
 function normalizeHistoryRow(

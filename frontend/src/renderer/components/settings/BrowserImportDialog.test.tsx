@@ -15,6 +15,16 @@ const source = {
 	historySupport: true as const,
 };
 
+const firefoxSource = {
+	id: "c".repeat(32),
+	name: "Firefox",
+	family: "firefox" as const,
+	profiles: [{ id: "d".repeat(32), name: "default-release", default: true }],
+	cookieSupport: "supported" as const,
+	cookieSupportReason: "firefox-plaintext" as const,
+	historySupport: true as const,
+};
+
 describe("BrowserImportDialog", () => {
 	const originalBridge = aoBridge.browserProfiles;
 
@@ -35,7 +45,7 @@ describe("BrowserImportDialog", () => {
 			rename: vi.fn(),
 			clear: vi.fn(),
 			delete: vi.fn(),
-			discoverImportSources: vi.fn(async () => ({ sources: [source] })),
+			discoverImportSources: vi.fn(async () => ({ sources: [source, firefoxSource] })),
 			import: vi.fn(async () => ({
 				sourceName: source.name,
 				entries: [{
@@ -54,6 +64,15 @@ describe("BrowserImportDialog", () => {
 
 		render(<BrowserImportDialog onImported={onImported} onOpenChange={() => undefined} open />);
 		expect(await screen.findByText("Google Chrome")).toBeInTheDocument();
+		const chromeButton = screen.getByRole("button", { name: /Google Chrome/ });
+		const firefoxButton = screen.getByRole("button", { name: /Firefox/ });
+		expect(chromeButton).toHaveAttribute("aria-pressed", "true");
+		expect(chromeButton).toHaveAttribute("data-selected", "true");
+		expect(chromeButton).toHaveClass("ring-2");
+		await userEvent.click(firefoxButton);
+		expect(firefoxButton).toHaveAttribute("aria-pressed", "true");
+		expect(chromeButton).toHaveAttribute("aria-pressed", "false");
+		await userEvent.click(chromeButton);
 		await userEvent.click(screen.getByRole("button", { name: "Next" }));
 		expect(screen.getByRole("checkbox", { name: /Default/ })).toBeChecked();
 		await userEvent.click(screen.getByRole("button", { name: "Next" }));
