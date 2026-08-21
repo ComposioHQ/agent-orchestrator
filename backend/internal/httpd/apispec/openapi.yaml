@@ -5651,9 +5651,15 @@ components:
           - integer
         sessionId:
           type: string
+        totalTokens:
+          description: Deprecated compatibility alias for processedTokens.
+          format: int64
+          minimum: 0
+          type: integer
       required:
       - sessionId
       - processedTokens
+      - totalTokens
       - incomplete
       type: object
     ContainerReapConfig:
@@ -8920,8 +8926,22 @@ components:
       type: object
     UsageTotalsResponse:
       properties:
+        cacheReadTokens:
+          description: Deprecated compatibility alias for cachedInputTokens.
+          minimum: 0
+          type:
+          - "null"
+          - integer
+        cacheWriteTokens:
+          description: Deprecated compatibility aggregate of provider cache-write
+            input counters.
+          minimum: 0
+          type:
+          - "null"
+          - integer
         cachedInputTokens:
-          description: Input read from an existing provider cache.
+          description: Input read from an existing provider cache. Cache hit percentage
+            uses cachedInputTokens divided by inclusive inputTokens.
           minimum: 0
           type:
           - "null"
@@ -8956,6 +8976,13 @@ components:
           $ref: '#/components/schemas/UsageMetricProvenanceResponse'
         providerDetails:
           $ref: '#/components/schemas/UsageProviderDetailsResponse'
+        reasoningTokens:
+          description: Deprecated compatibility alias for the OpenAI reasoning-output
+            subset.
+          minimum: 0
+          type:
+          - "null"
+          - integer
         uncachedInputTokens:
           description: Input not read from an existing provider cache.
           minimum: 0
@@ -8969,6 +8996,9 @@ components:
       - cachedOutputTokens
       - outputTokens
       - processedTokens
+      - cacheReadTokens
+      - cacheWriteTokens
+      - reasoningTokens
       - provenance
       - providerDetails
       type: object

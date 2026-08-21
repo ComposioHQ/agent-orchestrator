@@ -1203,6 +1203,7 @@
 	"inspector.usage.inputTokens": "总输入",
 	"inspector.usage.cachedInputTokens": "缓存输入",
 	"inspector.usage.cacheHitRate": "命中率 {{rate}}%",
+	"inspector.usage.cacheHitRateDescription": "命中率 {{rate}}%（缓存输入 / 总输入）",
 	"inspector.usage.uncachedInputTokens": "新输入",
 	"inspector.usage.outputTokens": "总输出",
 	"inspector.usage.comingSoon": "即将推出",

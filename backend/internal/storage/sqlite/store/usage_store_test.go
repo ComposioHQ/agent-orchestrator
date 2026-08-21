@@ -515,6 +515,152 @@ func TestApplyUsageChunkRejectsConflictsAndPreservesCursor(t *testing.T) {
 	assertUsageSourceOffset(t, s, source.ID, 50)
 }
 
+func TestApplyUsageChunkProviderDetailConflictsRollback(t *testing.T) {
+	tests := []struct {
+		name        string
+		harness     domain.AgentHarness
+		wantInput   int64
+		wantOutput  int64
+		baseEvent   func(string) domain.ModelUsageEvent
+		conflicting func(string) domain.ModelUsageEvent
+	}{
+		{
+			name: "OpenAI", harness: domain.HarnessCodex, wantInput: 10, wantOutput: 1,
+			baseEvent: func(key string) domain.ModelUsageEvent {
+				return usageEvent(key, canonicalUsageTokens(10, 0, 10, 1))
+			},
+			conflicting: func(key string) domain.ModelUsageEvent {
+				event := usageEvent(key, canonicalUsageTokens(10, 0, 10, 1))
+				reasoning := int64(1)
+				event.ProviderDetails.OpenAI.ReasoningOutputTokens = &reasoning
+				return event
+			},
+		},
+		{
+			name: "Anthropic", harness: domain.HarnessClaudeCode, wantInput: 20, wantOutput: 4,
+			baseEvent: func(key string) domain.ModelUsageEvent {
+				return anthropicUsageEvent(key, 10, 3, 7, 4)
+			},
+			conflicting: func(key string) domain.ModelUsageEvent {
+				event := anthropicUsageEvent(key, 10, 3, 7, 4)
+				creation := int64(4)
+				event.ProviderDetails.Anthropic.CacheCreationInputTokens = &creation
+				return event
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			s := newTestStore(t)
+			ctx := context.Background()
+			sess := seedUsageSession(t, s, test.harness)
+			now := time.Unix(1700000000, 0).UTC()
+			source := seedUsageSource(t, s, sess, now)
+			if err := s.ApplyUsageChunk(ctx, source.ID, 0, source.UpdatedAt, domain.SourceCursorState{
+				ByteOffset: 50, State: domain.UsageSourceActive, UpdatedAt: now,
+			}, []domain.ModelUsageEvent{test.baseEvent("event-1")}); err != nil {
+				t.Fatalf("seed provider event: %v", err)
+			}
+
+			err := s.ApplyUsageChunk(ctx, source.ID, 50, now, domain.SourceCursorState{
+				ByteOffset: 80, State: domain.UsageSourceActive, UpdatedAt: now.Add(time.Second),
+			}, []domain.ModelUsageEvent{test.baseEvent("event-2"), test.conflicting("event-1")})
+			if !errors.Is(err, domain.ErrUsageSourceEventConflict) {
+				t.Fatalf("provider conflict err = %v, want ErrUsageSourceEventConflict", err)
+			}
+			assertUsageSourceOffset(t, s, source.ID, 50)
+			aggregates, err := s.ListUsageModelAggregates(ctx, sess.ID)
+			mustNoError(t, err)
+			if len(aggregates) != 1 || usageTokenValue(aggregates[0].Tokens.InputTokens) != test.wantInput ||
+				usageTokenValue(aggregates[0].Tokens.OutputTokens) != test.wantOutput {
+				t.Fatalf("provider conflict persisted partial chunk: %+v", aggregates)
+			}
+		})
+	}
+}
+
+func TestApplyUsageChunkProviderDetailEnrichmentAdvancesCursorWithoutDuplicate(t *testing.T) {
+	tests := []struct {
+		name         string
+		harness      domain.AgentHarness
+		wantInput    int64
+		wantOutput   int64
+		baseEvent    func() domain.ModelUsageEvent
+		richerEvent  func() domain.ModelUsageEvent
+		assertDetail func(*testing.T, domain.UsageModelAggregate)
+	}{
+		{
+			name: "OpenAI", harness: domain.HarnessCodex, wantInput: 10, wantOutput: 1,
+			baseEvent: func() domain.ModelUsageEvent {
+				event := usageEvent("event-1", canonicalUsageTokens(10, 0, 10, 1))
+				event.ProviderDetails.OpenAI.ReasoningOutputTokens = nil
+				return event
+			},
+			richerEvent: func() domain.ModelUsageEvent {
+				event := usageEvent("event-1", canonicalUsageTokens(10, 0, 10, 1))
+				reasoning := int64(1)
+				event.ProviderDetails.OpenAI.ReasoningOutputTokens = &reasoning
+				return event
+			},
+			assertDetail: func(t *testing.T, aggregate domain.UsageModelAggregate) {
+				t.Helper()
+				if aggregate.ProviderDetails.OpenAI == nil ||
+					usageTokenValue(aggregate.ProviderDetails.OpenAI.ReasoningOutputTokens) != 1 {
+					t.Fatalf("enriched OpenAI details = %+v", aggregate.ProviderDetails.OpenAI)
+				}
+			},
+		},
+		{
+			name: "Anthropic", harness: domain.HarnessClaudeCode, wantInput: 20, wantOutput: 4,
+			baseEvent: func() domain.ModelUsageEvent {
+				return anthropicUsageEvent("event-1", 10, 3, 7, 4)
+			},
+			richerEvent: func() domain.ModelUsageEvent {
+				event := anthropicUsageEvent("event-1", 10, 3, 7, 4)
+				creation5m := int64(2)
+				event.ProviderDetails.Anthropic.CacheCreation5mInputTokens = &creation5m
+				return event
+			},
+			assertDetail: func(t *testing.T, aggregate domain.UsageModelAggregate) {
+				t.Helper()
+				if aggregate.ProviderDetails.Anthropic == nil ||
+					usageTokenValue(aggregate.ProviderDetails.Anthropic.CacheCreation5mInputTokens) != 2 {
+					t.Fatalf("enriched Anthropic details = %+v", aggregate.ProviderDetails.Anthropic)
+				}
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			s := newTestStore(t)
+			ctx := context.Background()
+			sess := seedUsageSession(t, s, test.harness)
+			now := time.Unix(1700000000, 0).UTC()
+			source := seedUsageSource(t, s, sess, now)
+			if err := s.ApplyUsageChunk(ctx, source.ID, 0, source.UpdatedAt, domain.SourceCursorState{
+				ByteOffset: 50, State: domain.UsageSourceActive, UpdatedAt: now,
+			}, []domain.ModelUsageEvent{test.baseEvent()}); err != nil {
+				t.Fatalf("seed provider event: %v", err)
+			}
+			if err := s.ApplyUsageChunk(ctx, source.ID, 50, now, domain.SourceCursorState{
+				ByteOffset: 80, State: domain.UsageSourceActive, UpdatedAt: now.Add(time.Second),
+			}, []domain.ModelUsageEvent{test.richerEvent()}); err != nil {
+				t.Fatalf("enrich provider event: %v", err)
+			}
+			assertUsageSourceOffset(t, s, source.ID, 80)
+			aggregates, err := s.ListUsageModelAggregates(ctx, sess.ID)
+			mustNoError(t, err)
+			if len(aggregates) != 1 || usageTokenValue(aggregates[0].Tokens.InputTokens) != test.wantInput ||
+				usageTokenValue(aggregates[0].Tokens.OutputTokens) != test.wantOutput {
+				t.Fatalf("enrichment duplicated provider event: %+v", aggregates)
+			}
+			test.assertDetail(t, aggregates[0])
+		})
+	}
+}
+
 func TestUsageBindingWaitsForPersistedCodexChildren(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
@@ -892,16 +1038,24 @@ func seedUsageSession(t *testing.T, s *sqlite.Store, harness domain.AgentHarness
 
 func seedUsageSource(t *testing.T, s *sqlite.Store, sess domain.SessionRecord, now time.Time) domain.UsageSourceRecord {
 	t.Helper()
+	initialModelID := "gpt-5"
+	sourceKind := domain.UsageSourceCodexRollout
+	artifactPath := "/tmp/codex/rollout.jsonl"
+	if sess.Harness == domain.HarnessClaudeCode {
+		initialModelID = "claude-x"
+		sourceKind = domain.UsageSourceClaudeMain
+		artifactPath = "/tmp/claude/transcript.jsonl"
+	}
 	binding := mustUpsertUsageBinding(t, s, sess, now, domain.UsageBindingRecord{
 		NativeRootID:   "root-thread",
-		InitialModelID: "gpt-5",
+		InitialModelID: initialModelID,
 		State:          domain.UsageBindingActive,
 	})
 	return mustInsertUsageSource(t, s, now, domain.UsageSourceRecord{
 		BindingID:       binding.ID,
-		Kind:            domain.UsageSourceCodexRollout,
+		Kind:            sourceKind,
 		NativeSessionID: "child-thread",
-		ArtifactPath:    "/tmp/codex/rollout.jsonl",
+		ArtifactPath:    artifactPath,
 		FileIdentity:    "dev:ino",
 		State:           domain.UsageSourcePending,
 	})
@@ -948,6 +1102,22 @@ func usageEvent(key string, tokens domain.UsageTokenMetrics) domain.ModelUsageEv
 		Tokens:     tokens,
 		ProviderDetails: domain.UsageProviderDetails{OpenAI: &domain.OpenAIUsageDetails{
 			ReasoningOutputTokens: &zero, CacheWriteInputTokens: &zero,
+		}},
+		SourceEventKey: key,
+	}
+}
+
+func anthropicUsageEvent(key string, directInput, cacheCreationInput, cachedInput, output int64) domain.ModelUsageEvent {
+	input := directInput + cacheCreationInput + cachedInput
+	uncachedInput := directInput + cacheCreationInput
+	tokens := canonicalUsageTokens(input, cachedInput, uncachedInput, output)
+	tokens.Provenance.InputTokens = domain.UsageMetricDerived
+	return domain.ModelUsageEvent{
+		ProviderID: domain.UsageProviderAnthropic,
+		ModelID:    "claude-x",
+		Tokens:     tokens,
+		ProviderDetails: domain.UsageProviderDetails{Anthropic: &domain.AnthropicUsageDetails{
+			DirectUncachedInputTokens: &directInput, CacheCreationInputTokens: &cacheCreationInput,
 		}},
 		SourceEventKey: key,
 	}

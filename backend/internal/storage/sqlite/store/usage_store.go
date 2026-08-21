@@ -398,10 +398,11 @@ func (s *Store) ApplyUsageChunk(
 				if !usageEventMatches(existing, ev) {
 					return fmt.Errorf("%w: binding %d event %q", domain.ErrUsageSourceEventConflict, source.BindingID, ev.SourceEventKey)
 				}
-				if usageEventDetailsConflict(existing, ev) {
+				detailsConflict, needsDetailEnrichment := usageEventDetailReconciliation(existing, ev)
+				if detailsConflict {
 					return fmt.Errorf("%w: binding %d event %q provider details", domain.ErrUsageSourceEventConflict, source.BindingID, ev.SourceEventKey)
 				}
-				if usageEventNeedsDetailEnrichment(existing, ev) {
+				if needsDetailEnrichment {
 					if err := upsertUsageEventDetails(ctx, q, existing.ID, ev); err != nil {
 						return err
 					}
@@ -581,9 +582,8 @@ func usageEventInsertParams(source gen.GetUsageSourceWithBindingAndSessionRow, e
 		CachedOutputProvenance:  string(ev.Tokens.Provenance.CachedOutputTokens),
 		OutputTokens:            ptrInt64ToNull(ev.Tokens.OutputTokens),
 		OutputProvenance:        string(ev.Tokens.Provenance.OutputTokens),
-		PricingVersion:          stringToNull(ev.PricingVersion),
 		SourceEventKey:          ev.SourceEventKey,
-		CreatedAt:               ptrTimeToNullTime(timePtrUnlessZero(ev.CreatedAt)),
+		CreatedAt:               sql.NullTime{Time: ev.CreatedAt.UTC(), Valid: !ev.CreatedAt.IsZero()},
 	}
 }
 
@@ -598,8 +598,7 @@ func usageEventMatches(existing gen.GetModelUsageEventByKeyRow, event domain.Mod
 		existing.CachedOutputTokens == ptrInt64ToNull(event.Tokens.CachedOutputTokens) &&
 		existing.CachedOutputProvenance == string(event.Tokens.Provenance.CachedOutputTokens) &&
 		existing.OutputTokens == ptrInt64ToNull(event.Tokens.OutputTokens) &&
-		existing.OutputProvenance == string(event.Tokens.Provenance.OutputTokens) &&
-		existing.PricingVersion == stringToNull(event.PricingVersion)
+		existing.OutputProvenance == string(event.Tokens.Provenance.OutputTokens)
 }
 
 func usageAggregateFromGen(row gen.AggregateUsageBySessionHarnessModelRow) domain.UsageModelAggregate {
@@ -710,30 +709,23 @@ func upsertUsageEventDetails(ctx context.Context, q *gen.Queries, eventID int64,
 	return nil
 }
 
-func usageEventDetailsConflict(existing gen.GetModelUsageEventByKeyRow, event domain.ModelUsageEvent) bool {
+func usageEventDetailReconciliation(existing gen.GetModelUsageEventByKeyRow, event domain.ModelUsageEvent) (conflict, enrichment bool) {
+	reconcile := func(stored sql.NullInt64, incoming *int64) {
+		conflict = conflict || nullIntConflicts(stored, incoming)
+		enrichment = enrichment || nullIntCanEnrich(stored, incoming)
+	}
 	if details := event.ProviderDetails.OpenAI; details != nil {
-		return nullIntConflicts(existing.OpenaiReasoningOutputTokens, details.ReasoningOutputTokens) ||
-			nullIntConflicts(existing.OpenaiCacheWriteInputTokens, details.CacheWriteInputTokens) ||
-			nullIntConflicts(existing.OpenaiReportedTotalTokens, details.ReportedTotalTokens)
+		reconcile(existing.OpenaiReasoningOutputTokens, details.ReasoningOutputTokens)
+		reconcile(existing.OpenaiCacheWriteInputTokens, details.CacheWriteInputTokens)
+		reconcile(existing.OpenaiReportedTotalTokens, details.ReportedTotalTokens)
+		return conflict, enrichment
 	}
 	details := event.ProviderDetails.Anthropic
-	return nullIntConflicts(existing.AnthropicDirectUncachedInputTokens, details.DirectUncachedInputTokens) ||
-		nullIntConflicts(existing.AnthropicCacheCreationInputTokens, details.CacheCreationInputTokens) ||
-		nullIntConflicts(existing.AnthropicCacheCreation5mInputTokens, details.CacheCreation5mInputTokens) ||
-		nullIntConflicts(existing.AnthropicCacheCreation1hInputTokens, details.CacheCreation1hInputTokens)
-}
-
-func usageEventNeedsDetailEnrichment(existing gen.GetModelUsageEventByKeyRow, event domain.ModelUsageEvent) bool {
-	if details := event.ProviderDetails.OpenAI; details != nil {
-		return nullIntCanEnrich(existing.OpenaiReasoningOutputTokens, details.ReasoningOutputTokens) ||
-			nullIntCanEnrich(existing.OpenaiCacheWriteInputTokens, details.CacheWriteInputTokens) ||
-			nullIntCanEnrich(existing.OpenaiReportedTotalTokens, details.ReportedTotalTokens)
-	}
-	details := event.ProviderDetails.Anthropic
-	return nullIntCanEnrich(existing.AnthropicDirectUncachedInputTokens, details.DirectUncachedInputTokens) ||
-		nullIntCanEnrich(existing.AnthropicCacheCreationInputTokens, details.CacheCreationInputTokens) ||
-		nullIntCanEnrich(existing.AnthropicCacheCreation5mInputTokens, details.CacheCreation5mInputTokens) ||
-		nullIntCanEnrich(existing.AnthropicCacheCreation1hInputTokens, details.CacheCreation1hInputTokens)
+	reconcile(existing.AnthropicDirectUncachedInputTokens, details.DirectUncachedInputTokens)
+	reconcile(existing.AnthropicCacheCreationInputTokens, details.CacheCreationInputTokens)
+	reconcile(existing.AnthropicCacheCreation5mInputTokens, details.CacheCreation5mInputTokens)
+	reconcile(existing.AnthropicCacheCreation1hInputTokens, details.CacheCreation1hInputTokens)
+	return conflict, enrichment
 }
 
 func nullIntConflicts(existing sql.NullInt64, incoming *int64) bool {
@@ -803,17 +795,6 @@ func ptrInt64ToNull(v *int64) sql.NullInt64 {
 		return sql.NullInt64{}
 	}
 	return sql.NullInt64{Int64: *v, Valid: true}
-}
-
-func stringToNull(v string) sql.NullString {
-	return sql.NullString{String: v, Valid: v != ""}
-}
-
-func timePtrUnlessZero(v time.Time) *time.Time {
-	if v.IsZero() {
-		return nil
-	}
-	return &v
 }
 
 func int64PtrWhen(v int64, ok bool) *int64 {

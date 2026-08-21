@@ -215,7 +215,6 @@ type ModelUsageEvent struct {
 	CachedOutputProvenance  string
 	OutputTokens            sql.NullInt64
 	OutputProvenance        string
-	PricingVersion          sql.NullString
 	SourceEventKey          string
 	CreatedAt               sql.NullTime
 }

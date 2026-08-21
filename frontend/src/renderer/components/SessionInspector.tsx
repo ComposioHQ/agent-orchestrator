@@ -776,6 +776,7 @@ function UsageMetrics({ totals }: { totals: SessionUsage["totals"] }) {
 			<UsageMetric label={t("inspector.usage.inputTokens")} metric={totals.inputTokens} />
 			<UsageMetric
 				detail={cacheHitRate === null ? undefined : t("inspector.usage.cacheHitRate", { rate: cacheHitRate })}
+				detailDescription={cacheHitRate === null ? undefined : t("inspector.usage.cacheHitRateDescription", { rate: cacheHitRate })}
 				label={t("inspector.usage.cachedInputTokens")}
 				metric={totals.cachedInputTokens}
 			/>
@@ -786,20 +787,23 @@ function UsageMetrics({ totals }: { totals: SessionUsage["totals"] }) {
 
 function UsageMetric({
 	detail,
+	detailDescription,
 	label,
 	metric,
 }: {
 	detail?: string;
+	detailDescription?: string;
 	label: string;
 	metric: number | null | undefined;
 }) {
 	const { t } = useTranslation();
 	const value = typeof metric === "number" && Number.isFinite(metric) ? metric : null;
 	const exactValue = value?.toLocaleString("en-US");
+	const accessibleDetail = detailDescription ?? detail;
 	const accessibleLabel =
 		value === null
 			? t("inspector.usage.metricUnavailable", { label })
-			: [t("inspector.usage.metricAria", { label, count: exactValue }), detail].filter(Boolean).join("; ");
+			: [t("inspector.usage.metricAria", { label, count: exactValue }), accessibleDetail].filter(Boolean).join("; ");
 	return (
 		<div className="min-w-0">
 			<dt className="truncate text-2xs text-settings-muted">{label}</dt>
@@ -809,7 +813,7 @@ function UsageMetric({
 				title={
 					value === null
 						? t("inspector.usage.metricUnavailable", { label })
-						: [t("inspector.usage.tokensExact", { count: exactValue }), detail].filter(Boolean).join(" · ")
+						: [t("inspector.usage.tokensExact", { count: exactValue }), accessibleDetail].filter(Boolean).join(" · ")
 				}
 			>
 				{value === null ? "—" : formatTelemetryTokenValue(value)}

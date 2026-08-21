@@ -1886,6 +1886,11 @@ export interface components {
             /** @description Canonical input plus output. Null when either component is unknown. */
             processedTokens: null | number;
             sessionId: string;
+            /**
+             * Format: int64
+             * @description Deprecated compatibility alias for processedTokens.
+             */
+            totalTokens: number;
         };
         ContainerReapConfig: {
             disabled?: boolean;
@@ -3132,7 +3137,11 @@ export interface components {
             openai?: components["schemas"]["OpenAIUsageDetailsResponse"];
         };
         UsageTotalsResponse: {
-            /** @description Input read from an existing provider cache. */
+            /** @description Deprecated compatibility alias for cachedInputTokens. */
+            cacheReadTokens: null | number;
+            /** @description Deprecated compatibility aggregate of provider cache-write input counters. */
+            cacheWriteTokens: null | number;
+            /** @description Input read from an existing provider cache. Cache hit percentage uses cachedInputTokens divided by inclusive inputTokens. */
             cachedInputTokens: null | number;
             /** @description Output served from a provider output cache. */
             cachedOutputTokens: null | number;
@@ -3144,6 +3153,8 @@ export interface components {
             processedTokens: null | number;
             provenance: components["schemas"]["UsageMetricProvenanceResponse"];
             providerDetails: components["schemas"]["UsageProviderDetailsResponse"];
+            /** @description Deprecated compatibility alias for the OpenAI reasoning-output subset. */
+            reasoningTokens: null | number;
             /** @description Input not read from an existing provider cache. */
             uncachedInputTokens: null | number;
         };

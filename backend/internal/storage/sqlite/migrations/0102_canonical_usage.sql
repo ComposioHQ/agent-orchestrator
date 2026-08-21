@@ -54,6 +54,10 @@ CREATE TABLE IF NOT EXISTS model_usage_events (
     UNIQUE (binding_id, source_event_key)
 );
 
+-- SQLite cannot replace the legacy event constraints or split provider-native
+-- counters in place. This is a structural one-to-one table rebuild: it copies
+-- the persisted counters without rereading transcripts or running a historical
+-- usage backfill.
 CREATE TABLE model_usage_events_next (
     id                          INTEGER PRIMARY KEY AUTOINCREMENT,
     binding_id                  INTEGER NOT NULL REFERENCES usage_bindings (id) ON DELETE CASCADE,
@@ -70,7 +74,6 @@ CREATE TABLE model_usage_events_next (
     cached_output_provenance    TEXT NOT NULL CHECK (cached_output_provenance IN ('reported', 'derived', 'unsupported', 'unknown')),
     output_tokens               INTEGER,
     output_provenance           TEXT NOT NULL CHECK (output_provenance IN ('reported', 'derived', 'unsupported', 'unknown')),
-    pricing_version             TEXT,
     source_event_key            TEXT NOT NULL CHECK (trim(source_event_key) <> ''),
     created_at                  TIMESTAMP,
     UNIQUE (binding_id, source_event_key),
@@ -90,7 +93,7 @@ INSERT INTO model_usage_events_next (
     uncached_input_tokens, uncached_input_provenance,
     cached_output_tokens, cached_output_provenance,
     output_tokens, output_provenance,
-    pricing_version, source_event_key, created_at
+    source_event_key, created_at
 )
 SELECT
     event.id, event.binding_id, event.usage_source_id,
@@ -102,7 +105,7 @@ SELECT
     event.uncached_input_tokens + event.cache_write_tokens, 'derived',
     0, 'unsupported',
     event.output_tokens, 'reported',
-    NULL, event.source_event_key, NULL
+    event.source_event_key, NULL
 FROM model_usage_events event
 JOIN usage_bindings binding ON binding.id = event.binding_id;
 

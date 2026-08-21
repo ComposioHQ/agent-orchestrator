@@ -27,7 +27,7 @@ var expectedUsageTableColumns = map[string][]string{
 		"id", "binding_id", "usage_source_id", "provider_id", "model_id",
 		"input_tokens", "input_provenance", "cached_input_tokens", "cached_input_provenance",
 		"uncached_input_tokens", "uncached_input_provenance", "cached_output_tokens", "cached_output_provenance",
-		"output_tokens", "output_provenance", "pricing_version", "source_event_key", "created_at",
+		"output_tokens", "output_provenance", "source_event_key", "created_at",
 	},
 	"openai_usage_event_details": {
 		"event_id", "openai_reasoning_output_tokens", "openai_cache_write_input_tokens", "openai_reported_total_tokens",

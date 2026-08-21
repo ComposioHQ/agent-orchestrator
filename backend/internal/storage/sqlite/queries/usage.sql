@@ -341,7 +341,7 @@ SELECT
     event.uncached_input_tokens, event.uncached_input_provenance,
     event.cached_output_tokens, event.cached_output_provenance,
     event.output_tokens, event.output_provenance,
-    event.pricing_version, event.created_at,
+    event.created_at,
     openai.openai_reasoning_output_tokens,
     openai.openai_cache_write_input_tokens,
     openai.openai_reported_total_tokens,
@@ -362,8 +362,8 @@ INSERT INTO model_usage_events (
     uncached_input_tokens, uncached_input_provenance,
     cached_output_tokens, cached_output_provenance,
     output_tokens, output_provenance,
-    pricing_version, source_event_key, created_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    source_event_key, created_at
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 RETURNING id;
 
 -- name: UpsertOpenAIUsageEventDetails :execrows

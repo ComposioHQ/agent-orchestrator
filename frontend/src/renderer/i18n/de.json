@@ -1221,6 +1221,7 @@
 	"inspector.usage.inputTokens": "Eingabe gesamt",
 	"inspector.usage.cachedInputTokens": "Zwischengespeicherte Eingabe",
 	"inspector.usage.cacheHitRate": "{{rate}} % Treffer",
+	"inspector.usage.cacheHitRateDescription": "{{rate}} % Treffer (zwischengespeicherte Eingabe / Gesamteingabe)",
 	"inspector.usage.uncachedInputTokens": "Neue Eingabe",
 	"inspector.usage.outputTokens": "Ausgabe gesamt",
 	"inspector.usage.comingSoon": "Bald verfügbar",

@@ -58,17 +58,15 @@ func TestUsageAPIListsCompactProjectUsage(t *testing.T) {
 		Sessions []struct {
 			SessionID       string `json:"sessionId"`
 			ProcessedTokens int64  `json:"processedTokens"`
+			TotalTokens     int64  `json:"totalTokens"`
 			Incomplete      bool   `json:"incomplete"`
 		} `json:"sessions"`
 	}
 	mustJSON(t, body, &got)
 	if len(got.Sessions) != 1 || got.Sessions[0].SessionID != "reverb-12" ||
-		got.Sessions[0].ProcessedTokens != 12300 ||
+		got.Sessions[0].ProcessedTokens != 12300 || got.Sessions[0].TotalTokens != 12300 ||
 		!got.Sessions[0].Incomplete {
 		t.Fatalf("response = %+v", got)
-	}
-	if strings.Contains(string(body), `"totalTokens"`) {
-		t.Fatalf("compact response retained removed totalTokens field: %s", body)
 	}
 }
 
@@ -109,7 +107,7 @@ func TestUsageAPIShowsDetailedSessionTokenTelemetryWithoutCost(t *testing.T) {
 	if svc.sessionID != "reverb-12" {
 		t.Fatalf("session id = %q", svc.sessionID)
 	}
-	for _, forbidden := range []string{`"cost"`, `"valueNanos"`, `"pricingVersion"`, `"cacheReadTokens"`, `"cacheWriteTokens"`, `"reasoningTokens"`, `"totalTokens"`} {
+	for _, forbidden := range []string{`"cost"`, `"valueNanos"`, `"pricingVersion"`, `"totalTokens"`} {
 		if strings.Contains(string(body), forbidden) {
 			t.Fatalf("detailed usage exposed %s: %s", forbidden, body)
 		}
@@ -124,6 +122,9 @@ func TestUsageAPIShowsDetailedSessionTokenTelemetryWithoutCost(t *testing.T) {
 			CachedOutputTokens  int64 `json:"cachedOutputTokens"`
 			OutputTokens        int64 `json:"outputTokens"`
 			ProcessedTokens     int64 `json:"processedTokens"`
+			CacheReadTokens     int64 `json:"cacheReadTokens"`
+			CacheWriteTokens    int64 `json:"cacheWriteTokens"`
+			ReasoningTokens     int64 `json:"reasoningTokens"`
 			ProviderDetails     struct {
 				OpenAI struct {
 					Reasoning  int64 `json:"openaiReasoningOutputTokens"`
@@ -141,7 +142,9 @@ func TestUsageAPIShowsDetailedSessionTokenTelemetryWithoutCost(t *testing.T) {
 	if got.SessionID != "reverb-12" || !got.Incomplete || got.Totals.InputTokens != 1000 ||
 		got.Totals.CachedInputTokens != 400 || got.Totals.UncachedInputTokens != 600 ||
 		got.Totals.CachedOutputTokens != 0 || got.Totals.OutputTokens != 200 ||
-		got.Totals.ProcessedTokens != 1200 || got.Totals.ProviderDetails.OpenAI.Reasoning != 40 ||
+		got.Totals.ProcessedTokens != 1200 || got.Totals.CacheReadTokens != 400 ||
+		got.Totals.CacheWriteTokens != 100 || got.Totals.ReasoningTokens != 40 ||
+		got.Totals.ProviderDetails.OpenAI.Reasoning != 40 ||
 		got.Totals.ProviderDetails.OpenAI.CacheWrite != 100 ||
 		len(got.Harnesses) != 1 || len(got.Harnesses[0].Models) != 1 ||
 		got.Harnesses[0].Models[0].ModelID != "gpt-5.6" {

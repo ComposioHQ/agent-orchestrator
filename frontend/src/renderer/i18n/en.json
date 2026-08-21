@@ -1206,6 +1206,7 @@
 	"inspector.usage.inputTokens": "Total Input",
 	"inspector.usage.cachedInputTokens": "Cached Input",
 	"inspector.usage.cacheHitRate": "{{rate}}% hit",
+	"inspector.usage.cacheHitRateDescription": "{{rate}}% hit (cached input / total input)",
 	"inspector.usage.uncachedInputTokens": "Fresh Input",
 	"inspector.usage.outputTokens": "Total Output",
 	"inspector.usage.comingSoon": "Coming soon",

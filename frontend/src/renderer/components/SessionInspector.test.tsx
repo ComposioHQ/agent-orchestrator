@@ -804,7 +804,7 @@ describe("SessionInspector usage", () => {
 		expect(within(metrics).getAllByRole("term").map((term) => term.textContent)).toEqual([
 			"Fresh Input", "Total Input", "Cached Input", "Total Output",
 		]);
-		expect(within(metrics).getByLabelText("Cached Input: 1,000 tokens; 83.3% hit")).toHaveTextContent(
+		expect(within(metrics).getByLabelText("Cached Input: 1,000 tokens; 83.3% hit (cached input / total input)")).toHaveTextContent(
 			"1K · 83.3% hit",
 		);
 		expect(within(metrics).queryByText("Cached Output")).not.toBeInTheDocument();

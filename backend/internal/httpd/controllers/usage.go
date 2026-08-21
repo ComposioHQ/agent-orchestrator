@@ -40,9 +40,13 @@ func (c *UsageController) listSessions(w http.ResponseWriter, r *http.Request) {
 	}
 	out := make([]CompactSessionUsageResponse, 0, len(items))
 	for _, item := range items {
+		var totalTokens int64
+		if item.ProcessedTokens != nil {
+			totalTokens = *item.ProcessedTokens
+		}
 		out = append(out, CompactSessionUsageResponse{
 			SessionID: item.SessionID, ProcessedTokens: item.ProcessedTokens,
-			Incomplete: item.Incomplete,
+			TotalTokens: totalTokens, Incomplete: item.Incomplete,
 		})
 	}
 	envelope.WriteJSON(w, http.StatusOK, ListCompactSessionUsageResponse{Sessions: out})
@@ -81,10 +85,39 @@ func sessionUsageResponse(summary domain.SessionUsageSummary) SessionUsageRespon
 }
 
 func usageTotalsResponse(totals domain.UsageMetricTotals) UsageTotalsResponse {
+	var cacheWriteTokens *int64
+	var cacheWriteTotal int64
+	cacheWriteKnown := false
+	cacheWriteComplete := true
+	if totals.ProviderDetails.OpenAI != nil {
+		if value := totals.ProviderDetails.OpenAI.CacheWriteInputTokens; value != nil {
+			cacheWriteTotal += *value
+			cacheWriteKnown = true
+		} else {
+			cacheWriteComplete = false
+		}
+	}
+	if totals.ProviderDetails.Anthropic != nil {
+		if value := totals.ProviderDetails.Anthropic.CacheCreationInputTokens; value != nil {
+			cacheWriteTotal += *value
+			cacheWriteKnown = true
+		} else {
+			cacheWriteComplete = false
+		}
+	}
+	if cacheWriteKnown && cacheWriteComplete {
+		cacheWriteTokens = &cacheWriteTotal
+	}
+	var reasoningTokens *int64
+	if totals.ProviderDetails.OpenAI != nil {
+		reasoningTokens = totals.ProviderDetails.OpenAI.ReasoningOutputTokens
+	}
 	return UsageTotalsResponse{
 		InputTokens: totals.InputTokens, CachedInputTokens: totals.CachedInputTokens,
 		UncachedInputTokens: totals.UncachedInputTokens, CachedOutputTokens: totals.CachedOutputTokens,
 		OutputTokens: totals.OutputTokens, ProcessedTokens: totals.ProcessedTokens,
+		CacheReadTokens: totals.CachedInputTokens, CacheWriteTokens: cacheWriteTokens,
+		ReasoningTokens: reasoningTokens,
 		Provenance: UsageMetricProvenanceResponse{
 			InputTokens: totals.Provenance.InputTokens, CachedInputTokens: totals.Provenance.CachedInputTokens,
 			UncachedInputTokens: totals.Provenance.UncachedInputTokens, CachedOutputTokens: totals.Provenance.CachedOutputTokens,

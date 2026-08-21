@@ -179,7 +179,6 @@ type ModelUsageEvent struct {
 	ModelID         string
 	Tokens          UsageTokenMetrics
 	ProviderDetails UsageProviderDetails
-	PricingVersion  string
 	CreatedAt       time.Time
 	SourceEventKey  string
 }
