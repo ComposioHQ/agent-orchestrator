@@ -179,7 +179,8 @@ func (c *commandContext) runDoctor(ctx context.Context) []doctorCheck {
 	for _, harness := range doctorHarnesses {
 		checks = append(checks, c.checkHarness(ctx, harness))
 	}
-	checks = append(checks, c.checkCodexLaunchFlags(ctx), c.checkGitHubToken(ctx), c.checkGitLabToken(ctx))
+	checks = append(checks, c.checkCodexLaunchFlags(ctx), c.checkGitHubToken(ctx))
+	checks = append(checks, c.checkGitLabTokens(ctx, cfg.GitLab)...)
 	return checks
 }
 
@@ -508,24 +509,85 @@ func (c *commandContext) githubToken(ctx context.Context) (token, source string,
 	return token, "gh", nil
 }
 
-func (c *commandContext) checkGitLabToken(ctx context.Context) doctorCheck {
-	token, source, err := c.gitlabToken(ctx)
-	if err != nil {
-		return doctorCheck{Level: doctorWarn, Section: doctorSectionGitLab, Name: "gitlab-token", Message: err.Error()}
+// checkGitLabTokens probes every GitLab instance AO is configured to talk to,
+// not just gitlab.com. A self-managed deployment (AO_GITLAB_ALLOWED_HOSTS)
+// never reaches gitlab.com, so a gitlab.com-only probe reports a token verdict
+// about a host AO will never call. Host -> REST base + token resolution mirrors
+// the SCM provider's clientForHost (adapters/scm/gitlab/provider.go).
+func (c *commandContext) checkGitLabTokens(ctx context.Context, gitlabCfg config.GitLabConfig) []doctorCheck {
+	hosts := gitlabDoctorHosts(gitlabCfg.AllowedHosts)
+	if len(hosts) == 0 {
+		return []doctorCheck{c.checkGitLabToken(ctx, "", c.deps.DoctorGitLabRESTBase, "")}
+	}
+	checks := make([]doctorCheck, 0, len(hosts))
+	for _, host := range hosts {
+		checks = append(checks, c.checkGitLabToken(ctx, host, c.gitlabRESTBaseForHost(host), gitlabCfg.HostTokens[host]))
+	}
+	return checks
+}
+
+// gitlabDoctorHosts normalizes and de-duplicates the configured allowlist,
+// preserving configuration order so doctor output is stable.
+func gitlabDoctorHosts(allowed []string) []string {
+	hosts := make([]string, 0, len(allowed))
+	seen := make(map[string]bool, len(allowed))
+	for _, raw := range allowed {
+		host := strings.ToLower(strings.TrimSpace(raw))
+		if host == "" || seen[host] {
+			continue
+		}
+		seen[host] = true
+		hosts = append(hosts, host)
+	}
+	return hosts
+}
+
+// gitlabRESTBaseForHost derives the REST base for an allowlisted host. gitlab.com
+// keeps the injectable default base; self-managed hosts get https://<host>/api/v4,
+// preserving any port, exactly like the provider does.
+func (c *commandContext) gitlabRESTBaseForHost(host string) string {
+	if isGitLabDotCom(host) {
+		return c.deps.DoctorGitLabRESTBase
+	}
+	return c.deps.DoctorGitLabHostRESTBase(host)
+}
+
+// isGitLabDotCom mirrors gitlab.IsGitLabDotCom without importing the SCM adapter
+// into the CLI (the same boundary parseGLabTokenLine already respects).
+func isGitLabDotCom(host string) bool {
+	host = strings.ToLower(strings.TrimSpace(host))
+	return host == "" || host == "gitlab.com" || host == "www.gitlab.com"
+}
+
+// checkGitLabToken probes one GitLab instance. host is empty for the default
+// (gitlab.com) instance; hostToken is the AO_GITLAB_HOST_TOKENS override for
+// this host, empty when the default token applies.
+func (c *commandContext) checkGitLabToken(ctx context.Context, host, restBase, hostToken string) doctorCheck {
+	name := "gitlab-token"
+	if host != "" {
+		name += ":" + host
+	}
+	token, source := strings.TrimSpace(hostToken), "AO_GITLAB_HOST_TOKENS"
+	if token == "" {
+		var err error
+		token, source, err = c.gitlabToken(ctx)
+		if err != nil {
+			return doctorCheck{Level: doctorWarn, Section: doctorSectionGitLab, Name: name, Message: err.Error()}
+		}
 	}
 
 	reqCtx, cancel := context.WithTimeout(ctx, probeTimeout)
 	defer cancel()
-	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, strings.TrimRight(c.deps.DoctorGitLabRESTBase, "/")+"/user", http.NoBody)
+	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, strings.TrimRight(restBase, "/")+"/user", http.NoBody)
 	if err != nil {
-		return doctorCheck{Level: doctorFail, Section: doctorSectionGitLab, Name: "gitlab-token", Message: err.Error()}
+		return doctorCheck{Level: doctorFail, Section: doctorSectionGitLab, Name: name, Message: err.Error()}
 	}
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("User-Agent", gitlabDoctorUserAgent)
 	req.Header.Set("PRIVATE-TOKEN", token)
 	resp, err := c.deps.HTTPClient.Do(req)
 	if err != nil {
-		return doctorCheck{Level: doctorFail, Section: doctorSectionGitLab, Name: "gitlab-token", Message: fmt.Sprintf("%s token validation failed: %v", source, err)}
+		return doctorCheck{Level: doctorFail, Section: doctorSectionGitLab, Name: name, Message: fmt.Sprintf("%s token validation failed: %v", source, err)}
 	}
 	defer func() {
 		_, _ = io.Copy(io.Discard, resp.Body)
@@ -533,23 +595,23 @@ func (c *commandContext) checkGitLabToken(ctx context.Context) doctorCheck {
 	}()
 
 	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
-		return doctorCheck{Level: doctorFail, Section: doctorSectionGitLab, Name: "gitlab-token", Message: fmt.Sprintf("%s token rejected by GitLab (HTTP %d)", source, resp.StatusCode)}
+		return doctorCheck{Level: doctorFail, Section: doctorSectionGitLab, Name: name, Message: fmt.Sprintf("%s token rejected by GitLab (HTTP %d)", source, resp.StatusCode)}
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return doctorCheck{Level: doctorWarn, Section: doctorSectionGitLab, Name: "gitlab-token", Message: fmt.Sprintf("%s token probe returned HTTP %d", source, resp.StatusCode)}
+		return doctorCheck{Level: doctorWarn, Section: doctorSectionGitLab, Name: name, Message: fmt.Sprintf("%s token probe returned HTTP %d", source, resp.StatusCode)}
 	}
 
 	var user struct {
 		Username string `json:"username"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&user); err != nil {
-		return doctorCheck{Level: doctorFail, Section: doctorSectionGitLab, Name: "gitlab-token", Message: fmt.Sprintf("%s token probe decode failed: %v", source, err)}
+		return doctorCheck{Level: doctorFail, Section: doctorSectionGitLab, Name: name, Message: fmt.Sprintf("%s token probe decode failed: %v", source, err)}
 	}
 	login := user.Username
 	if login == "" {
 		login = "unknown user"
 	}
-	return doctorCheck{Level: doctorPass, Section: doctorSectionGitLab, Name: "gitlab-token", Message: fmt.Sprintf("%s token valid for %s", source, login)}
+	return doctorCheck{Level: doctorPass, Section: doctorSectionGitLab, Name: name, Message: fmt.Sprintf("%s token valid for %s", source, login)}
 }
 
 func (c *commandContext) gitlabToken(ctx context.Context) (token, source string, err error) {

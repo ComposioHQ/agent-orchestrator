@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -342,6 +343,131 @@ func TestDoctorFailsExpiredGitLabToken(t *testing.T) {
 	}
 }
 
+// TestDoctorProbesSelfManagedGitLabHost covers the host-aware probe: with a
+// self-managed host in AO_GITLAB_ALLOWED_HOSTS, doctor must validate the token
+// against that host and never against gitlab.com.
+func TestDoctorProbesSelfManagedGitLabHost(t *testing.T) {
+	setConfigEnv(t)
+	clearDoctorGitLabEnv(t)
+	srv, tokens := gitlabDoctorHostServer(t, http.StatusOK, `{"username":"self-hosted-user"}`)
+	dotComHit := false
+	dotCom := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		dotComHit = true
+	}))
+	t.Cleanup(dotCom.Close)
+	c := doctorContext(t, map[string]string{"git": "/bin/git"}, func(context.Context, string, ...string) ([]byte, error) {
+		return []byte("git version 2.43.0\n"), nil
+	})
+	t.Setenv("AO_GITLAB_TOKEN", "env-token")
+	t.Setenv("AO_GITLAB_ALLOWED_HOSTS", "gitlab.internal:8443")
+	c.deps.HTTPClient = srv.Client()
+	c.deps.DoctorGitLabRESTBase = dotCom.URL
+	c.deps.DoctorGitLabHostRESTBase = func(string) string { return srv.URL }
+
+	checks := c.runDoctor(context.Background())
+	check := findDoctorCheck(t, checks, "gitlab-token:gitlab.internal:8443")
+	if check.Level != doctorPass || !strings.Contains(check.Message, "self-hosted-user") {
+		t.Fatalf("gitlab-token check = %+v, want PASS for the self-managed host", check)
+	}
+	if dotComHit {
+		t.Fatal("doctor probed gitlab.com for a self-managed-only configuration")
+	}
+	for _, c := range checks {
+		if c.Name == "gitlab-token" {
+			t.Fatalf("unexpected gitlab.com check %+v for a self-managed-only configuration", c)
+		}
+	}
+	if got := tokens(); len(got) != 1 || got[0] != "env-token" {
+		t.Fatalf("probe tokens = %v, want the default token once", got)
+	}
+}
+
+// TestDoctorUsesPerHostGitLabToken covers AO_GITLAB_HOST_TOKENS: the per-host
+// override must be the credential doctor validates, not the default token.
+func TestDoctorUsesPerHostGitLabToken(t *testing.T) {
+	setConfigEnv(t)
+	clearDoctorGitLabEnv(t)
+	srv, tokens := gitlabDoctorHostServer(t, http.StatusOK, `{"username":"host-user"}`)
+	c := doctorContext(t, map[string]string{"git": "/bin/git"}, func(context.Context, string, ...string) ([]byte, error) {
+		return []byte("git version 2.43.0\n"), nil
+	})
+	t.Setenv("AO_GITLAB_TOKEN", "default-token")
+	t.Setenv("AO_GITLAB_ALLOWED_HOSTS", "gitlab.example.com")
+	t.Setenv("AO_GITLAB_HOST_TOKENS", "gitlab.example.com=host-token")
+	c.deps.HTTPClient = srv.Client()
+	c.deps.DoctorGitLabHostRESTBase = func(string) string { return srv.URL }
+
+	check := findDoctorCheck(t, c.runDoctor(context.Background()), "gitlab-token:gitlab.example.com")
+	if check.Level != doctorPass || !strings.Contains(check.Message, "AO_GITLAB_HOST_TOKENS") {
+		t.Fatalf("gitlab-token check = %+v, want PASS sourced from AO_GITLAB_HOST_TOKENS", check)
+	}
+	if got := tokens(); len(got) != 1 || got[0] != "host-token" {
+		t.Fatalf("probe tokens = %v, want the per-host override", got)
+	}
+}
+
+// TestDoctorProbesEveryAllowedGitLabHost covers multi-instance setups: each
+// allowlisted host gets its own check, and gitlab.com keeps the default base.
+func TestDoctorProbesEveryAllowedGitLabHost(t *testing.T) {
+	setConfigEnv(t)
+	clearDoctorGitLabEnv(t)
+	dotCom := gitlabDoctorServer(t, http.StatusOK, `{"username":"dotcom-user"}`)
+	selfHosted, _ := gitlabDoctorHostServer(t, http.StatusUnauthorized, `{"message":"401 Unauthorized"}`)
+	c := doctorContext(t, map[string]string{"git": "/bin/git"}, func(context.Context, string, ...string) ([]byte, error) {
+		return []byte("git version 2.43.0\n"), nil
+	})
+	t.Setenv("AO_GITLAB_TOKEN", "env-token")
+	t.Setenv("AO_GITLAB_ALLOWED_HOSTS", "gitlab.com, GitLab.Internal , gitlab.internal,")
+	c.deps.HTTPClient = dotCom.Client()
+	c.deps.DoctorGitLabRESTBase = dotCom.URL
+	c.deps.DoctorGitLabHostRESTBase = func(string) string { return selfHosted.URL }
+
+	checks := c.runDoctor(context.Background())
+	if check := findDoctorCheck(t, checks, "gitlab-token:gitlab.com"); check.Level != doctorPass {
+		t.Fatalf("gitlab.com check = %+v, want PASS via the default REST base", check)
+	}
+	check := findDoctorCheck(t, checks, "gitlab-token:gitlab.internal")
+	if check.Level != doctorFail || !strings.Contains(check.Message, "HTTP 401") {
+		t.Fatalf("self-managed check = %+v, want FAIL rejected token", check)
+	}
+	gitlabChecks := 0
+	for _, c := range checks {
+		if strings.HasPrefix(c.Name, "gitlab-token") {
+			gitlabChecks++
+		}
+	}
+	if gitlabChecks != 2 {
+		t.Fatalf("gitlab-token checks = %d, want 2 (duplicate hosts collapsed)", gitlabChecks)
+	}
+}
+
+// gitlabDoctorHostServer is gitlabDoctorServer plus a recorder of the
+// PRIVATE-TOKEN values it was called with, so tests can assert which credential
+// doctor picked for a host.
+func gitlabDoctorHostServer(t *testing.T, status int, body string) (*httptest.Server, func() []string) {
+	t.Helper()
+	var mu sync.Mutex
+	var tokens []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/user" {
+			t.Errorf("unexpected gitlab probe: %s %s", r.Method, r.URL.Path)
+			return
+		}
+		mu.Lock()
+		tokens = append(tokens, r.Header.Get("PRIVATE-TOKEN"))
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(status)
+		_, _ = io.WriteString(w, body)
+	}))
+	t.Cleanup(srv.Close)
+	return srv, func() []string {
+		mu.Lock()
+		defer mu.Unlock()
+		return append([]string(nil), tokens...)
+	}
+}
+
 func gitlabDoctorServer(t *testing.T, status int, body string) *httptest.Server {
 	t.Helper()
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -437,6 +563,8 @@ func clearDoctorGitLabEnv(t *testing.T) {
 	t.Helper()
 	t.Setenv("AO_GITLAB_TOKEN", "")
 	t.Setenv("GITLAB_TOKEN", "")
+	t.Setenv("AO_GITLAB_ALLOWED_HOSTS", "")
+	t.Setenv("AO_GITLAB_HOST_TOKENS", "")
 }
 
 // TestDoctorChecksAOBinaryIdentity covers the `ao-binary` check: workspace
