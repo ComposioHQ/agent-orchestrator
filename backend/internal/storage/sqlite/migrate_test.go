@@ -177,31 +177,30 @@ VALUES (1, 1, 1, 'gpt-test', 100, 30, 60, 10, 20, 3, 'codex-event'),
 		t.Fatalf("migrate canonical usage: %v", err)
 	}
 	type canonicalRow struct {
-		provider                                                         string
-		input, cached, uncached, out                                     int64
-		cachedOutput                                                     int64
-		inputProvenance, uncachedInputProvenance, cachedOutputProvenance string
+		provider                                string
+		input, cached, uncached, out            int64
+		cachedOutput                            int64
+		inputProvenance, cachedOutputProvenance string
 	}
 	for _, test := range []struct {
-		key, provider              string
-		cached, uncached           int64
-		inputProv, uncachedInpProv string
+		key, provider    string
+		cached, uncached int64
+		inputProv        string
 	}{
-		{key: "codex-event", provider: "openai", cached: 60, uncached: 30, inputProv: "reported", uncachedInpProv: "derived"},
-		{key: "claude-event", provider: "anthropic", cached: 50, uncached: 10, inputProv: "derived", uncachedInpProv: "reported"},
+		{key: "codex-event", provider: "openai", cached: 60, uncached: 40, inputProv: "reported"},
+		{key: "claude-event", provider: "anthropic", cached: 50, uncached: 50, inputProv: "derived"},
 	} {
 		var row canonicalRow
 		if err := db.QueryRow(`SELECT provider_id, input_tokens, cached_input_tokens,
-uncached_input_tokens, cached_output_tokens, output_tokens, input_provenance, uncached_input_provenance,
+uncached_input_tokens, cached_output_tokens, output_tokens, input_provenance,
 cached_output_provenance FROM model_usage_events WHERE source_event_key = ?`, test.key).Scan(
 			&row.provider, &row.input, &row.cached, &row.uncached, &row.cachedOutput, &row.out,
-			&row.inputProvenance, &row.uncachedInputProvenance, &row.cachedOutputProvenance,
+			&row.inputProvenance, &row.cachedOutputProvenance,
 		); err != nil {
 			t.Fatalf("read %s canonical event: %v", test.key, err)
 		}
 		if row.provider != test.provider || row.input != 100 || row.cached != test.cached || row.uncached != test.uncached ||
 			row.cachedOutput != 0 || row.out != 20 || row.inputProvenance != test.inputProv ||
-			row.uncachedInputProvenance != test.uncachedInpProv ||
 			row.cachedOutputProvenance != "unsupported" {
 			t.Fatalf("%s canonical row = %+v", test.key, row)
 		}

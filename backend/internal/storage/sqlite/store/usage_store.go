@@ -654,29 +654,18 @@ func validateUsageEvent(harness domain.AgentHarness, event domain.ModelUsageEven
 		!validUsageMetric(metrics.OutputTokens, metrics.Provenance.OutputTokens) {
 		return errors.New("invalid usage event metric provenance")
 	}
+	if metrics.InputTokens != nil && metrics.CachedInputTokens != nil && metrics.UncachedInputTokens != nil &&
+		*metrics.InputTokens != *metrics.CachedInputTokens+*metrics.UncachedInputTokens {
+		return errors.New("usage input does not equal cached plus uncached input")
+	}
+	if metrics.OutputTokens != nil && metrics.CachedOutputTokens != nil && *metrics.CachedOutputTokens > *metrics.OutputTokens {
+		return errors.New("cached output exceeds output")
+	}
 	if event.ProviderID == domain.UsageProviderOpenAI && (event.ProviderDetails.OpenAI == nil || event.ProviderDetails.Anthropic != nil) {
 		return errors.New("invalid OpenAI usage details")
 	}
 	if event.ProviderID == domain.UsageProviderAnthropic && (event.ProviderDetails.Anthropic == nil || event.ProviderDetails.OpenAI != nil) {
 		return errors.New("invalid Anthropic usage details")
-	}
-	var cacheWriteInput *int64
-	if event.ProviderDetails.OpenAI != nil {
-		cacheWriteInput = event.ProviderDetails.OpenAI.CacheWriteInputTokens
-	} else if event.ProviderDetails.Anthropic != nil {
-		cacheWriteInput = event.ProviderDetails.Anthropic.CacheCreationInputTokens
-	}
-	if metrics.InputTokens != nil && metrics.CachedInputTokens != nil && metrics.UncachedInputTokens != nil {
-		expectedInput := *metrics.CachedInputTokens + *metrics.UncachedInputTokens
-		if cacheWriteInput != nil {
-			expectedInput += *cacheWriteInput
-		}
-		if *metrics.InputTokens != expectedInput {
-			return errors.New("usage input does not equal cached, fresh, and cache-write input")
-		}
-	}
-	if metrics.OutputTokens != nil && metrics.CachedOutputTokens != nil && *metrics.CachedOutputTokens > *metrics.OutputTokens {
-		return errors.New("cached output exceeds output")
 	}
 	return nil
 }

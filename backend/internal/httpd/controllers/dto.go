@@ -1011,12 +1011,12 @@ type UsageProviderDetailsResponse struct {
 
 // UsageTotalsResponse is the canonical telemetry aggregate for one scope.
 type UsageTotalsResponse struct {
-	InputTokens         *int64                        `json:"inputTokens" minimum:"0" description:"Inclusive input, including fresh input, cache reads, and cache writes."`
+	InputTokens         *int64                        `json:"inputTokens" minimum:"0" description:"Total input, including cached and uncached input."`
 	CachedInputTokens   *int64                        `json:"cachedInputTokens" minimum:"0" description:"Input read from an existing provider cache."`
-	UncachedInputTokens *int64                        `json:"uncachedInputTokens" minimum:"0" description:"Fresh input, excluding cache reads and cache writes."`
+	UncachedInputTokens *int64                        `json:"uncachedInputTokens" minimum:"0" description:"Input not read from an existing provider cache."`
 	CachedOutputTokens  *int64                        `json:"cachedOutputTokens" minimum:"0" description:"Output served from a provider output cache."`
 	OutputTokens        *int64                        `json:"outputTokens" minimum:"0" description:"Total output, including provider-specific subsets such as reasoning output."`
-	ProcessedTokens     *int64                        `json:"processedTokens" minimum:"0" description:"Inclusive input plus output. Null when either component is unknown."`
+	ProcessedTokens     *int64                        `json:"processedTokens" minimum:"0" description:"Canonical input plus output. Null when either component is unknown."`
 	Provenance          UsageMetricProvenanceResponse `json:"provenance"`
 	ProviderDetails     UsageProviderDetailsResponse  `json:"providerDetails"`
 }

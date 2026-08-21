@@ -770,46 +770,18 @@ function UsageCostPlaceholder() {
 function UsageMetrics({ totals }: { totals: SessionUsage["totals"] }) {
 	const { t } = useTranslation();
 	const cacheHitRate = formatCacheHitRate(totals.cachedInputTokens, totals.inputTokens);
-	const cacheWriteInputTokens = usageCacheWriteInputTokens(totals);
-	const reasoningOutputTokens = usageReasoningOutputTokens(totals);
 	return (
 		<dl className="grid grid-cols-2 gap-x-4 gap-y-2 @max-[300px]/inspector:grid-cols-1" data-testid="session-usage-metrics">
 			<UsageMetric label={t("inspector.usage.uncachedInputTokens")} metric={totals.uncachedInputTokens} />
-			<UsageMetric label={t("inspector.usage.outputTokens")} metric={totals.outputTokens} />
+			<UsageMetric label={t("inspector.usage.inputTokens")} metric={totals.inputTokens} />
 			<UsageMetric
 				detail={cacheHitRate === null ? undefined : t("inspector.usage.cacheHitRate", { rate: cacheHitRate })}
 				label={t("inspector.usage.cachedInputTokens")}
 				metric={totals.cachedInputTokens}
 			/>
-			<UsageMetric label={t("inspector.usage.cacheWriteInputTokens")} metric={cacheWriteInputTokens} />
-			<UsageMetric label={t("inspector.usage.reasoningOutputTokens")} metric={reasoningOutputTokens} />
+			<UsageMetric label={t("inspector.usage.outputTokens")} metric={totals.outputTokens} />
 		</dl>
 	);
-}
-
-function usageCacheWriteInputTokens(totals: SessionUsage["totals"]): number | null {
-	const providerDetails = totals.providerDetails;
-	let foundProvider = false;
-	let total = 0;
-	if (providerDetails.openai) {
-		const value = providerDetails.openai.openaiCacheWriteInputTokens;
-		if (typeof value !== "number" || !Number.isFinite(value)) return null;
-		foundProvider = true;
-		total += value;
-	}
-	if (providerDetails.anthropic) {
-		const value = providerDetails.anthropic.anthropicCacheCreationInputTokens;
-		if (typeof value !== "number" || !Number.isFinite(value)) return null;
-		foundProvider = true;
-		total += value;
-	}
-	return foundProvider ? total : null;
-}
-
-function usageReasoningOutputTokens(totals: SessionUsage["totals"]): number | null {
-	if (!totals.providerDetails.openai) return null;
-	const value = totals.providerDetails.openai.openaiReasoningOutputTokens;
-	return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
 function UsageMetric({

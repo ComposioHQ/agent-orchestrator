@@ -774,12 +774,12 @@ describe("SessionInspector usage", () => {
 		const totals = {
 			inputTokens: 1200,
 			cachedInputTokens: 1000,
-			uncachedInputTokens: 150,
+			uncachedInputTokens: 200,
 			cachedOutputTokens: 0,
 			outputTokens: 300,
 			processedTokens: 1500,
 			provenance: { inputTokens: "reported", cachedInputTokens: "reported", uncachedInputTokens: "derived", cachedOutputTokens: "unsupported", outputTokens: "reported" },
-			providerDetails: { openai: { openaiReasoningOutputTokens: 5, openaiCacheWriteInputTokens: 50 } },
+			providerDetails: { openai: { openaiReasoningOutputTokens: 5, openaiCacheWriteInputTokens: 0 } },
 		};
 		getMock.mockImplementation(async (path: string) => {
 			if (path === "/api/v1/usage/sessions/{sessionId}") {
@@ -802,15 +802,14 @@ describe("SessionInspector usage", () => {
 		expect(screen.getByLabelText("1,500 tokens processed")).toBeInTheDocument();
 		const metrics = screen.getAllByTestId("session-usage-metrics")[0];
 		expect(within(metrics).getAllByRole("term").map((term) => term.textContent)).toEqual([
-			"Fresh Input", "Output", "Cache Reads", "Cache Writes", "Reasoning (included in output)",
+			"Fresh Input", "Total Input", "Cached Input", "Total Output",
 		]);
-		expect(within(metrics).getByLabelText("Cache Reads: 1,000 tokens; 83.3% hit")).toHaveTextContent(
+		expect(within(metrics).getByLabelText("Cached Input: 1,000 tokens; 83.3% hit")).toHaveTextContent(
 			"1K · 83.3% hit",
 		);
-		expect(within(metrics).getByLabelText("Cache Writes: 50 tokens")).toHaveTextContent("50");
-		expect(within(metrics).getByLabelText("Reasoning (included in output): 5 tokens")).toHaveTextContent("5");
 		expect(within(metrics).queryByText("Cached Output")).not.toBeInTheDocument();
-		expect(within(metrics).queryByText("Total Input")).not.toBeInTheDocument();
+		expect(screen.queryByText("Cache write tokens")).not.toBeInTheDocument();
+		expect(screen.queryByText("Reasoning (included in output)")).not.toBeInTheDocument();
 		const agentAttribution = screen.getByText("Codex").parentElement;
 		expect(agentAttribution?.querySelector("img")).toBeInTheDocument();
 		const agentDisclosure = screen.getByRole("button", { name: "Codex usage details" });

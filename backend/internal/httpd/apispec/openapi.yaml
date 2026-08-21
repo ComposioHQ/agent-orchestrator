@@ -8933,8 +8933,7 @@ components:
           - "null"
           - integer
         inputTokens:
-          description: Inclusive input, including fresh input, cache reads, and cache
-            writes.
+          description: Total input, including cached and uncached input.
           minimum: 0
           type:
           - "null"
@@ -8947,7 +8946,7 @@ components:
           - "null"
           - integer
         processedTokens:
-          description: Inclusive input plus output. Null when either component is
+          description: Canonical input plus output. Null when either component is
             unknown.
           minimum: 0
           type:
@@ -8958,7 +8957,7 @@ components:
         providerDetails:
           $ref: '#/components/schemas/UsageProviderDetailsResponse'
         uncachedInputTokens:
-          description: Fresh input, excluding cache reads and cache writes.
+          description: Input not read from an existing provider cache.
           minimum: 0
           type:
           - "null"

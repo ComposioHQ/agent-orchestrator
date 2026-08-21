@@ -68,7 +68,7 @@ func TestSummaryReaderGetAggregatesModelsAndIntegrity(t *testing.T) {
 			},
 			{
 				Harness: domain.HarnessCodex, ModelID: "gpt-5.6",
-				Tokens: testUsageMetrics(1000, 400, 500, 200, domain.UsageMetricReported),
+				Tokens: testUsageMetrics(1000, 400, 600, 200, domain.UsageMetricReported),
 				ProviderDetails: domain.UsageProviderDetails{OpenAI: &domain.OpenAIUsageDetails{
 					ReasoningOutputTokens: &reasoning, CacheWriteInputTokens: &cacheWrite,
 				}},
@@ -89,7 +89,6 @@ func TestSummaryReaderGetAggregatesModelsAndIntegrity(t *testing.T) {
 		t.Fatal("integrity failure did not mark usage incomplete")
 	}
 	if got.Totals.InputTokens == nil || *got.Totals.InputTokens != 1100 ||
-		got.Totals.UncachedInputTokens == nil || *got.Totals.UncachedInputTokens != 580 ||
 		got.Totals.OutputTokens == nil || *got.Totals.OutputTokens != 225 ||
 		got.Totals.ProcessedTokens == nil || *got.Totals.ProcessedTokens != 1325 {
 		t.Fatalf("totals = %+v", got.Totals)

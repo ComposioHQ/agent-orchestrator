@@ -3136,15 +3136,15 @@ export interface components {
             cachedInputTokens: null | number;
             /** @description Output served from a provider output cache. */
             cachedOutputTokens: null | number;
-            /** @description Inclusive input, including fresh input, cache reads, and cache writes. */
+            /** @description Total input, including cached and uncached input. */
             inputTokens: null | number;
             /** @description Total output, including provider-specific subsets such as reasoning output. */
             outputTokens: null | number;
-            /** @description Inclusive input plus output. Null when either component is unknown. */
+            /** @description Canonical input plus output. Null when either component is unknown. */
             processedTokens: null | number;
             provenance: components["schemas"]["UsageMetricProvenanceResponse"];
             providerDetails: components["schemas"]["UsageProviderDetailsResponse"];
-            /** @description Fresh input, excluding cache reads and cache writes. */
+            /** @description Input not read from an existing provider cache. */
             uncachedInputTokens: null | number;
         };
         WorkspaceFileResponse: {

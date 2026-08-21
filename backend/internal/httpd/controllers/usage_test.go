@@ -74,7 +74,7 @@ func TestUsageAPIListsCompactProjectUsage(t *testing.T) {
 
 func TestUsageAPIShowsDetailedSessionTokenTelemetryWithoutCost(t *testing.T) {
 	input := int64(1000)
-	uncached := int64(500)
+	uncached := int64(600)
 	output := int64(200)
 	cachedInput := int64(400)
 	cachedOutput := int64(0)
@@ -139,7 +139,7 @@ func TestUsageAPIShowsDetailedSessionTokenTelemetryWithoutCost(t *testing.T) {
 	}
 	mustJSON(t, body, &got)
 	if got.SessionID != "reverb-12" || !got.Incomplete || got.Totals.InputTokens != 1000 ||
-		got.Totals.CachedInputTokens != 400 || got.Totals.UncachedInputTokens != 500 ||
+		got.Totals.CachedInputTokens != 400 || got.Totals.UncachedInputTokens != 600 ||
 		got.Totals.CachedOutputTokens != 0 || got.Totals.OutputTokens != 200 ||
 		got.Totals.ProcessedTokens != 1200 || got.Totals.ProviderDetails.OpenAI.Reasoning != 40 ||
 		got.Totals.ProviderDetails.OpenAI.CacheWrite != 100 ||
