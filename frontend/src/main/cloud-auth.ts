@@ -78,6 +78,10 @@ function storePath(dataDir: string): string {
 }
 
 function protectedStorageAvailable(): boolean {
+	// Local development can opt into process-only credentials so an unsigned
+	// Electron build does not block behind macOS Keychain access. Packaged builds
+	// always use the OS-protected store.
+	if (!app.isPackaged && process.env.AO_CLOUD_AUTH_MEMORY_ONLY === "1") return false;
 	if (!safeStorage.isEncryptionAvailable()) return false;
 	if (process.platform !== "linux") return true;
 	const backend = safeStorage.getSelectedStorageBackend();
@@ -95,12 +99,21 @@ function decodeStore(value: Buffer): AuthStore {
 async function readAuthStore(dataDir: string): Promise<AuthStore> {
 	const memoryStore = memoryStores.get(dataDir);
 	if (memoryStore) return memoryStore;
+	let encryptedStore: Buffer;
+	try {
+		encryptedStore = await readFile(storePath(dataDir));
+	} catch {
+		// Avoid touching the OS credential store on a fresh install. On macOS,
+		// merely probing safeStorage can block on a Keychain prompt even though
+		// there is no AO Cloud credential to decrypt yet.
+		return emptyStore();
+	}
 	if (!protectedStorageAvailable()) {
 		await rm(storePath(dataDir), { force: true });
 		return emptyStore();
 	}
 	try {
-		return decodeStore(await readFile(storePath(dataDir)));
+		return decodeStore(encryptedStore);
 	} catch {
 		await rm(storePath(dataDir), { force: true });
 		return emptyStore();

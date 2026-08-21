@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
 	decryptString: vi.fn((value: Buffer) => value.toString("utf8")),
 	encryptString: vi.fn((value: string) => Buffer.from(value, "utf8")),
+	isEncryptionAvailable: vi.fn(() => true),
 	encryptionAvailable: true,
 	selectedStorageBackend: "gnome_libsecret",
 	openExternal: vi.fn(),
@@ -21,7 +22,7 @@ vi.mock("electron", () => ({
 		decryptString: mocks.decryptString,
 		encryptString: mocks.encryptString,
 		getSelectedStorageBackend: () => mocks.selectedStorageBackend,
-		isEncryptionAvailable: () => mocks.encryptionAvailable,
+		isEncryptionAvailable: mocks.isEncryptionAvailable,
 	},
 	shell: { openExternal: mocks.openExternal },
 }));
@@ -49,6 +50,7 @@ describe("native Google authentication", () => {
 	beforeEach(async () => {
 		vi.clearAllMocks();
 		mocks.encryptionAvailable = true;
+		mocks.isEncryptionAvailable.mockImplementation(() => mocks.encryptionAvailable);
 		mocks.selectedStorageBackend = "gnome_libsecret";
 		dataDir = await mkdtemp(path.join(os.tmpdir(), "ao-cloud-auth-"));
 		fetchMock = vi.fn(async (input: string | URL | Request) => {
@@ -96,6 +98,11 @@ describe("native Google authentication", () => {
 		expect(authorize.searchParams.get("code_challenge_method")).toBe("S256");
 		expect(authorize.searchParams.get("redirect_uri")).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/callback$/);
 		await expect(getCloudAccessToken(dataDir)).resolves.toBe("access_123");
+	});
+
+	it("does not probe protected storage before a cloud session exists", async () => {
+		await expect(getCloudSession(dataDir)).resolves.toBeNull();
+		expect(mocks.isEncryptionAvailable).not.toHaveBeenCalled();
 	});
 
 	it("keeps credentials process-local when protected storage is unavailable", async () => {
