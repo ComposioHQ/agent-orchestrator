@@ -104,6 +104,49 @@ func TestNewRejectsMissingToken(t *testing.T) {
 	}
 }
 
+// TestNewKeepsTrackerWhenOnlyHostTokenConfigured covers a self-managed-only
+// setup: the credential lives in AO_GITLAB_HOST_TOKENS and there is no
+// gitlab.com token at all. The tracker must stay enabled — the allowlisted
+// host has a usable credential, and disabling the whole provider would leave
+// issue intake dead for the only instance the user actually talks to.
+func TestNewKeepsTrackerWhenOnlyHostTokenConfigured(t *testing.T) {
+	tr, err := New(Options{
+		Token:        scmgitlab.StaticTokenSource(""),
+		AllowedHosts: []string{"gitlab.internal"},
+		HostTokens: map[string]scmgitlab.TokenSource{
+			"gitlab.internal": scmgitlab.StaticTokenSource("glpat-internal"),
+		},
+	})
+	if err != nil {
+		t.Fatalf("New with a per-host token only = %v, want a usable tracker", err)
+	}
+	entry, err := tr.configForHost("gitlab.internal")
+	if err != nil {
+		t.Fatalf("configForHost(gitlab.internal) = %v", err)
+	}
+	tok, err := entry.tokens.Token(ctx())
+	if err != nil || tok != "glpat-internal" {
+		t.Fatalf("host token = %q, %v, want the configured per-host token", tok, err)
+	}
+}
+
+// TestNewRejectsHostTokensWithoutAnyUsableCredential covers the other side:
+// an allowlisted host whose token source can never yield a token is not a
+// reason to keep the tracker alive, so the daemon still reports it disabled
+// instead of failing every issue lookup later.
+func TestNewRejectsHostTokensWithoutAnyUsableCredential(t *testing.T) {
+	_, err := New(Options{
+		Token:        scmgitlab.StaticTokenSource(""),
+		AllowedHosts: []string{"gitlab.internal"},
+		HostTokens: map[string]scmgitlab.TokenSource{
+			"gitlab.internal": scmgitlab.StaticTokenSource("  "),
+		},
+	})
+	if !errors.Is(err, ErrNoToken) {
+		t.Fatalf("New with no usable credential = %v, want ErrNoToken", err)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // ID parsing
 // ---------------------------------------------------------------------------

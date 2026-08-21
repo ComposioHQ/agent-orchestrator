@@ -101,6 +101,15 @@ func (s FallbackTokenSource) InvalidateToken() {
 
 const defaultGLabTokenCacheTTL = 5 * time.Minute
 
+// defaultGLabFailureCacheTTL bounds how often a *failing* lookup re-spawns
+// glab. A host-scoped source whose host glab knows nothing about (or a glab
+// too old for `--hostname`) fails on every call, and a failure that is not
+// memoized forks a process per token resolution — once per allowlisted host,
+// on every API call and every credentials probe. It is deliberately far
+// shorter than the success TTL: after `glab auth login --hostname <host>` the
+// new credential must become visible quickly.
+const defaultGLabFailureCacheTTL = 30 * time.Second
+
 // GLabTokenSource shells out to `glab auth status --show-token` when env vars
 // are not configured. It memoizes the result for TokenTTL.
 type GLabTokenSource struct {
@@ -114,13 +123,16 @@ type GLabTokenSource struct {
 	TokenTTL time.Duration
 	Clock    func() time.Time
 
-	mu        sync.Mutex
-	token     string
-	expiresAt time.Time
+	mu           sync.Mutex
+	token        string
+	expiresAt    time.Time
+	err          error
+	errExpiresAt time.Time
 }
 
 // Token returns the cached glab token, re-fetching via `glab auth status` when
-// the cache expires.
+// the cache expires. Failures are memoized too, for a shorter window, so a
+// source glab can never satisfy does not fork a process per call.
 func (s *GLabTokenSource) Token(ctx context.Context) (string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -128,29 +140,47 @@ func (s *GLabTokenSource) Token(ctx context.Context) (string, error) {
 	if s.token != "" && now.Before(s.expiresAt) {
 		return s.token, nil
 	}
+	if s.err != nil && now.Before(s.errExpiresAt) {
+		return "", s.err
+	}
 	run := s.GLab
 	if run == nil {
 		run = func(ctx context.Context) (string, error) { return glabAuthToken(ctx, s.Hostname) }
 	}
 	out, err := run(ctx)
 	if err != nil {
-		return "", err
+		return "", s.cacheFailure(err, now)
 	}
 	token := strings.TrimSpace(out)
 	if token == "" {
-		return "", ErrNoToken
+		return "", s.cacheFailure(ErrNoToken, now)
 	}
 	s.token = token
 	s.expiresAt = now.Add(s.ttl())
+	s.err, s.errExpiresAt = nil, time.Time{}
 	return token, nil
 }
 
+// cacheFailure memoizes err until the failure window elapses and returns it
+// unchanged, so callers (FallbackTokenSource in particular) still see the
+// original ErrNoToken or command error identity.
+func (s *GLabTokenSource) cacheFailure(err error, now time.Time) error {
+	s.token, s.expiresAt = "", time.Time{}
+	s.err = err
+	s.errExpiresAt = now.Add(s.failureTTL())
+	return err
+}
+
 // InvalidateToken clears the cached glab token so the next call re-fetches.
+// The memoized failure is cleared with it: an invalidation means the caller
+// believes the credential situation changed.
 func (s *GLabTokenSource) InvalidateToken() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.token = ""
 	s.expiresAt = time.Time{}
+	s.err = nil
+	s.errExpiresAt = time.Time{}
 }
 
 func (s *GLabTokenSource) now() time.Time {
@@ -165,6 +195,15 @@ func (s *GLabTokenSource) ttl() time.Duration {
 		return s.TokenTTL
 	}
 	return defaultGLabTokenCacheTTL
+}
+
+// failureTTL is the negative-cache window: the success TTL when it is shorter
+// (tests pin it), otherwise defaultGLabFailureCacheTTL.
+func (s *GLabTokenSource) failureTTL() time.Duration {
+	if ttl := s.ttl(); ttl < defaultGLabFailureCacheTTL {
+		return ttl
+	}
+	return defaultGLabFailureCacheTTL
 }
 
 // glabAuthToken runs `glab auth status --show-token` and parses the token from
@@ -240,4 +279,26 @@ func HostTokenSource(host string) TokenSource {
 		sources = append(sources, &GLabTokenSource{Hostname: h})
 	}
 	return append(sources, &GLabTokenSource{})
+}
+
+// DotComTokenSource is the token chain for gitlab.com: the shared env vars
+// first, then glab scoped to gitlab.com.
+//
+// allowUnscopedGLab appends glab's own default host as a last resort. It is
+// safe only when no self-managed instance is configured: an unscoped
+// `glab auth status --show-token` on a glab authenticated against several
+// instances answers with whichever host it lists first, and sending that
+// token to gitlab.com would disclose a self-managed credential to a third
+// party. With gitlab.com as the only reachable instance the unscoped token
+// can only be the one AO would send there anyway, and the fallback is what
+// keeps a glab too old for `--hostname` working.
+func DotComTokenSource(allowUnscopedGLab bool) TokenSource {
+	sources := FallbackTokenSource{
+		&EnvTokenSource{EnvVars: []string{"AO_GITLAB_TOKEN"}},
+		&GLabTokenSource{Hostname: DotComHost},
+	}
+	if allowUnscopedGLab {
+		sources = append(sources, &GLabTokenSource{})
+	}
+	return sources
 }

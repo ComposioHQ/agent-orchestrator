@@ -108,14 +108,14 @@ type Tracker struct {
 }
 
 // New returns a Tracker. It fails fast when no token can be obtained so
-// daemons crash at startup rather than at first issue lookup.
+// daemons crash at startup rather than at first issue lookup. "No token" means
+// no instance can authenticate: a self-managed-only setup keeps its credential
+// in HostTokens and has nothing for gitlab.com, and disabling the tracker there
+// would leave issue intake dead for the only instance the user talks to.
 func New(opts Options) (*Tracker, error) {
 	src := opts.Token
 	if src == nil {
 		return nil, ErrNoToken
-	}
-	if _, err := src.Token(context.Background()); err != nil {
-		return nil, err
 	}
 	baseURL := opts.BaseURL
 	if baseURL == "" {
@@ -143,6 +143,13 @@ func New(opts Options) (*Tracker, error) {
 		hosts[h] = he
 	}
 
+	// Fail fast only when no instance can authenticate. When gitlab.com has no
+	// credential but an allowlisted host does, the tracker stays up and
+	// gitlab.com lookups fail per request instead.
+	if _, err := src.Token(context.Background()); err != nil && !anyHostUsable(hosts) {
+		return nil, err
+	}
+
 	t := &Tracker{
 		http:        opts.HTTPClient,
 		userAgent:   ua,
@@ -153,6 +160,21 @@ func New(opts Options) (*Tracker, error) {
 		t.http = &http.Client{Timeout: 30 * time.Second}
 	}
 	return t, nil
+}
+
+// anyHostUsable reports whether at least one allowlisted self-managed host can
+// authenticate. Consulted only when the default (gitlab.com) source yields
+// nothing, so the common path still costs a single token resolution.
+func anyHostUsable(hosts map[string]hostEntry) bool {
+	for _, he := range hosts {
+		if he.tokens == nil {
+			continue
+		}
+		if tok, err := he.tokens.Token(context.Background()); err == nil && tok != "" {
+			return true
+		}
+	}
+	return false
 }
 
 // configForHost returns the per-host config (base URL + token) for the given

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"strings"
 
 	scmgithub "github.com/aoagents/agent-orchestrator/backend/internal/adapters/scm/github"
 	scmgitlab "github.com/aoagents/agent-orchestrator/backend/internal/adapters/scm/gitlab"
@@ -53,10 +54,7 @@ func newGitHubSCMProvider(logger *slog.Logger) (*scmgithub.Provider, error) {
 }
 
 func newGitLabSCMProvider(gitlabCfg config.GitLabConfig, logger *slog.Logger) (*scmgitlab.Provider, error) {
-	tokens := scmgitlab.FallbackTokenSource{
-		scmgitlab.EnvTokenSource{EnvVars: []string{"AO_GITLAB_TOKEN"}},
-		&scmgitlab.GLabTokenSource{},
-	}
+	tokens := gitlabDotComTokenSource(gitlabCfg)
 	hostTokens := gitlabHostTokenSources(gitlabCfg)
 	return scmgitlab.NewProvider(scmgitlab.ProviderOptions{
 		Token:              tokens,
@@ -67,11 +65,40 @@ func newGitLabSCMProvider(gitlabCfg config.GitLabConfig, logger *slog.Logger) (*
 	})
 }
 
+// gitlabDotComTokenSource is the token chain for the default client
+// (gitlab.com). The glab lookup is scoped to gitlab.com, and glab's own
+// default host is consulted only when no self-managed instance is configured:
+// an unscoped lookup on a multi-instance glab answers with whichever host it
+// lists first, so keeping it would send a self-managed token to gitlab.com.
+// `ao doctor` applies the same rule when it decides whether a credential is
+// attributable to gitlab.com (checkGitLabTokens in cli/doctor.go), so the two
+// agree on which token gitlab.com is probed and polled with.
+func gitlabDotComTokenSource(gitlabCfg config.GitLabConfig) scmgitlab.TokenSource {
+	return scmgitlab.DotComTokenSource(!hasSelfManagedGitLabHost(gitlabCfg))
+}
+
+// hasSelfManagedGitLabHost reports whether the allowlist names an instance
+// other than gitlab.com. gitlab.com and its aliases are always allowed and are
+// served by the default client, so they do not make the setup multi-instance.
+func hasSelfManagedGitLabHost(gitlabCfg config.GitLabConfig) bool {
+	for _, host := range gitlabCfg.AllowedHosts {
+		if host = scmgitlab.NormalizeHost(host); host != "" && !scmgitlab.IsGitLabDotCom(host) {
+			return true
+		}
+	}
+	return false
+}
+
 // gitlabHostTokenSources maps every allowlisted self-managed host to the token
 // source the provider should use for it: the explicit AO_GITLAB_HOST_TOKENS
 // override when configured, otherwise a chain that asks glab for that host
 // specifically. Without the per-host entry a multi-instance glab setup answers
 // with whichever host it happens to list first.
+//
+// An entry with an empty token (`host=` in AO_GITLAB_HOST_TOKENS, which
+// config.Load preserves) is not an override: binding it would leave the host
+// with a token source that can only ever fail, silently disabling it. Such an
+// entry falls through to the host chain instead.
 func gitlabHostTokenSources(gitlabCfg config.GitLabConfig) map[string]scmgitlab.TokenSource {
 	hostTokens := make(map[string]scmgitlab.TokenSource, len(gitlabCfg.HostTokens)+len(gitlabCfg.AllowedHosts))
 	for _, host := range gitlabCfg.AllowedHosts {
@@ -80,9 +107,11 @@ func gitlabHostTokenSources(gitlabCfg config.GitLabConfig) map[string]scmgitlab.
 		}
 	}
 	for host, token := range gitlabCfg.HostTokens {
-		if host = scmgitlab.NormalizeHost(host); host != "" {
-			hostTokens[host] = scmgitlab.StaticTokenSource(token)
+		host = scmgitlab.NormalizeHost(host)
+		if host == "" || strings.TrimSpace(token) == "" {
+			continue
 		}
+		hostTokens[host] = scmgitlab.StaticTokenSource(token)
 	}
 	return hostTokens
 }
