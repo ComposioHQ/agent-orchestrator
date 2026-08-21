@@ -3217,3 +3217,69 @@ func TestPoll_IdentityKeyedDispatchSurvivesRename(t *testing.T) {
 		t.Fatalf("lifecycle notifications = %d, want 1", len(lc.observed))
 	}
 }
+
+// Two stored rows for the same provider-native PR (one per repo name, the
+// pre-#3923 duplicate-row artifact) collapse to a single subject instead of
+// two subjects fighting over the same PR.
+func TestDiscoverSubjects_CollapsesDuplicateRowsByIdentity(t *testing.T) {
+	store := &fakeStore{
+		sessions: []domain.SessionRecord{{ID: "p-1", ProjectID: "p", Metadata: domain.SessionMetadata{Branch: "feat"}}},
+		projects: map[string]domain.ProjectRecord{"p": {ID: "p", RepoOriginURL: "https://github.com/new/r.git"}},
+		prs: map[domain.SessionID][]domain.PullRequest{"p-1": {
+			{URL: "https://github.com/old/r/pull/1", SessionID: "p-1", Number: 1, Provider: "github", Host: "github.com", Repo: "old/r", ProviderID: "PR_dup", SourceBranch: "feat"},
+			{URL: "https://github.com/new/r/pull/1", SessionID: "p-1", Number: 1, Provider: "github", Host: "github.com", Repo: "new/r", ProviderID: "PR_dup", SourceBranch: "feat"},
+		}},
+		checks: map[string][]domain.PullRequestCheck{},
+	}
+	provider := &fakeProvider{observations: map[string]ports.SCMObservation{}}
+	obs := newTestObserver(store, provider, &fakeLifecycle{}, time.Unix(1, 0).UTC())
+	subjects, _, err := obs.discoverSubjects(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(subjects) != 1 {
+		t.Fatalf("subjects = %d, want 1 (same provider identity must collapse)", len(subjects))
+	}
+	if _, ok := subjects[identityPRKey("github", "github.com", "PR_dup")]; !ok {
+		t.Fatalf("subject not keyed by provider identity: %v", subjects)
+	}
+}
+
+// A permanently unresolvable tracked PR (provider returns an ErrSCMNotFound
+// placeholder every tick) must stay quiet at Warn level — Debug only — while
+// still pinning the repo ETag/cursor and never entering a rate-limit
+// cooldown. Guards the ~2.9k-warnings/day regression flagged in review.
+func TestPoll_NotFoundObservationLogsDebugAndPinsRepo(t *testing.T) {
+	store := testStoreWithSession()
+	store.prs["p-1"] = []domain.PullRequest{knownPR(1)}
+	provider := &fakeProvider{
+		repoGuards:     map[string]ports.SCMGuardResult{prKey(testRepo, 0): {ETag: "v2"}},
+		openPRs:        map[string][]ports.SCMPRObservation{},
+		observations:   map[string]ports.SCMObservation{},
+		fetchObsErrors: map[string]error{prKey(testRepo, 1): fmt.Errorf("%w: pull request o/r#1 not in batch response", ports.ErrSCMNotFound)},
+	}
+	var logs bytes.Buffer
+	obs := New(provider, store, &fakeLifecycle{}, Config{
+		Clock:            func() time.Time { return time.Unix(1, 0).UTC() },
+		Tick:             time.Hour,
+		Logger:           slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelWarn})),
+		CacheMax:         128,
+		IdentityResolver: provider,
+	})
+	obs.Cache.RepoPRListETag[prKey(testRepo, 0)] = "v1"
+	if err := obs.Poll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(logs.String(), "provider fetch failed") || strings.Contains(logs.String(), "rate-limited") {
+		t.Fatalf("not-found placeholder logged at warn: %s", logs.String())
+	}
+	if obs.inRateLimitCooldown(time.Unix(1, 0).UTC(), "github") {
+		t.Fatal("not-found placeholder must not trigger a rate-limit cooldown")
+	}
+	if got := obs.Cache.RepoPRListETag[prKey(testRepo, 0)]; got != "v1" {
+		t.Fatalf("repo ETag advanced past a not-found ref: %q, want pinned v1", got)
+	}
+	if len(store.writes) != 0 {
+		t.Fatalf("not-found placeholder was persisted: %#v", store.writes)
+	}
+}

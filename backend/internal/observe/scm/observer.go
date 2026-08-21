@@ -508,7 +508,12 @@ func (o *Observer) Poll(ctx context.Context) error {
 				if i < len(batch) && batch[i].Error != nil {
 					fetchErr := batch[i].Error
 					providerKey := firstNonEmpty(batch[i].Provider, ref.Repo.Provider)
-					if cooldown, ok := rateLimitCooldown(now, fetchErr); ok {
+					if errors.Is(fetchErr, ports.ErrSCMNotFound) {
+						// A permanent miss (deleted repo, revoked access, dead
+						// redirect), re-observed every tick — Debug, not Warn,
+						// so a broken tracked PR does not flood the log.
+						o.logger.Debug("scm observer: tracked PR not found at provider; marking refresh-incomplete", "provider", providerKey, "pr", ref.URL, "err", fetchErr)
+					} else if cooldown, ok := rateLimitCooldown(now, fetchErr); ok {
 						o.setRateLimitCooldown(now, providerKey, cooldown)
 						o.logger.Warn("scm observer: provider rate-limited (per-observation); entering cooldown", "provider", providerKey, "cooldown", cooldown, "err", fetchErr)
 					} else {
@@ -1473,7 +1478,11 @@ func (o *Observer) reconcileTerminalGitHubPRs(ctx context.Context, subjects map[
 				if i < len(batch) && batch[i].Error != nil {
 					fetchErr := batch[i].Error
 					providerKey := firstNonEmpty(batch[i].Provider, r.ref.Repo.Provider)
-					if cooldown, ok := rateLimitCooldown(now, fetchErr); ok {
+					if errors.Is(fetchErr, ports.ErrSCMNotFound) {
+						// Permanent miss, re-observed every tick — Debug, not
+						// Warn, so a broken tracked PR does not flood the log.
+						o.logger.Debug("scm observer: reconciled PR not found at provider; marking refresh-incomplete", "provider", providerKey, "pr", r.ref.URL, "err", fetchErr)
+					} else if cooldown, ok := rateLimitCooldown(now, fetchErr); ok {
 						o.setRateLimitCooldown(now, providerKey, cooldown)
 						o.logger.Warn("scm observer: reconciliation rate-limited (per-observation); entering cooldown", "provider", providerKey, "cooldown", cooldown, "err", fetchErr)
 					} else {
