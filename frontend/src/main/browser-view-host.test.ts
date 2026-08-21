@@ -1434,6 +1434,24 @@ describe("browser:setBounds", () => {
 		expect(view.setBounds).toHaveBeenLastCalledWith({ x: 100, y: 20, width: 320, height: 240 });
 		expect(view.setVisible).toHaveBeenLastCalledWith(false);
 	});
+
+	it("does not hide the page when a subresource fails to load", async () => {
+		const { invoke, sent, view, webContentsListeners } = setupHost();
+		await invoke("browser:ensure", "sess-1");
+		view.setVisible.mockClear();
+		sent.length = 0;
+
+		webContentsListeners.get("did-fail-load")?.(
+			{} as never,
+			-118 as never,
+			"Connection timed out" as never,
+			"https://third-party.example/script.js" as never,
+			false as never,
+		);
+
+		expect(view.setVisible).not.toHaveBeenCalled();
+		expect(sent).not.toContainEqual(expect.objectContaining({ channel: "browser:navState" }));
+	});
 });
 
 describe("browser annotation IPC", () => {

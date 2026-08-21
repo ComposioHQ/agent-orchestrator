@@ -1977,8 +1977,12 @@ function wireNavEvents(
 		recordHistory(contents.getURL(), contents.getTitle(), false);
 		update();
 	});
-	contents.on("did-fail-load", (_event, errorCode, errorDescription) => {
+	contents.on("did-fail-load", (_event, errorCode, errorDescription, _validatedURL, isMainFrame) => {
 		if (errorCode === -3) return;
+		// A page can contain third-party images, frames, or scripts that fail
+		// independently. Only a main-frame failure means the browser page itself
+		// should be replaced with AO's error state.
+		if (isMainFrame === false) return;
 		if (isActive()) entry.view.setVisible?.(false);
 		entry.state = { ...readNavState(entry), error: String(errorDescription || "Unable to load page") };
 		if (isActive()) shellContents(options).send("browser:navState", entry.state);

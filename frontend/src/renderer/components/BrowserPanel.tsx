@@ -254,6 +254,7 @@ export function BrowserPanelView({
 		setAnnotationMode,
 	} = browserView;
 	const [urlInput, setUrlInput] = useState(navState.url);
+	const [addressEditing, setAddressEditing] = useState(false);
 	const [historySuggestions, setHistorySuggestions] = useState<Array<{ url: string; title?: string }>>([]);
 	const historyListId = useId();
 	const { beginPicking, cancelPicking, enqueue, error, failPicking, queuedCount, retryQueued, status } =
@@ -280,16 +281,25 @@ export function BrowserPanelView({
 
 	useEffect(() => {
 		setUrlInput(navState.url);
+		setHistorySuggestions([]);
 	}, [navState.url]);
 
 	useEffect(() => {
-		if (!window.ao?.browser || !viewId || !profileState.profileId || urlInput.trim().length < 2) {
+		const query = urlInput.trim();
+		if (
+			!addressEditing ||
+			!window.ao?.browser ||
+			!viewId ||
+			!profileState.profileId ||
+			query === navState.url ||
+			query.length < 2
+		) {
 			setHistorySuggestions([]);
 			return;
 		}
 		let current = true;
 		const timer = window.setTimeout(() => {
-			void window.ao!.browser.historySuggestions({ viewId, query: urlInput }).then(
+			void window.ao!.browser.historySuggestions({ viewId, query }).then(
 				(suggestions) => current && setHistorySuggestions(suggestions),
 				() => current && setHistorySuggestions([]),
 			);
@@ -298,7 +308,7 @@ export function BrowserPanelView({
 			current = false;
 			window.clearTimeout(timer);
 		};
-	}, [profileState.profileId, urlInput, viewId]);
+	}, [addressEditing, navState.url, profileState.profileId, urlInput, viewId]);
 
 	useEffect(() => {
 		const offSubmit = window.ao?.browser.onAnnotationSubmit((payload) => {
@@ -318,7 +328,20 @@ export function BrowserPanelView({
 	const submit = (event: FormEvent<HTMLFormElement>) => {
 		event.preventDefault();
 		const nextURL = urlInput.trim();
-		if (nextURL) void navigate(nextURL);
+		if (nextURL) {
+			setAddressEditing(false);
+			setHistorySuggestions([]);
+			void navigate(nextURL);
+		}
+	};
+
+	const handleURLChange = (value: string) => {
+		setUrlInput(value);
+		const selected = historySuggestions.find((suggestion) => suggestion.url === value.trim());
+		if (!selected) return;
+		setAddressEditing(false);
+		setHistorySuggestions([]);
+		void navigate(selected.url);
 	};
 
 	const toggleAnnotationMode = async () => {
@@ -471,7 +494,9 @@ export function BrowserPanelView({
 						aria-label={t("browser.url")}
 						className="browser-panel__url-input h-browser-url pl-browser-url font-mono text-xs"
 						list={historySuggestions.length > 0 ? historyListId : undefined}
-						onChange={(event) => setUrlInput(event.target.value)}
+						onBlur={() => setAddressEditing(false)}
+						onChange={(event) => handleURLChange(event.target.value)}
+						onFocus={() => setAddressEditing(true)}
 						placeholder={t("browser.urlPlaceholder")}
 						ref={urlInputRef}
 						value={urlInput}

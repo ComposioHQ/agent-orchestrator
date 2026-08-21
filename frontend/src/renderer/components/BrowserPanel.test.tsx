@@ -238,6 +238,34 @@ describe("BrowserPanel", () => {
 		expect(option).toHaveValue("https://github.com/openai");
 		expect(input).toHaveAttribute("list", option.closest("datalist")?.id);
 		expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+
+		fireEvent.change(input, { target: { value: "https://github.com/openai" } });
+		expect(hookState.navigate).toHaveBeenCalledWith("https://github.com/openai");
+		expect(document.querySelector("datalist option")).toBeNull();
+	});
+
+	it("does not search imported history until the address is edited", async () => {
+		hookState.profileState = {
+			viewId: "42:sess-1",
+			profileId: "11111111-1111-4111-8111-111111111111",
+			temporary: false,
+		};
+		hookState.navState = { ...hookState.navState, url: "https://example.com/current" };
+		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
+		const input = screen.getByRole("textbox", { name: /browser url/i });
+
+		fireEvent.focus(input);
+		await new Promise((resolve) => window.setTimeout(resolve, 150));
+		expect(window.ao!.browser.historySuggestions).not.toHaveBeenCalled();
+
+		await userEvent.clear(input);
+		await userEvent.type(input, "exa");
+		await waitFor(() =>
+			expect(window.ao!.browser.historySuggestions).toHaveBeenCalledWith({
+				viewId: "42:sess-1",
+				query: "exa",
+			}),
+		);
 	});
 
 	it("keeps the URL input editable while the browser is maximized", async () => {
