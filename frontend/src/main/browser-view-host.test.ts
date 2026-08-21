@@ -797,7 +797,7 @@ describe("native browser visibility", () => {
 	// and identical bounds are a no-op Electron ignores. refreshLastFocusedPanelSurface
 	// applies that same "shrink by 1px, restore next tick" nudge to the live
 	// page's own view; main.ts calls it right after raising the shell.
-	it("nudges the last-focused panel's bounds to force a real resize, then restores them", async () => {
+	it("toggles visibility and nudges the last-focused panel's bounds to force a real resize, then restores both", async () => {
 		const { emit, host, invoke, view } = setupHost();
 		await invoke("browser:ensure", "sess-1");
 		emit("browser:setBounds", 1, {
@@ -807,12 +807,15 @@ describe("native browser visibility", () => {
 		});
 		await invoke("browser:navigate", { viewId: "1:sess-1", url: "http://localhost:3000" });
 		view.setBounds.mockClear();
+		view.setVisible.mockClear();
 
 		host.refreshLastFocusedPanelSurface();
+		expect(view.setVisible).toHaveBeenLastCalledWith(false);
 		expect(view.setBounds).toHaveBeenLastCalledWith({ x: 10, y: 20, width: 320, height: 239 });
 
 		await new Promise((resolve) => setTimeout(resolve, 0));
 		expect(view.setBounds).toHaveBeenLastCalledWith({ x: 10, y: 20, width: 320, height: 240 });
+		expect(view.setVisible).toHaveBeenLastCalledWith(true);
 	});
 
 	it("does nothing when nothing has been focused yet, or the panel is hidden", async () => {

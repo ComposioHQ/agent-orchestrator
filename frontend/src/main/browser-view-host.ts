@@ -1632,14 +1632,18 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 			lastFocusedViewId = null;
 		},
 		// Reported live (macOS, maximized/popped-out panel): opening an overlay
-		// (e.g. a toolbar dropdown) over the browser panel blanked the live page
-		// to black instead of showing it behind the dropdown. window-composition.ts
-		// documents the same class of bug for its own shell view — re-adding a
-		// WebContentsView to reorder it above others can leave its *previous*
-		// compositor surface on screen until some real geometry change rebuilds
-		// it, and applying identical bounds is a no-op Electron ignores. That
-		// fix only refreshed the shell; the live page's own view needs the same
-		// nudge whenever the shell is raised above it.
+		// (e.g. a toolbar dropdown) over the browser panel blanks the live page
+		// to black instead of showing it behind the dropdown, and a plain bounds
+		// nudge alone was not enough to clear it (confirmed still reproducing
+		// after that first attempt). window-composition.ts documents the same
+		// class of bug for its own shell view — re-adding a WebContentsView to
+		// reorder it above others can leave its *previous* compositor surface on
+		// screen until something forces a real re-composite, and applying
+		// identical bounds is a no-op Electron ignores. That fix only refreshed
+		// the shell; the live page's own view needs an equivalent nudge whenever
+		// the shell is raised above it. A visibility toggle is a stronger,
+		// more direct signal to re-establish the view's compositor surface than
+		// a 1px bounds change alone, so do both.
 		refreshLastFocusedPanelSurface: () => {
 			if (lastFocusedViewId === null) return;
 			const session = entries.get(lastFocusedViewId);
@@ -1647,11 +1651,12 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 			const entry = activeEntry(session);
 			const bounds = session.bounds;
 			if (bounds.width <= 0 || bounds.height <= 0) return;
+			entry.view.setVisible?.(false);
 			applyBrowserViewBounds(entry.view, { ...bounds, height: Math.max(1, bounds.height - 1) });
 			setTimeout(() => {
 				const current = lastFocusedViewId !== null ? entries.get(lastFocusedViewId) : undefined;
 				if (!current || !current.visible) return;
-				applyBrowserViewBounds(activeEntry(current).view, current.bounds);
+				applyBrowserViewBounds(activeEntry(current).view, current.bounds, true);
 			}, 0);
 		},
 	};
