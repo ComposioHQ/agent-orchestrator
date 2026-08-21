@@ -542,14 +542,15 @@ export function ChatWorkspace({
 		() =>
 			snapshot.items.reduce<ConversationActivity | undefined>((latest, item) => {
 				if (
-					!turn ||
 					item.kind !== "activity" ||
 					item.activityKind !== "approval" ||
 					item.status !== "pending" ||
-					item.turnId !== turn.id
+					(item.turnId ? item.turnId !== turn?.id : !turn)
 				) {
 					return latest;
 				}
+				if (latest?.turnId && !item.turnId) return latest;
+				if (item.turnId && !latest?.turnId) return item;
 				return !latest || item.sequence > latest.sequence ? item : latest;
 			}, undefined),
 		[snapshot.items, turn],
