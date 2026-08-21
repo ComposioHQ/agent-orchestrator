@@ -178,8 +178,7 @@ func makeLegacyProviderNull(t *testing.T, dataDir string, sourceID int64) {
 	t.Helper()
 	db := openUsageRawDB(t, dataDir)
 	_, err := db.Exec(`UPDATE model_usage_events
-SET provider_id = NULL, cache_write_5m_tokens = NULL,
-    cache_write_1h_tokens = NULL, uncached_input_cost_nanos = NULL,
+SET billing_provider_id = NULL, uncached_input_cost_nanos = NULL,
     cache_read_cost_nanos = NULL, cache_write_cost_nanos = NULL,
     output_cost_nanos = NULL, estimated_cost_nanos = NULL,
     pricing_version = ''
@@ -192,7 +191,7 @@ func assertLegacyRepair(t *testing.T, dataDir string, sourceID int64, provider s
 	db := openUsageRawDB(t, dataDir)
 	var gotProvider, gotVersion string
 	var gotTotal int64
-	mustNoError(t, db.QueryRow(`SELECT provider_id, estimated_cost_nanos, pricing_version
+	mustNoError(t, db.QueryRow(`SELECT billing_provider_id, estimated_cost_nanos, pricing_version
 FROM model_usage_events WHERE usage_source_id = ?`, sourceID).Scan(&gotProvider, &gotTotal, &gotVersion))
 	if gotProvider != provider || gotTotal != total || gotVersion != version {
 		t.Fatalf("legacy repair = provider %q total %d version %q", gotProvider, gotTotal, gotVersion)
@@ -203,9 +202,9 @@ func assertLegacyStillNull(t *testing.T, dataDir string, sourceID int64) {
 	t.Helper()
 	db := openUsageRawDB(t, dataDir)
 	var provider sql.NullString
-	mustNoError(t, db.QueryRow(`SELECT provider_id FROM model_usage_events
+	mustNoError(t, db.QueryRow(`SELECT billing_provider_id FROM model_usage_events
 WHERE usage_source_id = ?`, sourceID).Scan(&provider))
 	if provider.Valid {
-		t.Fatalf("legacy provider = %q, want NULL", provider.String)
+		t.Fatalf("legacy billing provider = %q, want NULL", provider.String)
 	}
 }

@@ -110,70 +110,132 @@ type UsageSourceContext struct {
 	BindingState   UsageBindingState
 }
 
-// UsageTokenMetrics is the normalized token vector stored on every usage event
-// and returned in aggregate summaries.
-type UsageTokenMetrics struct {
-	InputTokens         int64
-	UncachedInputTokens int64
-	CacheReadTokens     int64
-	CacheWriteTokens    int64
-	OutputTokens        int64
-	ReasoningTokens     *int64
+// UsageProviderID identifies the provider vocabulary normalized into a usage
+// event. Provider-specific counters remain separate from the canonical totals.
+type UsageProviderID string
+
+// Usage provider identifiers.
+const (
+	UsageProviderOpenAI    UsageProviderID = "openai"
+	UsageProviderAnthropic UsageProviderID = "anthropic"
+)
+
+// UsageMetricProvenance describes how one canonical metric was obtained.
+type UsageMetricProvenance string
+
+// Usage metric provenance values.
+const (
+	UsageMetricReported    UsageMetricProvenance = "reported"
+	UsageMetricDerived     UsageMetricProvenance = "derived"
+	UsageMetricUnsupported UsageMetricProvenance = "unsupported"
+	UsageMetricUnknown     UsageMetricProvenance = "unknown"
+)
+
+// UsageMetricProvenanceSet records provenance independently for each canonical
+// metric so a known zero is distinguishable from unavailable data.
+type UsageMetricProvenanceSet struct {
+	InputTokens         UsageMetricProvenance
+	CachedInputTokens   UsageMetricProvenance
+	UncachedInputTokens UsageMetricProvenance
+	OutputTokens        UsageMetricProvenance
 }
 
-// ModelUsageEvent is one append-only normalized usage fact.
-type ModelUsageEvent struct {
-	ProviderID             string
-	ModelID                string
-	Tokens                 UsageTokenMetrics
-	CacheWrite5mTokens     *int64
-	CacheWrite1hTokens     *int64
+// UsageTokenMetrics is the provider-neutral token vector stored on every usage
+// event. Nil means unknown; a non-nil zero is a known zero.
+type UsageTokenMetrics struct {
+	InputTokens         *int64
+	CachedInputTokens   *int64
+	UncachedInputTokens *int64
+	OutputTokens        *int64
+	Provenance          UsageMetricProvenanceSet
+}
+
+// OpenAIUsageDetails retains provider counters that are not part of the shared
+// four-metric vocabulary.
+type OpenAIUsageDetails struct {
+	ReasoningOutputTokens *int64
+	CacheWriteInputTokens *int64
+	ReportedTotalTokens   *int64
+}
+
+// AnthropicUsageDetails retains direct input and cache-creation counters. The
+// TTL buckets can be nil when an older transcript did not report them.
+type AnthropicUsageDetails struct {
+	DirectUncachedInputTokens  *int64
+	CacheCreationInputTokens   *int64
+	CacheCreation5mInputTokens *int64
+	CacheCreation1hInputTokens *int64
+}
+
+// UsageProviderDetails contains at most the detail block matching ProviderID.
+type UsageProviderDetails struct {
+	OpenAI    *OpenAIUsageDetails
+	Anthropic *AnthropicUsageDetails
+}
+
+// UsageEventCosts is the durable nano-USD estimate stored on one event. Every
+// field is nil until the event has been priced; a non-nil total is immutable.
+type UsageEventCosts struct {
 	UncachedInputCostNanos *int64
 	CacheReadCostNanos     *int64
 	CacheWriteCostNanos    *int64
 	OutputCostNanos        *int64
 	EstimatedCostNanos     *int64
 	PricingVersion         string
-	SourceEventKey         string
+}
+
+// ModelUsageEvent is one append-only normalized usage fact.
+//
+// ProviderID is the provider *vocabulary* the counters were normalized into and
+// selects which ProviderDetails block applies. BillingProviderID is the exact
+// catalog provider the event is priced against and is empty until attribution
+// proves it; the two differ whenever an Anthropic-vocabulary transcript is
+// served by another billing provider such as z.ai.
+type ModelUsageEvent struct {
+	ProviderID        UsageProviderID
+	BillingProviderID string
+	ModelID           string
+	Tokens            UsageTokenMetrics
+	ProviderDetails   UsageProviderDetails
+	Costs             UsageEventCosts
+	CreatedAt         time.Time
+	SourceEventKey    string
 }
 
 // UsageCostCandidate is one still-total-null event selected for an exact
 // provider catalog attempt. Source facts remain immutable and are carried back
 // to storage as compare-and-swap guards.
 type UsageCostCandidate struct {
-	ID                 int64
-	BindingID          int64
-	ProviderID         string
-	ModelID            string
-	Tokens             UsageTokenMetrics
-	CacheWrite5mTokens *int64
-	CacheWrite1hTokens *int64
-	PricingVersion     string
-	SourceEventKey     string
+	ID                int64
+	BindingID         int64
+	ProviderID        UsageProviderID
+	BillingProviderID string
+	ModelID           string
+	Tokens            UsageTokenMetrics
+	ProviderDetails   UsageProviderDetails
+	PricingVersion    string
+	SourceEventKey    string
 }
 
 // UsageCostUpdate carries one candidate's immutable compare-and-swap facts and
 // the result of attempting it against a newer provider catalog version.
 type UsageCostUpdate struct {
-	Candidate              UsageCostCandidate
-	UncachedInputCostNanos *int64
-	CacheReadCostNanos     *int64
-	CacheWriteCostNanos    *int64
-	OutputCostNanos        *int64
-	EstimatedCostNanos     *int64
-	PricingVersion         string
+	Candidate UsageCostCandidate
+	Costs     UsageEventCosts
 }
 
-// LegacyUsageEvent is one provider-null event selected for transcript
+// LegacyUsageEvent is one billing-provider-null event selected for transcript
 // attribution repair. Its source and generic facts are immutable CAS guards.
 type LegacyUsageEvent struct {
-	ID             int64
-	BindingID      int64
-	UsageSourceID  int64
-	ModelID        string
-	Tokens         UsageTokenMetrics
-	PricingVersion string
-	SourceEventKey string
+	ID              int64
+	BindingID       int64
+	UsageSourceID   int64
+	ProviderID      UsageProviderID
+	ModelID         string
+	Tokens          UsageTokenMetrics
+	ProviderDetails UsageProviderDetails
+	PricingVersion  string
+	SourceEventKey  string
 }
 
 // LegacyUsageRepair carries transcript-derived attribution and the estimate
@@ -184,15 +246,8 @@ type LegacyUsageRepair struct {
 	ExpectedByteOffset      int64
 	ExpectedParserStateJSON string
 	ExpectedSourceUpdatedAt time.Time
-	ProviderID              string
-	CacheWrite5mTokens      *int64
-	CacheWrite1hTokens      *int64
-	UncachedInputCostNanos  *int64
-	CacheReadCostNanos      *int64
-	CacheWriteCostNanos     *int64
-	OutputCostNanos         *int64
-	EstimatedCostNanos      *int64
-	PricingVersion          string
+	BillingProviderID       string
+	Costs                   UsageEventCosts
 }
 
 // EstimatedCostCoverage describes how much of a usage scope has a durable
@@ -241,49 +296,49 @@ type UsageCostAggregate struct {
 // UsageModelAggregate is the raw model-level aggregate read from storage before
 // the service applies user-facing coverage rules.
 type UsageModelAggregate struct {
-	Harness             AgentHarness
-	ProviderID          string
-	ModelID             string
-	Tokens              UsageTokenMetrics
-	ReasoningEventCount int64
-	Cost                UsageCostAggregate
+	Harness           AgentHarness
+	BillingProviderID string
+	ModelID           string
+	Tokens            UsageTokenMetrics
+	ProviderDetails   UsageProviderDetails
+	Cost              UsageCostAggregate
 }
 
 // CompactSessionUsageAggregate is one batched storage row before checked token
 // and cost derivation.
 type CompactSessionUsageAggregate struct {
-	SessionID    SessionID
-	InputTokens  int64
-	OutputTokens int64
-	Incomplete   bool
-	Cost         UsageCostAggregate
+	SessionID       SessionID
+	ProcessedTokens *int64
+	Incomplete      bool
+	Cost            UsageCostAggregate
 }
 
 // CompactSessionUsage is the dashboard usage read model.
 type CompactSessionUsage struct {
-	SessionID     SessionID
-	TotalTokens   int64
-	Incomplete    bool
-	EstimatedCost *EstimatedCost
+	SessionID       SessionID
+	ProcessedTokens *int64
+	Incomplete      bool
+	EstimatedCost   *EstimatedCost
 }
 
 // UsageMetricTotals is the aggregate metric block used by session, harness,
 // and model summaries.
 type UsageMetricTotals struct {
 	InputTokens         *int64
+	CachedInputTokens   *int64
 	UncachedInputTokens *int64
-	CacheReadTokens     *int64
-	CacheWriteTokens    *int64
 	OutputTokens        *int64
-	ReasoningTokens     *int64
+	ProcessedTokens     *int64
+	Provenance          UsageMetricProvenanceSet
+	ProviderDetails     UsageProviderDetails
 	EstimatedCost       *EstimatedCost
 }
 
 // ModelUsageSummary is a per-exact-provider-and-model aggregate.
 type ModelUsageSummary struct {
-	ProviderID string
-	ModelID    string
-	Totals     UsageMetricTotals
+	BillingProviderID string
+	ModelID           string
+	Totals            UsageMetricTotals
 }
 
 // HarnessUsageSummary groups model summaries by AO harness.

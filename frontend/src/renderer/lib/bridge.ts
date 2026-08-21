@@ -1,5 +1,5 @@
 import type { AoBridge } from "../../preload";
-import { coerceLocale } from "../../shared/ui-locale";
+import { coerceUiSettings, DEFAULT_UI_SETTINGS } from "../../shared/ui-locale";
 export type { FeatureBuild } from "../../main/feature-builds";
 
 export const aoBridge: AoBridge =
@@ -13,6 +13,8 @@ export const aoBridge: AoBridge =
 			},
 			scanImportFolder: async ({ path }) => ({ path, repos: [] }),
 			checkAncestorRepo: async () => undefined,
+			getPathForFile: () => "",
+			onOpenFolderPath: () => () => undefined,
 			onNewSessionShortcut: () => () => undefined,
 			onKeyboardShortcutsHelp: () => () => undefined,
 			onNewShellTerminalShortcut: () => () => undefined,
@@ -161,8 +163,8 @@ export const aoBridge: AoBridge =
 			set: async () => undefined,
 		},
 		uiSettings: {
-			get: async () => ({ locale: "en" as const }),
-			set: async (settings) => ({ locale: coerceLocale(settings.locale) }),
+			get: async () => ({ ...DEFAULT_UI_SETTINGS }),
+			set: async (settings) => coerceUiSettings({ ...DEFAULT_UI_SETTINGS, ...settings }),
 		},
 		keybindings: {
 			get: async () => ({}),

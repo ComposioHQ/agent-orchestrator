@@ -27,7 +27,7 @@ func TestDecodeCandidateBuildsExactCanonicalSnapshot(t *testing.T) {
 	if got, want := snapshot.ProviderVersion(" Z.AI "), candidate.versions["zai"]; got != want {
 		t.Fatalf("ProviderVersion = %q, want %q", got, want)
 	}
-	event := domain.ModelUsageEvent{ProviderID: " ANTHROPIC ", ModelID: "anthropic/CLAUDE-TEST"}
+	event := domain.ModelUsageEvent{BillingProviderID: " ANTHROPIC ", ModelID: "anthropic/CLAUDE-TEST"}
 	estimate, err := snapshot.Estimate(event)
 	if err != nil {
 		t.Fatalf("Estimate exact canonical lookup: %v", err)
@@ -92,9 +92,14 @@ func TestEstimateRoundsComponentsHalfUpAndSumsChecked(t *testing.T) {
 	})
 	five, one := int64(1), int64(1)
 	estimate, err := snapshot.Estimate(domain.ModelUsageEvent{
-		ProviderID: "anthropic", ModelID: "claude-test",
-		Tokens:             domain.UsageTokenMetrics{UncachedInputTokens: 1, CacheReadTokens: 1, CacheWriteTokens: 2, OutputTokens: 1},
-		CacheWrite5mTokens: &five, CacheWrite1hTokens: &one,
+		ProviderID: domain.UsageProviderAnthropic, BillingProviderID: "anthropic", ModelID: "claude-test",
+		Tokens: pricingTokens(4, 1, 3, 1),
+		ProviderDetails: domain.UsageProviderDetails{Anthropic: &domain.AnthropicUsageDetails{
+			DirectUncachedInputTokens:  costInt64(1),
+			CacheCreationInputTokens:   costInt64(2),
+			CacheCreation5mInputTokens: &five,
+			CacheCreation1hInputTokens: &one,
+		}},
 	})
 	if err != nil {
 		t.Fatalf("Estimate: %v", err)
@@ -113,7 +118,13 @@ func TestEstimateKeepsUnknownBucketsUnknownAndZeroBucketsKnown(t *testing.T) {
 		"zai":       {{ID: "glm-test", Input: "0.1", Output: "0.2"}},
 	})
 
-	estimate, err := snapshot.Estimate(domain.ModelUsageEvent{ProviderID: "anthropic", ModelID: "claude-test", Tokens: domain.UsageTokenMetrics{CacheWriteTokens: 1}})
+	estimate, err := snapshot.Estimate(domain.ModelUsageEvent{
+		ProviderID: domain.UsageProviderAnthropic, BillingProviderID: "anthropic", ModelID: "claude-test",
+		Tokens: pricingTokens(1, 0, 1, 0),
+		ProviderDetails: domain.UsageProviderDetails{Anthropic: &domain.AnthropicUsageDetails{
+			DirectUncachedInputTokens: costInt64(0), CacheCreationInputTokens: costInt64(1),
+		}},
+	})
 	if err != nil {
 		t.Fatalf("Estimate: %v", err)
 	}
@@ -124,7 +135,13 @@ func TestEstimateKeepsUnknownBucketsUnknownAndZeroBucketsKnown(t *testing.T) {
 	}
 	assertCost(t, "zero output", estimate.OutputNanos, 0)
 
-	missing, err := snapshot.Estimate(domain.ModelUsageEvent{ProviderID: "openai", ModelID: "missing"})
+	missing, err := snapshot.Estimate(domain.ModelUsageEvent{
+		ProviderID: domain.UsageProviderOpenAI, BillingProviderID: "openai", ModelID: "missing",
+		Tokens: pricingTokens(0, 0, 0, 0),
+		ProviderDetails: domain.UsageProviderDetails{OpenAI: &domain.OpenAIUsageDetails{
+			CacheWriteInputTokens: costInt64(0),
+		}},
+	})
 	if err != nil {
 		t.Fatalf("Estimate missing model zero vector: %v", err)
 	}
@@ -141,10 +158,22 @@ func TestEstimateRejectsInvalidTokensAndOverflow(t *testing.T) {
 		"openai":    {{ID: "gpt-test", Input: "0", Output: "0"}},
 		"zai":       {{ID: "glm-test", Input: "0", Output: "0"}},
 	})
-	if _, err := snapshot.Estimate(domain.ModelUsageEvent{ProviderID: "anthropic", ModelID: "claude-test", Tokens: domain.UsageTokenMetrics{UncachedInputTokens: 2}}); err == nil {
+	if _, err := snapshot.Estimate(domain.ModelUsageEvent{
+		ProviderID: domain.UsageProviderAnthropic, BillingProviderID: "anthropic", ModelID: "claude-test",
+		Tokens: pricingTokens(2, 0, 2, 0),
+		ProviderDetails: domain.UsageProviderDetails{Anthropic: &domain.AnthropicUsageDetails{
+			DirectUncachedInputTokens: costInt64(2), CacheCreationInputTokens: costInt64(0),
+		}},
+	}); err == nil {
 		t.Fatal("overflow error = nil")
 	}
-	if _, err := snapshot.Estimate(domain.ModelUsageEvent{ProviderID: "openai", ModelID: "gpt-test", Tokens: domain.UsageTokenMetrics{OutputTokens: -1}}); err == nil {
+	if _, err := snapshot.Estimate(domain.ModelUsageEvent{
+		ProviderID: domain.UsageProviderOpenAI, BillingProviderID: "openai", ModelID: "gpt-test",
+		Tokens: pricingTokens(0, 0, 0, -1),
+		ProviderDetails: domain.UsageProviderDetails{OpenAI: &domain.OpenAIUsageDetails{
+			CacheWriteInputTokens: costInt64(0),
+		}},
+	}); err == nil {
 		t.Fatal("negative token error = nil")
 	}
 	if math.MaxInt64 == 0 {
@@ -422,5 +451,20 @@ func assertCost(t *testing.T, name string, got *int64, want int64) {
 	t.Helper()
 	if got == nil || *got != want {
 		t.Fatalf("%s = %v, want %d", name, got, want)
+	}
+}
+
+func costInt64(value int64) *int64 { return &value }
+
+// pricingTokens builds the canonical vector the estimator reads alongside a
+// provider detail block.
+func pricingTokens(input, cachedInput, uncachedInput, output int64) domain.UsageTokenMetrics {
+	return domain.UsageTokenMetrics{
+		InputTokens: &input, CachedInputTokens: &cachedInput,
+		UncachedInputTokens: &uncachedInput, OutputTokens: &output,
+		Provenance: domain.UsageMetricProvenanceSet{
+			InputTokens: domain.UsageMetricReported, CachedInputTokens: domain.UsageMetricReported,
+			UncachedInputTokens: domain.UsageMetricDerived, OutputTokens: domain.UsageMetricReported,
+		},
 	}
 }

@@ -167,8 +167,8 @@ func (r *LegacyRepairer) repairSource(ctx context.Context, source domain.UsageSo
 				return err
 			}
 			event := match.event
-			providerID := strings.TrimSpace(event.ProviderID)
-			if providerID == "" || strings.EqualFold(providerID, "unknown") {
+			billingProviderID := strings.TrimSpace(event.BillingProviderID)
+			if billingProviderID == "" {
 				continue
 			}
 			repair := domain.LegacyUsageRepair{
@@ -177,21 +177,21 @@ func (r *LegacyRepairer) repairSource(ctx context.Context, source domain.UsageSo
 				ExpectedByteOffset:      source.Source.ByteOffset,
 				ExpectedParserStateJSON: source.Source.ParserStateJSON,
 				ExpectedSourceUpdatedAt: source.Source.UpdatedAt,
-				ProviderID:              providerID,
-				CacheWrite5mTokens:      event.CacheWrite5mTokens,
-				CacheWrite1hTokens:      event.CacheWrite1hTokens,
-				PricingVersion:          snapshot.ProviderVersion(providerID),
+				BillingProviderID:       billingProviderID,
+				Costs:                   domain.UsageEventCosts{PricingVersion: snapshot.ProviderVersion(billingProviderID)},
 			}
 			estimate, estimateErr := snapshot.Estimate(event)
 			if estimateErr != nil {
 				r.config.OnError(estimateErr)
 			} else {
-				repair.UncachedInputCostNanos = estimate.UncachedInputNanos
-				repair.CacheReadCostNanos = estimate.CacheReadNanos
-				repair.CacheWriteCostNanos = estimate.CacheWriteNanos
-				repair.OutputCostNanos = estimate.OutputNanos
-				repair.EstimatedCostNanos = estimate.TotalNanos
-				repair.PricingVersion = estimate.PricingVersion
+				repair.Costs = domain.UsageEventCosts{
+					UncachedInputCostNanos: estimate.UncachedInputNanos,
+					CacheReadCostNanos:     estimate.CacheReadNanos,
+					CacheWriteCostNanos:    estimate.CacheWriteNanos,
+					OutputCostNanos:        estimate.OutputNanos,
+					EstimatedCostNanos:     estimate.TotalNanos,
+					PricingVersion:         estimate.PricingVersion,
+				}
 			}
 			repairs = append(repairs, repair)
 			if len(repairs) == 256 {
@@ -287,7 +287,8 @@ func matchLegacyEvents(candidates []domain.LegacyUsageEvent, parsed []domain.Mod
 			continue
 		}
 		event, ok := byKey[candidate.SourceEventKey]
-		if !ok || event.ModelID != candidate.ModelID || !genericTokensEqual(event.Tokens, candidate.Tokens) {
+		if !ok || event.ProviderID != candidate.ProviderID || event.ModelID != candidate.ModelID ||
+			!genericTokensEqual(event.Tokens, candidate.Tokens) {
 			continue
 		}
 		matches = append(matches, legacyEventMatch{candidate: candidate, event: event})
@@ -296,12 +297,11 @@ func matchLegacyEvents(candidates []domain.LegacyUsageEvent, parsed []domain.Mod
 }
 
 func genericTokensEqual(left, right domain.UsageTokenMetrics) bool {
-	return left.InputTokens == right.InputTokens &&
-		left.UncachedInputTokens == right.UncachedInputTokens &&
-		left.CacheReadTokens == right.CacheReadTokens &&
-		left.CacheWriteTokens == right.CacheWriteTokens &&
-		left.OutputTokens == right.OutputTokens &&
-		optionalInt64Equal(left.ReasoningTokens, right.ReasoningTokens)
+	return optionalInt64Equal(left.InputTokens, right.InputTokens) &&
+		optionalInt64Equal(left.CachedInputTokens, right.CachedInputTokens) &&
+		optionalInt64Equal(left.UncachedInputTokens, right.UncachedInputTokens) &&
+		optionalInt64Equal(left.OutputTokens, right.OutputTokens) &&
+		left.Provenance == right.Provenance
 }
 
 func optionalInt64Equal(left, right *int64) bool {

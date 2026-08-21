@@ -655,7 +655,7 @@ describe("SessionInspector PR section", () => {
     }
     expect(
       screen.getByRole("button", {
-        name: "Sets the default for newly created pull requests. When disabled, CI failures are displayed but not sent to the worker agent to fix.",
+        name: "Sends CI failures to the worker.",
       }),
     ).toBeInTheDocument();
     expect(
@@ -769,31 +769,42 @@ describe("SessionInspector PR section", () => {
 });
 
 describe("SessionInspector usage", () => {
-	const tokenTotals = (estimatedCost: unknown) => ({
-		cacheReadTokens: 12,
-		cacheWriteTokens: 0,
-		estimatedCost,
+	const canonicalTotals = {
 		inputTokens: 1200,
+		cachedInputTokens: 1000,
+		uncachedInputTokens: 200,
 		outputTokens: 300,
-		reasoningTokens: 5,
-		uncachedInputTokens: 20,
-	});
+		processedTokens: 1500,
+		provenance: {
+			inputTokens: "reported",
+			cachedInputTokens: "reported",
+			uncachedInputTokens: "derived",
+			outputTokens: "reported",
+		},
+		providerDetails: { openai: { openaiReasoningOutputTokens: 5, openaiCacheWriteInputTokens: 0 } },
+	};
 
-	function mockUsage(estimatedCost: unknown, models: unknown[] = []) {
+	const tokenTotals = (estimatedCost: unknown) => ({ ...canonicalTotals, estimatedCost });
+
+	function mockUsage(estimatedCost: unknown, harnesses?: unknown[]) {
+		const totals = tokenTotals(estimatedCost);
 		getMock.mockImplementation(async (path: string) => {
 			if (path === "/api/v1/usage/sessions/{sessionId}") {
 				return {
 					data: {
-						harnesses: [
+						sessionId: "sess-1",
+						incomplete: false,
+						totals,
+						harnesses: harnesses ?? [
 							{
-								harness: "claude-code",
-								models,
-								totals: tokenTotals(estimatedCost),
+								harness: "codex",
+								totals,
+								models: [
+									{ modelId: "gpt-5.5", totals },
+									{ modelId: "gpt-5.5-mini", totals },
+								],
 							},
 						],
-						incomplete: false,
-						sessionId: "sess-1",
-						totals: tokenTotals(estimatedCost),
 					},
 					error: undefined,
 				};
@@ -808,10 +819,58 @@ describe("SessionInspector usage", () => {
 
 		renderWithQuery(<SessionInspector session={session([])} />);
 		expect(await screen.findByText("Usage & cost")).toBeInTheDocument();
-		expect(screen.getByText("Total tokens")).toBeInTheDocument();
-		expect(screen.getByText("Claude")).toBeInTheDocument();
+		expect(screen.getByText("Tokens processed")).toBeInTheDocument();
+		expect(screen.getByLabelText("1,500 tokens processed")).toBeInTheDocument();
 		expect(screen.getByText("Estimated cost").nextElementSibling).toHaveTextContent("—");
 		expect(screen.queryByText("Coming soon")).not.toBeInTheDocument();
+		const metrics = screen.getAllByTestId("session-usage-metrics")[0];
+		expect(within(metrics).getAllByRole("term").map((term) => term.textContent)).toEqual([
+			"Fresh Input", "Cache Reads", "Output", "Cache Hit Rate",
+		]);
+		expect(within(metrics).getByLabelText("Cache Reads: 1,000 tokens")).toHaveTextContent("1K");
+		expect(within(metrics).getByLabelText("83.3% cache hit rate (cache reads / total input)")).toHaveTextContent("83.3%");
+		expect(within(metrics).queryByText("Cached Output")).not.toBeInTheDocument();
+		expect(screen.queryByText("Cache write tokens")).not.toBeInTheDocument();
+		expect(screen.queryByText("Reasoning (included in output)")).not.toBeInTheDocument();
+		const agentAttribution = screen.getByText("Codex").parentElement;
+		expect(agentAttribution?.querySelector("img")).toBeInTheDocument();
+		const agentDisclosure = screen.getByRole("button", { name: "Codex usage details" });
+		await userEvent.click(agentDisclosure);
+		const details = screen.getByRole("region", { name: "Codex usage peek" });
+		expect(within(details).getByRole("button", { name: "GPT 5.5 usage details" })).toBeInTheDocument();
+		expect(within(details).getByRole("button", { name: "GPT 5.5 Mini usage details" })).toBeInTheDocument();
+		expect(within(details).queryByText("2 models")).not.toBeInTheDocument();
+		expect(within(details).queryByText("Processed")).not.toBeInTheDocument();
+		expect(within(details).queryByText("Cost")).not.toBeInTheDocument();
+	});
+
+	it("shows icon disclosures without repeated metrics when multiple agents contributed", async () => {
+		useUiStore.getState().setDeveloperMode(true);
+		const totals = { ...canonicalTotals, providerDetails: {}, estimatedCost: null };
+		mockUsage(null, [
+			{ harness: "codex", totals, models: [{ modelId: "gpt-5.5", totals }] },
+			{ harness: "claude-code", totals, models: [{ modelId: "claude-haiku-4-5-20251001", totals }] },
+		]);
+
+		renderWithQuery(<SessionInspector session={session([])} />);
+		const codexDisclosure = await screen.findByRole("button", { name: "Codex usage details" });
+		expect(codexDisclosure.querySelector("img")).toBeInTheDocument();
+
+		await userEvent.click(codexDisclosure);
+		const details = screen.getByRole("region", { name: "Codex usage peek" });
+		expect(within(details).getByRole("button", { name: "GPT 5.5 usage details" })).toBeInTheDocument();
+		expect(within(details).queryByText("1 model")).not.toBeInTheDocument();
+		expect(within(details).queryByText("Processed")).not.toBeInTheDocument();
+		expect(within(details).queryByText("Cost")).not.toBeInTheDocument();
+		expect(within(details).queryByText("Fresh Input")).not.toBeInTheDocument();
+
+		await userEvent.click(screen.getByRole("button", { name: "Claude usage details" }));
+		const claudeDetails = screen.getByRole("region", { name: "Claude usage peek" });
+		const haikuDisclosure = within(claudeDetails).getByRole("button", { name: "Haiku 4.5 usage details" });
+		expect(within(haikuDisclosure).getByText("Haiku 4.5")).toHaveAttribute(
+			"title",
+			"claude-haiku-4-5-20251001",
+		);
 	});
 
 	it("renders complete costs, components, and provider/model attribution", async () => {
@@ -826,9 +885,15 @@ describe("SessionInspector usage", () => {
 		};
 		mockUsage(completeCost, [
 			{
-				modelId: "claude-sonnet-4",
-				providerId: "anthropic",
-				totals: tokenTotals({ ...completeCost, totalNanos: 600_000_000 }),
+				harness: "claude-code",
+				totals: tokenTotals(completeCost),
+				models: [
+					{
+						modelId: "claude-sonnet-4",
+						providerId: "anthropic",
+						totals: tokenTotals({ ...completeCost, totalNanos: 600_000_000 }),
+					},
+				],
 			},
 		]);
 
@@ -838,12 +903,12 @@ describe("SessionInspector usage", () => {
 			"[data-testid='inspector-section']",
 		) as HTMLElement;
 		expect(within(section).getAllByText("≈$1.24").length).toBeGreaterThan(0);
-		expect(within(section).getByText("Input").nextElementSibling).toHaveTextContent("$0.40");
-		expect(within(section).getByText("Cache read").nextElementSibling).toHaveTextContent("$0.10");
-		expect(within(section).getByText("Cache write").nextElementSibling).toHaveTextContent("$0.14");
-		expect(within(section).getByText("Output").nextElementSibling).toHaveTextContent("$0.60");
-		await userEvent.click(within(section).getByRole("button", { name: "Claude usage details" }));
-		expect(within(section).getByText("anthropic · claude-sonnet-4")).toBeInTheDocument();
+		const breakdown = within(section).getByTestId("session-estimated-cost");
+		expect(within(breakdown).getByText("Input").nextElementSibling).toHaveTextContent("$0.40");
+		expect(within(breakdown).getByText("Cache read").nextElementSibling).toHaveTextContent("$0.10");
+		expect(within(breakdown).getByText("Cache write").nextElementSibling).toHaveTextContent("$0.14");
+		expect(within(breakdown).getByText("Output").nextElementSibling).toHaveTextContent("$0.60");
+		expect(within(section).getByText("anthropic · Sonnet 4")).toBeInTheDocument();
 		expect(section).not.toHaveTextContent(/lower bound/i);
 	});
 
@@ -864,8 +929,9 @@ describe("SessionInspector usage", () => {
 			"[data-testid='inspector-section']",
 		) as HTMLElement;
 		expect(within(section).getAllByText("≥$0.007").length).toBeGreaterThan(0);
-		expect(within(section).getByText("Input").nextElementSibling).toHaveTextContent("—");
-		expect(within(section).getByText("Cache read").nextElementSibling).toHaveTextContent("—");
+		const breakdown = within(section).getByTestId("session-estimated-cost");
+		expect(within(breakdown).getByText("Input").nextElementSibling).toHaveTextContent("—");
+		expect(within(breakdown).getByText("Cache read").nextElementSibling).toHaveTextContent("—");
 	});
 });
 

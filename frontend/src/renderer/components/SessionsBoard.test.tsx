@@ -296,6 +296,7 @@ describe("SessionsBoard", () => {
 				workspaceWithSessions([
 					boardSession({ id: "s-active", title: "active worker", status: "idle" }),
 					boardSession({ id: "s-empty", title: "empty worker", status: "idle" }),
+					boardSession({ id: "s-tokens", title: "tokens worker", status: "idle" }),
 					terminatedSession(),
 				]),
 			],
@@ -316,6 +317,7 @@ describe("SessionsBoard", () => {
 							uncachedInputNanos: 400_000_000,
 						},
 						sessionId: "s-active",
+						processedTokens: 12_300,
 						totalTokens: 12_400,
 						incomplete: false,
 					},
@@ -325,6 +327,17 @@ describe("SessionsBoard", () => {
 					{
 						estimatedCost: null,
 						sessionId: "s-empty",
+						processedTokens: 0,
+						totalTokens: 0,
+						incomplete: false,
+					},
+				],
+				[
+					"s-tokens",
+					{
+						estimatedCost: null,
+						sessionId: "s-tokens",
+						processedTokens: 800,
 						totalTokens: 800,
 						incomplete: false,
 					},
@@ -341,6 +354,7 @@ describe("SessionsBoard", () => {
 							uncachedInputNanos: null,
 						},
 						sessionId: "s-dead",
+						processedTokens: 1_900,
 						totalTokens: 2_000,
 						incomplete: true,
 					},
@@ -350,10 +364,11 @@ describe("SessionsBoard", () => {
 
 		renderBoard("p1");
 
-		const activeUsage = screen.getByText("≈$1.24 · 12.4K tok");
-		expect(activeUsage).toHaveAttribute("aria-label", "≈$1.24 · 12,400 tokens");
-		const tokensOnlyCard = screen.getByText("empty worker").closest('[data-testid="board-session-card"]') as HTMLElement;
-		expect(within(tokensOnlyCard).getByText("800 tok")).toHaveAttribute("aria-label", "800 tokens");
+		const activeUsage = screen.getByText("≈$1.24 · 12.3K processed");
+		expect(activeUsage).toHaveAttribute("aria-label", "≈$1.24 · 12,300 tokens processed");
+		expect(screen.queryByText("0 processed")).not.toBeInTheDocument();
+		const tokensOnlyCard = screen.getByText("tokens worker").closest('[data-testid="board-session-card"]') as HTMLElement;
+		expect(within(tokensOnlyCard).getByText("800 processed")).toHaveAttribute("aria-label", "800 tokens processed");
 		expect(tokensOnlyCard).not.toHaveTextContent(/[≈≥]\$/);
 		expect(usageQueryMock).toHaveBeenCalledWith("p1");
 		await userEvent.hover(activeUsage);
@@ -368,8 +383,8 @@ describe("SessionsBoard", () => {
 		await userEvent.unhover(activeUsage);
 
 		const archive = await expandArchive();
-		const archivedUsage = within(archive).getByText("≥$0.02 · 2K tok");
-		expect(archivedUsage).toHaveAttribute("aria-label", "≥$0.02 · 2,000 tokens");
+		const archivedUsage = within(archive).getByText("≥$0.02 · 1.9K processed");
+		expect(archivedUsage).toHaveAttribute("aria-label", "≥$0.02 · 1,900 tokens processed");
 		await userEvent.hover(archivedUsage);
 		const archivedTooltip = await screen.findByRole("tooltip");
 		expect(within(archivedTooltip).getByText("Estimated cost")).toBeInTheDocument();
@@ -401,6 +416,7 @@ describe("SessionsBoard", () => {
 						},
 						incomplete: false,
 						sessionId: "s-keyboard",
+						processedTokens: 12_400,
 						totalTokens: 12_400,
 					},
 				],
@@ -416,7 +432,7 @@ describe("SessionsBoard", () => {
 		await userEvent.tab();
 
 		const costTrigger = within(card).getByRole("button", {
-			name: "Estimated cost: ≈$1.24 · 12,400 tokens",
+			name: "Estimated cost: ≈$1.24 · 12,400 tokens processed",
 		});
 		expect(costTrigger).toHaveFocus();
 		const tooltip = await screen.findByRole("tooltip");

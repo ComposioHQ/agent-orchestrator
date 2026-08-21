@@ -29,12 +29,21 @@ func TestGeneratedFractionalRatesLoadInRuntime(t *testing.T) {
 	if err != nil {
 		t.Fatalf("runtime load generated catalog: %v", err)
 	}
+	one, zero := int64(1), int64(0)
 	estimate, err := catalog.Snapshot().Estimate(domain.ModelUsageEvent{
-		ProviderID: "openai",
-		ModelID:    "o",
+		ProviderID:        domain.UsageProviderOpenAI,
+		BillingProviderID: "openai",
+		ModelID:           "o",
 		Tokens: domain.UsageTokenMetrics{
-			InputTokens: 1, UncachedInputTokens: 1, OutputTokens: 1,
+			InputTokens: &one, CachedInputTokens: &zero, UncachedInputTokens: &one, OutputTokens: &one,
+			Provenance: domain.UsageMetricProvenanceSet{
+				InputTokens: domain.UsageMetricReported, CachedInputTokens: domain.UsageMetricReported,
+				UncachedInputTokens: domain.UsageMetricDerived, OutputTokens: domain.UsageMetricReported,
+			},
 		},
+		ProviderDetails: domain.UsageProviderDetails{OpenAI: &domain.OpenAIUsageDetails{
+			CacheWriteInputTokens: &zero,
+		}},
 	})
 	if err != nil {
 		t.Fatalf("runtime estimate generated rates: %v", err)

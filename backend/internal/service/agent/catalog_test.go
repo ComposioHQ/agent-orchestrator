@@ -47,6 +47,11 @@ type countingResolverAgent struct {
 	calls atomic.Int32
 }
 
+type mutableInstallAgent struct {
+	fakeAgent
+	installed atomic.Bool
+}
+
 type blockingResolverAgent struct {
 	fakeAgent
 	started chan struct{}
@@ -154,6 +159,13 @@ func (f *concurrentResolverAgent) ResolveBinary(ctx context.Context) (string, er
 func (f *countingResolverAgent) ResolveBinary(ctx context.Context) (string, error) {
 	f.calls.Add(1)
 	return f.fakeAgent.ResolveBinary(ctx)
+}
+
+func (f *mutableInstallAgent) ResolveBinary(context.Context) (string, error) {
+	if !f.installed.Load() {
+		return "", ports.ErrAgentBinaryNotFound
+	}
+	return "agent", nil
 }
 
 func (f *blockingResolverAgent) ResolveBinary(ctx context.Context) (string, error) {
@@ -430,6 +442,39 @@ func TestRefreshIsRateLimited(t *testing.T) {
 	}
 	if probes != 1 {
 		t.Fatalf("probes = %d, want 1", probes)
+	}
+}
+
+func TestRefreshFreshBypassesRateLimitAfterManualInstall(t *testing.T) {
+	previous := agentRefreshMinInterval
+	agentRefreshMinInterval = time.Hour
+	t.Cleanup(func() { agentRefreshMinInterval = previous })
+
+	agent := &mutableInstallAgent{}
+	svc := NewWithAgents([]agentregistry.HarnessAgent{{
+		Harness: domain.AgentHarness("codex"),
+		Manifest: adapters.Manifest{
+			ID:   "codex",
+			Name: "Codex",
+		},
+		Agent: agent,
+	}})
+
+	initial, err := svc.Refresh(context.Background())
+	if err != nil {
+		t.Fatalf("Refresh: %v", err)
+	}
+	if len(initial.Installed) != 0 {
+		t.Fatalf("initial Installed = %#v, want empty", initial.Installed)
+	}
+
+	agent.installed.Store(true)
+	fresh, err := svc.RefreshFresh(context.Background())
+	if err != nil {
+		t.Fatalf("RefreshFresh: %v", err)
+	}
+	if len(fresh.Installed) != 1 || fresh.Installed[0].ID != "codex" {
+		t.Fatalf("fresh Installed = %#v, want codex", fresh.Installed)
 	}
 }
 

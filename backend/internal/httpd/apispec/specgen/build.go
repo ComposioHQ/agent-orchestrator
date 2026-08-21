@@ -83,6 +83,8 @@ func Build() ([]byte, error) {
 			"Connect Mobile LAN bridge control (loopback/desktop only)"),
 		*(&openapi31.Tag{Name: "browser"}).WithDescription(
 			"Target-isolated desktop browser runtime (loopback only)"),
+		*(&openapi31.Tag{Name: "system"}).WithDescription(
+			"Local machine readiness checks the desktop app runs before showing the board"),
 	}
 
 	for _, op := range operations() {
@@ -277,27 +279,41 @@ var schemaNames = map[string]string{
 	"AgentInventory":                                      "ListAgentsResponse",
 	"AgentInfo":                                           "AgentInfo",
 	"AgentProbeResult":                                    "ProbeAgentResponse",
-	"PortsAgentModelCatalog":                              "AgentModelsResponse",
-	"PortsAgentModelInfo":                                 "AgentModelInfo",
-	"ControllersListNotificationsQuery":                   "ListNotificationsQuery",
-	"ControllersNotificationStreamQuery":                  "NotificationStreamQuery",
-	"ControllersNotificationIDParam":                      "NotificationIDParam",
-	"ControllersNotificationTarget":                       "NotificationTarget",
-	"ControllersNotificationResponse":                     "NotificationResponse",
-	"ControllersListNotificationsResponse":                "ListNotificationsResponse",
-	"ControllersMarkNotificationReadRequest":              "MarkNotificationReadRequest",
-	"ControllersNotificationEnvelope":                     "NotificationEnvelope",
-	"ControllersMarkAllNotificationsReadRequest":          "MarkAllNotificationsReadRequest",
-	"ControllersMarkAllNotificationsReadResponse":         "MarkAllNotificationsReadResponse",
-	"ControllersUsageHookMetadata":                        "UsageHookMetadata",
-	"ControllersListUsageSessionsQuery":                   "ListUsageSessionsQuery",
-	"ControllersEstimatedCostResponse":                    "EstimatedCostResponse",
-	"ControllersCompactSessionUsageResponse":              "CompactSessionUsageResponse",
-	"ControllersListCompactSessionUsageResponse":          "ListCompactSessionUsageResponse",
-	"ControllersUsageTotalsResponse":                      "UsageTotalsResponse",
-	"ControllersUsageModelResponse":                       "UsageModelResponse",
-	"ControllersUsageHarnessResponse":                     "UsageHarnessResponse",
-	"ControllersSessionUsageResponse":                     "SessionUsageResponse",
+	// service/systemcheck: "SystemcheckReport" is a generic default name that
+	// reads like an internal type, not a wire response — rename to match the
+	// endpoint it serves, same treatment as AgentInventory above.
+	"SystemcheckReport":             "SystemRequirementsResponse",
+	"SystemcheckRequirement":        "SystemRequirement",
+	"ControllersInstallTargetParam": "InstallTargetParam",
+	// service/systeminstall: Job backs both StartInstallResponse and
+	// InstallStatusResponse (they're the same Go type), so it reflects to one
+	// shared component — name it after the domain concept, not either alias.
+	"SysteminstallJob":                            "InstallJob",
+	"PortsAgentModelCatalog":                      "AgentModelsResponse",
+	"PortsAgentModelInfo":                         "AgentModelInfo",
+	"ControllersListNotificationsQuery":           "ListNotificationsQuery",
+	"ControllersNotificationStreamQuery":          "NotificationStreamQuery",
+	"ControllersNotificationIDParam":              "NotificationIDParam",
+	"ControllersNotificationTarget":               "NotificationTarget",
+	"ControllersNotificationResponse":             "NotificationResponse",
+	"ControllersListNotificationsResponse":        "ListNotificationsResponse",
+	"ControllersMarkNotificationReadRequest":      "MarkNotificationReadRequest",
+	"ControllersNotificationEnvelope":             "NotificationEnvelope",
+	"ControllersMarkAllNotificationsReadRequest":  "MarkAllNotificationsReadRequest",
+	"ControllersMarkAllNotificationsReadResponse": "MarkAllNotificationsReadResponse",
+	"ControllersUsageHookMetadata":                "UsageHookMetadata",
+	"ControllersListUsageSessionsQuery":           "ListUsageSessionsQuery",
+	"ControllersEstimatedCostResponse":            "EstimatedCostResponse",
+	"ControllersCompactSessionUsageResponse":      "CompactSessionUsageResponse",
+	"ControllersListCompactSessionUsageResponse":  "ListCompactSessionUsageResponse",
+	"ControllersUsageMetricProvenanceResponse":    "UsageMetricProvenanceResponse",
+	"ControllersOpenAIUsageDetailsResponse":       "OpenAIUsageDetailsResponse",
+	"ControllersAnthropicUsageDetailsResponse":    "AnthropicUsageDetailsResponse",
+	"ControllersUsageProviderDetailsResponse":     "UsageProviderDetailsResponse",
+	"ControllersUsageTotalsResponse":              "UsageTotalsResponse",
+	"ControllersUsageModelResponse":               "UsageModelResponse",
+	"ControllersUsageHarnessResponse":             "UsageHarnessResponse",
+	"ControllersSessionUsageResponse":             "SessionUsageResponse",
 	// httpd/controllers — standalone shell terminal wire envelopes
 	"ControllersShellTerminalHandleIDParam": "ShellTerminalHandleIDParam",
 	"ControllersOpenShellTerminalRequest":   "OpenShellTerminalRequest",
@@ -464,7 +480,47 @@ func operations() []operation {
 	ops = append(ops, mobileDeviceOperations()...)
 	ops = append(ops, browserOperations()...)
 	ops = append(ops, shellTerminalOperations()...)
+	ops = append(ops, systemOperations()...)
 	return ops
+}
+
+// systemOperations declares the startup requirements gate the desktop loading
+// screen polls before showing the board, plus the real-install operations for
+// the fixed system/install target allowlist.
+func systemOperations() []operation {
+	return []operation{
+		{
+			method: http.MethodGet, path: "/api/v1/system/requirements", id: "getSystemRequirements", tag: "system",
+			summary: "Check local machine readiness (git, tmux, agent harness, gh)",
+			resps: []respUnit{
+				{http.StatusOK, controllers.SystemRequirementsResponse{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodPost, path: "/api/v1/system/install/{target}", id: "startSystemInstall", tag: "system",
+			summary:    "Start (or return the already-running) install job for a fixed system target",
+			pathParams: []any{controllers.InstallTargetParam{}},
+			resps: []respUnit{
+				{http.StatusAccepted, controllers.StartInstallResponse{}},
+				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodGet, path: "/api/v1/system/install/{target}", id: "getSystemInstallStatus", tag: "system",
+			summary:    "Get the current or last known install job status for a system target",
+			pathParams: []any{controllers.InstallTargetParam{}},
+			resps: []respUnit{
+				{http.StatusOK, controllers.InstallStatusResponse{}},
+				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+	}
 }
 
 func browserOperations() []operation {

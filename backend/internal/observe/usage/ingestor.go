@@ -312,16 +312,18 @@ func (i *Ingestor) Ingest(ctx context.Context, sourceID int64) (IngestResult, er
 				for index := range parsed.Events {
 					estimate, estimateErr := snapshot.Estimate(parsed.Events[index])
 					if estimateErr != nil {
-						parsed.Events[index].PricingVersion = snapshot.ProviderVersion(parsed.Events[index].ProviderID)
+						parsed.Events[index].Costs.PricingVersion = snapshot.ProviderVersion(parsed.Events[index].BillingProviderID)
 						i.onPricingError(fmt.Errorf("estimate usage event %q: %w", parsed.Events[index].SourceEventKey, estimateErr))
 						continue
 					}
-					parsed.Events[index].UncachedInputCostNanos = estimate.UncachedInputNanos
-					parsed.Events[index].CacheReadCostNanos = estimate.CacheReadNanos
-					parsed.Events[index].CacheWriteCostNanos = estimate.CacheWriteNanos
-					parsed.Events[index].OutputCostNanos = estimate.OutputNanos
-					parsed.Events[index].EstimatedCostNanos = estimate.TotalNanos
-					parsed.Events[index].PricingVersion = estimate.PricingVersion
+					parsed.Events[index].Costs = domain.UsageEventCosts{
+						UncachedInputCostNanos: estimate.UncachedInputNanos,
+						CacheReadCostNanos:     estimate.CacheReadNanos,
+						CacheWriteCostNanos:    estimate.CacheWriteNanos,
+						OutputCostNanos:        estimate.OutputNanos,
+						EstimatedCostNanos:     estimate.TotalNanos,
+						PricingVersion:         estimate.PricingVersion,
+					}
 				}
 				return i.store.ApplyUsageChunk(
 					ctx,

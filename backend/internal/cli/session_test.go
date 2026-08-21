@@ -645,6 +645,53 @@ func TestSessionClaimPR_JSONAndNoTakeoverError(t *testing.T) {
 	}
 }
 
+// TestSessionClaimPR_Draft covers #4171 from the CLI side: claiming a draft PR
+// succeeds and the draft state survives into `--json` output instead of the
+// daemon answering PR_NOT_OPEN.
+func TestSessionClaimPR_Draft(t *testing.T) {
+	cfg := setConfigEnv(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/sessions/demo-1":
+			_, _ = io.WriteString(w, `{"session":`+sessionJSON("demo-1", "demo", "worker", "working", false)+`}`)
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/projects/demo":
+			_, _ = io.WriteString(w, `{"status":"ok","project":{"id":"demo","name":"Demo","path":"/repo/demo","repo":"https://github.com/aoagents/agent-orchestrator","defaultBranch":"main"}}`)
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/sessions/demo-1/pr/claim":
+			var req claimPRRequest
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			_, _ = io.WriteString(w, `{"ok":true,"sessionId":"demo-1","prs":[{"url":`+jsonQuote(req.PR)+`,"number":4168,"state":"draft","ci":"pending","review":"none","mergeability":"unknown","reviewComments":false,"updatedAt":"2026-08-20T12:00:00Z"}],"branchChanged":false,"takenOverFrom":[]}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	writeRunFileFor(t, cfg, srv)
+
+	out, errOut, err := executeCLI(t, Deps{ProcessAlive: func(int) bool { return true }}, "session", "claim-pr", "demo-1", "4168")
+	if err != nil {
+		t.Fatalf("claim-pr draft failed: %v stderr=%s", err, errOut)
+	}
+	if !strings.Contains(out, "claimed PR #4168") {
+		t.Fatalf("unexpected output: %s", out)
+	}
+
+	out, errOut, err = executeCLI(t, Deps{ProcessAlive: func(int) bool { return true }}, "session", "claim-pr", "demo-1", "4168", "--json")
+	if err != nil {
+		t.Fatalf("claim-pr draft --json failed: %v stderr=%s", err, errOut)
+	}
+	var got claimPRResponse
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatalf("bad json err=%v out=%s", err, out)
+	}
+	if len(got.PRs) != 1 || got.PRs[0].State != "draft" {
+		t.Fatalf("claim response = %#v, want a single draft PR", got.PRs)
+	}
+}
+
 func TestSessionClaimPR_GitLabMR(t *testing.T) {
 	cfg := setConfigEnv(t)
 	var capturedReq claimPRRequest

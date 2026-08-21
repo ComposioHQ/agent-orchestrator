@@ -268,12 +268,19 @@ function toUsagePresentation(
 	usage: SessionUsageSummary | undefined,
 	t: TFunction,
 ): BoardUsagePresentation | undefined {
-	if (!usage || (usage.totalTokens <= 0 && !usage.estimatedCost)) return undefined;
+	const processedTokens = usage?.processedTokens ?? null;
+	if (!usage || ((processedTokens === null || processedTokens <= 0) && !usage.estimatedCost)) {
+		return undefined;
+	}
 	const cost = formatEstimatedCost(usage.estimatedCost);
-	const compactTokens = formatTokenCount(usage.totalTokens);
-	const accessibleTokens = t("shell.usageTokens", {
-		count: usage.totalTokens.toLocaleString("en-US"),
+	if (processedTokens === null || processedTokens <= 0) {
+		return { accessibleLabel: cost as string, compactLabel: cost as string };
+	}
+	const compactCount = formatTokenCount(processedTokens).replace(/ tok$/, "");
+	const accessibleTokens = t("shell.usageProcessed", {
+		count: processedTokens.toLocaleString("en-US"),
 	});
+	const compactTokens = t("shell.usageProcessedCompact", { count: compactCount });
 	return {
 		accessibleLabel: cost ? `${cost} · ${accessibleTokens}` : accessibleTokens,
 		compactLabel: cost ? `${cost} · ${compactTokens}` : compactTokens,

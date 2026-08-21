@@ -476,8 +476,8 @@ function ExpandedTabRow({ active, chrome, closeTitle, onClose, onSelect, onlyTab
 			<button
 				aria-label={closeLabel}
 				className={cn(
-					"grid size-5 shrink-0 place-items-center overflow-hidden text-passive opacity-0",
-					"transition-opacity hover:bg-interactive-hover hover:text-foreground",
+					"mr-1.5 grid size-control-sm shrink-0 place-items-center overflow-hidden rounded-sm text-passive opacity-0",
+					"transition-[opacity,background-color,color] hover:bg-interactive-hover hover:text-foreground",
 					"group-hover/tab-row:opacity-100 group-focus-within/tab-row:opacity-100",
 					"disabled:pointer-events-none",
 				)}

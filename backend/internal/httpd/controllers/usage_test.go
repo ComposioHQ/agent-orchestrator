@@ -43,15 +43,17 @@ func newUsageTestServer(t *testing.T, svc *fakeUsageSummaryService) *httptest.Se
 
 func TestUsageAPIListsCompactProjectUsage(t *testing.T) {
 	inputCost := int64(300000000)
+	processed := int64(12300)
+	unavailableProcessed := int64(3)
 	svc := &fakeUsageSummaryService{items: []domain.CompactSessionUsage{
 		{
-			SessionID: "reverb-12", TotalTokens: 12400, Incomplete: true,
+			SessionID: "reverb-12", ProcessedTokens: &processed, Incomplete: true,
 			EstimatedCost: &domain.EstimatedCost{
 				TotalNanos: 420000000, UncachedInputNanos: &inputCost,
 				Coverage: domain.EstimatedCostCoveragePartial,
 			},
 		},
-		{SessionID: "unavailable", TotalTokens: 3},
+		{SessionID: "unavailable", ProcessedTokens: &unavailableProcessed},
 	}}
 	srv := newUsageTestServer(t, svc)
 
@@ -64,15 +66,17 @@ func TestUsageAPIListsCompactProjectUsage(t *testing.T) {
 	}
 	var got struct {
 		Sessions []struct {
-			SessionID     string          `json:"sessionId"`
-			TotalTokens   int64           `json:"totalTokens"`
-			Incomplete    bool            `json:"incomplete"`
-			EstimatedCost json.RawMessage `json:"estimatedCost"`
+			SessionID       string          `json:"sessionId"`
+			ProcessedTokens int64           `json:"processedTokens"`
+			TotalTokens     int64           `json:"totalTokens"`
+			Incomplete      bool            `json:"incomplete"`
+			EstimatedCost   json.RawMessage `json:"estimatedCost"`
 		} `json:"sessions"`
 	}
 	mustJSON(t, body, &got)
 	if len(got.Sessions) != 2 || got.Sessions[0].SessionID != "reverb-12" ||
-		got.Sessions[0].TotalTokens != 12400 || !got.Sessions[0].Incomplete {
+		got.Sessions[0].ProcessedTokens != 12300 || got.Sessions[0].TotalTokens != 12300 ||
+		!got.Sessions[0].Incomplete {
 		t.Fatalf("response = %+v", got)
 	}
 	var cost struct {
@@ -93,13 +97,26 @@ func TestUsageAPIListsCompactProjectUsage(t *testing.T) {
 
 func TestUsageAPIShowsDetailedEstimatedCostAndProviderAttribution(t *testing.T) {
 	input := int64(1000)
+	uncached := int64(600)
 	output := int64(200)
-	cacheRead := int64(400)
 	zero := int64(0)
+	cachedInput := int64(400)
+	cacheWrite := int64(100)
+	reasoning := int64(40)
+	processed := int64(1200)
 	svc := &fakeUsageSummaryService{detail: domain.SessionUsageSummary{
 		SessionID: "reverb-12", Incomplete: true,
 		Totals: domain.UsageMetricTotals{
-			InputTokens: &input, CacheReadTokens: &cacheRead, OutputTokens: &output,
+			InputTokens: &input, CachedInputTokens: &cachedInput, UncachedInputTokens: &uncached,
+			OutputTokens: &output, ProcessedTokens: &processed,
+			Provenance: domain.UsageMetricProvenanceSet{
+				InputTokens: domain.UsageMetricReported, CachedInputTokens: domain.UsageMetricReported,
+				UncachedInputTokens: domain.UsageMetricDerived,
+				OutputTokens:        domain.UsageMetricReported,
+			},
+			ProviderDetails: domain.UsageProviderDetails{OpenAI: &domain.OpenAIUsageDetails{
+				ReasoningOutputTokens: &reasoning, CacheWriteInputTokens: &cacheWrite,
+			}},
 			EstimatedCost: &domain.EstimatedCost{
 				TotalNanos: 135, UncachedInputNanos: &input, CacheWriteNanos: &zero,
 				OutputNanos: &output, Coverage: domain.EstimatedCostCoveragePartial,
@@ -108,7 +125,7 @@ func TestUsageAPIShowsDetailedEstimatedCostAndProviderAttribution(t *testing.T) 
 		Harnesses: []domain.HarnessUsageSummary{{
 			Harness: domain.HarnessCodex,
 			Models: []domain.ModelUsageSummary{{
-				ProviderID: "openai", ModelID: "gpt-5.6",
+				BillingProviderID: "openai", ModelID: "gpt-5.6",
 				Totals: domain.UsageMetricTotals{EstimatedCost: &domain.EstimatedCost{
 					TotalNanos: 0, UncachedInputNanos: &zero, CacheReadNanos: &zero,
 					CacheWriteNanos: &zero, OutputNanos: &zero, Coverage: domain.EstimatedCostCoverageComplete,
@@ -125,7 +142,7 @@ func TestUsageAPIShowsDetailedEstimatedCostAndProviderAttribution(t *testing.T) 
 	if svc.sessionID != "reverb-12" {
 		t.Fatalf("session id = %q", svc.sessionID)
 	}
-	for _, forbidden := range []string{`"valueNanos"`, `"pricingVersion"`} {
+	for _, forbidden := range []string{`"cost"`, `"valueNanos"`, `"pricingVersion"`} {
 		if strings.Contains(string(body), forbidden) {
 			t.Fatalf("detailed usage exposed %s: %s", forbidden, body)
 		}
@@ -134,7 +151,20 @@ func TestUsageAPIShowsDetailedEstimatedCostAndProviderAttribution(t *testing.T) 
 		SessionID  string `json:"sessionId"`
 		Incomplete bool   `json:"incomplete"`
 		Totals     struct {
-			InputTokens   int64 `json:"inputTokens"`
+			InputTokens         int64 `json:"inputTokens"`
+			CachedInputTokens   int64 `json:"cachedInputTokens"`
+			UncachedInputTokens int64 `json:"uncachedInputTokens"`
+			OutputTokens        int64 `json:"outputTokens"`
+			ProcessedTokens     int64 `json:"processedTokens"`
+			CacheReadTokens     int64 `json:"cacheReadTokens"`
+			CacheWriteTokens    int64 `json:"cacheWriteTokens"`
+			ReasoningTokens     int64 `json:"reasoningTokens"`
+			ProviderDetails     struct {
+				OpenAI struct {
+					Reasoning  int64 `json:"openaiReasoningOutputTokens"`
+					CacheWrite int64 `json:"openaiCacheWriteInputTokens"`
+				} `json:"openai"`
+			} `json:"providerDetails"`
 			EstimatedCost struct {
 				TotalNanos      int64  `json:"totalNanos"`
 				CacheReadNanos  *int64 `json:"cacheReadNanos"`
@@ -160,6 +190,12 @@ func TestUsageAPIShowsDetailedEstimatedCostAndProviderAttribution(t *testing.T) 
 		got.Totals.EstimatedCost.TotalNanos != 135 || got.Totals.EstimatedCost.CacheReadNanos != nil ||
 		got.Totals.EstimatedCost.CacheWriteNanos == nil || *got.Totals.EstimatedCost.CacheWriteNanos != 0 ||
 		got.Totals.EstimatedCost.Coverage != "partial" ||
+		got.Totals.CachedInputTokens != 400 || got.Totals.UncachedInputTokens != 600 ||
+		got.Totals.OutputTokens != 200 ||
+		got.Totals.ProcessedTokens != 1200 || got.Totals.CacheReadTokens != 400 ||
+		got.Totals.CacheWriteTokens != 100 || got.Totals.ReasoningTokens != 40 ||
+		got.Totals.ProviderDetails.OpenAI.Reasoning != 40 ||
+		got.Totals.ProviderDetails.OpenAI.CacheWrite != 100 ||
 		len(got.Harnesses) != 1 || len(got.Harnesses[0].Models) != 1 ||
 		got.Harnesses[0].Models[0].ProviderID != "openai" || got.Harnesses[0].Models[0].ModelID != "gpt-5.6" ||
 		got.Harnesses[0].Models[0].Totals.EstimatedCost.TotalNanos != 0 ||

@@ -236,23 +236,26 @@ func (b *CostBackfiller) process(ctx context.Context, job costBackfillJob) error
 			updates := make([]domain.UsageCostUpdate, 0, len(candidates))
 			for _, candidate := range candidates {
 				event := domain.ModelUsageEvent{
-					ProviderID:         candidate.ProviderID,
-					ModelID:            candidate.ModelID,
-					Tokens:             candidate.Tokens,
-					CacheWrite5mTokens: candidate.CacheWrite5mTokens,
-					CacheWrite1hTokens: candidate.CacheWrite1hTokens,
-					SourceEventKey:     candidate.SourceEventKey,
+					ProviderID:        candidate.ProviderID,
+					BillingProviderID: candidate.BillingProviderID,
+					ModelID:           candidate.ModelID,
+					Tokens:            candidate.Tokens,
+					ProviderDetails:   candidate.ProviderDetails,
+					SourceEventKey:    candidate.SourceEventKey,
 				}
 				estimate, estimateErr := job.snapshot.Estimate(event)
-				update := domain.UsageCostUpdate{Candidate: candidate, PricingVersion: job.version}
+				update := domain.UsageCostUpdate{
+					Candidate: candidate,
+					Costs:     domain.UsageEventCosts{PricingVersion: job.version},
+				}
 				if estimateErr != nil {
 					b.config.OnError(estimateErr)
 				} else {
-					update.UncachedInputCostNanos = estimate.UncachedInputNanos
-					update.CacheReadCostNanos = estimate.CacheReadNanos
-					update.CacheWriteCostNanos = estimate.CacheWriteNanos
-					update.OutputCostNanos = estimate.OutputNanos
-					update.EstimatedCostNanos = estimate.TotalNanos
+					update.Costs.UncachedInputCostNanos = estimate.UncachedInputNanos
+					update.Costs.CacheReadCostNanos = estimate.CacheReadNanos
+					update.Costs.CacheWriteCostNanos = estimate.CacheWriteNanos
+					update.Costs.OutputCostNanos = estimate.OutputNanos
+					update.Costs.EstimatedCostNanos = estimate.TotalNanos
 				}
 				updates = append(updates, update)
 			}

@@ -5034,6 +5034,113 @@ paths:
       summary: Rename a standalone shell terminal tab
       tags:
       - shellTerminals
+  /api/v1/system/install/{target}:
+    get:
+      operationId: getSystemInstallStatus
+      parameters:
+      - description: 'Install target identifier: tmux, gh, claude, codex, opencode,
+          or copilot.'
+        in: path
+        name: target
+        required: true
+        schema:
+          description: 'Install target identifier: tmux, gh, claude, codex, opencode,
+            or copilot.'
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InstallJob'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Get the current or last known install job status for a system target
+      tags:
+      - system
+    post:
+      operationId: startSystemInstall
+      parameters:
+      - description: 'Install target identifier: tmux, gh, claude, codex, opencode,
+          or copilot.'
+        in: path
+        name: target
+        required: true
+        schema:
+          description: 'Install target identifier: tmux, gh, claude, codex, opencode,
+            or copilot.'
+          type: string
+      responses:
+        "202":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InstallJob'
+          description: Accepted
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Start (or return the already-running) install job for a fixed system
+        target
+      tags:
+      - system
+  /api/v1/system/requirements:
+    get:
+      operationId: getSystemRequirements
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SystemRequirementsResponse'
+          description: OK
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Check local machine readiness (git, tmux, agent harness, gh)
+      tags:
+      - system
   /api/v1/usage/sessions:
     get:
       operationId: listCompactSessionUsage
@@ -5335,6 +5442,34 @@ components:
       required:
       - switch
       type: object
+    AnthropicUsageDetailsResponse:
+      properties:
+        anthropicCacheCreation1hInputTokens:
+          minimum: 0
+          type:
+          - "null"
+          - integer
+        anthropicCacheCreation5mInputTokens:
+          minimum: 0
+          type:
+          - "null"
+          - integer
+        anthropicCacheCreationInputTokens:
+          minimum: 0
+          type:
+          - "null"
+          - integer
+        anthropicDirectUncachedInputTokens:
+          minimum: 0
+          type:
+          - "null"
+          - integer
+      required:
+      - anthropicDirectUncachedInputTokens
+      - anthropicCacheCreationInputTokens
+      - anthropicCacheCreation5mInputTokens
+      - anthropicCacheCreation1hInputTokens
+      type: object
     AttachmentInput:
       properties:
         data:
@@ -5512,14 +5647,23 @@ components:
             type: object
         incomplete:
           type: boolean
+        processedTokens:
+          description: Canonical input plus output. Null when either component is
+            unknown.
+          minimum: 0
+          type:
+          - "null"
+          - integer
         sessionId:
           type: string
         totalTokens:
+          description: Deprecated compatibility alias for processedTokens.
           format: int64
           minimum: 0
           type: integer
       required:
       - sessionId
+      - processedTokens
       - totalTokens
       - incomplete
       - estimatedCost
@@ -6629,6 +6773,54 @@ components:
       required:
       - path
       type: object
+    InstallJob:
+      properties:
+        command:
+          description: Human-readable install command, e.g. "brew install tmux", for
+            display even before/without output.
+          type: string
+        error:
+          description: 'Set on failure or when the target is unsupported on this machine:
+            the exec error, the Unsupported reason, or a timeout message.'
+          type: string
+        finishedAt:
+          description: Absent until the job finishes.
+          format: date-time
+          type:
+          - "null"
+          - string
+        output:
+          description: Combined stdout+stderr from the install command, tail-capped
+            to the last ~4000 bytes.
+          type: string
+        startedAt:
+          format: date-time
+          type:
+          - "null"
+          - string
+        status:
+          description: Current lifecycle state of the job.
+          enum:
+          - idle
+          - running
+          - succeeded
+          - failed
+          - unsupported
+          type: string
+        target:
+          description: Install target this job ran (or is running) for.
+          enum:
+          - tmux
+          - gh
+          - claude
+          - codex
+          - opencode
+          - copilot
+          type: string
+      required:
+      - target
+      - status
+      type: object
     KillReviewResponse:
       properties:
         reviewerHandleId:
@@ -7011,6 +7203,22 @@ components:
       required:
       - kind
       - sessionId
+      type: object
+    OpenAIUsageDetailsResponse:
+      properties:
+        openaiCacheWriteInputTokens:
+          minimum: 0
+          type:
+          - "null"
+          - integer
+        openaiReasoningOutputTokens:
+          minimum: 0
+          type:
+          - "null"
+          - integer
+      required:
+      - openaiReasoningOutputTokens
+      - openaiCacheWriteInputTokens
       type: object
     OpenShellTerminalRequest:
       properties:
@@ -8519,6 +8727,51 @@ components:
       required:
       - targetHarness
       type: object
+    SystemRequirement:
+      properties:
+        detail:
+          description: 'Extra context: the resolved path when satisfied, or why it
+            is not.'
+          type: string
+        id:
+          description: Stable requirement identifier.
+          enum:
+          - git
+          - tmux
+          - harness
+          - gh
+          type: string
+        label:
+          description: Human-readable requirement name.
+          type: string
+        required:
+          description: Whether this requirement blocks the overall Ready state.
+          type: boolean
+        satisfied:
+          description: Whether this requirement is currently met.
+          type: boolean
+      required:
+      - id
+      - label
+      - satisfied
+      - required
+      type: object
+    SystemRequirementsResponse:
+      properties:
+        ready:
+          description: True iff every requirement with Required=true is satisfied.
+            Requirements with Required=false (e.g. gh) are advisory and never block
+            readiness.
+          type: boolean
+        requirements:
+          description: 'Individual checks, in stable order: git, tmux, harness, gh.'
+          items:
+            $ref: '#/components/schemas/SystemRequirement'
+          type: array
+      required:
+      - ready
+      - requirements
+      type: object
     TrackerIntakeConfig:
       properties:
         assignee:
@@ -8663,6 +8916,42 @@ components:
       required:
       - harness
       type: object
+    UsageMetricProvenanceResponse:
+      properties:
+        cachedInputTokens:
+          enum:
+          - reported
+          - derived
+          - unsupported
+          - unknown
+          type: string
+        inputTokens:
+          enum:
+          - reported
+          - derived
+          - unsupported
+          - unknown
+          type: string
+        outputTokens:
+          enum:
+          - reported
+          - derived
+          - unsupported
+          - unknown
+          type: string
+        uncachedInputTokens:
+          enum:
+          - reported
+          - derived
+          - unsupported
+          - unknown
+          type: string
+      required:
+      - inputTokens
+      - cachedInputTokens
+      - uncachedInputTokens
+      - outputTokens
+      type: object
     UsageModelResponse:
       properties:
         modelId:
@@ -8676,13 +8965,32 @@ components:
       - modelId
       - totals
       type: object
+    UsageProviderDetailsResponse:
+      properties:
+        anthropic:
+          $ref: '#/components/schemas/AnthropicUsageDetailsResponse'
+        openai:
+          $ref: '#/components/schemas/OpenAIUsageDetailsResponse'
+      type: object
     UsageTotalsResponse:
       properties:
         cacheReadTokens:
+          description: Deprecated compatibility alias for cachedInputTokens.
+          minimum: 0
           type:
           - "null"
           - integer
         cacheWriteTokens:
+          description: Deprecated compatibility aggregate of provider cache-write
+            input counters.
+          minimum: 0
+          type:
+          - "null"
+          - integer
+        cachedInputTokens:
+          description: Input read from an existing provider cache. Cache hit percentage
+            uses cachedInputTokens divided by inclusive inputTokens.
+          minimum: 0
           type:
           - "null"
           - integer
@@ -8692,28 +9000,53 @@ components:
           - $ref: '#/components/schemas/EstimatedCostResponse'
             type: object
         inputTokens:
+          description: Total input, including cached and uncached input.
+          minimum: 0
           type:
           - "null"
           - integer
         outputTokens:
+          description: Total output, including provider-specific subsets such as reasoning
+            output.
+          minimum: 0
           type:
           - "null"
           - integer
+        processedTokens:
+          description: Canonical input plus output. Null when either component is
+            unknown.
+          minimum: 0
+          type:
+          - "null"
+          - integer
+        provenance:
+          $ref: '#/components/schemas/UsageMetricProvenanceResponse'
+        providerDetails:
+          $ref: '#/components/schemas/UsageProviderDetailsResponse'
         reasoningTokens:
+          description: Deprecated compatibility alias for the OpenAI reasoning-output
+            subset.
+          minimum: 0
           type:
           - "null"
           - integer
         uncachedInputTokens:
+          description: Input not read from an existing provider cache.
+          minimum: 0
           type:
           - "null"
           - integer
       required:
       - inputTokens
+      - cachedInputTokens
       - uncachedInputTokens
+      - outputTokens
+      - processedTokens
       - cacheReadTokens
       - cacheWriteTokens
-      - outputTokens
       - reasoningTokens
+      - provenance
+      - providerDetails
       - estimatedCost
       type: object
     WorkspaceFileResponse:
@@ -8847,3 +9180,6 @@ tags:
   name: mobile
 - description: Target-isolated desktop browser runtime (loopback only)
   name: browser
+- description: Local machine readiness checks the desktop app runs before showing
+    the board
+  name: system

@@ -374,13 +374,15 @@ func newFakeBackfillStore(count int) *fakeBackfillStore {
 	}
 	for index := 0; index < count; index++ {
 		store.candidates = append(store.candidates, domain.UsageCostCandidate{
-			ID:         int64(index + 1),
-			BindingID:  1,
-			ProviderID: "OpenAI",
-			ModelID:    "gpt-test",
-			Tokens: domain.UsageTokenMetrics{
-				InputTokens: 1, UncachedInputTokens: 1,
-			},
+			ID:                int64(index + 1),
+			BindingID:         1,
+			ProviderID:        domain.UsageProviderOpenAI,
+			BillingProviderID: "OpenAI",
+			ModelID:           "gpt-test",
+			Tokens:            testUsageMetrics(1, 0, 1, 0, domain.UsageMetricReported),
+			ProviderDetails: domain.UsageProviderDetails{OpenAI: &domain.OpenAIUsageDetails{
+				ReasoningOutputTokens: int64Pointer(0), CacheWriteInputTokens: int64Pointer(0),
+			}},
 			SourceEventKey: fmt.Sprintf("event-%03d", index),
 		})
 	}
@@ -414,7 +416,7 @@ func (s *fakeBackfillStore) ListUsageCostCandidates(
 	}
 	batch := make([]domain.UsageCostCandidate, 0, 256)
 	for _, candidate := range s.candidates {
-		if candidate.ID > afterID && !s.totalKnown[candidate.ID] && pricing.CanonicalProviderID(candidate.ProviderID) == providerID &&
+		if candidate.ID > afterID && !s.totalKnown[candidate.ID] && pricing.CanonicalProviderID(candidate.BillingProviderID) == providerID &&
 			candidate.PricingVersion != version && len(batch) < 256 {
 			batch = append(batch, candidate)
 		}
@@ -440,7 +442,7 @@ func (s *fakeBackfillStore) ApplyUsageCostUpdates(
 	defer s.mu.Unlock()
 	s.batchSizes = append(s.batchSizes, len(updates))
 	if len(updates) > 0 {
-		s.batchVersions = append(s.batchVersions, updates[0].PricingVersion)
+		s.batchVersions = append(s.batchVersions, updates[0].Costs.PricingVersion)
 	}
 	applied := 0
 	for _, update := range updates {
@@ -449,15 +451,15 @@ func (s *fakeBackfillStore) ApplyUsageCostUpdates(
 			if candidate.ID != update.Candidate.ID || candidate.PricingVersion != update.Candidate.PricingVersion {
 				continue
 			}
-			candidate.PricingVersion = update.PricingVersion
-			s.totalKnown[candidate.ID] = update.EstimatedCostNanos != nil
+			candidate.PricingVersion = update.Costs.PricingVersion
+			s.totalKnown[candidate.ID] = update.Costs.EstimatedCostNanos != nil
 			applied++
 			break
 		}
 	}
 	remaining := false
 	if len(updates) > 0 {
-		version := updates[0].PricingVersion
+		version := updates[0].Costs.PricingVersion
 		for _, candidate := range s.candidates {
 			if !s.totalKnown[candidate.ID] && candidate.PricingVersion != version {
 				remaining = true
@@ -469,7 +471,7 @@ func (s *fakeBackfillStore) ApplyUsageCostUpdates(
 		s.doneOnce.Do(func() { close(s.complete) })
 	}
 	if len(updates) > 0 {
-		s.applied <- updates[0].PricingVersion
+		s.applied <- updates[0].Costs.PricingVersion
 	}
 	return applied, nil
 }

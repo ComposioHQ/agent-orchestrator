@@ -59,6 +59,14 @@ type AgentSwitch struct {
 	FinalHandoffHash        string
 }
 
+type AnthropicUsageEventDetail struct {
+	EventID                             int64
+	AnthropicDirectUncachedInputTokens  sql.NullInt64
+	AnthropicCacheCreationInputTokens   sql.NullInt64
+	AnthropicCacheCreation5mInputTokens sql.NullInt64
+	AnthropicCacheCreation1hInputTokens sql.NullInt64
+}
+
 type AppSetting struct {
 	ID                 int64
 	DefaultSessionMode domain.SessionMode
@@ -192,26 +200,28 @@ type ConversationTurn struct {
 }
 
 type ModelUsageEvent struct {
-	ID                     int64
-	BindingID              int64
-	UsageSourceID          int64
-	ModelID                string
-	InputTokens            int64
-	UncachedInputTokens    int64
-	CacheReadTokens        int64
-	CacheWriteTokens       int64
-	OutputTokens           int64
-	ReasoningTokens        sql.NullInt64
-	SourceEventKey         string
-	ProviderID             sql.NullString
-	CacheWrite5mTokens     sql.NullInt64
-	CacheWrite1hTokens     sql.NullInt64
-	UncachedInputCostNanos sql.NullInt64
-	CacheReadCostNanos     sql.NullInt64
-	CacheWriteCostNanos    sql.NullInt64
-	OutputCostNanos        sql.NullInt64
-	EstimatedCostNanos     sql.NullInt64
-	PricingVersion         string
+	ID                      int64
+	BindingID               int64
+	UsageSourceID           int64
+	ProviderID              string
+	ModelID                 string
+	InputTokens             sql.NullInt64
+	InputProvenance         string
+	CachedInputTokens       sql.NullInt64
+	CachedInputProvenance   string
+	UncachedInputTokens     sql.NullInt64
+	UncachedInputProvenance string
+	OutputTokens            sql.NullInt64
+	OutputProvenance        string
+	SourceEventKey          string
+	CreatedAt               sql.NullTime
+	BillingProviderID       sql.NullString
+	UncachedInputCostNanos  sql.NullInt64
+	CacheReadCostNanos      sql.NullInt64
+	CacheWriteCostNanos     sql.NullInt64
+	OutputCostNanos         sql.NullInt64
+	EstimatedCostNanos      sql.NullInt64
+	PricingVersion          string
 }
 
 type Notification struct {
@@ -225,6 +235,13 @@ type Notification struct {
 	Status     domain.NotificationStatus
 	CreatedAt  time.Time
 	ResolvedAt sql.NullTime
+}
+
+type OpenaiUsageEventDetail struct {
+	EventID                     int64
+	OpenaiReasoningOutputTokens sql.NullInt64
+	OpenaiCacheWriteInputTokens sql.NullInt64
+	OpenaiReportedTotalTokens   sql.NullInt64
 }
 
 type PR struct {

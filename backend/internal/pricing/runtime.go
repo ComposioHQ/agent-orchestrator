@@ -305,12 +305,26 @@ type Estimate struct {
 	PricingVersion     string
 }
 
+// billableTokens is the disjoint bucket split pricing charges against. Each
+// bucket is nil when the durable event never collected it; a non-nil zero is a
+// known zero. The canonical usage vector deliberately folds cache writes into
+// uncached input, so the split is rebuilt from the provider detail block.
+type billableTokens struct {
+	uncachedInput *int64
+	cacheRead     *int64
+	cacheWrite    *int64
+	cacheWrite5m  *int64
+	cacheWrite1h  *int64
+	output        *int64
+}
+
 // Estimate prices one normalized usage event against this immutable snapshot.
 func (s *Snapshot) Estimate(event domain.ModelUsageEvent) (Estimate, error) {
-	if err := validateEventTokens(event); err != nil {
+	buckets, err := billableTokensFor(event)
+	if err != nil {
 		return Estimate{}, err
 	}
-	providerID := CanonicalProviderID(event.ProviderID)
+	providerID := CanonicalProviderID(event.BillingProviderID)
 	modelID := CanonicalModelID(providerID, event.ModelID)
 	var rates exactRates
 	version := ""
@@ -320,19 +334,19 @@ func (s *Snapshot) Estimate(event domain.ModelUsageEvent) (Estimate, error) {
 			rates = provider.models[modelID]
 		}
 	}
-	input, err := charge(event.Tokens.UncachedInputTokens, rates.input)
+	input, err := chargeOptional(buckets.uncachedInput, rates.input)
 	if err != nil {
 		return Estimate{}, fmt.Errorf("uncached input cost: %w", err)
 	}
-	read, err := charge(event.Tokens.CacheReadTokens, rates.read)
+	read, err := chargeOptional(buckets.cacheRead, rates.read)
 	if err != nil {
 		return Estimate{}, fmt.Errorf("cache read cost: %w", err)
 	}
-	write, err := estimateCacheWrite(providerID, event, rates)
+	write, err := estimateCacheWrite(providerID, buckets, rates)
 	if err != nil {
 		return Estimate{}, fmt.Errorf("cache write cost: %w", err)
 	}
-	output, err := charge(event.Tokens.OutputTokens, rates.output)
+	output, err := chargeOptional(buckets.output, rates.output)
 	if err != nil {
 		return Estimate{}, fmt.Errorf("output cost: %w", err)
 	}
@@ -347,35 +361,69 @@ func (s *Snapshot) Estimate(event domain.ModelUsageEvent) (Estimate, error) {
 	return estimate, nil
 }
 
-func validateEventTokens(event domain.ModelUsageEvent) error {
-	values := []int64{event.Tokens.UncachedInputTokens, event.Tokens.CacheReadTokens, event.Tokens.CacheWriteTokens, event.Tokens.OutputTokens}
-	for _, value := range values {
-		if value < 0 {
-			return errors.New("usage tokens must be nonnegative")
+// billableTokensFor rebuilds the disjoint pricing buckets from the canonical
+// vector plus the provider detail block that matches the event's vocabulary.
+func billableTokensFor(event domain.ModelUsageEvent) (billableTokens, error) {
+	buckets := billableTokens{cacheRead: event.Tokens.CachedInputTokens, output: event.Tokens.OutputTokens}
+	switch {
+	case event.ProviderDetails.Anthropic != nil:
+		details := event.ProviderDetails.Anthropic
+		buckets.uncachedInput = details.DirectUncachedInputTokens
+		buckets.cacheWrite = details.CacheCreationInputTokens
+		buckets.cacheWrite5m = details.CacheCreation5mInputTokens
+		buckets.cacheWrite1h = details.CacheCreation1hInputTokens
+	case event.ProviderDetails.OpenAI != nil:
+		details := event.ProviderDetails.OpenAI
+		buckets.cacheWrite = details.CacheWriteInputTokens
+		// The canonical uncached bucket still contains the cache-write tokens.
+		// Charging both would double count, so subtract them back out.
+		if event.Tokens.UncachedInputTokens != nil && details.CacheWriteInputTokens != nil {
+			fresh := *event.Tokens.UncachedInputTokens - *details.CacheWriteInputTokens
+			if fresh < 0 {
+				return billableTokens{}, errors.New("cache-write tokens exceed uncached input tokens")
+			}
+			buckets.uncachedInput = &fresh
 		}
+	default:
+		buckets.uncachedInput = event.Tokens.UncachedInputTokens
 	}
-	for _, value := range []*int64{event.CacheWrite5mTokens, event.CacheWrite1hTokens} {
+	for _, value := range []*int64{
+		buckets.uncachedInput, buckets.cacheRead, buckets.cacheWrite,
+		buckets.cacheWrite5m, buckets.cacheWrite1h, buckets.output,
+	} {
 		if value != nil && *value < 0 {
-			return errors.New("cache-write split tokens must be nonnegative")
+			return billableTokens{}, errors.New("usage tokens must be nonnegative")
 		}
 	}
-	return nil
+	return buckets, nil
 }
 
-func estimateCacheWrite(providerID string, event domain.ModelUsageEvent, rates exactRates) (*int64, error) {
-	if event.Tokens.CacheWriteTokens == 0 {
+func estimateCacheWrite(providerID string, buckets billableTokens, rates exactRates) (*int64, error) {
+	if buckets.cacheWrite == nil {
+		return nil, nil
+	}
+	if *buckets.cacheWrite == 0 {
 		return costPointer(0), nil
 	}
 	if providerID != "anthropic" {
-		return charge(event.Tokens.CacheWriteTokens, rates.write)
+		return charge(*buckets.cacheWrite, rates.write)
 	}
-	if event.CacheWrite5mTokens == nil || event.CacheWrite1hTokens == nil {
+	if buckets.cacheWrite5m == nil || buckets.cacheWrite1h == nil {
 		return nil, nil
 	}
-	if *event.CacheWrite5mTokens > math.MaxInt64-*event.CacheWrite1hTokens || *event.CacheWrite5mTokens+*event.CacheWrite1hTokens != event.Tokens.CacheWriteTokens {
+	if *buckets.cacheWrite5m > math.MaxInt64-*buckets.cacheWrite1h ||
+		*buckets.cacheWrite5m+*buckets.cacheWrite1h != *buckets.cacheWrite {
 		return nil, nil
 	}
-	return combinedCharge([]tokenRate{{*event.CacheWrite5mTokens, rates.write}, {*event.CacheWrite1hTokens, rates.write1H}})
+	return combinedCharge([]tokenRate{{*buckets.cacheWrite5m, rates.write}, {*buckets.cacheWrite1h, rates.write1H}})
+}
+
+// chargeOptional prices an uncollected bucket as unknown rather than as zero.
+func chargeOptional(tokens *int64, rate *big.Rat) (*int64, error) {
+	if tokens == nil {
+		return nil, nil
+	}
+	return charge(*tokens, rate)
 }
 
 type tokenRate struct {

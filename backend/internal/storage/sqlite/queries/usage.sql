@@ -340,50 +340,106 @@ WHERE id = sqlc.arg(usage_binding_id)
 
 -- name: GetModelUsageEventByKey :one
 SELECT
-    provider_id, model_id, input_tokens, uncached_input_tokens,
-    cache_read_tokens, cache_write_tokens, output_tokens, reasoning_tokens,
-    cache_write_5m_tokens, cache_write_1h_tokens
-FROM model_usage_events
-WHERE binding_id = ? AND source_event_key = ?;
+    event.id, event.provider_id, event.billing_provider_id, event.model_id,
+    event.input_tokens, event.input_provenance,
+    event.cached_input_tokens, event.cached_input_provenance,
+    event.uncached_input_tokens, event.uncached_input_provenance,
+    event.output_tokens, event.output_provenance,
+    event.created_at,
+    openai.openai_reasoning_output_tokens,
+    openai.openai_cache_write_input_tokens,
+    openai.openai_reported_total_tokens,
+    anthropic.anthropic_direct_uncached_input_tokens,
+    anthropic.anthropic_cache_creation_input_tokens,
+    anthropic.anthropic_cache_creation_5m_input_tokens,
+    anthropic.anthropic_cache_creation_1h_input_tokens
+FROM model_usage_events event
+LEFT JOIN openai_usage_event_details openai ON openai.event_id = event.id
+LEFT JOIN anthropic_usage_event_details anthropic ON anthropic.event_id = event.id
+WHERE event.binding_id = ? AND event.source_event_key = ?;
 
--- name: InsertModelUsageEvent :exec
+-- name: InsertModelUsageEvent :one
 INSERT INTO model_usage_events (
-    binding_id, usage_source_id, provider_id, model_id, input_tokens, uncached_input_tokens,
-    cache_read_tokens, cache_write_tokens, output_tokens, reasoning_tokens,
-    cache_write_5m_tokens, cache_write_1h_tokens,
+    binding_id, usage_source_id, provider_id, billing_provider_id, model_id,
+    input_tokens, input_provenance,
+    cached_input_tokens, cached_input_provenance,
+    uncached_input_tokens, uncached_input_provenance,
+    output_tokens, output_provenance,
     uncached_input_cost_nanos, cache_read_cost_nanos, cache_write_cost_nanos,
-    output_cost_nanos, estimated_cost_nanos, pricing_version, source_event_key
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+    output_cost_nanos, estimated_cost_nanos, pricing_version,
+    source_event_key, created_at
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+RETURNING id;
+
+-- name: UpsertOpenAIUsageEventDetails :execrows
+INSERT INTO openai_usage_event_details (
+    event_id, openai_reasoning_output_tokens, openai_cache_write_input_tokens,
+    openai_reported_total_tokens
+) VALUES (?, ?, ?, ?)
+ON CONFLICT (event_id) DO UPDATE SET
+    openai_reasoning_output_tokens = COALESCE(openai_usage_event_details.openai_reasoning_output_tokens, excluded.openai_reasoning_output_tokens),
+    openai_cache_write_input_tokens = COALESCE(openai_usage_event_details.openai_cache_write_input_tokens, excluded.openai_cache_write_input_tokens),
+    openai_reported_total_tokens = COALESCE(openai_usage_event_details.openai_reported_total_tokens, excluded.openai_reported_total_tokens)
+WHERE (openai_usage_event_details.openai_reasoning_output_tokens IS NULL OR excluded.openai_reasoning_output_tokens IS NULL OR openai_usage_event_details.openai_reasoning_output_tokens = excluded.openai_reasoning_output_tokens)
+  AND (openai_usage_event_details.openai_cache_write_input_tokens IS NULL OR excluded.openai_cache_write_input_tokens IS NULL OR openai_usage_event_details.openai_cache_write_input_tokens = excluded.openai_cache_write_input_tokens)
+  AND (openai_usage_event_details.openai_reported_total_tokens IS NULL OR excluded.openai_reported_total_tokens IS NULL OR openai_usage_event_details.openai_reported_total_tokens = excluded.openai_reported_total_tokens);
+
+-- name: UpsertAnthropicUsageEventDetails :execrows
+INSERT INTO anthropic_usage_event_details (
+    event_id, anthropic_direct_uncached_input_tokens,
+    anthropic_cache_creation_input_tokens,
+    anthropic_cache_creation_5m_input_tokens,
+    anthropic_cache_creation_1h_input_tokens
+) VALUES (?, ?, ?, ?, ?)
+ON CONFLICT (event_id) DO UPDATE SET
+    anthropic_direct_uncached_input_tokens = COALESCE(anthropic_usage_event_details.anthropic_direct_uncached_input_tokens, excluded.anthropic_direct_uncached_input_tokens),
+    anthropic_cache_creation_input_tokens = COALESCE(anthropic_usage_event_details.anthropic_cache_creation_input_tokens, excluded.anthropic_cache_creation_input_tokens),
+    anthropic_cache_creation_5m_input_tokens = COALESCE(anthropic_usage_event_details.anthropic_cache_creation_5m_input_tokens, excluded.anthropic_cache_creation_5m_input_tokens),
+    anthropic_cache_creation_1h_input_tokens = COALESCE(anthropic_usage_event_details.anthropic_cache_creation_1h_input_tokens, excluded.anthropic_cache_creation_1h_input_tokens)
+WHERE (anthropic_usage_event_details.anthropic_direct_uncached_input_tokens IS NULL OR excluded.anthropic_direct_uncached_input_tokens IS NULL OR anthropic_usage_event_details.anthropic_direct_uncached_input_tokens = excluded.anthropic_direct_uncached_input_tokens)
+  AND (anthropic_usage_event_details.anthropic_cache_creation_input_tokens IS NULL OR excluded.anthropic_cache_creation_input_tokens IS NULL OR anthropic_usage_event_details.anthropic_cache_creation_input_tokens = excluded.anthropic_cache_creation_input_tokens)
+  AND (anthropic_usage_event_details.anthropic_cache_creation_5m_input_tokens IS NULL OR excluded.anthropic_cache_creation_5m_input_tokens IS NULL OR anthropic_usage_event_details.anthropic_cache_creation_5m_input_tokens = excluded.anthropic_cache_creation_5m_input_tokens)
+  AND (anthropic_usage_event_details.anthropic_cache_creation_1h_input_tokens IS NULL OR excluded.anthropic_cache_creation_1h_input_tokens IS NULL OR anthropic_usage_event_details.anthropic_cache_creation_1h_input_tokens = excluded.anthropic_cache_creation_1h_input_tokens);
 
 -- name: TouchUsageBinding :exec
 UPDATE usage_bindings SET updated_at = ? WHERE id = ?;
 
 -- name: ListUsageCostCandidates :many
 SELECT
-    id,
-    binding_id,
-    provider_id,
-    model_id,
-    input_tokens,
-    uncached_input_tokens,
-    cache_read_tokens,
-    cache_write_tokens,
-    output_tokens,
-    reasoning_tokens,
-    cache_write_5m_tokens,
-    cache_write_1h_tokens,
-    pricing_version,
-    source_event_key
-FROM model_usage_events
-WHERE provider_id IS NOT NULL
-  AND CASE lower(trim(provider_id))
+    event.id,
+    event.binding_id,
+    event.provider_id,
+    event.billing_provider_id,
+    event.model_id,
+    event.input_tokens,
+    event.input_provenance,
+    event.cached_input_tokens,
+    event.cached_input_provenance,
+    event.uncached_input_tokens,
+    event.uncached_input_provenance,
+    event.output_tokens,
+    event.output_provenance,
+    openai.openai_reasoning_output_tokens,
+    openai.openai_cache_write_input_tokens,
+    openai.openai_reported_total_tokens,
+    anthropic.anthropic_direct_uncached_input_tokens,
+    anthropic.anthropic_cache_creation_input_tokens,
+    anthropic.anthropic_cache_creation_5m_input_tokens,
+    anthropic.anthropic_cache_creation_1h_input_tokens,
+    event.pricing_version,
+    event.source_event_key
+FROM model_usage_events event
+LEFT JOIN openai_usage_event_details openai ON openai.event_id = event.id
+LEFT JOIN anthropic_usage_event_details anthropic ON anthropic.event_id = event.id
+WHERE event.billing_provider_id IS NOT NULL
+  AND CASE lower(trim(event.billing_provider_id))
         WHEN 'z.ai' THEN 'zai'
-        ELSE lower(trim(provider_id))
-  END = sqlc.arg(provider_id)
-  AND estimated_cost_nanos IS NULL
-  AND pricing_version <> sqlc.arg(pricing_version)
-  AND id > sqlc.arg(after_id)
-ORDER BY id
+        ELSE lower(trim(event.billing_provider_id))
+  END = sqlc.arg(billing_provider_id)
+  AND event.estimated_cost_nanos IS NULL
+  AND event.pricing_version <> sqlc.arg(pricing_version)
+  AND event.id > sqlc.arg(after_id)
+ORDER BY event.id
 LIMIT 256;
 
 -- name: UpdateUsageCostCandidate :one
@@ -396,16 +452,16 @@ SET uncached_input_cost_nanos = sqlc.narg(uncached_input_cost_nanos),
     pricing_version = sqlc.arg(attempted_pricing_version)
 WHERE id = sqlc.arg(id)
   AND binding_id = sqlc.arg(binding_id)
-  AND provider_id = sqlc.arg(expected_provider_id)
+  AND billing_provider_id = sqlc.arg(expected_billing_provider_id)
   AND model_id = sqlc.arg(expected_model_id)
-  AND input_tokens = sqlc.arg(expected_input_tokens)
-  AND uncached_input_tokens = sqlc.arg(expected_uncached_input_tokens)
-  AND cache_read_tokens = sqlc.arg(expected_cache_read_tokens)
-  AND cache_write_tokens = sqlc.arg(expected_cache_write_tokens)
-  AND output_tokens = sqlc.arg(expected_output_tokens)
-  AND reasoning_tokens IS sqlc.narg(expected_reasoning_tokens)
-  AND cache_write_5m_tokens IS sqlc.narg(expected_cache_write_5m_tokens)
-  AND cache_write_1h_tokens IS sqlc.narg(expected_cache_write_1h_tokens)
+  AND input_tokens IS sqlc.narg(expected_input_tokens)
+  AND input_provenance = sqlc.arg(expected_input_provenance)
+  AND cached_input_tokens IS sqlc.narg(expected_cached_input_tokens)
+  AND cached_input_provenance = sqlc.arg(expected_cached_input_provenance)
+  AND uncached_input_tokens IS sqlc.narg(expected_uncached_input_tokens)
+  AND uncached_input_provenance = sqlc.arg(expected_uncached_input_provenance)
+  AND output_tokens IS sqlc.narg(expected_output_tokens)
+  AND output_provenance = sqlc.arg(expected_output_provenance)
   AND source_event_key = sqlc.arg(expected_source_event_key)
   AND pricing_version = sqlc.arg(expected_pricing_version)
   AND estimated_cost_nanos IS NULL
@@ -415,35 +471,45 @@ RETURNING binding_id;
 SELECT DISTINCT us.id
 FROM usage_sources us
 JOIN model_usage_events mue ON mue.usage_source_id = us.id
-WHERE mue.provider_id IS NULL
+WHERE mue.billing_provider_id IS NULL
   AND mue.estimated_cost_nanos IS NULL
 ORDER BY us.id;
 
 -- name: ListLegacyUsageEvents :many
 SELECT
-    id,
-    binding_id,
-    usage_source_id,
-    model_id,
-    input_tokens,
-    uncached_input_tokens,
-    cache_read_tokens,
-    cache_write_tokens,
-    output_tokens,
-    reasoning_tokens,
-    pricing_version,
-    source_event_key
-FROM model_usage_events
-WHERE usage_source_id = sqlc.arg(usage_source_id)
-  AND provider_id IS NULL
-  AND estimated_cost_nanos IS NULL
-ORDER BY id;
+    event.id,
+    event.binding_id,
+    event.usage_source_id,
+    event.provider_id,
+    event.model_id,
+    event.input_tokens,
+    event.input_provenance,
+    event.cached_input_tokens,
+    event.cached_input_provenance,
+    event.uncached_input_tokens,
+    event.uncached_input_provenance,
+    event.output_tokens,
+    event.output_provenance,
+    openai.openai_reasoning_output_tokens,
+    openai.openai_cache_write_input_tokens,
+    openai.openai_reported_total_tokens,
+    anthropic.anthropic_direct_uncached_input_tokens,
+    anthropic.anthropic_cache_creation_input_tokens,
+    anthropic.anthropic_cache_creation_5m_input_tokens,
+    anthropic.anthropic_cache_creation_1h_input_tokens,
+    event.pricing_version,
+    event.source_event_key
+FROM model_usage_events event
+LEFT JOIN openai_usage_event_details openai ON openai.event_id = event.id
+LEFT JOIN anthropic_usage_event_details anthropic ON anthropic.event_id = event.id
+WHERE event.usage_source_id = sqlc.arg(usage_source_id)
+  AND event.billing_provider_id IS NULL
+  AND event.estimated_cost_nanos IS NULL
+ORDER BY event.id;
 
 -- name: UpdateLegacyUsageEvent :one
 UPDATE model_usage_events
-SET provider_id = sqlc.arg(provider_id),
-    cache_write_5m_tokens = sqlc.narg(cache_write_5m_tokens),
-    cache_write_1h_tokens = sqlc.narg(cache_write_1h_tokens),
+SET billing_provider_id = sqlc.arg(billing_provider_id),
     uncached_input_cost_nanos = sqlc.narg(uncached_input_cost_nanos),
     cache_read_cost_nanos = sqlc.narg(cache_read_cost_nanos),
     cache_write_cost_nanos = sqlc.narg(cache_write_cost_nanos),
@@ -453,14 +519,17 @@ SET provider_id = sqlc.arg(provider_id),
 WHERE model_usage_events.id = sqlc.arg(id)
   AND model_usage_events.binding_id = sqlc.arg(binding_id)
   AND model_usage_events.usage_source_id = sqlc.arg(usage_source_id)
-  AND model_usage_events.provider_id IS NULL
+  AND model_usage_events.billing_provider_id IS NULL
+  AND model_usage_events.provider_id = sqlc.arg(expected_provider_id)
   AND model_usage_events.model_id = sqlc.arg(expected_model_id)
-  AND model_usage_events.input_tokens = sqlc.arg(expected_input_tokens)
-  AND model_usage_events.uncached_input_tokens = sqlc.arg(expected_uncached_input_tokens)
-  AND model_usage_events.cache_read_tokens = sqlc.arg(expected_cache_read_tokens)
-  AND model_usage_events.cache_write_tokens = sqlc.arg(expected_cache_write_tokens)
-  AND model_usage_events.output_tokens = sqlc.arg(expected_output_tokens)
-  AND model_usage_events.reasoning_tokens IS sqlc.narg(expected_reasoning_tokens)
+  AND model_usage_events.input_tokens IS sqlc.narg(expected_input_tokens)
+  AND model_usage_events.input_provenance = sqlc.arg(expected_input_provenance)
+  AND model_usage_events.cached_input_tokens IS sqlc.narg(expected_cached_input_tokens)
+  AND model_usage_events.cached_input_provenance = sqlc.arg(expected_cached_input_provenance)
+  AND model_usage_events.uncached_input_tokens IS sqlc.narg(expected_uncached_input_tokens)
+  AND model_usage_events.uncached_input_provenance = sqlc.arg(expected_uncached_input_provenance)
+  AND model_usage_events.output_tokens IS sqlc.narg(expected_output_tokens)
+  AND model_usage_events.output_provenance = sqlc.arg(expected_output_provenance)
   AND model_usage_events.source_event_key = sqlc.arg(expected_source_event_key)
   AND model_usage_events.pricing_version = sqlc.arg(expected_pricing_version)
   AND model_usage_events.estimated_cost_nanos IS NULL
@@ -482,16 +551,39 @@ RETURNING binding_id;
 -- name: AggregateUsageBySessionHarnessModel :many
 SELECT
     ub.harness,
-    COALESCE(mue.provider_id, 'unknown') AS provider_id,
+    COALESCE(mue.billing_provider_id, 'unknown') AS billing_provider_id,
     mue.model_id,
-    CAST(SUM(mue.input_tokens) AS INTEGER) AS input_tokens,
-    CAST(SUM(mue.uncached_input_tokens) AS INTEGER) AS uncached_input_tokens,
-    CAST(SUM(mue.cache_read_tokens) AS INTEGER) AS cache_read_tokens,
-    CAST(SUM(mue.cache_write_tokens) AS INTEGER) AS cache_write_tokens,
-    CAST(SUM(mue.output_tokens) AS INTEGER) AS output_tokens,
-    CAST(COALESCE(SUM(mue.reasoning_tokens), 0) AS INTEGER) AS reasoning_tokens,
-    CAST(COUNT(mue.reasoning_tokens) AS INTEGER) AS reasoning_event_count,
     CAST(COUNT(*) AS INTEGER) AS event_count,
+    CAST(COALESCE(SUM(mue.input_tokens), 0) AS INTEGER) AS input_tokens,
+    CAST(CASE WHEN COUNT(mue.input_tokens) <> COUNT(*) THEN 'unknown'
+         WHEN COUNT(DISTINCT mue.input_provenance) = 1 THEN MIN(mue.input_provenance)
+         ELSE 'derived' END AS TEXT) AS input_provenance,
+    CAST(COALESCE(SUM(mue.cached_input_tokens), 0) AS INTEGER) AS cached_input_tokens,
+    CAST(CASE WHEN COUNT(mue.cached_input_tokens) <> COUNT(*) THEN 'unknown'
+         WHEN COUNT(DISTINCT mue.cached_input_provenance) = 1 THEN MIN(mue.cached_input_provenance)
+         ELSE 'derived' END AS TEXT) AS cached_input_provenance,
+    CAST(COALESCE(SUM(mue.uncached_input_tokens), 0) AS INTEGER) AS uncached_input_tokens,
+    CAST(CASE WHEN COUNT(mue.uncached_input_tokens) <> COUNT(*) THEN 'unknown'
+         WHEN COUNT(DISTINCT mue.uncached_input_provenance) = 1 THEN MIN(mue.uncached_input_provenance)
+         ELSE 'derived' END AS TEXT) AS uncached_input_provenance,
+    CAST(COALESCE(SUM(mue.output_tokens), 0) AS INTEGER) AS output_tokens,
+    CAST(CASE WHEN COUNT(mue.output_tokens) <> COUNT(*) THEN 'unknown'
+         WHEN COUNT(DISTINCT mue.output_provenance) = 1 THEN MIN(mue.output_provenance)
+         ELSE 'derived' END AS TEXT) AS output_provenance,
+    COUNT(CASE WHEN mue.provider_id = 'openai' THEN 1 END) AS openai_event_count,
+    CAST(COALESCE(SUM(openai.openai_reasoning_output_tokens), 0) AS INTEGER) AS openai_reasoning_output_tokens,
+    COUNT(openai.openai_reasoning_output_tokens) AS openai_reasoning_output_event_count,
+    CAST(COALESCE(SUM(openai.openai_cache_write_input_tokens), 0) AS INTEGER) AS openai_cache_write_input_tokens,
+    COUNT(openai.openai_cache_write_input_tokens) AS openai_cache_write_input_event_count,
+    COUNT(CASE WHEN mue.provider_id = 'anthropic' THEN 1 END) AS anthropic_event_count,
+    CAST(COALESCE(SUM(anthropic.anthropic_direct_uncached_input_tokens), 0) AS INTEGER) AS anthropic_direct_uncached_input_tokens,
+    COUNT(anthropic.anthropic_direct_uncached_input_tokens) AS anthropic_direct_uncached_input_event_count,
+    CAST(COALESCE(SUM(anthropic.anthropic_cache_creation_input_tokens), 0) AS INTEGER) AS anthropic_cache_creation_input_tokens,
+    COUNT(anthropic.anthropic_cache_creation_input_tokens) AS anthropic_cache_creation_input_event_count,
+    CAST(COALESCE(SUM(anthropic.anthropic_cache_creation_5m_input_tokens), 0) AS INTEGER) AS anthropic_cache_creation_5m_input_tokens,
+    COUNT(anthropic.anthropic_cache_creation_5m_input_tokens) AS anthropic_cache_creation_5m_input_event_count,
+    CAST(COALESCE(SUM(anthropic.anthropic_cache_creation_1h_input_tokens), 0) AS INTEGER) AS anthropic_cache_creation_1h_input_tokens,
+    COUNT(anthropic.anthropic_cache_creation_1h_input_tokens) AS anthropic_cache_creation_1h_input_event_count,
     CAST(COUNT(mue.estimated_cost_nanos) AS INTEGER) AS priced_event_count,
     CAST(COALESCE(SUM(mue.estimated_cost_nanos), 0) AS INTEGER) AS priced_total_nanos,
     CAST(COUNT(mue.uncached_input_cost_nanos) AS INTEGER) AS known_uncached_input_count,
@@ -508,9 +600,11 @@ SELECT
     CAST(COALESCE(SUM(CASE WHEN mue.estimated_cost_nanos IS NULL THEN mue.output_cost_nanos END), 0) AS INTEGER) AS unpriced_known_output_nanos
 FROM model_usage_events mue
 JOIN usage_bindings ub ON ub.id = mue.binding_id
+LEFT JOIN openai_usage_event_details openai ON openai.event_id = mue.id
+LEFT JOIN anthropic_usage_event_details anthropic ON anthropic.event_id = mue.id
 WHERE ub.session_id = ?
-GROUP BY ub.harness, COALESCE(mue.provider_id, 'unknown'), mue.model_id
-ORDER BY ub.harness, provider_id, mue.model_id;
+GROUP BY ub.harness, COALESCE(mue.billing_provider_id, 'unknown'), mue.model_id
+ORDER BY SUM(mue.input_tokens + mue.output_tokens) DESC, ub.harness, billing_provider_id, mue.model_id;
 
 -- name: GetUsageSessionIncomplete :one
 SELECT CAST(COALESCE((
@@ -520,8 +614,8 @@ SELECT CAST(COALESCE((
 -- name: ListCompactSessionUsage :many
 SELECT
     ub.session_id,
-    CAST(SUM(mue.input_tokens) AS INTEGER) AS input_tokens,
-    CAST(SUM(mue.output_tokens) AS INTEGER) AS output_tokens,
+    CAST(COALESCE(SUM(mue.input_tokens) + SUM(mue.output_tokens), 0) AS INTEGER) AS processed_tokens,
+    CAST(COUNT(mue.input_tokens) = COUNT(*) AND COUNT(mue.output_tokens) = COUNT(*) AS INTEGER) AS processed_tokens_known,
     CAST(COALESCE(integrity.incomplete, 0) AS INTEGER) AS incomplete,
     CAST(COUNT(*) AS INTEGER) AS event_count,
     CAST(COUNT(mue.estimated_cost_nanos) AS INTEGER) AS priced_event_count,
