@@ -123,7 +123,7 @@ func (p *Provider) bootstrap(ctx context.Context, sandbox *daytonasdk.Sandbox, w
 	workspacePath := filepath.Join(string(filepath.Separator), "workspace", "ao-"+strings.ReplaceAll(workspace.ID, "-", "")[:12])
 
 	if _, err := run(ctx, sandbox,
-		`sudo apt-get update -qq && sudo apt-get install -y -qq ca-certificates curl git tmux && sudo npm install -g @anthropic-ai/claude-code`,
+		`sudo apt-get update -qq && sudo apt-get install -y -qq ca-certificates curl git tmux && sudo env PATH="$PATH" npm install -g @anthropic-ai/claude-code`,
 		10*time.Minute); err != nil {
 		return fmt.Errorf("install sandbox dependencies: %w", err)
 	}
