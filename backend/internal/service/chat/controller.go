@@ -152,6 +152,7 @@ type Controller struct {
 	conv     ports.ChatConversation
 	store    Store
 	activity ActivityRecorder
+	quota    ports.QuotaCollector
 	log      *slog.Logger
 	newID    IDFactory
 	now      Clock
@@ -224,6 +225,7 @@ func newController(
 	conv ports.ChatConversation,
 	store Store,
 	activity ActivityRecorder,
+	quota ports.QuotaCollector,
 	log *slog.Logger,
 	newID IDFactory,
 	now Clock,
@@ -235,6 +237,7 @@ func newController(
 		conv:         conv,
 		store:        store,
 		activity:     activity,
+		quota:        quota,
 		log:          log,
 		newID:        newID,
 		now:          now,
@@ -774,11 +777,16 @@ func (c *Controller) readRateLimits() {
 	if !ok {
 		return
 	}
+	identity, ok := c.conv.(ports.ChatQuotaIdentity)
+	if !ok || c.quota == nil {
+		return
+	}
+	provider, accountID := identity.QuotaIdentity()
 
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(context.Background()), rateLimitReadTimeout)
 	defer cancel()
 
-	limits, err := reporter.ReadRateLimits(ctx)
+	limits, err := c.quota.CollectRateLimits(ctx, provider, accountID, reporter.ReadRateLimits)
 	if err != nil {
 		c.log.Debug("chat rate limit read failed", "session", c.sessionID, "error", err)
 		return
@@ -794,6 +802,15 @@ func (c *Controller) readRateLimits() {
 		PlanLabel:                limits.PlanLabel,
 	}); err != nil {
 		c.log.Debug("failed to record chat rate limits", "session", c.sessionID, "error", err)
+	}
+}
+
+func (c *Controller) recordQuotaSnapshot(ctx context.Context, snapshot *domain.QuotaSnapshot) {
+	if c.quota == nil || snapshot == nil {
+		return
+	}
+	if err := c.quota.RecordQuotaSnapshot(ctx, *snapshot); err != nil {
+		c.log.Debug("failed to record provider quota", "session", c.sessionID, "provider", snapshot.Provider, "error", err)
 	}
 }
 
@@ -2177,6 +2194,7 @@ func (c *Controller) apply(ctx context.Context, event ports.ChatEvent) error {
 		if event.RateLimits == nil {
 			return nil
 		}
+		c.recordQuotaSnapshot(ctx, event.RateLimits.Quota)
 		return c.store.RecordRateLimits(ctx, c.conversation.ID, domain.ConversationRateLimits{
 			PrimaryUsedPercent:       event.RateLimits.PrimaryUsedPercent,
 			SecondaryUsedPercent:     event.RateLimits.SecondaryUsedPercent,

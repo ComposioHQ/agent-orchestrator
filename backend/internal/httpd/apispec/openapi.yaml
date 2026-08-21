@@ -4741,77 +4741,6 @@ paths:
       summary: Read one session workspace file and its git diff
       tags:
       - sessions
-  /api/v1/sessions/{sessionId}/workspace/file/blob:
-    get:
-      operationId: getSessionWorkspaceFileBlob
-      parameters:
-      - description: Session identifier, e.g. project-1.
-        in: path
-        name: sessionId
-        required: true
-        schema:
-          description: Session identifier, e.g. project-1.
-          type: string
-      - description: Session-worktree-relative file path.
-        in: query
-        name: path
-        required: true
-        schema:
-          description: Session-worktree-relative file path.
-          type: string
-      - description: 'Which revision to read: the compare base (before) or the session
-          worktree (after). Defaults to after.'
-        in: query
-        name: side
-        schema:
-          description: 'Which revision to read: the compare base (before) or the session
-            worktree (after). Defaults to after.'
-          enum:
-          - before
-          - after
-          type: string
-      - description: Cache-busting token. Ignored by the server; the response is never
-          cached.
-        in: query
-        name: v
-        schema:
-          description: Cache-busting token. Ignored by the server; the response is
-            never cached.
-          type: string
-      responses:
-        "200":
-          content:
-            application/octet-stream:
-              schema:
-                type: string
-          description: OK
-        "400":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/APIError'
-          description: Bad Request
-        "404":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/APIError'
-          description: Not Found
-        "500":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/APIError'
-          description: Internal Server Error
-        "501":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/APIError'
-          description: Not Implemented
-      summary: Read one side of a session workspace image file
-      tags:
-      - sessions
   /api/v1/sessions/{sessionId}/workspace/files:
     get:
       operationId: listSessionWorkspaceFiles
@@ -5105,25 +5034,119 @@ paths:
       summary: Rename a standalone shell terminal tab
       tags:
       - shellTerminals
-  /api/v1/system/install/{target}:
+  /api/v1/usage/plans:
     get:
-      operationId: getSystemInstallStatus
+      operationId: listProviderQuota
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListProviderQuotaResponse'
+          description: OK
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: List account-level subscription quota for every observed provider
+      tags:
+      - usage
+  /api/v1/usage/plans/{provider}/accounts/{accountId}:
+    get:
+      operationId: getProviderQuota
       parameters:
-      - description: 'Install target identifier: tmux, gh, claude, codex, opencode,
-          or copilot.'
+      - description: Opaque quota provider id, for example codex or claude.
         in: path
-        name: target
+        name: provider
         required: true
         schema:
-          description: 'Install target identifier: tmux, gh, claude, codex, opencode,
-            or copilot.'
+          description: Opaque quota provider id, for example codex or claude.
+          type: string
+      - description: Local non-secret provider account id.
+        in: path
+        name: accountId
+        required: true
+        schema:
+          description: Local non-secret provider account id.
           type: string
       responses:
         "200":
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/InstallJob'
+                $ref: '#/components/schemas/ProviderQuotaResponse'
+          description: OK
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Get one provider account's current subscription quota
+      tags:
+      - usage
+  /api/v1/usage/plans/{provider}/accounts/{accountId}/history:
+    get:
+      operationId: getProviderQuotaHistory
+      parameters:
+      - description: Opaque quota provider id, for example codex or claude.
+        in: path
+        name: provider
+        required: true
+        schema:
+          description: Opaque quota provider id, for example codex or claude.
+          type: string
+      - description: Local non-secret provider account id.
+        in: path
+        name: accountId
+        required: true
+        schema:
+          description: Local non-secret provider account id.
+          type: string
+      - description: History lookback in hours. Defaults to 168 (seven days).
+        in: query
+        name: hours
+        schema:
+          description: History lookback in hours. Defaults to 168 (seven days).
+          format: int64
+          maximum: 2160
+          minimum: 1
+          type: integer
+      - description: Maximum points. Defaults to 500.
+        in: query
+        name: limit
+        schema:
+          description: Maximum points. Defaults to 500.
+          format: int64
+          maximum: 2000
+          minimum: 1
+          type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListQuotaHistoryResponse'
           description: OK
         "400":
           content:
@@ -5143,28 +5166,84 @@ paths:
               schema:
                 $ref: '#/components/schemas/APIError'
           description: Not Implemented
-      summary: Get the current or last known install job status for a system target
+      summary: Get bounded quota-position history for one provider account
       tags:
-      - system
+      - usage
+  /api/v1/usage/plans/{provider}/accounts/{accountId}/refresh:
     post:
-      operationId: startSystemInstall
+      operationId: refreshProviderQuota
       parameters:
-      - description: 'Install target identifier: tmux, gh, claude, codex, opencode,
-          or copilot.'
+      - description: Opaque quota provider id, for example codex or claude.
         in: path
-        name: target
+        name: provider
         required: true
         schema:
-          description: 'Install target identifier: tmux, gh, claude, codex, opencode,
-            or copilot.'
+          description: Opaque quota provider id, for example codex or claude.
+          type: string
+      - description: Local non-secret provider account id.
+        in: path
+        name: accountId
+        required: true
+        schema:
+          description: Local non-secret provider account id.
           type: string
       responses:
-        "202":
+        "200":
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/InstallJob'
-          description: Accepted
+                $ref: '#/components/schemas/ProviderQuotaResponse'
+          description: OK
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Refresh quota through a provider that supports an on-demand read
+      tags:
+      - usage
+  /api/v1/usage/plans/alerts:
+    get:
+      operationId: listProviderQuotaAlerts
+      parameters:
+      - description: Alert lookback in minutes. Defaults to 10.
+        in: query
+        name: minutes
+        schema:
+          description: Alert lookback in minutes. Defaults to 10.
+          format: int64
+          maximum: 10080
+          minimum: 1
+          type: integer
+      - description: Maximum alerts. Defaults to 100.
+        in: query
+        name: limit
+        schema:
+          description: Maximum alerts. Defaults to 100.
+          format: int64
+          maximum: 500
+          minimum: 1
+          type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListQuotaAlertsResponse'
+          description: OK
         "400":
           content:
             application/json:
@@ -5183,35 +5262,9 @@ paths:
               schema:
                 $ref: '#/components/schemas/APIError'
           description: Not Implemented
-      summary: Start (or return the already-running) install job for a fixed system
-        target
+      summary: List recent transition-only provider quota alerts
       tags:
-      - system
-  /api/v1/system/requirements:
-    get:
-      operationId: getSystemRequirements
-      responses:
-        "200":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/SystemRequirementsResponse'
-          description: OK
-        "500":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/APIError'
-          description: Internal Server Error
-        "501":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/APIError'
-          description: Not Implemented
-      summary: Check local machine readiness (git, tmux, agent harness, gh)
-      tags:
-      - system
+      - usage
   /api/v1/usage/sessions:
     get:
       operationId: listCompactSessionUsage
@@ -5365,16 +5418,6 @@ components:
           type: string
         label:
           type: string
-        lastUsedAt:
-          description: Creation time of the newest retained session currently attributed
-            to this agent.
-          format: date-time
-          type:
-          - "null"
-          - string
-        usageCount:
-          description: Number of retained sessions currently attributed to this agent.
-          type: integer
       required:
       - id
       - label
@@ -5522,34 +5565,6 @@ components:
           $ref: '#/components/schemas/AgentSwitch'
       required:
       - switch
-      type: object
-    AnthropicUsageDetailsResponse:
-      properties:
-        anthropicCacheCreation1hInputTokens:
-          minimum: 0
-          type:
-          - "null"
-          - integer
-        anthropicCacheCreation5mInputTokens:
-          minimum: 0
-          type:
-          - "null"
-          - integer
-        anthropicCacheCreationInputTokens:
-          minimum: 0
-          type:
-          - "null"
-          - integer
-        anthropicDirectUncachedInputTokens:
-          minimum: 0
-          type:
-          - "null"
-          - integer
-      required:
-      - anthropicDirectUncachedInputTokens
-      - anthropicCacheCreationInputTokens
-      - anthropicCacheCreation5mInputTokens
-      - anthropicCacheCreation1hInputTokens
       type: object
     AttachmentInput:
       properties:
@@ -5723,23 +5738,14 @@ components:
       properties:
         incomplete:
           type: boolean
-        processedTokens:
-          description: Canonical input plus output. Null when either component is
-            unknown.
-          minimum: 0
-          type:
-          - "null"
-          - integer
         sessionId:
           type: string
         totalTokens:
-          description: Deprecated compatibility alias for processedTokens.
           format: int64
           minimum: 0
           type: integer
       required:
       - sessionId
-      - processedTokens
       - totalTokens
       - incomplete
       type: object
@@ -6805,54 +6811,6 @@ components:
       required:
       - path
       type: object
-    InstallJob:
-      properties:
-        command:
-          description: Human-readable install command, e.g. "brew install tmux", for
-            display even before/without output.
-          type: string
-        error:
-          description: 'Set on failure or when the target is unsupported on this machine:
-            the exec error, the Unsupported reason, or a timeout message.'
-          type: string
-        finishedAt:
-          description: Absent until the job finishes.
-          format: date-time
-          type:
-          - "null"
-          - string
-        output:
-          description: Combined stdout+stderr from the install command, tail-capped
-            to the last ~4000 bytes.
-          type: string
-        startedAt:
-          format: date-time
-          type:
-          - "null"
-          - string
-        status:
-          description: Current lifecycle state of the job.
-          enum:
-          - idle
-          - running
-          - succeeded
-          - failed
-          - unsupported
-          type: string
-        target:
-          description: Install target this job ran (or is running) for.
-          enum:
-          - tmux
-          - gh
-          - claude
-          - codex
-          - opencode
-          - copilot
-          type: string
-      required:
-      - target
-      - status
-      type: object
     KillReviewResponse:
       properties:
         reviewerHandleId:
@@ -6952,6 +6910,33 @@ components:
           type: array
       required:
       - projects
+      type: object
+    ListProviderQuotaResponse:
+      properties:
+        providers:
+          items:
+            $ref: '#/components/schemas/ProviderQuotaResponse'
+          type: array
+      required:
+      - providers
+      type: object
+    ListQuotaAlertsResponse:
+      properties:
+        alerts:
+          items:
+            $ref: '#/components/schemas/QuotaAlertResponse'
+          type: array
+      required:
+      - alerts
+      type: object
+    ListQuotaHistoryResponse:
+      properties:
+        points:
+          items:
+            $ref: '#/components/schemas/QuotaHistoryPointResponse'
+          type: array
+      required:
+      - points
       type: object
     ListReviewsResponse:
       properties:
@@ -7236,22 +7221,6 @@ components:
       - kind
       - sessionId
       type: object
-    OpenAIUsageDetailsResponse:
-      properties:
-        openaiCacheWriteInputTokens:
-          minimum: 0
-          type:
-          - "null"
-          - integer
-        openaiReasoningOutputTokens:
-          minimum: 0
-          type:
-          - "null"
-          - integer
-      required:
-      - openaiReasoningOutputTokens
-      - openaiCacheWriteInputTokens
-      type: object
     OpenShellTerminalRequest:
       properties:
         projectId:
@@ -7494,6 +7463,64 @@ components:
       - providerTurnId
       - activityId
       type: object
+    ProviderQuotaResponse:
+      properties:
+        accountId:
+          type: string
+        accountLabel:
+          type: string
+        authMode:
+          type: string
+        balances:
+          items:
+            $ref: '#/components/schemas/QuotaBalanceResponse'
+          type: array
+        capabilities:
+          $ref: '#/components/schemas/QuotaCapabilitiesResponse'
+        completeness:
+          enum:
+          - complete
+          - partial
+          type: string
+        freshness:
+          enum:
+          - fresh
+          - aging
+          - stale
+          - unavailable
+          type: string
+        limits:
+          items:
+            $ref: '#/components/schemas/QuotaLimitResponse'
+          type: array
+        observedAt:
+          format: date-time
+          type: string
+        planType:
+          type: string
+        provider:
+          type: string
+        refreshError:
+          type: string
+        severity:
+          enum:
+          - normal
+          - warning
+          - critical
+          - exhausted
+          - unknown
+          type: string
+      required:
+      - provider
+      - accountId
+      - capabilities
+      - completeness
+      - freshness
+      - severity
+      - observedAt
+      - limits
+      - balances
+      type: object
     PushDeviceEnvelope:
       properties:
         device:
@@ -7518,6 +7545,169 @@ components:
       required:
       - createdAt
       - lastSeenAt
+      type: object
+    QuotaAlertResponse:
+      properties:
+        accountId:
+          type: string
+        body:
+          type: string
+        createdAt:
+          format: date-time
+          type: string
+        id:
+          type: string
+        kind:
+          type: string
+        limitId:
+          type: string
+        provider:
+          type: string
+        severity:
+          enum:
+          - normal
+          - warning
+          - critical
+          - exhausted
+          - unknown
+          type: string
+        title:
+          type: string
+      required:
+      - id
+      - provider
+      - accountId
+      - kind
+      - severity
+      - title
+      - createdAt
+      type: object
+    QuotaBalanceResponse:
+      properties:
+        currency:
+          type: string
+        id:
+          type: string
+        name:
+          type: string
+        unlimited:
+          type: boolean
+        value:
+          type: string
+      required:
+      - id
+      - unlimited
+      type: object
+    QuotaCapabilitiesResponse:
+      properties:
+        supportsCredits:
+          type: boolean
+        supportsHistory:
+          type: boolean
+        supportsRead:
+          type: boolean
+        supportsSpendLimits:
+          type: boolean
+        supportsSubscribe:
+          type: boolean
+      required:
+      - supportsRead
+      - supportsSubscribe
+      - supportsHistory
+      - supportsCredits
+      - supportsSpendLimits
+      type: object
+    QuotaHistoryPointResponse:
+      properties:
+        limitId:
+          type: string
+        observedAt:
+          format: date-time
+          type: string
+        reached:
+          type:
+          - "null"
+          - boolean
+        resetsAt:
+          format: date-time
+          type:
+          - "null"
+          - string
+        scope:
+          type: string
+        scopeId:
+          type: string
+        usedPercent:
+          type:
+          - "null"
+          - number
+        windowType:
+          type: string
+      required:
+      - limitId
+      - scope
+      - observedAt
+      type: object
+    QuotaLimitResponse:
+      properties:
+        category:
+          type: string
+        id:
+          type: string
+        name:
+          type: string
+        reached:
+          type:
+          - "null"
+          - boolean
+        reachedReason:
+          type: string
+        remainingPercent:
+          type:
+          - "null"
+          - number
+        remainingValue:
+          type:
+          - "null"
+          - number
+        resetsAt:
+          format: date-time
+          type:
+          - "null"
+          - string
+        scope:
+          type: string
+        scopeId:
+          type: string
+        severity:
+          enum:
+          - normal
+          - warning
+          - critical
+          - exhausted
+          - unknown
+          type: string
+        totalValue:
+          type:
+          - "null"
+          - number
+        unit:
+          type: string
+        usedPercent:
+          type:
+          - "null"
+          - number
+        windowDurationSeconds:
+          type:
+          - "null"
+          - integer
+        windowType:
+          type: string
+      required:
+      - id
+      - category
+      - scope
+      - severity
       type: object
     RegisterPushDeviceRequest:
       properties:
@@ -8759,51 +8949,6 @@ components:
       required:
       - targetHarness
       type: object
-    SystemRequirement:
-      properties:
-        detail:
-          description: 'Extra context: the resolved path when satisfied, or why it
-            is not.'
-          type: string
-        id:
-          description: Stable requirement identifier.
-          enum:
-          - git
-          - tmux
-          - harness
-          - gh
-          type: string
-        label:
-          description: Human-readable requirement name.
-          type: string
-        required:
-          description: Whether this requirement blocks the overall Ready state.
-          type: boolean
-        satisfied:
-          description: Whether this requirement is currently met.
-          type: boolean
-      required:
-      - id
-      - label
-      - satisfied
-      - required
-      type: object
-    SystemRequirementsResponse:
-      properties:
-        ready:
-          description: True iff every requirement with Required=true is satisfied.
-            Requirements with Required=false (e.g. gh) are advisory and never block
-            readiness.
-          type: boolean
-        requirements:
-          description: 'Individual checks, in stable order: git, tmux, harness, gh.'
-          items:
-            $ref: '#/components/schemas/SystemRequirement'
-          type: array
-      required:
-      - ready
-      - requirements
-      type: object
     TrackerIntakeConfig:
       properties:
         assignee:
@@ -8944,42 +9089,6 @@ components:
       required:
       - harness
       type: object
-    UsageMetricProvenanceResponse:
-      properties:
-        cachedInputTokens:
-          enum:
-          - reported
-          - derived
-          - unsupported
-          - unknown
-          type: string
-        inputTokens:
-          enum:
-          - reported
-          - derived
-          - unsupported
-          - unknown
-          type: string
-        outputTokens:
-          enum:
-          - reported
-          - derived
-          - unsupported
-          - unknown
-          type: string
-        uncachedInputTokens:
-          enum:
-          - reported
-          - derived
-          - unsupported
-          - unknown
-          type: string
-      required:
-      - inputTokens
-      - cachedInputTokens
-      - uncachedInputTokens
-      - outputTokens
-      type: object
     UsageModelResponse:
       properties:
         modelId:
@@ -8990,83 +9099,39 @@ components:
       - modelId
       - totals
       type: object
-    UsageProviderDetailsResponse:
-      properties:
-        anthropic:
-          $ref: '#/components/schemas/AnthropicUsageDetailsResponse'
-        openai:
-          $ref: '#/components/schemas/OpenAIUsageDetailsResponse'
-      type: object
     UsageTotalsResponse:
       properties:
         cacheReadTokens:
-          description: Deprecated compatibility alias for cachedInputTokens.
-          minimum: 0
           type:
           - "null"
           - integer
         cacheWriteTokens:
-          description: Deprecated compatibility aggregate of provider cache-write
-            input counters.
-          minimum: 0
-          type:
-          - "null"
-          - integer
-        cachedInputTokens:
-          description: Input read from an existing provider cache. Cache hit percentage
-            uses cachedInputTokens divided by inclusive inputTokens.
-          minimum: 0
           type:
           - "null"
           - integer
         inputTokens:
-          description: Total input, including cached and uncached input.
-          minimum: 0
           type:
           - "null"
           - integer
         outputTokens:
-          description: Total output, including provider-specific subsets such as reasoning
-            output.
-          minimum: 0
           type:
           - "null"
           - integer
-        processedTokens:
-          description: Canonical input plus output. Null when either component is
-            unknown.
-          minimum: 0
-          type:
-          - "null"
-          - integer
-        provenance:
-          $ref: '#/components/schemas/UsageMetricProvenanceResponse'
-        providerDetails:
-          $ref: '#/components/schemas/UsageProviderDetailsResponse'
         reasoningTokens:
-          description: Deprecated compatibility alias for the OpenAI reasoning-output
-            subset.
-          minimum: 0
           type:
           - "null"
           - integer
         uncachedInputTokens:
-          description: Input not read from an existing provider cache.
-          minimum: 0
           type:
           - "null"
           - integer
       required:
       - inputTokens
-      - cachedInputTokens
       - uncachedInputTokens
-      - outputTokens
-      - processedTokens
       - cacheReadTokens
       - cacheWriteTokens
+      - outputTokens
       - reasoningTokens
-      - provenance
-      - providerDetails
       type: object
     WorkspaceFileResponse:
       properties:
@@ -9095,8 +9160,6 @@ components:
           type: string
         diffTruncated:
           type: boolean
-        imageMediaType:
-          type: string
         path:
           type: string
         previousPath:
@@ -9201,6 +9264,3 @@ tags:
   name: mobile
 - description: Target-isolated desktop browser runtime (loopback only)
   name: browser
-- description: Local machine readiness checks the desktop app runs before showing
-    the board
-  name: system
