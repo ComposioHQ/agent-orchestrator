@@ -122,6 +122,7 @@ describe("send keys", () => {
 		);
 	});
 
+
 	it("keeps a taller resting field for the redesigned composer", () => {
 		const { field } = renderComposer();
 		expect(field).toHaveAttribute("rows", "1");

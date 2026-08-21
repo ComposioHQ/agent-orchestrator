@@ -71,7 +71,6 @@ export function TurnSettingsBar({
 	error,
 	disabled,
 	children,
-	beforeApprovals,
 }: {
 	models: ChatModel[];
 	settings: TurnSettings;
@@ -94,8 +93,6 @@ export function TurnSettingsBar({
 	disabled?: boolean;
 	/** Inline controls that belong on the model row, such as queue vs steer. */
 	children?: ReactNode;
-	/** Sits on the right, immediately before the approvals picker. */
-	beforeApprovals?: ReactNode;
 }) {
 	const selected = models.find((model) => model.id === settings.model);
 	const fallback = models.find((model) => model.default);
@@ -121,12 +118,8 @@ export function TurnSettingsBar({
 	};
 	const nativeModelMenu = Boolean(onChange && models.length > 0 && grouped.model.length === 0);
 	const clubbedLeft = grouped.model.length > 0 || grouped.effort.length > 0 || grouped.extra.length > 0;
-	const lastConfigOptions = useRef(configOptions);
-	if (configOptions && configOptions.length > 0) lastConfigOptions.current = configOptions;
-	const stableGrouped = clubbedLeft ? grouped : partitionConfigOptions(lastConfigOptions.current ?? []);
-	const stableClubbed = stableGrouped.model.length > 0 || stableGrouped.effort.length > 0 || stableGrouped.extra.length > 0;
-	const modeOption = grouped.mode ?? stableGrouped.mode;
-	const showRight = Boolean(onChange || beforeApprovals || modeOption);
+	const modeOption = grouped.mode;
+	const showRight = Boolean(onChange || modeOption);
 
 	return (
 		<div role="group" aria-label="Turn settings" className="flex min-w-0 flex-1 flex-col gap-0.5">
@@ -152,11 +145,11 @@ export function TurnSettingsBar({
 
 					{children}
 
-					{onChangeConfigOption && stableClubbed && !nativeModelMenu ? (
+					{onChangeConfigOption && clubbedLeft && !nativeModelMenu ? (
 						<ClubbedConfigPicker
-							modelOptions={stableGrouped.model}
-							effortOptions={stableGrouped.effort}
-							extraOptions={stableGrouped.extra}
+							modelOptions={grouped.model}
+							effortOptions={grouped.effort}
+							extraOptions={grouped.extra}
 							disabled={optionDisabled}
 							onChange={applyOption}
 						/>
@@ -165,7 +158,6 @@ export function TurnSettingsBar({
 
 				{showRight ? (
 					<div className="flex h-7 shrink-0 items-center gap-1">
-						{beforeApprovals}
 						{modeOption && onChangeConfigOption ? (
 							<ConfigOptionPicker
 								option={modeOption}

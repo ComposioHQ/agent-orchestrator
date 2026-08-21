@@ -769,7 +769,7 @@ export function ChatWorkspace({
 								commandError={commandError}
 								settings={
 									onChooseSettings || onChooseConfigOption
-										? ({ delivery }) => (
+										? (
 												<TurnSettingsBar
 													models={models ?? []}
 													settings={snapshot.settings}
@@ -782,7 +782,6 @@ export function ChatWorkspace({
 													disabled={
 														snapshot.controller.state === "stopped" || configOptionPending
 													}
-													beforeApprovals={delivery}
 												/>
 											)
 										: null

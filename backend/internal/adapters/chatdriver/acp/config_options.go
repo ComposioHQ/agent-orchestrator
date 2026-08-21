@@ -98,11 +98,22 @@ func (c *conversation) SetConfigOption(
 func (c *conversation) replaceConfigOptions(options []acpsdk.SessionConfigOption) {
 	normalized := normalizeConfigOptions(options)
 	c.mu.Lock()
+	defer c.mu.Unlock()
+	// ACP declares configOptions as the *full* set and marks it required, so an
+	// agent that has options always sends them. An empty list arriving while we
+	// already hold a catalog is therefore a malformed or partial answer — most
+	// visibly from `session/set_config_option`, whose response some agents send
+	// without the rebuilt catalog. Overwriting on that emptied the catalog and
+	// made the whole turn-settings picker vanish mid-session until the agent
+	// happened to push a ConfigOptionUpdate notification. Keeping what we have
+	// costs nothing: a real catalog change arrives as a non-empty replacement.
+	if len(normalized) == 0 && len(c.configOptions) > 0 {
+		return
+	}
 	c.configOptions = normalized
 	if len(normalized) > 0 {
 		c.capabilities[ports.ChatCapabilityConfigOptions] = true
 	}
-	c.mu.Unlock()
 }
 
 func normalizeConfigOptions(options []acpsdk.SessionConfigOption) []ports.ChatConfigOption {

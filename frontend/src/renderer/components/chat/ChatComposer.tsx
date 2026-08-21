@@ -42,7 +42,7 @@ import {
 	type KeyboardEvent,
 	type ReactNode,
 } from "react";
-import { ArrowUp, Command, CornerDownLeft, CornerDownRight, Loader2, Plus, Square, X } from "lucide-react";
+import { ArrowUp, Command, CornerDownLeft, Loader2, Plus, Square, X } from "lucide-react";
 import { Button } from "../ui/button";
 import { cn } from "../../lib/utils";
 import { ComposerSuggestMenu } from "./ComposerSuggestMenu";
@@ -104,11 +104,7 @@ export function ChatComposer({
 	autoFocus = true,
 }: {
 	onSend: (text: string, attachments?: FileAttachmentPayload[]) => void | Promise<unknown>;
-	/**
-	 * The next-turn controls, rendered inline. When a function, it receives the
-	 * queue/steer addon so those controls can sit immediately before Approvals.
-	 */
-	settings?: ReactNode | ((slots: { delivery: ReactNode | null }) => ReactNode);
+	settings?: ReactNode;
 	/** A send is in flight. */
 	busy?: boolean;
 	/** The agent is mid-turn, so this message is held until the turn ends. */
@@ -236,21 +232,16 @@ export function ChatComposer({
 
 	const staged = fileAttachments.attachments.length > 0;
 	const hasDraft = text.trim().length > 0 || staged;
-	// The control disappears the moment the turn ends, and the armed mode degrades
-	// with it: a steer with nothing in flight is refused, so it must never be what
-	// Enter is still pointing at.
-	const steering = false;
-	// Attachments cannot be steered: the steer branch delivers text only and refuses
-	// an empty body. A staged file must not light up the send button on its own while
-	// steering is armed, or Enter would silently do nothing.
 	const canSend =
-		(text.trim().length > 0 || (staged && !steering)) && !busy && !disabled && !steerPending;
+		(text.trim().length > 0 || staged) && !busy && !disabled && !steerPending;
 	const canStopTurn = Boolean(willQueue && onInterrupt && !disabled && !hasDraft);
 	const sendHint = menuOpen
 		? "Enter to insert"
-		: willQueue
+		: willQueue && canSteer && onSteer
 			? "⏎ queue · ⌘⏎ steer"
-			: "Enter to send";
+			: willQueue
+				? "⏎ queue"
+				: "Enter to send";
 	const draftSeedId = draftSeed?.id;
 	const draftSeedText = draftSeed?.text;
 
@@ -346,7 +337,7 @@ export function ChatComposer({
 		if (!canSend) return;
 		setSendError(null);
 
-		const shouldSteer = forceSteer ?? steering;
+		const shouldSteer = forceSteer ?? false;
 		const body = text.trim();
 
 		if (body === "/compact" && onCompact) {
@@ -528,11 +519,14 @@ export function ChatComposer({
 	const [metaHeld, setMetaHeld] = useState(false);
 	useEffect(() => {
 		const onKey = (e: globalThis.KeyboardEvent) => setMetaHeld(e.metaKey || e.ctrlKey);
+		const onBlur = () => setMetaHeld(false);
 		window.addEventListener("keydown", onKey);
 		window.addEventListener("keyup", onKey);
+		window.addEventListener("blur", onBlur);
 		return () => {
 			window.removeEventListener("keydown", onKey);
 			window.removeEventListener("keyup", onKey);
+			window.removeEventListener("blur", onBlur);
 		};
 	}, []);
 	const activeDelivery = metaHeld && canSteer && onSteer ? "steer" : "queue";
@@ -542,8 +536,7 @@ export function ChatComposer({
 		canSteer && onSteer ? (
 			<DeliveryChoice value={activeDelivery} disabled={steerPending} />
 		) : null;
-	const settingsNode =
-		typeof settings === "function" ? settings({ delivery: null }) : settings;
+	const settingsNode = settings;
 
 	return (
 		<>
@@ -635,11 +628,9 @@ export function ChatComposer({
 				placeholder={
 					disabled
 						? "The controller is not connected"
-						: steering
-							? "Agent is working — this goes into the turn it is running"
-							: willQueue
-								? "Agent is working — this sends when it finishes"
-								: "Message the agent…"
+						: willQueue
+							? "Agent is working — this sends when it finishes"
+							: "Message the agent…"
 				}
 				className="chat-composer-scrollbar max-h-40 min-h-[4.5rem] w-full resize-none overflow-y-hidden overscroll-contain bg-transparent pl-[7px] pr-0 py-1 text-base! leading-relaxed text-foreground outline-none placeholder:text-passive disabled:opacity-50"
 			/>
@@ -706,9 +697,7 @@ export function ChatComposer({
 						size="icon-sm"
 						disabled={canStopTurn ? false : !canSend}
 						onClick={canStopTurn ? onInterrupt : undefined}
-						aria-label={
-							canStopTurn ? "Stop turn" : steering ? "Steer the running turn" : "Send message"
-						}
+						aria-label={canStopTurn ? "Stop turn" : "Send message"}
 						// The destination Enter is armed with used to be spelled out beside
 						// the button. The row reads better without a line of prose in it, but
 						// the fact is not decoration, so it moves onto the control it
@@ -725,8 +714,6 @@ export function ChatComposer({
 							<Square aria-hidden="true" className="size-2.5 fill-current" />
 						) : steerPending ? (
 							<Loader2 aria-hidden="true" className="size-3.5 animate-spin" />
-						) : steering ? (
-							<CornerDownRight aria-hidden="true" className="size-3.5" />
 						) : (
 							<ArrowUp aria-hidden="true" className="size-3.5" />
 						)}

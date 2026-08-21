@@ -552,6 +552,13 @@ export function useConversationConfigOptions(sessionId: string | undefined, enab
 			optionId: string;
 			value: ChatConfigOptionValue;
 		}) => {
+			// The poll interval can have a GET in flight when the user picks an
+			// option. If that stale response lands after this mutation's own
+			// setQueryData, it overwrites the fresh selection with the pre-mutation
+			// list — the picker flashes back to the old value until the next poll
+			// or a full reload. Cancelling here excludes that in-flight fetch from
+			// updating the cache once this mutation resolves.
+			await queryClient.cancelQueries({ queryKey });
 			const { data, error } = await apiClient.PATCH(
 				"/api/v1/sessions/{sessionId}/conversation/config-options/{configId}",
 				{
