@@ -16,12 +16,32 @@ export const metadata: Metadata = {
     "Submit your Agent Orchestrator testimonial for the AO website.",
 };
 
-const testimonialExamples = [
-  "AO really changes the way you develop. The orchestrator and kanban have been a game changer. I’m no longer confused about what agent is doing what; scoping tasks and spawning them off has been a breeze.",
-  "With AO Mobile, I’m able to ship things on the fly, and my agents are never blocked on my input anymore.",
-  "Before AO, I would ship at most 2–3 PRs a day. Now I consistently ship 5+ PRs every day at work.",
-  "There hasn’t been a day in the last two months when I opened another IDE or ran a coding agent in a terminal app. AO really changes how you think about work. It’s a mindset shift you can’t go back from.",
-  "AO automatically gets the right agent to address CI failures and review comments. My agents are much more autonomous now, and with the orchestrator + kanban, I’m able to manage more and more of them.",
+const testimonials = [
+  {
+    quote:
+      "AO really changes the way you develop. The orchestrator and kanban have been a game changer. I’m no longer confused about what agent is doing what; scoping tasks and spawning them off has been a breeze.",
+    author: "Aditi Chauhan, Software Engineer, Docusign",
+  },
+  {
+    quote:
+      "With AO Mobile, I’m able to ship things on the fly, and my agents are never blocked on my input anymore.",
+    author: "Dhruv Sharma, Engineering Lead, The Hashgraph group",
+  },
+  {
+    quote:
+      "Before AO, I would ship at most 2–3 PRs a day. Now I consistently ship 5+ PRs every day at work.",
+    author: "Harshit Singh Bhandari, IEOR @ IIT Bombay",
+  },
+  {
+    quote:
+      "There hasn’t been a day in the last two months when I opened another IDE or ran a coding agent in a terminal app. AO really changes how you think about work. It’s a mindset shift you can’t go back from.",
+    author: "Pritom Mazumdar, Microsoft",
+  },
+  {
+    quote:
+      "AO automatically gets the right agent to address CI failures and review comments. My agents are much more autonomous now, and with the orchestrator + kanban, I’m able to manage more and more of them.",
+    author: "Aditya Purohit, CTO @ Osvi.ai",
+  },
 ];
 
 export default function TestimonialsPage() {
@@ -61,12 +81,15 @@ export default function TestimonialsPage() {
 
               <div className="mt-10 border-t border-border/70 pt-6 lg:mt-auto">
                 <div className="grid gap-x-6 gap-y-5 lg:grid-cols-2">
-                  {testimonialExamples.slice(1, 5).map((example, index) => (
+                  {testimonials.slice(1, 5).map((testimonial, index) => (
                     <blockquote
-                      key={example}
+                      key={testimonial.author}
                       className={`${index > 0 ? "hidden lg:block" : ""} text-sm leading-6 text-foreground/80`}
                     >
-                      “{example}”
+                      <p>“{testimonial.quote}”</p>
+                      <cite className="mt-2 block text-xs font-medium not-italic leading-5 text-muted-foreground">
+                        {testimonial.author}
+                      </cite>
                     </blockquote>
                   ))}
                 </div>
@@ -74,7 +97,7 @@ export default function TestimonialsPage() {
                   href="#testimonial-examples"
                   className="mt-6 inline-flex text-sm font-medium text-foreground underline decoration-border underline-offset-4 transition-colors hover:decoration-foreground"
                 >
-                  More examples below ↓
+                  More testimonials below ↓
                 </a>
               </div>
             </div>
@@ -98,19 +121,19 @@ export default function TestimonialsPage() {
             <h2
               className={`${testimonialDisplay.className} text-2xl font-semibold text-foreground sm:text-3xl`}
             >
-              Examples of good testimonials
+              Some testimonials from existing users
             </h2>
           </div>
 
           <div className="grid sm:grid-cols-2">
-            {testimonialExamples.map((example, index) => (
+            {testimonials.map((testimonial, index) => (
               <blockquote
-                key={example}
+                key={testimonial.author}
                 className={`group relative border-border py-7 first:pt-8 ${
                   index > 0 ? "border-t" : ""
                 } ${index < 2 ? "sm:border-t-0" : "sm:border-t"} ${
-                  index === testimonialExamples.length - 1 &&
-                  testimonialExamples.length % 2 === 1
+                  index === testimonials.length - 1 &&
+                  testimonials.length % 2 === 1
                     ? "sm:col-span-2"
                     : index % 2 === 1
                       ? "sm:border-l sm:pl-8"
@@ -119,7 +142,7 @@ export default function TestimonialsPage() {
               >
                 <div className="flex items-center justify-between gap-4">
                   <span className="font-mono text-[10px] uppercase tracking-[0.2em] text-muted-foreground">
-                    Example {String(index + 1).padStart(2, "0")}
+                    Testimonial {String(index + 1).padStart(2, "0")}
                   </span>
                   <Quote
                     className="size-5 text-foreground/10 transition-colors group-hover:text-foreground/20"
@@ -127,8 +150,11 @@ export default function TestimonialsPage() {
                   />
                 </div>
                 <p className="mt-5 max-w-2xl text-base leading-7 text-foreground/90 sm:text-lg sm:leading-8">
-                  “{example}”
+                  “{testimonial.quote}”
                 </p>
+                <cite className="mt-4 block text-sm font-medium not-italic leading-6 text-muted-foreground">
+                  {testimonial.author}
+                </cite>
               </blockquote>
             ))}
           </div>

@@ -150,6 +150,9 @@ func (s *Service) fetchClaimObservation(ctx context.Context, ref ports.SCMPRRef)
 		return ports.SCMObservation{}, ErrPRNotFound
 	}
 	obs := batch[0]
+	if errors.Is(obs.Error, ports.ErrSCMNotFound) {
+		return ports.SCMObservation{}, ErrPRNotFound
+	}
 	if !obs.Fetched {
 		return ports.SCMObservation{}, ErrSCMUnavailable
 	}

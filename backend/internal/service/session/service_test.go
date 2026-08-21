@@ -2857,8 +2857,12 @@ func TestClaimRowsFromSCMSnapshotsSessionReviewPolicy(t *testing.T) {
 type noopSCMProvider struct{}
 
 func (noopSCMProvider) ParseRepository(string) (ports.SCMRepo, bool) { return ports.SCMRepo{}, false }
-func (noopSCMProvider) FetchPullRequests(context.Context, []ports.SCMPRRef) ([]ports.SCMObservation, error) {
-	return nil, nil
+func (noopSCMProvider) FetchPullRequests(_ context.Context, refs []ports.SCMPRRef) ([]ports.SCMObservation, error) {
+	out := make([]ports.SCMObservation, len(refs))
+	for i := range out {
+		out[i].Error = ports.ErrSCMNotFound
+	}
+	return out, nil
 }
 func (noopSCMProvider) FetchReviewThreads(context.Context, ports.SCMPRRef) (ports.SCMReviewObservation, error) {
 	return ports.SCMReviewObservation{}, nil
@@ -2872,14 +2876,21 @@ func (f fakeSCM) ParseRepository(remote string) (ports.SCMRepo, bool) {
 	return ports.SCMRepo{Provider: providerKey(host), Host: host, Owner: owner, Name: repo, Repo: owner + "/" + repo}, true
 }
 
-func (f fakeSCM) FetchPullRequests(context.Context, []ports.SCMPRRef) ([]ports.SCMObservation, error) {
+func (f fakeSCM) FetchPullRequests(_ context.Context, refs []ports.SCMPRRef) ([]ports.SCMObservation, error) {
 	if f.fetchErr != nil {
 		return nil, f.fetchErr
 	}
+	out := make([]ports.SCMObservation, len(refs))
 	if !f.obs.Fetched && f.obs.PR.URL == "" && f.obs.PR.Number == 0 {
-		return nil, nil
+		for i := range out {
+			out[i].Error = ports.ErrSCMNotFound
+		}
+		return out, nil
 	}
-	return []ports.SCMObservation{f.obs}, nil
+	for i := range out {
+		out[i] = f.obs
+	}
+	return out, nil
 }
 
 func (f fakeSCM) FetchReviewThreads(context.Context, ports.SCMPRRef) (ports.SCMReviewObservation, error) {
@@ -2931,7 +2942,8 @@ func TestClaimPRMapsObserverAndStoreErrors(t *testing.T) {
 		want error
 	}{
 		{"missing scm", NewWithDeps(Deps{Store: st}), ErrSCMUnavailable},
-		{"not found", NewWithDeps(Deps{Store: st, PRClaimer: &fakePRClaimer{}, SCM: fakeSCM{fetchErr: ports.ErrSCMNotFound}}), ErrPRNotFound},
+		{"not found error", NewWithDeps(Deps{Store: st, PRClaimer: &fakePRClaimer{}, SCM: fakeSCM{fetchErr: ports.ErrSCMNotFound}}), ErrPRNotFound},
+		{"not found placeholder", NewWithDeps(Deps{Store: st, PRClaimer: &fakePRClaimer{}, SCM: fakeSCM{}}), ErrPRNotFound},
 		{"closed", NewWithDeps(Deps{Store: st, PRClaimer: &fakePRClaimer{}, SCM: fakeSCM{obs: ports.SCMObservation{Fetched: true, Provider: "github", Host: "github.com", Repo: "acme/repo", PR: ports.SCMPRObservation{URL: "https://github.com/acme/repo/pull/7", Number: 7, Closed: true}}}}), ErrPRNotOpen},
 		{"active owner", NewWithDeps(Deps{Store: st, PRClaimer: &fakePRClaimer{err: ports.PRClaimedByActiveSessionError{Owner: "mer-2"}}, SCM: fakeSCM{obs: ports.SCMObservation{Fetched: true, Provider: "github", Host: "github.com", Repo: "acme/repo", PR: ports.SCMPRObservation{URL: "https://github.com/acme/repo/pull/7", Number: 7}}}}), ports.ErrPRClaimedByActiveSession},
 	}

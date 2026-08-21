@@ -655,7 +655,7 @@ describe("SessionInspector PR section", () => {
     }
     expect(
       screen.getByRole("button", {
-        name: "Sets the default for newly created pull requests. When disabled, CI failures are displayed but not sent to the worker agent to fix.",
+        name: "Sends CI failures to the worker.",
       }),
     ).toBeInTheDocument();
     expect(

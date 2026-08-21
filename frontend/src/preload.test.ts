@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { CLOSE_SHELL_TERMINAL_SHORTCUT_CHANNEL, FOCUS_TERMINAL_SHORTCUT_CHANNEL, KEYBOARD_SHORTCUTS_HELP_CHANNEL, NEXT_SESSION_SHORTCUT_CHANNEL, NEXT_TAB_SHORTCUT_CHANNEL, NEW_SESSION_SHORTCUT_CHANNEL, NEW_SHELL_TERMINAL_SHORTCUT_CHANNEL, OPEN_SETTINGS_SHORTCUT_CHANNEL, PREVIOUS_SESSION_SHORTCUT_CHANNEL, PREVIOUS_TAB_SHORTCUT_CHANNEL, SET_CLOSE_SHELL_TERMINAL_SHORTCUT_ENABLED_CHANNEL } from "./shared/shortcuts";
 import type { AoBridge } from "./preload";
 
@@ -6,6 +6,7 @@ const electronMocks = vi.hoisted(() => {
 	const listeners = new Map<string, (...args: unknown[]) => void>();
 	return {
 		exposeInMainWorld: vi.fn(),
+		getPathForFile: vi.fn(),
 		invoke: vi.fn(),
 		listeners,
 		off: vi.fn(),
@@ -24,9 +25,15 @@ vi.mock("electron", () => ({
 		on: electronMocks.on,
 		send: electronMocks.send,
 	},
+	webUtils: { getPathForFile: electronMocks.getPathForFile },
 }));
 
 await import("./preload");
+
+// Captured once, before any test's beforeEach clears the listeners map: this
+// is the always-on buffering listener preload.ts registers at module load,
+// not the per-call listener onOpenFolderPath registers when invoked.
+const openFolderPathBufferListener = electronMocks.listeners.get("app:openFolderPath");
 
 function exposedBridge(): AoBridge {
 	const call = electronMocks.exposeInMainWorld.mock.calls.find(([key]) => key === "ao");
@@ -36,10 +43,89 @@ function exposedBridge(): AoBridge {
 
 beforeEach(() => {
 	electronMocks.listeners.clear();
+	electronMocks.getPathForFile.mockClear();
 	electronMocks.invoke.mockClear();
 	electronMocks.off.mockClear();
 	electronMocks.on.mockClear();
 	electronMocks.send.mockClear();
+});
+
+describe("preload getPathForFile bridge", () => {
+	it("forwards the File to webUtils.getPathForFile without going through IPC", () => {
+		electronMocks.getPathForFile.mockReturnValue("/Users/x/dropped-folder");
+		const file = new File([], "dropped-folder");
+
+		const path = exposedBridge().app.getPathForFile(file);
+
+		expect(path).toBe("/Users/x/dropped-folder");
+		expect(electronMocks.getPathForFile).toHaveBeenCalledWith(file);
+		expect(electronMocks.invoke).not.toHaveBeenCalled();
+	});
+});
+
+describe("preload openFolderPath bridge", () => {
+	// The dispatcher's "active listener" is module-level state that outlives a
+	// single test, exactly like the real renderer's mounted subscription — so
+	// every test below disposes its own subscription before finishing, the same
+	// way a real unmount would, to avoid leaking into the next test.
+	let dispose: (() => void) | undefined;
+
+	afterEach(() => {
+		dispose?.();
+		dispose = undefined;
+	});
+
+	it("replays a folder path that arrived before onOpenFolderPath was called", () => {
+		// Regression: cold start / an early second-instance can flush
+		// app:openFolderPath before ShellLayout's own effect has run to call
+		// onOpenFolderPath and register its listener (React mounts TrayRuntime's
+		// child effect, whose ready-ping triggers the main-process flush, before
+		// ShellLayout's own parent effect). Without buffering, that path was lost.
+		openFolderPathBufferListener?.({}, "/dropped/via-icon");
+
+		const listener = vi.fn();
+		dispose = exposedBridge().app.onOpenFolderPath(listener);
+
+		expect(listener).toHaveBeenCalledWith("/dropped/via-icon");
+	});
+
+	it("does not replay an already-consumed buffered path a second time", () => {
+		openFolderPathBufferListener?.({}, "/dropped/first");
+		const firstListener = vi.fn();
+		exposedBridge().app.onOpenFolderPath(firstListener)();
+		expect(firstListener).toHaveBeenCalledTimes(1);
+
+		const secondListener = vi.fn();
+		dispose = exposedBridge().app.onOpenFolderPath(secondListener);
+		expect(secondListener).not.toHaveBeenCalled();
+	});
+
+	it("delivers a path that arrives normally, after the listener is already registered", () => {
+		const listener = vi.fn();
+		dispose = exposedBridge().app.onOpenFolderPath(listener);
+
+		openFolderPathBufferListener?.({}, "/dropped/normal");
+
+		expect(listener).toHaveBeenCalledWith("/dropped/normal");
+	});
+
+	it("does not replay a normally delivered path to a later resubscription", () => {
+		// Regression: a single dispatcher forwards straight to the active
+		// listener without ever touching the buffer, so unsubscribing and
+		// resubscribing afterward must not hand the new listener a path that
+		// was already delivered while the first listener was active.
+		const firstListener = vi.fn();
+		const disposeFirst = exposedBridge().app.onOpenFolderPath(firstListener);
+
+		openFolderPathBufferListener?.({}, "/dropped/already-delivered");
+		expect(firstListener).toHaveBeenCalledWith("/dropped/already-delivered");
+		disposeFirst();
+
+		const secondListener = vi.fn();
+		dispose = exposedBridge().app.onOpenFolderPath(secondListener);
+
+		expect(secondListener).not.toHaveBeenCalled();
+	});
 });
 
 describe("preload new-session shortcut bridge", () => {

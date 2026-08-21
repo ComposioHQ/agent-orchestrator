@@ -467,14 +467,10 @@ func (c *Controller) importNativeHistory(
 	}
 	historyCtx, cancel := context.WithTimeout(ctx, nativeHistorySettleLimit)
 	defer cancel()
-	var events []ports.ChatEvent
+	events, err := reader.ReadHistory(historyCtx)
+	refresher, refreshable := reader.(ports.ChatHistoryRefresher)
 	sawUnsettled := false
-	for {
-		var err error
-		events, err = reader.ReadHistory(historyCtx)
-		if err == nil && (!required || checkpoint.reached(events)) {
-			break
-		}
+	for err != nil || (required && !checkpoint.reached(events)) {
 		if err == nil {
 			err = ports.ErrChatHistoryUnsettled
 		}
@@ -489,6 +485,9 @@ func (c *Controller) importNativeHistory(
 			return fmt.Errorf("read native conversation history: %w", err)
 		}
 		sawUnsettled = true
+		if !refreshable {
+			return fmt.Errorf("native conversation history snapshot is incomplete and cannot be refreshed: %w", err)
+		}
 
 		timer := time.NewTimer(nativeHistorySettlePoll)
 		select {
@@ -498,6 +497,7 @@ func (c *Controller) importNativeHistory(
 				ports.ErrChatHistoryUnsettled, historyCtx.Err())
 		case <-timer.C:
 		}
+		events, err = refresher.RefreshHistory(historyCtx)
 	}
 	events = reconcileNativeHistory(
 		events, existingTurns, existingMessages, existingActivities,
