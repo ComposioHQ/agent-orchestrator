@@ -1230,6 +1230,7 @@
 	"settings.project.reviewer": "Reviewer",
 	"shell.cloudProject": "Proyecto en la nube",
 	"shell.createCloudProject": "Crear proyecto en la nube",
+	"shell.createLocalProject": "Crear proyecto local",
 	"shell.useLocalProjects": "Usar proyectos locales",
 	"cloudWorkspace.title": "Crear proyecto en la nube",
 	"cloudWorkspace.description": "AO clonará este repositorio en un entorno aislado de Daytona y ejecutará allí el daemon normal de AO y Claude Code.",

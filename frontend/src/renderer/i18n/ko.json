@@ -1214,6 +1214,7 @@
 	"settings.project.reviewer": "Reviewer",
 	"shell.cloudProject": "클라우드 프로젝트",
 	"shell.createCloudProject": "클라우드 프로젝트 만들기",
+	"shell.createLocalProject": "로컬 프로젝트 만들기",
 	"shell.useLocalProjects": "로컬 프로젝트 사용",
 	"cloudWorkspace.title": "클라우드 프로젝트 만들기",
 	"cloudWorkspace.description": "AO가 이 저장소를 Daytona 샌드박스에 복제하고 일반 AO 데몬과 Claude Code를 실행합니다.",

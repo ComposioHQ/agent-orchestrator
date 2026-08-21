@@ -1214,6 +1214,7 @@
 	"settings.project.reviewer": "Reviewer",
 	"shell.cloudProject": "クラウドプロジェクト",
 	"shell.createCloudProject": "クラウドプロジェクトを作成",
+	"shell.createLocalProject": "ローカルプロジェクトを作成",
 	"shell.useLocalProjects": "ローカルプロジェクトを使用",
 	"cloudWorkspace.title": "クラウドプロジェクトを作成",
 	"cloudWorkspace.description": "AO はこのリポジトリを Daytona サンドボックスにクローンし、通常の AO デーモンと Claude Code をそこで実行します。",

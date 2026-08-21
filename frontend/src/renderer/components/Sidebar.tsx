@@ -1127,8 +1127,6 @@ function CloudAccountRow({ tabIndex }: { tabIndex: number }) {
 	const { t } = useTranslation();
 	const queryClient = useQueryClient();
 	const { configured, session, status, signIn, signOut } = useCloudSession();
-	const [workspaceOpen, setWorkspaceOpen] = useState(false);
-	const [cloudConnected, setCloudConnected] = useState(isCloudApiActive());
 	if (!configured || status === "loading") return null;
 
 	if (status === "unauthenticated") {
@@ -1176,23 +1174,6 @@ function CloudAccountRow({ tabIndex }: { tabIndex: number }) {
 				</button>
 			</DropdownMenuTrigger>
 			<DropdownMenuContent side="top" align="start" className="min-w-44">
-				<DropdownMenuItem onSelect={() => setWorkspaceOpen(true)}>
-					<Plus aria-hidden="true" />
-					{t("shell.createCloudProject")}
-				</DropdownMenuItem>
-				{cloudConnected && (
-					<DropdownMenuItem
-						onSelect={() => {
-							setCloudApiBaseUrl(null);
-							queryClient.clear();
-							setCloudConnected(false);
-						}}
-					>
-						<Folder aria-hidden="true" />
-						{t("shell.useLocalProjects")}
-					</DropdownMenuItem>
-				)}
-				<DropdownMenuSeparator />
 				<DropdownMenuItem
 					className="text-destructive focus:text-destructive [&_svg]:text-destructive"
 					onSelect={() => {
@@ -1206,11 +1187,6 @@ function CloudAccountRow({ tabIndex }: { tabIndex: number }) {
 				</DropdownMenuItem>
 			</DropdownMenuContent>
 		</DropdownMenu>
-		<CloudWorkspaceDialog
-			onConnected={() => setCloudConnected(true)}
-			onOpenChange={setWorkspaceOpen}
-			open={workspaceOpen}
-		/>
 		</>
 	);
 }
@@ -1465,6 +1441,8 @@ function CreateProjectButton({
 	onInitializeProject,
 }: Pick<SidebarProps, "onCloneProject" | "onCreateProject" | "onInitializeProject"> & { hideTrigger?: boolean }) {
 	const { t } = useTranslation();
+	const { configured, status, signIn } = useCloudSession();
+	const [cloudWorkspaceOpen, setCloudWorkspaceOpen] = useState(false);
 	// Single CreateProjectFlow owner for the sidebar: the header "+" stays mounted
 	// (CSS-hidden when collapsed or on the empty start page) so it can own
 	// openSignal for ⌘N on every shell route. The collapsed rail button below
@@ -1478,25 +1456,58 @@ function CreateProjectButton({
 			onInitializeProject={onInitializeProject}
 			openSignal={createProjectNonce}
 		>
-			{({ disabled, choosePath, label }) => (
-				<Tooltip>
-					<TooltipTrigger asChild>
-						<button
+			{({ disabled, choosePath, label }) => {
+				const trigger = (
+					<button
 							aria-label={t("shell.newProject")}
 							className={cn(
 								"grid size-icon-xl shrink-0 place-items-center rounded-sm text-passive transition-colors hover:bg-interactive-hover hover:text-foreground",
 								hideTrigger && "hidden",
 							)}
-							disabled={disabled}
-							onClick={choosePath}
+							disabled={disabled || (configured && status === "loading")}
+							onClick={configured ? undefined : choosePath}
 							type="button"
 						>
 							<Plus className="size-icon-sm" aria-hidden="true" />
 						</button>
-					</TooltipTrigger>
-					<TooltipContent>{label}</TooltipContent>
-				</Tooltip>
-			)}
+				);
+				return (
+					<>
+						{configured ? (
+							<DropdownMenu>
+								<Tooltip>
+									<TooltipTrigger asChild>
+										<DropdownMenuTrigger asChild>{trigger}</DropdownMenuTrigger>
+									</TooltipTrigger>
+									<TooltipContent>{label}</TooltipContent>
+								</Tooltip>
+								<DropdownMenuContent align="end" className="min-w-44">
+									<DropdownMenuItem onSelect={choosePath}>
+										<Folder aria-hidden="true" />
+										{t("shell.createLocalProject")}
+									</DropdownMenuItem>
+									<DropdownMenuItem
+										onSelect={() => status === "authenticated" ? setCloudWorkspaceOpen(true) : signIn()}
+									>
+										<Cloud aria-hidden="true" />
+										{t("shell.createCloudProject")}
+									</DropdownMenuItem>
+								</DropdownMenuContent>
+							</DropdownMenu>
+						) : (
+							<Tooltip>
+								<TooltipTrigger asChild>{trigger}</TooltipTrigger>
+								<TooltipContent>{label}</TooltipContent>
+							</Tooltip>
+						)}
+						<CloudWorkspaceDialog
+							onConnected={() => undefined}
+							onOpenChange={setCloudWorkspaceOpen}
+							open={cloudWorkspaceOpen}
+						/>
+					</>
+				);
+			}}
 		</CreateProjectFlow>
 	);
 }

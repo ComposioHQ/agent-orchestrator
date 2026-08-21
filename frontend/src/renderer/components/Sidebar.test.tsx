@@ -275,9 +275,29 @@ beforeEach(() => {
 
 afterEach(() => {
 	vi.restoreAllMocks();
+	vi.unstubAllEnvs();
 });
 
 describe("Sidebar", () => {
+	it("offers local and cloud project creation from the project button", async () => {
+		vi.stubEnv("VITE_AO_CLOUD_GOOGLE_CLIENT_ID", "desktop.apps.googleusercontent.com");
+		vi.stubEnv("VITE_AO_CLOUD_API_URL", "https://cloud.example");
+		vi.spyOn(window.ao!.cloud, "getSession").mockResolvedValue({
+			authProvider: "google",
+			user: { id: "user-1", email: "person@example.com", displayName: "Person" },
+			organizations: [],
+			storedAt: new Date().toISOString(),
+		});
+		const user = userEvent.setup();
+		renderSidebar();
+
+		await waitFor(() => expect(screen.getByLabelText("New project")).toBeEnabled());
+		await user.click(screen.getByLabelText("New project"));
+
+		expect(screen.getByRole("menuitem", { name: "Create local project" })).toBeInTheDocument();
+		expect(screen.getByRole("menuitem", { name: "Create cloud project" })).toBeInTheDocument();
+	});
+
 	it("suppresses focus chrome without removing keyboard focusability", () => {
 		renderSidebar();
 

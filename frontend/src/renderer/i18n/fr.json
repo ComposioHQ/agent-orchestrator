@@ -1230,6 +1230,7 @@
 	"settings.project.reviewer": "Reviewer",
 	"shell.cloudProject": "Projet cloud",
 	"shell.createCloudProject": "Créer un projet cloud",
+	"shell.createLocalProject": "Créer un projet local",
 	"shell.useLocalProjects": "Utiliser les projets locaux",
 	"cloudWorkspace.title": "Créer un projet cloud",
 	"cloudWorkspace.description": "AO clonera ce dépôt dans un bac à sable Daytona et y exécutera le daemon AO normal et Claude Code.",

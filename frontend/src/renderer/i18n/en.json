@@ -1196,6 +1196,7 @@
 	"settings.project.reviewer": "Reviewer",
 	"shell.cloudProject": "Cloud project",
 	"shell.createCloudProject": "Create cloud project",
+	"shell.createLocalProject": "Create local project",
 	"shell.useLocalProjects": "Use local projects",
 	"cloudWorkspace.title": "Create cloud project",
 	"cloudWorkspace.description": "AO will clone this repository into a Daytona sandbox and run the normal AO daemon and Claude Code there.",

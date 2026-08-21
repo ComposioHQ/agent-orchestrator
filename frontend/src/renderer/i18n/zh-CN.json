@@ -1196,6 +1196,7 @@
 	"settings.project.reviewer": "Reviewer",
 	"shell.cloudProject": "云项目",
 	"shell.createCloudProject": "创建云项目",
+	"shell.createLocalProject": "创建本地项目",
 	"shell.useLocalProjects": "使用本地项目",
 	"cloudWorkspace.title": "创建云项目",
 	"cloudWorkspace.description": "AO 会将此仓库克隆到 Daytona 沙盒中，并在其中运行常规 AO 守护进程和 Claude Code。",
