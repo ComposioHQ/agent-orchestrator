@@ -760,7 +760,7 @@ function ProjectItem({
 			{workspace.name}
 		</span>
 		{source === "cloud" ? (
-			<Cloud aria-label="Cloud project" className="sidebar-expanded-chrome size-3.5! shrink-0 text-muted-foreground group-data-[collapsible=icon]:hidden" />
+			<Cloud aria-label={t("shell.cloudProject")} className="sidebar-expanded-chrome size-3.5! shrink-0 text-muted-foreground group-data-[collapsible=icon]:hidden" />
 		) : null}
 	</SidebarMenuButton>
 	{/* Folder disclosure toggle: sibling of the nav button, absolutely positioned over
@@ -1178,7 +1178,7 @@ function CloudAccountRow({ tabIndex }: { tabIndex: number }) {
 			<DropdownMenuContent side="top" align="start" className="min-w-44">
 				<DropdownMenuItem onSelect={() => setWorkspaceOpen(true)}>
 					<Plus aria-hidden="true" />
-					Create cloud project
+					{t("shell.createCloudProject")}
 				</DropdownMenuItem>
 				{cloudConnected && (
 					<DropdownMenuItem
@@ -1189,7 +1189,7 @@ function CloudAccountRow({ tabIndex }: { tabIndex: number }) {
 						}}
 					>
 						<Folder aria-hidden="true" />
-						Use local projects
+						{t("shell.useLocalProjects")}
 					</DropdownMenuItem>
 				)}
 				<DropdownMenuSeparator />
