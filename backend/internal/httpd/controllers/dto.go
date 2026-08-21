@@ -1069,6 +1069,7 @@ type StartInstallResponse = systeminstall.Job
 // InstallStatusResponse is the body of GET /api/v1/system/install/{target}.
 type InstallStatusResponse = systeminstall.Job
 
+// QuotaCapabilitiesResponse describes the quota features exposed by an adapter.
 type QuotaCapabilitiesResponse struct {
 	SupportsRead        bool `json:"supportsRead"`
 	SupportsSubscribe   bool `json:"supportsSubscribe"`
@@ -1077,6 +1078,7 @@ type QuotaCapabilitiesResponse struct {
 	SupportsSpendLimits bool `json:"supportsSpendLimits"`
 }
 
+// QuotaLimitResponse is one independently enforced provider quota bucket.
 type QuotaLimitResponse struct {
 	ID                    string     `json:"id"`
 	Name                  string     `json:"name,omitempty"`
@@ -1096,6 +1098,7 @@ type QuotaLimitResponse struct {
 	Severity              string     `json:"severity" enum:"normal,warning,critical,exhausted,unknown"`
 }
 
+// QuotaBalanceResponse is a provider-reported credit or monetary balance.
 type QuotaBalanceResponse struct {
 	ID        string `json:"id"`
 	Name      string `json:"name,omitempty"`
@@ -1104,6 +1107,7 @@ type QuotaBalanceResponse struct {
 	Unlimited bool   `json:"unlimited"`
 }
 
+// ProviderQuotaResponse is the latest quota state for one provider account.
 type ProviderQuotaResponse struct {
 	Provider     string                    `json:"provider"`
 	AccountID    string                    `json:"accountId"`
@@ -1120,15 +1124,18 @@ type ProviderQuotaResponse struct {
 	Balances     []QuotaBalanceResponse    `json:"balances"`
 }
 
+// ListProviderQuotaResponse contains the latest known provider account quotas.
 type ListProviderQuotaResponse struct {
 	Providers []ProviderQuotaResponse `json:"providers"`
 }
 
+// QuotaAlertsQuery controls the alert lookback window and result limit.
 type QuotaAlertsQuery struct {
 	Minutes int64 `query:"minutes,omitempty" minimum:"1" maximum:"10080" description:"Alert lookback in minutes. Defaults to 10."`
 	Limit   int64 `query:"limit,omitempty" minimum:"1" maximum:"500" description:"Maximum alerts. Defaults to 100."`
 }
 
+// QuotaAlertResponse describes a provider quota threshold transition.
 type QuotaAlertResponse struct {
 	ID        string    `json:"id"`
 	Provider  string    `json:"provider"`
@@ -1141,20 +1148,24 @@ type QuotaAlertResponse struct {
 	CreatedAt time.Time `json:"createdAt"`
 }
 
+// ListQuotaAlertsResponse contains recent provider quota alerts.
 type ListQuotaAlertsResponse struct {
 	Alerts []QuotaAlertResponse `json:"alerts"`
 }
 
+// QuotaProviderAccountParams identifies one provider quota account.
 type QuotaProviderAccountParams struct {
 	Provider  string `path:"provider" description:"Opaque quota provider id, for example codex or claude."`
 	AccountID string `path:"accountId" description:"Local non-secret provider account id."`
 }
 
+// QuotaHistoryQuery controls the history lookback window and result limit.
 type QuotaHistoryQuery struct {
 	Hours int64 `query:"hours,omitempty" minimum:"1" maximum:"2160" description:"History lookback in hours. Defaults to 168 (seven days)."`
 	Limit int64 `query:"limit,omitempty" minimum:"1" maximum:"2000" description:"Maximum points. Defaults to 500."`
 }
 
+// QuotaHistoryPointResponse is one observed quota bucket state.
 type QuotaHistoryPointResponse struct {
 	LimitID     string     `json:"limitId"`
 	WindowType  string     `json:"windowType,omitempty"`
@@ -1166,6 +1177,7 @@ type QuotaHistoryPointResponse struct {
 	ObservedAt  time.Time  `json:"observedAt"`
 }
 
+// ListQuotaHistoryResponse contains observed quota bucket states.
 type ListQuotaHistoryResponse struct {
 	Points []QuotaHistoryPointResponse `json:"points"`
 }
