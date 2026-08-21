@@ -167,7 +167,7 @@ AO works with the coding agents and source-control workflow you already use. Age
 
 ## Install
 
-Download the latest AO desktop app for your platform. AO checks for updates automatically.
+Download the latest AO desktop app for your platform.
 
 | Platform              | Download                                                                                                                      |
 | --------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
@@ -177,8 +177,23 @@ Download the latest AO desktop app for your platform. AO checks for updates auto
 | Linux (AppImage)      | [Download](https://github.com/Untrivial-ai/agent-orchestrator/releases/latest/download/agent-orchestrator-linux-x64.AppImage) |
 | Linux (Debian/Ubuntu) | [Download](https://github.com/Untrivial-ai/agent-orchestrator/releases/latest/download/agent-orchestrator-linux-x64.deb)      |
 | Linux (Fedora/RHEL)   | [Download](https://github.com/Untrivial-ai/agent-orchestrator/releases/latest/download/agent-orchestrator-linux-x64.rpm)      |
+| Linux (Arch)          | [`makepkg -si`](packaging/arch/README.md) from `packaging/arch`                                                               |
 
-On Linux, the deb and rpm packages also put the bundled `ao` CLI on your PATH as
+All Linux artifacts are x86_64 only. There is no arm64 Linux build to install.
+
+How updates reach you depends on the format:
+
+| Format          | Updates                                                                    |
+| --------------- | -------------------------------------------------------------------------- |
+| macOS, Windows  | The app updates itself.                                                     |
+| Linux AppImage  | The app updates itself.                                                     |
+| deb, rpm        | Manual: download the new file and install it again.                         |
+| Arch            | `git pull`, then `./update-pkgbuild.sh && makepkg -si` in `packaging/arch`. |
+
+A package-manager install (deb, rpm, Arch) never updates itself: the app lives
+in `/usr/lib`, which your package manager owns and the app cannot write to.
+
+On Linux the packages also put the bundled `ao` CLI on your PATH as
 `/usr/bin/ao`, so `ao --version` and `ao preview <url>` work in any terminal. The
 AppImage is a single file and cannot add anything to your PATH: run `ao start`
 from the app, or link the CLI out of an extracted AppImage yourself.
