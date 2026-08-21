@@ -394,6 +394,8 @@ export type InspectorReviewRun = {
 	createdAtLabel: string;
 	harness: string;
 	id: string;
+	inlineComments?: InspectorInlineComment[];
+	resolvedComments?: InspectorInlineComment[];
 	status: string;
 	url?: string | null;
 	verdict: InspectorVerdict;
@@ -413,6 +415,7 @@ export type InspectorInlineComment = {
 	file?: string;
 	line?: number;
 	pullRequestUrl?: string;
+	reviewerId?: string;
 	resolved?: boolean;
 	url?: string;
 };
@@ -440,6 +443,7 @@ export type InspectorUnresolvedReviewer = {
 		body?: string;
 		file?: string;
 		line?: number;
+		reviewId?: string;
 		url?: string;
 	}[];
 	reviewerId: string;
@@ -479,6 +483,7 @@ export type InspectorReviewLabels = {
 	openInSystemBrowser: string;
 	openInlineComments: (count: number) => string;
 	requestRereviewPR: string;
+	reviewActions: string;
 	reviews: string;
 	reviewedAt: (time: string) => string;
 	resolvedComments: (count: number) => string;
@@ -561,10 +566,13 @@ export function InspectorReviewsView({
 									labels={labels}
 									externalLink={externalLink}
 									onOpenInAOBrowser={onOpenInAOBrowser}
+									onResolveInlineComment={onResolveInlineComment}
+									onSendInlineComment={onSendInlineComment}
 									renderAvatar={renderAvatar}
 									renderMarkdown={renderMarkdown}
 									runs={group.ao.runs}
 									onSendReviewSummary={onSendReviewSummary}
+									onViewInlineCommentInFile={onViewInlineCommentInFile}
 								/>
 							</div>
 						) : null}
@@ -717,7 +725,10 @@ function ReviewRuns({
 	historical,
 	labels,
 	onOpenInAOBrowser,
+	onResolveInlineComment,
+	onSendInlineComment,
 	onSendReviewSummary,
+	onViewInlineCommentInFile,
 	renderAvatar,
 	renderMarkdown,
 	runs,
@@ -727,7 +738,10 @@ function ReviewRuns({
 	historical?: boolean;
 	labels: InspectorReviewLabels;
 	onOpenInAOBrowser?: (url: string) => void;
+	onResolveInlineComment?: (comment: InspectorInlineComment & { reviewerId?: string }) => Promise<void> | void;
+	onSendInlineComment?: (comment: InspectorInlineComment & { reviewerId?: string }) => Promise<void> | void;
 	onSendReviewSummary?: (summary: InspectorReviewSummaryAction) => Promise<void> | void;
+	onViewInlineCommentInFile?: (comment: InspectorInlineComment & { reviewerId?: string }) => void;
 	renderAvatar: (harness: string) => ReactNode;
 	renderMarkdown: (body: string) => ReactNode;
 	runs: InspectorReviewRun[];
@@ -742,7 +756,10 @@ function ReviewRuns({
 			historical={historical}
 			labels={labels}
 			onOpenInAOBrowser={onOpenInAOBrowser}
+			onResolveInlineComment={onResolveInlineComment}
+			onSendInlineComment={onSendInlineComment}
 			onSendReviewSummary={onSendReviewSummary}
+			onViewInlineCommentInFile={onViewInlineCommentInFile}
 			renderAvatar={renderAvatar}
 			renderMarkdown={renderMarkdown}
 			runs={runs}
@@ -756,7 +773,10 @@ function ReviewRunHistory({
 	historical,
 	labels,
 	onOpenInAOBrowser,
+	onResolveInlineComment,
+	onSendInlineComment,
 	onSendReviewSummary,
+	onViewInlineCommentInFile,
 	renderAvatar,
 	renderMarkdown,
 	runs,
@@ -766,7 +786,10 @@ function ReviewRunHistory({
 	historical?: boolean;
 	labels: InspectorReviewLabels;
 	onOpenInAOBrowser?: (url: string) => void;
+	onResolveInlineComment?: (comment: InspectorInlineComment & { reviewerId?: string }) => Promise<void> | void;
+	onSendInlineComment?: (comment: InspectorInlineComment & { reviewerId?: string }) => Promise<void> | void;
 	onSendReviewSummary?: (summary: InspectorReviewSummaryAction) => Promise<void> | void;
+	onViewInlineCommentInFile?: (comment: InspectorInlineComment & { reviewerId?: string }) => void;
 	renderAvatar: (harness: string) => ReactNode;
 	renderMarkdown: (body: string) => ReactNode;
 	runs: InspectorReviewRun[];
@@ -789,7 +812,12 @@ function ReviewRunHistory({
 					renderAvatar={renderAvatar}
 					renderMarkdown={renderMarkdown}
 					onOpenInAOBrowser={onOpenInAOBrowser}
+					onResolveInlineComment={onResolveInlineComment}
+					onSendInlineComment={onSendInlineComment}
 					onSendReviewSummary={onSendReviewSummary}
+					onViewInlineCommentInFile={onViewInlineCommentInFile}
+					inlineComments={run.inlineComments}
+					resolvedComments={run.resolvedComments}
 					source="agent"
 					testId="review-run-summary"
 					timestamp={run.createdAtLabel}
@@ -929,7 +957,7 @@ function ExternalReviewCard({
 	const { ref: bodyRef, isOverflowing: bodyOverflows } = useRenderedOverflow<HTMLDivElement>(body ?? "", "vertical", !open);
 	const hasNestedContent = openComments.length > 0 || resolvedComments.length > 0;
 	const collapsible = bodyOverflows || hasNestedContent;
-	const header = (
+	const headerContent = (
 		<>
 			<GithubAvatar className="size-6 shrink-0" login={entry.reviewerId} />
 			<span className="flex min-w-0 flex-col gap-0.5">
@@ -948,26 +976,30 @@ function ExternalReviewCard({
 					</span>
 				) : null}
 			</span>
-			{collapsible ? <ChevronIcon className="size-icon-2xs shrink-0 text-passive" direction={open ? "down" : "right"} /> : null}
 		</>
 	);
 	return (
 		<article className="relative min-w-0 border-b border-border/70 py-2 first:pt-0 last:border-b-0 last:pb-0" data-testid="github-review-card">
-			{collapsible ? (
-				<button aria-expanded={open} className="grid w-full min-w-0 grid-cols-[auto_1fr_auto_auto] items-center gap-x-3 gap-y-1 rounded-md px-1.5 py-1.5 text-left transition-colors hover:bg-interactive-hover/30" onClick={() => setOpen((current) => !current)} type="button">
-					{header}
-				</button>
-			) : (
-				<div className="grid w-full min-w-0 grid-cols-[auto_1fr_auto] items-center gap-x-3 gap-y-1 px-1.5 py-1.5 text-left">
-					{header}
-				</div>
-			)}
+			<div className={cn("grid w-full min-w-0 items-center gap-x-1 rounded-md pr-1", collapsible ? "grid-cols-[minmax(0,1fr)_auto_auto]" : "grid-cols-[minmax(0,1fr)_auto]")} data-testid="external-review-header">
+				{collapsible ? (
+					<button aria-expanded={open} className="grid min-w-0 grid-cols-[auto_1fr_auto] items-center gap-x-3 gap-y-1 rounded-md px-1.5 py-1.5 text-left transition-colors hover:bg-interactive-hover/30" onClick={() => setOpen((current) => !current)} type="button">
+						{headerContent}
+					</button>
+				) : (
+					<div className="grid min-w-0 grid-cols-[auto_1fr_auto] items-center gap-x-3 gap-y-1 px-1.5 py-1.5 text-left">
+						{headerContent}
+					</div>
+				)}
+				<ReviewSummaryActions body={body ?? ""} externalLink={externalLink} labels={labels} onOpenInAOBrowser={onOpenInAOBrowser} onSendReviewSummary={onSendReviewSummary} pullRequestUrl={entry.pullRequestUrl} reviewerId={entry.reviewerId} source="external" url={entry.reviewUrl || entry.pullRequestUrl} />
+				{collapsible ? (
+					<button aria-expanded={open} aria-label={open ? labels.showLess : labels.showMore} className="inline-flex size-7 shrink-0 items-center justify-center rounded-md text-passive transition-colors hover:bg-interactive-hover hover:text-foreground" onClick={() => setOpen((current) => !current)} type="button">
+						<ChevronIcon className="size-icon-2xs" direction={open ? "down" : "right"} />
+					</button>
+				) : null}
+			</div>
 			<div className="flex min-w-0 flex-col gap-3 px-1 pt-2 text-left">
 				{body ? (
-					<div className="flex min-w-0 flex-col gap-1">
-						<ReviewMarkdownBody body={body} clamped={!open} elementRef={bodyRef} renderMarkdown={renderMarkdown} testId="github-review-summary" />
-						<ReviewSummaryActions body={body} externalLink={externalLink} labels={labels} onOpenInAOBrowser={onOpenInAOBrowser} onSendReviewSummary={onSendReviewSummary} pullRequestUrl={entry.pullRequestUrl} reviewerId={entry.reviewerId} source="external" url={entry.reviewUrl || entry.pullRequestUrl} />
-					</div>
+					<ReviewMarkdownBody body={body} clamped={!open} elementRef={bodyRef} renderMarkdown={renderMarkdown} testId="github-review-summary" />
 				) : null}
 				{open ? <GithubInlineComments comments={openComments} externalLink={externalLink} labels={labels} onResolveInlineComment={onResolveInlineComment} onSendInlineComment={onSendInlineComment} onViewInlineCommentInFile={onViewInlineCommentInFile} reviewerId={entry.reviewerId} reviewUrl={entry.reviewUrl} /> : null}
 				{open && resolvedComments.length > 0 ? <ResolvedInlineComments comments={resolvedComments} externalLink={externalLink} labels={labels} onViewInlineCommentInFile={onViewInlineCommentInFile} reviewerId={entry.reviewerId} reviewUrl={entry.reviewUrl} /> : null}
@@ -1063,7 +1095,7 @@ function InlineCommentList({
 	const keyedComments = comments.map((comment, index) => ({
 		...comment,
 		id: `${reviewerId}:${comment.url ?? `${comment.file ?? ""}:${comment.line ?? ""}:${index}`}`,
-		reviewerId,
+		reviewerId: comment.reviewerId || reviewerId,
 		url: comment.url || reviewUrl,
 	}));
 	return (
@@ -1233,10 +1265,15 @@ function ReviewSummaryCard({
 	isBot = false,
 	isEarlier = false,
 	labels,
+	inlineComments = [],
 	onOpenInAOBrowser,
+	onResolveInlineComment,
+	onSendInlineComment,
 	onSendReviewSummary,
+	onViewInlineCommentInFile,
 	renderAvatar,
 	renderMarkdown,
+	resolvedComments = [],
 	source,
 	testId,
 	timestamp,
@@ -1249,10 +1286,15 @@ function ReviewSummaryCard({
 	isBot?: boolean;
 	isEarlier?: boolean;
 	labels: InspectorReviewLabels;
+	inlineComments?: InspectorInlineComment[];
 	onOpenInAOBrowser?: (url: string) => void;
+	onResolveInlineComment?: (comment: InspectorInlineComment & { reviewerId?: string }) => Promise<void> | void;
+	onSendInlineComment?: (comment: InspectorInlineComment & { reviewerId?: string }) => Promise<void> | void;
 	onSendReviewSummary?: (summary: InspectorReviewSummaryAction) => Promise<void> | void;
+	onViewInlineCommentInFile?: (comment: InspectorInlineComment & { reviewerId?: string }) => void;
 	renderAvatar: (harness: string) => ReactNode;
 	renderMarkdown: (body: string) => ReactNode;
+	resolvedComments?: InspectorInlineComment[];
 	source: InspectorReviewSummaryAction["source"];
 	testId: string;
 	timestamp: string;
@@ -1294,6 +1336,26 @@ function ReviewSummaryCard({
 				labels={labels}
 				onExpandedChange={() => setExpanded((open) => !open)}
 			/>
+			<GithubInlineComments
+				comments={inlineComments}
+				externalLink={externalLink}
+				labels={labels}
+				onResolveInlineComment={onResolveInlineComment}
+				onSendInlineComment={onSendInlineComment}
+				onViewInlineCommentInFile={onViewInlineCommentInFile}
+				reviewerId={actor}
+				reviewUrl={url ?? undefined}
+			/>
+			{resolvedComments.length > 0 ? (
+				<ResolvedInlineComments
+					comments={resolvedComments}
+					externalLink={externalLink}
+					labels={labels}
+					onViewInlineCommentInFile={onViewInlineCommentInFile}
+					reviewerId={actor}
+					reviewUrl={url ?? undefined}
+				/>
+			) : null}
 		</article>
 	);
 }
@@ -1371,7 +1433,7 @@ function ReviewSummaryActions({
 	};
 	return (
 		<span className="relative flex shrink-0" onClick={(event) => event.stopPropagation()}>
-			<button aria-expanded={menuOpen} aria-label={labels.viewOnPR} className="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground" onClick={() => setMenuOpen((current) => !current)} type="button">
+			<button aria-expanded={menuOpen} aria-label={labels.reviewActions} className="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground" onClick={() => setMenuOpen((current) => !current)} type="button">
 				<MoreHorizontalIcon className="size-icon-xs" />
 			</button>
 			{menuOpen ? (

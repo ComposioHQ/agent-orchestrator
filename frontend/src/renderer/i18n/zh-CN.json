@@ -294,6 +294,7 @@
 	"inspector.openInSystemBrowser": "在系统浏览器中打开",
 	"inspector.openInlineComments": "{{count}} 条未解决的行内评论",
 	"inspector.requestRereviewPR": "请求重新评审 PR",
+	"inspector.reviewActions": "审查操作",
 	"inspector.reviewedAt": "{{time}}前评审",
 	"inspector.resolvedComments": "已解决评论 · {{count}}",
 	"inspector.rereviewRequested": "已请求重新评审",

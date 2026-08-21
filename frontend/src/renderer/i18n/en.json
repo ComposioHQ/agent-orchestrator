@@ -294,6 +294,7 @@
 	"inspector.openInSystemBrowser": "Open in system browser",
 	"inspector.openInlineComments": "{{count}} open comments",
 	"inspector.requestRereviewPR": "Request to re-review PR",
+	"inspector.reviewActions": "Review actions",
 	"inspector.reviewedAt": "Reviewed {{time}}",
 	"inspector.resolvedComments": "Resolved comments · {{count}}",
 	"inspector.rereviewRequested": "Asked for re-review",

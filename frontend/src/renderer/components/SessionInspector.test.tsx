@@ -2091,7 +2091,7 @@ describe("SessionInspector summary reviews", () => {
     renderWithQuery(<SessionInspector session={session([pr(3, "open")])} />);
     await openReviewsSection();
 
-    await userEvent.click(await screen.findByRole("button", { name: "View on PR" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Review actions" }));
     await userEvent.click(screen.getByRole("button", { name: "Open in AO Browser" }));
 
     await waitFor(() =>
@@ -2116,6 +2116,100 @@ describe("SessionInspector summary reviews", () => {
       params: { path: { sessionId: "sess-1" } },
       body: { message: expect.stringContaining(`Review URL: ${reviewUrl}`) },
     });
+  });
+
+  it("shows inline comments on their exact AO review pass without duplicating them externally", async () => {
+    const onOpenReviewFile = vi.fn();
+    const currentRun = {
+      ...approvedReview,
+      body: "Current AO review.",
+      githubReviewId: "111",
+      prUrl: "https://example.com/pr/3",
+    };
+    const previousRun = {
+      ...approvedReview,
+      id: "run-previous",
+      body: "Earlier AO review.",
+      githubReviewId: "222",
+      prUrl: "https://example.com/pr/3",
+      createdAt: "2026-06-15T10:06:00Z",
+    };
+    mockCommonGets([], "reviewer-pane", [{
+      ...reviewState(3, "up_to_date", "abc123"),
+      latestRun: currentRun,
+      previousRun,
+    }]);
+    const previousGet = getMock.getMockImplementation()!;
+    getMock.mockImplementation(async (path: string, opts?: unknown) => {
+      if (path === "/api/v1/sessions/{sessionId}/pr") {
+        return {
+          data: {
+            prs: [prSummary(3, "open", {
+              author: "codebanditssss",
+              review: {
+                decision: "changes_requested",
+                hasUnresolvedHumanComments: true,
+                reviews: [],
+                unresolvedBy: [{
+                  reviewerId: "codebanditssss",
+                  count: 2,
+                  links: [
+                    { reviewId: "111", body: "Current-pass comment.", file: "src/current.ts", line: 11, url: "https://example.com/current", autoInjectReview: false },
+                    { reviewId: "222", body: "Earlier-pass comment.", file: "src/earlier.ts", line: 22, url: "https://example.com/earlier", autoInjectReview: true },
+                  ],
+                }, {
+                  reviewerId: "maya",
+                  count: 1,
+                  links: [
+                    { body: "Legacy external comment.", file: "src/legacy.ts", line: 33, url: "https://example.com/legacy", autoInjectReview: true },
+                  ],
+                }],
+                resolvedBy: [{
+                  reviewerId: "codebanditssss",
+                  count: 1,
+                  links: [{ reviewId: "111", body: "Resolved current-pass comment.", file: "src/current.ts", line: 9, url: "https://example.com/resolved", autoInjectReview: true }],
+                }],
+              },
+            })],
+          },
+        };
+      }
+      return previousGet(path, opts);
+    });
+
+    renderWithQuery(
+      <SessionInspector
+        onOpenReviewFile={onOpenReviewFile}
+        session={session([pr(3, "open")])}
+      />,
+    );
+    await openReviewsSection();
+
+    expect(await screen.findByText("Current-pass comment.")).toBeInTheDocument();
+    expect(screen.queryByText("Earlier-pass comment.")).not.toBeInTheDocument();
+    expect(screen.getByText("Resolved comments · 1")).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "Send to worker agent" }));
+    expect(postMock).toHaveBeenCalledWith("/api/v1/sessions/{sessionId}/send", expect.objectContaining({
+      params: { path: { sessionId: "sess-1" } },
+    }));
+    await userEvent.click(screen.getAllByRole("button", { name: "Comment actions" })[0]!);
+    await userEvent.click(screen.getByRole("button", { name: "View in file" }));
+    expect(onOpenReviewFile).toHaveBeenCalledWith({ path: "src/current.ts", line: 11 });
+    await userEvent.click(screen.getByRole("button", { name: "Resolve comment" }));
+    await waitFor(() => expect(postMock).toHaveBeenCalledWith(
+      "/api/v1/sessions/{sessionId}/reviews/comments/resolve",
+      expect.objectContaining({ params: { path: { sessionId: "sess-1" } } }),
+    ));
+
+    await userEvent.click(screen.getByRole("button", { name: /Load more.*1 earlier/i }));
+    expect(screen.getByText("Earlier-pass comment.")).toBeInTheDocument();
+    expect(screen.getAllByText("Current-pass comment.")).toHaveLength(1);
+
+    await userEvent.click(screen.getByRole("button", { name: /maya.*Commented/i }));
+    expect(screen.getByText("Legacy external comment.")).toBeInTheDocument();
+    expect(screen.getAllByText("Current-pass comment.")).toHaveLength(1);
+    expect(screen.getAllByText("Earlier-pass comment.")).toHaveLength(1);
   });
 
   it("passes an inline review location to the Files diff viewer", async () => {

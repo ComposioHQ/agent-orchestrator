@@ -346,7 +346,7 @@ describe("portable inspector presentations", () => {
     expect(within(cards[0]).getByText(newerBody)).toBeInTheDocument();
   });
 
-  it("keeps external review actions inside comments and does not show re-review CTAs", () => {
+  it("keeps external review actions in the header without toggling nested comments", () => {
     render(
       <InspectorReviewsView
         externalLink={ExternalLink}
@@ -358,6 +358,7 @@ describe("portable inspector presentations", () => {
                   body: "Please take another pass after fixes land.",
                   id: "github-review-1",
                   reviewerId: "maya",
+                  resolvedComments: [{ body: "Already addressed.", resolved: true }],
                   reviewUrl: "https://example.com/review",
                   submittedAt: "2026-08-09T10:00:00Z",
                   submittedAtLabel: "1h ago",
@@ -384,6 +385,18 @@ describe("portable inspector presentations", () => {
       screen.queryByRole("button", { name: "Request to re-review PR" }),
     ).not.toBeInTheDocument();
     expect(screen.getByText("Please take another pass after fixes land.")).toBeInTheDocument();
+    const reviewToggle = screen.getByRole("button", { name: /maya.*Changes requested/i });
+    const actionMenu = screen.getByRole("button", { name: "Review actions" });
+    expect(screen.getByTestId("external-review-header")).toContainElement(actionMenu);
+    expect(reviewToggle).not.toContainElement(actionMenu);
+    expect(reviewToggle).toHaveAttribute("aria-expanded", "false");
+    fireEvent.click(actionMenu);
+    expect(screen.getByRole("link", { name: "Open in system browser" })).toBeInTheDocument();
+    expect(reviewToggle).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByText("Resolved comments · 1")).not.toBeInTheDocument();
+    fireEvent.click(within(screen.getByTestId("external-review-header")).getByRole("button", { name: "Show more" }));
+    expect(reviewToggle).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByText("Resolved comments · 1")).toBeInTheDocument();
   });
 
   it("does not offer re-review for an approved external review", () => {
@@ -884,7 +897,7 @@ describe("portable inspector presentations", () => {
       />,
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "View on PR" }));
+    fireEvent.click(screen.getByRole("button", { name: "Review actions" }));
     fireEvent.click(screen.getByRole("button", { name: "Open in AO Browser" }));
     expect(onOpenInAOBrowser).toHaveBeenCalledWith("https://github.com/example/repo/pull/12#pullrequestreview-1");
     expect(screen.getByRole("link", { name: "Open in system browser" })).toHaveAttribute(
@@ -915,6 +928,7 @@ const reviewLabels: InspectorReviewLabels = {
   openInSystemBrowser: "Open in system browser",
   openInlineComments: (count) => `${count} open comments`,
   requestRereviewPR: "Request to re-review PR",
+  reviewActions: "Review actions",
   reviews: "Reviews",
   reviewedAt: (time) => `Reviewed ${time}`,
   resolvedComments: (count) => `Resolved comments · ${count}`,

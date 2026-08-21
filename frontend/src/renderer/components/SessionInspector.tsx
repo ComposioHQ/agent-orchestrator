@@ -1507,7 +1507,8 @@ function ReviewsSection({
 		(pr) =>
 			(pr.state === "open" || pr.state === "draft") &&
 			((pr.review?.reviews?.length ?? 0) > 0 ||
-				(pr.review?.unresolvedBy ?? []).some((reviewer) => reviewer.count > 0)),
+				(pr.review?.unresolvedBy ?? []).some((reviewer) => reviewer.count > 0) ||
+				(pr.review?.resolvedBy ?? []).some((reviewer) => reviewer.count > 0)),
 	);
 	return (
 		<div className="p-2">
@@ -1631,10 +1632,44 @@ function MergedReviewsSection({
 		const entries = (github?.review?.reviews ?? []).filter(
 			(entry) => !externalReviewActorMatchesPRAuthor(entry.reviewerId, github?.author),
 		);
-		const unresolvedReviewers = (github?.review?.unresolvedBy ?? []).filter(
+		const allUnresolvedReviewers = github?.review?.unresolvedBy ?? [];
+		const allResolvedReviewers = github?.review?.resolvedBy ?? [];
+		const agentReviewIds = new Set(aoRuns.map((run) => run.githubReviewId).filter(Boolean));
+		const agentComments = new Map<string, { inlineComments: InspectorInlineComment[]; resolvedComments: InspectorInlineComment[] }>();
+		const partitionReviewerComments = (
+			reviewers: typeof allUnresolvedReviewers,
+			resolved: boolean,
+		) => reviewers
+			.map((reviewer) => {
+				const externalLinks = [] as typeof reviewer.links;
+				for (const link of reviewer.links) {
+					const reviewId = link.reviewId?.trim();
+					if (!reviewId || !agentReviewIds.has(reviewId)) {
+						externalLinks.push(link);
+						continue;
+					}
+					const comments = agentComments.get(reviewId) ?? { inlineComments: [], resolvedComments: [] };
+					const comment = {
+						autoInjectReview: link.autoInjectReview,
+						body: link.body,
+						file: link.file,
+						line: link.line,
+						pullRequestUrl: github?.url,
+						resolved,
+						reviewerId: reviewer.reviewerId,
+						url: link.url || reviewer.reviewUrl,
+					};
+					if (resolved) comments.resolvedComments.push(comment);
+					else comments.inlineComments.push(comment);
+					agentComments.set(reviewId, comments);
+				}
+				return { ...reviewer, count: externalLinks.length, links: externalLinks };
+			})
+			.filter((reviewer) => reviewer.links.length > 0);
+		const unresolvedReviewers = partitionReviewerComments(allUnresolvedReviewers, false).filter(
 			(reviewer) => !externalReviewActorMatchesPRAuthor(reviewer.reviewerId, github?.author),
 		);
-		const resolvedReviewers = (github?.review?.resolvedBy ?? []).filter(
+		const resolvedReviewers = partitionReviewerComments(allResolvedReviewers, true).filter(
 			(reviewer) => !externalReviewActorMatchesPRAuthor(reviewer.reviewerId, github?.author),
 		);
 		const unresolved = unresolvedReviewers.reduce((count, reviewer) => count + reviewer.count, 0);
@@ -1646,6 +1681,8 @@ function MergedReviewsSection({
 				createdAtLabel: formatTimeCompact(run.createdAt),
 				harness: run.harness || "reviewer",
 				id: run.id,
+				inlineComments: agentComments.get(run.githubReviewId)?.inlineComments ?? [],
+				resolvedComments: agentComments.get(run.githubReviewId)?.resolvedComments ?? [],
 				status: run.status,
 				url: reviewUrl ?? (ao?.prUrl || null),
 				verdict: githubVerdict(run.verdict, t),
@@ -1841,6 +1878,7 @@ function reviewLabels(t: TFunction): InspectorReviewLabels {
 		openInSystemBrowser: t("inspector.openInSystemBrowser"),
 		openInlineComments: (count) => t("inspector.openInlineComments", { count }),
 		requestRereviewPR: t("inspector.requestRereviewPR"),
+		reviewActions: t("inspector.reviewActions"),
 		reviews: t("inspector.reviews"),
 		reviewedAt: (time) => t("inspector.reviewedAt", { time }),
 		resolvedComments: (count) => t("inspector.resolvedComments", { count }),

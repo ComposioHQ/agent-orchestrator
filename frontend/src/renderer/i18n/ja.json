@@ -295,6 +295,7 @@
 	"inspector.openInSystemBrowser": "システムブラウザで開く",
 	"inspector.openInlineComments": "未解決のインラインコメント {{count}} 件",
 	"inspector.requestRereviewPR": "PR の再レビューを依頼",
+	"inspector.reviewActions": "レビュー操作",
 	"inspector.reviewedAt": "{{time}}前にレビュー",
 	"inspector.resolvedComments": "解決済みコメント · {{count}}",
 	"inspector.rereviewRequested": "再レビューを依頼済み",

@@ -297,6 +297,7 @@
 	"inspector.openInSystemBrowser": "Abrir en el navegador del sistema",
 	"inspector.openInlineComments": "{{count}} comentarios inline abiertos",
 	"inspector.requestRereviewPR": "Solicitar nueva revisión del PR",
+	"inspector.reviewActions": "Acciones de revisión",
 	"inspector.reviewedAt": "Revisado hace {{time}}",
 	"inspector.resolvedComments": "Comentarios resueltos · {{count}}",
 	"inspector.rereviewRequested": "Nueva revisión solicitada",

@@ -295,6 +295,7 @@
 	"inspector.openInSystemBrowser": "Im Systembrowser öffnen",
 	"inspector.openInlineComments": "{{count}} offene Inline-Kommentare",
 	"inspector.requestRereviewPR": "Erneute PR-Review anfragen",
+	"inspector.reviewActions": "Review-Aktionen",
 	"inspector.reviewedAt": "Geprüft vor {{time}}",
 	"inspector.resolvedComments": "Erledigte Kommentare · {{count}}",
 	"inspector.rereviewRequested": "Erneute Review angefragt",
