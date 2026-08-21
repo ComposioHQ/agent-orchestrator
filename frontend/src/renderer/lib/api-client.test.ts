@@ -2,6 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
 	apiClient,
 	apiErrorMessage,
+	activateCloudApi,
+	clearCloudApiBaseUrl,
 	getApiBaseUrl,
 	hasTrustedApiBaseUrl,
 	normalizeApiOperation,
@@ -21,7 +23,7 @@ const captureMock = vi.mocked(captureRendererEvent);
 describe("apiClient runtime base URL", () => {
 	afterEach(() => {
 		vi.restoreAllMocks();
-		setCloudApiBaseUrl(null);
+		clearCloudApiBaseUrl();
 		setApiBaseUrl("http://127.0.0.1:3001");
 		setApiDaemonStatus({ state: "stopped" });
 	});
@@ -35,6 +37,13 @@ describe("apiClient runtime base URL", () => {
 		expect(getApiBaseUrl()).toBe("https://3001-signed.proxy.daytona.work");
 
 		setCloudApiBaseUrl(null);
+		expect(getApiBaseUrl()).toBe("http://127.0.0.1:3999");
+
+		expect(activateCloudApi()).toBe(true);
+		expect(getApiBaseUrl()).toBe("https://3001-signed.proxy.daytona.work");
+
+		clearCloudApiBaseUrl();
+		expect(activateCloudApi()).toBe(false);
 		expect(getApiBaseUrl()).toBe("http://127.0.0.1:3999");
 	});
 

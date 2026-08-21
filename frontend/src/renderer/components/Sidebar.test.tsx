@@ -64,6 +64,11 @@ vi.mock("../lib/bridge", async (importOriginal) => {
 
 vi.mock("../lib/api-client", () => ({
 	apiClient: { GET: getMock },
+	activateCloudApi: () => true,
+	clearCloudApiBaseUrl: vi.fn(),
+	isCloudApiActive: () => false,
+	setCloudApiBaseUrl: vi.fn(),
+	subscribeApiBaseUrl: () => () => undefined,
 	apiErrorMessage: (error: unknown) => {
 		if (error instanceof Error) return error.message;
 		if (typeof error === "object" && error !== null && "message" in error && typeof error.message === "string") {

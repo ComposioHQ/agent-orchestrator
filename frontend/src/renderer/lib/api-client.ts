@@ -14,6 +14,7 @@ const initialApiBaseUrl = explicitApiBaseUrl ?? (import.meta.env.DEV ? devApiBas
 let runtimeApiBaseUrl: string | null = explicitApiBaseUrl ?? null;
 let daemonApiBaseUrl: string | null = runtimeApiBaseUrl;
 let cloudApiBaseUrl: string | null = null;
+let cloudApiActive = false;
 let daemonStatus: DaemonStatus = { state: "stopped" };
 
 const baseUrlListeners = new Set<() => void>();
@@ -41,22 +42,41 @@ export function subscribeApiBaseUrl(listener: () => void): () => void {
 export function setApiBaseUrl(nextBaseUrl: string | null): void {
 	const normalized = (nextBaseUrl ?? explicitApiBaseUrl ?? null)?.replace(/\/+$/, "") ?? null;
 	daemonApiBaseUrl = normalized;
-	const active = cloudApiBaseUrl ?? daemonApiBaseUrl;
+	const active = cloudApiActive ? cloudApiBaseUrl : daemonApiBaseUrl;
 	if (active === runtimeApiBaseUrl) return;
 	runtimeApiBaseUrl = active;
 	baseUrlListeners.forEach((listener) => listener());
 }
 
 export function setCloudApiBaseUrl(nextBaseUrl: string | null): void {
-	cloudApiBaseUrl = nextBaseUrl?.replace(/\/+$/, "") || null;
-	const active = cloudApiBaseUrl ?? daemonApiBaseUrl;
+	if (nextBaseUrl) {
+		cloudApiBaseUrl = nextBaseUrl.replace(/\/+$/, "");
+		cloudApiActive = true;
+	} else {
+		cloudApiActive = false;
+	}
+	const active = cloudApiActive ? cloudApiBaseUrl : daemonApiBaseUrl;
 	if (active === runtimeApiBaseUrl) return;
 	runtimeApiBaseUrl = active;
 	baseUrlListeners.forEach((listener) => listener());
 }
 
+export function activateCloudApi(): boolean {
+	if (!cloudApiBaseUrl) return false;
+	setCloudApiBaseUrl(cloudApiBaseUrl);
+	return true;
+}
+
+export function clearCloudApiBaseUrl(): void {
+	cloudApiBaseUrl = null;
+	cloudApiActive = false;
+	if (runtimeApiBaseUrl === daemonApiBaseUrl) return;
+	runtimeApiBaseUrl = daemonApiBaseUrl;
+	baseUrlListeners.forEach((listener) => listener());
+}
+
 export function isCloudApiActive(): boolean {
-	return cloudApiBaseUrl !== null;
+	return cloudApiActive;
 }
 
 // The renderer records every supervisor status here so API requests made while
