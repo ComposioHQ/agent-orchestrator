@@ -199,7 +199,7 @@ The AppImage keeps updating itself. It is the file the `ao start` bootstrapper d
 
 *Why: so Arch users can `makepkg -si` instead of juggling an AppImage.*
 
-- [ ] Create `packaging/arch/PKGBUILD`: `pkgname=agent-orchestrator-bin`, `pkgver` set to the current release (`0.10.3`), `arch=('x86_64')`, `license=('MIT')`, `url` pointing at the GitHub repo.
+- [ ] Create `packaging/arch/PKGBUILD`: `pkgname=agent-orchestrator-bin`, `pkgver` set to the current release (`0.12.6` as of writing, read the real one with `gh release view --json tagName`), `arch=('x86_64')`, `license=('MIT')`, `url` pointing at the GitHub repo.
 - [ ] Add `provides=('agent-orchestrator')` and `conflicts=('agent-orchestrator')`, so a build-from-source package could later share the same name space without colliding.
 - [ ] Point `source=` at the released deb: `"$pkgname-$pkgver.deb::https://github.com/Untrivial-ai/agent-orchestrator/releases/download/v$pkgver/agent-orchestrator-linux-x64.deb"`, with a real `sha256sums` value.
 - [ ] Work out `depends=` by running `ldd` on the unpacked binary rather than guessing. Expect at least `gtk3`, `nss`, `alsa-lib`, `libxss`, `libnotify`, `xdg-utils`.
@@ -276,7 +276,7 @@ Only worth doing if AO wants Linux users on a real update path. It needs a GPG s
 - **The package contents are assumed, not confirmed.** A1 and B1 both start by unpacking a real deb and rpm and listing them. Every path in this document rests on that.
 - **The name `ao` may already be taken.** Claiming `/usr/bin/ao` across three distro families is hard to undo once users have it installed. Check before shipping.
 - **AO could appear twice in the menu.** A3 makes the AppImage entry visible; B4 ships a packaged one. A machine that did both sees two entries. B4's decision step has to cover it.
-- **The Arch package goes stale.** It is pinned to a release tag. B5's script is the fix; B6 decides who runs it.
+- **The Arch package goes stale.** It is pinned to a release tag, and AO releases often (`v0.12.6` shipped while this plan was being written). B5's script is the fix; B6 decides who runs it.
 
 ## Open questions
 
