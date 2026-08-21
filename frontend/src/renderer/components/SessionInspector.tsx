@@ -705,15 +705,12 @@ function UsageCostPlaceholder() {
 function UsageMetrics({ totals }: { totals: SessionUsage["totals"] }) {
 	const { t } = useTranslation();
 	return (
-		<dl className="grid grid-cols-2 gap-x-4 gap-y-2 @max-[300px]/inspector:grid-cols-1">
-			<UsageMetric label={t("inspector.usage.freshInputTokens")} metric={totals.uncachedInputTokens} />
+		<dl className="grid grid-cols-2 gap-x-4 gap-y-2 @max-[300px]/inspector:grid-cols-1" data-testid="session-usage-metrics">
+			<UsageMetric label={t("inspector.usage.inputTokens")} metric={totals.inputTokens} />
+			<UsageMetric label={t("inspector.usage.cachedInputTokens")} metric={totals.cachedInputTokens} />
+			<UsageMetric label={t("inspector.usage.uncachedInputTokens")} metric={totals.uncachedInputTokens} />
+			<UsageMetric label={t("inspector.usage.cachedOutputTokens")} metric={totals.cachedOutputTokens} />
 			<UsageMetric label={t("inspector.usage.outputTokens")} metric={totals.outputTokens} />
-			<UsageMetric label={t("inspector.usage.cacheReadTokens")} metric={totals.cacheReadTokens} />
-			<UsageRateMetric
-				description={t("inspector.usage.cacheHitRateDescription")}
-				label={t("inspector.usage.cacheHitRate")}
-				metric={usageCacheHitRate(totals)}
-			/>
 		</dl>
 	);
 }
@@ -749,44 +746,13 @@ function UsageMetric({
 	);
 }
 
-function UsageRateMetric({
-	description,
-	label,
-	metric,
-}: {
-	description: string;
-	label: string;
-	metric: number | null;
-}) {
-	const { t } = useTranslation();
-	const accessibleLabel =
-		metric === null
-			? t("inspector.usage.metricUnavailable", { label })
-			: t("inspector.usage.rateAria", { label, count: metric, description });
-	return (
-		<div className="min-w-0">
-			<dt className="truncate text-2xs text-settings-muted" title={description}>
-				{label}
-			</dt>
-			<dd
-				aria-label={accessibleLabel}
-				className="mt-0.5 truncate font-mono text-sm-md text-settings-label"
-				title={metric === null ? t("inspector.usage.metricUnavailable", { label }) : description}
-			>
-				{metric === null ? "—" : `${metric}%`}
-			</dd>
-		</div>
-	);
-}
-
 const usageMetricKeys = [
 	"processedTokens",
 	"inputTokens",
+	"cachedInputTokens",
 	"uncachedInputTokens",
-	"cacheReadTokens",
-	"cacheWriteTokens",
+	"cachedOutputTokens",
 	"outputTokens",
-	"reasoningTokens",
 ] as const;
 
 function usageScopes(usage: SessionUsage): SessionUsage["totals"][] {
@@ -812,15 +778,6 @@ function formatTelemetryTokenValue(totalTokens: number): string {
 
 function usageProcessedTokens(totals: SessionUsage["totals"]): number | null {
 	return totals.processedTokens;
-}
-
-// Cache writes populate the cache rather than satisfy the current input, so the
-// hit-rate denominator is reusable input: fresh input plus cache reads.
-function usageCacheHitRate(totals: SessionUsage["totals"]): number | null {
-	if (totals.uncachedInputTokens === null || totals.cacheReadTokens === null) return null;
-	const reusableInput = totals.uncachedInputTokens + totals.cacheReadTokens;
-	if (reusableInput === 0) return null;
-	return Math.round((totals.cacheReadTokens / reusableInput) * 100);
 }
 
 function formatHarnessName(harness: string): string {

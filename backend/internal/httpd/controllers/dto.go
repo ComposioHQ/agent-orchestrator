@@ -970,8 +970,7 @@ type ListUsageSessionsQuery struct {
 // CompactSessionUsageResponse is one session card's token-only usage summary.
 type CompactSessionUsageResponse struct {
 	SessionID       domain.SessionID `json:"sessionId"`
-	ProcessedTokens int64            `json:"processedTokens" minimum:"0" description:"Tokens processed exactly once: fresh input plus cache reads, cache writes, and output."`
-	TotalTokens     int64            `json:"totalTokens" minimum:"0" description:"Deprecated compatibility field using inclusive input plus output. Use processedTokens."`
+	ProcessedTokens *int64           `json:"processedTokens" minimum:"0" description:"Canonical input plus output. Null when either component is unknown."`
 	Incomplete      bool             `json:"incomplete"`
 }
 
@@ -980,15 +979,46 @@ type ListCompactSessionUsageResponse struct {
 	Sessions []CompactSessionUsageResponse `json:"sessions"`
 }
 
-// UsageTotalsResponse is the normalized telemetry aggregate for one scope.
+// UsageMetricProvenanceResponse records how each canonical metric was obtained.
+type UsageMetricProvenanceResponse struct {
+	InputTokens         domain.UsageMetricProvenance `json:"inputTokens" enum:"reported,derived,unsupported,unknown"`
+	CachedInputTokens   domain.UsageMetricProvenance `json:"cachedInputTokens" enum:"reported,derived,unsupported,unknown"`
+	UncachedInputTokens domain.UsageMetricProvenance `json:"uncachedInputTokens" enum:"reported,derived,unsupported,unknown"`
+	CachedOutputTokens  domain.UsageMetricProvenance `json:"cachedOutputTokens" enum:"reported,derived,unsupported,unknown"`
+	OutputTokens        domain.UsageMetricProvenance `json:"outputTokens" enum:"reported,derived,unsupported,unknown"`
+}
+
+// OpenAIUsageDetailsResponse exposes namespaced counters outside the shared
+// five-metric vocabulary.
+type OpenAIUsageDetailsResponse struct {
+	OpenAIReasoningOutputTokens *int64 `json:"openaiReasoningOutputTokens" minimum:"0"`
+	OpenAICacheWriteInputTokens *int64 `json:"openaiCacheWriteInputTokens" minimum:"0"`
+}
+
+// AnthropicUsageDetailsResponse exposes namespaced prompt-cache components.
+type AnthropicUsageDetailsResponse struct {
+	AnthropicDirectUncachedInputTokens  *int64 `json:"anthropicDirectUncachedInputTokens" minimum:"0"`
+	AnthropicCacheCreationInputTokens   *int64 `json:"anthropicCacheCreationInputTokens" minimum:"0"`
+	AnthropicCacheCreation5mInputTokens *int64 `json:"anthropicCacheCreation5mInputTokens" minimum:"0"`
+	AnthropicCacheCreation1hInputTokens *int64 `json:"anthropicCacheCreation1hInputTokens" minimum:"0"`
+}
+
+// UsageProviderDetailsResponse groups optional provider-native counters.
+type UsageProviderDetailsResponse struct {
+	OpenAI    *OpenAIUsageDetailsResponse    `json:"openai,omitempty"`
+	Anthropic *AnthropicUsageDetailsResponse `json:"anthropic,omitempty"`
+}
+
+// UsageTotalsResponse is the canonical telemetry aggregate for one scope.
 type UsageTotalsResponse struct {
-	InputTokens         *int64 `json:"inputTokens" description:"Deprecated inclusive input count retained for compatibility. Use uncachedInputTokens for fresh input and processedTokens for processed volume."`
-	UncachedInputTokens *int64 `json:"uncachedInputTokens" description:"Fresh input tokens that were not read from or written to cache."`
-	CacheReadTokens     *int64 `json:"cacheReadTokens"`
-	CacheWriteTokens    *int64 `json:"cacheWriteTokens"`
-	OutputTokens        *int64 `json:"outputTokens" description:"Output tokens, including reasoning tokens."`
-	ReasoningTokens     *int64 `json:"reasoningTokens" description:"Informational subset included in outputTokens."`
-	ProcessedTokens     *int64 `json:"processedTokens" description:"Tokens processed exactly once: fresh input plus cache reads, cache writes, and output."`
+	InputTokens         *int64                        `json:"inputTokens" minimum:"0" description:"Total input, including cached and uncached input."`
+	CachedInputTokens   *int64                        `json:"cachedInputTokens" minimum:"0" description:"Input read from an existing provider cache."`
+	UncachedInputTokens *int64                        `json:"uncachedInputTokens" minimum:"0" description:"Input not read from an existing provider cache."`
+	CachedOutputTokens  *int64                        `json:"cachedOutputTokens" minimum:"0" description:"Output served from a provider output cache."`
+	OutputTokens        *int64                        `json:"outputTokens" minimum:"0" description:"Total output, including provider-specific subsets such as reasoning output."`
+	ProcessedTokens     *int64                        `json:"processedTokens" minimum:"0" description:"Canonical input plus output. Null when either component is unknown."`
+	Provenance          UsageMetricProvenanceResponse `json:"provenance"`
+	ProviderDetails     UsageProviderDetailsResponse  `json:"providerDetails"`
 }
 
 // UsageModelResponse is telemetry grouped by exact model id.

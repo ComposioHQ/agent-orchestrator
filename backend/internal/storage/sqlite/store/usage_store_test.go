@@ -373,7 +373,7 @@ func TestUsageMutationsEmitSessionUpdatedCDC(t *testing.T) {
 		UpdatedAt:  now,
 	}, []domain.ModelUsageEvent{usageEvent(
 		"event-1",
-		domain.UsageTokenMetrics{InputTokens: 10, UncachedInputTokens: 10, OutputTokens: 2},
+		canonicalUsageTokens(10, 0, 10, 2),
 	)})
 	mustNoError(t, err)
 	// New totals invalidate usage once after the transaction commits.
@@ -430,14 +430,10 @@ func TestApplyUsageChunkAtomicReplayAndTokenAggregates(t *testing.T) {
 	source := seedUsageSource(t, s, sess, now)
 
 	reasoning := int64(3)
-	event := usageEvent("event-1", domain.UsageTokenMetrics{
-		InputTokens:         100,
-		UncachedInputTokens: 40,
-		CacheReadTokens:     50,
-		CacheWriteTokens:    10,
-		OutputTokens:        20,
-		ReasoningTokens:     &reasoning,
-	})
+	event := usageEvent("event-1", canonicalUsageTokens(100, 50, 50, 20))
+	event.ProviderDetails.OpenAI.ReasoningOutputTokens = &reasoning
+	cacheWrite := int64(10)
+	event.ProviderDetails.OpenAI.CacheWriteInputTokens = &cacheWrite
 
 	err := s.ApplyUsageChunk(ctx, source.ID, 0, source.UpdatedAt, domain.SourceCursorState{
 		ByteOffset:      100,
@@ -463,11 +459,9 @@ func TestApplyUsageChunkAtomicReplayAndTokenAggregates(t *testing.T) {
 		t.Fatalf("aggregates = %+v, want one row", aggs)
 	}
 	got := aggs[0]
-	if got.Tokens.InputTokens != 100 || got.Tokens.OutputTokens != 20 || got.Tokens.ReasoningTokens == nil || *got.Tokens.ReasoningTokens != 3 {
+	if usageTokenValue(got.Tokens.InputTokens) != 100 || usageTokenValue(got.Tokens.OutputTokens) != 20 ||
+		got.ProviderDetails.OpenAI == nil || usageTokenValue(got.ProviderDetails.OpenAI.ReasoningOutputTokens) != 3 {
 		t.Fatalf("aggregate tokens = %+v", got.Tokens)
-	}
-	if got.ReasoningEventCount != 1 {
-		t.Fatalf("aggregate coverage counts = %+v, want 1/1", got)
 	}
 
 	ctxRow, ok, err := s.GetUsageSourceForIngestion(ctx, source.ID)
@@ -489,14 +483,14 @@ func TestApplyUsageChunkRejectsConflictsAndPreservesCursor(t *testing.T) {
 	source := seedUsageSource(t, s, sess, now)
 
 	if err := s.ApplyUsageChunk(ctx, source.ID, 0, source.UpdatedAt, domain.SourceCursorState{ByteOffset: 50, State: domain.UsageSourceActive, UpdatedAt: now}, []domain.ModelUsageEvent{
-		usageEvent("event-1", domain.UsageTokenMetrics{InputTokens: 10, UncachedInputTokens: 10, OutputTokens: 1}),
+		usageEvent("event-1", canonicalUsageTokens(10, 0, 10, 1)),
 	}); err != nil {
 		t.Fatalf("seed event: %v", err)
 	}
 
-	conflict := usageEvent("event-1", domain.UsageTokenMetrics{InputTokens: 11, UncachedInputTokens: 11, OutputTokens: 1})
+	conflict := usageEvent("event-1", canonicalUsageTokens(11, 0, 11, 1))
 	err := s.ApplyUsageChunk(ctx, source.ID, 50, now, domain.SourceCursorState{ByteOffset: 80, State: domain.UsageSourceActive, UpdatedAt: now}, []domain.ModelUsageEvent{
-		usageEvent("event-2", domain.UsageTokenMetrics{InputTokens: 4, UncachedInputTokens: 4, OutputTokens: 1}),
+		usageEvent("event-2", canonicalUsageTokens(4, 0, 4, 1)),
 		conflict,
 	})
 	if !errors.Is(err, domain.ErrUsageSourceEventConflict) {
@@ -505,16 +499,11 @@ func TestApplyUsageChunkRejectsConflictsAndPreservesCursor(t *testing.T) {
 	assertUsageSourceOffset(t, s, source.ID, 50)
 	aggregates, err := s.ListUsageModelAggregates(ctx, sess.ID)
 	mustNoError(t, err)
-	if len(aggregates) != 1 || aggregates[0].Tokens.InputTokens+aggregates[0].Tokens.OutputTokens != 11 {
+	if len(aggregates) != 1 || usageTokenValue(aggregates[0].Tokens.InputTokens)+usageTokenValue(aggregates[0].Tokens.OutputTokens) != 11 {
 		t.Fatalf("rolled-back chunk persisted events: %+v", aggregates)
 	}
 
-	bad := usageEvent("event-2", domain.UsageTokenMetrics{
-		InputTokens:         10,
-		UncachedInputTokens: 10,
-		CacheReadTokens:     11,
-		OutputTokens:        1,
-	})
+	bad := usageEvent("event-2", canonicalUsageTokens(10, 11, 10, 1))
 	if err := s.ApplyUsageChunk(ctx, source.ID, 50, now, domain.SourceCursorState{ByteOffset: 90, State: domain.UsageSourceActive, UpdatedAt: now}, []domain.ModelUsageEvent{bad}); err == nil {
 		t.Fatal("expected invalid event insert to fail")
 	}
@@ -684,7 +673,7 @@ func TestUsageRowsCascadeWhenSeedSessionDeleted(t *testing.T) {
 	}
 	source := seedUsageSource(t, s, sess, now)
 	if err := s.ApplyUsageChunk(ctx, source.ID, 0, source.UpdatedAt, domain.SourceCursorState{ByteOffset: 10, State: domain.UsageSourceComplete, UpdatedAt: now}, []domain.ModelUsageEvent{
-		usageEvent("event-1", domain.UsageTokenMetrics{InputTokens: 1, UncachedInputTokens: 1, OutputTokens: 1}),
+		usageEvent("event-1", canonicalUsageTokens(1, 0, 1, 1)),
 	}); err != nil {
 		t.Fatalf("apply event: %v", err)
 	}
@@ -721,8 +710,8 @@ func TestListCompactSessionUsageAggregatesAndFiltersByProject(t *testing.T) {
 		State:      domain.UsageSourceComplete,
 		UpdatedAt:  now,
 	}, []domain.ModelUsageEvent{
-		usageEvent("event-1", domain.UsageTokenMetrics{InputTokens: 100, UncachedInputTokens: 40, CacheReadTokens: 50, OutputTokens: 20}),
-		usageEvent("event-2", domain.UsageTokenMetrics{InputTokens: 50, UncachedInputTokens: 20, CacheReadTokens: 20, CacheWriteTokens: 5, OutputTokens: 10}),
+		usageEvent("event-1", canonicalUsageTokens(100, 50, 50, 20)),
+		usageEvent("event-2", canonicalUsageTokens(50, 20, 30, 10)),
 	}); err != nil {
 		t.Fatalf("apply usage events: %v", err)
 	}
@@ -748,7 +737,7 @@ func TestListCompactSessionUsageAggregatesAndFiltersByProject(t *testing.T) {
 		t.Fatalf("filtered rows = %+v, want only %s (not %s)", got, usageSession.ID, otherSession.ID)
 	}
 	row := got[0]
-	if row.ProcessedTokens != 165 || row.TotalTokens != 180 || row.Incomplete {
+	if usageTokenValue(row.ProcessedTokens) != 180 || row.Incomplete {
 		t.Fatalf("aggregate = %+v", row)
 	}
 	all, err := s.ListCompactSessionUsage(ctx, "")
@@ -769,7 +758,7 @@ func TestListCompactSessionUsageSeparatesRetriesFromIntegrityFailures(t *testing
 		State:      domain.UsageSourceActive,
 		UpdatedAt:  now,
 	}, []domain.ModelUsageEvent{
-		usageEvent("transient-event", domain.UsageTokenMetrics{InputTokens: 1, UncachedInputTokens: 1}),
+		usageEvent("transient-event", canonicalUsageTokens(1, 0, 1, 0)),
 	}); err != nil {
 		t.Fatalf("seed transient usage: %v", err)
 	}
@@ -791,7 +780,7 @@ func TestListCompactSessionUsageSeparatesRetriesFromIntegrityFailures(t *testing
 		State:      domain.UsageSourceActive,
 		UpdatedAt:  now,
 	}, []domain.ModelUsageEvent{
-		usageEvent("incomplete-event", domain.UsageTokenMetrics{InputTokens: 1, UncachedInputTokens: 1}),
+		usageEvent("incomplete-event", canonicalUsageTokens(1, 0, 1, 0)),
 	}); err != nil {
 		t.Fatalf("seed incomplete usage: %v", err)
 	}
@@ -852,11 +841,7 @@ func TestUsageSessionAggregatesParentChildAndMultipleBindingsExactlyOnce(t *test
 			ByteOffset: 10,
 			State:      domain.UsageSourceComplete,
 			UpdatedAt:  observedAt,
-		}, []domain.ModelUsageEvent{usageEvent(key, domain.UsageTokenMetrics{
-			InputTokens:         input,
-			UncachedInputTokens: input,
-			OutputTokens:        output,
-		})})
+		}, []domain.ModelUsageEvent{usageEvent(key, canonicalUsageTokens(input, 0, input, output))})
 		if err != nil {
 			t.Fatalf("apply source %d: %v", source.ID, err)
 		}
@@ -879,7 +864,7 @@ func TestUsageSessionAggregatesParentChildAndMultipleBindingsExactlyOnce(t *test
 	models, err := s.ListUsageModelAggregates(ctx, sess.ID)
 	mustNoError(t, err, "list model aggregates")
 	if len(models) != 1 ||
-		models[0].Tokens.InputTokens != 180 || models[0].Tokens.OutputTokens != 35 {
+		usageTokenValue(models[0].Tokens.InputTokens) != 180 || usageTokenValue(models[0].Tokens.OutputTokens) != 35 {
 		t.Fatalf("model aggregates = %+v, want input=180 output=35 events=3", models)
 	}
 
@@ -889,7 +874,7 @@ func TestUsageSessionAggregatesParentChildAndMultipleBindingsExactlyOnce(t *test
 		t.Fatalf("compact rows = %+v, want one", compact)
 	}
 	row := compact[0]
-	if row.ProcessedTokens != 215 || row.TotalTokens != 215 || row.Incomplete {
+	if usageTokenValue(row.ProcessedTokens) != 215 || row.Incomplete {
 		t.Fatalf("compact aggregate = %+v", row)
 	}
 }
@@ -956,11 +941,36 @@ func mustInsertUsageSource(
 }
 
 func usageEvent(key string, tokens domain.UsageTokenMetrics) domain.ModelUsageEvent {
+	zero := int64(0)
 	return domain.ModelUsageEvent{
-		ModelID:        "gpt-5",
-		Tokens:         tokens,
+		ProviderID: domain.UsageProviderOpenAI,
+		ModelID:    "gpt-5",
+		Tokens:     tokens,
+		ProviderDetails: domain.UsageProviderDetails{OpenAI: &domain.OpenAIUsageDetails{
+			ReasoningOutputTokens: &zero, CacheWriteInputTokens: &zero,
+		}},
 		SourceEventKey: key,
 	}
+}
+
+func canonicalUsageTokens(input, cachedInput, uncachedInput, output int64) domain.UsageTokenMetrics {
+	cachedOutput := int64(0)
+	return domain.UsageTokenMetrics{
+		InputTokens: &input, CachedInputTokens: &cachedInput, UncachedInputTokens: &uncachedInput,
+		CachedOutputTokens: &cachedOutput, OutputTokens: &output,
+		Provenance: domain.UsageMetricProvenanceSet{
+			InputTokens: domain.UsageMetricReported, CachedInputTokens: domain.UsageMetricReported,
+			UncachedInputTokens: domain.UsageMetricDerived, CachedOutputTokens: domain.UsageMetricUnsupported,
+			OutputTokens: domain.UsageMetricReported,
+		},
+	}
+}
+
+func usageTokenValue(value *int64) int64 {
+	if value == nil {
+		return -1
+	}
+	return *value
 }
 
 func assertUsageSourceOffset(t *testing.T, s *sqlite.Store, sourceID int64, want int64) {

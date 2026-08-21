@@ -2,6 +2,7 @@ package usage
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -27,10 +28,15 @@ func TestParseClaudeFinalUsageAndSkipMainSidechain(t *testing.T) {
 		t.Fatalf("events = %d, want 1", len(result.Events))
 	}
 	got := result.Events[0]
-	if got.Tokens.InputTokens != 20 || got.Tokens.UncachedInputTokens != 10 ||
-		got.Tokens.CacheReadTokens != 7 || got.Tokens.CacheWriteTokens != 3 ||
-		got.Tokens.OutputTokens != 4 {
+	if tokenValue(got.Tokens.InputTokens) != 20 || tokenValue(got.Tokens.UncachedInputTokens) != 13 ||
+		tokenValue(got.Tokens.CachedInputTokens) != 7 || tokenValue(got.Tokens.CachedOutputTokens) != 0 ||
+		tokenValue(got.Tokens.OutputTokens) != 4 {
 		t.Fatalf("tokens = %+v", got.Tokens)
+	}
+	if details := got.ProviderDetails.Anthropic; details == nil ||
+		tokenValue(details.DirectUncachedInputTokens) != 10 || tokenValue(details.CacheCreationInputTokens) != 3 ||
+		tokenValue(details.CacheCreation5mInputTokens) != 2 || tokenValue(details.CacheCreation1hInputTokens) != 1 {
+		t.Fatalf("provider details = %+v", details)
 	}
 	if got.ModelID != "claude-x" {
 		t.Fatalf("event = %+v", got)
@@ -43,6 +49,48 @@ func TestParseClaudeSubagentIncludesSidechainTranscript(t *testing.T) {
 	result := parseRecords(source, []jsonlRecord{record}, 200, time.Unix(1700000000, 0).UTC())
 	if len(result.Events) != 1 {
 		t.Fatalf("events = %d, want subagent usage", len(result.Events))
+	}
+}
+
+func TestParseClaudeReferenceUsageDeduplicatesLogicalResponses(t *testing.T) {
+	source := usageSource(domain.UsageSourceClaudeMain)
+	type response struct {
+		id                            string
+		direct, creation, cached, out int64
+	}
+	responses := []response{
+		{id: "msg-1", direct: 10, creation: 34983, out: 547},
+		{id: "msg-2", direct: 10, creation: 35619, out: 481},
+		{id: "msg-3", direct: 10, creation: 529, cached: 35619, out: 3602},
+		{id: "msg-4", direct: 10, creation: 2078, cached: 39757, out: 20363},
+	}
+	var records []jsonlRecord
+	for index, response := range responses {
+		line := fmt.Sprintf(`{"type":"assistant","uuid":"physical-%d","timestamp":"2026-08-20T10:00:0%dZ","message":{"id":%q,"model":"claude-sonnet","stop_reason":"end_turn","usage":{"input_tokens":%d,"cache_creation_input_tokens":%d,"cache_read_input_tokens":%d,"output_tokens":%d,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":%d}}}}`, index, index, response.id, response.direct, response.creation, response.cached, response.out, response.creation)
+		records = append(records,
+			jsonlRecord{Offset: int64(index * 200), Data: []byte(line)},
+			jsonlRecord{Offset: int64(index*200 + 100), Data: []byte(strings.Replace(line, fmt.Sprintf("physical-%d", index), fmt.Sprintf("duplicate-%d", index), 1))},
+		)
+	}
+
+	result := parseRecords(source, records, 1600, time.Unix(1700000000, 0).UTC())
+	if len(result.Events) != 4 || result.Cursor.AnomalyCount != 0 {
+		t.Fatalf("result = %+v, want four logical events", result)
+	}
+	assertCanonicalEventTotals(t, result.Events, 148625, 75376, 73249, 0, 24993)
+	var direct, creation, creation5m, creation1h int64
+	for _, event := range result.Events {
+		details := event.ProviderDetails.Anthropic
+		if event.ProviderID != domain.UsageProviderAnthropic || details == nil {
+			t.Fatalf("provider mapping = %+v", event)
+		}
+		direct += tokenValue(details.DirectUncachedInputTokens)
+		creation += tokenValue(details.CacheCreationInputTokens)
+		creation5m += tokenValue(details.CacheCreation5mInputTokens)
+		creation1h += tokenValue(details.CacheCreation1hInputTokens)
+	}
+	if direct != 40 || creation != 73209 || creation5m != 0 || creation1h != 73209 {
+		t.Fatalf("Anthropic details = direct:%d creation:%d 5m:%d 1h:%d", direct, creation, creation5m, creation1h)
 	}
 }
 
@@ -60,18 +108,53 @@ func TestParseCodexCumulativeDeltasAndRepeats(t *testing.T) {
 	if len(result.Events) != 2 {
 		t.Fatalf("events = %d, want 2", len(result.Events))
 	}
-	if got := result.Events[0].Tokens; got.InputTokens != 100 || got.UncachedInputTokens != 30 ||
-		got.CacheReadTokens != 60 || got.CacheWriteTokens != 10 || got.OutputTokens != 20 {
+	if got := result.Events[0].Tokens; tokenValue(got.InputTokens) != 100 || tokenValue(got.UncachedInputTokens) != 40 ||
+		tokenValue(got.CachedInputTokens) != 60 || tokenValue(got.CachedOutputTokens) != 0 || tokenValue(got.OutputTokens) != 20 {
 		t.Fatalf("first tokens = %+v", got)
 	}
-	if got := result.Events[1].Tokens; got.InputTokens != 60 || got.UncachedInputTokens != 30 ||
-		got.CacheReadTokens != 30 || got.OutputTokens != 15 ||
-		got.ReasoningTokens == nil || *got.ReasoningTokens != 3 {
+	if details := result.Events[0].ProviderDetails.OpenAI; details == nil ||
+		tokenValue(details.CacheWriteInputTokens) != 10 || tokenValue(details.ReasoningOutputTokens) != 5 {
+		t.Fatalf("first provider details = %+v", details)
+	}
+	if got := result.Events[1].Tokens; tokenValue(got.InputTokens) != 60 || tokenValue(got.UncachedInputTokens) != 30 ||
+		tokenValue(got.CachedInputTokens) != 30 || tokenValue(got.OutputTokens) != 15 {
 		t.Fatalf("delta tokens = %+v", got)
+	}
+	if details := result.Events[1].ProviderDetails.OpenAI; details == nil || tokenValue(details.ReasoningOutputTokens) != 3 {
+		t.Fatalf("delta provider details = %+v", details)
 	}
 	state := parserStateFromResult(t, result, domain.UsageSourceCodexRollout)
 	if state.Codex.Baseline.InputTokens != 160 || state.Codex.ModelID != "gpt-5.6" {
 		t.Fatalf("parser state = %+v", state.Codex)
+	}
+}
+
+func TestParseCodexReferenceUsageReconcilesLastAndCumulativeTotals(t *testing.T) {
+	source := usageSource(domain.UsageSourceCodexRollout)
+	records := []jsonlRecord{
+		{Data: []byte(`{"type":"turn_context","payload":{"model":"gpt-5.5"}}`)},
+		{Data: codexTokenLineWithLast("2026-08-20T10:00:00Z", codexTokenVector{InputTokens: 16568, CachedInputTokens: 4480, OutputTokens: 638, ReasoningOutputTokens: 148, TotalTokens: 17206}, codexTokenVector{InputTokens: 16568, CachedInputTokens: 4480, OutputTokens: 638, ReasoningOutputTokens: 148, TotalTokens: 17206})},
+		{Data: codexTokenLineWithLast("2026-08-20T10:01:00Z", codexTokenVector{InputTokens: 22673, CachedInputTokens: 4480, OutputTokens: 1895, ReasoningOutputTokens: 516, TotalTokens: 24568}, codexTokenVector{InputTokens: 39241, CachedInputTokens: 8960, OutputTokens: 2533, ReasoningOutputTokens: 664, TotalTokens: 41774})},
+		{Data: codexTokenLineWithLast("2026-08-20T10:02:00Z", codexTokenVector{InputTokens: 24325, CachedInputTokens: 21888, OutputTokens: 2525, ReasoningOutputTokens: 516, TotalTokens: 26850}, codexTokenVector{InputTokens: 63566, CachedInputTokens: 30848, OutputTokens: 5058, ReasoningOutputTokens: 1180, TotalTokens: 68624})},
+	}
+
+	result := parseRecords(source, records, 1000, time.Unix(1700000000, 0).UTC())
+	if len(result.Events) != 3 || result.Cursor.AnomalyCount != 0 {
+		t.Fatalf("result = %+v, want three reconciled events", result)
+	}
+	assertCanonicalEventTotals(t, result.Events, 63566, 30848, 32718, 0, 5058)
+	var reasoning, cacheWrite, reportedTotal int64
+	for _, event := range result.Events {
+		details := event.ProviderDetails.OpenAI
+		if event.ProviderID != domain.UsageProviderOpenAI || details == nil {
+			t.Fatalf("provider mapping = %+v", event)
+		}
+		reasoning += tokenValue(details.ReasoningOutputTokens)
+		cacheWrite += tokenValue(details.CacheWriteInputTokens)
+		reportedTotal += tokenValue(details.ReportedTotalTokens)
+	}
+	if reasoning != 1180 || cacheWrite != 0 || reportedTotal != 68624 {
+		t.Fatalf("OpenAI details = reasoning:%d cache-write:%d reported-total:%d", reasoning, cacheWrite, reportedTotal)
 	}
 }
 
@@ -110,8 +193,8 @@ func TestParseCodexContextFillStartsNewEpochWithoutAnomaly(t *testing.T) {
 	if len(result.Events) != 1 {
 		t.Fatalf("events = %+v, want one event from the new epoch", result.Events)
 	}
-	if got := result.Events[0].Tokens; got.InputTokens != 10 || got.CacheReadTokens != 5 ||
-		got.UncachedInputTokens != 5 || got.OutputTokens != 2 {
+	if got := result.Events[0].Tokens; tokenValue(got.InputTokens) != 10 || tokenValue(got.CachedInputTokens) != 5 ||
+		tokenValue(got.UncachedInputTokens) != 5 || tokenValue(got.OutputTokens) != 2 {
 		t.Fatalf("new epoch tokens = %+v", got)
 	}
 }
@@ -552,6 +635,43 @@ func codexContextFillLine(timestamp string, modelContextWindow int64) []byte {
 		`{"timestamp":%q,"type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":0,"cached_input_tokens":0,"cache_write_input_tokens":0,"output_tokens":0,"reasoning_output_tokens":0,"total_tokens":%d},"model_context_window":%d}}}`,
 		timestamp, modelContextWindow, modelContextWindow,
 	))
+}
+
+func codexTokenLineWithLast(timestamp string, last, total codexTokenVector) []byte {
+	return []byte(fmt.Sprintf(
+		`{"timestamp":%q,"type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":%s,"total_token_usage":%s}}}`,
+		timestamp, mustJSONTokenVector(last), mustJSONTokenVector(total),
+	))
+}
+
+func mustJSONTokenVector(vector codexTokenVector) string {
+	encoded, err := json.Marshal(vector)
+	if err != nil {
+		panic(err)
+	}
+	return string(encoded)
+}
+
+func assertCanonicalEventTotals(t *testing.T, events []domain.ModelUsageEvent, input, cachedInput, uncachedInput, cachedOutput, output int64) {
+	t.Helper()
+	var gotInput, gotCachedInput, gotUncachedInput, gotCachedOutput, gotOutput int64
+	for _, event := range events {
+		gotInput += tokenValue(event.Tokens.InputTokens)
+		gotCachedInput += tokenValue(event.Tokens.CachedInputTokens)
+		gotUncachedInput += tokenValue(event.Tokens.UncachedInputTokens)
+		gotCachedOutput += tokenValue(event.Tokens.CachedOutputTokens)
+		gotOutput += tokenValue(event.Tokens.OutputTokens)
+	}
+	if gotInput != input || gotCachedInput != cachedInput || gotUncachedInput != uncachedInput || gotCachedOutput != cachedOutput || gotOutput != output {
+		t.Fatalf("canonical totals = (%d, %d, %d, %d, %d), want (%d, %d, %d, %d, %d)", gotInput, gotCachedInput, gotUncachedInput, gotCachedOutput, gotOutput, input, cachedInput, uncachedInput, cachedOutput, output)
+	}
+}
+
+func tokenValue(value *int64) int64 {
+	if value == nil {
+		return -1
+	}
+	return *value
 }
 
 func osWrite(path, content string) error {

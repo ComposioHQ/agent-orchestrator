@@ -35,24 +35,28 @@ func (s *usageSummaryStoreStub) GetUsageSessionIncomplete(context.Context, domai
 }
 
 func TestSummaryReaderListCompactUsesOneBatchRead(t *testing.T) {
+	used, incomplete := int64(110), int64(55)
 	store := &usageSummaryStoreStub{rows: []domain.CompactSessionUsage{
 		{SessionID: "empty"},
-		{SessionID: "used", ProcessedTokens: 110, TotalTokens: 120},
-		{SessionID: "incomplete", ProcessedTokens: 55, TotalTokens: 60, Incomplete: true},
+		{SessionID: "used", ProcessedTokens: &used},
+		{SessionID: "incomplete", ProcessedTokens: &incomplete, Incomplete: true},
 	}}
 	got, err := NewSummaryReader(store).ListCompact(context.Background(), "reverb")
 	mustNoError(t, err)
 	if store.calls[0] != 1 || store.projectID != "reverb" || len(got) != 3 {
 		t.Fatalf("read=%d project=%q items=%+v", store.calls[0], store.projectID, got)
 	}
-	if got[1].ProcessedTokens != 110 || got[1].TotalTokens != 120 || got[1].Incomplete ||
-		got[2].ProcessedTokens != 55 || !got[2].Incomplete {
+	if got[1].ProcessedTokens == nil || *got[1].ProcessedTokens != 110 || got[1].Incomplete ||
+		got[2].ProcessedTokens == nil || *got[2].ProcessedTokens != 55 || !got[2].Incomplete {
 		t.Fatalf("compact summaries = %+v", got)
 	}
 }
 
 func TestSummaryReaderGetAggregatesModelsAndIntegrity(t *testing.T) {
 	reasoning := int64(40)
+	cacheWrite := int64(100)
+	direct := int64(80)
+	creation := int64(0)
 	store := &usageSummaryStoreStub{
 		found:      true,
 		incomplete: true,
@@ -60,12 +64,17 @@ func TestSummaryReaderGetAggregatesModelsAndIntegrity(t *testing.T) {
 		models: []domain.UsageModelAggregate{
 			{
 				Harness: domain.HarnessCodex, ModelID: "gpt-5.6",
-				Tokens:              domain.UsageTokenMetrics{InputTokens: 1000, UncachedInputTokens: 500, CacheReadTokens: 400, CacheWriteTokens: 100, OutputTokens: 200, ReasoningTokens: &reasoning},
-				ReasoningEventCount: 2,
+				Tokens: testUsageMetrics(1000, 400, 600, 200, domain.UsageMetricReported),
+				ProviderDetails: domain.UsageProviderDetails{OpenAI: &domain.OpenAIUsageDetails{
+					ReasoningOutputTokens: &reasoning, CacheWriteInputTokens: &cacheWrite,
+				}},
 			},
 			{
 				Harness: domain.HarnessClaudeCode, ModelID: "claude-sonnet",
-				Tokens: domain.UsageTokenMetrics{InputTokens: 100, UncachedInputTokens: 80, CacheReadTokens: 20, OutputTokens: 25},
+				Tokens: testUsageMetrics(100, 20, 80, 25, domain.UsageMetricDerived),
+				ProviderDetails: domain.UsageProviderDetails{Anthropic: &domain.AnthropicUsageDetails{
+					DirectUncachedInputTokens: &direct, CacheCreationInputTokens: &creation,
+				}},
 			},
 		},
 	}
@@ -77,7 +86,6 @@ func TestSummaryReaderGetAggregatesModelsAndIntegrity(t *testing.T) {
 	}
 	if got.Totals.InputTokens == nil || *got.Totals.InputTokens != 1100 ||
 		got.Totals.OutputTokens == nil || *got.Totals.OutputTokens != 225 ||
-		got.Totals.ReasoningTokens == nil || *got.Totals.ReasoningTokens != 40 ||
 		got.Totals.ProcessedTokens == nil || *got.Totals.ProcessedTokens != 1325 {
 		t.Fatalf("totals = %+v", got.Totals)
 	}
@@ -93,6 +101,21 @@ func TestSummaryReaderGetAggregatesModelsAndIntegrity(t *testing.T) {
 		t.Fatalf("store calls = %v", store.calls)
 	}
 }
+
+func testUsageMetrics(input, cachedInput, uncachedInput, output int64, inputProvenance domain.UsageMetricProvenance) domain.UsageTokenMetrics {
+	cachedOutput := int64(0)
+	return domain.UsageTokenMetrics{
+		InputTokens: &input, CachedInputTokens: &cachedInput, UncachedInputTokens: &uncachedInput,
+		CachedOutputTokens: &cachedOutput, OutputTokens: &output,
+		Provenance: domain.UsageMetricProvenanceSet{
+			InputTokens: inputProvenance, CachedInputTokens: domain.UsageMetricReported,
+			UncachedInputTokens: domain.UsageMetricDerived, CachedOutputTokens: domain.UsageMetricUnsupported,
+			OutputTokens: domain.UsageMetricReported,
+		},
+	}
+}
+
+func int64Pointer(value int64) *int64 { return &value }
 
 func TestSummaryReaderGetReturnsUnavailableMetricsWithoutEvents(t *testing.T) {
 	store := &usageSummaryStoreStub{found: true, session: domain.SessionRecord{ID: "empty"}}

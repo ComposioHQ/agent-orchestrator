@@ -42,7 +42,7 @@ func (c *UsageController) listSessions(w http.ResponseWriter, r *http.Request) {
 	for _, item := range items {
 		out = append(out, CompactSessionUsageResponse{
 			SessionID: item.SessionID, ProcessedTokens: item.ProcessedTokens,
-			TotalTokens: item.TotalTokens, Incomplete: item.Incomplete,
+			Incomplete: item.Incomplete,
 		})
 	}
 	envelope.WriteJSON(w, http.StatusOK, ListCompactSessionUsageResponse{Sessions: out})
@@ -82,9 +82,33 @@ func sessionUsageResponse(summary domain.SessionUsageSummary) SessionUsageRespon
 
 func usageTotalsResponse(totals domain.UsageMetricTotals) UsageTotalsResponse {
 	return UsageTotalsResponse{
-		InputTokens: totals.InputTokens, UncachedInputTokens: totals.UncachedInputTokens,
-		CacheReadTokens: totals.CacheReadTokens, CacheWriteTokens: totals.CacheWriteTokens,
-		OutputTokens: totals.OutputTokens, ReasoningTokens: totals.ReasoningTokens,
-		ProcessedTokens: totals.ProcessedTokens,
+		InputTokens: totals.InputTokens, CachedInputTokens: totals.CachedInputTokens,
+		UncachedInputTokens: totals.UncachedInputTokens, CachedOutputTokens: totals.CachedOutputTokens,
+		OutputTokens: totals.OutputTokens, ProcessedTokens: totals.ProcessedTokens,
+		Provenance: UsageMetricProvenanceResponse{
+			InputTokens: totals.Provenance.InputTokens, CachedInputTokens: totals.Provenance.CachedInputTokens,
+			UncachedInputTokens: totals.Provenance.UncachedInputTokens, CachedOutputTokens: totals.Provenance.CachedOutputTokens,
+			OutputTokens: totals.Provenance.OutputTokens,
+		},
+		ProviderDetails: usageProviderDetailsResponse(totals.ProviderDetails),
 	}
+}
+
+func usageProviderDetailsResponse(details domain.UsageProviderDetails) UsageProviderDetailsResponse {
+	var response UsageProviderDetailsResponse
+	if details.OpenAI != nil {
+		response.OpenAI = &OpenAIUsageDetailsResponse{
+			OpenAIReasoningOutputTokens: details.OpenAI.ReasoningOutputTokens,
+			OpenAICacheWriteInputTokens: details.OpenAI.CacheWriteInputTokens,
+		}
+	}
+	if details.Anthropic != nil {
+		response.Anthropic = &AnthropicUsageDetailsResponse{
+			AnthropicDirectUncachedInputTokens:  details.Anthropic.DirectUncachedInputTokens,
+			AnthropicCacheCreationInputTokens:   details.Anthropic.CacheCreationInputTokens,
+			AnthropicCacheCreation5mInputTokens: details.Anthropic.CacheCreation5mInputTokens,
+			AnthropicCacheCreation1hInputTokens: details.Anthropic.CacheCreation1hInputTokens,
+		}
+	}
+	return response
 }

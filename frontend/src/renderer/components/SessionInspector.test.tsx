@@ -777,8 +777,8 @@ describe("SessionInspector usage", () => {
 					data: {
 						sessionId: "sess-1",
 						incomplete: false,
-						totals: { inputTokens: 1200, outputTokens: 300, cacheReadTokens: 1000, cacheWriteTokens: 0, reasoningTokens: 5, uncachedInputTokens: 200, processedTokens: 1500 },
-						harnesses: [{ harness: "codex", totals: { inputTokens: 1200, outputTokens: 300, cacheReadTokens: 1000, cacheWriteTokens: 0, reasoningTokens: 5, uncachedInputTokens: 200, processedTokens: 1500 }, models: [] }],
+						totals: { inputTokens: 1200, cachedInputTokens: 1000, uncachedInputTokens: 200, cachedOutputTokens: 0, outputTokens: 300, processedTokens: 1500, provenance: { inputTokens: "reported", cachedInputTokens: "reported", uncachedInputTokens: "derived", cachedOutputTokens: "unsupported", outputTokens: "reported" }, providerDetails: { openai: { openaiReasoningOutputTokens: 5, openaiCacheWriteInputTokens: 0 } } },
+						harnesses: [{ harness: "codex", totals: { inputTokens: 1200, cachedInputTokens: 1000, uncachedInputTokens: 200, cachedOutputTokens: 0, outputTokens: 300, processedTokens: 1500, provenance: { inputTokens: "reported", cachedInputTokens: "reported", uncachedInputTokens: "derived", cachedOutputTokens: "unsupported", outputTokens: "reported" }, providerDetails: { openai: { openaiReasoningOutputTokens: 5, openaiCacheWriteInputTokens: 0 } } }, models: [] }],
 					},
 					error: undefined,
 				};
@@ -790,10 +790,12 @@ describe("SessionInspector usage", () => {
 		expect(await screen.findByText("Usage & cost")).toBeInTheDocument();
 		expect(screen.getByText("Tokens processed")).toBeInTheDocument();
 		expect(screen.getByLabelText("1,500 tokens processed")).toBeInTheDocument();
-		expect(screen.getAllByText("Fresh input").length).toBeGreaterThan(0);
-		expect(screen.getAllByText("Cache hit rate").length).toBeGreaterThan(0);
-		expect(screen.getAllByLabelText("Cache hit rate: 83%. Cache reads ÷ (fresh input + cache reads).").length).toBeGreaterThan(0);
-		expect(screen.queryByText("Input tokens")).not.toBeInTheDocument();
+		const metrics = screen.getAllByTestId("session-usage-metrics")[0];
+		expect(within(metrics).getAllByRole("term").map((term) => term.textContent)).toEqual([
+			"Input", "Cached Input", "Uncached Input", "Cached Output", "Output",
+		]);
+		expect(within(metrics).getByLabelText("Cached Output: 0 tokens")).toBeInTheDocument();
+		expect(screen.queryByText("Cache hit rate")).not.toBeInTheDocument();
 		expect(screen.queryByText("Cache write tokens")).not.toBeInTheDocument();
 		expect(screen.queryByText("Reasoning (included in output)")).not.toBeInTheDocument();
 		expect(screen.getByText("Codex")).toBeInTheDocument();

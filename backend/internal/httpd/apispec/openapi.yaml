@@ -5442,6 +5442,34 @@ components:
       required:
       - switch
       type: object
+    AnthropicUsageDetailsResponse:
+      properties:
+        anthropicCacheCreation1hInputTokens:
+          minimum: 0
+          type:
+          - "null"
+          - integer
+        anthropicCacheCreation5mInputTokens:
+          minimum: 0
+          type:
+          - "null"
+          - integer
+        anthropicCacheCreationInputTokens:
+          minimum: 0
+          type:
+          - "null"
+          - integer
+        anthropicDirectUncachedInputTokens:
+          minimum: 0
+          type:
+          - "null"
+          - integer
+      required:
+      - anthropicDirectUncachedInputTokens
+      - anthropicCacheCreationInputTokens
+      - anthropicCacheCreation5mInputTokens
+      - anthropicCacheCreation1hInputTokens
+      type: object
     AttachmentInput:
       properties:
         data:
@@ -5615,23 +5643,17 @@ components:
         incomplete:
           type: boolean
         processedTokens:
-          description: 'Tokens processed exactly once: fresh input plus cache reads,
-            cache writes, and output.'
-          format: int64
+          description: Canonical input plus output. Null when either component is
+            unknown.
           minimum: 0
-          type: integer
+          type:
+          - "null"
+          - integer
         sessionId:
           type: string
-        totalTokens:
-          description: Deprecated compatibility field using inclusive input plus output.
-            Use processedTokens.
-          format: int64
-          minimum: 0
-          type: integer
       required:
       - sessionId
       - processedTokens
-      - totalTokens
       - incomplete
       type: object
     ContainerReapConfig:
@@ -7126,6 +7148,22 @@ components:
       required:
       - kind
       - sessionId
+      type: object
+    OpenAIUsageDetailsResponse:
+      properties:
+        openaiCacheWriteInputTokens:
+          minimum: 0
+          type:
+          - "null"
+          - integer
+        openaiReasoningOutputTokens:
+          minimum: 0
+          type:
+          - "null"
+          - integer
+      required:
+      - openaiReasoningOutputTokens
+      - openaiCacheWriteInputTokens
       type: object
     OpenShellTerminalRequest:
       properties:
@@ -8819,6 +8857,50 @@ components:
       required:
       - harness
       type: object
+    UsageMetricProvenanceResponse:
+      properties:
+        cachedInputTokens:
+          enum:
+          - reported
+          - derived
+          - unsupported
+          - unknown
+          type: string
+        cachedOutputTokens:
+          enum:
+          - reported
+          - derived
+          - unsupported
+          - unknown
+          type: string
+        inputTokens:
+          enum:
+          - reported
+          - derived
+          - unsupported
+          - unknown
+          type: string
+        outputTokens:
+          enum:
+          - reported
+          - derived
+          - unsupported
+          - unknown
+          type: string
+        uncachedInputTokens:
+          enum:
+          - reported
+          - derived
+          - unsupported
+          - unknown
+          type: string
+      required:
+      - inputTokens
+      - cachedInputTokens
+      - uncachedInputTokens
+      - cachedOutputTokens
+      - outputTokens
+      type: object
     UsageModelResponse:
       properties:
         modelId:
@@ -8829,52 +8911,66 @@ components:
       - modelId
       - totals
       type: object
+    UsageProviderDetailsResponse:
+      properties:
+        anthropic:
+          $ref: '#/components/schemas/AnthropicUsageDetailsResponse'
+        openai:
+          $ref: '#/components/schemas/OpenAIUsageDetailsResponse'
+      type: object
     UsageTotalsResponse:
       properties:
-        cacheReadTokens:
+        cachedInputTokens:
+          description: Input read from an existing provider cache.
+          minimum: 0
           type:
           - "null"
           - integer
-        cacheWriteTokens:
+        cachedOutputTokens:
+          description: Output served from a provider output cache.
+          minimum: 0
           type:
           - "null"
           - integer
         inputTokens:
-          description: Deprecated inclusive input count retained for compatibility.
-            Use uncachedInputTokens for fresh input and processedTokens for processed
-            volume.
+          description: Total input, including cached and uncached input.
+          minimum: 0
           type:
           - "null"
           - integer
         outputTokens:
-          description: Output tokens, including reasoning tokens.
+          description: Total output, including provider-specific subsets such as reasoning
+            output.
+          minimum: 0
           type:
           - "null"
           - integer
         processedTokens:
-          description: 'Tokens processed exactly once: fresh input plus cache reads,
-            cache writes, and output.'
+          description: Canonical input plus output. Null when either component is
+            unknown.
+          minimum: 0
           type:
           - "null"
           - integer
-        reasoningTokens:
-          description: Informational subset included in outputTokens.
-          type:
-          - "null"
-          - integer
+        provenance:
+          $ref: '#/components/schemas/UsageMetricProvenanceResponse'
+        providerDetails:
+          $ref: '#/components/schemas/UsageProviderDetailsResponse'
         uncachedInputTokens:
-          description: Fresh input tokens that were not read from or written to cache.
+          description: Input not read from an existing provider cache.
+          minimum: 0
           type:
           - "null"
           - integer
       required:
       - inputTokens
+      - cachedInputTokens
       - uncachedInputTokens
-      - cacheReadTokens
-      - cacheWriteTokens
+      - cachedOutputTokens
       - outputTokens
-      - reasoningTokens
       - processedTokens
+      - provenance
+      - providerDetails
       type: object
     WorkspaceFileResponse:
       properties:
