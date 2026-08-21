@@ -120,7 +120,7 @@ func (p *Provider) bootstrap(ctx context.Context, sandbox *daytonasdk.Sandbox, w
 	claudePath := filepath.Join(home, ".claude", ".credentials.json")
 	githubTokenPath := filepath.Join(home, ".ao", "github-token")
 	askpassPath := filepath.Join(home, ".ao", "github-askpass")
-	workspacePath := filepath.Join(string(filepath.Separator), "workspace", "ao-"+strings.ReplaceAll(workspace.ID, "-", "")[:12])
+	workspacePath := filepath.Join(home, "workspace", "ao-"+strings.ReplaceAll(workspace.ID, "-", "")[:12])
 
 	if _, err := run(ctx, sandbox,
 		`sudo apt-get update -qq && sudo apt-get install -y -qq ca-certificates curl git tmux && sudo env PATH="$PATH" npm install -g @anthropic-ai/claude-code`,
