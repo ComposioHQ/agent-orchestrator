@@ -21,6 +21,7 @@ import {
 import type { WorkspaceSession, WorkspaceSummary } from "../types/workspace";
 import { agentsQueryKey } from "../hooks/useAgentsQuery";
 import { useUiStore } from "../stores/ui-store";
+import { setCloudApiBaseUrl } from "../lib/api-client";
 
 const { getMock, navigateMock, mockParams, renameSessionMock, spawnMock, updateStatusMock, commandPaletteEnabled } = vi.hoisted(
 	() => ({
@@ -296,6 +297,9 @@ describe("Sidebar", () => {
 
 		expect(screen.getByRole("menuitem", { name: "Create local project" })).toBeInTheDocument();
 		expect(screen.getByRole("menuitem", { name: "Create cloud project" })).toBeInTheDocument();
+		await user.click(screen.getByRole("menuitem", { name: "Create local project" }));
+		expect(setCloudApiBaseUrl).toHaveBeenCalledWith(null);
+		expect(screen.getByRole("dialog", { name: "Add code to Agent Orchestrator" })).toBeInTheDocument();
 	});
 
 	it("suppresses focus chrome without removing keyboard focusability", () => {

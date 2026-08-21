@@ -1441,6 +1441,7 @@ function CreateProjectButton({
 	onInitializeProject,
 }: Pick<SidebarProps, "onCloneProject" | "onCreateProject" | "onInitializeProject"> & { hideTrigger?: boolean }) {
 	const { t } = useTranslation();
+	const queryClient = useQueryClient();
 	const { configured, status, signIn } = useCloudSession();
 	const [cloudWorkspaceOpen, setCloudWorkspaceOpen] = useState(false);
 	// Single CreateProjectFlow owner for the sidebar: the header "+" stays mounted
@@ -1482,7 +1483,11 @@ function CreateProjectButton({
 									<TooltipContent>{label}</TooltipContent>
 								</Tooltip>
 								<DropdownMenuContent align="end" className="min-w-44">
-									<DropdownMenuItem onSelect={choosePath}>
+									<DropdownMenuItem onSelect={() => {
+										setCloudApiBaseUrl(null);
+										queryClient.clear();
+										choosePath();
+									}}>
 										<Folder aria-hidden="true" />
 										{t("shell.createLocalProject")}
 									</DropdownMenuItem>
