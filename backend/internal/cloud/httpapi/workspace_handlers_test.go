@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -61,7 +63,10 @@ func (s *memoryWorkspaceStore) UpdateWorkspaceProvisioning(
 
 type fakeWorkspaceProvisioner struct{}
 
-func (fakeWorkspaceProvisioner) Provision(context.Context, domain.Workspace) (string, error) {
+func (fakeWorkspaceProvisioner) Provision(_ context.Context, _ domain.Workspace, credentials []byte) (string, error) {
+	if string(credentials) != `{"claudeAiOauth":{"accessToken":"secret"}}` {
+		return "", errors.New("unexpected Claude credentials")
+	}
 	return "sandbox-1", nil
 }
 
@@ -100,7 +105,7 @@ func TestWorkspaceProvisioningRequiresAuthAndReturnsSignedAOConnection(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	request := httptest.NewRequest(http.MethodPost, "/api/cloud/v1/orgs/org-1/workspaces", bytes.NewBufferString(`{"repositoryUrl":"https://github.com/Untrivial-ai/agent-orchestrator.git","repositoryRef":"main"}`))
+	request := httptest.NewRequest(http.MethodPost, "/api/cloud/v1/orgs/org-1/workspaces", bytes.NewBufferString(`{"repositoryUrl":"https://github.com/Untrivial-ai/agent-orchestrator.git","repositoryRef":"main","claudeCredentialsBase64":"eyJjbGF1ZGVBaU9hdXRoIjp7ImFjY2Vzc1Rva2VuIjoic2VjcmV0In19"}`))
 	request.Header.Set("Authorization", "Bearer "+accessToken)
 	response := httptest.NewRecorder()
 	server.Handler().ServeHTTP(response, request)
@@ -139,5 +144,35 @@ func TestValidGitHubRepository(t *testing.T) {
 	}
 	if !validGitHubRepository("https://github.com/org/repo.git") {
 		t.Fatal("valid GitHub repository was rejected")
+	}
+}
+
+func TestWorkspaceProvisioningRejectsMissingClaudeCredentials(t *testing.T) {
+	principal := domain.Principal{UserID: "58fc7182-0360-412f-abd9-5057097db664", Provider: "google"}
+	accountStore := &memoryAccountStore{principal: principal, refreshes: make(map[string]string)}
+	tokens, err := auth.NewAccessTokenManager(
+		[]byte("0123456789abcdef0123456789abcdef"), "issuer", "audience", 15*time.Minute,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server, err := New(Options{
+		Store: accountStore, Google: &staticIdentityVerifier{}, AccessTokens: tokens,
+		AllowedEmails: []string{"person@example.com"}, RefreshTokenTTL: time.Hour,
+		WorkspaceStore: &memoryWorkspaceStore{updated: make(chan struct{}, 1)}, Workspaces: fakeWorkspaceProvisioner{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	accessToken, _, err := tokens.Issue(principal.UserID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(http.MethodPost, "/api/cloud/v1/orgs/org-1/workspaces", bytes.NewBufferString(`{"repositoryUrl":"https://github.com/org/repo"}`))
+	request.Header.Set("Authorization", "Bearer "+accessToken)
+	response := httptest.NewRecorder()
+	server.Handler().ServeHTTP(response, request)
+	if response.Code != http.StatusBadRequest || !strings.Contains(response.Body.String(), "INVALID_CLAUDE_CREDENTIALS") {
+		t.Fatalf("response = %d: %s", response.Code, response.Body.String())
 	}
 }

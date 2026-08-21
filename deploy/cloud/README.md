@@ -32,7 +32,6 @@ client ID, then run:
 export AO_CLOUD_GOOGLE_CLIENT_IDS='123456789-example.apps.googleusercontent.com'
 export AO_CLOUD_ALLOWED_EMAILS='maintainer@example.com'
 export DAYTONA_API_KEY='...'
-export AO_CLOUD_CLAUDE_CREDENTIALS_BASE64="$(base64 < ~/.claude/.credentials.json | tr -d '\n')"
 export AO_CLOUD_GITHUB_TOKEN_BASE64="$(gh auth token | base64 | tr -d '\n')"
 deploy/cloud/deploy-staging.sh
 ```
@@ -40,9 +39,15 @@ deploy/cloud/deploy-staging.sh
 These values are written to AWS Secrets Manager and injected into ECS; they are
 not Terraform variables, image layers, logs, or committed files.
 
+Claude credentials are not a deployment secret. When a signed-in desktop
+creates a cloud project, Electron main reads that user's existing Claude Code
+credential from OS-protected storage and sends it over the authenticated TLS
+request directly to the provisioner. The control plane holds it only in memory
+while bootstrapping the user's sandbox and does not persist or log it.
+
 `AO_CLOUD_ALLOWED_EMAILS` is a required, comma-separated staging signup gate.
-Because this POC injects shared operator credentials into permitted sandboxes,
-use a fine-grained GitHub token limited to the test repositories and set the
+Because this POC still injects a shared operator GitHub credential into
+permitted sandboxes, use a fine-grained token limited to the test repositories and set the
 shortest practical expiration. Rotate both shared credentials after each test
 period; do not broaden the email allowlist until per-user credential custody is
 implemented.

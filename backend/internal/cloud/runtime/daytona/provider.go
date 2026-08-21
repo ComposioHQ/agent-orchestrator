@@ -21,20 +21,18 @@ const daemonPort = 3001
 
 // Config contains server-side runtime credentials and the AO worker artifact.
 type Config struct {
-	APIKey            string
-	APIURL            string
-	Target            string
-	AOBinaryPath      string
-	ClaudeCredentials []byte
-	GitHubToken       []byte
+	APIKey       string
+	APIURL       string
+	Target       string
+	AOBinaryPath string
+	GitHubToken  []byte
 }
 
 // Provider owns Daytona sandbox creation and signed AO preview links.
 type Provider struct {
-	client            *daytonasdk.Client
-	aoBinary          []byte
-	claudeCredentials []byte
-	githubToken       []byte
+	client      *daytonasdk.Client
+	aoBinary    []byte
+	githubToken []byte
 }
 
 // New validates credentials and creates a Daytona client.
@@ -45,9 +43,6 @@ func New(cfg Config) (*Provider, error) {
 	aoBinary, err := os.ReadFile(strings.TrimSpace(cfg.AOBinaryPath))
 	if err != nil {
 		return nil, fmt.Errorf("read AO sandbox binary: %w", err)
-	}
-	if len(cfg.ClaudeCredentials) == 0 {
-		return nil, errors.New("Claude credentials are required") //nolint:staticcheck // Claude is a product name.
 	}
 	if len(cfg.GitHubToken) == 0 {
 		return nil, errors.New("GitHub token is required")
@@ -61,10 +56,9 @@ func New(cfg Config) (*Provider, error) {
 		return nil, fmt.Errorf("create Daytona client: %w", err)
 	}
 	return &Provider{
-		client:            client,
-		aoBinary:          aoBinary,
-		claudeCredentials: append([]byte(nil), cfg.ClaudeCredentials...),
-		githubToken:       append([]byte(nil), cfg.GitHubToken...),
+		client:      client,
+		aoBinary:    aoBinary,
+		githubToken: append([]byte(nil), cfg.GitHubToken...),
 	}, nil
 }
 
@@ -75,7 +69,7 @@ func (p *Provider) Close(ctx context.Context) error {
 
 // Provision creates one sandbox, installs the existing AO daemon and Claude
 // harness, clones the real repository, and registers it as an AO project.
-func (p *Provider) Provision(ctx context.Context, workspace domain.Workspace) (string, error) {
+func (p *Provider) Provision(ctx context.Context, workspace domain.Workspace, claudeCredentials []byte) (string, error) {
 	zero := 0
 	sandbox, err := p.client.Create(ctx, types.SnapshotParams{
 		Snapshot: "daytona-small",
@@ -88,7 +82,7 @@ func (p *Provider) Provision(ctx context.Context, workspace domain.Workspace) (s
 	if err != nil {
 		return "", fmt.Errorf("create Daytona sandbox: %w", err)
 	}
-	if err := p.bootstrap(ctx, sandbox, workspace); err != nil {
+	if err := p.bootstrap(ctx, sandbox, workspace, claudeCredentials); err != nil {
 		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Minute)
 		defer cancel()
 		if cleanupErr := sandbox.Delete(cleanupCtx); cleanupErr != nil {
@@ -112,7 +106,7 @@ func (p *Provider) PreviewURL(ctx context.Context, sandboxID string) (string, er
 	return preview.URL, nil
 }
 
-func (p *Provider) bootstrap(ctx context.Context, sandbox *daytonasdk.Sandbox, workspace domain.Workspace) error {
+func (p *Provider) bootstrap(ctx context.Context, sandbox *daytonasdk.Sandbox, workspace domain.Workspace, claudeCredentials []byte) error {
 	homeResult, err := run(ctx, sandbox, `printf %s "$HOME"`, time.Minute)
 	if err != nil {
 		return err
@@ -141,7 +135,7 @@ func (p *Provider) bootstrap(ctx context.Context, sandbox *daytonasdk.Sandbox, w
 	if err := sandbox.FileSystem.UploadFile(ctx, p.aoBinary, binPath); err != nil {
 		return fmt.Errorf("upload AO daemon: %w", err)
 	}
-	if err := sandbox.FileSystem.UploadFile(ctx, p.claudeCredentials, claudePath); err != nil {
+	if err := sandbox.FileSystem.UploadFile(ctx, claudeCredentials, claudePath); err != nil {
 		return fmt.Errorf("upload Claude credentials: %w", err)
 	}
 	// Credentials alone do not suppress Claude Code's first-run theme and login

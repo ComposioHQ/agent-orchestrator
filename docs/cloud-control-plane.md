@@ -102,7 +102,6 @@ Workspace provisioning additionally requires server-side secret injection:
 export DAYTONA_API_KEY='...'
 export DAYTONA_API_URL='https://app.daytona.io/api'
 export DAYTONA_TARGET='us'
-export AO_CLOUD_CLAUDE_CREDENTIALS_BASE64='...'
 export AO_CLOUD_GITHUB_TOKEN_BASE64='...'
 export AO_CLOUD_SANDBOX_AO_BINARY='/ao'
 ```
@@ -112,8 +111,12 @@ loopback callback and encrypts AO access/refresh tokens with Electron
 `safeStorage`. The renderer receives account metadata, never bearer tokens. A
 signed Daytona preview URL is held in memory and rebases the existing AO REST,
 SSE, and `/mux` transports, so the local and cloud paths render the same React
-components. Selecting “Use local projects” restores the supervised loopback
-daemon without stopping the cloud workspace.
+components. At cloud-project creation, Electron main reads the current Claude
+Code credential from the macOS Keychain (or Claude's credential file on other
+platforms), sends it only over the authenticated TLS request, and the control
+plane passes it in memory to Daytona. It is written directly into that user's
+sandbox and is never exposed to the renderer, stored in Postgres, logged, or
+kept as a shared deployment secret.
 
 Run migrations and start the service:
 

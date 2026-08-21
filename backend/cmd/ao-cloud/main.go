@@ -63,12 +63,11 @@ func run(logger *slog.Logger) error {
 	var workspaceProvider *cloudruntime.Provider
 	if cfg.DaytonaAPIKey != "" {
 		workspaceProvider, err = cloudruntime.New(cloudruntime.Config{
-			APIKey:            cfg.DaytonaAPIKey,
-			APIURL:            cfg.DaytonaAPIURL,
-			Target:            cfg.DaytonaTarget,
-			AOBinaryPath:      cfg.SandboxAOBinaryPath,
-			ClaudeCredentials: cfg.ClaudeCredentials,
-			GitHubToken:       cfg.GitHubToken,
+			APIKey:       cfg.DaytonaAPIKey,
+			APIURL:       cfg.DaytonaAPIURL,
+			Target:       cfg.DaytonaTarget,
+			AOBinaryPath: cfg.SandboxAOBinaryPath,
+			GitHubToken:  cfg.GitHubToken,
 		})
 		if err != nil {
 			return err

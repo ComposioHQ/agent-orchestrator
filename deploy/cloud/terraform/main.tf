@@ -324,7 +324,6 @@ resource "aws_ecs_task_definition" "api" {
       { name = "DAYTONA_API_KEY", valueFrom = "${aws_secretsmanager_secret.application.arn}:daytonaApiKey::" },
       { name = "DAYTONA_API_URL", valueFrom = "${aws_secretsmanager_secret.application.arn}:daytonaApiUrl::" },
       { name = "DAYTONA_TARGET", valueFrom = "${aws_secretsmanager_secret.application.arn}:daytonaTarget::" },
-      { name = "AO_CLOUD_CLAUDE_CREDENTIALS_BASE64", valueFrom = "${aws_secretsmanager_secret.application.arn}:claudeCredentialsBase64::" },
       { name = "AO_CLOUD_GITHUB_TOKEN_BASE64", valueFrom = "${aws_secretsmanager_secret.application.arn}:githubTokenBase64::" },
     ]
     portMappings     = [{ containerPort = 8080, hostPort = 8080, protocol = "tcp" }]

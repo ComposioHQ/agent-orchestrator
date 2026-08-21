@@ -35,7 +35,6 @@ type Config struct {
 	DaytonaAPIURL       string
 	DaytonaTarget       string
 	SandboxAOBinaryPath string
-	ClaudeCredentials   []byte
 	GitHubToken         []byte
 }
 
@@ -57,10 +56,6 @@ func load(getenv func(string) string) (Config, error) {
 	if err != nil {
 		return Config{}, fmt.Errorf("AO_CLOUD_ACCESS_TOKEN_KEY_BASE64: %w", err)
 	}
-	claudeCredentials, err := optionalBase64(getenv("AO_CLOUD_CLAUDE_CREDENTIALS_BASE64"))
-	if err != nil {
-		return Config{}, fmt.Errorf("AO_CLOUD_CLAUDE_CREDENTIALS_BASE64: %w", err)
-	}
 	githubToken, err := optionalBase64(getenv("AO_CLOUD_GITHUB_TOKEN_BASE64"))
 	if err != nil {
 		return Config{}, fmt.Errorf("AO_CLOUD_GITHUB_TOKEN_BASE64: %w", err)
@@ -81,7 +76,6 @@ func load(getenv func(string) string) (Config, error) {
 		DaytonaAPIURL:       valueOrDefault(getenv("DAYTONA_API_URL"), "https://app.daytona.io/api"),
 		DaytonaTarget:       valueOrDefault(getenv("DAYTONA_TARGET"), "us"),
 		SandboxAOBinaryPath: valueOrDefault(getenv("AO_CLOUD_SANDBOX_AO_BINARY"), "/ao"),
-		ClaudeCredentials:   claudeCredentials,
 		GitHubToken:         githubToken,
 	}
 	if cfg.DatabaseURL == "" {

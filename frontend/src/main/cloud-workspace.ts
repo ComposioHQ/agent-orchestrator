@@ -1,5 +1,6 @@
 import { ipcMain } from "electron";
 import { getCloudAccessToken, getCloudSession } from "./cloud-auth";
+import { readClaudeCredentials } from "./claude-credentials";
 import type { CloudWorkspaceResponse } from "../shared/cloud-workspace";
 
 const CLOUD_API_URL =
@@ -38,12 +39,16 @@ export function installCloudWorkspaceIPC(getDataDir: () => string): void {
 			const account = await getCloudSession(dataDir);
 			const orgID = account?.organizations[0]?.id;
 			if (!orgID) throw new Error("Your AO Cloud account has no active organization.");
+			const claudeCredentials = await readClaudeCredentials();
 			return requestWorkspace(
 				dataDir,
 				`/api/cloud/v1/orgs/${encodeURIComponent(orgID)}/workspaces`,
 				{
 					method: "POST",
-					body: JSON.stringify(input),
+					body: JSON.stringify({
+						...input,
+						claudeCredentialsBase64: claudeCredentials.toString("base64"),
+					}),
 				},
 			);
 		},

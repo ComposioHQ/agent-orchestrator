@@ -2,6 +2,8 @@ package httpapi
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/url"
@@ -18,8 +20,9 @@ import (
 var gitRefPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._/-]{0,199}$`)
 
 type createWorkspaceRequest struct {
-	RepositoryURL string `json:"repositoryUrl"`
-	RepositoryRef string `json:"repositoryRef,omitempty"`
+	RepositoryURL           string `json:"repositoryUrl"`
+	RepositoryRef           string `json:"repositoryRef,omitempty"`
+	ClaudeCredentialsBase64 string `json:"claudeCredentialsBase64"`
 }
 
 type workspaceResponse struct {
@@ -51,8 +54,15 @@ func (s *Server) createWorkspace(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, http.StatusBadRequest, "bad_request", "INVALID_REPOSITORY_REF", "repositoryRef is invalid")
 		return
 	}
+	claudeCredentials, err := base64.StdEncoding.DecodeString(input.ClaudeCredentialsBase64)
+	input.ClaudeCredentialsBase64 = ""
+	if err != nil || len(claudeCredentials) == 0 || len(claudeCredentials) > 256<<10 || !validJSONObject(claudeCredentials) {
+		writeError(w, r, http.StatusBadRequest, "bad_request", "INVALID_CLAUDE_CREDENTIALS", "valid Claude credentials are required")
+		return
+	}
 	workspace, err := s.workspaceStore.CreateWorkspace(r.Context(), principal, chi.URLParam(r, "orgID"), input.RepositoryURL, input.RepositoryRef)
 	if err != nil {
+		clear(claudeCredentials)
 		if errors.Is(err, postgres.ErrInvalid) || errors.Is(err, postgres.ErrNotFound) {
 			writeError(w, r, http.StatusForbidden, "forbidden", "ORG_ACCESS_REQUIRED", "active organization membership required")
 			return
@@ -60,7 +70,9 @@ func (s *Server) createWorkspace(w http.ResponseWriter, r *http.Request) {
 		s.internalError(w, r, "create cloud workspace", err)
 		return
 	}
-	go s.provisionWorkspace(context.WithoutCancel(r.Context()), workspace)
+	provisionCredentials := append([]byte(nil), claudeCredentials...)
+	clear(claudeCredentials)
+	go s.provisionWorkspace(context.WithoutCancel(r.Context()), workspace, provisionCredentials)
 	writeJSON(w, http.StatusAccepted, workspaceResponse{Workspace: workspace})
 }
 
@@ -94,14 +106,15 @@ func (s *Server) getWorkspace(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, response)
 }
 
-func (s *Server) provisionWorkspace(parent context.Context, workspace domain.Workspace) {
+func (s *Server) provisionWorkspace(parent context.Context, workspace domain.Workspace, claudeCredentials []byte) {
+	defer clear(claudeCredentials)
 	ctx, cancel := context.WithTimeout(parent, 20*time.Minute)
 	defer cancel()
 	if err := s.workspaceStore.UpdateWorkspaceProvisioning(ctx, workspace, domain.WorkspaceProvisioning, "", ""); err != nil {
 		s.logger.Error("mark Cloud workspace provisioning", "workspace_id", workspace.ID, "error", err)
 		return
 	}
-	sandboxID, err := s.workspaces.Provision(ctx, workspace)
+	sandboxID, err := s.workspaces.Provision(ctx, workspace, claudeCredentials)
 	if err != nil {
 		failure := "sandbox provisioning failed"
 		if updateErr := s.workspaceStore.UpdateWorkspaceProvisioning(ctx, workspace, domain.WorkspaceFailed, sandboxID, failure); updateErr != nil {
@@ -113,6 +126,15 @@ func (s *Server) provisionWorkspace(parent context.Context, workspace domain.Wor
 	if err := s.workspaceStore.UpdateWorkspaceProvisioning(ctx, workspace, domain.WorkspaceReady, sandboxID, ""); err != nil {
 		s.logger.Error("mark Cloud workspace ready", "workspace_id", workspace.ID, "sandbox_id", sandboxID, "error", err)
 	}
+}
+
+func validJSONObject(value []byte) bool {
+	var object map[string]json.RawMessage
+	if json.Unmarshal(value, &object) != nil || object == nil {
+		return false
+	}
+	var oauth map[string]json.RawMessage
+	return json.Unmarshal(object["claudeAiOauth"], &oauth) == nil && oauth != nil
 }
 
 func validGitHubRepository(raw string) bool {

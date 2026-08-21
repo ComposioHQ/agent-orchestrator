@@ -13,7 +13,6 @@ ALLOWED_EMAILS="${AO_CLOUD_ALLOWED_EMAILS:-}"
 DAYTONA_API_KEY_VALUE="${DAYTONA_API_KEY:-}"
 DAYTONA_API_URL_VALUE="${DAYTONA_API_URL:-https://app.daytona.io/api}"
 DAYTONA_TARGET_VALUE="${DAYTONA_TARGET:-us}"
-CLAUDE_CREDENTIALS_BASE64="${AO_CLOUD_CLAUDE_CREDENTIALS_BASE64:-}"
 GITHUB_TOKEN_BASE64="${AO_CLOUD_GITHUB_TOKEN_BASE64:-}"
 SOURCE_COMMIT="${AO_CLOUD_SOURCE_COMMIT:-$(git rev-parse HEAD)}"
 IMAGE_TAG="${AO_CLOUD_IMAGE_TAG:-${SOURCE_COMMIT:0:12}}"
@@ -148,14 +147,11 @@ fi
 if [[ -z "$DAYTONA_API_KEY_VALUE" ]]; then
   DAYTONA_API_KEY_VALUE="$(jq -r '.daytonaApiKey // empty' <<<"${existing_application_secret:-{}}" 2>/dev/null || true)"
 fi
-if [[ -z "$CLAUDE_CREDENTIALS_BASE64" ]]; then
-  CLAUDE_CREDENTIALS_BASE64="$(jq -r '.claudeCredentialsBase64 // empty' <<<"${existing_application_secret:-{}}" 2>/dev/null || true)"
-fi
 if [[ -z "$GITHUB_TOKEN_BASE64" ]]; then
   GITHUB_TOKEN_BASE64="$(jq -r '.githubTokenBase64 // empty' <<<"${existing_application_secret:-{}}" 2>/dev/null || true)"
 fi
-if [[ -z "$DAYTONA_API_KEY_VALUE" || -z "$CLAUDE_CREDENTIALS_BASE64" || -z "$GITHUB_TOKEN_BASE64" ]]; then
-  echo "DAYTONA_API_KEY, AO_CLOUD_CLAUDE_CREDENTIALS_BASE64, and AO_CLOUD_GITHUB_TOKEN_BASE64 are required for workspace provisioning" >&2
+if [[ -z "$DAYTONA_API_KEY_VALUE" || -z "$GITHUB_TOKEN_BASE64" ]]; then
+  echo "DAYTONA_API_KEY and AO_CLOUD_GITHUB_TOKEN_BASE64 are required for workspace provisioning" >&2
   exit 2
 fi
 jq -n \
@@ -165,9 +161,8 @@ jq -n \
   --arg daytonaApiKey "$DAYTONA_API_KEY_VALUE" \
   --arg daytonaApiUrl "$DAYTONA_API_URL_VALUE" \
   --arg daytonaTarget "$DAYTONA_TARGET_VALUE" \
-  --arg claudeCredentialsBase64 "$CLAUDE_CREDENTIALS_BASE64" \
   --arg githubTokenBase64 "$GITHUB_TOKEN_BASE64" \
-  '{googleClientIds:$googleClientIds,allowedEmails:$allowedEmails,accessTokenKeyBase64:$accessTokenKeyBase64,daytonaApiKey:$daytonaApiKey,daytonaApiUrl:$daytonaApiUrl,daytonaTarget:$daytonaTarget,claudeCredentialsBase64:$claudeCredentialsBase64,githubTokenBase64:$githubTokenBase64}' \
+  '{googleClientIds:$googleClientIds,allowedEmails:$allowedEmails,accessTokenKeyBase64:$accessTokenKeyBase64,daytonaApiKey:$daytonaApiKey,daytonaApiUrl:$daytonaApiUrl,daytonaTarget:$daytonaTarget,githubTokenBase64:$githubTokenBase64}' \
   >"$temporary_directory/application.json"
 aws secretsmanager put-secret-value \
   --secret-id "$application_secret_arn" \
