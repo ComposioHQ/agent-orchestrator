@@ -9,6 +9,11 @@ AWS_RETRY_MODE="${AWS_RETRY_MODE:-standard}"
 AWS_MAX_ATTEMPTS="${AWS_MAX_ATTEMPTS:-10}"
 ENVIRONMENT="${AO_CLOUD_ENVIRONMENT:-staging}"
 GOOGLE_CLIENT_IDS="${AO_CLOUD_GOOGLE_CLIENT_IDS:-}"
+DAYTONA_API_KEY_VALUE="${DAYTONA_API_KEY:-}"
+DAYTONA_API_URL_VALUE="${DAYTONA_API_URL:-https://app.daytona.io/api}"
+DAYTONA_TARGET_VALUE="${DAYTONA_TARGET:-us}"
+CLAUDE_CREDENTIALS_BASE64="${AO_CLOUD_CLAUDE_CREDENTIALS_BASE64:-}"
+GITHUB_TOKEN_BASE64="${AO_CLOUD_GITHUB_TOKEN_BASE64:-}"
 SOURCE_COMMIT="${AO_CLOUD_SOURCE_COMMIT:-$(git rev-parse HEAD)}"
 IMAGE_TAG="${AO_CLOUD_IMAGE_TAG:-${SOURCE_COMMIT:0:12}}"
 ACCOUNT_ID="$(aws sts get-caller-identity --query Account --output text)"
@@ -135,10 +140,28 @@ access_token_key="$(jq -r '.accessTokenKeyBase64 // empty' <<<"${existing_applic
 if [[ -z "$access_token_key" ]]; then
   access_token_key="$(openssl rand -base64 32 | tr -d '\n')"
 fi
+if [[ -z "$DAYTONA_API_KEY_VALUE" ]]; then
+  DAYTONA_API_KEY_VALUE="$(jq -r '.daytonaApiKey // empty' <<<"${existing_application_secret:-{}}" 2>/dev/null || true)"
+fi
+if [[ -z "$CLAUDE_CREDENTIALS_BASE64" ]]; then
+  CLAUDE_CREDENTIALS_BASE64="$(jq -r '.claudeCredentialsBase64 // empty' <<<"${existing_application_secret:-{}}" 2>/dev/null || true)"
+fi
+if [[ -z "$GITHUB_TOKEN_BASE64" ]]; then
+  GITHUB_TOKEN_BASE64="$(jq -r '.githubTokenBase64 // empty' <<<"${existing_application_secret:-{}}" 2>/dev/null || true)"
+fi
+if [[ -z "$DAYTONA_API_KEY_VALUE" || -z "$CLAUDE_CREDENTIALS_BASE64" || -z "$GITHUB_TOKEN_BASE64" ]]; then
+  echo "DAYTONA_API_KEY, AO_CLOUD_CLAUDE_CREDENTIALS_BASE64, and AO_CLOUD_GITHUB_TOKEN_BASE64 are required for workspace provisioning" >&2
+  exit 2
+fi
 jq -n \
   --arg googleClientIds "$GOOGLE_CLIENT_IDS" \
   --arg accessTokenKeyBase64 "$access_token_key" \
-  '{googleClientIds:$googleClientIds,accessTokenKeyBase64:$accessTokenKeyBase64}' \
+  --arg daytonaApiKey "$DAYTONA_API_KEY_VALUE" \
+  --arg daytonaApiUrl "$DAYTONA_API_URL_VALUE" \
+  --arg daytonaTarget "$DAYTONA_TARGET_VALUE" \
+  --arg claudeCredentialsBase64 "$CLAUDE_CREDENTIALS_BASE64" \
+  --arg githubTokenBase64 "$GITHUB_TOKEN_BASE64" \
+  '{googleClientIds:$googleClientIds,accessTokenKeyBase64:$accessTokenKeyBase64,daytonaApiKey:$daytonaApiKey,daytonaApiUrl:$daytonaApiUrl,daytonaTarget:$daytonaTarget,claudeCredentialsBase64:$claudeCredentialsBase64,githubTokenBase64:$githubTokenBase64}' \
   >"$temporary_directory/application.json"
 aws secretsmanager put-secret-value \
   --secret-id "$application_secret_arn" \

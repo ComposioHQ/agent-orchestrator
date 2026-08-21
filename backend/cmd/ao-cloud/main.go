@@ -15,6 +15,7 @@ import (
 	cloudconfig "github.com/aoagents/agent-orchestrator/backend/internal/cloud/config"
 	"github.com/aoagents/agent-orchestrator/backend/internal/cloud/httpapi"
 	cloudpostgres "github.com/aoagents/agent-orchestrator/backend/internal/cloud/postgres"
+	cloudruntime "github.com/aoagents/agent-orchestrator/backend/internal/cloud/runtime/daytona"
 )
 
 func main() {
@@ -50,12 +51,33 @@ func run(logger *slog.Logger) error {
 	if err != nil {
 		return err
 	}
+	var workspaceProvider *cloudruntime.Provider
+	if cfg.DaytonaAPIKey != "" {
+		workspaceProvider, err = cloudruntime.New(cloudruntime.Config{
+			APIKey:            cfg.DaytonaAPIKey,
+			APIURL:            cfg.DaytonaAPIURL,
+			Target:            cfg.DaytonaTarget,
+			AOBinaryPath:      cfg.SandboxAOBinaryPath,
+			ClaudeCredentials: cfg.ClaudeCredentials,
+			GitHubToken:       cfg.GitHubToken,
+		})
+		if err != nil {
+			return err
+		}
+		defer func() {
+			closeCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			_ = workspaceProvider.Close(closeCtx)
+		}()
+	}
 	api, err := httpapi.New(httpapi.Options{
 		Store:           store,
 		Google:          google,
 		AccessTokens:    accessTokens,
 		RefreshTokenTTL: cfg.RefreshTokenTTL,
 		Logger:          logger,
+		Workspaces:      workspaceProvider,
+		WorkspaceStore:  store,
 	})
 	if err != nil {
 		return err

@@ -1,6 +1,6 @@
 # AWS staging deployment
 
-This directory deploys the PostgreSQL/auth control-plane foundation to a
+This directory deploys the PostgreSQL/auth/Daytona POC control plane to a
 cost-oriented staging environment in `us-west-2`.
 
 ## Architecture
@@ -18,8 +18,9 @@ cost-oriented staging environment in `us-west-2`.
 - CodeBuild builds the exact Git commit and pushes an immutable image to ECR.
 - CloudWatch receives API, migration, and API Gateway logs.
 
+The task also calls Daytona to provision the complete AO daemon in a sandbox.
 This is intentionally a staging stack. It excludes production multi-AZ RDS,
-autoscaling, a custom domain, WAF, Daytona, SCM, and session lifecycle workers.
+autoscaling, a custom domain, WAF, and durable lifecycle reconciliation.
 
 ## Deploy
 
@@ -29,8 +30,14 @@ client ID, then run:
 
 ```bash
 export AO_CLOUD_GOOGLE_CLIENT_IDS='123456789-example.apps.googleusercontent.com'
+export DAYTONA_API_KEY='...'
+export AO_CLOUD_CLAUDE_CREDENTIALS_BASE64="$(base64 < ~/.claude/.credentials.json | tr -d '\n')"
+export AO_CLOUD_GITHUB_TOKEN_BASE64="$(gh auth token | base64 | tr -d '\n')"
 deploy/cloud/deploy-staging.sh
 ```
+
+These values are written to AWS Secrets Manager and injected into ECS; they are
+not Terraform variables, image layers, logs, or committed files.
 
 The script:
 

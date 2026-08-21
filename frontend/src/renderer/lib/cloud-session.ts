@@ -15,9 +15,9 @@ export interface UseCloudSessionResult {
 }
 
 export function isCloudSignInConfigured(
-  clientId = import.meta.env.VITE_WORKOS_CLIENT_ID,
+	clientId = import.meta.env.VITE_AO_CLOUD_GOOGLE_CLIENT_ID,
 ): boolean {
-  return Boolean(clientId?.trim());
+	return Boolean(clientId?.trim() && import.meta.env.VITE_AO_CLOUD_API_URL?.trim());
 }
 
 export function useCloudSession(): UseCloudSessionResult {

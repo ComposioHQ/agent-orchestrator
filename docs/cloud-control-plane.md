@@ -1,8 +1,10 @@
 # Cloud control-plane foundation
 
 This repository now contains the first hosted AO control-plane slice. It is a
-small, independently runnable Go service built around PostgreSQL and Google
-identity. It does not provision sandboxes or implement projects and sessions.
+small, independently runnable Go service built around PostgreSQL, Google
+identity, and Daytona. The POC provisions the complete existing AO daemon in a
+sandbox; that daemon continues to own projects, sessions, worktrees, SCM, and
+terminal multiplexing exactly as it does locally.
 
 ## Included in this foundation
 
@@ -16,6 +18,9 @@ identity. It does not provision sandboxes or implement projects and sessions.
   organizations, memberships, and forced row-level security.
 - `backend/internal/cloud/httpapi`: the implemented subset of the public Cloud
   contract.
+- `backend/internal/cloud/runtime/daytona`: one sandbox per cloud workspace,
+  with the Linux AO binary, Claude Code credentials, repository checkout, and a
+  one-hour signed preview URL.
 
 The existing daemon is unchanged. It remains loopback-only and continues to
 own every local project and session.
@@ -30,6 +35,8 @@ own every local project and session.
 | `POST /api/cloud/v1/auth/refresh` | Rotating refresh token in JSON | Atomically consume and replace a refresh token |
 | `POST /api/cloud/v1/auth/logout` | Refresh token in JSON | Revoke a refresh token |
 | `GET /api/cloud/v1/me` | AO bearer access token | Return the current user and live organization memberships |
+| `POST /api/cloud/v1/orgs/{orgId}/workspaces` | AO bearer access token | Record intent and asynchronously provision a Daytona AO workspace |
+| `GET /api/cloud/v1/orgs/{orgId}/workspaces/{workspaceId}` | AO bearer access token | Poll lifecycle state and obtain a fresh signed AO URL when ready |
 
 Google establishes identity only. A verified Google hosted-domain claim never
 creates, selects, or authorizes an AO organization. First sign-in atomically
@@ -88,6 +95,25 @@ export AO_CLOUD_ACCESS_TOKEN_TTL='15m'
 export AO_CLOUD_REFRESH_TOKEN_TTL='720h'
 ```
 
+Workspace provisioning additionally requires server-side secret injection:
+
+```bash
+export DAYTONA_API_KEY='...'
+export DAYTONA_API_URL='https://app.daytona.io/api'
+export DAYTONA_TARGET='us'
+export AO_CLOUD_CLAUDE_CREDENTIALS_BASE64='...'
+export AO_CLOUD_GITHUB_TOKEN_BASE64='...'
+export AO_CLOUD_SANDBOX_AO_BINARY='/ao'
+```
+
+The Electron main process performs Google installed-app PKCE on a temporary
+loopback callback and encrypts AO access/refresh tokens with Electron
+`safeStorage`. The renderer receives account metadata, never bearer tokens. A
+signed Daytona preview URL is held in memory and rebases the existing AO REST,
+SSE, and `/mux` transports, so the local and cloud paths render the same React
+components. Selecting “Use local projects” restores the supervised loopback
+daemon without stopping the cloud workspace.
+
 Run migrations and start the service:
 
 ```bash
@@ -104,13 +130,14 @@ staging deployment terminates public TLS at API Gateway and reaches the service
 through a VPC link and internal load balancer. See
 [`deploy/cloud/README.md`](../deploy/cloud/README.md).
 
-## Explicitly not in this PR
+## POC limits
 
-- Daytona or any sandbox provider
-- project, session, lifecycle, worker, event, terminal, or workspace handlers
-- GitHub App, SCM synchronization, or credential brokering
-- Electron Google PKCE and protected refresh-token custody
-- Cloud/local project placement and shared UI wiring
+- Provisioning is asynchronous but not yet recovered by a durable reconciler
+  after a control-plane process restart.
+- The GitHub and Claude credentials used by the staging POC are AO-held shared
+  bootstrap credentials; per-user custody and a GitHub App exchange remain.
+- A signed URL is refreshed when the desktop polls the workspace, but automatic
+  renewal for an already-connected window remains.
+- Stop, pause, resume, archive, delete, quotas, billing, and idle reaping remain.
 
-Those pieces should land as separately reviewable follow-ups on top of this
-foundation.
+Those production lifecycle pieces should remain separately reviewable follow-ups.

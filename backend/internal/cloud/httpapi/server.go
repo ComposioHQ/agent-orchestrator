@@ -40,6 +40,19 @@ type AccountStore interface {
 	ListMemberships(context.Context, domain.Principal) ([]domain.Membership, error)
 }
 
+// WorkspaceStore persists the durable intent and observed provisioning state.
+type WorkspaceStore interface {
+	CreateWorkspace(context.Context, domain.Principal, string, string, string) (domain.Workspace, error)
+	Workspace(context.Context, domain.Principal, string, string) (domain.Workspace, error)
+	UpdateWorkspaceProvisioning(context.Context, domain.Workspace, string, string, string) error
+}
+
+// WorkspaceProvisioner owns the remote sandbox lifecycle used by this POC.
+type WorkspaceProvisioner interface {
+	Provision(context.Context, domain.Workspace) (string, error)
+	PreviewURL(context.Context, string) (string, error)
+}
+
 // Options supplies the dependencies for a control-plane HTTP server.
 type Options struct {
 	Store           AccountStore
@@ -47,6 +60,8 @@ type Options struct {
 	AccessTokens    *auth.AccessTokenManager
 	RefreshTokenTTL time.Duration
 	Logger          *slog.Logger
+	Workspaces      WorkspaceProvisioner
+	WorkspaceStore  WorkspaceStore
 }
 
 // Server owns the Cloud foundation HTTP handler.
@@ -56,6 +71,8 @@ type Server struct {
 	accessTokens    *auth.AccessTokenManager
 	refreshTokenTTL time.Duration
 	logger          *slog.Logger
+	workspaces      WorkspaceProvisioner
+	workspaceStore  WorkspaceStore
 	handler         http.Handler
 }
 
@@ -63,6 +80,9 @@ type Server struct {
 func New(options Options) (*Server, error) {
 	if options.Store == nil || options.Google == nil || options.AccessTokens == nil {
 		return nil, errors.New("cloud HTTP store, Google verifier, and access-token manager are required")
+	}
+	if options.Workspaces != nil && options.WorkspaceStore == nil {
+		return nil, errors.New("cloud workspace store is required when a workspace provisioner is configured")
 	}
 	if options.RefreshTokenTTL <= 0 {
 		return nil, errors.New("cloud refresh-token lifetime must be positive")
@@ -76,6 +96,8 @@ func New(options Options) (*Server, error) {
 		accessTokens:    options.AccessTokens,
 		refreshTokenTTL: options.RefreshTokenTTL,
 		logger:          options.Logger,
+		workspaces:      options.Workspaces,
+		workspaceStore:  options.WorkspaceStore,
 	}
 	server.handler = server.routes()
 	return server, nil
@@ -104,6 +126,8 @@ func (s *Server) routes() http.Handler {
 	router.Post("/api/cloud/v1/auth/refresh", s.refresh)
 	router.Post("/api/cloud/v1/auth/logout", s.logout)
 	router.With(s.requirePrincipal).Get("/api/cloud/v1/me", s.me)
+	router.With(s.requirePrincipal).Post("/api/cloud/v1/orgs/{orgID}/workspaces", s.createWorkspace)
+	router.With(s.requirePrincipal).Get("/api/cloud/v1/orgs/{orgID}/workspaces/{workspaceID}", s.getWorkspace)
 	return router
 }
 

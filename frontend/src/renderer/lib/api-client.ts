@@ -12,6 +12,8 @@ const explicitApiBaseUrl = import.meta.env.VITE_AO_API_BASE_URL;
 const initialApiBaseUrl = explicitApiBaseUrl ?? (import.meta.env.DEV ? devApiBaseUrl() : "http://127.0.0.1:3001");
 
 let runtimeApiBaseUrl: string | null = explicitApiBaseUrl ?? null;
+let daemonApiBaseUrl: string | null = runtimeApiBaseUrl;
+let cloudApiBaseUrl: string | null = null;
 let daemonStatus: DaemonStatus = { state: "stopped" };
 
 const baseUrlListeners = new Set<() => void>();
@@ -38,9 +40,23 @@ export function subscribeApiBaseUrl(listener: () => void): () => void {
 
 export function setApiBaseUrl(nextBaseUrl: string | null): void {
 	const normalized = (nextBaseUrl ?? explicitApiBaseUrl ?? null)?.replace(/\/+$/, "") ?? null;
-	if (normalized === runtimeApiBaseUrl) return;
-	runtimeApiBaseUrl = normalized;
+	daemonApiBaseUrl = normalized;
+	const active = cloudApiBaseUrl ?? daemonApiBaseUrl;
+	if (active === runtimeApiBaseUrl) return;
+	runtimeApiBaseUrl = active;
 	baseUrlListeners.forEach((listener) => listener());
+}
+
+export function setCloudApiBaseUrl(nextBaseUrl: string | null): void {
+	cloudApiBaseUrl = nextBaseUrl?.replace(/\/+$/, "") || null;
+	const active = cloudApiBaseUrl ?? daemonApiBaseUrl;
+	if (active === runtimeApiBaseUrl) return;
+	runtimeApiBaseUrl = active;
+	baseUrlListeners.forEach((listener) => listener());
+}
+
+export function isCloudApiActive(): boolean {
+	return cloudApiBaseUrl !== null;
 }
 
 // The renderer records every supervisor status here so API requests made while

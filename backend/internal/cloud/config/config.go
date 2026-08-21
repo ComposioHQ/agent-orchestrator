@@ -30,6 +30,12 @@ type Config struct {
 	AccessTokenAudience string
 	AccessTokenTTL      time.Duration
 	RefreshTokenTTL     time.Duration
+	DaytonaAPIKey       string
+	DaytonaAPIURL       string
+	DaytonaTarget       string
+	SandboxAOBinaryPath string
+	ClaudeCredentials   []byte
+	GitHubToken         []byte
 }
 
 // Load reads control-plane configuration from the process environment.
@@ -50,6 +56,14 @@ func load(getenv func(string) string) (Config, error) {
 	if err != nil {
 		return Config{}, fmt.Errorf("AO_CLOUD_ACCESS_TOKEN_KEY_BASE64: %w", err)
 	}
+	claudeCredentials, err := optionalBase64(getenv("AO_CLOUD_CLAUDE_CREDENTIALS_BASE64"))
+	if err != nil {
+		return Config{}, fmt.Errorf("AO_CLOUD_CLAUDE_CREDENTIALS_BASE64: %w", err)
+	}
+	githubToken, err := optionalBase64(getenv("AO_CLOUD_GITHUB_TOKEN_BASE64"))
+	if err != nil {
+		return Config{}, fmt.Errorf("AO_CLOUD_GITHUB_TOKEN_BASE64: %w", err)
+	}
 	cfg := Config{
 		Address:             valueOrDefault(getenv("AO_CLOUD_ADDR"), defaultAddress),
 		DatabaseURL:         strings.TrimSpace(getenv("AO_CLOUD_DATABASE_URL")),
@@ -61,6 +75,12 @@ func load(getenv func(string) string) (Config, error) {
 		AccessTokenAudience: valueOrDefault(getenv("AO_CLOUD_ACCESS_TOKEN_AUDIENCE"), "ao-desktop"),
 		AccessTokenTTL:      accessTTL,
 		RefreshTokenTTL:     refreshTTL,
+		DaytonaAPIKey:       strings.TrimSpace(getenv("DAYTONA_API_KEY")),
+		DaytonaAPIURL:       valueOrDefault(getenv("DAYTONA_API_URL"), "https://app.daytona.io/api"),
+		DaytonaTarget:       valueOrDefault(getenv("DAYTONA_TARGET"), "us"),
+		SandboxAOBinaryPath: valueOrDefault(getenv("AO_CLOUD_SANDBOX_AO_BINARY"), "/ao"),
+		ClaudeCredentials:   claudeCredentials,
+		GitHubToken:         githubToken,
 	}
 	if cfg.DatabaseURL == "" {
 		return Config{}, errors.New("AO_CLOUD_DATABASE_URL is required")
@@ -72,6 +92,18 @@ func load(getenv func(string) string) (Config, error) {
 		return Config{}, errors.New("AO_CLOUD_ACCESS_TOKEN_KEY_BASE64 must decode to at least 32 bytes")
 	}
 	return cfg, nil
+}
+
+func optionalBase64(raw string) ([]byte, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil, nil
+	}
+	value, err := base64.StdEncoding.DecodeString(raw)
+	if err != nil {
+		return nil, errors.New("must be valid base64")
+	}
+	return value, nil
 }
 
 func durationValue(raw string, fallback time.Duration) (time.Duration, error) {

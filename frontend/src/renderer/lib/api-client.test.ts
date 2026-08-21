@@ -7,6 +7,7 @@ import {
 	normalizeApiOperation,
 	setApiDaemonStatus,
 	setApiBaseUrl,
+	setCloudApiBaseUrl,
 	subscribeApiBaseUrl,
 } from "./api-client";
 import { captureRendererEvent } from "./telemetry";
@@ -20,8 +21,21 @@ const captureMock = vi.mocked(captureRendererEvent);
 describe("apiClient runtime base URL", () => {
 	afterEach(() => {
 		vi.restoreAllMocks();
+		setCloudApiBaseUrl(null);
 		setApiBaseUrl("http://127.0.0.1:3001");
 		setApiDaemonStatus({ state: "stopped" });
+	});
+
+	it("keeps the cloud AO override active while local daemon status changes", () => {
+		setApiBaseUrl("http://127.0.0.1:3002");
+		setCloudApiBaseUrl("https://3001-signed.proxy.daytona.work/");
+		expect(getApiBaseUrl()).toBe("https://3001-signed.proxy.daytona.work");
+
+		setApiBaseUrl("http://127.0.0.1:3999");
+		expect(getApiBaseUrl()).toBe("https://3001-signed.proxy.daytona.work");
+
+		setCloudApiBaseUrl(null);
+		expect(getApiBaseUrl()).toBe("http://127.0.0.1:3999");
 	});
 
 	it("rewrites requests to the current runtime daemon port", async () => {

@@ -85,6 +85,8 @@ import { CreateProjectFlow, type CloneProjectInput, type CreateProjectInput } fr
 import { ResizeHandle } from "./ResizeHandle";
 import { isMacPlatform, isWindowsPlatform } from "../lib/platform";
 import { useCloudSession } from "../lib/cloud-session";
+import { isCloudApiActive, setCloudApiBaseUrl } from "../lib/api-client";
+import { CloudWorkspaceDialog } from "./CloudWorkspaceDialog";
 
 // macOS paints framed chrome: the fixed TitlebarNav cluster carries the
 // sidebar toggle + history arrows above this surface. Windows hangs the sidebar
@@ -1056,7 +1058,10 @@ function SessionRow({
 // email with a sign-out action in a dropdown.
 function CloudAccountRow({ tabIndex }: { tabIndex: number }) {
 	const { t } = useTranslation();
+	const queryClient = useQueryClient();
 	const { configured, session, status, signIn, signOut } = useCloudSession();
+	const [workspaceOpen, setWorkspaceOpen] = useState(false);
+	const [cloudConnected, setCloudConnected] = useState(isCloudApiActive());
 	if (!configured || status === "loading") return null;
 
 	if (status === "unauthenticated") {
@@ -1085,6 +1090,7 @@ function CloudAccountRow({ tabIndex }: { tabIndex: number }) {
 	}
 
 	return (
+		<>
 		<DropdownMenu>
 			<DropdownMenuTrigger asChild>
 				<button
@@ -1103,15 +1109,42 @@ function CloudAccountRow({ tabIndex }: { tabIndex: number }) {
 				</button>
 			</DropdownMenuTrigger>
 			<DropdownMenuContent side="top" align="start" className="min-w-44">
+				<DropdownMenuItem onSelect={() => setWorkspaceOpen(true)}>
+					<Plus aria-hidden="true" />
+					Create cloud project
+				</DropdownMenuItem>
+				{cloudConnected && (
+					<DropdownMenuItem
+						onSelect={() => {
+							setCloudApiBaseUrl(null);
+							queryClient.clear();
+							setCloudConnected(false);
+						}}
+					>
+						<Folder aria-hidden="true" />
+						Use local projects
+					</DropdownMenuItem>
+				)}
+				<DropdownMenuSeparator />
 				<DropdownMenuItem
 					className="text-destructive focus:text-destructive [&_svg]:text-destructive"
-					onSelect={() => void signOut()}
+					onSelect={() => {
+						setCloudApiBaseUrl(null);
+						queryClient.clear();
+						void signOut();
+					}}
 				>
 					<LogOut aria-hidden="true" />
 					{t("shell.signOut")}
 				</DropdownMenuItem>
 			</DropdownMenuContent>
 		</DropdownMenu>
+		<CloudWorkspaceDialog
+			onConnected={() => setCloudConnected(true)}
+			onOpenChange={setWorkspaceOpen}
+			open={workspaceOpen}
+		/>
+		</>
 	);
 }
 
