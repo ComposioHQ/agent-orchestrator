@@ -345,56 +345,82 @@ func TestDoctorFailsExpiredGitLabToken(t *testing.T) {
 
 // TestDoctorProbesSelfManagedGitLabHost covers the host-aware probe: with a
 // self-managed host in AO_GITLAB_ALLOWED_HOSTS, doctor must validate the token
-// against that host and never against gitlab.com.
+// against that host, not only against gitlab.com.
 func TestDoctorProbesSelfManagedGitLabHost(t *testing.T) {
 	setConfigEnv(t)
 	clearDoctorGitLabEnv(t)
 	srv, tokens := gitlabDoctorHostServer(t, http.StatusOK, `{"username":"self-hosted-user"}`)
-	dotComHit := false
-	dotCom := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
-		dotComHit = true
-	}))
-	t.Cleanup(dotCom.Close)
+	dotCom, dotComTokens := gitlabDoctorHostServer(t, http.StatusOK, `{"username":"dotcom-user"}`)
 	c := doctorContext(t, map[string]string{"git": "/bin/git"}, func(context.Context, string, ...string) ([]byte, error) {
 		return []byte("git version 2.43.0\n"), nil
 	})
 	t.Setenv("AO_GITLAB_TOKEN", "env-token")
-	t.Setenv("AO_GITLAB_ALLOWED_HOSTS", "gitlab.internal:8443")
+	t.Setenv("AO_GITLAB_ALLOWED_HOSTS", "GitLab.Internal:8443")
 	c.deps.HTTPClient = srv.Client()
 	c.deps.DoctorGitLabRESTBase = dotCom.URL
-	c.deps.DoctorGitLabHostRESTBase = func(string) string { return srv.URL }
+	c.deps.DoctorGitLabHostRESTBase = func(host string) string {
+		if host != "gitlab.internal:8443" {
+			t.Errorf("host REST base requested for %q, want the normalized allowlist host", host)
+		}
+		return srv.URL
+	}
 
 	checks := c.runDoctor(context.Background())
 	check := findDoctorCheck(t, checks, "gitlab-token:gitlab.internal:8443")
 	if check.Level != doctorPass || !strings.Contains(check.Message, "self-hosted-user") {
 		t.Fatalf("gitlab-token check = %+v, want PASS for the self-managed host", check)
 	}
-	if dotComHit {
-		t.Fatal("doctor probed gitlab.com for a self-managed-only configuration")
-	}
-	for _, c := range checks {
-		if c.Name == "gitlab-token" {
-			t.Fatalf("unexpected gitlab.com check %+v for a self-managed-only configuration", c)
-		}
-	}
 	if got := tokens(); len(got) != 1 || got[0] != "env-token" {
-		t.Fatalf("probe tokens = %v, want the default token once", got)
+		t.Fatalf("self-managed probe tokens = %v, want the default token once", got)
+	}
+	if got := dotComTokens(); len(got) != 1 {
+		t.Fatalf("gitlab.com probe tokens = %v, want the default instance probed once", got)
+	}
+}
+
+// TestDoctorWarnsWhenDotComRejectsSelfManagedToken covers the lenient default
+// check: with self-managed hosts configured, a token gitlab.com rejects must
+// not fail `ao doctor` — the deployment never calls gitlab.com.
+func TestDoctorWarnsWhenDotComRejectsSelfManagedToken(t *testing.T) {
+	setConfigEnv(t)
+	clearDoctorGitLabEnv(t)
+	selfHosted, _ := gitlabDoctorHostServer(t, http.StatusOK, `{"username":"self-hosted-user"}`)
+	dotCom := gitlabDoctorServer(t, http.StatusUnauthorized, `{"message":"401 Unauthorized"}`)
+	c := doctorContext(t, map[string]string{"git": "/bin/git"}, func(context.Context, string, ...string) ([]byte, error) {
+		return []byte("git version 2.43.0\n"), nil
+	})
+	t.Setenv("AO_GITLAB_TOKEN", "self-managed-token")
+	t.Setenv("AO_GITLAB_ALLOWED_HOSTS", "gitlab.internal")
+	c.deps.HTTPClient = dotCom.Client()
+	c.deps.DoctorGitLabRESTBase = dotCom.URL
+	c.deps.DoctorGitLabHostRESTBase = func(string) string { return selfHosted.URL }
+
+	checks := c.runDoctor(context.Background())
+	check := findDoctorCheck(t, checks, "gitlab-token")
+	if check.Level != doctorWarn || !strings.Contains(check.Message, "HTTP 401") {
+		t.Fatalf("gitlab.com check = %+v, want WARN for a self-managed-scoped token", check)
+	}
+	if check := findDoctorCheck(t, checks, "gitlab-token:gitlab.internal"); check.Level != doctorPass {
+		t.Fatalf("self-managed check = %+v, want PASS", check)
 	}
 }
 
 // TestDoctorUsesPerHostGitLabToken covers AO_GITLAB_HOST_TOKENS: the per-host
-// override must be the credential doctor validates, not the default token.
+// override must be the credential doctor validates, not the default token, and
+// must be matched case-insensitively like the provider does.
 func TestDoctorUsesPerHostGitLabToken(t *testing.T) {
 	setConfigEnv(t)
 	clearDoctorGitLabEnv(t)
 	srv, tokens := gitlabDoctorHostServer(t, http.StatusOK, `{"username":"host-user"}`)
+	dotCom := gitlabDoctorServer(t, http.StatusOK, `{"username":"dotcom-user"}`)
 	c := doctorContext(t, map[string]string{"git": "/bin/git"}, func(context.Context, string, ...string) ([]byte, error) {
 		return []byte("git version 2.43.0\n"), nil
 	})
 	t.Setenv("AO_GITLAB_TOKEN", "default-token")
 	t.Setenv("AO_GITLAB_ALLOWED_HOSTS", "gitlab.example.com")
-	t.Setenv("AO_GITLAB_HOST_TOKENS", "gitlab.example.com=host-token")
+	t.Setenv("AO_GITLAB_HOST_TOKENS", "GitLab.Example.COM=host-token")
 	c.deps.HTTPClient = srv.Client()
+	c.deps.DoctorGitLabRESTBase = dotCom.URL
 	c.deps.DoctorGitLabHostRESTBase = func(string) string { return srv.URL }
 
 	check := findDoctorCheck(t, c.runDoctor(context.Background()), "gitlab-token:gitlab.example.com")
@@ -407,7 +433,8 @@ func TestDoctorUsesPerHostGitLabToken(t *testing.T) {
 }
 
 // TestDoctorProbesEveryAllowedGitLabHost covers multi-instance setups: each
-// allowlisted host gets its own check, and gitlab.com keeps the default base.
+// allowlisted host gets its own check, duplicates and gitlab.com aliases
+// collapse into the default check, and host names are normalized.
 func TestDoctorProbesEveryAllowedGitLabHost(t *testing.T) {
 	setConfigEnv(t)
 	clearDoctorGitLabEnv(t)
@@ -417,13 +444,13 @@ func TestDoctorProbesEveryAllowedGitLabHost(t *testing.T) {
 		return []byte("git version 2.43.0\n"), nil
 	})
 	t.Setenv("AO_GITLAB_TOKEN", "env-token")
-	t.Setenv("AO_GITLAB_ALLOWED_HOSTS", "gitlab.com, GitLab.Internal , gitlab.internal,")
+	t.Setenv("AO_GITLAB_ALLOWED_HOSTS", "gitlab.com, www.gitlab.com, GitLab.Internal , gitlab.internal,")
 	c.deps.HTTPClient = dotCom.Client()
 	c.deps.DoctorGitLabRESTBase = dotCom.URL
 	c.deps.DoctorGitLabHostRESTBase = func(string) string { return selfHosted.URL }
 
 	checks := c.runDoctor(context.Background())
-	if check := findDoctorCheck(t, checks, "gitlab-token:gitlab.com"); check.Level != doctorPass {
+	if check := findDoctorCheck(t, checks, "gitlab-token"); check.Level != doctorPass {
 		t.Fatalf("gitlab.com check = %+v, want PASS via the default REST base", check)
 	}
 	check := findDoctorCheck(t, checks, "gitlab-token:gitlab.internal")
@@ -431,13 +458,13 @@ func TestDoctorProbesEveryAllowedGitLabHost(t *testing.T) {
 		t.Fatalf("self-managed check = %+v, want FAIL rejected token", check)
 	}
 	gitlabChecks := 0
-	for _, c := range checks {
-		if strings.HasPrefix(c.Name, "gitlab-token") {
+	for _, check := range checks {
+		if strings.HasPrefix(check.Name, "gitlab-token") {
 			gitlabChecks++
 		}
 	}
 	if gitlabChecks != 2 {
-		t.Fatalf("gitlab-token checks = %d, want 2 (duplicate hosts collapsed)", gitlabChecks)
+		t.Fatalf("gitlab-token checks = %d, want 2 (gitlab.com aliases and duplicate hosts collapsed)", gitlabChecks)
 	}
 }
 

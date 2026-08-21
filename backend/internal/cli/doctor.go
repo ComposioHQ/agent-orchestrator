@@ -512,28 +512,40 @@ func (c *commandContext) githubToken(ctx context.Context) (token, source string,
 // checkGitLabTokens probes every GitLab instance AO is configured to talk to,
 // not just gitlab.com. A self-managed deployment (AO_GITLAB_ALLOWED_HOSTS)
 // never reaches gitlab.com, so a gitlab.com-only probe reports a token verdict
-// about a host AO will never call. Host -> REST base + token resolution mirrors
-// the SCM provider's clientForHost (adapters/scm/gitlab/provider.go).
+// about a host AO will never call. gitlab.com is still probed — the provider
+// always allows it, so a broken default token stays worth reporting — but its
+// auth rejection is downgraded to a warning once self-managed hosts are
+// configured, because a self-managed-only token is expected to fail there.
+// Host -> REST base + token resolution mirrors the SCM provider's
+// clientForHost (adapters/scm/gitlab/provider.go).
 func (c *commandContext) checkGitLabTokens(ctx context.Context, gitlabCfg config.GitLabConfig) []doctorCheck {
 	hosts := gitlabDoctorHosts(gitlabCfg.AllowedHosts)
-	if len(hosts) == 0 {
-		return []doctorCheck{c.checkGitLabToken(ctx, "", c.deps.DoctorGitLabRESTBase, "")}
-	}
-	checks := make([]doctorCheck, 0, len(hosts))
+	hostTokens := gitlabDoctorHostTokens(gitlabCfg.HostTokens)
+	checks := make([]doctorCheck, 0, len(hosts)+1)
+	checks = append(checks, c.checkGitLabToken(ctx, gitlabProbe{
+		name:     "gitlab-token",
+		restBase: c.deps.DoctorGitLabRESTBase,
+		lenient:  len(hosts) > 0,
+	}))
 	for _, host := range hosts {
-		checks = append(checks, c.checkGitLabToken(ctx, host, c.gitlabRESTBaseForHost(host), gitlabCfg.HostTokens[host]))
+		checks = append(checks, c.checkGitLabToken(ctx, gitlabProbe{
+			name:      "gitlab-token:" + host,
+			restBase:  c.deps.DoctorGitLabHostRESTBase(host),
+			hostToken: hostTokens[host],
+		}))
 	}
 	return checks
 }
 
 // gitlabDoctorHosts normalizes and de-duplicates the configured allowlist,
-// preserving configuration order so doctor output is stable.
+// preserving configuration order so doctor output is stable. gitlab.com is
+// dropped: it is always allowed and is covered by the default check.
 func gitlabDoctorHosts(allowed []string) []string {
 	hosts := make([]string, 0, len(allowed))
 	seen := make(map[string]bool, len(allowed))
 	for _, raw := range allowed {
-		host := strings.ToLower(strings.TrimSpace(raw))
-		if host == "" || seen[host] {
+		host := normalizeGitLabHost(raw)
+		if host == "" || seen[host] || isGitLabDotCom(host) {
 			continue
 		}
 		seen[host] = true
@@ -542,32 +554,56 @@ func gitlabDoctorHosts(allowed []string) []string {
 	return hosts
 }
 
-// gitlabRESTBaseForHost derives the REST base for an allowlisted host. gitlab.com
-// keeps the injectable default base; self-managed hosts get https://<host>/api/v4,
-// preserving any port, exactly like the provider does.
-func (c *commandContext) gitlabRESTBaseForHost(host string) string {
-	if isGitLabDotCom(host) {
-		return c.deps.DoctorGitLabRESTBase
+// gitlabDoctorHostTokens re-keys the configured per-host token overrides by
+// normalized host. config.Load stores the keys exactly as written in
+// AO_GITLAB_HOST_TOKENS, while the provider normalizes them before lookup
+// (NormalizeHost in adapters/scm/gitlab/provider.go); doctor must match the
+// provider or it validates a different credential than the daemon uses.
+func gitlabDoctorHostTokens(hostTokens map[string]string) map[string]string {
+	normalized := make(map[string]string, len(hostTokens))
+	for host, token := range hostTokens {
+		host = normalizeGitLabHost(host)
+		if host == "" {
+			continue
+		}
+		normalized[host] = token
 	}
-	return c.deps.DoctorGitLabHostRESTBase(host)
+	return normalized
 }
 
-// isGitLabDotCom mirrors gitlab.IsGitLabDotCom without importing the SCM adapter
-// into the CLI (the same boundary parseGLabTokenLine already respects).
+// normalizeGitLabHost mirrors gitlab.NormalizeHost without importing the SCM
+// adapter into the CLI (the same boundary parseGLabTokenLine already respects).
+func normalizeGitLabHost(host string) string {
+	return strings.ToLower(strings.TrimSpace(host))
+}
+
+// isGitLabDotCom mirrors gitlab.IsGitLabDotCom.
 func isGitLabDotCom(host string) bool {
-	host = strings.ToLower(strings.TrimSpace(host))
+	host = normalizeGitLabHost(host)
 	return host == "" || host == "gitlab.com" || host == "www.gitlab.com"
 }
 
-// checkGitLabToken probes one GitLab instance. host is empty for the default
-// (gitlab.com) instance; hostToken is the AO_GITLAB_HOST_TOKENS override for
-// this host, empty when the default token applies.
-func (c *commandContext) checkGitLabToken(ctx context.Context, host, restBase, hostToken string) doctorCheck {
-	name := "gitlab-token"
-	if host != "" {
-		name += ":" + host
-	}
-	token, source := strings.TrimSpace(hostToken), "AO_GITLAB_HOST_TOKENS"
+// gitlabProbe describes one GitLab instance doctor validates a token against.
+type gitlabProbe struct {
+	// name is the doctor check name ("gitlab-token" for the default instance,
+	// "gitlab-token:<host>" for an allowlisted self-managed host).
+	name string
+	// restBase is the API base the /user probe is issued against.
+	restBase string
+	// hostToken is the AO_GITLAB_HOST_TOKENS override for this host; empty
+	// means the default token (AO_GITLAB_TOKEN / GITLAB_TOKEN / glab) applies.
+	hostToken string
+	// lenient downgrades an auth rejection from FAIL to WARN. It is set for
+	// gitlab.com when self-managed hosts are configured: a token scoped to a
+	// self-managed instance is expected to be rejected by gitlab.com, and that
+	// must not fail `ao doctor` for a deployment that never calls gitlab.com.
+	lenient bool
+}
+
+// checkGitLabToken probes one GitLab instance described by probe.
+func (c *commandContext) checkGitLabToken(ctx context.Context, probe gitlabProbe) doctorCheck {
+	name, restBase := probe.name, probe.restBase
+	token, source := strings.TrimSpace(probe.hostToken), "AO_GITLAB_HOST_TOKENS"
 	if token == "" {
 		var err error
 		token, source, err = c.gitlabToken(ctx)
@@ -595,6 +631,9 @@ func (c *commandContext) checkGitLabToken(ctx context.Context, host, restBase, h
 	}()
 
 	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+		if probe.lenient {
+			return doctorCheck{Level: doctorWarn, Section: doctorSectionGitLab, Name: name, Message: fmt.Sprintf("%s token rejected by GitLab (HTTP %d); expected if the token is scoped to a self-managed host", source, resp.StatusCode)}
+		}
 		return doctorCheck{Level: doctorFail, Section: doctorSectionGitLab, Name: name, Message: fmt.Sprintf("%s token rejected by GitLab (HTTP %d)", source, resp.StatusCode)}
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
