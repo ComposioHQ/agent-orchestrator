@@ -294,6 +294,15 @@ describe("Sidebar", () => {
 		expect(screen.queryByText("Sign in")).not.toBeInTheDocument();
 	});
 
+	it("keeps cloud account controls visible while signed in", () => {
+		cloudSessionState.configured = true;
+		cloudSessionState.status = "authenticated";
+		cloudSessionState.session = { user: { email: "user@example.com" } };
+		renderSidebar();
+
+		expect(screen.getAllByLabelText("Signed in as user@example.com")).toHaveLength(2);
+	});
+
 	it("suppresses focus chrome without removing keyboard focusability", () => {
 		renderSidebar();
 
