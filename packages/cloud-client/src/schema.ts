@@ -1018,6 +1018,11 @@ export interface components {
             /** Format: uri */
             repositoryUrl: string;
             repositoryRef?: string;
+            /**
+             * Format: byte
+             * @description Base64-encoded Claude Code credential read by the trusted desktop main process. The control plane must never log or persist it and may retain it only while provisioning this workspace.
+             */
+            claudeCredentialsBase64: string;
         };
         CloudWorkspace: {
             /** Format: uuid */

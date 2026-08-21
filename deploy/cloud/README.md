@@ -47,10 +47,10 @@ while bootstrapping the user's sandbox and does not persist or log it.
 
 `AO_CLOUD_ALLOWED_EMAILS` is a required, comma-separated staging signup gate.
 Because this POC still injects a shared operator GitHub credential into
-permitted sandboxes, use a fine-grained token limited to the test repositories and set the
-shortest practical expiration. Rotate both shared credentials after each test
-period; do not broaden the email allowlist until per-user credential custody is
-implemented.
+permitted sandboxes, use a fine-grained token limited to the test repositories
+and set the shortest practical expiration. Rotate the shared token after each
+test period; do not broaden the email allowlist until per-user GitHub credential
+custody is implemented.
 
 The script:
 

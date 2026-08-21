@@ -1690,7 +1690,7 @@ components:
     CreateCloudWorkspaceInput:
       type: object
       additionalProperties: false
-      required: [repositoryUrl]
+      required: [repositoryUrl, claudeCredentialsBase64]
       properties:
         repositoryUrl:
           type: string
@@ -1699,6 +1699,14 @@ components:
         repositoryRef:
           type: string
           maxLength: 200
+        claudeCredentialsBase64:
+          type: string
+          format: byte
+          maxLength: 349528
+          description: >-
+            Base64-encoded Claude Code credential read by the trusted desktop
+            main process. The control plane must never log or persist it and
+            may retain it only while provisioning this workspace.
     CloudWorkspace:
       type: object
       additionalProperties: false
