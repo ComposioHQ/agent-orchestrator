@@ -1,0 +1,182 @@
+name: Linux package repositories
+
+# Publishes the apt and dnf repositories that let deb and rpm users upgrade with
+# their package manager instead of re-downloading a file by hand.
+#
+# The packages themselves stay on GitHub Releases: a .deb is ~140 MB and GitHub
+# Pages rejects files over 100 MB. What each package manager needs on top of
+# that is small signed metadata, published where its client can reach it:
+#
+#   apt  metadata is uploaded to the SAME release, because apt resolves a
+#        package's Filename relative to the repository base. Users point at
+#        releases/latest/download/, which always resolves to the newest stable
+#        release, so an upgrade is whatever that alias points at today.
+#   dnf  metadata needs a repodata/ subdirectory, which a flat release-asset URL
+#        cannot express, so it is pushed to the `linux-repo` branch and served
+#        from raw.githubusercontent.com. primary.xml carries an xml:base pointing
+#        back at the release download URL, so the .rpm still comes from the
+#        release. GitHub Pages would be the more conventional host, but this
+#        repo's Pages site is the landing page, and a second deploy replaces it;
+#        the metadata is a few KB, so a raw URL carries it comfortably.
+#
+# Neither published package is re-signed. The signature chain runs through the
+# metadata: the signed Release/repomd.xml carries the hash of the package index,
+# which carries the SHA-256 of the package. Re-signing would mean overwriting an
+# already-published asset, and other things pin those bytes.
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to publish repositories for (default: latest stable)"
+        type: string
+        required: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: linux-repos
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    # Canonical repo only: a fork has neither the signing key nor a release
+    # for its users to point at.
+    # Prereleases are skipped on purpose. Nightlies are published as prereleases
+    # in this same repo, and apt/dnf users track stable.
+    if: ${{ !github.event.repository.fork && !github.event.release.prerelease }}
+    runs-on: ubuntu-latest
+    # Same approval gate as the signed desktop release: this job holds the
+    # archive signing key.
+    environment: release
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve the release tag
+        id: release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          INPUT_TAG: ${{ inputs.tag }}
+          EVENT_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          tag="${INPUT_TAG:-$EVENT_TAG}"
+          if [ -z "$tag" ]; then
+            tag="$(gh release list --exclude-pre-releases --limit 1 --json tagName -q '.[0].tagName')"
+          fi
+          [ -n "$tag" ] || { echo "could not resolve a release tag" >&2; exit 1; }
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+      - name: Download the release packages
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.release.outputs.tag }}
+        run: |
+          mkdir -p dist
+          # The conductor uploads the stable-named deb and rpm after creating the
+          # release, so on a release:published trigger they may not be there yet.
+          for attempt in $(seq 1 20); do
+            gh release download "$TAG" --dir dist --clobber \
+              -p 'agent-orchestrator-linux-x64.deb' \
+              -p 'agent-orchestrator-linux-x64.rpm' 2>/dev/null || true
+            if [ -f dist/agent-orchestrator-linux-x64.deb ] && [ -f dist/agent-orchestrator-linux-x64.rpm ]; then
+              echo "packages present after attempt $attempt"
+              exit 0
+            fi
+            echo "waiting for the deb and rpm assets on $TAG (attempt $attempt)"
+            sleep 30
+          done
+          echo "the deb and rpm assets never appeared on $TAG" >&2
+          exit 1
+
+      - name: Install repository tooling
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq dpkg-dev apt-utils createrepo-c gnupg
+
+      - name: Import the archive signing key
+        id: signing
+        shell: bash
+        env:
+          SIGNING_KEY: ${{ secrets.LINUX_SIGNING_KEY }}
+        run: |
+          [ -n "$SIGNING_KEY" ] || { echo "LINUX_SIGNING_KEY is not set; see packaging/linux-repos/README.md" >&2; exit 1; }
+          export GNUPGHOME="$RUNNER_TEMP/gnupg"
+          mkdir -p "$GNUPGHOME" && chmod 700 "$GNUPGHOME"
+          printf '%s' "$SIGNING_KEY" | gpg --batch --import
+          fingerprint="$(gpg --list-secret-keys --with-colons | awk -F: '/^fpr:/{print $10; exit}')"
+          [ -n "$fingerprint" ] || { echo "no secret key after import" >&2; exit 1; }
+          # The fingerprint is public information; the key it identifies is not.
+          echo "fingerprint=$fingerprint" >> "$GITHUB_OUTPUT"
+          echo "GNUPGHOME=$GNUPGHOME" >> "$GITHUB_ENV"
+
+      - name: Build and upload the apt repository
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.release.outputs.tag }}
+          KEY: ${{ steps.signing.outputs.fingerprint }}
+        run: |
+          packaging/linux-repos/build-apt-repo.sh \
+            --deb dist/agent-orchestrator-linux-x64.deb \
+            --out apt \
+            --key "$KEY"
+          # The .deb is already on the release; only the metadata is uploaded.
+          gh release upload "$TAG" \
+            apt/Packages apt/Packages.gz apt/Release apt/Release.gpg apt/InRelease \
+            apt/ao-archive-keyring.asc --clobber
+
+      - name: Build the dnf metadata
+        shell: bash
+        env:
+          TAG: ${{ steps.release.outputs.tag }}
+          KEY: ${{ steps.signing.outputs.fingerprint }}
+        run: |
+          packaging/linux-repos/build-dnf-repo.sh \
+            --rpm dist/agent-orchestrator-linux-x64.rpm \
+            --out dnf \
+            --key "$KEY" \
+            --location-base "${{ github.server_url }}/${{ github.repository }}/releases/download/$TAG/"
+
+      - name: Publish the dnf metadata to the linux-repo branch
+        shell: bash
+        env:
+          TAG: ${{ steps.release.outputs.tag }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # A branch of its own: this is generated output with no relationship to
+          # the source history, and clients only ever read its current state.
+          # The remote is spelled with the token rather than reusing the
+          # checkout's credentials, which are configured on THAT working copy
+          # only and do not follow a clone made elsewhere.
+          tree="$RUNNER_TEMP/linux-repo"
+          remote="https://x-access-token:$GH_TOKEN@github.com/${{ github.repository }}.git"
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if git ls-remote --exit-code --heads "$remote" linux-repo >/dev/null 2>&1; then
+            git clone --depth 1 --branch linux-repo "$remote" "$tree"
+          else
+            git init -b linux-repo "$tree"
+            git -C "$tree" remote add origin "$remote"
+          fi
+          rm -rf "$tree/dnf"
+          cp -r dnf "$tree/dnf"
+          git -C "$tree" add -A
+          git -C "$tree" commit -m "dnf metadata for $TAG" || { echo "metadata unchanged"; exit 0; }
+          git -C "$tree" push origin linux-repo
+
+      - name: Summarize what users should point at
+        shell: bash
+        env:
+          TAG: ${{ steps.release.outputs.tag }}
+        run: |
+          {
+            echo "### Linux repositories published for $TAG"
+            echo
+            echo "apt base: ${{ github.server_url }}/${{ github.repository }}/releases/latest/download/"
+            echo "dnf base: https://raw.githubusercontent.com/${{ github.repository }}/linux-repo/dnf/"
+            echo
+            echo "Signed by ${{ steps.signing.outputs.fingerprint }}."
+          } >> "$GITHUB_STEP_SUMMARY"

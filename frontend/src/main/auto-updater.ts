@@ -722,6 +722,10 @@ export async function checkForUpdatesNow(
     });
     return;
   }
+  if (isPackageManagedInstall()) {
+    broadcastPackageManaged(options.requestId);
+    return;
+  }
   try {
     await runSerializedUpdaterOperation(
       "manual-check",
@@ -788,6 +792,10 @@ export async function returnToHome(
     });
     return;
   }
+  if (isPackageManagedInstall()) {
+    broadcastPackageManaged(requestId);
+    return;
+  }
   try {
     await runSerializedUpdaterOperation(
       "return-home",
@@ -831,6 +839,10 @@ export async function downloadUpdateNow(requestId?: string): Promise<void> {
     });
     return;
   }
+  if (isPackageManagedInstall()) {
+    broadcastPackageManaged(requestId);
+    return;
+  }
   try {
     await runSerializedUpdaterOperation(
       "manual-download",
@@ -856,6 +868,50 @@ export async function downloadUpdateNow(requestId?: string): Promise<void> {
       });
     }
   }
+}
+
+// isPackageManagedInstall reports whether this Linux app was installed by a
+// system package manager (the deb, the rpm, or an Arch package). Those payloads
+// land in /usr/lib, owned by root, and dpkg/rpm/pacman track every file in them.
+// electron-updater would try to overwrite files it does not own: at best the
+// install fails, at worst it half-succeeds and the package manager's records no
+// longer match what is on disk. The user updates with their package manager
+// instead.
+//
+// Two signals, and both must hold. APPIMAGE is set by the AppImage runtime, and
+// the AppImage must keep self-updating: it is what `ao start` downloads and the
+// only Linux build with a working update feed. The app directory being
+// unwritable is what separates a system install from an AppImage (or a tarball)
+// unpacked into the user's home.
+//
+// Linux only, deliberately. A read-only macOS bundle is a different failure with
+// its own preflight (getMacInstallBlocker), and a Windows install under Program
+// Files is unwritable by design yet updates fine through the elevated installer.
+export function isPackageManagedInstall(): boolean {
+  if (process.platform !== "linux") return false;
+  if (process.env.APPIMAGE) return false;
+  // .../usr/lib/agent-orchestrator/agent-orchestrator -> the app's own directory,
+  // which is what an update has to rewrite.
+  const appDir = path.dirname(process.execPath);
+  try {
+    accessSync(appDir, fsConstants.W_OK);
+    return false;
+  } catch {
+    return true;
+  }
+}
+
+// broadcastPackageManaged tells the renderer's update panel why nothing will
+// happen, instead of letting the operation fail somewhere in the download. The
+// wording (and its translations) live in the renderer; this only sets the flag.
+function broadcastPackageManaged(requestId?: string): void {
+  emitUpdateOutcome({
+    event: "ao.renderer.update_unsupported",
+    phase: activeUpdaterPhase,
+    trigger: activeUpdateTrigger(),
+    error_category: "not_supported",
+  });
+  broadcast({ state: "unsupported", packageManaged: true, requestId });
 }
 
 // getMacInstallBlocker is the macOS install preflight. An app launched straight

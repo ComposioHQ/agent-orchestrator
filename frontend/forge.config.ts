@@ -18,6 +18,24 @@ const DEFAULT_RELEASE_REPO = "Untrivial-ai/agent-orchestrator";
 // shortcut/launcher at the SAME name. Drift here means a broken Start menu
 // shortcut on Windows (#2414) or "could not find the Electron app binary" on deb.
 const EXECUTABLE_NAME = "agent-orchestrator";
+
+// Maintainer scripts that link the bundled `ao` CLI to /usr/bin/ao on deb and
+// rpm installs. The CLI and the daemon are one Go binary shipped inside the app
+// (resources/daemon/ao), and neither maker can carry a second /usr/bin symlink
+// in its payload: electron-installer-debian emits exactly one (the Electron
+// launcher), and the generated rpm spec has a fixed %files list, so an extra
+// file in the buildroot fails the build as unpackaged. Paths are relative to
+// the frontend dir, which is where Forge runs.
+const LINUX_CLI_SCRIPTS = {
+	deb: {
+		postinst: "packaging/linux/deb-postinst.sh",
+		postrm: "packaging/linux/deb-postrm.sh",
+	},
+	rpm: {
+		post: "packaging/linux/rpm-post.sh",
+		postun: "packaging/linux/rpm-postun.sh",
+	},
+};
 const AUTH_PROTOCOL = {
 	name: "Agent Orchestrator authentication callback",
 	schemes: ["ao-app"],
@@ -182,6 +200,7 @@ const config: ForgeConfig = {
 					maintainer: "Agent Orchestrator",
 					homepage: "https://github.com/aoagents/agent-orchestrator",
 					mimeType: [AUTH_PROTOCOL_MIME_TYPE],
+					scripts: LINUX_CLI_SCRIPTS.deb,
 				},
 			},
 		},
@@ -194,6 +213,7 @@ const config: ForgeConfig = {
 					license: "MIT",
 					homepage: "https://github.com/aoagents/agent-orchestrator",
 					mimeType: [AUTH_PROTOCOL_MIME_TYPE],
+					scripts: LINUX_CLI_SCRIPTS.rpm,
 				},
 			},
 		},

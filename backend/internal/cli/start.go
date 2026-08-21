@@ -104,7 +104,7 @@ func (c *commandContext) runStart(ctx context.Context, cmd *cobra.Command, opts 
 	res.AppPath = appPath
 
 	if runtime.GOOS == "linux" {
-		if err := c.registerLinuxProtocolHandler(ctx, appPath); err != nil {
+		if err := c.installLinuxDesktopEntry(ctx, cmd.ErrOrStderr(), appPath); err != nil {
 			return err
 		}
 	}
@@ -229,7 +229,12 @@ func knownAppLocations() []string {
 		if home, err := os.UserHomeDir(); err == nil {
 			paths = append(paths, filepath.Join(home, "Applications", "agent-orchestrator.AppImage"))
 		}
-		return paths
+		// A deb, rpm or Arch install. Scanned last: when both exist, the
+		// AppImage under ~/.ao is the copy that keeps itself current, and the
+		// packaged one is updated by the package manager on its own schedule.
+		// Without this entry, `ao start` on a machine with AO already installed
+		// downloads an AppImage it does not need.
+		return append(paths, linuxSystemAppPath)
 	default:
 		return nil
 	}
@@ -254,20 +259,46 @@ func linuxAppImagePath() string {
 	return filepath.Join(dir, "agent-orchestrator.AppImage")
 }
 
-const linuxDesktopEntryName = "agent-orchestrator-ao-app.desktop"
+const (
+	linuxDesktopEntryName = "agent-orchestrator-ao-app.desktop"
+	// Icon name, not a path: freedesktop resolves it against the icon theme, so
+	// the entry keeps working when the icon is reinstalled at a different size,
+	// and a system package's copy of the same name is used if one is present.
+	linuxIconName = "agent-orchestrator"
+	// Where the icon lives inside the AppImage, and the theme directory it is
+	// copied to. The AppImage carries one 1024x1024 PNG (its .DirIcon points at
+	// this same file), so the two sizes stay in step by construction.
+	linuxAppImageIconPath = "usr/share/icons/hicolor/1024x1024/apps/agent-orchestrator.png"
+	linuxIconThemeDir     = "icons/hicolor/1024x1024/apps"
+	// What a distro package (deb, rpm, or the Arch package in packaging/arch)
+	// installs: the launcher symlink it puts on PATH, and the menu entry it
+	// owns. Both names come from EXECUTABLE_NAME in frontend/forge.config.ts.
+	linuxSystemAppPath          = "/usr/bin/agent-orchestrator"
+	linuxSystemDesktopEntryName = "agent-orchestrator.desktop"
+)
 
-func linuxApplicationsDir() (string, error) {
-	// A URL-scheme handler is OS integration metadata, not AO runtime state.
-	// freedesktop.org requires desktop entries under XDG_DATA_HOME; keeping the
-	// executable and all mutable AO data under ~/.ao is unchanged.
+// linuxSystemDesktopEntryPath is where a distro package installs its entry. A
+// package var for the same reason as appScanLocations: tests point it at a temp
+// file instead of a real system path.
+var linuxSystemDesktopEntryPath = "/usr/share/applications/" + linuxSystemDesktopEntryName
+
+// linuxDataDir returns a subdirectory of XDG_DATA_HOME. Desktop entries and
+// icons are OS integration metadata, not AO runtime state: freedesktop.org
+// requires them here, and keeping the executable and all mutable AO data under
+// ~/.ao is unchanged.
+func linuxDataDir(subdir string) (string, error) {
 	if dataHome := os.Getenv("XDG_DATA_HOME"); filepath.IsAbs(dataHome) {
-		return filepath.Join(dataHome, "applications"), nil
+		return filepath.Join(dataHome, subdir), nil
 	}
 	home, err := os.UserHomeDir()
 	if err != nil {
-		return "", fmt.Errorf("resolve home for Linux protocol registration: %w", err)
+		return "", fmt.Errorf("resolve home for Linux desktop integration: %w", err)
 	}
-	return filepath.Join(home, ".local", "share", "applications"), nil
+	return filepath.Join(home, ".local", "share", subdir), nil
+}
+
+func linuxApplicationsDir() (string, error) {
+	return linuxDataDir("applications")
 }
 
 func desktopExecPath(appPath string) string {
@@ -281,25 +312,123 @@ func desktopExecPath(appPath string) string {
 	return `"` + escaped + `"`
 }
 
-func (c *commandContext) registerLinuxProtocolHandler(
+// installLinuxMenuIcon copies the app icon out of the AppImage into the user's
+// icon theme, so the menu entry can name the icon instead of pointing at the
+// AppImage's own path (which moves whenever the file is replaced).
+//
+// AppImages answer `--appimage-extract <pattern>` by unpacking just the matching
+// files into ./squashfs-root, relative to the working directory, which is why
+// this runs in a scratch directory beside the AppImage under ~/.ao rather than
+// wherever the user happened to run `ao start`. Extracting one 50 KB PNG takes
+// milliseconds; nothing else is unpacked.
+func (c *commandContext) installLinuxMenuIcon(ctx context.Context, appPath string) error {
+	iconDir, err := linuxDataDir(linuxIconThemeDir)
+	if err != nil {
+		return err
+	}
+	scratch, err := os.MkdirTemp(filepath.Dir(appPath), "icon-extract-")
+	if err != nil {
+		return fmt.Errorf("create icon extraction dir: %w", err)
+	}
+	defer func() { _ = os.RemoveAll(scratch) }()
+
+	if out, err := c.deps.CommandOutputInDir(
+		ctx,
+		scratch,
+		appPath,
+		"--appimage-extract",
+		linuxAppImageIconPath,
+	); err != nil {
+		return fmt.Errorf("extract icon from AppImage: %w: %s", err, out)
+	}
+	icon, err := os.ReadFile(filepath.Join(scratch, "squashfs-root", linuxAppImageIconPath))
+	if err != nil {
+		return fmt.Errorf("read extracted icon: %w", err)
+	}
+	if err := os.MkdirAll(iconDir, 0o750); err != nil {
+		return fmt.Errorf("create icon directory: %w", err)
+	}
+	// Same write-then-rename as the desktop entry: a half-written PNG in the
+	// theme would render as a broken icon until the next launch.
+	target := filepath.Join(iconDir, linuxIconName+".png")
+	temporary := target + ".tmp"
+	if err := os.WriteFile(temporary, icon, 0o644); err != nil { //nolint:gosec // G306: theme icons must be world-readable
+		return fmt.Errorf("write icon: %w", err)
+	}
+	if err := os.Rename(temporary, target); err != nil {
+		_ = os.Remove(temporary)
+		return fmt.Errorf("install icon: %w", err)
+	}
+	return nil
+}
+
+// systemDesktopEntryOwns reports whether a distro package already owns the menu
+// entry for the app about to be launched: the app is the packaged one under
+// /usr, and the package's desktop entry is on disk.
+func systemDesktopEntryOwns(appPath string) bool {
+	if appPath != linuxSystemAppPath && !strings.HasPrefix(appPath, "/usr/lib/agent-orchestrator/") {
+		return false
+	}
+	_, err := os.Stat(linuxSystemDesktopEntryPath)
+	return err == nil
+}
+
+// installLinuxDesktopEntry writes the user-level .desktop file for the AppImage
+// and registers it as the ao-app:// URL handler. The entry is a REAL menu entry:
+// it used to carry NoDisplay=true, which exists to hide an entry from the
+// applications menu, so an AppImage never appeared there and people hand-wrote
+// their own launchers pointing at wherever the file happened to be downloaded.
+//
+// When a distro package is what is being launched, the package's own entry wins
+// and this writes nothing: two entries would show AO twice in the menu and leave
+// two candidates for ao-app://. The packaged file is never touched (the package
+// manager owns it); only the entry a previous `ao start` wrote is cleared, and
+// only because it is ours and points at an AppImage that is no longer in use.
+//
+// Best-effort steps (the icon, refreshing the desktop database) report to w and
+// do not fail the launch: a missing icon or a stale menu cache is worth a line
+// on stderr, not a refusal to start the app.
+func (c *commandContext) installLinuxDesktopEntry(
 	ctx context.Context,
+	w io.Writer,
 	appPath string,
 ) error {
 	applicationsDir, err := linuxApplicationsDir()
 	if err != nil {
 		return err
 	}
+	if systemDesktopEntryOwns(appPath) {
+		stale := filepath.Join(applicationsDir, linuxDesktopEntryName)
+		if err := os.Remove(stale); err == nil {
+			_, _ = fmt.Fprintf(
+				w,
+				"ao start: removed the AppImage menu entry; %s owns this install\n",
+				linuxSystemDesktopEntryPath,
+			)
+			c.refreshDesktopDatabase(ctx, w, applicationsDir)
+		}
+		return c.registerAoAppHandler(ctx, linuxSystemDesktopEntryName)
+	}
 	if err := os.MkdirAll(applicationsDir, 0o750); err != nil {
 		return fmt.Errorf("create Linux applications directory: %w", err)
+	}
+	if err := c.installLinuxMenuIcon(ctx, appPath); err != nil {
+		// Icon= still names the icon: a system package, or an earlier run, may
+		// have already put it in the theme. Without either the menu entry shows
+		// a generic icon, which is not a reason to block the launch.
+		_, _ = fmt.Fprintf(w, "ao start: could not install the menu icon: %v\n", err)
 	}
 	entry := fmt.Sprintf(`[Desktop Entry]
 Type=Application
 Name=Agent Orchestrator
+Comment=Run parallel coding-agent sessions
 Exec=%s %%u
+Icon=%s
 Terminal=false
-NoDisplay=true
+Categories=Development;
 MimeType=x-scheme-handler/ao-app;
-`, desktopExecPath(appPath))
+StartupWMClass=Agent Orchestrator
+`, desktopExecPath(appPath), linuxIconName)
 	target := filepath.Join(applicationsDir, linuxDesktopEntryName)
 	temporary := target + ".tmp"
 	if err := os.WriteFile(temporary, []byte(entry), 0o600); err != nil {
@@ -313,11 +442,34 @@ MimeType=x-scheme-handler/ao-app;
 		_ = os.Remove(temporary)
 		return fmt.Errorf("install Linux desktop entry: %w", err)
 	}
+	c.refreshDesktopDatabase(ctx, w, applicationsDir)
+	return c.registerAoAppHandler(ctx, linuxDesktopEntryName)
+}
+
+// refreshDesktopDatabase rebuilds the menu cache for dir. Menus read that cache,
+// so a new entry can stay invisible until something rebuilds it. Not every
+// system ships the tool, and desktops that watch the directory do not need it,
+// so a failure is reported and ignored.
+func (c *commandContext) refreshDesktopDatabase(ctx context.Context, w io.Writer, dir string) {
+	if out, err := c.deps.CommandOutput(ctx, "update-desktop-database", dir); err != nil {
+		_, _ = fmt.Fprintf(
+			w,
+			"ao start: could not refresh the applications menu (install desktop-file-utils to fix): %v: %s\n",
+			err,
+			out,
+		)
+	}
+}
+
+// registerAoAppHandler points ao-app:// at entryName and proves it took. Which
+// entry that is depends on how AO got here: the package's when a distro package
+// owns this install, ours when it is the AppImage.
+func (c *commandContext) registerAoAppHandler(ctx context.Context, entryName string) error {
 	if out, err := c.deps.CommandOutput(
 		ctx,
 		"xdg-mime",
 		"default",
-		linuxDesktopEntryName,
+		entryName,
 		"x-scheme-handler/ao-app",
 	); err != nil {
 		return fmt.Errorf(
@@ -336,11 +488,11 @@ MimeType=x-scheme-handler/ao-app;
 	if err != nil {
 		return fmt.Errorf("verify ao-app URL handler: %w: %s", err, out)
 	}
-	if strings.TrimSpace(string(out)) != linuxDesktopEntryName {
+	if strings.TrimSpace(string(out)) != entryName {
 		return fmt.Errorf(
 			"verify ao-app URL handler: xdg-mime selected %q instead of %q",
 			strings.TrimSpace(string(out)),
-			linuxDesktopEntryName,
+			entryName,
 		)
 	}
 	return nil

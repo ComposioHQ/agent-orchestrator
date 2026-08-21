@@ -678,6 +678,7 @@
 	"settings.updates.featureTracking": "若已开启自动更新，将持续跟踪 PR #{{pr}}，直到你返回主通道或该构建下线。",
 	"settings.updates.latest": "已是最新版本。",
 	"settings.updates.needInstalledApp": "更新功能需要使用已安装的桌面应用。",
+	"settings.updates.packageManaged": "由系统包管理器安装。请使用包管理器更新。",
 	"settings.updates.noFeatureReleases": "暂无可用的功能版本。",
 	"settings.updates.networkStale": "已有一段时间无法检查更新，重启应用通常可以解决。",
 	"settings.updates.netErrorRestartGuidance": "无法连接到更新服务器 — 应用的网络连接似乎卡住了。重启应用通常可以解决此问题。",

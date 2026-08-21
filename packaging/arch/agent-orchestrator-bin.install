@@ -1,0 +1,19 @@
+# Desktop environments read menu entries and icons from caches. Without a
+# refresh the app can stay invisible (or keep a stale icon) until something
+# else happens to rebuild them.
+_refresh() {
+	update-desktop-database -q
+	gtk-update-icon-cache -q -t -f /usr/share/icons/hicolor
+}
+
+post_install() {
+	_refresh
+}
+
+post_upgrade() {
+	_refresh
+}
+
+post_remove() {
+	_refresh
+}

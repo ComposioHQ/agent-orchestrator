@@ -694,6 +694,7 @@
 	"settings.updates.featureTracking": "自動アップデートが有効な場合、ホームに戻るかビルドが終了するまで PR #{{pr}} を追跡し続けます。",
 	"settings.updates.latest": "最新バージョンを利用中です。",
 	"settings.updates.needInstalledApp": "アップデートにはインストール済みのアプリが必要です。",
+	"settings.updates.packageManaged": "システムのパッケージマネージャーでインストールされています。パッケージマネージャーで更新してください。",
 	"settings.updates.noFeatureReleases": "公開中の機能リリースはありません。",
 	"settings.updates.networkStale": "しばらくアップデートを確認できていません。アプリを再起動すると通常は解決します。",
 	"settings.updates.netErrorRestartGuidance": "アップデートサーバーに接続できません — アプリのネットワーク接続が止まっているようです。アプリを再起動すると通常は解決します。",

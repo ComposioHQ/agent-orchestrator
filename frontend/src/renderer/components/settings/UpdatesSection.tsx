@@ -364,7 +364,13 @@ function UpdateStatusLine({ status }: { status: UpdateStatus }) {
 		case "not-available":
 			return <span className="text-xs text-settings-muted">{t("settings.updates.latest")}</span>;
 		case "unsupported":
-			return <span className="text-xs text-settings-muted">{status.message ?? t("settings.updates.needInstalledApp")}</span>;
+			return (
+				<span className="text-xs text-settings-muted">
+					{status.packageManaged
+						? t("settings.updates.packageManaged")
+						: status.message ?? t("settings.updates.needInstalledApp")}
+				</span>
+			);
 		case "error":
 			return (
 				<span className="text-xs text-error">

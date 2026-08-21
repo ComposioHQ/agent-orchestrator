@@ -167,7 +167,7 @@ AO works with the coding agents and source-control workflow you already use. Age
 
 ## Install
 
-Download the latest AO desktop app for your platform. AO checks for updates automatically.
+Download the latest AO desktop app for your platform.
 
 | Platform              | Download                                                                                                                      |
 | --------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
@@ -177,6 +177,63 @@ Download the latest AO desktop app for your platform. AO checks for updates auto
 | Linux (AppImage)      | [Download](https://github.com/Untrivial-ai/agent-orchestrator/releases/latest/download/agent-orchestrator-linux-x64.AppImage) |
 | Linux (Debian/Ubuntu) | [Download](https://github.com/Untrivial-ai/agent-orchestrator/releases/latest/download/agent-orchestrator-linux-x64.deb)      |
 | Linux (Fedora/RHEL)   | [Download](https://github.com/Untrivial-ai/agent-orchestrator/releases/latest/download/agent-orchestrator-linux-x64.rpm)      |
+| Linux (Arch)          | [`makepkg -si`](packaging/arch/README.md) from `packaging/arch`                                                               |
+
+All Linux artifacts are x86_64 only. There is no arm64 Linux build to install.
+
+### Linux: install from a repository instead
+
+Adding the AO repository means `apt upgrade` or `dnf upgrade` picks up new
+releases like any other package, instead of downloading a file by hand.
+
+Debian, Ubuntu and derivatives:
+
+```bash
+curl -fsSL https://github.com/Untrivial-ai/agent-orchestrator/releases/latest/download/ao-archive-keyring.asc \
+  | sudo tee /usr/share/keyrings/ao-archive-keyring.asc > /dev/null
+echo 'deb [signed-by=/usr/share/keyrings/ao-archive-keyring.asc] https://github.com/Untrivial-ai/agent-orchestrator/releases/latest/download/ ./' \
+  | sudo tee /etc/apt/sources.list.d/agent-orchestrator.list > /dev/null
+sudo apt update && sudo apt install agent-orchestrator
+```
+
+Fedora, RHEL and derivatives:
+
+```bash
+sudo tee /etc/yum.repos.d/agent-orchestrator.repo > /dev/null <<'REPO'
+[agent-orchestrator]
+name=Agent Orchestrator
+baseurl=https://raw.githubusercontent.com/Untrivial-ai/agent-orchestrator/linux-repo/dnf/
+enabled=1
+repo_gpgcheck=1
+gpgcheck=0
+gpgkey=https://raw.githubusercontent.com/Untrivial-ai/agent-orchestrator/linux-repo/dnf/ao-archive-keyring.asc
+REPO
+sudo dnf install agent-orchestrator
+```
+
+`gpgcheck=0` with `repo_gpgcheck=1` is deliberate, not a weakened setting: the
+repository metadata is signed and carries the package's SHA-256, while the
+published `.rpm` itself is not individually signed. Details in
+[`packaging/linux-repos/README.md`](packaging/linux-repos/README.md).
+
+How updates reach you depends on the format:
+
+| Format             | Updates                                                                    |
+| ------------------ | -------------------------------------------------------------------------- |
+| macOS, Windows     | The app updates itself.                                                     |
+| Linux AppImage     | The app updates itself.                                                     |
+| apt, dnf repository| `apt upgrade` / `dnf upgrade`.                                              |
+| deb, rpm by hand   | Manual: download the new file and install it again.                         |
+| Arch               | `git pull`, then `./update-pkgbuild.sh && makepkg -si` in `packaging/arch`. |
+
+A package-manager install (deb, rpm, Arch) never updates itself: the app lives
+in `/usr/lib`, which your package manager owns and the app cannot write to.
+That is what the repositories above are for.
+
+On Linux the packages also put the bundled `ao` CLI on your PATH as
+`/usr/bin/ao`, so `ao --version` and `ao preview <url>` work in any terminal. The
+AppImage is a single file and cannot add anything to your PATH: run `ao start`
+from the app, or link the CLI out of an extracted AppImage yourself.
 
 Open Agent Orchestrator and point it at the repository you want AO to manage. The desktop app runs the daemon for you, so no CLI is required. See the [installation guide](https://aoagents.dev/docs/installation) for agent CLI setup and troubleshooting.
 

@@ -1,0 +1,74 @@
+# Maintainer: Agent Orchestrator <https://github.com/Untrivial-ai/agent-orchestrator>
+
+# This package repackages the official .deb rather than building from source.
+# The deb is already laid out the way Arch wants (the app under /usr/lib, a
+# launcher symlink in /usr/bin, a desktop entry, an icon), so package() is
+# mostly a move. Building from source would pull a full Go build, a full npm
+# build and a bundled Chromium download onto every user's machine for a result
+# we already publish as a binary.
+pkgname=agent-orchestrator-bin
+pkgver=0.12.6
+pkgrel=1
+pkgdesc='Desktop app that runs parallel coding-agent sessions in isolated worktrees'
+arch=('x86_64')
+url='https://github.com/Untrivial-ai/agent-orchestrator'
+license=('Apache-2.0')
+# Direct NEEDED entries of the Electron binary, mapped to their owning packages.
+# Read with `readelf -d`, not guessed. libxss (libXScrnSaver) is a common entry
+# in Electron packaging guides and is deliberately absent: this build does not
+# link it. libnotify and xdg-utils are dlopen'd or spawned at runtime, so they
+# never show up in NEEDED, and the app needs both.
+depends=(
+	'alsa-lib' 'at-spi2-core' 'cairo' 'dbus' 'expat' 'glib2' 'gtk3' 'libcups'
+	'libdrm' 'libnotify' 'libx11' 'libxcb' 'libxcomposite' 'libxdamage'
+	'libxext' 'libxfixes' 'libxkbcommon' 'libxrandr' 'mesa' 'nspr' 'nss'
+	'pango' 'systemd-libs' 'xdg-utils'
+)
+# A future build-from-source package can take the plain name without colliding.
+provides=('agent-orchestrator')
+conflicts=('agent-orchestrator')
+options=('!strip' '!debug')
+install="$pkgname.install"
+_deb="agent-orchestrator-linux-x64.deb"
+source=(
+	"$pkgname-$pkgver.deb::$url/releases/download/v$pkgver/$_deb"
+	"LICENSE-$pkgver::https://raw.githubusercontent.com/Untrivial-ai/agent-orchestrator/v$pkgver/LICENSE"
+)
+# makepkg does not know how to unpack a .deb, and would leave it alone with a
+# warning anyway. package() does it explicitly.
+noextract=("$pkgname-$pkgver.deb")
+sha256sums=(
+	'95a6709905fadb65349134da5446e2d564ac7a38418eac35330a240d14098bb3'
+	'1a2219722b7ef58364065e9073a2cb2831891eb147a785742a31431c9cddad1d'
+)
+
+package() {
+	# A .deb is an ar archive holding data.tar.<compression>. Piping the payload
+	# straight into a second bsdtar keeps this working whatever compression the
+	# maker picks (it is zstd today).
+	bsdtar -xOf "$srcdir/$pkgname-$pkgver.deb" 'data.tar*' | bsdtar -xpf - -C "$pkgdir"
+
+	# Debian bookkeeping that means nothing on Arch. The copyright file is the
+	# bundled Electron's MIT text, kept below next to the app's own license.
+	install -Dm644 "$pkgdir/usr/share/doc/agent-orchestrator/copyright" \
+		"$pkgdir/usr/share/licenses/$pkgname/LICENSE.electron"
+	install -Dm644 "$srcdir/LICENSE-$pkgver" "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+	rm -rf "$pkgdir/usr/share/doc" "$pkgdir/usr/share/lintian"
+
+	# The deb ships a single pixmap; Arch expects themed icons. Same file, the
+	# place desktop environments actually look first.
+	install -Dm644 "$pkgdir/usr/share/pixmaps/agent-orchestrator.png" \
+		"$pkgdir/usr/share/icons/hicolor/1024x1024/apps/agent-orchestrator.png"
+	rm -rf "$pkgdir/usr/share/pixmaps"
+
+	# The `ao` CLI and the daemon are the same Go binary, shipped inside the app.
+	# The deb and the rpm have to create this link from a maintainer script (see
+	# frontend/packaging/linux); here it is a tracked file in the package.
+	ln -s /usr/lib/agent-orchestrator/resources/daemon/ao "$pkgdir/usr/bin/ao"
+
+	# Electron's sandbox helper must be setuid root or Electron aborts at
+	# startup with "The SUID sandbox helper binary was found, but is not
+	# configured correctly". Arch ships the kernel feature it needs, so the fix
+	# is the permission bit, never --no-sandbox.
+	chmod 4755 "$pkgdir/usr/lib/agent-orchestrator/chrome-sandbox"
+}
