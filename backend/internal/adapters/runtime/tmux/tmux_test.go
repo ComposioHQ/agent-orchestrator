@@ -273,9 +273,10 @@ func TestCreateRejectsInvalidEnvKeys(t *testing.T) {
 
 func TestCreateIssuesNewSessionAndStatusOff(t *testing.T) {
 	// new-session, display-message cwd verification, set-option status,
-	// set-option mouse, set-option window-size, has-session (exit 0 = alive)
+	// set-option mouse, set-option window-size, set-option detach-on-destroy,
+	// has-session (exit 0 = alive)
 	r, fr := newTestRuntime(0)
-	fr.outputs = [][]byte{nil, []byte("/tmp/ws\n"), nil, nil, nil, nil}
+	fr.outputs = [][]byte{nil, []byte("/tmp/ws\n"), nil, nil, nil, nil, nil}
 
 	h, err := r.Create(context.Background(), ports.RuntimeConfig{
 		SessionID:     "sess-1",
@@ -289,10 +290,11 @@ func TestCreateIssuesNewSessionAndStatusOff(t *testing.T) {
 	if h.ID != "sess-1" {
 		t.Fatalf("handle ID = %q, want sess-1", h.ID)
 	}
-	// Expect 6 calls: new-session, display-message cwd verification,
-	// set-option status, set-option mouse, set-option window-size, has-session.
-	if len(fr.calls) != 6 {
-		t.Fatalf("calls = %d, want 6", len(fr.calls))
+	// Expect 7 calls: new-session, display-message cwd verification,
+	// set-option status, set-option mouse, set-option window-size,
+	// set-option detach-on-destroy, has-session.
+	if len(fr.calls) != 7 {
+		t.Fatalf("calls = %d, want 7", len(fr.calls))
 	}
 
 	// Call 0: new-session
@@ -333,9 +335,16 @@ func TestCreateIssuesNewSessionAndStatusOff(t *testing.T) {
 		t.Fatalf("call[4] = %#v, want %#v", got, want)
 	}
 
-	// Call 5: has-session (IsAlive, uses exact-match target =sess-1).
-	if got, want := fr.calls[5].args, hasSessionArgs("sess-1"); !reflect.DeepEqual(got, want) {
+	// Call 5: set-option detach-on-destroy on, so destroying this session
+	// detaches AO's terminal client instead of moving it to one of the user's
+	// own sessions (see setDetachOnDestroyOnArgs).
+	if got, want := fr.calls[5].args, setDetachOnDestroyOnArgs("sess-1"); !reflect.DeepEqual(got, want) {
 		t.Fatalf("call[5] = %#v, want %#v", got, want)
+	}
+
+	// Call 6: has-session (IsAlive, uses exact-match target =sess-1).
+	if got, want := fr.calls[6].args, hasSessionArgs("sess-1"); !reflect.DeepEqual(got, want) {
+		t.Fatalf("call[6] = %#v, want %#v", got, want)
 	}
 }
 
@@ -669,22 +678,23 @@ func TestRestartRejectsMismatchedSessionHandle(t *testing.T) {
 
 func TestDestroyIsIdempotentWhenSessionMissing(t *testing.T) {
 	r, fr := newTestRuntime(0)
-	// First output feeds list-panes (which also errors here → no sids); the
-	// missing-session marker must land on the kill-session call.
-	fr.outputs = [][]byte{nil, []byte("can't find session: sess-1")}
+	// First two outputs feed list-panes and the best-effort detach-on-destroy
+	// retrofit (both error here → no sids, ignored); the missing-session marker
+	// must land on the kill-session call.
+	fr.outputs = [][]byte{nil, nil, []byte("can't find session: sess-1")}
 	fr.err = &exec.ExitError{}
 
 	if err := r.Destroy(context.Background(), ports.RuntimeHandle{ID: "sess-1"}); err != nil {
 		t.Fatalf("Destroy: %v", err)
 	}
-	if len(fr.calls) != 2 || fr.calls[0].args[0] != "list-panes" || fr.calls[1].args[0] != "kill-session" {
-		t.Fatalf("calls = %#v, want list-panes then kill-session", fr.calls)
+	if len(fr.calls) != 3 || fr.calls[0].args[0] != "list-panes" || fr.calls[1].args[0] != "set-option" || fr.calls[2].args[0] != "kill-session" {
+		t.Fatalf("calls = %#v, want list-panes, set-option, kill-session", fr.calls)
 	}
 }
 
 func TestDestroyIsIdempotentWhenNoServer(t *testing.T) {
 	r, fr := newTestRuntime(0)
-	fr.outputs = [][]byte{nil, []byte("no server running on /tmp/tmux-1000/default")}
+	fr.outputs = [][]byte{nil, nil, []byte("no server running on /tmp/tmux-1000/default")}
 	fr.err = &exec.ExitError{}
 
 	if err := r.Destroy(context.Background(), ports.RuntimeHandle{ID: "sess-1"}); err != nil {
@@ -694,7 +704,7 @@ func TestDestroyIsIdempotentWhenNoServer(t *testing.T) {
 
 func TestDestroyReportsUnexpectedFailures(t *testing.T) {
 	r, fr := newTestRuntime(0)
-	fr.outputs = [][]byte{nil, []byte("permission denied")}
+	fr.outputs = [][]byte{nil, nil, []byte("permission denied")}
 	fr.err = &exec.ExitError{}
 
 	if err := r.Destroy(context.Background(), ports.RuntimeHandle{ID: "sess-1"}); err == nil {
@@ -704,17 +714,21 @@ func TestDestroyReportsUnexpectedFailures(t *testing.T) {
 
 func TestDestroyArgs(t *testing.T) {
 	r, fr := newTestRuntime(0)
-	fr.outputs = [][]byte{nil, nil}
+	fr.outputs = [][]byte{nil, nil, nil}
 
 	if err := r.Destroy(context.Background(), ports.RuntimeHandle{ID: "sess-1"}); err != nil {
 		t.Fatalf("Destroy: %v", err)
 	}
-	// list-panes discovers pane sessions; kill-session (exact-match target
-	// =<id>) tears the session down.
+	// list-panes discovers pane sessions; set-option retrofits detach-on-destroy
+	// onto sessions created before that landed in Create; kill-session
+	// (exact-match target =<id>) tears the session down.
 	if got, want := fr.calls[0].args, listPanePIDsArgs("sess-1"); !reflect.DeepEqual(got, want) {
 		t.Fatalf("list-panes args = %#v, want %#v", got, want)
 	}
-	if got, want := fr.calls[1].args, killSessionArgs("sess-1"); !reflect.DeepEqual(got, want) {
+	if got, want := fr.calls[1].args, setDetachOnDestroyOnArgs("sess-1"); !reflect.DeepEqual(got, want) {
+		t.Fatalf("detach-on-destroy args = %#v, want %#v", got, want)
+	}
+	if got, want := fr.calls[2].args, killSessionArgs("sess-1"); !reflect.DeepEqual(got, want) {
 		t.Fatalf("destroy args = %#v, want %#v", got, want)
 	}
 }

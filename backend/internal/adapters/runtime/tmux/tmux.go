@@ -332,6 +332,14 @@ func (r *Runtime) Create(ctx context.Context, cfg ports.RuntimeConfig) (ports.Ru
 		return ports.RuntimeHandle{}, fmt.Errorf("tmux runtime: set window-size %s: %w", id, err)
 	}
 
+	// Make sure destroying this session detaches AO's terminal client rather
+	// than moving it to one of the user's own sessions (see
+	// setDetachOnDestroyOnArgs).
+	if _, err := r.run(ctx, setDetachOnDestroyOnArgs(id)...); err != nil {
+		_ = r.Destroy(context.Background(), ports.RuntimeHandle{ID: id})
+		return ports.RuntimeHandle{}, fmt.Errorf("tmux runtime: set detach-on-destroy %s: %w", id, err)
+	}
+
 	handle := ports.RuntimeHandle{ID: id}
 	alive, err := r.IsAlive(ctx, handle)
 	if err != nil {
@@ -450,6 +458,13 @@ func (r *Runtime) Destroy(ctx context.Context, handle ports.RuntimeHandle) error
 	// session lists no panes and reaps nothing. Best-effort: failures here must
 	// not block the kill-session below.
 	sessionIDs := r.paneSessionIDs(ctx, id)
+
+	// Create sets this on every session it makes, but sessions outlive the app,
+	// so a session created before this shipped still carries the user's global
+	// `detach-on-destroy off`. Setting it here too retrofits those. Best-effort
+	// for the same reason as paneSessionIDs: an already-gone session must not
+	// block the kill below.
+	_, _ = r.run(ctx, setDetachOnDestroyOnArgs(id)...)
 
 	out, err := r.run(ctx, killSessionArgs(id)...)
 	// Reap regardless of the kill-session result: orphaned children outlive the

@@ -246,3 +246,111 @@ func waitForOutput(t *testing.T, r *Runtime, h ports.RuntimeHandle, want string,
 	}
 	return out
 }
+
+// TestRuntimeIntegrationDestroyDetachesClientUnderDetachOnDestroyOff pins the
+// fix for a config-dependent cross-session leak.
+//
+// tmux's `detach-on-destroy off` — a common tmux.conf line, because it keeps you
+// inside tmux when you kill a session — makes tmux move an attached client to
+// another session instead of detaching it. AO's terminal attachment is such a
+// client, so destroying an AO session silently reparented AO's PTY onto one of
+// the user's own sessions: the stream never EOF'd (so the attachment never saw
+// the session end), the other session's output streamed into AO's terminal
+// view, and anything typed there executed in that session's pane.
+//
+// Create now sets detach-on-destroy back to `on` for AO's own sessions only.
+// The test uses a private tmux server (TMUX_TMPDIR + `-f /dev/null`) with the
+// global set to `off`, so it reproduces on a default machine and never touches
+// the developer's own tmux.
+func TestRuntimeIntegrationDestroyDetachesClientUnderDetachOnDestroyOff(t *testing.T) {
+	if _, err := exec.LookPath("tmux"); err != nil {
+		t.Skip("tmux unavailable")
+	}
+	// tmux refuses to attach a client without a usable TERM.
+	t.Setenv("TERM", "xterm-256color")
+
+	// os.MkdirTemp rather than t.TempDir: the tmux socket is a unix path capped
+	// near 108 bytes and t.TempDir embeds this test's long name.
+	tmuxTmp, err := os.MkdirTemp("", "aotmux")
+	if err != nil {
+		t.Fatalf("MkdirTemp: %v", err)
+	}
+	t.Setenv("TMUX_TMPDIR", tmuxTmp)
+	t.Cleanup(func() {
+		_ = exec.Command("tmux", "kill-server").Run()
+		_ = os.RemoveAll(tmuxTmp)
+	})
+
+	// "bystander" stands in for a session of the user's own; it is also what
+	// holds the server open long enough to set the global option. `-f /dev/null`
+	// skips the developer's tmux.conf so the global below is the only one in play.
+	if out, err := exec.Command("tmux", "-f", "/dev/null", "new-session", "-d", "-s", "ao-dod-bystander", "sh", "-c", "sleep 120").CombinedOutput(); err != nil {
+		t.Skipf("cannot start private tmux server: %v: %s", err, out)
+	}
+	if out, err := exec.Command("tmux", "set-option", "-g", "detach-on-destroy", "off").CombinedOutput(); err != nil {
+		t.Fatalf("set detach-on-destroy off: %v: %s", err, out)
+	}
+
+	ctx := context.Background()
+	r := New(Options{Timeout: 5 * time.Second})
+	h, err := r.Create(ctx, ports.RuntimeConfig{
+		SessionID:     domain.SessionID("ao-dod-" + strings.ReplaceAll(t.Name(), "/", "_")),
+		WorkspacePath: t.TempDir(),
+		Argv:          []string{"sh", "-c", "echo agent-running"},
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	t.Cleanup(func() { _ = r.Destroy(context.Background(), h) })
+
+	stream, err := r.Attach(ctx, h, 50, 220)
+	if err != nil {
+		t.Fatalf("Attach: %v", err)
+	}
+	t.Cleanup(func() { _ = stream.Close() })
+
+	readErr := make(chan error, 1)
+	go func() {
+		buf := make([]byte, 4096)
+		for {
+			if _, err := stream.Read(buf); err != nil {
+				readErr <- err
+				return
+			}
+		}
+	}()
+
+	// Wait for the client to actually be attached before destroying, otherwise
+	// the test could pass simply by racing the attach.
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		out, _ := exec.Command("tmux", "list-clients", "-F", "#{client_session}").Output()
+		if strings.Contains(string(out), h.ID) {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("attach client never appeared; clients = %q", out)
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+
+	if err := r.Destroy(ctx, h); err != nil {
+		t.Fatalf("Destroy: %v", err)
+	}
+
+	// The attach client must end, not survive on another session.
+	select {
+	case <-readErr:
+	case <-time.After(5 * time.Second):
+		out, _ := exec.Command("tmux", "list-clients", "-F", "#{client_session}").Output()
+		t.Fatalf("attach stream never ended after Destroy; tmux clients now on: %q", strings.TrimSpace(string(out)))
+	}
+
+	out, err := exec.Command("tmux", "list-clients", "-F", "#{client_session}").Output()
+	if err != nil {
+		t.Fatalf("list-clients: %v", err)
+	}
+	if got := strings.TrimSpace(string(out)); got != "" {
+		t.Fatalf("client survived on session %q, want no attached clients — tmux reparented AO's terminal onto another session", got)
+	}
+}
