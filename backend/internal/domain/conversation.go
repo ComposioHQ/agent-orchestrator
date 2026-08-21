@@ -193,7 +193,10 @@ type ConversationRecord struct {
 type ConversationBranchStrategy string
 
 const (
-	ConversationBranchStrategyNative             ConversationBranchStrategy = "native"
+	// ConversationBranchStrategyNative preserves the provider's exact history.
+	ConversationBranchStrategyNative ConversationBranchStrategy = "native"
+	// ConversationBranchStrategyApproximateContext starts a fresh provider
+	// session from bounded AO-owned context.
 	ConversationBranchStrategyApproximateContext ConversationBranchStrategy = "approximate_context"
 )
 

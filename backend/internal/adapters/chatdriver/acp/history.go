@@ -201,7 +201,7 @@ func (c *conversation) startHistoryTurn(userID string) {
 		return
 	}
 	namespace := c.providerScopeID
-	turnID := ""
+	var turnID string
 	if namespace == "" {
 		turnID = legacyHistoryTurnID(c.history.sessionID, userID)
 	} else {
@@ -320,7 +320,7 @@ func (c *conversation) captureHistoryEvent(event ports.ChatEvent) bool {
 		if namespace == "" {
 			namespace = c.history.sessionID
 		}
-		base := ""
+		var base string
 		if c.providerScopeID == "" {
 			// Deployed ACP histories used this delimiter encoding before durable
 			// provider scopes existed. Keep it only for migrated unscoped roots so
