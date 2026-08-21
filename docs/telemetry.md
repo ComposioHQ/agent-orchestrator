@@ -15,6 +15,10 @@ ingestion drop rules, see [posthog-cost-controls.md](posthog-cost-controls.md).
   per six-hour UTC slot, or four per day per install/channel
 - Renderer load and daily route-surface usage, grouped by coarse surface names
 - Project/task/session UI actions, with project identifiers SHA-256 hashed
+- The GitHub organization or account (`github_org`) that owns a project's
+  `origin` remote, on project-add events only. Only the owner segment is sent
+  (never the repository name, path, or URL); for a personal repository this
+  slug is the owner's own GitHub username
 - Renderer exceptions, reduced to error name and coarse context
 - Daemon operational events: CLI invocation, session spawn/failure, waiting-input
   transitions, HTTP 5xx, and daemon panics
@@ -32,6 +36,10 @@ Before any renderer event or recording is transmitted:
 - Local URLs (`file://`, `app://renderer`, `localhost`, `127.0.0.1`, `[::1]`)
   are replaced with `[redacted-local-url]`
 - Project IDs are one-way hashed and never sent in plain text
+- `github_org` carries only the owner segment parsed from the `origin` remote.
+  It is not anonymous: for a personal repository the owner slug is the user's
+  GitHub username. It is sent only when a project has a GitHub `origin` remote,
+  and never includes the repository name, branch, path, or full URL
 
 Daemon events use a remote payload allowlist before PostHog export. Project and
 session IDs are hashed, and raw location/IP fields are not accepted from AO

@@ -144,6 +144,7 @@ var remotePayloadAllowlist = map[string]map[string]struct{}{
 	"ao.onboarding.first_project_added": {
 		"has_git_remote": {},
 		"kind":           {},
+		"github_org":     {},
 	},
 	"ao.onboarding.first_session_spawned": {
 		"harness":                {},
@@ -153,6 +154,7 @@ var remotePayloadAllowlist = map[string]map[string]struct{}{
 	"ao.projects.created": {
 		"has_git_remote": {},
 		"kind":           {},
+		"github_org":     {},
 	},
 	"ao.session.spawn_failed": {
 		"component":   {},
