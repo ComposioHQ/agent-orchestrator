@@ -4755,6 +4755,7 @@ paths:
       - description: Session-worktree-relative file path.
         in: query
         name: path
+        required: true
         schema:
           description: Session-worktree-relative file path.
           type: string

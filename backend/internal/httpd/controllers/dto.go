@@ -140,7 +140,10 @@ type WorkspaceFileQuery struct {
 
 // WorkspaceFileBlobQuery is the query string accepted by GET /api/v1/sessions/{sessionId}/workspace/file/blob.
 type WorkspaceFileBlobQuery struct {
-	Path string `query:"path" description:"Session-worktree-relative file path."`
+	// The handler rejects a missing path with WORKSPACE_PATH_REQUIRED, so mark it
+	// required: query params carry no json tag, and requiredFromJSONTag only
+	// derives `required` from those.
+	Path string `query:"path" required:"true" description:"Session-worktree-relative file path."`
 	Side string `query:"side,omitempty" enum:"before,after" description:"Which revision to read: the compare base (before) or the session worktree (after). Defaults to after."`
 	V    string `query:"v,omitempty" description:"Cache-busting token. Ignored by the server; the response is never cached."`
 }

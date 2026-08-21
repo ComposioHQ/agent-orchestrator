@@ -756,6 +756,51 @@ func TestGetWorkspaceFileBlobReadsRenamedFileFromPreviousPath(t *testing.T) {
 	}
 }
 
+func TestGetWorkspaceFileBlobTypesRenamedBeforeSideByItsOwnPath(t *testing.T) {
+	repo := newWorkspaceRepo(t)
+	writeWorkspaceFile(t, repo, "docs/logo.png", pngBytes("before"))
+	runGit(t, repo, "add", ".")
+	runGit(t, repo, "commit", "-m", "add logo")
+	runGit(t, repo, "mv", "docs/logo.png", "docs/logo.gif")
+	st := newFakeStore()
+	st.sessions["ao-1"] = domain.SessionRecord{ID: "ao-1", Metadata: domain.SessionMetadata{WorkspacePath: repo}}
+	svc := &Service{store: st}
+
+	// A rename that changes the extension must not type the historical bytes by
+	// the new path: the controller sends nosniff, so a PNG labelled image/gif
+	// never renders.
+	before, err := svc.GetWorkspaceFileBlob(context.Background(), "ao-1", "docs/logo.gif", WorkspaceBlobBefore)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if before.MediaType != "image/png" {
+		t.Fatalf("before mediaType = %q, want image/png", before.MediaType)
+	}
+	after, err := svc.GetWorkspaceFileBlob(context.Background(), "ao-1", "docs/logo.gif", WorkspaceBlobAfter)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.MediaType != "image/gif" {
+		t.Fatalf("after mediaType = %q, want image/gif", after.MediaType)
+	}
+}
+
+func TestGetWorkspaceFileBlobRejectsRenameFromANonImagePath(t *testing.T) {
+	repo := newWorkspaceRepo(t)
+	writeWorkspaceFile(t, repo, "docs/logo.bin", pngBytes("before"))
+	runGit(t, repo, "add", ".")
+	runGit(t, repo, "commit", "-m", "add blob")
+	runGit(t, repo, "mv", "docs/logo.bin", "docs/logo.png")
+	st := newFakeStore()
+	st.sessions["ao-1"] = domain.SessionRecord{ID: "ao-1", Metadata: domain.SessionMetadata{WorkspacePath: repo}}
+
+	_, err := (&Service{store: st}).GetWorkspaceFileBlob(context.Background(), "ao-1", "docs/logo.png", WorkspaceBlobBefore)
+	var e *apierr.Error
+	if !errors.As(err, &e) || e.Kind != apierr.KindInvalid || e.Code != "UNSUPPORTED_WORKSPACE_BLOB" {
+		t.Fatalf("err = %v, want apierr.Invalid UNSUPPORTED_WORKSPACE_BLOB", err)
+	}
+}
+
 func TestGetWorkspaceFileBlobRejectsNonImagePaths(t *testing.T) {
 	repo := newWorkspaceRepo(t)
 	st := newFakeStore()

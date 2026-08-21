@@ -9065,9 +9065,9 @@ export interface operations {
     };
     getSessionWorkspaceFileBlob: {
         parameters: {
-            query?: {
+            query: {
                 /** @description Session-worktree-relative file path. */
-                path?: string;
+                path: string;
                 /** @description Which revision to read: the compare base (before) or the session worktree (after). Defaults to after. */
                 side?: "before" | "after";
                 /** @description Cache-busting token. Ignored by the server; the response is never cached. */

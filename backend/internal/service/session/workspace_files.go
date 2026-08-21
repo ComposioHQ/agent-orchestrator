@@ -310,6 +310,14 @@ func (s *Service) GetWorkspaceFileBlob(ctx context.Context, id domain.SessionID,
 			basePath = previous
 		}
 	}
+	// A rename can change the extension, so type the historical bytes by the path
+	// they are read from rather than the worktree path. The controller sends
+	// nosniff, so a mismatched media type makes the browser refuse to render.
+	baseMediaType := workspaceImageMediaType(basePath)
+	if baseMediaType == "" {
+		return WorkspaceFileBlob{}, apierr.Invalid("UNSUPPORTED_WORKSPACE_BLOB", "workspace blobs are only served for image files", nil)
+	}
+	blob.MediaType = baseMediaType
 	data, err := gitWorkspaceBlob(ctx, target.root, target.compare.gitBase(), basePath, maxWorkspaceImageBytes)
 	if err != nil {
 		return WorkspaceFileBlob{}, err
