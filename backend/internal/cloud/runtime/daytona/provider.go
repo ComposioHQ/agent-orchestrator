@@ -170,7 +170,7 @@ func (p *Provider) bootstrap(ctx context.Context, sandbox *daytonasdk.Sandbox, w
 	runFile := filepath.Join(home, ".ao", "running.json")
 	logFile := filepath.Join(home, ".ao", "daemon.log")
 	start := "nohup env AO_DATA_DIR=" + shellQuote(dataDir) + " AO_RUN_FILE=" + shellQuote(runFile) +
-		" AO_PORT=3001 " + shellQuote(binPath) + " daemon >" + shellQuote(logFile) + " 2>&1 </dev/null &"
+		" AO_PORT=3001 AO_CORS_HEADERS_MANAGED_BY_PROXY=on " + shellQuote(binPath) + " daemon >" + shellQuote(logFile) + " 2>&1 </dev/null &"
 	if _, err := run(ctx, sandbox, start, time.Minute); err != nil {
 		return fmt.Errorf("start AO daemon: %w", err)
 	}
