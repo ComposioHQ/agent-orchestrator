@@ -360,7 +360,14 @@ function UpdateStatusLine({ status }: { status: UpdateStatus }) {
 		case "downloading":
 			return <span className="text-xs text-settings-muted">{t("settings.updates.downloading", { percent: status.percent ?? 0 })}</span>;
 		case "downloaded":
-			return <span className="text-xs text-success">{t("settings.updates.downloaded")}</span>;
+			// installBlockedReason (#3528) carries main-process prose explaining why
+			// the staged build cannot install yet (disk space / location), same
+			// policy as the install-blocker dialogs.
+			return status.installBlockedReason ? (
+				<span className="text-xs text-error">{status.installBlockedReason}</span>
+			) : (
+				<span className="text-xs text-success">{t("settings.updates.downloaded")}</span>
+			);
 		case "not-available":
 			return <span className="text-xs text-settings-muted">{t("settings.updates.latest")}</span>;
 		case "unsupported":
