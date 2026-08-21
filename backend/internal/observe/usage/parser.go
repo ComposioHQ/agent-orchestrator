@@ -588,6 +588,7 @@ func parseCodexEvent(source domain.UsageSourceContext, envelope codexEnvelope, s
 		if !validCodexTotal(last) {
 			result.Cursor.AnomalyCount++
 			result.Cursor.LastErrorCode = domain.UsageErrorNonMonotonicCumulativeUsage
+			state.Baseline = total
 			return
 		}
 		if !codexVectorMatchesDelta(last, input, cached, cacheWrite, output, reasoning, reportedTotal) {

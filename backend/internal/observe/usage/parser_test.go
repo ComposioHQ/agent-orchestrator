@@ -254,6 +254,33 @@ func TestParseCodexLastMismatchPrefersLastUsage(t *testing.T) {
 	}
 }
 
+func TestParseCodexInvalidLastAdvancesCumulativeBaseline(t *testing.T) {
+	source := usageSource(domain.UsageSourceCodexRollout)
+	records := []jsonlRecord{
+		{Data: codexTokenLineWithTotal("2026-08-20T10:00:00Z", codexTokenVector{InputTokens: 100, CachedInputTokens: 60, OutputTokens: 20, ReasoningOutputTokens: 5, TotalTokens: 120})},
+		{Data: codexTokenLineWithLast(
+			"2026-08-20T10:01:00Z",
+			codexTokenVector{InputTokens: 60, CachedInputTokens: 70, OutputTokens: 15, ReasoningOutputTokens: 3, TotalTokens: 75},
+			codexTokenVector{InputTokens: 160, CachedInputTokens: 90, OutputTokens: 35, ReasoningOutputTokens: 8, TotalTokens: 195},
+		)},
+		{Data: codexTokenLineWithTotal("2026-08-20T10:02:00Z", codexTokenVector{InputTokens: 200, CachedInputTokens: 100, OutputTokens: 50, ReasoningOutputTokens: 10, TotalTokens: 250})},
+	}
+
+	result := parseRecords(source, records, 1000, time.Unix(1700000000, 0).UTC())
+	if len(result.Events) != 2 || result.Cursor.AnomalyCount != 1 {
+		t.Fatalf("result = %+v, want invalid last usage skipped with one anomaly", result)
+	}
+	got := result.Events[1]
+	if tokenValue(got.Tokens.InputTokens) != 40 || tokenValue(got.Tokens.CachedInputTokens) != 10 ||
+		tokenValue(got.Tokens.UncachedInputTokens) != 30 || tokenValue(got.Tokens.OutputTokens) != 15 {
+		t.Fatalf("post-anomaly tokens = %+v, want delta from the skipped record's cumulative total", got.Tokens)
+	}
+	state := parserStateFromResult(t, result, domain.UsageSourceCodexRollout)
+	if state.Codex.Baseline.InputTokens != 200 || state.Codex.Baseline.TotalTokens != 250 {
+		t.Fatalf("baseline = %+v, want latest cumulative total", state.Codex.Baseline)
+	}
+}
+
 func TestParseCodexCounterResetNeverEmitsNegativeUsage(t *testing.T) {
 	now := time.Unix(1700000000, 0).UTC()
 	source := usageSource(domain.UsageSourceCodexRollout)
