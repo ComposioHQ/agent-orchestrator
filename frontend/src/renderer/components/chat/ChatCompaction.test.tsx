@@ -117,16 +117,19 @@ describe("compaction in the timeline", () => {
 });
 
 describe("the compact control", () => {
-	it("is offered in the composer message tools", () => {
-		const onCompact = vi.fn();
-		render(<ChatWorkspace snapshot={snapshot([assistantSaid])} onCompact={onCompact} />);
+	// Compaction lives on `/compact` rather than a toolbar button: the composer
+	// tools stay for attach/settings, and compact is an AO slash command.
+	it("is offered in the slash menu, not the message tools", async () => {
+		const user = userEvent.setup();
+		render(<ChatWorkspace snapshot={snapshot([assistantSaid])} onCompact={vi.fn()} />);
 
 		const tools = screen.getByRole("group", { name: "Message tools" });
-		const compactButton = within(tools).getByRole("button", {
-			name: "Compact conversation history",
-		});
-		compactButton.click();
-		expect(onCompact).toHaveBeenCalledOnce();
+		expect(
+			within(tools).queryByRole("button", { name: "Compact conversation history" }),
+		).not.toBeInTheDocument();
+
+		await user.type(screen.getByLabelText("Message the agent"), "/");
+		expect(screen.getByRole("option", { name: /compact/i })).toBeInTheDocument();
 	});
 
 	it("offers compact alongside provider skills in the slash menu", async () => {
@@ -171,7 +174,7 @@ describe("the compact control", () => {
 			/>,
 		);
 
-		expect(screen.getByText("This agent cannot compact its history")).toBeInTheDocument();
+		expect(screen.queryByText("This agent cannot compact its history")).not.toBeInTheDocument();
 		await user.type(screen.getByLabelText("Message the agent"), "/compact");
 		await user.keyboard("{Enter}");
 		expect(screen.getByRole("alert")).toHaveTextContent("This agent cannot compact its history");

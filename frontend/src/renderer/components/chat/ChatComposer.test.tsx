@@ -122,21 +122,6 @@ describe("send keys", () => {
 		);
 	});
 
-	it("keeps optional footer actions with message tools, away from send controls", () => {
-		render(
-			<ChatComposer
-				onSend={vi.fn()}
-				onStageAttachments={vi.fn().mockResolvedValue([])}
-				settings={<button type="button">Model</button>}
-
-			/>,
-		);
-		const tools = screen.getByRole("group", { name: "Message tools" });
-		expect(within(tools).getByRole("button", { name: "Compact" })).toBeInTheDocument();
-		const actions = screen.getByRole("group", { name: "Send message controls" });
-		expect(within(actions).queryByRole("button", { name: "Compact" })).not.toBeInTheDocument();
-	});
-
 	it("keeps a taller resting field for the redesigned composer", () => {
 		const { field } = renderComposer();
 		expect(field).toHaveAttribute("rows", "1");
