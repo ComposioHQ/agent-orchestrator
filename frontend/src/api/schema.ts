@@ -2144,6 +2144,8 @@ export interface components {
             modelReroute?: components["schemas"]["ConversationModelReroutePayload"];
             /** Format: int64 */
             oldestSequence?: number;
+            /** @enum {string} */
+            permissionFloor?: "default" | "read-only" | "accept-edits" | "auto" | "bypass-permissions";
             rateLimits?: components["schemas"]["ConversationRateLimitsPayload"];
             sessionId: string;
             settings: components["schemas"]["ConversationTurnSettingsPayload"];

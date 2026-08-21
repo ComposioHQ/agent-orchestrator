@@ -1,9 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
-import { approvalOptionsForPermissionFloor, loadTurnOptionCatalog } from "./turnOptionsCatalog";
+import { approvalOptionsForSnapshot, loadTurnOptionCatalog } from "./turnOptionsCatalog";
 
 describe("turn option catalog", () => {
-	it("does not expose broader approvals under a durable read-only floor", () => {
-		expect(approvalOptionsForPermissionFloor("read-only").map((option) => option.id))
+	it("does not expose broader approvals under a migrated session's effective read-only floor", () => {
+		expect(approvalOptionsForSnapshot({
+			permissionFloor: "read-only",
+			capabilities: ["preventive_read_only"],
+		}).map((option) => option.id))
 			.toEqual(["read-only"]);
 	});
 

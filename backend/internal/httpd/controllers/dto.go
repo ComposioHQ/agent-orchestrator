@@ -1657,14 +1657,18 @@ type ConversationSnapshotResponse struct {
 	Mode                       string `json:"mode" enum:"chat,tui"`
 	// Controller is reported separately from history so a client can tell "no
 	// messages yet" apart from "the agent is not running".
-	Controller     string                            `json:"controller" enum:"connecting,ready,busy,recovering,stopped"`
-	LatestSequence int64                             `json:"latestSequence"`
-	OldestSequence int64                             `json:"oldestSequence,omitempty"`
-	HasMoreBefore  bool                              `json:"hasMoreBefore"`
-	Turns          []ConversationTurnResponse        `json:"turns"`
-	Messages       []ConversationMessageResponse     `json:"messages"`
-	Activities     []ConversationActivityResponse    `json:"activities"`
-	BranchPoints   []ConversationBranchPointResponse `json:"branchPoints,omitempty"`
+	Controller string `json:"controller" enum:"connecting,ready,busy,recovering,stopped"`
+	// PermissionFloor is the effective immutable contract enforced by the live
+	// controller. It is omitted while no controller is running. Unlike the raw
+	// session marker, migrated sessions have already resolved project policy here.
+	PermissionFloor domain.PermissionMode             `json:"permissionFloor,omitempty" enum:"default,read-only,accept-edits,auto,bypass-permissions"`
+	LatestSequence  int64                             `json:"latestSequence"`
+	OldestSequence  int64                             `json:"oldestSequence,omitempty"`
+	HasMoreBefore   bool                              `json:"hasMoreBefore"`
+	Turns           []ConversationTurnResponse        `json:"turns"`
+	Messages        []ConversationMessageResponse     `json:"messages"`
+	Activities      []ConversationActivityResponse    `json:"activities"`
+	BranchPoints    []ConversationBranchPointResponse `json:"branchPoints,omitempty"`
 	// Settings are the provider choices for the next turn. Carried on the snapshot
 	// the client already polls so the composer can label itself without a second
 	// request, and so a choice made on another client shows up here.

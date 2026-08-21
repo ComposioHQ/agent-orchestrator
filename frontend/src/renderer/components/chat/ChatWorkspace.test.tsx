@@ -220,6 +220,30 @@ describe("HumanMessage attachments", () => {
 });
 
 describe("ChatWorkspace timeline", () => {
+	it("uses the effective restored floor when the durable permission marker is legacy-empty", async () => {
+		const user = userEvent.setup();
+		render(
+			<ChatWorkspace
+				snapshot={{
+					...idleSnapshot(),
+					permissionFloor: "read-only",
+					settings: { approvalMode: "default" },
+					capabilities: [...(chatFixture.capabilities ?? []), "preventive_read_only"],
+				}}
+				session={chatSession}
+				onChooseSettings={vi.fn()}
+			/>,
+		);
+
+		const trigger = screen.getByRole("button", {
+			name: "What the agent may do without asking",
+		});
+		expect(trigger).toHaveTextContent("Read only");
+		await user.click(trigger);
+		expect(screen.getByRole("menuitem", { name: /Read only/i })).toBeInTheDocument();
+		expect(screen.queryByRole("menuitem", { name: /Never ask/i })).not.toBeInTheDocument();
+	});
+
 	it("makes composer and history controls inert while a durable agent switch owns input", () => {
 		render(<ChatWorkspace snapshot={idleSnapshot()} agentInputDisabled />);
 

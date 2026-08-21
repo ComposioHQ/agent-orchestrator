@@ -695,6 +695,7 @@ function toSnapshot(wire: WireSnapshot): ConversationSnapshot {
 		harness: wire.harness ?? "",
 		mode: wire.mode as SessionMode,
 		controller: { state: wire.controller as ControllerState },
+		permissionFloor: wire.permissionFloor || undefined,
 		latestSequence: wire.latestSequence,
 		oldestSequence: wire.oldestSequence ?? wire.latestSequence + 1,
 		hasMoreBefore: wire.hasMoreBefore ?? false,

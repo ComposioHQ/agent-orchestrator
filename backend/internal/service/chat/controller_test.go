@@ -438,6 +438,44 @@ func TestStartRejectsStoredPreventiveReadOnlyWhenNegotiatedCapabilitiesNarrow(t 
 	}
 }
 
+func TestSnapshotExposesEffectivePermissionFloor(t *testing.T) {
+	st := openStore(t)
+	conv := newFakeConversation()
+	conv.capabilities = readOnlyCaps()
+	svc := chatsvc.New(chatsvc.Options{
+		Store: st, Sessions: st,
+		PageReader: chatsvc.SnapshotPageReaderFunc(func(ctx context.Context, conversationID string, _, _ int64) (chatsvc.ConversationRows, error) {
+			rows, err := st.LoadConversationSnapshot(ctx, conversationID)
+			if err != nil {
+				return chatsvc.ConversationRows{}, err
+			}
+			return chatsvc.ConversationRows{
+				Conversation: rows.Conversation,
+				Turns:        rows.Turns,
+				Messages:     rows.Messages,
+				Activities:   rows.Activities,
+			}, nil
+		}),
+		Drivers: fakeRegistry{driver: fakeDriver{conv: conv, caps: readOnlyCaps()}},
+		NewID:   func() string { return "effective-read-only-floor" },
+	})
+	t.Cleanup(func() { _ = svc.Stop(context.Background(), testSession) })
+
+	if _, err := svc.Start(context.Background(), chatsvc.StartConfig{
+		SessionID: testSession, ProjectID: testProject, Harness: domain.HarnessCodex,
+		WorkspacePath: t.TempDir(), Permissions: ports.PermissionModeReadOnly,
+	}); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	snapshot, err := svc.SnapshotPage(context.Background(), testSession, 0, 50)
+	if err != nil {
+		t.Fatalf("SnapshotPage: %v", err)
+	}
+	if snapshot.PermissionFloor != ports.PermissionModeReadOnly {
+		t.Fatalf("snapshot permission floor = %q, want read-only", snapshot.PermissionFloor)
+	}
+}
+
 func TestTurnSettingsRejectPreventiveReadOnlyBeforePersistence(t *testing.T) {
 	st := openStore(t)
 	conv := newFakeConversation()

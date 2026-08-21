@@ -707,6 +707,40 @@ func TestRestoreOmittedChatPermissionDoesNotAdoptChangedProjectDefault(t *testin
 	}
 }
 
+func TestRestorePreMigrationChatPermissionResolvesCurrentProjectReadOnlyFloor(t *testing.T) {
+	launcher := &recordingLauncher{}
+	mgr, store, _ := newChatManager(launcher)
+	ctx := context.Background()
+
+	rec, _, _, err := mgr.Spawn(ctx, ports.SpawnConfig{
+		ProjectID: chatTestProject, Kind: domain.KindWorker,
+		Harness: domain.HarnessCodex, RequestedMode: domain.SessionModeChat,
+	})
+	if err != nil {
+		t.Fatalf("Spawn: %v", err)
+	}
+	if _, err := mgr.Kill(ctx, rec.ID); err != nil {
+		t.Fatalf("Kill: %v", err)
+	}
+
+	// Rows created before session permissions became durable have no marker.
+	// They intentionally continue to resolve the current project contract.
+	legacy := store.sessions[rec.ID]
+	legacy.Metadata.Permissions = ""
+	store.sessions[rec.ID] = legacy
+	project := store.projects[string(chatTestProject)]
+	project.Config.AgentConfig.Permissions = domain.PermissionModeReadOnly
+	store.projects[string(chatTestProject)] = project
+
+	if _, err := mgr.RestoreWithMode(ctx, rec.ID); err != nil {
+		t.Fatalf("RestoreWithMode: %v", err)
+	}
+	resumed := launcher.started[len(launcher.started)-1]
+	if resumed.Permissions != ports.PermissionModeReadOnly {
+		t.Fatalf("restore permissions = %q, want project-resolved read-only floor", resumed.Permissions)
+	}
+}
+
 // `ao send` and orchestrator-to-worker relay both go through Manager.Send. A chat
 // session has no pane to type into, so without a mode branch the send reached the
 // runtime guard and was refused as "missing runtime handles" — which is true of

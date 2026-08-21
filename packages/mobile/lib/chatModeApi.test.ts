@@ -165,11 +165,13 @@ describe("mobile Chat API boundaries", () => {
 		vi.mocked(fetch).mockResolvedValue(response({
 			conversationId: "c-1", sessionId: "w-1", harness: "claude-code", mode: "chat", controller: "busy",
 			latestSequence: 2, oldestSequence: 1, hasMoreBefore: false, settings: {}, turns: [], messages: [],
+			permissionFloor: "read-only",
 			capabilities: ["config_options", "steer"],
 			activities: [{ kind: "activity", id: "a-1", sequence: 2, revision: 1, activityKind: "approval", status: "pending", summary: "Run command", requestId: "req-1", detail: { output: { text: "legacy" }, decisions: [{ id: "accept" }] }, createdAt: "2026-08-05T00:00:00Z" }],
 		}));
 		const page = await getConversationPage(cfg, "w-1");
 		expect(page.controller).toEqual({ state: "busy" });
+		expect(page.permissionFloor).toBe("read-only");
 		expect(page.capabilities).toEqual(["config_options", "steer"]);
 		expect(page.items[0]).toMatchObject({ activityKind: "approval", requestId: "req-1", decisions: [{ id: "accept", label: "accept" }], detail: { output: { text: "legacy" } } });
 	});

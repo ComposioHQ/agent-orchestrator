@@ -662,6 +662,9 @@ export interface ConversationSnapshot {
 	harness: string;
 	mode: SessionMode;
 	controller: { state: ControllerState; error?: string };
+	/** The effective immutable contract enforced by the live controller. Unlike
+	 *  the durable session marker, this is resolved for migrated sessions. */
+	permissionFloor?: ApprovalMode;
 	turns: ConversationTurn[];
 	/** Already ordered by sequence. The renderer does not re-sort. */
 	items: ConversationItem[];

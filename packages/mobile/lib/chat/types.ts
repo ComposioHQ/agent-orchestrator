@@ -208,6 +208,9 @@ export type ConversationSnapshot = {
 	harness: string;
 	mode: SessionMode;
 	controller: { state: ControllerState; error?: string };
+	/** Effective immutable contract enforced by the live controller. This is
+	 * resolved even when a migrated session's durable marker is empty. */
+	permissionFloor?: ApprovalMode;
 	latestSequence: number;
 	oldestSequence: number;
 	hasMoreBefore: boolean;

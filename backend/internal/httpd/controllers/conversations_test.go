@@ -178,6 +178,17 @@ func TestConversationSettingsAcceptPreventiveReadOnlyOrReturnTypedUnsupportedErr
 	})
 }
 
+func TestConversationSnapshotExposesEffectivePermissionFloor(t *testing.T) {
+	body := conversationSnapshotBody(t, chatsvc.Snapshot{
+		SessionID:       domain.SessionID("p1-1"),
+		Mode:            domain.SessionModeChat,
+		PermissionFloor: ports.PermissionModeReadOnly,
+	})
+	if body["permissionFloor"] != "read-only" {
+		t.Fatalf("permissionFloor = %#v, want read-only", body["permissionFloor"])
+	}
+}
+
 func TestConversationSnapshotExposesSafeEditContentAndBranchMetadata(t *testing.T) {
 	now := time.Date(2026, 8, 9, 12, 0, 0, 0, time.UTC)
 	body := conversationSnapshotBody(t, chatsvc.Snapshot{

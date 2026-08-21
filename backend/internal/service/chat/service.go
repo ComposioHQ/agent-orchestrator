@@ -674,11 +674,15 @@ func (s *Service) StopAll(ctx context.Context) {
 
 // Snapshot is the durable read model a client bootstraps from.
 type Snapshot struct {
-	Conversation               domain.ConversationRecord
-	SessionID                  domain.SessionID
-	Harness                    domain.AgentHarness
-	Mode                       domain.SessionMode
-	Controller                 ports.ChatControllerState
+	Conversation domain.ConversationRecord
+	SessionID    domain.SessionID
+	Harness      domain.AgentHarness
+	Mode         domain.SessionMode
+	Controller   ports.ChatControllerState
+	// PermissionFloor is the effective immutable contract held by the live
+	// controller. It is empty when no controller is running; importantly, it is
+	// already resolved for migrated sessions whose durable marker is empty.
+	PermissionFloor            ports.PermissionMode
 	Turns                      []domain.ConversationTurn
 	Messages                   []domain.ConversationMessage
 	Activities                 []domain.ConversationActivity
@@ -764,9 +768,11 @@ func (s *Service) Snapshot(ctx context.Context, id domain.SessionID) (Snapshot, 
 
 	state := ports.ChatControllerStopped
 	var caps ports.ChatCapabilities
+	var permissionFloor ports.PermissionMode
 	if controller, err := s.Controller(id); err == nil {
 		state = controller.State()
 		caps = controller.Capabilities()
+		permissionFloor = ports.NormalizePermissionMode(controller.permissionFloor)
 	}
 
 	return Snapshot{
@@ -775,6 +781,7 @@ func (s *Service) Snapshot(ctx context.Context, id domain.SessionID) (Snapshot, 
 		Harness:                    record.Harness,
 		Mode:                       domain.NormalizeSessionMode(record.Mode),
 		Controller:                 state,
+		PermissionFloor:            permissionFloor,
 		Turns:                      rows.Turns,
 		Messages:                   rows.Messages,
 		Activities:                 rows.Activities,
@@ -816,9 +823,11 @@ func (s *Service) SnapshotPage(ctx context.Context, id domain.SessionID, beforeS
 	}
 	state := ports.ChatControllerStopped
 	var caps ports.ChatCapabilities
+	var permissionFloor ports.PermissionMode
 	if controller, err := s.Controller(id); err == nil {
 		state = controller.State()
 		caps = controller.Capabilities()
+		permissionFloor = ports.NormalizePermissionMode(controller.permissionFloor)
 	}
 	return Snapshot{
 		Conversation:               rows.Conversation,
@@ -826,6 +835,7 @@ func (s *Service) SnapshotPage(ctx context.Context, id domain.SessionID, beforeS
 		Harness:                    record.Harness,
 		Mode:                       domain.NormalizeSessionMode(record.Mode),
 		Controller:                 state,
+		PermissionFloor:            permissionFloor,
 		Turns:                      rows.Turns,
 		Messages:                   rows.Messages,
 		Activities:                 rows.Activities,

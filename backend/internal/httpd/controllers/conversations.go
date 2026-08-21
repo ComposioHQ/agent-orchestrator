@@ -791,6 +791,7 @@ func conversationSnapshotResponse(s chatsvc.Snapshot) ConversationSnapshotRespon
 		Harness:                    string(s.Harness),
 		Mode:                       string(s.Mode),
 		Controller:                 string(s.Controller),
+		PermissionFloor:            s.PermissionFloor,
 		LatestSequence:             s.Conversation.LatestSequence,
 		OldestSequence:             s.OldestSequence,
 		HasMoreBefore:              s.HasMoreBefore,

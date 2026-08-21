@@ -6344,6 +6344,14 @@ components:
         oldestSequence:
           format: int64
           type: integer
+        permissionFloor:
+          enum:
+          - default
+          - read-only
+          - accept-edits
+          - auto
+          - bypass-permissions
+          type: string
         rateLimits:
           $ref: '#/components/schemas/ConversationRateLimitsPayload'
         sessionId:

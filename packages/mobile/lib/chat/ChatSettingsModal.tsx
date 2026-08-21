@@ -4,15 +4,14 @@ import { haptics } from "../haptics";
 import type { Theme } from "../theme";
 import { useTheme, useThemedStyles } from "../ThemeProvider";
 import { SheetHeader } from "../ui";
-import { approvalOptionsForPermissionFloor } from "./turnOptionsCatalog";
-import type { ApprovalMode, ChatConfigOption, ChatModel, ConversationSnapshot, TurnSettings } from "./types";
+import { approvalOptionsForSnapshot } from "./turnOptionsCatalog";
+import type { ChatConfigOption, ChatModel, ConversationSnapshot, TurnSettings } from "./types";
 import { can } from "./types";
 
 export function ChatSettingsSheet({
 	snapshot,
 	models,
 	options,
-	permissionFloor,
 	disabled,
 	refreshing,
 	error,
@@ -23,7 +22,6 @@ export function ChatSettingsSheet({
 	snapshot: ConversationSnapshot;
 	models: ChatModel[];
 	options: ChatConfigOption[];
-	permissionFloor?: ApprovalMode;
 	disabled?: boolean;
 	refreshing?: boolean;
 	error?: string;
@@ -41,11 +39,8 @@ export function ChatSettingsSheet({
 	);
 	const hasProviderMode = options.some(
 		(option) => option.category === "mode" || option.id === "mode");
-	const approvals = approvalOptionsForPermissionFloor(
-		permissionFloor,
-		can(snapshot, "preventive_read_only"),
-	);
-	const approvalMode = permissionFloor === "read-only"
+	const approvals = approvalOptionsForSnapshot(snapshot);
+	const approvalMode = snapshot.permissionFloor === "read-only"
 		? "read-only"
 		: snapshot.settings.approvalMode ?? "default";
 	return (

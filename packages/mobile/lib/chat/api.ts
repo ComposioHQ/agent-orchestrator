@@ -368,6 +368,7 @@ function toSnapshot(wire: WireSnapshot): ConversationSnapshot {
 	return {
 		...wire,
 		controller: { state: wire.controller },
+		permissionFloor: wire.permissionFloor,
 		oldestSequence: wire.oldestSequence ?? wire.latestSequence + 1,
 		hasMoreBefore: Boolean(wire.hasMoreBefore),
 		settings: {
