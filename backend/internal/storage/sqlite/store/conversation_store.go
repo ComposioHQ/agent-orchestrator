@@ -39,6 +39,15 @@ var ErrNoQueuedTurn = domain.ErrNoQueuedTurn
 // owns it. The caller must not contact the provider after this outcome.
 var ErrQueuedTurnNotAvailable = errors.New("queued turn is not available for promotion")
 
+type conversationCreateOptions struct {
+	id           string
+	scope        domain.ConversationScope
+	project      domain.ProjectID
+	session      domain.SessionID
+	contextReset *domain.ConversationActivity
+	now          time.Time
+}
+
 // CreateConversation opens a worker's session-scoped conversation or rebinds an
 // orchestrator's project-scoped narrative to its current session. Returning the
 // existing row makes controller restart and clean orchestrator replacement
@@ -51,77 +60,13 @@ func (s *Store) CreateConversation(
 	session domain.SessionID,
 	now time.Time,
 ) (domain.ConversationRecord, error) {
-	s.writeMu.Lock()
-	defer s.writeMu.Unlock()
-
-	if scope == domain.ConversationScopeProject {
-		if existing, err := s.qw.SelectProjectConversation(ctx, project); err == nil {
-			if err := s.qw.BindProjectConversationSession(ctx, gen.BindProjectConversationSessionParams{
-				CurrentSessionID: &session,
-				UpdatedAt:        now,
-				ID:               existing.ID,
-			}); err != nil {
-				return domain.ConversationRecord{}, fmt.Errorf("bind project conversation %s to %s: %w", existing.ID, session, err)
-			}
-			existing.CurrentSessionID = &session
-			existing.UpdatedAt = now
-			return conversationToDomain(existing), nil
-		} else if !errors.Is(err, sql.ErrNoRows) {
-			return domain.ConversationRecord{}, fmt.Errorf("select project conversation for %s: %w", project, err)
-		}
-	} else {
-		scope = domain.ConversationScopeSession
-		if existing, err := s.qw.SelectConversationBySession(ctx, &session); err == nil {
-			return conversationToDomain(existing), nil
-		} else if !errors.Is(err, sql.ErrNoRows) {
-			return domain.ConversationRecord{}, fmt.Errorf("select conversation for %s: %w", session, err)
-		}
-	}
-
-	var ownerSession *domain.SessionID
-	if scope == domain.ConversationScopeSession {
-		ownerSession = &session
-	}
-	rootBranchID := id + ":root"
-	err := s.inTx(ctx, "insert conversation", func(q *gen.Queries) error {
-		owner, getErr := q.GetSession(ctx, session)
-		if getErr != nil {
-			return fmt.Errorf("select controller session %s: %w", session, getErr)
-		}
-		if insertErr := q.InsertConversation(ctx, gen.InsertConversationParams{
-			ID:               id,
-			Scope:            scope,
-			ProjectID:        project,
-			SessionID:        ownerSession,
-			CurrentSessionID: &session,
-			ActiveBranchID:   rootBranchID,
-			CreatedAt:        now,
-			UpdatedAt:        now,
-		}); insertErr != nil {
-			return insertErr
-		}
-		return q.InsertConversationBranch(ctx, gen.InsertConversationBranchParams{
-			ID:                     rootBranchID,
-			ConversationID:         id,
-			SessionID:              nullableString(string(session)),
-			ProviderConversationID: owner.ProviderConversationID,
-			ForkAfterSequence:      0,
-			CreatedAt:              now,
-		})
+	return s.createConversation(ctx, conversationCreateOptions{
+		id:      id,
+		scope:   scope,
+		project: project,
+		session: session,
+		now:     now,
 	})
-	if err != nil {
-		return domain.ConversationRecord{}, fmt.Errorf("insert conversation %s: %w", id, err)
-	}
-
-	return domain.ConversationRecord{
-		ID:             id,
-		Scope:          scope,
-		ProjectID:      project,
-		SessionID:      session,
-		ActiveBranchID: rootBranchID,
-		CreatedAt:      now,
-		UpdatedAt:      now,
-	}, nil
 }
 
 // CreateProjectConversationWithContextReset rebinds an existing project
@@ -136,112 +81,147 @@ func (s *Store) CreateProjectConversationWithContextReset(
 	reset domain.ConversationActivity,
 	now time.Time,
 ) (domain.ConversationRecord, error) {
+	return s.createConversation(ctx, conversationCreateOptions{
+		id:           id,
+		scope:        domain.ConversationScopeProject,
+		project:      project,
+		session:      session,
+		contextReset: &reset,
+		now:          now,
+	})
+}
+
+func (s *Store) createConversation(
+	ctx context.Context,
+	options conversationCreateOptions,
+) (domain.ConversationRecord, error) {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
 
-	if existing, err := s.qw.SelectProjectConversation(ctx, project); err == nil {
-		detail := string(reset.Detail)
-		err = s.inTx(ctx, "rebind project conversation with reset", func(q *gen.Queries) error {
-			if err := q.BindProjectConversationSession(ctx, gen.BindProjectConversationSessionParams{
-				CurrentSessionID: &session,
-				UpdatedAt:        now,
-				ID:               existing.ID,
-			}); err != nil {
-				return fmt.Errorf("bind project conversation %s to %s: %w", existing.ID, session, err)
+	scope := options.scope
+	if scope == domain.ConversationScopeProject {
+		if existing, err := s.qw.SelectProjectConversation(ctx, options.project); err == nil {
+			transactionName := "rebind project conversation"
+			if options.contextReset != nil {
+				transactionName += " with reset"
 			}
-			if existing.LatestSequence <= 0 || reset.ProviderItemID == "" {
-				return nil
-			}
-			_, lookupErr := q.SelectConversationActivityByProviderItem(ctx,
-				gen.SelectConversationActivityByProviderItemParams{
-					ConversationID: existing.ID,
-					ProviderItemID: reset.ProviderItemID,
+			err = s.inTx(ctx, transactionName, func(q *gen.Queries) error {
+				if err := q.BindProjectConversationSession(ctx, gen.BindProjectConversationSessionParams{
+					CurrentSessionID: &options.session,
+					UpdatedAt:        options.now,
+					ID:               existing.ID,
+				}); err != nil {
+					return fmt.Errorf("bind project conversation %s to %s: %w", existing.ID, options.session, err)
+				}
+				if options.contextReset == nil ||
+					existing.LatestSequence <= 0 ||
+					options.contextReset.ProviderItemID == "" {
+					return nil
+				}
+				reset := options.contextReset
+				detail := string(reset.Detail)
+				_, lookupErr := q.SelectConversationActivityByProviderItem(ctx,
+					gen.SelectConversationActivityByProviderItemParams{
+						ConversationID: existing.ID,
+						ProviderItemID: reset.ProviderItemID,
+					})
+				if lookupErr == nil {
+					return q.SettleConversationActivity(ctx, gen.SettleConversationActivityParams{
+						Status:         reset.Status,
+						Summary:        reset.Summary,
+						DetailJson:     detail,
+						UpdatedAt:      options.now,
+						ConversationID: existing.ID,
+						ProviderItemID: reset.ProviderItemID,
+					})
+				}
+				if !errors.Is(lookupErr, sql.ErrNoRows) {
+					return fmt.Errorf("lookup reset boundary %s: %w", reset.ProviderItemID, lookupErr)
+				}
+				sequence, seqErr := q.NextConversationSequence(ctx, gen.NextConversationSequenceParams{
+					UpdatedAt: options.now,
+					ID:        existing.ID,
 				})
-			if lookupErr == nil {
-				return q.SettleConversationActivity(ctx, gen.SettleConversationActivityParams{
+				if seqErr != nil {
+					return fmt.Errorf("allocate reset boundary sequence: %w", seqErr)
+				}
+				existing.LatestSequence = sequence
+				return q.InsertConversationActivity(ctx, gen.InsertConversationActivityParams{
+					ID:             reset.ID,
+					ConversationID: existing.ID,
+					TurnID:         sql.NullString{},
+					Sequence:       sequence,
+					Kind:           reset.Kind,
 					Status:         reset.Status,
 					Summary:        reset.Summary,
 					DetailJson:     detail,
-					UpdatedAt:      now,
-					ConversationID: existing.ID,
+					RequestID:      reset.RequestID,
 					ProviderItemID: reset.ProviderItemID,
+					CreatedAt:      options.now,
+					UpdatedAt:      options.now,
 				})
-			}
-			if !errors.Is(lookupErr, sql.ErrNoRows) {
-				return fmt.Errorf("lookup reset boundary %s: %w", reset.ProviderItemID, lookupErr)
-			}
-			sequence, seqErr := q.NextConversationSequence(ctx, gen.NextConversationSequenceParams{
-				UpdatedAt: now,
-				ID:        existing.ID,
 			})
-			if seqErr != nil {
-				return fmt.Errorf("allocate reset boundary sequence: %w", seqErr)
+			if err != nil {
+				return domain.ConversationRecord{}, err
 			}
-			existing.LatestSequence = sequence
-			return q.InsertConversationActivity(ctx, gen.InsertConversationActivityParams{
-				ID:             reset.ID,
-				ConversationID: existing.ID,
-				TurnID:         sql.NullString{},
-				Sequence:       sequence,
-				Kind:           reset.Kind,
-				Status:         reset.Status,
-				Summary:        reset.Summary,
-				DetailJson:     detail,
-				RequestID:      reset.RequestID,
-				ProviderItemID: reset.ProviderItemID,
-				CreatedAt:      now,
-				UpdatedAt:      now,
-			})
-		})
-		if err != nil {
-			return domain.ConversationRecord{}, err
+			existing.CurrentSessionID = &options.session
+			existing.UpdatedAt = options.now
+			return conversationToDomain(existing), nil
+		} else if !errors.Is(err, sql.ErrNoRows) {
+			return domain.ConversationRecord{}, fmt.Errorf("select project conversation for %s: %w", options.project, err)
 		}
-		existing.CurrentSessionID = &session
-		existing.UpdatedAt = now
-		return conversationToDomain(existing), nil
-	} else if !errors.Is(err, sql.ErrNoRows) {
-		return domain.ConversationRecord{}, fmt.Errorf("select project conversation for %s: %w", project, err)
+	} else {
+		scope = domain.ConversationScopeSession
+		if existing, err := s.qw.SelectConversationBySession(ctx, &options.session); err == nil {
+			return conversationToDomain(existing), nil
+		} else if !errors.Is(err, sql.ErrNoRows) {
+			return domain.ConversationRecord{}, fmt.Errorf("select conversation for %s: %w", options.session, err)
+		}
 	}
 
-	rootBranchID := id + ":root"
-	err := s.inTx(ctx, "insert project conversation", func(q *gen.Queries) error {
-		owner, getErr := q.GetSession(ctx, session)
+	var ownerSession *domain.SessionID
+	if scope == domain.ConversationScopeSession {
+		ownerSession = &options.session
+	}
+	rootBranchID := options.id + ":root"
+	err := s.inTx(ctx, "insert conversation", func(q *gen.Queries) error {
+		owner, getErr := q.GetSession(ctx, options.session)
 		if getErr != nil {
-			return fmt.Errorf("select controller session %s: %w", session, getErr)
+			return fmt.Errorf("select controller session %s: %w", options.session, getErr)
 		}
 		if insertErr := q.InsertConversation(ctx, gen.InsertConversationParams{
-			ID:               id,
-			Scope:            domain.ConversationScopeProject,
-			ProjectID:        project,
-			SessionID:        nil,
-			CurrentSessionID: &session,
+			ID:               options.id,
+			Scope:            scope,
+			ProjectID:        options.project,
+			SessionID:        ownerSession,
+			CurrentSessionID: &options.session,
 			ActiveBranchID:   rootBranchID,
-			CreatedAt:        now,
-			UpdatedAt:        now,
+			CreatedAt:        options.now,
+			UpdatedAt:        options.now,
 		}); insertErr != nil {
 			return insertErr
 		}
 		return q.InsertConversationBranch(ctx, gen.InsertConversationBranchParams{
 			ID:                     rootBranchID,
-			ConversationID:         id,
-			SessionID:              nullableString(string(session)),
+			ConversationID:         options.id,
+			SessionID:              nullableString(string(options.session)),
 			ProviderConversationID: owner.ProviderConversationID,
 			ForkAfterSequence:      0,
-			CreatedAt:              now,
+			CreatedAt:              options.now,
 		})
 	})
 	if err != nil {
-		return domain.ConversationRecord{}, fmt.Errorf("insert project conversation %s: %w", id, err)
+		return domain.ConversationRecord{}, fmt.Errorf("insert conversation %s: %w", options.id, err)
 	}
 
 	return domain.ConversationRecord{
-		ID:             id,
-		Scope:          domain.ConversationScopeProject,
-		ProjectID:      project,
-		SessionID:      session,
+		ID:             options.id,
+		Scope:          scope,
+		ProjectID:      options.project,
+		SessionID:      options.session,
 		ActiveBranchID: rootBranchID,
-		CreatedAt:      now,
-		UpdatedAt:      now,
+		CreatedAt:      options.now,
+		UpdatedAt:      options.now,
 	}, nil
 }
 
@@ -2057,7 +2037,7 @@ func (s *Store) conversationVisibleAfterSequence(
 	}
 	sequence, err := s.qr.SelectConversationContextResetSequence(ctx, gen.SelectConversationContextResetSequenceParams{
 		ConversationID: conv.ID,
-		ProviderItemID: "ao-context-reset:" + string(*conv.CurrentSessionID),
+		ProviderItemID: domain.ConversationContextResetProviderItemID(*conv.CurrentSessionID),
 	})
 	if err != nil {
 		return 0, fmt.Errorf("select context reset boundary for conversation %s: %w", conv.ID, err)

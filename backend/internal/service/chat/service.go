@@ -306,7 +306,7 @@ func (s *Service) Start(ctx context.Context, cfg StartConfig) (*Controller, erro
 			Status:         domain.ActivityStatusCompleted,
 			Summary:        "Agent context reset.",
 			Detail:         detail,
-			ProviderItemID: "ao-context-reset:" + string(cfg.SessionID),
+			ProviderItemID: domain.ConversationContextResetProviderItemID(cfg.SessionID),
 		}
 	}
 	conversationID := s.newID()

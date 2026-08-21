@@ -403,7 +403,7 @@ func TestProjectConversationPageStartsAtCurrentContextReset(t *testing.T) {
 	if err := s.UpsertActivity(ctx, conversation.ID, "", domain.ConversationActivity{
 		ID: "context-reset", Kind: domain.ActivityKindSystem, Status: domain.ActivityStatusCompleted,
 		Summary:        "Started a fresh agent context.",
-		ProviderItemID: "ao-context-reset:" + string(second.ID),
+		ProviderItemID: domain.ConversationContextResetProviderItemID(second.ID),
 	}, histClock.Add(4*time.Second)); err != nil {
 		t.Fatalf("append reset boundary: %v", err)
 	}
@@ -474,7 +474,7 @@ func TestProjectConversationFreshContextRebindWritesResetBoundaryAtomically(t *t
 		"project-atomic-reset", second.ID, domain.ConversationActivity{
 			ID: "context-reset", Kind: domain.ActivityKindSystem, Status: domain.ActivityStatusCompleted,
 			Summary:        "Agent context reset.",
-			ProviderItemID: "ao-context-reset:" + string(second.ID),
+			ProviderItemID: domain.ConversationContextResetProviderItemID(second.ID),
 		}, histClock.Add(2*time.Second))
 	if err != nil {
 		t.Fatalf("atomic rebind: %v", err)

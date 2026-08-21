@@ -1086,7 +1086,8 @@ func TestFreshProjectControllerRecordsNativeContextBoundary(t *testing.T) {
 		t.Fatalf("activities = %#v, want old history plus context boundary", snapshot.Activities)
 	}
 	boundary := snapshot.Activities[1]
-	if boundary.Kind != domain.ActivityKindSystem || boundary.ProviderItemID != "ao-context-reset:p1-2" {
+	if boundary.Kind != domain.ActivityKindSystem ||
+		boundary.ProviderItemID != domain.ConversationContextResetProviderItemID(replacement) {
 		t.Fatalf("boundary = %#v", boundary)
 	}
 	var detail map[string]string
@@ -1154,7 +1155,7 @@ func TestFreshProjectControllerStartFailureKeepsPreviousHistoryHidden(t *testing
 		t.Fatalf("LoadConversationSnapshot: %v", err)
 	}
 	if len(snapshot.Activities) != 1 ||
-		snapshot.Activities[0].ProviderItemID != "ao-context-reset:"+string(replacement) {
+		snapshot.Activities[0].ProviderItemID != domain.ConversationContextResetProviderItemID(replacement) {
 		t.Fatalf("reset boundary after failed start = %#v", snapshot.Activities)
 	}
 	page, err := st.LoadConversationSnapshotPage(ctx, conversation.ID, 0, 10)
