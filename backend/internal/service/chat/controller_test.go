@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -73,14 +74,19 @@ type nativeHistoryConversation struct {
 	*fakeConversation
 	events []ports.ChatEvent
 	err    error
-	onRead func()
+	reads  atomic.Int32
+	onRead func(int)
 }
 
 type convergingHistoryConversation struct {
 	*fakeConversation
-	mu       sync.Mutex
-	attempts int
-	events   []ports.ChatEvent
+	mu             sync.Mutex
+	reads          int
+	refreshes      int
+	initialSettled bool
+	initialEvents  []ports.ChatEvent
+	events         []ports.ChatEvent
+	onRead         func()
 }
 
 type blockingHistoryConversation struct {
@@ -100,26 +106,50 @@ func (c *blockingHistoryConversation) ReadHistory(ctx context.Context) ([]ports.
 }
 
 func (c *nativeHistoryConversation) ReadHistory(context.Context) ([]ports.ChatEvent, error) {
+	reads := int(c.reads.Add(1))
 	if c.onRead != nil {
-		c.onRead()
+		c.onRead(reads)
 	}
 	return c.events, c.err
 }
 
 func (c *convergingHistoryConversation) ReadHistory(context.Context) ([]ports.ChatEvent, error) {
 	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.attempts++
-	if c.attempts == 1 {
+	c.reads++
+	reads := c.reads
+	onRead := c.onRead
+	initialSettled := c.initialSettled
+	initialEvents := append([]ports.ChatEvent(nil), c.initialEvents...)
+	events := append([]ports.ChatEvent(nil), c.events...)
+	c.mu.Unlock()
+	if onRead != nil {
+		onRead()
+	}
+	if reads == 1 {
+		if initialSettled {
+			return initialEvents, nil
+		}
 		return nil, ports.ErrChatHistoryUnsettled
 	}
-	return append([]ports.ChatEvent(nil), c.events...), nil
+	return events, nil
 }
 
-func (c *convergingHistoryConversation) readAttempts() int {
+func (c *convergingHistoryConversation) RefreshHistory(context.Context) ([]ports.ChatEvent, error) {
+	c.mu.Lock()
+	c.refreshes++
+	events := append([]ports.ChatEvent(nil), c.events...)
+	c.mu.Unlock()
+	return events, nil
+}
+
+func (c *convergingHistoryConversation) historyAttempts() (reads, refreshes int) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return c.attempts
+	return c.reads, c.refreshes
+}
+
+func (c *nativeHistoryConversation) historyReads() int {
+	return int(c.reads.Load())
 }
 
 type deferredConversation struct {
@@ -412,7 +442,7 @@ func TestResumeCanSkipNativeHistoryImportWithoutStartingFresh(t *testing.T) {
 		events: []ports.ChatEvent{{
 			Kind: ports.ChatEventTurnStarted, ProviderTurnID: "old-target-turn",
 		}},
-		onRead: func() { historyReads++ },
+		onRead: func(int) { historyReads++ },
 	}
 	conv.providerConversationID = "target-native-thread"
 	var started ports.ChatStartConfig
@@ -585,7 +615,7 @@ func TestResumeImportsNativeHistoryBeforeTheChatControllerStarts(t *testing.T) {
 	}
 }
 
-func TestInterfaceHandoffWaitsForNativeHistoryToSettleBeforeStartingChat(t *testing.T) {
+func TestInterfaceHandoffRefreshesNativeHistoryUntilSettledBeforeStartingChat(t *testing.T) {
 	st := openStore(t)
 	rec, found, err := st.GetSession(context.Background(), testSession)
 	if err != nil || !found {
@@ -636,8 +666,10 @@ func TestInterfaceHandoffWaitsForNativeHistoryToSettleBeforeStartingChat(t *test
 	if err != nil {
 		t.Fatalf("Start handoff: %v", err)
 	}
-	if got := conv.readAttempts(); got != 2 {
-		t.Fatalf("ReadHistory attempts = %d, want one unsettled read followed by convergence", got)
+	reads, refreshes := conv.historyAttempts()
+	if reads != 1 || refreshes != 1 {
+		t.Fatalf("history attempts = %d reads, %d refreshes; want one initial read followed by one refresh",
+			reads, refreshes)
 	}
 	snapshot, err := st.LoadConversationSnapshot(context.Background(), ctrl.ConversationID())
 	if err != nil {
@@ -649,6 +681,72 @@ func TestInterfaceHandoffWaitsForNativeHistoryToSettleBeforeStartingChat(t *test
 	}
 	if len(snapshot.Turns) != 1 || snapshot.Turns[0].State != domain.TurnStateCompleted {
 		t.Fatalf("turns = %#v, want one completed native turn", snapshot.Turns)
+	}
+}
+
+func TestInterfaceHandoffRefreshesNativeHistoryUntilItReachesTheCheckpoint(t *testing.T) {
+	st := openStore(t)
+	rec, found, err := st.GetSession(context.Background(), testSession)
+	if err != nil || !found {
+		t.Fatalf("load session: found=%v err=%v", found, err)
+	}
+	rec.Metadata.LatestUserPrompt = "Run the final verification."
+	rec.Metadata.LatestAssistantUpdate = "The final verification passed."
+	if err := st.UpdateSession(context.Background(), rec); err != nil {
+		t.Fatalf("seed native replay checkpoint: %v", err)
+	}
+
+	conv := &convergingHistoryConversation{
+		fakeConversation: newFakeConversation(),
+		initialSettled:   true,
+		// The first authoritative observation is internally settled but stale.
+		// RefreshHistory performs the provider read that reaches AO's checkpoint.
+		initialEvents: nil,
+		events: []ports.ChatEvent{
+			{Kind: ports.ChatEventTurnStarted, ProviderEventID: "history-start", ProviderTurnID: "native-turn-1"},
+			{
+				Kind: ports.ChatEventUserMessageCompleted, ProviderEventID: "history-user",
+				ProviderTurnID: "native-turn-1", ProviderItemID: "native-user-1",
+				Text: "Run the final verification.",
+			},
+			{
+				Kind: ports.ChatEventMessageCompleted, ProviderEventID: "history-answer",
+				ProviderTurnID: "native-turn-1", ProviderItemID: "native-answer-1",
+				Text: "The final verification passed.",
+			},
+			{
+				Kind: ports.ChatEventTurnCompleted, ProviderEventID: "history-complete",
+				ProviderTurnID: "native-turn-1", TurnState: domain.TurnStateCompleted,
+			},
+		},
+	}
+	svc := chatsvc.New(chatsvc.Options{
+		Store: st, Sessions: st,
+		Drivers: fakeRegistry{driver: fakeDriver{conv: conv}},
+		Log:     slog.New(slog.DiscardHandler),
+		NewID:   func() string { return fmt.Sprintf("checkpoint-refresh-%d", time.Now().UnixNano()) },
+	})
+	t.Cleanup(func() { _ = svc.Stop(context.Background(), testSession) })
+
+	ctrl, err := svc.Start(context.Background(), chatsvc.StartConfig{
+		SessionID: testSession, ProjectID: testProject, Harness: domain.HarnessCodex,
+		WorkspacePath: t.TempDir(), ProviderConversationID: "thread-1", RequireNativeHistory: true,
+	})
+	if err != nil {
+		t.Fatalf("Start handoff: %v", err)
+	}
+	reads, refreshes := conv.historyAttempts()
+	if reads != 1 || refreshes != 1 {
+		t.Fatalf("history attempts = %d reads, %d refreshes; want one stale read followed by one refresh",
+			reads, refreshes)
+	}
+	snapshot, err := st.LoadConversationSnapshot(context.Background(), ctrl.ConversationID())
+	if err != nil {
+		t.Fatalf("LoadConversationSnapshot: %v", err)
+	}
+	if len(snapshot.Messages) != 2 || snapshot.Messages[0].Text != "Run the final verification." ||
+		snapshot.Messages[1].Text != "The final verification passed." {
+		t.Fatalf("messages = %#v, want refreshed checkpoint transcript", snapshot.Messages)
 	}
 }
 
@@ -740,13 +838,12 @@ func TestOrdinaryResumeAllowsACPContextWithoutHistoryReplay(t *testing.T) {
 	t.Cleanup(func() { _ = svc.Stop(context.Background(), testSession) })
 }
 
-func TestInterfaceHandoffReportsUnsettledHistoryWhenContextEndsDuringConvergence(t *testing.T) {
+func TestInterfaceHandoffReportsUnsettledHistoryWhenContextEndsBeforeRefresh(t *testing.T) {
 	st := openStore(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	conv := &nativeHistoryConversation{
+	conv := &convergingHistoryConversation{
 		fakeConversation: newFakeConversation(),
-		err:              ports.ErrChatHistoryUnsettled,
 		// End the request only after native history import is reached. A tiny
 		// wall-clock deadline here used to expire during SQLite setup under the
 		// race runner and test ClaimChatControllerGeneration instead.
@@ -764,6 +861,47 @@ func TestInterfaceHandoffReportsUnsettledHistoryWhenContextEndsDuringConvergence
 	})
 	if !errors.Is(err, ports.ErrChatHistoryUnsettled) {
 		t.Fatalf("Start error = %v, want ErrChatHistoryUnsettled", err)
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("Start error = %v, want context cancellation cause", err)
+	}
+	reads, refreshes := conv.historyAttempts()
+	if reads != 1 || refreshes != 0 {
+		t.Fatalf("history attempts = %d reads, %d refreshes; want cancellation before refresh",
+			reads, refreshes)
+	}
+}
+
+func TestInterfaceHandoffRejectsUnsettledImmutableHistoryWithoutRereading(t *testing.T) {
+	st := openStore(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	conv := &nativeHistoryConversation{
+		fakeConversation: newFakeConversation(),
+		err:              ports.ErrChatHistoryUnsettled,
+		// Cancel a forbidden second read so the test fails quickly instead of
+		// waiting the full 45s settle limit on a regression.
+		onRead: func(reads int) {
+			if reads == 2 {
+				cancel()
+			}
+		},
+	}
+	svc := chatsvc.New(chatsvc.Options{
+		Store: st, Sessions: st,
+		Drivers: fakeRegistry{driver: fakeDriver{conv: conv}},
+		Log:     slog.New(slog.DiscardHandler),
+		NewID:   func() string { return fmt.Sprintf("immutable-unsettled-%d", time.Now().UnixNano()) },
+	})
+	_, err := svc.Start(ctx, chatsvc.StartConfig{
+		SessionID: testSession, ProjectID: testProject, Harness: domain.HarnessCodex,
+		WorkspacePath: t.TempDir(), ProviderConversationID: "thread-1", RequireNativeHistory: true,
+	})
+	if !errors.Is(err, ports.ErrChatHistoryUnsettled) {
+		t.Fatalf("Start error = %v, want ErrChatHistoryUnsettled", err)
+	}
+	if reads := conv.historyReads(); reads != 1 {
+		t.Fatalf("immutable history reads = %d, want exactly one", reads)
 	}
 }
 
@@ -787,7 +925,13 @@ func TestInterfaceHandoffRejectsSettledReplayBeforeLatestSessionCheckpoint(t *te
 		// on-disk transcript is still being flushed. Empty is the strongest form of
 		// that failure: no replay event reaches the hook facts AO already observed.
 		events: nil,
-		onRead: cancel,
+		// Cancel a forbidden second read so the test fails quickly instead of
+		// waiting the full 45s settle limit on a regression.
+		onRead: func(reads int) {
+			if reads == 2 {
+				cancel()
+			}
+		},
 	}
 	svc := chatsvc.New(chatsvc.Options{
 		Store: st, Sessions: st,
@@ -803,6 +947,9 @@ func TestInterfaceHandoffRejectsSettledReplayBeforeLatestSessionCheckpoint(t *te
 	})
 	if !errors.Is(err, ports.ErrChatHistoryUnsettled) {
 		t.Fatalf("Start error = %v, want ErrChatHistoryUnsettled for stale settled replay", err)
+	}
+	if reads := conv.historyReads(); reads != 1 {
+		t.Fatalf("immutable history reads = %d, want exactly one", reads)
 	}
 }
 

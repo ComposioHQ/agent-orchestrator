@@ -1217,6 +1217,9 @@ function Timeline({
 	const [pinned, setPinned] = useState(true);
 	const [hoveredMarker, setHoveredMarker] = useState<number | null>(null);
 	const [messageEdit, setMessageEdit] = useState<MessageEditDraft>();
+	const isInspectorOpen = useUiStore(
+		(state) => state.inspectorSessions[snapshot.sessionId]?.isOpen ?? true,
+	);
 	const turn = activeTurn(snapshot);
 	const [scrollbar, setScrollbar] = useState({
 		visible: false,
@@ -1570,33 +1573,39 @@ function Timeline({
 				)}
 			>
 				<div className="absolute inset-0 cursor-grab group-active/scroll:cursor-grabbing">
-					{scrollbar.markers.map((marker, index) => {
-						const distance = hoveredMarker === null ? Number.POSITIVE_INFINITY : Math.abs(index - hoveredMarker);
-						return (
-							<span
-								key={index}
-								data-chat-scroll-marker=""
-								data-scroll-target={marker.scrollTop}
-								onPointerEnter={() => setHoveredMarker(index)}
-								className="chat-scroll-marker-hit"
-								style={{ top: marker.top }}
-							>
-								<span
-									aria-hidden="true"
-									className={cn(
-										"chat-scroll-marker",
-										marker.visible && "chat-scroll-marker-visible",
-										distance === 0 && "chat-scroll-marker-active",
-										distance === 1 && "chat-scroll-marker-adjacent",
-										distance === 2 && "chat-scroll-marker-near",
-									)}
-								/>
-							</span>
-						);
-					})}
+					{!isInspectorOpen
+						? scrollbar.markers.map((marker, index) => {
+								const distance =
+									hoveredMarker === null ? Number.POSITIVE_INFINITY : Math.abs(index - hoveredMarker);
+								return (
+									<span
+										key={index}
+										data-chat-scroll-marker=""
+										data-scroll-target={marker.scrollTop}
+										onPointerEnter={() => setHoveredMarker(index)}
+										className="chat-scroll-marker-hit"
+										style={{ top: marker.top }}
+									>
+										<span
+											aria-hidden="true"
+											className={cn(
+												"chat-scroll-marker",
+												marker.visible && "chat-scroll-marker-visible",
+												distance === 0 && "chat-scroll-marker-active",
+												distance === 1 && "chat-scroll-marker-adjacent",
+												distance === 2 && "chat-scroll-marker-near",
+											)}
+										/>
+									</span>
+								);
+							})
+						: null}
 				</div>
 
-				{hoveredMarker !== null && scrollbar.markers[hoveredMarker] && previews[hoveredMarker] ? (
+				{!isInspectorOpen &&
+				hoveredMarker !== null &&
+				scrollbar.markers[hoveredMarker] &&
+				previews[hoveredMarker] ? (
 					<div
 						role="tooltip"
 						className="chat-scroll-preview pointer-events-none absolute right-full z-20 mr-3 w-80 rounded-xl border border-border-strong bg-raised px-3.5 py-3 shadow-lg"

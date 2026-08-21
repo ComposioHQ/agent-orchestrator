@@ -107,7 +107,7 @@ beforeEach(() => {
 	terminalPaneState.props = undefined;
 	window.localStorage.clear();
 	setApiBaseUrl("http://127.0.0.1:3001");
-	useUiStore.setState({ isSidebarOpen: true });
+	useUiStore.setState({ isSidebarOpen: true, inspectorSessions: {} });
 });
 
 afterEach(() => setApiBaseUrl(null));
@@ -392,6 +392,9 @@ describe("ChatWorkspace timeline", () => {
 	});
 
 	it("provides an interactive conversation minimap", () => {
+		useUiStore.setState({
+			inspectorSessions: { "ao-long": { isOpen: false, view: "summary" } },
+		});
 		render(<ChatWorkspace snapshot={chatFixtureLongHistory(8)} />);
 		const log = screen.getByRole("log");
 		const scrollbar = screen.getByRole("scrollbar", { name: "Conversation scrollbar" });
@@ -417,7 +420,24 @@ describe("ChatWorkspace timeline", () => {
 		expect(scrollbar).toHaveAttribute("aria-valuenow", "100");
 	});
 
+	it("hides conversation minimap markers while the inspector is open", () => {
+		useUiStore.setState({
+			inspectorSessions: { "ao-long": { isOpen: true, view: "summary" } },
+		});
+		render(<ChatWorkspace snapshot={chatFixtureLongHistory(8)} />);
+		const log = screen.getByRole("log");
+		const scrollbar = screen.getByRole("scrollbar", { name: "Conversation scrollbar" });
+		stubGeometry(log, { scrollHeight: 4000, clientHeight: 800, scrollTop: 1000 });
+		stubGeometry(scrollbar, { scrollHeight: 800, clientHeight: 800, scrollTop: 0 });
+		fireEvent.scroll(log);
+
+		expect(scrollbar.querySelectorAll("[data-chat-scroll-marker]")).toHaveLength(0);
+	});
+
 	it("previews the request and response for a hovered conversation marker", () => {
+		useUiStore.setState({
+			inspectorSessions: { "ao-long": { isOpen: false, view: "summary" } },
+		});
 		render(<ChatWorkspace snapshot={chatFixtureLongHistory(4)} />);
 		const log = screen.getByRole("log");
 		const scrollbar = screen.getByRole("scrollbar", { name: "Conversation scrollbar" });
@@ -456,6 +476,9 @@ describe("ChatWorkspace timeline", () => {
 			status: "completed",
 			summary: "Automatic compaction completed",
 			createdAt: "2026-08-08T00:00:00Z",
+		});
+		useUiStore.setState({
+			inspectorSessions: { [snapshot.sessionId]: { isOpen: false, view: "summary" } },
 		});
 		render(<ChatWorkspace snapshot={snapshot} />);
 		const log = screen.getByRole("log");

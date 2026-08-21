@@ -45,6 +45,7 @@ import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "./
 import { subscribeWorkspaceFileChanges } from "../lib/workspace-file-events";
 import { Button } from "./ui/button";
 import { DiffSelectionMenu } from "./DiffSelectionMenu";
+import { ImageDiffView } from "./ImageDiffView";
 import { Input } from "./ui/input";
 
 type WorkspaceFileDetail = components["schemas"]["WorkspaceFileResponse"] & {
@@ -474,6 +475,7 @@ function ReviewFileCard({
 						<ReviewDiffBody
 							annotation={annotation}
 							detail={detailQuery.data}
+							detailLoadedAt={detailQuery.dataUpdatedAt}
 							filePath={file.path}
 							onActiveSelectionChange={setSelectionOrMenuActive}
 							sessionId={sessionId}
@@ -546,6 +548,7 @@ async function loadWorkspaceFile(sessionId: string, path: string, t: TFunction) 
 function ReviewDiffBody({
 	annotation,
 	detail,
+	detailLoadedAt,
 	filePath,
 	onActiveSelectionChange,
 	sessionId,
@@ -554,6 +557,7 @@ function ReviewDiffBody({
 }: {
 	annotation: FileAnnotationModel;
 	detail: WorkspaceFileDetail;
+	detailLoadedAt: number;
 	filePath: string;
 	onActiveSelectionChange: (active: boolean) => void;
 	sessionId: string;
@@ -562,6 +566,19 @@ function ReviewDiffBody({
 }) {
 	const { t } = useTranslation();
 	const { rows, pending } = useParsedDiff(detail.diff);
+	// An image has no readable line diff, so it renders as the images themselves
+	// rather than the binary placeholder.
+	if (detail.imageMediaType) {
+		return (
+			<ImageDiffView
+				path={detail.path}
+				sessionId={sessionId}
+				split={split}
+				status={detail.status}
+				version={detailLoadedAt}
+			/>
+		);
+	}
 	if (detail.binary) {
 		return <PanelMessage compact>{t("files.binaryUnavailable")}</PanelMessage>;
 	}

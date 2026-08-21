@@ -188,6 +188,7 @@ The CLI and daemon share the same environment-driven config:
 | `AO_REQUEST_TIMEOUT`  | `60s`                | REST request timeout.                                                                          |
 | `AO_SHUTDOWN_TIMEOUT` | `10s`                | Graceful shutdown cap.                                                                         |
 | `AO_KEEP_DAEMON`      | unset (off)          | Keep the desktop app's daemon running after the window closes; stop only via `ao stop`. (fork) |
+| `AO_DISABLE_GPU`      | unset (off)          | Skip Chromium hardware acceleration; escape hatch for broken Linux GPU drivers.                |
 
 The daemon always binds `127.0.0.1`.
 

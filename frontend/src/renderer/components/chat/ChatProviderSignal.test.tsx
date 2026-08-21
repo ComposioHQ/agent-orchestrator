@@ -319,7 +319,7 @@ describe("provider error", () => {
 			/>,
 		);
 		expect(screen.getByText("Reconnecting... [1/5]")).toBeInTheDocument();
-		expect(screen.getByText(/You have no credits remaining/i)).toBeInTheDocument();
+		expect(screen.queryByText(/You have no credits remaining/i)).not.toBeInTheDocument();
 		// The raw envelope must not paint as the row label — that is what overflowed the column.
 		expect(screen.queryByText(/codexErrorInfo/i)).not.toBeInTheDocument();
 		expect(screen.queryByText(/provider error:/i)).not.toBeInTheDocument();
@@ -341,7 +341,7 @@ describe("provider error", () => {
 			/>,
 		);
 		expect(screen.getByText("Reconnecting... [1/5]")).toBeInTheDocument();
-		expect(screen.getByText(/You have no credits remaining/i)).toBeInTheDocument();
+		expect(screen.queryByText(/You have no credits remaining/i)).not.toBeInTheDocument();
 		expect(screen.queryByText(/codexErrorInfo/i)).not.toBeInTheDocument();
 	});
 

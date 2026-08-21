@@ -335,17 +335,64 @@ WHERE id = sqlc.arg(usage_binding_id)
 
 -- name: GetModelUsageEventByKey :one
 SELECT
-    model_id, input_tokens, uncached_input_tokens,
-    cache_read_tokens, cache_write_tokens, output_tokens, reasoning_tokens
-FROM model_usage_events
-WHERE binding_id = ? AND source_event_key = ?;
+    event.id, event.provider_id, event.model_id,
+    event.input_tokens, event.input_provenance,
+    event.cached_input_tokens, event.cached_input_provenance,
+    event.uncached_input_tokens, event.uncached_input_provenance,
+    event.output_tokens, event.output_provenance,
+    event.created_at,
+    openai.openai_reasoning_output_tokens,
+    openai.openai_cache_write_input_tokens,
+    openai.openai_reported_total_tokens,
+    anthropic.anthropic_direct_uncached_input_tokens,
+    anthropic.anthropic_cache_creation_input_tokens,
+    anthropic.anthropic_cache_creation_5m_input_tokens,
+    anthropic.anthropic_cache_creation_1h_input_tokens
+FROM model_usage_events event
+LEFT JOIN openai_usage_event_details openai ON openai.event_id = event.id
+LEFT JOIN anthropic_usage_event_details anthropic ON anthropic.event_id = event.id
+WHERE event.binding_id = ? AND event.source_event_key = ?;
 
--- name: InsertModelUsageEvent :exec
+-- name: InsertModelUsageEvent :one
 INSERT INTO model_usage_events (
-    binding_id, usage_source_id, model_id, input_tokens, uncached_input_tokens,
-    cache_read_tokens, cache_write_tokens, output_tokens, reasoning_tokens,
-    source_event_key
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+    binding_id, usage_source_id, provider_id, model_id,
+    input_tokens, input_provenance,
+    cached_input_tokens, cached_input_provenance,
+    uncached_input_tokens, uncached_input_provenance,
+    output_tokens, output_provenance,
+    source_event_key, created_at
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+RETURNING id;
+
+-- name: UpsertOpenAIUsageEventDetails :execrows
+INSERT INTO openai_usage_event_details (
+    event_id, openai_reasoning_output_tokens, openai_cache_write_input_tokens,
+    openai_reported_total_tokens
+) VALUES (?, ?, ?, ?)
+ON CONFLICT (event_id) DO UPDATE SET
+    openai_reasoning_output_tokens = COALESCE(openai_usage_event_details.openai_reasoning_output_tokens, excluded.openai_reasoning_output_tokens),
+    openai_cache_write_input_tokens = COALESCE(openai_usage_event_details.openai_cache_write_input_tokens, excluded.openai_cache_write_input_tokens),
+    openai_reported_total_tokens = COALESCE(openai_usage_event_details.openai_reported_total_tokens, excluded.openai_reported_total_tokens)
+WHERE (openai_usage_event_details.openai_reasoning_output_tokens IS NULL OR excluded.openai_reasoning_output_tokens IS NULL OR openai_usage_event_details.openai_reasoning_output_tokens = excluded.openai_reasoning_output_tokens)
+  AND (openai_usage_event_details.openai_cache_write_input_tokens IS NULL OR excluded.openai_cache_write_input_tokens IS NULL OR openai_usage_event_details.openai_cache_write_input_tokens = excluded.openai_cache_write_input_tokens)
+  AND (openai_usage_event_details.openai_reported_total_tokens IS NULL OR excluded.openai_reported_total_tokens IS NULL OR openai_usage_event_details.openai_reported_total_tokens = excluded.openai_reported_total_tokens);
+
+-- name: UpsertAnthropicUsageEventDetails :execrows
+INSERT INTO anthropic_usage_event_details (
+    event_id, anthropic_direct_uncached_input_tokens,
+    anthropic_cache_creation_input_tokens,
+    anthropic_cache_creation_5m_input_tokens,
+    anthropic_cache_creation_1h_input_tokens
+) VALUES (?, ?, ?, ?, ?)
+ON CONFLICT (event_id) DO UPDATE SET
+    anthropic_direct_uncached_input_tokens = COALESCE(anthropic_usage_event_details.anthropic_direct_uncached_input_tokens, excluded.anthropic_direct_uncached_input_tokens),
+    anthropic_cache_creation_input_tokens = COALESCE(anthropic_usage_event_details.anthropic_cache_creation_input_tokens, excluded.anthropic_cache_creation_input_tokens),
+    anthropic_cache_creation_5m_input_tokens = COALESCE(anthropic_usage_event_details.anthropic_cache_creation_5m_input_tokens, excluded.anthropic_cache_creation_5m_input_tokens),
+    anthropic_cache_creation_1h_input_tokens = COALESCE(anthropic_usage_event_details.anthropic_cache_creation_1h_input_tokens, excluded.anthropic_cache_creation_1h_input_tokens)
+WHERE (anthropic_usage_event_details.anthropic_direct_uncached_input_tokens IS NULL OR excluded.anthropic_direct_uncached_input_tokens IS NULL OR anthropic_usage_event_details.anthropic_direct_uncached_input_tokens = excluded.anthropic_direct_uncached_input_tokens)
+  AND (anthropic_usage_event_details.anthropic_cache_creation_input_tokens IS NULL OR excluded.anthropic_cache_creation_input_tokens IS NULL OR anthropic_usage_event_details.anthropic_cache_creation_input_tokens = excluded.anthropic_cache_creation_input_tokens)
+  AND (anthropic_usage_event_details.anthropic_cache_creation_5m_input_tokens IS NULL OR excluded.anthropic_cache_creation_5m_input_tokens IS NULL OR anthropic_usage_event_details.anthropic_cache_creation_5m_input_tokens = excluded.anthropic_cache_creation_5m_input_tokens)
+  AND (anthropic_usage_event_details.anthropic_cache_creation_1h_input_tokens IS NULL OR excluded.anthropic_cache_creation_1h_input_tokens IS NULL OR anthropic_usage_event_details.anthropic_cache_creation_1h_input_tokens = excluded.anthropic_cache_creation_1h_input_tokens);
 
 -- name: TouchUsageBinding :exec
 UPDATE usage_bindings SET updated_at = ? WHERE id = ?;
@@ -354,15 +401,41 @@ UPDATE usage_bindings SET updated_at = ? WHERE id = ?;
 SELECT
     ub.harness,
     mue.model_id,
-    CAST(SUM(mue.input_tokens) AS INTEGER) AS input_tokens,
-    CAST(SUM(mue.uncached_input_tokens) AS INTEGER) AS uncached_input_tokens,
-    CAST(SUM(mue.cache_read_tokens) AS INTEGER) AS cache_read_tokens,
-    CAST(SUM(mue.cache_write_tokens) AS INTEGER) AS cache_write_tokens,
-    CAST(SUM(mue.output_tokens) AS INTEGER) AS output_tokens,
-    CAST(COALESCE(SUM(mue.reasoning_tokens), 0) AS INTEGER) AS reasoning_tokens,
-    COUNT(mue.reasoning_tokens) AS reasoning_event_count
+    COUNT(*) AS event_count,
+    CAST(COALESCE(SUM(mue.input_tokens), 0) AS INTEGER) AS input_tokens,
+    CAST(CASE WHEN COUNT(mue.input_tokens) <> COUNT(*) THEN 'unknown'
+         WHEN COUNT(DISTINCT mue.input_provenance) = 1 THEN MIN(mue.input_provenance)
+         ELSE 'derived' END AS TEXT) AS input_provenance,
+    CAST(COALESCE(SUM(mue.cached_input_tokens), 0) AS INTEGER) AS cached_input_tokens,
+    CAST(CASE WHEN COUNT(mue.cached_input_tokens) <> COUNT(*) THEN 'unknown'
+         WHEN COUNT(DISTINCT mue.cached_input_provenance) = 1 THEN MIN(mue.cached_input_provenance)
+         ELSE 'derived' END AS TEXT) AS cached_input_provenance,
+    CAST(COALESCE(SUM(mue.uncached_input_tokens), 0) AS INTEGER) AS uncached_input_tokens,
+    CAST(CASE WHEN COUNT(mue.uncached_input_tokens) <> COUNT(*) THEN 'unknown'
+         WHEN COUNT(DISTINCT mue.uncached_input_provenance) = 1 THEN MIN(mue.uncached_input_provenance)
+         ELSE 'derived' END AS TEXT) AS uncached_input_provenance,
+    CAST(COALESCE(SUM(mue.output_tokens), 0) AS INTEGER) AS output_tokens,
+    CAST(CASE WHEN COUNT(mue.output_tokens) <> COUNT(*) THEN 'unknown'
+         WHEN COUNT(DISTINCT mue.output_provenance) = 1 THEN MIN(mue.output_provenance)
+         ELSE 'derived' END AS TEXT) AS output_provenance,
+    COUNT(CASE WHEN mue.provider_id = 'openai' THEN 1 END) AS openai_event_count,
+    CAST(COALESCE(SUM(openai.openai_reasoning_output_tokens), 0) AS INTEGER) AS openai_reasoning_output_tokens,
+    COUNT(openai.openai_reasoning_output_tokens) AS openai_reasoning_output_event_count,
+    CAST(COALESCE(SUM(openai.openai_cache_write_input_tokens), 0) AS INTEGER) AS openai_cache_write_input_tokens,
+    COUNT(openai.openai_cache_write_input_tokens) AS openai_cache_write_input_event_count,
+    COUNT(CASE WHEN mue.provider_id = 'anthropic' THEN 1 END) AS anthropic_event_count,
+    CAST(COALESCE(SUM(anthropic.anthropic_direct_uncached_input_tokens), 0) AS INTEGER) AS anthropic_direct_uncached_input_tokens,
+    COUNT(anthropic.anthropic_direct_uncached_input_tokens) AS anthropic_direct_uncached_input_event_count,
+    CAST(COALESCE(SUM(anthropic.anthropic_cache_creation_input_tokens), 0) AS INTEGER) AS anthropic_cache_creation_input_tokens,
+    COUNT(anthropic.anthropic_cache_creation_input_tokens) AS anthropic_cache_creation_input_event_count,
+    CAST(COALESCE(SUM(anthropic.anthropic_cache_creation_5m_input_tokens), 0) AS INTEGER) AS anthropic_cache_creation_5m_input_tokens,
+    COUNT(anthropic.anthropic_cache_creation_5m_input_tokens) AS anthropic_cache_creation_5m_input_event_count,
+    CAST(COALESCE(SUM(anthropic.anthropic_cache_creation_1h_input_tokens), 0) AS INTEGER) AS anthropic_cache_creation_1h_input_tokens,
+    COUNT(anthropic.anthropic_cache_creation_1h_input_tokens) AS anthropic_cache_creation_1h_input_event_count
 FROM model_usage_events mue
 JOIN usage_bindings ub ON ub.id = mue.binding_id
+LEFT JOIN openai_usage_event_details openai ON openai.event_id = mue.id
+LEFT JOIN anthropic_usage_event_details anthropic ON anthropic.event_id = mue.id
 WHERE ub.session_id = ?
 GROUP BY ub.harness, mue.model_id
 ORDER BY SUM(mue.input_tokens + mue.output_tokens) DESC, ub.harness, mue.model_id;
@@ -375,7 +448,8 @@ SELECT CAST(COALESCE((
 -- name: ListCompactSessionUsage :many
 SELECT
     ub.session_id,
-    CAST(SUM(mue.input_tokens + mue.output_tokens) AS INTEGER) AS total_tokens,
+    CAST(COALESCE(SUM(mue.input_tokens) + SUM(mue.output_tokens), 0) AS INTEGER) AS processed_tokens,
+    CAST(COUNT(mue.input_tokens) = COUNT(*) AND COUNT(mue.output_tokens) = COUNT(*) AS INTEGER) AS processed_tokens_known,
     CAST(COALESCE(integrity.incomplete, 0) AS INTEGER) AS incomplete
 FROM model_usage_events mue
 JOIN usage_bindings ub ON ub.id = mue.binding_id

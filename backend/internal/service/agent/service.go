@@ -66,6 +66,8 @@ type Info struct {
 	ID         string                `json:"id"`
 	Label      string                `json:"label"`
 	AuthStatus ports.AgentAuthStatus `json:"authStatus,omitempty" enum:"authorized,unauthorized,unknown" description:"Advisory local auth probe result. authorized means a recent local probe passed; spawn remains the authoritative validation point."`
+	UsageCount int                   `json:"usageCount,omitempty" description:"Number of retained sessions currently attributed to this agent."`
+	LastUsedAt *time.Time            `json:"lastUsedAt,omitempty" format:"date-time" description:"Creation time of the newest retained session currently attributed to this agent."`
 }
 
 // Inventory describes all daemon-supported agents and best-effort local probe
@@ -91,6 +93,7 @@ type Service struct {
 	inventoryCache ports.AgentInventoryCache
 	discoverer     ports.AgentModelDiscoverer
 	projects       ProjectLookup
+	sessions       SessionUsageLookup
 	resolverMu     map[string]*sync.Mutex
 	modelCallMu    sync.Mutex
 	modelCalls     map[string]*modelCatalogCall
@@ -109,12 +112,19 @@ type Deps struct {
 	InventoryCache ports.AgentInventoryCache
 	Discoverer     ports.AgentModelDiscoverer
 	Projects       ProjectLookup
+	Sessions       SessionUsageLookup
 }
 
 // ProjectLookup resolves the registered working directory used for model
 // discovery. The SQLite store satisfies this narrow read boundary.
 type ProjectLookup interface {
 	GetProject(ctx context.Context, id string) (domain.ProjectRecord, bool, error)
+}
+
+// SessionUsageLookup provides durable session facts used to rank agent choices.
+// The SQLite store satisfies this narrow read boundary.
+type SessionUsageLookup interface {
+	ListAllSessions(ctx context.Context) ([]domain.SessionRecord, error)
 }
 
 // New returns an agent inventory service backed by the daemon's shipped
@@ -128,6 +138,7 @@ func NewWithDeps(deps Deps) *Service {
 	svc := newService(agentregistry.Harnessed(), deps.Cache, deps.Projects, deps.Discoverer)
 	svc.inventoryCache = deps.InventoryCache
 	svc.inventoryLoaded = deps.InventoryCache == nil
+	svc.sessions = deps.Sessions
 	return svc
 }
 
@@ -166,14 +177,26 @@ func (s *Service) List(ctx context.Context) (Inventory, error) {
 		}
 	}
 	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return cloneInventory(s.inventory), nil
+	inventory := cloneInventory(s.inventory)
+	s.mu.RUnlock()
+	return s.withSessionUsage(ctx, inventory)
 }
 
 // Refresh runs the bounded local binary/auth probes, updates the cached
 // inventory, and returns the new snapshot. Refreshes are serialized and
 // rate-limited so repeated frontend reloads cannot stampede agent CLIs.
 func (s *Service) Refresh(ctx context.Context) (Inventory, error) {
+	return s.refresh(ctx, false)
+}
+
+// RefreshFresh runs the full inventory probe even when a recent Refresh would
+// normally return the rate-limited cache. Use it for explicit user recovery
+// checks after an install may have changed PATH-visible binaries.
+func (s *Service) RefreshFresh(ctx context.Context) (Inventory, error) {
+	return s.refresh(ctx, true)
+}
+
+func (s *Service) refresh(ctx context.Context, force bool) (Inventory, error) {
 	if err := ctx.Err(); err != nil {
 		return Inventory{}, err
 	}
@@ -185,10 +208,10 @@ func (s *Service) Refresh(ctx context.Context) (Inventory, error) {
 	_ = s.loadCachedInventory(ctx)
 
 	s.mu.RLock()
-	if !s.lastRefresh.IsZero() && time.Since(s.lastRefresh) < agentRefreshMinInterval {
+	if !force && !s.lastRefresh.IsZero() && time.Since(s.lastRefresh) < agentRefreshMinInterval {
 		cached := cloneInventory(s.inventory)
 		s.mu.RUnlock()
-		return cached, nil
+		return s.withSessionUsage(ctx, cached)
 	}
 	s.mu.RUnlock()
 
@@ -241,7 +264,49 @@ func (s *Service) Refresh(ctx context.Context) (Inventory, error) {
 	s.inventoryLoaded = true
 	s.lastRefresh = time.Now()
 	s.mu.Unlock()
-	return next, nil
+	return s.withSessionUsage(ctx, next)
+}
+
+type sessionUsage struct {
+	count      int
+	lastUsedAt time.Time
+}
+
+func (s *Service) withSessionUsage(ctx context.Context, inventory Inventory) (Inventory, error) {
+	if s.sessions == nil {
+		return inventory, nil
+	}
+	records, err := s.sessions.ListAllSessions(ctx)
+	if err != nil {
+		return Inventory{}, fmt.Errorf("list sessions for agent usage: %w", err)
+	}
+	usageByAgent := make(map[string]sessionUsage)
+	for _, record := range records {
+		if record.Harness == "" {
+			continue
+		}
+		usage := usageByAgent[string(record.Harness)]
+		usage.count++
+		if record.CreatedAt.After(usage.lastUsedAt) {
+			usage.lastUsedAt = record.CreatedAt
+		}
+		usageByAgent[string(record.Harness)] = usage
+	}
+	decorate := func(infos []Info) {
+		for i := range infos {
+			usage := usageByAgent[infos[i].ID]
+			infos[i].UsageCount = usage.count
+			if !usage.lastUsedAt.IsZero() {
+				lastUsedAt := usage.lastUsedAt
+				infos[i].LastUsedAt = &lastUsedAt
+			}
+		}
+		sortInfosByUsage(infos)
+	}
+	decorate(inventory.Supported)
+	decorate(inventory.Installed)
+	decorate(inventory.Authorized)
+	return inventory, nil
 }
 
 func (s *Service) loadCachedInventory(ctx context.Context) error {
@@ -623,6 +688,28 @@ func authStatus(ctx context.Context, a ports.Agent) ports.AgentAuthStatus {
 
 func sortInfos(infos []Info) {
 	sort.Slice(infos, func(i, j int) bool {
+		return infos[i].ID < infos[j].ID
+	})
+}
+
+func sortInfosByUsage(infos []Info) {
+	sort.SliceStable(infos, func(i, j int) bool {
+		if infos[i].UsageCount != infos[j].UsageCount {
+			return infos[i].UsageCount > infos[j].UsageCount
+		}
+		var left, right time.Time
+		if infos[i].LastUsedAt != nil {
+			left = *infos[i].LastUsedAt
+		}
+		if infos[j].LastUsedAt != nil {
+			right = *infos[j].LastUsedAt
+		}
+		if !left.Equal(right) {
+			return left.After(right)
+		}
+		if infos[i].Label != infos[j].Label {
+			return infos[i].Label < infos[j].Label
+		}
 		return infos[i].ID < infos[j].ID
 	})
 }

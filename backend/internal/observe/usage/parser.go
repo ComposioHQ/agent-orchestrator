@@ -240,6 +240,7 @@ func validSHA256Digest(value string) bool {
 type claudeTranscriptRecord struct {
 	Type        string `json:"type"`
 	UUID        string `json:"uuid"`
+	Timestamp   string `json:"timestamp"`
 	IsSidechain bool   `json:"isSidechain"`
 	Message     struct {
 		ID         string  `json:"id"`
@@ -250,11 +251,16 @@ type claudeTranscriptRecord struct {
 			CacheCreationInputTokens int64 `json:"cache_creation_input_tokens"`
 			CacheReadInputTokens     int64 `json:"cache_read_input_tokens"`
 			OutputTokens             int64 `json:"output_tokens"`
+			CacheCreation            *struct {
+				Ephemeral5mInputTokens int64 `json:"ephemeral_5m_input_tokens"`
+				Ephemeral1hInputTokens int64 `json:"ephemeral_1h_input_tokens"`
+			} `json:"cache_creation"`
 		} `json:"usage"`
 	} `json:"message"`
 }
 
 func parseClaude(source domain.UsageSourceContext, records []jsonlRecord, state *claudeParserStateV1, result *parseResult) {
+	eventsByKey := make(map[string]domain.ModelUsageEvent)
 	for _, record := range records {
 		var native claudeTranscriptRecord
 		if err := json.Unmarshal(record.Data, &native); err != nil {
@@ -267,24 +273,24 @@ func parseClaude(source domain.UsageSourceContext, records []jsonlRecord, state 
 		if source.Source.Kind == domain.UsageSourceClaudeMain && native.IsSidechain {
 			continue
 		}
+		if strings.EqualFold(strings.TrimSpace(native.Message.Model), "<synthetic>") {
+			continue
+		}
 		usage := native.Message.Usage
-		input, ok := sumNonNegative(
+		var creation5m, creation1h *int64
+		if usage.CacheCreation != nil {
+			creation5m = int64Ptr(usage.CacheCreation.Ephemeral5mInputTokens)
+			creation1h = int64Ptr(usage.CacheCreation.Ephemeral1hInputTokens)
+		}
+		tokens, details, ok := normalizeAnthropicUsage(
 			usage.InputTokens,
 			usage.CacheCreationInputTokens,
 			usage.CacheReadInputTokens,
+			usage.OutputTokens,
+			creation5m,
+			creation1h,
 		)
-		if !ok || usage.OutputTokens < 0 {
-			recordMalformed(result)
-			continue
-		}
-		tokens := domain.UsageTokenMetrics{
-			InputTokens:         input,
-			UncachedInputTokens: usage.InputTokens,
-			CacheReadTokens:     usage.CacheReadInputTokens,
-			CacheWriteTokens:    usage.CacheCreationInputTokens,
-			OutputTokens:        usage.OutputTokens,
-		}
-		if !validTokenMetrics(tokens) {
+		if !ok {
 			recordMalformed(result)
 			continue
 		}
@@ -292,8 +298,11 @@ func parseClaude(source domain.UsageSourceContext, records []jsonlRecord, state 
 		state.ModelID = model
 		keyID := firstNonEmpty(native.Message.ID, native.UUID, strconv.FormatInt(record.Offset, 10))
 		event := domain.ModelUsageEvent{
-			ModelID: model,
-			Tokens:  tokens,
+			ProviderID:      domain.UsageProviderAnthropic,
+			ModelID:         model,
+			Tokens:          tokens,
+			ProviderDetails: domain.UsageProviderDetails{Anthropic: &details},
+			CreatedAt:       parseUsageTimestamp(native.Timestamp),
 			SourceEventKey: stableSourceEventKey(
 				"claude",
 				source.NativeRootID,
@@ -303,6 +312,14 @@ func parseClaude(source domain.UsageSourceContext, records []jsonlRecord, state 
 				keyID,
 			),
 		}
+		if existing, duplicate := eventsByKey[event.SourceEventKey]; duplicate {
+			if !usageEventsEqual(existing, event) {
+				result.Cursor.AnomalyCount++
+				result.Cursor.LastErrorCode = domain.UsageErrorSourceEventConflict
+			}
+			continue
+		}
+		eventsByKey[event.SourceEventKey] = event
 		result.Events = append(result.Events, event)
 	}
 }
@@ -520,27 +537,29 @@ func parseCodexEvent(source domain.UsageSourceContext, envelope codexEnvelope, s
 	var payload struct {
 		Type string `json:"type"`
 		Info *struct {
-			Total              codexTokenVector `json:"total_token_usage"`
-			ModelContextWindow int64            `json:"model_context_window"`
+			Total              codexTokenVector  `json:"total_token_usage"`
+			Last               *codexTokenVector `json:"last_token_usage"`
+			ModelContextWindow int64             `json:"model_context_window"`
 		} `json:"info"`
 	}
 	if err := json.Unmarshal(envelope.Payload, &payload); err != nil || payload.Type != "token_count" || payload.Info == nil {
 		return
 	}
 	total := payload.Info.Total
-	if !validCodexTotal(total) {
-		recordMalformed(result)
+	if isCodexContextFill(total, payload.Info.ModelContextWindow) {
+		state.Baseline = codexTokenVector{}
 		return
 	}
-	if isCodexContextFill(total, payload.Info.ModelContextWindow) {
-		state.Baseline = total
+	if !validCodexTotal(total) {
+		recordMalformed(result)
 		return
 	}
 	if total.InputTokens < state.Baseline.InputTokens ||
 		total.CachedInputTokens < state.Baseline.CachedInputTokens ||
 		total.CacheWriteInputTokens < state.Baseline.CacheWriteInputTokens ||
 		total.OutputTokens < state.Baseline.OutputTokens ||
-		total.ReasoningOutputTokens < state.Baseline.ReasoningOutputTokens {
+		total.ReasoningOutputTokens < state.Baseline.ReasoningOutputTokens ||
+		(total.TotalTokens != 0 && state.Baseline.TotalTokens != 0 && total.TotalTokens < state.Baseline.TotalTokens) {
 		result.Cursor.AnomalyCount++
 		result.Cursor.LastErrorCode = domain.UsageErrorNonMonotonicCumulativeUsage
 		state.Baseline = total
@@ -551,34 +570,62 @@ func parseCodexEvent(source domain.UsageSourceContext, envelope codexEnvelope, s
 	cacheWrite := total.CacheWriteInputTokens - state.Baseline.CacheWriteInputTokens
 	output := total.OutputTokens - state.Baseline.OutputTokens
 	reasoning := total.ReasoningOutputTokens - state.Baseline.ReasoningOutputTokens
-	state.Baseline = total
-	if input == 0 && output == 0 && cacheWrite == 0 {
+	reportedTotal := int64(0)
+	if total.TotalTokens != 0 {
+		if state.Baseline.TotalTokens != 0 {
+			reportedTotal = total.TotalTokens - state.Baseline.TotalTokens
+		} else {
+			reportedTotal = input + output
+		}
+	}
+	delta := codexTokenVector{
+		InputTokens: input, CachedInputTokens: cached, CacheWriteInputTokens: cacheWrite,
+		OutputTokens: output, ReasoningOutputTokens: reasoning, TotalTokens: reportedTotal,
+	}
+	selected := delta
+	if payload.Info.Last != nil {
+		last := *payload.Info.Last
+		if !validCodexTotal(last) {
+			result.Cursor.AnomalyCount++
+			result.Cursor.LastErrorCode = domain.UsageErrorNonMonotonicCumulativeUsage
+			state.Baseline = total
+			return
+		}
+		if !codexVectorMatchesDelta(last, input, cached, cacheWrite, output, reasoning, reportedTotal) {
+			result.Cursor.AnomalyCount++
+			result.Cursor.LastErrorCode = domain.UsageErrorNonMonotonicCumulativeUsage
+			selected = last
+		} else if selected.TotalTokens == 0 && last.TotalTokens != 0 {
+			selected.TotalTokens = last.TotalTokens
+		}
+	}
+	if selected.InputTokens == 0 && selected.CachedInputTokens == 0 && selected.OutputTokens == 0 &&
+		selected.CacheWriteInputTokens == 0 && selected.ReasoningOutputTokens == 0 {
+		state.Baseline = total
 		return
 	}
-	uncached := input - cached - cacheWrite
-	if uncached < 0 {
-		uncached = 0
+	tokens, details, ok := normalizeOpenAIUsage(
+		selected.InputTokens,
+		selected.CachedInputTokens,
+		selected.CacheWriteInputTokens,
+		selected.OutputTokens,
+		selected.ReasoningOutputTokens,
+		selected.TotalTokens,
+	)
+	if !ok {
 		result.Cursor.AnomalyCount++
 		result.Cursor.LastErrorCode = domain.UsageErrorNonMonotonicCumulativeUsage
+		return
 	}
+	state.Baseline = total
 	model := firstNonEmpty(state.ModelID, source.InitialModelID, "unknown")
 	state.ModelID = model
-	tokens := domain.UsageTokenMetrics{
-		InputTokens:         input,
-		UncachedInputTokens: uncached,
-		CacheReadTokens:     cached,
-		CacheWriteTokens:    cacheWrite,
-		OutputTokens:        output,
-		ReasoningTokens:     int64Ptr(reasoning),
-	}
-	if !validTokenMetrics(tokens) {
-		result.Cursor.AnomalyCount++
-		result.Cursor.LastErrorCode = domain.UsageErrorNonMonotonicCumulativeUsage
-		return
-	}
 	event := domain.ModelUsageEvent{
-		ModelID: model,
-		Tokens:  tokens,
+		ProviderID:      domain.UsageProviderOpenAI,
+		ModelID:         model,
+		Tokens:          tokens,
+		ProviderDetails: domain.UsageProviderDetails{OpenAI: &details},
+		CreatedAt:       parseUsageTimestamp(envelope.Timestamp),
 		SourceEventKey: stableSourceEventKey(
 			"codex",
 			source.NativeRootID,
@@ -608,7 +655,8 @@ func validCodexTotal(total codexTokenVector) bool {
 		total.CacheWriteInputTokens > total.InputTokens-total.CachedInputTokens {
 		return false
 	}
-	return total.ReasoningOutputTokens <= total.OutputTokens
+	return total.ReasoningOutputTokens <= total.OutputTokens &&
+		(total.TotalTokens == 0 || total.TotalTokens == total.InputTokens+total.OutputTokens)
 }
 
 func isCodexContextFill(total codexTokenVector, modelContextWindow int64) bool {
@@ -621,23 +669,89 @@ func isCodexContextFill(total codexTokenVector, modelContextWindow int64) bool {
 		total.TotalTokens == modelContextWindow
 }
 
-func validTokenMetrics(tokens domain.UsageTokenMetrics) bool {
-	if tokens.InputTokens < 0 || tokens.UncachedInputTokens < 0 ||
-		tokens.CacheReadTokens < 0 || tokens.CacheWriteTokens < 0 ||
-		tokens.OutputTokens < 0 {
+func normalizeOpenAIUsage(input, cachedInput, cacheWriteInput, output, reasoningOutput, reportedTotal int64) (domain.UsageTokenMetrics, domain.OpenAIUsageDetails, bool) {
+	if input < 0 || cachedInput < 0 || cachedInput > input || cacheWriteInput < 0 ||
+		cacheWriteInput > input-cachedInput || output < 0 || reasoningOutput < 0 || reasoningOutput > output ||
+		reportedTotal < 0 || (reportedTotal != 0 && reportedTotal != input+output) {
+		return domain.UsageTokenMetrics{}, domain.OpenAIUsageDetails{}, false
+	}
+	uncachedInput := input - cachedInput
+	metrics := domain.UsageTokenMetrics{
+		InputTokens:         int64Ptr(input),
+		CachedInputTokens:   int64Ptr(cachedInput),
+		UncachedInputTokens: int64Ptr(uncachedInput),
+		OutputTokens:        int64Ptr(output),
+		Provenance: domain.UsageMetricProvenanceSet{
+			InputTokens: domain.UsageMetricReported, CachedInputTokens: domain.UsageMetricReported,
+			UncachedInputTokens: domain.UsageMetricDerived,
+			OutputTokens:        domain.UsageMetricReported,
+		},
+	}
+	details := domain.OpenAIUsageDetails{
+		ReasoningOutputTokens: int64Ptr(reasoningOutput), CacheWriteInputTokens: int64Ptr(cacheWriteInput),
+	}
+	if reportedTotal != 0 || input+output == 0 {
+		details.ReportedTotalTokens = int64Ptr(reportedTotal)
+	}
+	return metrics, details, true
+}
+
+func normalizeAnthropicUsage(directInput, cacheCreationInput, cachedInput, output int64, creation5m, creation1h *int64) (domain.UsageTokenMetrics, domain.AnthropicUsageDetails, bool) {
+	uncachedInput, ok := sumNonNegative(directInput, cacheCreationInput)
+	if !ok {
+		return domain.UsageTokenMetrics{}, domain.AnthropicUsageDetails{}, false
+	}
+	input, ok := sumNonNegative(cachedInput, uncachedInput)
+	if !ok || output < 0 || !validAnthropicCacheCreation(cacheCreationInput, creation5m, creation1h) {
+		return domain.UsageTokenMetrics{}, domain.AnthropicUsageDetails{}, false
+	}
+	return domain.UsageTokenMetrics{
+			InputTokens:         int64Ptr(input),
+			CachedInputTokens:   int64Ptr(cachedInput),
+			UncachedInputTokens: int64Ptr(uncachedInput),
+			OutputTokens:        int64Ptr(output),
+			Provenance: domain.UsageMetricProvenanceSet{
+				InputTokens: domain.UsageMetricDerived, CachedInputTokens: domain.UsageMetricReported,
+				UncachedInputTokens: domain.UsageMetricDerived,
+				OutputTokens:        domain.UsageMetricReported,
+			},
+		}, domain.AnthropicUsageDetails{
+			DirectUncachedInputTokens: int64Ptr(directInput), CacheCreationInputTokens: int64Ptr(cacheCreationInput),
+			CacheCreation5mInputTokens: creation5m, CacheCreation1hInputTokens: creation1h,
+		}, true
+}
+
+func validAnthropicCacheCreation(total int64, creation5m, creation1h *int64) bool {
+	if creation5m == nil && creation1h == nil {
+		return true
+	}
+	if creation5m == nil || creation1h == nil || *creation5m < 0 || *creation1h < 0 {
 		return false
 	}
-	if tokens.UncachedInputTokens > tokens.InputTokens ||
-		tokens.CacheReadTokens > tokens.InputTokens ||
-		tokens.CacheWriteTokens > tokens.InputTokens {
-		return false
+	return *creation5m <= total && *creation1h <= total-*creation5m
+}
+
+func codexVectorMatchesDelta(last codexTokenVector, input, cachedInput, cacheWriteInput, output, reasoningOutput, total int64) bool {
+	return validCodexTotal(last) && last.InputTokens == input && last.CachedInputTokens == cachedInput &&
+		last.CacheWriteInputTokens == cacheWriteInput && last.OutputTokens == output &&
+		last.ReasoningOutputTokens == reasoningOutput &&
+		(last.TotalTokens == 0 || total == 0 || last.TotalTokens == total)
+}
+
+func parseUsageTimestamp(raw string) time.Time {
+	parsed, err := time.Parse(time.RFC3339Nano, raw)
+	if err != nil {
+		return time.Time{}
 	}
-	if tokens.CacheReadTokens > tokens.InputTokens-tokens.UncachedInputTokens ||
-		tokens.CacheWriteTokens > tokens.InputTokens-tokens.UncachedInputTokens-tokens.CacheReadTokens {
-		return false
-	}
-	return tokens.ReasoningTokens == nil ||
-		(*tokens.ReasoningTokens >= 0 && *tokens.ReasoningTokens <= tokens.OutputTokens)
+	return parsed.UTC()
+}
+
+func usageEventsEqual(a, b domain.ModelUsageEvent) bool {
+	a.CreatedAt, b.CreatedAt = time.Time{}, time.Time{}
+	a.SourceEventKey, b.SourceEventKey = "", ""
+	left, _ := json.Marshal(a)
+	right, _ := json.Marshal(b)
+	return bytes.Equal(left, right)
 }
 
 func sumNonNegative(values ...int64) (int64, bool) {
