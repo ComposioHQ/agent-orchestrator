@@ -973,13 +973,13 @@ class ChromiumCookieDecryptor {
 
 	decrypt(encrypted: Buffer, host: string): string | null {
 		if (encrypted.length === 0 || !this.key) return null;
-		if (this.platform === "win32") return decryptWindowsChromiumCookie(encrypted, this.key);
+		if (this.platform === "win32") return decryptWindowsChromiumCookie(encrypted, this.key, host);
 		if (this.platform === "darwin") return decryptMacChromiumCookie(encrypted, this.key, host);
 		return null;
 	}
 }
 
-function decryptWindowsChromiumCookie(encrypted: Buffer, key: Buffer): string | null {
+export function decryptWindowsChromiumCookie(encrypted: Buffer, key: Buffer, host: string): string | null {
 	if (encrypted.subarray(0, 3).toString() !== "v10" && encrypted.subarray(0, 3).toString() !== "v11") return null;
 	if (encrypted.length < 3 + 12 + 16) return null;
 	try {
@@ -989,7 +989,10 @@ function decryptWindowsChromiumCookie(encrypted: Buffer, key: Buffer): string | 
 		const authTag = payload.subarray(-16);
 		const decipher = createDecipheriv("aes-256-gcm", key, nonce);
 		decipher.setAuthTag(authTag);
-		return Buffer.concat([decipher.update(ciphertext), decipher.final()]).toString("utf8");
+		return stripChromiumCookieHostDigest(
+			Buffer.concat([decipher.update(ciphertext), decipher.final()]),
+			host,
+		).toString("utf8");
 	} catch {
 		return null;
 	}
@@ -1001,13 +1004,21 @@ function decryptMacChromiumCookie(encrypted: Buffer, password: Buffer, host: str
 	try {
 		const key = pbkdf2Sync(password, "saltysalt", 1_003, 16, "sha1");
 		const decipher = createDecipheriv("aes-128-cbc", key, Buffer.alloc(16, 0x20));
-		let plaintext = Buffer.concat([decipher.update(encrypted.subarray(3)), decipher.final()]);
-		const hostDigest = createHash("sha256").update(host).digest();
-		if (plaintext.subarray(0, hostDigest.length).equals(hostDigest)) plaintext = plaintext.subarray(hostDigest.length);
-		return plaintext.toString("utf8");
+		const plaintext = Buffer.concat([decipher.update(encrypted.subarray(3)), decipher.final()]);
+		return stripChromiumCookieHostDigest(plaintext, host).toString("utf8");
 	} catch {
 		return null;
 	}
+}
+
+function stripChromiumCookieHostDigest(plaintext: Buffer, host: string): Buffer {
+	// Chromium cookie DB v24 prefixes encrypted values with SHA-256(host_key)
+	// and verifies/removes it after platform decryption. Older databases do not,
+	// so only strip an exact digest match.
+	const hostDigest = createHash("sha256").update(host).digest();
+	return plaintext.subarray(0, hostDigest.length).equals(hostDigest)
+		? plaintext.subarray(hostDigest.length)
+		: plaintext;
 }
 
 async function windowsDPAPIUnprotect(input: Buffer): Promise<Buffer | null> {

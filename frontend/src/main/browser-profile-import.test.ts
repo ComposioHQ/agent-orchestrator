@@ -1,10 +1,11 @@
+import { createCipheriv, createHash } from "node:crypto";
 import { mkdir, mkdtemp, rm, symlink, truncate, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import Database from "better-sqlite3";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { BrowserHistoryStore } from "./browser-history-store";
-import { BrowserProfileImportService } from "./browser-profile-import";
+import { BrowserProfileImportService, decryptWindowsChromiumCookie } from "./browser-profile-import";
 import { BrowserProfileStore } from "./browser-profile-store";
 
 const temporaryDirectories: string[] = [];
@@ -93,6 +94,22 @@ function chromiumMicros(iso: string): number {
 }
 
 describe("BrowserProfileImportService", () => {
+	it("removes Chromium v24's domain hash from decrypted Windows cookie values", () => {
+		const host = ".example.com";
+		const key = Buffer.alloc(32, 0x11);
+		const nonce = Buffer.alloc(12, 0x22);
+		const cipher = createCipheriv("aes-256-gcm", key, nonce);
+		const plaintext = Buffer.concat([
+			createHash("sha256").update(host).digest(),
+			Buffer.from("usable-cookie-value"),
+		]);
+		const ciphertext = Buffer.concat([cipher.update(plaintext), cipher.final()]);
+		const encrypted = Buffer.concat([Buffer.from("v10"), nonce, ciphertext, cipher.getAuthTag()]);
+
+		expect(decryptWindowsChromiumCookie(encrypted, key, host)).toBe("usable-cookie-value");
+		expect(decryptWindowsChromiumCookie(encrypted, key, ".wrong.example")).not.toBe("usable-cookie-value");
+	});
+
 	it("imports a transaction-consistent Firefox snapshot while the source databases are open", async () => {
 		const root = await fixtureRoot();
 		const fixture = await createLiveFirefoxFixture(root);
