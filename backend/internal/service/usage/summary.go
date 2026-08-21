@@ -3,6 +3,7 @@ package usage
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/apierr"
@@ -44,6 +45,14 @@ func (r *SummaryReader) Get(ctx context.Context, sessionID domain.SessionID) (do
 	if err != nil {
 		return domain.SessionUsageSummary{}, err
 	}
+	visibleModels := make([]domain.UsageModelAggregate, 0, len(models))
+	for _, model := range models {
+		if strings.EqualFold(strings.TrimSpace(model.ModelID), "<synthetic>") {
+			continue
+		}
+		visibleModels = append(visibleModels, model)
+	}
+	models = visibleModels
 	incomplete, err := r.store.GetUsageSessionIncomplete(ctx, sessionID)
 	if err != nil {
 		return domain.SessionUsageSummary{}, err

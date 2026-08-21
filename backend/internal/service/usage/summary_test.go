@@ -63,6 +63,10 @@ func TestSummaryReaderGetAggregatesModelsAndIntegrity(t *testing.T) {
 		session:    domain.SessionRecord{ID: "reverb-12", Harness: domain.HarnessCodex},
 		models: []domain.UsageModelAggregate{
 			{
+				Harness: domain.HarnessClaudeCode, ModelID: "<synthetic>",
+				Tokens: testUsageMetrics(0, 0, 0, 0, domain.UsageMetricDerived),
+			},
+			{
 				Harness: domain.HarnessCodex, ModelID: "gpt-5.6",
 				Tokens: testUsageMetrics(1000, 400, 600, 200, domain.UsageMetricReported),
 				ProviderDetails: domain.UsageProviderDetails{OpenAI: &domain.OpenAIUsageDetails{
@@ -91,6 +95,13 @@ func TestSummaryReaderGetAggregatesModelsAndIntegrity(t *testing.T) {
 	}
 	if len(got.Harnesses) != 2 || got.Harnesses[0].Models[0].ModelID != "gpt-5.6" {
 		t.Fatalf("harnesses = %+v", got.Harnesses)
+	}
+	for _, harness := range got.Harnesses {
+		for _, model := range harness.Models {
+			if model.ModelID == "<synthetic>" {
+				t.Fatalf("synthetic model leaked into summary: %+v", got.Harnesses)
+			}
+		}
 	}
 	if got.Harnesses[0].Totals.ProcessedTokens == nil || *got.Harnesses[0].Totals.ProcessedTokens != 1200 ||
 		got.Harnesses[0].Models[0].Totals.ProcessedTokens == nil || *got.Harnesses[0].Models[0].Totals.ProcessedTokens != 1200 ||

@@ -52,6 +52,24 @@ func TestParseClaudeSubagentIncludesSidechainTranscript(t *testing.T) {
 	}
 }
 
+func TestParseClaudeSkipsSyntheticControlResponses(t *testing.T) {
+	source := usageSource(domain.UsageSourceClaudeMain)
+	source.InitialModelID = "claude-fallback"
+	records := []jsonlRecord{
+		{Data: []byte(`{"type":"assistant","uuid":"synthetic","message":{"id":"synthetic","model":"<synthetic>","stop_reason":"stop_sequence","usage":{"input_tokens":0,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":0}}}`)},
+		{Data: []byte(`{"type":"assistant","uuid":"real","message":{"id":"real","stop_reason":"end_turn","usage":{"input_tokens":8,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":2}}}`)},
+	}
+
+	result := parseRecords(source, records, 400, time.Unix(1700000000, 0).UTC())
+	if len(result.Events) != 1 || result.Events[0].ModelID != "claude-fallback" {
+		t.Fatalf("events = %+v, want only the real fallback-model event", result.Events)
+	}
+	state := parserStateFromResult(t, result, domain.UsageSourceClaudeMain)
+	if state.Claude.ModelID != "claude-fallback" {
+		t.Fatalf("Claude parser state model = %q, want fallback model", state.Claude.ModelID)
+	}
+}
+
 func TestParseClaudeReferenceUsageDeduplicatesLogicalResponses(t *testing.T) {
 	source := usageSource(domain.UsageSourceClaudeMain)
 	type response struct {

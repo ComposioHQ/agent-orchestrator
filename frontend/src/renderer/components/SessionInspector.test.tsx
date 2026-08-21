@@ -771,14 +771,24 @@ describe("SessionInspector PR section", () => {
 describe("SessionInspector usage", () => {
 	it("shows detailed token statistics only when Developer Mode is enabled", async () => {
 		useUiStore.getState().setDeveloperMode(true);
+		const totals = {
+			inputTokens: 1200,
+			cachedInputTokens: 1000,
+			uncachedInputTokens: 200,
+			cachedOutputTokens: 0,
+			outputTokens: 300,
+			processedTokens: 1500,
+			provenance: { inputTokens: "reported", cachedInputTokens: "reported", uncachedInputTokens: "derived", cachedOutputTokens: "unsupported", outputTokens: "reported" },
+			providerDetails: { openai: { openaiReasoningOutputTokens: 5, openaiCacheWriteInputTokens: 0 } },
+		};
 		getMock.mockImplementation(async (path: string) => {
 			if (path === "/api/v1/usage/sessions/{sessionId}") {
 				return {
 					data: {
 						sessionId: "sess-1",
 						incomplete: false,
-						totals: { inputTokens: 1200, cachedInputTokens: 1000, uncachedInputTokens: 200, cachedOutputTokens: 0, outputTokens: 300, processedTokens: 1500, provenance: { inputTokens: "reported", cachedInputTokens: "reported", uncachedInputTokens: "derived", cachedOutputTokens: "unsupported", outputTokens: "reported" }, providerDetails: { openai: { openaiReasoningOutputTokens: 5, openaiCacheWriteInputTokens: 0 } } },
-						harnesses: [{ harness: "codex", totals: { inputTokens: 1200, cachedInputTokens: 1000, uncachedInputTokens: 200, cachedOutputTokens: 0, outputTokens: 300, processedTokens: 1500, provenance: { inputTokens: "reported", cachedInputTokens: "reported", uncachedInputTokens: "derived", cachedOutputTokens: "unsupported", outputTokens: "reported" }, providerDetails: { openai: { openaiReasoningOutputTokens: 5, openaiCacheWriteInputTokens: 0 } } }, models: [] }],
+						totals,
+						harnesses: [{ harness: "codex", totals, models: [{ modelId: "gpt-5.5", totals }, { modelId: "gpt-5.5-mini", totals }] }],
 					},
 					error: undefined,
 				};
@@ -792,7 +802,7 @@ describe("SessionInspector usage", () => {
 		expect(screen.getByLabelText("1,500 tokens processed")).toBeInTheDocument();
 		const metrics = screen.getAllByTestId("session-usage-metrics")[0];
 		expect(within(metrics).getAllByRole("term").map((term) => term.textContent)).toEqual([
-			"Uncached Input", "Total Input", "Cached Input", "Total Output",
+			"Fresh Input", "Total Input", "Cached Input", "Total Output",
 		]);
 		expect(within(metrics).getByLabelText("Cached Input: 1,000 tokens; 83.3% hit")).toHaveTextContent(
 			"1K · 83.3% hit",
@@ -800,7 +810,67 @@ describe("SessionInspector usage", () => {
 		expect(within(metrics).queryByText("Cached Output")).not.toBeInTheDocument();
 		expect(screen.queryByText("Cache write tokens")).not.toBeInTheDocument();
 		expect(screen.queryByText("Reasoning (included in output)")).not.toBeInTheDocument();
-		expect(screen.getByText("Codex")).toBeInTheDocument();
+		const agentAttribution = screen.getByText("Codex").parentElement;
+		expect(agentAttribution?.querySelector("img")).toBeInTheDocument();
+		const agentDisclosure = screen.getByRole("button", { name: "Codex usage details" });
+		await userEvent.click(agentDisclosure);
+		const details = screen.getByRole("region", { name: "Codex usage peek" });
+		expect(within(details).getByRole("button", { name: "GPT 5.5 usage details" })).toBeInTheDocument();
+		expect(within(details).getByRole("button", { name: "GPT 5.5 Mini usage details" })).toBeInTheDocument();
+		expect(within(details).queryByText("2 models")).not.toBeInTheDocument();
+		expect(within(details).queryByText("Processed")).not.toBeInTheDocument();
+		expect(within(details).queryByText("Cost")).not.toBeInTheDocument();
+	});
+
+	it("shows icon disclosures without repeated metrics when multiple agents contributed", async () => {
+		useUiStore.getState().setDeveloperMode(true);
+		const totals = {
+			inputTokens: 1200,
+			cachedInputTokens: 1000,
+			uncachedInputTokens: 200,
+			cachedOutputTokens: 0,
+			outputTokens: 300,
+			processedTokens: 1500,
+			provenance: { inputTokens: "reported", cachedInputTokens: "reported", uncachedInputTokens: "derived", cachedOutputTokens: "unsupported", outputTokens: "reported" },
+			providerDetails: {},
+		};
+		getMock.mockImplementation(async (path: string) => {
+			if (path === "/api/v1/usage/sessions/{sessionId}") {
+				return {
+					data: {
+						sessionId: "sess-1",
+						incomplete: false,
+						totals,
+						harnesses: [
+							{ harness: "codex", totals, models: [{ modelId: "gpt-5.5", totals }] },
+							{ harness: "claude-code", totals, models: [{ modelId: "claude-haiku-4-5-20251001", totals }] },
+						],
+					},
+					error: undefined,
+				};
+			}
+			return { data: undefined };
+		});
+
+		renderWithQuery(<SessionInspector session={session([])} />);
+		const codexDisclosure = await screen.findByRole("button", { name: "Codex usage details" });
+		expect(codexDisclosure.querySelector("img")).toBeInTheDocument();
+
+		await userEvent.click(codexDisclosure);
+		const details = screen.getByRole("region", { name: "Codex usage peek" });
+		expect(within(details).getByRole("button", { name: "GPT 5.5 usage details" })).toBeInTheDocument();
+		expect(within(details).queryByText("1 model")).not.toBeInTheDocument();
+		expect(within(details).queryByText("Processed")).not.toBeInTheDocument();
+		expect(within(details).queryByText("Cost")).not.toBeInTheDocument();
+		expect(within(details).queryByText("Fresh Input")).not.toBeInTheDocument();
+
+		await userEvent.click(screen.getByRole("button", { name: "Claude usage details" }));
+		const claudeDetails = screen.getByRole("region", { name: "Claude usage peek" });
+		const haikuDisclosure = within(claudeDetails).getByRole("button", { name: "Haiku 4.5 usage details" });
+		expect(within(haikuDisclosure).getByText("Haiku 4.5")).toHaveAttribute(
+			"title",
+			"claude-haiku-4-5-20251001",
+		);
 	});
 });
 

@@ -273,6 +273,9 @@ func parseClaude(source domain.UsageSourceContext, records []jsonlRecord, state 
 		if source.Source.Kind == domain.UsageSourceClaudeMain && native.IsSidechain {
 			continue
 		}
+		if strings.EqualFold(strings.TrimSpace(native.Message.Model), "<synthetic>") {
+			continue
+		}
 		usage := native.Message.Usage
 		var creation5m, creation1h *int64
 		if usage.CacheCreation != nil {

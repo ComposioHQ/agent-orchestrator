@@ -1221,7 +1221,7 @@
 	"inspector.usage.inputTokens": "총 입력",
 	"inspector.usage.cachedInputTokens": "캐시된 입력",
 	"inspector.usage.cacheHitRate": "적중률 {{rate}}%",
-	"inspector.usage.uncachedInputTokens": "캐시되지 않은 입력",
+	"inspector.usage.uncachedInputTokens": "새 입력",
 	"inspector.usage.outputTokens": "총 출력",
 	"inspector.usage.comingSoon": "출시 예정",
 	"inspector.usage.cost": "비용",

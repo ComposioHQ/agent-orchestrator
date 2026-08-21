@@ -1236,7 +1236,7 @@
 	"inspector.usage.inputTokens": "Entrada total",
 	"inspector.usage.cachedInputTokens": "Entrada en caché",
 	"inspector.usage.cacheHitRate": "{{rate}} % de aciertos",
-	"inspector.usage.uncachedInputTokens": "Entrada sin caché",
+	"inspector.usage.uncachedInputTokens": "Entrada nueva",
 	"inspector.usage.outputTokens": "Salida total",
 	"inspector.usage.comingSoon": "Próximamente",
 	"inspector.usage.cost": "Coste",
