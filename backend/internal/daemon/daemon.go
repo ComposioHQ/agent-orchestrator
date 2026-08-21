@@ -48,6 +48,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/service/systemcheck"
 	"github.com/aoagents/agent-orchestrator/backend/internal/service/systeminstall"
 	usagesvc "github.com/aoagents/agent-orchestrator/backend/internal/service/usage"
+	usagetelemetry "github.com/aoagents/agent-orchestrator/backend/internal/service/usagetelemetry"
 	"github.com/aoagents/agent-orchestrator/backend/internal/skillassets"
 	"github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite"
 	"github.com/aoagents/agent-orchestrator/backend/internal/terminal"
@@ -332,7 +333,21 @@ func Run() error {
 			},
 			ReconcilePath: usageCollector.ReconcilePath,
 		})
-		lcStack.LCM.SetUsageFinalizer(usageCollector)
+		// Decorate the finalizer so per-session token usage is emitted as
+		// ranking telemetry (with estimated cost and GitHub owner) once the
+		// pipeline has finalized the session's usage at termination.
+		var usageSCM usagetelemetry.SCMParser
+		if p := newMultiSCMProvider(cfg.GitLab, log); p != nil {
+			usageSCM = p
+		}
+		lcStack.LCM.SetUsageFinalizer(usagetelemetry.NewEmittingFinalizer(
+			usageCollector,
+			usagesvc.NewSummaryReader(store),
+			store,
+			usageSCM,
+			telemetrySink,
+			nil,
+		))
 	}
 	lcStack.scmDone = startSCMObserver(ctx, store, lcStack.LCM, cfg.GitLab, log)
 	var prActions prsvc.ActionManager
