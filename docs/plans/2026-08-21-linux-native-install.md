@@ -193,11 +193,13 @@ The AppImage keeps updating itself. It is the file the `ao start` bootstrapper d
 
 *Why: so AppImage users stop hand-writing `.desktop` files (problem 2).*
 
-- [ ] `ao start` already writes `agent-orchestrator-ao-app.desktop` (see `backend/internal/cli/start.go`). Turn it into a real menu entry: remove `NoDisplay=true`, add `Icon`, `Categories=Development;` and a `Comment`.
-- [ ] Get an icon onto disk so `Icon=` can name it rather than point at an absolute path. Extract it from the AppImage, or ship it next to the downloaded binary under `~/.ao`, then install it into `~/.local/share/icons/hicolor/`.
-- [ ] Keep the existing `Exec` quoting done by `desktopExecPath`. `backend/internal/cli/start_test.go:283` covers a path containing a space and a `%`; that test must stay green.
-- [ ] Run `update-desktop-database` after writing the file, the same way the code already runs `xdg-mime`.
-- [ ] **Verify:** after `ao start` on a machine with no AO installed, AO appears in the applications menu with its icon and opens on click, with no terminal window.
+- [x] `ao start` already writes `agent-orchestrator-ao-app.desktop` (see `backend/internal/cli/start.go`). Now a real menu entry: `NoDisplay=true` is gone, and it carries `Icon`, `Categories=Development;`, a `Comment` and `StartupWMClass` (so the running window groups with the launcher). `registerLinuxProtocolHandler` is renamed `installLinuxDesktopEntry`, since registering the URL handler is no longer all it does.
+- [x] Get an icon onto disk so `Icon=` can name it. Extracted from the AppImage: `installLinuxMenuIcon` runs `<appimage> --appimage-extract usr/share/icons/hicolor/1024x1024/apps/agent-orchestrator.png` in a scratch directory beside the AppImage under `~/.ao` (the AppImage unpacks into `./squashfs-root` relative to the working directory, hence `CommandOutputInDir`), then installs the PNG into `<XDG_DATA_HOME>/icons/hicolor/1024x1024/apps/`. Only the one file is unpacked, in milliseconds, and the scratch directory is removed. Failure is reported on stderr and never blocks the launch.
+- [x] Keep the existing `Exec` quoting done by `desktopExecPath`. The space-and-`%` case is still covered, now asserted against `strings.ReplaceAll(appPath, "%", "%%")` rather than a hand-spelled string.
+- [x] Run `update-desktop-database` after writing the file. Best effort, like the icon: not every machine ships `desktop-file-utils`, and desktops that watch the directory do not need it.
+- [x] **Verify:** unit tests cover the entry contents, the icon landing in the theme, the scratch directory being cleaned up, the exact command sequence, and both best-effort steps failing without blocking the launch. Against the real released v0.12.6 AppImage the entry is written, the 51274-byte icon lands in the theme, `update-desktop-database` and `xdg-mime` both succeed, and `desktop-file-validate` accepts the generated file with no warnings.
+  - Left for a human on a desktop session: clicking the menu entry. Everything up to the menu cache is verified above.
+  - Open, and B4's to settle: a machine with both the AppImage and a system package now has two entries (this one and the package's `/usr/share/applications/agent-orchestrator.desktop`), and `xdg-mime default` here points `ao-app://` at this one.
 
 ---
 

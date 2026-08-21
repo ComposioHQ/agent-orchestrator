@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -266,10 +267,17 @@ func TestDownloadURLUsesReleaseRepo(t *testing.T) {
 	}
 }
 
-func TestRegisterLinuxProtocolHandler(t *testing.T) {
+func TestInstallLinuxDesktopEntry(t *testing.T) {
 	dataHome := t.TempDir()
 	t.Setenv("XDG_DATA_HOME", dataHome)
+	// The AppImage lives beside the scratch directory the icon is extracted
+	// into, so it needs a real directory rather than a literal path.
+	appDir := t.TempDir()
+	appPath := filepath.Join(appDir, "Agent Orchestrator 100%.AppImage")
+	iconBytes := []byte("PNG-BYTES")
+
 	var commands [][]string
+	var extractions [][]string
 	c := &commandContext{deps: Deps{
 		CommandOutput: func(_ context.Context, name string, args ...string) ([]byte, error) {
 			commands = append(commands, append([]string{name}, args...))
@@ -278,10 +286,20 @@ func TestRegisterLinuxProtocolHandler(t *testing.T) {
 			}
 			return nil, nil
 		},
+		// Stands in for the AppImage runtime: it unpacks the requested file into
+		// ./squashfs-root, relative to the directory it was told to run in.
+		CommandOutputInDir: func(_ context.Context, dir, name string, args ...string) ([]byte, error) {
+			extractions = append(extractions, append([]string{dir, name}, args...))
+			extracted := filepath.Join(dir, "squashfs-root", linuxAppImageIconPath)
+			if err := os.MkdirAll(filepath.Dir(extracted), 0o750); err != nil {
+				return nil, err
+			}
+			return nil, os.WriteFile(extracted, iconBytes, 0o600)
+		},
 	}.withDefaults()}
 
-	appPath := "/tmp/Agent Orchestrator 100%.AppImage"
-	if err := c.registerLinuxProtocolHandler(context.Background(), appPath); err != nil {
+	var stderr bytes.Buffer
+	if err := c.installLinuxDesktopEntry(context.Background(), &stderr, appPath); err != nil {
 		t.Fatal(err)
 	}
 	entryPath := filepath.Join(dataHome, "applications", linuxDesktopEntryName)
@@ -290,18 +308,103 @@ func TestRegisterLinuxProtocolHandler(t *testing.T) {
 		t.Fatal(err)
 	}
 	content := string(entry)
-	if !strings.Contains(content, `Exec="/tmp/Agent Orchestrator 100%%.AppImage" %u`) {
+	// The path holds a space and a %, both of which break a naive Exec line.
+	wantExec := `Exec="` + strings.ReplaceAll(appPath, "%", "%%") + `" %u`
+	if !strings.Contains(content, wantExec) {
 		t.Fatalf("desktop entry does not safely target AppImage:\n%s", content)
 	}
 	if !strings.Contains(content, "MimeType=x-scheme-handler/ao-app;") {
 		t.Fatalf("desktop entry does not register ao-app:\n%s", content)
 	}
+	// The point of the change: an entry carrying NoDisplay is hidden from the
+	// applications menu, which is how AppImage users ended up hand-writing
+	// launchers pointing at ~/Downloads.
+	if strings.Contains(content, "NoDisplay") {
+		t.Fatalf("desktop entry is still hidden from the menu:\n%s", content)
+	}
+	for _, want := range []string{
+		"Icon=" + linuxIconName + "\n",
+		"Categories=Development;\n",
+		"Comment=",
+		"Terminal=false\n",
+	} {
+		if !strings.Contains(content, want) {
+			t.Fatalf("desktop entry is missing %q:\n%s", want, content)
+		}
+	}
+
+	// Icon= names an icon, so one has to exist in the theme for the menu entry
+	// to show anything but a generic placeholder.
+	iconPath := filepath.Join(dataHome, linuxIconThemeDir, linuxIconName+".png")
+	installed, err := os.ReadFile(iconPath)
+	if err != nil {
+		t.Fatalf("icon not installed into the theme: %v", err)
+	}
+	if !bytes.Equal(installed, iconBytes) {
+		t.Fatalf("icon = %q, want %q", installed, iconBytes)
+	}
+	if len(extractions) != 1 {
+		t.Fatalf("extractions = %#v, want exactly one", extractions)
+	}
+	if got := extractions[0][1:]; !reflect.DeepEqual(
+		got,
+		[]string{appPath, "--appimage-extract", linuxAppImageIconPath},
+	) {
+		t.Fatalf("extraction command = %#v", got)
+	}
+	// Extraction must not litter ~/.ao: the scratch directory is removed even
+	// though squashfs-root is left inside it.
+	leftovers, err := os.ReadDir(appDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(leftovers) != 0 {
+		t.Fatalf("scratch directories left behind: %#v", leftovers)
+	}
+
 	wantCommands := [][]string{
+		{"update-desktop-database", filepath.Join(dataHome, "applications")},
 		{"xdg-mime", "default", linuxDesktopEntryName, "x-scheme-handler/ao-app"},
 		{"xdg-mime", "query", "default", "x-scheme-handler/ao-app"},
 	}
 	if !reflect.DeepEqual(commands, wantCommands) {
 		t.Fatalf("commands = %#v, want %#v", commands, wantCommands)
+	}
+}
+
+// A missing icon, or a machine without desktop-file-utils, degrades the menu
+// entry. It must never stop the app from starting.
+func TestInstallLinuxDesktopEntry_BestEffortStepsDoNotBlockLaunch(t *testing.T) {
+	dataHome := t.TempDir()
+	t.Setenv("XDG_DATA_HOME", dataHome)
+	appPath := filepath.Join(t.TempDir(), "agent-orchestrator.AppImage")
+
+	c := &commandContext{deps: Deps{
+		CommandOutput: func(_ context.Context, name string, args ...string) ([]byte, error) {
+			if name == "update-desktop-database" {
+				return []byte("not found"), errors.New("exec: update-desktop-database")
+			}
+			if len(args) > 0 && args[0] == "query" {
+				return []byte(linuxDesktopEntryName + "\n"), nil
+			}
+			return nil, nil
+		},
+		CommandOutputInDir: func(_ context.Context, _, _ string, _ ...string) ([]byte, error) {
+			return []byte("no such file"), errors.New("exec: --appimage-extract")
+		},
+	}.withDefaults()}
+
+	var stderr bytes.Buffer
+	if err := c.installLinuxDesktopEntry(context.Background(), &stderr, appPath); err != nil {
+		t.Fatalf("launch blocked by a best-effort step: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dataHome, "applications", linuxDesktopEntryName)); err != nil {
+		t.Fatalf("desktop entry not written: %v", err)
+	}
+	for _, want := range []string{"menu icon", "applications menu"} {
+		if !strings.Contains(stderr.String(), want) {
+			t.Fatalf("stderr does not mention %q:\n%s", want, stderr.String())
+		}
 	}
 }
 
