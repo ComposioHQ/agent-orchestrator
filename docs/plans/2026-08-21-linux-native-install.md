@@ -109,9 +109,9 @@ Problems 1, 2 and 3 above are not distro-specific. They affect the packages we a
 
 Problem: Arch is the one major family with no native package at all. Fix: publish one.
 
-### Phase C: updates for .deb and .rpm (only if we want the commitment)
+### Phase C: updates for .deb and .rpm
 
-Problem 4. Fixing it means hosting signed `apt` and `dnf` repositories, which is real infrastructure, not just code. Deliberately last.
+Problem 4. Fixed by hosting signed `apt` and `dnf` repositories, both on GitHub itself: package payloads stay on Releases, and only the signed metadata needs publishing. Deliberately last, because it is the only phase that needs a key someone has to look after.
 
 **Not in this plan** (say so if any of these matter): Flatpak, Snap, and ARM builds.
 
@@ -269,14 +269,24 @@ The SUID sandbox helper binary was found, but is not configured correctly.
 
 ---
 
-## Phase C: updates for .deb and .rpm (needs a decision first)
+## Phase C: updates for .deb and .rpm
 
-Only worth doing if AO wants Linux users on a real update path. It needs a GPG signing key and somewhere to host files, so it is an infrastructure commitment, not just code.
-
-- [ ] Decide: host signed `apt` and `dnf` repositories, or accept manual updates for deb/rpm and point users who want auto-updates at the AppImage. Either answer is fine; write it down.
-- [ ] If hosting: generate and sign the repository metadata in the release workflow, and publish it. GitHub Pages is the cheapest option that adds no new service.
-- [ ] Document the `apt` and `dnf` setup steps in `README.md` next to the direct download links.
-- [ ] **Verify:** `apt update && apt upgrade` and `dnf upgrade` each pull a new AO release on a test machine.
+- [x] **Decision (2026-08-21): host signed repositories**, using only GitHub. No new service, no server to run.
+- [x] Two constraints decided the shape, and neither was in the original sketch:
+  - **GitHub Pages cannot host the packages.** It rejects any file over 100 MB and the `.deb` is around 140 MB. So the packages stay on GitHub Releases and only the (few KB of) signed metadata needs a home.
+  - **The Pages site is already the landing page.** `deploy-landing.yml` publishes it, and a second Pages deploy replaces the first, so the metadata could not simply be added there without entangling the two.
+- [x] Where each package manager's metadata ended up, and why it had to be different:
+  - **apt** resolves a package's `Filename` relative to the repository base, so metadata and package must share a base. The metadata is uploaded to the same release as assets, and users point at `releases/latest/download/`, which always resolves to the newest stable release. "Upgrade" is whatever that alias points at today.
+  - **dnf** needs a `repodata/` subdirectory, which flat release-asset names cannot express. Its metadata is pushed to a `linux-repo` branch and served from `raw.githubusercontent.com`; `primary.xml` carries an `xml:base` pointing back at the release, so the `.rpm` still comes from GitHub Releases.
+- [x] Neither published package is re-signed. The chain is `InRelease -> Release -> Packages -> .deb` and `repomd.xml.asc -> repomd.xml -> primary.xml -> .rpm`, each link a recorded SHA-256. Re-signing would mean overwriting an already published asset, and other things (the Arch `PKGBUILD`, the update feed) pin those bytes. The dnf `.repo` therefore sets `gpgcheck=0` with `repo_gpgcheck=1`: claiming a package signature that does not exist would fail every install.
+- [x] `packaging/linux-repos/build-apt-repo.sh` and `build-dnf-repo.sh` do the work; `.github/workflows/linux-repos.yml` runs them on every published stable release (prereleases skipped: nightlies are prereleases in this same repo). It waits for the conductor's deb and rpm assets to appear before starting, and holds the signing key behind the `release` environment's reviewers.
+- [x] Document the `apt` and `dnf` setup steps in `README.md`, and the key handling, hosting reasoning and test recipe in `packaging/linux-repos/README.md`.
+- [x] **Verify:** both repositories were built from the real v0.12.6 packages with a throwaway key and consumed in containers.
+  - apt (`debian:trixie`): `apt update` accepted the signed `InRelease`, `apt-cache policy` showed 0.12.6 as the candidate, `apt install agent-orchestrator` installed it, and `ao --version` worked.
+  - dnf (`fedora:latest`): metadata on one origin and the `.rpm` on another, exactly like the real split. `dnf install` installed the package, and the access log on the second origin proves `xml:base` sent the client there for it.
+  - Tampering is refused, which matters more than the happy path. apt: a corrupted `.deb` gives "Some files failed to download" with the hash mismatch, and metadata re-signed by an untrusted key gives "The repository ... is not signed". dnf: a corrupted `.rpm` gives "Downloading successful, but checksum doesn't match", and metadata re-signed by an untrusted key gives "repomd.xml GPG signature verification error: Signing key not found", after which the package is no longer installable from the repository.
+  - Not covered: a real end-to-end `apt upgrade` across two published releases, which needs the signing key configured and a release cut. That is the first thing to run once `LINUX_SIGNING_KEY` exists.
+- [ ] **Left for a repo admin:** generate the archive signing key and add `LINUX_SIGNING_KEY` to the `release` environment (recipe in `packaging/linux-repos/README.md`). Until then the workflow fails fast with that instruction instead of publishing something unsigned.
 
 ---
 
@@ -296,8 +306,13 @@ Only worth doing if AO wants Linux users on a real update path. It needs a GPG s
 
 ## Open questions
 
-1. **AUR: publish publicly, or keep the recipe in the repo only?** Decides whether B6 happens and whether we are taking on ongoing maintenance.
-2. **Do Phase C at all?** The alternative is telling deb and rpm users to use the AppImage if they want updates.
-3. **Is `/usr/bin/ao` safe to claim?** See A1.
+1. ~~**AUR: publish publicly, or keep the recipe in the repo only?**~~ Answered in B6: repo only for now, revisit after living with the local install.
+2. ~~**Do Phase C at all?**~~ Answered: yes, hosted on GitHub itself. See Phase C for the shape and the one admin step left.
+3. ~~**Is `/usr/bin/ao` safe to claim?**~~ Answered in A1: nothing owns it in Debian, Fedora or Arch.
 4. **Does ARM matter?** There is no arm64 Linux artifact to install or repackage, because the build matrix has only `linux-x64`. Adding an arm64 build is separate work.
 5. **Flatpak instead?** One universal package could replace Phases B and C, at the cost of Flathub review and sandbox work for an app that spawns agent CLIs, git and terminals. Worth revisiting if per-distro packaging turns out to be too much upkeep.
+
+## Found along the way, not fixed here
+
+- **Release builds do not stamp a version.** `ao --version` prints `ao version dev` from the deb published as v0.12.6.
+- **The rpm claims the wrong license.** `frontend/forge.config.ts` passes `license: "MIT"` to the rpm maker; the repo is Apache-2.0.
