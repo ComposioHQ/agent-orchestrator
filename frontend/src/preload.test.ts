@@ -13,6 +13,7 @@ const electronMocks = vi.hoisted(() => {
 			listeners.set(channel, listener);
 		}),
 		send: vi.fn(),
+		sendSync: vi.fn(),
 	};
 });
 
@@ -23,6 +24,7 @@ vi.mock("electron", () => ({
 		off: electronMocks.off,
 		on: electronMocks.on,
 		send: electronMocks.send,
+		sendSync: electronMocks.sendSync,
 	},
 }));
 
@@ -40,6 +42,7 @@ beforeEach(() => {
 	electronMocks.off.mockClear();
 	electronMocks.on.mockClear();
 	electronMocks.send.mockClear();
+	electronMocks.sendSync.mockReset();
 });
 
 describe("preload new-session shortcut bridge", () => {
@@ -129,7 +132,11 @@ describe("preload uiSettings bridge", () => {
 
 describe("preload Cloud availability", () => {
 	it("exposes configuration availability separately from enablement", () => {
-		expect(exposedBridge().cloud.isAvailable()).toBeTypeOf("boolean");
-		expect(exposedBridge().cloud.isEnabled()).toBeTypeOf("boolean");
+		electronMocks.sendSync.mockReturnValueOnce(true).mockReturnValueOnce(false);
+
+		expect(exposedBridge().cloud.isAvailable()).toBe(true);
+		expect(exposedBridge().cloud.isEnabled()).toBe(false);
+		expect(electronMocks.sendSync).toHaveBeenNthCalledWith(1, "cloud:isAvailable");
+		expect(electronMocks.sendSync).toHaveBeenNthCalledWith(2, "cloud:isEnabled");
 	});
 });

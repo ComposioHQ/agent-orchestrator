@@ -59,6 +59,10 @@ export function cloudAuthConfigured(): boolean {
 	return CLOUD_DESKTOP_AVAILABLE && (CLOUD_ENVIRONMENT_ENABLED || cloudPreferenceEnabled);
 }
 
+export function cloudDesktopAvailable(): boolean {
+	return CLOUD_DESKTOP_AVAILABLE;
+}
+
 export function setCloudPreferenceEnabled(enabled: boolean): void {
 	cloudPreferenceEnabled = enabled;
 }
@@ -411,6 +415,12 @@ export function installCloudIPC(
 	getDataDir: () => string,
 	notifyRenderers: (session: CloudAccount | null) => void,
 ): void {
+	ipcMain.on("cloud:isAvailable", (event) => {
+		event.returnValue = cloudDesktopAvailable();
+	});
+	ipcMain.on("cloud:isEnabled", (event) => {
+		event.returnValue = cloudAuthConfigured();
+	});
 	ipcMain.handle("cloud:getSession", () => getCloudSession(getDataDir()));
 	ipcMain.handle("cloud:signIn", async () => {
 		if (!cloudAuthConfigured()) {
