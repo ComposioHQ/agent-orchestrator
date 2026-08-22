@@ -847,6 +847,7 @@
 	"usage.output": "输出",
 	"usage.unableLoadEstimatedCost": "无法加载预计费用。",
 	"usage.unavailable": "不可用",
+	"usage.unknownProvider": "未知提供方",
 	"shell.versionReady": "v{{version}} 已就绪",
 	"shell.workingSessions": "工作中会话",
 	"shortcut.add": "添加",

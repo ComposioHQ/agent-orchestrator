@@ -864,6 +864,7 @@
 	"usage.output": "Output",
 	"usage.unableLoadEstimatedCost": "Unable to load estimated cost.",
 	"usage.unavailable": "Unavailable",
+	"usage.unknownProvider": "unknown provider",
 	"shell.versionReady": "v{{version}} ready",
 	"shell.workingSessions": "Working sessions",
 	"shortcut.add": "Add",

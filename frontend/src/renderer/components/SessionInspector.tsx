@@ -465,7 +465,7 @@ function UsageAgentAttribution({ harness }: { harness: SessionUsage["harnesses"]
 	const canExpand = harness.models.length > 1;
 	const modelSummary =
 		harness.models.length === 1
-			? billingModelName(harness.models[0])
+			? billingModelName(harness.models[0], false, t)
 			: harness.models.length > 1
 				? t("inspector.usage.models", { count: harness.models.length })
 				: null;
@@ -609,12 +609,14 @@ function UsageProviderRow({
 function ProviderUsageDetails({ harness }: { harness: SessionUsage["harnesses"][number] }) {
 	const { t } = useTranslation();
 	const showCost = harness.models.some((model) => model.totals.estimatedCost !== null);
+	const collisions = collidingModelNames(harness.models);
 
 	return (
 		<div>
 			{harness.models.length > 0 ? (
 				harness.models.map((model, index) => (
 					<UsageModelRow
+						disambiguate={collisions.has(formatModelName(model.modelId))}
 						key={`${model.providerId}:${model.modelId}:${index}`}
 						model={model}
 						showCost={showCost}
@@ -688,14 +690,16 @@ function updateSessionAutoInjectCI(
 }
 
 function UsageModelRow({
+	disambiguate,
 	model,
 	showCost,
 }: {
+	disambiguate: boolean;
 	model: SessionUsage["harnesses"][number]["models"][number];
 	showCost: boolean;
 }) {
 	const { t } = useTranslation();
-	const modelName = billingModelName(model);
+	const modelName = billingModelName(model, disambiguate, t);
 
 	return (
 		<UsageDisclosureRow
@@ -961,11 +965,39 @@ function formatHarnessName(harness: string): string {
 		.join(" ");
 }
 
-// billingModelName is the model's display name. The billing provider stays out
-// of it: the row already sits under its agent, so the prefix only repeated
-// context the reader had. The exact model id remains available as the title.
-function billingModelName(model: SessionUsage["harnesses"][number]["models"][number]): string {
-	return formatModelName(model.modelId);
+// billingModelName is the model's display name, prefixed with its billing
+// provider only when a sibling row renders the same name.
+//
+// The row already sits under its agent, so the prefix is usually just repeated
+// context. But rows are grouped by (provider, model), so switching providers
+// mid-session produces two rows for one model — and without the prefix they are
+// indistinguishable, one priced and one not, with no way to tell which is which.
+// The prefix earns its place exactly when it is the only thing that differs.
+function billingModelName(
+	model: SessionUsage["harnesses"][number]["models"][number],
+	disambiguate: boolean,
+	t: TFunction,
+): string {
+	const name = formatModelName(model.modelId);
+	if (!disambiguate) return name;
+	const provider =
+		model.providerId && model.providerId !== "unknown"
+			? model.providerId
+			: t("usage.unknownProvider");
+	return `${provider} · ${name}`;
+}
+
+// collidingModelNames returns the display names more than one of these rows
+// renders, which are the only ones that need their provider spelled out.
+function collidingModelNames(
+	models: SessionUsage["harnesses"][number]["models"],
+): ReadonlySet<string> {
+	const seen = new Map<string, number>();
+	for (const model of models) {
+		const name = formatModelName(model.modelId);
+		seen.set(name, (seen.get(name) ?? 0) + 1);
+	}
+	return new Set([...seen].filter(([, count]) => count > 1).map(([name]) => name));
 }
 
 function formatModelName(modelID: string): string {
