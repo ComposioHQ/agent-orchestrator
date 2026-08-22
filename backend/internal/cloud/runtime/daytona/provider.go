@@ -178,6 +178,7 @@ func (p *Provider) bootstrap(ctx context.Context, sandbox *daytonasdk.Sandbox, w
 	logFile := filepath.Join(home, ".ao", "daemon.log")
 	start := "nohup env AO_DATA_DIR=" + shellQuote(dataDir) + " AO_RUN_FILE=" + shellQuote(runFile) +
 		" AO_PORT=3001 AO_CORS_HEADERS_MANAGED_BY_PROXY=on" +
+		" GIT_TERMINAL_PROMPT=0 GIT_ASKPASS=" + shellQuote(askpassPath) +
 		" AO_CLOUD_RUNTIME_API_URL=" + shellQuote(bootstrap.ControlPlaneURL) +
 		" AO_CLOUD_RUNTIME_TOKEN=" + shellQuote(bootstrap.RuntimeToken) +
 		" AO_CLOUD_WORKSPACE_ID=" + shellQuote(workspace.ID) +
