@@ -1,5 +1,5 @@
 import { ipcMain } from "electron";
-import { getCloudAccessToken, getCloudSession } from "./cloud-auth";
+import { cloudAuthConfigured, getCloudAccessToken, getCloudSession } from "./cloud-auth";
 import { readClaudeCredentials } from "./claude-credentials";
 import type { CloudWorkspaceResponse } from "../shared/cloud-workspace";
 
@@ -13,6 +13,7 @@ async function requestWorkspace(
 	path: string,
 	init: RequestInit,
 ): Promise<CloudWorkspaceResponse> {
+	if (!cloudAuthConfigured()) throw new Error("AO Cloud is not enabled.");
 	const accessToken = await getCloudAccessToken(dataDir);
 	const response = await fetch(`${CLOUD_API_URL}${path}`, {
 		...init,
@@ -35,6 +36,7 @@ export function installCloudWorkspaceIPC(getDataDir: () => string): void {
 	ipcMain.handle(
 		"cloud:createWorkspace",
 		async (_event, input: { repositoryUrl: string; repositoryRef?: string }) => {
+			if (!cloudAuthConfigured()) throw new Error("AO Cloud is not enabled.");
 			const dataDir = getDataDir();
 			const account = await getCloudSession(dataDir);
 			const orgID = account?.organizations[0]?.id;

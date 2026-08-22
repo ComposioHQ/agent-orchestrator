@@ -29,11 +29,45 @@ vi.mock("electron", () => ({
 
 import {
 	beginCloudSignIn,
+	cloudFeatureFlagEnabled,
 	getCloudAccessToken,
 	getCloudSession,
 	showCloudSignInFailure,
 	signOutCloud,
 } from "./cloud-auth";
+import { cloudDesktopConfigured } from "../shared/cloud-feature";
+
+describe("AO Cloud feature flag", () => {
+	it("is explicit and disabled for empty or unknown values", () => {
+		expect(cloudFeatureFlagEnabled(undefined)).toBe(false);
+		expect(cloudFeatureFlagEnabled("")).toBe(false);
+		expect(cloudFeatureFlagEnabled("disabled")).toBe(false);
+	});
+
+	it("accepts standard opt-in values case-insensitively", () => {
+		for (const value of ["1", "true", "TRUE", " yes ", "on"]) {
+			expect(cloudFeatureFlagEnabled(value)).toBe(true);
+		}
+	});
+
+	it("requires the flag, API URL, and Google client together", () => {
+		expect(cloudDesktopConfigured({
+			featureFlags: ["1"],
+			apiUrl: "https://cloud.example",
+			googleClientId: "desktop.apps.googleusercontent.com",
+		})).toBe(true);
+		expect(cloudDesktopConfigured({
+			featureFlags: [],
+			apiUrl: "https://cloud.example",
+			googleClientId: "desktop.apps.googleusercontent.com",
+		})).toBe(false);
+		expect(cloudDesktopConfigured({
+			featureFlags: ["1"],
+			apiUrl: "",
+			googleClientId: "desktop.apps.googleusercontent.com",
+		})).toBe(false);
+	});
+});
 
 const sessionResponse = (accessToken = "access_123", refreshToken = "ao_refresh_123", expiresAt?: string) => ({
 	accessToken,

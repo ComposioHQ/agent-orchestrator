@@ -38,6 +38,12 @@ export AO_CLOUD_GITHUB_TOKEN_BASE64="$(gh auth token | base64 | tr -d '\n')"
 deploy/cloud/deploy-staging.sh
 ```
 
+The deployed control plane remains protected by `AO_CLOUD_ALLOWED_EMAILS`.
+Desktop Cloud controls are separately hidden by default: launch an early-access
+desktop with `AO_CLOUD_ENABLED=1`, or set `VITE_AO_CLOUD_ENABLED=1` when
+building a dedicated Cloud feature build. Do not set the build-time flag for a
+general release until Cloud is ready to become the default offering.
+
 These values are written to AWS Secrets Manager and injected into ECS; they are
 not Terraform variables, image layers, logs, or committed files.
 

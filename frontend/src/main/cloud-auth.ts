@@ -5,6 +5,9 @@ import { createServer } from "node:http";
 import path from "node:path";
 import type { AddressInfo } from "node:net";
 import type { CloudAccount } from "../shared/cloud-account";
+import { cloudDesktopConfigured } from "../shared/cloud-feature";
+
+export { cloudFeatureFlagEnabled } from "../shared/cloud-feature";
 
 const CLOUD_API_URL =
 	import.meta.env.VITE_AO_CLOUD_API_URL?.trim().replace(/\/+$/, "") ||
@@ -15,6 +18,12 @@ const GOOGLE_CLIENT_ID =
 	process.env.AO_CLOUD_GOOGLE_CLIENT_ID?.trim() ||
 	(process.env.VITEST ? "client_test" : "");
 const GOOGLE_CLIENT_SECRET = process.env.AO_CLOUD_GOOGLE_CLIENT_SECRET?.trim() || "";
+const CLOUD_DESKTOP_CONFIGURED = cloudDesktopConfigured({
+	featureFlags: [import.meta.env.VITE_AO_CLOUD_ENABLED, process.env.AO_CLOUD_ENABLED],
+	apiUrl: CLOUD_API_URL,
+	googleClientId: GOOGLE_CLIENT_ID,
+	forceEnabled: Boolean(process.env.VITEST),
+});
 const AUTH_STORE_FILE = "cloud-auth.bin";
 const LEGACY_SESSION_FILE = "cloud-session.json";
 const PKCE_TTL_MS = 10 * 60 * 1000;
@@ -45,7 +54,7 @@ const authGenerations = new Map<string, number>();
 const authMutations = new Map<string, Promise<void>>();
 
 export function cloudAuthConfigured(): boolean {
-	return Boolean(CLOUD_API_URL && GOOGLE_CLIENT_ID);
+	return CLOUD_DESKTOP_CONFIGURED;
 }
 
 function authGeneration(dataDir: string): number {
@@ -384,6 +393,7 @@ export async function showCloudSignInFailure(error: unknown): Promise<void> {
 }
 
 export function registerCloudProtocol(): void {
+	if (!cloudAuthConfigured()) return;
 	if (process.defaultApp && process.argv.length >= 2) {
 		app.setAsDefaultProtocolClient("ao-app", process.execPath, [path.resolve(process.argv[1])]);
 		return;
@@ -402,7 +412,7 @@ export function installCloudIPC(
 				type: "info",
 				title: "AO Cloud not configured",
 				message: "AO Cloud Google sign-in is not configured.",
-				detail: "Set VITE_AO_CLOUD_API_URL and VITE_AO_CLOUD_GOOGLE_CLIENT_ID, then restart AO.",
+				detail: "Enable AO Cloud and configure its API URL and Google client ID, then restart AO.",
 			});
 			return;
 		}
@@ -414,6 +424,7 @@ export function installCloudIPC(
 		}
 	});
 	ipcMain.handle("cloud:signOut", async () => {
+		if (!cloudAuthConfigured()) return;
 		await signOutCloud(getDataDir());
 		notifyRenderers(null);
 	});

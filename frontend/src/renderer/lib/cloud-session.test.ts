@@ -1,20 +1,28 @@
-import { describe, expect, it } from "vitest";
-import { isCloudSignInConfigured } from "./cloud-session";
+import { renderHook, waitFor } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { useCloudSession } from "./cloud-session";
 
-describe("isCloudSignInConfigured", () => {
-	it("hides Cloud sign-in when the Google client ID is absent", () => {
-		expect(isCloudSignInConfigured(undefined, "https://cloud.example")).toBe(false);
-		expect(isCloudSignInConfigured("   ", "https://cloud.example")).toBe(false);
+afterEach(() => {
+	vi.restoreAllMocks();
+});
+
+describe("useCloudSession", () => {
+	it("keeps Cloud hidden when the feature flag is disabled", async () => {
+		vi.spyOn(window.ao!.cloud, "isEnabled").mockReturnValue(false);
+		const getSession = vi.spyOn(window.ao!.cloud, "getSession");
+		const { result } = renderHook(() => useCloudSession());
+
+		await waitFor(() => expect(result.current.status).toBe("unauthenticated"));
+		expect(result.current.configured).toBe(false);
+		expect(getSession).not.toHaveBeenCalled();
 	});
 
-	it("hides Cloud sign-in when the API URL is absent", () => {
-		expect(isCloudSignInConfigured("google-client.apps.googleusercontent.com", undefined)).toBe(false);
-		expect(isCloudSignInConfigured("google-client.apps.googleusercontent.com", "   ")).toBe(false);
-	});
+	it("loads the Cloud account only when the feature flag is enabled", async () => {
+		vi.spyOn(window.ao!.cloud, "isEnabled").mockReturnValue(true);
+		vi.spyOn(window.ao!.cloud, "getSession").mockResolvedValue(null);
+		const { result } = renderHook(() => useCloudSession());
 
-	it("shows Cloud sign-in when Google auth and the API are configured", () => {
-		expect(
-			isCloudSignInConfigured("google-client.apps.googleusercontent.com", "https://cloud.example"),
-		).toBe(true);
+		await waitFor(() => expect(result.current.status).toBe("unauthenticated"));
+		expect(result.current.configured).toBe(true);
 	});
 });

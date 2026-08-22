@@ -20,6 +20,7 @@ import type { TelemetryBootstrap } from "./shared/telemetry";
 import type { MigrationState } from "./main/app-state";
 import type { UpdateSettings, UpdateStatus } from "./main/update-settings";
 import type { CloudAccount } from "./shared/cloud-account";
+import { cloudDesktopConfigured } from "./shared/cloud-feature";
 import type { UpdateOutcome } from "./shared/update-telemetry";
 import type { UiSettings } from "./main/ui-settings";
 import type { UpdateCheckOptions } from "./main/auto-updater";
@@ -361,6 +362,11 @@ const api = {
 		getActive: () => ipcRenderer.invoke("featureBuilds:getActive") as Promise<{ pr: number } | null>,
 	},
 	cloud: {
+		isEnabled: () => cloudDesktopConfigured({
+			featureFlags: [import.meta.env.VITE_AO_CLOUD_ENABLED, process.env.AO_CLOUD_ENABLED],
+			apiUrl: import.meta.env.VITE_AO_CLOUD_API_URL || process.env.AO_CLOUD_API_URL,
+			googleClientId: import.meta.env.VITE_AO_CLOUD_GOOGLE_CLIENT_ID || process.env.AO_CLOUD_GOOGLE_CLIENT_ID,
+		}),
 		getSession: () => ipcRenderer.invoke("cloud:getSession") as Promise<CloudAccount | null>,
 		signIn: () => ipcRenderer.invoke("cloud:signIn") as Promise<void>,
 		signOut: () => ipcRenderer.invoke("cloud:signOut") as Promise<void>,

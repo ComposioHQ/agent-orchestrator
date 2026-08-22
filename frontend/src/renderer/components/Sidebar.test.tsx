@@ -280,9 +280,20 @@ afterEach(() => {
 });
 
 describe("Sidebar", () => {
+	it("hides Cloud sign-in and Cloud project creation when the feature flag is disabled", async () => {
+		const isEnabled = vi.spyOn(window.ao!.cloud, "isEnabled").mockReturnValue(false);
+		const user = userEvent.setup();
+		renderSidebar();
+
+		await waitFor(() => expect(isEnabled).toHaveBeenCalled());
+		expect(screen.queryByLabelText("Sign in to AO Cloud")).not.toBeInTheDocument();
+		await user.click(screen.getByLabelText("New project"));
+		expect(screen.queryByRole("menuitem", { name: "Create cloud project" })).not.toBeInTheDocument();
+		expect(screen.getByRole("dialog", { name: "Add code to Agent Orchestrator" })).toBeInTheDocument();
+	});
+
 	it("offers local and cloud project creation from the project button", async () => {
-		vi.stubEnv("VITE_AO_CLOUD_GOOGLE_CLIENT_ID", "desktop.apps.googleusercontent.com");
-		vi.stubEnv("VITE_AO_CLOUD_API_URL", "https://cloud.example");
+		vi.spyOn(window.ao!.cloud, "isEnabled").mockReturnValue(true);
 		vi.spyOn(window.ao!.cloud, "getSession").mockResolvedValue({
 			authProvider: "google",
 			user: { id: "user-1", email: "person@example.com", displayName: "Person" },

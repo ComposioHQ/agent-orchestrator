@@ -183,6 +183,7 @@ export const aoBridge: AoBridge =
 			getActive: async () => null,
 		},
 		cloud: {
+			isEnabled: () => false,
 			getSession: async () => null,
 			signIn: async () => undefined,
 			signOut: async () => undefined,

@@ -73,6 +73,7 @@ import {
 import { browserDaemonOwnershipDecision, shouldReplacePortHolder } from "./shared/daemon-takeover";
 import { buildDaemonEnv, resolveShellEnv, type ShellRunner } from "./shared/shell-env";
 import {
+	cloudAuthConfigured,
 	handleCloudDeepLink,
 	installCloudIPC,
 	registerCloudProtocol,
@@ -1833,6 +1834,7 @@ function focusCloudWindow(): void {
 }
 
 async function handleCloudDeepLinkAndFocus(url: string): Promise<void> {
+	if (!cloudAuthConfigured()) return;
 	focusCloudWindow();
 	try {
 		const session = await handleCloudDeepLink(url, cloudDataDir());
