@@ -1,8 +1,9 @@
-import { lazy, Suspense, useState } from "react";
+import { lazy, Suspense } from "react";
 import { useTranslation } from "react-i18next";
 import { GeneralSettingsSection } from "./settings/GeneralSettingsSection";
-import { ReportProblemDialog } from "./settings/ReportProblemDialog";
-import { SettingsLinkRow } from "./settings/SettingsRow";
+import { KeyboardShortcutsContent } from "./settings/KeyboardShortcutsContent";
+import { ReportProblemContent } from "./settings/ReportProblemContent";
+import { SettingsExpandableRow } from "./settings/SettingsRow";
 import { SettingsSection } from "./settings/SettingsSection";
 
 const UpdatesSection = lazy(async () => {
@@ -14,54 +15,41 @@ export type GlobalSettingsSection = "general" | "updates" | "help" | "all";
 
 export function GlobalSettingsForm({
 	section = "all",
-	onOpenKeyboardShortcuts,
-	onOpenConnectMobile,
 }: {
 	section?: GlobalSettingsSection;
-	onOpenKeyboardShortcuts?: () => void;
-	onOpenConnectMobile?: () => void;
 }) {
 	const { t } = useTranslation();
-	const [reportProblemOpen, setReportProblemOpen] = useState(false);
-	// One section per page means the dialog header already names it, so the
-	// page's leading heading would just repeat that title. Only "all" (no
-	// single-page header) shows every section's own heading.
 	const leadingTitleHidden = section !== "all";
 
 	return (
-		<>
-			<div
-				aria-label={t("settings.title")}
-				className="flex w-full flex-col gap-(--size-settings-section-gap)"
-				data-testid="settings-page"
-			>
-				{(section === "all" || section === "general") && (
-					<>
-						<GeneralSettingsSection
-							onConnectMobile={() => onOpenConnectMobile?.()}
-							titleHidden={leadingTitleHidden}
-						/>
-						<SettingsSection title={t("settings.preferences")} grouped>
-							<SettingsLinkRow
-								label={t("settings.keyboardShortcuts")}
-								onClick={() => onOpenKeyboardShortcuts?.()}
-							/>
-						</SettingsSection>
-					</>
-				)}
-				{(section === "all" || section === "updates") && (
-					<Suspense fallback={<UpdatesSectionSkeleton titleHidden={leadingTitleHidden} />}>
-						<UpdatesSection titleHidden={leadingTitleHidden} />
-					</Suspense>
-				)}
-				{(section === "all" || section === "help") && (
-					<SettingsSection title={t("settings.getHelp")} titleHidden={leadingTitleHidden} grouped>
-						<SettingsLinkRow label={t("settings.reportProblem")} onClick={() => setReportProblemOpen(true)} />
+		<div
+			aria-label={t("settings.title")}
+			className="flex w-full flex-col gap-(--size-settings-section-gap)"
+			data-testid="settings-page"
+		>
+			{(section === "all" || section === "general") && (
+				<>
+					<GeneralSettingsSection titleHidden={leadingTitleHidden} />
+					<SettingsSection title={t("settings.preferences")} grouped>
+						<SettingsExpandableRow label={t("settings.keyboardShortcuts")}>
+							{(open) => <KeyboardShortcutsContent active={open} />}
+						</SettingsExpandableRow>
 					</SettingsSection>
-				)}
-			</div>
-			<ReportProblemDialog open={reportProblemOpen} onOpenChange={setReportProblemOpen} />
-		</>
+				</>
+			)}
+			{(section === "all" || section === "updates") && (
+				<Suspense fallback={<UpdatesSectionSkeleton titleHidden={leadingTitleHidden} />}>
+					<UpdatesSection titleHidden={leadingTitleHidden} />
+				</Suspense>
+			)}
+			{(section === "all" || section === "help") && (
+				<SettingsSection title={t("settings.getHelp")} titleHidden={leadingTitleHidden} grouped>
+					<SettingsExpandableRow label={t("settings.reportProblem")}>
+						{(open) => <ReportProblemContent active={open} />}
+					</SettingsExpandableRow>
+				</SettingsSection>
+			)}
+		</div>
 	);
 }
 

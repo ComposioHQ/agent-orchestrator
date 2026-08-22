@@ -1,3 +1,4 @@
+import { Smartphone } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import type { ThemePreference, ThemeStyle } from "../../lib/theme";
 import type { AppLocale } from "../../i18n";
@@ -6,8 +7,9 @@ import { useSoundNotificationsStore } from "../../stores/sound-notifications-sto
 import { useUiStore } from "../../stores/ui-store";
 import { Switch } from "../ui/switch";
 import { SettingsOptionMenu, type SettingsOption } from "./SettingsOptionMenu";
-import { SettingsLinkRow, SettingsRow } from "./SettingsRow";
+import { SettingsExpandableRow, SettingsRow } from "./SettingsRow";
 import { SettingsSection } from "./SettingsSection";
+import { ConnectMobileContent } from "./ConnectMobileContent";
 import { cn } from "../../lib/utils";
 import { useSettings, useUpdateSessionInterface } from "../../hooks/useSettings";
 import type { SessionMode } from "../../types/workspace";
@@ -81,10 +83,8 @@ const COLOR_THEME_OPTIONS = [
 ] satisfies SettingsOption<ThemeStyle>[];
 
 export function GeneralSettingsSection({
-	onConnectMobile,
 	titleHidden,
 }: {
-	onConnectMobile: () => void;
 	titleHidden?: boolean;
 }) {
 	const { t } = useTranslation();
@@ -180,7 +180,9 @@ export function GeneralSettingsSection({
 					onCheckedChange={setDeveloperMode}
 				/>
 			</SettingsRow>
-			<SettingsLinkRow label={t("settings.connectMobile")} onClick={onConnectMobile} />
+			<SettingsExpandableRow icon={Smartphone} label={t("settings.connectMobile")}>
+				{(open) => <ConnectMobileContent active={open} />}
+			</SettingsExpandableRow>
 		</SettingsSection>
 	);
 }

@@ -7,6 +7,7 @@ import { GlobalSettingsForm } from "./GlobalSettingsForm";
 import { useLocaleStore } from "../stores/locale-store";
 import { useSoundNotificationsStore } from "../stores/sound-notifications-store";
 import { useUiStore } from "../stores/ui-store";
+import { TooltipProvider } from "./ui/tooltip";
 
 const {
 	getUpdate,
@@ -88,7 +89,9 @@ function renderForm() {
 	const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 	render(
 		<QueryClientProvider client={qc}>
-			<GlobalSettingsForm />
+			<TooltipProvider>
+				<GlobalSettingsForm />
+			</TooltipProvider>
 		</QueryClientProvider>,
 	);
 	return qc;
@@ -154,22 +157,21 @@ describe("GlobalSettingsForm", () => {
 	it("renders the Figma settings sections", async () => {
 		renderForm();
 		expect(await screen.findByLabelText("Settings")).toBeInTheDocument();
-		// "Settings" heading is now in the modal dialog header, not in the form body
-		expect(screen.getByText("General")).toBeInTheDocument();
+		expect(screen.getAllByText("General").length).toBeGreaterThanOrEqual(1);
 		expect(screen.getByText("Language")).toBeInTheDocument();
 		expect(await screen.findByText("Updates")).toBeInTheDocument();
 		expect(screen.getByText("Get help")).toBeInTheDocument();
 		expect(screen.getByRole("button", { name: "Report a problem" })).toBeInTheDocument();
 	});
 
-	it("gives settings link rows internal padding and rounded borders", async () => {
+	it("gives expandable rows internal padding and rounded borders", async () => {
 		renderForm();
 
 		const connectMobile = await screen.findByRole("button", { name: "Connect Mobile" });
 		const keyboardShortcuts = screen.getByRole("button", { name: "Keyboard shortcuts" });
 
 		for (const row of [connectMobile, keyboardShortcuts]) {
-			expect(row).toHaveClass("settings-row-bar", "settings-link-row");
+			expect(row.parentElement).toHaveClass("rounded-md");
 		}
 	});
 
@@ -200,14 +202,14 @@ describe("GlobalSettingsForm", () => {
 	it("switches General settings labels to Simplified Chinese and persists locale", async () => {
 		const user = userEvent.setup();
 		renderForm();
-		expect(await screen.findByText("General")).toBeInTheDocument();
+		expect(await screen.findByLabelText("Settings")).toBeInTheDocument();
 		expect(screen.getByLabelText("Language")).toBeInTheDocument();
 
 		await user.click(screen.getByLabelText("Language"));
 		await user.click(await screen.findByRole("menuitem", { name: "Simplified Chinese" }));
 
 		await waitFor(() => expect(setUiSettings).toHaveBeenCalledWith({ locale: "zh-CN" }));
-		await waitFor(() => expect(screen.getByText("通用")).toBeInTheDocument());
+		await waitFor(() => expect(screen.getAllByText("通用").length).toBeGreaterThanOrEqual(1));
 		expect(screen.getByText("语言")).toBeInTheDocument();
 		expect(screen.getByText("主题")).toBeInTheDocument();
 		expect(document.documentElement.lang).toBe("zh-CN");
@@ -243,14 +245,14 @@ describe("GlobalSettingsForm", () => {
 		setUiSettings.mockRejectedValue(new Error("disk full"));
 		const user = userEvent.setup();
 		renderForm();
-		await screen.findByText("General");
+		await screen.findByLabelText("Settings");
 
 		await user.click(screen.getByLabelText("Language"));
 		await user.click(await screen.findByRole("menuitem", { name: "Simplified Chinese" }));
 
 		expect(await screen.findByRole("alert")).toHaveTextContent("Could not save the language preference.");
 		expect(useLocaleStore.getState().locale).toBe("en");
-		expect(screen.getByText("General")).toBeInTheDocument();
+		expect(screen.getAllByText("General").length).toBeGreaterThanOrEqual(1);
 	});
 
 	it("closes settings with Escape", async () => {
@@ -264,15 +266,17 @@ describe("GlobalSettingsForm", () => {
 		expect(navigateMock).not.toHaveBeenCalled();
 	});
 
-	it("lets an open settings dialog consume Escape first", async () => {
+	it("expands report section inline without opening a separate dialog", async () => {
 		const user = userEvent.setup();
 		renderForm();
-		await user.click(await screen.findByRole("button", { name: "Report a problem" }));
+		const trigger = await screen.findByRole("button", { name: "Report a problem" });
+		expect(trigger).toHaveAttribute("aria-expanded", "false");
 
-		await user.keyboard("{Escape}");
+		await user.click(trigger);
 
-		await waitFor(() => expect(screen.queryByRole("dialog", { name: "Report a problem" })).not.toBeInTheDocument());
-		expect(navigateMock).not.toHaveBeenCalled();
+		expect(trigger).toHaveAttribute("aria-expanded", "true");
+		expect(await screen.findByLabelText("Title")).toBeInTheDocument();
+		expect(screen.queryByRole("dialog", { name: "Report a problem" })).not.toBeInTheDocument();
 	});
 
 	it("shows the nightly warning when the nightly channel is loaded", async () => {
@@ -436,9 +440,8 @@ describe("GlobalSettingsForm", () => {
 		renderForm();
 
 		await user.click(await screen.findByRole("button", { name: "Report a problem" }));
-		expect(await screen.findByRole("dialog", { name: "Report a problem" })).toBeInTheDocument();
 
-		await user.type(screen.getByLabelText("Title"), "Create project fails in /Users/alice/private-repo");
+		await user.type(await screen.findByLabelText("Title"), "Create project fails in /Users/alice/private-repo");
 		await user.type(
 			screen.getByLabelText("What happened?"),
 			"Open http://127.0.0.1:5173/projects/demo?access_token=local-secret and click Create. Show a clear prerequisite error.",
@@ -481,8 +484,7 @@ describe("GlobalSettingsForm", () => {
 		renderForm();
 
 		await user.click(await screen.findByRole("button", { name: "Report a problem" }));
-		expect(await screen.findByRole("dialog", { name: "Report a problem" })).toBeInTheDocument();
-		await user.type(screen.getByLabelText("Title"), "Need help with setup");
+		await user.type(await screen.findByLabelText("Title"), "Need help with setup");
 		await user.type(screen.getByLabelText("What happened?"), "The setup flow stalls after the first prompt.");
 
 		await user.click(screen.getByRole("radio", { name: "Discord" }));
@@ -513,23 +515,26 @@ describe("GlobalSettingsForm", () => {
 		expect(open).not.toHaveBeenCalled();
 	});
 
-	it("clears draft text when the feedback dialog closes", async () => {
+	it("clears draft text when the report section collapses and reopens", async () => {
 		const user = userEvent.setup();
 		const githubToken = `ghp_${"abcdefghijklmnopqrstuvwxyz"}${"1234567890AB"}`;
 		renderForm();
 
 		await user.click(await screen.findByRole("button", { name: "Report a problem" }));
-		expect(await screen.findByRole("dialog", { name: "Report a problem" })).toBeInTheDocument();
-		await user.type(screen.getByLabelText("Title"), "Sensitive setup problem");
+		await user.type(await screen.findByLabelText("Title"), "Sensitive setup problem");
 		await user.type(screen.getByLabelText("What happened?"), `Token is ${githubToken}`);
 
-		await user.click(screen.getByRole("button", { name: "Close report dialog" }));
-		await waitFor(() => expect(screen.queryByRole("dialog", { name: "Report a problem" })).not.toBeInTheDocument());
+		// Collapse the section
+		await user.click(screen.getByRole("button", { name: "Report a problem" }));
+		// Wait for exit animation to unmount content
+		await waitFor(() => expect(screen.queryByLabelText("Title")).not.toBeInTheDocument());
 
-		await user.click(await screen.findByRole("button", { name: "Report a problem" }));
-		expect(await screen.findByRole("dialog", { name: "Report a problem" })).toBeInTheDocument();
-		expect(screen.getByLabelText("Title")).toHaveValue("");
-		expect(screen.getByLabelText("What happened?")).toHaveValue("");
+		// Re-expand — the form should be cleared (fresh mount)
+		await user.click(screen.getByRole("button", { name: "Report a problem" }));
+		await waitFor(() => {
+			expect(screen.getByLabelText("Title")).toHaveValue("");
+			expect(screen.getByLabelText("What happened?")).toHaveValue("");
+		});
 	});
 
 	it("keeps the report form to title and details while tailoring placeholder guidance", async () => {
@@ -537,8 +542,7 @@ describe("GlobalSettingsForm", () => {
 		renderForm();
 
 		await user.click(await screen.findByRole("button", { name: "Report a problem" }));
-		expect(await screen.findByRole("dialog", { name: "Report a problem" })).toBeInTheDocument();
-		expect(screen.getByLabelText("Title")).toHaveAttribute("placeholder", "Brief Title");
+		expect(await screen.findByLabelText("Title")).toHaveAttribute("placeholder", "Brief Title");
 		expect(screen.getByLabelText("What happened?")).toHaveAttribute(
 			"placeholder",
 			"Share what happened, what you expected, and how to reproduce it.",

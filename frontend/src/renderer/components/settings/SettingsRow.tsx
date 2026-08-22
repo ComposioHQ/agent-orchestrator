@@ -1,4 +1,5 @@
-import { ChevronRight, Pencil, type LucideIcon } from "lucide-react";
+import { ChevronDown, ChevronRight, Pencil, type LucideIcon } from "lucide-react";
+import { AnimatePresence, motion } from "motion/react";
 import { useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { cn } from "../../lib/utils";
@@ -146,5 +147,85 @@ export function SettingsLinkRow({
 			<SettingsRowLabel icon={icon} label={label} />
 			<ChevronRight className="size-icon-base shrink-0 text-settings-muted" aria-hidden="true" />
 		</button>
+	);
+}
+
+export function SettingsExpandableRow({
+	icon,
+	label,
+	children,
+	defaultOpen = false,
+}: {
+	icon?: LucideIcon;
+	label: string;
+	children: ReactNode | ((open: boolean) => ReactNode);
+	defaultOpen?: boolean;
+}) {
+	const [open, setOpen] = useState(defaultOpen);
+	const containerRef = useRef<HTMLDivElement>(null);
+	const content = typeof children === "function" ? children(open) : children;
+
+	const scrollIntoViewIfNeeded = () => {
+		const el = containerRef.current;
+		if (!el) return;
+		requestAnimationFrame(() => {
+			const scrollParent = el.closest<HTMLElement>("[style*='overflow'], [class*='overflow']") ?? el.parentElement;
+			if (!scrollParent) return;
+			const targetTop = el.offsetTop - scrollParent.offsetTop;
+			const start = scrollParent.scrollTop;
+			const distance = targetTop - start;
+			if (Math.abs(distance) < 2) return;
+			const duration = 200;
+			const startTime = performance.now();
+			const step = (now: number) => {
+				const t = Math.min((now - startTime) / duration, 1);
+				const ease = t * (2 - t);
+				scrollParent.scrollTop = start + distance * ease;
+				if (t < 1) requestAnimationFrame(step);
+			};
+			requestAnimationFrame(step);
+		});
+	};
+
+	return (
+		<div
+			ref={containerRef}
+			className={cn(
+				"flex flex-col rounded-md bg-[var(--color-bg-settings-row)] transition-colors",
+				open ? "bg-[var(--color-bg-settings-row-hover)]" : "hover:bg-[var(--color-bg-settings-row-hover)]",
+			)}
+		>
+			<button
+				type="button"
+				onClick={() => setOpen(!open)}
+				aria-expanded={open}
+				className="flex h-[var(--size-settings-row)] min-h-[var(--size-settings-row)] w-full items-center justify-between gap-[var(--size-settings-row-icon-gap)] bg-transparent px-[var(--size-settings-row-padding)] py-[var(--size-settings-row-padding)] text-left focus-visible:rounded-md focus-visible:ring-1 focus-visible:ring-ring focus-visible:outline-none"
+			>
+				<SettingsRowLabel icon={icon} label={label} />
+				<ChevronDown
+					className={cn(
+						"size-icon-base shrink-0 text-settings-muted transition-transform duration-200",
+						!open && "-rotate-90",
+					)}
+					aria-hidden="true"
+				/>
+			</button>
+			<AnimatePresence initial={false}>
+				{open && (
+					<motion.div
+						initial={{ height: 0 }}
+						animate={{ height: "auto" }}
+						exit={{ height: 0 }}
+						transition={{ duration: 0.12, ease: [0.25, 0.1, 0.25, 1] }}
+						onAnimationComplete={() => { if (open) scrollIntoViewIfNeeded(); }}
+						className="overflow-hidden"
+					>
+						<div className="h-fit px-3 pb-4">
+							{content}
+						</div>
+					</motion.div>
+				)}
+			</AnimatePresence>
+		</div>
 	);
 }
