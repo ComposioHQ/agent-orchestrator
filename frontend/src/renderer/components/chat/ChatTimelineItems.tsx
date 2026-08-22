@@ -131,7 +131,10 @@ function shortenPaths(text: string): string {
 
 function formatDuration(ms: number): string {
 	if (ms < 1000) return `${ms}ms`;
-	if (ms < 60_000) return `${(ms / 1000).toFixed(1)}s`;
+	if (ms < 60_000) {
+		// Drop a trailing ".0" so whole seconds read as "3s", not "3.0s".
+		return `${(ms / 1000).toFixed(1).replace(/\.0$/, "")}s`;
+	}
 	return `${Math.round(ms / 60_000)}m`;
 }
 
@@ -207,10 +210,10 @@ export function HumanMessage({
 			) : (
 				<div
 					className={cn(
-						"cursor-chat-human-message w-fit max-w-[min(78%,560px)] rounded-[10px] border px-3 py-2.5 text-sm leading-[1.55]",
+						"cursor-chat-human-message w-fit max-w-[min(78%,560px)] rounded-[10px] px-3 py-2.5 text-sm leading-[1.55]",
 						queued
-							? "border-dashed border-border-strong bg-transparent text-muted-foreground"
-							: "border-border bg-raised text-foreground",
+							? "border border-dashed border-border-strong bg-transparent text-muted-foreground"
+							: "bg-raised text-foreground",
 					)}
 				>
 					{body ? <p className="break-words whitespace-pre-wrap text-pretty">{body}</p> : null}
@@ -241,13 +244,13 @@ export function HumanMessage({
 								type="button"
 								onClick={onEditStart}
 								aria-label="Edit user message"
-								className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[10.5px] text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground"
+								title="Edit user message"
+								className="flex items-center rounded px-1.5 py-0.5 text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground"
 							>
 								<Pencil aria-hidden="true" className="size-3" />
-								Edit
 							</button>
 						) : null}
-						<CopyButton text={message.text} label="Copy user message" />
+						<CopyButton text={message.text} label="Copy user message" compact />
 					</div>
 					{branchPoint && onActivateBranch ? (
 						<ConversationBranchNavigator
@@ -321,6 +324,7 @@ export function AssistantMessage({
 	message,
 	showCopy = false,
 	onRollback,
+	durationMs,
 	showStreamingIndicator = message.streaming,
 }: {
 	message: ConversationMessage;
@@ -331,13 +335,16 @@ export function AssistantMessage({
 	 * answer owns both "keep this" and "undo from here".
 	 */
 	onRollback?: () => void;
+	/** How long the finished turn took; sits next to rollback on the action row. */
+	durationMs?: number;
 	/** Only the newest item can still be visibly writing; older streaming fragments
 	 * are waiting on a tool rather than missing content. */
 	showStreamingIndicator?: boolean;
 }) {
 	const visiblyStreaming = message.streaming && showStreamingIndicator;
 	const hasText = message.text.trim().length > 0;
-	const showActions = !visiblyStreaming && (showCopy || Boolean(onRollback));
+	const hasDuration = durationMs !== undefined && durationMs > 0;
+	const showActions = !visiblyStreaming && (showCopy || Boolean(onRollback) || hasDuration);
 	return (
 		<div className={cn("group/message relative", visiblyStreaming && hasText && "chat-assistant-streaming")}>
 			<ChatMarkdown text={message.text} streaming={message.streaming} />
@@ -380,6 +387,7 @@ export function AssistantMessage({
 							<Undo2 aria-hidden="true" className="size-3" />
 						</button>
 					) : null}
+					{hasDuration ? <TurnDuration durationMs={durationMs} /> : null}
 				</div>
 			) : null}
 		</div>
@@ -1696,22 +1704,29 @@ function formatTokens(tokens: number): string {
 /* turn boundary                                                               */
 /* -------------------------------------------------------------------------- */
 
+/** Turn wall-clock duration; lives on the action row next to rollback, not the Done divider. */
+export function TurnDuration({ durationMs }: { durationMs: number }) {
+	if (durationMs <= 0) return null;
+	return (
+		<span className="shrink-0 px-1 font-sans text-[12px] leading-none tabular-nums text-muted-foreground">
+			{formatDuration(durationMs)}
+		</span>
+	);
+}
+
 /**
- * How a turn ended. `interrupted` is reported as its own outcome because the
- * provider reports it that way — relabelling it as failed would misattribute a
- * deliberate cancellation.
+ * How a turn ended when it did not complete cleanly. Successful turns skip this —
+ * their duration already sits on the answer action row. `interrupted` is kept
+ * distinct from failed because the provider reports it that way.
  */
 export function TurnOutcome({
 	state,
-	durationMs,
 	error,
 }: {
-	state: "completed" | "interrupted" | "failed";
-	durationMs?: number;
+	state: "interrupted" | "failed";
 	error?: string;
 }) {
 	const copy = {
-		completed: { label: "Done", tone: "text-muted-foreground/70" },
 		interrupted: { label: "Stopped", tone: "text-muted-foreground/70" },
 		failed: { label: "Failed", tone: "text-destructive" },
 	}[state];
@@ -1722,11 +1737,6 @@ export function TurnOutcome({
 			<span className={cn("shrink-0 text-[10px] uppercase tracking-[0.08em]", copy.tone)}>
 				{copy.label}
 			</span>
-			{durationMs !== undefined && durationMs > 0 ? (
-				<span className="shrink-0 font-mono text-[10px] tabular-nums text-muted-foreground/70">
-					{formatDuration(durationMs)}
-				</span>
-			) : null}
 			{error ? (
 				<span className="max-w-[40%] shrink truncate text-[10px] text-destructive" title={error}>
 					{error}
