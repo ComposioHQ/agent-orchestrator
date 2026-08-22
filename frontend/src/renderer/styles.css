@@ -2137,6 +2137,23 @@ body.is-resizing-x [data-slot="inspector-container"] {
 	background: color-mix(in srgb, var(--color-bg-secondary) 62%, transparent);
 }
 
+/* Explore / command expansion: one soft chat card; command and output share
+   the surface and split on a hairline — no nested near-black wells. */
+.cursor-chat-explore-box {
+	border-color: color-mix(in oklch, var(--color-border-strong) 55%, transparent);
+	background: color-mix(in srgb, var(--color-bg-elevated) 42%, var(--color-bg-secondary));
+}
+
+.cursor-chat-explore-command {
+	background: color-mix(in srgb, var(--color-bg-elevated) 28%, transparent);
+	color: color-mix(in oklch, var(--color-text-primary) 88%, transparent);
+}
+
+.cursor-chat-explore-output {
+	background: transparent;
+	color: color-mix(in oklch, var(--color-text-muted) 96%, var(--color-text-primary));
+}
+
 :root[data-theme="light"] .cursor-chat-surface {
 	background: var(--color-bg-primary);
 }
@@ -2182,6 +2199,21 @@ body.is-resizing-x [data-slot="inspector-container"] {
 :root[data-theme="light"] .cursor-chat-activity-panel {
 	background: color-mix(in srgb, var(--color-bg-tertiary) 66%, transparent);
 	border-color: color-mix(in oklch, var(--color-text-primary) 12%, transparent);
+}
+
+:root[data-theme="light"] .cursor-chat-explore-box {
+	border-color: color-mix(in oklch, var(--color-text-primary) 12%, transparent);
+	background: color-mix(in srgb, var(--color-bg-secondary) 82%, var(--color-bg-tertiary));
+}
+
+:root[data-theme="light"] .cursor-chat-explore-command {
+	background: color-mix(in srgb, var(--color-bg-tertiary) 55%, transparent);
+	color: color-mix(in oklch, var(--color-text-primary) 86%, transparent);
+}
+
+:root[data-theme="light"] .cursor-chat-explore-output {
+	background: transparent;
+	color: color-mix(in oklch, var(--color-text-primary) 58%, transparent);
 }
 
 /* The live caret belongs to the text being written. A separate block after the

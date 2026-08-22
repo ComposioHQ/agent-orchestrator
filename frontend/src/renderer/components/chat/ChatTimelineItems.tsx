@@ -550,37 +550,110 @@ function GenericActivityRow({ activity }: { activity: ConversationActivity }) {
 			</button>
 
 			{open && hasBody ? (
-				<div className="flex flex-col gap-1.5 px-1 pb-1 pt-0.5">
-					{/* One file: open straight onto its patch. Listing the same
-					    basename again under "Edited name" is noise. */}
-					{files.length === 1 && files[0]?.patch ? (
-						<Patch patch={files[0].patch} truncated={files[0].patchTruncated} />
-					) : null}
-					{files.length > 1 ? <FileChangeList files={files} /> : null}
-					{detail?.command ? (
-						// Said explicitly rather than implied by the label: "Ran command"
-						// alone never tells the reader what ran, and the collapsed row
-						// deliberately keeps only the category.
-						<pre className="overflow-x-auto rounded-md border border-border bg-background px-2.5 py-1.5 font-mono text-[10.5px] leading-relaxed text-foreground">
-							{detail.command}
-						</pre>
-					) : null}
-					{detail?.reason || detail?.text ? (
-						<p className="whitespace-pre-wrap px-1 text-[11px] leading-relaxed text-muted-foreground">
-							{detail.reason ?? detail.text}
-						</p>
-					) : null}
-					{detail?.terminalInput ? (
-						<TerminalInput
-							text={detail.terminalInput}
-							truncated={detail.terminalInputTruncated}
-						/>
-					) : null}
-					{detail?.output ? <CommandOutput activity={activity} /> : null}
-				</div>
+				compactSummary && (detail?.command || detail?.output || detail?.terminalInput) ? (
+					<CommandExploreBody activity={activity} />
+				) : (
+					<div className="flex flex-col gap-1.5 px-1 pb-1 pt-0.5">
+						{/* One file: open straight onto its patch. Listing the same
+						    basename again under "Edited name" is noise. */}
+						{files.length === 1 && files[0]?.patch ? (
+							<Patch patch={files[0].patch} truncated={files[0].patchTruncated} />
+						) : null}
+						{files.length > 1 ? <FileChangeList files={files} /> : null}
+						{detail?.command ? (
+							// Said explicitly rather than implied by the label: "Ran command"
+							// alone never tells the reader what ran, and the collapsed row
+							// deliberately keeps only the category.
+							<pre className="overflow-x-auto rounded-md border border-border bg-background px-2.5 py-1.5 font-mono text-[10.5px] leading-relaxed text-foreground">
+								{detail.command}
+							</pre>
+						) : null}
+						{detail?.reason || detail?.text ? (
+							<p className="whitespace-pre-wrap px-1 text-[11px] leading-relaxed text-muted-foreground">
+								{detail.reason ?? detail.text}
+							</p>
+						) : null}
+						{detail?.terminalInput ? (
+							<TerminalInput
+								text={detail.terminalInput}
+								truncated={detail.terminalInputTruncated}
+							/>
+						) : null}
+						{detail?.output ? <CommandOutput activity={activity} /> : null}
+					</div>
+				)
 			) : null}
 		</div>
 	);
+}
+
+/**
+ * Expanded command / explore body: one soft chat-surface card with the shell
+ * line nested in its own chip, then muted monospace output underneath — the
+ * same anatomy as the Cursor explore block, restated in AO chat tokens.
+ */
+function CommandExploreBody({ activity }: { activity: ConversationActivity }) {
+	const detail = activity.detail;
+	const command = detail?.command?.trim();
+	const reason = (detail?.reason ?? detail?.text)?.trim();
+	const binary = command ? commandBinaryLabel(command) : undefined;
+	const showPrompt = Boolean(reason && reason !== command);
+
+	return (
+		<div className="cursor-chat-explore-box mt-1 flex min-w-0 flex-col overflow-hidden rounded-[10px] border">
+			{showPrompt ? (
+				<div className="flex min-w-0 items-start gap-2 border-b border-border/60 px-3 py-2">
+					<span
+						aria-hidden="true"
+						className="shrink-0 select-none pt-px font-mono text-[11px] leading-relaxed text-muted-foreground/70"
+					>
+						&gt;_
+					</span>
+					<div className="flex min-w-0 flex-1 flex-wrap items-baseline gap-x-2 gap-y-0.5">
+						<span className="min-w-0 break-words text-[12px] leading-relaxed text-foreground/90">
+							{reason}
+						</span>
+						{binary ? (
+							<span className="shrink-0 font-mono text-[10.5px] text-muted-foreground/55">
+								{binary}
+							</span>
+						) : null}
+					</div>
+				</div>
+			) : null}
+
+			{command ? (
+				<pre
+					className={cn(
+						"cursor-chat-explore-command overflow-x-auto px-3 py-2 font-mono text-[11px] leading-relaxed text-foreground/85",
+						(detail?.output || detail?.terminalInput) && "border-b border-border/60",
+					)}
+				>
+					{command}
+				</pre>
+			) : null}
+
+			{detail?.terminalInput ? (
+				<div className={cn("px-3 py-2", detail?.output && "border-b border-border/60")}>
+					<TerminalInput
+						text={detail.terminalInput}
+						truncated={detail.terminalInputTruncated}
+					/>
+				</div>
+			) : null}
+			{detail?.output ? <CommandOutput activity={activity} embedded /> : null}
+		</div>
+	);
+}
+
+function commandBinaryLabel(command: string): string | undefined {
+	const trimmed = command.trim();
+	if (!trimmed) return undefined;
+	const space = trimmed.indexOf(" ");
+	const head = space > 0 ? trimmed.slice(0, space) : trimmed;
+	const slash = head.lastIndexOf("/");
+	const binary = slash >= 0 ? head.slice(slash + 1) : head;
+	return binary || undefined;
 }
 
 /**
@@ -631,7 +704,14 @@ function TerminalInput({ text, truncated }: { text: string; truncated?: boolean 
  * hundred stacked copies of itself. See `lib/ansi.ts` for why this is a text pass
  * rather than a terminal.
  */
-function CommandOutput({ activity }: { activity: ConversationActivity }) {
+function CommandOutput({
+	activity,
+	embedded = false,
+}: {
+	activity: ConversationActivity;
+	/** Inside the explore card: no second bordered surface. */
+	embedded?: boolean;
+}) {
 	const pre = useRef<HTMLPreElement>(null);
 	const detail = activity.detail;
 	// Older ACP-backed conversations may contain the provider's structured
@@ -658,7 +738,12 @@ function CommandOutput({ activity }: { activity: ConversationActivity }) {
 			<pre
 				ref={pre}
 				aria-live={streaming ? "polite" : undefined}
-				className="max-h-64 overflow-auto rounded-md border border-border bg-background px-2.5 py-2 font-mono text-[10.5px] leading-relaxed text-muted-foreground"
+				className={cn(
+					"max-h-64 overflow-auto font-mono leading-relaxed text-muted-foreground",
+					embedded
+						? "cursor-chat-explore-output px-3 py-2 text-[11px]"
+						: "rounded-md border border-border bg-background px-2.5 py-2 text-[10.5px]",
+				)}
 			>
 				{output}
 			</pre>
