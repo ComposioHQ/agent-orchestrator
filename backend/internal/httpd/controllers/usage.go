@@ -40,8 +40,13 @@ func (c *UsageController) listSessions(w http.ResponseWriter, r *http.Request) {
 	}
 	out := make([]CompactSessionUsageResponse, 0, len(items))
 	for _, item := range items {
+		var totalTokens int64
+		if item.ProcessedTokens != nil {
+			totalTokens = *item.ProcessedTokens
+		}
 		out = append(out, CompactSessionUsageResponse{
-			SessionID: item.SessionID, TotalTokens: item.TotalTokens, Incomplete: item.Incomplete,
+			SessionID: item.SessionID, ProcessedTokens: item.ProcessedTokens,
+			TotalTokens: totalTokens, Incomplete: item.Incomplete,
 		})
 	}
 	envelope.WriteJSON(w, http.StatusOK, ListCompactSessionUsageResponse{Sessions: out})
@@ -80,9 +85,63 @@ func sessionUsageResponse(summary domain.SessionUsageSummary) SessionUsageRespon
 }
 
 func usageTotalsResponse(totals domain.UsageMetricTotals) UsageTotalsResponse {
-	return UsageTotalsResponse{
-		InputTokens: totals.InputTokens, UncachedInputTokens: totals.UncachedInputTokens,
-		CacheReadTokens: totals.CacheReadTokens, CacheWriteTokens: totals.CacheWriteTokens,
-		OutputTokens: totals.OutputTokens, ReasoningTokens: totals.ReasoningTokens,
+	var cacheWriteTokens *int64
+	var cacheWriteTotal int64
+	cacheWriteKnown := false
+	cacheWriteComplete := true
+	if totals.ProviderDetails.OpenAI != nil {
+		if value := totals.ProviderDetails.OpenAI.CacheWriteInputTokens; value != nil {
+			cacheWriteTotal += *value
+			cacheWriteKnown = true
+		} else {
+			cacheWriteComplete = false
+		}
 	}
+	if totals.ProviderDetails.Anthropic != nil {
+		if value := totals.ProviderDetails.Anthropic.CacheCreationInputTokens; value != nil {
+			cacheWriteTotal += *value
+			cacheWriteKnown = true
+		} else {
+			cacheWriteComplete = false
+		}
+	}
+	if cacheWriteKnown && cacheWriteComplete {
+		cacheWriteTokens = &cacheWriteTotal
+	}
+	var reasoningTokens *int64
+	if totals.ProviderDetails.OpenAI != nil {
+		reasoningTokens = totals.ProviderDetails.OpenAI.ReasoningOutputTokens
+	}
+	return UsageTotalsResponse{
+		InputTokens: totals.InputTokens, CachedInputTokens: totals.CachedInputTokens,
+		UncachedInputTokens: totals.UncachedInputTokens,
+		OutputTokens:        totals.OutputTokens, ProcessedTokens: totals.ProcessedTokens,
+		CacheReadTokens: totals.CachedInputTokens, CacheWriteTokens: cacheWriteTokens,
+		ReasoningTokens: reasoningTokens,
+		Provenance: UsageMetricProvenanceResponse{
+			InputTokens: totals.Provenance.InputTokens, CachedInputTokens: totals.Provenance.CachedInputTokens,
+			UncachedInputTokens: totals.Provenance.UncachedInputTokens,
+			OutputTokens:        totals.Provenance.OutputTokens,
+		},
+		ProviderDetails: usageProviderDetailsResponse(totals.ProviderDetails),
+	}
+}
+
+func usageProviderDetailsResponse(details domain.UsageProviderDetails) UsageProviderDetailsResponse {
+	var response UsageProviderDetailsResponse
+	if details.OpenAI != nil {
+		response.OpenAI = &OpenAIUsageDetailsResponse{
+			OpenAIReasoningOutputTokens: details.OpenAI.ReasoningOutputTokens,
+			OpenAICacheWriteInputTokens: details.OpenAI.CacheWriteInputTokens,
+		}
+	}
+	if details.Anthropic != nil {
+		response.Anthropic = &AnthropicUsageDetailsResponse{
+			AnthropicDirectUncachedInputTokens:  details.Anthropic.DirectUncachedInputTokens,
+			AnthropicCacheCreationInputTokens:   details.Anthropic.CacheCreationInputTokens,
+			AnthropicCacheCreation5mInputTokens: details.Anthropic.CacheCreation5mInputTokens,
+			AnthropicCacheCreation1hInputTokens: details.Anthropic.CacheCreation1hInputTokens,
+		}
+	}
+	return response
 }

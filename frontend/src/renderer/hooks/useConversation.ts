@@ -10,7 +10,7 @@
  */
 
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useCallback } from "react";
+import { useCallback, useState } from "react";
 import type { components } from "../../api/schema";
 import { apiClient, apiErrorCode, apiErrorMessage } from "../lib/api-client";
 import { workspaceQueryKey } from "./useWorkspaceQuery";
@@ -527,6 +527,11 @@ export function useConversationModels(sessionId: string | undefined, enabled: bo
 export function useConversationConfigOptions(sessionId: string | undefined, enabled: boolean) {
 	const queryClient = useQueryClient();
 	const queryKey = conversationConfigOptionsQueryKey(sessionId ?? "");
+	// Set for as long as a selection is being written. Cancelling in-flight reads
+	// only closes half the race — without also holding the poll, the interval can
+	// start a fresh read mid-write whose pre-change catalog lands after the
+	// mutation's own result and reverts the picker the user just used.
+	const [writing, setWriting] = useState(false);
 	const query = useQuery({
 		queryKey,
 		enabled: Boolean(sessionId) && enabled,
@@ -534,7 +539,7 @@ export function useConversationConfigOptions(sessionId: string | undefined, enab
 		// ACP can push a replacement catalog when one option changes. Until the
 		// renderer consumes daemon change events, a light poll keeps those updates
 		// visible without coupling them to conversation history polling.
-		refetchInterval: CONFIG_OPTIONS_POLL_INTERVAL_MS,
+		refetchInterval: writing ? false : CONFIG_OPTIONS_POLL_INTERVAL_MS,
 		queryFn: async () => {
 			const { data, error } = await apiClient.GET(
 				"/api/v1/sessions/{sessionId}/conversation/config-options",
@@ -545,6 +550,11 @@ export function useConversationConfigOptions(sessionId: string | undefined, enab
 		},
 	});
 	const mutation = useMutation({
+		// Held across the whole write, paired with the cancel below: `onMutate`
+		// runs before the request and `onSettled` after the result is committed,
+		// so no poll can start or land inside that window.
+		onMutate: () => setWriting(true),
+		onSettled: () => setWriting(false),
 		mutationFn: async ({
 			optionId,
 			value,
@@ -552,6 +562,10 @@ export function useConversationConfigOptions(sessionId: string | undefined, enab
 			optionId: string;
 			value: ChatConfigOptionValue;
 		}) => {
+			// A read already in flight when the user picked would otherwise land
+			// after this mutation's setQueryData and put the pre-change catalog
+			// back, reverting the picker to the old value until the next poll.
+			await queryClient.cancelQueries({ queryKey });
 			const { data, error } = await apiClient.PATCH(
 				"/api/v1/sessions/{sessionId}/conversation/config-options/{configId}",
 				{

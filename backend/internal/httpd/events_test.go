@@ -104,6 +104,45 @@ func TestEventsStreamSubscribesBeforeReplayAndDrainsBufferedLive(t *testing.T) {
 	}
 }
 
+type reviewRunEventSource struct {
+	live *fakeEventSubscriber
+}
+
+func (s *reviewRunEventSource) EventsAfter(context.Context, int64, int) ([]cdc.Event, error) {
+	s.live.publish(testCDCEventWithType(2, cdc.EventReviewRunUpdated))
+	return []cdc.Event{testCDCEventWithType(1, cdc.EventReviewRunCreated)}, nil
+}
+
+func (*reviewRunEventSource) LatestSeq(context.Context) (int64, error) { return 0, nil }
+
+func TestEventsStreamForwardsReviewRunCDC(t *testing.T) {
+	live := &fakeEventSubscriber{}
+	src := &reviewRunEventSource{live: live}
+	router := NewRouterWithControl(config.Config{}, discardLogger(), nil, APIDeps{
+		CDC:    src,
+		Events: live,
+	}, ControlDeps{})
+	ts := httptest.NewServer(router)
+	defer ts.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, ts.URL+"/api/v1/events?after=0", nil)
+	if err != nil {
+		t.Fatalf("new request: %v", err)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("GET /api/v1/events: %v", err)
+	}
+	defer resp.Body.Close()
+
+	events := readSSEEventTypes(t, resp.Body, 2)
+	if got, want := strings.Join(events, ","), "review_run_created,review_run_updated"; got != want {
+		t.Fatalf("event types = %s, want %s", got, want)
+	}
+}
+
 func TestEventsStreamRejectsInvalidAfter(t *testing.T) {
 	router := NewRouterWithControl(config.Config{}, discardLogger(), nil, APIDeps{
 		CDC:    &fakeEventSource{live: &fakeEventSubscriber{}},
@@ -202,6 +241,33 @@ func readSSEIDs(t *testing.T, r io.Reader, want int) []string {
 		t.Fatalf("read stream: %v", err)
 	}
 	t.Fatalf("stream ended after ids %v, want %d ids", ids, want)
+	return nil
+}
+
+func readSSEEventTypes(t *testing.T, r io.Reader, want int) []string {
+	t.Helper()
+	types := make([]string, 0, want)
+	scanner := bufio.NewScanner(r)
+	var current string
+	for scanner.Scan() {
+		line := scanner.Text()
+		switch {
+		case strings.HasPrefix(line, "event: "):
+			current = strings.TrimPrefix(line, "event: ")
+		case line == "":
+			if current != "" {
+				types = append(types, current)
+				current = ""
+				if len(types) == want {
+					return types
+				}
+			}
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		t.Fatalf("read stream: %v", err)
+	}
+	t.Fatalf("stream ended after event types %v, want %d event types", types, want)
 	return nil
 }
 
@@ -306,11 +372,15 @@ func TestEventsStreamParsesLastEventIDHeader(t *testing.T) {
 }
 
 func testCDCEvent(seq int64) cdc.Event {
+	return testCDCEventWithType(seq, cdc.EventSessionUpdated)
+}
+
+func testCDCEventWithType(seq int64, typ cdc.EventType) cdc.Event {
 	return cdc.Event{
 		Seq:       seq,
 		ProjectID: "proj_1",
 		SessionID: "sess_1",
-		Type:      cdc.EventSessionUpdated,
+		Type:      typ,
 		Payload:   json.RawMessage(`{"status":"running"}`),
 		CreatedAt: time.Unix(seq, 0).UTC(),
 	}

@@ -289,8 +289,35 @@ func (s *Service) Start(ctx context.Context, cfg StartConfig) (*Controller, erro
 	if cfg.Kind == domain.KindOrchestrator {
 		scope = domain.ConversationScopeProject
 	}
-	conversation, err := s.store.CreateConversation(
-		ctx, s.newID(), scope, cfg.ProjectID, cfg.SessionID, s.now())
+	now := s.now()
+	var resetBoundary domain.ConversationActivity
+	freshProjectContext := scope == domain.ConversationScopeProject && cfg.ProviderConversationID == ""
+	if freshProjectContext {
+		detail, marshalErr := json.Marshal(map[string]string{
+			"event":  "context.reset",
+			"reason": "native conversation was unavailable",
+		})
+		if marshalErr != nil {
+			return nil, fmt.Errorf("encode fresh context boundary: %w", marshalErr)
+		}
+		resetBoundary = domain.ConversationActivity{
+			ID:             s.newID(),
+			Kind:           domain.ActivityKindSystem,
+			Status:         domain.ActivityStatusCompleted,
+			Summary:        "Agent context reset.",
+			Detail:         detail,
+			ProviderItemID: domain.ConversationContextResetProviderItemID(cfg.SessionID),
+		}
+	}
+	conversationID := s.newID()
+	var conversation domain.ConversationRecord
+	if freshProjectContext {
+		conversation, err = s.store.CreateProjectConversationWithContextReset(
+			ctx, conversationID, cfg.ProjectID, cfg.SessionID, resetBoundary, now)
+	} else {
+		conversation, err = s.store.CreateConversation(
+			ctx, conversationID, scope, cfg.ProjectID, cfg.SessionID, now)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("open conversation: %w", err)
 	}
@@ -348,29 +375,6 @@ func (s *Service) Start(ctx context.Context, cfg StartConfig) (*Controller, erro
 	// it. Settling here covers every way a controller can come up, and is a no-op
 	// for a session that has none of it.
 	s.settleOrphanedWork(ctx, cfg.SessionID, conversation.ID)
-	if conversation.Scope == domain.ConversationScopeProject &&
-		conversation.LatestSequence > 0 && cfg.ProviderConversationID == "" {
-		detail, marshalErr := json.Marshal(map[string]string{
-			"event":  "context.reset",
-			"reason": "native conversation was unavailable",
-		})
-		if marshalErr != nil {
-			_ = conv.Close()
-			return nil, fmt.Errorf("encode fresh context boundary: %w", marshalErr)
-		}
-		if boundaryErr := s.store.UpsertActivity(ctx, conversation.ID, "", domain.ConversationActivity{
-			ID:             s.newID(),
-			Kind:           domain.ActivityKindSystem,
-			Status:         domain.ActivityStatusCompleted,
-			Summary:        "Started a fresh agent context. Earlier project history remains visible in AO but was not loaded into this agent.",
-			Detail:         detail,
-			ProviderItemID: "ao-context-reset:" + string(cfg.SessionID),
-		}, s.now()); boundaryErr != nil {
-			_ = conv.Close()
-			return nil, fmt.Errorf("record fresh context boundary: %w", boundaryErr)
-		}
-	}
-
 	// A fresh generation per launch, so events from the controller this one
 	// replaced can be told apart from the current one's.
 	controller := newController(

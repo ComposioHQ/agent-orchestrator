@@ -199,8 +199,9 @@ export function SessionChatSurface({
 		switchPresentation?.lockAgentTerminal && !switchPresentation.allowSourceInput,
 	);
 	const renderShellFallback = Boolean(shellTarget && session);
+	const snapshotSessionMismatch = Boolean(snapshot && snapshot.sessionId !== session.id);
 	const renderSnapshot =
-		snapshot ??
+		(snapshotSessionMismatch ? undefined : snapshot) ??
 		(renderShellFallback
 			? unavailableConversationSnapshot(session)
 			: undefined);
@@ -247,6 +248,7 @@ export function SessionChatSurface({
 	return (
 		<div className="relative h-full min-h-0">
 			<ChatWorkspace
+				key={session.id}
 				snapshot={renderSnapshot}
 				agentInputDisabled={switchLocksChat || switchSelectorOpen}
 				onLinkOpen={openLinkInBrowser}
@@ -322,11 +324,6 @@ export function SessionChatSurface({
 				// covers the window before the controller reports, and it is the last word
 				// afterwards, since the capability is a property of the driver.
 				onSteer={can(renderSnapshot, "steer") && !commands.steerUnsupported ? commands.steer : undefined}
-				onPromoteQueuedTurn={
-					can(renderSnapshot, "steer") && !commands.steerUnsupported
-						? commands.promoteQueuedTurn
-						: undefined
-				}
 				steerPending={commands.steerPending}
 				steerRefusal={commands.steerRefusal}
 				onReloadMcpServers={

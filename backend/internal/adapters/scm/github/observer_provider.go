@@ -219,9 +219,14 @@ func stableCheckFingerprint(parts []string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// FetchPullRequests fetches normalized PR/check metadata for up to 25 PR refs in
-// one GraphQL request. The observer owns chunking; this method rejects larger
-// batches so tests catch accidental over-batching.
+// FetchPullRequests fetches normalized PR/check metadata for up to 25 PR refs
+// in one GraphQL request, positionally aligned with refs: out[i] answers
+// refs[i]. A PR the batch query could not resolve (deleted repo, permissions,
+// an old name recreated so the redirect no longer lands) leaves a
+// Fetched=false placeholder carrying ErrNotFound at its index, so the
+// observer marks that ref refresh-incomplete and can log the permanent miss
+// distinctly from a transient provider failure. The observer owns chunking;
+// this method rejects larger batches so tests catch accidental over-batching.
 func (p *Provider) FetchPullRequests(ctx context.Context, refs []ports.SCMPRRef) ([]ports.SCMObservation, error) {
 	if len(refs) == 0 {
 		return nil, nil
@@ -234,11 +239,19 @@ func (p *Provider) FetchPullRequests(ctx context.Context, refs []ports.SCMPRRef)
 	if err != nil {
 		return nil, err
 	}
-	out := make([]ports.SCMObservation, 0, len(refs))
+	out := make([]ports.SCMObservation, len(refs))
 	for i, ref := range refs {
 		repoData, _ := data[aliases[i]].(map[string]any)
 		pr, _ := repoData["pullRequest"].(map[string]any)
 		if pr == nil {
+			out[i] = ports.SCMObservation{
+				Fetched:  false,
+				Provider: ref.Repo.Provider,
+				Host:     ref.Repo.Host,
+				Repo:     repoFullName(ref.Repo),
+				PR:       ports.SCMPRObservation{Number: ref.Number, URL: ref.URL},
+				Error:    fmt.Errorf("%w: pull request %s#%d not in batch response", ErrNotFound, repoFullName(ref.Repo), ref.Number),
+			}
 			continue
 		}
 		if scmContextsPaginated(pr) {
@@ -246,7 +259,7 @@ func (p *Provider) FetchPullRequests(ctx context.Context, refs []ports.SCMPRRef)
 				return nil, err
 			}
 		}
-		out = append(out, scmObservationFromGraphQL(ref, pr))
+		out[i] = scmObservationFromGraphQL(ref, pr)
 	}
 	return out, nil
 }

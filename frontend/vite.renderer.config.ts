@@ -105,6 +105,18 @@ export default defineConfig({
 			"@aoagents/product-ui": fileURLToPath(
 				new URL("../packages/product-ui/src/index.ts", import.meta.url),
 			),
+			// The alias above resolves product-ui to its source, so that package's
+			// own imports resolve from packages/product-ui/ — which only has a
+			// node_modules if `npm ci` was run there too. CI does that; a
+			// frontend-only install does not, and the failure mode is quiet: every
+			// test importing product-ui dies at transform time with "failed to
+			// resolve clsx", which reads as pre-existing breakage rather than a
+			// missing install. Point both runtime deps at the frontend copies so
+			// one install is enough.
+			clsx: fileURLToPath(new URL("./node_modules/clsx", import.meta.url)),
+			"tailwind-merge": fileURLToPath(
+				new URL("./node_modules/tailwind-merge", import.meta.url),
+			),
 		},
 	},
 	// Dev proxy for VITE_NO_ELECTRON=1 browser preview — forwards /api and /mux

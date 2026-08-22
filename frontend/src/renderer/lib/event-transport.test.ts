@@ -86,6 +86,8 @@ describe("createEventTransport", () => {
 		expect(EventSourceStub.instances[0].url).toBe("http://127.0.0.1:3001/api/v1/events");
 		// All CDC event types plus onmessage are wired up.
 		expect(EventSourceStub.instances[0].listeners).toContain("session_updated");
+		expect(EventSourceStub.instances[0].listeners).toContain("review_run_created");
+		expect(EventSourceStub.instances[0].listeners).toContain("review_run_updated");
 		expect(EventSourceStub.instances[0].onmessage).toBeTypeOf("function");
 	});
 
