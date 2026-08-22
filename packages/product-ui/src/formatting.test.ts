@@ -18,6 +18,6 @@ describe("formatting", () => {
 			translate: (key, values) => `${key}:${values?.n ?? ""}`,
 		});
 
-		expect(result).toBe("time.minutesAgo:42");
+		expect(result).toBe("time.minutesShort:42");
 	});
 });
