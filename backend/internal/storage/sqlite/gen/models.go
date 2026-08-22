@@ -192,25 +192,26 @@ type ConversationTurn struct {
 }
 
 type ModelUsageEvent struct {
-	ID                   int64
-	BindingID            int64
-	UsageSourceID        int64
-	ProviderID           string
-	BillingProviderID    sql.NullString
-	ModelID              string
-	UsageMeasurementKind string
-	InputTokens          sql.NullInt64
-	CachedInputTokens    sql.NullInt64
-	UncachedInputTokens  sql.NullInt64
-	OutputTokens         sql.NullInt64
-	ProviderUsageJson    sql.NullString
-	SourceEventKey       string
-	CreatedAt            sql.NullTime
-	InputCostNanos       sql.NullInt64
-	CachedInputCostNanos sql.NullInt64
-	OutputCostNanos      sql.NullInt64
-	EstimatedCostNanos   sql.NullInt64
-	PricingVersion       string
+	ID                    int64
+	BindingID             int64
+	UsageSourceID         int64
+	ProviderID            string
+	BillingProviderID     sql.NullString
+	ModelID               string
+	UsageMeasurementKind  string
+	InputTokens           sql.NullInt64
+	CachedInputTokens     sql.NullInt64
+	UncachedInputTokens   sql.NullInt64
+	OutputTokens          sql.NullInt64
+	ProviderUsageJson     sql.NullString
+	SourceEventKey        string
+	CreatedAt             sql.NullTime
+	InputCostNanos        sql.NullInt64
+	CachedInputCostNanos  sql.NullInt64
+	OutputCostNanos       sql.NullInt64
+	EstimatedCostNanos    sql.NullInt64
+	PricingVersion        string
+	BillingProviderSource sql.NullString
 }
 
 type Notification struct {

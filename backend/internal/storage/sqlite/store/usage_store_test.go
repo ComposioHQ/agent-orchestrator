@@ -504,7 +504,7 @@ func TestApplyUsageChunkPersistsProviderSplitsAndPassiveCosts(t *testing.T) {
 	providerUsage := anthropicProviderUsage(5, 10, &fiveMinutes, &oneHour)
 	event := domain.ModelUsageEvent{
 		ProviderID:        domain.UsageProviderAnthropic,
-		BillingProviderID: "source-provider",
+		BillingProviderID: "source-provider", BillingProviderSource: domain.UsageBillingProviderObserved,
 		ModelID:           " source-model ",
 		MeasurementKind:   domain.UsageMeasurementNativeReported,
 		Tokens:            canonicalUsageTokens(20, 5, 15, 4),
@@ -815,6 +815,7 @@ func TestApplyLegacyUsageRepairsUsesExactSourceFactsAndPreservesCursor(t *testin
 	event := anthropicUsageEvent("legacy-repair", 5, 10, 5, 4)
 	event.ModelID = "claude-test"
 	event.BillingProviderID = "anthropic"
+	event.BillingProviderSource = domain.UsageBillingProviderObserved
 	parserState := `{"version":1,"source_kind":"claude_main","claude":{"model_id":"claude-test"}}`
 	mustNoError(t, s.ApplyUsageChunk(ctx, source.ID, 0, source.UpdatedAt, domain.SourceCursorState{
 		ByteOffset: 123, ParserStateJSON: parserState,
@@ -851,6 +852,7 @@ WHERE source_event_key = 'legacy-repair'`)
 		ExpectedParserStateJSON: sources[0].Source.ParserStateJSON,
 		ExpectedSourceUpdatedAt: sources[0].Source.UpdatedAt,
 		BillingProviderID:       "anthropic",
+		BillingProviderSource:   domain.UsageBillingProviderObserved,
 		ProviderUsageJSON:       anthropicProviderUsage(5, 10, nil, nil),
 		Costs: domain.UsageEventCosts{
 			InputCostNanos:       &input,
@@ -914,8 +916,9 @@ WHERE source_event_key = 'legacy-stale'`)
 	base, err := s.LatestSeq(ctx)
 	mustNoError(t, err)
 	applied, err := s.ApplyLegacyUsageRepairs(ctx, []domain.LegacyUsageRepair{{
-		Candidate:         candidates[0],
-		BillingProviderID: "openai",
+		Candidate:             candidates[0],
+		BillingProviderID:     "openai",
+		BillingProviderSource: domain.UsageBillingProviderObserved,
 		Costs: domain.UsageEventCosts{
 			EstimatedCostNanos: &total, PricingVersion: "catalog-v2",
 		},
@@ -942,6 +945,7 @@ func TestApplyUsageChunkReplayComparesNewSourceFactsButNotCosts(t *testing.T) {
 	fiveMinutes, oneHour := int64(7), int64(3)
 	event := anthropicUsageEvent("event-1", 5, 10, 5, 4)
 	event.BillingProviderID = "anthropic"
+	event.BillingProviderSource = domain.UsageBillingProviderObserved
 	event.ProviderUsageJSON = anthropicProviderUsage(5, 10, &fiveMinutes, &oneHour)
 	if err := s.ApplyUsageChunk(ctx, source.ID, 0, source.UpdatedAt, domain.SourceCursorState{ByteOffset: 10, State: domain.UsageSourceActive, UpdatedAt: now}, []domain.ModelUsageEvent{event}); err != nil {
 		t.Fatalf("seed event: %v", err)
@@ -998,6 +1002,7 @@ INSERT INTO model_usage_events (
 	}
 	replay := usageEvent("legacy-event", canonicalUsageTokens(20, 5, 15, 4))
 	replay.BillingProviderID = "openai"
+	replay.BillingProviderSource = domain.UsageBillingProviderObserved
 	if err := s.ApplyUsageChunk(ctx, source.ID, 0, source.UpdatedAt, domain.SourceCursorState{
 		ByteOffset: 10, State: domain.UsageSourceActive, UpdatedAt: now,
 	}, []domain.ModelUsageEvent{replay}); err != nil {
@@ -1391,7 +1396,8 @@ func TestUsageAggregatesMergeProvidersPerModelAndPreserveCostCoverageFacts(t *te
 	events := []domain.ModelUsageEvent{
 		{
 			ProviderID: domain.UsageProviderOpenAI, BillingProviderID: "openai",
-			ModelID: "shared-model", SourceEventKey: "complete",
+			BillingProviderSource: domain.UsageBillingProviderObserved,
+			ModelID:               "shared-model", SourceEventKey: "complete",
 			MeasurementKind: domain.UsageMeasurementNativeReported,
 			Tokens:          canonicalUsageTokens(10, 4, 6, 2),
 			Costs: domain.UsageEventCosts{
@@ -1401,7 +1407,8 @@ func TestUsageAggregatesMergeProvidersPerModelAndPreserveCostCoverageFacts(t *te
 		},
 		{
 			ProviderID: domain.UsageProviderOpenAI, BillingProviderID: "zai",
-			ModelID: "shared-model", SourceEventKey: "partial",
+			BillingProviderSource: domain.UsageBillingProviderObserved,
+			ModelID:               "shared-model", SourceEventKey: "partial",
 			MeasurementKind: domain.UsageMeasurementNativeReported,
 			Tokens:          canonicalUsageTokens(5, 0, 5, 1),
 			Costs: domain.UsageEventCosts{
@@ -1767,6 +1774,7 @@ func anthropicProviderUsage(directInput, cacheCreationInput int64, fiveM, oneH *
 func pricedCandidateEvent(key string) domain.ModelUsageEvent {
 	event := usageEvent(key, canonicalUsageTokens(5, 1, 4, 3))
 	event.BillingProviderID = "openai"
+	event.BillingProviderSource = domain.UsageBillingProviderObserved
 	event.ModelID = "gpt-test"
 	event.Costs.PricingVersion = "catalog-v1"
 	return event

@@ -600,12 +600,14 @@ func (s *Store) ListLegacyUsageEvents(ctx context.Context, sourceID int64) ([]do
 	out := make([]domain.LegacyUsageEvent, 0, len(rows))
 	for _, row := range rows {
 		out = append(out, domain.LegacyUsageEvent{
-			ID:              row.ID,
-			BindingID:       row.BindingID,
-			UsageSourceID:   row.UsageSourceID,
-			ProviderID:      domain.UsageProviderID(row.ProviderID),
-			ModelID:         row.ModelID,
-			MeasurementKind: domain.UsageMeasurementKind(row.UsageMeasurementKind),
+			ID:                    row.ID,
+			BindingID:             row.BindingID,
+			UsageSourceID:         row.UsageSourceID,
+			ProviderID:            domain.UsageProviderID(row.ProviderID),
+			BillingProviderID:     row.BillingProviderID.String,
+			BillingProviderSource: domain.UsageBillingProviderSource(row.BillingProviderSource.String),
+			ModelID:               row.ModelID,
+			MeasurementKind:       domain.UsageMeasurementKind(row.UsageMeasurementKind),
 			Tokens: storedUsageTokens(
 				row.InputTokens, row.CachedInputTokens,
 				row.UncachedInputTokens, row.OutputTokens,
@@ -643,32 +645,40 @@ func (s *Store) ApplyLegacyUsageRepairs(
 			if billingProviderID == "" {
 				return errors.New("legacy usage repair billing provider must be nonempty")
 			}
+			switch repair.BillingProviderSource {
+			case domain.UsageBillingProviderObserved, domain.UsageBillingProviderInferred:
+			default:
+				return fmt.Errorf("invalid usage billing provider source %q", repair.BillingProviderSource)
+			}
 			candidate := repair.Candidate
 			bindingID, err := q.UpdateLegacyUsageEvent(ctx, gen.UpdateLegacyUsageEventParams{
-				BillingProviderID:            sql.NullString{String: billingProviderID, Valid: true},
-				ProviderUsageJson:            stringOrNull(repair.ProviderUsageJSON),
-				InputCostNanos:               ptrInt64ToNull(repair.Costs.InputCostNanos),
-				CachedInputCostNanos:         ptrInt64ToNull(repair.Costs.CachedInputCostNanos),
-				OutputCostNanos:              ptrInt64ToNull(repair.Costs.OutputCostNanos),
-				EstimatedCostNanos:           ptrInt64ToNull(repair.Costs.EstimatedCostNanos),
-				PricingVersion:               repair.Costs.PricingVersion,
-				ID:                           candidate.ID,
-				BindingID:                    candidate.BindingID,
-				UsageSourceID:                candidate.UsageSourceID,
-				ExpectedProviderID:           string(candidate.ProviderID),
-				ExpectedModelID:              candidate.ModelID,
-				ExpectedUsageMeasurementKind: string(candidate.MeasurementKind),
-				ExpectedInputTokens:          ptrInt64ToNull(candidate.Tokens.InputTokens),
-				ExpectedCachedInputTokens:    ptrInt64ToNull(candidate.Tokens.CachedInputTokens),
-				ExpectedUncachedInputTokens:  ptrInt64ToNull(candidate.Tokens.UncachedInputTokens),
-				ExpectedOutputTokens:         ptrInt64ToNull(candidate.Tokens.OutputTokens),
-				ExpectedProviderUsageJson:    stringOrNull(candidate.ProviderUsageJSON),
-				ExpectedSourceEventKey:       candidate.SourceEventKey,
-				ExpectedPricingVersion:       candidate.PricingVersion,
-				ExpectedFileIdentity:         repair.ExpectedFileIdentity,
-				ExpectedByteOffset:           repair.ExpectedByteOffset,
-				ExpectedParserStateJson:      repair.ExpectedParserStateJSON,
-				ExpectedSourceUpdatedAt:      repair.ExpectedSourceUpdatedAt,
+				BillingProviderID:             sql.NullString{String: billingProviderID, Valid: true},
+				BillingProviderSource:         stringOrNull(string(repair.BillingProviderSource)),
+				ProviderUsageJson:             stringOrNull(repair.ProviderUsageJSON),
+				InputCostNanos:                ptrInt64ToNull(repair.Costs.InputCostNanos),
+				CachedInputCostNanos:          ptrInt64ToNull(repair.Costs.CachedInputCostNanos),
+				OutputCostNanos:               ptrInt64ToNull(repair.Costs.OutputCostNanos),
+				EstimatedCostNanos:            ptrInt64ToNull(repair.Costs.EstimatedCostNanos),
+				PricingVersion:                repair.Costs.PricingVersion,
+				ID:                            candidate.ID,
+				BindingID:                     candidate.BindingID,
+				UsageSourceID:                 candidate.UsageSourceID,
+				ExpectedBillingProviderID:     stringOrNull(candidate.BillingProviderID),
+				ExpectedBillingProviderSource: stringOrNull(string(candidate.BillingProviderSource)),
+				ExpectedProviderID:            string(candidate.ProviderID),
+				ExpectedModelID:               candidate.ModelID,
+				ExpectedUsageMeasurementKind:  string(candidate.MeasurementKind),
+				ExpectedInputTokens:           ptrInt64ToNull(candidate.Tokens.InputTokens),
+				ExpectedCachedInputTokens:     ptrInt64ToNull(candidate.Tokens.CachedInputTokens),
+				ExpectedUncachedInputTokens:   ptrInt64ToNull(candidate.Tokens.UncachedInputTokens),
+				ExpectedOutputTokens:          ptrInt64ToNull(candidate.Tokens.OutputTokens),
+				ExpectedProviderUsageJson:     stringOrNull(candidate.ProviderUsageJSON),
+				ExpectedSourceEventKey:        candidate.SourceEventKey,
+				ExpectedPricingVersion:        candidate.PricingVersion,
+				ExpectedFileIdentity:          repair.ExpectedFileIdentity,
+				ExpectedByteOffset:            repair.ExpectedByteOffset,
+				ExpectedParserStateJson:       repair.ExpectedParserStateJSON,
+				ExpectedSourceUpdatedAt:       repair.ExpectedSourceUpdatedAt,
 			})
 			if errors.Is(err, sql.ErrNoRows) {
 				continue
@@ -833,24 +843,25 @@ func usageSourceInsertParams(rec domain.UsageSourceRecord) gen.InsertUsageSource
 
 func usageEventInsertParams(source gen.GetUsageSourceWithBindingAndSessionRow, ev domain.ModelUsageEvent) gen.InsertModelUsageEventParams {
 	return gen.InsertModelUsageEventParams{
-		BindingID:            source.BindingID,
-		UsageSourceID:        source.SourceID,
-		ProviderID:           string(ev.ProviderID),
-		BillingProviderID:    stringOrNull(ev.BillingProviderID),
-		ModelID:              ev.ModelID,
-		UsageMeasurementKind: string(ev.MeasurementKind),
-		InputTokens:          ptrInt64ToNull(ev.Tokens.InputTokens),
-		CachedInputTokens:    ptrInt64ToNull(ev.Tokens.CachedInputTokens),
-		UncachedInputTokens:  ptrInt64ToNull(ev.Tokens.UncachedInputTokens),
-		OutputTokens:         ptrInt64ToNull(ev.Tokens.OutputTokens),
-		ProviderUsageJson:    stringOrNull(ev.ProviderUsageJSON),
-		InputCostNanos:       ptrInt64ToNull(ev.Costs.InputCostNanos),
-		CachedInputCostNanos: ptrInt64ToNull(ev.Costs.CachedInputCostNanos),
-		OutputCostNanos:      ptrInt64ToNull(ev.Costs.OutputCostNanos),
-		EstimatedCostNanos:   ptrInt64ToNull(ev.Costs.EstimatedCostNanos),
-		PricingVersion:       ev.Costs.PricingVersion,
-		SourceEventKey:       ev.SourceEventKey,
-		CreatedAt:            sql.NullTime{Time: ev.CreatedAt.UTC(), Valid: !ev.CreatedAt.IsZero()},
+		BindingID:             source.BindingID,
+		UsageSourceID:         source.SourceID,
+		ProviderID:            string(ev.ProviderID),
+		BillingProviderID:     stringOrNull(ev.BillingProviderID),
+		BillingProviderSource: stringOrNull(string(ev.BillingProviderSource)),
+		ModelID:               ev.ModelID,
+		UsageMeasurementKind:  string(ev.MeasurementKind),
+		InputTokens:           ptrInt64ToNull(ev.Tokens.InputTokens),
+		CachedInputTokens:     ptrInt64ToNull(ev.Tokens.CachedInputTokens),
+		UncachedInputTokens:   ptrInt64ToNull(ev.Tokens.UncachedInputTokens),
+		OutputTokens:          ptrInt64ToNull(ev.Tokens.OutputTokens),
+		ProviderUsageJson:     stringOrNull(ev.ProviderUsageJSON),
+		InputCostNanos:        ptrInt64ToNull(ev.Costs.InputCostNanos),
+		CachedInputCostNanos:  ptrInt64ToNull(ev.Costs.CachedInputCostNanos),
+		OutputCostNanos:       ptrInt64ToNull(ev.Costs.OutputCostNanos),
+		EstimatedCostNanos:    ptrInt64ToNull(ev.Costs.EstimatedCostNanos),
+		PricingVersion:        ev.Costs.PricingVersion,
+		SourceEventKey:        ev.SourceEventKey,
+		CreatedAt:             sql.NullTime{Time: ev.CreatedAt.UTC(), Valid: !ev.CreatedAt.IsZero()},
 	}
 }
 
@@ -933,6 +944,22 @@ func validateUsageEvent(harness domain.AgentHarness, event domain.ModelUsageEven
 	if metrics.InputTokens != nil && metrics.CachedInputTokens != nil && metrics.UncachedInputTokens != nil &&
 		*metrics.InputTokens != *metrics.CachedInputTokens+*metrics.UncachedInputTokens {
 		return errors.New("usage input does not equal cached plus uncached input")
+	}
+	// ALTER TABLE cannot add a CHECK that reads another column, so the pairing
+	// the schema comment describes is enforced here: a provider without a source
+	// would be an attribution nobody can tell apart from an inference, and a
+	// source without a provider names nothing.
+	switch event.BillingProviderSource {
+	case domain.UsageBillingProviderObserved, domain.UsageBillingProviderInferred:
+		if event.BillingProviderID == "" {
+			return errors.New("usage event billing provider source requires a billing provider")
+		}
+	case "":
+		if event.BillingProviderID != "" {
+			return errors.New("usage event billing provider requires a source")
+		}
+	default:
+		return fmt.Errorf("invalid usage billing provider source %q", event.BillingProviderSource)
 	}
 	if event.ProviderUsageJSON != "" {
 		var object map[string]json.RawMessage

@@ -495,36 +495,37 @@ func (q *Queries) HasPendingUsageDiscovery(ctx context.Context) (int64, error) {
 
 const insertModelUsageEvent = `-- name: InsertModelUsageEvent :one
 INSERT INTO model_usage_events (
-    binding_id, usage_source_id, provider_id, billing_provider_id, model_id,
-    usage_measurement_kind,
+    binding_id, usage_source_id, provider_id, billing_provider_id,
+    billing_provider_source, model_id, usage_measurement_kind,
     input_tokens, cached_input_tokens, uncached_input_tokens, output_tokens,
     provider_usage_json,
     input_cost_nanos, cached_input_cost_nanos, output_cost_nanos,
     estimated_cost_nanos, pricing_version,
     source_event_key, created_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 RETURNING id
 `
 
 type InsertModelUsageEventParams struct {
-	BindingID            int64
-	UsageSourceID        int64
-	ProviderID           string
-	BillingProviderID    sql.NullString
-	ModelID              string
-	UsageMeasurementKind string
-	InputTokens          sql.NullInt64
-	CachedInputTokens    sql.NullInt64
-	UncachedInputTokens  sql.NullInt64
-	OutputTokens         sql.NullInt64
-	ProviderUsageJson    sql.NullString
-	InputCostNanos       sql.NullInt64
-	CachedInputCostNanos sql.NullInt64
-	OutputCostNanos      sql.NullInt64
-	EstimatedCostNanos   sql.NullInt64
-	PricingVersion       string
-	SourceEventKey       string
-	CreatedAt            sql.NullTime
+	BindingID             int64
+	UsageSourceID         int64
+	ProviderID            string
+	BillingProviderID     sql.NullString
+	BillingProviderSource sql.NullString
+	ModelID               string
+	UsageMeasurementKind  string
+	InputTokens           sql.NullInt64
+	CachedInputTokens     sql.NullInt64
+	UncachedInputTokens   sql.NullInt64
+	OutputTokens          sql.NullInt64
+	ProviderUsageJson     sql.NullString
+	InputCostNanos        sql.NullInt64
+	CachedInputCostNanos  sql.NullInt64
+	OutputCostNanos       sql.NullInt64
+	EstimatedCostNanos    sql.NullInt64
+	PricingVersion        string
+	SourceEventKey        string
+	CreatedAt             sql.NullTime
 }
 
 func (q *Queries) InsertModelUsageEvent(ctx context.Context, arg InsertModelUsageEventParams) (int64, error) {
@@ -533,6 +534,7 @@ func (q *Queries) InsertModelUsageEvent(ctx context.Context, arg InsertModelUsag
 		arg.UsageSourceID,
 		arg.ProviderID,
 		arg.BillingProviderID,
+		arg.BillingProviderSource,
 		arg.ModelID,
 		arg.UsageMeasurementKind,
 		arg.InputTokens,
@@ -782,6 +784,8 @@ SELECT
     event.binding_id,
     event.usage_source_id,
     event.provider_id,
+    event.billing_provider_id,
+    event.billing_provider_source,
     event.model_id,
     event.usage_measurement_kind,
     event.input_tokens,
@@ -793,25 +797,26 @@ SELECT
     event.source_event_key
 FROM model_usage_events event
 WHERE event.usage_source_id = ?1
-  AND event.billing_provider_id IS NULL
-  AND event.estimated_cost_nanos IS NULL
+  AND (event.billing_provider_id IS NULL OR event.billing_provider_source = 'inferred')
 ORDER BY event.id
 `
 
 type ListLegacyUsageEventsRow struct {
-	ID                   int64
-	BindingID            int64
-	UsageSourceID        int64
-	ProviderID           string
-	ModelID              string
-	UsageMeasurementKind string
-	InputTokens          sql.NullInt64
-	CachedInputTokens    sql.NullInt64
-	UncachedInputTokens  sql.NullInt64
-	OutputTokens         sql.NullInt64
-	ProviderUsageJson    sql.NullString
-	PricingVersion       string
-	SourceEventKey       string
+	ID                    int64
+	BindingID             int64
+	UsageSourceID         int64
+	ProviderID            string
+	BillingProviderID     sql.NullString
+	BillingProviderSource sql.NullString
+	ModelID               string
+	UsageMeasurementKind  string
+	InputTokens           sql.NullInt64
+	CachedInputTokens     sql.NullInt64
+	UncachedInputTokens   sql.NullInt64
+	OutputTokens          sql.NullInt64
+	ProviderUsageJson     sql.NullString
+	PricingVersion        string
+	SourceEventKey        string
 }
 
 func (q *Queries) ListLegacyUsageEvents(ctx context.Context, usageSourceID int64) ([]ListLegacyUsageEventsRow, error) {
@@ -828,6 +833,8 @@ func (q *Queries) ListLegacyUsageEvents(ctx context.Context, usageSourceID int64
 			&i.BindingID,
 			&i.UsageSourceID,
 			&i.ProviderID,
+			&i.BillingProviderID,
+			&i.BillingProviderSource,
 			&i.ModelID,
 			&i.UsageMeasurementKind,
 			&i.InputTokens,
@@ -856,10 +863,12 @@ SELECT DISTINCT us.id
 FROM usage_sources us
 JOIN model_usage_events mue ON mue.usage_source_id = us.id
 WHERE mue.billing_provider_id IS NULL
-  AND mue.estimated_cost_nanos IS NULL
+   OR mue.billing_provider_source = 'inferred'
 ORDER BY us.id
 `
 
+// Open attribution: never attributed, or attributed only by inference and so
+// still replaceable by an observation.
 func (q *Queries) ListLegacyUsageSourceIDs(ctx context.Context) ([]int64, error) {
 	rows, err := q.db.QueryContext(ctx, listLegacyUsageSourceIDs)
 	if err != nil {
@@ -1266,37 +1275,42 @@ func (q *Queries) TouchUsageBinding(ctx context.Context, arg TouchUsageBindingPa
 const updateLegacyUsageEvent = `-- name: UpdateLegacyUsageEvent :one
 UPDATE model_usage_events
 SET billing_provider_id = ?1,
+    billing_provider_source = ?2,
     -- The reparse is the only way a pre-capture event can ever gain its bounded
     -- provider object, and it is exactly what makes the event priceable.
-    provider_usage_json = ?2,
-    input_cost_nanos = ?3,
-    cached_input_cost_nanos = ?4,
-    output_cost_nanos = ?5,
-    estimated_cost_nanos = ?6,
-    pricing_version = ?7
-WHERE model_usage_events.id = ?8
-  AND model_usage_events.binding_id = ?9
-  AND model_usage_events.usage_source_id = ?10
-  AND model_usage_events.billing_provider_id IS NULL
-  AND model_usage_events.provider_id = ?11
-  AND model_usage_events.model_id = ?12
-  AND model_usage_events.usage_measurement_kind = ?13
-  AND model_usage_events.input_tokens IS ?14
-  AND model_usage_events.cached_input_tokens IS ?15
-  AND model_usage_events.uncached_input_tokens IS ?16
-  AND model_usage_events.output_tokens IS ?17
-  AND model_usage_events.provider_usage_json IS ?18
-  AND model_usage_events.source_event_key = ?19
-  AND model_usage_events.pricing_version = ?20
-  AND model_usage_events.estimated_cost_nanos IS NULL
+    provider_usage_json = ?3,
+    input_cost_nanos = ?4,
+    cached_input_cost_nanos = ?5,
+    output_cost_nanos = ?6,
+    estimated_cost_nanos = ?7,
+    pricing_version = ?8
+WHERE model_usage_events.id = ?9
+  AND model_usage_events.binding_id = ?10
+  AND model_usage_events.usage_source_id = ?11
+  -- Writable while the attribution is still open. An observation is final, so
+  -- this can promote an inference exactly once and never revise an observation.
+  AND (model_usage_events.billing_provider_id IS NULL
+       OR model_usage_events.billing_provider_source = 'inferred')
+  AND model_usage_events.billing_provider_id IS ?12
+  AND model_usage_events.billing_provider_source IS ?13
+  AND model_usage_events.provider_id = ?14
+  AND model_usage_events.model_id = ?15
+  AND model_usage_events.usage_measurement_kind = ?16
+  AND model_usage_events.input_tokens IS ?17
+  AND model_usage_events.cached_input_tokens IS ?18
+  AND model_usage_events.uncached_input_tokens IS ?19
+  AND model_usage_events.output_tokens IS ?20
+  AND model_usage_events.provider_usage_json IS ?21
+  AND model_usage_events.source_event_key = ?22
+  AND model_usage_events.pricing_version = ?23
   AND EXISTS (
       SELECT 1
       FROM usage_sources source
       WHERE source.id = model_usage_events.usage_source_id
-        AND source.file_identity = ?21
-        AND source.byte_offset = ?22
-        AND source.parser_state_json = ?23
-        AND source.updated_at = ?24
+        AND source.file_identity = ?24
+        AND source.byte_offset = ?25
+        AND source.parser_state_json = ?26
+        AND source.updated_at = ?27
         AND NOT (
             source.state = 'complete'
             AND source.last_error_code = 'artifact_replaced'
@@ -1306,35 +1320,39 @@ RETURNING binding_id
 `
 
 type UpdateLegacyUsageEventParams struct {
-	BillingProviderID            sql.NullString
-	ProviderUsageJson            sql.NullString
-	InputCostNanos               sql.NullInt64
-	CachedInputCostNanos         sql.NullInt64
-	OutputCostNanos              sql.NullInt64
-	EstimatedCostNanos           sql.NullInt64
-	PricingVersion               string
-	ID                           int64
-	BindingID                    int64
-	UsageSourceID                int64
-	ExpectedProviderID           string
-	ExpectedModelID              string
-	ExpectedUsageMeasurementKind string
-	ExpectedInputTokens          sql.NullInt64
-	ExpectedCachedInputTokens    sql.NullInt64
-	ExpectedUncachedInputTokens  sql.NullInt64
-	ExpectedOutputTokens         sql.NullInt64
-	ExpectedProviderUsageJson    sql.NullString
-	ExpectedSourceEventKey       string
-	ExpectedPricingVersion       string
-	ExpectedFileIdentity         string
-	ExpectedByteOffset           int64
-	ExpectedParserStateJson      string
-	ExpectedSourceUpdatedAt      time.Time
+	BillingProviderID             sql.NullString
+	BillingProviderSource         sql.NullString
+	ProviderUsageJson             sql.NullString
+	InputCostNanos                sql.NullInt64
+	CachedInputCostNanos          sql.NullInt64
+	OutputCostNanos               sql.NullInt64
+	EstimatedCostNanos            sql.NullInt64
+	PricingVersion                string
+	ID                            int64
+	BindingID                     int64
+	UsageSourceID                 int64
+	ExpectedBillingProviderID     sql.NullString
+	ExpectedBillingProviderSource sql.NullString
+	ExpectedProviderID            string
+	ExpectedModelID               string
+	ExpectedUsageMeasurementKind  string
+	ExpectedInputTokens           sql.NullInt64
+	ExpectedCachedInputTokens     sql.NullInt64
+	ExpectedUncachedInputTokens   sql.NullInt64
+	ExpectedOutputTokens          sql.NullInt64
+	ExpectedProviderUsageJson     sql.NullString
+	ExpectedSourceEventKey        string
+	ExpectedPricingVersion        string
+	ExpectedFileIdentity          string
+	ExpectedByteOffset            int64
+	ExpectedParserStateJson       string
+	ExpectedSourceUpdatedAt       time.Time
 }
 
 func (q *Queries) UpdateLegacyUsageEvent(ctx context.Context, arg UpdateLegacyUsageEventParams) (int64, error) {
 	row := q.db.QueryRowContext(ctx, updateLegacyUsageEvent,
 		arg.BillingProviderID,
+		arg.BillingProviderSource,
 		arg.ProviderUsageJson,
 		arg.InputCostNanos,
 		arg.CachedInputCostNanos,
@@ -1344,6 +1362,8 @@ func (q *Queries) UpdateLegacyUsageEvent(ctx context.Context, arg UpdateLegacyUs
 		arg.ID,
 		arg.BindingID,
 		arg.UsageSourceID,
+		arg.ExpectedBillingProviderID,
+		arg.ExpectedBillingProviderSource,
 		arg.ExpectedProviderID,
 		arg.ExpectedModelID,
 		arg.ExpectedUsageMeasurementKind,

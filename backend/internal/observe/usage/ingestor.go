@@ -312,10 +312,14 @@ func (i *Ingestor) Ingest(ctx context.Context, sourceID int64) (IngestResult, er
 				for index := range parsed.Events {
 					// Nothing in the transcript or the binding named a route, so
 					// fall back to the one provider whose catalog lists the model
-					// that actually answered. Only Claude ever reaches here.
+					// that actually answered. Only Claude ever reaches here, and
+					// the result is marked an inference so the first observation
+					// to arrive can still correct it.
 					if parsed.Events[index].BillingProviderID == "" {
-						parsed.Events[index].BillingProviderID =
-							snapshot.ProviderForModel(parsed.Events[index].ModelID)
+						if inferred := snapshot.ProviderForModel(parsed.Events[index].ModelID); inferred != "" {
+							parsed.Events[index].BillingProviderID = inferred
+							parsed.Events[index].BillingProviderSource = domain.UsageBillingProviderInferred
+						}
 					}
 					estimate, estimateErr := snapshot.Estimate(parsed.Events[index])
 					if estimateErr != nil {

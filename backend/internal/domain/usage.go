@@ -140,6 +140,32 @@ const (
 	UsageMeasurementUnknown UsageMeasurementKind = "unknown"
 )
 
+// UsageBillingProviderSource records how an event's billing provider was
+// reached, which decides whether it can ever be revised.
+type UsageBillingProviderSource string
+
+const (
+	// UsageBillingProviderObserved means the provider was named by the
+	// transcript or by the trusted route hint. It is immutable, as is the cost
+	// derived from it.
+	UsageBillingProviderObserved UsageBillingProviderSource = "observed"
+	// UsageBillingProviderInferred means nothing named the provider and it was
+	// resolved from the model that answered. One later observation may replace
+	// it, along with its cost.
+	UsageBillingProviderInferred UsageBillingProviderSource = "inferred"
+)
+
+// ObservedBillingProviderSource pairs a provider the transcript or the
+// binding's route hint named outright with the source that makes the
+// attribution immutable. An empty provider carries no source: both columns are
+// written together or not at all.
+func ObservedBillingProviderSource(billingProviderID string) UsageBillingProviderSource {
+	if billingProviderID == "" {
+		return ""
+	}
+	return UsageBillingProviderObserved
+}
+
 // UsageTokenMetrics is the provider-neutral token vector stored on every usage
 // event. Nil means unknown; a non-nil zero is a known zero. Cache writes are
 // part of uncached input here; their provider-specific split stays in the
@@ -175,15 +201,16 @@ type UsageEventCosts struct {
 // verbatim so optional and future provider fields survive. It is empty when the
 // event predates the capture or the object exceeded its size bound.
 type ModelUsageEvent struct {
-	ProviderID        UsageProviderID
-	BillingProviderID string
-	ModelID           string
-	MeasurementKind   UsageMeasurementKind
-	Tokens            UsageTokenMetrics
-	ProviderUsageJSON string
-	Costs             UsageEventCosts
-	CreatedAt         time.Time
-	SourceEventKey    string
+	ProviderID            UsageProviderID
+	BillingProviderID     string
+	BillingProviderSource UsageBillingProviderSource
+	ModelID               string
+	MeasurementKind       UsageMeasurementKind
+	Tokens                UsageTokenMetrics
+	ProviderUsageJSON     string
+	Costs                 UsageEventCosts
+	CreatedAt             time.Time
+	SourceEventKey        string
 }
 
 // UsageCostCandidate is one still-total-null event selected for an exact
@@ -209,19 +236,23 @@ type UsageCostUpdate struct {
 	Costs     UsageEventCosts
 }
 
-// LegacyUsageEvent is one billing-provider-null event selected for transcript
-// attribution repair. Its source and generic facts are immutable CAS guards.
+// LegacyUsageEvent is one open-attribution event selected for transcript
+// attribution repair: never attributed, or attributed only by inference and so
+// still replaceable by an observation. Its source and generic facts are
+// immutable CAS guards.
 type LegacyUsageEvent struct {
-	ID                int64
-	BindingID         int64
-	UsageSourceID     int64
-	ProviderID        UsageProviderID
-	ModelID           string
-	MeasurementKind   UsageMeasurementKind
-	Tokens            UsageTokenMetrics
-	ProviderUsageJSON string
-	PricingVersion    string
-	SourceEventKey    string
+	ID                    int64
+	BindingID             int64
+	UsageSourceID         int64
+	ProviderID            UsageProviderID
+	BillingProviderID     string
+	BillingProviderSource UsageBillingProviderSource
+	ModelID               string
+	MeasurementKind       UsageMeasurementKind
+	Tokens                UsageTokenMetrics
+	ProviderUsageJSON     string
+	PricingVersion        string
+	SourceEventKey        string
 }
 
 // LegacyUsageRepair carries transcript-derived attribution and the estimate
@@ -233,6 +264,7 @@ type LegacyUsageRepair struct {
 	ExpectedParserStateJSON string
 	ExpectedSourceUpdatedAt time.Time
 	BillingProviderID       string
+	BillingProviderSource   UsageBillingProviderSource
 	ProviderUsageJSON       string
 	Costs                   UsageEventCosts
 }

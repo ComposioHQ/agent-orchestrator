@@ -350,14 +350,14 @@ WHERE event.binding_id = ? AND event.source_event_key = ?;
 
 -- name: InsertModelUsageEvent :one
 INSERT INTO model_usage_events (
-    binding_id, usage_source_id, provider_id, billing_provider_id, model_id,
-    usage_measurement_kind,
+    binding_id, usage_source_id, provider_id, billing_provider_id,
+    billing_provider_source, model_id, usage_measurement_kind,
     input_tokens, cached_input_tokens, uncached_input_tokens, output_tokens,
     provider_usage_json,
     input_cost_nanos, cached_input_cost_nanos, output_cost_nanos,
     estimated_cost_nanos, pricing_version,
     source_event_key, created_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 RETURNING id;
 
 -- name: EnrichModelUsageEventProviderUsage :execrows
@@ -424,8 +424,10 @@ RETURNING binding_id;
 SELECT DISTINCT us.id
 FROM usage_sources us
 JOIN model_usage_events mue ON mue.usage_source_id = us.id
+-- Open attribution: never attributed, or attributed only by inference and so
+-- still replaceable by an observation.
 WHERE mue.billing_provider_id IS NULL
-  AND mue.estimated_cost_nanos IS NULL
+   OR mue.billing_provider_source = 'inferred'
 ORDER BY us.id;
 
 -- name: ListLegacyUsageEvents :many
@@ -434,6 +436,8 @@ SELECT
     event.binding_id,
     event.usage_source_id,
     event.provider_id,
+    event.billing_provider_id,
+    event.billing_provider_source,
     event.model_id,
     event.usage_measurement_kind,
     event.input_tokens,
@@ -445,13 +449,13 @@ SELECT
     event.source_event_key
 FROM model_usage_events event
 WHERE event.usage_source_id = sqlc.arg(usage_source_id)
-  AND event.billing_provider_id IS NULL
-  AND event.estimated_cost_nanos IS NULL
+  AND (event.billing_provider_id IS NULL OR event.billing_provider_source = 'inferred')
 ORDER BY event.id;
 
 -- name: UpdateLegacyUsageEvent :one
 UPDATE model_usage_events
 SET billing_provider_id = sqlc.arg(billing_provider_id),
+    billing_provider_source = sqlc.arg(billing_provider_source),
     -- The reparse is the only way a pre-capture event can ever gain its bounded
     -- provider object, and it is exactly what makes the event priceable.
     provider_usage_json = sqlc.narg(provider_usage_json),
@@ -463,7 +467,12 @@ SET billing_provider_id = sqlc.arg(billing_provider_id),
 WHERE model_usage_events.id = sqlc.arg(id)
   AND model_usage_events.binding_id = sqlc.arg(binding_id)
   AND model_usage_events.usage_source_id = sqlc.arg(usage_source_id)
-  AND model_usage_events.billing_provider_id IS NULL
+  -- Writable while the attribution is still open. An observation is final, so
+  -- this can promote an inference exactly once and never revise an observation.
+  AND (model_usage_events.billing_provider_id IS NULL
+       OR model_usage_events.billing_provider_source = 'inferred')
+  AND model_usage_events.billing_provider_id IS sqlc.narg(expected_billing_provider_id)
+  AND model_usage_events.billing_provider_source IS sqlc.narg(expected_billing_provider_source)
   AND model_usage_events.provider_id = sqlc.arg(expected_provider_id)
   AND model_usage_events.model_id = sqlc.arg(expected_model_id)
   AND model_usage_events.usage_measurement_kind = sqlc.arg(expected_usage_measurement_kind)
@@ -474,7 +483,6 @@ WHERE model_usage_events.id = sqlc.arg(id)
   AND model_usage_events.provider_usage_json IS sqlc.narg(expected_provider_usage_json)
   AND model_usage_events.source_event_key = sqlc.arg(expected_source_event_key)
   AND model_usage_events.pricing_version = sqlc.arg(expected_pricing_version)
-  AND model_usage_events.estimated_cost_nanos IS NULL
   AND EXISTS (
       SELECT 1
       FROM usage_sources source

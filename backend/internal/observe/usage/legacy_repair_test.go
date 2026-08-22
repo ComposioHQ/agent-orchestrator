@@ -45,7 +45,8 @@ func TestLegacyRepairerPricesDurablePrefixAndPreservesCursorState(t *testing.T) 
 	})
 	mustNoError(t, repairer.Run(ctx))
 
-	assertLegacyRepair(t, dataDir, source.ID, "openai", 86_000, snapshot.ProviderVersion("openai"))
+	assertLegacyRepair(t, dataDir, source.ID, "openai", domain.UsageBillingProviderObserved,
+		86_000, snapshot.ProviderVersion("openai"))
 	after, ok, err := store.GetUsageSourceForIngestion(ctx, source.ID)
 	mustNoError(t, err)
 	if !ok || after.Source.ByteOffset != before.Source.ByteOffset ||
@@ -156,7 +157,8 @@ func TestLegacyRepairerReplaysFinalizedNoNewlineRecord(t *testing.T) {
 
 	snapshot := testPricingSnapshot(t, "0.000001")
 	mustNoError(t, NewLegacyRepairer(store, pricing.NewManager(snapshot), LegacyRepairerConfig{}).Run(ctx))
-	assertLegacyRepair(t, dataDir, source.ID, "openai", 86_000, snapshot.ProviderVersion("openai"))
+	assertLegacyRepair(t, dataDir, source.ID, "openai", domain.UsageBillingProviderObserved,
+		86_000, snapshot.ProviderVersion("openai"))
 }
 
 func legacyCodexTranscript(finalNewline bool) string {
@@ -191,15 +193,22 @@ WHERE usage_source_id = ?`, sourceID)
 	mustNoError(t, err)
 }
 
-func assertLegacyRepair(t *testing.T, dataDir string, sourceID int64, provider string, total int64, version string) {
+func assertLegacyRepair(
+	t *testing.T, dataDir string, sourceID int64,
+	provider string, source domain.UsageBillingProviderSource, total int64, version string,
+) {
 	t.Helper()
 	db := openUsageRawDB(t, dataDir)
-	var gotProvider, gotVersion string
+	var gotProvider, gotSource, gotVersion string
 	var gotTotal int64
-	mustNoError(t, db.QueryRow(`SELECT billing_provider_id, estimated_cost_nanos, pricing_version
-FROM model_usage_events WHERE usage_source_id = ?`, sourceID).Scan(&gotProvider, &gotTotal, &gotVersion))
-	if gotProvider != provider || gotTotal != total || gotVersion != version {
-		t.Fatalf("legacy repair = provider %q total %d version %q", gotProvider, gotTotal, gotVersion)
+	mustNoError(t, db.QueryRow(`SELECT billing_provider_id, billing_provider_source,
+estimated_cost_nanos, pricing_version
+FROM model_usage_events WHERE usage_source_id = ?`, sourceID).Scan(
+		&gotProvider, &gotSource, &gotTotal, &gotVersion))
+	if gotProvider != provider || domain.UsageBillingProviderSource(gotSource) != source ||
+		gotTotal != total || gotVersion != version {
+		t.Fatalf("legacy repair = provider %q source %q total %d version %q",
+			gotProvider, gotSource, gotTotal, gotVersion)
 	}
 }
 
@@ -260,12 +269,14 @@ func TestLegacyRepairerAttributesClaudeHistoryFromTheBindingRouteHint(t *testing
 		name         string
 		providerHint string
 		model        string
-		wantRepaired bool
+		wantSource   domain.UsageBillingProviderSource
 	}{
-		{name: "route hint present", providerHint: "anthropic", model: "claude-test", wantRepaired: true},
+		{name: "route hint present", providerHint: "anthropic", model: "claude-test",
+			wantSource: domain.UsageBillingProviderObserved},
 		// No hook ever ran for this binding, so the model that answered is the
 		// only evidence left — and it is evidence, not a harness-shaped guess.
-		{name: "no hint, model in catalog", model: "claude-test", wantRepaired: true},
+		{name: "no hint, model in catalog", model: "claude-test",
+			wantSource: domain.UsageBillingProviderInferred},
 		// A model no catalog lists proves nothing about who billed it. Guessing
 		// "anthropic" from the harness would misprice a z.ai-served session at
 		// Anthropic list rates, so the event stays unattributed.
@@ -287,14 +298,95 @@ func TestLegacyRepairerAttributesClaudeHistoryFromTheBindingRouteHint(t *testing
 				Clock: func() time.Time { return now.Add(time.Hour) },
 			}).Run(ctx))
 
-			if !test.wantRepaired {
+			if test.wantSource == "" {
 				assertLegacyStillNull(t, dataDir, source.ID)
 				return
 			}
 			// 40 fresh input at 3e-6, 20 cache-write at 3.75e-6, 500 cache read
 			// at 3e-7, 30 output at 1.5e-5 => 120000 + 75000 + 150000 + 450000.
-			assertLegacyRepair(t, dataDir, source.ID, "anthropic", 795_000, snapshot.ProviderVersion("anthropic"))
+			assertLegacyRepair(t, dataDir, source.ID, "anthropic", test.wantSource,
+				795_000, snapshot.ProviderVersion("anthropic"))
 		})
+	}
+}
+
+// Break caught: the model fallback writes a provider into a column the schema
+// made write-once, and the total it derives into a column the design made
+// immutable. A Claude session served by Bedrock or Vertex — routes the collector
+// accepts and no catalog lists — would be labelled anthropic and priced at
+// Anthropic list rates, permanently, with no path back even after the hook that
+// names the real route finally runs.
+func TestLegacyRepairerLetsAnObservationCorrectAnInference(t *testing.T) {
+	ctx := context.Background()
+	dataDir := t.TempDir()
+	// No hook has run, so ingestion can only infer the provider from the model.
+	store, source, path, now := seedClaudeIngestionSource(t, dataDir, "")
+	mustNoError(t, os.WriteFile(path, []byte(legacyClaudeTranscript("claude-test")), 0o600))
+	snapshot := claudePricingSnapshot(t)
+	ingestSourceFully(ctx, t, NewIngestor(store, IngestorConfig{
+		Clock:   func() time.Time { return now },
+		Pricing: pricing.NewManager(snapshot),
+	}), source.ID)
+	assertLegacyRepair(t, dataDir, source.ID, "anthropic", domain.UsageBillingProviderInferred,
+		795_000, snapshot.ProviderVersion("anthropic"))
+
+	// The hook finally runs and names the route the catalog could not: this
+	// session was served by z.ai, not by Anthropic.
+	db := openUsageRawDB(t, dataDir)
+	_, err := db.Exec(
+		`UPDATE usage_bindings SET provider_hint = 'zai' WHERE native_root_id = 'claude-root'`)
+	mustNoError(t, err)
+
+	mustNoError(t, NewLegacyRepairer(store, pricing.NewManager(snapshot), LegacyRepairerConfig{
+		Clock: func() time.Time { return now.Add(time.Hour) },
+	}).Run(ctx))
+
+	// The observation replaces the inference, and the Anthropic-rate total goes
+	// with it: z.ai does not publish this model, so the honest answer is that
+	// the cost is unknown rather than the number a wrong provider produced.
+	var provider, providerSource string
+	var total sql.NullInt64
+	mustNoError(t, db.QueryRow(`SELECT billing_provider_id, billing_provider_source, estimated_cost_nanos
+FROM model_usage_events WHERE usage_source_id = ?`, source.ID).Scan(&provider, &providerSource, &total))
+	if provider != "zai" || providerSource != string(domain.UsageBillingProviderObserved) || total.Valid {
+		t.Fatalf("corrected row = provider %q source %q total %v", provider, providerSource, total)
+	}
+}
+
+// An inference reads the model name, which the transcript reports the same way
+// on every pass. Re-deriving it rewrites nothing, so the repairer must leave the
+// row alone rather than replay the transcript on every trigger for the life of
+// the session. An inferred row that is merely unpriced is the cost backfiller's
+// job, not this one's.
+func TestLegacyRepairerLeavesAnInferenceAloneWithoutNewEvidence(t *testing.T) {
+	ctx := context.Background()
+	dataDir := t.TempDir()
+	store, source, path, now := seedClaudeIngestionSource(t, dataDir, "")
+	mustNoError(t, os.WriteFile(path, []byte(legacyClaudeTranscript("claude-test")), 0o600))
+	snapshot := claudePricingSnapshot(t)
+	ingestSourceFully(ctx, t, NewIngestor(store, IngestorConfig{
+		Clock:   func() time.Time { return now },
+		Pricing: pricing.NewManager(snapshot),
+	}), source.ID)
+
+	// Clearing the cost gives the pass something visible to do if it runs.
+	db := openUsageRawDB(t, dataDir)
+	_, err := db.Exec(`UPDATE model_usage_events
+SET input_cost_nanos = NULL, cached_input_cost_nanos = NULL,
+    output_cost_nanos = NULL, estimated_cost_nanos = NULL
+WHERE usage_source_id = ?`, source.ID)
+	mustNoError(t, err)
+
+	mustNoError(t, NewLegacyRepairer(store, pricing.NewManager(snapshot), LegacyRepairerConfig{
+		Clock: func() time.Time { return now.Add(time.Hour) },
+	}).Run(ctx))
+
+	var provider, providerSource string
+	var total sql.NullInt64
+	mustNoError(t, db.QueryRow(`SELECT billing_provider_id, billing_provider_source, estimated_cost_nanos
+FROM model_usage_events WHERE usage_source_id = ?`, source.ID).Scan(&provider, &providerSource, &total))
+	if provider != "anthropic" || providerSource != string(domain.UsageBillingProviderInferred) || total.Valid {
+		t.Fatalf("untouched row = provider %q source %q total %v", provider, providerSource, total)
 	}
 }
 
@@ -405,7 +497,8 @@ func TestLegacyRepairerRetriesAPassOutrunByIngestion(t *testing.T) {
 	if raced {
 		t.Fatal("settled source still reported a race")
 	}
-	assertLegacyRepair(t, dataDir, source.ID, "anthropic", 795_000, snapshot.ProviderVersion("anthropic"))
+	assertLegacyRepair(t, dataDir, source.ID, "anthropic", domain.UsageBillingProviderObserved,
+		795_000, snapshot.ProviderVersion("anthropic"))
 }
 
 // cursorRacingStore lets one real ingest land in the window between the

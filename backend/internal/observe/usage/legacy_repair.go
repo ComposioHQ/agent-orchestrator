@@ -199,6 +199,9 @@ func (r *LegacyRepairer) repairSource(ctx context.Context, source domain.UsageSo
 	if err != nil || len(candidates) == 0 {
 		return err
 	}
+	if !replayCanImprove(source, candidates) {
+		return nil
+	}
 	file, err := os.Open(source.Source.ArtifactPath) //nolint:gosec // registered transcript path.
 	if err != nil {
 		return nil
@@ -251,17 +254,29 @@ func (r *LegacyRepairer) repairSource(ctx context.Context, source domain.UsageSo
 				return err
 			}
 			event := match.event
+			// The replay reads the binding's route hint too, so a nonempty
+			// provider here was named outright by one of the two.
 			billingProviderID := strings.TrimSpace(event.BillingProviderID)
+			providerSource := domain.UsageBillingProviderObserved
 			if billingProviderID == "" {
+				// Inference cannot improve on inference: re-deriving the same
+				// provider from the same model rewrites nothing and would churn
+				// the row on every pass. Leave an already-inferred event alone
+				// until an observation arrives to promote it.
+				if match.candidate.BillingProviderSource == domain.UsageBillingProviderInferred {
+					continue
+				}
 				// A session collected before its first hook has no route on the
 				// binding either, so the served model name is the only evidence
 				// left. It is still evidence: the provider answered with it.
 				billingProviderID = snapshot.ProviderForModel(event.ModelID)
-				event.BillingProviderID = billingProviderID
+				providerSource = domain.UsageBillingProviderInferred
 			}
 			if billingProviderID == "" {
 				continue
 			}
+			event.BillingProviderID = billingProviderID
+			event.BillingProviderSource = providerSource
 			repair := domain.LegacyUsageRepair{
 				Candidate:               match.candidate,
 				ExpectedFileIdentity:    source.Source.FileIdentity,
@@ -269,6 +284,7 @@ func (r *LegacyRepairer) repairSource(ctx context.Context, source domain.UsageSo
 				ExpectedParserStateJSON: source.Source.ParserStateJSON,
 				ExpectedSourceUpdatedAt: source.Source.UpdatedAt,
 				BillingProviderID:       billingProviderID,
+				BillingProviderSource:   providerSource,
 				ProviderUsageJSON:       event.ProviderUsageJSON,
 				Costs:                   domain.UsageEventCosts{PricingVersion: snapshot.ProviderVersion(billingProviderID)},
 			}
@@ -293,6 +309,27 @@ func (r *LegacyRepairer) repairSource(ctx context.Context, source domain.UsageSo
 		}
 		return flush()
 	})
+}
+
+// replayCanImprove reports whether reparsing this source could still change any
+// of its open events, so a pass that cannot possibly gain anything never opens
+// the transcript at all.
+//
+// An unattributed event is always worth a replay: the reparse is the only way it
+// can gain the bounded provider object that makes it priceable. An event already
+// attributed by inference is different. Inference reads the model name, which is
+// the same on disk as it was at ingest, so the only input that can promote it to
+// an observation is a route hint the binding did not have then.
+func replayCanImprove(source domain.UsageSourceContext, candidates []domain.LegacyUsageEvent) bool {
+	if strings.TrimSpace(source.ProviderHint) != "" {
+		return true
+	}
+	for _, candidate := range candidates {
+		if candidate.BillingProviderSource != domain.UsageBillingProviderInferred {
+			return true
+		}
+	}
+	return false
 }
 
 func legacyArtifactMatches(file *os.File, source domain.UsageSourceRecord, checkpoint *parserCheckpointV1) bool {

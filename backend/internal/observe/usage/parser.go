@@ -315,13 +315,14 @@ func parseClaude(source domain.UsageSourceContext, records []jsonlRecord, state 
 		))
 		keyID := firstNonEmpty(native.Message.ID, native.UUID, strconv.FormatInt(record.Offset, 10))
 		event := domain.ModelUsageEvent{
-			ProviderID:        domain.UsageProviderAnthropic,
-			BillingProviderID: billingProvider,
-			ModelID:           model,
-			MeasurementKind:   domain.UsageMeasurementNativeReported,
-			Tokens:            tokens,
-			ProviderUsageJSON: boundedProviderUsage(native.Message.Usage),
-			CreatedAt:         parseUsageTimestamp(native.Timestamp),
+			ProviderID:            domain.UsageProviderAnthropic,
+			BillingProviderID:     billingProvider,
+			BillingProviderSource: domain.ObservedBillingProviderSource(billingProvider),
+			ModelID:               model,
+			MeasurementKind:       domain.UsageMeasurementNativeReported,
+			Tokens:                tokens,
+			ProviderUsageJSON:     boundedProviderUsage(native.Message.Usage),
+			CreatedAt:             parseUsageTimestamp(native.Timestamp),
 			SourceEventKey: stableSourceEventKey(
 				"claude",
 				source.NativeRootID,
@@ -667,13 +668,14 @@ func parseCodexEvent(source domain.UsageSourceContext, envelope codexEnvelope, s
 	model := firstNonEmpty(state.ModelID, source.InitialModelID, "unknown")
 	state.ModelID = model
 	event := domain.ModelUsageEvent{
-		ProviderID:        domain.UsageProviderOpenAI,
-		BillingProviderID: canonicalBillingProvider(state.Provider),
-		ModelID:           model,
-		MeasurementKind:   domain.UsageMeasurementNativeReported,
-		Tokens:            tokens,
-		ProviderUsageJSON: boundedProviderUsage(payload.Info),
-		CreatedAt:         parseUsageTimestamp(envelope.Timestamp),
+		ProviderID:            domain.UsageProviderOpenAI,
+		BillingProviderID:     canonicalBillingProvider(state.Provider),
+		BillingProviderSource: domain.ObservedBillingProviderSource(canonicalBillingProvider(state.Provider)),
+		ModelID:               model,
+		MeasurementKind:       domain.UsageMeasurementNativeReported,
+		Tokens:                tokens,
+		ProviderUsageJSON:     boundedProviderUsage(payload.Info),
+		CreatedAt:             parseUsageTimestamp(envelope.Timestamp),
 		SourceEventKey: stableSourceEventKey(
 			"codex",
 			source.NativeRootID,

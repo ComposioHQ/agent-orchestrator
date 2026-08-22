@@ -30,6 +30,10 @@ var expectedUsageTableColumns = map[string][]string{
 		"source_event_key", "created_at",
 		"input_cost_nanos", "cached_input_cost_nanos", "output_cost_nanos",
 		"estimated_cost_nanos", "pricing_version",
+		// 0106 appends: ALTER TABLE has no way to place a column mid-row, and a
+		// second full rebuild to move it beside billing_provider_id would cost
+		// more than the adjacency is worth.
+		"billing_provider_source",
 	},
 }
 
@@ -394,6 +398,85 @@ FROM model_usage_events WHERE source_event_key = ?`, test.key).Scan(
 	}
 	if err := migrate(db); err != nil {
 		t.Fatalf("repeat measurement migration: %v", err)
+	}
+}
+
+// TestBillingProviderSourceMigrationMarksExistingAttributionsObserved covers
+// 0106. Every row attributed before the column existed came from the transcript
+// or the route hint, so all of them must survive as observations: mislabelling
+// one as an inference would invite a later repair to overwrite a fact.
+func TestBillingProviderSourceMigrationMarksExistingAttributionsObserved(t *testing.T) {
+	db, err := sql.Open("sqlite", "file:"+filepath.Join(t.TempDir(), "ao.db")+pragmas)
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	db.SetMaxOpenConns(1)
+	t.Cleanup(func() { _ = db.Close() })
+	upTo(t, db, 105)
+
+	now := time.Now().UTC().Format(time.RFC3339)
+	if _, err := db.Exec(`
+INSERT INTO projects (id, path, registered_at, config) VALUES ('attrib', '/repo/attrib', ?, '{}');
+INSERT INTO sessions (id, project_id, num, harness, activity_last_at, created_at, updated_at)
+VALUES ('attrib-1', 'attrib', 1, 'claude-code', ?, ?, ?);
+INSERT INTO usage_bindings (id, session_id, harness, native_root_id, state, updated_at)
+VALUES (1, 'attrib-1', 'claude-code', 'root', 'complete', ?);
+INSERT INTO usage_sources (id, binding_id, kind, artifact_path, state, updated_at)
+VALUES (1, 1, 'claude_main', '/tmp/claude.jsonl', 'complete', ?);
+INSERT INTO model_usage_events (
+    id, binding_id, usage_source_id, provider_id, billing_provider_id, model_id,
+    usage_measurement_kind, input_tokens, cached_input_tokens, uncached_input_tokens,
+    output_tokens, source_event_key
+) VALUES
+    (1, 1, 1, 'anthropic', 'anthropic', 'claude-test', 'native_reported', 100, 40, 60, 20, 'attributed'),
+    (2, 1, 1, 'anthropic', NULL, 'claude-test', 'native_reported', 100, 40, 60, 20, 'unattributed');
+`, now, now, now, now, now, now); err != nil {
+		t.Fatalf("seed pre-source usage: %v", err)
+	}
+
+	if err := migrate(db); err != nil {
+		t.Fatalf("apply billing provider source migration: %v", err)
+	}
+
+	for _, test := range []struct {
+		key  string
+		want sql.NullString
+	}{
+		{key: "attributed", want: sql.NullString{String: "observed", Valid: true}},
+		// No provider, so no source: an attribution nobody made cannot be
+		// labelled with how it was reached.
+		{key: "unattributed"},
+	} {
+		var got sql.NullString
+		if err := db.QueryRow(
+			`SELECT billing_provider_source FROM model_usage_events WHERE source_event_key = ?`, test.key,
+		).Scan(&got); err != nil {
+			t.Fatalf("read %s attribution source: %v", test.key, err)
+		}
+		if got != test.want {
+			t.Fatalf("%s billing_provider_source = %v, want %v", test.key, got, test.want)
+		}
+	}
+
+	if _, err := db.Exec(
+		`UPDATE model_usage_events SET billing_provider_source = 'guessed' WHERE id = 1`,
+	); err == nil {
+		t.Fatal("billing_provider_source accepted a value outside the enum")
+	}
+
+	var indexSQL string
+	if err := db.QueryRow(
+		`SELECT sql FROM sqlite_master WHERE type = 'index' AND name = 'idx_model_usage_events_open_attribution'`,
+	).Scan(&indexSQL); err != nil {
+		t.Fatalf("read open attribution index: %v", err)
+	}
+	if !strings.Contains(indexSQL, "billing_provider_id IS NULL") ||
+		!strings.Contains(indexSQL, "billing_provider_source = 'inferred'") {
+		t.Fatalf("open attribution index = %q", indexSQL)
+	}
+
+	if err := migrate(db); err != nil {
+		t.Fatalf("repeat billing provider source migration: %v", err)
 	}
 }
 
