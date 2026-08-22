@@ -33,7 +33,6 @@ import { isValidElement, useCallback, useMemo, useRef, type ReactNode } from "re
 import { useTranslation } from "react-i18next";
 import { canonicalLanguage } from "../../lib/code-highlight";
 import { isWebLink } from "../../lib/external-link-policy";
-import { aoBridge } from "../../lib/bridge";
 import { HighlightedCode } from "../chat/HighlightedCode";
 import "../chat/code-theme.css";
 import "github-markdown-css/github-markdown.css";
@@ -147,7 +146,6 @@ export function MarkdownFileView({
 							onClick={(event) => {
 								event.preventDefault();
 								onFragmentClick(href);
-								void aoBridge.clipboard.writeText(href);
 							}}
 						>
 							{children}
