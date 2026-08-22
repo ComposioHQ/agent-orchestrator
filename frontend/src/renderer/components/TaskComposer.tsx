@@ -5,7 +5,7 @@ import {
 	type TaskComposerModelCatalog,
 	type TaskComposerModelControl,
 } from "@aoagents/product-ui";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Loader2 } from "lucide-react";
 import { RequiredAgentField } from "./CreateProjectAgentSheet";
@@ -15,6 +15,24 @@ import { captureRendererEvent } from "../lib/telemetry";
 import { agentsQueryKey, agentsQueryOptions, refreshAgentsIfStale } from "../hooks/useAgentsQuery";
 import { type FileAttachmentPayload, useFileAttachments } from "../hooks/useFileAttachments";
 import { useSettings } from "../hooks/useSettings";
+
+const TASK_PLACEHOLDERS = [
+	"Go through the backend files and let me know if there is any dead code in there",
+	"Set up a GitHub Actions workflow that runs tests on every pull request",
+	"Refactor the authentication module to use JWT tokens instead of sessions",
+	"Write unit tests for the payment processing service",
+	"Find and fix the memory leak in the WebSocket connection handler",
+	"Add rate limiting to the public API endpoints",
+	"Migrate the database schema to support multi-tenancy",
+	"Review the frontend bundle size and suggest optimizations",
+	"Document all public API endpoints with OpenAPI annotations",
+	"Add error boundaries to the React component tree and improve error messages",
+	"Investigate why the nightly build is 40% slower than last week",
+	"Replace the deprecated library usages flagged in the latest audit",
+	"Implement dark mode support across all UI components",
+	"Profile the database queries on the dashboard page and add missing indexes",
+	"Set up structured logging with correlation IDs across all services",
+] as const;
 import {
 	agentModelsQueryKey,
 	agentModelsQueryOptions,
@@ -283,7 +301,10 @@ export function TaskComposer({
 				start: t("newTask.start"),
 				starting: t("newTask.starting"),
 				task: t("newTask.task"),
-				taskPlaceholder: t("newTask.taskPlaceholder"),
+				taskPlaceholder: useMemo(
+					() => TASK_PLACEHOLDERS[Math.floor(Math.random() * TASK_PLACEHOLDERS.length)],
+					[],
+				),
 			}}
 			agent={{
 				label: t("newTask.agent"),
