@@ -16,11 +16,12 @@ export interface UseCloudSessionResult {
 }
 
 export function useCloudSession(): UseCloudSessionResult {
+	const available = aoBridge.cloud.isAvailable();
 	const environmentEnabled = aoBridge.cloud.isEnabled();
 	const cloudEnabled = useCloudSettingsStore((state) => state.enabled);
 	const cloudSettingsLoaded = useCloudSettingsStore((state) => state.loaded);
 	const loadCloudSettings = useCloudSettingsStore((state) => state.load);
-	const configured = environmentEnabled || (cloudSettingsLoaded && cloudEnabled);
+	const configured = available && (environmentEnabled || (cloudSettingsLoaded && cloudEnabled));
 	const [session, setSession] = useState<CloudAccount | null>(null);
 	const [status, setStatus] = useState<CloudSessionStatus>("loading");
 

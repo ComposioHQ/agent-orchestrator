@@ -234,6 +234,7 @@ if (typeof window !== "undefined") {
 			getActive: async () => null,
 		},
 		cloud: {
+			isAvailable: () => true,
 			isEnabled: () => false,
 			getSession: async () => null,
 			signIn: async () => undefined,

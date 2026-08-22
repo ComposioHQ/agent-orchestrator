@@ -22,6 +22,18 @@ describe("useCloudSession", () => {
 		expect(getSession).not.toHaveBeenCalled();
 	});
 
+	it("keeps Cloud hidden when the desktop has no Cloud configuration", async () => {
+		vi.spyOn(window.ao!.cloud, "isAvailable").mockReturnValue(false);
+		vi.spyOn(window.ao!.cloud, "isEnabled").mockReturnValue(false);
+		vi.spyOn(window.ao!.uiSettings, "get").mockResolvedValue({ locale: "en", cloudEnabled: true });
+		const getSession = vi.spyOn(window.ao!.cloud, "getSession");
+		const { result } = renderHook(() => useCloudSession());
+
+		await waitFor(() => expect(result.current.status).toBe("unauthenticated"));
+		expect(result.current.configured).toBe(false);
+		expect(getSession).not.toHaveBeenCalled();
+	});
+
 	it("loads the Cloud account only when the feature flag is enabled", async () => {
 		vi.spyOn(window.ao!.cloud, "isEnabled").mockReturnValue(true);
 		vi.spyOn(window.ao!.cloud, "getSession").mockResolvedValue(null);

@@ -126,3 +126,10 @@ describe("preload uiSettings bridge", () => {
 		expect(electronMocks.invoke).toHaveBeenNthCalledWith(2, "uiSettings:set", { cloudEnabled: true });
 	});
 });
+
+describe("preload Cloud availability", () => {
+	it("exposes configuration availability separately from enablement", () => {
+		expect(exposedBridge().cloud.isAvailable()).toBeTypeOf("boolean");
+		expect(exposedBridge().cloud.isEnabled()).toBeTypeOf("boolean");
+	});
+});

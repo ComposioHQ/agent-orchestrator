@@ -362,6 +362,10 @@ const api = {
 		getActive: () => ipcRenderer.invoke("featureBuilds:getActive") as Promise<{ pr: number } | null>,
 	},
 	cloud: {
+		isAvailable: () => Boolean(
+			(import.meta.env.VITE_AO_CLOUD_API_URL || process.env.AO_CLOUD_API_URL) &&
+				(import.meta.env.VITE_AO_CLOUD_GOOGLE_CLIENT_ID || process.env.AO_CLOUD_GOOGLE_CLIENT_ID),
+		),
 		isEnabled: () => cloudDesktopConfigured({
 			featureFlags: [import.meta.env.VITE_AO_CLOUD_ENABLED, process.env.AO_CLOUD_ENABLED],
 			apiUrl: import.meta.env.VITE_AO_CLOUD_API_URL || process.env.AO_CLOUD_API_URL,

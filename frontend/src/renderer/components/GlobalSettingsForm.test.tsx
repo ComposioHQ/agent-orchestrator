@@ -1,7 +1,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { appI18n } from "../i18n";
 import { GlobalSettingsForm } from "./GlobalSettingsForm";
 import { useLocaleStore } from "../stores/locale-store";
@@ -29,6 +29,7 @@ const {
 	getKeybindings,
 	setKeybindings,
 	setKeybindingRecording,
+	cloudIsAvailable,
 } = vi.hoisted(() => ({
 	getUpdate: vi.fn(),
 	setUpdate: vi.fn(),
@@ -50,6 +51,7 @@ const {
 	getKeybindings: vi.fn(),
 	setKeybindings: vi.fn(),
 	setKeybindingRecording: vi.fn(),
+	cloudIsAvailable: vi.fn(),
 }));
 
 vi.mock("@tanstack/react-router", async (importOriginal) => {
@@ -81,6 +83,7 @@ vi.mock("../lib/bridge", () => ({
 			onStatus: updOnStatus,
 		},
 		featureBuilds: { list: featListBuilds, getActive: featGetActive },
+		cloud: { isAvailable: cloudIsAvailable },
 	},
 }));
 
@@ -116,6 +119,7 @@ beforeEach(async () => {
 		getKeybindings,
 		setKeybindings,
 		setKeybindingRecording,
+		cloudIsAvailable,
 	]) {
 		m.mockReset();
 	}
@@ -141,12 +145,17 @@ beforeEach(async () => {
 	getKeybindings.mockResolvedValue({});
 	setKeybindings.mockImplementation(async (overrides) => overrides);
 	setKeybindingRecording.mockResolvedValue(undefined);
+	cloudIsAvailable.mockReturnValue(true);
 	// Locale defaults to English so existing copy assertions stay green.
 	await appI18n.changeLanguage("en");
 	useLocaleStore.setState({ locale: "en", loaded: false, saving: false, saveError: false });
 	useUiStore.setState({ developerMode: false });
 	useCloudSettingsStore.setState({ enabled: false, loaded: false, saving: false, saveError: false });
 	document.documentElement.lang = "en";
+});
+
+afterEach(() => {
+	vi.restoreAllMocks();
 });
 
 describe("GlobalSettingsForm", () => {
@@ -197,6 +206,15 @@ describe("GlobalSettingsForm", () => {
 		await user.click(cloudToggle);
 		await waitFor(() => expect(setUiSettings).toHaveBeenCalledWith({ cloudEnabled: true }));
 		expect(cloudToggle).toHaveAttribute("aria-checked", "true");
+	});
+
+	it("does not offer AO Cloud when this desktop has no Cloud configuration", async () => {
+		cloudIsAvailable.mockReturnValue(false);
+		useUiStore.getState().setDeveloperMode(true);
+
+		renderForm();
+
+		expect(screen.queryByRole("switch", { name: "AO Cloud (Early Access)" })).not.toBeInTheDocument();
 	});
 
 	it("shows the available feature builds after choosing Feature Releases", async () => {

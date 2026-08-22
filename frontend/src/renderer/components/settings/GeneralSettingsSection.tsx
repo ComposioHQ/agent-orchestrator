@@ -7,6 +7,7 @@ import { useLocaleStore } from "../../stores/locale-store";
 import { useUiStore } from "../../stores/ui-store";
 import { useCloudSettingsStore } from "../../stores/cloud-settings-store";
 import { clearCloudApiBaseUrl } from "../../lib/api-client";
+import { aoBridge } from "../../lib/bridge";
 import { SettingsOptionMenu, type SettingsOption } from "./SettingsOptionMenu";
 import { SettingsLinkRow, SettingsRow } from "./SettingsRow";
 import { SettingsSection } from "./SettingsSection";
@@ -102,6 +103,7 @@ export function GeneralSettingsSection({
 	const localeSaveError = useLocaleStore((state) => state.saveError);
 	const developerMode = useUiStore((state) => state.developerMode);
 	const setDeveloperMode = useUiStore((state) => state.setDeveloperMode);
+	const cloudAvailable = aoBridge.cloud.isAvailable();
 	const cloudEnabled = useCloudSettingsStore((state) => state.enabled);
 	const cloudSettingsLoaded = useCloudSettingsStore((state) => state.loaded);
 	const cloudSettingsSaving = useCloudSettingsStore((state) => state.saving);
@@ -175,7 +177,7 @@ export function GeneralSettingsSection({
 					onCheckedChange={setDeveloperMode}
 				/>
 			</SettingsRow>
-			{developerMode ? (
+			{developerMode && cloudAvailable ? (
 				<div className="flex w-full flex-col">
 					<SettingsRow className="rounded-none" label={t("settings.aoCloudEarlyAccess")}>
 						<Switch
