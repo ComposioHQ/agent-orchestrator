@@ -16,7 +16,9 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -281,65 +283,55 @@ func (r *Runtime) requestJSON(ctx context.Context, method, endpoint string, inpu
 }
 
 func archiveWorkspace(ctx context.Context, root string) ([]byte, error) {
+	paths, err := workspaceOverlayPaths(ctx, root)
+	if err != nil {
+		return nil, fmt.Errorf("list cloud workspace overlay: %w", err)
+	}
 	var buffer bytes.Buffer
 	gz := gzip.NewWriter(&buffer)
 	archive := tar.NewWriter(gz)
-	err := filepath.Walk(root, func(path string, info os.FileInfo, walkErr error) error {
-		if walkErr != nil {
-			return walkErr
-		}
+	for _, name := range paths {
 		if err := ctx.Err(); err != nil {
-			return err
+			return nil, err
 		}
-		relative, err := filepath.Rel(root, path)
+		path := filepath.Join(root, filepath.FromSlash(name))
+		info, err := os.Lstat(path)
 		if err != nil {
-			return err
-		}
-		if relative == "." {
-			return nil
-		}
-		name := filepath.ToSlash(relative)
-		first := strings.Split(name, "/")[0]
-		if first == ".git" || first == "node_modules" || first == ".ao" {
-			if info.IsDir() {
-				return filepath.SkipDir
-			}
-			return nil
+			return nil, err
 		}
 		linkTarget := ""
 		if info.Mode()&os.ModeSymlink != 0 {
 			linkTarget, err = os.Readlink(path)
 			if err != nil {
-				return err
+				return nil, err
 			}
 		}
 		header, err := tar.FileInfoHeader(info, linkTarget)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		header.Name = name
 		if err := archive.WriteHeader(header); err != nil {
-			return err
+			return nil, err
 		}
 		if info.Mode().IsRegular() {
-			file, err := os.Open(path) //nolint:gosec // filepath.Walk supplied this path beneath the coordinator-owned worktree.
+			file, err := os.Open(path) //nolint:gosec // Git supplied this path beneath the coordinator-owned worktree.
 			if err != nil {
-				return err
+				return nil, err
 			}
 			_, copyErr := io.Copy(archive, file)
 			closeErr := file.Close()
 			if copyErr != nil {
-				return copyErr
+				return nil, copyErr
 			}
 			if closeErr != nil {
-				return closeErr
+				return nil, closeErr
 			}
 		}
 		if buffer.Len() > maxWorkspaceArchive {
-			return errors.New("prepared workspace exceeds 24 MiB compressed cloud launch limit")
+			return nil, errors.New("prepared workspace exceeds 24 MiB compressed cloud launch limit")
 		}
-		return nil
-	})
+	}
 	if closeErr := archive.Close(); err == nil {
 		err = closeErr
 	}
@@ -353,6 +345,36 @@ func archiveWorkspace(ctx context.Context, root string) ([]byte, error) {
 		return nil, errors.New("prepared workspace exceeds 24 MiB compressed cloud launch limit")
 	}
 	return buffer.Bytes(), nil
+}
+
+// workspaceOverlayPaths returns only local worktree changes. Session sandboxes
+// clone the repository themselves, so sending every unchanged tracked asset is
+// both redundant and large enough to exceed API Gateway's request limit.
+func workspaceOverlayPaths(ctx context.Context, root string) ([]string, error) {
+	commands := [][]string{
+		{"-C", root, "diff", "--name-only", "-z", "--diff-filter=ACMRTUXB", "HEAD", "--"},
+		{"-C", root, "ls-files", "--others", "--exclude-standard", "-z"},
+	}
+	unique := make(map[string]struct{})
+	for _, args := range commands {
+		output, err := exec.CommandContext(ctx, "git", args...).Output()
+		if err != nil {
+			return nil, err
+		}
+		for _, raw := range bytes.Split(output, []byte{0}) {
+			name := filepath.ToSlash(string(raw))
+			if name == "" || strings.HasPrefix(name, "/") || name == ".." || strings.HasPrefix(name, "../") {
+				continue
+			}
+			unique[name] = struct{}{}
+		}
+	}
+	result := make([]string, 0, len(unique))
+	for name := range unique {
+		result = append(result, name)
+	}
+	sort.Strings(result)
+	return result, nil
 }
 
 func referencedFiles(workspace string, argv []string) ([]runtimeFile, error) {
