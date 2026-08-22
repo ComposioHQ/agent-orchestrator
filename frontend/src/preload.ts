@@ -16,6 +16,11 @@ import {
 	type TrayOpenSessionTarget,
 } from "./shared/tray";
 import type { DaemonStatus } from "./shared/daemon-status";
+import type {
+	EditorHandoffState,
+	OpenSessionTargetInput,
+	OpenSessionTargetResult,
+} from "./shared/editor-handoff";
 import type { TelemetryBootstrap } from "./shared/telemetry";
 import type { MigrationState } from "./main/app-state";
 import type { UpdateSettings, UpdateStatus } from "./main/update-settings";
@@ -256,6 +261,12 @@ const api = {
 				ipcRenderer.off("daemon:status", wrapped);
 			};
 		},
+	},
+	editorHandoff: {
+		getState: (sessionId: string) =>
+			ipcRenderer.invoke("editorHandoff:getState", sessionId) as Promise<EditorHandoffState>,
+		open: (input: OpenSessionTargetInput) =>
+			ipcRenderer.invoke("editorHandoff:open", input) as Promise<OpenSessionTargetResult>,
 	},
 	telemetry: {
 		getBootstrap: () => ipcRenderer.invoke("telemetry:getBootstrap") as Promise<TelemetryBootstrap | null>,

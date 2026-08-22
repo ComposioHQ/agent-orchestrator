@@ -46,7 +46,7 @@ export function TopbarButton({
 	return <button className={cn(topbarButtonVariants({ variant }), className)} type={type} {...props} />;
 }
 
-export function TopbarKillError({ className, ...props }: React.HTMLAttributes<HTMLSpanElement>) {
+export function TopbarActionError({ className, ...props }: React.HTMLAttributes<HTMLSpanElement>) {
 	return <span className={cn("text-caption text-destructive", className)} role="alert" {...props} />;
 }
 

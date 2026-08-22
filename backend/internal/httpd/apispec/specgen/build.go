@@ -141,6 +141,7 @@ func schemaName(_ reflect.Type, defaultName string) string {
 // the drift test fails until the spec is regenerated, which flags the gap.
 var schemaNames = map[string]string{
 	"ControllersSettingsResponse":                     "SettingsResponse",
+	"ControllersDesktopWorkspaceLocationResponse":     "DesktopWorkspaceLocationResponse",
 	"ControllersUpdateSessionInterfaceRequest":        "UpdateSessionInterfaceRequest",
 	"ControllersConversationSnapshotResponse":         "ConversationSnapshotResponse",
 	"ControllersConversationTurnResponse":             "ConversationTurnResponse",
@@ -1595,22 +1596,11 @@ func sessionOperations() []operation {
 			},
 		},
 		{
-			method: http.MethodGet, path: "/api/v1/editors", id: "listEditors", tag: "sessions",
-			summary: "List the external code editors AO can launch on this machine",
-			resps: []respUnit{
-				{http.StatusOK, controllers.ListEditorsResponse{}},
-				{http.StatusInternalServerError, envelope.APIError{}},
-				{http.StatusNotImplemented, envelope.APIError{}},
-			},
-		},
-		{
-			method: http.MethodPost, path: "/api/v1/sessions/{sessionId}/open-editor", id: "openSessionEditor", tag: "sessions",
-			summary:    "Open a session workspace in an external editor, focusing its most recently changed file",
+			method: http.MethodGet, path: "/api/v1/desktop/sessions/{sessionId}/workspace", id: "getDesktopSessionWorkspace", tag: "sessions",
+			summary:    "Resolve a session workspace for the loopback desktop supervisor",
 			pathParams: []any{controllers.SessionIDParam{}},
-			reqBody:    controllers.OpenSessionEditorRequest{},
 			resps: []respUnit{
-				{http.StatusOK, controllers.OpenSessionEditorResponse{}},
-				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusOK, controllers.DesktopWorkspaceLocationResponse{}},
 				{http.StatusNotFound, envelope.APIError{}},
 				{http.StatusInternalServerError, envelope.APIError{}},
 				{http.StatusNotImplemented, envelope.APIError{}},

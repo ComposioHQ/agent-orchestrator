@@ -3,6 +3,7 @@ import { aoBridge } from "./bridge";
 import { isLoopbackHostname } from "./loopback";
 import { ORCHESTRATOR_SPAWN_SOURCES } from "./orchestrator-spawn-sources";
 import { DEFAULT_POSTHOG_HOST, DEFAULT_POSTHOG_PROJECT_KEY } from "../../shared/posthog-config";
+import { EDITOR_IDS } from "../../shared/editor-handoff";
 
 const POSTHOG_KEY = import.meta.env.VITE_AO_POSTHOG_KEY?.trim() || DEFAULT_POSTHOG_PROJECT_KEY;
 const POSTHOG_HOST = import.meta.env.VITE_AO_POSTHOG_HOST?.trim() || DEFAULT_POSTHOG_HOST;
@@ -441,34 +442,8 @@ async function sanitizeRendererContextProperties(properties?: TelemetryPropertie
 
 const ORCHESTRATOR_SPAWN_SOURCE_SET = new Set<string>(ORCHESTRATOR_SPAWN_SOURCES);
 
-// Mirrors the editor package's candidate table on the daemon
-// (backend/internal/service/editor/editor.go) plus the renderer's own request
-// sentinel ("auto") and response fallback ("unknown"). None of these come from
-// user input, so they carry no user data.
-const EDITOR_ID_SET = new Set<string>([
-	"vscode",
-	"cursor",
-	"windsurf",
-	"zed",
-	"trae",
-	"kiro",
-	"positron",
-	"vscodium",
-	"vscode-insiders",
-	"sublime",
-	"intellij",
-	"webstorm",
-	"pycharm",
-	"goland",
-	"phpstorm",
-	"rubymine",
-	"clion",
-	"rider",
-	"android-studio",
-	"fleet",
-	"auto",
-	"unknown",
-]);
+const EDITOR_ID_SET = new Set<string>(EDITOR_IDS);
+const OPEN_TARGET_KIND_SET = new Set(["editor", "file_manager", "terminal"]);
 
 export async function sanitizeRendererProperties(
 	event: string,
@@ -554,8 +529,8 @@ export async function sanitizeRendererProperties(
 			if (typeof properties?.editor_id === "string" && EDITOR_ID_SET.has(properties.editor_id)) {
 				safe.editor_id = properties.editor_id;
 			}
-			if (properties?.target === "folder" || properties?.target === "file" || properties?.target === "auto") {
-				safe.target = properties.target;
+			if (typeof properties?.target_kind === "string" && OPEN_TARGET_KIND_SET.has(properties.target_kind)) {
+				safe.target_kind = properties.target_kind;
 			}
 			break;
 		}
@@ -565,10 +540,9 @@ export async function sanitizeRendererProperties(
 			if (typeof properties?.editor_id === "string" && EDITOR_ID_SET.has(properties.editor_id)) {
 				safe.editor_id = properties.editor_id;
 			}
-			if (properties?.scope === "workspace" || properties?.scope === "project" || properties?.scope === "unknown") {
-				safe.scope = properties.scope;
+			if (typeof properties?.target_kind === "string" && OPEN_TARGET_KIND_SET.has(properties.target_kind)) {
+				safe.target_kind = properties.target_kind;
 			}
-			if (typeof properties?.focused_file === "boolean") safe.focused_file = properties.focused_file;
 			break;
 		}
 		case "ao.renderer.open_in_editor_failed": {

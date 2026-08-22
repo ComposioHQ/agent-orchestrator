@@ -2298,7 +2298,7 @@ body.is-resizing-x [data-slot="inspector-container"] {
 	padding-inline: var(--space-2_5);
 }
 
-/* Split "Open in editor" control. The generic .topbar-control rule above rounds
+/* Split workspace handoff control. The generic .topbar-control rule above rounds
    all four corners and clamps every control to a square minimum, which makes the
    two halves read as separate chips crammed together rather than one button.
    Square the joining edge, let the label half breathe, and keep the chevron half

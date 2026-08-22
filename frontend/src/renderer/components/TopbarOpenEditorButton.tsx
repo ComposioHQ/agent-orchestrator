@@ -1,7 +1,8 @@
-import { ChevronDown, Code2, FolderOpen } from "lucide-react";
+import { ChevronDown, Code2, FolderOpen, SquareTerminal } from "lucide-react";
 import { useTranslation } from "react-i18next";
-import { useEditorsQuery, useOpenInEditor } from "../hooks/useEditors";
-import { TopbarButton, TopbarKillError } from "./TopbarButton";
+import type { OpenTarget, OpenTargetId } from "../../shared/editor-handoff";
+import { useEditorHandoffState, useOpenSessionTarget } from "../hooks/useEditorHandoff";
+import { TopbarActionError, TopbarButton } from "./TopbarButton";
 import {
 	DropdownMenu,
 	DropdownMenuContent,
@@ -21,9 +22,6 @@ import {
 	ZedIcon,
 } from "./icons";
 
-// Each editor shows its own mark. The JetBrains IDEs share the umbrella mark
-// rather than nine near-identical monochrome glyphs; anything without one falls
-// back to the generic icon instead of borrowing another editor's logo.
 const editorIcons: Record<string, typeof VSCodeIcon> = {
 	vscode: VSCodeIcon,
 	"vscode-insiders": VSCodeIcon,
@@ -44,11 +42,6 @@ const editorIcons: Record<string, typeof VSCodeIcon> = {
 	fleet: JetBrainsIcon,
 };
 
-// Brand colours, for the editors that actually have one. VS Code's is sampled
-// from its own app icon; the rest are simple-icons' published hexes. Cursor,
-// Windsurf, Zed and the JetBrains marks are monochrome brands — their real
-// logos are greyscale — so they inherit the menu's text colour, which also
-// keeps them legible in both light and dark themes.
 const editorColors: Record<string, string> = {
 	vscode: "#1F9CF0",
 	"vscode-insiders": "#1F9CF0",
@@ -57,20 +50,17 @@ const editorColors: Record<string, string> = {
 	"android-studio": "#3DDC84",
 };
 
-function EditorIcon({ editorId, className }: { editorId: string | undefined; className?: string }) {
-	const Icon = (editorId && editorIcons[editorId]) || Code2;
-	const color = editorId ? editorColors[editorId] : undefined;
+function TargetIcon({ target, className }: { target?: OpenTarget; className?: string }) {
+	if (target?.kind === "file_manager") return <FolderOpen className={className} aria-hidden="true" />;
+	if (target?.kind === "terminal") return <SquareTerminal className={className} aria-hidden="true" />;
+	const Icon = (target && editorIcons[target.id]) || Code2;
+	const color = target ? editorColors[target.id] : undefined;
 	return <Icon className={className} style={color ? { color } : undefined} aria-hidden="true" />;
 }
 
-// "Open" split button for the topbar, styled after the VS Code opener in t3
-// chat: the main half opens the session's worktree in the detected editor and
-// focuses the file the agent most recently changed, so a session that was
-// fixing the download button lands on that file. The chevron half offers the
-// folder-only open and the other installed editors.
-//
-// Path resolution and the launch both happen in the daemon (POST
-// /sessions/{id}/open-editor) — worktree paths are deliberately not on the wire.
+// Electron main owns the complete handoff: it resolves the loopback-only
+// workspace path, launches the native target, and persists editor preference.
+// This renderer receives only safe target metadata and availability status.
 export function TopbarOpenEditorButton({
 	sessionId,
 	projectId,
@@ -81,62 +71,74 @@ export function TopbarOpenEditorButton({
 	style?: React.CSSProperties;
 }) {
 	const { t } = useTranslation();
-	const editorsQuery = useEditorsQuery();
-	const editors = editorsQuery.data ?? [];
-	const primaryEditor = editors[0];
-	const open = useOpenInEditor();
+	const stateQuery = useEditorHandoffState(sessionId);
+	const open = useOpenSessionTarget();
+	const state = stateQuery.data;
+	const targets = state?.targets ?? [];
+	const editors = targets.filter((target) => target.kind === "editor");
+	const preferred = editors.find((target) => target.id === state?.preferredEditorId);
+	const safeTargets = targets.filter((target) => target.kind !== "editor");
+	const fileManagerName = safeTargets.find((target) => target.kind === "file_manager")?.name ?? t("editor.fileManager");
+	const terminalName = safeTargets.find((target) => target.kind === "terminal")?.name ?? t("editor.terminal");
+	const workspaceAvailable = state?.workspaceAvailable === true;
+	const busy = stateQuery.isPending || open.isPending;
+	const mainDisabled = busy || !workspaceAvailable || !preferred;
+	const menuDisabled = busy || !workspaceAvailable || targets.length === 0;
 
-	// Detection still in flight, or the daemon is unreachable: render nothing
-	// rather than a button that is guaranteed to fail.
-	if (editorsQuery.isPending || editors.length === 0) return null;
-
-	const launch = (input: { editorId?: string; path?: string }) => {
+	const launch = (targetId?: OpenTargetId) => {
 		open.reset();
-		open.mutate({ sessionId, projectId, ...input });
+		open.mutate({ sessionId, projectId, ...(targetId ? { targetId } : {}) });
 	};
-	const error = open.error instanceof Error ? open.error.message : null;
+	const launchError = open.error instanceof Error ? open.error.message : null;
+	const guidance = !stateQuery.isPending && !workspaceAvailable
+		? state?.unavailableReason ?? t("editor.workspaceUnavailable")
+		: !stateQuery.isPending && editors.length === 0
+			? t("editor.noEditorGuidance", { fileManager: fileManagerName, terminal: terminalName })
+			: null;
+	const mainLabel = open.isPending ? t("editor.opening") : preferred ? t("editor.open") : t("editor.chooseEditor");
+	const mainTitle = guidance
+		?? (preferred ? t("editor.openWorkspaceInTitle", { name: preferred.name }) : t("editor.chooseEditorTitle"));
 
 	return (
 		<>
-			{error ? (
-				<TopbarKillError className="max-w-content-max truncate" title={error}>
-					{error}
-				</TopbarKillError>
+			{launchError || guidance ? (
+				<TopbarActionError className="max-w-content-max truncate" title={launchError ?? guidance ?? undefined}>
+					{launchError ?? guidance}
+				</TopbarActionError>
 			) : null}
 			<div className="inline-flex items-center" style={style}>
 				<TopbarButton
-					aria-label={t("editor.openInAria", { name: primaryEditor.name })}
-					disabled={open.isPending}
-					onClick={() => launch({})}
-					title={t("editor.openWorkspaceInTitle", { name: primaryEditor.name })}
+					aria-label={preferred ? t("editor.openInAria", { name: preferred.name }) : t("editor.chooseEditor")}
+					data-priority="primary"
+					disabled={mainDisabled}
+					onClick={() => launch()}
+					title={mainTitle}
 					variant="splitMain"
 				>
-					<EditorIcon editorId={primaryEditor.id} className="size-icon-lg" />
-					{open.isPending ? t("editor.opening") : t("editor.open")}
+					<TargetIcon target={preferred} className="size-icon-lg" />
+					<span data-compact-label>{mainLabel}</span>
 				</TopbarButton>
 				<DropdownMenu>
 					<DropdownMenuTrigger asChild>
-						<TopbarButton aria-label={t("editor.openOptionsAria")} disabled={open.isPending} variant="splitTrigger">
+						<TopbarButton aria-label={t("editor.openOptionsAria")} disabled={menuDisabled} variant="splitTrigger">
 							<ChevronDown className="size-icon-sm" aria-hidden="true" />
 						</TopbarButton>
 					</DropdownMenuTrigger>
-					<DropdownMenuContent align="end" className="min-w-48">
-						<DropdownMenuItem onSelect={() => launch({ path: "." })}>
-							<FolderOpen className="size-icon-sm" aria-hidden="true" />
-							{t("editor.openFolderOnly")}
-						</DropdownMenuItem>
-						{editors.length > 1 ? (
-							<>
-								<DropdownMenuSeparator />
-								<DropdownMenuLabel>{t("editor.openWith")}</DropdownMenuLabel>
-								{editors.map((editor) => (
-									<DropdownMenuItem key={editor.id} onSelect={() => launch({ editorId: editor.id })}>
-										<EditorIcon editorId={editor.id} className="size-icon-sm" />
-										{editor.name}
-									</DropdownMenuItem>
-								))}
-							</>
-						) : null}
+					<DropdownMenuContent align="end" className="min-w-52">
+						{safeTargets.map((target) => (
+							<DropdownMenuItem key={target.id} onSelect={() => launch(target.id)}>
+								<TargetIcon target={target} className="size-icon-sm" />
+								{t("editor.openInTarget", { name: target.name })}
+							</DropdownMenuItem>
+						))}
+						{safeTargets.length > 0 && editors.length > 0 ? <DropdownMenuSeparator /> : null}
+						{editors.length > 0 ? <DropdownMenuLabel>{t("editor.openWith")}</DropdownMenuLabel> : null}
+						{editors.map((editor) => (
+							<DropdownMenuItem key={editor.id} onSelect={() => launch(editor.id)}>
+								<TargetIcon target={editor} className="size-icon-sm" />
+								{editor.name}
+							</DropdownMenuItem>
+						))}
 					</DropdownMenuContent>
 				</DropdownMenu>
 			</div>

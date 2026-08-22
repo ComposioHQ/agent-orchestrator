@@ -334,6 +334,45 @@ paths:
       summary: Check whether the desktop browser runtime is connected for a session
       tags:
       - browser
+  /api/v1/desktop/sessions/{sessionId}/workspace:
+    get:
+      operationId: getDesktopSessionWorkspace
+      parameters:
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DesktopWorkspaceLocationResponse'
+          description: OK
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Resolve a session workspace for the loopback desktop supervisor
+      tags:
+      - sessions
   /api/v1/dev/import-projects:
     post:
       operationId: runDevImportProjects
@@ -371,31 +410,6 @@ paths:
       summary: Run the developer project-registry import through the daemon store
       tags:
       - dev
-  /api/v1/editors:
-    get:
-      operationId: listEditors
-      responses:
-        "200":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ListEditorsResponse'
-          description: OK
-        "500":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/APIError'
-          description: Internal Server Error
-        "501":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/APIError'
-          description: Not Implemented
-      summary: List the external code editors AO can launch on this machine
-      tags:
-      - sessions
   /api/v1/events:
     get:
       operationId: streamEvents
@@ -3436,58 +3450,6 @@ paths:
                 $ref: '#/components/schemas/APIError'
           description: Not Implemented
       summary: Configure whether PR completion terminates the session
-      tags:
-      - sessions
-  /api/v1/sessions/{sessionId}/open-editor:
-    post:
-      operationId: openSessionEditor
-      parameters:
-      - description: Session identifier, e.g. project-1.
-        in: path
-        name: sessionId
-        required: true
-        schema:
-          description: Session identifier, e.g. project-1.
-          type: string
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/OpenSessionEditorRequest'
-        required: true
-      responses:
-        "200":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/OpenSessionEditorResponse'
-          description: OK
-        "400":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/APIError'
-          description: Bad Request
-        "404":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/APIError'
-          description: Not Found
-        "500":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/APIError'
-          description: Internal Server Error
-        "501":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/APIError'
-          description: Not Implemented
-      summary: Open a session workspace in an external editor, focusing its most recently
-        changed file
       tags:
       - sessions
   /api/v1/sessions/{sessionId}/pin:
@@ -6724,6 +6686,16 @@ components:
       - ok
       - workerId
       type: object
+    DesktopWorkspaceLocationResponse:
+      properties:
+        sessionId:
+          type: string
+        workspacePath:
+          type: string
+      required:
+      - sessionId
+      - workspacePath
+      type: object
     DevImportProjectsConflict:
       properties:
         path:
@@ -6833,16 +6805,6 @@ components:
       required:
       - sourceBranchId
       - activeBranchId
-      type: object
-    EditorSummary:
-      properties:
-        id:
-          type: string
-        name:
-          type: string
-      required:
-      - id
-      - name
       type: object
     ImportReport:
       properties:
@@ -7013,15 +6975,6 @@ components:
           type: array
       required:
       - sessions
-      type: object
-    ListEditorsResponse:
-      properties:
-        editors:
-          items:
-            $ref: '#/components/schemas/EditorSummary'
-          type: array
-      required:
-      - editors
       type: object
     ListNotificationsResponse:
       properties:
@@ -7347,38 +7300,6 @@ components:
       required:
       - openaiReasoningOutputTokens
       - openaiCacheWriteInputTokens
-      type: object
-    OpenSessionEditorRequest:
-      properties:
-        editorId:
-          type: string
-        path:
-          type: string
-      type: object
-    OpenSessionEditorResponse:
-      properties:
-        editorId:
-          type: string
-        editorName:
-          type: string
-        file:
-          type: string
-        ok:
-          type: boolean
-        scope:
-          enum:
-          - workspace
-          - project
-          type: string
-        sessionId:
-          type: string
-      required:
-      - ok
-      - sessionId
-      - editorId
-      - editorName
-      - file
-      - scope
       type: object
     OpenShellTerminalRequest:
       properties:

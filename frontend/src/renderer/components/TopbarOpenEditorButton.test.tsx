@@ -2,32 +2,36 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { EditorHandoffState, OpenSessionTargetInput } from "../../shared/editor-handoff";
 import { TopbarOpenEditorButton } from "./TopbarOpenEditorButton";
 
-const { getMock, postMock } = vi.hoisted(() => ({ getMock: vi.fn(), postMock: vi.fn() }));
-
-vi.mock("../lib/api-client", () => ({
-	apiClient: { GET: getMock, POST: postMock },
-	apiErrorMessage: (error: unknown, fallback = "Request failed") => {
-		if (error instanceof Error) return error.message;
-		if (typeof error === "object" && error !== null && "message" in error) {
-			return String((error as { message: unknown }).message);
-		}
-		return fallback;
-	},
-	hasTrustedApiBaseUrl: () => true,
-}));
 vi.mock("../lib/telemetry", () => ({ captureRendererEvent: vi.fn() }));
 
-function editorsResponse(editors: { id: string; name: string }[]) {
-	return async (path: string) => {
-		if (path === "/api/v1/editors") return { data: { editors } };
-		return { data: { sessionId: "sess-1", files: [], truncated: false } };
-	};
+const openMock = vi.fn(async ({ targetId }: OpenSessionTargetInput) => {
+	if (targetId === "file-manager") return { id: "file-manager" as const, name: "Finder", kind: "file_manager" as const };
+	if (targetId === "terminal") return { id: "terminal" as const, name: "Terminal", kind: "terminal" as const };
+	if (targetId === "vscode") return { id: "vscode" as const, name: "VS Code", kind: "editor" as const };
+	return { id: "cursor" as const, name: "Cursor", kind: "editor" as const };
+});
+
+const availableState: EditorHandoffState = {
+	targets: [
+		{ id: "cursor", name: "Cursor", kind: "editor" },
+		{ id: "vscode", name: "VS Code", kind: "editor" },
+		{ id: "file-manager", name: "Finder", kind: "file_manager" },
+		{ id: "terminal", name: "Terminal", kind: "terminal" },
+	],
+	preferredEditorId: "cursor",
+	workspaceAvailable: true,
+};
+
+function setState(state: EditorHandoffState) {
+	window.ao!.editorHandoff.getState = vi.fn().mockResolvedValue(state);
+	window.ao!.editorHandoff.open = openMock;
 }
 
 function renderButton() {
-	const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+	const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
 	return render(
 		<QueryClientProvider client={client}>
 			<TopbarOpenEditorButton sessionId="sess-1" projectId="proj-1" />
@@ -37,92 +41,86 @@ function renderButton() {
 
 describe("TopbarOpenEditorButton", () => {
 	beforeEach(() => {
-		getMock.mockReset();
-		postMock.mockReset();
-		postMock.mockResolvedValue({ data: { ok: true, editorId: "vscode", file: "src/a.ts", scope: "workspace" } });
-	});
-
-	it("stays hidden when no editor is installed", async () => {
-		getMock.mockImplementation(editorsResponse([]));
-		renderButton();
-		await waitFor(() => expect(getMock).toHaveBeenCalled());
-		expect(screen.queryByRole("button", { name: /open in/i })).toBeNull();
-	});
-
-	it("labels itself with the detected editor and opens with no explicit path", async () => {
-		getMock.mockImplementation(editorsResponse([{ id: "vscode", name: "VS Code" }]));
-		renderButton();
-
-		const open = await screen.findByRole("button", { name: "Open in VS Code" });
-		await userEvent.click(open);
-
-		await waitFor(() => expect(postMock).toHaveBeenCalledTimes(1));
-		// No path in the body: the daemon picks the most recently changed file.
-		expect(postMock).toHaveBeenCalledWith("/api/v1/sessions/{sessionId}/open-editor", {
-			params: { path: { sessionId: "sess-1" } },
-			body: {},
+		openMock.mockClear();
+		openMock.mockImplementation(async ({ targetId }: OpenSessionTargetInput) => {
+			if (targetId === "file-manager") return { id: "file-manager", name: "Finder", kind: "file_manager" };
+			if (targetId === "terminal") return { id: "terminal", name: "Terminal", kind: "terminal" };
+			if (targetId === "vscode") return { id: "vscode", name: "VS Code", kind: "editor" };
+			return { id: "cursor", name: "Cursor", kind: "editor" };
 		});
+		setState(availableState);
 	});
 
-	it("prefers Cursor's label when it is the only editor found", async () => {
-		getMock.mockImplementation(editorsResponse([{ id: "cursor", name: "Cursor" }]));
+	it("uses persisted Cursor as the primary target and sends no filesystem path", async () => {
 		renderButton();
-		expect(await screen.findByRole("button", { name: "Open in Cursor" })).toBeTruthy();
+		const button = await screen.findByRole("button", { name: "Open in Cursor" });
+		expect(button).toHaveAttribute("data-priority", "primary");
+		expect(button.querySelector("[data-compact-label]")).toHaveTextContent("Open");
+		await userEvent.click(button);
+		await waitFor(() => expect(openMock).toHaveBeenCalledWith({ sessionId: "sess-1" }));
 	});
 
-	it("sends path '.' for the folder-only menu entry", async () => {
-		getMock.mockImplementation(editorsResponse([{ id: "vscode", name: "VS Code" }]));
+	it("keeps the no-editor state visible and offers Finder and Terminal", async () => {
+		setState({
+			targets: [
+				{ id: "file-manager", name: "Finder", kind: "file_manager" },
+				{ id: "terminal", name: "Terminal", kind: "terminal" },
+			],
+			preferredEditorId: "cursor",
+			workspaceAvailable: true,
+		});
 		renderButton();
-
-		await userEvent.click(await screen.findByRole("button", { name: "Open in editor options" }));
-		await userEvent.click(await screen.findByRole("menuitem", { name: /open folder only/i }));
-
-		await waitFor(() => expect(postMock).toHaveBeenCalledTimes(1));
-		expect(postMock.mock.calls[0][1].body).toEqual({ path: "." });
+		expect(await screen.findByRole("alert")).toHaveTextContent("No supported editor found");
+		expect(screen.getByRole("button", { name: "Choose editor" })).toBeDisabled();
+		await userEvent.click(screen.getByRole("button", { name: "Open workspace options" }));
+		expect((await screen.findAllByRole("menuitem")).map((item) => item.textContent)).toEqual([
+			"Open in Finder",
+			"Open in Terminal",
+		]);
 	});
 
-	it("lists only the folder open and the installed editors, never changed files", async () => {
-		getMock.mockImplementation(editorsResponse([{ id: "vscode", name: "VS Code" }, { id: "cursor", name: "Cursor" }]));
+	it("shows a missing workspace and disables every launch action", async () => {
+		setState({
+			...availableState,
+			workspaceAvailable: false,
+			unavailableReason: "Session workspace is not available.",
+		});
 		renderButton();
-
-		await userEvent.click(await screen.findByRole("button", { name: "Open in editor options" }));
-		const items = (await screen.findAllByRole("menuitem")).map((el) => el.textContent);
-		expect(items).toEqual(["Open folder only", "VS Code", "Cursor"]);
-		// The workspace-files endpoint must not be probed for this menu.
-		expect(getMock.mock.calls.every((call) => call[0] === "/api/v1/editors")).toBe(true);
+		expect(await screen.findByRole("alert")).toHaveTextContent("Session workspace is not available.");
+		expect(screen.getByRole("button", { name: "Open in Cursor" })).toBeDisabled();
+		expect(screen.getByRole("button", { name: "Open workspace options" })).toBeDisabled();
 	});
 
-	it("gives each editor its own mark rather than reusing one logo", async () => {
-		getMock.mockImplementation(editorsResponse([{ id: "vscode", name: "VS Code" }, { id: "cursor", name: "Cursor" }]));
+	it("opens safe native fallbacks from the menu", async () => {
 		renderButton();
-
-		await userEvent.click(await screen.findByRole("button", { name: "Open in editor options" }));
-		const items = await screen.findAllByRole("menuitem");
-		const vscodePath = items[1].querySelector("svg path")?.getAttribute("d");
-		const cursorPath = items[2].querySelector("svg path")?.getAttribute("d");
-		expect(vscodePath).toBeTruthy();
-		expect(cursorPath).toBeTruthy();
-		expect(cursorPath).not.toEqual(vscodePath);
+		await userEvent.click(await screen.findByRole("button", { name: "Open workspace options" }));
+		await userEvent.click(await screen.findByRole("menuitem", { name: "Open in Finder" }));
+		await waitFor(() => expect(openMock).toHaveBeenCalledWith({ sessionId: "sess-1", targetId: "file-manager" }));
 	});
 
-	it("tints editors that have a brand colour and leaves monochrome brands alone", async () => {
-		getMock.mockImplementation(editorsResponse([{ id: "vscode", name: "VS Code" }, { id: "cursor", name: "Cursor" }]));
+	it("updates the primary target after a chosen editor succeeds", async () => {
 		renderButton();
-
-		await userEvent.click(await screen.findByRole("button", { name: "Open in editor options" }));
-		const items = await screen.findAllByRole("menuitem");
-		// VS Code's mark is genuinely blue; Cursor's real logo is greyscale, so it
-		// must inherit the menu text colour rather than get an invented tint.
-		expect(items[1].querySelector("svg")?.style.color).toBe("rgb(31, 156, 240)");
-		expect(items[2].querySelector("svg")?.style.color).toBe("");
+		await userEvent.click(await screen.findByRole("button", { name: "Open workspace options" }));
+		await userEvent.click(await screen.findByRole("menuitem", { name: "VS Code" }));
+		expect(await screen.findByRole("button", { name: "Open in VS Code" })).toBeEnabled();
 	});
 
-	it("surfaces a launch failure instead of failing silently", async () => {
-		getMock.mockImplementation(editorsResponse([{ id: "vscode", name: "VS Code" }]));
-		postMock.mockResolvedValue({ error: { message: "Could not launch VS Code" }, response: { status: 500 } });
+	it("gives each editor its own mark and keeps real brand color behavior", async () => {
 		renderButton();
+		await userEvent.click(await screen.findByRole("button", { name: "Open workspace options" }));
+		const vscode = await screen.findByRole("menuitem", { name: "VS Code" });
+		const cursor = await screen.findByRole("menuitem", { name: "Cursor" });
+		expect(vscode.querySelector("svg path")?.getAttribute("d")).not.toEqual(
+			cursor.querySelector("svg path")?.getAttribute("d"),
+		);
+		expect(vscode.querySelector("svg")?.style.color).toBe("rgb(31, 156, 240)");
+		expect(cursor.querySelector("svg")?.style.color).toBe("");
+	});
 
-		await userEvent.click(await screen.findByRole("button", { name: "Open in VS Code" }));
-		expect(await screen.findByRole("alert")).toHaveTextContent("Could not launch VS Code");
+	it("surfaces an Electron launch failure", async () => {
+		openMock.mockRejectedValueOnce(new Error("Could not open Cursor. Check that it is installed and try again."));
+		renderButton();
+		await userEvent.click(await screen.findByRole("button", { name: "Open in Cursor" }));
+		expect(await screen.findByRole("alert")).toHaveTextContent("Could not open Cursor");
 	});
 });
