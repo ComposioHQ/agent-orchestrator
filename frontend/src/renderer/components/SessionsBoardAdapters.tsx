@@ -7,7 +7,7 @@ import {
 	SessionUsageMetricView,
 	type BoardPullRequestLabels,
 	type BoardSessionPresentation,
-	type BoardSplitLaneLabels,
+	type BoardColumnLabels,
 	type BoardUsagePresentation,
 	type ProductUITranslator,
 } from "@aoagents/product-ui";
@@ -62,35 +62,9 @@ export function toBoardSessionPresentation(
 	};
 }
 
-export function sessionsBoardLabels(t: TFunction): BoardSplitLaneLabels {
+export function sessionsBoardLabels(t: TFunction): BoardColumnLabels {
 	return {
 		columnAria: (label) => t("shell.sessionsAria", { label }),
-		countSessions: (count, label) => t("shell.countSessionsAria", { count, label }),
-		idleWorkingAria: t("shell.idleWorkingSessions"),
-		laneSummary: (primary, secondary) => t("shell.laneSummaryAria", { primary, secondary }),
-		readyMergedAria: t("shell.readyMergedSessions"),
-		tones: {
-			idle: {
-				label: t("status.idle"),
-				countLabel: t("shell.countLabel.idle"),
-				regionLabel: t("shell.idleSessions"),
-			},
-			working: {
-				label: t("status.working"),
-				countLabel: t("shell.countLabel.working"),
-				regionLabel: t("shell.workingSessions"),
-			},
-			ready: {
-				label: t("zone.merge"),
-				countLabel: t("shell.countLabel.readyToMerge"),
-				regionLabel: t("shell.readyToMergeSessions"),
-			},
-			merged: {
-				label: t("status.merged"),
-				countLabel: t("shell.countLabel.merged"),
-				regionLabel: t("shell.mergedSessions"),
-			},
-		},
 	};
 }
 

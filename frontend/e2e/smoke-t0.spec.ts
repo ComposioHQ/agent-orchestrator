@@ -163,10 +163,10 @@ test("renderer: board renders all status columns @T0 @BRD", async ({ page }) => 
 	const columns = page.getByTestId("board-column");
 	await expect(columns).toHaveCount(4);
 	// Left→right delivery flow: building → validating → needs review → ready.
-	await expect(columns.nth(0)).toContainText("Working");
-	await expect(columns.nth(1)).toContainText("In review");
-	await expect(columns.nth(2)).toContainText("Needs you");
-	await expect(columns.nth(3)).toContainText("Ready to merge");
+	await expect(columns.nth(0)).toContainText("Building");
+	await expect(columns.nth(1)).toContainText("Validating");
+	await expect(columns.nth(2)).toContainText("Needs review");
+	await expect(columns.nth(3)).toContainText("Ready");
 });
 
 // #2483 BRD-012.

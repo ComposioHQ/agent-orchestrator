@@ -6,9 +6,9 @@ import {
 	getAttentionZoneView,
 	getSessionStatusView,
 	getSessionTimelinePillView,
+	getKanbanColumnView,
 	isAgentActivityWorking,
 	isSessionIdle,
-	kanbanColumnZone,
 } from "./session-presentation";
 
 describe("session presentation", () => {
@@ -73,13 +73,19 @@ describe("session presentation", () => {
 	});
 
 	it.each([
-		["building", "working"],
-		["validating", "pending"],
-		["needs_review", "action"],
-		["ready", "merge"],
-		["archive", "done"],
-	] as const)("renders the %s column with the %s lane presentation", (column, zone) => {
-		expect(kanbanColumnZone(column)).toBe(zone);
+		["building", "Building", "bg-status-working"],
+		["validating", "Validating", "bg-status-in-review"],
+		["needs_review", "Needs review", "bg-status-needs-you"],
+		["ready", "Ready", "bg-status-ready"],
+		["archive", "Archive", "bg-status-terminated"],
+	] as const)("gives the %s column its own label and palette", (column, label, dotClassName) => {
+		expect(getKanbanColumnView(column)).toMatchObject({ column, label, dotClassName });
+	});
+
+	it("accepts injected labels for Kanban columns", () => {
+		expect(getKanbanColumnView("needs_review", (key) => `translated:${key}`).label).toBe(
+			"translated:column.needs_review",
+		);
 	});
 
 	it("falls back for a daemon that sends no column, or an unknown one", () => {
