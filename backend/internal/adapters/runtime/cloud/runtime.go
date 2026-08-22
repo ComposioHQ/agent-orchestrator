@@ -332,13 +332,10 @@ func archiveWorkspace(ctx context.Context, root string) ([]byte, error) {
 			return nil, errors.New("prepared workspace exceeds 24 MiB compressed cloud launch limit")
 		}
 	}
-	if closeErr := archive.Close(); err == nil {
-		err = closeErr
+	if err := archive.Close(); err != nil {
+		return nil, fmt.Errorf("archive cloud workspace: %w", err)
 	}
-	if closeErr := gz.Close(); err == nil {
-		err = closeErr
-	}
-	if err != nil {
+	if err := gz.Close(); err != nil {
 		return nil, fmt.Errorf("archive cloud workspace: %w", err)
 	}
 	if buffer.Len() > maxWorkspaceArchive {
