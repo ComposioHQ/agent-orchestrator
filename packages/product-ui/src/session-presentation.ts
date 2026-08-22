@@ -1,3 +1,4 @@
+import { isKanbanColumn } from "./session-models";
 import type {
 	KanbanColumn,
 	SessionActivity,
@@ -252,6 +253,33 @@ export const boardKanbanColumnOrder: KanbanColumn[] = [
 	"needs_review",
 	"ready",
 ];
+
+/**
+ * Resolve the lane a session belongs in. The daemon derives the column from
+ * durable delivery facts and clients render what it sends; this only fills the
+ * gap when the field is absent or unrecognized.
+ *
+ * The fallback keeps the placement the session already had. A daemon that
+ * predates `kanbanColumn` still reports `status`, and mapping that through the
+ * attention zone reproduces exactly the lane the board used before the column
+ * existed — so a mixed-version upgrade leaves cards where the user last saw
+ * them instead of collapsing every live session into the leftmost lane.
+ */
+export function toKanbanColumn(column: string | undefined, status: SessionStatus): KanbanColumn {
+	if (column && isKanbanColumn(column)) return column;
+	switch (attentionZone(status)) {
+		case "merge":
+			return "ready";
+		case "action":
+			return "needs_review";
+		case "pending":
+			return "validating";
+		case "done":
+			return "archive";
+		case "working":
+			return "building";
+	}
+}
 
 export type KanbanColumnView = {
 	column: KanbanColumn;

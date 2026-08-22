@@ -87,8 +87,9 @@ export type WorkspaceSession = {
 	/**
 	 * Board lane derived by the daemon from durable delivery facts (PR
 	 * lifecycle, review runs, review ownership). The board groups by this and
-	 * never re-derives a lane from {@link status}. {@link toKanbanColumn} fills
-	 * it in for a daemon too old to send one.
+	 * never re-derives a lane from {@link status}. For a daemon too old to send
+	 * one, {@link toKanbanColumn} keeps the placement the status already
+	 * implied rather than inventing a new one.
 	 */
 	kanbanColumn?: KanbanColumn;
 	/** Durable runtime fact from the daemon; independent of the derived SCM-aware status. */

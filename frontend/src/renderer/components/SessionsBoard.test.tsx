@@ -2,8 +2,8 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { KanbanColumn, WorkspaceSession, WorkspaceSummary } from "../types/workspace";
-import { attentionZone } from "../lib/session-presentation";
+import type { WorkspaceSession, WorkspaceSummary } from "../types/workspace";
+import { toKanbanColumn } from "@aoagents/product-ui";
 import { appI18n } from "../i18n";
 
 // Instant motion updates so height tweens do not leave tests waiting on timers.
@@ -506,6 +506,10 @@ describe("SessionsBoard", () => {
 						provider: "codex",
 						branch: "ao/exited",
 						status: "exited",
+						// What the daemon derives for a worker with no PR, whatever its
+						// runtime status. Set explicitly so this covers the daemon path,
+						// not the older-daemon fallback.
+						kanbanColumn: "building",
 						activity: { state: "exited", lastActivityAt: "2026-01-01T00:00:00Z" },
 						updatedAt: "2026-01-01T00:00:00Z",
 						prs: [],
@@ -1013,6 +1017,37 @@ describe("SessionsBoard", () => {
 		expect(within(lane("Ready sessions")).queryByText("needs review worker")).toBeNull();
 	});
 
+	// Mixed-version upgrade: an older daemon sends no kanbanColumn at all. Cards
+	// must stay in the lanes their status already put them in, not pile into the
+	// leftmost one.
+	it("keeps an older daemon's sessions in their status-implied lanes", () => {
+		const legacy = (id: string, title: string, status: WorkspaceSession["status"]): WorkspaceSession => {
+			const session = boardSession({ id, title, status });
+			delete session.kanbanColumn;
+			return session;
+		};
+		workspaceQueryMock.mockReturnValue({
+			data: [
+				workspaceWithSessions([
+					legacy("s-ready", "legacy ready worker", "mergeable"),
+					legacy("s-action", "legacy action worker", "changes_requested"),
+					legacy("s-review", "legacy review worker", "review_pending"),
+					legacy("s-working", "legacy working worker", "working"),
+				]),
+			],
+			isError: false,
+			isSuccess: true,
+		});
+
+		renderBoard("p1");
+
+		const lane = (label: string) => screen.getByLabelText(label);
+		expect(within(lane("Building sessions")).getByText("legacy working worker")).toBeInTheDocument();
+		expect(within(lane("Validating sessions")).getByText("legacy review worker")).toBeInTheDocument();
+		expect(within(lane("Needs review sessions")).getByText("legacy action worker")).toBeInTheDocument();
+		expect(within(lane("Ready sessions")).getByText("legacy ready worker")).toBeInTheDocument();
+	});
+
 	it("orders the lanes building, validating, needs review, then ready", () => {
 		workspaceQueryMock.mockReturnValue({
 			data: [workspaceWithSessions([boardSession({ id: "s-one", title: "worker one", status: "idle" })])],
@@ -1201,31 +1236,11 @@ function boardSession(
 		workspaceName: "radic",
 		provider: "claude-code",
 		branch: `ao/${overrides.id}`,
-		kanbanColumn: fixtureKanbanColumn(overrides.status),
+		kanbanColumn: toKanbanColumn(undefined, overrides.status),
 		updatedAt: "2026-01-01T00:00:00Z",
 		prs: [],
 		...overrides,
 	};
-}
-
-/**
- * Lanes come from the daemon now, so a fixture that only names a display status
- * gets the column the daemon would have derived alongside it. Tests about lane
- * placement itself pass kanbanColumn explicitly instead.
- */
-function fixtureKanbanColumn(status: WorkspaceSession["status"]): KanbanColumn {
-	switch (attentionZone(status)) {
-		case "merge":
-			return "ready";
-		case "action":
-			return "needs_review";
-		case "pending":
-			return "validating";
-		case "done":
-			return "archive";
-		case "working":
-			return "building";
-	}
 }
 
 function activeAgentSwitch(

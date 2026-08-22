@@ -49,6 +49,10 @@ export const KANBAN_COLUMNS = [
  */
 export type KanbanColumn = (typeof KANBAN_COLUMNS)[number];
 
+export function isKanbanColumn(value: string): value is KanbanColumn {
+	return KANBAN_COLUMNS.some((column) => column === value);
+}
+
 export type SessionStatusModel = {
 	status: SessionStatus;
 };
@@ -56,16 +60,6 @@ export type SessionStatusModel = {
 export function toSessionStatus(status?: string, isTerminated = false): SessionStatus {
 	if (status && isSessionStatus(status)) return status;
 	return isTerminated ? "terminated" : "unknown";
-}
-
-/**
- * A daemon too old to send a column, or one sending an unknown value, must still
- * land somewhere sensible: terminated sessions archive, everything else is
- * building.
- */
-export function toKanbanColumn(column?: string, isTerminated = false): KanbanColumn {
-	if (column && isKanbanColumn(column)) return column;
-	return isTerminated ? "archive" : "building";
 }
 
 export function toSessionActivity(
@@ -82,10 +76,6 @@ export function toSessionActivity(
 
 function isSessionStatus(value: string): value is SessionStatus {
 	return SESSION_STATUSES.some((status) => status === value);
-}
-
-function isKanbanColumn(value: string): value is KanbanColumn {
-	return KANBAN_COLUMNS.some((column) => column === value);
 }
 
 function isSessionActivityState(value: string): value is SessionActivityState {
