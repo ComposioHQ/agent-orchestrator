@@ -18,9 +18,8 @@ import {
 import {
 	boardKanbanColumnOrder,
 	getAgentActivityView,
-	getAttentionZoneViewForZone,
-	kanbanColumnZone,
-	type AttentionZoneView,
+	getKanbanColumnView,
+	type KanbanColumnView,
 } from "../lib/session-presentation";
 import {
 	useSessionUsageSummaries,
@@ -78,11 +77,9 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 	const { t } = useTranslation();
 	const navigate = useNavigate();
 	const queryClient = useQueryClient();
-	// Lanes follow the daemon's delivery order (building -> validating ->
-	// needs review -> ready); each still renders with its attention-zone palette.
-	const columns: AttentionZoneView[] = boardKanbanColumnOrder.map((column) =>
-		getAttentionZoneViewForZone(kanbanColumnZone(column), t),
-	);
+	// Lanes follow the daemon's delivery order: building -> validating ->
+	// needs review -> ready.
+	const columns: KanbanColumnView[] = boardKanbanColumnOrder.map((column) => getKanbanColumnView(column, t));
 	const workspaceQuery = useWorkspaceQuery();
 	const shell = useShellMaybe();
 	const usageBySession = useSessionUsageSummaries(projectId).data ?? emptyUsageBySession;
