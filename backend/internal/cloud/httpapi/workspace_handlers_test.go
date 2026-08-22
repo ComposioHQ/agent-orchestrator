@@ -61,7 +61,9 @@ func (s *memoryWorkspaceStore) UpdateWorkspaceProvisioning(
 	return nil
 }
 
-type fakeWorkspaceProvisioner struct{}
+type fakeWorkspaceProvisioner struct {
+	resumed chan domain.WorkspaceBootstrap
+}
 
 func (fakeWorkspaceProvisioner) Provision(_ context.Context, _ domain.Workspace, bootstrap domain.WorkspaceBootstrap) (string, error) {
 	if string(bootstrap.ClaudeCredentials) != `{"claudeAiOauth":{"accessToken":"secret"}}` {
@@ -77,6 +79,16 @@ func (fakeWorkspaceProvisioner) PreviewURL(context.Context, string) (string, err
 	return "https://3001-signed.proxy.daytona.work", nil
 }
 
+func (p fakeWorkspaceProvisioner) Resume(_ context.Context, _ domain.Workspace, bootstrap domain.WorkspaceBootstrap) error {
+	if bootstrap.RuntimeToken == "" || bootstrap.ControlPlaneURL == "" {
+		return errors.New("missing resumed workspace capability")
+	}
+	if p.resumed != nil {
+		p.resumed <- bootstrap
+	}
+	return nil
+}
+
 func TestWorkspaceProvisioningRequiresAuthAndReturnsSignedAOConnection(t *testing.T) {
 	principal := domain.Principal{UserID: "58fc7182-0360-412f-abd9-5057097db664", Provider: "google"}
 	accountStore := &memoryAccountStore{principal: principal, refreshes: make(map[string]string)}
@@ -87,11 +99,12 @@ func TestWorkspaceProvisioningRequiresAuthAndReturnsSignedAOConnection(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
+	provisioner := fakeWorkspaceProvisioner{resumed: make(chan domain.WorkspaceBootstrap, 1)}
 	server, err := New(Options{
 		Store: accountStore, Google: &staticIdentityVerifier{}, AccessTokens: tokens,
 		AllowedEmails:   []string{"person@example.com"},
 		RefreshTokenTTL: time.Hour, WorkspaceStore: workspaceStore,
-		Workspaces: fakeWorkspaceProvisioner{},
+		Workspaces: provisioner, PublicURL: "https://cloud.example",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -134,6 +147,14 @@ func TestWorkspaceProvisioningRequiresAuthAndReturnsSignedAOConnection(t *testin
 	}
 	if result.Workspace.State != domain.WorkspaceReady || result.Workspace.SandboxID != "sandbox-1" || result.PreviewURL == "" {
 		t.Fatalf("workspace response = %#v", result)
+	}
+	select {
+	case resumed := <-provisioner.resumed:
+		if resumed.RuntimeToken == "" || resumed.ControlPlaneURL != "https://cloud.example" {
+			t.Fatalf("resume bootstrap = %#v", resumed)
+		}
+	default:
+		t.Fatal("ready workspace was not resumed before issuing its preview URL")
 	}
 }
 

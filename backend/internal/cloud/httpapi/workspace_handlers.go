@@ -107,6 +107,17 @@ func (s *Server) getWorkspace(w http.ResponseWriter, r *http.Request) {
 	}
 	response := workspaceResponse{Workspace: workspace}
 	if workspace.State == domain.WorkspaceReady && s.workspaces != nil {
+		runtimeToken, tokenErr := s.accessTokens.IssueWorkspace(principal.UserID, workspace.OrgID, workspace.ID, 30*24*time.Hour)
+		if tokenErr != nil {
+			s.internalError(w, r, "issue resumed cloud workspace capability", tokenErr)
+			return
+		}
+		if err = s.workspaces.Resume(r.Context(), workspace, domain.WorkspaceBootstrap{
+			RuntimeToken: runtimeToken, ControlPlaneURL: s.publicURL,
+		}); err != nil {
+			s.internalError(w, r, "resume cloud workspace", err)
+			return
+		}
 		response.PreviewURL, err = s.workspaces.PreviewURL(r.Context(), workspace.SandboxID)
 		if err != nil {
 			s.internalError(w, r, "create cloud workspace preview", err)

@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	daytonasdk "github.com/daytona/clients/sdk-go/pkg/daytona"
@@ -33,6 +34,7 @@ type Provider struct {
 	client      *daytonasdk.Client
 	aoBinary    []byte
 	githubToken []byte
+	resumeMu    sync.Mutex
 }
 
 // New validates credentials and creates a Daytona client.
@@ -98,6 +100,26 @@ func (p *Provider) PreviewURL(ctx context.Context, sandboxID string) (string, er
 	return p.previewURL(ctx, sandboxID, time.Hour)
 }
 
+// Resume starts a stopped coordinator and restores its daemon process before a
+// fresh preview URL is returned. Daytona preserves the filesystem across a
+// stop, but not the daemon process or its scoped control-plane capability.
+func (p *Provider) Resume(ctx context.Context, workspace domain.Workspace, bootstrap domain.WorkspaceBootstrap) error {
+	p.resumeMu.Lock()
+	defer p.resumeMu.Unlock()
+	sandbox, err := p.client.Get(ctx, strings.TrimSpace(workspace.SandboxID))
+	if err != nil {
+		return fmt.Errorf("get Daytona workspace sandbox: %w", err)
+	}
+	if err = sandbox.StartWithTimeout(ctx, 5*time.Minute); err != nil {
+		return fmt.Errorf("start Daytona workspace sandbox: %w", err)
+	}
+	home, err := sandboxHome(ctx, sandbox)
+	if err != nil {
+		return err
+	}
+	return p.startDaemon(ctx, sandbox, workspace, bootstrap, home)
+}
+
 func (p *Provider) previewURL(ctx context.Context, sandboxID string, ttl time.Duration) (string, error) {
 	sandbox, err := p.client.Get(ctx, strings.TrimSpace(sandboxID))
 	if err != nil {
@@ -111,13 +133,9 @@ func (p *Provider) previewURL(ctx context.Context, sandboxID string, ttl time.Du
 }
 
 func (p *Provider) bootstrap(ctx context.Context, sandbox *daytonasdk.Sandbox, workspace domain.Workspace, bootstrap domain.WorkspaceBootstrap) error {
-	homeResult, err := run(ctx, sandbox, `printf %s "$HOME"`, time.Minute)
+	home, err := sandboxHome(ctx, sandbox)
 	if err != nil {
 		return err
-	}
-	home := strings.TrimSpace(homeResult)
-	if home == "" || !filepath.IsAbs(home) {
-		return errors.New("Daytona sandbox returned an invalid home directory") //nolint:staticcheck // Daytona is a product name.
 	}
 	binPath := filepath.Join(home, "bin", "ao")
 	claudePath := filepath.Join(home, ".claude", ".credentials.json")
@@ -177,9 +195,43 @@ func (p *Provider) bootstrap(ctx context.Context, sandbox *daytonasdk.Sandbox, w
 		return fmt.Errorf("clone repository: %w", err)
 	}
 
+	if err := p.startDaemon(ctx, sandbox, workspace, bootstrap, home); err != nil {
+		return err
+	}
+	dataDir := filepath.Join(home, ".ao", "data")
+	runFile := filepath.Join(home, ".ao", "running.json")
+	addProject := "env AO_DATA_DIR=" + shellQuote(dataDir) + " AO_RUN_FILE=" + shellQuote(runFile) +
+		" " + shellQuote(binPath) + " project add --path " + shellQuote(workspacePath) +
+		" --id cloud --name " + shellQuote(repositoryName(workspace.RepositoryURL)) +
+		" --worker-agent claude-code --orchestrator-agent claude-code"
+	if _, err := run(ctx, sandbox, addProject, 2*time.Minute); err != nil {
+		return fmt.Errorf("register cloud project: %w", err)
+	}
+	return nil
+}
+
+func sandboxHome(ctx context.Context, sandbox *daytonasdk.Sandbox) (string, error) {
+	homeResult, err := run(ctx, sandbox, `printf %s "$HOME"`, time.Minute)
+	if err != nil {
+		return "", err
+	}
+	home := strings.TrimSpace(homeResult)
+	if home == "" || !filepath.IsAbs(home) {
+		return "", errors.New("Daytona sandbox returned an invalid home directory") //nolint:staticcheck // Daytona is a product name.
+	}
+	return home, nil
+}
+
+func (p *Provider) startDaemon(ctx context.Context, sandbox *daytonasdk.Sandbox, workspace domain.Workspace, bootstrap domain.WorkspaceBootstrap, home string) error {
+	ready, readyErr := sandbox.Process.ExecuteCommand(ctx, `curl -fsS http://127.0.0.1:3001/readyz >/dev/null`, options.WithExecuteTimeout(time.Minute))
+	if readyErr == nil && ready.ExitCode == 0 {
+		return nil
+	}
+	binPath := filepath.Join(home, "bin", "ao")
 	dataDir := filepath.Join(home, ".ao", "data")
 	runFile := filepath.Join(home, ".ao", "running.json")
 	logFile := filepath.Join(home, ".ao", "daemon.log")
+	askpassPath := filepath.Join(home, ".ao", "github-askpass")
 	start := "nohup env AO_DATA_DIR=" + shellQuote(dataDir) + " AO_RUN_FILE=" + shellQuote(runFile) +
 		" AO_PORT=3001 AO_CORS_HEADERS_MANAGED_BY_PROXY=on" +
 		" GIT_TERMINAL_PROMPT=0 GIT_ASKPASS=" + shellQuote(askpassPath) +
@@ -194,13 +246,6 @@ func (p *Provider) bootstrap(ctx context.Context, sandbox *daytonasdk.Sandbox, w
 		`for i in $(seq 1 120); do curl -fsS http://127.0.0.1:3001/readyz >/dev/null && exit 0; sleep 1; done; exit 1`,
 		3*time.Minute); err != nil {
 		return fmt.Errorf("wait for AO daemon: %w", err)
-	}
-	addProject := "env AO_DATA_DIR=" + shellQuote(dataDir) + " AO_RUN_FILE=" + shellQuote(runFile) +
-		" " + shellQuote(binPath) + " project add --path " + shellQuote(workspacePath) +
-		" --id cloud --name " + shellQuote(repositoryName(workspace.RepositoryURL)) +
-		" --worker-agent claude-code --orchestrator-agent claude-code"
-	if _, err := run(ctx, sandbox, addProject, 2*time.Minute); err != nil {
-		return fmt.Errorf("register cloud project: %w", err)
 	}
 	return nil
 }

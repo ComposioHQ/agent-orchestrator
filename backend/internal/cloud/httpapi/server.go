@@ -51,6 +51,7 @@ type WorkspaceStore interface {
 // WorkspaceProvisioner owns the remote sandbox lifecycle used by this POC.
 type WorkspaceProvisioner interface {
 	Provision(context.Context, domain.Workspace, domain.WorkspaceBootstrap) (string, error)
+	Resume(context.Context, domain.Workspace, domain.WorkspaceBootstrap) error
 	PreviewURL(context.Context, string) (string, error)
 }
 
