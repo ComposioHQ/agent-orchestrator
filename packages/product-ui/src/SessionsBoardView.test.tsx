@@ -63,6 +63,7 @@ const splitLabels: BoardSplitLaneLabels = {
 
 const baseSession: BoardSessionPresentation = {
 	id: "session-1",
+	kanbanColumn: "building",
 	provider: "codex",
 	status: "idle",
 	title: "portable task",
@@ -79,8 +80,8 @@ describe("SessionsBoardView", () => {
 		const sessions: BoardSessionPresentation[] = [
 			baseSession,
 			{ ...baseSession, id: "working", status: "working", title: "working task" },
-			{ ...baseSession, id: "ready", status: "mergeable", title: "ready task" },
-			{ ...baseSession, id: "merged", status: "merged", title: "merged task" },
+			{ ...baseSession, id: "ready", kanbanColumn: "ready", status: "mergeable", title: "ready task" },
+			{ ...baseSession, id: "merged", kanbanColumn: "ready", status: "merged", title: "merged task" },
 		];
 		render(
 			<SessionsBoardGridView

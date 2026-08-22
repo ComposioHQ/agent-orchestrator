@@ -24,6 +24,11 @@ type PRFacts struct {
 	TargetBranch   string
 	HeadSHA        string
 	UpdatedAt      time.Time
+	// ExternalApproved and ExternalChangesRequested are the human review
+	// verdicts AO did not author. Review above aggregates AO's own provider
+	// reviews with everyone else's, so it cannot say who owns the next step.
+	ExternalApproved         bool
+	ExternalChangesRequested bool
 }
 
 // PullRequest is the app-level representation of one tracked pull request as

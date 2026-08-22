@@ -128,13 +128,18 @@ type SessionRecord struct {
 }
 
 // Session is the read-model returned across the API boundary: a SessionRecord
-// plus derived display facts. Neither Status nor SCMStatus is persisted.
+// plus derived display facts. None of Status, SCMStatus, or KanbanColumn is
+// persisted.
 type Session struct {
 	SessionRecord
-	Status            SessionStatus `json:"status" enum:"working,pr_open,draft,ci_failed,review_pending,changes_requested,approved,mergeable,merged,needs_input,exited,idle,terminated,no_signal"`
-	SCMStatus         SessionStatus `json:"scmStatus,omitempty" enum:"pr_open,draft,ci_failed,review_pending,changes_requested,approved,mergeable,merged"`
-	TerminalHandleID  string        `json:"terminalHandleId,omitempty"`
-	ActiveAgentSwitch *AgentSwitch  `json:"-"`
+	Status    SessionStatus `json:"status" enum:"working,pr_open,draft,ci_failed,review_pending,changes_requested,approved,mergeable,merged,needs_input,exited,idle,terminated,no_signal"`
+	SCMStatus SessionStatus `json:"scmStatus,omitempty" enum:"pr_open,draft,ci_failed,review_pending,changes_requested,approved,mergeable,merged"`
+	// KanbanColumn is where the session sits in its delivery lifecycle and who
+	// owns the next step. It is derived independently of Status and, like it,
+	// is never persisted.
+	KanbanColumn      KanbanColumn `json:"kanbanColumn" enum:"building,validating,needs_review,ready,archive"`
+	TerminalHandleID  string       `json:"terminalHandleId,omitempty"`
+	ActiveAgentSwitch *AgentSwitch `json:"-"`
 	// PRs are the session's attributed pull requests (one session can own many).
 	// They feed status derivation and are surfaced on the API read model. Not
 	// serialized here: the HTTP boundary maps them to the curated wire shape.

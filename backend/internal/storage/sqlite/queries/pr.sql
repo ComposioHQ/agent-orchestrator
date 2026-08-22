@@ -211,8 +211,11 @@ LIMIT 1;
 
 -- name: ListPRFactsBySession :many
 -- All PR snapshots for a session (every state), with source/target branch for
--- stack derivation and the unresolved-comment flag. The status aggregator
--- filters open vs merged/closed in Go and derives stacks from the branches.
+-- stack derivation, the unresolved-comment flag, and the human review verdicts
+-- AO did not author (matched by the review id AO recorded when it posted). The
+-- status aggregator filters open vs merged/closed in Go and derives stacks from
+-- the branches; the Kanban reducer needs the AO/external split because the
+-- aggregate review_decision mixes both sources.
 SELECT
     pr.url,
     pr.number,
@@ -230,7 +233,33 @@ SELECT
         WHERE pr_comment.pr_url = pr.url
           AND pr_comment.resolved = 0
           AND pr_comment.is_bot = 0
-    ) AS review_comments
+    ) AS review_comments,
+    EXISTS (
+        SELECT 1
+        FROM pr_reviews
+        WHERE pr_reviews.pr_url = pr.url
+          AND pr_reviews.state = 'approved'
+          AND pr_reviews.is_bot = 0
+          AND NOT EXISTS (
+              SELECT 1
+              FROM review_run
+              WHERE review_run.github_review_id != ''
+                AND review_run.github_review_id = pr_reviews.review_id
+          )
+    ) AS external_approved,
+    EXISTS (
+        SELECT 1
+        FROM pr_reviews
+        WHERE pr_reviews.pr_url = pr.url
+          AND pr_reviews.state = 'changes_requested'
+          AND pr_reviews.is_bot = 0
+          AND NOT EXISTS (
+              SELECT 1
+              FROM review_run
+              WHERE review_run.github_review_id != ''
+                AND review_run.github_review_id = pr_reviews.review_id
+          )
+    ) AS external_changes_requested
 FROM pr
 WHERE pr.session_id = ?
 ORDER BY pr.updated_at DESC;

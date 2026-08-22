@@ -16,9 +16,10 @@ import {
 	workerSessions,
 } from "../types/workspace";
 import {
-	boardAttentionZoneOrder,
+	boardKanbanColumnOrder,
 	getAgentActivityView,
 	getAttentionZoneViewForZone,
+	kanbanColumnZone,
 	type AttentionZoneView,
 } from "../lib/session-presentation";
 import {
@@ -59,9 +60,14 @@ type UsageBySession = ReadonlyMap<string, SessionUsageSummary>;
 const emptyUsageBySession: UsageBySession = new Map();
 
 // Live merged sessions remain in-flow. A terminated runtime is archived even
-// when its SCM outcome remains `merged`.
+// when its SCM outcome remains `merged`, which is exactly what the daemon's
+// `archive` column means.
 function isArchivedSession(session: WorkspaceSession): boolean {
-	return session.isTerminated === true || session.status === "terminated";
+	return (
+		session.kanbanColumn === "archive" ||
+		session.isTerminated === true ||
+		session.status === "terminated"
+	);
 }
 
 const isMac = isMacPlatform();
@@ -72,7 +78,11 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 	const { t } = useTranslation();
 	const navigate = useNavigate();
 	const queryClient = useQueryClient();
-	const columns: AttentionZoneView[] = boardAttentionZoneOrder.map((zone) => getAttentionZoneViewForZone(zone, t));
+	// Lanes follow the daemon's delivery order (building -> validating ->
+	// needs review -> ready); each still renders with its attention-zone palette.
+	const columns: AttentionZoneView[] = boardKanbanColumnOrder.map((column) =>
+		getAttentionZoneViewForZone(kanbanColumnZone(column), t),
+	);
 	const workspaceQuery = useWorkspaceQuery();
 	const shell = useShellMaybe();
 	const usageBySession = useSessionUsageSummaries(projectId).data ?? emptyUsageBySession;
