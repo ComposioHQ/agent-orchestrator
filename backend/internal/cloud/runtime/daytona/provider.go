@@ -95,11 +95,15 @@ func (p *Provider) Provision(ctx context.Context, workspace domain.Workspace, bo
 
 // PreviewURL returns a fresh one-hour signed URL for the sandbox AO daemon.
 func (p *Provider) PreviewURL(ctx context.Context, sandboxID string) (string, error) {
+	return p.previewURL(ctx, sandboxID, time.Hour)
+}
+
+func (p *Provider) previewURL(ctx context.Context, sandboxID string, ttl time.Duration) (string, error) {
 	sandbox, err := p.client.Get(ctx, strings.TrimSpace(sandboxID))
 	if err != nil {
 		return "", fmt.Errorf("get Daytona sandbox: %w", err)
 	}
-	preview, err := sandbox.GetSignedPreviewLink(ctx, daemonPort, 3600)
+	preview, err := sandbox.GetSignedPreviewLink(ctx, daemonPort, int(ttl.Seconds()))
 	if err != nil {
 		return "", fmt.Errorf("create Daytona preview URL: %w", err)
 	}

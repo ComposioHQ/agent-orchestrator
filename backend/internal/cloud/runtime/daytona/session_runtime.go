@@ -152,6 +152,11 @@ func (p *Provider) bootstrapSessionRuntime(ctx context.Context, sandbox *daytona
 	env["HOME"] = home
 	env["TERM"] = "xterm-256color"
 	env["PATH"] = filepath.Join(home, "bin") + ":/usr/local/bin:/usr/bin:/bin"
+	coordinatorURL, err := p.previewURL(ctx, workspace.SandboxID, 24*time.Hour)
+	if err != nil {
+		return fmt.Errorf("create coordinator capability: %w", err)
+	}
+	env["AO_CLOUD_COORDINATOR_URL"] = coordinatorURL
 	command := "cd " + shellQuote(root) + " && exec env"
 	for _, key := range sortedKeys(env) {
 		command += " " + key + "=" + shellQuote(env[key])
