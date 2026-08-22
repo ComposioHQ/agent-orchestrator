@@ -10,11 +10,12 @@ import (
 	"path/filepath"
 	"strings"
 
+	acpsdk "github.com/coder/acp-go-sdk"
+
 	acpdriver "github.com/aoagents/agent-orchestrator/backend/internal/adapters/chatdriver/acp"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/chatdriver/nativeacp"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
-	acpsdk "github.com/coder/acp-go-sdk"
 )
 
 // New launches `cursor-agent acp` from the exact binary resolved by the
@@ -53,7 +54,7 @@ func configure(cfg acpdriver.LaunchConfig) ([]string, map[string]string, error) 
 
 func writeStandingRule(cfg acpdriver.LaunchConfig) (string, error) {
 	if strings.TrimSpace(cfg.DataDir) == "" {
-		return "", fmt.Errorf("Cursor ACP standing instructions require AO data directory")
+		return "", fmt.Errorf("cursor ACP standing instructions require AO data directory")
 	}
 	sessionKey := fmt.Sprintf("%x", sha256.Sum256([]byte(cfg.SessionID)))
 	pluginDir := filepath.Join(cfg.DataDir, "cursor", "acp-plugins", sessionKey)

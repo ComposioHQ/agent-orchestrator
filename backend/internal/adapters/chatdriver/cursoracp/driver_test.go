@@ -9,10 +9,11 @@ import (
 	"strings"
 	"testing"
 
+	acpsdk "github.com/coder/acp-go-sdk"
+
 	acpdriver "github.com/aoagents/agent-orchestrator/backend/internal/adapters/chatdriver/acp"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
-	acpsdk "github.com/coder/acp-go-sdk"
 )
 
 type fakeExtensionBridge struct {
