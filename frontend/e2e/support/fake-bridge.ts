@@ -193,6 +193,7 @@ export async function installFakeBridge(page: Page, opts: FakeBridgeOptions = {}
 					getActive: async () => null,
 				},
 				cloud: {
+					isEnabled: () => false,
 					getSession: async () => null,
 					signIn: async () => undefined,
 					signOut: async () => undefined,
@@ -622,6 +623,7 @@ export async function installFakeAgent(page: Page, opts: FakeAgentOptions = {}):
 					getActive: async () => null,
 				},
 				cloud: {
+					isEnabled: () => false,
 					getSession: async () => null,
 					signIn: async () => undefined,
 					signOut: async () => undefined,
