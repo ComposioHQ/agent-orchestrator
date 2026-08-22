@@ -1044,7 +1044,7 @@ export interface components {
             workspace: components["schemas"]["CloudWorkspace"];
             /**
              * Format: uri
-             * @description One-hour Daytona signed preview URL. Treat as an in-memory credential.
+             * @description One-hour signed AO connection URL. Treat as an in-memory credential.
              */
             previewUrl?: string;
         };
@@ -1954,7 +1954,7 @@ export interface components {
             };
         };
         /** @enum {string} */
-        ProviderName: "daytona" | "claude-code" | "codex" | "cursor";
+        ProviderName: "ao-cloud" | "claude-code" | "codex" | "cursor";
         ProviderPublicConfig: {
             /** Format: uri */
             apiUrl?: string;
@@ -2206,7 +2206,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Daytona workspace provisioning was accepted. */
+            /** @description Cloud workspace provisioning was accepted. */
             202: {
                 headers: {
                     [name: string]: unknown;

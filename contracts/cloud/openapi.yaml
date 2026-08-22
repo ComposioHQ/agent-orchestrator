@@ -4,7 +4,7 @@ info:
   version: 1.0.0
   description: |
     Client-facing contract for AO Cloud. The control-plane foundation in this
-    repository serves Google authentication, current-account, and the Daytona
+    repository serves Google authentication, current-account, and the cloud
     workspace POC. The remaining project, session, worker, SCM, and terminal
     routes are staged contracts for later implementation.
 security:
@@ -119,7 +119,7 @@ paths:
               $ref: "#/components/schemas/CreateCloudWorkspaceInput"
       responses:
         "202":
-          description: Daytona workspace provisioning was accepted.
+          description: Cloud workspace provisioning was accepted.
           content:
             application/json:
               schema:
@@ -1745,7 +1745,7 @@ components:
         previewUrl:
           type: string
           format: uri
-          description: One-hour Daytona signed preview URL. Treat as an in-memory credential.
+          description: One-hour signed AO connection URL. Treat as an in-memory credential.
     GoogleIdentityExchange:
       type: object
       additionalProperties: false
@@ -3725,7 +3725,7 @@ components:
               type: boolean
     ProviderName:
       type: string
-      enum: [daytona, claude-code, codex, cursor]
+      enum: [ao-cloud, claude-code, codex, cursor]
     ProviderPublicConfig:
       type: object
       additionalProperties: false
