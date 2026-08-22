@@ -71,7 +71,7 @@ export function ProjectBoardEmpty({
 						<OrchestratorIcon className="size-icon-md" aria-hidden="true" />
 						{busyLabel}
 					</TopbarButton>
-					<TopbarButton aria-label={t("shell.newTask")} disabled={isProjectRestarting} onClick={onNewTask} variant="accent">
+					<TopbarButton aria-label="New task" disabled={isProjectRestarting} onClick={onNewTask} variant="accent">
 						<Plus className="size-icon-md" aria-hidden="true" />
 						{t("shell.newTask")}
 					</TopbarButton>

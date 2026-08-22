@@ -100,6 +100,8 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 	const setOrchestratorStartupError = useUiStore((state) => state.setOrchestratorStartupError);
 	const requestNewTask = useUiStore((state) => state.requestNewTask);
 	const isProjectRestarting = projectId ? restartingProjectIds.has(projectId) : false;
+	const isBoardEmpty = Boolean(projectId) && sessions.length === 0;
+	const boardHeaderActionVariant = isBoardEmpty ? "accent" : "primary";
 	const health = workspace ? orchestratorHealth(workspace, isProjectRestarting) : { state: "ok" as const };
 	const visibleSpawnError = spawnError ?? orchestratorStartupError;
 
@@ -223,61 +225,36 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 					{t("newTask.createAsTui")}
 				</TopbarButton>
 			) : null}
-			<Tooltip>
-				<TooltipTrigger asChild>
-					<span className="inline-flex">
-						<TopbarButton
-							aria-label={t("shell.newTask")}
-							className="topbar-control--labeled"
-							data-priority="primary"
-							disabled={isProjectRestarting}
-							onClick={() => projectId && requestNewTask(projectId)}
-							variant="accent"
-						>
-							<Plus className="size-icon-md" aria-hidden="true" />
-							<span data-compact-label>{t("newTask.task")}</span>
-						</TopbarButton>
-					</span>
-				</TooltipTrigger>
-				<TooltipContent side="bottom">{t("shell.newTask")}</TooltipContent>
-			</Tooltip>
-			<Tooltip>
-				<TooltipTrigger asChild>
-					<span className="inline-flex">
-						<TopbarButton
-							aria-label={
-								orchestratorActivityLabel
-									? t("shell.orchestratorWithActivity", { activity: orchestratorActivityLabel })
-									: t("shell.spawnOrchestrator")
-							}
-							className="topbar-control--labeled"
-							data-priority="secondary"
-							disabled={isSpawning || isProjectRestarting}
-							onClick={() => void openOrchestrator()}
-							variant="primary"
-						>
-							<OrchestratorIcon className="size-icon-md" aria-hidden="true" />
-							<span data-compact-label>{t("shell.orchestrator")}</span>
-							{orchestrator ? <OrchestratorActivityIndicator session={orchestrator} /> : null}
-						</TopbarButton>
-					</span>
-				</TooltipTrigger>
-				<TooltipContent side="bottom">
-					{isProjectRestarting
-						? t("shell.restarting")
-						: isSpawning
-							? t("shell.spawning")
-							: orchestrator
-								? t("shell.openOrchestrator")
-								: t("shell.spawnOrchestrator")}
-				</TooltipContent>
-			</Tooltip>
-			{boardOwnsNotificationCenter ? (
-				<>
-					<span aria-hidden="true" className="workspace-topbar__utility-separator" />
-					<NotificationCenter />
-				</>
-			) : null}
+			<TopbarButton
+				aria-label={t("shell.newTask")}
+				disabled={isProjectRestarting}
+				onClick={() => projectId && requestNewTask(projectId)}
+				variant="accent"
+			>
+				<Plus className="size-icon-md" aria-hidden="true" />
+				{t("shell.newTask")}
+			</TopbarButton>
+			<TopbarButton
+				aria-label={
+					orchestratorActivityLabel
+						? t("shell.orchestratorWithActivity", { activity: orchestratorActivityLabel })
+						: t("shell.spawnOrchestrator")
+				}
+				disabled={isSpawning || isProjectRestarting}
+				onClick={() => void openOrchestrator()}
+				variant="primary"
+			>
+				<OrchestratorIcon className="size-icon-md" aria-hidden="true" />
+				{orchestrator ? <OrchestratorActivityIndicator session={orchestrator} /> : null}
+				{isProjectRestarting
+					? t("shell.restartingDots")
+					: isSpawning
+						? t("shell.spawningDots")
+						: orchestrator
+							? t("shell.orchestrator")
+							: t("shell.spawnOrchestrator")}
+			</TopbarButton>
+			{boardOwnsNotificationCenter ? <NotificationCenter /> : null}
 		</>
 	) : boardOwnsNotificationCenter ? (
 		<NotificationCenter />
@@ -488,4 +465,4 @@ const BoardArchivePanel = memo(function BoardArchivePanel({
 			) : null}
 		</>
 	);
-});
+}
