@@ -30,6 +30,7 @@ import { rehypeGithubAlerts } from "rehype-github-alerts";
 import rehypeSlug from "rehype-slug";
 import rehypeAutolinkHeadings from "rehype-autolink-headings";
 import { isValidElement, useMemo, type ReactNode } from "react";
+import { useTranslation } from "react-i18next";
 import { canonicalLanguage } from "../../lib/code-highlight";
 import { isWebLink } from "../../lib/external-link-policy";
 import { aoBridge } from "../../lib/bridge";
@@ -128,21 +129,32 @@ export function MarkdownFileView({
 	sessionId,
 	filePath,
 	content,
+	truncated,
 	version,
 }: {
 	sessionId: string;
 	filePath: string;
 	content: string;
+	/** The daemon capped the file it sent; what renders below is a prefix of it. */
+	truncated: boolean;
 	/** The file detail's load timestamp, for cache-busting relative images. */
 	version: number;
 }) {
+	const { t } = useTranslation();
 	const contextValue = useMemo(() => ({ sessionId, filePath, version }), [sessionId, filePath, version]);
 	return (
 		<MarkdownFileContext.Provider value={contextValue}>
-			<div className="markdown-body p-4">
-				<Markdown remarkPlugins={REMARK_PLUGINS} rehypePlugins={REHYPE_PLUGINS} components={COMPONENTS}>
-					{content}
-				</Markdown>
+			<div>
+				{truncated ? (
+					<div className="shrink-0 border-b border-border bg-warning/10 px-3 py-1.5 text-xs text-warning">
+						{t("files.contentTruncated")}
+					</div>
+				) : null}
+				<div className="markdown-body p-4">
+					<Markdown remarkPlugins={REMARK_PLUGINS} rehypePlugins={REHYPE_PLUGINS} components={COMPONENTS}>
+						{content}
+					</Markdown>
+				</div>
 			</div>
 		</MarkdownFileContext.Provider>
 	);

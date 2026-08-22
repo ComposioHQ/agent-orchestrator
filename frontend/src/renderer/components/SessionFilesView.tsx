@@ -614,6 +614,7 @@ function FileDetailBody({
 					content={detail.content}
 					filePath={file.path}
 					sessionId={sessionId}
+					truncated={detail.contentTruncated}
 					version={detailLoadedAt}
 				/>
 			</TabsContent>

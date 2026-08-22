@@ -1163,6 +1163,7 @@
 	"files.imagePreviewFailed": "Não foi possível carregar a pré-visualização da imagem.",
 	"files.imageAlt": "Versão “{{side}}” de {{file}}",
 	"files.diffTruncated": "Pré-visualização do diff truncada.",
+	"files.contentTruncated": "Pré-visualização renderizada truncada.",
 	"files.retry": "Tentar novamente",
 	"files.status.added": "Adicionado",
 	"files.status.deleted": "Excluído",

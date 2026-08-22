@@ -1149,6 +1149,7 @@
 	"files.imagePreviewFailed": "Bildvorschau konnte nicht geladen werden.",
 	"files.imageAlt": "Version „{{side}}“ von {{file}}",
 	"files.diffTruncated": "Diff-Vorschau gekürzt.",
+	"files.contentTruncated": "Gerenderte Vorschau gekürzt.",
 	"files.retry": "Erneut versuchen",
 	"files.status.added": "Hinzugefügt",
 	"files.status.deleted": "Gelöscht",

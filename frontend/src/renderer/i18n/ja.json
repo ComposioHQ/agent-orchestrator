@@ -1149,6 +1149,7 @@
 	"files.imagePreviewFailed": "画像のプレビューを読み込めませんでした。",
 	"files.imageAlt": "{{file}} の{{side}}バージョン",
 	"files.diffTruncated": "diff プレビューは切り詰められました。",
+	"files.contentTruncated": "レンダリングされたプレビューは切り詰められました。",
 	"files.retry": "再試行",
 	"files.status.added": "追加",
 	"files.status.deleted": "削除",
