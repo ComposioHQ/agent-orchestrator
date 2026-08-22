@@ -159,6 +159,13 @@ func (c *Coordinator) reasonChanged(id domain.SessionID, reason string) bool {
 	if c.lastReason[id] == reason {
 		return false
 	}
+	// Initialised lazily rather than relying on New's literal: this is the only
+	// write to a map on this struct, and a write to a nil one panics. Every other
+	// field here is nil-guarded despite New setting it, so a Coordinator built
+	// any other way must not be able to take the sweep down from telemetry.
+	if c.lastReason == nil {
+		c.lastReason = map[domain.SessionID]string{}
+	}
 	c.lastReason[id] = reason
 	return true
 }

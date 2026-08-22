@@ -447,3 +447,38 @@ func TestAutoReviewSkipReachesTheWireWithItsReason(t *testing.T) {
 		}
 	}
 }
+
+// lastReason is the only map written on the Coordinator, and a write to a nil
+// one panics. Every other field is nil-guarded despite New setting it, so a
+// coordinator assembled any other way must not be able to take the sweep down
+// from a telemetry write.
+func TestAutoReviewSkipSurvivesACoordinatorBuiltWithoutNew(t *testing.T) {
+	now := time.Date(2026, 8, 5, 12, 0, 0, 0, time.UTC)
+	store := autoReviewStore(now)
+	store.prs = nil
+	sink := &recordingSink{}
+	c := &Coordinator{
+		store:         store,
+		reviews:       &fakeTrigger{},
+		clock:         func() time.Time { return now },
+		idleThreshold: DefaultIdleThreshold,
+		sweepInterval: DefaultSweepInterval,
+		logger:        slog.Default(),
+		telemetry:     sink,
+		// lastReason deliberately left nil.
+	}
+
+	if _, err := c.EvaluateSession(context.Background(), "s1"); err != nil {
+		t.Fatalf("EvaluateSession: %v", err)
+	}
+	if got := sink.reasons(); len(got) != 1 || got[0] != "no_pr" {
+		t.Fatalf("reasons = %#v, want one no_pr", got)
+	}
+	// The lazily created map still has to dedup the next identical sweep.
+	if _, err := c.EvaluateSession(context.Background(), "s1"); err != nil {
+		t.Fatalf("second EvaluateSession: %v", err)
+	}
+	if got := sink.reasons(); len(got) != 1 {
+		t.Fatalf("reasons = %#v, want the repeat deduped", got)
+	}
+}
