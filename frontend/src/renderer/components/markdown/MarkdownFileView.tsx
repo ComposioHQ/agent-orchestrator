@@ -1,7 +1,7 @@
 /**
  * GitHub-accurate rendered view of a `.md` file's current worktree content.
  *
- * Shown as the "Rendered" tab alongside a markdown file's "Source diff" in
+ * Shown as the "Preview" tab alongside a markdown file's "Diff" in
  * `SessionFilesView.tsx`. Styled with `github-markdown-css` (`.markdown-body`)
  * rather than AO's own design system — a deliberate, scoped exception for this
  * one view, since the whole point is to look like GitHub, not like AO chrome.

@@ -643,7 +643,7 @@ function useViewModeScrollAnchor(
 	return { onViewModeChange };
 }
 
-// A markdown file gets a "Source diff" / "Rendered" tab pair above its diff
+// A markdown file gets a "Diff" / "Preview" tab pair above its diff
 // body; every other file (and a deleted markdown file, which has no current
 // content to render) falls straight through to the diff body unchanged.
 function FileDetailBody({
@@ -687,9 +687,16 @@ function FileDetailBody({
 	if (!canRenderMarkdown(file.path, file.status)) return diffBody;
 	return (
 		<Tabs ref={tabsRef} value={viewMode} onValueChange={(next) => onViewModeChange(next as FileViewMode)}>
-			<TabsList className="mx-2.5 mt-2">
-				<TabsTrigger value="source">{t("files.sourceDiff")}</TabsTrigger>
-				<TabsTrigger value="rendered">{t("files.rendered")}</TabsTrigger>
+			{/* Sized down from the app-wide default towards GitHub's own Edit/Preview
+			    control: this sits inside a file row, not on a page header, and the
+			    full-size pill dwarfs the diff it labels. */}
+			<TabsList className="mx-2.5 mt-2 h-6 gap-0.5 rounded-md p-0.5">
+				<TabsTrigger value="source" className="h-5 flex-none rounded-[5px] px-2 text-xs">
+					{t("files.diff")}
+				</TabsTrigger>
+				<TabsTrigger value="rendered" className="h-5 flex-none rounded-[5px] px-2 text-xs">
+					{t("files.preview")}
+				</TabsTrigger>
 			</TabsList>
 			<TabsContent value="source">{diffBody}</TabsContent>
 			<TabsContent value="rendered">
