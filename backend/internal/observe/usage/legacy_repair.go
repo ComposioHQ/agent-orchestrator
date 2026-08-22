@@ -27,7 +27,15 @@ type LegacyRepairerConfig struct {
 	RecordBytes int
 	Clock       func() time.Time
 	OnError     func(error)
+	// RaceRetry is the first delay before retrying a pass that lost its cursor
+	// guard to concurrent ingestion. It doubles up to maxRaceRetry.
+	RaceRetry time.Duration
 }
+
+const (
+	defaultRaceRetry = 30 * time.Second
+	maxRaceRetry     = 5 * time.Minute
+)
 
 // LegacyRepairer repairs provider-null historical rows: once at startup, and
 // again whenever Repair reports that new attribution evidence has arrived.
@@ -64,6 +72,9 @@ func NewLegacyRepairer(
 	if config.OnError == nil {
 		config.OnError = func(error) {}
 	}
+	if config.RaceRetry <= 0 {
+		config.RaceRetry = defaultRaceRetry
+	}
 	return &LegacyRepairer{
 		store: store, pricing: manager, config: config,
 		trigger: make(chan struct{}, 1), done: make(chan struct{}),
@@ -82,14 +93,41 @@ func (r *LegacyRepairer) Start(ctx context.Context) error {
 	}
 	go func() {
 		defer close(r.done)
+		var settleTimer *time.Timer
+		defer func() {
+			if settleTimer != nil {
+				settleTimer.Stop()
+			}
+		}()
+		retry := r.config.RaceRetry
 		for {
-			if err := r.Run(ctx); err != nil && ctx.Err() == nil {
+			raced, err := r.run(ctx)
+			if err != nil && ctx.Err() == nil {
 				r.config.OnError(err)
+			}
+			if settleTimer != nil {
+				settleTimer.Stop()
+				settleTimer = nil
+			}
+			// A pass that lost its cursor guard is not finished, it was
+			// outrun. Backing off lets a busy source settle instead of
+			// spinning on it; a clean pass resets the delay.
+			var settle <-chan time.Time
+			if raced && ctx.Err() == nil {
+				settleTimer = time.NewTimer(retry)
+				settle = settleTimer.C
+				retry *= 2
+				if retry > maxRaceRetry {
+					retry = maxRaceRetry
+				}
+			} else {
+				retry = r.config.RaceRetry
 			}
 			select {
 			case <-ctx.Done():
 				return
 			case <-r.trigger:
+			case <-settle:
 			}
 		}
 	}()
@@ -120,28 +158,35 @@ func (r *LegacyRepairer) Wait() {
 // Run performs one synchronous repair pass. Individual unverifiable sources
 // are intentionally skipped without mutating their lifecycle or cursor.
 func (r *LegacyRepairer) Run(ctx context.Context) error {
+	_, err := r.run(ctx)
+	return err
+}
+
+// run reports whether any repair lost its cursor guard to concurrent ingestion,
+// which means the source still owes work that a later pass can finish.
+func (r *LegacyRepairer) run(ctx context.Context) (raced bool, err error) {
 	if r.store == nil || r.pricing == nil {
-		return errors.New("legacy usage repairer requires store and pricing manager")
+		return false, errors.New("legacy usage repairer requires store and pricing manager")
 	}
 	sources, err := r.store.ListLegacyUsageSources(ctx)
 	if err != nil {
-		return err
+		return false, err
 	}
 	for _, source := range sources {
 		if err := ctx.Err(); err != nil {
-			return err
+			return raced, err
 		}
-		if err := r.repairSource(ctx, source); err != nil {
+		if err := r.repairSource(ctx, source, &raced); err != nil {
 			if ctx.Err() != nil {
-				return ctx.Err()
+				return raced, ctx.Err()
 			}
 			r.config.OnError(err)
 		}
 	}
-	return nil
+	return raced, nil
 }
 
-func (r *LegacyRepairer) repairSource(ctx context.Context, source domain.UsageSourceContext) error {
+func (r *LegacyRepairer) repairSource(ctx context.Context, source domain.UsageSourceContext, raced *bool) error {
 	if source.Source.State == domain.UsageSourceComplete &&
 		source.Source.LastErrorCode == domain.UsageErrorArtifactReplaced {
 		return nil
@@ -190,7 +235,14 @@ func (r *LegacyRepairer) repairSource(ctx context.Context, source domain.UsageSo
 			if len(repairs) == 0 {
 				return nil
 			}
-			_, err := r.store.ApplyLegacyUsageRepairs(ctx, repairs, r.config.Clock().UTC())
+			applied, err := r.store.ApplyLegacyUsageRepairs(ctx, repairs, r.config.Clock().UTC())
+			// Every repair is guarded on the source cursor it was derived from,
+			// so ingestion advancing mid-pass drops it. That is correct — the
+			// prefix it read is no longer the prefix on disk — but silently
+			// giving up would strand an always-active session forever.
+			if applied < len(repairs) {
+				*raced = true
+			}
 			repairs = repairs[:0]
 			return err
 		}

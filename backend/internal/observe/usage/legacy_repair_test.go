@@ -365,3 +365,77 @@ func claudePricingSnapshot(t *testing.T) *pricing.Snapshot {
 	mustNoError(t, err)
 	return catalog.Snapshot()
 }
+
+// Break caught: every repair is guarded on the source cursor it was derived
+// from, so ingestion advancing mid-pass drops it. That guard is right, but the
+// pass gave up silently and only ran again at the next daemon start — so an
+// always-active session could stay unattributed indefinitely while every
+// individual piece of the machinery looked healthy.
+func TestLegacyRepairerRetriesAPassOutrunByIngestion(t *testing.T) {
+	ctx := context.Background()
+	dataDir := t.TempDir()
+	store, source, path, now := seedClaudeIngestionSource(t, dataDir, "anthropic")
+	mustNoError(t, os.WriteFile(path, []byte(legacyClaudeTranscript("claude-test")), 0o600))
+	ingestSourceFully(ctx, t, NewIngestor(store, IngestorConfig{
+		Clock: func() time.Time { return now },
+	}), source.ID)
+	makeLegacyProviderNull(t, dataDir, source.ID)
+
+	// Advance the cursor between the repairer reading the source and writing
+	// its result — the exact window a live ingest occupies.
+	racing := &cursorRacingStore{Store: store, transcript: path, ingestor: NewIngestor(store, IngestorConfig{
+		Clock: func() time.Time { return now },
+	})}
+
+	snapshot := claudePricingSnapshot(t)
+	repairer := NewLegacyRepairer(racing, pricing.NewManager(snapshot), LegacyRepairerConfig{
+		Clock:     func() time.Time { return now.Add(time.Hour) },
+		RaceRetry: time.Millisecond,
+	})
+	raced, err := repairer.run(ctx)
+	mustNoError(t, err)
+	if !raced {
+		t.Fatal("a repair dropped by the cursor guard was not reported as raced")
+	}
+	assertLegacyStillNull(t, dataDir, source.ID)
+
+	// Once the source settles, the very next pass finishes the work.
+	raced, err = repairer.run(ctx)
+	mustNoError(t, err)
+	if raced {
+		t.Fatal("settled source still reported a race")
+	}
+	assertLegacyRepair(t, dataDir, source.ID, "anthropic", 795_000, snapshot.ProviderVersion("anthropic"))
+}
+
+// cursorRacingStore lets one real ingest land in the window between the
+// repairer reading a source and applying its repairs, which is the only place
+// the cursor guard can lose.
+type cursorRacingStore struct {
+	*sqlite.Store
+	transcript string
+	ingestor   *Ingestor
+	raceOnce   bool
+}
+
+func (s *cursorRacingStore) ApplyLegacyUsageRepairs(
+	ctx context.Context, repairs []domain.LegacyUsageRepair, at time.Time,
+) (int, error) {
+	if !s.raceOnce {
+		s.raceOnce = true
+		file, err := os.OpenFile(s.transcript, os.O_APPEND|os.O_WRONLY, 0o600)
+		if err != nil {
+			return 0, err
+		}
+		if _, err := file.WriteString(legacyClaudeTranscript("claude-test")); err != nil {
+			return 0, err
+		}
+		if err := file.Close(); err != nil {
+			return 0, err
+		}
+		if _, err := s.ingestor.Ingest(ctx, repairs[0].Candidate.UsageSourceID); err != nil {
+			return 0, err
+		}
+	}
+	return s.Store.ApplyLegacyUsageRepairs(ctx, repairs, at)
+}
