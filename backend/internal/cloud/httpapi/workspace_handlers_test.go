@@ -63,9 +63,12 @@ func (s *memoryWorkspaceStore) UpdateWorkspaceProvisioning(
 
 type fakeWorkspaceProvisioner struct{}
 
-func (fakeWorkspaceProvisioner) Provision(_ context.Context, _ domain.Workspace, credentials []byte) (string, error) {
-	if string(credentials) != `{"claudeAiOauth":{"accessToken":"secret"}}` {
+func (fakeWorkspaceProvisioner) Provision(_ context.Context, _ domain.Workspace, bootstrap domain.WorkspaceBootstrap) (string, error) {
+	if string(bootstrap.ClaudeCredentials) != `{"claudeAiOauth":{"accessToken":"secret"}}` {
 		return "", errors.New("unexpected Claude credentials")
+	}
+	if bootstrap.RuntimeToken == "" {
+		return "", errors.New("missing workspace runtime token")
 	}
 	return "sandbox-1", nil
 }

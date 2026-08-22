@@ -18,8 +18,10 @@ cost-oriented staging environment in `us-west-2`.
 - CodeBuild builds the exact Git commit and pushes an immutable image to ECR.
 - CloudWatch receives API, migration, and API Gateway logs.
 
-The task also calls Daytona to provision the complete AO daemon in a sandbox.
-This is intentionally a staging stack. It excludes production multi-AZ RDS,
+The task calls Daytona for a project coordinator and for a separate sandbox for
+every orchestrator and worker session. The coordinator holds only a scoped AO
+runtime capability; Daytona credentials remain in the control plane. This is
+intentionally a staging stack. It excludes production multi-AZ RDS,
 autoscaling, a custom domain, WAF, and durable lifecycle reconciliation.
 
 ## Deploy

@@ -2,7 +2,8 @@ package domain
 
 import "time"
 
-// Workspace is one AO daemon running in an isolated cloud sandbox.
+// Workspace is one cloud project coordinator. Agent execution belongs to
+// SessionRuntime records and never shares this sandbox.
 type Workspace struct {
 	ID            string    `json:"id"`
 	OrgID         string    `json:"orgId"`
@@ -26,3 +27,11 @@ const (
 	// WorkspaceFailed means provisioning ended with a bounded user-visible failure.
 	WorkspaceFailed = "failed"
 )
+
+// WorkspaceBootstrap contains ephemeral secrets needed only while creating a
+// project coordinator. None of these fields are persisted or serialized.
+type WorkspaceBootstrap struct {
+	ClaudeCredentials []byte
+	RuntimeToken      string
+	ControlPlaneURL   string
+}

@@ -59,6 +59,8 @@ func run(logger *slog.Logger) error {
 		RefreshTokenTTL: cfg.RefreshTokenTTL,
 		Logger:          logger,
 		WorkspaceStore:  store,
+		SessionStore:    store,
+		PublicURL:       cfg.PublicURL,
 	}
 	var workspaceProvider *cloudruntime.Provider
 	if cfg.DaytonaAPIKey != "" {
@@ -73,6 +75,7 @@ func run(logger *slog.Logger) error {
 			return err
 		}
 		options.Workspaces = workspaceProvider
+		options.SessionRuntimes = workspaceProvider
 		defer func() {
 			closeCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()

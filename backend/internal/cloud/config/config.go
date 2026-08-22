@@ -36,6 +36,7 @@ type Config struct {
 	DaytonaTarget       string
 	SandboxAOBinaryPath string
 	GitHubToken         []byte
+	PublicURL           string
 }
 
 // Load reads control-plane configuration from the process environment.
@@ -77,6 +78,7 @@ func load(getenv func(string) string) (Config, error) {
 		DaytonaTarget:       valueOrDefault(getenv("DAYTONA_TARGET"), "us"),
 		SandboxAOBinaryPath: valueOrDefault(getenv("AO_CLOUD_SANDBOX_AO_BINARY"), "/ao"),
 		GitHubToken:         githubToken,
+		PublicURL:           strings.TrimRight(strings.TrimSpace(getenv("AO_CLOUD_PUBLIC_URL")), "/"),
 	}
 	if cfg.DatabaseURL == "" {
 		return Config{}, errors.New("AO_CLOUD_DATABASE_URL is required")
@@ -89,6 +91,9 @@ func load(getenv func(string) string) (Config, error) {
 	}
 	if len(cfg.AccessTokenKey) < 32 {
 		return Config{}, errors.New("AO_CLOUD_ACCESS_TOKEN_KEY_BASE64 must decode to at least 32 bytes")
+	}
+	if cfg.DaytonaAPIKey != "" && cfg.PublicURL == "" {
+		return Config{}, errors.New("AO_CLOUD_PUBLIC_URL is required when Daytona is configured")
 	}
 	return cfg, nil
 }

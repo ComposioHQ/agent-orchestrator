@@ -69,7 +69,7 @@ func (p *Provider) Close(ctx context.Context) error {
 
 // Provision creates one sandbox, installs the existing AO daemon and Claude
 // harness, clones the real repository, and registers it as an AO project.
-func (p *Provider) Provision(ctx context.Context, workspace domain.Workspace, claudeCredentials []byte) (string, error) {
+func (p *Provider) Provision(ctx context.Context, workspace domain.Workspace, bootstrap domain.WorkspaceBootstrap) (string, error) {
 	zero := 0
 	sandbox, err := p.client.Create(ctx, types.SnapshotParams{
 		Snapshot: "daytona-small",
@@ -82,7 +82,7 @@ func (p *Provider) Provision(ctx context.Context, workspace domain.Workspace, cl
 	if err != nil {
 		return "", fmt.Errorf("create Daytona sandbox: %w", err)
 	}
-	if err := p.bootstrap(ctx, sandbox, workspace, claudeCredentials); err != nil {
+	if err := p.bootstrap(ctx, sandbox, workspace, bootstrap); err != nil {
 		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Minute)
 		defer cancel()
 		if cleanupErr := sandbox.Delete(cleanupCtx); cleanupErr != nil {
@@ -106,7 +106,7 @@ func (p *Provider) PreviewURL(ctx context.Context, sandboxID string) (string, er
 	return preview.URL, nil
 }
 
-func (p *Provider) bootstrap(ctx context.Context, sandbox *daytonasdk.Sandbox, workspace domain.Workspace, claudeCredentials []byte) error {
+func (p *Provider) bootstrap(ctx context.Context, sandbox *daytonasdk.Sandbox, workspace domain.Workspace, bootstrap domain.WorkspaceBootstrap) error {
 	homeResult, err := run(ctx, sandbox, `printf %s "$HOME"`, time.Minute)
 	if err != nil {
 		return err
@@ -135,7 +135,7 @@ func (p *Provider) bootstrap(ctx context.Context, sandbox *daytonasdk.Sandbox, w
 	if err := sandbox.FileSystem.UploadFile(ctx, p.aoBinary, binPath); err != nil {
 		return fmt.Errorf("upload AO daemon: %w", err)
 	}
-	if err := sandbox.FileSystem.UploadFile(ctx, claudeCredentials, claudePath); err != nil {
+	if err := sandbox.FileSystem.UploadFile(ctx, bootstrap.ClaudeCredentials, claudePath); err != nil {
 		return fmt.Errorf("upload Claude credentials: %w", err)
 	}
 	// Credentials alone do not suppress Claude Code's first-run theme and login
@@ -177,7 +177,11 @@ func (p *Provider) bootstrap(ctx context.Context, sandbox *daytonasdk.Sandbox, w
 	runFile := filepath.Join(home, ".ao", "running.json")
 	logFile := filepath.Join(home, ".ao", "daemon.log")
 	start := "nohup env AO_DATA_DIR=" + shellQuote(dataDir) + " AO_RUN_FILE=" + shellQuote(runFile) +
-		" AO_PORT=3001 AO_CORS_HEADERS_MANAGED_BY_PROXY=on " + shellQuote(binPath) + " daemon >" + shellQuote(logFile) + " 2>&1 </dev/null &"
+		" AO_PORT=3001 AO_CORS_HEADERS_MANAGED_BY_PROXY=on" +
+		" AO_CLOUD_RUNTIME_API_URL=" + shellQuote(bootstrap.ControlPlaneURL) +
+		" AO_CLOUD_RUNTIME_TOKEN=" + shellQuote(bootstrap.RuntimeToken) +
+		" AO_CLOUD_WORKSPACE_ID=" + shellQuote(workspace.ID) +
+		" " + shellQuote(binPath) + " daemon >" + shellQuote(logFile) + " 2>&1 </dev/null &"
 	if _, err := run(ctx, sandbox, start, time.Minute); err != nil {
 		return fmt.Errorf("start AO daemon: %w", err)
 	}

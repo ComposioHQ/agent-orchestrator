@@ -7,13 +7,13 @@ import (
 	"github.com/pressly/goose/v3"
 )
 
-func TestFoundationMigrationIsTenantScopedAndContainsNoExecutionPlane(t *testing.T) {
+func TestCloudMigrationsAreTenantScoped(t *testing.T) {
 	goose.SetBaseFS(migrationFS)
 	migrations, err := goose.CollectMigrations("migrations", 0, goose.MaxVersion)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(migrations) != 2 || migrations[0].Version != 1 || migrations[1].Version != 2 {
+	if len(migrations) != 3 || migrations[0].Version != 1 || migrations[1].Version != 2 || migrations[2].Version != 3 {
 		t.Fatalf("migrations = %#v", migrations)
 	}
 	migration, err := migrationFS.ReadFile("migrations/00001_auth_foundation.sql")
@@ -58,6 +58,16 @@ func TestFoundationMigrationIsTenantScopedAndContainsNoExecutionPlane(t *testing
 	} {
 		if !strings.Contains(workspaceSQL, required) {
 			t.Fatalf("workspace migration does not contain %q", required)
+		}
+	}
+	runtimeMigration, err := migrationFS.ReadFile("migrations/00003_session_runtimes.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtimeSQL := string(runtimeMigration)
+	for _, required := range []string{"CREATE TABLE ao_cloud_session_runtimes", "UNIQUE (workspace_id, session_id)", "ALTER TABLE ao_cloud_session_runtimes FORCE ROW LEVEL SECURITY"} {
+		if !strings.Contains(runtimeSQL, required) {
+			t.Fatalf("runtime migration does not contain %q", required)
 		}
 	}
 }

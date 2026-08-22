@@ -2,9 +2,10 @@
 
 This repository now contains the first hosted AO control-plane slice. It is a
 small, independently runnable Go service built around PostgreSQL, Google
-identity, and Daytona. The POC provisions the complete existing AO daemon in a
-sandbox; that daemon continues to own projects, sessions, worktrees, SCM, and
-terminal multiplexing exactly as it does locally.
+identity, and Daytona. A cloud project has a lightweight AO coordinator daemon,
+while every orchestrator and worker session is launched in its own Daytona
+sandbox. The coordinator continues to expose the existing daemon API, so the
+desktop's project, session, SCM, and terminal components remain unchanged.
 
 ## Included in this foundation
 
@@ -18,9 +19,11 @@ terminal multiplexing exactly as it does locally.
   organizations, memberships, and forced row-level security.
 - `backend/internal/cloud/httpapi`: the implemented subset of the public Cloud
   contract.
-- `backend/internal/cloud/runtime/daytona`: one sandbox per cloud workspace,
-  with the Linux AO binary, Claude Code credentials, repository checkout, and a
-  one-hour signed preview URL.
+- `backend/internal/cloud/runtime/daytona`: a coordinator sandbox per cloud
+  project plus one isolated sandbox per orchestrator/worker session.
+- `backend/internal/adapters/runtime/cloud`: the existing daemon runtime port
+  implemented as authenticated control-plane calls. This is the seam that
+  makes the ordinary AO lifecycle create remote compute without UI branching.
 
 The existing daemon is unchanged. It remains loopback-only and continues to
 own every local project and session.
@@ -37,6 +40,11 @@ own every local project and session.
 | `GET /api/cloud/v1/me` | AO bearer access token | Return the current user and live organization memberships |
 | `POST /api/cloud/v1/orgs/{orgId}/workspaces` | AO bearer access token | Record intent and asynchronously provision a Daytona AO workspace |
 | `GET /api/cloud/v1/orgs/{orgId}/workspaces/{workspaceId}` | AO bearer access token | Poll lifecycle state and obtain a fresh signed AO URL when ready |
+
+Coordinator-only `/api/cloud/internal/v1/workspaces/{workspaceId}/runtimes/*`
+routes create, inspect, message, interrupt, and destroy session sandboxes. They
+accept a workspace-scoped, 30-day capability with a distinct JWT audience;
+neither desktop access tokens nor a capability for another project are valid.
 
 Google establishes identity only. A verified Google hosted-domain claim never
 creates, selects, or authorizes an AO organization. First sign-in atomically
@@ -104,6 +112,7 @@ export DAYTONA_API_URL='https://app.daytona.io/api'
 export DAYTONA_TARGET='us'
 export AO_CLOUD_GITHUB_TOKEN_BASE64='...'
 export AO_CLOUD_SANDBOX_AO_BINARY='/ao'
+export AO_CLOUD_PUBLIC_URL='https://cloud.example.com'
 ```
 
 The Electron main process performs Google installed-app PKCE on a temporary
@@ -116,7 +125,12 @@ Code credential from the macOS Keychain (or Claude's credential file on other
 platforms), sends it only over the authenticated TLS request, and the control
 plane passes it in memory to Daytona. It is written directly into that user's
 sandbox and is never exposed to the renderer, stored in Postgres, logged, or
-kept as a shared deployment secret.
+kept as a shared deployment secret. The coordinator receives a scoped runtime
+capability, not Daytona credentials. On every AO runtime `Create`, it sends the
+prepared worktree overlay and launch specification to the control plane. The
+control plane clones the repository into fresh compute, overlays that exact
+worktree, installs the per-user Claude credential, and starts the agent under a
+tmux-backed terminal. Orchestrator and worker launches use the identical path.
 
 Run migrations and start the service:
 
@@ -138,8 +152,14 @@ through a VPC link and internal load balancer. See
 
 - Provisioning is asynchronous but not yet recovered by a durable reconciler
   after a control-plane process restart.
-- The GitHub and Claude credentials used by the staging POC are AO-held shared
-  bootstrap credentials; per-user custody and a GitHub App exchange remain.
+- GitHub remains a minimum-scope shared staging credential; Claude credentials
+  are per-user and are never persisted by the control plane.
+- Terminal output currently uses bounded polling through API Gateway. A
+  production terminal relay with resize, backpressure, and replay cursors is a
+  follow-up; this does not change the frontend terminal contract.
+- Prepared worktrees are capped at 24 MiB compressed for this POC. Production
+  will move overlays and caches to object storage/prebuilt images.
+- Workspace capabilities expire after 30 days; background renewal is deferred.
 - A signed URL is refreshed when the desktop polls the workspace, but automatic
   renewal for an already-connected window remains.
 - Stop, pause, resume, archive, delete, quotas, billing, and idle reaping remain.

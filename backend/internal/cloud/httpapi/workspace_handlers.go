@@ -70,9 +70,19 @@ func (s *Server) createWorkspace(w http.ResponseWriter, r *http.Request) {
 		s.internalError(w, r, "create cloud workspace", err)
 		return
 	}
+	runtimeToken, err := s.accessTokens.IssueWorkspace(principal.UserID, workspace.OrgID, workspace.ID, 30*24*time.Hour)
+	if err != nil {
+		clear(claudeCredentials)
+		s.internalError(w, r, "issue cloud workspace capability", err)
+		return
+	}
 	provisionCredentials := append([]byte(nil), claudeCredentials...)
 	clear(claudeCredentials)
-	go s.provisionWorkspace(context.WithoutCancel(r.Context()), workspace, provisionCredentials)
+	go s.provisionWorkspace(context.WithoutCancel(r.Context()), workspace, domain.WorkspaceBootstrap{
+		ClaudeCredentials: provisionCredentials,
+		RuntimeToken:      runtimeToken,
+		ControlPlaneURL:   s.publicURL,
+	})
 	writeJSON(w, http.StatusAccepted, workspaceResponse{Workspace: workspace})
 }
 
@@ -106,15 +116,15 @@ func (s *Server) getWorkspace(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, response)
 }
 
-func (s *Server) provisionWorkspace(parent context.Context, workspace domain.Workspace, claudeCredentials []byte) {
-	defer clear(claudeCredentials)
+func (s *Server) provisionWorkspace(parent context.Context, workspace domain.Workspace, bootstrap domain.WorkspaceBootstrap) {
+	defer clear(bootstrap.ClaudeCredentials)
 	ctx, cancel := context.WithTimeout(parent, 20*time.Minute)
 	defer cancel()
 	if err := s.workspaceStore.UpdateWorkspaceProvisioning(ctx, workspace, domain.WorkspaceProvisioning, "", ""); err != nil {
 		s.logger.Error("mark Cloud workspace provisioning", "workspace_id", workspace.ID, "error", err)
 		return
 	}
-	sandboxID, err := s.workspaces.Provision(ctx, workspace, claudeCredentials)
+	sandboxID, err := s.workspaces.Provision(ctx, workspace, bootstrap)
 	if err != nil {
 		failure := "sandbox provisioning failed"
 		if updateErr := s.workspaceStore.UpdateWorkspaceProvisioning(ctx, workspace, domain.WorkspaceFailed, sandboxID, failure); updateErr != nil {
