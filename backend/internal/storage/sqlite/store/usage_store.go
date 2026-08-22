@@ -886,9 +886,8 @@ func usageEventMatches(existing gen.GetModelUsageEventByKeyRow, event domain.Mod
 
 func usageAggregateFromGen(row gen.AggregateUsageBySessionHarnessModelRow) domain.UsageModelAggregate {
 	return domain.UsageModelAggregate{
-		Harness:           row.Harness,
-		BillingProviderID: row.BillingProviderID,
-		ModelID:           row.ModelID,
+		Harness: row.Harness,
+		ModelID: row.ModelID,
 		// A summed metric is only meaningful when every event in the group
 		// carried it; one uncollected counter makes the whole sum unknown.
 		Tokens: domain.UsageTokenMetrics{

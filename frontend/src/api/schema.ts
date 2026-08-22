@@ -3150,7 +3150,6 @@ export interface components {
         };
         UsageModelResponse: {
             modelId: string;
-            providerId: string;
             totals: components["schemas"]["UsageTotalsResponse"];
         };
         UsageTotalsResponse: {

@@ -1020,11 +1020,13 @@ type UsageTotalsResponse struct {
 	EstimatedCost       *EstimatedCostResponse `json:"estimatedCost"`
 }
 
-// UsageModelResponse is telemetry grouped by exact provider and model ids.
+// UsageModelResponse is telemetry grouped by model. The billing provider is a
+// pricing input rather than a product distinction: each event was costed
+// against its own provider's rates before reaching this aggregate, so one model
+// stays one row even when more than one provider served it.
 type UsageModelResponse struct {
-	ProviderID string              `json:"providerId"`
-	ModelID    string              `json:"modelId"`
-	Totals     UsageTotalsResponse `json:"totals"`
+	ModelID string              `json:"modelId"`
+	Totals  UsageTotalsResponse `json:"totals"`
 }
 
 // UsageHarnessResponse groups model telemetry under one AO harness.

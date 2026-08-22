@@ -89,12 +89,12 @@ func TestSummaryReaderGetPreservesStrongestPartialLowerBoundWithoutDoubleCountin
 				Tokens: testUsageMetrics(0, 0, 0, 0),
 			},
 			{
-				Harness: domain.HarnessCodex, BillingProviderID: "openai", ModelID: "gpt-5.6",
+				Harness: domain.HarnessCodex, ModelID: "gpt-5.6",
 				Tokens: testUsageMetrics(1000, 400, 600, 200),
 				Cost:   completeCostAggregate(1, 100, 20, 10, 70),
 			},
 			{
-				Harness: domain.HarnessClaudeCode, BillingProviderID: "zai", ModelID: "claude-sonnet",
+				Harness: domain.HarnessClaudeCode, ModelID: "claude-sonnet",
 				Tokens: testUsageMetrics(100, 20, 80, 25),
 				Cost: domain.UsageCostAggregate{
 					EventCount:               1,
@@ -131,9 +131,9 @@ func TestSummaryReaderGetPreservesStrongestPartialLowerBoundWithoutDoubleCountin
 		t.Fatalf("session component coverage = %+v", cost)
 	}
 	if len(got.Harnesses) != 2 || len(got.Harnesses[0].Models) != 1 || len(got.Harnesses[1].Models) != 1 ||
-		got.Harnesses[0].Models[0].BillingProviderID != "openai" ||
-		got.Harnesses[1].Models[0].BillingProviderID != "zai" {
-		t.Fatalf("provider/model grouping = %+v", got.Harnesses)
+		got.Harnesses[0].Models[0].ModelID != "gpt-5.6" ||
+		got.Harnesses[1].Models[0].ModelID != "claude-sonnet" {
+		t.Fatalf("model grouping = %+v", got.Harnesses)
 	}
 	if got.Harnesses[0].Models[0].Totals.EstimatedCost == nil ||
 		got.Harnesses[0].Models[0].Totals.EstimatedCost.Coverage != domain.EstimatedCostCoverageComplete ||
@@ -190,12 +190,12 @@ func TestSummaryReaderRejectsAggregateOverflow(t *testing.T) {
 	t.Run("detail cost groups", func(t *testing.T) {
 		store := &usageSummaryStoreStub{found: true, models: []domain.UsageModelAggregate{
 			{
-				Harness: domain.HarnessCodex, BillingProviderID: "openai", ModelID: "one",
+				Harness: domain.HarnessCodex, ModelID: "one",
 				Tokens: testUsageMetrics(1, 0, 1, 0),
 				Cost:   completeCostAggregate(1, math.MaxInt64, 0, 0, 0),
 			},
 			{
-				Harness: domain.HarnessCodex, BillingProviderID: "openai", ModelID: "two",
+				Harness: domain.HarnessCodex, ModelID: "two",
 				Tokens: testUsageMetrics(1, 0, 1, 0),
 				Cost:   completeCostAggregate(1, 1, 0, 0, 0),
 			},

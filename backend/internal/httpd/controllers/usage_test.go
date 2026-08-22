@@ -115,7 +115,7 @@ func TestUsageAPIShowsDetailedEstimatedCostAndProviderAttribution(t *testing.T) 
 		Harnesses: []domain.HarnessUsageSummary{{
 			Harness: domain.HarnessCodex,
 			Models: []domain.ModelUsageSummary{{
-				BillingProviderID: "openai", ModelID: "gpt-5.6",
+				ModelID: "gpt-5.6",
 				Totals: domain.UsageMetricTotals{EstimatedCost: &domain.EstimatedCost{
 					TotalNanos: 0, InputNanos: &zero, CachedInputNanos: &zero,
 					OutputNanos: &zero, Coverage: domain.EstimatedCostCoverageComplete,
@@ -182,7 +182,7 @@ func TestUsageAPIShowsDetailedEstimatedCostAndProviderAttribution(t *testing.T) 
 		got.Totals.OutputTokens != 200 ||
 		got.Totals.ProcessedTokens != 1200 || got.Totals.CacheReadTokens != 400 ||
 		len(got.Harnesses) != 1 || len(got.Harnesses[0].Models) != 1 ||
-		got.Harnesses[0].Models[0].ProviderID != "openai" || got.Harnesses[0].Models[0].ModelID != "gpt-5.6" ||
+		got.Harnesses[0].Models[0].ModelID != "gpt-5.6" ||
 		got.Harnesses[0].Models[0].Totals.EstimatedCost.TotalNanos != 0 ||
 		got.Harnesses[0].Models[0].Totals.EstimatedCost.Coverage != "complete" {
 		t.Fatalf("response = %+v", got)

@@ -279,11 +279,10 @@ type UsageCostAggregate struct {
 // UsageModelAggregate is the raw model-level aggregate read from storage before
 // the service applies user-facing coverage rules.
 type UsageModelAggregate struct {
-	Harness           AgentHarness
-	BillingProviderID string
-	ModelID           string
-	Tokens            UsageTokenMetrics
-	Cost              UsageCostAggregate
+	Harness AgentHarness
+	ModelID string
+	Tokens  UsageTokenMetrics
+	Cost    UsageCostAggregate
 }
 
 // CompactSessionUsageAggregate is one batched storage row before checked token
@@ -314,11 +313,12 @@ type UsageMetricTotals struct {
 	EstimatedCost       *EstimatedCost
 }
 
-// ModelUsageSummary is a per-exact-provider-and-model aggregate.
+// ModelUsageSummary is a per-model aggregate. The billing provider stays a
+// pricing input: every event was costed against its own provider's rates before
+// it reached this sum, so the total is exact without splitting the model apart.
 type ModelUsageSummary struct {
-	BillingProviderID string
-	ModelID           string
-	Totals            UsageMetricTotals
+	ModelID string
+	Totals  UsageMetricTotals
 }
 
 // HarnessUsageSummary groups model summaries by AO harness.

@@ -615,7 +615,7 @@ function ProviderUsageDetails({ harness }: { harness: SessionUsage["harnesses"][
 			{harness.models.length > 0 ? (
 				harness.models.map((model, index) => (
 					<UsageModelRow
-						key={`${model.providerId}:${model.modelId}:${index}`}
+						key={`${model.modelId}:${index}`}
 						model={model}
 						showCost={showCost}
 					/>

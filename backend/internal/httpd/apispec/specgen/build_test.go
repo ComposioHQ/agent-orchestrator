@@ -116,9 +116,12 @@ func TestBuild_UsageEstimatedCostIsNamedReusableAndNullable(t *testing.T) {
 			t.Fatalf("%s.%s = %+v, want nullable %s", schemaName, propertyName, property, costRef)
 		}
 	}
+	// One model is one row. The billing provider is a pricing input the
+	// aggregate has already applied, so it must not reappear here and split a
+	// model apart by AO's own attribution state.
 	model := doc.Components.Schemas["UsageModelResponse"]
-	if !slices.Contains(model.Required, "providerId") {
-		t.Fatalf("UsageModelResponse required = %v, missing providerId", model.Required)
+	if slices.Contains(model.Required, "providerId") {
+		t.Fatalf("UsageModelResponse still exposes providerId: %v", model.Required)
 	}
 }
 

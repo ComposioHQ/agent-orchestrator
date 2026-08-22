@@ -156,7 +156,7 @@ func harnessUsageSummaries(models []domain.UsageModelAggregate) ([]domain.Harnes
 				return nil, err
 			}
 			summary.Models = append(summary.Models, domain.ModelUsageSummary{
-				BillingProviderID: row.BillingProviderID, ModelID: row.ModelID, Totals: modelTotals,
+				ModelID: row.ModelID, Totals: modelTotals,
 			})
 		}
 		out = append(out, summary)

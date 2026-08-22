@@ -8951,12 +8951,9 @@ components:
       properties:
         modelId:
           type: string
-        providerId:
-          type: string
         totals:
           $ref: '#/components/schemas/UsageTotalsResponse'
       required:
-      - providerId
       - modelId
       - totals
       type: object

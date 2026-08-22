@@ -72,7 +72,7 @@ func sessionUsageResponse(summary domain.SessionUsageSummary) SessionUsageRespon
 		models := make([]UsageModelResponse, 0, len(harness.Models))
 		for _, model := range harness.Models {
 			models = append(models, UsageModelResponse{
-				ProviderID: model.BillingProviderID, ModelID: model.ModelID, Totals: usageTotalsResponse(model.Totals),
+				ModelID: model.ModelID, Totals: usageTotalsResponse(model.Totals),
 			})
 		}
 		harnesses = append(harnesses, UsageHarnessResponse{

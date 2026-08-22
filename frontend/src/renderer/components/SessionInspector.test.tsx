@@ -882,7 +882,6 @@ describe("SessionInspector usage", () => {
 				models: [
 					{
 						modelId: "claude-sonnet-4",
-						providerId: "anthropic",
 						totals: tokenTotals({ ...completeCost, totalNanos: 600_000_000 }),
 					},
 				],
@@ -941,8 +940,8 @@ describe("SessionInspector usage", () => {
 		useUiStore.getState().setDeveloperMode(true);
 		const totals = tokenTotals(null);
 		mockUsage(null, [
-			{ harness: "codex", totals, models: [{ modelId: "gpt-5.5", providerId: "openai", totals }] },
-			{ harness: "claude-code", totals, models: [{ modelId: "claude-sonnet-4", providerId: "anthropic", totals }] },
+			{ harness: "codex", totals, models: [{ modelId: "gpt-5.5", totals }] },
+			{ harness: "claude-code", totals, models: [{ modelId: "claude-sonnet-4", totals }] },
 		]);
 
 		renderWithQuery(<SessionInspector session={session([])} />);
@@ -967,11 +966,11 @@ describe("SessionInspector usage", () => {
 		});
 		const unpriced = tokenTotals(null);
 		mockUsage(null, [
-			{ harness: "codex", totals: priced, models: [{ modelId: "gpt-5.5", providerId: "openai", totals: priced }] },
+			{ harness: "codex", totals: priced, models: [{ modelId: "gpt-5.5", totals: priced }] },
 			{
 				harness: "claude-code",
 				totals: unpriced,
-				models: [{ modelId: "claude-sonnet-4", providerId: "anthropic", totals: unpriced }],
+				models: [{ modelId: "claude-sonnet-4", totals: unpriced }],
 			},
 		]);
 

@@ -493,7 +493,6 @@ RETURNING binding_id;
 -- name: AggregateUsageBySessionHarnessModel :many
 SELECT
     ub.harness,
-    COALESCE(mue.billing_provider_id, 'unknown') AS billing_provider_id,
     mue.model_id,
     CAST(COUNT(*) AS INTEGER) AS event_count,
     CAST(COALESCE(SUM(mue.input_tokens), 0) AS INTEGER) AS input_tokens,
@@ -518,8 +517,12 @@ SELECT
 FROM model_usage_events mue
 JOIN usage_bindings ub ON ub.id = mue.binding_id
 WHERE ub.session_id = ?
-GROUP BY ub.harness, COALESCE(mue.billing_provider_id, 'unknown'), mue.model_id
-ORDER BY SUM(mue.input_tokens + mue.output_tokens) DESC, ub.harness, billing_provider_id, mue.model_id;
+-- Grouped by model alone. The billing provider is a pricing input, not a
+-- product distinction: each event was already costed against its own provider's
+-- rates, so summing across them is exact. Splitting on it only ever surfaced
+-- AO's own attribution gaps as duplicate rows for one model.
+GROUP BY ub.harness, mue.model_id
+ORDER BY SUM(mue.input_tokens + mue.output_tokens) DESC, ub.harness, mue.model_id;
 
 -- name: GetUsageSessionIncomplete :one
 SELECT CAST(COALESCE((

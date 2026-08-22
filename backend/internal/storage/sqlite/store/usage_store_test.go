@@ -1381,7 +1381,7 @@ func TestUsageRowsCascadeWhenSeedSessionDeleted(t *testing.T) {
 	}
 }
 
-func TestUsageAggregatesSeparateProvidersAndPreserveCostCoverageFacts(t *testing.T) {
+func TestUsageAggregatesMergeProvidersPerModelAndPreserveCostCoverageFacts(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
 	now := time.Unix(1700000000, 0).UTC()
@@ -1416,21 +1416,21 @@ func TestUsageAggregatesSeparateProvidersAndPreserveCostCoverageFacts(t *testing
 		t.Fatalf("apply cost events: %v", err)
 	}
 
+	// One model is one row even when two providers served it. Each event was
+	// already costed against its own provider's rates, so the merged coverage
+	// facts stay exact; splitting the row only ever exposed AO's own attribution
+	// state as a duplicate model.
 	models, err := s.ListUsageModelAggregates(ctx, sess.ID)
 	mustNoError(t, err)
-	if len(models) != 2 || models[0].BillingProviderID != "openai" || models[1].BillingProviderID != "zai" {
-		t.Fatalf("provider/model rows = %+v", models)
+	if len(models) != 1 || models[0].ModelID != "shared-model" {
+		t.Fatalf("model rows = %+v, want one merged row", models)
 	}
-	complete := models[0].Cost
-	if complete.EventCount != 1 || complete.PricedEventCount != 1 || complete.PricedTotalNanos != 100 ||
-		complete.KnownInputNanos != 20 || complete.UnpricedKnownInputNanos != 0 {
-		t.Fatalf("complete cost facts = %+v", complete)
-	}
-	partial := models[1].Cost
-	if partial.EventCount != 1 || partial.PricedEventCount != 0 || partial.PricedTotalNanos != 0 ||
-		partial.KnownInputCount != 1 || partial.KnownInputNanos != 30 || partial.UnpricedKnownInputNanos != 30 ||
-		partial.KnownCachedInputCount != 0 || partial.KnownOutputCount != 1 || partial.UnpricedKnownOutputNanos != 5 {
-		t.Fatalf("partial cost facts = %+v", partial)
+	cost := models[0].Cost
+	if cost.EventCount != 2 || cost.PricedEventCount != 1 || cost.PricedTotalNanos != 100 ||
+		cost.KnownInputCount != 2 || cost.KnownInputNanos != 50 || cost.UnpricedKnownInputNanos != 30 ||
+		cost.KnownCachedInputCount != 1 || cost.KnownCachedInputNanos != 10 ||
+		cost.KnownOutputCount != 2 || cost.KnownOutputNanos != 75 || cost.UnpricedKnownOutputNanos != 5 {
+		t.Fatalf("merged cost facts = %+v", cost)
 	}
 
 	compact, err := s.ListCompactSessionUsageAggregates(ctx, sess.ProjectID)
@@ -1438,11 +1438,13 @@ func TestUsageAggregatesSeparateProvidersAndPreserveCostCoverageFacts(t *testing
 	if len(compact) != 1 || usageTokenValue(compact[0].ProcessedTokens) != 18 {
 		t.Fatalf("compact rows = %+v", compact)
 	}
-	cost := compact[0].Cost
-	if cost.EventCount != 2 || cost.PricedEventCount != 1 || cost.PricedTotalNanos != 100 ||
-		cost.KnownInputCount != 2 || cost.KnownInputNanos != 50 || cost.UnpricedKnownInputNanos != 30 ||
-		cost.KnownCachedInputCount != 1 || cost.KnownOutputNanos != 75 || cost.UnpricedKnownOutputNanos != 5 {
-		t.Fatalf("compact cost facts = %+v", cost)
+	// The dashboard row already summed across providers, so it is unchanged by
+	// the model row merging into one.
+	compactCost := compact[0].Cost
+	if compactCost.EventCount != 2 || compactCost.PricedEventCount != 1 || compactCost.PricedTotalNanos != 100 ||
+		compactCost.KnownInputCount != 2 || compactCost.KnownInputNanos != 50 || compactCost.UnpricedKnownInputNanos != 30 ||
+		compactCost.KnownCachedInputCount != 1 || compactCost.KnownOutputNanos != 75 || compactCost.UnpricedKnownOutputNanos != 5 {
+		t.Fatalf("compact cost facts = %+v", compactCost)
 	}
 }
 
