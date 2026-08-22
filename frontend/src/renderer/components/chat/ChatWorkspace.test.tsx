@@ -323,9 +323,9 @@ describe("ChatWorkspace timeline", () => {
 			summary: "Run command",
 			requestId: "approval-1",
 			decisions: [
-				{ id: "deny", label: "Deny" },
-				{ id: "allow_once", label: "Allow Once" },
-				{ id: "always_allow", label: "Always Allow" },
+				{ id: "deny", label: "Deny", kind: "reject_once" },
+				{ id: "allow_once", label: "Allow Once", kind: "allow_once" },
+				{ id: "always_allow", label: "Always Allow", kind: "allow_always" },
 			],
 			detail: { command: "npm test" },
 			createdAt: "2026-08-08T00:00:00Z",
@@ -436,6 +436,43 @@ describe("ChatWorkspace timeline", () => {
 		approval.focus();
 		fireEvent.keyDown(approval, { key: "Enter" });
 		expect(onDecide).toHaveBeenCalledWith("opaque-request", "option-a");
+	});
+
+	it("requires an explicit click for decisions without a semantic kind", () => {
+		const onDecide = vi.fn();
+		const snapshot = structuredClone(chatFixture);
+		snapshot.items.push({
+			kind: "activity",
+			id: "approval-unknown",
+			sequence: 102,
+			revision: 1,
+			turnId: "turn-2",
+			activityKind: "approval",
+			status: "pending",
+			summary: "Unknown provider decision",
+			requestId: "unknown-request",
+			decisions: [
+				{ id: "acceptWithDifferentSemantics", label: "acceptWithDifferentSemantics" },
+				{ id: "cancel", label: "Cancel", kind: "reject_once" },
+			],
+			detail: { subjectKind: "command" },
+			createdAt: "2026-08-08T00:00:00Z",
+		});
+
+		render(<ChatWorkspace snapshot={snapshot} onDecide={onDecide} onInterrupt={vi.fn()} />);
+
+		const approval = screen.getByRole("group", { name: "Approval request unknown-request" });
+		expect(within(approval).queryByRole("button", { name: /Allow once/ })).not.toBeInTheDocument();
+		const providerDecision = within(approval).getByRole("button", {
+			name: "acceptWithDifferentSemantics",
+		});
+
+		approval.focus();
+		fireEvent.keyDown(approval, { key: "Enter" });
+		expect(onDecide).not.toHaveBeenCalled();
+
+		fireEvent.click(providerDecision);
+		expect(onDecide).toHaveBeenCalledWith("unknown-request", "acceptWithDifferentSemantics");
 	});
 
 	it.each([

@@ -1634,19 +1634,7 @@ function approvalPrompt(subjectKind?: ActivityKind): string {
 }
 
 function approvalDecisionKind(decision: DecisionOption): DecisionOption["kind"] | "unknown" {
-	if (decision.kind) return decision.kind;
-	// Compatibility for approvals stored before semantic kinds were projected.
-	// Never treat an unrecognized provider option as approval.
-	const value = `${decision.id} ${decision.label}`.toLowerCase();
-	if (/(remember|always|amendment|policy)/.test(value) && /(allow|approve|accept)/.test(value)) {
-		return "allow_always";
-	}
-	if (/(remember|always)/.test(value) && /(deny|decline|reject|cancel)/.test(value)) {
-		return "reject_always";
-	}
-	if (/(deny|decline|reject|cancel)/.test(value)) return "reject_once";
-	if (/(allow|approve|accept)/.test(value)) return "allow_once";
-	return "unknown";
+	return decision.kind ?? "unknown";
 }
 
 function approvalDecisionRank(decision: DecisionOption): number {
