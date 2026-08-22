@@ -1874,6 +1874,7 @@ export interface components {
             /** Format: int64 */
             previewRevision?: number;
             previewUrl?: string;
+            projectAutoReview?: boolean;
             projectId: string;
             prs: components["schemas"]["SessionPRFacts"][];
             /** @enum {string} */

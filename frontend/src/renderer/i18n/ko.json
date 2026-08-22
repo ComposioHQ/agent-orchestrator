@@ -1182,5 +1182,7 @@
 	"settings.project.autoReview": "Auto review",
 	"settings.project.autoReviewToggle": "Enable for new sessions",
 	"settings.project.autoReviewDescription": "When enabled, new worker sessions will automatically review their pull requests. This can still be toggled per session after spawn.",
-	"settings.project.reviewer": "Reviewer"
+	"settings.project.reviewer": "Reviewer",
+	"inspector.autoReviewProjectDefaultOn": "Project default: on",
+	"inspector.autoReviewProjectDefaultOff": "Project default: off"
 }

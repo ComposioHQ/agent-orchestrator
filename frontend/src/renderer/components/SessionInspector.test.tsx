@@ -1680,6 +1680,22 @@ describe("SessionInspector summary reviews", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("shows the project's auto-review default below the session toggle", async () => {
+    mockCommonGets([], "", [reviewState(3, "needs_review")]);
+    renderWithQuery(
+      <SessionInspector
+        session={session([pr(3, "open")], {
+          autoReviewEnabled: false,
+          projectAutoReview: true,
+        })}
+      />,
+    );
+    await openReviewsSection();
+
+    expect(screen.getByRole("switch", { name: "Auto review" })).not.toBeChecked();
+    expect(screen.getByRole("note")).toHaveTextContent("Project default: on");
+  });
+
   it("enables auto-review for the current session", async () => {
     mockCommonGets([], "", [reviewState(3, "needs_review")]);
     renderWithQuery(<SessionInspector session={session([pr(3, "open")])} />);

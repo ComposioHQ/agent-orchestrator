@@ -5570,6 +5570,8 @@ components:
           type: integer
         previewUrl:
           type: string
+        projectAutoReview:
+          type: boolean
         projectId:
           type: string
         prs:

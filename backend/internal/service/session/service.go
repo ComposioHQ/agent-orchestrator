@@ -1024,13 +1024,19 @@ func (s *Service) toSession(ctx context.Context, rec domain.SessionRecord) (doma
 		return domain.Session{}, fmt.Errorf("pr facts %s: %w", rec.ID, err)
 	}
 	prs = deduplicatePRFacts(prs)
-	return domain.Session{
+	sess := domain.Session{
 		SessionRecord:    rec,
 		Status:           deriveStatus(rec, prs, s.now(), s.harnessSignals(rec.Harness)),
 		SCMStatus:        deriveSCMStatus(prs),
 		TerminalHandleID: rec.Metadata.RuntimeHandleID,
 		PRs:              prs,
-	}, nil
+	}
+	// Best-effort project default for the session inspector. A missing or
+	// degraded project must not block returning the session itself.
+	if project, ok, err := s.store.GetProject(ctx, string(rec.ProjectID)); err == nil && ok {
+		sess.ProjectAutoReview = project.Config.AutoReview
+	}
+	return sess, nil
 }
 
 // now tolerates a zero-value Service (tests construct the struct literally

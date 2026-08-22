@@ -356,6 +356,29 @@ func TestSessionListProjectsActiveAgentSwitch(t *testing.T) {
 	}
 }
 
+func TestSessionGetIncludesProjectAutoReview(t *testing.T) {
+	st := newFakeStore()
+	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer"}
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: domain.ProjectConfig{AutoReview: true}}
+
+	sess, err := (&Service{store: st}).Get(context.Background(), "mer-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !sess.ProjectAutoReview {
+		t.Fatalf("ProjectAutoReview = %v, want true", sess.ProjectAutoReview)
+	}
+
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: domain.ProjectConfig{AutoReview: false}}
+	sess, err = (&Service{store: st}).Get(context.Background(), "mer-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sess.ProjectAutoReview {
+		t.Fatalf("ProjectAutoReview = %v, want false", sess.ProjectAutoReview)
+	}
+}
+
 func TestSessionRenameUpdatesDisplayName(t *testing.T) {
 	st := newFakeStore()
 	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer"}

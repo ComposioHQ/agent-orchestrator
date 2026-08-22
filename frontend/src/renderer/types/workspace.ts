@@ -71,6 +71,8 @@ export type WorkspaceSession = {
 	reviewerHarness?: ReviewerHarnessId;
 	/** Whether the daemon may automatically review this session after it becomes idle. */
 	autoReviewEnabled?: boolean;
+	/** The project's current auto-review default, derived at read time. */
+	projectAutoReview?: boolean;
 	kind?: SessionKind;
 	/**
 	 * Which controller is currently committed for this session. The session

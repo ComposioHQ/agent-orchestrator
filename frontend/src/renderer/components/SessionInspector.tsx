@@ -1837,6 +1837,11 @@ function ReviewPanel({
 						onCheckedChange={onAutoReviewChange}
 						tooltipClassName="max-w-64"
 					/>
+					<p className="px-1 text-xs leading-row text-settings-muted" role="note">
+						{session.projectAutoReview
+							? t("inspector.autoReviewProjectDefaultOn")
+							: t("inspector.autoReviewProjectDefaultOff")}
+					</p>
 					<div className="flex min-h-10 items-center justify-between gap-3 py-2">
 						<span className="text-xs font-medium text-foreground">{t("inspector.review.session")}</span>
 						<div className="flex shrink-0 items-center gap-1.5">

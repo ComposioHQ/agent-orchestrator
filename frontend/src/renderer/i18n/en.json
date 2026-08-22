@@ -250,6 +250,8 @@
 	"inspector.review.runLatest": "Review latest commit",
 	"inspector.review.session": "Trigger review",
 	"inspector.autoReviewDescription": "When enabled, PRs will get auto-reviewed. When disabled, you can manually trigger the reviews.",
+	"inspector.autoReviewProjectDefaultOn": "Project default: on",
+	"inspector.autoReviewProjectDefaultOff": "Project default: off",
 	"inspector.autoReview": "Auto review",
 	"inspector.autoReviewOn": "Auto-review on",
 	"inspector.autoReviewWaitingIdle": "Waiting for worker to go idle",

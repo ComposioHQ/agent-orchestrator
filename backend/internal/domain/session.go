@@ -136,4 +136,8 @@ type Session struct {
 	// They feed status derivation and are surfaced on the API read model. Not
 	// serialized here: the HTTP boundary maps them to the curated wire shape.
 	PRs []PRFacts `json:"-"`
+	// ProjectAutoReview is the project's current auto-review setting at the time
+	// the session is read. It is derived, not persisted, so the session inspector
+	// can show whether the session toggle matches the project default.
+	ProjectAutoReview bool `json:"projectAutoReview,omitempty"`
 }
