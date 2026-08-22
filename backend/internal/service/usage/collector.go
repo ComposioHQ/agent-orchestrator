@@ -449,13 +449,7 @@ func trustedClaudeProviderHint(harness domain.AgentHarness, raw string) string {
 	if harness != domain.HarnessClaudeCode {
 		return ""
 	}
-	providerID := pricing.CanonicalProviderID(boundedUsageMetadata(raw))
-	switch providerID {
-	case "anthropic", "zai", "bedrock", "vertex_ai":
-		return providerID
-	default:
-		return ""
-	}
+	return pricing.TrustedClaudeBillingProvider(boundedUsageMetadata(raw))
 }
 
 func finalizingEvent(event string) bool {

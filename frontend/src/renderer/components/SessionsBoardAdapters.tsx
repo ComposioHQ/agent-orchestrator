@@ -274,7 +274,10 @@ function toUsagePresentation(
 	}
 	const cost = formatEstimatedCost(usage.estimatedCost);
 	if (processedTokens === null || processedTokens <= 0) {
-		return { accessibleLabel: cost as string, compactLabel: cost as string };
+		if (!cost) {
+			return undefined;
+		}
+		return { accessibleLabel: cost, compactLabel: cost };
 	}
 	const compactTokens = formatTokenCount(processedTokens).replace(/ tok$/, "");
 	const accessibleTokens = t("shell.usageTokens", {

@@ -14,6 +14,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
+	"github.com/aoagents/agent-orchestrator/backend/internal/pricing"
 )
 
 type jsonlRecord struct {
@@ -112,17 +113,26 @@ type stableTailStateV1 struct {
 
 type claudeParserStateV1 struct {
 	ModelID  string `json:"model_id,omitempty"`
-	Provider string `json:"provider,omitempty"`
+	Provider string `json:"billing_provider,omitempty"`
+	// LegacyProvider is the retired "provider" key. A build before #2928 filled
+	// it with the harness name — "claude-code", "openai" — not a billing route,
+	// so decoding must accept it (DisallowUnknownFields) and must never read
+	// it. Reusing the key for the billing route would stamp the harness name
+	// onto every event newly ingested from such a source, marked observed and
+	// therefore beyond every repair path.
+	LegacyProvider string `json:"provider,omitempty"`
 }
 
 type codexParserStateV1 struct {
-	Baseline            codexTokenVector `json:"baseline"`
-	ModelID             string           `json:"model_id,omitempty"`
-	Provider            string           `json:"provider,omitempty"`
-	NativeSessionID     string           `json:"native_session_id,omitempty"`
-	DirectParentID      string           `json:"direct_parent_id,omitempty"`
-	PendingSpawnCallIDs []string         `json:"pending_spawn_call_ids"`
-	DiscoveredChildIDs  []string         `json:"discovered_child_ids"`
+	Baseline       codexTokenVector `json:"baseline"`
+	ModelID        string           `json:"model_id,omitempty"`
+	Provider       string           `json:"billing_provider,omitempty"`
+	LegacyProvider string           `json:"provider,omitempty"` // see claudeParserStateV1
+
+	NativeSessionID     string   `json:"native_session_id,omitempty"`
+	DirectParentID      string   `json:"direct_parent_id,omitempty"`
+	PendingSpawnCallIDs []string `json:"pending_spawn_call_ids"`
+	DiscoveredChildIDs  []string `json:"discovered_child_ids"`
 }
 
 func decodeParserState(source domain.UsageSourceRecord) (*parserStateEnvelope, error) {
@@ -169,10 +179,12 @@ func decodeParserState(source domain.UsageSourceRecord) (*parserStateEnvelope, e
 		if state.Claude == nil || state.Codex != nil {
 			return nil, errors.New("claude state has invalid parser payload")
 		}
+		state.Claude.LegacyProvider = ""
 	case domain.UsageSourceCodexRollout:
 		if state.Codex == nil || state.Claude != nil {
 			return nil, errors.New("codex state has invalid parser payload")
 		}
+		state.Codex.LegacyProvider = ""
 		if state.Codex.PendingSpawnCallIDs == nil {
 			state.Codex.PendingSpawnCallIDs = []string{}
 		}
@@ -272,7 +284,11 @@ func parseClaude(source domain.UsageSourceContext, records []jsonlRecord, state 
 			recordMalformed(result)
 			continue
 		}
-		nativeProvider := firstNonEmpty(native.Message.Provider, native.Provider)
+		// The transcript feeds the same write-once column as the hook, so it
+		// earns the same whitelist. An unrecognised string is dropped rather
+		// than stored: unattributed is repairable, a wrong attribution is not.
+		nativeProvider := pricing.TrustedClaudeBillingProvider(
+			firstNonEmpty(native.Message.Provider, native.Provider))
 		if nativeProvider != "" {
 			state.Provider = nativeProvider
 		}
@@ -310,8 +326,8 @@ func parseClaude(source domain.UsageSourceContext, records []jsonlRecord, state 
 		}
 		model := firstNonEmpty(native.Message.Model, state.ModelID, source.InitialModelID, "unknown")
 		state.ModelID = model
-		billingProvider := canonicalBillingProvider(firstNonEmpty(
-			native.Message.Provider, native.Provider, state.Provider, source.ProviderHint,
+		billingProvider := pricing.TrustedClaudeBillingProvider(firstNonEmpty(
+			nativeProvider, state.Provider, source.ProviderHint,
 		))
 		keyID := firstNonEmpty(native.Message.ID, native.UUID, strconv.FormatInt(record.Offset, 10))
 		event := domain.ModelUsageEvent{

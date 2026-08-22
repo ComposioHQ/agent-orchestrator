@@ -1,8 +1,8 @@
 export type RelativeTimeMessageKey =
 	| "time.justNow"
-	| "time.minutesAgo"
-	| "time.hoursAgo"
-	| "time.daysAgo";
+	| "time.minutesShort"
+	| "time.hoursShort"
+	| "time.daysShort";
 
 export type RelativeTimeTranslator = (
 	key: RelativeTimeMessageKey,
@@ -14,11 +14,11 @@ const defaultRelativeTimeTranslator: RelativeTimeTranslator = (key, values) => {
 	switch (key) {
 		case "time.justNow":
 			return "just now";
-		case "time.minutesAgo":
+		case "time.minutesShort":
 			return `${count}m`;
-		case "time.hoursAgo":
+		case "time.hoursShort":
 			return `${count}h`;
-		case "time.daysAgo":
+		case "time.daysShort":
 			return `${count}d`;
 	}
 };
@@ -51,12 +51,12 @@ export function formatTimeCompact(
 		return translate("time.justNow");
 	}
 	if (diffMinutes < 60) {
-		return translate("time.minutesAgo", { n: diffMinutes });
+		return translate("time.minutesShort", { n: diffMinutes });
 	}
 	if (diffHours < 24) {
-		return translate("time.hoursAgo", { n: diffHours });
+		return translate("time.hoursShort", { n: diffHours });
 	}
-	return translate("time.daysAgo", { n: Math.floor(diffHours / 24) });
+	return translate("time.daysShort", { n: Math.floor(diffHours / 24) });
 }
 
 export function formatTokenCount(totalTokens: number, locale = "en-US"): string {

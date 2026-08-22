@@ -34,10 +34,15 @@ jobs:
         run: (cd backend && go run ./cmd/pricingcatalog validate -root ..)
       - name: Resolve latest LiteLLM catalog revision
         id: source
+        env:
+          # Unauthenticated api.github.com is 60 requests per hour per IP, and
+          # hosted runners share egress ranges, so without a token this step
+          # fails on someone else's traffic rather than on the change under
+          # review. The sibling sync workflow already calls gh api with one.
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          revision="$(curl --fail --location --silent --show-error \
-            https://api.github.com/repos/BerriAI/litellm/commits/main | jq -r .sha)"
+          revision="$(gh api repos/BerriAI/litellm/commits/main --jq .sha)"
           if ! [[ "$revision" =~ ^[0-9a-f]{40}$ ]]; then
             echo "LiteLLM main did not resolve to a full SHA" >&2
             exit 1

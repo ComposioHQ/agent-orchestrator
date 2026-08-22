@@ -85,26 +85,38 @@ func TestParseClaudeRetainsUnknownProviderUsageFieldsWithinTheBound(t *testing.T
 	}
 }
 
+// The transcript writes the same write-once column as the hook, so it earns the
+// same whitelist. A routing string AO cannot name is dropped rather than stored:
+// unattributed is repairable, and a wrong attribution — priced against nothing,
+// invisible to every repair path — is not.
 func TestParseClaudeProviderPrecedenceAndRetention(t *testing.T) {
 	source := usageSource(domain.UsageSourceClaudeMain)
 	source.ProviderHint = "anthropic"
 	records := []jsonlRecord{
 		{Data: []byte(`{"type":"assistant","provider":" record-provider ","uuid":"one","message":{"id":"msg-1","provider":" message-provider ","model":" claude-a ","stop_reason":"end_turn","usage":{"input_tokens":8,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":2}}}`)},
 		{Data: []byte(`{"type":"assistant","uuid":"two","message":{"id":"msg-2","model":"","stop_reason":"end_turn","usage":{"input_tokens":9,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":3}}}`)},
-		{Data: []byte(`{"type":"assistant","provider":" replacement-provider ","uuid":"three","message":{"id":"msg-3","model":"claude-b","stop_reason":"end_turn","usage":{"input_tokens":10,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":4}}}`)},
+		{Data: []byte(`{"type":"assistant","provider":" Z.AI ","uuid":"three","message":{"id":"msg-3","model":"claude-b","stop_reason":"end_turn","usage":{"input_tokens":10,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":4}}}`)},
 	}
 
 	result := parseRecords(source, records, 500, time.Unix(1700000000, 0).UTC())
 	if len(result.Events) != 3 {
 		t.Fatalf("events = %+v", result.Events)
 	}
-	if result.Events[0].BillingProviderID != "message-provider" || result.Events[0].ModelID != "claude-a" ||
-		result.Events[1].BillingProviderID != "message-provider" || result.Events[1].ModelID != "claude-a" ||
-		result.Events[2].BillingProviderID != "replacement-provider" || result.Events[2].ModelID != "claude-b" {
+	// The first two records name nothing AO recognises, so the whitelisted hook
+	// hint stands. The third names a route AO does know, canonicalised, and it
+	// takes precedence and persists to the next chunk.
+	if result.Events[0].BillingProviderID != "anthropic" || result.Events[0].ModelID != "claude-a" ||
+		result.Events[1].BillingProviderID != "anthropic" || result.Events[1].ModelID != "claude-a" ||
+		result.Events[2].BillingProviderID != "zai" || result.Events[2].ModelID != "claude-b" {
 		t.Fatalf("billing provider/model sequence = %+v", result.Events)
 	}
+	for index, event := range result.Events {
+		if event.BillingProviderSource != domain.UsageBillingProviderObserved {
+			t.Fatalf("event %d attribution source = %q", index, event.BillingProviderSource)
+		}
+	}
 	state := parserStateFromResult(t, result, domain.UsageSourceClaudeMain)
-	if state.Claude.Provider != "replacement-provider" {
+	if state.Claude.Provider != "zai" {
 		t.Fatalf("retained provider = %q", state.Claude.Provider)
 	}
 }
@@ -532,39 +544,77 @@ func TestDecodeParserStateTreatsWhitespaceOnlyObjectAsFreshState(t *testing.T) {
 	}
 }
 
-func TestDecodeParserStateRetainsPersistedProviderField(t *testing.T) {
+// Break caught: a build before #2928 wrote the harness name — "claude-code",
+// "openai" — into the parser state's "provider" key, and cleared it on decode
+// for exactly that reason. Reusing the key for the billing route would stamp the
+// harness onto every event newly ingested from such a source, marked observed
+// and so beyond every repair path. The route persists under its own key; the
+// retired one is still accepted and still discarded.
+func TestDecodeParserStateIgnoresTheRetiredProviderField(t *testing.T) {
 	tests := []struct {
-		kind domain.UsageSourceKind
-		raw  string
+		kind        domain.UsageSourceKind
+		retired     string
+		current     string
+		wantRoute   string
+		wantPersist string
 	}{
 		{
-			kind: domain.UsageSourceClaudeMain,
-			raw:  `{"version":1,"source_kind":"claude_main","claude":{"model_id":"claude-test","provider":"anthropic"}}`,
+			kind:        domain.UsageSourceClaudeMain,
+			retired:     `{"version":1,"source_kind":"claude_main","claude":{"model_id":"claude-test","provider":"claude-code"}}`,
+			current:     `{"version":1,"source_kind":"claude_main","claude":{"model_id":"claude-test","billing_provider":"anthropic"}}`,
+			wantRoute:   "anthropic",
+			wantPersist: `"billing_provider":"anthropic"`,
 		},
 		{
-			kind: domain.UsageSourceCodexRollout,
-			raw:  `{"version":1,"source_kind":"codex_rollout","codex":{"baseline":{},"provider":"openai","pending_spawn_call_ids":[],"discovered_child_ids":[]}}`,
+			kind:        domain.UsageSourceCodexRollout,
+			retired:     `{"version":1,"source_kind":"codex_rollout","codex":{"baseline":{},"provider":"openai","pending_spawn_call_ids":[],"discovered_child_ids":[]}}`,
+			current:     `{"version":1,"source_kind":"codex_rollout","codex":{"baseline":{},"billing_provider":"openai","pending_spawn_call_ids":[],"discovered_child_ids":[]}}`,
+			wantRoute:   "openai",
+			wantPersist: `"billing_provider":"openai"`,
 		},
 	}
 	for _, test := range tests {
-		state, err := decodeParserState(domain.UsageSourceRecord{Kind: test.kind, ParserStateJSON: test.raw})
+		retired, err := decodeParserState(domain.UsageSourceRecord{Kind: test.kind, ParserStateJSON: test.retired})
 		if err != nil {
 			t.Fatalf("decode %s state with retired provider field: %v", test.kind, err)
+		}
+		if got := persistedRoute(retired); got != "" {
+			t.Fatalf("%s read the retired provider key as a billing route: %q", test.kind, got)
+		}
+		current, err := decodeParserState(domain.UsageSourceRecord{Kind: test.kind, ParserStateJSON: test.current})
+		if err != nil {
+			t.Fatalf("decode %s state: %v", test.kind, err)
+		}
+		if got := persistedRoute(current); got != test.wantRoute {
+			t.Fatalf("%s persisted route = %q, want %q", test.kind, got, test.wantRoute)
 		}
 		parsed := parseRecordsWithState(
 			domain.UsageSourceContext{Source: domain.UsageSourceRecord{Kind: test.kind}},
 			nil,
 			0,
 			time.Unix(1700000000, 0).UTC(),
-			state,
+			current,
 		)
 		if parsed.err != nil {
 			t.Fatalf("encode normalized %s state: %v", test.kind, parsed.err)
 		}
-		if !strings.Contains(parsed.Cursor.ParserStateJSON, `"provider"`) {
-			t.Fatalf("normalized %s state dropped provider: %s", test.kind, parsed.Cursor.ParserStateJSON)
+		if !strings.Contains(parsed.Cursor.ParserStateJSON, test.wantPersist) {
+			t.Fatalf("normalized %s state dropped the route: %s", test.kind, parsed.Cursor.ParserStateJSON)
+		}
+		if strings.Contains(parsed.Cursor.ParserStateJSON, `"provider"`) {
+			t.Fatalf("normalized %s state rewrote the retired key: %s", test.kind, parsed.Cursor.ParserStateJSON)
 		}
 	}
+}
+
+func persistedRoute(state *parserStateEnvelope) string {
+	if state.Claude != nil {
+		return state.Claude.Provider
+	}
+	if state.Codex != nil {
+		return state.Codex.Provider
+	}
+	return ""
 }
 
 func TestDecodeParserStateValidatesV1Integrity(t *testing.T) {

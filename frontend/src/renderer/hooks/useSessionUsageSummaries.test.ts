@@ -6,10 +6,9 @@ vi.mock("../lib/api-client", () => ({
 	apiClient: { GET: (...args: unknown[]) => getMock(...args) },
 }));
 
+import { sessionUsageDetailQueryKey } from "./useSessionUsage";
 import {
-	fetchSessionUsage,
 	fetchSessionUsageSummaries,
-	sessionUsageDetailQueryOptions,
 	sessionUsageQueryRoot,
 	sessionUsageQueryOptions,
 } from "./useSessionUsageSummaries";
@@ -29,31 +28,11 @@ describe("session usage summaries", () => {
 		expect(sessionUsageQueryOptions("reverb")).not.toHaveProperty("refetchInterval");
 	});
 
-	it("fetches detailed usage beneath the shared usage query root", async () => {
-		getMock.mockResolvedValueOnce({
-			data: {
-				harnesses: [],
-				incomplete: false,
-				sessionId: "sess-1",
-				totals: {
-					cacheReadTokens: 0,
-					cacheWriteTokens: 0,
-					estimatedCost: null,
-					inputTokens: 0,
-					outputTokens: 0,
-					reasoningTokens: 0,
-					uncachedInputTokens: 0,
-				},
-			},
-		});
-
-		const result = await fetchSessionUsage("sess-1");
-
-		expect(result.sessionId).toBe("sess-1");
-		expect(getMock).toHaveBeenCalledWith("/api/v1/usage/sessions/{sessionId}", {
-			params: { path: { sessionId: "sess-1" } },
-		});
-		expect(sessionUsageDetailQueryOptions("sess-1").queryKey).toEqual([
+	// The detail query lives in useSessionUsage.ts and must stay beneath this
+	// root, or a usage event invalidates the board summaries without touching
+	// the inspector's open session.
+	it("keeps the detail query beneath the shared usage query root", () => {
+		expect(sessionUsageDetailQueryKey("sess-1")).toEqual([
 			...sessionUsageQueryRoot,
 			"detail",
 			"sess-1",
