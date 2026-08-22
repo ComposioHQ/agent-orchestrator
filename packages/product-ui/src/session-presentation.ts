@@ -48,6 +48,12 @@ const englishLabels: Record<SessionPresentationMessageKey, string> = {
 	"zone.done": "Terminated",
 	"column.building": "Building",
 	"column.validating": "Validating",
+	// Deliberate: this lane means "a person owns the next step", which is the
+	// fallthrough of derivePRKanbanColumn -- a card lands here precisely because
+	// no AO loop claimed it. It therefore also holds a PR with changes requested
+	// or failing CI while the matching inject flag is off, which is not literally
+	// under review. The wording is a product decision; the enum stays
+	// needs_review, so changing it later is one string per locale.
 	"column.needs_review": "In review",
 	"column.ready": "Ready",
 	"column.archive": "Archive",
