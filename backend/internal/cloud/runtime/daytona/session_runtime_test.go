@@ -15,3 +15,13 @@ func TestEnvironmentKeyPattern(t *testing.T) {
 		}
 	}
 }
+
+func TestSandboxProvidedCommandMapsClaudeToPathLookup(t *testing.T) {
+	got, ok := sandboxProvidedCommand("/usr/local/share/nvm/current/bin/claude")
+	if !ok || got != "claude" {
+		t.Fatalf("sandboxProvidedCommand() = %q, %v, want claude, true", got, ok)
+	}
+	if got, ok = sandboxProvidedCommand("/tmp/prompt.txt"); ok || got != "" {
+		t.Fatalf("sandboxProvidedCommand(prompt) = %q, %v, want empty, false", got, ok)
+	}
+}

@@ -129,6 +129,14 @@ func (p *Provider) bootstrapSessionRuntime(ctx context.Context, sandbox *daytona
 
 	argv := append([]string(nil), launch.Argv...)
 	pathMap := map[string]string{launch.SourceWorkspace: root}
+	for _, argument := range argv {
+		if replacement, ok := sandboxProvidedCommand(argument); ok {
+			// Claude Code is installed during sandbox bootstrap. The coordinator's
+			// absolute executable path is host-specific and must not be uploaded or
+			// invoked inside the isolated runtime.
+			pathMap[argument] = replacement
+		}
+	}
 	for i, file := range launch.Files {
 		destination := filepath.Join(filesRoot, strconv.Itoa(i)+"-"+filepath.Base(file.SourcePath))
 		if err = sandbox.FileSystem.UploadFile(ctx, file.Data, destination); err != nil {
@@ -232,6 +240,13 @@ func (p *Provider) SessionRuntimeInterrupt(ctx context.Context, sandboxID string
 	}
 	_, err = run(ctx, sandbox, "tmux send-keys -t "+shellQuote(sessionName)+" C-c", time.Minute)
 	return err
+}
+
+func sandboxProvidedCommand(argument string) (string, bool) {
+	if filepath.IsAbs(argument) && filepath.Base(argument) == "claude" {
+		return "claude", true
+	}
+	return "", false
 }
 
 func replaceRuntimePaths(value string, replacements map[string]string) string {

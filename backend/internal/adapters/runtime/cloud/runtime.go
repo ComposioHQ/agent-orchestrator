@@ -377,7 +377,7 @@ func workspaceOverlayPaths(ctx context.Context, root string) ([]string, error) {
 func referencedFiles(workspace string, argv []string) ([]runtimeFile, error) {
 	files := make([]runtimeFile, 0)
 	for index, argument := range argv {
-		if index == 0 || !filepath.IsAbs(argument) || strings.HasPrefix(argument, workspace+string(os.PathSeparator)) {
+		if index == 0 || sandboxProvidedExecutable(argument) || !filepath.IsAbs(argument) || strings.HasPrefix(argument, workspace+string(os.PathSeparator)) {
 			continue
 		}
 		info, err := os.Stat(argument)
@@ -395,6 +395,10 @@ func referencedFiles(workspace string, argv []string) ([]runtimeFile, error) {
 		clear(data)
 	}
 	return files, nil
+}
+
+func sandboxProvidedExecutable(argument string) bool {
+	return filepath.IsAbs(argument) && filepath.Base(argument) == "claude"
 }
 
 func userHome() string {

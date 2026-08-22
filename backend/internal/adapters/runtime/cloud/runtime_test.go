@@ -78,3 +78,26 @@ func TestNewRequiresCompleteWorkspaceCapability(t *testing.T) {
 		t.Fatal("non-HTTP URL accepted")
 	}
 }
+
+func TestReferencedFilesSkipsSandboxProvidedClaude(t *testing.T) {
+	root := t.TempDir()
+	claude := filepath.Join(t.TempDir(), "bin", "claude")
+	prompt := filepath.Join(t.TempDir(), "prompt.txt")
+	if err := os.MkdirAll(filepath.Dir(claude), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(claude, make([]byte, (1<<20)+1), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(prompt, []byte("prompt"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	files, err := referencedFiles(root, []string{"/tmp/ao", "agent-wrapper", claude, prompt})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(files) != 1 || files[0].Path != prompt {
+		t.Fatalf("referenced files = %#v, want only prompt", files)
+	}
+}
