@@ -20,7 +20,8 @@
  * combined stylesheet follows `prefers-color-scheme`, and `main.ts` already
  * drives Electron's `nativeTheme.themeSource` from AO's own theme preference,
  * so this renderer's `prefers-color-scheme` already tracks AO's theme, not the
- * raw OS setting.
+ * raw OS setting. (In `npm run dev:web` there is no `nativeTheme`, so it follows
+ * the OS directly.)
  */
 
 import Markdown, { type Components } from "react-markdown";
