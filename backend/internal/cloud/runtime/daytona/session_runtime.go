@@ -2,6 +2,7 @@ package daytona
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"path/filepath"
@@ -76,6 +77,14 @@ func (p *Provider) bootstrapSessionRuntime(ctx context.Context, sandbox *daytona
 	if _, err = run(ctx, sandbox, `sudo apt-get update -qq && sudo apt-get install -y -qq ca-certificates curl git tmux && sudo env PATH="$PATH" npm install -g @anthropic-ai/claude-code`, 10*time.Minute); err != nil {
 		return fmt.Errorf("install session dependencies: %w", err)
 	}
+	claudeResult, err := run(ctx, sandbox, "command -v claude", time.Minute)
+	if err != nil {
+		return fmt.Errorf("resolve sandbox Claude executable: %w", err)
+	}
+	claudeBinary := strings.TrimSpace(claudeResult)
+	if !filepath.IsAbs(claudeBinary) {
+		return errors.New("sandbox returned an invalid Claude executable path")
+	}
 	if _, err = run(ctx, sandbox, "mkdir -p "+shellQuote(filepath.Dir(archivePath))+" "+shellQuote(filepath.Dir(claudePath))+" "+shellQuote(filepath.Dir(aoPath))+" "+shellQuote(filesRoot), time.Minute); err != nil {
 		return err
 	}
@@ -85,7 +94,11 @@ func (p *Provider) bootstrapSessionRuntime(ctx context.Context, sandbox *daytona
 	if err = sandbox.FileSystem.UploadFile(ctx, launch.ClaudeCredentials, claudePath); err != nil {
 		return fmt.Errorf("upload Claude credentials: %w", err)
 	}
-	if err := sandbox.FileSystem.UploadFile(ctx, []byte("{\"hasCompletedOnboarding\":true}\n"), filepath.Join(home, ".claude.json")); err != nil {
+	claudeConfig, err := sandboxClaudeConfig(root)
+	if err != nil {
+		return err
+	}
+	if err := sandbox.FileSystem.UploadFile(ctx, claudeConfig, filepath.Join(home, ".claude.json")); err != nil {
 		return err
 	}
 	if len(p.githubToken) > 0 {
@@ -161,7 +174,7 @@ func (p *Provider) bootstrapSessionRuntime(ctx context.Context, sandbox *daytona
 	}
 	env["HOME"] = home
 	env["TERM"] = "xterm-256color"
-	env["PATH"] = filepath.Join(home, "bin") + ":/usr/local/bin:/usr/bin:/bin"
+	env["PATH"] = sandboxPATH(home, claudeBinary)
 	coordinatorURL, err := p.previewURL(ctx, workspace.SandboxID, 24*time.Hour)
 	if err != nil {
 		return fmt.Errorf("create coordinator capability: %w", err)
@@ -247,6 +260,30 @@ func sandboxProvidedCommand(argument string) (string, bool) {
 		return "claude", true
 	}
 	return "", false
+}
+
+func sandboxClaudeConfig(root string) ([]byte, error) {
+	value, err := json.Marshal(map[string]any{
+		"hasCompletedOnboarding": true,
+		"projects": map[string]any{
+			root: map[string]any{"hasTrustDialogAccepted": true},
+		},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("encode sandbox Claude config: %w", err)
+	}
+	return append(value, '\n'), nil
+}
+
+func sandboxPATH(home, claudeBinary string) string {
+	parts := []string{filepath.Join(home, "bin"), filepath.Dir(claudeBinary), "/usr/local/bin", "/usr/bin", "/bin"}
+	result := make([]string, 0, len(parts))
+	for _, part := range parts {
+		if !slices.Contains(result, part) {
+			result = append(result, part)
+		}
+	}
+	return strings.Join(result, ":")
 }
 
 func replaceRuntimePaths(value string, replacements map[string]string) string {

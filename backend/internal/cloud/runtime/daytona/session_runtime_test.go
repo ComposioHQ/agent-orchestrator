@@ -1,6 +1,9 @@
 package daytona
 
-import "testing"
+import (
+	"encoding/json"
+	"testing"
+)
 
 func TestEnvironmentKeyPattern(t *testing.T) {
 	t.Parallel()
@@ -23,5 +26,32 @@ func TestSandboxProvidedCommandMapsClaudeToPathLookup(t *testing.T) {
 	}
 	if got, ok = sandboxProvidedCommand("/tmp/prompt.txt"); ok || got != "" {
 		t.Fatalf("sandboxProvidedCommand(prompt) = %q, %v, want empty, false", got, ok)
+	}
+}
+
+func TestSandboxPATHIncludesResolvedClaudeDirectory(t *testing.T) {
+	got := sandboxPATH("/home/daytona", "/usr/local/share/nvm/current/bin/claude")
+	want := "/home/daytona/bin:/usr/local/share/nvm/current/bin:/usr/local/bin:/usr/bin:/bin"
+	if got != want {
+		t.Fatalf("sandboxPATH() = %q, want %q", got, want)
+	}
+}
+
+func TestSandboxClaudeConfigTrustsClonedWorkspace(t *testing.T) {
+	value, err := sandboxClaudeConfig("/home/daytona/workspace")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var config struct {
+		HasCompletedOnboarding bool `json:"hasCompletedOnboarding"`
+		Projects               map[string]struct {
+			HasTrustDialogAccepted bool `json:"hasTrustDialogAccepted"`
+		} `json:"projects"`
+	}
+	if err = json.Unmarshal(value, &config); err != nil {
+		t.Fatal(err)
+	}
+	if !config.HasCompletedOnboarding || !config.Projects["/home/daytona/workspace"].HasTrustDialogAccepted {
+		t.Fatalf("sandbox Claude config = %#v", config)
 	}
 }
