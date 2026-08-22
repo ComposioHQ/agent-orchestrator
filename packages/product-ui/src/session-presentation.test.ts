@@ -71,6 +71,9 @@ describe("session presentation", () => {
 	// A daemon that predates kanbanColumn still sends status, so the fallback
 	// must land each session in the lane the board gave it before the column
 	// existed rather than collapsing every live session into the first lane.
+	// The statuses landing in needs_review are the whole review-feedback loop
+	// as seen from a person's turn -- awaiting review, feedback to answer, a
+	// failing check to decide about -- not only PRs awaiting a first review.
 	it.each([
 		["mergeable", "ready"],
 		["approved", "ready"],

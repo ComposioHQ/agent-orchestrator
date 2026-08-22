@@ -980,10 +980,11 @@ describe("SessionsBoard", () => {
 						status: "working",
 						kanbanColumn: "building",
 					}),
-					// Mergeable on the card, but a human still has to look at it.
+					// Mergeable on the card, but no AO loop is turning it, so the
+					// review-feedback loop is on a person's turn.
 					boardSession({
 						id: "s-needs-review",
-						title: "needs review worker",
+						title: "in review worker",
 						status: "mergeable",
 						kanbanColumn: "needs_review",
 					}),
@@ -998,8 +999,8 @@ describe("SessionsBoard", () => {
 		const lane = (label: string) => screen.getByLabelText(label);
 		expect(within(lane("Building sessions")).getByText("building worker")).toBeInTheDocument();
 		expect(within(lane("Validating sessions")).getByText("validating worker")).toBeInTheDocument();
-		expect(within(lane("In review sessions")).getByText("needs review worker")).toBeInTheDocument();
-		expect(within(lane("Ready sessions")).queryByText("needs review worker")).toBeNull();
+		expect(within(lane("In review sessions")).getByText("in review worker")).toBeInTheDocument();
+		expect(within(lane("Ready sessions")).queryByText("in review worker")).toBeNull();
 	});
 
 	// Mixed-version upgrade: an older daemon sends no kanbanColumn at all. Cards
@@ -1033,7 +1034,7 @@ describe("SessionsBoard", () => {
 		expect(within(lane("Ready sessions")).getByText("legacy ready worker")).toBeInTheDocument();
 	});
 
-	it("orders the lanes building, validating, needs review, then ready", () => {
+	it("orders the lanes building, validating, in review, then ready", () => {
 		workspaceQueryMock.mockReturnValue({
 			data: [workspaceWithSessions([boardSession({ id: "s-one", title: "worker one", status: "idle" })])],
 			isError: false,
