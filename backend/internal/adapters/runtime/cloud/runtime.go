@@ -25,8 +25,10 @@ import (
 
 const maxWorkspaceArchive = 24 << 20
 
+// Options identifies the control plane and one coordinator's scoped capability.
 type Options struct{ BaseURL, Token, WorkspaceID string }
 
+// Runtime delegates AO runtime operations to isolated cloud sandboxes.
 type Runtime struct {
 	baseURL     string
 	token       string
@@ -34,6 +36,7 @@ type Runtime struct {
 	client      *http.Client
 }
 
+// New validates options and creates a cloud runtime adapter.
 func New(options Options) (*Runtime, error) {
 	parsed, err := url.Parse(strings.TrimRight(strings.TrimSpace(options.BaseURL), "/"))
 	if err != nil || (parsed.Scheme != "https" && parsed.Scheme != "http") || parsed.Host == "" {
@@ -45,6 +48,7 @@ func New(options Options) (*Runtime, error) {
 	return &Runtime{baseURL: parsed.String(), token: strings.TrimSpace(options.Token), workspaceID: strings.TrimSpace(options.WorkspaceID), client: &http.Client{Timeout: 30 * time.Second}}, nil
 }
 
+// FromEnvironment selects cloud execution when its API URL is configured.
 func FromEnvironment() (*Runtime, bool, error) {
 	baseURL := strings.TrimSpace(os.Getenv("AO_CLOUD_RUNTIME_API_URL"))
 	if baseURL == "" {
@@ -75,6 +79,7 @@ type statusResponse struct {
 	Output  string        `json:"output"`
 }
 
+// Create provisions a dedicated sandbox and waits until its agent is running.
 func (r *Runtime) Create(ctx context.Context, cfg ports.RuntimeConfig) (ports.RuntimeHandle, error) {
 	archive, err := archiveWorkspace(ctx, cfg.WorkspacePath)
 	if err != nil {
@@ -96,7 +101,7 @@ func (r *Runtime) Create(ctx context.Context, cfg ports.RuntimeConfig) (ports.Ru
 	}
 	clear(archive)
 	var response statusResponse
-	if err = r.requestJSON(ctx, http.MethodPost, r.runtimeURL(""), request, &response); err != nil {
+	if err := r.requestJSON(ctx, http.MethodPost, r.runtimeURL(""), request, &response); err != nil {
 		return ports.RuntimeHandle{}, err
 	}
 	poll := time.NewTicker(2 * time.Second)
@@ -116,16 +121,19 @@ func (r *Runtime) Create(ctx context.Context, cfg ports.RuntimeConfig) (ports.Ru
 		case <-deadline.C:
 			return ports.RuntimeHandle{}, errors.New("isolated runtime provisioning timed out")
 		case <-poll.C:
-			if err = r.requestJSON(ctx, http.MethodGet, r.runtimeURL(string(cfg.SessionID)), nil, &response); err != nil {
+			if err := r.requestJSON(ctx, http.MethodGet, r.runtimeURL(string(cfg.SessionID)), nil, &response); err != nil {
 				return ports.RuntimeHandle{}, err
 			}
 		}
 	}
 }
 
+// Destroy deletes the session's entire sandbox.
 func (r *Runtime) Destroy(ctx context.Context, handle ports.RuntimeHandle) error {
 	return r.requestJSON(ctx, http.MethodDelete, r.runtimeURL(handle.ID), nil, nil)
 }
+
+// GetOutput returns a bounded terminal capture from remote tmux.
 func (r *Runtime) GetOutput(ctx context.Context, handle ports.RuntimeHandle, lines int) (string, error) {
 	var response statusResponse
 	endpoint := r.runtimeURL(handle.ID)
@@ -137,17 +145,25 @@ func (r *Runtime) GetOutput(ctx context.Context, handle ports.RuntimeHandle, lin
 	}
 	return response.Output, nil
 }
+
+// IsAlive reports whether the remote agent tmux session still exists.
 func (r *Runtime) IsAlive(ctx context.Context, handle ports.RuntimeHandle) (bool, error) {
 	var response statusResponse
 	err := r.requestJSON(ctx, http.MethodGet, r.runtimeURL(handle.ID), nil, &response)
 	return response.Alive, err
 }
+
+// Interrupt sends Ctrl-C to the remote agent.
 func (r *Runtime) Interrupt(ctx context.Context, handle ports.RuntimeHandle) error {
 	return r.requestJSON(ctx, http.MethodPost, r.runtimeURL(handle.ID)+"/interrupt", struct{}{}, nil)
 }
+
+// SendInput writes raw input without submitting it.
 func (r *Runtime) SendInput(ctx context.Context, handle ports.RuntimeHandle, input string) error {
 	return r.send(ctx, handle, input, false)
 }
+
+// SendMessage pastes and submits a message to the remote agent.
 func (r *Runtime) SendMessage(ctx context.Context, handle ports.RuntimeHandle, message string) error {
 	return r.send(ctx, handle, message, true)
 }
@@ -155,6 +171,7 @@ func (r *Runtime) send(ctx context.Context, handle ports.RuntimeHandle, input st
 	return r.requestJSON(ctx, http.MethodPost, r.runtimeURL(handle.ID)+"/input", map[string]any{"input": input, "enter": enter}, nil)
 }
 
+// Attach opens a polling terminal stream over the HTTPS control-plane path.
 func (r *Runtime) Attach(ctx context.Context, handle ports.RuntimeHandle, rows, cols uint16) (ports.Stream, error) {
 	attachCtx, cancel := context.WithCancel(ctx)
 	reader, writer := io.Pipe()
@@ -191,7 +208,7 @@ func (s *pollingStream) Write(value []byte) (int, error) {
 func (s *pollingStream) Close() error                { s.cancel(); return s.reader.Close() }
 func (s *pollingStream) Resize(uint16, uint16) error { return nil }
 func (s *pollingStream) poll(ctx context.Context, writer *io.PipeWriter) {
-	defer writer.Close()
+	defer func() { _ = writer.Close() }()
 	ticker := time.NewTicker(500 * time.Millisecond)
 	defer ticker.Stop()
 	last := ""
@@ -252,7 +269,7 @@ func (r *Runtime) requestJSON(ctx context.Context, method, endpoint string, inpu
 	if err != nil {
 		return err
 	}
-	defer response.Body.Close()
+	defer func() { _ = response.Body.Close() }()
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		value, _ := io.ReadAll(io.LimitReader(response.Body, 4096))
 		return fmt.Errorf("cloud runtime API %s: %s", response.Status, strings.TrimSpace(string(value)))
@@ -301,11 +318,11 @@ func archiveWorkspace(ctx context.Context, root string) ([]byte, error) {
 			return err
 		}
 		header.Name = name
-		if err = archive.WriteHeader(header); err != nil {
+		if err := archive.WriteHeader(header); err != nil {
 			return err
 		}
 		if info.Mode().IsRegular() {
-			file, err := os.Open(path)
+			file, err := os.Open(path) //nolint:gosec // filepath.Walk supplied this path beneath the coordinator-owned worktree.
 			if err != nil {
 				return err
 			}

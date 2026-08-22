@@ -18,10 +18,14 @@ type SessionRuntime struct {
 }
 
 const (
+	// SessionRuntimeProvisioning means provider setup has not completed.
 	SessionRuntimeProvisioning = "provisioning"
-	SessionRuntimeRunning      = "running"
-	SessionRuntimeStopped      = "stopped"
-	SessionRuntimeFailed       = "failed"
+	// SessionRuntimeRunning means the isolated agent terminal is live.
+	SessionRuntimeRunning = "running"
+	// SessionRuntimeStopped means the sandbox has been deleted.
+	SessionRuntimeStopped = "stopped"
+	// SessionRuntimeFailed means provisioning ended with a bounded failure.
+	SessionRuntimeFailed = "failed"
 )
 
 // RuntimeLaunch is the provider-neutral launch request received from a cloud

@@ -61,7 +61,7 @@ func (p *Provider) bootstrapSessionRuntime(ctx context.Context, sandbox *daytona
 	}
 	home := strings.TrimSpace(homeResult)
 	if home == "" || !filepath.IsAbs(home) {
-		return errors.New("Daytona sandbox returned an invalid home directory")
+		return errors.New("daytona sandbox returned an invalid home directory") //nolint:staticcheck // Daytona is a product name.
 	}
 	root := filepath.Join(home, "workspace")
 	archivePath := filepath.Join(home, ".ao", "workspace.tar.gz")
@@ -83,15 +83,15 @@ func (p *Provider) bootstrapSessionRuntime(ctx context.Context, sandbox *daytona
 	if err = sandbox.FileSystem.UploadFile(ctx, launch.ClaudeCredentials, claudePath); err != nil {
 		return fmt.Errorf("upload Claude credentials: %w", err)
 	}
-	if err = sandbox.FileSystem.UploadFile(ctx, []byte("{\"hasCompletedOnboarding\":true}\n"), filepath.Join(home, ".claude.json")); err != nil {
+	if err := sandbox.FileSystem.UploadFile(ctx, []byte("{\"hasCompletedOnboarding\":true}\n"), filepath.Join(home, ".claude.json")); err != nil {
 		return err
 	}
 	if len(p.githubToken) > 0 {
-		if err = sandbox.FileSystem.UploadFile(ctx, p.githubToken, githubTokenPath); err != nil {
+		if err := sandbox.FileSystem.UploadFile(ctx, p.githubToken, githubTokenPath); err != nil {
 			return err
 		}
 		askpass := "#!/bin/sh\ncase \"$1\" in *Username*) printf '%s\\n' x-access-token ;; *) cat " + shellQuote(githubTokenPath) + " ;; esac\n"
-		if err = sandbox.FileSystem.UploadFile(ctx, []byte(askpass), askpassPath); err != nil {
+		if err := sandbox.FileSystem.UploadFile(ctx, []byte(askpass), askpassPath); err != nil {
 			return err
 		}
 	}
@@ -166,6 +166,7 @@ func (p *Provider) bootstrapSessionRuntime(ctx context.Context, sandbox *daytona
 	return nil
 }
 
+// DeleteSessionRuntime removes all compute and disk for one agent session.
 func (p *Provider) DeleteSessionRuntime(ctx context.Context, sandboxID string) error {
 	sandbox, err := p.client.Get(ctx, strings.TrimSpace(sandboxID))
 	if err != nil {
@@ -177,6 +178,7 @@ func (p *Provider) DeleteSessionRuntime(ctx context.Context, sandboxID string) e
 	return nil
 }
 
+// SessionRuntimeAlive probes the agent's tmux session.
 func (p *Provider) SessionRuntimeAlive(ctx context.Context, sandboxID string) (bool, error) {
 	sandbox, err := p.client.Get(ctx, strings.TrimSpace(sandboxID))
 	if err != nil {
@@ -189,6 +191,7 @@ func (p *Provider) SessionRuntimeAlive(ctx context.Context, sandboxID string) (b
 	return result.ExitCode == 0, nil
 }
 
+// SessionRuntimeOutput captures bounded terminal history.
 func (p *Provider) SessionRuntimeOutput(ctx context.Context, sandboxID string, lines int) (string, error) {
 	if lines <= 0 {
 		lines = 200
@@ -200,7 +203,8 @@ func (p *Provider) SessionRuntimeOutput(ctx context.Context, sandboxID string, l
 	return run(ctx, sandbox, "tmux capture-pane -p -t "+shellQuote(sessionName)+" -S -"+strconv.Itoa(lines), time.Minute)
 }
 
-func (p *Provider) SessionRuntimeInput(ctx context.Context, sandboxID string, input string, enter bool) error {
+// SessionRuntimeInput pastes input and optionally submits it.
+func (p *Provider) SessionRuntimeInput(ctx context.Context, sandboxID, input string, enter bool) error {
 	sandbox, err := p.client.Get(ctx, strings.TrimSpace(sandboxID))
 	if err != nil {
 		return err
@@ -213,6 +217,7 @@ func (p *Provider) SessionRuntimeInput(ctx context.Context, sandboxID string, in
 	return err
 }
 
+// SessionRuntimeInterrupt sends Ctrl-C to the isolated agent.
 func (p *Provider) SessionRuntimeInterrupt(ctx context.Context, sandboxID string) error {
 	sandbox, err := p.client.Get(ctx, strings.TrimSpace(sandboxID))
 	if err != nil {
@@ -222,6 +227,7 @@ func (p *Provider) SessionRuntimeInterrupt(ctx context.Context, sandboxID string
 	return err
 }
 
+// ConnectSessionRuntime attaches a provider PTY to the agent's tmux session.
 func (p *Provider) ConnectSessionRuntime(ctx context.Context, sandboxID string, rows, cols uint16) (io.ReadWriteCloser, error) {
 	sandbox, err := p.client.Get(ctx, strings.TrimSpace(sandboxID))
 	if err != nil {

@@ -9,6 +9,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/cloud/domain"
 )
 
+// CreateSessionRuntime records a new provisioning attempt for one AO session.
 func (s *Store) CreateSessionRuntime(ctx context.Context, principal domain.Principal, workspace domain.Workspace, sessionID string) (domain.SessionRuntime, error) {
 	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
@@ -29,12 +30,13 @@ func (s *Store) CreateSessionRuntime(ctx context.Context, principal domain.Princ
 	if err != nil {
 		return domain.SessionRuntime{}, normalizeError(err)
 	}
-	if err = tx.Commit(ctx); err != nil {
+	if err := tx.Commit(ctx); err != nil {
 		return domain.SessionRuntime{}, err
 	}
 	return runtime, nil
 }
 
+// SessionRuntime returns one tenant-scoped runtime mapping.
 func (s *Store) SessionRuntime(ctx context.Context, principal domain.Principal, orgID, workspaceID, sessionID string) (domain.SessionRuntime, error) {
 	workspace, err := s.Workspace(ctx, principal, orgID, workspaceID)
 	if err != nil {
@@ -52,7 +54,7 @@ func (s *Store) SessionRuntime(ctx context.Context, principal domain.Principal, 
 	if err != nil {
 		return domain.SessionRuntime{}, err
 	}
-	if err = tx.Commit(ctx); err != nil {
+	if err := tx.Commit(ctx); err != nil {
 		return domain.SessionRuntime{}, err
 	}
 	return runtime, nil
@@ -64,6 +66,7 @@ func (s *Store) RuntimeWorkspace(ctx context.Context, principal domain.Principal
 	return s.Workspace(ctx, principal, orgID, workspaceID)
 }
 
+// UpdateSessionRuntime records provider state for one runtime mapping.
 func (s *Store) UpdateSessionRuntime(ctx context.Context, principal domain.Principal, runtime domain.SessionRuntime, state, sandboxID, failure string) error {
 	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {

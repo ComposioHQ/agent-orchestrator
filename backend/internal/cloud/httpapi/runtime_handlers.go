@@ -102,7 +102,9 @@ func (s *Server) createSessionRuntime(w http.ResponseWriter, r *http.Request) {
 		Argv: append([]string(nil), input.Argv...), Env: input.Env, WorkspaceArchive: archive,
 		ClaudeCredentials: credentials, Files: files,
 	}
-	go s.provisionSessionRuntime(context.WithoutCancel(r.Context()), principal, workspace, runtime, launch)
+	// Provisioning deliberately outlives the HTTP request; the bounded worker
+	// context below owns its cancellation and cleanup.
+	go s.provisionSessionRuntime(context.WithoutCancel(r.Context()), principal, workspace, runtime, launch) //nolint:gosec // bounded provisioning intentionally outlives this request
 	writeJSON(w, http.StatusAccepted, runtimeStatusResponse{Runtime: runtime})
 }
 
@@ -229,14 +231,14 @@ func (s *Server) attachSessionRuntime(w http.ResponseWriter, r *http.Request) {
 		s.internalError(w, r, "attach cloud session runtime", err)
 		return
 	}
-	defer stream.Close()
+	defer func() { _ = stream.Close() }()
 	connection, err := websocket.Accept(w, r, &websocket.AcceptOptions{InsecureSkipVerify: true})
 	if err != nil {
 		return
 	}
-	defer connection.CloseNow()
+	defer func() { _ = connection.CloseNow() }()
 	network := websocket.NetConn(r.Context(), connection, websocket.MessageBinary)
-	defer network.Close()
+	defer func() { _ = network.Close() }()
 	errCh := make(chan error, 2)
 	go func() { _, copyErr := io.Copy(stream, network); errCh <- copyErr }()
 	go func() { _, copyErr := io.Copy(network, stream); errCh <- copyErr }()
