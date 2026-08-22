@@ -610,7 +610,12 @@ function FileDetailBody({
 			</TabsList>
 			<TabsContent value="source">{diffBody}</TabsContent>
 			<TabsContent value="rendered">
-				<MarkdownFileView content={detail.content} filePath={file.path} sessionId={sessionId} />
+				<MarkdownFileView
+					content={detail.content}
+					filePath={file.path}
+					sessionId={sessionId}
+					version={detailLoadedAt}
+				/>
 			</TabsContent>
 		</Tabs>
 	);

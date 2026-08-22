@@ -29,7 +29,7 @@ import remarkGfm from "remark-gfm";
 import { rehypeGithubAlerts } from "rehype-github-alerts";
 import rehypeSlug from "rehype-slug";
 import rehypeAutolinkHeadings from "rehype-autolink-headings";
-import { isValidElement, type ReactNode } from "react";
+import { isValidElement, useMemo, type ReactNode } from "react";
 import { canonicalLanguage } from "../../lib/code-highlight";
 import { isWebLink } from "../../lib/external-link-policy";
 import { aoBridge } from "../../lib/bridge";
@@ -128,13 +128,17 @@ export function MarkdownFileView({
 	sessionId,
 	filePath,
 	content,
+	version,
 }: {
 	sessionId: string;
 	filePath: string;
 	content: string;
+	/** The file detail's load timestamp, for cache-busting relative images. */
+	version: number;
 }) {
+	const contextValue = useMemo(() => ({ sessionId, filePath, version }), [sessionId, filePath, version]);
 	return (
-		<MarkdownFileContext.Provider value={{ sessionId, filePath }}>
+		<MarkdownFileContext.Provider value={contextValue}>
 			<div className="markdown-body p-4">
 				<Markdown remarkPlugins={REMARK_PLUGINS} rehypePlugins={REHYPE_PLUGINS} components={COMPONENTS}>
 					{content}
