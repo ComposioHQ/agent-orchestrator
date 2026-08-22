@@ -29,9 +29,10 @@ import remarkGfm from "remark-gfm";
 import { rehypeGithubAlerts } from "rehype-github-alerts";
 import rehypeSlug from "rehype-slug";
 import rehypeAutolinkHeadings from "rehype-autolink-headings";
-import { isValidElement, useCallback, useMemo, useRef, type ReactNode } from "react";
+import { useCallback, useMemo, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { canonicalLanguage } from "../../lib/code-highlight";
+import { fenceOf } from "../../lib/markdown-fence";
 import { isWebLink } from "../../lib/external-link-policy";
 import { HighlightedCode } from "../chat/HighlightedCode";
 import "../chat/code-theme.css";
@@ -58,27 +59,6 @@ const REHYPE_PLUGINS: PluggableList = [
 	],
 ];
 
-/** The text inside a node, for language sniffing on a fenced block. */
-function textOf(children: ReactNode): string {
-	if (typeof children === "string") return children;
-	if (typeof children === "number") return String(children);
-	if (Array.isArray(children)) return children.map(textOf).join("");
-	if (children && typeof children === "object" && "props" in children) {
-		return textOf((children as { props?: { children?: ReactNode } }).props?.children);
-	}
-	return "";
-}
-
-const LANGUAGE_CLASS = /language-([\w+#-]+)/;
-
-/** The fence inside a `pre`, or undefined if this is not a fenced block. */
-function fenceOf(children: ReactNode): { code: string; language?: string } | undefined {
-	if (!isValidElement<{ className?: string; children?: ReactNode }>(children)) return undefined;
-	return {
-		code: textOf(children.props.children).replace(/\n$/, ""),
-		language: LANGUAGE_CLASS.exec(children.props.className ?? "")?.[1],
-	};
-}
 
 export function MarkdownFileView({
 	sessionId,
