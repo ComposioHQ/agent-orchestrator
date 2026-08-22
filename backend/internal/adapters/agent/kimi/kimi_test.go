@@ -314,6 +314,15 @@ func TestGetAgentHooksInstallsSystemPromptInstructions(t *testing.T) {
 	}
 }
 
+func TestKimiInstructionsPathUsesProviderDiscoveredDirectory(t *testing.T) {
+	workspace := t.TempDir()
+	got := kimiInstructionsPath(workspace)
+	want := filepath.Join(workspace, ".kimi", "AGENTS.md")
+	if got != want {
+		t.Fatalf("kimiInstructionsPath = %q, want provider-discovered path %q", got, want)
+	}
+}
+
 func TestGetAgentHooksInstallsKimiConfigHooksWithoutSystemPrompt(t *testing.T) {
 	workspace := t.TempDir()
 	kimiHome := t.TempDir()

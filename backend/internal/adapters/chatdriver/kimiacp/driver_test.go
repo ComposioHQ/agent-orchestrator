@@ -2,11 +2,15 @@ package kimiacp
 
 import (
 	"context"
+	"io"
+	"log/slog"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	acpdriver "github.com/aoagents/agent-orchestrator/backend/internal/adapters/chatdriver/acp"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
@@ -63,7 +67,7 @@ func TestConfigureLaunchesNativeACPSubcommand(t *testing.T) {
 	if env != nil {
 		t.Fatalf("env = %#v, want nil", env)
 	}
-	instructions, err := os.ReadFile(filepath.Join(workspace, ".kimi-code", "AGENTS.md"))
+	instructions, err := os.ReadFile(filepath.Join(workspace, ".kimi", "AGENTS.md"))
 	if err != nil {
 		t.Fatalf("read Kimi ACP instructions: %v", err)
 	}
@@ -76,7 +80,7 @@ func TestConfigureLaunchesNativeACPSubcommand(t *testing.T) {
 			t.Errorf("Kimi ACP instructions missing %q:\n%s", want, instructions)
 		}
 	}
-	gitignore, err := os.ReadFile(filepath.Join(workspace, ".kimi-code", ".gitignore"))
+	gitignore, err := os.ReadFile(filepath.Join(workspace, ".kimi", ".gitignore"))
 	if err != nil {
 		t.Fatalf("read Kimi ACP gitignore: %v", err)
 	}
@@ -85,7 +89,7 @@ func TestConfigureLaunchesNativeACPSubcommand(t *testing.T) {
 	}
 }
 
-func TestSessionOptionsMapModelsAndPermissions(t *testing.T) {
+func TestSessionOptionsMapModelsButDoNotInventPermissionModes(t *testing.T) {
 	tests := []struct {
 		name     string
 		settings ports.ChatTurnSettings
@@ -100,17 +104,14 @@ func TestSessionOptionsMapModelsAndPermissions(t *testing.T) {
 		{
 			name:     "accept edits",
 			settings: ports.ChatTurnSettings{Approval: ports.PermissionModeAcceptEdits},
-			want:     []acpdriver.SessionOption{{ID: "mode", Value: "auto"}},
 		},
 		{
 			name:     "auto",
 			settings: ports.ChatTurnSettings{Approval: ports.PermissionModeAuto},
-			want:     []acpdriver.SessionOption{{ID: "mode", Value: "auto"}},
 		},
 		{
 			name:     "bypass",
 			settings: ports.ChatTurnSettings{Approval: ports.PermissionModeBypassPermissions},
-			want:     []acpdriver.SessionOption{{ID: "mode", Value: "yolo"}},
 		},
 		{
 			name: "model and permission",
@@ -119,7 +120,6 @@ func TestSessionOptionsMapModelsAndPermissions(t *testing.T) {
 			},
 			want: []acpdriver.SessionOption{
 				{ID: "model", Value: "kimi-code/kimi-for-coding"},
-				{ID: "mode", Value: "yolo"},
 			},
 		},
 	}
@@ -133,11 +133,64 @@ func TestSessionOptionsMapModelsAndPermissions(t *testing.T) {
 	}
 }
 
-func TestKimiModeCatalogKeepsPlanProviderOwned(t *testing.T) {
-	// Plan is a distinct Kimi ACP mode exposed through its live config-option
-	// catalog. It must not be inferred from AO's permission setting or collapsed
-	// into auto/yolo here.
-	if got := permissionMode(ports.PermissionModeDefault); got != "" {
-		t.Fatalf("default permission mapped to %q, want provider mode unchanged", got)
+func TestLiveKimiACPReceivesLaunchSystemPrompt(t *testing.T) {
+	if os.Getenv("AO_KIMI_ACP_INTEGRATION") != "1" {
+		t.Skip("set AO_KIMI_ACP_INTEGRATION=1 to run the live Kimi ACP prompt-delivery contract")
+	}
+	bin, err := exec.LookPath("kimi")
+	if err != nil {
+		t.Fatalf("find kimi: %v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	driver := New(fakePlugin{binary: bin, status: ports.AgentAuthStatusAuthorized},
+		slog.New(slog.NewTextHandler(io.Discard, nil)))
+	conv, err := driver.Start(ctx, ports.ChatStartConfig{
+		WorkspacePath: t.TempDir(),
+		SystemPrompt: "When the user sends AO_KIMI_PROMPT_HANDSHAKE, reply with exactly " +
+			"AO_KIMI_PROMPT_RECEIVED and no other text.",
+	})
+	if err != nil {
+		t.Fatalf("start live Kimi ACP: %v", err)
+	}
+	defer conv.Close()
+
+	for {
+		select {
+		case event := <-conv.Events():
+			if event.Kind == ports.ChatEventControllerState && event.ControllerState == ports.ChatControllerReady {
+				goto ready
+			}
+		case <-ctx.Done():
+			t.Fatalf("wait for Kimi ready: %v", ctx.Err())
+		}
+	}
+
+ready:
+	ref, err := conv.SendTurn(ctx, ports.ChatUserMessage{Text: "AO_KIMI_PROMPT_HANDSHAKE"})
+	if err != nil {
+		t.Fatalf("send Kimi handshake: %v", err)
+	}
+	if err := conv.(ports.ChatDeferredTurnStarter).StartDeferredTurn(ref.ProviderTurnID); err != nil {
+		t.Fatalf("start Kimi handshake: %v", err)
+	}
+
+	answer := ""
+	for {
+		select {
+		case event := <-conv.Events():
+			if event.Kind == ports.ChatEventMessageCompleted {
+				answer = event.Text
+			}
+			if event.Kind == ports.ChatEventTurnCompleted {
+				if strings.TrimSpace(answer) != "AO_KIMI_PROMPT_RECEIVED" {
+					t.Fatalf("Kimi response = %q, want system-prompt handshake", answer)
+				}
+				return
+			}
+		case <-ctx.Done():
+			t.Fatalf("wait for Kimi handshake: %v", ctx.Err())
+		}
 	}
 }

@@ -43,22 +43,5 @@ func sessionOptions(settings ports.ChatTurnSettings) []acpdriver.SessionOption {
 	if settings.Model != "" {
 		options = append(options, acpdriver.SessionOption{ID: "model", Value: settings.Model})
 	}
-	if mode := permissionMode(settings.Approval); mode != "" {
-		options = append(options, acpdriver.SessionOption{ID: "mode", Value: mode})
-	}
 	return options
-}
-
-func permissionMode(permission ports.PermissionMode) string {
-	switch ports.NormalizePermissionMode(permission) {
-	case ports.PermissionModeAcceptEdits, ports.PermissionModeAuto:
-		return "auto"
-	case ports.PermissionModeBypassPermissions:
-		return "yolo"
-	default:
-		// Leave Kimi's configured/default mode unchanged. The provider-owned
-		// config option remains available when the user explicitly wants to
-		// switch back to default or enter plan mode.
-		return ""
-	}
 }

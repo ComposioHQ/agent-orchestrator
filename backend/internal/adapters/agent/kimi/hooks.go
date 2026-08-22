@@ -16,7 +16,7 @@ import (
 var kimiAPIKeyLineRE = regexp.MustCompile(`(?m)^\s*api_key\s*=\s*("([^"]*)"|'([^']*)'|([^\s#]+))`)
 
 const (
-	kimiInstructionsDirName  = ".kimi-code"
+	kimiInstructionsDirName  = ".kimi"
 	kimiInstructionsFileName = "AGENTS.md"
 	kimiInstructionsSentinel = "<!-- managed by agent-orchestrator: kimi system prompt -->"
 	kimiInstructionsEnd      = "<!-- /managed by agent-orchestrator: kimi system prompt -->"
