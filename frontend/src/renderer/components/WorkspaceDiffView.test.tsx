@@ -2,6 +2,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-libra
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ReviewDiffBody, type FileAnnotationModel } from "./WorkspaceDiffView";
+import type { WorkspaceFileDetail } from "../hooks/useSessionWorkspaceFiles";
 
 const { postMock } = vi.hoisted(() => ({ postMock: vi.fn() }));
 
@@ -60,7 +61,7 @@ function noopAnnotation(): FileAnnotationModel {
 	};
 }
 
-function baseDetail(overrides: Record<string, unknown> = {}) {
+function baseDetail(overrides: Partial<WorkspaceFileDetail> = {}): WorkspaceFileDetail {
 	return {
 		sessionId: "sess-1",
 		path: "src/App.tsx",

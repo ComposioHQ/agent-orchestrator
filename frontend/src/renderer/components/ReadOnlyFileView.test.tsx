@@ -1,13 +1,14 @@
 import { render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ReadOnlyFileView } from "./ReadOnlyFileView";
+import type { WorkspaceFileDetail } from "../hooks/useSessionWorkspaceFiles";
 
 const { highlightMock } = vi.hoisted(() => ({ highlightMock: vi.fn() }));
 
 vi.mock("../lib/api-client", () => ({ getApiBaseUrl: () => "" }));
 vi.mock("../hooks/useShikiHtml", () => ({ useShikiHtml: highlightMock }));
 
-function baseDetail(overrides: Record<string, unknown> = {}) {
+function baseDetail(overrides: Partial<WorkspaceFileDetail> = {}): WorkspaceFileDetail {
 	return {
 		sessionId: "sess-1",
 		path: "README.md",
