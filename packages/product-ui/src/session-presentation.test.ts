@@ -1,5 +1,4 @@
 import { describe, expect, it } from "vitest";
-import { toKanbanColumn } from "./session-models";
 import {
 	attentionZone,
 	getAgentActivityView,
@@ -7,6 +6,7 @@ import {
 	getSessionStatusView,
 	getSessionTimelinePillView,
 	getKanbanColumnView,
+	toKanbanColumn,
 	isAgentActivityWorking,
 	isSessionIdle,
 } from "./session-presentation";
@@ -62,11 +62,33 @@ describe("session presentation", () => {
 		);
 	});
 
-	it("falls back for a daemon that sends no column, or an unknown one", () => {
-		expect(toKanbanColumn("needs_review")).toBe("needs_review");
-		expect(toKanbanColumn(undefined)).toBe("building");
-		expect(toKanbanColumn("bogus")).toBe("building");
-		expect(toKanbanColumn(undefined, true)).toBe("archive");
+	it("prefers the daemon's column over anything derived from status", () => {
+		// A validating session can read "mergeable" on the card; the column wins.
+		expect(toKanbanColumn("validating", "mergeable")).toBe("validating");
+		expect(toKanbanColumn("building", "changes_requested")).toBe("building");
+	});
+
+	// A daemon that predates kanbanColumn still sends status, so the fallback
+	// must land each session in the lane the board gave it before the column
+	// existed rather than collapsing every live session into the first lane.
+	it.each([
+		["mergeable", "ready"],
+		["approved", "ready"],
+		["merged", "ready"],
+		["changes_requested", "needs_review"],
+		["needs_input", "needs_review"],
+		["ci_failed", "needs_review"],
+		["review_pending", "validating"],
+		["draft", "validating"],
+		["pr_open", "validating"],
+		["working", "building"],
+		["idle", "building"],
+		["terminated", "archive"],
+	] as const)("places a %s session from an older daemon in %s", (status, column) => {
+		expect(toKanbanColumn(undefined, status)).toBe(column);
+		expect(toKanbanColumn("", status)).toBe(column);
+		// An unrecognized column (newer daemon, unknown lane) takes the same path.
+		expect(toKanbanColumn("bogus", status)).toBe(column);
 	});
 
 	it("keeps lifecycle predicates independent of presentation labels", () => {

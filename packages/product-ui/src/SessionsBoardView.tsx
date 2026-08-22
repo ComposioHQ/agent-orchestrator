@@ -15,6 +15,7 @@ import { ChevronIcon, GitBranchIcon } from "./icons";
 import {
 	getAgentActivityView,
 	getSessionStatusView,
+	toKanbanColumn,
 	type KanbanColumnView,
 	type ProductUITranslator,
 } from "./session-presentation";
@@ -26,9 +27,9 @@ export type BoardSessionPresentation = {
 	branch?: string;
 	id: string;
 	/**
-	 * Daemon-derived lane placement; the board never re-derives it from status.
-	 * Absent only for fixtures and for a daemon too old to send one, which fall
-	 * back to the first lane.
+	 * Daemon-derived lane placement. Absent only for fixtures and for a daemon
+	 * too old to send one; {@link toKanbanColumn} then keeps the placement the
+	 * session's status already implied.
 	 */
 	kanbanColumn?: KanbanColumn;
 	provider: string;
@@ -84,7 +85,7 @@ export function SessionsBoardGridView<TSession extends BoardSessionPresentation>
 }: SessionsBoardGridViewProps<TSession>) {
 	const byColumn = new Map<KanbanColumn, TSession[]>();
 	for (const session of sessions) {
-		const column = session.kanbanColumn ?? "building";
+		const column = toKanbanColumn(session.kanbanColumn, session.status);
 		const sessionsForColumn = byColumn.get(column);
 		if (sessionsForColumn) sessionsForColumn.push(session);
 		else byColumn.set(column, [session]);
