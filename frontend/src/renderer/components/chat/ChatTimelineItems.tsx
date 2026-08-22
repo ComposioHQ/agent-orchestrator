@@ -29,6 +29,7 @@ import {
 	ShieldQuestion,
 	ShieldX,
 	SquareTerminal,
+	Undo2,
 	User,
 } from "lucide-react";
 
@@ -233,20 +234,20 @@ export function HumanMessage({
 				</div>
 			)}
 			{editing ? null : (
-				<div className="flex h-[18px] items-center gap-0.5">
-					<div className="flex items-center opacity-0 transition-opacity duration-150 focus-within:opacity-100 group-hover/message:opacity-100">
-						<CopyButton text={message.text} label="Copy user message" compact className="-mr-1" />
+				<div className="mt-2 flex h-[18px] items-center gap-1">
+					<div className="flex items-center gap-1 opacity-0 transition-opacity duration-150 focus-within:opacity-100 group-hover/message:opacity-100">
 						{onEdit && onEditStart && message.turnId ? (
 							<button
 								type="button"
 								onClick={onEditStart}
 								aria-label="Edit user message"
-								title="Edit user message"
 								className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[10.5px] text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground"
 							>
 								<Pencil aria-hidden="true" className="size-3" />
+								Edit
 							</button>
 						) : null}
+						<CopyButton text={message.text} label="Copy user message" />
 					</div>
 					{branchPoint && onActivateBranch ? (
 						<ConversationBranchNavigator
@@ -319,17 +320,24 @@ export function OriginMessage({ message }: { message: ConversationMessage }) {
 export function AssistantMessage({
 	message,
 	showCopy = false,
+	onRollback,
 	showStreamingIndicator = message.streaming,
 }: {
 	message: ConversationMessage;
 	/** Only the final answer of a finished turn owns the turn's copy action. */
 	showCopy?: boolean;
+	/**
+	 * Discard this turn and everything after it. Lives next to copy so the finished
+	 * answer owns both "keep this" and "undo from here".
+	 */
+	onRollback?: () => void;
 	/** Only the newest item can still be visibly writing; older streaming fragments
 	 * are waiting on a tool rather than missing content. */
 	showStreamingIndicator?: boolean;
 }) {
 	const visiblyStreaming = message.streaming && showStreamingIndicator;
 	const hasText = message.text.trim().length > 0;
+	const showActions = !visiblyStreaming && (showCopy || Boolean(onRollback));
 	return (
 		<div className={cn("group/message relative", visiblyStreaming && hasText && "chat-assistant-streaming")}>
 			<ChatMarkdown text={message.text} streaming={message.streaming} />
@@ -346,18 +354,32 @@ export function AssistantMessage({
 						Writing…
 					</span>
 				)
-			) : showCopy ? (
-				// One action for the completed answer, not one after every prose fragment
-				// the provider emitted while working.
-				<div className="flex h-[18px] items-center opacity-0 transition-opacity duration-150 focus-within:opacity-100 group-hover/message:opacity-100">
-					{/* The stored markdown, not a re-serialization of what was rendered:
-					    pasting it into an editor has to give back what the agent wrote. */}
-					<CopyButton
-						text={message.text}
-						label="Copy message as markdown"
-						compact
-						className="-ml-1.5"
-					/>
+			) : showActions ? (
+				// One action row for the completed answer, not one after every prose
+				// fragment the provider emitted while working. Always visible: hover-only
+				// chrome is easy to miss next to a short reply.
+				<div className="mt-2 flex h-[18px] items-center gap-0.5">
+					{showCopy ? (
+						/* The stored markdown, not a re-serialization of what was rendered:
+						   pasting it into an editor has to give back what the agent wrote. */
+						<CopyButton
+							text={message.text}
+							label="Copy message as markdown"
+							compact
+							className="-ml-1.5"
+						/>
+					) : null}
+					{onRollback ? (
+						<button
+							type="button"
+							onClick={onRollback}
+							aria-label="Roll back to here"
+							title="Roll back to here"
+							className="flex items-center rounded px-1.5 py-0.5 text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground"
+						>
+							<Undo2 aria-hidden="true" className="size-3" />
+						</button>
+					) : null}
 				</div>
 			) : null}
 		</div>
@@ -1683,17 +1705,10 @@ export function TurnOutcome({
 	state,
 	durationMs,
 	error,
-	onRollback,
 }: {
 	state: "completed" | "interrupted" | "failed";
 	durationMs?: number;
 	error?: string;
-	/**
-	 * Discard this turn and everything after it. Absent means the operation is not
-	 * available right now — the agent cannot undo, or it is mid-turn — and the
-	 * control is not drawn rather than drawn and then refused.
-	 */
-	onRollback?: () => void;
 }) {
 	const copy = {
 		completed: { label: "Done", tone: "text-muted-foreground/70" },
@@ -1702,20 +1717,8 @@ export function TurnOutcome({
 	}[state];
 
 	return (
-		<div className="group/turn flex items-center gap-2 pt-1">
-			<span aria-hidden="true" className="h-px flex-1 bg-border" />
-			{onRollback ? (
-				// Revealed on hover or keyboard focus. Undo belongs on the turn it undoes,
-				// but a permanent button on every turn would compete with the conversation
-				// for attention.
-				<button
-					type="button"
-					onClick={onRollback}
-					className="shrink-0 rounded px-1 text-[10px] uppercase tracking-[0.08em] text-muted-foreground/70 opacity-0 transition-opacity hover:text-foreground focus-visible:opacity-100 group-hover/turn:opacity-100"
-				>
-					Roll back to here
-				</button>
-			) : null}
+		<div className="flex items-center gap-2 pt-1">
+			<span aria-hidden="true" className="h-px min-w-0 flex-1 bg-border" />
 			<span className={cn("shrink-0 text-[10px] uppercase tracking-[0.08em]", copy.tone)}>
 				{copy.label}
 			</span>
@@ -1725,10 +1728,11 @@ export function TurnOutcome({
 				</span>
 			) : null}
 			{error ? (
-				<span className="shrink-0 text-[10px] text-destructive" title={error}>
-					{error.slice(0, 60)}
+				<span className="max-w-[40%] shrink truncate text-[10px] text-destructive" title={error}>
+					{error}
 				</span>
 			) : null}
+			<span aria-hidden="true" className="h-px min-w-0 flex-1 bg-border" />
 		</div>
 	);
 }

@@ -1,7 +1,7 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { ChatWorkspace } from "./ChatWorkspace";
+import { ChatWorkspace, promptSpacerHeight, promptTopInset } from "./ChatWorkspace";
 import { HumanMessage, OriginMessage } from "./ChatTimelineItems";
 import {
 	chatFixture,
@@ -408,7 +408,7 @@ describe("ChatWorkspace timeline", () => {
 		);
 		expect(markers.length).toBeGreaterThan(1);
 		expect(Number.parseFloat(markers[1]!.style.top) - Number.parseFloat(markers[0]!.style.top)).toBeLessThanOrEqual(
-			18,
+			8,
 		);
 
 		fireEvent.wheel(scrollbar, { deltaY: 200 });
@@ -495,10 +495,21 @@ describe("ChatWorkspace timeline", () => {
 		expect(screen.getByRole("tooltip")).not.toHaveTextContent("Automatic compaction completed");
 	});
 
-	it("explains itself instead of showing an empty scroller", () => {
+	it("centers the composer on an empty conversation instead of a starter blurb", () => {
 		render(<ChatWorkspace snapshot={chatFixtureEmpty} />);
-		expect(screen.getByText("Start the conversation")).toBeInTheDocument();
+		expect(screen.queryByText("Start the conversation")).not.toBeInTheDocument();
 		expect(screen.queryByRole("log")).not.toBeInTheDocument();
+		expect(screen.getByLabelText("Message the agent")).toBeInTheDocument();
+		expect(
+			screen.getByTestId("chat-conversation-panel").querySelector("[data-composer-placement='center']"),
+		).not.toBeNull();
+	});
+
+	it("docks the composer once the conversation has content", () => {
+		render(<ChatWorkspace snapshot={chatFixture} />);
+		expect(
+			screen.getByTestId("chat-conversation-panel").querySelector("[data-composer-placement='dock']"),
+		).not.toBeNull();
 	});
 
 	it("keeps a turn as one block, positioned by its first item", () => {
@@ -533,12 +544,7 @@ describe("ChatWorkspace timeline", () => {
 		const jump = await screen.findByRole("button", { name: /jump to latest/i });
 		expect(jump).toHaveAttribute("title", "Jump to latest");
 		expect(jump).not.toHaveTextContent("Jump to latest");
-		expect(jump).toHaveClass(
-			"bg-raised",
-			"dark:bg-raised",
-			"hover:bg-surface",
-			"dark:hover:bg-surface",
-		);
+		expect(jump).toHaveClass("rounded-full", "size-12", "bg-raised", "dark:bg-raised");
 		expect(jump).not.toHaveClass("dark:bg-transparent");
 		expect(jump).not.toHaveClass("dark:hover:bg-input/30");
 
@@ -571,6 +577,70 @@ describe("ChatWorkspace timeline", () => {
 
 		rerender(<ChatWorkspace snapshot={{ ...poll(snapshot), latestSequence: 999 }} />);
 		expect(log.scrollTop).toBe(4000);
+	});
+
+	it("keeps a trailing spacer so a dropped prompt can sit near the top", async () => {
+		const snapshot = chatFixtureSettled;
+		const { rerender } = render(<ChatWorkspace snapshot={snapshot} />);
+		const log = screen.getByRole("log");
+		const spacer = screen.getByTestId("chat-prompt-spacer");
+		const anchors = log.querySelectorAll<HTMLElement>("[data-chat-scroll-anchor]");
+		const anchor = anchors[anchors.length - 1];
+		expect(anchor).toBeTruthy();
+
+		const contentHeight = 240;
+		Object.defineProperty(spacer, "offsetHeight", {
+			configurable: true,
+			get: () => Number.parseFloat(spacer.style.height || "0") || 0,
+		});
+		Object.defineProperty(log, "clientHeight", { configurable: true, value: 800 });
+		Object.defineProperty(log, "scrollHeight", {
+			configurable: true,
+			get: () => contentHeight + (Number.parseFloat(spacer.style.height || "0") || 0),
+		});
+		Object.defineProperty(log, "scrollTop", { configurable: true, writable: true, value: 0 });
+		log.getBoundingClientRect = () =>
+			({
+				x: 0,
+				y: 0,
+				top: 0,
+				left: 0,
+				bottom: 800,
+				right: 480,
+				width: 480,
+				height: 800,
+				toJSON() {
+					return this;
+				},
+			}) as DOMRect;
+		anchor!.getBoundingClientRect = () =>
+			({
+				x: 0,
+				y: 48,
+				top: 48,
+				left: 0,
+				bottom: 96,
+				right: 480,
+				width: 480,
+				height: 48,
+				toJSON() {
+					return this;
+				},
+			}) as DOMRect;
+
+		await act(async () => {
+			rerender(<ChatWorkspace snapshot={{ ...snapshot, latestSequence: snapshot.latestSequence + 1 }} />);
+		});
+
+		expect(Number.parseFloat(spacer.style.height)).toBe(
+			promptSpacerHeight({
+				viewportHeight: 800,
+				contentHeightWithoutSpacer: contentHeight,
+				anchorOffset: 48,
+				topInset: promptTopInset(800),
+			}),
+		);
+		expect(log.scrollTop).toBe(log.scrollHeight);
 	});
 
 	it("survives a poll without disturbing what the reader opened", async () => {
@@ -955,6 +1025,33 @@ describe("ChatWorkspace reviewer tabs", () => {
 		expect(previousTabListeners.size).toBe(1);
 		act(() => [...previousTabListeners][0]?.());
 		expect(onSelectChat).toHaveBeenCalledOnce();
+	});
+});
+
+describe("promptSpacerHeight", () => {
+	it("leaves room below a short prompt and collapses once the reply fills the viewport", () => {
+		expect(
+			promptSpacerHeight({
+				viewportHeight: 800,
+				contentHeightWithoutSpacer: 120,
+				anchorOffset: 40,
+				topInset: promptTopInset(800),
+			}),
+		).toBe(560);
+
+		expect(
+			promptSpacerHeight({
+				viewportHeight: 800,
+				contentHeightWithoutSpacer: 1200,
+				anchorOffset: 40,
+				topInset: promptTopInset(800),
+			}),
+		).toBe(0);
+	});
+
+	it("keeps a prior-chat band above the latest prompt instead of pinning flush to the top", () => {
+		expect(promptTopInset(800)).toBe(160);
+		expect(promptTopInset(300)).toBe(80);
 	});
 });
 

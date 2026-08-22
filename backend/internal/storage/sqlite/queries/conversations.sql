@@ -945,6 +945,13 @@ SELECT * FROM conversation_activities
 WHERE conversation_id = ? AND provider_item_id = ?
 LIMIT 1;
 
+-- name: SelectConversationContextResetSequence :one
+SELECT CAST(COALESCE(MAX(sequence), 0) AS INTEGER) AS sequence
+FROM conversation_activities
+WHERE conversation_id = ?
+  AND kind = 'system'
+  AND provider_item_id = ?;
+
 -- Activities the agent still remembers, filtered the same way messages are and for
 -- the same reason. See SelectConversationMessages.
 -- name: SelectConversationActivities :many

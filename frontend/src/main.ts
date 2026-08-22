@@ -1589,10 +1589,12 @@ ipcMain.handle("menu:action", (_event, action: string) => {
 		case "view.reload":
 			return wc.reload();
 		case "view.devtools":
-			return browserViewHost?.toggleDevToolsForLastFocused().then((state) => {
-				if (state) return state;
-				return wc.toggleDevTools();
-			}).catch(() => wc.toggleDevTools()) ?? wc.toggleDevTools();
+			if (browserViewHost) {
+				return browserViewHost.toggleDevToolsForLastFocused().then((state) => {
+					if (!state) wc?.toggleDevTools();
+				}).catch(() => wc?.toggleDevTools());
+			}
+			return wc?.toggleDevTools();
 		case "view.zoomIn":
 			return wc.setZoomLevel(wc.getZoomLevel() + 0.5);
 		case "view.zoomOut":

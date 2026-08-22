@@ -1957,14 +1957,30 @@ body.is-resizing-x [data-slot="inspector-container"] {
 /* Conversation minimap: each dash is a real turn anchor. The rail forwards
    pointer, wheel, and keyboard navigation to the conversation viewport. */
 .cursor-chat-surface {
-	background:
-		radial-gradient(circle at 50% 0%, color-mix(in srgb, var(--color-logo-accent) 3%, transparent), transparent 34rem),
-		var(--color-bg-primary);
+	/* Same canvas as the kanban board (`bg-background` → `--color-bg-primary`). */
+	background: var(--color-bg-primary);
+}
+
+/* Chat: no accent focus rings. Hover/active already cue interactivity; the blue
+ * outline on activity rows and shared Button chrome reads as noise in the timeline. */
+.cursor-chat-surface :focus {
+	outline: none;
+}
+.cursor-chat-surface :focus-visible {
+	outline: none !important;
+	box-shadow: none !important;
+}
+.cursor-chat-surface .group\/button:focus-visible {
+	/* Undo focus-visible:border-ring from the shared Button primitive. */
+	border-color: transparent !important;
+}
+.cursor-chat-surface .group\/button[class*="border-border"]:focus-visible {
+	border-color: var(--color-border) !important;
 }
 
 .cursor-chat-header {
 	border-bottom: 1px solid var(--color-border);
-	background: color-mix(in srgb, var(--color-bg-sidebar) 72%, var(--color-bg-primary));
+	background: transparent;
 }
 
 .cursor-chat-role-icon {
@@ -1985,7 +2001,7 @@ body.is-resizing-x [data-slot="inspector-container"] {
 .cursor-chat-timeline {
 	--chat-readable-font-size: var(--chat-font-size, var(--font-size-md));
 	--chat-readable-code-font-size: max(10px, calc(var(--chat-readable-font-size) - 1.5px));
-	background: linear-gradient(to bottom, color-mix(in srgb, var(--color-bg-secondary) 16%, transparent), transparent 7rem);
+	background: transparent;
 }
 
 .cursor-chat-timeline .chat-md,
@@ -2018,20 +2034,62 @@ body.is-resizing-x [data-slot="inspector-container"] {
 	font-size: var(--chat-readable-code-font-size);
 }
 
+/* The dock is layout only. The composer paints its own surface, so a filled
+   strip behind it read as a second black box around the rounded prompt. */
 .cursor-chat-composer-dock {
-	border-top: 1px solid color-mix(in srgb, var(--color-border) 70%, transparent);
-	background: linear-gradient(to top, var(--color-bg-primary) 76%, color-mix(in srgb, var(--color-bg-primary) 92%, transparent));
+	background: transparent;
 }
 
+/* FLIP docking uses transform only so the move stays on the compositor. */
+.cursor-chat-composer-dock[data-composer-motion="animating"] {
+	will-change: transform;
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.cursor-chat-composer-dock[data-composer-motion="animating"] {
+		will-change: auto;
+		transition: none !important;
+		transform: none !important;
+	}
+}
+
+/* Every state is a custom property read by the rules below, so a theme only
+   restates the four colors instead of repeating the state selectors — and the
+   drag highlight cannot be outranked by a theme's plain border-color. */
 .cursor-chat-composer {
-	background: color-mix(in srgb, var(--color-bg-secondary) 94%, var(--color-bg-elevated));
-	box-shadow: var(--elevation-sm);
+	/* Same fill as a kanban session card (`bg-surface` → `--color-bg-secondary`). */
+	--composer-bg: var(--color-bg-secondary);
+	--composer-bg-active: var(--color-bg-secondary);
+	--composer-border: color-mix(in oklch, var(--color-border-strong) 36%, transparent);
+	--composer-border-hover: color-mix(in oklch, var(--color-border-strong) 100%, var(--color-text-muted) 15%);
+	--composer-border-focus: color-mix(in oklch, var(--color-border-strong) 100%, var(--color-text-muted) 15%);
+
+	border-radius: var(--radius-chat-composer);
+	border-color: var(--composer-border);
+	background: var(--composer-bg);
+	box-shadow: none;
 }
 
-.cursor-chat-composer:focus-within {
-	border-color: color-mix(in srgb, var(--color-logo-accent) 45%, var(--color-border-strong));
-	background: var(--color-bg-secondary);
-	box-shadow: var(--elevation-md);
+.cursor-chat-composer[data-attached-top] {
+	border-top-left-radius: 0;
+	border-top-right-radius: 0;
+}
+
+.cursor-chat-composer:hover:not(:focus-within) {
+	border-color: var(--composer-border-hover);
+	background: var(--composer-bg-active);
+}
+
+.cursor-chat-composer:focus-within,
+.cursor-chat-composer:has([data-state="open"]) {
+	border-color: var(--composer-border-focus);
+	background: var(--composer-bg-active);
+	box-shadow: none;
+}
+
+.cursor-chat-composer[data-dragging] {
+	border-color: var(--color-logo-accent);
+	background: var(--composer-bg-active);
 }
 
 /* The draft grows to seven lines before it becomes its own scroll surface. A
@@ -2080,9 +2138,7 @@ body.is-resizing-x [data-slot="inspector-container"] {
 }
 
 :root[data-theme="light"] .cursor-chat-surface {
-	background:
-		radial-gradient(circle at 50% 0%, color-mix(in srgb, var(--color-logo-accent) 5%, transparent), transparent 34rem),
-		var(--color-bg-primary);
+	background: var(--color-bg-primary);
 }
 
 :root[data-theme="light"] .cursor-chat-surface .text-foreground,
@@ -2104,20 +2160,17 @@ body.is-resizing-x [data-slot="inspector-container"] {
 }
 
 :root[data-theme="light"] .cursor-chat-header {
-	background: color-mix(in srgb, var(--color-bg-sidebar) 86%, var(--color-bg-primary));
+	background: transparent;
 }
 
 :root[data-theme="light"] .cursor-chat-composer {
-	background: color-mix(in srgb, var(--color-bg-secondary) 98%, var(--color-bg-tertiary));
-	border-color: color-mix(in oklch, var(--color-text-primary) 18%, transparent);
-	box-shadow:
-		0 1px 0 color-mix(in oklch, var(--color-text-primary) 4%, transparent),
-		0 10px 28px color-mix(in oklch, var(--color-text-primary) 8%, transparent);
-}
+	--composer-bg: var(--color-bg-secondary);
+	--composer-bg-active: var(--color-bg-secondary);
+	--composer-border: color-mix(in oklch, var(--color-text-primary) 10%, transparent);
+	--composer-border-hover: color-mix(in oklch, var(--color-text-primary) 20%, transparent);
+	--composer-border-focus: color-mix(in oklch, var(--color-text-primary) 32%, transparent);
 
-:root[data-theme="light"] .cursor-chat-composer:focus-within {
-	border-color: color-mix(in srgb, var(--color-logo-accent) 48%, var(--color-border-strong));
-	background: var(--color-bg-secondary);
+	box-shadow: none;
 }
 
 :root[data-theme="light"] .cursor-chat-human-message {
@@ -2153,10 +2206,17 @@ body.is-resizing-x [data-slot="inspector-container"] {
 
 .chat-scroll-viewport {
 	scrollbar-width: none;
+	/* Spacer-driven prompt pinning fights the browser's own scroll anchoring. */
+	overflow-anchor: none;
 }
 
 .chat-scroll-viewport::-webkit-scrollbar {
 	display: none;
+}
+
+.chat-prompt-spacer {
+	flex-shrink: 0;
+	pointer-events: none;
 }
 
 .chat-scroll-marker {
@@ -2179,7 +2239,7 @@ body.is-resizing-x [data-slot="inspector-container"] {
 	position: absolute;
 	left: 0;
 	right: 0;
-	height: 10px;
+	height: 8px;
 	transform: translateY(-50%);
 }
 

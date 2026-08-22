@@ -1441,6 +1441,26 @@ func (q *Queries) SelectConversationBySession(ctx context.Context, currentSessio
 	return i, err
 }
 
+const selectConversationContextResetSequence = `-- name: SelectConversationContextResetSequence :one
+SELECT CAST(COALESCE(MAX(sequence), 0) AS INTEGER) AS sequence
+FROM conversation_activities
+WHERE conversation_id = ?
+  AND kind = 'system'
+  AND provider_item_id = ?
+`
+
+type SelectConversationContextResetSequenceParams struct {
+	ConversationID string
+	ProviderItemID string
+}
+
+func (q *Queries) SelectConversationContextResetSequence(ctx context.Context, arg SelectConversationContextResetSequenceParams) (int64, error) {
+	row := q.db.QueryRowContext(ctx, selectConversationContextResetSequence, arg.ConversationID, arg.ProviderItemID)
+	var sequence int64
+	err := row.Scan(&sequence)
+	return sequence, err
+}
+
 const selectConversationEditAnchor = `-- name: SelectConversationEditAnchor :one
 WITH RECURSIVE active_path(branch_id, max_sequence, depth) AS (
     SELECT conversations.active_branch_id, CAST(NULL AS INTEGER), 0

@@ -38,8 +38,10 @@ type fakeStore struct {
 	worktrees           map[domain.SessionID][]domain.SessionWorktreeRecord
 	checks              map[string][]domain.PullRequestCheck
 	reviews             map[string][]domain.PullRequestReview
+	reviewsErr          error
 	threads             map[string][]domain.PullRequestReviewThread
 	comments            map[string][]domain.PullRequestComment
+	commentsErr         error
 	num                 int
 }
 
@@ -274,6 +276,9 @@ func (f *fakeStore) ListChecks(_ context.Context, prURL string) ([]domain.PullRe
 }
 
 func (f *fakeStore) ListPRReviews(_ context.Context, prURL string) ([]domain.PullRequestReview, error) {
+	if f.reviewsErr != nil {
+		return nil, f.reviewsErr
+	}
 	return append([]domain.PullRequestReview(nil), f.reviews[prURL]...), nil
 }
 
@@ -282,6 +287,9 @@ func (f *fakeStore) ListPRReviewThreads(_ context.Context, prURL string) ([]doma
 }
 
 func (f *fakeStore) ListPRComments(_ context.Context, prURL string) ([]domain.PullRequestComment, error) {
+	if f.commentsErr != nil {
+		return nil, f.commentsErr
+	}
 	return append([]domain.PullRequestComment(nil), f.comments[prURL]...), nil
 }
 

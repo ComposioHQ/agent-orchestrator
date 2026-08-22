@@ -16,6 +16,7 @@ import {
 	memo,
 	useCallback,
 	useEffect,
+	useLayoutEffect,
 	useMemo,
 	useRef,
 	useState,
@@ -27,12 +28,10 @@ import {
 	type WheelEvent as ReactWheelEvent,
 } from "react";
 import {
-	Archive,
 	ArrowDown,
 	CornerDownRight,
 	GitBranch,
 	Loader2,
-	MessageSquare,
 	TriangleAlert,
 	Undo2,
 } from "lucide-react";
@@ -257,8 +256,6 @@ export interface ChatWorkspaceProps {
 	 * is worse than none.
 	 */
 	onSteer?: (text: string) => Promise<unknown>;
-	/** Promote one already queued turn into the running turn. */
-	onPromoteQueuedTurn?: (turnId: string) => Promise<unknown>;
 	steerPending?: boolean;
 	/** Why the last steer was refused, from the daemon's typed answer. */
 	steerRefusal?: string;
@@ -329,7 +326,6 @@ export function ChatWorkspace({
 	onStageAttachments,
 	nativeImages,
 	onSteer,
-	onPromoteQueuedTurn,
 	steerPending,
 	steerRefusal,
 	onReloadMcpServers,
@@ -538,6 +534,68 @@ export function ChatWorkspace({
 
 	const brokenServers = useMemo(() => brokenMcpServers(snapshot), [snapshot]);
 	const editHumanMessage = can(snapshot, "fork") ? onEditMessage : undefined;
+	// Empty chats center the prompt; once a turn or item exists the composer docks
+	// at the bottom and stays there for the rest of the session.
+	const conversationEmpty = snapshot.items.length === 0 && !turn;
+	const composerDockRef = useRef<HTMLDivElement>(null);
+	const composerCenteredTopRef = useRef<number | null>(null);
+	const composerFlipDyRef = useRef<number | null>(null);
+	const composerSessionRef = useRef(snapshot.sessionId);
+
+	useLayoutEffect(() => {
+		const dock = composerDockRef.current;
+		if (!dock) return;
+
+		const sessionChanged = composerSessionRef.current !== snapshot.sessionId;
+		if (sessionChanged) {
+			composerSessionRef.current = snapshot.sessionId;
+			composerCenteredTopRef.current = null;
+			composerFlipDyRef.current = null;
+			dock.style.transition = "";
+			dock.style.transform = "";
+			dock.removeAttribute("data-composer-motion");
+		}
+
+		if (conversationEmpty) {
+			composerCenteredTopRef.current = dock.getBoundingClientRect().top;
+			composerFlipDyRef.current = null;
+			return;
+		}
+
+		// Capture the centered→docked delta once. Keep it across Strict Mode's
+		// setup→cleanup→setup so the docking motion still plays.
+		if (composerFlipDyRef.current == null && composerCenteredTopRef.current != null) {
+			composerFlipDyRef.current =
+				composerCenteredTopRef.current - dock.getBoundingClientRect().top;
+			composerCenteredTopRef.current = null;
+		}
+
+		const dy = composerFlipDyRef.current;
+		const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+		if (dy == null || reduceMotion || Math.abs(dy) < 1) {
+			composerFlipDyRef.current = null;
+			return;
+		}
+
+		dock.dataset.composerMotion = "animating";
+		dock.style.transition = "none";
+		dock.style.transform = `translateY(${dy}px)`;
+		void dock.offsetHeight;
+		dock.style.transition = "transform 500ms cubic-bezier(0.22, 1, 0.36, 1)";
+		dock.style.transform = "translateY(0)";
+
+		const onEnd = (event: TransitionEvent) => {
+			if (event.target !== dock || event.propertyName !== "transform") return;
+			composerFlipDyRef.current = null;
+			dock.style.transition = "";
+			dock.style.transform = "";
+			dock.removeAttribute("data-composer-motion");
+		};
+		dock.addEventListener("transitionend", onEnd);
+		return () => {
+			dock.removeEventListener("transitionend", onEnd);
+		};
+	}, [conversationEmpty, snapshot.sessionId]);
 
 	return (
 		<section
@@ -654,93 +712,99 @@ export function ChatWorkspace({
 					turnInFlight={Boolean(turn)}
 					error={mcpReloadError}
 				/>
-				<ChatLinkProvider onLinkOpen={onLinkOpen}>
-					<Timeline
-						snapshot={snapshot}
-						hasOlder={hasOlder}
-						loadingOlder={loadingOlder}
-						onLoadOlder={onLoadOlder}
-						onDecide={onDecide}
-						onResolveInput={onResolveInput}
-						busy={busy}
-						onRollback={rollbackTarget}
-						onEditHumanMessage={editHumanMessage}
-						editPending={editMessagePending}
-						editBusy={Boolean(turn)}
-						editError={editMessageError}
-						onActivateBranch={onActivateBranch}
-						activateBranchPending={activateBranchPending}
-						activateBranchError={activateBranchError}
-					/>
-				</ChatLinkProvider>
-
-				<div className="cursor-chat-composer-dock shrink-0 px-4 pb-3 pt-2">
-					<div className="mx-auto flex w-full max-w-3xl flex-col gap-2">
-						{discarded > 0 ? <RolledBackNotice count={discarded} /> : null}
-						{snapshot.branchedFromEarlierMessage ? (
-							<p className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
-								<GitBranch aria-hidden="true" className="size-3 shrink-0" />
-								Conversation branched; worktree files were left unchanged.
-							</p>
-						) : null}
-						{turn?.state === "running" && queuedMessages.length > 0 ? (
-							<QueuedMessageDock
-								messages={queuedMessages}
-								onSteer={onPromoteQueuedTurn}
-							/>
-						) : null}
-						<ChatComposer
-							attachedTop={turn?.state === "running" && queuedMessages.length > 0}
-							onSend={(text, attachments) => onSend?.(text, attachments)}
-							onInterrupt={turn ? onInterrupt : undefined}
-							commandError={commandError}
-							settings={
-								onChooseSettings || onChooseConfigOption ? (
-									<TurnSettingsBar
-										models={models ?? []}
-										settings={snapshot.settings}
-										reroute={snapshot.modelReroute}
-										onChange={onChooseSettings}
-										configOptions={configOptions ?? []}
-										onChangeConfigOption={onChooseConfigOption}
-										configPending={configOptionPending}
-										error={configOptionError}
-										disabled={
-											snapshot.controller.state === "stopped" || configOptionPending
-										}
-									/>
-								) : null
-							}
-							footerAction={
-								<CompactButton
-									onCompact={onCompact}
-									compacting={compacting}
-									unavailable={compactUnavailable}
-									turnInFlight={Boolean(turn)}
-									compactedAt={snapshot.compactedAt}
-								/>
-							}
+				<div
+					className={cn(
+						"flex min-h-0 flex-1 flex-col",
+						conversationEmpty && "justify-center",
+					)}
+					data-composer-placement={conversationEmpty ? "center" : "dock"}
+				>
+					<ChatLinkProvider onLinkOpen={onLinkOpen}>
+						<Timeline
+							snapshot={snapshot}
+							hasOlder={hasOlder}
+							loadingOlder={loadingOlder}
+							onLoadOlder={onLoadOlder}
+							onDecide={onDecide}
+							onResolveInput={onResolveInput}
 							busy={busy}
-							willQueue={Boolean(turn)}
-							disabled={snapshot.controller.state === "stopped"}
-							skills={skills}
-							filePaths={filePaths}
-							filePathsTruncated={filePathsTruncated}
-							onStageAttachments={onStageAttachments}
-							nativeImages={nativeImages}
-							autoFocus={!reviewerActive}
-							autoFocusKey={snapshot.sessionId}
-							// Steering is only meaningful into a turn that is running. A queued turn
-							// has not reached the provider, so there is nothing to steer.
-							onSteer={onSteer}
-							canSteer={Boolean(onSteer) && turn?.state === "running"}
-							steerPending={steerPending}
-							steerRefusal={steerRefusal}
-							onCompact={onCompact}
-							compacting={compacting}
-							compactUnavailable={compactUnavailable}
-							compactBlocked={Boolean(turn)}
+							onRollback={rollbackTarget}
+							onEditHumanMessage={editHumanMessage}
+							editPending={editMessagePending}
+							editBusy={Boolean(turn)}
+							editError={editMessageError}
+							onActivateBranch={onActivateBranch}
+							activateBranchPending={activateBranchPending}
+							activateBranchError={activateBranchError}
 						/>
+					</ChatLinkProvider>
+
+					<div
+						ref={composerDockRef}
+						className="cursor-chat-composer-dock shrink-0 px-4 pb-3 pt-2"
+					>
+						<div
+							data-empty={conversationEmpty || undefined}
+							className="mx-auto flex w-full max-w-3xl flex-col gap-2 transition-[max-width] duration-500 ease-out data-[empty]:max-w-2xl"
+						>
+							{discarded > 0 ? <RolledBackNotice count={discarded} /> : null}
+							{snapshot.branchedFromEarlierMessage ? (
+								<p className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+									<GitBranch aria-hidden="true" className="size-3 shrink-0" />
+									Conversation branched; worktree files were left unchanged.
+								</p>
+							) : null}
+							<ChatComposer
+								attachedTop={turn?.state === "running" && queuedMessages.length > 0}
+								queuedDock={
+									turn?.state === "running" && queuedMessages.length > 0 ? (
+										<QueuedMessageDock messages={queuedMessages} />
+									) : null
+								}
+								onSend={(text, attachments) => onSend?.(text, attachments)}
+								onInterrupt={turn ? onInterrupt : undefined}
+								commandError={commandError}
+								settings={
+									onChooseSettings || onChooseConfigOption
+										? (
+												<TurnSettingsBar
+													models={models ?? []}
+													settings={snapshot.settings}
+													reroute={snapshot.modelReroute}
+													onChange={onChooseSettings}
+													configOptions={configOptions ?? []}
+													onChangeConfigOption={onChooseConfigOption}
+													configPending={configOptionPending}
+													error={configOptionError}
+													disabled={
+														snapshot.controller.state === "stopped" || configOptionPending
+													}
+												/>
+											)
+										: null
+								}
+								busy={busy}
+								willQueue={Boolean(turn)}
+								disabled={snapshot.controller.state === "stopped"}
+								skills={skills}
+								filePaths={filePaths}
+								filePathsTruncated={filePathsTruncated}
+								onStageAttachments={onStageAttachments}
+								nativeImages={nativeImages}
+								autoFocus={!reviewerActive}
+								autoFocusKey={snapshot.sessionId}
+								// Steering is only meaningful into a turn that is running. A queued turn
+								// has not reached the provider, so there is nothing to steer.
+								onSteer={onSteer}
+								canSteer={Boolean(onSteer) && turn?.state === "running"}
+								steerPending={steerPending}
+								steerRefusal={steerRefusal}
+								onCompact={onCompact}
+								compacting={compacting}
+								compactUnavailable={compactUnavailable}
+								compactBlocked={Boolean(turn)}
+							/>
+						</div>
 					</div>
 				</div>
 			</div>
@@ -784,44 +848,6 @@ export function ChatWorkspace({
 	);
 }
 
-function CompactButton({
-	onCompact,
-	compacting,
-	unavailable,
-	turnInFlight,
-	compactedAt,
-}: {
-	onCompact?: () => void;
-	compacting?: boolean;
-	unavailable?: string;
-	turnInFlight?: boolean;
-	compactedAt?: string;
-}) {
-	if (!onCompact) return null;
-	if (unavailable === "This agent cannot compact its history") {
-		return <span className="text-[11px] text-muted-foreground">{unavailable}</span>;
-	}
-	const title = turnInFlight
-		? "Finish or stop the current turn before compacting"
-		: compactedAt
-			? `Summarize earlier history to reclaim context. Last compacted ${new Date(compactedAt).toLocaleString()}.`
-			: "Summarize earlier history to reclaim context";
-	return (
-		<Button
-			type="button"
-			size="sm"
-			variant="ghost"
-			onClick={onCompact}
-			disabled={compacting || turnInFlight}
-			title={title}
-			aria-label="Compact conversation history"
-			className="h-5 gap-1 px-1.5 text-[11px]"
-		>
-			{compacting ? <Loader2 aria-hidden="true" className="size-3 animate-spin" /> : <Archive aria-hidden="true" className="size-3" />}
-			{compacting ? "Compacting…" : "Compact"}
-		</Button>
-	);
-}
 
 /**
  * What an undo took away.
@@ -1173,6 +1199,11 @@ function ControllerBanner({
  * Once they scroll up to read, new output must not yank them away — it surfaces a
  * jump control instead.
  *
+ * A trailing spacer sizes itself so the latest human prompt can sit near the top
+ * of the viewport when following — the Cursor/ChatGPT "drop a prompt and the
+ * history moves up" behaviour. As the reply grows the spacer shrinks, which keeps
+ * the prompt in place without fighting the reader.
+ *
  * Finished turns are memoized so a targeted live-event invalidation only redraws
  * the turn that changed. Older pages are prepended explicitly instead of keeping
  * an unbounded history in every snapshot response.
@@ -1212,8 +1243,10 @@ function Timeline({
 }) {
 	const scroller = useRef<HTMLDivElement>(null);
 	const scrollContent = useRef<HTMLDivElement>(null);
+	const promptSpacer = useRef<HTMLDivElement>(null);
 	const scrollTrack = useRef<HTMLDivElement>(null);
 	const drag = useRef<{ pointerId: number; startY: number; startScrollTop: number } | null>(null);
+	const pinnedRef = useRef(true);
 	const [pinned, setPinned] = useState(true);
 	const [hoveredMarker, setHoveredMarker] = useState<number | null>(null);
 	const [messageEdit, setMessageEdit] = useState<MessageEditDraft>();
@@ -1247,6 +1280,9 @@ function Timeline({
 	);
 
 	useEffect(() => setMessageEdit(undefined), [snapshot.sessionId]);
+	useEffect(() => {
+		pinnedRef.current = pinned;
+	}, [pinned]);
 
 	const startMessageEdit = useCallback((message: ConversationMessage) => {
 		if (!message.turnId) return;
@@ -1300,7 +1336,9 @@ function Timeline({
 		const anchors = Array.from(
 			scrollContent.current?.querySelectorAll<HTMLElement>("[data-chat-scroll-anchor]") ?? [],
 		);
-		const markerGap = anchors.length > 1 ? Math.min(18, (trackHeight - 12) / (anchors.length - 1)) : 0;
+		// 8px is the Cursor-chat cadence: a 2px dash with a ~6px gap. 18px left
+		// a sparse ladder when the conversation only had a handful of turns.
+		const markerGap = anchors.length > 1 ? Math.min(8, (trackHeight - 12) / (anchors.length - 1)) : 0;
 		const markerStart = (trackHeight - markerGap * Math.max(0, anchors.length - 1)) / 2;
 		const markers = anchors.map((anchor, index) => {
 			const rect = anchor.getBoundingClientRect();
@@ -1338,23 +1376,53 @@ function Timeline({
 		);
 	}, []);
 
-	useEffect(() => {
-		if (!pinned) return;
+	/**
+	 * Size the trailing spacer so scrolling to the bottom parks the latest human
+	 * prompt below a band of prior chat — matching Cursor, where a little of the
+	 * previous turn stays visible above the new prompt instead of flush to the top.
+	 * Shrinks naturally as that reply grows.
+	 */
+	const syncPromptSpacer = useCallback(() => {
 		const node = scroller.current;
-		if (node) {
-			node.scrollTop = node.scrollHeight;
-			updateScrollbar();
+		const pad = promptSpacer.current;
+		if (!node || !pad) return;
+
+		const anchors = scrollContent.current?.querySelectorAll<HTMLElement>("[data-chat-scroll-anchor]");
+		const anchor = anchors && anchors.length > 0 ? anchors[anchors.length - 1] : null;
+		const nextHeight = anchor
+			? promptSpacerHeight({
+					viewportHeight: node.clientHeight,
+					contentHeightWithoutSpacer: node.scrollHeight - pad.offsetHeight,
+					anchorOffset: anchor.getBoundingClientRect().top - node.getBoundingClientRect().top + node.scrollTop,
+					topInset: promptTopInset(node.clientHeight),
+				})
+			: 0;
+		if (Math.abs(pad.offsetHeight - nextHeight) > 0.5) {
+			pad.style.height = `${nextHeight}px`;
 		}
-	}, [pinned, snapshot.latestSequence, updateScrollbar]);
+	}, []);
+
+	const syncScrollLayout = useCallback(() => {
+		syncPromptSpacer();
+		const node = scroller.current;
+		if (node && pinnedRef.current) {
+			node.scrollTop = node.scrollHeight;
+		}
+		updateScrollbar();
+	}, [syncPromptSpacer, updateScrollbar]);
 
 	useEffect(() => {
-		updateScrollbar();
+		syncScrollLayout();
+	}, [pinned, snapshot.latestSequence, groups.length, messageEdit?.turnId, syncScrollLayout]);
+
+	useEffect(() => {
+		syncScrollLayout();
 		if (typeof ResizeObserver === "undefined") return;
-		const observer = new ResizeObserver(updateScrollbar);
+		const observer = new ResizeObserver(syncScrollLayout);
 		if (scroller.current) observer.observe(scroller.current);
 		if (scrollContent.current) observer.observe(scrollContent.current);
 		return () => observer.disconnect();
-	}, [groups.length, updateScrollbar]);
+	}, [groups.length, syncScrollLayout]);
 
 	function onScroll() {
 		const node = scroller.current;
@@ -1457,7 +1525,7 @@ function Timeline({
 	}
 
 	if (items.length === 0 && !messageEdit && !turn) {
-		return <EmptyState harness={snapshot.harness} />;
+		return null;
 	}
 
 	return (
@@ -1465,7 +1533,7 @@ function Timeline({
 			<div
 				ref={scroller}
 				onScroll={onScroll}
-				className="chat-scroll-viewport cursor-chat-timeline h-full min-w-0 select-text overflow-x-hidden overflow-y-auto px-4 py-5"
+				className="chat-scroll-viewport cursor-chat-timeline h-full min-w-0 select-text overflow-x-hidden overflow-y-auto px-4 pt-5 pb-0"
 				role="log"
 				aria-live="polite"
 				aria-label="Conversation"
@@ -1538,6 +1606,14 @@ function Timeline({
 							/>
 						</div>
 					) : null}
+					{/* Pushes the latest prompt toward the top of the viewport when following,
+					    then shrinks as the reply fills the space below it. */}
+					<div
+						ref={promptSpacer}
+						aria-hidden="true"
+						className="chat-prompt-spacer"
+						data-testid="chat-prompt-spacer"
+					/>
 				</div>
 			</div>
 
@@ -1633,9 +1709,9 @@ function Timeline({
 					aria-label="Jump to latest"
 					title="Jump to latest"
 					onClick={() => setPinned(true)}
-					className="absolute bottom-3 left-1/2 -translate-x-1/2 rounded-full bg-raised shadow-sm hover:bg-surface dark:bg-raised dark:hover:bg-surface"
+					className="absolute bottom-3 left-1/2 size-12 -translate-x-1/2 rounded-full border-border-strong bg-raised p-0 text-foreground shadow-sm hover:bg-surface dark:bg-raised dark:hover:bg-surface"
 				>
-					<ArrowDown aria-hidden="true" className="size-4" />
+					<ArrowDown aria-hidden="true" className="size-5" />
 				</Button>
 			) : null}
 		</div>
@@ -1740,6 +1816,11 @@ const TurnGroup = memo(function TurnGroup({
 						busy={busy}
 						queued={queued}
 						showCopy={run.items[0]?.id === copyableMessageId}
+						onRollback={
+							canRollback && run.items[0]?.id === copyableMessageId
+								? () => onRollback(group.turnId as string)
+								: undefined
+						}
 						showStreamingIndicator={group.live && run.items[0]?.id === latestItemId}
 					/>
 				),
@@ -1755,12 +1836,26 @@ const TurnGroup = memo(function TurnGroup({
 			{group.live ? (
 				<TurnLiveStatus startedAt={group.liveStartedAt} blocked={group.blocked} />
 			) : null}
+			{/* No assistant prose to hang the undo on — still offer it before the outcome
+			    divider so a tool-only turn is not stuck without a way back. */}
+			{canRollback && !copyableMessageId ? (
+				<div className="mt-2 flex h-[18px] items-center">
+					<button
+						type="button"
+						onClick={() => onRollback(group.turnId as string)}
+						aria-label="Roll back to here"
+						title="Roll back to here"
+						className="flex items-center rounded px-1.5 py-0.5 text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground"
+					>
+						<Undo2 aria-hidden="true" className="size-3" />
+					</button>
+				</div>
+			) : null}
 			{group.outcome ? (
 				<TurnOutcome
 					state={group.outcome.state}
 					durationMs={group.outcome.durationMs}
 					error={group.outcome.error}
-					onRollback={canRollback ? () => onRollback(group.turnId as string) : undefined}
 				/>
 			) : null}
 		</div>
@@ -1836,6 +1931,7 @@ function TimelineItem({
 	busy,
 	queued,
 	showCopy,
+	onRollback,
 	showStreamingIndicator,
 }: {
 	item: ConversationItem;
@@ -1865,6 +1961,8 @@ function TimelineItem({
 	queued?: boolean;
 	/** This is the final assistant response of a turn that has finished. */
 	showCopy?: boolean;
+	/** Undo this finished turn from the answer that owns its copy action. */
+	onRollback?: () => void;
 	/** This message is the live edge of its turn, rather than an earlier fragment
 	 * followed by tool activity. */
 	showStreamingIndicator?: boolean;
@@ -1875,6 +1973,7 @@ function TimelineItem({
 				<AssistantMessage
 					message={item}
 					showCopy={showCopy}
+					onRollback={onRollback}
 					showStreamingIndicator={showStreamingIndicator}
 				/>
 			);
@@ -2033,6 +2132,31 @@ function groupHasHumanPrompt(group: TimelineGroup): boolean {
 	return group.items.some((item) => item.kind === "message" && item.role === "user" && item.origin === "human");
 }
 
+/** How tall the trailing spacer must be to park `anchorOffset` near the top when scrolled to the end. */
+export function promptSpacerHeight({
+	viewportHeight,
+	contentHeightWithoutSpacer,
+	anchorOffset,
+	topInset = 12,
+}: {
+	viewportHeight: number;
+	contentHeightWithoutSpacer: number;
+	anchorOffset: number;
+	topInset?: number;
+}): number {
+	const afterAnchor = Math.max(0, contentHeightWithoutSpacer - anchorOffset);
+	return Math.max(0, Math.round(viewportHeight - topInset - afterAnchor));
+}
+
+/**
+ * Leave a band of prior chat above the latest prompt (Cursor-style), not flush to
+ * the top edge. Scales with the timeline viewport, with a floor so short panes
+ * still keep a peek of history.
+ */
+export function promptTopInset(viewportHeight: number): number {
+	return Math.max(80, Math.round(viewportHeight * 0.2));
+}
+
 function previewText(value: string, limit: number): string {
 	const plain = value
 		.replace(/```[\s\S]*?```/g, " code sample ")
@@ -2131,93 +2255,47 @@ function groupByTurn(snapshot: ConversationSnapshot): TimelineGroup[] {
 	return groups;
 }
 
-function EmptyState({ harness }: { harness: string }) {
-	return (
-		<div className="flex min-h-0 flex-1 items-center justify-center px-6">
-			<div className="flex max-w-sm flex-col items-center gap-2 text-center">
-				<MessageSquare aria-hidden="true" className="size-6 text-muted-foreground" />
-				<strong className="text-sm font-medium text-foreground">Start the conversation</strong>
-				<p className="text-xs leading-relaxed text-muted-foreground">
-					This session talks to {harness} over a structured connection. Tool calls, file changes,
-					and approvals appear here as they happen. The Terminal tab opens a plain shell in the
-					same worktree — it is not a second copy of the agent.
-				</p>
-			</div>
-		</div>
-	);
-}
-
 /* -------------------------------------------------------------------------- */
 
 function QueuedMessageDock({
 	messages,
-	onSteer,
 }: {
 	messages: Array<{ turnId: string; message: ConversationMessage }>;
-	onSteer?: (turnId: string) => Promise<unknown>;
 }) {
-	const [steeringTurnId, setSteeringTurnId] = useState<string>();
-	const [errors, setErrors] = useState<Record<string, string>>({});
+	const [errors] = useState<Record<string, string>>({});
 
-	async function steer(turnId: string) {
-		if (!onSteer || steeringTurnId) return;
-		setSteeringTurnId(turnId);
-		setErrors((current) => {
-			const next = { ...current };
-			delete next[turnId];
-			return next;
-		});
-		try {
-			await onSteer(turnId);
-		} catch {
-			setErrors((current) => ({
-				...current,
-				[turnId]: "Could not steer this message. It remains queued.",
-			}));
-		} finally {
-			setSteeringTurnId(undefined);
-		}
-	}
+	const reversed = [...messages].reverse();
+	const lastIndex = reversed.length - 1;
 
 	return (
 		<div
-			className="-mb-2 max-h-40 overflow-y-auto rounded-t-[10px] border border-b-0 border-border-strong bg-surface"
+			className="-mb-2 max-h-40 overflow-y-auto rounded-t-[var(--radius-chat-composer)] border border-b-0 border-border-strong bg-surface"
 			data-testid="queued-message-dock"
 		>
-			{messages.map(({ turnId, message }) => {
-				const steering = steeringTurnId === turnId;
-				return (
-					<div
-						key={turnId}
-						className="border-b border-border px-3 py-2 last:border-b-0"
-						data-testid={`queued-message-${turnId}`}
-					>
-						<div className="flex min-h-7 min-w-0 items-center gap-2">
-							<CornerDownRight aria-hidden="true" className="size-3.5 shrink-0 text-muted-foreground" />
-							<span className="min-w-0 flex-1 truncate text-sm text-foreground" title={message.text}>
-								{message.text}
-							</span>
-							{onSteer ? (
-								<Button
-									type="button"
-									size="sm"
-									variant="ghost"
-									disabled={Boolean(steeringTurnId)}
-									onClick={() => void steer(turnId)}
-								>
-									<CornerDownRight aria-hidden="true" className="size-3" />
-									{steering ? "Steering…" : "Steer"}
-								</Button>
+			{reversed.map(({ turnId, message }, index) => {
+					const isNext = index === lastIndex;
+					return (
+						<div
+							key={turnId}
+							className="border-b border-border last:border-b-0"
+							data-testid={`queued-message-${turnId}`}
+						>
+							<div className="flex h-8 min-w-0 items-center gap-2 px-3">
+								<span className="min-w-0 flex-1 truncate text-xs text-muted-foreground" title={message.text}>
+									{message.text}
+								</span>
+								{isNext ? (
+									<CornerDownRight aria-hidden="true" className="size-3 shrink-0 text-muted-foreground" />
+								) : null}
+							</div>
+							{errors[turnId] ? (
+								<p role="status" className="px-3 pb-1 text-[11px] text-warning">
+									{errors[turnId]}
+								</p>
 							) : null}
 						</div>
-						{errors[turnId] ? (
-							<p role="status" className="mt-1 text-[11px] text-warning">
-								{errors[turnId]}
-							</p>
-						) : null}
-					</div>
-				);
-			})}
+					);
+				})}
 		</div>
 	);
 }
