@@ -63,6 +63,7 @@ import {
 	isNonzeroCommandExit,
 } from "./activity-command";
 import { Button } from "../ui/button";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "../ui/tooltip";
 import {
 	fileChangeFiles,
 	reviewedPaths,
@@ -72,8 +73,10 @@ import {
 	type ConversationMessage,
 	type DecisionOption,
 	type DeliveryState,
+	type DiffFile,
 	type DiffStatus,
 	type FileChangeFile,
+	type ConversationItem,
 	type TurnDiff,
 } from "../../types/conversation";
 
@@ -448,12 +451,22 @@ function GenericActivityRow({ activity }: { activity: ConversationActivity }) {
 	const Icon = activityIcon[activity.activityKind] ?? SquareTerminal;
 	const detail = activity.detail;
 	const files = fileChangeFiles(activity);
+	// A single edit with no patch has nothing to expand into — the header already
+	// named the file. Multi-file edits expand to a list; a lone patch expands to
+	// the diff itself.
+	const hasFileBody =
+		files.length > 1 || (files.length === 1 && Boolean(files[0]?.patch));
 	const hasBody = Boolean(
 		detail?.command ||
-			detail?.output || detail?.reason || detail?.text || detail?.terminalInput || files.length,
+			detail?.output || detail?.reason || detail?.text || detail?.terminalInput || hasFileBody,
 	);
 	const { label, path } = splitSummary(activity);
-	const compactCommand = activity.activityKind === "command";
+	// Commands and file edits share the explore-style summary line: muted label,
+	// no icon column, always-visible chevron. Everything else keeps the denser
+	// bordered activity row.
+	const compactSummary =
+		activity.activityKind === "command" || activity.activityKind === "file_change";
+	const singleEdit = activity.activityKind === "file_change" && files.length === 1 ? files[0] : undefined;
 
 	// Live output is only live if it is on screen, so a command that is still
 	// running and already printing opens itself.
@@ -464,7 +477,7 @@ function GenericActivityRow({ activity }: { activity: ConversationActivity }) {
 		<div
 			className={cn(
 				"min-w-0 max-w-full",
-				compactCommand ? "flex flex-col" : "group/activity border-t border-border first:border-t-0",
+				compactSummary ? "flex flex-col" : "group/activity border-t border-border first:border-t-0",
 			)}
 		>
 			<button
@@ -473,14 +486,14 @@ function GenericActivityRow({ activity }: { activity: ConversationActivity }) {
 				disabled={!hasBody}
 				aria-expanded={hasBody ? open : undefined}
 				className={cn(
-					compactCommand
+					compactSummary
 						? ACTIVITY_SUMMARY_BUTTON_CLASS
 						: "flex min-h-[35px] w-full min-w-0 items-center gap-[9px] px-[11px] py-2 text-left text-[11px] transition-colors",
-					hasBody && !compactCommand && "hover:bg-interactive-hover",
+					hasBody && !compactSummary && "hover:bg-interactive-hover",
 					!hasBody && "cursor-default",
 				)}
 			>
-				{compactCommand ? null : (
+				{compactSummary ? null : (
 					<Icon
 						aria-hidden="true"
 						className={cn(
@@ -490,35 +503,42 @@ function GenericActivityRow({ activity }: { activity: ConversationActivity }) {
 						size={13}
 					/>
 				)}
-				<strong
-					className={cn(
-						compactCommand
-							? "shrink-0 text-[11.5px] font-normal text-muted-foreground"
-							: "min-w-0 truncate font-medium",
-						!compactCommand &&
-							(activity.status === "failed" ? "text-destructive" : "text-foreground"),
-					)}
-					title={compactCommand ? undefined : label}
-				>
-					{label}
-				</strong>
-				{path ? (
+				{singleEdit ? (
+					<span className="flex min-w-0 items-center gap-1 text-[11.5px] font-normal">
+						<span className="shrink-0 text-muted-foreground">Edited</span>
+						<FileLocationLabel path={singleEdit.path} oldPath={singleEdit.oldPath} />
+					</span>
+				) : (
+					<strong
+						className={cn(
+							compactSummary
+								? "shrink-0 text-[11.5px] font-normal text-muted-foreground"
+								: "min-w-0 truncate font-medium",
+							!compactSummary &&
+								(activity.status === "failed" ? "text-destructive" : "text-foreground"),
+						)}
+						title={compactSummary ? undefined : label}
+					>
+						{label}
+					</strong>
+				)}
+				{path && !singleEdit ? (
 					<span
 						className="min-w-0 flex-1 truncate font-mono text-[10.5px] text-muted-foreground"
 						title={path}
 					>
 						{path}
 					</span>
-				) : compactCommand ? null : (
+				) : compactSummary ? null : (
 					<span className="flex-1" />
 				)}
 				<ActivityState
 					activity={activity}
 					open={open}
 					hasBody={hasBody}
-					showDisclosure={!compactCommand}
+					showDisclosure={!compactSummary}
 				/>
-				{compactCommand && hasBody ? (
+				{compactSummary && hasBody ? (
 					<ChevronRight
 						aria-hidden="true"
 						className={cn(
@@ -530,8 +550,13 @@ function GenericActivityRow({ activity }: { activity: ConversationActivity }) {
 			</button>
 
 			{open && hasBody ? (
-				<div className="flex flex-col gap-1.5 px-[11px] pb-2.5">
-					{files.length ? <FileChangeList files={files} /> : null}
+				<div className="flex flex-col gap-1.5 px-1 pb-1 pt-0.5">
+					{/* One file: open straight onto its patch. Listing the same
+					    basename again under "Edited name" is noise. */}
+					{files.length === 1 && files[0]?.patch ? (
+						<Patch patch={files[0].patch} truncated={files[0].patchTruncated} />
+					) : null}
+					{files.length > 1 ? <FileChangeList files={files} /> : null}
 					{detail?.command ? (
 						// Said explicitly rather than implied by the label: "Ran command"
 						// alone never tells the reader what ran, and the collapsed row
@@ -541,7 +566,7 @@ function GenericActivityRow({ activity }: { activity: ConversationActivity }) {
 						</pre>
 					) : null}
 					{detail?.reason || detail?.text ? (
-						<p className="whitespace-pre-wrap text-[11px] leading-relaxed text-muted-foreground">
+						<p className="whitespace-pre-wrap px-1 text-[11px] leading-relaxed text-muted-foreground">
 							{detail.reason ?? detail.text}
 						</p>
 					) : null}
@@ -681,7 +706,8 @@ function splitSummary(activity: ConversationActivity): { label: string; path?: s
 	}
 	const files = fileChangeFiles(activity);
 	if (activity.activityKind === "file_change" && files.length === 1) {
-		return { label: "Edited", path: shortenPaths(files[0]!.path) };
+		// Basename sits in the chip next to "Edited"; the full path is the hover.
+		return { label: `Edited ${fileBasename(files[0]!.path)}` };
 	}
 	return { label: activity.summary };
 }
@@ -757,17 +783,14 @@ function ActivityState({
 /**
  * The files one edit touched, and what it did to them.
  *
- * Every field here is new signal. The daemon normalizes the provider's change kind
- * — which arrives as an object — into a plain status, so a row can finally say
- * whether a file was added, deleted or renamed instead of only counting lines. And
- * each file now carries its own patch, which is the difference between being told
- * something changed and being able to read the change without leaving the
- * conversation.
+ * Styled like the explore summary's nested lines — "Edited FAQ.tsx +1 −1" — so an
+ * expanded edit reads the same as the turn-level changed-files list. Hovering the
+ * basename shows the full location; a file that carries a patch can still open it.
  */
 export function FileChangeList({ files }: { files: FileChangeFile[] }) {
 	if (!files.length) return null;
 	return (
-		<ul className="flex flex-col gap-0.5">
+		<ul className="flex flex-col">
 			{files.map((file) => (
 				<FileChangeRow key={`${file.oldPath ?? ""}→${file.path}`} file={file} />
 			))}
@@ -779,27 +802,13 @@ function FileChangeRow({ file }: { file: FileChangeFile }) {
 	const [open, setOpen] = useState(false);
 	const status = diffStatusMark[file.status ?? "modified"] ?? diffStatusMark.modified;
 	const hasPatch = Boolean(file.patch);
+	const accessibleName = `${status.label} ${file.path}`;
 
 	const line = (
 		<>
-			<span
-				aria-label={status.label}
-				className={cn("w-3 shrink-0 text-center font-mono text-[10px] font-semibold", status.tone)}
-				title={status.label}
-			>
-				{status.mark}
-			</span>
-			<span className="min-w-0 flex-1 truncate font-mono text-[11px] text-muted-foreground" title={file.path}>
-				{file.oldPath ? (
-					<>
-						<span className="text-muted-foreground/60">{shortenPaths(file.oldPath)}</span>
-						<span aria-hidden="true" className="px-1 text-muted-foreground/40">
-							&rarr;
-						</span>
-					</>
-				) : null}
-				{shortenPaths(file.path)}
-			</span>
+			<span className="sr-only">{status.label}</span>
+			<span className="shrink-0 text-[11.5px] text-muted-foreground">Edited</span>
+			<FileLocationLabel path={file.path} oldPath={file.oldPath} />
 			<span className="shrink-0 font-mono text-[10px] tabular-nums text-success">
 				+{file.additions}
 			</span>
@@ -812,7 +821,11 @@ function FileChangeRow({ file }: { file: FileChangeFile }) {
 	// A file with no patch is not a button: nothing opens, and a control that does
 	// nothing when pressed is worse than plain text.
 	if (!hasPatch) {
-		return <li className="flex items-center gap-2.5 px-0.5 py-1">{line}</li>;
+		return (
+			<li className="flex items-center gap-1.5 py-0.5 pr-1" aria-label={accessibleName}>
+				{line}
+			</li>
+		);
 	}
 
 	return (
@@ -821,13 +834,14 @@ function FileChangeRow({ file }: { file: FileChangeFile }) {
 				type="button"
 				onClick={() => setOpen((prev) => !prev)}
 				aria-expanded={open}
-				className="flex items-center gap-2.5 rounded-sm px-0.5 py-1 text-left transition-colors hover:bg-interactive-hover"
+				aria-label={accessibleName}
+				className="flex items-center gap-1.5 rounded-sm py-0.5 pr-1 text-left"
 			>
 				{line}
 				<ChevronRight
 					aria-hidden="true"
 					className={cn(
-						"size-3 shrink-0 text-muted-foreground/50 transition-transform",
+						"size-3 shrink-0 text-muted-foreground/40 transition-transform",
 						open && "rotate-90",
 					)}
 				/>
@@ -1585,34 +1599,47 @@ const diffStatusMark: Record<DiffStatus, { mark: string; tone: string; label: st
 /**
  * What a turn changed on disk.
  *
- * One panel per turn rather than a row per update: the provider re-sends the whole
- * diff as the turn progresses, and the daemon overwrites it, so this is current
- * state and not history. It grows while the turn runs, which is the point — seeing
- * a file appear as the agent touches it is the difference between watching work and
- * waiting for it.
+ * A bordered summary card at the end of the turn (kept near rollback), not the
+ * compact explore line used for mid-turn activity. Always shows the changed
+ * files; Review opens the Files rail, and clicking a row focuses that path.
  *
  * Rendered only when the daemon reported a diff. An agent that cannot report one
  * gets no empty panel implying it changed nothing.
  */
-export function TurnChangedFiles({ diff, live }: { diff: TurnDiff; live?: boolean }) {
-	const [open, setOpen] = useState(false);
+export function TurnChangedFiles({
+	diff,
+	live,
+	onReview,
+	onOpenFile,
+	items,
+}: {
+	diff: TurnDiff;
+	live?: boolean;
+	/** Opens the session Files inspector for the full workspace diff. */
+	onReview?: () => void;
+	/** Opens the Files inspector focused on this path. */
+	onOpenFile?: (path: string) => void;
+	/**
+	 * Timeline items from the same turn. Turn diffs often carry repo-relative
+	 * basenames (`random_words.txt`); file_change rows and command cwds often
+	 * carry the absolute worktree path the Edited tooltip already shows.
+	 */
+	items?: ConversationItem[];
+}) {
+	const [expanded, setExpanded] = useState(false);
+	const pathHints = useMemo(() => turnPathHints(items), [items]);
 	if (diff.files.length === 0) return null;
 
-	const additions = diff.files.reduce((sum, file) => sum + file.additions, 0);
-	const deletions = diff.files.reduce((sum, file) => sum + file.deletions, 0);
+	const previewLimit = 4;
+	const hidden = Math.max(0, diff.files.length - previewLimit);
+	const visible = expanded ? diff.files : diff.files.slice(0, previewLimit);
 
 	return (
-		<div className="rounded-lg border border-border bg-surface">
-			<button
-				type="button"
-				onClick={() => setOpen((prev) => !prev)}
-				aria-expanded={open}
-				className="flex w-full items-center gap-2 px-3.5 py-2.5 text-left transition-colors hover:bg-interactive-hover"
-			>
-				<FileDiff aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" />
-				<strong className="shrink-0 text-xs font-semibold text-foreground">
-					{diff.files.length === 1 ? "1 file changed" : `${diff.files.length} files changed`}
-				</strong>
+		<div className="overflow-hidden rounded-lg bg-surface">
+			<div className="flex items-center gap-2 px-3 py-2">
+				<span className="shrink-0 text-[11px] text-muted-foreground">
+					{diff.files.length === 1 ? "1 File Changed" : `${diff.files.length} Files Changed`}
+				</span>
 				{live ? (
 					<Loader2
 						aria-label="still changing"
@@ -1620,70 +1647,200 @@ export function TurnChangedFiles({ diff, live }: { diff: TurnDiff; live?: boolea
 					/>
 				) : null}
 				<span className="flex-1" />
-				<span className="shrink-0 font-mono text-[10.5px] tabular-nums">
-					<span className="text-success">+{additions}</span>{" "}
-					<span className="text-destructive">&minus;{deletions}</span>
-				</span>
-				<ChevronRight
-					aria-hidden="true"
-					className={cn(
-						"size-3.5 shrink-0 text-muted-foreground/50 transition-transform",
-						open && "rotate-90",
-					)}
-				/>
-			</button>
+				{onReview ? (
+					<button
+						type="button"
+						onClick={onReview}
+						className="shrink-0 text-[11px] text-muted-foreground transition-colors hover:text-foreground"
+					>
+						Review
+					</button>
+				) : null}
+			</div>
 
-			{open ? (
-				<ul className="flex flex-col border-t border-border">
-					{diff.files.map((file) => {
-						const status = diffStatusMark[file.status] ?? diffStatusMark.modified;
-						return (
-							<li
-								key={`${file.status}-${file.oldPath ?? ""}-${file.path}`}
-								className="flex items-center gap-2.5 px-3.5 py-1.5 text-[11px]"
-							>
-								<span
-									aria-label={status.label}
-									className={cn("w-3 shrink-0 text-center font-mono font-semibold", status.tone)}
-									title={status.label}
-								>
-									{status.mark}
-								</span>
-								<span className="min-w-0 flex-1 truncate font-mono text-muted-foreground" title={file.path}>
-									{/* A rename shows both ends. Only the new path would read as an addition
-									    and lose the fact that something moved. */}
-									{file.oldPath ? (
-										<>
-											<span className="text-muted-foreground/60">
-												{shortenPaths(file.oldPath)}
-											</span>
-											<span aria-hidden="true" className="px-1 text-muted-foreground/40">
-												&rarr;
-											</span>
-											{shortenPaths(file.path)}
-										</>
-									) : (
-										shortenPaths(file.path)
-									)}
-								</span>
-								<span className="shrink-0 font-mono tabular-nums text-success">
+			<ul className="flex flex-col px-1.5 pb-1.5">
+				{visible.map((file) => {
+					const status = diffStatusMark[file.status] ?? diffStatusMark.modified;
+					const rowClass =
+						"flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left transition-colors hover:bg-interactive-hover";
+					const tooltipPath = resolveTurnFilePath(file.path, pathHints);
+					const tooltipOldPath = file.oldPath
+						? resolveTurnFilePath(file.oldPath, pathHints)
+						: undefined;
+
+					const body = (
+						<>
+							<span className="sr-only">{status.label}</span>
+							<FileIcon aria-hidden="true" className="size-3.5 shrink-0 text-muted-foreground" />
+							{/* Same path tooltip as mid-turn Edited rows — not a native
+							    ellipsis title of the basename. */}
+							<FileLocationLabel
+								path={file.path}
+								oldPath={file.oldPath}
+								locationPath={tooltipPath}
+								locationOldPath={tooltipOldPath}
+								className="min-w-0 flex-1 truncate text-[12px] text-foreground/80"
+							/>
+							{file.additions > 0 ? (
+								<span className="shrink-0 font-mono text-[11px] tabular-nums text-success">
 									+{file.additions}
 								</span>
-								<span className="shrink-0 font-mono tabular-nums text-destructive">
+							) : null}
+							{file.deletions > 0 ? (
+								<span className="shrink-0 font-mono text-[11px] tabular-nums text-destructive">
 									&minus;{file.deletions}
 								</span>
-							</li>
-						);
-					})}
-					{diff.truncated ? (
-						<li className="px-3.5 py-2 text-[10px] leading-relaxed text-warning">
-							This turn changed more files than AO lists here. Use the Diff tab for the whole change.
+							) : null}
+							{file.additions === 0 && file.deletions === 0 ? (
+								<span className="shrink-0 font-mono text-[11px] tabular-nums text-muted-foreground/50">
+									0
+								</span>
+							) : null}
+						</>
+					);
+
+					return (
+						<li key={`${file.status}-${file.oldPath ?? ""}-${file.path}`}>
+							{onOpenFile ? (
+								<button
+									type="button"
+									onClick={() => onOpenFile(file.path)}
+									aria-label={`Open ${file.path} in Files`}
+									className={rowClass}
+								>
+									{body}
+								</button>
+							) : (
+								<div className={rowClass}>{body}</div>
+							)}
 						</li>
-					) : null}
-				</ul>
+					);
+				})}
+			</ul>
+
+			{hidden > 0 ? (
+				<button
+					type="button"
+					onClick={() => setExpanded((prev) => !prev)}
+					aria-expanded={expanded}
+					className="flex w-full items-center gap-1.5 px-3 pb-2 text-left text-[11px] text-muted-foreground transition-colors hover:text-foreground"
+				>
+					{expanded ? "Show less" : `Show ${hidden} more`}
+				</button>
+			) : null}
+
+			{diff.truncated ? (
+				<p className="px-3 pb-2 text-[10px] leading-relaxed text-warning">
+					This turn changed more files than AO lists here.
+					{onReview ? " Use Review for the whole change." : " Open the Files tab for the whole change."}
+				</p>
 			) : null}
 		</div>
 	);
+}
+
+/**
+ * Basename only — color distinguishes it from "Edited", no hover fill. Hovering
+ * shows the home-shortened worktree path in a monospace tooltip.
+ */
+function FileLocationLabel({
+	path,
+	oldPath,
+	locationPath,
+	locationOldPath,
+	className,
+}: {
+	path: string;
+	oldPath?: string;
+	/** Absolute/worktree path for the tooltip when `path` is only a basename. */
+	locationPath?: string;
+	locationOldPath?: string;
+	className?: string;
+}) {
+	const location = fileLocationLabel(locationPath ?? path, locationOldPath ?? oldPath);
+
+	return (
+		<TooltipProvider delayDuration={200}>
+			<Tooltip>
+				<TooltipTrigger asChild>
+					{/* `title=""` blocks Chromium's native ellipsis tooltip so only the
+					    path tooltip below appears — otherwise hover shows the basename. */}
+					<span
+						className={cn(
+							"min-w-0 truncate text-[11.5px] text-foreground/65 outline-none",
+							className,
+						)}
+						title=""
+					>
+						{fileBasename(path)}
+					</span>
+				</TooltipTrigger>
+				<TooltipContent
+					side="top"
+					className="max-w-[min(28rem,90vw)] border-border bg-popover px-2.5 py-1.5 font-mono text-[11px] font-normal text-muted-foreground shadow-none"
+				>
+					{location}
+				</TooltipContent>
+			</Tooltip>
+		</TooltipProvider>
+	);
+}
+
+function fileLocationLabel(path: string, oldPath?: string): string {
+	return oldPath ? `${shortenPaths(oldPath)} → ${shortenPaths(path)}` : shortenPaths(path);
+}
+
+/**
+ * Absolute paths and a worktree cwd gathered from the same turn's activities, so a
+ * turn-diff basename can be shown like the Edited tooltip.
+ */
+type TurnPathHints = {
+	byBase: Map<string, string>;
+	cwd?: string;
+};
+
+function turnPathHints(items: ConversationItem[] | undefined): TurnPathHints {
+	const byBase = new Map<string, string>();
+	let cwd: string | undefined;
+	if (!items?.length) return { byBase, cwd };
+
+	for (const item of items) {
+		if (item.kind !== "activity") continue;
+		if (!cwd && item.detail?.cwd) cwd = item.detail.cwd;
+		if (item.activityKind !== "file_change") continue;
+		for (const file of fileChangeFiles(item)) {
+			if (looksAbsolutePath(file.path)) {
+				byBase.set(fileBasename(file.path), file.path);
+				byBase.set(file.path, file.path);
+			}
+			if (file.oldPath && looksAbsolutePath(file.oldPath)) {
+				byBase.set(fileBasename(file.oldPath), file.oldPath);
+			}
+		}
+	}
+	return { byBase, cwd };
+}
+
+function looksAbsolutePath(path: string): boolean {
+	return path.startsWith("/") || path.startsWith("~") || /^[A-Za-z]:[\\/]/.test(path);
+}
+
+/** Prefer an absolute path from the turn; otherwise join the worktree cwd. */
+function resolveTurnFilePath(path: string, hints: TurnPathHints): string {
+	if (looksAbsolutePath(path)) return path;
+	const fromActivity = hints.byBase.get(path) ?? hints.byBase.get(fileBasename(path));
+	if (fromActivity) return fromActivity;
+	if (hints.cwd) {
+		const rel = path.replace(/^\.\//, "");
+		return `${hints.cwd.replace(/\/$/, "")}/${rel}`;
+	}
+	return path;
+}
+
+/** Basename only — the row is too narrow for a full path; the tooltip carries that. */
+function fileBasename(path: string): string {
+	const slash = Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\"));
+	return slash >= 0 ? path.slice(slash + 1) : path;
 }
 
 /** Exact below a thousand, because that is where the digits still mean something. */

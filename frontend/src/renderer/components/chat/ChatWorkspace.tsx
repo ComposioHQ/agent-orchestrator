@@ -227,6 +227,10 @@ export interface ChatWorkspaceProps {
 	onRollback?: (turnId: string) => void | Promise<unknown>;
 	rollbackPending?: boolean;
 	rollbackError?: string;
+	/** Opens the session Files inspector from a turn's changed-files Review control. */
+	onOpenFiles?: () => void;
+	/** Opens the Files inspector focused on one changed path. */
+	onOpenFile?: (path: string) => void;
 	/** Create a conversation branch by replacing a prior human prompt. */
 	onEditMessage?: (turnId: string, text: string) => void | Promise<unknown>;
 	editMessagePending?: boolean;
@@ -314,6 +318,8 @@ export function ChatWorkspace({
 	onRollback,
 	rollbackPending,
 	rollbackError,
+	onOpenFiles,
+	onOpenFile,
 	onEditMessage,
 	editMessagePending,
 	editMessageError,
@@ -729,6 +735,8 @@ export function ChatWorkspace({
 							onResolveInput={onResolveInput}
 							busy={busy}
 							onRollback={rollbackTarget}
+							onOpenFiles={onOpenFiles}
+							onOpenFile={onOpenFile}
 							onEditHumanMessage={editHumanMessage}
 							editPending={editMessagePending}
 							editBusy={Boolean(turn)}
@@ -1217,6 +1225,8 @@ function Timeline({
 	onResolveInput,
 	busy,
 	onRollback,
+	onOpenFiles,
+	onOpenFile,
 	onEditHumanMessage,
 	editPending,
 	editBusy,
@@ -1233,6 +1243,8 @@ function Timeline({
 	onResolveInput?: ChatWorkspaceProps["onResolveInput"];
 	busy?: boolean;
 	onRollback?: (turnId: string) => void;
+	onOpenFiles?: () => void;
+	onOpenFile?: (path: string) => void;
 	onEditHumanMessage?: (turnId: string, text: string) => Promise<unknown> | void;
 	editPending?: boolean;
 	editBusy?: boolean;
@@ -1265,6 +1277,8 @@ function Timeline({
 	const decide = useStableCallback(onDecide);
 	const resolveInput = useStableCallback(onResolveInput);
 	const rollback = useStableCallback(onRollback);
+	const openFiles = useStableCallback(onOpenFiles);
+	const openFile = useStableCallback(onOpenFile);
 	const apiBaseUrl = useSyncExternalStore(subscribeApiBaseUrl, getApiBaseUrl, getApiBaseUrl);
 	const editHumanMessage = useStableCallback(onEditHumanMessage);
 	const activateBranch = useStableCallback(onActivateBranch);
@@ -1566,6 +1580,8 @@ function Timeline({
 								onDecide={decide}
 								onResolveInput={resolveInput}
 								onRollback={rollback}
+								onOpenFiles={onOpenFiles ? openFiles : undefined}
+								onOpenFile={onOpenFile ? openFile : undefined}
 								onEditHumanMessage={canEditHumanMessage ? editHumanMessage : undefined}
 								messageEdit={messageEdit}
 								onStartMessageEdit={startMessageEdit}
@@ -1730,6 +1746,8 @@ const TurnGroup = memo(function TurnGroup({
 	onDecide,
 	onResolveInput,
 	onRollback,
+	onOpenFiles,
+	onOpenFile,
 	onEditHumanMessage,
 	messageEdit,
 	onStartMessageEdit,
@@ -1754,6 +1772,8 @@ const TurnGroup = memo(function TurnGroup({
 	onDecide: (requestId: string, decisionId: string) => void;
 	onResolveInput: NonNullable<ChatWorkspaceProps["onResolveInput"]>;
 	onRollback: (turnId: string) => void;
+	onOpenFiles?: () => void;
+	onOpenFile?: (path: string) => void;
 	onEditHumanMessage?: (turnId: string, text: string) => Promise<unknown> | void;
 	messageEdit?: MessageEditDraft;
 	onStartMessageEdit: (message: ConversationMessage) => void;
@@ -1832,7 +1852,15 @@ const TurnGroup = memo(function TurnGroup({
 			{group.plan ? <TurnPlan plan={group.plan} live={group.live} /> : null}
 			{/* Above the outcome divider: the changed files are part of what the turn
 			    did, and belong inside it rather than after it closes. */}
-			{group.diff ? <TurnChangedFiles diff={group.diff} live={group.live} /> : null}
+			{group.diff ? (
+				<TurnChangedFiles
+					diff={group.diff}
+					live={group.live}
+					items={group.items}
+					onReview={onOpenFiles}
+					onOpenFile={onOpenFile}
+				/>
+			) : null}
 			{group.live ? (
 				<TurnLiveStatus startedAt={group.liveStartedAt} blocked={group.blocked} />
 			) : null}
