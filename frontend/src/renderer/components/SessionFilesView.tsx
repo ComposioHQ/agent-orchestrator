@@ -852,6 +852,10 @@ function DiffView({
 	const menuOpen = menuState?.open ?? false;
 	useEffect(() => {
 		onActiveSelectionChange(hasSelection || menuOpen);
+		// Unmounting takes the selection with it. Without this the guard sticks on
+		// after a tab switch away from the diff, and the file's detail query stays
+		// disabled — the rendered view would then show content that never refreshes.
+		return () => onActiveSelectionChange(false);
 	}, [hasSelection, menuOpen, onActiveSelectionChange]);
 
 	const onContextMenu = useCallback(
