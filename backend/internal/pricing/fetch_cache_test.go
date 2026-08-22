@@ -274,6 +274,46 @@ func TestCacheMissingOrCorruptLKGIsUnavailable(t *testing.T) {
 	}
 }
 
+// A content-addressed path whose bytes no longer hash to it is corrupt, and the
+// refresher's only route back is to reinstall the validated remote copy. If
+// Install refused that write, every retry would download the same valid bytes
+// and fail again, leaving pricing permanently unavailable until the user
+// deleted AO state by hand.
+func TestCacheInstallRepairsCorruptProviderBlob(t *testing.T) {
+	dataDir := t.TempDir()
+	fixture := testCandidate(t, testBaseModels("0.1"))
+	catalog, err := ParseCatalog(fixture.manifest, fixture.providers)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cache := NewCache(dataDir)
+	if err := cache.Install(catalog); err != nil {
+		t.Fatalf("first Install: %v", err)
+	}
+
+	corrupted := providerFilePaths(t, cache.Root(), fixture)[0]
+	if err := os.WriteFile(corrupted, []byte(`{"providerId":"openai","models":[]}`+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cache.Load(); err == nil {
+		t.Fatal("corrupt provider blob loaded successfully")
+	}
+
+	if err := cache.Install(catalog); err != nil {
+		t.Fatalf("reinstall over corrupt blob: %v", err)
+	}
+	loaded, err := cache.Load()
+	if err != nil {
+		t.Fatalf("Load after repair: %v", err)
+	}
+	if got := loaded.Snapshot().ProviderVersion("openai"); got != fixture.versions["openai"] {
+		t.Fatalf("repaired openai version = %q, want %q", got, fixture.versions["openai"])
+	}
+	if info, err := os.Stat(corrupted); err != nil || info.Mode().Perm() != 0o600 {
+		t.Fatalf("repaired blob mode = %v, %v", info.Mode().Perm(), err)
+	}
+}
+
 func providerFilePaths(t *testing.T, root string, fixture testCatalog) []string {
 	t.Helper()
 	paths := make([]string, 0, len(fixture.providers))

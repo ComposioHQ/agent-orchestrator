@@ -317,12 +317,11 @@ func (i *Ingestor) Ingest(ctx context.Context, sourceID int64) (IngestResult, er
 						continue
 					}
 					parsed.Events[index].Costs = domain.UsageEventCosts{
-						UncachedInputCostNanos: estimate.UncachedInputNanos,
-						CacheReadCostNanos:     estimate.CacheReadNanos,
-						CacheWriteCostNanos:    estimate.CacheWriteNanos,
-						OutputCostNanos:        estimate.OutputNanos,
-						EstimatedCostNanos:     estimate.TotalNanos,
-						PricingVersion:         estimate.PricingVersion,
+						InputCostNanos:       estimate.InputNanos,
+						CachedInputCostNanos: estimate.CachedInputNanos,
+						OutputCostNanos:      estimate.OutputNanos,
+						EstimatedCostNanos:   estimate.TotalNanos,
+						PricingVersion:       estimate.PricingVersion,
 					}
 				}
 				return i.store.ApplyUsageChunk(

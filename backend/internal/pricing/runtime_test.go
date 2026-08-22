@@ -93,22 +93,88 @@ func TestEstimateRoundsComponentsHalfUpAndSumsChecked(t *testing.T) {
 	five, one := int64(1), int64(1)
 	estimate, err := snapshot.Estimate(domain.ModelUsageEvent{
 		ProviderID: domain.UsageProviderAnthropic, BillingProviderID: "anthropic", ModelID: "claude-test",
-		Tokens: pricingTokens(4, 1, 3, 1),
-		ProviderDetails: domain.UsageProviderDetails{Anthropic: &domain.AnthropicUsageDetails{
-			DirectUncachedInputTokens:  costInt64(1),
-			CacheCreationInputTokens:   costInt64(2),
-			CacheCreation5mInputTokens: &five,
-			CacheCreation1hInputTokens: &one,
-		}},
+		Tokens:            pricingTokens(4, 1, 3, 1),
+		ProviderUsageJSON: anthropicUsageJSON(2, &five, &one),
 	})
 	if err != nil {
 		t.Fatalf("Estimate: %v", err)
 	}
-	assertCost(t, "input", estimate.UncachedInputNanos, 1)
-	assertCost(t, "read", estimate.CacheReadNanos, 2)
-	assertCost(t, "write", estimate.CacheWriteNanos, 6)
+	// One fresh token at 0.5 nano rounds half up to 1; the two cache-write
+	// tokens charge 2.5 and 3.5 and round to 3 each. Input is their sum.
+	assertCost(t, "input", estimate.InputNanos, 7)
+	assertCost(t, "cached input", estimate.CachedInputNanos, 2)
 	assertCost(t, "output", estimate.OutputNanos, 5)
 	assertCost(t, "total", estimate.TotalNanos, 14)
+}
+
+// Only 5 of 112 OpenAI models publish a cache-write rate. A catalog without one
+// is not missing data: the provider bills writes as ordinary input, so the whole
+// uncached bucket takes the input rate and the event still prices completely.
+func TestEstimateChargesCacheWritesAsInputWithoutAWriteRate(t *testing.T) {
+	snapshot := decodeTestSnapshot(t, map[string][]testModel{
+		"anthropic": {{ID: "claude-test", Input: "0.1", Output: "0.2"}},
+		"openai":    {{ID: "gpt-test", Input: "0.000001", Read: strptr("0.0000001"), Output: "0.000002"}},
+		"zai":       {{ID: "glm-test", Input: "0.1", Output: "0.2"}},
+	})
+	estimate, err := snapshot.Estimate(domain.ModelUsageEvent{
+		ProviderID: domain.UsageProviderOpenAI, BillingProviderID: "openai", ModelID: "gpt-test",
+		Tokens:            pricingTokens(1000, 400, 600, 200),
+		ProviderUsageJSON: codexUsageJSON(150),
+	})
+	if err != nil {
+		t.Fatalf("Estimate: %v", err)
+	}
+	assertCost(t, "input", estimate.InputNanos, 600_000)
+	assertCost(t, "cached input", estimate.CachedInputNanos, 40_000)
+	assertCost(t, "output", estimate.OutputNanos, 400_000)
+	assertCost(t, "total", estimate.TotalNanos, 1_040_000)
+
+	// The same event prices identically with no provider object at all: without
+	// a write rate the split is never consulted.
+	withoutJSON, err := snapshot.Estimate(domain.ModelUsageEvent{
+		ProviderID: domain.UsageProviderOpenAI, BillingProviderID: "openai", ModelID: "gpt-test",
+		Tokens: pricingTokens(1000, 400, 600, 200),
+	})
+	if err != nil {
+		t.Fatalf("Estimate without provider usage: %v", err)
+	}
+	assertCost(t, "total without provider usage", withoutJSON.TotalNanos, 1_040_000)
+}
+
+// A model that does publish a write rate needs the split, and an event stored
+// before the bounded object was captured cannot supply one.
+func TestEstimateLeavesInputUnknownWhenAPricedWriteSplitIsMissing(t *testing.T) {
+	snapshot := decodeTestSnapshot(t, map[string][]testModel{
+		"anthropic": {{ID: "claude-test", Input: "0.000003", Read: strptr("0.0000003"), Write: strptr("0.00000375"), Output: "0.000015"}},
+		"openai":    {{ID: "gpt-test", Input: "0.1", Output: "0.2"}},
+		"zai":       {{ID: "glm-test", Input: "0.1", Output: "0.2"}},
+	})
+	estimate, err := snapshot.Estimate(domain.ModelUsageEvent{
+		ProviderID: domain.UsageProviderAnthropic, BillingProviderID: "anthropic", ModelID: "claude-test",
+		Tokens: pricingTokens(1000, 400, 600, 200),
+	})
+	if err != nil {
+		t.Fatalf("Estimate: %v", err)
+	}
+	if estimate.InputNanos != nil || estimate.TotalNanos != nil {
+		t.Fatalf("input cost = %v, total = %v, want both unknown", estimate.InputNanos, estimate.TotalNanos)
+	}
+	// The other two components are still known and still contribute to the
+	// aggregate lower bound.
+	assertCost(t, "cached input", estimate.CachedInputNanos, 120_000)
+	assertCost(t, "output", estimate.OutputNanos, 3_000_000)
+
+	// With the object present the single write rate applies to the whole bucket.
+	priced, err := snapshot.Estimate(domain.ModelUsageEvent{
+		ProviderID: domain.UsageProviderAnthropic, BillingProviderID: "anthropic", ModelID: "claude-test",
+		Tokens:            pricingTokens(1000, 400, 600, 200),
+		ProviderUsageJSON: anthropicUsageJSON(100, nil, nil),
+	})
+	if err != nil {
+		t.Fatalf("Estimate with provider usage: %v", err)
+	}
+	assertCost(t, "input", priced.InputNanos, 1_875_000)
+	assertCost(t, "total", priced.TotalNanos, 4_995_000)
 }
 
 func TestEstimateKeepsUnknownBucketsUnknownAndZeroBucketsKnown(t *testing.T) {
@@ -118,38 +184,45 @@ func TestEstimateKeepsUnknownBucketsUnknownAndZeroBucketsKnown(t *testing.T) {
 		"zai":       {{ID: "glm-test", Input: "0.1", Output: "0.2"}},
 	})
 
+	// An uncollected counter prices as unknown, never as zero.
 	estimate, err := snapshot.Estimate(domain.ModelUsageEvent{
 		ProviderID: domain.UsageProviderAnthropic, BillingProviderID: "anthropic", ModelID: "claude-test",
-		Tokens: pricingTokens(1, 0, 1, 0),
-		ProviderDetails: domain.UsageProviderDetails{Anthropic: &domain.AnthropicUsageDetails{
-			DirectUncachedInputTokens: costInt64(0), CacheCreationInputTokens: costInt64(1),
-		}},
+		Tokens: domain.UsageTokenMetrics{CachedInputTokens: costInt64(0), OutputTokens: costInt64(0)},
 	})
 	if err != nil {
 		t.Fatalf("Estimate: %v", err)
 	}
-	assertCost(t, "zero input", estimate.UncachedInputNanos, 0)
-	assertCost(t, "zero read", estimate.CacheReadNanos, 0)
-	if estimate.CacheWriteNanos != nil || estimate.TotalNanos != nil {
-		t.Fatalf("positive unsplit Anthropic write must be unknown: %#v", estimate)
+	if estimate.InputNanos != nil || estimate.TotalNanos != nil {
+		t.Fatalf("uncollected input must be unknown: %#v", estimate)
 	}
+	assertCost(t, "zero cached input", estimate.CachedInputNanos, 0)
 	assertCost(t, "zero output", estimate.OutputNanos, 0)
 
+	// A known zero stays a known zero even for a model the catalog never priced:
+	// zero tokens cost zero at any rate, including an absent one.
 	missing, err := snapshot.Estimate(domain.ModelUsageEvent{
 		ProviderID: domain.UsageProviderOpenAI, BillingProviderID: "openai", ModelID: "missing",
 		Tokens: pricingTokens(0, 0, 0, 0),
-		ProviderDetails: domain.UsageProviderDetails{OpenAI: &domain.OpenAIUsageDetails{
-			CacheWriteInputTokens: costInt64(0),
-		}},
 	})
 	if err != nil {
 		t.Fatalf("Estimate missing model zero vector: %v", err)
 	}
-	assertCost(t, "missing input zero", missing.UncachedInputNanos, 0)
-	assertCost(t, "missing read zero", missing.CacheReadNanos, 0)
-	assertCost(t, "missing write zero", missing.CacheWriteNanos, 0)
+	assertCost(t, "missing input zero", missing.InputNanos, 0)
+	assertCost(t, "missing cached input zero", missing.CachedInputNanos, 0)
 	assertCost(t, "missing output zero", missing.OutputNanos, 0)
 	assertCost(t, "missing total zero", missing.TotalNanos, 0)
+
+	// A nonzero bucket for an unpriced model is unknown, not zero.
+	unpriced, err := snapshot.Estimate(domain.ModelUsageEvent{
+		ProviderID: domain.UsageProviderOpenAI, BillingProviderID: "openai", ModelID: "missing",
+		Tokens: pricingTokens(1, 0, 1, 0),
+	})
+	if err != nil {
+		t.Fatalf("Estimate missing model nonzero vector: %v", err)
+	}
+	if unpriced.InputNanos != nil || unpriced.TotalNanos != nil {
+		t.Fatalf("unpriced model must leave input unknown: %#v", unpriced)
+	}
 }
 
 func TestEstimateRejectsInvalidTokensAndOverflow(t *testing.T) {
@@ -161,18 +234,12 @@ func TestEstimateRejectsInvalidTokensAndOverflow(t *testing.T) {
 	if _, err := snapshot.Estimate(domain.ModelUsageEvent{
 		ProviderID: domain.UsageProviderAnthropic, BillingProviderID: "anthropic", ModelID: "claude-test",
 		Tokens: pricingTokens(2, 0, 2, 0),
-		ProviderDetails: domain.UsageProviderDetails{Anthropic: &domain.AnthropicUsageDetails{
-			DirectUncachedInputTokens: costInt64(2), CacheCreationInputTokens: costInt64(0),
-		}},
 	}); err == nil {
 		t.Fatal("overflow error = nil")
 	}
 	if _, err := snapshot.Estimate(domain.ModelUsageEvent{
 		ProviderID: domain.UsageProviderOpenAI, BillingProviderID: "openai", ModelID: "gpt-test",
 		Tokens: pricingTokens(0, 0, 0, -1),
-		ProviderDetails: domain.UsageProviderDetails{OpenAI: &domain.OpenAIUsageDetails{
-			CacheWriteInputTokens: costInt64(0),
-		}},
 	}); err == nil {
 		t.Fatal("negative token error = nil")
 	}
@@ -462,9 +529,32 @@ func pricingTokens(input, cachedInput, uncachedInput, output int64) domain.Usage
 	return domain.UsageTokenMetrics{
 		InputTokens: &input, CachedInputTokens: &cachedInput,
 		UncachedInputTokens: &uncachedInput, OutputTokens: &output,
-		Provenance: domain.UsageMetricProvenanceSet{
-			InputTokens: domain.UsageMetricReported, CachedInputTokens: domain.UsageMetricReported,
-			UncachedInputTokens: domain.UsageMetricDerived, OutputTokens: domain.UsageMetricReported,
-		},
 	}
+}
+
+// anthropicUsageJSON is the bounded object Claude emits, reduced to the fields
+// pricing reads back out of it.
+func anthropicUsageJSON(cacheCreation int64, fiveM, oneH *int64) string {
+	usage := map[string]any{"cache_creation_input_tokens": cacheCreation}
+	if fiveM != nil && oneH != nil {
+		usage["cache_creation"] = map[string]any{
+			"ephemeral_5m_input_tokens": *fiveM, "ephemeral_1h_input_tokens": *oneH,
+		}
+	}
+	encoded, err := json.Marshal(usage)
+	if err != nil {
+		panic(err)
+	}
+	return string(encoded)
+}
+
+// codexUsageJSON is payload.info reduced to the per-event vector pricing reads.
+func codexUsageJSON(cacheWrite int64) string {
+	encoded, err := json.Marshal(map[string]any{
+		"last_token_usage": map[string]any{"cache_write_input_tokens": cacheWrite},
+	})
+	if err != nil {
+		panic(err)
+	}
+	return string(encoded)
 }

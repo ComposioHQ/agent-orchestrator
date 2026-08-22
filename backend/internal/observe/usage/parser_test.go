@@ -33,13 +33,55 @@ func TestParseClaudeFinalUsageAndSkipMainSidechain(t *testing.T) {
 		tokenValue(got.Tokens.OutputTokens) != 4 {
 		t.Fatalf("tokens = %+v", got.Tokens)
 	}
-	if details := got.ProviderDetails.Anthropic; details == nil ||
-		tokenValue(details.DirectUncachedInputTokens) != 10 || tokenValue(details.CacheCreationInputTokens) != 3 ||
-		tokenValue(details.CacheCreation5mInputTokens) != 2 || tokenValue(details.CacheCreation1hInputTokens) != 1 {
-		t.Fatalf("provider details = %+v", details)
+	if providerUsageTokens(t, got.ProviderUsageJSON, "input_tokens") != 10 ||
+		providerUsageTokens(t, got.ProviderUsageJSON, "cache_creation_input_tokens") != 3 ||
+		providerUsageTokens(t, got.ProviderUsageJSON, "cache_creation", "ephemeral_5m_input_tokens") != 2 ||
+		providerUsageTokens(t, got.ProviderUsageJSON, "cache_creation", "ephemeral_1h_input_tokens") != 1 {
+		t.Fatalf("provider usage = %s", got.ProviderUsageJSON)
+	}
+	if got.MeasurementKind != domain.UsageMeasurementNativeReported {
+		t.Fatalf("measurement kind = %q, want native_reported", got.MeasurementKind)
 	}
 	if got.ModelID != "claude-x" {
 		t.Fatalf("event = %+v", got)
+	}
+}
+
+// The stored object is the CLI's usage record verbatim, so a field Anthropic
+// adds after this code was written still reaches pricing and auditing.
+func TestParseClaudeRetainsUnknownProviderUsageFieldsWithinTheBound(t *testing.T) {
+	source := usageSource(domain.UsageSourceClaudeMain)
+	result := parseRecords(source, []jsonlRecord{{Data: []byte(
+		`{"type":"assistant","uuid":"one","message":{"id":"msg-1","model":"claude-x","stop_reason":"end_turn","usage":{"input_tokens":8,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":2,"output_tokens_details":{"thinking_tokens":1},"server_tool_use":{"web_search_requests":2},"service_tier":"standard"}}}`,
+	)}}, 400, time.Unix(1700000000, 0).UTC())
+	if len(result.Events) != 1 {
+		t.Fatalf("events = %d, want 1", len(result.Events))
+	}
+	stored := result.Events[0].ProviderUsageJSON
+	if providerUsageTokens(t, stored, "output_tokens_details", "thinking_tokens") != 1 ||
+		providerUsageTokens(t, stored, "server_tool_use", "web_search_requests") != 2 {
+		t.Fatalf("provider usage = %s, want unknown fields retained", stored)
+	}
+	if !strings.Contains(stored, `"service_tier":"standard"`) {
+		t.Fatalf("provider usage = %s, want the object compacted verbatim", stored)
+	}
+
+	// An object far larger than the counter record the providers document is
+	// dropped rather than truncated: an absent object is honest, a partial one
+	// would silently misprice.
+	oversized := strings.Repeat("x", maxProviderUsageBytes)
+	huge := parseRecords(source, []jsonlRecord{{Data: []byte(fmt.Sprintf(
+		`{"type":"assistant","uuid":"two","message":{"id":"msg-2","model":"claude-x","stop_reason":"end_turn","usage":{"input_tokens":8,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":2,"padding":%q}}}`,
+		oversized,
+	))}}, 40_000, time.Unix(1700000000, 0).UTC())
+	if len(huge.Events) != 1 {
+		t.Fatalf("events = %d, want 1", len(huge.Events))
+	}
+	if huge.Events[0].ProviderUsageJSON != "" {
+		t.Fatalf("oversized provider usage was stored: %d bytes", len(huge.Events[0].ProviderUsageJSON))
+	}
+	if tokenValue(huge.Events[0].Tokens.InputTokens) != 8 {
+		t.Fatalf("dropping the object must not drop the neutral counters: %+v", huge.Events[0].Tokens)
 	}
 }
 
@@ -101,10 +143,11 @@ func TestParseClaudeCacheWriteSplitsAreCapturedOrRejected(t *testing.T) {
 		{name: "absent", wantEvents: 1},
 		{name: "explicit zero", cacheCreation: `,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0}`, want5m: int64Ptr(0), want1h: int64Ptr(0), wantEvents: 1},
 		{name: "valid", cacheCreation: `,"cache_creation":{"ephemeral_5m_input_tokens":2,"ephemeral_1h_input_tokens":1}`, want5m: int64Ptr(2), want1h: int64Ptr(1), wantEvents: 1},
-		// An absent TTL member decodes as a known zero, and splits that do not
-		// sum to the generic total are still persisted: pricing treats such an
-		// event as an unknown cache-write cost rather than rejecting the tokens.
-		{name: "missing member", cacheCreation: `,"cache_creation":{"ephemeral_5m_input_tokens":3}`, want5m: int64Ptr(3), want1h: int64Ptr(0), wantEvents: 1},
+		// An absent TTL member stays absent rather than becoming a known zero,
+		// and splits that do not sum to the generic total are still persisted:
+		// pricing treats either as an unknown input cost rather than rejecting
+		// the tokens.
+		{name: "missing member", cacheCreation: `,"cache_creation":{"ephemeral_5m_input_tokens":3}`, want5m: int64Ptr(3), wantEvents: 1},
 		{name: "negative", cacheCreation: `,"cache_creation":{"ephemeral_5m_input_tokens":4,"ephemeral_1h_input_tokens":-1}`, wantAnomaly: 1},
 		{name: "sum below generic total", cacheCreation: `,"cache_creation":{"ephemeral_5m_input_tokens":1,"ephemeral_1h_input_tokens":1}`, want5m: int64Ptr(1), want1h: int64Ptr(1), wantEvents: 1},
 		{name: "sum above generic total", cacheCreation: `,"cache_creation":{"ephemeral_5m_input_tokens":2,"ephemeral_1h_input_tokens":2}`, wantAnomaly: 1},
@@ -128,10 +171,11 @@ func TestParseClaudeCacheWriteSplitsAreCapturedOrRejected(t *testing.T) {
 			if test.wantEvents == 0 {
 				return
 			}
-			details := result.Events[0].ProviderDetails.Anthropic
-			if details == nil || !equalInt64Ptr(details.CacheCreation5mInputTokens, test.want5m) ||
-				!equalInt64Ptr(details.CacheCreation1hInputTokens, test.want1h) {
-				t.Fatalf("splits = %+v, want %v/%v", details, test.want5m, test.want1h)
+			stored := result.Events[0].ProviderUsageJSON
+			got5m := providerUsageValue(t, stored, "cache_creation", "ephemeral_5m_input_tokens")
+			got1h := providerUsageValue(t, stored, "cache_creation", "ephemeral_1h_input_tokens")
+			if !equalInt64Ptr(got5m, test.want5m) || !equalInt64Ptr(got1h, test.want1h) {
+				t.Fatalf("splits = %s, want %v/%v", stored, test.want5m, test.want1h)
 			}
 		})
 	}
@@ -196,17 +240,16 @@ func TestParseClaudeReferenceUsageDeduplicatesLogicalResponses(t *testing.T) {
 	assertCanonicalEventTotals(t, result.Events, 148625, 75376, 73249, 24993)
 	var direct, creation, creation5m, creation1h int64
 	for _, event := range result.Events {
-		details := event.ProviderDetails.Anthropic
-		if event.ProviderID != domain.UsageProviderAnthropic || details == nil {
+		if event.ProviderID != domain.UsageProviderAnthropic || event.ProviderUsageJSON == "" {
 			t.Fatalf("provider mapping = %+v", event)
 		}
-		direct += tokenValue(details.DirectUncachedInputTokens)
-		creation += tokenValue(details.CacheCreationInputTokens)
-		creation5m += tokenValue(details.CacheCreation5mInputTokens)
-		creation1h += tokenValue(details.CacheCreation1hInputTokens)
+		direct += providerUsageTokens(t, event.ProviderUsageJSON, "input_tokens")
+		creation += providerUsageTokens(t, event.ProviderUsageJSON, "cache_creation_input_tokens")
+		creation5m += providerUsageTokens(t, event.ProviderUsageJSON, "cache_creation", "ephemeral_5m_input_tokens")
+		creation1h += providerUsageTokens(t, event.ProviderUsageJSON, "cache_creation", "ephemeral_1h_input_tokens")
 	}
 	if direct != 40 || creation != 73209 || creation5m != 0 || creation1h != 73209 {
-		t.Fatalf("Anthropic details = direct:%d creation:%d 5m:%d 1h:%d", direct, creation, creation5m, creation1h)
+		t.Fatalf("Anthropic usage = direct:%d creation:%d 5m:%d 1h:%d", direct, creation, creation5m, creation1h)
 	}
 }
 
@@ -228,16 +271,21 @@ func TestParseCodexCumulativeDeltasAndRepeats(t *testing.T) {
 		tokenValue(got.CachedInputTokens) != 60 || tokenValue(got.OutputTokens) != 20 {
 		t.Fatalf("first tokens = %+v", got)
 	}
-	if details := result.Events[0].ProviderDetails.OpenAI; details == nil ||
-		tokenValue(details.CacheWriteInputTokens) != 10 || tokenValue(details.ReasoningOutputTokens) != 5 {
-		t.Fatalf("first provider details = %+v", details)
-	}
 	if got := result.Events[1].Tokens; tokenValue(got.InputTokens) != 60 || tokenValue(got.UncachedInputTokens) != 30 ||
 		tokenValue(got.CachedInputTokens) != 30 || tokenValue(got.OutputTokens) != 15 {
 		t.Fatalf("delta tokens = %+v", got)
 	}
-	if details := result.Events[1].ProviderDetails.OpenAI; details == nil || tokenValue(details.ReasoningOutputTokens) != 3 {
-		t.Fatalf("delta provider details = %+v", details)
+	// Each event stores payload.info exactly as emitted. These records carry only
+	// cumulative counters, so the stored object holds the running totals the
+	// event was derived from, not the derived delta.
+	for index, wantCumulativeInput := range []int64{100, 160} {
+		stored := result.Events[index].ProviderUsageJSON
+		if providerUsageTokens(t, stored, "total_token_usage", "input_tokens") != wantCumulativeInput {
+			t.Fatalf("event %d provider usage = %s, want cumulative input %d", index, stored, wantCumulativeInput)
+		}
+		if providerUsageValue(t, stored, "last_token_usage") != nil {
+			t.Fatalf("event %d provider usage invented a per-event vector: %s", index, stored)
+		}
 	}
 	state := parserStateFromResult(t, result, domain.UsageSourceCodexRollout)
 	if state.Codex.Baseline.InputTokens != 160 || state.Codex.ModelID != "gpt-5.6" || state.Codex.Provider != "openai" {
@@ -281,18 +329,21 @@ func TestParseCodexReferenceUsageReconcilesLastAndCumulativeTotals(t *testing.T)
 		t.Fatalf("result = %+v, want three reconciled events", result)
 	}
 	assertCanonicalEventTotals(t, result.Events, 63566, 30848, 32718, 5058)
-	var reasoning, cacheWrite, reportedTotal int64
+	// last_token_usage is the per-event vector, so the reasoning and cache-write
+	// subsets pricing needs are recoverable from each stored object.
+	var reasoning, cacheWrite int64
 	for _, event := range result.Events {
-		details := event.ProviderDetails.OpenAI
-		if event.ProviderID != domain.UsageProviderOpenAI || details == nil {
+		if event.ProviderID != domain.UsageProviderOpenAI || event.ProviderUsageJSON == "" {
 			t.Fatalf("provider mapping = %+v", event)
 		}
-		reasoning += tokenValue(details.ReasoningOutputTokens)
-		cacheWrite += tokenValue(details.CacheWriteInputTokens)
-		reportedTotal += tokenValue(details.ReportedTotalTokens)
+		reasoning += providerUsageTokens(t, event.ProviderUsageJSON, "last_token_usage", "reasoning_output_tokens")
+		cacheWrite += providerUsageTokens(t, event.ProviderUsageJSON, "last_token_usage", "cache_write_input_tokens")
 	}
-	if reasoning != 1180 || cacheWrite != 0 || reportedTotal != 68624 {
-		t.Fatalf("OpenAI details = reasoning:%d cache-write:%d reported-total:%d", reasoning, cacheWrite, reportedTotal)
+	if reasoning != 1180 || cacheWrite != 0 {
+		t.Fatalf("OpenAI usage = reasoning:%d cache-write:%d", reasoning, cacheWrite)
+	}
+	if last := result.Events[2].ProviderUsageJSON; providerUsageTokens(t, last, "total_token_usage", "total_tokens") != 68624 {
+		t.Fatalf("cumulative counters must survive beside the per-event vector: %s", last)
 	}
 }
 
@@ -310,14 +361,16 @@ func TestParseCodexOptionalReportedTotalDoesNotDropDeltas(t *testing.T) {
 		t.Fatalf("result = %+v, want three clean events", result)
 	}
 	assertCanonicalEventTotals(t, result.Events, 200, 100, 100, 50)
-	if first := result.Events[0].ProviderDetails.OpenAI.ReportedTotalTokens; first == nil || *first != 120 {
+	// An optional field the CLI omitted stays absent rather than being
+	// manufactured as a zero.
+	if first := providerUsageValue(t, result.Events[0].ProviderUsageJSON, "total_token_usage", "total_tokens"); first == nil || *first != 120 {
 		t.Fatalf("first reported total = %v, want 120", first)
 	}
-	if middle := result.Events[1].ProviderDetails.OpenAI.ReportedTotalTokens; middle != nil {
-		t.Fatalf("missing reported total persisted as %v, want nil", *middle)
+	if middle := providerUsageValue(t, result.Events[1].ProviderUsageJSON, "total_token_usage", "total_tokens"); middle == nil || *middle != 0 {
+		t.Fatalf("omitted reported total = %v, want the vector's own zero", middle)
 	}
-	if last := result.Events[2].ProviderDetails.OpenAI.ReportedTotalTokens; last == nil || *last != 55 {
-		t.Fatalf("reported total after missing value = %v, want event delta 55", last)
+	if last := providerUsageValue(t, result.Events[2].ProviderUsageJSON, "total_token_usage", "total_tokens"); last == nil || *last != 250 {
+		t.Fatalf("reported total after missing value = %v, want the cumulative 250", last)
 	}
 	state := parserStateFromResult(t, result, domain.UsageSourceCodexRollout)
 	if state.Codex.Baseline.TotalTokens != 250 {
@@ -364,9 +417,9 @@ func TestParseCodexLastMismatchPrefersLastUsage(t *testing.T) {
 		tokenValue(got.Tokens.UncachedInputTokens) != 30 || tokenValue(got.Tokens.OutputTokens) != 14 {
 		t.Fatalf("mismatched event tokens = %+v, want last_token_usage", got.Tokens)
 	}
-	if details := got.ProviderDetails.OpenAI; details == nil || tokenValue(details.ReasoningOutputTokens) != 2 ||
-		tokenValue(details.ReportedTotalTokens) != 69 {
-		t.Fatalf("mismatched event details = %+v, want last_token_usage", details)
+	if providerUsageTokens(t, got.ProviderUsageJSON, "last_token_usage", "reasoning_output_tokens") != 2 ||
+		providerUsageTokens(t, got.ProviderUsageJSON, "last_token_usage", "total_tokens") != 69 {
+		t.Fatalf("mismatched event usage = %s, want last_token_usage", got.ProviderUsageJSON)
 	}
 	state := parserStateFromResult(t, result, domain.UsageSourceCodexRollout)
 	if state.Codex.Baseline.InputTokens != 160 || state.Codex.Baseline.TotalTokens != 195 {
@@ -921,6 +974,40 @@ func tokenValue(value *int64) int64 {
 		return -1
 	}
 	return *value
+}
+
+// providerUsageValue reads one counter back out of a stored bounded provider
+// usage object, so tests assert on exactly what pricing will later read.
+// A missing path returns nil rather than zero.
+func providerUsageValue(t *testing.T, encoded string, path ...string) *int64 {
+	t.Helper()
+	if encoded == "" {
+		return nil
+	}
+	var node any
+	if err := json.Unmarshal([]byte(encoded), &node); err != nil {
+		t.Fatalf("decode provider usage %q: %v", encoded, err)
+	}
+	for _, key := range path {
+		object, ok := node.(map[string]any)
+		if !ok {
+			return nil
+		}
+		if node, ok = object[key]; !ok {
+			return nil
+		}
+	}
+	number, ok := node.(float64)
+	if !ok {
+		return nil
+	}
+	value := int64(number)
+	return &value
+}
+
+func providerUsageTokens(t *testing.T, encoded string, path ...string) int64 {
+	t.Helper()
+	return tokenValue(providerUsageValue(t, encoded, path...))
 }
 
 func osWrite(path, content string) error {

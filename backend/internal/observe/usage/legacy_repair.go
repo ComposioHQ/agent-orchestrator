@@ -140,7 +140,8 @@ func (r *LegacyRepairer) repairSource(ctx context.Context, source domain.UsageSo
 		state.Codex.NativeSessionID = persisted.Codex.NativeSessionID
 		state.Codex.DirectParentID = persisted.Codex.DirectParentID
 	}
-	parsedEvents, ok, err := r.reparseDurablePrefix(ctx, file, source, state)
+	replayed := newLegacyReplayIndex(candidates)
+	ok, err := r.reparseDurablePrefix(ctx, file, source, state, replayed)
 	if err != nil {
 		return err
 	}
@@ -148,7 +149,7 @@ func (r *LegacyRepairer) repairSource(ctx context.Context, source domain.UsageSo
 		return nil
 	}
 
-	matches := matchLegacyEvents(candidates, parsedEvents)
+	matches := matchLegacyEvents(candidates, replayed)
 	if len(matches) == 0 {
 		return nil
 	}
@@ -178,6 +179,7 @@ func (r *LegacyRepairer) repairSource(ctx context.Context, source domain.UsageSo
 				ExpectedParserStateJSON: source.Source.ParserStateJSON,
 				ExpectedSourceUpdatedAt: source.Source.UpdatedAt,
 				BillingProviderID:       billingProviderID,
+				ProviderUsageJSON:       event.ProviderUsageJSON,
 				Costs:                   domain.UsageEventCosts{PricingVersion: snapshot.ProviderVersion(billingProviderID)},
 			}
 			estimate, estimateErr := snapshot.Estimate(event)
@@ -185,12 +187,11 @@ func (r *LegacyRepairer) repairSource(ctx context.Context, source domain.UsageSo
 				r.config.OnError(estimateErr)
 			} else {
 				repair.Costs = domain.UsageEventCosts{
-					UncachedInputCostNanos: estimate.UncachedInputNanos,
-					CacheReadCostNanos:     estimate.CacheReadNanos,
-					CacheWriteCostNanos:    estimate.CacheWriteNanos,
-					OutputCostNanos:        estimate.OutputNanos,
-					EstimatedCostNanos:     estimate.TotalNanos,
-					PricingVersion:         estimate.PricingVersion,
+					InputCostNanos:       estimate.InputNanos,
+					CachedInputCostNanos: estimate.CachedInputNanos,
+					OutputCostNanos:      estimate.OutputNanos,
+					EstimatedCostNanos:   estimate.TotalNanos,
+					PricingVersion:       estimate.PricingVersion,
 				}
 			}
 			repairs = append(repairs, repair)
@@ -217,24 +218,64 @@ func legacyArtifactMatches(file *os.File, source domain.UsageSourceRecord, check
 	return err == nil && parserCheckpointsEqual(sample.checkpoint, checkpoint)
 }
 
+// legacyReplayIndex keeps only the replayed events a candidate could match.
+//
+// The chunk reader bounds each read, but a transcript prefix is unbounded, so
+// retaining every parsed event would make this one-shot startup repair allocate
+// in proportion to the whole file — exactly what the bounded ingestion design
+// exists to prevent. Retention is instead proportional to the number of legacy
+// rows on the one source being repaired.
+type legacyReplayIndex struct {
+	wanted     map[string]struct{}
+	byKey      map[string]domain.ModelUsageEvent
+	duplicates map[string]struct{}
+}
+
+func newLegacyReplayIndex(candidates []domain.LegacyUsageEvent) *legacyReplayIndex {
+	index := &legacyReplayIndex{
+		wanted:     make(map[string]struct{}, len(candidates)),
+		byKey:      make(map[string]domain.ModelUsageEvent, len(candidates)),
+		duplicates: make(map[string]struct{}),
+	}
+	for _, candidate := range candidates {
+		index.wanted[candidate.SourceEventKey] = struct{}{}
+	}
+	return index
+}
+
+// observe records one chunk's events. A key repeated across the prefix is
+// ambiguous and disqualifies its candidate, so both sightings are tracked even
+// though only the last event is kept.
+func (i *legacyReplayIndex) observe(events []domain.ModelUsageEvent) {
+	for _, event := range events {
+		if _, want := i.wanted[event.SourceEventKey]; !want {
+			continue
+		}
+		if _, seen := i.byKey[event.SourceEventKey]; seen {
+			i.duplicates[event.SourceEventKey] = struct{}{}
+		}
+		i.byKey[event.SourceEventKey] = event
+	}
+}
+
 func (r *LegacyRepairer) reparseDurablePrefix(
 	ctx context.Context,
 	file *os.File,
 	source domain.UsageSourceContext,
 	state *parserStateEnvelope,
-) ([]domain.ModelUsageEvent, bool, error) {
+	replayed *legacyReplayIndex,
+) (bool, error) {
 	durableOffset := source.Source.ByteOffset
 	offset := int64(0)
 	discardingOversized := false
 	attributionChecked := false
-	events := make([]domain.ModelUsageEvent, 0)
 	for offset < durableOffset {
 		chunk, err := readJSONLChunkFromSnapshot(
 			ctx, file, durableOffset, offset,
 			r.config.ChunkBytes, r.config.RecordBytes, discardingOversized,
 		)
 		if err != nil {
-			return nil, false, err
+			return false, err
 		}
 		if chunk.readToEOF && len(chunk.trailing) > 0 {
 			tail := bytes.TrimSpace(chunk.trailing)
@@ -249,22 +290,22 @@ func (r *LegacyRepairer) reparseDurablePrefix(
 			origin := source.Source
 			origin.ByteOffset = 0
 			if !codexChunkAttributionMatches(origin, state.Codex, chunk.records) {
-				return nil, false, nil
+				return false, nil
 			}
 			attributionChecked = true
 		}
 		parsed := parseRecordsWithState(source, chunk.records, chunk.nextOffset, r.config.Clock().UTC(), state)
 		if parsed.err != nil {
-			return nil, false, parsed.err
+			return false, parsed.err
 		}
-		events = append(events, parsed.Events...)
+		replayed.observe(parsed.Events)
 		discardingOversized = chunk.discardingOversizedRecord
 		if chunk.nextOffset <= offset {
-			return nil, false, nil
+			return false, nil
 		}
 		offset = chunk.nextOffset
 	}
-	return events, true, nil
+	return true, nil
 }
 
 type legacyEventMatch struct {
@@ -272,22 +313,17 @@ type legacyEventMatch struct {
 	event     domain.ModelUsageEvent
 }
 
-func matchLegacyEvents(candidates []domain.LegacyUsageEvent, parsed []domain.ModelUsageEvent) []legacyEventMatch {
-	byKey := make(map[string]domain.ModelUsageEvent, len(parsed))
-	duplicates := make(map[string]struct{})
-	for _, event := range parsed {
-		if _, exists := byKey[event.SourceEventKey]; exists {
-			duplicates[event.SourceEventKey] = struct{}{}
-		}
-		byKey[event.SourceEventKey] = event
-	}
+func matchLegacyEvents(candidates []domain.LegacyUsageEvent, replayed *legacyReplayIndex) []legacyEventMatch {
 	matches := make([]legacyEventMatch, 0, len(candidates))
 	for _, candidate := range candidates {
-		if _, duplicate := duplicates[candidate.SourceEventKey]; duplicate {
+		if _, duplicate := replayed.duplicates[candidate.SourceEventKey]; duplicate {
 			continue
 		}
-		event, ok := byKey[candidate.SourceEventKey]
+		event, ok := replayed.byKey[candidate.SourceEventKey]
+		// The stored provider usage object is deliberately not compared: filling
+		// it in is what this repair exists to do, so a stored NULL must still match.
 		if !ok || event.ProviderID != candidate.ProviderID || event.ModelID != candidate.ModelID ||
+			event.MeasurementKind != candidate.MeasurementKind ||
 			!genericTokensEqual(event.Tokens, candidate.Tokens) {
 			continue
 		}
@@ -300,8 +336,7 @@ func genericTokensEqual(left, right domain.UsageTokenMetrics) bool {
 	return optionalInt64Equal(left.InputTokens, right.InputTokens) &&
 		optionalInt64Equal(left.CachedInputTokens, right.CachedInputTokens) &&
 		optionalInt64Equal(left.UncachedInputTokens, right.UncachedInputTokens) &&
-		optionalInt64Equal(left.OutputTokens, right.OutputTokens) &&
-		left.Provenance == right.Provenance
+		optionalInt64Equal(left.OutputTokens, right.OutputTokens)
 }
 
 func optionalInt64Equal(left, right *int64) bool {

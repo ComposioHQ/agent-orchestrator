@@ -93,15 +93,20 @@ func ensurePrivateDir(directory string) error {
 	return nil
 }
 
+// installImmutableFile writes one content-addressed provider blob.
+//
+// A path whose contents already match is left untouched. A mismatch can only
+// mean the local copy is corrupt: the path is the digest of the contents, so
+// two different byte strings cannot legitimately share one. Install has already
+// revalidated the candidate bytes against that digest, so overwriting is the
+// only way a corrupt blob recovers — refusing would wedge every future refresh
+// that references the same hash until the user deleted AO state by hand.
 func installImmutableFile(target string, contents []byte, rename func(string, string) error) error {
 	existing, err := os.ReadFile(target)
-	if err == nil {
-		if !bytes.Equal(existing, contents) {
-			return errors.New("immutable provider blob content differs")
-		}
+	switch {
+	case err == nil && bytes.Equal(existing, contents):
 		return os.Chmod(target, 0o600)
-	}
-	if !errors.Is(err, os.ErrNotExist) {
+	case err != nil && !errors.Is(err, os.ErrNotExist):
 		return err
 	}
 	return atomicReplaceFile(target, contents, rename)

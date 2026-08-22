@@ -239,8 +239,9 @@ func (b *CostBackfiller) process(ctx context.Context, job costBackfillJob) error
 					ProviderID:        candidate.ProviderID,
 					BillingProviderID: candidate.BillingProviderID,
 					ModelID:           candidate.ModelID,
+					MeasurementKind:   candidate.MeasurementKind,
 					Tokens:            candidate.Tokens,
-					ProviderDetails:   candidate.ProviderDetails,
+					ProviderUsageJSON: candidate.ProviderUsageJSON,
 					SourceEventKey:    candidate.SourceEventKey,
 				}
 				estimate, estimateErr := job.snapshot.Estimate(event)
@@ -251,9 +252,8 @@ func (b *CostBackfiller) process(ctx context.Context, job costBackfillJob) error
 				if estimateErr != nil {
 					b.config.OnError(estimateErr)
 				} else {
-					update.Costs.UncachedInputCostNanos = estimate.UncachedInputNanos
-					update.Costs.CacheReadCostNanos = estimate.CacheReadNanos
-					update.Costs.CacheWriteCostNanos = estimate.CacheWriteNanos
+					update.Costs.InputCostNanos = estimate.InputNanos
+					update.Costs.CachedInputCostNanos = estimate.CachedInputNanos
 					update.Costs.OutputCostNanos = estimate.OutputNanos
 					update.Costs.EstimatedCostNanos = estimate.TotalNanos
 				}

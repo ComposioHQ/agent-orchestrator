@@ -309,12 +309,11 @@ describe("SessionsBoard", () => {
 					"s-active",
 					{
 						estimatedCost: {
-							cacheReadNanos: 100_000_000,
-							cacheWriteNanos: 140_000_000,
+							cachedInputNanos: 100_000_000,
 							coverage: "complete",
+							inputNanos: 540_000_000,
 							outputNanos: 600_000_000,
 							totalNanos: 1_240_000_000,
-							uncachedInputNanos: 400_000_000,
 						},
 						sessionId: "s-active",
 						processedTokens: 12_300,
@@ -346,12 +345,11 @@ describe("SessionsBoard", () => {
 					"s-dead",
 					{
 						estimatedCost: {
-							cacheReadNanos: null,
-							cacheWriteNanos: 5_000_000,
+							cachedInputNanos: null,
 							coverage: "partial",
+							inputNanos: 5_000_000,
 							outputNanos: 15_000_000,
 							totalNanos: 20_000_000,
-							uncachedInputNanos: null,
 						},
 						sessionId: "s-dead",
 						processedTokens: 1_900,
@@ -364,8 +362,8 @@ describe("SessionsBoard", () => {
 
 		renderBoard("p1");
 
-		const activeUsage = screen.getByText("≈$1.24 · 12.3K processed");
-		expect(activeUsage).toHaveAttribute("aria-label", "≈$1.24 · 12,300 tokens processed");
+		const activeUsage = screen.getByText("$1.24 · 12.3K processed");
+		expect(activeUsage).toHaveAttribute("aria-label", "$1.24 · 12,300 tokens processed");
 		expect(screen.queryByText("0 processed")).not.toBeInTheDocument();
 		const tokensOnlyCard = screen.getByText("tokens worker").closest('[data-testid="board-session-card"]') as HTMLElement;
 		expect(within(tokensOnlyCard).getByText("800 processed")).toHaveAttribute("aria-label", "800 tokens processed");
@@ -374,21 +372,23 @@ describe("SessionsBoard", () => {
 		await userEvent.hover(activeUsage);
 		const activeTooltip = await screen.findByRole("tooltip");
 		expect(within(activeTooltip).getByText("Estimated cost")).toBeInTheDocument();
-		expect(within(activeTooltip).getByText("≈$1.24")).toBeInTheDocument();
-		expect(within(activeTooltip).getByText("Input").nextElementSibling).toHaveTextContent("$0.40");
-		expect(within(activeTooltip).getByText("Cache read").nextElementSibling).toHaveTextContent("$0.10");
-		expect(within(activeTooltip).getByText("Cache write").nextElementSibling).toHaveTextContent("$0.14");
+		expect(within(activeTooltip).getByText("$1.24")).toBeInTheDocument();
+		expect(within(activeTooltip).getByText("Input").nextElementSibling).toHaveTextContent("$0.54");
+		expect(within(activeTooltip).getByText("Cached input").nextElementSibling).toHaveTextContent("$0.10");
 		expect(within(activeTooltip).getByText("Output").nextElementSibling).toHaveTextContent("$0.60");
-		expect(activeTooltip).not.toHaveTextContent(/lower bound/i);
+		expect(activeTooltip).toHaveTextContent(/published API list prices/);
+		expect(activeTooltip).not.toHaveTextContent(/could not be priced/);
 		await userEvent.unhover(activeUsage);
 
 		const archive = await expandArchive();
-		const archivedUsage = within(archive).getByText("≥$0.02 · 1.9K processed");
-		expect(archivedUsage).toHaveAttribute("aria-label", "≥$0.02 · 1,900 tokens processed");
+		const archivedUsage = within(archive).getByText("$0.02 · 1.9K processed");
+		expect(archivedUsage).toHaveAttribute("aria-label", "$0.02 · 1,900 tokens processed");
 		await userEvent.hover(archivedUsage);
 		const archivedTooltip = await screen.findByRole("tooltip");
 		expect(within(archivedTooltip).getByText("Estimated cost")).toBeInTheDocument();
-		expect(within(archivedTooltip).getAllByText("—")).toHaveLength(2);
+		// An unavailable component row stays a dash; the total never does.
+		expect(within(archivedTooltip).getAllByText("—")).toHaveLength(1);
+		expect(archivedTooltip).toHaveTextContent(/Some usage could not be priced/);
 	});
 
 	it("makes the exact cost breakdown keyboard-readable without opening the card", async () => {
@@ -407,12 +407,11 @@ describe("SessionsBoard", () => {
 					"s-keyboard",
 					{
 						estimatedCost: {
-							cacheReadNanos: 100_000_000,
-							cacheWriteNanos: 140_000_000,
+							cachedInputNanos: 100_000_000,
 							coverage: "complete",
+							inputNanos: 540_000_000,
 							outputNanos: 600_000_000,
 							totalNanos: 1_240_000_000,
-							uncachedInputNanos: 400_000_000,
 						},
 						incomplete: false,
 						sessionId: "s-keyboard",
@@ -432,14 +431,13 @@ describe("SessionsBoard", () => {
 		await userEvent.tab();
 
 		const costTrigger = within(card).getByRole("button", {
-			name: "Estimated cost: ≈$1.24 · 12,400 tokens processed",
+			name: "Estimated cost: $1.24 · 12,400 tokens processed",
 		});
 		expect(costTrigger).toHaveFocus();
 		const tooltip = await screen.findByRole("tooltip");
 		expect(within(tooltip).getByText("Estimated cost")).toBeInTheDocument();
-		expect(within(tooltip).getByText("Input").nextElementSibling).toHaveTextContent("$0.40");
-		expect(within(tooltip).getByText("Cache read").nextElementSibling).toHaveTextContent("$0.10");
-		expect(within(tooltip).getByText("Cache write").nextElementSibling).toHaveTextContent("$0.14");
+		expect(within(tooltip).getByText("Input").nextElementSibling).toHaveTextContent("$0.54");
+		expect(within(tooltip).getByText("Cached input").nextElementSibling).toHaveTextContent("$0.10");
 		expect(within(tooltip).getByText("Output").nextElementSibling).toHaveTextContent("$0.60");
 		await userEvent.keyboard("{Enter}");
 		expect(navigateMock).not.toHaveBeenCalled();

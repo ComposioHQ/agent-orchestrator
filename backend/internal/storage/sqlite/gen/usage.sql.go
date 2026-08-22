@@ -20,99 +20,55 @@ SELECT
     mue.model_id,
     CAST(COUNT(*) AS INTEGER) AS event_count,
     CAST(COALESCE(SUM(mue.input_tokens), 0) AS INTEGER) AS input_tokens,
-    CAST(CASE WHEN COUNT(mue.input_tokens) <> COUNT(*) THEN 'unknown'
-         WHEN COUNT(DISTINCT mue.input_provenance) = 1 THEN MIN(mue.input_provenance)
-         ELSE 'derived' END AS TEXT) AS input_provenance,
+    CAST(COUNT(mue.input_tokens) AS INTEGER) AS known_input_token_count,
     CAST(COALESCE(SUM(mue.cached_input_tokens), 0) AS INTEGER) AS cached_input_tokens,
-    CAST(CASE WHEN COUNT(mue.cached_input_tokens) <> COUNT(*) THEN 'unknown'
-         WHEN COUNT(DISTINCT mue.cached_input_provenance) = 1 THEN MIN(mue.cached_input_provenance)
-         ELSE 'derived' END AS TEXT) AS cached_input_provenance,
+    CAST(COUNT(mue.cached_input_tokens) AS INTEGER) AS known_cached_input_token_count,
     CAST(COALESCE(SUM(mue.uncached_input_tokens), 0) AS INTEGER) AS uncached_input_tokens,
-    CAST(CASE WHEN COUNT(mue.uncached_input_tokens) <> COUNT(*) THEN 'unknown'
-         WHEN COUNT(DISTINCT mue.uncached_input_provenance) = 1 THEN MIN(mue.uncached_input_provenance)
-         ELSE 'derived' END AS TEXT) AS uncached_input_provenance,
+    CAST(COUNT(mue.uncached_input_tokens) AS INTEGER) AS known_uncached_input_token_count,
     CAST(COALESCE(SUM(mue.output_tokens), 0) AS INTEGER) AS output_tokens,
-    CAST(CASE WHEN COUNT(mue.output_tokens) <> COUNT(*) THEN 'unknown'
-         WHEN COUNT(DISTINCT mue.output_provenance) = 1 THEN MIN(mue.output_provenance)
-         ELSE 'derived' END AS TEXT) AS output_provenance,
-    COUNT(CASE WHEN mue.provider_id = 'openai' THEN 1 END) AS openai_event_count,
-    CAST(COALESCE(SUM(openai.openai_reasoning_output_tokens), 0) AS INTEGER) AS openai_reasoning_output_tokens,
-    COUNT(openai.openai_reasoning_output_tokens) AS openai_reasoning_output_event_count,
-    CAST(COALESCE(SUM(openai.openai_cache_write_input_tokens), 0) AS INTEGER) AS openai_cache_write_input_tokens,
-    COUNT(openai.openai_cache_write_input_tokens) AS openai_cache_write_input_event_count,
-    COUNT(CASE WHEN mue.provider_id = 'anthropic' THEN 1 END) AS anthropic_event_count,
-    CAST(COALESCE(SUM(anthropic.anthropic_direct_uncached_input_tokens), 0) AS INTEGER) AS anthropic_direct_uncached_input_tokens,
-    COUNT(anthropic.anthropic_direct_uncached_input_tokens) AS anthropic_direct_uncached_input_event_count,
-    CAST(COALESCE(SUM(anthropic.anthropic_cache_creation_input_tokens), 0) AS INTEGER) AS anthropic_cache_creation_input_tokens,
-    COUNT(anthropic.anthropic_cache_creation_input_tokens) AS anthropic_cache_creation_input_event_count,
-    CAST(COALESCE(SUM(anthropic.anthropic_cache_creation_5m_input_tokens), 0) AS INTEGER) AS anthropic_cache_creation_5m_input_tokens,
-    COUNT(anthropic.anthropic_cache_creation_5m_input_tokens) AS anthropic_cache_creation_5m_input_event_count,
-    CAST(COALESCE(SUM(anthropic.anthropic_cache_creation_1h_input_tokens), 0) AS INTEGER) AS anthropic_cache_creation_1h_input_tokens,
-    COUNT(anthropic.anthropic_cache_creation_1h_input_tokens) AS anthropic_cache_creation_1h_input_event_count,
+    CAST(COUNT(mue.output_tokens) AS INTEGER) AS known_output_token_count,
     CAST(COUNT(mue.estimated_cost_nanos) AS INTEGER) AS priced_event_count,
     CAST(COALESCE(SUM(mue.estimated_cost_nanos), 0) AS INTEGER) AS priced_total_nanos,
-    CAST(COUNT(mue.uncached_input_cost_nanos) AS INTEGER) AS known_uncached_input_count,
-    CAST(COALESCE(SUM(mue.uncached_input_cost_nanos), 0) AS INTEGER) AS known_uncached_input_nanos,
-    CAST(COALESCE(SUM(CASE WHEN mue.estimated_cost_nanos IS NULL THEN mue.uncached_input_cost_nanos END), 0) AS INTEGER) AS unpriced_known_uncached_input_nanos,
-    CAST(COUNT(mue.cache_read_cost_nanos) AS INTEGER) AS known_cache_read_count,
-    CAST(COALESCE(SUM(mue.cache_read_cost_nanos), 0) AS INTEGER) AS known_cache_read_nanos,
-    CAST(COALESCE(SUM(CASE WHEN mue.estimated_cost_nanos IS NULL THEN mue.cache_read_cost_nanos END), 0) AS INTEGER) AS unpriced_known_cache_read_nanos,
-    CAST(COUNT(mue.cache_write_cost_nanos) AS INTEGER) AS known_cache_write_count,
-    CAST(COALESCE(SUM(mue.cache_write_cost_nanos), 0) AS INTEGER) AS known_cache_write_nanos,
-    CAST(COALESCE(SUM(CASE WHEN mue.estimated_cost_nanos IS NULL THEN mue.cache_write_cost_nanos END), 0) AS INTEGER) AS unpriced_known_cache_write_nanos,
+    CAST(COUNT(mue.input_cost_nanos) AS INTEGER) AS known_input_count,
+    CAST(COALESCE(SUM(mue.input_cost_nanos), 0) AS INTEGER) AS known_input_nanos,
+    CAST(COALESCE(SUM(CASE WHEN mue.estimated_cost_nanos IS NULL THEN mue.input_cost_nanos END), 0) AS INTEGER) AS unpriced_known_input_nanos,
+    CAST(COUNT(mue.cached_input_cost_nanos) AS INTEGER) AS known_cached_input_count,
+    CAST(COALESCE(SUM(mue.cached_input_cost_nanos), 0) AS INTEGER) AS known_cached_input_nanos,
+    CAST(COALESCE(SUM(CASE WHEN mue.estimated_cost_nanos IS NULL THEN mue.cached_input_cost_nanos END), 0) AS INTEGER) AS unpriced_known_cached_input_nanos,
     CAST(COUNT(mue.output_cost_nanos) AS INTEGER) AS known_output_count,
     CAST(COALESCE(SUM(mue.output_cost_nanos), 0) AS INTEGER) AS known_output_nanos,
     CAST(COALESCE(SUM(CASE WHEN mue.estimated_cost_nanos IS NULL THEN mue.output_cost_nanos END), 0) AS INTEGER) AS unpriced_known_output_nanos
 FROM model_usage_events mue
 JOIN usage_bindings ub ON ub.id = mue.binding_id
-LEFT JOIN openai_usage_event_details openai ON openai.event_id = mue.id
-LEFT JOIN anthropic_usage_event_details anthropic ON anthropic.event_id = mue.id
 WHERE ub.session_id = ?
 GROUP BY ub.harness, COALESCE(mue.billing_provider_id, 'unknown'), mue.model_id
 ORDER BY SUM(mue.input_tokens + mue.output_tokens) DESC, ub.harness, billing_provider_id, mue.model_id
 `
 
 type AggregateUsageBySessionHarnessModelRow struct {
-	Harness                                 domain.AgentHarness
-	BillingProviderID                       string
-	ModelID                                 string
-	EventCount                              int64
-	InputTokens                             int64
-	InputProvenance                         string
-	CachedInputTokens                       int64
-	CachedInputProvenance                   string
-	UncachedInputTokens                     int64
-	UncachedInputProvenance                 string
-	OutputTokens                            int64
-	OutputProvenance                        string
-	OpenaiEventCount                        int64
-	OpenaiReasoningOutputTokens             int64
-	OpenaiReasoningOutputEventCount         int64
-	OpenaiCacheWriteInputTokens             int64
-	OpenaiCacheWriteInputEventCount         int64
-	AnthropicEventCount                     int64
-	AnthropicDirectUncachedInputTokens      int64
-	AnthropicDirectUncachedInputEventCount  int64
-	AnthropicCacheCreationInputTokens       int64
-	AnthropicCacheCreationInputEventCount   int64
-	AnthropicCacheCreation5mInputTokens     int64
-	AnthropicCacheCreation5mInputEventCount int64
-	AnthropicCacheCreation1hInputTokens     int64
-	AnthropicCacheCreation1hInputEventCount int64
-	PricedEventCount                        int64
-	PricedTotalNanos                        int64
-	KnownUncachedInputCount                 int64
-	KnownUncachedInputNanos                 int64
-	UnpricedKnownUncachedInputNanos         int64
-	KnownCacheReadCount                     int64
-	KnownCacheReadNanos                     int64
-	UnpricedKnownCacheReadNanos             int64
-	KnownCacheWriteCount                    int64
-	KnownCacheWriteNanos                    int64
-	UnpricedKnownCacheWriteNanos            int64
-	KnownOutputCount                        int64
-	KnownOutputNanos                        int64
-	UnpricedKnownOutputNanos                int64
+	Harness                       domain.AgentHarness
+	BillingProviderID             string
+	ModelID                       string
+	EventCount                    int64
+	InputTokens                   int64
+	KnownInputTokenCount          int64
+	CachedInputTokens             int64
+	KnownCachedInputTokenCount    int64
+	UncachedInputTokens           int64
+	KnownUncachedInputTokenCount  int64
+	OutputTokens                  int64
+	KnownOutputTokenCount         int64
+	PricedEventCount              int64
+	PricedTotalNanos              int64
+	KnownInputCount               int64
+	KnownInputNanos               int64
+	UnpricedKnownInputNanos       int64
+	KnownCachedInputCount         int64
+	KnownCachedInputNanos         int64
+	UnpricedKnownCachedInputNanos int64
+	KnownOutputCount              int64
+	KnownOutputNanos              int64
+	UnpricedKnownOutputNanos      int64
 }
 
 func (q *Queries) AggregateUsageBySessionHarnessModel(ctx context.Context, sessionID domain.SessionID) ([]AggregateUsageBySessionHarnessModelRow, error) {
@@ -130,38 +86,21 @@ func (q *Queries) AggregateUsageBySessionHarnessModel(ctx context.Context, sessi
 			&i.ModelID,
 			&i.EventCount,
 			&i.InputTokens,
-			&i.InputProvenance,
+			&i.KnownInputTokenCount,
 			&i.CachedInputTokens,
-			&i.CachedInputProvenance,
+			&i.KnownCachedInputTokenCount,
 			&i.UncachedInputTokens,
-			&i.UncachedInputProvenance,
+			&i.KnownUncachedInputTokenCount,
 			&i.OutputTokens,
-			&i.OutputProvenance,
-			&i.OpenaiEventCount,
-			&i.OpenaiReasoningOutputTokens,
-			&i.OpenaiReasoningOutputEventCount,
-			&i.OpenaiCacheWriteInputTokens,
-			&i.OpenaiCacheWriteInputEventCount,
-			&i.AnthropicEventCount,
-			&i.AnthropicDirectUncachedInputTokens,
-			&i.AnthropicDirectUncachedInputEventCount,
-			&i.AnthropicCacheCreationInputTokens,
-			&i.AnthropicCacheCreationInputEventCount,
-			&i.AnthropicCacheCreation5mInputTokens,
-			&i.AnthropicCacheCreation5mInputEventCount,
-			&i.AnthropicCacheCreation1hInputTokens,
-			&i.AnthropicCacheCreation1hInputEventCount,
+			&i.KnownOutputTokenCount,
 			&i.PricedEventCount,
 			&i.PricedTotalNanos,
-			&i.KnownUncachedInputCount,
-			&i.KnownUncachedInputNanos,
-			&i.UnpricedKnownUncachedInputNanos,
-			&i.KnownCacheReadCount,
-			&i.KnownCacheReadNanos,
-			&i.UnpricedKnownCacheReadNanos,
-			&i.KnownCacheWriteCount,
-			&i.KnownCacheWriteNanos,
-			&i.UnpricedKnownCacheWriteNanos,
+			&i.KnownInputCount,
+			&i.KnownInputNanos,
+			&i.UnpricedKnownInputNanos,
+			&i.KnownCachedInputCount,
+			&i.KnownCachedInputNanos,
+			&i.UnpricedKnownCachedInputNanos,
 			&i.KnownOutputCount,
 			&i.KnownOutputNanos,
 			&i.UnpricedKnownOutputNanos,
@@ -249,6 +188,28 @@ func (q *Queries) CompleteUsageBindingIfSettled(ctx context.Context, arg Complet
 	return result.RowsAffected()
 }
 
+const enrichModelUsageEventProviderUsage = `-- name: EnrichModelUsageEventProviderUsage :execrows
+UPDATE model_usage_events
+SET provider_usage_json = ?1
+WHERE id = ?2
+  AND provider_usage_json IS NULL
+`
+
+type EnrichModelUsageEventProviderUsageParams struct {
+	ProviderUsageJson sql.NullString
+	ID                int64
+}
+
+// Replaying a durable prefix can supply the bounded provider object for an event
+// stored before the capture existed. A captured object is never overwritten.
+func (q *Queries) EnrichModelUsageEventProviderUsage(ctx context.Context, arg EnrichModelUsageEventProviderUsageParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, enrichModelUsageEventProviderUsage, arg.ProviderUsageJson, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const finalizeUsageBindingsForSessionLaunch = `-- name: FinalizeUsageBindingsForSessionLaunch :many
 UPDATE usage_bindings
 SET state = 'finalizing',
@@ -318,21 +279,11 @@ func (q *Queries) FinalizeUsageBindingsForSessionLaunch(ctx context.Context, arg
 const getModelUsageEventByKey = `-- name: GetModelUsageEventByKey :one
 SELECT
     event.id, event.provider_id, event.billing_provider_id, event.model_id,
-    event.input_tokens, event.input_provenance,
-    event.cached_input_tokens, event.cached_input_provenance,
-    event.uncached_input_tokens, event.uncached_input_provenance,
-    event.output_tokens, event.output_provenance,
-    event.created_at,
-    openai.openai_reasoning_output_tokens,
-    openai.openai_cache_write_input_tokens,
-    openai.openai_reported_total_tokens,
-    anthropic.anthropic_direct_uncached_input_tokens,
-    anthropic.anthropic_cache_creation_input_tokens,
-    anthropic.anthropic_cache_creation_5m_input_tokens,
-    anthropic.anthropic_cache_creation_1h_input_tokens
+    event.usage_measurement_kind,
+    event.input_tokens, event.cached_input_tokens,
+    event.uncached_input_tokens, event.output_tokens,
+    event.provider_usage_json, event.created_at
 FROM model_usage_events event
-LEFT JOIN openai_usage_event_details openai ON openai.event_id = event.id
-LEFT JOIN anthropic_usage_event_details anthropic ON anthropic.event_id = event.id
 WHERE event.binding_id = ? AND event.source_event_key = ?
 `
 
@@ -342,26 +293,17 @@ type GetModelUsageEventByKeyParams struct {
 }
 
 type GetModelUsageEventByKeyRow struct {
-	ID                                  int64
-	ProviderID                          string
-	BillingProviderID                   sql.NullString
-	ModelID                             string
-	InputTokens                         sql.NullInt64
-	InputProvenance                     string
-	CachedInputTokens                   sql.NullInt64
-	CachedInputProvenance               string
-	UncachedInputTokens                 sql.NullInt64
-	UncachedInputProvenance             string
-	OutputTokens                        sql.NullInt64
-	OutputProvenance                    string
-	CreatedAt                           sql.NullTime
-	OpenaiReasoningOutputTokens         sql.NullInt64
-	OpenaiCacheWriteInputTokens         sql.NullInt64
-	OpenaiReportedTotalTokens           sql.NullInt64
-	AnthropicDirectUncachedInputTokens  sql.NullInt64
-	AnthropicCacheCreationInputTokens   sql.NullInt64
-	AnthropicCacheCreation5mInputTokens sql.NullInt64
-	AnthropicCacheCreation1hInputTokens sql.NullInt64
+	ID                   int64
+	ProviderID           string
+	BillingProviderID    sql.NullString
+	ModelID              string
+	UsageMeasurementKind string
+	InputTokens          sql.NullInt64
+	CachedInputTokens    sql.NullInt64
+	UncachedInputTokens  sql.NullInt64
+	OutputTokens         sql.NullInt64
+	ProviderUsageJson    sql.NullString
+	CreatedAt            sql.NullTime
 }
 
 func (q *Queries) GetModelUsageEventByKey(ctx context.Context, arg GetModelUsageEventByKeyParams) (GetModelUsageEventByKeyRow, error) {
@@ -372,22 +314,13 @@ func (q *Queries) GetModelUsageEventByKey(ctx context.Context, arg GetModelUsage
 		&i.ProviderID,
 		&i.BillingProviderID,
 		&i.ModelID,
+		&i.UsageMeasurementKind,
 		&i.InputTokens,
-		&i.InputProvenance,
 		&i.CachedInputTokens,
-		&i.CachedInputProvenance,
 		&i.UncachedInputTokens,
-		&i.UncachedInputProvenance,
 		&i.OutputTokens,
-		&i.OutputProvenance,
+		&i.ProviderUsageJson,
 		&i.CreatedAt,
-		&i.OpenaiReasoningOutputTokens,
-		&i.OpenaiCacheWriteInputTokens,
-		&i.OpenaiReportedTotalTokens,
-		&i.AnthropicDirectUncachedInputTokens,
-		&i.AnthropicCacheCreationInputTokens,
-		&i.AnthropicCacheCreation5mInputTokens,
-		&i.AnthropicCacheCreation1hInputTokens,
 	)
 	return i, err
 }
@@ -562,39 +495,35 @@ func (q *Queries) HasPendingUsageDiscovery(ctx context.Context) (int64, error) {
 const insertModelUsageEvent = `-- name: InsertModelUsageEvent :one
 INSERT INTO model_usage_events (
     binding_id, usage_source_id, provider_id, billing_provider_id, model_id,
-    input_tokens, input_provenance,
-    cached_input_tokens, cached_input_provenance,
-    uncached_input_tokens, uncached_input_provenance,
-    output_tokens, output_provenance,
-    uncached_input_cost_nanos, cache_read_cost_nanos, cache_write_cost_nanos,
-    output_cost_nanos, estimated_cost_nanos, pricing_version,
+    usage_measurement_kind,
+    input_tokens, cached_input_tokens, uncached_input_tokens, output_tokens,
+    provider_usage_json,
+    input_cost_nanos, cached_input_cost_nanos, output_cost_nanos,
+    estimated_cost_nanos, pricing_version,
     source_event_key, created_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 RETURNING id
 `
 
 type InsertModelUsageEventParams struct {
-	BindingID               int64
-	UsageSourceID           int64
-	ProviderID              string
-	BillingProviderID       sql.NullString
-	ModelID                 string
-	InputTokens             sql.NullInt64
-	InputProvenance         string
-	CachedInputTokens       sql.NullInt64
-	CachedInputProvenance   string
-	UncachedInputTokens     sql.NullInt64
-	UncachedInputProvenance string
-	OutputTokens            sql.NullInt64
-	OutputProvenance        string
-	UncachedInputCostNanos  sql.NullInt64
-	CacheReadCostNanos      sql.NullInt64
-	CacheWriteCostNanos     sql.NullInt64
-	OutputCostNanos         sql.NullInt64
-	EstimatedCostNanos      sql.NullInt64
-	PricingVersion          string
-	SourceEventKey          string
-	CreatedAt               sql.NullTime
+	BindingID            int64
+	UsageSourceID        int64
+	ProviderID           string
+	BillingProviderID    sql.NullString
+	ModelID              string
+	UsageMeasurementKind string
+	InputTokens          sql.NullInt64
+	CachedInputTokens    sql.NullInt64
+	UncachedInputTokens  sql.NullInt64
+	OutputTokens         sql.NullInt64
+	ProviderUsageJson    sql.NullString
+	InputCostNanos       sql.NullInt64
+	CachedInputCostNanos sql.NullInt64
+	OutputCostNanos      sql.NullInt64
+	EstimatedCostNanos   sql.NullInt64
+	PricingVersion       string
+	SourceEventKey       string
+	CreatedAt            sql.NullTime
 }
 
 func (q *Queries) InsertModelUsageEvent(ctx context.Context, arg InsertModelUsageEventParams) (int64, error) {
@@ -604,17 +533,14 @@ func (q *Queries) InsertModelUsageEvent(ctx context.Context, arg InsertModelUsag
 		arg.ProviderID,
 		arg.BillingProviderID,
 		arg.ModelID,
+		arg.UsageMeasurementKind,
 		arg.InputTokens,
-		arg.InputProvenance,
 		arg.CachedInputTokens,
-		arg.CachedInputProvenance,
 		arg.UncachedInputTokens,
-		arg.UncachedInputProvenance,
 		arg.OutputTokens,
-		arg.OutputProvenance,
-		arg.UncachedInputCostNanos,
-		arg.CacheReadCostNanos,
-		arg.CacheWriteCostNanos,
+		arg.ProviderUsageJson,
+		arg.InputCostNanos,
+		arg.CachedInputCostNanos,
 		arg.OutputCostNanos,
 		arg.EstimatedCostNanos,
 		arg.PricingVersion,
@@ -713,15 +639,12 @@ SELECT
     CAST(COUNT(*) AS INTEGER) AS event_count,
     CAST(COUNT(mue.estimated_cost_nanos) AS INTEGER) AS priced_event_count,
     CAST(COALESCE(SUM(mue.estimated_cost_nanos), 0) AS INTEGER) AS priced_total_nanos,
-    CAST(COUNT(mue.uncached_input_cost_nanos) AS INTEGER) AS known_uncached_input_count,
-    CAST(COALESCE(SUM(mue.uncached_input_cost_nanos), 0) AS INTEGER) AS known_uncached_input_nanos,
-    CAST(COALESCE(SUM(CASE WHEN mue.estimated_cost_nanos IS NULL THEN mue.uncached_input_cost_nanos END), 0) AS INTEGER) AS unpriced_known_uncached_input_nanos,
-    CAST(COUNT(mue.cache_read_cost_nanos) AS INTEGER) AS known_cache_read_count,
-    CAST(COALESCE(SUM(mue.cache_read_cost_nanos), 0) AS INTEGER) AS known_cache_read_nanos,
-    CAST(COALESCE(SUM(CASE WHEN mue.estimated_cost_nanos IS NULL THEN mue.cache_read_cost_nanos END), 0) AS INTEGER) AS unpriced_known_cache_read_nanos,
-    CAST(COUNT(mue.cache_write_cost_nanos) AS INTEGER) AS known_cache_write_count,
-    CAST(COALESCE(SUM(mue.cache_write_cost_nanos), 0) AS INTEGER) AS known_cache_write_nanos,
-    CAST(COALESCE(SUM(CASE WHEN mue.estimated_cost_nanos IS NULL THEN mue.cache_write_cost_nanos END), 0) AS INTEGER) AS unpriced_known_cache_write_nanos,
+    CAST(COUNT(mue.input_cost_nanos) AS INTEGER) AS known_input_count,
+    CAST(COALESCE(SUM(mue.input_cost_nanos), 0) AS INTEGER) AS known_input_nanos,
+    CAST(COALESCE(SUM(CASE WHEN mue.estimated_cost_nanos IS NULL THEN mue.input_cost_nanos END), 0) AS INTEGER) AS unpriced_known_input_nanos,
+    CAST(COUNT(mue.cached_input_cost_nanos) AS INTEGER) AS known_cached_input_count,
+    CAST(COALESCE(SUM(mue.cached_input_cost_nanos), 0) AS INTEGER) AS known_cached_input_nanos,
+    CAST(COALESCE(SUM(CASE WHEN mue.estimated_cost_nanos IS NULL THEN mue.cached_input_cost_nanos END), 0) AS INTEGER) AS unpriced_known_cached_input_nanos,
     CAST(COUNT(mue.output_cost_nanos) AS INTEGER) AS known_output_count,
     CAST(COALESCE(SUM(mue.output_cost_nanos), 0) AS INTEGER) AS known_output_nanos,
     CAST(COALESCE(SUM(CASE WHEN mue.estimated_cost_nanos IS NULL THEN mue.output_cost_nanos END), 0) AS INTEGER) AS unpriced_known_output_nanos
@@ -735,25 +658,22 @@ ORDER BY s.project_id, s.num
 `
 
 type ListCompactSessionUsageRow struct {
-	SessionID                       domain.SessionID
-	ProcessedTokens                 int64
-	ProcessedTokensKnown            int64
-	Incomplete                      int64
-	EventCount                      int64
-	PricedEventCount                int64
-	PricedTotalNanos                int64
-	KnownUncachedInputCount         int64
-	KnownUncachedInputNanos         int64
-	UnpricedKnownUncachedInputNanos int64
-	KnownCacheReadCount             int64
-	KnownCacheReadNanos             int64
-	UnpricedKnownCacheReadNanos     int64
-	KnownCacheWriteCount            int64
-	KnownCacheWriteNanos            int64
-	UnpricedKnownCacheWriteNanos    int64
-	KnownOutputCount                int64
-	KnownOutputNanos                int64
-	UnpricedKnownOutputNanos        int64
+	SessionID                     domain.SessionID
+	ProcessedTokens               int64
+	ProcessedTokensKnown          int64
+	Incomplete                    int64
+	EventCount                    int64
+	PricedEventCount              int64
+	PricedTotalNanos              int64
+	KnownInputCount               int64
+	KnownInputNanos               int64
+	UnpricedKnownInputNanos       int64
+	KnownCachedInputCount         int64
+	KnownCachedInputNanos         int64
+	UnpricedKnownCachedInputNanos int64
+	KnownOutputCount              int64
+	KnownOutputNanos              int64
+	UnpricedKnownOutputNanos      int64
 }
 
 func (q *Queries) ListCompactSessionUsage(ctx context.Context, projectID interface{}) ([]ListCompactSessionUsageRow, error) {
@@ -773,15 +693,12 @@ func (q *Queries) ListCompactSessionUsage(ctx context.Context, projectID interfa
 			&i.EventCount,
 			&i.PricedEventCount,
 			&i.PricedTotalNanos,
-			&i.KnownUncachedInputCount,
-			&i.KnownUncachedInputNanos,
-			&i.UnpricedKnownUncachedInputNanos,
-			&i.KnownCacheReadCount,
-			&i.KnownCacheReadNanos,
-			&i.UnpricedKnownCacheReadNanos,
-			&i.KnownCacheWriteCount,
-			&i.KnownCacheWriteNanos,
-			&i.UnpricedKnownCacheWriteNanos,
+			&i.KnownInputCount,
+			&i.KnownInputNanos,
+			&i.UnpricedKnownInputNanos,
+			&i.KnownCachedInputCount,
+			&i.KnownCachedInputNanos,
+			&i.UnpricedKnownCachedInputNanos,
 			&i.KnownOutputCount,
 			&i.KnownOutputNanos,
 			&i.UnpricedKnownOutputNanos,
@@ -865,26 +782,15 @@ SELECT
     event.usage_source_id,
     event.provider_id,
     event.model_id,
+    event.usage_measurement_kind,
     event.input_tokens,
-    event.input_provenance,
     event.cached_input_tokens,
-    event.cached_input_provenance,
     event.uncached_input_tokens,
-    event.uncached_input_provenance,
     event.output_tokens,
-    event.output_provenance,
-    openai.openai_reasoning_output_tokens,
-    openai.openai_cache_write_input_tokens,
-    openai.openai_reported_total_tokens,
-    anthropic.anthropic_direct_uncached_input_tokens,
-    anthropic.anthropic_cache_creation_input_tokens,
-    anthropic.anthropic_cache_creation_5m_input_tokens,
-    anthropic.anthropic_cache_creation_1h_input_tokens,
+    event.provider_usage_json,
     event.pricing_version,
     event.source_event_key
 FROM model_usage_events event
-LEFT JOIN openai_usage_event_details openai ON openai.event_id = event.id
-LEFT JOIN anthropic_usage_event_details anthropic ON anthropic.event_id = event.id
 WHERE event.usage_source_id = ?1
   AND event.billing_provider_id IS NULL
   AND event.estimated_cost_nanos IS NULL
@@ -892,28 +798,19 @@ ORDER BY event.id
 `
 
 type ListLegacyUsageEventsRow struct {
-	ID                                  int64
-	BindingID                           int64
-	UsageSourceID                       int64
-	ProviderID                          string
-	ModelID                             string
-	InputTokens                         sql.NullInt64
-	InputProvenance                     string
-	CachedInputTokens                   sql.NullInt64
-	CachedInputProvenance               string
-	UncachedInputTokens                 sql.NullInt64
-	UncachedInputProvenance             string
-	OutputTokens                        sql.NullInt64
-	OutputProvenance                    string
-	OpenaiReasoningOutputTokens         sql.NullInt64
-	OpenaiCacheWriteInputTokens         sql.NullInt64
-	OpenaiReportedTotalTokens           sql.NullInt64
-	AnthropicDirectUncachedInputTokens  sql.NullInt64
-	AnthropicCacheCreationInputTokens   sql.NullInt64
-	AnthropicCacheCreation5mInputTokens sql.NullInt64
-	AnthropicCacheCreation1hInputTokens sql.NullInt64
-	PricingVersion                      string
-	SourceEventKey                      string
+	ID                   int64
+	BindingID            int64
+	UsageSourceID        int64
+	ProviderID           string
+	ModelID              string
+	UsageMeasurementKind string
+	InputTokens          sql.NullInt64
+	CachedInputTokens    sql.NullInt64
+	UncachedInputTokens  sql.NullInt64
+	OutputTokens         sql.NullInt64
+	ProviderUsageJson    sql.NullString
+	PricingVersion       string
+	SourceEventKey       string
 }
 
 func (q *Queries) ListLegacyUsageEvents(ctx context.Context, usageSourceID int64) ([]ListLegacyUsageEventsRow, error) {
@@ -931,21 +828,12 @@ func (q *Queries) ListLegacyUsageEvents(ctx context.Context, usageSourceID int64
 			&i.UsageSourceID,
 			&i.ProviderID,
 			&i.ModelID,
+			&i.UsageMeasurementKind,
 			&i.InputTokens,
-			&i.InputProvenance,
 			&i.CachedInputTokens,
-			&i.CachedInputProvenance,
 			&i.UncachedInputTokens,
-			&i.UncachedInputProvenance,
 			&i.OutputTokens,
-			&i.OutputProvenance,
-			&i.OpenaiReasoningOutputTokens,
-			&i.OpenaiCacheWriteInputTokens,
-			&i.OpenaiReportedTotalTokens,
-			&i.AnthropicDirectUncachedInputTokens,
-			&i.AnthropicCacheCreationInputTokens,
-			&i.AnthropicCacheCreation5mInputTokens,
-			&i.AnthropicCacheCreation1hInputTokens,
+			&i.ProviderUsageJson,
 			&i.PricingVersion,
 			&i.SourceEventKey,
 		); err != nil {
@@ -1099,26 +987,15 @@ SELECT
     event.provider_id,
     event.billing_provider_id,
     event.model_id,
+    event.usage_measurement_kind,
     event.input_tokens,
-    event.input_provenance,
     event.cached_input_tokens,
-    event.cached_input_provenance,
     event.uncached_input_tokens,
-    event.uncached_input_provenance,
     event.output_tokens,
-    event.output_provenance,
-    openai.openai_reasoning_output_tokens,
-    openai.openai_cache_write_input_tokens,
-    openai.openai_reported_total_tokens,
-    anthropic.anthropic_direct_uncached_input_tokens,
-    anthropic.anthropic_cache_creation_input_tokens,
-    anthropic.anthropic_cache_creation_5m_input_tokens,
-    anthropic.anthropic_cache_creation_1h_input_tokens,
+    event.provider_usage_json,
     event.pricing_version,
     event.source_event_key
 FROM model_usage_events event
-LEFT JOIN openai_usage_event_details openai ON openai.event_id = event.id
-LEFT JOIN anthropic_usage_event_details anthropic ON anthropic.event_id = event.id
 WHERE event.billing_provider_id IS NOT NULL
   AND CASE lower(trim(event.billing_provider_id))
         WHEN 'z.ai' THEN 'zai'
@@ -1138,28 +1015,19 @@ type ListUsageCostCandidatesParams struct {
 }
 
 type ListUsageCostCandidatesRow struct {
-	ID                                  int64
-	BindingID                           int64
-	ProviderID                          string
-	BillingProviderID                   sql.NullString
-	ModelID                             string
-	InputTokens                         sql.NullInt64
-	InputProvenance                     string
-	CachedInputTokens                   sql.NullInt64
-	CachedInputProvenance               string
-	UncachedInputTokens                 sql.NullInt64
-	UncachedInputProvenance             string
-	OutputTokens                        sql.NullInt64
-	OutputProvenance                    string
-	OpenaiReasoningOutputTokens         sql.NullInt64
-	OpenaiCacheWriteInputTokens         sql.NullInt64
-	OpenaiReportedTotalTokens           sql.NullInt64
-	AnthropicDirectUncachedInputTokens  sql.NullInt64
-	AnthropicCacheCreationInputTokens   sql.NullInt64
-	AnthropicCacheCreation5mInputTokens sql.NullInt64
-	AnthropicCacheCreation1hInputTokens sql.NullInt64
-	PricingVersion                      string
-	SourceEventKey                      string
+	ID                   int64
+	BindingID            int64
+	ProviderID           string
+	BillingProviderID    sql.NullString
+	ModelID              string
+	UsageMeasurementKind string
+	InputTokens          sql.NullInt64
+	CachedInputTokens    sql.NullInt64
+	UncachedInputTokens  sql.NullInt64
+	OutputTokens         sql.NullInt64
+	ProviderUsageJson    sql.NullString
+	PricingVersion       string
+	SourceEventKey       string
 }
 
 func (q *Queries) ListUsageCostCandidates(ctx context.Context, arg ListUsageCostCandidatesParams) ([]ListUsageCostCandidatesRow, error) {
@@ -1177,21 +1045,12 @@ func (q *Queries) ListUsageCostCandidates(ctx context.Context, arg ListUsageCost
 			&i.ProviderID,
 			&i.BillingProviderID,
 			&i.ModelID,
+			&i.UsageMeasurementKind,
 			&i.InputTokens,
-			&i.InputProvenance,
 			&i.CachedInputTokens,
-			&i.CachedInputProvenance,
 			&i.UncachedInputTokens,
-			&i.UncachedInputProvenance,
 			&i.OutputTokens,
-			&i.OutputProvenance,
-			&i.OpenaiReasoningOutputTokens,
-			&i.OpenaiCacheWriteInputTokens,
-			&i.OpenaiReportedTotalTokens,
-			&i.AnthropicDirectUncachedInputTokens,
-			&i.AnthropicCacheCreationInputTokens,
-			&i.AnthropicCacheCreation5mInputTokens,
-			&i.AnthropicCacheCreation1hInputTokens,
+			&i.ProviderUsageJson,
 			&i.PricingVersion,
 			&i.SourceEventKey,
 		); err != nil {
@@ -1406,9 +1265,11 @@ func (q *Queries) TouchUsageBinding(ctx context.Context, arg TouchUsageBindingPa
 const updateLegacyUsageEvent = `-- name: UpdateLegacyUsageEvent :one
 UPDATE model_usage_events
 SET billing_provider_id = ?1,
-    uncached_input_cost_nanos = ?2,
-    cache_read_cost_nanos = ?3,
-    cache_write_cost_nanos = ?4,
+    -- The reparse is the only way a pre-capture event can ever gain its bounded
+    -- provider object, and it is exactly what makes the event priceable.
+    provider_usage_json = ?2,
+    input_cost_nanos = ?3,
+    cached_input_cost_nanos = ?4,
     output_cost_nanos = ?5,
     estimated_cost_nanos = ?6,
     pricing_version = ?7
@@ -1418,25 +1279,23 @@ WHERE model_usage_events.id = ?8
   AND model_usage_events.billing_provider_id IS NULL
   AND model_usage_events.provider_id = ?11
   AND model_usage_events.model_id = ?12
-  AND model_usage_events.input_tokens IS ?13
-  AND model_usage_events.input_provenance = ?14
+  AND model_usage_events.usage_measurement_kind = ?13
+  AND model_usage_events.input_tokens IS ?14
   AND model_usage_events.cached_input_tokens IS ?15
-  AND model_usage_events.cached_input_provenance = ?16
-  AND model_usage_events.uncached_input_tokens IS ?17
-  AND model_usage_events.uncached_input_provenance = ?18
-  AND model_usage_events.output_tokens IS ?19
-  AND model_usage_events.output_provenance = ?20
-  AND model_usage_events.source_event_key = ?21
-  AND model_usage_events.pricing_version = ?22
+  AND model_usage_events.uncached_input_tokens IS ?16
+  AND model_usage_events.output_tokens IS ?17
+  AND model_usage_events.provider_usage_json IS ?18
+  AND model_usage_events.source_event_key = ?19
+  AND model_usage_events.pricing_version = ?20
   AND model_usage_events.estimated_cost_nanos IS NULL
   AND EXISTS (
       SELECT 1
       FROM usage_sources source
       WHERE source.id = model_usage_events.usage_source_id
-        AND source.file_identity = ?23
-        AND source.byte_offset = ?24
-        AND source.parser_state_json = ?25
-        AND source.updated_at = ?26
+        AND source.file_identity = ?21
+        AND source.byte_offset = ?22
+        AND source.parser_state_json = ?23
+        AND source.updated_at = ?24
         AND NOT (
             source.state = 'complete'
             AND source.last_error_code = 'artifact_replaced'
@@ -1446,40 +1305,38 @@ RETURNING binding_id
 `
 
 type UpdateLegacyUsageEventParams struct {
-	BillingProviderID               sql.NullString
-	UncachedInputCostNanos          sql.NullInt64
-	CacheReadCostNanos              sql.NullInt64
-	CacheWriteCostNanos             sql.NullInt64
-	OutputCostNanos                 sql.NullInt64
-	EstimatedCostNanos              sql.NullInt64
-	PricingVersion                  string
-	ID                              int64
-	BindingID                       int64
-	UsageSourceID                   int64
-	ExpectedProviderID              string
-	ExpectedModelID                 string
-	ExpectedInputTokens             sql.NullInt64
-	ExpectedInputProvenance         string
-	ExpectedCachedInputTokens       sql.NullInt64
-	ExpectedCachedInputProvenance   string
-	ExpectedUncachedInputTokens     sql.NullInt64
-	ExpectedUncachedInputProvenance string
-	ExpectedOutputTokens            sql.NullInt64
-	ExpectedOutputProvenance        string
-	ExpectedSourceEventKey          string
-	ExpectedPricingVersion          string
-	ExpectedFileIdentity            string
-	ExpectedByteOffset              int64
-	ExpectedParserStateJson         string
-	ExpectedSourceUpdatedAt         time.Time
+	BillingProviderID            sql.NullString
+	ProviderUsageJson            sql.NullString
+	InputCostNanos               sql.NullInt64
+	CachedInputCostNanos         sql.NullInt64
+	OutputCostNanos              sql.NullInt64
+	EstimatedCostNanos           sql.NullInt64
+	PricingVersion               string
+	ID                           int64
+	BindingID                    int64
+	UsageSourceID                int64
+	ExpectedProviderID           string
+	ExpectedModelID              string
+	ExpectedUsageMeasurementKind string
+	ExpectedInputTokens          sql.NullInt64
+	ExpectedCachedInputTokens    sql.NullInt64
+	ExpectedUncachedInputTokens  sql.NullInt64
+	ExpectedOutputTokens         sql.NullInt64
+	ExpectedProviderUsageJson    sql.NullString
+	ExpectedSourceEventKey       string
+	ExpectedPricingVersion       string
+	ExpectedFileIdentity         string
+	ExpectedByteOffset           int64
+	ExpectedParserStateJson      string
+	ExpectedSourceUpdatedAt      time.Time
 }
 
 func (q *Queries) UpdateLegacyUsageEvent(ctx context.Context, arg UpdateLegacyUsageEventParams) (int64, error) {
 	row := q.db.QueryRowContext(ctx, updateLegacyUsageEvent,
 		arg.BillingProviderID,
-		arg.UncachedInputCostNanos,
-		arg.CacheReadCostNanos,
-		arg.CacheWriteCostNanos,
+		arg.ProviderUsageJson,
+		arg.InputCostNanos,
+		arg.CachedInputCostNanos,
 		arg.OutputCostNanos,
 		arg.EstimatedCostNanos,
 		arg.PricingVersion,
@@ -1488,14 +1345,12 @@ func (q *Queries) UpdateLegacyUsageEvent(ctx context.Context, arg UpdateLegacyUs
 		arg.UsageSourceID,
 		arg.ExpectedProviderID,
 		arg.ExpectedModelID,
+		arg.ExpectedUsageMeasurementKind,
 		arg.ExpectedInputTokens,
-		arg.ExpectedInputProvenance,
 		arg.ExpectedCachedInputTokens,
-		arg.ExpectedCachedInputProvenance,
 		arg.ExpectedUncachedInputTokens,
-		arg.ExpectedUncachedInputProvenance,
 		arg.ExpectedOutputTokens,
-		arg.ExpectedOutputProvenance,
+		arg.ExpectedProviderUsageJson,
 		arg.ExpectedSourceEventKey,
 		arg.ExpectedPricingVersion,
 		arg.ExpectedFileIdentity,
@@ -1545,58 +1400,51 @@ func (q *Queries) UpdateUsageBinding(ctx context.Context, arg UpdateUsageBinding
 
 const updateUsageCostCandidate = `-- name: UpdateUsageCostCandidate :one
 UPDATE model_usage_events
-SET uncached_input_cost_nanos = ?1,
-    cache_read_cost_nanos = ?2,
-    cache_write_cost_nanos = ?3,
-    output_cost_nanos = ?4,
-    estimated_cost_nanos = ?5,
-    pricing_version = ?6
-WHERE id = ?7
-  AND binding_id = ?8
-  AND billing_provider_id = ?9
-  AND model_id = ?10
+SET input_cost_nanos = ?1,
+    cached_input_cost_nanos = ?2,
+    output_cost_nanos = ?3,
+    estimated_cost_nanos = ?4,
+    pricing_version = ?5
+WHERE id = ?6
+  AND binding_id = ?7
+  AND billing_provider_id = ?8
+  AND model_id = ?9
+  AND usage_measurement_kind = ?10
   AND input_tokens IS ?11
-  AND input_provenance = ?12
-  AND cached_input_tokens IS ?13
-  AND cached_input_provenance = ?14
-  AND uncached_input_tokens IS ?15
-  AND uncached_input_provenance = ?16
-  AND output_tokens IS ?17
-  AND output_provenance = ?18
-  AND source_event_key = ?19
-  AND pricing_version = ?20
+  AND cached_input_tokens IS ?12
+  AND uncached_input_tokens IS ?13
+  AND output_tokens IS ?14
+  AND provider_usage_json IS ?15
+  AND source_event_key = ?16
+  AND pricing_version = ?17
   AND estimated_cost_nanos IS NULL
 RETURNING binding_id
 `
 
 type UpdateUsageCostCandidateParams struct {
-	UncachedInputCostNanos          sql.NullInt64
-	CacheReadCostNanos              sql.NullInt64
-	CacheWriteCostNanos             sql.NullInt64
-	OutputCostNanos                 sql.NullInt64
-	EstimatedCostNanos              sql.NullInt64
-	AttemptedPricingVersion         string
-	ID                              int64
-	BindingID                       int64
-	ExpectedBillingProviderID       sql.NullString
-	ExpectedModelID                 string
-	ExpectedInputTokens             sql.NullInt64
-	ExpectedInputProvenance         string
-	ExpectedCachedInputTokens       sql.NullInt64
-	ExpectedCachedInputProvenance   string
-	ExpectedUncachedInputTokens     sql.NullInt64
-	ExpectedUncachedInputProvenance string
-	ExpectedOutputTokens            sql.NullInt64
-	ExpectedOutputProvenance        string
-	ExpectedSourceEventKey          string
-	ExpectedPricingVersion          string
+	InputCostNanos               sql.NullInt64
+	CachedInputCostNanos         sql.NullInt64
+	OutputCostNanos              sql.NullInt64
+	EstimatedCostNanos           sql.NullInt64
+	AttemptedPricingVersion      string
+	ID                           int64
+	BindingID                    int64
+	ExpectedBillingProviderID    sql.NullString
+	ExpectedModelID              string
+	ExpectedUsageMeasurementKind string
+	ExpectedInputTokens          sql.NullInt64
+	ExpectedCachedInputTokens    sql.NullInt64
+	ExpectedUncachedInputTokens  sql.NullInt64
+	ExpectedOutputTokens         sql.NullInt64
+	ExpectedProviderUsageJson    sql.NullString
+	ExpectedSourceEventKey       string
+	ExpectedPricingVersion       string
 }
 
 func (q *Queries) UpdateUsageCostCandidate(ctx context.Context, arg UpdateUsageCostCandidateParams) (int64, error) {
 	row := q.db.QueryRowContext(ctx, updateUsageCostCandidate,
-		arg.UncachedInputCostNanos,
-		arg.CacheReadCostNanos,
-		arg.CacheWriteCostNanos,
+		arg.InputCostNanos,
+		arg.CachedInputCostNanos,
 		arg.OutputCostNanos,
 		arg.EstimatedCostNanos,
 		arg.AttemptedPricingVersion,
@@ -1604,14 +1452,12 @@ func (q *Queries) UpdateUsageCostCandidate(ctx context.Context, arg UpdateUsageC
 		arg.BindingID,
 		arg.ExpectedBillingProviderID,
 		arg.ExpectedModelID,
+		arg.ExpectedUsageMeasurementKind,
 		arg.ExpectedInputTokens,
-		arg.ExpectedInputProvenance,
 		arg.ExpectedCachedInputTokens,
-		arg.ExpectedCachedInputProvenance,
 		arg.ExpectedUncachedInputTokens,
-		arg.ExpectedUncachedInputProvenance,
 		arg.ExpectedOutputTokens,
-		arg.ExpectedOutputProvenance,
+		arg.ExpectedProviderUsageJson,
 		arg.ExpectedSourceEventKey,
 		arg.ExpectedPricingVersion,
 	)
@@ -1687,80 +1533,6 @@ func (q *Queries) UpdateUsageSourceLifecycle(ctx context.Context, arg UpdateUsag
 		arg.NextRetryAt,
 		arg.UpdatedAt,
 		arg.ID,
-	)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected()
-}
-
-const upsertAnthropicUsageEventDetails = `-- name: UpsertAnthropicUsageEventDetails :execrows
-INSERT INTO anthropic_usage_event_details (
-    event_id, anthropic_direct_uncached_input_tokens,
-    anthropic_cache_creation_input_tokens,
-    anthropic_cache_creation_5m_input_tokens,
-    anthropic_cache_creation_1h_input_tokens
-) VALUES (?, ?, ?, ?, ?)
-ON CONFLICT (event_id) DO UPDATE SET
-    anthropic_direct_uncached_input_tokens = COALESCE(anthropic_usage_event_details.anthropic_direct_uncached_input_tokens, excluded.anthropic_direct_uncached_input_tokens),
-    anthropic_cache_creation_input_tokens = COALESCE(anthropic_usage_event_details.anthropic_cache_creation_input_tokens, excluded.anthropic_cache_creation_input_tokens),
-    anthropic_cache_creation_5m_input_tokens = COALESCE(anthropic_usage_event_details.anthropic_cache_creation_5m_input_tokens, excluded.anthropic_cache_creation_5m_input_tokens),
-    anthropic_cache_creation_1h_input_tokens = COALESCE(anthropic_usage_event_details.anthropic_cache_creation_1h_input_tokens, excluded.anthropic_cache_creation_1h_input_tokens)
-WHERE (anthropic_usage_event_details.anthropic_direct_uncached_input_tokens IS NULL OR excluded.anthropic_direct_uncached_input_tokens IS NULL OR anthropic_usage_event_details.anthropic_direct_uncached_input_tokens = excluded.anthropic_direct_uncached_input_tokens)
-  AND (anthropic_usage_event_details.anthropic_cache_creation_input_tokens IS NULL OR excluded.anthropic_cache_creation_input_tokens IS NULL OR anthropic_usage_event_details.anthropic_cache_creation_input_tokens = excluded.anthropic_cache_creation_input_tokens)
-  AND (anthropic_usage_event_details.anthropic_cache_creation_5m_input_tokens IS NULL OR excluded.anthropic_cache_creation_5m_input_tokens IS NULL OR anthropic_usage_event_details.anthropic_cache_creation_5m_input_tokens = excluded.anthropic_cache_creation_5m_input_tokens)
-  AND (anthropic_usage_event_details.anthropic_cache_creation_1h_input_tokens IS NULL OR excluded.anthropic_cache_creation_1h_input_tokens IS NULL OR anthropic_usage_event_details.anthropic_cache_creation_1h_input_tokens = excluded.anthropic_cache_creation_1h_input_tokens)
-`
-
-type UpsertAnthropicUsageEventDetailsParams struct {
-	EventID                             int64
-	AnthropicDirectUncachedInputTokens  sql.NullInt64
-	AnthropicCacheCreationInputTokens   sql.NullInt64
-	AnthropicCacheCreation5mInputTokens sql.NullInt64
-	AnthropicCacheCreation1hInputTokens sql.NullInt64
-}
-
-func (q *Queries) UpsertAnthropicUsageEventDetails(ctx context.Context, arg UpsertAnthropicUsageEventDetailsParams) (int64, error) {
-	result, err := q.db.ExecContext(ctx, upsertAnthropicUsageEventDetails,
-		arg.EventID,
-		arg.AnthropicDirectUncachedInputTokens,
-		arg.AnthropicCacheCreationInputTokens,
-		arg.AnthropicCacheCreation5mInputTokens,
-		arg.AnthropicCacheCreation1hInputTokens,
-	)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected()
-}
-
-const upsertOpenAIUsageEventDetails = `-- name: UpsertOpenAIUsageEventDetails :execrows
-INSERT INTO openai_usage_event_details (
-    event_id, openai_reasoning_output_tokens, openai_cache_write_input_tokens,
-    openai_reported_total_tokens
-) VALUES (?, ?, ?, ?)
-ON CONFLICT (event_id) DO UPDATE SET
-    openai_reasoning_output_tokens = COALESCE(openai_usage_event_details.openai_reasoning_output_tokens, excluded.openai_reasoning_output_tokens),
-    openai_cache_write_input_tokens = COALESCE(openai_usage_event_details.openai_cache_write_input_tokens, excluded.openai_cache_write_input_tokens),
-    openai_reported_total_tokens = COALESCE(openai_usage_event_details.openai_reported_total_tokens, excluded.openai_reported_total_tokens)
-WHERE (openai_usage_event_details.openai_reasoning_output_tokens IS NULL OR excluded.openai_reasoning_output_tokens IS NULL OR openai_usage_event_details.openai_reasoning_output_tokens = excluded.openai_reasoning_output_tokens)
-  AND (openai_usage_event_details.openai_cache_write_input_tokens IS NULL OR excluded.openai_cache_write_input_tokens IS NULL OR openai_usage_event_details.openai_cache_write_input_tokens = excluded.openai_cache_write_input_tokens)
-  AND (openai_usage_event_details.openai_reported_total_tokens IS NULL OR excluded.openai_reported_total_tokens IS NULL OR openai_usage_event_details.openai_reported_total_tokens = excluded.openai_reported_total_tokens)
-`
-
-type UpsertOpenAIUsageEventDetailsParams struct {
-	EventID                     int64
-	OpenaiReasoningOutputTokens sql.NullInt64
-	OpenaiCacheWriteInputTokens sql.NullInt64
-	OpenaiReportedTotalTokens   sql.NullInt64
-}
-
-func (q *Queries) UpsertOpenAIUsageEventDetails(ctx context.Context, arg UpsertOpenAIUsageEventDetailsParams) (int64, error) {
-	result, err := q.db.ExecContext(ctx, upsertOpenAIUsageEventDetails,
-		arg.EventID,
-		arg.OpenaiReasoningOutputTokens,
-		arg.OpenaiCacheWriteInputTokens,
-		arg.OpenaiReportedTotalTokens,
 	)
 	if err != nil {
 		return 0, err

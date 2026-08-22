@@ -413,9 +413,12 @@ function UsageCostTelemetry({ usage }: { usage: SessionUsage }) {
 					</p>
 				</div>
 				<div className="min-w-0 text-right">
-					<p className="text-2xs text-settings-muted">{t("inspector.usage.estimatedCost")}</p>
+					<div className="flex items-center justify-end gap-1">
+						<p className="text-2xs text-settings-muted">{t("inspector.usage.estimatedCost")}</p>
+						<EstimatedCostInfo cost={usage.totals.estimatedCost} />
+					</div>
 					<p className="mt-0.5 truncate font-mono text-sm-md font-medium text-settings-label">
-						{estimatedCost ?? "—"}
+						{estimatedCost ?? t("usage.unavailable")}
 					</p>
 				</div>
 			</div>
@@ -762,8 +765,39 @@ function UsageCostValue({ cost }: { cost: EstimatedCost | null }) {
 	const label = value ?? t("inspector.usage.metricUnavailable", { label: t("inspector.usage.cost") });
 	return (
 		<span aria-label={label} className="text-right font-mono text-2xs text-settings-label" title={label}>
-			{value ?? "—"}
+			{value ?? t("usage.unavailable")}
 		</span>
+	);
+}
+
+/**
+ * Contextual disclosure for the estimated-cost heading.
+ *
+ * Coverage never reaches the presented value as a qualifier, so this is where a
+ * partial estimate says so — in words, next to the heading, rather than as a `≥`
+ * the reader has to decode. Hover and keyboard focus both open it.
+ */
+function EstimatedCostInfo({ cost }: { cost: EstimatedCost | null }) {
+	const { t } = useTranslation();
+	const label = t("usage.estimatedCostInfoLabel");
+	return (
+		<Tooltip>
+			<TooltipTrigger asChild>
+				<button
+					aria-label={label}
+					className="rounded-sm text-settings-muted outline-none transition-colors hover:text-settings-label focus-visible:ring-1 focus-visible:ring-ring"
+					type="button"
+				>
+					<Info aria-hidden="true" className="size-3" />
+				</button>
+			</TooltipTrigger>
+			<TooltipContent className="max-w-64 text-left" side="bottom">
+				<p>{t("usage.estimatedCostInfo")}</p>
+				{cost?.coverage === "partial" ? (
+					<p className="mt-1.5">{t("usage.estimatedCostInfoPartial")}</p>
+				) : null}
+			</TooltipContent>
+		</Tooltip>
 	);
 }
 

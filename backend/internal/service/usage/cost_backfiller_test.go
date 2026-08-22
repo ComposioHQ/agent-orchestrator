@@ -379,11 +379,10 @@ func newFakeBackfillStore(count int) *fakeBackfillStore {
 			ProviderID:        domain.UsageProviderOpenAI,
 			BillingProviderID: "OpenAI",
 			ModelID:           "gpt-test",
-			Tokens:            testUsageMetrics(1, 0, 1, 0, domain.UsageMetricReported),
-			ProviderDetails: domain.UsageProviderDetails{OpenAI: &domain.OpenAIUsageDetails{
-				ReasoningOutputTokens: int64Pointer(0), CacheWriteInputTokens: int64Pointer(0),
-			}},
-			SourceEventKey: fmt.Sprintf("event-%03d", index),
+			MeasurementKind:   domain.UsageMeasurementNativeReported,
+			Tokens:            testUsageMetrics(1, 0, 1, 0),
+			ProviderUsageJSON: `{"last_token_usage":{"cache_write_input_tokens":0}}`,
+			SourceEventKey:    fmt.Sprintf("event-%03d", index),
 		})
 	}
 	return store

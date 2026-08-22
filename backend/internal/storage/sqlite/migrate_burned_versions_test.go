@@ -108,6 +108,7 @@ var shippedMigrations = map[int64]string{
 	102: "0102_canonical_usage.sql",
 	103: "0103_usage_cost_estimation.sql",
 	104: "0104_usage_cost_candidate_canonical_index.sql",
+	105: "0105_usage_measurement_and_provider_usage.sql",
 }
 
 // burnedVersion reports version numbers that must never be (re)used: they

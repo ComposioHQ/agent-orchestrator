@@ -775,13 +775,6 @@ describe("SessionInspector usage", () => {
 		uncachedInputTokens: 200,
 		outputTokens: 300,
 		processedTokens: 1500,
-		provenance: {
-			inputTokens: "reported",
-			cachedInputTokens: "reported",
-			uncachedInputTokens: "derived",
-			outputTokens: "reported",
-		},
-		providerDetails: { openai: { openaiReasoningOutputTokens: 5, openaiCacheWriteInputTokens: 0 } },
 	};
 
 	const tokenTotals = (estimatedCost: unknown) => ({ ...canonicalTotals, estimatedCost });
@@ -821,7 +814,7 @@ describe("SessionInspector usage", () => {
 		expect(await screen.findByText("Usage & cost")).toBeInTheDocument();
 		expect(screen.getByText("Tokens processed")).toBeInTheDocument();
 		expect(screen.getByLabelText("1,500 tokens processed")).toBeInTheDocument();
-		expect(screen.getByText("Estimated cost").nextElementSibling).toHaveTextContent("—");
+		expect(screen.getByText("Estimated cost").parentElement?.nextElementSibling).toHaveTextContent("Unavailable");
 		expect(screen.queryByText("Coming soon")).not.toBeInTheDocument();
 		const metrics = screen.getAllByTestId("session-usage-metrics")[0];
 		expect(within(metrics).getAllByRole("term").map((term) => term.textContent)).toEqual([
@@ -846,7 +839,7 @@ describe("SessionInspector usage", () => {
 
 	it("shows icon disclosures without repeated metrics when multiple agents contributed", async () => {
 		useUiStore.getState().setDeveloperMode(true);
-		const totals = { ...canonicalTotals, providerDetails: {}, estimatedCost: null };
+		const totals = { ...canonicalTotals, estimatedCost: null };
 		mockUsage(null, [
 			{ harness: "codex", totals, models: [{ modelId: "gpt-5.5", totals }] },
 			{ harness: "claude-code", totals, models: [{ modelId: "claude-haiku-4-5-20251001", totals }] },
@@ -876,12 +869,11 @@ describe("SessionInspector usage", () => {
 	it("renders complete costs and provider/model attribution", async () => {
 		useUiStore.getState().setDeveloperMode(true);
 		const completeCost = {
-			cacheReadNanos: 100_000_000,
-			cacheWriteNanos: 140_000_000,
+			cachedInputNanos: 100_000_000,
 			coverage: "complete",
+			inputNanos: 540_000_000,
 			outputNanos: 600_000_000,
 			totalNanos: 1_240_000_000,
-			uncachedInputNanos: 400_000_000,
 		};
 		mockUsage(completeCost, [
 			{
@@ -902,20 +894,27 @@ describe("SessionInspector usage", () => {
 		const section = (await screen.findByText("Usage & cost")).closest(
 			"[data-testid='inspector-section']",
 		) as HTMLElement;
-		expect(within(section).getAllByText("≈$1.24").length).toBeGreaterThan(0);
+		// The value carries no coverage qualifier, and the disclosure beside the
+		// heading explains the estimate without claiming it is billing.
+		expect(within(section).getAllByText("$1.24").length).toBeGreaterThan(0);
+		expect(section).not.toHaveTextContent(/[≈≥]\$/);
 		expect(within(section).getByText("anthropic · Sonnet 4")).toBeInTheDocument();
-		expect(section).not.toHaveTextContent(/lower bound/i);
+
+		await userEvent.hover(within(section).getByRole("button", { name: "About estimated cost" }));
+		const tooltip = await screen.findByRole("tooltip");
+		expect(tooltip).toHaveTextContent(/published API list prices/);
+		expect(tooltip).toHaveTextContent(/not provider-reported billing/);
+		expect(tooltip).not.toHaveTextContent(/could not be priced/);
 	});
 
-	it("renders a lower-bound total when coverage is partial", async () => {
+	it("presents a partial total as a plain value and discloses the gap in words", async () => {
 		useUiStore.getState().setDeveloperMode(true);
 		mockUsage({
-			cacheReadNanos: null,
-			cacheWriteNanos: 2_000_000,
+			cachedInputNanos: null,
 			coverage: "partial",
+			inputNanos: 2_000_000,
 			outputNanos: 5_000_000,
 			totalNanos: 7_000_000,
-			uncachedInputNanos: null,
 		});
 
 		renderWithQuery(<SessionInspector session={session([])} />);
@@ -923,7 +922,25 @@ describe("SessionInspector usage", () => {
 		const section = (await screen.findByText("Usage & cost")).closest(
 			"[data-testid='inspector-section']",
 		) as HTMLElement;
-		expect(within(section).getAllByText("≥$0.007").length).toBeGreaterThan(0);
+		expect(within(section).getAllByText("$0.007").length).toBeGreaterThan(0);
+		expect(section).not.toHaveTextContent(/[≈≥]\$/);
+		expect(section).not.toHaveTextContent(/partial/i);
+
+		await userEvent.hover(within(section).getByRole("button", { name: "About estimated cost" }));
+		const tooltip = await screen.findByRole("tooltip");
+		expect(tooltip).toHaveTextContent(/Some usage could not be priced/);
+	});
+
+	it("shows an unavailable estimate as words rather than a dash", async () => {
+		useUiStore.getState().setDeveloperMode(true);
+		mockUsage(null);
+
+		renderWithQuery(<SessionInspector session={session([])} />);
+
+		const section = (await screen.findByText("Usage & cost")).closest(
+			"[data-testid='inspector-section']",
+		) as HTMLElement;
+		expect(within(section).getAllByText("Unavailable").length).toBeGreaterThan(0);
 	});
 });
 

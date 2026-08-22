@@ -40,21 +40,21 @@ func TestSummaryReaderListCompactUsesOneBatchRead(t *testing.T) {
 	store := &usageSummaryStoreStub{rows: []domain.CompactSessionUsageAggregate{
 		{
 			SessionID: "zero", ProcessedTokens: &zeroProcessed,
-			Cost: completeCostAggregate(1, 0, 0, 0, 0, 0),
+			Cost: completeCostAggregate(1, 0, 0, 0, 0),
 		},
 		{
 			SessionID: "partial", ProcessedTokens: &partialProcessed, Incomplete: true,
 			Cost: domain.UsageCostAggregate{
-				EventCount:                      1,
-				KnownUncachedInputCount:         1,
-				KnownUncachedInputNanos:         30,
-				UnpricedKnownUncachedInputNanos: 30,
-				KnownCacheWriteCount:            1,
-				KnownCacheWriteNanos:            0,
-				UnpricedKnownCacheWriteNanos:    0,
-				KnownOutputCount:                1,
-				KnownOutputNanos:                5,
-				UnpricedKnownOutputNanos:        5,
+				EventCount:                    1,
+				KnownInputCount:               1,
+				KnownInputNanos:               30,
+				UnpricedKnownInputNanos:       30,
+				KnownCachedInputCount:         1,
+				KnownCachedInputNanos:         0,
+				UnpricedKnownCachedInputNanos: 0,
+				KnownOutputCount:              1,
+				KnownOutputNanos:              5,
+				UnpricedKnownOutputNanos:      5,
 			},
 		},
 	}}
@@ -72,16 +72,13 @@ func TestSummaryReaderListCompactUsesOneBatchRead(t *testing.T) {
 		got[1].EstimatedCost.Coverage != domain.EstimatedCostCoveragePartial || got[1].EstimatedCost.TotalNanos != 35 {
 		t.Fatalf("partial compact summary = %+v", got[1])
 	}
-	if got[1].EstimatedCost.CacheReadNanos != nil || got[1].EstimatedCost.CacheWriteNanos == nil || *got[1].EstimatedCost.CacheWriteNanos != 0 {
+	if got[1].EstimatedCost.InputNanos == nil || *got[1].EstimatedCost.InputNanos != 30 ||
+		got[1].EstimatedCost.CachedInputNanos == nil || *got[1].EstimatedCost.CachedInputNanos != 0 {
 		t.Fatalf("partial components = %+v", got[1].EstimatedCost)
 	}
 }
 
 func TestSummaryReaderGetPreservesStrongestPartialLowerBoundWithoutDoubleCounting(t *testing.T) {
-	reasoning := int64(40)
-	cacheWrite := int64(100)
-	direct := int64(80)
-	creation := int64(0)
 	store := &usageSummaryStoreStub{
 		found:      true,
 		incomplete: true,
@@ -89,32 +86,26 @@ func TestSummaryReaderGetPreservesStrongestPartialLowerBoundWithoutDoubleCountin
 		models: []domain.UsageModelAggregate{
 			{
 				Harness: domain.HarnessClaudeCode, ModelID: "<synthetic>",
-				Tokens: testUsageMetrics(0, 0, 0, 0, domain.UsageMetricDerived),
+				Tokens: testUsageMetrics(0, 0, 0, 0),
 			},
 			{
 				Harness: domain.HarnessCodex, BillingProviderID: "openai", ModelID: "gpt-5.6",
-				Tokens: testUsageMetrics(1000, 400, 600, 200, domain.UsageMetricReported),
-				ProviderDetails: domain.UsageProviderDetails{OpenAI: &domain.OpenAIUsageDetails{
-					ReasoningOutputTokens: &reasoning, CacheWriteInputTokens: &cacheWrite,
-				}},
-				Cost: completeCostAggregate(1, 100, 20, 10, 0, 70),
+				Tokens: testUsageMetrics(1000, 400, 600, 200),
+				Cost:   completeCostAggregate(1, 100, 20, 10, 70),
 			},
 			{
 				Harness: domain.HarnessClaudeCode, BillingProviderID: "zai", ModelID: "claude-sonnet",
-				Tokens: testUsageMetrics(100, 20, 80, 25, domain.UsageMetricDerived),
-				ProviderDetails: domain.UsageProviderDetails{Anthropic: &domain.AnthropicUsageDetails{
-					DirectUncachedInputTokens: &direct, CacheCreationInputTokens: &creation,
-				}},
+				Tokens: testUsageMetrics(100, 20, 80, 25),
 				Cost: domain.UsageCostAggregate{
-					EventCount:                      1,
-					KnownUncachedInputCount:         1,
-					KnownUncachedInputNanos:         30,
-					UnpricedKnownUncachedInputNanos: 30,
-					KnownCacheWriteCount:            1,
-					KnownCacheWriteNanos:            0,
-					KnownOutputCount:                1,
-					KnownOutputNanos:                5,
-					UnpricedKnownOutputNanos:        5,
+					EventCount:               1,
+					KnownInputCount:          1,
+					KnownInputNanos:          30,
+					UnpricedKnownInputNanos:  30,
+					KnownCachedInputCount:    1,
+					KnownCachedInputNanos:    0,
+					KnownOutputCount:         1,
+					KnownOutputNanos:         5,
+					UnpricedKnownOutputNanos: 5,
 				},
 			},
 		},
@@ -134,8 +125,9 @@ func TestSummaryReaderGetPreservesStrongestPartialLowerBoundWithoutDoubleCountin
 	if cost == nil || cost.Coverage != domain.EstimatedCostCoveragePartial || cost.TotalNanos != 135 {
 		t.Fatalf("session cost = %+v, want partial lower bound 100+30+5", cost)
 	}
-	if cost.UncachedInputNanos == nil || *cost.UncachedInputNanos != 50 || cost.CacheReadNanos != nil ||
-		cost.CacheWriteNanos == nil || *cost.CacheWriteNanos != 0 || cost.OutputNanos == nil || *cost.OutputNanos != 75 {
+	if cost.InputNanos == nil || *cost.InputNanos != 50 ||
+		cost.CachedInputNanos == nil || *cost.CachedInputNanos != 10 ||
+		cost.OutputNanos == nil || *cost.OutputNanos != 75 {
 		t.Fatalf("session component coverage = %+v", cost)
 	}
 	if len(got.Harnesses) != 2 || len(got.Harnesses[0].Models) != 1 || len(got.Harnesses[1].Models) != 1 ||
@@ -182,12 +174,12 @@ func TestSummaryReaderRejectsAggregateOverflow(t *testing.T) {
 		store := &usageSummaryStoreStub{rows: []domain.CompactSessionUsageAggregate{{
 			SessionID: "overflow",
 			Cost: domain.UsageCostAggregate{
-				EventCount:                      2,
-				PricedEventCount:                1,
-				PricedTotalNanos:                math.MaxInt64,
-				KnownUncachedInputCount:         1,
-				KnownUncachedInputNanos:         1,
-				UnpricedKnownUncachedInputNanos: 1,
+				EventCount:              2,
+				PricedEventCount:        1,
+				PricedTotalNanos:        math.MaxInt64,
+				KnownInputCount:         1,
+				KnownInputNanos:         1,
+				UnpricedKnownInputNanos: 1,
 			},
 		}}}
 		if _, err := NewSummaryReader(store).ListCompact(context.Background(), ""); err == nil {
@@ -199,13 +191,13 @@ func TestSummaryReaderRejectsAggregateOverflow(t *testing.T) {
 		store := &usageSummaryStoreStub{found: true, models: []domain.UsageModelAggregate{
 			{
 				Harness: domain.HarnessCodex, BillingProviderID: "openai", ModelID: "one",
-				Tokens: testUsageMetrics(1, 0, 1, 0, domain.UsageMetricReported),
-				Cost:   completeCostAggregate(1, math.MaxInt64, 0, 0, 0, 0),
+				Tokens: testUsageMetrics(1, 0, 1, 0),
+				Cost:   completeCostAggregate(1, math.MaxInt64, 0, 0, 0),
 			},
 			{
 				Harness: domain.HarnessCodex, BillingProviderID: "openai", ModelID: "two",
-				Tokens: testUsageMetrics(1, 0, 1, 0, domain.UsageMetricReported),
-				Cost:   completeCostAggregate(1, 1, 0, 0, 0, 0),
+				Tokens: testUsageMetrics(1, 0, 1, 0),
+				Cost:   completeCostAggregate(1, 1, 0, 0, 0),
 			},
 		}}
 		if _, err := NewSummaryReader(store).Get(context.Background(), "overflow"); err == nil {
@@ -214,19 +206,12 @@ func TestSummaryReaderRejectsAggregateOverflow(t *testing.T) {
 	})
 }
 
-func testUsageMetrics(input, cachedInput, uncachedInput, output int64, inputProvenance domain.UsageMetricProvenance) domain.UsageTokenMetrics {
+func testUsageMetrics(input, cachedInput, uncachedInput, output int64) domain.UsageTokenMetrics {
 	return domain.UsageTokenMetrics{
 		InputTokens: &input, CachedInputTokens: &cachedInput, UncachedInputTokens: &uncachedInput,
 		OutputTokens: &output,
-		Provenance: domain.UsageMetricProvenanceSet{
-			InputTokens: inputProvenance, CachedInputTokens: domain.UsageMetricReported,
-			UncachedInputTokens: domain.UsageMetricDerived,
-			OutputTokens:        domain.UsageMetricReported,
-		},
 	}
 }
-
-func int64Pointer(value int64) *int64 { return &value }
 
 func TestSummaryReaderGetReturnsUnavailableMetricsWithoutEvents(t *testing.T) {
 	store := &usageSummaryStoreStub{found: true, session: domain.SessionRecord{ID: "empty"}}
@@ -238,12 +223,11 @@ func TestSummaryReaderGetReturnsUnavailableMetricsWithoutEvents(t *testing.T) {
 	}
 }
 
-func completeCostAggregate(events, total, input, cacheRead, cacheWrite, output int64) domain.UsageCostAggregate {
+func completeCostAggregate(events, total, input, cachedInput, output int64) domain.UsageCostAggregate {
 	return domain.UsageCostAggregate{
 		EventCount: events, PricedEventCount: events, PricedTotalNanos: total,
-		KnownUncachedInputCount: events, KnownUncachedInputNanos: input,
-		KnownCacheReadCount: events, KnownCacheReadNanos: cacheRead,
-		KnownCacheWriteCount: events, KnownCacheWriteNanos: cacheWrite,
+		KnownInputCount: events, KnownInputNanos: input,
+		KnownCachedInputCount: events, KnownCachedInputNanos: cachedInput,
 		KnownOutputCount: events, KnownOutputNanos: output,
 	}
 }

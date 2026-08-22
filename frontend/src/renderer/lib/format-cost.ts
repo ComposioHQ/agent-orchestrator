@@ -21,10 +21,15 @@ export function formatCostNanos(nanos: number | null | undefined): string | null
 	return `$0.${fractionalNanos}`;
 }
 
-/** Format a coverage-aware estimate for display, or return null when unavailable. */
+/**
+ * Format an estimate for display, or return null when there is nothing to show.
+ *
+ * Coverage stays a backend fact used for aggregation and for the contextual
+ * disclosure beside the heading. It is deliberately not turned into a `≈`/`≥`
+ * prefix here: a mathematical qualifier reads as a pricing claim, and every
+ * estimate carries the same caveat regardless of coverage.
+ */
 export function formatEstimatedCost(cost: EstimatedCost | null | undefined): string | null {
 	if (!cost) return null;
-	const amount = formatCostNanos(cost.totalNanos);
-	if (!amount) return null;
-	return `${cost.coverage === "partial" ? "≥" : "≈"}${amount}`;
+	return formatCostNanos(cost.totalNanos);
 }

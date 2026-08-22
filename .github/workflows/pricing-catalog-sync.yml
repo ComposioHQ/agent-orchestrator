@@ -7,6 +7,10 @@ on:
 
 permissions:
   contents: read
+  # The fork PAT can write only to whoisasx/agent-orchestrator, so the pull
+  # request against the canonical repository is opened with github.token, which
+  # needs this scope to create or edit it.
+  pull-requests: write
 
 jobs:
   sync:
@@ -61,10 +65,12 @@ jobs:
           else
             echo "changed=true" >> "$GITHUB_OUTPUT"
           fi
+      # The branch push uses the fork PAT stored by the checkout step; the pull
+      # request lives in the canonical repository, which that PAT cannot write.
       - name: Create or update catalog pull request
         if: steps.generate.outputs.changed == 'true'
         env:
-          GH_TOKEN: ${{ secrets.PRICING_CATALOG_PAT }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           git config user.name "pricing-catalog[bot]"

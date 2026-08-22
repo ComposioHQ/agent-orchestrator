@@ -313,17 +313,22 @@ function DesktopUsageMetric({
 			</TooltipTrigger>
 			<TooltipContent side="top">
 				{estimatedCost && total ? (
-					<div className="w-44 space-y-1.5">
+					<div className="w-52 space-y-1.5">
 						<div className="flex items-center justify-between gap-4 font-medium">
 							<span>{t("usage.estimatedCost")}</span>
 							<span className="font-mono tabular-nums">{total}</span>
 						</div>
 						<dl className="grid grid-cols-[1fr_auto] gap-x-4 gap-y-1 text-2xs">
-							<CostComponentRow label={t("usage.input")} nanos={estimatedCost.uncachedInputNanos} />
-							<CostComponentRow label={t("usage.cacheRead")} nanos={estimatedCost.cacheReadNanos} />
-							<CostComponentRow label={t("usage.cacheWrite")} nanos={estimatedCost.cacheWriteNanos} />
+							<CostComponentRow label={t("usage.input")} nanos={estimatedCost.inputNanos} />
+							<CostComponentRow label={t("usage.cachedInput")} nanos={estimatedCost.cachedInputNanos} />
 							<CostComponentRow label={t("usage.output")} nanos={estimatedCost.outputNanos} />
 						</dl>
+						{/* This tooltip is already open, so the disclosure the inspector
+						    puts behind an ⓘ has to be inline here. */}
+						<p className="border-t border-border/60 pt-1.5 text-2xs text-muted-foreground">
+							{t("usage.estimatedCostInfo")}
+							{estimatedCost.coverage === "partial" ? ` ${t("usage.estimatedCostInfoPartial")}` : ""}
+						</p>
 					</div>
 				) : (
 					usage.accessibleLabel

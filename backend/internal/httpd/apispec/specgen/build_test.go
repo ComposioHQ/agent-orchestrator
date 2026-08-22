@@ -89,12 +89,12 @@ func TestBuild_UsageEstimatedCostIsNamedReusableAndNullable(t *testing.T) {
 	if !ok {
 		t.Fatal("EstimatedCostResponse is not a named schema")
 	}
-	for _, field := range []string{"totalNanos", "uncachedInputNanos", "cacheReadNanos", "cacheWriteNanos", "outputNanos", "coverage"} {
+	for _, field := range []string{"totalNanos", "inputNanos", "cachedInputNanos", "outputNanos", "coverage"} {
 		if !slices.Contains(cost.Required, field) {
 			t.Fatalf("EstimatedCostResponse required = %v, missing %s", cost.Required, field)
 		}
 	}
-	for _, field := range []string{"totalNanos", "uncachedInputNanos", "cacheReadNanos", "cacheWriteNanos", "outputNanos"} {
+	for _, field := range []string{"totalNanos", "inputNanos", "cachedInputNanos", "outputNanos"} {
 		if cost.Properties[field].Format != "int64" {
 			t.Fatalf("EstimatedCostResponse.%s format = %q, want int64", field, cost.Properties[field].Format)
 		}

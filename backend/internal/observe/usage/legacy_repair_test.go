@@ -3,6 +3,7 @@ package usage
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -177,9 +178,11 @@ func openUsageRawDB(t *testing.T, dataDir string) *sql.DB {
 func makeLegacyProviderNull(t *testing.T, dataDir string, sourceID int64) {
 	t.Helper()
 	db := openUsageRawDB(t, dataDir)
+	// A pre-feature row also predates the bounded provider object, so clear it
+	// too: refilling it from the durable transcript is part of the repair.
 	_, err := db.Exec(`UPDATE model_usage_events
-SET billing_provider_id = NULL, uncached_input_cost_nanos = NULL,
-    cache_read_cost_nanos = NULL, cache_write_cost_nanos = NULL,
+SET billing_provider_id = NULL, provider_usage_json = NULL,
+    input_cost_nanos = NULL, cached_input_cost_nanos = NULL,
     output_cost_nanos = NULL, estimated_cost_nanos = NULL,
     pricing_version = ''
 WHERE usage_source_id = ?`, sourceID)
@@ -206,5 +209,41 @@ func assertLegacyStillNull(t *testing.T, dataDir string, sourceID int64) {
 WHERE usage_source_id = ?`, sourceID).Scan(&provider))
 	if provider.Valid {
 		t.Fatalf("legacy billing provider = %q, want NULL", provider.String)
+	}
+}
+
+// The chunk reader bounds each read, but the prefix it walks does not, so the
+// replay must retain events per candidate rather than per record. Without this
+// bound, one legacy row on a long-lived transcript makes the startup repair
+// allocate in proportion to the whole file.
+func TestLegacyReplayIndexRetainsOnlyCandidateEvents(t *testing.T) {
+	candidates := []domain.LegacyUsageEvent{
+		{SourceEventKey: "wanted", ModelID: "claude-x", MeasurementKind: domain.UsageMeasurementNativeReported},
+		{SourceEventKey: "ambiguous", ModelID: "claude-x", MeasurementKind: domain.UsageMeasurementNativeReported},
+	}
+	index := newLegacyReplayIndex(candidates)
+	for chunk := 0; chunk < 1000; chunk++ {
+		index.observe([]domain.ModelUsageEvent{
+			{SourceEventKey: fmt.Sprintf("unrelated-%d", chunk), ModelID: "noise"},
+		})
+	}
+	index.observe([]domain.ModelUsageEvent{
+		{SourceEventKey: "wanted", ModelID: "claude-x", MeasurementKind: domain.UsageMeasurementNativeReported},
+	})
+	// A key seen twice across the prefix is ambiguous, so both sightings are
+	// tracked even though only the last event is kept.
+	index.observe([]domain.ModelUsageEvent{
+		{SourceEventKey: "ambiguous", ModelID: "claude-x", MeasurementKind: domain.UsageMeasurementNativeReported},
+	})
+	index.observe([]domain.ModelUsageEvent{
+		{SourceEventKey: "ambiguous", ModelID: "claude-x", MeasurementKind: domain.UsageMeasurementNativeReported},
+	})
+
+	if len(index.byKey) != 2 {
+		t.Fatalf("retained %d events, want only the two candidate keys", len(index.byKey))
+	}
+	matches := matchLegacyEvents(candidates, index)
+	if len(matches) != 1 || matches[0].candidate.SourceEventKey != "wanted" {
+		t.Fatalf("matches = %+v, want only the unambiguous candidate", matches)
 	}
 }

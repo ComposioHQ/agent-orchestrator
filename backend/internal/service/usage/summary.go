@@ -89,7 +89,7 @@ func (r *SummaryReader) Get(ctx context.Context, sessionID domain.SessionID) (do
 
 func usageTotals(models []domain.UsageModelAggregate) (domain.UsageMetricTotals, error) {
 	if len(models) == 0 {
-		return domain.UsageMetricTotals{Provenance: unknownUsageProvenance()}, nil
+		return domain.UsageMetricTotals{}, nil
 	}
 	var costs domain.UsageCostAggregate
 	for _, model := range models {
@@ -101,28 +101,16 @@ func usageTotals(models []domain.UsageModelAggregate) (domain.UsageMetricTotals,
 	if err != nil {
 		return domain.UsageMetricTotals{}, err
 	}
-	input, inputProvenance := aggregateMetric(models, func(model domain.UsageModelAggregate) (*int64, domain.UsageMetricProvenance) {
-		return model.Tokens.InputTokens, model.Tokens.Provenance.InputTokens
-	})
-	cachedInput, cachedInputProvenance := aggregateMetric(models, func(model domain.UsageModelAggregate) (*int64, domain.UsageMetricProvenance) {
-		return model.Tokens.CachedInputTokens, model.Tokens.Provenance.CachedInputTokens
-	})
-	uncachedInput, uncachedInputProvenance := aggregateMetric(models, func(model domain.UsageModelAggregate) (*int64, domain.UsageMetricProvenance) {
-		return model.Tokens.UncachedInputTokens, model.Tokens.Provenance.UncachedInputTokens
-	})
-	output, outputProvenance := aggregateMetric(models, func(model domain.UsageModelAggregate) (*int64, domain.UsageMetricProvenance) {
-		return model.Tokens.OutputTokens, model.Tokens.Provenance.OutputTokens
-	})
+	input := aggregateMetric(models, func(model domain.UsageModelAggregate) *int64 { return model.Tokens.InputTokens })
+	output := aggregateMetric(models, func(model domain.UsageModelAggregate) *int64 { return model.Tokens.OutputTokens })
 	totals := domain.UsageMetricTotals{
-		InputTokens: input, CachedInputTokens: cachedInput, UncachedInputTokens: uncachedInput,
-		OutputTokens: output,
-		Provenance: domain.UsageMetricProvenanceSet{
-			InputTokens: inputProvenance, CachedInputTokens: cachedInputProvenance,
-			UncachedInputTokens: uncachedInputProvenance,
-			OutputTokens:        outputProvenance,
-		},
-		ProviderDetails: aggregateProviderDetails(models),
-		EstimatedCost:   estimate,
+		InputTokens:       input,
+		CachedInputTokens: aggregateMetric(models, func(model domain.UsageModelAggregate) *int64 { return model.Tokens.CachedInputTokens }),
+		UncachedInputTokens: aggregateMetric(models, func(model domain.UsageModelAggregate) *int64 {
+			return model.Tokens.UncachedInputTokens
+		}),
+		OutputTokens:  output,
+		EstimatedCost: estimate,
 	}
 	if input != nil && output != nil {
 		processed := *input + *output
@@ -131,73 +119,18 @@ func usageTotals(models []domain.UsageModelAggregate) (domain.UsageMetricTotals,
 	return totals, nil
 }
 
-type usageMetricSelector func(domain.UsageModelAggregate) (*int64, domain.UsageMetricProvenance)
-
-func aggregateMetric(models []domain.UsageModelAggregate, selectMetric usageMetricSelector) (*int64, domain.UsageMetricProvenance) {
+// aggregateMetric sums one metric across models. One uncollected counter makes
+// the whole sum unknown rather than silently under-reporting it.
+func aggregateMetric(models []domain.UsageModelAggregate, selectMetric func(domain.UsageModelAggregate) *int64) *int64 {
 	var total int64
-	provenance := domain.UsageMetricProvenance("")
 	for _, model := range models {
-		value, current := selectMetric(model)
-		if value == nil || current == domain.UsageMetricUnknown {
-			return nil, domain.UsageMetricUnknown
-		}
-		total += *value
-		if provenance == "" {
-			provenance = current
-		} else if provenance != current {
-			provenance = domain.UsageMetricDerived
-		}
-	}
-	return &total, provenance
-}
-
-func aggregateProviderDetails(models []domain.UsageModelAggregate) domain.UsageProviderDetails {
-	var openAI []*domain.OpenAIUsageDetails
-	var anthropic []*domain.AnthropicUsageDetails
-	for _, model := range models {
-		if model.ProviderDetails.OpenAI != nil {
-			openAI = append(openAI, model.ProviderDetails.OpenAI)
-		}
-		if model.ProviderDetails.Anthropic != nil {
-			anthropic = append(anthropic, model.ProviderDetails.Anthropic)
-		}
-	}
-	var details domain.UsageProviderDetails
-	if len(openAI) > 0 {
-		details.OpenAI = &domain.OpenAIUsageDetails{
-			ReasoningOutputTokens: sumOptionalMetrics(openAI, func(detail *domain.OpenAIUsageDetails) *int64 { return detail.ReasoningOutputTokens }),
-			CacheWriteInputTokens: sumOptionalMetrics(openAI, func(detail *domain.OpenAIUsageDetails) *int64 { return detail.CacheWriteInputTokens }),
-		}
-	}
-	if len(anthropic) > 0 {
-		details.Anthropic = &domain.AnthropicUsageDetails{
-			DirectUncachedInputTokens:  sumOptionalMetrics(anthropic, func(detail *domain.AnthropicUsageDetails) *int64 { return detail.DirectUncachedInputTokens }),
-			CacheCreationInputTokens:   sumOptionalMetrics(anthropic, func(detail *domain.AnthropicUsageDetails) *int64 { return detail.CacheCreationInputTokens }),
-			CacheCreation5mInputTokens: sumOptionalMetrics(anthropic, func(detail *domain.AnthropicUsageDetails) *int64 { return detail.CacheCreation5mInputTokens }),
-			CacheCreation1hInputTokens: sumOptionalMetrics(anthropic, func(detail *domain.AnthropicUsageDetails) *int64 { return detail.CacheCreation1hInputTokens }),
-		}
-	}
-	return details
-}
-
-func sumOptionalMetrics[T any](values []*T, selectMetric func(*T) *int64) *int64 {
-	var total int64
-	for _, value := range values {
-		metric := selectMetric(value)
-		if metric == nil {
+		value := selectMetric(model)
+		if value == nil {
 			return nil
 		}
-		total += *metric
+		total += *value
 	}
 	return &total
-}
-
-func unknownUsageProvenance() domain.UsageMetricProvenanceSet {
-	return domain.UsageMetricProvenanceSet{
-		InputTokens: domain.UsageMetricUnknown, CachedInputTokens: domain.UsageMetricUnknown,
-		UncachedInputTokens: domain.UsageMetricUnknown,
-		OutputTokens:        domain.UsageMetricUnknown,
-	}
 }
 
 func harnessUsageSummaries(models []domain.UsageModelAggregate) ([]domain.HarnessUsageSummary, error) {
@@ -247,9 +180,8 @@ func estimatedCost(raw domain.UsageCostAggregate) (*domain.EstimatedCost, error)
 			name  string
 			value int64
 		}{
-			{"uncached input cost", raw.UnpricedKnownUncachedInputNanos},
-			{"cache read cost", raw.UnpricedKnownCacheReadNanos},
-			{"cache write cost", raw.UnpricedKnownCacheWriteNanos},
+			{"input cost", raw.UnpricedKnownInputNanos},
+			{"cached input cost", raw.UnpricedKnownCachedInputNanos},
 			{"output cost", raw.UnpricedKnownOutputNanos},
 		} {
 			total, err = checkedUsageAdd(component.name, total, component.value)
@@ -262,12 +194,11 @@ func estimatedCost(raw domain.UsageCostAggregate) (*domain.EstimatedCost, error)
 		}
 	}
 	return &domain.EstimatedCost{
-		TotalNanos:         total,
-		UncachedInputNanos: knownComponent(raw.EventCount, raw.KnownUncachedInputCount, raw.KnownUncachedInputNanos),
-		CacheReadNanos:     knownComponent(raw.EventCount, raw.KnownCacheReadCount, raw.KnownCacheReadNanos),
-		CacheWriteNanos:    knownComponent(raw.EventCount, raw.KnownCacheWriteCount, raw.KnownCacheWriteNanos),
-		OutputNanos:        knownComponent(raw.EventCount, raw.KnownOutputCount, raw.KnownOutputNanos),
-		Coverage:           coverage,
+		TotalNanos:       total,
+		InputNanos:       knownComponent(raw.EventCount, raw.KnownInputCount, raw.KnownInputNanos),
+		CachedInputNanos: knownComponent(raw.EventCount, raw.KnownCachedInputCount, raw.KnownCachedInputNanos),
+		OutputNanos:      knownComponent(raw.EventCount, raw.KnownOutputCount, raw.KnownOutputNanos),
+		Coverage:         coverage,
 	}, nil
 }
 
@@ -290,15 +221,12 @@ func mergeUsageCostAggregate(dst *domain.UsageCostAggregate, src domain.UsageCos
 		{"cost event count", &dst.EventCount, src.EventCount},
 		{"priced event count", &dst.PricedEventCount, src.PricedEventCount},
 		{"priced total cost", &dst.PricedTotalNanos, src.PricedTotalNanos},
-		{"known uncached input count", &dst.KnownUncachedInputCount, src.KnownUncachedInputCount},
-		{"known uncached input cost", &dst.KnownUncachedInputNanos, src.KnownUncachedInputNanos},
-		{"unpriced known uncached input cost", &dst.UnpricedKnownUncachedInputNanos, src.UnpricedKnownUncachedInputNanos},
-		{"known cache read count", &dst.KnownCacheReadCount, src.KnownCacheReadCount},
-		{"known cache read cost", &dst.KnownCacheReadNanos, src.KnownCacheReadNanos},
-		{"unpriced known cache read cost", &dst.UnpricedKnownCacheReadNanos, src.UnpricedKnownCacheReadNanos},
-		{"known cache write count", &dst.KnownCacheWriteCount, src.KnownCacheWriteCount},
-		{"known cache write cost", &dst.KnownCacheWriteNanos, src.KnownCacheWriteNanos},
-		{"unpriced known cache write cost", &dst.UnpricedKnownCacheWriteNanos, src.UnpricedKnownCacheWriteNanos},
+		{"known input count", &dst.KnownInputCount, src.KnownInputCount},
+		{"known input cost", &dst.KnownInputNanos, src.KnownInputNanos},
+		{"unpriced known input cost", &dst.UnpricedKnownInputNanos, src.UnpricedKnownInputNanos},
+		{"known cached input count", &dst.KnownCachedInputCount, src.KnownCachedInputCount},
+		{"known cached input cost", &dst.KnownCachedInputNanos, src.KnownCachedInputNanos},
+		{"unpriced known cached input cost", &dst.UnpricedKnownCachedInputNanos, src.UnpricedKnownCachedInputNanos},
 		{"known output count", &dst.KnownOutputCount, src.KnownOutputCount},
 		{"known output cost", &dst.KnownOutputNanos, src.KnownOutputNanos},
 		{"unpriced known output cost", &dst.UnpricedKnownOutputNanos, src.UnpricedKnownOutputNanos},
@@ -319,9 +247,8 @@ func validateUsageCostAggregate(raw domain.UsageCostAggregate) error {
 		value int64
 	}{
 		{"event count", raw.EventCount}, {"priced event count", raw.PricedEventCount}, {"priced total cost", raw.PricedTotalNanos},
-		{"known uncached input count", raw.KnownUncachedInputCount}, {"known uncached input cost", raw.KnownUncachedInputNanos}, {"unpriced known uncached input cost", raw.UnpricedKnownUncachedInputNanos},
-		{"known cache read count", raw.KnownCacheReadCount}, {"known cache read cost", raw.KnownCacheReadNanos}, {"unpriced known cache read cost", raw.UnpricedKnownCacheReadNanos},
-		{"known cache write count", raw.KnownCacheWriteCount}, {"known cache write cost", raw.KnownCacheWriteNanos}, {"unpriced known cache write cost", raw.UnpricedKnownCacheWriteNanos},
+		{"known input count", raw.KnownInputCount}, {"known input cost", raw.KnownInputNanos}, {"unpriced known input cost", raw.UnpricedKnownInputNanos},
+		{"known cached input count", raw.KnownCachedInputCount}, {"known cached input cost", raw.KnownCachedInputNanos}, {"unpriced known cached input cost", raw.UnpricedKnownCachedInputNanos},
 		{"known output count", raw.KnownOutputCount}, {"known output cost", raw.KnownOutputNanos}, {"unpriced known output cost", raw.UnpricedKnownOutputNanos},
 	}
 	for _, item := range values {
@@ -329,12 +256,13 @@ func validateUsageCostAggregate(raw domain.UsageCostAggregate) error {
 			return fmt.Errorf("usage %s must be nonnegative", item.name)
 		}
 	}
-	if raw.PricedEventCount > raw.EventCount || raw.KnownUncachedInputCount > raw.EventCount ||
-		raw.KnownCacheReadCount > raw.EventCount || raw.KnownCacheWriteCount > raw.EventCount || raw.KnownOutputCount > raw.EventCount {
+	if raw.PricedEventCount > raw.EventCount || raw.KnownInputCount > raw.EventCount ||
+		raw.KnownCachedInputCount > raw.EventCount || raw.KnownOutputCount > raw.EventCount {
 		return fmt.Errorf("usage cost coverage count exceeds event count")
 	}
-	if raw.UnpricedKnownUncachedInputNanos > raw.KnownUncachedInputNanos || raw.UnpricedKnownCacheReadNanos > raw.KnownCacheReadNanos ||
-		raw.UnpricedKnownCacheWriteNanos > raw.KnownCacheWriteNanos || raw.UnpricedKnownOutputNanos > raw.KnownOutputNanos {
+	if raw.UnpricedKnownInputNanos > raw.KnownInputNanos ||
+		raw.UnpricedKnownCachedInputNanos > raw.KnownCachedInputNanos ||
+		raw.UnpricedKnownOutputNanos > raw.KnownOutputNanos {
 		return fmt.Errorf("usage unpriced component cost exceeds known component cost")
 	}
 	return nil
