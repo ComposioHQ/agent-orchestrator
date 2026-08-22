@@ -232,6 +232,14 @@ export interface ChatWorkspaceProps {
 	onOpenFiles?: () => void;
 	/** Opens the Files inspector focused on one changed path. */
 	onOpenFile?: (path: string) => void;
+	/**
+	 * Re-dispatch a failed turn's durable prompt as a new turn. Offered only for
+	 * eligible failed human turns, so the affordance is drawn on the failed-turn
+	 * boundary and never for a turn that is running or already succeeded.
+	 */
+	onRetryTurn?: (turnId: string) => void | Promise<unknown>;
+	retryTurnPending?: boolean;
+	retryTurnError?: string;
 	/** Create a conversation branch by replacing a prior human prompt. */
 	onEditMessage?: (turnId: string, text: string) => void | Promise<unknown>;
 	editMessagePending?: boolean;
@@ -321,6 +329,9 @@ export function ChatWorkspace({
 	rollbackError,
 	onOpenFiles,
 	onOpenFile,
+	onRetryTurn,
+	retryTurnPending,
+	retryTurnError,
 	onEditMessage,
 	editMessagePending,
 	editMessageError,
@@ -755,6 +766,9 @@ export function ChatWorkspace({
 							onRollback={rollbackTarget}
 							onOpenFiles={onOpenFiles}
 							onOpenFile={onOpenFile}
+							onRetryTurn={onRetryTurn}
+							retryTurnPending={retryTurnPending}
+							retryTurnError={retryTurnError}
 							onEditHumanMessage={editHumanMessage}
 							editPending={editMessagePending}
 							editBusy={Boolean(turn)}
@@ -1256,6 +1270,9 @@ function Timeline({
 	onRollback,
 	onOpenFiles,
 	onOpenFile,
+	onRetryTurn,
+	retryTurnPending,
+	retryTurnError,
 	onEditHumanMessage,
 	editPending,
 	editBusy,
@@ -1274,6 +1291,9 @@ function Timeline({
 	onRollback?: (turnId: string) => void;
 	onOpenFiles?: () => void;
 	onOpenFile?: (path: string) => void;
+	onRetryTurn?: (turnId: string) => void;
+	retryTurnPending?: boolean;
+	retryTurnError?: string;
 	onEditHumanMessage?: (turnId: string, text: string) => Promise<unknown> | void;
 	editPending?: boolean;
 	editBusy?: boolean;
@@ -1308,6 +1328,7 @@ function Timeline({
 	const rollback = useStableCallback(onRollback);
 	const openFiles = useStableCallback(onOpenFiles);
 	const openFile = useStableCallback(onOpenFile);
+	const retryTurn = useStableCallback(onRetryTurn);
 	const apiBaseUrl = useSyncExternalStore(subscribeApiBaseUrl, getApiBaseUrl, getApiBaseUrl);
 	const editHumanMessage = useStableCallback(onEditHumanMessage);
 	const activateBranch = useStableCallback(onActivateBranch);
@@ -1638,6 +1659,10 @@ function Timeline({
 								onRollback={rollback}
 								onOpenFiles={onOpenFiles ? openFiles : undefined}
 								onOpenFile={onOpenFile ? openFile : undefined}
+								onRetryTurn={retryTurn}
+								canRetry={Boolean(onRetryTurn)}
+								retryTurnPending={retryTurnPending}
+								retryTurnError={retryTurnError}
 								onEditHumanMessage={canEditHumanMessage ? editHumanMessage : undefined}
 								messageEdit={messageEdit}
 								onStartMessageEdit={startMessageEdit}
@@ -1820,6 +1845,10 @@ const TurnGroup = memo(function TurnGroup({
 	activateBranchPending,
 	activateBranchError,
 	canRollback,
+	onRetryTurn,
+	canRetry,
+	retryTurnPending,
+	retryTurnError,
 	busy,
 	queued,
 	newHumanMessageIds,
@@ -1848,6 +1877,12 @@ const TurnGroup = memo(function TurnGroup({
 	activateBranchError?: string;
 	/** The daemon would accept a rollback of this turn, so offer the affordance. */
 	canRollback: boolean;
+	/** Re-dispatch this failed turn's prompt as a new turn. */
+	onRetryTurn?: (turnId: string) => void;
+	/** The daemon offers retry for this turn, so draw the affordance. */
+	canRetry: boolean;
+	retryTurnPending?: boolean;
+	retryTurnError?: string;
 	busy?: boolean;
 	/** This turn was recorded but not sent, so its message can say so. */
 	queued: boolean;
@@ -1956,7 +1991,17 @@ const TurnGroup = memo(function TurnGroup({
 			    Interrupted/failed still get a labelled boundary so the reader can see
 			    how the turn ended. */}
 			{group.outcome && group.outcome.state !== "completed" ? (
-				<TurnOutcome state={group.outcome.state} error={group.outcome.error} />
+				<TurnOutcome
+					state={group.outcome.state}
+					error={group.outcome.error}
+					onRetry={
+						group.outcome.state === "failed" && canRetry && group.turnId
+							? () => onRetryTurn?.(group.turnId as string)
+							: undefined
+					}
+					retryPending={retryTurnPending}
+					retryError={retryTurnError}
+				/>
 			) : null}
 		</div>
 	);

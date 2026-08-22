@@ -317,6 +317,9 @@ export function SessionChatSurface({
 				rollbackError={commands.rollbackError}
 				onOpenFiles={onOpenFiles}
 				onOpenFile={onOpenFile}
+				onRetryTurn={commands.retryTurn}
+				retryTurnPending={commands.retryTurnPending}
+				retryTurnError={commands.retryTurnError}
 				onEditMessage={commands.editMessage}
 				editMessagePending={commands.editMessagePending}
 				editMessageError={commands.editMessageError}
