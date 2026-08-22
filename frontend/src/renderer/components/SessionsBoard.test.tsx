@@ -362,36 +362,28 @@ describe("SessionsBoard", () => {
 
 		renderBoard("p1");
 
-		const activeUsage = screen.getByText("$1.24 · 12.3K processed");
-		expect(activeUsage).toHaveAttribute("aria-label", "$1.24 · 12,300 tokens processed");
-		expect(screen.queryByText("0 processed")).not.toBeInTheDocument();
+		// The card shows cost and tokens and nothing else. The word "processed"
+		// only survives where a screen reader needs the count named.
+		const activeUsage = screen.getByText("$1.24 · 12.3K");
+		expect(activeUsage).toHaveAttribute("aria-label", "$1.24 · 12,300 tokens");
+		expect(screen.queryByText(/processed/i)).not.toBeInTheDocument();
+		// A session with neither cost nor tokens carries no usage line at all.
+		const emptyCard = screen.getByText("empty worker").closest('[data-testid="board-session-card"]') as HTMLElement;
+		expect(within(emptyCard).queryByLabelText(/tokens$/)).not.toBeInTheDocument();
 		const tokensOnlyCard = screen.getByText("tokens worker").closest('[data-testid="board-session-card"]') as HTMLElement;
-		expect(within(tokensOnlyCard).getByText("800 processed")).toHaveAttribute("aria-label", "800 tokens processed");
+		expect(within(tokensOnlyCard).getByText("800")).toHaveAttribute("aria-label", "800 tokens");
 		expect(tokensOnlyCard).not.toHaveTextContent(/[≈≥]\$/);
 		expect(usageQueryMock).toHaveBeenCalledWith("p1");
-		await userEvent.hover(activeUsage);
-		const activeTooltip = await screen.findByRole("tooltip");
-		expect(within(activeTooltip).getByText("Estimated cost")).toBeInTheDocument();
-		expect(within(activeTooltip).getByText("$1.24")).toBeInTheDocument();
-		expect(within(activeTooltip).getByText("Input").nextElementSibling).toHaveTextContent("$0.54");
-		expect(within(activeTooltip).getByText("Cached input").nextElementSibling).toHaveTextContent("$0.10");
-		expect(within(activeTooltip).getByText("Output").nextElementSibling).toHaveTextContent("$0.60");
-		expect(activeTooltip).toHaveTextContent(/published API list prices/);
-		expect(activeTooltip).not.toHaveTextContent(/could not be priced/);
-		await userEvent.unhover(activeUsage);
 
 		const archive = await expandArchive();
-		const archivedUsage = within(archive).getByText("$0.02 · 1.9K processed");
-		expect(archivedUsage).toHaveAttribute("aria-label", "$0.02 · 1,900 tokens processed");
-		await userEvent.hover(archivedUsage);
-		const archivedTooltip = await screen.findByRole("tooltip");
-		expect(within(archivedTooltip).getByText("Estimated cost")).toBeInTheDocument();
-		// An unavailable component row stays a dash; the total never does.
-		expect(within(archivedTooltip).getAllByText("—")).toHaveLength(1);
-		expect(archivedTooltip).toHaveTextContent(/Some usage could not be priced/);
+		expect(within(archive).getByText("$0.02 · 1.9K")).toHaveAttribute("aria-label", "$0.02 · 1,900 tokens");
 	});
 
-	it("makes the exact cost breakdown keyboard-readable without opening the card", async () => {
+	// The breakdown lived behind a tooltip whose trigger was a real button, so
+	// every priced card added a tab stop between the terminate control and the
+	// next card. A board is for scanning; the per-component figures belong on
+	// the session's own surface, so the metric is plain text again.
+	it("shows the usage metric as plain text without a tab stop or tooltip", async () => {
 		workspaceQueryMock.mockReturnValue({
 			data: [
 				workspaceWithSessions([
@@ -425,22 +417,18 @@ describe("SessionsBoard", () => {
 		renderBoard("p1");
 
 		const card = screen.getByText("keyboard worker").closest('[data-testid="board-session-card"]') as HTMLElement;
+		const usage = within(card).getByText("$1.24 · 12.4K");
+		expect(usage.tagName).toBe("SPAN");
+		expect(usage).toHaveAttribute("aria-label", "$1.24 · 12,400 tokens");
+		expect(within(card).queryByRole("button", { name: /Estimated cost/ })).not.toBeInTheDocument();
+
 		within(card).getByRole("button", { name: "keyboard worker" }).focus();
 		await userEvent.tab();
 		expect(within(card).getByRole("button", { name: "Terminate keyboard worker" })).toHaveFocus();
-		await userEvent.tab();
 
-		const costTrigger = within(card).getByRole("button", {
-			name: "Estimated cost: $1.24 · 12,400 tokens processed",
-		});
-		expect(costTrigger).toHaveFocus();
-		const tooltip = await screen.findByRole("tooltip");
-		expect(within(tooltip).getByText("Estimated cost")).toBeInTheDocument();
-		expect(within(tooltip).getByText("Input").nextElementSibling).toHaveTextContent("$0.54");
-		expect(within(tooltip).getByText("Cached input").nextElementSibling).toHaveTextContent("$0.10");
-		expect(within(tooltip).getByText("Output").nextElementSibling).toHaveTextContent("$0.60");
-		await userEvent.keyboard("{Enter}");
-		expect(navigateMock).not.toHaveBeenCalled();
+		await userEvent.hover(usage);
+		expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
+		expect(card).not.toHaveTextContent("Cached input");
 	});
 
 	it("pulses the shared activity indicator on an actively working session card", () => {

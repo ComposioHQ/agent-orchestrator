@@ -898,12 +898,14 @@ describe("SessionInspector usage", () => {
 		// heading explains the estimate without claiming it is billing.
 		expect(within(section).getAllByText("$1.24").length).toBeGreaterThan(0);
 		expect(section).not.toHaveTextContent(/[≈≥]\$/);
-		expect(within(section).getByText("anthropic · Sonnet 4")).toBeInTheDocument();
+		// The row already sits under its agent, so the billing provider is not
+		// repeated in the model name.
+		expect(within(section).getByText("Sonnet 4")).toBeInTheDocument();
+		expect(section).not.toHaveTextContent("anthropic ·");
 
 		await userEvent.hover(within(section).getByRole("button", { name: "About estimated cost" }));
 		const tooltip = await screen.findByRole("tooltip");
 		expect(tooltip).toHaveTextContent(/published API list prices/);
-		expect(tooltip).toHaveTextContent(/not provider-reported billing/);
 		expect(tooltip).not.toHaveTextContent(/could not be priced/);
 	});
 
@@ -929,6 +931,61 @@ describe("SessionInspector usage", () => {
 		await userEvent.hover(within(section).getByRole("button", { name: "About estimated cost" }));
 		const tooltip = await screen.findByRole("tooltip");
 		expect(tooltip).toHaveTextContent(/Some usage could not be priced/);
+	});
+
+	// The column itself carries the "nothing here is priced" case: it disappears
+	// when no row has an estimate, so an install without pricing shows no empty
+	// column at all. Once any row is priced the column earns its place, and the
+	// rows that are not priced say so in words rather than trailing a dash.
+	it("drops the cost column only when no agent has an estimate", async () => {
+		useUiStore.getState().setDeveloperMode(true);
+		const totals = tokenTotals(null);
+		mockUsage(null, [
+			{ harness: "codex", totals, models: [{ modelId: "gpt-5.5", providerId: "openai", totals }] },
+			{ harness: "claude-code", totals, models: [{ modelId: "claude-sonnet-4", providerId: "anthropic", totals }] },
+		]);
+
+		renderWithQuery(<SessionInspector session={session([])} />);
+
+		const section = (await screen.findByText("Usage & cost")).closest(
+			"[data-testid='inspector-section']",
+		) as HTMLElement;
+		// The header row's parent is the list container holding every agent row.
+		const agentList = within(section).getByText("Agent").parentElement?.parentElement as HTMLElement;
+		expect(within(agentList).queryByText("Cost")).not.toBeInTheDocument();
+		expect(agentList).not.toHaveTextContent("Unavailable");
+	});
+
+	it("keeps the cost column and marks unpriced agents unavailable", async () => {
+		useUiStore.getState().setDeveloperMode(true);
+		const priced = tokenTotals({
+			cachedInputNanos: 100_000_000,
+			coverage: "complete",
+			inputNanos: 540_000_000,
+			outputNanos: 600_000_000,
+			totalNanos: 1_240_000_000,
+		});
+		const unpriced = tokenTotals(null);
+		mockUsage(null, [
+			{ harness: "codex", totals: priced, models: [{ modelId: "gpt-5.5", providerId: "openai", totals: priced }] },
+			{
+				harness: "claude-code",
+				totals: unpriced,
+				models: [{ modelId: "claude-sonnet-4", providerId: "anthropic", totals: unpriced }],
+			},
+		]);
+
+		renderWithQuery(<SessionInspector session={session([])} />);
+
+		const section = (await screen.findByText("Usage & cost")).closest(
+			"[data-testid='inspector-section']",
+		) as HTMLElement;
+		// The header row's parent is the list container holding every agent row.
+		const agentList = within(section).getByText("Agent").parentElement?.parentElement as HTMLElement;
+		expect(within(agentList).getByText("Cost")).toBeInTheDocument();
+		expect(within(agentList).getByText("$1.24")).toBeInTheDocument();
+		expect(within(agentList).getByText("Unavailable")).toBeInTheDocument();
+		expect(within(agentList).queryByText("—")).not.toBeInTheDocument();
 	});
 
 	it("shows an unavailable estimate as words rather than a dash", async () => {
@@ -1305,7 +1362,7 @@ describe("SessionInspector Activity section", () => {
     const activityRow = activitySection()
       .getByText("Working")
       .closest("[data-testid='inspector-timeline-event']") as HTMLElement;
-    expect(within(activityRow).getByText("2h ago")).toBeInTheDocument();
+    expect(within(activityRow).getByText("2h")).toBeInTheDocument();
   });
 
   it("aligns text-row dots lower while keeping the Activity chip dot centered", () => {
@@ -1476,7 +1533,7 @@ describe("SessionInspector Activity section", () => {
         draftLink.closest(
           "[data-testid='inspector-timeline-event']",
         ) as HTMLElement,
-      ).getByText("2h ago"),
+      ).getByText("2h"),
     ).toBeInTheDocument();
 
     const openLink = screen.getByRole("link", { name: "Opened PR #7" });
@@ -1485,7 +1542,7 @@ describe("SessionInspector Activity section", () => {
         openLink.closest(
           "[data-testid='inspector-timeline-event']",
         ) as HTMLElement,
-      ).getByText("1h ago"),
+      ).getByText("1h"),
     ).toBeInTheDocument();
 
     const mergedOpenedLink = screen.getByRole("link", { name: "Opened PR #6" });
@@ -1494,7 +1551,7 @@ describe("SessionInspector Activity section", () => {
         mergedOpenedLink.closest(
           "[data-testid='inspector-timeline-event']",
         ) as HTMLElement,
-      ).getByText("3h ago"),
+      ).getByText("3h"),
     ).toBeInTheDocument();
 
     const mergedLink = screen.getByRole("link", { name: "Merged PR #6" });
@@ -1503,12 +1560,12 @@ describe("SessionInspector Activity section", () => {
         mergedLink.closest(
           "[data-testid='inspector-timeline-event']",
         ) as HTMLElement,
-      ).getByText("30m ago"),
+      ).getByText("30m"),
     ).toBeInTheDocument();
     const doneRow = screen
       .getByText("Done")
       .closest("[data-testid='inspector-timeline-event']") as HTMLElement;
-    expect(within(doneRow).getByText("30m ago")).toBeInTheDocument();
+    expect(within(doneRow).getByText("30m")).toBeInTheDocument();
   });
 
   it("orders Activity timeline rows by timestamp with the latest event on top", () => {
@@ -1564,13 +1621,13 @@ describe("SessionInspector Activity section", () => {
       (row) => row.textContent?.replace(/\s+/g, " ").trim(),
     );
     expect(rows).toEqual([
-      "Opened PR #4130m ago",
-      "Merged PR #401h ago",
-      "Done1h ago",
-      "Idle2h ago",
-      "Opened PR #402h ago",
-      "Created workspace3h ago",
-      "Draft PR #424h ago",
+      "Opened PR #4130m",
+      "Merged PR #401h",
+      "Done1h",
+      "Idle2h",
+      "Opened PR #402h",
+      "Created workspace3h",
+      "Draft PR #424h",
     ]);
 
     const eventRows = section.querySelectorAll(
@@ -2397,7 +2454,7 @@ describe("SessionInspector summary reviews", () => {
     expect(within(summary).getByText("Ship it").tagName).toBe("LI");
     expect(summary).not.toHaveTextContent("**ready**");
     expect(
-      within(externalReview).getByText("Reviewed 3d ago"),
+      within(externalReview).getByText("Reviewed 3d"),
     ).toBeInTheDocument();
     expect(
       within(externalReview).queryByRole("link", { name: "View on PR" }),

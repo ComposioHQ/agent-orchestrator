@@ -4,7 +4,6 @@ import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
 import {
 	SessionCardView,
-	SessionUsageMetricView,
 	type BoardPullRequestLabels,
 	type BoardSessionPresentation,
 	type BoardSplitLaneLabels,
@@ -15,7 +14,7 @@ import { Check, Copy, GitBranch, LoaderCircle, RotateCcw, Trash2 } from "lucide-
 import type { MessageKey } from "../i18n";
 import { aoBridge } from "../lib/bridge";
 import { formatTimeCompact } from "../lib/format-time";
-import { formatCostNanos, formatEstimatedCost, type EstimatedCost } from "../lib/format-cost";
+import { formatEstimatedCost } from "../lib/format-cost";
 import { formatTokenCount } from "../lib/format-token-count";
 import { prBrowserUrl, sessionPRDisplaySummaries } from "../lib/pr-display";
 import {
@@ -242,9 +241,6 @@ function DesktopSessionCard({
 				url: prBrowserUrl(pr),
 			}))}
 			renderAvatar={(provider) => <AgentAvatar className="mt-0.5" provider={provider} />}
-			renderUsage={(presentation) => (
-				<DesktopUsageMetric estimatedCost={usage?.estimatedCost} usage={presentation} />
-			)}
 			session={toBoardSessionPresentation(session, t)}
 			translate={translate}
 			usage={usagePresentation}
@@ -264,6 +260,10 @@ function pullRequestLabels(t: TFunction): BoardPullRequestLabels {
 	};
 }
 
+// toUsagePresentation builds the card's single usage line: cost, tokens, or
+// both. The card carries no cost breakdown — a board is for scanning, and the
+// per-component figures belong on the session's own surface — so the visible
+// text is bare while the accessible label still names what the count is.
 function toUsagePresentation(
 	usage: SessionUsageSummary | undefined,
 	t: TFunction,
@@ -276,75 +276,14 @@ function toUsagePresentation(
 	if (processedTokens === null || processedTokens <= 0) {
 		return { accessibleLabel: cost as string, compactLabel: cost as string };
 	}
-	const compactCount = formatTokenCount(processedTokens).replace(/ tok$/, "");
-	const accessibleTokens = t("shell.usageProcessed", {
+	const compactTokens = formatTokenCount(processedTokens).replace(/ tok$/, "");
+	const accessibleTokens = t("shell.usageTokens", {
 		count: processedTokens.toLocaleString("en-US"),
 	});
-	const compactTokens = t("shell.usageProcessedCompact", { count: compactCount });
 	return {
 		accessibleLabel: cost ? `${cost} · ${accessibleTokens}` : accessibleTokens,
 		compactLabel: cost ? `${cost} · ${compactTokens}` : compactTokens,
 	};
-}
-
-function DesktopUsageMetric({
-	estimatedCost,
-	usage,
-}: {
-	estimatedCost?: EstimatedCost | null;
-	usage: BoardUsagePresentation;
-}) {
-	const { t } = useTranslation();
-	const total = formatEstimatedCost(estimatedCost);
-	const triggerLabel = total
-		? `${t("usage.estimatedCost")}: ${usage.accessibleLabel}`
-		: usage.accessibleLabel;
-	return (
-		<Tooltip>
-			<TooltipTrigger asChild>
-				<button
-					aria-label={triggerLabel}
-					className="rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
-					onClick={(event) => event.stopPropagation()}
-					type="button"
-				>
-					<SessionUsageMetricView aria-hidden="true" usage={usage} />
-				</button>
-			</TooltipTrigger>
-			<TooltipContent side="top">
-				{estimatedCost && total ? (
-					<div className="w-52 space-y-1.5">
-						<div className="flex items-center justify-between gap-4 font-medium">
-							<span>{t("usage.estimatedCost")}</span>
-							<span className="font-mono tabular-nums">{total}</span>
-						</div>
-						<dl className="grid grid-cols-[1fr_auto] gap-x-4 gap-y-1 text-2xs">
-							<CostComponentRow label={t("usage.input")} nanos={estimatedCost.inputNanos} />
-							<CostComponentRow label={t("usage.cachedInput")} nanos={estimatedCost.cachedInputNanos} />
-							<CostComponentRow label={t("usage.output")} nanos={estimatedCost.outputNanos} />
-						</dl>
-						{/* This tooltip is already open, so the disclosure the inspector
-						    puts behind an ⓘ has to be inline here. */}
-						<p className="border-t border-border/60 pt-1.5 text-2xs text-muted-foreground">
-							{t("usage.estimatedCostInfo")}
-							{estimatedCost.coverage === "partial" ? ` ${t("usage.estimatedCostInfoPartial")}` : ""}
-						</p>
-					</div>
-				) : (
-					usage.accessibleLabel
-				)}
-			</TooltipContent>
-		</Tooltip>
-	);
-}
-
-function CostComponentRow({ label, nanos }: { label: string; nanos: number | null }) {
-	return (
-		<>
-			<dt className="text-muted-foreground">{label}</dt>
-			<dd className="text-right font-mono tabular-nums">{formatCostNanos(nanos) ?? "—"}</dd>
-		</>
-	);
 }
 
 function ArchiveRestoreButton({
