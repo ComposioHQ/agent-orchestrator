@@ -558,6 +558,7 @@ type ChatDecisionOption struct {
 // ChatDecisionKind is the semantic effect of a provider-owned decision.
 type ChatDecisionKind string
 
+// Provider-neutral decision kinds exposed to chat clients.
 const (
 	ChatDecisionAllowOnce    ChatDecisionKind = "allow_once"
 	ChatDecisionAllowAlways  ChatDecisionKind = "allow_always"
