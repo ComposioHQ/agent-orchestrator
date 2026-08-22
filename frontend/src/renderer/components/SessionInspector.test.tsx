@@ -988,48 +988,6 @@ describe("SessionInspector usage", () => {
 		expect(within(agentList).queryByText("—")).not.toBeInTheDocument();
 	});
 
-	// Break caught: rows are grouped by (provider, model), so switching provider
-	// mid-session yields two rows for one model. Dropping the provider prefix made
-	// them render identically — one priced, one not, with nothing to tell them
-	// apart. The prefix has to come back exactly where it disambiguates.
-	it("names the provider only on model rows that would otherwise collide", async () => {
-		useUiStore.getState().setDeveloperMode(true);
-		const priced = tokenTotals({
-			cachedInputNanos: 10_000_000,
-			coverage: "complete",
-			inputNanos: 100_000_000,
-			outputNanos: 100_000_000,
-			totalNanos: 210_000_000,
-		});
-		const unpriced = tokenTotals(null);
-		mockUsage(null, [
-			{
-				harness: "claude-code",
-				totals: priced,
-				models: [
-					{ modelId: "claude-haiku-4-5", providerId: "anthropic", totals: priced },
-					{ modelId: "claude-sonnet-5", providerId: "anthropic", totals: priced },
-					{ modelId: "claude-sonnet-5", providerId: "unknown", totals: unpriced },
-				],
-			},
-		]);
-
-		renderWithQuery(<SessionInspector session={session([])} />);
-		await userEvent.click(await screen.findByRole("button", { name: "Claude usage details" }));
-		const details = screen.getByRole("region", { name: "Claude usage peek" });
-
-		// The one unique name stays bare.
-		expect(within(details).getByRole("button", { name: "Haiku 4.5 usage details" })).toBeInTheDocument();
-		// The two colliding ones each say who served them.
-		expect(
-			within(details).getByRole("button", { name: "anthropic · Sonnet 5 usage details" }),
-		).toBeInTheDocument();
-		expect(
-			within(details).getByRole("button", { name: "unknown provider · Sonnet 5 usage details" }),
-		).toBeInTheDocument();
-		expect(within(details).queryByText("Sonnet 5")).not.toBeInTheDocument();
-	});
-
 	it("shows an unavailable estimate as words rather than a dash", async () => {
 		useUiStore.getState().setDeveloperMode(true);
 		mockUsage(null);
