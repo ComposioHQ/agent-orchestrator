@@ -293,6 +293,37 @@ func (s *Snapshot) ProviderVersion(providerID string) string {
 	return provider.version
 }
 
+// ProviderForModel returns the one catalog provider that lists modelID, or ""
+// when no provider does or more than one does.
+//
+// This is the last resort for an event nothing else could attribute: a Claude
+// transcript names no provider, so a session collected before its first hook
+// has only the served model name to go on. That name is a recorded fact — it is
+// what the provider actually answered with — so a lookup is evidence rather
+// than the harness-shaped guess the design forbids.
+//
+// Ambiguity resolves to "". Sentinels like "unknown" and "<synthetic>" appear in
+// no catalog and fall out here for free, as does any model AO has no rates for,
+// which is exactly the event that must stay unpriced anyway.
+func (s *Snapshot) ProviderForModel(modelID string) string {
+	if s == nil || strings.TrimSpace(modelID) == "" {
+		return ""
+	}
+	found := ""
+	for providerID, provider := range s.providers {
+		// CanonicalModelID strips this provider's own prefix, so a stored
+		// "anthropic/claude-opus-5" still matches its unprefixed catalog entry.
+		if _, ok := provider.models[CanonicalModelID(providerID, modelID)]; !ok {
+			continue
+		}
+		if found != "" {
+			return ""
+		}
+		found = providerID
+	}
+	return found
+}
+
 // Estimate contains final per-component integer nano-USD estimates. A nil
 // component is unknown. TotalNanos is present only when every component is
 // known.

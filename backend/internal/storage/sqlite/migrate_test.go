@@ -374,7 +374,7 @@ FROM model_usage_events WHERE source_event_key = ?`, test.key).Scan(
 	}
 	for _, index := range []string{
 		"idx_model_usage_events_binding_model", "idx_model_usage_events_usage_source",
-		"idx_model_usage_events_provider", "idx_model_usage_events_cost_candidates",
+		"idx_model_usage_events_cost_candidates",
 		"idx_model_usage_events_canonical_cost_candidates",
 	} {
 		var name string
@@ -383,6 +383,14 @@ FROM model_usage_events WHERE source_event_key = ?`, test.key).Scan(
 		).Scan(&name); err != nil {
 			t.Fatalf("index %s was not recreated: %v", index, err)
 		}
+	}
+	// provider_id no longer reaches a detail table and no query filters by it,
+	// so its index is retired rather than rebuilt.
+	var retired string
+	if err := db.QueryRow(
+		`SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'idx_model_usage_events_provider'`,
+	).Scan(&retired); err == nil {
+		t.Fatal("idx_model_usage_events_provider survived the rebuild")
 	}
 	if err := migrate(db); err != nil {
 		t.Fatalf("repeat measurement migration: %v", err)

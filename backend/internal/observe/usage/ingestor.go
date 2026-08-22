@@ -310,6 +310,13 @@ func (i *Ingestor) Ingest(ctx context.Context, sourceID int64) (IngestResult, er
 		apply = func() error {
 			return i.pricing.WithSnapshot(ctx, func(snapshot *pricing.Snapshot) error {
 				for index := range parsed.Events {
+					// Nothing in the transcript or the binding named a route, so
+					// fall back to the one provider whose catalog lists the model
+					// that actually answered. Only Claude ever reaches here.
+					if parsed.Events[index].BillingProviderID == "" {
+						parsed.Events[index].BillingProviderID =
+							snapshot.ProviderForModel(parsed.Events[index].ModelID)
+					}
 					estimate, estimateErr := snapshot.Estimate(parsed.Events[index])
 					if estimateErr != nil {
 						parsed.Events[index].Costs.PricingVersion = snapshot.ProviderVersion(parsed.Events[index].BillingProviderID)

@@ -336,6 +336,9 @@ func Run() error {
 				usagePipeline.NotifyInventoryChanged()
 			}
 		})
+		if usagePricing != nil {
+			usageCollector.OnRouteResolved(usagePricing.RepairLegacyAttribution)
+		}
 		ingestorConfig := usagepipeline.IngestorConfig{}
 		if usagePricing != nil {
 			ingestorConfig.Pricing = usagePricing.Manager()

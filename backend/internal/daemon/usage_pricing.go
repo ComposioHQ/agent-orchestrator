@@ -84,6 +84,16 @@ func (r *usagePricingRuntime) Manager() *pricing.Manager {
 	return r.manager
 }
 
+// RepairLegacyAttribution asks for another historical repair pass because a
+// binding just learned its billing route. Without it a Claude session collected
+// before its first hook would stay unpriced until the next daemon start.
+func (r *usagePricingRuntime) RepairLegacyAttribution() {
+	if r == nil {
+		return
+	}
+	r.repairer.Repair()
+}
+
 func (r *usagePricingRuntime) Start(ctx context.Context) error {
 	if r == nil || r.manager == nil || r.backfiller == nil || r.repairer == nil || r.refresher == nil {
 		return errors.New("usage pricing runtime is incomplete")

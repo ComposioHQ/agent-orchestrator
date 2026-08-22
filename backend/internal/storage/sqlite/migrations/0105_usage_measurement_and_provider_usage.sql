@@ -85,9 +85,12 @@ DROP TABLE anthropic_usage_event_details;
 DROP TABLE model_usage_events;
 ALTER TABLE model_usage_events_next RENAME TO model_usage_events;
 
+-- 0102's idx_model_usage_events_provider is deliberately not recreated. It
+-- existed to reach the provider detail tables this migration drops; provider_id
+-- now only selects which shape to read provider_usage_json as, and no query
+-- filters or groups by it.
 CREATE INDEX idx_model_usage_events_binding_model ON model_usage_events (binding_id, model_id);
 CREATE INDEX idx_model_usage_events_usage_source ON model_usage_events (usage_source_id);
-CREATE INDEX idx_model_usage_events_provider ON model_usage_events (provider_id);
 CREATE INDEX idx_model_usage_events_cost_candidates
     ON model_usage_events (billing_provider_id, pricing_version, id)
     WHERE estimated_cost_nanos IS NULL;

@@ -11,6 +11,8 @@ import (
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/pricing"
+	"github.com/aoagents/agent-orchestrator/backend/internal/pricing/catalogsync"
+	usagesvc "github.com/aoagents/agent-orchestrator/backend/internal/service/usage"
 	"github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite"
 )
 
@@ -246,4 +248,120 @@ func TestLegacyReplayIndexRetainsOnlyCandidateEvents(t *testing.T) {
 	if len(matches) != 1 || matches[0].candidate.SourceEventKey != "wanted" {
 		t.Fatalf("matches = %+v, want only the unambiguous candidate", matches)
 	}
+}
+
+// Break caught: a Claude transcript carries no provider field of its own, so a
+// Claude event's billing identity comes only from the trusted route hint stored
+// on its binding, or — when no hook ever ran — from the model that answered.
+// Nothing covered either path, and their absence is silent: every Claude session
+// collected before the hint existed stays unattributed, and unpriceable, forever.
+func TestLegacyRepairerAttributesClaudeHistoryFromTheBindingRouteHint(t *testing.T) {
+	tests := []struct {
+		name         string
+		providerHint string
+		model        string
+		wantRepaired bool
+	}{
+		{name: "route hint present", providerHint: "anthropic", model: "claude-test", wantRepaired: true},
+		// No hook ever ran for this binding, so the model that answered is the
+		// only evidence left — and it is evidence, not a harness-shaped guess.
+		{name: "no hint, model in catalog", model: "claude-test", wantRepaired: true},
+		// A model no catalog lists proves nothing about who billed it. Guessing
+		// "anthropic" from the harness would misprice a z.ai-served session at
+		// Anthropic list rates, so the event stays unattributed.
+		{name: "no hint, model unknown to every catalog", model: "glm-5.3"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			ctx := context.Background()
+			dataDir := t.TempDir()
+			store, source, path, now := seedClaudeIngestionSource(t, dataDir, test.providerHint)
+			mustNoError(t, os.WriteFile(path, []byte(legacyClaudeTranscript(test.model)), 0o600))
+			ingestSourceFully(ctx, t, NewIngestor(store, IngestorConfig{
+				Clock: func() time.Time { return now },
+			}), source.ID)
+			makeLegacyProviderNull(t, dataDir, source.ID)
+
+			snapshot := claudePricingSnapshot(t)
+			mustNoError(t, NewLegacyRepairer(store, pricing.NewManager(snapshot), LegacyRepairerConfig{
+				Clock: func() time.Time { return now.Add(time.Hour) },
+			}).Run(ctx))
+
+			if !test.wantRepaired {
+				assertLegacyStillNull(t, dataDir, source.ID)
+				return
+			}
+			// 40 fresh input at 3e-6, 20 cache-write at 3.75e-6, 500 cache read
+			// at 3e-7, 30 output at 1.5e-5 => 120000 + 75000 + 150000 + 450000.
+			assertLegacyRepair(t, dataDir, source.ID, "anthropic", 795_000, snapshot.ProviderVersion("anthropic"))
+		})
+	}
+}
+
+func seedClaudeIngestionSource(
+	t *testing.T, dataDir, providerHint string,
+) (*sqlite.Store, domain.UsageSourceRecord, string, time.Time) {
+	t.Helper()
+	ctx := context.Background()
+	now := time.Unix(1700000000, 0).UTC()
+	store, session := seedUsageTestSession(
+		t, dataDir, "usage", domain.HarnessClaudeCode, domain.ActivityIdle, "", now,
+	)
+	binding, err := store.UpsertUsageBinding(ctx, domain.UsageBindingRecord{
+		SessionID:    session.ID,
+		Harness:      domain.HarnessClaudeCode,
+		NativeRootID: "claude-root",
+		ProviderHint: providerHint,
+		State:        domain.UsageBindingActive,
+		UpdatedAt:    now,
+	})
+	mustNoError(t, err)
+	path := canonicalTranscriptPath(filepath.Join(t.TempDir(), "transcript.jsonl"))
+	mustNoError(t, os.WriteFile(path, nil, 0o600))
+	identity, err := usagesvc.SourceIdentity(ctx, path)
+	mustNoError(t, err)
+	source, err := store.InsertUsageSource(ctx, domain.UsageSourceRecord{
+		BindingID:       binding.ID,
+		Kind:            domain.UsageSourceClaudeMain,
+		NativeSessionID: "claude-root",
+		ArtifactPath:    path,
+		FileIdentity:    identity,
+		State:           domain.UsageSourcePending,
+		UpdatedAt:       now,
+	})
+	mustNoError(t, err)
+	return store, source, path, now
+}
+
+func legacyClaudeTranscript(model string) string {
+	return `{"type":"assistant","uuid":"one","timestamp":"2026-08-20T10:00:00Z","message":` +
+		`{"id":"msg-1","model":"` + model + `","stop_reason":"end_turn","usage":` +
+		`{"input_tokens":40,"cache_creation_input_tokens":20,"cache_read_input_tokens":500,"output_tokens":30,` +
+		`"cache_creation":{"ephemeral_5m_input_tokens":20,"ephemeral_1h_input_tokens":0}}}}` + "\n"
+}
+
+func claudePricingSnapshot(t *testing.T) *pricing.Snapshot {
+	t.Helper()
+	root := t.TempDir()
+	upstream := []byte(`{
+  "anthropic/claude-test": {
+    "litellm_provider": "anthropic",
+    "mode": "chat",
+    "input_cost_per_token": 0.000003,
+    "cache_read_input_token_cost": 0.0000003,
+    "cache_creation_input_token_cost": 0.00000375,
+    "output_cost_per_token": 0.000015
+  },
+  "openai/gpt-test": {"litellm_provider":"openai","mode":"chat","input_cost_per_token":0,"output_cost_per_token":0},
+  "zai/glm-test": {"litellm_provider":"zai","mode":"chat","input_cost_per_token":0,"output_cost_per_token":0}
+}`)
+	_, err := catalogsync.Sync(root, upstream, catalogsync.Source{
+		Repository: "BerriAI/litellm",
+		Revision:   "0123456789abcdef0123456789abcdef01234567",
+		Path:       "model_prices_and_context_window.json",
+	})
+	mustNoError(t, err)
+	catalog, err := pricing.NewCache(root).Load()
+	mustNoError(t, err)
+	return catalog.Snapshot()
 }

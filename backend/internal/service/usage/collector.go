@@ -110,9 +110,31 @@ type Collector struct {
 	store                   collectorStore
 	roots                   SourceRoots
 	notifySourcesChanged    func(reconcile bool)
+	notifyRouteResolved     func()
 	codexLogicalSourceLimit int
 	now                     func() time.Time
 	mu                      sync.Mutex
+	// Guarded separately from mu, which RecordHook holds across the whole hook.
+	routeMu sync.RWMutex
+}
+
+// OnRouteResolved registers the handler called the first time a binding learns
+// its billing route. Only Claude needs it: a Claude transcript names no
+// provider, so events collected before the first hook are unattributed, and
+// this is the moment the evidence to repair them finally exists.
+func (c *Collector) OnRouteResolved(handler func()) {
+	if c == nil {
+		return
+	}
+	c.routeMu.Lock()
+	defer c.routeMu.Unlock()
+	c.notifyRouteResolved = handler
+}
+
+func (c *Collector) routeResolvedHandler() func() {
+	c.routeMu.RLock()
+	defer c.routeMu.RUnlock()
+	return c.notifyRouteResolved
 }
 
 // NewCollector constructs a transcript source registrar.
@@ -320,6 +342,9 @@ func (c *Collector) RecordHook(ctx context.Context, sessionID domain.SessionID, 
 	if session.Harness == domain.HarnessCodex && strings.TrimSpace(signal.TranscriptPath) == "" {
 		lastErrorCode = domain.UsageErrorSourceDiscoveryPending
 	}
+	// A binding that already existed without a route, and now has one, owns
+	// history that could never be attributed until this moment.
+	routeResolved := exists && existing.ProviderHint == "" && signal.ProviderHint != ""
 	binding, err := c.store.UpsertUsageBinding(ctx, domain.UsageBindingRecord{
 		SessionID:      sessionID,
 		Harness:        session.Harness,
@@ -332,6 +357,11 @@ func (c *Collector) RecordHook(ctx context.Context, sessionID domain.SessionID, 
 	})
 	if err != nil {
 		return err
+	}
+	if routeResolved {
+		if notify := c.routeResolvedHandler(); notify != nil {
+			notify()
+		}
 	}
 
 	if mainArtifact != nil {

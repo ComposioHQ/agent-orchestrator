@@ -107,6 +107,51 @@ func TestCollectorPersistsOnlyCanonicalClaudeProviderHints(t *testing.T) {
 	}
 }
 
+// Break caught: a Claude binding that predates its first hook holds events that
+// can never be attributed, because a Claude transcript names no provider. The
+// hook's route hint is the only evidence, and it arrives long after those events
+// were stored — so the moment it lands has to reopen historical repair, or the
+// session stays unpriced until the next daemon start.
+func TestCollectorReopensHistoricalRepairWhenAClaudeRouteFirstArrives(t *testing.T) {
+	store := collectorTestStore(t)
+	const nativeID = "native-late-route"
+	session := collectorTestSession(t, store, domain.HarnessClaudeCode, nativeID, false)
+	collector := NewCollector(store, SourceRoots{}, nil)
+	resolved := 0
+	collector.OnRouteResolved(func() { resolved++ })
+
+	hook := func(hint string) {
+		t.Helper()
+		if err := collector.RecordHook(context.Background(), session.ID, HookSignal{
+			Harness:         domain.HarnessClaudeCode,
+			Event:           "session-start",
+			NativeSessionID: nativeID,
+			ModelID:         "claude-test",
+			ProviderHint:    hint,
+		}); err != nil {
+			t.Fatalf("record hook: %v", err)
+		}
+	}
+
+	// A binding created without a route has no history to reopen yet.
+	hook("")
+	if resolved != 0 {
+		t.Fatalf("route resolutions = %d after the first routeless hook, want 0", resolved)
+	}
+
+	hook("anthropic")
+	if resolved != 1 {
+		t.Fatalf("route resolutions = %d once the route arrives, want 1", resolved)
+	}
+
+	// Every later hook repeats the same route. Reopening repair on each one
+	// would rescan every legacy source on every turn.
+	hook("anthropic")
+	if resolved != 1 {
+		t.Fatalf("route resolutions = %d after a repeat route, want it to stay 1", resolved)
+	}
+}
+
 func TestCollectorSerializesFinalizationAgainstEarlierHook(t *testing.T) {
 	store := collectorTestStore(t)
 	session := collectorTestSession(t, store, domain.HarnessCodex, "native-serialized", false)

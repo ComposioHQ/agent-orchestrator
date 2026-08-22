@@ -29,16 +29,24 @@ type LegacyRepairerConfig struct {
 	OnError     func(error)
 }
 
-// LegacyRepairer performs one startup pass over provider-null historical rows.
+// LegacyRepairer repairs provider-null historical rows: once at startup, and
+// again whenever Repair reports that new attribution evidence has arrived.
+//
+// The second trigger matters for Claude. A Claude transcript carries no
+// provider of its own, so its billing identity comes only from the route hint
+// on the binding, and that hint only appears once a hook runs. A session
+// collected before the hint existed would otherwise stay unattributed until the
+// next daemon start, however long that is.
 type LegacyRepairer struct {
 	store   legacyRepairStore
 	pricing *pricing.Manager
 	config  LegacyRepairerConfig
 	started atomic.Bool
+	trigger chan struct{}
 	done    chan struct{}
 }
 
-// NewLegacyRepairer constructs a one-shot historical attribution repairer.
+// NewLegacyRepairer constructs a historical attribution repairer.
 func NewLegacyRepairer(
 	store legacyRepairStore,
 	manager *pricing.Manager,
@@ -57,11 +65,14 @@ func NewLegacyRepairer(
 		config.OnError = func(error) {}
 	}
 	return &LegacyRepairer{
-		store: store, pricing: manager, config: config, done: make(chan struct{}),
+		store: store, pricing: manager, config: config,
+		trigger: make(chan struct{}, 1), done: make(chan struct{}),
 	}
 }
 
-// Start launches the one-shot repair pass.
+// Start runs the first repair pass and then serves Repair requests until the
+// context is cancelled. Passes never overlap, so one long scan cannot be
+// stacked on top of itself by a burst of hooks.
 func (r *LegacyRepairer) Start(ctx context.Context) error {
 	if !r.started.CompareAndSwap(false, true) {
 		return errors.New("legacy usage repairer already started")
@@ -71,14 +82,34 @@ func (r *LegacyRepairer) Start(ctx context.Context) error {
 	}
 	go func() {
 		defer close(r.done)
-		if err := r.Run(ctx); err != nil && ctx.Err() == nil {
-			r.config.OnError(err)
+		for {
+			if err := r.Run(ctx); err != nil && ctx.Err() == nil {
+				r.config.OnError(err)
+			}
+			select {
+			case <-ctx.Done():
+				return
+			case <-r.trigger:
+			}
 		}
 	}()
 	return nil
 }
 
-// Wait joins a started repair pass.
+// Repair asks for another pass because new attribution evidence exists. It
+// never blocks: a pass already queued absorbs this request, so a busy session
+// cannot queue one scan per hook.
+func (r *LegacyRepairer) Repair() {
+	if r == nil {
+		return
+	}
+	select {
+	case r.trigger <- struct{}{}:
+	default:
+	}
+}
+
+// Wait joins the repair loop. Callers cancel the start context first.
 func (r *LegacyRepairer) Wait() {
 	if !r.started.Load() {
 		return
@@ -169,6 +200,13 @@ func (r *LegacyRepairer) repairSource(ctx context.Context, source domain.UsageSo
 			}
 			event := match.event
 			billingProviderID := strings.TrimSpace(event.BillingProviderID)
+			if billingProviderID == "" {
+				// A session collected before its first hook has no route on the
+				// binding either, so the served model name is the only evidence
+				// left. It is still evidence: the provider answered with it.
+				billingProviderID = snapshot.ProviderForModel(event.ModelID)
+				event.BillingProviderID = billingProviderID
+			}
 			if billingProviderID == "" {
 				continue
 			}

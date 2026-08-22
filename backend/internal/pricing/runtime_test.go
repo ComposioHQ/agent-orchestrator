@@ -558,3 +558,51 @@ func codexUsageJSON(cacheWrite int64) string {
 	}
 	return string(encoded)
 }
+
+// ProviderForModel is the last resort for an event nothing else could attribute,
+// so its failure mode has to be silence. A wrong answer here is written into a
+// write-once column and priced against the wrong catalog, permanently.
+func TestProviderForModelResolvesOnlyAnUnambiguousOwner(t *testing.T) {
+	snapshot := decodeTestSnapshot(t, map[string][]testModel{
+		"anthropic": {{ID: "claude-test", Input: "0.1", Output: "0.2"}},
+		"openai":    {{ID: "gpt-test", Input: "0.1", Output: "0.2"}},
+		"zai":       {{ID: "glm-test", Input: "0.1", Output: "0.2"}},
+	})
+	for _, test := range []struct {
+		name, modelID, want string
+	}{
+		{name: "anthropic model", modelID: "claude-test", want: "anthropic"},
+		{name: "openai model", modelID: "gpt-test", want: "openai"},
+		{name: "zai model", modelID: "glm-test", want: "zai"},
+		// The stored id keeps whatever form the provider reported, so a
+		// provider-prefixed id still has to reach its unprefixed catalog entry.
+		{name: "provider-prefixed", modelID: "anthropic/claude-test", want: "anthropic"},
+		{name: "case and padding", modelID: "  CLAUDE-TEST  ", want: "anthropic"},
+		// A model no catalog lists says nothing about who billed it, and neither
+		// do the sentinels the parser falls back to.
+		{name: "unlisted model", modelID: "glm-5.3"},
+		{name: "parser sentinel", modelID: "unknown"},
+		{name: "synthetic", modelID: "<synthetic>"},
+		{name: "empty", modelID: ""},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if got := snapshot.ProviderForModel(test.modelID); got != test.want {
+				t.Fatalf("ProviderForModel(%q) = %q, want %q", test.modelID, got, test.want)
+			}
+		})
+	}
+
+	// Two providers listing the same id makes the model useless as evidence.
+	ambiguous := decodeTestSnapshot(t, map[string][]testModel{
+		"anthropic": {{ID: "shared-model", Input: "0.1", Output: "0.2"}},
+		"openai":    {{ID: "shared-model", Input: "0.9", Output: "0.9"}},
+		"zai":       {{ID: "glm-test", Input: "0.1", Output: "0.2"}},
+	})
+	if got := ambiguous.ProviderForModel("shared-model"); got != "" {
+		t.Fatalf("ambiguous model resolved to %q, want no owner", got)
+	}
+
+	if got := (*Snapshot)(nil).ProviderForModel("claude-test"); got != "" {
+		t.Fatalf("nil snapshot resolved to %q", got)
+	}
+}
