@@ -1,4 +1,5 @@
 import type {
+	KanbanColumn,
 	SessionActivity,
 	SessionActivityState,
 	SessionStatus,
@@ -233,6 +234,37 @@ const attentionZoneBases: Record<AttentionZone, AttentionZoneBase> = {
 
 export const attentionZoneOrder: AttentionZone[] = ["merge", "action", "pending", "working", "done"];
 export const boardAttentionZoneOrder: AttentionZone[] = ["working", "action", "pending", "merge"];
+
+/**
+ * Board lanes in delivery order: building -> validating -> needs review ->
+ * ready. `archive` is deliberately absent — terminated sessions render in the
+ * archive sheet, not as a lane.
+ */
+export const boardKanbanColumnOrder: KanbanColumn[] = [
+	"building",
+	"validating",
+	"needs_review",
+	"ready",
+];
+
+/**
+ * Lane presentation is still keyed by attention zone, so a derived column maps
+ * onto the zone whose label and palette already describe it.
+ */
+export function kanbanColumnZone(column: KanbanColumn): AttentionZone {
+	switch (column) {
+		case "building":
+			return "working";
+		case "validating":
+			return "pending";
+		case "needs_review":
+			return "action";
+		case "ready":
+			return "merge";
+		case "archive":
+			return "done";
+	}
+}
 
 export function attentionZone(input: SessionStatus | SessionStatusModel): AttentionZone {
 	const status = typeof input === "string" ? input : input.status;

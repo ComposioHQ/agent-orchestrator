@@ -1,9 +1,11 @@
 import { attentionZone as presentationAttentionZone } from "../lib/session-presentation";
 import {
 	AGENT_OPTIONS,
+	toKanbanColumn,
 	toSessionActivity,
 	toSessionStatus,
 	type AgentId,
+	type KanbanColumn,
 	type SessionActivity,
 	type SessionActivityState,
 	type SessionStatus,
@@ -11,8 +13,8 @@ import {
 
 import type { ReviewerHarnessId } from "../lib/reviewer-harnesses";
 
-export { toSessionActivity, toSessionStatus };
-export type { SessionActivity, SessionActivityState, SessionStatus };
+export { toKanbanColumn, toSessionActivity, toSessionStatus };
+export type { KanbanColumn, SessionActivity, SessionActivityState, SessionStatus };
 
 export type AgentProvider = AgentId | "fake";
 
@@ -82,6 +84,13 @@ export type WorkspaceSession = {
 	status: SessionStatus;
 	/** Stack-aware PR context derived by the daemon independently of runtime activity. */
 	scmStatus?: SessionStatus;
+	/**
+	 * Board lane derived by the daemon from durable delivery facts (PR
+	 * lifecycle, review runs, review ownership). The board groups by this and
+	 * never re-derives a lane from {@link status}. {@link toKanbanColumn} fills
+	 * it in for a daemon too old to send one.
+	 */
+	kanbanColumn?: KanbanColumn;
 	/** Durable runtime fact from the daemon; independent of the derived SCM-aware status. */
 	isTerminated?: boolean;
 	/** User preference to tear down this session when its PR set completes through a merge. */

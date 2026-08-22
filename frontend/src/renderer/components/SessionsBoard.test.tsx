@@ -2,7 +2,8 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { WorkspaceSession, WorkspaceSummary } from "../types/workspace";
+import type { KanbanColumn, WorkspaceSession, WorkspaceSummary } from "../types/workspace";
+import { attentionZone } from "../lib/session-presentation";
 import { appI18n } from "../i18n";
 
 // Instant motion updates so height tweens do not leave tests waiting on timers.
@@ -493,7 +494,7 @@ describe("SessionsBoard", () => {
 		expect(within(draftCard).getByText("Draft PR").parentElement).toHaveClass("text-status-in-review");
 	});
 
-	it("places an exited live session in Needs you with an Exited badge", () => {
+	it("keeps a PR-less exited session in the building lane with an Exited badge", () => {
 		workspaceQueryMock.mockReturnValue({
 			data: [
 				workspaceWithSessions([
@@ -517,10 +518,11 @@ describe("SessionsBoard", () => {
 
 		renderBoard("p1");
 
-		const needsYouColumn = screen.getByText("Needs you").closest("section") as HTMLElement;
-		expect(needsYouColumn.firstElementChild).toHaveClass("h-12");
-		expect(within(needsYouColumn).getByText("agent-exited-task")).toBeInTheDocument();
-		expect(within(needsYouColumn).getByText("Exited").parentElement).toHaveClass("text-status-exited");
+		// Lanes follow the daemon's column: a worker with no PR is still building,
+		// whatever its runtime status. The card keeps its Exited badge.
+		const buildingColumn = screen.getByLabelText("Idle / Working sessions");
+		expect(within(buildingColumn).getByText("agent-exited-task")).toBeInTheDocument();
+		expect(within(buildingColumn).getByText("Exited").parentElement).toHaveClass("text-status-exited");
 	});
 
 	it("renders an idle-first work lane with a separate lower working section", () => {
@@ -1191,6 +1193,62 @@ describe("SessionsBoard", () => {
 		expect(screen.queryByRole("button", { name: /archive/i })).not.toBeInTheDocument();
 	});
 
+	it("groups lanes by the daemon's Kanban column, not by display status", () => {
+		workspaceQueryMock.mockReturnValue({
+			data: [
+				workspaceWithSessions([
+					// Both are "working" on the card; only the column decides the lane.
+					boardSession({
+						id: "s-validating",
+						title: "validating worker",
+						status: "working",
+						kanbanColumn: "validating",
+					}),
+					boardSession({
+						id: "s-building",
+						title: "building worker",
+						status: "working",
+						kanbanColumn: "building",
+					}),
+					// Mergeable on the card, but a human still has to look at it.
+					boardSession({
+						id: "s-needs-review",
+						title: "needs review worker",
+						status: "mergeable",
+						kanbanColumn: "needs_review",
+					}),
+				]),
+			],
+			isError: false,
+			isSuccess: true,
+		});
+
+		renderBoard("p1");
+
+		const lane = (label: string) => screen.getByLabelText(label);
+		expect(within(lane("Idle / Working sessions")).getByText("building worker")).toBeInTheDocument();
+		expect(within(lane("In review sessions")).getByText("validating worker")).toBeInTheDocument();
+		expect(within(lane("Needs you sessions")).getByText("needs review worker")).toBeInTheDocument();
+		expect(within(lane("Ready to merge / Merged sessions")).queryByText("needs review worker")).toBeNull();
+	});
+
+	it("orders the lanes building, validating, needs review, then ready", () => {
+		workspaceQueryMock.mockReturnValue({
+			data: [workspaceWithSessions([boardSession({ id: "s-one", title: "worker one", status: "idle" })])],
+			isError: false,
+			isSuccess: true,
+		});
+
+		renderBoard("p1");
+
+		expect(screen.getAllByTestId("board-column").map((column) => column.dataset.column)).toEqual([
+			"working",
+			"pending",
+			"action",
+			"merge",
+		]);
+	});
+
 	it("uses the shared minimal scrollbar styling for every Kanban lane", () => {
 		workspaceQueryMock.mockReturnValue({
 			data: [
@@ -1362,10 +1420,31 @@ function boardSession(
 		workspaceName: "radic",
 		provider: "claude-code",
 		branch: `ao/${overrides.id}`,
+		kanbanColumn: fixtureKanbanColumn(overrides.status),
 		updatedAt: "2026-01-01T00:00:00Z",
 		prs: [],
 		...overrides,
 	};
+}
+
+/**
+ * Lanes come from the daemon now, so a fixture that only names a display status
+ * gets the column the daemon would have derived alongside it. Tests about lane
+ * placement itself pass kanbanColumn explicitly instead.
+ */
+function fixtureKanbanColumn(status: WorkspaceSession["status"]): KanbanColumn {
+	switch (attentionZone(status)) {
+		case "merge":
+			return "ready";
+		case "action":
+			return "needs_review";
+		case "pending":
+			return "validating";
+		case "done":
+			return "archive";
+		case "working":
+			return "building";
+	}
 }
 
 function activeAgentSwitch(
@@ -1393,6 +1472,7 @@ function terminatedSession(overrides: Partial<WorkspaceSession> = {}): Workspace
 		kind: "worker",
 		branch: "ao/dead-worker",
 		status: "terminated",
+		kanbanColumn: "archive",
 		isTerminated: true,
 		updatedAt: "2026-01-01T00:00:00Z",
 		prs: [

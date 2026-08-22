@@ -43,6 +43,7 @@ type fakeStore struct {
 	threads             map[string][]domain.PullRequestReviewThread
 	comments            map[string][]domain.PullRequestComment
 	commentsErr         error
+	reviewRuns          map[domain.SessionID][]domain.CurrentHeadReviewRun
 	num                 int
 }
 
@@ -58,6 +59,7 @@ func newFakeStore() *fakeStore {
 		reviews:        map[string][]domain.PullRequestReview{},
 		threads:        map[string][]domain.PullRequestReviewThread{},
 		comments:       map[string][]domain.PullRequestComment{},
+		reviewRuns:     map[domain.SessionID][]domain.CurrentHeadReviewRun{},
 	}
 }
 
@@ -273,6 +275,10 @@ func (f *fakeStore) ListPRFactsForSession(_ context.Context, id domain.SessionID
 		return nil, nil
 	}
 	return []domain.PRFacts{pr}, nil
+}
+
+func (f *fakeStore) ListCurrentHeadReviewRunsForSession(_ context.Context, id domain.SessionID) ([]domain.CurrentHeadReviewRun, error) {
+	return f.reviewRuns[id], nil
 }
 
 func (f *fakeStore) ListChecks(_ context.Context, prURL string) ([]domain.PullRequestCheck, error) {

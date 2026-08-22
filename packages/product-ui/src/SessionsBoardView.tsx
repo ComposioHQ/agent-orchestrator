@@ -13,20 +13,26 @@ import { motion, useReducedMotion } from "motion/react";
 import type { ExternalLinkComponent } from "./external-link";
 import { ChevronIcon, GitBranchIcon } from "./icons";
 import {
-	attentionZone,
 	getAgentActivityView,
 	getSessionStatusView,
+	kanbanColumnZone,
 	type AttentionZone,
 	type AttentionZoneView,
 	type ProductUITranslator,
 } from "./session-presentation";
-import type { SessionActivity, SessionStatus } from "./session-models";
+import type { KanbanColumn, SessionActivity, SessionStatus } from "./session-models";
 import { cn } from "./utils";
 
 export type BoardSessionPresentation = {
 	activity?: SessionActivity;
 	branch?: string;
 	id: string;
+	/**
+	 * Daemon-derived lane placement; the board never re-derives it from status.
+	 * Absent only for fixtures and for a daemon too old to send one, which fall
+	 * back to the first lane.
+	 */
+	kanbanColumn?: KanbanColumn;
 	provider: string;
 	status: SessionStatus;
 	statusPresentation?: BoardSessionStatusPresentation;
@@ -96,7 +102,7 @@ export function SessionsBoardGridView<TSession extends BoardSessionPresentation>
 }: SessionsBoardGridViewProps<TSession>) {
 	const byZone = new Map<AttentionZone, TSession[]>();
 	for (const session of sessions) {
-		const zone = attentionZone(session.status);
+		const zone = kanbanColumnZone(session.kanbanColumn ?? "building");
 		const sessionsForZone = byZone.get(zone);
 		if (sessionsForZone) sessionsForZone.push(session);
 		else byZone.set(zone, [session]);

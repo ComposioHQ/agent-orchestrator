@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { toKanbanColumn } from "./session-models";
 import {
 	attentionZone,
 	getAgentActivityView,
@@ -7,6 +8,7 @@ import {
 	getSessionTimelinePillView,
 	isAgentActivityWorking,
 	isSessionIdle,
+	kanbanColumnZone,
 } from "./session-presentation";
 
 describe("session presentation", () => {
@@ -68,6 +70,23 @@ describe("session presentation", () => {
 			className: "text-status-unknown",
 			dotClassName: "bg-status-unknown",
 		});
+	});
+
+	it.each([
+		["building", "working"],
+		["validating", "pending"],
+		["needs_review", "action"],
+		["ready", "merge"],
+		["archive", "done"],
+	] as const)("renders the %s column with the %s lane presentation", (column, zone) => {
+		expect(kanbanColumnZone(column)).toBe(zone);
+	});
+
+	it("falls back for a daemon that sends no column, or an unknown one", () => {
+		expect(toKanbanColumn("needs_review")).toBe("needs_review");
+		expect(toKanbanColumn(undefined)).toBe("building");
+		expect(toKanbanColumn("bogus")).toBe("building");
+		expect(toKanbanColumn(undefined, true)).toBe("archive");
 	});
 
 	it("keeps lifecycle predicates independent of presentation labels", () => {

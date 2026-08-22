@@ -2,6 +2,7 @@ import {
 	attentionZone,
 	attentionZoneOrder,
 	boardAttentionZoneOrder,
+	boardKanbanColumnOrder,
 	getAgentActivityView as getPortableAgentActivityView,
 	getAttentionZoneView as getPortableAttentionZoneView,
 	getAttentionZoneViewForZone as getPortableAttentionZoneViewForZone,
@@ -9,6 +10,7 @@ import {
 	getSessionTimelinePillView as getPortableSessionTimelinePillView,
 	isAgentActivityWorking,
 	isSessionIdle,
+	kanbanColumnZone,
 	type AgentActivityView,
 	type AttentionZone,
 	type AttentionZoneView,
@@ -114,8 +116,10 @@ export {
 	attentionZone,
 	attentionZoneOrder,
 	boardAttentionZoneOrder,
+	boardKanbanColumnOrder,
 	isAgentActivityWorking,
 	isSessionIdle,
+	kanbanColumnZone,
 };
 export type {
 	AgentActivityView,
