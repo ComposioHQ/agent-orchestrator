@@ -1210,7 +1210,7 @@
 	"zone.working": "In Arbeit",
 	"column.building": "In Entwicklung",
 	"column.validating": "Validierung",
-	"column.needs_review": "Review nötig",
+	"column.needs_review": "In Review",
 	"column.ready": "Bereit",
 	"column.archive": "Archiv",
 	"settings.developer": "Developer",

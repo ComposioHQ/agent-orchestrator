@@ -162,10 +162,10 @@ test("renderer: board renders all status columns @T0 @BRD", async ({ page }) => 
 	await page.goto("/");
 	const columns = page.getByTestId("board-column");
 	await expect(columns).toHaveCount(4);
-	// Left→right delivery flow: building → validating → needs review → ready.
+	// Left→right delivery flow: building → validating → in review → ready.
 	await expect(columns.nth(0)).toContainText("Building");
 	await expect(columns.nth(1)).toContainText("Validating");
-	await expect(columns.nth(2)).toContainText("Needs review");
+	await expect(columns.nth(2)).toContainText("In review");
 	await expect(columns.nth(3)).toContainText("Ready");
 });
 

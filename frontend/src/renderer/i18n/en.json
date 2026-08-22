@@ -1237,7 +1237,7 @@
 	"zone.working": "Working",
 	"column.building": "Building",
 	"column.validating": "Validating",
-	"column.needs_review": "Needs review",
+	"column.needs_review": "In review",
 	"column.ready": "Ready",
 	"column.archive": "Archive",
 	"newTask.task": "Task",

@@ -1013,7 +1013,7 @@ describe("SessionsBoard", () => {
 		const lane = (label: string) => screen.getByLabelText(label);
 		expect(within(lane("Building sessions")).getByText("building worker")).toBeInTheDocument();
 		expect(within(lane("Validating sessions")).getByText("validating worker")).toBeInTheDocument();
-		expect(within(lane("Needs review sessions")).getByText("needs review worker")).toBeInTheDocument();
+		expect(within(lane("In review sessions")).getByText("needs review worker")).toBeInTheDocument();
 		expect(within(lane("Ready sessions")).queryByText("needs review worker")).toBeNull();
 	});
 
@@ -1044,7 +1044,7 @@ describe("SessionsBoard", () => {
 		const lane = (label: string) => screen.getByLabelText(label);
 		expect(within(lane("Building sessions")).getByText("legacy working worker")).toBeInTheDocument();
 		expect(within(lane("Validating sessions")).getByText("legacy review worker")).toBeInTheDocument();
-		expect(within(lane("Needs review sessions")).getByText("legacy action worker")).toBeInTheDocument();
+		expect(within(lane("In review sessions")).getByText("legacy action worker")).toBeInTheDocument();
 		expect(within(lane("Ready sessions")).getByText("legacy ready worker")).toBeInTheDocument();
 	});
 

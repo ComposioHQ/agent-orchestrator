@@ -1210,7 +1210,7 @@
 	"zone.working": "작업 중",
 	"column.building": "개발 중",
 	"column.validating": "검증 중",
-	"column.needs_review": "리뷰 필요",
+	"column.needs_review": "리뷰 중",
 	"column.ready": "준비 완료",
 	"column.archive": "보관",
 	"settings.developer": "Developer",

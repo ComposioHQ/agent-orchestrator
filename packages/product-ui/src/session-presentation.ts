@@ -48,7 +48,7 @@ const englishLabels: Record<SessionPresentationMessageKey, string> = {
 	"zone.done": "Terminated",
 	"column.building": "Building",
 	"column.validating": "Validating",
-	"column.needs_review": "Needs review",
+	"column.needs_review": "In review",
 	"column.ready": "Ready",
 	"column.archive": "Archive",
 	"timeline.no_signal": "No Signal",
@@ -243,7 +243,7 @@ export const attentionZoneOrder: AttentionZone[] = ["merge", "action", "pending"
 export const boardAttentionZoneOrder: AttentionZone[] = ["working", "action", "pending", "merge"];
 
 /**
- * Board lanes in delivery order: building -> validating -> needs review ->
+ * Board lanes in delivery order: building -> validating -> in review ->
  * ready. `archive` is deliberately absent — terminated sessions render in the
  * archive sheet, not as a lane.
  */

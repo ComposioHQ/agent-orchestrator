@@ -1209,7 +1209,7 @@
 	"zone.working": "工作中",
 	"column.building": "开发中",
 	"column.validating": "验证中",
-	"column.needs_review": "待评审",
+	"column.needs_review": "评审中",
 	"column.ready": "就绪",
 	"column.archive": "归档",
 	"settings.developer": "开发者",

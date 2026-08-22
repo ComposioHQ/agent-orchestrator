@@ -98,7 +98,7 @@ describe("SessionsBoardView", () => {
 		expect(within(screen.getByRole("region", { name: "Ready sessions" })).getByTestId("card-ready")).toBeInTheDocument();
 		// Empty lanes still render, so the four-column grid never collapses.
 		expect(screen.getByRole("region", { name: "Validating sessions" })).toBeInTheDocument();
-		expect(screen.getByRole("region", { name: "Needs review sessions" })).toBeInTheDocument();
+		expect(screen.getByRole("region", { name: "In review sessions" })).toBeInTheDocument();
 		expect(screen.getByTestId("board-horizontal-scroll")).toHaveClass("board-horizontal-scrollbar");
 	});
 
