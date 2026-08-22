@@ -13,6 +13,7 @@ type SessionRuntime struct {
 	SandboxID   string    `json:"sandboxId,omitempty"`
 	State       string    `json:"state"`
 	Error       string    `json:"error,omitempty"`
+	Generation  int64     `json:"-"`
 	CreatedAt   time.Time `json:"createdAt"`
 	UpdatedAt   time.Time `json:"updatedAt"`
 }

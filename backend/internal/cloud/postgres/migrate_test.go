@@ -13,7 +13,7 @@ func TestCloudMigrationsAreTenantScoped(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(migrations) != 3 || migrations[0].Version != 1 || migrations[1].Version != 2 || migrations[2].Version != 3 {
+	if len(migrations) != 4 || migrations[0].Version != 1 || migrations[1].Version != 2 || migrations[2].Version != 3 || migrations[3].Version != 4 {
 		t.Fatalf("migrations = %#v", migrations)
 	}
 	migration, err := migrationFS.ReadFile("migrations/00001_auth_foundation.sql")
@@ -69,5 +69,12 @@ func TestCloudMigrationsAreTenantScoped(t *testing.T) {
 		if !strings.Contains(runtimeSQL, required) {
 			t.Fatalf("runtime migration does not contain %q", required)
 		}
+	}
+	generationMigration, err := migrationFS.ReadFile("migrations/00004_session_runtime_generation.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(generationMigration), "ADD COLUMN generation BIGINT NOT NULL DEFAULT 1") {
+		t.Fatal("runtime generation migration does not add the concurrency guard")
 	}
 }

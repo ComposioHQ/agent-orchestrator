@@ -4,8 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -19,6 +19,8 @@ import (
 )
 
 const sessionName = "ao-agent"
+
+var environmentKeyPattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
 // ProvisionSessionRuntime creates exactly one sandbox for one AO session. The
 // same path is used for orchestrators and workers; no agent ever shares compute
@@ -144,7 +146,7 @@ func (p *Provider) bootstrapSessionRuntime(ctx context.Context, sandbox *daytona
 	for key, value := range launch.Env {
 		// Coordinator-only endpoints and filesystem roots cannot be reached from
 		// isolated compute. Provider credentials are supplied separately.
-		if strings.HasPrefix(key, "AO_BROWSER_CAPABILITY") {
+		if !environmentKeyPattern.MatchString(key) || strings.HasPrefix(key, "AO_BROWSER_CAPABILITY") {
 			continue
 		}
 		env[key] = replaceRuntimePaths(value, pathMap)
@@ -231,32 +233,6 @@ func (p *Provider) SessionRuntimeInterrupt(ctx context.Context, sandboxID string
 	_, err = run(ctx, sandbox, "tmux send-keys -t "+shellQuote(sessionName)+" C-c", time.Minute)
 	return err
 }
-
-// ConnectSessionRuntime attaches a provider PTY to the agent's tmux session.
-func (p *Provider) ConnectSessionRuntime(ctx context.Context, sandboxID string, rows, cols uint16) (io.ReadWriteCloser, error) {
-	sandbox, err := p.client.Get(ctx, strings.TrimSpace(sandboxID))
-	if err != nil {
-		return nil, err
-	}
-	id := "attach-" + strings.ReplaceAll(fmt.Sprintf("%d", time.Now().UnixNano()), "-", "")
-	handle, err := sandbox.Process.CreatePty(ctx, id, options.WithCreatePtySize(types.PtySize{Rows: int(rows), Cols: int(cols)}))
-	if err != nil {
-		return nil, err
-	}
-	if err = handle.WaitForConnection(ctx); err != nil {
-		_ = handle.Disconnect()
-		return nil, err
-	}
-	if err = handle.SendInput([]byte("exec tmux attach-session -t " + shellQuote(sessionName) + "\n")); err != nil {
-		_ = handle.Disconnect()
-		return nil, err
-	}
-	return ptyStream{PtyHandle: handle}, nil
-}
-
-type ptyStream struct{ *daytonasdk.PtyHandle }
-
-func (s ptyStream) Close() error { return s.Disconnect() }
 
 func replaceRuntimePaths(value string, replacements map[string]string) string {
 	for source, destination := range replacements {

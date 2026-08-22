@@ -22,11 +22,11 @@ func (s *Store) CreateSessionRuntime(ctx context.Context, principal domain.Princ
 	var runtime domain.SessionRuntime
 	err = tx.QueryRow(ctx, `INSERT INTO ao_cloud_session_runtimes (workspace_id, org_id, session_id)
 		VALUES ($1, $2, $3)
-		ON CONFLICT (workspace_id, session_id) DO UPDATE SET state = 'provisioning', sandbox_id = '', error = '', updated_at = now()
-		RETURNING id, workspace_id, org_id, session_id, sandbox_id, state, error, created_at, updated_at`,
+		ON CONFLICT (workspace_id, session_id) DO UPDATE SET state = 'provisioning', sandbox_id = '', error = '', generation = ao_cloud_session_runtimes.generation + 1, updated_at = now()
+		RETURNING id, workspace_id, org_id, session_id, sandbox_id, state, error, generation, created_at, updated_at`,
 		workspace.ID, workspace.OrgID, strings.TrimSpace(sessionID)).Scan(
 		&runtime.ID, &runtime.WorkspaceID, &runtime.OrgID, &runtime.SessionID, &runtime.SandboxID,
-		&runtime.State, &runtime.Error, &runtime.CreatedAt, &runtime.UpdatedAt)
+		&runtime.State, &runtime.Error, &runtime.Generation, &runtime.CreatedAt, &runtime.UpdatedAt)
 	if err != nil {
 		return domain.SessionRuntime{}, normalizeError(err)
 	}
@@ -50,7 +50,7 @@ func (s *Store) SessionRuntime(ctx context.Context, principal domain.Principal, 
 	if _, err = tx.Exec(ctx, `SELECT set_config('ao.user_id', $1, true), set_config('ao.org_id', $2, true)`, principal.UserID, workspace.OrgID); err != nil {
 		return domain.SessionRuntime{}, err
 	}
-	runtime, err := scanSessionRuntime(tx.QueryRow(ctx, `SELECT id, workspace_id, org_id, session_id, sandbox_id, state, error, created_at, updated_at FROM ao_cloud_session_runtimes WHERE workspace_id = $1 AND session_id = $2`, workspaceID, sessionID))
+	runtime, err := scanSessionRuntime(tx.QueryRow(ctx, `SELECT id, workspace_id, org_id, session_id, sandbox_id, state, error, generation, created_at, updated_at FROM ao_cloud_session_runtimes WHERE workspace_id = $1 AND session_id = $2`, workspaceID, sessionID))
 	if err != nil {
 		return domain.SessionRuntime{}, err
 	}
@@ -76,7 +76,7 @@ func (s *Store) UpdateSessionRuntime(ctx context.Context, principal domain.Princ
 	if _, err = tx.Exec(ctx, `SELECT set_config('ao.user_id', $1, true), set_config('ao.org_id', $2, true)`, principal.UserID, runtime.OrgID); err != nil {
 		return err
 	}
-	result, err := tx.Exec(ctx, `UPDATE ao_cloud_session_runtimes SET state=$2, sandbox_id=$3, error=$4, updated_at=now() WHERE id=$1`, runtime.ID, state, strings.TrimSpace(sandboxID), strings.TrimSpace(failure))
+	result, err := tx.Exec(ctx, `UPDATE ao_cloud_session_runtimes SET state=$2, sandbox_id=$3, error=$4, updated_at=now() WHERE id=$1 AND generation=$5`, runtime.ID, state, strings.TrimSpace(sandboxID), strings.TrimSpace(failure), runtime.Generation)
 	if err != nil {
 		return normalizeError(err)
 	}
@@ -88,7 +88,7 @@ func (s *Store) UpdateSessionRuntime(ctx context.Context, principal domain.Princ
 
 func scanSessionRuntime(row rowScanner) (domain.SessionRuntime, error) {
 	var runtime domain.SessionRuntime
-	if err := row.Scan(&runtime.ID, &runtime.WorkspaceID, &runtime.OrgID, &runtime.SessionID, &runtime.SandboxID, &runtime.State, &runtime.Error, &runtime.CreatedAt, &runtime.UpdatedAt); err != nil {
+	if err := row.Scan(&runtime.ID, &runtime.WorkspaceID, &runtime.OrgID, &runtime.SessionID, &runtime.SandboxID, &runtime.State, &runtime.Error, &runtime.Generation, &runtime.CreatedAt, &runtime.UpdatedAt); err != nil {
 		return domain.SessionRuntime{}, normalizeError(err)
 	}
 	return runtime, nil

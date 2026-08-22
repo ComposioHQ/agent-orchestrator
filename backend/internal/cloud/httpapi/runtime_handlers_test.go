@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"sync"
@@ -66,9 +65,6 @@ func (*fakeSessionProvisioner) SessionRuntimeInput(context.Context, string, stri
 	return nil
 }
 func (*fakeSessionProvisioner) SessionRuntimeInterrupt(context.Context, string) error { return nil }
-func (*fakeSessionProvisioner) ConnectSessionRuntime(context.Context, string, uint16, uint16) (io.ReadWriteCloser, error) {
-	return nil, io.EOF
-}
 
 func TestWorkspaceCapabilityCreatesOneSessionRuntime(t *testing.T) {
 	principal := domain.Principal{UserID: "user-1"}

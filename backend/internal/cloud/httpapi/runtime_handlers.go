@@ -5,13 +5,11 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
-	"io"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
 
-	"github.com/coder/websocket"
 	"github.com/go-chi/chi/v5"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/cloud/domain"
@@ -214,37 +212,6 @@ func (s *Server) interruptSessionRuntime(w http.ResponseWriter, r *http.Request)
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func (s *Server) attachSessionRuntime(w http.ResponseWriter, r *http.Request) {
-	runtime, ok := s.authorizedRuntime(w, r)
-	if !ok {
-		return
-	}
-	rows, cols := uint16(24), uint16(80)
-	if value, err := parseUint16(r.URL.Query().Get("rows")); err == nil && value > 0 {
-		rows = value
-	}
-	if value, err := parseUint16(r.URL.Query().Get("cols")); err == nil && value > 0 {
-		cols = value
-	}
-	stream, err := s.sessionRuntimes.ConnectSessionRuntime(r.Context(), runtime.SandboxID, rows, cols)
-	if err != nil {
-		s.internalError(w, r, "attach cloud session runtime", err)
-		return
-	}
-	defer func() { _ = stream.Close() }()
-	connection, err := websocket.Accept(w, r, &websocket.AcceptOptions{InsecureSkipVerify: true})
-	if err != nil {
-		return
-	}
-	defer func() { _ = connection.CloseNow() }()
-	network := websocket.NetConn(r.Context(), connection, websocket.MessageBinary)
-	defer func() { _ = network.Close() }()
-	errCh := make(chan error, 2)
-	go func() { _, copyErr := io.Copy(stream, network); errCh <- copyErr }()
-	go func() { _, copyErr := io.Copy(network, stream); errCh <- copyErr }()
-	<-errCh
-}
-
 func (s *Server) authorizedRuntime(w http.ResponseWriter, r *http.Request) (domain.SessionRuntime, bool) {
 	principal, _ := principalFromContext(r.Context())
 	workspace, _ := r.Context().Value(workspaceContextKey{}).(domain.Workspace)
@@ -260,9 +227,4 @@ func clearRuntimeFiles(files []domain.RuntimeFile) {
 	for index := range files {
 		clear(files[index].Data)
 	}
-}
-
-func parseUint16(raw string) (uint16, error) {
-	value, err := strconv.ParseUint(strings.TrimSpace(raw), 10, 16)
-	return uint16(value), err
 }

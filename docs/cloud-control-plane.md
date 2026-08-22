@@ -160,6 +160,9 @@ through a VPC link and internal load balancer. See
 - Prepared worktrees are capped at 24 MiB compressed for this POC. Production
   will move overlays and caches to object storage/prebuilt images.
 - Workspace capabilities expire after 30 days; background renewal is deferred.
+- The signed coordinator URL injected into each isolated agent sandbox expires
+  after 24 hours and is not yet renewed in place. Long-running orchestrators
+  lose `ao` CLI connectivity until their session is relaunched.
 - A signed URL is refreshed when the desktop polls the workspace, but automatic
   renewal for an already-connected window remains.
 - Stop, pause, resume, archive, delete, quotas, billing, and idle reaping remain.
