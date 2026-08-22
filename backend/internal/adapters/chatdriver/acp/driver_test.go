@@ -712,6 +712,12 @@ func TestACPDriverClosesReplayTurnsAsRecoveredWithoutBlockingResume(t *testing.T
 	if !recoveredActivity {
 		t.Fatalf("history = %#v, want pending replay tool settled as recovered", history)
 	}
+	if history[5].TurnState != domain.TurnStateCompleted {
+		t.Fatalf("bounded first turn state = %q, want %q", history[5].TurnState, domain.TurnStateCompleted)
+	}
+	if history[10].TurnState != domain.TurnStateInterrupted {
+		t.Fatalf("unbounded replay tail state = %q, want %q", history[10].TurnState, domain.TurnStateInterrupted)
+	}
 	if !conv.Capabilities().Has(ports.ChatCapabilityHistory) {
 		t.Fatal("session/load conversation did not advertise replayable history")
 	}
@@ -774,6 +780,54 @@ func TestConversationCapabilitiesTreatLoadSessionAsResume(t *testing.T) {
 	}}
 	if !conversationCapabilities(configured, init)[ports.ChatCapabilityResume] {
 		t.Fatal("loadSession-only ACP agent was reported as non-resumable")
+	}
+}
+
+func TestACPDriverUsesProviderPermissionPolicyBeforeParking(t *testing.T) {
+	agent := &fakeAgent{promptNoPermission: true}
+	driver := New(Config{
+		Harness:      domain.HarnessCursor,
+		Capabilities: ports.ChatCapabilities{ports.ChatCapabilityApprovals: true},
+		Probe:        func(context.Context) error { return nil },
+		Launch:       func(context.Context, LaunchConfig) (Launch, error) { return Launch{Command: "fake"}, nil },
+		PermissionPolicy: func(mode ports.PermissionMode, params acpsdk.RequestPermissionRequest) (acpsdk.PermissionOptionId, bool) {
+			if mode != ports.PermissionModeBypassPermissions {
+				return "", false
+			}
+			return params.Options[0].OptionId, true
+		},
+	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	driver.spawn = fakeSpawn(agent)
+
+	opened, err := driver.Start(context.Background(), ports.ChatStartConfig{
+		WorkspacePath: t.TempDir(), Permissions: ports.PermissionModeBypassPermissions,
+	})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer opened.Close()
+	ready := nextEvent(t, opened.Events())
+	if ready.Kind != ports.ChatEventControllerState {
+		t.Fatalf("first event = %#v, want controller state", ready)
+	}
+
+	conv := opened.(*conversation)
+	response, err := conv.RequestPermission(context.Background(), acpsdk.RequestPermissionRequest{
+		ToolCall: acpsdk.ToolCallUpdate{ToolCallId: "edit-1", Kind: acpsdk.Ptr(acpsdk.ToolKindEdit)},
+		Options: []acpsdk.PermissionOption{{
+			OptionId: "allow-once", Name: "Allow", Kind: acpsdk.PermissionOptionKindAllowOnce,
+		}},
+	})
+	if err != nil {
+		t.Fatalf("RequestPermission: %v", err)
+	}
+	if response.Outcome.Selected == nil || response.Outcome.Selected.OptionId != "allow-once" {
+		t.Fatalf("permission response = %#v", response)
+	}
+	select {
+	case event := <-opened.Events():
+		t.Fatalf("automatic policy emitted a parked approval: %#v", event)
+	case <-time.After(30 * time.Millisecond):
 	}
 }
 

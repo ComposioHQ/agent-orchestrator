@@ -3,11 +3,12 @@ package cursoracp
 import (
 	"context"
 	"fmt"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
+
+	aoprocess "github.com/aoagents/agent-orchestrator/backend/internal/process"
 )
 
 // minimumCursorVersion is the oldest Cursor Agent build AO has verified by a
@@ -27,7 +28,7 @@ func versionProbe(ctx context.Context, bin string) error {
 			return requireMinimumCursorVersion(installed)
 		}
 	}
-	output, err := exec.CommandContext(ctx, bin, "--version").CombinedOutput()
+	output, err := aoprocess.CommandContext(ctx, bin, "--version").CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("read Cursor Agent version: %w", err)
 	}

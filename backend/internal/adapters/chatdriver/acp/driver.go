@@ -64,7 +64,20 @@ type Config struct {
 	SessionMode func(ports.PermissionMode) string
 	// SessionOptions maps AO's per-turn choices onto ACP config option ids.
 	SessionOptions func(ports.ChatTurnSettings) []SessionOption
+	// PermissionPolicy lets a provider binding resolve permission requests that
+	// have an exact AO policy mapping before the generic client parks them for a
+	// human. Returning handled=false preserves the ordinary approval flow.
+	PermissionPolicy PermissionPolicy
+	// ClientExtension handles provider-defined agent-to-client JSON-RPC methods.
+	ClientExtension ClientExtensionHandler
 }
+
+// PermissionPolicy maps the active AO permission mode and the provider's exact
+// offered choices to an automatic response when the mapping is unambiguous.
+type PermissionPolicy func(
+	ports.PermissionMode,
+	acpsdk.RequestPermissionRequest,
+) (acpsdk.PermissionOptionId, bool)
 
 // SessionOption is one ACP session configuration selection.
 type SessionOption struct {
@@ -154,7 +167,7 @@ func (d *Driver) Start(ctx context.Context, cfg ports.ChatStartConfig) (ports.Ch
 	}
 	conv.start(
 		string(resp.SessionId), conversationCapabilities(d.cfg.Capabilities, init),
-		d.cfg.SessionMode, d.cfg.SessionOptions, resp.ConfigOptions,
+		d.cfg.SessionMode, d.cfg.SessionOptions, d.cfg.PermissionPolicy, resp.ConfigOptions,
 	)
 	if err := conv.applyTurnSettings(ctx, ports.ChatTurnSettings{Model: cfg.Model, Approval: cfg.Permissions}); err != nil {
 		// Initial model and permission mode may have been applied via launch-time
@@ -246,7 +259,7 @@ func (d *Driver) Resume(ctx context.Context, cfg ports.ChatResumeConfig) (ports.
 	}
 	conv.start(
 		cfg.ProviderConversationID, conversationCapabilities(d.cfg.Capabilities, init),
-		d.cfg.SessionMode, d.cfg.SessionOptions, configOptions,
+		d.cfg.SessionMode, d.cfg.SessionOptions, d.cfg.PermissionPolicy, configOptions,
 	)
 	if err := conv.applyTurnSettings(ctx, ports.ChatTurnSettings{Model: cfg.Model, Approval: cfg.Permissions}); err != nil {
 		if !errors.Is(err, ErrACPSetterUnsupported) {
@@ -272,7 +285,7 @@ func (d *Driver) connect(
 	if err != nil {
 		return nil, acpsdk.InitializeResponse{}, fmt.Errorf("%w: launch ACP agent: %w", ports.ErrChatDriverUnavailable, err)
 	}
-	conv := newConversation(proc, d.log)
+	conv := newConversation(proc, d.log, d.cfg.ClientExtension)
 
 	initCtx, cancel := context.WithTimeout(ctx, handshakeTimeout)
 	defer cancel()

@@ -41,11 +41,13 @@ type VersionProbe func(ctx context.Context, bin string) error
 
 // Config describes the small provider-specific portion of a native ACP binding.
 type Config struct {
-	Harness        domain.AgentHarness
-	Capabilities   ports.ChatCapabilities
-	Configure      Configure
-	SessionMode    func(ports.PermissionMode) string
-	SessionOptions func(ports.ChatTurnSettings) []acpdriver.SessionOption
+	Harness          domain.AgentHarness
+	Capabilities     ports.ChatCapabilities
+	Configure        Configure
+	SessionMode      func(ports.PermissionMode) string
+	SessionOptions   func(ports.ChatTurnSettings) []acpdriver.SessionOption
+	PermissionPolicy acpdriver.PermissionPolicy
+	ClientExtension  acpdriver.ClientExtensionHandler
 	// VersionProbe optionally gates admission on a minimum binary version.
 	VersionProbe VersionProbe
 }
@@ -130,7 +132,9 @@ func buildConfig(plugin Plugin, cfg Config, log *slog.Logger) acpdriver.Config {
 				Env:     env,
 			}, nil
 		},
-		SessionMode:    cfg.SessionMode,
-		SessionOptions: cfg.SessionOptions,
+		SessionMode:      cfg.SessionMode,
+		SessionOptions:   cfg.SessionOptions,
+		PermissionPolicy: cfg.PermissionPolicy,
+		ClientExtension:  cfg.ClientExtension,
 	}
 }

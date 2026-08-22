@@ -50,7 +50,7 @@ type interruptAttempt struct {
 }
 
 type parkedPermission struct {
-	options map[string]acpsdk.PermissionOption
+	options map[string]json.RawMessage
 	result  chan string
 }
 
@@ -78,7 +78,7 @@ type nestedMessageState struct {
 }
 
 type conversation struct {
-	conn *acpsdk.ClientSideConnection
+	conn *clientConnection
 	proc *process
 	log  *slog.Logger
 
@@ -102,6 +102,8 @@ type conversation struct {
 	closed         bool
 	modeFor        func(ports.PermissionMode) string
 	optionsFor     func(ports.ChatTurnSettings) []SessionOption
+	permissionMode ports.PermissionMode
+	permissionFor  PermissionPolicy
 
 	eventMu      sync.RWMutex
 	events       chan ports.ChatEvent
@@ -125,7 +127,7 @@ var _ ports.ChatInputResponder = (*conversation)(nil)
 var _ acpsdk.Client = (*conversation)(nil)
 var _ acpsdk.ClientExperimental = (*conversation)(nil)
 
-func newConversation(proc *process, log *slog.Logger) *conversation {
+func newConversation(proc *process, log *slog.Logger, extensionFor ClientExtensionHandler) *conversation {
 	c := &conversation{
 		proc:           proc,
 		log:            log,
@@ -138,7 +140,7 @@ func newConversation(proc *process, log *slog.Logger) *conversation {
 		tools:          make(map[string]*toolState),
 		events:         make(chan ports.ChatEvent, eventBuffer),
 	}
-	c.conn = acpsdk.NewClientSideConnection(c, proc.stdin, proc.stdout)
+	c.conn = newClientConnection(c, extensionFor, proc.stdin, proc.stdout)
 	c.conn.SetLogger(log)
 	go c.watchConnection()
 	return c
@@ -149,6 +151,7 @@ func (c *conversation) start(
 	capabilities ports.ChatCapabilities,
 	modeFor func(ports.PermissionMode) string,
 	optionsFor func(ports.ChatTurnSettings) []SessionOption,
+	permissionFor PermissionPolicy,
 	configOptions []acpsdk.SessionConfigOption,
 ) {
 	c.mu.Lock()
@@ -169,6 +172,7 @@ func (c *conversation) start(
 	}
 	c.modeFor = modeFor
 	c.optionsFor = optionsFor
+	c.permissionFor = permissionFor
 	c.mu.Unlock()
 	c.emit(ports.ChatEvent{Kind: ports.ChatEventControllerState, ControllerState: ports.ChatControllerReady})
 }
@@ -232,6 +236,7 @@ func (c *conversation) applyTurnSettings(ctx context.Context, settings ports.Cha
 	sessionID := c.sessionID
 	modeFor := c.modeFor
 	optionsFor := c.optionsFor
+	c.permissionMode = ports.NormalizePermissionMode(settings.Approval)
 	c.mu.Unlock()
 	if sessionID == "" {
 		return errors.New("ACP session is not open")
@@ -441,13 +446,12 @@ func (c *conversation) ResolveRequest(
 		c.mu.Unlock()
 		return ports.ErrChatRequestNotPending
 	}
-	option, offered := request.options[decision.ID]
+	offeredRaw, offered := request.options[decision.ID]
 	if !offered {
 		c.mu.Unlock()
 		return ports.ErrChatDecisionNotOffered
 	}
 	if len(decision.Raw) > 0 {
-		offeredRaw, _ := json.Marshal(option)
 		if !bytes.Equal(bytes.TrimSpace(decision.Raw), bytes.TrimSpace(offeredRaw)) {
 			c.mu.Unlock()
 			return ports.ErrChatDecisionNotOffered

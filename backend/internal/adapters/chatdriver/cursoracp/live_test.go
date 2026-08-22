@@ -17,7 +17,8 @@ import (
 // Run explicitly with AO_LIVE_CURSOR_ACP=1. It uses the user's existing Cursor
 // executable, account, and AO-managed Cursor profile; CI never depends on them.
 // The test exercises the native tool/approval path, cancellation, load-based
-// resume, dynamic options/commands, and Cursor's ordinary AGENTS.md rules.
+// resume, dynamic options/commands, AO's managed standing rule, Cursor's
+// ordinary AGENTS.md rules, and a blocking Cursor extension request.
 func TestLiveCursorACP(t *testing.T) {
 	if os.Getenv("AO_LIVE_CURSOR_ACP") != "1" {
 		t.Skip("set AO_LIVE_CURSOR_ACP=1 to run against the local Cursor account")
@@ -46,7 +47,8 @@ func TestLiveCursorACP(t *testing.T) {
 
 	conv, err := driver.Start(ctx, ports.ChatStartConfig{
 		SessionID: "live-cursor-acp", DataDir: dataDir, WorkspacePath: workspace,
-		Env: liveEnvMap(),
+		Env: liveEnvMap(), Permissions: ports.PermissionModeDefault,
+		SystemPrompt: "On every response include the exact token AO_STANDING_START.",
 	})
 	if err != nil {
 		t.Fatalf("Start: %v", err)
@@ -59,7 +61,10 @@ func TestLiveCursorACP(t *testing.T) {
 
 	ref := sendLiveTurn(ctx, t, conv,
 		"Use the shell to run `printf cursor-acp-ok > proof.txt`, then report success.")
-	waitForLiveTurn(ctx, t, conv, ref.ProviderTurnID, true, false)
+	startAnswer := waitForLiveTurn(ctx, t, conv, ref.ProviderTurnID, true, false)
+	if !strings.Contains(startAnswer, "AO_STANDING_START") || !strings.Contains(startAnswer, "CURSOR_RULES_APPLIED") {
+		t.Fatalf("start answer omitted standing/project rule tokens: %q", startAnswer)
+	}
 	proof, err := os.ReadFile(filepath.Join(workspace, "proof.txt"))
 	if err != nil || string(proof) != "cursor-acp-ok" {
 		t.Fatalf("tool-created proof = %q, %v", proof, err)
@@ -75,6 +80,8 @@ func TestLiveCursorACP(t *testing.T) {
 	resumed, err := driver.Resume(ctx, ports.ChatResumeConfig{
 		SessionID: "live-cursor-acp", ProviderConversationID: providerID,
 		DataDir: dataDir, WorkspacePath: workspace, Env: liveEnvMap(),
+		Permissions:  ports.PermissionModeDefault,
+		SystemPrompt: "On every response include the exact token AO_STANDING_RESUME.",
 	})
 	if err != nil {
 		t.Fatalf("Resume: %v", err)
@@ -83,8 +90,58 @@ func TestLiveCursorACP(t *testing.T) {
 	resumeRef := sendLiveTurn(ctx, t, resumed,
 		"Confirm the project rule token and whether proof.txt exists. Do not modify files.")
 	answer := waitForLiveTurn(ctx, t, resumed, resumeRef.ProviderTurnID, false, false)
-	if !strings.Contains(answer, "CURSOR_RULES_APPLIED") || !strings.Contains(answer, "proof.txt") {
+	if !strings.Contains(answer, "AO_STANDING_RESUME") || !strings.Contains(answer, "CURSOR_RULES_APPLIED") || !strings.Contains(answer, "proof.txt") {
 		t.Fatalf("resumed answer did not apply project rules/history: %q", answer)
+	}
+
+	questionRef := sendLiveTurn(ctx, t, resumed,
+		"Use your ask-question tool now. Ask exactly one multiple-choice question with choices alpha and beta, then report my choice.")
+	waitForCursorInput(ctx, t, resumed, questionRef.ProviderTurnID)
+	questionAnswer := waitForLiveTurn(ctx, t, resumed, questionRef.ProviderTurnID, false, false)
+	if !strings.Contains(strings.ToLower(questionAnswer), "alpha") {
+		t.Fatalf("answer after cursor/ask_question = %q, want selected alpha", questionAnswer)
+	}
+}
+
+// Every AO permission mode must at least open and complete a native Cursor ACP
+// turn. The contract tests assert exact flags/client policy; this live matrix
+// catches provider-side flag drift. Run explicitly because it consumes account
+// turns and may surface real permission prompts.
+func TestLiveCursorACPPermissionModes(t *testing.T) {
+	if os.Getenv("AO_LIVE_CURSOR_ACP") != "1" {
+		t.Skip("set AO_LIVE_CURSOR_ACP=1 to run against the local Cursor account")
+	}
+	dataDir := liveDataDir(t)
+	for _, test := range []struct {
+		name string
+		mode ports.PermissionMode
+	}{
+		{name: "default", mode: ports.PermissionModeDefault},
+		{name: "accept-edits", mode: ports.PermissionModeAcceptEdits},
+		{name: "auto", mode: ports.PermissionModeAuto},
+		{name: "bypass-permissions", mode: ports.PermissionModeBypassPermissions},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+			defer cancel()
+			workspace := t.TempDir()
+			driver := New(cursor.New(), nil)
+			conv, err := driver.Start(ctx, ports.ChatStartConfig{
+				SessionID: domain.SessionID("live-cursor-mode-" + test.name),
+				DataDir:   dataDir, WorkspacePath: workspace, Env: liveEnvMap(), Permissions: test.mode,
+			})
+			if err != nil {
+				t.Fatalf("Start(%s): %v", test.mode, err)
+			}
+			defer conv.Close()
+			ref := sendLiveTurnWithSettings(ctx, t, conv,
+				"Use the file editing tool (not the shell) to create mode.txt containing ok, then say done.",
+				ports.ChatTurnSettings{Approval: test.mode})
+			waitForLiveTurn(ctx, t, conv, ref.ProviderTurnID, true, false)
+			if content, err := os.ReadFile(filepath.Join(workspace, "mode.txt")); err != nil || strings.TrimSpace(string(content)) != "ok" {
+				t.Fatalf("mode %s proof = %q, %v", test.mode, content, err)
+			}
+		})
 	}
 }
 
@@ -119,10 +176,20 @@ func assertCursorAdvertisements(ctx context.Context, t *testing.T, conv ports.Ch
 }
 
 func sendLiveTurn(ctx context.Context, t *testing.T, conv ports.ChatConversation, text string) ports.ChatTurnRef {
+	return sendLiveTurnWithSettings(ctx, t, conv, text, ports.ChatTurnSettings{})
+}
+
+func sendLiveTurnWithSettings(
+	ctx context.Context,
+	t *testing.T,
+	conv ports.ChatConversation,
+	text string,
+	settings ports.ChatTurnSettings,
+) ports.ChatTurnRef {
 	t.Helper()
 	ref, err := conv.SendTurn(ctx, ports.ChatUserMessage{
 		Text: text, ClientMessageID: "live-" + time.Now().Format("150405.000000000"),
-		Origin: domain.MessageOriginHuman,
+		Origin: domain.MessageOriginHuman, Settings: settings,
 	})
 	if err != nil {
 		t.Fatalf("SendTurn: %v", err)
@@ -195,6 +262,60 @@ func waitForLiveTurn(
 	}
 }
 
+func waitForCursorInput(
+	ctx context.Context,
+	t *testing.T,
+	conv ports.ChatConversation,
+	turnID string,
+) {
+	t.Helper()
+	for {
+		select {
+		case event, ok := <-conv.Events():
+			if !ok {
+				t.Fatal("controller closed before cursor/ask_question")
+			}
+			if event.ProviderTurnID != "" && event.ProviderTurnID != turnID {
+				continue
+			}
+			if event.Kind == ports.ChatEventTurnCompleted {
+				t.Fatal("turn completed without cursor/ask_question")
+			}
+			if event.Kind != ports.ChatEventInputRequested || event.Input == nil {
+				continue
+			}
+			content := firstFormChoice(event.Input.Schema)
+			if len(content) != 1 {
+				t.Fatalf("cursor input schema = %#v", event.Input.Schema)
+			}
+			if err := conv.(ports.ChatInputResponder).ResolveInput(ctx, event.RequestID, ports.ChatInputResponse{
+				Action: ports.ChatInputActionAccept, Content: content,
+			}); err != nil {
+				t.Fatalf("ResolveInput: %v", err)
+			}
+			return
+		case <-ctx.Done():
+			t.Fatalf("waiting for cursor/ask_question: %v", ctx.Err())
+		}
+	}
+}
+
+func firstFormChoice(schema map[string]any) map[string]any {
+	properties, _ := schema["properties"].(map[string]any)
+	for name, raw := range properties {
+		property, _ := raw.(map[string]any)
+		choices, _ := property["oneOf"].([]any)
+		if len(choices) == 0 {
+			continue
+		}
+		choice, _ := choices[0].(map[string]any)
+		if value, ok := choice["const"].(string); ok {
+			return map[string]any{name: value}
+		}
+	}
+	return nil
+}
+
 func liveEnvMap() map[string]string {
 	out := make(map[string]string)
 	for _, pair := range os.Environ() {
@@ -204,4 +325,16 @@ func liveEnvMap() map[string]string {
 		}
 	}
 	return out
+}
+
+func liveDataDir(t *testing.T) string {
+	t.Helper()
+	if dataDir := strings.TrimSpace(os.Getenv("AO_DATA_DIR")); dataDir != "" {
+		return dataDir
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Fatalf("home directory: %v", err)
+	}
+	return filepath.Join(home, ".ao")
 }
