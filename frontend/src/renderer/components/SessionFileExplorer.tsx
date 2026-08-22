@@ -1,7 +1,8 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { Columns2, Maximize2, Minimize2, Rows3, Search } from "lucide-react";
+import { ChevronLeft, Columns2, Maximize2, Minimize2, Rows3, Search } from "lucide-react";
+import { cn } from "../lib/utils";
 import { formatFileAnnotationMessage } from "../../shared/file-annotations";
 import { apiClient, apiErrorMessage } from "../lib/api-client";
 import { sessionWorkspaceFilesQueryOptions } from "../hooks/useSessionWorkspaceFiles";
@@ -203,29 +204,77 @@ export function SessionFileExplorer({ sessionId, isMaximized = false, onToggleMa
 					</Button>
 				) : null}
 			</header>
-			<ResizablePanelGroup className="min-h-0 flex-1">
-				<ResizablePanel defaultSize={30} minSize={15} maxSize={60}>
-					<FileTree
-						changedOnly={changedOnly}
-						changedOnlyData={changedOnlyData}
-						filterText={filter}
-						onSelectPath={(node) => setSelectedPath(node.path)}
-						selectedPath={selectedPath}
-						sessionId={sessionId}
-					/>
-				</ResizablePanel>
-				<ResizableHandle />
-				<ResizablePanel defaultSize={70} minSize={40}>
-					<div
-						className="board-scrollbar h-full min-h-0 overflow-x-hidden overflow-y-auto overscroll-contain bg-background"
-						data-files-scroll-root=""
-					>
-						<div className="flex w-full flex-col px-0">
+			{isMaximized ? (
+				// Maximized gives the explorer the full window — plenty of room for
+				// the tree and the content side by side, like a real editor.
+				<ResizablePanelGroup className="min-h-0 flex-1">
+					<ResizablePanel defaultSize={26} minSize={18} maxSize={50}>
+						<FileTree
+							changedOnly={changedOnly}
+							changedOnlyData={changedOnlyData}
+							filterText={filter}
+							onSelectPath={(node) => setSelectedPath(node.path)}
+							selectedPath={selectedPath}
+							sessionId={sessionId}
+						/>
+					</ResizablePanel>
+					<ResizableHandle />
+					<ResizablePanel defaultSize={74} minSize={40}>
+						<ContentScrollArea>
 							<FileContentPane annotation={annotation} path={selectedPath} sessionId={sessionId} split={split} wrap={true} />
-						</div>
+						</ContentScrollArea>
+					</ResizablePanel>
+				</ResizablePanelGroup>
+			) : (
+				// Docked in the 316px inspector rail there isn't room for the tree
+				// and the content side by side (see git history for the version that
+				// tried — file names truncated to a few characters). Show one at a
+				// time instead, like a narrow-window master/detail view: the tree
+				// stays mounted (not unmounted) so its scroll position and expanded
+				// folders survive going back and forth.
+				<div className="flex min-h-0 flex-1 flex-col">
+					<div className={cn("min-h-0 flex-1", selectedPath && "hidden")}>
+						<FileTree
+							changedOnly={changedOnly}
+							changedOnlyData={changedOnlyData}
+							filterText={filter}
+							onSelectPath={(node) => setSelectedPath(node.path)}
+							selectedPath={selectedPath}
+							sessionId={sessionId}
+						/>
 					</div>
-				</ResizablePanel>
-			</ResizablePanelGroup>
+					{selectedPath ? (
+						<div className="flex min-h-0 flex-1 flex-col">
+							<div className="flex h-8 shrink-0 items-center gap-1 border-b border-border bg-surface px-1">
+								<Button
+									aria-label={t("files.explorer.backToTree")}
+									onClick={() => setSelectedPath(null)}
+									size="icon-sm"
+									type="button"
+									variant="ghost"
+								>
+									<ChevronLeft className="size-icon-sm" aria-hidden="true" />
+								</Button>
+								<span className="min-w-0 flex-1 truncate font-mono text-xs text-muted-foreground">{selectedPath}</span>
+							</div>
+							<ContentScrollArea>
+								<FileContentPane annotation={annotation} path={selectedPath} sessionId={sessionId} split={split} wrap={true} />
+							</ContentScrollArea>
+						</div>
+					) : null}
+				</div>
+			)}
 		</section>
+	);
+}
+
+function ContentScrollArea({ children }: { children: ReactNode }) {
+	return (
+		<div
+			className="board-scrollbar min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain bg-background"
+			data-files-scroll-root=""
+		>
+			<div className="flex w-full flex-col px-0">{children}</div>
+		</div>
 	);
 }

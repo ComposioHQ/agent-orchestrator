@@ -1161,6 +1161,7 @@
 	"files.explorer.tree": "File tree",
 	"files.explorer.selectFile": "Select a file to preview.",
 	"files.explorer.tooLarge": "File is too large to preview ({{size}}).",
+	"files.explorer.backToTree": "Back to file tree",
 	"diffSelection.copy": "コピー",
 	"diffSelection.explain": "説明",
 	"diffSelection.explainInstruction": "これらの行の役割と理由を説明してください。",

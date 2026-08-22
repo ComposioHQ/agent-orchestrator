@@ -1175,6 +1175,7 @@
 	"files.explorer.tree": "File tree",
 	"files.explorer.selectFile": "Select a file to preview.",
 	"files.explorer.tooLarge": "File is too large to preview ({{size}}).",
+	"files.explorer.backToTree": "Back to file tree",
 	"diffSelection.copy": "Copiar",
 	"diffSelection.explain": "Explicar",
 	"diffSelection.explainInstruction": "Explique o que essas linhas fazem e por quê.",

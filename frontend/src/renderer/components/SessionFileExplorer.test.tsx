@@ -61,9 +61,35 @@ describe("SessionFileExplorer", () => {
 		fireEvent.change(input, { target: { value: "app" } });
 		expect(screen.getByTestId("tree-filter")).toHaveTextContent("app");
 
-		expect(screen.getByTestId("content-pane")).toHaveTextContent("none");
+		// Docked (non-maximized): tree and content are master/detail, not side by
+		// side, so the content pane isn't mounted at all until a file is picked.
+		expect(screen.queryByTestId("content-pane")).not.toBeInTheDocument();
 		await userEvent.click(screen.getByRole("button", { name: "select src/App.tsx" }));
 		expect(screen.getByTestId("content-pane")).toHaveTextContent("src/App.tsx");
+	});
+
+	it("returns to the tree when the back button is pressed, docked", async () => {
+		renderWithQuery(<SessionFileExplorer sessionId="sess-explorer-back" />);
+
+		await userEvent.click(screen.getByRole("button", { name: "select src/App.tsx" }));
+		expect(screen.getByTestId("content-pane")).toBeInTheDocument();
+
+		await userEvent.click(screen.getByRole("button", { name: "Back to file tree" }));
+		expect(screen.queryByTestId("content-pane")).not.toBeInTheDocument();
+		expect(screen.getByTestId("tree-changed-only")).toBeInTheDocument();
+	});
+
+	it("keeps the tree and content side by side when maximized", async () => {
+		renderWithQuery(<SessionFileExplorer isMaximized sessionId="sess-explorer-maximized" />);
+
+		// Maximized: both are mounted at once, with no back button.
+		expect(screen.getByTestId("tree-changed-only")).toBeInTheDocument();
+		expect(screen.getByTestId("content-pane")).toHaveTextContent("none");
+		expect(screen.queryByRole("button", { name: "Back to file tree" })).not.toBeInTheDocument();
+
+		await userEvent.click(screen.getByRole("button", { name: "select src/App.tsx" }));
+		expect(screen.getByTestId("content-pane")).toHaveTextContent("src/App.tsx");
+		expect(screen.getByTestId("tree-changed-only")).toBeInTheDocument();
 	});
 
 	it("toggles the changed-only setting in the ui store and reflects it in the tree", async () => {

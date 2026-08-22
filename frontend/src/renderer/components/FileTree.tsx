@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { Tree, type NodeApi, type NodeRendererProps, type TreeApi } from "react-arborist";
-import { File, Folder, FolderOpen } from "lucide-react";
+import { Tree, type NodeApi, type NodeRendererProps, type RowRendererProps, type TreeApi } from "react-arborist";
+import { ChevronRight, File, Folder, FolderOpen } from "lucide-react";
 import { cn } from "../lib/utils";
 import { statusLabel, statusTone } from "../lib/workspace-file-status";
 import {
@@ -10,6 +10,9 @@ import {
 	type TreeNode,
 	type WorkspaceTreeEntry,
 } from "../hooks/useSessionWorkspaceTree";
+
+const ROW_HEIGHT = 28;
+const INDENT = 14;
 
 function entryToNode(entry: WorkspaceTreeEntry): TreeNode {
 	if (entry.type === "dir") {
@@ -122,7 +125,7 @@ export function FileTree({
 	const isEmpty = data.length === 0 && (changedOnly || (rootQuery.isFetched && !rootQuery.isError));
 
 	return (
-		<div className="flex h-full min-h-0 flex-col bg-background" ref={containerRef}>
+		<div className="flex h-full min-h-0 min-w-0 flex-col bg-background" ref={containerRef}>
 			{rootQuery.isPending && !changedOnly ? (
 				<p className="p-3 text-xs text-muted-foreground">{t("files.loading")}</p>
 			) : null}
@@ -144,15 +147,39 @@ export function FileTree({
 					disableEdit
 					disableMultiSelection
 					searchTerm={filterText}
-					rowHeight={26}
-					indent={14}
+					rowHeight={ROW_HEIGHT}
+					indent={INDENT}
 					width={size.width}
 					height={size.height}
+					padding={4}
 					aria-label={t("files.explorer.tree")}
+					renderRow={FileTreeRowContainer}
 				>
 					{FileTreeRow}
 				</Tree>
 			) : null}
+		</div>
+	);
+}
+
+// react-arborist's default row wrapper sets `minWidth: max-content` so a
+// selection highlight never clips at the viewport edge under a long/deeply
+// nested name — but that also means a row never shrinks to the panel's
+// width, so name truncation (below) never has anything to truncate against
+// and the whole tree scrolls horizontally instead. A file-tree sidebar
+// should truncate long names with an ellipsis, not require horizontal
+// scrolling to read them, so this only overrides that one property.
+function FileTreeRowContainer<T>({ node, attrs, innerRef, children }: RowRendererProps<T>) {
+	return (
+		<div
+			{...attrs}
+			className="min-w-0!"
+			onClick={node.handleClick}
+			onFocus={(event) => event.stopPropagation()}
+			ref={innerRef}
+			style={{ ...attrs.style, minWidth: 0 }}
+		>
+			{children}
 		</div>
 	);
 }
@@ -164,13 +191,21 @@ function FileTreeRow({ node, style, dragHandle }: NodeRendererProps<TreeNode>) {
 	return (
 		<div
 			className={cn(
-				"flex cursor-pointer items-center gap-1.5 truncate rounded-sm px-1.5 text-xs",
-				node.isSelected ? "bg-interactive-active text-foreground" : "hover:bg-interactive-hover/60",
+				"flex h-full min-w-0 cursor-pointer items-center gap-1.5 rounded-md px-2 text-xs text-foreground",
+				node.isSelected ? "bg-interactive-active" : "hover:bg-interactive-hover",
 			)}
 			onClick={() => (isDir ? node.toggle() : node.activate())}
 			ref={dragHandle}
 			style={style}
 		>
+			{isDir ? (
+				<ChevronRight
+					aria-hidden="true"
+					className={cn("size-3 shrink-0 text-passive transition-transform", node.isOpen && "rotate-90")}
+				/>
+			) : (
+				<span aria-hidden="true" className="size-3 shrink-0" />
+			)}
 			{isDir ? (
 				node.isOpen ? (
 					<FolderOpen className="size-icon-sm shrink-0 text-passive" aria-hidden="true" />

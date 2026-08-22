@@ -1157,6 +1157,7 @@
 	"files.explorer.tree": "File tree",
 	"files.explorer.selectFile": "Select a file to preview.",
 	"files.explorer.tooLarge": "File is too large to preview ({{size}}).",
+	"files.explorer.backToTree": "Back to file tree",
 	"diffSelection.copy": "复制",
 	"diffSelection.explain": "解释",
 	"diffSelection.explainInstruction": "解释这些代码行的作用及原因。",
