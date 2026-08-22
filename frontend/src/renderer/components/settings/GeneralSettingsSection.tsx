@@ -1,8 +1,12 @@
+import { useEffect } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import type { ThemePreference, ThemeStyle } from "../../lib/theme";
 import type { AppLocale } from "../../i18n";
 import { useLocaleStore } from "../../stores/locale-store";
 import { useUiStore } from "../../stores/ui-store";
+import { useCloudSettingsStore } from "../../stores/cloud-settings-store";
+import { clearCloudApiBaseUrl } from "../../lib/api-client";
 import { SettingsOptionMenu, type SettingsOption } from "./SettingsOptionMenu";
 import { SettingsLinkRow, SettingsRow } from "./SettingsRow";
 import { SettingsSection } from "./SettingsSection";
@@ -87,6 +91,7 @@ export function GeneralSettingsSection({
 	titleHidden?: boolean;
 }) {
 	const { t } = useTranslation();
+	const queryClient = useQueryClient();
 	const themePreference = useUiStore((state) => state.themePreference);
 	const setThemePreference = useUiStore((state) => state.setThemePreference);
 	const themeStyle = useUiStore((state) => state.themeStyle);
@@ -97,6 +102,16 @@ export function GeneralSettingsSection({
 	const localeSaveError = useLocaleStore((state) => state.saveError);
 	const developerMode = useUiStore((state) => state.developerMode);
 	const setDeveloperMode = useUiStore((state) => state.setDeveloperMode);
+	const cloudEnabled = useCloudSettingsStore((state) => state.enabled);
+	const cloudSettingsLoaded = useCloudSettingsStore((state) => state.loaded);
+	const cloudSettingsSaving = useCloudSettingsStore((state) => state.saving);
+	const cloudSettingsSaveError = useCloudSettingsStore((state) => state.saveError);
+	const loadCloudSettings = useCloudSettingsStore((state) => state.load);
+	const setCloudEnabled = useCloudSettingsStore((state) => state.setEnabled);
+
+	useEffect(() => {
+		if (developerMode) void loadCloudSettings();
+	}, [developerMode, loadCloudSettings]);
 
 	const themeOptions = [
 		{ value: "light", label: t("settings.theme.light") },
@@ -160,6 +175,34 @@ export function GeneralSettingsSection({
 					onCheckedChange={setDeveloperMode}
 				/>
 			</SettingsRow>
+			{developerMode ? (
+				<div className="flex w-full flex-col">
+					<SettingsRow className="rounded-none" label={t("settings.aoCloudEarlyAccess")}>
+						<Switch
+							aria-label={t("settings.aoCloudEarlyAccess")}
+							checked={cloudEnabled}
+							disabled={!cloudSettingsLoaded || cloudSettingsSaving}
+							onCheckedChange={(enabled) => {
+								void setCloudEnabled(enabled);
+								if (!enabled) {
+									clearCloudApiBaseUrl();
+									queryClient.clear();
+								}
+							}}
+						/>
+					</SettingsRow>
+					<p
+						className={cn(
+							"px-3 pt-0 pb-4 text-xs leading-relaxed",
+							cloudSettingsSaveError ? "text-destructive" : "text-muted-foreground",
+						)}
+					>
+						{cloudSettingsSaveError
+							? t("settings.aoCloudEarlyAccessSaveFailed")
+							: t("settings.aoCloudEarlyAccessDescription")}
+					</p>
+				</div>
+			) : null}
 			<SettingsLinkRow label={t("settings.connectMobile")} onClick={onConnectMobile} />
 		</SettingsSection>
 	);

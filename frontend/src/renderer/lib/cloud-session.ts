@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { aoBridge } from "./bridge";
 import type { CloudAccount } from "../../shared/cloud-account";
+import { useCloudSettingsStore } from "../stores/cloud-settings-store";
 
 export type { CloudAccount };
 
@@ -15,12 +16,23 @@ export interface UseCloudSessionResult {
 }
 
 export function useCloudSession(): UseCloudSessionResult {
-	const configured = aoBridge.cloud.isEnabled();
+	const environmentEnabled = aoBridge.cloud.isEnabled();
+	const cloudEnabled = useCloudSettingsStore((state) => state.enabled);
+	const cloudSettingsLoaded = useCloudSettingsStore((state) => state.loaded);
+	const loadCloudSettings = useCloudSettingsStore((state) => state.load);
+	const configured = environmentEnabled || (cloudSettingsLoaded && cloudEnabled);
 	const [session, setSession] = useState<CloudAccount | null>(null);
-	const [status, setStatus] = useState<CloudSessionStatus>(configured ? "loading" : "unauthenticated");
+	const [status, setStatus] = useState<CloudSessionStatus>("loading");
 
 	useEffect(() => {
-		if (!configured) return;
+		void loadCloudSettings();
+	}, [loadCloudSettings]);
+
+	useEffect(() => {
+		if (!configured) {
+			if (cloudSettingsLoaded) setStatus("unauthenticated");
+			return;
+		}
 		let active = true;
 		void aoBridge.cloud.getSession().then((cloudSession) => {
 			if (!active) return;
@@ -41,7 +53,7 @@ export function useCloudSession(): UseCloudSessionResult {
 			active = false;
 			unsub();
 		};
-	}, [configured]);
+	}, [cloudSettingsLoaded, configured]);
 
 	const signIn = () => {
 		void aoBridge.cloud.signIn();

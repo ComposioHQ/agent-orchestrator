@@ -169,8 +169,8 @@ export async function installFakeBridge(page: Page, opts: FakeBridgeOptions = {}
 					set: async () => undefined,
 				},
 				uiSettings: {
-					get: async () => ({ locale: "en" }),
-					set: async (settings) => settings,
+					get: async () => ({ locale: "en", cloudEnabled: false }),
+					set: async (settings) => ({ locale: settings.locale ?? "en", cloudEnabled: settings.cloudEnabled === true }),
 				},
 				keybindings: {
 					get: async () => ({}),
@@ -599,8 +599,8 @@ export async function installFakeAgent(page: Page, opts: FakeAgentOptions = {}):
 					set: async () => undefined,
 				},
 				uiSettings: {
-					get: async () => ({ locale: "en" }),
-					set: async (settings) => settings,
+					get: async () => ({ locale: "en", cloudEnabled: false }),
+					set: async (settings) => ({ locale: settings.locale ?? "en", cloudEnabled: settings.cloudEnabled === true }),
 				},
 				keybindings: {
 					get: async () => ({}),

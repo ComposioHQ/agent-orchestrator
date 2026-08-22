@@ -209,9 +209,10 @@ if (typeof window !== "undefined") {
 			set: async () => undefined,
 		},
 		uiSettings: {
-			get: async () => ({ locale: "en" as const }),
-			set: async (settings: { locale: string }) => ({
-				locale: settings.locale as "en",
+			get: async () => ({ locale: "en" as const, cloudEnabled: false }),
+			set: async (settings) => ({
+				locale: settings.locale === undefined ? "en" as const : settings.locale,
+				cloudEnabled: settings.cloudEnabled === true,
 			}),
 		},
 		keybindings: {

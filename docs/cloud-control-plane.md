@@ -115,9 +115,16 @@ export AO_CLOUD_SANDBOX_AO_BINARY='/ao'
 export AO_CLOUD_PUBLIC_URL='https://cloud.example.com'
 ```
 
-AO Cloud is an explicit opt-in desktop preview. The Electron main process
-exposes Cloud auth and workspace creation to the renderer only when the API
-URL, Google client ID, and one of these feature flags are present:
+AO Cloud is an explicit opt-in desktop preview. In a normally configured
+desktop build, the user must first enable Developer Mode in Settings and then
+enable **AO Cloud (Early Access)**. The toggle is hidden unless Developer Mode
+is enabled, defaults off, and warns that it works only for accounts granted
+early access. The Electron main process exposes Cloud auth and workspace
+creation only when the API URL and Google client ID are configured and the
+persisted preference is enabled.
+
+Development and dedicated feature builds can force the preview on with either
+of these overrides:
 
 ```bash
 # Per-launch opt-in for development and early-access users.
@@ -127,10 +134,11 @@ export AO_CLOUD_ENABLED=1
 export VITE_AO_CLOUD_ENABLED=1
 ```
 
-Normal release builds leave both flags unset, so the existing local-only
-project creation flow remains the default and no Cloud controls are rendered.
-The server-side `AO_CLOUD_ALLOWED_EMAILS` allowlist remains a second,
-independent rollout gate even for enabled clients.
+Normal release builds leave both overrides unset, so the existing local-only
+project creation flow remains the default until a developer explicitly opts
+in. The server-side `AO_CLOUD_ALLOWED_EMAILS` allowlist remains a second,
+independent rollout gate: enabling the desktop preference does not grant early
+access.
 
 The Electron main process performs Google installed-app PKCE on a temporary
 loopback callback and encrypts AO access/refresh tokens with Electron

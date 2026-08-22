@@ -161,8 +161,8 @@ export const aoBridge: AoBridge =
 			set: async () => undefined,
 		},
 		uiSettings: {
-			get: async () => ({ locale: "en" as const }),
-			set: async (settings) => ({ locale: coerceLocale(settings.locale) }),
+			get: async () => ({ locale: "en" as const, cloudEnabled: false }),
+			set: async (settings) => ({ locale: coerceLocale(settings.locale), cloudEnabled: settings.cloudEnabled === true }),
 		},
 		keybindings: {
 			get: async () => ({}),

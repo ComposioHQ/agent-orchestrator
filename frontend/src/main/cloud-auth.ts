@@ -18,12 +18,14 @@ const GOOGLE_CLIENT_ID =
 	process.env.AO_CLOUD_GOOGLE_CLIENT_ID?.trim() ||
 	(process.env.VITEST ? "client_test" : "");
 const GOOGLE_CLIENT_SECRET = process.env.AO_CLOUD_GOOGLE_CLIENT_SECRET?.trim() || "";
-const CLOUD_DESKTOP_CONFIGURED = cloudDesktopConfigured({
+const CLOUD_ENVIRONMENT_ENABLED = cloudDesktopConfigured({
 	featureFlags: [import.meta.env.VITE_AO_CLOUD_ENABLED, process.env.AO_CLOUD_ENABLED],
 	apiUrl: CLOUD_API_URL,
 	googleClientId: GOOGLE_CLIENT_ID,
 	forceEnabled: Boolean(process.env.VITEST),
 });
+const CLOUD_DESKTOP_AVAILABLE = Boolean(CLOUD_API_URL && GOOGLE_CLIENT_ID);
+let cloudPreferenceEnabled = false;
 const AUTH_STORE_FILE = "cloud-auth.bin";
 const LEGACY_SESSION_FILE = "cloud-session.json";
 const PKCE_TTL_MS = 10 * 60 * 1000;
@@ -54,7 +56,11 @@ const authGenerations = new Map<string, number>();
 const authMutations = new Map<string, Promise<void>>();
 
 export function cloudAuthConfigured(): boolean {
-	return CLOUD_DESKTOP_CONFIGURED;
+	return CLOUD_DESKTOP_AVAILABLE && (CLOUD_ENVIRONMENT_ENABLED || cloudPreferenceEnabled);
+}
+
+export function setCloudPreferenceEnabled(enabled: boolean): void {
+	cloudPreferenceEnabled = enabled;
 }
 
 function authGeneration(dataDir: string): number {

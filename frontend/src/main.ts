@@ -35,7 +35,7 @@ import {
 	inspectInstalledBundle,
 	installedBundlePath,
 } from "./main/relocation";
-import { coerceUiSettings, readUiSettings, writeUiSettings, type UiSettings } from "./main/ui-settings";
+import { coerceUiSettings, readUiSettings, updateUiSettings, type UiSettings } from "./main/ui-settings";
 import { spawn, type ChildProcess } from "node:child_process";
 import { randomBytes, randomUUID } from "node:crypto";
 import { closeSync, existsSync, openSync, readFileSync } from "node:fs";
@@ -77,6 +77,7 @@ import {
 	handleCloudDeepLink,
 	installCloudIPC,
 	registerCloudProtocol,
+	setCloudPreferenceEnabled,
 	showCloudSignInFailure,
 } from "./main/cloud-auth";
 import { installCloudWorkspaceIPC } from "./main/cloud-workspace";
@@ -1662,15 +1663,16 @@ ipcMain.handle("updateSettings:set", async (_event, settings: UpdateSettings) =>
 
 ipcMain.handle("uiSettings:get", async (): Promise<UiSettings> => {
 	const runFile = runFilePath();
-	if (!runFile) return { locale: "en" };
+	if (!runFile) return coerceUiSettings({});
 	return readUiSettings(path.dirname(runFile));
 });
-	ipcMain.handle("uiSettings:set", async (_event, settings: UiSettings): Promise<UiSettings> => {
-		const runFile = runFilePath();
-	const result = !runFile ? coerceUiSettings(settings) : await writeUiSettings(path.dirname(runFile), settings);
+ipcMain.handle("uiSettings:set", async (_event, patch: Partial<UiSettings>): Promise<UiSettings> => {
+	const runFile = runFilePath();
+	const result = !runFile ? coerceUiSettings(patch) : await updateUiSettings(path.dirname(runFile), patch);
+	setCloudPreferenceEnabled(result.cloudEnabled);
 	trayController?.setLocale(result.locale);
 	return result;
-	});
+});
 
 ipcMain.handle("keybindings:get", (): KeybindingOverrides => keybindingOverrides);
 ipcMain.handle("keybindings:set", async (_event, overrides: KeybindingOverrides): Promise<KeybindingOverrides> => {
@@ -1978,6 +1980,10 @@ app.whenReady().then(async () => {
 	}
 
 	const keybindingRunFile = runFilePath();
+	const initialUiSettings = keybindingRunFile
+		? await readUiSettings(path.dirname(keybindingRunFile))
+		: coerceUiSettings({});
+	setCloudPreferenceEnabled(initialUiSettings.cloudEnabled);
 	if (keybindingRunFile) {
 		keybindingOverrides = await readKeybindingOverrides(path.dirname(keybindingRunFile));
 	}
@@ -1985,7 +1991,6 @@ app.whenReady().then(async () => {
 	registerRendererProtocol();
 	applyRuntimeAppIcon();
 	if (isTrayEnabled(process.platform, app.isPackaged, app.getVersion())) {
-		const initialUiSettings = keybindingRunFile ? await readUiSettings(path.dirname(keybindingRunFile)) : { locale: "en" as const };
 		trayController = createTrayController({
 			focusWindow: focusMainWindow,
 			openSession: trayLifecycle.openSession,

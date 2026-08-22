@@ -6,6 +6,7 @@ import { appI18n } from "../i18n";
 import { GlobalSettingsForm } from "./GlobalSettingsForm";
 import { useLocaleStore } from "../stores/locale-store";
 import { useUiStore } from "../stores/ui-store";
+import { useCloudSettingsStore } from "../stores/cloud-settings-store";
 
 const {
 	getUpdate,
@@ -120,9 +121,10 @@ beforeEach(async () => {
 	}
 	getUpdate.mockResolvedValue({ enabled: true, channel: "latest", nightlyAck: false, feature: null });
 	setUpdate.mockResolvedValue(undefined);
-	getUiSettings.mockResolvedValue({ locale: "en" });
-	setUiSettings.mockImplementation(async (settings: { locale: string }) => ({
-		locale: settings.locale,
+	getUiSettings.mockResolvedValue({ locale: "en", cloudEnabled: false });
+	setUiSettings.mockImplementation(async (settings: { locale?: "en"; cloudEnabled?: boolean }) => ({
+		locale: settings.locale ?? "en",
+		cloudEnabled: settings.cloudEnabled === true,
 	}));
 	updGetStatus.mockResolvedValue({ state: "idle" });
 	updCheck.mockResolvedValue(undefined);
@@ -143,6 +145,7 @@ beforeEach(async () => {
 	await appI18n.changeLanguage("en");
 	useLocaleStore.setState({ locale: "en", loaded: false, saving: false, saveError: false });
 	useUiStore.setState({ developerMode: false });
+	useCloudSettingsStore.setState({ enabled: false, loaded: false, saving: false, saveError: false });
 	document.documentElement.lang = "en";
 });
 
@@ -179,6 +182,21 @@ describe("GlobalSettingsForm", () => {
 		expect(window.localStorage.getItem("ao.developerMode")).toBe("true");
 		await user.click(screen.getByLabelText("Updates channel"));
 		expect(await screen.findByRole("menuitem", { name: "Feature Releases" })).toBeInTheDocument();
+	});
+
+	it("shows the AO Cloud early-access toggle only in Developer Mode", async () => {
+		const user = userEvent.setup();
+		renderForm();
+		expect(screen.queryByRole("switch", { name: "AO Cloud (Early Access)" })).not.toBeInTheDocument();
+
+		await user.click(await screen.findByRole("switch", { name: "Developer Mode" }));
+		const cloudToggle = await screen.findByRole("switch", { name: "AO Cloud (Early Access)" });
+		expect(screen.getByText("AO Cloud will only work if you have been granted early access.")).toBeInTheDocument();
+		expect(cloudToggle).toHaveAttribute("aria-checked", "false");
+
+		await user.click(cloudToggle);
+		await waitFor(() => expect(setUiSettings).toHaveBeenCalledWith({ cloudEnabled: true }));
+		expect(cloudToggle).toHaveAttribute("aria-checked", "true");
 	});
 
 	it("shows the available feature builds after choosing Feature Releases", async () => {

@@ -39,10 +39,14 @@ deploy/cloud/deploy-staging.sh
 ```
 
 The deployed control plane remains protected by `AO_CLOUD_ALLOWED_EMAILS`.
-Desktop Cloud controls are separately hidden by default: launch an early-access
-desktop with `AO_CLOUD_ENABLED=1`, or set `VITE_AO_CLOUD_ENABLED=1` when
-building a dedicated Cloud feature build. Do not set the build-time flag for a
-general release until Cloud is ready to become the default offering.
+Desktop Cloud controls are separately hidden by default. An early-access user
+must enable Developer Mode in Settings before the **AO Cloud (Early Access)**
+toggle is shown, then explicitly enable that toggle. The UI notes that this
+preference works only for accounts on the server allowlist. For automation or
+a dedicated feature build, `AO_CLOUD_ENABLED=1` or
+`VITE_AO_CLOUD_ENABLED=1` can force the preview on. Do not set the build-time
+override for a general release until Cloud is ready to become the default
+offering.
 
 These values are written to AWS Secrets Manager and injected into ECS; they are
 not Terraform variables, image layers, logs, or committed files.

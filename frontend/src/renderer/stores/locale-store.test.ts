@@ -19,8 +19,11 @@ describe("locale-store", () => {
 	beforeEach(async () => {
 		getUiSettings.mockReset();
 		setUiSettings.mockReset();
-		getUiSettings.mockResolvedValue({ locale: "en" });
-		setUiSettings.mockImplementation(async (settings: { locale: string }) => settings);
+		getUiSettings.mockResolvedValue({ locale: "en", cloudEnabled: false });
+		setUiSettings.mockImplementation(async (settings: { locale?: string }) => ({
+			locale: settings.locale ?? "en",
+			cloudEnabled: false,
+		}));
 		await appI18n.changeLanguage("en");
 		useLocaleStore.setState({ locale: "en", loaded: false, saving: false, saveError: false });
 		document.documentElement.lang = "en";
@@ -34,7 +37,7 @@ describe("locale-store", () => {
 	});
 
 	it("loads persisted locale from the main process", async () => {
-		getUiSettings.mockResolvedValue({ locale: "zh-CN" });
+		getUiSettings.mockResolvedValue({ locale: "zh-CN", cloudEnabled: false });
 		await useLocaleStore.getState().load();
 		expect(useLocaleStore.getState().locale).toBe("zh-CN");
 		expect(appI18n.t("settings.general")).toBe("通用");
