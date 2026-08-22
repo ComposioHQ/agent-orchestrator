@@ -13,8 +13,8 @@ import { agentsQueryKey, agentsQueryOptions, refreshAgentsIfStale } from "../hoo
 import { AGENT_OPTIONS } from "../lib/agent-options";
 import {
 	agentLabelCompare,
+	agentUsageCompare,
 	buildRankedAgentOptions,
-	DEFAULT_AGENT_PRIORITY,
 	DEFAULT_AGENT_PRIORITY_RANK,
 } from "../lib/agent-select-options";
 import { cn } from "../lib/utils";
@@ -542,8 +542,12 @@ export const RequiredAgentField = memo(function RequiredAgentField({
 });
 
 export function defaultAuthorizedAgent(authorizedAgents: AgentInfo[]): string {
-	const authorizedIds = new Set(authorizedAgents.map((agent) => agent.id));
-	const prioritized = DEFAULT_AGENT_PRIORITY.find((agent) => authorizedIds.has(agent));
-	if (prioritized) return prioritized;
-	return [...authorizedAgents].sort(agentLabelCompare)[0]?.id ?? "";
+	return [...authorizedAgents]
+		.sort(
+			(a, b) =>
+				agentUsageCompare(a, b) ||
+				(DEFAULT_AGENT_PRIORITY_RANK.get(a.id) ?? Number.MAX_SAFE_INTEGER) -
+					(DEFAULT_AGENT_PRIORITY_RANK.get(b.id) ?? Number.MAX_SAFE_INTEGER) ||
+				agentLabelCompare(a, b),
+		)[0]?.id ?? "";
 }

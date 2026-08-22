@@ -43,6 +43,7 @@ type fakeSessionService struct {
 	cleanupSkipped      []sessionsvc.CleanupSkipped
 	workspaceFiles      sessionsvc.WorkspaceFiles
 	workspaceFile       sessionsvc.WorkspaceFileDetail
+	workspaceBlob       sessionsvc.WorkspaceFileBlob
 	workspacePaths      []string
 	spawnErr            error
 	lastSpawn           ports.SpawnConfig
@@ -569,6 +570,21 @@ func (f *fakeSessionService) GetWorkspaceFile(_ context.Context, id domain.Sessi
 		return f.workspaceFile, nil
 	}
 	return sessionsvc.WorkspaceFileDetail{SessionID: id, Path: path}, nil
+}
+
+func (f *fakeSessionService) GetWorkspaceFileBlob(_ context.Context, id domain.SessionID, path string, side sessionsvc.WorkspaceFileBlobSide) (sessionsvc.WorkspaceFileBlob, error) {
+	if f.workspaceErr != nil {
+		return sessionsvc.WorkspaceFileBlob{}, f.workspaceErr
+	}
+	if _, ok := f.sessions[id]; !ok {
+		return sessionsvc.WorkspaceFileBlob{}, apierr.NotFound("SESSION_NOT_FOUND", "Unknown session")
+	}
+	if f.workspaceBlob.MediaType != "" {
+		blob := f.workspaceBlob
+		blob.Side = side
+		return blob, nil
+	}
+	return sessionsvc.WorkspaceFileBlob{Path: path, Side: side, MediaType: "image/png"}, nil
 }
 
 func TestSessionsAPI_AgentSwitchLifecycle(t *testing.T) {
@@ -2183,6 +2199,41 @@ func TestSessionsAPI_GetWorkspaceFileRequiresPath(t *testing.T) {
 	srv := newSessionTestServer(t, newFakeSessionService())
 
 	body, status, headers := doRequest(t, srv, "GET", "/api/v1/sessions/ao-1/workspace/file", "")
+	assertJSON(t, headers)
+	assertErrorCode(t, body, status, http.StatusBadRequest, "WORKSPACE_PATH_REQUIRED")
+}
+
+func TestSessionsAPI_GetWorkspaceFileBlob(t *testing.T) {
+	svc := newFakeSessionService()
+	svc.workspaceBlob = sessionsvc.WorkspaceFileBlob{
+		Path:      "docs/logo.png",
+		MediaType: "image/png",
+		Data:      []byte{0x89, 'P', 'N', 'G'},
+	}
+	srv := newSessionTestServer(t, svc)
+
+	body, status, headers := doRequest(t, srv, "GET", "/api/v1/sessions/ao-1/workspace/file/blob?side=before&path="+url.QueryEscape("docs/logo.png"), "")
+	if status != http.StatusOK {
+		t.Fatalf("GET workspace blob = %d, want 200; body=%s", status, body)
+	}
+	if contentType := headers.Get("Content-Type"); contentType != "image/png" {
+		t.Fatalf("Content-Type = %q, want image/png", contentType)
+	}
+	if cache := headers.Get("Cache-Control"); cache != "no-store" {
+		t.Fatalf("Cache-Control = %q, want no-store", cache)
+	}
+	if !bytes.Equal(body, []byte{0x89, 'P', 'N', 'G'}) {
+		t.Fatalf("body = %q, want raw png bytes", body)
+	}
+	if svc.workspaceBlob.Side != "" {
+		t.Fatalf("fake blob mutated: %#v", svc.workspaceBlob)
+	}
+}
+
+func TestSessionsAPI_GetWorkspaceFileBlobRequiresPath(t *testing.T) {
+	srv := newSessionTestServer(t, newFakeSessionService())
+
+	body, status, headers := doRequest(t, srv, "GET", "/api/v1/sessions/ao-1/workspace/file/blob?side=after", "")
 	assertJSON(t, headers)
 	assertErrorCode(t, body, status, http.StatusBadRequest, "WORKSPACE_PATH_REQUIRED")
 }

@@ -121,6 +121,10 @@ let automaticCheckNetFailureCounted = false;
 // broadcast a status, and error statuses carry no version.
 let activeUpdaterPhase: UpdatePhase = "check";
 let pendingUpdateVersion: string | undefined;
+// Session-scoped time of the most recent completed feed check. Packaged apps
+// check at launch when automatic updates are enabled, while disabled installs
+// truthfully remain "not checked yet" until the user asks.
+let lastCheckedAtMs: number | undefined;
 
 // emitUpdateOutcome pushes an update outcome to renderers on a channel separate
 // from "updates:status", so suppressing a status for UI reasons (as the
@@ -149,10 +153,14 @@ function broadcast(
   status: UpdateStatus,
   owner: "independent" | "automatic-operation" = "independent",
 ): void {
+  const statusWithCheckTime: UpdateStatus =
+    lastCheckedAtMs === undefined || status.checkedAt !== undefined
+      ? status
+      : { ...status, checkedAt: lastCheckedAtMs };
   const stamped: UpdateStatus =
     consecutiveAutomaticNetFailures >= STALE_CHECK_NUDGE_THRESHOLD
-      ? { ...status, staleCheckNudge: true }
-      : status;
+      ? { ...statusWithCheckTime, staleCheckNudge: true }
+      : statusWithCheckTime;
   if (owner === "independent") {
     independentStatusRevision += 1;
     if (
@@ -185,6 +193,11 @@ function broadcastUpdaterStatus(status: UpdateStatus): void {
       ? "automatic-operation"
       : "independent",
   );
+}
+
+function broadcastCompletedCheck(status: UpdateStatus): void {
+  lastCheckedAtMs = Date.now();
+  broadcastUpdaterStatus(status);
 }
 
 // --- Read-only release-feed helpers (packaged app only; every failure is silent).
@@ -475,16 +488,16 @@ function wireUpdaterEvents(): void {
     // (autoDownload is off on that path). It is still in cache and installs on
     // quit, so keep the richer downloaded status instead of hiding the row.
     if (stagedAtMs !== undefined && info?.version === stagedVersion) {
-      broadcastUpdaterStatus(stagedDownloadedStatus());
+      broadcastCompletedCheck(stagedDownloadedStatus());
       return;
     }
     pendingUpdateVersion = info?.version;
-    broadcastUpdaterStatus({ state: "available", version: info?.version });
+    broadcastCompletedCheck({ state: "available", version: info?.version });
   });
   autoUpdater.on("update-not-available", () => {
     // A successful check proves the network stack is healthy.
     consecutiveAutomaticNetFailures = 0;
-    broadcastUpdaterStatus({ state: "not-available" });
+    broadcastCompletedCheck({ state: "not-available" });
     // The staged build outlives a "nothing newer" answer (e.g. after a channel
     // switch); follow up so the restart row returns.
     if (stagedAtMs !== undefined)
@@ -498,6 +511,7 @@ function wireUpdaterEvents(): void {
     activeUpdaterPhase = "download";
     return broadcastUpdaterStatus({
       state: "downloading",
+      version: pendingUpdateVersion,
       percent: Math.max(0, Math.min(100, Math.round(p?.percent ?? 0))),
     });
   });
@@ -554,28 +568,26 @@ function wireUpdaterEvents(): void {
           }),
         );
       } else if (stagedAtMs !== undefined) {
-        broadcast(stagedDownloadedStatus());
+        broadcastCompletedCheck(stagedDownloadedStatus());
       } else {
-        broadcast(
-          withActiveRequest({
-            state: "error",
-            message:
-              "Couldn't check for updates — the update information was not found on the server.",
-          }),
-        );
+        broadcastCompletedCheck({
+          state: "error",
+          message:
+            "Couldn't check for updates — the update information was not found on the server.",
+        });
       }
       return;
     }
     // All other errors: broadcast so the user knows something went wrong.
     // Chromium network-stack failures carry a netError flag so the renderer can
     // localize restart guidance instead of showing the raw net:: string (#3526).
-    broadcast(
-      withActiveRequest({
-        state: "error",
-        message: errorMessage(err),
-        ...(isNetError(err) ? { netError: true } : {}),
-      }),
-    );
+    const status: UpdateStatus = {
+      state: "error",
+      message: errorMessage(err),
+      ...(isNetError(err) ? { netError: true } : {}),
+    };
+    if (activeUpdaterPhase === "check") broadcastCompletedCheck(status);
+    else broadcast(withActiveRequest(status));
   });
 }
 
@@ -744,19 +756,19 @@ export async function checkForUpdatesNow(
   } catch (err) {
     if (isManifest404Error(err)) {
       console.info("manual update check failed:", err);
-      broadcast({
+      broadcastCompletedCheck({
         state: "error",
         message:
           "Couldn't check for updates — the update information was not found on the server.",
-        requestId: options.requestId,
+        ...(options.requestId === undefined ? {} : { requestId: options.requestId }),
       });
       if (stagedAtMs !== undefined) broadcast(stagedDownloadedStatus());
     } else {
-      broadcast({
+      broadcastCompletedCheck({
         state: "error",
         message: errorMessage(err),
         ...(isNetError(err) ? { netError: true } : {}),
-        requestId: options.requestId,
+        ...(options.requestId === undefined ? {} : { requestId: options.requestId }),
       });
     }
   }
@@ -809,7 +821,7 @@ export async function returnToHome(
     broadcast({
       state: "error",
       message: (err as Error)?.message ?? "Return failed",
-      requestId,
+      ...(requestId === undefined ? {} : { requestId }),
     });
   }
 }

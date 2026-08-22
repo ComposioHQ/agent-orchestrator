@@ -1,13 +1,15 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
-import { AlertTriangle, Loader2, RefreshCw } from "lucide-react";
+import { AlertCircle, AlertTriangle, CheckCircle2, CircleDashed, Clock3, Download, Loader2, RefreshCw } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { aoBridge } from "../../lib/bridge";
+import { cn } from "../../lib/utils";
 import { useUiStore } from "../../stores/ui-store";
 import { useUpdateStatus } from "../../hooks/useUpdateStatus";
 import type { UpdateChannel, UpdateSettings, UpdateState, UpdateStatus } from "../../../main/update-settings";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
+import { Switch } from "../ui/switch";
 import { ConfirmDialog } from "../ConfirmDialog";
 import { SettingsOptionMenu } from "./SettingsOptionMenu";
 import { SettingsRow } from "./SettingsRow";
@@ -81,11 +83,6 @@ export function UpdatesSection({ titleHidden }: { titleHidden?: boolean } = {}) 
 			if (previous) setForm(previous);
 		},
 	});
-
-	const enabledOptions = [
-		{ value: "on" as const, label: t("settings.updates.enabled") },
-		{ value: "off" as const, label: t("settings.updates.disabled") },
-	];
 
 	const channelOptions: { value: PrimaryValue; label: string }[] = [
 		{ value: "latest", label: t("settings.updates.channel.stable") },
@@ -174,8 +171,10 @@ export function UpdatesSection({ titleHidden }: { titleHidden?: boolean } = {}) 
 	return (
 		<>
 			<SettingsSection title={t("settings.updates")} sectionId="updates" titleHidden={titleHidden} grouped>
+				<UpdateActions status={status} />
+
 				{featurePr != null && (
-					<div className="flex flex-col gap-2">
+					<div className="mt-3 flex flex-col gap-2 rounded-(--radius-settings-panel) border border-[var(--color-border-settings-dialog)] bg-[var(--color-bg-settings-input)] p-1">
 						<div className="settings-row-bar h-auto min-h-(--size-settings-row) flex-wrap gap-2">
 							<Badge variant="accent">PR #{featurePr}</Badge>
 							<span className="min-w-0 flex-1 text-sm leading-5 text-settings-label">
@@ -187,62 +186,61 @@ export function UpdatesSection({ titleHidden }: { titleHidden?: boolean } = {}) 
 								{form.channel === "nightly" ? t("settings.updates.returnToNightly") : t("settings.updates.returnToStable")}
 							</Button>
 						</div>
-					<p className="px-(--size-settings-row-padding) text-xs text-settings-muted">
-						{t("settings.updates.featureTracking", { pr: featurePr })}
-					</p>
+						<p className="px-(--size-settings-row-padding) pb-2 text-xs text-settings-muted">
+							{t("settings.updates.featureTracking", { pr: featurePr })}
+						</p>
 					</div>
 				)}
 
-				<SettingsRow label={t("settings.updates.automatic")}>
-					<SettingsOptionMenu
-						aria-label={t("settings.updates.automatic")}
-						value={form.enabled ? "on" : "off"}
-						options={enabledOptions}
-						onChange={(next) => setEnabled(next === "on")}
-						disabled={save.isPending}
-					/>
-				</SettingsRow>
-
-				<div className="w-full">
-					<SettingsRow label={t("settings.updates.channel")} className="rounded-none">
-						<SettingsOptionMenu
-							aria-label={t("settings.updates.channel")}
-							value={primaryValue}
-							options={developerMode ? channelOptions : channelOptions.filter((option) => option.value !== "feature")}
-							onChange={handlePrimaryChannel}
-							disabled={!form.enabled || save.isPending}
-						/>
+				<div className="mt-3 w-full overflow-hidden rounded-(--radius-settings-panel) border border-[var(--color-border-settings-dialog)] bg-[var(--color-bg-settings-input)] shadow-[inset_0_1px_0_color-mix(in_oklch,var(--foreground)_4%,transparent)]">
+					<SettingsRow label={t("settings.updates.automatic")}>
+						<div className="flex items-center gap-3">
+							<span className="text-xs text-settings-muted">
+								{form.enabled ? t("settings.updates.enabled") : t("settings.updates.disabled")}
+							</span>
+							<Switch
+								aria-label={t("settings.updates.automatic")}
+								checked={form.enabled}
+								onCheckedChange={setEnabled}
+								disabled={save.isPending}
+							/>
+						</div>
 					</SettingsRow>
 
-					{primaryValue === "feature" && (
-						<FeatureBuildsSelect
-							currentPr={form.feature?.pr ?? null}
-							onPin={(pr, title) => setPendingPin({ pr, title })}
-						/>
-					)}
+					{form.enabled && (
+						<div className="update-policy-details border-t border-[var(--color-border-settings-dialog)]">
+							<SettingsRow label={t("settings.updates.channel")}>
+								<SettingsOptionMenu
+									aria-label={t("settings.updates.channel")}
+									value={primaryValue}
+									options={developerMode ? channelOptions : channelOptions.filter((option) => option.value !== "feature")}
+									onChange={handlePrimaryChannel}
+									disabled={save.isPending}
+								/>
+							</SettingsRow>
 
-					{primaryValue === "nightly" && form.enabled && (
-						<p className="nightly-warning px-(--size-settings-row-padding) pb-(--size-settings-row-padding) text-xs leading-row text-warning">
-							<span className="mr-2 inline-flex align-middle" aria-hidden="true">
-								<AlertTriangle className="size-icon-sm" />
-							</span>
-							{t("settings.updates.nightlyWarning")}
-						</p>
+							{primaryValue === "feature" && (
+								<FeatureBuildsSelect
+									currentPr={form.feature?.pr ?? null}
+									onPin={(pr, title) => setPendingPin({ pr, title })}
+								/>
+							)}
+
+							{primaryValue === "nightly" && (
+								<p className="nightly-warning flex items-start gap-2 px-(--size-settings-row-padding) pb-(--size-settings-row-padding) text-xs leading-row text-warning">
+									<AlertTriangle className="mt-0.5 size-icon-sm shrink-0" aria-hidden="true" />
+									<span>{t("settings.updates.nightlyWarning")}</span>
+								</p>
+							)}
+						</div>
 					)}
 				</div>
 
-				{status.staleCheckNudge && (
-					<p className="flex items-center gap-2 px-(--size-settings-row-padding) text-xs leading-row text-warning">
-						<AlertTriangle className="size-icon-sm shrink-0" aria-hidden="true" />
-						<span>{t("settings.updates.networkStale")}</span>
+				{save.isError && (
+					<p className="mt-2 px-(--size-settings-row-padding) text-xs text-error">
+						{save.error instanceof Error ? save.error.message : t("settings.updates.saveFailed")}
 					</p>
 				)}
-
-			{save.isError && (
-				<p className="px-(--size-settings-row-padding) text-xs text-error">{save.error instanceof Error ? save.error.message : t("settings.updates.saveFailed")}</p>
-			)}
-
-				<UpdateActions status={status} suppressTopBorder={primaryValue === "nightly" && form.enabled} />
 			</SettingsSection>
 			<ConfirmDialog
 				open={pendingPin !== null}
@@ -288,92 +286,196 @@ function FeatureBuildsSelect({
 	);
 }
 
-function UpdateActions({ status, suppressTopBorder = false }: { status: UpdateStatus; suppressTopBorder?: boolean }) {
-	const { t } = useTranslation();
+function UpdateActions({ status }: { status: UpdateStatus }) {
+	const { t, i18n } = useTranslation();
 	const version = useQuery({ queryKey: ["app-version"], queryFn: () => aoBridge.app.getVersion() });
+	const [manualCheckPending, setManualCheckPending] = useState(false);
 
-	const checking = status.state === "checking";
+	const checking = status.state === "checking" || manualCheckPending;
 	const downloading = status.state === "downloading";
 	const busy = checking || downloading;
-	const showStatus =
-		status.state === "checking" ||
-		status.state === "available" ||
-		status.state === "downloading" ||
-		status.state === "downloaded" ||
-		status.state === "not-available" ||
-		status.state === "unsupported" ||
-		status.state === "error";
+	const displayStatus: UpdateStatus = manualCheckPending && status.state !== "checking" ? { ...status, state: "checking" } : status;
+	const tone = updateStatusTone(displayStatus.state);
+	const progress = Math.min(100, Math.max(0, displayStatus.percent ?? 0));
+	const checkedAt = status.checkedAt
+		? new Intl.DateTimeFormat(i18n.resolvedLanguage ?? i18n.language, {
+				dateStyle: "medium",
+				timeStyle: "short",
+			}).format(status.checkedAt)
+		: null;
+
+	const checkNow = async () => {
+		setManualCheckPending(true);
+		try {
+			await aoBridge.updates.check();
+		} catch {
+			// The main process publishes the actionable updater error state.
+		} finally {
+			setManualCheckPending(false);
+		}
+	};
 
 	return (
-		<>
-			<SettingsRow label={t("settings.updates.checksForUpdates")} className={suppressTopBorder ? "!border-t-0" : undefined}>
-				<div className="flex items-center gap-2">
-					<span className="text-control text-settings-muted" data-testid="app-version">
-						{t("settings.updates.currentVersion", { version: version.data ? `v${version.data}` : "…" })}
-					</span>
-					<button
-						type="button"
-						aria-label={t("settings.updates.check")}
-						className="inline-flex size-7 shrink-0 items-center justify-center rounded-md text-settings-muted transition-colors hover:text-settings-label disabled:cursor-not-allowed disabled:opacity-50"
-						onClick={() => void aoBridge.updates.check()}
-						disabled={busy}
-					>
-						{checking ? (
-							<Loader2 className="size-icon-base animate-spin" aria-hidden="true" />
-						) : (
-							<RefreshCw className="size-icon-base" aria-hidden="true" />
-						)}
-					</button>
-				</div>
-			</SettingsRow>
+		<div className="update-status-panel rounded-(--radius-settings-panel)" data-tone={tone}>
+			<div className="relative z-1 flex flex-col gap-4 px-4 py-4 sm:px-5 sm:py-5">
+				<div className="flex flex-col gap-4 sm:flex-row sm:items-center">
+					<div className="flex min-w-0 flex-1 items-start gap-3.5">
+						<div className="update-status-glyph mt-0.5 flex size-10 shrink-0 items-center justify-center rounded-lg" aria-hidden="true">
+							<UpdateStatusIcon status={displayStatus} />
+						</div>
 
-			{showStatus && (
-				<div className="settings-row-bar h-auto min-h-0 flex-wrap justify-start gap-3 py-3">
-					{status.state === "available" && (
-						<Button type="button" variant="primary" onClick={() => void aoBridge.updates.download()}>
-							{status.version ? t("settings.updates.updateTo", { version: `v${status.version}` }) : t("settings.updates.updateToLatest")}
+						<div
+							key={displayStatus.state}
+							id="update-status-line"
+							role="status"
+							aria-live="polite"
+							aria-atomic="true"
+							aria-busy={checking}
+							className="update-status-content min-w-0"
+						>
+							<UpdateStatusLine status={displayStatus} />
+							<div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] leading-4 text-settings-muted">
+								<span className="font-mono tabular-nums" data-testid="app-version">
+									{t("settings.updates.currentVersion", { version: version.data ? `v${version.data}` : "…" })}
+								</span>
+								{checkedAt && (
+									<>
+										<span className="hidden size-0.5 rounded-full bg-current opacity-50 sm:block" aria-hidden="true" />
+										<span className="inline-flex items-center gap-1.5 tabular-nums" data-testid="update-checked-at">
+											<Clock3 className="size-3" aria-hidden="true" />
+											{t("settings.updates.lastChecked", { time: checkedAt })}
+										</span>
+									</>
+								)}
+							</div>
+						</div>
+					</div>
+
+					<div className="flex shrink-0 flex-wrap items-center gap-2 sm:justify-end">
+						{!checking && status.state === "available" && (
+							<Button type="button" variant="primary" onClick={() => void aoBridge.updates.download()}>
+								{status.version ? t("settings.updates.updateTo", { version: `v${status.version}` }) : t("settings.updates.updateToLatest")}
+							</Button>
+						)}
+						{!checking && status.state === "downloaded" && (
+							<Button type="button" variant="primary" onClick={() => void aoBridge.updates.install()}>
+								{t("settings.updates.restartInstall")}
+							</Button>
+						)}
+						<Button
+							type="button"
+							aria-label={checking ? t("settings.updates.checking") : t("settings.updates.check")}
+							aria-describedby="update-status-line"
+							variant="outline"
+							size="sm"
+							className="min-w-36 bg-background/45"
+							onClick={() => void checkNow()}
+							disabled={busy}
+						>
+							{checking ? (
+								<Loader2 className="size-icon-sm animate-spin motion-reduce:animate-none" aria-hidden="true" />
+							) : (
+								<RefreshCw className="size-icon-sm" aria-hidden="true" />
+							)}
+							{checking ? t("settings.updates.checking") : t("settings.updates.check")}
 						</Button>
-					)}
-					{status.state === "downloaded" && (
-						<Button type="button" variant="primary" onClick={() => void aoBridge.updates.install()}>
-							{t("settings.updates.restartInstall")}
-						</Button>
-					)}
-					<UpdateStatusLine status={status} />
+					</div>
 				</div>
-			)}
-		</>
+
+				{displayStatus.state === "downloading" && (
+					<div className="h-1 overflow-hidden rounded-full bg-foreground/8" aria-hidden="true">
+						<div className="update-download-progress h-full origin-left rounded-full bg-primary" style={{ transform: `scaleX(${progress / 100})` }} />
+					</div>
+				)}
+
+				{status.staleCheckNudge && (
+					<p className="flex items-start gap-2 border-t border-[color-mix(in_oklch,var(--update-status-tone)_18%,transparent)] pt-3 text-xs leading-5 text-warning">
+						<AlertTriangle className="mt-0.5 size-icon-sm shrink-0" aria-hidden="true" />
+						<span>{t("settings.updates.networkStale")}</span>
+					</p>
+				)}
+			</div>
+		</div>
 	);
 }
 
 function UpdateStatusLine({ status }: { status: UpdateStatus }) {
 	const { t } = useTranslation();
+	let className = "text-settings-muted";
+	let label: string;
+
 	switch (status.state) {
 		case "checking":
-			return <span className="text-xs text-settings-muted">{t("settings.updates.checking")}</span>;
+			label = t("settings.updates.checking");
+			break;
 		case "available":
-			return (
-				<span className="text-xs text-settings-muted">
-					{t("settings.updates.available", { version: status.version ? ` (v${status.version})` : "" })}
-				</span>
-			);
+			className = "text-settings-label";
+			label = t("settings.updates.available", { version: status.version ? ` (v${status.version})` : "" });
+			break;
 		case "downloading":
-			return <span className="text-xs text-settings-muted">{t("settings.updates.downloading", { percent: status.percent ?? 0 })}</span>;
+			className = "text-settings-label tabular-nums";
+			label = t("settings.updates.downloading", { percent: status.percent ?? 0 });
+			break;
 		case "downloaded":
-			return <span className="text-xs text-success">{t("settings.updates.downloaded")}</span>;
+			className = "text-success";
+			label = t("settings.updates.downloaded");
+			break;
 		case "not-available":
-			return <span className="text-xs text-settings-muted">{t("settings.updates.latest")}</span>;
+			className = "text-success";
+			label = t("settings.updates.latest");
+			break;
 		case "unsupported":
-			return <span className="text-xs text-settings-muted">{status.message ?? t("settings.updates.needInstalledApp")}</span>;
+			label = status.message ?? t("settings.updates.needInstalledApp");
+			break;
 		case "error":
-			return (
-				<span className="text-xs text-error">
-				{status.netError
-					? t("settings.updates.netErrorRestartGuidance")
-					: status.message ?? t("settings.updates.updateFailed")}
-				</span>
-			);
+			className = "text-error";
+			label = status.netError
+				? t("settings.updates.netErrorRestartGuidance")
+				: status.message ?? t("settings.updates.updateFailed");
+			break;
 		default:
-			return null;
+			label = t("settings.updates.notChecked");
+	}
+
+	return (
+		<p className={cn("text-pretty text-[15px] font-medium leading-5 tracking-[-0.01em]", className)}>{label}</p>
+	);
+}
+
+function UpdateStatusIcon({ status }: { status: UpdateStatus }) {
+	const className = "size-5";
+	switch (status.state) {
+		case "checking":
+			return <Loader2 className={cn(className, "animate-spin motion-reduce:animate-none")} />;
+		case "available":
+		case "downloading":
+			return <Download className={className} />;
+		case "downloaded":
+		case "not-available":
+			return <CheckCircle2 className={className} />;
+		case "unsupported":
+			return <AlertTriangle className={className} />;
+		case "error":
+			return <AlertCircle className={className} />;
+		case "idle":
+			return <CircleDashed className={className} />;
+	}
+}
+
+function updateStatusTone(state: UpdateState): "neutral" | "accent" | "success" | "warning" | "error" {
+	switch (state) {
+		case "checking":
+		case "available":
+		case "downloading":
+			return "accent";
+		case "downloaded":
+		case "not-available":
+			return "success";
+		case "unsupported":
+			return "warning";
+		case "error":
+			return "error";
+		case "idle":
+			return "neutral";
 	}
 }

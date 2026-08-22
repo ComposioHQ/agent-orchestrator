@@ -47,6 +47,11 @@ type countingResolverAgent struct {
 	calls atomic.Int32
 }
 
+type mutableInstallAgent struct {
+	fakeAgent
+	installed atomic.Bool
+}
+
 type blockingResolverAgent struct {
 	fakeAgent
 	started chan struct{}
@@ -64,6 +69,15 @@ type fakeProjectLookup struct {
 	records map[string]domain.ProjectRecord
 	gotID   string
 	err     error
+}
+
+type fakeSessionUsageLookup struct {
+	records []domain.SessionRecord
+	err     error
+}
+
+func (f fakeSessionUsageLookup) ListAllSessions(context.Context) ([]domain.SessionRecord, error) {
+	return f.records, f.err
 }
 
 type fakeModelDiscoverer struct {
@@ -154,6 +168,13 @@ func (f *concurrentResolverAgent) ResolveBinary(ctx context.Context) (string, er
 func (f *countingResolverAgent) ResolveBinary(ctx context.Context) (string, error) {
 	f.calls.Add(1)
 	return f.fakeAgent.ResolveBinary(ctx)
+}
+
+func (f *mutableInstallAgent) ResolveBinary(context.Context) (string, error) {
+	if !f.installed.Load() {
+		return "", ports.ErrAgentBinaryNotFound
+	}
+	return "agent", nil
 }
 
 func (f *blockingResolverAgent) ResolveBinary(ctx context.Context) (string, error) {
@@ -371,6 +392,45 @@ func TestRefreshDoesNotWaitForSlowAgentProbe(t *testing.T) {
 	}
 }
 
+func TestListRanksAgentsByRetainedSessionUsage(t *testing.T) {
+	older := time.Date(2026, time.August, 18, 10, 0, 0, 0, time.UTC)
+	newer := older.Add(24 * time.Hour)
+	svc := NewWithAgents([]agentregistry.HarnessAgent{
+		harnessAgent("claude-code", "Claude Code", nil),
+		harnessAgent("codex", "Codex", nil),
+		harnessAgent("goose", "Goose", nil),
+	})
+	svc.sessions = fakeSessionUsageLookup{records: []domain.SessionRecord{
+		{Harness: domain.AgentHarness("claude-code"), CreatedAt: newer},
+		{Harness: domain.AgentHarness("codex"), CreatedAt: older},
+		{Harness: domain.AgentHarness("codex"), CreatedAt: newer},
+	}}
+
+	got, err := svc.List(context.Background())
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if ids := []string{got.Supported[0].ID, got.Supported[1].ID, got.Supported[2].ID}; !reflect.DeepEqual(ids, []string{"codex", "claude-code", "goose"}) {
+		t.Fatalf("supported order = %v, want frequency then unused fallback", ids)
+	}
+	if got.Supported[0].UsageCount != 2 || got.Supported[0].LastUsedAt == nil || !got.Supported[0].LastUsedAt.Equal(newer) {
+		t.Fatalf("codex usage = %#v, want count 2 and latest use %s", got.Supported[0], newer)
+	}
+	if got.Supported[2].UsageCount != 0 || got.Supported[2].LastUsedAt != nil {
+		t.Fatalf("unused agent usage = %#v, want empty usage metadata", got.Supported[2])
+	}
+}
+
+func TestListReturnsSessionUsageReadFailure(t *testing.T) {
+	svc := NewWithAgents([]agentregistry.HarnessAgent{harnessAgent("codex", "Codex", nil)})
+	svc.sessions = fakeSessionUsageLookup{err: errors.New("database unavailable")}
+
+	_, err := svc.List(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "list sessions for agent usage") {
+		t.Fatalf("List error = %v, want session usage context", err)
+	}
+}
+
 func TestRefreshUsesSeparateTimeoutForAuthProbe(t *testing.T) {
 	previousInstall := agentInstallProbeTimeout
 	previousAuth := agentAuthProbeTimeout
@@ -430,6 +490,39 @@ func TestRefreshIsRateLimited(t *testing.T) {
 	}
 	if probes != 1 {
 		t.Fatalf("probes = %d, want 1", probes)
+	}
+}
+
+func TestRefreshFreshBypassesRateLimitAfterManualInstall(t *testing.T) {
+	previous := agentRefreshMinInterval
+	agentRefreshMinInterval = time.Hour
+	t.Cleanup(func() { agentRefreshMinInterval = previous })
+
+	agent := &mutableInstallAgent{}
+	svc := NewWithAgents([]agentregistry.HarnessAgent{{
+		Harness: domain.AgentHarness("codex"),
+		Manifest: adapters.Manifest{
+			ID:   "codex",
+			Name: "Codex",
+		},
+		Agent: agent,
+	}})
+
+	initial, err := svc.Refresh(context.Background())
+	if err != nil {
+		t.Fatalf("Refresh: %v", err)
+	}
+	if len(initial.Installed) != 0 {
+		t.Fatalf("initial Installed = %#v, want empty", initial.Installed)
+	}
+
+	agent.installed.Store(true)
+	fresh, err := svc.RefreshFresh(context.Background())
+	if err != nil {
+		t.Fatalf("RefreshFresh: %v", err)
+	}
+	if len(fresh.Installed) != 1 || fresh.Installed[0].ID != "codex" {
+		t.Fatalf("fresh Installed = %#v, want codex", fresh.Installed)
 	}
 }
 
