@@ -81,9 +81,34 @@ func piAuthJSONStatus(path string) (ports.AgentAuthStatus, bool, error) {
 		if strings.TrimSpace(provider) == "" {
 			continue
 		}
-		if strings.TrimSpace(entry.Key) != "" {
+		if piAuthKeyIsResolved(entry.Key) {
 			return ports.AgentAuthStatusAuthorized, true, nil
 		}
 	}
 	return ports.AgentAuthStatusUnknown, false, nil
+}
+
+func piAuthKeyIsResolved(key string) bool {
+	key = strings.TrimSpace(key)
+	if key == "" || strings.HasPrefix(key, "!") {
+		// Avoid executing configured commands during a global auth probe. Their
+		// result remains unknown until Pi resolves them while launching.
+		return false
+	}
+
+	resolved := true
+	expanded := os.Expand(key, func(name string) string {
+		switch name {
+		case "$", "!":
+			// Pi documents $$ and $! as escaped literal prefixes.
+			return name
+		default:
+			value, ok := os.LookupEnv(name)
+			if !ok || strings.TrimSpace(value) == "" {
+				resolved = false
+			}
+			return value
+		}
+	})
+	return resolved && strings.TrimSpace(expanded) != ""
 }

@@ -93,7 +93,7 @@ func continueConfigHasCredential(node *yaml.Node) bool {
 		for i := 0; i+1 < len(node.Content); i += 2 {
 			key := strings.ToLower(strings.TrimSpace(node.Content[i].Value))
 			value := strings.Trim(strings.TrimSpace(node.Content[i+1].Value), `"'`)
-			if (strings.Contains(key, "apikey") || strings.Contains(key, "api_key") || strings.Contains(key, "token")) &&
+			if continueConfigKeyIsCredential(key) &&
 				value != "" &&
 				!strings.EqualFold(value, "null") &&
 				!strings.EqualFold(value, "none") {
@@ -105,4 +105,9 @@ func continueConfigHasCredential(node *yaml.Node) bool {
 		}
 	}
 	return false
+}
+
+func continueConfigKeyIsCredential(key string) bool {
+	key = strings.ToLower(strings.TrimSpace(key))
+	return key == "apikey" || key == "api_key" || strings.HasSuffix(key, "token")
 }

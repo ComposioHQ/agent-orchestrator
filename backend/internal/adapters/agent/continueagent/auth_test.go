@@ -50,3 +50,19 @@ func TestContinueConfigAuthStatusAuthorizedWithAPIKey(t *testing.T) {
 		t.Fatalf("status = (%q, %v), want (%q, true)", status, ok, ports.AgentAuthStatusAuthorized)
 	}
 }
+
+func TestContinueConfigAuthStatusUnknownWithOnlyTokenLimits(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	config := "models:\n  - provider: anthropic\n    defaultCompletionOptions:\n      maxTokens: 1500\n"
+	if err := os.WriteFile(path, []byte(config), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	status, ok, err := continueConfigAuthStatus(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ok || status != ports.AgentAuthStatusUnknown {
+		t.Fatalf("status = (%q, %v), want (%q, false)", status, ok, ports.AgentAuthStatusUnknown)
+	}
+}
