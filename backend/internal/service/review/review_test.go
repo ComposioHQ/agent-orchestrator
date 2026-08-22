@@ -842,3 +842,67 @@ func TestWithheldReasonNamesWhyFeedbackReachedNobody(t *testing.T) {
 		})
 	}
 }
+
+// Found by running the real coordinator against a real open PR: while a review
+// is running, the once-a-minute sweep calls TriggerAuto again, the engine
+// reports success with nothing created, and every sweep emitted another
+// ao.review.triggered. A six-minute review produced seven "triggers" for one
+// real pass, inflating the headline count and spending the per-name daily rate
+// limit that real triggers need.
+func TestReusedAutoPassIsNotCountedAsATrigger(t *testing.T) {
+	sink := &recordingSink{}
+	svc := New(nil, &fakeStore{}, WithTelemetry(sink))
+	svc.engineTrigger = func(
+		_ context.Context, _ domain.SessionID, _ domain.ReviewerHarness, _ domain.ReviewTriggerSource,
+	) (reviewcore.TriggerResult, error) {
+		// What the engine returns when a reviewer is already running for this
+		// worker: success, a reusable run, nothing created.
+		return reviewcore.TriggerResult{
+			Run:         domain.ReviewRun{Harness: "claude-code"},
+			CreatedRuns: nil,
+		}, nil
+	}
+
+	for i := 0; i < 6; i++ {
+		if _, err := svc.TriggerAuto(context.Background(), "worker-1", "claude-code"); err != nil {
+			t.Fatalf("TriggerAuto %d: %v", i, err)
+		}
+	}
+	if got := sink.named("ao.review.triggered"); len(got) != 0 {
+		t.Fatalf("ao.review.triggered count = %d, want 0 for six reused sweeps", len(got))
+	}
+	skipped := sink.named("ao.review.trigger_skipped")
+	if len(skipped) != 6 {
+		t.Fatalf("ao.review.trigger_skipped count = %d, want 6", len(skipped))
+	}
+	if skipped[0].Payload["reason"] != "reused" || skipped[0].Payload["trigger"] != "auto" {
+		t.Fatalf("payload = %#v, want reason=reused trigger=auto", skipped[0].Payload)
+	}
+}
+
+// A manual reuse is a real user action: they pressed the button and AO decided
+// the existing pass covered it. That must stay counted, with reused=true saying
+// what happened.
+func TestReusedManualPassStaysATrigger(t *testing.T) {
+	sink := &recordingSink{}
+	svc := New(nil, &fakeStore{}, WithTelemetry(sink))
+	svc.engineTrigger = func(
+		_ context.Context, _ domain.SessionID, _ domain.ReviewerHarness, _ domain.ReviewTriggerSource,
+	) (reviewcore.TriggerResult, error) {
+		return reviewcore.TriggerResult{Run: domain.ReviewRun{Harness: "codex"}, CreatedRuns: nil}, nil
+	}
+
+	if _, err := svc.Trigger(context.Background(), "worker-1", ""); err != nil {
+		t.Fatalf("Trigger: %v", err)
+	}
+	got := sink.named("ao.review.triggered")
+	if len(got) != 1 {
+		t.Fatalf("ao.review.triggered count = %d, want 1", len(got))
+	}
+	if got[0].Payload["reused"] != true || got[0].Payload["trigger"] != "manual" {
+		t.Fatalf("payload = %#v, want reused=true trigger=manual", got[0].Payload)
+	}
+	if n := len(sink.named("ao.review.trigger_skipped")); n != 0 {
+		t.Fatalf("trigger_skipped count = %d, want 0 for a manual reuse", n)
+	}
+}

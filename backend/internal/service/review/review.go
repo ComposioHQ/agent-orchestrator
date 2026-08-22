@@ -428,6 +428,19 @@ func (s *Service) triggerWithSource(
 		})
 		return result, nil
 	}
+	// A reused automatic pass did no work: the once-a-minute sweep found a review
+	// already running, or the current head already covered. Counting that as a
+	// trigger inflates how often auto-review actually reviews anything by one
+	// event per sweep for the whole life of a long review, and spends the
+	// per-name daily rate limit that real triggers need. A manual reuse is a
+	// different fact: the user pressed the button, and that is worth counting.
+	if source == domain.ReviewTriggerAuto && len(result.CreatedRuns) == 0 {
+		s.emit("ao.review.trigger_skipped", workerID, map[string]any{
+			"reason":  "reused",
+			"trigger": string(source),
+		})
+		return result, nil
+	}
 	// created_runs distinguishes a genuinely new pass from a reuse of a running
 	// or up-to-date one, which the engine also reports as success. harness is the
 	// one actually used, resolved by the engine, not the caller's override, which
