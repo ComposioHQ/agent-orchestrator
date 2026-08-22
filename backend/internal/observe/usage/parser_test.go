@@ -1038,3 +1038,71 @@ func osAppend(path, content string) error {
 	_, err = file.WriteString(content)
 	return err
 }
+
+// Break caught: once usage became a json.RawMessage, an explicit `usage: null`
+// no longer looked absent. It decoded as all-zero counters and produced a
+// synthetic event whose provider object was the literal `null`, which the
+// object-only column constraint rejects — rolling back the chunk without
+// advancing the cursor, so every retry hit the same record and no later usage
+// on that source could ever be collected.
+func TestParseClaudeTreatsNullUsageAsNoUsageWithoutWedgingTheSource(t *testing.T) {
+	source := usageSource(domain.UsageSourceClaudeMain)
+	records := []jsonlRecord{
+		{Offset: 0, Data: []byte(`{"type":"assistant","uuid":"null-usage","timestamp":"2026-07-01T10:00:00Z","message":{"id":"msg-null","model":"claude-x","stop_reason":"end_turn","usage":null}}`)},
+		{Offset: 200, Data: []byte(`{"type":"assistant","uuid":"scalar-usage","timestamp":"2026-07-01T10:00:01Z","message":{"id":"msg-scalar","model":"claude-x","stop_reason":"end_turn","usage":7}}`)},
+		{Offset: 400, Data: []byte(`{"type":"assistant","uuid":"real","timestamp":"2026-07-01T10:00:02Z","message":{"id":"msg-real","model":"claude-x","stop_reason":"end_turn","usage":{"input_tokens":10,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":4}}}`)},
+	}
+
+	result := parseRecords(source, records, 600, time.Unix(1700000000, 0).UTC())
+
+	// A null usage member is skipped exactly like an absent one, a present
+	// non-object member stays a malformed anomaly, and the record after them is
+	// still collected.
+	if len(result.Events) != 1 {
+		t.Fatalf("events = %+v, want only the record carrying real usage", result.Events)
+	}
+	if result.Cursor.AnomalyCount != 1 || result.Cursor.LastErrorCode != domain.UsageErrorMalformedJSONL {
+		t.Fatalf("anomalies = %d (%q), want exactly the scalar usage record",
+			result.Cursor.AnomalyCount, result.Cursor.LastErrorCode)
+	}
+	got := result.Events[0]
+	if got.SourceEventKey == "" || tokenValue(got.Tokens.InputTokens) != 10 || tokenValue(got.Tokens.OutputTokens) != 4 {
+		t.Fatalf("event = %+v, want the real usage record", got)
+	}
+	if got.ProviderUsageJSON == "" || got.ProviderUsageJSON == "null" {
+		t.Fatalf("provider usage = %q, want the emitted object", got.ProviderUsageJSON)
+	}
+	if result.Cursor.ByteOffset != 600 {
+		t.Fatalf("cursor = %d, want the chunk to advance past the unusable records", result.Cursor.ByteOffset)
+	}
+}
+
+// Break caught: `info: null` decoded into an all-zero cumulative vector instead
+// of being ignored. Against an existing baseline that read as a backwards jump,
+// which reset the baseline to zero, so the next real cumulative record was
+// charged from zero and durably double-counted every earlier token.
+func TestParseCodexNullInfoDoesNotResetTheCumulativeBaseline(t *testing.T) {
+	source := usageSource(domain.UsageSourceCodexRollout)
+	records := []jsonlRecord{
+		{Offset: 0, Data: []byte(`{"type":"turn_context","payload":{"model":"gpt-5.6"}}`)},
+		{Offset: 100, Data: codexTokenLine("2026-07-01T10:00:00Z", 100, 60, 0, 20, 5)},
+		{Offset: 200, Data: []byte(`{"timestamp":"2026-07-01T10:00:01Z","type":"event_msg","payload":{"type":"token_count","info":null}}`)},
+		{Offset: 300, Data: codexTokenLine("2026-07-01T10:00:02Z", 160, 90, 0, 35, 8)},
+	}
+
+	result := parseRecords(source, records, 400, time.Unix(1700000000, 0).UTC())
+
+	if len(result.Events) != 2 || result.Cursor.AnomalyCount != 0 {
+		t.Fatalf("result = %+v, want two events and no anomaly", result)
+	}
+	// The second event is the delta against the first record's totals. A reset
+	// baseline would charge the full cumulative 160/90/35 again.
+	if got := result.Events[1].Tokens; tokenValue(got.InputTokens) != 60 ||
+		tokenValue(got.CachedInputTokens) != 30 || tokenValue(got.OutputTokens) != 15 {
+		t.Fatalf("delta tokens = %+v, want the baseline preserved across the null record", got)
+	}
+	state := parserStateFromResult(t, result, domain.UsageSourceCodexRollout)
+	if state.Codex.Baseline.InputTokens != 160 {
+		t.Fatalf("baseline = %+v, want the latest cumulative total", state.Codex.Baseline)
+	}
+}

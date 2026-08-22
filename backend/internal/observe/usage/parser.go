@@ -276,7 +276,8 @@ func parseClaude(source domain.UsageSourceContext, records []jsonlRecord, state 
 		if nativeProvider != "" {
 			state.Provider = nativeProvider
 		}
-		if native.Type != "assistant" || len(native.Message.Usage) == 0 || native.Message.StopReason == nil || strings.TrimSpace(*native.Message.StopReason) == "" {
+		if native.Type != "assistant" || !jsonValueReported(native.Message.Usage) ||
+			native.Message.StopReason == nil || strings.TrimSpace(*native.Message.StopReason) == "" {
 			continue
 		}
 		if source.Source.Kind == domain.UsageSourceClaudeMain && native.IsSidechain {
@@ -580,7 +581,8 @@ func parseCodexEvent(source domain.UsageSourceContext, envelope codexEnvelope, s
 		Type string          `json:"type"`
 		Info json.RawMessage `json:"info"`
 	}
-	if err := json.Unmarshal(envelope.Payload, &payload); err != nil || payload.Type != "token_count" || len(payload.Info) == 0 {
+	if err := json.Unmarshal(envelope.Payload, &payload); err != nil ||
+		payload.Type != "token_count" || !jsonValueReported(payload.Info) {
 		return
 	}
 	var info struct {
@@ -750,15 +752,36 @@ func normalizeAnthropicUsage(directInput, cacheCreationInput, cachedInput, outpu
 // record the providers document, so it is dropped rather than persisted.
 const maxProviderUsageBytes = 8 << 10
 
+// jsonValueReported reports whether raw carries a value at all, as opposed to
+// being absent or an explicit JSON null.
+//
+// That distinction used to come free from a nil pointer. A json.RawMessage
+// holding `null` has nonzero length and decodes into a typed struct as all-zero
+// values, so a record reporting no usage would otherwise become a synthetic
+// zero event — or, for Codex, a cumulative baseline of zero that recharges
+// every earlier token. Callers still decode the value afterwards, so a present
+// but non-object member remains malformed rather than being silently dropped.
+func jsonValueReported(raw json.RawMessage) bool {
+	trimmed := bytes.TrimSpace(raw)
+	return len(trimmed) > 0 && !bytes.Equal(trimmed, []byte("null"))
+}
+
+// isJSONObject reports whether raw is a present JSON object. Unmarshalling into
+// a map is the check: JSON null yields a nil map without an error, and any
+// other JSON type fails outright.
+func isJSONObject(raw json.RawMessage) bool {
+	if len(raw) == 0 {
+		return false
+	}
+	var object map[string]json.RawMessage
+	return json.Unmarshal(raw, &object) == nil && object != nil
+}
+
 // boundedProviderUsage compacts one provider usage object for durable storage.
 // It returns empty for anything that is not a JSON object or exceeds the bound,
 // which stores SQL NULL: an absent object is honest, a truncated one is not.
 func boundedProviderUsage(raw json.RawMessage) string {
-	if len(raw) == 0 || len(raw) > maxProviderUsageBytes {
-		return ""
-	}
-	var object map[string]json.RawMessage
-	if err := json.Unmarshal(raw, &object); err != nil {
+	if len(raw) > maxProviderUsageBytes || !isJSONObject(raw) {
 		return ""
 	}
 	var compact bytes.Buffer
