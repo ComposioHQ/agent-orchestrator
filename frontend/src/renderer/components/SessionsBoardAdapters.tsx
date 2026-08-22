@@ -265,12 +265,13 @@ function toUsagePresentation(
 	usage: SessionUsageSummary | undefined,
 	t: TFunction,
 ): BoardUsagePresentation | undefined {
-	if (!usage || usage.totalTokens <= 0) return undefined;
+	if (!usage || usage.processedTokens === null || usage.processedTokens <= 0) return undefined;
+	const compactCount = formatTokenCount(usage.processedTokens).replace(/ tok$/, "");
 	return {
-		accessibleLabel: t("shell.usageTokens", {
-			count: usage.totalTokens.toLocaleString("en-US"),
+		accessibleLabel: t("shell.usageProcessed", {
+			count: usage.processedTokens.toLocaleString("en-US"),
 		}),
-		compactLabel: formatTokenCount(usage.totalTokens),
+		compactLabel: t("shell.usageProcessedCompact", { count: compactCount }),
 	};
 }
 

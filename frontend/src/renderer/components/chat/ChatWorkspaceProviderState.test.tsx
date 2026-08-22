@@ -158,11 +158,12 @@ describe("model reroute", () => {
 		);
 		// The control the user reads to know which model is in play now names the model
 		// that replied, and says whose place it took.
-		expect(
-			screen.getByRole("button", {
-				name: /answered with gpt-5\.6-terra-mini instead of gpt-5\.6-terra/,
-			}),
-		).toBeInTheDocument();
+		const trigger = screen.getByRole("button", {
+			name: "Model and reasoning effort for the next turn",
+		});
+		expect(trigger.getAttribute("title")).toMatch(
+			/answered with gpt-5\.6-terra-mini instead of gpt-5\.6-terra/,
+		);
 		expect(screen.getByLabelText(/Substituted for gpt-5\.6-terra$/)).toBeInTheDocument();
 	});
 
@@ -181,7 +182,7 @@ describe("model reroute", () => {
 
 	it("keeps naming the chosen model when nothing was substituted", () => {
 		render(<ChatWorkspace snapshot={chatFixture} models={MODELS} onChooseSettings={vi.fn()} />);
-		expect(screen.getByText("gpt-5.6-terra")).toBeInTheDocument();
+		expect(screen.getByText(/gpt-5\.6-terra/)).toBeInTheDocument();
 		expect(screen.queryByLabelText(/Substituted for/)).not.toBeInTheDocument();
 	});
 });
