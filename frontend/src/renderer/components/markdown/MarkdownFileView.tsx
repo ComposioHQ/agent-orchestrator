@@ -29,7 +29,7 @@ import remarkGfm from "remark-gfm";
 import { rehypeGithubAlerts } from "rehype-github-alerts";
 import rehypeSlug from "rehype-slug";
 import rehypeAutolinkHeadings from "rehype-autolink-headings";
-import { isValidElement, useMemo, type ReactNode } from "react";
+import { isValidElement, useCallback, useMemo, useRef, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { canonicalLanguage } from "../../lib/code-highlight";
 import { isWebLink } from "../../lib/external-link-policy";
@@ -81,50 +81,6 @@ function fenceOf(children: ReactNode): { code: string; language?: string } | und
 	};
 }
 
-const COMPONENTS: Components = {
-	pre: ({ children }) => {
-		const fence = fenceOf(children);
-		if (!fence) return <>{children}</>;
-		return (
-			<pre className="markdown-code">
-				<code>
-					<HighlightedCode code={fence.code} language={canonicalLanguage(fence.language)} />
-				</code>
-			</pre>
-		);
-	},
-
-	img: ({ src, alt }) => <MarkdownImage src={typeof src === "string" ? src : undefined} alt={alt} />,
-
-	// A dispatcher, not a single link renderer: a same-page heading fragment
-	// scrolls and copies its own link; a genuine http(s)/mailto link opens
-	// externally; a relative link to another repo file (`./OTHER.md`) has no
-	// in-app navigation target today, so it renders as inert text rather than a
-	// link that would silently do nothing (or worse, navigate the app shell).
-	a: ({ href, children, ...rest }) => {
-		if (!href) return <>{children}</>;
-		if (href.startsWith("#")) {
-			return (
-				<a
-					href={href}
-					{...rest}
-					onClick={(event) => {
-						event.preventDefault();
-						document.getElementById(href.slice(1))?.scrollIntoView({ behavior: "smooth", block: "start" });
-						void aoBridge.clipboard.writeText(href);
-					}}
-				>
-					{children}
-				</a>
-			);
-		}
-		if (isWebLink(href) || href.startsWith("mailto:")) {
-			return <MarkdownExternalLink href={href}>{children}</MarkdownExternalLink>;
-		}
-		return <span>{children}</span>;
-	},
-};
-
 export function MarkdownFileView({
 	sessionId,
 	filePath,
@@ -141,7 +97,71 @@ export function MarkdownFileView({
 	version: number;
 }) {
 	const { t } = useTranslation();
+	const bodyRef = useRef<HTMLDivElement>(null);
 	const contextValue = useMemo(() => ({ sessionId, filePath, version }), [sessionId, filePath, version]);
+
+	// Heading slugs are unique per rendered file, not per document, and the Files
+	// tab expands many files at once — two open READMEs both containing
+	// "## Overview" put two `id="overview"` in the same DOM. Resolving inside this
+	// file's own container is what keeps a fragment link on the file it was
+	// written in; `document.getElementById` would hand back whichever came first.
+	// It also leaves a hand-written `[x](#overview)` working, which prefixing the
+	// slugs would have broken.
+	const onFragmentClick = useCallback((fragment: string) => {
+		const id = fragment.slice(1);
+		if (!id) return;
+		bodyRef.current
+			?.querySelector(`[id="${CSS.escape(id)}"]`)
+			?.scrollIntoView({ behavior: "smooth", block: "start" });
+	}, []);
+
+	const components = useMemo<Components>(
+		() => ({
+			pre: ({ children }) => {
+				const fence = fenceOf(children);
+				if (!fence) return <>{children}</>;
+				return (
+					<pre className="markdown-code">
+						<code>
+							<HighlightedCode code={fence.code} language={canonicalLanguage(fence.language)} />
+						</code>
+					</pre>
+				);
+			},
+
+			img: ({ src, alt }) => <MarkdownImage src={typeof src === "string" ? src : undefined} alt={alt} />,
+
+			// A dispatcher, not a single link renderer: a same-page heading fragment
+			// scrolls to that heading; a genuine http(s)/mailto link opens
+			// externally; a relative link to another repo file (`./OTHER.md`) has no
+			// in-app navigation target today, so it renders as inert text rather than
+			// a link that would silently do nothing (or worse, navigate the app
+			// shell).
+			a: ({ href, children, ...rest }) => {
+				if (!href) return <>{children}</>;
+				if (href.startsWith("#")) {
+					return (
+						<a
+							href={href}
+							{...rest}
+							onClick={(event) => {
+								event.preventDefault();
+								onFragmentClick(href);
+								void aoBridge.clipboard.writeText(href);
+							}}
+						>
+							{children}
+						</a>
+					);
+				}
+				if (isWebLink(href) || href.startsWith("mailto:")) {
+					return <MarkdownExternalLink href={href}>{children}</MarkdownExternalLink>;
+				}
+				return <span>{children}</span>;
+			},
+		}),
+		[onFragmentClick],
+	);
 	return (
 		<MarkdownFileContext.Provider value={contextValue}>
 			<div>
@@ -150,8 +170,8 @@ export function MarkdownFileView({
 						{t("files.contentTruncated")}
 					</div>
 				) : null}
-				<div className="markdown-body p-4">
-					<Markdown remarkPlugins={REMARK_PLUGINS} rehypePlugins={REHYPE_PLUGINS} components={COMPONENTS}>
+				<div className="markdown-body p-4" ref={bodyRef}>
+					<Markdown remarkPlugins={REMARK_PLUGINS} rehypePlugins={REHYPE_PLUGINS} components={components}>
 						{content}
 					</Markdown>
 				</div>
