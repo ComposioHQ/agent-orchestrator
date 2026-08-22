@@ -1688,7 +1688,8 @@ function ResolvedApprovalRow({
 }) {
 	const detail = activity.detail;
 	const decision = typeof detail?.decision === "string" ? detail.decision : undefined;
-	const outcome = resolvedApprovalOutcome(activity.status, decision, detail?.resolvedBy);
+	const decisionKind = activity.decisions?.find((option) => option.id === decision)?.kind;
+	const outcome = resolvedApprovalOutcome(activity.status, decision, detail?.resolvedBy, decisionKind);
 	const title = detail?.cwd ? `${command}\n${detail.cwd}` : command;
 
 	return (
@@ -1705,16 +1706,24 @@ function resolvedApprovalOutcome(
 	status: ConversationActivity["status"],
 	decision?: string,
 	resolvedBy?: string,
+	decisionKind?: DecisionOption["kind"],
 ): { label: string; success: boolean } {
 	const value = decision?.toLowerCase() ?? "";
 	if (status === "failed") return { label: "Approval expired", success: false };
-	if (status === "cancelled" || /(deny|decline|reject|cancel)/.test(value)) {
+	if (
+		status === "cancelled" ||
+		decisionKind === "reject_once" ||
+		decisionKind === "reject_always" ||
+		/(deny|decline|reject|cancel)/.test(value)
+	) {
 		return { label: "Cancelled", success: false };
 	}
-	if (/(remember|always|amendment|policy)/.test(value)) {
+	if (decisionKind === "allow_always" || /(remember|always|amendment|policy)/.test(value)) {
 		return { label: "Approved and remembered", success: true };
 	}
-	if (/(allow|approve|accept)/.test(value)) return { label: "Approved", success: true };
+	if (decisionKind === "allow_once" || /(allow|approve|accept)/.test(value)) {
+		return { label: "Approved", success: true };
+	}
 	if (resolvedBy === "provider") return { label: "Resolved elsewhere", success: false };
 	return { label: "Resolved", success: false };
 }

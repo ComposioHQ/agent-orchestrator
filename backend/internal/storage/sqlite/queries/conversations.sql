@@ -831,10 +831,17 @@ WHERE conversation_id = ? AND provider_item_id = ? AND status <> 'cancelled';
 
 -- Resolving an approval matches on the provider's request id, so a card the user
 -- left on screen cannot answer a request that replaced it.
+-- Merge the resolution into the provider payload so the offered decision kinds
+-- remain available to audit/history readers after the request is answered.
 -- name: ResolveConversationApproval :exec
 UPDATE conversation_activities
-SET status = 'resolved', detail_json = ?, revision = revision + 1, updated_at = ?
-WHERE conversation_id = ? AND request_id = ? AND status = 'pending';
+SET status = 'resolved',
+    detail_json = json_patch(detail_json, CAST(sqlc.arg(detail_json) AS TEXT)),
+    revision = revision + 1,
+    updated_at = sqlc.arg(updated_at)
+WHERE conversation_id = sqlc.arg(conversation_id)
+  AND request_id = sqlc.arg(request_id)
+  AND status = 'pending';
 
 -- Any approval still pending when a controller dies can never be answered: the
 -- provider call it was blocking is gone.

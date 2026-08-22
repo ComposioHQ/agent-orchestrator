@@ -1727,6 +1727,22 @@ func TestApprovalIsStoredPendingWithProviderDecisions(t *testing.T) {
 	if resolved.Activities[0].Status != domain.ActivityStatusResolved {
 		t.Fatalf("status = %q, want resolved", resolved.Activities[0].Status)
 	}
+	var resolvedDetail struct {
+		Decision  string `json:"decision"`
+		Decisions []struct {
+			ID   string `json:"id"`
+			Kind string `json:"kind"`
+		} `json:"decisions"`
+	}
+	if err := json.Unmarshal(resolved.Activities[0].Detail, &resolvedDetail); err != nil {
+		t.Fatalf("resolved detail not decodable: %v (%s)", err, resolved.Activities[0].Detail)
+	}
+	if resolvedDetail.Decision != "accept" {
+		t.Fatalf("resolved decision = %q, want accept", resolvedDetail.Decision)
+	}
+	if len(resolvedDetail.Decisions) != 3 {
+		t.Fatalf("resolved decision options = %d, want preserved 3", len(resolvedDetail.Decisions))
+	}
 }
 
 // A controller that dies mid-turn must not leave the turn looking like it is still

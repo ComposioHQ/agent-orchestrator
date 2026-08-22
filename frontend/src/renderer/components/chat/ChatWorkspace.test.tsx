@@ -506,6 +506,31 @@ describe("ChatWorkspace timeline", () => {
 		expect(screen.queryByRole("button", { name: "Approve" })).not.toBeInTheDocument();
 	});
 
+	it("uses the preserved semantic kind for an opaque resolved decision", () => {
+		const snapshot = structuredClone(chatFixture);
+		snapshot.items = [
+			{
+				kind: "activity",
+				id: "approval-resolved-opaque",
+				sequence: 99,
+				revision: 2,
+				turnId: "turn-2",
+				activityKind: "approval",
+				status: "resolved",
+				summary: "Opaque provider decision",
+				requestId: "approval-resolved-opaque",
+				decisions: [{ id: "option-b", label: "Nein", kind: "reject_once" }],
+				detail: { decision: "option-b" },
+				createdAt: "2026-08-08T00:00:00Z",
+			},
+		];
+
+		render(<ChatWorkspace snapshot={snapshot} />);
+
+		expect(screen.getByText("Cancelled")).toBeInTheDocument();
+		expect(screen.queryByText("Resolved")).not.toBeInTheDocument();
+	});
+
 	it("does not describe an expired approval as approved", () => {
 		const snapshot = structuredClone(chatFixture);
 		snapshot.items = [
