@@ -1169,7 +1169,7 @@
 	"zone.working": "Em andamento",
 	"column.building": "Em desenvolvimento",
 	"column.validating": "Validando",
-	"column.needs_review": "Revisão necessária",
+	"column.needs_review": "Em revisão",
 	"column.ready": "Pronto",
 	"column.archive": "Arquivo",
 	"settings.developer": "Developer",

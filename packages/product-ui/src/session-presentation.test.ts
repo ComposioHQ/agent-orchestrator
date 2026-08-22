@@ -49,7 +49,7 @@ describe("session presentation", () => {
 	it.each([
 		["building", "Building", "bg-status-working"],
 		["validating", "Validating", "bg-status-in-review"],
-		["needs_review", "Needs review", "bg-status-needs-you"],
+		["needs_review", "In review", "bg-status-needs-you"],
 		["ready", "Ready", "bg-status-ready"],
 		["archive", "Archive", "bg-status-terminated"],
 	] as const)("gives the %s column its own label and palette", (column, label, dotClassName) => {

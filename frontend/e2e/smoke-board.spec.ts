@@ -21,7 +21,7 @@ test("renderer: card moves columns when its status changes @T0 @BRD", async ({ p
 	await expect(page.locator(columnCard("building", "mover"))).toBeVisible();
 	await expect(page.locator(columnCard("needs_review", "mover"))).toHaveCount(0);
 
-	// Fake agent hits waiting_input → the card must move to the "Needs review" column.
+	// Fake agent hits waiting_input → the card must move to the "In review" column.
 	await page.evaluate(() => window.__aoFakeAgent!.setStatus("mover", "needs_input", "waiting_input"));
 
 	await expect(page.locator(columnCard("needs_review", "mover"))).toBeVisible();

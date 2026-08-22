@@ -1156,7 +1156,7 @@
 	"zone.working": "作業中",
 	"column.building": "実装中",
 	"column.validating": "検証中",
-	"column.needs_review": "レビュー待ち",
+	"column.needs_review": "レビュー中",
 	"column.ready": "準備完了",
 	"column.archive": "アーカイブ",
 	"settings.developer": "Developer",

@@ -1169,7 +1169,7 @@
 	"zone.working": "En cours",
 	"column.building": "En cours",
 	"column.validating": "Validation",
-	"column.needs_review": "Revue requise",
+	"column.needs_review": "En revue",
 	"column.ready": "Prêt",
 	"column.archive": "Archives",
 	"settings.developer": "Developer",

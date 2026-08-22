@@ -1169,7 +1169,7 @@
 	"zone.working": "Trabajando",
 	"column.building": "En desarrollo",
 	"column.validating": "Validando",
-	"column.needs_review": "Revisión pendiente",
+	"column.needs_review": "En revisión",
 	"column.ready": "Listo",
 	"column.archive": "Archivo",
 	"settings.developer": "Developer",
