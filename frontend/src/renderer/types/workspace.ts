@@ -86,9 +86,11 @@ export type WorkspaceSession = {
 	scmStatus?: SessionStatus;
 	/**
 	 * Board lane derived by the daemon from durable delivery facts (PR
-	 * lifecycle, review runs, review ownership). The board groups by this and
-	 * never re-derives a lane from {@link status}. For a daemon too old to send
-	 * one, {@link toKanbanColumn} keeps the placement the status already
+	 * lifecycle, review runs, review ownership). `validating` and
+	 * `needs_review` are the same review-feedback loop seen from either side:
+	 * AO turning it, or a person taking the next turn. The board groups by this
+	 * and never re-derives a lane from {@link status}. For a daemon too old to
+	 * send one, {@link toKanbanColumn} keeps the placement the status already
 	 * implied rather than inventing a new one.
 	 */
 	kanbanColumn?: KanbanColumn;

@@ -138,9 +138,10 @@ type Session struct {
 	SessionRecord
 	Status    SessionStatus `json:"status" enum:"working,pr_open,draft,ci_failed,review_pending,changes_requested,approved,mergeable,merged,needs_input,exited,idle,terminated,no_signal"`
 	SCMStatus SessionStatus `json:"scmStatus,omitempty" enum:"pr_open,draft,ci_failed,review_pending,changes_requested,approved,mergeable,merged"`
-	// KanbanColumn is where the session sits in its delivery lifecycle and who
-	// owns the next step. It is derived independently of Status and, like it,
-	// is never persisted.
+	// KanbanColumn is where the session sits in its delivery lifecycle and
+	// which loop is turning it: an AO-driven one (validating) or the
+	// review-feedback loop whose next turn is a person's (needs_review). It is
+	// derived independently of Status and, like it, is never persisted.
 	KanbanColumn      KanbanColumn `json:"kanbanColumn" enum:"building,validating,needs_review,ready,archive"`
 	TerminalHandleID  string       `json:"terminalHandleId,omitempty"`
 	ActiveAgentSwitch *AgentSwitch `json:"-"`

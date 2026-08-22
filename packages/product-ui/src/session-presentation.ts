@@ -48,12 +48,14 @@ const englishLabels: Record<SessionPresentationMessageKey, string> = {
 	"zone.done": "Terminated",
 	"column.building": "Building",
 	"column.validating": "Validating",
-	// Deliberate: this lane means "a person owns the next step", which is the
-	// fallthrough of derivePRKanbanColumn -- a card lands here precisely because
-	// no AO loop claimed it. It therefore also holds a PR with changes requested
-	// or failing CI while the matching inject flag is off, which is not literally
-	// under review. The wording is a product decision; the enum stays
-	// needs_review, so changing it later is one string per locale.
+	// Deliberate: this lane is the review-feedback loop, not a queue of PRs
+	// awaiting a first human review. It is the fallthrough of
+	// derivePRKanbanColumn, so a card lands here whenever the PR is in its
+	// review cycle and no AO loop is turning it -- awaiting review, carrying
+	// feedback someone has to answer, or holding a failing check someone has to
+	// decide about. The next turn is a person's, but the loop is the same one
+	// "validating" holds while AO turns it. The enum stays needs_review, so
+	// different wording later is one string per locale.
 	"column.needs_review": "In review",
 	"column.ready": "Ready",
 	"column.archive": "Archive",
@@ -250,8 +252,10 @@ export const boardAttentionZoneOrder: AttentionZone[] = ["working", "action", "p
 
 /**
  * Board lanes in delivery order: building -> validating -> in review ->
- * ready. `archive` is deliberately absent — terminated sessions render in the
- * archive sheet, not as a lane.
+ * ready. The middle two are the same review-feedback loop seen from either
+ * side: validating while AO turns it, in review while a person does.
+ * `archive` is deliberately absent — terminated sessions render in the archive
+ * sheet, not as a lane.
  */
 export const boardKanbanColumnOrder: KanbanColumn[] = [
 	"building",

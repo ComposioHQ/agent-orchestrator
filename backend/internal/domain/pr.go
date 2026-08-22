@@ -26,7 +26,8 @@ type PRFacts struct {
 	UpdatedAt      time.Time
 	// ExternalApproved and ExternalChangesRequested are the human review
 	// verdicts AO did not author. Review above aggregates AO's own provider
-	// reviews with everyone else's, so it cannot say who owns the next step.
+	// reviews with everyone else's, so it cannot say whose turn the
+	// review-feedback loop is on.
 	ExternalApproved         bool
 	ExternalChangesRequested bool
 }

@@ -124,7 +124,7 @@ func TestDeriveKanbanColumnSinglePR(t *testing.T) {
 			want: contract.KanbanValidating,
 		},
 		{
-			name:    "failing ci with injection off waits on a person",
+			name:    "failing ci with injection off hands the loop to a person",
 			session: contract.KanbanSessionFacts{},
 			pr: contract.KanbanPRFacts{
 				URL:       "pr/1",
@@ -140,13 +140,13 @@ func TestDeriveKanbanColumnSinglePR(t *testing.T) {
 			want:    contract.KanbanValidating,
 		},
 		{
-			name:    "auto review off leaves an unreviewed head to a person",
+			name:    "auto review off hands an unreviewed head to a person",
 			session: contract.KanbanSessionFacts{},
 			pr:      contract.KanbanPRFacts{URL: "pr/1"},
 			want:    contract.KanbanNeedsReview,
 		},
 		{
-			name:    "auto review hands over once its pass approved this head",
+			name:    "auto review hands the loop over once its pass approved this head",
 			session: contract.KanbanSessionFacts{AutoReview: true},
 			pr: contract.KanbanPRFacts{
 				URL:       "pr/1",
@@ -167,7 +167,8 @@ func TestDeriveKanbanColumnSinglePR(t *testing.T) {
 }
 
 // A run recorded for an earlier head is dropped before the reducer sees it, so
-// the PR reads as an unreviewed head — auto review owns it again.
+// the PR reads as an unreviewed head and the review-feedback loop restarts: AO
+// takes the next turn with auto review on, a person takes it with it off.
 func TestDeriveKanbanColumnStaleReviewRunStartsANewCycle(t *testing.T) {
 	t.Parallel()
 	session := contract.KanbanSessionFacts{AutoReview: true}

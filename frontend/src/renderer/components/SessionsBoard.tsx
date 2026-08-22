@@ -78,7 +78,8 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 	const navigate = useNavigate();
 	const queryClient = useQueryClient();
 	// Lanes follow the daemon's delivery order: building -> validating ->
-	// in review -> ready.
+	// in review -> ready. The middle two are one review-feedback loop, split by
+	// whose turn it is.
 	const columns: KanbanColumnView[] = boardKanbanColumnOrder.map((column) => getKanbanColumnView(column, t));
 	const workspaceQuery = useWorkspaceQuery();
 	const shell = useShellMaybe();
