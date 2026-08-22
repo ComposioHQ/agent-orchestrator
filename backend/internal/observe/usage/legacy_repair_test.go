@@ -319,7 +319,9 @@ func TestLegacyRepairerAttributesClaudeHistoryFromTheBindingRouteHint(t *testing
 func TestLegacyRepairerLetsAnObservationCorrectAnInference(t *testing.T) {
 	ctx := context.Background()
 	dataDir := t.TempDir()
-	// No hook has run, so ingestion can only infer the provider from the model.
+	// No hook has run, so ingestion leaves the row unattributed and the first
+	// repair pass — the point at which no hook is coming — infers the provider
+	// from the model that answered.
 	store, source, path, now := seedClaudeIngestionSource(t, dataDir, "")
 	mustNoError(t, os.WriteFile(path, []byte(legacyClaudeTranscript("claude-test")), 0o600))
 	snapshot := claudePricingSnapshot(t)
@@ -327,6 +329,10 @@ func TestLegacyRepairerLetsAnObservationCorrectAnInference(t *testing.T) {
 		Clock:   func() time.Time { return now },
 		Pricing: pricing.NewManager(snapshot),
 	}), source.ID)
+	assertLegacyStillNull(t, dataDir, source.ID)
+	mustNoError(t, NewLegacyRepairer(store, pricing.NewManager(snapshot), LegacyRepairerConfig{
+		Clock: func() time.Time { return now.Add(time.Minute) },
+	}).Run(ctx))
 	assertLegacyRepair(t, dataDir, source.ID, "anthropic", domain.UsageBillingProviderInferred,
 		795_000, snapshot.ProviderVersion("anthropic"))
 
@@ -368,8 +374,11 @@ func TestLegacyRepairerLeavesAnInferenceAloneWithoutNewEvidence(t *testing.T) {
 		Clock:   func() time.Time { return now },
 		Pricing: pricing.NewManager(snapshot),
 	}), source.ID)
+	mustNoError(t, NewLegacyRepairer(store, pricing.NewManager(snapshot), LegacyRepairerConfig{
+		Clock: func() time.Time { return now.Add(time.Minute) },
+	}).Run(ctx))
 
-	// Clearing the cost gives the pass something visible to do if it runs.
+	// Clearing the cost gives a second pass something visible to do if it runs.
 	db := openUsageRawDB(t, dataDir)
 	_, err := db.Exec(`UPDATE model_usage_events
 SET input_cost_nanos = NULL, cached_input_cost_nanos = NULL,
@@ -387,6 +396,61 @@ WHERE usage_source_id = ?`, source.ID)
 FROM model_usage_events WHERE usage_source_id = ?`, source.ID).Scan(&provider, &providerSource, &total))
 	if provider != "anthropic" || providerSource != string(domain.UsageBillingProviderInferred) || total.Valid {
 		t.Fatalf("untouched row = provider %q source %q total %v", provider, providerSource, total)
+	}
+}
+
+// Break caught: the hook that resolves a route fires the repair trigger exactly
+// once. A chunk parsed before that hook but applied after it slips straight
+// through the pass it fired — those rows did not exist when the pass read the
+// table — and nothing fires again for the binding until the daemon restarts, so
+// a live session's own history stays unattributed while the route sits right
+// there on its binding.
+func TestIngestorRequestsRepairWhenARouteLandsMidChunk(t *testing.T) {
+	ctx := context.Background()
+	dataDir := t.TempDir()
+	store, source, path, now := seedClaudeIngestionSource(t, dataDir, "")
+	mustNoError(t, os.WriteFile(path, []byte(legacyClaudeTranscript("claude-test")), 0o600))
+
+	requested := 0
+	ingestor := NewIngestor(store, IngestorConfig{
+		Clock:                    func() time.Time { return now },
+		Pricing:                  pricing.NewManager(claudePricingSnapshot(t)),
+		RequestAttributionRepair: func() { requested++ },
+	})
+	// The chunk has been read against a binding with no route; the hook lands
+	// now, so the parse still sees none but the insert follows the pass it fired.
+	db := openUsageRawDB(t, dataDir)
+	ingestor.afterRead = func() {
+		_, err := db.Exec(
+			`UPDATE usage_bindings SET provider_hint = 'anthropic' WHERE native_root_id = 'claude-root'`)
+		mustNoError(t, err)
+		ingestor.afterRead = nil
+	}
+	ingestSourceFully(ctx, t, ingestor, source.ID)
+
+	assertLegacyStillNull(t, dataDir, source.ID)
+	if requested == 0 {
+		t.Fatal("no repair requested for rows the route-resolved pass could not have seen")
+	}
+}
+
+// The same callback must stay quiet on the ordinary hookless session, or every
+// chunk of every unattributed transcript would ask for a full replay pass.
+func TestIngestorDoesNotRequestRepairWithoutARoute(t *testing.T) {
+	ctx := context.Background()
+	dataDir := t.TempDir()
+	store, source, path, now := seedClaudeIngestionSource(t, dataDir, "")
+	mustNoError(t, os.WriteFile(path, []byte(legacyClaudeTranscript("claude-test")), 0o600))
+
+	requested := 0
+	ingestSourceFully(ctx, t, NewIngestor(store, IngestorConfig{
+		Clock:                    func() time.Time { return now },
+		Pricing:                  pricing.NewManager(claudePricingSnapshot(t)),
+		RequestAttributionRepair: func() { requested++ },
+	}), source.ID)
+
+	if requested != 0 {
+		t.Fatalf("repair requested %d times for a binding with no route", requested)
 	}
 }
 

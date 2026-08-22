@@ -345,6 +345,7 @@ func Run() error {
 			ingestorConfig.OnPricingError = func(err error) {
 				log.Warn("usage event pricing failed", "err", err)
 			}
+			ingestorConfig.RequestAttributionRepair = usagePricing.RepairLegacyAttribution
 		}
 		ingestor := usagepipeline.NewIngestor(store, ingestorConfig)
 		usagePipeline = usagepipeline.NewPipeline(store, ingestor, []string{
