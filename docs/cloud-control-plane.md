@@ -172,3 +172,57 @@ Cloud project controls remain absent until all of these are true:
 
 This prevents the staging POC from becoming an accidental second product
 architecture that the team would later have to migrate in place.
+
+## Implementation sequence
+
+The existing core is already close to the required seam: services and
+lifecycle code define narrow, domain-typed store interfaces and do not import
+SQL packages. The remaining concrete SQLite coupling is concentrated in daemon
+wiring. Preserve the consumer-owned interfaces; do not introduce a generic
+repository or expose SQL transactions to services.
+
+1. **Storage seam, no behavior change.** Move the consumer store contracts to
+   `internal/ports` (leaving aliases at their old packages during migration),
+   add a daemon-wiring aggregate only for construction, and make wiring depend
+   on the port. Add an import-boundary test forbidding `database/sql`, `pgx`,
+   and generated database packages outside `internal/storage`.
+2. **Remove SQLite-only ordering assumptions.** Add an explicit monotonic
+   sequence to conversation turns and stop ordering by SQLite `rowid`.
+3. **Conformance harness.** Add `internal/storage/storagetest` and run the same
+   domain behavior against adapters. SQLite remains the only active adapter at
+   this point.
+4. **Independent PostgreSQL baseline.** Keep SQLite migrations frozen. Create a
+   separate squashed PostgreSQL schema and a second generated query set with
+   identical query names and domain type overrides. A manifest test compares
+   logical tables/columns and a query-name test prevents dialect drift.
+5. **Port in dependency order.** Implement projects/workspace metadata first;
+   then sessions, worktrees, cleanup facts, interface transitions, and change
+   events; then SCM/PR facts; small settings/notification/terminal metadata;
+   reviews; agent switching; usage; and finally conversations/chat.
+6. **Atomic cutover.** Foreign keys and the no-dual-write rule mean the hosted
+   process must not split product tables between databases. SQLite serves all
+   product traffic until the PostgreSQL adapter passes the complete conformance
+   suite, then one storage-driver selection changes the whole process.
+7. **Hosted API composition.** Google/AO authentication becomes middleware in
+   front of the existing `internal/httpd` router and service set. The separate
+   `/api/cloud/v1` surface remains only for auth, organization administration,
+   placement, and billing—not duplicate project/session endpoints.
+
+Tenant identity travels in `context.Context`, not in hundreds of method
+signatures. The PostgreSQL adapter fails closed when tenant context is absent,
+sets `ao.user_id` and `ao.org_id` transaction-locally, and still includes
+explicit tenant predicates. Global background scans become per-tenant loops
+driven by a narrow tenant-directory port; they never bypass RLS.
+
+PostgreSQL change delivery keeps database-triggered CDC so domain writes and
+events stay atomic. Its poller cannot naively advance on an identity sequence:
+concurrent transactions may allocate sequence values and commit out of order.
+The Postgres source must use a transaction-visibility watermark (for example an
+`xmin`/snapshot boundary), with a concurrent-writer conformance test proving a
+cursor cannot skip a late commit.
+
+SQL storage does not cover repository files, attachments, or device-specific
+state. Those remain separate ports: object/blob storage for attachments,
+workspace/repository adapters for checkouts and overlays, and a dedicated
+device registry. None may be smuggled into the Postgres store or persisted only
+inside compute.
