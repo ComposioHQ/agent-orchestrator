@@ -315,6 +315,7 @@ resource "aws_ecs_task_definition" "api" {
       { name = "AO_CLOUD_ADDR", value = "0.0.0.0:8080" },
       { name = "AO_CLOUD_ACCESS_TOKEN_ISSUER", value = "ao-cloud-${var.environment}" },
       { name = "AO_CLOUD_ACCESS_TOKEN_AUDIENCE", value = "ao-desktop" },
+      { name = "AO_CLOUD_TRUST_SOURCE_IP_HEADER", value = "true" },
     ]
     secrets = [
       { name = "AO_CLOUD_DATABASE_URL", valueFrom = "${aws_secretsmanager_secret.database.arn}:runtimeUrl::" },

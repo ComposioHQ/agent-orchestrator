@@ -31,6 +31,7 @@ type Config struct {
 	AccessTokenAudience string
 	AccessTokenTTL      time.Duration
 	RefreshTokenTTL     time.Duration
+	TrustSourceIPHeader bool
 }
 
 // Load reads control-plane configuration from the process environment.
@@ -63,6 +64,7 @@ func load(getenv func(string) string) (Config, error) {
 		AccessTokenAudience: valueOrDefault(getenv("AO_CLOUD_ACCESS_TOKEN_AUDIENCE"), "ao-desktop"),
 		AccessTokenTTL:      accessTTL,
 		RefreshTokenTTL:     refreshTTL,
+		TrustSourceIPHeader: strings.EqualFold(strings.TrimSpace(getenv("AO_CLOUD_TRUST_SOURCE_IP_HEADER")), "true"),
 	}
 	if cfg.DatabaseURL == "" {
 		return Config{}, errors.New("AO_CLOUD_DATABASE_URL is required")
