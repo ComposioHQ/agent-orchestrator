@@ -30,7 +30,9 @@
 import {
 	cloneElement,
 	isValidElement,
+	startTransition,
 	useCallback,
+	useDeferredValue,
 	useEffect,
 	useId,
 	useLayoutEffect,
@@ -171,6 +173,13 @@ export function ChatComposer({
 	const [highlighted, setHighlighted] = useState(0);
 	const [dragging, setDragging] = useState(false);
 	const [sendError, setSendError] = useState<string | null>(null);
+	// The DOM event is the source of truth while React catches up with the draft
+	// transition. This keeps Enter-after-fast-typing from observing stale state.
+	const textRef = useRef("");
+	// Keep typing and the send affordance urgent. Matching a trigger and ranking a
+	// worktree's file list can be comparatively expensive, especially in large
+	// worktrees, so let React do that work in a deferred render.
+	const deferredText = useDeferredValue(text);
 	/**
 	 * What Enter does while the agent is working.
 	 *
@@ -206,7 +215,10 @@ export function ChatComposer({
 	const fileAttachments = useFileAttachments();
 	const canAttach = Boolean(onStageAttachments);
 
-	const trigger = useMemo(() => findActiveTrigger(text, caret), [text, caret]);
+	const trigger = useMemo(
+		() => findActiveTrigger(deferredText, caret),
+		[deferredText, caret],
+	);
 
 	const slashCommands = useMemo<ChatSkill[]>(() => {
 		if (!onCompact || compactUnavailable === "This agent cannot compact its history") return skills;
@@ -288,9 +300,12 @@ export function ChatComposer({
 	 * and the controlled re-render would then drop it to the end of the new one.
 	 */
 	const applyText = useCallback((next: string, nextCaret: number) => {
+		textRef.current = next;
 		pendingCaret.current = nextCaret;
-		setText(next);
-		setCaret(nextCaret);
+		startTransition(() => {
+			setText(next);
+			setCaret(nextCaret);
+		});
 	}, []);
 
 	useEffect(() => {
@@ -301,7 +316,7 @@ export function ChatComposer({
 		setSendError(null);
 	}, [applyText, draftSeedId, draftSeedText]);
 
-	useLayoutEffect(() => {
+	useEffect(() => {
 		resizeTextarea();
 	}, [resizeTextarea, text]);
 
@@ -343,11 +358,14 @@ export function ChatComposer({
 
 	async function submit(event?: FormEvent, forceSteer?: boolean) {
 		event?.preventDefault();
-		if (!canSend) return;
+		const currentText = textRef.current;
+		const canSubmitNow =
+			(currentText.trim().length > 0 || staged) && !busy && !disabled && !steerPending;
+		if (!canSubmitNow) return;
 		setSendError(null);
 
 		const shouldSteer = forceSteer ?? false;
-		const body = text.trim();
+		const body = currentText.trim();
 
 		if (body === "/compact" && onCompact) {
 			if (compactBlocked) {
@@ -441,7 +459,7 @@ export function ChatComposer({
 			// `/compact` takes no arguments. Once its exact name is present, Enter
 			// executes it directly instead of merely accepting the highlighted row and
 			// requiring a second Enter on the inserted trailing space.
-			if (event.key === "Enter" && text.trim() === "/compact" && onCompact) {
+			if (event.key === "Enter" && textRef.current.trim() === "/compact" && onCompact) {
 				event.preventDefault();
 				void submit();
 				return;
@@ -486,21 +504,25 @@ export function ChatComposer({
 	function onChange(event: ChangeEvent<HTMLTextAreaElement>) {
 		const value = event.target.value;
 		const nextCaret = event.target.selectionStart ?? value.length;
-		setText(value);
-		setCaret(nextCaret);
-		setHighlighted(0);
-		// A dismissal covers one trigger. It is released as soon as that trigger is no
-		// longer the one under the caret, so a fresh `/` or `@` opens a menu again
-		// without the user having to guess why the last one stayed shut.
-		const next = findActiveTrigger(value, nextCaret);
-		setDismissedAt((current) =>
-			current !== null && next?.start === current ? current : null,
-		);
+		textRef.current = value;
+		startTransition(() => {
+			setText(value);
+			setCaret(nextCaret);
+			setHighlighted(0);
+			// A dismissal covers one trigger. It is released as soon as that trigger is no
+			// longer the one under the caret, so a fresh `/` or `@` opens a menu again
+			// without the user having to guess why the last one stayed shut.
+			const next = findActiveTrigger(value, nextCaret);
+			setDismissedAt((current) =>
+				current !== null && next?.start === current ? current : null,
+			);
+		});
 	}
 
 	/** Caret moves that are not edits: arrow keys, clicks, selection changes. */
 	function onSelectionChange(event: { currentTarget: HTMLTextAreaElement }) {
-		setCaret(event.currentTarget.selectionStart ?? 0);
+		const nextCaret = event.currentTarget.selectionStart ?? 0;
+		setCaret((current) => (current === nextCaret ? current : nextCaret));
 	}
 
 	function onPaste(event: ClipboardEvent<HTMLTextAreaElement>) {
