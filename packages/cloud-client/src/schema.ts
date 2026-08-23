@@ -68,248 +68,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/projects": {
-        parameters: {
-            query?: never;
-            header?: {
-                /** @description Hosted /api/v1 tenant selector. Required when the principal belongs to
-                 *     multiple organizations. It is never an authority for control-plane
-                 *     admin routes, whose orgId path parameter remains authoritative.
-                 *      */
-                "X-AO-Org"?: components["parameters"]["XAOOrg"];
-            };
-            path?: never;
-            cookie?: never;
-        };
-        get: operations["listHostedProjects"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/projects/{id}": {
-        parameters: {
-            query?: never;
-            header?: {
-                /** @description Hosted /api/v1 tenant selector. Required when the principal belongs to
-                 *     multiple organizations. It is never an authority for control-plane
-                 *     admin routes, whose orgId path parameter remains authoritative.
-                 *      */
-                "X-AO-Org"?: components["parameters"]["XAOOrg"];
-            };
-            path: {
-                id: components["parameters"]["ProjectId"];
-            };
-            cookie?: never;
-        };
-        get: operations["getHostedProject"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/sessions": {
-        parameters: {
-            query?: never;
-            header?: {
-                /** @description Hosted /api/v1 tenant selector. Required when the principal belongs to
-                 *     multiple organizations. It is never an authority for control-plane
-                 *     admin routes, whose orgId path parameter remains authoritative.
-                 *      */
-                "X-AO-Org"?: components["parameters"]["XAOOrg"];
-            };
-            path?: never;
-            cookie?: never;
-        };
-        get: operations["listHostedSessions"];
-        put?: never;
-        post: operations["spawnHostedSession"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/sessions/{sessionId}": {
-        parameters: {
-            query?: never;
-            header?: {
-                /** @description Hosted /api/v1 tenant selector. Required when the principal belongs to
-                 *     multiple organizations. It is never an authority for control-plane
-                 *     admin routes, whose orgId path parameter remains authoritative.
-                 *      */
-                "X-AO-Org"?: components["parameters"]["XAOOrg"];
-            };
-            path: {
-                sessionId: components["parameters"]["SessionId"];
-            };
-            cookie?: never;
-        };
-        get: operations["getHostedSession"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/sessions/{sessionId}/send": {
-        parameters: {
-            query?: never;
-            header?: {
-                /** @description Hosted /api/v1 tenant selector. Required when the principal belongs to
-                 *     multiple organizations. It is never an authority for control-plane
-                 *     admin routes, whose orgId path parameter remains authoritative.
-                 *      */
-                "X-AO-Org"?: components["parameters"]["XAOOrg"];
-            };
-            path: {
-                sessionId: components["parameters"]["SessionId"];
-            };
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        post: operations["sendHostedSessionMessage"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/sessions/{sessionId}/pr": {
-        parameters: {
-            query?: never;
-            header?: {
-                /** @description Hosted /api/v1 tenant selector. Required when the principal belongs to
-                 *     multiple organizations. It is never an authority for control-plane
-                 *     admin routes, whose orgId path parameter remains authoritative.
-                 *      */
-                "X-AO-Org"?: components["parameters"]["XAOOrg"];
-            };
-            path: {
-                sessionId: components["parameters"]["SessionId"];
-            };
-            cookie?: never;
-        };
-        get: operations["listHostedSessionPullRequests"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/sessions/{sessionId}/reviews": {
-        parameters: {
-            query?: never;
-            header?: {
-                /** @description Hosted /api/v1 tenant selector. Required when the principal belongs to
-                 *     multiple organizations. It is never an authority for control-plane
-                 *     admin routes, whose orgId path parameter remains authoritative.
-                 *      */
-                "X-AO-Org"?: components["parameters"]["XAOOrg"];
-            };
-            path: {
-                sessionId: components["parameters"]["SessionId"];
-            };
-            cookie?: never;
-        };
-        get: operations["listHostedSessionReviews"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/sessions/{sessionId}/workspace/files": {
-        parameters: {
-            query?: never;
-            header?: {
-                /** @description Hosted /api/v1 tenant selector. Required when the principal belongs to
-                 *     multiple organizations. It is never an authority for control-plane
-                 *     admin routes, whose orgId path parameter remains authoritative.
-                 *      */
-                "X-AO-Org"?: components["parameters"]["XAOOrg"];
-            };
-            path: {
-                sessionId: components["parameters"]["SessionId"];
-            };
-            cookie?: never;
-        };
-        get: operations["listHostedWorkspaceFiles"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/sessions/{sessionId}/workspace/file": {
-        parameters: {
-            query: {
-                path: string;
-            };
-            header?: {
-                /** @description Hosted /api/v1 tenant selector. Required when the principal belongs to
-                 *     multiple organizations. It is never an authority for control-plane
-                 *     admin routes, whose orgId path parameter remains authoritative.
-                 *      */
-                "X-AO-Org"?: components["parameters"]["XAOOrg"];
-            };
-            path: {
-                sessionId: components["parameters"]["SessionId"];
-            };
-            cookie?: never;
-        };
-        get: operations["readHostedWorkspaceFile"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/sessions/{sessionId}/terminal-ticket": {
-        parameters: {
-            query?: never;
-            header?: {
-                /** @description Hosted /api/v1 tenant selector. Required when the principal belongs to
-                 *     multiple organizations. It is never an authority for control-plane
-                 *     admin routes, whose orgId path parameter remains authoritative.
-                 *      */
-                "X-AO-Org"?: components["parameters"]["XAOOrg"];
-            };
-            path: {
-                sessionId: components["parameters"]["SessionId"];
-            };
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** @description Atomically issues one connection ticket for the session sandbox mux.
-         *     Replaying a consumed ticket fails; terminal bytes never traverse a
-         *     control-plane terminal endpoint.
-         *      */
-        post: operations["createSandboxTerminalConnection"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/cloud/v1/orgs/{orgId}/workspaces": {
         parameters: {
             query?: never;
@@ -319,11 +77,12 @@ export interface paths {
             };
             cookie?: never;
         };
-        get?: never;
+        get: operations["listWorkspacePlacements"];
         put?: never;
         /** @description Accepts the asynchronous project-placement saga. A successful response
-         *     is not a project. Poll the returned operation until ready, then discover
-         *     the canonical project through GET /api/v1/projects.
+         *     is placement acceptance, not a product project response. Poll the
+         *     returned workspace until ready; project discovery remains exclusively
+         *     on the separate code-first application API and client.
          *      */
         post: operations["createWorkspacePlacement"];
         delete?: never;
@@ -332,19 +91,111 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/cloud/v1/orgs/{orgId}/workspaces/{operationId}": {
+    "/api/cloud/v1/orgs/{orgId}/workspaces/{workspaceId}": {
         parameters: {
             query?: never;
             header?: never;
             path: {
                 orgId: components["parameters"]["OrgId"];
-                operationId: components["parameters"]["OperationId"];
+                workspaceId: components["parameters"]["WorkspaceId"];
             };
             cookie?: never;
         };
         get: operations["getWorkspacePlacement"];
         put?: never;
         post?: never;
+        delete: operations["deleteWorkspacePlacement"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/cloud/v1/orgs/{orgId}/workspaces/{workspaceId}/resume": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                orgId: components["parameters"]["OrgId"];
+                workspaceId: components["parameters"]["WorkspaceId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["resumeWorkspacePlacement"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/cloud/v1/orgs/{orgId}/provider-connections": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                orgId: components["parameters"]["OrgId"];
+            };
+            cookie?: never;
+        };
+        get: operations["listProviderConnections"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/cloud/v1/orgs/{orgId}/provider-connections/agents/{provider}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                orgId: components["parameters"]["OrgId"];
+                provider: components["parameters"]["Provider"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put: operations["putAgentProviderConnection"];
+        post?: never;
+        delete: operations["deleteAgentProviderConnection"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/cloud/v1/orgs/{orgId}/sessions/{sessionId}/terminal-ticket": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                orgId: components["parameters"]["OrgId"];
+                sessionId: components["parameters"]["SessionId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["createTerminalTicket"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/cloud/v1/sandbox/terminal-tickets/consume": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Atomically consumes a one-time ticket for the bound sandbox tuple. */
+        post: operations["consumeTerminalTicket"];
         delete?: never;
         options?: never;
         head?: never;
@@ -387,7 +238,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/cloud/v1/orgs/{orgId}/github/installations/{installationId}": {
+    "/api/cloud/v1/orgs/{orgId}/github/installations/{installationId}/disconnect": {
         parameters: {
             query?: never;
             header?: never;
@@ -528,7 +379,59 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/cloud/v1/worker/sessions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["listWorkerSessions"];
+        put?: never;
+        post: operations["createWorkerSession"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/cloud/v1/worker/sessions/{sessionId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                sessionId: components["parameters"]["SessionId"];
+            };
+            cookie?: never;
+        };
+        get: operations["getWorkerSession"];
+        put?: never;
+        post?: never;
+        delete: operations["deleteWorkerSession"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/cloud/v1/worker/sessions/{sessionId}/messages": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                sessionId: components["parameters"]["SessionId"];
+            };
+            cookie?: never;
+        };
+        get: operations["listWorkerSessionMessages"];
+        put?: never;
+        post: operations["sendWorkerSessionMessage"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/cloud/v1/worker/sessions/{sessionId}/pr/claim": {
         parameters: {
             query?: never;
             header?: never;
@@ -539,14 +442,14 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        post: operations["sendWorkerSessionMessage"];
+        post: operations["claimWorkerSessionPullRequest"];
         delete?: never;
         options?: never;
         head?: never;
         patch?: never;
         trace?: never;
     };
-    "/api/cloud/v1/worker/sessions/{sessionId}/pull-requests": {
+    "/api/cloud/v1/worker/sessions/{sessionId}/pr": {
         parameters: {
             query?: never;
             header?: never;
@@ -582,6 +485,162 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/cloud/v1/worker/sessions/{sessionId}/reviews/submit": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                sessionId: components["parameters"]["SessionId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["submitWorkerSessionReview"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/cloud/v1/worker/events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["publishWorkerEvent"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/cloud/v1/worker/turns/claim": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["claimWorkerTurn"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/cloud/v1/worker/turns/{turnId}/cancellation": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                turnId: components["parameters"]["TurnId"];
+            };
+            cookie?: never;
+        };
+        get: operations["getWorkerTurnCancellation"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/cloud/v1/worker/turns/{turnId}/complete": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                turnId: components["parameters"]["TurnId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["completeWorkerTurn"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/cloud/v1/worker/turns/{turnId}/fail": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                turnId: components["parameters"]["TurnId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["failWorkerTurn"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/cloud/v1/worker/transport/claim": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["claimWorkerTransport"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/cloud/v1/worker/transport/{requestId}/complete": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                requestId: components["parameters"]["RequestId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["completeWorkerTransport"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/cloud/v1/worker/transport/{requestId}/fail": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                requestId: components["parameters"]["RequestId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["failWorkerTransport"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/cloud/v1/worker/checkout-grant": {
         parameters: {
             query?: never;
@@ -607,148 +666,6 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
-        APIError: {
-            code: string;
-            details?: {
-                [key: string]: unknown;
-            };
-            error: string;
-            message: string;
-            requestId?: string;
-        };
-        ListProjectsResponse: {
-            projects: components["schemas"]["ProjectSummary"][];
-        };
-        ProjectGetResponse: {
-            project: components["schemas"]["ProjectOrDegraded"];
-            /** @enum {string} */
-            status: "ok" | "degraded";
-        };
-        ProjectSummary: {
-            id: string;
-            /** @enum {string} */
-            kind: "single_repo" | "workspace" | "scratch";
-            name: string;
-            orchestratorAgent?: string;
-            path: string;
-            resolveError?: string;
-            sessionPrefix: string;
-        };
-        ListSessionsResponse: {
-            sessions: components["schemas"]["ControllersSessionView"][];
-        };
-        SessionResponse: {
-            session: components["schemas"]["ControllersSessionView"];
-        };
-        ControllersSessionView: {
-            activeAgentSwitch?: components["schemas"]["AgentSwitch"];
-            activity: components["schemas"]["DomainActivity"];
-            autoInjectCI: boolean;
-            autoInjectReview: boolean;
-            autoReviewEnabled: boolean;
-            branch?: string;
-            /** Format: date-time */
-            createdAt: string;
-            displayName?: string;
-            harness?: string;
-            id: string;
-            isPinned: boolean;
-            isTerminated: boolean;
-            issueId?: string;
-            kind: string;
-            /** @enum {string} */
-            mode: "chat" | "tui";
-            model?: string;
-            /** Format: date-time */
-            pinnedAt?: null | string;
-            /** Format: int64 */
-            previewRevision?: number;
-            previewUrl?: string;
-            projectId: string;
-            prs: components["schemas"]["SessionPRFacts"][];
-            /** @enum {string} */
-            reviewerHarness?: "claude-code" | "codex" | "copilot" | "cursor" | "kilocode" | "opencode" | "kiro" | "pi" | "qwen" | "agy" | "continue" | "goose" | "vibe" | "devin" | "droid" | "kimi" | "kimchi" | "muse" | "amp" | "aider" | "grok" | "crush" | "auggie" | "cline" | "autohand";
-            /** @enum {string} */
-            scmStatus?: "pr_open" | "draft" | "ci_failed" | "review_pending" | "changes_requested" | "approved" | "mergeable" | "merged";
-            /** @enum {string} */
-            status: "working" | "pr_open" | "draft" | "ci_failed" | "review_pending" | "changes_requested" | "approved" | "mergeable" | "merged" | "needs_input" | "exited" | "idle" | "terminated" | "no_signal";
-            terminalHandleId?: string;
-            terminateOnPrMerge: boolean;
-            /** Format: date-time */
-            updatedAt: string;
-        };
-        SpawnSessionRequest: {
-            attachments?: components["schemas"]["AttachmentInput"][];
-            branch?: string;
-            displayName?: string;
-            /** @enum {string} */
-            harness?: "claude-code" | "codex" | "aider" | "opencode" | "grok" | "droid" | "amp" | "agy" | "crush" | "cursor" | "qwen" | "copilot" | "goose" | "auggie" | "continue" | "devin" | "cline" | "kimi" | "muse" | "kiro" | "kilocode" | "vibe" | "pi" | "kimchi" | "prime-agent" | "autohand";
-            issueId?: string;
-            /** @enum {string} */
-            kind?: "worker" | "orchestrator";
-            /** @enum {string} */
-            mode?: "chat" | "tui";
-            model?: string;
-            projectId: string;
-            prompt?: string;
-            /** @enum {string} */
-            trackerProvider?: "github" | "gitlab";
-        };
-        SpawnSessionResponse: {
-            promptBytes: number;
-            session: components["schemas"]["ControllersSessionView"];
-            systemPromptBytes: number;
-        };
-        SendSessionMessageRequest: {
-            attachment?: components["schemas"]["AttachmentInput"];
-            message: string;
-        };
-        SendSessionMessageResponse: {
-            message: string;
-            ok: boolean;
-            sessionId: string;
-        };
-        ListSessionPRsResponse: {
-            prs: components["schemas"]["SessionPRSummary"][];
-            sessionId: string;
-        };
-        ListReviewsResponse: {
-            reviewerHandleId: string;
-            reviewerHarness?: string;
-            reviews: components["schemas"]["PRReviewState"][];
-            runs: components["schemas"]["ReviewRun"][];
-        };
-        ListWorkspaceFilesResponse: {
-            compareBaseRef?: string;
-            compareBaseSha?: string;
-            /** @enum {string} */
-            compareMode?: "base" | "head_fallback";
-            files: components["schemas"]["WorkspaceFileSummary"][];
-            sessionId: string;
-            truncated: boolean;
-        };
-        WorkspaceFileResponse: {
-            additions: number;
-            binary: boolean;
-            compareBaseRef?: string;
-            compareBaseSha?: string;
-            /** @enum {string} */
-            compareMode?: "base" | "head_fallback";
-            content: string;
-            contentTruncated: boolean;
-            deleted: boolean;
-            deletions: number;
-            diff: string;
-            diffTruncated: boolean;
-            imageMediaType?: string;
-            path: string;
-            previousPath?: string;
-            sessionId: string;
-            /** Format: int64 */
-            size: number;
-            /** @enum {string} */
-            status: "unmodified" | "modified" | "added" | "deleted" | "renamed";
-        };
         ErrorEnvelope: {
             error: string;
             code: string;
@@ -792,29 +709,40 @@ export interface components {
         CreateWorkspacePlacementInput: {
             displayName: string;
             /** Format: uri */
-            repositoryUrl: string;
+            repositoryUrl?: string;
             /** @description Authoritative branch passed through the placement saga. */
-            defaultBranch: string;
+            defaultBranch?: string;
             config?: {
                 [key: string]: unknown;
             };
         };
         /** @enum {string} */
         WorkspacePlacementState: "pending" | "failed" | "ready";
-        WorkspacePlacementOperation: {
+        WorkspacePlacement: {
             /** Format: uuid */
-            operationId: string;
+            id: string;
             /** Format: uuid */
             orgId: string;
+            /** Format: uuid */
+            ownerUserId: string;
             state: components["schemas"]["WorkspacePlacementState"];
             defaultBranch: string;
-            /** @description Present only when state is ready; discover its DTO through /api/v1/projects. */
-            projectId?: string;
-            failure?: components["schemas"]["PlacementFailure"];
+            /** @description Present only when state is ready; discovery uses the separate application client. */
+            productProjectId?: string;
+            /** @description Human-readable pending progress or terminal failure detail. */
+            message?: string;
             /** Format: date-time */
             createdAt: string;
             /** Format: date-time */
             updatedAt: string;
+        };
+        WorkspacePlacementPage: {
+            workspaces: components["schemas"]["WorkspacePlacement"][];
+            pageInfo: components["schemas"]["PageInfo"];
+        };
+        PageInfo: {
+            hasMore: boolean;
+            nextCursor?: string;
         };
         PlacementFailure: {
             code: string;
@@ -862,24 +790,57 @@ export interface components {
             /** @enum {string} */
             status: "accepted" | "duplicate";
         };
-        TerminalConnectionRequest: {
-            /** @enum {string} */
-            kind: "agent" | "workspace";
-            /** Format: int64 */
-            after?: number;
+        ProviderConnectionList: {
+            providerConnections: components["schemas"]["RedactedProviderConnection"][];
         };
-        TerminalConnection: {
+        ProviderConnectionResponse: {
+            providerConnection: components["schemas"]["RedactedProviderConnection"];
+        };
+        RedactedProviderConnection: {
+            /** @enum {string} */
+            provider: "claude-code" | "codex" | "cursor";
+            configured: boolean;
+            label?: string;
+            /** Format: date-time */
+            updatedAt: string;
+        };
+        PutAgentProviderConnectionInput: {
+            /** Format: password */
+            credential: string;
+            label?: string;
+        };
+        TerminalTicketRequest: {
+            scopes: components["schemas"]["TerminalTicketScope"][];
+        };
+        /** @enum {string} */
+        TerminalTicketScope: "terminal:read" | "terminal:operate" | "workspace:observe";
+        TerminalTicket: {
             /**
              * Format: uri
              * @description Authenticated sandbox mux WebSocket URL, never a control-plane relay URL.
              */
             connectionUrl: string;
-            /** @description Single-use ticket consumed atomically by the sandbox mux. */
+            /** @description Single-use ticket offered only as the WebSocket subprotocol. */
             ticket: string;
+            scopes: components["schemas"]["TerminalTicketScope"][];
             /** Format: date-time */
             expiresAt: string;
             /** @constant */
             protocol: "ao.mux.v1";
+        };
+        TerminalTicketRedemption: {
+            ticket: string;
+            sandboxId: string;
+            workspaceId: string;
+            sessionId: string;
+        };
+        TerminalTicketGrant: {
+            sandboxId: string;
+            workspaceId: string;
+            sessionId: string;
+            scopes: components["schemas"]["TerminalTicketScope"][];
+            /** Format: date-time */
+            expiresAt: string;
         };
         WorkerBootstrapInput: {
             /** Format: uuid */
@@ -916,6 +877,145 @@ export interface components {
             /** Format: date-time */
             observedAt: string;
         };
+        CreateWorkerSessionInput: {
+            projectId: string;
+            /** @enum {string} */
+            role: "coordinator" | "worker";
+            harness: string;
+            prompt?: string;
+        };
+        WorkerSession: {
+            id: string;
+            /** Format: uuid */
+            workspaceId: string;
+            projectId: string;
+            /** @enum {string} */
+            role: "coordinator" | "worker";
+            /** @enum {string} */
+            state: "pending" | "running" | "stopping" | "stopped" | "failed";
+            failure?: components["schemas"]["PlacementFailure"];
+            /** Format: date-time */
+            createdAt: string;
+            /** Format: date-time */
+            updatedAt: string;
+        };
+        WorkerSessionPage: {
+            sessions: components["schemas"]["WorkerSession"][];
+            pageInfo: components["schemas"]["PageInfo"];
+        };
+        WorkerMessageInput: {
+            message: string;
+        };
+        WorkerMessage: {
+            id: string;
+            sessionId: string;
+            /** @enum {string} */
+            role: "user" | "assistant" | "system";
+            message: string;
+            /** Format: date-time */
+            createdAt: string;
+        };
+        WorkerMessagePage: {
+            messages: components["schemas"]["WorkerMessage"][];
+            pageInfo: components["schemas"]["PageInfo"];
+        };
+        WorkerPullRequestClaimInput: {
+            /** Format: uri */
+            url: string;
+        };
+        WorkerPullRequest: {
+            /** Format: uri */
+            url: string;
+            number: number;
+            /** @enum {string} */
+            state: "draft" | "open" | "merged" | "closed";
+            title: string;
+            headSha?: string;
+        };
+        WorkerPullRequestPage: {
+            pullRequests: components["schemas"]["WorkerPullRequest"][];
+        };
+        WorkerReview: {
+            id: string;
+            /** @enum {string} */
+            status: "queued" | "running" | "passed" | "failed" | "cancelled";
+            /** @enum {string} */
+            verdict?: "approve" | "comment" | "request_changes";
+            summary?: string;
+            /** Format: date-time */
+            createdAt: string;
+            /** Format: date-time */
+            updatedAt: string;
+        };
+        WorkerReviewPage: {
+            reviews: components["schemas"]["WorkerReview"][];
+        };
+        WorkerReviewSubmitInput: {
+            /** @enum {string} */
+            verdict: "approve" | "comment" | "request_changes";
+            summary: string;
+        };
+        WorkerEventInput: {
+            /** @enum {string} */
+            type: "worker.ready" | "chat.assistant_delta" | "agent.activity";
+            payload: {
+                [key: string]: unknown;
+            };
+        };
+        WorkerOKResponse: {
+            /** @constant */
+            ok: true;
+        };
+        WorkerTurn: {
+            /** Format: uuid */
+            id: string;
+            prompt: string;
+            attempt: number;
+            cancelRequested: boolean;
+        };
+        WorkerClaimTurnResponse: {
+            turn: components["schemas"]["WorkerTurn"] | null;
+        };
+        WorkerCancellationResponse: {
+            requested: boolean;
+        };
+        WorkerCompleteTurnInput: {
+            attempt: number;
+            cancelled?: boolean;
+        };
+        WorkerFailTurnInput: {
+            attempt: number;
+            error: string;
+        };
+        WorkerFinishTurnResponse: {
+            /** @constant */
+            ok: true;
+            alreadyFinished: boolean;
+        };
+        WorkerWorkspaceTransportRequest: {
+            /** Format: uuid */
+            id: string;
+            attempt: number;
+            /** @enum {string} */
+            kind: "workspace.list" | "workspace.read" | "workspace.write" | "workspace.diff";
+            payload: {
+                [key: string]: unknown;
+            };
+        };
+        WorkerClaimTransportResponse: {
+            request: components["schemas"]["WorkerWorkspaceTransportRequest"] | null;
+        };
+        WorkerCompleteTransportInput: {
+            attempt: number;
+            response: {
+                [key: string]: unknown;
+            };
+        };
+        WorkerFailTransportInput: {
+            attempt: number;
+            code: string;
+            message: string;
+        };
         WorkerCheckoutGrantInput: {
             /** Format: uuid */
             deliveryId: string;
@@ -934,250 +1034,6 @@ export interface components {
             /** Format: date-time */
             expiresAt: string;
             failure?: components["schemas"]["PlacementFailure"];
-        };
-        AgentConfig: {
-            mode?: string;
-            model?: string;
-            permissions?: string;
-        };
-        ContainerReapConfig: {
-            disabled?: boolean;
-        };
-        RoleOverride: {
-            agent?: string;
-            agentConfig?: components["schemas"]["AgentConfig"];
-        };
-        DomainReviewerConfig: {
-            harness: string;
-        };
-        TrackerIntakeConfig: {
-            assignee?: string;
-            enabled?: boolean;
-            /** @enum {string} */
-            provider?: "github" | "gitlab";
-            repo?: string;
-        };
-        ProjectConfig: {
-            agentConfig?: components["schemas"]["AgentConfig"];
-            agentRules?: string;
-            agentRulesFile?: string;
-            autoReview?: boolean;
-            containerReap?: components["schemas"]["ContainerReapConfig"];
-            defaultBranch?: string;
-            env?: {
-                [key: string]: string;
-            };
-            orchestrator?: components["schemas"]["RoleOverride"];
-            orchestratorRules?: string;
-            postCreate?: string[];
-            reviewers?: components["schemas"]["DomainReviewerConfig"][];
-            sessionPrefix?: string;
-            symlinks?: string[];
-            trackerIntake?: components["schemas"]["TrackerIntakeConfig"];
-            worker?: components["schemas"]["RoleOverride"];
-        };
-        WorkspaceRepo: {
-            gitStatus?: string;
-            name: string;
-            relativePath: string;
-            repo: string;
-        };
-        Project: {
-            agent?: string;
-            config?: components["schemas"]["ProjectConfig"];
-            defaultBranch: string;
-            id: string;
-            /** @enum {string} */
-            kind: "single_repo" | "workspace" | "scratch";
-            name: string;
-            path: string;
-            repo: string;
-            workspaceRepos?: components["schemas"]["WorkspaceRepo"][];
-        };
-        DegradedProject: {
-            id: string;
-            /** @enum {string} */
-            kind: "single_repo" | "workspace" | "scratch";
-            name: string;
-            path: string;
-            resolveError: string;
-        };
-        ProjectOrDegraded: components["schemas"]["Project"] | components["schemas"]["DegradedProject"];
-        AgentSwitch: {
-            /** @enum {string} */
-            agentHandoffStatus: "not_attempted" | "requested" | "received" | "unavailable" | "timed_out" | "failed" | "rejected";
-            /** @enum {string} */
-            errorCode?: "daemon_restart_pre_stop" | "daemon_restart_post_stop" | "daemon_restart_unrecoverable_target" | "daemon_restart_before_delivery" | "delivery_unconfirmed" | "source_session_terminated" | "source_stop_unconfirmed" | "target_binary_missing" | "target_agent_unauthorized" | "target_start_unconfirmed" | "source_restore_unconfirmed" | "request_cancelled" | "source_blocked" | "failed_pre_stop" | "failed_post_stop" | "target_ready_failed" | "delivery_failed" | "switch_failed";
-            fromHarness: string;
-            id: string;
-            /** Format: date-time */
-            requestedAt: string;
-            semanticHandoffIncluded: boolean;
-            sessionId: string;
-            /** @enum {string} */
-            sourceTranscriptStatus?: "not_attempted" | "available" | "unavailable";
-            /** @enum {string} */
-            state: "preparing_handoff" | "stopping_source" | "source_stopped" | "starting_target" | "target_ready" | "delivering_context" | "completed" | "failed";
-            targetHarness: string;
-            /** @enum {string} */
-            targetStartMode?: "fresh" | "resumed";
-            /** Format: date-time */
-            updatedAt: string;
-        };
-        DomainActivity: {
-            /** Format: date-time */
-            lastActivityAt: string;
-            state: string;
-        };
-        SessionPRFacts: {
-            /** @enum {string} */
-            ci: "unknown" | "pending" | "passing" | "failing";
-            /** @enum {string} */
-            mergeability: "unknown" | "mergeable" | "conflicting" | "blocked" | "unstable";
-            number: number;
-            /** @enum {string} */
-            review: "none" | "approved" | "changes_requested" | "review_required";
-            reviewComments: boolean;
-            /** @enum {string} */
-            state: "draft" | "open" | "merged" | "closed";
-            /** Format: date-time */
-            updatedAt: string;
-            url: string;
-        };
-        AttachmentInput: {
-            data: string;
-            mimeType?: string;
-        };
-        SessionPRFailingCheck: {
-            conclusion: string;
-            name: string;
-            /** @enum {string} */
-            status: "failed" | "cancelled";
-            url?: string;
-        };
-        SessionPRCISummary: {
-            autoInjectCI: boolean;
-            failingChecks: components["schemas"]["SessionPRFailingCheck"][];
-            /** @enum {string} */
-            state: "unknown" | "pending" | "passing" | "failing";
-        };
-        SessionPRConflictFile: {
-            path: string;
-            url?: string;
-        };
-        SessionPRMergeabilitySummary: {
-            conflictFiles?: components["schemas"]["SessionPRConflictFile"][];
-            prUrl: string;
-            reasons: string[];
-            /** @enum {string} */
-            state: "unknown" | "mergeable" | "conflicting" | "blocked" | "unstable";
-        };
-        SessionPRReviewCommentLink: {
-            autoInjectReview: boolean;
-            body?: string;
-            file?: string;
-            line?: number;
-            url?: string;
-        };
-        SessionPRUnresolvedReviewer: {
-            count: number;
-            isBot?: boolean;
-            links: components["schemas"]["SessionPRReviewCommentLink"][];
-            reviewUrl?: string;
-            reviewerId: string;
-        };
-        SessionPRReviewEntry: {
-            autoInjectReview: boolean;
-            body?: string;
-            isBot?: boolean;
-            reviewUrl?: string;
-            reviewerId: string;
-            /** Format: date-time */
-            submittedAt: string;
-            /** @enum {string} */
-            verdict: "none" | "approved" | "changes_requested" | "review_required";
-        };
-        SessionPRReviewSummary: {
-            /** @enum {string} */
-            decision: "none" | "approved" | "changes_requested" | "review_required";
-            hasUnresolvedHumanComments: boolean;
-            resolvedBy?: components["schemas"]["SessionPRUnresolvedReviewer"][];
-            reviews?: components["schemas"]["SessionPRReviewEntry"][];
-            unresolvedBy: components["schemas"]["SessionPRUnresolvedReviewer"][];
-        };
-        SessionPRSummary: {
-            additions: number;
-            author: string;
-            changedFiles: number;
-            ci: components["schemas"]["SessionPRCISummary"];
-            /** Format: date-time */
-            ciObservedAt?: string;
-            /** Format: date-time */
-            createdAt?: null | string;
-            deletions: number;
-            headSha: string;
-            htmlUrl?: string;
-            mergeability: components["schemas"]["SessionPRMergeabilitySummary"];
-            number: number;
-            /** Format: date-time */
-            observedAt?: string;
-            /** @enum {string} */
-            provider: "github" | "gitlab";
-            repo: string;
-            review: components["schemas"]["SessionPRReviewSummary"];
-            /** Format: date-time */
-            reviewObservedAt?: string;
-            sourceBranch: string;
-            /** @enum {string} */
-            state: "draft" | "open" | "merged" | "closed";
-            /** Format: date-time */
-            stateChangedAt?: null | string;
-            targetBranch: string;
-            title: string;
-            /** Format: date-time */
-            updatedAt: string;
-            url: string;
-        };
-        ReviewRun: {
-            autoInjectReview: boolean;
-            batchId: string;
-            body: string;
-            /** Format: date-time */
-            createdAt: string;
-            /** Format: date-time */
-            deliveredAt?: null | string;
-            githubReviewId: string;
-            harness: string;
-            id: string;
-            prUrl: string;
-            reviewId: string;
-            sessionId: string;
-            status: string;
-            targetSha: string;
-            /** @enum {string} */
-            triggerSource: "manual" | "auto";
-            verdict: string;
-        };
-        PRReviewState: {
-            latestRun?: components["schemas"]["ReviewRun"];
-            prNumber: number;
-            prUrl: string;
-            previousRun?: components["schemas"]["ReviewRun"];
-            /** @enum {string} */
-            status: "needs_review" | "running" | "up_to_date" | "changes_requested" | "ineligible";
-            targetSha: string;
-            title: string;
-        };
-        WorkspaceFileSummary: {
-            additions: number;
-            binary: boolean;
-            deletions: number;
-            path: string;
-            previousPath?: string;
-            /** Format: int64 */
-            size: number;
-            /** @enum {string} */
-            status: "unmodified" | "modified" | "added" | "deleted" | "renamed";
         };
     };
     responses: {
@@ -1244,76 +1100,19 @@ export interface components {
                 "application/json": components["schemas"]["ErrorEnvelope"];
             };
         };
-        SharedBadRequest: {
-            headers: {
-                [name: string]: unknown;
-            };
-            content?: never;
-        };
-        SharedUnauthorized: {
-            headers: {
-                [name: string]: unknown;
-            };
-            content?: never;
-        };
-        SharedForbidden: {
-            headers: {
-                [name: string]: unknown;
-            };
-            content?: never;
-        };
-        SharedNotFound: {
-            headers: {
-                [name: string]: unknown;
-            };
-            content?: never;
-        };
-        SharedConflict: {
-            headers: {
-                [name: string]: unknown;
-            };
-            content?: never;
-        };
-        SharedUnprocessable: {
-            headers: {
-                [name: string]: unknown;
-            };
-            content?: never;
-        };
-        SharedNotImplemented: {
-            headers: {
-                [name: string]: unknown;
-            };
-            content?: never;
-        };
-        SharedInternalError: {
-            headers: {
-                [name: string]: unknown;
-            };
-            content?: never;
-        };
-        /** @description Canonical shared /api/v1 error envelope. */
-        SharedErrorResponse: {
-            headers: {
-                [name: string]: unknown;
-            };
-            content: {
-                "application/json": components["schemas"]["APIError"];
-            };
-        };
     };
     parameters: {
-        /** @description Hosted /api/v1 tenant selector. Required when the principal belongs to
-         *     multiple organizations. It is never an authority for control-plane
-         *     admin routes, whose orgId path parameter remains authoritative.
-         *      */
-        XAOOrg: string;
         OrgId: string;
-        ProjectId: string;
         SessionId: string;
-        OperationId: string;
+        WorkspaceId: string;
         InstallationId: string;
         IdempotencyKey: string;
+        Cursor: string;
+        Limit: number;
+        Provider: "claude-code" | "codex" | "cursor";
+        TurnId: string;
+        RequestId: string;
+        Attempt: number;
     };
     requestBodies: never;
     headers: never;
@@ -1424,385 +1223,32 @@ export interface operations {
             500: components["responses"]["InternalError"];
         };
     };
-    listHostedProjects: {
-        parameters: {
-            query?: never;
-            header?: {
-                /** @description Hosted /api/v1 tenant selector. Required when the principal belongs to
-                 *     multiple organizations. It is never an authority for control-plane
-                 *     admin routes, whose orgId path parameter remains authoritative.
-                 *      */
-                "X-AO-Org"?: components["parameters"]["XAOOrg"];
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Canonical AO project list. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ListProjectsResponse"];
-                };
-            };
-            400: components["responses"]["SharedBadRequest"];
-            401: components["responses"]["SharedUnauthorized"];
-            403: components["responses"]["SharedForbidden"];
-            500: components["responses"]["SharedInternalError"];
-        };
-    };
-    getHostedProject: {
-        parameters: {
-            query?: never;
-            header?: {
-                /** @description Hosted /api/v1 tenant selector. Required when the principal belongs to
-                 *     multiple organizations. It is never an authority for control-plane
-                 *     admin routes, whose orgId path parameter remains authoritative.
-                 *      */
-                "X-AO-Org"?: components["parameters"]["XAOOrg"];
-            };
-            path: {
-                id: components["parameters"]["ProjectId"];
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Canonical AO project detail. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ProjectGetResponse"];
-                };
-            };
-            400: components["responses"]["SharedBadRequest"];
-            401: components["responses"]["SharedUnauthorized"];
-            403: components["responses"]["SharedForbidden"];
-            404: components["responses"]["SharedNotFound"];
-            500: components["responses"]["SharedInternalError"];
-        };
-    };
-    listHostedSessions: {
+    listWorkspacePlacements: {
         parameters: {
             query?: {
-                project?: string;
-                active?: boolean | null;
-                orchestratorOnly?: boolean | null;
-                fresh?: boolean | null;
+                cursor?: components["parameters"]["Cursor"];
+                limit?: components["parameters"]["Limit"];
             };
-            header?: {
-                /** @description Hosted /api/v1 tenant selector. Required when the principal belongs to
-                 *     multiple organizations. It is never an authority for control-plane
-                 *     admin routes, whose orgId path parameter remains authoritative.
-                 *      */
-                "X-AO-Org"?: components["parameters"]["XAOOrg"];
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Canonical AO session list. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ListSessionsResponse"];
-                };
-            };
-            400: components["responses"]["SharedBadRequest"];
-            401: components["responses"]["SharedUnauthorized"];
-            403: components["responses"]["SharedForbidden"];
-            500: components["responses"]["SharedInternalError"];
-        };
-    };
-    spawnHostedSession: {
-        parameters: {
-            query?: never;
-            header: {
-                /** @description Hosted /api/v1 tenant selector. Required when the principal belongs to
-                 *     multiple organizations. It is never an authority for control-plane
-                 *     admin routes, whose orgId path parameter remains authoritative.
-                 *      */
-                "X-AO-Org"?: components["parameters"]["XAOOrg"];
-                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["SpawnSessionRequest"];
-            };
-        };
-        responses: {
-            /** @description Canonical AO session created. */
-            201: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["SpawnSessionResponse"];
-                };
-            };
-            400: components["responses"]["SharedBadRequest"];
-            401: components["responses"]["SharedUnauthorized"];
-            403: components["responses"]["SharedForbidden"];
-            404: components["responses"]["SharedNotFound"];
-            409: components["responses"]["SharedConflict"];
-            500: components["responses"]["SharedInternalError"];
-        };
-    };
-    getHostedSession: {
-        parameters: {
-            query?: never;
-            header?: {
-                /** @description Hosted /api/v1 tenant selector. Required when the principal belongs to
-                 *     multiple organizations. It is never an authority for control-plane
-                 *     admin routes, whose orgId path parameter remains authoritative.
-                 *      */
-                "X-AO-Org"?: components["parameters"]["XAOOrg"];
-            };
+            header?: never;
             path: {
-                sessionId: components["parameters"]["SessionId"];
+                orgId: components["parameters"]["OrgId"];
             };
             cookie?: never;
         };
         requestBody?: never;
         responses: {
-            /** @description Canonical AO session. */
+            /** @description Tenant-scoped workspace placement page. */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["SessionResponse"];
+                    "application/json": components["schemas"]["WorkspacePlacementPage"];
                 };
             };
-            401: components["responses"]["SharedUnauthorized"];
-            403: components["responses"]["SharedForbidden"];
-            404: components["responses"]["SharedNotFound"];
-            500: components["responses"]["SharedInternalError"];
-        };
-    };
-    sendHostedSessionMessage: {
-        parameters: {
-            query?: never;
-            header: {
-                /** @description Hosted /api/v1 tenant selector. Required when the principal belongs to
-                 *     multiple organizations. It is never an authority for control-plane
-                 *     admin routes, whose orgId path parameter remains authoritative.
-                 *      */
-                "X-AO-Org"?: components["parameters"]["XAOOrg"];
-                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
-            };
-            path: {
-                sessionId: components["parameters"]["SessionId"];
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["SendSessionMessageRequest"];
-            };
-        };
-        responses: {
-            /** @description Canonical AO send result. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["SendSessionMessageResponse"];
-                };
-            };
-            400: components["responses"]["SharedBadRequest"];
-            401: components["responses"]["SharedUnauthorized"];
-            403: components["responses"]["SharedForbidden"];
-            404: components["responses"]["SharedNotFound"];
-            409: components["responses"]["SharedConflict"];
-            500: components["responses"]["SharedInternalError"];
-        };
-    };
-    listHostedSessionPullRequests: {
-        parameters: {
-            query?: never;
-            header?: {
-                /** @description Hosted /api/v1 tenant selector. Required when the principal belongs to
-                 *     multiple organizations. It is never an authority for control-plane
-                 *     admin routes, whose orgId path parameter remains authoritative.
-                 *      */
-                "X-AO-Org"?: components["parameters"]["XAOOrg"];
-            };
-            path: {
-                sessionId: components["parameters"]["SessionId"];
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Canonical AO pull-request facts. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ListSessionPRsResponse"];
-                };
-            };
-            401: components["responses"]["SharedUnauthorized"];
-            403: components["responses"]["SharedForbidden"];
-            404: components["responses"]["SharedNotFound"];
-            500: components["responses"]["SharedInternalError"];
-            501: components["responses"]["SharedNotImplemented"];
-        };
-    };
-    listHostedSessionReviews: {
-        parameters: {
-            query?: never;
-            header?: {
-                /** @description Hosted /api/v1 tenant selector. Required when the principal belongs to
-                 *     multiple organizations. It is never an authority for control-plane
-                 *     admin routes, whose orgId path parameter remains authoritative.
-                 *      */
-                "X-AO-Org"?: components["parameters"]["XAOOrg"];
-            };
-            path: {
-                sessionId: components["parameters"]["SessionId"];
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Canonical AO review state. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ListReviewsResponse"];
-                };
-            };
-            401: components["responses"]["SharedUnauthorized"];
-            403: components["responses"]["SharedForbidden"];
-            422: components["responses"]["SharedUnprocessable"];
-            501: components["responses"]["SharedNotImplemented"];
-        };
-    };
-    listHostedWorkspaceFiles: {
-        parameters: {
-            query?: never;
-            header?: {
-                /** @description Hosted /api/v1 tenant selector. Required when the principal belongs to
-                 *     multiple organizations. It is never an authority for control-plane
-                 *     admin routes, whose orgId path parameter remains authoritative.
-                 *      */
-                "X-AO-Org"?: components["parameters"]["XAOOrg"];
-            };
-            path: {
-                sessionId: components["parameters"]["SessionId"];
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Canonical AO workspace file list. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ListWorkspaceFilesResponse"];
-                };
-            };
-            400: components["responses"]["SharedBadRequest"];
-            401: components["responses"]["SharedUnauthorized"];
-            403: components["responses"]["SharedForbidden"];
-            404: components["responses"]["SharedNotFound"];
-            500: components["responses"]["SharedInternalError"];
-            501: components["responses"]["SharedNotImplemented"];
-        };
-    };
-    readHostedWorkspaceFile: {
-        parameters: {
-            query: {
-                path: string;
-            };
-            header?: {
-                /** @description Hosted /api/v1 tenant selector. Required when the principal belongs to
-                 *     multiple organizations. It is never an authority for control-plane
-                 *     admin routes, whose orgId path parameter remains authoritative.
-                 *      */
-                "X-AO-Org"?: components["parameters"]["XAOOrg"];
-            };
-            path: {
-                sessionId: components["parameters"]["SessionId"];
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Canonical AO workspace file and diff. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["WorkspaceFileResponse"];
-                };
-            };
-            400: components["responses"]["SharedBadRequest"];
-            401: components["responses"]["SharedUnauthorized"];
-            403: components["responses"]["SharedForbidden"];
-            404: components["responses"]["SharedNotFound"];
-            500: components["responses"]["SharedInternalError"];
-            501: components["responses"]["SharedNotImplemented"];
-        };
-    };
-    createSandboxTerminalConnection: {
-        parameters: {
-            query?: never;
-            header: {
-                /** @description Hosted /api/v1 tenant selector. Required when the principal belongs to
-                 *     multiple organizations. It is never an authority for control-plane
-                 *     admin routes, whose orgId path parameter remains authoritative.
-                 *      */
-                "X-AO-Org"?: components["parameters"]["XAOOrg"];
-                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
-            };
-            path: {
-                sessionId: components["parameters"]["SessionId"];
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["TerminalConnectionRequest"];
-            };
-        };
-        responses: {
-            /** @description One-time sandbox mux connection metadata. */
-            201: {
-                headers: {
-                    "Cache-Control"?: "no-store";
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["TerminalConnection"];
-                };
-            };
-            400: components["responses"]["SharedBadRequest"];
-            401: components["responses"]["SharedUnauthorized"];
-            403: components["responses"]["SharedForbidden"];
-            404: components["responses"]["SharedNotFound"];
-            409: components["responses"]["SharedConflict"];
-            500: components["responses"]["SharedInternalError"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            500: components["responses"]["InternalError"];
         };
     };
     createWorkspacePlacement: {
@@ -1828,7 +1274,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["WorkspacePlacementOperation"];
+                    "application/json": components["schemas"]["WorkspacePlacement"];
                 };
             };
             400: components["responses"]["BadRequest"];
@@ -1844,7 +1290,7 @@ export interface operations {
             header?: never;
             path: {
                 orgId: components["parameters"]["OrgId"];
-                operationId: components["parameters"]["OperationId"];
+                workspaceId: components["parameters"]["WorkspaceId"];
             };
             cookie?: never;
         };
@@ -1856,12 +1302,224 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["WorkspacePlacementOperation"];
+                    "application/json": components["schemas"]["WorkspacePlacement"];
                 };
             };
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    deleteWorkspacePlacement: {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                orgId: components["parameters"]["OrgId"];
+                workspaceId: components["parameters"]["WorkspaceId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Workspace deletion accepted. */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspacePlacement"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    resumeWorkspacePlacement: {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                orgId: components["parameters"]["OrgId"];
+                workspaceId: components["parameters"]["WorkspaceId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Workspace resume accepted. */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspacePlacement"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    listProviderConnections: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                orgId: components["parameters"]["OrgId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Redacted organization provider connections. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProviderConnectionList"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    putAgentProviderConnection: {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                orgId: components["parameters"]["OrgId"];
+                provider: components["parameters"]["Provider"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PutAgentProviderConnectionInput"];
+            };
+        };
+        responses: {
+            /** @description Redacted provider connection metadata. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProviderConnectionResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            409: components["responses"]["Conflict"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    deleteAgentProviderConnection: {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                orgId: components["parameters"]["OrgId"];
+                provider: components["parameters"]["Provider"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Provider connection deleted. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    createTerminalTicket: {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                orgId: components["parameters"]["OrgId"];
+                sessionId: components["parameters"]["SessionId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TerminalTicketRequest"];
+            };
+        };
+        responses: {
+            /** @description One-time ticket and direct sandbox mux metadata. */
+            201: {
+                headers: {
+                    "Cache-Control"?: "no-store";
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TerminalTicket"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    consumeTerminalTicket: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TerminalTicketRedemption"];
+            };
+        };
+        responses: {
+            /** @description Scope grant for the exact sandbox, workspace, and session. */
+            200: {
+                headers: {
+                    "Cache-Control"?: "no-store";
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TerminalTicketGrant"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["WorkerUnauthorized"];
+            403: components["responses"]["WorkerForbidden"];
+            409: components["responses"]["Conflict"];
             500: components["responses"]["InternalError"];
         };
     };
@@ -2181,6 +1839,147 @@ export interface operations {
             500: components["responses"]["InternalError"];
         };
     };
+    listWorkerSessions: {
+        parameters: {
+            query?: {
+                cursor?: components["parameters"]["Cursor"];
+                limit?: components["parameters"]["Limit"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Capability-scoped session page. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkerSessionPage"];
+                };
+            };
+            401: components["responses"]["WorkerUnauthorized"];
+            403: components["responses"]["WorkerForbidden"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    createWorkerSession: {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateWorkerSessionInput"];
+            };
+        };
+        responses: {
+            /** @description Worker session creation accepted. */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkerSession"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["WorkerUnauthorized"];
+            403: components["responses"]["WorkerForbidden"];
+            409: components["responses"]["Conflict"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    getWorkerSession: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                sessionId: components["parameters"]["SessionId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Capability-scoped worker session. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkerSession"];
+                };
+            };
+            401: components["responses"]["WorkerUnauthorized"];
+            403: components["responses"]["WorkerForbidden"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    deleteWorkerSession: {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                sessionId: components["parameters"]["SessionId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Worker session deletion accepted. */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkerSession"];
+                };
+            };
+            401: components["responses"]["WorkerUnauthorized"];
+            403: components["responses"]["WorkerForbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    listWorkerSessionMessages: {
+        parameters: {
+            query?: {
+                cursor?: components["parameters"]["Cursor"];
+                limit?: components["parameters"]["Limit"];
+            };
+            header?: never;
+            path: {
+                sessionId: components["parameters"]["SessionId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Capability-scoped message page. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkerMessagePage"];
+                };
+            };
+            401: components["responses"]["WorkerUnauthorized"];
+            403: components["responses"]["WorkerForbidden"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["InternalError"];
+        };
+    };
     sendWorkerSessionMessage: {
         parameters: {
             query?: never;
@@ -2194,25 +1993,59 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["SendSessionMessageRequest"];
+                "application/json": components["schemas"]["WorkerMessageInput"];
             };
         };
         responses: {
-            /** @description Canonical AO send result. */
+            /** @description Message accepted. */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["SendSessionMessageResponse"];
+                    "application/json": components["schemas"]["WorkerMessage"];
                 };
             };
-            400: components["responses"]["SharedBadRequest"];
+            400: components["responses"]["BadRequest"];
             401: components["responses"]["WorkerUnauthorized"];
             403: components["responses"]["WorkerForbidden"];
-            404: components["responses"]["SharedNotFound"];
-            409: components["responses"]["SharedConflict"];
-            500: components["responses"]["SharedInternalError"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    claimWorkerSessionPullRequest: {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                sessionId: components["parameters"]["SessionId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WorkerPullRequestClaimInput"];
+            };
+        };
+        responses: {
+            /** @description Pull request claim result. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkerPullRequest"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["WorkerUnauthorized"];
+            403: components["responses"]["WorkerForbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            500: components["responses"]["InternalError"];
         };
     };
     listWorkerSessionPullRequests: {
@@ -2226,19 +2059,19 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Canonical AO pull-request facts. */
+            /** @description Pull-request facts visible to the capability. */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ListSessionPRsResponse"];
+                    "application/json": components["schemas"]["WorkerPullRequestPage"];
                 };
             };
             401: components["responses"]["WorkerUnauthorized"];
             403: components["responses"]["WorkerForbidden"];
-            404: components["responses"]["SharedNotFound"];
-            500: components["responses"]["SharedInternalError"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["InternalError"];
         };
     };
     listWorkerSessionReviews: {
@@ -2252,19 +2085,273 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Canonical AO review state. */
+            /** @description Review state visible to the capability. */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ListReviewsResponse"];
+                    "application/json": components["schemas"]["WorkerReviewPage"];
                 };
             };
             401: components["responses"]["WorkerUnauthorized"];
             403: components["responses"]["WorkerForbidden"];
-            422: components["responses"]["SharedUnprocessable"];
-            500: components["responses"]["SharedInternalError"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    submitWorkerSessionReview: {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                sessionId: components["parameters"]["SessionId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WorkerReviewSubmitInput"];
+            };
+        };
+        responses: {
+            /** @description Review submitted. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkerReview"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["WorkerUnauthorized"];
+            403: components["responses"]["WorkerForbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    publishWorkerEvent: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WorkerEventInput"];
+            };
+        };
+        responses: {
+            /** @description Event durably accepted. */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkerOKResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["WorkerUnauthorized"];
+            403: components["responses"]["WorkerForbidden"];
+            409: components["responses"]["Conflict"];
+        };
+    };
+    claimWorkerTurn: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Claimed turn or null. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkerClaimTurnResponse"];
+                };
+            };
+            401: components["responses"]["WorkerUnauthorized"];
+            403: components["responses"]["WorkerForbidden"];
+        };
+    };
+    getWorkerTurnCancellation: {
+        parameters: {
+            query: {
+                attempt: components["parameters"]["Attempt"];
+            };
+            header?: never;
+            path: {
+                turnId: components["parameters"]["TurnId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Cancellation state for the fenced attempt. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkerCancellationResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["WorkerUnauthorized"];
+            403: components["responses"]["WorkerForbidden"];
+            409: components["responses"]["Conflict"];
+        };
+    };
+    completeWorkerTurn: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                turnId: components["parameters"]["TurnId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WorkerCompleteTurnInput"];
+            };
+        };
+        responses: {
+            /** @description Fenced completion accepted. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkerFinishTurnResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["WorkerUnauthorized"];
+            403: components["responses"]["WorkerForbidden"];
+            409: components["responses"]["Conflict"];
+        };
+    };
+    failWorkerTurn: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                turnId: components["parameters"]["TurnId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WorkerFailTurnInput"];
+            };
+        };
+        responses: {
+            /** @description Fenced failure accepted. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkerFinishTurnResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["WorkerUnauthorized"];
+            403: components["responses"]["WorkerForbidden"];
+            409: components["responses"]["Conflict"];
+        };
+    };
+    claimWorkerTransport: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Claimed non-terminal transport request or null. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkerClaimTransportResponse"];
+                };
+            };
+            401: components["responses"]["WorkerUnauthorized"];
+            403: components["responses"]["WorkerForbidden"];
+        };
+    };
+    completeWorkerTransport: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                requestId: components["parameters"]["RequestId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WorkerCompleteTransportInput"];
+            };
+        };
+        responses: {
+            /** @description Transport result recorded. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkerOKResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["WorkerUnauthorized"];
+            403: components["responses"]["WorkerForbidden"];
+            409: components["responses"]["Conflict"];
+        };
+    };
+    failWorkerTransport: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                requestId: components["parameters"]["RequestId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WorkerFailTransportInput"];
+            };
+        };
+        responses: {
+            /** @description Transport failure recorded. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkerOKResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["WorkerUnauthorized"];
+            403: components["responses"]["WorkerForbidden"];
+            409: components["responses"]["Conflict"];
         };
     };
     requestWorkerCheckoutGrant: {
