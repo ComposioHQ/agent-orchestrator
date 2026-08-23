@@ -13,7 +13,7 @@ func TestCloudMigrationsAreTenantScoped(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(migrations) != 8 || migrations[0].Version != 1 || migrations[1].Version != 2 || migrations[2].Version != 3 || migrations[3].Version != 4 || migrations[4].Version != 5 || migrations[5].Version != 6 || migrations[6].Version != 7 || migrations[7].Version != 8 {
+	if len(migrations) != 11 || migrations[0].Version != 1 || migrations[1].Version != 2 || migrations[2].Version != 3 || migrations[3].Version != 4 || migrations[4].Version != 5 || migrations[5].Version != 6 || migrations[6].Version != 7 || migrations[7].Version != 8 || migrations[8].Version != 9 || migrations[9].Version != 10 || migrations[10].Version != 11 {
 		t.Fatalf("migrations = %#v", migrations)
 	}
 	migration, err := migrationFS.ReadFile("migrations/00001_auth_foundation.sql")
@@ -34,6 +34,23 @@ func TestCloudMigrationsAreTenantScoped(t *testing.T) {
 		if !strings.Contains(sql, required) {
 			t.Fatalf("migration does not contain %q", required)
 		}
+	}
+	conversationMigration, err := migrationFS.ReadFile("migrations/00010_conversations.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	conversationSQL := string(conversationMigration)
+	for _, required := range []string{"CREATE TABLE ao_conversations", "owner_user_id = ao_current_user_id()", "FORCE ROW LEVEL SECURITY"} {
+		if !strings.Contains(conversationSQL, required) {
+			t.Fatalf("conversation migration does not contain %q", required)
+		}
+	}
+	eventMigration, err := migrationFS.ReadFile("migrations/00011_conversation_provider_events.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(eventMigration), "CREATE TABLE ao_conversation_provider_events") {
+		t.Fatal("provider-event migration does not create archive table")
 	}
 	for _, deferred := range []string{
 		"ao_projects",
@@ -129,6 +146,21 @@ func TestCloudMigrationsAreTenantScoped(t *testing.T) {
 	for _, required := range []string{"ao_current_workspace_id", "workspace_id = ao_current_workspace_id()", "workspace.owner_user_id = ao_current_user_id()"} {
 		if !strings.Contains(workspaceScopeSQL, required) {
 			t.Fatalf("workspace runtime scope migration does not contain %q", required)
+		}
+	}
+	productMigration, err := migrationFS.ReadFile("migrations/00009_control_plane_state.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	productSQL := string(productMigration)
+	for _, required := range []string{
+		"CREATE TABLE ao_projects", "CREATE TABLE ao_workspace_repos",
+		"CREATE TABLE ao_sessions", "CREATE TABLE ao_session_worktrees",
+		"ALTER TABLE ao_projects FORCE ROW LEVEL SECURITY",
+		"ALTER TABLE ao_sessions FORCE ROW LEVEL SECURITY",
+	} {
+		if !strings.Contains(productSQL, required) {
+			t.Fatalf("product migration does not contain %q", required)
 		}
 	}
 
