@@ -722,7 +722,7 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	// Resolve the effective agent config (project base + role override + spawn
 	// override) and validate the model before any durable state is created. A
 	// model the harness cannot honor should not leave a seed row behind.
-	agentConfig := applySpawnAgentConfig(effectiveAgentConfig(cfg.Kind, project.Config), cfg.AgentConfig)
+	agentConfig := applySpawnAgentConfig(effectiveAgentConfig(cfg.Harness, cfg.Kind, project.Config), cfg.AgentConfig)
 	if err := validateSpawnModel(cfg.Harness, agentConfig.Model); err != nil {
 		return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn: %w: %s", ErrUnsupportedModel, err.Error())
 	}
@@ -1251,17 +1251,33 @@ func roleConfigName(kind domain.SessionKind) string {
 
 // effectiveAgentConfig merges the role override's agent config over the
 // project's base agent config; set override fields win.
-func effectiveAgentConfig(kind domain.SessionKind, cfg domain.ProjectConfig) ports.AgentConfig {
+//
+// The override's Model and Mode are chosen FOR its pinned harness. When the
+// session resolves to a different harness — an explicit spawn harness, a
+// restored switched continuation, or an agent-switch target — they are skipped:
+// launching one harness with another's model ids fails at launch (the bug that
+// let a codex/gpt role override break explicit claude-code spawns). Permissions
+// stay: they are not harness-specific. An override with no pinned harness keeps
+// its old apply-unconditionally behavior.
+func effectiveAgentConfig(harness domain.AgentHarness, kind domain.SessionKind, cfg domain.ProjectConfig) ports.AgentConfig {
 	merged := cfg.AgentConfig
-	override := roleOverride(kind, cfg).AgentConfig
-	if override.Model != "" {
-		merged.Model = override.Model
+	override := roleOverride(kind, cfg)
+	if override.Harness == "" || override.Harness == harness {
+		if override.AgentConfig.Model != "" {
+			merged.Model = override.AgentConfig.Model
+		}
+		if override.AgentConfig.Mode != "" {
+			merged.Mode = override.AgentConfig.Mode
+		}
 	}
-	if override.Mode != "" {
-		merged.Mode = override.Mode
-	}
-	if override.Permissions != "" {
-		merged.Permissions = override.Permissions
+	// Permissions are harness-agnostic — PermissionMode is an abstract enum that
+	// each adapter maps onto its own agent's native approval flags — so they are
+	// applied outside the harness gate. Returning early on a mismatch would
+	// silently substitute the project baseline for the role's permission, and
+	// one direction of that substitution (role "default" over a baseline of
+	// "bypass-permissions") is a privilege escalation.
+	if override.AgentConfig.Permissions != "" {
+		merged.Permissions = override.AgentConfig.Permissions
 	}
 	return merged
 }
@@ -1917,7 +1933,7 @@ func (m *Manager) relaunchSessionWithPolicy(ctx context.Context, operation strin
 
 	// Restore re-applies the project's resolved agent config so a configured
 	// model/permissions carry across a restore, matching fresh spawn.
-	agentConfig := effectiveAgentConfig(rec.Kind, project.Config)
+	agentConfig := effectiveAgentConfig(rec.Harness, rec.Kind, project.Config)
 	env, browserCapabilityVerifier, err := m.launchRuntimeEnv(rec.ID, rec.ProjectID, rec.IssueID, project.Config.Env)
 	if err != nil {
 		return RestoreResult{}, fmt.Errorf("%s %s: browser capability: %w", operation, rec.ID, err)
