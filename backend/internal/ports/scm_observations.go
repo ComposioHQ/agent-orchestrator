@@ -75,13 +75,11 @@ type SCMObservation struct {
 	// Mergeability contains AO's mergeability verdict and blockers.
 	Mergeability SCMMergeabilityObservation
 
-	// Error carries a transient per-observation failure from the multi-provider
-	// dispatcher (or any composite provider) when one provider in a batch fails
-	// while others succeed. It is NOT durable state: the observer must inspect
-	// it before persistence to route rate-limit errors to per-provider cooldown
-	// and non-rate-limit errors to refresh-incomplete, then nil it out so the
-	// storage layer never sees provider-error classification. A non-nil Error
-	// always implies Fetched=false.
+	// Error classifies a Fetched=false result, including a permanent not-found
+	// miss or a transient per-observation failure from a composite provider. It
+	// is NOT durable state: callers inspect it before persistence, then discard
+	// it so the storage layer never sees provider-error classification. A
+	// non-nil Error always implies Fetched=false.
 	Error error
 
 	// Changed marks which semantic buckets changed compared with the DB snapshot.
@@ -280,6 +278,8 @@ type SCMReviewThreadObservation struct {
 type SCMReviewCommentObservation struct {
 	// ID is the provider's stable review comment identifier.
 	ID string
+	// ReviewID is the provider's stable identifier for the parent review.
+	ReviewID string
 	// Author is the provider login/name of the commenter.
 	Author string
 	// Body is the review comment text.

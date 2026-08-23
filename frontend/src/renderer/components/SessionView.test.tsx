@@ -306,11 +306,17 @@ vi.mock("./SessionFilesView", () => ({
 	SessionFilesView: ({
 		isMaximized,
 		onToggleMaximized,
+		revealFile,
 	}: {
 		isMaximized?: boolean;
 		onToggleMaximized?: (next: boolean) => void;
+		revealFile?: { line?: number; path: string };
 	}) => (
-		<button type="button" onClick={() => onToggleMaximized?.(!isMaximized)}>
+		<button
+			data-reveal-file={revealFile ? `${revealFile.path}:${revealFile.line ?? ""}` : undefined}
+			type="button"
+			onClick={() => onToggleMaximized?.(!isMaximized)}
+		>
 			{isMaximized ? "files center" : "files rail"}
 		</button>
 	),
@@ -356,12 +362,14 @@ vi.mock("./SessionInspector", () => ({
 		filesView,
 		isInspectorVisible = true,
 		onOpenFiles,
+		onOpenReviewFile,
 		onToggleBrowserPopOut,
 		view,
 	}: {
 		filesView?: ReactNode;
 		isInspectorVisible?: boolean;
 		onOpenFiles?: () => void;
+		onOpenReviewFile?: (target: { line?: number; path: string }) => void;
 		onToggleBrowserPopOut?: () => void;
 		view?: string;
 	}) => {
@@ -373,6 +381,9 @@ vi.mock("./SessionInspector", () => ({
 				</button>
 				<button type="button" onClick={onOpenFiles}>
 					open files
+				</button>
+				<button type="button" onClick={() => onOpenReviewFile?.({ path: "src/panel.tsx", line: 42 })}>
+					view review file
 				</button>
 				{view === "files" ? filesView : null}
 			</div>
@@ -1277,6 +1288,18 @@ describe("SessionView", () => {
 		expect(screen.getByText("terminal center")).toBeInTheDocument();
 	});
 
+	it("opens a review file target in the Files inspector", () => {
+		act(() => useUiStore.getState().setInspectorOpen("sess-1", true));
+		render(<SessionView sessionId="sess-1" />);
+
+		fireEvent.click(screen.getByRole("button", { name: "view review file" }));
+
+		const files = within(screen.getByTestId("panel-inspector")).getByRole("button", { name: "files rail" });
+		expect(files).toHaveAttribute("data-reveal-file", "src/panel.tsx:42");
+		expect(useUiStore.getState().inspectorSessions["sess-1"]?.view).toBe("files");
+		expect(screen.queryByRole("button", { name: "files center" })).not.toBeInTheDocument();
+	});
+
 	it("maximizes files over the whole app window and returns to the rail", () => {
 		act(() => useUiStore.getState().setInspectorOpen("sess-1", true));
 		render(<SessionView sessionId="sess-1" />);
@@ -1309,22 +1332,23 @@ describe("SessionView", () => {
 		expect(document.querySelector(".files-popout-overlay")).not.toHaveClass("files-popout-overlay--mac-windowed");
 	});
 
-	it("opens Browser for a new live `ao preview` target", () => {
+	it("badges Browser as unseen for a new live `ao preview` target instead of auto-opening it", () => {
 		const worker = workerSession("sess-1");
 		const { rerender } = render(<SessionView sessionId="sess-1" />);
+		const viewBefore = inspectorButton().getAttribute("data-view");
+		const openBefore = inspectorOpen("sess-1");
 
 		worker.previewUrl = "http://localhost:5173/";
 		worker.previewRevision = 1;
 		rerender(<SessionView sessionId="sess-1" />);
 
 		expect(screen.getByText("terminal center")).toBeInTheDocument();
-		expect(inspectorOpen("sess-1")).toBe(true);
-		expect(inspectorButton()).toHaveAttribute("data-view", "browser");
-		expect(browserUnseen("sess-1")).toBe(false);
-		expect(browserViewOptions.current).toMatchObject({ active: true });
+		expect(inspectorOpen("sess-1")).toBe(openBefore);
+		expect(inspectorButton()).toHaveAttribute("data-view", viewBefore);
+		expect(browserUnseen("sess-1")).toBe(true);
 	});
 
-	it("opens a collapsed inspector when a new live preview arrives", () => {
+	it("badges Browser as unseen without opening a collapsed inspector when a new live preview arrives", () => {
 		const worker = workerSession("sess-1");
 		act(() => useUiStore.getState().setInspectorOpen("sess-1", false));
 		const { rerender } = render(<SessionView sessionId="sess-1" />);
@@ -1333,14 +1357,12 @@ describe("SessionView", () => {
 		worker.previewRevision = 1;
 		rerender(<SessionView sessionId="sess-1" />);
 
-		expect(inspectorOpen("sess-1")).toBe(true);
-		expect(inspectorButton()).toHaveAttribute("data-view", "browser");
-		expect(browserUnseen("sess-1")).toBe(false);
-		expect(browserViewOptions.current).toMatchObject({ active: true });
-		expect(screen.getByTestId("panel-inspector")).toHaveAttribute("data-state", "expanded");
+		expect(inspectorOpen("sess-1")).toBe(false);
+		expect(inspectorButton()).toHaveAttribute("data-view", "summary");
+		expect(browserUnseen("sess-1")).toBe(true);
 	});
 
-	it("keeps Summary on session entry and opens Browser for later preview work", () => {
+	it("keeps Summary on session entry and badges Browser as unseen for later preview work", () => {
 		const secondWorker = workerSession("sess-2");
 		secondWorker.previewUrl = "http://localhost:5173/";
 		secondWorker.previewRevision = 1;
@@ -1357,9 +1379,8 @@ describe("SessionView", () => {
 
 		secondWorker.previewRevision = 2;
 		rerender(<SessionView sessionId="sess-2" />);
-		expect(inspectorOpen("sess-2")).toBe(true);
-		expect(inspectorButton()).toHaveAttribute("data-view", "browser");
-		expect(browserUnseen("sess-2")).toBe(false);
+		expect(inspectorButton()).toHaveAttribute("data-view", "summary");
+		expect(browserUnseen("sess-2")).toBe(true);
 	});
 
 	it("keeps Summary selected when preview content arrives with the async workspace response", () => {
@@ -1452,8 +1473,8 @@ describe("SessionView", () => {
 		worker.previewUrl = "http://localhost:5173/";
 		worker.previewRevision = 1;
 		rerender(<SessionView sessionId="sess-1" />);
-		expect(inspectorButton()).toHaveAttribute("data-view", "browser");
-		expect(browserUnseen("sess-1")).toBe(false);
+		expect(inspectorButton()).toHaveAttribute("data-view", "summary");
+		expect(browserUnseen("sess-1")).toBe(true);
 
 		act(() => {
 			useUiStore.getState().setInspectorView("sess-1", "summary");
@@ -1472,9 +1493,9 @@ describe("SessionView", () => {
 		worker.previewRevision = 3;
 		rerender(<SessionView sessionId="sess-1" />);
 
-		expect(inspectorOpen("sess-1")).toBe(true);
-		expect(inspectorButton()).toHaveAttribute("data-view", "browser");
-		expect(browserUnseen("sess-1")).toBe(false);
+		expect(inspectorOpen("sess-1")).toBe(false);
+		expect(inspectorButton()).toHaveAttribute("data-view", "summary");
+		expect(browserUnseen("sess-1")).toBe(true);
 	});
 
 	// Regression: a terminated session's `previewUrl` is a stale DB fact —

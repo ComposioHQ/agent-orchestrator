@@ -58,6 +58,8 @@ export function SessionChatSurface({
 	onOpenShell,
 	openingShell,
 	shellError,
+	onOpenFiles,
+	onOpenFile,
 	headerActions,
 	controllerTransitioning,
 }: {
@@ -78,6 +80,10 @@ export function SessionChatSurface({
 	onOpenShell?: () => void;
 	openingShell?: boolean;
 	shellError?: string;
+	/** Opens the Files inspector from a turn's changed-files Review control. */
+	onOpenFiles?: () => void;
+	/** Opens the Files inspector focused on one changed path. */
+	onOpenFile?: (path: string) => void;
 	headerActions?: ReactNode;
 	/** The target controller is being installed by an interface handoff. */
 	controllerTransitioning?: boolean;
@@ -199,8 +205,9 @@ export function SessionChatSurface({
 		switchPresentation?.lockAgentTerminal && !switchPresentation.allowSourceInput,
 	);
 	const renderShellFallback = Boolean(shellTarget && session);
+	const snapshotSessionMismatch = Boolean(snapshot && snapshot.sessionId !== session.id);
 	const renderSnapshot =
-		snapshot ??
+		(snapshotSessionMismatch ? undefined : snapshot) ??
 		(renderShellFallback
 			? unavailableConversationSnapshot(session)
 			: undefined);
@@ -247,6 +254,7 @@ export function SessionChatSurface({
 	return (
 		<div className="relative h-full min-h-0">
 			<ChatWorkspace
+				key={session.id}
 				snapshot={renderSnapshot}
 				agentInputDisabled={switchLocksChat || switchSelectorOpen}
 				onLinkOpen={openLinkInBrowser}
@@ -306,6 +314,8 @@ export function SessionChatSurface({
 				onRollback={commands.rollback}
 				rollbackPending={commands.rollbackPending}
 				rollbackError={commands.rollbackError}
+				onOpenFiles={onOpenFiles}
+				onOpenFile={onOpenFile}
 				onEditMessage={commands.editMessage}
 				editMessagePending={commands.editMessagePending}
 				editMessageError={commands.editMessageError}
@@ -322,11 +332,6 @@ export function SessionChatSurface({
 				// covers the window before the controller reports, and it is the last word
 				// afterwards, since the capability is a property of the driver.
 				onSteer={can(renderSnapshot, "steer") && !commands.steerUnsupported ? commands.steer : undefined}
-				onPromoteQueuedTurn={
-					can(renderSnapshot, "steer") && !commands.steerUnsupported
-						? commands.promoteQueuedTurn
-						: undefined
-				}
 				steerPending={commands.steerPending}
 				steerRefusal={commands.steerRefusal}
 				onReloadMcpServers={

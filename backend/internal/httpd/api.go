@@ -25,6 +25,7 @@ type APIDeps struct {
 	Agents             controllers.AgentCatalog
 	Projects           projectsvc.Manager
 	Sessions           controllers.SessionService
+	DesktopWorkspaces  controllers.DesktopWorkspaceService
 	Activity           controllers.ActivityRecorder
 	UsageHooks         controllers.UsageHookRecorder
 	UsageSummary       controllers.UsageSummaryService
@@ -48,6 +49,8 @@ type APIDeps struct {
 	Browser             controllers.BrowserService
 	PreviewServer       controllers.ManagedPreviewServer
 	SessionCapabilities controllers.SessionCapabilityValidator
+	SystemChecks        controllers.SystemChecker
+	Installer           controllers.Installer
 
 	// Presence tracks which mobile devices are currently running the app.
 	// Nil disables presence tracking (the roster then reports every device offline).
@@ -93,6 +96,7 @@ type API struct {
 	agents        *controllers.AgentsController
 	projects      *controllers.ProjectsController
 	sessions      *controllers.SessionsController
+	desktop       *controllers.DesktopWorkspaceController
 	usage         *controllers.UsageController
 	prs           *controllers.PRsController
 	reviews       *controllers.ReviewsController
@@ -104,6 +108,8 @@ type API struct {
 	settings      *controllers.SettingsController
 	dev           *controllers.DevController
 	browser       *controllers.BrowserController
+	system        *controllers.SystemController
+	systemInstall *controllers.SystemInstallController
 	events        *EventsController
 }
 
@@ -128,6 +134,7 @@ func NewAPI(cfg config.Config, deps APIDeps) *API {
 			PreviewServer: deps.PreviewServer,
 			Capabilities:  deps.SessionCapabilities,
 		},
+		desktop:       &controllers.DesktopWorkspaceController{Svc: deps.DesktopWorkspaces},
 		usage:         &controllers.UsageController{Svc: deps.UsageSummary},
 		prs:           &controllers.PRsController{Svc: deps.PRs},
 		reviews:       &controllers.ReviewsController{Svc: deps.Reviews},
@@ -139,6 +146,8 @@ func NewAPI(cfg config.Config, deps APIDeps) *API {
 		settings:      &controllers.SettingsController{Svc: deps.Settings},
 		dev:           &controllers.DevController{Import: deps.DevImport},
 		browser:       &controllers.BrowserController{Svc: deps.Browser},
+		system:        &controllers.SystemController{Checks: deps.SystemChecks},
+		systemInstall: &controllers.SystemInstallController{Installer: deps.Installer},
 		events:        &EventsController{Source: deps.CDC, Live: deps.Events},
 	}
 }
@@ -160,6 +169,7 @@ func (a *API) Register(root chi.Router) {
 			a.agents.Register(r)
 			a.projects.Register(r)
 			a.sessions.Register(r)
+			a.desktop.Register(r)
 			a.usage.Register(r)
 			a.prs.Register(r)
 			a.reviews.Register(r)
@@ -171,6 +181,8 @@ func (a *API) Register(root chi.Router) {
 			a.settings.Register(r)
 			a.dev.Register(r)
 			a.browser.Register(r)
+			a.system.Register(r)
+			a.systemInstall.Register(r)
 			// Sibling REST controllers plug in here.
 		})
 		// Long-lived streams intentionally bypass the REST timeout middleware.

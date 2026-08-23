@@ -35,6 +35,13 @@ const (
 	ConversationScopeProject ConversationScope = "project"
 )
 
+// ConversationContextResetProviderItemID returns the durable identity of the
+// hidden activity that separates a fresh project orchestrator context from the
+// project conversation history that came before it.
+func ConversationContextResetProviderItemID(session SessionID) string {
+	return "ao-context-reset:" + string(session)
+}
+
 // TurnState is the lifecycle of one request and the agent work that follows it.
 type TurnState string
 

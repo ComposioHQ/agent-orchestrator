@@ -430,6 +430,46 @@ describe("telemetry sanitizers", () => {
 		).toEqual({});
 	});
 
+	it("keeps a hashed project id, shared editor id, and target kind on open_in_editor_requested", async () => {
+		const props = await sanitizeRendererProperties("ao.renderer.open_in_editor_requested", {
+			project_id: "demo-project",
+			editor_id: "vscode",
+			target_kind: "editor",
+		});
+		expect(Object.keys(props).sort()).toEqual(["editor_id", "project_id_hash", "target_kind"]);
+		expect(props.editor_id).toBe("vscode");
+		expect(props.target_kind).toBe("editor");
+
+		const bogus = await sanitizeRendererProperties("ao.renderer.open_in_editor_requested", {
+			project_id: "demo-project",
+			// Not a real editor id — must not be forwarded as-is.
+			editor_id: "/Users/alice/bin/notepad",
+			target_kind: "everything",
+		});
+		expect(bogus).not.toHaveProperty("editor_id");
+		expect(bogus).not.toHaveProperty("target_kind");
+	});
+
+	it("keeps the editor id and target kind on open_in_editor_succeeded", async () => {
+		const props = await sanitizeRendererProperties("ao.renderer.open_in_editor_succeeded", {
+			project_id: "demo-project",
+			editor_id: "cursor",
+			target_kind: "editor",
+		});
+		expect(Object.keys(props).sort()).toEqual(["editor_id", "project_id_hash", "target_kind"]);
+		expect(props.editor_id).toBe("cursor");
+		expect(props.target_kind).toBe("editor");
+	});
+
+	it("reports open_in_editor_failed with only the hashed project id", async () => {
+		const props = await sanitizeRendererProperties("ao.renderer.open_in_editor_failed", {
+			project_id: "demo-project",
+			// Never part of the contract; must not leak through.
+			error: "EDITOR_LAUNCH_FAILED: Could not launch VS Code",
+		});
+		expect(Object.keys(props)).toEqual(["project_id_hash"]);
+	});
+
 	it("whitelists coarse daemon failure fields and drops messages", async () => {
 		const props = await sanitizeRendererProperties("ao.renderer.daemon_failure", {
 			daemon_state: "error",

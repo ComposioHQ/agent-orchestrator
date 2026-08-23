@@ -384,6 +384,9 @@ func (s *Store) ApplyUsageChunk(
 		}
 		insertedEvent := false
 		for _, ev := range events {
+			if err := validateUsageEvent(source.Harness, ev); err != nil {
+				return err
+			}
 			existing, err := q.GetModelUsageEventByKey(ctx, gen.GetModelUsageEventByKeyParams{
 				BindingID:      source.BindingID,
 				SourceEventKey: ev.SourceEventKey,
@@ -395,9 +398,23 @@ func (s *Store) ApplyUsageChunk(
 				if !usageEventMatches(existing, ev) {
 					return fmt.Errorf("%w: binding %d event %q", domain.ErrUsageSourceEventConflict, source.BindingID, ev.SourceEventKey)
 				}
+				detailsConflict, needsDetailEnrichment := usageEventDetailReconciliation(existing, ev)
+				if detailsConflict {
+					return fmt.Errorf("%w: binding %d event %q provider details", domain.ErrUsageSourceEventConflict, source.BindingID, ev.SourceEventKey)
+				}
+				if needsDetailEnrichment {
+					if err := upsertUsageEventDetails(ctx, q, existing.ID, ev); err != nil {
+						return err
+					}
+					insertedEvent = true
+				}
 				continue
 			}
-			if err := q.InsertModelUsageEvent(ctx, usageEventInsertParams(source, ev)); err != nil {
+			eventID, err := q.InsertModelUsageEvent(ctx, usageEventInsertParams(source, ev))
+			if err != nil {
+				return err
+			}
+			if err := upsertUsageEventDetails(ctx, q, eventID, ev); err != nil {
 				return err
 			}
 			insertedEvent = true
@@ -461,7 +478,8 @@ func (s *Store) ListCompactSessionUsage(ctx context.Context, projectID domain.Pr
 	out := make([]domain.CompactSessionUsage, 0, len(rows))
 	for _, row := range rows {
 		out = append(out, domain.CompactSessionUsage{
-			SessionID: row.SessionID, TotalTokens: row.TotalTokens, Incomplete: row.Incomplete != 0,
+			SessionID: row.SessionID, ProcessedTokens: int64PtrWhen(row.ProcessedTokens, row.ProcessedTokensKnown != 0),
+			Incomplete: row.Incomplete != 0,
 		})
 	}
 	return out, nil
@@ -550,44 +568,162 @@ func usageSourceInsertParams(rec domain.UsageSourceRecord) gen.InsertUsageSource
 
 func usageEventInsertParams(source gen.GetUsageSourceWithBindingAndSessionRow, ev domain.ModelUsageEvent) gen.InsertModelUsageEventParams {
 	return gen.InsertModelUsageEventParams{
-		BindingID:           source.BindingID,
-		UsageSourceID:       source.SourceID,
-		ModelID:             ev.ModelID,
-		InputTokens:         ev.Tokens.InputTokens,
-		UncachedInputTokens: ev.Tokens.UncachedInputTokens,
-		CacheReadTokens:     ev.Tokens.CacheReadTokens,
-		CacheWriteTokens:    ev.Tokens.CacheWriteTokens,
-		OutputTokens:        ev.Tokens.OutputTokens,
-		ReasoningTokens:     ptrInt64ToNull(ev.Tokens.ReasoningTokens),
-		SourceEventKey:      ev.SourceEventKey,
+		BindingID:               source.BindingID,
+		UsageSourceID:           source.SourceID,
+		ProviderID:              string(ev.ProviderID),
+		ModelID:                 ev.ModelID,
+		InputTokens:             ptrInt64ToNull(ev.Tokens.InputTokens),
+		InputProvenance:         string(ev.Tokens.Provenance.InputTokens),
+		CachedInputTokens:       ptrInt64ToNull(ev.Tokens.CachedInputTokens),
+		CachedInputProvenance:   string(ev.Tokens.Provenance.CachedInputTokens),
+		UncachedInputTokens:     ptrInt64ToNull(ev.Tokens.UncachedInputTokens),
+		UncachedInputProvenance: string(ev.Tokens.Provenance.UncachedInputTokens),
+		OutputTokens:            ptrInt64ToNull(ev.Tokens.OutputTokens),
+		OutputProvenance:        string(ev.Tokens.Provenance.OutputTokens),
+		SourceEventKey:          ev.SourceEventKey,
+		CreatedAt:               sql.NullTime{Time: ev.CreatedAt.UTC(), Valid: !ev.CreatedAt.IsZero()},
 	}
 }
 
 func usageEventMatches(existing gen.GetModelUsageEventByKeyRow, event domain.ModelUsageEvent) bool {
-	reasoning := ptrInt64ToNull(event.Tokens.ReasoningTokens)
-	return existing.ModelID == event.ModelID &&
-		existing.InputTokens == event.Tokens.InputTokens &&
-		existing.UncachedInputTokens == event.Tokens.UncachedInputTokens &&
-		existing.CacheReadTokens == event.Tokens.CacheReadTokens &&
-		existing.CacheWriteTokens == event.Tokens.CacheWriteTokens &&
-		existing.OutputTokens == event.Tokens.OutputTokens &&
-		existing.ReasoningTokens == reasoning
+	return existing.ProviderID == string(event.ProviderID) && existing.ModelID == event.ModelID &&
+		existing.InputTokens == ptrInt64ToNull(event.Tokens.InputTokens) &&
+		existing.InputProvenance == string(event.Tokens.Provenance.InputTokens) &&
+		existing.CachedInputTokens == ptrInt64ToNull(event.Tokens.CachedInputTokens) &&
+		existing.CachedInputProvenance == string(event.Tokens.Provenance.CachedInputTokens) &&
+		existing.UncachedInputTokens == ptrInt64ToNull(event.Tokens.UncachedInputTokens) &&
+		existing.UncachedInputProvenance == string(event.Tokens.Provenance.UncachedInputTokens) &&
+		existing.OutputTokens == ptrInt64ToNull(event.Tokens.OutputTokens) &&
+		existing.OutputProvenance == string(event.Tokens.Provenance.OutputTokens)
 }
 
 func usageAggregateFromGen(row gen.AggregateUsageBySessionHarnessModelRow) domain.UsageModelAggregate {
-	return domain.UsageModelAggregate{
+	aggregate := domain.UsageModelAggregate{
 		Harness: row.Harness,
 		ModelID: row.ModelID,
 		Tokens: domain.UsageTokenMetrics{
-			InputTokens:         row.InputTokens,
-			UncachedInputTokens: row.UncachedInputTokens,
-			CacheReadTokens:     row.CacheReadTokens,
-			CacheWriteTokens:    row.CacheWriteTokens,
-			OutputTokens:        row.OutputTokens,
-			ReasoningTokens:     int64PtrWhen(row.ReasoningTokens, row.ReasoningEventCount > 0),
+			InputTokens:         int64PtrWhen(row.InputTokens, row.InputProvenance != string(domain.UsageMetricUnknown)),
+			CachedInputTokens:   int64PtrWhen(row.CachedInputTokens, row.CachedInputProvenance != string(domain.UsageMetricUnknown)),
+			UncachedInputTokens: int64PtrWhen(row.UncachedInputTokens, row.UncachedInputProvenance != string(domain.UsageMetricUnknown)),
+			OutputTokens:        int64PtrWhen(row.OutputTokens, row.OutputProvenance != string(domain.UsageMetricUnknown)),
+			Provenance: domain.UsageMetricProvenanceSet{
+				InputTokens:         domain.UsageMetricProvenance(row.InputProvenance),
+				CachedInputTokens:   domain.UsageMetricProvenance(row.CachedInputProvenance),
+				UncachedInputTokens: domain.UsageMetricProvenance(row.UncachedInputProvenance),
+				OutputTokens:        domain.UsageMetricProvenance(row.OutputProvenance),
+			},
 		},
-		ReasoningEventCount: row.ReasoningEventCount,
 	}
+	if row.OpenaiEventCount > 0 {
+		aggregate.ProviderDetails.OpenAI = &domain.OpenAIUsageDetails{
+			ReasoningOutputTokens: int64PtrWhen(row.OpenaiReasoningOutputTokens, row.OpenaiReasoningOutputEventCount == row.OpenaiEventCount),
+			CacheWriteInputTokens: int64PtrWhen(row.OpenaiCacheWriteInputTokens, row.OpenaiCacheWriteInputEventCount == row.OpenaiEventCount),
+		}
+	}
+	if row.AnthropicEventCount > 0 {
+		aggregate.ProviderDetails.Anthropic = &domain.AnthropicUsageDetails{
+			DirectUncachedInputTokens:  int64PtrWhen(row.AnthropicDirectUncachedInputTokens, row.AnthropicDirectUncachedInputEventCount == row.AnthropicEventCount),
+			CacheCreationInputTokens:   int64PtrWhen(row.AnthropicCacheCreationInputTokens, row.AnthropicCacheCreationInputEventCount == row.AnthropicEventCount),
+			CacheCreation5mInputTokens: int64PtrWhen(row.AnthropicCacheCreation5mInputTokens, row.AnthropicCacheCreation5mInputEventCount == row.AnthropicEventCount),
+			CacheCreation1hInputTokens: int64PtrWhen(row.AnthropicCacheCreation1hInputTokens, row.AnthropicCacheCreation1hInputEventCount == row.AnthropicEventCount),
+		}
+	}
+	return aggregate
+}
+
+func validateUsageEvent(harness domain.AgentHarness, event domain.ModelUsageEvent) error {
+	expectedProvider := domain.UsageProviderAnthropic
+	if harness == domain.HarnessCodex {
+		expectedProvider = domain.UsageProviderOpenAI
+	}
+	if event.ProviderID != expectedProvider || event.ModelID == "" || event.SourceEventKey == "" {
+		return fmt.Errorf("invalid usage event identity for %s", harness)
+	}
+	metrics := event.Tokens
+	if !validUsageMetric(metrics.InputTokens, metrics.Provenance.InputTokens) ||
+		!validUsageMetric(metrics.CachedInputTokens, metrics.Provenance.CachedInputTokens) ||
+		!validUsageMetric(metrics.UncachedInputTokens, metrics.Provenance.UncachedInputTokens) ||
+		!validUsageMetric(metrics.OutputTokens, metrics.Provenance.OutputTokens) {
+		return errors.New("invalid usage event metric provenance")
+	}
+	if metrics.InputTokens != nil && metrics.CachedInputTokens != nil && metrics.UncachedInputTokens != nil &&
+		*metrics.InputTokens != *metrics.CachedInputTokens+*metrics.UncachedInputTokens {
+		return errors.New("usage input does not equal cached plus uncached input")
+	}
+	if event.ProviderID == domain.UsageProviderOpenAI && (event.ProviderDetails.OpenAI == nil || event.ProviderDetails.Anthropic != nil) {
+		return errors.New("invalid OpenAI usage details")
+	}
+	if event.ProviderID == domain.UsageProviderAnthropic && (event.ProviderDetails.Anthropic == nil || event.ProviderDetails.OpenAI != nil) {
+		return errors.New("invalid Anthropic usage details")
+	}
+	return nil
+}
+
+func validUsageMetric(value *int64, provenance domain.UsageMetricProvenance) bool {
+	if value == nil {
+		return provenance == domain.UsageMetricUnknown
+	}
+	return *value >= 0 && provenance != domain.UsageMetricUnknown &&
+		(provenance == domain.UsageMetricReported || provenance == domain.UsageMetricDerived || provenance == domain.UsageMetricUnsupported)
+}
+
+func upsertUsageEventDetails(ctx context.Context, q *gen.Queries, eventID int64, event domain.ModelUsageEvent) error {
+	if details := event.ProviderDetails.OpenAI; details != nil {
+		rows, err := q.UpsertOpenAIUsageEventDetails(ctx, gen.UpsertOpenAIUsageEventDetailsParams{
+			EventID: eventID, OpenaiReasoningOutputTokens: ptrInt64ToNull(details.ReasoningOutputTokens),
+			OpenaiCacheWriteInputTokens: ptrInt64ToNull(details.CacheWriteInputTokens),
+			OpenaiReportedTotalTokens:   ptrInt64ToNull(details.ReportedTotalTokens),
+		})
+		if err != nil {
+			return err
+		}
+		if rows == 0 {
+			return fmt.Errorf("%w: OpenAI provider details", domain.ErrUsageSourceEventConflict)
+		}
+		return nil
+	}
+	details := event.ProviderDetails.Anthropic
+	rows, err := q.UpsertAnthropicUsageEventDetails(ctx, gen.UpsertAnthropicUsageEventDetailsParams{
+		EventID:                             eventID,
+		AnthropicDirectUncachedInputTokens:  ptrInt64ToNull(details.DirectUncachedInputTokens),
+		AnthropicCacheCreationInputTokens:   ptrInt64ToNull(details.CacheCreationInputTokens),
+		AnthropicCacheCreation5mInputTokens: ptrInt64ToNull(details.CacheCreation5mInputTokens),
+		AnthropicCacheCreation1hInputTokens: ptrInt64ToNull(details.CacheCreation1hInputTokens),
+	})
+	if err != nil {
+		return err
+	}
+	if rows == 0 {
+		return fmt.Errorf("%w: Anthropic provider details", domain.ErrUsageSourceEventConflict)
+	}
+	return nil
+}
+
+func usageEventDetailReconciliation(existing gen.GetModelUsageEventByKeyRow, event domain.ModelUsageEvent) (conflict, enrichment bool) {
+	reconcile := func(stored sql.NullInt64, incoming *int64) {
+		conflict = conflict || nullIntConflicts(stored, incoming)
+		enrichment = enrichment || nullIntCanEnrich(stored, incoming)
+	}
+	if details := event.ProviderDetails.OpenAI; details != nil {
+		reconcile(existing.OpenaiReasoningOutputTokens, details.ReasoningOutputTokens)
+		reconcile(existing.OpenaiCacheWriteInputTokens, details.CacheWriteInputTokens)
+		reconcile(existing.OpenaiReportedTotalTokens, details.ReportedTotalTokens)
+		return conflict, enrichment
+	}
+	details := event.ProviderDetails.Anthropic
+	reconcile(existing.AnthropicDirectUncachedInputTokens, details.DirectUncachedInputTokens)
+	reconcile(existing.AnthropicCacheCreationInputTokens, details.CacheCreationInputTokens)
+	reconcile(existing.AnthropicCacheCreation5mInputTokens, details.CacheCreation5mInputTokens)
+	reconcile(existing.AnthropicCacheCreation1hInputTokens, details.CacheCreation1hInputTokens)
+	return conflict, enrichment
+}
+
+func nullIntConflicts(existing sql.NullInt64, incoming *int64) bool {
+	return existing.Valid && incoming != nil && existing.Int64 != *incoming
+}
+
+func nullIntCanEnrich(existing sql.NullInt64, incoming *int64) bool {
+	return !existing.Valid && incoming != nil
 }
 
 func usageBindingStateOrDefault(state domain.UsageBindingState) domain.UsageBindingState {

@@ -112,6 +112,49 @@ func TestSpawnClaimPRWiring(t *testing.T) {
 	}
 }
 
+// TestSpawnClaimPR_Draft covers #4171: `ao spawn --claim-pr` on a draft PR must
+// keep the spawned session instead of rolling it back with PR_NOT_OPEN.
+func TestSpawnClaimPR_Draft(t *testing.T) {
+	cfg := setConfigEnv(t)
+	var requests []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		appendPrimaryRequest(&requests, r)
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/projects/demo":
+			_, _ = io.WriteString(w, `{"status":"ok","project":{"id":"demo","name":"Demo","path":"/repo/demo","repo":"https://github.com/aoagents/agent-orchestrator","defaultBranch":"main"}}`)
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/agents/refresh":
+			_, _ = io.WriteString(w, authorizedAgentsJSON("codex"))
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/sessions":
+			_, _ = io.WriteString(w, `{"session":{"id":"demo-9","status":"idle"}}`)
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/sessions/demo-9/pr/claim":
+			var req claimPRRequest
+			_ = json.NewDecoder(r.Body).Decode(&req)
+			if req.PR != "https://github.com/aoagents/agent-orchestrator/pull/4168" {
+				t.Fatalf("claim request = %#v", req)
+			}
+			_, _ = io.WriteString(w, `{"ok":true,"sessionId":"demo-9","prs":[{"url":"https://github.com/aoagents/agent-orchestrator/pull/4168","number":4168,"state":"draft","ci":"pending","review":"none","mergeability":"unknown","reviewComments":false,"updatedAt":"2026-08-20T12:00:00Z"}],"branchChanged":false,"takenOverFrom":[]}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	writeRunFileFor(t, cfg, srv)
+
+	out, errOut, err := executeCLI(t, Deps{ProcessAlive: func(int) bool { return true }}, "spawn", "--project", "demo", "--agent", "codex", "--name", "worker", "--claim-pr", "4168")
+	if err != nil {
+		t.Fatalf("spawn claim-pr draft failed: %v stderr=%s", err, errOut)
+	}
+	if !strings.Contains(out, "claimed https://github.com/aoagents/agent-orchestrator/pull/4168") {
+		t.Fatalf("output missing claimed label: %s", out)
+	}
+	// No rollback: the draft claim succeeded.
+	want := []string{"GET /api/v1/projects/demo", "POST /api/v1/agents/refresh", "POST /api/v1/sessions", "POST /api/v1/sessions/demo-9/pr/claim"}
+	if !reflect.DeepEqual(requests, want) {
+		t.Fatalf("requests=%#v want %#v", requests, want)
+	}
+}
+
 func TestSpawnClaimPR_GitLab(t *testing.T) {
 	cfg := setConfigEnv(t)
 	var capturedReq claimPRRequest

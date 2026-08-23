@@ -1,7 +1,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { SessionFilesView } from "./SessionFilesView";
 
@@ -28,7 +28,12 @@ function renderWithQuery(children: ReactNode) {
 	const client = new QueryClient({
 		defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
 	});
-	return render(<QueryClientProvider client={client}>{children}</QueryClientProvider>);
+	const result = render(<QueryClientProvider client={client}>{children}</QueryClientProvider>);
+	return {
+		...result,
+		rerender: (next: ReactNode) =>
+			result.rerender(<QueryClientProvider client={client}>{next}</QueryClientProvider>),
+	};
 }
 
 /**
@@ -225,6 +230,273 @@ describe("SessionFilesView", () => {
 			}),
 		);
 		expect(await screen.findByText(diffLine("const value = 1;"))).toBeInTheDocument();
+	});
+
+	it("keeps a chat file focus request pending through a cold files load", async () => {
+		let resolveFiles!: (value: unknown) => void;
+		const filesRequest = new Promise<unknown>((resolve) => {
+			resolveFiles = resolve;
+		});
+		const previousGet = getMock.getMockImplementation()!;
+		getMock.mockImplementation((path: string, ...args: unknown[]) => {
+			if (path === "/api/v1/sessions/{sessionId}/workspace/files") return filesRequest;
+			return previousGet(path, ...args);
+		});
+		const onFocusPathConsumed = vi.fn();
+		function ColdLoadFocusHarness() {
+			const [focusPath, setFocusPath] = useState<string | null>("docs/guide.md");
+			return (
+				<SessionFilesView
+					focusPath={focusPath}
+					onFocusPathConsumed={() => {
+						onFocusPathConsumed();
+						setFocusPath(null);
+					}}
+					sessionId="sess-1"
+				/>
+			);
+		}
+
+		renderWithQuery(<ColdLoadFocusHarness />);
+
+		await waitFor(() =>
+			expect(getMock).toHaveBeenCalledWith("/api/v1/sessions/{sessionId}/workspace/files", {
+				params: { path: { sessionId: "sess-1" } },
+			}),
+		);
+		expect(onFocusPathConsumed).not.toHaveBeenCalled();
+
+		await act(async () => {
+			resolveFiles({
+				data: {
+					sessionId: "sess-1",
+					truncated: false,
+					compareBaseSha: "base-sha",
+					compareBaseRef: "main",
+					compareMode: "base",
+					files: [
+						{
+							path: "docs/guide.md",
+							status: "added",
+							additions: 3,
+							deletions: 0,
+							size: 90,
+							binary: false,
+						},
+					],
+				},
+			});
+		});
+
+		expect(await screen.findByRole("button", { name: "Collapse docs/guide.md" })).toBeInTheDocument();
+		expect(onFocusPathConsumed).toHaveBeenCalledTimes(1);
+	});
+
+	it("reveals and focuses a file requested by a review comment", async () => {
+		const focus = vi.spyOn(HTMLElement.prototype, "focus");
+		renderWithQuery(<SessionFilesView revealFile={{ path: "docs/guide.md", line: 7, requestId: 1 }} sessionId="sess-1" />);
+
+		expect(await screen.findByRole("button", { name: "Collapse docs/guide.md" })).toBeInTheDocument();
+		await waitFor(() =>
+			expect(getMock).toHaveBeenCalledWith("/api/v1/sessions/{sessionId}/workspace/file", {
+				params: { path: { sessionId: "sess-1" }, query: { path: "docs/guide.md" } },
+			}),
+		);
+		await waitFor(() => expect(focus).toHaveBeenCalled());
+		focus.mockRestore();
+	});
+
+	it("scrolls and focuses the requested line in a multi-hunk review diff", async () => {
+		const focus = vi.spyOn(HTMLElement.prototype, "focus");
+		const scrollIntoView = vi.fn();
+		Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
+			configurable: true,
+			value: scrollIntoView,
+		});
+		getMock.mockImplementation(async (path: string, options?: unknown) => {
+			if (path === "/api/v1/sessions/{sessionId}/workspace/files") {
+				return {
+					data: {
+						sessionId: "sess-1",
+						truncated: false,
+						compareBaseSha: "base-sha",
+						compareBaseRef: "main",
+						compareMode: "base",
+						files: [{
+							path: "src/App.tsx",
+							status: "modified",
+							additions: 2,
+							deletions: 1,
+							size: 120,
+							binary: false,
+						}],
+					},
+				};
+			}
+			if (path === "/api/v1/sessions/{sessionId}/workspace/file") {
+				const query = options as { params?: { query?: { path?: string } } };
+				return {
+					data: {
+						sessionId: "sess-1",
+						path: query.params?.query?.path ?? "src/App.tsx",
+						status: "modified",
+						additions: 2,
+						deletions: 1,
+						size: 120,
+						binary: false,
+						deleted: false,
+						content: "",
+						contentTruncated: false,
+						diff: multiHunkDiff,
+						diffTruncated: false,
+						compareBaseSha: "base-sha",
+						compareBaseRef: "main",
+						compareMode: "base",
+					},
+				};
+			}
+			return { data: undefined };
+		});
+
+		renderWithQuery(<SessionFilesView revealFile={{ path: "src/App.tsx", line: 11, requestId: 1 }} sessionId="sess-1" />);
+
+		const target = await waitFor(() => {
+			const row = document.querySelector<HTMLElement>('[data-diff-row][data-new-no="11"]');
+			expect(row).not.toBeNull();
+			return row!;
+		});
+		await waitFor(() => expect(document.activeElement).toBe(target));
+		expect(target).toHaveTextContent("line twelve");
+		expect(scrollIntoView).toHaveBeenCalledWith({ block: "center" });
+		focus.mockRestore();
+	});
+
+	it("focuses the new-side row when revealing a context line in split view", async () => {
+		const scrollIntoView = vi.fn();
+		Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
+			configurable: true,
+			value: scrollIntoView,
+		});
+		getMock.mockImplementation(async (path: string, options?: unknown) => {
+			if (path === "/api/v1/sessions/{sessionId}/workspace/files") {
+				return {
+					data: {
+						sessionId: "sess-1",
+						truncated: false,
+						compareMode: "base",
+						files: [
+							{
+								path: "src/App.tsx",
+								status: "modified",
+								additions: 2,
+								deletions: 1,
+								size: 120,
+								binary: false,
+							},
+						],
+					},
+				};
+			}
+			if (path === "/api/v1/sessions/{sessionId}/workspace/file") {
+				const query = options as { params?: { query?: { path?: string } } };
+				return {
+					data: {
+						sessionId: "sess-1",
+						path: query.params?.query?.path ?? "src/App.tsx",
+						status: "modified",
+						additions: 2,
+						deletions: 1,
+						size: 120,
+						binary: false,
+						deleted: false,
+						content: "",
+						contentTruncated: false,
+						diff: multiHunkDiff,
+						diffTruncated: false,
+						compareMode: "base",
+					},
+				};
+			}
+			return { data: undefined };
+		});
+
+		const { rerender } = renderWithQuery(<SessionFilesView sessionId="sess-1" />);
+		await userEvent.click(await screen.findByRole("button", { name: "Expand src/App.tsx" }));
+		await screen.findByText(diffLine("line twelve"));
+		await userEvent.click(screen.getByRole("button", { name: "Split diff view" }));
+
+		rerender(<SessionFilesView revealFile={{ path: "src/App.tsx", line: 11, requestId: 1 }} sessionId="sess-1" />);
+
+		const matchingRows = await waitFor(() => {
+			const rows = document.querySelectorAll<HTMLElement>('[data-diff-row][data-new-no="11"]');
+			expect(rows).toHaveLength(2);
+			return rows;
+		});
+		await waitFor(() => expect(document.activeElement).toBe(matchingRows[1]));
+		expect(scrollIntoView).toHaveBeenCalledWith({ block: "center" });
+	});
+
+	it("resolves a requested previous path to its renamed file", async () => {
+		getMock.mockImplementation(async (path: string, options?: unknown) => {
+			if (path === "/api/v1/sessions/{sessionId}/workspace/files") {
+				return {
+					data: {
+						sessionId: "sess-1",
+						truncated: false,
+						compareMode: "base",
+						files: [{
+							path: "src/NewName.tsx",
+							previousPath: "src/OldName.tsx",
+							status: "renamed",
+							additions: 1,
+							deletions: 1,
+							size: 120,
+							binary: false,
+						}],
+					},
+				};
+			}
+			if (path === "/api/v1/sessions/{sessionId}/workspace/file") {
+				const query = options as { params?: { query?: { path?: string } } };
+				return {
+					data: {
+						sessionId: "sess-1",
+						path: query.params?.query?.path ?? "src/NewName.tsx",
+						previousPath: "src/OldName.tsx",
+						status: "renamed",
+						additions: 1,
+						deletions: 1,
+						size: 120,
+						binary: false,
+						deleted: false,
+						content: "",
+						contentTruncated: false,
+						diff: "",
+						diffTruncated: false,
+						compareMode: "base",
+					},
+				};
+			}
+			return { data: undefined };
+		});
+
+		renderWithQuery(<SessionFilesView revealFile={{ path: "src/OldName.tsx", requestId: 1 }} sessionId="sess-1" />);
+
+		expect(await screen.findByRole("button", { name: "Collapse src/OldName.tsx -> src/NewName.tsx" })).toBeInTheDocument();
+		await waitFor(() =>
+			expect(getMock).toHaveBeenCalledWith("/api/v1/sessions/{sessionId}/workspace/file", {
+				params: { path: { sessionId: "sess-1" }, query: { path: "src/NewName.tsx" } },
+			}),
+		);
+	});
+
+	it("does not expand an unrelated file when a review path is missing", async () => {
+		renderWithQuery(<SessionFilesView revealFile={{ path: "src/Missing.tsx", requestId: 1 }} sessionId="sess-1" />);
+
+		expect(await screen.findByRole("button", { name: "Expand src/App.tsx" })).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "Expand docs/guide.md" })).toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: /^Collapse / })).not.toBeInTheDocument();
+		expect(getMock).not.toHaveBeenCalledWith("/api/v1/sessions/{sessionId}/workspace/file", expect.anything());
 	});
 
 	it("filters and expands a changed file from the review list", async () => {
@@ -782,6 +1054,95 @@ describe("SessionFilesView", () => {
 			const body = postMock.mock.calls[0][1].body as { message: string };
 			expect(body.message).toContain("- const value = 0;");
 			expect(body.message).not.toContain("const value = 1;");
+		});
+	});
+
+	describe("image diffs", () => {
+		function mockImageFile(status: "modified" | "added" | "deleted") {
+			getMock.mockImplementation(async (path: string) => {
+				if (path === "/api/v1/sessions/{sessionId}/workspace/files") {
+					return {
+						data: {
+							sessionId: "sess-1",
+							truncated: false,
+							files: [{ path: "docs/logo.png", status, additions: 0, deletions: 0, size: 4096, binary: true }],
+						},
+					};
+				}
+				if (path === "/api/v1/sessions/{sessionId}/workspace/file") {
+					return {
+						data: {
+							sessionId: "sess-1",
+							path: "docs/logo.png",
+							status,
+							additions: 0,
+							deletions: 0,
+							size: 4096,
+							binary: status !== "deleted",
+							deleted: status === "deleted",
+							content: "",
+							contentTruncated: false,
+							diff: "",
+							diffTruncated: false,
+							imageMediaType: "image/png",
+							compareBaseSha: "base-sha",
+							compareBaseRef: "main",
+							compareMode: "base",
+						},
+					};
+				}
+				return { data: undefined };
+			});
+		}
+
+		it("renders both sides of a changed image instead of the binary placeholder", async () => {
+			mockImageFile("modified");
+
+			renderWithQuery(<SessionFilesView sessionId="sess-1" />);
+			await userEvent.click(await screen.findByRole("button", { name: "Expand docs/logo.png" }));
+
+			const before = await screen.findByAltText("Before version of docs/logo.png");
+			const after = await screen.findByAltText("After version of docs/logo.png");
+			expect(before).toHaveAttribute(
+				"src",
+				expect.stringContaining("/api/v1/sessions/sess-1/workspace/file/blob?path=docs%2Flogo.png&side=before"),
+			);
+			expect(after).toHaveAttribute(
+				"src",
+				expect.stringContaining("/api/v1/sessions/sess-1/workspace/file/blob?path=docs%2Flogo.png&side=after"),
+			);
+			expect(screen.queryByText("Binary file preview is not available.")).not.toBeInTheDocument();
+		});
+
+		it("shows only the after side for an added image", async () => {
+			mockImageFile("added");
+
+			renderWithQuery(<SessionFilesView sessionId="sess-1" />);
+			await userEvent.click(await screen.findByRole("button", { name: "Expand docs/logo.png" }));
+
+			expect(await screen.findByAltText("After version of docs/logo.png")).toBeInTheDocument();
+			expect(screen.queryByAltText("Before version of docs/logo.png")).not.toBeInTheDocument();
+		});
+
+		it("shows only the before side for a deleted image", async () => {
+			mockImageFile("deleted");
+
+			renderWithQuery(<SessionFilesView sessionId="sess-1" />);
+			await userEvent.click(await screen.findByRole("button", { name: "Expand docs/logo.png" }));
+
+			expect(await screen.findByAltText("Before version of docs/logo.png")).toBeInTheDocument();
+			expect(screen.queryByAltText("After version of docs/logo.png")).not.toBeInTheDocument();
+		});
+
+		it("falls back to a message when an image side fails to load", async () => {
+			mockImageFile("modified");
+
+			renderWithQuery(<SessionFilesView sessionId="sess-1" />);
+			await userEvent.click(await screen.findByRole("button", { name: "Expand docs/logo.png" }));
+			fireEvent.error(await screen.findByAltText("Before version of docs/logo.png"));
+
+			expect(await screen.findByText("Image preview could not be loaded.")).toBeInTheDocument();
+			expect(screen.getByAltText("After version of docs/logo.png")).toBeInTheDocument();
 		});
 	});
 
