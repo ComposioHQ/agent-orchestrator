@@ -81,7 +81,7 @@ export function ChatComposer({
 	willQueue,
 	disabled,
 	settings,
-
+	approval,
 	skills = [],
 	filePaths = [],
 	filePathsTruncated,
@@ -105,6 +105,8 @@ export function ChatComposer({
 }: {
 	onSend: (text: string, attachments?: FileAttachmentPayload[]) => void | Promise<unknown>;
 	settings?: ReactNode;
+	/** A provider decision that temporarily replaces ordinary message entry. */
+	approval?: ReactNode;
 	/** A send is in flight. */
 	busy?: boolean;
 	/** The agent is mid-turn, so this message is held until the turn ends. */
@@ -542,6 +544,26 @@ export function ChatComposer({
 			<DeliveryChoice value={activeDelivery} disabled={steerPending} />
 		) : null;
 	const settingsNode = settings;
+
+	if (approval) {
+		return (
+			<>
+				{queuedDock}
+				<form
+					onSubmit={(event) => event.preventDefault()}
+					data-attached-top={attachedTop || undefined}
+					className="cursor-chat-composer relative flex flex-col gap-1.5 border border-border-strong px-3 py-3 transition-[background,border-color,box-shadow]"
+				>
+					{approval}
+					{commandError ? (
+						<p role="alert" className="px-1.5 text-[11px] leading-snug text-destructive">
+							{commandError}
+						</p>
+					) : null}
+				</form>
+			</>
+		);
+	}
 
 	return (
 		<>

@@ -534,6 +534,23 @@ export function ChatWorkspace({
 
 	const brokenServers = useMemo(() => brokenMcpServers(snapshot), [snapshot]);
 	const editHumanMessage = can(snapshot, "fork") ? onEditMessage : undefined;
+	const pendingApproval = useMemo(
+		() =>
+			snapshot.items.reduce<ConversationActivity | undefined>((latest, item) => {
+				if (
+					item.kind !== "activity" ||
+					item.activityKind !== "approval" ||
+					item.status !== "pending" ||
+					(item.turnId ? item.turnId !== turn?.id : !turn)
+				) {
+					return latest;
+				}
+				if (latest?.turnId && !item.turnId) return latest;
+				if (item.turnId && !latest?.turnId) return item;
+				return !latest || item.sequence > latest.sequence ? item : latest;
+			}, undefined),
+		[snapshot.items, turn],
+	);
 	// Empty chats center the prompt; once a turn or item exists the composer docks
 	// at the bottom and stays there for the rest of the session.
 	const conversationEmpty = snapshot.items.length === 0 && !turn;
@@ -760,6 +777,16 @@ export function ChatWorkspace({
 									turn?.state === "running" && queuedMessages.length > 0 ? (
 										<QueuedMessageDock messages={queuedMessages} />
 									) : null
+								}
+								approval={
+									pendingApproval ? (
+										<ApprovalCard
+											activity={pendingApproval}
+											onDecide={onDecide}
+											busy={busy}
+											embedded
+										/>
+									) : undefined
 								}
 								onSend={(text, attachments) => onSend?.(text, attachments)}
 								onInterrupt={turn ? onInterrupt : undefined}
@@ -1871,27 +1898,26 @@ function TurnLiveStatus({ startedAt, blocked }: { startedAt?: string; blocked?: 
 		return () => clearInterval(timer);
 	}, [blocked, startedAt]);
 
+	if (blocked) {
+		return (
+			<span role="alert" className="sr-only">
+				The agent is waiting for your decision.
+			</span>
+		);
+	}
+
 	return (
 		<div className="flex min-h-6 items-center gap-2 px-1 py-0.5" data-testid="live-turn-status">
-			{blocked ? (
-				<span role="alert" className="sr-only">
-					The agent is waiting for your decision.
-				</span>
-			) : null}
-			{blocked ? (
-				<TriangleAlert aria-hidden="true" className="size-3.5 shrink-0 text-warning" />
-			) : (
-				<Loader2
-					aria-hidden="true"
-					className="size-3 shrink-0 animate-spin text-status-working opacity-100"
-				/>
-			)}
+			<Loader2
+				aria-hidden="true"
+				className="size-3 shrink-0 animate-spin text-status-working opacity-100"
+			/>
 			<span
-				role={blocked ? undefined : "status"}
-				aria-live={blocked ? undefined : "polite"}
-				className={cn("text-xs font-medium", blocked ? "text-warning" : "text-muted-foreground")}
+				role="status"
+				aria-live="polite"
+				className="text-xs font-medium text-muted-foreground"
 			>
-				{blocked ? "Waiting for your decision" : `Working for ${elapsed}`}
+				Working for {elapsed}
 			</span>
 		</div>
 	);
@@ -2010,6 +2036,9 @@ function TimelineItem({
 		return <OriginMessage message={item} />;
 	}
 	if (item.activityKind === "approval") {
+		// Pending approval owns the composer. Keeping it in the grouping model still
+		// marks the live turn as blocked, while omitting the timeline card itself.
+		if (item.status === "pending") return null;
 		return <ApprovalCard activity={item} onDecide={onDecide} busy={busy} />;
 	}
 	if (item.activityKind === "user_input") {

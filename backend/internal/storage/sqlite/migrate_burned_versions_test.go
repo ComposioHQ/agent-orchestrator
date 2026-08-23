@@ -108,9 +108,10 @@ var shippedMigrations = map[int64]string{
 	101: "0101_conversation_provider_ownership_epochs.sql",
 	102: "0102_canonical_usage.sql",
 	103: "0103_review_run_cdc.sql",
-	// 104 is left to #4233, which is approved and claims it. Renumbering above
-	// it is safe in either merge order: goose runs with WithAllowMissing, so a
-	// gap here costs nothing while a collision would wedge startup outright.
+	104: "0104_agent_inventory_cache.sql",
+	// Renumbered above 104 while this branch was in review, because another
+	// change claimed it first. Two files on one version is not a textual
+	// conflict: goose refuses to start at all.
 	105: "0105_usage_cost_estimation.sql",
 	106: "0106_usage_cost_candidate_canonical_index.sql",
 	107: "0107_usage_measurement_and_provider_usage.sql",
