@@ -183,25 +183,6 @@ type Job struct {
 	FinishedAt *time.Time `json:"finishedAt,omitempty" description:"Absent until the job finishes."`
 }
 
-// AgentPlans resolves one installation plan for every supported harness
-// without executing anything.
-func (s *Service) AgentPlans(ctx context.Context) ([]AgentPlan, error) {
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-	out := make([]AgentPlan, 0, len(agentTargets))
-	for _, target := range agentTargets {
-		plan := s.planAgent(target)
-		out = append(out, AgentPlan{
-			AgentID: string(target), Available: !plan.Unsupported,
-			Automatic: !plan.Unsupported, Method: plan.Method,
-			Command: displayCommand(plan), Reason: plan.Reason,
-			DocumentationURL: plan.DocsURL,
-		})
-	}
-	return out, nil
-}
-
 // Service runs real install commands for the fixed Target allowlist.
 type Service struct {
 	mu   sync.Mutex
@@ -229,6 +210,25 @@ func New(executables ports.ExecutableFinder, commands ports.CommandRunner) *Serv
 		goos:           runtime.GOOS,
 		installTimeout: defaultInstallTimeout,
 	}
+}
+
+// AgentPlans resolves one installation plan for every supported harness
+// without executing anything.
+func (s *Service) AgentPlans(ctx context.Context) ([]AgentPlan, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	out := make([]AgentPlan, 0, len(agentTargets))
+	for _, target := range agentTargets {
+		plan := s.planAgent(target)
+		out = append(out, AgentPlan{
+			AgentID: string(target), Available: !plan.Unsupported,
+			Automatic: !plan.Unsupported, Method: plan.Method,
+			Command: displayCommand(plan), Reason: plan.Reason,
+			DocumentationURL: plan.DocsURL,
+		})
+	}
+	return out, nil
 }
 
 // Start begins the install for target, or returns the already-running Job if
