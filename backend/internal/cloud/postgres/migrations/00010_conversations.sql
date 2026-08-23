@@ -5,10 +5,10 @@
 CREATE TABLE ao_conversations (
     org_id UUID NOT NULL,
     owner_user_id UUID NOT NULL REFERENCES ao_users(id) ON DELETE CASCADE,
-    id TEXT NOT NULL CHECK (btrim(id) <> ''),
+    id TEXT COLLATE "C" NOT NULL CHECK (btrim(id) <> ''),
     scope TEXT NOT NULL CHECK (scope IN ('session', 'project')),
-    project_id TEXT NOT NULL,
-    session_id TEXT NOT NULL,
+    project_id TEXT COLLATE "C" NOT NULL,
+    session_id TEXT COLLATE "C" NOT NULL,
     state JSONB NOT NULL,
     created_at TIMESTAMPTZ NOT NULL,
     updated_at TIMESTAMPTZ NOT NULL,

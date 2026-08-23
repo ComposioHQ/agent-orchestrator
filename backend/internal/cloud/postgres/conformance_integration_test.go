@@ -3,10 +3,12 @@ package postgres_test
 import (
 	"context"
 	"testing"
+	"time"
 
 	clouddomain "github.com/aoagents/agent-orchestrator/backend/internal/cloud/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/cloud/postgres"
 	"github.com/aoagents/agent-orchestrator/backend/internal/cloud/postgres/pgtest"
+	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	storageports "github.com/aoagents/agent-orchestrator/backend/internal/ports"
 	"github.com/aoagents/agent-orchestrator/backend/internal/storage/conformance"
 	"github.com/aoagents/agent-orchestrator/backend/internal/tenant"
@@ -45,6 +47,46 @@ func TestPostgresStorageConformance(t *testing.T) {
 			},
 		}
 	})
+}
+
+func TestPostgresRejectsStaleConversationGeneration(t *testing.T) {
+	store := pgtest.New(t)
+	alice := signUp(t, store, "stale-generation")
+	ctx := tenant.WithIdentity(context.Background(), alice)
+	project := newTenantProject()
+	if err := store.UpsertProject(ctx, project); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 3, 14, 15, 9, 26, 0, time.UTC)
+	session, err := store.CreateSession(ctx, domain.SessionRecord{
+		ProjectID: domain.ProjectID(project.ID), Kind: domain.KindWorker,
+		Harness: domain.HarnessClaudeCode, Mode: domain.SessionModeChat,
+		Activity:  domain.Activity{State: domain.ActivityIdle, LastActivityAt: now},
+		CreatedAt: now, UpdatedAt: now,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.ClaimChatControllerGeneration(ctx, session.ID, "current", now); err != nil {
+		t.Fatal(err)
+	}
+	conversation, err := store.CreateConversation(ctx, "conversation-1", domain.ConversationScopeSession, session.ProjectID, session.ID, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	created, err := store.AppendUserMessage(ctx, conversation.ID, session.ID, "stale", domain.ConversationMessage{
+		ID: "message-1", ClientMessageID: "client-1", Origin: domain.MessageOriginHuman, Text: "must not persist",
+	}, "turn-1", now)
+	if err != nil || created {
+		t.Fatalf("stale append = %v, %v", created, err)
+	}
+	snapshot, err := store.LoadConversationSnapshot(ctx, conversation.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(snapshot.Turns) != 0 || len(snapshot.Messages) != 0 {
+		t.Fatalf("stale append persisted: %#v", snapshot)
+	}
 }
 
 // TestPostgresRefusesAnUnscopedContext pins the behaviour that makes the tenant

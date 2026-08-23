@@ -19,15 +19,17 @@ import (
 const maxConversationStreamChars = 64 * 1024
 
 type conversationState struct {
-	Record          domain.ConversationRecord          `json:"record"`
-	AppliedTitle    string                             `json:"appliedTitle,omitempty"`
-	Branches        map[string]conversationBranchState `json:"branches"`
-	Turns           []domain.ConversationTurn          `json:"turns"`
-	TurnBranches    map[string]string                  `json:"turnBranches,omitempty"`
-	Messages        []domain.ConversationMessage       `json:"messages"`
-	DeliveryContent map[string]string                  `json:"deliveryContent,omitempty"`
-	Activities      []domain.ConversationActivity      `json:"activities"`
-	Promotions      map[string]bool                    `json:"promotions,omitempty"`
+	Record             domain.ConversationRecord          `json:"record"`
+	AppliedTitle       string                             `json:"appliedTitle,omitempty"`
+	Branches           map[string]conversationBranchState `json:"branches"`
+	Turns              []domain.ConversationTurn          `json:"turns"`
+	TurnSequences      map[string]int64                   `json:"turnSequences,omitempty"`
+	LatestTurnSequence int64                              `json:"latestTurnSequence,omitempty"`
+	TurnBranches       map[string]string                  `json:"turnBranches,omitempty"`
+	Messages           []domain.ConversationMessage       `json:"messages"`
+	DeliveryContent    map[string]string                  `json:"deliveryContent,omitempty"`
+	Activities         []domain.ConversationActivity      `json:"activities"`
+	Promotions         map[string]bool                    `json:"promotions,omitempty"`
 }
 
 type conversationBranchState struct {
@@ -87,6 +89,14 @@ func (state *conversationState) normalize() {
 	if state.TurnBranches == nil {
 		state.TurnBranches = make(map[string]string)
 	}
+	if state.TurnSequences == nil {
+		state.TurnSequences = make(map[string]int64)
+		// Compatibility for aggregates written before explicit turn sequencing.
+		for i := range state.Turns {
+			state.LatestTurnSequence++
+			state.TurnSequences[state.Turns[i].ID] = state.LatestTurnSequence
+		}
+	}
 	if state.DeliveryContent == nil {
 		state.DeliveryContent = make(map[string]string)
 	}
@@ -100,6 +110,12 @@ func (state *conversationState) normalize() {
 	for i := range state.Messages {
 		state.Messages[i].DeliveryContentJSON = state.DeliveryContent[state.Messages[i].ID]
 	}
+}
+
+func (state *conversationState) appendTurn(turn domain.ConversationTurn) {
+	state.LatestTurnSequence++
+	state.TurnSequences[turn.ID] = state.LatestTurnSequence
+	state.Turns = append(state.Turns, turn)
 }
 
 func (s *Store) loadConversation(ctx context.Context, tx pgx.Tx, id string, lock bool) (conversationState, error) {
@@ -435,7 +451,7 @@ func (s *Store) AppendUserMessage(ctx context.Context, conversationID string, se
 		turn := domain.ConversationTurn{ID: turnID, ConversationID: conversationID, HandledBySessionID: session, State: domain.TurnStateQueued, RequestedAt: now.UTC()}
 		state.TurnBranches[turnID] = state.Record.ActiveBranchID
 		state.DeliveryContent[msg.ID] = msg.DeliveryContentJSON
-		state.Turns = append(state.Turns, turn)
+		state.appendTurn(turn)
 		state.Messages = append(state.Messages, msg)
 		state.Record.UpdatedAt = now.UTC()
 		created = true
@@ -452,7 +468,7 @@ func (s *Store) AdoptProviderTurn(ctx context.Context, conversationID string, se
 			}
 		}
 		started := now.UTC()
-		state.Turns = append(state.Turns, domain.ConversationTurn{ID: turnID, ConversationID: conversationID, HandledBySessionID: session, ProviderTurnID: providerTurnID, State: domain.TurnStateRunning, RequestedAt: started, StartedAt: &started})
+		state.appendTurn(domain.ConversationTurn{ID: turnID, ConversationID: conversationID, HandledBySessionID: session, ProviderTurnID: providerTurnID, State: domain.TurnStateRunning, RequestedAt: started, StartedAt: &started})
 		state.TurnBranches[turnID] = state.Record.ActiveBranchID
 		state.Record.UpdatedAt = started
 		return nil
@@ -969,6 +985,9 @@ func (s *Store) LoadConversationSnapshotPage(ctx context.Context, id string, bef
 			turns = append(turns, turn)
 		}
 	}
+	sort.SliceStable(turns, func(i, j int) bool {
+		return state.TurnSequences[turns[i].ID] < state.TurnSequences[turns[j].ID]
+	})
 	messages := append([]domain.ConversationMessage(nil), state.Messages...)
 	activities := append([]domain.ConversationActivity(nil), state.Activities...)
 	sort.Slice(messages, func(i, j int) bool { return messages[i].Sequence < messages[j].Sequence })
