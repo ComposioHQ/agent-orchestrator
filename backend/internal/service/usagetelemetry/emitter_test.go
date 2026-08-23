@@ -2,7 +2,6 @@ package usagetelemetry
 
 import (
 	"context"
-	"errors"
 	"math"
 	"testing"
 	"time"
@@ -11,27 +10,12 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
-type fakeInner struct {
-	finalizeCalls   int
-	reactivateCalls int
-	finalizeErr     error
-}
-
-func (f *fakeInner) FinalizeSession(context.Context, domain.SessionID, string, time.Time) error {
-	f.finalizeCalls++
-	return f.finalizeErr
-}
-func (f *fakeInner) ReactivateSession(context.Context, domain.SessionID, string) error {
-	f.reactivateCalls++
-	return nil
-}
-
 type fakeSummary struct {
 	summary domain.SessionUsageSummary
 	err     error
 }
 
-func (f fakeSummary) Get(context.Context, domain.SessionID) (domain.SessionUsageSummary, error) {
+func (f *fakeSummary) Get(context.Context, domain.SessionID) (domain.SessionUsageSummary, error) {
 	return f.summary, f.err
 }
 
@@ -64,26 +48,20 @@ func (f *fakeSink) Emit(_ context.Context, ev ports.TelemetryEvent) { f.events =
 func (f *fakeSink) Close(context.Context) error                     { return nil }
 
 func opusSummary(incomplete bool) domain.SessionUsageSummary {
+	totals := domain.UsageMetricTotals{InputTokens: i64(100), CachedInputTokens: i64(10), OutputTokens: i64(50)}
 	return domain.SessionUsageSummary{
 		SessionID:  "ao-1",
 		Incomplete: incomplete,
-		Totals: domain.UsageMetricTotals{
-			InputTokens: i64(100), CachedInputTokens: i64(10), OutputTokens: i64(50),
-		},
+		Totals:     totals,
 		Harnesses: []domain.HarnessUsageSummary{{
 			Harness: domain.HarnessClaudeCode,
-			Models: []domain.ModelUsageSummary{{
-				ModelID: "claude-opus-4-8",
-				Totals: domain.UsageMetricTotals{
-					InputTokens: i64(100), CachedInputTokens: i64(10), OutputTokens: i64(50),
-				},
-			}},
+			Models:  []domain.ModelUsageSummary{{ModelID: "claude-opus-4-8", Totals: totals}},
 		}},
 	}
 }
 
-func newFixture(summary domain.SessionUsageSummary) (*EmittingFinalizer, *fakeInner, *fakeSink) {
-	inner := &fakeInner{}
+func newEmitter(summary domain.SessionUsageSummary) (*Emitter, *fakeSummary, *fakeSink) {
+	sum := &fakeSummary{summary: summary}
 	sink := &fakeSink{}
 	store := fakeStore{
 		rec:     domain.SessionRecord{ID: "ao-1", ProjectID: "ao", Harness: domain.HarnessClaudeCode},
@@ -92,19 +70,13 @@ func newFixture(summary domain.SessionUsageSummary) (*EmittingFinalizer, *fakeIn
 		projOK:  true,
 	}
 	scm := fakeSCM{repo: ports.SCMRepo{Provider: "github", Owner: "aoagents"}}
-	e := NewEmittingFinalizer(inner, fakeSummary{summary: summary}, store, scm,
-		sink, func() time.Time { return time.Unix(1700000000, 0).UTC() })
-	return e, inner, sink
+	e := NewEmitter(sum, store, scm, sink, func() time.Time { return time.Unix(1700000000, 0).UTC() })
+	return e, sum, sink
 }
 
-func TestFinalizeSessionForwardsAndEmits(t *testing.T) {
-	e, inner, sink := newFixture(opusSummary(false))
-	if err := e.FinalizeSession(context.Background(), "ao-1", "launch-1", time.Unix(0, 0)); err != nil {
-		t.Fatalf("FinalizeSession: %v", err)
-	}
-	if inner.finalizeCalls != 1 {
-		t.Fatalf("inner FinalizeSession calls = %d, want 1", inner.finalizeCalls)
-	}
+func TestEmitSessionUsageEmitsClassifiedEvent(t *testing.T) {
+	e, _, sink := newEmitter(opusSummary(false))
+	e.EmitSessionUsage(context.Background(), "ao-1")
 	if len(sink.events) != 1 {
 		t.Fatalf("emitted %d events, want 1", len(sink.events))
 	}
@@ -119,14 +91,12 @@ func TestFinalizeSessionForwardsAndEmits(t *testing.T) {
 	if p["model"] != "claude-opus-4-8" || p["harness"] != string(domain.HarnessClaudeCode) {
 		t.Fatalf("model/harness = %v / %v", p["model"], p["harness"])
 	}
-	if p["total_tokens"] != int64(150) {
+	if p["total_tokens"] != int64(150) { // input(100)+output(50); cached is a subset of input
 		t.Fatalf("total_tokens = %v, want 150", p["total_tokens"])
 	}
 	if p["incomplete"] != false {
 		t.Fatalf("incomplete = %v, want false", p["incomplete"])
 	}
-	// Cost is emitted UNrounded (full precision) plus integer micro-dollars for
-	// exact aggregation. This session is sub-cent, so it must NOT round to 0.
 	wantCost := modelCost("claude-opus-4-8", opusSummary(false).Harnesses[0].Models[0].Totals)
 	if wantCost <= 0 {
 		t.Fatalf("fixture cost should be > 0, got %v", wantCost)
@@ -135,70 +105,81 @@ func TestFinalizeSessionForwardsAndEmits(t *testing.T) {
 		t.Fatalf("est_cost_usd = %v, want unrounded %v", p["est_cost_usd"], wantCost)
 	}
 	if p["est_cost_microusd"] != int64(math.Round(wantCost*1_000_000)) {
-		t.Fatalf("est_cost_microusd = %v, want %v", p["est_cost_microusd"], int64(math.Round(wantCost*1_000_000)))
+		t.Fatalf("est_cost_microusd = %v", p["est_cost_microusd"])
 	}
 	if ev.SessionID == nil || *ev.SessionID != "ao-1" {
 		t.Fatalf("session id = %v", ev.SessionID)
 	}
 }
 
-func TestFinalizeSessionCarriesIncompleteFlag(t *testing.T) {
-	_, _, sink := func() (*EmittingFinalizer, *fakeInner, *fakeSink) {
-		e, inner, sink := newFixture(opusSummary(true))
-		_ = e.FinalizeSession(context.Background(), "ao-1", "l", time.Unix(0, 0))
-		return e, inner, sink
-	}()
-	if sink.events[0].Payload["incomplete"] != true {
-		t.Fatalf("incomplete = %v, want true", sink.events[0].Payload["incomplete"])
-	}
-}
-
-func TestFinalizeSessionEmptyUsageDoesNotEmit(t *testing.T) {
-	e, _, sink := newFixture(domain.SessionUsageSummary{SessionID: "ao-1"})
-	if err := e.FinalizeSession(context.Background(), "ao-1", "l", time.Unix(0, 0)); err != nil {
-		t.Fatal(err)
-	}
-	if len(sink.events) != 0 {
-		t.Fatalf("empty usage emitted %d events, want 0", len(sink.events))
-	}
-}
-
-func TestFinalizeSessionReturnsInnerErrorButStillBestEffort(t *testing.T) {
-	e, inner, sink := newFixture(opusSummary(false))
-	inner.finalizeErr = errors.New("boom")
-	err := e.FinalizeSession(context.Background(), "ao-1", "l", time.Unix(0, 0))
-	if err == nil || err.Error() != "boom" {
-		t.Fatalf("err = %v, want boom", err)
-	}
-	// Emission is best-effort and still happens even when finalize errored.
+func TestEmitSessionUsageIsIdempotentForSameTotal(t *testing.T) {
+	e, _, sink := newEmitter(opusSummary(false))
+	// Multi-binding settles and pipeline retries re-signal the same session; the
+	// same total must not double-count.
+	e.EmitSessionUsage(context.Background(), "ao-1")
+	e.EmitSessionUsage(context.Background(), "ao-1")
+	e.EmitSessionUsage(context.Background(), "ao-1")
 	if len(sink.events) != 1 {
-		t.Fatalf("emitted %d events, want 1", len(sink.events))
+		t.Fatalf("idempotent emit produced %d events, want 1", len(sink.events))
 	}
 }
 
-func TestReactivateSessionForwards(t *testing.T) {
-	e, inner, _ := newFixture(opusSummary(false))
-	if err := e.ReactivateSession(context.Background(), "ao-1", "l"); err != nil {
-		t.Fatal(err)
-	}
-	if inner.reactivateCalls != 1 {
-		t.Fatalf("inner ReactivateSession calls = %d, want 1", inner.reactivateCalls)
+func TestEmitSessionUsageReemitsOnHigherTotal(t *testing.T) {
+	e, sum, sink := newEmitter(opusSummary(false))
+	e.EmitSessionUsage(context.Background(), "ao-1")
+	// A reactivated session that ran more legitimately re-emits with the new total.
+	bigger := opusSummary(false)
+	bigger.Totals.OutputTokens = i64(500)
+	sum.summary = bigger
+	e.EmitSessionUsage(context.Background(), "ao-1")
+	if len(sink.events) != 2 {
+		t.Fatalf("higher total should re-emit: got %d events, want 2", len(sink.events))
 	}
 }
 
-func TestGithubOrgOmittedForNonGitHubRemote(t *testing.T) {
-	inner := &fakeInner{}
+func TestEmitSessionUsagePendingIngestionDoesNotEmit(t *testing.T) {
+	// At exit before ingestion the summary reads zero; emitting would be useless
+	// and (with the old design) permanently dropped. Now it simply no-ops until
+	// the settle signal fires with real data.
+	e, _, sink := newEmitter(domain.SessionUsageSummary{SessionID: "ao-1"})
+	e.EmitSessionUsage(context.Background(), "ao-1")
+	if len(sink.events) != 0 {
+		t.Fatalf("pending ingestion emitted %d events, want 0", len(sink.events))
+	}
+}
+
+func TestEmitSessionUsageGithubOrgOmittedForNonGitHubRemote(t *testing.T) {
+	sum := &fakeSummary{summary: opusSummary(false)}
 	sink := &fakeSink{}
 	store := fakeStore{
-		rec:     domain.SessionRecord{ID: "ao-1", ProjectID: "ao", Harness: domain.HarnessClaudeCode},
+		rec:     domain.SessionRecord{ID: "ao-1", ProjectID: "ao"},
 		recOK:   true,
 		project: domain.ProjectRecord{RepoOriginURL: ""},
 		projOK:  true,
 	}
-	e := NewEmittingFinalizer(inner, fakeSummary{summary: opusSummary(false)}, store, fakeSCM{},
-		sink, func() time.Time { return time.Unix(1700000000, 0).UTC() })
-	_ = e.FinalizeSession(context.Background(), "ao-1", "l", time.Unix(0, 0))
+	e := NewEmitter(sum, store, fakeSCM{}, sink, func() time.Time { return time.Unix(1700000000, 0).UTC() })
+	e.EmitSessionUsage(context.Background(), "ao-1")
 	if _, ok := sink.events[0].Payload["github_org"]; ok {
 		t.Fatalf("github_org should be absent for a non-GitHub remote")
+	}
+}
+
+func b(state domain.UsageBindingState) domain.UsageBindingRecord {
+	return domain.UsageBindingRecord{State: state}
+}
+
+func TestAllBindingsSettled(t *testing.T) {
+	t.Parallel()
+	if AllBindingsSettled(nil) {
+		t.Fatal("no bindings should not count as settled")
+	}
+	if !AllBindingsSettled([]domain.UsageBindingRecord{b(domain.UsageBindingComplete), b(domain.UsageBindingPartial)}) {
+		t.Fatal("all complete/partial should be settled")
+	}
+	if AllBindingsSettled([]domain.UsageBindingRecord{b(domain.UsageBindingComplete), b(domain.UsageBindingFinalizing)}) {
+		t.Fatal("a still-finalizing binding means the session is not settled")
+	}
+	if AllBindingsSettled([]domain.UsageBindingRecord{b(domain.UsageBindingActive)}) {
+		t.Fatal("an active binding is not settled")
 	}
 }

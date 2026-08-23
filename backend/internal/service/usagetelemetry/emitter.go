@@ -3,6 +3,7 @@ package usagetelemetry
 import (
 	"context"
 	"math"
+	"sync"
 	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
@@ -15,8 +16,8 @@ type SummaryReader interface {
 	Get(ctx context.Context, id domain.SessionID) (domain.SessionUsageSummary, error)
 }
 
-// SessionStore resolves the session's harness and its project's remote so a
-// usage event can be attributed to a GitHub owner.
+// SessionStore resolves the session's project so a usage event can be
+// attributed to a GitHub owner.
 type SessionStore interface {
 	GetSession(ctx context.Context, id domain.SessionID) (domain.SessionRecord, bool, error)
 	GetProject(ctx context.Context, id string) (domain.ProjectRecord, bool, error)
@@ -28,51 +29,67 @@ type SCMParser interface {
 	ParseRepository(remote string) (ports.SCMRepo, bool)
 }
 
-// Finalizer is the lifecycle usage-finalizer contract this package decorates.
-// It mirrors the interfaces lifecycle.Manager type-asserts for, so the
-// decorated value can be passed straight to SetUsageFinalizer.
-type Finalizer interface {
-	FinalizeSession(ctx context.Context, id domain.SessionID, expectedRuntimeLaunchID string, expectedSessionRevision time.Time) error
-	ReactivateSession(ctx context.Context, id domain.SessionID, expectedRuntimeLaunchID string) error
-}
-
-// EmittingFinalizer decorates the usage finalizer so that, immediately after a
-// session's usage is finalized at termination, a single ao.session.token_usage
-// event is emitted with the session's token totals, an estimated dollar cost,
-// and the owning GitHub organisation/account. Emission is best-effort: it never
-// changes the finalizer's result or blocks the lifecycle transition.
-type EmittingFinalizer struct {
-	inner     Finalizer
+// Emitter emits one ao.session.token_usage event per session once its usage is
+// fully settled (all transcript ingestion complete), attributed to the owning
+// GitHub org with an estimated cost.
+//
+// It is driven by the usage pipeline's settle signal, NOT by session exit: at
+// exit the pipeline has only been *poked*, so the transcript is typically not
+// yet ingested and a read would see zero tokens. Emitting after settle is what
+// makes the numbers real.
+//
+// Idempotent: it remembers the last total emitted per session and skips a
+// repeat with the same total, so the retries and multi-binding settles the
+// pipeline performs never double-count. A later genuine increase (a reactivated
+// session that runs more) re-emits with the higher total, which downstream
+// ranking treats as the session's latest figure.
+type Emitter struct {
 	summary   SummaryReader
 	store     SessionStore
 	scm       SCMParser
 	telemetry ports.EventSink
 	now       func() time.Time
+
+	mu        sync.Mutex
+	lastTotal map[domain.SessionID]int64
 }
 
-// NewEmittingFinalizer wraps inner. If any dependency needed to emit is nil the
-// decorator still forwards finalizer calls; it simply does not emit.
-func NewEmittingFinalizer(inner Finalizer, summary SummaryReader, store SessionStore, scm SCMParser, telemetry ports.EventSink, clock func() time.Time) *EmittingFinalizer {
+// NewEmitter builds an Emitter. A nil telemetry or summary makes EmitSessionUsage
+// a no-op (keeps wiring simple when telemetry is disabled).
+func NewEmitter(summary SummaryReader, store SessionStore, scm SCMParser, telemetry ports.EventSink, clock func() time.Time) *Emitter {
 	if clock == nil {
 		clock = time.Now
 	}
-	return &EmittingFinalizer{inner: inner, summary: summary, store: store, scm: scm, telemetry: telemetry, now: clock}
+	return &Emitter{
+		summary:   summary,
+		store:     store,
+		scm:       scm,
+		telemetry: telemetry,
+		now:       clock,
+		lastTotal: make(map[domain.SessionID]int64),
+	}
 }
 
-// FinalizeSession forwards to the wrapped finalizer, then emits usage telemetry
-// once the totals are as complete as they will be at termination.
-func (e *EmittingFinalizer) FinalizeSession(ctx context.Context, id domain.SessionID, expectedRuntimeLaunchID string, expectedSessionRevision time.Time) error {
-	err := e.inner.FinalizeSession(ctx, id, expectedRuntimeLaunchID, expectedSessionRevision)
-	e.emit(ctx, id)
-	return err
+// AllBindingsSettled reports whether every binding for a session has reached a
+// terminal ingestion state (complete or partial). Only then is the session's
+// usage summary final and worth emitting. Empty input is treated as not
+// settled: a session with no bindings has nothing to report.
+func AllBindingsSettled(bindings []domain.UsageBindingRecord) bool {
+	if len(bindings) == 0 {
+		return false
+	}
+	for _, b := range bindings {
+		if b.State != domain.UsageBindingComplete && b.State != domain.UsageBindingPartial {
+			return false
+		}
+	}
+	return true
 }
 
-// ReactivateSession forwards unchanged; reactivation is not a usage boundary.
-func (e *EmittingFinalizer) ReactivateSession(ctx context.Context, id domain.SessionID, expectedRuntimeLaunchID string) error {
-	return e.inner.ReactivateSession(ctx, id, expectedRuntimeLaunchID)
-}
-
-func (e *EmittingFinalizer) emit(ctx context.Context, id domain.SessionID) {
+// EmitSessionUsage reads the (now settled) usage summary for a session and emits
+// one ao.session.token_usage event, unless an identical total was already
+// emitted for it. Best-effort: any read error or empty usage is a silent no-op.
+func (e *Emitter) EmitSessionUsage(ctx context.Context, id domain.SessionID) {
 	if e.telemetry == nil || e.summary == nil {
 		return
 	}
@@ -87,15 +104,24 @@ func (e *EmittingFinalizer) emit(ctx context.Context, id domain.SessionID) {
 	output := deref(summary.Totals.OutputTokens)
 	total := input + output
 	if total == 0 {
-		return // nothing ingested for this session; not worth an event.
+		return // nothing ingested yet; not worth an event.
 	}
 
+	// Idempotency: skip a repeat with no new usage (multi-binding settles and
+	// pipeline retries both re-signal the same session). Record before emitting
+	// so a concurrent duplicate also short-circuits.
+	e.mu.Lock()
+	if prev, ok := e.lastTotal[id]; ok && prev == total {
+		e.mu.Unlock()
+		return
+	}
+	e.lastTotal[id] = total
+	e.mu.Unlock()
+
 	model, harness := dominant(summary)
-	// Do NOT round per session: a sub-cent session (e.g. $0.00225) rounded to
-	// $0.00 sums to $0 across thousands of sessions and skews org rankings. Emit
-	// integer micro-dollars for exact aggregation (SUM then divide by 1e6 at
-	// display), plus the unrounded float for readability. Rounding is a display
-	// concern, never a storage one.
+	// Do NOT round per session: a sub-cent session summed across thousands would
+	// vanish to $0 and skew rankings. Emit integer micro-dollars for exact
+	// aggregation plus the unrounded float; round only at display.
 	cost := summaryCost(summary)
 	costMicroUSD := int64(math.Round(cost * 1_000_000))
 
@@ -160,7 +186,7 @@ func dominant(summary domain.SessionUsageSummary) (model, harness string) {
 	return model, harness
 }
 
-func (e *EmittingFinalizer) projectID(ctx context.Context, id domain.SessionID) string {
+func (e *Emitter) projectID(ctx context.Context, id domain.SessionID) string {
 	if e.store == nil {
 		return ""
 	}
@@ -173,7 +199,7 @@ func (e *EmittingFinalizer) projectID(ctx context.Context, id domain.SessionID) 
 
 // githubOrg resolves the GitHub owner/org of the session's project remote, or
 // "" when unknown or not a GitHub remote. Only the owner segment is used.
-func (e *EmittingFinalizer) githubOrg(ctx context.Context, id domain.SessionID) string {
+func (e *Emitter) githubOrg(ctx context.Context, id domain.SessionID) string {
 	if e.store == nil || e.scm == nil {
 		return ""
 	}

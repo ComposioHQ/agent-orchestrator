@@ -310,7 +310,23 @@ func Run() error {
 	if roots, rootsErr := usagesvc.DefaultSourceRoots(ctx); rootsErr != nil {
 		log.Warn("usage collection disabled", "err", rootsErr)
 	} else {
-		usageCollector = usagesvc.NewCollector(store, roots, func(reconcile bool) {
+		// Emit per-session token-usage ranking telemetry when the pipeline has
+		// actually settled a session's usage (see usageSettleStore), not at
+		// session exit where nothing is ingested yet. The collector runs on the
+		// wrapped store so its settle call drives the emitter.
+		var usageSCM usagetelemetry.SCMParser
+		if p := newMultiSCMProvider(cfg.GitLab, log); p != nil {
+			usageSCM = p
+		}
+		usageEmitter := usagetelemetry.NewEmitter(
+			usagesvc.NewSummaryReader(store),
+			store,
+			usageSCM,
+			telemetrySink,
+			nil,
+		)
+		collectorStore := newUsageSettleStore(store, usageEmitter)
+		usageCollector = usagesvc.NewCollector(collectorStore, roots, func(reconcile bool) {
 			if usagePipeline == nil {
 				return
 			}
@@ -333,21 +349,7 @@ func Run() error {
 			},
 			ReconcilePath: usageCollector.ReconcilePath,
 		})
-		// Decorate the finalizer so per-session token usage is emitted as
-		// ranking telemetry (with estimated cost and GitHub owner) once the
-		// pipeline has finalized the session's usage at termination.
-		var usageSCM usagetelemetry.SCMParser
-		if p := newMultiSCMProvider(cfg.GitLab, log); p != nil {
-			usageSCM = p
-		}
-		lcStack.LCM.SetUsageFinalizer(usagetelemetry.NewEmittingFinalizer(
-			usageCollector,
-			usagesvc.NewSummaryReader(store),
-			store,
-			usageSCM,
-			telemetrySink,
-			nil,
-		))
+		lcStack.LCM.SetUsageFinalizer(usageCollector)
 	}
 	lcStack.scmDone = startSCMObserver(ctx, store, lcStack.LCM, cfg.GitLab, log)
 	var prActions prsvc.ActionManager
