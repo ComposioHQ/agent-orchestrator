@@ -192,7 +192,7 @@ func TestEnsureInjectsCapabilityThroughTheEnvironmentOnly(t *testing.T) {
 		options.Secrets = &recordingSecrets{
 			events: options.Secrets.(*recordingSecrets).events,
 			env:    map[string]string{"GITHUB_TOKEN": "ghs_averyLongSecretValue"},
-			files:  map[string]string{"/home/agent/.ssh/id_ed25519": "-----BEGIN OPENSSH PRIVATE KEY-----"},
+			files:  map[string]string{"/home/agent/.ssh/id_ed25519": "synthetic-owner-only-key-material"},
 		}
 	})
 	placement, err := h.manager.Ensure(context.Background(), workerRef())

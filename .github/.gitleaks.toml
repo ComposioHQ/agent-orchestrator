@@ -199,4 +199,8 @@ title = "gitleaks config"
         "2a0c8a0f3e27ae78612b9896f07e0a79b181a431",
         "d1d4092df1adfe6f9581b03484845485dfb91b76",
         "423f0de6fa12d55785f2cc254e033edb94773a84",
+		# Test-only placeholder used to verify that sandbox secret files never
+		# appear in argv. The fixture matched the PEM header rule but contained
+		# no key bytes; the live test now uses an unambiguous synthetic value.
+		"6b6141f9fcb0a454b3e0ee863b2cefe05f00476b",
     ]
