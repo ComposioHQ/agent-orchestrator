@@ -12,8 +12,10 @@ import {
 	AlertTriangle,
 	Archive,
 	Brain,
+	ChevronDown,
 	ChevronRight,
 	CircleAlert,
+	CornerDownLeft,
 	CornerDownRight,
 	File as FileIcon,
 	FileDiff,
@@ -58,11 +60,18 @@ import { ConversationBranchNavigator } from "./ConversationBranchNavigator";
 import { ConversationContentItems } from "./ConversationContentItems";
 import {
 	ACTIVITY_SUMMARY_BUTTON_CLASS,
+	commandBinaryLabel,
 	commandCategory,
 	exploredFileCount,
 	isNonzeroCommandExit,
 } from "./activity-command";
-import { Button } from "../ui/button";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "../ui/tooltip";
+import {
+	DropdownMenu,
+	DropdownMenuContent,
+	DropdownMenuItem,
+	DropdownMenuTrigger,
+} from "../ui/dropdown-menu";
 import {
 	fileChangeFiles,
 	reviewedPaths,
@@ -74,6 +83,7 @@ import {
 	type DeliveryState,
 	type DiffStatus,
 	type FileChangeFile,
+	type ConversationItem,
 	type TurnDiff,
 } from "../../types/conversation";
 
@@ -131,7 +141,10 @@ function shortenPaths(text: string): string {
 
 function formatDuration(ms: number): string {
 	if (ms < 1000) return `${ms}ms`;
-	if (ms < 60_000) return `${(ms / 1000).toFixed(1)}s`;
+	if (ms < 60_000) {
+		// Drop a trailing ".0" so whole seconds read as "3s", not "3.0s".
+		return `${(ms / 1000).toFixed(1).replace(/\.0$/, "")}s`;
+	}
 	return `${Math.round(ms / 60_000)}m`;
 }
 
@@ -207,10 +220,10 @@ export function HumanMessage({
 			) : (
 				<div
 					className={cn(
-						"cursor-chat-human-message w-fit max-w-[min(78%,560px)] rounded-[10px] border px-3 py-2.5 text-sm leading-[1.55]",
+						"cursor-chat-human-message w-fit max-w-[min(78%,560px)] rounded-[10px] px-3 py-2.5 text-sm leading-[1.55]",
 						queued
-							? "border-dashed border-border-strong bg-transparent text-muted-foreground"
-							: "border-border bg-raised text-foreground",
+							? "border border-dashed border-border-strong bg-transparent text-muted-foreground"
+							: "bg-raised text-foreground",
 					)}
 				>
 					{body ? <p className="break-words whitespace-pre-wrap text-pretty">{body}</p> : null}
@@ -241,13 +254,13 @@ export function HumanMessage({
 								type="button"
 								onClick={onEditStart}
 								aria-label="Edit user message"
-								className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[10.5px] text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground"
+								title="Edit user message"
+								className="flex items-center rounded px-1.5 py-0.5 text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground"
 							>
 								<Pencil aria-hidden="true" className="size-3" />
-								Edit
 							</button>
 						) : null}
-						<CopyButton text={message.text} label="Copy user message" />
+						<CopyButton text={message.text} label="Copy user message" compact />
 					</div>
 					{branchPoint && onActivateBranch ? (
 						<ConversationBranchNavigator
@@ -321,6 +334,7 @@ export function AssistantMessage({
 	message,
 	showCopy = false,
 	onRollback,
+	durationMs,
 	showStreamingIndicator = message.streaming,
 }: {
 	message: ConversationMessage;
@@ -331,13 +345,16 @@ export function AssistantMessage({
 	 * answer owns both "keep this" and "undo from here".
 	 */
 	onRollback?: () => void;
+	/** How long the finished turn took; sits next to rollback on the action row. */
+	durationMs?: number;
 	/** Only the newest item can still be visibly writing; older streaming fragments
 	 * are waiting on a tool rather than missing content. */
 	showStreamingIndicator?: boolean;
 }) {
 	const visiblyStreaming = message.streaming && showStreamingIndicator;
 	const hasText = message.text.trim().length > 0;
-	const showActions = !visiblyStreaming && (showCopy || Boolean(onRollback));
+	const hasDuration = durationMs !== undefined && durationMs > 0;
+	const showActions = !visiblyStreaming && (showCopy || Boolean(onRollback) || hasDuration);
 	return (
 		<div className={cn("group/message relative", visiblyStreaming && hasText && "chat-assistant-streaming")}>
 			<ChatMarkdown text={message.text} streaming={message.streaming} />
@@ -380,6 +397,7 @@ export function AssistantMessage({
 							<Undo2 aria-hidden="true" className="size-3" />
 						</button>
 					) : null}
+					{hasDuration ? <TurnDuration durationMs={durationMs} /> : null}
 				</div>
 			) : null}
 		</div>
@@ -448,12 +466,22 @@ function GenericActivityRow({ activity }: { activity: ConversationActivity }) {
 	const Icon = activityIcon[activity.activityKind] ?? SquareTerminal;
 	const detail = activity.detail;
 	const files = fileChangeFiles(activity);
+	// A single edit with no patch has nothing to expand into — the header already
+	// named the file. Multi-file edits expand to a list; a lone patch expands to
+	// the diff itself.
+	const hasFileBody =
+		files.length > 1 || (files.length === 1 && Boolean(files[0]?.patch));
 	const hasBody = Boolean(
 		detail?.command ||
-			detail?.output || detail?.reason || detail?.text || detail?.terminalInput || files.length,
+			detail?.output || detail?.reason || detail?.text || detail?.terminalInput || hasFileBody,
 	);
 	const { label, path } = splitSummary(activity);
-	const compactCommand = activity.activityKind === "command";
+	// Commands and file edits share the explore-style summary line: muted label,
+	// no icon column, always-visible chevron. Everything else keeps the denser
+	// bordered activity row.
+	const compactSummary =
+		activity.activityKind === "command" || activity.activityKind === "file_change";
+	const singleEdit = activity.activityKind === "file_change" && files.length === 1 ? files[0] : undefined;
 
 	// Live output is only live if it is on screen, so a command that is still
 	// running and already printing opens itself.
@@ -464,7 +492,7 @@ function GenericActivityRow({ activity }: { activity: ConversationActivity }) {
 		<div
 			className={cn(
 				"min-w-0 max-w-full",
-				compactCommand ? "flex flex-col" : "group/activity border-t border-border first:border-t-0",
+				compactSummary ? "flex flex-col" : "group/activity border-t border-border first:border-t-0",
 			)}
 		>
 			<button
@@ -473,14 +501,14 @@ function GenericActivityRow({ activity }: { activity: ConversationActivity }) {
 				disabled={!hasBody}
 				aria-expanded={hasBody ? open : undefined}
 				className={cn(
-					compactCommand
+					compactSummary
 						? ACTIVITY_SUMMARY_BUTTON_CLASS
 						: "flex min-h-[35px] w-full min-w-0 items-center gap-[9px] px-[11px] py-2 text-left text-[11px] transition-colors",
-					hasBody && !compactCommand && "hover:bg-interactive-hover",
+					hasBody && !compactSummary && "hover:bg-interactive-hover",
 					!hasBody && "cursor-default",
 				)}
 			>
-				{compactCommand ? null : (
+				{compactSummary ? null : (
 					<Icon
 						aria-hidden="true"
 						className={cn(
@@ -490,35 +518,44 @@ function GenericActivityRow({ activity }: { activity: ConversationActivity }) {
 						size={13}
 					/>
 				)}
-				<strong
-					className={cn(
-						compactCommand
-							? "shrink-0 text-[11.5px] font-normal text-muted-foreground"
-							: "min-w-0 truncate font-medium",
-						!compactCommand &&
-							(activity.status === "failed" ? "text-destructive" : "text-foreground"),
-					)}
-					title={compactCommand ? undefined : label}
-				>
-					{label}
-				</strong>
-				{path ? (
+				{singleEdit ? (
+					<span className="flex min-w-0 items-center gap-1 text-[11.5px] font-normal">
+						<span className="shrink-0 text-muted-foreground">
+							{fileChangeVerb(singleEdit.status ?? "modified")}
+						</span>
+						<FileLocationLabel path={singleEdit.path} oldPath={singleEdit.oldPath} />
+					</span>
+				) : (
+					<strong
+						className={cn(
+							compactSummary
+								? "shrink-0 text-[11.5px] font-normal text-muted-foreground"
+								: "min-w-0 truncate font-medium",
+							!compactSummary &&
+								(activity.status === "failed" ? "text-destructive" : "text-foreground"),
+						)}
+						title={compactSummary ? undefined : label}
+					>
+						{label}
+					</strong>
+				)}
+				{path && !singleEdit ? (
 					<span
 						className="min-w-0 flex-1 truncate font-mono text-[10.5px] text-muted-foreground"
 						title={path}
 					>
 						{path}
 					</span>
-				) : compactCommand ? null : (
+				) : compactSummary ? null : (
 					<span className="flex-1" />
 				)}
 				<ActivityState
 					activity={activity}
 					open={open}
 					hasBody={hasBody}
-					showDisclosure={!compactCommand}
+					showDisclosure={!compactSummary}
 				/>
-				{compactCommand && hasBody ? (
+				{compactSummary && hasBody ? (
 					<ChevronRight
 						aria-hidden="true"
 						className={cn(
@@ -530,30 +567,100 @@ function GenericActivityRow({ activity }: { activity: ConversationActivity }) {
 			</button>
 
 			{open && hasBody ? (
-				<div className="flex flex-col gap-1.5 px-[11px] pb-2.5">
-					{files.length ? <FileChangeList files={files} /> : null}
-					{detail?.command ? (
-						// Said explicitly rather than implied by the label: "Ran command"
-						// alone never tells the reader what ran, and the collapsed row
-						// deliberately keeps only the category.
-						<pre className="overflow-x-auto rounded-md border border-border bg-background px-2.5 py-1.5 font-mono text-[10.5px] leading-relaxed text-foreground">
-							{detail.command}
-						</pre>
-					) : null}
-					{detail?.reason || detail?.text ? (
-						<p className="whitespace-pre-wrap text-[11px] leading-relaxed text-muted-foreground">
-							{detail.reason ?? detail.text}
-						</p>
-					) : null}
-					{detail?.terminalInput ? (
-						<TerminalInput
-							text={detail.terminalInput}
-							truncated={detail.terminalInputTruncated}
-						/>
-					) : null}
-					{detail?.output ? <CommandOutput activity={activity} /> : null}
+				compactSummary &&
+				activity.activityKind === "command" &&
+				(detail?.command || detail?.output || detail?.terminalInput) ? (
+					<CommandExploreBody activity={activity} />
+				) : (
+					<div className="flex flex-col gap-1.5 px-1 pb-1 pt-0.5">
+						{/* One file: open straight onto its patch. Listing the same
+						    basename again under "Edited name" is noise. */}
+						{files.length === 1 && files[0]?.patch ? (
+							<Patch patch={files[0].patch} truncated={files[0].patchTruncated} />
+						) : null}
+						{files.length > 1 ? <FileChangeList files={files} /> : null}
+						{detail?.command ? (
+							// Said explicitly rather than implied by the label: "Ran command"
+							// alone never tells the reader what ran, and the collapsed row
+							// deliberately keeps only the category.
+							<pre className="overflow-x-auto rounded-md border border-border bg-background px-2.5 py-1.5 font-mono text-[10.5px] leading-relaxed text-foreground">
+								{detail.command}
+							</pre>
+						) : null}
+						{detail?.reason || detail?.text ? (
+							<p className="whitespace-pre-wrap px-1 text-[11px] leading-relaxed text-muted-foreground">
+								{detail.reason ?? detail.text}
+							</p>
+						) : null}
+						{detail?.terminalInput ? (
+							<TerminalInput
+								text={detail.terminalInput}
+								truncated={detail.terminalInputTruncated}
+							/>
+						) : null}
+						{detail?.output ? <CommandOutput activity={activity} /> : null}
+					</div>
+				)
+			) : null}
+		</div>
+	);
+}
+
+/**
+ * Expanded command / explore body: one soft chat-surface card with the shell
+ * line nested in its own chip, then muted monospace output underneath — the
+ * same anatomy as the Cursor explore block, restated in AO chat tokens.
+ */
+function CommandExploreBody({ activity }: { activity: ConversationActivity }) {
+	const detail = activity.detail;
+	const command = detail?.command?.trim();
+	const reason = (detail?.reason ?? detail?.text)?.trim();
+	const binary = command ? commandBinaryLabel(command) : undefined;
+	const showPrompt = Boolean(reason && reason !== command);
+
+	return (
+		<div className="cursor-chat-explore-box mt-1 flex min-w-0 flex-col overflow-hidden rounded-[10px] border">
+			{showPrompt ? (
+				<div className="flex min-w-0 items-start gap-2 border-b border-border/60 px-3 py-2">
+					<span
+						aria-hidden="true"
+						className="shrink-0 select-none pt-px font-mono text-[11px] leading-relaxed text-muted-foreground/70"
+					>
+						&gt;_
+					</span>
+					<div className="flex min-w-0 flex-1 flex-wrap items-baseline gap-x-2 gap-y-0.5">
+						<span className="min-w-0 break-words text-[12px] leading-relaxed text-foreground/90">
+							{reason}
+						</span>
+						{binary ? (
+							<span className="shrink-0 font-mono text-[10.5px] text-muted-foreground/55">
+								{binary}
+							</span>
+						) : null}
+					</div>
 				</div>
 			) : null}
+
+			{command ? (
+				<pre
+					className={cn(
+						"cursor-chat-explore-command overflow-x-auto px-3 py-2 font-mono text-[11px] leading-relaxed text-foreground/85",
+						(detail?.output || detail?.terminalInput) && "border-b border-border/60",
+					)}
+				>
+					{command}
+				</pre>
+			) : null}
+
+			{detail?.terminalInput ? (
+				<div className={cn("px-3 py-2", detail?.output && "border-b border-border/60")}>
+					<TerminalInput
+						text={detail.terminalInput}
+						truncated={detail.terminalInputTruncated}
+					/>
+				</div>
+			) : null}
+			{detail?.output ? <CommandOutput activity={activity} embedded /> : null}
 		</div>
 	);
 }
@@ -606,7 +713,14 @@ function TerminalInput({ text, truncated }: { text: string; truncated?: boolean 
  * hundred stacked copies of itself. See `lib/ansi.ts` for why this is a text pass
  * rather than a terminal.
  */
-function CommandOutput({ activity }: { activity: ConversationActivity }) {
+function CommandOutput({
+	activity,
+	embedded = false,
+}: {
+	activity: ConversationActivity;
+	/** Inside the explore card: no second bordered surface. */
+	embedded?: boolean;
+}) {
 	const pre = useRef<HTMLPreElement>(null);
 	const detail = activity.detail;
 	// Older ACP-backed conversations may contain the provider's structured
@@ -633,7 +747,12 @@ function CommandOutput({ activity }: { activity: ConversationActivity }) {
 			<pre
 				ref={pre}
 				aria-live={streaming ? "polite" : undefined}
-				className="max-h-64 overflow-auto rounded-md border border-border bg-background px-2.5 py-2 font-mono text-[10.5px] leading-relaxed text-muted-foreground"
+				className={cn(
+					"max-h-64 overflow-auto font-mono leading-relaxed text-muted-foreground",
+					embedded
+						? "cursor-chat-explore-output px-3 py-2 text-[11px]"
+						: "rounded-md border border-border bg-background px-2.5 py-2 text-[10.5px]",
+				)}
 			>
 				{output}
 			</pre>
@@ -681,7 +800,10 @@ function splitSummary(activity: ConversationActivity): { label: string; path?: s
 	}
 	const files = fileChangeFiles(activity);
 	if (activity.activityKind === "file_change" && files.length === 1) {
-		return { label: "Edited", path: shortenPaths(files[0]!.path) };
+		// Basename sits in the chip next to the status verb; the full path is the hover.
+		return {
+			label: `${fileChangeVerb(files[0]!.status ?? "modified")} ${fileBasename(files[0]!.path)}`,
+		};
 	}
 	return { label: activity.summary };
 }
@@ -757,17 +879,14 @@ function ActivityState({
 /**
  * The files one edit touched, and what it did to them.
  *
- * Every field here is new signal. The daemon normalizes the provider's change kind
- * — which arrives as an object — into a plain status, so a row can finally say
- * whether a file was added, deleted or renamed instead of only counting lines. And
- * each file now carries its own patch, which is the difference between being told
- * something changed and being able to read the change without leaving the
- * conversation.
+ * Styled like the explore summary's nested lines — "Edited FAQ.tsx +1 −1" — so an
+ * expanded edit reads the same as the turn-level changed-files list. Hovering the
+ * basename shows the full location; a file that carries a patch can still open it.
  */
 export function FileChangeList({ files }: { files: FileChangeFile[] }) {
 	if (!files.length) return null;
 	return (
-		<ul className="flex flex-col gap-0.5">
+		<ul className="flex flex-col">
 			{files.map((file) => (
 				<FileChangeRow key={`${file.oldPath ?? ""}→${file.path}`} file={file} />
 			))}
@@ -779,27 +898,15 @@ function FileChangeRow({ file }: { file: FileChangeFile }) {
 	const [open, setOpen] = useState(false);
 	const status = diffStatusMark[file.status ?? "modified"] ?? diffStatusMark.modified;
 	const hasPatch = Boolean(file.patch);
+	const accessibleName = `${status.label} ${file.path}`;
 
 	const line = (
 		<>
-			<span
-				aria-label={status.label}
-				className={cn("w-3 shrink-0 text-center font-mono text-[10px] font-semibold", status.tone)}
-				title={status.label}
-			>
-				{status.mark}
+			<span className="sr-only">{status.label}</span>
+			<span className="shrink-0 text-[11.5px] text-muted-foreground">
+				{fileChangeVerb(file.status ?? "modified")}
 			</span>
-			<span className="min-w-0 flex-1 truncate font-mono text-[11px] text-muted-foreground" title={file.path}>
-				{file.oldPath ? (
-					<>
-						<span className="text-muted-foreground/60">{shortenPaths(file.oldPath)}</span>
-						<span aria-hidden="true" className="px-1 text-muted-foreground/40">
-							&rarr;
-						</span>
-					</>
-				) : null}
-				{shortenPaths(file.path)}
-			</span>
+			<FileLocationLabel path={file.path} oldPath={file.oldPath} />
 			<span className="shrink-0 font-mono text-[10px] tabular-nums text-success">
 				+{file.additions}
 			</span>
@@ -812,7 +919,11 @@ function FileChangeRow({ file }: { file: FileChangeFile }) {
 	// A file with no patch is not a button: nothing opens, and a control that does
 	// nothing when pressed is worse than plain text.
 	if (!hasPatch) {
-		return <li className="flex items-center gap-2.5 px-0.5 py-1">{line}</li>;
+		return (
+			<li className="flex items-center gap-1.5 py-0.5 pr-1" aria-label={accessibleName}>
+				{line}
+			</li>
+		);
 	}
 
 	return (
@@ -821,13 +932,14 @@ function FileChangeRow({ file }: { file: FileChangeFile }) {
 				type="button"
 				onClick={() => setOpen((prev) => !prev)}
 				aria-expanded={open}
-				className="flex items-center gap-2.5 rounded-sm px-0.5 py-1 text-left transition-colors hover:bg-interactive-hover"
+				aria-label={accessibleName}
+				className="flex items-center gap-1.5 rounded-sm py-0.5 pr-1 text-left"
 			>
 				{line}
 				<ChevronRight
 					aria-hidden="true"
 					className={cn(
-						"size-3 shrink-0 text-muted-foreground/50 transition-transform",
+						"size-3 shrink-0 text-muted-foreground/40 transition-transform",
 						open && "rotate-90",
 					)}
 				/>
@@ -1440,88 +1552,285 @@ export function SteerMessage({ activity }: { activity: ConversationActivity }) {
 /**
  * A decision the agent is blocked on.
  *
- * Buttons come from `activity.decisions` — the provider's own list — never from a
- * fixed set. A real captured approval offered `accept`, an object-shaped
- * `acceptWithExecpolicyAmendment`, and `cancel`, and offered **no decline**: a
- * hardcoded three-button row would have drawn a control that cannot be honored.
+ * Decisions come from `activity.decisions` — the provider's own list — never from
+ * a fixed set. The UI still presents common permission choices with AO/Codex copy
+ * so provider-flavored labels do not leak into the chat surface.
  */
 export function ApprovalCard({
 	activity,
 	onDecide,
 	busy,
+	embedded,
 }: {
 	activity: ConversationActivity;
 	onDecide?: (requestId: string, decisionId: string) => void;
 	busy?: boolean;
+	/** Render inside the shared chat composer instead of drawing another card shell. */
+	embedded?: boolean;
 }) {
 	const resolved = activity.status !== "pending";
-	const decisions: DecisionOption[] = activity.decisions ?? [];
+	const decisions = orderedApprovalDecisions(activity.decisions ?? []);
 	const detail = activity.detail;
+	const command = detail?.command ?? activity.summary;
+	const subjectKind = approvalSubjectKind(activity);
+	const rejectOnceDecision = decisions.find(
+		(decision) => approvalDecisionKind(decision) === "reject_once",
+	);
+	const denyDecision =
+		rejectOnceDecision ??
+		decisions.find((decision) => approvalDecisionKind(decision) === "reject_always");
+	const allowOnceDecision = decisions.find(
+		(decision) => approvalDecisionKind(decision) === "allow_once",
+	);
+	const alternateAllowDecisions = allowOnceDecision
+		? decisions.filter((decision) => approvalDecisionKind(decision) === "allow_always")
+		: [];
+	const otherDecisions = decisions.filter(
+		(decision) =>
+			decision !== denyDecision &&
+			decision !== allowOnceDecision &&
+			!alternateAllowDecisions.includes(decision),
+	);
+	const requestId = activity.requestId ?? "";
+	const cardRef = useRef<HTMLDivElement>(null);
+
+	useEffect(() => {
+		if (!embedded || resolved || busy || !requestId) return;
+		const card = cardRef.current;
+		if (card && (document.activeElement === document.body || !document.activeElement)) card.focus();
+	}, [busy, embedded, requestId, resolved]);
+
+	if (resolved) {
+		return <ResolvedApprovalRow activity={activity} command={command} />;
+	}
 
 	return (
 		<div
+			ref={cardRef}
+			role="group"
+			tabIndex={-1}
+			aria-label={`Approval request ${requestId}`.trim()}
 			className={cn(
-				"rounded-lg border bg-surface",
-				resolved ? "border-border" : "border-warning/40 ring-1 ring-warning/10",
+				"cursor-chat-activity-panel",
+				embedded ? "px-1 py-0.5" : "rounded-lg border border-border px-3 py-2.5",
 			)}
+			onKeyDown={(event) => {
+				if (busy || event.defaultPrevented || event.altKey || event.ctrlKey || event.metaKey) return;
+				if (event.key === "Escape" && rejectOnceDecision) {
+					event.preventDefault();
+					onDecide?.(requestId, rejectOnceDecision.id);
+					return;
+				}
+				const target = event.target;
+				const interactive =
+					target instanceof HTMLElement &&
+					Boolean(target.closest("button, a, input, textarea, select, [contenteditable='true']"));
+				if (event.key === "Enter" && !event.shiftKey && !interactive && allowOnceDecision) {
+					event.preventDefault();
+					onDecide?.(requestId, allowOnceDecision.id);
+				}
+			}}
 		>
-			<div className="flex items-center gap-2 border-b border-border px-3.5 py-2.5">
-				<ShieldQuestion
-					aria-hidden="true"
-					className={cn("size-4 shrink-0", resolved ? "text-muted-foreground" : "text-warning")}
-				/>
-				<strong className="text-xs font-semibold text-foreground">
-					{resolved ? "Approval resolved" : "Approval required"}
-				</strong>
-				<span className="ml-auto shrink-0 font-mono text-[11px] text-muted-foreground">
-					req {activity.requestId}
-				</span>
-			</div>
+			<div className="flex flex-col">
+				<p className="whitespace-pre-wrap text-[13.5px] leading-[1.4] text-foreground/90">
+					{detail?.reason ?? approvalPrompt(subjectKind)}
+				</p>
 
-			<div className="flex flex-col gap-2.5 px-3.5 py-3">
-				{detail?.reason ? (
-					<p className="text-sm leading-relaxed text-muted-foreground">{detail.reason}</p>
-				) : null}
+				<pre className="mt-2 max-h-32 overflow-auto whitespace-pre-wrap break-words rounded-md border border-border/70 bg-background/45 px-2.5 py-1.5 font-mono text-[12px] leading-[1.45] text-muted-foreground">
+					{detail?.rawCommand ?? command}
+				</pre>
 
-				<dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1 rounded bg-background px-2.5 py-2 font-mono text-[11px] leading-relaxed">
-					<dt className="text-muted-foreground">command</dt>
-					<dd className="min-w-0 break-all text-foreground">{detail?.command ?? activity.summary}</dd>
-					{detail?.cwd ? (
-						<>
-							<dt className="text-muted-foreground">cwd</dt>
-							<dd className="min-w-0 break-all text-muted-foreground">{detail.cwd}</dd>
-						</>
+				<div className="mt-2 flex flex-wrap justify-end gap-1.5">
+					{denyDecision ? (
+						<button
+							type="button"
+							className="inline-flex h-7 items-center gap-1.5 rounded-full border border-border-strong bg-background/20 px-2.5 text-[12.5px] text-foreground/90 transition-colors hover:bg-interactive-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40 disabled:pointer-events-none disabled:opacity-50"
+							disabled={busy}
+							onClick={() => onDecide?.(requestId, denyDecision.id)}
+						>
+							{approvalDecisionLabel(denyDecision, subjectKind)}
+							{denyDecision === rejectOnceDecision ? (
+								<kbd className="rounded-full bg-foreground/10 px-1.5 py-0.5 font-sans text-[10.5px] leading-none text-muted-foreground">
+									Esc
+								</kbd>
+							) : null}
+						</button>
 					) : null}
-				</dl>
 
-				{resolved ? (
-					<p className="text-[11px] text-muted-foreground">
-						Already answered. This card is kept for the record.
-					</p>
-				) : (
-					<div className="flex flex-wrap gap-2 pt-0.5">
-						{decisions.map((decision, index) => (
-							<Button
-								key={decision.id}
+					{allowOnceDecision ? (
+						<div className="flex h-7 overflow-hidden rounded-full bg-logo-accent text-logo-accent-foreground shadow-sm">
+							<button
 								type="button"
-								size="sm"
-								variant={index === 0 ? "primary" : "outline"}
+								className="inline-flex items-center gap-1.5 px-2.5 text-[12.5px] transition-colors hover:bg-logo-accent-bright focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50"
 								disabled={busy}
-								onClick={() => onDecide?.(activity.requestId ?? "", decision.id)}
+								onClick={() => onDecide?.(requestId, allowOnceDecision.id)}
 							>
-								{decision.label}
-							</Button>
-						))}
-						{decisions.length === 0 ? (
-							<p className="text-[11px] text-warning">
-								The agent offered no decisions AO can present. Open diagnostics.
-							</p>
-						) : null}
-					</div>
-				)}
+								Allow once
+								<kbd className="rounded-full bg-logo-accent-foreground/15 p-0.5" aria-label="Press Return">
+									<CornerDownLeft aria-hidden="true" className="size-3" />
+								</kbd>
+							</button>
+							{alternateAllowDecisions.length > 0 ? (
+								<DropdownMenu>
+									<DropdownMenuTrigger asChild>
+										<button
+											type="button"
+											aria-label="More approval options"
+											className="flex w-7 items-center justify-center border-l border-logo-accent-foreground/20 transition-colors hover:bg-logo-accent-bright focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50"
+											disabled={busy}
+										>
+											<ChevronDown aria-hidden="true" className="size-3.5" />
+										</button>
+									</DropdownMenuTrigger>
+									<DropdownMenuContent
+										align="end"
+										side="bottom"
+										className="min-w-52"
+										data-approval-menu=""
+										onEscapeKeyDown={(event) => event.stopPropagation()}
+									>
+										{alternateAllowDecisions.map((decision) => (
+											<DropdownMenuItem
+												key={decision.id}
+												disabled={busy}
+												onSelect={() => onDecide?.(activity.requestId ?? "", decision.id)}
+											>
+												{approvalDecisionLabel(decision, subjectKind)}
+											</DropdownMenuItem>
+										))}
+									</DropdownMenuContent>
+								</DropdownMenu>
+							) : null}
+						</div>
+					) : null}
+					{otherDecisions.map((decision) => (
+						<button
+							key={decision.id}
+							type="button"
+							className="inline-flex h-7 items-center rounded-full border border-border-strong bg-background/20 px-2.5 text-[12.5px] text-foreground/90 transition-colors hover:bg-interactive-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40 disabled:pointer-events-none disabled:opacity-50"
+							disabled={busy}
+							onClick={() => onDecide?.(requestId, decision.id)}
+						>
+							{approvalDecisionLabel(decision, subjectKind)}
+						</button>
+					))}
+					{decisions.length === 0 ? (
+						<p className="text-[11px] text-warning">
+							The agent offered no decisions AO can present. Open diagnostics.
+						</p>
+					) : null}
+				</div>
 			</div>
 		</div>
 	);
+}
+
+function approvalSubjectKind(activity: ConversationActivity): ActivityKind | undefined {
+	if (activity.detail?.subjectKind) return activity.detail.subjectKind;
+	if (activity.detail?.method === "item/fileChange/requestApproval") return "file_change";
+	if (activity.detail?.method === "item/commandExecution/requestApproval") return "command";
+	return undefined;
+}
+
+function approvalPrompt(subjectKind?: ActivityKind): string {
+	return subjectKind === "file_change"
+		? "Do you want to allow these file changes?"
+		: "Do you want to run this command?";
+}
+
+function approvalDecisionKind(decision: DecisionOption): DecisionOption["kind"] | "unknown" {
+	return decision.kind ?? "unknown";
+}
+
+function approvalDecisionRank(decision: DecisionOption): number {
+	switch (approvalDecisionKind(decision)) {
+		case "reject_once":
+			return 10;
+		case "reject_always":
+			return 15;
+		case "allow_once":
+			return 20;
+		case "allow_always":
+			return 30;
+		default:
+			return 40;
+	}
+}
+
+function approvalDecisionLabel(decision: DecisionOption, subjectKind?: ActivityKind): string {
+	switch (approvalDecisionKind(decision)) {
+		case "allow_always":
+			return subjectKind === "file_change"
+				? "Always allow these file changes"
+				: "Always allow this command";
+		case "allow_once":
+			return "Allow once";
+		case "reject_once":
+			return "Deny";
+		case "reject_always":
+			return "Always deny";
+		default:
+			return decision.label;
+	}
+}
+
+function orderedApprovalDecisions(decisions: DecisionOption[]): DecisionOption[] {
+	return decisions
+		.map((decision, index) => ({ decision, index }))
+		.sort((left, right) => {
+			const byRank = approvalDecisionRank(left.decision) - approvalDecisionRank(right.decision);
+			return byRank || left.index - right.index;
+		})
+		.map(({ decision }) => decision);
+}
+
+function ResolvedApprovalRow({
+	activity,
+	command,
+}: {
+	activity: ConversationActivity;
+	command: string;
+}) {
+	const detail = activity.detail;
+	const decision = typeof detail?.decision === "string" ? detail.decision : undefined;
+	const decisionKind = activity.decisions?.find((option) => option.id === decision)?.kind;
+	const outcome = resolvedApprovalOutcome(activity.status, decision, detail?.resolvedBy, decisionKind);
+	const title = detail?.cwd ? `${command}\n${detail.cwd}` : command;
+
+	return (
+		<div className="grid min-w-0 grid-cols-[auto_minmax(0,1fr)] items-center gap-3 rounded-md border border-border/80 bg-surface/45 px-2.5 py-1.5 text-[11.5px] text-muted-foreground">
+			<strong className="shrink-0 font-medium text-foreground">{outcome.label}</strong>
+			<span className="min-w-0 truncate text-right font-mono" title={title}>
+				{command}
+			</span>
+		</div>
+	);
+}
+
+function resolvedApprovalOutcome(
+	status: ConversationActivity["status"],
+	decision?: string,
+	resolvedBy?: string,
+	decisionKind?: DecisionOption["kind"],
+): { label: string; success: boolean } {
+	const value = decision?.toLowerCase() ?? "";
+	if (status === "failed") return { label: "Approval expired", success: false };
+	if (
+		status === "cancelled" ||
+		decisionKind === "reject_once" ||
+		decisionKind === "reject_always" ||
+		/(deny|decline|reject|cancel)/.test(value)
+	) {
+		return { label: "Cancelled", success: false };
+	}
+	if (decisionKind === "allow_always" || /(remember|always|amendment|policy)/.test(value)) {
+		return { label: "Approved and remembered", success: true };
+	}
+	if (decisionKind === "allow_once" || /(allow|approve|accept)/.test(value)) {
+		return { label: "Approved", success: true };
+	}
+	if (resolvedBy === "provider") return { label: "Resolved elsewhere", success: false };
+	return { label: "Resolved", success: false };
 }
 
 /* -------------------------------------------------------------------------- */
@@ -1582,37 +1891,64 @@ const diffStatusMark: Record<DiffStatus, { mark: string; tone: string; label: st
 	renamed: { mark: "R", tone: "text-muted-foreground", label: "renamed" },
 };
 
+/** Match the daemon's file_change summary verbs (Created/Deleted/Renamed/Edited). */
+function fileChangeVerb(status: DiffStatus): string {
+	switch (status) {
+		case "added":
+			return "Created";
+		case "deleted":
+			return "Deleted";
+		case "renamed":
+			return "Renamed";
+		default:
+			return "Edited";
+	}
+}
+
 /**
  * What a turn changed on disk.
  *
- * One panel per turn rather than a row per update: the provider re-sends the whole
- * diff as the turn progresses, and the daemon overwrites it, so this is current
- * state and not history. It grows while the turn runs, which is the point — seeing
- * a file appear as the agent touches it is the difference between watching work and
- * waiting for it.
+ * A bordered summary card at the end of the turn (kept near rollback), not the
+ * compact explore line used for mid-turn activity. Always shows the changed
+ * files; Review opens the Files rail, and clicking a row focuses that path.
  *
  * Rendered only when the daemon reported a diff. An agent that cannot report one
  * gets no empty panel implying it changed nothing.
  */
-export function TurnChangedFiles({ diff, live }: { diff: TurnDiff; live?: boolean }) {
-	const [open, setOpen] = useState(false);
+export function TurnChangedFiles({
+	diff,
+	live,
+	onReview,
+	onOpenFile,
+	items,
+}: {
+	diff: TurnDiff;
+	live?: boolean;
+	/** Opens the session Files inspector for the full workspace diff. */
+	onReview?: () => void;
+	/** Opens the Files inspector focused on this path. */
+	onOpenFile?: (path: string) => void;
+	/**
+	 * Timeline items from the same turn. Turn diffs often carry repo-relative
+	 * basenames (`random_words.txt`); file_change rows and command cwds often
+	 * carry the absolute worktree path the Edited tooltip already shows.
+	 */
+	items?: ConversationItem[];
+}) {
+	const [expanded, setExpanded] = useState(false);
+	const pathHints = useMemo(() => turnPathHints(items), [items]);
 	if (diff.files.length === 0) return null;
 
-	const additions = diff.files.reduce((sum, file) => sum + file.additions, 0);
-	const deletions = diff.files.reduce((sum, file) => sum + file.deletions, 0);
+	const previewLimit = 4;
+	const hidden = Math.max(0, diff.files.length - previewLimit);
+	const visible = expanded ? diff.files : diff.files.slice(0, previewLimit);
 
 	return (
-		<div className="rounded-lg border border-border bg-surface">
-			<button
-				type="button"
-				onClick={() => setOpen((prev) => !prev)}
-				aria-expanded={open}
-				className="flex w-full items-center gap-2 px-3.5 py-2.5 text-left transition-colors hover:bg-interactive-hover"
-			>
-				<FileDiff aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" />
-				<strong className="shrink-0 text-xs font-semibold text-foreground">
-					{diff.files.length === 1 ? "1 file changed" : `${diff.files.length} files changed`}
-				</strong>
+		<div className="overflow-hidden rounded-lg bg-surface">
+			<div className="flex items-center gap-2 px-3 py-2">
+				<span className="shrink-0 text-[11px] text-muted-foreground">
+					{diff.files.length === 1 ? "1 File Changed" : `${diff.files.length} Files Changed`}
+				</span>
 				{live ? (
 					<Loader2
 						aria-label="still changing"
@@ -1620,70 +1956,204 @@ export function TurnChangedFiles({ diff, live }: { diff: TurnDiff; live?: boolea
 					/>
 				) : null}
 				<span className="flex-1" />
-				<span className="shrink-0 font-mono text-[10.5px] tabular-nums">
-					<span className="text-success">+{additions}</span>{" "}
-					<span className="text-destructive">&minus;{deletions}</span>
-				</span>
-				<ChevronRight
-					aria-hidden="true"
-					className={cn(
-						"size-3.5 shrink-0 text-muted-foreground/50 transition-transform",
-						open && "rotate-90",
-					)}
-				/>
-			</button>
+				{onReview ? (
+					<button
+						type="button"
+						onClick={onReview}
+						className="shrink-0 text-[11px] text-muted-foreground transition-colors hover:text-foreground"
+					>
+						Review
+					</button>
+				) : null}
+			</div>
 
-			{open ? (
-				<ul className="flex flex-col border-t border-border">
-					{diff.files.map((file) => {
-						const status = diffStatusMark[file.status] ?? diffStatusMark.modified;
-						return (
-							<li
-								key={`${file.status}-${file.oldPath ?? ""}-${file.path}`}
-								className="flex items-center gap-2.5 px-3.5 py-1.5 text-[11px]"
-							>
-								<span
-									aria-label={status.label}
-									className={cn("w-3 shrink-0 text-center font-mono font-semibold", status.tone)}
-									title={status.label}
-								>
-									{status.mark}
-								</span>
-								<span className="min-w-0 flex-1 truncate font-mono text-muted-foreground" title={file.path}>
-									{/* A rename shows both ends. Only the new path would read as an addition
-									    and lose the fact that something moved. */}
-									{file.oldPath ? (
-										<>
-											<span className="text-muted-foreground/60">
-												{shortenPaths(file.oldPath)}
-											</span>
-											<span aria-hidden="true" className="px-1 text-muted-foreground/40">
-												&rarr;
-											</span>
-											{shortenPaths(file.path)}
-										</>
-									) : (
-										shortenPaths(file.path)
-									)}
-								</span>
-								<span className="shrink-0 font-mono tabular-nums text-success">
+			<ul className="flex flex-col px-1.5 pb-1.5">
+				{visible.map((file) => {
+					const status = diffStatusMark[file.status] ?? diffStatusMark.modified;
+					const rowClass =
+						"flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left transition-colors hover:bg-interactive-hover";
+					const tooltipPath = resolveTurnFilePath(file.path, pathHints);
+					const tooltipOldPath = file.oldPath
+						? resolveTurnFilePath(file.oldPath, pathHints)
+						: undefined;
+
+					const body = (
+						<>
+							<span className="sr-only">{status.label}</span>
+							<FileIcon aria-hidden="true" className="size-3.5 shrink-0 text-muted-foreground" />
+							{/* Same path tooltip as mid-turn Edited rows — not a native
+							    ellipsis title of the basename. */}
+							<FileLocationLabel
+								path={file.path}
+								oldPath={file.oldPath}
+								locationPath={tooltipPath}
+								locationOldPath={tooltipOldPath}
+								className="min-w-0 flex-1 truncate text-[12px] text-foreground/80"
+							/>
+							{file.additions > 0 ? (
+								<span className="shrink-0 font-mono text-[11px] tabular-nums text-success">
 									+{file.additions}
 								</span>
-								<span className="shrink-0 font-mono tabular-nums text-destructive">
+							) : null}
+							{file.deletions > 0 ? (
+								<span className="shrink-0 font-mono text-[11px] tabular-nums text-destructive">
 									&minus;{file.deletions}
 								</span>
-							</li>
-						);
-					})}
-					{diff.truncated ? (
-						<li className="px-3.5 py-2 text-[10px] leading-relaxed text-warning">
-							This turn changed more files than AO lists here. Use the Diff tab for the whole change.
+							) : null}
+							{file.additions === 0 && file.deletions === 0 ? (
+								<span className="shrink-0 font-mono text-[11px] tabular-nums text-muted-foreground/50">
+									0
+								</span>
+							) : null}
+						</>
+					);
+
+					return (
+						<li key={`${file.status}-${file.oldPath ?? ""}-${file.path}`}>
+							{onOpenFile ? (
+								<button
+									type="button"
+									onClick={() => onOpenFile(file.path)}
+									aria-label={`Open ${file.path} in Files`}
+									className={rowClass}
+								>
+									{body}
+								</button>
+							) : (
+								<div className={rowClass}>{body}</div>
+							)}
 						</li>
-					) : null}
-				</ul>
+					);
+				})}
+			</ul>
+
+			{hidden > 0 ? (
+				<button
+					type="button"
+					onClick={() => setExpanded((prev) => !prev)}
+					aria-expanded={expanded}
+					className="flex w-full items-center gap-1.5 px-3 pb-2 text-left text-[11px] text-muted-foreground transition-colors hover:text-foreground"
+				>
+					{expanded ? "Show less" : `Show ${hidden} more`}
+				</button>
+			) : null}
+
+			{diff.truncated ? (
+				<p className="px-3 pb-2 text-[10px] leading-relaxed text-warning">
+					This turn changed more files than AO lists here.
+					{onReview ? " Use Review for the whole change." : " Open the Files tab for the whole change."}
+				</p>
 			) : null}
 		</div>
 	);
+}
+
+/**
+ * Basename only — color distinguishes it from "Edited", no hover fill. Hovering
+ * shows the home-shortened worktree path in a monospace tooltip.
+ */
+function FileLocationLabel({
+	path,
+	oldPath,
+	locationPath,
+	locationOldPath,
+	className,
+}: {
+	path: string;
+	oldPath?: string;
+	/** Absolute/worktree path for the tooltip when `path` is only a basename. */
+	locationPath?: string;
+	locationOldPath?: string;
+	className?: string;
+}) {
+	const location = fileLocationLabel(locationPath ?? path, locationOldPath ?? oldPath);
+
+	return (
+		<TooltipProvider delayDuration={200}>
+			<Tooltip>
+				<TooltipTrigger asChild>
+					{/* `title=""` blocks Chromium's native ellipsis tooltip so only the
+					    path tooltip below appears — otherwise hover shows the basename. */}
+					<span
+						className={cn(
+							"min-w-0 truncate text-[11.5px] text-foreground/65 outline-none",
+							className,
+						)}
+						title=""
+					>
+						{fileBasename(path)}
+					</span>
+				</TooltipTrigger>
+				<TooltipContent
+					side="top"
+					className="max-w-[min(28rem,90vw)] border-border bg-popover px-2.5 py-1.5 font-mono text-[11px] font-normal text-muted-foreground shadow-none"
+				>
+					{location}
+				</TooltipContent>
+			</Tooltip>
+		</TooltipProvider>
+	);
+}
+
+function fileLocationLabel(path: string, oldPath?: string): string {
+	return oldPath ? `${shortenPaths(oldPath)} → ${shortenPaths(path)}` : shortenPaths(path);
+}
+
+/**
+ * Absolute paths and a worktree cwd gathered from the same turn's activities, so a
+ * turn-diff basename can be shown like the Edited tooltip.
+ */
+type TurnPathHints = {
+	byBase: Map<string, string | undefined>;
+	cwd?: string;
+};
+
+function rememberTurnPathHint(byBase: Map<string, string | undefined>, absolutePath: string) {
+	const base = fileBasename(absolutePath);
+	if (!byBase.has(base)) {
+		byBase.set(base, absolutePath);
+		return;
+	}
+	if (byBase.get(base) !== absolutePath) byBase.set(base, undefined);
+}
+
+function turnPathHints(items: ConversationItem[] | undefined): TurnPathHints {
+	const byBase = new Map<string, string | undefined>();
+	let cwd: string | undefined;
+	if (!items?.length) return { byBase, cwd };
+
+	for (const item of items) {
+		if (item.kind !== "activity") continue;
+		if (!cwd && item.detail?.cwd) cwd = item.detail.cwd;
+		if (item.activityKind !== "file_change") continue;
+		for (const file of fileChangeFiles(item)) {
+			if (looksAbsolutePath(file.path)) rememberTurnPathHint(byBase, file.path);
+			if (file.oldPath && looksAbsolutePath(file.oldPath)) rememberTurnPathHint(byBase, file.oldPath);
+		}
+	}
+	return { byBase, cwd };
+}
+
+function looksAbsolutePath(path: string): boolean {
+	return path.startsWith("/") || path.startsWith("~") || /^[A-Za-z]:[\\/]/.test(path);
+}
+
+/** Prefer an absolute path from the turn; otherwise join the worktree cwd. */
+function resolveTurnFilePath(path: string, hints: TurnPathHints): string {
+	if (looksAbsolutePath(path)) return path;
+	const fromBasename = hints.byBase.get(fileBasename(path));
+	if (fromBasename) return fromBasename;
+	if (hints.cwd) {
+		const rel = path.replace(/^\.\//, "");
+		return `${hints.cwd.replace(/\/$/, "")}/${rel}`;
+	}
+	return path;
+}
+
+/** Basename only — the row is too narrow for a full path; the tooltip carries that. */
+function fileBasename(path: string): string {
+	const slash = Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\"));
+	return slash >= 0 ? path.slice(slash + 1) : path;
 }
 
 /** Exact below a thousand, because that is where the digits still mean something. */
@@ -1696,22 +2166,29 @@ function formatTokens(tokens: number): string {
 /* turn boundary                                                               */
 /* -------------------------------------------------------------------------- */
 
+/** Turn wall-clock duration; lives on the action row next to rollback, not the Done divider. */
+export function TurnDuration({ durationMs }: { durationMs: number }) {
+	if (durationMs <= 0) return null;
+	return (
+		<span className="shrink-0 px-1 font-sans text-[12px] leading-none tabular-nums text-muted-foreground">
+			{formatDuration(durationMs)}
+		</span>
+	);
+}
+
 /**
- * How a turn ended. `interrupted` is reported as its own outcome because the
- * provider reports it that way — relabelling it as failed would misattribute a
- * deliberate cancellation.
+ * How a turn ended when it did not complete cleanly. Successful turns skip this —
+ * their duration already sits on the answer action row. `interrupted` is kept
+ * distinct from failed because the provider reports it that way.
  */
 export function TurnOutcome({
 	state,
-	durationMs,
 	error,
 }: {
-	state: "completed" | "interrupted" | "failed";
-	durationMs?: number;
+	state: "interrupted" | "failed";
 	error?: string;
 }) {
 	const copy = {
-		completed: { label: "Done", tone: "text-muted-foreground/70" },
 		interrupted: { label: "Stopped", tone: "text-muted-foreground/70" },
 		failed: { label: "Failed", tone: "text-destructive" },
 	}[state];
@@ -1722,11 +2199,6 @@ export function TurnOutcome({
 			<span className={cn("shrink-0 text-[10px] uppercase tracking-[0.08em]", copy.tone)}>
 				{copy.label}
 			</span>
-			{durationMs !== undefined && durationMs > 0 ? (
-				<span className="shrink-0 font-mono text-[10px] tabular-nums text-muted-foreground/70">
-					{formatDuration(durationMs)}
-				</span>
-			) : null}
 			{error ? (
 				<span className="max-w-[40%] shrink truncate text-[10px] text-destructive" title={error}>
 					{error}
