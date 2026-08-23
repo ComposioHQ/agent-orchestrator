@@ -80,7 +80,21 @@ export async function initSentry(context: ObservabilityContext): Promise<void> {
 			release: context.release,
 			environment: context.channel ?? "unknown",
 			autoSessionTracking: false,
-			// We never want content in events — enums/ids only via tags, and scrub free text.
+			// Deny-by-default. Sentry's defaults capture far more than PostHog's
+			// allowlist ever would: fetch/XHR/console/DOM breadcrumbs (which carry
+			// local URLs and Tailscale hosts), global handlers that would
+			// double-report the exceptions we already feed in explicitly, and
+			// performance/replay. Turning the default integrations OFF is the plan's
+			// requirement — scrubbing alone is not enough. We add nothing back; every
+			// event reaches Sentry only through our own captureException/captureMessage
+			// seams, which attach safe enum/id tags.
+			defaultIntegrations: false,
+			// No PII, no server_name, no request bodies.
+			sendDefaultPii: false,
+			// Errors only. No tracing/replay spend.
+			sampleRate: 1,
+			tracesSampleRate: 0,
+			// Belt-and-braces free-text scrub on the message + stack strings.
 			beforeSend: (event: Record<string, unknown>) => scrubEvent(event),
 			beforeBreadcrumb: (crumb: Record<string, unknown> | null) => (crumb ? scrubEvent(crumb) : crumb),
 		});

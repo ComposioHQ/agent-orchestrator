@@ -28,6 +28,7 @@ import {
 	type UpdateCheckOptions,
 } from "./main/auto-updater";
 import { listFeatureBuilds, getActiveFeatureBuild } from "./main/feature-builds";
+import { initMainSentry } from "./main/sentry-main";
 import { readUpdateSettings, type UpdateSettings, type UpdateStatus } from "./main/update-settings";
 import { readKeybindingOverrides, writeKeybindingOverrides } from "./main/keybinding-settings";
 import { readEditorSettings, writeEditorPreference } from "./main/editor-settings";
@@ -156,6 +157,12 @@ app.setPath(
 	"userData",
 	app.isPackaged ? path.join(os.homedir(), ".ao", "electron") : path.join(os.homedir(), ".ao", "dev", "electron"),
 );
+
+// Init main-process Sentry as early as possible so startup crashes are caught,
+// and after userData is pinned so its cache resolves under ~/.ao/electron. The
+// renderer SDK forwards over IPC to this main process, so this is required for
+// any desktop event to upload. No-op unless AO_SENTRY_DSN is set.
+void initMainSentry(app.getVersion());
 
 let mainWindow: BaseWindow | null = null;
 let trayController: TrayController | null = null;
