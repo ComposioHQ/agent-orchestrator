@@ -105,22 +105,33 @@ func TestDeliverBootstrapRejectsUnboundRuntimeAndSandbox(t *testing.T) {
 
 func TestDeliverBootstrapRejectsStoreResultOutsideVerifiedScope(t *testing.T) {
 	key := bytes.Repeat([]byte{0x61}, 32)
-	record := bootstrapRecord(t, key, []byte(`{"claudeAiOauth":{"accessToken":"secret-token"}}`))
-	verified := verifiedFor(record)
-	record.SandboxID = "sandbox-from-different-runtime"
-	record.WorkspaceID = "workspace-from-different-org"
-	store := &recordingStore{record: record, expected: BootstrapAuthorization{
-		GrantID: verified.ID, Scope: verified.Scope, Provider: ProviderClaude,
-	}}
-	sink := &recordingSink{}
-	service := newDeliveryService(t, store, &recordingUnwrapper{key: key}, nil)
-
-	err := service.DeliverBootstrap(context.Background(), verified, ProviderClaude, sink)
-	if !errors.Is(err, ErrNotAuthorized) {
-		t.Fatalf("cross-scope store result = %v", err)
+	validRecord := bootstrapRecord(t, key, []byte(`{"claudeAiOauth":{"accessToken":"secret-token"}}`))
+	verified := verifiedFor(validRecord)
+	expected := authorizationFor(validRecord)
+	tests := []struct {
+		name   string
+		mutate func(*BootstrapRecord)
+	}{
+		{"cross workspace", func(record *BootstrapRecord) { record.WorkspaceID = "workspace-from-different-org" }},
+		{"missing runtime", func(record *BootstrapRecord) { record.RuntimeID = "" }},
+		{"missing sandbox", func(record *BootstrapRecord) { record.SandboxID = "" }},
 	}
-	if sink.deliverCalls != 0 || sink.purgeCalls != 0 {
-		t.Fatal("remote sink called with cross-scope store result")
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			record := validRecord
+			test.mutate(&record)
+			store := &recordingStore{record: record, expected: expected}
+			sink := &recordingSink{}
+			service := newDeliveryService(t, store, &recordingUnwrapper{key: append([]byte(nil), key...)}, nil)
+
+			err := service.DeliverBootstrap(context.Background(), verified, ProviderClaude, sink)
+			if !errors.Is(err, ErrNotAuthorized) {
+				t.Fatalf("cross-scope store result = %v", err)
+			}
+			if sink.deliverCalls != 0 || sink.purgeCalls != 0 {
+				t.Fatal("remote sink called with cross-scope store result")
+			}
+		})
 	}
 }
 
@@ -204,9 +215,13 @@ func verifiedFor(record BootstrapRecord) capability.Verified {
 	}}
 }
 
-func authorizationFor(record BootstrapRecord) BootstrapAuthorization {
+func authorizationFor(record BootstrapRecord) BootstrapLookup {
 	verified := verifiedFor(record)
-	return BootstrapAuthorization{GrantID: verified.ID, Scope: verified.Scope, Provider: record.Provider}
+	authorization, err := bootstrapLookup(verified, record.Provider)
+	if err != nil {
+		panic(err)
+	}
+	return authorization
 }
 
 func bootstrapRecord(t *testing.T, key, plaintext []byte) BootstrapRecord {
@@ -214,7 +229,7 @@ func bootstrapRecord(t *testing.T, key, plaintext []byte) BootstrapRecord {
 	record := BootstrapRecord{
 		CredentialID: "credential-1", Provider: ProviderClaude, Version: 3,
 		OrgID: "org-1", WorkspaceID: "workspace-1", SessionID: "session-1",
-		Role: capability.RoleWorker, SandboxID: "sandbox-provider-1",
+		Role: capability.RoleWorker, RuntimeID: "runtime-1", SandboxID: "sandbox-provider-1",
 	}
 	ctx := EncryptionContext{CredentialID: record.CredentialID, OrgID: record.OrgID, Provider: record.Provider, Version: record.Version}
 	block, err := aes.NewCipher(key)
@@ -235,12 +250,12 @@ func bootstrapRecord(t *testing.T, key, plaintext []byte) BootstrapRecord {
 
 type recordingStore struct {
 	record     BootstrapRecord
-	expected   BootstrapAuthorization
+	expected   BootstrapLookup
 	resolveErr error
 	events     []BootstrapEvent
 }
 
-func (s *recordingStore) ResolveBootstrap(_ context.Context, auth BootstrapAuthorization) (BootstrapRecord, error) {
+func (s *recordingStore) ResolveBootstrap(_ context.Context, auth BootstrapLookup) (BootstrapRecord, error) {
 	if s.resolveErr != nil {
 		return BootstrapRecord{}, s.resolveErr
 	}

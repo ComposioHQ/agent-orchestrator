@@ -62,14 +62,42 @@ type Metadata struct {
 	RevokedAt time.Time `json:"revokedAt,omitempty"`
 }
 
-// BootstrapAuthorization contains only identity already verified from the
-// bearer capability. There is no caller-provided org, workspace, runtime, or
-// sandbox id. Store implementations must join GrantID and Scope to the durable
+// BootstrapLookup contains only identity already verified from the bearer
+// capability. Its fields are intentionally opaque and never decoded from user
+// input. Store implementations must join GrantID and Scope to the durable
 // capability/runtime/workspace/org relationships before returning a record.
-type BootstrapAuthorization struct {
-	GrantID  string
-	Scope    capability.Scope
-	Provider Provider
+type BootstrapLookup struct {
+	grantID  string
+	scope    capability.Scope
+	provider Provider
+}
+
+func bootstrapLookup(verified capability.Verified, provider Provider) (BootstrapLookup, error) {
+	if strings.TrimSpace(verified.ID) == "" || verified.Scope.Role != capability.RoleWorker || !verified.Scope.Allows(capability.OpHarnessCredentialBootstrap) {
+		return BootstrapLookup{}, ErrNotAuthorized
+	}
+	normalized, err := verified.Scope.Normalize()
+	if err != nil || normalized.Role != capability.RoleWorker || !normalized.Allows(capability.OpHarnessCredentialBootstrap) {
+		return BootstrapLookup{}, ErrNotAuthorized
+	}
+	return BootstrapLookup{grantID: verified.ID, scope: normalized, provider: provider}, nil
+}
+
+// GrantID is the verified capability grant id used by the SQL authorization join.
+func (a BootstrapLookup) GrantID() string { return a.grantID }
+
+// Scope returns a defensive copy of the capability-derived scope.
+func (a BootstrapLookup) Scope() capability.Scope {
+	scope := a.scope
+	scope.Operations = append([]capability.Operation(nil), a.scope.Operations...)
+	return scope
+}
+
+// Provider is the requested harness credential provider.
+func (a BootstrapLookup) Provider() Provider { return a.provider }
+
+func (a BootstrapLookup) valid() bool {
+	return a.grantID != "" && a.provider != "" && a.scope.Role == capability.RoleWorker && a.scope.Allows(capability.OpHarnessCredentialBootstrap)
 }
 
 // BootstrapRecord is returned only after the store has proven the capability
@@ -83,18 +111,43 @@ type BootstrapRecord struct {
 	WorkspaceID  string
 	SessionID    string
 	Role         string
+	RuntimeID    string
 	SandboxID    string
 	Material     EncryptedMaterial
 }
 
-func (r BootstrapRecord) matches(auth BootstrapAuthorization) bool {
-	return strings.TrimSpace(r.CredentialID) != "" &&
-		strings.TrimSpace(r.SandboxID) != "" &&
-		r.Provider == auth.Provider &&
-		r.OrgID == auth.Scope.OrgID &&
-		r.WorkspaceID == auth.Scope.WorkspaceID &&
-		r.SessionID == auth.Scope.SessionID &&
-		r.Role == auth.Scope.Role
+// BootstrapAuthorizationScope is the proof consumed by delivery. Its opaque
+// fields are populated only after a verified capability lookup matches an
+// actual durable runtime placement; it cannot be populated from request ids.
+type BootstrapAuthorizationScope struct {
+	lookup    BootstrapLookup
+	runtimeID string
+	sandboxID string
+}
+
+func authorizeBootstrapScope(lookup BootstrapLookup, record BootstrapRecord) (BootstrapAuthorizationScope, error) {
+	if !lookup.valid() ||
+		strings.TrimSpace(record.CredentialID) == "" ||
+		strings.TrimSpace(record.RuntimeID) == "" ||
+		strings.TrimSpace(record.SandboxID) == "" ||
+		record.Provider != lookup.provider ||
+		record.OrgID != lookup.scope.OrgID ||
+		record.WorkspaceID != lookup.scope.WorkspaceID ||
+		record.SessionID != lookup.scope.SessionID ||
+		record.Role != lookup.scope.Role {
+		return BootstrapAuthorizationScope{}, ErrNotAuthorized
+	}
+	return BootstrapAuthorizationScope{lookup: lookup, runtimeID: record.RuntimeID, sandboxID: record.SandboxID}, nil
+}
+
+// RuntimeID is the placement row proven by the store authorization join.
+func (a BootstrapAuthorizationScope) RuntimeID() string { return a.runtimeID }
+
+// SandboxID is the provider sandbox proven by the store authorization join.
+func (a BootstrapAuthorizationScope) SandboxID() string { return a.sandboxID }
+
+func (a BootstrapAuthorizationScope) valid() bool {
+	return a.lookup.valid() && a.runtimeID != "" && a.sandboxID != ""
 }
 
 // BootstrapEvent is an immutable security audit event.
@@ -110,7 +163,7 @@ const (
 // ResolveBootstrap must fail when any grant, org, workspace, session, runtime,
 // sandbox, provider, revocation, or capability-scope relationship disagrees.
 type BootstrapStore interface {
-	ResolveBootstrap(context.Context, BootstrapAuthorization) (BootstrapRecord, error)
+	ResolveBootstrap(context.Context, BootstrapLookup) (BootstrapRecord, error)
 	RecordBootstrapEvent(context.Context, BootstrapRecord, BootstrapEvent) error
 }
 

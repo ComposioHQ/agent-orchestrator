@@ -53,22 +53,23 @@ func (s *DeliveryService) DeliverBootstrap(
 	if sink == nil {
 		return fmt.Errorf("%w: remote secret-file sink is required", ErrInvalid)
 	}
-	if strings.TrimSpace(verified.ID) == "" || verified.Scope.Role != capability.RoleWorker || !verified.Scope.Allows(capability.OpHarnessCredentialBootstrap) {
-		return ErrNotAuthorized
-	}
 	provider, err := s.providers.provider(providerID)
 	if err != nil {
 		return err
 	}
-	authorization := BootstrapAuthorization{GrantID: verified.ID, Scope: verified.Scope, Provider: providerID}
-	record, err := s.store.ResolveBootstrap(ctx, authorization)
+	lookup, err := bootstrapLookup(verified, providerID)
+	if err != nil {
+		return err
+	}
+	record, err := s.store.ResolveBootstrap(ctx, lookup)
 	if err != nil {
 		return fmt.Errorf("resolve credential bootstrap authorization: %w", err)
 	}
 	// Defense in depth against an adapter bug or forged store result. SQL is
 	// still responsible for performing the authoritative relationship join.
-	if !record.matches(authorization) {
-		return ErrNotAuthorized
+	authorization, err := authorizeBootstrapScope(lookup, record)
+	if err != nil {
+		return err
 	}
 	encryptionContext := EncryptionContext{
 		CredentialID: record.CredentialID,
@@ -108,7 +109,7 @@ func (s *DeliveryService) DeliverBootstrap(
 		paths[index] = files[index].Path
 	}
 
-	deliveryErr := sink.DeliverSecretFiles(ctx, record.SandboxID, files)
+	deliveryErr := sink.DeliverSecretFiles(ctx, authorization.SandboxID(), files)
 	var materializedAuditErr error
 	if deliveryErr == nil {
 		materializedAuditErr = s.store.RecordBootstrapEvent(ctx, record, EventMaterialized)
@@ -117,7 +118,7 @@ func (s *DeliveryService) DeliverBootstrap(
 	}
 	// Purge is unconditional, including partial delivery and audit failures.
 	// The sink contract makes this a remote idempotent removal.
-	purgeErr := sink.PurgeSecretFiles(ctx, record.SandboxID, paths)
+	purgeErr := sink.PurgeSecretFiles(ctx, authorization.SandboxID(), paths)
 	var purgeAuditErr error
 	if purgeErr == nil {
 		purgeAuditErr = s.store.RecordBootstrapEvent(ctx, record, EventPurged)
