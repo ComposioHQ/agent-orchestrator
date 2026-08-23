@@ -13,10 +13,15 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/cloud/capability"
 )
 
-// Capabilities revokes every outstanding one-time sandbox ticket beneath a
-// scope. Issuance and atomic redemption stay in the online control plane; the
-// compute manager never mints or verifies credentials offline.
+// Capabilities issues and revokes the rotating sandbox-to-control-plane
+// credential. Its verifier and liveness are durable in the online control
+// plane; the compute manager only transfers opaque bytes and never verifies or
+// signs credentials offline. One-time terminal tickets use a separate store.
 type Capabilities interface {
+	// IssueSandbox returns a fresh opaque credential as mutable bytes. The
+	// implementation persists only its verifier and liveness; callers transfer
+	// the bytes into the 0600 capability file and purge the buffer.
+	IssueSandbox(ctx context.Context, scope capability.Scope) ([]byte, error)
 	RevokeScope(ctx context.Context, selector capability.Selector) (int, error)
 }
 
@@ -57,8 +62,8 @@ type Options struct {
 	// Deployment names this control plane. It is stamped on every sandbox so
 	// two deployments can share a provider account without reaping each other.
 	Deployment string
-	// PublicURL is the verified HTTPS control-plane origin used to build the
-	// online ticket-redemption URL in capability.json.
+	// PublicURL is the verified HTTPS control-plane origin ao-sandbox uses for
+	// online ticket redemption.
 	PublicURL string
 	// Snapshots names the prebuilt image per role.
 	Snapshots map[Role]string
@@ -225,12 +230,13 @@ func (m *Manager) ensureExisting(ctx context.Context, record Record, now time.Ti
 				return sandboxes[i].CreatedAt.Before(sandboxes[j].CreatedAt)
 			})
 			sandbox := sandboxes[0]
+			wasFailed := record.State == StateFailed
 			record.ProviderID = sandbox.ID
 			updated, saveErr := m.observe(ctx, record, sandbox, now)
 			if saveErr != nil {
 				return Placement{}, saveErr
 			}
-			if sandbox.State == ProviderRunning || sandbox.State == ProviderStarting {
+			if !wasFailed && (sandbox.State == ProviderRunning || sandbox.State == ProviderStarting) {
 				if err := m.publishRoute(ctx, updated.Ref(), sandbox); err != nil {
 					return Placement{}, err
 				}
@@ -264,23 +270,41 @@ func (m *Manager) ensureExisting(ctx context.Context, record Record, now time.Ti
 
 	switch sandbox.State {
 	case ProviderRunning, ProviderStarting:
+		if record.State == StateFailed {
+			return m.boot(ctx, record, now, launch)
+		}
 		updated, err := m.observe(ctx, record, sandbox, now)
 		return Placement{Record: updated, Sandbox: sandbox}, err
 	default:
-		// Stopped or broken: boot it with a freshly generated capability.json.
+		// Stopped or broken: boot it with a freshly issued capability file.
 		return m.boot(ctx, record, now, launch)
 	}
 }
 
 // provision gathers transient files and creates the sandbox.
 func (m *Manager) provision(ctx context.Context, record Record, now time.Time, launch LaunchSpec) (Placement, error) {
+	if err := m.revokeCapabilities(ctx, record.Ref()); err != nil {
+		return Placement{}, err
+	}
 	request, err := m.launchRequest(ctx, record, launch)
 	if err != nil {
 		return Placement{}, m.markFailed(ctx, record, now, err)
 	}
+	defer PurgeFileSecrets(request.SecretFiles)
+	defer PurgeFileSecrets([]FileSecret{request.Capability})
 	sandbox, err := m.provider.Create(ctx, request)
 	if err != nil {
-		return Placement{}, m.markFailed(ctx, record, now, providerFailure("create sandbox", err))
+		revokeErr := m.revokeCapabilities(ctx, record.Ref())
+		if sandbox.ID != "" && record.ProviderID != sandbox.ID {
+			record.ProviderID = sandbox.ID
+			record.UpdatedAt = now
+			saved, saveErr := m.store.Save(ctx, record)
+			if saveErr != nil {
+				return Placement{Record: record, Sandbox: sandbox}, errors.Join(providerFailure("create sandbox", err), saveErr, revokeErr)
+			}
+			record = saved
+		}
+		return Placement{Record: record, Sandbox: sandbox}, m.markFailed(ctx, record, now, errors.Join(providerFailure("create sandbox", err), revokeErr))
 	}
 	record.ProviderID = sandbox.ID
 	updated, err := m.observe(ctx, record, sandbox, now)
@@ -304,12 +328,15 @@ func (m *Manager) boot(ctx context.Context, record Record, now time.Time, launch
 		_ = m.revokeCapabilities(ctx, record.Ref())
 		return Placement{}, m.markFailed(ctx, record, now, err)
 	}
+	defer PurgeFileSecrets(request.SecretFiles)
+	defer PurgeFileSecrets([]FileSecret{request.Capability})
 	sandbox, err := m.provider.Start(ctx, record.ProviderID, request)
 	if err != nil {
 		if errors.Is(err, ErrSandboxNotFound) {
 			return m.ensureExisting(ctx, record, now, launch)
 		}
-		return Placement{}, m.markFailed(ctx, record, now, providerFailure("start sandbox", err))
+		revokeErr := m.revokeCapabilities(ctx, record.Ref())
+		return Placement{Record: record, Sandbox: sandbox}, m.markFailed(ctx, record, now, errors.Join(providerFailure("start sandbox", err), revokeErr))
 	}
 	updated, err := m.observe(ctx, record, sandbox, now)
 	if err != nil {

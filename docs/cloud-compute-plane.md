@@ -21,6 +21,108 @@ processes.
   that deployment and the explicit opt-in is enabled.
 - Provider auto-stop and auto-delete intervals are mandatory. They cap spend
   even while the control plane or its reaper is unavailable.
+- Provider-only orphan/leak deletion is capped per pass by a mass-delete
+  breaker. Candidates over the cap are reported and deferred.
+
+## PostgreSQL handoff (migration window 00020-00029)
+
+The compute package does not register tables itself. The cloud integrator must
+allocate migrations in the shared `00020`-`00029` window and wire adapters for
+the three ports in `backend/internal/ports/compute.go`. The minimum DDL is:
+
+```sql
+CREATE TABLE cloud_runtime_placements (
+  id text PRIMARY KEY,                         -- public runtime handle
+  org_id text NOT NULL,
+  workspace_id text NOT NULL,
+  session_id text NOT NULL,
+  user_id text NOT NULL,
+  role text NOT NULL CHECK (role IN ('coordinator', 'worker')),
+  provider_sandbox_id text,
+  state text NOT NULL CHECK (state IN
+    ('provisioning', 'running', 'stopped', 'failed', 'deleting')),
+  desired_state text NOT NULL CHECK (desired_state IN
+    ('running', 'stopped', 'deleting')),
+  error text NOT NULL DEFAULT '',
+  generation bigint NOT NULL DEFAULT 1 CHECK (generation > 0),
+  last_heartbeat_at timestamptz,
+  created_at timestamptz NOT NULL,
+  updated_at timestamptz NOT NULL,
+  UNIQUE (org_id, workspace_id, session_id, role)
+);
+CREATE UNIQUE INDEX cloud_runtime_provider_handle_uq
+  ON cloud_runtime_placements (provider_sandbox_id)
+  WHERE provider_sandbox_id IS NOT NULL;
+CREATE INDEX cloud_runtime_workspace_idx
+  ON cloud_runtime_placements (org_id, workspace_id, created_at, id);
+CREATE INDEX cloud_runtime_reaper_idx
+  ON cloud_runtime_placements (state, updated_at);
+CREATE INDEX cloud_runtime_user_quota_idx
+  ON cloud_runtime_placements (user_id) WHERE state <> 'deleting';
+
+CREATE TABLE cloud_capability_grants (
+  id text PRIMARY KEY,
+  verifier text NOT NULL,                      -- one-way digest, never bearer
+  org_id text NOT NULL,
+  workspace_id text NOT NULL,
+  session_id text,
+  role text NOT NULL CHECK (role IN ('coordinator', 'worker')),
+  operations text[] NOT NULL CHECK (cardinality(operations) > 0),
+  issued_at timestamptz NOT NULL,
+  expires_at timestamptz NOT NULL,
+  revoked_at timestamptz,
+  rotated_to_id text REFERENCES cloud_capability_grants(id)
+);
+CREATE INDEX cloud_capability_scope_idx
+  ON cloud_capability_grants (org_id, workspace_id, session_id)
+  WHERE revoked_at IS NULL;
+CREATE INDEX cloud_capability_expiry_idx
+  ON cloud_capability_grants (expires_at, revoked_at);
+
+CREATE TABLE cloud_terminal_tickets (
+  id text PRIMARY KEY,
+  verifier bytea NOT NULL UNIQUE,               -- SHA-256-sized digest
+  org_id text NOT NULL,
+  workspace_id text NOT NULL,
+  session_id text NOT NULL,
+  sandbox_id text NOT NULL REFERENCES cloud_runtime_placements(id),
+  role text NOT NULL CHECK (role IN ('coordinator', 'worker')),
+  scopes text[] NOT NULL CHECK (cardinality(scopes) > 0),
+  issued_at timestamptz NOT NULL,
+  expires_at timestamptz NOT NULL,
+  consumed_at timestamptz,
+  revoked_at timestamptz,
+  CHECK (octet_length(verifier) = 32)
+);
+CREATE INDEX cloud_terminal_ticket_scope_idx
+  ON cloud_terminal_tickets (org_id, workspace_id, session_id, sandbox_id)
+  WHERE consumed_at IS NULL AND revoked_at IS NULL;
+CREATE INDEX cloud_terminal_ticket_expiry_idx
+  ON cloud_terminal_tickets (expires_at, consumed_at, revoked_at);
+```
+
+The placement adapter must implement `Ensure` as a single quota reservation
+transaction. Acquire transaction advisory locks in the fixed order org, user,
+workspace/role (for example `pg_advisory_xact_lock(hashtextextended(key, 0))`),
+re-read the unique placement, count rows whose state is not `deleting`, enforce
+all configured limits, then insert `provisioning`. Competing requests must not
+both observe `limit - 1`. `Save` is exactly `UPDATE ... SET generation =
+generation + 1 ... WHERE id = $id AND generation = $generation RETURNING ...`;
+zero rows is `ErrConflict`. `Delete` uses the same generation predicate,
+succeeds if the row is already absent, and must never turn `deleting` back into
+a live state. Adapter tests must invoke `runtimetest.RunStoreConformance`.
+
+Capability revocation is an idempotent durable update that preserves the first
+`revoked_at`; scope revocation happens before secrets, routes, or provider
+compute are removed. A terminal ticket consume transaction selects the digest
+and exact org/workspace/session/sandbox-handle/role scope `FOR UPDATE`, rejects
+expired/revoked/consumed rows, and sets `consumed_at` before returning. This
+lock/update is the replay boundary: exactly one concurrent consumer succeeds.
+Unknown verifier and scope mismatch both map to `ErrTicketNotFound`; known spent,
+expired, and revoked rows map to their specific errors. PostgreSQL adapter tests
+must invoke `storetest.RunCapabilityConformance` and
+`storetest.RunTerminalTicketConformance`. Neither table stores a
+plaintext bearer, signing key, or reusable launch credential.
 
 ## Launch and secret contract
 
@@ -31,24 +133,30 @@ element, prefixes `exec`, and runs it asynchronously in a stable process
 session. A retry observes the existing session and does not launch a duplicate.
 
 No credential is allowed in process arguments, environment variables, URLs,
-provider labels, or logs. The provider writes the exact 181 launch metadata to
-`/run/ao-sandbox/capability.json` as a transient byte buffer with mode `0600`:
-provider sandbox id, workspace id, session id, and the HTTPS online-redemption
-URL. Other launch credentials also use `FileSecret` byte buffers. The provider
-overwrites every buffer on success and failure. Opaque operation tickets are
-issued to clients and redeemed atomically online; they are not launch bearers
-and no signing key or replay database enters the sandbox.
+provider labels, or logs. The control plane issues a fresh opaque sandbox
+capability backed by the durable verifier store. The provider delivers its raw
+bytes to the exact 181 path `/run/ao/capability` with mode `0600`; Start revokes
+the preceding scope and overwrites the file with a newly issued capability.
+The durable runtime row id (the public sandbox handle), workspace id, and
+session id plus the verified HTTPS control-plane base URL are non-secret
+`ao-sandbox` flags. The provider id remains private to the placement row. Other
+launch credentials also use `FileSecret` byte buffers. The provider overwrites
+every buffer on success and failure. Opaque terminal tickets are issued to clients and redeemed
+atomically online; they are separate from the rotating sandbox capability and
+no signing key or replay database enters the sandbox.
 
 The adapter starts `/usr/local/bin/ao-sandbox` with fixed listener, workspace,
 readiness, secret-directory, and route-prefix flags. `CreateRequest.Command`
 and `Args` follow `--` as the semantic PTY child argv. Readiness is published at
-`/run/ao-sandbox/ready.json`; the terminal mux is `/mux`.
+`/run/ao/ready.json`; the secret sink root is `/run/ao/secrets`, and the
+terminal mux is `/mux`.
 
 The published sandbox endpoint is a separate authenticated listener owned by
 the thin sandbox runtime. Do not publish the local daemon listener, accept a
 shared bearer fallback, disable TLS verification, or relax origin checks.
-Terminal mux and readiness routes must remain bound to the placement's scoped
-capability.
+Terminal mux and workspace observation require scoped one-time tickets;
+readiness exposes no tenant data. The rotating sandbox capability is used only
+for the runtime's authenticated outbound ticket-redemption request.
 
 ## Configuration
 
@@ -87,6 +195,7 @@ AO_CLOUD_SANDBOX_IDLE_TIMEOUT
 AO_CLOUD_SANDBOX_ABANDONED_TIMEOUT
 AO_CLOUD_SANDBOX_PROVISIONING_TIMEOUT
 AO_CLOUD_SANDBOX_ORPHAN_GRACE
+AO_CLOUD_MAX_PROVIDER_DELETES_PER_RUN
 ```
 
 ## Verification
@@ -115,6 +224,15 @@ go test -tags=integration ./internal/cloud/runtime/daytona -run TestStagingLifec
 After the test, verify the provider console has no sandbox labelled
 `ao.deployment=staging-acceptance`. Any survivor is a failed cleanup and must be
 deleted before continuing.
+
+This repository's deterministic tests validate request shape and lifecycle
+semantics, but do not prove Daytona's current staging contract. Before calling
+the integration complete, 140 must verify against the real staging account:
+the create and transition paths, toolbox file upload/permission and process
+session endpoints, the `createdAt` format and meaning, label filtering,
+idempotency headers, provider auto-stop/auto-delete units, and whether async
+commands preserve the quoted semantic argv. Record any API mismatch as an
+adapter change; do not waive it based on the fake provider.
 
 The full integration acceptance, wired by the cloud composition layer, is:
 

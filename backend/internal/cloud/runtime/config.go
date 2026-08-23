@@ -103,6 +103,7 @@ func LoadConfig(getenv func(string) string) (Config, error) {
 		"AO_CLOUD_MAX_SANDBOXES_PER_USER":         &cfg.Quotas.MaxSandboxesPerUser,
 		"AO_CLOUD_MAX_WORKERS_PER_WORKSPACE":      &cfg.Quotas.MaxWorkersPerWorkspace,
 		"AO_CLOUD_MAX_COORDINATORS_PER_WORKSPACE": &cfg.Quotas.MaxCoordinatorsPerWorkspace,
+		"AO_CLOUD_MAX_PROVIDER_DELETES_PER_RUN":   &cfg.Reaper.MaxProviderDeletesPerRun,
 	}
 	for name, target := range integers {
 		parsed, err := intValue(getenv(name), *target)

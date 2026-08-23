@@ -13,12 +13,13 @@ import (
 
 func testPolicy() runtime.ReaperPolicy {
 	return runtime.ReaperPolicy{
-		IdleTimeout:         30 * time.Minute,
-		AbandonedTimeout:    4 * time.Hour,
-		ProvisioningTimeout: 10 * time.Minute,
-		OrphanGrace:         15 * time.Minute,
-		UnlabeledGrace:      time.Hour,
-		CapabilityRetention: 24 * time.Hour,
+		IdleTimeout:              30 * time.Minute,
+		AbandonedTimeout:         4 * time.Hour,
+		ProvisioningTimeout:      10 * time.Minute,
+		OrphanGrace:              15 * time.Minute,
+		UnlabeledGrace:           time.Hour,
+		CapabilityRetention:      24 * time.Hour,
+		MaxProviderDeletesPerRun: 10,
 	}
 }
 
@@ -329,6 +330,25 @@ func TestReaperReportsUnlabelledLeaksAndDeletesThemOnlyWhenAuthorized(t *testing
 	}
 }
 
+func TestReaperMassDeleteBreakerDefersProviderLeaks(t *testing.T) {
+	h := newHarness(t)
+	policy := testPolicy()
+	policy.ReapUnlabeled = true
+	policy.MaxProviderDeletesPerRun = 1
+	reaper := newReaper(t, h, policy)
+	for range 3 {
+		h.provider.Seed(runtime.Sandbox{Labels: map[string]string{}, CreatedAt: h.now.Add(-24 * time.Hour)})
+	}
+
+	report := mustRun(t, reaper)
+	if !report.DeleteBreakerTripped || len(report.Leaks) != 1 || len(report.DeferredProviderDeletes) != 2 {
+		t.Fatalf("report = %#v", report)
+	}
+	if h.provider.Len() != 2 {
+		t.Fatalf("provider sandboxes = %d, want two deferred", h.provider.Len())
+	}
+}
+
 func TestReaperWillNotDeleteASandboxOfUnknownAge(t *testing.T) {
 	h := newHarness(t)
 	policy := testPolicy()
@@ -397,13 +417,14 @@ func TestReaperPurgesSpentCapabilities(t *testing.T) {
 	if err := h.manager.Delete(ctx, workerRef()); err != nil {
 		t.Fatal(err)
 	}
-	if h.grants.Len() != 1 {
-		t.Fatalf("grants = %d, want the revoked row retained", h.grants.Len())
+	retained := h.grants.Len()
+	if retained != 2 {
+		t.Fatalf("grants = %d, want launch and manual revoked rows retained", retained)
 	}
 	h.now = h.now.Add(25 * time.Hour)
 
 	report := mustRun(t, reaper)
-	if report.PurgedCapabilities != 1 || h.grants.Len() != 0 {
+	if report.PurgedCapabilities != retained || h.grants.Len() != 0 {
 		t.Fatalf("purged = %d retained = %d", report.PurgedCapabilities, h.grants.Len())
 	}
 }
@@ -420,5 +441,22 @@ func TestReaperPolicyValidation(t *testing.T) {
 	}
 	if err := runtime.DefaultReaperPolicy().Validate(); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestReaperRunLoopDrainsOnCancellation(t *testing.T) {
+	h := newHarness(t)
+	reaper := newReaper(t, h, testPolicy())
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		reaper.RunLoop(ctx, time.Hour)
+		close(done)
+	}()
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("reaper goroutine did not drain after cancellation")
 	}
 }
