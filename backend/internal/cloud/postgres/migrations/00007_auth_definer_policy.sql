@@ -20,7 +20,9 @@ $$;
 -- +goose StatementBegin
 DO $$
 BEGIN
-    EXECUTE format('GRANT ao_cloud_auth TO %I WITH SET TRUE', current_user);
+    IF NOT pg_has_role(current_user, 'ao_cloud_auth', 'SET') THEN
+        EXECUTE format('GRANT ao_cloud_auth TO %I WITH SET TRUE', current_user);
+    END IF;
 END
 $$;
 -- +goose StatementEnd
