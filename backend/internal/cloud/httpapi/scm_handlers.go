@@ -8,6 +8,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/go-chi/chi/v5"
 
@@ -29,6 +31,15 @@ type SCMOptions struct {
 	Link    SCMLinkService
 	Webhook SCMWebhookProcessor
 }
+
+const (
+	maxWebhookHeaderFields        = 64
+	maxWebhookHeaderValues        = 128
+	maxWebhookHeaderValuesPerName = 8
+	maxWebhookHeaderNameBytes     = 128
+	maxWebhookHeaderValueBytes    = 4096
+	maxWebhookHeaderBytes         = 32 << 10
+)
 
 type scmInstallStartResponse struct {
 	InstallURL string    `json:"installUrl"`
@@ -107,9 +118,17 @@ func (s *Server) completeSCMInstall(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) receiveSCMWebhook(w http.ResponseWriter, r *http.Request) {
+	if !validWebhookHeaderEnvelope(r.Header) {
+		writeError(w, r, http.StatusBadRequest, "bad_request", "WEBHOOK_HEADERS_INVALID", "webhook headers are invalid")
+		return
+	}
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, scm.MaxWebhookBodyBytes))
 	if err != nil {
 		writeError(w, r, http.StatusRequestEntityTooLarge, "bad_request", "WEBHOOK_TOO_LARGE", "webhook body is too large")
+		return
+	}
+	if !singleWebhookHeaders(r.Header, scm.EventHeader, scm.DeliveryHeader, scm.SignatureHeader) {
+		writeError(w, r, http.StatusBadRequest, "bad_request", "WEBHOOK_HEADERS_INVALID", "webhook headers are invalid")
 		return
 	}
 	result, err := s.scm.Webhook.Process(r.Context(), r.Header.Get(scm.EventHeader), r.Header.Get(scm.DeliveryHeader), r.Header.Get(scm.SignatureHeader), body)
@@ -138,4 +157,48 @@ func (s *Server) receiveSCMWebhook(w http.ResponseWriter, r *http.Request) {
 		status = "duplicate"
 	}
 	writeJSON(w, http.StatusAccepted, map[string]string{"status": status})
+}
+
+func validWebhookHeaderEnvelope(header http.Header) bool {
+	if len(header) > maxWebhookHeaderFields {
+		return false
+	}
+	valueCount, byteCount := 0, 0
+	for name, values := range header {
+		if len(name) == 0 || len(name) > maxWebhookHeaderNameBytes || http.CanonicalHeaderKey(name) != name || !validHTTPToken(name) || len(values) > maxWebhookHeaderValuesPerName {
+			return false
+		}
+		byteCount += len(name)
+		for _, value := range values {
+			valueCount++
+			byteCount += len(value)
+			if len(value) > maxWebhookHeaderValueBytes || containsControl(value) {
+				return false
+			}
+		}
+	}
+	return valueCount <= maxWebhookHeaderValues && byteCount <= maxWebhookHeaderBytes
+}
+
+func singleWebhookHeaders(header http.Header, names ...string) bool {
+	for _, name := range names {
+		if len(header.Values(name)) != 1 {
+			return false
+		}
+	}
+	return true
+}
+
+func validHTTPToken(value string) bool {
+	for index := range len(value) {
+		character := value[index]
+		if character <= 0x20 || character >= 0x7f || strings.ContainsRune("()<>@,;:\\\"/[]?={}", rune(character)) {
+			return false
+		}
+	}
+	return true
+}
+
+func containsControl(value string) bool {
+	return !utf8.ValidString(value) || strings.IndexFunc(value, unicode.IsControl) >= 0
 }
