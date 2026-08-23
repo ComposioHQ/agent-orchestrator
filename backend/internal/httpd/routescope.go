@@ -131,11 +131,17 @@ const (
 // parity" a single grep, and keeps the pending entries below honest: a port
 // that ships flips every route that named it.
 const (
-	portAttachmentStore    = "object-storage attachment port"
-	portWorkspaceAdapter   = "runtime workspace adapter (file read/list/watch inside the sandbox)"
-	portPreviewAdapter     = "runtime preview adapter (preview server lifecycle inside the sandbox)"
-	portProjectProvisioner = "runtime project provisioner (clone/init inside the sandbox)"
-	portAgentCatalog       = "sandbox-executing agent catalog (refresh/probe without a host CLI)"
+	portAttachmentStore = "object-storage attachment port"
+	// portWorkspaceObservation names the settled single port for workspace
+	// observation — list, read, watch, diff — rather than describing the
+	// capability in prose. A prose label reads as a placeholder and invites a
+	// second interface for the same job; naming the type makes it obvious
+	// there is one, and makes this label wrong in an obvious way if the type
+	// is ever renamed.
+	portWorkspaceObservation = "ports.WorkspaceObservation (list/read/watch/diff inside the sandbox)"
+	portPreviewAdapter       = "runtime preview adapter (preview server lifecycle inside the sandbox)"
+	portProjectProvisioner   = "runtime project provisioner (clone/init inside the sandbox)"
+	portAgentCatalog         = "sandbox-executing agent catalog (refresh/probe without a host CLI)"
 )
 
 // routeClasses is the single explicit classification of every route the router
@@ -253,12 +259,12 @@ var routeClasses = map[RouteKey]RouteClass{
 	// surfaces read the local worktree and drive a local dev server.
 	{"POST", "/api/v1/sessions/{sessionId}/attachments"}: pending(portAttachmentStore,
 		"attachment staging writes the local data dir; hosted staging needs an object-storage port"),
-	{"GET", "/api/v1/sessions/{sessionId}/workspace/files"}: pending(portWorkspaceAdapter,
-		"reads the local worktree; hosted reads go through the runtime workspace adapter"),
-	{"GET", "/api/v1/sessions/{sessionId}/workspace/file"}: pending(portWorkspaceAdapter,
-		"reads the local worktree; hosted reads go through the runtime workspace adapter"),
-	{"GET", "/api/v1/sessions/{sessionId}/workspace/events"}: pendingStream(portWorkspaceAdapter,
-		"watches the local worktree; hosted watches go through the runtime workspace adapter"),
+	{"GET", "/api/v1/sessions/{sessionId}/workspace/files"}: pending(portWorkspaceObservation,
+		"reads the local worktree; hosted reads go through the workspace observation port"),
+	{"GET", "/api/v1/sessions/{sessionId}/workspace/file"}: pending(portWorkspaceObservation,
+		"reads the local worktree; hosted reads go through the workspace observation port"),
+	{"GET", "/api/v1/sessions/{sessionId}/workspace/events"}: pendingStream(portWorkspaceObservation,
+		"watches the local worktree; hosted watches go through the workspace observation port"),
 	{"GET", "/api/v1/sessions/{sessionId}/preview"}:           pending(portPreviewAdapter, "preview state is local; hosted preview goes through the runtime preview adapter"),
 	{"POST", "/api/v1/sessions/{sessionId}/preview"}:          pending(portPreviewAdapter, "preview state is local; hosted preview goes through the runtime preview adapter"),
 	{"DELETE", "/api/v1/sessions/{sessionId}/preview"}:        pending(portPreviewAdapter, "preview state is local; hosted preview goes through the runtime preview adapter"),
