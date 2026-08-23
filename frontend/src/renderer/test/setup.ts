@@ -252,6 +252,10 @@ if (typeof window !== "undefined") {
 		cloud: {
 			getAvailability: async () => ({ available: false, enabled: false }),
 			getSession: async () => null,
+			listProjects: async () => ({ groups: [] }),
+			createProject: async () => { throw new Error("AO Cloud unavailable in tests"); },
+			getProjectOperation: async () => { throw new Error("AO Cloud unavailable in tests"); },
+			startProjectSession: async () => { throw new Error("AO Cloud unavailable in tests"); },
 			signIn: async () => null,
 			signOut: async () => undefined,
 			onSessionChanged: () => () => undefined,

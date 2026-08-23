@@ -5,6 +5,7 @@ import {
 	ArrowRight,
 	CheckCircle2,
 	ChevronRight,
+	Cloud,
 	Folder,
 	FolderOpen,
 	FolderPlus,
@@ -16,11 +17,13 @@ import {
 import { lazy, Suspense, useEffect, useRef, useState, type ReactNode } from "react";
 import type { ImportFolderScan } from "../../preload";
 import { aoBridge } from "../lib/bridge";
+import { useCloudSession } from "../lib/cloud-session";
 import { cn } from "../lib/utils";
 import type { ProjectKind } from "../types/workspace";
 import { CreateProjectAgentSheet, type CreateProjectAgentSelection } from "./CreateProjectAgentSheet";
 import type { CloneRepositoryDetails, CloneRepositorySelection } from "./CloneRepositoryDialog";
 import { Button } from "./ui/button";
+import { CloudProjectFlow } from "./CloudProjectFlow";
 
 export type CreateProjectInput = { path: string; asWorkspace?: boolean } & CreateProjectAgentSelection;
 export type CloneProjectInput = Pick<CloneRepositorySelection, "remoteUrl" | "destinationParent"> &
@@ -64,10 +67,12 @@ export function CreateProjectFlow({
 	openSignal?: number;
 }) {
 	const { t } = useTranslation();
+	const cloud = useCloudSession();
 	const resolvedIdleLabel = idleLabel ?? t("createProject.newProject");
 	const [error, setError] = useState<string | null>(null);
 	const [modePickerOpen, setModePickerOpen] = useState(false);
 	const [cloneDialogOpen, setCloneDialogOpen] = useState(false);
+	const [cloudDialogOpen, setCloudDialogOpen] = useState(false);
 	const [cloneDetails, setCloneDetails] = useState<CloneRepositoryDetails>(() => ({
 		remoteUrl: "",
 		destinationParent:
@@ -98,6 +103,11 @@ export function CreateProjectFlow({
 		if (source === "clone") {
 			setModePickerOpen(false);
 			setCloneDialogOpen(true);
+			return;
+		}
+		if (source === "cloud") {
+			setModePickerOpen(false);
+			setCloudDialogOpen(true);
 			return;
 		}
 		setCloneSelection(null);
@@ -179,7 +189,7 @@ export function CreateProjectFlow({
 	useEffect(() => {
 		if (!droppedPath || droppedPath.nonce === lastDropNonce.current) return;
 		lastDropNonce.current = droppedPath.nonce;
-		if (isBusy || modePickerOpen || cloneDialogOpen || folderPickerOpen || selectedPath !== null) return;
+		if (isBusy || modePickerOpen || cloneDialogOpen || cloudDialogOpen || folderPickerOpen || selectedPath !== null) return;
 		startFlow(droppedPath.path);
 	}, [droppedPath]);
 
@@ -261,9 +271,9 @@ export function CreateProjectFlow({
 					error,
 					label,
 				})}
-			{hasModePicker && embedded && !modePickerOpen && !cloneDialogOpen && selectedPath === null && (
+			{hasModePicker && embedded && !modePickerOpen && !cloneDialogOpen && !cloudDialogOpen && selectedPath === null && (
 				<div className="flex w-full flex-col items-center gap-3">
-					<ImportSourcePicker disabled={isBusy} onSelect={selectSource} />
+					<ImportSourcePicker cloudEnabled={cloud.enabled} disabled={isBusy} onSelect={selectSource} />
 					{error && !folderPickerOpen && selectedPath === null && (
 						<p className="text-caption leading-body text-error" role="status">
 							{error}
@@ -274,6 +284,7 @@ export function CreateProjectFlow({
 			{hasModePicker && (
 				<>
 					<CreateProjectSourceDialog
+						cloudEnabled={cloud.enabled}
 						disabled={isBusy}
 						open={modePickerOpen}
 						onOpenChange={(open) => {
@@ -370,6 +381,7 @@ export function CreateProjectFlow({
 				repositorySetupNeeded={repositorySetup !== null}
 				repositorySetupWarning={repositorySetupWarning}
 			/>
+			<CloudProjectFlow open={cloudDialogOpen} onOpenChange={setCloudDialogOpen} />
 			{error && !hasModePicker && (
 				<span className="sr-only" role="status">
 					{error}
@@ -426,11 +438,13 @@ function shouldScanCreateFailure(message: string): boolean {
 }
 
 function CreateProjectSourceDialog({
+	cloudEnabled,
 	disabled,
 	onOpenChange,
 	onSelect,
 	open,
 }: {
+	cloudEnabled: boolean;
 	disabled: boolean;
 	onOpenChange: (open: boolean) => void;
 	onSelect: (source: ProjectSource) => void;
@@ -441,7 +455,7 @@ function CreateProjectSourceDialog({
 			<Dialog.Portal>
 				<Dialog.Overlay className="dialog-overlay data-[state=open]:animate-overlay-in" />
 				<Dialog.Content className="fixed left-1/2 top-1/2 z-overlay w-[min(var(--size-import-modal-max),calc(100vw-24px))] -translate-x-1/2 -translate-y-1/2 border-0 bg-transparent p-0 shadow-none outline-none data-[state=open]:animate-modal-in">
-					<ImportSourcePicker disabled={disabled} onClose={() => onOpenChange(false)} onSelect={onSelect} dialog />
+					<ImportSourcePicker cloudEnabled={cloudEnabled} disabled={disabled} onClose={() => onOpenChange(false)} onSelect={onSelect} dialog />
 				</Dialog.Content>
 			</Dialog.Portal>
 		</Dialog.Root>
@@ -450,11 +464,13 @@ function CreateProjectSourceDialog({
 
 /** Shared source chooser for first-run and subsequent project creation. */
 function ImportSourcePicker({
+	cloudEnabled,
 	dialog = false,
 	disabled,
 	onClose,
 	onSelect,
 }: {
+	cloudEnabled: boolean;
 	dialog?: boolean;
 	disabled: boolean;
 	onClose?: () => void;
@@ -477,6 +493,7 @@ function ImportSourcePicker({
 				closeIcon={<X className="size-5" aria-hidden="true" strokeWidth={1.67} />}
 				arrowIcon={<ArrowRight className="size-4" aria-hidden="true" />}
 				cloneIcon={<GitFork className="size-[14px] shrink-0" aria-hidden="true" />}
+				cloudIcon={<Cloud className="size-5" aria-hidden="true" />}
 				folderIcon={<FolderOpen className="size-[14px] shrink-0" aria-hidden="true" />}
 				workspaceIcon={<Folders className="size-5" aria-hidden="true" />}
 				labels={{
@@ -493,6 +510,12 @@ function ImportSourcePicker({
 					workspace: t("createProject.addWorkspace"),
 					workspaceDescription: t("createProject.workspaceDesc"),
 					close: t("createProject.closeDialog"),
+					...(cloudEnabled
+						? {
+							cloud: "AO Cloud",
+							cloudDescription: "Create a project that is available across your signed-in devices.",
+						}
+						: {}),
 				}}
 			/>
 		</>

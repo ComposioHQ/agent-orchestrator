@@ -210,6 +210,10 @@ export async function installFakeBridge(page: Page, opts: FakeBridgeOptions = {}
 				cloud: {
 					getAvailability: async () => ({ available: false, enabled: false }),
 					getSession: async () => null,
+					listProjects: async () => ({ groups: [] }),
+					createProject: async () => { throw new Error("AO Cloud is unavailable in this fixture"); },
+					getProjectOperation: async () => { throw new Error("AO Cloud is unavailable in this fixture"); },
+					startProjectSession: async () => { throw new Error("AO Cloud is unavailable in this fixture"); },
 					signIn: async () => null,
 					signOut: async () => undefined,
 					onSessionChanged: unsubscribe,
@@ -648,6 +652,10 @@ export async function installFakeAgent(page: Page, opts: FakeAgentOptions = {}):
 				cloud: {
 					getAvailability: async () => ({ available: false, enabled: false }),
 					getSession: async () => null,
+					listProjects: async () => ({ groups: [] }),
+					createProject: async () => { throw new Error("AO Cloud is unavailable in this fixture"); },
+					getProjectOperation: async () => { throw new Error("AO Cloud is unavailable in this fixture"); },
+					startProjectSession: async () => { throw new Error("AO Cloud is unavailable in this fixture"); },
 					signIn: async () => null,
 					signOut: async () => undefined,
 					onSessionChanged: unsubscribe,

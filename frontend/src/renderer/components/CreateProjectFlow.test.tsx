@@ -9,6 +9,19 @@ const bridgeMocks = vi.hoisted(() => ({
 	scanImportFolder: vi.fn(),
 }));
 
+const cloudSession = vi.hoisted(() => ({
+	enabled: false,
+	status: "unauthenticated" as "authenticated" | "unauthenticated",
+}));
+
+vi.mock("../lib/cloud-session", () => ({
+	useCloudSession: () => cloudSession,
+}));
+
+vi.mock("./CloudProjectFlow", () => ({
+	CloudProjectFlow: ({ open }: { open: boolean }) => (open ? <div role="dialog" aria-label="AO Cloud project" /> : null),
+}));
+
 vi.mock("../lib/bridge", () => ({
 	aoBridge: {
 		app: {
@@ -65,9 +78,29 @@ const noop = {
 };
 
 beforeEach(() => {
+	cloudSession.enabled = false;
+	cloudSession.status = "unauthenticated";
 	bridgeMocks.checkAncestorRepo.mockReset().mockResolvedValue(undefined);
 	bridgeMocks.chooseDirectory.mockReset();
 	bridgeMocks.scanImportFolder.mockReset().mockImplementation(async ({ path }: { path: string }) => okScan(path));
+});
+
+describe("CreateProjectFlow cloud source", () => {
+	it("shows eligible users a first-class Cloud choice outside the Clone flow", async () => {
+		cloudSession.enabled = true;
+		cloudSession.status = "authenticated";
+		const user = userEvent.setup();
+		const { rerender } = render(<CreateProjectFlow mode="choose" {...noop} openSignal={0} />);
+
+		rerender(<CreateProjectFlow mode="choose" {...noop} openSignal={1} />);
+		const cloudChoice = await screen.findByRole("button", { name: "AO Cloud" });
+		expect(screen.getByRole("button", { name: "Clone from Git" })).toBeInTheDocument();
+
+		await user.click(cloudChoice);
+
+		expect(await screen.findByRole("dialog", { name: "AO Cloud project" })).toBeInTheDocument();
+		expect(screen.queryByTestId("clone-dialog")).not.toBeInTheDocument();
+	});
 });
 
 describe("CreateProjectFlow droppedPath", () => {

@@ -25,8 +25,10 @@ import { chmod, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import path from "node:path";
+import { createCloudClient, type CurrentAccount } from "../../../packages/cloud-client/src/index";
 import type { CloudAccount, CloudAvailability, CloudOrganization } from "../shared/cloud-account";
 import { cloudDesktopConfigured, cloudEarlyAccessEnabled } from "../shared/cloud-feature";
+import { installCloudProjectIPC } from "./cloud-projects";
 
 const CLOUD_API_URL =
 	import.meta.env.VITE_AO_CLOUD_API_URL?.trim().replace(/\/+$/, "") ||
@@ -69,8 +71,6 @@ interface AOSessionResponse {
 	accessToken: string;
 	refreshToken: string;
 	expiresAt: string;
-	user: CloudAccount["user"] & { authProvider?: string };
-	organizations: CloudOrganization[];
 }
 
 const emptyStore = (): AuthStore => ({ session: null });
@@ -190,15 +190,34 @@ async function removeAuthStore(dataDir: string): Promise<void> {
 	]);
 }
 
-function toStoredSession(response: AOSessionResponse): StoredSession {
+function normalizeCurrentAccount(account: CurrentAccount): Pick<StoredSession, "user" | "organizations"> {
+	return {
+		user: account.user,
+		organizations: account.organizations.map((organization) => ({
+			id: organization.orgId,
+			slug: organization.orgSlug,
+			displayName: organization.displayName,
+			role: organization.role,
+		})),
+	};
+}
+
+async function fetchCurrentAccount(accessToken: string): Promise<Pick<StoredSession, "user" | "organizations">> {
+	const account = await createCloudClient({
+		baseUrl: CLOUD_API_URL,
+		getAccessToken: () => accessToken,
+	}).getCurrentAccount();
+	return normalizeCurrentAccount(account);
+}
+
+function toStoredSession(
+	response: AOSessionResponse,
+	identity: Pick<StoredSession, "user" | "organizations">,
+): StoredSession {
 	return {
 		authProvider: "google",
-		user: {
-			id: response.user.id,
-			email: response.user.email,
-			displayName: response.user.displayName,
-		},
-		organizations: response.organizations ?? [],
+		user: identity.user,
+		organizations: identity.organizations,
 		storedAt: new Date().toISOString(),
 		accessToken: response.accessToken,
 		refreshToken: response.refreshToken,
@@ -271,7 +290,9 @@ async function currentSession(dataDir: string): Promise<StoredSession | null> {
 
 export async function getCloudSession(dataDir: string): Promise<CloudAccount | null> {
 	const session = await currentSession(dataDir);
-	return session ? publicAccount(session) : null;
+	if (!session) return null;
+	const identity = await fetchCurrentAccount(session.accessToken);
+	return publicAccount({ ...session, ...identity });
 }
 
 async function refreshCloudSession(
@@ -294,7 +315,7 @@ async function refreshCloudSession(
 		});
 		return null;
 	}
-	const session = toStoredSession(response);
+	const session = toStoredSession(response, storedSession);
 	return withAuthMutation(dataDir, async () => {
 		// A sign-out or a fresh sign-in raced this refresh: the rotated token now
 		// belongs to nobody, and writing it back would resurrect a dead session.
@@ -429,7 +450,7 @@ export async function beginCloudSignIn(dataDir: string): Promise<CloudAccount> {
 		method: "POST",
 		body: JSON.stringify({ idToken }),
 	});
-	const session = toStoredSession(response);
+	const session = toStoredSession(response, await fetchCurrentAccount(response.accessToken));
 	// Retire any in-flight refresh for the session this one replaces before the
 	// write, so a late rotation cannot land on top of the new credentials.
 	invalidateAuthOperations(dataDir);
@@ -479,6 +500,11 @@ export function installCloudIPC(
 	getDataDir: () => string,
 	notifyRenderers: (session: CloudAccount | null) => void,
 ): void {
+	installCloudProjectIPC({
+		baseUrl: CLOUD_API_URL,
+		getAccessToken: () => getCloudAccessToken(getDataDir()),
+		getAccount: () => getCloudSession(getDataDir()),
+	});
 	ipcMain.handle("cloud:getAvailability", () => cloudAvailability());
 	ipcMain.handle("cloud:getSession", () => getCloudSession(getDataDir()));
 	ipcMain.handle("cloud:signIn", async () => {
