@@ -39,10 +39,19 @@ for command_name in aws curl git jq openssl terraform; do
 done
 
 temporary_directory="$(mktemp -d /tmp/ao-cloud-deploy.XXXXXX)"
+database_secret_changed=false
 cleanup() {
+	local exit_status=$?
+	if [[ "$exit_status" != "0" && "$database_secret_changed" == "true" && -s "$temporary_directory/database.previous.json" ]]; then
+		aws secretsmanager put-secret-value \
+			--secret-id "$database_secret_arn" \
+			--secret-string "file://$temporary_directory/database.previous.json" >/dev/null || \
+			echo "warning: failed to restore the previous database secret" >&2
+	fi
   case "$temporary_directory" in
     /tmp/ao-cloud-deploy.*) rm -r -- "$temporary_directory" ;;
   esac
+	return "$exit_status"
 }
 trap cleanup EXIT
 
@@ -74,12 +83,14 @@ ensure_state_bucket() {
 }
 
 terraform_apply() {
-  local image="$1"
-  local enabled="$2"
+  local api_image="$1"
+  local migration_image="$2"
+  local enabled="$3"
   terraform -chdir="$TERRAFORM_DIR" apply -auto-approve \
     -var "aws_region=$AWS_REGION" \
     -var "environment=$ENVIRONMENT" \
-    -var "control_plane_image=$image" \
+    -var "control_plane_image=$api_image" \
+    -var "control_plane_migration_image=$migration_image" \
     -var "deployment_enabled=$enabled"
 }
 
@@ -96,7 +107,7 @@ terraform -chdir="$TERRAFORM_DIR" init -reconfigure \
   -backend-config="use_lockfile=true"
 
 if ! terraform -chdir="$TERRAFORM_DIR" state show aws_codebuild_project.control_plane >/dev/null 2>&1; then
-  terraform_apply "$PLACEHOLDER_IMAGE" false
+  terraform_apply "$PLACEHOLDER_IMAGE" "$PLACEHOLDER_IMAGE" false
 fi
 
 database_secret_arn="$(terraform_output database_secret_arn)"
@@ -117,14 +128,17 @@ existing_database_secret="$(aws secretsmanager get-secret-value \
   --secret-id "$database_secret_arn" \
   --query SecretString \
   --output text 2>/dev/null || true)"
+if [[ -n "$existing_database_secret" ]]; then
+	printf '%s' "$existing_database_secret" >"$temporary_directory/database.previous.json"
+fi
 runtime_password="$(jq -r '.runtimePassword // empty' <<<"${existing_database_secret:-{}}" 2>/dev/null || true)"
 if [[ -z "$runtime_password" ]]; then
   runtime_password="$(openssl rand -base64 48 | tr -d '\n')"
 fi
 owner_password_encoded="$(jq -rn --arg value "$owner_password" '$value|@uri')"
 runtime_password_encoded="$(jq -rn --arg value "$runtime_password" '$value|@uri')"
-migration_url="postgres://${owner_user}:${owner_password_encoded}@${database_address}:5432/${database_name}?sslmode=verify-full&sslrootcert=system"
-runtime_url="postgres://${runtime_user}:${runtime_password_encoded}@${database_address}:5432/${database_name}?sslmode=verify-full&sslrootcert=system"
+migration_url="postgres://${owner_user}:${owner_password_encoded}@${database_address}:5432/${database_name}?sslmode=verify-full&sslrootcert=/etc/ssl/certs/rds-ca-bundle.pem"
+runtime_url="postgres://${runtime_user}:${runtime_password_encoded}@${database_address}:5432/${database_name}?sslmode=verify-full&sslrootcert=/etc/ssl/certs/rds-ca-bundle.pem"
 jq -n \
   --arg migrationUrl "$migration_url" \
   --arg runtimeUrl "$runtime_url" \
@@ -134,6 +148,7 @@ jq -n \
 aws secretsmanager put-secret-value \
   --secret-id "$database_secret_arn" \
   --secret-string "file://$temporary_directory/database.json" >/dev/null
+database_secret_changed=true
 
 existing_application_secret="$(aws secretsmanager get-secret-value \
   --secret-id "$application_secret_arn" \
@@ -202,11 +217,27 @@ image_digest="$(aws ecr describe-images \
   --output text)"
 image_reference="${repository_url}@${image_digest}"
 
-# Staging intentionally scales to zero while its migration task runs. The
-# production deployment will use an expand/migrate/contract rollout instead.
-terraform_apply "$image_reference" false
-
 cluster="$(terraform_output ecs_cluster)"
+service="$(terraform_output ecs_service)"
+current_task_definition="$(aws ecs describe-services \
+  --cluster "$cluster" --services "$service" \
+  --query 'services[0].taskDefinition' --output text)"
+current_api_image="$(aws ecs describe-task-definition \
+  --task-definition "$current_task_definition" \
+  --query 'taskDefinition.containerDefinitions[?name==`control-plane`].image | [0]' \
+  --output text)"
+current_desired_count="$(aws ecs describe-services \
+  --cluster "$cluster" --services "$service" \
+  --query 'services[0].desiredCount' --output text)"
+current_enabled=false
+if [[ "$current_desired_count" != "0" ]]; then
+  current_enabled=true
+fi
+
+# Register the new migration image without changing or stopping the serving API
+# task. A failed migration therefore leaves the previous revision online.
+terraform_apply "$current_api_image" "$image_reference" "$current_enabled"
+
 migration_task="$(terraform_output migration_task_definition_arn)"
 security_group="$(terraform_output ecs_security_group_id)"
 subnets="$(terraform -chdir="$TERRAFORM_DIR" output -json public_subnet_ids | jq -r 'join(",")')"
@@ -232,9 +263,8 @@ if [[ "$migration_exit_code" != "0" ]]; then
   exit 1
 fi
 
-terraform_apply "$image_reference" true
+terraform_apply "$image_reference" "$image_reference" true
 
-service="$(terraform_output ecs_service)"
 aws ecs update-service \
   --cluster "$cluster" \
   --service "$service" \

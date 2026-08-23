@@ -57,11 +57,9 @@ request directly to the provisioner. The control plane holds it only in memory
 while bootstrapping the user's sandbox and does not persist or log it.
 
 `AO_CLOUD_ALLOWED_EMAILS` is a required, comma-separated staging signup gate.
-Because this POC still injects a shared operator GitHub credential into
-permitted sandboxes, use a fine-grained token limited to the test repositories
-and set the shortest practical expiration. Rotate the shared token after each
-test period; do not broaden the email allowlist until per-user GitHub credential
-custody is implemented.
+This POC accepts public GitHub repositories only; it does not inject a shared
+operator GitHub credential into tenant compute. Private repository support
+requires repository-scoped, short-lived GitHub App installation tokens.
 
 The script:
 
@@ -70,10 +68,14 @@ The script:
    logging;
 3. generates secrets outside Terraform state;
 4. builds and pushes the exact current commit in CodeBuild;
-5. runs the migration task before enabling the API service; and
+5. stages the new migration image while the previous API revision remains
+   online, then runs migrations before rolling the API forward;
 6. forces a fresh ECS rollout so updated secret values are loaded; and
 7. verifies health, readiness, invalid Google identity, and malformed refresh
    and logout behavior through the public HTTPS endpoint.
 
-The script intentionally scales staging to zero during migration. Production
-must use a separately reviewed expand/migrate/contract rollout.
+The image contains the checksum-pinned regional RDS CA bundle, and both the
+migration and runtime connections use full certificate and hostname
+verification. A failed migration restores the previous database secret and
+leaves the serving revision online. Production still requires a separately
+reviewed expand/migrate/contract rollout for incompatible schema changes.

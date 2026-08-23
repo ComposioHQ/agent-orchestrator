@@ -342,7 +342,7 @@ resource "aws_ecs_task_definition" "migration" {
 
   container_definitions = jsonencode([{
     name       = "migration"
-    image      = var.control_plane_image
+    image      = var.control_plane_migration_image
     essential  = true
     entryPoint = ["/ao-cloud-migrate"]
     environment = [

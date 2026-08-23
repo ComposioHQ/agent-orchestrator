@@ -48,6 +48,12 @@ variable "control_plane_image" {
   default     = "public.ecr.aws/docker/library/busybox:1.36"
 }
 
+variable "control_plane_migration_image" {
+  description = "Digest-pinned migration image, independently staged before the serving API rolls forward."
+  type        = string
+  default     = "public.ecr.aws/docker/library/busybox:1.36"
+}
+
 variable "deployment_enabled" {
   description = "Run one API task after secrets and migrations are ready."
   type        = bool
