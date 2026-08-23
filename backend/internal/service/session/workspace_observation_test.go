@@ -3,11 +3,14 @@ package session
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"reflect"
 	"testing"
 	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
+	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/apierr"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
@@ -22,10 +25,6 @@ type fakeRemoteObservation struct {
 	invalidated domain.SessionID
 }
 
-func (f *fakeRemoteObservation) Snapshot(context.Context, ports.WorkspaceInfo) (ports.WorkspaceSnapshot, error) {
-	f.calls = append(f.calls, "snapshot")
-	return ports.WorkspaceSnapshot{}, f.err
-}
 func (f *fakeRemoteObservation) ListWorkspaceFiles(context.Context, domain.SessionID) (ports.WorkspaceFiles, error) {
 	f.calls = append(f.calls, "list")
 	return f.list, f.err
@@ -125,5 +124,59 @@ func TestWorkspaceContentPreservesRemoteErrorsAcrossEveryOperation(t *testing.T)
 		if err := check(); !errors.Is(err, want) {
 			t.Fatalf("operation %d error = %v", i, err)
 		}
+	}
+}
+
+func TestLocalWorkspaceObservationBoundsAndConfinesPreviewReads(t *testing.T) {
+	root := t.TempDir()
+	outside := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "ok.txt"), []byte("ok"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	large := filepath.Join(root, "large.bin")
+	file, err := os.Create(large)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := file.Truncate(ports.MaxPreviewFileBytes + 1); err != nil {
+		_ = file.Close()
+		t.Fatal(err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(outside, "secret.txt"), []byte("secret"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(outside, "secret.txt"), filepath.Join(root, "escape.txt")); err != nil {
+		t.Skipf("symlink unsupported: %v", err)
+	}
+
+	store := newFakeStore()
+	store.sessions["remote-safe"] = domain.SessionRecord{
+		ID:       "remote-safe",
+		Metadata: domain.SessionMetadata{WorkspacePath: root},
+	}
+	svc := &Service{store: store}
+
+	got, err := svc.ReadPreviewFile(context.Background(), "remote-safe", "ok.txt")
+	if err != nil || string(got.Data) != "ok" {
+		t.Fatalf("read ok = %#v, %v", got, err)
+	}
+	for _, path := range []string{"../secret.txt", "escape.txt"} {
+		if _, err := svc.ReadPreviewFile(context.Background(), "remote-safe", path); err == nil {
+			t.Fatalf("read %q unexpectedly succeeded", path)
+		}
+	}
+	_, err = svc.ReadPreviewFile(context.Background(), "remote-safe", "large.bin")
+	var apiError *apierr.Error
+	if !errors.As(err, &apiError) || apiError.Code != "PREVIEW_FILE_TOO_LARGE" {
+		t.Fatalf("large preview error = %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := svc.ReadPreviewFile(ctx, "remote-safe", "ok.txt"); !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancelled preview error = %v", err)
 	}
 }

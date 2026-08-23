@@ -2,7 +2,6 @@ package session
 
 import (
 	"context"
-	"fmt"
 	"io"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
@@ -20,10 +19,6 @@ type localWorkspaceObservation struct {
 }
 
 var _ ports.WorkspaceObservation = (*localWorkspaceObservation)(nil)
-
-func (o *localWorkspaceObservation) Snapshot(context.Context, ports.WorkspaceInfo) (ports.WorkspaceSnapshot, error) {
-	return ports.WorkspaceSnapshot{}, fmt.Errorf("local session content: snapshot is owned by the workspace adapter")
-}
 
 func (o *localWorkspaceObservation) ListWorkspaceFiles(ctx context.Context, id domain.SessionID) (ports.WorkspaceFiles, error) {
 	return o.service.localListWorkspaceFiles(ctx, id)
@@ -46,7 +41,7 @@ func (o *localWorkspaceObservation) WatchWorkspace(ctx context.Context, id domai
 	if err != nil {
 		return nil, err
 	}
-	events := make(chan ports.WorkspaceEvent)
+	events := make(chan ports.WorkspaceEvent, 1)
 	go func() {
 		defer close(events)
 		for {
@@ -59,8 +54,8 @@ func (o *localWorkspaceObservation) WatchWorkspace(ctx context.Context, id domai
 				}
 				select {
 				case events <- ports.WorkspaceEvent{}:
-				case <-ctx.Done():
-					return
+				default:
+					// Coalesce bursts. Consumers re-read semantic workspace state.
 				}
 			}
 		}
@@ -78,9 +73,21 @@ func (o *localWorkspaceObservation) ReadPreviewFile(ctx context.Context, id doma
 		return ports.PreviewFile{}, apierr.NotFound("PREVIEW_FILE_NOT_FOUND", "Preview file not found")
 	}
 	defer func() { _ = file.Close() }()
-	data, err := io.ReadAll(file)
+	if info.Size() > ports.MaxPreviewFileBytes {
+		return ports.PreviewFile{}, apierr.Invalid("PREVIEW_FILE_TOO_LARGE", "Preview file exceeds the supported size", map[string]any{"maxBytes": ports.MaxPreviewFileBytes})
+	}
+	if err := ctx.Err(); err != nil {
+		return ports.PreviewFile{}, err
+	}
+	data, err := io.ReadAll(io.LimitReader(previewContextReader{ctx: ctx, reader: file}, ports.MaxPreviewFileBytes+1))
 	if err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return ports.PreviewFile{}, ctxErr
+		}
 		return ports.PreviewFile{}, apierr.NotFound("PREVIEW_FILE_NOT_FOUND", "Preview file not found")
+	}
+	if int64(len(data)) > ports.MaxPreviewFileBytes {
+		return ports.PreviewFile{}, apierr.Invalid("PREVIEW_FILE_TOO_LARGE", "Preview file exceeds the supported size", map[string]any{"maxBytes": ports.MaxPreviewFileBytes})
 	}
 	return ports.PreviewFile{Path: clean, Name: info.Name(), Data: data, Size: info.Size(), ModTime: info.ModTime()}, nil
 }
@@ -139,4 +146,19 @@ func (s *Service) workspaceObserver() ports.WorkspaceObservation {
 func (s *Service) UsesLocalWorkspaceObservation() bool {
 	_, ok := s.workspaceObserver().(*localWorkspaceObservation)
 	return ok
+}
+
+// previewContextReader makes cancellation observable during bounded local reads.
+type previewContextReader struct {
+	ctx    context.Context
+	reader io.Reader
+}
+
+func (r previewContextReader) Read(p []byte) (int, error) {
+	select {
+	case <-r.ctx.Done():
+		return 0, r.ctx.Err()
+	default:
+		return r.reader.Read(p)
+	}
 }

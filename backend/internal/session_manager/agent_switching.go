@@ -1135,7 +1135,7 @@ func (m *Manager) prepareTargetActivation(ctx context.Context, store ports.Agent
 		return preparedTargetActivation{}, fmt.Errorf("system prompt: %w", err)
 	}
 	systemPrompt = appendAgentContinuationProtocol(systemPrompt)
-	systemFile, err := m.prepareSystemPromptFile(rec.ID, harness, systemPrompt)
+	systemFile, err := m.prepareSystemPromptFile(ctx, rec.ID, harness, systemPrompt)
 	if err != nil {
 		return preparedTargetActivation{}, fmt.Errorf("system prompt file: %w", err)
 	}
@@ -1204,7 +1204,7 @@ func (m *Manager) prepareTargetActivation(ctx context.Context, store ports.Agent
 			return preparedTargetActivation{}, fmt.Errorf("launch command: %w", err)
 		}
 	}
-	if err := m.resolveExecutionLaunch(ctx, argv, env); err != nil {
+	if env, err = m.resolveExecutionLaunch(ctx, argv, env); err != nil {
 		return preparedTargetActivation{}, err
 	}
 	argv, rawLaunchID, err := m.superviseAgentProcessForSwitch(agent, rec.ID, env, argv)
@@ -1297,7 +1297,7 @@ func (m *Manager) systemPromptForNativeRestore(ctx context.Context, rec domain.S
 func (m *Manager) prepareTargetLaunchPrompt(ctx context.Context, rec domain.SessionRecord, target *preparedTargetActivation, systemPrompt, prompt string) error {
 	launch := target.launch
 	systemPrompt = strings.TrimSpace(systemPrompt)
-	systemFile, err := m.prepareSystemPromptFile(rec.ID, target.harness, systemPrompt)
+	systemFile, err := m.prepareSystemPromptFile(ctx, rec.ID, target.harness, systemPrompt)
 	if err != nil {
 		return fmt.Errorf("system prompt file: %w", err)
 	}
@@ -1334,7 +1334,7 @@ func (m *Manager) prepareTargetLaunchPrompt(ctx context.Context, rec domain.Sess
 			return fmt.Errorf("launch command: %w", buildErr)
 		}
 	}
-	if err := m.resolveExecutionLaunch(ctx, raw, target.env); err != nil {
+	if target.env, err = m.resolveExecutionLaunch(ctx, raw, target.env); err != nil {
 		return err
 	}
 	wrapped, err := m.wrapAgentProcessWithLaunchID(target.agent, rec.ID, target.env, raw, string(target.launchID), true)
