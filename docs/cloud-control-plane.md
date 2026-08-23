@@ -184,12 +184,25 @@ through a VPC link and internal load balancer. See
   follow-up; this does not change the frontend terminal contract.
 - Prepared worktrees are capped at 24 MiB compressed for this POC. Production
   will move overlays and caches to object storage/prebuilt images.
+- Prepared-worktree overlays represent changed and untracked files only. They
+  cannot remove files, so deletions and the old side of renames may remain in a
+  session sandbox. They are also applied to the requested remote ref, not to
+  unpushed coordinator commits. Production synchronization needs an explicit
+  deletion manifest and an immutable base commit.
 - Workspace capabilities expire after 30 days; background renewal is deferred.
 - The signed coordinator URL injected into each isolated agent sandbox expires
   after 24 hours and is not yet renewed in place. Long-running orchestrators
   lose `ao` CLI connectivity until their session is relaunched.
 - A signed URL is refreshed when the desktop polls the workspace, but automatic
   renewal for an already-connected window remains.
-- Stop, pause, resume, archive, delete, quotas, billing, and idle reaping remain.
+- Ready coordinators are restarted when the desktop polls the workspace. The
+  staging provider currently serializes those checks globally; use per-workspace
+  coordination and a cheap already-running fast path before broad multi-tenant
+  access.
+- Cloud feature availability is queried through synchronous Electron IPC in
+  this developer-gated preview. Cache and push availability changes before the
+  feature is enabled by default so renderer paths never wait on main-process
+  work.
+- Stop, pause, archive, delete, quotas, billing, and idle reaping remain.
 
 Those production lifecycle pieces should remain separately reviewable follow-ups.
