@@ -122,6 +122,11 @@ export function BrowserImportDialog({
 		setError("");
 	};
 
+	const goBack = () => {
+		setError("");
+		setStep(step === "profiles" ? "source" : "profiles");
+	};
+
 	const startImport = async () => {
 		if (!bridge || !source || selectedProfiles.length === 0 || (!includeCookies && !includeHistory)) return;
 		const id = crypto.randomUUID();
@@ -234,7 +239,7 @@ export function BrowserImportDialog({
 
 				<div className={settingsDialogFooterClass}>
 					{step === "profiles" || step === "options" ? (
-						<Button onClick={() => setStep(step === "profiles" ? "source" : "profiles")} type="button" variant="footer">
+						<Button onClick={goBack} type="button" variant="footer">
 							<ChevronLeft aria-hidden="true" className="size-4" />
 							{t("settings.browserImport.back")}
 						</Button>
@@ -292,7 +297,7 @@ function SourceStep({
 				return (
 				<button
 					aria-pressed={selected}
-					className={`flex items-center justify-between rounded-lg border p-3 text-left transition-[background-color,border-color,box-shadow] ${selected ? "border-accent bg-accent/15 shadow-sm ring-2 ring-accent/50 ring-offset-1 ring-offset-background" : "border-border hover:bg-interactive-hover"}`}
+					className={`flex items-center justify-between rounded-lg border p-3 text-left transition-[background-color,border-color,box-shadow,color] ${selected ? "border-accent bg-accent text-accent-foreground shadow-sm ring-2 ring-accent ring-offset-2 ring-offset-background" : "border-border hover:bg-interactive-hover"}`}
 					data-selected={selected ? "true" : "false"}
 					key={source.id}
 					onClick={() => onSelect(source.id)}
@@ -300,10 +305,10 @@ function SourceStep({
 				>
 					<span>
 						<span className="block text-sm font-semibold">{source.name}</span>
-						<span className="block text-xs text-muted-foreground">{t("settings.browserImport.profileCount", { count: source.profiles.length })}</span>
+						<span className={`block text-xs ${selected ? "text-accent-foreground/80" : "text-muted-foreground"}`}>{t("settings.browserImport.profileCount", { count: source.profiles.length })}</span>
 					</span>
 					{selected ? (
-						<span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-accent text-accent-foreground shadow-sm">
+						<span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-accent-foreground text-accent shadow-sm">
 							<CheckCircle2 aria-hidden="true" className="size-4" />
 						</span>
 					) : null}

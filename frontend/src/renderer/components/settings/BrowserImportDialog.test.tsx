@@ -69,6 +69,7 @@ describe("BrowserImportDialog", () => {
 		expect(chromeButton).toHaveAttribute("aria-pressed", "true");
 		expect(chromeButton).toHaveAttribute("data-selected", "true");
 		expect(chromeButton).toHaveClass("ring-2");
+		expect(chromeButton).toHaveClass("bg-accent", "text-accent-foreground");
 		await userEvent.click(firefoxButton);
 		expect(firefoxButton).toHaveAttribute("aria-pressed", "true");
 		expect(chromeButton).toHaveAttribute("aria-pressed", "false");
@@ -89,5 +90,33 @@ describe("BrowserImportDialog", () => {
 			includeHistory: true,
 			destination: { mode: "merge", name: "Google Chrome" },
 		}));
+	});
+
+	it("clears a failed import when navigating back to choose another browser", async () => {
+		const bridge: AoBridge["browserProfiles"] = {
+			list: vi.fn(async () => ({ profiles: [] })),
+			create: vi.fn(),
+			rename: vi.fn(),
+			clear: vi.fn(),
+			delete: vi.fn(),
+			discoverImportSources: vi.fn(async () => ({ sources: [source, firefoxSource] })),
+			import: vi.fn(async () => { throw new Error("Firefox cookie data is unavailable."); }),
+			onImportProgress: vi.fn(() => () => undefined),
+		};
+		aoBridge.browserProfiles = bridge;
+
+		render(<BrowserImportDialog onImported={() => undefined} onOpenChange={() => undefined} open />);
+		await userEvent.click(await screen.findByRole("button", { name: /Firefox/ }));
+		await userEvent.click(screen.getByRole("button", { name: "Next" }));
+		await userEvent.click(screen.getByRole("button", { name: "Next" }));
+		await userEvent.click(screen.getByRole("button", { name: "Start import" }));
+		expect(await screen.findByRole("alert")).toHaveTextContent("Firefox cookie data is unavailable.");
+
+		await userEvent.click(screen.getByRole("button", { name: "Back" }));
+		await userEvent.click(screen.getByRole("button", { name: "Back" }));
+		const chromeButton = screen.getByRole("button", { name: /Google Chrome/ });
+		await userEvent.click(chromeButton);
+		expect(chromeButton).toHaveAttribute("aria-pressed", "true");
+		expect(screen.queryByRole("alert")).not.toBeInTheDocument();
 	});
 });

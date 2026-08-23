@@ -160,6 +160,55 @@ describe("BrowserProfileImportService", () => {
 		}
 	});
 
+	it("imports Firefox history when a detected profile has an empty cookie database", async () => {
+		const root = await fixtureRoot();
+		const appData = path.join(root, "roaming");
+		const profileRoot = path.join(appData, "Mozilla", "Firefox", "Profiles", "fixture.default-release");
+		await mkdir(profileRoot, { recursive: true });
+		new Database(path.join(profileRoot, "cookies.sqlite")).close();
+		const history = new Database(path.join(profileRoot, "places.sqlite"));
+		history.exec(`
+			CREATE TABLE moz_places (url TEXT, title TEXT, visit_count INTEGER, last_visit_date INTEGER);
+			INSERT INTO moz_places VALUES ('https://example.com/from-firefox', 'Firefox fixture', 3, 1767225600000000);
+		`);
+		history.close();
+
+		const stateDir = path.join(root, "ao-state");
+		const profileStore = new BrowserProfileStore({ stateDir });
+		await profileStore.load();
+		const setCookie = vi.fn(async () => undefined);
+		const service = new BrowserProfileImportService({
+			stateDir,
+			profileStore,
+			historyStore: new BrowserHistoryStore({ stateDir }),
+			platform: "win32",
+			homeDir: root,
+			env: { APPDATA: appData },
+			fromPartition: () => ({
+				cookies: { set: setCookie },
+				clearStorageData: async () => undefined,
+				clearCache: async () => undefined,
+			}),
+		});
+		const source = (await service.discover()).sources[0]!;
+		const result = await service.import({
+			requestId: "abababab-abab-4bab-8bab-abababababab",
+			sourceId: source.id,
+			profileIds: [source.profiles[0]!.id],
+			includeCookies: true,
+			includeHistory: true,
+			domains: [],
+			destination: { mode: "merge", name: "History-only Firefox" },
+		}, vi.fn());
+
+		expect(result.entries[0]).toMatchObject({
+			importedCookies: 0,
+			importedHistoryEntries: 1,
+			warnings: [expect.objectContaining({ code: "cookie-database-missing" })],
+		});
+		expect(setCookie).not.toHaveBeenCalled();
+	});
+
 	it("discovers path-hidden profiles and atomically imports filtered cookies and history", async () => {
 		const root = await fixtureRoot();
 		const { localAppData } = await createChromeFixture(root);

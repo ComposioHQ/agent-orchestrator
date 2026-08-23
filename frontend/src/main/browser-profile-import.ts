@@ -584,9 +584,13 @@ async function readProfileData(
 			const outcome = source.descriptor.family === "chromium"
 				? readChromiumCookies(snapshot, request.domains, decryptor, now)
 				: readFirefoxCookies(snapshot, request.domains, now);
-			cookies = outcome.cookies;
-			skippedCookies += outcome.skipped;
-			warnings.push(...outcome.warnings);
+			if (!outcome) {
+				warnings.push({ code: "cookie-database-missing" });
+			} else {
+				cookies = outcome.cookies;
+				skippedCookies += outcome.skipped;
+				warnings.push(...outcome.warnings);
+			}
 		}
 	}
 	if (request.includeHistory) {
@@ -681,9 +685,9 @@ function withReadOnlyDatabase<T>(file: string, read: (database: Database) => T):
 	}
 }
 
-function readFirefoxCookies(file: string, domains: string[], now: Date): { cookies: ImportedCookie[]; skipped: number; warnings: BrowserImportWarning[] } {
+function readFirefoxCookies(file: string, domains: string[], now: Date): { cookies: ImportedCookie[]; skipped: number; warnings: BrowserImportWarning[] } | null {
 	return withReadOnlyDatabase(file, (database) => {
-		requireTable(database, "moz_cookies", "The selected Firefox profile does not contain supported cookie data.");
+		if (!hasTable(database, "moz_cookies")) return null;
 		const rows = database.prepare(`
 			SELECT host, name, value, path, expiry, isSecure, isHttpOnly, sameSite
 			FROM moz_cookies
@@ -828,8 +832,11 @@ function readChromiumHistory(file: string, domains: string[]): BrowserHistoryEnt
 }
 
 function requireTable(database: Database, table: string, message: string): void {
-	const row = database.prepare("SELECT 1 AS present FROM sqlite_master WHERE type = 'table' AND name = ?").get(table);
-	if (!row) throw new Error(message);
+	if (!hasTable(database, table)) throw new Error(message);
+}
+
+function hasTable(database: Database, table: string): boolean {
+	return Boolean(database.prepare("SELECT 1 AS present FROM sqlite_master WHERE type = 'table' AND name = ?").get(table));
 }
 
 function normalizeHistoryRow(
