@@ -12,14 +12,19 @@ var (
 	ErrSCMConflict = errors.New("cloud scm record conflicts with existing ownership")
 )
 
+// SCMProviderGitHub identifies GitHub-backed SCM records.
 const SCMProviderGitHub = "github"
 
 const (
-	InstallationStatusActive    = "active"
+	// InstallationStatusActive means the installation can issue credentials.
+	InstallationStatusActive = "active"
+	// InstallationStatusSuspended means GitHub suspended the installation.
 	InstallationStatusSuspended = "suspended"
-	InstallationStatusRemoved   = "removed"
+	// InstallationStatusRemoved means the installation is no longer usable.
+	InstallationStatusRemoved = "removed"
 )
 
+// SCMInstallation is a tenant-owned GitHub App installation.
 type SCMInstallation struct {
 	ID                     string
 	OrgID                  string
@@ -43,10 +48,13 @@ type SCMInstallationLink struct {
 }
 
 const (
+	// TokenPurposeClone requests a read-only checkout credential.
 	TokenPurposeClone = "clone"
-	TokenPurposePush  = "push"
+	// TokenPurposePush requests a short-lived repository write credential.
+	TokenPurposePush = "push"
 )
 
+// SCMRepository is one repository discovered through an installation.
 type SCMRepository struct {
 	ID                   string
 	InstallationID       string
@@ -59,6 +67,7 @@ type SCMRepository struct {
 	UpdatedAt            time.Time
 }
 
+// SCMTokenGrant records a credential issuance without storing its secret.
 type SCMTokenGrant struct {
 	OrgID             string
 	InstallationID    string
@@ -81,21 +90,30 @@ type SCMObservationSignal struct {
 }
 
 const (
+	// SCMWebhookClassificationObservation identifies a supported refresh hint.
 	SCMWebhookClassificationObservation = "observation"
-	SCMWebhookClassificationIgnored     = "ignored"
-	SCMWebhookClassificationMalformed   = "malformed_json"
+	// SCMWebhookClassificationIgnored identifies a valid but unsupported event.
+	SCMWebhookClassificationIgnored = "ignored"
+	// SCMWebhookClassificationMalformed identifies a verified invalid payload.
+	SCMWebhookClassificationMalformed = "malformed_json"
 )
 
 const (
+	// SCMWebhookStateProcessing means a worker owns the current lease.
 	SCMWebhookStateProcessing = "processing"
-	SCMWebhookStateRetry      = "retry"
-	SCMWebhookStateComplete   = "complete"
+	// SCMWebhookStateRetry means the delivery awaits its next attempt.
+	SCMWebhookStateRetry = "retry"
+	// SCMWebhookStateComplete means processing finished successfully.
+	SCMWebhookStateComplete = "complete"
+	// SCMWebhookStateDeadLetter means the delivery cannot be retried safely.
 	SCMWebhookStateDeadLetter = "dead_letter"
 )
 
 const (
+	// SCMWebhookOutcomeComplete marks a successful leased attempt.
 	SCMWebhookOutcomeComplete = "complete"
-	SCMWebhookOutcomeRetry    = "retry"
+	// SCMWebhookOutcomeRetry schedules another leased attempt.
+	SCMWebhookOutcomeRetry = "retry"
 )
 
 // SCMWebhookReceipt is the complete durable input for a verified delivery.
