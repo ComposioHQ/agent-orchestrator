@@ -1,5 +1,6 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { typeInLexicalEditor } from "../../test/lexical";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ChatWorkspace, promptSpacerHeight, promptTopInset } from "./ChatWorkspace";
 import { HumanMessage, OriginMessage } from "./ChatTimelineItems";
@@ -942,10 +943,10 @@ describe("ChatWorkspace message actions", () => {
 			/>,
 		);
 		const composer = screen.getByLabelText("Message the agent");
-		await user.type(composer, "unsent composer draft");
+		await typeInLexicalEditor(composer, "unsent composer draft");
 
 		await user.click(screen.getAllByRole("button", { name: "Edit user message" })[0]!);
-		expect(composer).toHaveValue("unsent composer draft");
+		expect(composer).toHaveTextContent("unsent composer draft");
 
 		const editor = screen.getByRole("textbox", { name: "Edit message" });
 		expect(editor).toHaveFocus();
@@ -962,7 +963,7 @@ describe("ChatWorkspace message actions", () => {
 			),
 		);
 		expect(onRollback).not.toHaveBeenCalled();
-		expect(composer).toHaveValue("unsent composer draft");
+		expect(composer).toHaveTextContent("unsent composer draft");
 	});
 
 	it("keeps edit available while another turn is active", async () => {
@@ -1115,7 +1116,7 @@ describe("ChatWorkspace reviewer tabs", () => {
 		};
 		const view = render(<ChatWorkspace {...common} />);
 		const composer = screen.getByRole("combobox", { name: "Message the agent" });
-		await user.type(composer, "unsent reviewer-switch draft");
+		await typeInLexicalEditor(composer, "unsent reviewer-switch draft");
 		fireEvent.paste(composer, {
 			clipboardData: {
 				files: [new File([new Uint8Array([137, 80, 78, 71])], "review.png", { type: "image/png" })],
@@ -1143,7 +1144,7 @@ describe("ChatWorkspace reviewer tabs", () => {
 		view.rerender(<ChatWorkspace {...common} />);
 
 		expect(screen.getByRole("combobox", { name: "Message the agent" })).toBe(composer);
-		expect(composer).toHaveValue("unsent reviewer-switch draft");
+		expect(composer).toHaveTextContent("unsent reviewer-switch draft");
 		expect(screen.getByLabelText("Remove review.png")).toBe(attachment);
 		expect(screen.getByRole("textbox", { name: "Edit message" })).toBe(editor);
 		expect(editor).toHaveValue("in-progress branch edit");

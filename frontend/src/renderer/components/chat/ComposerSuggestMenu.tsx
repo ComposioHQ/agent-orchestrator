@@ -12,9 +12,10 @@
  * rather than a focus move).
  */
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useLayoutEffect, useRef, useState } from "react";
 import { ArrowDownUp, CornerDownLeft } from "lucide-react";
 import { cn } from "../../lib/utils";
+import { composerFileIcon } from "./composerFileIcon";
 import type { Suggestion, TriggerKind } from "./composerSuggest";
 
 export function ComposerSuggestMenu({
@@ -37,7 +38,10 @@ export function ComposerSuggestMenu({
 	const list = useRef<HTMLUListElement>(null);
 	const lastScrollTop = useRef(0);
 	const scrollDirection = useRef<"up" | "down" | null>(null);
-	const [scrollIndicators, setScrollIndicators] = useState({ top: false, bottom: false });
+	const [scrollIndicators, setScrollIndicators] = useState({
+		top: false,
+		bottom: true,
+	});
 
 	const updateScrollIndicators = useCallback(() => {
 		const node = list.current;
@@ -62,19 +66,19 @@ export function ComposerSuggestMenu({
 
 	// Keep the highlighted row visible when it moves by keyboard past the edge of
 	// the scroll area.
-	useEffect(() => {
+	useLayoutEffect(() => {
 		const row = list.current?.querySelector<HTMLElement>(`[data-index="${highlighted}"]`);
 		row?.scrollIntoView({ block: "nearest" });
-	}, [highlighted]);
+	}, [highlighted, items]);
 
-	useEffect(() => {
+	useLayoutEffect(() => {
 		updateScrollIndicators();
 		const node = list.current;
 		if (!node || typeof ResizeObserver === "undefined") return;
 		const observer = new ResizeObserver(updateScrollIndicators);
 		observer.observe(node);
 		return () => observer.disconnect();
-	}, [items.length, updateScrollIndicators]);
+	}, [items, updateScrollIndicators]);
 
 	if (items.length === 0) return null;
 
@@ -105,51 +109,64 @@ export function ComposerSuggestMenu({
 				>
 					{items.map((item, index) => (
 						<li key={item.value} data-index={index}>
-						<button
-							type="button"
-							role="option"
-							id={`${id}-option-${index}`}
-							aria-selected={index === highlighted}
-							onClick={() => onPick(item.value)}
-							className={cn(
-								"flex w-full items-baseline gap-2 rounded-md px-2 py-1.5 text-left text-control text-muted-foreground outline-none transition-none",
-								index === highlighted
-									? "bg-interactive-active text-foreground"
-									: "bg-transparent hover:bg-interactive-hover hover:text-foreground",
-							)}
-						>
-							<span className="min-w-0 flex-1">
-								<span
-									className={cn(
-										"block truncate text-xs",
-										index === highlighted ? "text-foreground" : "text-muted-foreground",
-									)}
-								>
-									{kind === "skill" ? `/${item.label}` : item.label}
+							<button
+								type="button"
+								role="option"
+								id={`${id}-option-${index}`}
+								aria-selected={index === highlighted}
+								onClick={() => onPick(item.value)}
+								className={cn(
+									"flex w-full items-start gap-2 rounded-md px-2 py-1.5 text-left text-control text-muted-foreground outline-none transition-none",
+									index === highlighted
+										? "bg-interactive-active text-foreground"
+										: "bg-transparent hover:bg-interactive-hover hover:text-foreground",
+								)}
+							>
+								{kind === "file"
+									? (() => {
+											const Icon = composerFileIcon(item.value);
+											return (
+												<span
+													aria-hidden="true"
+													className="flex h-4 shrink-0 items-center text-muted-foreground"
+												>
+													<Icon className="size-3.5" />
+												</span>
+											);
+										})()
+									: null}
+								<span className="min-w-0 flex-1">
+									<span
+										className={cn(
+											"block truncate text-xs",
+											index === highlighted ? "text-foreground" : "text-muted-foreground",
+										)}
+									>
+										{kind === "skill" ? `/${item.label}` : item.label}
+									</span>
+									{item.detail ? (
+										<span className="block truncate text-[11px] leading-snug text-muted-foreground">
+											{item.detail}
+										</span>
+									) : null}
 								</span>
-								{item.detail ? (
-									<span className="block truncate text-[11px] leading-snug text-muted-foreground">
-										{item.detail}
+								{displayBadge(item.badge) ? (
+									<span className="shrink-0 text-micro tracking-wide text-muted-foreground">
+										{displayBadge(item.badge)}
 									</span>
 								) : null}
-							</span>
-							{displayBadge(item.badge) ? (
-								<span className="shrink-0 text-micro tracking-wide text-muted-foreground">
-									{displayBadge(item.badge)}
-								</span>
-							) : null}
-							{index === highlighted ? (
-								<span
-									aria-label="Press Tab or Enter to insert"
-									className="flex shrink-0 items-center gap-1 text-micro text-muted-foreground"
-								>
-									<kbd className="rounded border border-border-strong bg-background/40 px-1 py-0.5 font-sans text-[10px] leading-none">
-										Tab
-									</kbd>
-									<CornerDownLeft aria-hidden="true" className="size-3" />
-								</span>
-							) : null}
-						</button>
+								{index === highlighted ? (
+									<span
+										aria-label="Press Tab or Enter to insert"
+										className="flex shrink-0 items-center gap-1 text-micro text-muted-foreground"
+									>
+										<kbd className="rounded border border-border-strong bg-background/40 px-1 py-0.5 font-sans text-[10px] leading-none">
+											Tab
+										</kbd>
+										<CornerDownLeft aria-hidden="true" className="size-3" />
+									</span>
+								) : null}
+							</button>
 						</li>
 					))}
 				</ul>

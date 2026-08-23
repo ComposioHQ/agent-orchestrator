@@ -5,15 +5,10 @@
  * the parts that are easy to get wrong — where a trigger starts, what a selection
  * replaces, where the caret lands — are testable without a DOM or a provider.
  *
- * Why a textarea and an anchored popup rather than a rich contenteditable editor:
- * both things AO inserts are plain text the agent has to resolve for itself (a
- * skill name and a worktree-relative path). Neither needs a non-text node in the
- * document, so the only thing a contenteditable buys is chips-in-the-flow — a
- * presentation change paid for with IME composition handling, paste sanitization,
- * an undo stack AO would own, and a11y semantics a textarea gets for free. The
- * existing keyboard contract (Enter sends, Shift+Enter newlines) is load-bearing
- * and already correct on a textarea; re-implementing it on a contenteditable is
- * risk with no user-visible gain.
+ * The editor renders accepted suggestions as atomic chips, but trigger matching
+ * and ranking stay plain-text operations here. Keeping that policy independent
+ * of Lexical makes the menu deterministic and lets the wire representation remain
+ * ordinary text for the agent.
  */
 
 import type { ChatSkill } from "../../types/conversation";
