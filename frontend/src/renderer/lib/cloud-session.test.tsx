@@ -77,7 +77,7 @@ describe("useCloudSession", () => {
 
 		await waitFor(() => expect(result.current.status).toBe("authenticated"));
 		expect(result.current.session?.user.email).toBe("dev@example.com");
-		expect(result.current.apiBaseUrl).toBe("https://cloud.example");
+		expect(result.current.apiBaseUrl).toBe("");
 	});
 
 	it("treats a failed account read as signed out rather than surfacing an error", async () => {

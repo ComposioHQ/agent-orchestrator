@@ -34,8 +34,10 @@ vi.mock("electron", () => ({
 import {
 	beginCloudSignIn,
 	cloudAvailability,
+	createCloudProject,
 	getCloudAccessToken,
 	getCloudSession,
+	listCloudProjects,
 	setCloudPreferenceEnabled,
 	showCloudSignInFailure,
 	signOutCloud,
@@ -129,8 +131,63 @@ describe("AO Cloud desktop credential custody", () => {
 		expect(cloudAvailability()).toEqual({
 			available: true,
 			enabled: true,
-			apiBaseUrl: "https://cloud.example",
+			apiBaseUrl: "",
 		});
+	});
+
+	it("creates placement, reads the normalized project, and starts a hosted orchestrator in main", async () => {
+		await beginCloudSignIn(dataDir);
+		const requests: Array<{ url: string; init?: RequestInit }> = [];
+		routes.set("https://cloud.example/api/cloud/v1/orgs/org_1/projects", (url, init) => {
+			requests.push({ url, init });
+			return jsonResponse({ project: { id: "project_1" } }, 201);
+		});
+		routes.set("https://cloud.example/api/v1/projects/project_1", (url, init) => {
+			requests.push({ url, init });
+			return jsonResponse({
+				status: "ok",
+				project: { id: "project_1", name: "repo", kind: "single_repo", path: "https://github.com/acme/repo", repo: "acme/repo", defaultBranch: "main" },
+			});
+		});
+		routes.set("https://cloud.example/api/v1/sessions", (url, init) => {
+			requests.push({ url, init });
+			return jsonResponse({ session: { id: "session_1", projectId: "project_1" } }, 201);
+		});
+
+		const result = await createCloudProject(dataDir, {
+			organizationId: "org_1",
+			displayName: "repo",
+			repositoryUrl: "https://github.com/acme/repo",
+			defaultBranch: "main",
+			config: {},
+			orchestratorHarness: "codex",
+		});
+
+		expect(result).toMatchObject({ project: { id: "project_1" }, session: { id: "session_1" } });
+		expect(requests).toHaveLength(3);
+		for (const request of requests) {
+			expect(request.init?.headers).toMatchObject({ Authorization: "Bearer ao_access_1", "X-AO-Org": "org_1" });
+		}
+		expect(requests[0]?.init?.headers).toMatchObject({ "Idempotency-Key": expect.any(String) });
+		expect(JSON.parse(String(requests[2]?.init?.body))).toMatchObject({ projectId: "project_1", kind: "orchestrator", harness: "codex" });
+	});
+
+	it("reloads durable cloud projects and sessions from the shared app API", async () => {
+		await beginCloudSignIn(dataDir);
+		routes.set("https://cloud.example/api/v1/projects", () =>
+			jsonResponse({ projects: [{ id: "project_1", name: "repo", kind: "single_repo", path: "https://github.com/acme/repo", sessionPrefix: "repo" }] }),
+		);
+		routes.set("https://cloud.example/api/v1/sessions", () =>
+			jsonResponse({ sessions: [{ id: "session_1", projectId: "project_1" }] }),
+		);
+
+		await expect(listCloudProjects(dataDir)).resolves.toEqual([
+			expect.objectContaining({
+				organizationId: "org_1",
+				projects: [expect.objectContaining({ id: "project_1" })],
+				sessions: [expect.objectContaining({ id: "session_1" })],
+			}),
+		]);
 	});
 
 	it("completes Google PKCE against the loopback redirect and stores the AO session", async () => {
