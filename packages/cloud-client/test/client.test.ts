@@ -44,7 +44,7 @@ describe("CloudClient control plane", () => {
     await client.listWorkspacePlacements("org-one", { cursor: "next page", limit: 25 });
     await client.createWorkspacePlacement(
       "org-one",
-      { displayName: "AO", repositoryUrl: "https://github.com/ao/ao.git", defaultBranch: "main" },
+      {},
       { idempotencyKey: "create-1" },
     );
     await client.getWorkspacePlacement("org-one", "workspace/one");
