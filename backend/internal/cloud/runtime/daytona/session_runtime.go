@@ -29,6 +29,10 @@ var environmentKeyPattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 // same path is used for orchestrators and workers; no agent ever shares compute
 // with another session or with the project coordinator.
 func (p *Provider) ProvisionSessionRuntime(ctx context.Context, workspace domain.Workspace, launch domain.RuntimeLaunch) (string, error) {
+	harness, ok := harnesscatalog.DetectLaunch(launch.Argv)
+	if !ok {
+		return "", errors.New("cloud harness is not provisionable")
+	}
 	zero := 0
 	sandbox, err := p.client.Create(ctx, types.SnapshotParams{
 		Snapshot: "daytona-small",
@@ -44,7 +48,7 @@ func (p *Provider) ProvisionSessionRuntime(ctx context.Context, workspace domain
 	if err != nil {
 		return "", fmt.Errorf("create Daytona session sandbox: %w", err)
 	}
-	if err = p.bootstrapSessionRuntime(ctx, sandbox, workspace, launch); err != nil {
+	if err = p.bootstrapSessionRuntime(ctx, sandbox, workspace, launch, harness); err != nil {
 		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Minute)
 		defer cancel()
 		if cleanupErr := sandbox.Delete(cleanupCtx); cleanupErr != nil {
@@ -67,11 +71,7 @@ func sessionSandboxName(workspaceID, sessionID string) string {
 	return "ao-session-" + shortWorkspaceID + "-" + shortSessionID
 }
 
-func (p *Provider) bootstrapSessionRuntime(ctx context.Context, sandbox *daytonasdk.Sandbox, workspace domain.Workspace, launch domain.RuntimeLaunch) error {
-	harness, ok := harnesscatalog.DetectLaunch(launch.Argv)
-	if !ok {
-		return errors.New("cloud harness is not provisionable")
-	}
+func (p *Provider) bootstrapSessionRuntime(ctx context.Context, sandbox *daytonasdk.Sandbox, workspace domain.Workspace, launch domain.RuntimeLaunch, harness harnesscatalog.Spec) error {
 	homeResult, err := run(ctx, sandbox, `printf %s "$HOME"`, time.Minute)
 	if err != nil {
 		return err
@@ -203,6 +203,9 @@ func (p *Provider) bootstrapSessionRuntime(ctx context.Context, sandbox *daytona
 func (p *Provider) DeleteSessionRuntime(ctx context.Context, sandboxID string) error {
 	sandbox, err := p.client.Get(ctx, strings.TrimSpace(sandboxID))
 	if err != nil {
+		if errors.Is(err, sdkerrors.ErrNotFound) {
+			return nil
+		}
 		return fmt.Errorf("get Daytona session sandbox: %w", err)
 	}
 	if err = sandbox.Delete(ctx); err != nil {

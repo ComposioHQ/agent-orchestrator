@@ -190,6 +190,7 @@ function renderSidebar({
 					onInitializeProject={onInitializeProject}
 					onRemoveProject={onRemoveProject}
 					workspaces={workspaces}
+					workspacesSettled
 				/>
 			</SidebarProvider>
 		</QueryClientProvider>,

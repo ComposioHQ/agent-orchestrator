@@ -132,6 +132,7 @@ type SidebarProps = {
 	onPreviewLeave?: () => void;
 	workspaceError?: string;
 	workspaces: WorkspaceSummary[];
+	workspacesSettled: boolean;
 	onCloneProject: (input: CloneProjectInput) => Promise<void>;
 	onCreateProject: (input: CreateProjectInput) => Promise<void>;
 	onInitializeProject: (path: string) => Promise<void>;
@@ -186,6 +187,7 @@ export function Sidebar({
 	onPreviewLeave,
 	workspaceError,
 	workspaces,
+	workspacesSettled,
 	onCloneProject,
 	onCreateProject,
 	onInitializeProject,
@@ -224,6 +226,11 @@ export function Sidebar({
 	useEffect(() => {
 		const orgID = cloudSession.session?.organizations[0]?.id;
 		const accountKey = cloudSession.session?.user.id ?? null;
+		// Capture the initial local query (including a valid empty result) before
+		// changing the shared transport. Otherwise a fast cloud resume can make a
+		// still-pending local query resolve against the cloud backend and strand
+		// the local project tree until another explicit local action.
+		if (activeApiSource === "local" && !workspacesSettled) return;
 		if (cloudSession.status !== "authenticated" || !orgID || !accountKey) return;
 		if (restoredCloudAccount.current === accountKey) return;
 		restoredCloudAccount.current = accountKey;
@@ -242,7 +249,7 @@ export function Sidebar({
 		return () => {
 			active = false;
 		};
-	}, [cloudSession.session, cloudSession.status, queryClient]);
+	}, [activeApiSource, cloudSession.session, cloudSession.status, queryClient, workspacesSettled]);
 	useEffect(() => {
 		if (workspaces.length === 0) return;
 		if (activeApiSource === "cloud") setCloudWorkspaces(workspaces);

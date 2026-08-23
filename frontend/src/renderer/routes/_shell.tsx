@@ -790,6 +790,7 @@ function ShellLayout() {
 						onRemoveProject={removeProject}
 						workspaceError={workspaceQuery.isError ? errorMessage(workspaceQuery.error) : undefined}
 						workspaces={workspaces}
+						workspacesSettled={!workspaceQuery.isPending}
 					/>
 					<main className={cn("flex min-w-0 flex-1 flex-col overflow-x-hidden", !isSidebarOpen && "sidebar-hidden")}>
 						<div className="min-h-0 flex-1 overflow-x-hidden">
