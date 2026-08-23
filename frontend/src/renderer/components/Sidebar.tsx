@@ -118,12 +118,9 @@ export const SIDEBAR_MAX_WIDTH = 420;
 type SidebarProps = {
 	/** Hide the sidebar's right edge stroke on the welcome board inset chrome. */
 	hideEdgeBorder?: boolean;
-	/** Render the expanded sidebar over content without reserving layout width. */
-	isOverlay?: boolean;
 	underTopbar?: boolean;
 	/** Chrome height to clear when underTopbar is set. Defaults to --size-toolbar. */
 	topbarOffset?: "toolbar" | "titlebar" | "trafficLights" | "session";
-	onPreviewLeave?: () => void;
 	workspaceError?: string;
 	workspaces: WorkspaceSummary[];
 	onCloneProject: (input: CloneProjectInput) => Promise<void>;
@@ -169,15 +166,11 @@ function SessionStatusDot({ session }: { session: WorkspaceSession }) {
 }
 
 // Built on shadcn's sidebar primitives (components/ui/sidebar): the provider in
-// _shell owns the persistent open state plus a transient hover-preview state.
-// Collapsed sidebars move fully off-canvas; previews return as overlays without
-// reserving layout width.
+// _shell owns the persistent open state. Collapsed sidebars move fully off-canvas.
 export function Sidebar({
 	hideEdgeBorder = false,
-	isOverlay = false,
 	underTopbar = true,
 	topbarOffset = "toolbar",
-	onPreviewLeave,
 	workspaceError,
 	workspaces,
 	onCloneProject,
@@ -256,30 +249,20 @@ export function Sidebar({
 		});
 
 	return (
-		// Pinned sidebars start below shell chrome. Hover previews paint a
-		// full-height surface behind the titlebar while their content keeps the
-		// same chrome clearance, leaving the titlebar controls unobstructed.
+		// Pinned sidebars start below shell chrome.
 		<SidebarRoot
 			collapsible="offcanvas"
 			data-expanded-chrome={expandedChromeVisible ? "visible" : "hidden"}
 			data-topbar-offset={underTopbar ? topbarOffset : undefined}
-			onPointerLeave={onPreviewLeave}
-			overlay={isOverlay}
 			className={cn(
 				"sidebar-focusless",
 				hideEdgeBorder ? "border-transparent" : "border-r-0 group-data-[side=left]:border-r-0",
-				isOverlay && "z-sidebar-preview shadow-2xl",
-				isOverlay || !underTopbar
+				!underTopbar
 					? "top-0 h-svh!"
 					: "top-(--sidebar-chrome-offset) h-[calc(100svh-var(--sidebar-chrome-offset))]!",
 			)}
 		>
-			<SidebarHeader
-				className={cn(
-					"gap-0 p-0 px-3 pt-2 group-data-[collapsible=icon]:px-1.5 group-data-[collapsible=icon]:pt-2",
-					isOverlay && underTopbar && "pt-(--sidebar-chrome-offset)!",
-				)}
-			>
+			<SidebarHeader className="gap-0 p-0 px-3 pt-2 group-data-[collapsible=icon]:px-1.5 group-data-[collapsible=icon]:pt-2">
 				{/* Brand (project-sidebar__brand); in the icon rail it becomes the old
             36px board button wrapping the 22px accent mark. */}
 				<div

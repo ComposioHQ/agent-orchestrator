@@ -455,7 +455,7 @@
 }
 
 /* A fully hidden sidebar no longer contributes a left layout gutter. Restore
- * the shared frame inset while transient hover previews overlay this surface. */
+ * the shared frame inset. */
 .sidebar-hidden .center-panel-shell {
 	padding-left: var(--size-center-panel-inline-inset);
 }
