@@ -197,6 +197,7 @@ var remotePayloadAllowlist = map[string]map[string]struct{}{
 	},
 	"ao.session.token_usage": {
 		"cached_input_tokens": {},
+		"est_cost_microusd":   {},
 		"est_cost_usd":        {},
 		"github_org":          {},
 		"harness":             {},

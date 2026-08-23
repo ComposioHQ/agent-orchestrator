@@ -3,6 +3,7 @@ package usagetelemetry
 import (
 	"context"
 	"errors"
+	"math"
 	"testing"
 	"time"
 
@@ -124,10 +125,17 @@ func TestFinalizeSessionForwardsAndEmits(t *testing.T) {
 	if p["incomplete"] != false {
 		t.Fatalf("incomplete = %v, want false", p["incomplete"])
 	}
-	// cost = modelCost(opus, 100 in / 50 out / 10 cacheRead / 5 cacheWrite)
-	wantCost := round2(modelCost("claude-opus-4-8", opusSummary(false).Harnesses[0].Models[0].Totals))
-	if p["est_cost_usd"] != wantCost || wantCost <= 0 {
-		t.Fatalf("est_cost_usd = %v, want %v", p["est_cost_usd"], wantCost)
+	// Cost is emitted UNrounded (full precision) plus integer micro-dollars for
+	// exact aggregation. This session is sub-cent, so it must NOT round to 0.
+	wantCost := modelCost("claude-opus-4-8", opusSummary(false).Harnesses[0].Models[0].Totals)
+	if wantCost <= 0 {
+		t.Fatalf("fixture cost should be > 0, got %v", wantCost)
+	}
+	if p["est_cost_usd"] != wantCost {
+		t.Fatalf("est_cost_usd = %v, want unrounded %v", p["est_cost_usd"], wantCost)
+	}
+	if p["est_cost_microusd"] != int64(math.Round(wantCost*1_000_000)) {
+		t.Fatalf("est_cost_microusd = %v, want %v", p["est_cost_microusd"], int64(math.Round(wantCost*1_000_000)))
 	}
 	if ev.SessionID == nil || *ev.SessionID != "ao-1" {
 		t.Fatalf("session id = %v", ev.SessionID)

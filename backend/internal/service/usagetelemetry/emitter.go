@@ -2,6 +2,7 @@ package usagetelemetry
 
 import (
 	"context"
+	"math"
 	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
@@ -90,7 +91,13 @@ func (e *EmittingFinalizer) emit(ctx context.Context, id domain.SessionID) {
 	}
 
 	model, harness := dominant(summary)
-	cost := round2(summaryCost(summary))
+	// Do NOT round per session: a sub-cent session (e.g. $0.00225) rounded to
+	// $0.00 sums to $0 across thousands of sessions and skews org rankings. Emit
+	// integer micro-dollars for exact aggregation (SUM then divide by 1e6 at
+	// display), plus the unrounded float for readability. Rounding is a display
+	// concern, never a storage one.
+	cost := summaryCost(summary)
+	costMicroUSD := int64(math.Round(cost * 1_000_000))
 
 	payload := map[string]any{
 		"harness":             harness,
@@ -100,6 +107,7 @@ func (e *EmittingFinalizer) emit(ctx context.Context, id domain.SessionID) {
 		"output_tokens":       output,
 		"total_tokens":        total,
 		"est_cost_usd":        cost,
+		"est_cost_microusd":   costMicroUSD,
 		"incomplete":          summary.Incomplete,
 	}
 	if org := e.githubOrg(ctx, id); org != "" {

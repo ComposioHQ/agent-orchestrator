@@ -25,23 +25,34 @@ type price struct {
 }
 
 // priceTable maps a model-id substring to its tier price, most specific first.
-// Rates are public list prices in USD per million tokens and are deliberately
-// approximate: the estimate is for relative ranking, not billing. Update as
-// pricing changes. An unknown model yields a zero estimate (tokens are still
-// counted; only the dollar figure is withheld).
+// Rates are public list prices in USD per million tokens (input, output,
+// cache-read) and are matched against concrete, dated model families so a new
+// generation is never mispriced with an older generation's rates. An unmatched
+// model yields a zero estimate (tokens are still counted; only the dollar figure
+// is withheld) rather than a wrong one. Verify and date any change:
+//   - Opus 4.x: $5 / $25 (anthropic.com/news/claude-opus-4-8, 2026)
+//   - Claude 3 Opus: $15 / $75 (legacy)
+//   - Sonnet: $3 / $15 ; Haiku 4.x/3.5: $0.80 / $4 ; Claude 3 Haiku: $0.25 / $1.25
+//   - GPT-5.4: $2.50 / $15, cached $0.25 (developers.openai.com, 2026)
+//
+// Cache-read is ~0.1x input where the vendor does not publish a separate figure.
 var priceTable = []struct {
 	match string
 	price price
 }{
+	// Anthropic. Order matters: the 3.x legacy IDs are checked before the broad
+	// family match so they keep their own (different) rates.
 	{"claude-3-opus", price{15, 75, 1.50}},
-	{"opus", price{15, 75, 1.50}},
+	{"claude-opus-4", price{5, 25, 0.50}},
 	{"claude-3-5-haiku", price{0.80, 4, 0.08}},
 	{"claude-3-haiku", price{0.25, 1.25, 0.03}},
-	{"haiku", price{0.80, 4, 0.08}},
+	{"claude-haiku", price{0.80, 4, 0.08}},
+	{"claude-sonnet", price{3, 15, 0.30}},
 	{"sonnet", price{3, 15, 0.30}},
-	// Codex / GPT tiers priced at published GPT-5-class rates as a coarse proxy.
-	{"gpt-5", price{1.25, 10, 0.125}},
-	{"gpt", price{1.25, 10, 0.125}},
+	// OpenAI / Codex. Concrete versions only; an unlisted gpt-* is left unpriced
+	// rather than guessed.
+	{"gpt-5.4", price{2.50, 15, 0.25}},
+	{"gpt-5-4", price{2.50, 15, 0.25}},
 }
 
 // modelCost estimates the USD cost of one model's token vector. Fresh input is
