@@ -29,7 +29,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        post: operations["refreshAOSession"];
+        post: operations["refreshCloudSession"];
         delete?: never;
         options?: never;
         head?: never;
@@ -45,7 +45,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        post: operations["logoutAOSession"];
+        post: operations["logoutCloudSession"];
         delete?: never;
         options?: never;
         head?: never;
@@ -68,46 +68,138 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/cloud/v1/github/user": {
+    "/api/v1/projects": {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description Hosted /api/v1 tenant selector. Required when the principal belongs to
+                 *     multiple organizations. It is never an authority for control-plane
+                 *     admin routes, whose orgId path parameter remains authoritative.
+                 *      */
+                "X-AO-Org"?: components["parameters"]["XAOOrg"];
+            };
             path?: never;
             cookie?: never;
         };
-        get: operations["getGitHubUserConnection"];
+        get: operations["listHostedProjects"];
         put?: never;
         post?: never;
-        delete: operations["disconnectGitHubUser"];
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
         trace?: never;
     };
-    "/api/cloud/v1/github/user/authorize": {
+    "/api/v1/projects/{id}": {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description Hosted /api/v1 tenant selector. Required when the principal belongs to
+                 *     multiple organizations. It is never an authority for control-plane
+                 *     admin routes, whose orgId path parameter remains authoritative.
+                 *      */
+                "X-AO-Org"?: components["parameters"]["XAOOrg"];
+            };
+            path: {
+                id: components["parameters"]["ProjectId"];
+            };
+            cookie?: never;
+        };
+        get: operations["getHostedProject"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/sessions": {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Hosted /api/v1 tenant selector. Required when the principal belongs to
+                 *     multiple organizations. It is never an authority for control-plane
+                 *     admin routes, whose orgId path parameter remains authoritative.
+                 *      */
+                "X-AO-Org"?: components["parameters"]["XAOOrg"];
+            };
             path?: never;
+            cookie?: never;
+        };
+        get: operations["listHostedSessions"];
+        put?: never;
+        post: operations["spawnHostedSession"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/sessions/{sessionId}": {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Hosted /api/v1 tenant selector. Required when the principal belongs to
+                 *     multiple organizations. It is never an authority for control-plane
+                 *     admin routes, whose orgId path parameter remains authoritative.
+                 *      */
+                "X-AO-Org"?: components["parameters"]["XAOOrg"];
+            };
+            path: {
+                sessionId: components["parameters"]["SessionId"];
+            };
+            cookie?: never;
+        };
+        get: operations["getHostedSession"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/sessions/{sessionId}/send": {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Hosted /api/v1 tenant selector. Required when the principal belongs to
+                 *     multiple organizations. It is never an authority for control-plane
+                 *     admin routes, whose orgId path parameter remains authoritative.
+                 *      */
+                "X-AO-Org"?: components["parameters"]["XAOOrg"];
+            };
+            path: {
+                sessionId: components["parameters"]["SessionId"];
+            };
             cookie?: never;
         };
         get?: never;
         put?: never;
-        post: operations["startGitHubUserAuthorization"];
+        post: operations["sendHostedSessionMessage"];
         delete?: never;
         options?: never;
         head?: never;
         patch?: never;
         trace?: never;
     };
-    "/api/cloud/v1/github/user/callback": {
+    "/api/v1/sessions/{sessionId}/pr": {
         parameters: {
             query?: never;
-            header?: never;
-            path?: never;
+            header?: {
+                /** @description Hosted /api/v1 tenant selector. Required when the principal belongs to
+                 *     multiple organizations. It is never an authority for control-plane
+                 *     admin routes, whose orgId path parameter remains authoritative.
+                 *      */
+                "X-AO-Org"?: components["parameters"]["XAOOrg"];
+            };
+            path: {
+                sessionId: components["parameters"]["SessionId"];
+            };
             cookie?: never;
         };
-        get: operations["completeGitHubUserAuthorization"];
+        get: operations["listHostedSessionPullRequests"];
         put?: never;
         post?: never;
         delete?: never;
@@ -116,16 +208,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/cloud/v1/orgs/{orgId}/agents": {
+    "/api/v1/sessions/{sessionId}/reviews": {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description Hosted /api/v1 tenant selector. Required when the principal belongs to
+                 *     multiple organizations. It is never an authority for control-plane
+                 *     admin routes, whose orgId path parameter remains authoritative.
+                 *      */
+                "X-AO-Org"?: components["parameters"]["XAOOrg"];
+            };
             path: {
-                orgId: components["parameters"]["OrgId"];
+                sessionId: components["parameters"]["SessionId"];
             };
             cookie?: never;
         };
-        get: operations["listAgents"];
+        get: operations["listHostedSessionReviews"];
         put?: never;
         post?: never;
         delete?: never;
@@ -134,41 +232,123 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/cloud/v1/orgs/{orgId}/projects": {
+    "/api/v1/sessions/{sessionId}/workspace/files": {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description Hosted /api/v1 tenant selector. Required when the principal belongs to
+                 *     multiple organizations. It is never an authority for control-plane
+                 *     admin routes, whose orgId path parameter remains authoritative.
+                 *      */
+                "X-AO-Org"?: components["parameters"]["XAOOrg"];
+            };
             path: {
-                orgId: components["parameters"]["OrgId"];
+                sessionId: components["parameters"]["SessionId"];
             };
             cookie?: never;
         };
-        get: operations["listProjects"];
+        get: operations["listHostedWorkspaceFiles"];
         put?: never;
-        post: operations["createProject"];
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
         patch?: never;
         trace?: never;
     };
-    "/api/cloud/v1/orgs/{orgId}/projects/{projectId}": {
+    "/api/v1/sessions/{sessionId}/workspace/file": {
+        parameters: {
+            query: {
+                path: string;
+            };
+            header?: {
+                /** @description Hosted /api/v1 tenant selector. Required when the principal belongs to
+                 *     multiple organizations. It is never an authority for control-plane
+                 *     admin routes, whose orgId path parameter remains authoritative.
+                 *      */
+                "X-AO-Org"?: components["parameters"]["XAOOrg"];
+            };
+            path: {
+                sessionId: components["parameters"]["SessionId"];
+            };
+            cookie?: never;
+        };
+        get: operations["readHostedWorkspaceFile"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/sessions/{sessionId}/terminal-ticket": {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description Hosted /api/v1 tenant selector. Required when the principal belongs to
+                 *     multiple organizations. It is never an authority for control-plane
+                 *     admin routes, whose orgId path parameter remains authoritative.
+                 *      */
+                "X-AO-Org"?: components["parameters"]["XAOOrg"];
+            };
             path: {
-                orgId: components["parameters"]["OrgId"];
-                projectId: components["parameters"]["ProjectId"];
+                sessionId: components["parameters"]["SessionId"];
             };
             cookie?: never;
         };
         get?: never;
         put?: never;
-        post?: never;
-        delete: operations["deleteProject"];
+        /** @description Atomically issues one connection ticket for the session sandbox mux.
+         *     Replaying a consumed ticket fails; terminal bytes never traverse a
+         *     control-plane terminal endpoint.
+         *      */
+        post: operations["createSandboxTerminalConnection"];
+        delete?: never;
         options?: never;
         head?: never;
-        patch: operations["updateProject"];
+        patch?: never;
+        trace?: never;
+    };
+    "/api/cloud/v1/orgs/{orgId}/workspaces": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                orgId: components["parameters"]["OrgId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Accepts the asynchronous project-placement saga. A successful response
+         *     is not a project. Poll the returned operation until ready, then discover
+         *     the canonical project through GET /api/v1/projects.
+         *      */
+        post: operations["createWorkspacePlacement"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/cloud/v1/orgs/{orgId}/workspaces/{operationId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                orgId: components["parameters"]["OrgId"];
+                operationId: components["parameters"]["OperationId"];
+            };
+            cookie?: never;
+        };
+        get: operations["getWorkspacePlacement"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/api/cloud/v1/orgs/{orgId}/github/installations": {
@@ -207,6 +387,44 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/cloud/v1/orgs/{orgId}/github/installations/{installationId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                orgId: components["parameters"]["OrgId"];
+                installationId: components["parameters"]["InstallationId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete: operations["disconnectGitHubInstallation"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/cloud/v1/orgs/{orgId}/github/installations/{installationId}/repositories": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                orgId: components["parameters"]["OrgId"];
+                installationId: components["parameters"]["InstallationId"];
+            };
+            cookie?: never;
+        };
+        get: operations["listGitHubInstallationRepositories"];
+        put: operations["setGitHubRepositoryAllowlist"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/cloud/v1/orgs/{orgId}/github/installations/{installationId}/sync": {
         parameters: {
             query?: never;
@@ -226,259 +444,14 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/cloud/v1/orgs/{orgId}/github/installations/{installationId}/disconnect": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                orgId: components["parameters"]["OrgId"];
-                installationId: components["parameters"]["InstallationId"];
-            };
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        post: operations["disconnectGitHubInstallation"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/cloud/v1/orgs/{orgId}/github/repositories": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                orgId: components["parameters"]["OrgId"];
-            };
-            cookie?: never;
-        };
-        get: operations["listGitHubRepositories"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/cloud/v1/orgs/{orgId}/github/projects": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                orgId: components["parameters"]["OrgId"];
-            };
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        post: operations["createProjectFromGitHub"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/cloud/v1/orgs/{orgId}/projects/scratch": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                orgId: components["parameters"]["OrgId"];
-            };
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        post: operations["createGitHubScratchProject"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/cloud/v1/orgs/{orgId}/sessions": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                orgId: components["parameters"]["OrgId"];
-            };
-            cookie?: never;
-        };
-        get: operations["listSessions"];
-        put?: never;
-        post: operations["createSession"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/cloud/v1/orgs/{orgId}/sessions/{sessionId}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                orgId: components["parameters"]["OrgId"];
-                sessionId: components["parameters"]["SessionId"];
-            };
-            cookie?: never;
-        };
-        get: operations["getSession"];
-        put?: never;
-        post?: never;
-        delete: operations["deleteSession"];
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/cloud/v1/orgs/{orgId}/sessions/{sessionId}/pull-requests": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                orgId: components["parameters"]["OrgId"];
-                sessionId: components["parameters"]["SessionId"];
-            };
-            cookie?: never;
-        };
-        get: operations["listSessionPullRequests"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/cloud/v1/orgs/{orgId}/sessions/{sessionId}/reviews": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                orgId: components["parameters"]["OrgId"];
-                sessionId: components["parameters"]["SessionId"];
-            };
-            cookie?: never;
-        };
-        get: operations["getSessionReviewState"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/cloud/v1/orgs/{orgId}/sessions/{sessionId}/messages": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                orgId: components["parameters"]["OrgId"];
-                sessionId: components["parameters"]["SessionId"];
-            };
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        post: operations["sendMessage"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/cloud/v1/orgs/{orgId}/sessions/{sessionId}/turns/{turnId}/cancel": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                orgId: components["parameters"]["OrgId"];
-                sessionId: components["parameters"]["SessionId"];
-                turnId: components["parameters"]["TurnId"];
-            };
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        post: operations["cancelTurn"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/cloud/v1/orgs/{orgId}/sessions/{sessionId}/chat-events": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                orgId: components["parameters"]["OrgId"];
-                sessionId: components["parameters"]["SessionId"];
-            };
-            cookie?: never;
-        };
-        get: operations["replayClientEvents"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/cloud/v1/orgs/{orgId}/sessions/{sessionId}/events": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                orgId: components["parameters"]["OrgId"];
-                sessionId: components["parameters"]["SessionId"];
-            };
-            cookie?: never;
-        };
-        get: operations["streamClientEvents"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/cloud/v1/orgs/{orgId}/sessions/{sessionId}/terminal-ticket": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                orgId: components["parameters"]["OrgId"];
-                sessionId: components["parameters"]["SessionId"];
-            };
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        post: operations["createTerminalTicket"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/cloud/v1/terminal": {
+    "/api/cloud/v1/github/installations/callback": {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
-        /** Upgrade to a terminal WebSocket using a short-lived ticket. */
-        get: operations["connectTerminal"];
+        get: operations["completeGitHubInstallation"];
         put?: never;
         post?: never;
         delete?: never;
@@ -487,95 +460,17 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/cloud/v1/orgs/{orgId}/sessions/{sessionId}/workspace/files": {
+    "/api/cloud/v1/github/webhook": {
         parameters: {
             query?: never;
             header?: never;
-            path: {
-                orgId: components["parameters"]["OrgId"];
-                sessionId: components["parameters"]["SessionId"];
-            };
-            cookie?: never;
-        };
-        get: operations["listWorkspaceFiles"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/cloud/v1/orgs/{orgId}/sessions/{sessionId}/workspace/file": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                orgId: components["parameters"]["OrgId"];
-                sessionId: components["parameters"]["SessionId"];
-            };
-            cookie?: never;
-        };
-        get: operations["readWorkspaceFile"];
-        put: operations["writeWorkspaceFile"];
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/cloud/v1/orgs/{orgId}/sessions/{sessionId}/workspace/diff": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                orgId: components["parameters"]["OrgId"];
-                sessionId: components["parameters"]["SessionId"];
-            };
-            cookie?: never;
-        };
-        get: operations["getWorkspaceDiff"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/cloud/v1/orgs/{orgId}/provider-connections": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                orgId: components["parameters"]["OrgId"];
-            };
-            cookie?: never;
-        };
-        get: operations["listProviderConnections"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/cloud/v1/orgs/{orgId}/provider-connections/agents/{provider}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                orgId: components["parameters"]["OrgId"];
-                provider: "claude-code" | "codex" | "cursor";
-            };
+            path?: never;
             cookie?: never;
         };
         get?: never;
-        put: operations["putAgentProviderConnection"];
-        post?: never;
-        delete: operations["deleteAgentProviderConnection"];
+        put?: never;
+        post: operations["receiveGitHubWebhook"];
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -590,15 +485,27 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /**
-         * Redeem a one-time bootstrap ticket.
-         * @description The bootstrap token is consumed atomically and cannot be replayed. A
-         *     successful response assigns the worker epoch and returns the first
-         *     short-lived worker token. The token carries the ticket's scopes and
-         *     must never be logged or persisted.
-         *
-         */
-        post: operations["bootstrapWorker"];
+        /** @description Atomically consumes one scoped bootstrap delivery. The bearer used for
+         *     this request was delivered out of band in /run/ao/capability and is not
+         *     repeated in either request or response.
+         *      */
+        post: operations["acknowledgeWorkerBootstrap"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/cloud/v1/worker/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getWorkerStatus"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -614,11 +521,6 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** @description Records worker liveness, promotes a bootstrapping sandbox to running,
-         *     and returns a newly issued token for the same worker identity, epoch,
-         *     and scopes. The prior token is not revoked by renewal and remains valid
-         *     until it expires unless the worker epoch is replaced.
-         *      */
         post: operations["heartbeatWorker"];
         delete?: never;
         options?: never;
@@ -626,61 +528,34 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/cloud/v1/worker/events": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** @description Publishes one allowlisted event. `agent.activity` carries an explicit
-         *     coding-agent lifecycle hook signal. `worker.ready` must identify the
-         *     authenticated worker and epoch. `chat.assistant_delta` is fenced by both
-         *     the token epoch and the claimed turn attempt.
-         *      */
-        post: operations["publishWorkerEvent"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/cloud/v1/worker/turns/claim": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** @description Atomically claims the oldest queued turn for the authenticated worker's
-         *     session. Reclaiming work from an older worker epoch increments
-         *     `attempt`. No server lease identifier or expiry is returned. An empty
-         *     queue is represented by HTTP 200 with `turn: null`.
-         *      */
-        post: operations["claimWorkerTurn"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/cloud/v1/worker/turns/{turnId}/cancellation": {
+    "/api/cloud/v1/worker/sessions/{sessionId}/messages": {
         parameters: {
             query?: never;
             header?: never;
             path: {
-                turnId: components["parameters"]["TurnId"];
+                sessionId: components["parameters"]["SessionId"];
             };
             cookie?: never;
         };
-        /** @description Returns cancellation intent only if the token epoch and supplied
-         *     positive attempt still own the active turn.
-         *      */
-        get: operations["getWorkerTurnCancellation"];
+        get?: never;
+        put?: never;
+        post: operations["sendWorkerSessionMessage"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/cloud/v1/worker/sessions/{sessionId}/pull-requests": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                sessionId: components["parameters"]["SessionId"];
+            };
+            cookie?: never;
+        };
+        get: operations["listWorkerSessionPullRequests"];
         put?: never;
         post?: never;
         delete?: never;
@@ -689,60 +564,16 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/cloud/v1/worker/turns/{turnId}/complete": {
+    "/api/cloud/v1/worker/sessions/{sessionId}/reviews": {
         parameters: {
             query?: never;
             header?: never;
             path: {
-                turnId: components["parameters"]["TurnId"];
+                sessionId: components["parameters"]["SessionId"];
             };
             cookie?: never;
         };
-        get?: never;
-        put?: never;
-        /** @description Completes the exact claimed attempt. `cancelled: true` records an
-         *     interrupted completion. Repeating the same callback after that attempt
-         *     has finished succeeds with `alreadyFinished: true`.
-         *      */
-        post: operations["completeWorkerTurn"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/cloud/v1/worker/turns/{turnId}/fail": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                turnId: components["parameters"]["TurnId"];
-            };
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** @description Fails the exact claimed attempt with a non-empty error message. A
-         *     repeated callback for the same finished attempt is idempotent.
-         *      */
-        post: operations["failWorkerTurn"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/cloud/v1/worker/credential": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** @description Returns the valid default coding-agent credential selected by the
-         *     session harness. The secret must never be logged or persisted.
-         *      */
-        get: operations["getWorkerCredential"];
+        get: operations["listWorkerSessionReviews"];
         put?: never;
         post?: never;
         delete?: never;
@@ -760,187 +591,12 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** @description Brokers a fresh repository-scoped GitHub installation token. Repository
-         *     identity is derived from the worker session and cannot be supplied by
-         *     the sandbox. The token must never be logged or persisted.
+        /** @description Requests one scoped checkout delivery. The control plane returns only
+         *     delivery state; repository credentials are installed by the sandbox
+         *     delivery mechanism and never appear in JSON, argv, environment, or git
+         *     configuration.
          *      */
-        post: operations["createWorkerCheckoutGrant"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/cloud/v1/worker/children": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** @description Creates a trusted child by default and passes its required prompt directly to the coding-agent launch command. */
-        get: operations["listWorkerChildren"];
-        put?: never;
-        post: operations["createWorkerChild"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/cloud/v1/worker/children/{sessionId}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                sessionId: components["parameters"]["SessionId"];
-            };
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        post?: never;
-        /** @description Requests deletion of a direct child owned by the authenticated orchestrator. */
-        delete: operations["deleteWorkerChild"];
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/cloud/v1/worker/children/{sessionId}/messages": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                sessionId: components["parameters"]["SessionId"];
-            };
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        post: operations["sendWorkerChildMessage"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/cloud/v1/worker/transport/claim": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** @description Claims the next durable workspace or terminal command for the token's
-         *     session and epoch. The internal claim lasts 10 seconds and may be
-         *     reclaimed up to three times. The positive claim attempt is returned and
-         *     must be echoed by completion or failure callbacks. No work is represented
-         *     by HTTP 200 with `request: null`.
-         *      */
-        post: operations["claimWorkerTransport"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/cloud/v1/worker/transport/{requestId}/complete": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                requestId: components["parameters"]["WorkerRequestId"];
-            };
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** @description Completes a claimed durable command. The worker token epoch, request
-         *     status, request expiry, and positive claim attempt are checked.
-         *      */
-        post: operations["completeWorkerTransport"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/cloud/v1/worker/transport/{requestId}/fail": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                requestId: components["parameters"]["WorkerRequestId"];
-            };
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** @description Records a bounded machine-readable error for a claimed command. The
-         *     token epoch, request status, expiry, and positive claim attempt are
-         *     checked.
-         *      */
-        post: operations["failWorkerTransport"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/cloud/v1/worker/terminals/agent": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** @description Returns the epoch-scoped persistent terminal used by the interactive agent TUI. */
-        post: operations["ensureWorkerAgentTerminal"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/cloud/v1/worker/terminals/{terminalId}/output": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                terminalId: components["parameters"]["TerminalId"];
-            };
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** @description Appends one base64-encoded output frame to a live workspace terminal.
-         *     The terminal and worker token must have the same current epoch.
-         *      */
-        post: operations["publishWorkerTerminalOutput"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/cloud/v1/worker/terminals/{terminalId}/exit": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                terminalId: components["parameters"]["TerminalId"];
-            };
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** @description Marks the epoch-scoped agent or workspace terminal process as exited. */
-        post: operations["publishWorkerTerminalExit"];
+        post: operations["requestWorkerCheckoutGrant"];
         delete?: never;
         options?: never;
         head?: never;
@@ -951,69 +607,147 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
-        EmptyObject: Record<string, never>;
-        /** @enum {string} */
-        AuthProvider: "google" | "workos" | "local";
-        /** @enum {string} */
-        OrganizationRole: "owner" | "admin" | "member";
-        CurrentUser: {
-            /** Format: uuid */
+        APIError: {
+            code: string;
+            details?: {
+                [key: string]: unknown;
+            };
+            error: string;
+            message: string;
+            requestId?: string;
+        };
+        ListProjectsResponse: {
+            projects: components["schemas"]["ProjectSummary"][];
+        };
+        ProjectGetResponse: {
+            project: components["schemas"]["ProjectOrDegraded"];
+            /** @enum {string} */
+            status: "ok" | "degraded";
+        };
+        ProjectSummary: {
             id: string;
-            /** Format: email */
-            email: string;
-            displayName: string;
-            authProvider: components["schemas"]["AuthProvider"];
+            /** @enum {string} */
+            kind: "single_repo" | "workspace" | "scratch";
+            name: string;
+            orchestratorAgent?: string;
+            path: string;
+            resolveError?: string;
+            sessionPrefix: string;
         };
-        OrganizationMembership: {
-            /** Format: uuid */
-            id: string;
-            slug: string;
-            displayName: string;
-            role: components["schemas"]["OrganizationRole"];
+        ListSessionsResponse: {
+            sessions: components["schemas"]["ControllersSessionView"][];
         };
-        CurrentAccount: {
-            user: components["schemas"]["CurrentUser"];
-            organizations: components["schemas"]["OrganizationMembership"][];
+        SessionResponse: {
+            session: components["schemas"]["ControllersSessionView"];
         };
-        GoogleIdentityExchange: {
-            /** @description Google OpenID Connect ID token obtained through desktop PKCE. */
-            idToken: string;
-        };
-        RefreshTokenInput: {
-            refreshToken: string;
-        };
-        AOSession: {
-            /** @description Short-lived AO bearer token; never expose it to renderer storage. */
-            accessToken: string;
-            /** @description Rotating opaque token for protected Electron-main storage. */
-            refreshToken: string;
+        ControllersSessionView: {
+            activeAgentSwitch?: components["schemas"]["AgentSwitch"];
+            activity: components["schemas"]["DomainActivity"];
+            autoInjectCI: boolean;
+            autoInjectReview: boolean;
+            autoReviewEnabled: boolean;
+            branch?: string;
             /** Format: date-time */
-            expiresAt: string;
-            user: components["schemas"]["CurrentUser"];
-            organizations: components["schemas"]["OrganizationMembership"][];
-        };
-        /** @enum {string} */
-        AgentCapability: "interface.chat" | "interface.tui" | "model.catalog" | "model.custom" | "attachments" | "browser.preview" | "review.execute" | "session.resume";
-        /** @enum {string} */
-        AgentInstallationState: "installed" | "not_installed" | "unknown" | "not_applicable";
-        /** @enum {string} */
-        AgentAuthenticationState: "authorized" | "unauthorized" | "unknown" | "not_applicable";
-        /** @enum {string} */
-        AgentOrganizationPolicy: "not_applicable" | "allowed" | "denied";
-        AgentAvailability: {
-            /** @description Effective host readiness after installation, authentication, and organization policy. */
-            available: boolean;
-            installation: components["schemas"]["AgentInstallationState"];
-            authentication: components["schemas"]["AgentAuthenticationState"];
-            organizationPolicy: components["schemas"]["AgentOrganizationPolicy"];
-            /** @description Host-supplied explanation when the agent is unavailable. */
-            reason?: string;
-        };
-        AgentProfile: {
+            createdAt: string;
+            displayName?: string;
+            harness?: string;
             id: string;
-            label: string;
-            capabilities: components["schemas"]["AgentCapability"][];
-            availability: components["schemas"]["AgentAvailability"];
+            isPinned: boolean;
+            isTerminated: boolean;
+            issueId?: string;
+            kind: string;
+            /** @enum {string} */
+            mode: "chat" | "tui";
+            model?: string;
+            /** Format: date-time */
+            pinnedAt?: null | string;
+            /** Format: int64 */
+            previewRevision?: number;
+            previewUrl?: string;
+            projectId: string;
+            prs: components["schemas"]["SessionPRFacts"][];
+            /** @enum {string} */
+            reviewerHarness?: "claude-code" | "codex" | "copilot" | "cursor" | "kilocode" | "opencode" | "kiro" | "pi" | "qwen" | "agy" | "continue" | "goose" | "vibe" | "devin" | "droid" | "kimi" | "kimchi" | "muse" | "amp" | "aider" | "grok" | "crush" | "auggie" | "cline" | "autohand";
+            /** @enum {string} */
+            scmStatus?: "pr_open" | "draft" | "ci_failed" | "review_pending" | "changes_requested" | "approved" | "mergeable" | "merged";
+            /** @enum {string} */
+            status: "working" | "pr_open" | "draft" | "ci_failed" | "review_pending" | "changes_requested" | "approved" | "mergeable" | "merged" | "needs_input" | "exited" | "idle" | "terminated" | "no_signal";
+            terminalHandleId?: string;
+            terminateOnPrMerge: boolean;
+            /** Format: date-time */
+            updatedAt: string;
+        };
+        SpawnSessionRequest: {
+            attachments?: components["schemas"]["AttachmentInput"][];
+            branch?: string;
+            displayName?: string;
+            /** @enum {string} */
+            harness?: "claude-code" | "codex" | "aider" | "opencode" | "grok" | "droid" | "amp" | "agy" | "crush" | "cursor" | "qwen" | "copilot" | "goose" | "auggie" | "continue" | "devin" | "cline" | "kimi" | "muse" | "kiro" | "kilocode" | "vibe" | "pi" | "kimchi" | "prime-agent" | "autohand";
+            issueId?: string;
+            /** @enum {string} */
+            kind?: "worker" | "orchestrator";
+            /** @enum {string} */
+            mode?: "chat" | "tui";
+            model?: string;
+            projectId: string;
+            prompt?: string;
+            /** @enum {string} */
+            trackerProvider?: "github" | "gitlab";
+        };
+        SpawnSessionResponse: {
+            promptBytes: number;
+            session: components["schemas"]["ControllersSessionView"];
+            systemPromptBytes: number;
+        };
+        SendSessionMessageRequest: {
+            attachment?: components["schemas"]["AttachmentInput"];
+            message: string;
+        };
+        SendSessionMessageResponse: {
+            message: string;
+            ok: boolean;
+            sessionId: string;
+        };
+        ListSessionPRsResponse: {
+            prs: components["schemas"]["SessionPRSummary"][];
+            sessionId: string;
+        };
+        ListReviewsResponse: {
+            reviewerHandleId: string;
+            reviewerHarness?: string;
+            reviews: components["schemas"]["PRReviewState"][];
+            runs: components["schemas"]["ReviewRun"][];
+        };
+        ListWorkspaceFilesResponse: {
+            compareBaseRef?: string;
+            compareBaseSha?: string;
+            /** @enum {string} */
+            compareMode?: "base" | "head_fallback";
+            files: components["schemas"]["WorkspaceFileSummary"][];
+            sessionId: string;
+            truncated: boolean;
+        };
+        WorkspaceFileResponse: {
+            additions: number;
+            binary: boolean;
+            compareBaseRef?: string;
+            compareBaseSha?: string;
+            /** @enum {string} */
+            compareMode?: "base" | "head_fallback";
+            content: string;
+            contentTruncated: boolean;
+            deleted: boolean;
+            deletions: number;
+            diff: string;
+            diffTruncated: boolean;
+            imageMediaType?: string;
+            path: string;
+            previousPath?: string;
+            sessionId: string;
+            /** Format: int64 */
+            size: number;
+            /** @enum {string} */
+            status: "unmodified" | "modified" | "added" | "deleted" | "renamed";
         };
         ErrorEnvelope: {
             error: string;
@@ -1024,955 +758,485 @@ export interface components {
                 [key: string]: unknown;
             };
         };
-        PageInfo: {
-            hasMore: boolean;
-            nextCursor?: string;
+        GoogleIdentityExchange: {
+            idToken: string;
         };
-        Project: {
+        RefreshTokenInput: {
+            refreshToken: string;
+        };
+        AOSession: {
+            accessToken: string;
+            refreshToken: string;
+            /** Format: date-time */
+            expiresAt: string;
+        };
+        CurrentUser: {
             /** Format: uuid */
             id: string;
+            /** Format: email */
+            email: string;
+            displayName: string;
+        };
+        OrganizationMembership: {
             /** Format: uuid */
             orgId: string;
+            orgSlug: string;
             displayName: string;
-            /** Format: uri */
-            repositoryUrl: string;
-            defaultBranch: string;
-            /** @description GitHub's integer repository ID encoded as a decimal string to preserve precision. */
-            githubRepositoryId?: string;
-            config: {
-                [key: string]: unknown;
-            };
-            /** Format: date-time */
-            createdAt: string;
-            /** Format: date-time */
-            updatedAt: string;
+            /** @enum {string} */
+            role: "owner" | "admin" | "member";
         };
-        CreateProjectInput: {
+        CurrentAccount: {
+            user: components["schemas"]["CurrentUser"];
+            organizations: components["schemas"]["OrganizationMembership"][];
+        };
+        CreateWorkspacePlacementInput: {
             displayName: string;
             /** Format: uri */
             repositoryUrl: string;
+            /** @description Authoritative branch passed through the placement saga. */
             defaultBranch: string;
             config?: {
                 [key: string]: unknown;
             };
         };
-        UpdateProjectInput: {
-            displayName: string;
+        /** @enum {string} */
+        WorkspacePlacementState: "pending" | "failed" | "ready";
+        WorkspacePlacementOperation: {
+            /** Format: uuid */
+            operationId: string;
+            /** Format: uuid */
+            orgId: string;
+            state: components["schemas"]["WorkspacePlacementState"];
             defaultBranch: string;
+            /** @description Present only when state is ready; discover its DTO through /api/v1/projects. */
+            projectId?: string;
+            failure?: components["schemas"]["PlacementFailure"];
+            /** Format: date-time */
+            createdAt: string;
+            /** Format: date-time */
+            updatedAt: string;
         };
-        DeleteProjectResponse: {
-            project: {
-                /** Format: uuid */
-                id: string;
-                deleted: boolean;
-            };
+        PlacementFailure: {
+            code: string;
+            message: string;
         };
-        ProjectPage: {
-            items: components["schemas"]["Project"][];
-            page: components["schemas"]["PageInfo"];
-        };
-        /** @enum {string} */
-        GitHubInstallationStatus: "active" | "suspended" | "removed";
-        /** @enum {string} */
-        GitHubSyncStatus: "pending" | "syncing" | "ready" | "retry" | "failed";
         GitHubInstallation: {
             /** Format: uuid */
             id: string;
-            /** @description GitHub's integer installation ID encoded as a decimal string to preserve precision. */
-            githubInstallationId: string;
+            /** Format: uuid */
+            orgId: string;
+            /** @constant */
+            provider: "github";
             accountLogin: string;
-            /** @enum {string} */
-            accountType: "User" | "Organization" | "Enterprise";
-            status: components["schemas"]["GitHubInstallationStatus"];
-            /** @enum {string} */
-            repositorySelection: "all" | "selected";
-            syncStatus: components["schemas"]["GitHubSyncStatus"];
-            /** Format: date-time */
-            lastSyncedAt?: string;
-            lastError?: string;
+            accountType: string;
+            appSlug: string;
+            repositorySelection: string;
+            status: string;
             /** Format: date-time */
             createdAt: string;
             /** Format: date-time */
             updatedAt: string;
+        };
+        GitHubInstallationList: {
+            installations: components["schemas"]["GitHubInstallation"][];
         };
         GitHubInstallationStart: {
             /** Format: uri */
-            installationUrl: string;
+            installUrl: string;
             /** Format: date-time */
             expiresAt: string;
         };
-        GitHubUserInstallation: {
-            /** @description GitHub's integer installation ID encoded as a decimal string to preserve precision. */
-            githubInstallationId: string;
-            accountLogin: string;
-            /** @enum {string} */
-            accountType: "User" | "Organization" | "Enterprise";
-            /** @enum {string} */
-            repositorySelection: "all" | "selected";
-            canCreateRepository: boolean;
-            unavailableReason?: string;
-        };
-        GitHubUserConnection: {
-            connected: boolean;
-            login?: string;
-            /** Format: uri */
-            avatarUrl?: string;
-            installations: components["schemas"]["GitHubUserInstallation"][];
-            /** Format: date-time */
-            lastSyncedAt?: string;
-        };
-        GitHubUserAuthorizationStart: {
-            /** Format: uri */
-            authorizeUrl: string;
-            /** Format: date-time */
-            expiresAt: string;
-        };
-        /** @enum {string} */
-        GitHubRepositoryAccessState: "active" | "revoked";
         GitHubRepository: {
-            /** @description GitHub's integer repository ID encoded as a decimal string to preserve precision. */
-            githubRepositoryId: string;
-            name: string;
-            fullName: string;
-            /** Format: uri */
-            htmlUrl: string;
-            defaultBranch: string;
-            visibility: string;
-            isPrivate: boolean;
-            isArchived: boolean;
-            access: components["schemas"]["GitHubRepositoryAccessState"];
-            /** Format: date-time */
-            grantedAt: string;
-            /** Format: date-time */
-            revokedAt?: string;
-        };
-        GitHubRepositoryPage: {
-            items: components["schemas"]["GitHubRepository"][];
-            page: components["schemas"]["PageInfo"];
-        };
-        CreateGitHubProjectInput: {
-            githubRepositoryId: string;
-            displayName?: string;
-            config?: {
-                [key: string]: unknown;
-            };
-        };
-        CreateGitHubScratchProjectInput: {
-            displayName: string;
-            githubInstallationId: string;
-            /** @default true */
-            private: boolean;
-            orchestrator: {
-                /** @enum {string} */
-                harness: "claude-code" | "codex" | "cursor";
-                prompt?: string;
-            };
-        };
-        CreateGitHubScratchProjectResponse: {
-            project: components["schemas"]["Project"];
-            repository: components["schemas"]["GitHubRepository"];
-            session: components["schemas"]["Session"];
-        };
-        /** @enum {string} */
-        SessionKind: "worker" | "orchestrator";
-        /** @enum {string} */
-        SessionMode: "read-only" | "standard" | "trusted";
-        /** @enum {string} */
-        SessionActivityState: "active" | "idle" | "waiting_input" | "blocked" | "exited";
-        /** @enum {string} */
-        SessionStatus: "working" | "needs_input" | "pr_open" | "draft" | "review_pending" | "ci_failed" | "changes_requested" | "approved" | "mergeable" | "merged" | "exited" | "idle" | "terminated" | "no_signal";
-        Turn: {
             id: string;
-            sessionId: string;
-            /** Format: int64 */
-            userMessageSequence: number;
+            fullName: string;
+            private: boolean;
+            allowed: boolean;
+        };
+        GitHubRepositoryList: {
+            repositories: components["schemas"]["GitHubRepository"][];
+        };
+        GitHubRepositoryAllowlistInput: {
+            repositories: string[];
+        };
+        GitHubWebhookAcceptance: {
             /** @enum {string} */
-            state: "queued" | "provisioning" | "running" | "cancel_requested" | "completed" | "failed";
-            attemptCount: number;
-            errorMessage?: string;
+            status: "accepted" | "duplicate";
+        };
+        TerminalConnectionRequest: {
+            /** @enum {string} */
+            kind: "agent" | "workspace";
+            /** Format: int64 */
+            after?: number;
+        };
+        TerminalConnection: {
+            /**
+             * Format: uri
+             * @description Authenticated sandbox mux WebSocket URL, never a control-plane relay URL.
+             */
+            connectionUrl: string;
+            /** @description Single-use ticket consumed atomically by the sandbox mux. */
+            ticket: string;
             /** Format: date-time */
-            startedAt?: string;
-            /** Format: date-time */
-            completedAt?: string;
-            /** Format: date-time */
-            createdAt: string;
-            /** Format: date-time */
-            updatedAt: string;
+            expiresAt: string;
+            /** @constant */
+            protocol: "ao.mux.v1";
         };
         WorkerBootstrapInput: {
-            /** @description One-time bootstrap ticket. Never log or persist this value. */
-            bootstrapToken: string;
-            version?: string;
-            capabilities?: string[];
-        };
-        WorkerLaunchContext: {
             /** Format: uuid */
-            sessionId: string;
-            /** Format: uuid */
-            projectId: string;
-            kind: components["schemas"]["SessionKind"];
-            harness: string;
-            displayName: string;
-            branch: string;
-            prompt: string;
-            agentSessionId?: string;
-            mode: components["schemas"]["SessionMode"];
-            deniedCommands: string[];
-            /** Format: uri */
-            repositoryUrl: string;
-            defaultBranch: string;
-        };
-        WorkerBootstrapResponse: {
-            /**
-             * Format: password
-             * @description Short-lived worker token. Never log or persist this value.
-             */
-            readonly workerToken: string;
-            workerId: string;
-            /** Format: int64 */
-            epoch: number;
-            /** @description Worker token lifetime in seconds. */
-            expiresIn: number;
-            /** Format: uuid */
-            sessionId: string;
-            launch: components["schemas"]["WorkerLaunchContext"];
-        };
-        WorkerHeartbeatInput: {
-            version?: string;
-            capabilities?: string[];
-        };
-        WorkerHeartbeatResponse: {
-            /** @constant */
-            ok: true;
-            /**
-             * Format: password
-             * @description Newly issued worker token. Never log or persist this value.
-             */
-            readonly workerToken: string;
-            /** @description New worker token lifetime in seconds. */
-            expiresIn: number;
-        };
-        WorkerReadyPayload: {
-            workerId: string;
-            /** Format: int64 */
-            epoch: number;
+            deliveryId: string;
             version: string;
             capabilities: string[];
         };
-        WorkerOutputPayload: {
+        WorkerBootstrapGrant: {
             /** Format: uuid */
-            turnId: string;
-            attempt: number;
+            deliveryId: string;
             /** @enum {string} */
-            stream: "stdout" | "stderr";
-            /** @description Assistant output frame, limited by the server to 16 KiB. */
-            text: string;
+            state: "consumed";
+            scope: components["schemas"]["WorkerScope"];
+            /** Format: date-time */
+            consumedAt: string;
         };
-        WorkerReadyEventInput: {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            type: "worker.ready";
-            payload: components["schemas"]["WorkerReadyPayload"];
-        };
-        WorkerOutputEventInput: {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            type: "chat.assistant_delta";
-            payload: components["schemas"]["WorkerOutputPayload"];
-        };
-        WorkerActivityPayload: {
-            /** @enum {string} */
-            harness: "claude-code" | "codex" | "cursor";
-            /** @enum {string} */
-            event: "session-start" | "user-prompt-submit" | "pre-tool-use" | "post-tool-use" | "post-tool-use-failure" | "permission-request" | "stop" | "notification" | "session-end";
-            state?: components["schemas"]["SessionActivityState"];
-            toolName?: string;
-            toolUseId?: string;
-            agentSessionId?: string;
-        };
-        WorkerActivityEventInput: {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            type: "agent.activity";
-            payload: components["schemas"]["WorkerActivityPayload"];
-        };
-        WorkerEventInput: components["schemas"]["WorkerActivityEventInput"] | components["schemas"]["WorkerReadyEventInput"] | components["schemas"]["WorkerOutputEventInput"];
-        WorkerOKResponse: {
-            /** @constant */
-            ok: true;
-        };
-        WorkerTurn: {
-            /** Format: uuid */
-            id: string;
-            prompt: string;
-            mode: components["schemas"]["SessionMode"];
-            deniedCommands: string[];
-            harness: string;
-            /** @description Claim attempt used with the token epoch as the turn fence. */
-            attempt: number;
-            cancelRequested: boolean;
-            /** @description Provider-native conversation identity to resume when present. */
-            agentSessionId?: string;
-        };
-        WorkerClaimTurnResponse: {
-            turn: components["schemas"]["WorkerTurn"] | null;
-        };
-        WorkerCancellationResponse: {
-            requested: boolean;
-        };
-        WorkerCompleteTurnInput: {
-            attempt: number;
-            cancelled?: boolean;
-        };
-        WorkerFailTurnInput: {
-            attempt: number;
-            /** @description Failure message, limited by the server to 4 KiB. */
-            error: string;
-        };
-        WorkerFinishTurnResponse: {
-            /** @constant */
-            ok: true;
-            alreadyFinished: boolean;
-        };
-        CreateWorkerChildInput: {
-            harness: string;
-            displayName: string;
-            prompt: string;
-            mode?: components["schemas"]["SessionMode"];
-            deniedCommands?: string[];
-            /** Format: uuid */
-            sandboxProviderConnectionId?: string;
-        };
-        SendMessageInput: {
-            text: string;
-        };
-        WorkerWorkspaceListPayload: {
-            path: string;
-            cursor?: string;
-            limit: number;
-        };
-        WorkerWorkspaceReadPayload: {
-            path: string;
-        };
-        WorkerWorkspaceWritePayload: components["schemas"]["WorkspaceFileWriteInput"];
-        WorkerWorkspaceEntryPage: {
-            path: string;
-            items: components["schemas"]["WorkspaceEntry"][];
-            hasMore: boolean;
-            nextCursor?: string;
-        };
-        WorkerTerminalOpenPayload: {
-            /** Format: uuid */
-            terminalId: string;
-            kind: components["schemas"]["TerminalKind"];
-            columns?: number;
-            rows?: number;
-        };
-        WorkerTerminalInputPayload: {
-            /** Format: uuid */
-            terminalId: string;
-            /** @description Base64-encoded terminal input, at most 16 KiB after decoding. */
-            data: string;
-        };
-        WorkerTerminalClosePayload: {
-            /** Format: uuid */
-            terminalId: string;
-        };
-        WorkerTerminalResizePayload: {
-            /** Format: uuid */
-            terminalId: string;
-            columns: number;
-            rows: number;
-        };
-        WorkerTerminalOpenResult: {
-            open: boolean;
-        };
-        WorkerTerminalInputResult: {
-            accepted: boolean;
-        };
-        WorkerTerminalCloseResult: {
-            closed: boolean;
-        };
-        WorkerTerminalResizeResult: {
-            resized: boolean;
-        };
-        WorkerWorkspaceListTransport: {
-            /** Format: uuid */
-            id: string;
-            attempt: number;
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "WorkerWorkspaceListTransport";
-            payload: components["schemas"]["WorkerWorkspaceListPayload"];
-        };
-        WorkerWorkspaceReadTransport: {
-            /** Format: uuid */
-            id: string;
-            attempt: number;
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "WorkerWorkspaceReadTransport";
-            payload: components["schemas"]["WorkerWorkspaceReadPayload"];
-        };
-        WorkerWorkspaceWriteTransport: {
-            /** Format: uuid */
-            id: string;
-            attempt: number;
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "WorkerWorkspaceWriteTransport";
-            payload: components["schemas"]["WorkerWorkspaceWritePayload"];
-        };
-        WorkerWorkspaceDiffTransport: {
-            /** Format: uuid */
-            id: string;
-            attempt: number;
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "WorkerWorkspaceDiffTransport";
-            payload: components["schemas"]["EmptyObject"];
-        };
-        WorkerTerminalOpenTransport: {
-            /** Format: uuid */
-            id: string;
-            attempt: number;
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "WorkerTerminalOpenTransport";
-            payload: components["schemas"]["WorkerTerminalOpenPayload"];
-        };
-        WorkerTerminalInputTransport: {
-            /** Format: uuid */
-            id: string;
-            attempt: number;
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "WorkerTerminalInputTransport";
-            payload: components["schemas"]["WorkerTerminalInputPayload"];
-        };
-        WorkerTerminalResizeTransport: {
-            /** Format: uuid */
-            id: string;
-            attempt: number;
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "WorkerTerminalResizeTransport";
-            payload: components["schemas"]["WorkerTerminalResizePayload"];
-        };
-        WorkerTerminalCloseTransport: {
-            /** Format: uuid */
-            id: string;
-            attempt: number;
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "WorkerTerminalCloseTransport";
-            payload: components["schemas"]["WorkerTerminalClosePayload"];
-        };
-        WorkerTransportRequest: components["schemas"]["WorkerWorkspaceListTransport"] | components["schemas"]["WorkerWorkspaceReadTransport"] | components["schemas"]["WorkerWorkspaceWriteTransport"] | components["schemas"]["WorkerWorkspaceDiffTransport"] | components["schemas"]["WorkerTerminalOpenTransport"] | components["schemas"]["WorkerTerminalInputTransport"] | components["schemas"]["WorkerTerminalResizeTransport"] | components["schemas"]["WorkerTerminalCloseTransport"];
-        WorkerClaimTransportResponse: {
-            request: components["schemas"]["WorkerTransportRequest"] | null;
-        };
-        /** @description The server accepts any non-null JSON object. Built-in workers return a
-         *     WorkerWorkspaceEntryPage, WorkspaceFile, WorkspaceDiff,
-         *     WorkerTerminalOpenResult, WorkerTerminalInputResult, or
-         *     WorkerTerminalCloseResult appropriate to the claimed command.
-         *      */
-        WorkerTransportResult: {
-            [key: string]: unknown;
-        };
-        WorkerCompleteTransportInput: {
-            attempt: number;
-            response: components["schemas"]["WorkerTransportResult"];
-        };
-        WorkerFailTransportInput: {
-            attempt: number;
-            code: string;
-            /** @description Worker-safe failure message, limited by the server to 4 KiB. */
-            message: string;
-        };
-        WorkerAgentTerminalResponse: {
-            /** Format: uuid */
-            terminalId: string;
-        };
-        WorkerTerminalExitInput: {
-            exitCode: number;
-        };
-        WorkerTerminalOutputInput: {
-            /** @description Base64-encoded output frame, at most 16 KiB after decoding. */
-            data: string;
-        };
-        WorkerTerminalOutputResponse: {
-            /** Format: int64 */
-            sequence: number;
-        };
-        DeleteSessionResponse: {
-            session: {
-                /** Format: uuid */
-                id: string;
-                /** @constant */
-                desiredState: "deleted";
-            };
-        };
-        Session: {
-            /** Format: uuid */
-            id: string;
+        WorkerScope: {
             /** Format: uuid */
             orgId: string;
             /** Format: uuid */
-            projectId: string;
-            kind: components["schemas"]["SessionKind"];
-            harness: string;
-            displayName: string;
-            branch: string;
-            mode: components["schemas"]["SessionMode"];
-            deniedCommands: string[];
-            activityState: components["schemas"]["SessionActivityState"];
-            status: components["schemas"]["SessionStatus"];
-            capabilities?: components["schemas"]["AgentCapability"][];
-            runtimeConnected: boolean;
-            runtimeState?: string;
-            runtimeError?: string;
-            activeTurn?: components["schemas"]["Turn"];
-            isTerminated: boolean;
-            /** Format: date-time */
-            createdAt: string;
-            /** Format: date-time */
-            updatedAt: string;
+            workspaceId: string;
+            sessionId: string;
+            /** @enum {string} */
+            role: "coordinator" | "worker";
         };
-        CreateSessionInput: {
-            /** Format: uuid */
-            projectId: string;
-            kind: components["schemas"]["SessionKind"];
-            harness: string;
-            displayName: string;
-            prompt: string;
-            /** @default trusted */
-            mode: components["schemas"]["SessionMode"];
-            /** @default [] */
-            deniedCommands: string[];
-            /** Format: uuid */
-            sandboxProviderConnectionId?: string;
+        WorkerHeartbeatInput: {
+            version: string;
+            capabilities: string[];
         };
-        SessionPage: {
-            items: components["schemas"]["Session"][];
-            page: components["schemas"]["PageInfo"];
-        };
-        /** @enum {string} */
-        PullRequestState: "draft" | "open" | "merged" | "closed";
-        /** @enum {string} */
-        CIState: "unknown" | "pending" | "passing" | "failing";
-        /** @enum {string} */
-        PullRequestCheckStatus: "unknown" | "queued" | "in_progress" | "passed" | "failed" | "skipped" | "cancelled";
-        /** @enum {string} */
-        ReviewDecision: "none" | "approved" | "changes_requested" | "review_required";
-        /** @enum {string} */
-        MergeabilityState: "unknown" | "mergeable" | "conflicting" | "blocked" | "unstable";
-        PullRequestFailingCheck: {
-            name: string;
-            status: components["schemas"]["PullRequestCheckStatus"];
-            conclusion: string;
-            url?: string;
-        };
-        PullRequestCISummary: {
-            state: components["schemas"]["CIState"];
-            failingChecks: components["schemas"]["PullRequestFailingCheck"][];
-        };
-        PullRequestReviewCommentLink: {
-            url?: string;
-            file?: string;
-            line?: number;
-            autoInjectReview: boolean;
-        };
-        PullRequestUnresolvedReviewer: {
-            reviewerId: string;
-            count: number;
-            links: components["schemas"]["PullRequestReviewCommentLink"][];
-            reviewUrl?: string;
-            isBot?: boolean;
-        };
-        PullRequestSubmittedReview: {
-            reviewerId: string;
-            verdict: components["schemas"]["ReviewDecision"];
-            body?: string;
-            reviewUrl?: string;
-            /** Format: date-time */
-            submittedAt: string;
-            isBot?: boolean;
-            autoInjectReview: boolean;
-        };
-        PullRequestReviewSummary: {
-            decision: components["schemas"]["ReviewDecision"];
-            hasUnresolvedHumanComments: boolean;
-            unresolvedBy: components["schemas"]["PullRequestUnresolvedReviewer"][];
-            reviews: components["schemas"]["PullRequestSubmittedReview"][];
-        };
-        PullRequestConflictFile: {
-            path: string;
-            url?: string;
-        };
-        PullRequestMergeabilitySummary: {
-            state: components["schemas"]["MergeabilityState"];
-            reasons: string[];
-            pullRequestUrl: string;
-            conflictFiles: components["schemas"]["PullRequestConflictFile"][];
-        };
-        PullRequestSummary: {
-            url: string;
-            htmlUrl?: string;
-            number: number;
-            title: string;
-            state: components["schemas"]["PullRequestState"];
-            provider: string;
-            repository: string;
-            author: string;
-            sourceBranch: string;
-            targetBranch: string;
-            headSha: string;
-            additions: number;
-            deletions: number;
-            changedFiles: number;
-            ci: components["schemas"]["PullRequestCISummary"];
-            review: components["schemas"]["PullRequestReviewSummary"];
-            mergeability: components["schemas"]["PullRequestMergeabilitySummary"];
-            /** Format: date-time */
-            stateChangedAt?: string;
-            /** Format: date-time */
-            createdAt?: string;
-            /** Format: date-time */
-            updatedAt: string;
+        WorkerStatus: {
+            scope: components["schemas"]["WorkerScope"];
+            /** @enum {string} */
+            placementState: "pending" | "running" | "stopping" | "stopped" | "failed";
             /** Format: date-time */
             observedAt: string;
-            /** Format: date-time */
-            ciObservedAt: string;
-            /** Format: date-time */
-            reviewObservedAt: string;
         };
-        SessionPullRequests: {
-            sessionId: string;
-            pullRequests: components["schemas"]["PullRequestSummary"][];
-        };
-        /** @enum {string} */
-        AOReviewRunStatus: "running" | "complete" | "delivered" | "failed" | "cancelled";
-        /** @enum {string} */
-        AOReviewVerdict: "" | "approved" | "changes_requested";
-        /** @enum {string} */
-        AOReviewState: "needs_review" | "running" | "up_to_date" | "changes_requested" | "ineligible";
-        AOReviewRun: {
-            id: string;
-            reviewId: string;
-            sessionId: string;
-            batchId: string;
-            harness: string;
-            pullRequestUrl: string;
-            targetSha: string;
-            status: components["schemas"]["AOReviewRunStatus"];
-            verdict: components["schemas"]["AOReviewVerdict"];
-            body: string;
-            providerReviewId: string;
-            /** Format: date-time */
-            createdAt: string;
-            /** Format: date-time */
-            deliveredAt?: string;
-            autoInjectReview: boolean;
-        };
-        AOPullRequestReviewState: {
-            pullRequestUrl: string;
-            pullRequestNumber: number;
-            title: string;
-            targetSha: string;
-            status: components["schemas"]["AOReviewState"];
-            /** @description Head SHA of the newest completed run that does not match targetSha. */
-            staleTargetSha?: string;
-            latestRun?: components["schemas"]["AOReviewRun"];
-            previousRun?: components["schemas"]["AOReviewRun"];
-        };
-        SessionReviewState: {
-            sessionId: string;
-            reviewerHandleId?: string;
-            reviewerHarness?: string;
-            reviews: components["schemas"]["AOPullRequestReviewState"][];
-            runs: components["schemas"]["AOReviewRun"][];
-        };
-        UserMessageEvent: {
-            sessionId: string;
-            /** Format: int64 */
-            sequence: number;
-            /** @constant */
-            type: "chat.user_message";
-            payload: {
-                text: string;
-            };
-            /** Format: date-time */
-            createdAt: string;
-        };
-        AssistantDeltaEvent: {
-            sessionId: string;
-            /** Format: int64 */
-            sequence: number;
-            /** @constant */
-            type: "chat.assistant_delta";
-            payload: components["schemas"]["WorkerOutputPayload"];
-            /** Format: date-time */
-            createdAt: string;
-        };
-        TurnStartedEvent: {
-            sessionId: string;
-            /** Format: int64 */
-            sequence: number;
-            /** @constant */
-            type: "chat.turn_started";
-            payload: {
-                /** Format: uuid */
-                turnId: string;
-                attempt: number;
-                /** Format: int64 */
-                workerEpoch: number;
-            };
-            /** Format: date-time */
-            createdAt: string;
-        };
-        TurnCompletedEvent: {
-            sessionId: string;
-            /** Format: int64 */
-            sequence: number;
-            /** @constant */
-            type: "chat.turn_completed";
-            payload: {
-                /** Format: uuid */
-                turnId: string;
-                attempt: number;
-            };
-            /** Format: date-time */
-            createdAt: string;
-        };
-        TurnInterruptedEvent: {
-            sessionId: string;
-            /** Format: int64 */
-            sequence: number;
-            /** @constant */
-            type: "chat.turn_interrupted";
-            payload: {
-                /** Format: uuid */
-                turnId: string;
-                attempt: number;
-            };
-            /** Format: date-time */
-            createdAt: string;
-        };
-        TurnAbortedEvent: {
-            sessionId: string;
-            /** Format: int64 */
-            sequence: number;
-            /** @constant */
-            type: "chat.turn_aborted";
-            payload: {
-                /** Format: uuid */
-                turnId: string;
-                attempt: number;
-                error: string;
-            };
-            /** Format: date-time */
-            createdAt: string;
-        };
-        InterruptRequestedEvent: {
-            sessionId: string;
-            /** Format: int64 */
-            sequence: number;
-            /** @constant */
-            type: "chat.interrupt_requested";
-            payload: {
-                /** Format: uuid */
-                turnId: string;
-            };
-            /** Format: date-time */
-            createdAt: string;
-        };
-        ClientEvent: components["schemas"]["UserMessageEvent"] | components["schemas"]["AssistantDeltaEvent"] | components["schemas"]["TurnStartedEvent"] | components["schemas"]["TurnCompletedEvent"] | components["schemas"]["TurnInterruptedEvent"] | components["schemas"]["TurnAbortedEvent"] | components["schemas"]["InterruptRequestedEvent"];
-        ClientEventPage: {
-            events: components["schemas"]["ClientEvent"][];
-            hasMore: boolean;
-            /**
-             * Format: int64
-             * @description Highest sequence returned, or the supplied after cursor when the page is empty.
-             */
-            nextAfter: number;
-        };
-        /** @enum {string} */
-        TerminalKind: "agent" | "workspace";
-        /** @enum {string} */
-        TerminalScope: "terminal:read" | "terminal:operate";
-        TerminalTicket: {
-            ticket: string;
-            /** @description Lifetime in seconds. */
-            expiresIn: number;
-            scopes: components["schemas"]["TerminalScope"][];
-        };
-        WorkspaceEntry: {
-            name: string;
-            path: string;
-            isDir: boolean;
-            /** Format: int64 */
-            size: number;
-            mode: string;
-            /** Format: date-time */
-            modTime: string;
-        };
-        WorkspaceEntryPage: {
-            path: string;
-            items: components["schemas"]["WorkspaceEntry"][];
-            page: components["schemas"]["PageInfo"];
-        };
-        WorkspaceFile: {
-            path: string;
-            content: string;
-            /** Format: int64 */
-            size: number;
-        };
-        WorkspaceFileWriteInput: {
-            path: string;
-            content: string;
-        };
-        /** @enum {string} */
-        WorkspaceFileStatus: "unmodified" | "modified" | "added" | "deleted" | "renamed" | "untracked" | "copied" | "changed";
-        WorkspaceDiffFile: {
-            path: string;
-            oldPath?: string;
-            status: components["schemas"]["WorkspaceFileStatus"];
-            staged?: string;
-            unstaged?: string;
-            additions: number;
-            deletions: number;
-            binary: boolean;
-        };
-        WorkspaceDiff: {
-            status: string;
-            unstaged: string;
-            staged: string;
-            combined: string;
-            diffBaseRef: string;
-            diffBaseSha?: string;
-            files: components["schemas"]["WorkspaceDiffFile"][];
-            untrackedFiles: string[];
-            truncated: {
-                combined: boolean;
-                stats: boolean;
-            };
-        };
-        /** @enum {string} */
-        ProviderName: "daytona" | "claude-code" | "codex" | "cursor";
-        ProviderPublicConfig: {
-            /** Format: uri */
-            apiUrl?: string;
+        WorkerCheckoutGrantInput: {
+            /** Format: uuid */
+            deliveryId: string;
+            repositoryId: string;
             /** @enum {string} */
-            target?: "us" | "eu";
-            /** @enum {string} */
-            credentialType?: "oauth_token" | "api_key" | "access_token";
+            operation: "clone" | "fetch";
         };
-        PutAgentProviderConnectionInput: {
+        WorkerCheckoutGrant: {
+            /** Format: uuid */
+            deliveryId: string;
+            repositoryId: string;
             /** @enum {string} */
-            credentialType: "oauth_token" | "api_key" | "access_token";
-            secret: string;
-        };
-        WorkerCredentialResponse: {
+            operation: "clone" | "fetch";
             /** @enum {string} */
-            provider: "claude-code" | "codex" | "cursor";
-            /** @enum {string} */
-            credentialType: "oauth_token" | "api_key" | "access_token";
-            /**
-             * Format: password
-             * @description Decrypted coding-agent secret. Never log or persist this value.
-             */
-            readonly secret: string;
-        };
-        WorkerCheckoutGrantResponse: {
-            /** Format: uri */
-            cloneUrl: string;
-            /**
-             * Format: password
-             * @description Repository-scoped GitHub installation token. Never log or persist this value.
-             */
-            readonly token: string;
+            state: "pending" | "delivered" | "failed" | "expired";
             /** Format: date-time */
             expiresAt: string;
+            failure?: components["schemas"]["PlacementFailure"];
         };
-        RedactedProviderConnection: {
-            id: string;
-            provider: components["schemas"]["ProviderName"];
-            label: string;
-            config: components["schemas"]["ProviderPublicConfig"];
+        AgentConfig: {
+            mode?: string;
+            model?: string;
+            permissions?: string;
+        };
+        ContainerReapConfig: {
+            disabled?: boolean;
+        };
+        RoleOverride: {
+            agent?: string;
+            agentConfig?: components["schemas"]["AgentConfig"];
+        };
+        DomainReviewerConfig: {
+            harness: string;
+        };
+        TrackerIntakeConfig: {
+            assignee?: string;
+            enabled?: boolean;
             /** @enum {string} */
-            validationState: "pending" | "valid" | "invalid";
+            provider?: "github" | "gitlab";
+            repo?: string;
+        };
+        ProjectConfig: {
+            agentConfig?: components["schemas"]["AgentConfig"];
+            agentRules?: string;
+            agentRulesFile?: string;
+            autoReview?: boolean;
+            containerReap?: components["schemas"]["ContainerReapConfig"];
+            defaultBranch?: string;
+            env?: {
+                [key: string]: string;
+            };
+            orchestrator?: components["schemas"]["RoleOverride"];
+            orchestratorRules?: string;
+            postCreate?: string[];
+            reviewers?: components["schemas"]["DomainReviewerConfig"][];
+            sessionPrefix?: string;
+            symlinks?: string[];
+            trackerIntake?: components["schemas"]["TrackerIntakeConfig"];
+            worker?: components["schemas"]["RoleOverride"];
+        };
+        WorkspaceRepo: {
+            gitStatus?: string;
+            name: string;
+            relativePath: string;
+            repo: string;
+        };
+        Project: {
+            agent?: string;
+            config?: components["schemas"]["ProjectConfig"];
+            defaultBranch: string;
+            id: string;
+            /** @enum {string} */
+            kind: "single_repo" | "workspace" | "scratch";
+            name: string;
+            path: string;
+            repo: string;
+            workspaceRepos?: components["schemas"]["WorkspaceRepo"][];
+        };
+        DegradedProject: {
+            id: string;
+            /** @enum {string} */
+            kind: "single_repo" | "workspace" | "scratch";
+            name: string;
+            path: string;
+            resolveError: string;
+        };
+        ProjectOrDegraded: components["schemas"]["Project"] | components["schemas"]["DegradedProject"];
+        AgentSwitch: {
+            /** @enum {string} */
+            agentHandoffStatus: "not_attempted" | "requested" | "received" | "unavailable" | "timed_out" | "failed" | "rejected";
+            /** @enum {string} */
+            errorCode?: "daemon_restart_pre_stop" | "daemon_restart_post_stop" | "daemon_restart_unrecoverable_target" | "daemon_restart_before_delivery" | "delivery_unconfirmed" | "source_session_terminated" | "source_stop_unconfirmed" | "target_binary_missing" | "target_agent_unauthorized" | "target_start_unconfirmed" | "source_restore_unconfirmed" | "request_cancelled" | "source_blocked" | "failed_pre_stop" | "failed_post_stop" | "target_ready_failed" | "delivery_failed" | "switch_failed";
+            fromHarness: string;
+            id: string;
             /** Format: date-time */
-            validatedAt?: string;
+            requestedAt: string;
+            semanticHandoffIncluded: boolean;
+            sessionId: string;
+            /** @enum {string} */
+            sourceTranscriptStatus?: "not_attempted" | "available" | "unavailable";
+            /** @enum {string} */
+            state: "preparing_handoff" | "stopping_source" | "source_stopped" | "starting_target" | "target_ready" | "delivering_context" | "completed" | "failed";
+            targetHarness: string;
+            /** @enum {string} */
+            targetStartMode?: "fresh" | "resumed";
+            /** Format: date-time */
+            updatedAt: string;
+        };
+        DomainActivity: {
+            /** Format: date-time */
+            lastActivityAt: string;
+            state: string;
+        };
+        SessionPRFacts: {
+            /** @enum {string} */
+            ci: "unknown" | "pending" | "passing" | "failing";
+            /** @enum {string} */
+            mergeability: "unknown" | "mergeable" | "conflicting" | "blocked" | "unstable";
+            number: number;
+            /** @enum {string} */
+            review: "none" | "approved" | "changes_requested" | "review_required";
+            reviewComments: boolean;
+            /** @enum {string} */
+            state: "draft" | "open" | "merged" | "closed";
+            /** Format: date-time */
+            updatedAt: string;
+            url: string;
+        };
+        AttachmentInput: {
+            data: string;
+            mimeType?: string;
+        };
+        SessionPRFailingCheck: {
+            conclusion: string;
+            name: string;
+            /** @enum {string} */
+            status: "failed" | "cancelled";
+            url?: string;
+        };
+        SessionPRCISummary: {
+            autoInjectCI: boolean;
+            failingChecks: components["schemas"]["SessionPRFailingCheck"][];
+            /** @enum {string} */
+            state: "unknown" | "pending" | "passing" | "failing";
+        };
+        SessionPRConflictFile: {
+            path: string;
+            url?: string;
+        };
+        SessionPRMergeabilitySummary: {
+            conflictFiles?: components["schemas"]["SessionPRConflictFile"][];
+            prUrl: string;
+            reasons: string[];
+            /** @enum {string} */
+            state: "unknown" | "mergeable" | "conflicting" | "blocked" | "unstable";
+        };
+        SessionPRReviewCommentLink: {
+            autoInjectReview: boolean;
+            body?: string;
+            file?: string;
+            line?: number;
+            url?: string;
+        };
+        SessionPRUnresolvedReviewer: {
+            count: number;
+            isBot?: boolean;
+            links: components["schemas"]["SessionPRReviewCommentLink"][];
+            reviewUrl?: string;
+            reviewerId: string;
+        };
+        SessionPRReviewEntry: {
+            autoInjectReview: boolean;
+            body?: string;
+            isBot?: boolean;
+            reviewUrl?: string;
+            reviewerId: string;
+            /** Format: date-time */
+            submittedAt: string;
+            /** @enum {string} */
+            verdict: "none" | "approved" | "changes_requested" | "review_required";
+        };
+        SessionPRReviewSummary: {
+            /** @enum {string} */
+            decision: "none" | "approved" | "changes_requested" | "review_required";
+            hasUnresolvedHumanComments: boolean;
+            resolvedBy?: components["schemas"]["SessionPRUnresolvedReviewer"][];
+            reviews?: components["schemas"]["SessionPRReviewEntry"][];
+            unresolvedBy: components["schemas"]["SessionPRUnresolvedReviewer"][];
+        };
+        SessionPRSummary: {
+            additions: number;
+            author: string;
+            changedFiles: number;
+            ci: components["schemas"]["SessionPRCISummary"];
+            /** Format: date-time */
+            ciObservedAt?: string;
+            /** Format: date-time */
+            createdAt?: null | string;
+            deletions: number;
+            headSha: string;
+            htmlUrl?: string;
+            mergeability: components["schemas"]["SessionPRMergeabilitySummary"];
+            number: number;
+            /** Format: date-time */
+            observedAt?: string;
+            /** @enum {string} */
+            provider: "github" | "gitlab";
+            repo: string;
+            review: components["schemas"]["SessionPRReviewSummary"];
+            /** Format: date-time */
+            reviewObservedAt?: string;
+            sourceBranch: string;
+            /** @enum {string} */
+            state: "draft" | "open" | "merged" | "closed";
+            /** Format: date-time */
+            stateChangedAt?: null | string;
+            targetBranch: string;
+            title: string;
+            /** Format: date-time */
+            updatedAt: string;
+            url: string;
+        };
+        ReviewRun: {
+            autoInjectReview: boolean;
+            batchId: string;
+            body: string;
             /** Format: date-time */
             createdAt: string;
             /** Format: date-time */
-            updatedAt: string;
+            deliveredAt?: null | string;
+            githubReviewId: string;
+            harness: string;
+            id: string;
+            prUrl: string;
+            reviewId: string;
+            sessionId: string;
+            status: string;
+            targetSha: string;
+            /** @enum {string} */
+            triggerSource: "manual" | "auto";
+            verdict: string;
+        };
+        PRReviewState: {
+            latestRun?: components["schemas"]["ReviewRun"];
+            prNumber: number;
+            prUrl: string;
+            previousRun?: components["schemas"]["ReviewRun"];
+            /** @enum {string} */
+            status: "needs_review" | "running" | "up_to_date" | "changes_requested" | "ineligible";
+            targetSha: string;
+            title: string;
+        };
+        WorkspaceFileSummary: {
+            additions: number;
+            binary: boolean;
+            deletions: number;
+            path: string;
+            previousPath?: string;
+            /** Format: int64 */
+            size: number;
+            /** @enum {string} */
+            status: "unmodified" | "modified" | "added" | "deleted" | "renamed";
         };
     };
     responses: {
-        /** @description Standard Cloud API error. */
-        Error: {
-            headers: {
-                [name: string]: unknown;
-            };
-            content: {
-                "application/json": components["schemas"]["ErrorEnvelope"];
-            };
-        };
-        /** @description The JSON body, path value, query value, or required header is invalid. */
         BadRequest: {
             headers: {
                 [name: string]: unknown;
             };
-            content: {
-                "application/json": components["schemas"]["ErrorEnvelope"];
-            };
+            content?: never;
         };
-        /** @description The request is syntactically valid but violates a resource constraint. */
-        ValidationError: {
+        Unauthorized: {
             headers: {
                 [name: string]: unknown;
             };
-            content: {
-                "application/json": components["schemas"]["ErrorEnvelope"];
-            };
+            content?: never;
         };
-        /** @description The `Worker` credential is absent, invalid, expired, or belongs to a
-         *     worker epoch that has been replaced.
-         *      */
+        Forbidden: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content?: never;
+        };
+        NotFound: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content?: never;
+        };
+        Conflict: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content?: never;
+        };
+        RateLimited: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content?: never;
+        };
+        InternalError: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content?: never;
+        };
         WorkerUnauthorized: {
             headers: {
                 [name: string]: unknown;
             };
-            content: {
-                "application/json": components["schemas"]["ErrorEnvelope"];
-            };
+            content?: never;
         };
-        /** @description The worker token does not contain the scope required by this operation. */
-        WorkerScopeRequired: {
+        WorkerForbidden: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content?: never;
+        };
+        /** @description Canonical control-plane error with request correlation. */
+        ErrorResponse: {
             headers: {
                 [name: string]: unknown;
             };
@@ -1980,37 +1244,75 @@ export interface components {
                 "application/json": components["schemas"]["ErrorEnvelope"];
             };
         };
-        /** @description Worker routes are not enabled on this deployment. */
-        WorkerRoutesDisabled: {
+        SharedBadRequest: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content?: never;
+        };
+        SharedUnauthorized: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content?: never;
+        };
+        SharedForbidden: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content?: never;
+        };
+        SharedNotFound: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content?: never;
+        };
+        SharedConflict: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content?: never;
+        };
+        SharedUnprocessable: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content?: never;
+        };
+        SharedNotImplemented: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content?: never;
+        };
+        SharedInternalError: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content?: never;
+        };
+        /** @description Canonical shared /api/v1 error envelope. */
+        SharedErrorResponse: {
             headers: {
                 [name: string]: unknown;
             };
             content: {
-                "application/json": components["schemas"]["ErrorEnvelope"];
+                "application/json": components["schemas"]["APIError"];
             };
         };
     };
     parameters: {
+        /** @description Hosted /api/v1 tenant selector. Required when the principal belongs to
+         *     multiple organizations. It is never an authority for control-plane
+         *     admin routes, whose orgId path parameter remains authoritative.
+         *      */
+        XAOOrg: string;
         OrgId: string;
         ProjectId: string;
         SessionId: string;
-        TurnId: string;
-        WorkerRequestId: string;
-        TerminalId: string;
-        /** @description Positive claim attempt returned with the turn. Together with the epoch
-         *     in the worker token, this fences cancellation checks, output, and the
-         *     terminal turn callback.
-         *      */
-        WorkerTurnAttempt: number;
+        OperationId: string;
         InstallationId: string;
-        Cursor: string;
-        Limit: number;
-        EventLimit: number;
-        /** @description Return events with a sequence strictly greater than this value. */
-        After: number;
-        /** @description Reusing a key with the same command returns the original result.
-         *     Reusing it with a different command returns an IDEMPOTENCY_CONFLICT.
-         *      */
         IdempotencyKey: string;
     };
     requestBodies: never;
@@ -2032,21 +1334,22 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Google identity verified and an AO session issued. */
+            /** @description AO session issued. */
             200: {
                 headers: {
-                    /** @description Always `no-store`. */
-                    "Cache-Control"?: string;
                     [name: string]: unknown;
                 };
                 content: {
                     "application/json": components["schemas"]["AOSession"];
                 };
             };
-            default: components["responses"]["Error"];
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
         };
     };
-    refreshAOSession: {
+    refreshCloudSession: {
         parameters: {
             query?: never;
             header?: never;
@@ -2059,21 +1362,22 @@ export interface operations {
             };
         };
         responses: {
-            /** @description The refresh token was consumed and replaced atomically without extending the session's absolute expiry. */
+            /** @description Rotated AO session issued. */
             200: {
                 headers: {
-                    /** @description Always `no-store`. */
-                    "Cache-Control"?: string;
                     [name: string]: unknown;
                 };
                 content: {
                     "application/json": components["schemas"]["AOSession"];
                 };
             };
-            default: components["responses"]["Error"];
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
         };
     };
-    logoutAOSession: {
+    logoutCloudSession: {
         parameters: {
             query?: never;
             header?: never;
@@ -2086,14 +1390,16 @@ export interface operations {
             };
         };
         responses: {
-            /** @description The refresh token was revoked. AO access tokens expire naturally. */
+            /** @description Session revoked. */
             204: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content?: never;
             };
-            default: components["responses"]["Error"];
+            400: components["responses"]["BadRequest"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
         };
     };
     getCurrentAccount: {
@@ -2105,7 +1411,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description The authenticated user and their active organization memberships. */
+            /** @description Current account and memberships. */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -2114,152 +1420,395 @@ export interface operations {
                     "application/json": components["schemas"]["CurrentAccount"];
                 };
             };
-            default: components["responses"]["Error"];
+            401: components["responses"]["Unauthorized"];
+            500: components["responses"]["InternalError"];
         };
     };
-    getGitHubUserConnection: {
+    listHostedProjects: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description Hosted /api/v1 tenant selector. Required when the principal belongs to
+                 *     multiple organizations. It is never an authority for control-plane
+                 *     admin routes, whose orgId path parameter remains authoritative.
+                 *      */
+                "X-AO-Org"?: components["parameters"]["XAOOrg"];
+            };
             path?: never;
             cookie?: never;
         };
         requestBody?: never;
         responses: {
-            /** @description The authenticated user's account-wide GitHub connection. */
+            /** @description Canonical AO project list. */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["GitHubUserConnection"];
+                    "application/json": components["schemas"]["ListProjectsResponse"];
                 };
             };
-            default: components["responses"]["Error"];
+            400: components["responses"]["SharedBadRequest"];
+            401: components["responses"]["SharedUnauthorized"];
+            403: components["responses"]["SharedForbidden"];
+            500: components["responses"]["SharedInternalError"];
         };
     };
-    disconnectGitHubUser: {
+    getHostedProject: {
         parameters: {
             query?: never;
-            header?: never;
-            path?: never;
+            header?: {
+                /** @description Hosted /api/v1 tenant selector. Required when the principal belongs to
+                 *     multiple organizations. It is never an authority for control-plane
+                 *     admin routes, whose orgId path parameter remains authoritative.
+                 *      */
+                "X-AO-Org"?: components["parameters"]["XAOOrg"];
+            };
+            path: {
+                id: components["parameters"]["ProjectId"];
+            };
             cookie?: never;
         };
         requestBody?: never;
         responses: {
-            /** @description The account-wide GitHub authorization was revoked. */
-            204: {
+            /** @description Canonical AO project detail. */
+            200: {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": components["schemas"]["ProjectGetResponse"];
+                };
             };
-            default: components["responses"]["Error"];
+            400: components["responses"]["SharedBadRequest"];
+            401: components["responses"]["SharedUnauthorized"];
+            403: components["responses"]["SharedForbidden"];
+            404: components["responses"]["SharedNotFound"];
+            500: components["responses"]["SharedInternalError"];
         };
     };
-    startGitHubUserAuthorization: {
+    listHostedSessions: {
         parameters: {
-            query?: never;
-            header?: never;
+            query?: {
+                project?: string;
+                active?: boolean | null;
+                orchestratorOnly?: boolean | null;
+                fresh?: boolean | null;
+            };
+            header?: {
+                /** @description Hosted /api/v1 tenant selector. Required when the principal belongs to
+                 *     multiple organizations. It is never an authority for control-plane
+                 *     admin routes, whose orgId path parameter remains authoritative.
+                 *      */
+                "X-AO-Org"?: components["parameters"]["XAOOrg"];
+            };
             path?: never;
             cookie?: never;
         };
         requestBody?: never;
         responses: {
-            /** @description A short-lived account-wide GitHub authorization attempt. */
+            /** @description Canonical AO session list. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ListSessionsResponse"];
+                };
+            };
+            400: components["responses"]["SharedBadRequest"];
+            401: components["responses"]["SharedUnauthorized"];
+            403: components["responses"]["SharedForbidden"];
+            500: components["responses"]["SharedInternalError"];
+        };
+    };
+    spawnHostedSession: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Hosted /api/v1 tenant selector. Required when the principal belongs to
+                 *     multiple organizations. It is never an authority for control-plane
+                 *     admin routes, whose orgId path parameter remains authoritative.
+                 *      */
+                "X-AO-Org"?: components["parameters"]["XAOOrg"];
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SpawnSessionRequest"];
+            };
+        };
+        responses: {
+            /** @description Canonical AO session created. */
             201: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["GitHubUserAuthorizationStart"];
+                    "application/json": components["schemas"]["SpawnSessionResponse"];
                 };
             };
-            default: components["responses"]["Error"];
+            400: components["responses"]["SharedBadRequest"];
+            401: components["responses"]["SharedUnauthorized"];
+            403: components["responses"]["SharedForbidden"];
+            404: components["responses"]["SharedNotFound"];
+            409: components["responses"]["SharedConflict"];
+            500: components["responses"]["SharedInternalError"];
         };
     };
-    completeGitHubUserAuthorization: {
-        parameters: {
-            query: {
-                state: string;
-                code: string;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description GitHub authorization completion page. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "text/html": string;
-                };
-            };
-            default: components["responses"]["Error"];
-        };
-    };
-    listAgents: {
+    getHostedSession: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description Hosted /api/v1 tenant selector. Required when the principal belongs to
+                 *     multiple organizations. It is never an authority for control-plane
+                 *     admin routes, whose orgId path parameter remains authoritative.
+                 *      */
+                "X-AO-Org"?: components["parameters"]["XAOOrg"];
+            };
             path: {
-                orgId: components["parameters"]["OrgId"];
+                sessionId: components["parameters"]["SessionId"];
             };
             cookie?: never;
         };
         requestBody?: never;
         responses: {
-            /** @description Agent profiles supplied by the runtime and organization host. */
+            /** @description Canonical AO session. */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        agents: components["schemas"]["AgentProfile"][];
-                    };
+                    "application/json": components["schemas"]["SessionResponse"];
                 };
             };
-            default: components["responses"]["Error"];
+            401: components["responses"]["SharedUnauthorized"];
+            403: components["responses"]["SharedForbidden"];
+            404: components["responses"]["SharedNotFound"];
+            500: components["responses"]["SharedInternalError"];
         };
     };
-    listProjects: {
-        parameters: {
-            query?: {
-                cursor?: components["parameters"]["Cursor"];
-                limit?: components["parameters"]["Limit"];
-            };
-            header?: never;
-            path: {
-                orgId: components["parameters"]["OrgId"];
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description A page of projects in the tenant. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ProjectPage"];
-                };
-            };
-            default: components["responses"]["Error"];
-        };
-    };
-    createProject: {
+    sendHostedSessionMessage: {
         parameters: {
             query?: never;
             header: {
-                /** @description Reusing a key with the same command returns the original result.
-                 *     Reusing it with a different command returns an IDEMPOTENCY_CONFLICT.
+                /** @description Hosted /api/v1 tenant selector. Required when the principal belongs to
+                 *     multiple organizations. It is never an authority for control-plane
+                 *     admin routes, whose orgId path parameter remains authoritative.
                  *      */
+                "X-AO-Org"?: components["parameters"]["XAOOrg"];
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                sessionId: components["parameters"]["SessionId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SendSessionMessageRequest"];
+            };
+        };
+        responses: {
+            /** @description Canonical AO send result. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SendSessionMessageResponse"];
+                };
+            };
+            400: components["responses"]["SharedBadRequest"];
+            401: components["responses"]["SharedUnauthorized"];
+            403: components["responses"]["SharedForbidden"];
+            404: components["responses"]["SharedNotFound"];
+            409: components["responses"]["SharedConflict"];
+            500: components["responses"]["SharedInternalError"];
+        };
+    };
+    listHostedSessionPullRequests: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Hosted /api/v1 tenant selector. Required when the principal belongs to
+                 *     multiple organizations. It is never an authority for control-plane
+                 *     admin routes, whose orgId path parameter remains authoritative.
+                 *      */
+                "X-AO-Org"?: components["parameters"]["XAOOrg"];
+            };
+            path: {
+                sessionId: components["parameters"]["SessionId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Canonical AO pull-request facts. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ListSessionPRsResponse"];
+                };
+            };
+            401: components["responses"]["SharedUnauthorized"];
+            403: components["responses"]["SharedForbidden"];
+            404: components["responses"]["SharedNotFound"];
+            500: components["responses"]["SharedInternalError"];
+            501: components["responses"]["SharedNotImplemented"];
+        };
+    };
+    listHostedSessionReviews: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Hosted /api/v1 tenant selector. Required when the principal belongs to
+                 *     multiple organizations. It is never an authority for control-plane
+                 *     admin routes, whose orgId path parameter remains authoritative.
+                 *      */
+                "X-AO-Org"?: components["parameters"]["XAOOrg"];
+            };
+            path: {
+                sessionId: components["parameters"]["SessionId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Canonical AO review state. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ListReviewsResponse"];
+                };
+            };
+            401: components["responses"]["SharedUnauthorized"];
+            403: components["responses"]["SharedForbidden"];
+            422: components["responses"]["SharedUnprocessable"];
+            501: components["responses"]["SharedNotImplemented"];
+        };
+    };
+    listHostedWorkspaceFiles: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Hosted /api/v1 tenant selector. Required when the principal belongs to
+                 *     multiple organizations. It is never an authority for control-plane
+                 *     admin routes, whose orgId path parameter remains authoritative.
+                 *      */
+                "X-AO-Org"?: components["parameters"]["XAOOrg"];
+            };
+            path: {
+                sessionId: components["parameters"]["SessionId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Canonical AO workspace file list. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ListWorkspaceFilesResponse"];
+                };
+            };
+            400: components["responses"]["SharedBadRequest"];
+            401: components["responses"]["SharedUnauthorized"];
+            403: components["responses"]["SharedForbidden"];
+            404: components["responses"]["SharedNotFound"];
+            500: components["responses"]["SharedInternalError"];
+            501: components["responses"]["SharedNotImplemented"];
+        };
+    };
+    readHostedWorkspaceFile: {
+        parameters: {
+            query: {
+                path: string;
+            };
+            header?: {
+                /** @description Hosted /api/v1 tenant selector. Required when the principal belongs to
+                 *     multiple organizations. It is never an authority for control-plane
+                 *     admin routes, whose orgId path parameter remains authoritative.
+                 *      */
+                "X-AO-Org"?: components["parameters"]["XAOOrg"];
+            };
+            path: {
+                sessionId: components["parameters"]["SessionId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Canonical AO workspace file and diff. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceFileResponse"];
+                };
+            };
+            400: components["responses"]["SharedBadRequest"];
+            401: components["responses"]["SharedUnauthorized"];
+            403: components["responses"]["SharedForbidden"];
+            404: components["responses"]["SharedNotFound"];
+            500: components["responses"]["SharedInternalError"];
+            501: components["responses"]["SharedNotImplemented"];
+        };
+    };
+    createSandboxTerminalConnection: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Hosted /api/v1 tenant selector. Required when the principal belongs to
+                 *     multiple organizations. It is never an authority for control-plane
+                 *     admin routes, whose orgId path parameter remains authoritative.
+                 *      */
+                "X-AO-Org"?: components["parameters"]["XAOOrg"];
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                sessionId: components["parameters"]["SessionId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TerminalConnectionRequest"];
+            };
+        };
+        responses: {
+            /** @description One-time sandbox mux connection metadata. */
+            201: {
+                headers: {
+                    "Cache-Control"?: "no-store";
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TerminalConnection"];
+                };
+            };
+            400: components["responses"]["SharedBadRequest"];
+            401: components["responses"]["SharedUnauthorized"];
+            403: components["responses"]["SharedForbidden"];
+            404: components["responses"]["SharedNotFound"];
+            409: components["responses"]["SharedConflict"];
+            500: components["responses"]["SharedInternalError"];
+        };
+    };
+    createWorkspacePlacement: {
+        parameters: {
+            query?: never;
+            header: {
                 "Idempotency-Key": components["parameters"]["IdempotencyKey"];
             };
             path: {
@@ -2269,76 +1818,51 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["CreateProjectInput"];
+                "application/json": components["schemas"]["CreateWorkspacePlacementInput"];
             };
         };
         responses: {
-            /** @description Project created. */
-            201: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        project: components["schemas"]["Project"];
-                    };
-                };
-            };
-            default: components["responses"]["Error"];
-        };
-    };
-    deleteProject: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                orgId: components["parameters"]["OrgId"];
-                projectId: components["parameters"]["ProjectId"];
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Project archived and sandbox teardown accepted. */
+            /** @description Placement operation accepted. */
             202: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["DeleteProjectResponse"];
+                    "application/json": components["schemas"]["WorkspacePlacementOperation"];
                 };
             };
-            default: components["responses"]["Error"];
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            409: components["responses"]["Conflict"];
+            500: components["responses"]["InternalError"];
         };
     };
-    updateProject: {
+    getWorkspacePlacement: {
         parameters: {
             query?: never;
             header?: never;
             path: {
                 orgId: components["parameters"]["OrgId"];
-                projectId: components["parameters"]["ProjectId"];
+                operationId: components["parameters"]["OperationId"];
             };
             cookie?: never;
         };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["UpdateProjectInput"];
-            };
-        };
+        requestBody?: never;
         responses: {
-            /** @description Project settings updated. */
+            /** @description Current placement operation state. */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        project: components["schemas"]["Project"];
-                    };
+                    "application/json": components["schemas"]["WorkspacePlacementOperation"];
                 };
             };
-            default: components["responses"]["Error"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["InternalError"];
         };
     };
     listGitHubInstallations: {
@@ -2352,18 +1876,18 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description GitHub App installations connected to the organization. */
+            /** @description Organization GitHub App installations. */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        installations: components["schemas"]["GitHubInstallation"][];
-                    };
+                    "application/json": components["schemas"]["GitHubInstallationList"];
                 };
             };
-            default: components["responses"]["Error"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            500: components["responses"]["InternalError"];
         };
     };
     startGitHubInstallation: {
@@ -2377,42 +1901,19 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description A short-lived GitHub App installation attempt. */
+            /** @description Single-use installation flow started. */
             201: {
                 headers: {
+                    "Cache-Control"?: "no-store";
                     [name: string]: unknown;
                 };
                 content: {
                     "application/json": components["schemas"]["GitHubInstallationStart"];
                 };
             };
-            default: components["responses"]["Error"];
-        };
-    };
-    syncGitHubInstallation: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                orgId: components["parameters"]["OrgId"];
-                installationId: components["parameters"]["InstallationId"];
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Repository synchronization accepted. */
-            202: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        installation: components["schemas"]["GitHubInstallation"];
-                    };
-                };
-            };
-            default: components["responses"]["Error"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            500: components["responses"]["InternalError"];
         };
     };
     disconnectGitHubInstallation: {
@@ -2427,431 +1928,115 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description The GitHub App installation was disconnected from AO. */
-            200: {
+            /** @description Installation disconnected. */
+            204: {
                 headers: {
                     [name: string]: unknown;
                 };
-                content: {
-                    "application/json": {
-                        installation: components["schemas"]["GitHubInstallation"];
-                    };
-                };
+                content?: never;
             };
-            default: components["responses"]["Error"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["InternalError"];
         };
     };
-    listGitHubRepositories: {
+    listGitHubInstallationRepositories: {
         parameters: {
-            query?: {
-                cursor?: components["parameters"]["Cursor"];
-                limit?: components["parameters"]["Limit"];
-            };
+            query?: never;
             header?: never;
             path: {
                 orgId: components["parameters"]["OrgId"];
+                installationId: components["parameters"]["InstallationId"];
             };
             cookie?: never;
         };
         requestBody?: never;
         responses: {
-            /** @description A page of repositories currently or historically granted to the organization. */
+            /** @description Repositories visible through the installation. */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["GitHubRepositoryPage"];
+                    "application/json": components["schemas"]["GitHubRepositoryList"];
                 };
             };
-            default: components["responses"]["Error"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["InternalError"];
         };
     };
-    createProjectFromGitHub: {
+    setGitHubRepositoryAllowlist: {
         parameters: {
             query?: never;
-            header: {
-                /** @description Reusing a key with the same command returns the original result.
-                 *     Reusing it with a different command returns an IDEMPOTENCY_CONFLICT.
-                 *      */
-                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
-            };
+            header?: never;
             path: {
                 orgId: components["parameters"]["OrgId"];
+                installationId: components["parameters"]["InstallationId"];
             };
             cookie?: never;
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["CreateGitHubProjectInput"];
+                "application/json": components["schemas"]["GitHubRepositoryAllowlistInput"];
             };
         };
         responses: {
-            /** @description Project created from an actively granted GitHub repository. */
-            201: {
+            /** @description Updated repository allowlist. */
+            200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        project: components["schemas"]["Project"];
-                    };
+                    "application/json": components["schemas"]["GitHubRepositoryList"];
                 };
             };
-            default: components["responses"]["Error"];
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["InternalError"];
         };
     };
-    createGitHubScratchProject: {
+    syncGitHubInstallation: {
         parameters: {
             query?: never;
             header: {
-                /** @description Reusing a key with the same command returns the original result.
-                 *     Reusing it with a different command returns an IDEMPOTENCY_CONFLICT.
-                 *      */
                 "Idempotency-Key": components["parameters"]["IdempotencyKey"];
             };
             path: {
                 orgId: components["parameters"]["OrgId"];
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["CreateGitHubScratchProjectInput"];
-            };
-        };
-        responses: {
-            /** @description GitHub repository, AO project, and first orchestrator created. */
-            201: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["CreateGitHubScratchProjectResponse"];
-                };
-            };
-            default: components["responses"]["Error"];
-        };
-    };
-    listSessions: {
-        parameters: {
-            query?: {
-                cursor?: components["parameters"]["Cursor"];
-                limit?: components["parameters"]["Limit"];
-                projectId?: string;
-            };
-            header?: never;
-            path: {
-                orgId: components["parameters"]["OrgId"];
+                installationId: components["parameters"]["InstallationId"];
             };
             cookie?: never;
         };
         requestBody?: never;
         responses: {
-            /** @description A page of sessions in the tenant. */
+            /** @description Synchronized repositories. */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["SessionPage"];
+                    "application/json": components["schemas"]["GitHubRepositoryList"];
                 };
             };
-            default: components["responses"]["Error"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            500: components["responses"]["InternalError"];
         };
     };
-    createSession: {
-        parameters: {
-            query?: never;
-            header: {
-                /** @description Reusing a key with the same command returns the original result.
-                 *     Reusing it with a different command returns an IDEMPOTENCY_CONFLICT.
-                 *      */
-                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
-            };
-            path: {
-                orgId: components["parameters"]["OrgId"];
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["CreateSessionInput"];
-            };
-        };
-        responses: {
-            /** @description Session created. */
-            201: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        session: components["schemas"]["Session"];
-                    };
-                };
-            };
-            default: components["responses"]["Error"];
-        };
-    };
-    getSession: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                orgId: components["parameters"]["OrgId"];
-                sessionId: components["parameters"]["SessionId"];
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Session details. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        session: components["schemas"]["Session"];
-                    };
-                };
-            };
-            default: components["responses"]["Error"];
-        };
-    };
-    deleteSession: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                orgId: components["parameters"]["OrgId"];
-                sessionId: components["parameters"]["SessionId"];
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Session sandbox deletion was requested; durable history is retained. */
-            202: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DeleteSessionResponse"];
-                };
-            };
-            default: components["responses"]["Error"];
-        };
-    };
-    listSessionPullRequests: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                orgId: components["parameters"]["OrgId"];
-                sessionId: components["parameters"]["SessionId"];
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Normalized provider pull-request observations for the session. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["SessionPullRequests"];
-                };
-            };
-            default: components["responses"]["Error"];
-        };
-    };
-    getSessionReviewState: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                orgId: components["parameters"]["OrgId"];
-                sessionId: components["parameters"]["SessionId"];
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description AO review planning state and recorded runs for the session. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["SessionReviewState"];
-                };
-            };
-            default: components["responses"]["Error"];
-        };
-    };
-    sendMessage: {
-        parameters: {
-            query?: never;
-            header: {
-                /** @description Reusing a key with the same command returns the original result.
-                 *     Reusing it with a different command returns an IDEMPOTENCY_CONFLICT.
-                 *      */
-                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
-            };
-            path: {
-                orgId: components["parameters"]["OrgId"];
-                sessionId: components["parameters"]["SessionId"];
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": {
-                    text: string;
-                };
-            };
-        };
-        responses: {
-            /** @description Message accepted and durably appended. */
-            202: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        event: components["schemas"]["UserMessageEvent"];
-                    };
-                };
-            };
-            default: components["responses"]["Error"];
-        };
-    };
-    cancelTurn: {
-        parameters: {
-            query?: never;
-            header: {
-                /** @description Reusing a key with the same command returns the original result.
-                 *     Reusing it with a different command returns an IDEMPOTENCY_CONFLICT.
-                 *      */
-                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
-            };
-            path: {
-                orgId: components["parameters"]["OrgId"];
-                sessionId: components["parameters"]["SessionId"];
-                turnId: components["parameters"]["TurnId"];
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Cancellation was durably requested for the turn. */
-            202: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["WorkerOKResponse"];
-                };
-            };
-            default: components["responses"]["Error"];
-        };
-    };
-    replayClientEvents: {
-        parameters: {
-            query?: {
-                /** @description Return events with a sequence strictly greater than this value. */
-                after?: components["parameters"]["After"];
-                limit?: components["parameters"]["EventLimit"];
-            };
-            header?: never;
-            path: {
-                orgId: components["parameters"]["OrgId"];
-                sessionId: components["parameters"]["SessionId"];
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Client-visible events after the supplied sequence. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ClientEventPage"];
-                };
-            };
-            default: components["responses"]["Error"];
-        };
-    };
-    streamClientEvents: {
-        parameters: {
-            query?: {
-                /** @description Return events with a sequence strictly greater than this value. */
-                after?: components["parameters"]["After"];
-            };
-            header?: never;
-            path: {
-                orgId: components["parameters"]["OrgId"];
-                sessionId: components["parameters"]["SessionId"];
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Replay followed by live client-visible events. Each SSE data field
-             *     contains a ClientEvent; the SSE id is its sequence.
-             *      */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "text/event-stream": string;
-                };
-            };
-            default: components["responses"]["Error"];
-        };
-    };
-    createTerminalTicket: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                orgId: components["parameters"]["OrgId"];
-                sessionId: components["parameters"]["SessionId"];
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": {
-                    kind: components["schemas"]["TerminalKind"];
-                };
-            };
-        };
-        responses: {
-            /** @description Short-lived, single-use terminal access ticket. */
-            201: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["TerminalTicket"];
-                };
-            };
-            default: components["responses"]["Error"];
-        };
-    };
-    connectTerminal: {
+    completeGitHubInstallation: {
         parameters: {
             query: {
-                ticket: string;
-                after?: number;
-                kind: components["schemas"]["TerminalKind"];
+                state: string;
+                installation_id: number;
+                setup_action?: string;
+                code?: string;
             };
             header?: never;
             path?: never;
@@ -2859,203 +2044,67 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description WebSocket protocol upgrade accepted. */
-            101: {
+            /** @description Installation linked when no completion redirect is configured. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GitHubInstallation"];
+                };
+            };
+            /** @description Browser redirected to the configured completion URL. */
+            302: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content?: never;
             };
-            default: components["responses"]["Error"];
+            400: components["responses"]["BadRequest"];
+            409: components["responses"]["Conflict"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
         };
     };
-    listWorkspaceFiles: {
-        parameters: {
-            query?: {
-                path?: string;
-                cursor?: components["parameters"]["Cursor"];
-                limit?: components["parameters"]["Limit"];
-            };
-            header?: never;
-            path: {
-                orgId: components["parameters"]["OrgId"];
-                sessionId: components["parameters"]["SessionId"];
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description A page of entries in a workspace directory. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["WorkspaceEntryPage"];
-                };
-            };
-            default: components["responses"]["Error"];
-        };
-    };
-    readWorkspaceFile: {
-        parameters: {
-            query: {
-                path: string;
-            };
-            header?: never;
-            path: {
-                orgId: components["parameters"]["OrgId"];
-                sessionId: components["parameters"]["SessionId"];
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description UTF-8 workspace file contents. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["WorkspaceFile"];
-                };
-            };
-            default: components["responses"]["Error"];
-        };
-    };
-    writeWorkspaceFile: {
+    receiveGitHubWebhook: {
         parameters: {
             query?: never;
-            header?: never;
-            path: {
-                orgId: components["parameters"]["OrgId"];
-                sessionId: components["parameters"]["SessionId"];
+            header: {
+                "X-GitHub-Event": string;
+                "X-GitHub-Delivery": string;
+                "X-Hub-Signature-256": string;
             };
+            path?: never;
             cookie?: never;
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["WorkspaceFileWriteInput"];
+                "application/json": {
+                    [key: string]: unknown;
+                };
             };
         };
         responses: {
-            /** @description The updated UTF-8 workspace file. */
-            200: {
+            /** @description Authenticated delivery accepted or deduplicated. */
+            202: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["WorkspaceFile"];
+                    "application/json": components["schemas"]["GitHubWebhookAcceptance"];
                 };
             };
-            default: components["responses"]["Error"];
+            401: components["responses"]["Unauthorized"];
+            413: components["responses"]["BadRequest"];
+            429: components["responses"]["RateLimited"];
         };
     };
-    getWorkspaceDiff: {
+    acknowledgeWorkerBootstrap: {
         parameters: {
             query?: never;
-            header?: never;
-            path: {
-                orgId: components["parameters"]["OrgId"];
-                sessionId: components["parameters"]["SessionId"];
+            header: {
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
             };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Workspace changes relative to the session compare base. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["WorkspaceDiff"];
-                };
-            };
-            default: components["responses"]["Error"];
-        };
-    };
-    listProviderConnections: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                orgId: components["parameters"]["OrgId"];
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Redacted provider connection metadata. Secrets are never returned. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        providerConnections: components["schemas"]["RedactedProviderConnection"][];
-                    };
-                };
-            };
-            default: components["responses"]["Error"];
-        };
-    };
-    putAgentProviderConnection: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                orgId: components["parameters"]["OrgId"];
-                provider: "claude-code" | "codex" | "cursor";
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["PutAgentProviderConnectionInput"];
-            };
-        };
-        responses: {
-            /** @description The validated coding-agent credential was encrypted and stored. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        providerConnection: components["schemas"]["RedactedProviderConnection"];
-                    };
-                };
-            };
-            default: components["responses"]["Error"];
-        };
-    };
-    deleteAgentProviderConnection: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                orgId: components["parameters"]["OrgId"];
-                provider: "claude-code" | "codex" | "cursor";
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description The coding-agent credential was disconnected. */
-            204: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            default: components["responses"]["Error"];
-        };
-    };
-    bootstrapWorker: {
-        parameters: {
-            query?: never;
-            header?: never;
             path?: never;
             cookie?: never;
         };
@@ -3065,21 +2114,44 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Bootstrap succeeded and the one-time ticket was consumed. */
+            /** @description Bootstrap delivery consumed or replayed idempotently. */
+            200: {
+                headers: {
+                    "Cache-Control"?: "no-store";
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkerBootstrapGrant"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["WorkerUnauthorized"];
+            403: components["responses"]["WorkerForbidden"];
+            409: components["responses"]["Conflict"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    getWorkerStatus: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Capability-scoped worker and placement status. */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["WorkerBootstrapResponse"];
+                    "application/json": components["schemas"]["WorkerStatus"];
                 };
             };
-            400: components["responses"]["BadRequest"];
-            /** @description The bootstrap token is missing, invalid, expired, or already used. */
-            401: components["responses"]["Error"];
-            /** @description Worker bootstrap is not enabled on this deployment. */
-            404: components["responses"]["Error"];
-            500: components["responses"]["Error"];
+            401: components["responses"]["WorkerUnauthorized"];
+            403: components["responses"]["WorkerForbidden"];
+            500: components["responses"]["InternalError"];
         };
     };
     heartbeatWorker: {
@@ -3095,297 +2167,55 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Liveness was recorded and a replacement token was issued. */
+            /** @description Liveness recorded without returning a replacement bearer. */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["WorkerHeartbeatResponse"];
-                };
-            };
-            400: components["responses"]["BadRequest"];
-            401: components["responses"]["WorkerUnauthorized"];
-            403: components["responses"]["WorkerScopeRequired"];
-            404: components["responses"]["WorkerRoutesDisabled"];
-            500: components["responses"]["Error"];
-        };
-    };
-    publishWorkerEvent: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["WorkerEventInput"];
-            };
-        };
-        responses: {
-            /** @description The event was durably accepted. */
-            202: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["WorkerOKResponse"];
-                };
-            };
-            400: components["responses"]["BadRequest"];
-            401: components["responses"]["WorkerUnauthorized"];
-            403: components["responses"]["WorkerScopeRequired"];
-            404: components["responses"]["Error"];
-            /** @description The turn has finished or another epoch or attempt owns it. */
-            409: components["responses"]["Error"];
-        };
-    };
-    claimWorkerTurn: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["EmptyObject"];
-            };
-        };
-        responses: {
-            /** @description The claimed turn, or null when no turn is available. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["WorkerClaimTurnResponse"];
-                };
-            };
-            400: components["responses"]["BadRequest"];
-            401: components["responses"]["WorkerUnauthorized"];
-            403: components["responses"]["WorkerScopeRequired"];
-            404: components["responses"]["WorkerRoutesDisabled"];
-        };
-    };
-    getWorkerTurnCancellation: {
-        parameters: {
-            query: {
-                /** @description Positive claim attempt returned with the turn. Together with the epoch
-                 *     in the worker token, this fences cancellation checks, output, and the
-                 *     terminal turn callback.
-                 *      */
-                attempt: components["parameters"]["WorkerTurnAttempt"];
-            };
-            header?: never;
-            path: {
-                turnId: components["parameters"]["TurnId"];
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Current cancellation state for this fenced attempt. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["WorkerCancellationResponse"];
-                };
-            };
-            400: components["responses"]["BadRequest"];
-            401: components["responses"]["WorkerUnauthorized"];
-            403: components["responses"]["WorkerScopeRequired"];
-            404: components["responses"]["Error"];
-            /** @description The turn has finished or another epoch or attempt owns it. */
-            409: components["responses"]["Error"];
-        };
-    };
-    completeWorkerTurn: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                turnId: components["parameters"]["TurnId"];
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["WorkerCompleteTurnInput"];
-            };
-        };
-        responses: {
-            /** @description The fenced completion was accepted. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["WorkerFinishTurnResponse"];
-                };
-            };
-            400: components["responses"]["BadRequest"];
-            401: components["responses"]["WorkerUnauthorized"];
-            403: components["responses"]["WorkerScopeRequired"];
-            404: components["responses"]["Error"];
-            /** @description Another epoch or attempt owns the turn. */
-            409: components["responses"]["Error"];
-            422: components["responses"]["ValidationError"];
-        };
-    };
-    failWorkerTurn: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                turnId: components["parameters"]["TurnId"];
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["WorkerFailTurnInput"];
-            };
-        };
-        responses: {
-            /** @description The fenced failure was accepted. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["WorkerFinishTurnResponse"];
-                };
-            };
-            400: components["responses"]["BadRequest"];
-            401: components["responses"]["WorkerUnauthorized"];
-            403: components["responses"]["WorkerScopeRequired"];
-            404: components["responses"]["Error"];
-            /** @description Another epoch or attempt owns the turn. */
-            409: components["responses"]["Error"];
-            422: components["responses"]["ValidationError"];
-        };
-    };
-    getWorkerCredential: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description The decrypted session-scoped coding-agent credential. */
-            200: {
-                headers: {
-                    "Cache-Control"?: "no-store";
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["WorkerCredentialResponse"];
+                    "application/json": components["schemas"]["WorkerStatus"];
                 };
             };
             401: components["responses"]["WorkerUnauthorized"];
-            403: components["responses"]["WorkerScopeRequired"];
-            404: components["responses"]["Error"];
-            422: components["responses"]["ValidationError"];
-            503: components["responses"]["Error"];
+            403: components["responses"]["WorkerForbidden"];
+            500: components["responses"]["InternalError"];
         };
     };
-    createWorkerCheckoutGrant: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description A short-lived checkout grant. */
-            200: {
-                headers: {
-                    "Cache-Control"?: "no-store";
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["WorkerCheckoutGrantResponse"];
-                };
-            };
-            401: components["responses"]["WorkerUnauthorized"];
-            403: components["responses"]["WorkerScopeRequired"];
-            404: components["responses"]["WorkerRoutesDisabled"];
-            502: components["responses"]["Error"];
-            503: components["responses"]["Error"];
-        };
-    };
-    listWorkerChildren: {
-        parameters: {
-            query?: {
-                cursor?: components["parameters"]["Cursor"];
-                limit?: components["parameters"]["Limit"];
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description A page of direct child sessions owned by this orchestrator. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["SessionPage"];
-                };
-            };
-            400: components["responses"]["BadRequest"];
-            401: components["responses"]["WorkerUnauthorized"];
-            403: components["responses"]["WorkerScopeRequired"];
-            404: components["responses"]["Error"];
-        };
-    };
-    createWorkerChild: {
+    sendWorkerSessionMessage: {
         parameters: {
             query?: never;
             header: {
-                /** @description Reusing a key with the same command returns the original result.
-                 *     Reusing it with a different command returns an IDEMPOTENCY_CONFLICT.
-                 *      */
                 "Idempotency-Key": components["parameters"]["IdempotencyKey"];
             };
-            path?: never;
+            path: {
+                sessionId: components["parameters"]["SessionId"];
+            };
             cookie?: never;
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["CreateWorkerChildInput"];
+                "application/json": components["schemas"]["SendSessionMessageRequest"];
             };
         };
         responses: {
-            /** @description A worker child was created under this orchestrator. */
-            201: {
+            /** @description Canonical AO send result. */
+            200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        session: components["schemas"]["Session"];
-                    };
+                    "application/json": components["schemas"]["SendSessionMessageResponse"];
                 };
             };
-            400: components["responses"]["BadRequest"];
+            400: components["responses"]["SharedBadRequest"];
             401: components["responses"]["WorkerUnauthorized"];
-            403: components["responses"]["WorkerScopeRequired"];
-            409: components["responses"]["Error"];
-            422: components["responses"]["ValidationError"];
-            500: components["responses"]["Error"];
+            403: components["responses"]["WorkerForbidden"];
+            404: components["responses"]["SharedNotFound"];
+            409: components["responses"]["SharedConflict"];
+            500: components["responses"]["SharedInternalError"];
         };
     };
-    deleteWorkerChild: {
+    listWorkerSessionPullRequests: {
         parameters: {
             query?: never;
             header?: never;
@@ -3396,231 +2226,77 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Child sandbox deletion was requested. */
-            202: {
+            /** @description Canonical AO pull-request facts. */
+            200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["DeleteSessionResponse"];
+                    "application/json": components["schemas"]["ListSessionPRsResponse"];
                 };
             };
             401: components["responses"]["WorkerUnauthorized"];
-            403: components["responses"]["WorkerScopeRequired"];
-            404: components["responses"]["Error"];
+            403: components["responses"]["WorkerForbidden"];
+            404: components["responses"]["SharedNotFound"];
+            500: components["responses"]["SharedInternalError"];
         };
     };
-    sendWorkerChildMessage: {
+    listWorkerSessionReviews: {
         parameters: {
             query?: never;
-            header: {
-                /** @description Reusing a key with the same command returns the original result.
-                 *     Reusing it with a different command returns an IDEMPOTENCY_CONFLICT.
-                 *      */
-                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
-            };
+            header?: never;
             path: {
                 sessionId: components["parameters"]["SessionId"];
             };
             cookie?: never;
         };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["SendMessageInput"];
-            };
-        };
-        responses: {
-            /** @description The message was durably appended to the direct child. */
-            202: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        event: components["schemas"]["UserMessageEvent"];
-                    };
-                };
-            };
-            400: components["responses"]["BadRequest"];
-            401: components["responses"]["WorkerUnauthorized"];
-            403: components["responses"]["WorkerScopeRequired"];
-            404: components["responses"]["Error"];
-            422: components["responses"]["ValidationError"];
-        };
-    };
-    claimWorkerTransport: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["EmptyObject"];
-            };
-        };
-        responses: {
-            /** @description The claimed command, or null when none is available. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["WorkerClaimTransportResponse"];
-                };
-            };
-            401: components["responses"]["WorkerUnauthorized"];
-            403: components["responses"]["WorkerScopeRequired"];
-            404: components["responses"]["WorkerRoutesDisabled"];
-        };
-    };
-    completeWorkerTransport: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                requestId: components["parameters"]["WorkerRequestId"];
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["WorkerCompleteTransportInput"];
-            };
-        };
-        responses: {
-            /** @description The command result was durably recorded. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["WorkerOKResponse"];
-                };
-            };
-            400: components["responses"]["BadRequest"];
-            401: components["responses"]["WorkerUnauthorized"];
-            403: components["responses"]["WorkerScopeRequired"];
-            /** @description The command is no longer claimed or has expired. */
-            409: components["responses"]["Error"];
-        };
-    };
-    failWorkerTransport: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                requestId: components["parameters"]["WorkerRequestId"];
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["WorkerFailTransportInput"];
-            };
-        };
-        responses: {
-            /** @description The command failure was durably recorded. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["WorkerOKResponse"];
-                };
-            };
-            400: components["responses"]["BadRequest"];
-            401: components["responses"]["WorkerUnauthorized"];
-            403: components["responses"]["WorkerScopeRequired"];
-            /** @description The command is no longer claimed or has expired. */
-            409: components["responses"]["Error"];
-            422: components["responses"]["ValidationError"];
-        };
-    };
-    ensureWorkerAgentTerminal: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
         requestBody?: never;
         responses: {
-            /** @description The agent terminal is ready for process attachment. */
+            /** @description Canonical AO review state. */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["WorkerAgentTerminalResponse"];
+                    "application/json": components["schemas"]["ListReviewsResponse"];
                 };
             };
             401: components["responses"]["WorkerUnauthorized"];
-            403: components["responses"]["WorkerScopeRequired"];
-            409: components["responses"]["Error"];
+            403: components["responses"]["WorkerForbidden"];
+            422: components["responses"]["SharedUnprocessable"];
+            500: components["responses"]["SharedInternalError"];
         };
     };
-    publishWorkerTerminalOutput: {
+    requestWorkerCheckoutGrant: {
         parameters: {
             query?: never;
-            header?: never;
-            path: {
-                terminalId: components["parameters"]["TerminalId"];
+            header: {
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
             };
+            path?: never;
             cookie?: never;
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["WorkerTerminalOutputInput"];
+                "application/json": components["schemas"]["WorkerCheckoutGrantInput"];
             };
         };
         responses: {
-            /** @description The output frame was appended. */
+            /** @description Checkout delivery accepted. */
             202: {
                 headers: {
+                    "Cache-Control"?: "no-store";
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["WorkerTerminalOutputResponse"];
+                    "application/json": components["schemas"]["WorkerCheckoutGrant"];
                 };
             };
             400: components["responses"]["BadRequest"];
             401: components["responses"]["WorkerUnauthorized"];
-            403: components["responses"]["WorkerScopeRequired"];
-            /** @description The terminal is closed, expired, over quota, or no longer current. */
-            409: components["responses"]["Error"];
-            422: components["responses"]["ValidationError"];
-        };
-    };
-    publishWorkerTerminalExit: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                terminalId: components["parameters"]["TerminalId"];
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["WorkerTerminalExitInput"];
-            };
-        };
-        responses: {
-            /** @description The terminal exit was recorded. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["WorkerOKResponse"];
-                };
-            };
-            400: components["responses"]["BadRequest"];
-            401: components["responses"]["WorkerUnauthorized"];
-            403: components["responses"]["WorkerScopeRequired"];
-            409: components["responses"]["Error"];
+            403: components["responses"]["WorkerForbidden"];
+            409: components["responses"]["Conflict"];
+            500: components["responses"]["InternalError"];
         };
     };
 }
