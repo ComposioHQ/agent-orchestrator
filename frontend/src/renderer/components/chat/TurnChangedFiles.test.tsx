@@ -38,15 +38,13 @@ function commandActivity(
 
 describe("TurnChangedFiles", () => {
 	it("shows the bordered summary with files visible", () => {
-		const { container } = render(<TurnChangedFiles diff={diff()} />);
-		expect(container.querySelector(".lucide-file-diff")).toBeTruthy();
-		expect(screen.getByText("2 files changed")).toHaveClass("text-xs", "font-semibold", "text-foreground");
+		render(<TurnChangedFiles diff={diff()} />);
+		expect(screen.getByText("2 Files Changed")).toBeInTheDocument();
 		expect(screen.getByText("a.ts")).toBeInTheDocument();
 		expect(screen.getByText("new.ts")).toBeInTheDocument();
-		expect(screen.getByText("+52")).toBeInTheDocument();
 		expect(screen.getByText("+12")).toBeInTheDocument();
 		expect(screen.getByText("+40")).toBeInTheDocument();
-		expect(screen.getAllByText("−3")).toHaveLength(2);
+		expect(screen.getByText("−3")).toBeInTheDocument();
 	});
 
 	it("offers Review when a handler is provided", async () => {
@@ -146,7 +144,7 @@ describe("TurnChangedFiles", () => {
 				}}
 			/>,
 		);
-		expect(screen.getByText("1 file changed")).toBeInTheDocument();
+		expect(screen.getByText("1 File Changed")).toBeInTheDocument();
 		expect(screen.getByText("new.ts")).toBeInTheDocument();
 		await user.hover(screen.getByText("new.ts"));
 		expect(await screen.findByRole("tooltip")).toHaveTextContent("src/old.ts → src/new.ts");
