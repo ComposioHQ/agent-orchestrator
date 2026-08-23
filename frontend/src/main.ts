@@ -350,27 +350,19 @@ function appendDaemonOutput(text: string): void {
 	if (nextStatus !== daemonStatus) setDaemonStatus(nextStatus);
 }
 
-// Electron's built-in toggleDevTools role assumes focus belongs to a
-// BrowserWindow. AO uses WebContentsView children, so every native DevTools
-// command must go through a guarded target selection instead.
-function toggleDevToolsForFocusedSurface(): void {
-	const fallback = () => getShellWebContents()?.toggleDevTools();
-	const host = browserViewHost;
-	if (!host) {
-		fallback();
-		return;
-	}
-	void host.toggleDevToolsForLastFocused().then((state) => {
-		if (!state) fallback();
-	}).catch(fallback);
-}
-
+// Menu installed on Windows where the native menu bar is hidden. The bar stays
+// out of sight, but the roles keep their accelerators alive (Reload, zoom, full
+// screen, edit commands). DevTools uses the AO browser toggle so the focused
+// Browser panel opens the same native Chromium surface as the toolbar.
 function buildWindowsAppMenu(): Menu {
-	return Menu.buildFromTemplate(buildWindowsAppMenuTemplate(toggleDevToolsForFocusedSurface));
-}
-
-function buildMacAppMenu(): Menu {
-	return Menu.buildFromTemplate(buildMacAppMenuTemplate(toggleDevToolsForFocusedSurface));
+	return Menu.buildFromTemplate(
+		buildWindowsAppMenuTemplate(() => {
+			const fallback = () => getShellWebContents()?.toggleDevTools();
+			void browserViewHost?.toggleDevToolsForLastFocused().then((state) => {
+				if (!state) fallback();
+			}).catch(fallback);
+		}),
+	);
 }
 
 async function disposeBrowserViewHost(): Promise<void> {
@@ -459,7 +451,21 @@ async function createWindowInternal(): Promise<void> {
 		Menu.setApplicationMenu(buildWindowsAppMenu());
 		mainWindow.setMenuBarVisibility(false);
 	} else if (process.platform === "darwin") {
-		Menu.setApplicationMenu(buildMacAppMenu());
+		Menu.setApplicationMenu(
+			Menu.buildFromTemplate(
+				buildMacAppMenuTemplate(() => {
+					const fallback = () => getShellWebContents()?.toggleDevTools();
+					const host = browserViewHost;
+					if (!host) {
+						fallback();
+						return;
+					}
+					void host.toggleDevToolsForLastFocused().then((state) => {
+						if (!state) fallback();
+					}).catch(fallback);
+				}),
+			),
+		);
 	}
 
 	// Harden navigation: never let renderer/terminal content open in-app windows or

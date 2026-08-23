@@ -14,6 +14,7 @@ export function buildMacAppMenuTemplate(onToggleDevTools: () => void): MenuItemC
 			label: "View",
 			submenu: [
 				{ role: "reload" },
+				{ role: "forceReload" },
 				{
 					label: "Toggle Developer Tools",
 					accelerator: "Alt+Command+I",

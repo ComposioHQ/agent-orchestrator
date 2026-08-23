@@ -63,5 +63,6 @@ describe("buildMacAppMenuTemplate", () => {
 		expect(template.map((item) => item.role)).toEqual(
 			expect.arrayContaining(["appMenu", "fileMenu", "editMenu", "windowMenu"]),
 		);
+		expect(macViewSubmenu()).toContainEqual(expect.objectContaining({ role: "forceReload" }));
 	});
 });
