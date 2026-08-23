@@ -51,7 +51,6 @@ func (s *Store) ListPRFactsForSession(ctx context.Context, id domain.SessionID) 
 
 			ExternalApproved:         r.ExternalApproved,
 			ExternalChangesRequested: r.ExternalChangesRequested,
-			CIAtCurrentHead:          r.CIAtCurrentHead,
 		})
 	}
 	return out, nil

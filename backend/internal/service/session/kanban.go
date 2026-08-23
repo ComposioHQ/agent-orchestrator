@@ -51,7 +51,7 @@ func toContractKanbanPRFacts(prs []domain.PRFacts, runs []domain.CurrentHeadRevi
 			Draft:        pr.Draft,
 			Merged:       pr.Merged,
 			Closed:       pr.Closed,
-			CI:           currentHeadCI(pr),
+			CI:           pr.CI,
 			Review:       pr.Review,
 			Mergeability: pr.Mergeability,
 			UpdatedAt:    pr.UpdatedAt,
@@ -63,15 +63,4 @@ func toContractKanbanPRFacts(prs []domain.PRFacts, runs []domain.CurrentHeadRevi
 		}
 	}
 	return out
-}
-
-// currentHeadCI reports a PR's aggregate CI state only while it describes the
-// PR's current head commit. Once AO holds check rows for earlier commits and
-// none for the head, the aggregate is about code that is no longer the PR, so
-// the reducer reads an unknown state instead of a stale verdict.
-func currentHeadCI(pr domain.PRFacts) contract.CIState {
-	if pr.CIAtCurrentHead {
-		return pr.CI
-	}
-	return contract.CIUnknown
 }

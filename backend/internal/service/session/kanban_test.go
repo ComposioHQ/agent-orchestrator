@@ -132,7 +132,7 @@ func TestSessionListDerivesDisplayStatus(t *testing.T) {
 			record: domain.SessionRecord{ID: "mer-1", ProjectID: "mer", AutoInjectCI: true},
 			pr: &domain.PRFacts{
 				URL: "pr1", HeadSHA: "head1",
-				CI: domain.CIFailing, CIAtCurrentHead: true,
+				CI: domain.CIFailing,
 			},
 			want: contract.DisplayFixingCI,
 		},
@@ -159,24 +159,5 @@ func TestSessionListDerivesDisplayStatus(t *testing.T) {
 				t.Fatalf("display status = %q, want %q", got.DisplayStatus, tt.want)
 			}
 		})
-	}
-}
-
-// CI recorded against an earlier commit describes code that is no longer the
-// PR, so it must not drive the card while the new head has no result yet.
-func TestSessionKanbanIgnoresCIForAnEarlierHead(t *testing.T) {
-	st := newFakeStore()
-	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer", AutoInjectCI: true}
-	st.pr["mer-1"] = domain.PRFacts{
-		URL: "pr1", HeadSHA: "head2",
-		CI: domain.CIFailing, CIAtCurrentHead: false,
-	}
-
-	got, err := (&Service{store: st}).Get(context.Background(), "mer-1")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got.DisplayStatus == contract.DisplayFixingCI || got.DisplayStatus == contract.DisplayChecksFailing {
-		t.Fatalf("display status = %q, want a status the stale failure does not drive", got.DisplayStatus)
 	}
 }
