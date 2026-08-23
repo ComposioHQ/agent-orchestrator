@@ -226,3 +226,22 @@ state. Those remain separate ports: object/blob storage for attachments,
 workspace/repository adapters for checkouts and overlays, and a dedicated
 device registry. None may be smuggled into the Postgres store or persisted only
 inside compute.
+
+### Compute capability boundary
+
+Do not give a worker a signed URL to a whole coordinator daemon. Use an opaque,
+random capability whose one-way verifier is bound server-side to exactly one
+workspace, one session, and a small operation allowlist. Its lifetime follows
+the session lifecycle and deletion revokes it immediately. The raw token never
+appears in process arguments, logs, Postgres, or renderer state.
+
+Any coordinator-like process exposed beyond loopback needs a separate published
+listener with bearer authentication, a route allowlist, session self-binding,
+strict origin handling, and normal TLS verification for terminal WebSockets.
+The existing unauthenticated loopback listener must not be republished through
+a preview URL. Desktop administration uses a distinct revocable capability;
+worker capabilities cannot resume/delete workspaces or address other sessions.
+
+Existing staging sandboxes from the removed POC are not migration candidates:
+they were issued non-revocable coordinator URLs and must be destroyed before a
+new compute-plane preview is enabled.
