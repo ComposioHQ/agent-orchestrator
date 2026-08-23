@@ -1537,18 +1537,8 @@ func (m *Manager) captureWorkspaceFacts(ctx context.Context, rec domain.SessionR
 	}
 	facts := make([]switchWorkspaceFact, 0, len(infos))
 	for i, info := range infos {
-		var (
-			observation ports.WorkspaceObservation
-			supported   bool
-			err         error
-		)
-		if observer, ok := m.workspace.(ports.WorkspaceObserver); ok {
-			observation, err = observer.ObserveWorkspace(ctx, info)
-			supported = true
-		} else {
-			observation, supported, err = m.execution.ObserveWorkspace(ctx, info)
-		}
-		if !supported {
+		observation, err := m.execution.Observation().Snapshot(ctx, info)
+		if errors.Is(err, ports.ErrWorkspaceObservationUnsupported) {
 			return nil
 		}
 		fact := switchWorkspaceFact{Repository: names[i], Path: info.Path, Branch: info.Branch}

@@ -3,17 +3,22 @@ package local
 import (
 	"context"
 	"fmt"
+	"io"
+	"io/fs"
 	"log/slog"
+	"mime"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/attachmentstore"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 	aoprocess "github.com/aoagents/agent-orchestrator/backend/internal/process"
+	"github.com/aoagents/agent-orchestrator/backend/internal/workspacewatch"
 )
 
 type Config struct {
@@ -60,9 +65,10 @@ func New(cfg Config) *Execution {
 	}
 }
 
-func (e *Execution) Workspace() ports.Workspace      { return e.workspace }
-func (e *Execution) Runtime() ports.Runtime          { return e.runtime }
-func (e *Execution) Messenger() ports.AgentMessenger { return e.messenger }
+func (e *Execution) Workspace() ports.Workspace              { return e.workspace }
+func (e *Execution) Runtime() ports.Runtime                  { return e.runtime }
+func (e *Execution) Messenger() ports.AgentMessenger         { return e.messenger }
+func (e *Execution) Observation() ports.WorkspaceObservation { return e }
 func (e *Execution) BeginSession(_ context.Context, spec ports.ExecutionSpec) (ports.SessionProvision, error) {
 	return &provision{Execution: e, spec: spec}, nil
 }
@@ -239,13 +245,177 @@ func (e *Execution) BindRuntimeConfig(_ context.Context, cfg ports.RuntimeConfig
 	return cfg, nil
 }
 
-func (e *Execution) ObserveWorkspace(ctx context.Context, info ports.WorkspaceInfo) (ports.WorkspaceObservation, bool, error) {
-	observer, ok := e.workspace.(ports.WorkspaceObserver)
+func (e *Execution) Snapshot(ctx context.Context, info ports.WorkspaceInfo) (ports.WorkspaceSnapshot, error) {
+	observer, ok := e.workspace.(interface {
+		ObserveWorkspace(context.Context, ports.WorkspaceInfo) (ports.WorkspaceSnapshot, error)
+	})
 	if !ok {
-		return ports.WorkspaceObservation{}, false, nil
+		return ports.WorkspaceSnapshot{}, ports.ErrWorkspaceObservationUnsupported
 	}
-	observation, err := observer.ObserveWorkspace(ctx, info)
-	return observation, true, err
+	return observer.ObserveWorkspace(ctx, info)
+}
+
+func (e *Execution) List(ctx context.Context, request ports.WorkspaceListRequest) (ports.WorkspaceListResult, error) {
+	limit := request.MaxEntries
+	if limit <= 0 {
+		limit = 5000
+	}
+	result := ports.WorkspaceListResult{Entries: make([]ports.WorkspaceEntry, 0)}
+	for _, workspace := range request.Workspaces {
+		err := filepath.WalkDir(workspace.Path, func(fullPath string, entry fs.DirEntry, walkErr error) error {
+			if walkErr != nil {
+				return walkErr
+			}
+			if fullPath == workspace.Path {
+				return nil
+			}
+			rel, err := filepath.Rel(workspace.Path, fullPath)
+			if err != nil {
+				return err
+			}
+			if entry.IsDir() && entry.Name() == ".git" {
+				return filepath.SkipDir
+			}
+			if len(result.Entries) >= limit {
+				result.Truncated = true
+				return fs.SkipAll
+			}
+			info, err := entry.Info()
+			if err != nil {
+				return err
+			}
+			result.Entries = append(result.Entries, ports.WorkspaceEntry{
+				WorkspacePath: workspace.Path, Path: filepath.ToSlash(rel), Size: info.Size(),
+				Mode: uint32(info.Mode()), ModTime: info.ModTime(), Directory: entry.IsDir(),
+			})
+			return nil
+		})
+		if err != nil {
+			return ports.WorkspaceListResult{}, err
+		}
+		if result.Truncated {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			return ports.WorkspaceListResult{}, ctx.Err()
+		default:
+		}
+	}
+	return result, nil
+}
+
+func (e *Execution) Read(_ context.Context, request ports.WorkspaceReadRequest) (ports.WorkspaceReadResult, error) {
+	data, size, modTime, truncated, err := readWorkspaceBytes(request.Workspace.Path, request.Path, request.MaxBytes)
+	if err != nil {
+		return ports.WorkspaceReadResult{}, err
+	}
+	return ports.WorkspaceReadResult{
+		Path: request.Path, Data: data, Size: size, ModTime: modTime,
+		MediaType: mime.TypeByExtension(filepath.Ext(request.Path)), Truncated: truncated,
+	}, nil
+}
+
+func (e *Execution) Watch(ctx context.Context, request ports.WorkspaceWatchRequest) (<-chan ports.WorkspaceEvent, error) {
+	roots := make([]string, 0, len(request.Workspaces))
+	for _, workspace := range request.Workspaces {
+		roots = append(roots, workspace.Path)
+	}
+	source, err := workspacewatch.Watch(ctx, roots...)
+	if err != nil {
+		return nil, err
+	}
+	events := make(chan ports.WorkspaceEvent, 1)
+	go func() {
+		defer close(events)
+		for range source {
+			select {
+			case events <- ports.WorkspaceEvent{}:
+			default:
+			}
+		}
+	}()
+	return events, nil
+}
+
+func (e *Execution) Diff(ctx context.Context, request ports.WorkspaceDiffRequest) (ports.WorkspaceDiffResult, error) {
+	args := []string{"-C", request.Workspace.Path, "diff", "--no-ext-diff", "--binary"}
+	if strings.TrimSpace(request.Base) != "" {
+		args = append(args, request.Base)
+	}
+	if strings.TrimSpace(request.Path) != "" {
+		clean, err := safeRelPath(request.Path)
+		if err != nil {
+			return ports.WorkspaceDiffResult{}, err
+		}
+		args = append(args, "--", filepath.ToSlash(clean))
+	}
+	out, err := aoprocess.CommandContext(ctx, "git", args...).Output()
+	if err != nil {
+		return ports.WorkspaceDiffResult{}, err
+	}
+	out, truncated := bounded(out, request.MaxBytes)
+	return ports.WorkspaceDiffResult{UnifiedDiff: string(out), Truncated: truncated}, nil
+}
+
+func (e *Execution) Blob(ctx context.Context, request ports.WorkspaceBlobRequest) (ports.WorkspaceBlobResult, error) {
+	clean, err := safeRelPath(request.Path)
+	if err != nil {
+		return ports.WorkspaceBlobResult{}, err
+	}
+	var data []byte
+	var truncated bool
+	if strings.TrimSpace(request.Revision) == "" {
+		data, _, _, truncated, err = readWorkspaceBytes(request.Workspace.Path, clean, request.MaxBytes)
+	} else {
+		data, err = aoprocess.CommandContext(ctx, "git", "-C", request.Workspace.Path, "show", request.Revision+":"+filepath.ToSlash(clean)).Output()
+		data, truncated = bounded(data, request.MaxBytes)
+	}
+	if err != nil {
+		return ports.WorkspaceBlobResult{}, err
+	}
+	return ports.WorkspaceBlobResult{Path: filepath.ToSlash(clean), Data: data, MediaType: mime.TypeByExtension(filepath.Ext(clean)), Truncated: truncated}, nil
+}
+
+func readWorkspaceBytes(rootPath, rawPath string, maxBytes int64) ([]byte, int64, time.Time, bool, error) {
+	clean, err := safeRelPath(rawPath)
+	if err != nil {
+		return nil, 0, time.Time{}, false, err
+	}
+	root, err := os.OpenRoot(rootPath)
+	if err != nil {
+		return nil, 0, time.Time{}, false, err
+	}
+	defer func() { _ = root.Close() }()
+	file, err := root.Open(filepath.FromSlash(clean))
+	if err != nil {
+		return nil, 0, time.Time{}, false, err
+	}
+	defer func() { _ = file.Close() }()
+	info, err := file.Stat()
+	if err != nil || !info.Mode().IsRegular() {
+		if err == nil {
+			err = fs.ErrNotExist
+		}
+		return nil, 0, time.Time{}, false, err
+	}
+	readLimit := maxBytes
+	if readLimit <= 0 {
+		readLimit = info.Size()
+	}
+	data, err := io.ReadAll(io.LimitReader(file, readLimit+1))
+	if err != nil {
+		return nil, 0, time.Time{}, false, err
+	}
+	data, truncated := bounded(data, readLimit)
+	return data, info.Size(), info.ModTime(), truncated, nil
+}
+
+func bounded(data []byte, maxBytes int64) ([]byte, bool) {
+	if maxBytes <= 0 || int64(len(data)) <= maxBytes {
+		return data, false
+	}
+	return data[:maxBytes], true
 }
 
 func (e *Execution) ResolveDiffBase(ctx context.Context, workspacePath, defaultBranch string) (string, string) {

@@ -35,9 +35,9 @@ func TestSessionExecutionLifecycleConformance(t *testing.T) {
 			if err := execution.Messenger().Send(ctx, "session", "hello"); err != nil {
 				t.Fatal(err)
 			}
-			observation, supported, err := execution.ObserveWorkspace(ctx, workspace)
-			if err != nil || !supported || observation.Branch != "feature" || observation.HeadSHA != "abc123" {
-				t.Fatalf("observation = %#v, supported=%v, err=%v", observation, supported, err)
+			observation, err := execution.Observation().Snapshot(ctx, workspace)
+			if err != nil || observation.Branch != "feature" || observation.HeadSHA != "abc123" {
+				t.Fatalf("observation = %#v, err=%v", observation, err)
 			}
 			// A second bound launch is the same operation used by agent switching.
 			switchConfig, err := execution.BindRuntimeConfig(ctx, ports.RuntimeConfig{
@@ -197,8 +197,8 @@ func (w *fakeWorkspace) ApplyPreserved(context.Context, ports.WorkspaceInfo, str
 	return nil
 }
 func (w *fakeWorkspace) AddExclude(context.Context, ports.WorkspaceInfo, ...string) error { return nil }
-func (w *fakeWorkspace) ObserveWorkspace(_ context.Context, info ports.WorkspaceInfo) (ports.WorkspaceObservation, error) {
-	return ports.WorkspaceObservation{Path: info.Path, Branch: info.Branch, HeadSHA: "abc123"}, nil
+func (w *fakeWorkspace) ObserveWorkspace(_ context.Context, info ports.WorkspaceInfo) (ports.WorkspaceSnapshot, error) {
+	return ports.WorkspaceSnapshot{Path: info.Path, Branch: info.Branch, HeadSHA: "abc123"}, nil
 }
 
 func workspaceInfo(cfg ports.WorkspaceConfig) ports.WorkspaceInfo {
@@ -243,9 +243,10 @@ func newFakeRemoteBackend() *fakeRemoteBackend {
 	return b
 }
 
-func (b *fakeRemoteBackend) RuntimeBackend() ports.Runtime          { return b.runtime }
-func (b *fakeRemoteBackend) WorkspaceBackend() ports.Workspace      { return b.workspace }
-func (b *fakeRemoteBackend) MessengerBackend() ports.AgentMessenger { return b.messenger }
+func (b *fakeRemoteBackend) RuntimeBackend() ports.Runtime                  { return b.runtime }
+func (b *fakeRemoteBackend) WorkspaceBackend() ports.Workspace              { return b.workspace }
+func (b *fakeRemoteBackend) MessengerBackend() ports.AgentMessenger         { return b.messenger }
+func (b *fakeRemoteBackend) ObservationBackend() ports.WorkspaceObservation { return b }
 func (b *fakeRemoteBackend) BeginExecution(context.Context, ports.ExecutionSpec) (string, error) {
 	b.events = append(b.events, "begin")
 	return "tx", nil
@@ -321,9 +322,25 @@ func (*fakeRemoteBackend) RemoveExecutionAgentState(context.Context, ports.Remot
 func (*fakeRemoteBackend) BindExistingRuntime(_ context.Context, cfg ports.RuntimeConfig) (ports.RuntimeConfig, error) {
 	return cfg, nil
 }
-func (b *fakeRemoteBackend) ObserveExecutionWorkspace(_ context.Context, info ports.WorkspaceInfo) (ports.WorkspaceObservation, bool, error) {
-	observation, err := b.workspace.ObserveWorkspace(context.Background(), info)
-	return observation, true, err
+func (b *fakeRemoteBackend) Snapshot(_ context.Context, info ports.WorkspaceInfo) (ports.WorkspaceSnapshot, error) {
+	return b.workspace.ObserveWorkspace(context.Background(), info)
+}
+func (*fakeRemoteBackend) List(context.Context, ports.WorkspaceListRequest) (ports.WorkspaceListResult, error) {
+	return ports.WorkspaceListResult{}, nil
+}
+func (*fakeRemoteBackend) Read(_ context.Context, request ports.WorkspaceReadRequest) (ports.WorkspaceReadResult, error) {
+	return ports.WorkspaceReadResult{Path: request.Path, Data: []byte("remote")}, nil
+}
+func (*fakeRemoteBackend) Watch(ctx context.Context, _ ports.WorkspaceWatchRequest) (<-chan ports.WorkspaceEvent, error) {
+	events := make(chan ports.WorkspaceEvent)
+	go func() { defer close(events); <-ctx.Done() }()
+	return events, nil
+}
+func (*fakeRemoteBackend) Diff(context.Context, ports.WorkspaceDiffRequest) (ports.WorkspaceDiffResult, error) {
+	return ports.WorkspaceDiffResult{UnifiedDiff: "diff"}, nil
+}
+func (*fakeRemoteBackend) Blob(_ context.Context, request ports.WorkspaceBlobRequest) (ports.WorkspaceBlobResult, error) {
+	return ports.WorkspaceBlobResult{Path: request.Path, Data: []byte("blob")}, nil
 }
 func (*fakeRemoteBackend) ResolveExistingDiffBase(context.Context, string, string) (string, string) {
 	return "base", "main"

@@ -18,6 +18,7 @@ type SessionExecution interface {
 	Workspace() Workspace
 	Runtime() Runtime
 	Messenger() AgentMessenger
+	Observation() WorkspaceObservation
 	BeginSession(ctx context.Context, spec ExecutionSpec) (SessionProvision, error)
 }
 
@@ -40,7 +41,6 @@ type SessionEnvironment interface {
 	RemoveAgentState(ctx context.Context, spec AgentPrepareSpec) error
 	ResolveLaunchBinary(ctx context.Context, argv []string, env map[string]string) (map[string]string, error)
 	BindRuntimeConfig(ctx context.Context, cfg RuntimeConfig) (RuntimeConfig, error)
-	ObserveWorkspace(ctx context.Context, info WorkspaceInfo) (WorkspaceObservation, bool, error)
 	ResolveDiffBase(ctx context.Context, workspacePath, defaultBranch string) (sha, ref string)
 }
 
@@ -111,6 +111,7 @@ type RemoteSessionExecutionBackend interface {
 	RuntimeBackend() Runtime
 	WorkspaceBackend() Workspace
 	MessengerBackend() AgentMessenger
+	ObservationBackend() WorkspaceObservation
 
 	BeginExecution(ctx context.Context, spec ExecutionSpec) (executionID string, err error)
 	StageExecutionSystemPrompt(ctx context.Context, executionID string, id domain.SessionID, prompt string) (string, error)
@@ -134,7 +135,6 @@ type RemoteSessionExecutionBackend interface {
 	RemoveExecutionAttachments(ctx context.Context, id domain.SessionID) error
 	RemoveExecutionAgentState(ctx context.Context, spec RemoteAgentPrepareSpec) error
 	BindExistingRuntime(ctx context.Context, cfg RuntimeConfig) (RuntimeConfig, error)
-	ObserveExecutionWorkspace(ctx context.Context, info WorkspaceInfo) (WorkspaceObservation, bool, error)
 	ResolveExistingDiffBase(ctx context.Context, workspacePath, defaultBranch string) (sha, ref string)
 }
 

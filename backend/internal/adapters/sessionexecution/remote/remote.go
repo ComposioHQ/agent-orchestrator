@@ -25,6 +25,9 @@ func New(backend ports.RemoteSessionExecutionBackend) *Execution {
 func (e *Execution) Workspace() ports.Workspace      { return e.backend.WorkspaceBackend() }
 func (e *Execution) Runtime() ports.Runtime          { return e.backend.RuntimeBackend() }
 func (e *Execution) Messenger() ports.AgentMessenger { return e.backend.MessengerBackend() }
+func (e *Execution) Observation() ports.WorkspaceObservation {
+	return e.backend.ObservationBackend()
+}
 
 func (e *Execution) BeginSession(ctx context.Context, spec ports.ExecutionSpec) (ports.SessionProvision, error) {
 	id, err := e.backend.BeginExecution(ctx, spec)
@@ -93,10 +96,6 @@ func (e *Execution) ResolveLaunchBinary(ctx context.Context, argv []string, env 
 
 func (e *Execution) BindRuntimeConfig(ctx context.Context, cfg ports.RuntimeConfig) (ports.RuntimeConfig, error) {
 	return e.backend.BindExistingRuntime(ctx, cfg)
-}
-
-func (e *Execution) ObserveWorkspace(ctx context.Context, info ports.WorkspaceInfo) (ports.WorkspaceObservation, bool, error) {
-	return e.backend.ObserveExecutionWorkspace(ctx, info)
 }
 
 func (e *Execution) ResolveDiffBase(ctx context.Context, workspacePath, defaultBranch string) (string, string) {

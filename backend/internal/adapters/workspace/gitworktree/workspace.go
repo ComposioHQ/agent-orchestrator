@@ -88,7 +88,6 @@ type commandRunner func(ctx context.Context, binary string, args ...string) ([]b
 var _ ports.Workspace = (*Workspace)(nil)
 var _ ports.WorkspaceDefaultBranchRefresher = (*Workspace)(nil)
 var _ ports.WorkspaceProject = (*Workspace)(nil)
-var _ ports.WorkspaceObserver = (*Workspace)(nil)
 
 // New builds a gitworktree Workspace, validating that ManagedRoot and
 // RepoResolver are set and resolving the root to an absolute, symlink-free path.
@@ -708,20 +707,20 @@ const (
 // ObserveWorkspace returns a bounded, read-only Git snapshot for handoff and
 // recovery. It deliberately lives in the workspace adapter so the session
 // manager does not grow an out-of-band dependency on the git executable.
-func (w *Workspace) ObserveWorkspace(ctx context.Context, info ports.WorkspaceInfo) (ports.WorkspaceObservation, error) {
+func (w *Workspace) ObserveWorkspace(ctx context.Context, info ports.WorkspaceInfo) (ports.WorkspaceSnapshot, error) {
 	path := strings.TrimSpace(info.Path)
 	if path == "" {
-		return ports.WorkspaceObservation{}, errors.New("gitworktree: observe workspace path is required")
+		return ports.WorkspaceSnapshot{}, errors.New("gitworktree: observe workspace path is required")
 	}
 	validated, err := w.validateManagedPath(path)
 	if err != nil {
-		return ports.WorkspaceObservation{}, err
+		return ports.WorkspaceSnapshot{}, err
 	}
 	path = validated
 
 	head, err := w.run(ctx, w.binary, "-C", path, "rev-parse", "--verify", "HEAD")
 	if err != nil {
-		return ports.WorkspaceObservation{}, fmt.Errorf("gitworktree: observe HEAD: %w", err)
+		return ports.WorkspaceSnapshot{}, fmt.Errorf("gitworktree: observe HEAD: %w", err)
 	}
 	branch := strings.TrimSpace(info.Branch)
 	if out, branchErr := w.run(ctx, w.binary, "-C", path, "branch", "--show-current"); branchErr == nil {
@@ -731,7 +730,7 @@ func (w *Workspace) ObserveWorkspace(ctx context.Context, info ports.WorkspaceIn
 	}
 	statusOut, err := w.run(ctx, w.binary, "-C", path, "status", "--porcelain=v1", "--untracked-files=all")
 	if err != nil {
-		return ports.WorkspaceObservation{}, fmt.Errorf("gitworktree: observe status: %w", err)
+		return ports.WorkspaceSnapshot{}, fmt.Errorf("gitworktree: observe status: %w", err)
 	}
 	changes, staged, untracked := parseObservedWorkspaceChanges(string(statusOut), maxObservedWorkspaceChanges)
 
@@ -740,9 +739,9 @@ func (w *Workspace) ObserveWorkspace(ctx context.Context, info ports.WorkspaceIn
 	logFormat := "%H%x1f%s%x1f%aI%x1e"
 	logOut, err := w.run(ctx, w.binary, "-C", path, "log", "-n", fmt.Sprintf("%d", maxObservedWorkspaceCommits), "--pretty=format:"+logFormat)
 	if err != nil {
-		return ports.WorkspaceObservation{}, fmt.Errorf("gitworktree: observe log: %w", err)
+		return ports.WorkspaceSnapshot{}, fmt.Errorf("gitworktree: observe log: %w", err)
 	}
-	return ports.WorkspaceObservation{
+	return ports.WorkspaceSnapshot{
 		Path:      path,
 		Branch:    branch,
 		HeadSHA:   strings.TrimSpace(string(head)),
