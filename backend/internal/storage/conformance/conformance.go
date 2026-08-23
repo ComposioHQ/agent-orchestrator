@@ -27,6 +27,7 @@ func (h Harness) ctx() context.Context {
 	return h.Ctx
 }
 
+// Factory builds a fresh, empty harness for one conformance test.
 type Factory func(t *testing.T) Harness
 
 // Run executes the complete core-store contract.

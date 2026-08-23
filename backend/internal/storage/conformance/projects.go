@@ -197,8 +197,8 @@ func runProjects(t *testing.T, newHarness Factory) {
 		parent := newProject("mono", "/repos/mono")
 		parent.Kind = domain.ProjectKindWorkspace
 		first := []domain.WorkspaceRepoRecord{
-			newWorkspaceRepo("mono", "web", "packages/web"),
-			newWorkspaceRepo("mono", "api", "packages/api"),
+			newWorkspaceRepo("web", "packages/web"),
+			newWorkspaceRepo("api", "packages/api"),
 		}
 		if err := h.Projects.UpsertWorkspaceProject(ctx, parent, first); err != nil {
 			t.Fatalf("UpsertWorkspaceProject: %v", err)
@@ -211,7 +211,7 @@ func runProjects(t *testing.T, newHarness Factory) {
 			t.Fatalf("repo names = %v, want [api web]", names)
 		}
 
-		second := []domain.WorkspaceRepoRecord{newWorkspaceRepo("mono", "web", "packages/web-v2")}
+		second := []domain.WorkspaceRepoRecord{newWorkspaceRepo("web", "packages/web-v2")}
 		if err := h.Projects.UpsertWorkspaceProject(ctx, parent, second); err != nil {
 			t.Fatalf("second UpsertWorkspaceProject: %v", err)
 		}
@@ -229,7 +229,7 @@ func runProjects(t *testing.T, newHarness Factory) {
 		ctx := h.ctx()
 		parent := newProject("mono", "/repos/mono")
 		parent.Kind = domain.ProjectKindWorkspace
-		original := []domain.WorkspaceRepoRecord{newWorkspaceRepo("mono", "api", "packages/api")}
+		original := []domain.WorkspaceRepoRecord{newWorkspaceRepo("api", "packages/api")}
 		if err := h.Projects.UpsertWorkspaceProject(ctx, parent, original); err != nil {
 			t.Fatalf("seed workspace: %v", err)
 		}
@@ -237,7 +237,7 @@ func runProjects(t *testing.T, newHarness Factory) {
 		invalid := parent
 		invalid.Kind = domain.ProjectKind("not-a-project-kind")
 		err := h.Projects.UpsertWorkspaceProject(ctx, invalid, []domain.WorkspaceRepoRecord{
-			newWorkspaceRepo("mono", "web", "packages/web"),
+			newWorkspaceRepo("web", "packages/web"),
 		})
 		if err == nil {
 			t.Fatal("invalid workspace replacement succeeded")
@@ -308,9 +308,9 @@ func newProject(id, path string) domain.ProjectRecord {
 	}
 }
 
-func newWorkspaceRepo(projectID domain.ProjectID, name, relativePath string) domain.WorkspaceRepoRecord {
+func newWorkspaceRepo(name, relativePath string) domain.WorkspaceRepoRecord {
 	return domain.WorkspaceRepoRecord{
-		ProjectID:     projectID,
+		ProjectID:     "mono",
 		Name:          name,
 		RelativePath:  relativePath,
 		RepoOriginURL: "https://github.com/acme/" + name + ".git",
