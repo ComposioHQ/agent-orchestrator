@@ -45,7 +45,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/AOSession"
+                $ref: "#/components/schemas/CloudTokenSet"
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "429": { $ref: "#/components/responses/RateLimited" }
@@ -68,7 +68,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/AOSession"
+                $ref: "#/components/schemas/CloudTokenSet"
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "429": { $ref: "#/components/responses/RateLimited" }
@@ -586,7 +586,7 @@ paths:
           description: Capability-scoped session page.
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/WorkerSessionPage" }
+              schema: { $ref: "#/components/schemas/WorkerSessionRecordPage" }
         "401": { $ref: "#/components/responses/WorkerUnauthorized" }
         "403": { $ref: "#/components/responses/WorkerForbidden" }
         "500": { $ref: "#/components/responses/InternalError" }
@@ -601,13 +601,13 @@ paths:
         required: true
         content:
           application/json:
-            schema: { $ref: "#/components/schemas/CreateWorkerSessionInput" }
+            schema: { $ref: "#/components/schemas/WorkerSessionCreateInput" }
       responses:
         "202":
           description: Worker session creation accepted.
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/WorkerSession" }
+              schema: { $ref: "#/components/schemas/WorkerSessionRecord" }
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/WorkerUnauthorized" }
         "403": { $ref: "#/components/responses/WorkerForbidden" }
@@ -627,7 +627,7 @@ paths:
           description: Capability-scoped worker session.
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/WorkerSession" }
+              schema: { $ref: "#/components/schemas/WorkerSessionRecord" }
         "401": { $ref: "#/components/responses/WorkerUnauthorized" }
         "403": { $ref: "#/components/responses/WorkerForbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
@@ -644,7 +644,7 @@ paths:
           description: Worker session deletion accepted.
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/WorkerSession" }
+              schema: { $ref: "#/components/schemas/WorkerSessionRecord" }
         "401": { $ref: "#/components/responses/WorkerUnauthorized" }
         "403": { $ref: "#/components/responses/WorkerForbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
@@ -1106,7 +1106,7 @@ components:
       required: [refreshToken]
       properties:
         refreshToken: { type: string, minLength: 1 }
-    AOSession:
+    CloudTokenSet:
       type: object
       additionalProperties: false
       required: [accessToken, refreshToken, expiresAt]
@@ -1399,7 +1399,7 @@ components:
         scope: { $ref: "#/components/schemas/WorkerScope" }
         placementState: { type: string, enum: [pending, running, stopping, stopped, failed] }
         observedAt: { type: string, format: date-time }
-    CreateWorkerSessionInput:
+    WorkerSessionCreateInput:
       type: object
       additionalProperties: false
       required: [projectId, role, harness]
@@ -1408,7 +1408,7 @@ components:
         role: { type: string, enum: [coordinator, worker] }
         harness: { type: string }
         prompt: { type: string, maxLength: 65536 }
-    WorkerSession:
+    WorkerSessionRecord:
       type: object
       additionalProperties: false
       required: [id, workspaceId, projectId, role, state, createdAt, updatedAt]
@@ -1421,14 +1421,14 @@ components:
         failure: { $ref: "#/components/schemas/PlacementFailure" }
         createdAt: { type: string, format: date-time }
         updatedAt: { type: string, format: date-time }
-    WorkerSessionPage:
+    WorkerSessionRecordPage:
       type: object
       additionalProperties: false
       required: [sessions, pageInfo]
       properties:
         sessions:
           type: array
-          items: { $ref: "#/components/schemas/WorkerSession" }
+          items: { $ref: "#/components/schemas/WorkerSessionRecord" }
         pageInfo: { $ref: "#/components/schemas/PageInfo" }
     WorkerMessageInput:
       type: object
