@@ -10,6 +10,8 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
 var (
@@ -60,7 +62,7 @@ func (s *Store) Ping(ctx context.Context) error {
 
 func (s *Store) validateRuntimeRole(ctx context.Context) error {
 	var role string
-	var superuser, bypassRLS, createRole, createDB, replication, ownsFoundation, allTablesForceRLS bool
+	var superuser, bypassRLS, createRole, createDB, replication, ownsTenantTable, allTablesForceRLS bool
 	err := s.pool.QueryRow(
 		ctx,
 		`SELECT role.rolname,
@@ -88,27 +90,27 @@ func (s *Store) validateRuntimeRole(ctx context.Context) error {
 		 WHERE role.rolname = current_user`,
 		runtimeTables,
 		len(runtimeTables),
-	).Scan(&role, &superuser, &bypassRLS, &createRole, &createDB, &replication, &ownsFoundation, &allTablesForceRLS)
+	).Scan(&role, &superuser, &bypassRLS, &createRole, &createDB, &replication, &ownsTenantTable, &allTablesForceRLS)
 	if err != nil {
 		return fmt.Errorf("inspect cloud database role: %w", err)
 	}
-	if superuser || bypassRLS || createRole || createDB || replication || ownsFoundation || !allTablesForceRLS {
-		return fmt.Errorf("cloud runtime database role %q is privileged or owns foundation tables", role)
+	if superuser || bypassRLS || createRole || createDB || replication || ownsTenantTable || !allTablesForceRLS {
+		return fmt.Errorf("cloud runtime database role %q is privileged or owns tenant tables", role)
 	}
 	return nil
 }
 
 func normalizeError(err error) error {
 	if errors.Is(err, pgx.ErrNoRows) {
-		return ErrNotFound
+		return errors.Join(ErrNotFound, ports.ErrStorageNotFound)
 	}
 	var pgErr *pgconn.PgError
 	if errors.As(err, &pgErr) {
 		switch pgErr.Code {
 		case "23505":
-			return fmt.Errorf("%w: %s", ErrConflict, pgErr.ConstraintName)
+			return fmt.Errorf("%w: %s", errors.Join(ErrConflict, ports.ErrStorageConflict), pgErr.ConstraintName)
 		case "22P02", "23502", "23514":
-			return fmt.Errorf("%w: %s", ErrInvalid, pgErr.ConstraintName)
+			return fmt.Errorf("%w: %s", errors.Join(ErrInvalid, ports.ErrStorageInvalid), pgErr.ConstraintName)
 		}
 	}
 	return err
