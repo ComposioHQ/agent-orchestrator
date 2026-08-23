@@ -13,6 +13,7 @@ import { motion, useReducedMotion } from "motion/react";
 import type { ExternalLinkComponent } from "./external-link";
 import { ChevronIcon, GitBranchIcon } from "./icons";
 import {
+	getDisplayStatusLabel,
 	getSessionStatusView,
 	toKanbanColumn,
 	type KanbanColumnView,
@@ -34,9 +35,13 @@ export type BoardSessionPresentation = {
 	/**
 	 * Daemon-derived phrase for what is happening inside {@link kanbanColumn}
 	 * ("Fixing CI failures", "Needs human review"), replacing {@link status} as
-	 * the card's status text. Rendered as plain, uncolored text for now; the
-	 * Figma visual treatment is tracked separately in #4264. A daemon too old
-	 * to send one falls back to the translated {@link status} label.
+	 * the card's status text. Translated via `getDisplayStatusLabel` for known
+	 * phrases (see {@link DisplayStatus}); an unrecognized one -- a newer
+	 * daemon that shipped a phrase before this build -- renders as the raw,
+	 * already-renderable English text the API guarantees. Rendered as plain,
+	 * uncolored text for now; the Figma visual treatment is tracked separately
+	 * in #4264. A daemon too old to send one falls back to the translated
+	 * {@link status} label.
 	 */
 	displayStatus?: string;
 	provider: string;
@@ -273,7 +278,10 @@ export function SessionCardView({
 							/>
 						)}
 						<span className="min-w-0 truncate">
-							{statusPresentation?.label ?? session.displayStatus ?? badge.label}
+							{statusPresentation?.label ??
+								(session.displayStatus
+									? getDisplayStatusLabel(session.displayStatus, translate)
+									: badge.label)}
 						</span>
 					</span>
 					<div className="ml-auto flex shrink-0 items-center gap-1.5 whitespace-nowrap font-mono text-2xs text-passive">

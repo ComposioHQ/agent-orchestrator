@@ -1,5 +1,6 @@
-import { isKanbanColumn } from "./session-models";
+import { isDisplayStatus, isKanbanColumn } from "./session-models";
 import type {
+	DisplayStatus,
 	KanbanColumn,
 	SessionActivity,
 	SessionActivityState,
@@ -12,7 +13,8 @@ export type SessionPresentationMessageKey =
 	| `status.${SessionStatus}`
 	| `zone.${AttentionZone}`
 	| `column.${KanbanColumn}`
-	| `timeline.${SessionTimelinePillStatus}`;
+	| `timeline.${SessionTimelinePillStatus}`
+	| (typeof displayStatusLabelKeys)[DisplayStatus];
 
 export type ProductUITranslator = (
 	key: SessionPresentationMessageKey,
@@ -62,7 +64,70 @@ const englishLabels: Record<SessionPresentationMessageKey, string> = {
 	"timeline.no_signal": "No Signal",
 	"timeline.ci_failed": "CI Failed",
 	"timeline.changes_requested": "Changes Requested",
+	"displayStatus.working": "Working",
+	"displayStatus.blocked": "Blocked",
+	"displayStatus.exited": "Exited",
+	"displayStatus.noSignal": "No signal",
+	"displayStatus.awaitingPr": "Awaiting PR",
+	"displayStatus.fixingCiFailures": "Fixing CI failures",
+	"displayStatus.addressingComments": "Addressing comments",
+	"displayStatus.needsReview": "Needs review",
+	"displayStatus.reviewScheduled": "Review scheduled",
+	"displayStatus.reviewing": "Reviewing",
+	"displayStatus.reviewPending": "Review pending",
+	"displayStatus.draft": "Draft",
+	"displayStatus.checksFailing": "Checks failing",
+	"displayStatus.changesRequested": "Changes requested",
+	"displayStatus.needsHumanReview": "Needs human review",
+	"displayStatus.mergeable": "Mergeable",
+	"displayStatus.approved": "Approved",
+	"displayStatus.merged": "Merged",
+	"displayStatus.closedWithoutMerge": "Closed without merge",
+	"displayStatus.terminated": "Terminated",
 };
+
+/**
+ * Exhaustive mapping from the daemon's wire phrase to a stable, namespaced
+ * translation key -- decoupled from the exact English wording so a future
+ * phrase edit on the daemon does not silently break every locale's lookup.
+ */
+export const displayStatusLabelKeys: Record<DisplayStatus, `displayStatus.${string}`> = {
+	Working: "displayStatus.working",
+	Blocked: "displayStatus.blocked",
+	Exited: "displayStatus.exited",
+	"No signal": "displayStatus.noSignal",
+	"Awaiting PR": "displayStatus.awaitingPr",
+	"Fixing CI failures": "displayStatus.fixingCiFailures",
+	"Addressing comments": "displayStatus.addressingComments",
+	"Needs review": "displayStatus.needsReview",
+	"Review scheduled": "displayStatus.reviewScheduled",
+	Reviewing: "displayStatus.reviewing",
+	"Review pending": "displayStatus.reviewPending",
+	Draft: "displayStatus.draft",
+	"Checks failing": "displayStatus.checksFailing",
+	"Changes requested": "displayStatus.changesRequested",
+	"Needs human review": "displayStatus.needsHumanReview",
+	Mergeable: "displayStatus.mergeable",
+	Approved: "displayStatus.approved",
+	Merged: "displayStatus.merged",
+	"Closed without merge": "displayStatus.closedWithoutMerge",
+	Terminated: "displayStatus.terminated",
+};
+
+/**
+ * Translates the daemon's `displayStatus` phrase for the current locale. A
+ * phrase this build does not recognize yet (a newer daemon added one before
+ * the frontend shipped a translation for it) falls back to the raw English
+ * text the API guarantees is already renderable, exactly as an older client
+ * without this lookup would show it.
+ */
+export function getDisplayStatusLabel(
+	displayStatus: string,
+	translate: ProductUITranslator = defaultProductUITranslator,
+): string {
+	if (!isDisplayStatus(displayStatus)) return displayStatus;
+	return translate(displayStatusLabelKeys[displayStatus]);
+}
 
 export const defaultProductUITranslator: ProductUITranslator = (key) => englishLabels[key];
 

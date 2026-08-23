@@ -3,6 +3,7 @@ import {
 	attentionZone,
 	getAgentActivityView,
 	getAttentionZoneView,
+	getDisplayStatusLabel,
 	getSessionStatusView,
 	getSessionTimelinePillView,
 	getKanbanColumnView,
@@ -10,6 +11,7 @@ import {
 	isAgentActivityWorking,
 	isSessionIdle,
 } from "./session-presentation";
+import { DISPLAY_STATUSES } from "./session-models";
 
 describe("session presentation", () => {
 	it.each([
@@ -59,6 +61,19 @@ describe("session presentation", () => {
 	it("accepts injected labels for Kanban columns", () => {
 		expect(getKanbanColumnView("needs_review", (key) => `translated:${key}`).label).toBe(
 			"translated:column.needs_review",
+		);
+	});
+
+	it("has exactly one translation key for every daemon display status", () => {
+		for (const status of DISPLAY_STATUSES) {
+			expect(getDisplayStatusLabel(status)).toBe(status);
+			expect(getDisplayStatusLabel(status, (key) => `translated:${key}`)).toMatch(/^translated:displayStatus\./);
+		}
+	});
+
+	it("shows an unrecognized display status as raw text instead of a translation key", () => {
+		expect(getDisplayStatusLabel("Rebasing onto main", (key) => `translated:${key}`)).toBe(
+			"Rebasing onto main",
 		);
 	});
 
