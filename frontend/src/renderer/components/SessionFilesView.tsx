@@ -77,9 +77,6 @@ type SessionFilesViewProps = {
 	sessionId: string;
 	isMaximized?: boolean;
 	onToggleMaximized?: (next: boolean) => void;
-	/** Expand and reveal this workspace path once (from chat "open file"). */
-	focusPath?: string | null;
-	onFocusPathConsumed?: () => void;
 };
 
 const emptyFiles: WorkspaceFileSummary[] = [];
@@ -112,8 +109,6 @@ export function SessionFilesView({
 	sessionId,
 	isMaximized = false,
 	onToggleMaximized,
-	focusPath,
-	onFocusPathConsumed,
 }: SessionFilesViewProps) {
 	const { t } = useTranslation();
 	const queryClient = useQueryClient();
@@ -142,31 +137,6 @@ export function SessionFilesView({
 		setAnnotationStatus("idle");
 		setAnnotationError("");
 	}, [sessionId]);
-
-	// Chat (and similar) can ask the Files rail to open on a specific path. Match
-	// by exact path first, then by basename when the turn diff only carried a
-	// short name — either way expand that row and clear the request.
-	useEffect(() => {
-		if (!focusPath) return;
-		const match =
-			changedFiles.find((file) => file.path === focusPath) ??
-			changedFiles.find((file) => file.path === focusPath.replace(/^\.\//, "")) ??
-			changedFiles.find((file) => file.path.endsWith(`/${focusPath}`) || file.path.endsWith(focusPath));
-		const target = match?.path ?? focusPath;
-		setExpandedPaths((current) => {
-			if (current.has(target)) return current;
-			const next = new Set(current);
-			next.add(target);
-			return next;
-		});
-		onFocusPathConsumed?.();
-		requestAnimationFrame(() => {
-			const toggle = rootRef.current?.querySelector<HTMLElement>(
-				`[data-file-toggle][data-file-path="${CSS.escape(target)}"]`,
-			);
-			toggle?.scrollIntoView({ block: "nearest" });
-		});
-	}, [changedFiles, focusPath, onFocusPathConsumed]);
 
 	useEffect(
 		() => () => {
@@ -479,7 +449,6 @@ function ReviewFileCard({
 					aria-label={t(expanded ? "files.collapseFile" : "files.expandFile", { file: fileLabel(file) })}
 					className="flex min-w-0 flex-1 items-center gap-1.5 px-2.5 py-1 text-left"
 					data-file-toggle=""
-					data-file-path={file.path}
 					headerClassName="min-h-9 hover:bg-interactive-hover/50 data-[state=open]:bg-interactive-active/35"
 					trailing={
 						<FileFeedbackButton

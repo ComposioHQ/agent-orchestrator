@@ -660,7 +660,7 @@ describe("ChatWorkspace timeline", () => {
 		expect(scrollbar.querySelectorAll("[data-chat-scroll-marker]")).toHaveLength(0);
 	});
 
-	it("keeps conversation minimap markers dim with no hover preview", () => {
+	it("previews the request and response for a hovered conversation marker", () => {
 		useUiStore.setState({
 			inspectorSessions: { "ao-long": { isOpen: false, view: "summary" } },
 		});
@@ -677,11 +677,13 @@ describe("ChatWorkspace timeline", () => {
 		expect(markers.length).toBeGreaterThan(2);
 		fireEvent.pointerEnter(markers[0]!);
 
-		expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
-		expect(markers[0]!.querySelector(".chat-scroll-marker")).not.toHaveClass(
+		const preview = screen.getByRole("tooltip");
+		expect(preview).toHaveTextContent("Wire the snapshot endpoint into the handler (round 1)");
+		expect(preview).toHaveTextContent("Done. conversation now returns the durable snapshot");
+		expect(markers[0]!.querySelector(".chat-scroll-marker")).toHaveClass(
 			"chat-scroll-marker-active",
 		);
-		expect(markers[1]!.querySelector(".chat-scroll-marker")).not.toHaveClass(
+		expect(markers[1]!.querySelector(".chat-scroll-marker")).toHaveClass(
 			"chat-scroll-marker-adjacent",
 		);
 
@@ -716,7 +718,7 @@ describe("ChatWorkspace timeline", () => {
 		);
 		expect(markers).toHaveLength(2);
 		fireEvent.pointerEnter(markers[1]!);
-		expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
+		expect(screen.getByRole("tooltip")).not.toHaveTextContent("Automatic compaction completed");
 	});
 
 	it("centers the composer on an empty conversation instead of a starter blurb", () => {

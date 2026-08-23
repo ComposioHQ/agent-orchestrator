@@ -85,7 +85,7 @@ export function ActivityRun({ activities }: { activities: ConversationActivity[]
 			</button>
 
 			{open ? (
-				<div className="mt-1 flex flex-col gap-1">
+				<div className="cursor-chat-activity-panel mt-0.5 flex flex-col overflow-hidden rounded-md border border-border">
 					{hierarchy.map((node) => <ActivityTree key={node.activity.id} node={node} />)}
 				</div>
 			) : null}
@@ -97,7 +97,7 @@ type ActivityNode = { activity: ConversationActivity; children: ActivityNode[] }
 
 function ActivityTree({ node }: { node: ActivityNode }) {
 	return (
-		<div className="flex flex-col">
+		<div className="flex flex-col [&>div>button]:px-[11px]">
 			<ActivityRow activity={node.activity} />
 			{node.children.length > 0 ? <NestedAgentRun nodes={node.children} /> : null}
 		</div>
