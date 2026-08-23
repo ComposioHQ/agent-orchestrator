@@ -7,10 +7,27 @@ placement, terminal ticket minting, and GitHub App installation.
 **This is not the product API.** Sessions, messages, events, pull requests,
 reviews and workspace files all live on the app API at `/api/v1`, whose types
 are generated into `frontend/src/api/schema.ts`. A hosted deployment serves
-those same routes with an `X-AO-Organization-ID` header after the bearer token;
-the DTOs and controller semantics are identical to a local daemon's, so a
-component that renders local AO renders hosted AO unchanged. Do not reach for
-this package to read or mutate a session — it deliberately cannot.
+those same routes behind the bearer token, selecting the tenant with an
+`X-AO-Org` header; the DTOs and controller semantics are identical to a local
+daemon's, so a component that renders local AO renders hosted AO unchanged. Do
+not reach for this package to read or mutate a session — it deliberately cannot.
+
+The header name and its rule are exported so hosts do not drift to three
+spellings of it:
+
+```ts
+import { organizationHeaders } from "@aoagents/cloud-client";
+
+await fetch(`${appBaseUrl}/api/v1/sessions`, {
+  headers: { ...authHeaders, ...organizationHeaders(activeOrg?.id) },
+});
+```
+
+`X-AO-Org` takes an organization id or slug — prefer the id, since a slug is
+renameable. It is only required when the account belongs to more than one
+organization: with a single active membership the server resolves it, and with
+several, omitting it is an error rather than a guess. Sending it always is
+harmless and is the simplest rule if you would rather not branch.
 
 ```ts
 import { createCloudClient } from "@aoagents/cloud-client";

@@ -76,6 +76,31 @@ interface JSONRequestOptions extends RequestOptions {
   cache?: RequestCache;
 }
 
+/**
+ * Header that selects the organization for a hosted app request to `/api/v1`.
+ *
+ * Exported so the desktop, the daemon mount, and this package cannot drift to
+ * three spellings of the same header — it has already been renamed once. The
+ * value is an organization id or slug, and it is only required when the caller
+ * belongs to more than one organization.
+ */
+export const ORGANIZATION_HEADER = "X-AO-Org";
+
+/**
+ * Builds the organization header for a hosted app request, or nothing when
+ * there is no organization to name.
+ *
+ * A caller with one active membership may omit it; a caller with several must
+ * send it, because the server refuses to guess. Passing the id is preferred
+ * over the slug, which is renameable.
+ */
+export function organizationHeaders(
+  organization?: string | null,
+): Record<string, string> {
+  const value = organization?.trim();
+  return value ? { [ORGANIZATION_HEADER]: value } : {};
+}
+
 export class CloudApiError extends Error {
   readonly status: number;
   readonly code: string;

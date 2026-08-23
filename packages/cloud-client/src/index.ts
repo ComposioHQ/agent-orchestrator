@@ -1,4 +1,6 @@
 export {
+  ORGANIZATION_HEADER,
+  organizationHeaders,
   CloudApiError,
   CloudClient,
   WorkerClient,

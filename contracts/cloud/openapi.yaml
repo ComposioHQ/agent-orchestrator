@@ -47,14 +47,15 @@ info:
     tenants. Account-wide routes (`/me`, `/github/user`) have no `{orgId}`
     because they describe the user rather than a tenant.
 
-    Hosted **app** routes at `/api/v1` scope differently: they carry
-    `X-AO-Organization-ID` after the bearer token, and middleware verifies an
-    active membership and injects the tenant context. Project and session
-    identifiers stay exactly where they already are in those routes and bodies,
-    and the stores enforce workspace ownership. A local daemon serves the same
-    routes with no header and no tenant, which is what keeps local AO a complete
-    product rather than a degraded cloud client. See the `OrganizationHeader`
-    parameter.
+    Hosted **app** routes at `/api/v1` scope differently: they carry `X-AO-Org`
+    after the bearer token, holding an organization id or slug, and middleware
+    verifies an active membership and injects the tenant context. The header is
+    needed only when the caller belongs to more than one organization — a single
+    active membership resolves without it. Project and session identifiers stay
+    exactly where they already are in those routes and bodies, and the stores
+    enforce workspace ownership. A local daemon serves the same routes with no
+    header and no tenant, which is what keeps local AO a complete product rather
+    than a degraded cloud client. See the `OrganizationHeader` parameter.
 
     **No vendor names.** Nothing a user can see names, or hints at, a compute
     provider. There is no sandbox provider, provider-assigned identifier,
@@ -1468,23 +1469,36 @@ components:
         maximum: 9007199254740991
         default: 0
     OrganizationHeader:
-      name: X-AO-Organization-ID
+      name: X-AO-Org
       in: header
-      required: true
+      required: false
       description: |
-        Organization the request acts within, on hosted app routes under
-        `/api/v1`. Middleware verifies the bearer token's account holds an
-        *active* membership in this organization and injects the tenant context
-        the stores scope by; a membership that has been revoked or suspended is
-        rejected as though it never existed.
+        Selects which organization a hosted app request under `/api/v1` acts
+        within. Accepts either the organization's id or its slug — whichever the
+        client has to hand. Prefer the id where you have both: a slug is
+        renameable, so a persisted one can go stale.
 
-        Absent on a local daemon, which serves the same routes untenanted.
-        Hosted deployments reject a request without it rather than falling back
-        to a default organization — a silent fallback is how cross-tenant reads
-        happen.
+        **Only needed when the caller belongs to more than one organization.**
+        With a single active membership the header may be omitted and the
+        middleware resolves that organization; with several, omitting it is an
+        error rather than a guess, because picking one silently is how a request
+        lands in the wrong tenant. Sending it always is harmless and is the
+        simplest rule for a client that does not want to branch on membership
+        count.
+
+        The middleware verifies the bearer token's account holds an *active*
+        membership before injecting the tenant context the stores scope by. A
+        revoked or suspended membership, and an organization the caller does not
+        belong to, are both answered as though the organization does not exist,
+        so the header cannot be used to probe for tenants.
+
+        Absent on a local daemon, which serves the same routes untenanted — that
+        is what lets one set of components render both.
       schema:
         type: string
-        format: uuid
+        minLength: 1
+        maxLength: 200
+        description: Organization id (uuid) or slug.
     IdempotencyKey:
       name: Idempotency-Key
       in: header

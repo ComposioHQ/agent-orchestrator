@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 
 import {
+  ORGANIZATION_HEADER,
+  organizationHeaders,
   CloudApiError,
   createCloudClient,
   createWorkerClient,
@@ -746,6 +748,26 @@ describe("WorkerClient", () => {
 
     await expect(client.claimTurn()).resolves.toBeNull();
     await expect(client.claimTransport()).resolves.toBeNull();
+  });
+});
+
+describe("organizationHeaders", () => {
+  it("names the header once so hosts cannot drift to three spellings", () => {
+    expect(ORGANIZATION_HEADER).toBe("X-AO-Org");
+    expect(organizationHeaders("4165753c-c6ad-4ac2-8f12-e0cbb24d9750")).toEqual({
+      "X-AO-Org": "4165753c-c6ad-4ac2-8f12-e0cbb24d9750",
+    });
+    // A slug is accepted too: the server takes either.
+    expect(organizationHeaders("acme")).toEqual({ "X-AO-Org": "acme" });
+  });
+
+  it("omits the header when there is no organization to name", () => {
+    // A caller with a single active membership may leave it off entirely, so
+    // an absent value must produce no header rather than an empty one — an
+    // empty header is a value the server would have to reject.
+    expect(organizationHeaders()).toEqual({});
+    expect(organizationHeaders(null)).toEqual({});
+    expect(organizationHeaders("   ")).toEqual({});
   });
 });
 

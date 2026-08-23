@@ -21,6 +21,30 @@ Two conventions this file exists to keep visible:
   operation here means adding a line there; mounting its handler means deleting
   that line. The test fails in both directions.
 
+## Unreleased — tenant header is `X-AO-Org`
+
+162's shared app mount is integrated, and the header it reads is `X-AO-Org`,
+replacing the longer name suggested earlier. Three details differ from that
+first suggestion and matter to anyone already coding against it:
+
+- **The value is an id *or* a slug**, not a uuid. Prefer the id where you have
+  both — a slug is renameable, so a persisted one can go stale.
+- **It is conditional, not required.** It selects the tenant only when the
+  account belongs to more than one organization. With a single active
+  membership it may be omitted; with several, omitting it is an error rather
+  than a guess, because picking one silently is how a request lands in the
+  wrong tenant. Sending it always is harmless and is the simplest client rule.
+- The parameter is therefore `required: false`.
+
+`ORGANIZATION_HEADER` and `organizationHeaders()` are exported from
+`@aoagents/cloud-client` so the desktop, the daemon mount and this package
+cannot drift to three spellings of a header that has already been renamed once.
+`organizationHeaders()` returns no header at all for an absent or blank value,
+rather than an empty one the server would have to reject.
+
+The product contract is unchanged: `/api/v1` remains the existing generated app
+OpenAPI.
+
 ## Unreleased — the duplicate product API is removed
 
 Directed by the integrating session (140) on 2026-08-22: the earlier draft
@@ -102,7 +126,7 @@ routes under `/api/cloud/v1`.
 | Decision | Consequence here |
 | --- | --- |
 | App routes stay at `/api/v1` | Product operations under `/api/cloud/v1/orgs/{orgId}/...` are duplicates and are being reconciled. |
-| `X-AO-Organization-ID` on hosted app routes, after bearer auth | New `OrganizationHeader` parameter. Middleware verifies an *active* membership and injects tenant context. |
+| `X-AO-Org` on hosted app routes, after bearer auth | The `OrganizationHeader` parameter. See the note below on its final shape. |
 | Project/session IDs stay in existing route/body fields | No org or workspace identifiers get pushed into app route paths; stores enforce workspace ownership. |
 | Auth and org admin stay at `/api/cloud/v1` | Unchanged. |
 | Terminal preserves `/mux` semantics where possible | The `ao.terminal.v1` framing below is **provisional**; see below. |

@@ -1907,16 +1907,27 @@ export interface components {
         EventLimit: number;
         /** @description Return events with a sequence strictly greater than this value. */
         After: number;
-        /** @description Organization the request acts within, on hosted app routes under
-         *     `/api/v1`. Middleware verifies the bearer token's account holds an
-         *     *active* membership in this organization and injects the tenant context
-         *     the stores scope by; a membership that has been revoked or suspended is
-         *     rejected as though it never existed.
+        /** @description Selects which organization a hosted app request under `/api/v1` acts
+         *     within. Accepts either the organization's id or its slug — whichever the
+         *     client has to hand. Prefer the id where you have both: a slug is
+         *     renameable, so a persisted one can go stale.
          *
-         *     Absent on a local daemon, which serves the same routes untenanted.
-         *     Hosted deployments reject a request without it rather than falling back
-         *     to a default organization — a silent fallback is how cross-tenant reads
-         *     happen.
+         *     **Only needed when the caller belongs to more than one organization.**
+         *     With a single active membership the header may be omitted and the
+         *     middleware resolves that organization; with several, omitting it is an
+         *     error rather than a guess, because picking one silently is how a request
+         *     lands in the wrong tenant. Sending it always is harmless and is the
+         *     simplest rule for a client that does not want to branch on membership
+         *     count.
+         *
+         *     The middleware verifies the bearer token's account holds an *active*
+         *     membership before injecting the tenant context the stores scope by. A
+         *     revoked or suspended membership, and an organization the caller does not
+         *     belong to, are both answered as though the organization does not exist,
+         *     so the header cannot be used to probe for tenants.
+         *
+         *     Absent on a local daemon, which serves the same routes untenanted — that
+         *     is what lets one set of components render both.
          *      */
         OrganizationHeader: string;
         /** @description Reusing a key with the same command returns the original result.
