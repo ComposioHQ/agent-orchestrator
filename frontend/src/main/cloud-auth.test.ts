@@ -148,7 +148,7 @@ describe("AO Cloud desktop credential custody", () => {
 					state: "pending",
 					createdAt: "2026-08-23T00:00:00Z",
 					updatedAt: "2026-08-23T00:00:00Z",
-				}, 201);
+				}, 202);
 			}
 			return jsonResponse({
 				id: "placement_1",
