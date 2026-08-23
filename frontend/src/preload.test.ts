@@ -129,3 +129,14 @@ describe("preload uiSettings bridge", () => {
 		expect(electronMocks.invoke).toHaveBeenNthCalledWith(2, "uiSettings:set", { locale: "zh-CN" });
 	});
 });
+
+describe("preload cloud credential boundary", () => {
+	it("never exposes tokens or a generic authenticated request channel", () => {
+		const methods = Object.keys(exposedBridge().cloud);
+
+		expect(methods).not.toContain("getAccessToken");
+		expect(methods).not.toContain("getRefreshToken");
+		expect(methods).not.toContain("fetch");
+		expect(methods).not.toContain("request");
+	});
+});
