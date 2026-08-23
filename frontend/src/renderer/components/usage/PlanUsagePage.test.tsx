@@ -161,4 +161,43 @@ describe("PlanUsagePage", () => {
 
 		expect(screen.getByText("Future Ai")).toBeInTheDocument();
 	});
+
+	it("renders Kimi dynamic quota windows through the generic card", () => {
+		hookState.providers = [quota({
+			accountLabel: "Kimi",
+			completeness: "complete",
+			limits: [
+				{
+					category: "rate_limit",
+					id: "weekly",
+					name: "Weekly limit",
+					remainingPercent: 91,
+					scope: "account",
+					severity: "normal",
+					usedPercent: 9,
+					windowType: "weekly",
+				},
+				{
+					category: "rate_limit",
+					id: "5h",
+					name: "5h limit",
+					remainingPercent: 100,
+					scope: "account",
+					severity: "normal",
+					usedPercent: 0,
+					windowDurationSeconds: 18_000,
+					windowType: "5h",
+				},
+			],
+			provider: "kimi",
+		})];
+
+		render(<PlanUsagePage />);
+
+		expect(screen.getByText("Kimi")).toBeInTheDocument();
+		expect(screen.getByText("Weekly limit")).toBeInTheDocument();
+		expect(screen.getByText("5h limit")).toBeInTheDocument();
+		expect(screen.getByText("91% remaining")).toBeInTheDocument();
+		expect(screen.getByText("100% remaining")).toBeInTheDocument();
+	});
 });
