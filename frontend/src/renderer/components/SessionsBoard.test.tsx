@@ -349,7 +349,7 @@ describe("SessionsBoard", () => {
 		expect(archivedUsage).toHaveAttribute("aria-label", "1,900 tokens processed");
 	});
 
-	it("pulses the shared activity indicator on an actively working session card", () => {
+	it("styles a working card from its building lane without inferring from runtime activity", () => {
 		workspaceQueryMock.mockReturnValue({
 			data: [
 				workspaceWithSessions([
@@ -368,10 +368,16 @@ describe("SessionsBoard", () => {
 		renderBoard("p1");
 		const card = screen.getByText("active-card-task").closest('[data-testid="board-session-card"]') as HTMLElement;
 		const working = within(card).getByText("Working").parentElement as HTMLElement;
-		// The board no longer color-codes or pulses the status label by runtime
-		// activity: the derived status is plain text until the Figma pass (#4264).
-		expect(working).toHaveClass("text-passive");
-		expect(working.querySelector('[aria-hidden="true"]')).toBeNull();
+		expect(working).toHaveAttribute("data-kanban-column", "building");
+		expect(working).toHaveClass("text-status-working");
+		expect(working.style.getPropertyValue("--session-status-tone")).toBe(
+			"var(--color-status-working)",
+		);
+		expect(working.querySelector('[aria-hidden="true"]')).toHaveClass(
+			"size-[var(--size-swatch)]",
+			"rounded-[var(--radius-swatch)]",
+		);
+		expect(working.querySelector('[aria-hidden="true"]')).not.toHaveClass("animate-status-pulse");
 	});
 
 	it("keeps a spawning card labeled Working when raw activity has not become active", () => {
@@ -418,11 +424,15 @@ describe("SessionsBoard", () => {
 		const card = screen.getByText("switching worker").closest('[data-testid="board-session-card"]') as HTMLElement;
 		const status = within(card).getByText("Switching to Codex").parentElement as HTMLElement;
 		expect(status).toHaveClass("text-status-working");
+		expect(status).not.toHaveAttribute("data-kanban-column");
+		expect(status.style.getPropertyValue("--session-status-tone")).toBe(
+			"var(--color-status-working)",
+		);
 		expect(status.querySelector("span")).toHaveClass("animate-status-pulse");
 		expect(within(card).queryByText("Exited")).not.toBeInTheDocument();
 	});
 
-	it("keeps idle, no signal, and draft PR sessions on the plain status text treatment", () => {
+	it("styles legacy statuses from their status-implied Kanban columns", () => {
 		workspaceQueryMock.mockReturnValue({
 			data: [
 				{
@@ -477,11 +487,18 @@ describe("SessionsBoard", () => {
 		const noSignalCard = screen.getByText("no-signal-card-task").closest('[data-testid="board-session-card"]') as HTMLElement;
 		const draftCard = screen.getByText("draft-card-task").closest('[data-testid="board-session-card"]') as HTMLElement;
 
-		// Distinct statuses share the same plain text treatment until the Figma
-		// pass (#4264) gives the board its own per-status visual language.
-		expect(within(idleCard).getByText("Idle").parentElement).toHaveClass("text-passive");
-		expect(within(noSignalCard).getByText("No signal").parentElement).toHaveClass("text-passive");
-		expect(within(draftCard).getByText("Draft PR").parentElement).toHaveClass("text-passive");
+		expect(within(idleCard).getByText("Idle").parentElement).toHaveAttribute(
+			"data-kanban-column",
+			"building",
+		);
+		expect(within(noSignalCard).getByText("No signal").parentElement).toHaveAttribute(
+			"data-kanban-column",
+			"needs_review",
+		);
+		expect(within(draftCard).getByText("Draft PR").parentElement).toHaveAttribute(
+			"data-kanban-column",
+			"validating",
+		);
 	});
 
 	it("keeps a PR-less exited session in the building lane with an Exited badge", () => {
@@ -516,7 +533,10 @@ describe("SessionsBoard", () => {
 		// whatever its runtime status. The card keeps its Exited badge.
 		const buildingColumn = screen.getByLabelText("Building sessions");
 		expect(within(buildingColumn).getByText("agent-exited-task")).toBeInTheDocument();
-		expect(within(buildingColumn).getByText("Exited").parentElement).toHaveClass("text-passive");
+		expect(within(buildingColumn).getByText("Exited").parentElement).toHaveAttribute(
+			"data-kanban-column",
+			"building",
+		);
 	});
 
 	it("swaps the building lane's cards when navigating between project boards", () => {
@@ -1135,7 +1155,10 @@ describe("SessionsBoard", () => {
 		expect(
 			within(archivedMergedCard!).queryByRole("button", { name: "Terminate archived merged worker" }),
 		).not.toBeInTheDocument();
-		expect(within(archivedMergedCard!).getByText("Merged").parentElement).toHaveClass("text-passive");
+		expect(within(archivedMergedCard!).getByText("Merged").parentElement).toHaveAttribute(
+			"data-kanban-column",
+			"archive",
+		);
 		expect(within(archive).getByRole("button", { name: "Restore archived merged worker" })).toBeInTheDocument();
 	});
 

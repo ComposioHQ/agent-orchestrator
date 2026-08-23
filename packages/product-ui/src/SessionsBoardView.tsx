@@ -5,6 +5,7 @@ import {
 	startTransition,
 	useEffect,
 	useState,
+	type CSSProperties,
 	type HTMLAttributes,
 	type ReactElement,
 	type ReactNode,
@@ -14,6 +15,7 @@ import type { ExternalLinkComponent } from "./external-link";
 import { ChevronIcon, GitBranchIcon } from "./icons";
 import {
 	getDisplayStatusLabel,
+	getKanbanColumnView,
 	getSessionStatusView,
 	toKanbanColumn,
 	type KanbanColumnView,
@@ -38,10 +40,10 @@ export type BoardSessionPresentation = {
 	 * the card's status text. Translated via `getDisplayStatusLabel` for known
 	 * phrases (see {@link DisplayStatus}); an unrecognized one -- a newer
 	 * daemon that shipped a phrase before this build -- renders as the raw,
-	 * already-renderable English text the API guarantees. Rendered as plain,
-	 * uncolored text for now; the Figma visual treatment is tracked separately
-	 * in #4264. A daemon too old to send one falls back to the translated
-	 * {@link status} label.
+	 * already-renderable English text the API guarantees. The card styles the
+	 * phrase with its daemon-owned Kanban column, so presentation never has to
+	 * infer lifecycle semantics from human-readable copy. A daemon too old to
+	 * send one falls back to the translated {@link status} label.
 	 */
 	displayStatus?: string;
 	provider: string;
@@ -56,6 +58,7 @@ export type BoardSessionStatusPresentation = {
 	className: string;
 	indicatorClassName: string;
 	label: string;
+	tone?: string;
 };
 
 export type BoardPullRequestState = "closed" | "open" | "draft" | "merged";
@@ -146,9 +149,13 @@ function BoardColumnView<TSession extends BoardSessionPresentation>({
 			data-testid="board-column"
 			data-column={column.column}
 		>
-			<div className="flex h-12 shrink-0 items-center gap-2.5 px-4">
+			<div
+				className="flex h-12 shrink-0 items-center gap-2.5 px-4"
+				style={{ backgroundImage: `linear-gradient(90deg, ${column.glow}, transparent 72%)` }}
+			>
 				<span
-					className="size-dot-sm rounded-full"
+					data-testid="board-column-swatch"
+					className="size-[var(--size-swatch)] rounded-[var(--radius-swatch)]"
 					style={{
 						background: column.dot,
 						boxShadow: column.dotGlow
@@ -216,6 +223,8 @@ export function SessionCardView({
 }: SessionCardViewProps) {
 	const badge = getSessionStatusView(session.status, translate);
 	const statusPresentation = session.statusPresentation;
+	const column = getKanbanColumnView(toKanbanColumn(session.kanbanColumn, session.status), translate);
+	const statusTone = statusPresentation?.tone ?? (!statusPresentation ? column.dot : undefined);
 	const branch = session.branch ?? "";
 	const showBranch = branch !== "" && !sameLabel(branch, session.title) && !sameLabel(branch, session.id);
 
@@ -265,25 +274,37 @@ export function SessionCardView({
 			<div aria-hidden="true" className="mx-3.5 my-px h-px bg-border" />
 			<div className="flex flex-col gap-1.5 px-3.5 py-2">
 				<div className="flex items-center gap-2">
-					<span
-						className={cn(
-							"inline-flex min-w-0 flex-1 items-center gap-1.5 text-2xs font-medium",
-							statusPresentation?.className ?? "text-passive",
-						)}
-					>
-						{statusPresentation && (
-							<span
-								aria-hidden="true"
-								className={cn("size-dot-sm shrink-0 rounded-full", statusPresentation.indicatorClassName)}
-							/>
-						)}
-						<span className="min-w-0 truncate">
-							{statusPresentation?.label ??
-								(session.displayStatus
-									? getDisplayStatusLabel(session.displayStatus, translate)
-									: badge.label)}
+					<div className="flex min-w-0 flex-1">
+						<span
+							className={cn(
+								"inline-flex min-w-0 max-w-full items-center gap-1.5 rounded-sm border border-[color-mix(in_srgb,var(--session-status-tone)_24%,transparent)] bg-[color-mix(in_srgb,var(--session-status-tone)_10%,transparent)] px-1.5 py-0.5 text-2xs font-medium",
+								!statusTone && "border-border bg-overlay",
+								statusPresentation?.className ?? column.titleClassName,
+							)}
+							data-kanban-column={statusPresentation ? undefined : column.column}
+							data-testid="session-status"
+							style={statusTone ? ({ "--session-status-tone": statusTone } as CSSProperties) : undefined}
+						>
+							{statusPresentation ? (
+								<span
+									aria-hidden="true"
+									className={cn("size-dot-sm shrink-0 rounded-full", statusPresentation.indicatorClassName)}
+								/>
+							) : (
+								<span
+									aria-hidden="true"
+									className="size-[var(--size-swatch)] shrink-0 rounded-[var(--radius-swatch)]"
+									style={{ backgroundColor: column.dot }}
+								/>
+							)}
+							<span className="min-w-0 truncate">
+								{statusPresentation?.label ??
+									(session.displayStatus
+										? getDisplayStatusLabel(session.displayStatus, translate)
+										: badge.label)}
+							</span>
 						</span>
-					</span>
+					</div>
 					<div className="ml-auto flex shrink-0 items-center gap-1.5 whitespace-nowrap font-mono text-2xs text-passive">
 						{usage ? renderUsage(usage) : null}
 						{usage ? <span aria-hidden="true">·</span> : null}

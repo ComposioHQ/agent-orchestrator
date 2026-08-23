@@ -89,6 +89,12 @@ describe("SessionsBoardView", () => {
 		);
 
 		const buildingLane = screen.getByRole("region", { name: "Building sessions" });
+		const buildingHeader = buildingLane.firstElementChild as HTMLElement;
+		expect(buildingHeader.style.backgroundImage).toContain("var(--color-status-working)");
+		expect(within(buildingLane).getByTestId("board-column-swatch")).toHaveClass(
+			"size-[var(--size-swatch)]",
+			"rounded-[var(--radius-swatch)]",
+		);
 		expect(
 			within(buildingLane)
 				.getAllByTestId(/^card-/)
@@ -162,9 +168,11 @@ describe("SessionsBoardView", () => {
 
 		const statusLabel = screen.getByText("Review pending");
 		const status = statusLabel.parentElement;
-		const metadataRow = status?.parentElement;
+		const statusSlot = status?.parentElement;
+		const metadataRow = statusSlot?.parentElement;
 		expect(statusLabel).toHaveClass("min-w-0", "truncate");
-		expect(status).toHaveClass("min-w-0", "flex-1");
+		expect(status).toHaveClass("min-w-0", "max-w-full");
+		expect(statusSlot).toHaveClass("min-w-0", "flex-1");
 		expect(metadataRow).toHaveClass("flex", "items-center", "gap-2");
 		expect(metadataRow).not.toHaveClass("flex-wrap");
 		expect(screen.getByText("24.6M tok").parentElement).toHaveClass("shrink-0", "whitespace-nowrap");
@@ -185,7 +193,12 @@ describe("SessionsBoardView", () => {
 				externalLink={ExternalLink}
 				labels={labels}
 				renderAvatar={(provider) => <span role="img" aria-label={provider}>C</span>}
-				session={{ ...baseSession, displayStatus: "Fixing CI failures", status: "ci_failed" }}
+				session={{
+					...baseSession,
+					displayStatus: "Fixing CI failures",
+					kanbanColumn: "validating",
+					status: "ci_failed",
+				}}
 			/>,
 		);
 		expect(screen.getByText("Fixing CI failures")).toBeInTheDocument();
@@ -218,7 +231,12 @@ describe("SessionsBoardView", () => {
 					updatedAt: (timestamp) => `Updated ${timestamp}`,
 				}}
 				renderAvatar={(provider) => <span role="img" aria-label={provider}>C</span>}
-				session={{ ...baseSession, displayStatus: "Fixing CI failures", status: "ci_failed" }}
+				session={{
+					...baseSession,
+					displayStatus: "Fixing CI failures",
+					kanbanColumn: "validating",
+					status: "ci_failed",
+				}}
 				translate={(key) => (key === "displayStatus.fixingCiFailures" ? "CI-Fehler werden behoben" : key)}
 			/>,
 		);
@@ -249,7 +267,7 @@ describe("SessionsBoardView", () => {
 		expect(screen.getByText("Rebasing onto main")).toBeInTheDocument();
 	});
 
-	it("renders the display status as plain uncolored text with no dot, ahead of the design pass", () => {
+	it("styles the display status with the daemon-owned Kanban column", () => {
 		render(
 			<SessionCardView
 				externalLink={ExternalLink}
@@ -263,14 +281,28 @@ describe("SessionsBoardView", () => {
 					updatedAt: (timestamp) => `Updated ${timestamp}`,
 				}}
 				renderAvatar={(provider) => <span role="img" aria-label={provider}>C</span>}
-				session={{ ...baseSession, displayStatus: "Fixing CI failures", status: "ci_failed" }}
+				session={{
+					...baseSession,
+					displayStatus: "Fixing CI failures",
+					kanbanColumn: "validating",
+					status: "ci_failed",
+				}}
 			/>,
 		);
 
 		const label = screen.getByText("Fixing CI failures");
-		expect(label.parentElement).toHaveClass("text-passive");
-		expect(label.parentElement).not.toHaveClass("bg-current");
-		expect(label.parentElement?.querySelector(".rounded-full")).toBeNull();
+		const status = label.parentElement;
+		expect(status).toHaveAttribute("data-kanban-column", "validating");
+		expect(status).toHaveClass(
+			"rounded-sm",
+			"border",
+			"border-[color-mix(in_srgb,var(--session-status-tone)_24%,transparent)]",
+			"bg-[color-mix(in_srgb,var(--session-status-tone)_10%,transparent)]",
+		);
+		expect(status?.style.getPropertyValue("--session-status-tone")).toBe(
+			"var(--color-status-in-review)",
+		);
+		expect(status?.querySelector(".rounded-full")).toBeNull();
 	});
 
 	it("keeps archive toggle height and board offset classes in lockstep", () => {

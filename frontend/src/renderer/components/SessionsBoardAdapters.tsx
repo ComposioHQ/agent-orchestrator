@@ -55,6 +55,7 @@ export function toBoardSessionPresentation(
 						className: switchVisual.className,
 						indicatorClassName: `${switchVisual.indicatorClassName}${switchVisual.breathe ? " animate-status-pulse" : ""}`,
 						label: t(switchPresentation.compactLabelKey, switchPresentation.values),
+						tone: switchVisual.tone,
 					}
 				: undefined,
 		title: session.title,
