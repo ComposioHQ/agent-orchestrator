@@ -14,6 +14,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/apispec"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/envelope"
+	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 	notificationsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/notification"
 )
 
@@ -25,9 +26,7 @@ type NotificationService interface {
 }
 
 // NotificationStream is the live notification stream used by SSE clients.
-type NotificationStream interface {
-	Subscribe(projectID domain.ProjectID) (<-chan domain.NotificationEvent, func())
-}
+type NotificationStream = ports.NotificationSubscriber
 
 // NotificationsController owns the /notifications routes.
 type NotificationsController struct {
@@ -126,7 +125,12 @@ func (c *NotificationsController) stream(w http.ResponseWriter, r *http.Request)
 		envelope.WriteAPIError(w, r, http.StatusInternalServerError, "internal", "SSE_UNSUPPORTED", "Streaming is not supported by this server", nil)
 		return
 	}
-	ch, unsubscribe := c.Stream.Subscribe(domain.ProjectID(r.URL.Query().Get("projectId")))
+	ch, unsubscribe, err := c.Stream.SubscribeNotifications(r.Context(), domain.ProjectID(r.URL.Query().Get("projectId")))
+	if err != nil {
+		envelope.WriteAPIError(w, r, http.StatusInternalServerError, "internal", "NOTIFICATION_SUBSCRIBE_FAILED",
+			"Could not subscribe to live notifications", nil)
+		return
+	}
 	defer unsubscribe()
 
 	h := w.Header()

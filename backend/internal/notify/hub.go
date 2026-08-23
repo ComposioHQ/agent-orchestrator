@@ -49,6 +49,22 @@ func (h *Hub) Subscribe(projectID domain.ProjectID) (<-chan domain.NotificationE
 	}
 }
 
+// SubscribeNotifications implements ports.NotificationSubscriber for the
+// single-tenant local daemon.
+func (h *Hub) SubscribeNotifications(
+	ctx context.Context,
+	projectID domain.ProjectID,
+) (<-chan domain.NotificationEvent, func(), error) {
+	ch, unsubscribe := h.Subscribe(projectID)
+	if ctx != nil {
+		go func() {
+			<-ctx.Done()
+			unsubscribe()
+		}()
+	}
+	return ch, unsubscribe, nil
+}
+
 // Publish pushes one notification event to matching subscribers without blocking lifecycle writes.
 func (h *Hub) Publish(_ context.Context, event domain.NotificationEvent) error {
 	if h == nil {

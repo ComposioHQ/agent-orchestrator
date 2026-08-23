@@ -1,6 +1,7 @@
 package cdc
 
 import (
+	"context"
 	"log/slog"
 	"sync"
 )
@@ -36,6 +37,20 @@ func (b *Broadcaster) Subscribe(fn func(Event)) (unsubscribe func()) {
 		delete(b.subs, id)
 		b.mu.Unlock()
 	}
+}
+
+// SubscribeChanges implements ports.ChangeEventSubscriber. The local daemon is
+// single tenant, so ctx carries cancellation only; hosted fan-out applies the
+// tenant identity as a database scope.
+func (b *Broadcaster) SubscribeChanges(ctx context.Context, fn func(Event)) (func(), error) {
+	unsubscribe := b.Subscribe(fn)
+	if ctx != nil {
+		go func() {
+			<-ctx.Done()
+			unsubscribe()
+		}()
+	}
+	return unsubscribe, nil
 }
 
 // SubscriberCount reports the number of current subscribers.

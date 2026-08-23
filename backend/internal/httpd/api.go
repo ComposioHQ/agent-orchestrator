@@ -46,7 +46,7 @@ type APIDeps struct {
 	PRs                prsvc.ActionManager
 	Reviews            reviewsvc.Manager
 	Notifications      controllers.NotificationService
-	NotificationStream controllers.NotificationStream
+	NotificationStream ports.NotificationSubscriber
 	Push               controllers.PushRegistry
 	Import             controllers.ImportService
 	ShellTerminals     controllers.ShellTerminalService
@@ -57,7 +57,7 @@ type APIDeps struct {
 	Settings            controllers.SettingsService
 	DevImport           controllers.DevImportService
 	CDC                 cdc.Source
-	Events              cdcSubscriber
+	Events              ports.ChangeEventSubscriber
 	Telemetry           ports.EventSink
 	Mobile              *controllers.MobileController
 	Browser             controllers.BrowserService

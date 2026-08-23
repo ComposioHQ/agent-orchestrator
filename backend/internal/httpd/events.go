@@ -13,6 +13,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/cdc"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/apispec"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/envelope"
+	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
 const (
@@ -21,15 +22,11 @@ const (
 	eventAfterHeader  = "X-AO-Event-After"
 )
 
-type cdcSubscriber interface {
-	Subscribe(func(cdc.Event)) (unsubscribe func())
-}
-
 // EventsController owns the client-facing CDC stream. Durable replay comes from
 // change_log through Source; Broadcaster remains a live-only pub/sub seam.
 type EventsController struct {
 	Source cdc.Source
-	Live   cdcSubscriber
+	Live   ports.ChangeEventSubscriber
 }
 
 // Register mounts the CDC SSE stream route.
@@ -70,7 +67,7 @@ func (c *EventsController) stream(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 
 	live := make(chan cdc.Event, eventsLiveBuffer)
-	unsubscribe := c.Live.Subscribe(func(e cdc.Event) {
+	unsubscribe, err := c.Live.SubscribeChanges(ctx, func(e cdc.Event) {
 		select {
 		case live <- e:
 		default:
@@ -79,6 +76,11 @@ func (c *EventsController) stream(w http.ResponseWriter, r *http.Request) {
 			cancel()
 		}
 	})
+	if err != nil {
+		envelope.WriteAPIError(w, r, http.StatusInternalServerError, "internal", "EVENT_SUBSCRIBE_FAILED",
+			"Could not subscribe to live events", nil)
+		return
+	}
 	defer unsubscribe()
 
 	h := w.Header()
