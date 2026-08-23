@@ -73,7 +73,6 @@ import {
 	type ConversationMessage,
 	type DecisionOption,
 	type DeliveryState,
-	type DiffFile,
 	type DiffStatus,
 	type FileChangeFile,
 	type ConversationItem,
