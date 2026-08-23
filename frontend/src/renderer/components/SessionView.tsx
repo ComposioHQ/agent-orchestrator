@@ -947,8 +947,8 @@ export function SessionView({ sessionId }: SessionViewProps) {
 							isInspectorVisible={inspectorPanelVisible}
 							onOpenFiles={handleOpenFiles}
 							onOpenReviewFile={handleOpenReviewFile}
-							onOpenReviewerTerminal={selectReviewerTerminal}
-							onWorkerMessageSent={session?.mode === "chat" ? selectSessionTerminal : undefined}
+							onOpenReviewerTerminal={showChatSurface ? undefined : selectReviewerTerminal}
+							onWorkerMessageSent={showChatSurface ? selectSessionTerminal : undefined}
 							onToggleBrowserPopOut={handleToggleBrowserPopOut}
 							onViewChange={(next: InspectorView) => setInspectorViewForSession(sessionId, next)}
 							view={inspectorView}

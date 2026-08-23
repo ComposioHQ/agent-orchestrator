@@ -363,6 +363,7 @@ vi.mock("./SessionInspector", () => ({
 		isInspectorVisible = true,
 		onOpenFiles,
 		onOpenReviewFile,
+		onOpenReviewerTerminal,
 		onWorkerMessageSent,
 		onToggleBrowserPopOut,
 		view,
@@ -371,6 +372,7 @@ vi.mock("./SessionInspector", () => ({
 		isInspectorVisible?: boolean;
 		onOpenFiles?: () => void;
 		onOpenReviewFile?: (target: { line?: number; path: string }) => void;
+		onOpenReviewerTerminal?: (target: { handleId: string; harness: string }) => void;
 		onWorkerMessageSent?: () => void;
 		onToggleBrowserPopOut?: () => void;
 		view?: string;
@@ -386,6 +388,12 @@ vi.mock("./SessionInspector", () => ({
 				</button>
 				<button type="button" onClick={() => onOpenReviewFile?.({ path: "src/panel.tsx", line: 42 })}>
 					view review file
+				</button>
+				<button
+					type="button"
+					onClick={() => onOpenReviewerTerminal?.({ handleId: "review-sess-1", harness: "codex" })}
+				>
+					start review
 				</button>
 				<button type="button" onClick={onWorkerMessageSent}>
 					send review to worker
@@ -929,6 +937,32 @@ describe("SessionView", () => {
 		fireEvent.click(screen.getByRole("button", { name: "select chat tab" }));
 		expect(screen.queryByTestId("terminal-target")).not.toBeInTheDocument();
 		expect(screen.getByTestId("chat-surface")).toBeInTheDocument();
+	});
+
+	it("keeps the rendered Chat surface selected when a review starts", async () => {
+		const worker = workerSession("sess-1");
+		worker.mode = "chat";
+		worker.prs = [{
+			url: "https://github.com/acme/repo/pull/7",
+			number: 7,
+			state: "open",
+			ci: "passing",
+			review: "none",
+			mergeability: "mergeable",
+			reviewComments: false,
+			updatedAt: "2026-06-15T00:00:00Z",
+		}];
+		reviewGetMock.mockResolvedValueOnce({
+			data: { reviewerHandleId: "review-sess-1", reviewerHarness: "codex", reviews: [], runs: [] },
+			error: undefined,
+		});
+
+		render(<SessionView sessionId="sess-1" />);
+		await screen.findByRole("button", { name: "Reviewer" });
+		fireEvent.click(screen.getByRole("button", { name: "start review" }));
+
+		expect(screen.getByTestId("chat-surface")).toBeInTheDocument();
+		expect(screen.queryByTestId("terminal-target")).not.toBeInTheDocument();
 	});
 
 	it.each([

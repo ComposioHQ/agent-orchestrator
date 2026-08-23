@@ -30,8 +30,9 @@ import (
 )
 
 const (
-	nativeHistorySettlePoll  = 100 * time.Millisecond
-	nativeHistorySettleLimit = 45 * time.Second
+	nativeHistorySettlePoll         = 100 * time.Millisecond
+	nativeHistorySettleLimit        = 45 * time.Second
+	nativeHistoryHandoffSettleLimit = 2 * time.Minute
 )
 
 // Store is the durable conversation surface the controller needs. Implemented by
@@ -487,7 +488,7 @@ func (c *Controller) importNativeHistory(
 		}
 		return nil
 	}
-	historyCtx, cancel := context.WithTimeout(ctx, nativeHistorySettleLimit)
+	historyCtx, cancel := nativeHistoryContext(ctx, required)
 	defer cancel()
 	events, err := reader.ReadHistory(historyCtx)
 	refresher, refreshable := reader.(ports.ChatHistoryRefresher)
@@ -533,6 +534,17 @@ func (c *Controller) importNativeHistory(
 		}
 	}
 	return nil
+}
+
+func nativeHistoryContext(parent context.Context, required bool) (context.Context, context.CancelFunc) {
+	limit := nativeHistorySettleLimit
+	if required {
+		// A TUI -> Chat handoff must wait for the provider's authoritative replay.
+		// Large native threads can take longer than an ordinary best-effort resume,
+		// while the transition still bounds the whole target start to three minutes.
+		limit = nativeHistoryHandoffSettleLimit
+	}
+	return context.WithTimeout(parent, limit)
 }
 
 // nativeHistoryTurn is the durable identity AO already assigned to one native
