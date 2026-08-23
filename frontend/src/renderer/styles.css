@@ -752,25 +752,6 @@ button.settings-link-row:active {
 	border-radius: 0;
 }
 
-.harness-install-progress-indicator {
-	animation: harness-install-progress 1.25s ease-in-out infinite;
-}
-
-@keyframes harness-install-progress {
-	0% {
-		transform: translateX(-100%);
-	}
-	100% {
-		transform: translateX(350%);
-	}
-}
-
-@media (prefers-reduced-motion: reduce) {
-	.harness-install-progress-indicator {
-		animation: status-pulse 1.5s ease-in-out infinite;
-	}
-}
-
 /* Button/link rows (e.g. Connect Mobile, Keyboard Shortcuts) keep rounded
  * corners even though the shared group container lost its outer border. */
 .settings-grouped-rows .settings-link-row.settings-row-bar {

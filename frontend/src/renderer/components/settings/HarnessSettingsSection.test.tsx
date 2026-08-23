@@ -85,7 +85,7 @@ describe("HarnessSettingsSection", () => {
 		expect(codexRow).toHaveTextContent("Retry");
 	});
 
-	it("keeps concurrent installs independent with one progress indicator per row", async () => {
+	it("keeps concurrent installs independent with only one spinner status per row", async () => {
 		vi.mocked(apiClient.POST).mockImplementation(async (path, options) => {
 			if (path === "/api/v1/agents/{agent}/install") {
 				const agent = (options as { params: { path: { agent: string } } }).params.path.agent;
@@ -102,10 +102,14 @@ describe("HarnessSettingsSection", () => {
 		await waitFor(() => expect(within(codexRow as HTMLElement).getByRole("button", { name: "Install" })).toBeEnabled());
 
 		await user.click(within(codexRow as HTMLElement).getByRole("button", { name: "Install" }));
-		await waitFor(() => expect(within(codexRow as HTMLElement).getByRole("progressbar")).toBeInTheDocument());
+		const codexStatus = await within(codexRow as HTMLElement).findByRole("status");
 		await user.click(within(aiderRow as HTMLElement).getByRole("button", { name: "Install" }));
 
-		await waitFor(() => expect(within(aiderRow as HTMLElement).getByRole("progressbar")).toBeInTheDocument());
+		const aiderStatus = await within(aiderRow as HTMLElement).findByRole("status");
+		expect(codexStatus.querySelector("svg.animate-spin")).not.toBeNull();
+		expect(aiderStatus.querySelector("svg.animate-spin")).not.toBeNull();
+		expect(within(codexRow as HTMLElement).queryByRole("progressbar")).not.toBeInTheDocument();
+		expect(within(aiderRow as HTMLElement).queryByRole("progressbar")).not.toBeInTheDocument();
 		expect(within(codexRow as HTMLElement).getAllByText("Installing…")).toHaveLength(1);
 		expect(within(aiderRow as HTMLElement).getAllByText("Installing…")).toHaveLength(1);
 	});

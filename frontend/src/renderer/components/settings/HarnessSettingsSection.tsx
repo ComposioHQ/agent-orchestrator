@@ -182,7 +182,7 @@ export function HarnessSettingsSection({ titleHidden = false }: { titleHidden?: 
 					const rowVerifying = installState?.verifying === true;
 					const statusId = `harness-agent-${agentId}-status`;
 					return (
-						<div className="settings-row-bar relative min-h-14 gap-3 overflow-hidden" data-agent={agentId} key={agentId}>
+						<div className="settings-row-bar min-h-14 gap-3" data-agent={agentId} key={agentId}>
 							<AgentAvatar className="size-7 shrink-0" decorative provider={agentId} />
 							<div className="min-w-0 flex-1">
 								<p className="truncate text-sm font-medium text-settings-label" id={`harness-agent-${agentId}`}>{agentLabel(agentId)}</p>
@@ -226,15 +226,6 @@ export function HarnessSettingsSection({ titleHidden = false }: { titleHidden?: 
 									{t("settings.harness.instructions")}
 								</Button>
 							)}
-							{running || rowVerifying ? (
-								<div
-									aria-labelledby={`harness-agent-${agentId} ${statusId}`}
-									className="absolute inset-x-0 bottom-0 h-0.5 overflow-hidden bg-settings-menu-selected"
-									role="progressbar"
-								>
-									<div className="h-full w-2/5 bg-primary harness-install-progress-indicator" />
-								</div>
-							) : null}
 						</div>
 					);
 				})}
