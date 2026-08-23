@@ -573,6 +573,50 @@ func TestGetAgentHooksSeedsAOManagedConfigFromOAuthUserKimiHome(t *testing.T) {
 	}
 }
 
+func TestGetAgentHooksSeedsAOManagedConfigFromOAuthKimiShareDir(t *testing.T) {
+	workspace := t.TempDir()
+	userShareDir := t.TempDir()
+	aoHome := t.TempDir()
+	t.Setenv(kimiShareDirEnv, userShareDir)
+	t.Setenv(kimiCodeHomeEnv, "")
+	userCredentials := `{"access_token":"current-access","refresh_token":"current-refresh"}`
+	writeKimiOAuthProfile(t, userShareDir, kimiOAuthUserConfig, userCredentials)
+
+	if err := (&Plugin{}).GetAgentHooks(context.Background(), ports.WorkspaceHookConfig{
+		WorkspacePath: workspace,
+		Env:           map[string]string{kimiShareDirEnv: aoHome},
+	}); err != nil {
+		t.Fatalf("GetAgentHooks err = %v", err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(aoHome, "config.toml"))
+	if err != nil {
+		t.Fatalf("read AO config: %v", err)
+	}
+	text := string(data)
+	for _, want := range []string{
+		`default_model = "kimi-code/kimi-for-coding"`,
+		`[providers."managed:kimi-code".oauth]`,
+		`[models."kimi-code/kimi-for-coding"]`,
+		`command = "ao hooks kimi session-start"`,
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("AO config missing %q:\n%s", want, text)
+		}
+	}
+	if got := strings.Count(text, kimiHooksSentinelStart); got != 1 {
+		t.Fatalf("managed hook block count = %d, want 1:\n%s", got, text)
+	}
+
+	credentials, err := os.ReadFile(kimiCredentialsPath(aoHome))
+	if err != nil {
+		t.Fatalf("read AO credentials: %v", err)
+	}
+	if string(credentials) != userCredentials {
+		t.Fatalf("AO credentials = %s, want %s", credentials, userCredentials)
+	}
+}
+
 func TestGetAgentHooksReseedsHookOnlyAOManagedConfigFromOAuthUserKimiHome(t *testing.T) {
 	workspace := t.TempDir()
 	userHome := t.TempDir()
@@ -759,13 +803,18 @@ func TestGetAgentHooksRewritesManagedKimiConfigBlock(t *testing.T) {
 }
 
 func TestAugmentRuntimeEnvUsesAODataDir(t *testing.T) {
-	env := map[string]string{kimiCodeHomeEnv: "/outside-ao"}
+	env := map[string]string{
+		kimiShareDirEnv: "/outside-current",
+		kimiCodeHomeEnv: "/outside-legacy",
+	}
 	dataDir := filepath.Join(t.TempDir(), "ao")
 
 	(&Plugin{}).AugmentRuntimeEnv(env, dataDir)
 
-	if got, want := env[kimiCodeHomeEnv], kimiCodeHomeDir(dataDir); got != want {
-		t.Fatalf("%s = %q, want %q", kimiCodeHomeEnv, got, want)
+	for _, name := range []string{kimiShareDirEnv, kimiCodeHomeEnv} {
+		if got, want := env[name], kimiCodeHomeDir(dataDir); got != want {
+			t.Fatalf("%s = %q, want %q", name, got, want)
+		}
 	}
 }
 

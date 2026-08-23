@@ -31,6 +31,7 @@ import (
 
 const (
 	adapterID       = "kimi"
+	kimiShareDirEnv = "KIMI_SHARE_DIR"
 	kimiCodeHomeEnv = "KIMI_CODE_HOME"
 	kimiDataDirName = "kimi"
 )
@@ -61,7 +62,9 @@ func (p *Plugin) AugmentRuntimeEnv(env map[string]string, dataDir string) {
 	if strings.TrimSpace(dataDir) == "" {
 		return
 	}
-	env[kimiCodeHomeEnv] = kimiCodeHomeDir(dataDir)
+	home := kimiCodeHomeDir(dataDir)
+	env[kimiShareDirEnv] = home
+	env[kimiCodeHomeEnv] = home
 }
 
 // Manifest returns the adapter's static self-description.

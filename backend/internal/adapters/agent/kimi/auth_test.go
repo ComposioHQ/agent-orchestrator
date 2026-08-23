@@ -42,6 +42,50 @@ base_url = "https://api.z.ai/api/coding/paas/v4"
 	}
 }
 
+func TestKimiLocalAuthStatusUsesKimiShareDir(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv(kimiShareDirEnv, home)
+	t.Setenv(kimiCodeHomeEnv, "")
+	credentialsDir := filepath.Join(home, "credentials")
+	if err := os.MkdirAll(credentialsDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(credentialsDir, "kimi-code.json"), []byte(`{"access_token":"token"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	status, ok, err := kimiLocalAuthStatus(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok || status != ports.AgentAuthStatusAuthorized {
+		t.Fatalf("status = (%q, %v), want (%q, true)", status, ok, ports.AgentAuthStatusAuthorized)
+	}
+}
+
+func TestKimiUserHomesIncludesCurrentAndLegacyDefaults(t *testing.T) {
+	t.Setenv(kimiShareDirEnv, "")
+	t.Setenv(kimiCodeHomeEnv, "")
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	homes := kimiUserHomes()
+	for _, want := range []string{filepath.Join(home, ".kimi"), filepath.Join(home, ".kimi-code")} {
+		found := false
+		for _, got := range homes {
+			if sameKimiConfigPath(got, want) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("kimiUserHomes() = %#v, missing %q", homes, want)
+		}
+	}
+}
+
 func TestKimiLocalAuthStatusUsesKimiCredentials(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("KIMI_CODE_HOME", home)

@@ -43,33 +43,58 @@ func kimiLocalAuthStatus(ctx context.Context) (ports.AgentAuthStatus, bool, erro
 			return ports.AgentAuthStatusAuthorized, true, nil
 		}
 	}
-	home, ok := kimiCodeHome()
-	if !ok {
-		return ports.AgentAuthStatusUnknown, false, nil
+	var fallbackStatus ports.AgentAuthStatus
+	var fallbackOK bool
+	for _, home := range kimiUserHomes() {
+		configStatus, configOK, err := kimiConfigAuthStatus(filepath.Join(home, "config.toml"))
+		if err != nil || configStatus == ports.AgentAuthStatusAuthorized {
+			return configStatus, configOK, err
+		}
+		credentialsStatus, credentialsOK, err := kimiCredentialsAuthStatus(kimiCredentialsPath(home))
+		if err != nil || credentialsStatus == ports.AgentAuthStatusAuthorized {
+			return credentialsStatus, credentialsOK, err
+		}
+		if !fallbackOK {
+			if credentialsOK {
+				fallbackStatus, fallbackOK = credentialsStatus, true
+			} else if configOK {
+				fallbackStatus, fallbackOK = configStatus, true
+			}
+		}
 	}
-	configStatus, configOK, err := kimiConfigAuthStatus(filepath.Join(home, "config.toml"))
-	if err != nil || configStatus == ports.AgentAuthStatusAuthorized {
-		return configStatus, configOK, err
-	}
-	credentialsStatus, credentialsOK, err := kimiCredentialsAuthStatus(kimiCredentialsPath(home))
-	if err != nil || credentialsOK {
-		return credentialsStatus, credentialsOK, err
-	}
-	if configOK {
-		return configStatus, configOK, nil
+	if fallbackOK {
+		return fallbackStatus, true, nil
 	}
 	return ports.AgentAuthStatusUnknown, false, nil
 }
 
-func kimiCodeHome() (string, bool) {
-	if home := strings.TrimSpace(os.Getenv(kimiCodeHomeEnv)); home != "" {
-		return home, true
+// kimiUserHomes returns explicitly configured Kimi homes, or the current and
+// legacy default homes when neither environment override is set.
+func kimiUserHomes() []string {
+	homes := make([]string, 0, 4)
+	add := func(home string) {
+		home = strings.TrimSpace(home)
+		if home == "" {
+			return
+		}
+		for _, existing := range homes {
+			if sameKimiConfigPath(existing, home) {
+				return
+			}
+		}
+		homes = append(homes, home)
 	}
-	home, err := os.UserHomeDir()
-	if err != nil || home == "" {
-		return "", false
+
+	add(os.Getenv(kimiShareDirEnv))
+	add(os.Getenv(kimiCodeHomeEnv))
+	if len(homes) > 0 {
+		return homes
 	}
-	return filepath.Join(home, ".kimi-code"), true
+	if home, err := os.UserHomeDir(); err == nil && strings.TrimSpace(home) != "" {
+		add(filepath.Join(home, ".kimi"))
+		add(filepath.Join(home, ".kimi-code"))
+	}
+	return homes
 }
 
 // kimiCredentialsPath returns the device-code OAuth credential file inside a
