@@ -21,7 +21,7 @@ import { CenterPane } from "./CenterPane";
 import { SessionChatSurface } from "./chat/SessionChatSurface";
 import { NotificationCenter } from "./NotificationCenter";
 import { ResizeHandle } from "./ResizeHandle";
-import { SessionFilesView } from "./SessionFilesView";
+import { SessionFilesView, type ReviewFileTarget } from "./SessionFilesView";
 import { SessionInspector } from "./SessionInspector";
 import {
 	SessionInterfaceActionGroup,
@@ -260,6 +260,8 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	const [terminalTarget, setTerminalTarget] = useState<TerminalTarget>({ kind: "worker" });
 	const [browserPopOutState, setBrowserPopOutState] = useState({ sessionId, poppedOut: false });
 	const [filesPoppedOut, setFilesPoppedOut] = useState(false);
+	const [reviewFileTarget, setReviewFileTarget] = useState<ReviewFileTarget | undefined>();
+	useEffect(() => setReviewFileTarget(undefined), [sessionId]);
 	const [filesFocusPath, setFilesFocusPath] = useState<string | null>(null);
 	const browserPoppedOut = browserPopOutState.sessionId === sessionId && browserPopOutState.poppedOut;
 	const [interfaceSwitchDialogOpen, setInterfaceSwitchDialogOpen] = useState(false);
@@ -646,6 +648,14 @@ export function SessionView({ sessionId }: SessionViewProps) {
 		setInspectorOpenForSession(sessionId, true);
 	}, [sessionId, setInspectorOpenForSession, setInspectorViewForSession]);
 
+	const handleOpenReviewFile = useCallback((target: { line?: number; path: string }) => {
+		setReviewFileTarget((current) => ({ ...target, requestId: (current?.requestId ?? 0) + 1 }));
+		setBrowserPopOutState({ sessionId, poppedOut: false });
+		setFilesPoppedOut(false);
+		setInspectorViewForSession(sessionId, "files");
+		setInspectorOpenForSession(sessionId, true);
+	}, [sessionId, setInspectorOpenForSession, setInspectorViewForSession]);
+
 	const handleOpenFile = useCallback(
 		(path: string) => {
 			handleOpenFiles();
@@ -924,12 +934,14 @@ export function SessionView({ sessionId }: SessionViewProps) {
 										focusPath={filesFocusPath}
 										onFocusPathConsumed={handleFilesFocusConsumed}
 										onToggleMaximized={handleToggleFilesPopOut}
+										revealFile={reviewFileTarget}
 										sessionId={session.id}
 									/>
 								) : null
 							}
 							isInspectorVisible={inspectorPanelVisible}
 							onOpenFiles={handleOpenFiles}
+							onOpenReviewFile={handleOpenReviewFile}
 							onOpenReviewerTerminal={selectReviewerTerminal}
 							onToggleBrowserPopOut={handleToggleBrowserPopOut}
 							onViewChange={(next: InspectorView) => setInspectorViewForSession(sessionId, next)}
@@ -976,6 +988,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 							<SessionFilesView
 								isMaximized
 								onToggleMaximized={handleToggleFilesPopOut}
+								revealFile={reviewFileTarget}
 								sessionId={session.id}
 							/>
 						</div>,

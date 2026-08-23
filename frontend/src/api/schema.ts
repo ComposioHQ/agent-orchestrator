@@ -2806,6 +2806,7 @@ export interface components {
             body?: string;
             file?: string;
             line?: number;
+            reviewId?: string;
             url?: string;
         };
         SessionPRReviewEntry: {
