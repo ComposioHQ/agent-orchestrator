@@ -53,6 +53,7 @@ type Options struct {
 	// limiter key. Leave false unless the edge overwrites X-AO-Source-IP.
 	TrustSourceIPHeader bool
 	Logger              *slog.Logger
+	SCM                 SCMOptions
 
 	// App is the shared AO application API — build it with
 	// httpd.NewCloudAPIHandler, composed with cloud storage and runtime ports.
@@ -73,6 +74,7 @@ type Server struct {
 	trustSourceIPHeader bool
 	logger              *slog.Logger
 	app                 http.Handler
+	scm                 SCMOptions
 	handler             http.Handler
 }
 
@@ -99,6 +101,7 @@ func New(options Options) (*Server, error) {
 		trustSourceIPHeader: options.TrustSourceIPHeader,
 		logger:              options.Logger,
 		app:                 options.App,
+		scm:                 options.SCM,
 	}
 	server.handler = server.routes()
 	return server, nil
@@ -150,6 +153,7 @@ func (s *Server) routes() http.Handler {
 	router.With(authRateLimit).Post("/api/cloud/v1/auth/refresh", s.refresh)
 	router.With(authRateLimit).Post("/api/cloud/v1/auth/logout", s.logout)
 	router.With(s.requirePrincipal).Get("/api/cloud/v1/me", s.me)
+	s.registerSCMRoutes(router, authRateLimit)
 
 	app := s.appHandler()
 	if app == nil {

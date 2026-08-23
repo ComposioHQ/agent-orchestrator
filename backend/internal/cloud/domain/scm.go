@@ -5,6 +5,52 @@ import "time"
 const SCMProviderGitHub = "github"
 
 const (
+	InstallationStatusActive    = "active"
+	InstallationStatusSuspended = "suspended"
+	InstallationStatusRemoved   = "removed"
+)
+
+type SCMInstallation struct {
+	ID                     string
+	OrgID                  string
+	Provider               string
+	ExternalInstallationID int64
+	AccountLogin           string
+	AccountType            string
+	AppSlug                string
+	RepositorySelection    string
+	Status                 string
+	LinkedByUserID         string
+	CreatedAt              time.Time
+	UpdatedAt              time.Time
+}
+
+const (
+	TokenPurposeClone = "clone"
+	TokenPurposePush  = "push"
+)
+
+type SCMRepository struct {
+	ID                   string
+	InstallationID       string
+	OrgID                string
+	ExternalRepositoryID int64
+	FullName             string
+	Private              bool
+	Allowed              bool
+}
+
+type SCMTokenGrant struct {
+	OrgID             string
+	InstallationID    string
+	RepositoryID      string
+	SandboxID         string
+	Purpose           string
+	RequestedByUserID string
+	ExpiresAt         time.Time
+}
+
+const (
 	SCMWebhookClassificationObservation = "observation"
 	SCMWebhookClassificationIgnored     = "ignored"
 	SCMWebhookClassificationMalformed   = "malformed_json"
