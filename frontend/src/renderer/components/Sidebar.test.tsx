@@ -1392,7 +1392,7 @@ describe("Sidebar", () => {
 		}
 	});
 
-	it("renders active activity as pulsing blue regardless of PR context", () => {
+	it("paints the dot from SCM state while activity drives the pulse", () => {
 		renderSidebar({
 			workspaces: [
 				{
@@ -1455,6 +1455,7 @@ describe("Sidebar", () => {
 		const sessionDot = (title: string) =>
 			screen.getByLabelText(`Open ${title}`).querySelector<HTMLElement>("[data-session-status]");
 
+		// No pull request: the dot falls back to runtime status.
 		expect(sessionDot("idle task")).toHaveClass("bg-status-idle");
 		expect(sessionDot("idle task")).not.toHaveClass("animate-status-pulse");
 
@@ -1462,16 +1463,17 @@ describe("Sidebar", () => {
 		expect(workingDot).toHaveClass("bg-status-working");
 		expect(workingDot).toHaveClass("animate-status-pulse");
 
-		const ciFailedDot = sessionDot("ci failed task");
-		expect(ciFailedDot).toHaveClass("bg-status-working");
-		expect(ciFailedDot).toHaveClass("animate-status-pulse");
-
-		expect(sessionDot("review task")).toHaveClass("bg-status-working", "animate-status-pulse");
-		expect(sessionDot("ready task")).toHaveClass("bg-status-working", "animate-status-pulse");
-		expect(sessionDot("merged task")).toHaveClass("bg-status-working", "animate-status-pulse");
+		// With one, the tone stays on the PR even while the agent runs. The board
+		// files these under Working (status is activity-first), so the sidebar
+		// deliberately keeps the PR tone the lane label would otherwise hide, and
+		// leaves the pulse to say the agent is busy.
+		expect(sessionDot("ci failed task")).toHaveClass("bg-status-exited", "animate-status-pulse");
+		expect(sessionDot("review task")).toHaveClass("bg-status-in-review", "animate-status-pulse");
+		expect(sessionDot("ready task")).toHaveClass("bg-status-ready", "animate-status-pulse");
+		expect(sessionDot("merged task")).toHaveClass("bg-status-merged", "animate-status-pulse");
 	});
 
-	it("renders a static gray dot for idle activity across session statuses", async () => {
+	it("holds the dot still for idle activity and keeps its PR tone", async () => {
 		renderSidebar({
 			workspaces: [
 				{
@@ -1481,7 +1483,7 @@ describe("Sidebar", () => {
 							...session,
 							id: "proj-1-idle-activity",
 							title: "idle activity task",
-							status: "working",
+							status: "idle",
 							activity: { state: "idle", lastActivityAt: "2026-06-30T00:00:00Z" },
 						},
 						{
@@ -1489,7 +1491,9 @@ describe("Sidebar", () => {
 							id: "proj-1-idle-draft",
 							title: "idle draft task",
 							status: "draft",
+							scmStatus: "draft",
 							activity: { state: "idle", lastActivityAt: "2026-06-30T00:00:00Z" },
+							prs: [sidebarPR({ state: "draft" })],
 						},
 					],
 				},
@@ -1502,8 +1506,10 @@ describe("Sidebar", () => {
 			.querySelector<HTMLElement>("span.rounded-full");
 		const idleDraftDot = screen.getByLabelText("Open idle draft task").querySelector<HTMLElement>("span.rounded-full");
 
+		// An idle session with no pull request stays gray; a parked draft keeps
+		// the in-review tone the board gives it, without any motion.
 		expect(idleActivityDot).toHaveClass("bg-status-idle");
-		expect(idleDraftDot).toHaveClass("bg-status-idle");
+		expect(idleDraftDot).toHaveClass("bg-status-in-review");
 		expect(idleActivityDot).not.toHaveClass("animate-status-pulse");
 		expect(idleDraftDot).not.toHaveClass("animate-status-pulse");
 	});

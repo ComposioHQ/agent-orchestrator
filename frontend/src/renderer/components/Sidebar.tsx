@@ -31,7 +31,7 @@ import {
 	sortedWorkerSessions,
 	workerSessions,
 } from "../types/workspace";
-import { getAgentActivityView, getBoardStatusDotTone } from "../lib/session-presentation";
+import { getSessionStatusDotView } from "../lib/session-presentation";
 import { deriveSessionAgentSwitchPresentation } from "../lib/agent-switch-presentation";
 import { aoBridge } from "../lib/bridge";
 import { useCommandPaletteEnabled } from "../hooks/useCommandPaletteEnabled";
@@ -155,17 +155,22 @@ function useSelection() {
 	};
 }
 
-// The sidebar mirrors the Kanban lane color for session status. Raw agent
-// activity remains the motion source; its class also provides a fallback
-// background while the status color variable resolves.
+// Colour tracks the session's SCM state, falling back to runtime status when
+// there is no pull request; motion stays on raw agent activity. Board status is
+// activity-first, so a running agent would repaint every row the same working
+// tone — the sidebar is the one list where every session is visible at once, so
+// it keeps the PR tone and lets the pulse carry "busy" instead.
 function SessionStatusDot({ session }: { session: WorkspaceSession }) {
-	const activity = getAgentActivityView(session.activity);
+	const dot = getSessionStatusDotView(session);
 	return (
 		<span
 			aria-hidden="true"
-			className={cn("size-2 shrink-0 rounded-full", activity.indicatorClassName)}
+			className={cn(
+				"size-2 shrink-0 rounded-full",
+				dot.className,
+				dot.breathe && "animate-status-pulse",
+			)}
 			data-session-status={session.status}
-			style={{ background: getBoardStatusDotTone(session.status) }}
 		/>
 	);
 }

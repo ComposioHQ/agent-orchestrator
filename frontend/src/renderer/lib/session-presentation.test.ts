@@ -3,7 +3,7 @@ import {
 	attentionZone,
 	getAgentActivityView,
 	getAttentionZoneView,
-	getBoardStatusDotTone,
+	getSessionStatusDotView,
 	getSessionStatusView,
 	getSessionTimelinePillView,
 	isAgentActivityWorking,
@@ -110,15 +110,49 @@ describe("session presentation", () => {
 	});
 
 	it.each([
-		["idle", "var(--color-status-idle)"],
-		["working", "var(--color-status-working)"],
-		["changes_requested", "var(--color-status-needs-you)"],
-		["pr_open", "var(--color-status-in-review)"],
-		["mergeable", "var(--color-status-ready)"],
-		["merged", "var(--color-status-merged)"],
-		["terminated", "var(--color-status-terminated)"],
-	] as const)("matches the Kanban dot tone for %s", (status, tone) => {
-		expect(getBoardStatusDotTone(status)).toBe(tone);
+		["idle", "bg-status-idle"],
+		["working", "bg-status-working"],
+		["needs_input", "bg-status-needs-you"],
+		["exited", "bg-status-exited"],
+		["no_signal", "bg-status-unknown"],
+		["ci_failed", "bg-status-exited"],
+		["changes_requested", "bg-status-needs-you"],
+		["draft", "bg-status-in-review"],
+		["pr_open", "bg-status-in-review"],
+		["review_pending", "bg-status-in-review"],
+		["approved", "bg-status-ready"],
+		["mergeable", "bg-status-ready"],
+		["merged", "bg-status-merged"],
+	] as const)("paints the session dot with the %s status tone", (status, dotClassName) => {
+		// Both surfaces read tones off the one status table, so a status can never
+		// mean amber on a card and blue in the sidebar.
+		expect(getSessionStatusView(status).dotClassName).toBe(dotClassName);
+		expect(getSessionStatusDotView(sessionWith({ status }))).toMatchObject({ className: dotClassName });
+	});
+
+	it("prefers SCM state over runtime status for the dot tone", () => {
+		// A running agent drives status to `working`, which would erase every PR
+		// tone in the sidebar. SCM state wins so the row keeps saying "merged".
+		const merged = sessionWith({
+			status: "working",
+			scmStatus: "merged",
+			activity: { state: "active", lastActivityAt: "" },
+		});
+
+		expect(getSessionStatusDotView(merged)).toEqual({ className: "bg-status-merged", breathe: true });
+	});
+
+	it("keeps the dot's motion on raw agent activity", () => {
+		const scmStatus = "mergeable" as const;
+
+		expect(
+			getSessionStatusDotView(sessionWith({ status: "idle", scmStatus, activity: { state: "idle", lastActivityAt: "" } })),
+		).toEqual({ className: "bg-status-ready", breathe: false });
+		expect(
+			getSessionStatusDotView(
+				sessionWith({ status: "working", scmStatus, activity: { state: "active", lastActivityAt: "" } }),
+			),
+		).toEqual({ className: "bg-status-ready", breathe: true });
 	});
 
 	it("keeps activity indicator color independent from PR and CI presentation", () => {

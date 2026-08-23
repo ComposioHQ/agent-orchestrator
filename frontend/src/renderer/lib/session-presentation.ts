@@ -53,13 +53,28 @@ export function getAttentionZoneViewForZone(
 	return getPortableAttentionZoneViewForZone(zone, translator(t));
 }
 
-// The board has two split-lane tones that are more specific than their parent
-// attention zones: idle is gray inside Working, and merged has its own green
-// inside Ready to merge. Every other status uses its attention-zone dot tone.
-export function getBoardStatusDotTone(status: SessionStatus): string {
-	if (status === "idle") return "var(--color-status-idle)";
-	if (status === "merged") return "var(--color-status-merged)";
-	return getAttentionZoneView(status).dot;
+export type SessionStatusDotView = {
+	className: string;
+	breathe: boolean;
+};
+
+// The session dot carries two independent signals. Colour comes from the SCM
+// state, which survives a running agent — `status` is activity-first, so it
+// collapses to `working` the moment an agent wakes and takes every pull request
+// tone with it. Sessions without a pull request fall back to `status`, which is
+// where working/idle/exited live. Motion stays on raw agent activity, so a
+// session being worked on breathes whatever its pull request says.
+//
+// Tones resolve through the same status table the board card reads, so a status
+// cannot mean one colour here and another there.
+export function getSessionStatusDotView(
+	session: { activity?: SessionActivity | null; scmStatus?: SessionStatus; status: SessionStatus },
+	t: TFunction = appI18n.t,
+): SessionStatusDotView {
+	return {
+		className: getSessionStatusView(session.scmStatus ?? session.status, t).dotClassName,
+		breathe: getAgentActivityView(session.activity, t).breathe,
+	};
 }
 
 export function getSessionTimelinePillView(
