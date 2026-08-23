@@ -15,3 +15,11 @@ const (
 	KanbanReady       = contract.KanbanReady
 	KanbanArchive     = contract.KanbanArchive
 )
+
+// DisplayStatus is the phrase shown inside a session's Kanban column: what is
+// happening right now at the stage the column already placed it in.
+type DisplayStatus = contract.DisplayStatus
+
+// KanbanPresentation is a session's derived board presentation: its column plus
+// the display status derived inside that column.
+type KanbanPresentation = contract.KanbanPresentation

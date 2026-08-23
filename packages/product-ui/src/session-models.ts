@@ -53,6 +53,43 @@ export function isKanbanColumn(value: string): value is KanbanColumn {
 	return KANBAN_COLUMNS.some((column) => column === value);
 }
 
+export const DISPLAY_STATUSES = [
+	"Working",
+	"Blocked",
+	"Exited",
+	"No signal",
+	"Awaiting PR",
+	"Fixing CI failures",
+	"Addressing comments",
+	"Needs review",
+	"Review scheduled",
+	"Reviewing",
+	"Review pending",
+	"Draft",
+	"Checks failing",
+	"Changes requested",
+	"Needs human review",
+	"Mergeable",
+	"Approved",
+	"Merged",
+	"Closed without merge",
+	"Terminated",
+] as const;
+
+/**
+ * The daemon's phrase for what is happening inside a session's
+ * {@link KanbanColumn} right now. The wire value is already an English phrase
+ * (the API's deliberate shape, so an old client can print it with no mapping
+ * table); {@link isDisplayStatus} narrows it to this known set so
+ * `getDisplayStatusLabel` can look up a locale string instead of printing that
+ * English text unconditionally.
+ */
+export type DisplayStatus = (typeof DISPLAY_STATUSES)[number];
+
+export function isDisplayStatus(value: string): value is DisplayStatus {
+	return DISPLAY_STATUSES.some((status) => status === value);
+}
+
 export type SessionStatusModel = {
 	status: SessionStatus;
 };

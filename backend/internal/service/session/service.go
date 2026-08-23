@@ -1031,11 +1031,17 @@ func (s *Service) toSession(ctx context.Context, rec domain.SessionRecord) (doma
 	if err != nil {
 		return domain.Session{}, err
 	}
+	// Both derivations read the clock once, from the same instant: they share
+	// the no-signal rule, and two reads could put them either side of its grace
+	// period and have the card contradict its own status.
+	now := s.now()
+	presentation := deriveKanbanPresentation(rec, prs, runs, now, s.harnessSignals(rec.Harness))
 	return domain.Session{
 		SessionRecord:    rec,
-		Status:           deriveStatus(rec, prs, s.now(), s.harnessSignals(rec.Harness)),
+		Status:           deriveStatus(rec, prs, now, s.harnessSignals(rec.Harness)),
 		SCMStatus:        deriveSCMStatus(prs),
-		KanbanColumn:     deriveKanbanColumn(rec, prs, runs),
+		KanbanColumn:     presentation.Column,
+		DisplayStatus:    presentation.DisplayStatus,
 		TerminalHandleID: rec.Metadata.RuntimeHandleID,
 		PRs:              prs,
 	}, nil
