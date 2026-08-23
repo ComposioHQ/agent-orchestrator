@@ -2037,14 +2037,14 @@ func (m *Manager) relaunchSessionWithPolicy(ctx context.Context, operation strin
 		Prompt:                    rec.Metadata.Prompt,
 		BrowserCapabilityVerifier: browserCapabilityVerifier,
 	}
-	// The interface coordinator has already frozen and stopped the Chat source,
-	// transferred its structured provider id, and required native history for
-	// this exact restore. Bind that id to the target launch immediately: passive
-	// TUI resumes do not necessarily emit a provider SessionStart hook until the
-	// next user turn, which would otherwise make an already-correct round trip
-	// appear unverified forever. Ordinary restores do not take this path and must
-	// still receive current-generation identity proof from their hooks.
-	if requireNativeHistory && !forceFresh && strings.TrimSpace(metadata.AgentSessionID) != "" {
+	// Bind an exact native resume to the target launch immediately. Passive Codex
+	// resumes do not necessarily emit SessionStart until the next user turn, but
+	// `codex resume <id>` cannot silently select a different conversation. The
+	// interface coordinator provides the same guarantee after it freezes Chat and
+	// transfers the required native history. Fresh and fallback launches still
+	// require current-generation identity proof from their hooks.
+	bindNativeIdentity := mode == RestoreModeNative && rec.Harness == domain.HarnessCodex
+	if (bindNativeIdentity || (requireNativeHistory && !forceFresh)) && strings.TrimSpace(metadata.AgentSessionID) != "" {
 		metadata.AgentSessionIDLaunchID = launchID
 	}
 	if err := m.lcm.MarkSpawned(ctx, rec.ID, metadata); err != nil {
