@@ -7,7 +7,7 @@
  * re-sorting. Those belong to the daemon.
  */
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
 	AlertTriangle,
 	Brain,
@@ -102,6 +102,67 @@ const ATTACHMENT_REFERENCE_BLOCK =
 	/(?:^|\n\n)(?:Attached files \(read these files in the workspace(?: for context)?\)|Attached images \(read these files in the workspace for visual context\)):\n((?:- [^\n]+(?:\n|$))+)$/;
 const STAGED_ATTACHMENT_PATH = /^\.ao\/attachments\/(?:attachment|image)-[A-Za-z0-9][A-Za-z0-9._-]*$/;
 const IMAGE_ATTACHMENT_PATH = /\.(?:png|jpe?g|gif|webp|bmp)$/i;
+
+/** Fixed playback cadence for bursty provider chunks. */
+const STREAM_CHARACTER_INTERVAL_MS = 12;
+
+function useSmoothStreamingText(message: ConversationMessage): string {
+	const [visibleText, setVisibleText] = useState(() => (message.streaming ? "" : message.text));
+	const visibleRef = useRef(visibleText);
+	const targetRef = useRef(message.text);
+	const messageIdRef = useRef(message.id);
+	const timerRef = useRef<number | undefined>(undefined);
+
+	const scheduleDrain = useCallback(() => {
+		if (timerRef.current !== undefined) return;
+
+		const tick = () => {
+			timerRef.current = undefined;
+			setVisibleText((current) => {
+				const target = targetRef.current;
+				if (current.length >= target.length) return current;
+				const next = current + target[current.length];
+				visibleRef.current = next;
+				return next;
+			});
+			if (visibleRef.current.length < targetRef.current.length) {
+				timerRef.current = window.setTimeout(tick, STREAM_CHARACTER_INTERVAL_MS);
+			}
+		};
+
+		timerRef.current = window.setTimeout(tick, STREAM_CHARACTER_INTERVAL_MS);
+	}, []);
+
+	useEffect(() => {
+		if (message.id !== messageIdRef.current) {
+			messageIdRef.current = message.id;
+			targetRef.current = message.text;
+			const initial = message.streaming ? "" : message.text;
+			visibleRef.current = initial;
+			setVisibleText(initial);
+			return;
+		}
+
+		targetRef.current = message.text;
+		// A provider correction or rollback can replace the current prefix. In that
+		// case the durable snapshot is authoritative and should be shown immediately.
+		if (!message.text.startsWith(visibleRef.current)) {
+			visibleRef.current = message.text;
+			setVisibleText(message.text);
+			return;
+		}
+		if (visibleRef.current.length < message.text.length) scheduleDrain();
+	}, [message.id, message.text, message.streaming, scheduleDrain]);
+
+	useEffect(
+		() => () => {
+			if (timerRef.current !== undefined) window.clearTimeout(timerRef.current);
+		},
+		[],
+	);
+
+	return visibleText;
+}
 
 function humanMessageParts(text: string): { body: string; attachments: string[] } {
 	const match = ATTACHMENT_REFERENCE_BLOCK.exec(text);
@@ -413,11 +474,13 @@ export function AssistantMessage({
 	/** How long the finished turn took; sits next to rollback on the action row. */
 	durationMs?: number;
 }) {
+	const visibleText = useSmoothStreamingText(message);
+	const renderingStreaming = message.streaming || visibleText.length < message.text.length;
 	const hasDuration = durationMs !== undefined && durationMs > 0;
-	const showActions = !message.streaming && (showCopy || Boolean(onRollback) || hasDuration);
+	const showActions = !renderingStreaming && (showCopy || Boolean(onRollback) || hasDuration);
 	return (
 		<div className="group/message relative">
-			<ChatMarkdown text={message.text} streaming={message.streaming} />
+			<ChatMarkdown text={visibleText} streaming={renderingStreaming} />
 			{showActions ? (
 				// One action row for the completed answer, not one after every prose
 				// fragment the provider emitted while working. Always visible: hover-only
