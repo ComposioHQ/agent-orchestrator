@@ -136,6 +136,27 @@ test("the address line follows the selected mode", async () => {
 	await waitFor(() => expect(within(address).getByText("100.72.46.7:3011")).toBeInTheDocument());
 });
 
+test("shows the unencrypted-traffic warning for plaintext pairing", async () => {
+	mobileStatus.warning = "Traffic on this connection is not encrypted.";
+	renderModal();
+
+	expect(await screen.findByText(mobileStatus.warning)).toBeInTheDocument();
+});
+
+test("hides the unencrypted-traffic warning when secure pairing is active", async () => {
+	mobileStatus.warning = "Traffic on this connection is not encrypted.";
+	mobileStatus.securePairing = {
+		enabled: true, available: true, active: true,
+		host: "prasads-macbook-pro.tail057d04.ts.net", port: 443, reason: "",
+	};
+	renderModal();
+	await screen.findByText(mobileStatus.warning);
+
+	await userEvent.click(screen.getByRole("radio", { name: "Tailscale" }));
+
+	await waitFor(() => expect(screen.queryByText(mobileStatus.warning)).not.toBeInTheDocument());
+});
+
 test("omits the secure key entirely for plaintext pairing", () => {
 	expect(JSON.parse(pairingPayload("192.168.1.42", 3011, "pw"))).toEqual({
 		v: 1, host: "192.168.1.42", port: 3011, password: "pw",

@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { useEffect, useRef, useState } from "react";
-import { ArrowUpRight, Check, Copy, Loader2, RotateCcw } from "lucide-react";
+import { ArrowUpRight, Check, Copy, Info, Loader2, RotateCcw } from "lucide-react";
 import { motion } from "motion/react";
 import { RadioGroup } from "radix-ui";
 import { apiClient, apiErrorMessage } from "../../lib/api-client";
@@ -242,6 +242,12 @@ export function ConnectMobileContent({ active }: { active: boolean }) {
 	return (
 		<div className="flex flex-col gap-4">
 			<p className="text-xs leading-4 text-settings-muted">{t("mobile.description")}</p>
+			{enabled && status.warning && !secureActive && (
+				<p className="flex items-start gap-2 text-caption leading-(--leading-settings-mobile-warning) text-warning">
+					<Info className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
+					<span>{status.warning}</span>
+				</p>
+			)}
 
 			<div className="flex flex-col gap-6 sm:flex-row sm:items-start">
 				{/* Left: platform + connection pickers above one combined walkthrough. */}
