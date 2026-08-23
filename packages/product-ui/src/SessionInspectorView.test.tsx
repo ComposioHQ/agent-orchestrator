@@ -399,10 +399,10 @@ describe("portable inspector presentations", () => {
     expect(screen.getByText("Please take another pass after fixes land.")).toBeInTheDocument();
     const reviewToggle = screen.getByRole("button", { name: /maya.*Changes requested/i });
     const actionMenu = screen.getByRole("button", { name: "Review actions" });
-    const detailsToggle = screen.getByRole("button", { name: "Show more" });
+    const externalReview = screen.getByTestId("github-review-card");
     expect(screen.getByTestId("external-review-header")).toContainElement(actionMenu);
     expect(reviewToggle).not.toContainElement(actionMenu);
-    expect(reviewToggle).not.toContainElement(detailsToggle);
+    expect(within(externalReview).queryByRole("button", { name: "Show more" })).not.toBeInTheDocument();
     expect(reviewToggle).toHaveAttribute("aria-expanded", "false");
     fireEvent.click(actionMenu);
     expect(screen.getByRole("link", { name: "Open in System Browser" })).toBeInTheDocument();
@@ -412,14 +412,9 @@ describe("portable inspector presentations", () => {
     );
     expect(reviewToggle).toHaveAttribute("aria-expanded", "false");
     expect(screen.queryByText("Resolved comments · 1")).not.toBeInTheDocument();
-    expect(
-      within(screen.getByTestId("external-review-header")).queryByRole("button", {
-        name: "Show more",
-      }),
-    ).not.toBeInTheDocument();
-    fireEvent.click(detailsToggle);
+    fireEvent.click(reviewToggle);
     expect(reviewToggle).toHaveAttribute("aria-expanded", "true");
-    expect(screen.getByRole("button", { name: "Show less" })).toBeInTheDocument();
+    expect(within(externalReview).queryByRole("button", { name: "Show less" })).not.toBeInTheDocument();
     expect(screen.getByText("Resolved comments · 1")).toBeInTheDocument();
   });
 

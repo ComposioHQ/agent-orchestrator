@@ -992,11 +992,6 @@ function ExternalReviewCard({
 				{body ? (
 					<ReviewMarkdownBody body={body} clamped={!open} elementRef={bodyRef} renderMarkdown={renderMarkdown} testId="github-review-summary" />
 				) : null}
-				{collapsible ? (
-					<button aria-expanded={open} className="w-fit rounded-md px-1.5 py-1 text-micro font-medium text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground" onClick={() => setOpen((current) => !current)} type="button">
-						{open ? labels.showLess : labels.showMore}
-					</button>
-				) : null}
 				{open ? <GithubInlineComments comments={openComments} externalLink={externalLink} labels={labels} onResolveInlineComment={onResolveInlineComment} onSendInlineComment={onSendInlineComment} onViewInlineCommentInFile={onViewInlineCommentInFile} reviewerId={entry.reviewerId} reviewUrl={entry.reviewUrl} /> : null}
 				{open && resolvedComments.length > 0 ? <ResolvedInlineComments comments={resolvedComments} externalLink={externalLink} labels={labels} onViewInlineCommentInFile={onViewInlineCommentInFile} reviewerId={entry.reviewerId} reviewUrl={entry.reviewUrl} /> : null}
 			</div>
