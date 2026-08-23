@@ -45,11 +45,12 @@ import (
 // feature-detects each interface, and a missing method would read as "the provider
 // cannot do this" with nothing anywhere to notice.
 var (
-	_ ports.ChatRollbacker       = (*conversation)(nil)
-	_ ports.ChatForker           = (*conversation)(nil)
-	_ ports.ChatRenamer          = (*conversation)(nil)
-	_ ports.ChatHistoryReader    = (*conversation)(nil)
-	_ ports.ChatHistoryRefresher = (*conversation)(nil)
+	_ ports.ChatRollbacker         = (*conversation)(nil)
+	_ ports.ChatForker             = (*conversation)(nil)
+	_ ports.ChatConversationBinder = (*conversation)(nil)
+	_ ports.ChatRenamer            = (*conversation)(nil)
+	_ ports.ChatHistoryReader      = (*conversation)(nil)
+	_ ports.ChatHistoryRefresher   = (*conversation)(nil)
 )
 
 // providerRefusal marks a request the provider rejected on its own terms, as
@@ -105,10 +106,11 @@ type providerTurn struct {
 // terminal visible in AO's structured timeline as well; resuming the thread alone
 // preserves model context but does not make app-server re-emit old notifications.
 func (c *conversation) ReadHistory(ctx context.Context) ([]ports.ChatEvent, error) {
+	threadID := c.ProviderConversationID()
 	var resp codexproto.ThreadReadResponse
 	includeTurns := true
 	if err := c.conn.request(ctx, codexproto.MethodThreadRead, codexproto.ThreadReadParams{
-		ThreadID:     c.threadID,
+		ThreadID:     threadID,
 		IncludeTurns: &includeTurns,
 	}, &resp); err != nil {
 		return nil, asRefusal(fmt.Errorf("thread/read history: %w", err))
@@ -127,7 +129,7 @@ func (c *conversation) ReadHistory(ctx context.Context) ([]ports.ChatEvent, erro
 
 		events = append(events, ports.ChatEvent{
 			Kind:            ports.ChatEventTurnStarted,
-			ProviderEventID: historyEventID(c.threadID, turn.ID, "started"),
+			ProviderEventID: historyEventID(threadID, turn.ID, "started"),
 			ProviderTurnID:  turn.ID,
 		})
 
@@ -152,11 +154,11 @@ func (c *conversation) ReadHistory(ctx context.Context) ([]ports.ChatEvent, erro
 				}
 				clientID := deref(item.ClientID)
 				if clientID == "" {
-					clientID = historyEventID(c.threadID, turn.ID, "user", eventItemID)
+					clientID = historyEventID(threadID, turn.ID, "user", eventItemID)
 				}
 				events = append(events, ports.ChatEvent{
 					Kind:            ports.ChatEventUserMessageCompleted,
-					ProviderEventID: historyEventID(c.threadID, turn.ID, "user", eventItemID),
+					ProviderEventID: historyEventID(threadID, turn.ID, "user", eventItemID),
 					ProviderTurnID:  turn.ID,
 					ProviderItemID:  itemID,
 					ClientMessageID: clientID,
@@ -166,7 +168,7 @@ func (c *conversation) ReadHistory(ctx context.Context) ([]ports.ChatEvent, erro
 			}
 
 			params, err := json.Marshal(map[string]any{
-				"threadId": c.threadID,
+				"threadId": threadID,
 				"turnId":   turn.ID,
 				"item":     item,
 			})
@@ -175,14 +177,14 @@ func (c *conversation) ReadHistory(ctx context.Context) ([]ports.ChatEvent, erro
 			}
 			for eventIndex, event := range normalizeItem(params, true) {
 				event.ProviderEventID = historyEventID(
-					c.threadID, turn.ID, "item", eventItemID, string(event.Kind), fmt.Sprint(eventIndex))
+					threadID, turn.ID, "item", eventItemID, string(event.Kind), fmt.Sprint(eventIndex))
 				events = append(events, event)
 			}
 		}
 
 		completed := ports.ChatEvent{
 			Kind:            ports.ChatEventTurnCompleted,
-			ProviderEventID: historyEventID(c.threadID, turn.ID, "completed"),
+			ProviderEventID: historyEventID(threadID, turn.ID, "completed"),
 			ProviderTurnID:  turn.ID,
 			TurnState:       state,
 		}
@@ -284,7 +286,7 @@ func (c *conversation) Rollback(ctx context.Context, providerTurnID string) erro
 	}
 
 	if err := c.conn.request(ctx, "thread/rollback", map[string]any{
-		"threadId": c.threadID,
+		"threadId": c.ProviderConversationID(),
 		"numTurns": discard,
 	}, nil); err != nil {
 		return asRefusal(fmt.Errorf("thread/rollback: %w", err))
@@ -305,7 +307,7 @@ func (c *conversation) readTurns(ctx context.Context) ([]providerTurn, error) {
 		} `json:"thread"`
 	}
 	if err := c.conn.request(ctx, "thread/read", map[string]any{
-		"threadId":     c.threadID,
+		"threadId":     c.ProviderConversationID(),
 		"includeTurns": true,
 	}, &resp); err != nil {
 		return nil, asRefusal(fmt.Errorf("thread/read: %w", err))
@@ -322,7 +324,7 @@ func (c *conversation) Fork(ctx context.Context, lastProviderTurnID *string) (st
 	c.sendMu.Lock()
 	defer c.sendMu.Unlock()
 
-	params := codexproto.ThreadForkParams{ThreadID: c.threadID}
+	params := codexproto.ThreadForkParams{ThreadID: c.ProviderConversationID()}
 	if lastProviderTurnID != nil {
 		anchor := strings.TrimSpace(*lastProviderTurnID)
 		if anchor == "" {
@@ -340,6 +342,7 @@ func (c *conversation) Fork(ctx context.Context, lastProviderTurnID *string) (st
 	if resp.Thread.ID == "" {
 		return "", errors.New("thread/fork returned no thread id")
 	}
+	c.rememberLoadedThread(resp.Thread.ID)
 	return resp.Thread.ID, nil
 }
 
@@ -360,7 +363,7 @@ func (c *conversation) SetTitle(ctx context.Context, title string) error {
 	defer c.sendMu.Unlock()
 
 	if err := c.conn.request(ctx, "thread/name/set", map[string]any{
-		"threadId": c.threadID,
+		"threadId": c.ProviderConversationID(),
 		"name":     trimmed,
 	}, nil); err != nil {
 		return asRefusal(fmt.Errorf("thread/name/set: %w", err))

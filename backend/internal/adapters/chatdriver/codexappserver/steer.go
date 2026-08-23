@@ -84,7 +84,7 @@ func (c *conversation) Steer(
 		return ports.ChatTurnRef{}, err
 	}
 	params := codexproto.TurnSteerParams{
-		ThreadID:       c.threadID,
+		ThreadID:       c.ProviderConversationID(),
 		ExpectedTurnID: providerTurnID,
 		Input:          input,
 	}

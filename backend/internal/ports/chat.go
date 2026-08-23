@@ -559,6 +559,14 @@ type (
 	ChatForker interface {
 		Fork(ctx context.Context, lastProviderTurnID *string) (providerConversationID string, err error)
 	}
+	// ChatConversationBinder rebinds a live provider connection to another
+	// conversation that connection already loaded. Some providers make a fork live
+	// immediately and retain its writer lock in the creating process; attempting to
+	// resume that fork through a second process is therefore invalid. False means
+	// the conversation is not loaded here and the caller must use ordinary resume.
+	ChatConversationBinder interface {
+		BindProviderConversation(providerConversationID string) bool
+	}
 	// ChatRenamer sets or reads a human title the provider derived for the thread.
 	ChatRenamer interface {
 		SetTitle(ctx context.Context, title string) error

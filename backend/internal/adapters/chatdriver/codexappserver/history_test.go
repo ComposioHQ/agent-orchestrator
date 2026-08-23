@@ -328,6 +328,40 @@ func TestForkThroughTurnSendsLastTurnID(t *testing.T) {
 	}
 }
 
+func TestLoadedForkCanBecomeTheLiveConversationWithoutResume(t *testing.T) {
+	conv, srv := openConversation(t)
+	srv.reply("thread/fork", `{"thread":{"id":"thread-2"},"cwd":"/tmp/ws"}`)
+
+	forked, err := conv.Fork(context.Background(), nil)
+	if err != nil {
+		t.Fatalf("Fork: %v", err)
+	}
+	if !conv.BindProviderConversation(forked) {
+		t.Fatalf("BindProviderConversation(%q) = false", forked)
+	}
+	if got := conv.ProviderConversationID(); got != "thread-2" {
+		t.Fatalf("provider conversation = %q, want thread-2", got)
+	}
+	if conv.BindProviderConversation("thread-not-loaded") {
+		t.Fatal("bound a provider conversation this app-server did not load")
+	}
+
+	srv.reply("thread/name/set", `{}`)
+	if err := conv.SetTitle(context.Background(), "fork title"); err != nil {
+		t.Fatalf("SetTitle on bound fork: %v", err)
+	}
+	frame := srv.awaitFrame(func(f frame) bool { return f.Method == "thread/name/set" })
+	var params struct {
+		ThreadID string `json:"threadId"`
+	}
+	if err := json.Unmarshal(frame.Params, &params); err != nil {
+		t.Fatalf("decode thread/name/set: %v", err)
+	}
+	if params.ThreadID != "thread-2" {
+		t.Fatalf("thread/name/set target = %q, want bound fork", params.ThreadID)
+	}
+}
+
 func TestForkRejectsAResponseWithNoThreadID(t *testing.T) {
 	conv, srv := openConversation(t)
 	srv.reply("thread/fork", `{"thread":{}}`)

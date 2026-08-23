@@ -920,7 +920,11 @@ func (c *Controller) ProviderConversationID() string { return c.conv.ProviderCon
 func (c *Controller) ConversationID() string { return c.conversation.ID }
 
 // Generation fences events from a controller that has been replaced.
-func (c *Controller) Generation() string { return c.generation }
+func (c *Controller) Generation() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.generation
+}
 
 // State reports controller health.
 func (c *Controller) State() ports.ChatControllerState {
@@ -975,7 +979,7 @@ func (c *Controller) Send(ctx context.Context, msg ports.ChatUserMessage) (domai
 	}
 
 	created, err := c.store.AppendUserMessage(
-		ctx, c.conversation.ID, c.sessionID, c.generation, record, turnID, now)
+		ctx, c.conversation.ID, c.sessionID, c.Generation(), record, turnID, now)
 	if err != nil {
 		return domain.ConversationTurn{}, fmt.Errorf("record user message: %w", err)
 	}
@@ -1548,6 +1552,21 @@ func (c *Controller) AbortHandoff() {
 	}
 }
 
+// CommitIdleBranchHandoff moves this controller's durable fence and visible
+// branch together after the store has committed the same ownership change. It is
+// used when the provider can keep the fork on the existing live connection, so
+// replacing the controller process would violate the provider's one-writer rule.
+func (c *Controller) CommitIdleBranchHandoff(branchID, generation string) {
+	c.sendMu.Lock()
+	defer c.sendMu.Unlock()
+
+	c.mu.Lock()
+	c.conversation.ActiveBranchID = branchID
+	c.generation = generation
+	c.handoff = controllerHandoffNone
+	c.mu.Unlock()
+}
+
 // Resolve answers a pending approval. The provider is told first: if it rejects
 // the decision, AO must not have already recorded the approval as answered.
 func (c *Controller) Resolve(ctx context.Context, requestID string, decision ports.ChatDecision) error {
@@ -2057,7 +2076,7 @@ func (c *Controller) projectEvent(ctx context.Context, event ports.ChatEvent) (b
 		return false, false, fmt.Errorf("encode provider event archive: %w", err)
 	}
 	projected, err := c.store.ProjectProviderEvent(ctx, c.conversation.ID, c.sessionID,
-		c.generation, event.ProviderEventID, string(event.Kind), string(payload), c.now(),
+		c.Generation(), event.ProviderEventID, string(event.Kind), string(payload), c.now(),
 		func(txCtx context.Context) error { return c.apply(txCtx, event) })
 	if err != nil || !projected {
 		return projected, false, err
@@ -2127,7 +2146,7 @@ func (c *Controller) apply(ctx context.Context, event ports.ChatEvent) error {
 				// correlated, and without that the activities arrive with no turn and the
 				// timeline quietly stops grouping them.
 				if err := c.store.AdoptProviderTurn(ctx, c.conversation.ID, c.sessionID,
-					c.generation, c.newID(), event.ProviderTurnID, now); err != nil {
+					c.Generation(), c.newID(), event.ProviderTurnID, now); err != nil {
 					return fmt.Errorf("adopt provider-started turn %s: %w", event.ProviderTurnID, err)
 				}
 			}
@@ -2906,7 +2925,7 @@ func (c *Controller) reportActivity(
 		State:                state,
 		Timestamp:            now,
 		Event:                event,
-		ControllerGeneration: c.generation,
+		ControllerGeneration: c.Generation(),
 	}); err != nil {
 		c.log.Debug("chat activity signal rejected",
 			"session", c.sessionID, "event", event, "error", err)

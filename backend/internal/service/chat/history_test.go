@@ -31,6 +31,7 @@ type historyRecorder struct {
 	setTitleErr  error
 	forkErr      error
 	forkAnchors  []*string
+	boundThreads []string
 	echoRenameTo string
 }
 
@@ -75,6 +76,23 @@ func (h *historyRecorder) lastForkAnchor() *string {
 	}
 	anchorCopy := *anchor
 	return &anchorCopy
+}
+
+func (h *historyRecorder) BindProviderConversation(providerConversationID string) bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if providerConversationID != h.forkedTo && providerConversationID != "thread-1" {
+		return false
+	}
+	h.providerConversationID = providerConversationID
+	h.boundThreads = append(h.boundThreads, providerConversationID)
+	return true
+}
+
+func (h *historyRecorder) boundProviderThreads() []string {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return append([]string(nil), h.boundThreads...)
 }
 
 // SetTitle records the name and, like the real provider, reports it back on the event
@@ -1127,22 +1145,19 @@ func TestEditMessageForksBeforeMiddlePromptAndReusesStoredContent(t *testing.T) 
 		t.Fatalf("editing called rollback: %v", got)
 	}
 	driver.mu.Lock()
-	replacement := driver.resumed["thread-forked"]
 	resumes := append([]ports.ChatResumeConfig(nil), driver.resumeCalls...)
 	driver.mu.Unlock()
-	sent := replacement.sentMessages()
-	if len(sent) != 1 || sent[0].Text != "B edited" || len(sent[0].Content) != 2 ||
-		sent[0].Content[0].Text != `{"userSupplied":true}` ||
-		sent[0].Content[1].Data != "data:image/png;base64,AA==" {
-		t.Fatalf("replacement send = %#v", sent)
+	sent := source.sentMessages()
+	if len(sent) != 3 || sent[2].Text != "B edited" || len(sent[2].Content) != 2 ||
+		sent[2].Content[0].Text != `{"userSupplied":true}` ||
+		sent[2].Content[1].Data != "data:image/png;base64,AA==" {
+		t.Fatalf("bound provider send = %#v", sent)
 	}
-	driver.mu.Lock()
-	starts := append([]ports.ChatStartConfig(nil), driver.startConfigs...)
-	driver.mu.Unlock()
-	if len(resumes) != 1 || resumes[0].WorkspacePath == "" || resumes[0].Env["AO_EDIT_TEST"] != "yes" ||
-		resumes[0].SystemPrompt != "preserved prompt" || resumes[0].ProviderScopeID == "" ||
-		len(starts) != 1 || resumes[0].ProviderScopeID != starts[0].ProviderScopeID {
-		t.Fatalf("resume config = %#v", resumes)
+	if len(resumes) != 0 {
+		t.Fatalf("fork already loaded by provider was resumed on a second writer: %#v", resumes)
+	}
+	if got := source.boundProviderThreads(); len(got) != 1 || got[0] != "thread-forked" {
+		t.Fatalf("bound provider threads = %v", got)
 	}
 }
 
@@ -1281,19 +1296,16 @@ func TestEditMessageForkFailureReopensSource(t *testing.T) {
 }
 
 func TestEditMessageExplicitRefusalRestoresSourceBranch(t *testing.T) {
-	h, _, driver := newEditHarness(t, false)
+	h, source, _ := newEditHarness(t, false)
 	ctx := context.Background()
 	completeTurn(t, h, "A", "provider-turn-1")
 	h.awaitSnapshot(t, func(s store.ConversationSnapshot) bool { return len(s.Messages) == 2 })
 	second := completeTurn(t, h, "B", "provider-turn-2")
 	h.awaitSnapshot(t, func(s store.ConversationSnapshot) bool { return len(s.Messages) == 4 })
 
-	driver.mu.Lock()
-	replacement := driver.resumed["thread-forked"]
-	replacement.mu.Lock()
-	replacement.sendErr = refusedError{msg: "provider declined edit"}
-	replacement.mu.Unlock()
-	driver.mu.Unlock()
+	source.mu.Lock()
+	source.sendErr = refusedError{msg: "provider declined edit"}
+	source.mu.Unlock()
 
 	failed, err := h.svc.EditMessage(ctx, testSession, second, ports.ChatUserMessage{
 		Text: "B edited", ClientMessageID: "edit-b-failed", Origin: domain.MessageOriginHuman,
@@ -1316,6 +1328,9 @@ func TestEditMessageExplicitRefusalRestoresSourceBranch(t *testing.T) {
 	if snapshot.ActiveBranch.ID != failed.SourceBranchID {
 		t.Fatalf("active branch after explicit refusal = %q, want source %q", snapshot.ActiveBranch.ID, failed.SourceBranchID)
 	}
+	source.mu.Lock()
+	source.sendErr = nil
+	source.mu.Unlock()
 	if _, err := h.svc.Send(ctx, testSession, ports.ChatUserMessage{Text: "source remains usable"}); err != nil {
 		t.Fatalf("Send on restored source: %v", err)
 	}
@@ -1545,6 +1560,49 @@ func TestActivateBranchSwitchesBetweenCompatibleApproximateProviderScopes(t *tes
 		t.Fatalf("Snapshot edited branch again: %v", err)
 	}
 	requireBranchPoint(t, editedSnapshot, edited.Turn.ID, edited.SourceBranchID, "")
+}
+
+func TestActivateLoadedBranchRebindsWithoutSecondProviderWriter(t *testing.T) {
+	h, source, driver := newEditHarness(t, false)
+	ctx := context.Background()
+	completeTurn(t, h, "A", "provider-turn-1")
+	h.awaitSnapshot(t, func(s store.ConversationSnapshot) bool { return len(s.Messages) == 2 })
+	second := completeTurn(t, h, "B", "provider-turn-2")
+	h.awaitSnapshot(t, func(s store.ConversationSnapshot) bool { return len(s.Messages) == 4 })
+
+	edited, err := h.svc.EditMessage(ctx, testSession, second, ports.ChatUserMessage{
+		Text: "B edited", ClientMessageID: "edit-b", Origin: domain.MessageOriginHuman,
+	})
+	if err != nil {
+		t.Fatalf("EditMessage: %v", err)
+	}
+	source.emit(
+		ports.ChatEvent{Kind: ports.ChatEventTurnStarted, ProviderTurnID: edited.Turn.ProviderTurnID},
+		ports.ChatEvent{Kind: ports.ChatEventTurnCompleted, ProviderTurnID: edited.Turn.ProviderTurnID, TurnState: domain.TurnStateCompleted},
+	)
+	h.awaitSnapshot(t, func(s store.ConversationSnapshot) bool {
+		return len(s.Turns) == 2 && s.Turns[1].State.Terminal()
+	})
+
+	active, err := h.svc.ActivateBranch(ctx, testSession, edited.SourceBranchID)
+	if err != nil {
+		t.Fatalf("ActivateBranch source: %v", err)
+	}
+	if active != edited.SourceBranchID {
+		t.Fatalf("active branch = %q, want %q", active, edited.SourceBranchID)
+	}
+	driver.mu.Lock()
+	resumeCount := len(driver.resumeCalls)
+	driver.mu.Unlock()
+	if resumeCount != 0 {
+		t.Fatalf("loaded source branch resumed on a second provider writer: %d calls", resumeCount)
+	}
+	if got := source.boundProviderThreads(); len(got) != 2 || got[0] != "thread-forked" || got[1] != "thread-1" {
+		t.Fatalf("bound provider threads = %v", got)
+	}
+	if sent := source.sentTexts(); len(sent) != 3 {
+		t.Fatalf("branch activation sent a message: %v", sent)
+	}
 }
 
 func TestApproximateBranchScopePersistsAcrossServiceRestartAndSwitching(t *testing.T) {

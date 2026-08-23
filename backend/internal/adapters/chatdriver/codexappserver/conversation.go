@@ -46,8 +46,10 @@ type conversation struct {
 	proc *process
 	log  *slog.Logger
 
-	threadID string
-	events   chan ports.ChatEvent
+	threadMu      sync.RWMutex
+	threadID      string
+	loadedThreads map[string]struct{}
+	events        chan ports.ChatEvent
 	// Effective defaults returned when Codex opened or resumed this thread.
 	threadModel, threadEffort string
 
@@ -104,11 +106,12 @@ var _ ports.ChatMCPReloader = (*conversation)(nil)
 
 func newConversation(proc *process, log *slog.Logger) *conversation {
 	c := &conversation{
-		proc:     proc,
-		log:      log,
-		events:   make(chan ports.ChatEvent, eventBuffer),
-		pending:  make(map[string]*parkedRequest),
-		pumpDone: make(chan struct{}),
+		proc:          proc,
+		log:           log,
+		loadedThreads: make(map[string]struct{}),
+		events:        make(chan ports.ChatEvent, eventBuffer),
+		pending:       make(map[string]*parkedRequest),
+		pumpDone:      make(chan struct{}),
 	}
 	c.conn = newConn(proc.stdin, proc.stdout, log, c.handleServerRequest)
 	return c
@@ -118,14 +121,47 @@ func newConversation(proc *process, log *slog.Logger) *conversation {
 // called once, after the thread is open, so no event is emitted for a
 // conversation the caller does not yet have a handle to.
 func (c *conversation) start(threadID, model, effort string) {
+	c.threadMu.Lock()
 	c.threadID = threadID
+	c.loadedThreads[threadID] = struct{}{}
+	c.threadMu.Unlock()
 	c.threadModel = model
 	c.threadEffort = effort
 	go c.pump()
 }
 
 // ProviderConversationID is the Codex thread id AO persists for resume.
-func (c *conversation) ProviderConversationID() string { return c.threadID }
+func (c *conversation) ProviderConversationID() string {
+	c.threadMu.RLock()
+	defer c.threadMu.RUnlock()
+	return c.threadID
+}
+
+// BindProviderConversation retargets this live connection to a thread the same
+// app-server process already loaded. Codex thread/fork loads and writer-locks the
+// fork immediately, so handing its id to a second process is invalid while this
+// connection remains alive.
+func (c *conversation) BindProviderConversation(providerConversationID string) bool {
+	providerConversationID = strings.TrimSpace(providerConversationID)
+	if providerConversationID == "" {
+		return false
+	}
+	c.sendMu.Lock()
+	defer c.sendMu.Unlock()
+	c.threadMu.Lock()
+	defer c.threadMu.Unlock()
+	if _, ok := c.loadedThreads[providerConversationID]; !ok {
+		return false
+	}
+	c.threadID = providerConversationID
+	return true
+}
+
+func (c *conversation) rememberLoadedThread(providerConversationID string) {
+	c.threadMu.Lock()
+	c.loadedThreads[providerConversationID] = struct{}{}
+	c.threadMu.Unlock()
+}
 
 // Capabilities reports what this conversation can do.
 func (c *conversation) Capabilities() ports.ChatCapabilities { return capabilities() }
@@ -149,7 +185,7 @@ func (c *conversation) pump() {
 		// as an absolute instant and has to become a remaining duration, and a
 		// normalizer that reads the clock itself cannot be tested deterministically.
 		for _, ev := range normalizeNotification(n, time.Now()) {
-			rootConversation := ev.ProviderConversationID == "" || ev.ProviderConversationID == c.threadID
+			rootConversation := ev.ProviderConversationID == "" || ev.ProviderConversationID == c.ProviderConversationID()
 			if ev.Kind == ports.ChatEventTurnStarted && ev.ProviderTurnID != "" && rootConversation {
 				c.mu.Lock()
 				c.activeTurn = ev.ProviderTurnID
@@ -233,7 +269,7 @@ func (c *conversation) SendTurn(ctx context.Context, msg ports.ChatUserMessage) 
 	defer c.sendMu.Unlock()
 
 	params := map[string]any{
-		"threadId": c.threadID,
+		"threadId": c.ProviderConversationID(),
 		"input":    []any{map[string]any{"type": "text", "text": msg.Text}},
 	}
 	if msg.ClientMessageID != "" {
@@ -407,7 +443,7 @@ func (c *conversation) Compact(ctx context.Context) (ports.ChatCompactionResult,
 	// id: compaction is a property of the thread, and passing turn-shaped params
 	// here is rejected.
 	if err := c.conn.request(ctx, "thread/compact/start", map[string]any{
-		"threadId": c.threadID,
+		"threadId": c.ProviderConversationID(),
 	}, nil); err != nil {
 		return ports.ChatCompactionResult{}, fmt.Errorf("thread/compact/start: %w", err)
 	}
@@ -503,7 +539,7 @@ func (c *conversation) Interrupt(ctx context.Context, providerTurnID string) err
 		return ports.ErrChatNoActiveTurn
 	}
 	if err := c.conn.request(ctx, "turn/interrupt", map[string]any{
-		"threadId": c.threadID,
+		"threadId": c.ProviderConversationID(),
 		"turnId":   providerTurnID,
 	}, nil); err != nil {
 		// The provider refuses an interrupt for a turn it does not consider
@@ -748,7 +784,7 @@ func (c *conversation) ReloadMCPServers(ctx context.Context) ([]ports.ChatMCPSer
 		// The summary form: the full one returns every tool's JSON Schema, which for a
 		// handful of servers is hundreds of kilobytes AO would immediately discard.
 		"detail":   "summary",
-		"threadId": c.threadID,
+		"threadId": c.ProviderConversationID(),
 	}, &resp); err != nil {
 		// The reload itself succeeded, and that is the part the caller asked for. The
 		// pushed notifications will report the outcome regardless.

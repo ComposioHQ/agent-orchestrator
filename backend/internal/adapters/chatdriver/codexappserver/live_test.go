@@ -76,8 +76,9 @@ func TestLiveCodexAppServer(t *testing.T) {
 	}
 
 	var (
-		sawDelta bool
-		state    domain.TurnState
+		sawDelta                bool
+		state                   domain.TurnState
+		completedProviderTurnID string
 	)
 collect:
 	for {
@@ -96,6 +97,7 @@ collect:
 				_ = conv.ResolveRequest(ctx, ev.RequestID, ports.ChatDecision{ID: "accept"})
 			case ports.ChatEventTurnCompleted:
 				state = ev.TurnState
+				completedProviderTurnID = ev.ProviderTurnID
 				break collect
 			case ports.ChatEventControllerState:
 				if ev.ControllerState == ports.ChatControllerStopped {
@@ -136,6 +138,54 @@ collect:
 		t.Fatalf("resumed thread = %q, want %q", got, threadID)
 	}
 	t.Logf("resumed thread %s on a fresh app-server process", threadID)
+
+	// thread/fork loads and writer-locks the fork in this same app-server. AO must
+	// therefore rebind this live connection instead of trying to resume the fork in
+	// a second process, which Codex rejects as another active writer.
+	forker, ok := resumed.(ports.ChatForker)
+	if !ok {
+		t.Fatal("live Codex conversation does not implement ChatForker")
+	}
+	binder, ok := resumed.(ports.ChatConversationBinder)
+	if !ok {
+		t.Fatal("live Codex conversation does not implement ChatConversationBinder")
+	}
+	forkedID, err := forker.Fork(ctx, &completedProviderTurnID)
+	if err != nil {
+		t.Fatalf("Fork through completed turn: %v", err)
+	}
+	if !binder.BindProviderConversation(forkedID) {
+		t.Fatalf("bind loaded fork %s", forkedID)
+	}
+	if got := resumed.ProviderConversationID(); got != forkedID {
+		t.Fatalf("bound thread = %q, want fork %q", got, forkedID)
+	}
+	if _, err := resumed.SendTurn(ctx, ports.ChatUserMessage{
+		Text:            "Reply with exactly the word: forked",
+		ClientMessageID: "live-fork-1",
+		Origin:          domain.MessageOriginHuman,
+	}); err != nil {
+		t.Fatalf("SendTurn on loaded fork: %v", err)
+	}
+	for {
+		select {
+		case ev, ok := <-resumed.Events():
+			if !ok {
+				t.Fatal("fork event stream closed before the turn completed")
+			}
+			if ev.Kind == ports.ChatEventTurnCompleted {
+				if ev.TurnState != domain.TurnStateCompleted {
+					t.Fatalf("fork turn state = %q", ev.TurnState)
+				}
+				return
+			}
+			if ev.Kind == ports.ChatEventControllerState && ev.ControllerState == ports.ChatControllerStopped {
+				t.Fatalf("controller stopped before fork turn completed: %v", ev.Err)
+			}
+		case <-ctx.Done():
+			t.Fatalf("waiting for fork turn: %v", ctx.Err())
+		}
+	}
 }
 
 // livePlugin stands in for AO's Codex agent plugin so this test exercises the
