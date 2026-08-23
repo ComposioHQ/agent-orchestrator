@@ -8,10 +8,11 @@ import type { SessionActivityState, WorkspaceSession, WorkspaceSummary } from ".
 import { ShellTopbar, TopbarKillButton } from "./ShellTopbar";
 import { TooltipProvider } from "./ui/tooltip";
 
-const { navigateMock, onKilledMock, paramsMock, postMock, spawnMock, useWorkspaceQueryMock } = vi.hoisted(() => ({
+const { navigateMock, onKilledMock, paramsMock, pathnameMock, postMock, spawnMock, useWorkspaceQueryMock } = vi.hoisted(() => ({
 	navigateMock: vi.fn(),
 	onKilledMock: vi.fn(),
 	paramsMock: { projectId: undefined as string | undefined, sessionId: undefined as string | undefined },
+	pathnameMock: { current: "/" },
 	postMock: vi.fn(),
 	spawnMock: vi.fn(),
 	useWorkspaceQueryMock: vi.fn(),
@@ -23,6 +24,8 @@ vi.mock("@tanstack/react-router", async (importOriginal) => {
 		...actual,
 		useNavigate: () => navigateMock,
 		useParams: () => paramsMock,
+		useRouterState: ({ select }: { select: (state: { location: { pathname: string } }) => unknown }) =>
+			select({ location: { pathname: pathnameMock.current } }),
 	};
 });
 
@@ -178,6 +181,7 @@ beforeEach(() => {
 	onKilledMock.mockReset();
 	paramsMock.projectId = undefined;
 	paramsMock.sessionId = undefined;
+	pathnameMock.current = "/";
 	postMock.mockReset();
 	postMock.mockResolvedValue({ data: { ok: true, sessionId: "sess-1" }, error: undefined });
 	useWorkspaceQueryMock.mockReset();
@@ -353,7 +357,37 @@ describe("ShellTopbar orchestrator actions", () => {
 		});
 	});
 
-	it("opens project settings instead of spawning when no orchestrator agent is configured", async () => {
+	it("resolves the running session on the stable orchestrator route", () => {
+		useWorkspaceQueryMock.mockReturnValue({
+			data: [
+				{
+					id: "proj-1",
+					name: "my-app",
+					path: "/repo/my-app",
+					orchestratorAgent: "claude-code",
+					sessions: [worker, orchestrator],
+				},
+			],
+			isError: false,
+			isLoading: false,
+		});
+		paramsMock.projectId = "proj-1";
+		paramsMock.sessionId = undefined;
+		pathnameMock.current = "/projects/proj-1/orchestrator";
+
+		render(
+			<QueryClientProvider client={new QueryClient()}>
+				<TooltipProvider>
+					<ShellTopbar />
+				</TooltipProvider>
+			</QueryClientProvider>,
+		);
+
+		expect(screen.getByTestId("session-topbar-identity")).toHaveTextContent("my-app");
+		expect(screen.getByRole("button", { name: "Open Kanban" })).toBeInTheDocument();
+	});
+
+	it("opens the stable destination without spawning when no orchestrator agent is configured", async () => {
 		useWorkspaceQueryMock.mockReturnValue({
 			data: [
 				{
@@ -378,9 +412,23 @@ describe("ShellTopbar orchestrator actions", () => {
 
 		await userEvent.click(screen.getByRole("button", { name: "Open orchestrator" }));
 
-		expect(useUiStore.getState().settingsModal).toEqual({ scope: "project", projectId: "proj-1" });
-		expect(navigateMock).not.toHaveBeenCalled();
+		expect(navigateMock).toHaveBeenCalledWith({
+			to: "/projects/$projectId/orchestrator",
+			params: { projectId: "proj-1" },
+		});
 		expect(spawnMock).not.toHaveBeenCalled();
+	});
+
+	it("shows the delegated worker's orchestrator origin and links back to the stable route", async () => {
+		renderTopbarSessions([worker, orchestrator], worker.id);
+
+		const origin = screen.getByTestId("worker-orchestrator-origin");
+		expect(origin).toHaveTextContent("From Orchestrator");
+		await userEvent.click(origin);
+		expect(navigateMock).toHaveBeenCalledWith({
+			to: "/projects/$projectId/orchestrator",
+			params: { projectId: "proj-1" },
+		});
 	});
 
 	it("switches from a worker to its orchestrator as soon as termination is confirmed", async () => {
@@ -391,8 +439,8 @@ describe("ShellTopbar orchestrator actions", () => {
 		await clickKillDialogConfirm();
 
 		expect(navigateMock).toHaveBeenCalledWith({
-			to: "/projects/$projectId/sessions/$sessionId",
-			params: { projectId: "proj-1", sessionId: "orch-1" },
+			to: "/projects/$projectId/orchestrator",
+			params: { projectId: "proj-1" },
 		});
 	});
 });

@@ -115,4 +115,24 @@ describe("restartProjectOrchestrator", () => {
 			requestId: "request-42",
 		});
 	});
+
+	it("returns to the stable orchestrator destination after replacement", async () => {
+		const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+		vi.spyOn(queryClient, "invalidateQueries").mockResolvedValue();
+		spawnMock.mockResolvedValue("orch-replacement");
+		const navigate = vi.fn();
+
+		await restartProjectOrchestrator({
+			projectId: "proj-1",
+			queryClient,
+			navigate,
+			setProjectRestarting: vi.fn(),
+			setOrchestratorReplacementError: vi.fn(),
+		});
+
+		expect(navigate).toHaveBeenCalledWith({
+			to: "/projects/$projectId/orchestrator",
+			params: { projectId: "proj-1" },
+		});
+	});
 });

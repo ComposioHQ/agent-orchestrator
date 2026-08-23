@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
-import { isChatPreflightError, OrchestratorSpawnError, spawnOrchestrator } from "./spawn-orchestrator";
+import { chatPreflightGuidance, isChatPreflightError, OrchestratorSpawnError, spawnOrchestrator } from "./spawn-orchestrator";
 import { apiClient } from "./api-client";
 import { captureRendererEvent } from "./telemetry";
 
@@ -122,5 +122,14 @@ describe("spawnOrchestrator", () => {
 		});
 		expect((error as Error).message).toBe("chat driver is unavailable (CHAT_DRIVER_UNAVAILABLE)");
 		expect(isChatPreflightError(error)).toBe(true);
+	});
+
+	it.each([
+		["SESSION_MODE_UNSUPPORTED", "does not support Chat sessions"],
+		["CHAT_DRIVER_UNAVAILABLE", "no Chat driver available"],
+		["CHAT_DRIVER_INCOMPATIBLE", "Chat driver is incompatible"],
+		["CHAT_AUTH_REQUIRED", "must be signed in"],
+	] as const)("explains the %s preflight failure", (code, expected) => {
+		expect(chatPreflightGuidance(code)).toContain(expected);
 	});
 });
