@@ -149,7 +149,7 @@ export default function CloneRepositoryDialog({
 							{cloudOrganizations.length > 0 ? (
 								<div className="space-y-2">
 									<Label htmlFor="cloneProjectLocation" className="text-[13px] font-semibold text-[var(--color-text-import-title)]">
-										Project location
+										{t("shell.projectLocation")}
 									</Label>
 									<Select
 										value={isCloud ? "cloud" : "local"}
@@ -160,12 +160,12 @@ export default function CloneRepositoryDialog({
 											organizationId: location === "cloud" ? (value.organizationId || cloudOrganizations[0]?.id) : undefined,
 										})}
 									>
-										<SelectTrigger id="cloneProjectLocation" aria-label="Project location" className="w-full bg-[var(--color-bg-import-card)]">
+										<SelectTrigger id="cloneProjectLocation" aria-label={t("shell.projectLocation")} className="w-full bg-[var(--color-bg-import-card)]">
 											<SelectValue />
 										</SelectTrigger>
 										<SelectContent>
-											<SelectItem value="local">On this device</SelectItem>
-											<SelectItem value="cloud">AO Cloud</SelectItem>
+											<SelectItem value="local">{t("shell.projectLocationLocal")}</SelectItem>
+											<SelectItem value="cloud">{t("shell.projectLocationCloud")}</SelectItem>
 										</SelectContent>
 									</Select>
 								</div>
@@ -218,13 +218,13 @@ export default function CloneRepositoryDialog({
 							{isCloud && repositoryName ? (
 								<div className="flex items-center gap-3 rounded-lg border border-[var(--color-border-import-modal)] bg-[var(--color-bg-import-card)] px-3 py-3">
 									<Cloud className="size-4 shrink-0 text-[var(--color-text-import-muted)]" aria-hidden="true" />
-									<div className="min-w-0"><p className="text-[12px] font-medium text-[var(--color-text-import-muted)]">Create in AO Cloud</p><p className="mt-0.5 truncate font-mono text-[13px] font-semibold text-[var(--color-text-import-title)]">{repositoryName}</p></div>
+									<div className="min-w-0"><p className="text-[12px] font-medium text-[var(--color-text-import-muted)]">{t("shell.cloudProject")}</p><p className="mt-0.5 truncate font-mono text-[13px] font-semibold text-[var(--color-text-import-title)]">{repositoryName}</p></div>
 								</div>
 							) : null}
 
 							{isCloud ? (
 								<div className="space-y-2">
-									<Label htmlFor="cloudDefaultBranch" className="text-[13px] font-semibold text-[var(--color-text-import-title)]">Default branch</Label>
+									<Label htmlFor="cloudDefaultBranch" className="text-[13px] font-semibold text-[var(--color-text-import-title)]">{t("shell.cloudDefaultBranch")}</Label>
 									<Input id="cloudDefaultBranch" className="bg-[var(--color-bg-import-card)] font-mono text-[13px]" disabled={disabled} placeholder="main" value={value.defaultBranch ?? ""} onChange={(event) => onChange({ ...value, defaultBranch: event.target.value })} />
 								</div>
 							) : (
