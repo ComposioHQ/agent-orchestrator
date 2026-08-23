@@ -3114,7 +3114,7 @@ export interface components {
         SystemRequirementsResponse: {
             /** @description True iff every requirement with Required=true is satisfied. Requirements with Required=false (e.g. gh) are advisory and never block readiness. */
             ready: boolean;
-            /** @description Individual checks, in stable order: git, tmux, harness, gh. */
+            /** @description Individual checks in stable order for the selected probe. */
             requirements: components["schemas"]["SystemRequirement"][];
         };
         TrackerIntakeConfig: {
