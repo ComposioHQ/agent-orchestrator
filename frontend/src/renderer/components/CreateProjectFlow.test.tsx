@@ -38,7 +38,8 @@ vi.mock("./CreateProjectAgentSheet", () => ({
 // These tests only care whether the clone flow is on screen and that the
 // droppedPath guard leaves it alone, so a thin stub keeps the suite focused.
 vi.mock("./CloneRepositoryDialog", () => ({
-	default: ({ open }: { open: boolean }) => (open ? <div data-testid="clone-dialog" /> : null),
+	default: ({ open, value }: { open: boolean; value: { location?: string; organizationId?: string } }) =>
+		(open ? <div data-location={value.location} data-organization={value.organizationId} data-testid="clone-dialog" /> : null),
 }));
 
 function okScan(path: string) {
@@ -71,6 +72,45 @@ beforeEach(() => {
 });
 
 describe("CreateProjectFlow droppedPath", () => {
+	it("keeps AO Cloud hidden when cloud is disabled", async () => {
+		const { rerender } = render(<CreateProjectFlow mode="choose" {...noop} openSignal={0} />);
+		rerender(<CreateProjectFlow mode="choose" {...noop} openSignal={1} />);
+		expect(await screen.findByRole("button", { name: "Open local repository" })).toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: "AO Cloud repository" })).not.toBeInTheDocument();
+	});
+
+	it("offers AO Cloud directly and resumes after sign-in", async () => {
+		const user = userEvent.setup();
+		const onCloudSignIn = vi.fn().mockResolvedValue({
+			organizations: [{ id: "org_1", slug: "dev", displayName: "Dev", role: "owner" }],
+		});
+		const { rerender } = render(
+			<CreateProjectFlow cloudEnabled mode="choose" {...noop} onCloudSignIn={onCloudSignIn} openSignal={0} />,
+		);
+		rerender(<CreateProjectFlow cloudEnabled mode="choose" {...noop} onCloudSignIn={onCloudSignIn} openSignal={1} />);
+
+		await user.click(await screen.findByRole("button", { name: "AO Cloud repository" }));
+
+		expect(onCloudSignIn).toHaveBeenCalledOnce();
+		expect(await screen.findByTestId("clone-dialog")).toHaveAttribute("data-location", "cloud");
+		expect(screen.getByTestId("clone-dialog")).toHaveAttribute("data-organization", "org_1");
+	});
+
+	it("keeps the source step open when cloud sign-in is cancelled", async () => {
+		const user = userEvent.setup();
+		const onCloudSignIn = vi.fn().mockResolvedValue(null);
+		const { rerender } = render(
+			<CreateProjectFlow cloudEnabled mode="choose" {...noop} onCloudSignIn={onCloudSignIn} openSignal={0} />,
+		);
+		rerender(<CreateProjectFlow cloudEnabled mode="choose" {...noop} onCloudSignIn={onCloudSignIn} openSignal={1} />);
+
+		await user.click(await screen.findByRole("button", { name: "AO Cloud repository" }));
+
+		expect(await screen.findByRole("alert")).toHaveTextContent("Sign in to AO Cloud");
+		expect(screen.getByRole("button", { name: "AO Cloud repository" })).toBeInTheDocument();
+		expect(screen.queryByTestId("clone-dialog")).not.toBeInTheDocument();
+	});
+
 	it("does not open on mount", () => {
 		render(<CreateProjectFlow mode="choose" {...noop} droppedPath={null} />);
 		expect(screen.queryByRole("button", { name: "Add a workspace folder" })).not.toBeInTheDocument();

@@ -18,7 +18,7 @@ type ProjectExternalLink = ComponentType<{
 	title?: string;
 }>;
 
-export type ProjectSource = "clone" | "local" | "workspace";
+export type ProjectSource = "clone" | "cloud" | "local" | "workspace";
 
 export type ProjectSourcePickerLabels = {
 	title: string;
@@ -34,12 +34,15 @@ export type ProjectSourcePickerLabels = {
 	workspace: string;
 	workspaceDescription: string;
 	close: string;
+	cloud?: string;
+	cloudDescription?: string;
 };
 
 export type ProjectSourcePickerViewProps = {
 	arrowIcon?: ReactNode;
 	cloneIcon?: ReactNode;
 	closeIcon?: ReactNode;
+	cloudIcon?: ReactNode;
 	dialog?: boolean;
 	disabled: boolean;
 	folderIcon?: ReactNode;
@@ -53,6 +56,7 @@ export function ProjectSourcePickerView({
 	arrowIcon,
 	cloneIcon,
 	closeIcon,
+	cloudIcon,
 	dialog = false,
 	disabled,
 	folderIcon,
@@ -89,6 +93,24 @@ export function ProjectSourcePickerView({
 					onClick={() => onSelect("local")}
 				/>
 			</div>
+			{labels.cloud && labels.cloudDescription ? (
+				<button
+					type="button"
+					aria-label={labels.cloud}
+					className="relative z-[2] flex min-h-18 w-full items-center gap-4 rounded-welcome-panel border border-[var(--color-border-import-modal)] bg-[var(--color-bg-import-card)] px-5 py-4 text-left transition-colors hover:bg-[var(--color-bg-import-card-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 disabled:pointer-events-none disabled:opacity-50"
+					disabled={disabled}
+					onClick={() => onSelect("cloud")}
+				>
+					<span className="grid size-10 shrink-0 place-items-center rounded-lg border border-[var(--color-border-import-modal)] bg-[var(--color-bg-import-chip)] text-[var(--color-text-import-muted)]">
+						{cloudIcon}
+					</span>
+					<span className="min-w-0 flex-1">
+						<span className="block text-[15px] font-bold leading-5 text-[var(--color-text-import-title)]">{labels.cloud}</span>
+						<span className="mt-1 block text-pretty text-[13px] leading-5 text-[var(--color-text-import-muted)]">{labels.cloudDescription}</span>
+					</span>
+					<span className="shrink-0 text-[var(--color-text-import-muted)]" aria-hidden="true">{arrowIcon}</span>
+				</button>
+			) : null}
 			<button
 				type="button"
 				aria-label={labels.workspace}
