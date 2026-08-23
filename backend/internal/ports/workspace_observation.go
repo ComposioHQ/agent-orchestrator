@@ -6,6 +6,7 @@ import (
 	"time"
 )
 
+// ErrWorkspaceObservationUnsupported reports an unavailable observation capability.
 var ErrWorkspaceObservationUnsupported = errors.New("workspace observation: operation unsupported")
 
 // WorkspaceObservation is the sole read-only port for materialized workspace
@@ -20,16 +21,19 @@ type WorkspaceObservation interface {
 	Blob(ctx context.Context, request WorkspaceBlobRequest) (WorkspaceBlobResult, error)
 }
 
+// WorkspaceListRequest selects workspace roots and an optional result limit.
 type WorkspaceListRequest struct {
 	Workspaces []WorkspaceInfo
 	MaxEntries int
 }
 
+// WorkspaceListResult is a bounded recursive workspace listing.
 type WorkspaceListResult struct {
 	Entries   []WorkspaceEntry
 	Truncated bool
 }
 
+// WorkspaceEntry describes one path relative to a workspace root.
 type WorkspaceEntry struct {
 	WorkspacePath string
 	Path          string
@@ -39,12 +43,14 @@ type WorkspaceEntry struct {
 	Directory     bool
 }
 
+// WorkspaceReadRequest selects a materialized file and optional byte limit.
 type WorkspaceReadRequest struct {
 	Workspace WorkspaceInfo
 	Path      string
 	MaxBytes  int64
 }
 
+// WorkspaceReadResult contains materialized file metadata and bytes.
 type WorkspaceReadResult struct {
 	Path      string
 	Data      []byte
@@ -54,12 +60,15 @@ type WorkspaceReadResult struct {
 	Truncated bool
 }
 
+// WorkspaceWatchRequest selects workspace roots to observe for changes.
 type WorkspaceWatchRequest struct {
 	Workspaces []WorkspaceInfo
 }
 
+// WorkspaceEvent signals that at least one selected workspace changed.
 type WorkspaceEvent struct{}
 
+// WorkspaceDiffRequest selects a bounded Git diff for a workspace or path.
 type WorkspaceDiffRequest struct {
 	Workspace WorkspaceInfo
 	Base      string
@@ -67,11 +76,13 @@ type WorkspaceDiffRequest struct {
 	MaxBytes  int64
 }
 
+// WorkspaceDiffResult contains a unified diff and truncation state.
 type WorkspaceDiffResult struct {
 	UnifiedDiff string
 	Truncated   bool
 }
 
+// WorkspaceBlobRequest selects current or historical file content.
 type WorkspaceBlobRequest struct {
 	Workspace WorkspaceInfo
 	Path      string
@@ -81,6 +92,7 @@ type WorkspaceBlobRequest struct {
 	MaxBytes int64
 }
 
+// WorkspaceBlobResult contains file bytes and presentation metadata.
 type WorkspaceBlobResult struct {
 	Path      string
 	Data      []byte

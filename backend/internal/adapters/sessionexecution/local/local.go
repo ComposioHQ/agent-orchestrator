@@ -1,3 +1,4 @@
+//nolint:revive // Exported methods intentionally mirror the ports.SessionExecution contracts.
 package local
 
 import (

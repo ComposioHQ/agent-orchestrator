@@ -7,6 +7,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 )
 
+// ErrWorkspaceProjectUnsupported reports that an adapter cannot materialize a multi-repository workspace.
 var ErrWorkspaceProjectUnsupported = errors.New("workspace project materialization is not supported by workspace adapter")
 
 // SessionExecution is the single placement seam for a session. Implementations
@@ -60,6 +61,7 @@ type SessionProvision interface {
 	Rollback(ctx context.Context, opts RollbackOptions) RollbackOutcome
 }
 
+// ExecutionSpec identifies a new placement transaction.
 type ExecutionSpec struct {
 	SessionID   domain.SessionID
 	ProjectID   domain.ProjectID
@@ -69,11 +71,13 @@ type ExecutionSpec struct {
 	Branch      string
 }
 
+// WorkspaceCreateSpec selects single-repository or workspace-project creation.
 type WorkspaceCreateSpec struct {
 	Workspace WorkspaceConfig
 	Project   *WorkspaceProjectConfig
 }
 
+// WorkspaceProvisionSpec describes post-checkout workspace setup.
 type WorkspaceProvisionSpec struct {
 	ProjectPath   string
 	WorkspacePath string
@@ -93,11 +97,13 @@ type AgentPrepareSpec struct {
 	PreLaunch LaunchConfig
 }
 
+// RollbackOptions records cleanup already completed by the manager.
 type RollbackOptions struct {
 	AgentStatePrepared bool
 	RuntimeDestroyed   bool
 }
 
+// RollbackOutcome reports transaction-owned resources removed by an adapter.
 type RollbackOutcome struct {
 	WorkspaceDestroyed bool
 }

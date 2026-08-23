@@ -3659,10 +3659,6 @@ func (m *Manager) writeSystemPromptFile(id domain.SessionID, systemPrompt string
 	return m.execution.StageSystemPrompt(context.Background(), id, systemPrompt)
 }
 
-func (m *Manager) prepareSystemPromptFile(id domain.SessionID, harness domain.AgentHarness, systemPrompt string) (string, error) {
-	return m.prepareSystemPromptFileIn(context.Background(), m.execution, id, harness, systemPrompt)
-}
-
 func (m *Manager) prepareSystemPromptFileIn(ctx context.Context, environment ports.SessionEnvironment, id domain.SessionID, harness domain.AgentHarness, systemPrompt string) (string, error) {
 	path, err := environment.StageSystemPrompt(ctx, id, systemPrompt)
 	if err == nil || path != "" {
@@ -3688,13 +3684,6 @@ func systemPromptFileRequired(harness domain.AgentHarness) bool {
 	default:
 		return false
 	}
-}
-
-func (m *Manager) systemPromptDir(id domain.SessionID) string {
-	if strings.TrimSpace(m.dataDir) == "" {
-		return ""
-	}
-	return filepath.Join(m.dataDir, "prompts", string(id))
 }
 
 func (m *Manager) cleanupSystemPromptDir(id domain.SessionID) {
@@ -3928,14 +3917,6 @@ func runPostCreate(ctx context.Context, workspacePath string, commands []string)
 	return nil
 }
 
-// preLauncher is an optional Agent capability: a step the manager runs before
-// launch. Claude Code implements it to record workspace trust in ~/.claude.json
-// so its interactive "do you trust this folder?" dialog can't block the headless
-// pane. Adapters that don't need it simply omit the method.
-type preLauncher interface {
-	PreLaunch(ctx context.Context, cfg ports.LaunchConfig) error
-}
-
 // workspaceCleaner is an optional Agent capability for durable agent-side state
 // that should be released only after AO has actually removed the workspace.
 type workspaceCleaner interface {
@@ -3950,14 +3931,6 @@ func (m *Manager) augmentAgentRuntimeEnv(agent ports.Agent, env map[string]strin
 	if augmenter, ok := agent.(runtimeEnvAugmenter); ok {
 		augmenter.AugmentRuntimeEnv(env, m.dataDir)
 	}
-}
-
-// prepareWorkspace runs the per-session pre-launch steps before the runtime
-// starts the agent: installing the workspace-local activity hooks (so early
-// startup hooks can update the already-created session row), then any optional
-// PreLaunch step. Shared by Spawn and Restore.
-func (m *Manager) prepareWorkspace(ctx context.Context, agent ports.Agent, id domain.SessionID, workspacePath, systemPrompt, systemPromptFile string, agentConfig ports.AgentConfig, env map[string]string) error {
-	return m.prepareWorkspaceIn(ctx, m.execution, agent, "", id, workspacePath, systemPrompt, systemPromptFile, agentConfig, env)
 }
 
 func (m *Manager) prepareWorkspaceIn(ctx context.Context, environment ports.SessionEnvironment, agent ports.Agent, harness domain.AgentHarness, id domain.SessionID, workspacePath, systemPrompt, systemPromptFile string, agentConfig ports.AgentConfig, env map[string]string) error {
