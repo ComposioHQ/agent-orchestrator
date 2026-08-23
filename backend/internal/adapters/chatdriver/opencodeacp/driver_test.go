@@ -1,6 +1,7 @@
 package opencodeacp
 
 import (
+	"context"
 	"encoding/json"
 	"testing"
 
@@ -9,7 +10,7 @@ import (
 )
 
 func TestConfigureUsesNativeACPAndMergesSystemPromptConfig(t *testing.T) {
-	args, env, err := configure(acpdriver.LaunchConfig{
+	args, env, err := configure(context.Background(), acpdriver.LaunchConfig{
 		SessionID: "worker-1", SystemPrompt: "Follow AO worker rules.",
 		Permissions: ports.PermissionModeBypassPermissions,
 		Env: map[string]string{
@@ -50,7 +51,7 @@ func TestConfigureUsesNativeACPAndMergesSystemPromptConfig(t *testing.T) {
 }
 
 func TestConfigureWithoutSystemPromptWritesNoAOConfig(t *testing.T) {
-	args, env, err := configure(acpdriver.LaunchConfig{})
+	args, env, err := configure(context.Background(), acpdriver.LaunchConfig{})
 	if err != nil {
 		t.Fatalf("configure: %v", err)
 	}

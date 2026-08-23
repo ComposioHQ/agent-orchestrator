@@ -1005,6 +1005,21 @@ func toAPIError(err error) error {
 	case errors.Is(err, ports.ErrRuntimePrerequisite):
 		return apierr.Invalid("RUNTIME_PREREQUISITE_MISSING", err.Error(), nil)
 	case errors.Is(err, ports.ErrChatUnsupported):
+		var capabilityErr *ports.ChatCapabilityError
+		if errors.As(err, &capabilityErr) {
+			missing := make([]string, 0, len(capabilityErr.Missing))
+			for _, capability := range capabilityErr.Missing {
+				missing = append(missing, string(capability))
+			}
+			allowed := make([]string, 0, len(capabilityErr.AllowedPermissionModes))
+			for _, mode := range capabilityErr.AllowedPermissionModes {
+				allowed = append(allowed, string(mode))
+			}
+			return apierr.Conflict("SESSION_MODE_UNSUPPORTED", err.Error(), map[string]any{
+				"missingCapabilities":  missing,
+				"allowedApprovalModes": allowed,
+			})
+		}
 		return apierr.Conflict("SESSION_MODE_UNSUPPORTED", err.Error(), nil)
 	case errors.Is(err, ports.ErrChatDriverUnavailable):
 		return apierr.Conflict("CHAT_DRIVER_UNAVAILABLE", err.Error(), nil)

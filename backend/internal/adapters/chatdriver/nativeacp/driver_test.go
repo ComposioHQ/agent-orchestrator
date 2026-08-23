@@ -17,6 +17,16 @@ type fakePlugin struct {
 	authErr error
 }
 
+type fakeAugmentingPlugin struct {
+	fakePlugin
+	dataDir string
+}
+
+func (p *fakeAugmentingPlugin) AugmentRuntimeEnv(env map[string]string, dataDir string) {
+	p.dataDir = dataDir
+	env["PROVIDER_DATA_DIR"] = dataDir + "/provider"
+}
+
 func (p fakePlugin) ResolveBinary(context.Context) (string, error) { return p.binary, p.binErr }
 func (p fakePlugin) AuthStatus(context.Context) (ports.AgentAuthStatus, error) {
 	return p.status, p.authErr
@@ -27,7 +37,7 @@ func TestBindingLaunchesExactUserInstalledBinary(t *testing.T) {
 	var configured acpdriver.LaunchConfig
 	cfg := buildConfig(fakePlugin{binary: userBinary, status: ports.AgentAuthStatusAuthorized}, Config{
 		Harness: domain.HarnessOpenCode,
-		Configure: func(in acpdriver.LaunchConfig) ([]string, map[string]string, error) {
+		Configure: func(_ context.Context, in acpdriver.LaunchConfig) ([]string, map[string]string, error) {
 			configured = in
 			return []string{"acp"}, map[string]string{"PROVIDER_CONFIG": "/ao/config.json"}, nil
 		},
@@ -85,7 +95,7 @@ func TestBindingMapsPluginDiscoveryAndAuth(t *testing.T) {
 
 	t.Run("missing user binary", func(t *testing.T) {
 		cfg := buildConfig(fakePlugin{binErr: ports.ErrAgentBinaryNotFound}, Config{
-			Harness: domain.HarnessDroid, Configure: func(acpdriver.LaunchConfig) ([]string, map[string]string, error) {
+			Harness: domain.HarnessDroid, Configure: func(context.Context, acpdriver.LaunchConfig) ([]string, map[string]string, error) {
 				return []string{"exec"}, nil, nil
 			},
 		}, nil)
@@ -97,7 +107,7 @@ func TestBindingMapsPluginDiscoveryAndAuth(t *testing.T) {
 
 	t.Run("installed but logged out", func(t *testing.T) {
 		cfg := buildConfig(fakePlugin{binary: "/user/droid", status: ports.AgentAuthStatusUnauthorized}, Config{
-			Harness: domain.HarnessDroid, Configure: func(acpdriver.LaunchConfig) ([]string, map[string]string, error) {
+			Harness: domain.HarnessDroid, Configure: func(context.Context, acpdriver.LaunchConfig) ([]string, map[string]string, error) {
 				return []string{"exec"}, nil, nil
 			},
 		}, nil)
@@ -108,7 +118,7 @@ func TestBindingMapsPluginDiscoveryAndAuth(t *testing.T) {
 
 	t.Run("inconclusive auth is not logged out", func(t *testing.T) {
 		cfg := buildConfig(fakePlugin{binary: "/user/opencode", authErr: errors.New("probe timed out")}, Config{
-			Harness: domain.HarnessOpenCode, Configure: func(acpdriver.LaunchConfig) ([]string, map[string]string, error) {
+			Harness: domain.HarnessOpenCode, Configure: func(context.Context, acpdriver.LaunchConfig) ([]string, map[string]string, error) {
 				return []string{"acp"}, nil, nil
 			},
 		}, nil)
@@ -116,4 +126,27 @@ func TestBindingMapsPluginDiscoveryAndAuth(t *testing.T) {
 			t.Fatalf("Probe: %v", err)
 		}
 	})
+}
+
+func TestBindingReusesPluginRuntimeEnvironment(t *testing.T) {
+	plugin := &fakeAugmentingPlugin{fakePlugin: fakePlugin{
+		binary: "/user/provider", status: ports.AgentAuthStatusAuthorized,
+	}}
+	cfg := buildConfig(plugin, Config{
+		Harness: domain.HarnessCursor,
+		Configure: func(context.Context, acpdriver.LaunchConfig) ([]string, map[string]string, error) {
+			return []string{"acp"}, nil, nil
+		},
+	}, nil)
+
+	launch, err := cfg.Launch(context.Background(), acpdriver.LaunchConfig{
+		DataDir: "/ao", Env: map[string]string{"KEEP": "yes"},
+	})
+	if err != nil {
+		t.Fatalf("Launch: %v", err)
+	}
+	if plugin.dataDir != "/ao" || launch.Env["PROVIDER_DATA_DIR"] != "/ao/provider" ||
+		launch.Env["KEEP"] != "yes" {
+		t.Fatalf("plugin data dir/env = %q, %#v", plugin.dataDir, launch.Env)
+	}
 }

@@ -631,6 +631,9 @@ type DelegateTaskRequest struct {
 	Brief     string              `json:"brief" maxLength:"4096"`
 	Agent     domain.AgentHarness `json:"agent,omitempty" enum:"claude-code,codex,aider,opencode,grok,droid,amp,agy,crush,cursor,qwen,copilot,goose,auggie,continue,devin,cline,kimi,muse,kiro,kilocode,vibe,pi,kimchi,prime-agent,autohand,fake"`
 	Model     string              `json:"model,omitempty" maxLength:"256"`
+	// ApprovalMode is an optional per-session override. The UI uses the explicit
+	// bypass value only after the user accepts an approval-less Chat fallback.
+	ApprovalMode domain.PermissionMode `json:"approvalMode,omitempty" enum:"default,accept-edits,auto,bypass-permissions"`
 	// Mode is omitted for the daemon-owned default. The UI sends tui only when
 	// the user explicitly accepts the fallback after Chat preflight fails.
 	Mode domain.SessionMode `json:"mode,omitempty" enum:"tui,chat"`
@@ -1367,7 +1370,7 @@ type SendConversationMessageResponse struct {
 	// `queued` when it arrived mid-turn and will be sent once the turn ends. A
 	// client that only reads turnId cannot tell those apart, and "accepted" is not
 	// the same claim as "delivered".
-	State domain.TurnState `json:"state,omitempty" enum:"queued,running,completed,interrupted,failed"`
+	State domain.TurnState `json:"state,omitempty" enum:"queued,running,completed,recovered,interrupted,failed"`
 	// Duplicate is true when this client message id was already delivered, so a
 	// retrying client can stop instead of assuming a new turn began.
 	Duplicate bool `json:"duplicate"`
@@ -1397,7 +1400,7 @@ type EditConversationMessageResponse struct {
 	ActiveBranchID string           `json:"activeBranchId"`
 	TurnID         string           `json:"turnId,omitempty"`
 	ProviderTurnID string           `json:"providerTurnId,omitempty"`
-	State          domain.TurnState `json:"state,omitempty" enum:"queued,running,completed,interrupted,failed"`
+	State          domain.TurnState `json:"state,omitempty" enum:"queued,running,completed,recovered,interrupted,failed"`
 }
 
 // ActivateConversationBranchResponse reports the durable head after switching.
@@ -1527,7 +1530,7 @@ type CompactConversationResponse struct {
 // ConversationTurnResponse is one request and the work that followed it.
 type ConversationTurnResponse struct {
 	ID             string  `json:"id"`
-	State          string  `json:"state" enum:"queued,running,completed,interrupted,failed"`
+	State          string  `json:"state" enum:"queued,running,completed,recovered,interrupted,failed"`
 	ProviderTurnID string  `json:"providerTurnId,omitempty"`
 	ErrorMessage   string  `json:"errorMessage,omitempty"`
 	RequestedAt    string  `json:"requestedAt"`
@@ -1631,7 +1634,7 @@ type ConversationActivityResponse struct {
 	// approval is a question waiting on a person, while an auto-review is a decision
 	// the provider already made on their behalf, and those are opposites.
 	ActivityKind string `json:"activityKind" enum:"command,file_change,plan,reasoning,approval,usage,error,system,mcp_tool,auto_review,user_input"`
-	Status       string `json:"status" enum:"running,completed,failed,cancelled,pending,resolved"`
+	Status       string `json:"status" enum:"running,completed,recovered,failed,cancelled,pending,resolved"`
 	Summary      string `json:"summary"`
 	// Detail is the provider-neutral typed payload for this kind. For an approval
 	// it carries the provider's own offered decisions, which is what the client

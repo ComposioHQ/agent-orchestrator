@@ -628,8 +628,13 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	// targets. A terminal pane (reviewer or shell) renders as a tab inside the
 	// chat surface, so opening one never costs the user the conversation.
 	const chatTargetKind = routedTerminalTarget.kind;
+	const renderedSessionMode =
+		interfaceSwitch.transition?.phase === "failed"
+			? interfaceSwitch.transition.sourceMode
+			: session?.mode;
 	const showChatSurface =
-		session?.mode === "chat" &&
+		session !== undefined &&
+		renderedSessionMode === "chat" &&
 		(chatTargetKind === "worker" || chatTargetKind === "reviewer" || chatTargetKind === "shell");
 
 	// The pane shows one terminal at a time, so selecting a shell or the reviewer

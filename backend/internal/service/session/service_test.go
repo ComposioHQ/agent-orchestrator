@@ -2856,6 +2856,30 @@ func TestToAPIErrorSwitchDeliveryUnconfirmedMessage(t *testing.T) {
 	}
 }
 
+func TestToAPIErrorPreservesMissingChatCapabilityRecoveryDetails(t *testing.T) {
+	mapped := toAPIError(fmt.Errorf("spawn: %w", &ports.ChatCapabilityError{
+		Harness:                domain.HarnessPi,
+		Missing:                []ports.ChatCapability{ports.ChatCapabilityApprovals},
+		AllowedPermissionModes: []ports.PermissionMode{ports.PermissionModeBypassPermissions},
+	}))
+
+	var apiError *apierr.Error
+	if !errors.As(mapped, &apiError) {
+		t.Fatalf("mapped = %v, want *apierr.Error", mapped)
+	}
+	if apiError.Code != "SESSION_MODE_UNSUPPORTED" {
+		t.Fatalf("code = %q, want SESSION_MODE_UNSUPPORTED", apiError.Code)
+	}
+	missing, ok := apiError.Details["missingCapabilities"].([]string)
+	if !ok || len(missing) != 1 || missing[0] != "approvals" {
+		t.Fatalf("missingCapabilities = %#v, want [approvals]", apiError.Details["missingCapabilities"])
+	}
+	allowed, ok := apiError.Details["allowedApprovalModes"].([]string)
+	if !ok || len(allowed) != 1 || allowed[0] != "bypass-permissions" {
+		t.Fatalf("allowedApprovalModes = %#v, want [bypass-permissions]", apiError.Details["allowedApprovalModes"])
+	}
+}
+
 // TestToAPIError_NotResumable asserts that ErrNotResumable (promptless worker
 // with no adapter resume handle) maps to a Conflict with code SESSION_NOT_RESUMABLE.
 func TestToAPIError_NotResumable(t *testing.T) {
