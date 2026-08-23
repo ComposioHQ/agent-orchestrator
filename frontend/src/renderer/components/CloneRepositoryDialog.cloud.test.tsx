@@ -6,19 +6,33 @@ import CloneRepositoryDialog, { type CloneRepositoryDetails, type CloneRepositor
 
 const organization = { id: "org_1", slug: "dev", displayName: "Dev", role: "owner" };
 
-function Harness({ onContinue = vi.fn(), error = null }: { onContinue?: (selection: CloneRepositorySelection) => void; error?: string | null }) {
+function Harness({
+	cloudEnabled = true,
+	cloudOrganizations = [organization],
+	onCloudSignIn,
+	onContinue = vi.fn(),
+	error = null,
+}: {
+	cloudEnabled?: boolean;
+	cloudOrganizations?: typeof organization[];
+	onCloudSignIn?: () => Promise<{ organizations: typeof organization[] } | null>;
+	onContinue?: (selection: CloneRepositorySelection) => void;
+	error?: string | null;
+}) {
 	const [value, setValue] = useState<CloneRepositoryDetails>({
 		remoteUrl: "https://github.com/acme/repo.git",
 		destinationParent: "",
 	});
 	return (
 		<CloneRepositoryDialog
-			cloudOrganizations={[organization]}
+			cloudEnabled={cloudEnabled}
+			cloudOrganizations={cloudOrganizations}
 			disabled={false}
 			error={error}
 			onBack={() => undefined}
 			onChange={setValue}
 			onClose={() => undefined}
+			onCloudSignIn={onCloudSignIn}
 			onContinue={onContinue}
 			open
 			value={value}
@@ -27,6 +41,11 @@ function Harness({ onContinue = vi.fn(), error = null }: { onContinue?: (selecti
 }
 
 describe("CloneRepositoryDialog cloud location", () => {
+	it("hides Cloud when cloud features are disabled", () => {
+		render(<Harness cloudEnabled={false} />);
+		expect(screen.queryByRole("combobox", { name: "Where should this project run?" })).not.toBeInTheDocument();
+	});
+
 	it("offers AO Cloud to a signed-in organization and submits a placement selection", async () => {
 		const user = userEvent.setup();
 		const onContinue = vi.fn();
@@ -49,5 +68,17 @@ describe("CloneRepositoryDialog cloud location", () => {
 	it("keeps cloud placement failures visible for retry", () => {
 		render(<Harness error="Provisioning capacity is temporarily unavailable" />);
 		expect(screen.getByRole("alert")).toHaveTextContent("Provisioning capacity is temporarily unavailable");
+	});
+
+	it("offers Cloud while signed out and requires sign-in when selected", async () => {
+		const user = userEvent.setup();
+		const onCloudSignIn = vi.fn().mockResolvedValue(null);
+		render(<Harness cloudOrganizations={[]} onCloudSignIn={onCloudSignIn} />);
+
+		await user.click(screen.getByRole("combobox", { name: "Where should this project run?" }));
+		await user.click(await screen.findByRole("option", { name: "AO Cloud" }));
+
+		expect(onCloudSignIn).toHaveBeenCalledTimes(1);
+		expect(await screen.findByRole("alert")).toHaveTextContent("Sign in to AO Cloud");
 	});
 });
