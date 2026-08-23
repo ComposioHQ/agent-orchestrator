@@ -2,7 +2,7 @@
 CREATE TABLE ao_app_settings (
     org_id UUID PRIMARY KEY REFERENCES ao_organizations(id) ON DELETE CASCADE,
     default_session_mode TEXT NOT NULL DEFAULT 'chat'
-        CHECK (default_session_mode IN ('terminal', 'chat')),
+        CHECK (default_session_mode IN ('tui', 'chat')),
     updated_at TIMESTAMPTZ NOT NULL
 );
 
