@@ -2,7 +2,7 @@ import { act, fireEvent, render, screen, waitFor, within } from "@testing-librar
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ChatWorkspace, promptSpacerHeight, promptTopInset } from "./ChatWorkspace";
-import { HumanMessage, OriginMessage } from "./ChatTimelineItems";
+import { AssistantMessage, HumanMessage, OriginMessage } from "./ChatTimelineItems";
 import {
 	chatFixture,
 	chatFixtureEmpty,
@@ -223,6 +223,60 @@ describe("HumanMessage attachments", () => {
 	});
 });
 
+describe("Chat message timestamps", () => {
+	it("exposes user and assistant sent times as 24-hour hover labels", () => {
+		const today = new Date().toISOString();
+		const user = { ...humanMessage("user message"), createdAt: today };
+		const assistant = {
+			...user,
+			id: "assistant-message",
+			role: "assistant",
+			origin: "assistant",
+			text: "assistant message",
+		} satisfies ConversationMessage;
+		const { container } = render(
+			<>
+				<HumanMessage message={user} sessionId="ao-1" />
+				<AssistantMessage message={assistant} />
+			</>,
+		);
+
+		const messageTimes = Array.from(container.querySelectorAll("div[title]")).map((element) =>
+			element.getAttribute("title"),
+		);
+		expect(messageTimes).toHaveLength(2);
+		for (const time of messageTimes) {
+			expect(time).toHaveLength(5);
+			expect(time?.[2]).toBe(":");
+		}
+	});
+
+	it("labels yesterday and older messages with calendar dates", () => {
+		const now = new Date();
+		const relativeDate = (daysAgo: number) => {
+			const date = new Date(now);
+			date.setDate(date.getDate() - daysAgo);
+			return date.toISOString();
+		};
+		const messages = [
+			{ ...humanMessage("yesterday"), id: "yesterday", createdAt: relativeDate(1) },
+			{ ...humanMessage("older"), id: "older", createdAt: relativeDate(3) },
+		];
+		const { container } = render(
+			<>
+				{messages.map((message) => (
+					<HumanMessage key={message.id} message={message} sessionId="ao-1" />
+				))}
+			</>,
+		);
+
+		const titles = Array.from(container.querySelectorAll("div[title]"), (element) => element.getAttribute("title"));
+		expect(titles[0]).toBe("Yesterday");
+		expect(titles[1]).not.toBe("Yesterday");
+		expect(titles[1]?.includes(":")).toBe(false);
+	});
+});
+
 describe("ChatWorkspace timeline", () => {
 	it("makes composer and history controls inert while a durable agent switch owns input", () => {
 		render(<ChatWorkspace snapshot={idleSnapshot()} agentInputDisabled />);
@@ -272,11 +326,11 @@ describe("ChatWorkspace timeline", () => {
 		expect(screen.queryByRole("button", { name: "Fullscreen" })).not.toBeInTheDocument();
 	});
 
-	it("starts chat text at 12px without a topbar font control", () => {
+	it("starts chat text at 13px without a topbar font control", () => {
 		render(<ChatWorkspace snapshot={chatFixture} />);
 		const chat = screen.getByLabelText("Chat");
 
-		expect(chat.style.getPropertyValue("--chat-font-size")).toBe("12px");
+		expect(chat.style.getPropertyValue("--chat-font-size")).toBe("13px");
 	});
 
 	it("keeps the composer aligned to the readable conversation width", () => {

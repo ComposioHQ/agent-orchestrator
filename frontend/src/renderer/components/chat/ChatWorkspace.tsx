@@ -104,7 +104,7 @@ import {
 	type TurnSettings,
 } from "../../types/conversation";
 
-const CHAT_FONT_SIZE_DEFAULT = 12;
+const CHAT_FONT_SIZE_DEFAULT = 13;
 
 // Reviewer panes share the terminal font-size preference with CenterPane, so a
 // reviewer opened inside the Chat surface matches a reviewer opened in TUI mode.
