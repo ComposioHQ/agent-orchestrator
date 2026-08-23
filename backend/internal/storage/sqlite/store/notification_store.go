@@ -11,8 +11,11 @@ import (
 	sqlite3 "modernc.org/sqlite/lib"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
+	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 	"github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite/gen"
 )
+
+var _ ports.NotificationStore = (*Store)(nil)
 
 // CreateNotification inserts one unread notification. It returns created=false
 // when the open dedupe index already has a matching row — open meaning unseen

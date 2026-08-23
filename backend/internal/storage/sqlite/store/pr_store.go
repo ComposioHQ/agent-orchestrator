@@ -27,6 +27,7 @@ var (
 	_ ports.PRWriter  = (*Store)(nil)
 	_ ports.SCMWriter = (*Store)(nil)
 	_ ports.PRClaimer = (*Store)(nil)
+	_ ports.PRStore   = (*Store)(nil)
 )
 
 // WritePR persists a legacy PR observation — scalar facts, check runs, and the

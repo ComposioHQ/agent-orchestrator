@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
+	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 	"github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite/gen"
 )
 
@@ -14,24 +15,15 @@ import (
 // The row is seeded by migration, so a read is a plain SELECT and no caller has
 // to handle "settings do not exist yet".
 
-// AppSettings is the durable preference set. Field-compatible with
-// service/settings.Snapshot, which the daemon wiring adapts.
-type AppSettings struct {
-	// DefaultSessionMode is the interface a new session gets when the spawn does
-	// not name one. Never applied to an existing session: only an explicit
-	// interface transition changes a live session's committed mode, so
-	// changing this only affects sessions created afterwards.
-	DefaultSessionMode domain.SessionMode
-	UpdatedAt          time.Time
-}
+var _ ports.SettingsStore = (*Store)(nil)
 
 // GetAppSettings reads the preference row.
-func (s *Store) GetAppSettings(ctx context.Context) (AppSettings, error) {
+func (s *Store) GetAppSettings(ctx context.Context) (ports.SettingsSnapshot, error) {
 	row, err := s.qr.GetAppSettings(ctx)
 	if err != nil {
-		return AppSettings{}, fmt.Errorf("read app settings: %w", err)
+		return ports.SettingsSnapshot{}, fmt.Errorf("read app settings: %w", err)
 	}
-	return AppSettings{
+	return ports.SettingsSnapshot{
 		// Normalized on read: a value written by a build that knows a mode this
 		// one does not must still resolve to something dispatchable.
 		DefaultSessionMode: domain.NormalizeSessionMode(row.DefaultSessionMode),
