@@ -1,11 +1,15 @@
-import { useState } from "react";
+import { lazy, Suspense, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { GeneralSettingsSection } from "./settings/GeneralSettingsSection";
+import { HarnessSettingsSection } from "./settings/HarnessSettingsSection";
 import { ReportProblemDialog } from "./settings/ReportProblemDialog";
 import { SettingsLinkRow } from "./settings/SettingsRow";
 import { SettingsSection } from "./settings/SettingsSection";
-import { UpdatesSection } from "./settings/UpdatesSection";
-import { HarnessSettingsSection } from "./settings/HarnessSettingsSection";
+
+const UpdatesSection = lazy(async () => {
+	const module = await import("./settings/UpdatesSection");
+	return { default: module.UpdatesSection };
+});
 
 export type GlobalSettingsSection = "general" | "harness" | "updates" | "help" | "all";
 
@@ -47,7 +51,11 @@ export function GlobalSettingsForm({
 					</>
 				)}
 				{(section === "all" || section === "harness") && <HarnessSettingsSection titleHidden={leadingTitleHidden} />}
-				{(section === "all" || section === "updates") && <UpdatesSection titleHidden={leadingTitleHidden} />}
+				{(section === "all" || section === "updates") && (
+					<Suspense fallback={<UpdatesSectionSkeleton titleHidden={leadingTitleHidden} />}>
+						<UpdatesSection titleHidden={leadingTitleHidden} />
+					</Suspense>
+				)}
 				{(section === "all" || section === "help") && (
 					<SettingsSection title={t("settings.getHelp")} titleHidden={leadingTitleHidden} grouped>
 						<SettingsLinkRow label={t("settings.reportProblem")} onClick={() => setReportProblemOpen(true)} />
@@ -56,5 +64,14 @@ export function GlobalSettingsForm({
 			</div>
 			<ReportProblemDialog open={reportProblemOpen} onOpenChange={setReportProblemOpen} />
 		</>
+	);
+}
+
+function UpdatesSectionSkeleton({ titleHidden }: { titleHidden: boolean }) {
+	return (
+		<section className="flex w-full flex-col gap-(--size-settings-section-inner-gap)" aria-busy="true">
+			{!titleHidden && <div className="mx-3 h-4 w-16 animate-pulse rounded bg-foreground/8 motion-reduce:animate-none" />}
+			<div className="h-32 w-full animate-pulse rounded-(--radius-settings-panel) border border-[var(--color-border-settings-dialog)] bg-[var(--color-bg-settings-input)] motion-reduce:animate-none" />
+		</section>
 	);
 }

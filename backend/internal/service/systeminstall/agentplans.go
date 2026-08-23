@@ -171,10 +171,10 @@ func (s *Service) officialByOS(target Target, unixURL, unixShell, windowsURL, do
 }
 
 func (s *Service) planShellInstaller(target Target, url, shell string) Plan {
-	if _, err := s.lookPath("curl"); err != nil {
+	if _, err := s.executables.LookPath("curl"); err != nil {
 		return Plan{Target: target, Unsupported: true, Method: "official-installer", Reason: "curl was not found on PATH."}
 	}
-	if _, err := s.lookPath(shell); err != nil {
+	if _, err := s.executables.LookPath(shell); err != nil {
 		return Plan{Target: target, Unsupported: true, Method: "official-installer", Reason: fmt.Sprintf("%s was not found on PATH.", shell)}
 	}
 	return Plan{
@@ -185,7 +185,7 @@ func (s *Service) planShellInstaller(target Target, url, shell string) Plan {
 
 func (s *Service) planPowerShellInstaller(target Target, url string) Plan {
 	for _, shell := range []string{"pwsh.exe", "powershell.exe", "pwsh", "powershell"} {
-		if _, err := s.lookPath(shell); err == nil {
+		if _, err := s.executables.LookPath(shell); err == nil {
 			return Plan{
 				Target: target, Method: "official-installer",
 				Command: []string{shell, "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", fmt.Sprintf("irm '%s' | iex", url)},
@@ -196,14 +196,14 @@ func (s *Service) planPowerShellInstaller(target Target, url string) Plan {
 }
 
 func (s *Service) planUV(target Target, pkg string) Plan {
-	if _, err := s.lookPath("uv"); err != nil {
+	if _, err := s.executables.LookPath("uv"); err != nil {
 		return Plan{Target: target, Unsupported: true, Method: "uv", Reason: "uv was not found on PATH. Install uv, then retry."}
 	}
 	return Plan{Target: target, Method: "uv", Command: []string{"uv", "tool", "install", pkg}}
 }
 
 func (s *Service) planBun(target Target, pkg string) Plan {
-	if _, err := s.lookPath("bun"); err != nil {
+	if _, err := s.executables.LookPath("bun"); err != nil {
 		return Plan{Target: target, Unsupported: true, Method: "bun", Reason: "Bun was not found on PATH."}
 	}
 	return Plan{Target: target, Method: "bun", Command: []string{"bun", "install", "-g", pkg}}
@@ -211,7 +211,7 @@ func (s *Service) planBun(target Target, pkg string) Plan {
 
 func (s *Service) planPythonPip(target Target, pkg string) Plan {
 	for _, python := range []string{"python3", "python"} {
-		if _, err := s.lookPath(python); err == nil {
+		if _, err := s.executables.LookPath(python); err == nil {
 			return Plan{Target: target, Method: "pip", Command: []string{python, "-m", "pip", "install", pkg}}
 		}
 	}

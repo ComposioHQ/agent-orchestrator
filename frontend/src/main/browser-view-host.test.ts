@@ -226,6 +226,9 @@ function setupTabHost() {
 			setVisible: ReturnType<typeof vi.fn>;
 		}> = [];
 	let nextID = 100;
+	// Populated by tests that need a specific navigation to fail, e.g. a dead
+	// localhost dev server — every view's loadURL checks this shared set.
+	const failNavigationTo = new Set<string>();
 	const makeView = () => {
 		let currentURL = "";
 		let windowOpenHandler:
@@ -263,6 +266,9 @@ function setupTabHost() {
 			goForward: () => undefined,
 			isLoading: () => false,
 			loadURL: vi.fn(async (url: string) => {
+				if (failNavigationTo.has(url)) {
+					throw Object.assign(new Error(`ERR_CONNECTION_REFUSED (-102) loading '${url}'`), { errorCode: -102 });
+				}
 				currentURL = url;
 			}),
 			on: (event: string, listener: (...args: never[]) => void) => listeners.set(event, listener),
@@ -356,8 +362,207 @@ function setupTabHost() {
 		handlers.get(channel)!({ sender: { id: 1 } }, ...args) as Promise<unknown>;
 	const emit = (channel: string, ...args: unknown[]) =>
 		eventHandlers.get(channel)!({ sender: { id: 1, getZoomFactor: () => 1 } }, ...args);
-	return { activeTargets, constructorOptions, emit, host, invoke, runtime, sent, views };
+	return { activeTargets, constructorOptions, emit, failNavigationTo, host, invoke, runtime, sent, views };
 }
+
+describe("browser:closeTab automation-runtime fallback", () => {
+	// Regression: observed in a real long-running session as
+	// "Tab t5 not found; run `agent-browser tab` to list open tabs" — the
+	// external automation runtime's own internal tab registry had drifted from
+	// session.tabs, and the close request just threw instead of falling back,
+	// leaving the tab permanently stuck open with no way to close it.
+	it("closes the tab locally when the automation runtime reports its registry does not recognize it", async () => {
+		const { invoke, runtime } = setupTabHost();
+		const ensure = (await invoke("browser:ensure", "sess-1")) as { viewId: string };
+		const viewId = ensure.viewId;
+		await invoke("browser:openTab", { viewId });
+
+		const before = (await invoke("browser:getTabs", viewId)) as { tabs: { id: string }[] };
+		expect(before.tabs.map((tab) => tab.id)).toEqual(["t1", "t2"]);
+
+		const runAction = runtime.runAction as unknown as ReturnType<typeof vi.fn>;
+		const originalRunAction = runAction.getMockImplementation()! as (...args: unknown[]) => Promise<unknown>;
+		runAction.mockImplementation(async (sessionId: string, action: string, args: Record<string, unknown>, provider: unknown) => {
+			if (action === "tab-close" && String(args.tabId) === "t2") {
+				throw Object.assign(new Error("Tab t2 not found; run `agent-browser tab` to list open tabs"), {
+					code: "AGENT_BROWSER_COMMAND_FAILED",
+				});
+			}
+			return originalRunAction(sessionId, action, args, provider);
+		});
+
+		const result = (await invoke("browser:closeTab", { viewId, tabId: "t2" })) as { tabs: { id: string }[] };
+		expect(result.tabs.map((tab) => tab.id)).toEqual(["t1"]);
+	});
+
+	// Regression, reported live: the runtime's Target.closeTarget handling
+	// (invoked from inside runAction) can call AO's own internal closeTab
+	// before the runtime still reports the overall tab-close command as
+	// failed. The fallback used to call closeTab a second time regardless,
+	// which threw TAB_NOT_FOUND for a tab that had already, genuinely closed —
+	// the exact outcome the user wanted, reported as an error.
+	it("treats a tab-close as successful when the runtime already removed the tab before reporting failure", async () => {
+		const { invoke, runtime } = setupTabHost();
+		const ensure = (await invoke("browser:ensure", "sess-1")) as { viewId: string };
+		const viewId = ensure.viewId;
+		await invoke("browser:openTab", { viewId });
+
+		const runAction = runtime.runAction as unknown as ReturnType<typeof vi.fn>;
+		runAction.mockImplementation(async (_sessionId: string, action: string, args: Record<string, unknown>, provider: import("./agent-browser-cdp-bridge").AgentBrowserTargetProvider) => {
+			if (action === "tab-close" && String(args.tabId) === "t2") {
+				// The bridge's own Target.closeTarget calls this before reporting
+				// the command as failed — mirrors the real, observed sequence.
+				await provider.closeTarget("t2");
+				throw Object.assign(new Error("agent-browser lost the connection mid-command"), {
+					code: "AGENT_BROWSER_COMMAND_FAILED",
+				});
+			}
+			return {};
+		});
+
+		const result = (await invoke("browser:closeTab", { viewId, tabId: "t2" })) as { tabs: { id: string }[] };
+		expect(result.tabs.map((tab) => tab.id)).toEqual(["t1"]);
+	});
+
+	it("still surfaces an unrelated automation-runtime failure instead of silently closing the tab", async () => {
+		const { invoke, runtime } = setupTabHost();
+		const ensure = (await invoke("browser:ensure", "sess-1")) as { viewId: string };
+		const viewId = ensure.viewId;
+		await invoke("browser:openTab", { viewId });
+
+		const runAction = runtime.runAction as unknown as ReturnType<typeof vi.fn>;
+		const originalRunAction = runAction.getMockImplementation()! as (...args: unknown[]) => Promise<unknown>;
+		runAction.mockImplementation(async (sessionId: string, action: string, args: Record<string, unknown>, provider: unknown) => {
+			if (action === "tab-close" && String(args.tabId) === "t2") {
+				throw Object.assign(new Error("agent-browser exited with code 1"), {
+					code: "AGENT_BROWSER_START_FAILED",
+				});
+			}
+			return originalRunAction(sessionId, action, args, provider);
+		});
+
+		await expect(invoke("browser:closeTab", { viewId, tabId: "t2" })).rejects.toThrow("agent-browser exited with code 1");
+
+		const after = (await invoke("browser:getTabs", viewId)) as { tabs: { id: string }[] };
+		expect(after.tabs.map((tab) => tab.id)).toEqual(["t1", "t2"]);
+	});
+});
+
+describe("browser:openTab navigation failure", () => {
+	// Regression, reported with a real repro against reopening a closed tab
+	// pointed at a stopped dev server: openTab used to throw NAVIGATION_FAILED
+	// after already creating the tab and telling the renderer about it
+	// (pushTabsState), so a dead URL rejected an IPC call for a tab that
+	// demonstrably existed. navigateEntry — the same navigation codepath used
+	// for an *existing* tab — never throws on a failed load; it just sets
+	// `.error` on the nav state and resolves. openTab now matches that.
+	it("does not reject when the new tab's initial navigation fails — the tab still exists", async () => {
+		const { failNavigationTo, invoke } = setupTabHost();
+		const ensure = (await invoke("browser:ensure", "sess-1")) as { viewId: string };
+		const viewId = ensure.viewId;
+
+		failNavigationTo.add("http://localhost:5175/");
+		const result = (await invoke("browser:openTab", { viewId, url: "http://localhost:5175/" })) as {
+			tabs: { id: string }[];
+		};
+
+		expect(result.tabs.map((tab) => tab.id)).toEqual(["t1", "t2"]);
+	});
+});
+
+describe("ensureNativeActiveTab automation-runtime resync", () => {
+	// Regression, reported against the reopen-closed-tabs PR with a real repro
+	// log: the runtime's own tab registry drifted from session.tabs, and
+	// ensureNativeActiveTab's convergence loop just retried the identical
+	// failing tab-select forever, since re-selecting the same tabId can never
+	// succeed once the runtime has forgotten it. Every native browser
+	// operation for the session routes through this loop (select, close,
+	// click, snapshot, ...), so that permanently wedged the whole session, not
+	// just whichever call happened to trigger it first — browser:closeTab's
+	// own try/catch never even ran, because the throw came from its unguarded
+	// ensureNativeActiveTab call sitting *before* that try block.
+	it("recovers browser:selectTab when the runtime rejects tab-select for the newly active tab", async () => {
+		const { invoke, runtime } = setupTabHost();
+		const ensure = (await invoke("browser:ensure", "sess-1")) as { viewId: string };
+		const viewId = ensure.viewId;
+		await invoke("browser:openTab", { viewId }); // t1, t2 — t2 active, natively synced
+
+		const runAction = runtime.runAction as unknown as ReturnType<typeof vi.fn>;
+		const originalRunAction = runAction.getMockImplementation()! as (...args: unknown[]) => Promise<unknown>;
+		const seenActions: string[] = [];
+		let failNextSelect = true;
+		runAction.mockImplementation(async (sessionId: string, action: string, args: Record<string, unknown>, provider: unknown) => {
+			seenActions.push(action);
+			if (action === "tab-select" && String(args.tabId) === "t1" && failNextSelect) {
+				failNextSelect = false;
+				throw Object.assign(new Error("Tab t1 not found; run `agent-browser tab` to list open tabs"), {
+					code: "AGENT_BROWSER_COMMAND_FAILED",
+				});
+			}
+			return originalRunAction(sessionId, action, args, provider);
+		});
+
+		const result = (await invoke("browser:selectTab", { viewId, tabId: "t1" })) as { activeTabId: string };
+		expect(result.activeTabId).toBe("t1");
+		// Asked the runtime to refresh its own view (exactly what its error
+		// message suggests) before retrying, rather than giving up immediately.
+		expect(seenActions).toContain("tabs");
+	});
+
+	it("does not wedge the session after a transient tab-select failure — later operations still work", async () => {
+		const { invoke, runtime } = setupTabHost();
+		const ensure = (await invoke("browser:ensure", "sess-1")) as { viewId: string };
+		const viewId = ensure.viewId;
+		await invoke("browser:openTab", { viewId }); // t1, t2 — t2 active, natively synced
+
+		const runAction = runtime.runAction as unknown as ReturnType<typeof vi.fn>;
+		const originalRunAction = runAction.getMockImplementation()! as (...args: unknown[]) => Promise<unknown>;
+		let failNextSelect = true;
+		runAction.mockImplementation(async (sessionId: string, action: string, args: Record<string, unknown>, provider: unknown) => {
+			if (action === "tab-select" && String(args.tabId) === "t1" && failNextSelect) {
+				failNextSelect = false;
+				throw Object.assign(new Error("Tab t1 not found; run `agent-browser tab` to list open tabs"), {
+					code: "AGENT_BROWSER_COMMAND_FAILED",
+				});
+			}
+			return originalRunAction(sessionId, action, args, provider);
+		});
+
+		await invoke("browser:selectTab", { viewId, tabId: "t1" });
+		// If the loop were still wedged, this would hang/reject instead of
+		// closing — the bug's whole symptom was "works for a while, then every
+		// later close/select fails identically forever."
+		const result = (await invoke("browser:closeTab", { viewId, tabId: "t2" })) as { tabs: { id: string }[] };
+		expect(result.tabs.map((tab) => tab.id)).toEqual(["t1"]);
+	});
+
+	// Regression: accepting the drift used to be silent — no log at all — so a
+	// later "the agent clicked the wrong tab" report would have nothing to go
+	// on. A resync attempt that also fails should leave a breadcrumb.
+	it("warns when the runtime is still desynced after a resync attempt, instead of failing silently", async () => {
+		const { invoke, runtime } = setupTabHost();
+		const ensure = (await invoke("browser:ensure", "sess-1")) as { viewId: string };
+		const viewId = ensure.viewId;
+		await invoke("browser:openTab", { viewId }); // t1, t2 — t2 active, natively synced
+
+		const runAction = runtime.runAction as unknown as ReturnType<typeof vi.fn>;
+		runAction.mockImplementation(async (_sessionId: string, action: string, args: Record<string, unknown>) => {
+			if (action === "tab-select" && String(args.tabId) === "t1") {
+				throw Object.assign(new Error("Tab t1 not found; run `agent-browser tab` to list open tabs"), {
+					code: "AGENT_BROWSER_COMMAND_FAILED",
+				});
+			}
+			return {};
+		});
+		const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+		await invoke("browser:selectTab", { viewId, tabId: "t1" });
+
+		expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("t1"));
+		expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("sess-1"));
+		warnSpy.mockRestore();
+	});
+});
 
 describe("new-session shortcut forwarding", () => {
 	it("focuses the shell before forwarding a matching preview chord", async () => {

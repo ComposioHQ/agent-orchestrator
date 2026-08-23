@@ -11,21 +11,23 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/service/systeminstall"
 )
 
-// Installer is the controller-facing contract for real, asynchronous harness
-// installs against the fixed systeminstall.Target allowlist.
+// Installer is the controller-facing contract for real, async install runs
+// against the fixed systeminstall.Target allowlist.
 type Installer interface {
 	Start(ctx context.Context, target systeminstall.Target) (systeminstall.Job, error)
-	Status(target systeminstall.Target) (systeminstall.Job, error)
+	Status(ctx context.Context, target systeminstall.Target) (systeminstall.Job, error)
 	AgentPlans(ctx context.Context) ([]systeminstall.AgentPlan, error)
 }
 
-// SystemInstallController owns the agent harness install routes.
+// SystemInstallController owns the system prerequisite and agent harness install routes.
 type SystemInstallController struct {
 	Installer Installer
 }
 
-// Register mounts the agent installer catalog, start, and status routes.
+// Register mounts the system install routes on the supplied router.
 func (c *SystemInstallController) Register(r chi.Router) {
+	r.Post("/system/install/{target}", c.start)
+	r.Get("/system/install/{target}", c.status)
 	r.Get("/agents/installers", c.agentPlans)
 	r.Post("/agents/{agent}/install", c.startAgent)
 	r.Get("/agents/{agent}/install", c.agentStatus)
@@ -70,12 +72,60 @@ func (c *SystemInstallController) agentStatus(w http.ResponseWriter, r *http.Req
 	if !ok {
 		return
 	}
-	job, err := c.Installer.Status(target)
+	job, err := c.Installer.Status(r.Context(), target)
 	if err != nil {
 		envelope.WriteError(w, r, err)
 		return
 	}
 	envelope.WriteJSON(w, http.StatusOK, job)
+}
+
+func (c *SystemInstallController) start(w http.ResponseWriter, r *http.Request) {
+	if c.Installer == nil {
+		apispec.NotImplemented(w, r, "POST", "/api/v1/system/install/{target}")
+		return
+	}
+	target, ok := parseInstallTarget(w, r)
+	if !ok {
+		return
+	}
+	job, err := c.Installer.Start(r.Context(), target)
+	if err != nil {
+		envelope.WriteError(w, r, err)
+		return
+	}
+	envelope.WriteJSON(w, http.StatusAccepted, job)
+}
+
+func (c *SystemInstallController) status(w http.ResponseWriter, r *http.Request) {
+	if c.Installer == nil {
+		apispec.NotImplemented(w, r, "GET", "/api/v1/system/install/{target}")
+		return
+	}
+	target, ok := parseInstallTarget(w, r)
+	if !ok {
+		return
+	}
+	job, err := c.Installer.Status(r.Context(), target)
+	if err != nil {
+		envelope.WriteError(w, r, err)
+		return
+	}
+	envelope.WriteJSON(w, http.StatusOK, job)
+}
+
+// parseInstallTarget reads and validates the {target} path param against the
+// fixed systeminstall allowlist before it ever reaches the service, so a path
+// traversal attempt or other junk value gets a clean 400 here rather than
+// being passed through.
+func parseInstallTarget(w http.ResponseWriter, r *http.Request) (systeminstall.Target, bool) {
+	target := systeminstall.Target(chi.URLParam(r, "target"))
+	if !systeminstall.Valid(target) {
+		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "UNKNOWN_INSTALL_TARGET",
+			"unknown install target", nil)
+		return "", false
+	}
+	return target, true
 }
 
 func parseAgentInstallTarget(w http.ResponseWriter, r *http.Request) (systeminstall.Target, bool) {

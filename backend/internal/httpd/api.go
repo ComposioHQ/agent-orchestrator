@@ -23,7 +23,6 @@ import (
 // APIDeps bundles every service the API layer's controllers depend on.
 type APIDeps struct {
 	Agents             controllers.AgentCatalog
-	Installer          controllers.Installer
 	Projects           projectsvc.Manager
 	Sessions           controllers.SessionService
 	Activity           controllers.ActivityRecorder
@@ -49,6 +48,8 @@ type APIDeps struct {
 	Browser             controllers.BrowserService
 	PreviewServer       controllers.ManagedPreviewServer
 	SessionCapabilities controllers.SessionCapabilityValidator
+	SystemChecks        controllers.SystemChecker
+	Installer           controllers.Installer
 
 	// Presence tracks which mobile devices are currently running the app.
 	// Nil disables presence tracking (the roster then reports every device offline).
@@ -92,7 +93,6 @@ type API struct {
 	cfg           config.Config
 	deps          APIDeps
 	agents        *controllers.AgentsController
-	installer     *controllers.SystemInstallController
 	projects      *controllers.ProjectsController
 	sessions      *controllers.SessionsController
 	usage         *controllers.UsageController
@@ -106,6 +106,8 @@ type API struct {
 	settings      *controllers.SettingsController
 	dev           *controllers.DevController
 	browser       *controllers.BrowserController
+	system        *controllers.SystemController
+	systemInstall *controllers.SystemInstallController
 	events        *EventsController
 }
 
@@ -119,7 +121,6 @@ func NewAPI(cfg config.Config, deps APIDeps) *API {
 		agents: &controllers.AgentsController{
 			Catalog: deps.Agents,
 		},
-		installer: &controllers.SystemInstallController{Installer: deps.Installer},
 		projects: &controllers.ProjectsController{
 			Mgr: deps.Projects,
 		},
@@ -142,6 +143,8 @@ func NewAPI(cfg config.Config, deps APIDeps) *API {
 		settings:      &controllers.SettingsController{Svc: deps.Settings},
 		dev:           &controllers.DevController{Import: deps.DevImport},
 		browser:       &controllers.BrowserController{Svc: deps.Browser},
+		system:        &controllers.SystemController{Checks: deps.SystemChecks},
+		systemInstall: &controllers.SystemInstallController{Installer: deps.Installer},
 		events:        &EventsController{Source: deps.CDC, Live: deps.Events},
 	}
 }
@@ -161,7 +164,6 @@ func (a *API) Register(root chi.Router) {
 			r.Use(middleware.Timeout(timeout))
 			r.Use(presenceMiddleware(a.deps.Presence))
 			a.agents.Register(r)
-			a.installer.Register(r)
 			a.projects.Register(r)
 			a.sessions.Register(r)
 			a.usage.Register(r)
@@ -175,6 +177,8 @@ func (a *API) Register(root chi.Router) {
 			a.settings.Register(r)
 			a.dev.Register(r)
 			a.browser.Register(r)
+			a.system.Register(r)
+			a.systemInstall.Register(r)
 			// Sibling REST controllers plug in here.
 		})
 		// Long-lived streams intentionally bypass the REST timeout middleware.

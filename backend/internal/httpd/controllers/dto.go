@@ -13,6 +13,7 @@ import (
 	agentsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/agent"
 	projectsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/project"
 	sessionsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/session"
+	"github.com/aoagents/agent-orchestrator/backend/internal/service/systemcheck"
 	"github.com/aoagents/agent-orchestrator/backend/internal/service/systeminstall"
 )
 
@@ -139,6 +140,16 @@ type WorkspaceFileQuery struct {
 	Path string `query:"path" description:"Session-worktree-relative file path."`
 }
 
+// WorkspaceFileBlobQuery is the query string accepted by GET /api/v1/sessions/{sessionId}/workspace/file/blob.
+type WorkspaceFileBlobQuery struct {
+	// The handler rejects a missing path with WORKSPACE_PATH_REQUIRED, so mark it
+	// required: query params carry no json tag, and requiredFromJSONTag only
+	// derives `required` from those.
+	Path string `query:"path" required:"true" description:"Session-worktree-relative file path."`
+	Side string `query:"side,omitempty" enum:"before,after" description:"Which revision to read: the compare base (before) or the session worktree (after). Defaults to after."`
+	V    string `query:"v,omitempty" description:"Cache-busting token. Ignored by the server; the response is never cached."`
+}
+
 // SessionView is the session wire shape: the domain read model plus the
 // display-safe branch name and the session's attributed pull requests in the
 // curated SessionPRFacts shape. One session can own many PRs (e.g. a stack), so
@@ -178,11 +189,11 @@ type SpawnSessionRequest struct {
 	Branch          string                 `json:"branch,omitempty"`
 	// Mode picks the conversation controller: chat talks to the agent over a
 	// structured connection, tui opens the agent's native terminal interface.
-	// Omitted resolves to the daemon default (tui), which is why an upgrade
-	// changes nothing. Compatible sessions may later switch through the durable
-	// interface-transition endpoint; the default never mutates existing sessions
-	// automatically. An unsupported explicit request fails rather than quietly
-	// producing the other kind of session.
+	// Omitted resolves to the daemon-owned preference, which defaults to Chat for
+	// new sessions and falls back to TUI when Chat is unavailable. The preference
+	// never mutates existing sessions automatically; compatible sessions may later
+	// switch through the durable interface-transition endpoint. An unsupported
+	// explicit request fails rather than quietly producing the other kind of session.
 	Mode   domain.SessionMode `json:"mode,omitempty" enum:"chat,tui"`
 	Prompt string             `json:"prompt,omitempty" maxLength:"4096"`
 	// Model is an optional agent model override scoped to this single spawn. Empty
@@ -323,6 +334,7 @@ type WorkspaceFileResponse struct {
 	Size             int64                           `json:"size"`
 	Binary           bool                            `json:"binary"`
 	Deleted          bool                            `json:"deleted"`
+	ImageMediaType   string                          `json:"imageMediaType,omitempty"`
 	Content          string                          `json:"content"`
 	ContentTruncated bool                            `json:"contentTruncated"`
 	Diff             string                          `json:"diff"`
@@ -968,9 +980,10 @@ type ListUsageSessionsQuery struct {
 
 // CompactSessionUsageResponse is one session card's token-only usage summary.
 type CompactSessionUsageResponse struct {
-	SessionID   domain.SessionID `json:"sessionId"`
-	TotalTokens int64            `json:"totalTokens" minimum:"0"`
-	Incomplete  bool             `json:"incomplete"`
+	SessionID       domain.SessionID `json:"sessionId"`
+	ProcessedTokens *int64           `json:"processedTokens" minimum:"0" description:"Canonical input plus output. Null when either component is unknown."`
+	TotalTokens     int64            `json:"totalTokens" minimum:"0" description:"Deprecated compatibility alias for processedTokens."`
+	Incomplete      bool             `json:"incomplete"`
 }
 
 // ListCompactSessionUsageResponse is the batch dashboard usage response.
@@ -978,14 +991,47 @@ type ListCompactSessionUsageResponse struct {
 	Sessions []CompactSessionUsageResponse `json:"sessions"`
 }
 
-// UsageTotalsResponse is the normalized telemetry aggregate for one scope.
+// UsageMetricProvenanceResponse records how each canonical metric was obtained.
+type UsageMetricProvenanceResponse struct {
+	InputTokens         domain.UsageMetricProvenance `json:"inputTokens" enum:"reported,derived,unsupported,unknown"`
+	CachedInputTokens   domain.UsageMetricProvenance `json:"cachedInputTokens" enum:"reported,derived,unsupported,unknown"`
+	UncachedInputTokens domain.UsageMetricProvenance `json:"uncachedInputTokens" enum:"reported,derived,unsupported,unknown"`
+	OutputTokens        domain.UsageMetricProvenance `json:"outputTokens" enum:"reported,derived,unsupported,unknown"`
+}
+
+// OpenAIUsageDetailsResponse exposes namespaced counters outside the shared
+// four-metric vocabulary.
+type OpenAIUsageDetailsResponse struct {
+	OpenAIReasoningOutputTokens *int64 `json:"openaiReasoningOutputTokens" minimum:"0"`
+	OpenAICacheWriteInputTokens *int64 `json:"openaiCacheWriteInputTokens" minimum:"0"`
+}
+
+// AnthropicUsageDetailsResponse exposes namespaced prompt-cache components.
+type AnthropicUsageDetailsResponse struct {
+	AnthropicDirectUncachedInputTokens  *int64 `json:"anthropicDirectUncachedInputTokens" minimum:"0"`
+	AnthropicCacheCreationInputTokens   *int64 `json:"anthropicCacheCreationInputTokens" minimum:"0"`
+	AnthropicCacheCreation5mInputTokens *int64 `json:"anthropicCacheCreation5mInputTokens" minimum:"0"`
+	AnthropicCacheCreation1hInputTokens *int64 `json:"anthropicCacheCreation1hInputTokens" minimum:"0"`
+}
+
+// UsageProviderDetailsResponse groups optional provider-native counters.
+type UsageProviderDetailsResponse struct {
+	OpenAI    *OpenAIUsageDetailsResponse    `json:"openai,omitempty"`
+	Anthropic *AnthropicUsageDetailsResponse `json:"anthropic,omitempty"`
+}
+
+// UsageTotalsResponse is the canonical telemetry aggregate for one scope.
 type UsageTotalsResponse struct {
-	InputTokens         *int64 `json:"inputTokens"`
-	UncachedInputTokens *int64 `json:"uncachedInputTokens"`
-	CacheReadTokens     *int64 `json:"cacheReadTokens"`
-	CacheWriteTokens    *int64 `json:"cacheWriteTokens"`
-	OutputTokens        *int64 `json:"outputTokens"`
-	ReasoningTokens     *int64 `json:"reasoningTokens"`
+	InputTokens         *int64                        `json:"inputTokens" minimum:"0" description:"Total input, including cached and uncached input."`
+	CachedInputTokens   *int64                        `json:"cachedInputTokens" minimum:"0" description:"Input read from an existing provider cache. Cache hit percentage uses cachedInputTokens divided by inclusive inputTokens."`
+	UncachedInputTokens *int64                        `json:"uncachedInputTokens" minimum:"0" description:"Input not read from an existing provider cache."`
+	OutputTokens        *int64                        `json:"outputTokens" minimum:"0" description:"Total output, including provider-specific subsets such as reasoning output."`
+	ProcessedTokens     *int64                        `json:"processedTokens" minimum:"0" description:"Canonical input plus output. Null when either component is unknown."`
+	CacheReadTokens     *int64                        `json:"cacheReadTokens" minimum:"0" description:"Deprecated compatibility alias for cachedInputTokens."`
+	CacheWriteTokens    *int64                        `json:"cacheWriteTokens" minimum:"0" description:"Deprecated compatibility aggregate of provider cache-write input counters."`
+	ReasoningTokens     *int64                        `json:"reasoningTokens" minimum:"0" description:"Deprecated compatibility alias for the OpenAI reasoning-output subset."`
+	Provenance          UsageMetricProvenanceResponse `json:"provenance"`
+	ProviderDetails     UsageProviderDetailsResponse  `json:"providerDetails"`
 }
 
 // UsageModelResponse is telemetry grouped by exact model id.
@@ -1009,12 +1055,21 @@ type SessionUsageResponse struct {
 	Harnesses  []UsageHarnessResponse `json:"harnesses"`
 }
 
-// AgentInstallerCatalogResponse is the body of GET /agents/installers.
-type AgentInstallerCatalogResponse struct {
-	Agents []systeminstall.AgentPlan `json:"agents"`
+// SystemRequirementsResponse is the body of GET /api/v1/system/requirements.
+type SystemRequirementsResponse = systemcheck.Report
+
+// InstallTargetParam is the {target} path parameter for /system/install routes.
+type InstallTargetParam struct {
+	Target string `path:"target" enum:"tmux,gh,claude,codex,opencode,copilot" description:"Install target identifier: tmux, gh, claude, codex, opencode, or copilot."`
 }
 
-// AgentInstallResponse is shared by the start and status agent install routes.
+// StartInstallResponse is the body of POST /api/v1/system/install/{target} (202).
+type StartInstallResponse = systeminstall.Job
+
+// InstallStatusResponse is the body of GET /api/v1/system/install/{target}.
+type InstallStatusResponse = systeminstall.Job
+
+// AgentInstallResponse is shared by the agent harness start and status routes.
 type AgentInstallResponse = systeminstall.Job
 
 // ListNotificationsQuery is the query string accepted by GET /api/v1/notifications.
@@ -1824,6 +1879,11 @@ type SettingsResponse struct {
 	// ChatHarnesses are the agents that can run in chat mode today. Empty means
 	// chat cannot be used yet, which a client should say plainly.
 	ChatHarnesses []string `json:"chatHarnesses"`
+}
+
+// AgentInstallerCatalogResponse is the body of GET /api/v1/agents/installers.
+type AgentInstallerCatalogResponse struct {
+	Agents []systeminstall.AgentPlan `json:"agents"`
 }
 
 // UpdateSessionInterfaceRequest changes the default interface for new sessions.
