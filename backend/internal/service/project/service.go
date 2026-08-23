@@ -182,17 +182,17 @@ func (m *Service) Add(ctx context.Context, in AddInput) (Project, error) {
 // mutates the filesystem (git init, .gitignore, commits) between the conflict
 // check and the store write — two concurrent calls for the same path would both
 // pass FindProjectByPath and then race on those mutations.
-func (m *Service) addLocal(ctx context.Context, in AddInput) (Project, error) {
+func (m *Service) addLocal(ctx context.Context, in AddInput) (ports.ProjectProvision, error) {
 	path, err := normalizePath(in.Path)
 	if err != nil {
-		return Project{}, err
+		return ports.ProjectProvision{}, err
 	}
 	id := defaultProjectID(path)
 	if in.ProjectID != nil {
 		id = domain.ProjectID(strings.TrimSpace(*in.ProjectID))
 	}
 	if err := validateProjectID(id); err != nil {
-		return Project{}, err
+		return ports.ProjectProvision{}, err
 	}
 
 	m.addMu.Lock()
@@ -200,7 +200,7 @@ func (m *Service) addLocal(ctx context.Context, in AddInput) (Project, error) {
 
 	projectCountBefore, err := m.activeProjectCount(ctx)
 	if err != nil {
-		return Project{}, apierr.Internal("PROJECT_LOAD_FAILED", "Failed to load project")
+		return ports.ProjectProvision{}, apierr.Internal("PROJECT_LOAD_FAILED", "Failed to load project")
 	}
 
 	name := string(id)
@@ -212,17 +212,17 @@ func (m *Service) addLocal(ctx context.Context, in AddInput) (Project, error) {
 	}
 
 	if existing, ok, err := m.store.FindProjectByPath(ctx, path); err != nil {
-		return Project{}, apierr.Internal("PROJECT_LOAD_FAILED", "Failed to load project")
+		return ports.ProjectProvision{}, apierr.Internal("PROJECT_LOAD_FAILED", "Failed to load project")
 	} else if ok {
-		return Project{}, apierr.Conflict("PATH_ALREADY_REGISTERED", "A project at this path is already registered", map[string]any{
+		return ports.ProjectProvision{}, apierr.Conflict("PATH_ALREADY_REGISTERED", "A project at this path is already registered", map[string]any{
 			"existingProjectId":  existing.ID,
 			"suggestedProjectId": string(m.suggestID(ctx, id)),
 		})
 	}
 	if existing, ok, err := m.store.GetProject(ctx, string(id)); err != nil {
-		return Project{}, apierr.Internal("PROJECT_LOAD_FAILED", "Failed to load project")
+		return ports.ProjectProvision{}, apierr.Internal("PROJECT_LOAD_FAILED", "Failed to load project")
 	} else if ok && existing.ArchivedAt.IsZero() && existing.Path != path {
-		return Project{}, apierr.Conflict("ID_ALREADY_REGISTERED", "A project with this id is already registered for a different path", map[string]any{
+		return ports.ProjectProvision{}, apierr.Conflict("ID_ALREADY_REGISTERED", "A project with this id is already registered for a different path", map[string]any{
 			"existingProjectId":  existing.ID,
 			"suggestedProjectId": string(m.suggestID(ctx, id)),
 		})
@@ -231,7 +231,7 @@ func (m *Service) addLocal(ctx context.Context, in AddInput) (Project, error) {
 	var projectConfig domain.ProjectConfig
 	if in.Config != nil {
 		if err := in.Config.Validate(); err != nil {
-			return Project{}, apierr.Invalid("INVALID_PROJECT_CONFIG", err.Error(), nil)
+			return ports.ProjectProvision{}, apierr.Invalid("INVALID_PROJECT_CONFIG", err.Error(), nil)
 		}
 		projectConfig = *in.Config
 	}
@@ -248,33 +248,31 @@ func (m *Service) addLocal(ctx context.Context, in AddInput) (Project, error) {
 	if in.AsWorkspace {
 		repos, err := prepareWorkspaceProject(ctx, path, domain.ProjectID(row.ID), registeredAt)
 		if err != nil {
-			return Project{}, err
+			return ports.ProjectProvision{}, err
 		}
 		row.Kind = domain.ProjectKindWorkspace
 		row.RepoOriginURL = resolveGitOriginURL(path)
 		if err := m.store.UpsertWorkspaceProject(ctx, row, repos); err != nil {
-			return Project{}, apierr.Internal("PROJECT_ADD_FAILED", "Failed to register workspace project")
+			return ports.ProjectProvision{}, apierr.Internal("PROJECT_ADD_FAILED", "Failed to register workspace project")
 		}
 		m.emitProjectAdded(row, projectCountBefore == 0)
-		p := m.projectFromRow(ctx, row)
-		p.WorkspaceRepos = workspaceReposFromRecords(repos)
-		return p, nil
+		return ports.ProjectProvision{Project: row, WorkspaceRepos: repos}, nil
 	}
 	if !isGitRepo(path) {
-		return Project{}, apierr.Invalid("NOT_A_GIT_REPO", "AO needs a Git repository with an initial commit before it can create agent workspaces.", nil)
+		return ports.ProjectProvision{}, apierr.Invalid("NOT_A_GIT_REPO", "AO needs a Git repository with an initial commit before it can create agent workspaces.", nil)
 	}
 	if !repoHasCommit(ctx, path) {
-		return Project{}, apierr.Invalid("PROJECT_UNBORN", "AO needs a Git repository with an initial commit before it can create agent workspaces.", map[string]any{
+		return ports.ProjectProvision{}, apierr.Invalid("PROJECT_UNBORN", "AO needs a Git repository with an initial commit before it can create agent workspaces.", map[string]any{
 			"path":         path,
 			"suggestedFix": "Run `git commit --allow-empty -m \"initial commit\"` in this folder, then try again.",
 		})
 	}
 	row.RepoOriginURL = resolveGitOriginURL(path)
 	if err := m.store.UpsertProject(ctx, row); err != nil {
-		return Project{}, apierr.Internal("PROJECT_ADD_FAILED", "Failed to register project")
+		return ports.ProjectProvision{}, apierr.Internal("PROJECT_ADD_FAILED", "Failed to register project")
 	}
 	m.emitProjectAdded(row, projectCountBefore == 0)
-	return m.projectFromRow(ctx, row), nil
+	return ports.ProjectProvision{Project: row}, nil
 }
 
 type repositorySetupTarget int
