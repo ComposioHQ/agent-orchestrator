@@ -1361,7 +1361,7 @@ describe("SessionInspector Activity section", () => {
     const activityRow = activitySection()
       .getByText("Working")
       .closest("[data-testid='inspector-timeline-event']") as HTMLElement;
-    expect(within(activityRow).getByText("2h")).toBeInTheDocument();
+    expect(within(activityRow).getByText("2h ago")).toBeInTheDocument();
   });
 
   it("aligns text-row dots lower while keeping the Activity chip dot centered", () => {
@@ -1532,7 +1532,7 @@ describe("SessionInspector Activity section", () => {
         draftLink.closest(
           "[data-testid='inspector-timeline-event']",
         ) as HTMLElement,
-      ).getByText("2h"),
+      ).getByText("2h ago"),
     ).toBeInTheDocument();
 
     const openLink = screen.getByRole("link", { name: "Opened PR #7" });
@@ -1541,7 +1541,7 @@ describe("SessionInspector Activity section", () => {
         openLink.closest(
           "[data-testid='inspector-timeline-event']",
         ) as HTMLElement,
-      ).getByText("1h"),
+      ).getByText("1h ago"),
     ).toBeInTheDocument();
 
     const mergedOpenedLink = screen.getByRole("link", { name: "Opened PR #6" });
@@ -1550,7 +1550,7 @@ describe("SessionInspector Activity section", () => {
         mergedOpenedLink.closest(
           "[data-testid='inspector-timeline-event']",
         ) as HTMLElement,
-      ).getByText("3h"),
+      ).getByText("3h ago"),
     ).toBeInTheDocument();
 
     const mergedLink = screen.getByRole("link", { name: "Merged PR #6" });
@@ -1559,12 +1559,12 @@ describe("SessionInspector Activity section", () => {
         mergedLink.closest(
           "[data-testid='inspector-timeline-event']",
         ) as HTMLElement,
-      ).getByText("30m"),
+      ).getByText("30m ago"),
     ).toBeInTheDocument();
     const doneRow = screen
       .getByText("Done")
       .closest("[data-testid='inspector-timeline-event']") as HTMLElement;
-    expect(within(doneRow).getByText("30m")).toBeInTheDocument();
+    expect(within(doneRow).getByText("30m ago")).toBeInTheDocument();
   });
 
   it("orders Activity timeline rows by timestamp with the latest event on top", () => {
@@ -1620,13 +1620,13 @@ describe("SessionInspector Activity section", () => {
       (row) => row.textContent?.replace(/\s+/g, " ").trim(),
     );
     expect(rows).toEqual([
-      "Opened PR #4130m",
-      "Merged PR #401h",
-      "Done1h",
-      "Idle2h",
-      "Opened PR #402h",
-      "Created workspace3h",
-      "Draft PR #424h",
+      "Opened PR #4130m ago",
+      "Merged PR #401h ago",
+      "Done1h ago",
+      "Idle2h ago",
+      "Opened PR #402h ago",
+      "Created workspace3h ago",
+      "Draft PR #424h ago",
     ]);
 
     const eventRows = section.querySelectorAll(
