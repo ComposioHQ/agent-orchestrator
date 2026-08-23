@@ -3,6 +3,8 @@ package cli
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -21,7 +23,6 @@ const (
 	sandboxControlPlaneEnv  = "AO_SANDBOX_CONTROL_PLANE_URL"
 	sandboxCapabilityEnv    = "AO_SANDBOX_CAPABILITY_FILE"
 	sandboxRoleEnv          = "AO_SANDBOX_ROLE"
-	sandboxCoordinatorRole  = "coordinator"
 	defaultCapabilityPath   = "/run/ao/capability"
 	maxSandboxCapabilityLen = 4 << 10
 )
@@ -29,47 +30,46 @@ const (
 type sandboxOperation string
 
 const (
-	sandboxSend          sandboxOperation = "send"
-	sandboxReadList      sandboxOperation = "read.list"
-	sandboxReadOne       sandboxOperation = "read.one"
-	sandboxStatus        sandboxOperation = "status"
-	sandboxSpawn         sandboxOperation = "spawn"
-	sandboxClaimPR       sandboxOperation = "pr.claim"
-	sandboxMergePR       sandboxOperation = "pr.merge"
-	sandboxResolvePR     sandboxOperation = "pr.resolve-comments"
-	sandboxReviewList    sandboxOperation = "review.list"
-	sandboxReviewSubmit  sandboxOperation = "review.submit"
-	sandboxReviewCancel  sandboxOperation = "review.cancel"
-	sandboxReviewTrigger sandboxOperation = "review.trigger"
+	sandboxSend         sandboxOperation = "send"
+	sandboxReadList     sandboxOperation = "read.list"
+	sandboxReadOne      sandboxOperation = "read.one"
+	sandboxKill         sandboxOperation = "session.kill"
+	sandboxStatus       sandboxOperation = "status"
+	sandboxSpawn        sandboxOperation = "spawn"
+	sandboxMessageRead  sandboxOperation = "message.read"
+	sandboxClaimPR      sandboxOperation = "pr.claim"
+	sandboxReadPR       sandboxOperation = "pr.read"
+	sandboxReviewList   sandboxOperation = "review.list"
+	sandboxReviewSubmit sandboxOperation = "review.submit"
 )
 
 type sandboxRoute struct {
+	commandPath     string
 	operation       sandboxOperation
 	method          string
 	pathTemplate    string
 	coordinatorOnly bool
+	idempotent      bool
+	handlerReady    bool
 }
 
-// sandboxRoutes is the single command-to-worker-contract mapping. Empty HTTP
-// fields are intentional until the corrected worker contract publishes the
-// canonical paths and DTOs; sandbox commands fail closed rather than falling
-// through to the local daemon or guessing a cloud endpoint.
-var sandboxRoutes = map[string]sandboxRoute{
-	"ao send":                {operation: sandboxSend},
-	"ao session ls":          {operation: sandboxReadList},
-	"ao session get":         {operation: sandboxReadOne},
-	"ao status":              {operation: sandboxStatus},
-	"ao spawn":               {operation: sandboxSpawn, coordinatorOnly: true},
-	"ao session claim-pr":    {operation: sandboxClaimPR},
-	"ao pr merge":            {operation: sandboxMergePR},
-	"ao pr resolve-comments": {operation: sandboxResolvePR},
-	"ao review ls":           {operation: sandboxReviewList},
-	"ao review submit":       {operation: sandboxReviewSubmit},
-	"ao review cancel":       {operation: sandboxReviewCancel},
-	"ao review trigger":      {operation: sandboxReviewTrigger},
-}
+var errSandboxContractPending = errors.New("sandbox command is mapped but its worker API schema is not available in the current contract")
 
-var errSandboxContractPending = errors.New("sandbox command is supported but its worker API mapping is not available in the current contract")
+// sandboxRoutes is the single command-to-worker-contract mapping. Commands
+// absent from this table fail closed instead of touching the local daemon.
+var sandboxRoutes = map[sandboxOperation]sandboxRoute{
+	sandboxStatus:       {commandPath: "ao status", operation: sandboxStatus, method: http.MethodGet, pathTemplate: "/api/cloud/v1/worker/status"},
+	sandboxReadList:     {commandPath: "ao session ls", operation: sandboxReadList, method: http.MethodGet, pathTemplate: "/api/cloud/v1/worker/sessions"},
+	sandboxReadOne:      {commandPath: "ao session get", operation: sandboxReadOne, method: http.MethodGet, pathTemplate: "/api/cloud/v1/worker/sessions/{sessionId}"},
+	sandboxKill:         {commandPath: "ao session kill", operation: sandboxKill, method: http.MethodDelete, pathTemplate: "/api/cloud/v1/worker/sessions/{sessionId}", idempotent: true},
+	sandboxSpawn:        {commandPath: "ao spawn", operation: sandboxSpawn, method: http.MethodPost, pathTemplate: "/api/cloud/v1/worker/sessions", coordinatorOnly: true, idempotent: true},
+	sandboxMessageRead:  {operation: sandboxMessageRead, method: http.MethodGet, pathTemplate: "/api/cloud/v1/worker/sessions/{sessionId}/messages"},
+	sandboxSend:         {commandPath: "ao send", operation: sandboxSend, method: http.MethodPost, pathTemplate: "/api/cloud/v1/worker/sessions/{sessionId}/messages", idempotent: true},
+	sandboxClaimPR:      {commandPath: "ao session claim-pr", operation: sandboxClaimPR, method: http.MethodPost, pathTemplate: "/api/cloud/v1/worker/sessions/{sessionId}/pr/claim"},
+	sandboxReadPR:       {operation: sandboxReadPR, method: http.MethodGet, pathTemplate: "/api/cloud/v1/worker/sessions/{sessionId}/pr"},
+	sandboxReviewList:   {commandPath: "ao review ls", operation: sandboxReviewList, method: http.MethodGet, pathTemplate: "/api/cloud/v1/worker/sessions/{sessionId}/reviews"},
+	sandboxReviewSubmit: {commandPath: "ao review submit", operation: sandboxReviewSubmit, method: http.MethodPost, pathTemplate: "/api/cloud/v1/worker/sessions/{sessionId}/reviews/submit"},
+}
 
 func sandboxRequested() bool {
 	return strings.TrimSpace(os.Getenv(sandboxControlPlaneEnv)) != ""
@@ -79,17 +79,23 @@ func (c *commandContext) guardSandboxCommand(cmd *cobra.Command) error {
 	if !sandboxRequested() {
 		return nil
 	}
-	route, ok := sandboxRoutes[cmd.CommandPath()]
-	if !ok {
-		return fmt.Errorf("%s is unavailable in sandbox mode because it requires the local AO daemon", cmd.CommandPath())
-	}
-	if route.coordinatorOnly {
-		role := strings.ToLower(strings.TrimSpace(os.Getenv(sandboxRoleEnv)))
-		if role != "" && role != sandboxCoordinatorRole {
-			return fmt.Errorf("%s is available only to a sandbox coordinator", cmd.CommandPath())
+	var route sandboxRoute
+	found := false
+	for _, candidate := range sandboxRoutes {
+		if candidate.commandPath == cmd.CommandPath() {
+			route = candidate
+			found = true
+			break
 		}
 	}
-	if route.method == "" || route.pathTemplate == "" {
+	if !found {
+		return fmt.Errorf("%s is unavailable in sandbox mode because it requires the local AO daemon", cmd.CommandPath())
+	}
+	// AO_SANDBOX_ROLE is only a non-secret UX hint. In particular, do not use
+	// it to authorize coordinator-only spawn: the capability scope and the
+	// control plane's 403 response are authoritative.
+	_ = route.coordinatorOnly
+	if !route.handlerReady {
 		return fmt.Errorf("%s: %w", cmd.CommandPath(), errSandboxContractPending)
 	}
 	return nil
@@ -173,7 +179,49 @@ func validateCapabilityFileInfo(info os.FileInfo) error {
 	return nil
 }
 
+func sandboxRouteFor(operation sandboxOperation) (sandboxRoute, error) {
+	if route, ok := sandboxRoutes[operation]; ok {
+		return route, nil
+	}
+	return sandboxRoute{}, fmt.Errorf("sandbox operation %q is not mapped", operation)
+}
+
+func (c *commandContext) doSandboxRoute(ctx context.Context, operation sandboxOperation, sessionID string, body, out any) error {
+	route, err := sandboxRouteFor(operation)
+	if err != nil {
+		return err
+	}
+	path := route.pathTemplate
+	if strings.Contains(path, "{sessionId}") {
+		if strings.TrimSpace(sessionID) == "" {
+			return errors.New("sandbox route requires a session id")
+		}
+		path = strings.ReplaceAll(path, "{sessionId}", url.PathEscape(sessionID))
+	}
+	headers := make(map[string]string)
+	if route.idempotent {
+		key, err := newSandboxIdempotencyKey()
+		if err != nil {
+			return err
+		}
+		headers["Idempotency-Key"] = key
+	}
+	return c.doSandboxJSONWithHeaders(ctx, route.method, path, body, out, headers)
+}
+
+func newSandboxIdempotencyKey() (string, error) {
+	var raw [16]byte
+	if _, err := rand.Read(raw[:]); err != nil {
+		return "", errors.New("generate sandbox idempotency key")
+	}
+	return hex.EncodeToString(raw[:]), nil
+}
+
 func (c *commandContext) doSandboxJSON(ctx context.Context, method, path string, body, out any) error {
+	return c.doSandboxJSONWithHeaders(ctx, method, path, body, out, nil)
+}
+
+func (c *commandContext) doSandboxJSONWithHeaders(ctx context.Context, method, path string, body, out any, headers map[string]string) error {
 	transport, err := loadSandboxTransport()
 	if err != nil {
 		return err
@@ -192,7 +240,12 @@ func (c *commandContext) doSandboxJSON(ctx context.Context, method, path string,
 		reader = bytes.NewReader(payload)
 	}
 	requestURL := *transport.baseURL
-	requestURL.Path = strings.TrimRight(requestURL.Path, "/") + "/" + strings.TrimLeft(path, "/")
+	escapedPath := strings.TrimRight(requestURL.EscapedPath(), "/") + "/" + strings.TrimLeft(path, "/")
+	requestURL.Path, err = url.PathUnescape(escapedPath)
+	if err != nil {
+		return errors.New("build sandbox control-plane request path")
+	}
+	requestURL.RawPath = escapedPath
 	req, err := http.NewRequestWithContext(ctx, method, requestURL.String(), reader)
 	if err != nil {
 		return errors.New(redactSandboxSecret(err.Error(), capability))
@@ -201,6 +254,9 @@ func (c *commandContext) doSandboxJSON(ctx context.Context, method, path string,
 		req.Header.Set("Content-Type", "application/json")
 	}
 	req.Header.Set("Authorization", "Bearer "+string(capability))
+	for name, value := range headers {
+		req.Header.Set(name, value)
+	}
 
 	client := *c.deps.HTTPClient
 	client.Timeout = commandTimeout

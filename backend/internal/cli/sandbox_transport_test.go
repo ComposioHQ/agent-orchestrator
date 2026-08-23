@@ -15,25 +15,34 @@ import (
 	"github.com/spf13/cobra"
 )
 
-func TestSandboxCommandMatrixFailsClosedUntilContractMapping(t *testing.T) {
+func TestSandboxCommandMatrix(t *testing.T) {
 	t.Setenv(sandboxControlPlaneEnv, "https://control.example")
 	t.Setenv(sandboxCapabilityEnv, defaultCapabilityPath)
 	t.Setenv(sandboxRoleEnv, "")
 
-	for commandPath, route := range sandboxRoutes {
-		t.Run(commandPath, func(t *testing.T) {
-			cmd := commandByPath(t, commandPath)
-			err := (&commandContext{}).guardSandboxCommand(cmd)
-			if !errors.Is(err, errSandboxContractPending) {
-				t.Fatalf("guard error = %v, want pending contract mapping", err)
-			}
-			if route.operation == "" {
-				t.Fatal("supported route has no operation identifier")
-			}
-			if route.method != "" || route.pathTemplate != "" {
-				t.Fatalf("provisional route was guessed: %#v", route)
-			}
-		})
+	want := map[sandboxOperation]sandboxRoute{
+		sandboxStatus:       {commandPath: "ao status", operation: sandboxStatus, method: http.MethodGet, pathTemplate: "/api/cloud/v1/worker/status"},
+		sandboxReadList:     {commandPath: "ao session ls", operation: sandboxReadList, method: http.MethodGet, pathTemplate: "/api/cloud/v1/worker/sessions"},
+		sandboxReadOne:      {commandPath: "ao session get", operation: sandboxReadOne, method: http.MethodGet, pathTemplate: "/api/cloud/v1/worker/sessions/{sessionId}"},
+		sandboxKill:         {commandPath: "ao session kill", operation: sandboxKill, method: http.MethodDelete, pathTemplate: "/api/cloud/v1/worker/sessions/{sessionId}", idempotent: true},
+		sandboxSpawn:        {commandPath: "ao spawn", operation: sandboxSpawn, method: http.MethodPost, pathTemplate: "/api/cloud/v1/worker/sessions", coordinatorOnly: true, idempotent: true},
+		sandboxMessageRead:  {operation: sandboxMessageRead, method: http.MethodGet, pathTemplate: "/api/cloud/v1/worker/sessions/{sessionId}/messages"},
+		sandboxSend:         {commandPath: "ao send", operation: sandboxSend, method: http.MethodPost, pathTemplate: "/api/cloud/v1/worker/sessions/{sessionId}/messages", idempotent: true},
+		sandboxClaimPR:      {commandPath: "ao session claim-pr", operation: sandboxClaimPR, method: http.MethodPost, pathTemplate: "/api/cloud/v1/worker/sessions/{sessionId}/pr/claim"},
+		sandboxReadPR:       {operation: sandboxReadPR, method: http.MethodGet, pathTemplate: "/api/cloud/v1/worker/sessions/{sessionId}/pr"},
+		sandboxReviewList:   {commandPath: "ao review ls", operation: sandboxReviewList, method: http.MethodGet, pathTemplate: "/api/cloud/v1/worker/sessions/{sessionId}/reviews"},
+		sandboxReviewSubmit: {commandPath: "ao review submit", operation: sandboxReviewSubmit, method: http.MethodPost, pathTemplate: "/api/cloud/v1/worker/sessions/{sessionId}/reviews/submit"},
+	}
+	if fmt.Sprint(sandboxRoutes) != fmt.Sprint(want) {
+		t.Fatalf("sandbox route table = %#v, want %#v", sandboxRoutes, want)
+	}
+	for _, route := range want {
+		if route.commandPath == "" {
+			continue
+		}
+		if err := (&commandContext{}).guardSandboxCommand(commandByPath(t, route.commandPath)); !errors.Is(err, errSandboxContractPending) {
+			t.Errorf("guard %s = %v, want pending shared schema", route.commandPath, err)
+		}
 	}
 }
 
@@ -49,6 +58,10 @@ func TestSandboxRefusesLocalOnlyCommands(t *testing.T) {
 		"ao agent ls",
 		"ao session cleanup",
 		"ao session restore",
+		"ao pr merge",
+		"ao pr resolve-comments",
+		"ao review cancel",
+		"ao review trigger",
 		"ao preview",
 		"ao browser status",
 	} {
@@ -61,20 +74,48 @@ func TestSandboxRefusesLocalOnlyCommands(t *testing.T) {
 	}
 }
 
-func TestSandboxSpawnRoleHint(t *testing.T) {
+func TestSandboxRefusalStopsBeforeAnyTransport(t *testing.T) {
+	t.Setenv(sandboxControlPlaneEnv, "https://control.example")
+	t.Setenv(sandboxCapabilityEnv, "/must-not-be-read")
+
+	tests := [][]string{
+		{"start"},
+		{"project", "ls"},
+		{"pr", "merge", "42"},
+		{"pr", "resolve-comments", "42"},
+		{"review", "cancel", "worker-1"},
+		{"review", "trigger", "worker-1"},
+	}
+	for _, args := range tests {
+		t.Run(strings.Join(args, "_"), func(t *testing.T) {
+			calls := 0
+			client := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+				calls++
+				return nil, errors.New("transport must not be called")
+			})}
+			err := executeWithDeps(Deps{HTTPClient: client}, args)
+			if err == nil || !strings.Contains(err.Error(), "unavailable in sandbox mode") {
+				t.Fatalf("error = %v, want sandbox refusal", err)
+			}
+			if ExitCode(err) != 1 {
+				t.Fatalf("exit code = %d, want 1", ExitCode(err))
+			}
+			if calls != 0 {
+				t.Fatalf("transport calls = %d, want 0", calls)
+			}
+		})
+	}
+}
+
+func TestSandboxSpawnRoleHintNeverAuthorizesLocally(t *testing.T) {
 	t.Setenv(sandboxControlPlaneEnv, "https://control.example")
 	t.Setenv(sandboxCapabilityEnv, defaultCapabilityPath)
 	cmd := commandByPath(t, "ao spawn")
 
-	t.Setenv(sandboxRoleEnv, "worker")
-	if err := (&commandContext{}).guardSandboxCommand(cmd); err == nil || !strings.Contains(err.Error(), "only to a sandbox coordinator") {
-		t.Fatalf("worker spawn error = %v", err)
-	}
-
-	for _, role := range []string{"", "coordinator", " COORDINATOR "} {
+	for _, role := range []string{"", "worker", "coordinator", "unexpected"} {
 		t.Setenv(sandboxRoleEnv, role)
 		if err := (&commandContext{}).guardSandboxCommand(cmd); !errors.Is(err, errSandboxContractPending) {
-			t.Fatalf("role %q error = %v, want server-authoritative pending mapping", role, err)
+			t.Fatalf("role %q produced role authorization instead of schema gate: %v", role, err)
 		}
 	}
 }
@@ -257,6 +298,56 @@ func TestSandboxTransportRereadsCapabilityAndMapsBearer(t *testing.T) {
 	want := []string{"Bearer first-token", "Bearer rotated-token"}
 	if fmt.Sprint(authorizations) != fmt.Sprint(want) {
 		t.Fatalf("Authorization headers = %v, want %v", authorizations, want)
+	}
+}
+
+func TestSandboxRouteMappings(t *testing.T) {
+	capabilityFile := filepath.Join(t.TempDir(), "capability")
+	writeSandboxCapability(t, capabilityFile, "route-token")
+	t.Setenv(sandboxCapabilityEnv, capabilityFile)
+
+	tests := []struct {
+		operation      sandboxOperation
+		sessionID      string
+		wantMethod     string
+		wantPath       string
+		wantIdempotent bool
+	}{
+		{sandboxStatus, "", http.MethodGet, "/api/cloud/v1/worker/status", false},
+		{sandboxReadList, "", http.MethodGet, "/api/cloud/v1/worker/sessions", false},
+		{sandboxReadOne, "demo/1", http.MethodGet, "/api/cloud/v1/worker/sessions/demo%2F1", false},
+		{sandboxKill, "demo/1", http.MethodDelete, "/api/cloud/v1/worker/sessions/demo%2F1", true},
+		{sandboxSpawn, "", http.MethodPost, "/api/cloud/v1/worker/sessions", true},
+		{sandboxMessageRead, "demo/1", http.MethodGet, "/api/cloud/v1/worker/sessions/demo%2F1/messages", false},
+		{sandboxSend, "demo/1", http.MethodPost, "/api/cloud/v1/worker/sessions/demo%2F1/messages", true},
+		{sandboxClaimPR, "demo/1", http.MethodPost, "/api/cloud/v1/worker/sessions/demo%2F1/pr/claim", false},
+		{sandboxReadPR, "demo/1", http.MethodGet, "/api/cloud/v1/worker/sessions/demo%2F1/pr", false},
+		{sandboxReviewList, "demo/1", http.MethodGet, "/api/cloud/v1/worker/sessions/demo%2F1/reviews", false},
+		{sandboxReviewSubmit, "demo/1", http.MethodPost, "/api/cloud/v1/worker/sessions/demo%2F1/reviews/submit", false},
+	}
+	for _, tc := range tests {
+		t.Run(string(tc.operation), func(t *testing.T) {
+			server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method != tc.wantMethod || r.URL.EscapedPath() != tc.wantPath {
+					t.Errorf("request = %s %s, want %s %s", r.Method, r.URL.EscapedPath(), tc.wantMethod, tc.wantPath)
+				}
+				key := r.Header.Get("Idempotency-Key")
+				if tc.wantIdempotent && key == "" {
+					t.Error("missing Idempotency-Key")
+				}
+				if !tc.wantIdempotent && key != "" {
+					t.Errorf("unexpected Idempotency-Key %q", key)
+				}
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = io.WriteString(w, `{}`)
+			}))
+			t.Cleanup(server.Close)
+			t.Setenv(sandboxControlPlaneEnv, server.URL)
+			ctx := &commandContext{deps: Deps{HTTPClient: server.Client()}.withDefaults()}
+			if err := ctx.doSandboxRoute(context.Background(), tc.operation, tc.sessionID, map[string]string{"test": "body"}, &struct{}{}); err != nil {
+				t.Fatal(err)
+			}
+		})
 	}
 }
 
