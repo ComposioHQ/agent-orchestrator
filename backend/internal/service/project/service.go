@@ -720,6 +720,16 @@ func (m *Service) projectFromRow(ctx context.Context, row domain.ProjectRecord) 
 			}
 		}
 	}
+	// Agent reports the project's *effective* orchestrator harness: its own
+	// override when set, falling back to the daemon-wide default otherwise.
+	// Bug fix: this used to report the daemon default unconditionally,
+	// ignoring row.Config.Orchestrator.Harness, so a saved per-project
+	// override never showed up here (List()'s Summary.OrchestratorAgent got
+	// this right all along; only this single-project view did not).
+	agent := row.Config.Orchestrator.Harness
+	if agent == "" {
+		agent = m.defaultHarness
+	}
 	p := Project{
 		ID:            domain.ProjectID(row.ID),
 		Name:          displayName(row),
@@ -727,7 +737,7 @@ func (m *Service) projectFromRow(ctx context.Context, row domain.ProjectRecord) 
 		Path:          row.Path,
 		Repo:          row.RepoOriginURL,
 		DefaultBranch: defaultBranch,
-		Agent:         string(m.defaultHarness),
+		Agent:         string(agent),
 	}
 	p.Config = projectConfigPtr(row.Config)
 	return p

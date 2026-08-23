@@ -574,6 +574,69 @@ func TestManager_GetUsesConfiguredDefaultHarness(t *testing.T) {
 	}
 }
 
+// TestManager_GetIgnoresProjectOrchestratorAgentOverride reproduces a bug: a
+// project's saved orchestrator-agent override (Config.Orchestrator.Harness)
+// is correctly persisted and correctly reflected by List(), but Get() (and
+// therefore UpdateSettings()'s own response) ignores it and always reports
+// the daemon-wide default harness instead. A user who overrides the
+// orchestrator agent in Project Settings sees the change silently "not take"
+// because the very API response that confirms the save shows the old value.
+func TestManager_GetIgnoresProjectOrchestratorAgentOverride(t *testing.T) {
+	ctx := context.Background()
+	store, err := sqlitetest.Open(t.TempDir())
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	// Daemon-wide default is codex; the project overrides its orchestrator
+	// agent to claude-code. Any response reporting "codex" here is reporting
+	// the daemon default, not this project's own setting.
+	m := project.NewWithDeps(project.Deps{Store: store, DefaultHarness: domain.HarnessCodex})
+	repo := gitRepo(t)
+
+	if _, err := m.Add(ctx, project.AddInput{Path: repo, ProjectID: ptr("ao")}); err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+
+	updated, err := m.UpdateSettings(ctx, "ao", project.UpdateSettingsInput{
+		DisplayName: "AO Project",
+		Config: domain.ProjectConfig{
+			Orchestrator: domain.RoleOverride{Harness: domain.HarnessClaudeCode},
+		},
+	})
+	if err != nil {
+		t.Fatalf("UpdateSettings: %v", err)
+	}
+
+	// The saved config correctly holds the override.
+	if updated.Config == nil || updated.Config.Orchestrator.Harness != domain.HarnessClaudeCode {
+		t.Fatalf("saved config orchestrator harness = %#v, want claude-code", updated.Config)
+	}
+
+	// List() (GET /api/v1/projects) gets this right today.
+	summaries, err := m.List(ctx)
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(summaries) != 1 || summaries[0].OrchestratorAgent != domain.HarnessClaudeCode {
+		t.Fatalf("List orchestrator agent = %#v, want claude-code", summaries)
+	}
+
+	// BUG: UpdateSettings' own response and a subsequent Get() (GET
+	// /api/v1/projects/{id}) both report the daemon default instead of the
+	// project's saved override.
+	if updated.Agent != string(domain.HarnessClaudeCode) {
+		t.Fatalf("BUG: UpdateSettings response Agent = %q, want %q (the saved override)", updated.Agent, domain.HarnessClaudeCode)
+	}
+	got, err := m.Get(ctx, "ao")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got.Project == nil || got.Project.Agent != string(domain.HarnessClaudeCode) {
+		t.Fatalf("BUG: Get().Agent = %q, want %q (the saved override)", got.Project.Agent, domain.HarnessClaudeCode)
+	}
+}
+
 func TestManager_AddDoesNotTreatCurrentBranchAsAutomaticDefault(t *testing.T) {
 	ctx := context.Background()
 	m := newManager(t)
