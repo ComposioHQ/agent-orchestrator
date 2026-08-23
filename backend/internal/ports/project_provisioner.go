@@ -16,6 +16,13 @@ import (
 // ErrProjectProvisionUnavailable means completion is not yet known and callers
 // may retry the identical request with the same key. Reconciliation,
 // compensation, checkpoints, and provider retries are adapter-private.
+//
+// Remote implementations obtain one-shot SCM credentials from the SCM issuer
+// at execution time and deliver their mutable bytes through the compute
+// adapter's owner-only secret-file channel. Credentials are never part of this
+// request/result contract: they must not be cached, persisted, placed in
+// argv/environment/Git configuration, or returned to callers, and both the
+// issuer credential and delivered file buffer must be zeroed after use.
 type ProjectProvisioner interface {
 	Provision(ctx context.Context, request ProjectProvisionRequest) (ProjectProvision, error)
 }
@@ -53,7 +60,9 @@ type ProjectAddRequest struct {
 
 // ProjectCloneRequest describes cloning and registering a repository. A local
 // provisioner uses DestinationParent as a host path; a remote provisioner uses
-// its placement root.
+// its placement root. The remote adapter derives tenant identity from context
+// and privately issues a fresh read-only bootstrap credential for RemoteURL;
+// no credential material crosses this public boundary.
 type ProjectCloneRequest struct {
 	RemoteURL         string
 	DestinationParent string
