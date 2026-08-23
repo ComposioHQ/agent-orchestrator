@@ -54,6 +54,11 @@ const (
 	OpSessionRead Operation = "session.read"
 	// OpSessionWrite lets a worker publish progress for its own session.
 	OpSessionWrite Operation = "session.write"
+	// OpHarnessCredentialBootstrap lets a worker receive its harness credential
+	// through the runtime's remote secret-file transport. It is intentionally
+	// narrower than session.read: possession of a general session capability
+	// must not imply access to credential material.
+	OpHarnessCredentialBootstrap Operation = "credential.bootstrap"
 	// OpWorkspaceRead lets a coordinator enumerate its workspace's sessions.
 	OpWorkspaceRead Operation = "workspace.read"
 	// OpWorkerProvision lets a coordinator ask the control plane to provision
@@ -62,13 +67,14 @@ const (
 )
 
 var knownOperations = map[Operation]struct{}{
-	OpSandboxHeartbeat:   {},
-	OpSandboxReportState: {},
-	OpCapabilityRotate:   {},
-	OpSessionRead:        {},
-	OpSessionWrite:       {},
-	OpWorkspaceRead:      {},
-	OpWorkerProvision:    {},
+	OpSandboxHeartbeat:           {},
+	OpSandboxReportState:         {},
+	OpCapabilityRotate:           {},
+	OpSessionRead:                {},
+	OpSessionWrite:               {},
+	OpHarnessCredentialBootstrap: {},
+	OpWorkspaceRead:              {},
+	OpWorkerProvision:            {},
 }
 
 // Errors returned by the authority. Callers may distinguish them; the HTTP

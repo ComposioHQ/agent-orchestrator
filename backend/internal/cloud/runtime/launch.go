@@ -49,6 +49,7 @@ var workerOperations = []capability.Operation{
 	capability.OpCapabilityRotate,
 	capability.OpSessionRead,
 	capability.OpSessionWrite,
+	capability.OpHarnessCredentialBootstrap,
 }
 
 // CapabilityScope builds the scope for one placement. It is exported so the
