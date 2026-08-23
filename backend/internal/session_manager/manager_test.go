@@ -2204,8 +2204,8 @@ func TestWrapSpawnStagePreservesInnerSentinel(t *testing.T) {
 }
 
 func TestSpawn_RollsBackOnRuntimeFailure(t *testing.T) {
-	m, st, _, ws := newManager()
-	m.runtime = &fakeRuntime{createErr: errors.New("boom")}
+	m, st, runtime, ws := newManager()
+	runtime.createErr = errors.New("boom")
 	if _, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer"}); err == nil {
 		t.Fatal("expected failure")
 	}
@@ -2446,7 +2446,7 @@ func TestSpawn_WorkspaceProjectRecordsRootAndChildWorktrees(t *testing.T) {
 }
 
 func TestSpawn_WorkspaceProjectRollsBackAllWorktreesOnRuntimeFailure(t *testing.T) {
-	m, st, _, ws := newManager()
+	m, st, runtime, ws := newManager()
 	st.projects["mer"] = domain.ProjectRecord{
 		ID:     "mer",
 		Path:   "/repo/mer",
@@ -2454,7 +2454,7 @@ func TestSpawn_WorkspaceProjectRollsBackAllWorktreesOnRuntimeFailure(t *testing.
 		Config: testRoleAgents(),
 	}
 	st.workspaceRepo["mer"] = []domain.WorkspaceRepoRecord{{Name: "api", RelativePath: "api"}}
-	m.runtime = &fakeRuntime{createErr: errors.New("boom")}
+	runtime.createErr = errors.New("boom")
 	if _, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker}); err == nil {
 		t.Fatal("expected failure")
 	}

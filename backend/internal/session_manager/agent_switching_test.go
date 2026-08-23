@@ -712,7 +712,7 @@ type switchTestWorkspace struct {
 	onObserve func()
 }
 
-func (w switchTestWorkspace) ObserveWorkspace(_ context.Context, info ports.WorkspaceInfo) (ports.WorkspaceSnapshot, error) {
+func (w *switchTestWorkspace) ObserveWorkspace(_ context.Context, info ports.WorkspaceInfo) (ports.WorkspaceSnapshot, error) {
 	if w.onObserve != nil {
 		w.onObserve()
 	}
@@ -753,7 +753,7 @@ func newSwitchTestManager(t *testing.T, runtime runtimeController) (*Manager, *s
 	manager := New(Deps{
 		Runtime:   runtime,
 		Agents:    switchTestAgents{domain.HarnessClaudeCode: source, domain.HarnessCodex: target},
-		Workspace: switchTestWorkspace{fakeWorkspace: &fakeWorkspace{path: workspacePath}},
+		Workspace: &switchTestWorkspace{fakeWorkspace: &fakeWorkspace{path: workspacePath}},
 		Store:     store, Messenger: messenger, Lifecycle: lcm, DataDir: filepath.Join(root, "ao"),
 		LookPath:   func(string) (string, error) { return "/bin/agent", nil },
 		Executable: func() (string, error) { return filepath.Join(root, "bin", "ao"), nil },
@@ -3323,9 +3323,8 @@ func TestSwitchAgentInstallsTargetWorkspaceOnlyAfterFinalSourceSnapshot(t *testi
 	runtime := &fakeRestartRuntime{fakeRuntime: &fakeRuntime{}}
 	manager, _, _ := newSwitchTestManager(t, runtime)
 	observed := false
-	workspace := manager.workspace.(switchTestWorkspace)
+	workspace := manager.workspace.(*switchTestWorkspace)
 	workspace.onObserve = func() { observed = true }
-	manager.workspace = workspace
 	target := manager.agents.(switchTestAgents)[domain.HarnessCodex].(*switchTestAgent)
 	target.onHooks = func() {
 		if !observed {

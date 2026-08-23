@@ -2,14 +2,109 @@ package sessionexecution_test
 
 import (
 	"context"
+	"errors"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
+	"time"
 
 	localexecution "github.com/aoagents/agent-orchestrator/backend/internal/adapters/sessionexecution/local"
 	remoteexecution "github.com/aoagents/agent-orchestrator/backend/internal/adapters/sessionexecution/remote"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
+
+func TestWorkspaceObservationConformance(t *testing.T) {
+	root := t.TempDir()
+	runGit(t, root, "init")
+	runGit(t, root, "config", "user.email", "test@example.com")
+	runGit(t, root, "config", "user.name", "Test")
+	path := filepath.Join(root, "hello.txt")
+	if err := os.WriteFile(path, []byte("before\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, root, "add", "hello.txt")
+	runGit(t, root, "commit", "-m", "initial")
+	if err := os.WriteFile(path, []byte("after\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	workspace := &fakeWorkspace{}
+	local := localexecution.New(localexecution.Config{Workspace: workspace, Runtime: &fakeRuntime{}, Messenger: &fakeMessenger{}})
+	remoteBackend := newFakeRemoteBackend()
+	// The fake sandbox exposes the same semantic observer through its backend;
+	// the remote adapter must not attempt to interpret its workspace path.
+	remoteBackend.observation = local.Observation()
+	fixtures := []struct {
+		name        string
+		observation ports.WorkspaceObservation
+	}{
+		{name: "local", observation: local.Observation()},
+		{name: "fake-remote", observation: remoteexecution.New(remoteBackend).Observation()},
+	}
+	info := ports.WorkspaceInfo{Path: root, Branch: "feature"}
+	for _, fixture := range fixtures {
+		t.Run(fixture.name, func(t *testing.T) {
+			listed, err := fixture.observation.List(context.Background(), ports.WorkspaceListRequest{Workspaces: []ports.WorkspaceInfo{info}})
+			if err != nil || !containsWorkspacePath(listed.Entries, "hello.txt") {
+				t.Fatalf("list = %#v, err=%v", listed, err)
+			}
+			read, err := fixture.observation.Read(context.Background(), ports.WorkspaceReadRequest{Workspace: info, Path: "hello.txt", MaxBytes: 3})
+			if err != nil || string(read.Data) != "aft" || !read.Truncated || read.Size != 6 {
+				t.Fatalf("read = %#v, err=%v", read, err)
+			}
+			diff, err := fixture.observation.Diff(context.Background(), ports.WorkspaceDiffRequest{Workspace: info, Base: "HEAD", Path: "hello.txt"})
+			if err != nil || !strings.Contains(diff.UnifiedDiff, "+after") {
+				t.Fatalf("diff = %#v, err=%v", diff, err)
+			}
+			current, err := fixture.observation.Blob(context.Background(), ports.WorkspaceBlobRequest{Workspace: info, Path: "hello.txt"})
+			if err != nil || string(current.Data) != "after\n" {
+				t.Fatalf("current blob = %#v, err=%v", current, err)
+			}
+			historical, err := fixture.observation.Blob(context.Background(), ports.WorkspaceBlobRequest{Workspace: info, Path: "hello.txt", Revision: "HEAD"})
+			if err != nil || string(historical.Data) != "before\n" {
+				t.Fatalf("historical blob = %#v, err=%v", historical, err)
+			}
+			watchCtx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			events, err := fixture.observation.Watch(watchCtx, ports.WorkspaceWatchRequest{Workspaces: []ports.WorkspaceInfo{info}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(root, fixture.name+".txt"), []byte("event"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			select {
+			case _, ok := <-events:
+				if !ok {
+					t.Fatal("watch closed before reporting a workspace change")
+				}
+			case <-time.After(5 * time.Second):
+				t.Fatal("workspace watch did not report a change")
+			}
+		})
+	}
+}
+
+func runGit(t *testing.T, dir string, args ...string) {
+	t.Helper()
+	cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git %v: %v: %s", args, err, out)
+	}
+}
+
+func containsWorkspacePath(entries []ports.WorkspaceEntry, path string) bool {
+	for _, entry := range entries {
+		if entry.Path == path {
+			return true
+		}
+	}
+	return false
+}
 
 func TestSessionExecutionLifecycleConformance(t *testing.T) {
 	for _, fixture := range executionFixtures(t) {
@@ -153,6 +248,58 @@ func TestRemoteProvisionOrderingAndRollback(t *testing.T) {
 	}
 }
 
+func TestRemoteProvisionPartialFailureLeavesNoEnvironment(t *testing.T) {
+	for _, failAt := range []string{"prompt", "workspace", "provision", "attachments", "hooks", "binary", "bind", "launch", "commit"} {
+		t.Run(failAt, func(t *testing.T) {
+			backend := newFakeRemoteBackend()
+			backend.failAt = failAt
+			execution := remoteexecution.New(backend)
+			ctx := context.Background()
+			provision, err := execution.BeginSession(ctx, ports.ExecutionSpec{SessionID: "s", ProjectID: "p"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = provision.StageSystemPrompt(ctx, "s", "rules")
+			var workspace ports.WorkspaceInfo
+			if err == nil {
+				workspace, _, err = provision.CreateWorkspace(ctx, ports.WorkspaceCreateSpec{Workspace: ports.WorkspaceConfig{SessionID: "s", Branch: "feature"}})
+			}
+			if err == nil {
+				err = provision.Provision(ctx, ports.WorkspaceProvisionSpec{WorkspacePath: workspace.Path})
+			}
+			if err == nil {
+				_, err = provision.StageAttachments(ctx, "s", workspace.Path, []ports.SpawnAttachment{{Data: []byte("x")}})
+			}
+			if err == nil {
+				err = provision.InstallAgentHooks(ctx, ports.AgentPrepareSpec{Harness: domain.HarnessCodex, SessionID: "s"})
+			}
+			if err == nil {
+				_, err = provision.ResolveLaunchBinary(ctx, []string{"agent"}, map[string]string{})
+			}
+			var bound ports.RuntimeConfig
+			if err == nil {
+				bound, err = provision.BindRuntimeConfig(ctx, ports.RuntimeConfig{SessionID: "s", WorkspacePath: workspace.Path, Argv: []string{"agent"}})
+			}
+			if err == nil {
+				_, err = provision.LaunchRuntime(ctx, bound)
+			}
+			if err == nil {
+				provision.ResolveDiffBase(ctx, workspace.Path, "main")
+				err = provision.Commit(ctx)
+			}
+			if err == nil {
+				t.Fatalf("injected %s failure did not fail", failAt)
+			}
+			if outcome := provision.Rollback(ctx, ports.RollbackOptions{}); !outcome.WorkspaceDestroyed {
+				t.Fatalf("rollback after %s did not report environment removal", failAt)
+			}
+			if backend.environmentExists {
+				t.Fatalf("environment leaked after %s failure: events=%v", failAt, backend.events)
+			}
+		})
+	}
+}
+
 type executionFixture struct {
 	name      string
 	execution ports.SessionExecution
@@ -231,10 +378,13 @@ func (m *fakeMessenger) Send(_ context.Context, _ domain.SessionID, message stri
 }
 
 type fakeRemoteBackend struct {
-	events    []string
-	workspace *fakeWorkspace
-	runtime   *fakeRuntime
-	messenger *fakeMessenger
+	events            []string
+	failAt            string
+	environmentExists bool
+	workspace         *fakeWorkspace
+	runtime           *fakeRuntime
+	messenger         *fakeMessenger
+	observation       ports.WorkspaceObservation
 }
 
 func newFakeRemoteBackend() *fakeRemoteBackend {
@@ -243,62 +393,87 @@ func newFakeRemoteBackend() *fakeRemoteBackend {
 	return b
 }
 
-func (b *fakeRemoteBackend) RuntimeBackend() ports.Runtime                  { return b.runtime }
-func (b *fakeRemoteBackend) WorkspaceBackend() ports.Workspace              { return b.workspace }
-func (b *fakeRemoteBackend) MessengerBackend() ports.AgentMessenger         { return b.messenger }
-func (b *fakeRemoteBackend) ObservationBackend() ports.WorkspaceObservation { return b }
+func (b *fakeRemoteBackend) RuntimeBackend() ports.Runtime          { return b.runtime }
+func (b *fakeRemoteBackend) WorkspaceBackend() ports.Workspace      { return b.workspace }
+func (b *fakeRemoteBackend) MessengerBackend() ports.AgentMessenger { return b.messenger }
+func (b *fakeRemoteBackend) ObservationBackend() ports.WorkspaceObservation {
+	if b.observation != nil {
+		return b.observation
+	}
+	return b
+}
 func (b *fakeRemoteBackend) BeginExecution(context.Context, ports.ExecutionSpec) (string, error) {
 	b.events = append(b.events, "begin")
+	b.environmentExists = true
 	return "tx", nil
 }
 func (b *fakeRemoteBackend) StageExecutionSystemPrompt(context.Context, string, domain.SessionID, string) (string, error) {
-	b.events = append(b.events, "prompt")
+	if err := b.record("prompt"); err != nil {
+		return "", err
+	}
 	return "/sandbox/system.md", nil
 }
 func (b *fakeRemoteBackend) CreateExecutionWorkspace(_ context.Context, _ string, spec ports.WorkspaceCreateSpec) (ports.WorkspaceInfo, *ports.WorkspaceProjectInfo, error) {
-	b.events = append(b.events, "workspace")
+	if err := b.record("workspace"); err != nil {
+		return ports.WorkspaceInfo{}, nil, err
+	}
 	info, err := b.workspace.Create(context.Background(), spec.Workspace)
 	return info, nil, err
 }
 func (b *fakeRemoteBackend) ProvisionExecutionWorkspace(context.Context, string, ports.WorkspaceProvisionSpec) error {
-	b.events = append(b.events, "provision")
-	return nil
+	return b.record("provision")
 }
 func (b *fakeRemoteBackend) StageExecutionAttachments(context.Context, string, domain.SessionID, string, []ports.SpawnAttachment) ([]string, error) {
-	b.events = append(b.events, "attachments")
+	if err := b.record("attachments"); err != nil {
+		return nil, err
+	}
 	return []string{".ao/attachments/attachment-1.txt"}, nil
 }
 func (b *fakeRemoteBackend) PutExecutionAttachment(context.Context, domain.SessionID, string, string, []byte) error {
 	return nil
 }
 func (b *fakeRemoteBackend) InstallExecutionAgent(context.Context, string, ports.RemoteAgentPrepareSpec) error {
-	b.events = append(b.events, "hooks")
-	return nil
+	return b.record("hooks")
 }
 func (b *fakeRemoteBackend) ResolveExecutionBinary(_ context.Context, executionID string, _ []string, env map[string]string) (map[string]string, error) {
 	if executionID != "" {
-		b.events = append(b.events, "binary")
+		if err := b.record("binary"); err != nil {
+			return env, err
+		}
 	}
 	return env, nil
 }
 func (b *fakeRemoteBackend) BindExecutionRuntime(_ context.Context, _ string, cfg ports.RuntimeConfig) (ports.RuntimeConfig, error) {
-	b.events = append(b.events, "bind")
+	if err := b.record("bind"); err != nil {
+		return ports.RuntimeConfig{}, err
+	}
 	return cfg, nil
 }
 func (b *fakeRemoteBackend) LaunchExecutionRuntime(ctx context.Context, _ string, cfg ports.RuntimeConfig) (ports.RuntimeHandle, error) {
-	return b.runtime.Create(ctx, cfg)
+	if err := b.record("launch"); err != nil {
+		return ports.RuntimeHandle{}, err
+	}
+	return ports.RuntimeHandle{ID: "runtime-" + string(cfg.SessionID)}, nil
 }
 func (b *fakeRemoteBackend) ResolveExecutionDiffBase(context.Context, string, string, string) (string, string) {
-	b.events = append(b.events, "diff")
+	_ = b.record("diff")
 	return "base", "main"
 }
 func (b *fakeRemoteBackend) CommitExecution(context.Context, string) error {
-	b.events = append(b.events, "commit")
-	return nil
+	return b.record("commit")
 }
 func (b *fakeRemoteBackend) RollbackExecution(context.Context, string, ports.RollbackOptions) ports.RollbackOutcome {
 	b.events = append(b.events, "rollback")
+	b.environmentExists = false
 	return ports.RollbackOutcome{WorkspaceDestroyed: true}
+}
+
+func (b *fakeRemoteBackend) record(event string) error {
+	b.events = append(b.events, event)
+	if b.failAt == event {
+		return errors.New("injected " + event + " failure")
+	}
+	return nil
 }
 func (*fakeRemoteBackend) ValidateExecutionHost(context.Context) error { return nil }
 func (*fakeRemoteBackend) ReadExecutionProjectFile(context.Context, string, string) ([]byte, error) {
