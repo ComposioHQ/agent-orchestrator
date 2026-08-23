@@ -628,7 +628,7 @@ func TestACPDriverReappliesLaunchContextWhenResuming(t *testing.T) {
 	}
 }
 
-func TestACPDriverReportsReplayTailOutcomeAsUnsettled(t *testing.T) {
+func TestACPDriverClosesReplayTurnsAsRecoveredWithoutBlockingResume(t *testing.T) {
 	userOneID := "11111111-1111-4111-8111-111111111111"
 	answerOneID := "22222222-2222-4222-8222-222222222222"
 	userTwoID := "33333333-3333-4333-8333-333333333333"
@@ -643,12 +643,16 @@ func TestACPDriverReportsReplayTailOutcomeAsUnsettled(t *testing.T) {
 	userTwo.UserMessageChunk.MessageId = &userTwoID
 	answerTwo := acpsdk.UpdateAgentMessageText("All tests pass.")
 	answerTwo.AgentMessageChunk.MessageId = &answerTwoID
+	pendingTool := acpsdk.SessionUpdate{ToolCall: &acpsdk.SessionUpdateToolCall{
+		SessionUpdate: "tool_call", ToolCallId: "history-tool", Title: "Run tests",
+		Kind: acpsdk.ToolKindExecute, Status: acpsdk.ToolCallStatusInProgress,
+	}}
 
 	agent := &fakeAgent{
 		capabilities: &acpsdk.AgentCapabilities{
 			LoadSession: true,
 		},
-		loadUpdates: []acpsdk.SessionUpdate{userOne, answerOneA, answerOneB, userTwo, answerTwo},
+		loadUpdates: []acpsdk.SessionUpdate{userOne, answerOneA, answerOneB, userTwo, answerTwo, pendingTool},
 	}
 	driver := New(Config{
 		Harness:      domain.HarnessClaudeCode,
@@ -687,8 +691,26 @@ func TestACPDriverReportsReplayTailOutcomeAsUnsettled(t *testing.T) {
 		t.Fatalf("session/load metadata = %#v, want recomputed system prompt", loadMeta)
 	}
 
-	if history, err := conv.(ports.ChatHistoryReader).ReadHistory(context.Background()); !errors.Is(err, ports.ErrChatHistoryUnsettled) {
-		t.Fatalf("ReadHistory = (%#v, %v), want ErrChatHistoryUnsettled", history, err)
+	history, err := conv.(ports.ChatHistoryReader).ReadHistory(context.Background())
+	if err != nil {
+		t.Fatalf("ReadHistory: %v", err)
+	}
+	var states []domain.TurnState
+	var recoveredActivity bool
+	for _, event := range history {
+		if event.Kind == ports.ChatEventTurnCompleted {
+			states = append(states, event.TurnState)
+		}
+		if event.ProviderItemID == "history-tool" && event.Kind == ports.ChatEventActivityCompleted {
+			recoveredActivity = event.ActivityStatus == domain.ActivityStatusRecovered
+		}
+	}
+	if len(states) != 2 || states[0] != domain.TurnStateRecovered ||
+		states[1] != domain.TurnStateRecovered {
+		t.Fatalf("replayed turn states = %v, want [recovered recovered]", states)
+	}
+	if !recoveredActivity {
+		t.Fatalf("history = %#v, want pending replay tool settled as recovered", history)
 	}
 	if !conv.Capabilities().Has(ports.ChatCapabilityHistory) {
 		t.Fatal("session/load conversation did not advertise replayable history")
@@ -705,7 +727,7 @@ func TestACPDriverReportsReplayTailOutcomeAsUnsettled(t *testing.T) {
 	}
 }
 
-func TestACPDriverReportsTrailingUserOnlyHistoryAsUnsettled(t *testing.T) {
+func TestACPDriverClosesTrailingUserOnlyHistoryAsRecovered(t *testing.T) {
 	userID := "55555555-5555-4555-8555-555555555555"
 	user := acpsdk.UpdateUserMessageText("Work that has not produced a provider event yet")
 	user.UserMessageChunk.MessageId = &userID
@@ -735,8 +757,13 @@ func TestACPDriverReportsTrailingUserOnlyHistoryAsUnsettled(t *testing.T) {
 	}
 	defer conv.Close()
 
-	if history, err := conv.(ports.ChatHistoryReader).ReadHistory(context.Background()); !errors.Is(err, ports.ErrChatHistoryUnsettled) {
-		t.Fatalf("ReadHistory = (%#v, %v), want ErrChatHistoryUnsettled", history, err)
+	history, err := conv.(ports.ChatHistoryReader).ReadHistory(context.Background())
+	if err != nil {
+		t.Fatalf("ReadHistory: %v", err)
+	}
+	if len(history) != 3 || history[2].Kind != ports.ChatEventTurnCompleted ||
+		history[2].TurnState != domain.TurnStateRecovered {
+		t.Fatalf("history = %#v, want trailing recovered turn", history)
 	}
 }
 

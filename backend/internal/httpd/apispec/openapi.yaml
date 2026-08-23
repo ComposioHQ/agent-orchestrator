@@ -6010,6 +6010,7 @@ components:
           enum:
           - running
           - completed
+          - recovered
           - failed
           - cancelled
           - pending
@@ -6503,6 +6504,7 @@ components:
           - queued
           - running
           - completed
+          - recovered
           - interrupted
           - failed
           type: string
@@ -6755,6 +6757,7 @@ components:
           - queued
           - running
           - completed
+          - recovered
           - interrupted
           - failed
           type: string
@@ -7803,6 +7806,7 @@ components:
           - queued
           - running
           - completed
+          - recovered
           - interrupted
           - failed
           type: string

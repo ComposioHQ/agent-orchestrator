@@ -65,26 +65,22 @@ func (c *conversation) abortHistoryReplay() {
 
 // finishHistoryReplay closes the capture without inventing an outcome for its
 // final turn. ACP session/load guarantees only that all stored entries were
-// replayed; it does not say whether that tail completed, failed, or was still
-// running when persistence stopped.
+// replayed; it does not report their terminal outcomes. Recovered is the shared
+// terminal state for that evidence gap; service reconciliation replaces it with
+// AO's known completed/interrupted/failed result when a durable turn matches.
 func (c *conversation) finishHistoryReplay() {
 	c.historyMu.Lock()
-	unsettled := c.history != nil && c.history.turnID != ""
+	hasTail := c.history != nil && c.history.turnID != ""
 	c.historyMu.Unlock()
 
-	if unsettled {
-		c.finishHistoryTurn("")
+	if hasTail {
+		c.finishHistoryTurn(domain.TurnStateRecovered)
 	}
 
 	c.historyMu.Lock()
 	if c.history != nil {
 		c.historyEvents = append([]ports.ChatEvent(nil), c.history.events...)
-		if unsettled {
-			c.historyErr = fmt.Errorf("%w: ACP session/load does not report the replay tail outcome",
-				ports.ErrChatHistoryUnsettled)
-		} else {
-			c.historyErr = nil
-		}
+		c.historyErr = nil
 		c.historyLoaded = true
 	}
 	c.history = nil
@@ -169,7 +165,7 @@ func (c *conversation) captureHistoryUserChunk(chunk *acpsdk.SessionUpdateUserMe
 	c.historyMu.Unlock()
 
 	if finishPrevious {
-		c.finishHistoryTurn(domain.TurnStateCompleted)
+		c.finishHistoryTurn(domain.TurnStateRecovered)
 		startTurn = true
 	}
 	if startTurn {
@@ -250,7 +246,7 @@ func (c *conversation) finishHistoryTurn(state domain.TurnState) {
 	turnID := c.history.turnID
 	c.historyMu.Unlock()
 
-	c.settleOpenItems(turnID)
+	c.settleOpenItems(turnID, state)
 	if state != "" {
 		c.emit(ports.ChatEvent{
 			Kind:           ports.ChatEventTurnCompleted,

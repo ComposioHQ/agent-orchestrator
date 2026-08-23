@@ -745,14 +745,25 @@ func reconcileNativeHistory(
 			continue
 		}
 		event.ProviderTurnID = candidate.providerTurnID
-		// A replay has no portable ACP turn-outcome field. Do not overwrite AO's
-		// known interrupted/failed result with the adapter's synthetic "completed".
-		if event.Kind == ports.ChatEventTurnCompleted && candidate.state.Terminal() {
+		// A replay may have no portable turn-outcome field. Preserve AO's stronger
+		// known result only when the adapter reports recovered. Conversely, a known
+		// replay outcome upgrades an older recovered observation.
+		if event.Kind == ports.ChatEventTurnCompleted &&
+			event.TurnState == domain.TurnStateRecovered && knownTurnOutcome(candidate.state) {
 			event.TurnState = candidate.state
 		}
 		reconciled = append(reconciled, event)
 	}
 	return reconciled
+}
+
+func knownTurnOutcome(state domain.TurnState) bool {
+	switch state {
+	case domain.TurnStateCompleted, domain.TurnStateInterrupted, domain.TurnStateFailed:
+		return true
+	default:
+		return false
+	}
 }
 
 // rateLimitReadTimeout bounds the startup quota read. It is a local IPC call, and

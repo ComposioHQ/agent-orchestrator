@@ -629,7 +629,7 @@ func TestResumeImportsNativeHistoryBeforeTheChatControllerStarts(t *testing.T) {
 			},
 			{
 				Kind: ports.ChatEventTurnCompleted, ProviderEventID: "history-complete",
-				ProviderTurnID: "native-turn-1", TurnState: domain.TurnStateCompleted,
+				ProviderTurnID: "native-turn-1", TurnState: domain.TurnStateRecovered,
 			},
 		},
 	}
@@ -871,6 +871,63 @@ func TestInterfaceHandoffImportsInterruptedUserOnlyNativeHistory(t *testing.T) {
 	}
 	if len(snapshot.Turns) != 1 || snapshot.Turns[0].State != domain.TurnStateInterrupted {
 		t.Fatalf("turns = %#v, want one interrupted native turn", snapshot.Turns)
+	}
+}
+
+func TestInterfaceHandoffImportsOutcomeUnknownNativeHistoryAsRecovered(t *testing.T) {
+	st := openStore(t)
+	conv := &nativeHistoryConversation{
+		fakeConversation: newFakeConversation(),
+		events: []ports.ChatEvent{
+			{Kind: ports.ChatEventTurnStarted, ProviderEventID: "history-start", ProviderTurnID: "native-turn-1"},
+			{
+				Kind: ports.ChatEventUserMessageCompleted, ProviderEventID: "history-user",
+				ProviderTurnID: "native-turn-1", ProviderItemID: "native-user-1",
+				Text: "Historical work with no portable provider outcome.",
+			},
+			{
+				Kind: ports.ChatEventMessageCompleted, ProviderEventID: "history-answer",
+				ProviderTurnID: "native-turn-1", ProviderItemID: "native-answer-1",
+				Text: "Partial or complete historical output.",
+			},
+			{
+				Kind: ports.ChatEventActivityCompleted, ProviderEventID: "history-tool",
+				ProviderTurnID: "native-turn-1", ProviderItemID: "native-tool-1",
+				ActivityKind: domain.ActivityKindCommand, ActivityStatus: domain.ActivityStatusRecovered,
+				Summary: "Historical command with no portable outcome",
+			},
+			{
+				Kind: ports.ChatEventTurnCompleted, ProviderEventID: "history-recovered",
+				ProviderTurnID: "native-turn-1", TurnState: domain.TurnStateRecovered,
+			},
+		},
+	}
+	svc := chatsvc.New(chatsvc.Options{
+		Store: st, Sessions: st,
+		Drivers: fakeRegistry{driver: fakeDriver{conv: conv}},
+		Log:     slog.New(slog.DiscardHandler),
+		NewID:   func() string { return fmt.Sprintf("recovered-history-%d", time.Now().UnixNano()) },
+	})
+	t.Cleanup(func() { _ = svc.Stop(context.Background(), testSession) })
+
+	ctrl, err := svc.Start(context.Background(), chatsvc.StartConfig{
+		SessionID: testSession, ProjectID: testProject, Harness: domain.HarnessCodex,
+		WorkspacePath: t.TempDir(), ProviderConversationID: "thread-1", RequireNativeHistory: true,
+	})
+	if err != nil {
+		t.Fatalf("Start handoff: %v", err)
+	}
+	snapshot, err := st.LoadConversationSnapshot(context.Background(), ctrl.ConversationID())
+	if err != nil {
+		t.Fatalf("LoadConversationSnapshot: %v", err)
+	}
+	if len(snapshot.Turns) != 1 || snapshot.Turns[0].State != domain.TurnStateRecovered ||
+		!snapshot.Turns[0].State.Terminal() {
+		t.Fatalf("snapshot = turns %#v messages %#v activities %#v, want one terminal recovered native turn",
+			snapshot.Turns, snapshot.Messages, snapshot.Activities)
+	}
+	if len(snapshot.Activities) != 1 || snapshot.Activities[0].Status != domain.ActivityStatusRecovered {
+		t.Fatalf("activities = %#v, want one recovered historical activity", snapshot.Activities)
 	}
 }
 

@@ -737,6 +737,13 @@ function ActivityState({
 			</span>
 		);
 	}
+	if (status === "recovered") {
+		return (
+			<span className="shrink-0 font-mono text-[10px] text-muted-foreground/70">
+				outcome unknown
+			</span>
+		);
+	}
 	if (status === "cancelled") {
 		return (
 			<span className="shrink-0 font-mono text-[10px] text-muted-foreground/70">
@@ -999,6 +1006,8 @@ function McpToolRow({ activity }: { activity: ConversationActivity }) {
 					/>
 				) : failed ? (
 					<span className="shrink-0 text-[10px] text-destructive">failed</span>
+				) : activity.status === "recovered" ? (
+					<span className="shrink-0 text-[10px] text-muted-foreground/70">outcome unknown</span>
 				) : activity.status === "cancelled" ? (
 					<span className="shrink-0 text-[10px] text-muted-foreground/70">stopped</span>
 				) : hasBody ? (
@@ -1903,19 +1912,21 @@ function formatTokens(tokens: number): string {
 /**
  * How a turn ended. `interrupted` is reported as its own outcome because the
  * provider reports it that way — relabelling it as failed would misattribute a
- * deliberate cancellation.
+ * deliberate cancellation. `recovered` closes replayed history without claiming
+ * the provider reported success or failure.
  */
 export function TurnOutcome({
 	state,
 	durationMs,
 	error,
 }: {
-	state: "completed" | "interrupted" | "failed";
+	state: "completed" | "recovered" | "interrupted" | "failed";
 	durationMs?: number;
 	error?: string;
 }) {
 	const copy = {
 		completed: { label: "Done", tone: "text-muted-foreground/70" },
+		recovered: { label: "Outcome unknown", tone: "text-muted-foreground/70" },
 		interrupted: { label: "Stopped", tone: "text-muted-foreground/70" },
 		failed: { label: "Failed", tone: "text-destructive" },
 	}[state];
