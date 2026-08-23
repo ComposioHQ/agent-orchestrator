@@ -7004,6 +7004,18 @@ components:
       type: object
     ListWorkspaceFilesResponse:
       properties:
+        ahead:
+          type:
+          - "null"
+          - integer
+        behind:
+          type:
+          - "null"
+          - integer
+        commits:
+          items:
+            $ref: '#/components/schemas/WorkspaceCommitSummary'
+          type: array
         compareBaseRef:
           type: string
         compareBaseSha:
@@ -7017,14 +7029,21 @@ components:
           items:
             $ref: '#/components/schemas/WorkspaceFileSummary'
           type: array
+        sections:
+          $ref: '#/components/schemas/WorkspaceFileSections'
         sessionId:
           type: string
+        summary:
+          $ref: '#/components/schemas/WorkspaceSummary'
         truncated:
           type: boolean
       required:
       - sessionId
       - files
       - truncated
+      - sections
+      - commits
+      - summary
       type: object
     MarkAllNotificationsReadRequest:
       properties:
@@ -9068,6 +9087,23 @@ components:
       - provenance
       - providerDetails
       type: object
+    WorkspaceCommitSummary:
+      properties:
+        author:
+          type: string
+        sha:
+          type: string
+        subject:
+          type: string
+        timestamp:
+          format: date-time
+          type: string
+      required:
+      - sha
+      - subject
+      - author
+      - timestamp
+      type: object
     WorkspaceFileResponse:
       properties:
         additions:
@@ -9128,6 +9164,30 @@ components:
       - diff
       - diffTruncated
       type: object
+    WorkspaceFileSections:
+      properties:
+        committed:
+          items:
+            $ref: '#/components/schemas/WorkspaceFileSummary'
+          type: array
+        staged:
+          items:
+            $ref: '#/components/schemas/WorkspaceFileSummary'
+          type: array
+        unstaged:
+          items:
+            $ref: '#/components/schemas/WorkspaceFileSummary'
+          type: array
+        untracked:
+          items:
+            $ref: '#/components/schemas/WorkspaceFileSummary'
+          type: array
+      required:
+      - staged
+      - unstaged
+      - untracked
+      - committed
+      type: object
     WorkspaceFileSummary:
       properties:
         additions:
@@ -9173,6 +9233,19 @@ components:
       - name
       - relativePath
       - repo
+      type: object
+    WorkspaceSummary:
+      properties:
+        additions:
+          type: integer
+        deletions:
+          type: integer
+        files:
+          type: integer
+      required:
+      - files
+      - additions
+      - deletions
       type: object
 tags:
 - description: Supported and locally runnable agent adapters

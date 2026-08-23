@@ -1465,6 +1465,141 @@ func TestWorkspaceFilesKeepBaseStatusWhenCommittedAddedFileIsModified(t *testing
 	}
 }
 
+func workspaceSectionPaths(files []WorkspaceFileSummary) map[string]bool {
+	out := map[string]bool{}
+	for _, file := range files {
+		out[file.Path] = true
+	}
+	return out
+}
+
+func TestWorkspaceFileSectionsSplitByGitState(t *testing.T) {
+	repo := newWorkspaceRepo(t)
+	base := strings.TrimSpace(runGit(t, repo, "rev-parse", "HEAD"))
+	runGit(t, repo, "switch", "-c", "ao/work")
+
+	// Committed since base.
+	writeWorkspaceFile(t, repo, "committed.go", "package main\n")
+	runGit(t, repo, "add", "committed.go")
+	runGit(t, repo, "commit", "-m", "agent: add committed.go")
+
+	// Partially staged: index differs from HEAD, worktree differs from index.
+	writeWorkspaceFile(t, repo, "README.md", "hello\nstaged addition\n")
+	runGit(t, repo, "add", "README.md")
+	writeWorkspaceFile(t, repo, "README.md", "hello\nstaged addition\nunstaged addition\n")
+
+	// Untracked.
+	writeWorkspaceFile(t, repo, "scratch.txt", "untracked note\n")
+
+	st := newFakeStore()
+	st.sessions["ao-1"] = domain.SessionRecord{
+		ID: "ao-1",
+		Metadata: domain.SessionMetadata{
+			Branch:        "ao/work",
+			WorkspacePath: repo,
+			DiffBaseSHA:   base,
+			DiffBaseRef:   "main",
+		},
+	}
+
+	files, err := (&Service{store: st}).ListWorkspaceFiles(context.Background(), "ao-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	staged := workspaceSectionPaths(files.Sections.Staged)
+	if !staged["README.md"] {
+		t.Fatalf("staged section = %v, want README.md", staged)
+	}
+	unstaged := workspaceSectionPaths(files.Sections.Unstaged)
+	if !unstaged["README.md"] {
+		t.Fatalf("unstaged section = %v, want README.md (partially staged file)", unstaged)
+	}
+	untracked := workspaceSectionPaths(files.Sections.Untracked)
+	if !untracked["scratch.txt"] {
+		t.Fatalf("untracked section = %v, want scratch.txt", untracked)
+	}
+	committed := workspaceSectionPaths(files.Sections.Committed)
+	if !committed["committed.go"] {
+		t.Fatalf("committed section = %v, want committed.go", committed)
+	}
+	if len(files.Commits) != 1 || files.Commits[0].Subject != "agent: add committed.go" {
+		t.Fatalf("commits = %+v, want one commit for agent: add committed.go", files.Commits)
+	}
+	if files.Summary.Files == 0 || files.Summary.Additions == 0 {
+		t.Fatalf("summary = %+v, want non-zero files and additions", files.Summary)
+	}
+}
+
+func TestWorkspaceFilesAheadReportsPushCount(t *testing.T) {
+	remote := t.TempDir()
+	runGit(t, remote, "init", "--bare")
+
+	repo := newWorkspaceRepo(t)
+	runGit(t, repo, "remote", "add", "origin", remote)
+	runGit(t, repo, "push", "-u", "origin", "HEAD")
+	writeWorkspaceFile(t, repo, "ahead.go", "package main\n")
+	runGit(t, repo, "add", "ahead.go")
+	runGit(t, repo, "commit", "-m", "local ahead commit")
+
+	st := newFakeStore()
+	st.sessions["ao-1"] = domain.SessionRecord{ID: "ao-1", Metadata: domain.SessionMetadata{WorkspacePath: repo}}
+
+	files, err := (&Service{store: st}).ListWorkspaceFiles(context.Background(), "ao-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if files.Ahead == nil || *files.Ahead != 1 {
+		t.Fatalf("ahead = %v, want 1", files.Ahead)
+	}
+	if files.Behind == nil || *files.Behind != 0 {
+		t.Fatalf("behind = %v, want 0", files.Behind)
+	}
+}
+
+func TestWorkspaceFilesBehindReportsPullCount(t *testing.T) {
+	remote := t.TempDir()
+	runGit(t, remote, "init", "--bare")
+
+	repo := newWorkspaceRepo(t)
+	runGit(t, repo, "remote", "add", "origin", remote)
+	writeWorkspaceFile(t, repo, "upstream.go", "package main\n")
+	runGit(t, repo, "add", "upstream.go")
+	runGit(t, repo, "commit", "-m", "upstream commit")
+	runGit(t, repo, "push", "-u", "origin", "HEAD")
+	// Simulate a session worktree that hasn't picked up the commit its
+	// tracking ref already knows the remote has.
+	runGit(t, repo, "reset", "--hard", "HEAD~1")
+
+	st := newFakeStore()
+	st.sessions["ao-1"] = domain.SessionRecord{ID: "ao-1", Metadata: domain.SessionMetadata{WorkspacePath: repo}}
+
+	files, err := (&Service{store: st}).ListWorkspaceFiles(context.Background(), "ao-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if files.Ahead == nil || *files.Ahead != 0 {
+		t.Fatalf("ahead = %v, want 0", files.Ahead)
+	}
+	if files.Behind == nil || *files.Behind != 1 {
+		t.Fatalf("behind = %v, want 1", files.Behind)
+	}
+}
+
+func TestWorkspaceFilesAheadBehindNilWithoutUpstream(t *testing.T) {
+	repo := newWorkspaceRepo(t)
+	st := newFakeStore()
+	st.sessions["ao-1"] = domain.SessionRecord{ID: "ao-1", Metadata: domain.SessionMetadata{WorkspacePath: repo}}
+
+	files, err := (&Service{store: st}).ListWorkspaceFiles(context.Background(), "ao-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if files.Ahead != nil || files.Behind != nil {
+		t.Fatalf("ahead/behind = %v/%v, want nil/nil without a configured upstream", files.Ahead, files.Behind)
+	}
+}
+
 func TestWorkspaceFilesReportRenamesAgainstRecordedBase(t *testing.T) {
 	repo := newWorkspaceRepo(t)
 	base := strings.TrimSpace(runGit(t, repo, "rev-parse", "HEAD"))
