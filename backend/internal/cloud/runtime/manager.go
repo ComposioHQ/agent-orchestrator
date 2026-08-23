@@ -185,13 +185,9 @@ func (m *Manager) Ensure(ctx context.Context, ref Ref, launch LaunchSpec) (Place
 		return Placement{}, err
 	}
 
-	// Quotas are checked only on the path that adds compute. An attach or a
-	// repair of an existing placement must never fail because a limit was
-	// lowered underneath a running session.
-	if err := m.quotas.check(ctx, m.store, ref); err != nil {
-		return Placement{}, err
-	}
-	record, created, err := m.store.Ensure(ctx, ref, now)
+	// Store.Ensure performs quota evaluation and insertion as one durable
+	// reservation, so concurrent replicas cannot both pass a limit-1 precheck.
+	record, created, err := m.store.Ensure(ctx, ref, m.quotas, now)
 	if err != nil {
 		return Placement{}, err
 	}
