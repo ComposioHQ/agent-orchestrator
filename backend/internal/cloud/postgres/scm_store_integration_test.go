@@ -1,6 +1,7 @@
 package postgres
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"errors"
@@ -241,11 +242,11 @@ func TestSCMWebhookDeliveriesAreDeduplicated(t *testing.T) {
 	ctx := context.Background()
 	deliveryID := "delivery-" + time.Now().UTC().Format("20060102150405.000000000")
 
-	first, err := store.RecordSCMWebhookDelivery(ctx, deliveryID, "pull_request", 910004)
+	first, err := store.RecordSCMWebhookDelivery(ctx, deliveryID, "pull_request")
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := store.RecordSCMWebhookDelivery(ctx, deliveryID, "pull_request", 910004)
+	second, err := store.RecordSCMWebhookDelivery(ctx, deliveryID, "pull_request")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -254,6 +255,48 @@ func TestSCMWebhookDeliveriesAreDeduplicated(t *testing.T) {
 	}
 	if _, err := store.PruneSCMWebhookDeliveries(ctx, time.Nanosecond); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestSCMWebhookDeliveriesAreDurablyRetried(t *testing.T) {
+	store := newSCMIntegrationStore(t)
+	ctx := context.Background()
+	deliveryID := "retry-delivery-" + time.Now().UTC().Format("20060102150405.000000000")
+	body := []byte(`{"installation":{"id":910099}}`)
+
+	first, err := store.RecordSCMWebhookDelivery(ctx, deliveryID, "installation")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !first {
+		t.Fatal("first delivery was not claimed")
+	}
+	if err := store.PrepareSCMWebhookDelivery(ctx, deliveryID, body); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.FinishSCMWebhookDelivery(ctx, deliveryID, "retry", "processing_failed", 910099); err != nil {
+		t.Fatal(err)
+	}
+
+	deliveries, err := store.ClaimSCMWebhookRetries(ctx, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(deliveries) != 1 {
+		t.Fatalf("claimed deliveries = %#v", deliveries)
+	}
+	if deliveries[0].DeliveryID != deliveryID || deliveries[0].Event != "installation" || !bytes.Equal(deliveries[0].Body, body) {
+		t.Fatalf("claimed delivery = %#v", deliveries[0])
+	}
+	if err := store.FinishSCMWebhookDelivery(ctx, deliveryID, "processed", "", 910099); err != nil {
+		t.Fatal(err)
+	}
+	deliveries, err = store.ClaimSCMWebhookRetries(ctx, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(deliveries) != 0 {
+		t.Fatalf("processed delivery was reclaimed: %#v", deliveries)
 	}
 }
 

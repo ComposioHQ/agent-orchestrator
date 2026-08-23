@@ -29,19 +29,26 @@ type memoryWebhookStore struct {
 	added         []recordedRepository
 	removed       []recordedRepository
 	recordErr     error
+	events        map[string]string
+	bodies        map[string][]byte
+	states        map[string]string
+	errors        map[string]string
 }
 
 func newMemoryWebhookStore() *memoryWebhookStore {
 	return &memoryWebhookStore{
 		deliveries:    map[string]int{},
 		installations: map[int64]domain.SCMInstallation{},
+		events:        map[string]string{},
+		bodies:        map[string][]byte{},
+		states:        map[string]string{},
+		errors:        map[string]string{},
 	}
 }
 
 func (s *memoryWebhookStore) RecordSCMWebhookDelivery(
 	_ context.Context,
-	deliveryID, _ string,
-	_ int64,
+	deliveryID, event string,
 ) (bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -49,7 +56,46 @@ func (s *memoryWebhookStore) RecordSCMWebhookDelivery(
 		return false, s.recordErr
 	}
 	s.deliveries[deliveryID]++
+	s.events[deliveryID] = event
 	return s.deliveries[deliveryID] == 1, nil
+}
+
+func (s *memoryWebhookStore) PrepareSCMWebhookDelivery(_ context.Context, deliveryID string, body []byte) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.bodies[deliveryID] = append([]byte(nil), body...)
+	s.states[deliveryID] = "processing"
+	return nil
+}
+
+func (s *memoryWebhookStore) FinishSCMWebhookDelivery(
+	_ context.Context,
+	deliveryID, state, errorCode string,
+	_ int64,
+) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.states[deliveryID] = state
+	s.errors[deliveryID] = errorCode
+	return nil
+}
+
+func (s *memoryWebhookStore) ClaimSCMWebhookRetries(_ context.Context, limit int) ([]domain.SCMWebhookDelivery, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	deliveries := make([]domain.SCMWebhookDelivery, 0, limit)
+	for deliveryID, state := range s.states {
+		if state != "retry" || len(deliveries) == limit {
+			continue
+		}
+		s.states[deliveryID] = "processing"
+		deliveries = append(deliveries, domain.SCMWebhookDelivery{
+			DeliveryID: deliveryID,
+			Event:      s.events[deliveryID],
+			Body:       append([]byte(nil), s.bodies[deliveryID]...),
+		})
+	}
+	return deliveries, nil
 }
 
 func (s *memoryWebhookStore) SCMInstallationContext(
@@ -234,6 +280,38 @@ func TestWebhookDeduplicatesSignedDeliveryBeforeParsing(t *testing.T) {
 	}
 	if !result.Duplicate || store.deliveries["delivery-malformed"] != 2 {
 		t.Fatalf("duplicate result = %#v deliveries = %#v", result, store.deliveries)
+	}
+	if store.states["delivery-malformed"] != webhookStateFailed || store.errors["delivery-malformed"] != webhookErrorInvalidJSON {
+		t.Fatalf("durable malformed state = %q error = %q", store.states["delivery-malformed"], store.errors["delivery-malformed"])
+	}
+}
+
+func TestWebhookInternalFailureIsDurablyRetried(t *testing.T) {
+	store := newMemoryWebhookStore()
+	store.installations[55] = domain.SCMInstallation{
+		ID: "installation-55", OrgID: "org-1", Status: domain.InstallationStatusActive,
+	}
+	sink := &recordingSink{err: errors.New("observer unavailable")}
+	processor := newTestProcessor(t, store, sink)
+	body := []byte(`{
+		"action":"synchronize",
+		"installation":{"id":55},
+		"repository":{"id":900,"full_name":"acme/widgets"},
+		"pull_request":{"number":7,"head":{"sha":"abc123"}}
+	}`)
+	if _, err := processor.Process(context.Background(), "pull_request", "delivery-retry", sign(body), body); err == nil {
+		t.Fatal("processing failure unexpectedly succeeded")
+	}
+	if store.states["delivery-retry"] != webhookStateRetry || store.errors["delivery-retry"] != webhookErrorProcessing {
+		t.Fatalf("retry state = %q error = %q", store.states["delivery-retry"], store.errors["delivery-retry"])
+	}
+	sink.err = nil
+	processed, err := processor.RetryPending(context.Background(), 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if processed != 1 || sink.count() != 1 || store.states["delivery-retry"] != webhookStateProcessed {
+		t.Fatalf("processed = %d signals = %d state = %q", processed, sink.count(), store.states["delivery-retry"])
 	}
 }
 

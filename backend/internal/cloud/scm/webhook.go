@@ -75,12 +75,24 @@ type ObservationSink interface {
 // WebhookStore is the persistence a webhook needs: delivery dedup, tenant
 // resolution, and the narrow set of installation mutations a webhook may make.
 type WebhookStore interface {
-	RecordSCMWebhookDelivery(ctx context.Context, deliveryID, event string, externalInstallationID int64) (bool, error)
+	RecordSCMWebhookDelivery(ctx context.Context, deliveryID, event string) (bool, error)
+	PrepareSCMWebhookDelivery(ctx context.Context, deliveryID string, body []byte) error
+	FinishSCMWebhookDelivery(ctx context.Context, deliveryID, state, errorCode string, externalInstallationID int64) error
+	ClaimSCMWebhookRetries(ctx context.Context, limit int) ([]domain.SCMWebhookDelivery, error)
 	SCMInstallationContext(ctx context.Context, externalInstallationID int64) (domain.SCMInstallation, error)
 	SetSCMInstallationStatus(ctx context.Context, externalInstallationID int64, status string) (bool, error)
 	AddSCMWebhookRepository(ctx context.Context, externalInstallationID, externalRepositoryID int64, fullName string, private bool) (bool, error)
 	RemoveSCMWebhookRepository(ctx context.Context, externalInstallationID, externalRepositoryID int64) (bool, error)
 }
+
+const (
+	webhookStateProcessed = "processed"
+	webhookStateRetry     = "retry"
+	webhookStateFailed    = "failed"
+
+	webhookErrorInvalidJSON = "invalid_json"
+	webhookErrorProcessing  = "processing_failed"
+)
 
 // WebhookResult describes what one delivery did.
 type WebhookResult struct {
@@ -191,7 +203,7 @@ func (p *WebhookProcessor) Process(
 	// Claim the delivery before parsing. A signed but malformed redelivery must
 	// be idempotent too, and no attacker-controlled JSON reaches the decoder
 	// before signature verification and delivery-id deduplication succeed.
-	first, err := p.store.RecordSCMWebhookDelivery(ctx, deliveryID, event, 0)
+	first, err := p.store.RecordSCMWebhookDelivery(ctx, deliveryID, event)
 	if err != nil {
 		return WebhookResult{}, err
 	}
@@ -200,11 +212,65 @@ func (p *WebhookProcessor) Process(
 		result.Duplicate = true
 		return result, nil
 	}
+	if err := p.store.PrepareSCMWebhookDelivery(ctx, deliveryID, body); err != nil {
+		return WebhookResult{}, err
+	}
+	return p.processClaimed(ctx, event, deliveryID, body)
+}
+
+// RetryPending processes a bounded batch of durably retained deliveries. A
+// scheduler may call it repeatedly; claims are atomic and safe across replicas.
+func (p *WebhookProcessor) RetryPending(ctx context.Context, limit int) (int, error) {
+	deliveries, err := p.store.ClaimSCMWebhookRetries(ctx, limit)
+	if err != nil {
+		return 0, err
+	}
+	var firstErr error
+	for _, delivery := range deliveries {
+		if _, processErr := p.processClaimed(ctx, delivery.Event, delivery.DeliveryID, delivery.Body); processErr != nil && firstErr == nil {
+			firstErr = processErr
+		}
+	}
+	return len(deliveries), firstErr
+}
+
+func (p *WebhookProcessor) processClaimed(
+	ctx context.Context,
+	event, deliveryID string,
+	body []byte,
+) (WebhookResult, error) {
 	var payload webhookPayload
 	if err := json.Unmarshal(body, &payload); err != nil {
+		if finishErr := p.store.FinishSCMWebhookDelivery(
+			ctx, deliveryID, webhookStateFailed, webhookErrorInvalidJSON, 0,
+		); finishErr != nil {
+			return WebhookResult{}, errors.Join(errors.New("cloud scm: webhook body is not valid JSON"), finishErr)
+		}
 		return WebhookResult{}, errors.New("cloud scm: webhook body is not valid JSON")
 	}
-	result.Action = payload.Action
+	result, err := p.applyPayload(ctx, event, deliveryID, payload)
+	if err != nil {
+		if finishErr := p.store.FinishSCMWebhookDelivery(
+			ctx, deliveryID, webhookStateRetry, webhookErrorProcessing, payload.Installation.ID,
+		); finishErr != nil {
+			return WebhookResult{}, errors.Join(err, finishErr)
+		}
+		return WebhookResult{}, err
+	}
+	if err := p.store.FinishSCMWebhookDelivery(
+		ctx, deliveryID, webhookStateProcessed, "", payload.Installation.ID,
+	); err != nil {
+		return WebhookResult{}, err
+	}
+	return result, nil
+}
+
+func (p *WebhookProcessor) applyPayload(
+	ctx context.Context,
+	event, deliveryID string,
+	payload webhookPayload,
+) (WebhookResult, error) {
+	result := WebhookResult{Event: event, Action: payload.Action, DeliveryID: deliveryID}
 	if event == "ping" {
 		return result, nil
 	}
@@ -225,7 +291,7 @@ func (p *WebhookProcessor) Process(
 	if err != nil {
 		// An event for an installation this control plane does not know about
 		// is not an error: another AO deployment may share the app. Any other
-		// failure is real and must surface so GitHub retries.
+		// failure is real and is persisted for the internal retry loop.
 		if errors.Is(err, postgres.ErrNotFound) {
 			return result, nil
 		}

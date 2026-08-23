@@ -12,11 +12,20 @@ CREATE TABLE ao_scm_webhook_deliveries (
     delivery_id TEXT NOT NULL CHECK (btrim(delivery_id) <> ''),
     event TEXT NOT NULL DEFAULT '',
     external_installation_id BIGINT NOT NULL DEFAULT 0,
+    body BYTEA NOT NULL DEFAULT ''::BYTEA CHECK (octet_length(body) <= 2097152),
+    processing_state TEXT NOT NULL DEFAULT 'pending'
+        CHECK (processing_state IN ('pending', 'processing', 'retry', 'processed', 'failed')),
+    attempts INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
+    last_error TEXT NOT NULL DEFAULT '' CHECK (length(last_error) <= 128),
     received_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY (provider, delivery_id)
 );
 CREATE INDEX ao_scm_webhook_deliveries_received_idx
     ON ao_scm_webhook_deliveries(received_at);
+CREATE INDEX ao_scm_webhook_deliveries_retry_idx
+    ON ao_scm_webhook_deliveries(processing_state, updated_at)
+    WHERE processing_state = 'retry';
 
 ALTER TABLE ao_scm_webhook_deliveries ENABLE ROW LEVEL SECURITY;
 ALTER TABLE ao_scm_webhook_deliveries FORCE ROW LEVEL SECURITY;
@@ -86,8 +95,7 @@ $$;
 CREATE FUNCTION ao_scm_record_webhook_delivery(
     candidate_provider TEXT,
     candidate_delivery_id TEXT,
-    candidate_event TEXT,
-    candidate_external_installation_id BIGINT
+    candidate_event TEXT
 ) RETURNS BOOLEAN
 LANGUAGE plpgsql
 SECURITY DEFINER
@@ -97,16 +105,124 @@ DECLARE
     affected INTEGER;
 BEGIN
     INSERT INTO public.ao_scm_webhook_deliveries (
-        provider, delivery_id, event, external_installation_id
+        provider, delivery_id, event
     ) VALUES (
         candidate_provider,
         candidate_delivery_id,
-        coalesce(candidate_event, ''),
-        coalesce(candidate_external_installation_id, 0)
+        coalesce(candidate_event, '')
     )
     ON CONFLICT (provider, delivery_id) DO NOTHING;
     GET DIAGNOSTICS affected = ROW_COUNT;
     RETURN affected > 0;
+END
+$$;
+-- +goose StatementEnd
+
+-- Persist the verified raw body before JSON parsing. This makes a transient
+-- processing failure internally retryable even though every valid-HMAC HTTP
+-- delivery receives 202 and GitHub will not retry it for us.
+-- +goose StatementBegin
+CREATE FUNCTION ao_scm_prepare_webhook_delivery(
+    candidate_provider TEXT,
+    candidate_delivery_id TEXT,
+    candidate_body BYTEA
+) RETURNS BOOLEAN
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, public
+AS $$
+DECLARE
+    affected INTEGER;
+BEGIN
+    UPDATE public.ao_scm_webhook_deliveries
+    SET body = candidate_body,
+        processing_state = 'processing',
+        attempts = attempts + 1,
+        last_error = '',
+        updated_at = now()
+    WHERE provider = candidate_provider
+      AND delivery_id = candidate_delivery_id
+      AND processing_state = 'pending';
+    GET DIAGNOSTICS affected = ROW_COUNT;
+    RETURN affected > 0;
+END
+$$;
+-- +goose StatementEnd
+
+-- Record only a stable, sanitized error code. Provider payloads, database
+-- errors, and credential material must never enter the error ledger.
+-- +goose StatementBegin
+CREATE FUNCTION ao_scm_finish_webhook_delivery(
+    candidate_provider TEXT,
+    candidate_delivery_id TEXT,
+    candidate_state TEXT,
+    candidate_error TEXT,
+    candidate_external_installation_id BIGINT
+) RETURNS BOOLEAN
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, public
+AS $$
+DECLARE
+    affected INTEGER;
+BEGIN
+    IF candidate_state NOT IN ('processed', 'retry', 'failed') THEN
+        RAISE EXCEPTION 'unsupported webhook processing state';
+    END IF;
+    UPDATE public.ao_scm_webhook_deliveries
+    SET processing_state = CASE
+            WHEN candidate_state = 'retry' AND attempts >= 10 THEN 'failed'
+            ELSE candidate_state
+        END,
+        last_error = left(coalesce(candidate_error, ''), 128),
+        external_installation_id = coalesce(candidate_external_installation_id, 0),
+        updated_at = now()
+    WHERE provider = candidate_provider
+      AND delivery_id = candidate_delivery_id;
+    GET DIAGNOSTICS affected = ROW_COUNT;
+    RETURN affected > 0;
+END
+$$;
+-- +goose StatementEnd
+
+-- Atomically claim bounded retry work. SKIP LOCKED permits multiple control
+-- plane replicas without processing one delivery concurrently.
+-- +goose StatementBegin
+CREATE FUNCTION ao_scm_claim_webhook_retries(
+    candidate_provider TEXT,
+    candidate_limit INTEGER
+) RETURNS TABLE (delivery_id TEXT, event TEXT, body BYTEA)
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, public
+AS $$
+BEGIN
+    RETURN QUERY
+    WITH candidates AS (
+        SELECT pending.provider, pending.delivery_id
+        FROM public.ao_scm_webhook_deliveries pending
+        WHERE pending.provider = candidate_provider
+          AND (
+              pending.processing_state = 'retry'
+              OR (
+                  pending.processing_state = 'processing'
+                  AND pending.updated_at < now() - interval '5 minutes'
+              )
+          )
+          AND pending.body <> ''::BYTEA
+          AND pending.attempts < 10
+        ORDER BY pending.updated_at, pending.delivery_id
+        FOR UPDATE SKIP LOCKED
+        LIMIT greatest(0, least(candidate_limit, 100))
+    )
+    UPDATE public.ao_scm_webhook_deliveries claimed
+    SET processing_state = 'processing',
+        attempts = claimed.attempts + 1,
+        updated_at = now()
+    FROM candidates
+    WHERE claimed.provider = candidates.provider
+      AND claimed.delivery_id = candidates.delivery_id
+    RETURNING claimed.delivery_id, claimed.event, claimed.body;
 END
 $$;
 -- +goose StatementEnd
@@ -122,7 +238,8 @@ DECLARE
     removed BIGINT;
 BEGIN
     DELETE FROM public.ao_scm_webhook_deliveries
-    WHERE received_at < now() - retain;
+    WHERE processing_state IN ('processed', 'failed')
+      AND updated_at < now() - retain;
     GET DIAGNOSTICS removed = ROW_COUNT;
     RETURN removed;
 END
@@ -257,7 +374,10 @@ $$;
 -- +goose StatementEnd
 
 REVOKE ALL ON FUNCTION ao_scm_consume_install_state(BYTEA) FROM PUBLIC;
-REVOKE ALL ON FUNCTION ao_scm_record_webhook_delivery(TEXT, TEXT, TEXT, BIGINT) FROM PUBLIC;
+REVOKE ALL ON FUNCTION ao_scm_record_webhook_delivery(TEXT, TEXT, TEXT) FROM PUBLIC;
+REVOKE ALL ON FUNCTION ao_scm_prepare_webhook_delivery(TEXT, TEXT, BYTEA) FROM PUBLIC;
+REVOKE ALL ON FUNCTION ao_scm_finish_webhook_delivery(TEXT, TEXT, TEXT, TEXT, BIGINT) FROM PUBLIC;
+REVOKE ALL ON FUNCTION ao_scm_claim_webhook_retries(TEXT, INTEGER) FROM PUBLIC;
 REVOKE ALL ON FUNCTION ao_scm_prune_webhook_deliveries(INTERVAL) FROM PUBLIC;
 REVOKE ALL ON FUNCTION ao_scm_installation_context(TEXT, BIGINT) FROM PUBLIC;
 REVOKE ALL ON FUNCTION ao_scm_set_installation_status(TEXT, BIGINT, TEXT) FROM PUBLIC;
@@ -265,7 +385,10 @@ REVOKE ALL ON FUNCTION ao_scm_webhook_upsert_repository(TEXT, BIGINT, BIGINT, TE
 REVOKE ALL ON FUNCTION ao_scm_webhook_remove_repository(TEXT, BIGINT, BIGINT) FROM PUBLIC;
 
 ALTER FUNCTION ao_scm_consume_install_state(BYTEA) OWNER TO ao_cloud_scm;
-ALTER FUNCTION ao_scm_record_webhook_delivery(TEXT, TEXT, TEXT, BIGINT) OWNER TO ao_cloud_scm;
+ALTER FUNCTION ao_scm_record_webhook_delivery(TEXT, TEXT, TEXT) OWNER TO ao_cloud_scm;
+ALTER FUNCTION ao_scm_prepare_webhook_delivery(TEXT, TEXT, BYTEA) OWNER TO ao_cloud_scm;
+ALTER FUNCTION ao_scm_finish_webhook_delivery(TEXT, TEXT, TEXT, TEXT, BIGINT) OWNER TO ao_cloud_scm;
+ALTER FUNCTION ao_scm_claim_webhook_retries(TEXT, INTEGER) OWNER TO ao_cloud_scm;
 ALTER FUNCTION ao_scm_prune_webhook_deliveries(INTERVAL) OWNER TO ao_cloud_scm;
 ALTER FUNCTION ao_scm_installation_context(TEXT, BIGINT) OWNER TO ao_cloud_scm;
 ALTER FUNCTION ao_scm_set_installation_status(TEXT, BIGINT, TEXT) OWNER TO ao_cloud_scm;
@@ -301,7 +424,10 @@ DROP FUNCTION IF EXISTS ao_scm_webhook_upsert_repository(TEXT, BIGINT, BIGINT, T
 DROP FUNCTION IF EXISTS ao_scm_set_installation_status(TEXT, BIGINT, TEXT);
 DROP FUNCTION IF EXISTS ao_scm_installation_context(TEXT, BIGINT);
 DROP FUNCTION IF EXISTS ao_scm_prune_webhook_deliveries(INTERVAL);
-DROP FUNCTION IF EXISTS ao_scm_record_webhook_delivery(TEXT, TEXT, TEXT, BIGINT);
+DROP FUNCTION IF EXISTS ao_scm_claim_webhook_retries(TEXT, INTEGER);
+DROP FUNCTION IF EXISTS ao_scm_finish_webhook_delivery(TEXT, TEXT, TEXT, TEXT, BIGINT);
+DROP FUNCTION IF EXISTS ao_scm_prepare_webhook_delivery(TEXT, TEXT, BYTEA);
+DROP FUNCTION IF EXISTS ao_scm_record_webhook_delivery(TEXT, TEXT, TEXT);
 DROP FUNCTION IF EXISTS ao_scm_consume_install_state(BYTEA);
 DROP POLICY IF EXISTS ao_scm_webhook_deliveries_scm_definer ON ao_scm_webhook_deliveries;
 DROP POLICY IF EXISTS ao_scm_install_states_scm_definer ON ao_scm_install_states;

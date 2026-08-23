@@ -76,3 +76,11 @@ type SCMTokenGrant struct {
 	RequestedByUserID string
 	ExpiresAt         time.Time
 }
+
+// SCMWebhookDelivery is verified retry work claimed from the durable webhook
+// ledger. Body contains provider JSON, never credential material.
+type SCMWebhookDelivery struct {
+	DeliveryID string
+	Event      string
+	Body       []byte
+}

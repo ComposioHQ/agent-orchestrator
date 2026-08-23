@@ -441,7 +441,6 @@ func (s *Store) RecordSCMTokenGrant(ctx context.Context, identity tenant.Identit
 func (s *Store) RecordSCMWebhookDelivery(
 	ctx context.Context,
 	deliveryID, event string,
-	externalInstallationID int64,
 ) (bool, error) {
 	deliveryID = strings.TrimSpace(deliveryID)
 	if deliveryID == "" {
@@ -450,12 +449,72 @@ func (s *Store) RecordSCMWebhookDelivery(
 	var first bool
 	if err := s.pool.QueryRow(
 		ctx,
-		`SELECT ao_scm_record_webhook_delivery('github', $1, $2, $3)`,
-		deliveryID, strings.TrimSpace(event), externalInstallationID,
+		`SELECT ao_scm_record_webhook_delivery('github', $1, $2)`,
+		deliveryID, strings.TrimSpace(event),
 	).Scan(&first); err != nil {
 		return false, normalizeError(err)
 	}
 	return first, nil
+}
+
+// PrepareSCMWebhookDelivery persists the verified body and starts the first
+// processing attempt before any JSON parsing occurs.
+func (s *Store) PrepareSCMWebhookDelivery(ctx context.Context, deliveryID string, body []byte) error {
+	var prepared bool
+	if err := s.pool.QueryRow(
+		ctx,
+		`SELECT ao_scm_prepare_webhook_delivery('github', $1, $2)`,
+		strings.TrimSpace(deliveryID), body,
+	).Scan(&prepared); err != nil {
+		return normalizeError(err)
+	}
+	if !prepared {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// FinishSCMWebhookDelivery records a terminal or internally retryable result.
+// errorCode must be stable and sanitized; raw provider/database errors do not
+// belong in the durable ledger.
+func (s *Store) FinishSCMWebhookDelivery(
+	ctx context.Context,
+	deliveryID, state, errorCode string,
+	externalInstallationID int64,
+) error {
+	var finished bool
+	if err := s.pool.QueryRow(
+		ctx,
+		`SELECT ao_scm_finish_webhook_delivery('github', $1, $2, $3, $4)`,
+		strings.TrimSpace(deliveryID), state, strings.TrimSpace(errorCode), externalInstallationID,
+	).Scan(&finished); err != nil {
+		return normalizeError(err)
+	}
+	if !finished {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// ClaimSCMWebhookRetries atomically claims bounded durable retry work.
+func (s *Store) ClaimSCMWebhookRetries(ctx context.Context, limit int) ([]domain.SCMWebhookDelivery, error) {
+	if limit <= 0 || limit > 100 {
+		return nil, ErrInvalid
+	}
+	rows, err := s.pool.Query(ctx, `SELECT delivery_id, event, body FROM ao_scm_claim_webhook_retries('github', $1)`, limit)
+	if err != nil {
+		return nil, normalizeError(err)
+	}
+	defer rows.Close()
+	deliveries := make([]domain.SCMWebhookDelivery, 0)
+	for rows.Next() {
+		var delivery domain.SCMWebhookDelivery
+		if err := rows.Scan(&delivery.DeliveryID, &delivery.Event, &delivery.Body); err != nil {
+			return nil, err
+		}
+		deliveries = append(deliveries, delivery)
+	}
+	return deliveries, rows.Err()
 }
 
 // PruneSCMWebhookDeliveries drops dedup rows older than retain.

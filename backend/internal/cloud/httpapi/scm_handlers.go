@@ -295,9 +295,9 @@ func (s *Server) unlinkSCMInstallation(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// receiveSCMWebhook verifies, deduplicates, and applies one delivery. A
-// duplicate answers 200 so GitHub stops retrying; an unverifiable body answers
-// 401 with no detail about why.
+// receiveSCMWebhook verifies, deduplicates, and applies one delivery. Every
+// valid-HMAC delivery answers 202 so GitHub stops retrying; an unverifiable
+// body answers 401 with no detail about why.
 func (s *Server) receiveSCMWebhook(w http.ResponseWriter, r *http.Request) {
 	if s.scm.Webhook == nil {
 		writeError(w, r, http.StatusNotFound, "not_found", "SCM_WEBHOOK_DISABLED", "scm webhooks are not configured")

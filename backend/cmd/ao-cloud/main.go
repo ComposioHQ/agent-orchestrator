@@ -62,6 +62,9 @@ func run(logger *slog.Logger) error {
 			Webhook:              scmBundle.Webhook,
 			InstallCompletionURL: scmBundle.Config.InstallCompletionURL,
 		}
+		if scmBundle.Webhook != nil {
+			go runSCMWebhookRetries(ctx, logger, scmBundle.Webhook)
+		}
 	}
 	api, err := httpapi.New(httpapi.Options{
 		Store:               store,
@@ -100,5 +103,30 @@ func run(logger *slog.Logger) error {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		return server.Shutdown(shutdownCtx)
+	}
+}
+
+func runSCMWebhookRetries(ctx context.Context, logger *slog.Logger, processor *cloudscm.WebhookProcessor) {
+	const batchSize = 50
+	retry := func() {
+		processed, err := processor.RetryPending(ctx, batchSize)
+		if err != nil && !errors.Is(err, context.Canceled) {
+			logger.Error("Cloud SCM webhook retry failed", "error", err)
+			return
+		}
+		if processed > 0 {
+			logger.Info("Cloud SCM webhook retries processed", "deliveries", processed)
+		}
+	}
+	retry()
+	ticker := time.NewTicker(time.Minute)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			retry()
+		}
 	}
 }
