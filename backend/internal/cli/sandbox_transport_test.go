@@ -89,6 +89,49 @@ func TestSandboxGuardIsInactiveWithoutControlPlaneEnv(t *testing.T) {
 	}
 }
 
+func TestSandboxEnvAbsentPreservesLocalTransport(t *testing.T) {
+	t.Setenv(sandboxControlPlaneEnv, "")
+	// A path alone is never an activation signal. This also proves a host with
+	// an unrelated file variable keeps using the byte-for-byte local path.
+	t.Setenv(sandboxCapabilityEnv, "/not/read/by/local-mode")
+
+	tests := []struct {
+		name   string
+		method string
+		path   string
+	}{
+		{"get", http.MethodGet, "sessions/demo-1"},
+		{"post", http.MethodPost, "sessions/demo-1/send"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := setConfigEnv(t)
+			var gotMethod, gotPath string
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				gotMethod, gotPath = r.Method, r.URL.Path
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = io.WriteString(w, `{}`)
+			}))
+			t.Cleanup(server.Close)
+			writeRunFileFor(t, cfg, server)
+
+			ctx := &commandContext{deps: Deps{ProcessAlive: func(int) bool { return true }}.withDefaults()}
+			var err error
+			if tc.method == http.MethodGet {
+				err = ctx.getJSON(context.Background(), tc.path, &struct{}{})
+			} else {
+				err = ctx.postJSON(context.Background(), tc.path, map[string]string{"message": "hello"}, &struct{}{})
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if gotMethod != tc.method || gotPath != "/api/v1/"+tc.path {
+				t.Fatalf("local request = %s %s, want %s /api/v1/%s", gotMethod, gotPath, tc.method, tc.path)
+			}
+		})
+	}
+}
+
 func TestLoadSandboxTransportValidation(t *testing.T) {
 	t.Setenv(sandboxControlPlaneEnv, "https://control.example/base/")
 	t.Setenv(sandboxCapabilityEnv, defaultCapabilityPath)
