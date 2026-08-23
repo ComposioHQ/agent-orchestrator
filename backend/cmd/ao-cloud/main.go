@@ -15,6 +15,7 @@ import (
 	cloudconfig "github.com/aoagents/agent-orchestrator/backend/internal/cloud/config"
 	"github.com/aoagents/agent-orchestrator/backend/internal/cloud/httpapi"
 	cloudpostgres "github.com/aoagents/agent-orchestrator/backend/internal/cloud/postgres"
+	cloudscm "github.com/aoagents/agent-orchestrator/backend/internal/cloud/scm"
 )
 
 func main() {
@@ -50,6 +51,18 @@ func run(logger *slog.Logger) error {
 	if err != nil {
 		return err
 	}
+	var scmOptions httpapi.SCMOptions
+	scmBundle, err := cloudscm.NewBundleFromEnv(store, nil)
+	if err != nil && !errors.Is(err, cloudscm.ErrNotConfigured) {
+		return err
+	}
+	if scmBundle != nil {
+		scmOptions = httpapi.SCMOptions{
+			Link:                 scmBundle.Link,
+			Webhook:              scmBundle.Webhook,
+			InstallCompletionURL: scmBundle.Config.InstallCompletionURL,
+		}
+	}
 	api, err := httpapi.New(httpapi.Options{
 		Store:               store,
 		Google:              google,
@@ -59,6 +72,7 @@ func run(logger *slog.Logger) error {
 		TrustSourceIPHeader: cfg.TrustSourceIPHeader,
 		Logger:              logger,
 		App:                 buildAppAPI(cfg, logger),
+		SCM:                 scmOptions,
 	})
 	if err != nil {
 		return err

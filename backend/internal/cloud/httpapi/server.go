@@ -53,6 +53,9 @@ type Options struct {
 	// limiter key. Leave false unless the edge overwrites X-AO-Source-IP.
 	TrustSourceIPHeader bool
 	Logger              *slog.Logger
+	// SCM wires the GitHub App credential boundary. Zero value disables the
+	// routes rather than exposing a partially configured credential surface.
+	SCM SCMOptions
 
 	// App is the shared AO application API — build it with
 	// httpd.NewCloudAPIHandler, composed with cloud storage and runtime ports.
@@ -73,6 +76,7 @@ type Server struct {
 	trustSourceIPHeader bool
 	logger              *slog.Logger
 	app                 http.Handler
+	scm                 SCMOptions
 	handler             http.Handler
 }
 
@@ -99,6 +103,7 @@ func New(options Options) (*Server, error) {
 		trustSourceIPHeader: options.TrustSourceIPHeader,
 		logger:              options.Logger,
 		app:                 options.App,
+		scm:                 options.SCM,
 	}
 	server.handler = server.routes()
 	return server, nil
@@ -150,6 +155,7 @@ func (s *Server) routes() http.Handler {
 	router.With(authRateLimit).Post("/api/cloud/v1/auth/refresh", s.refresh)
 	router.With(authRateLimit).Post("/api/cloud/v1/auth/logout", s.logout)
 	router.With(s.requirePrincipal).Get("/api/cloud/v1/me", s.me)
+	s.registerSCMRoutes(router, authRateLimit)
 
 	app := s.appHandler()
 	if app == nil {
@@ -168,6 +174,30 @@ func (s *Server) routes() http.Handler {
 		}
 		router.ServeHTTP(w, r)
 	})
+}
+
+// registerSCMRoutes adds transport handlers to the control-plane router. The
+// SCM package owns application and domain behavior; it intentionally has no
+// independent route mount.
+func (s *Server) registerSCMRoutes(router chi.Router, rateLimit func(http.Handler) http.Handler) {
+	if s.scm.Link == nil {
+		return
+	}
+	const installations = "/api/cloud/v1/orgs/{orgId}/github/installations"
+	authed := router.With(s.requirePrincipal)
+	authed.Post(installations, s.startSCMInstall)
+	authed.Get(installations, s.listSCMInstallations)
+	authed.Get(installations+"/{installationID}/repositories", s.listSCMRepositories)
+	authed.Post(installations+"/{installationID}/repositories/sync", s.syncSCMRepositories)
+	authed.Put(installations+"/{installationID}/allowlist", s.setSCMAllowlist)
+	authed.Delete(installations+"/{installationID}", s.unlinkSCMInstallation)
+	// GitHub drives setup and webhook requests without an AO bearer token.
+	// Setup proves possession of a single-use state; webhook proves HMAC over
+	// the raw body before parsing or durable side effects.
+	router.With(rateLimit).Get("/api/cloud/v1/github/setup", s.completeSCMInstall)
+	if s.scm.Webhook != nil {
+		router.With(rateLimit).Post("/api/cloud/v1/github/webhook", s.receiveSCMWebhook)
+	}
 }
 
 func (s *Server) sourceIPKey(r *http.Request) (string, error) {

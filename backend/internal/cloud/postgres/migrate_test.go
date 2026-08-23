@@ -13,8 +13,14 @@ func TestCloudMigrationsAreTenantScoped(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(migrations) != 8 || migrations[0].Version != 1 || migrations[1].Version != 2 || migrations[2].Version != 3 || migrations[3].Version != 4 || migrations[4].Version != 5 || migrations[5].Version != 6 || migrations[6].Version != 7 || migrations[7].Version != 8 {
+	versions := []int64{1, 2, 3, 4, 5, 6, 7, 8, 30, 31}
+	if len(migrations) != len(versions) {
 		t.Fatalf("migrations = %#v", migrations)
+	}
+	for index, version := range versions {
+		if migrations[index].Version != version {
+			t.Fatalf("migration[%d].Version = %d, want %d", index, migrations[index].Version, version)
+		}
 	}
 	migration, err := migrationFS.ReadFile("migrations/00001_auth_foundation.sql")
 	if err != nil {
