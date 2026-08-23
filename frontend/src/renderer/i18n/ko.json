@@ -1201,6 +1201,7 @@
 	"settings.browserImport.rowLabel": "브라우저 데이터 가져오기",
 	"settings.browserImport.action": "브라우저 데이터 가져오기",
 	"settings.browserImport.title": "브라우저 데이터 가져오기",
+	"settings.browserImport.from": "가져올 위치",
 	"settings.browserImport.description": "선택한 쿠키와 기록을 새로 격리된 AO 프로필에 복사합니다. 원본 브라우저는 변경하지 않습니다.",
 	"settings.browserImport.step": "{{total}}단계 중 {{current}}단계",
 	"settings.browserImport.importing": "가져오는 중",

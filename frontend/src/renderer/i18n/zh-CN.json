@@ -1197,6 +1197,7 @@
 	"settings.browserImport.rowLabel": "迁移浏览器数据",
 	"settings.browserImport.action": "导入浏览器数据",
 	"settings.browserImport.title": "导入浏览器数据",
+	"settings.browserImport.from": "来源",
 	"settings.browserImport.description": "将所选 Cookie 和历史记录复制到新的独立 AO 配置文件中。源浏览器不会被修改。",
 	"settings.browserImport.step": "第 {{current}} 步，共 {{total}} 步",
 	"settings.browserImport.importing": "正在导入",

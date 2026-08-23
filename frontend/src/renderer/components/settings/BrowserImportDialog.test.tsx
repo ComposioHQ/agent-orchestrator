@@ -9,7 +9,10 @@ const source = {
 	id: "a".repeat(32),
 	name: "Google Chrome",
 	family: "chromium" as const,
-	profiles: [{ id: "b".repeat(32), name: "Default", default: true }],
+	profiles: [
+		{ id: "b".repeat(32), name: "Default", default: true },
+		{ id: "e".repeat(32), name: "Personal", default: false },
+	],
 	cookieSupport: "partial" as const,
 	cookieSupportReason: "chromium-encryption-partial" as const,
 	historySupport: true as const,
@@ -64,18 +67,19 @@ describe("BrowserImportDialog", () => {
 
 		render(<BrowserImportDialog onImported={onImported} onOpenChange={() => undefined} open />);
 		expect(await screen.findByText("Google Chrome")).toBeInTheDocument();
-		const chromeButton = screen.getByRole("button", { name: /Google Chrome/ });
-		const firefoxButton = screen.getByRole("button", { name: /Firefox/ });
-		expect(chromeButton).toHaveAttribute("aria-pressed", "true");
-		expect(chromeButton).toHaveAttribute("data-selected", "true");
-		expect(chromeButton).toHaveClass("border-accent", "bg-settings-menu-selected", "text-foreground");
-		await userEvent.click(firefoxButton);
-		expect(firefoxButton).toHaveAttribute("aria-pressed", "true");
-		expect(chromeButton).toHaveAttribute("aria-pressed", "false");
-		await userEvent.click(chromeButton);
-		await userEvent.click(screen.getByRole("button", { name: "Next" }));
+		const sourcePicker = screen.getByRole("combobox", { name: "From" });
+		expect(sourcePicker).toHaveTextContent("Google Chrome");
+		await userEvent.click(sourcePicker);
+		await userEvent.click(screen.getByRole("option", { name: /Firefox/ }));
+		expect(sourcePicker).toHaveTextContent("Firefox");
+		await userEvent.click(sourcePicker);
+		await userEvent.click(screen.getByRole("option", { name: /Google Chrome/ }));
 		expect(screen.getByRole("checkbox", { name: /Default/ })).toBeChecked();
-		await userEvent.click(screen.getByRole("button", { name: "Next" }));
+		const personalProfile = screen.getByRole("checkbox", { name: /Personal/ });
+		expect(personalProfile).not.toBeChecked();
+		await userEvent.click(personalProfile);
+		expect(screen.getByRole("radio", { name: "Keep profiles separate" })).toBeChecked();
+		await userEvent.click(personalProfile);
 		expect(screen.getByRole("textbox", { name: "Destination profile name" })).toHaveValue("Google Chrome");
 		await userEvent.click(screen.getByRole("button", { name: "Start import" }));
 
@@ -91,7 +95,7 @@ describe("BrowserImportDialog", () => {
 		}));
 	});
 
-	it("clears a failed import when navigating back to choose another browser", async () => {
+	it("clears a failed import when choosing another browser", async () => {
 		const bridge: AoBridge["browserProfiles"] = {
 			list: vi.fn(async () => ({ profiles: [] })),
 			create: vi.fn(),
@@ -105,17 +109,34 @@ describe("BrowserImportDialog", () => {
 		aoBridge.browserProfiles = bridge;
 
 		render(<BrowserImportDialog onImported={() => undefined} onOpenChange={() => undefined} open />);
-		await userEvent.click(await screen.findByRole("button", { name: /Firefox/ }));
-		await userEvent.click(screen.getByRole("button", { name: "Next" }));
-		await userEvent.click(screen.getByRole("button", { name: "Next" }));
+		const sourcePicker = await screen.findByRole("combobox", { name: "From" });
+		await userEvent.click(sourcePicker);
+		await userEvent.click(screen.getByRole("option", { name: /Firefox/ }));
 		await userEvent.click(screen.getByRole("button", { name: "Start import" }));
 		expect(await screen.findByRole("alert")).toHaveTextContent("Firefox cookie data is unavailable.");
 
-		await userEvent.click(screen.getByRole("button", { name: "Back" }));
-		await userEvent.click(screen.getByRole("button", { name: "Back" }));
-		const chromeButton = screen.getByRole("button", { name: /Google Chrome/ });
-		await userEvent.click(chromeButton);
-		expect(chromeButton).toHaveAttribute("aria-pressed", "true");
+		const retrySourcePicker = screen.getByRole("combobox", { name: "From" });
+		await userEvent.click(retrySourcePicker);
+		await userEvent.click(screen.getByRole("option", { name: /Google Chrome/ }));
+		expect(retrySourcePicker).toHaveTextContent("Google Chrome");
 		expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+	});
+
+	it("keeps discovery failures visible and disables import", async () => {
+		const bridge: AoBridge["browserProfiles"] = {
+			list: vi.fn(async () => ({ profiles: [] })),
+			create: vi.fn(),
+			rename: vi.fn(),
+			clear: vi.fn(),
+			delete: vi.fn(),
+			discoverImportSources: vi.fn(async () => { throw new Error("Browser discovery failed."); }),
+			import: vi.fn(),
+			onImportProgress: vi.fn(() => () => undefined),
+		};
+		aoBridge.browserProfiles = bridge;
+
+		render(<BrowserImportDialog onImported={() => undefined} onOpenChange={() => undefined} open />);
+		expect(await screen.findByRole("alert")).toHaveTextContent("Browser discovery failed.");
+		expect(screen.getByRole("button", { name: "Start import" })).toBeDisabled();
 	});
 });

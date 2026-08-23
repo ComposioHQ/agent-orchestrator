@@ -601,6 +601,7 @@
 	"settings.browserImport.rowLabel": "Bring over browser data",
 	"settings.browserImport.action": "Import browser data",
 	"settings.browserImport.title": "Import browser data",
+	"settings.browserImport.from": "From",
 	"settings.browserImport.description": "Copy selected cookies and history into new, isolated AO profiles. Your source browser is never modified.",
 	"settings.browserImport.step": "Step {{current}} of {{total}}",
 	"settings.browserImport.importing": "Importing",

@@ -1201,6 +1201,7 @@
 	"settings.browserImport.rowLabel": "ブラウザデータを取り込む",
 	"settings.browserImport.action": "ブラウザデータをインポート",
 	"settings.browserImport.title": "ブラウザデータをインポート",
+	"settings.browserImport.from": "インポート元",
 	"settings.browserImport.description": "選択したCookieと履歴を、新しい分離されたAOプロファイルにコピーします。元のブラウザは変更されません。",
 	"settings.browserImport.step": "ステップ {{current}} / {{total}}",
 	"settings.browserImport.importing": "インポート中",

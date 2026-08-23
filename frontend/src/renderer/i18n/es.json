@@ -1215,6 +1215,7 @@
 	"settings.browserImport.rowLabel": "Traer datos del navegador",
 	"settings.browserImport.action": "Importar datos del navegador",
 	"settings.browserImport.title": "Importar datos del navegador",
+	"settings.browserImport.from": "Desde",
 	"settings.browserImport.description": "Copia las cookies y el historial seleccionados en perfiles de AO nuevos y aislados. El navegador de origen nunca se modifica.",
 	"settings.browserImport.step": "Paso {{current}} de {{total}}",
 	"settings.browserImport.importing": "Importando",
