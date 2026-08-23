@@ -9,7 +9,14 @@ const previewCloudAccount = {
 	storedAt: new Date(0).toISOString(),
 };
 
-let previewCloudProject: { id: string; name: string; path: string; kind: "single_repo"; sessionPrefix: string } | null = null;
+let previewCloudProject: {
+	id: string;
+	name: string;
+	path: string;
+	repo: string;
+	defaultBranch: string;
+	kind: "single_repo";
+} | null = null;
 let previewCloudOperation: {
 	operationId: string;
 	orgId: string;
@@ -225,8 +232,9 @@ export const aoBridge: AoBridge =
 					id: "preview-project",
 					name: input.displayName,
 					path: "/sandbox/preview-project",
+					repo: input.repositoryUrl ?? "",
+					defaultBranch: input.defaultBranch ?? "",
 					kind: "single_repo",
-					sessionPrefix: "preview",
 				};
 				previewCloudOperation = {
 					operationId: "preview-operation",
@@ -249,6 +257,8 @@ export const aoBridge: AoBridge =
 				return previewCloudOperation;
 			},
 			startProjectSession: async (input) => ({
+				promptBytes: 0,
+				systemPromptBytes: 0,
 				session: {
 					id: "preview-session",
 					projectId: input.projectId,
@@ -263,8 +273,10 @@ export const aoBridge: AoBridge =
 					autoInjectCI: false,
 					autoInjectReview: false,
 					autoReviewEnabled: false,
-					pinned: false,
+					isPinned: false,
+					mode: "tui",
 					prs: [],
+					terminateOnPrMerge: false,
 				},
 			}),
 			signIn: async () => previewCloudAccount,

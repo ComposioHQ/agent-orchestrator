@@ -1,5 +1,6 @@
 import * as Dialog from "@radix-ui/react-dialog";
 import { Cloud, LoaderCircle, RefreshCw, X } from "lucide-react";
+import { useTranslation } from "react-i18next";
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import type {
 	CloudProjectOperation,
@@ -13,11 +14,12 @@ import { Button } from "./ui/button";
 const INITIAL_POLL_DELAY_MS = 500;
 const MAX_POLL_DELAY_MS = 4_000;
 
-function errorMessage(error: unknown): string {
-	return error instanceof Error ? error.message : "AO Cloud could not complete the request.";
+function errorMessage(error: unknown, fallback: string): string {
+	return error instanceof Error ? error.message : fallback;
 }
 
 export function CloudProjectFlow({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
+	const { t } = useTranslation();
 	const cloud = useCloudSession();
 	const [snapshot, setSnapshot] = useState<CloudProjectSnapshot | null>(null);
 	const [listError, setListError] = useState<string | null>(null);
@@ -46,11 +48,11 @@ export function CloudProjectFlow({ open, onOpenChange }: { open: boolean; onOpen
 			setSnapshot(next);
 			setOrganizationId((current) => current || next.groups[0]?.organization.id || "");
 		} catch (error) {
-			if (generation === requestGeneration.current) setListError(errorMessage(error));
+			if (generation === requestGeneration.current) setListError(errorMessage(error, t("cloudProject.requestFailed")));
 		} finally {
 			if (generation === requestGeneration.current) setLoading(false);
 		}
-	}, []);
+	}, [t]);
 
 	useEffect(() => {
 		if (!open || cloud.status !== "authenticated") return;
@@ -71,6 +73,7 @@ export function CloudProjectFlow({ open, onOpenChange }: { open: boolean; onOpen
 					const next = await aoBridge.cloud.getProjectOperation({
 						organizationId: operation.orgId,
 						operationId: operation.operationId,
+						defaultBranch: operation.defaultBranch,
 					});
 					if (cancelled) return;
 					setOperation(next);
@@ -84,7 +87,7 @@ export function CloudProjectFlow({ open, onOpenChange }: { open: boolean; onOpen
 					schedule();
 				} catch (error) {
 					if (cancelled) return;
-					setPollError(errorMessage(error));
+					setPollError(errorMessage(error, t("cloudProject.requestFailed")));
 					setWatchPaused(true);
 				}
 			}, delay);
@@ -94,7 +97,7 @@ export function CloudProjectFlow({ open, onOpenChange }: { open: boolean; onOpen
 			cancelled = true;
 			if (timer !== undefined) window.clearTimeout(timer);
 		};
-	}, [loadProjects, open, operation?.operationId, operation?.orgId, operation?.state, watchPaused]);
+	}, [loadProjects, open, operation?.operationId, operation?.orgId, operation?.state, t, watchPaused]);
 
 	const projects = useMemo(() => snapshot?.groups.flatMap((group) => group.projects) ?? [], [snapshot]);
 	const readyProject = operation?.projectId ? projects.find((project) => project.id === operation.projectId) : undefined;
@@ -115,7 +118,7 @@ export function CloudProjectFlow({ open, onOpenChange }: { open: boolean; onOpen
 			setWatchPaused(false);
 			if (next.state === "ready") await loadProjects();
 		} catch (error) {
-			setCreateError(errorMessage(error));
+			setCreateError(errorMessage(error, t("cloudProject.requestFailed")));
 		} finally {
 			setCreating(false);
 		}
@@ -140,7 +143,7 @@ export function CloudProjectFlow({ open, onOpenChange }: { open: boolean; onOpen
 				projectId: operation.projectId,
 			}));
 		} catch (error) {
-			setSessionError(errorMessage(error));
+			setSessionError(errorMessage(error, t("cloudProject.requestFailed")));
 		} finally {
 			setStartingSession(false);
 		}
@@ -154,51 +157,51 @@ export function CloudProjectFlow({ open, onOpenChange }: { open: boolean; onOpen
 					<header className="flex items-start gap-3 border-b border-[var(--color-border-import-modal)] p-(--size-import-dialog-padding)">
 						<span className="grid size-10 shrink-0 place-items-center rounded-lg bg-accent/15 text-accent-strong"><Cloud aria-hidden="true" className="size-5" /></span>
 						<div className="min-w-0 flex-1">
-							<Dialog.Title className="text-subtitle font-semibold">AO Cloud project</Dialog.Title>
-							<Dialog.Description className="mt-1 text-sm text-muted-foreground">Create once, then access the project from any signed-in device.</Dialog.Description>
+							<Dialog.Title className="text-subtitle font-semibold">{t("cloudProject.title")}</Dialog.Title>
+							<Dialog.Description className="mt-1 text-sm text-muted-foreground">{t("cloudProject.description")}</Dialog.Description>
 						</div>
-						<Dialog.Close asChild><button type="button" aria-label="Close cloud project dialog" className="import-close-button"><X className="size-5" /></button></Dialog.Close>
+						<Dialog.Close asChild><button type="button" aria-label={t("cloudProject.close")} className="import-close-button"><X className="size-5" /></button></Dialog.Close>
 					</header>
 
 					<div className="min-h-0 overflow-y-auto p-(--size-import-dialog-padding)">
 						{cloud.status !== "authenticated" ? (
 							<div className="rounded-lg border border-[var(--color-border-import-modal)] bg-[var(--color-bg-import-card)] p-5">
-								<p className="font-medium">Sign in to create an AO Cloud project.</p>
-								<Button className="mt-4" type="button" onClick={cloud.signIn}>Sign in with Google</Button>
+								<p className="font-medium">{t("cloudProject.signInPrompt")}</p>
+								<Button className="mt-4" type="button" onClick={cloud.signIn}>{t("cloudProject.signIn")}</Button>
 							</div>
 						) : (
 							<div className="space-y-6">
-								<section aria-label="Cloud projects">
+								<section aria-label={t("cloudProject.projectsAria")}>
 									<div className="flex items-center justify-between gap-3">
-										<h3 className="text-sm font-semibold">Your cloud projects</h3>
+										<h3 className="text-sm font-semibold">{t("cloudProject.projectsTitle")}</h3>
 										<Button type="button" variant="ghost" size="sm" disabled={loading} onClick={() => void loadProjects()}>
-											<RefreshCw aria-hidden="true" className={loading ? "animate-spin" : ""} /> Refresh
+											<RefreshCw aria-hidden="true" className={loading ? "animate-spin" : ""} /> {t("cloudProject.refresh")}
 										</Button>
 									</div>
-									{listError ? <ActionError message={listError} action="Retry list" onAction={() => void loadProjects()} /> : null}
-									{!listError && !loading && projects.length === 0 ? <p className="mt-3 text-sm text-muted-foreground">No cloud projects yet.</p> : null}
-									{projects.length > 0 ? <ul className="mt-3 grid gap-2">{projects.map((project) => <li key={project.id} className="rounded-lg border border-[var(--color-border-import-modal)] bg-[var(--color-bg-import-card)] px-3 py-2"><span className="font-medium">{project.name}</span><span className="ml-2 text-xs text-muted-foreground">{project.kind}</span></li>)}</ul> : null}
+									{listError ? <ActionError message={listError} action={t("cloudProject.retryList")} onAction={() => void loadProjects()} /> : null}
+									{!listError && !loading && projects.length === 0 ? <p className="mt-3 text-sm text-muted-foreground">{t("cloudProject.empty")}</p> : null}
+									{projects.length > 0 ? <ul className="mt-3 grid gap-2">{projects.map((project) => <li key={project.id} className="rounded-lg border border-[var(--color-border-import-modal)] bg-[var(--color-bg-import-card)] px-3 py-2"><span className="font-medium">{project.name}</span><span className="ml-2 font-mono text-xs text-muted-foreground">{project.defaultBranch}</span></li>)}</ul> : null}
 								</section>
 
 								{operation ? (
 									<section className="rounded-lg border border-[var(--color-border-import-modal)] bg-[var(--color-bg-import-card)] p-4" aria-live="polite">
-										{operation.state === "pending" ? <p className="flex items-center gap-2 font-medium"><LoaderCircle className="size-4 animate-spin" aria-hidden="true" />Provisioning {displayName || "project"} on <code>{operation.defaultBranch}</code>…</p> : null}
-										{operation.state === "failed" ? <ActionError message={operation.failure?.message || "AO Cloud could not provision this project."} action="Try again" onAction={resetCreate} /> : null}
-										{operation.state === "ready" ? <div><p className="font-medium text-success">{readyProject?.name || displayName || "Project"} is ready.</p><p className="mt-1 text-sm text-muted-foreground">Default branch: <code>{operation.defaultBranch}</code>. The project is ready for a sandbox session.</p></div> : null}
-										{pollError ? <ActionError message={pollError} action="Retry status" onAction={() => { setPollError(null); setWatchPaused(false); }} /> : null}
-										{operation.state === "pending" && !pollError ? <Button className="mt-3" type="button" variant="ghost" size="sm" onClick={() => setWatchPaused((paused) => !paused)}>{watchPaused ? "Resume status checks" : "Stop waiting"}</Button> : null}
-										{sessionError ? <ActionError message={sessionError} action="Retry session" onAction={() => void startSession()} /> : null}
-										{sessionResult ? <p className="mt-3 text-sm font-medium text-success" role="status">Sandbox session {sessionResult.session.id} started.</p> : null}
-										{operation.state === "ready" ? <div className="mt-3 flex flex-wrap gap-2"><Button type="button" disabled={startingSession || Boolean(sessionResult)} onClick={() => void startSession()}>{startingSession ? "Starting…" : sessionResult ? "Session started" : "Start sandbox session"}</Button><Button type="button" variant="ghost" onClick={resetCreate}>Create another</Button></div> : null}
+										{operation.state === "pending" ? <p className="flex items-center gap-2 font-medium"><LoaderCircle className="size-4 animate-spin" aria-hidden="true" />{t("cloudProject.provisioning", { name: displayName || t("cloudProject.project"), branch: operation.defaultBranch })}</p> : null}
+										{operation.state === "failed" ? <ActionError message={operation.failure?.message || t("cloudProject.provisionFailed")} action={t("cloudProject.tryAgain")} onAction={resetCreate} /> : null}
+										{operation.state === "ready" ? <div><p className="font-medium text-success">{t("cloudProject.ready", { name: readyProject?.name || displayName || t("cloudProject.project") })}</p><p className="mt-1 text-sm text-muted-foreground">{t("cloudProject.readyDescription", { branch: operation.defaultBranch })}</p></div> : null}
+										{pollError ? <ActionError message={pollError} action={t("cloudProject.retryStatus")} onAction={() => { setPollError(null); setWatchPaused(false); }} /> : null}
+										{operation.state === "pending" && !pollError ? <Button className="mt-3" type="button" variant="ghost" size="sm" onClick={() => setWatchPaused((paused) => !paused)}>{watchPaused ? t("cloudProject.resumeStatus") : t("cloudProject.stopWaiting")}</Button> : null}
+										{sessionError ? <ActionError message={sessionError} action={t("cloudProject.retrySession")} onAction={() => void startSession()} /> : null}
+										{sessionResult ? <p className="mt-3 text-sm font-medium text-success" role="status">{t("cloudProject.sessionStarted", { id: sessionResult.session.id })}</p> : null}
+										{operation.state === "ready" ? <div className="mt-3 flex flex-wrap gap-2"><Button type="button" disabled={startingSession || Boolean(sessionResult)} onClick={() => void startSession()}>{startingSession ? t("cloudProject.startingSession") : sessionResult ? t("cloudProject.sessionStartedButton") : t("cloudProject.startSession")}</Button><Button type="button" variant="ghost" onClick={resetCreate}>{t("cloudProject.createAnother")}</Button></div> : null}
 									</section>
 								) : (
 									<form className="grid gap-4" onSubmit={createProject}>
-										<label className="grid gap-1.5 text-sm font-medium">Organization<select aria-label="Organization" className="h-10 rounded-md border border-input bg-background px-3" required value={organizationId} onChange={(event) => setOrganizationId(event.target.value)}>{(cloud.session?.organizations ?? []).map((organization) => <option key={organization.id} value={organization.id}>{organization.displayName}</option>)}</select></label>
-										<label className="grid gap-1.5 text-sm font-medium">Project name<input aria-label="Project name" className="h-10 rounded-md border border-input bg-background px-3" required value={displayName} onChange={(event) => setDisplayName(event.target.value)} /></label>
-										<label className="grid gap-1.5 text-sm font-medium">Repository URL<input aria-label="Repository URL" className="h-10 rounded-md border border-input bg-background px-3 font-mono text-sm" type="url" required placeholder="https://github.com/acme/app.git" value={repositoryUrl} onChange={(event) => setRepositoryUrl(event.target.value)} /></label>
-										<label className="grid gap-1.5 text-sm font-medium">Default branch<input aria-label="Default branch" className="h-10 rounded-md border border-input bg-background px-3 font-mono text-sm" required placeholder="release/2026" value={defaultBranch} onChange={(event) => setDefaultBranch(event.target.value)} /></label>
-										{createError ? <ActionError message={createError} action="Retry create" onAction={() => setCreateError(null)} /> : null}
-										<div className="flex justify-end"><Button type="submit" disabled={creating || loading || !organizationId}>{creating ? "Creating…" : "Create cloud project"}</Button></div>
+										<label className="grid gap-1.5 text-sm font-medium">{t("cloudProject.organization")}<select aria-label={t("cloudProject.organization")} className="h-10 rounded-md border border-input bg-background px-3" required value={organizationId} onChange={(event) => setOrganizationId(event.target.value)}>{(cloud.session?.organizations ?? []).map((organization) => <option key={organization.id} value={organization.id}>{organization.displayName}</option>)}</select></label>
+										<label className="grid gap-1.5 text-sm font-medium">{t("cloudProject.projectName")}<input aria-label={t("cloudProject.projectName")} className="h-10 rounded-md border border-input bg-background px-3" required value={displayName} onChange={(event) => setDisplayName(event.target.value)} /></label>
+										<label className="grid gap-1.5 text-sm font-medium">{t("cloudProject.repositoryUrl")}<input aria-label={t("cloudProject.repositoryUrl")} className="h-10 rounded-md border border-input bg-background px-3 font-mono text-sm" type="url" required placeholder={t("cloudProject.repositoryPlaceholder")} value={repositoryUrl} onChange={(event) => setRepositoryUrl(event.target.value)} /></label>
+										<label className="grid gap-1.5 text-sm font-medium">{t("cloudProject.defaultBranch")}<input aria-label={t("cloudProject.defaultBranch")} className="h-10 rounded-md border border-input bg-background px-3 font-mono text-sm" required placeholder={t("cloudProject.branchPlaceholder")} value={defaultBranch} onChange={(event) => setDefaultBranch(event.target.value)} /></label>
+										{createError ? <ActionError message={createError} action={t("cloudProject.retryCreate")} onAction={() => setCreateError(null)} /> : null}
+										<div className="flex justify-end"><Button type="submit" disabled={creating || loading || !organizationId}>{creating ? t("cloudProject.creating") : t("cloudProject.create")}</Button></div>
 									</form>
 								)}
 							</div>

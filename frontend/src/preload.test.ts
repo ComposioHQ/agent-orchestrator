@@ -73,14 +73,15 @@ describe("preload cloud project bridge", () => {
 		};
 		await exposedBridge().cloud.listProjects();
 		await exposedBridge().cloud.createProject(createInput);
-		await exposedBridge().cloud.getProjectOperation({ organizationId: "org-1", operationId: "operation-1" });
+		await exposedBridge().cloud.getProjectOperation({ organizationId: "org-1", operationId: "operation-1", defaultBranch: "release/2026" });
 		await exposedBridge().cloud.startProjectSession({ organizationId: "org-1", projectId: "project-1" });
 
 		expect(electronMocks.invoke).toHaveBeenNthCalledWith(1, "cloud:listProjects");
 		expect(electronMocks.invoke).toHaveBeenNthCalledWith(2, "cloud:createProject", createInput);
-		expect(electronMocks.invoke).toHaveBeenNthCalledWith(3, "cloud:getProjectOperation", {
+			expect(electronMocks.invoke).toHaveBeenNthCalledWith(3, "cloud:getProjectOperation", {
 			organizationId: "org-1",
 			operationId: "operation-1",
+			defaultBranch: "release/2026",
 		});
 		expect(electronMocks.invoke).toHaveBeenNthCalledWith(4, "cloud:startProjectSession", {
 			organizationId: "org-1",

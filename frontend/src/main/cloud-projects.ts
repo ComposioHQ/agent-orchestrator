@@ -3,8 +3,7 @@ import { randomUUID } from "node:crypto";
 import {
 	createCloudClient,
 	type CloudClient,
-	type ProjectSummary,
-	type WorkspacePlacementOperation,
+	type WorkspacePlacement,
 } from "../../../packages/cloud-client/src/index";
 import type { CloudAccount } from "../shared/cloud-account";
 import type {
@@ -13,14 +12,13 @@ import type {
 	GetCloudProjectOperationInput,
 	StartCloudProjectSessionInput,
 } from "../shared/cloud-projects";
+import { createHostedAppClient, type HostedAppClient } from "./cloud-app-client";
 
-type ProjectCloudClient = Pick<
-	CloudClient,
-	"createWorkspacePlacement" | "getWorkspacePlacement" | "listProjects" | "spawnSession"
->;
+type PlacementClient = Pick<CloudClient, "createWorkspacePlacement" | "getWorkspacePlacement">;
 
 export type CloudProjectsDependencies = {
-	client: ProjectCloudClient;
+	placementClient: PlacementClient;
+	appClient: HostedAppClient;
 	getAccount: () => Promise<CloudAccount | null>;
 	newIdempotencyKey?: () => string;
 };
@@ -33,10 +31,23 @@ function requireOrganization(account: CloudAccount | null, organizationId: strin
 	return account;
 }
 
+function normalizePlacement(placement: WorkspacePlacement, defaultBranch: string) {
+	return {
+		operationId: placement.id,
+		orgId: placement.orgId,
+		state: placement.state,
+		projectId: placement.projectId,
+		defaultBranch,
+		failure: placement.state === "failed" ? { message: placement.message || "AO Cloud could not provision this project." } : undefined,
+		createdAt: placement.createdAt,
+		updatedAt: placement.updatedAt,
+	};
+}
+
 /**
- * Main-process-only project API. Every network call goes through the generated
- * Cloud client; renderer IPC receives only canonical project DTOs and the
- * token-free placement operation.
+ * Main-process-only project API. Every network call goes through a generated
+ * client; renderer IPC receives only canonical project DTOs and the token-free
+ * placement operation.
  */
 export function createCloudProjectsService(dependencies: CloudProjectsDependencies) {
 	const newIdempotencyKey = dependencies.newIdempotencyKey ?? randomUUID;
@@ -47,17 +58,22 @@ export function createCloudProjectsService(dependencies: CloudProjectsDependenci
 			if (!account) throw new Error("Sign in to AO Cloud first.");
 			const groups = await Promise.all(
 				account.organizations.map(async (organization) => {
-					const response = await dependencies.client.listProjects(organization.id);
+					const response = await dependencies.appClient.listProjects(organization.id);
+					const details = await Promise.all(
+						response.projects.map((project) => dependencies.appClient.getProject(organization.id, project.id)),
+					);
 					return {
 						organization,
-						projects: response.projects as ProjectSummary[],
+						projects: details.flatMap((detail) =>
+							detail.status === "ok" && "defaultBranch" in detail.project ? [detail.project] : [],
+						),
 					};
 				}),
 			);
 			return { groups };
 		},
 
-		async create(input: CreateCloudProjectInput): Promise<WorkspacePlacementOperation> {
+		async create(input: CreateCloudProjectInput) {
 			requireOrganization(await dependencies.getAccount(), input.organizationId);
 			const displayName = input.displayName.trim();
 			const repositoryUrl = input.repositoryUrl.trim();
@@ -65,26 +81,30 @@ export function createCloudProjectsService(dependencies: CloudProjectsDependenci
 			if (!displayName || !repositoryUrl || !defaultBranch) {
 				throw new Error("Project name, repository URL, and default branch are required.");
 			}
-			return dependencies.client.createWorkspacePlacement(
+			const placement = await dependencies.placementClient.createWorkspacePlacement(
 				input.organizationId,
 				{ displayName, repositoryUrl, defaultBranch, config: input.config },
 				{ idempotencyKey: newIdempotencyKey() },
 			);
+			return normalizePlacement(placement, defaultBranch);
 		},
 
-		async getOperation(input: GetCloudProjectOperationInput): Promise<WorkspacePlacementOperation> {
+		async getOperation(input: GetCloudProjectOperationInput) {
 			requireOrganization(await dependencies.getAccount(), input.organizationId);
 			if (!input.operationId.trim()) throw new Error("Cloud project operation is required.");
-			return dependencies.client.getWorkspacePlacement(input.organizationId, input.operationId);
+			return normalizePlacement(
+				await dependencies.placementClient.getWorkspacePlacement(input.organizationId, input.operationId),
+				input.defaultBranch,
+			);
 		},
 
 		async startSession(input: StartCloudProjectSessionInput) {
 			requireOrganization(await dependencies.getAccount(), input.organizationId);
 			if (!input.projectId.trim()) throw new Error("Cloud project is required.");
-			return dependencies.client.spawnSession(
+			return dependencies.appClient.spawnSession(
 				input.organizationId,
 				{ projectId: input.projectId, kind: "orchestrator", harness: input.harness ?? "codex" },
-				{ idempotencyKey: newIdempotencyKey() },
+				newIdempotencyKey(),
 			);
 		},
 	};
@@ -96,7 +116,8 @@ export function installCloudProjectIPC(input: {
 	getAccount: () => Promise<CloudAccount | null>;
 }): void {
 	const service = createCloudProjectsService({
-		client: createCloudClient({ baseUrl: input.baseUrl, getAccessToken: input.getAccessToken }),
+		placementClient: createCloudClient({ baseUrl: input.baseUrl, getAccessToken: input.getAccessToken }),
+		appClient: createHostedAppClient({ baseUrl: input.baseUrl, getAccessToken: input.getAccessToken }),
 		getAccount: input.getAccount,
 	});
 	ipcMain.handle("cloud:listProjects", () => service.list());

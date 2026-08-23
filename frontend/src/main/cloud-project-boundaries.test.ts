@@ -19,11 +19,13 @@ describe("cloud project security boundaries", () => {
 
 	it("routes project operations through the generated client in Electron main", async () => {
 		const main = await source("./cloud-projects.ts");
+		const appClient = await source("./cloud-app-client.ts");
 
 		expect(main).toContain("createCloudClient");
-		expect(main).toContain("client.createWorkspacePlacement");
-		expect(main).toContain("client.getWorkspacePlacement");
-		expect(main).toContain("client.listProjects");
-		expect(main).toContain("client.spawnSession");
+		expect(main).toContain("placementClient.createWorkspacePlacement");
+		expect(main).toContain("placementClient.getWorkspacePlacement");
+		expect(main).toContain("appClient.listProjects");
+		expect(main).toContain("appClient.spawnSession");
+		expect(appClient).toContain("createClient<paths>");
 	});
 });

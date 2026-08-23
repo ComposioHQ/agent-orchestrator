@@ -86,6 +86,15 @@ beforeEach(() => {
 });
 
 describe("CreateProjectFlow cloud source", () => {
+	it("keeps Cloud hidden when the main-process feature gate is disabled", async () => {
+		const { rerender } = render(<CreateProjectFlow mode="choose" {...noop} openSignal={0} />);
+
+		rerender(<CreateProjectFlow mode="choose" {...noop} openSignal={1} />);
+
+		expect(await screen.findByRole("button", { name: "Clone from Git" })).toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: "AO Cloud" })).not.toBeInTheDocument();
+	});
+
 	it("shows eligible users a first-class Cloud choice outside the Clone flow", async () => {
 		cloudSession.enabled = true;
 		cloudSession.status = "authenticated";
