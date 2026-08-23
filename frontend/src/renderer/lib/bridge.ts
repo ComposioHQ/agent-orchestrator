@@ -198,6 +198,10 @@ export const aoBridge: AoBridge =
 		cloud: {
 			getAvailability: async () => ({ available: false, enabled: false, apiBaseUrl: "" }),
 			getSession: async () => null,
+			listProjects: async () => [],
+			createProject: async () => {
+				throw new Error("AO Cloud requires the desktop app.");
+			},
 			signIn: async () => null,
 			signOut: async () => undefined,
 			onSessionChanged: () => () => undefined,

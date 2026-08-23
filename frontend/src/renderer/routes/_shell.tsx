@@ -66,6 +66,11 @@ function errorMessage(error: unknown) {
 	return error instanceof Error ? error.message : "Could not load projects";
 }
 
+export function cloudProjectDisplayName(repositoryUrl: string): string {
+	const segment = repositoryUrl.trim().replace(/\/+$/, "").split("/").pop() ?? "";
+	return segment.replace(/\.git$/, "") || "Project";
+}
+
 type CreateProjectConfigInput = {
 	workerAgent: string;
 	orchestratorAgent: string;
@@ -401,10 +406,37 @@ function ShellLayout() {
 		async (input: {
 			remoteUrl: string;
 			destinationParent: string;
+			location?: "local" | "cloud";
+			organizationId?: string;
+			defaultBranch?: string;
 			workerAgent: string;
 			orchestratorAgent: string;
 			trackerIntake?: components["schemas"]["TrackerIntakeConfig"];
 		}) => {
+			if (input.location === "cloud") {
+				if (!input.organizationId) throw new Error("Choose an AO Cloud organization.");
+				const result = await aoBridge.cloud.createProject({
+					organizationId: input.organizationId,
+					displayName: cloudProjectDisplayName(input.remoteUrl),
+					repositoryUrl: input.remoteUrl,
+					defaultBranch: input.defaultBranch || "main",
+					config: createProjectConfig(input),
+					orchestratorHarness: input.orchestratorAgent as components["schemas"]["SpawnSessionRequest"]["harness"],
+				});
+				await queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
+				if (result.session?.id) {
+					void navigate({
+						to: "/projects/$projectId/sessions/$sessionId",
+						params: { projectId: result.project.id, sessionId: result.session.id },
+					});
+					return;
+				}
+				void navigate({ to: "/projects/$projectId", params: { projectId: result.project.id } });
+				if (result.sessionError) {
+					setOrchestratorStartupError(result.project.id, `Project added, but orchestrator did not start: ${result.sessionError}`);
+				}
+				return;
+			}
 			void addRendererExceptionStep("Project clone requested", {
 				source: "project-clone",
 				operation: "project_clone",
@@ -435,7 +467,7 @@ function ShellLayout() {
 			if (!data?.project) throw new Error("Project clone returned no project");
 			await completeProjectCreation(data.project, input, "project_clone");
 		},
-		[completeProjectCreation],
+		[completeProjectCreation, navigate, queryClient, setOrchestratorStartupError],
 	);
 
 	const initializeProjectRepository = useCallback(async (path: string) => {

@@ -20,12 +20,17 @@
 //     the stale result written back over it.
 
 import { app, dialog, ipcMain, safeStorage, shell } from "electron";
-import { createHash, randomBytes } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { chmod, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import path from "node:path";
 import type { CloudAccount, CloudAvailability, CloudOrganization } from "../shared/cloud-account";
+import type {
+	CloudOrganizationProjectSnapshot,
+	CreateCloudProjectInput,
+	CreateCloudProjectResult,
+} from "../shared/cloud-projects";
 import { cloudDesktopConfigured, cloudEarlyAccessEnabled } from "../shared/cloud-feature";
 
 const CLOUD_API_URL =
@@ -101,7 +106,7 @@ export function cloudAvailability(): CloudAvailability {
 	return {
 		available: cloudDesktopAvailable(),
 		enabled: cloudAuthConfigured(),
-		apiBaseUrl: cloudAuthConfigured() ? CLOUD_API_URL : "",
+		apiBaseUrl: "",
 	};
 }
 
@@ -236,6 +241,103 @@ async function cloudRequest<T>(route: string, init: RequestInit): Promise<T> {
 	return body;
 }
 
+async function authenticatedCloudRequest<T>(
+	dataDir: string,
+	organizationId: string,
+	route: string,
+	init: RequestInit = {},
+): Promise<T> {
+	if (!organizationId.trim()) throw new Error("Choose an AO Cloud organization.");
+	const session = await currentSession(dataDir);
+	if (!session || tokenExpiresSoon(session)) throw new Error("Sign in to AO Cloud first.");
+	if (!session.organizations.some((organization) => organization.id === organizationId)) {
+		throw new Error("This account is not a member of the selected AO Cloud organization.");
+	}
+	return cloudRequest<T>(route, {
+		...init,
+		headers: {
+			Authorization: `Bearer ${session.accessToken}`,
+			"X-AO-Org": organizationId,
+			...init.headers,
+		},
+	});
+}
+
+export async function listCloudProjects(dataDir: string): Promise<CloudOrganizationProjectSnapshot[]> {
+	const session = await currentSession(dataDir);
+	if (!session) return [];
+	return Promise.all(
+		session.organizations.map(async (organization) => {
+			const [projects, sessions] = await Promise.all([
+				authenticatedCloudRequest<{ projects: CloudOrganizationProjectSnapshot["projects"] }>(
+					dataDir,
+					organization.id,
+					"/api/v1/projects",
+				),
+				authenticatedCloudRequest<{ sessions: CloudOrganizationProjectSnapshot["sessions"] }>(
+					dataDir,
+					organization.id,
+					"/api/v1/sessions",
+				),
+			]);
+			return {
+				organizationId: organization.id,
+				projects: projects.projects ?? [],
+				sessions: sessions.sessions ?? [],
+			};
+		}),
+	);
+}
+
+export async function createCloudProject(
+	dataDir: string,
+	input: CreateCloudProjectInput,
+): Promise<CreateCloudProjectResult> {
+	const organizationId = input.organizationId.trim();
+	const placement = await authenticatedCloudRequest<{ project: { id: string } }>(
+		dataDir,
+		organizationId,
+		`/api/cloud/v1/orgs/${encodeURIComponent(organizationId)}/projects`,
+		{
+			method: "POST",
+			headers: { "Idempotency-Key": randomUUID() },
+			body: JSON.stringify({
+				displayName: input.displayName,
+				repositoryUrl: input.repositoryUrl,
+				defaultBranch: input.defaultBranch,
+				config: input.config,
+			}),
+		},
+	);
+	if (!placement.project?.id) throw new Error("AO Cloud placement returned no project.");
+
+	const projectResponse = await authenticatedCloudRequest<{
+		status: "ok" | "degraded";
+		project: CreateCloudProjectResult["project"];
+	}>(dataDir, organizationId, `/api/v1/projects/${encodeURIComponent(placement.project.id)}`);
+	if (!projectResponse.project?.id) throw new Error("AO Cloud project creation returned no project.");
+
+	try {
+		const spawn = await authenticatedCloudRequest<{
+			session: NonNullable<CreateCloudProjectResult["session"]>;
+		}>(dataDir, organizationId, "/api/v1/sessions", {
+			method: "POST",
+			body: JSON.stringify({
+				projectId: projectResponse.project.id,
+				kind: "orchestrator",
+				harness: input.orchestratorHarness,
+			}),
+		});
+		return { organizationId, project: projectResponse.project, session: spawn.session };
+	} catch (error) {
+		return {
+			organizationId,
+			project: projectResponse.project,
+			sessionError: error instanceof Error ? error.message : "Could not start the cloud session.",
+		};
+	}
+}
+
 // A rotated-away, revoked, or rejected refresh token is unrecoverable: drop the
 // session. Anything else (offline, 5xx, DNS) must leave it in place.
 function isTerminalRefreshFailure(error: unknown): boolean {
@@ -308,9 +410,9 @@ async function refreshCloudSession(
 }
 
 /**
- * A currently valid AO access token for the renderer's cloud client. Throws
- * rather than handing back an expired token, so a failed refresh surfaces as a
- * request failure the UI can retry instead of a silent 401 loop.
+ * A currently valid AO access token for Electron-main cloud operations. This
+ * function is never registered as IPC; preload exposes only purpose-specific
+ * project/account methods. Throws rather than using an expired token.
  */
 export async function getCloudAccessToken(dataDir: string): Promise<string> {
 	const session = await currentSession(dataDir);
@@ -482,6 +584,10 @@ export function installCloudIPC(
 ): void {
 	ipcMain.handle("cloud:getAvailability", () => cloudAvailability());
 	ipcMain.handle("cloud:getSession", () => getCloudSession(getDataDir()));
+	ipcMain.handle("cloud:listProjects", () => listCloudProjects(getDataDir()));
+	ipcMain.handle("cloud:createProject", (_event, input: CreateCloudProjectInput) =>
+		createCloudProject(getDataDir(), input),
+	);
 	ipcMain.handle("cloud:signIn", async () => {
 		if (!cloudAuthConfigured()) {
 			await dialog.showMessageBox({
