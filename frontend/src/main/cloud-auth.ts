@@ -289,32 +289,71 @@ export async function listCloudProjects(dataDir: string): Promise<CloudOrganizat
 	);
 }
 
+export type WorkspacePlacementCreateInput = {
+	organizationId: string;
+	displayName: string;
+	repositoryUrl: string;
+	defaultBranch: string;
+	config: CreateCloudProjectInput["config"];
+	idempotencyKey: string;
+};
+
+/**
+ * Electron-main-only boundary for the Cloud control plane. The renderer sees
+ * neither this wire client nor its placement DTO; it receives shared /api/v1
+ * project/session DTOs after placement resolves to a durable project id.
+ */
+export interface WorkspacePlacementClient {
+	create(input: WorkspacePlacementCreateInput): Promise<{ projectId: string }>;
+}
+
+function httpWorkspacePlacementClient(dataDir: string): WorkspacePlacementClient {
+	return {
+		async create(input) {
+			// The final WorkspacePlacement contract is not integrated on this base.
+			// Keep its provisional wire shape confined to this adapter so replacing
+			// it cannot change preload or renderer types.
+			const response = await authenticatedCloudRequest<{ project: { id: string } }>(
+				dataDir,
+				input.organizationId,
+				`/api/cloud/v1/orgs/${encodeURIComponent(input.organizationId)}/projects`,
+				{
+					method: "POST",
+					headers: { "Idempotency-Key": input.idempotencyKey },
+					body: JSON.stringify({
+						displayName: input.displayName,
+						repositoryUrl: input.repositoryUrl,
+						defaultBranch: input.defaultBranch,
+						config: input.config,
+					}),
+				},
+			);
+			if (!response.project?.id) throw new Error("AO Cloud placement returned no project.");
+			return { projectId: response.project.id };
+		},
+	};
+}
+
 export async function createCloudProject(
 	dataDir: string,
 	input: CreateCloudProjectInput,
+	placements: WorkspacePlacementClient = httpWorkspacePlacementClient(dataDir),
 ): Promise<CreateCloudProjectResult> {
 	const organizationId = input.organizationId.trim();
-	const placement = await authenticatedCloudRequest<{ project: { id: string } }>(
-		dataDir,
+	const placement = await placements.create({
 		organizationId,
-		`/api/cloud/v1/orgs/${encodeURIComponent(organizationId)}/projects`,
-		{
-			method: "POST",
-			headers: { "Idempotency-Key": randomUUID() },
-			body: JSON.stringify({
-				displayName: input.displayName,
-				repositoryUrl: input.repositoryUrl,
-				defaultBranch: input.defaultBranch,
-				config: input.config,
-			}),
-		},
-	);
-	if (!placement.project?.id) throw new Error("AO Cloud placement returned no project.");
+		displayName: input.displayName,
+		repositoryUrl: input.repositoryUrl,
+		defaultBranch: input.defaultBranch,
+		config: input.config,
+		idempotencyKey: randomUUID(),
+	});
+	if (!placement.projectId) throw new Error("AO Cloud placement returned no project.");
 
 	const projectResponse = await authenticatedCloudRequest<{
 		status: "ok" | "degraded";
 		project: CreateCloudProjectResult["project"];
-	}>(dataDir, organizationId, `/api/v1/projects/${encodeURIComponent(placement.project.id)}`);
+	}>(dataDir, organizationId, `/api/v1/projects/${encodeURIComponent(placement.projectId)}`);
 	if (!projectResponse.project?.id) throw new Error("AO Cloud project creation returned no project.");
 
 	try {

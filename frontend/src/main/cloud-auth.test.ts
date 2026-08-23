@@ -172,6 +172,39 @@ describe("AO Cloud desktop credential custody", () => {
 		expect(JSON.parse(String(requests[2]?.init?.body))).toMatchObject({ projectId: "project_1", kind: "orchestrator", harness: "codex" });
 	});
 
+	it("isolates the provisional placement wire contract behind the main-side client", async () => {
+		await beginCloudSignIn(dataDir);
+		const createPlacement = vi.fn().mockResolvedValue({ projectId: "project_1" });
+		routes.set("https://cloud.example/api/v1/projects/project_1", () =>
+			jsonResponse({
+				status: "ok",
+				project: { id: "project_1", name: "repo", kind: "single_repo", path: "https://github.com/acme/repo", repo: "acme/repo", defaultBranch: "main" },
+			}),
+		);
+		routes.set("https://cloud.example/api/v1/sessions", () =>
+			jsonResponse({ session: { id: "session_1", projectId: "project_1" } }, 201),
+		);
+
+		await createCloudProject(
+			dataDir,
+			{
+				organizationId: "org_1",
+				displayName: "repo",
+				repositoryUrl: "https://github.com/acme/repo",
+				defaultBranch: "main",
+				config: {},
+				orchestratorHarness: "codex",
+			},
+			{ create: createPlacement },
+		);
+
+		expect(createPlacement).toHaveBeenCalledWith(expect.objectContaining({
+			organizationId: "org_1",
+			repositoryUrl: "https://github.com/acme/repo",
+			idempotencyKey: expect.any(String),
+		}));
+	});
+
 	it("reloads durable cloud projects and sessions from the shared app API", async () => {
 		await beginCloudSignIn(dataDir);
 		routes.set("https://cloud.example/api/v1/projects", () =>
