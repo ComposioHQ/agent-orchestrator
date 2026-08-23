@@ -219,6 +219,15 @@ describe("preload uiSettings bridge", () => {
 describe("preload cloud credential boundary", () => {
 	it("never exposes tokens or a generic authenticated request channel", () => {
 		const methods = Object.keys(exposedBridge().cloud);
+		expect(methods.sort()).toEqual([
+			"createProject",
+			"getAvailability",
+			"getSession",
+			"listProjects",
+			"onSessionChanged",
+			"signIn",
+			"signOut",
+		].sort());
 
 		expect(methods).not.toContain("getAccessToken");
 		expect(methods).not.toContain("getRefreshToken");

@@ -1,15 +1,20 @@
 import * as Dialog from "@radix-ui/react-dialog";
-import { ChevronLeft, Folder, GitBranch, Link2, X } from "lucide-react";
+import { ChevronLeft, Cloud, Folder, GitBranch, Link2, X } from "lucide-react";
 import { type FormEvent, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { aoBridge } from "../lib/bridge";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { Label } from "./ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
+import type { CloudOrganization } from "../../shared/cloud-account";
 
 export type CloneRepositoryDetails = {
 	remoteUrl: string;
 	destinationParent: string;
+	location?: "local" | "cloud";
+	defaultBranch?: string;
+	organizationId?: string;
 };
 
 export type CloneRepositorySelection = CloneRepositoryDetails & {
@@ -19,6 +24,7 @@ export type CloneRepositorySelection = CloneRepositoryDetails & {
 export const LAST_CLONE_DESTINATION_KEY = "ao.clone.lastDestinationParent";
 
 export default function CloneRepositoryDialog({
+	cloudOrganizations = [],
 	disabled,
 	error,
 	onBack,
@@ -28,6 +34,7 @@ export default function CloneRepositoryDialog({
 	open,
 	value,
 }: {
+	cloudOrganizations?: CloudOrganization[];
 	disabled: boolean;
 	error: string | null;
 	onBack: () => void;
@@ -41,12 +48,16 @@ export default function CloneRepositoryDialog({
 	const [submitted, setSubmitted] = useState(false);
 	const [choosingDestination, setChoosingDestination] = useState(false);
 	const [destinationPickerError, setDestinationPickerError] = useState<string | null>(null);
+	const isCloud = cloudOrganizations.length > 0 && value.location === "cloud";
 	const repositoryName = repositoryNameFromGitUrl(value.remoteUrl);
-	const targetPath = repositoryName && value.destinationParent
+	const targetPath = !isCloud && repositoryName && value.destinationParent
 		? joinCloneDestination(value.destinationParent, repositoryName)
 		: "";
-	const urlError = submitted && !repositoryName ? t("createProject.cloneInvalidUrl") : null;
-	const destinationError = submitted && !value.destinationParent ? t("createProject.cloneDestinationRequired") : null;
+	const cloudUrlError = submitted && isCloud && !value.remoteUrl.trim().startsWith("https://")
+		? "Cloud repositories must use an HTTPS URL."
+		: null;
+	const urlError = (submitted && !repositoryName ? t("createProject.cloneInvalidUrl") : null) ?? cloudUrlError;
+	const destinationError = submitted && !isCloud && !value.destinationParent ? t("createProject.cloneDestinationRequired") : null;
 
 	const chooseDestination = async () => {
 		setDestinationPickerError(null);
@@ -71,9 +82,22 @@ export default function CloneRepositoryDialog({
 	const submit = (event: FormEvent<HTMLFormElement>) => {
 		event.preventDefault();
 		setSubmitted(true);
-		if (!repositoryName || !value.destinationParent || disabled) return;
+		if (!repositoryName || disabled) return;
+		if (isCloud) {
+			if (!value.remoteUrl.trim().startsWith("https://") || !value.organizationId) return;
+			onContinue({
+				...value,
+				location: "cloud",
+				defaultBranch: value.defaultBranch?.trim() || "main",
+				remoteUrl: value.remoteUrl.trim(),
+				targetPath: "",
+			});
+			return;
+		}
+		if (!value.destinationParent) return;
 		onContinue({
 			...value,
+			location: "local",
 			remoteUrl: value.remoteUrl.trim(),
 			targetPath: joinCloneDestination(value.destinationParent, repositoryName),
 		});
@@ -122,6 +146,41 @@ export default function CloneRepositoryDialog({
 								</div>
 							) : null}
 
+							{cloudOrganizations.length > 0 ? (
+								<div className="space-y-2">
+									<Label htmlFor="cloneProjectLocation" className="text-[13px] font-semibold text-[var(--color-text-import-title)]">
+										Project location
+									</Label>
+									<Select
+										value={isCloud ? "cloud" : "local"}
+										disabled={disabled}
+										onValueChange={(location) => onChange({
+											...value,
+											location: location as "local" | "cloud",
+											organizationId: location === "cloud" ? (value.organizationId || cloudOrganizations[0]?.id) : undefined,
+										})}
+									>
+										<SelectTrigger id="cloneProjectLocation" aria-label="Project location" className="w-full bg-[var(--color-bg-import-card)]">
+											<SelectValue />
+										</SelectTrigger>
+										<SelectContent>
+											<SelectItem value="local">On this device</SelectItem>
+											<SelectItem value="cloud">AO Cloud</SelectItem>
+										</SelectContent>
+									</Select>
+								</div>
+							) : null}
+
+							{isCloud && cloudOrganizations.length > 1 ? (
+								<div className="space-y-2">
+									<Label htmlFor="cloudOrganization" className="text-[13px] font-semibold text-[var(--color-text-import-title)]">Organization</Label>
+									<Select value={value.organizationId || cloudOrganizations[0]?.id} disabled={disabled} onValueChange={(organizationId) => onChange({ ...value, organizationId })}>
+										<SelectTrigger id="cloudOrganization" aria-label="Cloud organization" className="w-full bg-[var(--color-bg-import-card)]"><SelectValue /></SelectTrigger>
+										<SelectContent>{cloudOrganizations.map((organization) => <SelectItem key={organization.id} value={organization.id}>{organization.displayName}</SelectItem>)}</SelectContent>
+									</Select>
+								</div>
+							) : null}
+
 							<div className="space-y-2">
 								<Label htmlFor="cloneRepositoryUrl" className="text-[13px] font-semibold text-[var(--color-text-import-title)]">
 									{t("createProject.cloneRepositoryUrl")}
@@ -156,6 +215,19 @@ export default function CloneRepositoryDialog({
 								)}
 							</div>
 
+							{isCloud && repositoryName ? (
+								<div className="flex items-center gap-3 rounded-lg border border-[var(--color-border-import-modal)] bg-[var(--color-bg-import-card)] px-3 py-3">
+									<Cloud className="size-4 shrink-0 text-[var(--color-text-import-muted)]" aria-hidden="true" />
+									<div className="min-w-0"><p className="text-[12px] font-medium text-[var(--color-text-import-muted)]">Create in AO Cloud</p><p className="mt-0.5 truncate font-mono text-[13px] font-semibold text-[var(--color-text-import-title)]">{repositoryName}</p></div>
+								</div>
+							) : null}
+
+							{isCloud ? (
+								<div className="space-y-2">
+									<Label htmlFor="cloudDefaultBranch" className="text-[13px] font-semibold text-[var(--color-text-import-title)]">Default branch</Label>
+									<Input id="cloudDefaultBranch" className="bg-[var(--color-bg-import-card)] font-mono text-[13px]" disabled={disabled} placeholder="main" value={value.defaultBranch ?? ""} onChange={(event) => onChange({ ...value, defaultBranch: event.target.value })} />
+								</div>
+							) : (
 							<div className="space-y-2">
 								<Label htmlFor="cloneDestination" className="text-[13px] font-semibold text-[var(--color-text-import-title)]">
 									{t("createProject.cloneDestination")}
@@ -191,6 +263,7 @@ export default function CloneRepositoryDialog({
 									</p>
 								) : null}
 							</div>
+							)}
 
 							{targetPath ? (
 								<div className="flex items-center gap-3 rounded-lg border border-[var(--color-border-import-modal)] bg-[var(--color-bg-import-card)] px-3 py-3">

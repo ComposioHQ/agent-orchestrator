@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 import { lazy, Suspense, useEffect, useRef, useState, type ReactNode } from "react";
 import type { ImportFolderScan } from "../../preload";
+import type { CloudOrganization } from "../../shared/cloud-account";
 import { aoBridge } from "../lib/bridge";
 import { cn } from "../lib/utils";
 import type { ProjectKind } from "../types/workspace";
@@ -23,7 +24,10 @@ import type { CloneRepositoryDetails, CloneRepositorySelection } from "./CloneRe
 import { Button } from "./ui/button";
 
 export type CreateProjectInput = { path: string; asWorkspace?: boolean } & CreateProjectAgentSelection;
-export type CloneProjectInput = Pick<CloneRepositorySelection, "remoteUrl" | "destinationParent"> &
+export type CloneProjectInput = Pick<
+	CloneRepositorySelection,
+	"remoteUrl" | "destinationParent" | "location" | "defaultBranch" | "organizationId"
+> &
 	CreateProjectAgentSelection;
 
 const CloneRepositoryDialog = lazy(() => import("./CloneRepositoryDialog"));
@@ -36,6 +40,7 @@ type CreateProjectFlowMode = ProjectKind | "choose";
 // Every source converges on the same agent sheet and project-start behavior.
 export function CreateProjectFlow({
 	children,
+	cloudOrganizations = [],
 	droppedPath,
 	embedded = false,
 	idleLabel,
@@ -46,6 +51,7 @@ export function CreateProjectFlow({
 	openSignal,
 }: {
 	children?: (state: { choosePath: () => void; disabled: boolean; error: string | null; label: string }) => ReactNode;
+	cloudOrganizations?: CloudOrganization[];
 	// A folder was dropped on the app window (ShellLayout owns the global
 	// listener). Mirrors openSignal but carries a path: skips straight to the
 	// mode picker with the native OS dialog step skipped.
@@ -192,6 +198,13 @@ export function CreateProjectFlow({
 				await onCloneProject({
 					remoteUrl: cloneSelection.remoteUrl,
 					destinationParent: cloneSelection.destinationParent,
+					...(cloneSelection.location === "cloud"
+						? {
+							location: "cloud" as const,
+							defaultBranch: cloneSelection.defaultBranch,
+							organizationId: cloneSelection.organizationId,
+						}
+						: {}),
 					...selection,
 				});
 				setSelectedPath(null);
@@ -288,6 +301,7 @@ export function CreateProjectFlow({
 					{cloneDialogOpen ? (
 						<Suspense fallback={<CloneRepositoryDialogSkeleton />}>
 							<CloneRepositoryDialog
+								cloudOrganizations={cloudOrganizations}
 								disabled={isBusy}
 								error={error}
 								onBack={() => {
@@ -306,7 +320,7 @@ export function CreateProjectFlow({
 								onContinue={(next) => {
 									setCloneSelection(next);
 									setSelectedKind("single_repo");
-									setSelectedPath(next.targetPath);
+									setSelectedPath(next.targetPath || next.remoteUrl);
 									setCloneDialogOpen(false);
 								}}
 								open
