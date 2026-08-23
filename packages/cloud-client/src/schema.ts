@@ -68,23 +68,111 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/cloud/v1/github/user": {
+    "/api/cloud/v1/scm/github/installations": {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
-        get: operations["getGitHubUserConnection"];
+        get: operations["listGitHubInstallations"];
         put?: never;
-        post?: never;
-        delete: operations["disconnectGitHubUser"];
+        post: operations["startGitHubInstallation"];
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
         trace?: never;
     };
-    "/api/cloud/v1/github/user/authorize": {
+    "/api/cloud/v1/scm/github/installations/{installationId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                installationId: components["parameters"]["InstallationId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete: operations["disconnectGitHubInstallation"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/cloud/v1/scm/github/installations/{installationId}/repositories": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                installationId: components["parameters"]["InstallationId"];
+            };
+            cookie?: never;
+        };
+        get: operations["listGitHubRepositories"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/cloud/v1/scm/github/installations/{installationId}/repositories/sync": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                installationId: components["parameters"]["InstallationId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["syncGitHubRepositories"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/cloud/v1/scm/github/installations/{installationId}/allowlist": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                installationId: components["parameters"]["InstallationId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put: operations["setGitHubRepositoryAllowlist"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/cloud/v1/scm/github/setup": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["completeGitHubInstallation"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/cloud/v1/scm/github/webhook": {
         parameters: {
             query?: never;
             header?: never;
@@ -93,23 +181,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        post: operations["startGitHubUserAuthorization"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/cloud/v1/github/user/callback": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get: operations["completeGitHubUserAuthorization"];
-        put?: never;
-        post?: never;
+        post: operations["receiveGitHubWebhook"];
         delete?: never;
         options?: never;
         head?: never;
@@ -162,289 +234,54 @@ export interface paths {
             };
             cookie?: never;
         };
-        get?: never;
+        /** @description Read one project placement the caller's organization owns.
+         *
+         *     This is placement discovery, not a product read: it answers where a
+         *     project is provisioned and what state that provisioning is in. Anything
+         *     a user sees about the project — its name, its settings, its sessions —
+         *     comes from the app API's own project routes at `/api/v1`.
+         *      */
+        get: operations["getProject"];
         put?: never;
         post?: never;
+        /** @description Archive the project and tear down its cloud workspace. The call is
+         *     idempotent under `Idempotency-Key`: a retry of the same key returns the
+         *     original result rather than reporting a missing project, so a client
+         *     that loses the response can safely repeat it.
+         *      */
         delete: operations["deleteProject"];
         options?: never;
         head?: never;
-        patch: operations["updateProject"];
-        trace?: never;
-    };
-    "/api/cloud/v1/orgs/{orgId}/github/installations": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                orgId: components["parameters"]["OrgId"];
-            };
-            cookie?: never;
-        };
-        get: operations["listGitHubInstallations"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
         patch?: never;
         trace?: never;
     };
-    "/api/cloud/v1/orgs/{orgId}/github/installations/start": {
+    "/api/cloud/v1/orgs/{orgId}/projects/{projectId}/resume": {
         parameters: {
             query?: never;
             header?: never;
             path: {
                 orgId: components["parameters"]["OrgId"];
+                projectId: components["parameters"]["ProjectId"];
             };
             cookie?: never;
         };
         get?: never;
         put?: never;
-        post: operations["startGitHubInstallation"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/cloud/v1/orgs/{orgId}/github/installations/{installationId}/sync": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                orgId: components["parameters"]["OrgId"];
-                installationId: components["parameters"]["InstallationId"];
-            };
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        post: operations["syncGitHubInstallation"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/cloud/v1/orgs/{orgId}/github/installations/{installationId}/disconnect": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                orgId: components["parameters"]["OrgId"];
-                installationId: components["parameters"]["InstallationId"];
-            };
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        post: operations["disconnectGitHubInstallation"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/cloud/v1/orgs/{orgId}/github/repositories": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                orgId: components["parameters"]["OrgId"];
-            };
-            cookie?: never;
-        };
-        get: operations["listGitHubRepositories"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/cloud/v1/orgs/{orgId}/github/projects": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                orgId: components["parameters"]["OrgId"];
-            };
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        post: operations["createProjectFromGitHub"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/cloud/v1/orgs/{orgId}/projects/scratch": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                orgId: components["parameters"]["OrgId"];
-            };
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        post: operations["createGitHubScratchProject"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/cloud/v1/orgs/{orgId}/sessions": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                orgId: components["parameters"]["OrgId"];
-            };
-            cookie?: never;
-        };
-        get: operations["listSessions"];
-        put?: never;
-        post: operations["createSession"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/cloud/v1/orgs/{orgId}/sessions/{sessionId}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                orgId: components["parameters"]["OrgId"];
-                sessionId: components["parameters"]["SessionId"];
-            };
-            cookie?: never;
-        };
-        get: operations["getSession"];
-        put?: never;
-        post?: never;
-        delete: operations["deleteSession"];
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/cloud/v1/orgs/{orgId}/sessions/{sessionId}/pull-requests": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                orgId: components["parameters"]["OrgId"];
-                sessionId: components["parameters"]["SessionId"];
-            };
-            cookie?: never;
-        };
-        get: operations["listSessionPullRequests"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/cloud/v1/orgs/{orgId}/sessions/{sessionId}/reviews": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                orgId: components["parameters"]["OrgId"];
-                sessionId: components["parameters"]["SessionId"];
-            };
-            cookie?: never;
-        };
-        get: operations["getSessionReviewState"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/cloud/v1/orgs/{orgId}/sessions/{sessionId}/messages": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                orgId: components["parameters"]["OrgId"];
-                sessionId: components["parameters"]["SessionId"];
-            };
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        post: operations["sendMessage"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/cloud/v1/orgs/{orgId}/sessions/{sessionId}/turns/{turnId}/cancel": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                orgId: components["parameters"]["OrgId"];
-                sessionId: components["parameters"]["SessionId"];
-                turnId: components["parameters"]["TurnId"];
-            };
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        post: operations["cancelTurn"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/cloud/v1/orgs/{orgId}/sessions/{sessionId}/chat-events": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                orgId: components["parameters"]["OrgId"];
-                sessionId: components["parameters"]["SessionId"];
-            };
-            cookie?: never;
-        };
-        get: operations["replayClientEvents"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/cloud/v1/orgs/{orgId}/sessions/{sessionId}/events": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                orgId: components["parameters"]["OrgId"];
-                sessionId: components["parameters"]["SessionId"];
-            };
-            cookie?: never;
-        };
-        get: operations["streamClientEvents"];
-        put?: never;
-        post?: never;
+        /** @description Bring a `suspended` project's cloud workspace back online so its
+         *     sessions can run again. Resume is asynchronous: the response carries the
+         *     project with `lifecycleState` set to `provisioning` (or already `ready`
+         *     when nothing needed starting), and the client observes completion by
+         *     re-reading the project or by the session events of the sessions it cares
+         *     about.
+         *
+         *     Resuming a `ready` project is a no-op that returns the project
+         *     unchanged. Resuming an `archived` project fails with
+         *     `PROJECT_ARCHIVED` — archived projects are re-created, not resumed.
+         *
+         *     Local AO has no suspended state, so its projects are always `ready` and
+         *     the local adapter never issues this call.
+         *      */
+        post: operations["resumeProject"];
         delete?: never;
         options?: never;
         head?: never;
@@ -463,6 +300,27 @@ export interface paths {
         };
         get?: never;
         put?: never;
+        /** @description Mint the credential for one terminal attachment and return, alongside
+         *     it, everything needed to make the connection.
+         *
+         *     The handoff is deliberately two-credential: the bearer token proves who
+         *     the caller is to the control plane and never leaves it, and the ticket
+         *     is what travels to the terminal listener. The ticket is single-use,
+         *     short-lived, and bound to this session, this `kind`, and the scopes
+         *     granted below, so a leaked query string cannot be replayed and cannot
+         *     reach another session.
+         *
+         *     `scopes` in the request is a *request*, not an assertion. The server
+         *     grants the intersection of what was asked for and what the caller's
+         *     organization role allows, and the response reports what was actually
+         *     granted. Asking for nothing asks for the caller's full authority. Asking
+         *     for a scope the caller does not hold is not an error — the scope is
+         *     simply absent from the response, so a read-only viewer degrades to a
+         *     read-only terminal instead of failing to open one.
+         *
+         *     The response embeds `TerminalConnection` metadata, so a client learns
+         *     where and how to attach in the same round trip that mints the ticket.
+         *      */
         post: operations["createTerminalTicket"];
         delete?: never;
         options?: never;
@@ -477,65 +335,45 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Upgrade to a terminal WebSocket using a short-lived ticket. */
+        /**
+         * Attach to a session terminal over the mux WebSocket.
+         * @description Attach to a hosted session's terminal. The framing is the local daemon's
+         *     terminal mux (`MuxClientFrame` / `MuxServerFrame`): the same channels,
+         *     the same field names, so the xterm client that already talks to a local
+         *     daemon attaches here unchanged.
+         *
+         *     **The credential travels as a WebSocket subprotocol, not a query
+         *     parameter.** A browser cannot set headers on a handshake, and a query
+         *     string ends up in proxy logs, browser history and referrers — a ticket
+         *     there is a credential written to disk in three places. So the client
+         *     offers two subprotocols:
+         *
+         *     ```
+         *     Sec-WebSocket-Protocol: ao.mux.v1, ao.ticket.<opaque>
+         *     ```
+         *
+         *     where `<opaque>` is the `ticket` value from `createTerminalTicket`,
+         *     verbatim. The server authenticates from the `ao.ticket.` entry and
+         *     selects **only** `ao.mux.v1` in its response, so the credential is never
+         *     echoed back. A client that sees anything other than `ao.mux.v1` selected
+         *     must close rather than guess a framing.
+         *
+         *     Attach to the `url` reported on the ticket's `connection`. It may name a
+         *     listener that is not the control plane's origin, so do not rebuild it
+         *     from the API base URL.
+         *
+         *     Authority. `data` and `resize` frames require the `terminal:operate`
+         *     scope. A ticket holding only `terminal:read` may attach and receive
+         *     output; an operate frame on such a ticket is answered with a
+         *     `terminal`/`error` frame and the socket stays open, so a read-only
+         *     viewer is not disconnected for a stray keystroke.
+         *
+         *     Close. The listener closes with 1008 when the ticket is invalid,
+         *     expired, already used, or bound to a different session, and with 1011
+         *     when the sandbox is unreachable.
+         *
+         */
         get: operations["connectTerminal"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/cloud/v1/orgs/{orgId}/sessions/{sessionId}/workspace/files": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                orgId: components["parameters"]["OrgId"];
-                sessionId: components["parameters"]["SessionId"];
-            };
-            cookie?: never;
-        };
-        get: operations["listWorkspaceFiles"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/cloud/v1/orgs/{orgId}/sessions/{sessionId}/workspace/file": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                orgId: components["parameters"]["OrgId"];
-                sessionId: components["parameters"]["SessionId"];
-            };
-            cookie?: never;
-        };
-        get: operations["readWorkspaceFile"];
-        put: operations["writeWorkspaceFile"];
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/cloud/v1/orgs/{orgId}/sessions/{sessionId}/workspace/diff": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                orgId: components["parameters"]["OrgId"];
-                sessionId: components["parameters"]["SessionId"];
-            };
-            cookie?: never;
-        };
-        get: operations["getWorkspaceDiff"];
         put?: never;
         post?: never;
         delete?: never;
@@ -947,6 +785,142 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/projects": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List all registered projects (active + degraded) */
+        get: operations["appListProjects"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Fetch one project; discriminates ok vs degraded */
+        get: operations["appGetProject"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/sessions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List sessions */
+        get: operations["appListSessions"];
+        put?: never;
+        /** Spawn a new agent session */
+        post: operations["appSpawnSession"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/sessions/{sessionId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Fetch one session */
+        get: operations["appGetSession"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/sessions/{sessionId}/kill": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Mark a session terminated and tear down runtime/workspace resources */
+        post: operations["appKillSession"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/sessions/{sessionId}/restore": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Restore a terminated session */
+        post: operations["appRestoreSession"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/sessions/{sessionId}/send": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Send a message to a running session's agent */
+        post: operations["appSendSessionMessage"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/cloud/v1/sandbox/terminal-tickets/consume": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["redeemSandboxTicket"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -1028,6 +1002,15 @@ export interface components {
             hasMore: boolean;
             nextCursor?: string;
         };
+        /**
+         * @description Cloud workspace lifecycle. `provisioning` and `suspended` are the two
+         *     states a client must render differently from `ready`: neither can accept
+         *     a session spawn until it reaches `ready`. Local AO projects are always
+         *     `ready`.
+         *
+         * @enum {string}
+         */
+        ProjectLifecycleState: "provisioning" | "ready" | "suspended" | "archived" | "error";
         Project: {
             /** Format: uuid */
             id: string;
@@ -1044,8 +1027,33 @@ export interface components {
             };
             /** Format: date-time */
             createdAt: string;
-            /** Format: date-time */
+            /** Format: date-time
+            The default is stated here rather than as a schema `default:` because `openapi-typescript` promotes a defaulted response property to a required one, which would break the clients this field exists to keep working. */
             updatedAt: string;
+            /** @description Absent means `ready`, which is what local AO always reports. Stated
+             *     as prose rather than a schema `default:` for the reason given on
+             *     `kind`.
+             *      */
+            lifecycleState?: components["schemas"]["ProjectLifecycleState"];
+            /** @description Operator-facing detail for `error` (and, when useful, for a slow
+             *     `provisioning`). Never present when `lifecycleState` is `ready`.
+             *      */
+            lifecycleMessage?: string;
+            /**
+             * Format: date-time
+             * @description Present only once `lifecycleState` is `archived`.
+             */
+            archivedAt?: string;
+        };
+        ResumeProjectInput: {
+            /**
+             * Format: uuid
+             * @description Pin the resumed workspace to one organization sandbox provider
+             *     connection. Absent uses the organization default, which is the only
+             *     behaviour a client needs unless the user picks a provider.
+             *
+             */
+            sandboxProviderConnectionId?: string;
         };
         CreateProjectInput: {
             displayName: string;
@@ -1055,10 +1063,6 @@ export interface components {
             config?: {
                 [key: string]: unknown;
             };
-        };
-        UpdateProjectInput: {
-            displayName: string;
-            defaultBranch: string;
         };
         DeleteProjectResponse: {
             project: {
@@ -1072,133 +1076,27 @@ export interface components {
             page: components["schemas"]["PageInfo"];
         };
         /** @enum {string} */
-        GitHubInstallationStatus: "active" | "suspended" | "removed";
-        /** @enum {string} */
-        GitHubSyncStatus: "pending" | "syncing" | "ready" | "retry" | "failed";
-        GitHubInstallation: {
-            /** Format: uuid */
-            id: string;
-            /** @description GitHub's integer installation ID encoded as a decimal string to preserve precision. */
-            githubInstallationId: string;
-            accountLogin: string;
-            /** @enum {string} */
-            accountType: "User" | "Organization" | "Enterprise";
-            status: components["schemas"]["GitHubInstallationStatus"];
-            /** @enum {string} */
-            repositorySelection: "all" | "selected";
-            syncStatus: components["schemas"]["GitHubSyncStatus"];
-            /** Format: date-time */
-            lastSyncedAt?: string;
-            lastError?: string;
-            /** Format: date-time */
-            createdAt: string;
-            /** Format: date-time */
-            updatedAt: string;
-        };
-        GitHubInstallationStart: {
-            /** Format: uri */
-            installationUrl: string;
-            /** Format: date-time */
-            expiresAt: string;
-        };
-        GitHubUserInstallation: {
-            /** @description GitHub's integer installation ID encoded as a decimal string to preserve precision. */
-            githubInstallationId: string;
-            accountLogin: string;
-            /** @enum {string} */
-            accountType: "User" | "Organization" | "Enterprise";
-            /** @enum {string} */
-            repositorySelection: "all" | "selected";
-            canCreateRepository: boolean;
-            unavailableReason?: string;
-        };
-        GitHubUserConnection: {
-            connected: boolean;
-            login?: string;
-            /** Format: uri */
-            avatarUrl?: string;
-            installations: components["schemas"]["GitHubUserInstallation"][];
-            /** Format: date-time */
-            lastSyncedAt?: string;
-        };
-        GitHubUserAuthorizationStart: {
-            /** Format: uri */
-            authorizeUrl: string;
-            /** Format: date-time */
-            expiresAt: string;
-        };
-        /** @enum {string} */
-        GitHubRepositoryAccessState: "active" | "revoked";
-        GitHubRepository: {
-            /** @description GitHub's integer repository ID encoded as a decimal string to preserve precision. */
-            githubRepositoryId: string;
-            name: string;
-            fullName: string;
-            /** Format: uri */
-            htmlUrl: string;
-            defaultBranch: string;
-            visibility: string;
-            isPrivate: boolean;
-            isArchived: boolean;
-            access: components["schemas"]["GitHubRepositoryAccessState"];
-            /** Format: date-time */
-            grantedAt: string;
-            /** Format: date-time */
-            revokedAt?: string;
-        };
-        GitHubRepositoryPage: {
-            items: components["schemas"]["GitHubRepository"][];
-            page: components["schemas"]["PageInfo"];
-        };
-        CreateGitHubProjectInput: {
-            githubRepositoryId: string;
-            displayName?: string;
-            config?: {
-                [key: string]: unknown;
-            };
-        };
-        CreateGitHubScratchProjectInput: {
-            displayName: string;
-            githubInstallationId: string;
-            /** @default true */
-            private: boolean;
-            orchestrator: {
-                /** @enum {string} */
-                harness: "claude-code" | "codex" | "cursor";
-                prompt?: string;
-            };
-        };
-        CreateGitHubScratchProjectResponse: {
-            project: components["schemas"]["Project"];
-            repository: components["schemas"]["GitHubRepository"];
-            session: components["schemas"]["Session"];
-        };
-        /** @enum {string} */
         SessionKind: "worker" | "orchestrator";
-        /** @enum {string} */
+        /**
+         * @description Permission mode a session's agent runs under. Used on worker launch and
+         *     provisioning inputs only — it is not a presentation field, and it is not
+         *     the local `/api/v1` session `mode`, which means `chat` or `tui`. Those
+         *     two meanings colliding is why the duplicate user-facing session type was
+         *     removed; this one survives because the compute plane genuinely needs it.
+         *
+         * @enum {string}
+         */
         SessionMode: "read-only" | "standard" | "trusted";
-        /** @enum {string} */
+        /**
+         * @description Identical vocabulary to the local `/api/v1` agent activity state, so a
+         *     shared view classifies a Cloud session and a local session with the same
+         *     rule.
+         *
+         * @enum {string}
+         */
         SessionActivityState: "active" | "idle" | "waiting_input" | "blocked" | "exited";
         /** @enum {string} */
         SessionStatus: "working" | "needs_input" | "pr_open" | "draft" | "review_pending" | "ci_failed" | "changes_requested" | "approved" | "mergeable" | "merged" | "exited" | "idle" | "terminated" | "no_signal";
-        Turn: {
-            id: string;
-            sessionId: string;
-            /** Format: int64 */
-            userMessageSequence: number;
-            /** @enum {string} */
-            state: "queued" | "provisioning" | "running" | "cancel_requested" | "completed" | "failed";
-            attemptCount: number;
-            errorMessage?: string;
-            /** Format: date-time */
-            startedAt?: string;
-            /** Format: date-time */
-            completedAt?: string;
-            /** Format: date-time */
-            createdAt: string;
-            /** Format: date-time */
-            updatedAt: string;
-        };
         WorkerBootstrapInput: {
             /** @description One-time bootstrap ticket. Never log or persist this value. */
             bootstrapToken: string;
@@ -1361,6 +1259,117 @@ export interface components {
             path: string;
         };
         WorkerWorkspaceWritePayload: components["schemas"]["WorkspaceFileWriteInput"];
+        /**
+         * @description One socket multiplexes every logical stream, tagged by `ch`:
+         *
+         *     - `terminal` — per-pane byte stream, keyed by the runtime handle in `id`
+         *     - `subscribe` — the client opting into the session-state channel
+         *     - `sessions` — server-pushed session-state changes
+         *     - `system` — liveness; WebSocket ping/pong also runs underneath
+         *
+         * @enum {string}
+         */
+        MuxChannel: "terminal" | "subscribe" | "sessions" | "system";
+        /** @enum {string} */
+        MuxClientFrameType: "open" | "data" | "resize" | "close" | "subscribe" | "ping";
+        /** @enum {string} */
+        MuxServerFrameType: "opened" | "data" | "resize" | "exited" | "error" | "snapshot" | "pong";
+        /** @description One inbound frame. Fields are shared across channels; which apply
+         *     depends on `ch` and `type`, exactly as in the local daemon's mux:
+         *
+         *     - `terminal`/`open` — `id`, optionally `cols`, `rows`, `role`
+         *     - `terminal`/`data` — `id`, `data`
+         *     - `terminal`/`resize` — `id`, `cols`, `rows`, optionally `force`
+         *     - `terminal`/`close` — `id`
+         *     - `subscribe`/`subscribe` — no payload
+         *     - `system`/`ping` — no payload
+         *
+         *     `data` and `resize` require the `terminal:operate` scope. A frame sent
+         *     without it is answered with an `error` frame and the socket stays open,
+         *     so a read-only viewer is not disconnected for a stray keystroke.
+         *      */
+        MuxClientFrame: {
+            ch: components["schemas"]["MuxChannel"];
+            type: components["schemas"]["MuxClientFrameType"];
+            /** @description Opaque runtime handle for the pane, on `ch` `terminal`. */
+            id?: string;
+            /** @description Base64-encoded keystrokes. Base64 because PTY bytes need not be
+             *     valid UTF-8 and so could not survive a raw JSON string.
+             *      */
+            data?: string;
+            cols?: number;
+            rows?: number;
+            /** @description Re-signal an unchanged grid for attach recovery. Duplicate frames
+             *     are otherwise ignored so they cannot trigger another TUI repaint.
+             *      */
+            force?: boolean;
+            role?: components["schemas"]["MuxClientRole"];
+        };
+        /**
+         * @description A pane has one grid. When several clients view it at once the primary
+         *     drives that grid and secondaries render the authoritative size rather
+         *     than shrinking the PTY. Unset means primary, which is what keeps
+         *     existing clients driving the size.
+         *
+         * @enum {string}
+         */
+        MuxClientRole: "secondary";
+        /** @description One outbound frame, mirroring the local daemon's server frames:
+         *
+         *     - `terminal`/`opened` — `id`
+         *     - `terminal`/`data` — `id`, `data`, optionally `seq`
+         *     - `terminal`/`resize` — `id`, `cols`, `rows`; the authoritative grid,
+         *       pushed so followers render the size the PTY is actually using
+         *     - `terminal`/`exited` — `id`
+         *     - `terminal`/`error` — `error`, optionally `id`
+         *     - `sessions`/`snapshot` — `session`
+         *     - `system`/`pong` — no payload
+         *      */
+        MuxServerFrame: {
+            ch: components["schemas"]["MuxChannel"];
+            type: components["schemas"]["MuxServerFrameType"];
+            id?: string;
+            /** @description Base64-encoded PTY output. */
+            data?: string;
+            cols?: number;
+            rows?: number;
+            error?: string;
+            session?: components["schemas"]["MuxSessionUpdate"];
+            /**
+             * Format: int64
+             * @description Optional monotonic cursor on a `terminal`/`data` frame. Present only
+             *     where the listener retains a replay buffer, which a local daemon
+             *     does not — hence optional, so the same client code works against
+             *     both. When present, reconnect with the last value rendered as
+             *     `after` to replay the gap; when absent, a reconnect starts live.
+             *
+             */
+            seq?: number;
+        };
+        /** @description The `sessions` channel payload: one change projected to the fields a
+         *     client needs in order to know it should refetch. It deliberately omits
+         *     the change payload itself — detail comes from the app API.
+         *      */
+        MuxSessionUpdate: {
+            /** Format: int64 */
+            seq: number;
+            projectId: string;
+            sessionId?: string;
+            eventType: string;
+        };
+        /** @description One entry in a sandbox directory listing, returned over the worker
+         *     transport. The product's own file browsing goes through the app API.
+         *      */
+        WorkspaceEntry: {
+            name: string;
+            path: string;
+            isDir: boolean;
+            /** Format: int64 */
+            size: number;
+            mode: string;
+            /** Format: date-time */
+            modTime: string;
+        };
         WorkerWorkspaceEntryPage: {
             path: string;
             items: components["schemas"]["WorkspaceEntry"][];
@@ -1535,185 +1544,36 @@ export interface components {
                 desiredState: "deleted";
             };
         };
-        Session: {
+        /** @description The minimum a worker orchestrator needs to reason about a child session
+         *     it spawned. It is deliberately **not** a product DTO and must never grow
+         *     into one: the product contract for sessions is the app API's own session
+         *     record at `/api/v1`, and a second user-facing session type here is what
+         *     created the `mode` collision this schema was cut down to remove.
+         *
+         *     Nothing on it describes presentation, and nothing on it names or hints
+         *     at a compute vendor. A client rendering a session reads the app API.
+         *      */
+        WorkerChildSession: {
             /** Format: uuid */
             id: string;
-            /** Format: uuid */
-            orgId: string;
             /** Format: uuid */
             projectId: string;
             kind: components["schemas"]["SessionKind"];
             harness: string;
             displayName: string;
             branch: string;
-            mode: components["schemas"]["SessionMode"];
-            deniedCommands: string[];
             activityState: components["schemas"]["SessionActivityState"];
             status: components["schemas"]["SessionStatus"];
             capabilities?: components["schemas"]["AgentCapability"][];
-            runtimeConnected: boolean;
-            runtimeState?: string;
-            runtimeError?: string;
-            activeTurn?: components["schemas"]["Turn"];
             isTerminated: boolean;
             /** Format: date-time */
             createdAt: string;
             /** Format: date-time */
             updatedAt: string;
         };
-        CreateSessionInput: {
-            /** Format: uuid */
-            projectId: string;
-            kind: components["schemas"]["SessionKind"];
-            harness: string;
-            displayName: string;
-            prompt: string;
-            /** @default trusted */
-            mode: components["schemas"]["SessionMode"];
-            /** @default [] */
-            deniedCommands: string[];
-            /** Format: uuid */
-            sandboxProviderConnectionId?: string;
-        };
-        SessionPage: {
-            items: components["schemas"]["Session"][];
+        WorkerChildSessionPage: {
+            items: components["schemas"]["WorkerChildSession"][];
             page: components["schemas"]["PageInfo"];
-        };
-        /** @enum {string} */
-        PullRequestState: "draft" | "open" | "merged" | "closed";
-        /** @enum {string} */
-        CIState: "unknown" | "pending" | "passing" | "failing";
-        /** @enum {string} */
-        PullRequestCheckStatus: "unknown" | "queued" | "in_progress" | "passed" | "failed" | "skipped" | "cancelled";
-        /** @enum {string} */
-        ReviewDecision: "none" | "approved" | "changes_requested" | "review_required";
-        /** @enum {string} */
-        MergeabilityState: "unknown" | "mergeable" | "conflicting" | "blocked" | "unstable";
-        PullRequestFailingCheck: {
-            name: string;
-            status: components["schemas"]["PullRequestCheckStatus"];
-            conclusion: string;
-            url?: string;
-        };
-        PullRequestCISummary: {
-            state: components["schemas"]["CIState"];
-            failingChecks: components["schemas"]["PullRequestFailingCheck"][];
-        };
-        PullRequestReviewCommentLink: {
-            url?: string;
-            file?: string;
-            line?: number;
-            autoInjectReview: boolean;
-        };
-        PullRequestUnresolvedReviewer: {
-            reviewerId: string;
-            count: number;
-            links: components["schemas"]["PullRequestReviewCommentLink"][];
-            reviewUrl?: string;
-            isBot?: boolean;
-        };
-        PullRequestSubmittedReview: {
-            reviewerId: string;
-            verdict: components["schemas"]["ReviewDecision"];
-            body?: string;
-            reviewUrl?: string;
-            /** Format: date-time */
-            submittedAt: string;
-            isBot?: boolean;
-            autoInjectReview: boolean;
-        };
-        PullRequestReviewSummary: {
-            decision: components["schemas"]["ReviewDecision"];
-            hasUnresolvedHumanComments: boolean;
-            unresolvedBy: components["schemas"]["PullRequestUnresolvedReviewer"][];
-            reviews: components["schemas"]["PullRequestSubmittedReview"][];
-        };
-        PullRequestConflictFile: {
-            path: string;
-            url?: string;
-        };
-        PullRequestMergeabilitySummary: {
-            state: components["schemas"]["MergeabilityState"];
-            reasons: string[];
-            pullRequestUrl: string;
-            conflictFiles: components["schemas"]["PullRequestConflictFile"][];
-        };
-        PullRequestSummary: {
-            url: string;
-            htmlUrl?: string;
-            number: number;
-            title: string;
-            state: components["schemas"]["PullRequestState"];
-            provider: string;
-            repository: string;
-            author: string;
-            sourceBranch: string;
-            targetBranch: string;
-            headSha: string;
-            additions: number;
-            deletions: number;
-            changedFiles: number;
-            ci: components["schemas"]["PullRequestCISummary"];
-            review: components["schemas"]["PullRequestReviewSummary"];
-            mergeability: components["schemas"]["PullRequestMergeabilitySummary"];
-            /** Format: date-time */
-            stateChangedAt?: string;
-            /** Format: date-time */
-            createdAt?: string;
-            /** Format: date-time */
-            updatedAt: string;
-            /** Format: date-time */
-            observedAt: string;
-            /** Format: date-time */
-            ciObservedAt: string;
-            /** Format: date-time */
-            reviewObservedAt: string;
-        };
-        SessionPullRequests: {
-            sessionId: string;
-            pullRequests: components["schemas"]["PullRequestSummary"][];
-        };
-        /** @enum {string} */
-        AOReviewRunStatus: "running" | "complete" | "delivered" | "failed" | "cancelled";
-        /** @enum {string} */
-        AOReviewVerdict: "" | "approved" | "changes_requested";
-        /** @enum {string} */
-        AOReviewState: "needs_review" | "running" | "up_to_date" | "changes_requested" | "ineligible";
-        AOReviewRun: {
-            id: string;
-            reviewId: string;
-            sessionId: string;
-            batchId: string;
-            harness: string;
-            pullRequestUrl: string;
-            targetSha: string;
-            status: components["schemas"]["AOReviewRunStatus"];
-            verdict: components["schemas"]["AOReviewVerdict"];
-            body: string;
-            providerReviewId: string;
-            /** Format: date-time */
-            createdAt: string;
-            /** Format: date-time */
-            deliveredAt?: string;
-            autoInjectReview: boolean;
-        };
-        AOPullRequestReviewState: {
-            pullRequestUrl: string;
-            pullRequestNumber: number;
-            title: string;
-            targetSha: string;
-            status: components["schemas"]["AOReviewState"];
-            /** @description Head SHA of the newest completed run that does not match targetSha. */
-            staleTargetSha?: string;
-            latestRun?: components["schemas"]["AOReviewRun"];
-            previousRun?: components["schemas"]["AOReviewRun"];
-        };
-        SessionReviewState: {
-            sessionId: string;
-            reviewerHandleId?: string;
-            reviewerHarness?: string;
-            reviews: components["schemas"]["AOPullRequestReviewState"][];
-            runs: components["schemas"]["AOReviewRun"][];
         };
         UserMessageEvent: {
             sessionId: string;
@@ -1727,158 +1587,197 @@ export interface components {
             /** Format: date-time */
             createdAt: string;
         };
-        AssistantDeltaEvent: {
-            sessionId: string;
-            /** Format: int64 */
-            sequence: number;
-            /** @constant */
-            type: "chat.assistant_delta";
-            payload: components["schemas"]["WorkerOutputPayload"];
-            /** Format: date-time */
-            createdAt: string;
-        };
-        TurnStartedEvent: {
-            sessionId: string;
-            /** Format: int64 */
-            sequence: number;
-            /** @constant */
-            type: "chat.turn_started";
-            payload: {
-                /** Format: uuid */
-                turnId: string;
-                attempt: number;
-                /** Format: int64 */
-                workerEpoch: number;
-            };
-            /** Format: date-time */
-            createdAt: string;
-        };
-        TurnCompletedEvent: {
-            sessionId: string;
-            /** Format: int64 */
-            sequence: number;
-            /** @constant */
-            type: "chat.turn_completed";
-            payload: {
-                /** Format: uuid */
-                turnId: string;
-                attempt: number;
-            };
-            /** Format: date-time */
-            createdAt: string;
-        };
-        TurnInterruptedEvent: {
-            sessionId: string;
-            /** Format: int64 */
-            sequence: number;
-            /** @constant */
-            type: "chat.turn_interrupted";
-            payload: {
-                /** Format: uuid */
-                turnId: string;
-                attempt: number;
-            };
-            /** Format: date-time */
-            createdAt: string;
-        };
-        TurnAbortedEvent: {
-            sessionId: string;
-            /** Format: int64 */
-            sequence: number;
-            /** @constant */
-            type: "chat.turn_aborted";
-            payload: {
-                /** Format: uuid */
-                turnId: string;
-                attempt: number;
-                error: string;
-            };
-            /** Format: date-time */
-            createdAt: string;
-        };
-        InterruptRequestedEvent: {
-            sessionId: string;
-            /** Format: int64 */
-            sequence: number;
-            /** @constant */
-            type: "chat.interrupt_requested";
-            payload: {
-                /** Format: uuid */
-                turnId: string;
-            };
-            /** Format: date-time */
-            createdAt: string;
-        };
-        ClientEvent: components["schemas"]["UserMessageEvent"] | components["schemas"]["AssistantDeltaEvent"] | components["schemas"]["TurnStartedEvent"] | components["schemas"]["TurnCompletedEvent"] | components["schemas"]["TurnInterruptedEvent"] | components["schemas"]["TurnAbortedEvent"] | components["schemas"]["InterruptRequestedEvent"];
-        ClientEventPage: {
-            events: components["schemas"]["ClientEvent"][];
-            hasMore: boolean;
-            /**
-             * Format: int64
-             * @description Highest sequence returned, or the supplied after cursor when the page is empty.
-             */
-            nextAfter: number;
-        };
         /** @enum {string} */
         TerminalKind: "agent" | "workspace";
-        /** @enum {string} */
+        /**
+         * @description `terminal:read` receives output. `terminal:operate` additionally sends
+         *     input and drives the grid.
+         *
+         * @enum {string}
+         */
         TerminalScope: "terminal:read" | "terminal:operate";
+        /**
+         * @description An enum with one member so a later transport can be added without a
+         *     client having to guess from the URL scheme.
+         *
+         * @enum {string}
+         */
+        TerminalTransport: "websocket";
+        /**
+         * @description WebSocket subprotocol naming the framing version. This is the local
+         *     daemon's terminal mux protocol, not a Cloud-specific one: the same
+         *     channel-tagged frames, the same field names, so the xterm client that
+         *     already talks to a local daemon attaches to a hosted session unchanged.
+         *
+         *     A client offers this value in `Sec-WebSocket-Protocol` and must close if
+         *     the server selects anything else.
+         *
+         * @enum {string}
+         */
+        TerminalProtocol: "ao.mux.v1";
+        /**
+         * @description Optional protocol capabilities the listener supports for this terminal,
+         *     independent of what the caller is *authorized* to do (that is `scopes`).
+         *     `replay` means the `after` cursor is honoured; without it a reconnect
+         *     starts from the live head. `snapshot` means the first `ready` frame
+         *     carries a rendered screen the client can paint immediately.
+         *
+         * @enum {string}
+         */
+        TerminalFeature: "input" | "resize" | "replay" | "snapshot";
+        TerminalConnection: {
+            transport: components["schemas"]["TerminalTransport"];
+            protocol: components["schemas"]["TerminalProtocol"];
+            /** @description Prefix the client prepends to the ticket to form the credential
+             *     subprotocol — `ao.ticket.` — offered alongside `protocol` on the
+             *     handshake. Reported rather than assumed so the pair can be versioned
+             *     together. Absent means `ao.ticket.`.
+             *      */
+            ticketSubprotocolPrefix?: string;
+            /**
+             * Format: uri
+             * @description Absolute `wss://` (or `ws://` in development) URL to attach to. The
+             *     client appends `ticket`, `kind`, and `after` as query parameters and
+             *     otherwise treats the URL as opaque — it may name a listener that is
+             *     not the control plane's origin, and it may already carry query
+             *     parameters of its own.
+             *
+             */
+            url: string;
+            /** @description Terminal kinds this session currently has. Empty means there is
+             *     nothing to attach to yet, which is the normal answer while the
+             *     sandbox is still provisioning.
+             *      */
+            kinds: components["schemas"]["TerminalKind"][];
+            features: components["schemas"]["TerminalFeature"][];
+            /** @description Control-plane path to `POST` for a ticket, relative to the API base
+             *     URL. Present so a client can follow the contract without rebuilding
+             *     the org/session path itself.
+             *      */
+            ticketPath?: string;
+            /** @description Largest decoded `data` payload the listener accepts on one client
+             *     frame. Absent means the client should not exceed 16384, which is the
+             *     limit the worker transport routes already impose.
+             *      */
+            maxFrameBytes?: number;
+            /** @description How often the client should send `ping`. Absent means the listener
+             *     relies on WebSocket-level ping/pong and the client need not send
+             *     application pings.
+             *      */
+            heartbeatIntervalSeconds?: number;
+            /** @description Lifetime a freshly minted ticket will have, so a client can decide
+             *     whether to pre-mint. Advisory — the ticket's own `expiresIn` is
+             *     authoritative.
+             *      */
+            ticketTtlSeconds?: number;
+        };
         TerminalTicket: {
+            /** @description Single-use bearer of terminal authority. It travels as the
+             *     `ao.ticket.<opaque>` WebSocket subprotocol on the attach handshake —
+             *     never in a URL, where it would reach proxy logs and browser history.
+             *     Keep it in memory and never log it.
+             *      */
             ticket: string;
             /** @description Lifetime in seconds. */
             expiresIn: number;
+            /** @description Scopes actually granted, which may be narrower than those requested.
+             *     A client renders a read-only terminal when `terminal:operate` is
+             *     absent rather than letting the user type into a socket that will
+             *     reject the frame.
+             *      */
             scopes: components["schemas"]["TerminalScope"][];
-        };
-        WorkspaceEntry: {
-            name: string;
-            path: string;
-            isDir: boolean;
-            /** Format: int64 */
-            size: number;
-            mode: string;
-            /** Format: date-time */
-            modTime: string;
-        };
-        WorkspaceEntryPage: {
-            path: string;
-            items: components["schemas"]["WorkspaceEntry"][];
-            page: components["schemas"]["PageInfo"];
-        };
-        WorkspaceFile: {
-            path: string;
-            content: string;
-            /** Format: int64 */
-            size: number;
+            /**
+             * Format: date-time
+             * @description Absolute expiry, for clients that would rather not depend on their
+             *     own clock offset when scheduling a re-mint. Absent means compute it
+             *     from `expiresIn`.
+             *
+             */
+            expiresAt?: string;
+            /**
+             * Format: uuid
+             * @description Session the ticket is bound to. Echoed so a client holding several
+             *     pending tickets cannot attach one to the wrong socket.
+             *
+             */
+            sessionId?: string;
+            /** @description Terminal kind the ticket is bound to. */
+            kind?: components["schemas"]["TerminalKind"];
+            /** @description Authoritative listener metadata. Absent means the control-plane
+             *     terminal URL and documented mux defaults apply.
+             *      */
+            connection?: components["schemas"]["TerminalConnection"];
+            /**
+             * Format: int64
+             * @description The `seq` at the head of the retained output buffer when the ticket
+             *     was minted, where the listener keeps one. A client opening a
+             *     terminal for the first time can pass it as `after` to skip the
+             *     backlog, or ignore it to replay. Absent means the listener does not
+             *     retain output, which is the local daemon's behaviour.
+             *
+             */
+            lastSequence?: number;
         };
         WorkspaceFileWriteInput: {
             path: string;
             content: string;
         };
-        /** @enum {string} */
-        WorkspaceFileStatus: "unmodified" | "modified" | "added" | "deleted" | "renamed" | "untracked" | "copied" | "changed";
-        WorkspaceDiffFile: {
-            path: string;
-            oldPath?: string;
-            status: components["schemas"]["WorkspaceFileStatus"];
-            staged?: string;
-            unstaged?: string;
-            additions: number;
-            deletions: number;
-            binary: boolean;
+        SCMInstallStart: {
+            /** Format: uri */
+            installUrl: string;
+            /** Format: date-time */
+            expiresAt: string;
         };
-        WorkspaceDiff: {
+        SCMInstallation: {
+            id: string;
+            orgId: string;
+            /** @constant */
+            provider: "github";
+            accountLogin: string;
+            accountType: string;
+            appSlug: string;
+            repositorySelection: string;
             status: string;
-            unstaged: string;
-            staged: string;
-            combined: string;
-            diffBaseRef: string;
-            diffBaseSha?: string;
-            files: components["schemas"]["WorkspaceDiffFile"][];
-            untrackedFiles: string[];
-            truncated: {
-                combined: boolean;
-                stats: boolean;
-            };
+            /** Format: date-time */
+            createdAt: string;
+            /** Format: date-time */
+            updatedAt: string;
+        };
+        SCMRepository: {
+            id: string;
+            fullName: string;
+            private: boolean;
+            allowed: boolean;
+        };
+        SCMInstallationList: {
+            installations: components["schemas"]["SCMInstallation"][];
+        };
+        SCMRepositoryList: {
+            repositories: components["schemas"]["SCMRepository"][];
+        };
+        SCMAllowlistInput: {
+            repositories: string[];
+        };
+        SCMWebhookResponse: {
+            /** @enum {string} */
+            status: "accepted" | "duplicate";
+        };
+        /** @enum {string} */
+        SandboxScope: "terminal:read" | "terminal:operate" | "workspace:observe";
+        SandboxTicketRedemptionInput: {
+            /** Format: password */
+            ticket: string;
+            sandboxId: string;
+            workspaceId: string;
+            sessionId: string;
+        };
+        SandboxTicketGrant: {
+            sandboxId: string;
+            workspaceId: string;
+            sessionId: string;
+            scopes: components["schemas"]["SandboxScope"][];
+            /** Format: date-time */
+            expiresAt: string;
         };
         /** @enum {string} */
         ProviderName: "daytona" | "claude-code" | "codex" | "cursor";
@@ -1925,11 +1824,237 @@ export interface components {
             /** @enum {string} */
             validationState: "pending" | "valid" | "invalid";
             /** Format: date-time */
-            validatedAt?: string;
+            validatedAt: string;
             /** Format: date-time */
             createdAt: string;
             /** Format: date-time */
             updatedAt: string;
+        };
+        AppAPIError: {
+            code: string;
+            details?: {
+                [key: string]: unknown;
+            };
+            error: string;
+            message: string;
+            requestId?: string;
+        };
+        AppAgentConfig: {
+            mode?: string;
+            model?: string;
+            permissions?: string;
+        };
+        AppAgentSwitch: {
+            /** @enum {string} */
+            agentHandoffStatus: "not_attempted" | "requested" | "received" | "unavailable" | "timed_out" | "failed" | "rejected";
+            /** @enum {string} */
+            errorCode?: "daemon_restart_pre_stop" | "daemon_restart_post_stop" | "daemon_restart_unrecoverable_target" | "daemon_restart_before_delivery" | "delivery_unconfirmed" | "source_session_terminated" | "source_stop_unconfirmed" | "target_binary_missing" | "target_agent_unauthorized" | "target_start_unconfirmed" | "source_restore_unconfirmed" | "request_cancelled" | "source_blocked" | "failed_pre_stop" | "failed_post_stop" | "target_ready_failed" | "delivery_failed" | "switch_failed";
+            fromHarness: string;
+            id: string;
+            /** Format: date-time */
+            requestedAt: string;
+            semanticHandoffIncluded: boolean;
+            sessionId: string;
+            /** @enum {string} */
+            sourceTranscriptStatus?: "not_attempted" | "available" | "unavailable";
+            /** @enum {string} */
+            state: "preparing_handoff" | "stopping_source" | "source_stopped" | "starting_target" | "target_ready" | "delivering_context" | "completed" | "failed";
+            targetHarness: string;
+            /** @enum {string} */
+            targetStartMode?: "fresh" | "resumed";
+            /** Format: date-time */
+            updatedAt: string;
+        };
+        AppAttachmentInput: {
+            data: string;
+            mimeType?: string;
+        };
+        AppContainerReapConfig: {
+            disabled?: boolean;
+        };
+        AppControllersSessionView: {
+            activeAgentSwitch?: components["schemas"]["AppAgentSwitch"];
+            activity: components["schemas"]["AppDomainActivity"];
+            autoInjectCI: boolean;
+            autoInjectReview: boolean;
+            autoReviewEnabled: boolean;
+            branch?: string;
+            /** Format: date-time */
+            createdAt: string;
+            displayName?: string;
+            harness?: string;
+            id: string;
+            isPinned: boolean;
+            isTerminated: boolean;
+            issueId?: string;
+            kind: string;
+            /** @enum {string} */
+            mode: "chat" | "tui";
+            model?: string;
+            /** Format: date-time */
+            pinnedAt?: null | string;
+            /** Format: int64 */
+            previewRevision?: number;
+            previewUrl?: string;
+            projectId: string;
+            prs: components["schemas"]["AppSessionPRFacts"][];
+            /** @enum {string} */
+            reviewerHarness?: "claude-code" | "codex" | "copilot" | "cursor" | "kilocode" | "opencode" | "kiro" | "pi" | "qwen" | "agy" | "continue" | "goose" | "vibe" | "devin" | "droid" | "kimi" | "kimchi" | "muse" | "amp" | "aider" | "grok" | "crush" | "auggie" | "cline" | "autohand";
+            /** @enum {string} */
+            scmStatus?: "pr_open" | "draft" | "ci_failed" | "review_pending" | "changes_requested" | "approved" | "mergeable" | "merged";
+            /** @enum {string} */
+            status: "working" | "pr_open" | "draft" | "ci_failed" | "review_pending" | "changes_requested" | "approved" | "mergeable" | "merged" | "needs_input" | "exited" | "idle" | "terminated" | "no_signal";
+            terminalHandleId?: string;
+            terminateOnPrMerge: boolean;
+            /** Format: date-time */
+            updatedAt: string;
+        };
+        AppDegradedProject: {
+            id: string;
+            /** @enum {string} */
+            kind: "single_repo" | "workspace" | "scratch";
+            name: string;
+            path: string;
+            resolveError: string;
+        };
+        AppDomainActivity: {
+            /** Format: date-time */
+            lastActivityAt: string;
+            state: string;
+        };
+        AppDomainReviewerConfig: {
+            harness: string;
+        };
+        AppKillSessionResponse: {
+            freed?: boolean;
+            ok: boolean;
+            sessionId: string;
+        };
+        AppListProjectsResponse: {
+            projects: components["schemas"]["AppProjectSummary"][];
+        };
+        AppListSessionsResponse: {
+            sessions: components["schemas"]["AppControllersSessionView"][];
+        };
+        AppProject: {
+            agent?: string;
+            config?: components["schemas"]["AppProjectConfig"];
+            defaultBranch: string;
+            id: string;
+            /** @enum {string} */
+            kind: "single_repo" | "workspace" | "scratch";
+            name: string;
+            path: string;
+            repo: string;
+            workspaceRepos?: components["schemas"]["AppWorkspaceRepo"][];
+        };
+        AppProjectConfig: {
+            agentConfig?: components["schemas"]["AppAgentConfig"];
+            agentRules?: string;
+            agentRulesFile?: string;
+            autoReview?: boolean;
+            containerReap?: components["schemas"]["AppContainerReapConfig"];
+            defaultBranch?: string;
+            env?: {
+                [key: string]: string;
+            };
+            orchestrator?: components["schemas"]["AppRoleOverride"];
+            orchestratorRules?: string;
+            postCreate?: string[];
+            reviewers?: components["schemas"]["AppDomainReviewerConfig"][];
+            sessionPrefix?: string;
+            symlinks?: string[];
+            trackerIntake?: components["schemas"]["AppTrackerIntakeConfig"];
+            worker?: components["schemas"]["AppRoleOverride"];
+        };
+        AppProjectGetResponse: {
+            project: components["schemas"]["AppProjectOrDegraded"];
+            /** @enum {string} */
+            status: "ok" | "degraded";
+        };
+        AppProjectOrDegraded: components["schemas"]["AppProject"] | components["schemas"]["AppDegradedProject"];
+        AppProjectSummary: {
+            id: string;
+            /** @enum {string} */
+            kind: "single_repo" | "workspace" | "scratch";
+            name: string;
+            orchestratorAgent?: string;
+            path: string;
+            resolveError?: string;
+            sessionPrefix: string;
+        };
+        AppRestoreSessionResponse: {
+            ok: boolean;
+            /** @enum {string} */
+            restoreMode: "native" | "saved_prompt" | "fresh";
+            session: components["schemas"]["AppControllersSessionView"];
+            sessionId: string;
+        };
+        AppRoleOverride: {
+            agent?: string;
+            agentConfig?: components["schemas"]["AppAgentConfig"];
+        };
+        AppSendSessionMessageRequest: {
+            attachment?: components["schemas"]["AppAttachmentInput"];
+            message: string;
+        };
+        AppSendSessionMessageResponse: {
+            message: string;
+            ok: boolean;
+            sessionId: string;
+        };
+        AppSessionPRFacts: {
+            /** @enum {string} */
+            ci: "unknown" | "pending" | "passing" | "failing";
+            /** @enum {string} */
+            mergeability: "unknown" | "mergeable" | "conflicting" | "blocked" | "unstable";
+            number: number;
+            /** @enum {string} */
+            review: "none" | "approved" | "changes_requested" | "review_required";
+            reviewComments: boolean;
+            /** @enum {string} */
+            state: "draft" | "open" | "merged" | "closed";
+            /** Format: date-time */
+            updatedAt: string;
+            url: string;
+        };
+        AppSessionResponse: {
+            session: components["schemas"]["AppControllersSessionView"];
+        };
+        AppSpawnSessionRequest: {
+            attachments?: components["schemas"]["AppAttachmentInput"][];
+            branch?: string;
+            displayName?: string;
+            /** @enum {string} */
+            harness?: "claude-code" | "codex" | "aider" | "opencode" | "grok" | "droid" | "amp" | "agy" | "crush" | "cursor" | "qwen" | "copilot" | "goose" | "auggie" | "continue" | "devin" | "cline" | "kimi" | "muse" | "kiro" | "kilocode" | "vibe" | "pi" | "kimchi" | "prime-agent" | "autohand";
+            issueId?: string;
+            /** @enum {string} */
+            kind?: "worker" | "orchestrator";
+            /** @enum {string} */
+            mode?: "chat" | "tui";
+            model?: string;
+            projectId: string;
+            prompt?: string;
+            /** @enum {string} */
+            trackerProvider?: "github" | "gitlab";
+        };
+        AppSpawnSessionResponse: {
+            promptBytes: number;
+            session: components["schemas"]["AppControllersSessionView"];
+            systemPromptBytes: number;
+        };
+        AppTrackerIntakeConfig: {
+            assignee?: string;
+            enabled?: boolean;
+            /** @enum {string} */
+            provider?: "github" | "gitlab";
+            repo?: string;
+        };
+        AppWorkspaceRepo: {
+            gitStatus?: string;
+            name: string;
+            relativePath: string;
+            repo: string;
         };
     };
     responses: {
@@ -2008,6 +2133,29 @@ export interface components {
         EventLimit: number;
         /** @description Return events with a sequence strictly greater than this value. */
         After: number;
+        /** @description Selects which organization a hosted app request under `/api/v1` acts
+         *     within. Accepts either the organization's id or its slug — whichever the
+         *     client has to hand. Prefer the id where you have both: a slug is
+         *     renameable, so a persisted one can go stale.
+         *
+         *     **Only needed when the caller belongs to more than one organization.**
+         *     With a single active membership the header may be omitted and the
+         *     middleware resolves that organization; with several, omitting it is an
+         *     error rather than a guess, because picking one silently is how a request
+         *     lands in the wrong tenant. Sending it always is harmless and is the
+         *     simplest rule for a client that does not want to branch on membership
+         *     count.
+         *
+         *     The middleware verifies the bearer token's account holds an *active*
+         *     membership before injecting the tenant context the stores scope by. A
+         *     revoked or suspended membership, and an organization the caller does not
+         *     belong to, are both answered as though the organization does not exist,
+         *     so the header cannot be used to probe for tenants.
+         *
+         *     Absent on a local daemon, which serves the same routes untenanted — that
+         *     is what lets one set of components render both.
+         *      */
+        OrganizationHeader: string;
         /** @description Reusing a key with the same command returns the original result.
          *     Reusing it with a different command returns an IDEMPOTENCY_CONFLICT.
          *      */
@@ -2117,37 +2265,134 @@ export interface operations {
             default: components["responses"]["Error"];
         };
     };
-    getGitHubUserConnection: {
+    listGitHubInstallations: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description Selects which organization a hosted app request under `/api/v1` acts
+                 *     within. Accepts either the organization's id or its slug — whichever the
+                 *     client has to hand. Prefer the id where you have both: a slug is
+                 *     renameable, so a persisted one can go stale.
+                 *
+                 *     **Only needed when the caller belongs to more than one organization.**
+                 *     With a single active membership the header may be omitted and the
+                 *     middleware resolves that organization; with several, omitting it is an
+                 *     error rather than a guess, because picking one silently is how a request
+                 *     lands in the wrong tenant. Sending it always is harmless and is the
+                 *     simplest rule for a client that does not want to branch on membership
+                 *     count.
+                 *
+                 *     The middleware verifies the bearer token's account holds an *active*
+                 *     membership before injecting the tenant context the stores scope by. A
+                 *     revoked or suspended membership, and an organization the caller does not
+                 *     belong to, are both answered as though the organization does not exist,
+                 *     so the header cannot be used to probe for tenants.
+                 *
+                 *     Absent on a local daemon, which serves the same routes untenanted — that
+                 *     is what lets one set of components render both.
+                 *      */
+                "X-AO-Org"?: components["parameters"]["OrganizationHeader"];
+            };
             path?: never;
             cookie?: never;
         };
         requestBody?: never;
         responses: {
-            /** @description The authenticated user's account-wide GitHub connection. */
+            /** @description GitHub App installations connected to the acting organization. */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["GitHubUserConnection"];
+                    "application/json": components["schemas"]["SCMInstallationList"];
                 };
             };
             default: components["responses"]["Error"];
         };
     };
-    disconnectGitHubUser: {
+    startGitHubInstallation: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description Selects which organization a hosted app request under `/api/v1` acts
+                 *     within. Accepts either the organization's id or its slug — whichever the
+                 *     client has to hand. Prefer the id where you have both: a slug is
+                 *     renameable, so a persisted one can go stale.
+                 *
+                 *     **Only needed when the caller belongs to more than one organization.**
+                 *     With a single active membership the header may be omitted and the
+                 *     middleware resolves that organization; with several, omitting it is an
+                 *     error rather than a guess, because picking one silently is how a request
+                 *     lands in the wrong tenant. Sending it always is harmless and is the
+                 *     simplest rule for a client that does not want to branch on membership
+                 *     count.
+                 *
+                 *     The middleware verifies the bearer token's account holds an *active*
+                 *     membership before injecting the tenant context the stores scope by. A
+                 *     revoked or suspended membership, and an organization the caller does not
+                 *     belong to, are both answered as though the organization does not exist,
+                 *     so the header cannot be used to probe for tenants.
+                 *
+                 *     Absent on a local daemon, which serves the same routes untenanted — that
+                 *     is what lets one set of components render both.
+                 *      */
+                "X-AO-Org"?: components["parameters"]["OrganizationHeader"];
+            };
             path?: never;
             cookie?: never;
         };
         requestBody?: never;
         responses: {
-            /** @description The account-wide GitHub authorization was revoked. */
+            /** @description A short-lived GitHub App installation URL. */
+            201: {
+                headers: {
+                    /** @description Always no-store. */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SCMInstallStart"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    disconnectGitHubInstallation: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Selects which organization a hosted app request under `/api/v1` acts
+                 *     within. Accepts either the organization's id or its slug — whichever the
+                 *     client has to hand. Prefer the id where you have both: a slug is
+                 *     renameable, so a persisted one can go stale.
+                 *
+                 *     **Only needed when the caller belongs to more than one organization.**
+                 *     With a single active membership the header may be omitted and the
+                 *     middleware resolves that organization; with several, omitting it is an
+                 *     error rather than a guess, because picking one silently is how a request
+                 *     lands in the wrong tenant. Sending it always is harmless and is the
+                 *     simplest rule for a client that does not want to branch on membership
+                 *     count.
+                 *
+                 *     The middleware verifies the bearer token's account holds an *active*
+                 *     membership before injecting the tenant context the stores scope by. A
+                 *     revoked or suspended membership, and an organization the caller does not
+                 *     belong to, are both answered as though the organization does not exist,
+                 *     so the header cannot be used to probe for tenants.
+                 *
+                 *     Absent on a local daemon, which serves the same routes untenanted — that
+                 *     is what lets one set of components render both.
+                 *      */
+                "X-AO-Org"?: components["parameters"]["OrganizationHeader"];
+            };
+            path: {
+                installationId: components["parameters"]["InstallationId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Installation disconnected from the acting organization. */
             204: {
                 headers: {
                     [name: string]: unknown;
@@ -2157,46 +2402,219 @@ export interface operations {
             default: components["responses"]["Error"];
         };
     };
-    startGitHubUserAuthorization: {
+    listGitHubRepositories: {
         parameters: {
             query?: never;
-            header?: never;
-            path?: never;
+            header?: {
+                /** @description Selects which organization a hosted app request under `/api/v1` acts
+                 *     within. Accepts either the organization's id or its slug — whichever the
+                 *     client has to hand. Prefer the id where you have both: a slug is
+                 *     renameable, so a persisted one can go stale.
+                 *
+                 *     **Only needed when the caller belongs to more than one organization.**
+                 *     With a single active membership the header may be omitted and the
+                 *     middleware resolves that organization; with several, omitting it is an
+                 *     error rather than a guess, because picking one silently is how a request
+                 *     lands in the wrong tenant. Sending it always is harmless and is the
+                 *     simplest rule for a client that does not want to branch on membership
+                 *     count.
+                 *
+                 *     The middleware verifies the bearer token's account holds an *active*
+                 *     membership before injecting the tenant context the stores scope by. A
+                 *     revoked or suspended membership, and an organization the caller does not
+                 *     belong to, are both answered as though the organization does not exist,
+                 *     so the header cannot be used to probe for tenants.
+                 *
+                 *     Absent on a local daemon, which serves the same routes untenanted — that
+                 *     is what lets one set of components render both.
+                 *      */
+                "X-AO-Org"?: components["parameters"]["OrganizationHeader"];
+            };
+            path: {
+                installationId: components["parameters"]["InstallationId"];
+            };
             cookie?: never;
         };
         requestBody?: never;
         responses: {
-            /** @description A short-lived account-wide GitHub authorization attempt. */
-            201: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["GitHubUserAuthorizationStart"];
-                };
-            };
-            default: components["responses"]["Error"];
-        };
-    };
-    completeGitHubUserAuthorization: {
-        parameters: {
-            query: {
-                state: string;
-                code: string;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description GitHub authorization completion page. */
+            /** @description Repositories visible through this installation. */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "text/html": string;
+                    "application/json": components["schemas"]["SCMRepositoryList"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    syncGitHubRepositories: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Selects which organization a hosted app request under `/api/v1` acts
+                 *     within. Accepts either the organization's id or its slug — whichever the
+                 *     client has to hand. Prefer the id where you have both: a slug is
+                 *     renameable, so a persisted one can go stale.
+                 *
+                 *     **Only needed when the caller belongs to more than one organization.**
+                 *     With a single active membership the header may be omitted and the
+                 *     middleware resolves that organization; with several, omitting it is an
+                 *     error rather than a guess, because picking one silently is how a request
+                 *     lands in the wrong tenant. Sending it always is harmless and is the
+                 *     simplest rule for a client that does not want to branch on membership
+                 *     count.
+                 *
+                 *     The middleware verifies the bearer token's account holds an *active*
+                 *     membership before injecting the tenant context the stores scope by. A
+                 *     revoked or suspended membership, and an organization the caller does not
+                 *     belong to, are both answered as though the organization does not exist,
+                 *     so the header cannot be used to probe for tenants.
+                 *
+                 *     Absent on a local daemon, which serves the same routes untenanted — that
+                 *     is what lets one set of components render both.
+                 *      */
+                "X-AO-Org"?: components["parameters"]["OrganizationHeader"];
+            };
+            path: {
+                installationId: components["parameters"]["InstallationId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Refreshed repositories visible through this installation. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SCMRepositoryList"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    setGitHubRepositoryAllowlist: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Selects which organization a hosted app request under `/api/v1` acts
+                 *     within. Accepts either the organization's id or its slug — whichever the
+                 *     client has to hand. Prefer the id where you have both: a slug is
+                 *     renameable, so a persisted one can go stale.
+                 *
+                 *     **Only needed when the caller belongs to more than one organization.**
+                 *     With a single active membership the header may be omitted and the
+                 *     middleware resolves that organization; with several, omitting it is an
+                 *     error rather than a guess, because picking one silently is how a request
+                 *     lands in the wrong tenant. Sending it always is harmless and is the
+                 *     simplest rule for a client that does not want to branch on membership
+                 *     count.
+                 *
+                 *     The middleware verifies the bearer token's account holds an *active*
+                 *     membership before injecting the tenant context the stores scope by. A
+                 *     revoked or suspended membership, and an organization the caller does not
+                 *     belong to, are both answered as though the organization does not exist,
+                 *     so the header cannot be used to probe for tenants.
+                 *
+                 *     Absent on a local daemon, which serves the same routes untenanted — that
+                 *     is what lets one set of components render both.
+                 *      */
+                "X-AO-Org"?: components["parameters"]["OrganizationHeader"];
+            };
+            path: {
+                installationId: components["parameters"]["InstallationId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SCMAllowlistInput"];
+            };
+        };
+        responses: {
+            /** @description Updated repository allowlist. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SCMRepositoryList"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    completeGitHubInstallation: {
+        parameters: {
+            query: {
+                state: string;
+                installation_id: number;
+                setup_action?: string;
+                code?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Installation completed without a configured browser redirect. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SCMInstallation"];
+                };
+            };
+            /** @description Browser redirected to the configured completion URL. */
+            302: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    receiveGitHubWebhook: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-GitHub-Event": string;
+                "X-GitHub-Delivery": string;
+                "X-Hub-Signature-256": string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    [key: string]: unknown;
+                };
+            };
+        };
+        responses: {
+            /** @description Duplicate delivery already processed. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SCMWebhookResponse"];
+                };
+            };
+            /** @description Delivery verified and accepted. */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SCMWebhookResponse"];
                 };
             };
             default: components["responses"]["Error"];
@@ -2287,10 +2705,41 @@ export interface operations {
             default: components["responses"]["Error"];
         };
     };
-    deleteProject: {
+    getProject: {
         parameters: {
             query?: never;
             header?: never;
+            path: {
+                orgId: components["parameters"]["OrgId"];
+                projectId: components["parameters"]["ProjectId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Project details. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        project: components["schemas"]["Project"];
+                    };
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    deleteProject: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Reusing a key with the same command returns the original result.
+                 *     Reusing it with a different command returns an IDEMPOTENCY_CONFLICT.
+                 *      */
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
             path: {
                 orgId: components["parameters"]["OrgId"];
                 projectId: components["parameters"]["ProjectId"];
@@ -2311,24 +2760,29 @@ export interface operations {
             default: components["responses"]["Error"];
         };
     };
-    updateProject: {
+    resumeProject: {
         parameters: {
             query?: never;
-            header?: never;
+            header: {
+                /** @description Reusing a key with the same command returns the original result.
+                 *     Reusing it with a different command returns an IDEMPOTENCY_CONFLICT.
+                 *      */
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
             path: {
                 orgId: components["parameters"]["OrgId"];
                 projectId: components["parameters"]["ProjectId"];
             };
             cookie?: never;
         };
-        requestBody: {
+        requestBody?: {
             content: {
-                "application/json": components["schemas"]["UpdateProjectInput"];
+                "application/json": components["schemas"]["ResumeProjectInput"];
             };
         };
         responses: {
-            /** @description Project settings updated. */
-            200: {
+            /** @description Workspace resume accepted, or the project was already running. */
+            202: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -2336,481 +2790,6 @@ export interface operations {
                     "application/json": {
                         project: components["schemas"]["Project"];
                     };
-                };
-            };
-            default: components["responses"]["Error"];
-        };
-    };
-    listGitHubInstallations: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                orgId: components["parameters"]["OrgId"];
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description GitHub App installations connected to the organization. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        installations: components["schemas"]["GitHubInstallation"][];
-                    };
-                };
-            };
-            default: components["responses"]["Error"];
-        };
-    };
-    startGitHubInstallation: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                orgId: components["parameters"]["OrgId"];
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description A short-lived GitHub App installation attempt. */
-            201: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["GitHubInstallationStart"];
-                };
-            };
-            default: components["responses"]["Error"];
-        };
-    };
-    syncGitHubInstallation: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                orgId: components["parameters"]["OrgId"];
-                installationId: components["parameters"]["InstallationId"];
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Repository synchronization accepted. */
-            202: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        installation: components["schemas"]["GitHubInstallation"];
-                    };
-                };
-            };
-            default: components["responses"]["Error"];
-        };
-    };
-    disconnectGitHubInstallation: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                orgId: components["parameters"]["OrgId"];
-                installationId: components["parameters"]["InstallationId"];
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description The GitHub App installation was disconnected from AO. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        installation: components["schemas"]["GitHubInstallation"];
-                    };
-                };
-            };
-            default: components["responses"]["Error"];
-        };
-    };
-    listGitHubRepositories: {
-        parameters: {
-            query?: {
-                cursor?: components["parameters"]["Cursor"];
-                limit?: components["parameters"]["Limit"];
-            };
-            header?: never;
-            path: {
-                orgId: components["parameters"]["OrgId"];
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description A page of repositories currently or historically granted to the organization. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["GitHubRepositoryPage"];
-                };
-            };
-            default: components["responses"]["Error"];
-        };
-    };
-    createProjectFromGitHub: {
-        parameters: {
-            query?: never;
-            header: {
-                /** @description Reusing a key with the same command returns the original result.
-                 *     Reusing it with a different command returns an IDEMPOTENCY_CONFLICT.
-                 *      */
-                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
-            };
-            path: {
-                orgId: components["parameters"]["OrgId"];
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["CreateGitHubProjectInput"];
-            };
-        };
-        responses: {
-            /** @description Project created from an actively granted GitHub repository. */
-            201: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        project: components["schemas"]["Project"];
-                    };
-                };
-            };
-            default: components["responses"]["Error"];
-        };
-    };
-    createGitHubScratchProject: {
-        parameters: {
-            query?: never;
-            header: {
-                /** @description Reusing a key with the same command returns the original result.
-                 *     Reusing it with a different command returns an IDEMPOTENCY_CONFLICT.
-                 *      */
-                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
-            };
-            path: {
-                orgId: components["parameters"]["OrgId"];
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["CreateGitHubScratchProjectInput"];
-            };
-        };
-        responses: {
-            /** @description GitHub repository, AO project, and first orchestrator created. */
-            201: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["CreateGitHubScratchProjectResponse"];
-                };
-            };
-            default: components["responses"]["Error"];
-        };
-    };
-    listSessions: {
-        parameters: {
-            query?: {
-                cursor?: components["parameters"]["Cursor"];
-                limit?: components["parameters"]["Limit"];
-                projectId?: string;
-            };
-            header?: never;
-            path: {
-                orgId: components["parameters"]["OrgId"];
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description A page of sessions in the tenant. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["SessionPage"];
-                };
-            };
-            default: components["responses"]["Error"];
-        };
-    };
-    createSession: {
-        parameters: {
-            query?: never;
-            header: {
-                /** @description Reusing a key with the same command returns the original result.
-                 *     Reusing it with a different command returns an IDEMPOTENCY_CONFLICT.
-                 *      */
-                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
-            };
-            path: {
-                orgId: components["parameters"]["OrgId"];
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["CreateSessionInput"];
-            };
-        };
-        responses: {
-            /** @description Session created. */
-            201: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        session: components["schemas"]["Session"];
-                    };
-                };
-            };
-            default: components["responses"]["Error"];
-        };
-    };
-    getSession: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                orgId: components["parameters"]["OrgId"];
-                sessionId: components["parameters"]["SessionId"];
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Session details. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        session: components["schemas"]["Session"];
-                    };
-                };
-            };
-            default: components["responses"]["Error"];
-        };
-    };
-    deleteSession: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                orgId: components["parameters"]["OrgId"];
-                sessionId: components["parameters"]["SessionId"];
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Session sandbox deletion was requested; durable history is retained. */
-            202: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DeleteSessionResponse"];
-                };
-            };
-            default: components["responses"]["Error"];
-        };
-    };
-    listSessionPullRequests: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                orgId: components["parameters"]["OrgId"];
-                sessionId: components["parameters"]["SessionId"];
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Normalized provider pull-request observations for the session. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["SessionPullRequests"];
-                };
-            };
-            default: components["responses"]["Error"];
-        };
-    };
-    getSessionReviewState: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                orgId: components["parameters"]["OrgId"];
-                sessionId: components["parameters"]["SessionId"];
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description AO review planning state and recorded runs for the session. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["SessionReviewState"];
-                };
-            };
-            default: components["responses"]["Error"];
-        };
-    };
-    sendMessage: {
-        parameters: {
-            query?: never;
-            header: {
-                /** @description Reusing a key with the same command returns the original result.
-                 *     Reusing it with a different command returns an IDEMPOTENCY_CONFLICT.
-                 *      */
-                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
-            };
-            path: {
-                orgId: components["parameters"]["OrgId"];
-                sessionId: components["parameters"]["SessionId"];
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": {
-                    text: string;
-                };
-            };
-        };
-        responses: {
-            /** @description Message accepted and durably appended. */
-            202: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        event: components["schemas"]["UserMessageEvent"];
-                    };
-                };
-            };
-            default: components["responses"]["Error"];
-        };
-    };
-    cancelTurn: {
-        parameters: {
-            query?: never;
-            header: {
-                /** @description Reusing a key with the same command returns the original result.
-                 *     Reusing it with a different command returns an IDEMPOTENCY_CONFLICT.
-                 *      */
-                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
-            };
-            path: {
-                orgId: components["parameters"]["OrgId"];
-                sessionId: components["parameters"]["SessionId"];
-                turnId: components["parameters"]["TurnId"];
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Cancellation was durably requested for the turn. */
-            202: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["WorkerOKResponse"];
-                };
-            };
-            default: components["responses"]["Error"];
-        };
-    };
-    replayClientEvents: {
-        parameters: {
-            query?: {
-                /** @description Return events with a sequence strictly greater than this value. */
-                after?: components["parameters"]["After"];
-                limit?: components["parameters"]["EventLimit"];
-            };
-            header?: never;
-            path: {
-                orgId: components["parameters"]["OrgId"];
-                sessionId: components["parameters"]["SessionId"];
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Client-visible events after the supplied sequence. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ClientEventPage"];
-                };
-            };
-            default: components["responses"]["Error"];
-        };
-    };
-    streamClientEvents: {
-        parameters: {
-            query?: {
-                /** @description Return events with a sequence strictly greater than this value. */
-                after?: components["parameters"]["After"];
-            };
-            header?: never;
-            path: {
-                orgId: components["parameters"]["OrgId"];
-                sessionId: components["parameters"]["SessionId"];
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Replay followed by live client-visible events. Each SSE data field
-             *     contains a ClientEvent; the SSE id is its sequence.
-             *      */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "text/event-stream": string;
                 };
             };
             default: components["responses"]["Error"];
@@ -2830,6 +2809,10 @@ export interface operations {
             content: {
                 "application/json": {
                     kind: components["schemas"]["TerminalKind"];
+                    /** @description Scopes the client intends to use. Absent requests the
+                     *     caller's full authority for this session.
+                     *      */
+                    scopes?: components["schemas"]["TerminalScope"][];
                 };
             };
         };
@@ -2848,10 +2831,13 @@ export interface operations {
     };
     connectTerminal: {
         parameters: {
-            query: {
-                ticket: string;
+            query?: {
+                /** @description Replay retained output with a `seq` strictly greater than this value
+                 *     before going live, where the listener keeps a replay buffer. Use the
+                 *     last `seq` rendered. Omit — or pass 0 — to take whatever the
+                 *     listener offers, which for a local daemon is the live stream only.
+                 *      */
                 after?: number;
-                kind: components["schemas"]["TerminalKind"];
             };
             header?: never;
             path?: never;
@@ -2859,118 +2845,16 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description WebSocket protocol upgrade accepted. */
+            /** @description WebSocket upgrade accepted. `Sec-WebSocket-Protocol` echoes
+             *     `ao.mux.v1` alone — never the ticket subprotocol.
+             *      */
             101: {
                 headers: {
+                    /** @description Always `ao.mux.v1`. */
+                    "Sec-WebSocket-Protocol"?: string;
                     [name: string]: unknown;
                 };
                 content?: never;
-            };
-            default: components["responses"]["Error"];
-        };
-    };
-    listWorkspaceFiles: {
-        parameters: {
-            query?: {
-                path?: string;
-                cursor?: components["parameters"]["Cursor"];
-                limit?: components["parameters"]["Limit"];
-            };
-            header?: never;
-            path: {
-                orgId: components["parameters"]["OrgId"];
-                sessionId: components["parameters"]["SessionId"];
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description A page of entries in a workspace directory. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["WorkspaceEntryPage"];
-                };
-            };
-            default: components["responses"]["Error"];
-        };
-    };
-    readWorkspaceFile: {
-        parameters: {
-            query: {
-                path: string;
-            };
-            header?: never;
-            path: {
-                orgId: components["parameters"]["OrgId"];
-                sessionId: components["parameters"]["SessionId"];
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description UTF-8 workspace file contents. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["WorkspaceFile"];
-                };
-            };
-            default: components["responses"]["Error"];
-        };
-    };
-    writeWorkspaceFile: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                orgId: components["parameters"]["OrgId"];
-                sessionId: components["parameters"]["SessionId"];
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["WorkspaceFileWriteInput"];
-            };
-        };
-        responses: {
-            /** @description The updated UTF-8 workspace file. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["WorkspaceFile"];
-                };
-            };
-            default: components["responses"]["Error"];
-        };
-    };
-    getWorkspaceDiff: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                orgId: components["parameters"]["OrgId"];
-                sessionId: components["parameters"]["SessionId"];
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Workspace changes relative to the session compare base. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["WorkspaceDiff"];
-                };
             };
             default: components["responses"]["Error"];
         };
@@ -3339,7 +3223,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["SessionPage"];
+                    "application/json": components["schemas"]["WorkerChildSessionPage"];
                 };
             };
             400: components["responses"]["BadRequest"];
@@ -3373,7 +3257,7 @@ export interface operations {
                 };
                 content: {
                     "application/json": {
-                        session: components["schemas"]["Session"];
+                        session: components["schemas"]["WorkerChildSession"];
                     };
                 };
             };
@@ -3621,6 +3505,597 @@ export interface operations {
             401: components["responses"]["WorkerUnauthorized"];
             403: components["responses"]["WorkerScopeRequired"];
             409: components["responses"]["Error"];
+        };
+    };
+    appListProjects: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Selects which organization a hosted app request under `/api/v1` acts
+                 *     within. Accepts either the organization's id or its slug — whichever the
+                 *     client has to hand. Prefer the id where you have both: a slug is
+                 *     renameable, so a persisted one can go stale.
+                 *
+                 *     **Only needed when the caller belongs to more than one organization.**
+                 *     With a single active membership the header may be omitted and the
+                 *     middleware resolves that organization; with several, omitting it is an
+                 *     error rather than a guess, because picking one silently is how a request
+                 *     lands in the wrong tenant. Sending it always is harmless and is the
+                 *     simplest rule for a client that does not want to branch on membership
+                 *     count.
+                 *
+                 *     The middleware verifies the bearer token's account holds an *active*
+                 *     membership before injecting the tenant context the stores scope by. A
+                 *     revoked or suspended membership, and an organization the caller does not
+                 *     belong to, are both answered as though the organization does not exist,
+                 *     so the header cannot be used to probe for tenants.
+                 *
+                 *     Absent on a local daemon, which serves the same routes untenanted — that
+                 *     is what lets one set of components render both.
+                 *      */
+                "X-AO-Org"?: components["parameters"]["OrganizationHeader"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AppListProjectsResponse"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AppAPIError"];
+                };
+            };
+        };
+    };
+    appGetProject: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Selects which organization a hosted app request under `/api/v1` acts
+                 *     within. Accepts either the organization's id or its slug — whichever the
+                 *     client has to hand. Prefer the id where you have both: a slug is
+                 *     renameable, so a persisted one can go stale.
+                 *
+                 *     **Only needed when the caller belongs to more than one organization.**
+                 *     With a single active membership the header may be omitted and the
+                 *     middleware resolves that organization; with several, omitting it is an
+                 *     error rather than a guess, because picking one silently is how a request
+                 *     lands in the wrong tenant. Sending it always is harmless and is the
+                 *     simplest rule for a client that does not want to branch on membership
+                 *     count.
+                 *
+                 *     The middleware verifies the bearer token's account holds an *active*
+                 *     membership before injecting the tenant context the stores scope by. A
+                 *     revoked or suspended membership, and an organization the caller does not
+                 *     belong to, are both answered as though the organization does not exist,
+                 *     so the header cannot be used to probe for tenants.
+                 *
+                 *     Absent on a local daemon, which serves the same routes untenanted — that
+                 *     is what lets one set of components render both.
+                 *      */
+                "X-AO-Org"?: components["parameters"]["OrganizationHeader"];
+            };
+            path: {
+                /** @description Project identifier (registry key). */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AppProjectGetResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AppAPIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AppAPIError"];
+                };
+            };
+        };
+    };
+    appListSessions: {
+        parameters: {
+            query?: {
+                /** @description Project id filter. */
+                project?: string;
+                /** @description When true, return non-terminated sessions; when false, return terminated sessions. */
+                active?: null | boolean;
+                /** @description When true, return only orchestrator sessions. */
+                orchestratorOnly?: null | boolean;
+                /** @description When true, return only fresh non-terminated sessions. */
+                fresh?: null | boolean;
+            };
+            header?: {
+                /** @description Selects which organization a hosted app request under `/api/v1` acts
+                 *     within. Accepts either the organization's id or its slug — whichever the
+                 *     client has to hand. Prefer the id where you have both: a slug is
+                 *     renameable, so a persisted one can go stale.
+                 *
+                 *     **Only needed when the caller belongs to more than one organization.**
+                 *     With a single active membership the header may be omitted and the
+                 *     middleware resolves that organization; with several, omitting it is an
+                 *     error rather than a guess, because picking one silently is how a request
+                 *     lands in the wrong tenant. Sending it always is harmless and is the
+                 *     simplest rule for a client that does not want to branch on membership
+                 *     count.
+                 *
+                 *     The middleware verifies the bearer token's account holds an *active*
+                 *     membership before injecting the tenant context the stores scope by. A
+                 *     revoked or suspended membership, and an organization the caller does not
+                 *     belong to, are both answered as though the organization does not exist,
+                 *     so the header cannot be used to probe for tenants.
+                 *
+                 *     Absent on a local daemon, which serves the same routes untenanted — that
+                 *     is what lets one set of components render both.
+                 *      */
+                "X-AO-Org"?: components["parameters"]["OrganizationHeader"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AppListSessionsResponse"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AppAPIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AppAPIError"];
+                };
+            };
+        };
+    };
+    appSpawnSession: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Selects which organization a hosted app request under `/api/v1` acts
+                 *     within. Accepts either the organization's id or its slug — whichever the
+                 *     client has to hand. Prefer the id where you have both: a slug is
+                 *     renameable, so a persisted one can go stale.
+                 *
+                 *     **Only needed when the caller belongs to more than one organization.**
+                 *     With a single active membership the header may be omitted and the
+                 *     middleware resolves that organization; with several, omitting it is an
+                 *     error rather than a guess, because picking one silently is how a request
+                 *     lands in the wrong tenant. Sending it always is harmless and is the
+                 *     simplest rule for a client that does not want to branch on membership
+                 *     count.
+                 *
+                 *     The middleware verifies the bearer token's account holds an *active*
+                 *     membership before injecting the tenant context the stores scope by. A
+                 *     revoked or suspended membership, and an organization the caller does not
+                 *     belong to, are both answered as though the organization does not exist,
+                 *     so the header cannot be used to probe for tenants.
+                 *
+                 *     Absent on a local daemon, which serves the same routes untenanted — that
+                 *     is what lets one set of components render both.
+                 *      */
+                "X-AO-Org"?: components["parameters"]["OrganizationHeader"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AppSpawnSessionRequest"];
+            };
+        };
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AppSpawnSessionResponse"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AppAPIError"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AppAPIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AppAPIError"];
+                };
+            };
+        };
+    };
+    appGetSession: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Selects which organization a hosted app request under `/api/v1` acts
+                 *     within. Accepts either the organization's id or its slug — whichever the
+                 *     client has to hand. Prefer the id where you have both: a slug is
+                 *     renameable, so a persisted one can go stale.
+                 *
+                 *     **Only needed when the caller belongs to more than one organization.**
+                 *     With a single active membership the header may be omitted and the
+                 *     middleware resolves that organization; with several, omitting it is an
+                 *     error rather than a guess, because picking one silently is how a request
+                 *     lands in the wrong tenant. Sending it always is harmless and is the
+                 *     simplest rule for a client that does not want to branch on membership
+                 *     count.
+                 *
+                 *     The middleware verifies the bearer token's account holds an *active*
+                 *     membership before injecting the tenant context the stores scope by. A
+                 *     revoked or suspended membership, and an organization the caller does not
+                 *     belong to, are both answered as though the organization does not exist,
+                 *     so the header cannot be used to probe for tenants.
+                 *
+                 *     Absent on a local daemon, which serves the same routes untenanted — that
+                 *     is what lets one set of components render both.
+                 *      */
+                "X-AO-Org"?: components["parameters"]["OrganizationHeader"];
+            };
+            path: {
+                /** @description Session identifier, e.g. project-1. */
+                sessionId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AppSessionResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AppAPIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AppAPIError"];
+                };
+            };
+        };
+    };
+    appKillSession: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Selects which organization a hosted app request under `/api/v1` acts
+                 *     within. Accepts either the organization's id or its slug — whichever the
+                 *     client has to hand. Prefer the id where you have both: a slug is
+                 *     renameable, so a persisted one can go stale.
+                 *
+                 *     **Only needed when the caller belongs to more than one organization.**
+                 *     With a single active membership the header may be omitted and the
+                 *     middleware resolves that organization; with several, omitting it is an
+                 *     error rather than a guess, because picking one silently is how a request
+                 *     lands in the wrong tenant. Sending it always is harmless and is the
+                 *     simplest rule for a client that does not want to branch on membership
+                 *     count.
+                 *
+                 *     The middleware verifies the bearer token's account holds an *active*
+                 *     membership before injecting the tenant context the stores scope by. A
+                 *     revoked or suspended membership, and an organization the caller does not
+                 *     belong to, are both answered as though the organization does not exist,
+                 *     so the header cannot be used to probe for tenants.
+                 *
+                 *     Absent on a local daemon, which serves the same routes untenanted — that
+                 *     is what lets one set of components render both.
+                 *      */
+                "X-AO-Org"?: components["parameters"]["OrganizationHeader"];
+            };
+            path: {
+                /** @description Session identifier, e.g. project-1. */
+                sessionId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AppKillSessionResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AppAPIError"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AppAPIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AppAPIError"];
+                };
+            };
+        };
+    };
+    appRestoreSession: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Selects which organization a hosted app request under `/api/v1` acts
+                 *     within. Accepts either the organization's id or its slug — whichever the
+                 *     client has to hand. Prefer the id where you have both: a slug is
+                 *     renameable, so a persisted one can go stale.
+                 *
+                 *     **Only needed when the caller belongs to more than one organization.**
+                 *     With a single active membership the header may be omitted and the
+                 *     middleware resolves that organization; with several, omitting it is an
+                 *     error rather than a guess, because picking one silently is how a request
+                 *     lands in the wrong tenant. Sending it always is harmless and is the
+                 *     simplest rule for a client that does not want to branch on membership
+                 *     count.
+                 *
+                 *     The middleware verifies the bearer token's account holds an *active*
+                 *     membership before injecting the tenant context the stores scope by. A
+                 *     revoked or suspended membership, and an organization the caller does not
+                 *     belong to, are both answered as though the organization does not exist,
+                 *     so the header cannot be used to probe for tenants.
+                 *
+                 *     Absent on a local daemon, which serves the same routes untenanted — that
+                 *     is what lets one set of components render both.
+                 *      */
+                "X-AO-Org"?: components["parameters"]["OrganizationHeader"];
+            };
+            path: {
+                /** @description Session identifier, e.g. project-1. */
+                sessionId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AppRestoreSessionResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AppAPIError"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AppAPIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AppAPIError"];
+                };
+            };
+        };
+    };
+    appSendSessionMessage: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Selects which organization a hosted app request under `/api/v1` acts
+                 *     within. Accepts either the organization's id or its slug — whichever the
+                 *     client has to hand. Prefer the id where you have both: a slug is
+                 *     renameable, so a persisted one can go stale.
+                 *
+                 *     **Only needed when the caller belongs to more than one organization.**
+                 *     With a single active membership the header may be omitted and the
+                 *     middleware resolves that organization; with several, omitting it is an
+                 *     error rather than a guess, because picking one silently is how a request
+                 *     lands in the wrong tenant. Sending it always is harmless and is the
+                 *     simplest rule for a client that does not want to branch on membership
+                 *     count.
+                 *
+                 *     The middleware verifies the bearer token's account holds an *active*
+                 *     membership before injecting the tenant context the stores scope by. A
+                 *     revoked or suspended membership, and an organization the caller does not
+                 *     belong to, are both answered as though the organization does not exist,
+                 *     so the header cannot be used to probe for tenants.
+                 *
+                 *     Absent on a local daemon, which serves the same routes untenanted — that
+                 *     is what lets one set of components render both.
+                 *      */
+                "X-AO-Org"?: components["parameters"]["OrganizationHeader"];
+            };
+            path: {
+                /** @description Session identifier, e.g. project-1. */
+                sessionId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AppSendSessionMessageRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AppSendSessionMessageResponse"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AppAPIError"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AppAPIError"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AppAPIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AppAPIError"];
+                };
+            };
+        };
+    };
+    redeemSandboxTicket: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SandboxTicketRedemptionInput"];
+            };
+        };
+        responses: {
+            /** @description Ticket atomically consumed and its bound grant returned. */
+            200: {
+                headers: {
+                    /** @description Always no-store. */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SandboxTicketGrant"];
+                };
+            };
+            default: components["responses"]["Error"];
         };
     };
 }

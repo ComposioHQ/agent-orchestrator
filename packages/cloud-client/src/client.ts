@@ -1,24 +1,23 @@
 import type {
-  AOSession,
   AgentProfile,
-  ClientEvent,
-  ClientEventPage,
-  CreateWorkerChildInput,
-  CreateGitHubProjectInput,
-  CreateGitHubScratchProjectInput,
-  CreateGitHubScratchProjectResponse,
+  AOSession,
+  AppKillSessionResponse,
+  AppListProjectsResponse,
+  AppListSessionsResponse,
+  AppProjectGetResponse,
+  AppRestoreSessionResponse,
+  AppSendSessionMessageRequest,
+  AppSendSessionMessageResponse,
+  AppSessionListOptions,
+  AppSessionResponse,
+  AppSpawnSessionRequest,
+  AppSpawnSessionResponse,
   CreateProjectInput,
-  CreateSessionInput,
+  CreateWorkerChildInput,
   CurrentAccount,
   DeleteProjectResponse,
   DeleteSessionResponse,
   ErrorEnvelope,
-  EventReplayOptions,
-  GitHubInstallation,
-  GitHubInstallationStart,
-  GitHubRepositoryPage,
-  GitHubUserAuthorizationStart,
-  GitHubUserConnection,
   GoogleIdentityExchange,
   IdempotentRequestOptions,
   PaginationOptions,
@@ -28,18 +27,25 @@ import type {
   RedactedProviderConnection,
   RefreshTokenInput,
   RequestOptions,
-  Session,
-  SessionPage,
-  SessionPullRequests,
-  SessionReviewState,
+  ResumeProjectInput,
+  SandboxTicketGrant,
+  SandboxTicketRedemptionInput,
+  SCMAllowlistInput,
+  SCMInstallStart,
+  SCMInstallation,
+  SCMRepositoryList,
+  TerminalConnection,
   TerminalKind,
+  TerminalScope,
   TerminalTicket,
-  UpdateProjectInput,
   UserMessageEvent,
+  WorkerAgentTerminalResponse,
   WorkerBootstrapInput,
   WorkerBootstrapResponse,
   WorkerCancellationResponse,
   WorkerCheckoutGrantResponse,
+  WorkerChildSession,
+  WorkerChildSessionPage,
   WorkerCompleteTransportInput,
   WorkerCompleteTurnInput,
   WorkerCredentialResponse,
@@ -49,16 +55,12 @@ import type {
   WorkerFinishTurnResponse,
   WorkerHeartbeatInput,
   WorkerHeartbeatResponse,
-  WorkerAgentTerminalResponse,
   WorkerOKResponse,
   WorkerTerminalExitInput,
   WorkerTerminalOutputInput,
   WorkerTerminalOutputResponse,
   WorkerTransportRequest,
   WorkerTurn,
-  WorkspaceDiff,
-  WorkspaceEntryPage,
-  WorkspaceFile,
   WorkspaceFileWriteInput,
 } from "./types.js";
 
@@ -76,11 +78,43 @@ export interface WorkerClientConfig {
   fetch?: typeof globalThis.fetch;
 }
 
+export interface SandboxClientConfig {
+  baseUrl: string;
+  getCapability: () => MaybePromise<string | null | undefined>;
+  fetch?: typeof globalThis.fetch;
+}
+
 interface JSONRequestOptions extends RequestOptions {
   method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
   body?: unknown;
   idempotencyKey?: string;
   cache?: RequestCache;
+  organization?: string;
+}
+
+/**
+ * Header that selects the organization for a hosted app request to `/api/v1`.
+ *
+ * Exported so the desktop, the daemon mount, and this package cannot drift to
+ * three spellings of the same header — it has already been renamed once. The
+ * value is an organization id or slug, and it is only required when the caller
+ * belongs to more than one organization.
+ */
+export const ORGANIZATION_HEADER = "X-AO-Org";
+
+/**
+ * Builds the organization header for a hosted app request, or nothing when
+ * there is no organization to name.
+ *
+ * A caller with one active membership may omit it; a caller with several must
+ * send it, because the server refuses to guess. Passing the id is preferred
+ * over the slug, which is renameable.
+ */
+export function organizationHeaders(
+  organization?: string | null,
+): Record<string, string> {
+  const value = organization?.trim();
+  return value ? { [ORGANIZATION_HEADER]: value } : {};
 }
 
 export class CloudApiError extends Error {
@@ -158,6 +192,105 @@ export class CloudClient {
     return this.request("/api/cloud/v1/me", options);
   }
 
+  listAppProjects(
+    organization: string,
+    options: RequestOptions = {},
+  ): Promise<AppListProjectsResponse> {
+    return this.request("/api/v1/projects", {
+      organization,
+      signal: options.signal,
+    });
+  }
+
+  getAppProject(
+    organization: string,
+    projectId: string,
+    options: RequestOptions = {},
+  ): Promise<AppProjectGetResponse> {
+    return this.request(`/api/v1/projects/${encodeURIComponent(projectId)}`, {
+      organization,
+      signal: options.signal,
+    });
+  }
+
+  listSessions(
+    organization: string,
+    options: AppSessionListOptions = {},
+  ): Promise<AppListSessionsResponse> {
+    return this.request(
+      this.withQuery("/api/v1/sessions", {
+        project: options.project,
+        active: options.active,
+        orchestratorOnly: options.orchestratorOnly,
+        fresh: options.fresh,
+      }),
+      { organization, signal: options.signal },
+    );
+  }
+
+  spawnSession(
+    organization: string,
+    input: AppSpawnSessionRequest,
+    options: RequestOptions = {},
+  ): Promise<AppSpawnSessionResponse> {
+    return this.request("/api/v1/sessions", {
+      method: "POST",
+      body: input,
+      organization,
+      signal: options.signal,
+    });
+  }
+
+  getSession(
+    organization: string,
+    sessionId: string,
+    options: RequestOptions = {},
+  ): Promise<AppSessionResponse> {
+    return this.request(`/api/v1/sessions/${encodeURIComponent(sessionId)}`, {
+      organization,
+      signal: options.signal,
+    });
+  }
+
+  killSession(
+    organization: string,
+    sessionId: string,
+    options: RequestOptions = {},
+  ): Promise<AppKillSessionResponse> {
+    return this.request(
+      `/api/v1/sessions/${encodeURIComponent(sessionId)}/kill`,
+      { method: "POST", organization, signal: options.signal },
+    );
+  }
+
+  restoreSession(
+    organization: string,
+    sessionId: string,
+    options: RequestOptions = {},
+  ): Promise<AppRestoreSessionResponse> {
+    return this.request(
+      `/api/v1/sessions/${encodeURIComponent(sessionId)}/restore`,
+      { method: "POST", organization, signal: options.signal },
+    );
+  }
+
+  sendMessage(
+    organization: string,
+    sessionId: string,
+    input: AppSendSessionMessageRequest,
+    options: RequestOptions = {},
+  ): Promise<AppSendSessionMessageResponse> {
+    return this.request(
+      `/api/v1/sessions/${encodeURIComponent(sessionId)}/send`,
+      {
+        method: "POST",
+        body: input,
+        organization,
+        signal: options.signal,
+      },
+    );
+  }
+
   async listAgents(
     orgId: string,
     options: RequestOptions = {},
@@ -195,440 +328,178 @@ export class CloudClient {
     });
   }
 
-  updateProject(
+  /**
+   * @deprecated Superseded by `GET /api/v1/projects/{id}` on the hosted app
+   * API. See `contracts/cloud/CHANGELOG.md`.
+   */
+  getProject(
     orgId: string,
     projectId: string,
-    input: UpdateProjectInput,
     options: RequestOptions = {},
   ): Promise<{ project: Project }> {
     return this.request(
       this.orgPath(orgId, `/projects/${encodeURIComponent(projectId)}`),
-      {
-        method: "PATCH",
-        body: input,
-        signal: options.signal,
-      },
+      options,
     );
   }
 
   deleteProject(
     orgId: string,
     projectId: string,
-    options: RequestOptions = {},
+    options: IdempotentRequestOptions,
   ): Promise<DeleteProjectResponse> {
     return this.request(
       this.orgPath(orgId, `/projects/${encodeURIComponent(projectId)}`),
       {
         method: "DELETE",
+        idempotencyKey: options.idempotencyKey,
         signal: options.signal,
       },
     );
   }
 
-  getGitHubUserConnection(
-    options: RequestOptions = {},
-  ): Promise<GitHubUserConnection> {
-    return this.request("/api/cloud/v1/github/user", options);
-  }
-
-  startGitHubUserAuthorization(
-    options: RequestOptions = {},
-  ): Promise<GitHubUserAuthorizationStart> {
-    return this.request("/api/cloud/v1/github/user/authorize", {
-      method: "POST",
-      signal: options.signal,
-    });
-  }
-
-  disconnectGitHubUser(options: RequestOptions = {}): Promise<void> {
-    return this.request("/api/cloud/v1/github/user", {
-      method: "DELETE",
-      signal: options.signal,
-    });
+  resumeProject(
+    orgId: string,
+    projectId: string,
+    options: IdempotentRequestOptions & { input?: ResumeProjectInput },
+  ): Promise<{ project: Project }> {
+    return this.request(
+      this.orgPath(orgId, `/projects/${encodeURIComponent(projectId)}/resume`),
+      {
+        method: "POST",
+        body: options.input ?? {},
+        idempotencyKey: options.idempotencyKey,
+        signal: options.signal,
+      },
+    );
   }
 
   async listGitHubInstallations(
-    orgId: string,
+    organization: string,
     options: RequestOptions = {},
-  ): Promise<GitHubInstallation[]> {
-    const response = await this.request<{
-      installations: GitHubInstallation[];
-    }>(this.orgPath(orgId, "/github/installations"), options);
+  ): Promise<SCMInstallation[]> {
+    const response = await this.request<{ installations: SCMInstallation[] }>(
+      "/api/cloud/v1/scm/github/installations",
+      { organization, signal: options.signal },
+    );
     return response.installations;
   }
 
   startGitHubInstallation(
-    orgId: string,
+    organization: string,
     options: RequestOptions = {},
-  ): Promise<GitHubInstallationStart> {
-    return this.request(this.orgPath(orgId, "/github/installations/start"), {
+  ): Promise<SCMInstallStart> {
+    return this.request("/api/cloud/v1/scm/github/installations", {
       method: "POST",
+      organization,
       signal: options.signal,
     });
   }
 
-  syncGitHubInstallation(
-    orgId: string,
+  syncGitHubRepositories(
+    organization: string,
     installationId: string,
     options: RequestOptions = {},
-  ): Promise<{ installation: GitHubInstallation }> {
+  ): Promise<SCMRepositoryList> {
     return this.request(
-      this.orgPath(
-        orgId,
-        `/github/installations/${encodeURIComponent(installationId)}/sync`,
-      ),
-      { method: "POST", signal: options.signal },
+      `/api/cloud/v1/scm/github/installations/${encodeURIComponent(installationId)}/repositories/sync`,
+      { method: "POST", organization, signal: options.signal },
     );
   }
 
-  disconnectGitHubInstallation(
-    orgId: string,
+  async disconnectGitHubInstallation(
+    organization: string,
     installationId: string,
     options: RequestOptions = {},
-  ): Promise<{ installation: GitHubInstallation }> {
-    return this.request(
-      this.orgPath(
-        orgId,
-        `/github/installations/${encodeURIComponent(installationId)}/disconnect`,
-      ),
-      { method: "POST", signal: options.signal },
+  ): Promise<void> {
+    await this.request(
+      `/api/cloud/v1/scm/github/installations/${encodeURIComponent(installationId)}`,
+      { method: "DELETE", organization, signal: options.signal },
     );
   }
 
   listGitHubRepositories(
-    orgId: string,
-    options: PaginationOptions = {},
-  ): Promise<GitHubRepositoryPage> {
-    return this.request(
-      this.withQuery(this.orgPath(orgId, "/github/repositories"), {
-        cursor: options.cursor,
-        limit: options.limit,
-      }),
-      { signal: options.signal },
-    );
-  }
-
-  createProjectFromGitHub(
-    orgId: string,
-    input: CreateGitHubProjectInput,
-    options: IdempotentRequestOptions,
-  ): Promise<{ project: Project }> {
-    return this.request(this.orgPath(orgId, "/github/projects"), {
-      method: "POST",
-      body: input,
-      idempotencyKey: options.idempotencyKey,
-      signal: options.signal,
-    });
-  }
-
-  createGitHubScratchProject(
-    orgId: string,
-    input: CreateGitHubScratchProjectInput,
-    options: IdempotentRequestOptions,
-  ): Promise<CreateGitHubScratchProjectResponse> {
-    return this.request(this.orgPath(orgId, "/projects/scratch"), {
-      method: "POST",
-      body: input,
-      idempotencyKey: options.idempotencyKey,
-      signal: options.signal,
-    });
-  }
-
-  listSessions(
-    orgId: string,
-    options: PaginationOptions & { projectId?: string } = {},
-  ): Promise<SessionPage> {
-    return this.request(
-      this.withQuery(this.orgPath(orgId, "/sessions"), {
-        cursor: options.cursor,
-        limit: options.limit,
-        projectId: options.projectId,
-      }),
-      { signal: options.signal },
-    );
-  }
-
-  getSession(
-    orgId: string,
-    sessionId: string,
+    organization: string,
+    installationId: string,
     options: RequestOptions = {},
-  ): Promise<{ session: Session }> {
+  ): Promise<SCMRepositoryList> {
     return this.request(
-      this.orgPath(orgId, `/sessions/${encodeURIComponent(sessionId)}`),
-      options,
+      `/api/cloud/v1/scm/github/installations/${encodeURIComponent(installationId)}/repositories`,
+      { organization, signal: options.signal },
     );
   }
 
-  createSession(
-    orgId: string,
-    input: CreateSessionInput,
-    options: IdempotentRequestOptions,
-  ): Promise<{ session: Session }> {
-    return this.request(this.orgPath(orgId, "/sessions"), {
-      method: "POST",
-      body: input,
-      idempotencyKey: options.idempotencyKey,
-      signal: options.signal,
-    });
-  }
-
-  deleteSession(
-    orgId: string,
-    sessionId: string,
+  setGitHubRepositoryAllowlist(
+    organization: string,
+    installationId: string,
+    input: SCMAllowlistInput,
     options: RequestOptions = {},
-  ): Promise<DeleteSessionResponse> {
+  ): Promise<SCMRepositoryList> {
     return this.request(
-      this.orgPath(orgId, `/sessions/${encodeURIComponent(sessionId)}`),
-      { method: "DELETE", signal: options.signal },
+      `/api/cloud/v1/scm/github/installations/${encodeURIComponent(installationId)}/allowlist`,
+      { method: "PUT", body: input, organization, signal: options.signal },
     );
-  }
-
-  listSessionPullRequests(
-    orgId: string,
-    sessionId: string,
-    options: RequestOptions = {},
-  ): Promise<SessionPullRequests> {
-    return this.request(
-      this.orgPath(
-        orgId,
-        `/sessions/${encodeURIComponent(sessionId)}/pull-requests`,
-      ),
-      options,
-    );
-  }
-
-  getSessionReviewState(
-    orgId: string,
-    sessionId: string,
-    options: RequestOptions = {},
-  ): Promise<SessionReviewState> {
-    return this.request(
-      this.orgPath(
-        orgId,
-        `/sessions/${encodeURIComponent(sessionId)}/reviews`,
-      ),
-      options,
-    );
-  }
-
-  sendMessage(
-    orgId: string,
-    sessionId: string,
-    text: string,
-    options: IdempotentRequestOptions,
-  ): Promise<{ event: UserMessageEvent }> {
-    return this.request(
-      this.orgPath(
-        orgId,
-        `/sessions/${encodeURIComponent(sessionId)}/messages`,
-      ),
-      {
-        method: "POST",
-        body: { text },
-        idempotencyKey: options.idempotencyKey,
-        signal: options.signal,
-      },
-    );
-  }
-
-  cancelTurn(
-    orgId: string,
-    sessionId: string,
-    turnId: string,
-    options: IdempotentRequestOptions,
-  ): Promise<WorkerOKResponse> {
-    return this.request(
-      this.orgPath(
-        orgId,
-        `/sessions/${encodeURIComponent(sessionId)}/turns/${encodeURIComponent(turnId)}/cancel`,
-      ),
-      {
-        method: "POST",
-        idempotencyKey: options.idempotencyKey,
-        signal: options.signal,
-      },
-    );
-  }
-
-  replayEvents(
-    orgId: string,
-    sessionId: string,
-    options: EventReplayOptions = {},
-  ): Promise<ClientEventPage> {
-    const path = this.orgPath(
-      orgId,
-      `/sessions/${encodeURIComponent(sessionId)}/chat-events`,
-    );
-    return this.request(
-      this.withQuery(path, {
-        after: options.after ?? 0,
-        limit: options.limit,
-      }),
-      { signal: options.signal },
-    );
-  }
-
-  async *streamEvents(
-    orgId: string,
-    sessionId: string,
-    options: Omit<EventReplayOptions, "limit"> = {},
-  ): AsyncGenerator<ClientEvent, void, void> {
-    const endpoint = this.orgPath(
-      orgId,
-      `/sessions/${encodeURIComponent(sessionId)}/events`,
-    );
-    let after = options.after ?? 0;
-    let retryAttempt = 0;
-
-    while (!options.signal?.aborted) {
-      let receivedEvent = false;
-      try {
-        const path = this.withQuery(endpoint, { after });
-        const response = await this.authorizedFetch(path, {
-          headers: { Accept: "text/event-stream" },
-          signal: options.signal,
-        });
-        await this.throwIfError(response);
-        if (!response.body) {
-          throw this.invalidResponse(
-            response.status,
-            "Cloud event stream returned no response body.",
-          );
-        }
-
-        const reader = response.body.getReader();
-        const decoder = new TextDecoder();
-        let buffer = "";
-        try {
-          while (!options.signal?.aborted) {
-            const { done, value } = await reader.read();
-            buffer += decoder.decode(value, { stream: !done });
-            buffer = buffer.replaceAll("\r\n", "\n");
-
-            let boundary = buffer.indexOf("\n\n");
-            while (boundary >= 0) {
-              const event = parseSSEBlock(buffer.slice(0, boundary));
-              buffer = buffer.slice(boundary + 2);
-              if (event && event.sequence > after) {
-                after = event.sequence;
-                receivedEvent = true;
-                yield event;
-              }
-              boundary = buffer.indexOf("\n\n");
-            }
-
-            if (done) {
-              const event = parseSSEBlock(buffer);
-              if (event && event.sequence > after) {
-                after = event.sequence;
-                receivedEvent = true;
-                yield event;
-              }
-              break;
-            }
-          }
-        } finally {
-          await reader.cancel().catch(() => undefined);
-          reader.releaseLock();
-        }
-      } catch (error) {
-        if (options.signal?.aborted) return;
-        if (!isRetryableStreamError(error)) throw error;
-      }
-
-      if (options.signal?.aborted) return;
-      retryAttempt = receivedEvent ? 0 : retryAttempt + 1;
-      await waitForRetry(retryAttempt, options.signal);
-    }
   }
 
   createTerminalTicket(
     orgId: string,
     sessionId: string,
     kind: TerminalKind = "workspace",
-    options: RequestOptions = {},
+    options: RequestOptions & { scopes?: TerminalScope[] } = {},
   ): Promise<TerminalTicket> {
     return this.request(
       this.orgPath(
         orgId,
         `/sessions/${encodeURIComponent(sessionId)}/terminal-ticket`,
       ),
-      { method: "POST", body: { kind }, signal: options.signal },
+      {
+        method: "POST",
+        body: options.scopes ? { kind, scopes: options.scopes } : { kind },
+        cache: "no-store",
+        signal: options.signal,
+      },
     );
   }
 
+  /**
+   * Attach URL for a terminal ticket.
+   *
+   * The ticket is deliberately **not** in this URL: it travels as a WebSocket
+   * subprotocol (see {@link terminalSubprotocols}), because a query string
+   * reaches proxy logs, browser history and referrers, and a credential in
+   * three such places is a credential leaked.
+   *
+   * The listener need not live on the API origin, so the ticket's own
+   * `connection.url` wins; the control plane's default is used only when the
+   * server reported none.
+   */
   terminalUrl(
-    ticket: string,
-    options: { after?: number; kind?: TerminalKind } = {},
+    options: { after?: number; connection?: TerminalConnection } = {},
   ): string {
-    const url = new URL(`${this.baseUrl}/api/cloud/v1/terminal`);
-    url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
-    url.searchParams.set("ticket", ticket);
-    url.searchParams.set("after", String(options.after ?? 0));
-    url.searchParams.set("kind", options.kind ?? "workspace");
+    const url = new URL(
+      options.connection?.url ?? `${this.baseUrl}/api/cloud/v1/terminal`,
+    );
+    if (url.protocol === "https:" || url.protocol === "http:") {
+      url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+    }
+    if (options.after !== undefined) {
+      url.searchParams.set("after", String(options.after));
+    }
     return url.toString();
   }
 
-  listWorkspaceFiles(
-    orgId: string,
-    sessionId: string,
-    path = "",
-    options: PaginationOptions = {},
-  ): Promise<WorkspaceEntryPage> {
-    const endpoint = this.orgPath(
-      orgId,
-      `/sessions/${encodeURIComponent(sessionId)}/workspace/files`,
-    );
-    return this.request(
-      this.withQuery(endpoint, {
-        path,
-        cursor: options.cursor,
-        limit: options.limit,
-      }),
-      { signal: options.signal },
-    );
-  }
-
-  readWorkspaceFile(
-    orgId: string,
-    sessionId: string,
-    path: string,
-    options: RequestOptions = {},
-  ): Promise<WorkspaceFile> {
-    const endpoint = this.orgPath(
-      orgId,
-      `/sessions/${encodeURIComponent(sessionId)}/workspace/file`,
-    );
-    return this.request(this.withQuery(endpoint, { path }), options);
-  }
-
-  writeWorkspaceFile(
-    orgId: string,
-    sessionId: string,
-    input: WorkspaceFileWriteInput,
-    options: RequestOptions = {},
-  ): Promise<WorkspaceFile> {
-    return this.request(
-      this.orgPath(
-        orgId,
-        `/sessions/${encodeURIComponent(sessionId)}/workspace/file`,
-      ),
-      { ...options, method: "PUT", body: input },
-    );
-  }
-
-  getWorkspaceDiff(
-    orgId: string,
-    sessionId: string,
-    options: RequestOptions = {},
-  ): Promise<WorkspaceDiff> {
-    return this.request(
-      this.orgPath(
-        orgId,
-        `/sessions/${encodeURIComponent(sessionId)}/workspace/diff`,
-      ),
-      options,
-    );
+  /**
+   * Subprotocols to offer on the attach handshake: the framing version, then
+   * the ticket as `ao.ticket.<opaque>`.
+   *
+   * The server authenticates from the ticket entry and selects only the framing
+   * one, so the credential is never echoed back. Close the socket if anything
+   * other than the framing protocol is selected rather than guessing a framing.
+   */
+  terminalSubprotocols(ticket: TerminalTicket): [string, string] {
+    const connection = ticket.connection;
+    const prefix = connection?.ticketSubprotocolPrefix ?? "ao.ticket.";
+    return [connection?.protocol ?? "ao.mux.v1", `${prefix}${ticket.ticket}`];
   }
 
   async listProviderConnections(
@@ -685,7 +556,7 @@ export class CloudClient {
 
   private withQuery(
     path: string,
-    values: Record<string, string | number | undefined>,
+    values: Record<string, string | number | boolean | undefined>,
   ): string {
     const query = new URLSearchParams();
     for (const [key, value] of Object.entries(values)) {
@@ -700,6 +571,11 @@ export class CloudClient {
     options: JSONRequestOptions = {},
   ): Promise<T> {
     const headers = new Headers({ Accept: "application/json" });
+    for (const [name, value] of Object.entries(
+      organizationHeaders(options.organization),
+    )) {
+      headers.set(name, value);
+    }
     if (options.body !== undefined) {
       headers.set("Content-Type", "application/json");
     }
@@ -715,6 +591,9 @@ export class CloudClient {
       headers,
       body:
         options.body === undefined ? undefined : JSON.stringify(options.body),
+      // Threaded like the worker client already does, so a secret-bearing
+      // route asking for "no-store" actually gets it.
+      cache: options.cache,
       signal: options.signal,
     });
     await this.throwIfError(response);
@@ -917,7 +796,7 @@ export class WorkerClient {
 
   listChildren(
     options: PaginationOptions = {},
-  ): Promise<SessionPage> {
+  ): Promise<WorkerChildSessionPage> {
     const query = new URLSearchParams();
     if (options.cursor !== undefined) query.set("cursor", options.cursor);
     if (options.limit !== undefined) query.set("limit", String(options.limit));
@@ -930,7 +809,7 @@ export class WorkerClient {
   createChild(
     input: CreateWorkerChildInput,
     options: IdempotentRequestOptions,
-  ): Promise<{ session: Session }> {
+  ): Promise<{ session: WorkerChildSession }> {
     return this.request("/api/cloud/v1/worker/children", {
       method: "POST",
       body: input,
@@ -1100,31 +979,64 @@ export function createWorkerClient(config: WorkerClientConfig): WorkerClient {
   return new WorkerClient(config);
 }
 
+export class SandboxClient {
+  readonly baseUrl: string;
+
+  private readonly getCapability: SandboxClientConfig["getCapability"];
+  private readonly fetch: typeof globalThis.fetch;
+
+  constructor(config: SandboxClientConfig) {
+    const baseUrl = new URL(config.baseUrl);
+    if (baseUrl.search || baseUrl.hash) {
+      throw new TypeError("Cloud API baseUrl must not contain a query or fragment.");
+    }
+    this.baseUrl = baseUrl.toString().replace(/\/+$/, "");
+    this.getCapability = config.getCapability;
+    this.fetch = config.fetch ?? globalThis.fetch.bind(globalThis);
+  }
+
+  async redeemSandboxTicket(
+    input: SandboxTicketRedemptionInput,
+    options: RequestOptions = {},
+  ): Promise<SandboxTicketGrant> {
+    const capability = (await this.getCapability())?.trim();
+    if (!capability) {
+      throw new CloudApiError(401, {
+        error: "Unauthorized",
+        code: "SANDBOX_CAPABILITY_REQUIRED",
+        message: "A sandbox capability is required.",
+        requestId: "",
+      });
+    }
+    const response = await this.fetch(
+      `${this.baseUrl}/api/cloud/v1/sandbox/terminal-tickets/consume`,
+      {
+        method: "POST",
+        headers: {
+          Accept: "application/json",
+          Authorization: `Bearer ${capability}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(input),
+        cache: "no-store",
+        signal: options.signal,
+      },
+    );
+    await throwIfErrorResponse(response);
+    return readJSONResponse<SandboxTicketGrant>(response);
+  }
+}
+
+export function createSandboxClient(config: SandboxClientConfig): SandboxClient {
+  return new SandboxClient(config);
+}
+
 function validateIdempotencyKey(value: string): string {
   const key = value.trim();
   if (!key || key.length > 200) {
     throw new TypeError("idempotencyKey must contain between 1 and 200 characters.");
   }
   return key;
-}
-
-function parseSSEBlock(block: string): ClientEvent | undefined {
-  const data = block
-    .split("\n")
-    .filter((line) => line.startsWith("data:"))
-    .map((line) => line.slice(5).trimStart())
-    .join("\n");
-  return data ? (JSON.parse(data) as ClientEvent) : undefined;
-}
-
-function isRetryableStreamError(error: unknown): boolean {
-  if (!(error instanceof CloudApiError)) return true;
-  return (
-    error.status === 408 ||
-    error.status === 425 ||
-    error.status === 429 ||
-    error.status >= 500
-  );
 }
 
 async function waitForRetry(

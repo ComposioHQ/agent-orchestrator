@@ -21,87 +21,70 @@ export type AgentAvailability = Schemas["AgentAvailability"];
 export type AgentProfile = Schemas["AgentProfile"];
 
 export type Project = Schemas["Project"];
+export type ProjectLifecycleState = Schemas["ProjectLifecycleState"];
 export type CreateProjectInput = Schemas["CreateProjectInput"];
-export type UpdateProjectInput = Schemas["UpdateProjectInput"];
+export type ResumeProjectInput = Schemas["ResumeProjectInput"];
 export type DeleteProjectResponse = Schemas["DeleteProjectResponse"];
 export type ProjectPage = Schemas["ProjectPage"];
 
-export type GitHubInstallationStatus = Schemas["GitHubInstallationStatus"];
-export type GitHubSyncStatus = Schemas["GitHubSyncStatus"];
-export type GitHubInstallation = Schemas["GitHubInstallation"];
-export type GitHubInstallationStart = Schemas["GitHubInstallationStart"];
-export type GitHubUserInstallation = Schemas["GitHubUserInstallation"];
-export type GitHubUserConnection = Schemas["GitHubUserConnection"];
-export type GitHubUserAuthorizationStart =
-  Schemas["GitHubUserAuthorizationStart"];
-export type GitHubRepositoryAccessState =
-  Schemas["GitHubRepositoryAccessState"];
-export type GitHubRepository = Schemas["GitHubRepository"];
-export type GitHubRepositoryPage = Schemas["GitHubRepositoryPage"];
-export type CreateGitHubProjectInput = Schemas["CreateGitHubProjectInput"];
-export type CreateGitHubScratchProjectInput =
-  Schemas["CreateGitHubScratchProjectInput"];
-export type CreateGitHubScratchProjectResponse =
-  Schemas["CreateGitHubScratchProjectResponse"];
+// Hosted product DTOs are copied verbatim from the generated /api/v1 app
+// contract. The App prefix keeps them distinct from the control-plane
+// placement DTOs above, which deliberately carry provisioning lifecycle.
+export type AppAPIError = Schemas["AppAPIError"];
+export type AppProject = Schemas["AppProject"];
+export type AppProjectSummary = Schemas["AppProjectSummary"];
+export type AppListProjectsResponse = Schemas["AppListProjectsResponse"];
+export type AppProjectGetResponse = Schemas["AppProjectGetResponse"];
 
-export type Session = Schemas["Session"];
+export type SCMInstallStart = Schemas["SCMInstallStart"];
+export type SCMInstallation = Schemas["SCMInstallation"];
+export type SCMRepository = Schemas["SCMRepository"];
+export type SCMInstallationList = Schemas["SCMInstallationList"];
+export type SCMRepositoryList = Schemas["SCMRepositoryList"];
+export type SCMAllowlistInput = Schemas["SCMAllowlistInput"];
+
 export type SessionKind = Schemas["SessionKind"];
+export type WorkerChildSession = Schemas["WorkerChildSession"];
+export type WorkerChildSessionPage = Schemas["WorkerChildSessionPage"];
+export type DeleteSessionResponse = Schemas["DeleteSessionResponse"];
 export type SessionMode = Schemas["SessionMode"];
 export type SessionActivityState = Schemas["SessionActivityState"];
 export type SessionStatus = Schemas["SessionStatus"];
-export type Turn = Schemas["Turn"];
-export type CreateSessionInput = Schemas["CreateSessionInput"];
-export type DeleteSessionResponse = Schemas["DeleteSessionResponse"];
-export type SessionPage = Schemas["SessionPage"];
+export type AppSessionView = Schemas["AppControllersSessionView"];
+export type AppListSessionsResponse = Schemas["AppListSessionsResponse"];
+export type AppSpawnSessionRequest = Schemas["AppSpawnSessionRequest"];
+export type AppSpawnSessionResponse = Schemas["AppSpawnSessionResponse"];
+export type AppSessionResponse = Schemas["AppSessionResponse"];
+export type AppKillSessionResponse = Schemas["AppKillSessionResponse"];
+export type AppRestoreSessionResponse = Schemas["AppRestoreSessionResponse"];
+export type AppSendSessionMessageRequest =
+  Schemas["AppSendSessionMessageRequest"];
+export type AppSendSessionMessageResponse =
+  Schemas["AppSendSessionMessageResponse"];
 
-export type PullRequestState = Schemas["PullRequestState"];
-export type CIState = Schemas["CIState"];
-export type PullRequestCheckStatus = Schemas["PullRequestCheckStatus"];
-export type ReviewDecision = Schemas["ReviewDecision"];
-export type MergeabilityState = Schemas["MergeabilityState"];
-export type PullRequestFailingCheck = Schemas["PullRequestFailingCheck"];
-export type PullRequestCISummary = Schemas["PullRequestCISummary"];
-export type PullRequestReviewCommentLink =
-  Schemas["PullRequestReviewCommentLink"];
-export type PullRequestUnresolvedReviewer =
-  Schemas["PullRequestUnresolvedReviewer"];
-export type PullRequestSubmittedReview =
-  Schemas["PullRequestSubmittedReview"];
-export type PullRequestReviewSummary = Schemas["PullRequestReviewSummary"];
-export type PullRequestConflictFile = Schemas["PullRequestConflictFile"];
-export type PullRequestMergeabilitySummary =
-  Schemas["PullRequestMergeabilitySummary"];
-export type PullRequestSummary = Schemas["PullRequestSummary"];
-export type SessionPullRequests = Schemas["SessionPullRequests"];
-
-export type AOReviewRunStatus = Schemas["AOReviewRunStatus"];
-export type AOReviewVerdict = Schemas["AOReviewVerdict"];
-export type AOReviewState = Schemas["AOReviewState"];
-export type AOReviewRun = Schemas["AOReviewRun"];
-export type AOPullRequestReviewState = Schemas["AOPullRequestReviewState"];
-export type SessionReviewState = Schemas["SessionReviewState"];
-
-export type ClientEvent = Schemas["ClientEvent"];
-export type ClientEventPage = Schemas["ClientEventPage"];
 export type UserMessageEvent = Schemas["UserMessageEvent"];
-export type AssistantDeltaEvent = Schemas["AssistantDeltaEvent"];
-export type TurnStartedEvent = Schemas["TurnStartedEvent"];
-export type TurnCompletedEvent = Schemas["TurnCompletedEvent"];
-export type TurnInterruptedEvent = Schemas["TurnInterruptedEvent"];
-export type TurnAbortedEvent = Schemas["TurnAbortedEvent"];
-export type InterruptRequestedEvent = Schemas["InterruptRequestedEvent"];
 
 export type TerminalKind = Schemas["TerminalKind"];
 export type TerminalScope = Schemas["TerminalScope"];
+export type TerminalTransport = Schemas["TerminalTransport"];
+export type MuxChannel = Schemas["MuxChannel"];
+export type MuxClientFrame = Schemas["MuxClientFrame"];
+export type MuxClientFrameType = Schemas["MuxClientFrameType"];
+export type MuxClientRole = Schemas["MuxClientRole"];
+export type MuxServerFrame = Schemas["MuxServerFrame"];
+export type MuxServerFrameType = Schemas["MuxServerFrameType"];
+export type MuxSessionUpdate = Schemas["MuxSessionUpdate"];
+export type TerminalProtocol = Schemas["TerminalProtocol"];
+export type TerminalFeature = Schemas["TerminalFeature"];
+export type TerminalConnection = Schemas["TerminalConnection"];
 export type TerminalTicket = Schemas["TerminalTicket"];
+export type SandboxScope = Schemas["SandboxScope"];
+export type SandboxTicketRedemptionInput =
+  Schemas["SandboxTicketRedemptionInput"];
+export type SandboxTicketGrant = Schemas["SandboxTicketGrant"];
 
 export type WorkspaceEntry = Schemas["WorkspaceEntry"];
-export type WorkspaceEntryPage = Schemas["WorkspaceEntryPage"];
-export type WorkspaceFile = Schemas["WorkspaceFile"];
 export type WorkspaceFileWriteInput = Schemas["WorkspaceFileWriteInput"];
-export type WorkspaceFileStatus = Schemas["WorkspaceFileStatus"];
-export type WorkspaceDiffFile = Schemas["WorkspaceDiffFile"];
-export type WorkspaceDiff = Schemas["WorkspaceDiff"];
 
 export type ProviderName = Schemas["ProviderName"];
 export type ProviderPublicConfig = Schemas["ProviderPublicConfig"];
@@ -209,4 +192,11 @@ export interface IdempotentRequestOptions {
 
 export interface RequestOptions {
   signal?: AbortSignal;
+}
+
+export interface AppSessionListOptions extends RequestOptions {
+  project?: string;
+  active?: boolean;
+  orchestratorOnly?: boolean;
+  fresh?: boolean;
 }
