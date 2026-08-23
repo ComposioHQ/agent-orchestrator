@@ -14,6 +14,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/cloud/domain"
 )
 
+// SignatureHeader and related constants define the GitHub webhook envelope.
 const (
 	SignatureHeader     = "X-Hub-Signature-256"
 	DeliveryHeader      = "X-GitHub-Delivery"
@@ -54,6 +55,7 @@ type ObservationSink interface {
 	ObserveSCMSignal(context.Context, string, ObservationSignal) error
 }
 
+// WebhookResult describes the durable disposition of a webhook request.
 type WebhookResult struct {
 	DeliveryID string
 	Event      string
@@ -63,12 +65,14 @@ type WebhookResult struct {
 	Signal     *ObservationSignal
 }
 
+// WebhookProcessor verifies, persists, leases, and processes GitHub deliveries.
 type WebhookProcessor struct {
 	secret []byte
 	store  WebhookStore
 	sink   ObservationSink
 }
 
+// NewWebhookProcessor constructs a processor with required durable store and sink boundaries.
 func NewWebhookProcessor(secret []byte, store WebhookStore, sink ObservationSink) (*WebhookProcessor, error) {
 	if len(secret) == 0 {
 		return nil, ErrNotConfigured
@@ -82,6 +86,7 @@ func NewWebhookProcessor(secret []byte, store WebhookStore, sink ObservationSink
 	return &WebhookProcessor{secret: append([]byte(nil), secret...), store: store, sink: sink}, nil
 }
 
+// VerifyWebhookSignature validates the GitHub SHA-256 HMAC header for body.
 func VerifyWebhookSignature(secret, body []byte, header string) error {
 	if len(secret) == 0 {
 		return ErrNotConfigured
@@ -147,6 +152,7 @@ func (p *WebhookProcessor) Process(ctx context.Context, event, deliveryID, signa
 	return p.processClaim(ctx, claim, result)
 }
 
+// RetryPending claims and processes due webhook deliveries up to limit.
 func (p *WebhookProcessor) RetryPending(ctx context.Context, limit int) (int, error) {
 	claims, err := p.store.ClaimDueSCMWebhooks(ctx, limit)
 	if err != nil {

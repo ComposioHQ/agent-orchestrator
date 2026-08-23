@@ -18,15 +18,18 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/tenant"
 )
 
+// SCMLinkService starts and completes GitHub App installation linking.
 type SCMLinkService interface {
 	StartInstall(context.Context, tenant.Identity) (scm.InstallRedirect, error)
 	CompleteInstall(context.Context, scm.CallbackParams) (domain.SCMInstallation, error)
 }
 
+// SCMWebhookProcessor durably accepts verified GitHub webhook deliveries.
 type SCMWebhookProcessor interface {
 	Process(context.Context, string, string, string, []byte) (scm.WebhookResult, error)
 }
 
+// SCMOptions configures the optional SCM HTTP surface.
 type SCMOptions struct {
 	Link    SCMLinkService
 	Webhook SCMWebhookProcessor
@@ -165,7 +168,7 @@ func validWebhookHeaderEnvelope(header http.Header) bool {
 	}
 	valueCount, byteCount := 0, 0
 	for name, values := range header {
-		if len(name) == 0 || len(name) > maxWebhookHeaderNameBytes || http.CanonicalHeaderKey(name) != name || !validHTTPToken(name) || len(values) > maxWebhookHeaderValuesPerName {
+		if name == "" || len(name) > maxWebhookHeaderNameBytes || http.CanonicalHeaderKey(name) != name || !validHTTPToken(name) || len(values) > maxWebhookHeaderValuesPerName {
 			return false
 		}
 		byteCount += len(name)

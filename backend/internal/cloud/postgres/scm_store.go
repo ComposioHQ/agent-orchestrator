@@ -9,6 +9,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/cloud/domain"
 )
 
+// IngestAndClaimSCMWebhook atomically persists and attempts to lease a complete delivery.
 func (s *Store) IngestAndClaimSCMWebhook(ctx context.Context, receipt domain.SCMWebhookReceipt) (domain.SCMWebhookClaim, error) {
 	if strings.TrimSpace(receipt.Provider) != domain.SCMProviderGitHub ||
 		strings.TrimSpace(receipt.DeliveryID) == "" || strings.TrimSpace(receipt.Event) == "" ||
@@ -30,6 +31,7 @@ func (s *Store) IngestAndClaimSCMWebhook(ctx context.Context, receipt domain.SCM
 	return claim, nil
 }
 
+// ClaimDueSCMWebhooks leases due or expired webhook deliveries for processing.
 func (s *Store) ClaimDueSCMWebhooks(ctx context.Context, limit int) ([]domain.SCMWebhookClaim, error) {
 	if limit <= 0 {
 		return nil, nil
@@ -59,6 +61,7 @@ func (s *Store) ClaimDueSCMWebhooks(ctx context.Context, limit int) ([]domain.SC
 	return claims, nil
 }
 
+// FinishSCMWebhook completes or reschedules a delivery held by the supplied lease.
 func (s *Store) FinishSCMWebhook(ctx context.Context, deliveryID, leaseID, outcome, errorCode string) (bool, error) {
 	if strings.TrimSpace(deliveryID) == "" || strings.TrimSpace(leaseID) == "" {
 		return false, ErrInvalid
@@ -74,6 +77,7 @@ func (s *Store) FinishSCMWebhook(ctx context.Context, deliveryID, leaseID, outco
 	return finished, nil
 }
 
+// PruneSCMWebhooks removes terminal deliveries older than the retention period.
 func (s *Store) PruneSCMWebhooks(ctx context.Context, retention time.Duration) (int64, error) {
 	if retention <= 0 {
 		return 0, ErrInvalid
