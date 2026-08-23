@@ -1,10 +1,18 @@
-import type { AoBridge } from "../../preload";
+import type { AoBridge, AoCapabilities } from "../../preload";
 import { coerceUiSettings, DEFAULT_UI_SETTINGS } from "../../shared/ui-locale";
 export type { FeatureBuild } from "../../main/feature-builds";
 
-export const aoBridge: AoBridge =
-	window.ao ??
-	({
+export function createWebBridge(): AoBridge {
+	return {
+		capabilities: Object.freeze<AoCapabilities>({
+			terminals: true,
+			nativeBrowserPanel: false,
+			windowChrome: false,
+			daemonControl: false,
+			nativeFileDialogs: false,
+			osNotifications: false,
+			filePathDrop: false,
+		}),
 		app: {
 			getVersion: async () => "0.0.0-preview",
 			chooseDirectory: async () => null,
@@ -201,4 +209,7 @@ export const aoBridge: AoBridge =
 			signOut: async () => undefined,
 			onSessionChanged: () => () => undefined,
 		},
-	} satisfies AoBridge);
+	};
+}
+
+export const aoBridge: AoBridge = window.ao ?? createWebBridge();

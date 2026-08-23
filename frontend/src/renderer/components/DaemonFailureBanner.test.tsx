@@ -11,6 +11,23 @@ describe("DaemonFailureBanner", () => {
 		await appI18n.changeLanguage("en");
 	});
 
+	it("reports a stopped web daemon plainly without offering restart", () => {
+		const capabilities = aoBridge.capabilities;
+		Object.defineProperty(aoBridge, "capabilities", {
+			configurable: true,
+			value: { ...capabilities, daemonControl: false },
+		});
+		try {
+			render(<DaemonFailureBanner status={{ state: "stopped" }} />);
+
+			expect(screen.getByRole("alert")).toHaveTextContent("AO daemon is unavailable");
+			expect(screen.getByRole("alert")).toHaveTextContent("Start AO on the host, then reload this page.");
+			expect(screen.queryByRole("button", { name: "Restart daemon" })).not.toBeInTheDocument();
+		} finally {
+			Object.defineProperty(aoBridge, "capabilities", { configurable: true, value: capabilities });
+		}
+	});
+
 	it("shows the daemon failure message, code, and actionable hint", () => {
 		render(
 			<DaemonFailureBanner

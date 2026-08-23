@@ -301,8 +301,12 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	const interfaceSwitch = useSessionInterfaceTransition(session?.id);
 	const reviewerQuery = useQuery({
 		queryKey: ["session-reviews", sessionId],
+		// Reviews are daemon HTTP data, so they are available in every client.
 		enabled: Boolean(
-			window.ao && session && sessionIsActive(session) && !isOrchestratorSession(session) && session.prs.length > 0,
+			session &&
+				sessionIsActive(session) &&
+				!isOrchestratorSession(session) &&
+				session.prs.length > 0,
 		),
 		refetchInterval: (query) => {
 			const data = query.state.data as ReviewsResponse | undefined;

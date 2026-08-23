@@ -59,6 +59,15 @@ export async function installFakeBridge(page: Page, opts: FakeBridgeOptions = {}
 			// resolves — an incomplete object would throw the moment the app touched
 			// a missing method.
 			const ao = {
+				capabilities: Object.freeze({
+					terminals: true,
+					nativeBrowserPanel: true,
+					windowChrome: true,
+					daemonControl: true,
+					nativeFileDialogs: true,
+					osNotifications: true,
+					filePathDrop: true,
+				}),
 				app: {
 					getVersion: async () => version,
 					chooseDirectory: async () => null,
@@ -506,6 +515,15 @@ export async function installFakeAgent(page: Page, opts: FakeAgentOptions = {}):
 				...(error ? { error } : {}),
 			});
 			const ao = {
+				capabilities: Object.freeze({
+					terminals: true,
+					nativeBrowserPanel: true,
+					windowChrome: true,
+					daemonControl: true,
+					nativeFileDialogs: true,
+					osNotifications: true,
+					filePathDrop: true,
+				}),
 				app: {
 					getVersion: async () => version,
 					chooseDirectory: async () => null,

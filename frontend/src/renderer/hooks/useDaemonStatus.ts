@@ -76,10 +76,12 @@ export function useDaemonStatus(queryClient: QueryClient = defaultQueryClient) {
 			if (active) stopTransport = createEventTransport(queryClient).connect();
 		});
 
-		const stopStatusListener = aoBridge.daemon.onStatus((nextStatus) => {
-			statusVersion += 1;
-			applyStatus(nextStatus);
-		});
+		const stopStatusListener = aoBridge.capabilities.daemonControl
+			? aoBridge.daemon.onStatus((nextStatus) => {
+					statusVersion += 1;
+					applyStatus(nextStatus);
+				})
+			: () => undefined;
 
 		return () => {
 			active = false;

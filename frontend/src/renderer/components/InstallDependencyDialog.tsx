@@ -47,7 +47,7 @@ const POLL_INTERVAL_MS = 1_000;
  *  interval while running. One target is ever in flight at a time — this
  *  gate only ever needs one, and serializing keeps the UI unambiguous about
  *  which command is running. */
-function useInstallRunner(onSucceeded: () => void) {
+function useInstallRunner(enabled: boolean, onSucceeded: () => void) {
 	const [target, setTarget] = useState<InstallTarget | null>(null);
 	const [job, setJob] = useState<InstallJob | undefined>(undefined);
 	const [previews, setPreviews] = useState<Partial<Record<InstallTarget, InstallJob>>>({});
@@ -87,6 +87,7 @@ function useInstallRunner(onSucceeded: () => void) {
 	// Unsupported plus the exact sudo command, so the renderer can show manual
 	// instructions without first POSTing a job that is guaranteed to fail.
 	const inspect = useCallback(async (nextTarget: InstallTarget) => {
+		if (!enabled) return;
 		if (inspectedRef.current.has(nextTarget)) return;
 		inspectedRef.current.add(nextTarget);
 		try {
@@ -101,9 +102,10 @@ function useInstallRunner(onSucceeded: () => void) {
 		} finally {
 			setInspectedTargets((current) => ({ ...current, [nextTarget]: true }));
 		}
-	}, []);
+	}, [enabled]);
 
 	const start = async (nextTarget: InstallTarget) => {
+		if (!enabled) return;
 		stopPolling();
 		setTarget(nextTarget);
 		setJob(undefined);
@@ -138,10 +140,12 @@ export function InstallDependencyDialog({
 	onRefetchRequirements: () => Promise<unknown> | void;
 }) {
 	const { t } = useTranslation();
+	const canInstall = aoBridge.capabilities.daemonControl;
+	const canQuit = aoBridge.capabilities.windowChrome;
 	const [selectedAgent, setSelectedAgent] = useState<AgentInstallTarget | null>(null);
 	const [ghDismissed, setGhDismissed] = useState(false);
 	const [isCheckingAgain, setIsCheckingAgain] = useState(false);
-	const install = useInstallRunner(() => void onRefetchRequirements());
+	const install = useInstallRunner(canInstall, () => void onRefetchRequirements());
 
 	const byId = new Map(requirements.map((requirement) => [requirement.id, requirement]));
 	const git = byId.get("git");
@@ -154,16 +158,16 @@ export function InstallDependencyDialog({
 	const ghAdvisory = Boolean(gh && !gh.satisfied);
 
 	useEffect(() => {
-		if (tmuxBlocking) void install.inspect("tmux");
-	}, [install.inspect, tmuxBlocking]);
+		if (canInstall && tmuxBlocking) void install.inspect("tmux");
+	}, [canInstall, install.inspect, tmuxBlocking]);
 
 	useEffect(() => {
-		if (ghAdvisory) void install.inspect("gh");
-	}, [ghAdvisory, install.inspect]);
+		if (canInstall && ghAdvisory) void install.inspect("gh");
+	}, [canInstall, ghAdvisory, install.inspect]);
 
 	useEffect(() => {
-		if (selectedAgent) void install.inspect(selectedAgent);
-	}, [install.inspect, selectedAgent]);
+		if (canInstall && selectedAgent) void install.inspect(selectedAgent);
+	}, [canInstall, install.inspect, selectedAgent]);
 
 	const checkAgain = async () => {
 		setIsCheckingAgain(true);
@@ -192,6 +196,11 @@ export function InstallDependencyDialog({
 				</div>
 
 				<div className={cn(settingsDialogBodyClass, "gap-5")}>
+					{!canInstall ? (
+						<p className="text-caption leading-snug text-settings-muted" role="note">
+							{t("startup.webInstallUnavailable")}
+						</p>
+					) : null}
 					{gitBlocking && git ? (
 						<IssueSection label={requirementDisplayLabel(git, t)} detail={requirementDetailText(git, t)}>
 							<p className="text-caption leading-snug text-settings-muted">{t("startup.installGitInstructions")}</p>
@@ -200,61 +209,67 @@ export function InstallDependencyDialog({
 
 					{tmuxBlocking && tmux ? (
 						<IssueSection label={requirementDisplayLabel(tmux, t)} detail={requirementDetailText(tmux, t)}>
-							<InstallAction
-								primaryLabel={t("startup.installTmux")}
-								disabled={install.running && install.target !== "tmux"}
-								job={install.jobFor("tmux")}
-								planChecked={install.inspectionFinished("tmux")}
-								error={install.target === "tmux" ? install.startError : undefined}
-								onInstall={() => void install.start("tmux")}
-								t={t}
-							/>
+							{canInstall ? (
+								<InstallAction
+									primaryLabel={t("startup.installTmux")}
+									disabled={install.running && install.target !== "tmux"}
+									job={install.jobFor("tmux")}
+									planChecked={install.inspectionFinished("tmux")}
+									error={install.target === "tmux" ? install.startError : undefined}
+									onInstall={() => void install.start("tmux")}
+									t={t}
+								/>
+							) : null}
 						</IssueSection>
 					) : null}
 
 					{harnessBlocking && harness ? (
 						<IssueSection label={requirementDisplayLabel(harness, t)} detail={requirementDetailText(harness, t)}>
-							<RadioGroup.Root
-								aria-label={t("startup.chooseAgentAriaLabel")}
-								className="mt-2 flex flex-col gap-1.5"
-								value={selectedAgent ?? ""}
-								onValueChange={(value) => setSelectedAgent(value as AgentInstallTarget)}
-							>
-								{AGENT_INSTALL_OPTIONS.map((option) => (
-									<RadioGroup.Item
-										key={option.target}
-										value={option.target}
-										disabled={install.running}
-										className="group flex items-start gap-2.5 rounded-md border border-border px-3 py-2 text-left transition-colors hover:bg-interactive-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 disabled:cursor-not-allowed disabled:opacity-50 data-[state=checked]:border-accent data-[state=checked]:bg-accent-weak"
-									>
-										<span
-											aria-hidden="true"
-											className="mt-0.5 grid size-icon-sm shrink-0 place-items-center rounded-full border border-border-strong group-data-[state=checked]:border-accent"
+							{canInstall ? (
+								<RadioGroup.Root
+									aria-label={t("startup.chooseAgentAriaLabel")}
+									className="mt-2 flex flex-col gap-1.5"
+									value={selectedAgent ?? ""}
+									onValueChange={(value) => setSelectedAgent(value as AgentInstallTarget)}
+								>
+									{AGENT_INSTALL_OPTIONS.map((option) => (
+										<RadioGroup.Item
+											key={option.target}
+											value={option.target}
+											disabled={install.running}
+											className="group flex items-start gap-2.5 rounded-md border border-border px-3 py-2 text-left transition-colors hover:bg-interactive-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 disabled:cursor-not-allowed disabled:opacity-50 data-[state=checked]:border-accent data-[state=checked]:bg-accent-weak"
 										>
-											<RadioGroup.Indicator className="size-1.5 rounded-full bg-accent" />
-										</span>
-										<span className="min-w-0">
-											<span className="block text-control font-medium text-settings-title">{option.label}</span>
-											<span className="block text-caption text-settings-muted">
-												{t(AGENT_INSTALL_DESCRIPTION_KEYS[option.target])}
+											<span
+												aria-hidden="true"
+												className="mt-0.5 grid size-icon-sm shrink-0 place-items-center rounded-full border border-border-strong group-data-[state=checked]:border-accent"
+											>
+												<RadioGroup.Indicator className="size-1.5 rounded-full bg-accent" />
 											</span>
-										</span>
-									</RadioGroup.Item>
-								))}
-							</RadioGroup.Root>
-							<div className="mt-2">
-								<InstallAction
-									primaryLabel={t("startup.installSelected")}
-									disabled={
-										!selectedAgent || (install.running && install.target !== selectedAgent)
-									}
-									job={selectedAgent ? install.jobFor(selectedAgent) : undefined}
-									planChecked={selectedAgent ? install.inspectionFinished(selectedAgent) : true}
-									error={selectedAgent && install.target === selectedAgent ? install.startError : undefined}
-									onInstall={() => selectedAgent && void install.start(selectedAgent)}
-									t={t}
-								/>
-							</div>
+											<span className="min-w-0">
+												<span className="block text-control font-medium text-settings-title">{option.label}</span>
+												<span className="block text-caption text-settings-muted">
+													{t(AGENT_INSTALL_DESCRIPTION_KEYS[option.target])}
+												</span>
+											</span>
+										</RadioGroup.Item>
+									))}
+								</RadioGroup.Root>
+							) : null}
+							{canInstall ? (
+								<div className="mt-2">
+									<InstallAction
+										primaryLabel={t("startup.installSelected")}
+										disabled={
+											!selectedAgent || (install.running && install.target !== selectedAgent)
+										}
+										job={selectedAgent ? install.jobFor(selectedAgent) : undefined}
+										planChecked={selectedAgent ? install.inspectionFinished(selectedAgent) : true}
+										error={selectedAgent && install.target === selectedAgent ? install.startError : undefined}
+										onInstall={() => selectedAgent && void install.start(selectedAgent)}
+										t={t}
+									/>
+								</div>
+							) : null}
 						</IssueSection>
 					) : null}
 
@@ -262,17 +277,19 @@ export function InstallDependencyDialog({
 						<div className="rounded-lg border border-warning/30 bg-warning/10 px-3 py-2.5 text-xs leading-body-md">
 							<p className="font-medium text-settings-title">{t("startup.recommendedInstallGh")}</p>
 							<p className="mt-0.5 text-settings-muted">{requirementDetailText(gh, t)}</p>
-							<div className="mt-2">
-								<InstallAction
-									primaryLabel={t("startup.installGh")}
-									disabled={install.running && install.target !== "gh"}
-									job={install.jobFor("gh")}
-									planChecked={install.inspectionFinished("gh")}
-									error={install.target === "gh" ? install.startError : undefined}
-									onInstall={() => void install.start("gh")}
-									t={t}
-								/>
-							</div>
+							{canInstall ? (
+								<div className="mt-2">
+									<InstallAction
+										primaryLabel={t("startup.installGh")}
+										disabled={install.running && install.target !== "gh"}
+										job={install.jobFor("gh")}
+										planChecked={install.inspectionFinished("gh")}
+										error={install.target === "gh" ? install.startError : undefined}
+										onInstall={() => void install.start("gh")}
+										t={t}
+									/>
+								</div>
+							) : null}
 							<button
 								type="button"
 								className="mt-2 text-caption text-settings-muted underline-offset-2 hover:underline"
@@ -285,13 +302,15 @@ export function InstallDependencyDialog({
 				</div>
 
 				<div className={settingsDialogFooterClass}>
-					<button
-						type="button"
-						className="settings-footer-button"
-						onClick={() => void window.ao?.menu?.action("app.quit")}
-					>
-						{t("startup.quit")}
-					</button>
+					{canQuit ? (
+						<button
+							type="button"
+							className="settings-footer-button"
+							onClick={() => void aoBridge.menu.action("app.quit")}
+						>
+							{t("startup.quit")}
+						</button>
+					) : null}
 					<button
 						type="button"
 						className="settings-footer-button settings-footer-button-primary"

@@ -7,6 +7,7 @@ import {
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { useEffect } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { aoBridge } from "../lib/bridge";
 
 type Listener = (state: BrowserNavState) => void;
 type TabsListener = (state: import("../../main/browser-view-host").BrowserTabsState) => void;
@@ -132,7 +133,7 @@ function setupBridge() {
 			activityListeners.forEach((listener) => listener(state));
 		},
 	};
-	window.ao = { ...window.ao!, browser: bridge };
+	aoBridge.browser = bridge;
 	return bridge;
 }
 
@@ -1128,8 +1129,11 @@ describe("useBrowserView", () => {
 	it("re-applies the preview on remount without a native browser, whose view state does not survive", async () => {
 		// In web/mock mode navState is component-local, so remounting with an
 		// already-consumed trigger must still restore the static preview.
-		const original = window.ao;
-		window.ao = undefined;
+		const capabilities = aoBridge.capabilities;
+		Object.defineProperty(aoBridge, "capabilities", {
+			configurable: true,
+			value: { ...capabilities, nativeBrowserPanel: false },
+		});
 		try {
 			const props = {
 				sessionId: "sess-1",
@@ -1146,7 +1150,7 @@ describe("useBrowserView", () => {
 			await waitFor(() => expect(second.result.current.navState.url).toBe("http://localhost:5217/"));
 			second.unmount();
 		} finally {
-			window.ao = original;
+			Object.defineProperty(aoBridge, "capabilities", { configurable: true, value: capabilities });
 		}
 	});
 

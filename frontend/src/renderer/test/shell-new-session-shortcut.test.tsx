@@ -104,6 +104,15 @@ vi.mock("@tanstack/react-router", async (importOriginal) => ({
 
 vi.mock("../lib/bridge", () => ({
 	aoBridge: {
+		capabilities: Object.freeze({
+			terminals: true,
+			nativeBrowserPanel: true,
+			windowChrome: true,
+			daemonControl: true,
+			nativeFileDialogs: true,
+			osNotifications: true,
+			filePathDrop: true,
+		}),
 		app: {
 			onNewSessionShortcut: shellMocks.onNewSessionShortcut,
 			onKeyboardShortcutsHelp: shellMocks.onKeyboardShortcutsHelp,

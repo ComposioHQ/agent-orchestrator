@@ -20,7 +20,7 @@ export type ShellTerminal = {
 };
 
 export const shellTerminalsQueryKey = ["shell-terminals"] as const;
-const usePreviewData = import.meta.env.VITE_NO_ELECTRON === "1";
+const usePreviewData = import.meta.env.VITE_AO_PREVIEW_DATA === "1";
 
 function toShellTerminal(t: components["schemas"]["ShellTerminalResponse"]): ShellTerminal {
 	return {
@@ -33,7 +33,7 @@ function toShellTerminal(t: components["schemas"]["ShellTerminalResponse"]): She
 	};
 }
 
-// Preview-only shell list. The browser build has no daemon to spawn a PTY, so
+// Preview-only shell list. The preview-data build has no daemon to spawn a PTY, so
 // open/close mutate this array instead — keeping the tab strip fully
 // interactive (open, select, close) without a backend, which is what the e2e
 // suite drives.

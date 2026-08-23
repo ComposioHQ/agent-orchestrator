@@ -4,6 +4,7 @@ import type { QueryClient } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const {
+	bridgeCapabilities,
 	getStatusMock,
 	onStatusMock,
 	removeStatusMock,
@@ -12,6 +13,7 @@ const {
 	setApiBaseUrlMock,
 	setApiDaemonStatusMock,
 } = vi.hoisted(() => ({
+	bridgeCapabilities: { daemonControl: true },
 	getStatusMock: vi.fn(),
 	onStatusMock: vi.fn(),
 	removeStatusMock: vi.fn(),
@@ -22,7 +24,10 @@ const {
 }));
 
 vi.mock("../lib/bridge", () => ({
-	aoBridge: { daemon: { getStatus: getStatusMock, onStatus: onStatusMock } },
+	aoBridge: {
+		capabilities: bridgeCapabilities,
+		daemon: { getStatus: getStatusMock, onStatus: onStatusMock },
+	},
 }));
 
 vi.mock("../lib/event-transport", () => ({
@@ -44,6 +49,7 @@ function fakeQueryClient(): QueryClient {
 
 beforeEach(() => {
 	vi.useRealTimers();
+	bridgeCapabilities.daemonControl = true;
 	getStatusMock.mockReset().mockResolvedValue({ state: "stopped" });
 	onStatusMock.mockReset().mockReturnValue(removeStatusMock);
 	removeStatusMock.mockReset();
@@ -55,9 +61,44 @@ beforeEach(() => {
 
 afterEach(() => {
 	vi.useRealTimers();
+	vi.unstubAllGlobals();
 });
 
 describe("useDaemonStatus", () => {
+	it("reports web readiness from the same-origin health check", async () => {
+		bridgeCapabilities.daemonControl = false;
+		const fetchMock = vi.fn().mockResolvedValue({
+			ok: true,
+			json: async () => ({ status: "ok", service: "agent-orchestrator-daemon", pid: 4242 }),
+		});
+		vi.stubGlobal("fetch", fetchMock);
+
+		const { result } = renderHook(() => useDaemonStatus(fakeQueryClient()));
+
+		const origin = new URL(window.location.origin);
+		const port = Number(origin.port) || (origin.protocol === "https:" ? 443 : 80);
+		await waitFor(() => expect(result.current).toMatchObject({ state: "ready", port, pid: 4242 }));
+		expect(fetchMock).toHaveBeenCalledWith(new URL("/healthz", window.location.origin), {
+			cache: "no-store",
+			credentials: "same-origin",
+			headers: { Accept: "application/json" },
+		});
+		expect(setApiBaseUrlMock).toHaveBeenCalledWith(window.location.origin);
+		expect(getStatusMock).not.toHaveBeenCalled();
+		expect(onStatusMock).not.toHaveBeenCalled();
+	});
+
+	it("reports a web daemon outage plainly and keeps polling the web origin", async () => {
+		bridgeCapabilities.daemonControl = false;
+		vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("connection refused")));
+
+		const { result } = renderHook(() => useDaemonStatus(fakeQueryClient()));
+
+		await waitFor(() => expect(result.current.code).toBe("daemon_unreachable"));
+		expect(result.current.message).toBeUndefined();
+		expect(setApiBaseUrlMock).toHaveBeenCalledWith(window.location.origin);
+	});
+
 	it("applies the initial status, points REST at the reported port, and connects the transport", async () => {
 		getStatusMock.mockResolvedValue({ state: "ready", port: 3037 });
 		const queryClient = fakeQueryClient();

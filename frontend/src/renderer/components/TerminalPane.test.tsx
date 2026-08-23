@@ -9,6 +9,7 @@ import type { AttachableTerminal } from "../hooks/useTerminalSession";
 import type { TerminalTarget } from "../types/terminal";
 import type { WorkspaceSession } from "../types/workspace";
 import { useUiStore } from "../stores/ui-store";
+import { aoBridge } from "../lib/bridge";
 import {
 	TerminalCacheProvider,
 	TerminalPane,
@@ -24,6 +25,7 @@ const {
 	terminalState,
 	replaySettled,
 	terminalSessionOptions,
+	previewMode,
 	xtermMounts,
 	xtermUnmounts,
 } = vi.hoisted(
@@ -36,11 +38,18 @@ const {
 		terminalState: { value: "idle" },
 		replaySettled: { value: true },
 		terminalSessionOptions: [] as Array<{ coverInitialReplay?: boolean }>,
+		previewMode: { enabled: false },
 		xtermMounts: { value: 0 },
 		xtermUnmounts: { value: 0 },
 	}),
 );
 let terminalLinkHandler: ((uri: string) => void) | undefined;
+
+vi.mock("../lib/preview-mode", () => ({
+	get usesPreviewWorkspaceData() {
+		return previewMode.enabled;
+	},
+}));
 
 vi.mock("../lib/api-client", () => ({
 	apiClient: {
@@ -128,6 +137,7 @@ beforeEach(() => {
 	replaySettled.value = true;
 	terminalLinkHandler = undefined;
 	terminalSessionOptions.length = 0;
+	previewMode.enabled = false;
 	attachMock.mockClear();
 	prepareForActivationMock.mockReset();
 	prepareForActivationMock.mockResolvedValue(undefined);
@@ -218,6 +228,52 @@ function activeXterm(): HTMLElement {
 }
 
 describe("TerminalPane empty states", () => {
+	it("renders the canned transcript in preview mode even when live terminals are supported", () => {
+		previewMode.enabled = true;
+		const view = renderPane({ ...worker, id: "demo-working", terminalHandleId: "term-1" });
+		try {
+			expect(aoBridge.capabilities.terminals).toBe(true);
+			expect(screen.getByText("PASS 18 tests passed")).toBeInTheDocument();
+			expect(screen.queryByTestId("xterm")).not.toBeInTheDocument();
+		} finally {
+			view.restore();
+		}
+	});
+
+	it("keeps a Chat worker target on the live pane path", () => {
+		previewMode.enabled = true;
+		const view = renderPane({ ...worker, mode: "chat", terminalHandleId: "term-1" });
+		try {
+			expect(screen.getByTestId("xterm")).toBeInTheDocument();
+			expect(screen.queryByText("PASS 18 tests passed")).not.toBeInTheDocument();
+		} finally {
+			view.restore();
+		}
+	});
+
+	it("mounts a live terminal when terminal capability is available without Electron", () => {
+		const previousAO = window.ao;
+		window.ao = undefined;
+		try {
+			render(
+				<QueryClientProvider client={new QueryClient()}>
+					<TerminalPane
+						daemonReady
+						fontSize={12}
+						session={{ ...worker, terminalHandleId: "term-1" }}
+						theme="dark"
+					/>
+				</QueryClientProvider>,
+			);
+
+			expect(aoBridge.capabilities.terminals).toBe(true);
+			expect(screen.getByTestId("xterm")).toBeInTheDocument();
+			expect(screen.queryByText(/demo terminal/i)).not.toBeInTheDocument();
+		} finally {
+			window.ao = previousAO;
+		}
+	});
+
 	it("uses the full top, right, and bottom extent for the terminal grid", () => {
 		const view = renderPane({ ...worker, terminalHandleId: "term-1" });
 		try {

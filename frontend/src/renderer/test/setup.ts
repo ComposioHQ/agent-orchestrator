@@ -63,6 +63,15 @@ if (typeof window !== "undefined") {
 	Element.prototype.scrollIntoView = (() => undefined) as typeof Element.prototype.scrollIntoView;
 
 	window.ao = {
+		capabilities: Object.freeze({
+			terminals: true,
+			nativeBrowserPanel: true,
+			windowChrome: true,
+			daemonControl: true,
+			nativeFileDialogs: true,
+			osNotifications: true,
+			filePathDrop: true,
+		}),
 		app: {
 			getVersion: async () => "0.0.0-test",
 			chooseDirectory: async () => null,
