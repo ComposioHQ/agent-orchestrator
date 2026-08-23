@@ -32,9 +32,9 @@ describe("CloneRepositoryDialog cloud location", () => {
 		const onContinue = vi.fn();
 		render(<Harness onContinue={onContinue} />);
 
-		await user.click(screen.getByRole("combobox", { name: "Project location" }));
+		await user.click(screen.getByRole("combobox", { name: "Where should this project run?" }));
 		await user.click(await screen.findByRole("option", { name: "AO Cloud" }));
-		expect(screen.getByText("Create in AO Cloud")).toBeInTheDocument();
+		expect(screen.getByText("Cloud project")).toBeInTheDocument();
 		await user.click(screen.getByRole("button", { name: "Continue" }));
 
 		expect(onContinue).toHaveBeenCalledWith(expect.objectContaining({
