@@ -6,6 +6,7 @@ import { useTranslation } from "react-i18next";
 import { useNavigate, useParams, useRouterState } from "@tanstack/react-router";
 import {
 	ChevronRight,
+	Download,
 	Folder,
 	FolderOpen,
 	LogOut,
@@ -429,7 +430,7 @@ export function Sidebar({
 					aria-hidden={isCollapsed || undefined}
 					className="sidebar-expanded-chrome relative flex w-full min-w-46.5 flex-col gap-0.5 transition-[opacity,transform] duration-150 ease-out group-data-[collapsible=icon]:pointer-events-none group-data-[collapsible=icon]:-translate-x-2 group-data-[collapsible=icon]:opacity-0"
 				>
-					<RestartToUpdateRow status={updateStatus} tabIndex={isCollapsed ? -1 : 0} />
+					<UpdateStatusRow status={updateStatus} tabIndex={isCollapsed ? -1 : 0} />
 					<CloudAccountRow tabIndex={isCollapsed ? -1 : 0} />
 					<button
 						aria-label={t("shell.settings")}
@@ -449,7 +450,7 @@ export function Sidebar({
 					aria-hidden={!isCollapsed || undefined}
 					className="pointer-events-none absolute inset-x-1.5 bottom-0 top-auto flex min-h-row-md flex-col items-center justify-end gap-1 opacity-0 transition-opacity duration-150 ease-out group-data-[collapsible=icon]:pointer-events-auto group-data-[collapsible=icon]:opacity-100"
 				>
-					<RestartToUpdateRailButton status={updateStatus} tabIndex={isCollapsed ? 0 : -1} />
+					<UpdateStatusRail status={updateStatus} tabIndex={isCollapsed ? 0 : -1} />
 					<CloudAccountRailButton tabIndex={isCollapsed ? 0 : -1} />
 					<Tooltip>
 						<TooltipTrigger asChild>
@@ -1098,13 +1099,30 @@ function CloudAccountRailButton({ tabIndex }: { tabIndex: number }) {
 	);
 }
 
-// RestartToUpdateRow sits directly above the Settings row when an update is
-// downloaded and staged. Transparent while fresh; orange (working tokens) once
-// the main-process evaluator flags it escalated. Clicking installs immediately;
-// the row itself is the prompt, so no confirmation dialog. Renders nothing in
-// every other update state.
-function RestartToUpdateRow({ status, tabIndex }: { status: UpdateStatus; tabIndex: number }) {
+// UpdateStatusRow makes automatic update activity visible before the build is
+// staged, then becomes the existing restart action once installation is ready.
+// Idle/checking states stay quiet so routine background checks do not flash in
+// the sidebar.
+function UpdateStatusRow({ status, tabIndex }: { status: UpdateStatus; tabIndex: number }) {
 	const { t } = useTranslation();
+	if (status.state === "available" || status.state === "downloading") {
+		const label =
+			status.state === "available"
+				? t("settings.updates.available", { version: status.version ? ` (v${status.version})` : "" })
+				: t("settings.updates.downloading", { percent: status.percent ?? 0 });
+		return (
+			<div
+				aria-live="polite"
+				className="flex w-full items-center gap-2.5 rounded-lg p-2.5 text-left text-control font-medium text-passive"
+				role="status"
+			>
+				<Download aria-hidden="true" className="size-icon-lg shrink-0" />
+				<span className={cn("min-w-0 flex-1 truncate", status.state === "downloading" && "tabular-nums")}>
+					{label}
+				</span>
+			</div>
+		);
+	}
 	if (status.state !== "downloaded") return null;
 	const escalated = status.escalated === true;
 	return (
@@ -1141,10 +1159,31 @@ function RestartToUpdateRow({ status, tabIndex }: { status: UpdateStatus; tabInd
 	);
 }
 
-// Icon-rail variant of RestartToUpdateRow for the collapsed sidebar: icon-only
-// with the two-line copy in the tooltip.
-function RestartToUpdateRailButton({ status, tabIndex }: { status: UpdateStatus; tabIndex: number }) {
+// Icon-rail variant of UpdateStatusRow. Pre-download states are informational;
+// only a staged update becomes a button.
+function UpdateStatusRail({ status, tabIndex }: { status: UpdateStatus; tabIndex: number }) {
 	const { t } = useTranslation();
+	if (status.state === "available" || status.state === "downloading") {
+		const label =
+			status.state === "available"
+				? t("settings.updates.available", { version: status.version ? ` (v${status.version})` : "" })
+				: t("settings.updates.downloading", { percent: status.percent ?? 0 });
+		return (
+			<Tooltip>
+				<TooltipTrigger asChild>
+					<span
+						aria-label={label}
+						aria-live="polite"
+						className="grid size-9 place-items-center rounded-lg text-passive [&_svg]:size-4"
+						role="status"
+					>
+						<Download aria-hidden="true" />
+					</span>
+				</TooltipTrigger>
+				<TooltipContent side="right">{label}</TooltipContent>
+			</Tooltip>
+		);
+	}
 	if (status.state !== "downloaded") return null;
 	const escalated = status.escalated === true;
 	return (

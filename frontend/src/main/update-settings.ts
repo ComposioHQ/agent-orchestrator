@@ -17,8 +17,8 @@ export interface UpdateSettings {
 	feature: FeaturePin | null;
 }
 
-// Live state of a manual update check/download, streamed to the renderer so the
-// Global Settings "Check for updates" / "Update" buttons can reflect progress.
+// Live state of an automatic or manual update check/download, streamed to the
+// renderer so Settings and the sidebar can reflect progress.
 export type UpdateState =
 	"idle" | "checking" | "available" | "not-available" | "downloading" | "downloaded" | "error" | "unsupported";
 
