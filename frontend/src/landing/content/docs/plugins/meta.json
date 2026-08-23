@@ -1,5 +1,0 @@
-{
-	"title": "Built-in capabilities",
-	"defaultOpen": false,
-	"pages": ["agents", "runtimes", "workspaces", "trackers", "scm", "notifiers", "terminals"]
-}
