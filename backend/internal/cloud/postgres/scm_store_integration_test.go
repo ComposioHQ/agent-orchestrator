@@ -271,14 +271,37 @@ func TestSCMWebhookDeliveriesAreDurablyRetried(t *testing.T) {
 	if !first {
 		t.Fatal("first delivery was not claimed")
 	}
-	if err := store.PrepareSCMWebhookDelivery(ctx, deliveryID, body); err != nil {
+	duplicate, err := store.RecordSCMWebhookDelivery(ctx, deliveryID, "installation")
+	if err != nil {
 		t.Fatal(err)
+	}
+	if duplicate {
+		t.Fatal("duplicate delivery was treated as new")
+	}
+	// Even after a duplicate observes the durable received row, the verified
+	// body can still acquire it for processing; dedup cannot suppress work
+	// interrupted between the record and prepare calls.
+	prepared, err := store.PrepareSCMWebhookDelivery(ctx, deliveryID, body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !prepared {
+		t.Fatal("first delivery body was not prepared")
 	}
 	if err := store.FinishSCMWebhookDelivery(ctx, deliveryID, "retry", "processing_failed", 910099); err != nil {
 		t.Fatal(err)
 	}
 
+	// The first retry uses a one-second backoff; it must not be claimable early.
 	deliveries, err := store.ClaimSCMWebhookRetries(ctx, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(deliveries) != 0 {
+		t.Fatalf("delivery ignored retry backoff: %#v", deliveries)
+	}
+	time.Sleep(1100 * time.Millisecond)
+	deliveries, err = store.ClaimSCMWebhookRetries(ctx, 10)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -288,7 +311,7 @@ func TestSCMWebhookDeliveriesAreDurablyRetried(t *testing.T) {
 	if deliveries[0].DeliveryID != deliveryID || deliveries[0].Event != "installation" || !bytes.Equal(deliveries[0].Body, body) {
 		t.Fatalf("claimed delivery = %#v", deliveries[0])
 	}
-	if err := store.FinishSCMWebhookDelivery(ctx, deliveryID, "processed", "", 910099); err != nil {
+	if err := store.FinishSCMWebhookDelivery(ctx, deliveryID, "complete", "", 910099); err != nil {
 		t.Fatal(err)
 	}
 	deliveries, err = store.ClaimSCMWebhookRetries(ctx, 10)
@@ -296,7 +319,7 @@ func TestSCMWebhookDeliveriesAreDurablyRetried(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(deliveries) != 0 {
-		t.Fatalf("processed delivery was reclaimed: %#v", deliveries)
+		t.Fatalf("complete delivery was reclaimed: %#v", deliveries)
 	}
 }
 

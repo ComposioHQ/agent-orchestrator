@@ -458,20 +458,18 @@ func (s *Store) RecordSCMWebhookDelivery(
 }
 
 // PrepareSCMWebhookDelivery persists the verified body and starts the first
-// processing attempt before any JSON parsing occurs.
-func (s *Store) PrepareSCMWebhookDelivery(ctx context.Context, deliveryID string, body []byte) error {
+// processing attempt before any JSON parsing occurs. It returns false when
+// durable state already owns this delivery's unfinished or completed work.
+func (s *Store) PrepareSCMWebhookDelivery(ctx context.Context, deliveryID string, body []byte) (bool, error) {
 	var prepared bool
 	if err := s.pool.QueryRow(
 		ctx,
 		`SELECT ao_scm_prepare_webhook_delivery('github', $1, $2)`,
 		strings.TrimSpace(deliveryID), body,
 	).Scan(&prepared); err != nil {
-		return normalizeError(err)
+		return false, normalizeError(err)
 	}
-	if !prepared {
-		return ErrNotFound
-	}
-	return nil
+	return prepared, nil
 }
 
 // FinishSCMWebhookDelivery records a terminal or internally retryable result.

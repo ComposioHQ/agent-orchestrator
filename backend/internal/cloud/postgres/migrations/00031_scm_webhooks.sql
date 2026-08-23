@@ -13,9 +13,10 @@ CREATE TABLE ao_scm_webhook_deliveries (
     event TEXT NOT NULL DEFAULT '',
     external_installation_id BIGINT NOT NULL DEFAULT 0,
     body BYTEA NOT NULL DEFAULT ''::BYTEA CHECK (octet_length(body) <= 2097152),
-    processing_state TEXT NOT NULL DEFAULT 'pending'
-        CHECK (processing_state IN ('pending', 'processing', 'retry', 'processed', 'failed')),
+    processing_state TEXT NOT NULL DEFAULT 'received'
+        CHECK (processing_state IN ('received', 'processing', 'retry', 'complete')),
     attempts INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
+    next_attempt_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     last_error TEXT NOT NULL DEFAULT '' CHECK (length(last_error) <= 128),
     received_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -24,8 +25,8 @@ CREATE TABLE ao_scm_webhook_deliveries (
 CREATE INDEX ao_scm_webhook_deliveries_received_idx
     ON ao_scm_webhook_deliveries(received_at);
 CREATE INDEX ao_scm_webhook_deliveries_retry_idx
-    ON ao_scm_webhook_deliveries(processing_state, updated_at)
-    WHERE processing_state = 'retry';
+    ON ao_scm_webhook_deliveries(processing_state, next_attempt_at)
+    WHERE processing_state IN ('received', 'processing', 'retry');
 
 ALTER TABLE ao_scm_webhook_deliveries ENABLE ROW LEVEL SECURITY;
 ALTER TABLE ao_scm_webhook_deliveries FORCE ROW LEVEL SECURITY;
@@ -118,9 +119,10 @@ END
 $$;
 -- +goose StatementEnd
 
--- Persist the verified raw body before JSON parsing. This makes a transient
--- processing failure internally retryable even though every valid-HMAC HTTP
--- delivery receives 202 and GitHub will not retry it for us.
+-- Persist the verified raw body and acquire the initial processing lease
+-- before JSON parsing. A duplicate may acquire a still-received delivery, so
+-- an interruption between delivery-id dedup and body persistence cannot let a
+-- redelivery suppress unfinished work.
 -- +goose StatementBegin
 CREATE FUNCTION ao_scm_prepare_webhook_delivery(
     candidate_provider TEXT,
@@ -138,11 +140,12 @@ BEGIN
     SET body = candidate_body,
         processing_state = 'processing',
         attempts = attempts + 1,
+        next_attempt_at = now() + interval '5 minutes',
         last_error = '',
         updated_at = now()
     WHERE provider = candidate_provider
       AND delivery_id = candidate_delivery_id
-      AND processing_state = 'pending';
+      AND processing_state = 'received';
     GET DIAGNOSTICS affected = ROW_COUNT;
     RETURN affected > 0;
 END
@@ -166,13 +169,18 @@ AS $$
 DECLARE
     affected INTEGER;
 BEGIN
-    IF candidate_state NOT IN ('processed', 'retry', 'failed') THEN
+    IF candidate_state NOT IN ('complete', 'retry') THEN
         RAISE EXCEPTION 'unsupported webhook processing state';
     END IF;
     UPDATE public.ao_scm_webhook_deliveries
-    SET processing_state = CASE
-            WHEN candidate_state = 'retry' AND attempts >= 10 THEN 'failed'
-            ELSE candidate_state
+    SET processing_state = candidate_state,
+        next_attempt_at = CASE
+            WHEN candidate_state = 'retry' THEN
+                now() + make_interval(secs => least(
+                    3600,
+                    power(2::NUMERIC, least(greatest(attempts - 1, 0), 12))::INTEGER
+                ))
+            ELSE now()
         END,
         last_error = left(coalesce(candidate_error, ''), 128),
         external_installation_id = coalesce(candidate_external_installation_id, 0),
@@ -202,22 +210,17 @@ BEGIN
         SELECT pending.provider, pending.delivery_id
         FROM public.ao_scm_webhook_deliveries pending
         WHERE pending.provider = candidate_provider
-          AND (
-              pending.processing_state = 'retry'
-              OR (
-                  pending.processing_state = 'processing'
-                  AND pending.updated_at < now() - interval '5 minutes'
-              )
-          )
+          AND pending.processing_state IN ('processing', 'retry')
+          AND pending.next_attempt_at <= now()
           AND pending.body <> ''::BYTEA
-          AND pending.attempts < 10
-        ORDER BY pending.updated_at, pending.delivery_id
+        ORDER BY pending.next_attempt_at, pending.delivery_id
         FOR UPDATE SKIP LOCKED
         LIMIT greatest(0, least(candidate_limit, 100))
     )
     UPDATE public.ao_scm_webhook_deliveries claimed
     SET processing_state = 'processing',
         attempts = claimed.attempts + 1,
+        next_attempt_at = now() + interval '5 minutes',
         updated_at = now()
     FROM candidates
     WHERE claimed.provider = candidates.provider
@@ -238,7 +241,7 @@ DECLARE
     removed BIGINT;
 BEGIN
     DELETE FROM public.ao_scm_webhook_deliveries
-    WHERE processing_state IN ('processed', 'failed')
+    WHERE processing_state = 'complete'
       AND updated_at < now() - retain;
     GET DIAGNOSTICS removed = ROW_COUNT;
     RETURN removed;

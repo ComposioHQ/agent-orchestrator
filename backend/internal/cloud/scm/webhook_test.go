@@ -33,6 +33,7 @@ type memoryWebhookStore struct {
 	bodies        map[string][]byte
 	states        map[string]string
 	errors        map[string]string
+	attempts      map[string]int
 }
 
 func newMemoryWebhookStore() *memoryWebhookStore {
@@ -43,6 +44,7 @@ func newMemoryWebhookStore() *memoryWebhookStore {
 		bodies:        map[string][]byte{},
 		states:        map[string]string{},
 		errors:        map[string]string{},
+		attempts:      map[string]int{},
 	}
 }
 
@@ -56,16 +58,28 @@ func (s *memoryWebhookStore) RecordSCMWebhookDelivery(
 		return false, s.recordErr
 	}
 	s.deliveries[deliveryID]++
-	s.events[deliveryID] = event
-	return s.deliveries[deliveryID] == 1, nil
+	first := s.deliveries[deliveryID] == 1
+	if first {
+		s.events[deliveryID] = event
+		s.states[deliveryID] = "received"
+	}
+	return first, nil
 }
 
-func (s *memoryWebhookStore) PrepareSCMWebhookDelivery(_ context.Context, deliveryID string, body []byte) error {
+func (s *memoryWebhookStore) PrepareSCMWebhookDelivery(
+	_ context.Context,
+	deliveryID string,
+	body []byte,
+) (bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.states[deliveryID] != "received" {
+		return false, nil
+	}
 	s.bodies[deliveryID] = append([]byte(nil), body...)
 	s.states[deliveryID] = "processing"
-	return nil
+	s.attempts[deliveryID]++
+	return true, nil
 }
 
 func (s *memoryWebhookStore) FinishSCMWebhookDelivery(
@@ -89,6 +103,7 @@ func (s *memoryWebhookStore) ClaimSCMWebhookRetries(_ context.Context, limit int
 			continue
 		}
 		s.states[deliveryID] = "processing"
+		s.attempts[deliveryID]++
 		deliveries = append(deliveries, domain.SCMWebhookDelivery{
 			DeliveryID: deliveryID,
 			Event:      s.events[deliveryID],
@@ -281,8 +296,40 @@ func TestWebhookDeduplicatesSignedDeliveryBeforeParsing(t *testing.T) {
 	if !result.Duplicate || store.deliveries["delivery-malformed"] != 2 {
 		t.Fatalf("duplicate result = %#v deliveries = %#v", result, store.deliveries)
 	}
-	if store.states["delivery-malformed"] != webhookStateFailed || store.errors["delivery-malformed"] != webhookErrorInvalidJSON {
+	if store.states["delivery-malformed"] != webhookStateRetry || store.errors["delivery-malformed"] != webhookErrorInvalidJSON {
 		t.Fatalf("durable malformed state = %q error = %q", store.states["delivery-malformed"], store.errors["delivery-malformed"])
+	}
+	if store.attempts["delivery-malformed"] != 1 {
+		t.Fatalf("duplicate changed attempts to %d", store.attempts["delivery-malformed"])
+	}
+	processed, err := processor.RetryPending(context.Background(), 10)
+	if err == nil {
+		t.Fatal("malformed retry unexpectedly succeeded")
+	}
+	if processed != 1 || store.attempts["delivery-malformed"] != 2 || store.states["delivery-malformed"] != webhookStateRetry {
+		t.Fatalf("processed = %d attempts = %d state = %q", processed, store.attempts["delivery-malformed"], store.states["delivery-malformed"])
+	}
+}
+
+func TestWebhookDuplicateResumesAReceivedDelivery(t *testing.T) {
+	store := newMemoryWebhookStore()
+	store.installations[55] = domain.SCMInstallation{
+		ID: "installation-55", OrgID: "org-1", Status: domain.InstallationStatusActive,
+	}
+	processor := newTestProcessor(t, store, nil)
+	body := []byte(`{"installation":{"id":55}}`)
+	if first, err := store.RecordSCMWebhookDelivery(context.Background(), "delivery-interrupted", "installation"); err != nil || !first {
+		t.Fatalf("initial record first=%v err=%v", first, err)
+	}
+
+	result, err := processor.Process(
+		context.Background(), "installation", "delivery-interrupted", sign(body), body,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.Duplicate || store.states["delivery-interrupted"] != webhookStateComplete || store.attempts["delivery-interrupted"] != 1 {
+		t.Fatalf("result = %#v state = %q attempts = %d", result, store.states["delivery-interrupted"], store.attempts["delivery-interrupted"])
 	}
 }
 
@@ -310,7 +357,7 @@ func TestWebhookInternalFailureIsDurablyRetried(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if processed != 1 || sink.count() != 1 || store.states["delivery-retry"] != webhookStateProcessed {
+	if processed != 1 || sink.count() != 1 || store.states["delivery-retry"] != webhookStateComplete {
 		t.Fatalf("processed = %d signals = %d state = %q", processed, sink.count(), store.states["delivery-retry"])
 	}
 }

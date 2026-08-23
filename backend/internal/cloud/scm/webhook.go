@@ -76,7 +76,7 @@ type ObservationSink interface {
 // resolution, and the narrow set of installation mutations a webhook may make.
 type WebhookStore interface {
 	RecordSCMWebhookDelivery(ctx context.Context, deliveryID, event string) (bool, error)
-	PrepareSCMWebhookDelivery(ctx context.Context, deliveryID string, body []byte) error
+	PrepareSCMWebhookDelivery(ctx context.Context, deliveryID string, body []byte) (bool, error)
 	FinishSCMWebhookDelivery(ctx context.Context, deliveryID, state, errorCode string, externalInstallationID int64) error
 	ClaimSCMWebhookRetries(ctx context.Context, limit int) ([]domain.SCMWebhookDelivery, error)
 	SCMInstallationContext(ctx context.Context, externalInstallationID int64) (domain.SCMInstallation, error)
@@ -86,9 +86,8 @@ type WebhookStore interface {
 }
 
 const (
-	webhookStateProcessed = "processed"
-	webhookStateRetry     = "retry"
-	webhookStateFailed    = "failed"
+	webhookStateComplete = "complete"
+	webhookStateRetry    = "retry"
 
 	webhookErrorInvalidJSON = "invalid_json"
 	webhookErrorProcessing  = "processing_failed"
@@ -207,15 +206,19 @@ func (p *WebhookProcessor) Process(
 	if err != nil {
 		return WebhookResult{}, err
 	}
-	result := WebhookResult{Event: event, DeliveryID: deliveryID}
-	if !first {
-		result.Duplicate = true
-		return result, nil
-	}
-	if err := p.store.PrepareSCMWebhookDelivery(ctx, deliveryID, body); err != nil {
+	result := WebhookResult{Event: event, DeliveryID: deliveryID, Duplicate: !first}
+	prepared, err := p.store.PrepareSCMWebhookDelivery(ctx, deliveryID, body)
+	if err != nil {
 		return WebhookResult{}, err
 	}
-	return p.processClaimed(ctx, event, deliveryID, body)
+	if !prepared {
+		// A complete, retry-scheduled, or actively leased delivery remains owned
+		// by durable state. A duplicate never cancels or replaces that work.
+		return result, nil
+	}
+	processed, err := p.processClaimed(ctx, event, deliveryID, body)
+	processed.Duplicate = !first
+	return processed, err
 }
 
 // RetryPending processes a bounded batch of durably retained deliveries. A
@@ -242,7 +245,7 @@ func (p *WebhookProcessor) processClaimed(
 	var payload webhookPayload
 	if err := json.Unmarshal(body, &payload); err != nil {
 		if finishErr := p.store.FinishSCMWebhookDelivery(
-			ctx, deliveryID, webhookStateFailed, webhookErrorInvalidJSON, 0,
+			ctx, deliveryID, webhookStateRetry, webhookErrorInvalidJSON, 0,
 		); finishErr != nil {
 			return WebhookResult{}, errors.Join(errors.New("cloud scm: webhook body is not valid JSON"), finishErr)
 		}
@@ -258,7 +261,7 @@ func (p *WebhookProcessor) processClaimed(
 		return WebhookResult{}, err
 	}
 	if err := p.store.FinishSCMWebhookDelivery(
-		ctx, deliveryID, webhookStateProcessed, "", payload.Installation.ID,
+		ctx, deliveryID, webhookStateComplete, "", payload.Installation.ID,
 	); err != nil {
 		return WebhookResult{}, err
 	}
