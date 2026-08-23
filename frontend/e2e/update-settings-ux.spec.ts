@@ -45,12 +45,23 @@ test("automatic updates stay readable without asking for a manual download", asy
 
 	const panel = await openUpdates(page);
 	await captureEvidence(panel, "available");
-	const surface = await panel.evaluate((element) => ({
-		wash: getComputedStyle(element).backgroundImage,
-		texture: getComputedStyle(element, "::after").backgroundImage,
-	}));
-	expect(surface.wash).toContain("gradient");
-	expect(surface.texture).toContain("radial-gradient");
+	const controls = page.getByTestId("update-settings-controls");
+	const [surface, controlSurface] = await Promise.all([
+		panel.evaluate((element) => ({
+			backgroundColor: getComputedStyle(element).backgroundColor,
+			backgroundImage: getComputedStyle(element).backgroundImage,
+			borderColor: getComputedStyle(element).borderColor,
+			texture: getComputedStyle(element, "::after").backgroundImage,
+		})),
+		controls.evaluate((element) => ({
+			backgroundColor: getComputedStyle(element).backgroundColor,
+			borderColor: getComputedStyle(element).borderColor,
+		})),
+	]);
+	expect(surface.backgroundImage).toBe("none");
+	expect(surface.texture).toBe("none");
+	expect(surface.backgroundColor).toBe(controlSurface.backgroundColor);
+	expect(surface.borderColor).toBe(controlSurface.borderColor);
 	await expect(panel).toContainText(`v${AVAILABLE_VERSION}`);
 	await expect(panel).toContainText("Downloads automatically");
 	await expect(panel.getByRole("button", { name: /Update to/ })).toHaveCount(0);

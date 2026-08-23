@@ -192,7 +192,10 @@ export function UpdatesSection({ titleHidden }: { titleHidden?: boolean } = {}) 
 					</div>
 				)}
 
-				<div className="mt-3 w-full overflow-hidden rounded-(--radius-settings-panel) border border-[var(--color-border-settings-dialog)] bg-[var(--color-bg-settings-input)] shadow-[inset_0_1px_0_color-mix(in_oklch,var(--foreground)_4%,transparent)]">
+				<div
+					className="mt-3 w-full overflow-hidden rounded-(--radius-settings-panel) border border-[var(--color-border-settings-dialog)] bg-[var(--color-bg-settings-input)] shadow-[inset_0_1px_0_color-mix(in_oklch,var(--foreground)_4%,transparent)]"
+					data-testid="update-settings-controls"
+				>
 					<SettingsRow label={t("settings.updates.automatic")}>
 						<div className="flex items-center gap-3">
 							<span className="text-xs text-settings-muted">
@@ -351,7 +354,7 @@ function UpdateActions({ status, automaticUpdatesEnabled }: { status: UpdateStat
 
 	return (
 		<div className="update-status-panel rounded-(--radius-settings-panel)" data-tone={tone}>
-			<div className="relative z-1 flex flex-col px-4 py-4 sm:px-5 sm:py-5">
+			<div className="flex flex-col px-4 py-4 sm:px-5 sm:py-5">
 				<div className="flex min-w-0 items-start gap-3.5">
 					<div className="update-status-glyph mt-0.5 flex size-10 shrink-0 items-center justify-center rounded-lg" aria-hidden="true">
 						<UpdateStatusIcon status={displayStatus} />
@@ -409,7 +412,7 @@ function UpdateActions({ status, automaticUpdatesEnabled }: { status: UpdateStat
 				)}
 
 				{showActions && (
-					<div className="mt-4 flex flex-wrap items-center justify-end gap-2 border-t border-[color-mix(in_oklch,var(--update-status-tone)_14%,transparent)] pt-3">
+					<div className="mt-4 flex flex-wrap items-center justify-end gap-2 border-t border-[var(--color-border-settings-dialog)] pt-3">
 						{showDownloadAction && (
 							<Button type="button" variant="primary" onClick={() => void downloadNow()} disabled={manualDownloadPending}>
 								{manualDownloadPending ? t("settings.updates.downloading", { percent: 0 }) : t("settings.updates.downloadNow")}
@@ -427,7 +430,6 @@ function UpdateActions({ status, automaticUpdatesEnabled }: { status: UpdateStat
 								aria-describedby="update-status-line"
 								variant="outline"
 								size="sm"
-								className="bg-background/45"
 								onClick={() => void checkNow()}
 								disabled={busy}
 							>
@@ -443,7 +445,7 @@ function UpdateActions({ status, automaticUpdatesEnabled }: { status: UpdateStat
 				)}
 
 				{status.staleCheckNudge && (
-					<p className="mt-4 flex items-start gap-2 border-t border-[color-mix(in_oklch,var(--update-status-tone)_18%,transparent)] pt-3 text-xs leading-5 text-warning">
+					<p className="mt-4 flex items-start gap-2 border-t border-[var(--color-border-settings-dialog)] pt-3 text-xs leading-5 text-warning">
 						<AlertTriangle className="mt-0.5 size-icon-sm shrink-0" aria-hidden="true" />
 						<span>{t("settings.updates.networkStale")}</span>
 					</p>
