@@ -81,12 +81,10 @@ var _ Manager = (*Service)(nil)
 
 // Store is the review_run persistence surface owned by the service submit path.
 type Store interface {
+	ports.ReviewRunStore
 	GetReviewByID(ctx context.Context, id string) (domain.Review, bool, error)
 	UpdateReviewAgentSessionID(ctx context.Context, id, agentSessionID string) (bool, error)
-	GetReviewRun(ctx context.Context, id string) (domain.ReviewRun, bool, error)
 	GetSession(ctx context.Context, id domain.SessionID) (domain.SessionRecord, bool, error)
-	UpdateReviewRunResult(ctx context.Context, id string, status domain.ReviewRunStatus, verdict domain.ReviewVerdict, body, githubReviewID string, autoInjectReview bool) (bool, error)
-	MarkReviewRunDelivered(ctx context.Context, id string, deliveredAt time.Time) (bool, error)
 	ListPRsBySession(ctx context.Context, id domain.SessionID) ([]domain.PullRequest, error)
 	ListPRReviews(ctx context.Context, prURL string) ([]domain.PullRequestReview, error)
 	ListPRComments(ctx context.Context, prURL string) ([]domain.PullRequestComment, error)

@@ -123,6 +123,39 @@ func (f *fakeStore) ListReviewRunsByBatch(context.Context, domain.SessionID, str
 	return out, nil
 }
 
+func (f *fakeStore) InsertReviewRun(_ context.Context, run domain.ReviewRun) error {
+	f.batchRuns = append(f.batchRuns, run)
+	return nil
+}
+
+func (f *fakeStore) SupersedeStaleRunningReviewRuns(_ context.Context, _ domain.SessionID, _, _, _ string) (int64, error) {
+	return 0, nil
+}
+
+func (f *fakeStore) CancelRunningReviewRunsBySession(_ context.Context, _ domain.SessionID, _ string) (int64, error) {
+	return 0, nil
+}
+
+func (f *fakeStore) CancelRunningReviewRunsBySessionAndHarness(_ context.Context, _ domain.SessionID, _ domain.ReviewerHarness, _ string) (int64, error) {
+	return 0, nil
+}
+
+func (f *fakeStore) GetReviewRunBySessionPRAndSHA(_ context.Context, _ domain.SessionID, _, _ string) (domain.ReviewRun, bool, error) {
+	return domain.ReviewRun{}, false, nil
+}
+
+func (f *fakeStore) GetReviewRunBySessionPRSHAAndHarness(_ context.Context, _ domain.SessionID, _, _ string, _ domain.ReviewerHarness) (domain.ReviewRun, bool, error) {
+	return domain.ReviewRun{}, false, nil
+}
+
+func (f *fakeStore) ListReviewRunsBySession(_ context.Context, _ domain.SessionID) ([]domain.ReviewRun, error) {
+	return append([]domain.ReviewRun(nil), f.batchRuns...), nil
+}
+
+func (f *fakeStore) ListRunningReviewRunsBySession(_ context.Context, _ domain.SessionID) ([]domain.ReviewRun, error) {
+	return nil, nil
+}
+
 func (f *fakeStore) ListPRsBySession(context.Context, domain.SessionID) ([]domain.PullRequest, error) {
 	out := append([]domain.PullRequest(nil), f.prs...)
 	return out, nil

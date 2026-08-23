@@ -45,6 +45,24 @@ type SettingsStore interface {
 	SetDefaultSessionMode(context.Context, domain.SessionMode, time.Time) error
 }
 
+// ReviewRunStore persists the complete lifecycle of AO-internal review passes.
+// Database triggers own CDC for these canonical mutations; adapters must not
+// emit review-run change events manually.
+type ReviewRunStore interface {
+	InsertReviewRun(context.Context, domain.ReviewRun) error
+	UpdateReviewRunResult(context.Context, string, domain.ReviewRunStatus, domain.ReviewVerdict, string, string, bool) (bool, error)
+	SupersedeStaleRunningReviewRuns(context.Context, domain.SessionID, string, string, string) (int64, error)
+	CancelRunningReviewRunsBySession(context.Context, domain.SessionID, string) (int64, error)
+	CancelRunningReviewRunsBySessionAndHarness(context.Context, domain.SessionID, domain.ReviewerHarness, string) (int64, error)
+	MarkReviewRunDelivered(context.Context, string, time.Time) (bool, error)
+	GetReviewRun(context.Context, string) (domain.ReviewRun, bool, error)
+	GetReviewRunBySessionPRAndSHA(context.Context, domain.SessionID, string, string) (domain.ReviewRun, bool, error)
+	GetReviewRunBySessionPRSHAAndHarness(context.Context, domain.SessionID, string, string, domain.ReviewerHarness) (domain.ReviewRun, bool, error)
+	ListReviewRunsBySession(context.Context, domain.SessionID) ([]domain.ReviewRun, error)
+	ListRunningReviewRunsBySession(context.Context, domain.SessionID) ([]domain.ReviewRun, error)
+	ListReviewRunsByBatch(context.Context, domain.SessionID, string) ([]domain.ReviewRun, error)
+}
+
 // PRFactsReader supplies persisted SCM facts to session status, PR summaries,
 // review delivery, notification reconciliation, and actions.
 type PRFactsReader interface {

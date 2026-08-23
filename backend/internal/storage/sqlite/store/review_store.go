@@ -8,8 +8,11 @@ import (
 	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
+	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 	"github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite/gen"
 )
+
+var _ ports.ReviewRunStore = (*Store)(nil)
 
 // UpsertReview inserts the per-worker, per-harness review row, or reuses the
 // existing one by refreshing its handle/native-session state.

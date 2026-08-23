@@ -216,6 +216,25 @@ func (f *fakeStore) ListRunningReviewRunsBySession(_ context.Context, sessionID 
 	}
 	return out, nil
 }
+func (f *fakeStore) MarkReviewRunDelivered(_ context.Context, id string, deliveredAt time.Time) (bool, error) {
+	for i := range f.runs {
+		if f.runs[i].ID == id && f.runs[i].Status == domain.ReviewRunComplete && f.runs[i].DeliveredAt == nil {
+			f.runs[i].Status = domain.ReviewRunDelivered
+			f.runs[i].DeliveredAt = &deliveredAt
+			return true, nil
+		}
+	}
+	return false, nil
+}
+func (f *fakeStore) ListReviewRunsByBatch(_ context.Context, sessionID domain.SessionID, batchID string) ([]domain.ReviewRun, error) {
+	out := make([]domain.ReviewRun, 0)
+	for _, run := range f.runs {
+		if run.SessionID == sessionID && run.BatchID == batchID {
+			out = append(out, run)
+		}
+	}
+	return out, nil
+}
 
 type fakeSessions struct {
 	rec domain.SessionRecord
