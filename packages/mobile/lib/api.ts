@@ -567,7 +567,7 @@ export async function markNotificationRead(cfg: ServerConfig, id: string): Promi
 
 // ---- Notification history ---------------------------------------------------
 
-export type NotificationType = "needs_input" | "ready_to_merge" | "pr_merged" | "pr_closed_unmerged";
+export type NotificationType = "needs_input" | "turn_complete" | "ready_to_merge" | "pr_merged" | "pr_closed_unmerged";
 
 export type NotificationRecord = {
 	id: string;
