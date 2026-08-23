@@ -316,18 +316,22 @@ describe("TaskComposer", () => {
 		);
 	});
 
-	it("offers an explicit approval-less retry for Pi Chat", async () => {
+	it("offers an explicit approval-less retry from structured capability details", async () => {
 		h.get.mockImplementation(async (path: string) => {
 			if (path.includes("/models")) {
-				return { data: { agent: "pi", selectionMode: "text", models: [], allowCustom: true } };
+				return { data: { agent: "cursor", selectionMode: "text", models: [], allowCustom: true } };
 			}
-			return { data: { status: "ok", project: { agent: "pi", config: {} } } };
+			return { data: { status: "ok", project: { agent: "cursor", config: {} } } };
 		});
 		h.post
 			.mockResolvedValueOnce({
 				error: {
 					code: "SESSION_MODE_UNSUPPORTED",
-					message: "spawn: chat mode unsupported for harness: pi lacks [approvals]",
+					message: "This provider cannot satisfy the selected approval policy",
+					details: {
+						missingCapabilities: ["approvals"],
+						allowedApprovalModes: ["bypass-permissions"],
+					},
 				},
 			})
 			.mockResolvedValueOnce({ data: { workerId: "sess-pi" } });
@@ -338,8 +342,8 @@ describe("TaskComposer", () => {
 				<TaskComposer projectId="proj-1" onCreated={onCreated} />
 			</Wrap>,
 		);
-		await waitFor(() => expect(screen.getByTestId("agent-field")).toHaveAttribute("data-value", "pi"));
-		fireEvent.change(task(), { target: { value: "Use Pi Chat" } });
+		await waitFor(() => expect(screen.getByTestId("agent-field")).toHaveAttribute("data-value", "cursor"));
+		fireEvent.change(task(), { target: { value: "Use approval-less Chat" } });
 		fireEvent.click(screen.getByText("Start task"));
 
 		const fallback = await screen.findByRole("button", { name: "Start without approvals" });

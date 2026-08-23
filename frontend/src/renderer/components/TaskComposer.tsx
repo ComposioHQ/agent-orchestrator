@@ -48,10 +48,18 @@ class TaskCreateError extends Error {
 	constructor(
 		message: string,
 		readonly code?: string,
+		readonly details?: components["schemas"]["APIError"]["details"],
 	) {
 		super(message);
 		this.name = "TaskCreateError";
 	}
+}
+
+type FallbackAction = "tui" | "bypass-permissions";
+
+function hasErrorDetail(details: components["schemas"]["APIError"]["details"] | undefined, key: string, value: string) {
+	const values = details?.[key];
+	return Array.isArray(values) && values.includes(value);
 }
 
 export type TaskComposerProps = {
@@ -79,8 +87,7 @@ export function TaskComposer({
 	const [modelTouched, setModelTouched] = useState(false);
 	const [isSubmitting, setIsSubmitting] = useState(false);
 	const [error, setError] = useState<string | undefined>();
-	const [canCreateAsTUI, setCanCreateAsTUI] = useState(false);
-	const [canCreateWithoutApprovals, setCanCreateWithoutApprovals] = useState(false);
+	const [fallbackAction, setFallbackAction] = useState<FallbackAction>();
 	const {
 		attachments,
 		error: attachmentError,
@@ -108,6 +115,7 @@ export function TaskComposer({
 					throw new TaskCreateError(
 						apiErrorMessage(error, t("newTask.unableToStart")),
 						apiErrorCode(error),
+						error.details,
 					);
 				}
 				if (!data?.workerId) throw new Error(t("newTask.noSession"));
@@ -249,8 +257,7 @@ export function TaskComposer({
 
 		setIsSubmitting(true);
 		setError(undefined);
-		setCanCreateAsTUI(false);
-		setCanCreateWithoutApprovals(false);
+		setFallbackAction(undefined);
 		try {
 			const attachmentPayloads = await toSettledPayload();
 			const sessionId = await createTask({
@@ -266,17 +273,19 @@ export function TaskComposer({
 			});
 			onCreated(sessionId);
 		} catch (err) {
-			const canBypassPiApprovals =
-				selectedAgent === "pi" &&
+			const canBypassApprovals =
 				err instanceof TaskCreateError &&
 				err.code === "SESSION_MODE_UNSUPPORTED" &&
-				err.message.includes("lacks [approvals]");
-			setCanCreateWithoutApprovals(canBypassPiApprovals);
-			setCanCreateAsTUI(
-				!canBypassPiApprovals &&
-					interfaceMode !== "tui" &&
-					err instanceof TaskCreateError &&
-					Boolean(err.code && CHAT_PREFLIGHT_CODES.has(err.code)),
+				hasErrorDetail(err.details, "missingCapabilities", "approvals") &&
+				hasErrorDetail(err.details, "allowedApprovalModes", "bypass-permissions");
+			setFallbackAction(
+				canBypassApprovals
+					? "bypass-permissions"
+					: interfaceMode !== "tui" &&
+							err instanceof TaskCreateError &&
+							Boolean(err.code && CHAT_PREFLIGHT_CODES.has(err.code))
+						? "tui"
+						: undefined,
 			);
 			setError(err instanceof Error ? err.message : t("newTask.unableToStart"));
 		} finally {
@@ -292,7 +301,7 @@ export function TaskComposer({
 			onPromptChange={setPrompt}
 			labels={{
 				addFile: t("newTask.addFile"),
-				createAsTui: canCreateWithoutApprovals
+				fallbackAction: fallbackAction === "bypass-permissions"
 					? t("newTask.startWithoutApprovals", { defaultValue: "Start without approvals" })
 					: t("newTask.createAsTui"),
 				removeFile: (name) => t("newTask.removeFile", { name }),
@@ -348,15 +357,15 @@ export function TaskComposer({
 				onRemove: removeAttachment,
 			}}
 			submission={{
-				canCreateAsTui: canCreateAsTUI || canCreateWithoutApprovals,
+				showFallbackAction: fallbackAction !== undefined,
 				error,
 				isSubmitting,
 				modelWarning,
-				onSubmit: () => void submitTask(requiresTuiFallback ? "tui" : undefined),
-				onSubmitAsTui: () =>
-					void (canCreateWithoutApprovals
+				onFallbackAction: () =>
+					void (fallbackAction === "bypass-permissions"
 						? submitTask(undefined, "bypass-permissions")
 						: submitTask("tui")),
+				onSubmit: () => void submitTask(requiresTuiFallback ? "tui" : undefined),
 			}}
 			renderAgentControl={(control) => <DesktopAgentControl {...control} />}
 			renderModelControl={(control) => <TaskModelPicker {...control} />}

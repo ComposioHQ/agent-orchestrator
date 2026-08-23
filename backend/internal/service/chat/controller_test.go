@@ -252,6 +252,7 @@ type fakeDriver struct {
 	conv      ports.ChatConversation
 	startCfg  *ports.ChatStartConfig
 	resumeCfg *ports.ChatResumeConfig
+	caps      ports.ChatCapabilities
 	probe     func() error
 	start     func(ports.ChatStartConfig) (ports.ChatConversation, error)
 	resume    func(ports.ChatResumeConfig) (ports.ChatConversation, error)
@@ -289,6 +290,9 @@ func (d fakeDriver) Probe(context.Context) (ports.ChatCapabilities, error) {
 		if err := d.probe(); err != nil {
 			return nil, err
 		}
+	}
+	if d.caps != nil {
+		return d.caps, nil
 	}
 	return productionCaps(), nil
 }
@@ -368,7 +372,7 @@ func TestSuccessfulChatProbeIsReusedByStart(t *testing.T) {
 	})
 	t.Cleanup(func() { _ = svc.Stop(context.Background(), testSession) })
 
-	if err := svc.PreflightChat(context.Background(), domain.HarnessCodex); err != nil {
+	if err := svc.PreflightChat(context.Background(), domain.HarnessCodex, ports.PermissionModeDefault); err != nil {
 		t.Fatalf("PreflightChat: %v", err)
 	}
 	if _, err := svc.Start(context.Background(), chatsvc.StartConfig{
@@ -393,17 +397,92 @@ func TestFailedChatProbeCanBeRetriedThenCached(t *testing.T) {
 	}}
 	svc := chatsvc.New(chatsvc.Options{Drivers: fakeRegistry{driver: driver}})
 
-	if err := svc.PreflightChat(context.Background(), domain.HarnessCodex); err == nil {
+	if err := svc.PreflightChat(context.Background(), domain.HarnessCodex, ports.PermissionModeDefault); err == nil {
 		t.Fatal("first PreflightChat must surface the transient probe failure")
 	}
-	if err := svc.PreflightChat(context.Background(), domain.HarnessCodex); err != nil {
+	if err := svc.PreflightChat(context.Background(), domain.HarnessCodex, ports.PermissionModeDefault); err != nil {
 		t.Fatalf("second PreflightChat: %v", err)
 	}
-	if err := svc.PreflightChat(context.Background(), domain.HarnessCodex); err != nil {
+	if err := svc.PreflightChat(context.Background(), domain.HarnessCodex, ports.PermissionModeDefault); err != nil {
 		t.Fatalf("cached PreflightChat: %v", err)
 	}
 	if attempts != 2 {
 		t.Fatalf("Probe attempts = %d, want one failed attempt plus one cached success", attempts)
+	}
+}
+
+func TestCapabilityCacheEvaluatesEveryRequestedPermissionMode(t *testing.T) {
+	probes := 0
+	driver := fakeDriver{
+		caps: ports.ChatCapabilities{
+			ports.ChatCapabilityStreaming: true,
+			ports.ChatCapabilityInterrupt: true,
+			ports.ChatCapabilityResume:    true,
+		},
+		probe: func() error {
+			probes++
+			return nil
+		},
+	}
+	svc := chatsvc.New(chatsvc.Options{Drivers: fakeRegistry{driver: driver}})
+
+	if err := svc.PreflightChat(context.Background(), domain.HarnessCodex, ports.PermissionModeDefault); !errors.Is(err, ports.ErrChatUnsupported) {
+		t.Fatalf("default preflight error = %v, want ErrChatUnsupported", err)
+	}
+	if err := svc.PreflightChat(context.Background(), domain.HarnessCodex, ports.PermissionModeBypassPermissions); err != nil {
+		t.Fatalf("bypass preflight: %v", err)
+	}
+	if err := svc.PreflightChat(context.Background(), domain.HarnessCodex, ports.PermissionModeDefault); !errors.Is(err, ports.ErrChatUnsupported) {
+		t.Fatalf("cached default preflight error = %v, want ErrChatUnsupported", err)
+	}
+	if probes != 1 {
+		t.Fatalf("Probe calls = %d, want one raw capability probe reused across permission modes", probes)
+	}
+}
+
+func TestResumeUsesPersistedBypassPermissionForCapabilityAdmission(t *testing.T) {
+	st := openStore(t)
+	ctx := context.Background()
+	now := time.Date(2026, 8, 23, 12, 0, 0, 0, time.UTC)
+	conversation, err := st.CreateConversation(
+		ctx, "persisted-bypass-conversation", domain.ConversationScopeProject,
+		testProject, testSession, now,
+	)
+	if err != nil {
+		t.Fatalf("CreateConversation: %v", err)
+	}
+	if err := st.SetConversationSettings(ctx, conversation.ID, domain.ConversationSettings{
+		ApprovalMode: domain.PermissionModeBypassPermissions,
+	}, now); err != nil {
+		t.Fatalf("SetConversationSettings: %v", err)
+	}
+
+	conv := newFakeConversation()
+	var resumed ports.ChatResumeConfig
+	svc := chatsvc.New(chatsvc.Options{
+		Store: st, Sessions: st,
+		Drivers: fakeRegistry{driver: fakeDriver{
+			conv: conv, resumeCfg: &resumed,
+			caps: ports.ChatCapabilities{
+				ports.ChatCapabilityStreaming: true,
+				ports.ChatCapabilityInterrupt: true,
+				ports.ChatCapabilityResume:    true,
+			},
+		}},
+		Log:   slog.New(slog.DiscardHandler),
+		NewID: func() string { return "persisted-bypass-start" },
+	})
+	t.Cleanup(func() { _ = svc.Stop(context.Background(), testSession) })
+
+	if _, err := svc.Start(ctx, chatsvc.StartConfig{
+		SessionID: testSession, ProjectID: testProject, Harness: domain.HarnessCodex,
+		WorkspacePath: t.TempDir(), ProviderConversationID: "thread-bypass",
+		Permissions: ports.PermissionModeDefault,
+	}); err != nil {
+		t.Fatalf("Start resume: %v", err)
+	}
+	if resumed.Permissions != ports.PermissionModeBypassPermissions {
+		t.Fatalf("resume permissions = %q, want persisted bypass", resumed.Permissions)
 	}
 }
 

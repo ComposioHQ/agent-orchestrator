@@ -69,18 +69,24 @@ func (c *conversation) abortHistoryReplay() {
 // idempotent import path.
 func (c *conversation) finishHistoryReplay() {
 	c.historyMu.Lock()
-	interrupted := c.history != nil && c.history.turnID != "" &&
+	unsettled := c.history != nil && c.history.turnID != "" &&
 		c.history.turnUserID != "" && !c.history.turnHasProvider
+	if unsettled {
+		c.historyEvents = nil
+		c.historyErr = fmt.Errorf("%w: final replayed user turn has no provider output",
+			ports.ErrChatHistoryUnsettled)
+		c.historyLoaded = true
+		c.history = nil
+	}
 	c.historyMu.Unlock()
 
-	turnState := domain.TurnStateCompleted
-	if interrupted {
-		// session/load has finished, so this user-only turn cannot still be
-		// producing output. It represents a prompt interrupted before the agent
-		// emitted a provider event and remains valid replayable history.
-		turnState = domain.TurnStateInterrupted
+	if unsettled {
+		c.mu.Lock()
+		c.activeTurn = ""
+		c.mu.Unlock()
+		return
 	}
-	c.finishHistoryTurn(turnState)
+	c.finishHistoryTurn(domain.TurnStateCompleted)
 
 	c.historyMu.Lock()
 	if c.history != nil {
