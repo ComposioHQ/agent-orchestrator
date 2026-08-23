@@ -208,7 +208,7 @@ export async function installFakeBridge(page: Page, opts: FakeBridgeOptions = {}
 					getActive: async () => null,
 				},
 				cloud: {
-					getAvailability: async () => ({ available: false, enabled: false, apiBaseUrl: "" }),
+					getAvailability: async () => ({ available: false, enabled: false }),
 					getSession: async () => null,
 					signIn: async () => null,
 					signOut: async () => undefined,
@@ -646,7 +646,7 @@ export async function installFakeAgent(page: Page, opts: FakeAgentOptions = {}):
 					getActive: async () => null,
 				},
 				cloud: {
-					getAvailability: async () => ({ available: false, enabled: false, apiBaseUrl: "" }),
+					getAvailability: async () => ({ available: false, enabled: false }),
 					getSession: async () => null,
 					signIn: async () => null,
 					signOut: async () => undefined,

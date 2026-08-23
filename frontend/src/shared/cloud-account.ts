@@ -32,6 +32,4 @@ export interface CloudOrganization {
 export interface CloudAvailability {
 	available: boolean;
 	enabled: boolean;
-	/** Control-plane origin, so the renderer can build its own cloud client. */
-	apiBaseUrl: string;
 }

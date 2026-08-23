@@ -121,16 +121,12 @@ describe("AO Cloud desktop credential custody", () => {
 
 	it("gates every cloud surface behind the developer early-access opt-in", async () => {
 		setCloudPreferenceEnabled(false);
-		expect(cloudAvailability()).toEqual({ available: true, enabled: false, apiBaseUrl: "" });
+		expect(cloudAvailability()).toEqual({ available: true, enabled: false });
 		await expect(getCloudSession(dataDir)).resolves.toBeNull();
 		await expect(beginCloudSignIn(dataDir)).rejects.toThrow("not configured");
 
 		setCloudPreferenceEnabled(true);
-		expect(cloudAvailability()).toEqual({
-			available: true,
-			enabled: true,
-			apiBaseUrl: "https://cloud.example",
-		});
+		expect(cloudAvailability()).toEqual({ available: true, enabled: true });
 	});
 
 	it("completes Google PKCE against the loopback redirect and stores the AO session", async () => {

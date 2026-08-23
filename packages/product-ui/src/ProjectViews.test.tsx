@@ -23,6 +23,8 @@ const modeLabels = {
 	workspace: "Workspace",
 	workspaceDescription: "A folder containing repositories",
 	close: "Close",
+	cloud: "AO Cloud",
+	cloudDescription: "Create a project that is available on every device",
 };
 
 function ExternalLink(props: ComponentProps<"a">) {
@@ -67,7 +69,7 @@ describe("project models", () => {
 });
 
 describe("project presentation", () => {
-	it("presents the controlled source choice with workspace as a secondary path", () => {
+	it("presents Cloud as a first-class source alongside the local choices", () => {
 		const onSelect = vi.fn();
 		render(<ProjectSourcePickerView disabled={false} labels={modeLabels} onSelect={onSelect} />);
 
@@ -75,6 +77,8 @@ describe("project presentation", () => {
 		expect(onSelect).toHaveBeenCalledWith("clone");
 		fireEvent.click(screen.getByRole("button", { name: "Workspace" }));
 		expect(onSelect).toHaveBeenCalledWith("workspace");
+		fireEvent.click(screen.getByRole("button", { name: "AO Cloud" }));
+		expect(onSelect).toHaveBeenCalledWith("cloud");
 		expect(screen.getByText("github.com/acme/web-app")).toBeInTheDocument();
 	});
 

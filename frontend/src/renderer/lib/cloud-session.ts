@@ -12,8 +12,6 @@ export interface UseCloudSessionResult {
 	available: boolean;
 	/** Available *and* early access is on — gates every other cloud surface. */
 	enabled: boolean;
-	/** Control-plane origin for the renderer's cloud client; "" while disabled. */
-	apiBaseUrl: string;
 	session: CloudAccount | null;
 	status: CloudSessionStatus;
 	signIn: () => void;
@@ -79,7 +77,6 @@ export function useCloudSession(): UseCloudSessionResult {
 	return {
 		available: availability.available,
 		enabled: availability.enabled,
-		apiBaseUrl: availability.apiBaseUrl,
 		session,
 		status,
 		signIn,

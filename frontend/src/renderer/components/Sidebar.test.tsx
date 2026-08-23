@@ -27,7 +27,6 @@ const { cloudSessionState, getMock, navigateMock, mockParams, renameSessionMock,
 		cloudSessionState: {
 			available: false,
 			enabled: false,
-			apiBaseUrl: "",
 			session: null as null | { user: { email: string } },
 			status: "unauthenticated" as "authenticated" | "loading" | "unauthenticated",
 			signIn: vi.fn(),
@@ -253,7 +252,6 @@ beforeEach(() => {
 	commandPaletteEnabled.current = true;
 	cloudSessionState.available = false;
 	cloudSessionState.enabled = false;
-	cloudSessionState.apiBaseUrl = "";
 	cloudSessionState.session = null;
 	cloudSessionState.status = "unauthenticated";
 	cloudSessionState.signIn.mockReset();
