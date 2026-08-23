@@ -380,12 +380,6 @@ export interface paths {
          *
          *     Idempotent under `Idempotency-Key`: retrying the same key returns the
          *     original result instead of failing on the now-missing sandbox.
-         *       content:
-         *         application/json:
-         *           schema:
-         *             $ref: "#/components/schemas/DeleteSessionResponse"
-         *     default:
-         *       $ref: "#/components/responses/Error"
          *      */
         delete: operations["deleteSession"];
         options?: never;
@@ -3361,7 +3355,18 @@ export interface operations {
             cookie?: never;
         };
         requestBody?: never;
-        responses: never;
+        responses: {
+            /** @description Session sandbox deletion was requested; durable history is retained. */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DeleteSessionResponse"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
     };
     terminateSession: {
         parameters: {
