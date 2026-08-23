@@ -103,8 +103,10 @@ const ATTACHMENT_REFERENCE_BLOCK =
 const STAGED_ATTACHMENT_PATH = /^\.ao\/attachments\/(?:attachment|image)-[A-Za-z0-9][A-Za-z0-9._-]*$/;
 const IMAGE_ATTACHMENT_PATH = /\.(?:png|jpe?g|gif|webp|bmp)$/i;
 
-/** Fixed playback cadence for bursty provider chunks. */
-const STREAM_CHARACTER_INTERVAL_MS = 12;
+/** Smooth baseline, with adaptive catch-up when provider chunks outrun playback. */
+const STREAM_BASE_CHARACTERS_PER_SECOND = 58;
+const STREAM_TARGET_BACKLOG_CHARACTERS = 72;
+const STREAM_MAX_CHARACTERS_PER_SECOND = 720;
 
 function useSmoothStreamingText(message: ConversationMessage): string {
 	// A snapshot can first reach the renderer after the provider has already emitted
@@ -113,26 +115,49 @@ function useSmoothStreamingText(message: ConversationMessage): string {
 	const visibleRef = useRef(visibleText);
 	const targetRef = useRef(message.text);
 	const messageIdRef = useRef(message.id);
-	const timerRef = useRef<number | undefined>(undefined);
+	const frameRef = useRef<number | undefined>(undefined);
+	const lastFrameAtRef = useRef<number | undefined>(undefined);
+	const fractionalCharactersRef = useRef(0);
 
 	const scheduleDrain = useCallback(() => {
-		if (timerRef.current !== undefined) return;
+		if (frameRef.current !== undefined) return;
 
-		const tick = () => {
-			timerRef.current = undefined;
+		const tick = (now: number) => {
+			frameRef.current = undefined;
+			const previousFrameAt = lastFrameAtRef.current ?? now;
+			lastFrameAtRef.current = now;
+			const backlog = targetRef.current.length - visibleRef.current.length;
+			if (backlog <= 0) {
+				fractionalCharactersRef.current = 0;
+				return;
+			}
+
+			// Keep a small, intentional buffer for smoothness. As it grows, increase
+			// throughput instead of letting a long response fall further behind.
+			const catchup = Math.max(0, backlog - STREAM_TARGET_BACKLOG_CHARACTERS);
+			const charactersPerSecond = Math.min(
+				STREAM_MAX_CHARACTERS_PER_SECOND,
+				STREAM_BASE_CHARACTERS_PER_SECOND + catchup * 2,
+			);
+			fractionalCharactersRef.current +=
+				charactersPerSecond * Math.max(0, now - previousFrameAt) / 1000;
+			const count = Math.max(1, Math.floor(fractionalCharactersRef.current));
+			fractionalCharactersRef.current -= count;
 			setVisibleText((current) => {
 				const target = targetRef.current;
 				if (current.length >= target.length) return current;
-				const next = current + target[current.length];
+				const next = current + target.slice(current.length, current.length + count);
 				visibleRef.current = next;
 				return next;
 			});
 			if (visibleRef.current.length < targetRef.current.length) {
-				timerRef.current = window.setTimeout(tick, STREAM_CHARACTER_INTERVAL_MS);
+				frameRef.current = window.requestAnimationFrame(tick);
 			}
 		};
 
-		timerRef.current = window.setTimeout(tick, STREAM_CHARACTER_INTERVAL_MS);
+		lastFrameAtRef.current = undefined;
+		fractionalCharactersRef.current = 0;
+		frameRef.current = window.requestAnimationFrame(tick);
 	}, []);
 
 	useEffect(() => {
@@ -158,7 +183,7 @@ function useSmoothStreamingText(message: ConversationMessage): string {
 
 	useEffect(
 		() => () => {
-			if (timerRef.current !== undefined) window.clearTimeout(timerRef.current);
+			if (frameRef.current !== undefined) window.cancelAnimationFrame(frameRef.current);
 		},
 		[],
 	);
