@@ -16,6 +16,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/kimi"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/modelcatalog"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/chatdriver/claudeacp"
 	chatdriverregistry "github.com/aoagents/agent-orchestrator/backend/internal/adapters/chatdriver/registry"
@@ -261,13 +262,18 @@ func Run() error {
 			quotaSvc.RegisterRefresher("claude", "default", claudeacp.NewQuotaRefresher(plugin))
 		}
 	}
+	if kimiAgent, ok := agents.Agent(domain.HarnessKimi); ok {
+		if plugin, ok := kimiAgent.(kimi.QuotaPlugin); ok {
+			quotaSvc.RegisterRefresher("kimi", "default", kimi.NewQuotaRefresher(plugin, cfg.DataDir))
+		}
+	}
 	const quotaRefreshInterval = 5 * time.Minute
 	quotaRefreshDone := quotaSvc.StartAutoRefresh(ctx, quotaRefreshInterval)
 	lcStack.LCM.SetActivityObserver(func(session domain.SessionRecord, signal ports.ActivitySignal) {
 		if session.Kind != domain.KindWorker || !signal.Valid || signal.State != domain.ActivityIdle {
 			return
 		}
-		if session.Harness != domain.HarnessClaudeCode && session.Harness != domain.HarnessCodex {
+		if !quotaRefreshOnIdleHarness(session.Harness) {
 			return
 		}
 		go quotaSvc.RefreshRegisteredIfStale(ctx)
@@ -582,6 +588,10 @@ func Run() error {
 		log.Error("cdc pipeline shutdown", "err", err)
 	}
 	return runErr
+}
+
+func quotaRefreshOnIdleHarness(harness domain.AgentHarness) bool {
+	return harness == domain.HarnessClaudeCode || harness == domain.HarnessCodex || harness == domain.HarnessKimi
 }
 
 func seedScratchProjectOnBoot(ctx context.Context, cfg config.Config, projects *projectsvc.Service) error {

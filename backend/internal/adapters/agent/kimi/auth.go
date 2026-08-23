@@ -124,7 +124,13 @@ type kimiCredentialSource struct {
 }
 
 type kimiAuthConfig struct {
-	Providers map[string]kimiCredentialSource `json:"providers" toml:"providers"`
+	DefaultModel string                          `json:"default_model" toml:"default_model"`
+	Providers    map[string]kimiCredentialSource `json:"providers" toml:"providers"`
+	Models       map[string]kimiModelConfig      `json:"models" toml:"models"`
+}
+
+type kimiModelConfig struct {
+	Provider string `json:"provider" toml:"provider"`
 }
 
 func kimiConfigAuthStatus(path string) (ports.AgentAuthStatus, bool, error) {

@@ -140,6 +140,17 @@ func TestWiring_AgentResolverResolvesRealAdapters(t *testing.T) {
 	}
 }
 
+func TestQuotaIdleRefreshIncludesKimi(t *testing.T) {
+	for _, harness := range []domain.AgentHarness{domain.HarnessCodex, domain.HarnessClaudeCode, domain.HarnessKimi} {
+		if !quotaRefreshOnIdleHarness(harness) {
+			t.Errorf("quotaRefreshOnIdleHarness(%q) = false", harness)
+		}
+	}
+	if quotaRefreshOnIdleHarness(domain.HarnessCursor) {
+		t.Fatal("Cursor should not be enabled by the Kimi-only change")
+	}
+}
+
 // TestWiring_ActiveTurnSteeringComesFromAdapters asserts the active-turn
 // steering policy lifecycle consumes is resolved from the agent adapters
 // (ports.ActiveTurnSteerer) rather than from any harness knowledge baked into
