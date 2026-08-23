@@ -11,6 +11,7 @@ import type {
 import type { BrowserAnnotationCancelPayload, BrowserAnnotationSubmitPayload } from "../../shared/browser-annotations";
 import { MAX_BROWSER_TABS } from "../../shared/browser-tabs";
 import { OPEN_BROWSER_OVERLAY_SELECTOR } from "../lib/dom-selectors";
+import { aoBridge } from "../lib/bridge";
 
 export type { BrowserNavState };
 
@@ -215,7 +216,7 @@ export function useBrowserView({
 	const overlayOpenRef = useRef(false);
 	const tabNoticeTimerRef = useRef<number | null>(null);
 	const tabsStateRef = useRef(tabsState);
-	const hasNativeBrowser = Boolean(window.ao?.browser);
+	const hasNativeBrowser = aoBridge.capabilities.nativeBrowserPanel;
 
 	useEffect(() => {
 		activeRef.current = active;
@@ -254,7 +255,7 @@ export function useBrowserView({
 
 	const sendHiddenBounds = useCallback((id = viewIdRef.current) => {
 		if (!id) return;
-		window.ao?.browser.setBounds({ viewId: id, rect: HIDDEN_RECT, visible: false });
+		aoBridge.browser.setBounds({ viewId: id, rect: HIDDEN_RECT, visible: false });
 	}, []);
 
 	const measureAndSend = useCallback(() => {
@@ -282,7 +283,7 @@ export function useBrowserView({
 			rect,
 			visible: rect.width > 0 && rect.height > 0,
 		};
-		window.ao?.browser.setBounds(payload);
+		aoBridge.browser.setBounds(payload);
 	}, [sendHiddenBounds]);
 
 	const cancelScheduledMeasure = useCallback(() => {
@@ -383,12 +384,12 @@ export function useBrowserView({
 				viewIdRef.current = "";
 			};
 		}
-		window.ao?.browser.ensure(sessionId).then((state) => {
+		aoBridge.browser.ensure(sessionId).then((state) => {
 			if (disposed) return;
 			viewIdRef.current = state.viewId;
 			setViewId(state.viewId);
 			setNavState(state);
-			void window.ao?.browser
+			void aoBridge.browser
 				.getTabs(state.viewId)
 				.then((tabs) => {
 					if (!disposed && viewIdRef.current === tabs.viewId) setTabsState(tabs);
@@ -401,7 +402,7 @@ export function useBrowserView({
 			const id = viewIdRef.current;
 			if (id) {
 				if (annotationModeRef.current) {
-					void window.ao?.browser.setAnnotationMode({ viewId: id, enabled: false });
+					void aoBridge.browser.setAnnotationMode({ viewId: id, enabled: false });
 					setAnnotationModeState(false);
 				}
 				sendHiddenBounds(id);
@@ -416,20 +417,22 @@ export function useBrowserView({
 	]);
 
 	useEffect(() => {
-		return window.ao?.browser.onNavState((state) => {
+		if (!hasNativeBrowser) return;
+		return aoBridge.browser.onNavState((state) => {
 			if (state.viewId !== viewIdRef.current) return;
 			setNavState(state);
 		});
-	}, []);
+	}, [hasNativeBrowser]);
 
 	useEffect(() => {
-		return window.ao?.browser.onTabsState((state) => {
+		if (!hasNativeBrowser) return;
+		return aoBridge.browser.onTabsState((state) => {
 			if (state.viewId !== viewIdRef.current) return;
 			setTabsState(state);
 			if (state.change?.kind !== "popup") return;
 			showTabNotice("Opened new tab");
 		});
-	}, [showTabNotice]);
+	}, [hasNativeBrowser, showTabNotice]);
 
 	// Re-project the persisted display order onto every incoming tabsState push:
 	// browser:tabsState fires on every nav/title-update/loading-state change for
@@ -452,19 +455,21 @@ export function useBrowserView({
 	const reorderTabs = useCallback((orderedIds: string[]) => setTabOrder(orderedIds), []);
 
 	useEffect(() => {
-		return window.ao?.browser.onDevToolsState((state) => {
+		if (!hasNativeBrowser) return;
+		return aoBridge.browser.onDevToolsState((state) => {
 			if (state.viewId !== viewIdRef.current) return;
 			setDevtoolsState(state);
 		});
-	}, []);
+	}, [hasNativeBrowser]);
 
 	useEffect(() => {
-		return window.ao?.browser.onAgentActivity((state) => {
+		if (!hasNativeBrowser) return;
+		return aoBridge.browser.onAgentActivity((state) => {
 			if (state.viewId !== viewIdRef.current) return;
 			setAgentBrowserActive(state.active);
 			setAgentBrowserActivity(state);
 		});
-	}, []);
+	}, [hasNativeBrowser]);
 
 	useEffect(
 		() => () => {
@@ -505,7 +510,7 @@ export function useBrowserView({
 			overlayOpenRef.current = open;
 			// The live page never moves or becomes a bitmap. Reordering the explicit
 			// transparent shell is the complete overlay handoff.
-			window.ao?.browser.setOverlayOpen(open);
+			aoBridge.browser.setOverlayOpen(open);
 			if (!open) scheduleSettleMeasure();
 		};
 		update();
@@ -537,7 +542,7 @@ export function useBrowserView({
 		return () => {
 			observer.disconnect();
 			resizeObserver.disconnect();
-			window.ao?.browser.setOverlayOpen(false);
+			aoBridge.browser.setOverlayOpen(false);
 			overlayOpenRef.current = false;
 		};
 	}, [hasNativeBrowser, scheduleSettleMeasure]);
@@ -578,7 +583,7 @@ export function useBrowserView({
 				setAnnotationModeState(false);
 				return;
 			}
-			await window.ao!.browser.setAnnotationMode({ viewId: id, enabled });
+			await aoBridge.browser.setAnnotationMode({ viewId: id, enabled });
 			setAnnotationModeState(enabled);
 		},
 		[hasNativeBrowser],
@@ -589,7 +594,7 @@ export function useBrowserView({
 			const viewId = viewIdRef.current;
 			if (!viewId || !hasNativeBrowser) return;
 			try {
-				const state = await window.ao!.browser.selectTab({ viewId, tabId });
+				const state = await aoBridge.browser.selectTab({ viewId, tabId });
 				if (viewIdRef.current === state.viewId) setTabsState(state);
 			} catch {
 				// Fire-and-forget from the rail (`void onSelectTab(...)`) — without
@@ -611,7 +616,7 @@ export function useBrowserView({
 			// handleCloseTab in BrowserTabsRail.tsx otherwise).
 			const closing = tabsStateRef.current.tabs.find((tab) => tab.id === tabId);
 			try {
-				const state = await window.ao!.browser.closeTab({ viewId, tabId });
+				const state = await aoBridge.browser.closeTab({ viewId, tabId });
 				if (viewIdRef.current !== state.viewId) return;
 				setTabsState(state);
 				// Only remember it once the main process confirms it's actually gone —
@@ -633,7 +638,7 @@ export function useBrowserView({
 				// reports failure) — resync instead of leaving this tab's row
 				// showing in the rail after it's genuinely gone, which just
 				// re-fails identically on every retry.
-				window.ao?.browser
+				aoBridge.browser
 					.getTabs(viewId)
 					.then((state) => {
 						if (viewIdRef.current === state.viewId) setTabsState(state);
@@ -648,7 +653,7 @@ export function useBrowserView({
 		async (url?: string) => {
 			const viewId = viewIdRef.current;
 			if (!viewId || !hasNativeBrowser) return;
-			const state = await window.ao!.browser.openTab({ viewId, url });
+			const state = await aoBridge.browser.openTab({ viewId, url });
 			if (viewIdRef.current === state.viewId) setTabsState(state);
 		},
 		[hasNativeBrowser],
@@ -683,7 +688,7 @@ export function useBrowserView({
 			const id = viewIdRef.current;
 			if (!id || !hasNativeBrowser) return;
 			try {
-				const next = await window.ao!.browser.devtools({ viewId: id, operation, placement });
+				const next = await aoBridge.browser.devtools({ viewId: id, operation, placement });
 				if (viewIdRef.current === next.viewId) setDevtoolsState(next);
 			} catch {
 				// The main process reports the unavailable state through the normal
@@ -695,17 +700,18 @@ export function useBrowserView({
 	);
 
 	useEffect(() => {
+		if (!hasNativeBrowser) return;
 		const handleDone = (payload: BrowserAnnotationSubmitPayload | BrowserAnnotationCancelPayload) => {
 			if (payload.viewId !== viewIdRef.current) return;
 			setAnnotationModeState(false);
 		};
-		const offSubmit = window.ao?.browser.onAnnotationSubmit(handleDone);
-		const offCancel = window.ao?.browser.onAnnotationCancel(handleDone);
+		const offSubmit = aoBridge.browser.onAnnotationSubmit(handleDone);
+		const offCancel = aoBridge.browser.onAnnotationCancel(handleDone);
 		return () => {
 			offSubmit?.();
 			offCancel?.();
 		};
-	}, []);
+	}, [hasNativeBrowser]);
 
 	useEffect(() => {
 		if (navState.url || !annotationModeRef.current) return;
@@ -724,7 +730,7 @@ export function useBrowserView({
 				}));
 				return Promise.resolve();
 			}
-			return withView((id) => window.ao!.browser.navigate({ viewId: id, url }));
+			return withView((id) => aoBridge.browser.navigate({ viewId: id, url }));
 		},
 		[hasNativeBrowser, withView],
 	);
@@ -734,7 +740,7 @@ export function useBrowserView({
 			setNavState((current) => ({ ...current, url: "", title: "", isLoading: false }));
 			return Promise.resolve();
 		}
-		return withView((id) => window.ao!.browser.clear(id));
+		return withView((id) => aoBridge.browser.clear(id));
 	}, [hasNativeBrowser, withView]);
 
 	// Drive the view from the daemon-set preview target. Current daemons key
@@ -764,12 +770,12 @@ export function useBrowserView({
 		const id = viewIdRef.current;
 		if (!id) return;
 		if (annotationModeRef.current) {
-			void window.ao?.browser.setAnnotationMode({ viewId: id, enabled: false });
+			void aoBridge.browser.setAnnotationMode({ viewId: id, enabled: false });
 			setAnnotationModeState(false);
 		}
 		overlayOpenRef.current = false;
 		sendHiddenBounds(id);
-		window.ao?.browser.destroy(id);
+		aoBridge.browser.destroy(id);
 		viewIdRef.current = "";
 		setViewId("");
 		setNavState(EMPTY_NAV_STATE);
@@ -798,10 +804,10 @@ export function useBrowserView({
 		navState: stateBelongsToSession ? navState : EMPTY_NAV_STATE,
 		slotRef,
 		navigate,
-		goBack: () => (hasNativeBrowser ? withView((id) => window.ao!.browser.goBack(id)) : Promise.resolve()),
-		goForward: () => (hasNativeBrowser ? withView((id) => window.ao!.browser.goForward(id)) : Promise.resolve()),
-		reload: () => (hasNativeBrowser ? withView((id) => window.ao!.browser.reload(id)) : Promise.resolve()),
-		stop: () => (hasNativeBrowser ? withView((id) => window.ao!.browser.stop(id)) : Promise.resolve()),
+		goBack: () => (hasNativeBrowser ? withView((id) => aoBridge.browser.goBack(id)) : Promise.resolve()),
+		goForward: () => (hasNativeBrowser ? withView((id) => aoBridge.browser.goForward(id)) : Promise.resolve()),
+		reload: () => (hasNativeBrowser ? withView((id) => aoBridge.browser.reload(id)) : Promise.resolve()),
+		stop: () => (hasNativeBrowser ? withView((id) => aoBridge.browser.stop(id)) : Promise.resolve()),
 		tabs: stateBelongsToSession ? tabs : [],
 		activeTabId: stateBelongsToSession ? tabsState.activeTabId : "",
 		tabNotice: stateBelongsToSession ? tabNotice : "",

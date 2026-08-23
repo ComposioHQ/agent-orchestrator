@@ -4,11 +4,13 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { components } from "../../api/schema";
 import { DaemonStartupLoader } from "./DaemonStartupLoader";
+import { ShellProvider, type ShellContextValue } from "../lib/shell-context";
 
 type Requirement = components["schemas"]["SystemRequirement"];
 type InstallJob = components["schemas"]["InstallJob"];
 
-const { getMock, postMock, writeTextMock } = vi.hoisted(() => ({
+const { bridgeCapabilities, getMock, postMock, writeTextMock } = vi.hoisted(() => ({
+	bridgeCapabilities: { daemonControl: true, windowChrome: true },
 	getMock: vi.fn(),
 	postMock: vi.fn(),
 	writeTextMock: vi.fn(),
@@ -29,6 +31,7 @@ vi.mock("../lib/api-client", () => ({
 
 vi.mock("../lib/bridge", () => ({
 	aoBridge: {
+		capabilities: bridgeCapabilities,
 		clipboard: { writeText: (...args: unknown[]) => writeTextMock(...args) },
 		menu: { action: vi.fn() },
 	},
@@ -59,6 +62,8 @@ function renderLoader() {
 }
 
 beforeEach(() => {
+	bridgeCapabilities.daemonControl = true;
+	bridgeCapabilities.windowChrome = true;
 	getMock.mockReset();
 	postMock.mockReset();
 	writeTextMock.mockReset();
@@ -71,6 +76,56 @@ afterEach(() => {
 });
 
 describe("DaemonStartupLoader", () => {
+	it("reports an unreachable web daemon without lifecycle controls", () => {
+		bridgeCapabilities.daemonControl = false;
+		bridgeCapabilities.windowChrome = false;
+		getMock.mockReturnValue(new Promise(() => undefined));
+		const shellValue = {
+			daemonStatus: { state: "stopped" },
+			workspaceStartupState: "loading",
+			createProject: vi.fn(),
+			cloneProject: vi.fn(),
+			initializeProjectRepository: vi.fn(),
+		} as unknown as ShellContextValue;
+
+		render(
+			<QueryClientProvider client={new QueryClient()}>
+				<ShellProvider value={shellValue}>
+					<DaemonStartupLoader />
+				</ShellProvider>
+			</QueryClientProvider>,
+		);
+
+		expect(screen.getByRole("status")).toHaveTextContent(
+			"The AO daemon is not reachable. Start AO on the host, then reload this page.",
+		);
+		expect(screen.queryByRole("button", { name: /start|stop|restart/i })).not.toBeInTheDocument();
+	});
+
+	it("does not offer host dependency installation or app quit in the web client", async () => {
+		bridgeCapabilities.daemonControl = false;
+		bridgeCapabilities.windowChrome = false;
+		getMock.mockImplementation(async (path: string) => {
+			if (path === "/api/v1/system/requirements") {
+				return {
+					data: requirementsResponse({ tmux: { satisfied: false, detail: "tmux was not found on PATH." } }),
+					error: undefined,
+				};
+			}
+			throw new Error(`unexpected GET ${path}`);
+		});
+
+		renderLoader();
+
+		expect(await screen.findByRole("note")).toHaveTextContent(
+			"Automatic dependency installation is available in the desktop app only.",
+		);
+		expect(screen.queryByRole("button", { name: "Install tmux" })).not.toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: "Quit" })).not.toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "Check again" })).toBeInTheDocument();
+		expect(getMock).not.toHaveBeenCalledWith("/api/v1/system/install/{target}", expect.anything());
+	});
+
 	it("renders the checklist from the requirements response in backend order", async () => {
 		getMock.mockImplementation(async (path: string) => {
 			if (path === "/api/v1/system/requirements") return { data: requirementsResponse(), error: undefined };

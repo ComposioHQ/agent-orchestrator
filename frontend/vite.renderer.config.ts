@@ -119,9 +119,9 @@ export default defineConfig({
 			),
 		},
 	},
-	// Dev proxy for VITE_NO_ELECTRON=1 browser preview — forwards /api and /mux
-	// to the daemon so the renderer can be tested against a running daemon from
-	// a plain browser without an Electron shell.
+	// Dev proxy for browser modes without an Electron preload — forwards /api
+	// and /mux so the renderer can be tested against a running daemon from a
+	// plain browser.
 	server: {
 		proxy: {
 			"/api": {

@@ -28,6 +28,7 @@ import { Input } from "./ui/input";
 import { BrowserTabsRail, type BrowserTabsRailHandle } from "./BrowserTabsRail";
 import { cn } from "../lib/utils";
 import { appI18n, type MessageKey } from "../i18n";
+import { aoBridge } from "../lib/bridge";
 
 // One-click viewport width presets for responsive testing — height is shown
 // for reference but not enforced (only width drives CSS breakpoints, and
@@ -249,6 +250,18 @@ export function useBrowserAnnotationQueue({
 }
 
 export function BrowserPanel({ session, active, poppedOut, onTogglePopOut }: BrowserPanelProps) {
+	if (!aoBridge.capabilities.nativeBrowserPanel) return <BrowserPanelUnavailable />;
+	return (
+		<NativeBrowserPanel
+			active={active}
+			onTogglePopOut={onTogglePopOut}
+			poppedOut={poppedOut}
+			session={session}
+		/>
+	);
+}
+
+function NativeBrowserPanel({ session, active, poppedOut, onTogglePopOut }: BrowserPanelProps) {
 	const browserView = useBrowserView({
 		sessionId: session.id,
 		active,
@@ -273,6 +286,22 @@ export function BrowserPanel({ session, active, poppedOut, onTogglePopOut }: Bro
 }
 
 export function BrowserPanelView({
+	...props
+}: BrowserPanelProps & { annotationQueue: BrowserAnnotationQueueModel; browserView: BrowserViewModel }) {
+	if (!aoBridge.capabilities.nativeBrowserPanel) return <BrowserPanelUnavailable />;
+	return <NativeBrowserPanelView {...props} />;
+}
+
+function BrowserPanelUnavailable() {
+	const { t } = useTranslation();
+	return (
+		<p className="grid h-full place-items-center p-5 text-center text-xs text-passive" role="status">
+			{t("browser.desktopOnly")}
+		</p>
+	);
+}
+
+function NativeBrowserPanelView({
 	poppedOut,
 	onTogglePopOut,
 	browserView,
@@ -308,9 +337,7 @@ export function BrowserPanelView({
 	const [urlInput, setUrlInput] = useState(navState.url);
 	const { beginPicking, cancelPicking, enqueue, error, failPicking, queuedCount, retryQueued, status } =
 		annotationQueue;
-	const hasNativeBrowser = Boolean(window.ao?.browser);
-	const showStaticPreview = !hasNativeBrowser && navState.url !== "";
-	const canAnnotate = Boolean(window.ao?.browser && viewId && navState.url);
+	const canAnnotate = Boolean(viewId && navState.url);
 	const canRetryAnnotation = status === "error" && queuedCount > 0;
 	const canOpenTab = tabs.length < MAX_BROWSER_TABS;
 	const [devicePreset, setDevicePreset] = useState<string | null>(null);
@@ -332,7 +359,7 @@ export function BrowserPanelView({
 	// Docked DevTools belongs to the native page view, which is intentionally
 	// hidden while the active target is blank. Keep close available for any
 	// in-flight state update, but do not offer an open action with no page.
-	const canUseDevTools = hasNativeBrowser && Boolean(viewId) && Boolean(navState.url || devtoolsState.open);
+	const canUseDevTools = Boolean(viewId) && Boolean(navState.url || devtoolsState.open);
 
 	useEffect(() => {
 		setUrlInput(navState.url);
@@ -349,11 +376,11 @@ export function BrowserPanelView({
 	}, [navState.url]);
 
 	useEffect(() => {
-		const offSubmit = window.ao?.browser.onAnnotationSubmit((payload) => {
+		const offSubmit = aoBridge.browser.onAnnotationSubmit((payload) => {
 			if (payload.viewId !== viewId) return;
 			enqueue(payload);
 		});
-		const offCancel = window.ao?.browser.onAnnotationCancel((payload) => {
+		const offCancel = aoBridge.browser.onAnnotationCancel((payload) => {
 			if (payload.viewId !== viewId) return;
 			cancelPicking();
 		});
@@ -713,10 +740,10 @@ export function BrowserPanelView({
 					// utilities live in a lower-priority cascade layer and can never
 					// override plain author CSS. Gate that CSS rule with this data
 					// attribute instead, so there's exactly one place deciding opacity.
-					data-placeholder={!hasNativeBrowser || navState.url === "" ? "true" : undefined}
+					data-placeholder={navState.url === "" ? "true" : undefined}
 					data-testid="browser-viewport"
 				>
-					{/* Only the native-view slot is width-constrained for a device
+						{/* Only the native-view slot is width-constrained for a device
 					    preset — the empty/error placeholders below stay full-width
 					    overlays. maxWidth caps it to whatever room the panel actually
 					    has instead of overflowing a narrow docked panel. */}
@@ -730,7 +757,6 @@ export function BrowserPanelView({
 							ref={slotRef}
 						/>
 					</div>
-					{showStaticPreview ? <StaticPreview url={navState.url} /> : null}
 					{navState.url === "" ? (
 						<div className="pointer-events-none absolute inset-0 grid place-items-center p-5 text-center font-mono text-xs text-passive">
 							<p>{t("browser.emptyUrl")}</p>
@@ -813,49 +839,4 @@ function browserActionVerb(action: string): string {
 		}
 	})();
 	return appI18n.t(key);
-}
-
-function StaticPreview({ url }: { url: string }) {
-	return (
-		<div className="absolute inset-0 overflow-auto bg-background text-foreground">
-			<div className="border-b border-border bg-surface px-4 py-3">
-				<div className="text-caption font-semibold uppercase tracking-wide-md text-muted-foreground">AO Preview</div>
-				<div className="mt-1 truncate font-mono text-xs text-accent">{url}</div>
-			</div>
-			<div className="mx-auto max-w-preview-max px-5 py-6">
-				<div className="rounded-lg border border-border bg-card p-5 shadow-sm">
-					<div className="flex items-center justify-between gap-3">
-						<div>
-							<h1 className="text-heading-lg font-semibold leading-tight tracking-normal text-foreground">
-								Demo app preview
-							</h1>
-							<p className="mt-1 text-control leading-row text-muted-foreground">
-								The worker exposed a local Vite app with <span className="font-mono">ao preview</span>.
-							</p>
-						</div>
-						<span className="rounded-md bg-success/15 px-2.5 py-1 text-caption font-semibold text-success">
-							Loaded
-						</span>
-					</div>
-					<div className="mt-5 grid grid-cols-3 gap-3">
-						{[
-							["Routes", "12 passing"],
-							["Build", "ready"],
-							["Latency", "42 ms"],
-						].map(([label, value]) => (
-							<div key={label} className="rounded-md border border-border bg-raised p-3">
-								<div className="text-caption font-medium uppercase tracking-wide text-muted-foreground">{label}</div>
-								<div className="mt-1 text-subtitle font-semibold text-foreground">{value}</div>
-							</div>
-						))}
-					</div>
-					<div className="mt-5 rounded-md border border-border bg-terminal p-3 font-mono text-xs leading-row text-terminal-dim">
-						<div>$ npm run dev -- --host 127.0.0.1</div>
-						<div className="text-success-bright">ready in 418 ms</div>
-						<div>Local: http://localhost:5173/</div>
-					</div>
-				</div>
-			</div>
-		</div>
-	);
 }

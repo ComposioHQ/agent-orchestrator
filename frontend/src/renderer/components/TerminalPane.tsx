@@ -24,6 +24,8 @@ import {
 } from "../hooks/useTerminalSession";
 import { useSessionBrowserLink } from "../hooks/useSessionBrowserLink";
 import { getApiBaseUrl } from "../lib/api-client";
+import { aoBridge } from "../lib/bridge";
+import { usesPreviewWorkspaceData } from "../lib/preview-mode";
 import {
 	createTerminalMux,
 	createTerminalMuxPool,
@@ -655,6 +657,7 @@ export function TerminalPane({
 	inputDisabled,
 	focusRequested,
 }: TerminalPaneProps) {
+	const { t } = useTranslation();
 	const terminalTarget =
 		requestedTerminalTarget &&
 		terminalTargetBelongsToSession(requestedTerminalTarget, session?.id)
@@ -666,7 +669,11 @@ export function TerminalPane({
 			? terminalTarget.handleId
 			: (session?.terminalHandleId ?? "empty");
 
-	if (!window.ao) {
+	// A worker target in Chat mode belongs to SessionChatSurface, not the PTY
+	// terminal. Auxiliary shell/reviewer targets remain terminal panes even when
+	// they were opened from a Chat session.
+	const isChatWorkerTarget = terminalTarget.kind === "worker" && session?.mode === "chat";
+	if (usesPreviewWorkspaceData && !isChatWorkerTarget) {
 		// A standalone shell has no agent and no branch, so it previews as a plain
 		// prompt rather than borrowing the session's agent transcript.
 		if (terminalTarget?.kind === "shell") {
@@ -714,6 +721,14 @@ export function TerminalPane({
 					</span>
 				))}
 			</pre>
+		);
+	}
+
+	if (!aoBridge.capabilities.terminals) {
+		return (
+			<p className="grid h-full place-items-center bg-terminal p-4 text-center text-xs text-terminal-dim">
+				{t("terminal.unavailable")}
+			</p>
 		);
 	}
 

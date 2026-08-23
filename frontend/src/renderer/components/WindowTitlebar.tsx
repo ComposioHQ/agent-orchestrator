@@ -11,6 +11,7 @@ import {
   X,
 } from "lucide-react";
 import { useEffect, useState } from "react";
+import { aoBridge } from "../lib/bridge";
 import { useUiStore } from "../stores/ui-store";
 import { useCanGoForward } from "./TitlebarNav";
 import {
@@ -38,7 +39,7 @@ type MenuKey = "view" | "help";
 
 // Dispatch a native-menu action to the main process (see menu:action in main.ts).
 const act = (action: string) => () => {
-  void window.ao?.menu?.action(action);
+  void aoBridge.menu.action(action);
 };
 
 // One top-level menu (View/Help). Declared at module scope, not inside
@@ -148,12 +149,12 @@ export function WindowTitlebar() {
   const [isMaximized, setIsMaximized] = useState(false);
 
   useEffect(() => {
-    if (!isWindows) return;
+    if (!isWindows || !aoBridge.capabilities.windowChrome) return;
     let active = true;
-    void window.ao?.window?.isMaximized().then((maximized) => {
+    void aoBridge.window.isMaximized().then((maximized) => {
       if (active) setIsMaximized(maximized);
     });
-    const unsubscribe = window.ao?.window?.onMaximized((maximized) =>
+    const unsubscribe = aoBridge.window.onMaximized((maximized) =>
       setIsMaximized(maximized),
     );
     return () => {
@@ -164,17 +165,17 @@ export function WindowTitlebar() {
 
   // Tell main to forget the last-focused panel whenever real shell UI (not this menu) gets focus, so its fallback target doesn't go stale.
   useEffect(() => {
-    if (!isWindows) return;
+    if (!isWindows || !aoBridge.capabilities.windowChrome) return;
     const onFocusIn = (event: FocusEvent) => {
       const target = event.target as HTMLElement | null;
       if (target?.closest('[class*="window-titlebar"]')) return;
-      void window.ao?.menu?.notifyShellFocus();
+      void aoBridge.menu.notifyShellFocus();
     };
     document.addEventListener("focusin", onFocusIn);
     return () => document.removeEventListener("focusin", onFocusIn);
   }, []);
 
-  if (!isWindows) return null;
+  if (!isWindows || !aoBridge.capabilities.windowChrome) return null;
 
   return (
     <header className="window-titlebar">

@@ -17,7 +17,7 @@ export const systemRequirementsQueryOptions = {
 	queryKey: systemRequirementsQueryKey,
 	queryFn: fetchSystemRequirements,
 	refetchOnWindowFocus: false,
-	// The preview build (VITE_NO_ELECTRON) has no real daemon behind it, so
+	// The preview-data build has no real daemon behind it, so
 	// there is nothing to probe — mirrors isDaemonReady's short-circuit for
 	// the same flag in SessionsBoard.
 	enabled: !usesPreviewWorkspaceData,

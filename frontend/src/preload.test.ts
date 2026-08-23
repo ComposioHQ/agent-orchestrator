@@ -50,6 +50,21 @@ beforeEach(() => {
 	electronMocks.send.mockClear();
 });
 
+describe("preload capabilities", () => {
+	it("exposes an immutable all-native capability record", () => {
+		expect(exposedBridge().capabilities).toEqual({
+			terminals: true,
+			nativeBrowserPanel: true,
+			windowChrome: true,
+			daemonControl: true,
+			nativeFileDialogs: true,
+			osNotifications: true,
+			filePathDrop: true,
+		});
+		expect(Object.isFrozen(exposedBridge().capabilities)).toBe(true);
+	});
+});
+
 describe("preload getPathForFile bridge", () => {
 	it("forwards the File to webUtils.getPathForFile without going through IPC", () => {
 		electronMocks.getPathForFile.mockReturnValue("/Users/x/dropped-folder");

@@ -81,6 +81,16 @@ export type ImportFolderScan = {
 	setupWarning?: string;
 };
 
+export type AoCapabilities = {
+	terminals: boolean; // live PTY over /mux
+	nativeBrowserPanel: boolean; // Electron WebContentsView inspector panel
+	windowChrome: boolean; // custom titlebar / native menus
+	daemonControl: boolean; // start/stop/restart the daemon process
+	nativeFileDialogs: boolean; // OS folder picker
+	osNotifications: boolean; // dock bounce / OS notifications
+	filePathDrop: boolean; // drag-drop yields absolute host paths
+};
+
 // A folder-drop path can arrive (cold start, or an early second-instance)
 // before ShellLayout's own effect has registered app.onOpenFolderPath's
 // listener below — React mounts TrayRuntime's child effect (which pings
@@ -101,6 +111,15 @@ ipcRenderer.on("app:openFolderPath", (_event, path: string) => {
 });
 
 const api = {
+	capabilities: Object.freeze<AoCapabilities>({
+		terminals: true,
+		nativeBrowserPanel: true,
+		windowChrome: true,
+		daemonControl: true,
+		nativeFileDialogs: true,
+		osNotifications: true,
+		filePathDrop: true,
+	}),
 	app: {
 		getVersion: () => ipcRenderer.invoke("app:getVersion") as Promise<string>,
 		chooseDirectory: (title?: string) => ipcRenderer.invoke("app:chooseDirectory", title) as Promise<string | null>,

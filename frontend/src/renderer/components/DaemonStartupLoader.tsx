@@ -2,6 +2,8 @@ import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import aoLogo from "../../../assets/ao-logo.svg";
 import { useSystemRequirementsGate } from "../hooks/useSystemRequirementsGate";
+import { aoBridge } from "../lib/bridge";
+import { useShellMaybe } from "../lib/shell-context";
 import { InstallDependencyDialog } from "./InstallDependencyDialog";
 import { SystemRequirementsChecklist } from "./SystemRequirementsChecklist";
 
@@ -20,6 +22,7 @@ const READY_HOLD_MS = 700;
 
 export function DaemonStartupLoader() {
 	const { t } = useTranslation();
+	const shell = useShellMaybe();
 	const [phase, setPhase] = useState<"requirements" | "phrases">("requirements");
 	const [phraseIndex, setPhraseIndex] = useState(0);
 
@@ -59,6 +62,8 @@ export function DaemonStartupLoader() {
 	}, [phase]);
 
 	const phrase = t(STARTUP_PHRASE_KEYS[phraseIndex]);
+	const webDaemonUnavailable =
+		!aoBridge.capabilities.daemonControl && shell !== null && shell.daemonStatus.state !== "ready";
 
 	return (
 		<div
@@ -74,7 +79,11 @@ export function DaemonStartupLoader() {
 					<img className="ao-startup-logo h-22 w-25 object-contain" src={aoLogo} alt="" />
 				</div>
 				<p className="mt-5 text-base font-semibold tracking-tight text-foreground">Agent Orchestrator</p>
-				{phase === "phrases" ? (
+				{webDaemonUnavailable ? (
+					<p className="mt-2 max-w-md text-md-sm text-muted-foreground">
+						{t("daemon.webUnavailableBody")}
+					</p>
+				) : phase === "phrases" ? (
 					<p className="mt-2 min-h-5 text-md-sm text-muted-foreground">
 						<span aria-hidden="true" className="ao-startup-status" key={phrase}>
 							{phrase}
@@ -91,7 +100,7 @@ export function DaemonStartupLoader() {
 					<span />
 				</div>
 			</div>
-			{requirementsBlocked ? (
+			{requirementsBlocked && !webDaemonUnavailable ? (
 				<InstallDependencyDialog requirements={requirements} onRefetchRequirements={() => requirementsQuery.refetch()} />
 			) : null}
 		</div>

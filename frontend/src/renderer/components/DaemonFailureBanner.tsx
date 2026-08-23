@@ -7,7 +7,14 @@ import { daemonFailureHint, daemonFailureMessage, daemonFailureTitle } from "../
 import { aoBridge } from "../lib/bridge";
 
 export function DaemonFailureBanner({ status }: { status: DaemonStatus }) {
-	if ((!status.code && !isSlowDaemonStartupStatus(status)) || status.state === "ready") return null;
+	if (status.state === "ready") return null;
+	if (
+		aoBridge.capabilities.daemonControl &&
+		!status.code &&
+		!isSlowDaemonStartupStatus(status)
+	) {
+		return null;
+	}
 	return <DaemonFailureContent status={status} />;
 }
 
@@ -18,11 +25,21 @@ function DaemonFailureContent({ status }: { status: DaemonStatus }) {
 	const [restarting, setRestarting] = useState(false);
 	const [restartError, setRestartError] = useState<string | null>(null);
 	const copiedTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
+	const canControlDaemon = aoBridge.capabilities.daemonControl;
 	const slowStartup = isSlowDaemonStartupStatus(status);
 	const details = status.details?.trim();
-	const hint = slowStartup ? "" : daemonFailureHint(status, t);
-	const title = slowStartup ? t("daemon.title.notReady") : daemonFailureTitle(status, t);
+	const hint = canControlDaemon
+		? slowStartup
+			? ""
+			: daemonFailureHint(status, t)
+		: t("daemon.webUnavailableHint");
+	const title = canControlDaemon
+		? slowStartup
+			? t("daemon.title.notReady")
+			: daemonFailureTitle(status, t)
+		: t("daemon.webUnavailableTitle");
 	const canRestart =
+		canControlDaemon &&
 		!slowStartup &&
 		(status.code === "not_ready" ||
 			status.code === "spawn_failed" ||

@@ -135,6 +135,27 @@ describe("WindowTitlebar", () => {
     },
   );
 
+  it("lets the browser provide its own chrome", async () => {
+    const capabilities = window.ao!.capabilities;
+    Object.defineProperty(window.ao, "capabilities", {
+      configurable: true,
+      value: { ...capabilities, windowChrome: false },
+    });
+    try {
+      const { WindowTitlebar } = await loadWindowTitlebar();
+
+      const { container } = render(<WindowTitlebar />);
+
+      expect(container).toBeEmptyDOMElement();
+      expect(actionMock).not.toHaveBeenCalled();
+    } finally {
+      Object.defineProperty(window.ao, "capabilities", {
+        configurable: true,
+        value: capabilities,
+      });
+    }
+  });
+
   it("keeps Windows spacing and overlays scoped to Windows", () => {
     const css = readFileSync("src/renderer/styles.css", "utf8");
     const tokens = readFileSync("src/styles/tokens.css", "utf8");

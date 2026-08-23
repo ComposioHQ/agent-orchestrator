@@ -1,1 +1,1 @@
-export const usesPreviewWorkspaceData = import.meta.env.VITE_NO_ELECTRON === "1";
+export const usesPreviewWorkspaceData = import.meta.env.VITE_AO_PREVIEW_DATA === "1";

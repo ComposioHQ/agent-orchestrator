@@ -28,7 +28,18 @@ vi.mock("../../lib/api-client", () => ({
 }));
 
 vi.mock("../../lib/bridge", () => ({
-	aoBridge: { app: { chooseDirectory: chooseDirectoryMock } },
+	aoBridge: {
+		capabilities: Object.freeze({
+			terminals: true,
+			nativeBrowserPanel: true,
+			windowChrome: true,
+			daemonControl: true,
+			nativeFileDialogs: true,
+			osNotifications: true,
+			filePathDrop: true,
+		}),
+		app: { chooseDirectory: chooseDirectoryMock },
+	},
 }));
 
 vi.mock("@tanstack/react-router", async (importOriginal) => {

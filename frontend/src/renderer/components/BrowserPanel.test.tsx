@@ -11,6 +11,7 @@ import type {
 	BrowserAnnotationContext,
 	BrowserAnnotationSubmitPayload,
 } from "../../shared/browser-annotations";
+import { aoBridge } from "../lib/bridge";
 
 const postMock = vi.hoisted(() => vi.fn());
 
@@ -343,17 +344,22 @@ describe("BrowserPanel", () => {
 		expect(hookState.previewUrl).toBe("file:///tmp/preview/index.html");
 	});
 
-	it("uses the active app theme for the static browser preview", () => {
-		hookState.navState = { ...hookState.navState, url: "http://localhost:5173/" };
-		const ao = window.ao;
-		Object.defineProperty(window, "ao", { configurable: true, value: undefined });
+	it("shows an honest desktop-only message when the native browser panel is unavailable", () => {
+		const capabilities = aoBridge.capabilities;
+		Object.defineProperty(aoBridge, "capabilities", {
+			configurable: true,
+			value: { ...capabilities, nativeBrowserPanel: false },
+		});
 		try {
 			render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
 
-			const preview = screen.getByText("Demo app preview").closest(".bg-preview, .bg-background");
-			expect(preview).toHaveClass("bg-background", "text-foreground");
+			expect(screen.getByRole("status")).toHaveTextContent(
+				"The browser panel is available in the desktop app only.",
+			);
+			expect(screen.queryByTestId("browser-panel")).not.toBeInTheDocument();
+			expect(hookState.previewUrl).toBeUndefined();
 		} finally {
-			Object.defineProperty(window, "ao", { configurable: true, value: ao });
+			Object.defineProperty(aoBridge, "capabilities", { configurable: true, value: capabilities });
 		}
 	});
 
@@ -1148,18 +1154,6 @@ describe("BrowserPanel", () => {
 	it("keeps an opaque background behind the empty-URL placeholder", () => {
 		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
 		expect(screen.getByTestId("browser-viewport")).toHaveAttribute("data-placeholder", "true");
-	});
-
-	it("keeps an opaque background for the static preview fallback when there is no native browser bridge", () => {
-		hookState.navState = { ...hookState.navState, url: "http://localhost:5173/" };
-		const ao = window.ao;
-		Object.defineProperty(window, "ao", { configurable: true, value: undefined });
-		try {
-			render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
-			expect(screen.getByTestId("browser-viewport")).toHaveAttribute("data-placeholder", "true");
-		} finally {
-			Object.defineProperty(window, "ao", { configurable: true, value: ao });
-		}
 	});
 
 	describe("pinned rail", () => {
