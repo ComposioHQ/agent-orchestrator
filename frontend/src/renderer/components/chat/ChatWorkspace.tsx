@@ -340,6 +340,27 @@ export function ChatWorkspace({
 	mcpReloadError,
 }: ChatWorkspaceProps) {
 	const turn = activeTurn(snapshot);
+	const hasPendingApproval = snapshot.items.some(
+		(item) => item.kind === "activity" && item.activityKind === "approval" && item.status === "pending",
+	);
+	const handleChatKeyDown = useCallback(
+		(event: ReactKeyboardEvent<HTMLElement>) => {
+			if (
+				event.key !== "Escape" ||
+				event.defaultPrevented ||
+				event.altKey ||
+				event.ctrlKey ||
+				event.metaKey ||
+				!turn ||
+				hasPendingApproval ||
+				!onInterrupt
+			)
+				return;
+			event.preventDefault();
+			onInterrupt();
+		},
+		[hasPendingApproval, onInterrupt, turn],
+	);
 	// Selection is durable UI state; availability only controls whether the tab is
 	// offered. Keeping these separate preserves a selected reviewer while an active
 	// session temporarily becomes terminated and later returns.
@@ -624,6 +645,7 @@ export function ChatWorkspace({
 	return (
 		<section
 			ref={surfaceRef}
+			onKeyDown={handleChatKeyDown}
 			aria-label="Chat"
 			className="cursor-chat-surface flex h-full min-h-0 flex-col [font-size:var(--chat-font-size)]"
 			data-session-mode={snapshot.mode}
@@ -1828,7 +1850,6 @@ const TurnGroup = memo(function TurnGroup({
 				.reverse()
 				.find((item) => item.kind === "message" && item.role === "assistant")?.id
 		: undefined;
-	const latestItemId = group.items.at(-1)?.id;
 	return (
 		<div className="flex min-w-0 flex-col gap-2.5">
 			{runs.map((run) =>
@@ -1874,7 +1895,6 @@ const TurnGroup = memo(function TurnGroup({
 								? group.outcome?.durationMs
 								: undefined
 						}
-						showStreamingIndicator={group.live && run.items[0]?.id === latestItemId}
 					/>
 				),
 			)}
@@ -1920,9 +1940,6 @@ const TurnGroup = memo(function TurnGroup({
 					) : null}
 				</div>
 			) : null}
-			{/* Completed turns need no divider — duration lives on the action row.
-			    Interrupted/failed still get a labelled boundary so the reader can see
-			    how the turn ended. */}
 			{group.outcome && group.outcome.state !== "completed" ? (
 				<TurnOutcome state={group.outcome.state} error={group.outcome.error} />
 			) : null}
@@ -2000,7 +2017,6 @@ function TimelineItem({
 	showCopy,
 	onRollback,
 	durationMs,
-	showStreamingIndicator,
 }: {
 	item: ConversationItem;
 	sessionId: string;
@@ -2035,7 +2051,6 @@ function TimelineItem({
 	durationMs?: number;
 	/** This message is the live edge of its turn, rather than an earlier fragment
 	 * followed by tool activity. */
-	showStreamingIndicator?: boolean;
 }) {
 	if (item.kind === "message") {
 		if (item.role === "assistant") {
@@ -2045,7 +2060,6 @@ function TimelineItem({
 					showCopy={showCopy}
 					onRollback={onRollback}
 					durationMs={durationMs}
-					showStreamingIndicator={showStreamingIndicator}
 				/>
 			);
 		}

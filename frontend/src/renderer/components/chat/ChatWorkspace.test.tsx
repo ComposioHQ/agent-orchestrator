@@ -308,6 +308,19 @@ describe("ChatWorkspace timeline", () => {
 		expect(onInterrupt).toHaveBeenCalledOnce();
 	});
 
+	it("interrupts the active turn when Escape is pressed", () => {
+		const onInterrupt = vi.fn();
+		const snapshot = structuredClone(chatFixture);
+		snapshot.items = snapshot.items.filter(
+			(item) => !(item.kind === "activity" && item.activityKind === "approval" && item.status === "pending"),
+		);
+
+		render(<ChatWorkspace snapshot={snapshot} onInterrupt={onInterrupt} />);
+		fireEvent.keyDown(screen.getByLabelText("Message the agent"), { key: "Escape" });
+
+		expect(onInterrupt).toHaveBeenCalledOnce();
+	});
+
 	it("moves a pending approval into the chat composer", async () => {
 		const user = userEvent.setup();
 		const onDecide = vi.fn();
@@ -1083,12 +1096,12 @@ describe("ChatWorkspace message actions", () => {
 		snapshot.items = snapshot.items.filter((item) => item.sequence <= 12);
 		render(<ChatWorkspace snapshot={snapshot} />);
 		// The latest assistant message is mid-stream; half a message is not what the
-		// reader means by "copy this".
-		const streaming = screen.getByLabelText("still writing").closest("div");
-		expect(streaming?.querySelector('[aria-label*="Copy message"]')).toBeNull();
+		// reader means by "copy this", and streaming has no extra visual indicator.
+		expect(screen.queryByLabelText("still writing")).not.toBeInTheDocument();
+		expect(screen.queryByText("Writing…")).not.toBeInTheDocument();
 	});
 
-	it("does not leave a writing caret behind prose followed by tool activity", () => {
+	it("does not show a writing caret while prose is streaming", () => {
 		render(<ChatWorkspace snapshot={chatFixture} />);
 		expect(screen.queryByLabelText("still writing")).not.toBeInTheDocument();
 	});

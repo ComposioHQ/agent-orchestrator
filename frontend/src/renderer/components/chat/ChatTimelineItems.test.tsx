@@ -3,10 +3,12 @@ import { describe, expect, it } from "vitest";
 import { ActivityRow, TurnOutcome } from "./ChatTimelineItems";
 
 describe("TurnOutcome", () => {
-	it("does not present a recovered historical turn as successful", () => {
-		render(<TurnOutcome state="recovered" />);
-		expect(screen.getByText("Outcome unknown")).toBeInTheDocument();
-		expect(screen.queryByText("Done")).not.toBeInTheDocument();
+	it("shows the message above a full-width rule", () => {
+		const { container } = render(<TurnOutcome state="failed" error="Provider error" />);
+
+		expect(screen.getByText("The agent ran into a problem")).toBeInTheDocument();
+		expect(screen.getByText("Provider error")).toBeInTheDocument();
+		expect(container.querySelector(".h-px.w-full.bg-border")).toBeInTheDocument();
 	});
 });
 

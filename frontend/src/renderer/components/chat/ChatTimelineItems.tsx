@@ -10,7 +10,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
 	AlertTriangle,
-	Archive,
 	Brain,
 	ChevronDown,
 	ChevronRight,
@@ -120,6 +119,73 @@ function humanMessageParts(text: string): { body: string; attachments: string[] 
 	// The match begins at the generated separator, so slicing at its index
 	// removes only AO-owned text and preserves the authored body byte-for-byte.
 	return { body: text.slice(0, match.index), attachments };
+}
+
+/** A status message followed by a full-width rule, with no text inside the rule. */
+function TwoRowTimelineMarker({
+	message,
+	detail,
+	tone = "text-muted-foreground/70",
+}: {
+	message: string;
+	detail?: string;
+	tone?: string;
+}) {
+	return (
+		<div className="flex min-w-0 flex-col gap-1 py-1">
+			<div className={cn("flex min-w-0 items-baseline gap-2 text-[11px]", tone)}>
+				<span className="shrink-0">{message}</span>
+				{detail ? (
+					<span className="min-w-0 truncate text-destructive" title={detail}>
+						{detail}
+					</span>
+				) : null}
+			</div>
+			<span aria-hidden="true" className="h-px w-full bg-border" />
+		</div>
+	);
+}
+
+export function CompactionMarker({ activity }: { activity: ConversationActivity }) {
+	const reclaimed = activity.detail?.tokensReclaimed;
+	const after = activity.detail?.tokensAfter;
+	const contextWindow = activity.detail?.contextWindow;
+	const detail = reclaimed ? `−${formatTokens(reclaimed)}` : undefined;
+	const fullness = after && contextWindow ? `${Math.round((after / contextWindow) * 100)}% full` : undefined;
+
+	return (
+		<TwoRowTimelineMarker
+			message="The conversation history was compacted"
+			detail={[detail, fullness].filter(Boolean).join(" · ") || undefined}
+		/>
+	);
+}
+
+export function TurnOutcome({
+	state,
+	error,
+}: {
+	state: "recovered" | "interrupted" | "failed";
+	error?: string;
+}) {
+	const copy = {
+		recovered: {
+			label: "This turn was recovered from an earlier session",
+			tone: "text-muted-foreground/70",
+		},
+		interrupted: {
+			label: "The agent was interrupted by you",
+			tone: "text-muted-foreground/70",
+		},
+		failed: { label: "The agent ran into a problem", tone: "text-destructive" },
+	}[state];
+
+	return <TwoRowTimelineMarker message={copy.label} detail={error} tone={copy.tone} />;
+}
+
+function formatTokens(tokens: number): string {
+	if (tokens < 1000) return `${tokens}`;
+	return `${(tokens / 1000).toFixed(1)}k`;
 }
 
 function attachmentName(path: string): string {
@@ -329,13 +395,12 @@ export function OriginMessage({ message }: { message: ConversationMessage }) {
 	);
 }
 
-/** The agent's prose. A trailing caret marks text still arriving. */
+/** The agent's prose. Streaming is represented by text arriving in place. */
 export function AssistantMessage({
 	message,
 	showCopy = false,
 	onRollback,
 	durationMs,
-	showStreamingIndicator = message.streaming,
 }: {
 	message: ConversationMessage;
 	/** Only the final answer of a finished turn owns the turn's copy action. */
@@ -347,31 +412,13 @@ export function AssistantMessage({
 	onRollback?: () => void;
 	/** How long the finished turn took; sits next to rollback on the action row. */
 	durationMs?: number;
-	/** Only the newest item can still be visibly writing; older streaming fragments
-	 * are waiting on a tool rather than missing content. */
-	showStreamingIndicator?: boolean;
 }) {
-	const visiblyStreaming = message.streaming && showStreamingIndicator;
-	const hasText = message.text.trim().length > 0;
 	const hasDuration = durationMs !== undefined && durationMs > 0;
-	const showActions = !visiblyStreaming && (showCopy || Boolean(onRollback) || hasDuration);
+	const showActions = !message.streaming && (showCopy || Boolean(onRollback) || hasDuration);
 	return (
-		<div className={cn("group/message relative", visiblyStreaming && hasText && "chat-assistant-streaming")}>
+		<div className="group/message relative">
 			<ChatMarkdown text={message.text} streaming={message.streaming} />
-			{visiblyStreaming ? (
-				hasText ? (
-					<span aria-label="still writing" className="sr-only" />
-				) : (
-					<span
-						role="status"
-						aria-label="still writing"
-						className="inline-flex items-center gap-1.5 text-[11px] text-muted-foreground"
-					>
-						<Loader2 aria-hidden="true" className="size-3 animate-spin" />
-						Writing…
-					</span>
-				)
-			) : showActions ? (
+			{showActions ? (
 				// One action row for the completed answer, not one after every prose
 				// fragment the provider emitted while working. Always visible: hover-only
 				// chrome is easy to miss next to a short reply.
@@ -1843,52 +1890,6 @@ function resolvedApprovalOutcome(
 }
 
 /* -------------------------------------------------------------------------- */
-/* compaction                                                                  */
-/* -------------------------------------------------------------------------- */
-
-/**
- * Where the conversation's earlier history was summarized to reclaim context.
- *
- * It renders as a divider rather than an activity row because that is what it is:
- * everything above it is no longer what the agent sees verbatim. Without the
- * marker, a conversation that quietly lost half its history reads as if the agent
- * simply forgot — the user would have no way to tell a compaction from a bug.
- *
- * Figures are shown only when the provider's reports allowed them to be computed.
- * A compaction right after a daemon restart genuinely does not know what it saved,
- * and a "0 tokens freed" label would be a lie rather than a gap.
- */
-export function CompactionMarker({ activity }: { activity: ConversationActivity }) {
-	const reclaimed = activity.detail?.tokensReclaimed;
-	const after = activity.detail?.tokensAfter;
-	const window = activity.detail?.contextWindow;
-
-	return (
-		<div className="flex items-center gap-2 py-1" data-compaction="true">
-			<span aria-hidden="true" className="h-px flex-1 bg-border" />
-			<Archive aria-hidden="true" className="size-3 shrink-0 text-muted-foreground/70" />
-			<span className="shrink-0 text-[10px] uppercase tracking-[0.08em] text-muted-foreground/70">
-				History compacted
-			</span>
-			{reclaimed ? (
-				<span className="shrink-0 font-mono text-[10px] tabular-nums text-muted-foreground/70">
-					&minus;{formatTokens(reclaimed)}
-				</span>
-			) : null}
-			{after && window ? (
-				<span
-					className="shrink-0 font-mono text-[10px] tabular-nums text-muted-foreground/70"
-					title={`${after.toLocaleString()} of ${window.toLocaleString()} context tokens in use`}
-				>
-					{Math.round((after / window) * 100)}% full
-				</span>
-			) : null}
-			<span aria-hidden="true" className="h-px flex-1 bg-border" />
-		</div>
-	);
-}
-
-/* -------------------------------------------------------------------------- */
 /* turn diff                                                                   */
 /* -------------------------------------------------------------------------- */
 
@@ -2165,12 +2166,6 @@ function fileBasename(path: string): string {
 	return slash >= 0 ? path.slice(slash + 1) : path;
 }
 
-/** Exact below a thousand, because that is where the digits still mean something. */
-function formatTokens(tokens: number): string {
-	if (tokens < 1000) return `${tokens}`;
-	return `${(tokens / 1000).toFixed(1)}k`;
-}
-
 /* -------------------------------------------------------------------------- */
 /* turn boundary                                                               */
 /* -------------------------------------------------------------------------- */
@@ -2182,41 +2177,6 @@ export function TurnDuration({ durationMs }: { durationMs: number }) {
 		<span className="shrink-0 px-1 font-sans text-[12px] leading-none tabular-nums text-muted-foreground">
 			{formatDuration(durationMs)}
 		</span>
-	);
-}
-
-/**
- * How a turn ended when it did not complete cleanly. Successful turns skip this —
- * their duration already sits on the answer action row. `interrupted` is kept
- * distinct from failed because the provider reports it that way. `recovered`
- * closes replayed history without claiming the provider reported an outcome.
- */
-export function TurnOutcome({
-	state,
-	error,
-}: {
-	state: "recovered" | "interrupted" | "failed";
-	error?: string;
-}) {
-	const copy = {
-		recovered: { label: "Outcome unknown", tone: "text-muted-foreground/70" },
-		interrupted: { label: "Stopped", tone: "text-muted-foreground/70" },
-		failed: { label: "Failed", tone: "text-destructive" },
-	}[state];
-
-	return (
-		<div className="flex items-center gap-2 pt-1">
-			<span aria-hidden="true" className="h-px min-w-0 flex-1 bg-border" />
-			<span className={cn("shrink-0 text-[10px] uppercase tracking-[0.08em]", copy.tone)}>
-				{copy.label}
-			</span>
-			{error ? (
-				<span className="max-w-[40%] shrink truncate text-[10px] text-destructive" title={error}>
-					{error}
-				</span>
-			) : null}
-			<span aria-hidden="true" className="h-px min-w-0 flex-1 bg-border" />
-		</div>
 	);
 }
 
