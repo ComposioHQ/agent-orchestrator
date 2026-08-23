@@ -25,7 +25,9 @@ import { useUiStore } from "../stores/ui-store";
 const { cloudSessionState, getMock, navigateMock, mockParams, renameSessionMock, spawnMock, updateStatusMock, commandPaletteEnabled } = vi.hoisted(
 	() => ({
 		cloudSessionState: {
-			configured: false,
+			available: false,
+			enabled: false,
+			apiBaseUrl: "",
 			session: null as null | { user: { email: string } },
 			status: "unauthenticated" as "authenticated" | "loading" | "unauthenticated",
 			signIn: vi.fn(),
@@ -249,7 +251,9 @@ beforeEach(() => {
 	window.localStorage.clear();
 	document.documentElement.style.removeProperty("--ao-sidebar-w");
 	commandPaletteEnabled.current = true;
-	cloudSessionState.configured = false;
+	cloudSessionState.available = false;
+	cloudSessionState.enabled = false;
+	cloudSessionState.apiBaseUrl = "";
 	cloudSessionState.session = null;
 	cloudSessionState.status = "unauthenticated";
 	cloudSessionState.signIn.mockReset();
@@ -286,8 +290,9 @@ afterEach(() => {
 });
 
 describe("Sidebar", () => {
-	it("does not show cloud sign-in controls while signed out", () => {
-		cloudSessionState.configured = true;
+	it("does not show cloud sign-in controls while cloud early access is disabled", () => {
+		cloudSessionState.available = true;
+		cloudSessionState.enabled = false;
 		renderSidebar();
 
 		expect(screen.queryByLabelText("Sign in to AO Cloud")).not.toBeInTheDocument();
@@ -295,7 +300,8 @@ describe("Sidebar", () => {
 	});
 
 	it("keeps cloud account controls visible while signed in", () => {
-		cloudSessionState.configured = true;
+		cloudSessionState.available = true;
+		cloudSessionState.enabled = true;
 		cloudSessionState.status = "authenticated";
 		cloudSessionState.session = { user: { email: "user@example.com" } };
 		renderSidebar();
