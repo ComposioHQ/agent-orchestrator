@@ -373,7 +373,114 @@ export interface paths {
         get: operations["getSession"];
         put?: never;
         post?: never;
+        /** @description Delete the session's sandbox permanently. Durable history — messages,
+         *     events, pull-request observations — is retained, so the session stays
+         *     readable but can never be restored. Use `terminateSession` for the
+         *     reversible stop.
+         *
+         *     Idempotent under `Idempotency-Key`: retrying the same key returns the
+         *     original result instead of failing on the now-missing sandbox.
+         *       content:
+         *         application/json:
+         *           schema:
+         *             $ref: "#/components/schemas/DeleteSessionResponse"
+         *     default:
+         *       $ref: "#/components/responses/Error"
+         *      */
         delete: operations["deleteSession"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/cloud/v1/orgs/{orgId}/sessions/{sessionId}/terminate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                orgId: components["parameters"]["OrgId"];
+                sessionId: components["parameters"]["SessionId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Stop the agent and release the session's compute, keeping the session
+         *     and its history restorable. This is the Cloud counterpart of the local
+         *     `POST /api/v1/sessions/{sessionId}/kill`, and the same reversible
+         *     contract: `isTerminated` becomes true, `activityState` becomes `exited`,
+         *     `status` becomes `terminated`, and `restoreSession` can bring it back.
+         *
+         *     Termination is asynchronous — the response reports the session with the
+         *     terminal intent already recorded, while the sandbox may still be
+         *     stopping. Terminating an already-terminated session is a no-op that
+         *     returns the session unchanged.
+         *      */
+        post: operations["terminateSession"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/cloud/v1/orgs/{orgId}/sessions/{sessionId}/restore": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                orgId: components["parameters"]["OrgId"];
+                sessionId: components["parameters"]["SessionId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Bring a terminated session back: re-provision a sandbox, restore the
+         *     workspace at the branch the session owns, and resume the agent with its
+         *     transcript. Counterpart of the local
+         *     `POST /api/v1/sessions/{sessionId}/restore`.
+         *
+         *     Asynchronous, like terminate: the response carries the session with
+         *     `isTerminated` already false and `sandbox.state` reporting how far the
+         *     re-provision has got. A restore whose project is `suspended` fails with
+         *     `PROJECT_SUSPENDED` — resume the project first. A session whose sandbox
+         *     was deleted with `deleteSession` fails with `SESSION_SANDBOX_DELETED`.
+         *      */
+        post: operations["restoreSession"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/cloud/v1/orgs/{orgId}/sessions/{sessionId}/activity": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                orgId: components["parameters"]["OrgId"];
+                sessionId: components["parameters"]["SessionId"];
+            };
+            cookie?: never;
+        };
+        /** @description The session's current activity, runtime, and sandbox state without the
+         *     rest of the session record. Intended for the poll a client runs while a
+         *     spawn, terminate, restore, or project resume settles — the payload is
+         *     small enough to poll at a few seconds without the cost of a full
+         *     `getSession`.
+         *
+         *     Steady-state clients should prefer `streamClientEvents`; this route
+         *     exists because sandbox transitions are not turn events and so do not
+         *     appear on that stream.
+         *
+         *     Unlike local AO's `POST /api/v1/sessions/{sessionId}/activity`, which is
+         *     how an agent hook *reports* a state, this is read-only. Cloud agents
+         *     report activity over the worker route (`publishEvent`), never here.
+         *      */
+        get: operations["getSessionActivity"];
+        put?: never;
+        post?: never;
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -1282,8 +1389,74 @@ export interface components {
         SessionKind: "worker" | "orchestrator";
         /** @enum {string} */
         SessionMode: "read-only" | "standard" | "trusted";
-        /** @enum {string} */
+        /**
+         * @description Identical vocabulary to the local `/api/v1` agent activity state, so a
+         *     shared view classifies a Cloud session and a local session with the same
+         *     rule.
+         *
+         * @enum {string}
+         */
         SessionActivityState: "active" | "idle" | "waiting_input" | "blocked" | "exited";
+        /**
+         * @description Which interface the session presents, matching the local `/api/v1`
+         *     session `mode` field. Named `interfaceMode` on `Session` because Cloud's
+         *     `mode` already means the permission mode (`SessionMode`); a client
+         *     porting local code must read `interfaceMode`, not `mode`.
+         *
+         * @enum {string}
+         */
+        SessionInterfaceMode: "chat" | "tui";
+        /**
+         * @description Compute-plane lifecycle of the session's sandbox, reported by the
+         *     provider. Only `running` accepts messages and terminal attachment.
+         *     `stopped` is restorable; `deleted` is not.
+         *
+         * @enum {string}
+         */
+        SandboxState: "provisioning" | "starting" | "running" | "suspended" | "stopping" | "stopped" | "deleting" | "deleted" | "error";
+        SessionSandbox: {
+            state: components["schemas"]["SandboxState"];
+            provider?: components["schemas"]["ProviderName"];
+            /** @description The provider's own identifier, surfaced for support and correlation.
+             *     Clients must treat it as opaque and never route on it.
+             *      */
+            providerSandboxId?: string;
+            region?: string;
+            /** Format: date-time */
+            lastTransitionAt?: string;
+            /** @description Operator-facing detail, present when `state` is `error` and
+             *     otherwise only when a transition is unusually slow.
+             *      */
+            message?: string;
+        };
+        SessionActivity: {
+            state: components["schemas"]["SessionActivityState"];
+            /** Format: date-time */
+            lastActivityAt: string;
+            /** @description Absent means the caller should fall back to `Session.runtimeConnected`. */
+            runtimeConnected?: boolean;
+            sandbox?: components["schemas"]["SessionSandbox"];
+            activeTurn?: components["schemas"]["Turn"];
+        };
+        TerminateSessionInput: {
+            /** @description Recorded on the session for the operator-facing history. */
+            reason?: string;
+        };
+        RestoreSessionInput: {
+            /**
+             * Format: uuid
+             * @description Pin the restored sandbox to one organization provider connection.
+             *     Absent reuses the connection the session last ran on, falling back
+             *     to the organization default when that connection is gone.
+             *
+             */
+            sandboxProviderConnectionId?: string;
+            /** @description Message to deliver once the agent is back. Absent restores the
+             *     session idle, which is what a client that is only reopening a
+             *     terminated session wants.
+             *      */
+            prompt?: string;
+        };
         /** @enum {string} */
         SessionStatus: "working" | "needs_input" | "pr_open" | "draft" | "review_pending" | "ci_failed" | "changes_requested" | "approved" | "mergeable" | "merged" | "exited" | "idle" | "terminated" | "no_signal";
         Turn: {
@@ -1665,6 +1838,48 @@ export interface components {
             createdAt: string;
             /** Format: date-time */
             updatedAt: string;
+            /** @description Same `{state, lastActivityAt}` shape the local `/api/v1` session
+             *     carries, so a component that already reads `session.activity`
+             *     renders a Cloud session unchanged. Absent means the client derives
+             *     it from `activityState` and `updatedAt`.
+             *      */
+            activity?: components["schemas"]["SessionActivity"];
+            /** @description Absent means `chat`. */
+            interfaceMode?: components["schemas"]["SessionInterfaceMode"];
+            /** @description Model the harness is running, when the harness reports one. Absent
+             *     means the harness default.
+             *      */
+            model?: string;
+            /** @description Tracker issue this session was spawned for, when there was one. */
+            issueId?: string;
+            /** @description Absent means false. */
+            isPinned?: boolean;
+            /** Format: date-time */
+            pinnedAt?: string | null;
+            /** @description Absent means false. */
+            terminateOnPrMerge?: boolean;
+            /** @description Absent means the project setting applies. */
+            autoReviewEnabled?: boolean;
+            /** @description Absent means false. */
+            autoInjectReview?: boolean;
+            /** @description Absent means false. */
+            autoInjectCI?: boolean;
+            /**
+             * Format: date-time
+             * @description Present only while `isTerminated` is true.
+             */
+            terminatedAt?: string;
+            /**
+             * Format: uuid
+             * @description Cloud workspace the session's sandbox belongs to. Absent for local
+             *     AO, and absent in Cloud before the first sandbox exists.
+             *
+             */
+            workspaceId?: string;
+            /** @description Compute-plane state. Absent for local AO, whose sessions run as
+             *     local processes with no sandbox lifecycle.
+             *      */
+            sandbox?: components["schemas"]["SessionSandbox"];
         };
         CreateSessionInput: {
             /** Format: uuid */
@@ -1679,6 +1894,10 @@ export interface components {
             deniedCommands: string[];
             /** Format: uuid */
             sandboxProviderConnectionId?: string;
+            /** @default chat */
+            interfaceMode: components["schemas"]["SessionInterfaceMode"];
+            issueId?: string;
+            model?: string;
         };
         SessionPage: {
             items: components["schemas"]["Session"][];
@@ -2794,6 +3013,94 @@ export interface operations {
     deleteSession: {
         parameters: {
             query?: never;
+            header: {
+                /** @description Reusing a key with the same command returns the original result.
+                 *     Reusing it with a different command returns an IDEMPOTENCY_CONFLICT.
+                 *      */
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                orgId: components["parameters"]["OrgId"];
+                sessionId: components["parameters"]["SessionId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: never;
+    };
+    terminateSession: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Reusing a key with the same command returns the original result.
+                 *     Reusing it with a different command returns an IDEMPOTENCY_CONFLICT.
+                 *      */
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                orgId: components["parameters"]["OrgId"];
+                sessionId: components["parameters"]["SessionId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["TerminateSessionInput"];
+            };
+        };
+        responses: {
+            /** @description Termination recorded; sandbox teardown may still be in flight. */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        session: components["schemas"]["Session"];
+                    };
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    restoreSession: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Reusing a key with the same command returns the original result.
+                 *     Reusing it with a different command returns an IDEMPOTENCY_CONFLICT.
+                 *      */
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                orgId: components["parameters"]["OrgId"];
+                sessionId: components["parameters"]["SessionId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["RestoreSessionInput"];
+            };
+        };
+        responses: {
+            /** @description Restore accepted; the sandbox may still be provisioning. */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        session: components["schemas"]["Session"];
+                    };
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getSessionActivity: {
+        parameters: {
+            query?: never;
             header?: never;
             path: {
                 orgId: components["parameters"]["OrgId"];
@@ -2803,13 +3110,13 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Session sandbox deletion was requested; durable history is retained. */
-            202: {
+            /** @description The session's activity snapshot. */
+            200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["DeleteSessionResponse"];
+                    "application/json": components["schemas"]["SessionActivity"];
                 };
             };
             default: components["responses"]["Error"];

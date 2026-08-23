@@ -556,13 +556,130 @@ paths:
     delete:
       operationId: deleteSession
       tags: [Sessions]
-      responses:
-        "202":
-          description: Session sandbox deletion was requested; durable history is retained.
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      description: |
+        Delete the session's sandbox permanently. Durable history — messages,
+        events, pull-request observations — is retained, so the session stays
+        readable but can never be restored. Use `terminateSession` for the
+        reversible stop.
+
+        Idempotent under `Idempotency-Key`: retrying the same key returns the
+        original result instead of failing on the now-missing sandbox.
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/DeleteSessionResponse"
+        default:
+          $ref: "#/components/responses/Error"
+  /api/cloud/v1/orgs/{orgId}/sessions/{sessionId}/terminate:
+    parameters:
+      - $ref: "#/components/parameters/OrgId"
+      - $ref: "#/components/parameters/SessionId"
+    post:
+      operationId: terminateSession
+      tags: [Sessions]
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      description: |
+        Stop the agent and release the session's compute, keeping the session
+        and its history restorable. This is the Cloud counterpart of the local
+        `POST /api/v1/sessions/{sessionId}/kill`, and the same reversible
+        contract: `isTerminated` becomes true, `activityState` becomes `exited`,
+        `status` becomes `terminated`, and `restoreSession` can bring it back.
+
+        Termination is asynchronous — the response reports the session with the
+        terminal intent already recorded, while the sandbox may still be
+        stopping. Terminating an already-terminated session is a no-op that
+        returns the session unchanged.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TerminateSessionInput"
+      responses:
+        "202":
+          description: Termination recorded; sandbox teardown may still be in flight.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [session]
+                properties:
+                  session:
+                    $ref: "#/components/schemas/Session"
+        default:
+          $ref: "#/components/responses/Error"
+  /api/cloud/v1/orgs/{orgId}/sessions/{sessionId}/restore:
+    parameters:
+      - $ref: "#/components/parameters/OrgId"
+      - $ref: "#/components/parameters/SessionId"
+    post:
+      operationId: restoreSession
+      tags: [Sessions]
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      description: |
+        Bring a terminated session back: re-provision a sandbox, restore the
+        workspace at the branch the session owns, and resume the agent with its
+        transcript. Counterpart of the local
+        `POST /api/v1/sessions/{sessionId}/restore`.
+
+        Asynchronous, like terminate: the response carries the session with
+        `isTerminated` already false and `sandbox.state` reporting how far the
+        re-provision has got. A restore whose project is `suspended` fails with
+        `PROJECT_SUSPENDED` — resume the project first. A session whose sandbox
+        was deleted with `deleteSession` fails with `SESSION_SANDBOX_DELETED`.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RestoreSessionInput"
+      responses:
+        "202":
+          description: Restore accepted; the sandbox may still be provisioning.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [session]
+                properties:
+                  session:
+                    $ref: "#/components/schemas/Session"
+        default:
+          $ref: "#/components/responses/Error"
+  /api/cloud/v1/orgs/{orgId}/sessions/{sessionId}/activity:
+    parameters:
+      - $ref: "#/components/parameters/OrgId"
+      - $ref: "#/components/parameters/SessionId"
+    get:
+      operationId: getSessionActivity
+      tags: [Sessions]
+      description: |
+        The session's current activity, runtime, and sandbox state without the
+        rest of the session record. Intended for the poll a client runs while a
+        spawn, terminate, restore, or project resume settles — the payload is
+        small enough to poll at a few seconds without the cost of a full
+        `getSession`.
+
+        Steady-state clients should prefer `streamClientEvents`; this route
+        exists because sandbox transitions are not turn events and so do not
+        appear on that stream.
+
+        Unlike local AO's `POST /api/v1/sessions/{sessionId}/activity`, which is
+        how an agent hook *reports* a state, this is read-only. Cloud agents
+        report activity over the worker route (`publishEvent`), never here.
+      responses:
+        "200":
+          description: The session's activity snapshot.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SessionActivity"
         default:
           $ref: "#/components/responses/Error"
   /api/cloud/v1/orgs/{orgId}/sessions/{sessionId}/pull-requests:
@@ -2215,6 +2332,104 @@ components:
     SessionActivityState:
       type: string
       enum: [active, idle, waiting_input, blocked, exited]
+      description: |
+        Identical vocabulary to the local `/api/v1` agent activity state, so a
+        shared view classifies a Cloud session and a local session with the same
+        rule.
+    SessionInterfaceMode:
+      type: string
+      enum: [chat, tui]
+      description: |
+        Which interface the session presents, matching the local `/api/v1`
+        session `mode` field. Named `interfaceMode` on `Session` because Cloud's
+        `mode` already means the permission mode (`SessionMode`); a client
+        porting local code must read `interfaceMode`, not `mode`.
+    SandboxState:
+      type: string
+      enum:
+        - provisioning
+        - starting
+        - running
+        - suspended
+        - stopping
+        - stopped
+        - deleting
+        - deleted
+        - error
+      description: |
+        Compute-plane lifecycle of the session's sandbox, reported by the
+        provider. Only `running` accepts messages and terminal attachment.
+        `stopped` is restorable; `deleted` is not.
+    SessionSandbox:
+      type: object
+      additionalProperties: false
+      required: [state]
+      properties:
+        state:
+          $ref: "#/components/schemas/SandboxState"
+        provider:
+          $ref: "#/components/schemas/ProviderName"
+        providerSandboxId:
+          type: string
+          maxLength: 200
+          description: |
+            The provider's own identifier, surfaced for support and correlation.
+            Clients must treat it as opaque and never route on it.
+        region:
+          type: string
+          maxLength: 64
+        lastTransitionAt:
+          type: string
+          format: date-time
+        message:
+          type: string
+          maxLength: 2048
+          description: |
+            Operator-facing detail, present when `state` is `error` and
+            otherwise only when a transition is unusually slow.
+    SessionActivity:
+      type: object
+      additionalProperties: false
+      required: [state, lastActivityAt]
+      properties:
+        state:
+          $ref: "#/components/schemas/SessionActivityState"
+        lastActivityAt:
+          type: string
+          format: date-time
+        runtimeConnected:
+          type: boolean
+          description: Absent means the caller should fall back to `Session.runtimeConnected`.
+        sandbox:
+          $ref: "#/components/schemas/SessionSandbox"
+        activeTurn:
+          $ref: "#/components/schemas/Turn"
+    TerminateSessionInput:
+      type: object
+      additionalProperties: false
+      properties:
+        reason:
+          type: string
+          maxLength: 2048
+          description: Recorded on the session for the operator-facing history.
+    RestoreSessionInput:
+      type: object
+      additionalProperties: false
+      properties:
+        sandboxProviderConnectionId:
+          type: string
+          format: uuid
+          description: |
+            Pin the restored sandbox to one organization provider connection.
+            Absent reuses the connection the session last ran on, falling back
+            to the organization default when that connection is gone.
+        prompt:
+          type: string
+          maxLength: 65536
+          description: |
+            Message to deliver once the agent is back. Absent restores the
+            session idle, which is what a client that is only reopening a
+            terminated session wants.
     SessionStatus:
       type: string
       enum:
@@ -3043,6 +3258,59 @@ components:
         updatedAt:
           type: string
           format: date-time
+        activity:
+          $ref: "#/components/schemas/SessionActivity"
+          description: |
+            Same `{state, lastActivityAt}` shape the local `/api/v1` session
+            carries, so a component that already reads `session.activity`
+            renders a Cloud session unchanged. Absent means the client derives
+            it from `activityState` and `updatedAt`.
+        interfaceMode:
+          $ref: "#/components/schemas/SessionInterfaceMode"
+          description: Absent means `chat`.
+        model:
+          type: string
+          maxLength: 200
+          description: |
+            Model the harness is running, when the harness reports one. Absent
+            means the harness default.
+        issueId:
+          type: string
+          maxLength: 200
+          description: Tracker issue this session was spawned for, when there was one.
+        isPinned:
+          type: boolean
+          description: Absent means false.
+        pinnedAt:
+          type: [string, "null"]
+          format: date-time
+        terminateOnPrMerge:
+          type: boolean
+          description: Absent means false.
+        autoReviewEnabled:
+          type: boolean
+          description: Absent means the project setting applies.
+        autoInjectReview:
+          type: boolean
+          description: Absent means false.
+        autoInjectCI:
+          type: boolean
+          description: Absent means false.
+        terminatedAt:
+          type: string
+          format: date-time
+          description: Present only while `isTerminated` is true.
+        workspaceId:
+          type: string
+          format: uuid
+          description: |
+            Cloud workspace the session's sandbox belongs to. Absent for local
+            AO, and absent in Cloud before the first sandbox exists.
+        sandbox:
+          $ref: "#/components/schemas/SessionSandbox"
+          description: |
+            Compute-plane state. Absent for local AO, whose sessions run as
+            local processes with no sandbox lifecycle.
     CreateSessionInput:
       type: object
       additionalProperties: false
@@ -3075,6 +3343,15 @@ components:
         sandboxProviderConnectionId:
           type: string
           format: uuid
+        interfaceMode:
+          $ref: "#/components/schemas/SessionInterfaceMode"
+          default: chat
+        issueId:
+          type: string
+          maxLength: 200
+        model:
+          type: string
+          maxLength: 200
     SessionPage:
       type: object
       additionalProperties: false

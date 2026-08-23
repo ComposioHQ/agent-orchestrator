@@ -8,6 +8,8 @@ import {
   type ClientEvent,
   type Project,
   type PullRequestSummary,
+  type Session,
+  type SessionActivity,
   type SessionReviewState,
 } from "../src/index.js";
 
@@ -101,12 +103,117 @@ describe("CloudClient", () => {
     await client.deleteSession(
       "4165753c-c6ad-4ac2-8f12-e0cbb24d9750",
       "a9dc6493-bd04-4c03-bb45-55733ed83784",
+      { idempotencyKey: "delete-session-1" },
     );
 
     expect(fetchMock.mock.calls[0]?.[0]).toBe(
       "https://cloud.example.com/api/cloud/v1/orgs/4165753c-c6ad-4ac2-8f12-e0cbb24d9750/sessions/a9dc6493-bd04-4c03-bb45-55733ed83784",
     );
     expect(fetchMock.mock.calls[0]?.[1]?.method).toBe("DELETE");
+    expect(
+      new Headers(fetchMock.mock.calls[0]?.[1]?.headers).get("Idempotency-Key"),
+    ).toBe("delete-session-1");
+  });
+
+  it("terminates a session reversibly and restores it with a follow-up prompt", async () => {
+    const base = {
+      id: "a9dc6493-bd04-4c03-bb45-55733ed83784",
+      orgId: "4165753c-c6ad-4ac2-8f12-e0cbb24d9750",
+      projectId: "1d3f6bd1-4f3f-4a2c-9d0e-6c9a3b1f2f77",
+      kind: "worker",
+      harness: "claude-code",
+      displayName: "Cloud contract",
+      branch: "ao/cloud-contract",
+      mode: "trusted",
+      deniedCommands: [],
+      activityState: "active",
+      status: "working",
+      runtimeConnected: true,
+      isTerminated: false,
+      createdAt: "2026-08-19T20:00:00Z",
+      updatedAt: "2026-08-19T20:00:00Z",
+    } as const satisfies Session;
+    const terminated: Session = {
+      ...base,
+      isTerminated: true,
+      activityState: "exited",
+      status: "terminated",
+      runtimeConnected: false,
+      terminatedAt: "2026-08-19T20:05:00Z",
+      sandbox: { state: "stopping" },
+    };
+    const restored: Session = {
+      ...base,
+      sandbox: { state: "provisioning", provider: "daytona" },
+    };
+    const fetchMock = vi.fn(
+      async (input: RequestInfo | URL, _init?: RequestInit) =>
+        jsonResponse(
+          {
+            session: String(input).endsWith("/terminate")
+              ? terminated
+              : restored,
+          },
+          202,
+        ),
+    );
+    const client = createCloudClient({
+      baseUrl: "https://cloud.example.com",
+      getAccessToken: () => "access-token",
+      fetch: fetchMock as typeof fetch,
+    });
+
+    await expect(
+      client.terminateSession(base.orgId, base.id, {
+        idempotencyKey: "terminate-1",
+        input: { reason: "done for the day" },
+      }),
+    ).resolves.toEqual({ session: terminated });
+    expect(fetchMock.mock.calls[0]?.[0]).toBe(
+      `https://cloud.example.com/api/cloud/v1/orgs/${base.orgId}/sessions/${base.id}/terminate`,
+    );
+    expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toEqual({
+      reason: "done for the day",
+    });
+
+    await expect(
+      client.restoreSession(base.orgId, base.id, {
+        idempotencyKey: "restore-1",
+        input: { prompt: "pick this back up" },
+      }),
+    ).resolves.toEqual({ session: restored });
+    expect(fetchMock.mock.calls[1]?.[0]).toBe(
+      `https://cloud.example.com/api/cloud/v1/orgs/${base.orgId}/sessions/${base.id}/restore`,
+    );
+    expect(
+      new Headers(fetchMock.mock.calls[1]?.[1]?.headers).get("Idempotency-Key"),
+    ).toBe("restore-1");
+  });
+
+  it("reads the session activity snapshot while a sandbox settles", async () => {
+    const activity: SessionActivity = {
+      state: "idle",
+      lastActivityAt: "2026-08-19T20:00:00Z",
+      runtimeConnected: false,
+      sandbox: { state: "starting", provider: "daytona", region: "us-east-1" },
+    };
+    const fetchMock = vi.fn(
+      async (_input: RequestInfo | URL, _init?: RequestInit) =>
+        jsonResponse(activity),
+    );
+    const client = createCloudClient({
+      baseUrl: "https://cloud.example.com",
+      getAccessToken: () => "access-token",
+      fetch: fetchMock as typeof fetch,
+    });
+
+    await expect(
+      client.getSessionActivity("org one", "session one"),
+    ).resolves.toEqual(activity);
+    expect(fetchMock.mock.calls[0]?.[0]).toBe(
+      "https://cloud.example.com/api/cloud/v1/orgs/org%20one/sessions/session%20one/activity",
+    );
+    expect(fetchMock.mock.calls[0]?.[1]?.method ?? "GET").toBe("GET");
   });
 
   it("updates editable project settings on the project resource", async () => {

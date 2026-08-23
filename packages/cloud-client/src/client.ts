@@ -29,12 +29,15 @@ import type {
   RedactedProviderConnection,
   RefreshTokenInput,
   RequestOptions,
+  RestoreSessionInput,
   Session,
+  SessionActivity,
   SessionPage,
   SessionPullRequests,
   SessionReviewState,
   TerminalKind,
   TerminalTicket,
+  TerminateSessionInput,
   UpdateProjectInput,
   UserMessageEvent,
   WorkerBootstrapInput,
@@ -404,11 +407,61 @@ export class CloudClient {
   deleteSession(
     orgId: string,
     sessionId: string,
-    options: RequestOptions = {},
+    options: IdempotentRequestOptions,
   ): Promise<DeleteSessionResponse> {
     return this.request(
       this.orgPath(orgId, `/sessions/${encodeURIComponent(sessionId)}`),
-      { method: "DELETE", signal: options.signal },
+      {
+        method: "DELETE",
+        idempotencyKey: options.idempotencyKey,
+        signal: options.signal,
+      },
+    );
+  }
+
+  terminateSession(
+    orgId: string,
+    sessionId: string,
+    options: IdempotentRequestOptions & { input?: TerminateSessionInput },
+  ): Promise<{ session: Session }> {
+    return this.request(
+      this.orgPath(
+        orgId,
+        `/sessions/${encodeURIComponent(sessionId)}/terminate`,
+      ),
+      {
+        method: "POST",
+        body: options.input ?? {},
+        idempotencyKey: options.idempotencyKey,
+        signal: options.signal,
+      },
+    );
+  }
+
+  restoreSession(
+    orgId: string,
+    sessionId: string,
+    options: IdempotentRequestOptions & { input?: RestoreSessionInput },
+  ): Promise<{ session: Session }> {
+    return this.request(
+      this.orgPath(orgId, `/sessions/${encodeURIComponent(sessionId)}/restore`),
+      {
+        method: "POST",
+        body: options.input ?? {},
+        idempotencyKey: options.idempotencyKey,
+        signal: options.signal,
+      },
+    );
+  }
+
+  getSessionActivity(
+    orgId: string,
+    sessionId: string,
+    options: RequestOptions = {},
+  ): Promise<SessionActivity> {
+    return this.request(
+      this.orgPath(orgId, `/sessions/${encodeURIComponent(sessionId)}/activity`),
+      options,
     );
   }
 

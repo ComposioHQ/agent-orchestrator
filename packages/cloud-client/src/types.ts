@@ -51,9 +51,15 @@ export type Session = Schemas["Session"];
 export type SessionKind = Schemas["SessionKind"];
 export type SessionMode = Schemas["SessionMode"];
 export type SessionActivityState = Schemas["SessionActivityState"];
+export type SessionInterfaceMode = Schemas["SessionInterfaceMode"];
 export type SessionStatus = Schemas["SessionStatus"];
+export type SandboxState = Schemas["SandboxState"];
+export type SessionSandbox = Schemas["SessionSandbox"];
+export type SessionActivity = Schemas["SessionActivity"];
 export type Turn = Schemas["Turn"];
 export type CreateSessionInput = Schemas["CreateSessionInput"];
+export type TerminateSessionInput = Schemas["TerminateSessionInput"];
+export type RestoreSessionInput = Schemas["RestoreSessionInput"];
 export type DeleteSessionResponse = Schemas["DeleteSessionResponse"];
 export type SessionPage = Schemas["SessionPage"];
 
