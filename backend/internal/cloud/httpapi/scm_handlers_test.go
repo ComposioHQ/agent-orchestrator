@@ -35,6 +35,15 @@ type stubLinkService struct {
 	repositories  []domain.SCMRepository
 	allowlist     []string
 	disconnected  string
+	setup         scm.CallbackParams
+}
+
+func (s *stubLinkService) BeginInstallAuthorization(_ context.Context, params scm.CallbackParams) (string, error) {
+	s.setup = params
+	if params.State != "single-use-state" || params.ExternalInstallationID != 42 || params.SetupAction != "install" || params.Code != "" {
+		return "", scm.ErrInvalidState
+	}
+	return "https://github.com/login/oauth/authorize?client_id=client&state=oauth-state", nil
 }
 
 func (s *stubLinkService) ListInstallations(_ context.Context, identity tenant.Identity) ([]domain.SCMInstallation, error) {
@@ -70,7 +79,7 @@ func (s *stubLinkService) StartInstall(_ context.Context, identity tenant.Identi
 }
 
 func (s *stubLinkService) CompleteInstall(_ context.Context, params scm.CallbackParams) (domain.SCMInstallation, error) {
-	if params.State == "single-use-state" && params.ExternalInstallationID == 42 {
+	if params.State == "oauth-state" && params.Code == "oauth-code" && params.ExternalInstallationID == 0 {
 		return domain.SCMInstallation{ID: "installation-42"}, nil
 	}
 	return domain.SCMInstallation{}, scm.ErrInvalidState
@@ -180,11 +189,18 @@ func TestCanonicalSCMInstallRoutes(t *testing.T) {
 		t.Fatalf("start status = %d, identity = %#v, body = %s", startResponse.Code, link.identity, startResponse.Body.String())
 	}
 
-	callback := httptest.NewRequest(http.MethodGet, "/api/cloud/v1/github/installations/callback?state=single-use-state&installation_id=42", nil)
+	setup := httptest.NewRequest(http.MethodGet, "/api/cloud/v1/github/installations/callback?state=single-use-state&installation_id=42&setup_action=install", nil)
+	setupResponse := httptest.NewRecorder()
+	server.Handler().ServeHTTP(setupResponse, setup)
+	if setupResponse.Code != http.StatusFound || !strings.Contains(setupResponse.Header().Get("Location"), "state=oauth-state") {
+		t.Fatalf("setup status = %d, location=%q body = %s", setupResponse.Code, setupResponse.Header().Get("Location"), setupResponse.Body.String())
+	}
+
+	callback := httptest.NewRequest(http.MethodGet, "/api/cloud/v1/github/installations/callback?state=oauth-state&code=oauth-code", nil)
 	callbackResponse := httptest.NewRecorder()
 	server.Handler().ServeHTTP(callbackResponse, callback)
 	if callbackResponse.Code != http.StatusOK {
-		t.Fatalf("callback status = %d, body = %s", callbackResponse.Code, callbackResponse.Body.String())
+		t.Fatalf("oauth callback status = %d, body = %s", callbackResponse.Code, callbackResponse.Body.String())
 	}
 }
 

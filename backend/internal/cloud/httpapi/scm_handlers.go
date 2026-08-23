@@ -22,6 +22,7 @@ import (
 // SCMLinkService starts and completes GitHub App installation linking.
 type SCMLinkService interface {
 	StartInstall(context.Context, tenant.Identity) (scm.InstallRedirect, error)
+	BeginInstallAuthorization(context.Context, scm.CallbackParams) (string, error)
 	CompleteInstall(context.Context, scm.CallbackParams) (domain.SCMInstallation, error)
 	ListInstallations(context.Context, tenant.Identity) ([]domain.SCMInstallation, error)
 	ListRepositories(context.Context, tenant.Identity, string) ([]domain.SCMRepository, error)
@@ -148,10 +149,20 @@ func (s *Server) startSCMInstall(w http.ResponseWriter, r *http.Request) {
 func (s *Server) completeSCMInstall(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	externalID, _ := strconv.ParseInt(strings.TrimSpace(r.URL.Query().Get("installation_id")), 10, 64)
-	installation, err := s.scm.Link.CompleteInstall(r.Context(), scm.CallbackParams{
+	params := scm.CallbackParams{
 		State: r.URL.Query().Get("state"), ExternalInstallationID: externalID,
 		SetupAction: r.URL.Query().Get("setup_action"), Code: r.URL.Query().Get("code"),
-	})
+	}
+	if params.Code == "" && params.ExternalInstallationID > 0 {
+		authorizationURL, err := s.scm.Link.BeginInstallAuthorization(r.Context(), params)
+		if err != nil {
+			s.writeSCMError(w, r, "begin scm install authorization", err)
+			return
+		}
+		http.Redirect(w, r, authorizationURL, http.StatusFound)
+		return
+	}
+	installation, err := s.scm.Link.CompleteInstall(r.Context(), params)
 	if err != nil {
 		if strings.TrimSpace(s.scm.InstallCompletionURL) != "" {
 			http.Redirect(w, r, scmCompletionURL(s.scm.InstallCompletionURL, "error", scmErrorCode(err)), http.StatusFound)

@@ -97,8 +97,10 @@ func TestCloudMigrationsAreTenantScoped(t *testing.T) {
 		"UNIQUE (provider, external_installation_id)",
 		"ALTER TABLE ao_scm_token_grants FORCE ROW LEVEL SECURITY",
 		"CREATE FUNCTION ao_scm_upsert_installation",
-		"CREATE FUNCTION ao_scm_consume_install_state",
-		"REVOKE ALL ON FUNCTION ao_scm_consume_install_state(BYTEA) FROM PUBLIC",
+		"CREATE FUNCTION ao_scm_claim_install_state",
+		"CREATE FUNCTION ao_scm_get_install_claim",
+		"CREATE FUNCTION ao_scm_release_install_claim",
+		"CREATE FUNCTION ao_scm_finalize_install_state",
 	} {
 		if !strings.Contains(installationSQL, required) {
 			t.Fatalf("SCM installation migration does not contain %q", required)

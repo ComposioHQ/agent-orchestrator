@@ -94,6 +94,12 @@ func (c *AppClient) InstallURL(state string) string {
 		"/installations/new?state=" + url.QueryEscape(state)
 }
 
+// AuthorizationURL starts the distinct GitHub user web-authorization flow.
+func (c *AppClient) AuthorizationURL(state string) string {
+	query := url.Values{"client_id": []string{c.oauthID}, "state": []string{state}}
+	return c.webBase + "/login/oauth/authorize?" + query.Encode()
+}
+
 // InstallationAccount is the authoritative provider view of an installation.
 type InstallationAccount struct {
 	ExternalID          int64
