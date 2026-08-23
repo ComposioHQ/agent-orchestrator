@@ -240,7 +240,7 @@ listener with bearer authentication, a route allowlist, session self-binding,
 strict origin handling, and normal TLS verification for terminal WebSockets.
 The existing unauthenticated loopback listener must not be republished through
 a preview URL. Desktop administration uses a distinct revocable capability;
-worker capabilities cannot resume/delete workspaces or address other sessions.
+worker capabilities cannot resume or delete workspaces and cannot address sessions outside their own workspace. Preview, browser, and activity operations are further restricted to the worker's own session.
 
 Existing staging sandboxes from the removed POC are not migration candidates:
 they were issued non-revocable coordinator URLs and must be destroyed before a

@@ -13,7 +13,7 @@ func TestCloudMigrationsAreTenantScoped(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(migrations) != 7 || migrations[0].Version != 1 || migrations[1].Version != 2 || migrations[2].Version != 3 || migrations[3].Version != 4 || migrations[4].Version != 5 || migrations[5].Version != 6 || migrations[6].Version != 7 {
+	if len(migrations) != 8 || migrations[0].Version != 1 || migrations[1].Version != 2 || migrations[2].Version != 3 || migrations[3].Version != 4 || migrations[4].Version != 5 || migrations[5].Version != 6 || migrations[6].Version != 7 || migrations[7].Version != 8 {
 		t.Fatalf("migrations = %#v", migrations)
 	}
 	migration, err := migrationFS.ReadFile("migrations/00001_auth_foundation.sql")
@@ -121,4 +121,15 @@ func TestCloudMigrationsAreTenantScoped(t *testing.T) {
 			t.Fatalf("auth repair migration does not contain %q", required)
 		}
 	}
+	workspaceScopeMigration, err := migrationFS.ReadFile("migrations/00008_workspace_runtime_scope.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	workspaceScopeSQL := string(workspaceScopeMigration)
+	for _, required := range []string{"ao_current_workspace_id", "workspace_id = ao_current_workspace_id()", "workspace.owner_user_id = ao_current_user_id()"} {
+		if !strings.Contains(workspaceScopeSQL, required) {
+			t.Fatalf("workspace runtime scope migration does not contain %q", required)
+		}
+	}
+
 }
