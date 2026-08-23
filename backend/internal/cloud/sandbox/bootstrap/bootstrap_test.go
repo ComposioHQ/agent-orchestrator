@@ -601,3 +601,69 @@ func TestTicketVerifierBuildsFromTheLoadedConfiguration(t *testing.T) {
 		t.Fatalf("a ticket minted for this placement did not verify: %v", err)
 	}
 }
+
+func TestTicketKeyCanArriveInAFile(t *testing.T) {
+	path := t.TempDir() + "/ticket.key"
+	if err := os.WriteFile(path, []byte(testKeyBase64+"\n"), 0o600); err != nil {
+		t.Fatalf("write key file: %v", err)
+	}
+	env := baseEnv()
+	delete(env, EnvTicketKey)
+	env[EnvTicketKeyFile] = path
+	cfg, err := Load(lookup(env))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.TicketKey.Encode() != testKeyBase64 {
+		t.Fatal("the key read from the file does not match the one written")
+	}
+
+	// A named file that cannot be read is a misconfiguration, not a silent
+	// fallback to the environment: falling back would mean a deployment that
+	// meant to use a file quietly signs with whatever was left in the env.
+	env[EnvTicketKeyFile] = path + ".missing"
+	env[EnvTicketKey] = testKeyBase64
+	if _, err := Load(lookup(env)); err == nil {
+		t.Fatal("Load fell back to the environment when the named key file was unreadable")
+	}
+}
+
+// The agent harness runs as the same user in the same sandbox; an inherited
+// signing key would let it mint connection tickets for its own sandbox.
+func TestChildrenDoNotInheritTheTicketKey(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell steps are not spawned on Windows")
+	}
+	t.Setenv(EnvTicketKey, testKeyBase64)
+	t.Setenv("AO_SANDBOX_UNRELATED", "kept")
+
+	logs := &syncBuffer{}
+	supervisor, err := NewSupervisor(Options{
+		Steps: []Step{{
+			Name:  "harness",
+			Argv:  []string{"/bin/sh", "-c", `printf 'key=[%s] unrelated=[%s]\n' "$AO_SANDBOX_TICKET_KEY" "$AO_SANDBOX_UNRELATED"; sleep 30`},
+			Phase: PhaseHarness,
+		}},
+		Logger:   slog.New(slog.NewTextHandler(logs, nil)),
+		StripEnv: ChildEnvDenyList(),
+		Probe:    func(context.Context, string) error { return nil },
+	})
+	if err != nil {
+		t.Fatalf("NewSupervisor: %v", err)
+	}
+	t.Cleanup(supervisor.Stop)
+	if err := supervisor.Start(context.Background()); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) && !strings.Contains(logs.String(), "unrelated=") {
+		time.Sleep(20 * time.Millisecond)
+	}
+	captured := logs.String()
+	if !strings.Contains(captured, "unrelated=[kept]") {
+		t.Fatalf("the child lost an unrelated variable: %s", captured)
+	}
+	if !strings.Contains(captured, "key=[]") {
+		t.Fatalf("the child inherited the ticket key: %s", captured)
+	}
+}

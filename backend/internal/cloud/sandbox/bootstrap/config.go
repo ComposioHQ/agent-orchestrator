@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"os"
 	"sort"
 	"strings"
 	"time"
@@ -23,6 +24,11 @@ import (
 const (
 	// EnvTicketKey carries the base64 per-sandbox ticket-signing key.
 	EnvTicketKey = "AO_SANDBOX_TICKET_KEY"
+	// EnvTicketKeyFile names a file holding the same value, for deployments
+	// that deliver it through the provider's secret-file channel instead of the
+	// environment. It wins over EnvTicketKey when both are set, because a
+	// deployment that went to the trouble of using a file meant it.
+	EnvTicketKeyFile = "AO_SANDBOX_TICKET_KEY_FILE"
 	// EnvListenAddr is where the published listener binds.
 	EnvListenAddr = "AO_SANDBOX_LISTEN_ADDR"
 	// EnvDaemonAddr is the daemon's loopback address inside the sandbox.
@@ -90,9 +96,9 @@ func Load(getenv func(string) string) (Config, error) {
 	if getenv == nil {
 		return Config{}, errors.New("bootstrap: an environment reader is required")
 	}
-	key, err := ticket.ParseKey(getenv(EnvTicketKey))
+	key, keySource, err := loadTicketKey(getenv)
 	if err != nil {
-		return Config{}, fmt.Errorf("%s: %w", EnvTicketKey, err)
+		return Config{}, fmt.Errorf("%s: %w", keySource, err)
 	}
 	daemonArgv, err := argvValue(getenv(EnvDaemonArgv), []string{"ao", "start"})
 	if err != nil {
@@ -156,6 +162,30 @@ func (c Config) UpstreamMuxURL() string { return "ws://" + c.DaemonAddr + "/mux"
 // must not report ready before this does: it relays to a daemon that would
 // otherwise not be there.
 func (c Config) DaemonReadyURL() string { return "http://" + c.DaemonAddr + "/readyz" }
+
+// loadTicketKey reads the ticket key from a file when one is named, else from
+// the environment. It returns the source name so a failure says which one the
+// deployment actually used.
+func loadTicketKey(getenv func(string) string) (ticket.Key, string, error) {
+	if path := strings.TrimSpace(getenv(EnvTicketKeyFile)); path != "" {
+		raw, err := os.ReadFile(path) //nolint:gosec // the path is deployment configuration
+		if err != nil {
+			return ticket.Key{}, EnvTicketKeyFile, errors.New("could not be read")
+		}
+		key, err := ticket.ParseKey(string(raw))
+		return key, EnvTicketKeyFile, err
+	}
+	key, err := ticket.ParseKey(getenv(EnvTicketKey))
+	return key, EnvTicketKey, err
+}
+
+// ChildEnvDenyList names the variables children must not inherit.
+//
+// The ticket key is this process's own secret. The agent harness runs as the
+// same user in the same sandbox; handing it the signing key would let it mint
+// connection tickets for the sandbox it is running in, which is authority it
+// has no reason to hold.
+func ChildEnvDenyList() []string { return []string{EnvTicketKey, EnvTicketKeyFile} }
 
 // Binding is the placement a presented ticket must name.
 func (c Config) Binding() ticket.Binding {

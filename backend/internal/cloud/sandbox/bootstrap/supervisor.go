@@ -77,6 +77,8 @@ type Supervisor struct {
 	reporter Reporter
 	log      *slog.Logger
 	secrets  []string
+	// strip names environment variables the children must not inherit.
+	strip []string
 	// probe is the readiness poll, injectable so tests do not need a listener.
 	probe func(ctx context.Context, url string) error
 	// heartbeat is how often a ready sandbox re-reports. Zero disables it.
@@ -96,6 +98,11 @@ type Options struct {
 	// Secrets are the values that must never appear in a log line. Every child
 	// process's stderr passes through Redact with this list.
 	Secrets []string
+	// StripEnv names variables to remove from the environment children
+	// inherit. The sandbox runtime's own ticket-signing key belongs here: it
+	// is this process's secret, and an agent that inherited it could mint
+	// tickets for the sandbox it is running in.
+	StripEnv []string
 	// Probe overrides the readiness poll (tests).
 	Probe func(ctx context.Context, url string) error
 	// Heartbeat is how often a ready sandbox re-reports its state. Zero
@@ -132,6 +139,7 @@ func NewSupervisor(opts Options) (*Supervisor, error) {
 		reporter:  opts.Reporter,
 		log:       log,
 		secrets:   opts.Secrets,
+		strip:     opts.StripEnv,
 		probe:     probe,
 		heartbeat: opts.Heartbeat,
 		phase:     PhaseStarting,
@@ -213,7 +221,7 @@ func (s *Supervisor) Start(ctx context.Context) error {
 func (s *Supervisor) spawn(step Step) (*exec.Cmd, error) {
 	cmd := exec.Command(step.Argv[0], step.Argv[1:]...) //nolint:gosec // the argv is deployment configuration, not user input
 	cmd.Dir = step.Dir
-	cmd.Env = mergeEnv(os.Environ(), step.Env)
+	cmd.Env = mergeEnv(stripEnv(os.Environ(), s.strip), step.Env)
 	cmd.Stdout = &redactingWriter{log: s.log, step: step.Name, stream: "stdout", secrets: s.secrets}
 	cmd.Stderr = &redactingWriter{log: s.log, step: step.Name, stream: "stderr", secrets: s.secrets}
 	if err := cmd.Start(); err != nil {
@@ -359,6 +367,31 @@ func (s *Supervisor) fail(ctx context.Context, err error) error {
 	reason := Redact(err.Error(), s.secrets...)
 	s.setPhase(ctx, PhaseFailed, reason)
 	return errors.New(reason)
+}
+
+// stripEnv removes named variables from an inherited environment.
+//
+// A child that does not need a secret must not be handed one. The sandbox
+// runtime's ticket key is the case that matters: the agent harness runs as the
+// same user in the same sandbox, and an inherited signing key would let it mint
+// connection tickets for its own sandbox.
+func stripEnv(inherited []string, remove []string) []string {
+	if len(remove) == 0 {
+		return inherited
+	}
+	excluded := make(map[string]struct{}, len(remove))
+	for _, name := range remove {
+		excluded[name] = struct{}{}
+	}
+	kept := make([]string, 0, len(inherited))
+	for _, entry := range inherited {
+		name, _, _ := strings.Cut(entry, "=")
+		if _, drop := excluded[name]; drop {
+			continue
+		}
+		kept = append(kept, entry)
+	}
+	return kept
 }
 
 // mergeEnv layers overrides onto an inherited environment, last value winning.
