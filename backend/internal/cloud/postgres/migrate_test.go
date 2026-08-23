@@ -194,12 +194,8 @@ func TestCloudMigrationsAreTenantScoped(t *testing.T) {
 	}
 	triggerSQL := string(triggerMigration)
 	for _, required := range []string{
-		"ao_projects_change_created",
-		"ao_workspace_repos_change_inserted",
 		"ao_sessions_change_created",
 		"ao_sessions_change_updated",
-		"ao_conversations_change_inserted",
-		"ao_conversation_provider_events_change_inserted",
 		"ao_pull_requests_change_created",
 		"ao_pull_requests_change_updated",
 		"ao_pull_requests_change_session",
@@ -207,14 +203,27 @@ func TestCloudMigrationsAreTenantScoped(t *testing.T) {
 		"ao_pull_request_checks_change_updated",
 		"ao_pull_request_review_threads_change_added",
 		"ao_pull_request_review_threads_change_resolved",
-		"ao_pull_request_comments_change_inserted",
-		"ao_pull_request_reviews_change_inserted",
+		"ao_pull_request_reviews_change_created",
+		"ao_pull_request_reviews_change_updated",
 		"ao_notifications_change_created",
 		"ao_notifications_change_resolved",
-		"ao_notifications_change_deleted",
 	} {
 		if !strings.Contains(triggerSQL, required) {
 			t.Fatalf("change trigger migration does not contain %q", required)
+		}
+	}
+	for _, forbidden := range []string{
+		"ao_projects_change_",
+		"ao_workspace_repos_change_",
+		"ao_session_worktrees_change_",
+		"ao_conversations_change_",
+		"ao_conversation_provider_events_change_",
+		"ao_pull_request_comments_change_",
+		"ao_app_settings_change_",
+		"ao_agent_inventory_cache_change_",
+	} {
+		if strings.Contains(triggerSQL, forbidden) {
+			t.Fatalf("change trigger migration unexpectedly contains %q", forbidden)
 		}
 	}
 

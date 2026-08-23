@@ -11,8 +11,6 @@ import (
 type ChangeEventType string
 
 const (
-	ChangeEventProjectCreated         ChangeEventType = "project_created"
-	ChangeEventProjectUpdated         ChangeEventType = "project_updated"
 	ChangeEventSessionCreated         ChangeEventType = "session_created"
 	ChangeEventSessionUpdated         ChangeEventType = "session_updated"
 	ChangeEventPRCreated              ChangeEventType = "pr_created"
@@ -21,8 +19,6 @@ const (
 	ChangeEventPRSessionChanged       ChangeEventType = "pr_session_changed"
 	ChangeEventPRReviewThreadAdded    ChangeEventType = "pr_review_thread_added"
 	ChangeEventPRReviewThreadResolved ChangeEventType = "pr_review_thread_resolved"
-	ChangeEventPRCommentRecorded      ChangeEventType = "pr_comment_recorded"
-	ChangeEventPRReviewRecorded       ChangeEventType = "pr_review_recorded"
 	ChangeEventReviewRunCreated       ChangeEventType = "review_run_created"
 	ChangeEventReviewRunUpdated       ChangeEventType = "review_run_updated"
 	ChangeEventNotificationCreated    ChangeEventType = "notification_created"

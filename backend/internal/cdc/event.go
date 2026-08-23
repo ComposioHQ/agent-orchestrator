@@ -19,8 +19,6 @@ type EventType = ports.ChangeEventType
 
 // Event types, one per row-change the DB triggers emit into change_log.
 const (
-	EventProjectCreated         = ports.ChangeEventProjectCreated
-	EventProjectUpdated         = ports.ChangeEventProjectUpdated
 	EventSessionCreated         = ports.ChangeEventSessionCreated
 	EventSessionUpdated         = ports.ChangeEventSessionUpdated
 	EventPRCreated              = ports.ChangeEventPRCreated
@@ -29,8 +27,6 @@ const (
 	EventPRSessionChanged       = ports.ChangeEventPRSessionChanged
 	EventPRReviewThreadAdded    = ports.ChangeEventPRReviewThreadAdded
 	EventPRReviewThreadResolved = ports.ChangeEventPRReviewThreadResolved
-	EventPRCommentRecorded      = ports.ChangeEventPRCommentRecorded
-	EventPRReviewRecorded       = ports.ChangeEventPRReviewRecorded
 	EventReviewRunCreated       = ports.ChangeEventReviewRunCreated
 	EventReviewRunUpdated       = ports.ChangeEventReviewRunUpdated
 	EventNotificationCreated    = ports.ChangeEventNotificationCreated

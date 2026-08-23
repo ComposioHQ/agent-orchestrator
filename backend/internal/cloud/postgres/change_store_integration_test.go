@@ -68,18 +68,9 @@ func TestChangeDeliveryAgainstPostgres(t *testing.T) {
 		statements := []string{
 			`INSERT INTO ao_projects (org_id, id, owner_user_id, path, registered_at)
 			 VALUES ($1, 'product-project', $2, '/tmp/product-project', $3)`,
-			`INSERT INTO ao_workspace_repos (org_id, owner_user_id, project_id, name, registered_at)
-			 VALUES ($1, $2, 'product-project', 'main', $3)`,
 			`INSERT INTO ao_sessions (
 				org_id, id, project_id, owner_user_id, num, activity_last_at, created_at, updated_at
 			 ) VALUES ($1, 'product-session', 'product-project', $2, 1, $3, $3, $3)`,
-			`INSERT INTO ao_conversations (
-				org_id, owner_user_id, id, scope, project_id, session_id, state, created_at, updated_at
-			 ) VALUES ($1, $2, 'conversation-1', 'session', 'product-project', 'product-session',
-			           '{}'::jsonb, $3, $3)`,
-			`INSERT INTO ao_conversation_provider_events (
-				org_id, owner_user_id, conversation_id, provider_event_id, observed_at
-			 ) VALUES ($1, $2, 'conversation-1', 'provider-event-1', $3)`,
 			`INSERT INTO ao_pull_requests (org_id, owner_user_id, url, session_id, updated_at)
 			 VALUES ($1, $2, 'https://example.test/pr/1', 'product-session', $3)`,
 			`INSERT INTO ao_pull_request_checks (
@@ -88,9 +79,6 @@ func TestChangeDeliveryAgainstPostgres(t *testing.T) {
 			`INSERT INTO ao_pull_request_review_threads (
 				org_id, owner_user_id, pr_url, thread_id, resolved, updated_at
 			 ) VALUES ($1, $2, 'https://example.test/pr/1', 'thread-1', false, $3)`,
-			`INSERT INTO ao_pull_request_comments (
-				org_id, owner_user_id, pr_url, comment_id, created_at
-			 ) VALUES ($1, $2, 'https://example.test/pr/1', 'comment-1', $3)`,
 			`INSERT INTO ao_pull_request_reviews (
 				org_id, owner_user_id, pr_url, review_id, state, submitted_at
 			 ) VALUES ($1, $2, 'https://example.test/pr/1', 'review-1', 'approved', $3)`,
@@ -113,13 +101,11 @@ func TestChangeDeliveryAgainstPostgres(t *testing.T) {
 			t.Fatal(err)
 		}
 		wantTypes := map[ports.ChangeEventType]bool{
-			ports.ChangeEventProjectCreated:      false,
 			ports.ChangeEventSessionCreated:      false,
 			ports.ChangeEventPRCreated:           false,
 			ports.ChangeEventPRCheckRecorded:     false,
 			ports.ChangeEventPRReviewThreadAdded: false,
-			ports.ChangeEventPRCommentRecorded:   false,
-			ports.ChangeEventPRReviewRecorded:    false,
+			ports.ChangeEventReviewRunCreated:    false,
 			ports.ChangeEventNotificationCreated: false,
 		}
 		for _, event := range events {
@@ -145,8 +131,9 @@ func TestChangeDeliveryAgainstPostgres(t *testing.T) {
 			t.Fatal(err)
 		}
 		if _, err := mutated.Exec(aliceCtx,
-			`DELETE FROM ao_notifications
-			 WHERE org_id = $1 AND owner_user_id = $2 AND id = 'notification-1'`,
+			`UPDATE ao_pull_request_reviews SET state = 'changes_requested'
+			 WHERE org_id = $1 AND owner_user_id = $2
+			   AND pr_url = 'https://example.test/pr/1' AND review_id = 'review-1'`,
 			alice.OrgID, alice.UserID,
 		); err != nil {
 			t.Fatal(err)
@@ -158,8 +145,8 @@ func TestChangeDeliveryAgainstPostgres(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if len(mutations) != 2 || mutations[0].Type != ports.ChangeEventPRUpdated || mutations[1].Type != ports.ChangeEventNotificationResolved {
-			t.Fatalf("raw update/delete events = %#v", mutations)
+		if len(mutations) != 2 || mutations[0].Type != ports.ChangeEventPRUpdated || mutations[1].Type != ports.ChangeEventReviewRunUpdated {
+			t.Fatalf("raw update events = %#v", mutations)
 		}
 		head = mutations[len(mutations)-1].Seq
 		rolledBack := beginChangeTestTx(t, aliceCtx, writer, alice)
@@ -397,6 +384,17 @@ func TestChangeDeliveryAgainstPostgres(t *testing.T) {
 		case <-time.After(3 * time.Second):
 			t.Fatal("timed out waiting for durable notification fan-out")
 		}
+		if err := resolveChangeTestNotification(aliceCtx, writer, alice, record.ID); err != nil {
+			t.Fatal(err)
+		}
+		select {
+		case event := <-notifications:
+			if event.Kind != core.NotificationResolved || event.Record.ID != record.ID || event.Record.ResolvedAt.IsZero() {
+				t.Fatalf("resolved notification event = %#v", event)
+			}
+		case <-time.After(3 * time.Second):
+			t.Fatal("timed out waiting for durable notification resolution")
+		}
 	})
 }
 
@@ -406,12 +404,8 @@ func productChangeTablesPresent(t *testing.T, ctx context.Context, pool *pgxpool
 	if err := pool.QueryRow(ctx, `
 		SELECT to_regclass('public.ao_sessions') IS NOT NULL
 		   AND to_regclass('public.ao_projects') IS NOT NULL
-		   AND to_regclass('public.ao_workspace_repos') IS NOT NULL
-		   AND to_regclass('public.ao_conversations') IS NOT NULL
-		   AND to_regclass('public.ao_conversation_provider_events') IS NOT NULL
 		   AND to_regclass('public.ao_pull_requests') IS NOT NULL
 		   AND to_regclass('public.ao_pull_request_checks') IS NOT NULL
-		   AND to_regclass('public.ao_pull_request_comments') IS NOT NULL
 		   AND to_regclass('public.ao_pull_request_reviews') IS NOT NULL
 		   AND to_regclass('public.ao_pull_request_review_threads') IS NOT NULL
 		   AND to_regclass('public.ao_notifications') IS NOT NULL
@@ -427,26 +421,14 @@ func requireProductionChangeTriggers(t *testing.T, ctx context.Context, pool *pg
 		table    string
 		triggers []string
 	}{
-		{"ao_projects", []string{"ao_projects_change_created", "ao_projects_change_updated"}},
-		{"ao_workspace_repos", []string{"ao_workspace_repos_change_inserted", "ao_workspace_repos_change_updated"}},
 		{"ao_sessions", []string{"ao_sessions_change_created", "ao_sessions_change_updated"}},
-		{"ao_conversations", []string{"ao_conversations_change_inserted", "ao_conversations_change_updated"}},
-		{"ao_conversation_provider_events", []string{"ao_conversation_provider_events_change_inserted"}},
 		{"ao_pull_requests", []string{"ao_pull_requests_change_created", "ao_pull_requests_change_updated", "ao_pull_requests_change_session"}},
 		{"ao_pull_request_checks", []string{"ao_pull_request_checks_change_inserted", "ao_pull_request_checks_change_updated"}},
 		{"ao_pull_request_review_threads", []string{"ao_pull_request_review_threads_change_added", "ao_pull_request_review_threads_change_resolved"}},
-		{"ao_pull_request_comments", []string{"ao_pull_request_comments_change_inserted", "ao_pull_request_comments_change_updated"}},
-		{"ao_pull_request_reviews", []string{"ao_pull_request_reviews_change_inserted", "ao_pull_request_reviews_change_updated"}},
-		{"ao_notifications", []string{"ao_notifications_change_created", "ao_notifications_change_resolved", "ao_notifications_change_deleted"}},
+		{"ao_pull_request_reviews", []string{"ao_pull_request_reviews_change_created", "ao_pull_request_reviews_change_updated"}},
+		{"ao_notifications", []string{"ao_notifications_change_created", "ao_notifications_change_resolved"}},
 	}
 	for _, want := range wants {
-		var tableExists bool
-		if err := pool.QueryRow(ctx, `SELECT to_regclass('public.' || $1) IS NOT NULL`, want.table).Scan(&tableExists); err != nil {
-			t.Fatal(err)
-		}
-		if !tableExists {
-			continue
-		}
 		for _, trigger := range want.triggers {
 			var exists bool
 			if err := pool.QueryRow(ctx, `
@@ -463,6 +445,25 @@ func requireProductionChangeTriggers(t *testing.T, ctx context.Context, pool *pg
 			if !exists {
 				t.Fatalf("covered product table %s is missing trigger %s", want.table, trigger)
 			}
+		}
+	}
+	for _, table := range []string{
+		"ao_projects", "ao_workspace_repos", "ao_session_worktrees",
+		"ao_conversations", "ao_conversation_provider_events",
+		"ao_pull_request_comments", "ao_app_settings", "ao_agent_inventory_cache",
+	} {
+		var count int
+		if err := pool.QueryRow(ctx, `
+			SELECT count(*)
+			FROM pg_trigger trigger
+			JOIN pg_class relation ON relation.oid = trigger.tgrelid
+			WHERE relation.relname = $1
+			  AND trigger.tgname LIKE 'ao\_%\_change\_%' ESCAPE '\'
+			  AND NOT trigger.tgisinternal`, table).Scan(&count); err != nil {
+			t.Fatal(err)
+		}
+		if count != 0 {
+			t.Fatalf("non-contract table %s has %d change triggers", table, count)
 		}
 	}
 }
@@ -729,6 +730,33 @@ func recordChangeTestNotification(
 		record.PRURL, record.Type, record.Title, record.Body, record.Status, record.CreatedAt,
 	)
 	if err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+func resolveChangeTestNotification(
+	ctx context.Context,
+	store *Store,
+	identity tenant.Identity,
+	id string,
+) error {
+	tx, err := store.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err := tx.Exec(ctx,
+		`SELECT set_config('ao.user_id', $1, true), set_config('ao.org_id', $2, true)`,
+		identity.UserID, identity.OrgID,
+	); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx,
+		`UPDATE ao_change_event_test_notifications
+		 SET resolved_at = now()
+		 WHERE org_id = $1 AND id = $2`, identity.OrgID, id,
+	); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)
