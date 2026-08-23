@@ -1472,7 +1472,7 @@ function ReviewsSection({
 				setReviewNotice(t("inspector.reviewAlreadyRanForCommit"));
 				return;
 			}
-			if (data?.reviewerHandleId) {
+			if (session.mode !== "chat" && data?.reviewerHandleId) {
 				const harness = started.latestRun.harness || "reviewer";
 				onOpenReviewerTerminal?.({ handleId: data.reviewerHandleId, harness });
 			}
@@ -1622,20 +1622,33 @@ function MergedReviewsSection({
 		void queryClient.invalidateQueries({ queryKey: sessionScmSummaryQueryKey(session.id) });
 		void queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
 	};
-	const sendInlineCommentToWorker = async (comment: InspectorInlineComment & { reviewerId?: string }) => {
+	const sendMessageToWorker = async (message: string, fallbackError: string) => {
+		if (session.mode === "chat") {
+			const { error } = await apiClient.POST("/api/v1/sessions/{sessionId}/conversation/messages", {
+				params: { path: { sessionId: session.id } },
+				body: { text: message, clientMessageId: crypto.randomUUID() },
+			});
+			if (error) throw new Error(apiErrorMessage(error, fallbackError));
+			return;
+		}
 		const { error } = await apiClient.POST("/api/v1/sessions/{sessionId}/send", {
 			params: { path: { sessionId: session.id } },
-			body: { message: formatInlineReviewCommentMessage(comment) },
+			body: { message },
 		});
-		if (error) throw new Error(apiErrorMessage(error, "Unable to send review comment to worker agent"));
+		if (error) throw new Error(apiErrorMessage(error, fallbackError));
+	};
+	const sendInlineCommentToWorker = async (comment: InspectorInlineComment & { reviewerId?: string }) => {
+		await sendMessageToWorker(
+			formatInlineReviewCommentMessage(comment),
+			"Unable to send review comment to worker agent",
+		);
 		onWorkerMessageSent?.();
 	};
 	const sendReviewSummaryToWorker = async (summary: InspectorReviewSummaryAction) => {
-		const { error } = await apiClient.POST("/api/v1/sessions/{sessionId}/send", {
-			params: { path: { sessionId: session.id } },
-			body: { message: formatReviewSummaryMessage(summary) },
-		});
-		if (error) throw new Error(apiErrorMessage(error, "Unable to send review summary to worker agent"));
+		await sendMessageToWorker(
+			formatReviewSummaryMessage(summary),
+			"Unable to send review summary to worker agent",
+		);
 		onWorkerMessageSent?.();
 	};
 	const groups: InspectorReviewGroup[] = rows.map(([number, { ao, github }]) => {

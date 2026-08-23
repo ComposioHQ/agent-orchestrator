@@ -1636,6 +1636,46 @@ describe("SessionInspector summary reviews", () => {
     });
   });
 
+  it("keeps Chat selected when triggering a review from a Chat session", async () => {
+    mockCommonGets([], "", [reviewState(3, "needs_review")]);
+    const runningReview = {
+      ...approvedReview,
+      status: "running",
+      verdict: "",
+      body: "",
+    };
+    postMock.mockResolvedValue({
+      response: { status: 201 },
+      data: {
+        reviewerHandleId: "reviewer-pane",
+        reviews: [{ ...reviewState(3, "running"), latestRun: runningReview }],
+      },
+    });
+    const onOpenReviewerTerminal = vi.fn();
+
+    renderWithQuery(
+      <SessionInspector
+        onOpenReviewerTerminal={onOpenReviewerTerminal}
+        session={session([pr(3, "open")], { mode: "chat" })}
+      />,
+    );
+    await openReviewsSection();
+
+    await userEvent.click(
+      await screen.findByRole("button", { name: "Review latest commit" }),
+    );
+
+    await waitFor(() =>
+      expect(postMock).toHaveBeenCalledWith(
+        "/api/v1/sessions/{sessionId}/reviews/trigger",
+        {
+          params: { path: { sessionId: "sess-1" } },
+        },
+      ),
+    );
+    expect(onOpenReviewerTerminal).not.toHaveBeenCalled();
+  });
+
   it("shows the worker-compatible default reviewer before a run exists", async () => {
     getMock.mockImplementation(async (path: string) => {
       if (path === "/api/v1/sessions/{sessionId}/reviews") {
@@ -2134,6 +2174,50 @@ describe("SessionInspector summary reviews", () => {
     });
     expect(onWorkerMessageSent).toHaveBeenCalledTimes(1);
     expect(screen.getByText("Sent to worker agent")).toBeInTheDocument();
+  });
+
+  it("sends review feedback as a human message in Chat mode", async () => {
+    const onWorkerMessageSent = vi.fn();
+    mockCommonGets([], "reviewer-pane", [
+      {
+        ...reviewState(3, "up_to_date", "abc123"),
+        latestRun: {
+          ...approvedReview,
+          body: "Please tighten validation and add a regression test.",
+        },
+      },
+    ]);
+
+    renderWithQuery(
+      <SessionInspector
+        onWorkerMessageSent={onWorkerMessageSent}
+        session={session([pr(3, "open")], { mode: "chat" })}
+      />,
+    );
+    await openReviewsSection();
+
+    await userEvent.click(await screen.findByRole("button", { name: "Review actions" }));
+    await userEvent.click(screen.getByRole("button", { name: "Send to worker agent" }));
+
+    await waitFor(() =>
+      expect(postMock).toHaveBeenCalledWith(
+        "/api/v1/sessions/{sessionId}/conversation/messages",
+        {
+          params: { path: { sessionId: "sess-1" } },
+          body: {
+            text: expect.stringContaining(
+              "## Review feedback\n\n**Source:** AO agent review · codex",
+            ),
+            clientMessageId: expect.any(String),
+          },
+        },
+      ),
+    );
+    expect(postMock).not.toHaveBeenCalledWith(
+      "/api/v1/sessions/{sessionId}/send",
+      expect.anything(),
+    );
+    expect(onWorkerMessageSent).toHaveBeenCalledTimes(1);
   });
 
   it("keeps the current surface selected when review feedback fails to send", async () => {
