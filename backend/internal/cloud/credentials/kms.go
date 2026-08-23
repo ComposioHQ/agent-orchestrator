@@ -2,7 +2,6 @@ package credentials
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"strings"
 )
@@ -49,14 +48,15 @@ type KMSKeyManager struct {
 	client KMSClient
 }
 
+// NewKMSKeyManager validates the configured key and client without making a network call.
 func NewKMSKeyManager(keyID string, client KMSClient) (*KMSKeyManager, error) {
-	if strings.TrimSpace(keyID) != keyID || len(keyID) == 0 || len(keyID) > maxKMSKeyIDBytes || client == nil {
+	if strings.TrimSpace(keyID) != keyID || keyID == "" || len(keyID) > maxKMSKeyIDBytes || client == nil {
 		return nil, fmt.Errorf("%w: invalid KMS configuration", ErrKMSUnavailable)
 	}
 	return &KMSKeyManager{keyID: keyID, client: client}, nil
 }
 
-func (m *KMSKeyManager) Generate(ctx context.Context, binding EncryptionContext) ([]byte, []byte, string, error) {
+func (m *KMSKeyManager) generate(ctx context.Context, binding EncryptionContext) ([]byte, []byte, string, error) {
 	if m == nil || m.client == nil || !binding.valid() {
 		return nil, nil, "", ErrKMSUnavailable
 	}
@@ -68,7 +68,7 @@ func (m *KMSKeyManager) Generate(ctx context.Context, binding EncryptionContext)
 	return plaintext, append([]byte(nil), ciphertext...), resolvedID, nil
 }
 
-func (m *KMSKeyManager) Unwrap(ctx context.Context, material EncryptedMaterial, binding EncryptionContext) ([]byte, error) {
+func (m *KMSKeyManager) unwrap(ctx context.Context, material EncryptedMaterial, binding EncryptionContext) ([]byte, error) {
 	if m == nil || m.client == nil || !binding.valid() || material.KeyID != m.keyID || len(material.EncryptedDataKey) == 0 {
 		return nil, ErrKMSUnavailable
 	}
@@ -78,11 +78,4 @@ func (m *KMSKeyManager) Unwrap(ctx context.Context, material EncryptedMaterial, 
 		return nil, ErrKMSUnavailable
 	}
 	return plaintext, nil
-}
-
-func kmsUnavailable(err error) error {
-	if errors.Is(err, ErrKMSUnavailable) {
-		return ErrKMSUnavailable
-	}
-	return ErrKMSUnavailable
 }

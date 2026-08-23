@@ -18,10 +18,10 @@ type credentialScanner interface{ Scan(...any) error }
 
 func beginCredentialTx(ctx context.Context, pool interface {
 	BeginTx(context.Context, pgx.TxOptions) (pgx.Tx, error)
-}, readOnly bool) (pgx.Tx, tenant.Identity, error) {
+}, readOnly bool) (pgx.Tx, error) {
 	identity, ok := tenant.FromContext(ctx)
 	if !ok {
-		return nil, tenant.Identity{}, tenant.ErrNoTenant
+		return nil, tenant.ErrNoTenant
 	}
 	options := pgx.TxOptions{}
 	if readOnly {
@@ -29,20 +29,21 @@ func beginCredentialTx(ctx context.Context, pool interface {
 	}
 	tx, err := pool.BeginTx(ctx, options)
 	if err != nil {
-		return nil, tenant.Identity{}, err
+		return nil, err
 	}
 	if _, err := tx.Exec(ctx,
 		`SELECT set_config('ao.user_id', $1, true), set_config('ao.org_id', $2, true)`,
 		identity.UserID, identity.OrgID,
 	); err != nil {
 		_ = tx.Rollback(ctx)
-		return nil, tenant.Identity{}, err
+		return nil, err
 	}
-	return tx, identity, nil
+	return tx, nil
 }
 
+// PutCredential creates or optimistically rotates one tenant-owned ciphertext record.
 func (s *Store) PutCredential(ctx context.Context, put credentials.PutCredential) (credentials.CredentialRecord, error) {
-	tx, _, err := beginCredentialTx(ctx, s.pool, false)
+	tx, err := beginCredentialTx(ctx, s.pool, false)
 	if err != nil {
 		return credentials.CredentialRecord{}, err
 	}
@@ -70,8 +71,9 @@ func (s *Store) PutCredential(ctx context.Context, put credentials.PutCredential
 	return record, nil
 }
 
+// ListCredentials returns only RLS-visible redacted metadata.
 func (s *Store) ListCredentials(ctx context.Context) ([]credentials.Metadata, error) {
-	tx, _, err := beginCredentialTx(ctx, s.pool, true)
+	tx, err := beginCredentialTx(ctx, s.pool, true)
 	if err != nil {
 		return nil, err
 	}
@@ -109,8 +111,9 @@ func (s *Store) ListCredentials(ctx context.Context) ([]credentials.Metadata, er
 	return result, nil
 }
 
+// GetCredential returns one RLS-visible ciphertext record for internal rotation.
 func (s *Store) GetCredential(ctx context.Context, provider credentials.Provider) (credentials.CredentialRecord, error) {
-	tx, _, err := beginCredentialTx(ctx, s.pool, true)
+	tx, err := beginCredentialTx(ctx, s.pool, true)
 	if err != nil {
 		return credentials.CredentialRecord{}, err
 	}
@@ -129,8 +132,9 @@ func (s *Store) GetCredential(ctx context.Context, provider credentials.Provider
 	return record, nil
 }
 
+// RevokeCredential idempotently revokes a provider credential and audits the transition.
 func (s *Store) RevokeCredential(ctx context.Context, provider credentials.Provider) error {
-	tx, _, err := beginCredentialTx(ctx, s.pool, false)
+	tx, err := beginCredentialTx(ctx, s.pool, false)
 	if err != nil {
 		return err
 	}
@@ -141,6 +145,7 @@ func (s *Store) RevokeCredential(ctx context.Context, provider credentials.Provi
 	return normalizeCredentialError(tx.Commit(ctx))
 }
 
+// ClaimDelivery performs the durable capability/runtime/workspace authorization join.
 func (s *Store) ClaimDelivery(ctx context.Context, lookup credentials.DeliveryLookup, limits credentials.DeliveryLimits) (credentials.DeliveryClaim, error) {
 	row := s.pool.QueryRow(ctx,
 		`SELECT * FROM ao_claim_harness_credential_delivery(
@@ -184,6 +189,7 @@ func (s *Store) ClaimDelivery(ctx context.Context, lookup credentials.DeliveryLo
 	return claim, nil
 }
 
+// AcknowledgeDelivery records exactly one explicit harness-loaded acknowledgement.
 func (s *Store) AcknowledgeDelivery(ctx context.Context, deliveryID string, ack credentials.LoadAcknowledgement) error {
 	_, err := s.pool.Exec(ctx,
 		`SELECT ao_acknowledge_harness_credential_delivery($1::uuid, $2, $3, $4, $5)`,
@@ -192,11 +198,13 @@ func (s *Store) AcknowledgeDelivery(ctx context.Context, deliveryID string, ack 
 	return normalizeCredentialError(err)
 }
 
+// RecordDeliveryPurge idempotently records remote purge after acknowledgement.
 func (s *Store) RecordDeliveryPurge(ctx context.Context, deliveryID string) error {
 	_, err := s.pool.Exec(ctx, `SELECT ao_record_harness_credential_purge($1::uuid)`, deliveryID)
 	return normalizeCredentialError(err)
 }
 
+// RecordDeliveryFailure records a bounded redacted failure category.
 func (s *Store) RecordDeliveryFailure(ctx context.Context, deliveryID string, code credentials.FailureCode) error {
 	_, err := s.pool.Exec(ctx, `SELECT ao_record_harness_credential_failure($1::uuid, $2)`, deliveryID, string(code))
 	return normalizeCredentialError(err)

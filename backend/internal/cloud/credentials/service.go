@@ -12,6 +12,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/tenant"
 )
 
+// PutCredential carries one ciphertext-only create or optimistic rotation write.
 type PutCredential struct {
 	Record          CredentialRecord
 	ExpectedVersion int64
@@ -26,6 +27,7 @@ type CustodyStore interface {
 	RevokeCredential(context.Context, Provider) error
 }
 
+// ImportRequest is bounded transient import material plus redacted metadata.
 type ImportRequest struct {
 	Name     string
 	Provider Provider
@@ -41,6 +43,7 @@ type VaultService struct {
 	envelope *KMSEnvelope
 }
 
+// NewVaultService constructs custody; envelope may be nil when the vault is unused.
 func NewVaultService(store CustodyStore, envelope *KMSEnvelope) (*VaultService, error) {
 	if store == nil {
 		return nil, fmt.Errorf("%w: credential store is required", ErrInvalid)
@@ -48,6 +51,7 @@ func NewVaultService(store CustodyStore, envelope *KMSEnvelope) (*VaultService, 
 	return &VaultService{store: store, envelope: envelope}, nil
 }
 
+// Import validates and envelope-encrypts a first provider credential version.
 func (s *VaultService) Import(ctx context.Context, request ImportRequest) (Metadata, error) {
 	if s.envelope == nil {
 		return Metadata{}, ErrKMSUnavailable
@@ -61,7 +65,7 @@ func (s *VaultService) Import(ctx context.Context, request ImportRequest) (Metad
 		Name: request.Name, Provider: request.Provider, Metadata: append(json.RawMessage(nil), request.Metadata...),
 		PlaintextBytes: int64(len(request.Secret)), Version: 1,
 	}
-	record.Material, err = s.envelope.Seal(ctx, request.Secret, recordEncryptionContext(record))
+	record.Material, err = s.envelope.seal(ctx, request.Secret, recordEncryptionContext(record))
 	if err != nil {
 		return Metadata{}, ErrKMSUnavailable
 	}
@@ -72,6 +76,7 @@ func (s *VaultService) Import(ctx context.Context, request ImportRequest) (Metad
 	return metadataOf(stored), nil
 }
 
+// Rotate atomically replaces a live credential with a newly encrypted version.
 func (s *VaultService) Rotate(ctx context.Context, request ImportRequest) (Metadata, error) {
 	if s.envelope == nil {
 		return Metadata{}, ErrKMSUnavailable
@@ -91,7 +96,7 @@ func (s *VaultService) Rotate(ctx context.Context, request ImportRequest) (Metad
 	current.Metadata = append(current.Metadata[:0], request.Metadata...)
 	current.PlaintextBytes = int64(len(request.Secret))
 	current.Version++
-	current.Material, err = s.envelope.Seal(ctx, request.Secret, recordEncryptionContext(current))
+	current.Material, err = s.envelope.seal(ctx, request.Secret, recordEncryptionContext(current))
 	if err != nil {
 		return Metadata{}, ErrKMSUnavailable
 	}
@@ -102,6 +107,7 @@ func (s *VaultService) Rotate(ctx context.Context, request ImportRequest) (Metad
 	return metadataOf(stored), nil
 }
 
+// List returns tenant-scoped redacted credential metadata.
 func (s *VaultService) List(ctx context.Context) ([]Metadata, error) {
 	if _, ok := tenant.FromContext(ctx); !ok {
 		return nil, tenant.ErrNoTenant

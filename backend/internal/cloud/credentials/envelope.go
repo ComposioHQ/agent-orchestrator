@@ -17,6 +17,7 @@ const maxWrappedDataKeyBytes = 16 << 10
 // key per version. Its only open surface is callback-scoped delivery.
 type KMSEnvelope struct{ keys *KMSKeyManager }
 
+// NewKMSEnvelope constructs a callback-only envelope over a configured KMS key manager.
 func NewKMSEnvelope(keys *KMSKeyManager) (*KMSEnvelope, error) {
 	if keys == nil {
 		return nil, ErrKMSUnavailable
@@ -24,13 +25,13 @@ func NewKMSEnvelope(keys *KMSKeyManager) (*KMSEnvelope, error) {
 	return &KMSEnvelope{keys: keys}, nil
 }
 
-func (e *KMSEnvelope) Seal(ctx context.Context, plaintext []byte, binding EncryptionContext) (EncryptedMaterial, error) {
+func (e *KMSEnvelope) seal(ctx context.Context, plaintext []byte, binding EncryptionContext) (EncryptedMaterial, error) {
 	if e == nil || e.keys == nil || !binding.valid() || len(plaintext) == 0 || len(plaintext) > MaxCredentialBytes {
 		return EncryptedMaterial{}, ErrKMSUnavailable
 	}
-	dataKey, encryptedKey, keyID, err := e.keys.Generate(ctx, binding)
+	dataKey, encryptedKey, keyID, err := e.keys.generate(ctx, binding)
 	if err != nil {
-		return EncryptedMaterial{}, kmsUnavailable(err)
+		return EncryptedMaterial{}, ErrKMSUnavailable
 	}
 	defer Erase(dataKey)
 	block, err := aes.NewCipher(dataKey)
@@ -60,9 +61,9 @@ func (e *KMSEnvelope) Open(ctx context.Context, record CredentialRecord, consume
 		return ErrKMSUnavailable
 	}
 	binding := recordEncryptionContext(record)
-	dataKey, err := e.keys.Unwrap(ctx, record.Material, binding)
+	dataKey, err := e.keys.unwrap(ctx, record.Material, binding)
 	if err != nil {
-		return kmsUnavailable(err)
+		return ErrKMSUnavailable
 	}
 	defer Erase(dataKey)
 	block, err := aes.NewCipher(dataKey)
@@ -103,7 +104,7 @@ func associatedData(binding EncryptionContext) []byte {
 	result = append(result, []byte("ao-credential-envelope-v1\x00")...)
 	for _, part := range parts {
 		var length [4]byte
-		binary.BigEndian.PutUint32(length[:], uint32(len(part)))
+		binary.BigEndian.PutUint32(length[:], uint32(len(part))) //nolint:gosec // validated identifiers are at most 256 bytes
 		result = append(result, length[:]...)
 		result = append(result, part...)
 	}

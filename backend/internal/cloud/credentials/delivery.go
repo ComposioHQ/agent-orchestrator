@@ -10,7 +10,7 @@ import (
 	"strings"
 )
 
-const claudeCredentialPath = ".claude/.credentials.json"
+const claudeCredentialPath = ".claude/.credentials.json" //nolint:gosec // fixed remote path, not credential material
 
 // DeliveryService is the only vault surface that opens encrypted material.
 // It never accepts a sandbox id and never returns plaintext.
@@ -21,6 +21,7 @@ type DeliveryService struct {
 	slots  chan struct{}
 }
 
+// NewDeliveryService builds the bounded, acknowledgement-gated remote delivery service.
 func NewDeliveryService(store DeliveryStore, opener PlaintextOpener, limits DeliveryLimits) (*DeliveryService, error) {
 	if store == nil || opener == nil {
 		return nil, fmt.Errorf("%w: delivery store and plaintext opener are required", ErrInvalid)

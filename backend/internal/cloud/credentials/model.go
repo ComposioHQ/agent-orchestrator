@@ -23,41 +23,71 @@ const (
 	// to the central operation registry and worker grant template.
 	OperationCredentialLoad Operation = "harness.credential.load"
 
+	// RoleWorker is the only sandbox role permitted to load a harness credential.
 	RoleWorker = "worker"
 
-	MaxCredentialBytes       = 64 << 10
-	MaxCredentialNameBytes   = 128
-	MaxProviderBytes         = 32
-	MaxMetadataBytes         = 4 << 10
-	MaxIdempotencyKeyBytes   = 128
-	MaxReceiptBytes          = 256
-	MaxSecretFiles           = 4
-	MaxDeliveryBytes         = 64 << 10
-	MaxConcurrentDeliveries  = 8
-	MaxInflightPerSandbox    = 2
-	MaxInflightPerUser       = 8
-	MaxInflightPerOrg        = 64
+	// MaxCredentialBytes bounds one plaintext credential.
+	MaxCredentialBytes = 64 << 10
+	// MaxCredentialNameBytes bounds a display name.
+	MaxCredentialNameBytes = 128
+	// MaxProviderBytes bounds provider wire values.
+	MaxProviderBytes = 32
+	// MaxMetadataBytes bounds redacted JSON metadata.
+	MaxMetadataBytes = 4 << 10
+	// MaxIdempotencyKeyBytes bounds a caller retry key.
+	MaxIdempotencyKeyBytes = 128
+	// MaxReceiptBytes bounds an opaque harness acknowledgement receipt.
+	MaxReceiptBytes = 256
+	// MaxSecretFiles bounds one remote delivery file set.
+	MaxSecretFiles = 4
+	// MaxDeliveryBytes bounds aggregate transient file bytes.
+	MaxDeliveryBytes = 64 << 10
+	// MaxConcurrentDeliveries bounds process-local delivery work.
+	MaxConcurrentDeliveries = 8
+	// MaxInflightPerSandbox bounds durable concurrent sandbox loads.
+	MaxInflightPerSandbox = 2
+	// MaxInflightPerUser bounds durable concurrent user loads.
+	MaxInflightPerUser = 8
+	// MaxInflightPerOrg bounds durable concurrent organization loads.
+	MaxInflightPerOrg = 64
+	// MaxStoredBytesPerSandbox bounds aggregate inflight sandbox size metadata.
 	MaxStoredBytesPerSandbox = 64 << 10
-	MaxStoredBytesPerUser    = 1 << 20
-	MaxStoredBytesPerOrg     = 32 << 20
+	// MaxStoredBytesPerUser bounds aggregate live user credential size metadata.
+	MaxStoredBytesPerUser = 1 << 20
+	// MaxStoredBytesPerOrg bounds aggregate live organization credential size metadata.
+	MaxStoredBytesPerOrg = 32 << 20
 )
 
 var (
-	ErrInvalid             = errors.New("invalid credential request")
-	ErrNotAuthorized       = errors.New("credential operation not authorized")
-	ErrNotFound            = errors.New("credential not found")
-	ErrConflict            = errors.New("credential conflict")
-	ErrRevoked             = errors.New("credential revoked")
-	ErrKMSUnavailable      = errors.New("credential KMS unavailable")
-	ErrDeliveryFailed      = errors.New("credential delivery failed")
+	// ErrInvalid reports malformed or unsupported credential input.
+	ErrInvalid = errors.New("invalid credential request")
+	// ErrNotAuthorized reports a capability or durable scope mismatch.
+	ErrNotAuthorized = errors.New("credential operation not authorized")
+	// ErrNotFound reports an absent credential.
+	ErrNotFound = errors.New("credential not found")
+	// ErrConflict reports an optimistic version or uniqueness conflict.
+	ErrConflict = errors.New("credential conflict")
+	// ErrRevoked reports an operation attempted on revoked material.
+	ErrRevoked = errors.New("credential revoked")
+	// ErrKMSUnavailable reports missing, invalid, or failed KMS configuration.
+	ErrKMSUnavailable = errors.New("credential KMS unavailable")
+	// ErrDeliveryFailed reports a redacted remote delivery failure.
+	ErrDeliveryFailed = errors.New("credential delivery failed")
+	// ErrLoadNotAcknowledged reports a missing or invalid harness receipt.
 	ErrLoadNotAcknowledged = errors.New("harness did not acknowledge credential load")
-	ErrDeliveryInFlight    = errors.New("credential delivery already in flight")
-	ErrLimitExceeded       = errors.New("credential limit exceeded")
+	// ErrDeliveryInFlight reports a live duplicate delivery lease.
+	ErrDeliveryInFlight = errors.New("credential delivery already in flight")
+	// ErrLimitExceeded reports a byte or concurrency quota violation.
+	ErrLimitExceeded = errors.New("credential limit exceeded")
 )
 
+// Provider is a canonical harness provider wire value.
 type Provider string
+
+// Operation is vault-local capability operation vocabulary pending central integration.
 type Operation string
 
+// ParseProvider accepts only canonical, bounded provider wire values.
 func ParseProvider(value string) (Provider, error) {
 	provider := Provider(strings.TrimSpace(value))
 	if string(provider) != value || len(provider) == 0 || len(provider) > MaxProviderBytes || provider != ProviderClaudeCode {
@@ -111,6 +141,7 @@ type DeliveryLookup struct {
 	idempotencyKey string
 }
 
+// NewDeliveryLookup derives an opaque SQL lookup exclusively from verified capability facts.
 func NewDeliveryLookup(verified VerifiedCapability, provider Provider, idempotencyKey string) (DeliveryLookup, error) {
 	if !verified.permitsCredentialLoad() || provider != ProviderClaudeCode || !validBounded(idempotencyKey, MaxIdempotencyKeyBytes) {
 		return DeliveryLookup{}, ErrNotAuthorized
@@ -122,12 +153,25 @@ func NewDeliveryLookup(verified VerifiedCapability, provider Provider, idempoten
 	}, nil
 }
 
-func (l DeliveryLookup) GrantID() string        { return l.grantID }
-func (l DeliveryLookup) OrgID() string          { return l.orgID }
-func (l DeliveryLookup) WorkspaceID() string    { return l.workspaceID }
-func (l DeliveryLookup) SessionID() string      { return l.sessionID }
-func (l DeliveryLookup) Role() string           { return l.role }
-func (l DeliveryLookup) Provider() Provider     { return l.provider }
+// GrantID returns the verified central capability grant id.
+func (l DeliveryLookup) GrantID() string { return l.grantID }
+
+// OrgID returns the capability-derived organization id.
+func (l DeliveryLookup) OrgID() string { return l.orgID }
+
+// WorkspaceID returns the capability-derived workspace id.
+func (l DeliveryLookup) WorkspaceID() string { return l.workspaceID }
+
+// SessionID returns the capability-derived worker session id.
+func (l DeliveryLookup) SessionID() string { return l.sessionID }
+
+// Role returns the capability-derived sandbox role.
+func (l DeliveryLookup) Role() string { return l.role }
+
+// Provider returns the canonical requested harness provider.
+func (l DeliveryLookup) Provider() Provider { return l.provider }
+
+// IdempotencyKey returns the bounded caller retry key.
 func (l DeliveryLookup) IdempotencyKey() string { return l.idempotencyKey }
 
 func (l DeliveryLookup) valid() bool {
@@ -146,15 +190,20 @@ type EncryptedMaterial struct {
 }
 
 func (EncryptedMaterial) String() string { return "<redacted credential material>" }
+
+// LogValue implements slog.LogValuer with unconditional redaction.
 func (EncryptedMaterial) LogValue() slog.Value {
 	return slog.StringValue("<redacted credential material>")
 }
+
+// MarshalJSON prevents ciphertext from becoming an accidental download surface.
 func (EncryptedMaterial) MarshalJSON() ([]byte, error) {
 	return json.Marshal(struct {
 		Redacted bool `json:"redacted"`
 	}{Redacted: true})
 }
 
+// CredentialRecord is one ciphertext-only durable credential version.
 type CredentialRecord struct {
 	ID             string
 	OrgID          string
@@ -182,11 +231,14 @@ type Metadata struct {
 	RevokedAt time.Time       `json:"revokedAt,omitempty"`
 }
 
+// DeliveryState is the durable idempotent delivery state.
 type DeliveryState string
 
 const (
+	// DeliveryClaimed means one caller owns the active delivery lease.
 	DeliveryClaimed DeliveryState = "claimed"
-	DeliveryLoaded  DeliveryState = "loaded"
+	// DeliveryLoaded means the harness acknowledgement is durable.
+	DeliveryLoaded DeliveryState = "loaded"
 )
 
 // DeliveryClaim is produced only by the durable store after its authorization
@@ -205,18 +257,21 @@ func (c DeliveryClaim) valid() bool {
 		validIdentifier(c.Credential.ID) && c.Credential.OrgID == c.Lookup.orgID &&
 		validIdentifier(c.Credential.OwnerUserID) && c.Credential.Provider == c.Lookup.provider &&
 		c.Credential.Version > 0 && c.Credential.PlaintextBytes > 0 && c.Credential.PlaintextBytes <= MaxCredentialBytes &&
-		c.RevocationValid() && (c.State == DeliveryClaimed || c.State == DeliveryLoaded)
+		c.revocationValid() && (c.State == DeliveryClaimed || c.State == DeliveryLoaded)
 }
 
-func (c DeliveryClaim) RevocationValid() bool { return c.Credential.RevokedAt.IsZero() }
+func (c DeliveryClaim) revocationValid() bool { return c.Credential.RevokedAt.IsZero() }
 
+// SecretFile is one transient owner-only path and bounded mutable content buffer.
 type SecretFile struct {
 	Path    string
 	Mode    fs.FileMode
 	Content []byte
 }
 
-func (SecretFile) String() string       { return "<redacted secret file>" }
+func (SecretFile) String() string { return "<redacted secret file>" }
+
+// LogValue implements slog.LogValuer with unconditional redaction.
 func (SecretFile) LogValue() slog.Value { return slog.StringValue("<redacted secret file>") }
 
 // LoadRequest is consumed by a REMOTE sink. Implementations must never write
@@ -244,16 +299,23 @@ func (a LoadAcknowledgement) validFor(lookup DeliveryLookup) bool {
 		!a.LoadedAt.IsZero() && validBounded(a.HarnessReceipt, MaxReceiptBytes)
 }
 
+// FailureCode is a bounded, non-sensitive delivery failure category.
 type FailureCode string
 
 const (
+	// FailureValidation records locally rejected credential material.
 	FailureValidation FailureCode = "validation"
-	FailureLoad       FailureCode = "load"
-	FailureNoAck      FailureCode = "missing_ack"
-	FailureCancelled  FailureCode = "cancelled"
-	FailureAudit      FailureCode = "audit"
+	// FailureLoad records a remote transport failure.
+	FailureLoad FailureCode = "load"
+	// FailureNoAck records a missing or invalid explicit receipt.
+	FailureNoAck FailureCode = "missing_ack"
+	// FailureCancelled records cancellation or timeout.
+	FailureCancelled FailureCode = "cancelled"
+	// FailureAudit records failure to durably acknowledge a load.
+	FailureAudit FailureCode = "audit"
 )
 
+// DeliveryLimits bounds memory, concurrency, and durable inflight claims.
 type DeliveryLimits struct {
 	MaxItemBytes       int
 	MaxAggregateBytes  int
@@ -264,6 +326,7 @@ type DeliveryLimits struct {
 	PurgeTimeout       time.Duration
 }
 
+// DefaultDeliveryLimits returns the maximum production vault delivery bounds.
 func DefaultDeliveryLimits() DeliveryLimits {
 	return DeliveryLimits{
 		MaxItemBytes: MaxCredentialBytes, MaxAggregateBytes: MaxDeliveryBytes,
@@ -310,5 +373,5 @@ type PlaintextOpener interface {
 func validIdentifier(value string) bool { return validBounded(value, 256) }
 func validBounded(value string, maximum int) bool {
 	trimmed := strings.TrimSpace(value)
-	return trimmed == value && len(value) > 0 && len(value) <= maximum && !strings.ContainsRune(value, '\x00')
+	return trimmed == value && value != "" && len(value) <= maximum && !strings.ContainsRune(value, '\x00')
 }

@@ -20,7 +20,7 @@ func TestEnvelopeRoundTripBindsContextAndZerosKeysAndPlaintext(t *testing.T) {
 	}
 	secret := append([]byte(nil), testSecret...)
 	binding := testEncryptionContext()
-	material, err := envelope.Seal(context.Background(), secret, binding)
+	material, err := envelope.seal(context.Background(), secret, binding)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -57,7 +57,7 @@ func TestEnvelopeRejectsMovedCiphertextAndErasesOnConsumerFailure(t *testing.T) 
 	envelope, client := testEnvelope(t)
 	secret := append([]byte(nil), testSecret...)
 	binding := testEncryptionContext()
-	material, err := envelope.Seal(context.Background(), secret, binding)
+	material, err := envelope.seal(context.Background(), secret, binding)
 	if err != nil {
 		t.Fatal(err)
 	}

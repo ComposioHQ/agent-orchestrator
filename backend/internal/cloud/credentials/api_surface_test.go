@@ -3,6 +3,7 @@ package credentials
 import (
 	"go/parser"
 	"go/token"
+	"os"
 	"reflect"
 	"strings"
 	"testing"
@@ -48,11 +49,18 @@ func TestDeliveryLookupScopeIsOpaque(t *testing.T) {
 }
 
 func TestCredentialControlPlaneHasNoLocalFilesystemRuntimeOrProcessSecretImports(t *testing.T) {
-	files, err := parser.ParseDir(token.NewFileSet(), ".", nil, parser.ImportsOnly)
+	entries, err := os.ReadDir(".")
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, file := range files["credentials"].Files {
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".go") || strings.HasSuffix(entry.Name(), "_test.go") {
+			continue
+		}
+		file, err := parser.ParseFile(token.NewFileSet(), entry.Name(), nil, parser.ImportsOnly)
+		if err != nil {
+			t.Fatal(err)
+		}
 		for _, imported := range file.Imports {
 			name := strings.Trim(imported.Path.Value, `"`)
 			if name == "os" || name == "io/ioutil" || name == "path/filepath" || name == "os/exec" ||

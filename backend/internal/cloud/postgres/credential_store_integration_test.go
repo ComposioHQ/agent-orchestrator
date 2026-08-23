@@ -73,7 +73,7 @@ func TestCredentialStoreAgainstPostgres(t *testing.T) {
 	if err := Migrate(ctx, migrationURL, runtimeRole); err != nil {
 		t.Fatal(err)
 	}
-	grantCredentialTestPrivileges(t, ctx, migrationURL, runtimeRole)
+	grantCredentialTestPrivileges(ctx, t, migrationURL, runtimeRole)
 	store, err := Open(ctx, runtimeURL)
 	if err != nil {
 		t.Fatal(err)
@@ -81,9 +81,9 @@ func TestCredentialStoreAgainstPostgres(t *testing.T) {
 	defer store.Close()
 
 	suffix := fmt.Sprint(time.Now().UnixNano())
-	bob, bobOrg := createCredentialTestPrincipal(t, ctx, store, "vault-bob-"+suffix)
-	alice, aliceOrg := createCredentialTestPrincipal(t, ctx, store, "vault-alice-"+suffix)
-	workspaceID, _ := createCredentialTestRuntime(t, ctx, store, bob.UserID, bobOrg, "session-"+suffix, "sandbox-"+suffix)
+	bob, bobOrg := createCredentialTestPrincipal(ctx, t, store, "vault-bob-"+suffix)
+	alice, aliceOrg := createCredentialTestPrincipal(ctx, t, store, "vault-alice-"+suffix)
+	workspaceID, _ := createCredentialTestRuntime(ctx, t, store, bob.UserID, bobOrg, "session-"+suffix, "sandbox-"+suffix)
 	bobCtx := tenant.WithIdentity(ctx, tenant.Identity{OrgID: bobOrg, UserID: bob.UserID, Role: "owner"})
 	aliceCtx := tenant.WithIdentity(ctx, tenant.Identity{OrgID: aliceOrg, UserID: alice.UserID, Role: "owner"})
 
@@ -141,8 +141,8 @@ func TestCredentialStoreAgainstPostgres(t *testing.T) {
 		t.Fatalf("idempotency key replay under another grant = %v", err)
 	}
 
-	assertRejectedCredentialScope(t, ctx, store, verified, aliceOrg, workspaceID, "session-"+suffix, "cross-org")
-	assertRejectedCredentialScope(t, ctx, store, verified, bobOrg, workspaceID, "forged-session", "wrong-session")
+	assertRejectedCredentialScope(ctx, t, store, verified, aliceOrg, workspaceID, "session-"+suffix, "cross-org")
+	assertRejectedCredentialScope(ctx, t, store, verified, bobOrg, workspaceID, "forged-session", "wrong-session")
 
 	loadingLookup := mustCredentialLookup(t, verified, "loading-1")
 	loadingClaim, err := store.ClaimDelivery(ctx, loadingLookup, credentials.DefaultDeliveryLimits())
@@ -192,7 +192,7 @@ func TestCredentialStoreAgainstPostgres(t *testing.T) {
 		t.Fatalf("claim after revoke = %v", err)
 	}
 
-	events := credentialAuditEvents(t, bobCtx, store)
+	events := credentialAuditEvents(bobCtx, t, store)
 	for _, event := range []string{"credential.created", "credential.rotated", "credential.revoked", "credential.load_acknowledged", "credential.purged"} {
 		if strings.Count(strings.Join(events, ","), event) != 1 {
 			t.Fatalf("audit events %v do not contain %q exactly once", events, event)
@@ -200,7 +200,7 @@ func TestCredentialStoreAgainstPostgres(t *testing.T) {
 	}
 }
 
-func grantCredentialTestPrivileges(t *testing.T, ctx context.Context, databaseURL, runtimeRole string) {
+func grantCredentialTestPrivileges(ctx context.Context, t *testing.T, databaseURL, runtimeRole string) {
 	t.Helper()
 	conn, err := pgx.Connect(ctx, databaseURL)
 	if err != nil {
@@ -219,7 +219,7 @@ func grantCredentialTestPrivileges(t *testing.T, ctx context.Context, databaseUR
 	}
 }
 
-func createCredentialTestPrincipal(t *testing.T, ctx context.Context, store *Store, externalID string) (domain.Principal, string) {
+func createCredentialTestPrincipal(ctx context.Context, t *testing.T, store *Store, externalID string) (domain.Principal, string) {
 	t.Helper()
 	principal, err := store.UpsertGoogleUser(ctx, domain.Principal{ExternalID: externalID, Email: externalID + "@example.com", DisplayName: externalID})
 	if err != nil {
@@ -232,7 +232,7 @@ func createCredentialTestPrincipal(t *testing.T, ctx context.Context, store *Sto
 	return principal, memberships[0].OrgID
 }
 
-func createCredentialTestRuntime(t *testing.T, ctx context.Context, store *Store, userID, orgID, sessionID, sandboxID string) (string, string) {
+func createCredentialTestRuntime(ctx context.Context, t *testing.T, store *Store, userID, orgID, sessionID, sandboxID string) (string, string) {
 	t.Helper()
 	tx, err := store.pool.Begin(ctx)
 	if err != nil {
@@ -277,7 +277,7 @@ func mustCredentialLookup(t *testing.T, verified credentials.VerifiedCapability,
 	return lookup
 }
 
-func assertRejectedCredentialScope(t *testing.T, ctx context.Context, store *Store, base credentials.VerifiedCapability, orgID, workspaceID, sessionID, key string) {
+func assertRejectedCredentialScope(ctx context.Context, t *testing.T, store *Store, base credentials.VerifiedCapability, orgID, workspaceID, sessionID, key string) {
 	t.Helper()
 	base.Scope.OrgID, base.Scope.WorkspaceID, base.Scope.SessionID = orgID, workspaceID, sessionID
 	_, err := store.ClaimDelivery(ctx, mustCredentialLookup(t, base, key), credentials.DefaultDeliveryLimits())
@@ -286,9 +286,9 @@ func assertRejectedCredentialScope(t *testing.T, ctx context.Context, store *Sto
 	}
 }
 
-func credentialAuditEvents(t *testing.T, ctx context.Context, store *Store) []string {
+func credentialAuditEvents(ctx context.Context, t *testing.T, store *Store) []string {
 	t.Helper()
-	tx, _, err := beginCredentialTx(ctx, store.pool, true)
+	tx, err := beginCredentialTx(ctx, store.pool, true)
 	if err != nil {
 		t.Fatal(err)
 	}

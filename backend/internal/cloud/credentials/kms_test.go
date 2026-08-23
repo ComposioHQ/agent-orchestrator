@@ -31,15 +31,15 @@ func TestKMSRejectsWrongKeyAndMalformedDataKeys(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, _, err := manager.Generate(context.Background(), binding); !errors.Is(err, ErrKMSUnavailable) {
+	if _, _, _, err := manager.generate(context.Background(), binding); !errors.Is(err, ErrKMSUnavailable) {
 		t.Fatalf("wrong key id error = %v", err)
 	}
 	client.resolvedKeyID = "kms-key"
 	client.generatedKey = make([]byte, 16)
-	if _, _, _, err := manager.Generate(context.Background(), binding); !errors.Is(err, ErrKMSUnavailable) {
+	if _, _, _, err := manager.generate(context.Background(), binding); !errors.Is(err, ErrKMSUnavailable) {
 		t.Fatalf("short key error = %v", err)
 	}
-	if _, err := manager.Unwrap(context.Background(), EncryptedMaterial{KeyID: "other", EncryptedDataKey: []byte("wrapped")}, binding); !errors.Is(err, ErrKMSUnavailable) {
+	if _, err := manager.unwrap(context.Background(), EncryptedMaterial{KeyID: "other", EncryptedDataKey: []byte("wrapped")}, binding); !errors.Is(err, ErrKMSUnavailable) {
 		t.Fatalf("material key mismatch error = %v", err)
 	}
 }
