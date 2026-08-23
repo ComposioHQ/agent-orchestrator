@@ -631,6 +631,7 @@ func usagePipelineWatchRoots(roots usagesvc.SourceRoots) []string {
 		roots.CodexSessions,
 		roots.CodexArchived,
 		roots.KimiHome,
+		roots.PiSessions,
 	}
 }
 

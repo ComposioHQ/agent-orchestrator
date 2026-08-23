@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -63,6 +64,7 @@ type SourceRoots struct {
 	CodexSessions  string
 	CodexArchived  string
 	KimiHome       string
+	PiSessions     string
 }
 
 // DefaultSourceRoots resolves provider-owned transcript directories. dataDir
@@ -82,11 +84,16 @@ func DefaultSourceRoots(ctx context.Context, dataDir string) (SourceRoots, error
 	if strings.TrimSpace(dataDir) == "" {
 		dataDir = filepath.Join(home, ".ao", "data")
 	}
+	piHome := strings.TrimSpace(os.Getenv("PI_CODING_AGENT_DIR"))
+	if piHome == "" {
+		piHome = filepath.Join(home, ".pi", "agent")
+	}
 	return SourceRoots{
 		ClaudeProjects: filepath.Join(home, ".claude", "projects"),
 		CodexSessions:  filepath.Join(codexHome, "sessions"),
 		CodexArchived:  filepath.Join(codexHome, "archived_sessions"),
 		KimiHome:       filepath.Join(dataDir, "kimi"),
+		PiSessions:     filepath.Join(piHome, "sessions"),
 	}, nil
 }
 
@@ -208,9 +215,29 @@ func (c *Collector) ReactivateSession(
 	sessionID domain.SessionID,
 	expectedRuntimeLaunchID string,
 ) error {
-	c.mu.Lock()
+	if !c.mu.TryLock() {
+		go func() {
+			c.mu.Lock()
+			defer c.mu.Unlock()
+			if err := c.reactivateSessionLocked(context.WithoutCancel(ctx), sessionID, expectedRuntimeLaunchID); err != nil {
+				slog.Default().Warn(
+					"usage: reactivate session after concurrent finalization",
+					"session", sessionID,
+					"err", err,
+				)
+			}
+		}()
+		return nil
+	}
 	defer c.mu.Unlock()
+	return c.reactivateSessionLocked(ctx, sessionID, expectedRuntimeLaunchID)
+}
 
+func (c *Collector) reactivateSessionLocked(
+	ctx context.Context,
+	sessionID domain.SessionID,
+	expectedRuntimeLaunchID string,
+) error {
 	session, ok, err := c.store.GetSession(ctx, sessionID)
 	if err != nil {
 		return err
@@ -243,6 +270,10 @@ func (c *Collector) ReactivateSession(
 		}
 	} else if nativeID != "" && nativeUsageIDPattern.MatchString(nativeID) {
 		if err := c.backfillSession(ctx, session, nativeID); err != nil {
+			return err
+		}
+	} else if session.Harness == domain.HarnessPi {
+		if err := c.backfillPiPaths(ctx); err != nil {
 			return err
 		}
 	} else {
@@ -280,7 +311,7 @@ func (c *Collector) RecordHook(ctx context.Context, sessionID domain.SessionID, 
 		}
 	}
 	if signal.NativeSessionID != "" && mainPath == "" &&
-		(session.Harness == domain.HarnessCodex || session.Harness == domain.HarnessKimi ||
+		(session.Harness == domain.HarnessCodex || session.Harness == domain.HarnessKimi || session.Harness == domain.HarnessPi ||
 			finalizing && !existsForDiscovery) {
 		mainPath, err = c.discoverPath(ctx, session.Harness, signal.NativeSessionID)
 		if err != nil {
@@ -534,6 +565,12 @@ func (c *Collector) BackfillActive(ctx context.Context) error {
 			continue
 		}
 		nativeID := usageNativeSessionID(session)
+		if nativeID == "" && session.Harness == domain.HarnessPi {
+			if err := c.backfillPiPaths(ctx); err != nil {
+				errs = append(errs, err)
+			}
+			continue
+		}
 		if nativeID == "" || !nativeUsageIDPattern.MatchString(nativeID) {
 			continue
 		}
@@ -557,6 +594,23 @@ func usageNativeSessionID(session domain.SessionRecord) string {
 		nativeID = session.Metadata.ProviderConversationID
 	}
 	return boundedUsageMetadata(nativeID)
+}
+
+func (c *Collector) backfillPiPaths(ctx context.Context) error {
+	paths, err := newestPiPaths(ctx, c.roots.PiSessions, 256)
+	if err != nil {
+		return err
+	}
+	var errs []error
+	for _, path := range paths {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if err := c.reconcilePiPath(ctx, path); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	return errors.Join(errs...)
 }
 
 func (c *Collector) backfillSession(ctx context.Context, session domain.SessionRecord, nativeID string) error {
@@ -657,6 +711,10 @@ func (c *Collector) ReconcileSources(ctx context.Context, limit int64) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
+	var errs []error
+	if err := c.backfillPiPaths(ctx); err != nil {
+		errs = append(errs, err)
+	}
 	if limit == 0 {
 		limit = defaultDiscoveryLimit
 	}
@@ -665,7 +723,6 @@ func (c *Collector) ReconcileSources(ctx context.Context, limit int64) error {
 		return err
 	}
 	now := c.now().UTC()
-	var errs []error
 	for _, binding := range bindings {
 		if err := c.reconcileBinding(ctx, binding, now); err != nil {
 			errs = append(errs, err)
@@ -679,6 +736,9 @@ func (c *Collector) ReconcileSources(ctx context.Context, limit int64) error {
 func (c *Collector) ReconcilePath(ctx context.Context, path string) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if pathWithinRoot(ctx, path, c.roots.PiSessions) {
+		return c.reconcilePiPath(ctx, path)
+	}
 
 	resolved, _, _, err := c.validateSourcePath(ctx, domain.HarnessCodex, path)
 	if err != nil {
@@ -731,6 +791,57 @@ func (c *Collector) ReconcilePath(ctx context.Context, path string) error {
 		}
 	}
 	return errors.Join(errs...)
+}
+
+func (c *Collector) reconcilePiPath(ctx context.Context, path string) error {
+	resolved, _, _, err := c.validateSourcePath(ctx, domain.HarnessPi, path)
+	if err != nil {
+		return nil //nolint:nilerr // Watch notifications may target another provider.
+	}
+	meta, ok := readPiSessionMeta(resolved)
+	if !ok {
+		return nil
+	}
+	workspace, err := filepath.EvalSymlinks(filepath.Clean(meta.CWD))
+	if err != nil {
+		return nil //nolint:nilerr // Ignore stale provider metadata.
+	}
+	sessions, err := c.store.ListAllSessions(ctx)
+	if err != nil {
+		return err
+	}
+	matches := make([]domain.SessionRecord, 0, 1)
+	for _, session := range sessions {
+		if session.Harness != domain.HarnessPi || session.IsTerminated ||
+			session.Activity.State == domain.ActivityExited || session.Metadata.WorkspacePath == "" {
+			continue
+		}
+		candidate, candidateErr := filepath.EvalSymlinks(filepath.Clean(session.Metadata.WorkspacePath))
+		if candidateErr == nil && candidate == workspace {
+			matches = append(matches, session)
+		}
+	}
+	if len(matches) != 1 {
+		return nil
+	}
+	now := c.now().UTC()
+	binding, err := c.store.UpsertUsageBinding(ctx, domain.UsageBindingRecord{
+		SessionID: matches[0].ID, Harness: domain.HarnessPi, NativeRootID: meta.ID,
+		State: domain.UsageBindingActive, UpdatedAt: now,
+	})
+	if err != nil {
+		return err
+	}
+	changed, err := c.registerSource(
+		ctx, binding, domain.UsageSourcePiSession, meta.ID, "", resolved, now, false,
+	)
+	if err != nil {
+		return err
+	}
+	if changed {
+		c.notifySourceInventory(false)
+	}
+	return nil
 }
 
 func (c *Collector) reconcileRetiredCodexClaims(
@@ -1779,6 +1890,12 @@ func validateSourceAttribution(
 			filepath.Base(sessionDir) != binding.NativeRootID || subagentID != wantSubagent {
 			return rejected()
 		}
+	case domain.UsageSourcePiSession:
+		meta, ok := readPiSessionMeta(resolved)
+		if binding.Harness != domain.HarnessPi || nativeSessionID != binding.NativeRootID ||
+			subagentID != "" || !ok || meta.ID != nativeSessionID {
+			return rejected()
+		}
 	default:
 		return rejected()
 	}
@@ -1826,6 +1943,8 @@ func (c *Collector) allowedRoots(harness domain.AgentHarness) []string {
 		return []string{c.roots.CodexSessions, c.roots.CodexArchived}
 	case domain.HarnessKimi:
 		return []string{c.roots.KimiHome}
+	case domain.HarnessPi:
+		return []string{c.roots.PiSessions}
 	default:
 		return nil
 	}
@@ -1839,6 +1958,8 @@ func sourceKindForHarness(harness domain.AgentHarness) (domain.UsageSourceKind, 
 		return domain.UsageSourceCodexRollout, true
 	case domain.HarnessKimi:
 		return domain.UsageSourceKimiWire, true
+	case domain.HarnessPi:
+		return domain.UsageSourcePiSession, true
 	default:
 		return "", false
 	}
@@ -1888,6 +2009,8 @@ func (c *Collector) discoverPath(ctx context.Context, harness domain.AgentHarnes
 		return c.discoverCodexPath(ctx, nativeID, "")
 	case domain.HarnessKimi:
 		return c.discoverKimiPath(ctx, nativeID)
+	case domain.HarnessPi:
+		return c.discoverPiPath(ctx, nativeID)
 	}
 	type candidate struct {
 		path string
@@ -1967,6 +2090,81 @@ func (c *Collector) discoverKimiPath(ctx context.Context, nativeID string) (stri
 	}
 	sort.Strings(paths)
 	return paths[0], nil
+}
+
+type piSessionMeta struct {
+	Type string `json:"type"`
+	ID   string `json:"id"`
+	CWD  string `json:"cwd"`
+}
+
+func readPiSessionMeta(path string) (piSessionMeta, bool) {
+	file, err := os.Open(path) //nolint:gosec // validated provider-owned path.
+	if err != nil {
+		return piSessionMeta{}, false
+	}
+	defer func() { _ = file.Close() }()
+	reader := bufio.NewReader(io.LimitReader(file, 64<<10))
+	line, err := reader.ReadBytes('\n')
+	if err != nil && !errors.Is(err, io.EOF) {
+		return piSessionMeta{}, false
+	}
+	var meta piSessionMeta
+	if json.Unmarshal(bytes.TrimSpace(line), &meta) != nil || meta.Type != "session" ||
+		!nativeUsageIDPattern.MatchString(meta.ID) || !filepath.IsAbs(meta.CWD) {
+		return piSessionMeta{}, false
+	}
+	return meta, true
+}
+
+func (c *Collector) discoverPiPath(ctx context.Context, nativeID string) (string, error) {
+	paths, err := newestPiPaths(ctx, c.roots.PiSessions, 256)
+	if err != nil {
+		return "", err
+	}
+	for _, path := range paths {
+		if err := ctx.Err(); err != nil {
+			return "", err
+		}
+		if meta, ok := readPiSessionMeta(path); ok && meta.ID == nativeID {
+			return path, nil
+		}
+	}
+	return "", nil
+}
+
+func newestPiPaths(ctx context.Context, root string, limit int) ([]string, error) {
+	paths, err := filepath.Glob(filepath.Join(root, "*", "*.jsonl"))
+	if err != nil {
+		return nil, err
+	}
+	type candidate struct {
+		path string
+		mod  time.Time
+	}
+	candidates := make([]candidate, 0, len(paths))
+	for _, path := range paths {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		if info, statErr := os.Stat(path); statErr == nil && info.Mode().IsRegular() {
+			candidates = append(candidates, candidate{path: path, mod: info.ModTime()})
+		}
+	}
+	sort.Slice(candidates, func(i, j int) bool {
+		if candidates[i].mod.Equal(candidates[j].mod) {
+			return candidates[i].path > candidates[j].path
+		}
+		return candidates[i].mod.After(candidates[j].mod)
+	})
+	if limit > 0 && len(candidates) > limit {
+		candidates = candidates[:limit]
+	}
+	result := make([]string, 0, len(candidates))
+	for _, candidate := range candidates {
+		result = append(result, candidate.path)
+	}
+	return result, nil
 }
 
 func (c *Collector) discoverCodexPath(ctx context.Context, nativeID, parentID string) (string, error) {

@@ -211,6 +211,20 @@ func TestListLatestRetiredCodexReplacementClaimsByPath(t *testing.T) {
 	assertClaims()
 }
 
+func TestPiSessionWithoutBindingKeepsDiscoveryPending(t *testing.T) {
+	s := newTestStore(t)
+	session := seedUsageSession(t, s, domain.HarnessPi)
+	session.Metadata.WorkspacePath = t.TempDir()
+	session.Activity.State = domain.ActivityIdle
+	mustNoError(t, s.UpdateSession(context.Background(), session))
+
+	pending, err := s.HasPendingUsageDiscovery(context.Background())
+	mustNoError(t, err)
+	if !pending {
+		t.Fatal("live Pi session without a usage binding did not request discovery")
+	}
+}
+
 func TestUsageBindingUpsertDoesNotRegressSettledLifecycle(t *testing.T) {
 	s := newTestStore(t)
 	sess := seedUsageSession(t, s, domain.HarnessCodex)
@@ -1746,6 +1760,39 @@ func TestKimiUsageEventRoundTrip(t *testing.T) {
 		usageTokenValue(models[0].Tokens.UncachedInputTokens) != 21 ||
 		usageTokenValue(models[0].Tokens.OutputTokens) != 5 {
 		t.Fatalf("Kimi aggregate = %+v", models)
+	}
+}
+
+func TestPiUsageEventRoundTrip(t *testing.T) {
+	s := newTestStore(t)
+	now := time.Date(2026, 8, 24, 12, 0, 0, 0, time.UTC)
+	session := seedUsageSession(t, s, domain.HarnessPi)
+	binding := mustUpsertUsageBinding(t, s, session, now, domain.UsageBindingRecord{
+		NativeRootID: "pi-session",
+		State:        domain.UsageBindingActive,
+	})
+	source := mustInsertUsageSource(t, s, now, domain.UsageSourceRecord{
+		BindingID:       binding.ID,
+		Kind:            domain.UsageSourcePiSession,
+		NativeSessionID: "pi-session",
+		ArtifactPath:    "/tmp/pi/session.jsonl",
+		FileIdentity:    "dev:ino",
+		State:           domain.UsageSourcePending,
+	})
+	event := usageEvent("pi-event", canonicalUsageTokens(19, 5, 14, 7))
+	event.ModelID = "zai-glm/glm-4.5"
+	anthropicEvent := anthropicUsageEvent("pi-anthropic-event", 11, 3, 5, 7)
+	anthropicEvent.ModelID = "anthropic/claude-sonnet"
+	if err := s.ApplyUsageChunk(context.Background(), source.ID, 0, source.UpdatedAt, domain.SourceCursorState{
+		ByteOffset: 100, State: domain.UsageSourceActive, ParserStateJSON: `{}`, UpdatedAt: now,
+	}, []domain.ModelUsageEvent{event, anthropicEvent}); err != nil {
+		t.Fatalf("apply Pi usage: %v", err)
+	}
+	models, err := s.ListUsageModelAggregates(context.Background(), session.ID)
+	mustNoError(t, err)
+	if len(models) != 2 || models[0].Harness != domain.HarnessPi ||
+		models[1].Harness != domain.HarnessPi {
+		t.Fatalf("Pi aggregate = %+v", models)
 	}
 }
 

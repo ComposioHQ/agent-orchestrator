@@ -520,6 +520,19 @@ SELECT CAST(EXISTS (
                 )
           )
       )
+) OR EXISTS (
+    SELECT 1
+    FROM sessions s
+    WHERE s.is_terminated = 0
+      AND s.activity_state <> 'exited'
+      AND s.harness = 'pi'
+      AND trim(s.workspace_path) <> ''
+      AND NOT EXISTS (
+          SELECT 1
+          FROM usage_bindings ub
+          WHERE ub.session_id = s.id
+            AND ub.harness = 'pi'
+      )
 ) AS INTEGER)
 `
 

@@ -571,12 +571,17 @@ func (m *Manager) ApplyActivitySignal(ctx context.Context, id domain.SessionID, 
 	// (old CLIs, adapters without tool identity) pass through untouched —
 	// last-writer-wins, exactly as before.
 	promptAt := timeOr(s.Timestamp, now)
-	metadataChanged := (s.AgentSessionID != "" && rec.Metadata.AgentSessionID != s.AgentSessionID) ||
-		(s.AgentSessionID != "" && rec.Metadata.AgentSessionIDLaunchID != s.LaunchID) ||
+	nativeSessionChanged := s.AgentSessionID != "" &&
+		(rec.Metadata.AgentSessionID != s.AgentSessionID || rec.Metadata.AgentSessionIDLaunchID != s.LaunchID)
+	metadataChanged := nativeSessionChanged ||
 		(s.LatestUserPrompt != "" && (rec.Metadata.LatestUserPrompt != s.LatestUserPrompt ||
 			(s.Event == "user-prompt-submit" && promptAt.After(rec.Metadata.LatestUserPromptAt)))) ||
 		(s.LatestAssistantUpdate != "" && rec.Metadata.LatestAssistantUpdate != s.LatestAssistantUpdate) ||
 		(s.TranscriptPath != "" && rec.Metadata.NativeTranscriptPath != s.TranscriptPath)
+	var usageReactivator sessionUsageReactivator
+	if nativeSessionChanged {
+		usageReactivator = m.usageReactivator
+	}
 	if s.Valid {
 		s = m.applyToolPrecedenceLocked(id, rec.Activity.State, s)
 	}
@@ -589,6 +594,9 @@ func (m *Manager) ApplyActivitySignal(ctx context.Context, id domain.SessionID, 
 		rec.UpdatedAt = now
 		_, err := m.store.UpdateSessionFromActivitySignal(ctx, rec)
 		m.mu.Unlock()
+		if err == nil {
+			reactivateSessionUsage(ctx, id, rec.Metadata.RuntimeLaunchID, usageReactivator)
+		}
 		return err
 	}
 	if metadataChanged {
@@ -615,6 +623,9 @@ func (m *Manager) ApplyActivitySignal(ctx context.Context, id domain.SessionID, 
 			}
 			if !applied {
 				return nil
+			}
+			if nativeSessionChanged {
+				reactivateSessionUsage(ctx, id, rec.Metadata.RuntimeLaunchID, usageReactivator)
 			}
 			return m.acknowledgeAgentSwitchTarget(ctx, id, s, now)
 		}
@@ -660,6 +671,9 @@ func (m *Manager) ApplyActivitySignal(ctx context.Context, id domain.SessionID, 
 	resolutions := needsInputResolutions(rec, next, now)
 	waitingEvents := m.waitingInputEvents(next, prevState, prevAt, now)
 	m.mu.Unlock()
+	if nativeSessionChanged {
+		reactivateSessionUsage(ctx, id, next.Metadata.RuntimeLaunchID, usageReactivator)
+	}
 	if err := m.acknowledgeAgentSwitchTarget(ctx, id, s, now); err != nil {
 		return err
 	}
