@@ -84,7 +84,9 @@ func (s *Store) Workspace(
 	return workspace, nil
 }
 
-// ListWorkspaces returns tenant-visible cloud workspaces, newest first.
+// ListWorkspaces returns at most 100 owner-visible cloud workspaces, newest
+// first. The hard cap bounds control-plane and desktop memory until the public
+// contract gains keyset pagination.
 func (s *Store) ListWorkspaces(
 	ctx context.Context, principal domain.Principal, orgID string,
 ) ([]domain.Workspace, error) {
@@ -101,8 +103,10 @@ func (s *Store) ListWorkspaces(
 	rows, err := tx.Query(ctx,
 		`SELECT id, org_id, owner_user_id, repository_url, repository_ref,
 		        sandbox_id, state, error, created_at, updated_at
-		 FROM ao_cloud_workspaces WHERE org_id = $1
-		 ORDER BY updated_at DESC, created_at DESC`, strings.TrimSpace(orgID))
+		 FROM ao_cloud_workspaces
+		 WHERE org_id = $1 AND owner_user_id = $2
+		 ORDER BY created_at DESC, id DESC
+		 LIMIT 100`, strings.TrimSpace(orgID), principal.UserID)
 	if err != nil {
 		return nil, normalizeError(err)
 	}

@@ -35,7 +35,6 @@ type Config struct {
 	DaytonaAPIURL       string
 	DaytonaTarget       string
 	SandboxAOBinaryPath string
-	GitHubToken         []byte
 	PublicURL           string
 }
 
@@ -57,10 +56,6 @@ func load(getenv func(string) string) (Config, error) {
 	if err != nil {
 		return Config{}, fmt.Errorf("AO_CLOUD_ACCESS_TOKEN_KEY_BASE64: %w", err)
 	}
-	githubToken, err := optionalBase64(getenv("AO_CLOUD_GITHUB_TOKEN_BASE64"))
-	if err != nil {
-		return Config{}, fmt.Errorf("AO_CLOUD_GITHUB_TOKEN_BASE64: %w", err)
-	}
 	cfg := Config{
 		Address:             valueOrDefault(getenv("AO_CLOUD_ADDR"), defaultAddress),
 		DatabaseURL:         strings.TrimSpace(getenv("AO_CLOUD_DATABASE_URL")),
@@ -77,7 +72,6 @@ func load(getenv func(string) string) (Config, error) {
 		DaytonaAPIURL:       valueOrDefault(getenv("DAYTONA_API_URL"), "https://app.daytona.io/api"),
 		DaytonaTarget:       valueOrDefault(getenv("DAYTONA_TARGET"), "us"),
 		SandboxAOBinaryPath: valueOrDefault(getenv("AO_CLOUD_SANDBOX_AO_BINARY"), "/ao"),
-		GitHubToken:         githubToken,
 		PublicURL:           strings.TrimRight(strings.TrimSpace(getenv("AO_CLOUD_PUBLIC_URL")), "/"),
 	}
 	if cfg.DatabaseURL == "" {
@@ -104,18 +98,6 @@ func normalizedEmails(raw string) []string {
 		values[index] = strings.ToLower(values[index])
 	}
 	return values
-}
-
-func optionalBase64(raw string) ([]byte, error) {
-	raw = strings.TrimSpace(raw)
-	if raw == "" {
-		return nil, nil
-	}
-	value, err := base64.StdEncoding.DecodeString(raw)
-	if err != nil {
-		return nil, errors.New("must be valid base64")
-	}
-	return value, nil
 }
 
 func durationValue(raw string, fallback time.Duration) (time.Duration, error) {

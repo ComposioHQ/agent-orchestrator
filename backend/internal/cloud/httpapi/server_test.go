@@ -192,6 +192,36 @@ func TestGoogleExchangeRejectsUnverifiedIdentity(t *testing.T) {
 	}
 }
 
+func TestAuthenticationEndpointsAreRateLimitedByClientIP(t *testing.T) {
+	store := &memoryAccountStore{refreshes: make(map[string]string)}
+	server := newTestServer(t, store, &staticIdentityVerifier{err: auth.ErrInvalidToken})
+	for attempt := 1; attempt <= 21; attempt++ {
+		request := httptest.NewRequest(
+			http.MethodPost,
+			"/api/cloud/v1/auth/google",
+			bytes.NewBufferString(`{"idToken":"forged"}`),
+		)
+		request.Header.Set("X-Forwarded-For", "203.0.113.7")
+		response := httptest.NewRecorder()
+		server.Handler().ServeHTTP(response, request)
+		if attempt <= 20 && response.Code != http.StatusUnauthorized {
+			t.Fatalf("attempt %d status = %d: %s", attempt, response.Code, response.Body.String())
+		}
+		if attempt == 21 {
+			if response.Code != http.StatusTooManyRequests {
+				t.Fatalf("rate-limited status = %d: %s", response.Code, response.Body.String())
+			}
+			var responseError errorEnvelope
+			if err := json.Unmarshal(response.Body.Bytes(), &responseError); err != nil {
+				t.Fatal(err)
+			}
+			if responseError.Code != "AUTH_RATE_LIMITED" {
+				t.Fatalf("code = %q, want AUTH_RATE_LIMITED", responseError.Code)
+			}
+		}
+	}
+}
+
 func TestGoogleExchangeRejectsAccountOutsideAllowlist(t *testing.T) {
 	store := &memoryAccountStore{refreshes: make(map[string]string)}
 	server := newTestServer(t, store, &staticIdentityVerifier{principal: domain.Principal{

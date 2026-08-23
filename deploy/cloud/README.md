@@ -34,7 +34,6 @@ client ID, then run:
 export AO_CLOUD_GOOGLE_CLIENT_IDS='123456789-example.apps.googleusercontent.com'
 export AO_CLOUD_ALLOWED_EMAILS='maintainer@example.com'
 export DAYTONA_API_KEY='...'
-export AO_CLOUD_GITHUB_TOKEN_BASE64="$(gh auth token | base64 | tr -d '\n')"
 deploy/cloud/deploy-staging.sh
 ```
 

@@ -38,12 +38,13 @@ own every local project and session.
 | `POST /api/cloud/v1/auth/refresh` | Rotating refresh token in JSON | Atomically consume and replace a refresh token |
 | `POST /api/cloud/v1/auth/logout` | Refresh token in JSON | Revoke a refresh token |
 | `GET /api/cloud/v1/me` | AO bearer access token | Return the current user and live organization memberships |
+| `GET /api/cloud/v1/orgs/{orgId}/workspaces` | AO bearer access token | List the current user's cloud workspaces for desktop rediscovery |
 | `POST /api/cloud/v1/orgs/{orgId}/workspaces` | AO bearer access token | Record intent and asynchronously provision a Daytona AO workspace |
 | `GET /api/cloud/v1/orgs/{orgId}/workspaces/{workspaceId}` | AO bearer access token | Poll lifecycle state and obtain a fresh signed AO URL when ready |
 
 Coordinator-only `/api/cloud/internal/v1/workspaces/{workspaceId}/runtimes/*`
 routes create, inspect, message, interrupt, and destroy session sandboxes. They
-accept a workspace-scoped, 30-day capability with a distinct JWT audience;
+accept a workspace-scoped, 24-hour capability with a distinct JWT audience;
 neither desktop access tokens nor a capability for another project are valid.
 
 Google establishes identity only. A verified Google hosted-domain claim never
@@ -78,8 +79,12 @@ migration and grants that role only the tables and tenant helper functions in
 this foundation. The AWS deployment generates and stores the runtime password
 outside Terraform state.
 
-`ao_organizations` and `ao_org_memberships` have forced row-level security.
-Tenant reads are authorized through the current AO user. Writes additionally
+All six control-plane tables, including `ao_users` and `ao_auth_sessions`, have
+forced row-level security. Pre-authentication identity upsert and refresh-token
+rotation are available only through narrowly scoped, fixed-search-path
+`SECURITY DEFINER` functions; runtime startup verifies that every tenant table
+has both RLS flags enabled. Tenant reads are authorized through the current AO
+user. Writes additionally
 require an AO-selected organization transaction context, and administrative
 updates require an active owner or admin membership.
 
@@ -110,7 +115,6 @@ Workspace provisioning additionally requires server-side secret injection:
 export DAYTONA_API_KEY='...'
 export DAYTONA_API_URL='https://app.daytona.io/api'
 export DAYTONA_TARGET='us'
-export AO_CLOUD_GITHUB_TOKEN_BASE64='...'
 export AO_CLOUD_SANDBOX_AO_BINARY='/ao'
 export AO_CLOUD_PUBLIC_URL='https://cloud.example.com'
 ```
@@ -225,8 +229,11 @@ through a VPC link and internal load balancer. See
 
 - Provisioning is asynchronous but not yet recovered by a durable reconciler
   after a control-plane process restart.
-- GitHub remains a minimum-scope shared staging credential; Claude credentials
-  are per-user and are never persisted by the control plane.
+- Cloud project creation currently supports public GitHub repositories only.
+  Private repositories and authenticated SCM operations remain disabled until
+  per-workspace, repository-scoped, short-lived GitHub App tokens replace the
+  former shared operator credential. No shared GitHub token is injected into
+  tenant compute.
 - Terminal output currently uses bounded polling through API Gateway. A
   production terminal relay with resize, backpressure, and replay cursors is a
   follow-up; this does not change the frontend terminal contract.
@@ -237,7 +244,7 @@ through a VPC link and internal load balancer. See
   session sandbox. They are also applied to the requested remote ref, not to
   unpushed coordinator commits. Production synchronization needs an explicit
   deletion manifest and an immutable base commit.
-- Workspace capabilities expire after 30 days; background renewal is deferred.
+- Workspace capabilities expire after 24 hours; background renewal is deferred.
 - The signed coordinator URL injected into each isolated agent sandbox expires
   after 24 hours and is not yet renewed in place. Long-running orchestrators
   lose `ao` CLI connectivity until their session is relaunched.

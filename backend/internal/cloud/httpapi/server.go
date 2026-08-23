@@ -14,6 +14,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
+	"github.com/go-chi/httprate"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/cloud/auth"
 	"github.com/aoagents/agent-orchestrator/backend/internal/cloud/domain"
@@ -177,9 +178,17 @@ func (s *Server) routes() http.Handler {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	})
 	router.Get("/readyz", s.ready)
-	router.Post("/api/cloud/v1/auth/google", s.exchangeGoogle)
-	router.Post("/api/cloud/v1/auth/refresh", s.refresh)
-	router.Post("/api/cloud/v1/auth/logout", s.logout)
+	authRateLimit := httprate.Limit(
+		20,
+		time.Minute,
+		httprate.WithKeyByRealIP(),
+		httprate.WithLimitHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			writeError(w, r, http.StatusTooManyRequests, "rate_limited", "AUTH_RATE_LIMITED", "too many authentication requests")
+		})),
+	)
+	router.With(authRateLimit).Post("/api/cloud/v1/auth/google", s.exchangeGoogle)
+	router.With(authRateLimit).Post("/api/cloud/v1/auth/refresh", s.refresh)
+	router.With(authRateLimit).Post("/api/cloud/v1/auth/logout", s.logout)
 	router.With(s.requirePrincipal).Get("/api/cloud/v1/me", s.me)
 	router.With(s.requirePrincipal).Get("/api/cloud/v1/orgs/{orgID}/workspaces", s.listWorkspaces)
 	router.With(s.requirePrincipal).Post("/api/cloud/v1/orgs/{orgID}/workspaces", s.createWorkspace)

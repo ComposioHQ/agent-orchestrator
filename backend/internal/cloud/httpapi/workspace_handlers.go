@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/cloud/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/cloud/postgres"
@@ -44,7 +45,11 @@ func (s *Server) listWorkspaces(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, http.StatusUnauthorized, "unauthorized", "AUTH_REQUIRED", "valid AO access token required")
 		return
 	}
-	workspaces, err := s.workspaceStore.ListWorkspaces(r.Context(), principal, chi.URLParam(r, "orgID"))
+	orgID, ok := validOrgID(w, r)
+	if !ok {
+		return
+	}
+	workspaces, err := s.workspaceStore.ListWorkspaces(r.Context(), principal, orgID)
 	if err != nil {
 		s.internalError(w, r, "list cloud workspaces", err)
 		return
@@ -60,6 +65,10 @@ func (s *Server) createWorkspace(w http.ResponseWriter, r *http.Request) {
 	principal, ok := principalFromContext(r.Context())
 	if !ok {
 		writeError(w, r, http.StatusUnauthorized, "unauthorized", "AUTH_REQUIRED", "valid AO access token required")
+		return
+	}
+	orgID, ok := validOrgID(w, r)
+	if !ok {
 		return
 	}
 	var input createWorkspaceRequest
@@ -82,7 +91,7 @@ func (s *Server) createWorkspace(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, http.StatusBadRequest, "bad_request", "INVALID_CLAUDE_CREDENTIALS", "valid Claude credentials are required")
 		return
 	}
-	workspace, err := s.workspaceStore.CreateWorkspace(r.Context(), principal, chi.URLParam(r, "orgID"), input.RepositoryURL, input.RepositoryRef)
+	workspace, err := s.workspaceStore.CreateWorkspace(r.Context(), principal, orgID, input.RepositoryURL, input.RepositoryRef)
 	if err != nil {
 		clear(claudeCredentials)
 		if errors.Is(err, postgres.ErrInvalid) || errors.Is(err, postgres.ErrNotFound) {
@@ -92,7 +101,7 @@ func (s *Server) createWorkspace(w http.ResponseWriter, r *http.Request) {
 		s.internalError(w, r, "create cloud workspace", err)
 		return
 	}
-	runtimeToken, err := s.accessTokens.IssueWorkspace(principal.UserID, workspace.OrgID, workspace.ID, 30*24*time.Hour)
+	runtimeToken, err := s.accessTokens.IssueWorkspace(principal.UserID, workspace.OrgID, workspace.ID, 24*time.Hour)
 	if err != nil {
 		clear(claudeCredentials)
 		s.internalError(w, r, "issue cloud workspace capability", err)
@@ -118,7 +127,11 @@ func (s *Server) getWorkspace(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, http.StatusUnauthorized, "unauthorized", "AUTH_REQUIRED", "valid AO access token required")
 		return
 	}
-	workspace, err := s.workspaceStore.Workspace(r.Context(), principal, chi.URLParam(r, "orgID"), chi.URLParam(r, "workspaceID"))
+	orgID, ok := validOrgID(w, r)
+	if !ok {
+		return
+	}
+	workspace, err := s.workspaceStore.Workspace(r.Context(), principal, orgID, chi.URLParam(r, "workspaceID"))
 	if err != nil {
 		if errors.Is(err, postgres.ErrNotFound) {
 			writeError(w, r, http.StatusNotFound, "not_found", "WORKSPACE_NOT_FOUND", "cloud workspace not found")
@@ -129,7 +142,7 @@ func (s *Server) getWorkspace(w http.ResponseWriter, r *http.Request) {
 	}
 	response := workspaceResponse{Workspace: workspace}
 	if workspace.State == domain.WorkspaceReady && s.workspaces != nil {
-		runtimeToken, tokenErr := s.accessTokens.IssueWorkspace(principal.UserID, workspace.OrgID, workspace.ID, 30*24*time.Hour)
+		runtimeToken, tokenErr := s.accessTokens.IssueWorkspace(principal.UserID, workspace.OrgID, workspace.ID, 24*time.Hour)
 		if tokenErr != nil {
 			s.internalError(w, r, "issue resumed cloud workspace capability", tokenErr)
 			return
@@ -147,6 +160,15 @@ func (s *Server) getWorkspace(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeJSON(w, http.StatusOK, response)
+}
+
+func validOrgID(w http.ResponseWriter, r *http.Request) (string, bool) {
+	orgID := strings.TrimSpace(chi.URLParam(r, "orgID"))
+	if uuid.Validate(orgID) != nil {
+		writeError(w, r, http.StatusBadRequest, "bad_request", "INVALID_ORG_ID", "orgID must be a UUID")
+		return "", false
+	}
+	return orgID, true
 }
 
 func (s *Server) provisionWorkspace(parent context.Context, workspace domain.Workspace, bootstrap domain.WorkspaceBootstrap) {

@@ -27,15 +27,13 @@ type Config struct {
 	APIURL       string
 	Target       string
 	AOBinaryPath string
-	GitHubToken  []byte
 }
 
 // Provider owns Daytona sandbox creation and signed AO preview links.
 type Provider struct {
-	client      *daytonasdk.Client
-	aoBinary    []byte
-	githubToken []byte
-	resumeMu    sync.Mutex
+	client   *daytonasdk.Client
+	aoBinary []byte
+	resumeMu sync.Mutex
 }
 
 // New validates credentials and creates a Daytona client.
@@ -47,9 +45,6 @@ func New(cfg Config) (*Provider, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read AO sandbox binary: %w", err)
 	}
-	if len(cfg.GitHubToken) == 0 {
-		return nil, errors.New("GitHub token is required")
-	}
 	client, err := daytonasdk.NewClientWithConfig(&types.DaytonaConfig{
 		APIKey: strings.TrimSpace(cfg.APIKey),
 		APIUrl: strings.TrimSpace(cfg.APIURL),
@@ -59,9 +54,8 @@ func New(cfg Config) (*Provider, error) {
 		return nil, fmt.Errorf("create Daytona client: %w", err)
 	}
 	return &Provider{
-		client:      client,
-		aoBinary:    aoBinary,
-		githubToken: append([]byte(nil), cfg.GitHubToken...),
+		client:   client,
+		aoBinary: aoBinary,
 	}, nil
 }
 
@@ -142,8 +136,6 @@ func (p *Provider) bootstrap(ctx context.Context, sandbox *daytonasdk.Sandbox, w
 	defaultHarness, _ := harnesscatalog.Lookup("claude-code")
 	claudePath := filepath.Join(home, defaultHarness.CredentialRelativePath)
 	claudeConfigPath := filepath.Join(home, ".claude.json")
-	githubTokenPath := filepath.Join(home, ".ao", "github-token")
-	askpassPath := filepath.Join(home, ".ao", "github-askpass")
 	workspacePath := filepath.Join(home, "workspace", "ao-"+strings.ReplaceAll(workspace.ID, "-", "")[:12])
 
 	if _, err := run(ctx, sandbox, `sudo apt-get update -qq && sudo apt-get install -y -qq ca-certificates curl git tmux`, 10*time.Minute); err != nil {
@@ -155,7 +147,7 @@ func (p *Provider) bootstrap(ctx context.Context, sandbox *daytonasdk.Sandbox, w
 		}
 	}
 	if _, err := run(ctx, sandbox, "mkdir -p "+shellQuote(filepath.Dir(binPath))+" "+
-		shellQuote(filepath.Dir(claudePath))+" "+shellQuote(filepath.Dir(githubTokenPath))+" "+
+		shellQuote(filepath.Dir(claudePath))+" "+shellQuote(filepath.Join(home, ".ao"))+" "+
 		shellQuote(filepath.Dir(workspacePath)), time.Minute); err != nil {
 		return err
 	}
@@ -172,26 +164,13 @@ func (p *Provider) bootstrap(ctx context.Context, sandbox *daytonasdk.Sandbox, w
 	if err := sandbox.FileSystem.UploadFile(ctx, []byte("{\"hasCompletedOnboarding\":true}\n"), claudeConfigPath); err != nil {
 		return fmt.Errorf("initialize Claude profile: %w", err)
 	}
-	if len(p.githubToken) > 0 {
-		if err := sandbox.FileSystem.UploadFile(ctx, p.githubToken, githubTokenPath); err != nil {
-			return fmt.Errorf("upload GitHub credential: %w", err)
-		}
-		askpass := "#!/bin/sh\ncase \"$1\" in *Username*) printf '%s\\n' x-access-token ;; *) cat " + shellQuote(githubTokenPath) + " ;; esac\n"
-		if err := sandbox.FileSystem.UploadFile(ctx, []byte(askpass), askpassPath); err != nil {
-			return fmt.Errorf("upload GitHub askpass helper: %w", err)
-		}
-	}
 	if _, err := run(ctx, sandbox,
-		"chmod 0755 "+shellQuote(binPath)+" "+shellQuote(askpassPath)+" && chmod 0600 "+
-			shellQuote(claudePath)+" "+shellQuote(claudeConfigPath)+" "+shellQuote(githubTokenPath), time.Minute); err != nil {
+		"chmod 0755 "+shellQuote(binPath)+" && chmod 0600 "+
+			shellQuote(claudePath)+" "+shellQuote(claudeConfigPath), time.Minute); err != nil {
 		return err
 	}
 
-	clone := "GIT_TERMINAL_PROMPT=0"
-	if len(p.githubToken) > 0 {
-		clone += " GIT_ASKPASS=" + shellQuote(askpassPath)
-	}
-	clone += " git clone --depth 1"
+	clone := "GIT_TERMINAL_PROMPT=0 git clone --depth 1"
 	if workspace.RepositoryRef != "" {
 		clone += " --branch " + shellQuote(workspace.RepositoryRef)
 	}
@@ -236,11 +215,10 @@ func (p *Provider) startDaemon(ctx context.Context, sandbox *daytonasdk.Sandbox,
 	dataDir := filepath.Join(home, ".ao", "data")
 	runFile := filepath.Join(home, ".ao", "running.json")
 	logFile := filepath.Join(home, ".ao", "daemon.log")
-	askpassPath := filepath.Join(home, ".ao", "github-askpass")
 	start := "nohup env AO_DATA_DIR=" + shellQuote(dataDir) + " AO_RUN_FILE=" + shellQuote(runFile) +
 		" AO_PORT=3001 AO_CORS_HEADERS_MANAGED_BY_PROXY=on AO_SCRATCH_PROJECT=off" +
 		" AO_CLOUD_HARNESSES=" + shellQuote(harnesscatalog.CSV()) +
-		" GIT_TERMINAL_PROMPT=0 GIT_ASKPASS=" + shellQuote(askpassPath) +
+		" GIT_TERMINAL_PROMPT=0" +
 		" AO_CLOUD_RUNTIME_API_URL=" + shellQuote(bootstrap.ControlPlaneURL) +
 		" AO_CLOUD_RUNTIME_TOKEN=" + shellQuote(bootstrap.RuntimeToken) +
 		" AO_CLOUD_WORKSPACE_ID=" + shellQuote(workspace.ID) +

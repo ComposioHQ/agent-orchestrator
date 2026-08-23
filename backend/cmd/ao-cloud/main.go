@@ -69,7 +69,6 @@ func run(logger *slog.Logger) error {
 			APIURL:       cfg.DaytonaAPIURL,
 			Target:       cfg.DaytonaTarget,
 			AOBinaryPath: cfg.SandboxAOBinaryPath,
-			GitHubToken:  cfg.GitHubToken,
 		})
 		if err != nil {
 			return err

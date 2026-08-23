@@ -82,8 +82,6 @@ func (p *Provider) bootstrapSessionRuntime(ctx context.Context, sandbox *daytona
 	root := filepath.Join(home, "workspace")
 	archivePath := filepath.Join(home, ".ao", "workspace.tar.gz")
 	credentialPath := filepath.Join(home, harness.CredentialRelativePath)
-	githubTokenPath := filepath.Join(home, ".ao", "github-token")
-	askpassPath := filepath.Join(home, ".ao", "github-askpass")
 	aoPath := filepath.Join(home, "bin", "ao")
 	filesRoot := filepath.Join(home, ".ao", "runtime-files")
 
@@ -120,24 +118,11 @@ func (p *Provider) bootstrapSessionRuntime(ctx context.Context, sandbox *daytona
 	if err := sandbox.FileSystem.UploadFile(ctx, claudeConfig, filepath.Join(home, ".claude.json")); err != nil {
 		return err
 	}
-	if len(p.githubToken) > 0 {
-		if err := sandbox.FileSystem.UploadFile(ctx, p.githubToken, githubTokenPath); err != nil {
-			return err
-		}
-		askpass := "#!/bin/sh\ncase \"$1\" in *Username*) printf '%s\\n' x-access-token ;; *) cat " + shellQuote(githubTokenPath) + " ;; esac\n"
-		if err := sandbox.FileSystem.UploadFile(ctx, []byte(askpass), askpassPath); err != nil {
-			return err
-		}
-	}
-	if _, err = run(ctx, sandbox, "chmod 0755 "+shellQuote(aoPath)+" "+shellQuote(askpassPath)+" && chmod 0600 "+shellQuote(credentialPath)+" "+shellQuote(githubTokenPath), time.Minute); err != nil {
+	if _, err = run(ctx, sandbox, "chmod 0755 "+shellQuote(aoPath)+" && chmod 0600 "+shellQuote(credentialPath), time.Minute); err != nil {
 		return err
 	}
 
-	clone := "GIT_TERMINAL_PROMPT=0"
-	if len(p.githubToken) > 0 {
-		clone += " GIT_ASKPASS=" + shellQuote(askpassPath)
-	}
-	clone += " git clone " + shellQuote(workspace.RepositoryURL) + " " + shellQuote(root)
+	clone := "GIT_TERMINAL_PROMPT=0 git clone " + shellQuote(workspace.RepositoryURL) + " " + shellQuote(root)
 	if _, err = run(ctx, sandbox, clone, 10*time.Minute); err != nil {
 		return fmt.Errorf("clone session repository: %w", err)
 	}

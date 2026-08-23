@@ -325,7 +325,6 @@ resource "aws_ecs_task_definition" "api" {
       { name = "DAYTONA_API_KEY", valueFrom = "${aws_secretsmanager_secret.application.arn}:daytonaApiKey::" },
       { name = "DAYTONA_API_URL", valueFrom = "${aws_secretsmanager_secret.application.arn}:daytonaApiUrl::" },
       { name = "DAYTONA_TARGET", valueFrom = "${aws_secretsmanager_secret.application.arn}:daytonaTarget::" },
-      { name = "AO_CLOUD_GITHUB_TOKEN_BASE64", valueFrom = "${aws_secretsmanager_secret.application.arn}:githubTokenBase64::" },
     ]
     portMappings     = [{ containerPort = 8080, hostPort = 8080, protocol = "tcp" }]
     logConfiguration = local.log_configuration
@@ -458,6 +457,11 @@ resource "aws_apigatewayv2_stage" "default" {
   api_id      = aws_apigatewayv2_api.this.id
   name        = "$default"
   auto_deploy = true
+
+  default_route_settings {
+    throttling_burst_limit = 100
+    throttling_rate_limit  = 50
+  }
 
   access_log_settings {
     destination_arn = aws_cloudwatch_log_group.api_gateway.arn

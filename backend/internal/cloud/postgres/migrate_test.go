@@ -13,7 +13,7 @@ func TestCloudMigrationsAreTenantScoped(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(migrations) != 4 || migrations[0].Version != 1 || migrations[1].Version != 2 || migrations[2].Version != 3 || migrations[3].Version != 4 {
+	if len(migrations) != 5 || migrations[0].Version != 1 || migrations[1].Version != 2 || migrations[2].Version != 3 || migrations[3].Version != 4 || migrations[4].Version != 5 {
 		t.Fatalf("migrations = %#v", migrations)
 	}
 	migration, err := migrationFS.ReadFile("migrations/00001_auth_foundation.sql")
@@ -76,5 +76,23 @@ func TestCloudMigrationsAreTenantScoped(t *testing.T) {
 	}
 	if !strings.Contains(string(generationMigration), "ADD COLUMN generation BIGINT NOT NULL DEFAULT 1") {
 		t.Fatal("runtime generation migration does not add the concurrency guard")
+	}
+	authRLSMigration, err := migrationFS.ReadFile("migrations/00005_auth_rls.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	authRLSSQL := string(authRLSMigration)
+	for _, required := range []string{
+		"ALTER TABLE ao_users FORCE ROW LEVEL SECURITY",
+		"ALTER TABLE ao_auth_sessions FORCE ROW LEVEL SECURITY",
+		"CREATE FUNCTION ao_upsert_google_user",
+		"CREATE FUNCTION ao_rotate_refresh_session",
+		"SECURITY DEFINER",
+		"owner_user_id = ao_current_user_id()",
+		"ao_cloud_workspaces_owner_created_idx",
+	} {
+		if !strings.Contains(authRLSSQL, required) {
+			t.Fatalf("auth RLS migration does not contain %q", required)
+		}
 	}
 }

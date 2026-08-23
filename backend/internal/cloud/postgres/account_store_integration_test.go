@@ -155,11 +155,23 @@ func TestAccountFoundationAgainstPostgres(t *testing.T) {
 		t.Fatal(err)
 	}
 	var originalCreatedAt, originalExpiresAt time.Time
-	if err := store.pool.QueryRow(
+	authTx, err := store.pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = authTx.Exec(ctx, `SELECT set_config('ao.user_id', $1, true)`, alice.UserID); err != nil {
+		_ = authTx.Rollback(ctx)
+		t.Fatal(err)
+	}
+	if err = authTx.QueryRow(
 		ctx,
 		`SELECT created_at, expires_at FROM ao_auth_sessions WHERE token_hash = $1`,
 		refreshHash,
 	).Scan(&originalCreatedAt, &originalExpiresAt); err != nil {
+		_ = authTx.Rollback(ctx)
+		t.Fatal(err)
+	}
+	if err = authTx.Commit(ctx); err != nil {
 		t.Fatal(err)
 	}
 	_, replacementHash, err := auth.NewRefreshToken()
@@ -175,11 +187,23 @@ func TestAccountFoundationAgainstPostgres(t *testing.T) {
 		t.Fatalf("rotated principal = %#v, error = %v", rotated, err)
 	}
 	var rotatedCreatedAt, rotatedExpiresAt time.Time
-	if err := store.pool.QueryRow(
+	authTx, err = store.pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = authTx.Exec(ctx, `SELECT set_config('ao.user_id', $1, true)`, alice.UserID); err != nil {
+		_ = authTx.Rollback(ctx)
+		t.Fatal(err)
+	}
+	if err = authTx.QueryRow(
 		ctx,
 		`SELECT created_at, expires_at FROM ao_auth_sessions WHERE token_hash = $1`,
 		replacementHash,
 	).Scan(&rotatedCreatedAt, &rotatedExpiresAt); err != nil {
+		_ = authTx.Rollback(ctx)
+		t.Fatal(err)
+	}
+	if err = authTx.Commit(ctx); err != nil {
 		t.Fatal(err)
 	}
 	if !rotatedCreatedAt.Equal(originalCreatedAt) || !rotatedExpiresAt.Equal(originalExpiresAt) {

@@ -17,9 +17,11 @@ import (
 )
 
 type memoryWorkspaceStore struct {
-	mu        sync.Mutex
-	workspace domain.Workspace
-	updated   chan struct{}
+	mu           sync.Mutex
+	workspace    domain.Workspace
+	updated      chan struct{}
+	listedUserID string
+	listedOrgID  string
 }
 
 func (s *memoryWorkspaceStore) CreateWorkspace(
@@ -44,10 +46,12 @@ func (s *memoryWorkspaceStore) Workspace(
 }
 
 func (s *memoryWorkspaceStore) ListWorkspaces(
-	context.Context, domain.Principal, string,
+	_ context.Context, principal domain.Principal, orgID string,
 ) ([]domain.Workspace, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.listedUserID = principal.UserID
+	s.listedOrgID = orgID
 	if s.workspace.ID == "" {
 		return []domain.Workspace{}, nil
 	}
@@ -101,6 +105,7 @@ func (p fakeWorkspaceProvisioner) Resume(_ context.Context, _ domain.Workspace, 
 }
 
 func TestWorkspaceProvisioningRequiresAuthAndReturnsSignedAOConnection(t *testing.T) {
+	const orgID = "f737107a-d943-4aee-9fa7-46c6f5cafef8"
 	principal := domain.Principal{UserID: "58fc7182-0360-412f-abd9-5057097db664", Provider: "google"}
 	accountStore := &memoryAccountStore{principal: principal, refreshes: make(map[string]string)}
 	workspaceStore := &memoryWorkspaceStore{updated: make(chan struct{}, 1)}
@@ -121,7 +126,7 @@ func TestWorkspaceProvisioningRequiresAuthAndReturnsSignedAOConnection(t *testin
 		t.Fatal(err)
 	}
 
-	unauthenticated := httptest.NewRequest(http.MethodPost, "/api/cloud/v1/orgs/org-1/workspaces", bytes.NewBufferString(`{"repositoryUrl":"https://github.com/Untrivial-ai/agent-orchestrator.git"}`))
+	unauthenticated := httptest.NewRequest(http.MethodPost, "/api/cloud/v1/orgs/"+orgID+"/workspaces", bytes.NewBufferString(`{"repositoryUrl":"https://github.com/Untrivial-ai/agent-orchestrator.git"}`))
 	unauthenticatedResponse := httptest.NewRecorder()
 	server.Handler().ServeHTTP(unauthenticatedResponse, unauthenticated)
 	if unauthenticatedResponse.Code != http.StatusUnauthorized {
@@ -132,7 +137,7 @@ func TestWorkspaceProvisioningRequiresAuthAndReturnsSignedAOConnection(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	request := httptest.NewRequest(http.MethodPost, "/api/cloud/v1/orgs/org-1/workspaces", bytes.NewBufferString(`{"repositoryUrl":"https://github.com/Untrivial-ai/agent-orchestrator.git","repositoryRef":"main","claudeCredentialsBase64":"eyJjbGF1ZGVBaU9hdXRoIjp7ImFjY2Vzc1Rva2VuIjoic2VjcmV0In19"}`))
+	request := httptest.NewRequest(http.MethodPost, "/api/cloud/v1/orgs/"+orgID+"/workspaces", bytes.NewBufferString(`{"repositoryUrl":"https://github.com/Untrivial-ai/agent-orchestrator.git","repositoryRef":"main","claudeCredentialsBase64":"eyJjbGF1ZGVBaU9hdXRoIjp7ImFjY2Vzc1Rva2VuIjoic2VjcmV0In19"}`))
 	request.Header.Set("Authorization", "Bearer "+accessToken)
 	response := httptest.NewRecorder()
 	server.Handler().ServeHTTP(response, request)
@@ -144,15 +149,18 @@ func TestWorkspaceProvisioningRequiresAuthAndReturnsSignedAOConnection(t *testin
 	case <-time.After(time.Second):
 		t.Fatal("workspace provisioning did not complete")
 	}
-	listRequest := httptest.NewRequest(http.MethodGet, "/api/cloud/v1/orgs/org-1/workspaces", nil)
+	listRequest := httptest.NewRequest(http.MethodGet, "/api/cloud/v1/orgs/"+orgID+"/workspaces", nil)
 	listRequest.Header.Set("Authorization", "Bearer "+accessToken)
 	listResponse := httptest.NewRecorder()
 	server.Handler().ServeHTTP(listResponse, listRequest)
 	if listResponse.Code != http.StatusOK || !strings.Contains(listResponse.Body.String(), `"id":"workspace-1"`) {
 		t.Fatalf("list response = %d: %s", listResponse.Code, listResponse.Body.String())
 	}
+	if workspaceStore.listedUserID != principal.UserID || workspaceStore.listedOrgID != orgID {
+		t.Fatalf("list scope = (%q, %q), want (%q, %q)", workspaceStore.listedUserID, workspaceStore.listedOrgID, principal.UserID, orgID)
+	}
 
-	getRequest := httptest.NewRequest(http.MethodGet, "/api/cloud/v1/orgs/org-1/workspaces/workspace-1", nil)
+	getRequest := httptest.NewRequest(http.MethodGet, "/api/cloud/v1/orgs/"+orgID+"/workspaces/workspace-1", nil)
 	getRequest.Header.Set("Authorization", "Bearer "+accessToken)
 	getResponse := httptest.NewRecorder()
 	server.Handler().ServeHTTP(getResponse, getRequest)
@@ -190,6 +198,7 @@ func TestValidGitHubRepository(t *testing.T) {
 }
 
 func TestWorkspaceProvisioningRejectsMissingClaudeCredentials(t *testing.T) {
+	const orgID = "f737107a-d943-4aee-9fa7-46c6f5cafef8"
 	principal := domain.Principal{UserID: "58fc7182-0360-412f-abd9-5057097db664", Provider: "google"}
 	accountStore := &memoryAccountStore{principal: principal, refreshes: make(map[string]string)}
 	tokens, err := auth.NewAccessTokenManager(
@@ -210,11 +219,46 @@ func TestWorkspaceProvisioningRejectsMissingClaudeCredentials(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	request := httptest.NewRequest(http.MethodPost, "/api/cloud/v1/orgs/org-1/workspaces", bytes.NewBufferString(`{"repositoryUrl":"https://github.com/org/repo"}`))
+	request := httptest.NewRequest(http.MethodPost, "/api/cloud/v1/orgs/"+orgID+"/workspaces", bytes.NewBufferString(`{"repositoryUrl":"https://github.com/org/repo"}`))
 	request.Header.Set("Authorization", "Bearer "+accessToken)
 	response := httptest.NewRecorder()
 	server.Handler().ServeHTTP(response, request)
 	if response.Code != http.StatusBadRequest || !strings.Contains(response.Body.String(), "INVALID_CLAUDE_CREDENTIALS") {
 		t.Fatalf("response = %d: %s", response.Code, response.Body.String())
+	}
+}
+
+func TestWorkspaceRoutesRejectMalformedOrganizationID(t *testing.T) {
+	principal := domain.Principal{UserID: "58fc7182-0360-412f-abd9-5057097db664", Provider: "google"}
+	accountStore := &memoryAccountStore{principal: principal, refreshes: make(map[string]string)}
+	tokens, err := auth.NewAccessTokenManager(
+		[]byte("0123456789abcdef0123456789abcdef"), "issuer", "audience", 15*time.Minute,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server, err := New(Options{
+		Store: accountStore, Google: &staticIdentityVerifier{}, AccessTokens: tokens,
+		AllowedEmails: []string{"person@example.com"}, RefreshTokenTTL: time.Hour,
+		WorkspaceStore: &memoryWorkspaceStore{updated: make(chan struct{}, 1)}, Workspaces: fakeWorkspaceProvisioner{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	accessToken, _, err := tokens.Issue(principal.UserID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{
+		"/api/cloud/v1/orgs/not-a-uuid/workspaces",
+		"/api/cloud/v1/orgs/not-a-uuid/workspaces/workspace-1",
+	} {
+		request := httptest.NewRequest(http.MethodGet, path, nil)
+		request.Header.Set("Authorization", "Bearer "+accessToken)
+		response := httptest.NewRecorder()
+		server.Handler().ServeHTTP(response, request)
+		if response.Code != http.StatusBadRequest || !strings.Contains(response.Body.String(), "INVALID_ORG_ID") {
+			t.Fatalf("%s response = %d: %s", path, response.Code, response.Body.String())
+		}
 	}
 }
