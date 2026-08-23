@@ -47,11 +47,8 @@ const TRIGGER_BOUNDARY = /\s/;
  *
  * A sigil only counts at the start of the text or after whitespace. Without that
  * rule an email address or a path like `src/app` would open a menu mid-word, and
- * `and/or` would hijack Enter.
- *
- * `/` additionally only counts at the very start of the message. A slash command
- * is the whole instruction, not something dropped into a sentence — and prose is
- * full of slashes.
+ * `and/or` would hijack Enter. Both commands and file mentions can be added after
+ * existing prose.
  */
 export function findActiveTrigger(text: string, caret: number): ActiveTrigger | undefined {
 	for (let i = caret - 1; i >= 0; i -= 1) {
@@ -63,12 +60,11 @@ export function findActiveTrigger(text: string, caret: number): ActiveTrigger | 
 		const atBoundary = preceding === undefined || TRIGGER_BOUNDARY.test(preceding);
 		if (!atBoundary) return undefined;
 
-		if (char === "/") {
-			// Anchored to the start of the message, ignoring leading whitespace.
-			if (text.slice(0, i).trim() !== "") return undefined;
-			return { kind: "skill", start: i, query: text.slice(i + 1, caret) };
-		}
-		return { kind: "file", start: i, query: text.slice(i + 1, caret) };
+		return {
+			kind: char === "/" ? "skill" : "file",
+			start: i,
+			query: text.slice(i + 1, caret),
+		};
 	}
 	return undefined;
 }

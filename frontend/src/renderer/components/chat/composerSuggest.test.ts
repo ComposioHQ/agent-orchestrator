@@ -24,12 +24,14 @@ describe("findActiveTrigger", () => {
 		expect(findActiveTrigger("/", 1)).toEqual({ kind: "skill", start: 0, query: "" });
 	});
 
-	// A slash mid-sentence is prose. Prose is full of them, and opening a menu there
-	// would make the next Enter insert a skill instead of sending the message.
-	it("ignores a slash that is not the start of the message", () => {
+	it("opens a slash command after existing prose", () => {
 		expect(findActiveTrigger("read src/app", 12)).toBeUndefined();
 		expect(findActiveTrigger("either and/or", 13)).toBeUndefined();
-		expect(findActiveTrigger("look at /rev", 12)).toBeUndefined();
+		expect(findActiveTrigger("look at /rev", 12)).toEqual({
+			kind: "skill",
+			start: 8,
+			query: "rev",
+		});
 	});
 
 	it("opens a file trigger for an at-sign after whitespace", () => {

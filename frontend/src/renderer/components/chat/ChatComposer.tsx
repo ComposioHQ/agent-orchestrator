@@ -32,7 +32,6 @@ import {
 	isValidElement,
 	startTransition,
 	useCallback,
-	useDeferredValue,
 	useEffect,
 	useId,
 	useLayoutEffect,
@@ -176,10 +175,6 @@ export function ChatComposer({
 	// The DOM event is the source of truth while React catches up with the draft
 	// transition. This keeps Enter-after-fast-typing from observing stale state.
 	const textRef = useRef("");
-	// Keep typing and the send affordance urgent. Matching a trigger and ranking a
-	// worktree's file list can be comparatively expensive, especially in large
-	// worktrees, so let React do that work in a deferred render.
-	const deferredText = useDeferredValue(text);
 	/**
 	 * What Enter does while the agent is working.
 	 *
@@ -215,10 +210,7 @@ export function ChatComposer({
 	const fileAttachments = useFileAttachments();
 	const canAttach = Boolean(onStageAttachments);
 
-	const trigger = useMemo(
-		() => findActiveTrigger(deferredText, caret),
-		[deferredText, caret],
-	);
+	const trigger = useMemo(() => findActiveTrigger(text, caret), [text, caret]);
 
 	const slashCommands = useMemo<ChatSkill[]>(() => {
 		if (!onCompact || compactUnavailable === "This agent cannot compact its history") return skills;
@@ -505,10 +497,12 @@ export function ChatComposer({
 		const value = event.target.value;
 		const nextCaret = event.target.selectionStart ?? value.length;
 		textRef.current = value;
+		// Searching always starts from the first result. Keep this urgent so an
+		// older keyboard selection cannot survive while the draft update is scheduled.
+		setHighlighted(0);
 		startTransition(() => {
 			setText(value);
 			setCaret(nextCaret);
-			setHighlighted(0);
 			// A dismissal covers one trigger. It is released as soon as that trigger is no
 			// longer the one under the caret, so a fresh `/` or `@` opens a menu again
 			// without the user having to guess why the last one stayed shut.
@@ -626,8 +620,7 @@ export function ChatComposer({
 					items={suggestions}
 					highlighted={activeIndex}
 					onPick={pick}
-					onHighlight={setHighlighted}
-					truncated={trigger.kind === "file" && filePathsTruncated}
+					truncated={trigger?.kind === "file" && filePathsTruncated}
 				/>
 			) : null}
 
@@ -688,7 +681,7 @@ export function ChatComposer({
 							? "Agent is working — this sends when it finishes"
 							: "Message the agent…"
 				}
-				className="chat-composer-scrollbar max-h-40 min-h-[4.5rem] w-full resize-none overflow-y-hidden overscroll-contain bg-transparent pl-[7px] pr-0 py-1 text-base! leading-relaxed text-foreground outline-none placeholder:text-passive disabled:opacity-50"
+				className="chat-composer-scrollbar max-h-40 min-h-[4.5rem] w-full resize-none overflow-y-hidden overscroll-contain bg-transparent pl-[7px] pr-0 py-1 text-base! leading-relaxed text-foreground outline-none placeholder:text-muted-foreground disabled:opacity-50"
 			/>
 
 			{attachmentError ? (

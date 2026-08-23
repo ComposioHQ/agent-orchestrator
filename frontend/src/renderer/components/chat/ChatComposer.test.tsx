@@ -325,6 +325,19 @@ describe("slash commands", () => {
 		expect(screen.getAllByRole("option")).toHaveLength(3);
 	});
 
+	it("hides the generic agent source and keeps the AO source label", async () => {
+		const { field } = renderComposer({
+			skills: [
+				{ name: "built-in", displayName: "built-in", source: "agent" },
+				{ name: "compact", displayName: "compact", source: "ao" },
+			],
+		});
+		await userEvent.type(field, "/");
+
+		expect(screen.queryByText("agent", { exact: true })).toBeNull();
+		expect(screen.getByText("AO", { exact: true })).toBeInTheDocument();
+	});
+
 	it("filters as the user types", async () => {
 		const { field } = renderComposer({ skills: SKILLS });
 		await userEvent.type(field, "/rev");
@@ -346,10 +359,11 @@ describe("slash commands", () => {
 		expect(onSend).toHaveBeenCalledWith("/rev");
 	});
 
-	it("does not open on a slash that is not the start of the message", async () => {
+	it("opens on a slash after existing text", async () => {
 		const { field } = renderComposer({ skills: SKILLS });
-		await userEvent.type(field, "look in src/app");
-		expect(screen.queryByRole("listbox")).toBeNull();
+		await userEvent.type(field, "look here /rev");
+		expect(screen.getByRole("listbox")).toBeInTheDocument();
+		expect(screen.getByRole("option", { name: /\/review/ })).toBeInTheDocument();
 	});
 
 	it("moves the highlight with the arrow keys and wraps", async () => {
@@ -363,6 +377,30 @@ describe("slash commands", () => {
 		expect(selected()).toBe(1);
 		await userEvent.keyboard("{ArrowUp}{ArrowUp}");
 		expect(selected()).toBe(2);
+	});
+
+	it("does not let mouse movement change keyboard selection", async () => {
+		const { field } = renderComposer({ skills: SKILLS });
+		await userEvent.type(field, "/");
+		await userEvent.keyboard("{ArrowDown}");
+		fireEvent.mouseEnter(screen.getAllByRole("option")[0]!);
+
+		const selected = screen
+			.getAllByRole("option")
+			.findIndex((node) => node.getAttribute("aria-selected") === "true");
+		expect(selected).toBe(1);
+	});
+
+	it("returns to the first result when the search changes", async () => {
+		const { field } = renderComposer({ skills: SKILLS });
+		await userEvent.type(field, "/");
+		await userEvent.keyboard("{ArrowDown}{ArrowDown}");
+		await userEvent.type(field, "r");
+
+		const selected = screen
+			.getAllByRole("option")
+			.findIndex((node) => node.getAttribute("aria-selected") === "true");
+		expect(selected).toBe(0);
 	});
 
 	it("inserts the highlighted skill on Enter instead of sending", async () => {
