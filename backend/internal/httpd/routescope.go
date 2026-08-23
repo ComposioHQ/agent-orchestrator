@@ -171,8 +171,9 @@ var routeClasses = map[RouteKey]RouteClass{
 	// path and one JSON frame contract either way, and Electron's main process
 	// keeps a single terminal implementation behind the existing TerminalMux
 	// IPC contract. What differs is which listener answers and whether a ticket
-	// is required; see internal/terminal/muxproto for the handshake. The
-	// control plane's /mux specifically must never be exposed publicly.
+	// is required; the published listener and its ticket handshake belong to
+	// the sandbox runtime. The control plane's /mux specifically must never be
+	// exposed publicly.
 	//
 	// Two invariants ride on this and are worth stating where the route is
 	// classified. The ticket is one-time and control-plane-issued, so a leaked
