@@ -8,11 +8,13 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/tenant"
 )
 
+// InstallRedirect describes the short-lived GitHub App installation redirect.
 type InstallRedirect struct {
 	InstallURL string
 	ExpiresAt  time.Time
 }
 
+// CallbackParams carries the state and installation identity returned by GitHub.
 type CallbackParams struct {
 	State                  string
 	ExternalInstallationID int64

@@ -19,16 +19,19 @@ var permissionsByPurpose = map[string]map[string]string{
 	domain.TokenPurposePush:  {"contents": "write", "metadata": "read", "pull_requests": "write"},
 }
 
+// BrokerStore enforces repository and sandbox authorization and records credential grants.
 type BrokerStore interface {
 	AuthorizeSCMSandbox(context.Context, tenant.Identity, string) error
 	AllowedSCMRepository(context.Context, tenant.Identity, string) (domain.SCMInstallation, domain.SCMRepository, error)
 	RecordSCMTokenGrant(context.Context, tenant.Identity, domain.SCMTokenGrant) error
 }
 
+// InstallationTokenMinter creates a fresh GitHub App installation token.
 type InstallationTokenMinter interface {
 	MintInstallationToken(context.Context, int64, int64, map[string]string) ([]byte, time.Time, error)
 }
 
+// Broker delivers short-lived repository credentials to one scoped callback.
 type Broker struct {
 	store  BrokerStore
 	minter InstallationTokenMinter
@@ -41,6 +44,7 @@ const (
 	maxInstallationTokenBytes = 255
 )
 
+// NewBroker constructs a credential broker from its authorization and minting boundaries.
 func NewBroker(store BrokerStore, minter InstallationTokenMinter) (*Broker, error) {
 	if store == nil || minter == nil {
 		return nil, errors.New("cloud scm: broker requires store and token minter")
@@ -123,6 +127,7 @@ func clonePermissions(source map[string]string) map[string]string {
 	return result
 }
 
+// NormalizeRepository accepts trusted GitHub references and returns owner/name.
 func NormalizeRepository(reference string) (string, error) {
 	value := strings.TrimSpace(reference)
 	if strings.HasPrefix(value, "git@") {
@@ -188,7 +193,7 @@ func zeroBytes(value []byte) {
 }
 
 func validInstallationToken(token []byte) bool {
-	if len(token) < len("ghs_")+1 || len(token) > maxInstallationTokenBytes || !bytes.HasPrefix(token, []byte("ghs_")) {
+	if len(token) <= len("ghs_") || len(token) > maxInstallationTokenBytes || !bytes.HasPrefix(token, []byte("ghs_")) {
 		return false
 	}
 	for _, character := range token[len("ghs_"):] {

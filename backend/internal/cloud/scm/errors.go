@@ -2,6 +2,7 @@ package scm
 
 import "errors"
 
+// ErrNotConfigured and the related values classify stable SCM boundary failures.
 var (
 	ErrNotConfigured             = errors.New("cloud scm: github webhook is not configured")
 	ErrInvalidSignature          = errors.New("cloud scm: webhook signature is invalid")
