@@ -243,6 +243,12 @@ describe("startAutoUpdates", () => {
   });
 
   it("manual nightly checks resolve the newest completed release without the Atom feed", async () => {
+    const platformManifest =
+      process.platform === "darwin"
+        ? "nightly-mac.yml"
+        : process.platform === "linux"
+          ? "nightly-linux.yml"
+          : "nightly.yml";
     const resourcesPath = mkdtempSync(
       nodePath.join(os.tmpdir(), "ao-nightly-feed-"),
     );
@@ -271,13 +277,13 @@ describe("startAutoUpdates", () => {
             tag_name: "v1.0.1-nightly.202608231517",
             draft: false,
             prerelease: true,
-            assets: [{ name: "nightly-mac.yml" }],
+            assets: [{ name: platformManifest }],
           },
           {
             tag_name: "v1.0.1-nightly.202608231350",
             draft: false,
             prerelease: true,
-            assets: [{ name: "nightly-mac.yml" }],
+            assets: [{ name: platformManifest }],
           },
         ]),
         { status: 200 },
