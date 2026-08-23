@@ -83,6 +83,8 @@ server's `Cache-Control: no-store`.
 The source contract is `contracts/cloud/openapi.yaml`. Run `npm run generate`
 from this directory after changing it. The generated `src/schema.ts` file is
 committed so consumers do not need an OpenAPI toolchain.
+`contracts/cloud/CHANGELOG.md` tracks each revision and the DTO deltas against
+the local daemon's `/api/v1` shapes — read it before adapting to a new one.
 
 The worker client matches the control plane's bootstrap, heartbeat, event,
 fenced turn, credential, checkout-grant, child orchestration, workspace
