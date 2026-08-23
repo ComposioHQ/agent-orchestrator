@@ -33,6 +33,20 @@ func TestDeliveryServiceHasNoGeneralPlaintextOrDecryptSurface(t *testing.T) {
 	}
 }
 
+func TestBootstrapAuthorizationScopeIsOpaque(t *testing.T) {
+	for _, value := range []any{BootstrapLookup{}, BootstrapAuthorizationScope{}} {
+		typeOfScope := reflect.TypeOf(value)
+		for index := 0; index < typeOfScope.NumField(); index++ {
+			if typeOfScope.Field(index).IsExported() {
+				t.Fatalf("authorization scope field is user-constructible: %s", typeOfScope.Field(index).Name)
+			}
+		}
+	}
+	if (BootstrapAuthorizationScope{}).valid() {
+		t.Fatal("zero/user-constructed authorization scope is valid")
+	}
+}
+
 func TestCredentialDeliveryDoesNotUseControlPlaneFilesystem(t *testing.T) {
 	files, err := parser.ParseDir(token.NewFileSet(), ".", nil, parser.ImportsOnly)
 	if err != nil {
