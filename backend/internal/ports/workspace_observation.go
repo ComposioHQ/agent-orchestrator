@@ -11,7 +11,6 @@ import (
 // workspace. Implementations execute where the workspace lives; callers must
 // not interpret workspace paths as control-plane filesystem paths.
 type WorkspaceObservation interface {
-	Snapshot(ctx context.Context, info WorkspaceInfo) (WorkspaceSnapshot, error)
 	ListWorkspaceFiles(ctx context.Context, id domain.SessionID) (WorkspaceFiles, error)
 	ReadWorkspaceFile(ctx context.Context, id domain.SessionID, path string) (WorkspaceFile, error)
 	ReadWorkspaceBlob(ctx context.Context, id domain.SessionID, path string, side WorkspaceBlobSide) (WorkspaceBlob, error)
@@ -104,6 +103,9 @@ type WorkspaceBlob struct {
 // WorkspaceEvent is deliberately coalesced: consumers must re-read semantic
 // content after an event instead of treating the event as a durable diff.
 type WorkspaceEvent struct{}
+
+// MaxPreviewFileBytes bounds preview reads across local and hosted adapters.
+const MaxPreviewFileBytes int64 = 10 << 20
 
 // PreviewFile is a bounded file read suitable for HTTP preview serving.
 type PreviewFile struct {

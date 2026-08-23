@@ -7993,3 +7993,52 @@ func (m *flipOnNudgeMessenger) Send(_ context.Context, _ domain.SessionID, msg s
 	}
 	return nil
 }
+
+type launchResolvingExecution struct {
+	ports.SessionExecution
+	resolved map[string]string
+}
+
+func (e launchResolvingExecution) ResolveLaunch(context.Context, []string, map[string]string) (map[string]string, error) {
+	return e.resolved, nil
+}
+
+func TestRemoteExecutionLaunchDoesNotLeakControlPlaneExecutable(t *testing.T) {
+	executableCalled := false
+	m := &Manager{
+		executionInjected: true,
+		execution:         launchResolvingExecution{resolved: map[string]string{"REMOTE": "1"}},
+		newLaunchID:       func() string { return "remote-launch" },
+		executable: func() (string, error) {
+			executableCalled = true
+			return "/control-plane/ao", nil
+		},
+	}
+
+	env, err := m.resolveExecutionLaunch(context.Background(), []string{"agent"}, map[string]string{"LOCAL": "1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(env, map[string]string{"REMOTE": "1"}) {
+		t.Fatalf("resolved env = %#v, want remote replacement", env)
+	}
+
+	argv, launchID, err := m.superviseAgentProcess(
+		supervisedLaunchAgent{launchArgvAgent{argv: []string{"agent"}}},
+		"session-1",
+		env,
+		[]string{"agent"},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if executableCalled {
+		t.Fatal("remote execution resolved the control-plane executable")
+	}
+	if !reflect.DeepEqual(argv, []string{"agent"}) {
+		t.Fatalf("remote argv = %#v, want semantic agent argv", argv)
+	}
+	if launchID != "remote-launch" || env[EnvRuntimeLaunchID] != "remote-launch" {
+		t.Fatalf("launch fencing = id %q env %q", launchID, env[EnvRuntimeLaunchID])
+	}
+}

@@ -273,7 +273,7 @@ func (m *Manager) executeChatAgentSwitch(
 		return result, fmt.Errorf("switch Chat agent %s: record finalized handoff: %w", id, err)
 	}
 	finalSystemPrompt := appendAgentSwitchContinuation(systemPrompt, continuation)
-	systemPromptFile, err := m.prepareSystemPromptFile(rec.ID, cfg.TargetHarness, finalSystemPrompt)
+	systemPromptFile, err := m.prepareSystemPromptFile(ctx, rec.ID, cfg.TargetHarness, finalSystemPrompt)
 	if err != nil {
 		return result, fmt.Errorf("switch Chat agent %s: target system prompt file: %w", id, err)
 	}
@@ -485,7 +485,7 @@ func (m *Manager) rollbackStoppedChatAgentSwitchSource(
 	if err != nil {
 		return err
 	}
-	systemPromptFile, err := m.prepareSystemPromptFile(rec.ID, rec.Harness, systemPrompt)
+	systemPromptFile, err := m.prepareSystemPromptFile(ctx, rec.ID, rec.Harness, systemPrompt)
 	if err != nil {
 		return err
 	}

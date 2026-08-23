@@ -509,19 +509,6 @@ func previewOriginAssetPath(entry, requestPath string) string {
 	return path.Join(root, requested)
 }
 
-// serveWorkspacePreviewFile is the single serving path for both the legacy API
-// route and isolated preview origins. OpenRoot keeps symlink traversal and the
-// subsequent read on the same workspace-confined file handle.
-func (c *SessionsController) serveWorkspacePreviewFile(w http.ResponseWriter, r *http.Request, workspacePath, assetPath string) {
-	file, info, clean, err := previewutil.OpenWorkspaceFile(workspacePath, assetPath)
-	if err != nil {
-		envelope.WriteAPIError(w, r, http.StatusNotFound, "not_found", "PREVIEW_FILE_NOT_FOUND", "Preview file not found", nil)
-		return
-	}
-	defer func() { _ = file.Close() }()
-	serveOpenedPreviewFile(w, r, file, info, clean)
-}
-
 func (c *SessionsController) serveObservedPreviewFile(w http.ResponseWriter, r *http.Request, id domain.SessionID, assetPath string) {
 	file, err := c.Svc.ReadPreviewFile(r.Context(), id, assetPath)
 	if err != nil {

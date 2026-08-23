@@ -17,10 +17,6 @@ var _ ports.WorkspaceObservation = (*Observation)(nil)
 
 func New(client ports.WorkspaceObservationClient) *Observation { return &Observation{client: client} }
 
-func (o *Observation) Snapshot(ctx context.Context, info ports.WorkspaceInfo) (ports.WorkspaceSnapshot, error) {
-	return o.client.Snapshot(ctx, info)
-}
-
 func (o *Observation) ListWorkspaceFiles(ctx context.Context, id domain.SessionID) (ports.WorkspaceFiles, error) {
 	return o.client.ListWorkspaceFiles(ctx, id)
 }

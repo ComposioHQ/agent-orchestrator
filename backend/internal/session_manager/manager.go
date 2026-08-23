@@ -901,7 +901,7 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 			err = nil
 		}
 	} else {
-		systemPromptFile, err = m.prepareSystemPromptFile(id, cfg.Harness, systemPrompt)
+		systemPromptFile, err = m.prepareSystemPromptFile(ctx, id, cfg.Harness, systemPrompt)
 	}
 	if err != nil {
 		if provision != nil {
@@ -1035,7 +1035,7 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	// tmux happily creates a session+pane around a missing command, so an
 	// unresolved binary would leak through as a "live" session that never ran.
 	if provision != nil {
-		_, err = provision.ResolveLaunch(ctx, argv, env)
+		env, err = provision.ResolveLaunch(ctx, argv, env)
 	} else {
 		err = m.validateAgentBinary(argv)
 		m.augmentRuntimePATHForLaunchBinary(ctx, env, argv)
@@ -1595,7 +1595,7 @@ func sessionPrefix(project domain.ProjectRecord) string {
 // rollbackSpawnSeedRow.
 func (m *Manager) markSpawnFailedTerminated(ctx context.Context, id domain.SessionID) {
 	_ = m.lcm.MarkTerminated(ctx, id)
-	m.cleanupSystemPromptDir(id)
+	m.cleanupSystemPromptDir(ctx, id)
 }
 
 // markSpawnFailedTerminatedWithoutWorkspace parks a spawn failure after the
@@ -1622,7 +1622,7 @@ func (m *Manager) markSpawnFailedTerminatedWithoutWorkspace(ctx context.Context,
 // fails, fall back to parking it terminated so a phantom row never looks live.
 func (m *Manager) rollbackSpawnSeedRow(ctx context.Context, id domain.SessionID) {
 	if deleted, err := m.store.DeleteSession(ctx, id); err == nil && deleted {
-		m.cleanupSystemPromptDir(id)
+		m.cleanupSystemPromptDir(ctx, id)
 		m.cleanupAttachments(ctx, id)
 		return
 	}
@@ -1646,7 +1646,7 @@ func (m *Manager) rollbackSpawn(ctx context.Context, id domain.SessionID) (delet
 		return false, false, fmt.Errorf("rollback %s: %w", id, err)
 	}
 	if deleted {
-		m.cleanupSystemPromptDir(id)
+		m.cleanupSystemPromptDir(ctx, id)
 		m.cleanupAttachments(ctx, id)
 		return true, false, nil
 	}
@@ -1750,7 +1750,7 @@ func (m *Manager) Kill(ctx context.Context, id domain.SessionID) (bool, error) {
 			if err := m.lcm.MarkTerminated(ctx, id); err != nil {
 				return false, fmt.Errorf("kill %s: %w", id, err)
 			}
-			m.cleanupSystemPromptDir(id)
+			m.cleanupSystemPromptDir(ctx, id)
 			return false, nil
 		}
 		if release != nil {
@@ -1765,7 +1765,7 @@ func (m *Manager) Kill(ctx context.Context, id domain.SessionID) (bool, error) {
 				if err := m.lcm.MarkTerminated(ctx, id); err != nil {
 					return false, fmt.Errorf("kill %s: %w", id, err)
 				}
-				m.cleanupSystemPromptDir(id)
+				m.cleanupSystemPromptDir(ctx, id)
 				return false, nil
 			}
 			return false, fmt.Errorf("kill %s: workspace: %w", id, err)
@@ -1783,7 +1783,7 @@ func (m *Manager) Kill(ctx context.Context, id domain.SessionID) (bool, error) {
 				if err := m.lcm.MarkTerminated(ctx, id); err != nil {
 					return false, fmt.Errorf("kill %s: %w", id, err)
 				}
-				m.cleanupSystemPromptDir(id)
+				m.cleanupSystemPromptDir(ctx, id)
 				return false, nil
 			}
 			return false, fmt.Errorf("kill %s: workspace: %w", id, err)
@@ -1801,7 +1801,7 @@ func (m *Manager) Kill(ctx context.Context, id domain.SessionID) (bool, error) {
 	if err := m.lcm.MarkTerminated(ctx, id); err != nil {
 		return false, fmt.Errorf("kill %s: %w", id, err)
 	}
-	m.cleanupSystemPromptDir(id)
+	m.cleanupSystemPromptDir(ctx, id)
 	return freed, nil
 }
 
@@ -2143,9 +2143,9 @@ func (m *Manager) relaunchSessionWithPolicy(ctx context.Context, operation strin
 	if err != nil {
 		return RestoreResult{}, fmt.Errorf("%s %s: switched continuation: %w", operation, rec.ID, err)
 	}
-	systemPromptFile, err := m.prepareSystemPromptFile(rec.ID, rec.Harness, systemPrompt)
+	systemPromptFile, err := m.prepareSystemPromptFile(ctx, rec.ID, rec.Harness, systemPrompt)
 	if err != nil {
-		m.cleanupSystemPromptDir(rec.ID)
+		m.cleanupSystemPromptDir(ctx, rec.ID)
 		return RestoreResult{}, fmt.Errorf("%s %s: system prompt file: %w", operation, rec.ID, err)
 	}
 
@@ -2175,20 +2175,20 @@ func (m *Manager) relaunchSessionWithPolicy(ctx context.Context, operation strin
 			systemPrompt, systemPromptFile, agentConfig, rec.Kind, rec.Harness, m.dataDir)
 	}
 	if err != nil {
-		m.cleanupSystemPromptDir(rec.ID)
+		m.cleanupSystemPromptDir(ctx, rec.ID)
 		return RestoreResult{}, fmt.Errorf("%s %s: %w", operation, rec.ID, err)
 	}
-	if err := m.resolveExecutionLaunch(ctx, argv, env); err != nil {
-		m.cleanupSystemPromptDir(rec.ID)
+	if env, err = m.resolveExecutionLaunch(ctx, argv, env); err != nil {
+		m.cleanupSystemPromptDir(ctx, rec.ID)
 		return RestoreResult{}, fmt.Errorf("%s %s: %w", operation, rec.ID, err)
 	}
 	argv, launchID, err := m.superviseAgentProcess(agent, rec.ID, env, argv)
 	if err != nil {
-		m.cleanupSystemPromptDir(rec.ID)
+		m.cleanupSystemPromptDir(ctx, rec.ID)
 		return RestoreResult{}, fmt.Errorf("%s %s: supervisor: %w", operation, rec.ID, err)
 	}
 	if err := m.lcm.PrepareLaunch(rec.ID, launchID); err != nil {
-		m.cleanupSystemPromptDir(rec.ID)
+		m.cleanupSystemPromptDir(ctx, rec.ID)
 		return RestoreResult{}, fmt.Errorf("%s %s: prepare launch: %w", operation, rec.ID, err)
 	}
 	defer m.lcm.CancelLaunch(rec.ID, launchID)
@@ -2205,7 +2205,7 @@ func (m *Manager) relaunchSessionWithPolicy(ctx context.Context, operation strin
 		handle, err = m.restartRuntime(ctx, *restartHandle, runtimeCfg)
 	}
 	if err != nil {
-		m.cleanupSystemPromptDir(rec.ID)
+		m.cleanupSystemPromptDir(ctx, rec.ID)
 		return RestoreResult{}, fmt.Errorf("%s %s: runtime: %w", operation, rec.ID, err)
 	}
 	metadata := domain.SessionMetadata{
@@ -2230,7 +2230,7 @@ func (m *Manager) relaunchSessionWithPolicy(ctx context.Context, operation strin
 	}
 	if err := m.lcm.MarkSpawned(ctx, rec.ID, metadata); err != nil {
 		_ = m.runtime.Destroy(ctx, handle)
-		m.cleanupSystemPromptDir(rec.ID)
+		m.cleanupSystemPromptDir(ctx, rec.ID)
 		return RestoreResult{}, fmt.Errorf("%s %s: completed: %w", operation, rec.ID, err)
 	}
 	if delivery == ports.PromptDeliveryAfterStart && rec.Metadata.Prompt != "" {
@@ -2248,7 +2248,7 @@ func (m *Manager) relaunchSessionWithPolicy(ctx context.Context, operation strin
 		if err := m.deliverAfterStartPrompt(ctx, agent, launchCfg, handle, rec.ID, rec.Metadata.Prompt); err != nil {
 			_ = m.runtime.Destroy(ctx, handle)
 			_ = m.lcm.MarkTerminated(ctx, rec.ID)
-			m.cleanupSystemPromptDir(rec.ID)
+			m.cleanupSystemPromptDir(ctx, rec.ID)
 			return RestoreResult{}, fmt.Errorf("%s %s: deliver prompt: %w", operation, rec.ID, err)
 		}
 	}
@@ -3397,7 +3397,7 @@ func (m *Manager) Cleanup(ctx context.Context, project domain.ProjectID) (Cleanu
 		ws := workspaceInfo(rec)
 		if ws.Path == "" {
 			m.cleanupAgentWorkspace(ctx, rec, "")
-			m.cleanupSystemPromptDir(rec.ID)
+			m.cleanupSystemPromptDir(ctx, rec.ID)
 			continue
 		}
 		if h := runtimeHandle(rec.Metadata); h.ID != "" {
@@ -3407,7 +3407,7 @@ func (m *Manager) Cleanup(ctx context.Context, project domain.ProjectID) (Cleanu
 			result.Skipped = append(result.Skipped, CleanupSkip{SessionID: rec.ID, Reason: reason})
 			continue
 		}
-		m.cleanupSystemPromptDir(rec.ID)
+		m.cleanupSystemPromptDir(ctx, rec.ID)
 		result.Cleaned = append(result.Cleaned, rec.ID)
 	}
 	return result, nil
@@ -3840,11 +3840,11 @@ func (m *Manager) writeSystemPromptFileLocal(id domain.SessionID, systemPrompt s
 	return path, nil
 }
 
-func (m *Manager) prepareSystemPromptFile(id domain.SessionID, harness domain.AgentHarness, systemPrompt string) (string, error) {
+func (m *Manager) prepareSystemPromptFile(ctx context.Context, id domain.SessionID, harness domain.AgentHarness, systemPrompt string) (string, error) {
 	var path string
 	var err error
 	if m.executionInjected {
-		path, err = m.execution.StageSystemPrompt(context.Background(), id, systemPrompt)
+		path, err = m.execution.StageSystemPrompt(ctx, id, systemPrompt)
 	} else {
 		path, err = m.writeSystemPromptFile(id, systemPrompt)
 	}
@@ -3880,9 +3880,11 @@ func (m *Manager) systemPromptDir(id domain.SessionID) string {
 	return filepath.Join(m.dataDir, "prompts", string(id))
 }
 
-func (m *Manager) cleanupSystemPromptDir(id domain.SessionID) {
+func (m *Manager) cleanupSystemPromptDir(ctx context.Context, id domain.SessionID) {
 	if m.executionInjected {
-		if err := m.execution.DiscardSystemPrompt(context.Background(), id); err != nil {
+		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+		defer cancel()
+		if err := m.execution.DiscardSystemPrompt(cleanupCtx, id); err != nil {
 			m.logger.Warn("system prompt cleanup failed", "session", id, "err", err)
 		}
 		return
@@ -4429,16 +4431,15 @@ func (m *Manager) validateAgentBinary(argv []string) error {
 	return nil
 }
 
-func (m *Manager) resolveExecutionLaunch(ctx context.Context, argv []string, env map[string]string) error {
+func (m *Manager) resolveExecutionLaunch(ctx context.Context, argv []string, env map[string]string) (map[string]string, error) {
 	if m.executionInjected {
-		_, err := m.execution.ResolveLaunch(ctx, argv, env)
-		return err
+		return m.execution.ResolveLaunch(ctx, argv, env)
 	}
 	if err := m.validateAgentBinary(argv); err != nil {
-		return err
+		return env, err
 	}
 	m.augmentRuntimePATHForLaunchBinary(ctx, env, argv)
-	return nil
+	return env, nil
 }
 
 func (m *Manager) createExecutionRuntime(ctx context.Context, cfg ports.RuntimeConfig) (ports.RuntimeHandle, error) {
@@ -4725,6 +4726,12 @@ func (m *Manager) wrapAgentProcessWithLaunchID(agent ports.Agent, id domain.Sess
 		return argv, nil
 	}
 	env[EnvSupervisedProcess] = "1"
+	if m.executionInjected {
+		// A remote execution environment owns its process supervisor. Injecting
+		// the control-plane executable path would create a host-filesystem
+		// dependency that cannot exist inside the sandbox.
+		return argv, nil
+	}
 	executable, err := m.executable()
 	if err != nil {
 		return nil, fmt.Errorf("resolve AO executable: %w", err)
