@@ -21,6 +21,70 @@ Two conventions this file exists to keep visible:
   operation here means adding a line there; mounting its handler means deleting
   that line. The test fails in both directions.
 
+## Unreleased — the product surface is `/api/v1`, not a copy of it here
+
+Decided by the integrating session (140) on 2026-08-22, after the revision
+below had already landed. Recorded here because it changes where work belongs,
+and three sessions are building against this file.
+
+**The hosted product API is the existing app API at `/api/v1`.** A hosted
+deployment mounts those routes unchanged and scopes them with a header;
+`/api/cloud/v1` keeps only what has no local equivalent — authentication and
+organization administration. There is to be no second copy of the product
+routes under `/api/cloud/v1`.
+
+| Decision | Consequence here |
+| --- | --- |
+| App routes stay at `/api/v1` | Product operations under `/api/cloud/v1/orgs/{orgId}/...` are duplicates and are being reconciled. |
+| `X-AO-Organization-ID` on hosted app routes, after bearer auth | New `OrganizationHeader` parameter. Middleware verifies an *active* membership and injects tenant context. |
+| Project/session IDs stay in existing route/body fields | No org or workspace identifiers get pushed into app route paths; stores enforce workspace ownership. |
+| Auth and org admin stay at `/api/cloud/v1` | Unchanged. |
+| Terminal preserves `/mux` semantics where possible | The `ao.terminal.v1` framing below is **provisional**; see below. |
+
+### Deprecated, not deleted
+
+Three operations added in the revision below duplicate routes the app API
+already serves. They now carry `deprecated: true`, so `openapi-typescript`
+emits `@deprecated` and a consumer sees it in-editor; the client methods carry
+the same marker. They still work — nothing breaks mid-flight.
+
+| Deprecated | Superseded by |
+| --- | --- |
+| `getProject` | `GET /api/v1/projects/{id}` |
+| `terminateSession` | `POST /api/v1/sessions/{sessionId}/kill` |
+| `restoreSession` | `POST /api/v1/sessions/{sessionId}/restore` |
+
+### Deliberately *not* deprecated
+
+- `getSessionActivity` is only half-superseded. The app API's session record
+  already carries `activity`, but no `/api/v1` route reports compute-plane
+  lifecycle, because a local daemon has none. Deprecating it would leave
+  sandbox state with no contract at all.
+- `resumeProject` and `getTerminalConnection` have no `/api/v1` equivalent.
+  Resuming a suspended workspace and learning which host to attach a terminal
+  to are both concepts a local daemon does not have.
+
+### Still open
+
+The pre-existing `/api/cloud/v1/orgs/{orgId}/...` product routes — `listProjects`,
+`createProject`, `updateProject`, `deleteProject`, `listSessions`,
+`createSession`, `deleteSession`, `sendMessage`, `cancelTurn`, the event,
+workspace, review and pull-request routes — predate this contract work and were
+not asked about in the decision. Whether they move to `/api/v1`, or the rule is
+only "add no new ones here", is unresolved and has been raised twice with the
+integrator. **Nothing has been deleted pending that answer**: removing another
+session's surface from a file four sessions consume is not a call to make on an
+inference.
+
+The terminal framing is provisional. `/mux` is the local daemon's multiplexed
+WebSocket (`backend/internal/terminal/protocol.go`): one socket carrying
+channel-tagged JSON frames, base64 payloads, `cols`/`rows`. What is specified
+below is a *single-terminal* `ao.terminal.v1` framing, which is not that. If
+preserving `/mux` semantics means literal parity so the existing xterm client
+attaches unchanged, the framing gets rewritten. Held pending session 160's
+protocol specifics, per the integrator. The reconnect cursor and capability
+metadata survive either outcome — both were explicitly allowed.
+
 ## Unreleased — control-plane contract for projects, sessions, and terminals
 
 Owner: session 163. Base: `3bd62e9f3`.

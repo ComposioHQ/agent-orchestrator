@@ -20,13 +20,34 @@ info:
     (a WebSocket handshake cannot carry headers, so it uses a single-use
     ticket), and the worker routes, which use their own `Worker` credential.
 
-    **Tenant scoping.** The organization is in the path, not a header or a token
-    claim, so every request states the tenant it means and a misrouted request
-    fails loudly instead of resolving against whichever org the token happened
-    to carry. A caller without a membership in `{orgId}` gets the same answer as
-    one asking for an org that does not exist, so the surface cannot be used to
-    probe for tenants. Account-wide routes (`/me`, `/github/user`) have no
-    `{orgId}` because they describe the user rather than a tenant.
+    ## Where the product surface lives
+
+    Decided by the integrating session, 2026-08-22. **The hosted product API is
+    the existing app API at `/api/v1`, not a second copy of it here.** A hosted
+    deployment mounts the app routes unchanged and scopes them with a header;
+    `/api/cloud/v1` keeps only what has no local equivalent — authentication and
+    organization administration.
+
+    This document still describes product operations under
+    `/api/cloud/v1/orgs/{orgId}/...`. Those predate the decision. They are being
+    reconciled; see `CHANGELOG.md` for status and do not build new work against
+    them without checking there first.
+
+    **Tenant scoping on hosted app routes.** `/api/v1` routes carry
+    `X-AO-Organization-ID` after the bearer token. Middleware verifies the
+    caller holds an active membership in that organization and injects the
+    tenant context; project and session identifiers stay exactly where they are
+    in the existing routes and bodies, and the stores enforce workspace
+    ownership. A local daemon serves the same routes with no header and no
+    tenant, which is what keeps local AO a complete product rather than a
+    degraded cloud client.
+
+    **Tenant scoping on `/api/cloud/v1`.** The organization is in the path,
+    because on these routes the organization *is* the resource being
+    administered. A caller without a membership in `{orgId}` gets the same
+    answer as one asking for an org that does not exist, so the surface cannot
+    be used to probe for tenants. Account-wide routes (`/me`, `/github/user`)
+    have no `{orgId}` because they describe the user rather than a tenant.
 
     **Errors.** Every non-2xx response is an `ErrorEnvelope`, including the
     WebSocket upgrade failures. `code` is the stable machine-readable value —
@@ -280,7 +301,13 @@ paths:
     get:
       operationId: getProject
       tags: [Projects]
+      deprecated: true
       description: |
+        **Superseded** by `GET /api/v1/projects/{id}` on the hosted app API,
+        which already returns this project. Kept until the reconciliation
+        described in `CHANGELOG.md` lands so nothing breaks mid-flight; do not
+        build new work against it.
+
         Read one project the caller's organization owns. Discovery pairs this
         with `listProjects`: the page carries the same `Project` shape, so a
         client that already has a listed project never needs this call to
@@ -627,9 +654,14 @@ paths:
     post:
       operationId: terminateSession
       tags: [Sessions]
+      deprecated: true
       parameters:
         - $ref: "#/components/parameters/IdempotencyKey"
       description: |
+        **Superseded** by `POST /api/v1/sessions/{sessionId}/kill`, which is the
+        same reversible stop and already exists on the hosted app API. Kept
+        until the reconciliation in `CHANGELOG.md` lands.
+
         Stop the agent and release the session's compute, keeping the session
         and its history restorable. This is the Cloud counterpart of the local
         `POST /api/v1/sessions/{sessionId}/kill`, and the same reversible
@@ -667,9 +699,14 @@ paths:
     post:
       operationId: restoreSession
       tags: [Sessions]
+      deprecated: true
       parameters:
         - $ref: "#/components/parameters/IdempotencyKey"
       description: |
+        **Superseded** by `POST /api/v1/sessions/{sessionId}/restore`, which
+        already exists on the hosted app API. Kept until the reconciliation in
+        `CHANGELOG.md` lands.
+
         Bring a terminated session back: re-provision a sandbox, restore the
         workspace at the branch the session owns, and resume the agent with its
         transcript. Counterpart of the local
@@ -727,6 +764,12 @@ paths:
         Unlike local AO's `POST /api/v1/sessions/{sessionId}/activity`, which is
         how an agent hook *reports* a state, this is read-only. Cloud agents
         report activity over the worker route (`publishEvent`), never here.
+
+        Partly superseded: the agent half of this payload is already on the app
+        API's session record, which carries `activity`. The sandbox half is not
+        — no `/api/v1` route reports compute-plane lifecycle, because a local
+        daemon has none. That is why this route is not deprecated alongside the
+        others; see `CHANGELOG.md`.
       responses:
         "200":
           description: The session's activity snapshot.
@@ -1905,6 +1948,24 @@ components:
         minimum: 0
         maximum: 9007199254740991
         default: 0
+    OrganizationHeader:
+      name: X-AO-Organization-ID
+      in: header
+      required: true
+      description: |
+        Organization the request acts within, on hosted app routes under
+        `/api/v1`. Middleware verifies the bearer token's account holds an
+        *active* membership in this organization and injects the tenant context
+        the stores scope by; a membership that has been revoked or suspended is
+        rejected as though it never existed.
+
+        Absent on a local daemon, which serves the same routes untenanted.
+        Hosted deployments reject a request without it rather than falling back
+        to a default organization — a silent fallback is how cross-tenant reads
+        happen.
+      schema:
+        type: string
+        format: uuid
     IdempotencyKey:
       name: Idempotency-Key
       in: header

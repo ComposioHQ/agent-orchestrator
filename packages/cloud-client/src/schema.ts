@@ -162,11 +162,19 @@ export interface paths {
             };
             cookie?: never;
         };
-        /** @description Read one project the caller's organization owns. Discovery pairs this
+        /**
+         * @deprecated
+         * @description **Superseded** by `GET /api/v1/projects/{id}` on the hosted app API,
+         *     which already returns this project. Kept until the reconciliation
+         *     described in `CHANGELOG.md` lands so nothing breaks mid-flight; do not
+         *     build new work against it.
+         *
+         *     Read one project the caller's organization owns. Discovery pairs this
          *     with `listProjects`: the page carries the same `Project` shape, so a
          *     client that already has a listed project never needs this call to
          *     render, only to refresh a single row.
-         *      */
+         *
+         */
         get: operations["getProject"];
         put?: never;
         post?: never;
@@ -399,7 +407,13 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** @description Stop the agent and release the session's compute, keeping the session
+        /**
+         * @deprecated
+         * @description **Superseded** by `POST /api/v1/sessions/{sessionId}/kill`, which is the
+         *     same reversible stop and already exists on the hosted app API. Kept
+         *     until the reconciliation in `CHANGELOG.md` lands.
+         *
+         *     Stop the agent and release the session's compute, keeping the session
          *     and its history restorable. This is the Cloud counterpart of the local
          *     `POST /api/v1/sessions/{sessionId}/kill`, and the same reversible
          *     contract: `isTerminated` becomes true, `activityState` becomes `exited`,
@@ -409,7 +423,8 @@ export interface paths {
          *     terminal intent already recorded, while the sandbox may still be
          *     stopping. Terminating an already-terminated session is a no-op that
          *     returns the session unchanged.
-         *      */
+         *
+         */
         post: operations["terminateSession"];
         delete?: never;
         options?: never;
@@ -429,7 +444,13 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** @description Bring a terminated session back: re-provision a sandbox, restore the
+        /**
+         * @deprecated
+         * @description **Superseded** by `POST /api/v1/sessions/{sessionId}/restore`, which
+         *     already exists on the hosted app API. Kept until the reconciliation in
+         *     `CHANGELOG.md` lands.
+         *
+         *     Bring a terminated session back: re-provision a sandbox, restore the
          *     workspace at the branch the session owns, and resume the agent with its
          *     transcript. Counterpart of the local
          *     `POST /api/v1/sessions/{sessionId}/restore`.
@@ -439,7 +460,8 @@ export interface paths {
          *     re-provision has got. A restore whose project is `suspended` fails with
          *     `PROJECT_SUSPENDED` — resume the project first. A session whose sandbox
          *     was deleted with `deleteSession` fails with `SESSION_SANDBOX_DELETED`.
-         *      */
+         *
+         */
         post: operations["restoreSession"];
         delete?: never;
         options?: never;
@@ -476,6 +498,12 @@ export interface paths {
          *     Unlike local AO's `POST /api/v1/sessions/{sessionId}/activity`, which is
          *     how an agent hook *reports* a state, this is read-only. Cloud agents
          *     report activity over the worker route (`publishEvent`), never here.
+         *
+         *     Partly superseded: the agent half of this payload is already on the app
+         *     API's session record, which carries `activity`. The sandbox half is not
+         *     — no `/api/v1` route reports compute-plane lifecycle, because a local
+         *     daemon has none. That is why this route is not deprecated alongside the
+         *     others; see `CHANGELOG.md`.
          *      */
         get: operations["getSessionActivity"];
         put?: never;
@@ -2651,6 +2679,18 @@ export interface components {
         EventLimit: number;
         /** @description Return events with a sequence strictly greater than this value. */
         After: number;
+        /** @description Organization the request acts within, on hosted app routes under
+         *     `/api/v1`. Middleware verifies the bearer token's account holds an
+         *     *active* membership in this organization and injects the tenant context
+         *     the stores scope by; a membership that has been revoked or suspended is
+         *     rejected as though it never existed.
+         *
+         *     Absent on a local daemon, which serves the same routes untenanted.
+         *     Hosted deployments reject a request without it rather than falling back
+         *     to a default organization — a silent fallback is how cross-tenant reads
+         *     happen.
+         *      */
+        OrganizationHeader: string;
         /** @description Reusing a key with the same command returns the original result.
          *     Reusing it with a different command returns an IDEMPOTENCY_CONFLICT.
          *      */

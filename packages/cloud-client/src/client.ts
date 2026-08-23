@@ -201,6 +201,10 @@ export class CloudClient {
     });
   }
 
+  /**
+   * @deprecated Superseded by `GET /api/v1/projects/{id}` on the hosted app
+   * API. See `contracts/cloud/CHANGELOG.md`.
+   */
   getProject(
     orgId: string,
     projectId: string,
@@ -421,6 +425,10 @@ export class CloudClient {
     );
   }
 
+  /**
+   * @deprecated Superseded by `POST /api/v1/sessions/{sessionId}/kill`, the
+   * same reversible stop. See `contracts/cloud/CHANGELOG.md`.
+   */
   terminateSession(
     orgId: string,
     sessionId: string,
@@ -440,6 +448,10 @@ export class CloudClient {
     );
   }
 
+  /**
+   * @deprecated Superseded by `POST /api/v1/sessions/{sessionId}/restore`.
+   * See `contracts/cloud/CHANGELOG.md`.
+   */
   restoreSession(
     orgId: string,
     sessionId: string,
