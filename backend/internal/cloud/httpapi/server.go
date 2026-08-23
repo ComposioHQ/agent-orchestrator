@@ -44,6 +44,7 @@ type AccountStore interface {
 // WorkspaceStore persists the durable intent and observed provisioning state.
 type WorkspaceStore interface {
 	CreateWorkspace(context.Context, domain.Principal, string, string, string) (domain.Workspace, error)
+	ListWorkspaces(context.Context, domain.Principal, string) ([]domain.Workspace, error)
 	Workspace(context.Context, domain.Principal, string, string) (domain.Workspace, error)
 	UpdateWorkspaceProvisioning(context.Context, domain.Workspace, string, string, string) error
 }
@@ -180,6 +181,7 @@ func (s *Server) routes() http.Handler {
 	router.Post("/api/cloud/v1/auth/refresh", s.refresh)
 	router.Post("/api/cloud/v1/auth/logout", s.logout)
 	router.With(s.requirePrincipal).Get("/api/cloud/v1/me", s.me)
+	router.With(s.requirePrincipal).Get("/api/cloud/v1/orgs/{orgID}/workspaces", s.listWorkspaces)
 	router.With(s.requirePrincipal).Post("/api/cloud/v1/orgs/{orgID}/workspaces", s.createWorkspace)
 	router.With(s.requirePrincipal).Get("/api/cloud/v1/orgs/{orgID}/workspaces/{workspaceID}", s.getWorkspace)
 	router.Route("/api/cloud/internal/v1/workspaces/{workspaceID}/runtimes", func(runtime chi.Router) {

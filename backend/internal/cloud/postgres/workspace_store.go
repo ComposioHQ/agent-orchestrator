@@ -84,6 +84,46 @@ func (s *Store) Workspace(
 	return workspace, nil
 }
 
+// ListWorkspaces returns tenant-visible cloud workspaces, newest first.
+func (s *Store) ListWorkspaces(
+	ctx context.Context, principal domain.Principal, orgID string,
+) ([]domain.Workspace, error) {
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{AccessMode: pgx.ReadOnly})
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err = tx.Exec(ctx,
+		`SELECT set_config('ao.user_id', $1, true), set_config('ao.org_id', $2, true)`,
+		principal.UserID, strings.TrimSpace(orgID)); err != nil {
+		return nil, err
+	}
+	rows, err := tx.Query(ctx,
+		`SELECT id, org_id, owner_user_id, repository_url, repository_ref,
+		        sandbox_id, state, error, created_at, updated_at
+		 FROM ao_cloud_workspaces WHERE org_id = $1
+		 ORDER BY updated_at DESC, created_at DESC`, strings.TrimSpace(orgID))
+	if err != nil {
+		return nil, normalizeError(err)
+	}
+	defer rows.Close()
+	workspaces := make([]domain.Workspace, 0)
+	for rows.Next() {
+		workspace, scanErr := scanWorkspace(rows)
+		if scanErr != nil {
+			return nil, scanErr
+		}
+		workspaces = append(workspaces, workspace)
+	}
+	if err = rows.Err(); err != nil {
+		return nil, normalizeError(err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+	return workspaces, nil
+}
+
 // UpdateWorkspaceProvisioning records provider state for the workspace owner.
 func (s *Store) UpdateWorkspaceProvisioning(
 	ctx context.Context, workspace domain.Workspace, state, sandboxID, failure string,

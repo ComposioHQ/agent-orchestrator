@@ -10,6 +10,7 @@ import type {
   CreateProjectInput,
   CreateSessionInput,
   CurrentAccount,
+  CloudWorkspace,
   CloudWorkspaceResponse,
   CreateCloudWorkspaceInput,
   DeleteProjectResponse,
@@ -158,6 +159,17 @@ export class CloudClient {
 
   getCurrentAccount(options: RequestOptions = {}): Promise<CurrentAccount> {
     return this.request("/api/cloud/v1/me", options);
+  }
+
+  async listCloudWorkspaces(
+    orgId: string,
+    options: RequestOptions = {},
+  ): Promise<CloudWorkspace[]> {
+    const response = await this.request<{ workspaces: CloudWorkspace[] }>(
+      this.orgPath(orgId, "/workspaces"),
+      options,
+    );
+    return response.workspaces;
   }
 
   createCloudWorkspace(

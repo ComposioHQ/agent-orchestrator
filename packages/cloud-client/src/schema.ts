@@ -77,7 +77,7 @@ export interface paths {
             };
             cookie?: never;
         };
-        get?: never;
+        get: operations["listCloudWorkspaces"];
         put?: never;
         post: operations["createCloudWorkspace"];
         delete?: never;
@@ -1047,6 +1047,9 @@ export interface components {
              * @description One-hour signed AO connection URL. Treat as an in-memory credential.
              */
             previewUrl?: string;
+        };
+        CloudWorkspaceListResponse: {
+            workspaces: components["schemas"]["CloudWorkspace"][];
         };
         GoogleIdentityExchange: {
             /** @description Google OpenID Connect ID token obtained through desktop PKCE. */
@@ -2186,6 +2189,29 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["CurrentAccount"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    listCloudWorkspaces: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                orgId: components["parameters"]["OrgId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Cloud workspaces visible to the authenticated organization member, newest first. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CloudWorkspaceListResponse"];
                 };
             };
             default: components["responses"]["Error"];

@@ -313,6 +313,33 @@ describe("Sidebar", () => {
 		expect(screen.getByRole("dialog", { name: "Add code to Agent Orchestrator" })).toBeInTheDocument();
 	});
 
+	it("rediscovers the newest ready cloud project after a desktop restart", async () => {
+		vi.spyOn(window.ao!.cloud, "isEnabled").mockReturnValue(true);
+		vi.spyOn(window.ao!.cloud, "getSession").mockResolvedValue({
+			authProvider: "google",
+			user: { id: "user-1", email: "person@example.com", displayName: "Person" },
+			organizations: [{ id: "org-1", slug: "person", displayName: "Person", role: "owner" }],
+			storedAt: new Date().toISOString(),
+		});
+		vi.spyOn(window.ao!.cloud, "listWorkspaces").mockResolvedValue({
+			workspaces: [{
+				id: "workspace-1", orgId: "org-1", repositoryUrl: "https://github.com/org/repo",
+				state: "ready", createdAt: "2026-08-22T00:00:00Z", updatedAt: "2026-08-22T00:00:00Z",
+			}],
+		});
+		vi.spyOn(window.ao!.cloud, "getWorkspace").mockResolvedValue({
+			workspace: {
+				id: "workspace-1", orgId: "org-1", repositoryUrl: "https://github.com/org/repo",
+				state: "ready", createdAt: "2026-08-22T00:00:00Z", updatedAt: "2026-08-22T00:00:00Z",
+			},
+			previewUrl: "https://cloud-workspace.example",
+		});
+
+		renderSidebar();
+
+		await waitFor(() => expect(setCloudApiBaseUrl).toHaveBeenCalledWith("https://cloud-workspace.example"));
+	});
+
 	it("suppresses focus chrome without removing keyboard focusability", () => {
 		renderSidebar();
 

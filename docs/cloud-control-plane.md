@@ -180,6 +180,31 @@ same catalog entry. Adding a completed harness integration therefore updates
 the cloud inventory and both installation paths together, without branching
 the task/session UI or consulting local installation state.
 
+### Postgres and coordinator SQLite responsibilities
+
+Postgres is the multi-tenant control-plane database; it is not a second copy of
+the AO product database. It stores users and refresh sessions, organizations
+and memberships, cloud workspace provisioning records, and the mapping from an
+AO session id to its isolated runtime. Tenant tables use Postgres row-level
+security scoped by the authenticated user and organization.
+
+Every cloud project coordinator runs the same `ao` daemon binary as desktop and
+owns an ordinary AO SQLite database inside its durable workspace. Projects,
+sessions, configuration, activity, PR state, notifications, and the other
+product-facing records continue to use the normal SQLite migrations and service
+layer. Consequently there is no Postgres/SQLite schema replication or dual
+write to keep synchronized: Postgres answers control-plane ownership and
+placement questions, while the coordinator SQLite database answers the shared
+`/api/v1` product API.
+
+Cloud images must therefore ship the coordinator from the same source revision
+as the API contract expected by the desktop. New SQLite migrations run through
+normal daemon startup, just as they do locally. Production rollout still needs
+an explicit desktop/coordinator compatibility window and durable backup or
+snapshot policy for coordinator data; copying product tables into Postgres
+would create two authorities and is intentionally not the synchronization
+strategy.
+
 Run migrations and start the service:
 
 ```bash

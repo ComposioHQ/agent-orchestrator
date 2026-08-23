@@ -108,6 +108,18 @@ paths:
   /api/cloud/v1/orgs/{orgId}/workspaces:
     parameters:
       - $ref: "#/components/parameters/OrgId"
+    get:
+      operationId: listCloudWorkspaces
+      tags: [Workspace]
+      responses:
+        "200":
+          description: Cloud workspaces visible to the authenticated organization member, newest first.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CloudWorkspaceListResponse"
+        default:
+          $ref: "#/components/responses/Error"
     post:
       operationId: createCloudWorkspace
       tags: [Workspace]
@@ -1746,6 +1758,15 @@ components:
           type: string
           format: uri
           description: One-hour signed AO connection URL. Treat as an in-memory credential.
+    CloudWorkspaceListResponse:
+      type: object
+      additionalProperties: false
+      required: [workspaces]
+      properties:
+        workspaces:
+          type: array
+          items:
+            $ref: "#/components/schemas/CloudWorkspace"
     GoogleIdentityExchange:
       type: object
       additionalProperties: false

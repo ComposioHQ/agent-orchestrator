@@ -243,6 +243,7 @@ if (typeof window !== "undefined") {
 			createWorkspace: async () => {
 				throw new Error("not configured");
 			},
+			listWorkspaces: async () => ({ workspaces: [] }),
 			getWorkspace: async () => {
 				throw new Error("not configured");
 			},

@@ -43,6 +43,17 @@ func (s *memoryWorkspaceStore) Workspace(
 	return s.workspace, nil
 }
 
+func (s *memoryWorkspaceStore) ListWorkspaces(
+	context.Context, domain.Principal, string,
+) ([]domain.Workspace, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.workspace.ID == "" {
+		return []domain.Workspace{}, nil
+	}
+	return []domain.Workspace{s.workspace}, nil
+}
+
 func (s *memoryWorkspaceStore) UpdateWorkspaceProvisioning(
 	_ context.Context, workspace domain.Workspace, state, sandboxID, failure string,
 ) error {
@@ -132,6 +143,13 @@ func TestWorkspaceProvisioningRequiresAuthAndReturnsSignedAOConnection(t *testin
 	case <-workspaceStore.updated:
 	case <-time.After(time.Second):
 		t.Fatal("workspace provisioning did not complete")
+	}
+	listRequest := httptest.NewRequest(http.MethodGet, "/api/cloud/v1/orgs/org-1/workspaces", nil)
+	listRequest.Header.Set("Authorization", "Bearer "+accessToken)
+	listResponse := httptest.NewRecorder()
+	server.Handler().ServeHTTP(listResponse, listRequest)
+	if listResponse.Code != http.StatusOK || !strings.Contains(listResponse.Body.String(), `"id":"workspace-1"`) {
+		t.Fatalf("list response = %d: %s", listResponse.Code, listResponse.Body.String())
 	}
 
 	getRequest := httptest.NewRequest(http.MethodGet, "/api/cloud/v1/orgs/org-1/workspaces/workspace-1", nil)

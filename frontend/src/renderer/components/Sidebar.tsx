@@ -219,6 +219,30 @@ export function Sidebar({
 	const [cloudWorkspaces, setCloudWorkspaces] = useState<WorkspaceSummary[]>(() =>
 		activeApiSource === "cloud" ? workspaces : [],
 	);
+	const cloudSession = useCloudSession();
+	const restoredCloudAccount = useRef<string | null>(null);
+	useEffect(() => {
+		const orgID = cloudSession.session?.organizations[0]?.id;
+		const accountKey = cloudSession.session?.user.id ?? null;
+		if (cloudSession.status !== "authenticated" || !orgID || !accountKey) return;
+		if (restoredCloudAccount.current === accountKey) return;
+		restoredCloudAccount.current = accountKey;
+		let active = true;
+		void aoBridge.cloud.listWorkspaces({ orgId: orgID }).then(async ({ workspaces: available }) => {
+			const workspace = available.find((candidate) => candidate.state === "ready");
+			if (!active || !workspace) return;
+			const response = await aoBridge.cloud.getWorkspace({ orgId: orgID, workspaceId: workspace.id });
+			if (!active || !response.previewUrl) return;
+			setCloudApiBaseUrl(response.previewUrl);
+			queryClient.clear();
+		}).catch(() => {
+			// Discovery is best-effort; explicit project creation and local projects
+			// remain usable when an existing coordinator cannot be resumed.
+		});
+		return () => {
+			active = false;
+		};
+	}, [cloudSession.session, cloudSession.status, queryClient]);
 	useEffect(() => {
 		if (workspaces.length === 0) return;
 		if (activeApiSource === "cloud") setCloudWorkspaces(workspaces);

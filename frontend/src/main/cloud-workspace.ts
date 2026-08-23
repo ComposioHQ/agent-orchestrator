@@ -1,7 +1,7 @@
 import { ipcMain } from "electron";
 import { cloudAuthConfigured, getCloudAccessToken, getCloudSession } from "./cloud-auth";
 import { readClaudeCredentials } from "./claude-credentials";
-import type { CloudWorkspaceResponse } from "../shared/cloud-workspace";
+import type { CloudWorkspaceListResponse, CloudWorkspaceResponse } from "../shared/cloud-workspace";
 
 const CLOUD_API_URL =
 	import.meta.env.VITE_AO_CLOUD_API_URL?.trim().replace(/\/+$/, "") ||
@@ -32,7 +32,24 @@ async function requestWorkspace(
 	return body;
 }
 
+async function listWorkspaces(dataDir: string, orgID: string): Promise<CloudWorkspaceListResponse> {
+	if (!cloudAuthConfigured()) throw new Error("AO Cloud is not enabled.");
+	const accessToken = await getCloudAccessToken(dataDir);
+	const response = await fetch(`${CLOUD_API_URL}/api/cloud/v1/orgs/${encodeURIComponent(orgID)}/workspaces`, {
+		headers: { Authorization: `Bearer ${accessToken}` },
+	});
+	const body = (await response.json().catch(() => null)) as
+		| (CloudWorkspaceListResponse & { message?: string })
+		| null;
+	if (!response.ok || !Array.isArray(body?.workspaces)) {
+		throw new Error(body?.message || `AO Cloud workspace request failed (${response.status}).`);
+	}
+	return body;
+}
+
 export function installCloudWorkspaceIPC(getDataDir: () => string): void {
+	ipcMain.handle("cloud:listWorkspaces", (_event, input: { orgId: string }) =>
+		listWorkspaces(getDataDir(), input.orgId));
 	ipcMain.handle(
 		"cloud:createWorkspace",
 		async (_event, input: { repositoryUrl: string; repositoryRef?: string }) => {

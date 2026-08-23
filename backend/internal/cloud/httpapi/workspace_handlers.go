@@ -30,6 +30,28 @@ type workspaceResponse struct {
 	PreviewURL string           `json:"previewUrl,omitempty"`
 }
 
+type workspaceListResponse struct {
+	Workspaces []domain.Workspace `json:"workspaces"`
+}
+
+func (s *Server) listWorkspaces(w http.ResponseWriter, r *http.Request) {
+	if s.workspaceStore == nil {
+		writeError(w, r, http.StatusServiceUnavailable, "unavailable", "CLOUD_RUNTIME_UNAVAILABLE", "cloud runtime is not configured")
+		return
+	}
+	principal, ok := principalFromContext(r.Context())
+	if !ok {
+		writeError(w, r, http.StatusUnauthorized, "unauthorized", "AUTH_REQUIRED", "valid AO access token required")
+		return
+	}
+	workspaces, err := s.workspaceStore.ListWorkspaces(r.Context(), principal, chi.URLParam(r, "orgID"))
+	if err != nil {
+		s.internalError(w, r, "list cloud workspaces", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, workspaceListResponse{Workspaces: workspaces})
+}
+
 func (s *Server) createWorkspace(w http.ResponseWriter, r *http.Request) {
 	if s.workspaces == nil {
 		writeError(w, r, http.StatusServiceUnavailable, "unavailable", "CLOUD_RUNTIME_UNAVAILABLE", "cloud runtime is not configured")

@@ -192,6 +192,7 @@ export const aoBridge: AoBridge =
 			createWorkspace: async () => {
 				throw new Error("Cloud workspaces are unavailable in browser preview mode.");
 			},
+			listWorkspaces: async () => ({ workspaces: [] }),
 			getWorkspace: async () => {
 				throw new Error("Cloud workspaces are unavailable in browser preview mode.");
 			},

@@ -14,3 +14,7 @@ export interface CloudWorkspaceResponse {
 	workspace: CloudWorkspace;
 	previewUrl?: string;
 }
+
+export interface CloudWorkspaceListResponse {
+	workspaces: CloudWorkspace[];
+}
