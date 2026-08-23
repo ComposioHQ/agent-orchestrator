@@ -35,7 +35,13 @@ import {
 	inspectInstalledBundle,
 	installedBundlePath,
 } from "./main/relocation";
-import { coerceUiSettings, readUiSettings, writeUiSettings, type UiSettings } from "./main/ui-settings";
+import {
+	DEFAULT_UI_SETTINGS,
+	coerceUiSettings,
+	readUiSettings,
+	updateUiSettings,
+	type UiSettings,
+} from "./main/ui-settings";
 import { spawn, type ChildProcess } from "node:child_process";
 import { randomBytes, randomUUID } from "node:crypto";
 import { closeSync, existsSync, openSync, readFileSync } from "node:fs";
@@ -72,12 +78,7 @@ import {
 } from "./shared/daemon-attach";
 import { browserDaemonOwnershipDecision, shouldReplacePortHolder } from "./shared/daemon-takeover";
 import { buildDaemonEnv, resolveShellEnv, type ShellRunner } from "./shared/shell-env";
-import {
-	handleCloudDeepLink,
-	installCloudIPC,
-	registerCloudProtocol,
-	showCloudSignInFailure,
-} from "./main/cloud-auth";
+import { installCloudIPC, setCloudPreferenceEnabled } from "./main/cloud-auth";
 import { DEFAULT_POSTHOG_HOST, DEFAULT_POSTHOG_PROJECT_KEY } from "./shared/posthog-config";
 import { buildTelemetryBootstrap } from "./shared/telemetry";
 import { createBrowserViewHost, type BrowserViewHost } from "./main/browser-view-host";
@@ -216,9 +217,6 @@ protocol.registerSchemesAsPrivileged([
 	},
 ]);
 
-// Register ao-app:// as the deep-link protocol for WorkOS auth callbacks.
-// Must run before app.whenReady().
-registerCloudProtocol();
 if (!app.requestSingleInstanceLock()) {
 	app.exit(0);
 }
@@ -1660,13 +1658,20 @@ ipcMain.handle("updateSettings:set", async (_event, settings: UpdateSettings) =>
 
 ipcMain.handle("uiSettings:get", async (): Promise<UiSettings> => {
 	const runFile = runFilePath();
-	if (!runFile) return { locale: "en" };
-	return readUiSettings(path.dirname(runFile));
+	if (!runFile) return { ...DEFAULT_UI_SETTINGS };
+	const settings = await readUiSettings(path.dirname(runFile));
+	setCloudPreferenceEnabled(settings.cloudEnabled);
+	return settings;
 });
-	ipcMain.handle("uiSettings:set", async (_event, settings: UiSettings): Promise<UiSettings> => {
+	ipcMain.handle("uiSettings:set", async (_event, patch: Partial<UiSettings>): Promise<UiSettings> => {
 		const runFile = runFilePath();
-	const result = !runFile ? coerceUiSettings(settings) : await writeUiSettings(path.dirname(runFile), settings);
+	const result = !runFile
+		? coerceUiSettings({ ...DEFAULT_UI_SETTINGS, ...patch })
+		: await updateUiSettings(path.dirname(runFile), patch);
 	trayController?.setLocale(result.locale);
+	// Main owns the early-access gate: cloud IPC must refuse work the moment the
+	// developer turns the toggle off, without waiting for a renderer round trip.
+	setCloudPreferenceEnabled(result.cloudEnabled);
 	return result;
 	});
 
@@ -1822,40 +1827,7 @@ function notifyRenderersOfCloudSession(account: import("./shared/cloud-account")
 
 installCloudIPC(cloudDataDir, notifyRenderersOfCloudSession);
 
-function focusCloudWindow(): void {
-	const window = BaseWindow.getAllWindows()[0];
-	if (!window) return;
-	if (window.isMinimized()) window.restore();
-	window.show();
-	window.focus();
-}
-
-async function handleCloudDeepLinkAndFocus(url: string): Promise<void> {
-	focusCloudWindow();
-	try {
-		const session = await handleCloudDeepLink(url, cloudDataDir());
-		if (!session) return;
-		notifyRenderersOfCloudSession(session);
-	} catch (error) {
-		console.error("WorkOS callback failed:", error);
-		await showCloudSignInFailure(error);
-	}
-}
-
-// macOS: the OS sends the ao-app:// URL via the open-url event when the app is
-// already running. If the app is not running, the URL is passed in process.argv
-// on first launch (handled in app.whenReady below).
-app.on("open-url", (event, url) => {
-	event.preventDefault();
-	void handleCloudDeepLinkAndFocus(url);
-});
-
-app.on("second-instance", (_event, argv) => {
-	const deepLink = argv.find((value) => value.startsWith("ao-app://"));
-	if (deepLink) {
-		void handleCloudDeepLinkAndFocus(deepLink);
-		return;
-	}
+app.on("second-instance", () => {
 	const window = BaseWindow.getAllWindows()[0];
 	if (!window) return;
 	if (window.isMinimized()) window.restore();
@@ -1980,8 +1952,13 @@ app.whenReady().then(async () => {
 
 	registerRendererProtocol();
 	applyRuntimeAppIcon();
+	const initialUiSettings = keybindingRunFile
+		? await readUiSettings(path.dirname(keybindingRunFile))
+		: DEFAULT_UI_SETTINGS;
+	// Restore the cloud early-access opt-in before any window exists, so the
+	// gate is already correct on the renderer's first availability read.
+	setCloudPreferenceEnabled(initialUiSettings.cloudEnabled);
 	if (isTrayEnabled(process.platform, app.isPackaged, app.getVersion())) {
-		const initialUiSettings = keybindingRunFile ? await readUiSettings(path.dirname(keybindingRunFile)) : { locale: "en" as const };
 		trayController = createTrayController({
 			focusWindow: focusMainWindow,
 			openSession: trayLifecycle.openSession,
@@ -1991,13 +1968,6 @@ app.whenReady().then(async () => {
 	await createWindow();
 	void startDaemon();
 	initAutoUpdates();
-
-	// Windows/Linux: on first launch, the deep-link URL may arrive as a
-	// process.argv entry (e.g. ao-app://callback?token=...).
-	const deepLinkArg = process.argv.find((a) => a.startsWith("ao-app://"));
-	if (deepLinkArg) {
-		void handleCloudDeepLinkAndFocus(deepLinkArg);
-	}
 
 	app.on("activate", () => {
 		if (BaseWindow.getAllWindows().length === 0) {

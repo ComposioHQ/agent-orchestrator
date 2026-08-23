@@ -24,10 +24,16 @@ describe("shared UI locale schema", () => {
 	});
 
 	it("normalizes persisted settings through the shared locale validator", () => {
-		expect(coerceUiSettings({ locale: "zh-CN" })).toEqual({ locale: "zh-CN" });
-		expect(coerceUiSettings({ locale: "ja" })).toEqual({ locale: "ja" });
-		expect(coerceUiSettings({ locale: "pt-BR" })).toEqual({ locale: "pt-BR" });
+		expect(coerceUiSettings({ locale: "zh-CN" })).toEqual({ locale: "zh-CN", cloudEnabled: false });
+		expect(coerceUiSettings({ locale: "ja" })).toEqual({ locale: "ja", cloudEnabled: false });
+		expect(coerceUiSettings({ locale: "pt-BR" })).toEqual({ locale: "pt-BR", cloudEnabled: false });
 		expect(coerceUiSettings({ locale: "pt" })).toEqual(DEFAULT_UI_SETTINGS);
 		expect(coerceUiSettings(null)).toEqual(DEFAULT_UI_SETTINGS);
+	});
+
+	it("keeps the cloud early-access opt-in strictly boolean", () => {
+		expect(coerceUiSettings({ locale: "en", cloudEnabled: true }).cloudEnabled).toBe(true);
+		expect(coerceUiSettings({ locale: "en", cloudEnabled: "true" }).cloudEnabled).toBe(false);
+		expect(coerceUiSettings({ locale: "en" }).cloudEnabled).toBe(false);
 	});
 });

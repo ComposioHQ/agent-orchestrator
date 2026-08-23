@@ -116,11 +116,14 @@ describe("preload keybinding recording bridge", () => {
 
 describe("preload uiSettings bridge", () => {
 	it("invokes get and set over IPC", async () => {
-		electronMocks.invoke.mockResolvedValueOnce({ locale: "en" });
-		electronMocks.invoke.mockResolvedValueOnce({ locale: "zh-CN" });
+		electronMocks.invoke.mockResolvedValueOnce({ locale: "en", cloudEnabled: false });
+		electronMocks.invoke.mockResolvedValueOnce({ locale: "zh-CN", cloudEnabled: false });
 
-		await expect(exposedBridge().uiSettings.get()).resolves.toEqual({ locale: "en" });
-		await expect(exposedBridge().uiSettings.set({ locale: "zh-CN" })).resolves.toEqual({ locale: "zh-CN" });
+		await expect(exposedBridge().uiSettings.get()).resolves.toEqual({ locale: "en", cloudEnabled: false });
+		await expect(exposedBridge().uiSettings.set({ locale: "zh-CN" })).resolves.toEqual({
+			locale: "zh-CN",
+			cloudEnabled: false,
+		});
 
 		expect(electronMocks.invoke).toHaveBeenNthCalledWith(1, "uiSettings:get");
 		expect(electronMocks.invoke).toHaveBeenNthCalledWith(2, "uiSettings:set", { locale: "zh-CN" });

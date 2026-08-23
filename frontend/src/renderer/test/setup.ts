@@ -209,9 +209,10 @@ if (typeof window !== "undefined") {
 			set: async () => undefined,
 		},
 		uiSettings: {
-			get: async () => ({ locale: "en" as const }),
-			set: async (settings: { locale: string }) => ({
-				locale: settings.locale as "en",
+			get: async () => ({ locale: "en" as const, cloudEnabled: false }),
+			set: async (patch: { locale?: string; cloudEnabled?: boolean }) => ({
+				locale: (patch.locale ?? "en") as "en",
+				cloudEnabled: patch.cloudEnabled ?? false,
 			}),
 		},
 		keybindings: {
@@ -233,8 +234,12 @@ if (typeof window !== "undefined") {
 			getActive: async () => null,
 		},
 		cloud: {
+			getAvailability: async () => ({ available: false, enabled: false, apiBaseUrl: "" }),
 			getSession: async () => null,
-			signIn: async () => undefined,
+			getAccessToken: async () => {
+				throw new Error("AO Cloud is unavailable in tests unless stubbed.");
+			},
+			signIn: async () => null,
 			signOut: async () => undefined,
 			onSessionChanged: () => () => undefined,
 		},

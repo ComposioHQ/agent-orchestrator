@@ -53,3 +53,16 @@ export async function readUiSettings(stateDir: string): Promise<UiSettings> {
 export async function writeUiSettings(stateDir: string, settings: UiSettings): Promise<UiSettings> {
 	return runSettingsOperation(() => writeUiSettingsUnlocked(stateDir, settings));
 }
+
+/**
+ * Merge a partial update into the persisted settings inside the same serialized
+ * operation. Separate renderer stores own separate fields (locale, cloud
+ * early-access), so a read-modify-write from one must never clobber the other's
+ * concurrent change.
+ */
+export async function updateUiSettings(stateDir: string, patch: Partial<UiSettings>): Promise<UiSettings> {
+	return runSettingsOperation(async () => {
+		const current = await readUiSettingsUnlocked(stateDir);
+		return writeUiSettingsUnlocked(stateDir, { ...current, ...patch });
+	});
+}

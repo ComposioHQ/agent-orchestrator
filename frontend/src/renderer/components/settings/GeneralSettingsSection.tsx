@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import { useTranslation } from "react-i18next";
 import type { ThemePreference, ThemeStyle } from "../../lib/theme";
 import type { AppLocale } from "../../i18n";
@@ -9,6 +10,7 @@ import { SettingsSection } from "./SettingsSection";
 import { cn } from "../../lib/utils";
 import { Switch } from "../ui/switch";
 import { useSettings, useUpdateSessionInterface } from "../../hooks/useSettings";
+import { useCloudSettingsStore } from "../../stores/cloud-settings-store";
 import type { SessionMode } from "../../types/workspace";
 
 /**
@@ -62,6 +64,51 @@ function SessionInterfaceRow() {
 				)}
 			>
 				{note}
+			</p>
+		</div>
+	);
+}
+
+/**
+ * Early-access switch for AO Cloud, the single gate for every cloud surface:
+ * the sidebar account row, cloud projects in the sidebar and board, and cloud
+ * session transport. It lives under Developer Mode and is hidden outright on a
+ * build with no control plane configured, so it never offers a dead switch.
+ */
+function CloudEarlyAccessRow() {
+	const { t } = useTranslation();
+	const availability = useCloudSettingsStore((state) => state.availability);
+	const loaded = useCloudSettingsStore((state) => state.loaded);
+	const saving = useCloudSettingsStore((state) => state.saving);
+	const saveError = useCloudSettingsStore((state) => state.saveError);
+	const load = useCloudSettingsStore((state) => state.load);
+	const setEnabled = useCloudSettingsStore((state) => state.setEnabled);
+
+	useEffect(() => {
+		void load();
+	}, [load]);
+
+	if (!loaded || !availability.available) return null;
+
+	return (
+		<div className="flex w-full flex-col">
+			<SettingsRow className="rounded-none" label={t("settings.cloudEarlyAccess")}>
+				<Switch
+					aria-label={t("settings.cloudEarlyAccess")}
+					checked={availability.enabled}
+					disabled={saving}
+					onCheckedChange={(next) => {
+						void setEnabled(next);
+					}}
+				/>
+			</SettingsRow>
+			<p
+				className={cn(
+					"px-3 pt-0 pb-4 text-xs leading-relaxed",
+					saveError ? "text-destructive" : "text-muted-foreground",
+				)}
+			>
+				{saveError ? t("settings.cloudEarlyAccess.saveFailed") : t("settings.cloudEarlyAccess.help")}
 			</p>
 		</div>
 	);
@@ -160,6 +207,7 @@ export function GeneralSettingsSection({
 					onCheckedChange={setDeveloperMode}
 				/>
 			</SettingsRow>
+			{developerMode ? <CloudEarlyAccessRow /> : null}
 			<SettingsLinkRow label={t("settings.connectMobile")} onClick={onConnectMobile} />
 		</SettingsSection>
 	);
