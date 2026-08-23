@@ -107,6 +107,100 @@ func TestRouteClassificationIsComplete(t *testing.T) {
 	}
 }
 
+// TestStreamRoutesBypassTheRequestTimeout checks the transport column against
+// the router's own structure instead of trusting the table.
+//
+// API.Register puts bounded REST routes inside a Group carrying the
+// per-request Timeout middleware and registers the long-lived streams outside
+// it. chi.Walk hands back each route's accumulated middleware chain, so the
+// two tiers are distinguishable at runtime: a route inside the bounded group
+// carries strictly more middleware than one outside it. A stream that drifted
+// into the bounded group would be severed mid-connection at the timeout, and a
+// bounded route that drifted out would lose its deadline — this catches both
+// without hard-coding a middleware count.
+func TestStreamRoutesBypassTheRequestTimeout(t *testing.T) {
+	depth := map[RouteKey]int{}
+	err := chi.Walk(fullyWiredRouter(t), func(method, route string, _ http.Handler, middlewares ...func(http.Handler) http.Handler) error {
+		depth[RouteKey{Method: strings.ToUpper(method), Pattern: route}] = len(middlewares)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walk routes: %v", err)
+	}
+
+	tiers := map[int]bool{}
+	for _, n := range depth {
+		tiers[n] = true
+	}
+	if len(tiers) != 2 {
+		t.Fatalf("expected exactly two middleware tiers (bounded group vs outside it), got %d: %v", len(tiers), tiers)
+	}
+	bounded := 0
+	for n := range tiers {
+		if n > bounded {
+			bounded = n
+		}
+	}
+
+	for key, class := range routeClasses {
+		inBoundedGroup := depth[key] == bounded
+		switch {
+		case class.Stream() && inBoundedGroup:
+			t.Errorf("%s %s is declared a stream but is registered under the request timeout; "+
+				"it would be cut off mid-connection", key.Method, key.Pattern)
+		case !class.Stream() && !inBoundedGroup && strings.HasPrefix(key.Pattern, "/api/v1/") &&
+			key.Pattern != "/api/v1/openapi.yaml" && !strings.HasPrefix(key.Pattern, "/api/v1/mobile"):
+			t.Errorf("%s %s is declared bounded but is registered outside the request timeout; "+
+				"either give it a deadline or classify it as a stream", key.Method, key.Pattern)
+		}
+	}
+}
+
+// CloudStreamRoutes is what the deploy has to configure long idle reads for,
+// so it must list every hosted stream and nothing that is not one.
+func TestCloudStreamRoutesListsHostedStreamsOnly(t *testing.T) {
+	got := map[RouteKey]bool{}
+	for _, key := range CloudStreamRoutes() {
+		got[key] = true
+	}
+	want := map[RouteKey]bool{
+		{Method: http.MethodGet, Pattern: "/api/v1/events"}:               true,
+		{Method: http.MethodGet, Pattern: "/api/v1/notifications/stream"}: true,
+	}
+	for key := range want {
+		if !got[key] {
+			t.Errorf("CloudStreamRoutes omits %s %s", key.Method, key.Pattern)
+		}
+	}
+	for key := range got {
+		if !want[key] {
+			t.Errorf("CloudStreamRoutes includes unexpected %s %s — if this is a new hosted stream, "+
+				"the deploy's idle-timeout and buffering settings need it too", key.Method, key.Pattern)
+		}
+	}
+}
+
+// The terminal multiplex is long-lived AND local-only: hosted panes ride the
+// compute plane's own published listener, so /mux must never appear in the
+// hosted stream list.
+func TestTerminalMuxIsAStreamAndNeverHosted(t *testing.T) {
+	class, ok := ClassifyRoute(http.MethodGet, "/mux")
+	if !ok {
+		t.Fatal("/mux is not classified")
+	}
+	if !class.Stream() {
+		t.Error("/mux must be classified as a stream: it is the long-lived terminal transport")
+	}
+	if class.Scope != ScopeLocalOnly {
+		t.Errorf("/mux scope = %q, want local-only", class.Scope)
+	}
+	for _, key := range CloudStreamRoutes() {
+		if key.Pattern == "/mux" {
+			t.Error("/mux appears in the hosted stream list")
+		}
+	}
+}
+
 // A local-only entry without a reason is unreviewable: the next reader cannot
 // tell whether a port has since made the route hostable.
 func TestLocalOnlyRoutesCarryAReason(t *testing.T) {
@@ -218,8 +312,12 @@ func TestCloudScopeGuardLeavesUnmatchedPathsAlone(t *testing.T) {
 	}
 }
 
-// The daemon-process routes are never registered on the cloud mount in the
-// first place, so they 404 as unknown paths rather than as refusals.
+// TestCloudHandlerOmitsDaemonProcessRoutes covers the exclusions by name:
+// daemon control, the loopback CLI telemetry intake, the terminal multiplex,
+// and the whole Connect Mobile control surface including the device roster.
+// These are never registered on the cloud mount in the first place, so they
+// 404 as unknown paths rather than as scope refusals — excluded twice over,
+// since each is also classified local-only.
 func TestCloudHandlerOmitsDaemonProcessRoutes(t *testing.T) {
 	handler := NewCloudAPIHandler(config.Config{}, discardLogger(), APIDeps{})
 	for _, probe := range []struct {
@@ -231,13 +329,53 @@ func TestCloudHandlerOmitsDaemonProcessRoutes(t *testing.T) {
 		{http.MethodPost, "/shutdown"},
 		{http.MethodGet, "/mux"},
 		{http.MethodPost, "/internal/telemetry/cli-invoked"},
+		{http.MethodPost, "/internal/telemetry/cli-usage-error"},
 		{http.MethodGet, "/api/v1/mobile/status"},
+		{http.MethodPost, "/api/v1/mobile/enable"},
+		{http.MethodPost, "/api/v1/mobile/disable"},
+		{http.MethodPost, "/api/v1/mobile/regenerate"},
+		{http.MethodPost, "/api/v1/mobile/secure-pairing"},
+		{http.MethodGet, "/api/v1/mobile/devices"},
+		{http.MethodPatch, "/api/v1/mobile/devices/probe-id"},
+		{http.MethodDelete, "/api/v1/mobile/devices/probe-id"},
 	} {
 		rec := httptest.NewRecorder()
 		handler.ServeHTTP(rec, httptest.NewRequest(probe.method, probe.path, nil))
 		if rec.Code != http.StatusNotFound {
 			t.Errorf("%s %s = %d, want 404", probe.method, probe.path, rec.Code)
 		}
+	}
+}
+
+// The same exclusions stated as a classification invariant, so a future edit
+// cannot quietly promote one of them to the hosted surface by flipping a
+// table entry — the routes above would still 404, but the intent would have
+// silently changed.
+func TestExcludedSurfacesAreClassifiedLocalOnly(t *testing.T) {
+	for _, key := range []RouteKey{
+		{Method: http.MethodPost, Pattern: "/shutdown"},
+		{Method: http.MethodPost, Pattern: "/internal/telemetry/cli-invoked"},
+		{Method: http.MethodPost, Pattern: "/internal/telemetry/cli-usage-error"},
+		{Method: http.MethodGet, Pattern: "/mux"},
+	} {
+		assertLocalOnly(t, key)
+	}
+	for key := range routeClasses {
+		if strings.HasPrefix(key.Pattern, "/api/v1/mobile") || strings.HasPrefix(key.Pattern, "/api/v1/push") {
+			assertLocalOnly(t, key)
+		}
+	}
+}
+
+func assertLocalOnly(t *testing.T, key RouteKey) {
+	t.Helper()
+	class, ok := ClassifyRoute(key.Method, key.Pattern)
+	if !ok {
+		t.Errorf("%s %s is not classified", key.Method, key.Pattern)
+		return
+	}
+	if class.Scope != ScopeLocalOnly {
+		t.Errorf("%s %s scope = %q, want local-only", key.Method, key.Pattern, class.Scope)
 	}
 }
 
