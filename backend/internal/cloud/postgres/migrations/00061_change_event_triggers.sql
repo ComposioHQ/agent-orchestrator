@@ -9,6 +9,30 @@
 -- +goose StatementBegin
 DO $$
 BEGIN
+    IF to_regclass('public.ao_projects') IS NOT NULL THEN
+        CREATE TRIGGER ao_projects_change_created
+        AFTER INSERT ON ao_projects
+        FOR EACH ROW EXECUTE FUNCTION ao_capture_change_event(
+            'project_created', 'id', '', 'identity');
+        CREATE TRIGGER ao_projects_change_updated
+        AFTER UPDATE ON ao_projects
+        FOR EACH ROW WHEN (OLD IS DISTINCT FROM NEW)
+        EXECUTE FUNCTION ao_capture_change_event(
+            'project_updated', 'id', '', 'identity');
+    END IF;
+
+    IF to_regclass('public.ao_workspace_repos') IS NOT NULL THEN
+        CREATE TRIGGER ao_workspace_repos_change_inserted
+        AFTER INSERT ON ao_workspace_repos
+        FOR EACH ROW EXECUTE FUNCTION ao_capture_change_event(
+            'project_updated', 'project_id', '', 'identity');
+        CREATE TRIGGER ao_workspace_repos_change_updated
+        AFTER UPDATE ON ao_workspace_repos
+        FOR EACH ROW WHEN (OLD IS DISTINCT FROM NEW)
+        EXECUTE FUNCTION ao_capture_change_event(
+            'project_updated', 'project_id', '', 'identity');
+    END IF;
+
     IF to_regclass('public.ao_sessions') IS NOT NULL THEN
         CREATE TRIGGER ao_sessions_change_created
         AFTER INSERT ON ao_sessions
@@ -39,6 +63,25 @@ BEGIN
         )
         EXECUTE FUNCTION ao_capture_change_event(
             'session_updated', 'project_id', 'id', 'session');
+    END IF;
+
+    IF to_regclass('public.ao_conversations') IS NOT NULL THEN
+        CREATE TRIGGER ao_conversations_change_inserted
+        AFTER INSERT ON ao_conversations
+        FOR EACH ROW EXECUTE FUNCTION ao_capture_change_event(
+            'session_updated', 'project_id', 'session_id', 'identity');
+        CREATE TRIGGER ao_conversations_change_updated
+        AFTER UPDATE ON ao_conversations
+        FOR EACH ROW WHEN (OLD IS DISTINCT FROM NEW)
+        EXECUTE FUNCTION ao_capture_change_event(
+            'session_updated', 'project_id', 'session_id', 'identity');
+    END IF;
+
+    IF to_regclass('public.ao_conversation_provider_events') IS NOT NULL THEN
+        CREATE TRIGGER ao_conversation_provider_events_change_inserted
+        AFTER INSERT ON ao_conversation_provider_events
+        FOR EACH ROW EXECUTE FUNCTION ao_capture_change_event(
+            'session_updated', '@conversation', '', 'identity');
     END IF;
 
     IF to_regclass('public.ao_pull_requests') IS NOT NULL THEN
@@ -93,6 +136,30 @@ BEGIN
             'pr_review_thread_resolved', '@pull_request', '', 'review_thread');
     END IF;
 
+    IF to_regclass('public.ao_pull_request_comments') IS NOT NULL THEN
+        CREATE TRIGGER ao_pull_request_comments_change_inserted
+        AFTER INSERT ON ao_pull_request_comments
+        FOR EACH ROW EXECUTE FUNCTION ao_capture_change_event(
+            'pr_comment_recorded', '@pull_request', '', 'comment');
+        CREATE TRIGGER ao_pull_request_comments_change_updated
+        AFTER UPDATE ON ao_pull_request_comments
+        FOR EACH ROW WHEN (OLD IS DISTINCT FROM NEW)
+        EXECUTE FUNCTION ao_capture_change_event(
+            'pr_comment_recorded', '@pull_request', '', 'comment');
+    END IF;
+
+    IF to_regclass('public.ao_pull_request_reviews') IS NOT NULL THEN
+        CREATE TRIGGER ao_pull_request_reviews_change_inserted
+        AFTER INSERT ON ao_pull_request_reviews
+        FOR EACH ROW EXECUTE FUNCTION ao_capture_change_event(
+            'pr_review_recorded', '@pull_request', '', 'review');
+        CREATE TRIGGER ao_pull_request_reviews_change_updated
+        AFTER UPDATE ON ao_pull_request_reviews
+        FOR EACH ROW WHEN (OLD IS DISTINCT FROM NEW)
+        EXECUTE FUNCTION ao_capture_change_event(
+            'pr_review_recorded', '@pull_request', '', 'review');
+    END IF;
+
     IF to_regclass('public.ao_notifications') IS NOT NULL THEN
         CREATE TRIGGER ao_notifications_change_created
         AFTER INSERT ON ao_notifications
@@ -114,6 +181,14 @@ $$;
 -- +goose StatementBegin
 DO $$
 BEGIN
+    IF to_regclass('public.ao_pull_request_reviews') IS NOT NULL THEN
+        DROP TRIGGER IF EXISTS ao_pull_request_reviews_change_updated ON ao_pull_request_reviews;
+        DROP TRIGGER IF EXISTS ao_pull_request_reviews_change_inserted ON ao_pull_request_reviews;
+    END IF;
+    IF to_regclass('public.ao_pull_request_comments') IS NOT NULL THEN
+        DROP TRIGGER IF EXISTS ao_pull_request_comments_change_updated ON ao_pull_request_comments;
+        DROP TRIGGER IF EXISTS ao_pull_request_comments_change_inserted ON ao_pull_request_comments;
+    END IF;
     IF to_regclass('public.ao_notifications') IS NOT NULL THEN
         DROP TRIGGER IF EXISTS ao_notifications_change_resolved ON ao_notifications;
         DROP TRIGGER IF EXISTS ao_notifications_change_created ON ao_notifications;
@@ -134,6 +209,21 @@ BEGIN
     IF to_regclass('public.ao_sessions') IS NOT NULL THEN
         DROP TRIGGER IF EXISTS ao_sessions_change_updated ON ao_sessions;
         DROP TRIGGER IF EXISTS ao_sessions_change_created ON ao_sessions;
+    END IF;
+    IF to_regclass('public.ao_conversation_provider_events') IS NOT NULL THEN
+        DROP TRIGGER IF EXISTS ao_conversation_provider_events_change_inserted ON ao_conversation_provider_events;
+    END IF;
+    IF to_regclass('public.ao_conversations') IS NOT NULL THEN
+        DROP TRIGGER IF EXISTS ao_conversations_change_updated ON ao_conversations;
+        DROP TRIGGER IF EXISTS ao_conversations_change_inserted ON ao_conversations;
+    END IF;
+    IF to_regclass('public.ao_workspace_repos') IS NOT NULL THEN
+        DROP TRIGGER IF EXISTS ao_workspace_repos_change_updated ON ao_workspace_repos;
+        DROP TRIGGER IF EXISTS ao_workspace_repos_change_inserted ON ao_workspace_repos;
+    END IF;
+    IF to_regclass('public.ao_projects') IS NOT NULL THEN
+        DROP TRIGGER IF EXISTS ao_projects_change_updated ON ao_projects;
+        DROP TRIGGER IF EXISTS ao_projects_change_created ON ao_projects;
     END IF;
 END
 $$;

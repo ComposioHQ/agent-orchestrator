@@ -119,6 +119,7 @@ BEGIN
         WHEN TG_ARGV[1] = '' THEN tenant_org_id::TEXT
         WHEN TG_ARGV[1] = '@session' THEN NULL
         WHEN TG_ARGV[1] = '@pull_request' THEN NULL
+        WHEN TG_ARGV[1] = '@conversation' THEN NULL
         ELSE COALESCE(NULLIF(record_data ->> TG_ARGV[1], ''), tenant_org_id::TEXT)
     END;
 
@@ -139,6 +140,13 @@ BEGIN
         WHERE p.org_id = tenant_org_id
           AND p.owner_user_id = tenant_owner_user_id
           AND p.url = record_data ->> 'pr_url';
+    ELSIF TG_ARGV[1] = '@conversation' THEN
+        SELECT c.project_id, c.session_id
+        INTO event_project_id, event_session_id
+        FROM public.ao_conversations c
+        WHERE c.org_id = tenant_org_id
+          AND c.owner_user_id = tenant_owner_user_id
+          AND c.id = record_data ->> 'conversation_id';
     END IF;
     IF event_project_id IS NULL OR btrim(event_project_id) = '' THEN
         RAISE EXCEPTION 'ao_capture_change_event could not resolve project for %.%', TG_TABLE_SCHEMA, TG_TABLE_NAME;
@@ -209,6 +217,20 @@ BEGIN
             'line', record_data -> 'line',
             'resolved', record_data -> 'resolved',
             'isBot', record_data -> 'is_bot'
+        );
+    WHEN 'comment' THEN
+        event_payload := jsonb_build_object(
+            'pr', record_data -> 'pr_url',
+            'comment', record_data -> 'comment_id',
+            'thread', record_data -> 'thread_id',
+            'resolved', record_data -> 'resolved'
+        );
+    WHEN 'review' THEN
+        event_payload := jsonb_build_object(
+            'pr', record_data -> 'pr_url',
+            'review', record_data -> 'review_id',
+            'state', record_data -> 'state',
+            'targetSha', record_data -> 'target_sha'
         );
     ELSE
         RAISE EXCEPTION 'unsupported ao_capture_change_event payload mode %', TG_ARGV[3];

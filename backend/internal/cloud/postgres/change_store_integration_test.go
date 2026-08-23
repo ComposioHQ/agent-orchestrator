@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net/url"
 	"os"
 	"strings"
 	"testing"
@@ -44,13 +45,12 @@ func TestChangeDeliveryAgainstPostgres(t *testing.T) {
 	alice := createChangeTestTenant(t, ctx, runtimeStore, "alice")
 	bob := createChangeTestTenant(t, ctx, runtimeStore, "bob")
 
-	// The migration owner is used for this adapter test until the integration
-	// branch's canonical runtime table registry grants the new 00060 tables.
-	// FORCE RLS still applies, so all reads and writes exercise tenant policies.
-	writer := newChangeTestStore(t, ctx, migrationURL, "ao-cdc-writer")
-	hubOneStore := newChangeTestStore(t, ctx, migrationURL, "ao-cdc-hub-one")
-	hubTwoStore := newChangeTestStore(t, ctx, migrationURL, "ao-cdc-hub-two")
-	createChangeTriggerFixtures(t, ctx, writer.pool)
+	admin := newChangeTestStore(t, ctx, migrationURL, "ao-cdc-migration-owner")
+	createChangeTriggerFixtures(t, ctx, admin.pool)
+	grantChangeTestRuntimeAccess(t, ctx, admin.pool, runtimeRole)
+	writer := openChangeRuntimeStore(t, ctx, runtimeURL, "ao-cdc-writer")
+	hubOneStore := openChangeRuntimeStore(t, ctx, runtimeURL, "ao-cdc-hub-one")
+	hubTwoStore := openChangeRuntimeStore(t, ctx, runtimeURL, "ao-cdc-hub-two")
 	requireProductionChangeTriggers(t, ctx, writer.pool)
 	aliceCtx := tenant.WithIdentity(ctx, alice)
 	bobCtx := tenant.WithIdentity(ctx, bob)
@@ -68,9 +68,18 @@ func TestChangeDeliveryAgainstPostgres(t *testing.T) {
 		statements := []string{
 			`INSERT INTO ao_projects (org_id, id, owner_user_id, path, registered_at)
 			 VALUES ($1, 'product-project', $2, '/tmp/product-project', $3)`,
+			`INSERT INTO ao_workspace_repos (org_id, owner_user_id, project_id, name, registered_at)
+			 VALUES ($1, $2, 'product-project', 'main', $3)`,
 			`INSERT INTO ao_sessions (
 				org_id, id, project_id, owner_user_id, num, activity_last_at, created_at, updated_at
 			 ) VALUES ($1, 'product-session', 'product-project', $2, 1, $3, $3, $3)`,
+			`INSERT INTO ao_conversations (
+				org_id, owner_user_id, id, scope, project_id, session_id, state, created_at, updated_at
+			 ) VALUES ($1, $2, 'conversation-1', 'session', 'product-project', 'product-session',
+			           '{}'::jsonb, $3, $3)`,
+			`INSERT INTO ao_conversation_provider_events (
+				org_id, owner_user_id, conversation_id, provider_event_id, observed_at
+			 ) VALUES ($1, $2, 'conversation-1', 'provider-event-1', $3)`,
 			`INSERT INTO ao_pull_requests (org_id, owner_user_id, url, session_id, updated_at)
 			 VALUES ($1, $2, 'https://example.test/pr/1', 'product-session', $3)`,
 			`INSERT INTO ao_pull_request_checks (
@@ -79,6 +88,12 @@ func TestChangeDeliveryAgainstPostgres(t *testing.T) {
 			`INSERT INTO ao_pull_request_review_threads (
 				org_id, owner_user_id, pr_url, thread_id, resolved, updated_at
 			 ) VALUES ($1, $2, 'https://example.test/pr/1', 'thread-1', false, $3)`,
+			`INSERT INTO ao_pull_request_comments (
+				org_id, owner_user_id, pr_url, comment_id, created_at
+			 ) VALUES ($1, $2, 'https://example.test/pr/1', 'comment-1', $3)`,
+			`INSERT INTO ao_pull_request_reviews (
+				org_id, owner_user_id, pr_url, review_id, state, submitted_at
+			 ) VALUES ($1, $2, 'https://example.test/pr/1', 'review-1', 'approved', $3)`,
 			`INSERT INTO ao_notifications (
 				org_id, owner_user_id, id, session_id, project_id, type, title, created_at
 			 ) VALUES ($1, $2, 'notification-1', 'product-session', 'product-project',
@@ -98,10 +113,13 @@ func TestChangeDeliveryAgainstPostgres(t *testing.T) {
 			t.Fatal(err)
 		}
 		wantTypes := map[ports.ChangeEventType]bool{
+			ports.ChangeEventProjectCreated:      false,
 			ports.ChangeEventSessionCreated:      false,
 			ports.ChangeEventPRCreated:           false,
 			ports.ChangeEventPRCheckRecorded:     false,
 			ports.ChangeEventPRReviewThreadAdded: false,
+			ports.ChangeEventPRCommentRecorded:   false,
+			ports.ChangeEventPRReviewRecorded:    false,
 			ports.ChangeEventNotificationCreated: false,
 		}
 		for _, event := range events {
@@ -359,8 +377,14 @@ func productChangeTablesPresent(t *testing.T, ctx context.Context, pool *pgxpool
 	var present bool
 	if err := pool.QueryRow(ctx, `
 		SELECT to_regclass('public.ao_sessions') IS NOT NULL
+		   AND to_regclass('public.ao_projects') IS NOT NULL
+		   AND to_regclass('public.ao_workspace_repos') IS NOT NULL
+		   AND to_regclass('public.ao_conversations') IS NOT NULL
+		   AND to_regclass('public.ao_conversation_provider_events') IS NOT NULL
 		   AND to_regclass('public.ao_pull_requests') IS NOT NULL
 		   AND to_regclass('public.ao_pull_request_checks') IS NOT NULL
+		   AND to_regclass('public.ao_pull_request_comments') IS NOT NULL
+		   AND to_regclass('public.ao_pull_request_reviews') IS NOT NULL
 		   AND to_regclass('public.ao_pull_request_review_threads') IS NOT NULL
 		   AND to_regclass('public.ao_notifications') IS NOT NULL
 	`).Scan(&present); err != nil {
@@ -375,10 +399,16 @@ func requireProductionChangeTriggers(t *testing.T, ctx context.Context, pool *pg
 		table    string
 		triggers []string
 	}{
+		{"ao_projects", []string{"ao_projects_change_created", "ao_projects_change_updated"}},
+		{"ao_workspace_repos", []string{"ao_workspace_repos_change_inserted", "ao_workspace_repos_change_updated"}},
 		{"ao_sessions", []string{"ao_sessions_change_created", "ao_sessions_change_updated"}},
+		{"ao_conversations", []string{"ao_conversations_change_inserted", "ao_conversations_change_updated"}},
+		{"ao_conversation_provider_events", []string{"ao_conversation_provider_events_change_inserted"}},
 		{"ao_pull_requests", []string{"ao_pull_requests_change_created", "ao_pull_requests_change_updated", "ao_pull_requests_change_session"}},
 		{"ao_pull_request_checks", []string{"ao_pull_request_checks_change_inserted", "ao_pull_request_checks_change_updated"}},
 		{"ao_pull_request_review_threads", []string{"ao_pull_request_review_threads_change_added", "ao_pull_request_review_threads_change_resolved"}},
+		{"ao_pull_request_comments", []string{"ao_pull_request_comments_change_inserted", "ao_pull_request_comments_change_updated"}},
+		{"ao_pull_request_reviews", []string{"ao_pull_request_reviews_change_inserted", "ao_pull_request_reviews_change_updated"}},
 		{"ao_notifications", []string{"ao_notifications_change_created", "ao_notifications_change_resolved"}},
 	}
 	for _, want := range wants {
@@ -536,6 +566,45 @@ func newChangeTestStore(t *testing.T, ctx context.Context, databaseURL, applicat
 	}
 	t.Cleanup(pool.Close)
 	return &Store{pool: pool}
+}
+
+func openChangeRuntimeStore(t *testing.T, ctx context.Context, databaseURL, applicationName string) *Store {
+	t.Helper()
+	parsed, err := url.Parse(databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	query := parsed.Query()
+	query.Set("application_name", applicationName)
+	parsed.RawQuery = query.Encode()
+	store, err := Open(ctx, parsed.String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(store.Close)
+	return store
+}
+
+func grantChangeTestRuntimeAccess(
+	t *testing.T,
+	ctx context.Context,
+	pool *pgxpool.Pool,
+	runtimeRole string,
+) {
+	t.Helper()
+	role := pgx.Identifier{runtimeRole}.Sanitize()
+	statements := []string{
+		"GRANT SELECT, INSERT, UPDATE ON ao_change_heads TO " + role,
+		"GRANT SELECT, INSERT ON ao_change_log TO " + role,
+		"GRANT SELECT, INSERT, UPDATE ON ao_change_cursors TO " + role,
+		"GRANT SELECT, INSERT, UPDATE ON ao_change_event_test_facts TO " + role,
+		"GRANT SELECT, INSERT, UPDATE ON ao_change_event_test_notifications TO " + role,
+	}
+	for _, statement := range statements {
+		if _, err := pool.Exec(ctx, statement); err != nil {
+			t.Fatal(err)
+		}
+	}
 }
 
 func beginChangeTestTx(t *testing.T, ctx context.Context, store *Store, identity tenant.Identity) pgx.Tx {
