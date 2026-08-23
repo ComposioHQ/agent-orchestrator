@@ -31,15 +31,22 @@ var allowedCloneSchemes = map[string]struct{}{
 // The checkout is staged in a unique sibling directory so a failed or cancelled
 // clone can never leave a half-populated destination behind.
 func (m *Service) Clone(ctx context.Context, in CloneInput) (Project, error) {
-	provisioned, err := m.provisioner.Clone(ctx, ports.ProjectCloneRequest{
-		RemoteURL:         in.RemoteURL,
-		DestinationParent: in.DestinationParent,
-		ProjectID:         in.ProjectID,
-		Name:              in.Name,
-		Config:            in.Config,
+	provisioned, err := m.provisioner.Provision(ctx, ports.ProjectProvisionRequest{
+		IdempotencyKey: provisionIdempotencyKey(ports.ProjectProvisionClone, in.RemoteURL, stringValue(in.ProjectID)),
+		Operation:      ports.ProjectProvisionClone,
+		Clone: &ports.ProjectCloneRequest{
+			RemoteURL:         in.RemoteURL,
+			DestinationParent: in.DestinationParent,
+			ProjectID:         in.ProjectID,
+			Name:              in.Name,
+			Config:            in.Config,
+		},
 	})
 	if err != nil {
 		return Project{}, err
+	}
+	if provisioned.State != ports.ProjectProvisionFinalized {
+		return Project{}, apierr.Internal("PROJECT_PROVISION_INCOMPLETE", "Project provisioning did not complete")
 	}
 	return m.projectFromProvision(ctx, provisioned), nil
 }

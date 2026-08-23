@@ -2,6 +2,8 @@ package project
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"io/fs"
 	"os"
@@ -163,17 +165,45 @@ func (m *Service) Get(ctx context.Context, id domain.ProjectID) (GetResult, erro
 
 // Add materializes and registers a project through the configured provisioner.
 func (m *Service) Add(ctx context.Context, in AddInput) (Project, error) {
-	provisioned, err := m.provisioner.Add(ctx, ports.ProjectAddRequest{
-		Path:        in.Path,
-		ProjectID:   in.ProjectID,
-		Name:        in.Name,
-		Config:      in.Config,
-		AsWorkspace: in.AsWorkspace,
+	provisioned, err := m.provisioner.Provision(ctx, ports.ProjectProvisionRequest{
+		IdempotencyKey: provisionIdempotencyKey(ports.ProjectProvisionAdd, in.Path, stringValue(in.ProjectID), strconv.FormatBool(in.AsWorkspace)),
+		Operation:      ports.ProjectProvisionAdd,
+		Add: &ports.ProjectAddRequest{
+			Path:        in.Path,
+			ProjectID:   in.ProjectID,
+			Name:        in.Name,
+			Config:      in.Config,
+			AsWorkspace: in.AsWorkspace,
+		},
 	})
 	if err != nil {
 		return Project{}, err
 	}
+	if provisioned.State != ports.ProjectProvisionFinalized {
+		return Project{}, apierr.Internal("PROJECT_PROVISION_INCOMPLETE", "Project provisioning did not complete")
+	}
 	return m.projectFromProvision(ctx, provisioned), nil
+}
+
+func provisionIdempotencyKey(operation ports.ProjectProvisionOperation, parts ...string) string {
+	var material strings.Builder
+	material.WriteString(string(operation))
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		material.WriteByte(0)
+		material.WriteString(strconv.Itoa(len(part)))
+		material.WriteByte(':')
+		material.WriteString(part)
+	}
+	digest := sha256.Sum256([]byte(material.String()))
+	return "project-" + hex.EncodeToString(digest[:])
+}
+
+func stringValue(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return *value
 }
 
 // addLocal registers a local git repository as a project.
@@ -284,11 +314,18 @@ const (
 
 // InitializeRepository prepares a selected folder for project registration by ensuring it has an initial Git commit.
 func (m *Service) InitializeRepository(ctx context.Context, in InitializeRepositoryInput) (result InitializeRepositoryResult, retErr error) {
-	initialized, err := m.provisioner.InitializeRepository(ctx, ports.ProjectInitializeRequest{Path: in.Path})
+	provisioned, err := m.provisioner.Provision(ctx, ports.ProjectProvisionRequest{
+		IdempotencyKey: provisionIdempotencyKey(ports.ProjectProvisionInitialize, in.Path),
+		Operation:      ports.ProjectProvisionInitialize,
+		Initialize:     &ports.ProjectInitializeRequest{Path: in.Path},
+	})
 	if err != nil {
 		return InitializeRepositoryResult{}, err
 	}
-	return InitializeRepositoryResult{Path: initialized.Path}, nil
+	if provisioned.State != ports.ProjectProvisionFinalized {
+		return InitializeRepositoryResult{}, apierr.Internal("PROJECT_PROVISION_INCOMPLETE", "Project provisioning did not complete")
+	}
+	return InitializeRepositoryResult{Path: provisioned.Initialization.Path}, nil
 }
 
 func (m *Service) initializeRepositoryLocal(ctx context.Context, in InitializeRepositoryInput) (result InitializeRepositoryResult, retErr error) {
