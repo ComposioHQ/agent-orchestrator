@@ -12,6 +12,7 @@ import (
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/apierr"
+	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 	aoprocess "github.com/aoagents/agent-orchestrator/backend/internal/process"
 )
 
@@ -30,6 +31,20 @@ var allowedCloneSchemes = map[string]struct{}{
 // The checkout is staged in a unique sibling directory so a failed or cancelled
 // clone can never leave a half-populated destination behind.
 func (m *Service) Clone(ctx context.Context, in CloneInput) (Project, error) {
+	provisioned, err := m.provisioner.Clone(ctx, ports.ProjectCloneRequest{
+		RemoteURL:         in.RemoteURL,
+		DestinationParent: in.DestinationParent,
+		ProjectID:         in.ProjectID,
+		Name:              in.Name,
+		Config:            in.Config,
+	})
+	if err != nil {
+		return Project{}, err
+	}
+	return m.projectFromProvision(ctx, provisioned), nil
+}
+
+func (m *Service) cloneLocal(ctx context.Context, in CloneInput) (Project, error) {
 	remoteURL := strings.TrimSpace(in.RemoteURL)
 	repositoryName, err := cloneRepositoryName(remoteURL)
 	if err != nil {
@@ -94,7 +109,7 @@ func (m *Service) Clone(ctx context.Context, in CloneInput) (Project, error) {
 	}
 	cleanupPath = target
 
-	project, err := m.Add(ctx, AddInput{
+	project, err := m.addLocal(ctx, AddInput{
 		Path:      target,
 		ProjectID: in.ProjectID,
 		Name:      in.Name,

@@ -63,6 +63,7 @@ type SessionTeardowner interface {
 type Service struct {
 	store          Store
 	sessions       SessionTeardowner
+	provisioner    ports.ProjectProvisioner
 	clock          func() time.Time
 	telemetry      ports.EventSink
 	defaultHarness domain.AgentHarness
@@ -84,6 +85,7 @@ type Deps struct {
 	DefaultHarness domain.AgentHarness
 	Store          Store
 	Sessions       SessionTeardowner
+	Provisioner    ports.ProjectProvisioner
 	Clock          func() time.Time
 	Telemetry      ports.EventSink
 }
@@ -102,12 +104,16 @@ func NewWithDeps(d Deps) *Service {
 	s := &Service{
 		store:          d.Store,
 		sessions:       d.Sessions,
+		provisioner:    d.Provisioner,
 		clock:          d.Clock,
 		telemetry:      d.Telemetry,
 		defaultHarness: defaultHarness,
 	}
 	if s.clock == nil {
 		s.clock = time.Now
+	}
+	if s.provisioner == nil {
+		s.provisioner = localProjectProvisioner{service: s}
 	}
 	return s
 }
@@ -155,13 +161,28 @@ func (m *Service) Get(ctx context.Context, id domain.ProjectID) (GetResult, erro
 	return GetResult{Status: "ok", Project: &p}, nil
 }
 
-// Add registers a local git repository as a project.
+// Add materializes and registers a project through the configured provisioner.
+func (m *Service) Add(ctx context.Context, in AddInput) (Project, error) {
+	provisioned, err := m.provisioner.Add(ctx, ports.ProjectAddRequest{
+		Path:        in.Path,
+		ProjectID:   in.ProjectID,
+		Name:        in.Name,
+		Config:      in.Config,
+		AsWorkspace: in.AsWorkspace,
+	})
+	if err != nil {
+		return Project{}, err
+	}
+	return m.projectFromProvision(ctx, provisioned), nil
+}
+
+// addLocal registers a local git repository as a project.
 //
 // The whole method body is serialised by addMu because workspace registration
 // mutates the filesystem (git init, .gitignore, commits) between the conflict
 // check and the store write — two concurrent calls for the same path would both
 // pass FindProjectByPath and then race on those mutations.
-func (m *Service) Add(ctx context.Context, in AddInput) (Project, error) {
+func (m *Service) addLocal(ctx context.Context, in AddInput) (Project, error) {
 	path, err := normalizePath(in.Path)
 	if err != nil {
 		return Project{}, err
@@ -265,6 +286,14 @@ const (
 
 // InitializeRepository prepares a selected folder for project registration by ensuring it has an initial Git commit.
 func (m *Service) InitializeRepository(ctx context.Context, in InitializeRepositoryInput) (result InitializeRepositoryResult, retErr error) {
+	initialized, err := m.provisioner.InitializeRepository(ctx, ports.ProjectInitializeRequest{Path: in.Path})
+	if err != nil {
+		return InitializeRepositoryResult{}, err
+	}
+	return InitializeRepositoryResult{Path: initialized.Path}, nil
+}
+
+func (m *Service) initializeRepositoryLocal(ctx context.Context, in InitializeRepositoryInput) (result InitializeRepositoryResult, retErr error) {
 	path, err := normalizePath(in.Path)
 	if err != nil {
 		return InitializeRepositoryResult{}, err
