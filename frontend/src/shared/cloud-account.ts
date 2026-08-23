@@ -2,8 +2,8 @@
  * The account shape the renderer is allowed to see.
  *
  * Deliberately token-free: the AO access token and the rotating refresh token
- * live only in Electron main under ~/.ao (see main/cloud-auth.ts). The renderer
- * asks main for a short-lived access token per request and never persists one.
+ * live only in Electron main under ~/.ao (see main/cloud-auth.ts). Electron
+ * main performs authenticated cloud requests behind purpose-specific IPC.
  */
 export interface CloudAccount {
 	authProvider: "google";

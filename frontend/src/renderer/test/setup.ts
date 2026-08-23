@@ -236,9 +236,6 @@ if (typeof window !== "undefined") {
 		cloud: {
 			getAvailability: async () => ({ available: false, enabled: false, apiBaseUrl: "" }),
 			getSession: async () => null,
-			getAccessToken: async () => {
-				throw new Error("AO Cloud is unavailable in tests unless stubbed.");
-			},
 			signIn: async () => null,
 			signOut: async () => undefined,
 			onSessionChanged: () => () => undefined,

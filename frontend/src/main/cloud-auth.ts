@@ -13,8 +13,8 @@
 //     Electron safeStorage, mode 0600. When the OS offers no real protection we
 //     keep the session process-local rather than writing a rotating refresh
 //     token as plaintext.
-//   - The renderer never receives or stores a refresh token. It asks main for a
-//     short-lived access token per request (`cloud:getAccessToken`).
+//   - The renderer never receives or stores either token. Authenticated cloud
+//     requests run in main behind purpose-specific IPC methods.
 //   - Refresh is single-flight per data dir and guarded by a generation counter,
 //     so a sign-out or a new sign-in that races an in-flight refresh cannot have
 //     the stale result written back over it.
@@ -482,7 +482,6 @@ export function installCloudIPC(
 ): void {
 	ipcMain.handle("cloud:getAvailability", () => cloudAvailability());
 	ipcMain.handle("cloud:getSession", () => getCloudSession(getDataDir()));
-	ipcMain.handle("cloud:getAccessToken", () => getCloudAccessToken(getDataDir()));
 	ipcMain.handle("cloud:signIn", async () => {
 		if (!cloudAuthConfigured()) {
 			await dialog.showMessageBox({
