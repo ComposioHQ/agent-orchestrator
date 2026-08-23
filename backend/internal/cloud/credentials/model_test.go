@@ -32,7 +32,6 @@ func TestDeliveryLookupRequiresWorkerLoadOperationAndBounds(t *testing.T) {
 		"forged operation":  func(value *VerifiedCapability) { value.Scope.Operations = []Operation{"session.write"} },
 		"coordinator":       func(value *VerifiedCapability) { value.Scope.Role = "coordinator" },
 		"missing org":       func(value *VerifiedCapability) { value.Scope.OrgID = "" },
-		"missing user":      func(value *VerifiedCapability) { value.Scope.UserID = "" },
 		"missing workspace": func(value *VerifiedCapability) { value.Scope.WorkspaceID = "" },
 		"missing session":   func(value *VerifiedCapability) { value.Scope.SessionID = "" },
 	} {
@@ -69,7 +68,7 @@ func TestEncryptedAndTransientValuesAreRedacted(t *testing.T) {
 
 func testVerifiedCapability() VerifiedCapability {
 	return VerifiedCapability{GrantID: "grant-1", Scope: CapabilityScope{
-		OrgID: "org-1", UserID: "user-1", WorkspaceID: "workspace-1", SessionID: "session-1",
+		OrgID: "org-1", WorkspaceID: "workspace-1", SessionID: "session-1",
 		Role: RoleWorker, Operations: []Operation{OperationCredentialLoad},
 	}}
 }

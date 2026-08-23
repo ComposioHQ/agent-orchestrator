@@ -37,7 +37,7 @@ const (
 	MaxInflightPerSandbox    = 2
 	MaxInflightPerUser       = 8
 	MaxInflightPerOrg        = 64
-	MaxStoredBytesPerSandbox = 256 << 10
+	MaxStoredBytesPerSandbox = 64 << 10
 	MaxStoredBytesPerUser    = 1 << 20
 	MaxStoredBytesPerOrg     = 32 << 20
 )
@@ -46,6 +46,7 @@ var (
 	ErrInvalid             = errors.New("invalid credential request")
 	ErrNotAuthorized       = errors.New("credential operation not authorized")
 	ErrNotFound            = errors.New("credential not found")
+	ErrConflict            = errors.New("credential conflict")
 	ErrRevoked             = errors.New("credential revoked")
 	ErrKMSUnavailable      = errors.New("credential KMS unavailable")
 	ErrDeliveryFailed      = errors.New("credential delivery failed")
@@ -70,7 +71,6 @@ func ParseProvider(value string) (Provider, error) {
 // the shared capability registry before the integration owner is ready.
 type CapabilityScope struct {
 	OrgID       string
-	UserID      string
 	WorkspaceID string
 	SessionID   string
 	Role        string
@@ -86,7 +86,7 @@ type VerifiedCapability struct {
 
 func (v VerifiedCapability) permitsCredentialLoad() bool {
 	if !validIdentifier(v.GrantID) || !validIdentifier(v.Scope.OrgID) ||
-		!validIdentifier(v.Scope.UserID) || !validIdentifier(v.Scope.WorkspaceID) ||
+		!validIdentifier(v.Scope.WorkspaceID) ||
 		!validIdentifier(v.Scope.SessionID) || v.Scope.Role != RoleWorker {
 		return false
 	}
@@ -104,7 +104,6 @@ func (v VerifiedCapability) permitsCredentialLoad() bool {
 type DeliveryLookup struct {
 	grantID        string
 	orgID          string
-	userID         string
 	workspaceID    string
 	sessionID      string
 	role           string
@@ -117,7 +116,7 @@ func NewDeliveryLookup(verified VerifiedCapability, provider Provider, idempoten
 		return DeliveryLookup{}, ErrNotAuthorized
 	}
 	return DeliveryLookup{
-		grantID: verified.GrantID, orgID: verified.Scope.OrgID, userID: verified.Scope.UserID,
+		grantID: verified.GrantID, orgID: verified.Scope.OrgID,
 		workspaceID: verified.Scope.WorkspaceID, sessionID: verified.Scope.SessionID,
 		role: verified.Scope.Role, provider: provider, idempotencyKey: idempotencyKey,
 	}, nil
@@ -125,7 +124,6 @@ func NewDeliveryLookup(verified VerifiedCapability, provider Provider, idempoten
 
 func (l DeliveryLookup) GrantID() string        { return l.grantID }
 func (l DeliveryLookup) OrgID() string          { return l.orgID }
-func (l DeliveryLookup) UserID() string         { return l.userID }
 func (l DeliveryLookup) WorkspaceID() string    { return l.workspaceID }
 func (l DeliveryLookup) SessionID() string      { return l.sessionID }
 func (l DeliveryLookup) Role() string           { return l.role }
@@ -133,7 +131,7 @@ func (l DeliveryLookup) Provider() Provider     { return l.provider }
 func (l DeliveryLookup) IdempotencyKey() string { return l.idempotencyKey }
 
 func (l DeliveryLookup) valid() bool {
-	return validIdentifier(l.grantID) && validIdentifier(l.orgID) && validIdentifier(l.userID) &&
+	return validIdentifier(l.grantID) && validIdentifier(l.orgID) &&
 		validIdentifier(l.workspaceID) && validIdentifier(l.sessionID) && l.role == RoleWorker &&
 		l.provider == ProviderClaudeCode && validBounded(l.idempotencyKey, MaxIdempotencyKeyBytes)
 }
@@ -205,7 +203,7 @@ type DeliveryClaim struct {
 func (c DeliveryClaim) valid() bool {
 	return validIdentifier(c.ID) && c.Lookup.valid() && validIdentifier(c.SandboxID) &&
 		validIdentifier(c.Credential.ID) && c.Credential.OrgID == c.Lookup.orgID &&
-		c.Credential.OwnerUserID == c.Lookup.userID && c.Credential.Provider == c.Lookup.provider &&
+		validIdentifier(c.Credential.OwnerUserID) && c.Credential.Provider == c.Lookup.provider &&
 		c.Credential.Version > 0 && c.Credential.PlaintextBytes > 0 && c.Credential.PlaintextBytes <= MaxCredentialBytes &&
 		c.RevocationValid() && (c.State == DeliveryClaimed || c.State == DeliveryLoaded)
 }

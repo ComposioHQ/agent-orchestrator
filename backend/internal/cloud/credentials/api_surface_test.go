@@ -9,19 +9,21 @@ import (
 )
 
 func TestDeliveryServiceHasNoGeneralPlaintextDecryptOrSandboxSurface(t *testing.T) {
-	typeOfService := reflect.TypeOf((*DeliveryService)(nil))
-	for index := 0; index < typeOfService.NumMethod(); index++ {
-		method := typeOfService.Method(index)
-		name := strings.ToLower(method.Name)
-		if strings.Contains(name, "decrypt") || strings.Contains(name, "plaintext") || strings.Contains(name, "open") {
-			t.Fatalf("forbidden general plaintext method exported: %s", method.Name)
-		}
-		for output := 0; output < method.Type.NumOut(); output++ {
-			if method.Type.Out(output) == reflect.TypeOf([]byte(nil)) {
-				t.Fatalf("method %s returns plaintext-capable []byte", method.Name)
+	for _, typeOfService := range []reflect.Type{reflect.TypeOf((*DeliveryService)(nil)), reflect.TypeOf((*VaultService)(nil))} {
+		for index := 0; index < typeOfService.NumMethod(); index++ {
+			method := typeOfService.Method(index)
+			name := strings.ToLower(method.Name)
+			if strings.Contains(name, "decrypt") || strings.Contains(name, "plaintext") || strings.Contains(name, "open") {
+				t.Fatalf("forbidden general plaintext method exported: %s", method.Name)
+			}
+			for output := 0; output < method.Type.NumOut(); output++ {
+				if method.Type.Out(output) == reflect.TypeOf([]byte(nil)) {
+					t.Fatalf("method %s returns plaintext-capable []byte", method.Name)
+				}
 			}
 		}
 	}
+	typeOfService := reflect.TypeOf((*DeliveryService)(nil))
 	deliver, ok := typeOfService.MethodByName("Deliver")
 	if !ok {
 		t.Fatal("Deliver is missing")

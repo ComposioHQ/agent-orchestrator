@@ -87,6 +87,29 @@ func TestDeliverCancelUsesDetachedRemotePurgeAndZeros(t *testing.T) {
 	}
 }
 
+func TestDeliverTimeoutUsesDetachedRemotePurgeAndZeros(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	store := newFakeDeliveryStore()
+	opener := &fakeOpener{secret: append([]byte(nil), testSecret...)}
+	sink := &fakeSink{load: func(ctx context.Context, _ LoadRequest) (LoadAcknowledgement, error) {
+		<-ctx.Done()
+		return LoadAcknowledgement{}, ctx.Err()
+	}, purge: func(ctx context.Context, _, _ string, _ []string) error {
+		if ctx.Err() != nil {
+			t.Fatalf("purge inherited timed-out context: %v", ctx.Err())
+		}
+		return nil
+	}}
+	service := mustDeliveryService(t, store, opener, DefaultDeliveryLimits())
+	if _, err := service.Deliver(ctx, testVerifiedCapability(), ProviderClaudeCode, "request-1", sink); !errors.Is(err, ErrDeliveryFailed) {
+		t.Fatalf("error = %v", err)
+	}
+	if sink.purgeCount() != 1 || !isZero(opener.secret) || store.lastFailure != FailureCancelled {
+		t.Fatalf("purges=%d zero=%v failure=%q", sink.purgeCount(), isZero(opener.secret), store.lastFailure)
+	}
+}
+
 func TestDuplicateDeliveryDoesNotReloadOrDoubleAudit(t *testing.T) {
 	store := newFakeDeliveryStore()
 	opener := &fakeOpener{secret: append([]byte(nil), testSecret...)}
@@ -237,7 +260,7 @@ func (f *fakeDeliveryStore) ClaimDelivery(_ context.Context, lookup DeliveryLook
 		return f.claim, nil
 	}
 	f.claim = DeliveryClaim{ID: "delivery-1", Lookup: lookup, SandboxID: "sandbox-1", State: DeliveryClaimed, Credential: CredentialRecord{
-		ID: "credential-1", OrgID: lookup.OrgID(), OwnerUserID: lookup.UserID(), Provider: lookup.Provider(),
+		ID: "credential-1", OrgID: lookup.OrgID(), OwnerUserID: "user-1", Provider: lookup.Provider(),
 		PlaintextBytes: int64(len(testSecret)), Version: 1,
 	}}
 	return f.claim, nil
