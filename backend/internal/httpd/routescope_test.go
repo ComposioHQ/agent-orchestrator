@@ -254,3 +254,54 @@ func concretePath(pattern string) string {
 	}
 	return strings.Join(segments, "/")
 }
+
+// TestDaemonRouterStaysUnauthenticated locks the hard rule that survives the
+// cloud work: the daemon's primary listener is loopback and unauthenticated,
+// and the hosted composition is a separate listener with its own auth. If the
+// control plane's bearer requirement ever leaked into the shared router, every
+// desktop client would break at once — so assert here that an app request with
+// no Authorization header is never answered with 401 or 403.
+//
+// With empty deps each controller answers its OpenAPI-backed 501, which is the
+// point: the router reached the controller without asking who was calling.
+func TestDaemonRouterStaysUnauthenticated(t *testing.T) {
+	router := fullyWiredRouter(t)
+
+	for key, class := range routeClasses {
+		if class.Scope != ScopeCloud || !strings.HasPrefix(key.Pattern, "/api/v1/") {
+			continue
+		}
+		t.Run(key.Method+" "+key.Pattern, func(t *testing.T) {
+			req := httptest.NewRequest(key.Method, concretePath(key.Pattern), strings.NewReader("{}"))
+			req.Header.Set("Content-Type", "application/json")
+			rec := httptest.NewRecorder()
+			router.ServeHTTP(rec, req)
+
+			if rec.Code == http.StatusUnauthorized || rec.Code == http.StatusForbidden {
+				t.Fatalf("daemon router demanded credentials on the loopback listener: status %d body %s",
+					rec.Code, rec.Body.String())
+			}
+		})
+	}
+}
+
+// The scope guard belongs to the hosted composition only. Wrapping the daemon
+// router in it would silently drop the local-only surface the desktop app
+// depends on, so assert the daemon still serves those routes.
+func TestDaemonRouterKeepsLocalOnlyRoutes(t *testing.T) {
+	router := fullyWiredRouter(t)
+
+	for _, path := range []string{
+		"/api/v1/shell-terminals",
+		"/api/v1/browser/status",
+		"/api/v1/usage/sessions",
+		"/api/v1/mobile/status",
+		"/healthz",
+	} {
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+		if rec.Code == http.StatusNotFound {
+			t.Errorf("daemon no longer serves local-only route GET %s", path)
+		}
+	}
+}
