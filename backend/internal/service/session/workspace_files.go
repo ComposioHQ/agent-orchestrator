@@ -1471,9 +1471,9 @@ func workspaceGitState(ctx context.Context, root, base string) (WorkspaceFileSec
 			return err
 		})
 	}
-	g.Go(func() (err error) {
-		ahead, behind, err = gitAheadBehind(gctx, root)
-		return err
+	g.Go(func() error {
+		ahead, behind = gitAheadBehind(gctx, root)
+		return nil
 	})
 	if err := g.Wait(); err != nil {
 		return WorkspaceFileSections{}, nil, nil, nil, err
@@ -1573,37 +1573,37 @@ func gitCommitLog(ctx context.Context, root, base string) ([]CommitSummary, erro
 
 // gitAheadBehind reports HEAD's commit counts against its upstream, falling
 // back to origin/<branch> when no upstream is configured. Both return values
-// are nil when neither can be resolved (detached HEAD, no remote) — that
-// means "no push/pull data," not an error.
-func gitAheadBehind(ctx context.Context, root string) (*int, *int, error) {
+// are nil when neither can be resolved (detached HEAD, no remote, git
+// failure) — that means "no push/pull data," not an error worth propagating.
+func gitAheadBehind(ctx context.Context, root string) (*int, *int) {
 	ref, err := gitWorkspaceOutput(ctx, root, "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}")
 	upstream := strings.TrimSpace(ref)
 	if err != nil || upstream == "" {
 		branchOut, branchErr := gitWorkspaceOutput(ctx, root, "rev-parse", "--abbrev-ref", "HEAD")
 		branch := strings.TrimSpace(branchOut)
 		if branchErr != nil || branch == "" || branch == "HEAD" {
-			return nil, nil, nil
+			return nil, nil
 		}
 		candidate := "origin/" + branch
 		if !gitCommitExists(ctx, root, candidate) {
-			return nil, nil, nil
+			return nil, nil
 		}
 		upstream = candidate
 	}
 	out, err := gitWorkspaceOutput(ctx, root, "rev-list", "--left-right", "--count", "HEAD..."+upstream)
 	if err != nil {
-		return nil, nil, nil
+		return nil, nil
 	}
 	fields := strings.Fields(strings.TrimSpace(out))
 	if len(fields) != 2 {
-		return nil, nil, nil
+		return nil, nil
 	}
 	aheadCount, aheadErr := strconv.Atoi(fields[0])
 	behindCount, behindErr := strconv.Atoi(fields[1])
 	if aheadErr != nil || behindErr != nil {
-		return nil, nil, nil
+		return nil, nil
 	}
-	return &aheadCount, &behindCount, nil
+	return &aheadCount, &behindCount
 }
 
 func workspaceStatuses(ctx context.Context, root string) (map[string]WorkspaceFileStatus, map[string]string, error) {
