@@ -46,6 +46,9 @@ func TestPostgresProductPersistenceConformance(t *testing.T) {
 	storagetest.RunProductFactsConformance(t, aliceCtx, storagetest.ProductFactsFixture{
 		Store: store, ProjectID: projectID, SessionID: first.ID, OtherSessionID: second.ID,
 	})
+	storagetest.RunReviewRunConformance(t, aliceCtx, storagetest.ReviewRunFixture{
+		Store: store, ProjectID: projectID, SessionID: first.ID,
+	})
 
 	if _, ok, err := store.GetPR(bobCtx, "https://github.com/acme/repo/pull/7"); err != nil || ok {
 		t.Fatalf("cross-tenant GetPR = ok:%v err:%v", ok, err)
@@ -60,6 +63,12 @@ func TestPostgresProductPersistenceConformance(t *testing.T) {
 	}
 	if err := store.UpsertAgentInventoryCache(forged, `{}`, time.Now().UTC()); err == nil {
 		t.Fatal("cross-tenant inventory write succeeded")
+	}
+	if err := store.InsertReviewRun(forged, domain.ReviewRun{
+		ID: "forged-run", ReviewID: "review-conformance", SessionID: first.ID,
+		Harness: domain.ReviewerCodex, Status: domain.ReviewRunRunning, CreatedAt: time.Now().UTC(),
+	}); err == nil {
+		t.Fatal("cross-tenant review run write succeeded")
 	}
 }
 
