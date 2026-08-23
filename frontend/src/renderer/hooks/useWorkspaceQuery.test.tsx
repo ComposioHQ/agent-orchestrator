@@ -1,12 +1,13 @@
-import { renderHook, waitFor } from "@testing-library/react";
+import { act, renderHook, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ReactNode } from "react";
 
-const { captureRendererEventMock, getMock, hasTrustedApiBaseUrlMock } = vi.hoisted(() => ({
+const { captureRendererEventMock, getMock, hasTrustedApiBaseUrlMock, listCloudProjectsMock } = vi.hoisted(() => ({
 	captureRendererEventMock: vi.fn().mockResolvedValue(undefined),
 	getMock: vi.fn(),
 	hasTrustedApiBaseUrlMock: vi.fn(() => true),
+	listCloudProjectsMock: vi.fn(),
 }));
 
 vi.mock("../lib/api-client", () => ({
@@ -15,6 +16,7 @@ vi.mock("../lib/api-client", () => ({
 }));
 
 vi.mock("../lib/telemetry", () => ({ captureRendererEvent: captureRendererEventMock }));
+vi.mock("../lib/bridge", () => ({ aoBridge: { cloud: { listProjects: listCloudProjectsMock } } }));
 
 import { useWorkspaceQuery } from "./useWorkspaceQuery";
 
@@ -39,6 +41,7 @@ beforeEach(() => {
 	captureRendererEventMock.mockClear();
 	getMock.mockReset();
 	hasTrustedApiBaseUrlMock.mockReset().mockReturnValue(true);
+	listCloudProjectsMock.mockReset().mockResolvedValue([]);
 });
 
 describe("useWorkspaceQuery", () => {
@@ -350,5 +353,32 @@ describe("useWorkspaceQuery", () => {
 
 		await waitFor(() => expect(result.current.isError).toBe(true), { timeout: 3_000 });
 		expect(result.current.error).toBe(failure);
+	});
+
+	it("keeps local projects visible while surfacing and retrying a cloud-list failure", async () => {
+		respondWith({
+			projects: { data: { projects: [{ id: "local-1", name: "local", path: "/local" }] }, error: undefined },
+			sessions: { data: { sessions: [] }, error: undefined },
+		});
+		listCloudProjectsMock.mockRejectedValue(new Error("AO Cloud is unavailable"));
+
+		const { result } = renderHook(() => useWorkspaceQuery(), { wrapper });
+
+		await waitFor(() => expect(result.current.cloudError).toEqual(new Error("AO Cloud is unavailable")));
+		expect(result.current.data).toEqual([expect.objectContaining({ id: "local-1" })]);
+		expect(listCloudProjectsMock).toHaveBeenCalledTimes(2);
+
+		listCloudProjectsMock.mockResolvedValue([{
+			organizationId: "org_1",
+			projects: [{ id: "cloud-1", name: "cloud", kind: "single_repo", path: "cloud", sessionPrefix: "cloud" }],
+			sessions: [],
+		}]);
+		await act(async () => { await result.current.retryCloud(); });
+
+		await waitFor(() => expect(result.current.cloudError).toBeNull());
+		expect(result.current.data).toEqual([
+			expect.objectContaining({ id: "local-1" }),
+			expect.objectContaining({ id: "cloud-1", location: "cloud" }),
+		]);
 	});
 });

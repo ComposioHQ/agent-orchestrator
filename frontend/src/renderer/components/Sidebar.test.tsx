@@ -27,7 +27,6 @@ const { cloudSessionState, getMock, navigateMock, mockParams, renameSessionMock,
 		cloudSessionState: {
 			available: false,
 			enabled: false,
-			apiBaseUrl: "",
 			session: null as null | { user: { email: string } },
 			status: "unauthenticated" as "authenticated" | "loading" | "unauthenticated",
 			signIn: vi.fn(),
@@ -154,7 +153,9 @@ function renderSidebar({
 	onCreateProject = vi.fn().mockResolvedValue(undefined) as CreateProjectHandler,
 	onInitializeProject = vi.fn().mockResolvedValue(undefined) as InitializeProjectHandler,
 	onRemoveProject = vi.fn().mockResolvedValue(undefined) as RemoveProjectHandler,
+	onRetryWorkspaces,
 	seedAgents = true,
+	workspaceError,
 	workspaces = [workspace],
 	initialOpen = true,
 }: {
@@ -162,7 +163,9 @@ function renderSidebar({
 	onCreateProject?: CreateProjectHandler;
 	onInitializeProject?: InitializeProjectHandler;
 	onRemoveProject?: RemoveProjectHandler;
+	onRetryWorkspaces?: () => void;
 	seedAgents?: boolean;
+	workspaceError?: string;
 	workspaces?: WorkspaceSummary[];
 	initialOpen?: boolean;
 } = {}) {
@@ -192,7 +195,9 @@ function renderSidebar({
 						onCloneProject={onCloneProject}
 						onCreateProject={onCreateProject}
 					onInitializeProject={onInitializeProject}
-					onRemoveProject={onRemoveProject}
+						onRemoveProject={onRemoveProject}
+						onRetryWorkspaces={onRetryWorkspaces}
+						workspaceError={workspaceError}
 					workspaces={workspaces}
 				/>
 			</SidebarProvider>
@@ -253,7 +258,6 @@ beforeEach(() => {
 	commandPaletteEnabled.current = true;
 	cloudSessionState.available = false;
 	cloudSessionState.enabled = false;
-	cloudSessionState.apiBaseUrl = "";
 	cloudSessionState.session = null;
 	cloudSessionState.status = "unauthenticated";
 	cloudSessionState.signIn.mockReset();
@@ -290,6 +294,17 @@ afterEach(() => {
 });
 
 describe("Sidebar", () => {
+	it("shows a retryable cloud error without hiding local project rows", async () => {
+		const user = userEvent.setup();
+		const onRetryWorkspaces = vi.fn();
+		renderSidebar({ workspaceError: "AO Cloud is unavailable", onRetryWorkspaces });
+
+		expect(screen.getByText("AO Cloud is unavailable")).toBeInTheDocument();
+		expect(screen.getByText(workspace.name)).toBeInTheDocument();
+		await user.click(screen.getByRole("button", { name: "Retry projects" }));
+		expect(onRetryWorkspaces).toHaveBeenCalledOnce();
+	});
+
 	it("does not show cloud sign-in controls while cloud early access is disabled", () => {
 		cloudSessionState.available = true;
 		cloudSessionState.enabled = false;

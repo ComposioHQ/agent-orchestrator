@@ -134,8 +134,12 @@ async function fetchWorkspaces(): Promise<WorkspaceSummary[]> {
 		};
 	});
 
-	const cloudSnapshots = await aoBridge.cloud.listProjects().catch(() => []);
-	const cloud: WorkspaceSummary[] = cloudSnapshots.flatMap((snapshot) =>
+	return local;
+}
+
+async function fetchCloudWorkspaces(): Promise<WorkspaceSummary[]> {
+	const cloudSnapshots = await aoBridge.cloud.listProjects();
+	return cloudSnapshots.flatMap((snapshot) =>
 		snapshot.projects.map((project) => ({
 			id: project.id,
 			name: project.name,
@@ -176,7 +180,6 @@ async function fetchWorkspaces(): Promise<WorkspaceSummary[]> {
 				})),
 		})),
 	);
-	return [...local, ...cloud];
 }
 
 // Shared so route loaders can prefetch via queryClient.ensureQueryData (paired
@@ -188,6 +191,22 @@ export const workspaceQueryOptions = {
 	refetchInterval: 15_000,
 };
 
+export const cloudWorkspaceQueryKey = ["workspaces", "cloud"] as const;
+const cloudWorkspaceQueryOptions = {
+	queryKey: cloudWorkspaceQueryKey,
+	queryFn: fetchCloudWorkspaces,
+	retry: 1,
+	refetchInterval: 15_000,
+};
+
 export function useWorkspaceQuery() {
-	return useQuery(workspaceQueryOptions);
+	const localQuery = useQuery(workspaceQueryOptions);
+	const cloudQuery = useQuery(cloudWorkspaceQueryOptions);
+	return {
+		...localQuery,
+		data: localQuery.data ? [...localQuery.data, ...(cloudQuery.data ?? [])] : localQuery.data,
+		dataUpdatedAt: Math.max(localQuery.dataUpdatedAt, cloudQuery.dataUpdatedAt),
+		cloudError: cloudQuery.error,
+		retryCloud: cloudQuery.refetch,
+	};
 }
