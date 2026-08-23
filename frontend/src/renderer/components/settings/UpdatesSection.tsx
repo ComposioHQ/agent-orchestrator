@@ -171,7 +171,7 @@ export function UpdatesSection({ titleHidden }: { titleHidden?: boolean } = {}) 
 	return (
 		<>
 			<SettingsSection title={t("settings.updates")} sectionId="updates" titleHidden={titleHidden} grouped>
-				<UpdateActions status={status} />
+				<UpdateActions status={status} automaticUpdatesEnabled={form.enabled} />
 
 				{featurePr != null && (
 					<div className="mt-3 flex flex-col gap-2 rounded-(--radius-settings-panel) border border-[var(--color-border-settings-dialog)] bg-[var(--color-bg-settings-input)] p-1">
@@ -286,18 +286,28 @@ function FeatureBuildsSelect({
 	);
 }
 
-function UpdateActions({ status }: { status: UpdateStatus }) {
+function UpdateActions({ status, automaticUpdatesEnabled }: { status: UpdateStatus; automaticUpdatesEnabled: boolean }) {
 	const { t, i18n } = useTranslation();
 	const version = useQuery({ queryKey: ["app-version"], queryFn: () => aoBridge.app.getVersion() });
 	const [manualCheckRequestId, setManualCheckRequestId] = useState<string | null>(null);
+	const [manualDownloadRequestId, setManualDownloadRequestId] = useState<string | null>(null);
 
 	const manualCheckPending = manualCheckRequestId !== null;
+	const manualDownloadPending = manualDownloadRequestId !== null;
 	const checking = status.state === "checking" || manualCheckPending;
 	const downloading = status.state === "downloading";
-	const busy = checking || downloading;
-	const displayStatus: UpdateStatus = manualCheckPending && status.state !== "checking" ? { ...status, state: "checking" } : status;
+	const busy = checking || downloading || manualDownloadPending;
+	const displayStatus: UpdateStatus = manualCheckPending
+		? { ...status, state: "checking" }
+		: manualDownloadPending && status.state === "available"
+			? { ...status, state: "downloading", percent: 0 }
+			: status;
 	const tone = updateStatusTone(displayStatus.state);
 	const progress = Math.min(100, Math.max(0, displayStatus.percent ?? 0));
+	const automaticDownload = automaticUpdatesEnabled && status.state === "available";
+	const showDownloadAction = status.state === "available" && (!automaticDownload || status.requestId !== undefined);
+	const showCheckAction = status.state === "idle" || status.state === "not-available" || status.state === "unsupported" || status.state === "error";
+	const showActions = showDownloadAction || status.state === "downloaded" || showCheckAction;
 	const checkedAt = status.checkedAt
 		? new Intl.DateTimeFormat(i18n.resolvedLanguage ?? i18n.language, {
 				dateStyle: "medium",
@@ -309,6 +319,11 @@ function UpdateActions({ status }: { status: UpdateStatus }) {
 		if (manualCheckRequestId === null || status.requestId !== manualCheckRequestId) return;
 		if (status.state !== "checking") setManualCheckRequestId(null);
 	}, [manualCheckRequestId, status.requestId, status.state]);
+
+	useEffect(() => {
+		if (manualDownloadRequestId === null || status.requestId !== manualDownloadRequestId) return;
+		if (status.state !== "available") setManualDownloadRequestId(null);
+	}, [manualDownloadRequestId, status.requestId, status.state]);
 
 	const checkNow = async () => {
 		const requestId = nextUpdateRequestId("manual-update");
@@ -322,46 +337,67 @@ function UpdateActions({ status }: { status: UpdateStatus }) {
 		}
 	};
 
+	const downloadNow = async () => {
+		const requestId = status.requestId ?? nextUpdateRequestId("manual-download");
+		setManualDownloadRequestId(requestId);
+		try {
+			await aoBridge.updates.download(requestId);
+		} catch {
+			// The main process publishes the actionable updater error state.
+		} finally {
+			setManualDownloadRequestId((pending) => (pending === requestId ? null : pending));
+		}
+	};
+
 	return (
 		<div className="update-status-panel rounded-(--radius-settings-panel)" data-tone={tone}>
-			<div className="relative z-1 flex flex-col gap-4 px-4 py-4 sm:px-5 sm:py-5">
-				<div className="flex flex-col gap-4 sm:flex-row sm:items-center">
-					<div className="flex min-w-0 flex-1 items-start gap-3.5">
-						<div className="update-status-glyph mt-0.5 flex size-10 shrink-0 items-center justify-center rounded-lg" aria-hidden="true">
-							<UpdateStatusIcon status={displayStatus} />
-						</div>
-
-						<div
-							key={displayStatus.state}
-							id="update-status-line"
-							role="status"
-							aria-live="polite"
-							aria-atomic="true"
-							aria-busy={checking}
-							className="update-status-content min-w-0"
-						>
-							<UpdateStatusLine status={displayStatus} />
-							<div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] leading-4 text-settings-muted">
-								<span className="font-mono tabular-nums" data-testid="app-version">
-									{t("settings.updates.currentVersion", { version: version.data ? `v${version.data}` : "…" })}
-								</span>
-								{checkedAt && (
-									<>
-										<span className="hidden size-0.5 rounded-full bg-current opacity-50 sm:block" aria-hidden="true" />
-										<span className="inline-flex items-center gap-1.5 tabular-nums" data-testid="update-checked-at">
-											<Clock3 className="size-3" aria-hidden="true" />
-											{t("settings.updates.lastChecked", { time: checkedAt })}
-										</span>
-									</>
-								)}
-							</div>
-						</div>
+			<div className="relative z-1 flex flex-col px-4 py-4 sm:px-5 sm:py-5">
+				<div className="flex min-w-0 items-start gap-3.5">
+					<div className="update-status-glyph mt-0.5 flex size-10 shrink-0 items-center justify-center rounded-lg" aria-hidden="true">
+						<UpdateStatusIcon status={displayStatus} />
 					</div>
 
-					<div className="flex shrink-0 flex-wrap items-center gap-2 sm:justify-end">
-						{!checking && status.state === "available" && (
-							<Button type="button" variant="primary" onClick={() => void aoBridge.updates.download()}>
-								{status.version ? t("settings.updates.updateTo", { version: `v${status.version}` }) : t("settings.updates.updateToLatest")}
+					<div
+						key={displayStatus.state}
+						id="update-status-line"
+						role="status"
+						aria-live="polite"
+						aria-atomic="true"
+						aria-busy={busy}
+						className="update-status-content min-w-0 flex-1"
+					>
+						<UpdateStatusLine status={displayStatus} />
+						{automaticDownload && (
+							<p className="mt-1 text-xs leading-5 text-settings-muted">{t("settings.updates.automaticDownload")}</p>
+						)}
+						<div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] leading-4 text-settings-muted">
+							<span className="font-mono tabular-nums" data-testid="app-version">
+								{t("settings.updates.currentVersion", { version: version.data ? `v${version.data}` : "…" })}
+							</span>
+							{checkedAt && (
+								<>
+									<span className="hidden size-0.5 rounded-full bg-current opacity-50 sm:block" aria-hidden="true" />
+									<span className="inline-flex items-center gap-1.5 tabular-nums" data-testid="update-checked-at">
+										<Clock3 className="size-3" aria-hidden="true" />
+										{t("settings.updates.lastChecked", { time: checkedAt })}
+									</span>
+								</>
+							)}
+						</div>
+					</div>
+				</div>
+
+				{displayStatus.state === "downloading" && (
+					<div className="mt-4 h-1 overflow-hidden rounded-full bg-foreground/8" aria-hidden="true">
+						<div className="update-download-progress h-full origin-left rounded-full bg-primary" style={{ transform: `scaleX(${progress / 100})` }} />
+					</div>
+				)}
+
+				{showActions && (
+					<div className="mt-4 flex flex-wrap items-center justify-end gap-2 border-t border-[color-mix(in_oklch,var(--update-status-tone)_14%,transparent)] pt-3">
+						{showDownloadAction && (
+							<Button type="button" variant="primary" onClick={() => void downloadNow()} disabled={manualDownloadPending}>
+								{manualDownloadPending ? t("settings.updates.downloading", { percent: 0 }) : t("settings.updates.downloadNow")}
 							</Button>
 						)}
 						{!checking && status.state === "downloaded" && (
@@ -369,34 +405,30 @@ function UpdateActions({ status }: { status: UpdateStatus }) {
 								{t("settings.updates.restartInstall")}
 							</Button>
 						)}
-						<Button
-							type="button"
-							aria-label={checking ? t("settings.updates.checking") : t("settings.updates.check")}
-							aria-describedby="update-status-line"
-							variant="outline"
-							size="sm"
-							className="min-w-36 bg-background/45"
-							onClick={() => void checkNow()}
-							disabled={busy}
-						>
-							{checking ? (
-								<Loader2 className="size-icon-sm animate-spin motion-reduce:animate-none" aria-hidden="true" />
-							) : (
-								<RefreshCw className="size-icon-sm" aria-hidden="true" />
-							)}
-							{checking ? t("settings.updates.checking") : t("settings.updates.check")}
-						</Button>
-					</div>
-				</div>
-
-				{displayStatus.state === "downloading" && (
-					<div className="h-1 overflow-hidden rounded-full bg-foreground/8" aria-hidden="true">
-						<div className="update-download-progress h-full origin-left rounded-full bg-primary" style={{ transform: `scaleX(${progress / 100})` }} />
+						{showCheckAction && (
+							<Button
+								type="button"
+								aria-label={checking ? t("settings.updates.checking") : t("settings.updates.check")}
+								aria-describedby="update-status-line"
+								variant="outline"
+								size="sm"
+								className="bg-background/45"
+								onClick={() => void checkNow()}
+								disabled={busy}
+							>
+								{checking ? (
+									<Loader2 className="size-icon-sm animate-spin motion-reduce:animate-none" aria-hidden="true" />
+								) : (
+									<RefreshCw className="size-icon-sm" aria-hidden="true" />
+								)}
+								{checking ? t("settings.updates.checking") : t("settings.updates.check")}
+							</Button>
+						)}
 					</div>
 				)}
 
 				{status.staleCheckNudge && (
-					<p className="flex items-start gap-2 border-t border-[color-mix(in_oklch,var(--update-status-tone)_18%,transparent)] pt-3 text-xs leading-5 text-warning">
+					<p className="mt-4 flex items-start gap-2 border-t border-[color-mix(in_oklch,var(--update-status-tone)_18%,transparent)] pt-3 text-xs leading-5 text-warning">
 						<AlertTriangle className="mt-0.5 size-icon-sm shrink-0" aria-hidden="true" />
 						<span>{t("settings.updates.networkStale")}</span>
 					</p>
@@ -444,9 +476,7 @@ function UpdateStatusLine({ status }: { status: UpdateStatus }) {
 			label = t("settings.updates.notChecked");
 	}
 
-	return (
-		<p className={cn("text-pretty text-[15px] font-medium leading-5 tracking-[-0.01em]", className)}>{label}</p>
-	);
+	return <p className={cn("text-pretty text-[15px] font-medium leading-5", className)}>{label}</p>;
 }
 
 function UpdateStatusIcon({ status }: { status: UpdateStatus }) {

@@ -377,7 +377,7 @@ describe("GlobalSettingsForm", () => {
 		expect(screen.getByRole("status")).toHaveTextContent("You're on the latest version.");
 	});
 
-	it("offers an Update button when an update is available and downloads it", async () => {
+	it("lets automatic updates download in the background without a redundant action", async () => {
 		let emit: (s: { state: string; version?: string; requestId?: string }) => void = () => undefined;
 		updOnStatus.mockImplementation((cb: (s: unknown) => void) => {
 			emit = cb as typeof emit;
@@ -386,9 +386,30 @@ describe("GlobalSettingsForm", () => {
 		renderForm();
 		await screen.findByRole("button", { name: "Check for updates" });
 		act(() => emit({ state: "available", version: "1.2.3" }));
-		const updateBtn = await screen.findByRole("button", { name: "Update to v1.2.3" });
+		expect(await screen.findByText("Downloads automatically in the background.")).toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: /Update to/ })).not.toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: "Check for updates" })).not.toBeInTheDocument();
+		expect(updDownload).not.toHaveBeenCalled();
+	});
+
+	it("immediately acknowledges a manual download while updater startup is pending", async () => {
+		updDownload.mockReturnValue(new Promise<void>(() => undefined));
+		let emit: (s: { state: string; version?: string; requestId?: string }) => void = () => undefined;
+		updOnStatus.mockImplementation((cb: (s: unknown) => void) => {
+			emit = cb as typeof emit;
+			return () => undefined;
+		});
+		renderForm();
+		await screen.findByRole("button", { name: "Check for updates" });
+		act(() => emit({ state: "available", version: "1.2.3", requestId: "manual-update-1" }));
+		expect(await screen.findByText("Downloads automatically in the background.")).toBeInTheDocument();
+		const updateBtn = await screen.findByRole("button", { name: "Download now" });
 		await userEvent.click(updateBtn);
-		expect(updDownload).toHaveBeenCalled();
+
+		expect(updDownload).toHaveBeenCalledWith("manual-update-1");
+		expect(updateBtn).toBeDisabled();
+		expect(updateBtn).toHaveTextContent("Downloading… 0%");
+		expect(screen.getByRole("status")).toHaveTextContent("Downloading… 0%");
 	});
 
 	it("offers Restart & install once downloaded and installs it", async () => {
