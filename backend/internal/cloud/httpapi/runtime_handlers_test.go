@@ -49,8 +49,10 @@ func (s *memoryRuntimeStore) UpdateSessionRuntime(_ context.Context, _ domain.Pr
 }
 
 type fakeSessionProvisioner struct {
-	launch chan domain.RuntimeLaunch
-	resize chan runtimeResizeRequest
+	launch      chan domain.RuntimeLaunch
+	resize      chan runtimeResizeRequest
+	alive       bool
+	outputCalls int
 }
 
 func (p *fakeSessionProvisioner) ProvisionSessionRuntime(_ context.Context, _ domain.Workspace, launch domain.RuntimeLaunch) (string, error) {
@@ -58,10 +60,11 @@ func (p *fakeSessionProvisioner) ProvisionSessionRuntime(_ context.Context, _ do
 	return "sandbox-session-1", nil
 }
 func (*fakeSessionProvisioner) DeleteSessionRuntime(context.Context, string) error { return nil }
-func (*fakeSessionProvisioner) SessionRuntimeAlive(context.Context, string) (bool, error) {
-	return true, nil
+func (p *fakeSessionProvisioner) SessionRuntimeAlive(context.Context, string) (bool, error) {
+	return p.alive, nil
 }
-func (*fakeSessionProvisioner) SessionRuntimeOutput(context.Context, string, int) (string, error) {
+func (p *fakeSessionProvisioner) SessionRuntimeOutput(context.Context, string, int) (string, error) {
+	p.outputCalls++
 	return "ready", nil
 }
 func (*fakeSessionProvisioner) SessionRuntimeInput(context.Context, string, string, bool) error {
@@ -84,7 +87,7 @@ func TestWorkspaceCapabilityCreatesOneSessionRuntime(t *testing.T) {
 	}
 	workspace := domain.Workspace{ID: "workspace-1", OrgID: "org-1", OwnerUserID: principal.UserID, RepositoryURL: "https://github.com/org/repo"}
 	store := &memoryRuntimeStore{workspace: workspace, running: make(chan struct{})}
-	provider := &fakeSessionProvisioner{launch: make(chan domain.RuntimeLaunch, 1), resize: make(chan runtimeResizeRequest, 1)}
+	provider := &fakeSessionProvisioner{launch: make(chan domain.RuntimeLaunch, 1), resize: make(chan runtimeResizeRequest, 1), alive: true}
 	server, err := New(Options{Store: accounts, Google: &staticIdentityVerifier{}, AllowedEmails: []string{"person@example.com"}, AccessTokens: tokens, RefreshTokenTTL: time.Hour, SessionStore: store, SessionRuntimes: provider, PublicURL: "https://cloud.example"})
 	if err != nil {
 		t.Fatal(err)
@@ -126,6 +129,18 @@ func TestWorkspaceCapabilityCreatesOneSessionRuntime(t *testing.T) {
 	server.Handler().ServeHTTP(wrongResponse, wrong)
 	if wrongResponse.Code != http.StatusUnauthorized {
 		t.Fatalf("desktop token status=%d", wrongResponse.Code)
+	}
+
+	provider.alive = false
+	stopped := httptest.NewRequest(http.MethodGet, "/api/cloud/internal/v1/workspaces/workspace-1/runtimes/orchestrator-1", nil)
+	stopped.Header.Set("Authorization", "Bearer "+capability)
+	stoppedResponse := httptest.NewRecorder()
+	server.Handler().ServeHTTP(stoppedResponse, stopped)
+	if stoppedResponse.Code != http.StatusOK {
+		t.Fatalf("stopped runtime status=%d body=%s", stoppedResponse.Code, stoppedResponse.Body.String())
+	}
+	if provider.outputCalls != 0 {
+		t.Fatalf("stopped runtime captured output %d times", provider.outputCalls)
 	}
 
 	resize := httptest.NewRequest(http.MethodPost, "/api/cloud/internal/v1/workspaces/workspace-1/runtimes/orchestrator-1/resize", bytes.NewBufferString(`{"rows":42,"cols":132}`))

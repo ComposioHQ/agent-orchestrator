@@ -216,6 +216,13 @@ func (p *Provider) SessionRuntimeAlive(ctx context.Context, sandboxID string) (b
 	if err != nil {
 		return false, fmt.Errorf("get Daytona session sandbox: %w", err)
 	}
+	// A stopped/paused sandbox has no container IP and the process API returns a
+	// provider 400. Its provider state is authoritative, so report the session
+	// as not alive instead of turning a normal lifecycle fact into a control-
+	// plane 500. Unknown/error states still fail below or at the provider call.
+	if sandbox.State != daytonasdk.SandboxStateStarted {
+		return false, nil
+	}
 	result, err := sandbox.Process.ExecuteCommand(ctx, "tmux has-session -t "+shellQuote(sessionName), options.WithExecuteTimeout(time.Minute))
 	if err != nil {
 		return false, err

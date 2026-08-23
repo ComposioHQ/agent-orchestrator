@@ -147,7 +147,7 @@ func (s *Server) getSessionRuntime(w http.ResponseWriter, r *http.Request) {
 		if parsed, parseErr := strconv.Atoi(r.URL.Query().Get("lines")); parseErr == nil && parsed > 0 && parsed <= 5000 {
 			lines = parsed
 		}
-		if err == nil {
+		if err == nil && response.Alive {
 			response.Output, err = s.sessionRuntimes.SessionRuntimeOutput(r.Context(), runtime.SandboxID, lines)
 		}
 		if err != nil {
