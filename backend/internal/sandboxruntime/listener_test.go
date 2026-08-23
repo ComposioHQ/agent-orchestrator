@@ -43,7 +43,7 @@ func (f *fakeObservation) record(call string, id domain.SessionID) {
 }
 
 func (f *fakeObservation) Snapshot(_ context.Context, info ports.WorkspaceInfo) (ports.WorkspaceSnapshot, error) {
-	f.record("snapshot", "")
+	f.record("snapshot:"+info.Path, "")
 	return ports.WorkspaceSnapshot{Path: info.Path, HeadSHA: "abc123"}, nil
 }
 func (f *fakeObservation) ListWorkspaceFiles(_ context.Context, id domain.SessionID) (ports.WorkspaceFiles, error) {
@@ -158,12 +158,13 @@ func newListenerFixture(t *testing.T) *listenerFixture {
 	}
 	var once sync.Once
 	listener, err := NewListener(ListenerOptions{
-		Observation: f.observation,
-		Runtime:     f.runtime,
-		Mux:         f.mux,
-		Tickets:     f.tickets,
-		SessionID:   "session-1",
-		Shutdown:    func() { once.Do(func() { close(f.shutdown) }) },
+		Observation:   f.observation,
+		Runtime:       f.runtime,
+		Mux:           f.mux,
+		Tickets:       f.tickets,
+		SessionID:     "session-1",
+		WorkspacePath: "/workspace",
+		Shutdown:      func() { once.Do(func() { close(f.shutdown) }) },
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -201,7 +202,7 @@ func TestListenerWorkspaceObservationConformance(t *testing.T) {
 		body      any
 		status    int
 	}{
-		{http.MethodPost, RouteSnapshot, OperationSnapshot, ports.WorkspaceInfo{Path: "/workspace"}, http.StatusOK},
+		{http.MethodPost, RouteSnapshot, OperationSnapshot, ports.WorkspaceInfo{Path: "/control-plane/path"}, http.StatusOK},
 		{http.MethodGet, RouteWorkspaceFiles, OperationWorkspaceFiles, nil, http.StatusOK},
 		{http.MethodGet, RouteWorkspaceFile + "?path=README.md", OperationWorkspaceFile, nil, http.StatusOK},
 		{http.MethodGet, RouteWorkspaceBlob + "?path=logo.png&side=before", OperationWorkspaceBlob, nil, http.StatusOK},
@@ -218,7 +219,7 @@ func TestListenerWorkspaceObservationConformance(t *testing.T) {
 
 	f.observation.mu.Lock()
 	defer f.observation.mu.Unlock()
-	if strings.Join(f.observation.calls, ",") != "snapshot,list,file:README.md,blob:logo.png:before,preview:index.html,discover,invalidate" {
+	if strings.Join(f.observation.calls, ",") != "snapshot:/workspace,list,file:README.md,blob:logo.png:before,preview:index.html,discover,invalidate" {
 		t.Fatalf("calls = %v", f.observation.calls)
 	}
 	for _, id := range f.observation.sessionIDs {
@@ -309,6 +310,32 @@ func TestListenerAtomicTicketReplayIsRejected(t *testing.T) {
 	}
 	if status := request(); status != http.StatusNotFound {
 		t.Fatalf("replay status = %d", status)
+	}
+}
+
+func TestListenerAtomicTicketConcurrentReplayAllowsExactlyOne(t *testing.T) {
+	f := newListenerFixture(t)
+	const token = "concurrent-one-time"
+	f.tickets.issue(token, OperationWorkspaceFiles)
+	statuses := make(chan int, 2)
+	var start sync.WaitGroup
+	start.Add(1)
+	for range 2 {
+		go func() {
+			start.Wait()
+			req := httptest.NewRequest(http.MethodGet, RouteWorkspaceFiles, nil)
+			req.Header.Set("Authorization", "Bearer "+token)
+			w := httptest.NewRecorder()
+			f.listener.ServeHTTP(w, req)
+			statuses <- w.Code
+		}()
+	}
+	start.Done()
+	counts := map[int]int{}
+	counts[<-statuses]++
+	counts[<-statuses]++
+	if counts[http.StatusOK] != 1 || counts[http.StatusNotFound] != 1 {
+		t.Fatalf("concurrent statuses = %#v", counts)
 	}
 }
 
@@ -441,12 +468,13 @@ func TestListenerMuxPreservesPTYProtocolParity(t *testing.T) {
 	manager := terminal.NewManager(ptyRuntime, nil, nil, terminal.WithHeartbeat(time.Hour))
 	defer manager.Close()
 	listener, err := NewListener(ListenerOptions{
-		Observation: &fakeObservation{events: make(chan ports.WorkspaceEvent)},
-		Runtime:     ptyRuntime,
-		Mux:         manager,
-		Tickets:     tickets,
-		SessionID:   "session-1",
-		Shutdown:    func() {},
+		Observation:   &fakeObservation{events: make(chan ports.WorkspaceEvent)},
+		Runtime:       ptyRuntime,
+		Mux:           manager,
+		Tickets:       tickets,
+		SessionID:     "session-1",
+		WorkspacePath: "/workspace",
+		Shutdown:      func() {},
 	})
 	if err != nil {
 		t.Fatal(err)

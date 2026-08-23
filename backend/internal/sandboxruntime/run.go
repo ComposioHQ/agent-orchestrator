@@ -68,13 +68,14 @@ func RunLocal(ctx context.Context, config LaunchConfig, tickets TicketConsumer, 
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	listener, err := NewListener(ListenerOptions{
-		Observation: observation,
-		Runtime:     runtime,
-		Mux:         mux,
-		Tickets:     tickets,
-		SessionID:   config.SessionID,
-		Shutdown:    cancel,
-		Logger:      log,
+		Observation:   observation,
+		Runtime:       runtime,
+		Mux:           mux,
+		Tickets:       tickets,
+		SessionID:     config.SessionID,
+		WorkspacePath: config.WorkspacePath,
+		Shutdown:      cancel,
+		Logger:        log,
 	})
 	if err != nil {
 		return err

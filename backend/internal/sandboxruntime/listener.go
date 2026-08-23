@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -90,26 +91,28 @@ type Mux interface {
 }
 
 type ListenerOptions struct {
-	Observation ports.WorkspaceObservation
-	Runtime     Runtime
-	Mux         Mux
-	Tickets     TicketConsumer
-	SessionID   domain.SessionID
-	Shutdown    context.CancelFunc
-	Logger      *slog.Logger
+	Observation   ports.WorkspaceObservation
+	Runtime       Runtime
+	Mux           Mux
+	Tickets       TicketConsumer
+	SessionID     domain.SessionID
+	WorkspacePath string
+	Shutdown      context.CancelFunc
+	Logger        *slog.Logger
 }
 
 // Listener is the authenticated sandbox-private HTTP surface. It contains no
 // AO daemon, product store, relay, provider adapter, or local fallback.
 type Listener struct {
-	observation ports.WorkspaceObservation
-	runtime     Runtime
-	mux         Mux
-	tickets     TicketConsumer
-	sessionID   domain.SessionID
-	shutdown    context.CancelFunc
-	log         *slog.Logger
-	handler     http.Handler
+	observation   ports.WorkspaceObservation
+	runtime       Runtime
+	mux           Mux
+	tickets       TicketConsumer
+	sessionID     domain.SessionID
+	workspacePath string
+	shutdown      context.CancelFunc
+	log           *slog.Logger
+	handler       http.Handler
 }
 
 func NewListener(options ListenerOptions) (*Listener, error) {
@@ -119,6 +122,9 @@ func NewListener(options ListenerOptions) (*Listener, error) {
 	if strings.TrimSpace(string(options.SessionID)) == "" {
 		return nil, errors.New("sandbox listener requires a self-bound session id")
 	}
+	if !filepath.IsAbs(options.WorkspacePath) {
+		return nil, errors.New("sandbox listener requires a self-bound absolute workspace path")
+	}
 	if options.Shutdown == nil {
 		return nil, errors.New("sandbox listener requires a shutdown callback")
 	}
@@ -126,13 +132,14 @@ func NewListener(options ListenerOptions) (*Listener, error) {
 		options.Logger = slog.Default()
 	}
 	l := &Listener{
-		observation: options.Observation,
-		runtime:     options.Runtime,
-		mux:         options.Mux,
-		tickets:     options.Tickets,
-		sessionID:   options.SessionID,
-		shutdown:    options.Shutdown,
-		log:         options.Logger,
+		observation:   options.Observation,
+		runtime:       options.Runtime,
+		mux:           options.Mux,
+		tickets:       options.Tickets,
+		sessionID:     options.SessionID,
+		workspacePath: options.WorkspacePath,
+		shutdown:      options.Shutdown,
+		log:           options.Logger,
 	}
 	l.handler = l.routes()
 	return l, nil
@@ -205,8 +212,9 @@ func (l *Listener) snapshot(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &info) {
 		return
 	}
-	// The configured session is authoritative. Implementations execute where
-	// the workspace lives and must not interpret a control-plane path locally.
+	// The configured placement is authoritative. Never interpret the caller's
+	// control-plane-local path inside compute.
+	info.Path = l.workspacePath
 	snapshot, err := l.observation.Snapshot(r.Context(), info)
 	writeResult(w, snapshot, err)
 }
@@ -295,7 +303,7 @@ func (l *Listener) createRuntime(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &config) {
 		return
 	}
-	if config.SessionID != l.sessionID {
+	if config.SessionID != l.sessionID || config.WorkspacePath != l.workspacePath {
 		writeError(w, http.StatusBadRequest, "runtime session does not match listener")
 		return
 	}
@@ -308,7 +316,7 @@ func (l *Listener) restartRuntime(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &config) {
 		return
 	}
-	if config.SessionID != l.sessionID {
+	if config.SessionID != l.sessionID || config.WorkspacePath != l.workspacePath {
 		writeError(w, http.StatusBadRequest, "runtime session does not match listener")
 		return
 	}
