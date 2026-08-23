@@ -3,10 +3,10 @@ info:
   title: AO Cloud Public API
   version: 1.0.0
   description: |
-    Public AO Cloud control-plane contract plus the hosted mount of AO's shared
-    application API. Hosted product requests keep their canonical /api/v1 paths
-    and DTOs. X-AO-Org selects a tenant only on that authenticated application
-    surface; control-plane administration keeps orgId in the path.
+    Public AO Cloud control-plane contract. The separate code-first application
+    specification and client own all product projects, sessions, conversations,
+    worktrees, and shared application DTOs. Control-plane administration keeps
+    orgId in the path and validates the authenticated principal's membership.
 
     A sandbox capability is provisioned out of band at /run/ao/capability with
     mode 0600. This API never returns that bearer or a general-purpose worker
@@ -18,10 +18,14 @@ security:
   - bearerAuth: []
 tags:
   - name: Account
-  - name: Application
   - name: Placement
   - name: GitHub
+  - name: Vault
+  - name: Terminal
   - name: Worker
+  - name: Worker Lifecycle
+  - name: Worker Execution
+  - name: Worker Transport
 
 paths:
   /api/cloud/v1/auth/google:
@@ -101,271 +105,24 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "500": { $ref: "#/components/responses/InternalError" }
 
-  /api/v1/projects:
-    parameters:
-      - $ref: "#/components/parameters/XAOOrg"
-    get:
-      operationId: listHostedProjects
-      tags: [Application]
-      responses:
-        "200":
-          description: Canonical AO project list.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ListProjectsResponse"
-        "400": { $ref: "#/components/responses/SharedBadRequest" }
-        "401": { $ref: "#/components/responses/SharedUnauthorized" }
-        "403": { $ref: "#/components/responses/SharedForbidden" }
-        "500": { $ref: "#/components/responses/SharedInternalError" }
-
-  /api/v1/projects/{id}:
-    parameters:
-      - $ref: "#/components/parameters/XAOOrg"
-      - $ref: "#/components/parameters/ProjectId"
-    get:
-      operationId: getHostedProject
-      tags: [Application]
-      responses:
-        "200":
-          description: Canonical AO project detail.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ProjectGetResponse"
-        "400": { $ref: "#/components/responses/SharedBadRequest" }
-        "401": { $ref: "#/components/responses/SharedUnauthorized" }
-        "403": { $ref: "#/components/responses/SharedForbidden" }
-        "404": { $ref: "#/components/responses/SharedNotFound" }
-        "500": { $ref: "#/components/responses/SharedInternalError" }
-
-  /api/v1/sessions:
-    parameters:
-      - $ref: "#/components/parameters/XAOOrg"
-    get:
-      operationId: listHostedSessions
-      tags: [Application]
-      parameters:
-        - name: project
-          in: query
-          schema: { type: string }
-        - name: active
-          in: query
-          schema: { type: [boolean, "null"] }
-        - name: orchestratorOnly
-          in: query
-          schema: { type: [boolean, "null"] }
-        - name: fresh
-          in: query
-          schema: { type: [boolean, "null"] }
-      responses:
-        "200":
-          description: Canonical AO session list.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ListSessionsResponse"
-        "400": { $ref: "#/components/responses/SharedBadRequest" }
-        "401": { $ref: "#/components/responses/SharedUnauthorized" }
-        "403": { $ref: "#/components/responses/SharedForbidden" }
-        "500": { $ref: "#/components/responses/SharedInternalError" }
-    post:
-      operationId: spawnHostedSession
-      tags: [Application]
-      parameters:
-        - $ref: "#/components/parameters/IdempotencyKey"
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/SpawnSessionRequest"
-      responses:
-        "201":
-          description: Canonical AO session created.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/SpawnSessionResponse"
-        "400": { $ref: "#/components/responses/SharedBadRequest" }
-        "401": { $ref: "#/components/responses/SharedUnauthorized" }
-        "403": { $ref: "#/components/responses/SharedForbidden" }
-        "404": { $ref: "#/components/responses/SharedNotFound" }
-        "409": { $ref: "#/components/responses/SharedConflict" }
-        "500": { $ref: "#/components/responses/SharedInternalError" }
-
-  /api/v1/sessions/{sessionId}:
-    parameters:
-      - $ref: "#/components/parameters/XAOOrg"
-      - $ref: "#/components/parameters/SessionId"
-    get:
-      operationId: getHostedSession
-      tags: [Application]
-      responses:
-        "200":
-          description: Canonical AO session.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/SessionResponse"
-        "401": { $ref: "#/components/responses/SharedUnauthorized" }
-        "403": { $ref: "#/components/responses/SharedForbidden" }
-        "404": { $ref: "#/components/responses/SharedNotFound" }
-        "500": { $ref: "#/components/responses/SharedInternalError" }
-
-  /api/v1/sessions/{sessionId}/send:
-    parameters:
-      - $ref: "#/components/parameters/XAOOrg"
-      - $ref: "#/components/parameters/SessionId"
-    post:
-      operationId: sendHostedSessionMessage
-      tags: [Application]
-      parameters:
-        - $ref: "#/components/parameters/IdempotencyKey"
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/SendSessionMessageRequest"
-      responses:
-        "200":
-          description: Canonical AO send result.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/SendSessionMessageResponse"
-        "400": { $ref: "#/components/responses/SharedBadRequest" }
-        "401": { $ref: "#/components/responses/SharedUnauthorized" }
-        "403": { $ref: "#/components/responses/SharedForbidden" }
-        "404": { $ref: "#/components/responses/SharedNotFound" }
-        "409": { $ref: "#/components/responses/SharedConflict" }
-        "500": { $ref: "#/components/responses/SharedInternalError" }
-
-  /api/v1/sessions/{sessionId}/pr:
-    parameters:
-      - $ref: "#/components/parameters/XAOOrg"
-      - $ref: "#/components/parameters/SessionId"
-    get:
-      operationId: listHostedSessionPullRequests
-      tags: [Application]
-      responses:
-        "200":
-          description: Canonical AO pull-request facts.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ListSessionPRsResponse"
-        "401": { $ref: "#/components/responses/SharedUnauthorized" }
-        "403": { $ref: "#/components/responses/SharedForbidden" }
-        "404": { $ref: "#/components/responses/SharedNotFound" }
-        "500": { $ref: "#/components/responses/SharedInternalError" }
-        "501": { $ref: "#/components/responses/SharedNotImplemented" }
-
-  /api/v1/sessions/{sessionId}/reviews:
-    parameters:
-      - $ref: "#/components/parameters/XAOOrg"
-      - $ref: "#/components/parameters/SessionId"
-    get:
-      operationId: listHostedSessionReviews
-      tags: [Application]
-      responses:
-        "200":
-          description: Canonical AO review state.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ListReviewsResponse"
-        "401": { $ref: "#/components/responses/SharedUnauthorized" }
-        "403": { $ref: "#/components/responses/SharedForbidden" }
-        "422": { $ref: "#/components/responses/SharedUnprocessable" }
-        "501": { $ref: "#/components/responses/SharedNotImplemented" }
-
-  /api/v1/sessions/{sessionId}/workspace/files:
-    parameters:
-      - $ref: "#/components/parameters/XAOOrg"
-      - $ref: "#/components/parameters/SessionId"
-    get:
-      operationId: listHostedWorkspaceFiles
-      tags: [Application]
-      responses:
-        "200":
-          description: Canonical AO workspace file list.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ListWorkspaceFilesResponse"
-        "400": { $ref: "#/components/responses/SharedBadRequest" }
-        "401": { $ref: "#/components/responses/SharedUnauthorized" }
-        "403": { $ref: "#/components/responses/SharedForbidden" }
-        "404": { $ref: "#/components/responses/SharedNotFound" }
-        "500": { $ref: "#/components/responses/SharedInternalError" }
-        "501": { $ref: "#/components/responses/SharedNotImplemented" }
-
-  /api/v1/sessions/{sessionId}/workspace/file:
-    parameters:
-      - $ref: "#/components/parameters/XAOOrg"
-      - $ref: "#/components/parameters/SessionId"
-      - name: path
-        in: query
-        required: true
-        schema: { type: string }
-    get:
-      operationId: readHostedWorkspaceFile
-      tags: [Application]
-      responses:
-        "200":
-          description: Canonical AO workspace file and diff.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/WorkspaceFileResponse"
-        "400": { $ref: "#/components/responses/SharedBadRequest" }
-        "401": { $ref: "#/components/responses/SharedUnauthorized" }
-        "403": { $ref: "#/components/responses/SharedForbidden" }
-        "404": { $ref: "#/components/responses/SharedNotFound" }
-        "500": { $ref: "#/components/responses/SharedInternalError" }
-        "501": { $ref: "#/components/responses/SharedNotImplemented" }
-
-  /api/v1/sessions/{sessionId}/terminal-ticket:
-    parameters:
-      - $ref: "#/components/parameters/XAOOrg"
-      - $ref: "#/components/parameters/SessionId"
-    post:
-      operationId: createSandboxTerminalConnection
-      tags: [Application]
-      parameters:
-        - $ref: "#/components/parameters/IdempotencyKey"
-      description: |
-        Atomically issues one connection ticket for the session sandbox mux.
-        Replaying a consumed ticket fails; terminal bytes never traverse a
-        control-plane terminal endpoint.
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/TerminalConnectionRequest"
-      responses:
-        "201":
-          description: One-time sandbox mux connection metadata.
-          headers:
-            Cache-Control:
-              schema: { type: string, const: no-store }
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/TerminalConnection"
-        "400": { $ref: "#/components/responses/SharedBadRequest" }
-        "401": { $ref: "#/components/responses/SharedUnauthorized" }
-        "403": { $ref: "#/components/responses/SharedForbidden" }
-        "404": { $ref: "#/components/responses/SharedNotFound" }
-        "409": { $ref: "#/components/responses/SharedConflict" }
-        "500": { $ref: "#/components/responses/SharedInternalError" }
-
   /api/cloud/v1/orgs/{orgId}/workspaces:
     parameters:
       - $ref: "#/components/parameters/OrgId"
+    get:
+      operationId: listWorkspacePlacements
+      tags: [Placement]
+      parameters:
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: Tenant-scoped workspace placement page.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WorkspacePlacementPage" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "500": { $ref: "#/components/responses/InternalError" }
     post:
       operationId: createWorkspacePlacement
       tags: [Placement]
@@ -373,8 +130,9 @@ paths:
         - $ref: "#/components/parameters/IdempotencyKey"
       description: |
         Accepts the asynchronous project-placement saga. A successful response
-        is not a project. Poll the returned operation until ready, then discover
-        the canonical project through GET /api/v1/projects.
+        is placement acceptance, not a product project response. Poll the
+        returned workspace until ready; project discovery remains exclusively
+        on the separate code-first application API and client.
       requestBody:
         required: true
         content:
@@ -387,17 +145,17 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/WorkspacePlacementOperation"
+                $ref: "#/components/schemas/WorkspacePlacement"
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "409": { $ref: "#/components/responses/Conflict" }
         "500": { $ref: "#/components/responses/InternalError" }
 
-  /api/cloud/v1/orgs/{orgId}/workspaces/{operationId}:
+  /api/cloud/v1/orgs/{orgId}/workspaces/{workspaceId}:
     parameters:
       - $ref: "#/components/parameters/OrgId"
-      - $ref: "#/components/parameters/OperationId"
+      - $ref: "#/components/parameters/WorkspaceId"
     get:
       operationId: getWorkspacePlacement
       tags: [Placement]
@@ -407,10 +165,157 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/WorkspacePlacementOperation"
+                $ref: "#/components/schemas/WorkspacePlacement"
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "500": { $ref: "#/components/responses/InternalError" }
+    delete:
+      operationId: deleteWorkspacePlacement
+      tags: [Placement]
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      responses:
+        "202":
+          description: Workspace deletion accepted.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WorkspacePlacement" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "500": { $ref: "#/components/responses/InternalError" }
+
+  /api/cloud/v1/orgs/{orgId}/workspaces/{workspaceId}/resume:
+    parameters:
+      - $ref: "#/components/parameters/OrgId"
+      - $ref: "#/components/parameters/WorkspaceId"
+    post:
+      operationId: resumeWorkspacePlacement
+      tags: [Placement]
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      responses:
+        "202":
+          description: Workspace resume accepted.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WorkspacePlacement" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "500": { $ref: "#/components/responses/InternalError" }
+
+  /api/cloud/v1/orgs/{orgId}/provider-connections:
+    parameters:
+      - $ref: "#/components/parameters/OrgId"
+    get:
+      operationId: listProviderConnections
+      tags: [Vault]
+      responses:
+        "200":
+          description: Redacted organization provider connections.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ProviderConnectionList" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "500": { $ref: "#/components/responses/InternalError" }
+
+  /api/cloud/v1/orgs/{orgId}/provider-connections/agents/{provider}:
+    parameters:
+      - $ref: "#/components/parameters/OrgId"
+      - $ref: "#/components/parameters/Provider"
+    put:
+      operationId: putAgentProviderConnection
+      tags: [Vault]
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PutAgentProviderConnectionInput" }
+      responses:
+        "200":
+          description: Redacted provider connection metadata.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ProviderConnectionResponse" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "500": { $ref: "#/components/responses/InternalError" }
+    delete:
+      operationId: deleteAgentProviderConnection
+      tags: [Vault]
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      responses:
+        "204": { description: Provider connection deleted. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "500": { $ref: "#/components/responses/InternalError" }
+
+  /api/cloud/v1/orgs/{orgId}/sessions/{sessionId}/terminal-ticket:
+    parameters:
+      - $ref: "#/components/parameters/OrgId"
+      - $ref: "#/components/parameters/SessionId"
+    post:
+      operationId: createTerminalTicket
+      tags: [Terminal]
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/TerminalTicketRequest" }
+      responses:
+        "201":
+          description: One-time ticket and direct sandbox mux metadata.
+          headers:
+            Cache-Control:
+              schema: { type: string, const: no-store }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TerminalTicket" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "500": { $ref: "#/components/responses/InternalError" }
+
+  /api/cloud/v1/sandbox/terminal-tickets/consume:
+    post:
+      operationId: consumeTerminalTicket
+      tags: [Terminal]
+      security:
+        - workerAuth: []
+      description: Atomically consumes a one-time ticket for the bound sandbox tuple.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/TerminalTicketRedemption" }
+      responses:
+        "200":
+          description: Scope grant for the exact sandbox, workspace, and session.
+          headers:
+            Cache-Control:
+              schema: { type: string, const: no-store }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TerminalTicketGrant" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/WorkerUnauthorized" }
+        "403": { $ref: "#/components/responses/WorkerForbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
         "500": { $ref: "#/components/responses/InternalError" }
 
   /api/cloud/v1/orgs/{orgId}/github/installations:
@@ -450,7 +355,7 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "500": { $ref: "#/components/responses/InternalError" }
 
-  /api/cloud/v1/orgs/{orgId}/github/installations/{installationId}:
+  /api/cloud/v1/orgs/{orgId}/github/installations/{installationId}/disconnect:
     parameters:
       - $ref: "#/components/parameters/OrgId"
       - $ref: "#/components/parameters/InstallationId"
@@ -667,9 +572,106 @@ paths:
         "403": { $ref: "#/components/responses/WorkerForbidden" }
         "500": { $ref: "#/components/responses/InternalError" }
 
+  /api/cloud/v1/worker/sessions:
+    get:
+      operationId: listWorkerSessions
+      tags: [Worker]
+      security:
+        - workerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: Capability-scoped session page.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WorkerSessionPage" }
+        "401": { $ref: "#/components/responses/WorkerUnauthorized" }
+        "403": { $ref: "#/components/responses/WorkerForbidden" }
+        "500": { $ref: "#/components/responses/InternalError" }
+    post:
+      operationId: createWorkerSession
+      tags: [Worker]
+      security:
+        - workerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateWorkerSessionInput" }
+      responses:
+        "202":
+          description: Worker session creation accepted.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WorkerSession" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/WorkerUnauthorized" }
+        "403": { $ref: "#/components/responses/WorkerForbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "500": { $ref: "#/components/responses/InternalError" }
+
+  /api/cloud/v1/worker/sessions/{sessionId}:
+    parameters:
+      - $ref: "#/components/parameters/SessionId"
+    get:
+      operationId: getWorkerSession
+      tags: [Worker]
+      security:
+        - workerAuth: []
+      responses:
+        "200":
+          description: Capability-scoped worker session.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WorkerSession" }
+        "401": { $ref: "#/components/responses/WorkerUnauthorized" }
+        "403": { $ref: "#/components/responses/WorkerForbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "500": { $ref: "#/components/responses/InternalError" }
+    delete:
+      operationId: deleteWorkerSession
+      tags: [Worker]
+      security:
+        - workerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      responses:
+        "202":
+          description: Worker session deletion accepted.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WorkerSession" }
+        "401": { $ref: "#/components/responses/WorkerUnauthorized" }
+        "403": { $ref: "#/components/responses/WorkerForbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "500": { $ref: "#/components/responses/InternalError" }
+
   /api/cloud/v1/worker/sessions/{sessionId}/messages:
     parameters:
       - $ref: "#/components/parameters/SessionId"
+    get:
+      operationId: listWorkerSessionMessages
+      tags: [Worker]
+      security:
+        - workerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: Capability-scoped message page.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WorkerMessagePage" }
+        "401": { $ref: "#/components/responses/WorkerUnauthorized" }
+        "403": { $ref: "#/components/responses/WorkerForbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "500": { $ref: "#/components/responses/InternalError" }
     post:
       operationId: sendWorkerSessionMessage
       tags: [Worker]
@@ -682,22 +684,50 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/SendSessionMessageRequest"
+              $ref: "#/components/schemas/WorkerMessageInput"
       responses:
         "200":
-          description: Canonical AO send result.
+          description: Message accepted.
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/SendSessionMessageResponse"
-        "400": { $ref: "#/components/responses/SharedBadRequest" }
+                $ref: "#/components/schemas/WorkerMessage"
+        "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/WorkerUnauthorized" }
         "403": { $ref: "#/components/responses/WorkerForbidden" }
-        "404": { $ref: "#/components/responses/SharedNotFound" }
-        "409": { $ref: "#/components/responses/SharedConflict" }
-        "500": { $ref: "#/components/responses/SharedInternalError" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "500": { $ref: "#/components/responses/InternalError" }
 
-  /api/cloud/v1/worker/sessions/{sessionId}/pull-requests:
+  /api/cloud/v1/worker/sessions/{sessionId}/pr/claim:
+    parameters:
+      - $ref: "#/components/parameters/SessionId"
+    post:
+      operationId: claimWorkerSessionPullRequest
+      tags: [Worker]
+      security:
+        - workerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/WorkerPullRequestClaimInput" }
+      responses:
+        "200":
+          description: Pull request claim result.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WorkerPullRequest" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/WorkerUnauthorized" }
+        "403": { $ref: "#/components/responses/WorkerForbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "500": { $ref: "#/components/responses/InternalError" }
+
+  /api/cloud/v1/worker/sessions/{sessionId}/pr:
     parameters:
       - $ref: "#/components/parameters/SessionId"
     get:
@@ -707,15 +737,15 @@ paths:
         - workerAuth: []
       responses:
         "200":
-          description: Canonical AO pull-request facts.
+          description: Pull-request facts visible to the capability.
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ListSessionPRsResponse"
+                $ref: "#/components/schemas/WorkerPullRequestPage"
         "401": { $ref: "#/components/responses/WorkerUnauthorized" }
         "403": { $ref: "#/components/responses/WorkerForbidden" }
-        "404": { $ref: "#/components/responses/SharedNotFound" }
-        "500": { $ref: "#/components/responses/SharedInternalError" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "500": { $ref: "#/components/responses/InternalError" }
 
   /api/cloud/v1/worker/sessions/{sessionId}/reviews:
     parameters:
@@ -727,15 +757,212 @@ paths:
         - workerAuth: []
       responses:
         "200":
-          description: Canonical AO review state.
+          description: Review state visible to the capability.
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ListReviewsResponse"
+                $ref: "#/components/schemas/WorkerReviewPage"
         "401": { $ref: "#/components/responses/WorkerUnauthorized" }
         "403": { $ref: "#/components/responses/WorkerForbidden" }
-        "422": { $ref: "#/components/responses/SharedUnprocessable" }
-        "500": { $ref: "#/components/responses/SharedInternalError" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "500": { $ref: "#/components/responses/InternalError" }
+
+  /api/cloud/v1/worker/sessions/{sessionId}/reviews/submit:
+    parameters:
+      - $ref: "#/components/parameters/SessionId"
+    post:
+      operationId: submitWorkerSessionReview
+      tags: [Worker]
+      security:
+        - workerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/WorkerReviewSubmitInput" }
+      responses:
+        "200":
+          description: Review submitted.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WorkerReview" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/WorkerUnauthorized" }
+        "403": { $ref: "#/components/responses/WorkerForbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "500": { $ref: "#/components/responses/InternalError" }
+
+  /api/cloud/v1/worker/events:
+    post:
+      operationId: publishWorkerEvent
+      tags: [Worker Execution]
+      security:
+        - workerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/WorkerEventInput" }
+      responses:
+        "202":
+          description: Event durably accepted.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WorkerOKResponse" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/WorkerUnauthorized" }
+        "403": { $ref: "#/components/responses/WorkerForbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /api/cloud/v1/worker/turns/claim:
+    post:
+      operationId: claimWorkerTurn
+      tags: [Worker Execution]
+      security:
+        - workerAuth: []
+      responses:
+        "200":
+          description: Claimed turn or null.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WorkerClaimTurnResponse" }
+        "401": { $ref: "#/components/responses/WorkerUnauthorized" }
+        "403": { $ref: "#/components/responses/WorkerForbidden" }
+
+  /api/cloud/v1/worker/turns/{turnId}/cancellation:
+    parameters:
+      - $ref: "#/components/parameters/TurnId"
+    get:
+      operationId: getWorkerTurnCancellation
+      tags: [Worker Execution]
+      security:
+        - workerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/Attempt"
+      responses:
+        "200":
+          description: Cancellation state for the fenced attempt.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WorkerCancellationResponse" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/WorkerUnauthorized" }
+        "403": { $ref: "#/components/responses/WorkerForbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /api/cloud/v1/worker/turns/{turnId}/complete:
+    parameters:
+      - $ref: "#/components/parameters/TurnId"
+    post:
+      operationId: completeWorkerTurn
+      tags: [Worker Execution]
+      security:
+        - workerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/WorkerCompleteTurnInput" }
+      responses:
+        "200":
+          description: Fenced completion accepted.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WorkerFinishTurnResponse" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/WorkerUnauthorized" }
+        "403": { $ref: "#/components/responses/WorkerForbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /api/cloud/v1/worker/turns/{turnId}/fail:
+    parameters:
+      - $ref: "#/components/parameters/TurnId"
+    post:
+      operationId: failWorkerTurn
+      tags: [Worker Execution]
+      security:
+        - workerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/WorkerFailTurnInput" }
+      responses:
+        "200":
+          description: Fenced failure accepted.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WorkerFinishTurnResponse" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/WorkerUnauthorized" }
+        "403": { $ref: "#/components/responses/WorkerForbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /api/cloud/v1/worker/transport/claim:
+    post:
+      operationId: claimWorkerTransport
+      tags: [Worker Transport]
+      security:
+        - workerAuth: []
+      responses:
+        "200":
+          description: Claimed non-terminal transport request or null.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WorkerClaimTransportResponse" }
+        "401": { $ref: "#/components/responses/WorkerUnauthorized" }
+        "403": { $ref: "#/components/responses/WorkerForbidden" }
+
+  /api/cloud/v1/worker/transport/{requestId}/complete:
+    parameters:
+      - $ref: "#/components/parameters/RequestId"
+    post:
+      operationId: completeWorkerTransport
+      tags: [Worker Transport]
+      security:
+        - workerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/WorkerCompleteTransportInput" }
+      responses:
+        "200":
+          description: Transport result recorded.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WorkerOKResponse" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/WorkerUnauthorized" }
+        "403": { $ref: "#/components/responses/WorkerForbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /api/cloud/v1/worker/transport/{requestId}/fail:
+    parameters:
+      - $ref: "#/components/parameters/RequestId"
+    post:
+      operationId: failWorkerTransport
+      tags: [Worker Transport]
+      security:
+        - workerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/WorkerFailTransportInput" }
+      responses:
+        "200":
+          description: Transport failure recorded.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WorkerOKResponse" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/WorkerUnauthorized" }
+        "403": { $ref: "#/components/responses/WorkerForbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
 
   /api/cloud/v1/worker/checkout-grant:
     post:
@@ -784,32 +1011,18 @@ components:
       bearerFormat: capability from /run/ao/capability
 
   parameters:
-    XAOOrg:
-      name: X-AO-Org
-      in: header
-      required: false
-      description: |
-        Hosted /api/v1 tenant selector. Required when the principal belongs to
-        multiple organizations. It is never an authority for control-plane
-        admin routes, whose orgId path parameter remains authoritative.
-      schema: { type: string, minLength: 1 }
     OrgId:
       name: orgId
       in: path
       required: true
       schema: { type: string, format: uuid }
-    ProjectId:
-      name: id
-      in: path
-      required: true
-      schema: { type: string }
     SessionId:
       name: sessionId
       in: path
       required: true
       schema: { type: string }
-    OperationId:
-      name: operationId
+    WorkspaceId:
+      name: workspaceId
       in: path
       required: true
       schema: { type: string, format: uuid }
@@ -823,6 +1036,36 @@ components:
       in: header
       required: true
       schema: { type: string, minLength: 1, maxLength: 200 }
+    Cursor:
+      name: cursor
+      in: query
+      required: false
+      schema: { type: string }
+    Limit:
+      name: limit
+      in: query
+      required: false
+      schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
+    Provider:
+      name: provider
+      in: path
+      required: true
+      schema: { type: string, enum: [claude-code, codex, cursor] }
+    TurnId:
+      name: turnId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    RequestId:
+      name: requestId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    Attempt:
+      name: attempt
+      in: query
+      required: true
+      schema: { type: integer, minimum: 1 }
 
   responses:
     BadRequest: { $ref: "#/components/responses/ErrorResponse" }
@@ -840,56 +1083,7 @@ components:
         application/json:
           schema:
             $ref: "#/components/schemas/ErrorEnvelope"
-    SharedBadRequest: { $ref: "#/components/responses/SharedErrorResponse" }
-    SharedUnauthorized: { $ref: "#/components/responses/SharedErrorResponse" }
-    SharedForbidden: { $ref: "#/components/responses/SharedErrorResponse" }
-    SharedNotFound: { $ref: "#/components/responses/SharedErrorResponse" }
-    SharedConflict: { $ref: "#/components/responses/SharedErrorResponse" }
-    SharedUnprocessable: { $ref: "#/components/responses/SharedErrorResponse" }
-    SharedNotImplemented: { $ref: "#/components/responses/SharedErrorResponse" }
-    SharedInternalError: { $ref: "#/components/responses/SharedErrorResponse" }
-    SharedErrorResponse:
-      description: Canonical shared /api/v1 error envelope.
-      content:
-        application/json:
-          schema:
-            $ref: "#/components/schemas/APIError"
-
   schemas:
-    # Shared application DTOs are references to the code-generated daemon API.
-    # The parity test locks these names and targets so Cloud cannot fork App*
-    # product models or silently drift from /api/v1.
-    APIError:
-      $ref: "../../backend/internal/httpd/apispec/openapi.yaml#/components/schemas/APIError"
-    ListProjectsResponse:
-      $ref: "../../backend/internal/httpd/apispec/openapi.yaml#/components/schemas/ListProjectsResponse"
-    ProjectGetResponse:
-      $ref: "../../backend/internal/httpd/apispec/openapi.yaml#/components/schemas/ProjectGetResponse"
-    ProjectSummary:
-      $ref: "../../backend/internal/httpd/apispec/openapi.yaml#/components/schemas/ProjectSummary"
-    ListSessionsResponse:
-      $ref: "../../backend/internal/httpd/apispec/openapi.yaml#/components/schemas/ListSessionsResponse"
-    SessionResponse:
-      $ref: "../../backend/internal/httpd/apispec/openapi.yaml#/components/schemas/SessionResponse"
-    ControllersSessionView:
-      $ref: "../../backend/internal/httpd/apispec/openapi.yaml#/components/schemas/ControllersSessionView"
-    SpawnSessionRequest:
-      $ref: "../../backend/internal/httpd/apispec/openapi.yaml#/components/schemas/SpawnSessionRequest"
-    SpawnSessionResponse:
-      $ref: "../../backend/internal/httpd/apispec/openapi.yaml#/components/schemas/SpawnSessionResponse"
-    SendSessionMessageRequest:
-      $ref: "../../backend/internal/httpd/apispec/openapi.yaml#/components/schemas/SendSessionMessageRequest"
-    SendSessionMessageResponse:
-      $ref: "../../backend/internal/httpd/apispec/openapi.yaml#/components/schemas/SendSessionMessageResponse"
-    ListSessionPRsResponse:
-      $ref: "../../backend/internal/httpd/apispec/openapi.yaml#/components/schemas/ListSessionPRsResponse"
-    ListReviewsResponse:
-      $ref: "../../backend/internal/httpd/apispec/openapi.yaml#/components/schemas/ListReviewsResponse"
-    ListWorkspaceFilesResponse:
-      $ref: "../../backend/internal/httpd/apispec/openapi.yaml#/components/schemas/ListWorkspaceFilesResponse"
-    WorkspaceFileResponse:
-      $ref: "../../backend/internal/httpd/apispec/openapi.yaml#/components/schemas/WorkspaceFileResponse"
-
     ErrorEnvelope:
       type: object
       additionalProperties: false
@@ -950,7 +1144,7 @@ components:
     CreateWorkspacePlacementInput:
       type: object
       additionalProperties: false
-      required: [displayName, repositoryUrl, defaultBranch]
+      required: [displayName]
       properties:
         displayName: { type: string, minLength: 1 }
         repositoryUrl: { type: string, format: uri }
@@ -964,22 +1158,40 @@ components:
     WorkspacePlacementState:
       type: string
       enum: [pending, failed, ready]
-    WorkspacePlacementOperation:
+    WorkspacePlacement:
       type: object
       additionalProperties: false
-      required: [operationId, orgId, state, defaultBranch, createdAt, updatedAt]
+      required: [id, orgId, ownerUserId, state, defaultBranch, createdAt, updatedAt]
       properties:
-        operationId: { type: string, format: uuid }
+        id: { type: string, format: uuid }
         orgId: { type: string, format: uuid }
+        ownerUserId: { type: string, format: uuid }
         state: { $ref: "#/components/schemas/WorkspacePlacementState" }
         defaultBranch: { type: string }
-        projectId:
+        productProjectId:
           type: string
-          description: Present only when state is ready; discover its DTO through /api/v1/projects.
-        failure:
-          $ref: "#/components/schemas/PlacementFailure"
+          description: Present only when state is ready; discovery uses the separate application client.
+        message:
+          type: string
+          description: Human-readable pending progress or terminal failure detail.
         createdAt: { type: string, format: date-time }
         updatedAt: { type: string, format: date-time }
+    WorkspacePlacementPage:
+      type: object
+      additionalProperties: false
+      required: [workspaces, pageInfo]
+      properties:
+        workspaces:
+          type: array
+          items: { $ref: "#/components/schemas/WorkspacePlacement" }
+        pageInfo: { $ref: "#/components/schemas/PageInfo" }
+    PageInfo:
+      type: object
+      additionalProperties: false
+      required: [hasMore]
+      properties:
+        hasMore: { type: boolean }
+        nextCursor: { type: string }
     PlacementFailure:
       type: object
       additionalProperties: false
@@ -987,7 +1199,6 @@ components:
       properties:
         code: { type: string }
         message: { type: string }
-
     GitHubInstallation:
       type: object
       additionalProperties: false
@@ -1051,17 +1262,58 @@ components:
       properties:
         status: { type: string, enum: [accepted, duplicate] }
 
-    TerminalConnectionRequest:
+    ProviderConnectionList:
       type: object
       additionalProperties: false
-      required: [kind]
+      required: [providerConnections]
       properties:
-        kind: { type: string, enum: [agent, workspace] }
-        after: { type: integer, format: int64, minimum: 0 }
-    TerminalConnection:
+        providerConnections:
+          type: array
+          items: { $ref: "#/components/schemas/RedactedProviderConnection" }
+    ProviderConnectionResponse:
       type: object
       additionalProperties: false
-      required: [connectionUrl, ticket, expiresAt, protocol]
+      required: [providerConnection]
+      properties:
+        providerConnection: { $ref: "#/components/schemas/RedactedProviderConnection" }
+    RedactedProviderConnection:
+      type: object
+      additionalProperties: false
+      required: [provider, configured, updatedAt]
+      properties:
+        provider: { type: string, enum: [claude-code, codex, cursor] }
+        configured: { type: boolean }
+        label: { type: string }
+        updatedAt: { type: string, format: date-time }
+    PutAgentProviderConnectionInput:
+      type: object
+      additionalProperties: false
+      required: [credential]
+      properties:
+        credential:
+          type: string
+          writeOnly: true
+          format: password
+          minLength: 1
+        label: { type: string }
+
+    TerminalTicketRequest:
+      type: object
+      additionalProperties: false
+      required: [scopes]
+      properties:
+        scopes:
+          type: array
+          minItems: 1
+          uniqueItems: true
+          items: { $ref: "#/components/schemas/TerminalTicketScope" }
+    TerminalTicketScope:
+      type: string
+      enum: [terminal:read, terminal:operate, workspace:observe]
+    TerminalTicket:
+      type: object
+      additionalProperties: false
+      required: [connectionUrl, ticket, scopes, expiresAt, protocol]
       properties:
         connectionUrl:
           type: string
@@ -1069,9 +1321,38 @@ components:
           description: Authenticated sandbox mux WebSocket URL, never a control-plane relay URL.
         ticket:
           type: string
-          description: Single-use ticket consumed atomically by the sandbox mux.
+          pattern: '^ao\.ticket\.[A-Za-z0-9_-]+$'
+          description: Single-use ticket offered only as the WebSocket subprotocol.
+        scopes:
+          type: array
+          minItems: 1
+          uniqueItems: true
+          items: { $ref: "#/components/schemas/TerminalTicketScope" }
         expiresAt: { type: string, format: date-time }
         protocol: { type: string, const: ao.mux.v1 }
+    TerminalTicketRedemption:
+      type: object
+      additionalProperties: false
+      required: [ticket, sandboxId, workspaceId, sessionId]
+      properties:
+        ticket: { type: string, pattern: '^ao\.ticket\.[A-Za-z0-9_-]+$' }
+        sandboxId: { type: string }
+        workspaceId: { type: string }
+        sessionId: { type: string }
+    TerminalTicketGrant:
+      type: object
+      additionalProperties: false
+      required: [sandboxId, workspaceId, sessionId, scopes, expiresAt]
+      properties:
+        sandboxId: { type: string }
+        workspaceId: { type: string }
+        sessionId: { type: string }
+        scopes:
+          type: array
+          minItems: 1
+          uniqueItems: true
+          items: { $ref: "#/components/schemas/TerminalTicketScope" }
+        expiresAt: { type: string, format: date-time }
 
     WorkerBootstrapInput:
       type: object
@@ -1120,6 +1401,203 @@ components:
         scope: { $ref: "#/components/schemas/WorkerScope" }
         placementState: { type: string, enum: [pending, running, stopping, stopped, failed] }
         observedAt: { type: string, format: date-time }
+    CreateWorkerSessionInput:
+      type: object
+      additionalProperties: false
+      required: [projectId, role, harness]
+      properties:
+        projectId: { type: string }
+        role: { type: string, enum: [coordinator, worker] }
+        harness: { type: string }
+        prompt: { type: string, maxLength: 65536 }
+    WorkerSession:
+      type: object
+      additionalProperties: false
+      required: [id, workspaceId, projectId, role, state, createdAt, updatedAt]
+      properties:
+        id: { type: string }
+        workspaceId: { type: string, format: uuid }
+        projectId: { type: string }
+        role: { type: string, enum: [coordinator, worker] }
+        state: { type: string, enum: [pending, running, stopping, stopped, failed] }
+        failure: { $ref: "#/components/schemas/PlacementFailure" }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    WorkerSessionPage:
+      type: object
+      additionalProperties: false
+      required: [sessions, pageInfo]
+      properties:
+        sessions:
+          type: array
+          items: { $ref: "#/components/schemas/WorkerSession" }
+        pageInfo: { $ref: "#/components/schemas/PageInfo" }
+    WorkerMessageInput:
+      type: object
+      additionalProperties: false
+      required: [message]
+      properties:
+        message: { type: string, minLength: 1, maxLength: 65536 }
+    WorkerMessage:
+      type: object
+      additionalProperties: false
+      required: [id, sessionId, role, message, createdAt]
+      properties:
+        id: { type: string }
+        sessionId: { type: string }
+        role: { type: string, enum: [user, assistant, system] }
+        message: { type: string }
+        createdAt: { type: string, format: date-time }
+    WorkerMessagePage:
+      type: object
+      additionalProperties: false
+      required: [messages, pageInfo]
+      properties:
+        messages:
+          type: array
+          items: { $ref: "#/components/schemas/WorkerMessage" }
+        pageInfo: { $ref: "#/components/schemas/PageInfo" }
+    WorkerPullRequestClaimInput:
+      type: object
+      additionalProperties: false
+      required: [url]
+      properties:
+        url: { type: string, format: uri }
+    WorkerPullRequest:
+      type: object
+      additionalProperties: false
+      required: [url, number, state, title]
+      properties:
+        url: { type: string, format: uri }
+        number: { type: integer, minimum: 1 }
+        state: { type: string, enum: [draft, open, merged, closed] }
+        title: { type: string }
+        headSha: { type: string }
+    WorkerPullRequestPage:
+      type: object
+      additionalProperties: false
+      required: [pullRequests]
+      properties:
+        pullRequests:
+          type: array
+          items: { $ref: "#/components/schemas/WorkerPullRequest" }
+    WorkerReview:
+      type: object
+      additionalProperties: false
+      required: [id, status, createdAt, updatedAt]
+      properties:
+        id: { type: string }
+        status: { type: string, enum: [queued, running, passed, failed, cancelled] }
+        verdict: { type: string, enum: [approve, comment, request_changes] }
+        summary: { type: string }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    WorkerReviewPage:
+      type: object
+      additionalProperties: false
+      required: [reviews]
+      properties:
+        reviews:
+          type: array
+          items: { $ref: "#/components/schemas/WorkerReview" }
+    WorkerReviewSubmitInput:
+      type: object
+      additionalProperties: false
+      required: [verdict, summary]
+      properties:
+        verdict: { type: string, enum: [approve, comment, request_changes] }
+        summary: { type: string, minLength: 1, maxLength: 65536 }
+    WorkerEventInput:
+      type: object
+      additionalProperties: false
+      required: [type, payload]
+      properties:
+        type: { type: string, enum: [worker.ready, chat.assistant_delta, agent.activity] }
+        payload: { type: object, additionalProperties: true }
+    WorkerOKResponse:
+      type: object
+      additionalProperties: false
+      required: [ok]
+      properties:
+        ok: { type: boolean, const: true }
+    WorkerTurn:
+      type: object
+      additionalProperties: false
+      required: [id, prompt, attempt, cancelRequested]
+      properties:
+        id: { type: string, format: uuid }
+        prompt: { type: string }
+        attempt: { type: integer, minimum: 1 }
+        cancelRequested: { type: boolean }
+    WorkerClaimTurnResponse:
+      type: object
+      additionalProperties: false
+      required: [turn]
+      properties:
+        turn:
+          oneOf:
+            - $ref: "#/components/schemas/WorkerTurn"
+            - type: "null"
+    WorkerCancellationResponse:
+      type: object
+      additionalProperties: false
+      required: [requested]
+      properties:
+        requested: { type: boolean }
+    WorkerCompleteTurnInput:
+      type: object
+      additionalProperties: false
+      required: [attempt]
+      properties:
+        attempt: { type: integer, minimum: 1 }
+        cancelled: { type: boolean }
+    WorkerFailTurnInput:
+      type: object
+      additionalProperties: false
+      required: [attempt, error]
+      properties:
+        attempt: { type: integer, minimum: 1 }
+        error: { type: string, minLength: 1, maxLength: 4096 }
+    WorkerFinishTurnResponse:
+      type: object
+      additionalProperties: false
+      required: [ok, alreadyFinished]
+      properties:
+        ok: { type: boolean, const: true }
+        alreadyFinished: { type: boolean }
+    WorkerWorkspaceTransportRequest:
+      type: object
+      additionalProperties: false
+      required: [id, attempt, kind, payload]
+      properties:
+        id: { type: string, format: uuid }
+        attempt: { type: integer, minimum: 1 }
+        kind: { type: string, enum: [workspace.list, workspace.read, workspace.write, workspace.diff] }
+        payload: { type: object, additionalProperties: true }
+    WorkerClaimTransportResponse:
+      type: object
+      additionalProperties: false
+      required: [request]
+      properties:
+        request:
+          oneOf:
+            - $ref: "#/components/schemas/WorkerWorkspaceTransportRequest"
+            - type: "null"
+    WorkerCompleteTransportInput:
+      type: object
+      additionalProperties: false
+      required: [attempt, response]
+      properties:
+        attempt: { type: integer, minimum: 1 }
+        response: { type: object, additionalProperties: true }
+    WorkerFailTransportInput:
+      type: object
+      additionalProperties: false
+      required: [attempt, code, message]
+      properties:
+        attempt: { type: integer, minimum: 1 }
+        code: { type: string, minLength: 1, maxLength: 100 }
+        message: { type: string, minLength: 1, maxLength: 4096 }
     WorkerCheckoutGrantInput:
       type: object
       additionalProperties: false

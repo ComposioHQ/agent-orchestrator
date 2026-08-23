@@ -1,6 +1,6 @@
 import type {
   AOSession,
-  APIError,
+  CreateWorkerSessionInput,
   CreateWorkspacePlacementInput,
   CurrentAccount,
   ErrorEnvelope,
@@ -9,35 +9,48 @@ import type {
   GitHubRepository,
   GitHubRepositoryAllowlistInput,
   GoogleIdentityExchange,
-  HostedSessionListOptions,
   IdempotentRequestOptions,
-  ListProjectsResponse,
-  ListReviewsResponse,
-  ListSessionPRsResponse,
-  ListSessionsResponse,
-  ProjectGetResponse,
+  PaginationOptions,
+  PutAgentProviderConnectionInput,
+  RedactedProviderConnection,
   RefreshTokenInput,
   RequestOptions,
-  SendSessionMessageRequest,
-  SendSessionMessageResponse,
-  SessionResponse,
-  SpawnSessionRequest,
-  SpawnSessionResponse,
-  TerminalConnection,
-  TerminalConnectionRequest,
+  TerminalTicket,
+  TerminalTicketGrant,
+  TerminalTicketRedemption,
+  TerminalTicketRequest,
   WorkerBootstrapGrant,
   WorkerBootstrapInput,
+  WorkerCancellationResponse,
+  WorkerClaimTurnResponse,
   WorkerCheckoutGrant,
   WorkerCheckoutGrantInput,
+  WorkerCompleteTransportInput,
+  WorkerCompleteTurnInput,
+  WorkerEventInput,
+  WorkerFailTransportInput,
+  WorkerFailTurnInput,
+  WorkerFinishTurnResponse,
   WorkerHeartbeatInput,
+  WorkerMessage,
+  WorkerMessageInput,
+  WorkerMessagePage,
+  WorkerOKResponse,
+  WorkerPullRequest,
+  WorkerPullRequestClaimInput,
+  WorkerPullRequestPage,
+  WorkerReview,
+  WorkerReviewPage,
+  WorkerReviewSubmitInput,
+  WorkerSession,
+  WorkerSessionPage,
   WorkerStatus,
-  WorkspaceFileResponse,
-  WorkspacePlacementOperation,
-  ListWorkspaceFilesResponse,
+  WorkerWorkspaceTransportRequest,
+  WorkspacePlacement,
+  WorkspacePlacementPage,
 } from "./types.js";
 
 type MaybePromise<T> = T | Promise<T>;
-type APIErrorEnvelope = ErrorEnvelope | APIError;
 
 export interface CloudClientConfig {
   baseUrl: string;
@@ -56,7 +69,6 @@ interface JSONRequestOptions extends RequestOptions {
   method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
   body?: unknown;
   idempotencyKey?: string;
-  orgId?: string;
   cache?: RequestCache;
 }
 
@@ -65,15 +77,15 @@ export class CloudApiError extends Error {
   readonly code: string;
   readonly requestId: string;
   readonly details?: Record<string, unknown>;
-  readonly envelope: APIErrorEnvelope;
+  readonly envelope: ErrorEnvelope;
 
-  constructor(status: number, envelope: APIErrorEnvelope) {
+  constructor(status: number, envelope: ErrorEnvelope) {
     super(envelope.message);
     this.name = "CloudApiError";
     this.status = status;
     this.code = envelope.code;
-    this.requestId = envelope.requestId ?? "";
-    this.details = envelope.details as Record<string, unknown> | undefined;
+    this.requestId = envelope.requestId;
+    this.details = envelope.details;
     this.envelope = envelope;
   }
 }
@@ -93,7 +105,16 @@ abstract class JSONClient {
     this.fetch = fetchImpl ?? globalThis.fetch.bind(globalThis);
   }
 
-  protected async readJSON<T>(response: Response): Promise<T> {
+  protected async finish<T>(response: Response): Promise<T> {
+    if (!response.ok) {
+      let value: unknown;
+      try {
+        value = await response.json();
+      } catch {
+        value = undefined;
+      }
+      throw new CloudApiError(response.status, toErrorEnvelope(response, value));
+    }
     if (response.status === 204) return undefined as T;
     try {
       return (await response.json()) as T;
@@ -105,17 +126,6 @@ abstract class JSONClient {
         requestId: response.headers.get("X-Request-Id") ?? "",
       });
     }
-  }
-
-  protected async throwIfError(response: Response): Promise<void> {
-    if (response.ok) return;
-    let value: unknown;
-    try {
-      value = await response.json();
-    } catch {
-      value = undefined;
-    }
-    throw new CloudApiError(response.status, toErrorEnvelope(response, value));
   }
 }
 
@@ -151,11 +161,11 @@ export class CloudClient extends JSONClient {
     });
   }
 
-  async logoutSession(
+  logoutSession(
     input: RefreshTokenInput,
     options: RequestOptions = {},
   ): Promise<void> {
-    await this.unauthenticatedRequest<void>("/api/cloud/v1/auth/logout", {
+    return this.unauthenticatedRequest("/api/cloud/v1/auth/logout", {
       method: "POST",
       body: input,
       cache: "no-store",
@@ -167,22 +177,13 @@ export class CloudClient extends JSONClient {
     return this.request("/api/cloud/v1/me", options);
   }
 
-  listProjects(
+  listWorkspacePlacements(
     orgId: string,
-    options: RequestOptions = {},
-  ): Promise<ListProjectsResponse> {
-    return this.appRequest(orgId, "/api/v1/projects", options);
-  }
-
-  getProject(
-    orgId: string,
-    projectId: string,
-    options: RequestOptions = {},
-  ): Promise<ProjectGetResponse> {
-    return this.appRequest(
-      orgId,
-      `/api/v1/projects/${encodeURIComponent(projectId)}`,
-      options,
+    options: PaginationOptions = {},
+  ): Promise<WorkspacePlacementPage> {
+    return this.request(
+      withQuery(this.orgPath(orgId, "/workspaces"), options),
+      { signal: options.signal },
     );
   }
 
@@ -190,162 +191,51 @@ export class CloudClient extends JSONClient {
     orgId: string,
     input: CreateWorkspacePlacementInput,
     options: IdempotentRequestOptions,
-  ): Promise<WorkspacePlacementOperation> {
-    return this.request(this.orgPath(orgId, "/workspaces"), {
-      method: "POST",
-      body: input,
-      idempotencyKey: options.idempotencyKey,
-      signal: options.signal,
-    });
+  ): Promise<WorkspacePlacement> {
+    return this.request(this.orgPath(orgId, "/workspaces"), mutation(input, options));
   }
 
   getWorkspacePlacement(
     orgId: string,
-    operationId: string,
+    workspaceId: string,
     options: RequestOptions = {},
-  ): Promise<WorkspacePlacementOperation> {
-    return this.request(
-      this.orgPath(orgId, `/workspaces/${encodeURIComponent(operationId)}`),
-      options,
-    );
+  ): Promise<WorkspacePlacement> {
+    return this.request(this.workspacePath(orgId, workspaceId), options);
   }
 
-  listSessions(
+  deleteWorkspacePlacement(
     orgId: string,
-    options: HostedSessionListOptions = {},
-  ): Promise<ListSessionsResponse> {
-    const path = withQuery("/api/v1/sessions", {
-      project: options.project,
-      active: options.active,
-      orchestratorOnly: options.orchestratorOnly,
-      fresh: options.fresh,
-    });
-    return this.appRequest(orgId, path, { signal: options.signal });
-  }
-
-  getSession(
-    orgId: string,
-    sessionId: string,
-    options: RequestOptions = {},
-  ): Promise<SessionResponse> {
-    return this.appRequest(
-      orgId,
-      `/api/v1/sessions/${encodeURIComponent(sessionId)}`,
-      options,
-    );
-  }
-
-  spawnSession(
-    orgId: string,
-    input: SpawnSessionRequest,
+    workspaceId: string,
     options: IdempotentRequestOptions,
-  ): Promise<SpawnSessionResponse> {
-    return this.appRequest(orgId, "/api/v1/sessions", {
-      method: "POST",
-      body: input,
+  ): Promise<WorkspacePlacement> {
+    return this.request(this.workspacePath(orgId, workspaceId), {
+      method: "DELETE",
       idempotencyKey: options.idempotencyKey,
       signal: options.signal,
     });
   }
 
-  sendSessionMessage(
+  resumeWorkspacePlacement(
     orgId: string,
-    sessionId: string,
-    input: SendSessionMessageRequest,
+    workspaceId: string,
     options: IdempotentRequestOptions,
-  ): Promise<SendSessionMessageResponse> {
-    return this.appRequest(
-      orgId,
-      `/api/v1/sessions/${encodeURIComponent(sessionId)}/send`,
-      {
-        method: "POST",
-        body: input,
-        idempotencyKey: options.idempotencyKey,
-        signal: options.signal,
-      },
-    );
-  }
-
-  listSessionPullRequests(
-    orgId: string,
-    sessionId: string,
-    options: RequestOptions = {},
-  ): Promise<ListSessionPRsResponse> {
-    return this.appRequest(
-      orgId,
-      `/api/v1/sessions/${encodeURIComponent(sessionId)}/pr`,
-      options,
-    );
-  }
-
-  listSessionReviews(
-    orgId: string,
-    sessionId: string,
-    options: RequestOptions = {},
-  ): Promise<ListReviewsResponse> {
-    return this.appRequest(
-      orgId,
-      `/api/v1/sessions/${encodeURIComponent(sessionId)}/reviews`,
-      options,
-    );
-  }
-
-  createTerminalConnection(
-    orgId: string,
-    sessionId: string,
-    input: TerminalConnectionRequest,
-    options: IdempotentRequestOptions,
-  ): Promise<TerminalConnection> {
-    return this.appRequest(
-      orgId,
-      `/api/v1/sessions/${encodeURIComponent(sessionId)}/terminal-ticket`,
-      {
-        method: "POST",
-        body: input,
-        cache: "no-store",
-        idempotencyKey: options.idempotencyKey,
-        signal: options.signal,
-      },
-    );
-  }
-
-  listWorkspaceFiles(
-    orgId: string,
-    sessionId: string,
-    options: RequestOptions = {},
-  ): Promise<ListWorkspaceFilesResponse> {
-    return this.appRequest(
-      orgId,
-      `/api/v1/sessions/${encodeURIComponent(sessionId)}/workspace/files`,
-      options,
-    );
-  }
-
-  readWorkspaceFile(
-    orgId: string,
-    sessionId: string,
-    path: string,
-    options: RequestOptions = {},
-  ): Promise<WorkspaceFileResponse> {
-    return this.appRequest(
-      orgId,
-      withQuery(
-        `/api/v1/sessions/${encodeURIComponent(sessionId)}/workspace/file`,
-        { path },
-      ),
-      options,
-    );
+  ): Promise<WorkspacePlacement> {
+    return this.request(`${this.workspacePath(orgId, workspaceId)}/resume`, {
+      method: "POST",
+      idempotencyKey: options.idempotencyKey,
+      signal: options.signal,
+    });
   }
 
   async listGitHubInstallations(
     orgId: string,
     options: RequestOptions = {},
   ): Promise<GitHubInstallation[]> {
-    const result = await this.request<{ installations: GitHubInstallation[] }>(
+    const response = await this.request<{ installations: GitHubInstallation[] }>(
       this.orgPath(orgId, "/github/installations"),
       options,
     );
-    return result.installations;
+    return response.installations;
   }
 
   startGitHubInstallation(
@@ -359,16 +249,27 @@ export class CloudClient extends JSONClient {
     });
   }
 
+  disconnectGitHubInstallation(
+    orgId: string,
+    installationId: string,
+    options: RequestOptions = {},
+  ): Promise<void> {
+    return this.request(
+      `${this.installationPath(orgId, installationId)}/disconnect`,
+      { method: "DELETE", signal: options.signal },
+    );
+  }
+
   async listGitHubRepositories(
     orgId: string,
     installationId: string,
     options: RequestOptions = {},
   ): Promise<GitHubRepository[]> {
-    const result = await this.request<{ repositories: GitHubRepository[] }>(
-      this.installationPath(orgId, installationId, "/repositories"),
+    const response = await this.request<{ repositories: GitHubRepository[] }>(
+      `${this.installationPath(orgId, installationId)}/repositories`,
       options,
     );
-    return result.repositories;
+    return response.repositories;
   }
 
   async setGitHubRepositoryAllowlist(
@@ -377,11 +278,11 @@ export class CloudClient extends JSONClient {
     input: GitHubRepositoryAllowlistInput,
     options: RequestOptions = {},
   ): Promise<GitHubRepository[]> {
-    const result = await this.request<{ repositories: GitHubRepository[] }>(
-      this.installationPath(orgId, installationId, "/repositories"),
+    const response = await this.request<{ repositories: GitHubRepository[] }>(
+      `${this.installationPath(orgId, installationId)}/repositories`,
       { method: "PUT", body: input, signal: options.signal },
     );
-    return result.repositories;
+    return response.repositories;
   }
 
   async syncGitHubInstallation(
@@ -389,62 +290,105 @@ export class CloudClient extends JSONClient {
     installationId: string,
     options: IdempotentRequestOptions,
   ): Promise<GitHubRepository[]> {
-    const result = await this.request<{ repositories: GitHubRepository[] }>(
-      this.installationPath(orgId, installationId, "/sync"),
+    const response = await this.request<{ repositories: GitHubRepository[] }>(
+      `${this.installationPath(orgId, installationId)}/sync`,
       {
         method: "POST",
         idempotencyKey: options.idempotencyKey,
         signal: options.signal,
       },
     );
-    return result.repositories;
+    return response.repositories;
   }
 
-  async disconnectGitHubInstallation(
+  async listProviderConnections(
     orgId: string,
-    installationId: string,
     options: RequestOptions = {},
+  ): Promise<RedactedProviderConnection[]> {
+    const response = await this.request<{
+      providerConnections: RedactedProviderConnection[];
+    }>(this.orgPath(orgId, "/provider-connections"), options);
+    return response.providerConnections;
+  }
+
+  async putAgentProviderConnection(
+    orgId: string,
+    provider: "claude-code" | "codex" | "cursor",
+    input: PutAgentProviderConnectionInput,
+    options: IdempotentRequestOptions,
+  ): Promise<RedactedProviderConnection> {
+    const response = await this.request<{
+      providerConnection: RedactedProviderConnection;
+    }>(this.providerPath(orgId, provider), mutation(input, options, "PUT"));
+    return response.providerConnection;
+  }
+
+  deleteAgentProviderConnection(
+    orgId: string,
+    provider: "claude-code" | "codex" | "cursor",
+    options: IdempotentRequestOptions,
   ): Promise<void> {
-    await this.request<void>(this.installationPath(orgId, installationId, ""), {
+    return this.request(this.providerPath(orgId, provider), {
       method: "DELETE",
+      idempotencyKey: options.idempotencyKey,
       signal: options.signal,
     });
   }
 
-  private appRequest<T>(
+  createTerminalTicket(
     orgId: string,
-    path: string,
-    options: JSONRequestOptions = {},
-  ): Promise<T> {
-    return this.request(path, { ...options, orgId: validateOrg(orgId) });
-  }
-
-  private orgPath(orgId: string, suffix: string): string {
-    return `/api/cloud/v1/orgs/${encodeURIComponent(validateOrg(orgId))}${suffix}`;
-  }
-
-  private installationPath(
-    orgId: string,
-    installationId: string,
-    suffix: string,
-  ): string {
-    return this.orgPath(
-      orgId,
-      `/github/installations/${encodeURIComponent(installationId)}${suffix}`,
+    sessionId: string,
+    input: TerminalTicketRequest,
+    options: IdempotentRequestOptions,
+  ): Promise<TerminalTicket> {
+    return this.request(
+      this.orgPath(orgId, `/sessions/${encodeURIComponent(sessionId)}/terminal-ticket`),
+      { ...mutation(input, options), cache: "no-store" },
     );
   }
 
-  private async request<T>(
+  private orgPath(orgId: string, suffix: string): string {
+    return `/api/cloud/v1/orgs/${encodeURIComponent(requireValue(orgId, "orgId"))}${suffix}`;
+  }
+
+  private workspacePath(orgId: string, workspaceId: string): string {
+    return this.orgPath(orgId, `/workspaces/${encodeURIComponent(workspaceId)}`);
+  }
+
+  private installationPath(orgId: string, installationId: string): string {
+    return this.orgPath(
+      orgId,
+      `/github/installations/${encodeURIComponent(installationId)}`,
+    );
+  }
+
+  private providerPath(orgId: string, provider: string): string {
+    return this.orgPath(
+      orgId,
+      `/provider-connections/agents/${encodeURIComponent(provider)}`,
+    );
+  }
+
+  private async request<T>(path: string, options: JSONRequestOptions = {}): Promise<T> {
+    const token = await this.getAccessToken();
+    if (!token) throw authError("AO access token is unavailable.");
+    return this.send<T>(path, options, token);
+  }
+
+  private unauthenticatedRequest<T>(
     path: string,
-    options: JSONRequestOptions = {},
+    options: JSONRequestOptions,
+  ): Promise<T> {
+    return this.send(path, options);
+  }
+
+  private async send<T>(
+    path: string,
+    options: JSONRequestOptions,
+    bearer?: string,
   ): Promise<T> {
     const headers = jsonHeaders(options);
-    if (options.orgId !== undefined) headers.set("X-AO-Org", options.orgId);
-    const token = await this.getAccessToken();
-    if (!token) {
-      throw new CloudApiError(401, authRequired("AO access token is unavailable."));
-    }
-    headers.set("Authorization", `Bearer ${token}`);
+    if (bearer) headers.set("Authorization", `Bearer ${bearer}`);
     const response = await this.fetch(`${this.baseUrl}${path}`, {
       method: options.method ?? "GET",
       headers,
@@ -452,23 +396,7 @@ export class CloudClient extends JSONClient {
       cache: options.cache,
       signal: options.signal,
     });
-    await this.throwIfError(response);
-    return this.readJSON<T>(response);
-  }
-
-  private async unauthenticatedRequest<T>(
-    path: string,
-    options: JSONRequestOptions,
-  ): Promise<T> {
-    const response = await this.fetch(`${this.baseUrl}${path}`, {
-      method: options.method ?? "POST",
-      headers: jsonHeaders(options),
-      body: encodeBody(options.body),
-      cache: options.cache,
-      signal: options.signal,
-    });
-    await this.throwIfError(response);
-    return this.readJSON<T>(response);
+    return this.finish(response);
   }
 }
 
@@ -485,11 +413,8 @@ export class WorkerClient extends JSONClient {
     options: IdempotentRequestOptions,
   ): Promise<WorkerBootstrapGrant> {
     return this.request("/api/cloud/v1/worker/bootstrap", {
-      method: "POST",
-      body: input,
+      ...mutation(input, options),
       cache: "no-store",
-      idempotencyKey: options.idempotencyKey,
-      signal: options.signal,
     });
   }
 
@@ -508,39 +433,173 @@ export class WorkerClient extends JSONClient {
     });
   }
 
-  sendSessionMessage(
-    sessionId: string,
-    input: SendSessionMessageRequest,
+  listSessions(options: PaginationOptions = {}): Promise<WorkerSessionPage> {
+    return this.request(withQuery("/api/cloud/v1/worker/sessions", options), {
+      signal: options.signal,
+    });
+  }
+
+  createSession(
+    input: CreateWorkerSessionInput,
     options: IdempotentRequestOptions,
-  ): Promise<SendSessionMessageResponse> {
+  ): Promise<WorkerSession> {
+    return this.request("/api/cloud/v1/worker/sessions", mutation(input, options));
+  }
+
+  getSession(sessionId: string, options: RequestOptions = {}): Promise<WorkerSession> {
+    return this.request(this.sessionPath(sessionId), options);
+  }
+
+  deleteSession(
+    sessionId: string,
+    options: IdempotentRequestOptions,
+  ): Promise<WorkerSession> {
+    return this.request(this.sessionPath(sessionId), {
+      method: "DELETE",
+      idempotencyKey: options.idempotencyKey,
+      signal: options.signal,
+    });
+  }
+
+  listMessages(
+    sessionId: string,
+    options: PaginationOptions = {},
+  ): Promise<WorkerMessagePage> {
+    return this.request(withQuery(`${this.sessionPath(sessionId)}/messages`, options), {
+      signal: options.signal,
+    });
+  }
+
+  sendMessage(
+    sessionId: string,
+    input: WorkerMessageInput,
+    options: IdempotentRequestOptions,
+  ): Promise<WorkerMessage> {
     return this.request(
-      `/api/cloud/v1/worker/sessions/${encodeURIComponent(sessionId)}/messages`,
-      {
-        method: "POST",
-        body: input,
-        idempotencyKey: options.idempotencyKey,
-        signal: options.signal,
-      },
+      `${this.sessionPath(sessionId)}/messages`,
+      mutation(input, options),
     );
   }
 
-  listSessionPullRequests(
+  claimPullRequest(
+    sessionId: string,
+    input: WorkerPullRequestClaimInput,
+    options: IdempotentRequestOptions,
+  ): Promise<WorkerPullRequest> {
+    return this.request(
+      `${this.sessionPath(sessionId)}/pr/claim`,
+      mutation(input, options),
+    );
+  }
+
+  listPullRequests(
     sessionId: string,
     options: RequestOptions = {},
-  ): Promise<ListSessionPRsResponse> {
+  ): Promise<WorkerPullRequestPage> {
+    return this.request(`${this.sessionPath(sessionId)}/pr`, options);
+  }
+
+  listReviews(
+    sessionId: string,
+    options: RequestOptions = {},
+  ): Promise<WorkerReviewPage> {
+    return this.request(`${this.sessionPath(sessionId)}/reviews`, options);
+  }
+
+  submitReview(
+    sessionId: string,
+    input: WorkerReviewSubmitInput,
+    options: IdempotentRequestOptions,
+  ): Promise<WorkerReview> {
     return this.request(
-      `/api/cloud/v1/worker/sessions/${encodeURIComponent(sessionId)}/pull-requests`,
+      `${this.sessionPath(sessionId)}/reviews/submit`,
+      mutation(input, options),
+    );
+  }
+
+  publishEvent(
+    input: WorkerEventInput,
+    options: RequestOptions = {},
+  ): Promise<WorkerOKResponse> {
+    return this.request("/api/cloud/v1/worker/events", {
+      method: "POST",
+      body: input,
+      signal: options.signal,
+    });
+  }
+
+  async claimTurn(options: RequestOptions = {}) {
+    const response = await this.request<{ turn: WorkerClaimTurnResponse["turn"] }>(
+      "/api/cloud/v1/worker/turns/claim",
+      { method: "POST", signal: options.signal },
+    );
+    return response.turn;
+  }
+
+  getTurnCancellation(
+    turnId: string,
+    attempt: number,
+    options: RequestOptions = {},
+  ): Promise<WorkerCancellationResponse> {
+    return this.request(
+      withQuery(`/api/cloud/v1/worker/turns/${encodeURIComponent(turnId)}/cancellation`, {
+        attempt,
+      }),
       options,
     );
   }
 
-  listSessionReviews(
-    sessionId: string,
+  completeTurn(
+    turnId: string,
+    input: WorkerCompleteTurnInput,
     options: RequestOptions = {},
-  ): Promise<ListReviewsResponse> {
+  ): Promise<WorkerFinishTurnResponse> {
+    return this.request(`/api/cloud/v1/worker/turns/${encodeURIComponent(turnId)}/complete`, {
+      method: "POST",
+      body: input,
+      signal: options.signal,
+    });
+  }
+
+  failTurn(
+    turnId: string,
+    input: WorkerFailTurnInput,
+    options: RequestOptions = {},
+  ): Promise<WorkerFinishTurnResponse> {
+    return this.request(`/api/cloud/v1/worker/turns/${encodeURIComponent(turnId)}/fail`, {
+      method: "POST",
+      body: input,
+      signal: options.signal,
+    });
+  }
+
+  async claimTransport(options: RequestOptions = {}): Promise<WorkerWorkspaceTransportRequest | null> {
+    const response = await this.request<{ request: WorkerWorkspaceTransportRequest | null }>(
+      "/api/cloud/v1/worker/transport/claim",
+      { method: "POST", signal: options.signal },
+    );
+    return response.request;
+  }
+
+  completeTransport(
+    requestId: string,
+    input: WorkerCompleteTransportInput,
+    options: RequestOptions = {},
+  ): Promise<WorkerOKResponse> {
     return this.request(
-      `/api/cloud/v1/worker/sessions/${encodeURIComponent(sessionId)}/reviews`,
-      options,
+      `/api/cloud/v1/worker/transport/${encodeURIComponent(requestId)}/complete`,
+      { method: "POST", body: input, signal: options.signal },
+    );
+  }
+
+  failTransport(
+    requestId: string,
+    input: WorkerFailTransportInput,
+    options: RequestOptions = {},
+  ): Promise<WorkerOKResponse> {
+    return this.request(
+      `/api/cloud/v1/worker/transport/${encodeURIComponent(requestId)}/fail`,
+      { method: "POST", body: input, signal: options.signal },
     );
   }
 
@@ -549,25 +608,30 @@ export class WorkerClient extends JSONClient {
     options: IdempotentRequestOptions,
   ): Promise<WorkerCheckoutGrant> {
     return this.request("/api/cloud/v1/worker/checkout-grant", {
+      ...mutation(input, options),
+      cache: "no-store",
+    });
+  }
+
+  consumeTerminalTicket(
+    input: TerminalTicketRedemption,
+    options: RequestOptions = {},
+  ): Promise<TerminalTicketGrant> {
+    return this.request("/api/cloud/v1/sandbox/terminal-tickets/consume", {
       method: "POST",
       body: input,
       cache: "no-store",
-      idempotencyKey: options.idempotencyKey,
       signal: options.signal,
     });
   }
 
-  private async request<T>(
-    path: string,
-    options: JSONRequestOptions = {},
-  ): Promise<T> {
+  private sessionPath(sessionId: string): string {
+    return `/api/cloud/v1/worker/sessions/${encodeURIComponent(requireValue(sessionId, "sessionId"))}`;
+  }
+
+  private async request<T>(path: string, options: JSONRequestOptions = {}): Promise<T> {
     const capability = await this.getCapability();
-    if (!capability) {
-      throw new CloudApiError(
-        401,
-        authRequired("Sandbox capability is unavailable."),
-      );
-    }
+    if (!capability) throw authError("Sandbox capability is unavailable.");
     const headers = jsonHeaders(options);
     headers.set("Authorization", `Bearer ${capability}`);
     const response = await this.fetch(`${this.baseUrl}${path}`, {
@@ -577,8 +641,7 @@ export class WorkerClient extends JSONClient {
       cache: options.cache,
       signal: options.signal,
     });
-    await this.throwIfError(response);
-    return this.readJSON<T>(response);
+    return this.finish(response);
   }
 }
 
@@ -588,6 +651,19 @@ export function createCloudClient(config: CloudClientConfig): CloudClient {
 
 export function createWorkerClient(config: WorkerClientConfig): WorkerClient {
   return new WorkerClient(config);
+}
+
+function mutation(
+  body: unknown,
+  options: IdempotentRequestOptions,
+  method: "POST" | "PUT" = "POST",
+): JSONRequestOptions {
+  return {
+    method,
+    body,
+    idempotencyKey: options.idempotencyKey,
+    signal: options.signal,
+  };
 }
 
 function jsonHeaders(options: JSONRequestOptions): Headers {
@@ -611,40 +687,55 @@ function validateIdempotencyKey(value: string): string {
   return key;
 }
 
-function validateOrg(value: string): string {
-  const org = value.trim();
-  if (!org) throw new TypeError("orgId must not be empty.");
-  return org;
+function requireValue(value: string, name: string): string {
+  const result = value.trim();
+  if (!result) throw new TypeError(`${name} must not be empty.`);
+  return result;
 }
 
 function withQuery(
   path: string,
-  values: Record<string, string | number | boolean | undefined>,
+  values: { cursor?: string; limit?: number; attempt?: number },
 ): string {
   const query = new URLSearchParams();
-  for (const [key, value] of Object.entries(values)) {
-    if (value !== undefined) query.set(key, String(value));
-  }
+  if (values.cursor !== undefined) query.set("cursor", values.cursor);
+  if (values.limit !== undefined) query.set("limit", String(values.limit));
+  if (values.attempt !== undefined) query.set("attempt", String(values.attempt));
   const encoded = query.toString();
   return encoded ? `${path}?${encoded}` : path;
 }
 
-function authRequired(message: string): ErrorEnvelope {
-  return {
+function authError(message: string): CloudApiError {
+  return new CloudApiError(401, {
     error: "Unauthorized",
     code: "AUTH_REQUIRED",
     message,
     requestId: "",
-  };
+  });
 }
 
-function toErrorEnvelope(response: Response, value: unknown): APIErrorEnvelope {
-  if (isErrorEnvelope(value)) {
-    return {
-      ...value,
-      requestId:
-        value.requestId ?? response.headers.get("X-Request-Id") ?? "",
-    };
+function toErrorEnvelope(response: Response, value: unknown): ErrorEnvelope {
+  if (value && typeof value === "object") {
+    const candidate = value as Record<string, unknown>;
+    if (
+      typeof candidate.error === "string" &&
+      typeof candidate.code === "string" &&
+      typeof candidate.message === "string"
+    ) {
+      return {
+        error: candidate.error,
+        code: candidate.code,
+        message: candidate.message,
+        requestId:
+          typeof candidate.requestId === "string"
+            ? candidate.requestId
+            : response.headers.get("X-Request-Id") ?? "",
+        details:
+          candidate.details && typeof candidate.details === "object"
+            ? (candidate.details as Record<string, never>)
+            : undefined,
+      };
+    }
   }
   return {
     error: response.statusText || "Request Failed",
@@ -652,15 +743,4 @@ function toErrorEnvelope(response: Response, value: unknown): APIErrorEnvelope {
     message: `Cloud API request failed with status ${response.status}.`,
     requestId: response.headers.get("X-Request-Id") ?? "",
   };
-}
-
-function isErrorEnvelope(value: unknown): value is APIErrorEnvelope {
-  if (!value || typeof value !== "object") return false;
-  const candidate = value as Record<string, unknown>;
-  return (
-    typeof candidate.error === "string" &&
-    typeof candidate.code === "string" &&
-    typeof candidate.message === "string" &&
-    (candidate.requestId === undefined || typeof candidate.requestId === "string")
-  );
 }

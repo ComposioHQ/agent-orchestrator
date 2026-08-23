@@ -1,11 +1,12 @@
 # `@aoagents/cloud-client`
 
-Runtime-neutral TypeScript client for AO Cloud.
+Runtime-neutral TypeScript client for the AO Cloud control plane.
 
-Hosted product operations use the same `/api/v1` paths and generated DTOs as
-the local AO application API. The client adds `X-AO-Org` to those authenticated
-requests. Control-plane administration remains under `/api/cloud/v1`, with
-`orgId` in the path; `X-AO-Org` is never sent as an alternate admin authority.
+This package intentionally contains no product application routes or DTOs. The
+separate code-first application specification and generated client own projects,
+sessions, conversations, worktrees, and all other shared product operations.
+Control-plane organization administration is always scoped by `orgId` in the
+path and authorized against the authenticated principal's membership.
 
 ```ts
 import { createCloudClient } from "@aoagents/cloud-client";
@@ -15,22 +16,21 @@ const cloud = createCloudClient({
   getAccessToken: () => authSession.getAccessToken(),
 });
 
-const projects = await cloud.listProjects(orgId);
-const placement = await cloud.createWorkspacePlacement(
+const accepted = await cloud.createWorkspacePlacement(
   orgId,
   { displayName, repositoryUrl, defaultBranch },
   { idempotencyKey },
 );
 ```
 
-Project creation is asynchronous. Poll `getWorkspacePlacement` until its state
-is `ready` or `failed`; after `ready`, discover the project through the shared
-`/api/v1/projects` response. Placement status always carries the authoritative
-`defaultBranch`.
+Workspace creation, deletion, and resume are asynchronous `202` operations.
+Poll the returned workspace placement until it reaches `ready` or `failed`.
+The placement carries the authoritative `defaultBranch`; project discovery
+after readiness belongs to the separate application client.
 
 Sandbox clients receive their scoped capability out of band in the fixed
-`/run/ao/capability` file with mode `0600`. The runtime-neutral client accepts a
-getter for that already-loaded value; no API response returns or rotates it.
+`/run/ao/capability` file with mode `0600`. No Cloud API response returns or
+rotates this bearer.
 
 ```ts
 import { createWorkerClient } from "@aoagents/cloud-client";
@@ -41,15 +41,17 @@ const worker = createWorkerClient({
 });
 
 await worker.getStatus();
-await worker.sendSessionMessage(sessionId, { message }, { idempotencyKey });
+await worker.sendMessage(sessionId, { message }, { idempotencyKey });
 ```
 
-Bootstrap and checkout methods exchange only scoped, one-shot delivery IDs and
-delivery state. They never model credentials in JSON, argv, environment, or git
-configuration. Terminal creation returns a one-time ticket and the authenticated
-sandbox mux URL; there is no control-plane terminal relay.
+Terminal tickets are issued from the organization/session control-plane route.
+The response contains an absolute sandbox mux URL, an `ao.ticket.*` one-time
+ticket, exact scopes, expiry, and the `ao.mux.v1` protocol. The sandbox redeems
+the ticket atomically at the control plane; terminal bytes never traverse it.
 
-The source contract is `contracts/cloud/openapi.yaml`. It references canonical
-shared schemas from `backend/internal/httpd/apispec/openapi.yaml`. After either
-contract changes, run `npm run generate` in this package and commit the generated
-`src/schema.ts`.
+Bootstrap and checkout APIs expose scoped delivery IDs and state only. Provider
+credentials are accepted solely by organization vault administration and are
+never exposed through worker credential or audit endpoints.
+
+The source contract is `contracts/cloud/openapi.yaml`. Run `npm run generate`
+in this package after changing it and commit the generated `src/schema.ts`.
