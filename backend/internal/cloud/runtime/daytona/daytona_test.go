@@ -151,6 +151,13 @@ func TestCreateDeliversOwnerOnlySecretThenExecutesSemanticCommand(t *testing.T) 
 	if !strings.Contains(capabilityUpload.body, "aocap_v1.create-capability-material") {
 		t.Fatalf("raw capability was not delivered: %q", capabilityUpload.body)
 	}
+	if capabilityUpload.query != "path=%2Frun%2Fao%2Fcapability" {
+		t.Fatalf("capability upload path = %q, want fixed 181 path", capabilityUpload.query)
+	}
+	capabilityPermissions := stub.requests[4]
+	if capabilityPermissions.query != "mode=0600&path=%2Frun%2Fao%2Fcapability" {
+		t.Fatalf("capability permissions = %q, want owner-only fixed path", capabilityPermissions.query)
+	}
 	for _, forbidden := range []string{"sandboxId", "workspaceId", "controlPlaneRedeemUrl"} {
 		if strings.Contains(capabilityUpload.body, forbidden) {
 			t.Fatalf("obsolete capability metadata %q was delivered: %q", forbidden, capabilityUpload.body)
@@ -184,8 +191,10 @@ func TestCreateDeliversOwnerOnlySecretThenExecutesSemanticCommand(t *testing.T) 
 	if launch.Command != want || !launch.RunAsync {
 		t.Fatalf("launch = %#v, want command %q", launch, want)
 	}
-	if strings.Contains(launch.Command, "aocap_") {
-		t.Fatal("capability leaked into bootstrap command")
+	for _, forbidden := range []string{"aocap_", "--capability", "--capability-file"} {
+		if strings.Contains(launch.Command, forbidden) {
+			t.Fatalf("capability contract %q leaked into bootstrap command", forbidden)
+		}
 	}
 }
 

@@ -211,6 +211,19 @@ and `Args` follow `--` as the semantic PTY child argv. Readiness is published at
 `/run/ao/ready.json`; the secret sink root is `/run/ao/secrets`, and the
 terminal mux is `/mux`.
 
+The exact 181 CLI contract is `--listen 0.0.0.0:8080`,
+`--control-plane-url <absolute HTTPS base>`, `--sandbox-id <runtime row id>`,
+`--workspace-id`, `--session-id`, `--workspace /workspace`,
+`--ready-file /run/ao/ready.json`, `--secret-dir /run/ao/secrets`, and
+`--route-prefix /api/sandbox/v1`, followed by `--` and the absolute child
+executable plus its semantic arguments. There is deliberately no
+`--capability` or `--capability-file` option: the runtime always reads the
+owner-only regular file `/run/ao/capability` afresh for each redemption.
+The readiness file is atomically installed with mode `0600` and contains only
+`address`, `muxPath`, `routePrefix`, and `sessionId`; `muxPath` is `/mux`.
+Runtime shutdown removes both the readiness and capability files and purges
+the secret sink.
+
 The published sandbox endpoint is a separate authenticated listener owned by
 the thin sandbox runtime. Do not publish the local daemon listener, accept a
 shared bearer fallback, disable TLS verification, or relax origin checks.
