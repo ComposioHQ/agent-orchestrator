@@ -1545,7 +1545,7 @@ func TestWorkspaceFilesIncludeWorkspaceProjectChildRepoDiffs(t *testing.T) {
 	}
 
 	svc := &Service{store: st}
-	paths, err := svc.WorkspaceWatchPaths(context.Background(), "ws-1")
+	paths, err := svc.localWorkspaceWatchPaths(context.Background(), "ws-1")
 	if err != nil {
 		t.Fatal(err)
 	}

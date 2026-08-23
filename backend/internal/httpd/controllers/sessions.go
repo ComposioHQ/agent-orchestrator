@@ -32,7 +32,6 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/previewserver"
 	sessionsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/session"
 	usagesvc "github.com/aoagents/agent-orchestrator/backend/internal/service/usage"
-	"github.com/aoagents/agent-orchestrator/backend/internal/workspacewatch"
 )
 
 const (
@@ -105,10 +104,12 @@ type SessionService interface {
 	ListPRSummaries(ctx context.Context, id domain.SessionID) ([]sessionsvc.PRSummary, error)
 	ClaimPR(ctx context.Context, id domain.SessionID, ref string, opts sessionsvc.ClaimPROptions) (sessionsvc.ClaimPRResult, error)
 	StageAttachments(ctx context.Context, id domain.SessionID, attachments []ports.SpawnAttachment) ([]string, error)
-	WorkspaceWatchPaths(ctx context.Context, id domain.SessionID) ([]string, error)
+	WatchWorkspace(ctx context.Context, id domain.SessionID) (<-chan ports.WorkspaceEvent, error)
 	ListWorkspaceFiles(ctx context.Context, id domain.SessionID) (sessionsvc.WorkspaceFiles, error)
 	GetWorkspaceFile(ctx context.Context, id domain.SessionID, path string) (sessionsvc.WorkspaceFileDetail, error)
 	GetWorkspaceFileBlob(ctx context.Context, id domain.SessionID, path string, side sessionsvc.WorkspaceFileBlobSide) (sessionsvc.WorkspaceFileBlob, error)
+	ReadPreviewFile(ctx context.Context, id domain.SessionID, path string) (ports.PreviewFile, error)
+	DiscoverPreview(ctx context.Context, id domain.SessionID) (string, bool, error)
 	InvalidateWorkspaceCache(id domain.SessionID)
 	Pin(ctx context.Context, id domain.SessionID) (domain.Session, error)
 	Unpin(ctx context.Context, id domain.SessionID) (domain.Session, error)
@@ -402,12 +403,11 @@ func (c *SessionsController) preview(w http.ResponseWriter, r *http.Request) {
 		apispec.NotImplemented(w, r, "GET", "/api/v1/sessions/{sessionId}/preview")
 		return
 	}
-	sess, err := c.Svc.Get(r.Context(), sessionID(r))
+	entry, ok, err := c.Svc.DiscoverPreview(r.Context(), sessionID(r))
 	if err != nil {
 		envelope.WriteError(w, r, err)
 		return
 	}
-	entry, ok := discoverPreviewEntry(sess.Metadata.WorkspacePath)
 	res := SessionPreviewResponse{SessionID: sessionID(r)}
 	if ok {
 		res.Entry = entry
@@ -425,21 +425,23 @@ func (c *SessionsController) previewFile(w http.ResponseWriter, r *http.Request)
 		apispec.NotImplemented(w, r, "GET", "/api/v1/sessions/{sessionId}/preview/files/*")
 		return
 	}
-	sess, err := c.Svc.Get(r.Context(), sessionID(r))
-	if err != nil {
-		envelope.WriteError(w, r, err)
-		return
-	}
 	assetPath := chi.URLParam(r, "*")
-	if name, ok := attachmentstore.NameFromWorkspacePath(assetPath); ok && c.Attachments != nil {
-		file, info, openErr := c.Attachments.Open(r.Context(), sess.ID, name)
-		if openErr == nil {
-			defer func() { _ = file.Close() }()
-			serveOpenedPreviewFile(w, r, file, info, assetPath)
-			return
+	if local, ok := c.Svc.(interface{ UsesLocalWorkspaceObservation() bool }); ok && local.UsesLocalWorkspaceObservation() {
+		if name, attachment := attachmentstore.NameFromWorkspacePath(assetPath); attachment && c.Attachments != nil {
+			sess, getErr := c.Svc.Get(r.Context(), sessionID(r))
+			if getErr != nil {
+				envelope.WriteError(w, r, getErr)
+				return
+			}
+			file, info, openErr := c.Attachments.Open(r.Context(), sess.ID, name)
+			if openErr == nil {
+				defer func() { _ = file.Close() }()
+				serveOpenedPreviewFile(w, r, file, info, assetPath)
+				return
+			}
 		}
 	}
-	c.serveWorkspacePreviewFile(w, r, sess.Metadata.WorkspacePath, assetPath)
+	c.serveObservedPreviewFile(w, r, sessionID(r), assetPath)
 }
 
 // PreviewOrigin serves a workspace preview from its isolated *.localhost
@@ -470,23 +472,25 @@ func (c *SessionsController) PreviewOrigin(w http.ResponseWriter, r *http.Reques
 		envelope.WriteError(w, r, err)
 		return true
 	}
-	entry, ok := previewOriginEntry(sess)
+	entry, ok, err := c.previewOriginEntry(r.Context(), sess)
+	if err != nil {
+		envelope.WriteError(w, r, err)
+		return true
+	}
 	if !ok {
 		envelope.WriteAPIError(w, r, http.StatusNotFound, "not_found", "NO_PREVIEW_ENTRY", "No preview entry point found in session workspace", nil)
 		return true
 	}
 	asset := previewOriginAssetPath(entry, r.URL.Path)
-	c.serveWorkspacePreviewFile(w, r, sess.Metadata.WorkspacePath, asset)
+	c.serveObservedPreviewFile(w, r, id, asset)
 	return true
 }
 
-func previewOriginEntry(sess domain.Session) (string, bool) {
+func (c *SessionsController) previewOriginEntry(ctx context.Context, sess domain.Session) (string, bool, error) {
 	if entry, ok := previewutil.StoredWorkspaceEntry(sess.Metadata.PreviewURL, sess.ID); ok {
-		if stored, exists := previewutil.EntryAtPath(sess.Metadata.WorkspacePath, entry); exists {
-			return stored.Path, true
-		}
+		return entry, true, nil
 	}
-	return discoverPreviewEntry(sess.Metadata.WorkspacePath)
+	return c.Svc.DiscoverPreview(ctx, sess.ID)
 }
 
 func previewOriginAssetPath(entry, requestPath string) string {
@@ -516,6 +520,27 @@ func (c *SessionsController) serveWorkspacePreviewFile(w http.ResponseWriter, r 
 	}
 	defer func() { _ = file.Close() }()
 	serveOpenedPreviewFile(w, r, file, info, clean)
+}
+
+func (c *SessionsController) serveObservedPreviewFile(w http.ResponseWriter, r *http.Request, id domain.SessionID, assetPath string) {
+	file, err := c.Svc.ReadPreviewFile(r.Context(), id, assetPath)
+	if err != nil {
+		envelope.WriteError(w, r, err)
+		return
+	}
+	if !previewutil.IsMarkdownPath(file.Path) {
+		http.ServeContent(w, r, file.Name, file.ModTime, bytes.NewReader(file.Data))
+		return
+	}
+	rendered, err := previewutil.RenderMarkdown(file.Data, filepath.Base(file.Path))
+	if err != nil {
+		envelope.WriteError(w, r, err)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if r.Method != http.MethodHead {
+		_, _ = w.Write(rendered) //nolint:gosec // G705: preview content is workspace-local and agent-trusted
+	}
 }
 
 func serveOpenedPreviewFile(w http.ResponseWriter, r *http.Request, file *os.File, info fs.FileInfo, clean string) {
@@ -614,12 +639,7 @@ func (c *SessionsController) streamWorkspaceChanges(w http.ResponseWriter, r *ht
 		envelope.WriteAPIError(w, r, http.StatusInternalServerError, "internal", "SSE_UNSUPPORTED", "Streaming is not supported by this server", nil)
 		return
 	}
-	paths, err := c.Svc.WorkspaceWatchPaths(r.Context(), sessionID(r))
-	if err != nil {
-		envelope.WriteError(w, r, err)
-		return
-	}
-	changes, err := workspacewatch.Watch(r.Context(), paths...)
+	changes, err := c.Svc.WatchWorkspace(r.Context(), sessionID(r))
 	if err != nil {
 		envelope.WriteError(w, r, err)
 		return
