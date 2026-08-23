@@ -13,7 +13,7 @@ func TestCloudMigrationsAreTenantScoped(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(migrations) != 8 || migrations[0].Version != 1 || migrations[1].Version != 2 || migrations[2].Version != 3 || migrations[3].Version != 4 || migrations[4].Version != 5 || migrations[5].Version != 6 || migrations[6].Version != 7 || migrations[7].Version != 8 {
+	if len(migrations) != 10 || migrations[0].Version != 1 || migrations[7].Version != 8 || migrations[8].Version != 40 || migrations[9].Version != 41 {
 		t.Fatalf("migrations = %#v", migrations)
 	}
 	migration, err := migrationFS.ReadFile("migrations/00001_auth_foundation.sql")
@@ -129,6 +129,41 @@ func TestCloudMigrationsAreTenantScoped(t *testing.T) {
 	for _, required := range []string{"ao_current_workspace_id", "workspace_id = ao_current_workspace_id()", "workspace.owner_user_id = ao_current_user_id()"} {
 		if !strings.Contains(workspaceScopeSQL, required) {
 			t.Fatalf("workspace runtime scope migration does not contain %q", required)
+		}
+	}
+	credentialMigration, err := migrationFS.ReadFile("migrations/00040_harness_credentials.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	bootstrapMigration, err := migrationFS.ReadFile("migrations/00041_harness_credential_bootstrap.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	bootstrapSQL := string(bootstrapMigration)
+	for _, required := range []string{
+		"CREATE ROLE ao_cloud_credentials NOLOGIN NOBYPASSRLS",
+		"CREATE FUNCTION ao_harness_credential_for_workspace",
+		"CREATE FUNCTION ao_audit_harness_credential_workspace",
+		"workspace.owner_user_id",
+		"credential.decrypted",
+		"SECURITY DEFINER",
+	} {
+		if !strings.Contains(bootstrapSQL, required) {
+			t.Fatalf("credential bootstrap migration does not contain %q", required)
+		}
+	}
+	credentialSQL := string(credentialMigration)
+	for _, required := range []string{
+		"CREATE TABLE ao_harness_credentials",
+		"CREATE TABLE ao_harness_credential_audit",
+		"ALTER TABLE ao_harness_credentials FORCE ROW LEVEL SECURITY",
+		"ALTER TABLE ao_harness_credential_audit FORCE ROW LEVEL SECURITY",
+		"owner_user_id = ao_current_user_id()",
+		"org_id = ao_current_org_id()",
+		"REVOKE ALL ON TABLE ao_harness_credentials",
+	} {
+		if !strings.Contains(credentialSQL, required) {
+			t.Fatalf("credential migration does not contain %q", required)
 		}
 	}
 

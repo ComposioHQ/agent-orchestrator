@@ -225,4 +225,12 @@ describe("preload cloud credential boundary", () => {
 		expect(methods).not.toContain("fetch");
 		expect(methods).not.toContain("request");
 	});
+
+	it("exposes only redacted credential actions, never a secret reader", () => {
+		const methods = Object.keys(exposedBridge().cloudCredentials);
+
+		expect(methods).toEqual(["status", "importClaude", "deleteClaude"]);
+		expect(methods).not.toContain("readKeychain");
+		expect(methods).not.toContain("getSecret");
+	});
 });

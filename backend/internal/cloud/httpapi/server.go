@@ -18,6 +18,7 @@ import (
 	"github.com/go-chi/httprate"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/cloud/auth"
+	"github.com/aoagents/agent-orchestrator/backend/internal/cloud/credentials"
 	"github.com/aoagents/agent-orchestrator/backend/internal/cloud/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/cloud/postgres"
 )
@@ -42,6 +43,14 @@ type AccountStore interface {
 	ListMemberships(context.Context, domain.Principal) ([]domain.Membership, error)
 }
 
+// CredentialVault is the purpose-specific control-plane boundary. It returns
+// redacted metadata only; plaintext can enter Put but can never leave this API.
+type CredentialVault interface {
+	Put(context.Context, string, string, []byte) (credentials.Metadata, error)
+	List(context.Context) ([]credentials.Metadata, error)
+	Delete(context.Context, string) error
+}
+
 // Options supplies the dependencies for a control-plane HTTP server.
 type Options struct {
 	Store           AccountStore
@@ -53,6 +62,7 @@ type Options struct {
 	// limiter key. Leave false unless the edge overwrites X-AO-Source-IP.
 	TrustSourceIPHeader bool
 	Logger              *slog.Logger
+	Credentials         CredentialVault
 
 	// App is the shared AO application API — build it with
 	// httpd.NewCloudAPIHandler, composed with cloud storage and runtime ports.
@@ -73,6 +83,7 @@ type Server struct {
 	trustSourceIPHeader bool
 	logger              *slog.Logger
 	app                 http.Handler
+	credentials         CredentialVault
 	handler             http.Handler
 }
 
@@ -99,6 +110,7 @@ func New(options Options) (*Server, error) {
 		trustSourceIPHeader: options.TrustSourceIPHeader,
 		logger:              options.Logger,
 		app:                 options.App,
+		credentials:         options.Credentials,
 	}
 	server.handler = server.routes()
 	return server, nil
@@ -150,6 +162,14 @@ func (s *Server) routes() http.Handler {
 	router.With(authRateLimit).Post("/api/cloud/v1/auth/refresh", s.refresh)
 	router.With(authRateLimit).Post("/api/cloud/v1/auth/logout", s.logout)
 	router.With(s.requirePrincipal).Get("/api/cloud/v1/me", s.me)
+	if s.credentials != nil {
+		router.Route("/api/cloud/v1/orgs/{orgId}", func(org chi.Router) {
+			org.Use(s.requirePrincipal, s.requirePathTenant)
+			org.Get("/provider-connections", s.listProviderConnections)
+			org.Put("/provider-connections/agents/{provider}", s.putAgentProviderConnection)
+			org.Delete("/provider-connections/agents/{provider}", s.deleteAgentProviderConnection)
+		})
+	}
 
 	app := s.appHandler()
 	if app == nil {

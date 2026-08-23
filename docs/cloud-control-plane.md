@@ -2,7 +2,7 @@
 
 This repository contains the first hosted AO control-plane slice: a small Go
 service backed by PostgreSQL and Google identity, plus an AWS staging stack. The
-slice is intentionally limited to authentication, tenancy, and deployment. It
+slice is intentionally limited to authentication, tenancy, credential custody, and deployment. It
 does **not** expose cloud projects or sessions yet.
 
 That limit is architectural, not merely a feature flag. Cloud product state
@@ -23,10 +23,13 @@ service boundaries are backed by a tenant-scoped PostgreSQL adapter.
 - `backend/internal/cloud/postgres`: users, hashed refresh sessions,
   organizations, memberships, placement-schema groundwork, and forced RLS.
 - `backend/internal/cloud/httpapi`: the implemented public auth/account surface.
+- `backend/internal/cloud/credentials`: owner-scoped coding-harness credential
+  custody using per-credential AWS KMS data keys and AES-256-GCM envelopes.
 - `deploy/cloud`: a digest-pinned, least-privilege AWS staging deployment.
 
-The local daemon remains loopback-only and continues to use SQLite. No Electron
-cloud-project controls or sandbox provider are included in this PR.
+The local daemon remains loopback-only and continues to use SQLite. Electron
+main owns Cloud identity and credential import; no credential material crosses
+the preload bridge.
 
 ## HTTP surface
 
@@ -38,6 +41,9 @@ cloud-project controls or sandbox provider are included in this PR.
 | `POST /api/cloud/v1/auth/refresh` | Rotating refresh token in JSON | Atomically consume and replace a refresh token |
 | `POST /api/cloud/v1/auth/logout` | Refresh token in JSON | Revoke a refresh token |
 | `GET /api/cloud/v1/me` | AO bearer access token | Return the user and live organization memberships |
+| `GET /api/cloud/v1/orgs/{orgId}/provider-connections` | AO bearer access token + membership | Return redacted credential status |
+| `PUT /api/cloud/v1/orgs/{orgId}/provider-connections/agents/{provider}` | AO bearer access token + membership | Encrypt and rotate the caller's credential |
+| `DELETE /api/cloud/v1/orgs/{orgId}/provider-connections/agents/{provider}` | AO bearer access token + membership | Revoke the caller's credential and delete its ciphertext |
 
 Google establishes identity only. A verified Google hosted-domain claim never
 creates, selects, or authorizes an AO organization. First sign-in atomically
@@ -115,8 +121,10 @@ and FORCE RLS on every tenant table.
 
 Authentication routes are limited per source IP in-process; API Gateway also
 applies a stage-wide burst/rate limit and overwrites the trusted source-IP
-header. The public service has no sandbox credentials or customer SCM/agent
-credentials in this foundation.
+header. Agent credentials are imported only through Electron main after native
+consent. PostgreSQL stores ciphertext and a forced-RLS audit trail; workspace
+bootstrap resolves the credential owner inside a narrowly privileged database
+function.
 
 ## Configuration
 
@@ -125,6 +133,7 @@ export AO_CLOUD_DATABASE_URL='postgres://ao_runtime:...@db.example/ao_cloud?sslm
 export AO_CLOUD_GOOGLE_CLIENT_IDS='desktop-oauth-client.apps.googleusercontent.com'
 export AO_CLOUD_ALLOWED_EMAILS='maintainer@example.com'
 export AO_CLOUD_ACCESS_TOKEN_KEY_BASE64="$(openssl rand -base64 32)"
+export AO_CLOUD_CREDENTIAL_KMS_KEY_ID='arn:aws:kms:us-west-2:123456789012:key/...'
 ```
 
 Optional settings:

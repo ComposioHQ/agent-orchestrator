@@ -147,6 +147,17 @@ resource "aws_kms_alias" "cloud" {
   target_key_id = aws_kms_key.cloud.key_id
 }
 
+resource "aws_kms_key" "credentials" {
+  description             = "AO Cloud ${var.environment} customer credential envelope keys"
+  deletion_window_in_days = 30
+  enable_key_rotation     = true
+}
+
+resource "aws_kms_alias" "credentials" {
+  name          = "alias/${local.name}-credentials"
+  target_key_id = aws_kms_key.credentials.key_id
+}
+
 resource "aws_db_subnet_group" "this" {
   name       = local.name
   subnet_ids = aws_subnet.database[*].id
@@ -278,6 +289,41 @@ resource "aws_iam_role" "ecs_task" {
   assume_role_policy = data.aws_iam_policy_document.ecs_assume.json
 }
 
+data "aws_iam_policy_document" "ecs_credential_kms" {
+  statement {
+    sid = "CredentialEnvelopeDataKeysOnly"
+    actions = [
+      "kms:GenerateDataKey",
+      "kms:Decrypt",
+    ]
+    resources = [aws_kms_key.credentials.arn]
+
+    condition {
+      test     = "StringEquals"
+      variable = "kms:EncryptionContext:ao:provider"
+      values   = ["claude-code"]
+    }
+
+    condition {
+      test     = "Null"
+      variable = "kms:EncryptionContext:ao:org-id"
+      values   = ["false"]
+    }
+
+    condition {
+      test     = "Null"
+      variable = "kms:EncryptionContext:ao:user-id"
+      values   = ["false"]
+    }
+  }
+}
+
+resource "aws_iam_role_policy" "ecs_credential_kms" {
+  name   = "credential-envelope-kms"
+  role   = aws_iam_role.ecs_task.id
+  policy = data.aws_iam_policy_document.ecs_credential_kms.json
+}
+
 resource "aws_ecs_cluster" "this" {
   name = local.name
 
@@ -316,6 +362,7 @@ resource "aws_ecs_task_definition" "api" {
       { name = "AO_CLOUD_ACCESS_TOKEN_ISSUER", value = "ao-cloud-${var.environment}" },
       { name = "AO_CLOUD_ACCESS_TOKEN_AUDIENCE", value = "ao-desktop" },
       { name = "AO_CLOUD_TRUST_SOURCE_IP_HEADER", value = "true" },
+      { name = "AO_CLOUD_CREDENTIAL_KMS_KEY_ID", value = aws_kms_key.credentials.arn },
     ]
     secrets = [
       { name = "AO_CLOUD_DATABASE_URL", valueFrom = "${aws_secretsmanager_secret.database.arn}:runtimeUrl::" },

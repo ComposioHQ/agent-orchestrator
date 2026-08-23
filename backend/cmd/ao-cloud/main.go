@@ -11,8 +11,12 @@ import (
 	"syscall"
 	"time"
 
+	awsconfig "github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/service/kms"
+
 	"github.com/aoagents/agent-orchestrator/backend/internal/cloud/auth"
 	cloudconfig "github.com/aoagents/agent-orchestrator/backend/internal/cloud/config"
+	"github.com/aoagents/agent-orchestrator/backend/internal/cloud/credentials"
 	"github.com/aoagents/agent-orchestrator/backend/internal/cloud/httpapi"
 	cloudpostgres "github.com/aoagents/agent-orchestrator/backend/internal/cloud/postgres"
 )
@@ -50,6 +54,22 @@ func run(logger *slog.Logger) error {
 	if err != nil {
 		return err
 	}
+	awsCfg, err := awsconfig.LoadDefaultConfig(ctx)
+	if err != nil {
+		return err
+	}
+	keyManager, err := credentials.NewAWSKeyManager(kms.NewFromConfig(awsCfg), cfg.CredentialKMSKeyID)
+	if err != nil {
+		return err
+	}
+	envelope, err := credentials.NewKMSEnvelope(keyManager)
+	if err != nil {
+		return err
+	}
+	credentialVault, err := credentials.NewService(store, envelope)
+	if err != nil {
+		return err
+	}
 	api, err := httpapi.New(httpapi.Options{
 		Store:               store,
 		Google:              google,
@@ -58,6 +78,7 @@ func run(logger *slog.Logger) error {
 		RefreshTokenTTL:     cfg.RefreshTokenTTL,
 		TrustSourceIPHeader: cfg.TrustSourceIPHeader,
 		Logger:              logger,
+		Credentials:         credentialVault,
 		App:                 buildAppAPI(cfg, logger),
 	})
 	if err != nil {

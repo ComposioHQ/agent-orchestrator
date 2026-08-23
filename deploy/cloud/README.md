@@ -15,6 +15,9 @@ provision customer projects, sessions, or sandboxes yet.
 - RDS manages the migration-owner secret. Separate Secrets Manager records hold
   the restricted runtime URL, Google client IDs, email allowlist, and signing
   key. Terraform creates secret containers but never receives their values.
+- A dedicated rotating KMS key wraps per-credential data keys. The ECS task
+  role can only generate/decrypt data keys when the tenant and Claude Code
+  encryption-context fields are present.
 - CodeBuild builds the exact commit and ECR stores immutable images.
 - CloudWatch receives API, migration, and API Gateway logs.
 

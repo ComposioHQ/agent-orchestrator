@@ -25,6 +25,7 @@ import type { TelemetryBootstrap } from "./shared/telemetry";
 import type { MigrationState } from "./main/app-state";
 import type { UpdateSettings, UpdateStatus } from "./main/update-settings";
 import type { CloudAccount, CloudAvailability } from "./shared/cloud-account";
+import type { CloudCredentialStatus } from "./shared/cloud-credential";
 import type { UpdateOutcome } from "./shared/update-telemetry";
 import type { UiSettings } from "./main/ui-settings";
 import type { UpdateCheckOptions } from "./main/auto-updater";
@@ -421,6 +422,11 @@ const api = {
 				ipcRenderer.off("cloud:sessionChanged", wrapped);
 			};
 		},
+	},
+	cloudCredentials: {
+		status: (orgId: string) => ipcRenderer.invoke("cloudCredentials:status", orgId) as Promise<CloudCredentialStatus>,
+		importClaude: (orgId: string) => ipcRenderer.invoke("cloudCredentials:importClaude", orgId) as Promise<CloudCredentialStatus>,
+		deleteClaude: (orgId: string) => ipcRenderer.invoke("cloudCredentials:deleteClaude", orgId) as Promise<void>,
 	},
 };
 

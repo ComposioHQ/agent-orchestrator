@@ -17,6 +17,8 @@ var runtimeTables = []string{
 	"ao_org_memberships",
 	"ao_cloud_workspaces",
 	"ao_cloud_session_runtimes",
+	"ao_harness_credentials",
+	"ao_harness_credential_audit",
 }
 
 func qualifiedRuntimeTables() string {

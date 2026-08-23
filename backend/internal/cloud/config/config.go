@@ -32,6 +32,7 @@ type Config struct {
 	AccessTokenTTL      time.Duration
 	RefreshTokenTTL     time.Duration
 	TrustSourceIPHeader bool
+	CredentialKMSKeyID  string
 
 	// AppAPIEnabled mounts the shared AO application API under /api/v1,
 	// behind authentication and tenant resolution. Defaults on; set
@@ -71,10 +72,14 @@ func load(getenv func(string) string) (Config, error) {
 		AccessTokenTTL:      accessTTL,
 		RefreshTokenTTL:     refreshTTL,
 		TrustSourceIPHeader: strings.EqualFold(strings.TrimSpace(getenv("AO_CLOUD_TRUST_SOURCE_IP_HEADER")), "true"),
+		CredentialKMSKeyID:  strings.TrimSpace(getenv("AO_CLOUD_CREDENTIAL_KMS_KEY_ID")),
 		AppAPIEnabled:       !strings.EqualFold(strings.TrimSpace(getenv("AO_CLOUD_APP_API")), "false"),
 	}
 	if cfg.DatabaseURL == "" {
 		return Config{}, errors.New("AO_CLOUD_DATABASE_URL is required")
+	}
+	if cfg.CredentialKMSKeyID == "" {
+		return Config{}, errors.New("AO_CLOUD_CREDENTIAL_KMS_KEY_ID is required")
 	}
 	if len(cfg.GoogleClientIDs) == 0 {
 		return Config{}, errors.New("AO_CLOUD_GOOGLE_CLIENT_IDS is required")

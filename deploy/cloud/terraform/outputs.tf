@@ -38,6 +38,10 @@ output "application_secret_arn" {
   value = aws_secretsmanager_secret.application.arn
 }
 
+output "credential_kms_key_arn" {
+  value = aws_kms_key.credentials.arn
+}
+
 output "rds_master_secret_arn" {
   value     = aws_db_instance.this.master_user_secret[0].secret_arn
   sensitive = true

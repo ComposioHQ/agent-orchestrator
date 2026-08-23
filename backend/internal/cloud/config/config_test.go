@@ -15,6 +15,7 @@ func TestLoadRequiresHostedIdentityAndDatabaseSettings(t *testing.T) {
 		"AO_CLOUD_ACCESS_TOKEN_TTL":        "10m",
 		"AO_CLOUD_REFRESH_TOKEN_TTL":       "720h",
 		"AO_CLOUD_TRUST_SOURCE_IP_HEADER":  "true",
+		"AO_CLOUD_CREDENTIAL_KMS_KEY_ID":   "test-key",
 	}
 	cfg, err := load(func(key string) string { return values[key] })
 	if err != nil {
@@ -35,6 +36,11 @@ func TestLoadRequiresHostedIdentityAndDatabaseSettings(t *testing.T) {
 	if _, err := load(func(key string) string { return values[key] }); err == nil {
 		t.Fatal("missing allowed emails were accepted")
 	}
+	values["AO_CLOUD_ALLOWED_EMAILS"] = "person@example.com"
+	delete(values, "AO_CLOUD_CREDENTIAL_KMS_KEY_ID")
+	if _, err := load(func(key string) string { return values[key] }); err == nil {
+		t.Fatal("missing credential KMS key was accepted")
+	}
 }
 
 func TestLoadRejectsWeakSigningKey(t *testing.T) {
@@ -43,6 +49,7 @@ func TestLoadRejectsWeakSigningKey(t *testing.T) {
 		"AO_CLOUD_GOOGLE_CLIENT_IDS":       "desktop",
 		"AO_CLOUD_ALLOWED_EMAILS":          "person@example.com",
 		"AO_CLOUD_ACCESS_TOKEN_KEY_BASE64": base64.StdEncoding.EncodeToString([]byte("too-short")),
+		"AO_CLOUD_CREDENTIAL_KMS_KEY_ID":   "test-key",
 	}
 	if _, err := load(func(key string) string { return values[key] }); err == nil {
 		t.Fatal("weak access-token key was accepted")
@@ -58,6 +65,7 @@ func TestAppAPIDefaultsOnAndIsExplicitlyDisableable(t *testing.T) {
 		"AO_CLOUD_GOOGLE_CLIENT_IDS":       "desktop",
 		"AO_CLOUD_ALLOWED_EMAILS":          "person@example.com",
 		"AO_CLOUD_ACCESS_TOKEN_KEY_BASE64": base64.StdEncoding.EncodeToString([]byte("0123456789abcdef0123456789abcdef")),
+		"AO_CLOUD_CREDENTIAL_KMS_KEY_ID":   "test-key",
 	}
 	for name, want := range map[string]struct {
 		value   string

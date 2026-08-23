@@ -130,6 +130,7 @@ func grantRuntimeRole(ctx context.Context, databaseURL, runtimeRole string) erro
 		"GRANT CONNECT ON DATABASE " + pgx.Identifier{databaseName}.Sanitize() + " TO " + role,
 		"GRANT USAGE ON SCHEMA public TO " + role,
 		"GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE " + qualifiedRuntimeTables() + " TO " + role,
+		"GRANT USAGE, SELECT ON SEQUENCE public.ao_harness_credential_audit_id_seq TO " + role,
 		"GRANT EXECUTE ON FUNCTION public.ao_current_user_id(), public.ao_current_org_id(), public.ao_current_workspace_id(), public.ao_is_org_member(uuid, uuid), public.ao_can_manage_org(uuid, uuid) TO " + role,
 	}
 	for _, statement := range statements {
@@ -145,6 +146,17 @@ func grantRuntimeRole(ctx context.Context, databaseURL, runtimeRole string) erro
 	}
 	if _, err := conn.Exec(ctx,
 		"GRANT EXECUTE ON FUNCTION public.ao_upsert_google_user(text, text, text), public.ao_rotate_refresh_session(bytea, bytea), public.ao_revoke_refresh_session(bytea) TO "+role,
+	); err != nil {
+		return err
+	}
+	if _, err = conn.Exec(ctx, `RESET ROLE`); err != nil {
+		return err
+	}
+	if _, err = conn.Exec(ctx, `SET ROLE ao_cloud_credentials`); err != nil {
+		return err
+	}
+	if _, err = conn.Exec(ctx,
+		"GRANT EXECUTE ON FUNCTION public.ao_harness_credential_for_workspace(uuid, uuid, text, text), public.ao_audit_harness_credential_workspace(uuid, uuid, text, text, text, bigint) TO "+role,
 	); err != nil {
 		return err
 	}

@@ -82,6 +82,7 @@ import {
 import { browserDaemonOwnershipDecision, shouldReplacePortHolder } from "./shared/daemon-takeover";
 import { buildDaemonEnv, resolveShellEnv, type ShellRunner } from "./shared/shell-env";
 import { installCloudIPC, setCloudPreferenceEnabled } from "./main/cloud-auth";
+import { installCloudCredentialIPC } from "./main/cloud-credentials";
 import { DEFAULT_POSTHOG_HOST, DEFAULT_POSTHOG_PROJECT_KEY } from "./shared/posthog-config";
 import { buildTelemetryBootstrap } from "./shared/telemetry";
 import { createBrowserViewHost, type BrowserViewHost } from "./main/browser-view-host";
@@ -1964,6 +1965,7 @@ function notifyRenderersOfCloudSession(account: import("./shared/cloud-account")
 }
 
 installCloudIPC(cloudDataDir, notifyRenderersOfCloudSession);
+installCloudCredentialIPC();
 
 app.on("second-instance", (_event, argv) => {
 	const folderPath = parseOpenFolderPathArg(argv);
