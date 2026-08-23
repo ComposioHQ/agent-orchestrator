@@ -3,6 +3,7 @@ package httpd
 import (
 	"log/slog"
 	"net/http"
+	"sort"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
@@ -29,6 +30,29 @@ const (
 	ScopeLocalOnly RouteScope = "local-only"
 )
 
+// RouteTransport says how long a route holds its connection open. It is a
+// separate axis from RouteScope on purpose: "may the hosted plane serve this"
+// and "does this run to completion in milliseconds or stay open for hours" are
+// independent questions, and the second one is what infrastructure in front of
+// the hosted plane has to be told about.
+type RouteTransport string
+
+const (
+	// TransportBounded is an ordinary REST route. Inside /api/v1 these run
+	// under the per-request timeout.
+	TransportBounded RouteTransport = "bounded"
+
+	// TransportStream is a long-lived connection — the terminal multiplex and
+	// the server-sent event streams. These deliberately sit outside the
+	// per-request timeout, which also means anything fronting them (load
+	// balancer, API gateway) must permit long idle reads and must not buffer
+	// the response. A stream accidentally registered inside the bounded group
+	// would be cut off mid-connection, so
+	// TestStreamRoutesBypassTheRequestTimeout checks this declaration against
+	// the router's actual structure rather than trusting the table.
+	TransportStream RouteTransport = "stream"
+)
+
 // RouteKey identifies one registered route by its HTTP method and its chi
 // pattern (the pattern, not the concrete path, so `{sessionId}` classifies
 // every session).
@@ -37,19 +61,30 @@ type RouteKey struct {
 	Pattern string
 }
 
-// RouteClass is a route's scope plus, for a local-only route, the reason it
-// cannot be hosted. The reason is required for local-only entries: it is what a
-// future reader needs in order to decide whether a port has since made the
-// route hostable, and TestRouteClassificationIsComplete enforces its presence.
+// RouteClass is a route's scope, its transport, and — for a local-only route —
+// the reason it cannot be hosted. The reason is required for local-only
+// entries: it is what a future reader needs in order to decide whether a port
+// has since made the route hostable, and TestRouteClassificationIsComplete
+// enforces its presence.
 type RouteClass struct {
-	Scope  RouteScope
-	Reason string
+	Scope     RouteScope
+	Transport RouteTransport
+	Reason    string
 }
 
-func cloud() RouteClass { return RouteClass{Scope: ScopeCloud} }
+// Stream reports whether the route holds a long-lived connection.
+func (c RouteClass) Stream() bool { return c.Transport == TransportStream }
+
+func cloud() RouteClass { return RouteClass{Scope: ScopeCloud, Transport: TransportBounded} }
+
+func cloudStream() RouteClass { return RouteClass{Scope: ScopeCloud, Transport: TransportStream} }
 
 func local(reason string) RouteClass {
-	return RouteClass{Scope: ScopeLocalOnly, Reason: reason}
+	return RouteClass{Scope: ScopeLocalOnly, Transport: TransportBounded, Reason: reason}
+}
+
+func localStream(reason string) RouteClass {
+	return RouteClass{Scope: ScopeLocalOnly, Transport: TransportStream, Reason: reason}
 }
 
 // Reasons shared by whole route families. Naming them keeps the table below
@@ -79,7 +114,7 @@ var routeClasses = map[RouteKey]RouteClass{
 	{"GET", "/healthz"}:   local(reasonCloudNative),
 	{"GET", "/readyz"}:    local(reasonCloudNative),
 	{"POST", "/shutdown"}: local(reasonDesktopOnly + "; stops this daemon process"),
-	{"GET", "/mux"}: local("terminal transport bound to the host runtime; hosted panes ride the " +
+	{"GET", "/mux"}: localStream("terminal transport bound to the host runtime; hosted panes ride the " +
 		"compute plane's authenticated published listener, not this route"),
 	{"POST", "/internal/telemetry/cli-invoked"}:     local("loopback-only CLI telemetry intake (localControlRequest)"),
 	{"POST", "/internal/telemetry/cli-usage-error"}: local("loopback-only CLI telemetry intake (localControlRequest)"),
@@ -142,7 +177,7 @@ var routeClasses = map[RouteKey]RouteClass{
 	{"POST", "/api/v1/sessions/{sessionId}/attachments"}:      local(reasonHostFilesystem),
 	{"GET", "/api/v1/sessions/{sessionId}/workspace/files"}:   local(reasonHostFilesystem),
 	{"GET", "/api/v1/sessions/{sessionId}/workspace/file"}:    local(reasonHostFilesystem),
-	{"GET", "/api/v1/sessions/{sessionId}/workspace/events"}:  local(reasonHostFilesystem),
+	{"GET", "/api/v1/sessions/{sessionId}/workspace/events"}:  localStream(reasonHostFilesystem),
 	{"GET", "/api/v1/sessions/{sessionId}/preview"}:           local(reasonHostFilesystem),
 	{"POST", "/api/v1/sessions/{sessionId}/preview"}:          local(reasonHostFilesystem),
 	{"DELETE", "/api/v1/sessions/{sessionId}/preview"}:        local(reasonHostFilesystem),
@@ -197,8 +232,8 @@ var routeClasses = map[RouteKey]RouteClass{
 	{"GET", "/api/v1/notifications"}:                cloud(),
 	{"PATCH", "/api/v1/notifications/{id}"}:         cloud(),
 	{"POST", "/api/v1/notifications/read-all"}:      cloud(),
-	{"GET", "/api/v1/notifications/stream"}:         cloud(),
-	{"GET", "/api/v1/events"}:                       cloud(),
+	{"GET", "/api/v1/notifications/stream"}:         cloudStream(),
+	{"GET", "/api/v1/events"}:                       cloudStream(),
 	{"GET", "/api/v1/settings"}:                     cloud(),
 	{"PATCH", "/api/v1/settings/session-interface"}: cloud(),
 
@@ -242,6 +277,25 @@ var routeClasses = map[RouteKey]RouteClass{
 func ClassifyRoute(method, pattern string) (RouteClass, bool) {
 	class, ok := routeClasses[RouteKey{Method: strings.ToUpper(method), Pattern: pattern}]
 	return class, ok
+}
+
+// CloudStreamRoutes returns the hosted plane's long-lived routes. Anything
+// fronting the control plane — load balancer, API gateway, proxy — has to
+// allow long idle reads on exactly these and must not buffer them.
+func CloudStreamRoutes() []RouteKey {
+	var keys []RouteKey
+	for key, class := range routeClasses {
+		if class.Scope == ScopeCloud && class.Stream() {
+			keys = append(keys, key)
+		}
+	}
+	sort.Slice(keys, func(i, j int) bool {
+		if keys[i].Pattern != keys[j].Pattern {
+			return keys[i].Pattern < keys[j].Pattern
+		}
+		return keys[i].Method < keys[j].Method
+	})
+	return keys
 }
 
 // RouteClasses returns a copy of the classification table, for tests and for
