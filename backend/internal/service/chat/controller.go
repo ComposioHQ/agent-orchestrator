@@ -226,6 +226,13 @@ var ErrControllerHandoff = errors.New("chat controller is switching interfaces")
 // turn.
 var ErrTurnNotRetryable = errors.New("turn is not retryable")
 
+// ErrRetryDeliveryUncertain reports a failed turn whose dispatch was never
+// acknowledged by the provider. Settling it failed was AO's safe guess rather
+// than a fact about delivery: the provider may have accepted the work. Because
+// a retry re-sends the prompt as a new turn, an uncertain source could execute
+// it twice, so these turns are refused until delivery is confirmed.
+var ErrRetryDeliveryUncertain = errors.New("turn was never confirmed as delivered to the provider")
+
 func newController(
 	sessionID domain.SessionID,
 	conversation domain.ConversationRecord,
@@ -933,10 +940,14 @@ func (c *Controller) Send(ctx context.Context, msg ports.ChatUserMessage) (domai
 // owns what gets sent again. The original failed turn is never mutated or
 // relabeled: the retry is a brand-new turn and both attempts stay in history.
 //
-// Idempotency: each attempt derives a deterministic client message id from the
-// source prompt's key plus an attempt number. A double-click derives the same id
-// for the same attempt and is deduped by AppendUserMessage, so one click records
-// exactly one new turn. The current next-turn settings apply.
+// Idempotency: one deterministic client message id per source turn
+// ("retry/<turnID>"). A replayed request — an uncertain network round trip, a
+// double-click, a client retry — looks the attempt up before anything else and
+// returns the turn that already exists, so one request can never execute the
+// work twice. A deliberate further attempt is expressed by retrying the failed
+// retry turn itself, which owns its own key: the chain A -> B -> C is built
+// from distinct sources, never by re-sending A. The current next-turn settings
+// apply.
 func (c *Controller) RetryTurn(ctx context.Context, turnID string) (domain.ConversationTurn, error) {
 	c.sendMu.Lock()
 	defer c.sendMu.Unlock()
@@ -954,9 +965,6 @@ func (c *Controller) RetryTurn(ctx context.Context, turnID string) (domain.Conve
 	if source.State != domain.TurnStateFailed || source.RolledBackAt != nil {
 		return domain.ConversationTurn{}, fmt.Errorf("%w: %s", ErrTurnNotRetryable, turnID)
 	}
-	if c.busy() {
-		return domain.ConversationTurn{}, ErrTurnRunning
-	}
 
 	prompt, err := c.store.RetryPrompt(ctx, c.conversation.ID, turnID)
 	if err != nil {
@@ -966,30 +974,37 @@ func (c *Controller) RetryTurn(ctx context.Context, turnID string) (domain.Conve
 		return domain.ConversationTurn{}, fmt.Errorf("%w: %s", ErrTurnNotRetryable, turnID)
 	}
 
+	// A dispatch the provider never acknowledged may still have been accepted:
+	// settling it failed was AO's safe guess, not a fact about delivery.
+	// Re-dispatching such a prompt could run the work twice, which is the one
+	// outcome a retry must never have. Refuse until the caller confirms.
+	if source.ProviderTurnID == "" {
+		return domain.ConversationTurn{}, fmt.Errorf("%w: %s", ErrRetryDeliveryUncertain, turnID)
+	}
+
+	// The replay check comes before the busy check on purpose: returning an
+	// already-recorded attempt must stay true even while that attempt runs.
+	key := retryClientMessageID(turnID)
+	if existingID, found, lookupErr := c.store.TurnIDForClientMessage(ctx, c.conversation.ID, key); lookupErr != nil {
+		return domain.ConversationTurn{}, lookupErr
+	} else if found {
+		existing, existingErr := c.store.TurnByID(ctx, existingID)
+		if existingErr != nil {
+			return domain.ConversationTurn{}, existingErr
+		}
+		return existing, nil
+	}
+
+	if c.busy() {
+		return domain.ConversationTurn{}, ErrTurnRunning
+	}
+
 	var content []ports.ChatContent
 	if prompt.DeliveryContentJSON != "" {
 		if err := json.Unmarshal([]byte(prompt.DeliveryContentJSON), &content); err != nil {
 			return domain.ConversationTurn{}, fmt.Errorf("decode retried chat content: %w", err)
 		}
 	}
-
-	keyBase := prompt.ClientMessageID
-	if keyBase == "" {
-		keyBase = "turn-" + turnID
-	}
-	// Derive a free idempotency key by probing existing attempts, so a double-click
-	// and an earlier retry of the same source can never collide.
-	attempt := 1
-	for {
-		key := fmt.Sprintf("%s/retry/%d", keyBase, attempt)
-		if _, found, probeErr := c.store.TurnIDForClientMessage(ctx, c.conversation.ID, key); probeErr != nil {
-			return domain.ConversationTurn{}, probeErr
-		} else if !found {
-			break
-		}
-		attempt++
-	}
-	key := fmt.Sprintf("%s/retry/%d", keyBase, attempt)
 
 	now := c.now()
 	newTurnID := c.newID()
@@ -1005,7 +1020,7 @@ func (c *Controller) RetryTurn(ctx context.Context, turnID string) (domain.Conve
 		return domain.ConversationTurn{}, fmt.Errorf("record retried message: %w", err)
 	}
 	if !created {
-		// A concurrent click already recorded this exact attempt. Report the turn it
+		// Lost a race with a concurrent identical click. Report the turn it
 		// created rather than opening a second one.
 		if existingID, found, lookupErr := c.store.TurnIDForClientMessage(ctx, c.conversation.ID, key); lookupErr == nil && found {
 			if existing, existingErr := c.store.TurnByID(ctx, existingID); existingErr == nil {
@@ -1021,6 +1036,13 @@ func (c *Controller) RetryTurn(ctx context.Context, turnID string) (domain.Conve
 		Origin:          prompt.Origin,
 		ClientMessageID: key,
 	}, now)
+}
+
+// retryClientMessageID derives the idempotency key for the one retry attempt a
+// source turn can own. Deterministic in the source's own id, so every replay of
+// the same request collides with the same row instead of minting a new attempt.
+func retryClientMessageID(turnID string) string {
+	return "retry/" + turnID
 }
 
 // Settings reports the provider choices for the next turn.

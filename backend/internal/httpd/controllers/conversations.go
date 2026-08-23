@@ -144,6 +144,10 @@ func writeConversationRetryError(w http.ResponseWriter, r *http.Request, err err
 		envelope.WriteAPIError(w, r, http.StatusConflict, "conflict",
 			"CHAT_RETRY_NOT_RETRYABLE",
 			"this turn cannot be retried: it is not a failed human turn in this conversation", nil)
+	case errors.Is(err, chatsvc.ErrRetryDeliveryUncertain):
+		envelope.WriteAPIError(w, r, http.StatusConflict, "conflict",
+			"CHAT_RETRY_DELIVERY_UNCERTAIN",
+			"delivery of this turn was never confirmed by the agent, so retrying it could run the work twice", nil)
 	case errors.Is(err, chatsvc.ErrTurnRunning), errors.Is(err, chatsvc.ErrControllerHandoff):
 		envelope.WriteAPIError(w, r, http.StatusConflict, "conflict",
 			"CHAT_RETRY_BUSY", "stop the current turn before retrying this one", nil)

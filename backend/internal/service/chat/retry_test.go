@@ -200,12 +200,12 @@ func TestRetryTurnRefusesNonHumanPrompt(t *testing.T) {
 	}
 }
 
-func TestRetryTurnDerivesDistinctIdempotencyKeys(t *testing.T) {
+func TestRetryTurnReplaysReturnExistingAttempt(t *testing.T) {
 	h := newHarness(t)
 	ctx := context.Background()
 
 	turn, err := h.svc.Send(ctx, testSession, ports.ChatUserMessage{
-		Text:            "retry me",
+		Text:            "retry me once",
 		ClientMessageID: "cm-6",
 		Origin:          domain.MessageOriginHuman,
 	})
@@ -224,27 +224,130 @@ func TestRetryTurnDerivesDistinctIdempotencyKeys(t *testing.T) {
 	if err != nil {
 		t.Fatalf("first RetryTurn: %v", err)
 	}
-	// The first retry attempt also fails, so the source is still eligible and a
-	// second retry must derive a different key and open a third turn.
+
+	// A replay of the same request — an uncertain round trip or a double-click —
+	// must return the attempt that already exists rather than opening another.
+	second, err := h.svc.RetryTurn(ctx, testSession, turn.ID)
+	if err != nil {
+		t.Fatalf("replayed RetryTurn: %v", err)
+	}
+	if second.ID != first.ID {
+		t.Fatalf("replay opened turn %q, want the existing attempt %q", second.ID, first.ID)
+	}
+	sent := h.conv.sentTexts()
+	if len(sent) != 2 {
+		t.Fatalf("provider received %d sends after replay, want exactly 2: %v", len(sent), sent)
+	}
+
+	// Even after the first attempt settles, the source keeps answering with it
+	// instead of minting another attempt.
 	h.conv.emit(ports.ChatEvent{
 		Kind:           ports.ChatEventTurnCompleted,
 		ProviderTurnID: first.ProviderTurnID,
-		TurnState:      domain.TurnStateFailed,
-		Err:            errors.New("still down"),
+		TurnState:      domain.TurnStateCompleted,
 	})
 	h.awaitSnapshot(t, func(s store.ConversationSnapshot) bool {
 		t, ok := turnByID(s, first.ID)
-		return ok && t.State == domain.TurnStateFailed
+		return ok && t.State == domain.TurnStateCompleted
 	})
-
-	second, err := h.svc.RetryTurn(ctx, testSession, turn.ID)
+	third, err := h.svc.RetryTurn(ctx, testSession, turn.ID)
 	if err != nil {
-		t.Fatalf("second RetryTurn: %v", err)
+		t.Fatalf("post-settlement RetryTurn: %v", err)
 	}
-	if second.ID == first.ID || second.ID == turn.ID {
-		t.Fatalf("second retry id = %q, want a new turn (first=%q, source=%q)", second.ID, first.ID, turn.ID)
+	if third.ID != first.ID {
+		t.Fatalf("post-settlement replay opened turn %q, want the existing attempt %q", third.ID, first.ID)
 	}
-	if got := h.conv.sentTexts(); len(got) != 3 {
-		t.Fatalf("provider received %d sends, want 3: %v", len(got), got)
+	if got := h.conv.sentTexts(); len(got) != 2 {
+		t.Fatalf("provider received %d sends after all replays, want exactly 2: %v", len(got), got)
+	}
+}
+
+// A deliberate further attempt is expressed by retrying the failed RETRY turn,
+// which owns its own deterministic key. That builds the chain A -> B -> C from
+// distinct sources instead of ever re-sending A.
+func TestRetryChainThroughFailedAttempt(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+
+	a, err := h.svc.Send(ctx, testSession, ports.ChatUserMessage{
+		Text:            "deploy the service",
+		ClientMessageID: "cm-7",
+		Origin:          domain.MessageOriginHuman,
+	})
+	if err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	fail := func(turn domain.ConversationTurn) {
+		h.conv.emit(ports.ChatEvent{
+			Kind:           ports.ChatEventTurnCompleted,
+			ProviderTurnID: turn.ProviderTurnID,
+			TurnState:      domain.TurnStateFailed,
+			Err:            errors.New("still down"),
+		})
+	}
+	fail(a)
+	failedTurnSnapshot(t, h, a.ID)
+
+	b, err := h.svc.RetryTurn(ctx, testSession, a.ID)
+	if err != nil {
+		t.Fatalf("retry A: %v", err)
+	}
+	if b.ID == a.ID {
+		t.Fatalf("retry of A reused A's id")
+	}
+	fail(b)
+	failedTurnSnapshot(t, h, b.ID)
+
+	c, err := h.svc.RetryTurn(ctx, testSession, b.ID)
+	if err != nil {
+		t.Fatalf("retry B: %v", err)
+	}
+	if c.ID == a.ID || c.ID == b.ID {
+		t.Fatalf("retry of B produced id %q, want a distinct third turn (a=%q b=%q)", c.ID, a.ID, b.ID)
+	}
+	if c.State != domain.TurnStateRunning {
+		t.Fatalf("chained retry state = %q, want running", c.State)
+	}
+	sent := h.conv.sentTexts()
+	if len(sent) != 3 {
+		t.Fatalf("provider received %d sends across the chain, want 3: %v", len(sent), sent)
+	}
+	for i, text := range sent {
+		if text != "deploy the service" {
+			t.Fatalf("send %d text = %q, want the original prompt throughout the chain", i+1, text)
+		}
+	}
+}
+
+// A dispatch the provider never acknowledged may still have been accepted, so
+// re-dispatching it could run the work twice. These turns are refused with a
+// typed uncertain-delivery error rather than retried.
+func TestRetryTurnRefusesUnconfirmedDispatch(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+
+	h.conv.sendErr = errors.New("connection reset before response")
+	turn, err := h.svc.Send(ctx, testSession, ports.ChatUserMessage{
+		Text:            "uncertain delivery",
+		ClientMessageID: "cm-8",
+		Origin:          domain.MessageOriginHuman,
+	})
+	h.conv.sendErr = nil
+	if err == nil {
+		t.Fatalf("Send with a failing provider = nil error, want the dispatch failure")
+	}
+	if turn.ID == "" || turn.State != domain.TurnStateFailed {
+		t.Fatalf("undispatched turn = %+v, want a failed turn with an AO id", turn)
+	}
+	snapshot := failedTurnSnapshot(t, h, turn.ID)
+	if settled, ok := turnByID(snapshot, turn.ID); !ok || settled.ProviderTurnID != "" {
+		t.Fatalf("failed turn provider id = %q, want empty (never accepted)", settled.ProviderTurnID)
+	}
+
+	if _, err := h.svc.RetryTurn(ctx, testSession, turn.ID); !errors.Is(err, chatsvc.ErrRetryDeliveryUncertain) {
+		t.Fatalf("RetryTurn on unconfirmed dispatch = %v, want ErrRetryDeliveryUncertain", err)
+	}
+	if sent := h.conv.sentTexts(); len(sent) != 0 {
+		t.Fatalf("provider received %d sends after refused retry, want 0: %v", len(sent), sent)
 	}
 }
