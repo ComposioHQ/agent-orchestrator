@@ -25,8 +25,11 @@ import (
 //     settings, CDC) — Postgres-backed, org-scoped by reading the request's
 //     tenant identity from internal/tenant
 //   - runtime/sandbox ports (session spawn, kill, agent messaging) — the
-//     compute plane; terminal streams do not ride this handler, they ride the
-//     compute plane's own authenticated published listener
+//     compute plane. Terminal streams never ride this handler: the desktop
+//     dials the sandbox's authenticated published /mux directly with a
+//     one-time control-plane-issued ticket. The endpoint that issues those
+//     tickets is ordinary bounded REST and belongs on this handler; the
+//     terminal bytes do not.
 //
 // Nothing local-only belongs here. The classification in internal/httpd
 // refuses those routes even if a local implementation were injected by
@@ -45,11 +48,6 @@ func buildAppAPI(cfg cloudconfig.Config, logger *slog.Logger) http.Handler {
 			RequestTimeout: config.DefaultRequestTimeout,
 		},
 		logger,
-		// No terminal relay yet. When the runtime adapter can back one, pass it
-		// here and flip /mux to cloudStream() in internal/httpd/routescope.go —
-		// the desktop then connects to the control plane's own /mux, never to a
-		// provider-issued sandbox URL.
-		nil,
 		httpd.APIDeps{},
 	)
 }
