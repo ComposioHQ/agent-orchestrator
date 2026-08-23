@@ -88,6 +88,9 @@ func (c *ControlPlaneClient) doAuthenticated(ctx context.Context, method, route 
 	if err != nil {
 		return nil, fmt.Errorf("build control-plane request: %w", err)
 	}
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
 
 	var response *http.Response
 	err = withCapabilityAt(c.capabilityPath, c.expectedUID, func(raw []byte) error {
