@@ -13,7 +13,7 @@ func TestCloudMigrationsAreTenantScoped(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantVersions := []int64{1, 2, 3, 4, 5, 6, 7, 8, 9, 50, 51, 52, 53, 54, 55, 56, 59}
+	wantVersions := []int64{1, 2, 3, 4, 5, 6, 7, 8, 9, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59}
 	if len(migrations) != len(wantVersions) {
 		t.Fatalf("migrations = %#v", migrations)
 	}
@@ -174,6 +174,8 @@ func TestProductMigrationsForceTenantRLS(t *testing.T) {
 		{file: "00054_pull_request_reviews.sql", tables: []string{"ao_pull_request_reviews"}},
 		{file: "00055_pull_request_review_threads.sql", tables: []string{"ao_pull_request_review_threads"}},
 		{file: "00056_notifications.sql", tables: []string{"ao_notifications"}},
+		{file: "00057_reviews.sql", tables: []string{"ao_reviews"}},
+		{file: "00058_review_runs.sql", tables: []string{"ao_review_runs"}},
 		{file: "00059_agent_inventory_cache.sql", tables: []string{"ao_agent_inventory_cache"}},
 	}
 	for _, fixture := range fixtures {

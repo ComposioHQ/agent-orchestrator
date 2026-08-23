@@ -248,6 +248,27 @@ func moveProductPRAliasRows(ctx context.Context, tx pgx.Tx, id tenant.Identity, 
 	if _, err := tx.Exec(ctx, `UPDATE ao_notifications SET pr_url=$4 WHERE org_id=$1 AND owner_user_id=$2 AND pr_url=$3`, id.OrgID, id.UserID, previousURL, canonicalURL); err != nil {
 		return normalizeError(err)
 	}
+	if _, err := tx.Exec(ctx, `UPDATE ao_reviews SET pr_url=$4 WHERE org_id=$1 AND owner_user_id=$2 AND pr_url=$3`, id.OrgID, id.UserID, previousURL, canonicalURL); err != nil {
+		return normalizeError(err)
+	}
+	// Preserve the canonical active pass when alias and canonical URLs already
+	// contain the same idempotency key, matching SQLite's UPDATE OR IGNORE then
+	// delete behavior. All other lifecycle rows move to the canonical URL.
+	if _, err := tx.Exec(ctx, `DELETE FROM ao_review_runs old
+		WHERE old.org_id=$1 AND old.owner_user_id=$2 AND old.pr_url=$3
+		AND old.target_sha<>'' AND old.status NOT IN ('failed','cancelled')
+		AND (old.status='running' OR old.verdict NOT IN ('','changes_requested'))
+		AND EXISTS(SELECT 1 FROM ao_review_runs current
+			WHERE current.org_id=old.org_id AND current.owner_user_id=old.owner_user_id
+			AND current.pr_url=$4 AND current.session_id=old.session_id
+			AND current.target_sha=old.target_sha AND current.harness=old.harness
+			AND current.target_sha<>'' AND current.status NOT IN ('failed','cancelled')
+			AND (current.status='running' OR current.verdict NOT IN ('','changes_requested')))`, id.OrgID, id.UserID, previousURL, canonicalURL); err != nil {
+		return normalizeError(err)
+	}
+	if _, err := tx.Exec(ctx, `UPDATE ao_review_runs SET pr_url=$4 WHERE org_id=$1 AND owner_user_id=$2 AND pr_url=$3`, id.OrgID, id.UserID, previousURL, canonicalURL); err != nil {
+		return normalizeError(err)
+	}
 	if _, err := tx.Exec(ctx, `UPDATE ao_pull_request_url_aliases SET canonical_url=$4 WHERE org_id=$1 AND owner_user_id=$2 AND canonical_url=$3`, id.OrgID, id.UserID, previousURL, canonicalURL); err != nil {
 		return normalizeError(err)
 	}
