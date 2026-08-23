@@ -1,7 +1,7 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { ChatWorkspace } from "./ChatWorkspace";
+import { ChatWorkspace, promptSpacerHeight, promptTopInset } from "./ChatWorkspace";
 import { HumanMessage, OriginMessage } from "./ChatTimelineItems";
 import {
 	chatFixture,
@@ -78,6 +78,10 @@ function idleSnapshot(snapshot: ConversationSnapshot = chatFixture): Conversatio
 	return {
 		...snapshot,
 		controller: { state: "ready" },
+		items: snapshot.items.filter(
+			(item) =>
+				!(item.kind === "activity" && item.activityKind === "approval" && item.status === "pending"),
+		),
 		turns: snapshot.turns.map((turn) =>
 			turn.state === "running"
 				? { ...turn, state: "completed" as const, completedAt: turn.requestedAt }
@@ -107,7 +111,7 @@ beforeEach(() => {
 	terminalPaneState.props = undefined;
 	window.localStorage.clear();
 	setApiBaseUrl("http://127.0.0.1:3001");
-	useUiStore.setState({ isSidebarOpen: true });
+	useUiStore.setState({ isSidebarOpen: true, inspectorSessions: {} });
 });
 
 afterEach(() => setApiBaseUrl(null));
@@ -220,6 +224,12 @@ describe("HumanMessage attachments", () => {
 });
 
 describe("ChatWorkspace timeline", () => {
+	it("makes composer and history controls inert while a durable agent switch owns input", () => {
+		render(<ChatWorkspace snapshot={idleSnapshot()} agentInputDisabled />);
+
+		expect(screen.getByTestId("chat-conversation-panel")).toHaveAttribute("inert");
+	});
+
 	it("uses the shared session topbar chrome for workers and orchestrators", () => {
 		const view = render(<ChatWorkspace snapshot={chatFixture} sessionRole="worker" />);
 
@@ -270,7 +280,7 @@ describe("ChatWorkspace timeline", () => {
 	});
 
 	it("keeps the composer aligned to the readable conversation width", () => {
-		render(<ChatWorkspace snapshot={chatFixture} />);
+		render(<ChatWorkspace snapshot={idleSnapshot(chatFixtureSettled)} />);
 		const composer = screen.getByLabelText("Message the agent").closest("form");
 		expect(composer?.parentElement).toHaveClass("mx-auto", "w-full", "max-w-3xl");
 	});
@@ -298,7 +308,9 @@ describe("ChatWorkspace timeline", () => {
 		expect(onInterrupt).toHaveBeenCalledOnce();
 	});
 
-	it("shows blocked turn state inline with the current turn", () => {
+	it("moves a pending approval into the chat composer", async () => {
+		const user = userEvent.setup();
+		const onDecide = vi.fn();
 		const snapshot = structuredClone(chatFixture);
 		snapshot.items.push({
 			kind: "activity",
@@ -310,16 +322,236 @@ describe("ChatWorkspace timeline", () => {
 			status: "pending",
 			summary: "Run command",
 			requestId: "approval-1",
-			decisions: [{ id: "accept", label: "Approve" }],
+			decisions: [
+				{ id: "deny", label: "Deny", kind: "reject_once" },
+				{ id: "allow_once", label: "Allow Once", kind: "allow_once" },
+				{ id: "always_allow", label: "Always Allow", kind: "allow_always" },
+			],
 			detail: { command: "npm test" },
 			createdAt: "2026-08-08T00:00:00Z",
 		});
 
-		render(<ChatWorkspace snapshot={snapshot} onInterrupt={vi.fn()} />);
+		render(<ChatWorkspace snapshot={snapshot} onDecide={onDecide} onInterrupt={vi.fn()} />);
 
 		expect(screen.getByRole("alert")).toHaveTextContent("The agent is waiting for your decision.");
-		expect(screen.getByText("Waiting for your decision")).toBeInTheDocument();
+		expect(screen.getByText("Do you want to run this command?")).toBeInTheDocument();
+		expect(screen.queryByText("Waiting for your decision")).not.toBeInTheDocument();
 		expect(screen.queryByText(/^Working for /)).not.toBeInTheDocument();
+		const approval = screen.getByRole("group", { name: "Approval request approval-1" });
+		const composer = approval.closest("form");
+		expect(composer).toHaveClass("cursor-chat-composer", "border-border-strong");
+		expect(screen.getByRole("log", { name: "Conversation" })).not.toContainElement(approval);
+		expect(screen.queryByLabelText("Message the agent")).not.toBeInTheDocument();
+		expect(within(approval).queryByText("Terminal")).not.toBeInTheDocument();
+		expect(within(approval).getByRole("button", { name: /Deny/ })).toHaveTextContent("DenyEsc");
+		expect(within(approval).getByRole("button", { name: /Allow once/ })).toBeInTheDocument();
+		expect(within(approval).getByRole("button", { name: "More approval options" })).toBeInTheDocument();
+		expect(within(approval).queryByRole("button", { name: "Allow Once" })).not.toBeInTheDocument();
+		expect(within(approval).queryByRole("button", { name: "Always Allow" })).not.toBeInTheDocument();
+		expect(within(approval).queryByRole("button", { name: "Deny" })).not.toBeInTheDocument();
+		await user.click(within(approval).getByRole("button", { name: "More approval options" }));
+		await user.keyboard("{Escape}");
+		expect(onDecide).not.toHaveBeenCalled();
+
+		approval.focus();
+		fireEvent.keyDown(approval, { key: "Enter" });
+		expect(onDecide).toHaveBeenCalledWith("approval-1", "allow_once");
+		fireEvent.keyDown(approval, { key: "Escape" });
+		expect(onDecide).toHaveBeenCalledWith("approval-1", "deny");
+		onDecide.mockClear();
+
+		const deny = within(approval).getByRole("button", { name: /Deny/ });
+		deny.focus();
+		fireEvent.keyDown(deny, { key: "Enter" });
+		expect(onDecide).not.toHaveBeenCalled();
+		fireEvent.click(deny);
+		expect(onDecide).toHaveBeenCalledWith("approval-1", "deny");
+		onDecide.mockClear();
+
+		document.body.focus();
+		fireEvent.keyDown(window, { key: "Enter" });
+		expect(onDecide).not.toHaveBeenCalled();
+
+		await user.click(within(approval).getByRole("button", { name: /Allow once/ }));
+		expect(onDecide).toHaveBeenCalledWith("approval-1", "allow_once");
+
+		await user.click(within(approval).getByRole("button", { name: "More approval options" }));
+		await user.click(screen.getByRole("menuitem", { name: "Always allow this command" }));
+		expect(onDecide).toHaveBeenCalledWith("approval-1", "always_allow");
+	});
+
+	it("shows an unbound pending approval in the composer", () => {
+		const snapshot = structuredClone(chatFixture);
+		snapshot.items.push({
+			kind: "activity",
+			id: "approval-unbound",
+			sequence: 100,
+			revision: 1,
+			activityKind: "approval",
+			status: "pending",
+			summary: "Run command",
+			requestId: "0",
+			decisions: [
+				{ id: "cancel", label: "Cancel", kind: "reject_once" },
+				{ id: "accept", label: "Approve", kind: "allow_once" },
+			],
+			detail: { command: "touch /tmp/marker" },
+			createdAt: "2026-08-08T00:00:00Z",
+		});
+
+		render(<ChatWorkspace snapshot={snapshot} onDecide={vi.fn()} onInterrupt={vi.fn()} />);
+
+		const approval = screen.getByRole("group", { name: "Approval request 0" });
+		expect(approval.closest("form")).toHaveClass("cursor-chat-composer");
+		expect(screen.queryByLabelText("Message the agent")).not.toBeInTheDocument();
+	});
+
+	it("uses ACP edit metadata and semantic kinds instead of guessing opaque labels", () => {
+		const onDecide = vi.fn();
+		const snapshot = structuredClone(chatFixture);
+		snapshot.items.push({
+			kind: "activity",
+			id: "approval-edit",
+			sequence: 101,
+			revision: 1,
+			turnId: "turn-2",
+			activityKind: "approval",
+			status: "pending",
+			summary: "Write marker.txt",
+			requestId: "opaque-request",
+			decisions: [
+				{ id: "option-a", label: "Einmal", kind: "allow_once" },
+				{ id: "option-b", label: "Nein", kind: "reject_once" },
+				{ id: "option-c", label: "Immer", kind: "allow_always" },
+			],
+			detail: { subjectKind: "file_change", toolKind: "edit" },
+			createdAt: "2026-08-08T00:00:00Z",
+		});
+
+		render(<ChatWorkspace snapshot={snapshot} onDecide={onDecide} onInterrupt={vi.fn()} />);
+
+		expect(screen.getByText("Do you want to allow these file changes?")).toBeInTheDocument();
+		expect(screen.queryByText("Do you want to run this command?")).not.toBeInTheDocument();
+		const approval = screen.getByRole("group", { name: "Approval request opaque-request" });
+		approval.focus();
+		fireEvent.keyDown(approval, { key: "Enter" });
+		expect(onDecide).toHaveBeenCalledWith("opaque-request", "option-a");
+	});
+
+	it("requires an explicit click for decisions without a semantic kind", () => {
+		const onDecide = vi.fn();
+		const snapshot = structuredClone(chatFixture);
+		snapshot.items.push({
+			kind: "activity",
+			id: "approval-unknown",
+			sequence: 102,
+			revision: 1,
+			turnId: "turn-2",
+			activityKind: "approval",
+			status: "pending",
+			summary: "Unknown provider decision",
+			requestId: "unknown-request",
+			decisions: [
+				{ id: "acceptWithDifferentSemantics", label: "acceptWithDifferentSemantics" },
+				{ id: "cancel", label: "Cancel", kind: "reject_once" },
+			],
+			detail: { subjectKind: "command" },
+			createdAt: "2026-08-08T00:00:00Z",
+		});
+
+		render(<ChatWorkspace snapshot={snapshot} onDecide={onDecide} onInterrupt={vi.fn()} />);
+
+		const approval = screen.getByRole("group", { name: "Approval request unknown-request" });
+		expect(within(approval).queryByRole("button", { name: /Allow once/ })).not.toBeInTheDocument();
+		const providerDecision = within(approval).getByRole("button", {
+			name: "acceptWithDifferentSemantics",
+		});
+
+		approval.focus();
+		fireEvent.keyDown(approval, { key: "Enter" });
+		expect(onDecide).not.toHaveBeenCalled();
+
+		fireEvent.click(providerDecision);
+		expect(onDecide).toHaveBeenCalledWith("unknown-request", "acceptWithDifferentSemantics");
+	});
+
+	it.each([
+		["accept", "Approved"],
+		["acceptWithExecpolicyAmendment", "Approved and remembered"],
+		["cancel", "Cancelled"],
+	] as const)("keeps a resolved %s approval compact and explicit", (decision, label) => {
+		const snapshot = structuredClone(chatFixture);
+		snapshot.items = [
+			{
+				kind: "activity",
+				id: "approval-resolved-1",
+				sequence: 99,
+				revision: 2,
+				turnId: "turn-2",
+				activityKind: "approval",
+				status: "resolved",
+				summary: "Run gh pr create --base main --head ao/example",
+				requestId: "approval-resolved-1",
+				detail: { decision },
+				createdAt: "2026-08-08T00:00:00Z",
+			},
+		];
+
+		render(<ChatWorkspace snapshot={snapshot} />);
+
+		expect(screen.getByText(label)).toBeInTheDocument();
+		expect(screen.getByText("Run gh pr create --base main --head ao/example")).toBeInTheDocument();
+		expect(screen.queryByText(/req approval-resolved-1/)).not.toBeInTheDocument();
+		expect(screen.queryByText("Already answered. This card is kept for the record.")).not.toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: "Approve" })).not.toBeInTheDocument();
+	});
+
+	it("uses the preserved semantic kind for an opaque resolved decision", () => {
+		const snapshot = structuredClone(chatFixture);
+		snapshot.items = [
+			{
+				kind: "activity",
+				id: "approval-resolved-opaque",
+				sequence: 99,
+				revision: 2,
+				turnId: "turn-2",
+				activityKind: "approval",
+				status: "resolved",
+				summary: "Opaque provider decision",
+				requestId: "approval-resolved-opaque",
+				decisions: [{ id: "option-b", label: "Nein", kind: "reject_once" }],
+				detail: { decision: "option-b" },
+				createdAt: "2026-08-08T00:00:00Z",
+			},
+		];
+
+		render(<ChatWorkspace snapshot={snapshot} />);
+
+		expect(screen.getByText("Cancelled")).toBeInTheDocument();
+		expect(screen.queryByText("Resolved")).not.toBeInTheDocument();
+	});
+
+	it("does not describe an expired approval as approved", () => {
+		const snapshot = structuredClone(chatFixture);
+		snapshot.items = [
+			{
+				kind: "activity",
+				id: "approval-expired-1",
+				sequence: 99,
+				revision: 2,
+				turnId: "turn-2",
+				activityKind: "approval",
+				status: "failed",
+				summary: "Run npm test",
+				requestId: "approval-expired-1",
+				createdAt: "2026-08-08T00:00:00Z",
+			},
+		];
+
+		render(<ChatWorkspace snapshot={snapshot} />);
+
+		expect(screen.getByText("Approval expired")).toBeInTheDocument();
+		expect(screen.queryByText("Approved")).not.toBeInTheDocument();
 	});
 
 	it("lets readers select conversation text", () => {
@@ -386,6 +618,9 @@ describe("ChatWorkspace timeline", () => {
 	});
 
 	it("provides an interactive conversation minimap", () => {
+		useUiStore.setState({
+			inspectorSessions: { "ao-long": { isOpen: false, view: "summary" } },
+		});
 		render(<ChatWorkspace snapshot={chatFixtureLongHistory(8)} />);
 		const log = screen.getByRole("log");
 		const scrollbar = screen.getByRole("scrollbar", { name: "Conversation scrollbar" });
@@ -399,7 +634,7 @@ describe("ChatWorkspace timeline", () => {
 		);
 		expect(markers.length).toBeGreaterThan(1);
 		expect(Number.parseFloat(markers[1]!.style.top) - Number.parseFloat(markers[0]!.style.top)).toBeLessThanOrEqual(
-			18,
+			8,
 		);
 
 		fireEvent.wheel(scrollbar, { deltaY: 200 });
@@ -411,7 +646,24 @@ describe("ChatWorkspace timeline", () => {
 		expect(scrollbar).toHaveAttribute("aria-valuenow", "100");
 	});
 
+	it("hides conversation minimap markers while the inspector is open", () => {
+		useUiStore.setState({
+			inspectorSessions: { "ao-long": { isOpen: true, view: "summary" } },
+		});
+		render(<ChatWorkspace snapshot={chatFixtureLongHistory(8)} />);
+		const log = screen.getByRole("log");
+		const scrollbar = screen.getByRole("scrollbar", { name: "Conversation scrollbar" });
+		stubGeometry(log, { scrollHeight: 4000, clientHeight: 800, scrollTop: 1000 });
+		stubGeometry(scrollbar, { scrollHeight: 800, clientHeight: 800, scrollTop: 0 });
+		fireEvent.scroll(log);
+
+		expect(scrollbar.querySelectorAll("[data-chat-scroll-marker]")).toHaveLength(0);
+	});
+
 	it("previews the request and response for a hovered conversation marker", () => {
+		useUiStore.setState({
+			inspectorSessions: { "ao-long": { isOpen: false, view: "summary" } },
+		});
 		render(<ChatWorkspace snapshot={chatFixtureLongHistory(4)} />);
 		const log = screen.getByRole("log");
 		const scrollbar = screen.getByRole("scrollbar", { name: "Conversation scrollbar" });
@@ -451,6 +703,9 @@ describe("ChatWorkspace timeline", () => {
 			summary: "Automatic compaction completed",
 			createdAt: "2026-08-08T00:00:00Z",
 		});
+		useUiStore.setState({
+			inspectorSessions: { [snapshot.sessionId]: { isOpen: false, view: "summary" } },
+		});
 		render(<ChatWorkspace snapshot={snapshot} />);
 		const log = screen.getByRole("log");
 		const scrollbar = screen.getByRole("scrollbar", { name: "Conversation scrollbar" });
@@ -466,10 +721,21 @@ describe("ChatWorkspace timeline", () => {
 		expect(screen.getByRole("tooltip")).not.toHaveTextContent("Automatic compaction completed");
 	});
 
-	it("explains itself instead of showing an empty scroller", () => {
+	it("centers the composer on an empty conversation instead of a starter blurb", () => {
 		render(<ChatWorkspace snapshot={chatFixtureEmpty} />);
-		expect(screen.getByText("Start the conversation")).toBeInTheDocument();
+		expect(screen.queryByText("Start the conversation")).not.toBeInTheDocument();
 		expect(screen.queryByRole("log")).not.toBeInTheDocument();
+		expect(screen.getByLabelText("Message the agent")).toBeInTheDocument();
+		expect(
+			screen.getByTestId("chat-conversation-panel").querySelector("[data-composer-placement='center']"),
+		).not.toBeNull();
+	});
+
+	it("docks the composer once the conversation has content", () => {
+		render(<ChatWorkspace snapshot={chatFixture} />);
+		expect(
+			screen.getByTestId("chat-conversation-panel").querySelector("[data-composer-placement='dock']"),
+		).not.toBeNull();
 	});
 
 	it("keeps a turn as one block, positioned by its first item", () => {
@@ -504,12 +770,7 @@ describe("ChatWorkspace timeline", () => {
 		const jump = await screen.findByRole("button", { name: /jump to latest/i });
 		expect(jump).toHaveAttribute("title", "Jump to latest");
 		expect(jump).not.toHaveTextContent("Jump to latest");
-		expect(jump).toHaveClass(
-			"bg-raised",
-			"dark:bg-raised",
-			"hover:bg-surface",
-			"dark:hover:bg-surface",
-		);
+		expect(jump).toHaveClass("rounded-full", "size-12", "bg-raised", "dark:bg-raised");
 		expect(jump).not.toHaveClass("dark:bg-transparent");
 		expect(jump).not.toHaveClass("dark:hover:bg-input/30");
 
@@ -542,6 +803,70 @@ describe("ChatWorkspace timeline", () => {
 
 		rerender(<ChatWorkspace snapshot={{ ...poll(snapshot), latestSequence: 999 }} />);
 		expect(log.scrollTop).toBe(4000);
+	});
+
+	it("keeps a trailing spacer so a dropped prompt can sit near the top", async () => {
+		const snapshot = chatFixtureSettled;
+		const { rerender } = render(<ChatWorkspace snapshot={snapshot} />);
+		const log = screen.getByRole("log");
+		const spacer = screen.getByTestId("chat-prompt-spacer");
+		const anchors = log.querySelectorAll<HTMLElement>("[data-chat-scroll-anchor]");
+		const anchor = anchors[anchors.length - 1];
+		expect(anchor).toBeTruthy();
+
+		const contentHeight = 240;
+		Object.defineProperty(spacer, "offsetHeight", {
+			configurable: true,
+			get: () => Number.parseFloat(spacer.style.height || "0") || 0,
+		});
+		Object.defineProperty(log, "clientHeight", { configurable: true, value: 800 });
+		Object.defineProperty(log, "scrollHeight", {
+			configurable: true,
+			get: () => contentHeight + (Number.parseFloat(spacer.style.height || "0") || 0),
+		});
+		Object.defineProperty(log, "scrollTop", { configurable: true, writable: true, value: 0 });
+		log.getBoundingClientRect = () =>
+			({
+				x: 0,
+				y: 0,
+				top: 0,
+				left: 0,
+				bottom: 800,
+				right: 480,
+				width: 480,
+				height: 800,
+				toJSON() {
+					return this;
+				},
+			}) as DOMRect;
+		anchor!.getBoundingClientRect = () =>
+			({
+				x: 0,
+				y: 48,
+				top: 48,
+				left: 0,
+				bottom: 96,
+				right: 480,
+				width: 480,
+				height: 48,
+				toJSON() {
+					return this;
+				},
+			}) as DOMRect;
+
+		await act(async () => {
+			rerender(<ChatWorkspace snapshot={{ ...snapshot, latestSequence: snapshot.latestSequence + 1 }} />);
+		});
+
+		expect(Number.parseFloat(spacer.style.height)).toBe(
+			promptSpacerHeight({
+				viewportHeight: 800,
+				contentHeightWithoutSpacer: contentHeight,
+				anchorOffset: 48,
+				topInset: promptTopInset(800),
+			}),
+		);
+		expect(log.scrollTop).toBe(log.scrollHeight);
 	});
 
 	it("survives a poll without disturbing what the reader opened", async () => {
@@ -926,6 +1251,33 @@ describe("ChatWorkspace reviewer tabs", () => {
 		expect(previousTabListeners.size).toBe(1);
 		act(() => [...previousTabListeners][0]?.());
 		expect(onSelectChat).toHaveBeenCalledOnce();
+	});
+});
+
+describe("promptSpacerHeight", () => {
+	it("leaves room below a short prompt and collapses once the reply fills the viewport", () => {
+		expect(
+			promptSpacerHeight({
+				viewportHeight: 800,
+				contentHeightWithoutSpacer: 120,
+				anchorOffset: 40,
+				topInset: promptTopInset(800),
+			}),
+		).toBe(560);
+
+		expect(
+			promptSpacerHeight({
+				viewportHeight: 800,
+				contentHeightWithoutSpacer: 1200,
+				anchorOffset: 40,
+				topInset: promptTopInset(800),
+			}),
+		).toBe(0);
+	});
+
+	it("keeps a prior-chat band above the latest prompt instead of pinning flush to the top", () => {
+		expect(promptTopInset(800)).toBe(160);
+		expect(promptTopInset(300)).toBe(80);
 	});
 });
 

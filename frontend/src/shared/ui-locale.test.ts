@@ -24,9 +24,13 @@ describe("shared UI locale schema", () => {
 	});
 
 	it("normalizes persisted settings through the shared locale validator", () => {
-		expect(coerceUiSettings({ locale: "zh-CN" })).toEqual({ locale: "zh-CN", cloudEnabled: false });
-		expect(coerceUiSettings({ locale: "ja" })).toEqual({ locale: "ja", cloudEnabled: false });
-		expect(coerceUiSettings({ locale: "pt-BR" })).toEqual({ locale: "pt-BR", cloudEnabled: false });
+		expect(coerceUiSettings({ locale: "zh-CN" })).toEqual({
+			locale: "zh-CN",
+			cloudEnabled: false,
+			soundNotificationsEnabled: true,
+		});
+		expect(coerceUiSettings({ locale: "ja" }).locale).toBe("ja");
+		expect(coerceUiSettings({ locale: "pt-BR" }).locale).toBe("pt-BR");
 		expect(coerceUiSettings({ locale: "pt" })).toEqual(DEFAULT_UI_SETTINGS);
 		expect(coerceUiSettings(null)).toEqual(DEFAULT_UI_SETTINGS);
 	});
@@ -35,5 +39,17 @@ describe("shared UI locale schema", () => {
 		expect(coerceUiSettings({ locale: "en", cloudEnabled: true }).cloudEnabled).toBe(true);
 		expect(coerceUiSettings({ locale: "en", cloudEnabled: "true" }).cloudEnabled).toBe(false);
 		expect(coerceUiSettings({ locale: "en" }).cloudEnabled).toBe(false);
+	});
+
+	it("defaults soundNotificationsEnabled to true and accepts a persisted boolean", () => {
+		expect(DEFAULT_UI_SETTINGS.soundNotificationsEnabled).toBe(true);
+		expect(coerceUiSettings({ locale: "en", soundNotificationsEnabled: false }).soundNotificationsEnabled).toBe(false);
+		expect(coerceUiSettings({ locale: "en", soundNotificationsEnabled: true }).soundNotificationsEnabled).toBe(true);
+	});
+
+	it("coerces a non-boolean or missing soundNotificationsEnabled to the default (true)", () => {
+		expect(coerceUiSettings({ locale: "en" }).soundNotificationsEnabled).toBe(true);
+		expect(coerceUiSettings({ locale: "en", soundNotificationsEnabled: "false" }).soundNotificationsEnabled).toBe(true);
+		expect(coerceUiSettings({ locale: "en", soundNotificationsEnabled: null }).soundNotificationsEnabled).toBe(true);
 	});
 });

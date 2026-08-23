@@ -524,6 +524,48 @@ describe("XtermTerminal", () => {
 		expect(writeText).toHaveBeenLastCalledWith("retry me");
 	});
 
+	it("shows a copied toast after a successful selection auto-copy", async () => {
+		render(<XtermTerminal theme="dark" />);
+		state.lastTerminal!.selection = "toast selection";
+		state.lastTerminal!.selectionListeners.forEach((listener) => listener());
+		await new Promise((resolve) => window.setTimeout(resolve, 0));
+
+		expect(await screen.findByRole("status")).toHaveTextContent("Copied to clipboard");
+	});
+
+	it("does not show a copied toast when clipboard write fails", async () => {
+		window.ao!.clipboard.writeText = vi.fn().mockRejectedValue(new Error("clipboard failed"));
+		render(<XtermTerminal theme="dark" />);
+		state.lastTerminal!.selection = "failed selection";
+		state.lastTerminal!.selectionListeners.forEach((listener) => listener());
+		await new Promise((resolve) => window.setTimeout(resolve, 0));
+		await Promise.resolve();
+
+		expect(screen.queryByRole("status")).not.toBeInTheDocument();
+	});
+
+	it("hides the copied toast after a short delay", async () => {
+		vi.useFakeTimers();
+		try {
+			render(<XtermTerminal theme="dark" />);
+			state.lastTerminal!.selection = "timed selection";
+			await act(async () => {
+				state.lastTerminal!.selectionListeners.forEach((listener) => listener());
+				await vi.advanceTimersByTimeAsync(0);
+				await Promise.resolve();
+			});
+
+			expect(screen.getByRole("status")).toHaveTextContent("Copied to clipboard");
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(1600);
+			});
+			expect(screen.queryByRole("status")).not.toBeInTheDocument();
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
 	it("leaves plain Ctrl+C as terminal input on non-Windows even when text is selected", () => {
 		render(<XtermTerminal theme="dark" />);
 		state.lastTerminal!.selection = "selected text";
@@ -1035,5 +1077,52 @@ describe("XtermTerminal", () => {
 		expect(state.lastTerminal!._core._selectionService.enable).toHaveBeenCalled();
 		expect(state.lastTerminal!._core.element.classList.remove).toHaveBeenCalledWith("enable-mouse-events");
 		expect(state.lastTerminal!._core._selectionService.shouldForceSelection({} as MouseEvent)).toBe(true);
+	});
+
+	function dropTransfer(entry: { isDirectory: boolean }, files: File[]) {
+		return { items: [{ webkitGetAsEntry: () => entry }], files, types: ["Files"] };
+	}
+
+	it("attaches a real dropped file's saved path, and still lets the drop bubble to the window", async () => {
+		const saveDroppedFile = vi.fn().mockResolvedValue("/tmp/ao-dropped/notes.txt");
+		window.ao!.terminal.saveDroppedFile = saveDroppedFile;
+		const onInput = vi.fn();
+		const { container } = render(
+			<XtermTerminal theme="dark" onReady={(terminal) => terminal.onUserInput(onInput)} />,
+		);
+		const host = container.firstElementChild!;
+		const bubbled = vi.fn();
+		window.addEventListener("drop", bubbled);
+		const file = new File(["hello"], "notes.txt", { type: "text/plain" });
+
+		fireEvent.drop(host, { dataTransfer: dropTransfer({ isDirectory: false }, [file]) });
+		await waitFor(() => expect(saveDroppedFile).toHaveBeenCalledWith({ name: "notes.txt", bytes: expect.any(Uint8Array) }));
+		await waitFor(() => expect(onInput).toHaveBeenCalledWith("/tmp/ao-dropped/notes.txt ", "paste"));
+
+		window.removeEventListener("drop", bubbled);
+		// Regression: no stopPropagation here — _shell.tsx's window-level listener
+		// still needs this drop to reset the drag-depth counter its preceding
+		// dragenter bumped, or the next folder drag inherits a stale depth and
+		// never shows the overlay.
+		expect(bubbled).toHaveBeenCalledTimes(1);
+	});
+
+	// Regression: a dropped folder is the app-wide "open as project" gesture
+	// (_shell.tsx's window-level drop handler), not a file to attach — dropping
+	// one over an active terminal pane must not be swallowed as a file-attach.
+	it("lets a dropped folder bubble to the window instead of attaching it as a file", () => {
+		const saveDroppedFile = vi.fn();
+		window.ao!.terminal.saveDroppedFile = saveDroppedFile;
+		const { container } = render(<XtermTerminal theme="dark" />);
+		const host = container.firstElementChild!;
+		const bubbled = vi.fn();
+		window.addEventListener("drop", bubbled);
+		const folder = new File([], "my-project");
+
+		fireEvent.drop(host, { dataTransfer: dropTransfer({ isDirectory: true }, [folder]) });
+
+		window.removeEventListener("drop", bubbled);
+		expect(bubbled).toHaveBeenCalledTimes(1);
+		expect(saveDroppedFile).not.toHaveBeenCalled();
 	});
 });

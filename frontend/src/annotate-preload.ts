@@ -532,7 +532,7 @@ function openPrompt(
 	mount.innerHTML = `
 		<form class="prompt" aria-label="Annotate selection">
 			<textarea rows="1" aria-label="Annotation request" placeholder="Describe the change…"></textarea>
-			<button disabled type="submit" aria-label="Send annotation" title="Send (⌘/Ctrl + Enter)">
+			<button disabled type="submit" aria-label="Send annotation" title="Send (Enter)">
 				<svg viewBox="0 0 24 24" aria-hidden="true">
 					<path d="M12 19V5"></path>
 					<path d="m5 12 7-7 7 7"></path>
@@ -578,7 +578,7 @@ function openPrompt(
 		if (event.key === "Escape") {
 			event.preventDefault();
 			setEnabled(false, "escape");
-		} else if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+		} else if (event.key === "Enter" && !event.shiftKey) {
 			event.preventDefault();
 			submitAnnotation();
 		}

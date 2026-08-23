@@ -335,8 +335,20 @@ func TestACPDriverDefersPromptUntilDurableTurnBinding(t *testing.T) {
 		}
 		if event.Kind == ports.ChatEventApprovalRequested {
 			approvalID = event.RequestID
-			if len(event.Decisions) != 2 || event.Decisions[0].ID != "allow" {
+			if len(event.Decisions) != 2 || event.Decisions[0].ID != "allow" ||
+				event.Decisions[0].Kind != ports.ChatDecisionAllowOnce ||
+				event.Decisions[1].Kind != ports.ChatDecisionRejectOnce {
 				t.Fatalf("approval decisions = %#v", event.Decisions)
+			}
+			var detail struct {
+				SubjectKind string          `json:"subjectKind"`
+				ToolKind    acpsdk.ToolKind `json:"toolKind"`
+			}
+			if err := json.Unmarshal(event.Detail, &detail); err != nil {
+				t.Fatalf("approval detail: %v (%s)", err, event.Detail)
+			}
+			if detail.SubjectKind != string(domain.ActivityKindFileChange) || detail.ToolKind != acpsdk.ToolKindEdit {
+				t.Fatalf("approval detail = %+v, want an ACP file edit", detail)
 			}
 		}
 	}
@@ -532,6 +544,12 @@ func TestACPDriverReappliesLaunchContextWhenResuming(t *testing.T) {
 		SessionMeta: func(cfg LaunchConfig) map[string]any {
 			return map[string]any{"systemPrompt": map[string]any{"append": cfg.SystemPrompt}}
 		},
+		SessionOptions: func(settings ports.ChatTurnSettings) []SessionOption {
+			if settings.Model == "" {
+				return nil
+			}
+			return []SessionOption{{ID: "model", Value: settings.Model}}
+		},
 	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	driver.spawn = fakeSpawn(agent)
 
@@ -541,19 +559,21 @@ func TestACPDriverReappliesLaunchContextWhenResuming(t *testing.T) {
 		ProviderConversationID: "provider-session-1",
 		WorkspacePath:          workspace,
 		Env:                    map[string]string{"KEEP": "yes"},
+		Model:                  "selected-resume-model",
 		SystemPrompt:           "Recomputed AO instructions",
 	})
 	if err != nil {
 		t.Fatalf("Resume: %v", err)
 	}
 	defer conv.Close()
-	if got.SessionID != "worker-1" || got.WorkspacePath != workspace ||
+	if got.SessionID != "worker-1" || got.WorkspacePath != workspace || got.Model != "selected-resume-model" ||
 		got.Env["KEEP"] != "yes" || got.SystemPrompt != "Recomputed AO instructions" {
 		t.Fatalf("launch config = %#v", got)
 	}
 	agent.mu.Lock()
 	resumeCalls, loadCalls := agent.resumeCalls, agent.loadCalls
 	resumeMeta := agent.resumeParams.Meta
+	resumeModel := agent.options["model"]
 	agent.mu.Unlock()
 	if resumeCalls != 1 || loadCalls != 0 {
 		t.Fatalf("resume calls = %d, load calls = %d; want resume fallback", resumeCalls, loadCalls)
@@ -561,6 +581,9 @@ func TestACPDriverReappliesLaunchContextWhenResuming(t *testing.T) {
 	prompt, ok := resumeMeta["systemPrompt"].(map[string]any)
 	if !ok || prompt["append"] != "Recomputed AO instructions" {
 		t.Fatalf("session/resume metadata = %#v, want recomputed system prompt", resumeMeta)
+	}
+	if resumeModel != "selected-resume-model" {
+		t.Fatalf("resumed ACP model = %q, want selected-resume-model", resumeModel)
 	}
 	if conv.Capabilities().Has(ports.ChatCapabilityHistory) {
 		t.Fatal("resume-only ACP conversation advertised replayable history")
@@ -612,6 +635,9 @@ func TestACPDriverLoadsSettledHistoryWhenTheAgentCanReplayIt(t *testing.T) {
 		t.Fatalf("Resume: %v", err)
 	}
 	defer conv.Close()
+	if _, ok := conv.(ports.ChatHistoryRefresher); ok {
+		t.Fatal("ACP session/load replay is a frozen snapshot, not refreshable history")
+	}
 
 	agent.mu.Lock()
 	loadCalls, resumeCalls := agent.loadCalls, agent.resumeCalls
@@ -680,7 +706,7 @@ func TestACPDriverLoadsSettledHistoryWhenTheAgentCanReplayIt(t *testing.T) {
 	}
 }
 
-func TestACPDriverRejectsTrailingUserOnlyHistoryAsUnsettled(t *testing.T) {
+func TestACPDriverImportsTrailingUserOnlyHistoryAsInterrupted(t *testing.T) {
 	userID := "55555555-5555-4555-8555-555555555555"
 	user := acpsdk.UpdateUserMessageText("Work that has not produced a provider event yet")
 	user.UserMessageChunk.MessageId = &userID
@@ -710,8 +736,31 @@ func TestACPDriverRejectsTrailingUserOnlyHistoryAsUnsettled(t *testing.T) {
 	}
 	defer conv.Close()
 
-	if _, err := conv.(ports.ChatHistoryReader).ReadHistory(context.Background()); !errors.Is(err, ports.ErrChatHistoryUnsettled) {
-		t.Fatalf("ReadHistory error = %v, want ErrChatHistoryUnsettled", err)
+	history, err := conv.(ports.ChatHistoryReader).ReadHistory(context.Background())
+	if err != nil {
+		t.Fatalf("ReadHistory: %v", err)
+	}
+	wantKinds := []ports.ChatEventKind{
+		ports.ChatEventTurnStarted,
+		ports.ChatEventUserMessageCompleted,
+		ports.ChatEventTurnCompleted,
+	}
+	if len(history) != len(wantKinds) {
+		t.Fatalf("history = %d events, want %d: %#v", len(history), len(wantKinds), history)
+	}
+	for i, event := range history {
+		if event.Kind != wantKinds[i] {
+			t.Errorf("history event %d kind = %q, want %q", i, event.Kind, wantKinds[i])
+		}
+		if event.ProviderEventID == "" {
+			t.Errorf("history event %d has no stable identity", i)
+		}
+	}
+	if history[1].Text != "Work that has not produced a provider event yet" {
+		t.Fatalf("user message = %q", history[1].Text)
+	}
+	if history[2].TurnState != domain.TurnStateInterrupted {
+		t.Fatalf("turn state = %q, want %q", history[2].TurnState, domain.TurnStateInterrupted)
 	}
 }
 

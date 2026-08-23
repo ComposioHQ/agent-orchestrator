@@ -462,7 +462,7 @@ describe("CenterPane toolbar session label", () => {
 		expect(screen.queryByTestId("agent-switch-terminal-overlay")).not.toBeInTheDocument();
 	});
 
-	it("keeps completion covered until target settlement without stealing terminal selection", () => {
+	it("settles a completed switch without reviving it after the target stops", () => {
 		vi.useFakeTimers();
 		const activeSwitch = switchRecord({ state: "delivering_context" });
 		const completedSwitch: AgentSwitch = { ...activeSwitch, state: "completed" };
@@ -491,12 +491,21 @@ describe("CenterPane toolbar session label", () => {
 
 		view.rerender(
 			<TooltipProvider>
-				<CenterPane daemonReady onSelectSessionTerminal={onSelectSessionTerminal} session={settledSession} theme="dark" />
+				<CenterPane
+					daemonReady
+					onSelectSessionTerminal={onSelectSessionTerminal}
+					session={{ ...settledSession, terminalHandleId: undefined }}
+					theme="dark"
+				/>
 			</TooltipProvider>,
 		);
 		expect(onSelectSessionTerminal).not.toHaveBeenCalled();
+		expect(screen.getByRole("status")).toHaveTextContent("Completed");
+		expect(screen.getByTestId("terminal-interaction-surface")).not.toHaveAttribute("inert");
+
 		act(() => vi.advanceTimersByTime(3_100));
 		expect(screen.queryByTestId("agent-switch-terminal-overlay")).not.toBeInTheDocument();
+		expect(screen.getByTestId("terminal-interaction-surface")).not.toHaveAttribute("inert");
 		vi.useRealTimers();
 	});
 
@@ -606,7 +615,7 @@ describe("CenterPane toolbar session label", () => {
 		expect(within(mainContainer as HTMLElement).queryByTestId("terminal-switch-agent")).toBeNull();
 	});
 
-	it("keeps the compact owner card fixed before the scrollable terminal list", () => {
+	it("keeps the compact owner card before the scrollable terminal list while allowing it to shrink", () => {
 		const [shell] = makeShells(1);
 		renderCenterPane({ session: worker, shellTerminals: [shell] });
 
@@ -615,7 +624,8 @@ describe("CenterPane toolbar session label", () => {
 		const scrollRegion = document.querySelector(".overflow-x-auto");
 		const avatar = ownerCard?.querySelector('img[aria-hidden="true"]');
 
-		expect(ownerCard?.classList.contains("shrink-0")).toBe(true);
+		expect(ownerCard).toHaveClass("min-w-0", "shrink", "overflow-hidden");
+		expect(ownerCard).not.toHaveClass("min-w-shell-tab-min", "shrink-0");
 		expect(scrollRegion?.contains(ownerCard)).toBe(false);
 		expect(avatar?.classList.contains("size-terminal-agent-icon")).toBe(true);
 	});

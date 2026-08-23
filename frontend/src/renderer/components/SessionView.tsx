@@ -260,6 +260,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	const [terminalTarget, setTerminalTarget] = useState<TerminalTarget>({ kind: "worker" });
 	const [browserPopOutState, setBrowserPopOutState] = useState({ sessionId, poppedOut: false });
 	const [filesPoppedOut, setFilesPoppedOut] = useState(false);
+	const [filesFocusPath, setFilesFocusPath] = useState<string | null>(null);
 	const browserPoppedOut = browserPopOutState.sessionId === sessionId && browserPopOutState.poppedOut;
 	const [interfaceSwitchDialogOpen, setInterfaceSwitchDialogOpen] = useState(false);
 	const isNativeFullScreen = useWindowFullScreen();
@@ -612,6 +613,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 		setTerminalTarget({ kind: "worker" });
 		setBrowserPopOutState({ sessionId, poppedOut: false });
 		setFilesPoppedOut(false);
+		setFilesFocusPath(null);
 	}, [sessionId]);
 
 	// Route props change one render before the passive reset above. Reject the
@@ -643,6 +645,16 @@ export function SessionView({ sessionId }: SessionViewProps) {
 		setInspectorViewForSession(sessionId, "files");
 		setInspectorOpenForSession(sessionId, true);
 	}, [sessionId, setInspectorOpenForSession, setInspectorViewForSession]);
+
+	const handleOpenFile = useCallback(
+		(path: string) => {
+			handleOpenFiles();
+			setFilesFocusPath(path);
+		},
+		[handleOpenFiles, setFilesFocusPath],
+	);
+
+	const handleFilesFocusConsumed = useCallback(() => setFilesFocusPath(null), []);
 
 	const handleToggleFilesPopOut = useCallback(
 		(next: boolean) => {
@@ -698,8 +710,13 @@ export function SessionView({ sessionId }: SessionViewProps) {
 			setBrowserUnseen(sessionId, false);
 			return;
 		}
-		setInspectorViewForSession(sessionId, "browser");
-		setInspectorOpenForSession(sessionId, true);
+		// A new preview target used to force-switch the inspector to the Browser
+		// tab and pop it open, even if the user was looking at something else
+		// entirely (Reviews, a different session's Files tab, mid-typing in
+		// chat). Match the agent-activity effect below: badge it as unseen and
+		// let the user open Browser themselves when they're ready, instead of
+		// grabbing focus out from under them.
+		setBrowserUnseen(sessionId, true);
 	}, [
 		browserPoppedOut,
 		hasInspector,
@@ -708,8 +725,6 @@ export function SessionView({ sessionId }: SessionViewProps) {
 		sessionId,
 		setBrowserContentRevealed,
 		setBrowserUnseen,
-		setInspectorOpenForSession,
-		setInspectorViewForSession,
 	]);
 
 	// Agent browser commands are genuine browser activity even when they do not
@@ -851,6 +866,8 @@ export function SessionView({ sessionId }: SessionViewProps) {
 									shellError={
 										openShellTerminal.error ? apiErrorMessage(openShellTerminal.error) : undefined
 									}
+									onOpenFiles={handleOpenFiles}
+									onOpenFile={handleOpenFile}
 								/>
 							) : (
 								<CenterPane
@@ -903,7 +920,12 @@ export function SessionView({ sessionId }: SessionViewProps) {
 							browserPoppedOut={browserPoppedOut}
 							filesView={
 								session ? (
-									<SessionFilesView onToggleMaximized={handleToggleFilesPopOut} sessionId={session.id} />
+									<SessionFilesView
+										focusPath={filesFocusPath}
+										onFocusPathConsumed={handleFilesFocusConsumed}
+										onToggleMaximized={handleToggleFilesPopOut}
+										sessionId={session.id}
+									/>
 								) : null
 							}
 							isInspectorVisible={inspectorPanelVisible}

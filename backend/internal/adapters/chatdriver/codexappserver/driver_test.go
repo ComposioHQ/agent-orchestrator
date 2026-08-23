@@ -337,6 +337,9 @@ func TestApprovalIsParkedUntilResolved(t *testing.T) {
 	if ev.RequestID != "0" {
 		t.Fatalf("request id = %q, want the JSON-RPC id 0", ev.RequestID)
 	}
+	if ev.ProviderTurnID != "turn-1" {
+		t.Fatalf("provider turn id = %q, want turn-1", ev.ProviderTurnID)
+	}
 	if ev.ActivityStatus != domain.ActivityStatusPending {
 		t.Errorf("status = %q, want pending", ev.ActivityStatus)
 	}
@@ -351,6 +354,14 @@ func TestApprovalIsParkedUntilResolved(t *testing.T) {
 	want := []string{"accept", "acceptWithExecpolicyAmendment", "cancel"}
 	if strings.Join(ids, ",") != strings.Join(want, ",") {
 		t.Fatalf("decisions = %v, want %v (from the provider's own list)", ids, want)
+	}
+	wantKinds := []ports.ChatDecisionKind{
+		ports.ChatDecisionAllowOnce, ports.ChatDecisionAllowAlways, ports.ChatDecisionRejectOnce,
+	}
+	for i, option := range ev.Decisions {
+		if option.Kind != wantKinds[i] {
+			t.Fatalf("decision %q kind = %q, want %q", option.ID, option.Kind, wantKinds[i])
+		}
 	}
 
 	// Nothing has been answered yet, so the provider is still blocked.
@@ -582,6 +593,7 @@ func TestResumeReappliesWorkspaceAndStandingInstructions(t *testing.T) {
 		SessionID:              "ao-1",
 		ProviderConversationID: "thread-1",
 		WorkspacePath:          "/tmp/ws",
+		Model:                  "selected-resume-model",
 		SystemPrompt:           "current AO standing instructions",
 	})
 	if err != nil {
@@ -593,6 +605,7 @@ func TestResumeReappliesWorkspaceAndStandingInstructions(t *testing.T) {
 	var params struct {
 		ThreadID              string `json:"threadId"`
 		Cwd                   string `json:"cwd"`
+		Model                 string `json:"model"`
 		DeveloperInstructions string `json:"developerInstructions"`
 	}
 	if err := json.Unmarshal(resume.Params, &params); err != nil {
@@ -600,6 +613,9 @@ func TestResumeReappliesWorkspaceAndStandingInstructions(t *testing.T) {
 	}
 	if params.ThreadID != "thread-1" || params.Cwd != "/tmp/ws" {
 		t.Fatalf("thread resume identity = %#v", params)
+	}
+	if params.Model != "selected-resume-model" {
+		t.Fatalf("thread resume model = %q, want selected-resume-model", params.Model)
 	}
 	if params.DeveloperInstructions != "current AO standing instructions" {
 		t.Fatalf("developerInstructions = %q", params.DeveloperInstructions)

@@ -22,8 +22,15 @@ import type { WorkspaceSession, WorkspaceSummary } from "../types/workspace";
 import { agentsQueryKey } from "../hooks/useAgentsQuery";
 import { useUiStore } from "../stores/ui-store";
 
-const { getMock, navigateMock, mockParams, renameSessionMock, spawnMock, updateStatusMock, commandPaletteEnabled } = vi.hoisted(
+const { cloudSessionState, getMock, navigateMock, mockParams, renameSessionMock, spawnMock, updateStatusMock, commandPaletteEnabled } = vi.hoisted(
 	() => ({
+		cloudSessionState: {
+			configured: false,
+			session: null as null | { user: { email: string } },
+			status: "unauthenticated" as "authenticated" | "loading" | "unauthenticated",
+			signIn: vi.fn(),
+			signOut: vi.fn().mockResolvedValue(undefined),
+		},
 		getMock: vi.fn(),
 		navigateMock: vi.fn(),
 		mockParams: { projectId: undefined as string | undefined, sessionId: undefined as string | undefined },
@@ -36,6 +43,7 @@ const { getMock, navigateMock, mockParams, renameSessionMock, spawnMock, updateS
 
 vi.mock("../lib/rename-session", () => ({ renameSession: renameSessionMock }));
 vi.mock("../lib/spawn-orchestrator", () => ({ spawnOrchestrator: spawnMock }));
+vi.mock("../lib/cloud-session", () => ({ useCloudSession: () => cloudSessionState }));
 
 vi.mock("../hooks/useCommandPaletteEnabled", () => ({
 	useCommandPaletteEnabled: () => commandPaletteEnabled.current,
@@ -241,6 +249,11 @@ beforeEach(() => {
 	window.localStorage.clear();
 	document.documentElement.style.removeProperty("--ao-sidebar-w");
 	commandPaletteEnabled.current = true;
+	cloudSessionState.configured = false;
+	cloudSessionState.session = null;
+	cloudSessionState.status = "unauthenticated";
+	cloudSessionState.signIn.mockReset();
+	cloudSessionState.signOut.mockReset().mockResolvedValue(undefined);
 	useUiStore.setState({ isCommandPaletteOpen: false, settingsModal: null });
 	getMock.mockReset();
 	getMock.mockResolvedValue({
@@ -273,6 +286,23 @@ afterEach(() => {
 });
 
 describe("Sidebar", () => {
+	it("does not show cloud sign-in controls while signed out", () => {
+		cloudSessionState.configured = true;
+		renderSidebar();
+
+		expect(screen.queryByLabelText("Sign in to AO Cloud")).not.toBeInTheDocument();
+		expect(screen.queryByText("Sign in")).not.toBeInTheDocument();
+	});
+
+	it("keeps cloud account controls visible while signed in", () => {
+		cloudSessionState.configured = true;
+		cloudSessionState.status = "authenticated";
+		cloudSessionState.session = { user: { email: "user@example.com" } };
+		renderSidebar();
+
+		expect(screen.getAllByLabelText("Signed in as user@example.com")).toHaveLength(2);
+	});
+
 	it("suppresses focus chrome without removing keyboard focusability", () => {
 		renderSidebar();
 
@@ -1566,11 +1596,21 @@ describe("Sidebar", () => {
 		expect(screen.queryByLabelText("Open merged terminated task")).not.toBeInTheDocument();
 	});
 
-	it("does not render the restart-to-update row unless an update is downloaded", async () => {
+	it("shows update activity before an available update finishes downloading", async () => {
 		updateStatusMock.mockResolvedValue({ state: "available", version: "9.9.9" });
 		renderSidebar();
 
 		await waitFor(() => expect(updateStatusMock).toHaveBeenCalled());
+		expect(screen.getByText("Update available (v9.9.9).")).toBeInTheDocument();
+		expect(screen.queryByLabelText(/Restart to install update/)).not.toBeInTheDocument();
+	});
+
+	it("keeps showing update activity while the automatic download is in progress", async () => {
+		updateStatusMock.mockResolvedValue({ state: "downloading", version: "9.9.9", percent: 42 });
+		renderSidebar();
+
+		await waitFor(() => expect(updateStatusMock).toHaveBeenCalled());
+		expect(screen.getByText("Downloading… 42%")).toBeInTheDocument();
 		expect(screen.queryByLabelText(/Restart to install update/)).not.toBeInTheDocument();
 	});
 

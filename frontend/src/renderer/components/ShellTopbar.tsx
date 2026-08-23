@@ -25,13 +25,14 @@ import { useUiStore } from "../stores/ui-store";
 import { OrchestratorIcon } from "./icons";
 import { OrchestratorActivityIndicator } from "./OrchestratorActivityIndicator";
 import { getAgentActivityView } from "../lib/session-presentation";
-import { isMacPlatform, usesBoardActionsInPanel } from "../lib/platform";
+import { isLinuxPlatform, isMacPlatform, usesBoardActionsInPanel } from "../lib/platform";
 import { cn } from "../lib/utils";
 import { SHELL_PANEL_SPRING } from "../lib/motion-spring";
 import { useWindowFullScreen } from "../hooks/useWindowFullScreen";
 import { StatusPill } from "./StatusPill";
-import { TopbarButton, TopbarKillError, topbarHeaderClass, topbarProjectLabelClass } from "./TopbarButton";
+import { TopbarActionError, TopbarButton, topbarHeaderClass, topbarProjectLabelClass } from "./TopbarButton";
 import { SessionTerminationPopover } from "./SessionTerminationPopover";
+import { TopbarOpenEditorButton } from "./TopbarOpenEditorButton";
 import {
 	agentSwitchStatusVisual,
 	deriveSessionAgentSwitchPresentation,
@@ -57,9 +58,12 @@ const noDragStyle = isMac ? ({ WebkitAppRegion: "no-drag" } as React.CSSProperti
 // --size-titlebar-cluster-left (72) + --size-titlebar-cluster-width (3×28+2×4=92)
 // + --size-titlebar-content-gap (12) = 176; minus --size-center-panel-inset-mac (6) = 170.
 // Fullscreen: --space-2 (8) + 92 + 12 = 112.
+// Linux: --size-titlebar-cluster-left-linux (6) + 92 + 12 = 110; minus
+// --size-center-panel-inline-inset (16) because the framed panel keeps that gutter.
 const PADDING_DEFAULT = 18; // 1.125rem
 const PADDING_CLEARANCE = 170;
 const PADDING_CLEARANCE_FULLSCREEN = 112;
+const PADDING_CLEARANCE_LINUX = 94;
 
 export function ShellTopbar({
 	embedded = false,
@@ -82,12 +86,15 @@ export function ShellTopbar({
 	const isFullScreen = useWindowFullScreen();
 	const prefersReducedMotion = useReducedMotion();
 	const mac = isMacPlatform();
+	const linux = isLinuxPlatform();
 	const targetPaddingLeft =
-		!embedded && mac && !isSidebarOpen
+		!embedded && !isSidebarOpen && mac
 			? isFullScreen
 				? PADDING_CLEARANCE_FULLSCREEN
 				: PADDING_CLEARANCE
-			: PADDING_DEFAULT;
+			: !embedded && !isSidebarOpen && linux
+				? PADDING_CLEARANCE_LINUX
+				: PADDING_DEFAULT;
 	const paddingLeft = useMotionValue(targetPaddingLeft);
 	useEffect(() => {
 		const controls = animate(
@@ -224,9 +231,9 @@ export function ShellTopbar({
 				{!boardActionsInPanel && isProjectBoardRoute ? (
 					<>
 						{boardSpawnError ? (
-							<TopbarKillError className="max-w-content-max truncate" title={boardSpawnError}>
+							<TopbarActionError className="max-w-content-max truncate" title={boardSpawnError}>
 								{boardSpawnError}
-							</TopbarKillError>
+							</TopbarActionError>
 						) : null}
 						<Tooltip>
 							<TooltipTrigger asChild>
@@ -316,6 +323,22 @@ export function ShellTopbar({
 									<TooltipContent side="bottom">{t("shell.openKanban")}</TooltipContent>
 								</Tooltip>
 							</>
+						) : null}
+						{/* Open-in-editor leads the session actions: it is the only
+						    non-destructive one, and it must sit left of Kill. Kept outside
+						    the local-actions group because Electron main independently
+						    reports whether this session has a live workspace. */}
+						{session ? (
+							// Keyed per session so a stale launch error does not carry over
+							// when switching sessions. The prefix keeps it distinct from the
+							// kill button's key: identical sibling keys make React duplicate
+							// the nodes.
+							<TopbarOpenEditorButton
+								key={`open-workspace-${session.id}`}
+								sessionId={session.id}
+								projectId={session.workspaceId}
+								style={noDragStyle}
+							/>
 						) : null}
 						{/* Local worker actions share one tight control group. Navigation
 						    remains a separate visual target in the outer top-bar row. */}
@@ -431,7 +454,7 @@ export function TopbarKillButton({
 					</TopbarButton>
 				}
 			/>
-			{error ? <TopbarKillError>{error}</TopbarKillError> : null}
+			{error ? <TopbarActionError>{error}</TopbarActionError> : null}
 		</div>
 	);
 }
@@ -445,9 +468,9 @@ function ProjectTerminationFeedback({ projectId }: { projectId: string | undefin
 		<div aria-label={t("shell.sessionTerminationStatus")} className="flex max-w-content-max items-center gap-2">
 			{states.map((state) =>
 				state.error ? (
-					<TopbarKillError className="max-w-48 truncate" key={state.session.id} title={state.error}>
+					<TopbarActionError className="max-w-48 truncate" key={state.session.id} title={state.error}>
 						{state.session.title}: {state.error}
-					</TopbarKillError>
+					</TopbarActionError>
 				) : (
 					<span
 						className="max-w-40 truncate text-caption text-muted-foreground"

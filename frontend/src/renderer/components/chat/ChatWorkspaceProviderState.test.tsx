@@ -18,6 +18,16 @@ const MODELS = [
 	{ id: "gpt-5.6-terra-mini", displayName: "gpt-5.6-terra-mini", default: false },
 ];
 
+function withoutPendingApproval(snapshot: ConversationSnapshot): ConversationSnapshot {
+	return {
+		...snapshot,
+		items: snapshot.items.filter(
+			(item) =>
+				!(item.kind === "activity" && item.activityKind === "approval" && item.status === "pending"),
+		),
+	};
+}
+
 describe("reasoning", () => {
 	it("keeps provider reasoning out of the conversation chrome", () => {
 		render(<ChatWorkspace snapshot={chatFixture} />);
@@ -151,18 +161,19 @@ describe("model reroute", () => {
 	it("names what answered rather than what was asked for", () => {
 		render(
 			<ChatWorkspace
-				snapshot={chatFixtureRerouted}
+				snapshot={withoutPendingApproval(chatFixtureRerouted)}
 				models={MODELS}
 				onChooseSettings={vi.fn()}
 			/>,
 		);
 		// The control the user reads to know which model is in play now names the model
 		// that replied, and says whose place it took.
-		expect(
-			screen.getByRole("button", {
-				name: /answered with gpt-5\.6-terra-mini instead of gpt-5\.6-terra/,
-			}),
-		).toBeInTheDocument();
+		const trigger = screen.getByRole("button", {
+			name: "Model and reasoning effort for the next turn",
+		});
+		expect(trigger.getAttribute("title")).toMatch(
+			/answered with gpt-5\.6-terra-mini instead of gpt-5\.6-terra/,
+		);
 		expect(screen.getByLabelText(/Substituted for gpt-5\.6-terra$/)).toBeInTheDocument();
 	});
 
@@ -180,8 +191,14 @@ describe("model reroute", () => {
 	});
 
 	it("keeps naming the chosen model when nothing was substituted", () => {
-		render(<ChatWorkspace snapshot={chatFixture} models={MODELS} onChooseSettings={vi.fn()} />);
-		expect(screen.getByText("gpt-5.6-terra")).toBeInTheDocument();
+		render(
+			<ChatWorkspace
+				snapshot={withoutPendingApproval(chatFixture)}
+				models={MODELS}
+				onChooseSettings={vi.fn()}
+			/>,
+		);
+		expect(screen.getByText(/gpt-5\.6-terra/)).toBeInTheDocument();
 		expect(screen.queryByLabelText(/Substituted for/)).not.toBeInTheDocument();
 	});
 });

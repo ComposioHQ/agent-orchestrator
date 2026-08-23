@@ -152,9 +152,13 @@ const (
 // not served.
 var routeClasses = map[RouteKey]RouteClass{
 	// ---- Daemon-process surface -------------------------------------------
-	{"GET", "/healthz"}:   local(reasonCloudNative),
-	{"GET", "/readyz"}:    local(reasonCloudNative),
-	{"POST", "/shutdown"}: local(reasonDesktopOnly + "; stops this daemon process"),
+	{"GET", "/healthz"}: local(reasonCloudNative),
+	{"GET", "/readyz"}:  local(reasonCloudNative),
+	{"GET", "/api/v1/desktop/sessions/{sessionId}/workspace"}: local(reasonDesktopOnly),
+	{"GET", "/api/v1/system/requirements"}:                    local(reasonHostProcess),
+	{"GET", "/api/v1/system/install/{target}"}:                local(reasonHostProcess),
+	{"POST", "/api/v1/system/install/{target}"}:               local(reasonHostProcess),
+	{"POST", "/shutdown"}:                                     local(reasonDesktopOnly + "; stops this daemon process"),
 	// Terminal transport, and deliberately never hosted — settled architecture,
 	// not a gap waiting on a port.
 	//
@@ -252,6 +256,8 @@ var routeClasses = map[RouteKey]RouteClass{
 		"reads the local worktree; hosted reads go through the runtime workspace adapter"),
 	{"GET", "/api/v1/sessions/{sessionId}/workspace/file"}: pending(portWorkspaceAdapter,
 		"reads the local worktree; hosted reads go through the runtime workspace adapter"),
+	{"GET", "/api/v1/sessions/{sessionId}/workspace/file/blob"}: pending(portWorkspaceAdapter,
+		"reads binary content from the local worktree; hosted reads go through the runtime workspace adapter"),
 	{"GET", "/api/v1/sessions/{sessionId}/workspace/events"}: pendingStream(portWorkspaceAdapter,
 		"watches the local worktree; hosted watches go through the runtime workspace adapter"),
 	{"GET", "/api/v1/sessions/{sessionId}/preview"}:           pending(portPreviewAdapter, "preview state is local; hosted preview goes through the runtime preview adapter"),

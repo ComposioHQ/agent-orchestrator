@@ -30,6 +30,9 @@ import {
 import { listFeatureBuilds, getActiveFeatureBuild } from "./main/feature-builds";
 import { readUpdateSettings, type UpdateSettings, type UpdateStatus } from "./main/update-settings";
 import { readKeybindingOverrides, writeKeybindingOverrides } from "./main/keybinding-settings";
+import { readEditorSettings, writeEditorPreference } from "./main/editor-settings";
+import { createEditorHandoff } from "./main/editor-handoff";
+import { launchCommand } from "./main/launch-command";
 import {
 	decideRelocation,
 	inspectInstalledBundle,
@@ -90,9 +93,10 @@ import { connectBrowserRuntime, type BrowserRuntimeLinkHandle } from "./main/bro
 import { keepDaemonAlive, shouldLinkOnAttach } from "./main/daemon-owner";
 import { readMigrationState, updateMigration, writeAppStateMarker, type MigrationState } from "./main/app-state";
 import { isAllowedAppExternalURL, openAllowedAppExternalURL } from "./main/external-open";
-import { shouldSignalAttention, shouldToast } from "./main/notification-signals";
+import { dockBounceType, shouldReplaceBounce, shouldSignalAttention, shouldToast } from "./main/notification-signals";
 import { buildWindowsAppMenuTemplate } from "./main/menu";
 import { ancestorRepositorySetupWarning, scanImportFolder } from "./main/import-folder-scan";
+import { parseOpenFolderPathArg } from "./main/open-folder-arg";
 
 // Globals injected at compile time by @electron-forge/plugin-vite.
 declare const MAIN_WINDOW_VITE_DEV_SERVER_URL: string | undefined;
@@ -121,6 +125,18 @@ if (process.platform === "win32") {
 	app.setAppUserModelId("dev.agent-orchestrator.desktop");
 }
 
+// Escape hatch for hosts whose GPU driver stack crashes Chromium on startup
+// (Linux/Wayland in practice, #3961). Chromium still runs a GPU process; what
+// this drops is the vendor driver, falling the process back to Electron's
+// bundled SwiftShader. There is no window yet when the crashes happen, so an
+// in-app setting is unreachable and an env var is the only knob that works.
+// Truthy allowlist mirrors keepDaemonAlive() so "off"/"no" cannot accidentally
+// turn the GPU off. Must run before app ready — the call throws after that.
+const disableGpu = process.env.AO_DISABLE_GPU?.trim().toLowerCase();
+if (disableGpu === "1" || disableGpu === "true" || disableGpu === "yes" || disableGpu === "on") {
+	app.disableHardwareAcceleration();
+}
+
 // Pin ALL Electron-owned state (Chromium cache, cookies, local/session storage,
 // crash dumps) under the canonical AO home at ~/.ao instead of Electron's macOS
 // default ~/Library/Application Support/<name>. Keeps the app's entire footprint
@@ -144,6 +160,13 @@ const trayLifecycle = createTrayLifecycle({
 	getTrayController: () => trayController,
 	focusWindow: () => focusMainWindow(),
 });
+// Icon/taskbar-shortcut folder drop, mirroring VS Code: relayed to the
+// renderer's global drop handling so it opens the same create-project flow.
+const OPEN_FOLDER_PATH_CHANNEL = "app:openFolderPath";
+// Folder path from a cold-start launch (icon/shortcut drop while not running)
+// whose renderer isn't mounted yet. Flushed once the shell signals readiness
+// via TRAY_RENDERER_READY_CHANNEL — see the OPEN_FOLDER_PATH_CHANNEL handler.
+let pendingFolderPath: string | null = null;
 let daemonProcess: ChildProcess | null = null;
 let daemonStoppingProcess: ChildProcess | null = null;
 let daemonRestartAfterExitProcess: ChildProcess | null = null;
@@ -168,6 +191,14 @@ let terminalFocused = false;
 let supervisorLink: SupervisorLinkHandle | null = null;
 // Guard: prevents stacking multiple flashFrame(true) calls when notifications arrive rapidly.
 let isFlashing = false;
+// macOS: the in-flight dock bounce, cancelled once the window regains focus
+// so a "critical" bounce stops as soon as the user looks at the app. Held as
+// one object so the id and its criticality can never drift apart; a pending
+// critical bounce is not replaced by a later informational notification.
+let pendingBounce: { id: number; critical: boolean } | null = null;
+// Live mirror of the persisted `soundNotificationsEnabled` UI setting, kept in sync by the
+// uiSettings:set handler so a toggle flip takes effect without an app restart.
+let soundNotificationsEnabled = DEFAULT_UI_SETTINGS.soundNotificationsEnabled;
 
 const isDev = !app.isPackaged;
 
@@ -460,6 +491,7 @@ async function createWindowInternal(): Promise<void> {
 		isKeybindingRecording: () => keybindingRecordingActive,
 		agentBrowserRuntime,
 		isCloseShellTerminalShortcutEnabled: () => closeShellTerminalShortcutEnabled,
+		getDaemonPort: () => (daemonStatus.state === "ready" ? daemonStatus.port : undefined),
 	});
 	if (daemonStatus.state === "ready") establishBrowserRuntimeLink();
 
@@ -507,6 +539,10 @@ async function createWindowInternal(): Promise<void> {
 			composition.dispose();
 		});
 		mainWindow = null;
+		// Drop any pending dock bounce with the window it was attached to: its
+		// focus listener died with the window, so leaving the id set would make
+		// the next bounce skip attaching one to the replacement window.
+		cancelDockBounce();
 		trayLifecycle.clearPendingTarget();
 	});
 }
@@ -552,6 +588,60 @@ function runFilePath(): string | null {
 	if (isDev) return path.join(os.homedir(), ".ao", DEV_STATE_SUBDIR, "running.json");
 	return defaultRunFilePath(process.platform, process.env, os.homedir());
 }
+
+function editorStateDir(): string {
+	const runFile = runFilePath();
+	if (!runFile) throw new Error("AO state directory is not available.");
+	return path.dirname(runFile);
+}
+
+async function resolveSessionWorkspaceForDesktop(sessionId: string): Promise<string> {
+	if (daemonStatus.state !== "ready" || !daemonStatus.port) {
+		throw new Error("AO daemon is not ready.");
+	}
+	const controller = new AbortController();
+	const timer = setTimeout(() => controller.abort(), DAEMON_PROBE_TIMEOUT_MS);
+	try {
+		const response = await net.fetch(
+			`http://127.0.0.1:${daemonStatus.port}/api/v1/desktop/sessions/${encodeURIComponent(sessionId)}/workspace`,
+			{ signal: controller.signal },
+		);
+		const body = await response.json() as Record<string, unknown>;
+		if (!response.ok) {
+			const message = typeof body.message === "string" ? body.message : "Session workspace is not available.";
+			throw new Error(message);
+		}
+		const workspacePath = body.workspacePath;
+		if (typeof workspacePath !== "string" || !path.isAbsolute(workspacePath)) {
+			throw new Error("Session workspace is not available.");
+		}
+		return workspacePath;
+	} catch (error) {
+		if (error instanceof Error && error.name === "AbortError") {
+			throw new Error("Timed out while resolving the session workspace.");
+		}
+		throw error;
+	} finally {
+		clearTimeout(timer);
+	}
+}
+
+const editorHandoff = createEditorHandoff({
+	platform: process.platform,
+	env: process.env,
+	homeDir: os.homedir(),
+	resolveWorkspace: resolveSessionWorkspaceForDesktop,
+	readPreference: async () => (await readEditorSettings(editorStateDir())).preferredEditorId,
+	writePreference: async (editorId) => {
+		await writeEditorPreference(editorStateDir(), editorId);
+	},
+	launch: (command, args, cwd) => launchCommand(command, args, cwd),
+	openDirectory: async (workspacePath) => {
+		const error = await shell.openPath(workspacePath);
+		if (error) throw new Error(error);
+	},
+	logError: (message, error) => console.error(message, error),
+});
 
 // How long to wait for the login shell to print its env before giving up. A
 // misconfigured rc that blocks (or a slow nvm/pyenv chain) must not hang startup;
@@ -1486,6 +1576,14 @@ ipcMain.handle("daemon:restart", async () => {
 		return reportDaemonRestartFailure(error);
 	}
 });
+ipcMain.handle("editorHandoff:getState", (event, sessionId: string) => {
+	if (event.sender !== getShellWebContents()) throw new Error("Untrusted editor handoff request.");
+	return editorHandoff.getState(typeof sessionId === "string" ? sessionId : "");
+});
+ipcMain.handle("editorHandoff:open", (event, input) => {
+	if (event.sender !== getShellWebContents()) throw new Error("Untrusted editor handoff request.");
+	return editorHandoff.open(input && typeof input === "object" ? input : { sessionId: "" });
+});
 ipcMain.handle("app:getVersion", () => app.getVersion());
 ipcMain.handle("app:openExternal", async (_event, url: string) => {
 	await openAllowedAppExternalURL(url, shell);
@@ -1511,6 +1609,10 @@ ipcMain.on("shell:focus", () => browserViewHost?.forgetLastFocusedPanel());
 ipcMain.on("browser:overlay", (event, open: unknown) => {
 	if (event.sender !== getShellWebContents() || typeof open !== "boolean") return;
 	windowComposition?.setOverlayOpen(open);
+	// Raising the shell can leave the live page's own compositor surface stale
+	// (the same class of bug window-composition.ts already works around for
+	// the shell itself) — nudge it the same way once the shell is on top.
+	if (open) browserViewHost?.refreshLastFocusedPanelSurface();
 });
 
 ipcMain.on(SET_CLOSE_SHELL_TERMINAL_SHORTCUT_ENABLED_CHANNEL, (_event, enabled: unknown) => {
@@ -1549,10 +1651,12 @@ ipcMain.handle("menu:action", (_event, action: string) => {
 		case "view.reload":
 			return wc.reload();
 		case "view.devtools":
-			return browserViewHost?.toggleDevToolsForLastFocused().then((state) => {
-				if (state) return state;
-				return wc.toggleDevTools();
-			}).catch(() => wc.toggleDevTools()) ?? wc.toggleDevTools();
+			if (browserViewHost) {
+				return browserViewHost.toggleDevToolsForLastFocused().then((state) => {
+					if (!state) wc?.toggleDevTools();
+				}).catch(() => wc?.toggleDevTools());
+			}
+			return wc?.toggleDevTools();
 		case "view.zoomIn":
 			return wc.setZoomLevel(wc.getZoomLevel() + 0.5);
 		case "view.zoomOut":
@@ -1663,8 +1767,8 @@ ipcMain.handle("uiSettings:get", async (): Promise<UiSettings> => {
 	setCloudPreferenceEnabled(settings.cloudEnabled);
 	return settings;
 });
-	ipcMain.handle("uiSettings:set", async (_event, patch: Partial<UiSettings>): Promise<UiSettings> => {
-		const runFile = runFilePath();
+ipcMain.handle("uiSettings:set", async (_event, patch: Partial<UiSettings>): Promise<UiSettings> => {
+	const runFile = runFilePath();
 	const result = !runFile
 		? coerceUiSettings({ ...DEFAULT_UI_SETTINGS, ...patch })
 		: await updateUiSettings(path.dirname(runFile), patch);
@@ -1672,8 +1776,9 @@ ipcMain.handle("uiSettings:get", async (): Promise<UiSettings> => {
 	// Main owns the early-access gate: cloud IPC must refuse work the moment the
 	// developer turns the toggle off, without waiting for a renderer round trip.
 	setCloudPreferenceEnabled(result.cloudEnabled);
+	soundNotificationsEnabled = result.soundNotificationsEnabled;
 	return result;
-	});
+});
 
 ipcMain.handle("keybindings:get", (): KeybindingOverrides => keybindingOverrides);
 ipcMain.handle("keybindings:set", async (_event, overrides: KeybindingOverrides): Promise<KeybindingOverrides> => {
@@ -1708,6 +1813,13 @@ ipcMain.handle("updates:install", () => {
 	quitAndInstallUpdate();
 });
 
+function cancelDockBounce(): void {
+	if (pendingBounce === null) return;
+	const { id } = pendingBounce;
+	pendingBounce = null;
+	app.dock?.cancelBounce(id);
+}
+
 ipcMain.handle(
 	"notifications:show",
 	(_event, notification: { id: string; title: string; body?: string; type?: string }) => {
@@ -1737,22 +1849,39 @@ ipcMain.handle(
 			toast.show();
 		}
 
-		// Dock (macOS) / taskbar (Windows/Linux) attention signal — only for the
-		// actionable types. A merged/closed PR still toasts above, but shouldn't
-		// bounce the dock as insistently as an agent blocked waiting on the user.
-		if (shouldSignalAttention(notification.type)) {
-			if (process.platform === "darwin" && app.dock) {
-				app.dock.bounce("informational");
-			} else if (process.platform === "win32" || process.platform === "linux") {
-				if (!isFlashing) {
-					isFlashing = true;
-					mainWindow.flashFrame(true);
-					mainWindow.once("focus", () => {
-						isFlashing = false;
-						mainWindow?.flashFrame(false);
-					});
+		// Dock (macOS) / taskbar (Windows/Linux) attention signal. On macOS every
+		// notification bounces the dock — urgency is carried by the bounce type,
+		// so a merged PR bounces once while a blocked agent keeps bouncing. On
+		// Windows/Linux only the actionable types flash (see
+		// shouldSignalAttention), preserving the pre-existing behavior there.
+		if (process.platform === "darwin" && app.dock) {
+			// A pending critical bounce (agent blocked on the user) is never
+			// replaced: a later informational notification must not downgrade it
+			// to a one-shot bounce.
+			if (shouldReplaceBounce(pendingBounce)) {
+				// A focus listener from an earlier un-cancelled bounce still works for
+				// the new id, so only attach one at a time.
+				const hadPendingBounce = pendingBounce !== null;
+				cancelDockBounce();
+				const bounceType = dockBounceType(notification.type);
+				const id = app.dock.bounce(bounceType);
+				if (typeof id === "number" && id >= 0) {
+					pendingBounce = { id, critical: bounceType === "critical" };
+					if (!hadPendingBounce) mainWindow.once("focus", cancelDockBounce);
 				}
 			}
+		} else if ((process.platform === "win32" || process.platform === "linux") && shouldSignalAttention(notification.type)) {
+			if (!isFlashing) {
+				isFlashing = true;
+				mainWindow.flashFrame(true);
+				mainWindow.once("focus", () => {
+					isFlashing = false;
+					mainWindow?.flashFrame(false);
+				});
+			}
+		}
+		if (shouldSignalAttention(notification.type) && soundNotificationsEnabled) {
+			shell.beep();
 		}
 	},
 );
@@ -1771,6 +1900,9 @@ if (!app.isPackaged) {
 			setTimeout(() => {
 				mainWindow?.flashFrame(false);
 			}, 2000);
+		}
+		if (soundNotificationsEnabled) {
+			shell.beep();
 		}
 	});
 }
@@ -1809,7 +1941,13 @@ ipcMain.handle("notifications:setBadge", (_event, count: number) => {
 
 ipcMain.on(TRAY_SET_ATTENTION_STATE_CHANNEL, (event, state) => trayLifecycle.handleSetAttentionState(event, state));
 
-ipcMain.on(TRAY_RENDERER_READY_CHANNEL, (event) => trayLifecycle.handleRendererReady(event));
+ipcMain.on(TRAY_RENDERER_READY_CHANNEL, (event) => {
+	trayLifecycle.handleRendererReady(event);
+	if (pendingFolderPath && event.sender === getShellWebContents()) {
+		event.sender.send(OPEN_FOLDER_PATH_CHANNEL, pendingFolderPath);
+		pendingFolderPath = null;
+	}
+});
 
 // Cloud auth IPC — cloud:getSession, cloud:signIn, cloud:signOut.
 // Data dir resolves to ~/.ao (prod) or ~/.ao/dev (dev) matching daemon conventions.
@@ -1827,7 +1965,16 @@ function notifyRenderersOfCloudSession(account: import("./shared/cloud-account")
 
 installCloudIPC(cloudDataDir, notifyRenderersOfCloudSession);
 
-app.on("second-instance", () => {
+app.on("second-instance", (_event, argv) => {
+	const folderPath = parseOpenFolderPathArg(argv);
+	if (folderPath) {
+		const contents = getShellWebContents();
+		if (contents) {
+			contents.send(OPEN_FOLDER_PATH_CHANNEL, folderPath);
+		} else {
+			pendingFolderPath = folderPath;
+		}
+	}
 	const window = BaseWindow.getAllWindows()[0];
 	if (!window) return;
 	if (window.isMinimized()) window.restore();
@@ -1958,6 +2105,7 @@ app.whenReady().then(async () => {
 	// Restore the cloud early-access opt-in before any window exists, so the
 	// gate is already correct on the renderer's first availability read.
 	setCloudPreferenceEnabled(initialUiSettings.cloudEnabled);
+	soundNotificationsEnabled = initialUiSettings.soundNotificationsEnabled;
 	if (isTrayEnabled(process.platform, app.isPackaged, app.getVersion())) {
 		trayController = createTrayController({
 			focusWindow: focusMainWindow,
@@ -1968,6 +2116,10 @@ app.whenReady().then(async () => {
 	await createWindow();
 	void startDaemon();
 	initAutoUpdates();
+
+	// A folder passed to the first process is queued until the shell renderer is ready.
+	const folderPathArg = parseOpenFolderPathArg(process.argv);
+	if (folderPathArg) pendingFolderPath = folderPathArg;
 
 	app.on("activate", () => {
 		if (BaseWindow.getAllWindows().length === 0) {

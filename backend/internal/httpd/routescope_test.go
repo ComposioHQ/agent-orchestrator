@@ -209,6 +209,8 @@ var parityExemptPrefixes = []string{
 	"/api/v1/browser/",
 	"/api/v1/import",
 	"/api/v1/dev/",
+	"/api/v1/desktop/",
+	"/api/v1/system/",
 	"/api/v1/shell-terminals",
 }
 

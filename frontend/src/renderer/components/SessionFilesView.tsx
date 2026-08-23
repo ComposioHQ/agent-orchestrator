@@ -38,14 +38,21 @@ import {
 	type WorkspaceFileSummary,
 } from "../hooks/useSessionWorkspaceFiles";
 import { useParsedDiff } from "../hooks/useParsedDiff";
+import { useDiffHighlight } from "../hooks/useDiffHighlight";
 import { cn } from "../lib/utils";
-import type { DiffRow, DiffRowKind, DiffSegment } from "../lib/diff-parser";
+import type { DiffRow, DiffRowKind } from "../lib/diff-parser";
+import type { DiffRun } from "../lib/diff-highlight";
 import type { DiffSelectionLine } from "../../shared/diff-selection";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "./ui/accordion";
 import { subscribeWorkspaceFileChanges } from "../lib/workspace-file-events";
 import { Button } from "./ui/button";
 import { DiffSelectionMenu } from "./DiffSelectionMenu";
+import { ImageDiffView } from "./ImageDiffView";
 import { Input } from "./ui/input";
+// The token colours live with the engine rather than with one caller: they are
+// scoped under `.chat-code`/`.diff-code`, so anything rendering these class names
+// has to be inside one of those containers and has to have loaded this sheet.
+import "./chat/code-theme.css";
 
 type WorkspaceFileDetail = components["schemas"]["WorkspaceFileResponse"] & {
 	previousPath?: string;
@@ -70,6 +77,9 @@ type SessionFilesViewProps = {
 	sessionId: string;
 	isMaximized?: boolean;
 	onToggleMaximized?: (next: boolean) => void;
+	/** Expand and reveal this workspace path once (from chat "open file"). */
+	focusPath?: string | null;
+	onFocusPathConsumed?: () => void;
 };
 
 const emptyFiles: WorkspaceFileSummary[] = [];
@@ -102,6 +112,8 @@ export function SessionFilesView({
 	sessionId,
 	isMaximized = false,
 	onToggleMaximized,
+	focusPath,
+	onFocusPathConsumed,
 }: SessionFilesViewProps) {
 	const { t } = useTranslation();
 	const queryClient = useQueryClient();
@@ -130,6 +142,31 @@ export function SessionFilesView({
 		setAnnotationStatus("idle");
 		setAnnotationError("");
 	}, [sessionId]);
+
+	// Chat (and similar) can ask the Files rail to open on a specific path. Match
+	// by exact path first, then by basename when the turn diff only carried a
+	// short name — either way expand that row and clear the request.
+	useEffect(() => {
+		if (!focusPath) return;
+		const match =
+			changedFiles.find((file) => file.path === focusPath) ??
+			changedFiles.find((file) => file.path === focusPath.replace(/^\.\//, "")) ??
+			changedFiles.find((file) => file.path.endsWith(`/${focusPath}`) || file.path === focusPath);
+		const target = match?.path ?? focusPath;
+		setExpandedPaths((current) => {
+			if (current.has(target)) return current;
+			const next = new Set(current);
+			next.add(target);
+			return next;
+		});
+		onFocusPathConsumed?.();
+		requestAnimationFrame(() => {
+			const toggle = rootRef.current?.querySelector<HTMLElement>(
+				`[data-file-toggle][data-file-path="${CSS.escape(target)}"]`,
+			);
+			toggle?.scrollIntoView({ block: "nearest" });
+		});
+	}, [changedFiles, focusPath, onFocusPathConsumed]);
 
 	useEffect(
 		() => () => {
@@ -442,6 +479,7 @@ function ReviewFileCard({
 					aria-label={t(expanded ? "files.collapseFile" : "files.expandFile", { file: fileLabel(file) })}
 					className="flex min-w-0 flex-1 items-center gap-1.5 px-2.5 py-1 text-left"
 					data-file-toggle=""
+					data-file-path={file.path}
 					headerClassName="min-h-9 hover:bg-interactive-hover/50 data-[state=open]:bg-interactive-active/35"
 					trailing={
 						<FileFeedbackButton
@@ -474,6 +512,7 @@ function ReviewFileCard({
 						<ReviewDiffBody
 							annotation={annotation}
 							detail={detailQuery.data}
+							detailLoadedAt={detailQuery.dataUpdatedAt}
 							filePath={file.path}
 							onActiveSelectionChange={setSelectionOrMenuActive}
 							sessionId={sessionId}
@@ -546,6 +585,7 @@ async function loadWorkspaceFile(sessionId: string, path: string, t: TFunction) 
 function ReviewDiffBody({
 	annotation,
 	detail,
+	detailLoadedAt,
 	filePath,
 	onActiveSelectionChange,
 	sessionId,
@@ -554,6 +594,7 @@ function ReviewDiffBody({
 }: {
 	annotation: FileAnnotationModel;
 	detail: WorkspaceFileDetail;
+	detailLoadedAt: number;
 	filePath: string;
 	onActiveSelectionChange: (active: boolean) => void;
 	sessionId: string;
@@ -562,6 +603,19 @@ function ReviewDiffBody({
 }) {
 	const { t } = useTranslation();
 	const { rows, pending } = useParsedDiff(detail.diff);
+	// An image has no readable line diff, so it renders as the images themselves
+	// rather than the binary placeholder.
+	if (detail.imageMediaType) {
+		return (
+			<ImageDiffView
+				path={detail.path}
+				sessionId={sessionId}
+				split={split}
+				status={detail.status}
+				version={detailLoadedAt}
+			/>
+		);
+	}
 	if (detail.binary) {
 		return <PanelMessage compact>{t("files.binaryUnavailable")}</PanelMessage>;
 	}
@@ -746,6 +800,14 @@ function DiffView({
 	const [menuState, setMenuState] = useState<DiffViewMenuState | null>(null);
 	const shouldVirtualize = !split && rows.length > ROW_VIRTUALIZE_THRESHOLD;
 	const { listRef, virtualizer } = useSharedScrollRowVirtualizer(containerRef, rows.length, shouldVirtualize);
+	const highlight = useDiffHighlight(rows, path, previousPath);
+	// Unified view shows each row once, so a del row reads its old-file color and
+	// every other row (context, add) reads its new-file color — same convention
+	// toSplitRows already uses to decide which side "owns" a context row.
+	const runs = useMemo(
+		() => rows.map((row, index) => (row.kind === "del" ? highlight.oldSide[index] : highlight.newSide[index])),
+		[rows, highlight],
+	);
 
 	useEffect(() => {
 		const onSelectionChange = () => {
@@ -805,12 +867,20 @@ function DiffView({
 				</div>
 			) : null}
 			<div
-				className="session-files-diff-scrollbar overflow-x-auto overflow-y-visible bg-terminal font-mono text-xs leading-row text-terminal-foreground"
+				className="diff-code session-files-diff-scrollbar overflow-x-auto overflow-y-visible bg-terminal font-mono text-xs leading-row text-terminal-foreground"
 				onContextMenu={onContextMenu}
 				ref={containerRef}
 			>
 				{split ? (
-					<SplitDiff annotation={annotation} path={path} previousPath={previousPath} rows={rows} t={t} />
+					<SplitDiff
+						annotation={annotation}
+						newRuns={highlight.newSide}
+						oldRuns={highlight.oldSide}
+						path={path}
+						previousPath={previousPath}
+						rows={rows}
+						t={t}
+					/>
 				) : shouldVirtualize ? (
 					<div
 						className={cn("relative", !wrap && "min-w-max")}
@@ -838,6 +908,7 @@ function DiffView({
 										path={path}
 										previousPath={previousPath}
 										row={row}
+										runs={runs[virtualRow.index]}
 										t={t}
 										wrap={wrap}
 									/>
@@ -855,6 +926,7 @@ function DiffView({
 								path={path}
 								previousPath={previousPath}
 								row={row}
+								runs={runs[index]}
 								t={t}
 								wrap={wrap}
 							/>
@@ -890,13 +962,14 @@ type DiffRowContentProps = {
 	path: string;
 	previousPath?: string;
 	row: DiffRow;
+	runs: DiffRun[];
 	t: TFunction;
 	wrap: boolean;
 };
 
 // One unified-view diff row, shared between the plain (non-virtualized) and
 // virtualized render paths so they can't drift apart from each other.
-function DiffRowContentInner({ annotation, index, path, previousPath, row, t, wrap }: DiffRowContentProps) {
+function DiffRowContentInner({ annotation, index, path, previousPath, row, runs, t, wrap }: DiffRowContentProps) {
 	if (row.kind === "hunk") return <HunkBand row={row} />;
 	return (
 		<div>
@@ -927,7 +1000,7 @@ function DiffRowContentInner({ annotation, index, path, previousPath, row, t, wr
 					{diffMarkerGlyph[row.kind]}
 				</span>
 				<span className={cn("pr-3", wrap ? "whitespace-pre-wrap break-all" : "whitespace-pre")}>
-					{row.segments ? <DiffLineSegments add={row.kind === "add"} segments={row.segments} /> : row.text || " "}
+					{renderDiffRuns(runs, row.kind === "add")}
 				</span>
 			</div>
 			{isAnnotationRow(annotation.target, path, index) ? <FileAnnotationComposer annotation={annotation} /> : null}
@@ -941,16 +1014,19 @@ function DiffRowContentInner({ annotation, index, path, previousPath, row, t, wr
 // anywhere in the panel, on top of every scroll tick. Only a row that IS or
 // WAS the active annotation target actually needs to re-render when
 // `annotation` changes; every other row only cares about `row`/`index`/
-// `path`/`previousPath`/`wrap`, which are stable across scroll-driven
-// re-renders. This is what actually lets scrolling skip re-running the
-// i18next calls, cn() calls, and nested Button for rows that are already
-// mounted and unchanged.
+// `path`/`previousPath`/`runs`/`wrap`, which are stable across scroll-driven
+// re-renders (`runs` only gets a new reference when useDiffHighlight actually
+// recomputes — unchanged rows and settled diffs keep the same array). This is
+// what actually lets scrolling skip re-running the i18next calls, cn() calls,
+// and nested Button for rows that are already mounted and unchanged, while
+// still picking up the color pop-in once a grammar chunk finishes loading.
 const DiffRowContent = memo(DiffRowContentInner, (prev, next) => {
 	if (
 		prev.row !== next.row ||
 		prev.index !== next.index ||
 		prev.path !== next.path ||
 		prev.previousPath !== next.previousPath ||
+		prev.runs !== next.runs ||
 		prev.wrap !== next.wrap
 	) {
 		return false;
@@ -1007,12 +1083,16 @@ function toSplitRows(rows: DiffRow[]): SplitRow[] {
 
 function SplitDiff({
 	annotation,
+	newRuns,
+	oldRuns,
 	path,
 	previousPath,
 	rows,
 	t,
 }: {
 	annotation: FileAnnotationModel;
+	newRuns: DiffRun[][];
+	oldRuns: DiffRun[][];
 	path: string;
 	previousPath?: string;
 	rows: DiffRow[];
@@ -1033,6 +1113,7 @@ function SplitDiff({
 								previousPath={previousPath}
 								row={splitRow.left}
 								rowIndex={splitRow.leftIndex}
+								runs={splitRow.leftIndex === null ? null : oldRuns[splitRow.leftIndex]}
 								side="old"
 								t={t}
 							/>
@@ -1042,6 +1123,7 @@ function SplitDiff({
 								previousPath={previousPath}
 								row={splitRow.right}
 								rowIndex={splitRow.rightIndex}
+								runs={splitRow.rightIndex === null ? null : newRuns[splitRow.rightIndex]}
 								side="new"
 								t={t}
 							/>
@@ -1063,6 +1145,7 @@ function SplitSide({
 	previousPath,
 	row,
 	rowIndex,
+	runs,
 	side,
 	t,
 }: {
@@ -1071,10 +1154,11 @@ function SplitSide({
 	previousPath?: string;
 	row: DiffRow | null;
 	rowIndex: number | null;
+	runs: DiffRun[] | null;
 	side: "old" | "new";
 	t: TFunction;
 }) {
-	if (!row || rowIndex === null) return <div className="bg-surface-faint/20" aria-hidden="true" />;
+	if (!row || rowIndex === null || !runs) return <div className="bg-surface-faint/20" aria-hidden="true" />;
 	const lineNo = side === "old" ? row.oldNo : row.newNo;
 	const tone = row.kind === "hunk" ? "" : diffRowTone[row.kind];
 	const target = lineNo == null ? null : lineAnnotationTarget(path, previousPath, row, rowIndex, side);
@@ -1098,9 +1182,7 @@ function SplitSide({
 			<span className="w-9 shrink-0 select-none border-r border-border/50 bg-terminal px-1.5 text-right text-passive/70 tabular-nums">
 				{lineNo ?? ""}
 			</span>
-			<span className="min-w-0 whitespace-pre-wrap break-all px-1.5">
-				{row.segments ? <DiffLineSegments add={row.kind === "add"} segments={row.segments} /> : row.text || " "}
-			</span>
+			<span className="min-w-0 whitespace-pre-wrap break-all px-1.5">{renderDiffRuns(runs, row.kind === "add")}</span>
 		</div>
 	);
 }
@@ -1237,19 +1319,24 @@ function FileAnnotationComposer({ annotation }: { annotation: FileAnnotationMode
 	);
 }
 
-function DiffLineSegments({ add, segments }: { add: boolean; segments: DiffSegment[] }) {
-	return (
-		<>
-			{segments.map((segment, index) =>
-				segment.changed ? (
-					<span className={cn("rounded-sm", add ? "bg-success/35" : "bg-error/35")} key={index}>
-						{segment.text}
-					</span>
-				) : (
-					<span key={index}>{segment.text}</span>
-				),
-			)}
-		</>
+// Renders a diff line's composed runs: a highlight.js class when the line could
+// be tokenized, layered with the existing exact-changed-word background tint. A
+// run with neither renders as a bare string, matching the plain-text output this
+// replaces exactly (no highlighting available for the file's language, or the
+// row is unchanged context with nothing to tokenize against).
+function renderDiffRuns(runs: DiffRun[], add: boolean): ReactNode {
+	return runs.map((run, index) =>
+		run.changed ? (
+			<span className={cn(run.className, "rounded-sm", add ? "bg-success/35" : "bg-error/35")} key={index}>
+				{run.text}
+			</span>
+		) : run.className ? (
+			<span className={run.className} key={index}>
+				{run.text}
+			</span>
+		) : (
+			run.text
+		),
 	);
 }
 

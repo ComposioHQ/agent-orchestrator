@@ -38,6 +38,7 @@ const (
 // the SQLite store.
 type Store interface {
 	CreateConversation(ctx context.Context, id string, scope domain.ConversationScope, project domain.ProjectID, session domain.SessionID, now time.Time) (domain.ConversationRecord, error)
+	CreateProjectConversationWithContextReset(ctx context.Context, id string, project domain.ProjectID, session domain.SessionID, reset domain.ConversationActivity, now time.Time) (domain.ConversationRecord, error)
 	ConversationForSession(ctx context.Context, session domain.SessionID) (domain.ConversationRecord, error)
 	ClaimChatControllerGeneration(ctx context.Context, session domain.SessionID, generation string, now time.Time) error
 	ConversationBranch(ctx context.Context, conversationID, branchID string) (domain.ConversationBranch, error)
@@ -467,14 +468,10 @@ func (c *Controller) importNativeHistory(
 	}
 	historyCtx, cancel := context.WithTimeout(ctx, nativeHistorySettleLimit)
 	defer cancel()
-	var events []ports.ChatEvent
+	events, err := reader.ReadHistory(historyCtx)
+	refresher, refreshable := reader.(ports.ChatHistoryRefresher)
 	sawUnsettled := false
-	for {
-		var err error
-		events, err = reader.ReadHistory(historyCtx)
-		if err == nil && (!required || checkpoint.reached(events)) {
-			break
-		}
+	for err != nil || (required && !checkpoint.reached(events)) {
 		if err == nil {
 			err = ports.ErrChatHistoryUnsettled
 		}
@@ -489,6 +486,9 @@ func (c *Controller) importNativeHistory(
 			return fmt.Errorf("read native conversation history: %w", err)
 		}
 		sawUnsettled = true
+		if !refreshable {
+			return fmt.Errorf("native conversation history snapshot is incomplete and cannot be refreshed: %w", err)
+		}
 
 		timer := time.NewTimer(nativeHistorySettlePoll)
 		select {
@@ -498,6 +498,7 @@ func (c *Controller) importNativeHistory(
 				ports.ErrChatHistoryUnsettled, historyCtx.Err())
 		case <-timer.C:
 		}
+		events, err = refresher.RefreshHistory(historyCtx)
 	}
 	events = reconcileNativeHistory(
 		events, existingTurns, existingMessages, existingActivities,
@@ -1634,6 +1635,21 @@ func (c *Controller) Rollback(ctx context.Context, turnID string) (int, error) {
 		return 0, fmt.Errorf("%w: turn %s is not in this session's conversation",
 			ErrTurnNotRollbackable, turnID)
 	}
+	if turn.BranchID != "" {
+		turnBranch, branchErr := c.store.ConversationBranch(
+			ctx, c.conversation.ID, turn.BranchID)
+		if branchErr != nil {
+			return 0, fmt.Errorf("load rollback turn branch: %w", branchErr)
+		}
+		activeBranch, branchErr := c.store.ConversationBranch(
+			ctx, c.conversation.ID, c.conversation.ActiveBranchID)
+		if branchErr != nil {
+			return 0, fmt.Errorf("load active rollback branch: %w", branchErr)
+		}
+		if turnBranch.ProviderScopeID != activeBranch.ProviderScopeID {
+			return 0, ErrTurnProviderMismatch
+		}
+	}
 	if turn.ProviderTurnID == "" {
 		// The provider never accepted this turn, so it holds no history to discard.
 		// Hiding AO's rows anyway would leave the agent remembering more than the
@@ -2549,7 +2565,11 @@ func mergeApprovalDetail(event ports.ChatEvent) []byte {
 	}
 	decisions := make([]map[string]string, 0, len(event.Decisions))
 	for _, option := range event.Decisions {
-		decisions = append(decisions, map[string]string{"id": option.ID, "label": option.Label})
+		decision := map[string]string{"id": option.ID, "label": option.Label}
+		if option.Kind != "" {
+			decision["kind"] = string(option.Kind)
+		}
+		decisions = append(decisions, decision)
 	}
 	merged["decisions"] = decisions
 	encoded, err := json.Marshal(merged)

@@ -6,6 +6,7 @@ import { useTranslation } from "react-i18next";
 import { useNavigate, useParams, useRouterState } from "@tanstack/react-router";
 import {
 	ChevronRight,
+	Download,
 	Folder,
 	FolderOpen,
 	LogIn,
@@ -119,12 +120,9 @@ export const SIDEBAR_MAX_WIDTH = 420;
 type SidebarProps = {
 	/** Hide the sidebar's right edge stroke on the welcome board inset chrome. */
 	hideEdgeBorder?: boolean;
-	/** Render the expanded sidebar over content without reserving layout width. */
-	isOverlay?: boolean;
 	underTopbar?: boolean;
 	/** Chrome height to clear when underTopbar is set. Defaults to --size-toolbar. */
 	topbarOffset?: "toolbar" | "titlebar" | "trafficLights" | "session";
-	onPreviewLeave?: () => void;
 	workspaceError?: string;
 	workspaces: WorkspaceSummary[];
 	onCloneProject: (input: CloneProjectInput) => Promise<void>;
@@ -170,15 +168,11 @@ function SessionStatusDot({ session }: { session: WorkspaceSession }) {
 }
 
 // Built on shadcn's sidebar primitives (components/ui/sidebar): the provider in
-// _shell owns the persistent open state plus a transient hover-preview state.
-// Collapsed sidebars move fully off-canvas; previews return as overlays without
-// reserving layout width.
+// _shell owns the persistent open state. Collapsed sidebars move fully off-canvas.
 export function Sidebar({
 	hideEdgeBorder = false,
-	isOverlay = false,
 	underTopbar = true,
 	topbarOffset = "toolbar",
-	onPreviewLeave,
 	workspaceError,
 	workspaces,
 	onCloneProject,
@@ -257,30 +251,20 @@ export function Sidebar({
 		});
 
 	return (
-		// Pinned sidebars start below shell chrome. Hover previews paint a
-		// full-height surface behind the titlebar while their content keeps the
-		// same chrome clearance, leaving the titlebar controls unobstructed.
+		// Pinned sidebars start below shell chrome.
 		<SidebarRoot
 			collapsible="offcanvas"
 			data-expanded-chrome={expandedChromeVisible ? "visible" : "hidden"}
 			data-topbar-offset={underTopbar ? topbarOffset : undefined}
-			onPointerLeave={onPreviewLeave}
-			overlay={isOverlay}
 			className={cn(
 				"sidebar-focusless",
 				hideEdgeBorder ? "border-transparent" : "border-r-0 group-data-[side=left]:border-r-0",
-				isOverlay && "z-sidebar-preview shadow-2xl",
-				isOverlay || !underTopbar
+				!underTopbar
 					? "top-0 h-svh!"
 					: "top-(--sidebar-chrome-offset) h-[calc(100svh-var(--sidebar-chrome-offset))]!",
 			)}
 		>
-			<SidebarHeader
-				className={cn(
-					"gap-0 p-0 px-3 pt-2 group-data-[collapsible=icon]:px-1.5 group-data-[collapsible=icon]:pt-2",
-					isOverlay && underTopbar && "pt-(--sidebar-chrome-offset)!",
-				)}
-			>
+			<SidebarHeader className="gap-0 p-0 px-3 pt-2 group-data-[collapsible=icon]:px-1.5 group-data-[collapsible=icon]:pt-2">
 				{/* Brand (project-sidebar__brand); in the icon rail it becomes the old
             36px board button wrapping the 22px accent mark. */}
 				<div
@@ -447,7 +431,7 @@ export function Sidebar({
 					aria-hidden={isCollapsed || undefined}
 					className="sidebar-expanded-chrome relative flex w-full min-w-46.5 flex-col gap-0.5 transition-[opacity,transform] duration-150 ease-out group-data-[collapsible=icon]:pointer-events-none group-data-[collapsible=icon]:-translate-x-2 group-data-[collapsible=icon]:opacity-0"
 				>
-					<RestartToUpdateRow status={updateStatus} tabIndex={isCollapsed ? -1 : 0} />
+					<UpdateStatusRow status={updateStatus} tabIndex={isCollapsed ? -1 : 0} />
 					<CloudAccountRow tabIndex={isCollapsed ? -1 : 0} />
 					<button
 						aria-label={t("shell.settings")}
@@ -467,7 +451,7 @@ export function Sidebar({
 					aria-hidden={!isCollapsed || undefined}
 					className="pointer-events-none absolute inset-x-1.5 bottom-0 top-auto flex min-h-row-md flex-col items-center justify-end gap-1 opacity-0 transition-opacity duration-150 ease-out group-data-[collapsible=icon]:pointer-events-auto group-data-[collapsible=icon]:opacity-100"
 				>
-					<RestartToUpdateRailButton status={updateStatus} tabIndex={isCollapsed ? 0 : -1} />
+					<UpdateStatusRail status={updateStatus} tabIndex={isCollapsed ? 0 : -1} />
 					<CloudAccountRailButton tabIndex={isCollapsed ? 0 : -1} />
 					<Tooltip>
 						<TooltipTrigger asChild>
@@ -1161,13 +1145,30 @@ function CloudAccountRailButton({ tabIndex }: { tabIndex: number }) {
 	);
 }
 
-// RestartToUpdateRow sits directly above the Settings row when an update is
-// downloaded and staged. Transparent while fresh; orange (working tokens) once
-// the main-process evaluator flags it escalated. Clicking installs immediately;
-// the row itself is the prompt, so no confirmation dialog. Renders nothing in
-// every other update state.
-function RestartToUpdateRow({ status, tabIndex }: { status: UpdateStatus; tabIndex: number }) {
+// UpdateStatusRow makes automatic update activity visible before the build is
+// staged, then becomes the existing restart action once installation is ready.
+// Idle/checking states stay quiet so routine background checks do not flash in
+// the sidebar.
+function UpdateStatusRow({ status, tabIndex }: { status: UpdateStatus; tabIndex: number }) {
 	const { t } = useTranslation();
+	if (status.state === "available" || status.state === "downloading") {
+		const label =
+			status.state === "available"
+				? t("settings.updates.available", { version: status.version ? ` (v${status.version})` : "" })
+				: t("settings.updates.downloading", { percent: status.percent ?? 0 });
+		return (
+			<div
+				aria-live="polite"
+				className="flex w-full items-center gap-2.5 rounded-lg p-2.5 text-left text-control font-medium text-passive"
+				role="status"
+			>
+				<Download aria-hidden="true" className="size-icon-lg shrink-0" />
+				<span className={cn("min-w-0 flex-1 truncate", status.state === "downloading" && "tabular-nums")}>
+					{label}
+				</span>
+			</div>
+		);
+	}
 	if (status.state !== "downloaded") return null;
 	const escalated = status.escalated === true;
 	return (
@@ -1204,10 +1205,31 @@ function RestartToUpdateRow({ status, tabIndex }: { status: UpdateStatus; tabInd
 	);
 }
 
-// Icon-rail variant of RestartToUpdateRow for the collapsed sidebar: icon-only
-// with the two-line copy in the tooltip.
-function RestartToUpdateRailButton({ status, tabIndex }: { status: UpdateStatus; tabIndex: number }) {
+// Icon-rail variant of UpdateStatusRow. Pre-download states are informational;
+// only a staged update becomes a button.
+function UpdateStatusRail({ status, tabIndex }: { status: UpdateStatus; tabIndex: number }) {
 	const { t } = useTranslation();
+	if (status.state === "available" || status.state === "downloading") {
+		const label =
+			status.state === "available"
+				? t("settings.updates.available", { version: status.version ? ` (v${status.version})` : "" })
+				: t("settings.updates.downloading", { percent: status.percent ?? 0 });
+		return (
+			<Tooltip>
+				<TooltipTrigger asChild>
+					<span
+						aria-label={label}
+						aria-live="polite"
+						className="grid size-9 place-items-center rounded-lg text-passive [&_svg]:size-4"
+						role="status"
+					>
+						<Download aria-hidden="true" />
+					</span>
+				</TooltipTrigger>
+				<TooltipContent side="right">{label}</TooltipContent>
+			</Tooltip>
+		);
+	}
 	if (status.state !== "downloaded") return null;
 	const escalated = status.escalated === true;
 	return (
@@ -1366,8 +1388,10 @@ function CreateProjectButton({
 	// openSignal for ⌘N on every shell route. The collapsed rail button below
 	// reuses this flow via requestCreateProject().
 	const createProjectNonce = useUiStore((state) => state.createProjectNonce);
+	const folderDropRequest = useUiStore((state) => state.folderDropRequest);
 	return (
 		<CreateProjectFlow
+			droppedPath={folderDropRequest}
 			mode="choose"
 			onCloneProject={onCloneProject}
 			onCreateProject={onCreateProject}

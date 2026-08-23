@@ -2,6 +2,7 @@ import type { Page } from "@playwright/test";
 
 import type { AoBridge } from "../../src/preload";
 import type { DaemonStatus } from "../../src/shared/daemon-status";
+import { coerceUiSettings, DEFAULT_UI_SETTINGS } from "../../src/shared/ui-locale";
 
 // The e2e suite runs the renderer under `dev:web` (VITE_NO_ELECTRON=1) with no
 // Electron preload, so `window.ao` is undefined and lib/bridge.ts falls back to
@@ -64,6 +65,8 @@ export async function installFakeBridge(page: Page, opts: FakeBridgeOptions = {}
 					openExternal: async () => undefined,
 					scanImportFolder: async ({ path }: { path: string }) => ({ path, repos: [] }),
 					checkAncestorRepo: async () => undefined,
+					getPathForFile: () => "",
+					onOpenFolderPath: () => () => undefined,
 					onNewSessionShortcut: unsubscribe,
 					onKeyboardShortcutsHelp: unsubscribe,
 					onNewShellTerminalShortcut: unsubscribe,
@@ -102,6 +105,18 @@ export async function installFakeBridge(page: Page, opts: FakeBridgeOptions = {}
 						listener(status);
 						return unsubscribe();
 					},
+				},
+				editorHandoff: {
+					getState: async () => ({
+						targets: [
+							{ id: "cursor" as const, name: "Cursor", kind: "editor" as const },
+							{ id: "file-manager" as const, name: "File Manager", kind: "file_manager" as const },
+							{ id: "terminal" as const, name: "Terminal", kind: "terminal" as const },
+						],
+						preferredEditorId: "cursor" as const,
+						workspaceAvailable: true,
+					}),
+					open: async () => ({ id: "cursor" as const, name: "Cursor", kind: "editor" as const }),
 				},
 				telemetry: {
 					getBootstrap: async () => null,
@@ -169,11 +184,8 @@ export async function installFakeBridge(page: Page, opts: FakeBridgeOptions = {}
 					set: async () => undefined,
 				},
 				uiSettings: {
-					get: async () => ({ locale: "en", cloudEnabled: false }),
-					set: async (settings) => ({
-						locale: settings.locale ?? "en",
-						cloudEnabled: settings.cloudEnabled ?? false,
-					}),
+					get: async () => ({ ...DEFAULT_UI_SETTINGS }),
+					set: async (settings) => coerceUiSettings({ ...DEFAULT_UI_SETTINGS, ...settings }),
 				},
 				keybindings: {
 					get: async () => ({}),
@@ -304,7 +316,7 @@ export async function installFakeAgent(page: Page, opts: FakeAgentOptions = {}):
 			type Session = Record<string, unknown>;
 			const makeWorker = (w: (typeof workers)[number]): Session => ({
 				id: w.id,
-				terminalHandleId: `${w.id}/terminal_0`,
+				terminalHandleId: (w.mode ?? "tui") === "tui" ? `${w.id}/terminal_0` : undefined,
 				workspaceId: projectId,
 				workspaceName: projectName,
 				title: w.title,
@@ -501,6 +513,8 @@ export async function installFakeAgent(page: Page, opts: FakeAgentOptions = {}):
 					openExternal: async () => undefined,
 					scanImportFolder: async ({ path }: { path: string }) => ({ path, repos: [] }),
 					checkAncestorRepo: async () => undefined,
+					getPathForFile: () => "",
+					onOpenFolderPath: () => () => undefined,
 					onNewSessionShortcut: unsubscribe,
 					onKeyboardShortcutsHelp: unsubscribe,
 					onNewShellTerminalShortcut: unsubscribe,
@@ -536,6 +550,18 @@ export async function installFakeAgent(page: Page, opts: FakeAgentOptions = {}):
 						listener(status);
 						return unsubscribe();
 					},
+				},
+				editorHandoff: {
+					getState: async () => ({
+						targets: [
+							{ id: "cursor" as const, name: "Cursor", kind: "editor" as const },
+							{ id: "file-manager" as const, name: "File Manager", kind: "file_manager" as const },
+							{ id: "terminal" as const, name: "Terminal", kind: "terminal" as const },
+						],
+						preferredEditorId: "cursor" as const,
+						workspaceAvailable: true,
+					}),
+					open: async () => ({ id: "cursor" as const, name: "Cursor", kind: "editor" as const }),
 				},
 				telemetry: { getBootstrap: async () => null },
 				browser: {
@@ -596,11 +622,8 @@ export async function installFakeAgent(page: Page, opts: FakeAgentOptions = {}):
 					set: async () => undefined,
 				},
 				uiSettings: {
-					get: async () => ({ locale: "en", cloudEnabled: false }),
-					set: async (settings) => ({
-						locale: settings.locale ?? "en",
-						cloudEnabled: settings.cloudEnabled ?? false,
-					}),
+					get: async () => ({ ...DEFAULT_UI_SETTINGS }),
+					set: async (settings) => coerceUiSettings({ ...DEFAULT_UI_SETTINGS, ...settings }),
 				},
 				keybindings: {
 					get: async () => ({}),

@@ -2,6 +2,7 @@ import "@testing-library/jest-dom/vitest";
 import * as jestDomMatchers from "@testing-library/jest-dom/matchers";
 import { expect } from "vitest";
 import "../i18n";
+import { coerceUiSettings, DEFAULT_UI_SETTINGS } from "../../shared/ui-locale";
 
 // Vitest 4 can load the convenience entry against a different matcher
 // instance. Register the matchers on the active test runtime as well.
@@ -68,6 +69,8 @@ if (typeof window !== "undefined") {
 			openExternal: async () => undefined,
 			scanImportFolder: async ({ path }: { path: string }) => ({ path, repos: [] }),
 			checkAncestorRepo: async () => undefined,
+			getPathForFile: () => "",
+			onOpenFolderPath: () => () => undefined,
 			onNewSessionShortcut: () => () => undefined,
 			onKeyboardShortcutsHelp: () => () => undefined,
 			onNewShellTerminalShortcut: () => () => undefined,
@@ -108,6 +111,22 @@ if (typeof window !== "undefined") {
 			stop: async () => ({ state: "stopped" }),
 			restart: async () => ({ state: "starting" }),
 			onStatus: () => () => undefined,
+		},
+		editorHandoff: {
+			getState: async () => ({
+				targets: [
+					{ id: "cursor", name: "Cursor", kind: "editor" },
+					{ id: "file-manager", name: "Finder", kind: "file_manager" },
+					{ id: "terminal", name: "Terminal", kind: "terminal" },
+				],
+				preferredEditorId: "cursor",
+				workspaceAvailable: true,
+			}),
+			open: async ({ targetId }) => {
+				if (targetId === "file-manager") return { id: "file-manager", name: "Finder", kind: "file_manager" };
+				if (targetId === "terminal") return { id: "terminal", name: "Terminal", kind: "terminal" };
+				return { id: targetId ?? "cursor", name: "Cursor", kind: "editor" };
+			},
 		},
 		telemetry: {
 			getBootstrap: async () => null,
@@ -209,11 +228,8 @@ if (typeof window !== "undefined") {
 			set: async () => undefined,
 		},
 		uiSettings: {
-			get: async () => ({ locale: "en" as const, cloudEnabled: false }),
-			set: async (patch: { locale?: string; cloudEnabled?: boolean }) => ({
-				locale: (patch.locale ?? "en") as "en",
-				cloudEnabled: patch.cloudEnabled ?? false,
-			}),
+			get: async () => ({ ...DEFAULT_UI_SETTINGS }),
+			set: async (settings) => coerceUiSettings({ ...DEFAULT_UI_SETTINGS, ...settings }),
 		},
 		keybindings: {
 			get: async () => ({}),

@@ -406,8 +406,10 @@ func claudeLocalAuthStatus(ctx context.Context) (ports.AgentAuthStatus, bool, er
 	if err := ctx.Err(); err != nil {
 		return ports.AgentAuthStatusUnknown, false, err
 	}
-	if strings.TrimSpace(os.Getenv("ANTHROPIC_API_KEY")) != "" {
-		return ports.AgentAuthStatusAuthorized, true, nil
+	for _, name := range []string{"ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN"} {
+		if strings.TrimSpace(os.Getenv(name)) != "" {
+			return ports.AgentAuthStatusAuthorized, true, nil
+		}
 	}
 	cfgPath, err := claudeConfigPath()
 	if err != nil {
@@ -556,7 +558,8 @@ func claudeConfigPath() (string, error) {
 // only projects[workspacePath].hasTrustDialogAccepted = true (preserving the
 // rest of the entry and every other project), and writes back via a
 // temp-file + atomic rename. If the path is already trusted, it makes no
-// write at all. A missing config file is treated as an empty one.
+// write at all. A missing config file is treated as an empty one; a
+// zero-byte or corrupt config file is refused rather than overwritten.
 // claudeTrustMu serializes ensureWorkspaceTrusted within the process. Concurrent
 // spawns to different workspaces otherwise read the same ~/.claude.json snapshot
 // and the last rename drops the other's trust entry.
@@ -570,10 +573,16 @@ func ensureWorkspaceTrusted(configPath, workspacePath string) error {
 	data, err := os.ReadFile(configPath)
 	switch {
 	case err == nil:
-		if len(data) > 0 {
-			if err := json.Unmarshal(data, &root); err != nil {
-				return fmt.Errorf("claude-code: parse %s: %w", configPath, err)
-			}
+		if len(bytes.TrimSpace(data)) == 0 {
+			// A zero-byte read means we may have caught some other writer
+			// mid-truncate. Treat it like a corrupt file, not a missing
+			// one: refuse to write rather than silently replacing the
+			// user's real config (oauthAccount, projects history, etc.)
+			// with one containing only the trust entry.
+			return fmt.Errorf("claude-code: %s is empty; refusing to overwrite", configPath)
+		}
+		if err := json.Unmarshal(data, &root); err != nil {
+			return fmt.Errorf("claude-code: parse %s: %w", configPath, err)
 		}
 	case os.IsNotExist(err):
 		// Treat as empty config; we'll create it.

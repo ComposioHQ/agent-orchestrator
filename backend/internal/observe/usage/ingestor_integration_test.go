@@ -148,7 +148,7 @@ func TestIngestorReplaysReplacementWithoutStableTimestampAcrossClocks(t *testing
 			}
 			aggregates, err := store.ListUsageModelAggregates(ctx, got.SessionID)
 			mustNoError(t, err)
-			if len(aggregates) != 1 || aggregates[0].Tokens.InputTokens+aggregates[0].Tokens.OutputTokens != 120 {
+			if len(aggregates) != 1 || tokenValue(aggregates[0].Tokens.InputTokens)+tokenValue(aggregates[0].Tokens.OutputTokens) != 120 {
 				t.Fatalf("aggregates = %+v, want one replay-deduplicated event", aggregates)
 			}
 		})
@@ -907,7 +907,7 @@ func TestIngestorStopsRetryingConflictingNativeEvent(t *testing.T) {
 		t.Fatal(parsed.err)
 	}
 	conflict := parsed.Events[0]
-	conflict.Tokens.OutputTokens++
+	(*conflict.Tokens.OutputTokens)++
 	if err := store.ApplyUsageChunk(ctx, source.ID, 0, source.UpdatedAt, domain.SourceCursorState{
 		ByteOffset: 0,
 		State:      domain.UsageSourcePending,
@@ -1008,7 +1008,7 @@ func assertTokenAggregate(t *testing.T, store *sqlite.Store, sessionID domain.Se
 	mustNoError(t, err)
 	var got int64
 	for _, aggregate := range aggregates {
-		got += aggregate.Tokens.InputTokens + aggregate.Tokens.OutputTokens
+		got += tokenValue(aggregate.Tokens.InputTokens) + tokenValue(aggregate.Tokens.OutputTokens)
 	}
 	if got != total {
 		t.Fatalf("total tokens = %d, want %d; aggregates=%+v", got, total, aggregates)
@@ -1063,7 +1063,7 @@ func waitForTokenAggregate(t *testing.T, store *sqlite.Store, sessionID domain.S
 		mustNoError(t, err)
 		var got int64
 		for _, aggregate := range aggregates {
-			got += aggregate.Tokens.InputTokens + aggregate.Tokens.OutputTokens
+			got += tokenValue(aggregate.Tokens.InputTokens) + tokenValue(aggregate.Tokens.OutputTokens)
 		}
 		if got == total {
 			return

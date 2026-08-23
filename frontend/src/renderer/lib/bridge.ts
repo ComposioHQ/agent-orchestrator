@@ -1,5 +1,5 @@
 import type { AoBridge } from "../../preload";
-import { DEFAULT_UI_SETTINGS, coerceLocale } from "../../shared/ui-locale";
+import { coerceUiSettings, DEFAULT_UI_SETTINGS } from "../../shared/ui-locale";
 export type { FeatureBuild } from "../../main/feature-builds";
 
 export const aoBridge: AoBridge =
@@ -13,6 +13,8 @@ export const aoBridge: AoBridge =
 			},
 			scanImportFolder: async ({ path }) => ({ path, repos: [] }),
 			checkAncestorRepo: async () => undefined,
+			getPathForFile: () => "",
+			onOpenFolderPath: () => () => undefined,
 			onNewSessionShortcut: () => () => undefined,
 			onKeyboardShortcutsHelp: () => () => undefined,
 			onNewShellTerminalShortcut: () => () => undefined,
@@ -60,6 +62,17 @@ export const aoBridge: AoBridge =
 			stop: async () => ({ state: "stopped" }),
 			restart: async () => ({ state: "starting" }),
 			onStatus: () => () => undefined,
+		},
+		editorHandoff: {
+			getState: async () => ({
+				targets: [],
+				preferredEditorId: "cursor",
+				workspaceAvailable: false,
+				unavailableReason: "Desktop app is required to open a workspace.",
+			}),
+			open: async () => {
+				throw new Error("Desktop app is required to open a workspace.");
+			},
 		},
 		telemetry: {
 			getBootstrap: async () => null,
@@ -162,7 +175,7 @@ export const aoBridge: AoBridge =
 		},
 		uiSettings: {
 			get: async () => ({ ...DEFAULT_UI_SETTINGS }),
-			set: async (patch) => ({ ...DEFAULT_UI_SETTINGS, ...patch, locale: coerceLocale(patch.locale) }),
+			set: async (settings) => coerceUiSettings({ ...DEFAULT_UI_SETTINGS, ...settings }),
 		},
 		keybindings: {
 			get: async () => ({}),

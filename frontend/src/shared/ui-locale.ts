@@ -9,9 +9,15 @@ export interface UiSettings {
 	locale: AppLocale;
 	/** Developer early-access opt-in that gates every AO Cloud surface. */
 	cloudEnabled: boolean;
+	/** Whether attention-worthy notifications (needs input, ready to merge) also play a sound. */
+	soundNotificationsEnabled: boolean;
 }
 
-export const DEFAULT_UI_SETTINGS: UiSettings = { locale: DEFAULT_LOCALE, cloudEnabled: false };
+export const DEFAULT_UI_SETTINGS: UiSettings = {
+	locale: DEFAULT_LOCALE,
+	cloudEnabled: false,
+	soundNotificationsEnabled: true,
+};
 
 /** Normalize an unknown value to a supported UI locale. */
 export function coerceLocale(raw: unknown): AppLocale {
@@ -23,6 +29,15 @@ export function coerceLocale(raw: unknown): AppLocale {
 
 /** Normalize unknown persisted or IPC data to the supported UI-settings schema. */
 export function coerceUiSettings(raw: unknown): UiSettings {
-	const value = typeof raw === "object" && raw !== null ? (raw as Record<string, unknown>) : {};
-	return { locale: coerceLocale(value.locale), cloudEnabled: value.cloudEnabled === true };
+	if (typeof raw !== "object" || raw === null) return { ...DEFAULT_UI_SETTINGS };
+	const record = raw as Record<string, unknown>;
+	const soundNotificationsEnabled =
+		typeof record.soundNotificationsEnabled === "boolean"
+			? record.soundNotificationsEnabled
+			: DEFAULT_UI_SETTINGS.soundNotificationsEnabled;
+	return {
+		locale: coerceLocale(record.locale),
+		cloudEnabled: record.cloudEnabled === true,
+		soundNotificationsEnabled,
+	};
 }

@@ -29,6 +29,7 @@ func (f *fakeTelemetrySink) Close(context.Context) error { return nil }
 
 type fakeStore struct {
 	sessions            map[domain.SessionID]domain.SessionRecord
+	getSessionErr       error
 	activeSwitches      map[domain.SessionID]domain.AgentSwitch
 	activeSwitchGetErr  error
 	activeSwitchListErr error
@@ -38,8 +39,10 @@ type fakeStore struct {
 	worktrees           map[domain.SessionID][]domain.SessionWorktreeRecord
 	checks              map[string][]domain.PullRequestCheck
 	reviews             map[string][]domain.PullRequestReview
+	reviewsErr          error
 	threads             map[string][]domain.PullRequestReviewThread
 	comments            map[string][]domain.PullRequestComment
+	commentsErr         error
 	num                 int
 }
 
@@ -134,6 +137,9 @@ func (f *fakeStore) CreateSession(_ context.Context, rec domain.SessionRecord) (
 }
 
 func (f *fakeStore) GetSession(_ context.Context, id domain.SessionID) (domain.SessionRecord, bool, error) {
+	if f.getSessionErr != nil {
+		return domain.SessionRecord{}, false, f.getSessionErr
+	}
 	r, ok := f.sessions[id]
 	return r, ok, nil
 }
@@ -274,6 +280,9 @@ func (f *fakeStore) ListChecks(_ context.Context, prURL string) ([]domain.PullRe
 }
 
 func (f *fakeStore) ListPRReviews(_ context.Context, prURL string) ([]domain.PullRequestReview, error) {
+	if f.reviewsErr != nil {
+		return nil, f.reviewsErr
+	}
 	return append([]domain.PullRequestReview(nil), f.reviews[prURL]...), nil
 }
 
@@ -282,6 +291,9 @@ func (f *fakeStore) ListPRReviewThreads(_ context.Context, prURL string) ([]doma
 }
 
 func (f *fakeStore) ListPRComments(_ context.Context, prURL string) ([]domain.PullRequestComment, error) {
+	if f.commentsErr != nil {
+		return nil, f.commentsErr
+	}
 	return append([]domain.PullRequestComment(nil), f.comments[prURL]...), nil
 }
 
@@ -590,6 +602,238 @@ func TestGetWorkspaceFileReturnsContentAndDiff(t *testing.T) {
 	}
 	if !strings.Contains(got.Diff, "-hello") || !strings.Contains(got.Diff, "+updated") {
 		t.Fatalf("diff did not include expected old/new lines:\n%s", got.Diff)
+	}
+}
+
+// pngBytes is a byte sequence that reads as binary (it carries a NUL) and
+// carries a PNG signature, standing in for a real image in workspace tests.
+func pngBytes(tail string) string {
+	return "\x89PNG\r\n\x1a\n\x00" + tail
+}
+
+func TestGetWorkspaceFileReportsImageMediaType(t *testing.T) {
+	repo := newWorkspaceRepo(t)
+	writeWorkspaceFile(t, repo, "docs/logo.png", pngBytes("before"))
+	runGit(t, repo, "add", ".")
+	runGit(t, repo, "commit", "-m", "add logo")
+	writeWorkspaceFile(t, repo, "docs/logo.png", pngBytes("after"))
+	st := newFakeStore()
+	st.sessions["ao-1"] = domain.SessionRecord{ID: "ao-1", Metadata: domain.SessionMetadata{WorkspacePath: repo}}
+
+	got, err := (&Service{store: st}).GetWorkspaceFile(context.Background(), "ao-1", "docs/logo.png")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.Binary || got.ImageMediaType != "image/png" {
+		t.Fatalf("binary = %v, imageMediaType = %q, want true and image/png", got.Binary, got.ImageMediaType)
+	}
+	if got.Content != "" {
+		t.Fatalf("content = %q, want empty for a binary file", got.Content)
+	}
+}
+
+func TestGetWorkspaceFileLeavesTextFilesWithoutImageMediaType(t *testing.T) {
+	repo := newWorkspaceRepo(t)
+	// An SVG is text, so it keeps its line diff instead of an image preview.
+	writeWorkspaceFile(t, repo, "docs/icon.svg", "<svg></svg>\n")
+	st := newFakeStore()
+	st.sessions["ao-1"] = domain.SessionRecord{ID: "ao-1", Metadata: domain.SessionMetadata{WorkspacePath: repo}}
+
+	got, err := (&Service{store: st}).GetWorkspaceFile(context.Background(), "ao-1", "docs/icon.svg")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.ImageMediaType != "" {
+		t.Fatalf("imageMediaType = %q, want empty for a text file", got.ImageMediaType)
+	}
+}
+
+func TestGetWorkspaceFileBlobReturnsBothSides(t *testing.T) {
+	repo := newWorkspaceRepo(t)
+	writeWorkspaceFile(t, repo, "docs/logo.png", pngBytes("before"))
+	runGit(t, repo, "add", ".")
+	runGit(t, repo, "commit", "-m", "add logo")
+	writeWorkspaceFile(t, repo, "docs/logo.png", pngBytes("after"))
+	st := newFakeStore()
+	st.sessions["ao-1"] = domain.SessionRecord{ID: "ao-1", Metadata: domain.SessionMetadata{WorkspacePath: repo}}
+	svc := &Service{store: st}
+
+	before, err := svc.GetWorkspaceFileBlob(context.Background(), "ao-1", "docs/logo.png", WorkspaceBlobBefore)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(before.Data) != pngBytes("before") || before.MediaType != "image/png" {
+		t.Fatalf("before blob = %q (%s)", before.Data, before.MediaType)
+	}
+	after, err := svc.GetWorkspaceFileBlob(context.Background(), "ao-1", "docs/logo.png", WorkspaceBlobAfter)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(after.Data) != pngBytes("after") || after.Path != "docs/logo.png" {
+		t.Fatalf("after blob = %q (%s)", after.Data, after.Path)
+	}
+}
+
+// gitWorkspaceBlob asks git for the object size before it asks for the bytes,
+// so a blob past the limit is refused instead of buffered into memory.
+func TestGitWorkspaceBlobRefusesOversizedObjectBeforeReadingIt(t *testing.T) {
+	repo := newWorkspaceRepo(t)
+	writeWorkspaceFile(t, repo, "docs/logo.png", pngBytes(strings.Repeat("x", 4096)))
+	runGit(t, repo, "add", ".")
+	runGit(t, repo, "commit", "-m", "add logo")
+
+	if _, err := gitWorkspaceBlob(context.Background(), repo, "HEAD", "docs/logo.png", 64); err == nil {
+		t.Fatal("oversized blob: want error, got nil")
+	} else {
+		var e *apierr.Error
+		if !errors.As(err, &e) || e.Kind != apierr.KindInvalid || e.Code != "WORKSPACE_BLOB_TOO_LARGE" {
+			t.Fatalf("err = %v, want apierr.Invalid WORKSPACE_BLOB_TOO_LARGE", err)
+		}
+	}
+	if _, err := gitWorkspaceBlob(context.Background(), repo, "HEAD", "docs/logo.png", 1<<20); err != nil {
+		t.Fatalf("blob within the limit: %v", err)
+	}
+}
+
+func TestGetWorkspaceFileBlobHasNoBeforeSideForAddedFile(t *testing.T) {
+	repo := newWorkspaceRepo(t)
+	writeWorkspaceFile(t, repo, "docs/logo.png", pngBytes("new"))
+	st := newFakeStore()
+	st.sessions["ao-1"] = domain.SessionRecord{ID: "ao-1", Metadata: domain.SessionMetadata{WorkspacePath: repo}}
+	svc := &Service{store: st}
+
+	if _, err := svc.GetWorkspaceFileBlob(context.Background(), "ao-1", "docs/logo.png", WorkspaceBlobBefore); err == nil {
+		t.Fatal("before blob for an added file: want error, got nil")
+	} else {
+		var e *apierr.Error
+		if !errors.As(err, &e) || e.Kind != apierr.KindNotFound || e.Code != "WORKSPACE_BLOB_NOT_FOUND" {
+			t.Fatalf("err = %v, want apierr.NotFound WORKSPACE_BLOB_NOT_FOUND", err)
+		}
+	}
+	after, err := svc.GetWorkspaceFileBlob(context.Background(), "ao-1", "docs/logo.png", WorkspaceBlobAfter)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(after.Data) != pngBytes("new") {
+		t.Fatalf("after blob = %q", after.Data)
+	}
+}
+
+func TestGetWorkspaceFileBlobHasNoAfterSideForDeletedFile(t *testing.T) {
+	repo := newWorkspaceRepo(t)
+	writeWorkspaceFile(t, repo, "docs/logo.png", pngBytes("before"))
+	runGit(t, repo, "add", ".")
+	runGit(t, repo, "commit", "-m", "add logo")
+	if err := os.Remove(filepath.Join(repo, "docs", "logo.png")); err != nil {
+		t.Fatal(err)
+	}
+	st := newFakeStore()
+	st.sessions["ao-1"] = domain.SessionRecord{ID: "ao-1", Metadata: domain.SessionMetadata{WorkspacePath: repo}}
+	svc := &Service{store: st}
+
+	before, err := svc.GetWorkspaceFileBlob(context.Background(), "ao-1", "docs/logo.png", WorkspaceBlobBefore)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(before.Data) != pngBytes("before") {
+		t.Fatalf("before blob = %q", before.Data)
+	}
+	if _, err := svc.GetWorkspaceFileBlob(context.Background(), "ao-1", "docs/logo.png", WorkspaceBlobAfter); err == nil {
+		t.Fatal("after blob for a deleted file: want error, got nil")
+	}
+	detail, err := svc.GetWorkspaceFile(context.Background(), "ao-1", "docs/logo.png")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !detail.Deleted || detail.ImageMediaType != "image/png" {
+		t.Fatalf("deleted = %v, imageMediaType = %q", detail.Deleted, detail.ImageMediaType)
+	}
+}
+
+func TestGetWorkspaceFileBlobReadsRenamedFileFromPreviousPath(t *testing.T) {
+	repo := newWorkspaceRepo(t)
+	writeWorkspaceFile(t, repo, "docs/logo.png", pngBytes("before"))
+	runGit(t, repo, "add", ".")
+	runGit(t, repo, "commit", "-m", "add logo")
+	runGit(t, repo, "mv", "docs/logo.png", "docs/brand.png")
+	st := newFakeStore()
+	st.sessions["ao-1"] = domain.SessionRecord{ID: "ao-1", Metadata: domain.SessionMetadata{WorkspacePath: repo}}
+
+	before, err := (&Service{store: st}).GetWorkspaceFileBlob(context.Background(), "ao-1", "docs/brand.png", WorkspaceBlobBefore)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(before.Data) != pngBytes("before") {
+		t.Fatalf("before blob = %q", before.Data)
+	}
+}
+
+func TestGetWorkspaceFileBlobTypesRenamedBeforeSideByItsOwnPath(t *testing.T) {
+	repo := newWorkspaceRepo(t)
+	writeWorkspaceFile(t, repo, "docs/logo.png", pngBytes("before"))
+	runGit(t, repo, "add", ".")
+	runGit(t, repo, "commit", "-m", "add logo")
+	runGit(t, repo, "mv", "docs/logo.png", "docs/logo.gif")
+	st := newFakeStore()
+	st.sessions["ao-1"] = domain.SessionRecord{ID: "ao-1", Metadata: domain.SessionMetadata{WorkspacePath: repo}}
+	svc := &Service{store: st}
+
+	// A rename that changes the extension must not type the historical bytes by
+	// the new path: the controller sends nosniff, so a PNG labelled image/gif
+	// never renders.
+	before, err := svc.GetWorkspaceFileBlob(context.Background(), "ao-1", "docs/logo.gif", WorkspaceBlobBefore)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if before.MediaType != "image/png" {
+		t.Fatalf("before mediaType = %q, want image/png", before.MediaType)
+	}
+	after, err := svc.GetWorkspaceFileBlob(context.Background(), "ao-1", "docs/logo.gif", WorkspaceBlobAfter)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.MediaType != "image/gif" {
+		t.Fatalf("after mediaType = %q, want image/gif", after.MediaType)
+	}
+}
+
+func TestGetWorkspaceFileBlobRejectsRenameFromANonImagePath(t *testing.T) {
+	repo := newWorkspaceRepo(t)
+	writeWorkspaceFile(t, repo, "docs/logo.bin", pngBytes("before"))
+	runGit(t, repo, "add", ".")
+	runGit(t, repo, "commit", "-m", "add blob")
+	runGit(t, repo, "mv", "docs/logo.bin", "docs/logo.png")
+	st := newFakeStore()
+	st.sessions["ao-1"] = domain.SessionRecord{ID: "ao-1", Metadata: domain.SessionMetadata{WorkspacePath: repo}}
+
+	_, err := (&Service{store: st}).GetWorkspaceFileBlob(context.Background(), "ao-1", "docs/logo.png", WorkspaceBlobBefore)
+	var e *apierr.Error
+	if !errors.As(err, &e) || e.Kind != apierr.KindInvalid || e.Code != "UNSUPPORTED_WORKSPACE_BLOB" {
+		t.Fatalf("err = %v, want apierr.Invalid UNSUPPORTED_WORKSPACE_BLOB", err)
+	}
+}
+
+func TestGetWorkspaceFileBlobRejectsNonImagePaths(t *testing.T) {
+	repo := newWorkspaceRepo(t)
+	st := newFakeStore()
+	st.sessions["ao-1"] = domain.SessionRecord{ID: "ao-1", Metadata: domain.SessionMetadata{WorkspacePath: repo}}
+
+	_, err := (&Service{store: st}).GetWorkspaceFileBlob(context.Background(), "ao-1", "README.md", WorkspaceBlobAfter)
+	var e *apierr.Error
+	if !errors.As(err, &e) || e.Kind != apierr.KindInvalid || e.Code != "UNSUPPORTED_WORKSPACE_BLOB" {
+		t.Fatalf("err = %v, want apierr.Invalid UNSUPPORTED_WORKSPACE_BLOB", err)
+	}
+}
+
+func TestGetWorkspaceFileBlobRejectsUnknownSide(t *testing.T) {
+	repo := newWorkspaceRepo(t)
+	st := newFakeStore()
+	st.sessions["ao-1"] = domain.SessionRecord{ID: "ao-1", Metadata: domain.SessionMetadata{WorkspacePath: repo}}
+
+	_, err := (&Service{store: st}).GetWorkspaceFileBlob(context.Background(), "ao-1", "docs/logo.png", "sideways")
+	var e *apierr.Error
+	if !errors.As(err, &e) || e.Kind != apierr.KindInvalid || e.Code != "INVALID_WORKSPACE_BLOB_SIDE" {
+		t.Fatalf("err = %v, want apierr.Invalid INVALID_WORKSPACE_BLOB_SIDE", err)
 	}
 }
 
@@ -2261,6 +2505,9 @@ func TestSpawnFailedEmitsDuration(t *testing.T) {
 	if got := sink.events[0].Payload["error_kind"]; got != "internal" {
 		t.Fatalf("spawn_failed error_kind = %#v, want internal", got)
 	}
+	if got := sink.events[0].Payload["error_code"]; got != "SPAWN_INTERNAL" {
+		t.Fatalf("spawn_failed error_code = %#v, want SPAWN_INTERNAL", got)
+	}
 	if got := sink.events[0].Payload["component"]; got != "session_service" {
 		t.Fatalf("spawn_failed component = %#v, want session_service", got)
 	}
@@ -2327,6 +2574,9 @@ func TestSpawnEmitsTelemetryOnFailure(t *testing.T) {
 	}
 	if got := ev.Payload["error_kind"]; got != "internal" {
 		t.Fatalf("event payload error_kind = %#v, want internal", got)
+	}
+	if got := ev.Payload["error_code"]; got != "SPAWN_INTERNAL" {
+		t.Fatalf("event payload error_code = %#v, want SPAWN_INTERNAL", got)
 	}
 	if got := ev.Payload["component"]; got != "session_service" {
 		t.Fatalf("event payload component = %#v, want session_service", got)
@@ -2439,6 +2689,150 @@ func TestToAPIErrorMapsWorkspaceBranchSentinels(t *testing.T) {
 				t.Fatalf("mapped = %v, want %s %s", mapped, tc.wantCode, e)
 			}
 		})
+	}
+}
+
+func TestToSpawnAPIErrorMapsSpawnStageSentinels(t *testing.T) {
+	cases := []struct {
+		name     string
+		err      error
+		wantKind apierr.Kind
+		wantCode string
+	}{
+		{
+			"workspace create",
+			fmt.Errorf("spawn mer-1: %w: git worktree add failed", sessionmanager.ErrWorkspaceCreate),
+			apierr.KindConflict,
+			"WORKSPACE_CREATE_FAILED",
+		},
+		{
+			"workspace provision",
+			fmt.Errorf("spawn mer-1: %w: postCreate \"pnpm install\": exit 1", sessionmanager.ErrWorkspaceProvision),
+			apierr.KindConflict,
+			"WORKSPACE_PROVISION_FAILED",
+		},
+		{
+			"runtime create",
+			fmt.Errorf("spawn mer-1: %w: tmux runtime: create session mer-1: context deadline exceeded", sessionmanager.ErrRuntimeCreate),
+			apierr.KindInternal,
+			"RUNTIME_CREATE_FAILED",
+		},
+		{
+			"chat controller",
+			fmt.Errorf("spawn mer-1: %w: app-server exited", sessionmanager.ErrChatController),
+			apierr.KindConflict,
+			"CHAT_CONTROLLER_FAILED",
+		},
+		{
+			"spawn timeout",
+			context.DeadlineExceeded,
+			apierr.KindConflict,
+			"SPAWN_TIMEOUT",
+		},
+		{
+			"timeout wins over runtime stage",
+			fmt.Errorf("spawn mer-1: %w: %w", sessionmanager.ErrRuntimeCreate, context.DeadlineExceeded),
+			apierr.KindConflict,
+			"SPAWN_TIMEOUT",
+		},
+		{
+			"spawn cancelled",
+			context.Canceled,
+			apierr.KindConflict,
+			"SPAWN_CANCELLED",
+		},
+		{
+			"branch sentinel wins over workspace stage",
+			fmt.Errorf("spawn mer-1: %w: %w", sessionmanager.ErrWorkspaceCreate, ports.ErrWorkspaceBranchNotFetched),
+			apierr.KindInvalid,
+			"BRANCH_NOT_FETCHED",
+		},
+		{
+			"unclassified fallback",
+			errors.New("boom"),
+			apierr.KindInternal,
+			"SPAWN_INTERNAL",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			mapped := toSpawnAPIError(tc.err)
+			var e *apierr.Error
+			if !errors.As(mapped, &e) || e.Kind != tc.wantKind || e.Code != tc.wantCode {
+				t.Fatalf("mapped = %v, want kind=%v code=%s", mapped, tc.wantKind, tc.wantCode)
+			}
+		})
+	}
+}
+
+func TestSpawnEmitsTypedErrorCodeForRuntimeFailure(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer"}
+	fc := &fakeCommander{
+		spawnErr: fmt.Errorf("spawn mer-1: %w: tmux runtime: create session mer-1: boom", sessionmanager.ErrRuntimeCreate),
+	}
+	ts := &fakeTelemetrySink{}
+	svc := NewWithDeps(Deps{Manager: fc, Store: st, Telemetry: ts, Clock: func() time.Time { return time.Unix(1700000000, 0).UTC() }})
+
+	_, _, _, err := svc.Spawn(context.Background(), ports.SpawnConfig{
+		ProjectID: "mer",
+		Kind:      domain.KindWorker,
+		Harness:   domain.HarnessCodex,
+	})
+	if err == nil {
+		t.Fatal("Spawn error = nil, want failure")
+	}
+	var apiError *apierr.Error
+	if !errors.As(err, &apiError) || apiError.Code != "RUNTIME_CREATE_FAILED" {
+		t.Fatalf("err = %v, want RUNTIME_CREATE_FAILED", err)
+	}
+	if len(ts.events) != 1 {
+		t.Fatalf("telemetry events = %d, want 1", len(ts.events))
+	}
+	if got := ts.events[0].Payload["error_code"]; got != "RUNTIME_CREATE_FAILED" {
+		t.Fatalf("event payload error_code = %#v, want RUNTIME_CREATE_FAILED", got)
+	}
+	if got := ts.events[0].Payload["error_kind"]; got != "internal" {
+		t.Fatalf("event payload error_kind = %#v, want internal", got)
+	}
+}
+
+func TestEmitSpawnFailedClassifiesRawStageSentinel(t *testing.T) {
+	ts := &fakeTelemetrySink{}
+	svc := NewWithDeps(Deps{
+		Telemetry: ts,
+		Clock:     func() time.Time { return time.Unix(1700000000, 0).UTC() },
+	})
+
+	raw := fmt.Errorf("spawn mer-1: %w: tmux runtime: create session mer-1: boom", sessionmanager.ErrRuntimeCreate)
+	svc.emitSpawnFailed(ports.SpawnConfig{
+		ProjectID: "mer",
+		Kind:      domain.KindWorker,
+		Harness:   domain.HarnessCodex,
+	}, raw, 42)
+
+	if len(ts.events) != 1 {
+		t.Fatalf("telemetry events = %d, want 1", len(ts.events))
+	}
+	if got := ts.events[0].Payload["error_code"]; got != "RUNTIME_CREATE_FAILED" {
+		t.Fatalf("event payload error_code = %#v, want RUNTIME_CREATE_FAILED", got)
+	}
+	if got := ts.events[0].Payload["error_kind"]; got != "internal" {
+		t.Fatalf("event payload error_kind = %#v, want internal", got)
+	}
+}
+
+func TestToSpawnAPIErrorIsIdempotentForMappedErrors(t *testing.T) {
+	raw := fmt.Errorf("spawn mer-1: %w: tmux runtime: create session mer-1: boom", sessionmanager.ErrRuntimeCreate)
+	first := toSpawnAPIError(raw)
+	second := toSpawnAPIError(first)
+
+	var firstErr, secondErr *apierr.Error
+	if !errors.As(first, &firstErr) || !errors.As(second, &secondErr) {
+		t.Fatalf("mapped = %v / %v, want *apierr.Error", first, second)
+	}
+	if firstErr.Code != "RUNTIME_CREATE_FAILED" || secondErr.Code != "RUNTIME_CREATE_FAILED" {
+		t.Fatalf("codes = %q / %q, want RUNTIME_CREATE_FAILED", firstErr.Code, secondErr.Code)
 	}
 }
 
@@ -2807,6 +3201,7 @@ func TestDelegateTaskPassesAttachmentsToSpawnConfig(t *testing.T) {
 type fakePRClaimer struct {
 	out        errorFreeClaimOutcome
 	err        error
+	gotPR      domain.PullRequest
 	gotMode    ports.ReviewWriteMode
 	gotThreads []domain.PullRequestReviewThread
 	called     bool
@@ -2816,7 +3211,8 @@ type errorFreeClaimOutcome struct {
 	ports.ClaimOutcome
 }
 
-func (f *fakePRClaimer) ClaimPR(_ context.Context, _ domain.PullRequest, _ []domain.PullRequestCheck, _ []domain.PullRequestReview, threads []domain.PullRequestReviewThread, _ []domain.PullRequestComment, mode ports.ReviewWriteMode, _ bool) (ports.ClaimOutcome, error) {
+func (f *fakePRClaimer) ClaimPR(_ context.Context, pr domain.PullRequest, _ []domain.PullRequestCheck, _ []domain.PullRequestReview, threads []domain.PullRequestReviewThread, _ []domain.PullRequestComment, mode ports.ReviewWriteMode, _ bool) (ports.ClaimOutcome, error) {
+	f.gotPR = pr
 	f.gotMode = mode
 	f.gotThreads = threads
 	f.called = true
@@ -2857,8 +3253,12 @@ func TestClaimRowsFromSCMSnapshotsSessionReviewPolicy(t *testing.T) {
 type noopSCMProvider struct{}
 
 func (noopSCMProvider) ParseRepository(string) (ports.SCMRepo, bool) { return ports.SCMRepo{}, false }
-func (noopSCMProvider) FetchPullRequests(context.Context, []ports.SCMPRRef) ([]ports.SCMObservation, error) {
-	return nil, nil
+func (noopSCMProvider) FetchPullRequests(_ context.Context, refs []ports.SCMPRRef) ([]ports.SCMObservation, error) {
+	out := make([]ports.SCMObservation, len(refs))
+	for i := range out {
+		out[i].Error = ports.ErrSCMNotFound
+	}
+	return out, nil
 }
 func (noopSCMProvider) FetchReviewThreads(context.Context, ports.SCMPRRef) (ports.SCMReviewObservation, error) {
 	return ports.SCMReviewObservation{}, nil
@@ -2872,14 +3272,21 @@ func (f fakeSCM) ParseRepository(remote string) (ports.SCMRepo, bool) {
 	return ports.SCMRepo{Provider: providerKey(host), Host: host, Owner: owner, Name: repo, Repo: owner + "/" + repo}, true
 }
 
-func (f fakeSCM) FetchPullRequests(context.Context, []ports.SCMPRRef) ([]ports.SCMObservation, error) {
+func (f fakeSCM) FetchPullRequests(_ context.Context, refs []ports.SCMPRRef) ([]ports.SCMObservation, error) {
 	if f.fetchErr != nil {
 		return nil, f.fetchErr
 	}
+	out := make([]ports.SCMObservation, len(refs))
 	if !f.obs.Fetched && f.obs.PR.URL == "" && f.obs.PR.Number == 0 {
-		return nil, nil
+		for i := range out {
+			out[i].Error = ports.ErrSCMNotFound
+		}
+		return out, nil
 	}
-	return []ports.SCMObservation{f.obs}, nil
+	for i := range out {
+		out[i] = f.obs
+	}
+	return out, nil
 }
 
 func (f fakeSCM) FetchReviewThreads(context.Context, ports.SCMPRRef) (ports.SCMReviewObservation, error) {
@@ -2931,8 +3338,12 @@ func TestClaimPRMapsObserverAndStoreErrors(t *testing.T) {
 		want error
 	}{
 		{"missing scm", NewWithDeps(Deps{Store: st}), ErrSCMUnavailable},
-		{"not found", NewWithDeps(Deps{Store: st, PRClaimer: &fakePRClaimer{}, SCM: fakeSCM{fetchErr: ports.ErrSCMNotFound}}), ErrPRNotFound},
+		{"not found error", NewWithDeps(Deps{Store: st, PRClaimer: &fakePRClaimer{}, SCM: fakeSCM{fetchErr: ports.ErrSCMNotFound}}), ErrPRNotFound},
+		{"not found placeholder", NewWithDeps(Deps{Store: st, PRClaimer: &fakePRClaimer{}, SCM: fakeSCM{}}), ErrPRNotFound},
 		{"closed", NewWithDeps(Deps{Store: st, PRClaimer: &fakePRClaimer{}, SCM: fakeSCM{obs: ports.SCMObservation{Fetched: true, Provider: "github", Host: "github.com", Repo: "acme/repo", PR: ports.SCMPRObservation{URL: "https://github.com/acme/repo/pull/7", Number: 7, Closed: true}}}}), ErrPRNotOpen},
+		{"merged", NewWithDeps(Deps{Store: st, PRClaimer: &fakePRClaimer{}, SCM: fakeSCM{obs: ports.SCMObservation{Fetched: true, Provider: "github", Host: "github.com", Repo: "acme/repo", PR: ports.SCMPRObservation{URL: "https://github.com/acme/repo/pull/7", Number: 7, Merged: true}}}}), ErrPRNotOpen},
+		{"draft merged", NewWithDeps(Deps{Store: st, PRClaimer: &fakePRClaimer{}, SCM: fakeSCM{obs: ports.SCMObservation{Fetched: true, Provider: "github", Host: "github.com", Repo: "acme/repo", PR: ports.SCMPRObservation{URL: "https://github.com/acme/repo/pull/7", Number: 7, Draft: true, Merged: true}}}}), ErrPRNotOpen},
+		{"draft closed", NewWithDeps(Deps{Store: st, PRClaimer: &fakePRClaimer{}, SCM: fakeSCM{obs: ports.SCMObservation{Fetched: true, Provider: "github", Host: "github.com", Repo: "acme/repo", PR: ports.SCMPRObservation{URL: "https://github.com/acme/repo/pull/7", Number: 7, Draft: true, Closed: true}}}}), ErrPRNotOpen},
 		{"active owner", NewWithDeps(Deps{Store: st, PRClaimer: &fakePRClaimer{err: ports.PRClaimedByActiveSessionError{Owner: "mer-2"}}, SCM: fakeSCM{obs: ports.SCMObservation{Fetched: true, Provider: "github", Host: "github.com", Repo: "acme/repo", PR: ports.SCMPRObservation{URL: "https://github.com/acme/repo/pull/7", Number: 7}}}}), ports.ErrPRClaimedByActiveSession},
 	}
 	for _, tc := range cases {
@@ -2952,6 +3363,45 @@ func TestClaimPRMapsObserverAndStoreErrors(t *testing.T) {
 	}
 	if len(res.TakenOverFrom) != 1 || res.TakenOverFrom[0] != "mer-2" || len(res.PRs) != 1 || res.PRs[0].URL == "" {
 		t.Fatalf("claim result = %+v", res)
+	}
+}
+
+// TestClaimPRAllowsDraftPR pins the fix for #4171: a draft PR is open work and
+// must be claimable, with the draft fact carried onto the persisted PR row and
+// the returned read model rather than being rejected as PR_NOT_OPEN.
+func TestClaimPRAllowsDraftPR(t *testing.T) {
+	st := newFakeStore()
+	now := time.Date(2026, 8, 20, 12, 0, 0, 0, time.UTC)
+	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer", Kind: domain.KindWorker, Metadata: domain.SessionMetadata{WorkspacePath: "/ws"}}
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", RepoOriginURL: "https://github.com/acme/repo"}
+	// Stands in for the row the claimer would have written.
+	st.pr["mer-1"] = domain.PRFacts{URL: "https://github.com/acme/repo/pull/7", Number: 7, Draft: true, CI: domain.CIPending, UpdatedAt: now}
+
+	claimer := &fakePRClaimer{out: errorFreeClaimOutcome{ports.ClaimOutcome{}}}
+	svc := NewWithDeps(Deps{
+		Store:     st,
+		PRClaimer: claimer,
+		SCM: fakeSCM{obs: ports.SCMObservation{
+			Fetched:  true,
+			Provider: "github",
+			Host:     "github.com",
+			Repo:     "acme/repo",
+			PR:       ports.SCMPRObservation{URL: "https://github.com/acme/repo/pull/7", Number: 7, Draft: true},
+		}},
+	})
+
+	res, err := svc.ClaimPR(context.Background(), "mer-1", "7", ClaimPROptions{})
+	if err != nil {
+		t.Fatalf("claim draft PR: %v", err)
+	}
+	if !claimer.called {
+		t.Fatal("ClaimPR was not called for a draft PR")
+	}
+	if !claimer.gotPR.Draft || claimer.gotPR.Merged || claimer.gotPR.Closed {
+		t.Fatalf("persisted PR = %+v, want draft preserved and not merged/closed", claimer.gotPR)
+	}
+	if len(res.PRs) != 1 || res.PRs[0].URL != "https://github.com/acme/repo/pull/7" || !res.PRs[0].Draft {
+		t.Fatalf("claim result = %+v, want the draft PR", res.PRs)
 	}
 }
 

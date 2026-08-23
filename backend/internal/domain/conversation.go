@@ -35,6 +35,13 @@ const (
 	ConversationScopeProject ConversationScope = "project"
 )
 
+// ConversationContextResetProviderItemID returns the durable identity of the
+// hidden activity that separates a fresh project orchestrator context from the
+// project conversation history that came before it.
+func ConversationContextResetProviderItemID(session SessionID) string {
+	return "ao-context-reset:" + string(session)
+}
+
 // TurnState is the lifecycle of one request and the agent work that follows it.
 type TurnState string
 
@@ -193,13 +200,16 @@ type ConversationBranch struct {
 	ConversationID         string    `json:"conversationId"`
 	SessionID              SessionID `json:"sessionId"`
 	ProviderConversationID string    `json:"-"`
-	ParentBranchID         string    `json:"parentBranchId,omitempty"`
-	ForkAfterTurnID        string    `json:"forkAfterTurnId,omitempty"`
-	ReplacedTurnID         string    `json:"replacedTurnId,omitempty"`
-	ReplacementTurnID      string    `json:"replacementTurnId,omitempty"`
-	ForkAfterSequence      int64     `json:"-"`
-	Active                 bool      `json:"active"`
-	CreatedAt              time.Time `json:"createdAt"`
+	// ProviderScopeID is the root created for one provider ownership epoch. Agent
+	// switches start a new scope while keeping older AO history visible.
+	ProviderScopeID   string    `json:"-"`
+	ParentBranchID    string    `json:"parentBranchId,omitempty"`
+	ForkAfterTurnID   string    `json:"forkAfterTurnId,omitempty"`
+	ReplacedTurnID    string    `json:"replacedTurnId,omitempty"`
+	ReplacementTurnID string    `json:"replacementTurnId,omitempty"`
+	ForkAfterSequence int64     `json:"-"`
+	Active            bool      `json:"active"`
+	CreatedAt         time.Time `json:"createdAt"`
 }
 
 // ConversationBranchPoint describes the sibling continuations available at one
@@ -424,6 +434,9 @@ type ConversationSettings struct {
 type ConversationTurn struct {
 	ID             string `json:"id"`
 	ConversationID string `json:"conversationId"`
+	// BranchID is durable provider-lineage metadata used to keep opaque turn ids
+	// inside the provider ownership epoch that created them.
+	BranchID string `json:"-"`
 	// HandledBySessionID is the AO session whose controller ran the turn. For a
 	// project-scoped conversation this changes when the orchestrator is
 	// replaced; the conversation identity does not.
