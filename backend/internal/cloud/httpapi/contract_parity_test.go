@@ -42,11 +42,24 @@ func TestCloudContractLocksWorkspacePlacementRoutes(t *testing.T) {
 	assertMutation(t, paths, "/api/cloud/v1/orgs/{orgId}/workspaces/{workspaceId}/resume", "post", "202")
 
 	schemas := objectAt(t, cloud, "components", "schemas")
+	createInput := mapValue(t, schemas, "CreateWorkspacePlacementInput")
+	if required := stringSlice(createInput["required"]); len(required) != 0 {
+		t.Errorf("CreateWorkspacePlacementInput requires optional fields: %v", required)
+	}
 	placement := mapValue(t, schemas, "WorkspacePlacement")
 	required := stringSlice(placement["required"])
-	for _, field := range []string{"id", "orgId", "ownerUserId", "state", "defaultBranch", "createdAt", "updatedAt"} {
+	for _, field := range []string{"id", "orgId", "ownerUserId", "state", "createdAt", "updatedAt"} {
 		if !contains(required, field) {
 			t.Errorf("WorkspacePlacement does not require %s", field)
+		}
+	}
+	properties := objectAt(t, placement, "properties")
+	if _, ok := properties["projectId"]; !ok {
+		t.Error("WorkspacePlacement does not expose optional projectId")
+	}
+	for _, forbidden := range []string{"defaultBranch", "productProjectId"} {
+		if _, ok := properties[forbidden]; ok {
+			t.Errorf("WorkspacePlacement exposes non-authoritative field %s", forbidden)
 		}
 	}
 	states := stringSlice(mapValue(t, schemas, "WorkspacePlacementState")["enum"])

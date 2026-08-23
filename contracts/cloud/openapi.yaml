@@ -1144,7 +1144,6 @@ components:
     CreateWorkspacePlacementInput:
       type: object
       additionalProperties: false
-      required: [displayName]
       properties:
         displayName: { type: string, minLength: 1 }
         repositoryUrl: { type: string, format: uri }
@@ -1161,14 +1160,13 @@ components:
     WorkspacePlacement:
       type: object
       additionalProperties: false
-      required: [id, orgId, ownerUserId, state, defaultBranch, createdAt, updatedAt]
+      required: [id, orgId, ownerUserId, state, createdAt, updatedAt]
       properties:
         id: { type: string, format: uuid }
         orgId: { type: string, format: uuid }
         ownerUserId: { type: string, format: uuid }
         state: { $ref: "#/components/schemas/WorkspacePlacementState" }
-        defaultBranch: { type: string }
-        productProjectId:
+        projectId:
           type: string
           description: Present only when state is ready; discovery uses the separate application client.
         message:

@@ -707,7 +707,7 @@ export interface components {
             organizations: components["schemas"]["OrganizationMembership"][];
         };
         CreateWorkspacePlacementInput: {
-            displayName: string;
+            displayName?: string;
             /** Format: uri */
             repositoryUrl?: string;
             /** @description Authoritative branch passed through the placement saga. */
@@ -726,9 +726,8 @@ export interface components {
             /** Format: uuid */
             ownerUserId: string;
             state: components["schemas"]["WorkspacePlacementState"];
-            defaultBranch: string;
             /** @description Present only when state is ready; discovery uses the separate application client. */
-            productProjectId?: string;
+            projectId?: string;
             /** @description Human-readable pending progress or terminal failure detail. */
             message?: string;
             /** Format: date-time */
