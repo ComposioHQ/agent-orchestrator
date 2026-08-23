@@ -131,7 +131,6 @@ const (
 // parity" a single grep, and keeps the pending entries below honest: a port
 // that ships flips every route that named it.
 const (
-	portTerminalRelay      = "control-plane terminal relay (httpd.TerminalMux backed by the runtime adapter)"
 	portAttachmentStore    = "object-storage attachment port"
 	portWorkspaceAdapter   = "runtime workspace adapter (file read/list/watch inside the sandbox)"
 	portPreviewAdapter     = "runtime preview adapter (preview server lifecycle inside the sandbox)"
@@ -156,15 +155,31 @@ var routeClasses = map[RouteKey]RouteClass{
 	{"GET", "/healthz"}:   local(reasonCloudNative),
 	{"GET", "/readyz"}:    local(reasonCloudNative),
 	{"POST", "/shutdown"}: local(reasonDesktopOnly + "; stops this daemon process"),
-	// The desktop always connects to this route, on whichever plane it is
-	// talking to. Hosted, it is a relay: the control plane terminates the
-	// client connection and the injected TerminalMux forwards to the sandbox
-	// via the runtime adapter. The desktop must never be pointed at a
-	// provider-issued preview or sandbox URL — that would put the client on a
-	// connection the control plane neither authenticates nor can revoke.
-	// Refused today only because no relay is injected yet.
-	{"GET", "/mux"}: pendingStream(portTerminalRelay,
-		"no terminal relay is injected yet; the hosted mount serves this route once one is"),
+	// Terminal transport, and deliberately never hosted — settled architecture,
+	// not a gap waiting on a port.
+	//
+	// This route is the daemon's own tmux/conpty mux. Against the hosted plane
+	// the desktop does not use it and the control plane does not relay it:
+	// Electron's main process dials the sandbox's authenticated published /mux
+	// directly, using a one-time ticket and subprotocol obtained from the
+	// control plane's terminal metadata. Relaying instead would put every byte
+	// of every pane through the control plane for no security gain — the
+	// ticket already scopes and expires the connection.
+	//
+	// Two invariants ride on this and are worth stating where the route is
+	// classified. The ticket is one-time and control-plane-issued, so a leaked
+	// URL is not a durable credential. And the provider URL, token and vendor
+	// identity stop at Electron's main process: the renderer only ever sees
+	// the existing TerminalMux IPC abstraction, so no sandbox provider detail
+	// reaches a web context.
+	//
+	// Terminal parity is therefore met by a different transport, not by
+	// hosting this route — see parityExemptPrefixes in the tests. When the
+	// control-plane terminal-metadata endpoint that issues those tickets is
+	// added, it is an ordinary bounded REST route and must be classified
+	// ScopeCloud.
+	{"GET", "/mux"}: localStream("hosted terminals connect straight to the sandbox's published /mux " +
+		"with a one-time control-plane ticket; relaying through the control plane buys nothing"),
 	{"POST", "/internal/telemetry/cli-invoked"}:     local("loopback-only CLI telemetry intake (localControlRequest)"),
 	{"POST", "/internal/telemetry/cli-usage-error"}: local("loopback-only CLI telemetry intake (localControlRequest)"),
 
@@ -369,22 +384,20 @@ func RouteClasses() map[RouteKey]RouteClass {
 // the storage and runtime ports, and the returned handler is wrapped in a
 // classification guard that refuses every route not marked ScopeCloud.
 //
-// relay is the control-plane terminal relay: the desktop connects to /mux here
-// exactly as it does against a local daemon, and the relay forwards to the
-// sandbox through the runtime adapter. Passing nil leaves /mux unmounted. The
-// desktop must never be pointed at a provider-issued sandbox or preview URL
-// instead — that would put the client on a connection the control plane
-// neither authenticates nor can revoke.
-//
 // Deliberately not mounted here: health probes (the control plane serves its
-// own), daemon control, CLI telemetry intake, and the Connect Mobile bridge.
-// Those are local-only by classification too, so they are refused twice over —
-// once by never being registered, once by the guard.
+// own), daemon control, CLI telemetry intake, the Connect Mobile bridge, and
+// the terminal mux. Those are local-only by classification too, so they are
+// refused twice over — once by never being registered, once by the guard.
+//
+// There is deliberately no terminal relay parameter. Hosted terminals do not
+// pass through the control plane at all: the desktop dials the sandbox's own
+// authenticated published /mux with a one-time control-plane-issued ticket.
+// See the /mux entry in routeClasses.
 //
 // The caller is responsible for authentication and for putting a tenant
 // identity on the request context before this handler runs; the guard does not
 // authenticate.
-func NewCloudAPIHandler(cfg config.Config, log *slog.Logger, relay TerminalMux, deps APIDeps) http.Handler {
+func NewCloudAPIHandler(cfg config.Config, log *slog.Logger, deps APIDeps) http.Handler {
 	log = loggerOrDefault(log)
 	deps = normalizeAPIDeps(deps, log)
 
@@ -398,26 +411,8 @@ func NewCloudAPIHandler(cfg config.Config, log *slog.Logger, relay TerminalMux, 
 	r.MethodNotAllowed(methodNotAllowedJSON)
 
 	NewAPI(cfg, deps).Register(r)
-	mountTerminalMux(r, relay, log)
-
-	// A relay wired up while /mux is still classified pending would be dead
-	// weight: the guard refuses the route and the desktop sees a 404 with
-	// nothing in the logs to explain it. Say so once, at construction.
-	if relay != nil {
-		if class, ok := ClassifyRoute(http.MethodGet, "/mux"); !ok || class.Scope != ScopeCloud {
-			log.Warn("terminal relay injected but /mux is not classified cloud-mounted; the route will be refused",
-				"pending_port", classPendingPort(class))
-		}
-	}
 
 	return CloudScopeGuard(r)
-}
-
-func classPendingPort(class RouteClass) string {
-	if class.PendingPort == "" {
-		return "none"
-	}
-	return class.PendingPort
 }
 
 // CloudScopeGuard wraps a router so only ScopeCloud routes reach it.

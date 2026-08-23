@@ -84,7 +84,6 @@ func newAppServer(t *testing.T, memberships []domain.Membership) (*Server, *memo
 	app := httpd.NewCloudAPIHandler(
 		config.Config{DataDir: t.TempDir()},
 		slog.New(slog.NewTextHandler(io.Discard, nil)),
-		nil,
 		httpd.APIDeps{Agents: catalog},
 	)
 	server := newTestServerWithApp(t, store, &staticIdentityVerifier{principal: principal}, app)

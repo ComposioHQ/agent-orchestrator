@@ -189,10 +189,19 @@ func TestCloudStreamRoutesListsHostedStreamsOnly(t *testing.T) {
 // the agent CLIs' logs on the user's own machine, and the UI handles the
 // surface being unavailable. The rest are desktop and device integrations that
 // have no hosted meaning at all.
+//
+// /mux is exempt for a different reason, worth keeping distinct: hosted
+// terminals reach full parity, just not through this route. The desktop dials
+// the sandbox's own authenticated published /mux with a one-time
+// control-plane-issued ticket rather than having the control plane relay every
+// pane byte. Exempt here means "parity is delivered by another transport", not
+// "the hosted product does without terminals" — see the /mux entry in
+// routeClasses and TestHostedTerminalsBypassTheControlPlane below.
 var parityExemptPrefixes = []string{
 	"/healthz",
 	"/readyz",
 	"/shutdown",
+	"/mux",
 	"/internal/telemetry/",
 	"/api/v1/usage/",
 	"/api/v1/mobile",
@@ -243,9 +252,11 @@ func TestParityRequiredRoutesAreNeverPermanentlyLocal(t *testing.T) {
 // it swallows a surface that was supposed to reach parity.
 func TestNamedParityViewsReachTheHostedPlane(t *testing.T) {
 	for _, pattern := range []string{
-		"/mux",             // terminal
-		"/api/v1/projects", // project
-		"/api/v1/sessions", // session
+		// Terminal is deliberately absent: it reaches parity over the
+		// sandbox's own published listener, not this route. See
+		// TestHostedTerminalsBypassTheControlPlane.
+		"/api/v1/projects",                             // project
+		"/api/v1/sessions",                             // session
 		"/api/v1/sessions/{sessionId}/conversation",    // chat
 		"/api/v1/sessions/{sessionId}/pr",              // PR
 		"/api/v1/sessions/{sessionId}/reviews",         // review
@@ -284,43 +295,48 @@ func TestPendingRoutesNameTheirBlockingPort(t *testing.T) {
 	}
 }
 
-// The terminal relay terminates on the control plane. If /mux were ever
-// classified cloud while the desktop was expected to dial a provider URL
-// instead, the client would be on a connection the control plane cannot
-// authenticate or revoke — so the route must stay the desktop's single
-// terminal entry point on both planes.
-func TestTerminalRouteIsTheSameOnBothPlanes(t *testing.T) {
+// TestHostedTerminalsBypassTheControlPlane pins the settled terminal
+// architecture at the one place a future change would have to pass through.
+//
+// Hosted panes do not go through the control plane at all: Electron's main
+// process dials the sandbox's authenticated published /mux with a one-time
+// control-plane-issued ticket. Relaying instead would push every byte of every
+// pane through the control plane for no security gain, and would show up here
+// as /mux becoming cloud-mounted or appearing in the hosted stream list.
+//
+// If hosted terminals are ever genuinely re-routed through the control plane,
+// this test is the deliberate stop: update it together with the /mux entry in
+// routeClasses, not around it.
+func TestHostedTerminalsBypassTheControlPlane(t *testing.T) {
 	class, ok := ClassifyRoute(http.MethodGet, "/mux")
 	if !ok {
 		t.Fatal("/mux is not classified")
 	}
 	if !class.Stream() {
-		t.Error("/mux must be a stream")
+		t.Error("/mux must be classified as a stream: it is the long-lived terminal transport")
 	}
-	if class.Scope != ScopeCloud && class.PendingPort == "" {
-		t.Error("/mux must either be cloud-mounted or name the relay port blocking it")
+	if class.Scope != ScopeLocalOnly {
+		t.Errorf("/mux scope = %q, want local-only: hosted terminals dial the sandbox directly", class.Scope)
+	}
+	if class.Pending() {
+		t.Errorf("/mux names pending port %q, but not hosting it is a settled decision, not a gap",
+			class.PendingPort)
+	}
+	for _, key := range CloudStreamRoutes() {
+		if key.Pattern == "/mux" {
+			t.Error("/mux appears in the hosted stream list; the control plane must not carry pane bytes")
+		}
 	}
 }
 
-// An injected relay mounts /mux on the hosted handler, but the guard still
-// refuses it while the route is pending — flipping the classification is the
-// deliberate second step, and this pins both halves so neither can drift into
-// serving a terminal the classification has not approved.
-func TestCloudHandlerMountsRelayButHonoursClassification(t *testing.T) {
-	handler := NewCloudAPIHandler(config.Config{}, discardLogger(), stubTerminalMux{}, APIDeps{})
-
+// The cloud handler must not mount /mux under any composition — there is no
+// relay seam to wire one through, and the guard refuses the route regardless.
+func TestCloudHandlerNeverMountsTheTerminalMux(t *testing.T) {
+	handler := NewCloudAPIHandler(config.Config{}, discardLogger(), APIDeps{})
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/mux", nil))
-
-	class, _ := ClassifyRoute(http.MethodGet, "/mux")
-	if class.Scope == ScopeCloud {
-		if rec.Code == http.StatusNotFound {
-			t.Fatal("/mux is classified cloud-mounted but the handler refused it")
-		}
-		return
-	}
-	if rec.Code != http.StatusNotFound || !strings.Contains(rec.Body.String(), "ROUTE_NOT_AVAILABLE") {
-		t.Fatalf("/mux is still pending but was not refused: status %d body %s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("GET /mux on the cloud handler = %d, want 404", rec.Code)
 	}
 }
 
@@ -375,7 +391,7 @@ func TestCloudHandlerMountsTheSameAPI(t *testing.T) {
 // Connect Mobile surface lands here). Every cloud route must reach the router,
 // which with empty deps answers 501 NOT_IMPLEMENTED — anything but a 404.
 func TestCloudScopeGuardRefusesLocalOnlyRoutes(t *testing.T) {
-	handler := NewCloudAPIHandler(config.Config{DataDir: t.TempDir()}, discardLogger(), nil, APIDeps{})
+	handler := NewCloudAPIHandler(config.Config{DataDir: t.TempDir()}, discardLogger(), APIDeps{})
 
 	for key, class := range routeClasses {
 		if !strings.HasPrefix(key.Pattern, "/api/v1/") {
@@ -424,7 +440,7 @@ func TestCloudScopeGuardDeniesUnclassifiedRoutes(t *testing.T) {
 // A path that matches no route keeps the router's ordinary 404 envelope, so a
 // client typo is not reported as "this route exists but is hosted elsewhere".
 func TestCloudScopeGuardLeavesUnmatchedPathsAlone(t *testing.T) {
-	handler := NewCloudAPIHandler(config.Config{}, discardLogger(), nil, APIDeps{})
+	handler := NewCloudAPIHandler(config.Config{}, discardLogger(), APIDeps{})
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/no-such-route", nil))
 	if rec.Code != http.StatusNotFound {
@@ -442,7 +458,7 @@ func TestCloudScopeGuardLeavesUnmatchedPathsAlone(t *testing.T) {
 // 404 as unknown paths rather than as scope refusals — excluded twice over,
 // since each is also classified local-only.
 func TestCloudHandlerOmitsDaemonProcessRoutes(t *testing.T) {
-	handler := NewCloudAPIHandler(config.Config{}, discardLogger(), nil, APIDeps{})
+	handler := NewCloudAPIHandler(config.Config{}, discardLogger(), APIDeps{})
 	for _, probe := range []struct {
 		method string
 		path   string
@@ -479,6 +495,7 @@ func TestExcludedSurfacesAreClassifiedLocalOnly(t *testing.T) {
 		{Method: http.MethodPost, Pattern: "/shutdown"},
 		{Method: http.MethodPost, Pattern: "/internal/telemetry/cli-invoked"},
 		{Method: http.MethodPost, Pattern: "/internal/telemetry/cli-usage-error"},
+		{Method: http.MethodGet, Pattern: "/mux"},
 	} {
 		assertLocalOnly(t, key)
 	}
