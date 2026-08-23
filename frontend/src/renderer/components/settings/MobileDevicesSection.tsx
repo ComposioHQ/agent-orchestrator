@@ -166,7 +166,7 @@ export function MobileDevicesSection() {
 							return (
 								<li
 									key={device.installId}
-									className="flex items-center gap-3 rounded-lg border border-[var(--color-border-settings-input)] bg-[var(--color-bg-settings-input)] p-3 shadow-sm"
+									className="flex items-center gap-3 rounded-lg border border-[var(--color-border-settings-input)] bg-[var(--color-bg-settings-input)] p-3"
 								>
 									<Smartphone className="size-4 shrink-0 text-settings-muted" />
 									<div className="min-w-0 flex-1">

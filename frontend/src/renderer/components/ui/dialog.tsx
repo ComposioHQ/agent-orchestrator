@@ -113,9 +113,9 @@ export {
 	DialogDescription,
 };
 
-// Settings-style dialog sections — the single source for settings popups
-// (ReportProblemDialog) and confirmation modals (ConfirmDialog) so they all
-// share the same frame, spacing, and typography. Every value resolves to a
+// Settings-style dialog sections — the single source for settings popups and
+// confirmation modals (ConfirmDialog) so they all share the same frame,
+// spacing, and typography. Every value resolves to a
 // design token; no raw pixel values here.
 export const settingsDialogContentClass =
 	"z-overlay flex max-h-[min(var(--size-settings-dialog-max-h),calc(100svh-var(--space-8)))] w-[min(var(--size-settings-dialog),calc(100vw-var(--space-8)))] max-w-none flex-col gap-0 overflow-hidden rounded-(--radius-settings-dialog-lg) border border-[var(--color-border-settings-dialog)] bg-popover p-0 text-settings-label shadow-[var(--shadow-settings-dialog)]";

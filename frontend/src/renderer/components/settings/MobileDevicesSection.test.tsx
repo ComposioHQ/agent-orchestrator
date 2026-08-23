@@ -44,7 +44,8 @@ describe("MobileDevicesSection", () => {
 
 		expect(await screen.findByText("iPhone")).toBeInTheDocument();
 		expect(screen.getByRole("heading", { name: "Connected devices" })).toBeInTheDocument();
-		expect(screen.getAllByRole("listitem")[0]).toHaveClass("rounded-lg", "border", "shadow-sm");
+		expect(screen.getAllByRole("listitem")[0]).toHaveClass("rounded-lg", "border");
+		expect(screen.getAllByRole("listitem")[0]).not.toHaveClass("shadow-sm");
 		expect(screen.getByText("Live")).toBeInTheDocument();
 		expect(screen.getByText("M31s")).toBeInTheDocument();
 		expect(screen.getByText(/2 hours ago/)).toBeInTheDocument();

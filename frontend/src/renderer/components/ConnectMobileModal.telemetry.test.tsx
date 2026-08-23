@@ -109,6 +109,18 @@ describe("Connect Mobile telemetry", () => {
 		expect(reported).not.toContain("3011");
 	});
 
+	test("can disable the bridge after pairing has been generated", async () => {
+		mobileStatus.enabled = true;
+		renderModal();
+		await waitFor(() => expect(screen.getByRole("switch", { name: "Enable mobile" })).toBeInTheDocument());
+
+		await userEvent.click(screen.getByRole("switch", { name: "Enable mobile" }));
+
+		await waitFor(() => expect(post).toHaveBeenCalledWith("/api/v1/mobile/disable"));
+		await waitFor(() => expect(toggleEvents()).toHaveLength(1));
+		expect(toggleEvents()[0][1]).toEqual({ enabled: false, outcome: "succeeded" });
+	});
+
 	test("reports a failed enable as failed rather than staying silent", async () => {
 		post.mockResolvedValue({ data: undefined, error: { message: "bind failed" } });
 		renderModal();
