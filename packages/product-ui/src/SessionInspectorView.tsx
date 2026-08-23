@@ -6,7 +6,6 @@ import {
 	CheckIcon,
 	ChevronIcon,
 	GitPullRequestIcon,
-	MessageSquareIcon,
 	MoreHorizontalIcon,
 } from "./icons";
 import {
@@ -963,40 +962,32 @@ function ExternalReviewCard({
 			<GithubAvatar className="size-6 shrink-0" login={entry.reviewerId} />
 			<span className="flex min-w-0 flex-col gap-0.5">
 				<span className="flex min-w-0 items-center gap-1.5 text-xs font-semibold text-foreground">
-					<span className="truncate">{entry.reviewerId}</span>
+					<span className="min-w-0 break-words">{entry.reviewerId}</span>
 					{entry.isBot ? <span className="shrink-0 font-mono text-micro text-passive">{labels.bot}</span> : null}
 				</span>
 				{entry.submittedAtLabel ? <span className="font-mono text-micro text-passive">{labels.reviewedAt(entry.submittedAtLabel)}</span> : null}
 			</span>
-			<span className={cn("flex shrink-0 items-center gap-2 whitespace-nowrap pr-1 text-2xs font-medium", reviewerVerdictTone[entry.verdict.tone])}>
+			<span className={cn("flex shrink-0 items-center gap-2 whitespace-nowrap pr-1 text-2xs font-medium @max-[360px]/inspector:col-start-2 @max-[360px]/inspector:row-start-2 @max-[360px]/inspector:justify-self-start", reviewerVerdictTone[entry.verdict.tone])}>
 				<span>{entry.verdict.label}</span>
 				{openComments.length > 0 ? (
-					<span className="inline-flex items-center gap-1.5 rounded-sm px-0.5 text-muted-foreground" title={labels.openInlineComments(openComments.length)}>
-						<MessageSquareIcon className="size-icon-2xs" />
-						<span>{openComments.length}</span>
-					</span>
+					<span className="rounded-sm px-0.5 text-muted-foreground" title={labels.openInlineComments(openComments.length)}>{openComments.length}</span>
 				) : null}
 			</span>
 		</>
 	);
 	return (
 		<article className="relative min-w-0 border-b border-border/70 py-2 first:pt-0 last:border-b-0 last:pb-0" data-testid="github-review-card">
-			<div className={cn("grid w-full min-w-0 items-center gap-x-1 rounded-md pr-1", collapsible ? "grid-cols-[minmax(0,1fr)_auto_auto]" : "grid-cols-[minmax(0,1fr)_auto]")} data-testid="external-review-header">
+			<div className="grid w-full min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-x-1 rounded-md pr-1" data-testid="external-review-header">
 				{collapsible ? (
-					<button aria-expanded={open} className="grid min-w-0 grid-cols-[auto_1fr_auto] items-center gap-x-3 gap-y-1 rounded-md px-1.5 py-1.5 text-left transition-colors hover:bg-interactive-hover/30" onClick={() => setOpen((current) => !current)} type="button">
+					<button aria-expanded={open} className="grid min-w-0 grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-x-3 gap-y-1 rounded-md px-1.5 py-1.5 text-left transition-colors hover:bg-interactive-hover/30 @max-[360px]/inspector:grid-cols-[auto_minmax(0,1fr)]" onClick={() => setOpen((current) => !current)} type="button">
 						{headerContent}
 					</button>
 				) : (
-					<div className="grid min-w-0 grid-cols-[auto_1fr_auto] items-center gap-x-3 gap-y-1 px-1.5 py-1.5 text-left">
+					<div className="grid min-w-0 grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-x-3 gap-y-1 px-1.5 py-1.5 text-left @max-[360px]/inspector:grid-cols-[auto_minmax(0,1fr)]">
 						{headerContent}
 					</div>
 				)}
 				<ReviewSummaryActions body={body ?? ""} externalLink={externalLink} labels={labels} onOpenInAOBrowser={onOpenInAOBrowser} onRequestRereview={entry.canRequestRereview ? () => onRequestRereview?.(entry) : undefined} onSendReviewSummary={onSendReviewSummary} pullRequestUrl={entry.pullRequestUrl} reviewerId={entry.reviewerId} source="external" url={entry.reviewUrl || entry.pullRequestUrl} />
-				{collapsible ? (
-					<button aria-expanded={open} aria-label={open ? labels.showLess : labels.showMore} className="inline-flex size-7 shrink-0 items-center justify-center rounded-md text-passive transition-colors hover:bg-interactive-hover hover:text-foreground" onClick={() => setOpen((current) => !current)} type="button">
-						<ChevronIcon className="size-icon-2xs" direction={open ? "down" : "right"} />
-					</button>
-				) : null}
 			</div>
 			<div className="flex min-w-0 flex-col gap-3 px-1 pt-2 text-left">
 				{body ? (
@@ -1226,9 +1217,8 @@ function InlineCommentRow({
 					</span>
 					<span className="flex shrink-0 items-center justify-end" onClick={(event) => event.stopPropagation()}>
 						{sent ? (
-							<span className="inline-flex h-7 items-center gap-1.5 rounded-md px-1.5 text-2xs font-medium text-success">
+							<span aria-label={labels.sentToWorkerAgent} className="inline-flex size-7 items-center justify-center rounded-md text-success" role="status" title={labels.sentToWorkerAgent}>
 								<CheckIcon className="size-icon-xs shrink-0" />
-								{labels.sentToWorkerAgent}
 							</span>
 						) : null}
 					</span>

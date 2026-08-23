@@ -398,7 +398,12 @@ describe("portable inspector presentations", () => {
     );
     expect(reviewToggle).toHaveAttribute("aria-expanded", "false");
     expect(screen.queryByText("Resolved comments · 1")).not.toBeInTheDocument();
-    fireEvent.click(within(screen.getByTestId("external-review-header")).getByRole("button", { name: "Show more" }));
+    expect(
+      within(screen.getByTestId("external-review-header")).queryByRole("button", {
+        name: "Show more",
+      }),
+    ).not.toBeInTheDocument();
+    fireEvent.click(reviewToggle);
     expect(reviewToggle).toHaveAttribute("aria-expanded", "true");
     expect(screen.getByText("Resolved comments · 1")).toBeInTheDocument();
   });
@@ -549,9 +554,11 @@ describe("portable inspector presentations", () => {
       }),
     );
     await waitFor(() => {
-      const sentLabels = screen.getAllByText("Sent to worker agent");
-      expect(sentLabels).toHaveLength(2);
-      expect(sentLabels[0]?.closest("span")).toHaveClass("text-success");
+      const sentStatuses = screen.getAllByRole("status", {
+        name: "Sent to worker agent",
+      });
+      expect(sentStatuses).toHaveLength(2);
+      expect(sentStatuses[0]).toHaveClass("text-success");
     });
     fireEvent.click(screen.getAllByRole("button", { name: "Comment actions" })[0]!);
     fireEvent.click(screen.getByRole("button", { name: "Resolve comment" }));
@@ -645,7 +652,9 @@ describe("portable inspector presentations", () => {
     expect(
       screen.getByRole("button", { name: "Send to worker agent" }),
     ).toBeInTheDocument();
-    expect(screen.queryByText("Sent to worker agent")).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("status", { name: "Sent to worker agent" }),
+    ).not.toBeInTheDocument();
   });
 
   it("keeps resolved comments collapsed until requested", () => {
@@ -777,7 +786,9 @@ describe("portable inspector presentations", () => {
     fireEvent.click(screen.getByRole("button", { name: "Send to worker agent" }));
 
     await waitFor(() =>
-      expect(screen.getByText("Sent to worker agent")).toBeInTheDocument(),
+      expect(
+        screen.getByRole("status", { name: "Sent to worker agent" }),
+      ).toBeInTheDocument(),
     );
     fireEvent.click(actionButtons[1]!);
     expect(

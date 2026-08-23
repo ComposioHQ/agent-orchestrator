@@ -2410,7 +2410,9 @@ describe("SessionInspector summary reviews", () => {
     const comments = screen.getByTestId("github-inline-comments");
     expect(comments).toHaveTextContent("Open comments · 2");
     expect(comments).not.toHaveTextContent("maya");
-    expect(comments).toHaveTextContent("Sent to worker agent");
+    expect(
+      within(comments).getAllByRole("status", { name: "Sent to worker agent" }),
+    ).toHaveLength(2);
     expect(comments).toHaveTextContent("a.ts:3");
     expect(comments).toHaveTextContent("a.ts:9");
     // AO's runs and the PR's own reviews share one section keyed by PR, so the
@@ -2667,7 +2669,9 @@ describe("SessionInspector summary reviews", () => {
     expect(
       screen.queryByRole("button", { name: "Resolve comment" }),
     ).not.toBeInTheDocument();
-    expect(screen.getAllByText("Sent to worker agent")).toHaveLength(2);
+    expect(
+      screen.getAllByRole("status", { name: "Sent to worker agent" }),
+    ).toHaveLength(2);
   });
 
   it("marks an AO review using its stored injection decision", async () => {
