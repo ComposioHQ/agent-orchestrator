@@ -29,8 +29,39 @@ func (p *stubWebhookProcessor) Process(context.Context, string, string, string, 
 }
 
 type stubLinkService struct {
-	identity tenant.Identity
-	start    scm.InstallRedirect
+	identity      tenant.Identity
+	start         scm.InstallRedirect
+	installations []domain.SCMInstallation
+	repositories  []domain.SCMRepository
+	allowlist     []string
+	disconnected  string
+}
+
+func (s *stubLinkService) ListInstallations(_ context.Context, identity tenant.Identity) ([]domain.SCMInstallation, error) {
+	s.identity = identity
+	return s.installations, nil
+}
+
+func (s *stubLinkService) ListRepositories(_ context.Context, identity tenant.Identity, _ string) ([]domain.SCMRepository, error) {
+	s.identity = identity
+	return s.repositories, nil
+}
+
+func (s *stubLinkService) SyncInstallation(_ context.Context, identity tenant.Identity, _ string) ([]domain.SCMRepository, error) {
+	s.identity = identity
+	return s.repositories, nil
+}
+
+func (s *stubLinkService) SetAllowlist(_ context.Context, identity tenant.Identity, _ string, repositories []string) ([]domain.SCMRepository, error) {
+	s.identity = identity
+	s.allowlist = append([]string(nil), repositories...)
+	return s.repositories, nil
+}
+
+func (s *stubLinkService) Unlink(_ context.Context, identity tenant.Identity, installationID string) error {
+	s.identity = identity
+	s.disconnected = installationID
+	return nil
 }
 
 func (s *stubLinkService) StartInstall(_ context.Context, identity tenant.Identity) (scm.InstallRedirect, error) {
@@ -154,5 +185,60 @@ func TestCanonicalSCMInstallRoutes(t *testing.T) {
 	server.Handler().ServeHTTP(callbackResponse, callback)
 	if callbackResponse.Code != http.StatusOK {
 		t.Fatalf("callback status = %d, body = %s", callbackResponse.Code, callbackResponse.Body.String())
+	}
+}
+
+func TestCanonicalSCMAdminRoutes(t *testing.T) {
+	link := &stubLinkService{
+		installations: []domain.SCMInstallation{{ID: "installation-42", Provider: "github", ExternalInstallationID: 987, AccountLogin: "acme"}},
+		repositories:  []domain.SCMRepository{{ID: "repository-77", FullName: "acme/widgets", Private: true, Allowed: true}},
+	}
+	server, token := newSCMRouteServer(t, link, nil)
+	base := "/api/cloud/v1/orgs/org-1/github/installations"
+	requests := []struct {
+		method string
+		path   string
+		body   string
+		status int
+	}{
+		{method: http.MethodGet, path: base, status: http.StatusOK},
+		{method: http.MethodGet, path: base + "/installation-42/repositories", status: http.StatusOK},
+		{method: http.MethodPost, path: base + "/installation-42/sync", status: http.StatusOK},
+		{method: http.MethodPut, path: base + "/installation-42/allowlist", body: `{"repositories":["acme/widgets"]}`, status: http.StatusOK},
+		{method: http.MethodDelete, path: base + "/installation-42/disconnect", status: http.StatusNoContent},
+	}
+	for _, request := range requests {
+		httpRequest := httptest.NewRequest(request.method, request.path, strings.NewReader(request.body))
+		httpRequest.Header.Set("Authorization", "Bearer "+token)
+		if request.body != "" {
+			httpRequest.Header.Set("Content-Type", "application/json")
+		}
+		response := httptest.NewRecorder()
+		server.Handler().ServeHTTP(response, httpRequest)
+		if response.Code != request.status {
+			t.Fatalf("%s %s status=%d body=%s", request.method, request.path, response.Code, response.Body.String())
+		}
+	}
+	if len(link.allowlist) != 1 || link.allowlist[0] != "acme/widgets" || link.disconnected != "installation-42" {
+		t.Fatalf("allowlist=%#v disconnected=%q", link.allowlist, link.disconnected)
+	}
+	listRequest := httptest.NewRequest(http.MethodGet, base, nil)
+	listRequest.Header.Set("Authorization", "Bearer "+token)
+	listResponse := httptest.NewRecorder()
+	server.Handler().ServeHTTP(listResponse, listRequest)
+	if strings.Contains(listResponse.Body.String(), "987") {
+		t.Fatalf("external installation id leaked: %s", listResponse.Body.String())
+	}
+	for _, legacy := range []struct{ method, path string }{
+		{http.MethodDelete, base + "/installation-42"},
+		{http.MethodPost, base + "/installation-42/repositories/sync"},
+	} {
+		request := httptest.NewRequest(legacy.method, legacy.path, nil)
+		request.Header.Set("Authorization", "Bearer "+token)
+		response := httptest.NewRecorder()
+		server.Handler().ServeHTTP(response, request)
+		if response.Code != http.StatusNotFound {
+			t.Fatalf("legacy %s %s status=%d", legacy.method, legacy.path, response.Code)
+		}
 	}
 }

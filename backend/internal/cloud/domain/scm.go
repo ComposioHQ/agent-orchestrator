@@ -1,6 +1,16 @@
 package domain
 
-import "time"
+import (
+	"errors"
+	"time"
+)
+
+var (
+	// ErrSCMNotFound means a tenant-scoped SCM record is absent or invisible.
+	ErrSCMNotFound = errors.New("cloud scm record not found")
+	// ErrSCMConflict means an installation is already claimed by another tenant.
+	ErrSCMConflict = errors.New("cloud scm record conflicts with existing ownership")
+)
 
 const SCMProviderGitHub = "github"
 
@@ -25,6 +35,12 @@ type SCMInstallation struct {
 	UpdatedAt              time.Time
 }
 
+// SCMInstallationLink is the tenant identity recovered from one install state.
+type SCMInstallationLink struct {
+	OrgID  string
+	UserID string
+}
+
 const (
 	TokenPurposeClone = "clone"
 	TokenPurposePush  = "push"
@@ -38,6 +54,8 @@ type SCMRepository struct {
 	FullName             string
 	Private              bool
 	Allowed              bool
+	CreatedAt            time.Time
+	UpdatedAt            time.Time
 }
 
 type SCMTokenGrant struct {
@@ -48,6 +66,17 @@ type SCMTokenGrant struct {
 	Purpose           string
 	RequestedByUserID string
 	ExpiresAt         time.Time
+}
+
+// SCMObservationSignal is a normalized provider refresh hint keyed by delivery.
+type SCMObservationSignal struct {
+	ExternalInstallationID int64
+	Repository             string
+	PullRequestNumber      int
+	PullRequestURL         string
+	HeadSHA                string
+	Event                  string
+	Action                 string
 }
 
 const (

@@ -15,6 +15,7 @@ import (
 	cloudconfig "github.com/aoagents/agent-orchestrator/backend/internal/cloud/config"
 	"github.com/aoagents/agent-orchestrator/backend/internal/cloud/httpapi"
 	cloudpostgres "github.com/aoagents/agent-orchestrator/backend/internal/cloud/postgres"
+	cloudscm "github.com/aoagents/agent-orchestrator/backend/internal/cloud/scm"
 )
 
 func main() {
@@ -50,6 +51,17 @@ func run(logger *slog.Logger) error {
 	if err != nil {
 		return err
 	}
+	var scmOptions httpapi.SCMOptions
+	scmBundle, err := cloudscm.NewBundleFromEnv(store, nil)
+	if err != nil && !errors.Is(err, cloudscm.ErrNotConfigured) {
+		return err
+	}
+	if scmBundle != nil {
+		scmOptions = httpapi.SCMOptions{
+			Link: scmBundle.Link, Webhook: scmBundle.Webhook,
+			InstallCompletionURL: scmBundle.InstallCompletionURL,
+		}
+	}
 	api, err := httpapi.New(httpapi.Options{
 		Store:               store,
 		Google:              google,
@@ -59,9 +71,13 @@ func run(logger *slog.Logger) error {
 		TrustSourceIPHeader: cfg.TrustSourceIPHeader,
 		Logger:              logger,
 		App:                 buildAppAPI(cfg, logger),
+		SCM:                 scmOptions,
 	})
 	if err != nil {
 		return err
+	}
+	if scmBundle != nil {
+		go runSCMWebhookRetries(ctx, logger, scmBundle.Webhook)
 	}
 	server := &http.Server{
 		Addr:              cfg.Address,
@@ -86,5 +102,30 @@ func run(logger *slog.Logger) error {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		return server.Shutdown(shutdownCtx)
+	}
+}
+
+func runSCMWebhookRetries(ctx context.Context, logger *slog.Logger, processor *cloudscm.WebhookProcessor) {
+	const batchSize = 50
+	retry := func() {
+		processed, err := processor.RetryPending(ctx, batchSize)
+		if err != nil && !errors.Is(err, context.Canceled) {
+			logger.Error("Cloud SCM webhook retry failed", "error", err)
+			return
+		}
+		if processed > 0 {
+			logger.Info("Cloud SCM webhook retries processed", "deliveries", processed)
+		}
+	}
+	retry()
+	ticker := time.NewTicker(time.Minute)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			retry()
+		}
 	}
 }

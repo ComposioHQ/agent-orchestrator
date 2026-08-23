@@ -18,12 +18,14 @@ import (
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/cloud/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/cloud/scm"
+	"github.com/aoagents/agent-orchestrator/backend/internal/tenant"
 )
 
 type scmWebhookPGHarness struct {
-	store  *Store
-	admin  *pgxpool.Pool
-	prefix string
+	store    *Store
+	admin    *pgxpool.Pool
+	scmAdmin *pgxpool.Pool
+	prefix   string
 }
 
 func newSCMWebhookPGHarness(t *testing.T) *scmWebhookPGHarness {
@@ -49,28 +51,221 @@ func newSCMWebhookPGHarness(t *testing.T) *scmWebhookPGHarness {
 	_, err = admin.Exec(ctx, `GRANT EXECUTE ON FUNCTION
 		ao_scm_ingest_and_claim_webhook(TEXT, TEXT, TEXT, BYTEA, TEXT, TEXT),
 		ao_scm_claim_due_webhooks(TEXT, INTEGER),
-		ao_scm_finish_webhook(TEXT, TEXT, UUID, TEXT, TEXT),
-		ao_scm_prune_webhooks(INTERVAL) TO `+role)
+		 ao_scm_finish_webhook(TEXT, TEXT, UUID, TEXT, TEXT),
+		 ao_scm_prune_webhooks(INTERVAL),
+		 ao_scm_upsert_installation(UUID, UUID, BIGINT, TEXT, TEXT, TEXT, TEXT, TEXT),
+		 ao_scm_consume_install_state(BYTEA),
+		ao_scm_record_observation(TEXT, BIGINT, TEXT, TEXT, TEXT, INTEGER, TEXT, TEXT) TO `+role)
+	if err != nil {
+		admin.Close()
+		t.Fatal(err)
+	}
+	_, err = admin.Exec(ctx, `GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE
+		ao_scm_installations, ao_scm_repositories, ao_scm_install_states,
+		ao_scm_token_grants TO `+role)
+	if err != nil {
+		admin.Close()
+		t.Fatal(err)
+	}
+	scmConfig, err := pgxpool.ParseConfig(migrationURL)
+	if err != nil {
+		admin.Close()
+		t.Fatal(err)
+	}
+	scmConfig.AfterConnect = func(ctx context.Context, conn *pgx.Conn) error {
+		_, err := conn.Exec(ctx, `SET ROLE ao_cloud_scm`)
+		return err
+	}
+	scmAdmin, err := pgxpool.NewWithConfig(ctx, scmConfig)
 	if err != nil {
 		admin.Close()
 		t.Fatal(err)
 	}
 	store, err := Open(ctx, runtimeURL)
 	if err != nil {
+		scmAdmin.Close()
 		admin.Close()
 		t.Fatal(err)
 	}
 	harness := &scmWebhookPGHarness{
-		store: store, admin: admin,
+		store: store, admin: admin, scmAdmin: scmAdmin,
 		prefix: "scm-lifecycle-" + uuid.NewString(),
 	}
 	t.Cleanup(func() {
-		_, _ = admin.Exec(context.Background(),
+		_, _ = scmAdmin.Exec(context.Background(),
 			`DELETE FROM ao_scm_webhook_deliveries WHERE delivery_id LIKE $1`, harness.prefix+"%")
+		_, _ = scmAdmin.Exec(context.Background(),
+			`DELETE FROM ao_scm_observations WHERE delivery_id LIKE $1`, harness.prefix+"%")
 		store.Close()
+		scmAdmin.Close()
 		admin.Close()
 	})
 	return harness
+}
+
+func TestSCMInstallationBoundaryAgainstPostgres(t *testing.T) {
+	h := newSCMWebhookPGHarness(t)
+	ctx := context.Background()
+	principalA, err := h.store.UpsertGoogleUser(ctx, domain.Principal{
+		Provider: "google", ExternalID: h.prefix + "-user-a", Email: h.prefix + "-a@example.test", DisplayName: "SCM A",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	membershipsA, err := h.store.ListMemberships(ctx, principalA)
+	if err != nil || len(membershipsA) != 1 {
+		t.Fatalf("memberships A=%#v error=%v", membershipsA, err)
+	}
+	principalB, err := h.store.UpsertGoogleUser(ctx, domain.Principal{
+		Provider: "google", ExternalID: h.prefix + "-user-b", Email: h.prefix + "-b@example.test", DisplayName: "SCM B",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	membershipsB, err := h.store.ListMemberships(ctx, principalB)
+	if err != nil || len(membershipsB) != 1 {
+		t.Fatalf("memberships B=%#v error=%v", membershipsB, err)
+	}
+	userA, userB := principalA.UserID, principalB.UserID
+	orgA, orgB := membershipsA[0].OrgID, membershipsB[0].OrgID
+	workspaceA := uuid.NewString()
+	workspaceTx, err := h.store.pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = workspaceTx.Rollback(ctx) }()
+	if _, err := workspaceTx.Exec(ctx,
+		`SELECT set_config('ao.user_id', $1, true), set_config('ao.org_id', $2, true)`, userA, orgA,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := workspaceTx.Exec(ctx,
+		`INSERT INTO ao_cloud_workspaces (id, org_id, owner_user_id, repository_url, sandbox_id, state)
+		 VALUES ($1, $2, $3, 'https://github.com/acme/widgets.git', $4, 'ready')`,
+		workspaceA, orgA, userA, h.prefix+"-sandbox",
+	); err != nil {
+		t.Fatal(err)
+	}
+	if err := workspaceTx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	identityA := tenant.Identity{OrgID: orgA, UserID: userA, Role: "owner"}
+	identityB := tenant.Identity{OrgID: orgB, UserID: userB, Role: "owner"}
+
+	t.Run("install state is one shot", func(t *testing.T) {
+		digest := sha256.Sum256([]byte(h.prefix + "-state"))
+		if err := h.store.CreateSCMInstallState(ctx, identityA, digest[:], time.Now().Add(time.Minute)); err != nil {
+			t.Fatal(err)
+		}
+		link, err := h.store.ConsumeSCMInstallState(ctx, digest[:])
+		if err != nil || link.OrgID != orgA || link.UserID != userA {
+			t.Fatalf("link=%#v error=%v", link, err)
+		}
+		if _, err := h.store.ConsumeSCMInstallState(ctx, digest[:]); !errors.Is(err, domain.ErrSCMNotFound) {
+			t.Fatalf("replay error=%v", err)
+		}
+	})
+
+	var installation domain.SCMInstallation
+	t.Run("repository access is default deny and tenant scoped", func(t *testing.T) {
+		installation, err = h.store.UpsertSCMInstallation(ctx, identityA, domain.SCMInstallation{
+			ExternalInstallationID: time.Now().UnixNano(), AccountLogin: "acme",
+			AccountType: "Organization", AppSlug: "ao-cloud",
+			RepositorySelection: "selected", Status: domain.InstallationStatusActive,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := h.store.SyncSCMRepositories(ctx, identityA, installation.ID, []domain.SCMRepository{{
+			ExternalRepositoryID: time.Now().UnixNano(), FullName: "acme/widgets", Private: true,
+		}}); err != nil {
+			t.Fatal(err)
+		}
+		repositories, err := h.store.ListSCMRepositories(ctx, identityA, installation.ID)
+		if err != nil || len(repositories) != 1 || repositories[0].Allowed {
+			t.Fatalf("repositories=%#v error=%v", repositories, err)
+		}
+		if _, _, err := h.store.AllowedSCMRepository(ctx, identityA, "acme/widgets"); !errors.Is(err, domain.ErrSCMNotFound) {
+			t.Fatalf("denied lookup error=%v", err)
+		}
+		if err := h.store.SetSCMRepositoryAllowlist(ctx, identityA, installation.ID, []int64{repositories[0].ExternalRepositoryID}); err != nil {
+			t.Fatal(err)
+		}
+		_, allowed, err := h.store.AllowedSCMRepository(ctx, identityA, "acme/widgets")
+		if err != nil || !allowed.Allowed {
+			t.Fatalf("allowed=%#v error=%v", allowed, err)
+		}
+		if _, err := h.store.SCMInstallationByID(ctx, identityB, installation.ID); !errors.Is(err, domain.ErrSCMNotFound) {
+			t.Fatalf("cross-org installation error=%v", err)
+		}
+		if repositories, err := h.store.ListSCMInstallations(ctx, identityB); err != nil || len(repositories) != 0 {
+			t.Fatalf("cross-org list=%#v error=%v", repositories, err)
+		}
+		if _, err := h.store.UpsertSCMInstallation(ctx, identityB, domain.SCMInstallation{
+			ExternalInstallationID: installation.ExternalInstallationID,
+			AccountLogin:           "acme", AccountType: "Organization", AppSlug: "ao-cloud",
+			RepositorySelection: "selected", Status: domain.InstallationStatusActive,
+		}); !errors.Is(err, domain.ErrSCMConflict) {
+			t.Fatalf("cross-org installation claim error=%v", err)
+		}
+	})
+
+	t.Run("sandbox binding and audit contain no credential", func(t *testing.T) {
+		sandboxID := h.prefix + "-sandbox"
+		if err := h.store.AuthorizeSCMSandbox(ctx, identityA, sandboxID); err != nil {
+			t.Fatal(err)
+		}
+		if err := h.store.AuthorizeSCMSandbox(ctx, identityB, sandboxID); err == nil {
+			t.Fatal("cross-tenant sandbox was authorized")
+		}
+		_, repository, err := h.store.AllowedSCMRepository(ctx, identityA, "acme/widgets")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := h.store.RecordSCMTokenGrant(ctx, identityA, domain.SCMTokenGrant{
+			OrgID: orgA, InstallationID: installation.ID, RepositoryID: repository.ID,
+			SandboxID: sandboxID, Purpose: domain.TokenPurposeClone,
+			RequestedByUserID: userA, ExpiresAt: time.Now().Add(time.Hour),
+		}); err != nil {
+			t.Fatal(err)
+		}
+		var grants int
+		err = h.store.withSCMIdentityTx(ctx, identityA, pgx.TxOptions{AccessMode: pgx.ReadOnly}, func(tx pgx.Tx) error {
+			return tx.QueryRow(ctx, `SELECT count(*) FROM ao_scm_token_grants WHERE org_id = $1`, orgA).Scan(&grants)
+		})
+		if err != nil || grants != 1 {
+			t.Fatalf("grants=%d error=%v", grants, err)
+		}
+		var secretColumns int
+		if err := h.admin.QueryRow(ctx,
+			`SELECT count(*) FROM information_schema.columns
+			 WHERE table_name = 'ao_scm_token_grants' AND column_name IN ('token', 'access_token', 'token_hash', 'private_key')`,
+		).Scan(&secretColumns); err != nil || secretColumns != 0 {
+			t.Fatalf("secret columns=%d error=%v", secretColumns, err)
+		}
+	})
+
+	t.Run("observation sink deduplicates delivery id", func(t *testing.T) {
+		deliveryID := h.deliveryID("observation")
+		signal := domain.SCMObservationSignal{
+			ExternalInstallationID: installation.ExternalInstallationID,
+			Repository:             "acme/widgets", Event: "pull_request", Action: "synchronize",
+			PullRequestNumber: 7, PullRequestURL: "https://github.com/acme/widgets/pull/7", HeadSHA: "abc123",
+		}
+		if err := h.store.ObserveSCMSignal(ctx, deliveryID, signal); err != nil {
+			t.Fatal(err)
+		}
+		if err := h.store.ObserveSCMSignal(ctx, deliveryID, signal); err != nil {
+			t.Fatal(err)
+		}
+		var observations int
+		if err := h.scmAdmin.QueryRow(ctx, `SELECT count(*) FROM ao_scm_observations WHERE delivery_id = $1`, deliveryID).Scan(&observations); err != nil || observations != 1 {
+			t.Fatalf("observations=%d error=%v", observations, err)
+		}
+		if err := h.store.pool.QueryRow(ctx, `SELECT count(*) FROM ao_scm_observations`).Scan(&observations); err == nil || !strings.Contains(err.Error(), "permission denied") {
+			t.Fatalf("runtime direct observation read error=%v", err)
+		}
+	})
 }
 
 func (h *scmWebhookPGHarness) deliveryID(suffix string) string {
@@ -140,7 +335,7 @@ func TestSCMWebhookLifecycleAgainstPostgres(t *testing.T) {
 			t.Fatalf("first receipts = %d, claimed = %d", first, claimed)
 		}
 		var rows, bodyBytes int
-		if err := h.admin.QueryRow(ctx,
+		if err := h.scmAdmin.QueryRow(ctx,
 			`SELECT count(*), max(octet_length(body)) FROM ao_scm_webhook_deliveries WHERE delivery_id = $1`, id,
 		).Scan(&rows, &bodyBytes); err != nil {
 			t.Fatal(err)
@@ -154,7 +349,7 @@ func TestSCMWebhookLifecycleAgainstPostgres(t *testing.T) {
 		if _, err := h.store.IngestAndClaimSCMWebhook(ctx, invalid); err == nil {
 			t.Fatal("inconsistent terminal receipt unexpectedly committed")
 		}
-		if err := h.admin.QueryRow(ctx,
+		if err := h.scmAdmin.QueryRow(ctx,
 			`SELECT count(*) FROM ao_scm_webhook_deliveries WHERE delivery_id = $1`, invalid.DeliveryID,
 		).Scan(&rows); err != nil || rows != 0 {
 			t.Fatalf("failed atomic ingest rows = %d, error = %v", rows, err)
@@ -184,7 +379,7 @@ func TestSCMWebhookLifecycleAgainstPostgres(t *testing.T) {
 		}
 		var state, lastError string
 		var attempts int
-		if err := h.admin.QueryRow(ctx,
+		if err := h.scmAdmin.QueryRow(ctx,
 			`SELECT processing_state, last_error, attempts FROM ao_scm_webhook_deliveries WHERE delivery_id = $1`, id,
 		).Scan(&state, &lastError, &attempts); err != nil {
 			t.Fatal(err)
@@ -207,7 +402,7 @@ func TestSCMWebhookLifecycleAgainstPostgres(t *testing.T) {
 		if duplicate.Claimed || duplicate.LeaseID != initial.LeaseID || duplicate.Attempts != initial.Attempts {
 			t.Fatalf("active duplicate = %#v, initial = %#v", duplicate, initial)
 		}
-		if _, err := h.admin.Exec(ctx,
+		if _, err := h.scmAdmin.Exec(ctx,
 			`UPDATE ao_scm_webhook_deliveries SET lease_expires_at = clock_timestamp() - interval '1 second', next_attempt_at = clock_timestamp() - interval '1 second' WHERE delivery_id = $1`, id,
 		); err != nil {
 			t.Fatal(err)
@@ -261,7 +456,7 @@ func TestSCMWebhookLifecycleAgainstPostgres(t *testing.T) {
 			t.Fatalf("retry finish = %v, error = %v", finished, err)
 		}
 		var delay float64
-		if err := h.admin.QueryRow(ctx,
+		if err := h.scmAdmin.QueryRow(ctx,
 			`SELECT extract(epoch FROM (next_attempt_at - updated_at)) FROM ao_scm_webhook_deliveries WHERE delivery_id = $1`, id,
 		).Scan(&delay); err != nil {
 			t.Fatal(err)
@@ -269,18 +464,18 @@ func TestSCMWebhookLifecycleAgainstPostgres(t *testing.T) {
 		if delay < .9 || delay > 1.1 {
 			t.Fatalf("first retry delay = %f", delay)
 		}
-		if _, err := h.admin.Exec(ctx,
+		if _, err := h.scmAdmin.Exec(ctx,
 			`UPDATE ao_scm_webhook_deliveries SET attempts = 14, processing_state = 'processing', lease_id = gen_random_uuid(), lease_expires_at = clock_timestamp() + interval '5 minutes', next_attempt_at = clock_timestamp() + interval '5 minutes' WHERE delivery_id = $1`, id,
 		); err != nil {
 			t.Fatal(err)
 		}
-		if err := h.admin.QueryRow(ctx, `SELECT lease_id::text FROM ao_scm_webhook_deliveries WHERE delivery_id = $1`, id).Scan(&claim.LeaseID); err != nil {
+		if err := h.scmAdmin.QueryRow(ctx, `SELECT lease_id::text FROM ao_scm_webhook_deliveries WHERE delivery_id = $1`, id).Scan(&claim.LeaseID); err != nil {
 			t.Fatal(err)
 		}
 		if finished, err = h.store.FinishSCMWebhook(ctx, id, claim.LeaseID, domain.SCMWebhookOutcomeRetry, "processing_failed"); err != nil || !finished {
 			t.Fatalf("capped retry finish = %v, error = %v", finished, err)
 		}
-		if err := h.admin.QueryRow(ctx,
+		if err := h.scmAdmin.QueryRow(ctx,
 			`SELECT extract(epoch FROM (next_attempt_at - updated_at)) FROM ao_scm_webhook_deliveries WHERE delivery_id = $1`, id,
 		).Scan(&delay); err != nil {
 			t.Fatal(err)
@@ -327,7 +522,7 @@ func TestSCMWebhookLifecycleAgainstPostgres(t *testing.T) {
 		if err == nil || !result.Durable {
 			t.Fatalf("result = %#v, error = %v", result, err)
 		}
-		if _, err := h.admin.Exec(ctx,
+		if _, err := h.scmAdmin.Exec(ctx,
 			`UPDATE ao_scm_webhook_deliveries SET lease_expires_at = clock_timestamp() - interval '1 second', next_attempt_at = clock_timestamp() - interval '1 second' WHERE delivery_id = $1`, id,
 		); err != nil {
 			t.Fatal(err)
@@ -365,7 +560,7 @@ func TestSCMWebhookLifecycleAgainstPostgres(t *testing.T) {
 		if _, err := h.store.IngestAndClaimSCMWebhook(ctx, dead); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := h.admin.Exec(ctx,
+		if _, err := h.scmAdmin.Exec(ctx,
 			`UPDATE ao_scm_webhook_deliveries SET updated_at = clock_timestamp() - interval '2 hours' WHERE delivery_id = ANY($1)`,
 			[]string{processingID, completeID, deadID},
 		); err != nil {
@@ -376,7 +571,7 @@ func TestSCMWebhookLifecycleAgainstPostgres(t *testing.T) {
 			t.Fatalf("removed = %d, error = %v", removed, err)
 		}
 		var state string
-		if err := h.admin.QueryRow(ctx,
+		if err := h.scmAdmin.QueryRow(ctx,
 			`SELECT processing_state FROM ao_scm_webhook_deliveries WHERE delivery_id = $1`, processingID,
 		).Scan(&state); err != nil || state != domain.SCMWebhookStateProcessing {
 			t.Fatalf("unfinished state = %q, error = %v", state, err)
