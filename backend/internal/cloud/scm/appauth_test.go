@@ -36,7 +36,7 @@ func TestAppCredentialsSignsBoundedGitHubJWT(t *testing.T) {
 	if got := claims.ExpiresAt.Sub(claims.IssuedAt.Time); got != appJWTLifetime {
 		t.Fatalf("lifetime = %s", got)
 	}
-	if !claims.IssuedAt.Time.Equal(now.Add(-appJWTBackdate)) {
+	if !claims.IssuedAt.Equal(now.Add(-appJWTBackdate)) {
 		t.Fatalf("issued at = %s", claims.IssuedAt.Time)
 	}
 }

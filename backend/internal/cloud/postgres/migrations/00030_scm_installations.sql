@@ -201,7 +201,7 @@ END
 $$;
 -- +goose StatementEnd
 
-GRANT USAGE, CREATE ON SCHEMA public TO ao_cloud_scm;
+GRANT USAGE ON SCHEMA public TO ao_cloud_scm;
 GRANT SELECT, INSERT, UPDATE ON ao_scm_installations TO ao_cloud_scm;
 GRANT SELECT, DELETE ON ao_scm_install_states TO ao_cloud_scm;
 GRANT EXECUTE ON FUNCTION ao_current_user_id(), ao_current_org_id(),
@@ -283,6 +283,7 @@ BEGIN
 END
 $$;
 -- +goose StatementEnd
+GRANT CREATE ON SCHEMA public TO ao_cloud_scm;
 ALTER FUNCTION ao_scm_upsert_installation(UUID, UUID, BIGINT, TEXT, TEXT, TEXT, TEXT, TEXT) OWNER TO ao_cloud_scm;
 REVOKE ALL ON FUNCTION ao_scm_upsert_installation(UUID, UUID, BIGINT, TEXT, TEXT, TEXT, TEXT, TEXT) FROM PUBLIC;
 
@@ -300,6 +301,7 @@ AS $$
 $$;
 -- +goose StatementEnd
 ALTER FUNCTION ao_scm_consume_install_state(BYTEA) OWNER TO ao_cloud_scm;
+REVOKE CREATE ON SCHEMA public FROM ao_cloud_scm;
 REVOKE ALL ON FUNCTION ao_scm_consume_install_state(BYTEA) FROM PUBLIC;
 
 -- +goose Down

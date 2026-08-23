@@ -328,10 +328,12 @@ REVOKE ALL ON FUNCTION ao_scm_ingest_and_claim_webhook(TEXT, TEXT, TEXT, BYTEA, 
 REVOKE ALL ON FUNCTION ao_scm_claim_due_webhooks(TEXT, INTEGER) FROM PUBLIC;
 REVOKE ALL ON FUNCTION ao_scm_finish_webhook(TEXT, TEXT, UUID, TEXT, TEXT) FROM PUBLIC;
 REVOKE ALL ON FUNCTION ao_scm_prune_webhooks(INTERVAL) FROM PUBLIC;
+GRANT CREATE ON SCHEMA public TO ao_cloud_scm;
 ALTER FUNCTION ao_scm_ingest_and_claim_webhook(TEXT, TEXT, TEXT, BYTEA, TEXT, TEXT) OWNER TO ao_cloud_scm;
 ALTER FUNCTION ao_scm_claim_due_webhooks(TEXT, INTEGER) OWNER TO ao_cloud_scm;
 ALTER FUNCTION ao_scm_finish_webhook(TEXT, TEXT, UUID, TEXT, TEXT) OWNER TO ao_cloud_scm;
 ALTER FUNCTION ao_scm_prune_webhooks(INTERVAL) OWNER TO ao_cloud_scm;
+REVOKE CREATE ON SCHEMA public FROM ao_cloud_scm;
 
 -- +goose Down
 DROP FUNCTION IF EXISTS ao_scm_prune_webhooks(INTERVAL);
