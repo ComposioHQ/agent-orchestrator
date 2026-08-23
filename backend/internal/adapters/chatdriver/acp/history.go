@@ -21,6 +21,7 @@ type historyCapture struct {
 	occurrences     map[string]int
 	turnID          string
 	turnUserID      string
+	turnHasProvider bool
 	pendingUserID   string
 	pendingUserText string
 	fallbackID      int
@@ -126,6 +127,11 @@ func (c *conversation) prepareHistoryUpdate(update acpsdk.SessionUpdate) bool {
 	c.flushHistoryUserMessage()
 	if seed, needsTurn := historyUpdateTurnSeed(update); needsTurn {
 		c.ensureHistoryTurn(seed)
+		c.historyMu.Lock()
+		if c.history != nil && c.history.turnID != "" {
+			c.history.turnHasProvider = true
+		}
+		c.historyMu.Unlock()
 	}
 	return false
 }
@@ -190,6 +196,7 @@ func (c *conversation) startHistoryTurn(userID string) {
 	turnID := "acp-history-turn:" + c.history.sessionID + ":" + userID
 	c.history.turnID = turnID
 	c.history.turnUserID = userID
+	c.history.turnHasProvider = false
 	c.historyMu.Unlock()
 
 	c.resetHistoryItems(turnID)
@@ -259,6 +266,7 @@ func (c *conversation) finishHistoryTurn(state domain.TurnState) {
 	if c.history != nil && c.history.turnID == turnID {
 		c.history.turnID = ""
 		c.history.turnUserID = ""
+		c.history.turnHasProvider = false
 		c.history.pendingUserID = ""
 		c.history.pendingUserText = ""
 	}

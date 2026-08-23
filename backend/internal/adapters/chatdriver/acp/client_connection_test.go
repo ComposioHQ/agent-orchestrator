@@ -4,17 +4,21 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
+	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	acpsdk "github.com/coder/acp-go-sdk"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
-func TestClientConnectionDispatchesBlockingCursorMethodsOverTheWire(t *testing.T) {
+func TestExtensionMethodReaderRoutesOnlyConfiguredLegacyMethodsThroughSDK(t *testing.T) {
 	clientToAgentR, clientToAgentW := io.Pipe()
 	agentToClientR, agentToClientW := io.Pipe()
 	conv := &conversation{
@@ -71,7 +75,16 @@ func TestClientConnectionDispatchesBlockingCursorMethodsOverTheWire(t *testing.T
 			return nil, false, nil
 		}
 	}
-	conv.conn = newClientConnection(conv, extension, clientToAgentW, agentToClientR)
+	conv.extensionFor = extension
+	conv.extensionMethods = map[string]string{
+		"_cursor/ask_question": "cursor/ask_question",
+		"_cursor/create_plan":  "cursor/create_plan",
+	}
+	peerOutput := newExtensionMethodReader(agentToClientR, map[string]string{
+		"cursor/ask_question": "_cursor/ask_question",
+		"cursor/create_plan":  "_cursor/create_plan",
+	})
+	conv.conn = acpsdk.NewClientSideConnection(conv, clientToAgentW, peerOutput)
 	reader := bufio.NewReader(clientToAgentR)
 	var once sync.Once
 	t.Cleanup(func() {
@@ -135,6 +148,31 @@ func TestClientConnectionDispatchesBlockingCursorMethodsOverTheWire(t *testing.T
 	}
 	if response := readWireResponse(t, reader); response.ID != 3 || response.Outcome != "cancelled" {
 		t.Fatalf("cancelled plan wire response = %#v", response)
+	}
+}
+
+func TestExtensionMethodReaderRejectsOversizedFrames(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		input string
+	}{
+		{name: "terminated", input: strings.Repeat("x", 33) + "\n"},
+		{name: "unterminated", input: strings.Repeat("x", 33)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			reader := &extensionMethodReader{
+				reader:   bufio.NewReaderSize(strings.NewReader(tc.input), 8),
+				aliases:  map[string]string{"cursor/ask_question": "_cursor/ask_question"},
+				maxFrame: 32,
+			}
+			output, err := io.ReadAll(reader)
+			if !errors.Is(err, errACPFrameTooLarge) {
+				t.Fatalf("ReadAll error = %v, want %v", err, errACPFrameTooLarge)
+			}
+			if len(output) != 0 {
+				t.Fatalf("ReadAll returned %d bytes from rejected frame", len(output))
+			}
+		})
 	}
 }
 

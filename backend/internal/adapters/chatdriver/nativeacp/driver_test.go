@@ -37,7 +37,7 @@ func TestBindingLaunchesExactUserInstalledBinary(t *testing.T) {
 	var configured acpdriver.LaunchConfig
 	cfg := buildConfig(fakePlugin{binary: userBinary, status: ports.AgentAuthStatusAuthorized}, Config{
 		Harness: domain.HarnessOpenCode,
-		Configure: func(in acpdriver.LaunchConfig) ([]string, map[string]string, error) {
+		Configure: func(_ context.Context, in acpdriver.LaunchConfig) ([]string, map[string]string, error) {
 			configured = in
 			return []string{"acp"}, map[string]string{"PROVIDER_CONFIG": "/ao/config.json"}, nil
 		},
@@ -95,7 +95,7 @@ func TestBindingMapsPluginDiscoveryAndAuth(t *testing.T) {
 
 	t.Run("missing user binary", func(t *testing.T) {
 		cfg := buildConfig(fakePlugin{binErr: ports.ErrAgentBinaryNotFound}, Config{
-			Harness: domain.HarnessDroid, Configure: func(acpdriver.LaunchConfig) ([]string, map[string]string, error) {
+			Harness: domain.HarnessDroid, Configure: func(context.Context, acpdriver.LaunchConfig) ([]string, map[string]string, error) {
 				return []string{"exec"}, nil, nil
 			},
 		}, nil)
@@ -107,7 +107,7 @@ func TestBindingMapsPluginDiscoveryAndAuth(t *testing.T) {
 
 	t.Run("installed but logged out", func(t *testing.T) {
 		cfg := buildConfig(fakePlugin{binary: "/user/droid", status: ports.AgentAuthStatusUnauthorized}, Config{
-			Harness: domain.HarnessDroid, Configure: func(acpdriver.LaunchConfig) ([]string, map[string]string, error) {
+			Harness: domain.HarnessDroid, Configure: func(context.Context, acpdriver.LaunchConfig) ([]string, map[string]string, error) {
 				return []string{"exec"}, nil, nil
 			},
 		}, nil)
@@ -118,7 +118,7 @@ func TestBindingMapsPluginDiscoveryAndAuth(t *testing.T) {
 
 	t.Run("inconclusive auth is not logged out", func(t *testing.T) {
 		cfg := buildConfig(fakePlugin{binary: "/user/opencode", authErr: errors.New("probe timed out")}, Config{
-			Harness: domain.HarnessOpenCode, Configure: func(acpdriver.LaunchConfig) ([]string, map[string]string, error) {
+			Harness: domain.HarnessOpenCode, Configure: func(context.Context, acpdriver.LaunchConfig) ([]string, map[string]string, error) {
 				return []string{"acp"}, nil, nil
 			},
 		}, nil)
@@ -134,7 +134,7 @@ func TestBindingReusesPluginRuntimeEnvironment(t *testing.T) {
 	}}
 	cfg := buildConfig(plugin, Config{
 		Harness: domain.HarnessCursor,
-		Configure: func(acpdriver.LaunchConfig) ([]string, map[string]string, error) {
+		Configure: func(context.Context, acpdriver.LaunchConfig) ([]string, map[string]string, error) {
 			return []string{"acp"}, nil, nil
 		},
 	}, nil)

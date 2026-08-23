@@ -86,7 +86,7 @@ func (c *conversation) RequestPermission(
 	}
 	selected, err := c.RequestApproval(ctx, ClientApprovalRequest{
 		Summary: summary, ActivityKind: activityKindFromTool(pointerValue(params.ToolCall.Kind)),
-		Detail: approvalToolDetail(params.ToolCall, activityKindFromTool(pointerValue(params.ToolCall.Kind))),
+		Detail:    approvalToolDetail(params.ToolCall, activityKindFromTool(pointerValue(params.ToolCall.Kind))),
 		Decisions: decisions,
 	})
 	if err != nil || selected == "" {

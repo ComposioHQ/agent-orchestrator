@@ -3,6 +3,7 @@ package cursoracp
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -48,7 +49,7 @@ func TestConfigureWritesManagedStandingRuleForStartAndResume(t *testing.T) {
 		SessionID: "worker-1", DataDir: dataDir,
 		SystemPrompt: "AO standing instructions for start",
 	}
-	args, env, err := configure(cfg)
+	args, env, err := configure(context.Background(), cfg)
 	if err != nil {
 		t.Fatalf("configure start: %v", err)
 	}
@@ -74,7 +75,7 @@ func TestConfigureWritesManagedStandingRuleForStartAndResume(t *testing.T) {
 	// standing rule with the newly generated role instead of retaining launch
 	// context from the previous process.
 	cfg.SystemPrompt = "AO standing instructions recomputed for resume"
-	resumeArgs, _, err := configure(cfg)
+	resumeArgs, _, err := configure(context.Background(), cfg)
 	if err != nil {
 		t.Fatalf("configure resume: %v", err)
 	}
@@ -87,6 +88,18 @@ func TestConfigureWritesManagedStandingRuleForStartAndResume(t *testing.T) {
 	}
 	if !strings.Contains(string(rule), cfg.SystemPrompt) || strings.Contains(string(rule), "instructions for start") {
 		t.Fatalf("resumed managed rule = %q", rule)
+	}
+}
+
+func TestConfigureStopsStandingRuleWriteWhenContextCancelled(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	dataDir := t.TempDir()
+	_, _, err := configure(ctx, acpdriver.LaunchConfig{
+		SessionID: "cancelled", DataDir: dataDir, SystemPrompt: "must not be written",
+	})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("configure error = %v, want context.Canceled", err)
 	}
 }
 
@@ -103,7 +116,7 @@ func TestConfigureMapsEveryCursorPermissionMode(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			args, env, err := configure(acpdriver.LaunchConfig{Permissions: tt.mode})
+			args, env, err := configure(context.Background(), acpdriver.LaunchConfig{Permissions: tt.mode})
 			if err != nil {
 				t.Fatalf("configure: %v", err)
 			}
@@ -145,6 +158,33 @@ func TestCursorPermissionPolicyImplementsAdvertisedModes(t *testing.T) {
 			})
 			if gotID != tt.wantID || gotHandled != tt.handled {
 				t.Fatalf("selection = (%q, %v), want (%q, %v)", gotID, gotHandled, tt.wantID, tt.handled)
+			}
+		})
+	}
+}
+
+func TestValidateTurnSettingsRejectsCursorProcessModeTransitions(t *testing.T) {
+	tests := []struct {
+		name    string
+		initial ports.PermissionMode
+		turn    ports.PermissionMode
+		wantErr bool
+	}{
+		{name: "empty preserves auto launch", initial: ports.PermissionModeAuto},
+		{name: "same auto is valid", initial: ports.PermissionModeAuto, turn: ports.PermissionModeAuto},
+		{name: "default to accept edits is dynamic", initial: ports.PermissionModeDefault, turn: ports.PermissionModeAcceptEdits},
+		{name: "accept edits to default is dynamic", initial: ports.PermissionModeAcceptEdits, turn: ports.PermissionModeDefault},
+		{name: "default to auto needs restart", initial: ports.PermissionModeDefault, turn: ports.PermissionModeAuto, wantErr: true},
+		{name: "auto to default needs restart", initial: ports.PermissionModeAuto, turn: ports.PermissionModeDefault, wantErr: true},
+		{name: "default to bypass needs restart", initial: ports.PermissionModeDefault, turn: ports.PermissionModeBypassPermissions, wantErr: true},
+		{name: "bypass to accept edits needs restart", initial: ports.PermissionModeBypassPermissions, turn: ports.PermissionModeAcceptEdits, wantErr: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			err := validateTurnSettings(test.initial, ports.ChatTurnSettings{Approval: test.turn})
+			if (err != nil) != test.wantErr {
+				t.Fatalf("validateTurnSettings(%q, %q) error = %v, wantErr %v",
+					test.initial, test.turn, err, test.wantErr)
 			}
 		})
 	}
@@ -235,7 +275,7 @@ func TestHandleCreatePlanPublishesPlanAndUsesDurableApprovalFlow(t *testing.T) {
 }
 
 func TestConfigureUsesNativeCursorACPWithoutStandingRule(t *testing.T) {
-	args, env, err := configure(acpdriver.LaunchConfig{
+	args, env, err := configure(context.Background(), acpdriver.LaunchConfig{
 		Model: "gpt-5.5", Permissions: ports.PermissionModeDefault,
 	})
 	if err != nil {

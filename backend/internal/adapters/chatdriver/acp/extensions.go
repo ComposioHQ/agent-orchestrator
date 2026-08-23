@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 
+	acpsdk "github.com/coder/acp-go-sdk"
+
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
@@ -34,3 +36,24 @@ type ClientExtensionHandler func(
 	string,
 	json.RawMessage,
 ) (result any, handled bool, err error)
+
+// HandleExtensionMethod is the SDK's narrow extension hook. Legacy wire method
+// aliases are restored before dispatch so provider handlers use documented names.
+func (c *conversation) HandleExtensionMethod(
+	ctx context.Context,
+	method string,
+	params json.RawMessage,
+) (any, error) {
+	original, configured := c.extensionMethods[method]
+	if !configured || c.extensionFor == nil {
+		return nil, acpsdk.NewMethodNotFound(method)
+	}
+	result, handled, err := c.extensionFor(ctx, c, original, params)
+	if err != nil {
+		return nil, err
+	}
+	if !handled {
+		return nil, acpsdk.NewMethodNotFound(original)
+	}
+	return result, nil
+}
