@@ -9,5 +9,10 @@
 - [x] Increase chat UI typography beyond the composer.
 - [x] Show user and assistant message sent times on hover in 24-hour format.
 - [x] Show the 24-hour sent time on hover beside the copy button without shifting permanent controls.
-- [ ] Use `HH:MM` today, `Yesterday` yesterday, and a date for older messages.
+- [x] Use `HH:MM` today, `Yesterday` yesterday, and a date for older messages.
+- [x] Increase the right-side history trigger width.
+- [x] Replace composer top padding with a 10px background-to-transparent fade.
+- [x] Set user messages and AI responses to 14px.
+- [x] Keep chat composer text explicitly at 16px.
+- [x] Make the composer fade an overlay so it does not add layout padding.
 - [x] Run focused tests and review the final diff. Frontend typecheck was attempted but is blocked by missing workspace dependencies (`react`/`motion` in `packages/product-ui`).

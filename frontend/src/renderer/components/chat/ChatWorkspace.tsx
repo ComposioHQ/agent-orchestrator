@@ -104,7 +104,7 @@ import {
 	type TurnSettings,
 } from "../../types/conversation";
 
-const CHAT_FONT_SIZE_DEFAULT = 13;
+const CHAT_FONT_SIZE_DEFAULT = 14;
 
 // Reviewer panes share the terminal font-size preference with CenterPane, so a
 // reviewer opened inside the Chat surface matches a reviewer opened in TUI mode.
@@ -767,8 +767,9 @@ export function ChatWorkspace({
 
 					<div
 						ref={composerDockRef}
-						className="cursor-chat-composer-dock shrink-0 px-4 pb-3 pt-2"
+						className="cursor-chat-composer-dock shrink-0 px-4 pb-3"
 					>
+						<div aria-hidden="true" className="chat-composer-fade" />
 						<div
 							data-empty={conversationEmpty || undefined}
 							className="mx-auto flex w-full max-w-3xl flex-col gap-2 transition-[max-width] duration-500 ease-out data-[empty]:max-w-2xl"
@@ -1688,7 +1689,7 @@ function Timeline({
 				onBlur={() => setHoveredMarker(null)}
 				onPointerLeave={() => setHoveredMarker(null)}
 				className={cn(
-					"group/scroll absolute inset-y-3 right-1 z-10 w-4 touch-none rounded-full outline-none transition-opacity focus-visible:ring-1 focus-visible:ring-logo-accent/60",
+					"group/scroll absolute inset-y-3 right-1 z-10 w-6 touch-none rounded-full outline-none transition-opacity focus-visible:ring-1 focus-visible:ring-logo-accent/60",
 					scrollbar.visible ? "cursor-pointer opacity-100" : "pointer-events-none opacity-0",
 				)}
 			>

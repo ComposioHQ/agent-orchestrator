@@ -326,11 +326,11 @@ describe("ChatWorkspace timeline", () => {
 		expect(screen.queryByRole("button", { name: "Fullscreen" })).not.toBeInTheDocument();
 	});
 
-	it("starts chat text at 13px without a topbar font control", () => {
+	it("starts chat text at 14px without a topbar font control", () => {
 		render(<ChatWorkspace snapshot={chatFixture} />);
 		const chat = screen.getByLabelText("Chat");
 
-		expect(chat.style.getPropertyValue("--chat-font-size")).toBe("13px");
+		expect(chat.style.getPropertyValue("--chat-font-size")).toBe("14px");
 	});
 
 	it("keeps the composer aligned to the readable conversation width", () => {
