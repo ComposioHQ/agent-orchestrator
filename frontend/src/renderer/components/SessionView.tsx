@@ -858,6 +858,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 							    reviewer targets remain terminal surfaces in either mode. */}
 							{showChatSurface ? (
 								<SessionChatSurface
+									key={session.id}
 									session={session}
 									reviewerTerminal={reviewerTerminal}
 									onOpenReviewerTerminal={selectReviewerTerminal}

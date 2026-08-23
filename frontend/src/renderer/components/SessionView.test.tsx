@@ -168,6 +168,7 @@ vi.mock("./TerminalSwitchAgentButton", () => ({
 }));
 vi.mock("./chat/SessionChatSurface", () => ({
 	SessionChatSurface: ({
+		session,
 		onOpenShell,
 		headerActions,
 		reviewerTerminal,
@@ -178,6 +179,7 @@ vi.mock("./chat/SessionChatSurface", () => ({
 		shellTarget,
 		onSelectShellTerminal,
 	}: {
+		session: WorkspaceSession;
 		onOpenShell?: () => void;
 		headerActions?: ReactNode;
 		reviewerTerminal?: { handleId: string; harness: string };
@@ -188,7 +190,14 @@ vi.mock("./chat/SessionChatSurface", () => ({
 		shellTarget?: { kind: "shell"; handleId: string };
 		onSelectShellTerminal?: (handleId: string) => void;
 	}) => (
-		<div data-testid="chat-surface">
+		<div
+			data-testid="chat-surface"
+			ref={(node) => {
+				if (node && !node.dataset.mountedSessionId) {
+					node.dataset.mountedSessionId = session.id;
+				}
+			}}
+		>
 			chat surface
 			{headerActions}
 			{reviewerTerminal ? (
@@ -565,6 +574,23 @@ describe("SessionView", () => {
 		fireEvent.click(screen.getByRole("button", { name: "select chat tab" }));
 		expect(screen.getByTestId("chat-surface")).toBeInTheDocument();
 		expect(screen.queryByTestId("terminal-target")).not.toBeInTheDocument();
+	});
+
+	it("starts with fresh Chat state when navigating to another session", () => {
+		workspaces[0].sessions[0].mode = "chat";
+		workspaces[0].sessions[1].mode = "chat";
+		const { rerender } = render(<SessionView sessionId="sess-1" />);
+		expect(screen.getByTestId("chat-surface")).toHaveAttribute(
+			"data-mounted-session-id",
+			"sess-1",
+		);
+
+		rerender(<SessionView sessionId="sess-2" />);
+
+		expect(screen.getByTestId("chat-surface")).toHaveAttribute(
+			"data-mounted-session-id",
+			"sess-2",
+		);
 	});
 
 	// The strip only ever shows the session on screen — pinning another session's
