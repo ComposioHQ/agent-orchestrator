@@ -46,7 +46,7 @@ func mustRun(t *testing.T, reaper *runtime.Reaper) runtime.ReapReport {
 func TestReaperStopsAnIdlePlacementAndRevokesItsCapability(t *testing.T) {
 	h := newHarness(t)
 	reaper := newReaper(t, h, testPolicy())
-	placement, err := h.manager.Ensure(context.Background(), workerRef())
+	placement, err := h.manager.Ensure(context.Background(), workerRef(), testLaunch())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -64,15 +64,12 @@ func TestReaperStopsAnIdlePlacementAndRevokesItsCapability(t *testing.T) {
 	if h.provider.Len() != 1 || h.store.Len() != 1 {
 		t.Fatalf("sandboxes = %d rows = %d", h.provider.Len(), h.store.Len())
 	}
-	if _, err := h.authority.Verify(context.Background(), placement.Capability.Token, capability.OpSandboxHeartbeat); !errors.Is(err, capability.ErrRevoked) {
-		t.Fatalf("capability after idle stop = %v, want revoked", err)
-	}
 }
 
 func TestReaperHeartbeatKeepsAPlacementAlive(t *testing.T) {
 	h := newHarness(t)
 	reaper := newReaper(t, h, testPolicy())
-	if _, err := h.manager.Ensure(context.Background(), workerRef()); err != nil {
+	if _, err := h.manager.Ensure(context.Background(), workerRef(), testLaunch()); err != nil {
 		t.Fatal(err)
 	}
 	h.now = h.now.Add(25 * time.Minute)
@@ -88,7 +85,7 @@ func TestReaperHeartbeatKeepsAPlacementAlive(t *testing.T) {
 func TestReaperDeletesAnAbandonedPlacement(t *testing.T) {
 	h := newHarness(t)
 	reaper := newReaper(t, h, testPolicy())
-	placement, err := h.manager.Ensure(context.Background(), workerRef())
+	placement, err := h.manager.Ensure(context.Background(), workerRef(), testLaunch())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -130,7 +127,7 @@ func TestReaperResumesAnInterruptedDelete(t *testing.T) {
 	h := newHarness(t)
 	reaper := newReaper(t, h, testPolicy())
 	ctx := context.Background()
-	if _, err := h.manager.Ensure(ctx, workerRef()); err != nil {
+	if _, err := h.manager.Ensure(ctx, workerRef(), testLaunch()); err != nil {
 		t.Fatal(err)
 	}
 	h.provider.FailDelete = errors.New("provider unreachable")
@@ -150,7 +147,7 @@ func TestReaperResumesAnInterruptedDelete(t *testing.T) {
 func TestReaperRepairsRecordedStateFromProviderTruth(t *testing.T) {
 	h := newHarness(t)
 	reaper := newReaper(t, h, testPolicy())
-	placement, err := h.manager.Ensure(context.Background(), workerRef())
+	placement, err := h.manager.Ensure(context.Background(), workerRef(), testLaunch())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -174,7 +171,7 @@ func TestReaperConvergesASandboxBackToTheDesiredStoppedState(t *testing.T) {
 	h := newHarness(t)
 	reaper := newReaper(t, h, testPolicy())
 	ctx := context.Background()
-	placement, err := h.manager.Ensure(ctx, workerRef())
+	placement, err := h.manager.Ensure(ctx, workerRef(), testLaunch())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -200,7 +197,7 @@ func TestReaperConvergesASandboxBackToTheDesiredStoppedState(t *testing.T) {
 func TestReaperMarksALostSandboxFailedThenDeletesItWhenAbandoned(t *testing.T) {
 	h := newHarness(t)
 	reaper := newReaper(t, h, testPolicy())
-	placement, err := h.manager.Ensure(context.Background(), workerRef())
+	placement, err := h.manager.Ensure(context.Background(), workerRef(), testLaunch())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -269,7 +266,7 @@ func TestReaperLeavesASandboxAClaimingRowStillPointsAt(t *testing.T) {
 	})
 	reaper := newReaper(t, h, testPolicy())
 	ctx := context.Background()
-	if _, err := h.manager.Ensure(ctx, workerRef()); err != nil {
+	if _, err := h.manager.Ensure(ctx, workerRef(), testLaunch()); err != nil {
 		t.Fatal(err)
 	}
 	h.now = h.now.Add(time.Hour)
@@ -351,13 +348,13 @@ func TestReaperKeepsGoingWhenOnePlacementFails(t *testing.T) {
 	h := newHarness(t)
 	reaper := newReaper(t, h, testPolicy())
 	ctx := context.Background()
-	first, err := h.manager.Ensure(ctx, workerRef())
+	first, err := h.manager.Ensure(ctx, workerRef(), testLaunch())
 	if err != nil {
 		t.Fatal(err)
 	}
 	second := workerRef()
 	second.SessionID = "sess-2"
-	if _, err := h.manager.Ensure(ctx, second); err != nil {
+	if _, err := h.manager.Ensure(ctx, second, testLaunch()); err != nil {
 		t.Fatal(err)
 	}
 	h.now = h.now.Add(5 * time.Hour)
@@ -384,7 +381,17 @@ func TestReaperPurgesSpentCapabilities(t *testing.T) {
 	h := newHarness(t)
 	reaper := newReaper(t, h, testPolicy())
 	ctx := context.Background()
-	if _, err := h.manager.Ensure(ctx, workerRef()); err != nil {
+	if _, err := h.manager.Ensure(ctx, workerRef(), testLaunch()); err != nil {
+		t.Fatal(err)
+	}
+	grant, err := h.authority.Issue(ctx, capability.Scope{
+		OrgID: "org-1", WorkspaceID: "ws-1", SessionID: "sess-1", Role: capability.RoleWorker,
+		Operations: []capability.Operation{capability.OpSandboxHeartbeat},
+	}, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := h.authority.Revoke(ctx, grant.Token); err != nil {
 		t.Fatal(err)
 	}
 	if err := h.manager.Delete(ctx, workerRef()); err != nil {

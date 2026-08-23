@@ -1,12 +1,15 @@
 package runtime
 
 import (
-	"context"
+	"bytes"
 	"errors"
 	"fmt"
+	"net/url"
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
 // ErrSandboxNotFound is what a Provider returns when the named sandbox does
@@ -54,8 +57,8 @@ func (s Sandbox) Attribution() (Attribution, bool) { return Attribute(s.Labels) 
 
 // CreateRequest is everything the provider needs to build one sandbox.
 //
-// Secrets travel in Env and SecretFiles only. There is deliberately no way to
-// put a credential on a command line: see Validate.
+// Secrets travel in SecretFiles only. There is deliberately no credential
+// field for argv or environment: see Validate.
 type CreateRequest struct {
 	// Ref and Labels attribute the sandbox. Labels are the discovery and
 	// cleanup key, so an adapter must apply them at creation, not afterwards —
@@ -64,12 +67,18 @@ type CreateRequest struct {
 	Labels map[string]string
 	// Snapshot names the prebuilt image the sandbox boots from.
 	Snapshot string
-	// Env carries configuration and secrets into the sandbox environment.
+	// Env carries non-secret launch configuration into the sandbox
+	// environment. Secret credentials use SecretFiles so they do not survive
+	// in the environment of every child process.
 	Env map[string]string
-	// SecretFiles are written inside the sandbox with owner-only permissions.
-	// Use them for material that must not appear in the process environment of
-	// every child process (private keys, tokens with long lives).
-	SecretFiles map[string]string
+	// SecretFiles are transient byte buffers written inside the sandbox with
+	// owner-only permissions. Providers must purge Content before Create
+	// returns, whether creation succeeds or fails.
+	SecretFiles []FileSecret
+	// CapabilityFilePath receives the 0600 sandbox-runtime launch metadata.
+	// The provider fills in the provider sandbox id after creation.
+	CapabilityFilePath    string
+	ControlPlaneRedeemURL string
 	// Command and Args, when set, are the sandbox entrypoint. They must never
 	// contain secret material.
 	Command string
@@ -94,6 +103,61 @@ type Resources struct {
 	DiskGB   int
 }
 
+// StartRequest supplies the fresh, short-lived launch material needed when a
+// stopped sandbox boots again. A revoked capability file must never be reused.
+type StartRequest struct {
+	SecretFiles           []FileSecret
+	Command               string
+	Args                  []string
+	BootstrapKey          string
+	Ref                   Ref
+	CapabilityFilePath    string
+	ControlPlaneRedeemURL string
+}
+
+// Validate enforces fresh launch metadata and secret-free semantic argv.
+func (r StartRequest) Validate() error {
+	if strings.TrimSpace(r.Command) == "" || strings.TrimSpace(r.BootstrapKey) == "" {
+		return fmt.Errorf("%w: restart command and bootstrap key are required", ErrInvalid)
+	}
+	if err := validateCapabilityFile(r.Ref, r.CapabilityFilePath, r.ControlPlaneRedeemURL); err != nil {
+		return err
+	}
+	if err := validateFileSecrets(r.SecretFiles); err != nil {
+		return err
+	}
+	for _, secret := range r.SecretFiles {
+		if secret.Path == r.CapabilityFilePath {
+			return fmt.Errorf("%w: secret source may not replace the sandbox capability file", ErrInvalid)
+		}
+	}
+	return guardFileSecretsArgv(r.Command, r.Args, r.SecretFiles)
+}
+
+func validateCapabilityFile(ref Ref, path, redeemURL string) error {
+	if err := ref.Validate(); err != nil {
+		return err
+	}
+	if strings.TrimSpace(path) != CapabilityFilePath {
+		return fmt.Errorf("%w: capability file path must be %s", ErrInvalid, CapabilityFilePath)
+	}
+	parsed, err := url.Parse(strings.TrimSpace(redeemURL))
+	if err != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
+		return fmt.Errorf("%w: control-plane redemption URL must be absolute HTTPS", ErrInvalid)
+	}
+	return nil
+}
+
+// FileSecret is one short-lived capability or credential delivered through a
+// file. Mode must be owner-only; zero means 0600. Content is deliberately a
+// byte slice so it can be overwritten after delivery instead of lingering as
+// an immutable Go string.
+type FileSecret struct {
+	Path    string
+	Content []byte
+	Mode    uint32
+}
+
 // Validate enforces the request invariants the compute plane depends on, above
 // all the no-secrets-in-argv rule.
 //
@@ -112,40 +176,106 @@ func (r CreateRequest) Validate() error {
 	if _, ok := Attribute(r.Labels); !ok {
 		return fmt.Errorf("%w: sandbox labels must attribute org, workspace, session, role, and runtime", ErrInvalid)
 	}
-	if err := guardArgv(r.Command, r.Args, r.Env, r.SecretFiles); err != nil {
+	if strings.TrimSpace(r.Command) == "" {
+		return fmt.Errorf("%w: sandbox command is required", ErrInvalid)
+	}
+	if err := validateCapabilityFile(r.Ref, r.CapabilityFilePath, r.ControlPlaneRedeemURL); err != nil {
+		return err
+	}
+	if err := validateConfigEnv(r.Env); err != nil {
+		return err
+	}
+	if err := validateFileSecrets(r.SecretFiles); err != nil {
+		return err
+	}
+	for _, secret := range r.SecretFiles {
+		if secret.Path == r.CapabilityFilePath {
+			return fmt.Errorf("%w: secret source may not replace the sandbox capability file", ErrInvalid)
+		}
+	}
+	if err := guardFileSecretsArgv(r.Command, r.Args, r.SecretFiles); err != nil {
 		return err
 	}
 	return nil
 }
 
-// minimumGuardedSecretLength keeps the argv scan from rejecting an entrypoint
-// because some trivial env value ("1", "true", a short flag word) happens to
-// appear in it. Real credentials are long; short values are not secrets worth
-// protecting and matching them would only produce false positives.
-const minimumGuardedSecretLength = 8
+func validateFileSecrets(secrets []FileSecret) error {
+	seen := make(map[string]struct{}, len(secrets))
+	for _, secret := range secrets {
+		path := strings.TrimSpace(secret.Path)
+		if path == "" || !strings.HasPrefix(path, "/") {
+			return fmt.Errorf("%w: secret file path must be absolute", ErrInvalid)
+		}
+		if len(secret.Content) == 0 {
+			return fmt.Errorf("%w: secret file %s is empty", ErrInvalid, path)
+		}
+		mode := secret.Mode
+		if mode == 0 {
+			mode = 0o600
+		}
+		if mode&0o077 != 0 || mode&0o600 != mode {
+			return fmt.Errorf("%w: secret file %s mode must be owner-only", ErrInvalid, path)
+		}
+		if _, duplicate := seen[path]; duplicate {
+			return fmt.Errorf("%w: duplicate secret file path %s", ErrInvalid, path)
+		}
+		seen[path] = struct{}{}
+	}
+	return nil
+}
 
-func guardArgv(command string, args []string, secretSets ...map[string]string) error {
-	haystack := append([]string{command}, args...)
-	names := make([]string, 0)
-	for _, secrets := range secretSets {
-		for name, value := range secrets {
-			if len(value) < minimumGuardedSecretLength {
-				continue
-			}
-			for _, candidate := range haystack {
-				if strings.Contains(candidate, value) {
-					names = append(names, name)
-					break
-				}
+func validateConfigEnv(env map[string]string) error {
+	for name := range env {
+		upper := strings.ToUpper(strings.TrimSpace(name))
+		if strings.HasSuffix(upper, "_FILE") {
+			continue
+		}
+		for _, marker := range []string{"TOKEN", "SECRET", "PASSWORD", "CREDENTIAL", "API_KEY", "PRIVATE_KEY"} {
+			if strings.Contains(upper, marker) {
+				return fmt.Errorf("%w: %s looks secret-bearing; deliver credentials through FileSecret", ErrInvalid, name)
 			}
 		}
 	}
-	if len(names) == 0 {
+	return nil
+}
+
+// PurgeFileSecrets overwrites transient secret buffers in place. It is
+// exported so managers and provider adapters can both defer it at their trust
+// boundary; repeated purges are harmless.
+func PurgeFileSecrets(secrets []FileSecret) {
+	for i := range secrets {
+		clear(secrets[i].Content)
+		secrets[i].Content = nil
+	}
+}
+
+// minimumGuardedSecretLength keeps the argv scan from rejecting an entrypoint
+// because a trivial short file value happens to appear in it.
+const minimumGuardedSecretLength = 8
+
+func guardFileSecretsArgv(command string, args []string, secrets []FileSecret) error {
+	haystack := make([][]byte, 0, len(args)+1)
+	haystack = append(haystack, []byte(command))
+	for _, arg := range args {
+		haystack = append(haystack, []byte(arg))
+	}
+	leaked := make([]string, 0)
+	for _, secret := range secrets {
+		if len(secret.Content) < minimumGuardedSecretLength {
+			continue
+		}
+		for _, candidate := range haystack {
+			if bytes.Contains(candidate, secret.Content) {
+				leaked = append(leaked, secret.Path)
+				break
+			}
+		}
+	}
+	if len(leaked) == 0 {
 		return nil
 	}
-	sort.Strings(names)
-	return fmt.Errorf("%w: sandbox arguments must not contain secret values (%s); pass them through the environment or a file",
-		ErrInvalid, strings.Join(names, ", "))
+	sort.Strings(leaked)
+	return fmt.Errorf("%w: sandbox arguments must not contain secret file values (%s)", ErrInvalid, strings.Join(leaked, ", "))
 }
 
 // Selector filters a provider listing. An empty map matches everything, which
@@ -158,17 +288,4 @@ type Selector struct {
 // be safe for concurrent use, and every method must be idempotent in the sense
 // the reconciler relies on: starting a running sandbox, stopping a stopped
 // one, and deleting a missing one all succeed.
-type Provider interface {
-	// Create builds a sandbox and returns it with its provider id and labels.
-	Create(ctx context.Context, request CreateRequest) (Sandbox, error)
-	// Get returns one sandbox, or ErrSandboxNotFound.
-	Get(ctx context.Context, id string) (Sandbox, error)
-	// Start boots a stopped sandbox.
-	Start(ctx context.Context, id string) (Sandbox, error)
-	// Stop suspends a running sandbox without destroying its disk.
-	Stop(ctx context.Context, id string) (Sandbox, error)
-	// Delete destroys a sandbox. A missing sandbox is success.
-	Delete(ctx context.Context, id string) error
-	// List enumerates sandboxes matching a selector.
-	List(ctx context.Context, selector Selector) ([]Sandbox, error)
-}
+type Provider = ports.ComputeProvider[CreateRequest, StartRequest, Sandbox, Selector]

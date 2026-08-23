@@ -35,6 +35,7 @@ type FakeProvider struct {
 	FailDelete error
 	// LastCreate is the most recent create request, for argument assertions.
 	LastCreate runtime.CreateRequest
+	LastStart  runtime.StartRequest
 }
 
 // NewFakeProvider returns an empty provider fake.
@@ -58,8 +59,12 @@ func (p *FakeProvider) now() time.Time {
 func (p *FakeProvider) Create(_ context.Context, request runtime.CreateRequest) (runtime.Sandbox, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	defer runtime.PurgeFileSecrets(request.SecretFiles)
 	p.Calls = append(p.Calls, "create")
 	p.LastCreate = request
+	if err := request.Validate(); err != nil {
+		return runtime.Sandbox{}, err
+	}
 	if err := p.FailCreate; err != nil {
 		p.FailCreate = nil
 		return runtime.Sandbox{}, err
@@ -100,10 +105,15 @@ func (p *FakeProvider) Get(_ context.Context, id string) (runtime.Sandbox, error
 }
 
 // Start boots a sandbox.
-func (p *FakeProvider) Start(_ context.Context, id string) (runtime.Sandbox, error) {
+func (p *FakeProvider) Start(_ context.Context, id string, request runtime.StartRequest) (runtime.Sandbox, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	defer runtime.PurgeFileSecrets(request.SecretFiles)
 	p.Calls = append(p.Calls, "start:"+id)
+	p.LastStart = request
+	if err := request.Validate(); err != nil {
+		return runtime.Sandbox{}, err
+	}
 	if err := p.FailStart; err != nil {
 		p.FailStart = nil
 		return runtime.Sandbox{}, err
