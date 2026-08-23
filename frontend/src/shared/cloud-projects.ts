@@ -17,7 +17,7 @@ export type CreateCloudProjectInput = {
 
 export type CreateCloudProjectResult = {
 	organizationId: string;
-	project: components["schemas"]["ProjectSummary"];
+	project: components["schemas"]["Project"];
 	session?: components["schemas"]["ControllersSessionView"];
 	sessionError?: string;
 };

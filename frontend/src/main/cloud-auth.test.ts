@@ -123,7 +123,7 @@ describe("AO Cloud desktop credential custody", () => {
 
 	it("gates every cloud surface behind the developer early-access opt-in", async () => {
 		setCloudPreferenceEnabled(false);
-		expect(cloudAvailability()).toEqual({ available: true, enabled: false, apiBaseUrl: "" });
+		expect(cloudAvailability()).toEqual({ available: true, enabled: false });
 		await expect(getCloudSession(dataDir)).resolves.toBeNull();
 		await expect(beginCloudSignIn(dataDir)).rejects.toThrow("not configured");
 
@@ -131,7 +131,6 @@ describe("AO Cloud desktop credential custody", () => {
 		expect(cloudAvailability()).toEqual({
 			available: true,
 			enabled: true,
-			apiBaseUrl: "",
 		});
 	});
 
@@ -154,16 +153,17 @@ describe("AO Cloud desktop credential custody", () => {
 				id: "placement_1",
 				orgId: "org_1",
 				ownerUserId: "user_1",
-				projectId: "project_1",
+				productProjectId: "project_1",
 				state: "ready",
 				createdAt: "2026-08-23T00:00:00Z",
 				updatedAt: "2026-08-23T00:00:01Z",
 			});
 		});
-		routes.set("https://cloud.example/api/v1/projects", (url, init) => {
+		routes.set("https://cloud.example/api/v1/projects/project_1", (url, init) => {
 			requests.push({ url, init });
 			return jsonResponse({
-				projects: [{ id: "project_1", name: "repo", kind: "single_repo", path: "https://github.com/acme/repo", repo: "acme/repo", defaultBranch: "main" }],
+				status: "ok",
+				project: { id: "project_1", name: "repo", kind: "single_repo", path: "https://github.com/acme/repo", repo: "acme/repo", defaultBranch: "main" },
 			});
 		});
 		routes.set("https://cloud.example/api/v1/sessions", (url, init) => {
@@ -205,16 +205,17 @@ describe("AO Cloud desktop credential custody", () => {
 			id: "placement_1",
 			orgId: "org_1",
 			ownerUserId: "user_1",
-			projectId: "project_1",
+			productProjectId: "project_1",
 			state: "ready",
 			createdAt: "2026-08-23T00:00:00Z",
 			updatedAt: "2026-08-23T00:00:01Z",
 		};
 		const createPlacement = vi.fn().mockResolvedValue(placement);
 		const getPlacement = vi.fn().mockResolvedValue(placement);
-		routes.set("https://cloud.example/api/v1/projects", () =>
+		routes.set("https://cloud.example/api/v1/projects/project_1", () =>
 			jsonResponse({
-				projects: [{ id: "project_1", name: "repo", kind: "single_repo", path: "https://github.com/acme/repo", repo: "acme/repo", defaultBranch: "main" }],
+				status: "ok",
+				project: { id: "project_1", name: "repo", kind: "single_repo", path: "https://github.com/acme/repo", repo: "acme/repo", defaultBranch: "main" },
 			}),
 		);
 		routes.set("https://cloud.example/api/v1/sessions", () =>
@@ -271,6 +272,77 @@ describe("AO Cloud desktop credential custody", () => {
 			"https://cloud.example/api/v1/sessions",
 			expect.objectContaining({ method: "POST" }),
 		);
+	});
+
+	it("retries placement creation with one idempotency key", async () => {
+		await beginCloudSignIn(dataDir);
+		const ready = {
+			id: "placement_1",
+			orgId: "org_1",
+			ownerUserId: "user_1",
+			productProjectId: "project_1",
+			state: "ready",
+			createdAt: "2026-08-23T00:00:00Z",
+			updatedAt: "2026-08-23T00:00:01Z",
+		};
+		const retryable = Object.assign(new Error("temporarily unavailable"), { status: 503 });
+		const createPlacement = vi.fn()
+			.mockRejectedValueOnce(retryable)
+			.mockRejectedValueOnce(retryable)
+			.mockResolvedValue(ready);
+		routes.set("https://cloud.example/api/v1/projects/project_1", () => jsonResponse({
+			status: "ok",
+			project: { id: "project_1", name: "repo", kind: "single_repo", path: "cloud", repo: "acme/repo", defaultBranch: "main", sessionPrefix: "repo" },
+		}));
+		routes.set("https://cloud.example/api/v1/sessions", () => jsonResponse({ session: { id: "session_1", projectId: "project_1" } }, 201));
+		let now = 0;
+
+		await createCloudProject(
+			dataDir,
+			{
+				organizationId: "org_1",
+				displayName: "repo",
+				repositoryUrl: "https://github.com/acme/repo",
+				defaultBranch: "main",
+				config: {},
+				orchestratorHarness: "codex",
+			},
+			{ create: createPlacement, get: vi.fn().mockResolvedValue(ready) },
+			{ now: () => now, sleep: async (delay) => { now += delay; }, timeoutMs: 10_000 },
+		);
+
+		expect(createPlacement).toHaveBeenCalledTimes(3);
+		expect(new Set(createPlacement.mock.calls.map(([input]) => input.idempotencyKey)).size).toBe(1);
+	});
+
+	it("times out bounded placement polling without starting a session", async () => {
+		await beginCloudSignIn(dataDir);
+		const pending = {
+			id: "placement_1",
+			orgId: "org_1",
+			ownerUserId: "user_1",
+			state: "pending",
+			createdAt: "2026-08-23T00:00:00Z",
+			updatedAt: "2026-08-23T00:00:00Z",
+		};
+		const getPlacement = vi.fn().mockResolvedValue(pending);
+		routes.set("https://cloud.example/api/v1/projects", () => jsonResponse({ projects: [] }));
+		let now = 0;
+
+		await expect(createCloudProject(
+			dataDir,
+			{
+				organizationId: "org_1",
+				displayName: "repo",
+				repositoryUrl: "https://github.com/acme/repo",
+				defaultBranch: "main",
+				config: {},
+				orchestratorHarness: "codex",
+			},
+			{ create: vi.fn().mockResolvedValue(pending), get: getPlacement },
+			{ now: () => now, sleep: async (delay) => { now += delay; }, timeoutMs: 500 },
+		)).rejects.toThrow("timed out");
+		expect(getPlacement).toHaveBeenCalledTimes(3);
 	});
 
 	it("reloads durable cloud projects and sessions from the shared app API", async () => {
@@ -365,6 +437,33 @@ describe("AO Cloud desktop credential custody", () => {
 
 		await expect(getCloudAccessToken(dataDir)).resolves.toBe("ao_access_2");
 		expect(await readStoredSession(dataDir)).toMatchObject({ refreshToken: "ao_refresh_2" });
+	});
+
+	it("refreshes before an authenticated project list request", async () => {
+		routes.set("https://cloud.example/api/cloud/v1/auth/google", () =>
+			jsonResponse(aoSession({ expiresAt: new Date(Date.now() + 1_000).toISOString() })),
+		);
+		await beginCloudSignIn(dataDir);
+		const refresh = vi.fn(() =>
+			jsonResponse(aoSession({ accessToken: "ao_access_2", refreshToken: "ao_refresh_2" })),
+		);
+		routes.set("https://cloud.example/api/cloud/v1/auth/refresh", refresh);
+		const authenticatedHeaders: HeadersInit[] = [];
+		routes.set("https://cloud.example/api/v1/projects", (_url, init) => {
+			authenticatedHeaders.push(init?.headers ?? {});
+			return jsonResponse({ projects: [] });
+		});
+		routes.set("https://cloud.example/api/v1/sessions", (_url, init) => {
+			authenticatedHeaders.push(init?.headers ?? {});
+			return jsonResponse({ sessions: [] });
+		});
+
+		await listCloudProjects(dataDir);
+
+		expect(refresh).toHaveBeenCalledTimes(1);
+		for (const headers of authenticatedHeaders) {
+			expect(headers).toMatchObject({ Authorization: "Bearer ao_access_2", "X-AO-Org": "org_1" });
+		}
 	});
 
 	it("refreshes once for concurrent readers", async () => {
