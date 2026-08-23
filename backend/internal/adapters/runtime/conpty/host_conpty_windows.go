@@ -5,8 +5,10 @@ package conpty
 import (
 	"fmt"
 	"os"
+	"os/exec"
+	"strconv"
 	"sync"
-	"unsafe"
+	"syscall"
 
 	gopty "github.com/aymanbagabas/go-pty"
 	"golang.org/x/sys/windows"
@@ -17,18 +19,6 @@ import (
 type conptyConn struct {
 	pty gopty.ConPty
 	cmd *gopty.Cmd
-
-	// job groups the ConPTY child and every process it spawns (e.g. the
-	// "agent-process supervise" wrapper and, under that, the actual agent
-	// binary) so Close can terminate the whole tree atomically. Without this,
-	// killing only cmd.Process (TerminateProcess, no signal, no propagation)
-	// orphans grandchildren, which can keep holding open file handles in the
-	// session's git worktree well past its removal retry budget, failing
-	// orchestrator replacement with "process cannot access the file". See
-	// windows.INVALID_HANDLE_VALUE check in newConPTY: job stays 0 if it
-	// could not be created/assigned, and Close falls back to the old
-	// single-process kill so a job-object failure never blocks teardown.
-	job windows.Handle
 
 	once     sync.Once
 	doneC    chan struct{}
@@ -72,54 +62,25 @@ func newConPTY(cwd, shellCmd string, shellArgs []string) (ptyConn, error) {
 		cmd:   cmd,
 		doneC: make(chan struct{}),
 	}
-	// Best-effort: a job-object failure (permissions, exotic sandboxing) must
-	// not fail the session start. c.job stays its zero value and Close falls
-	// back to killing only cmd.Process, matching the pre-job-object behavior.
-	c.job = newKillOnCloseJob(cmd.Process.Pid)
 
 	go c.wait()
 	return c, nil
 }
 
-// newKillOnCloseJob creates a Windows Job Object with
-// JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE and assigns pid to it, so every process
-// pid spawns (and every process those spawn, recursively) dies together when
-// the job is terminated or its last handle closes. Returns 0 if the job
-// could not be created or the process could not be assigned — the caller
-// treats that as "no job", not a fatal error.
-func newKillOnCloseJob(pid int) windows.Handle {
-	job, err := windows.CreateJobObject(nil, nil)
-	if err != nil {
-		return 0
+// killProcessTree taskkills pid's whole process tree. Node/the ConPTY child
+// launches its own children (e.g. the "agent-process supervise" wrapper and,
+// under that, the actual agent binary), and cmd.Process.Kill() alone
+// (TerminateProcess) does not propagate to them. /T walks the tree from pid;
+// /F forces it. Mirrors killProcessTree in
+// adapters/chatdriver/acp/process_windows.go, the same fix for the same
+// class of problem in a sibling package.
+func killProcessTree(pid int) error {
+	kill := exec.Command("taskkill", "/PID", strconv.Itoa(pid), "/T", "/F")
+	kill.SysProcAttr = &syscall.SysProcAttr{
+		CreationFlags: windows.CREATE_NO_WINDOW,
+		HideWindow:    true,
 	}
-	info := windows.JOBOBJECT_EXTENDED_LIMIT_INFORMATION{
-		BasicLimitInformation: windows.JOBOBJECT_BASIC_LIMIT_INFORMATION{
-			LimitFlags: windows.JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
-		},
-	}
-	if _, err := windows.SetInformationJobObject(
-		job,
-		windows.JobObjectExtendedLimitInformation,
-		uintptr(unsafe.Pointer(&info)),
-		uint32(unsafe.Sizeof(info)),
-	); err != nil {
-		_ = windows.CloseHandle(job)
-		return 0
-	}
-	// PROCESS_TERMINATE + PROCESS_SET_QUOTA are the documented minimum rights
-	// AssignProcessToJobObject requires. This handle is only needed for the
-	// assignment call itself; the job keeps the process bound after it closes.
-	proc, err := windows.OpenProcess(windows.PROCESS_TERMINATE|windows.PROCESS_SET_QUOTA, false, uint32(pid))
-	if err != nil {
-		_ = windows.CloseHandle(job)
-		return 0
-	}
-	defer windows.CloseHandle(proc)
-	if err := windows.AssignProcessToJobObject(job, proc); err != nil {
-		_ = windows.CloseHandle(job)
-		return 0
-	}
-	return job
+	return kill.Run()
 }
 
 func (c *conptyConn) wait() {
@@ -142,20 +103,15 @@ func (c *conptyConn) Close() error {
 	// Best-effort kill: a child that ignores ConPTY EOF still gets terminated
 	// so Done() fires. Mirrors pty.kill() in pty-host.ts.
 	//
-	// Prefer the job object: TerminateJobObject kills cmd.Process AND every
-	// process it spawned (e.g. "agent-process supervise" and, under that, the
-	// actual agent binary) atomically. cmd.Process.Kill() alone only reaches
-	// the direct child — TerminateProcess does not propagate to descendants,
-	// so on Windows the actual agent process is orphaned, keeps running, and
-	// can hold the session's worktree files open well past the caller's
-	// force-remove retry budget (surfaces as "process cannot access the
-	// file" when replacing/retiring the session). Falls back to the old
-	// single-process kill when no job was created (see newKillOnCloseJob).
-	if c.job != 0 {
-		_ = windows.TerminateJobObject(c.job, 1)
-		_ = windows.CloseHandle(c.job)
-	} else if c.cmd.Process != nil {
-		_ = c.cmd.Process.Kill()
+	// killProcessTree, not cmd.Process.Kill(): the ConPTY child spawns its own
+	// children (e.g. "agent-process supervise" and, under that, the actual
+	// agent binary), and TerminateProcess does not propagate to descendants.
+	// Killing only the direct child orphaned the real agent process, which
+	// could then hold the session's worktree files open well past the
+	// caller's force-remove retry budget (surfaces as "process cannot access
+	// the file" when replacing/retiring the session).
+	if c.cmd.Process != nil {
+		_ = killProcessTree(c.cmd.Process.Pid)
 	}
 	return err
 }
