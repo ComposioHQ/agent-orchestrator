@@ -14,6 +14,7 @@ import { motion, useReducedMotion } from "motion/react";
 import type { ExternalLinkComponent } from "./external-link";
 import { ChevronIcon, GitBranchIcon } from "./icons";
 import {
+	attentionZone,
 	getDisplayStatusLabel,
 	getKanbanColumnView,
 	getSessionStatusView,
@@ -141,7 +142,12 @@ function BoardColumnView<TSession extends BoardSessionPresentation>({
 	renderSessionCard: (session: TSession) => ReactNode;
 	sessions: TSession[];
 }) {
-	const ordered = [...sessions].sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
+	const ordered = [...sessions].sort((left, right) => {
+		const attentionPriority =
+			Number(attentionZone(right.status) === "action") -
+			Number(attentionZone(left.status) === "action");
+		return attentionPriority || right.updatedAt.localeCompare(left.updatedAt);
+	});
 	return (
 		<section
 			aria-label={labels.columnAria(column.label)}
@@ -222,6 +228,7 @@ export function SessionCardView({
 	usage,
 }: SessionCardViewProps) {
 	const badge = getSessionStatusView(session.status, translate);
+	const needsAttention = attentionZone(session.status) === "action";
 	const statusPresentation = session.statusPresentation;
 	const column = getKanbanColumnView(toKanbanColumn(session.kanbanColumn, session.status), translate);
 	const statusTone = statusPresentation?.tone ?? (!statusPresentation ? column.dot : undefined);
@@ -237,6 +244,8 @@ export function SessionCardView({
 				badge.cardClassName ?? "border-border bg-surface",
 				interactive &&
 					"cursor-pointer hover:border-border-strong hover:shadow-sm focus-within:border-border-strong focus-within:ring-2 focus-within:ring-ring/60",
+				needsAttention &&
+					"animate-attention-card-pulse border-status-needs-you bg-[color-mix(in_srgb,var(--color-status-needs-you)_8%,var(--color-surface))] hover:border-status-needs-you focus-within:border-status-needs-you",
 			)}
 			data-testid="board-session-card"
 			data-session-id={session.id}

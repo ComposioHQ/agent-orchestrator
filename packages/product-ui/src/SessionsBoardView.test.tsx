@@ -109,6 +109,100 @@ describe("SessionsBoardView", () => {
 		expect(screen.getByTestId("board-horizontal-scroll")).toHaveClass("board-horizontal-scrollbar");
 	});
 
+	it("pins attention-required sessions first inside every lane without changing lanes", () => {
+		const columns = boardKanbanColumnOrder.map((column) => getKanbanColumnView(column));
+		const sessions: BoardSessionPresentation[] = columns.flatMap(({ column }, index) => [
+			{
+				...baseSession,
+				id: `${column}-newer`,
+				kanbanColumn: column,
+				status: column === "ready" ? "mergeable" : "idle",
+				title: `${column} newer`,
+				updatedAt: `2026-08-09T1${index}:00:00Z`,
+			},
+			{
+				...baseSession,
+				id: `${column}-attention`,
+				kanbanColumn: column,
+				status: "needs_input",
+				title: `${column} attention`,
+				updatedAt: "2026-08-08T09:00:00Z",
+			},
+		]);
+
+		render(
+			<SessionsBoardGridView
+				columns={columns}
+				labels={columnLabels}
+				renderSessionCard={(session) => <div data-testid={`card-${session.id}`}>{session.title}</div>}
+				sessions={sessions}
+			/>,
+		);
+
+		for (const column of columns) {
+			const lane = screen.getByRole("region", { name: `${column.label} sessions` });
+			expect(
+				within(lane)
+					.getAllByTestId(/^card-/)
+					.map((card) => card.textContent),
+			).toEqual([`${column.column} attention`, `${column.column} newer`]);
+		}
+	});
+
+	it.each(["needs_input", "exited", "no_signal", "ci_failed", "changes_requested", "unknown"] as const)(
+		"gives %s cards the persistent orange attention treatment",
+		(status) => {
+			render(
+				<SessionCardView
+					externalLink={ExternalLink}
+					labels={{
+						formatTime: () => "5m ago",
+						intakeIssue: (id) => `Issue ${id}`,
+						pr: {
+							short: "PR",
+							states: { closed: "closed", draft: "draft", merged: "merged", open: "open" },
+						},
+						updatedAt: (timestamp) => `Updated ${timestamp}`,
+					}}
+					renderAvatar={(provider) => <span role="img" aria-label={provider}>C</span>}
+					session={{ ...baseSession, status }}
+				/>,
+			);
+
+			const card = screen.getByTestId("board-session-card");
+			expect(card).toHaveClass(
+				"animate-attention-card-pulse",
+				"border-status-needs-you",
+				"bg-[color-mix(in_srgb,var(--color-status-needs-you)_8%,var(--color-surface))]",
+				"hover:border-status-needs-you",
+				"focus-within:border-status-needs-you",
+			);
+		},
+	);
+
+	it("leaves ordinary cards on the neutral surface", () => {
+		render(
+			<SessionCardView
+				externalLink={ExternalLink}
+				labels={{
+					formatTime: () => "5m ago",
+					intakeIssue: (id) => `Issue ${id}`,
+					pr: {
+						short: "PR",
+						states: { closed: "closed", draft: "draft", merged: "merged", open: "open" },
+					},
+					updatedAt: (timestamp) => `Updated ${timestamp}`,
+				}}
+				renderAvatar={(provider) => <span role="img" aria-label={provider}>C</span>}
+				session={baseSession}
+			/>,
+		);
+
+		const card = screen.getByTestId("board-session-card");
+		expect(card).toHaveClass("border-border", "bg-surface");
+		expect(card).not.toHaveClass("animate-attention-card-pulse", "border-status-needs-you");
+	});
+
 	it("renders a neutral card with grouped multi-PR, usage, and action presentation", () => {
 		const onOpen = vi.fn();
 		render(

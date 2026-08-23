@@ -1050,6 +1050,53 @@ describe("SessionsBoard", () => {
 		expect(screen.getByText("Fixing CI failures")).toBeInTheDocument();
 	});
 
+	it("highlights every user-attention status while leaving ordinary cards neutral", () => {
+		const attentionStatuses = [
+			"needs_input",
+			"exited",
+			"no_signal",
+			"ci_failed",
+			"changes_requested",
+			"unknown",
+		] as const;
+		workspaceQueryMock.mockReturnValue({
+			data: [
+				workspaceWithSessions([
+					...attentionStatuses.map((status) =>
+						boardSession({
+							id: `s-${status}`,
+							kanbanColumn: "building",
+							status,
+							title: `${status} worker`,
+						}),
+					),
+					boardSession({ id: "s-idle", title: "idle worker", status: "idle" }),
+				]),
+			],
+			isError: false,
+			isSuccess: true,
+		});
+
+		renderBoard("p1");
+
+		for (const status of attentionStatuses) {
+			const card = screen
+				.getByText(`${status} worker`)
+				.closest('[data-testid="board-session-card"]');
+			expect(card).toHaveClass(
+				"animate-attention-card-pulse",
+				"border-status-needs-you",
+				"bg-[color-mix(in_srgb,var(--color-status-needs-you)_8%,var(--color-surface))]",
+			);
+		}
+
+		const ordinaryCard = screen
+			.getByText("idle worker")
+			.closest('[data-testid="board-session-card"]');
+		expect(ordinaryCard).toHaveClass("border-border", "bg-surface");
+		expect(ordinaryCard).not.toHaveClass("animate-attention-card-pulse");
+	});
+
 	// Mixed-version upgrade: an older daemon sends no kanbanColumn at all. Cards
 	// must stay in the lanes their status already put them in, not pile into the
 	// leftmost one.

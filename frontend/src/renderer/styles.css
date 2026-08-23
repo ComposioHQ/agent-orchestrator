@@ -286,6 +286,7 @@
 	--ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
 
 	--animate-status-pulse: status-pulse 1.8s ease-in-out infinite;
+	--animate-attention-card-pulse: attention-card-pulse 5.5s ease-in-out infinite;
 	--animate-overlay-in: overlay-in 80ms var(--ease-out);
 	--animate-modal-in: modal-in 120ms var(--ease-out);
 	--animate-popover-in: popover-in 150ms var(--ease-out);
@@ -1629,6 +1630,22 @@ textarea,
 	}
 	50% {
 		opacity: 0.35;
+	}
+}
+
+@keyframes attention-card-pulse {
+	0%,
+	100% {
+		background-color: color-mix(in srgb, var(--color-status-needs-you) 8%, var(--color-surface));
+	}
+	50% {
+		background-color: color-mix(in srgb, var(--color-status-needs-you) 15%, var(--color-surface));
+	}
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.animate-attention-card-pulse {
+		animation: none;
 	}
 }
 
