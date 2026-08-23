@@ -23,7 +23,10 @@ type Store interface {
 	// A row in StateDeleting must NOT be resurrected: implementations return
 	// the existing record with created=false, and the caller maps that to
 	// ErrDeleting.
-	Ensure(ctx context.Context, ref Ref, now time.Time) (record Record, created bool, err error)
+	// Quota evaluation and insertion are one atomic reservation. Adapters must
+	// serialize competing reservations for the affected org/user/workspace
+	// (for example with transaction-scoped advisory locks in PostgreSQL).
+	Ensure(ctx context.Context, ref Ref, quotas Quotas, now time.Time) (record Record, created bool, err error)
 	// Get loads the placement for a ref, returning ErrNotFound when absent.
 	Get(ctx context.Context, ref Ref) (Record, error)
 	// GetByID loads a placement by row id, returning ErrNotFound when absent.
@@ -37,9 +40,6 @@ type Store interface {
 	Delete(ctx context.Context, id string, generation int64) error
 	// List returns placements matching a filter, oldest first.
 	List(ctx context.Context, filter Filter) ([]Record, error)
-	// Count returns how many placements match a filter. It exists separately
-	// from List because quota checks must not page a whole org into memory.
-	Count(ctx context.Context, filter Filter) (int, error)
 }
 
 // Filter selects placements. Empty string fields are wildcards; the zero
