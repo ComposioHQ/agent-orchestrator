@@ -64,9 +64,16 @@ export function createCloudProjectsService(dependencies: CloudProjectsDependenci
 					);
 					return {
 						organization,
-						projects: details.flatMap((detail) =>
-							detail.status === "ok" && "defaultBranch" in detail.project ? [detail.project] : [],
-						),
+						projects: details.map((detail) => {
+							if (detail.status !== "ok" || !("defaultBranch" in detail.project)) {
+								throw new Error(
+									"resolveError" in detail.project
+										? detail.project.resolveError
+										: "AO Cloud could not resolve this project.",
+								);
+							}
+							return detail.project;
+						}),
 					};
 				}),
 			);

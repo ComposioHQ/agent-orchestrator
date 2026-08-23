@@ -25,7 +25,11 @@ import { chmod, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import path from "node:path";
-import { createCloudClient, type CurrentAccount } from "../../../packages/cloud-client/src/index";
+import {
+	createCloudClient,
+	type CloudTokenSet,
+	type CurrentAccount,
+} from "../../../packages/cloud-client/src/index";
 import type { CloudAccount, CloudAvailability, CloudOrganization } from "../shared/cloud-account";
 import { cloudDesktopConfigured, cloudEarlyAccessEnabled } from "../shared/cloud-feature";
 import { installCloudProjectIPC } from "./cloud-projects";
@@ -64,13 +68,6 @@ interface StoredSession {
 
 interface AuthStore {
 	session: StoredSession | null;
-}
-
-/** POST /auth/google and /auth/refresh both return the contract's AOSession. */
-interface AOSessionResponse {
-	accessToken: string;
-	refreshToken: string;
-	expiresAt: string;
 }
 
 const emptyStore = (): AuthStore => ({ session: null });
@@ -211,7 +208,7 @@ async function fetchCurrentAccount(accessToken: string): Promise<Pick<StoredSess
 }
 
 function toStoredSession(
-	response: AOSessionResponse,
+	response: CloudTokenSet,
 	identity: Pick<StoredSession, "user" | "organizations">,
 ): StoredSession {
 	return {
@@ -237,21 +234,6 @@ function publicAccount(session: StoredSession): CloudAccount {
 function tokenExpiresSoon(session: StoredSession): boolean {
 	const expiry = Date.parse(session.expiresAt);
 	return !Number.isFinite(expiry) || Date.now() >= expiry - EXPIRY_SKEW_MS;
-}
-
-async function cloudRequest<T>(route: string, init: RequestInit): Promise<T> {
-	const response = await fetch(`${CLOUD_API_URL}${route}`, {
-		...init,
-		headers: { "Content-Type": "application/json", ...init.headers },
-	});
-	const body = (await response.json().catch(() => null)) as (T & { message?: string; code?: string }) | null;
-	if (!response.ok || !body) {
-		throw Object.assign(new Error(body?.message || `AO Cloud request failed (${response.status})`), {
-			status: response.status,
-			code: body?.code,
-		});
-	}
-	return body;
 }
 
 // A rotated-away, revoked, or rejected refresh token is unrecoverable: drop the
@@ -300,12 +282,12 @@ async function refreshCloudSession(
 	storedSession: StoredSession,
 	generation: number,
 ): Promise<StoredSession | null> {
-	let response: AOSessionResponse;
+	let response: CloudTokenSet;
 	try {
-		response = await cloudRequest<AOSessionResponse>("/api/cloud/v1/auth/refresh", {
-			method: "POST",
-			body: JSON.stringify({ refreshToken: storedSession.refreshToken }),
-		});
+		response = await createCloudClient({
+			baseUrl: CLOUD_API_URL,
+			getAccessToken: () => null,
+		}).refreshSession({ refreshToken: storedSession.refreshToken });
 	} catch (error) {
 		if (!isTerminalRefreshFailure(error)) return storedSession;
 		await withAuthMutation(dataDir, async () => {
@@ -446,10 +428,10 @@ export async function beginCloudSignIn(dataDir: string): Promise<CloudAccount> {
 	}
 
 	const idToken = await exchangeGoogleCode(await code, codeVerifier, redirectURI);
-	const response = await cloudRequest<AOSessionResponse>("/api/cloud/v1/auth/google", {
-		method: "POST",
-		body: JSON.stringify({ idToken }),
-	});
+	const response = await createCloudClient({
+		baseUrl: CLOUD_API_URL,
+		getAccessToken: () => null,
+	}).exchangeGoogleIdentity({ idToken });
 	const session = toStoredSession(response, await fetchCurrentAccount(response.accessToken));
 	// Retire any in-flight refresh for the session this one replaces before the
 	// write, so a late rotation cannot land on top of the new credentials.
@@ -464,10 +446,10 @@ export async function signOutCloud(dataDir: string): Promise<void> {
 	if (session) {
 		// Best effort: a revoke that cannot reach the control plane must still
 		// clear local custody. The token expires server-side regardless.
-		await cloudRequest("/api/cloud/v1/auth/logout", {
-			method: "POST",
-			body: JSON.stringify({ refreshToken: session.refreshToken }),
-		}).catch(() => undefined);
+		await createCloudClient({
+			baseUrl: CLOUD_API_URL,
+			getAccessToken: () => null,
+		}).logoutSession({ refreshToken: session.refreshToken }).catch(() => undefined);
 	}
 	await withAuthMutation(dataDir, () => removeAuthStore(dataDir));
 }
