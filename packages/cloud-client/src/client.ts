@@ -24,6 +24,7 @@ import type {
   PaginationOptions,
   Project,
   ProjectPage,
+  ResumeProjectInput,
   PutAgentProviderConnectionInput,
   RedactedProviderConnection,
   RefreshTokenInput,
@@ -195,6 +196,17 @@ export class CloudClient {
     });
   }
 
+  getProject(
+    orgId: string,
+    projectId: string,
+    options: RequestOptions = {},
+  ): Promise<{ project: Project }> {
+    return this.request(
+      this.orgPath(orgId, `/projects/${encodeURIComponent(projectId)}`),
+      options,
+    );
+  }
+
   updateProject(
     orgId: string,
     projectId: string,
@@ -214,12 +226,29 @@ export class CloudClient {
   deleteProject(
     orgId: string,
     projectId: string,
-    options: RequestOptions = {},
+    options: IdempotentRequestOptions,
   ): Promise<DeleteProjectResponse> {
     return this.request(
       this.orgPath(orgId, `/projects/${encodeURIComponent(projectId)}`),
       {
         method: "DELETE",
+        idempotencyKey: options.idempotencyKey,
+        signal: options.signal,
+      },
+    );
+  }
+
+  resumeProject(
+    orgId: string,
+    projectId: string,
+    options: IdempotentRequestOptions & { input?: ResumeProjectInput },
+  ): Promise<{ project: Project }> {
+    return this.request(
+      this.orgPath(orgId, `/projects/${encodeURIComponent(projectId)}/resume`),
+      {
+        method: "POST",
+        body: options.input ?? {},
+        idempotencyKey: options.idempotencyKey,
         signal: options.signal,
       },
     );

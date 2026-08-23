@@ -162,13 +162,56 @@ export interface paths {
             };
             cookie?: never;
         };
-        get?: never;
+        /** @description Read one project the caller's organization owns. Discovery pairs this
+         *     with `listProjects`: the page carries the same `Project` shape, so a
+         *     client that already has a listed project never needs this call to
+         *     render, only to refresh a single row.
+         *      */
+        get: operations["getProject"];
         put?: never;
         post?: never;
+        /** @description Archive the project and tear down its cloud workspace. The call is
+         *     idempotent under `Idempotency-Key`: a retry of the same key returns the
+         *     original result rather than reporting a missing project, so a client
+         *     that loses the response can safely repeat it.
+         *      */
         delete: operations["deleteProject"];
         options?: never;
         head?: never;
         patch: operations["updateProject"];
+        trace?: never;
+    };
+    "/api/cloud/v1/orgs/{orgId}/projects/{projectId}/resume": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                orgId: components["parameters"]["OrgId"];
+                projectId: components["parameters"]["ProjectId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Bring a `suspended` project's cloud workspace back online so its
+         *     sessions can run again. Resume is asynchronous: the response carries the
+         *     project with `lifecycleState` set to `provisioning` (or already `ready`
+         *     when nothing needed starting), and the client observes completion by
+         *     re-reading the project or by the session events of the sessions it cares
+         *     about.
+         *
+         *     Resuming a `ready` project is a no-op that returns the project
+         *     unchanged. Resuming an `archived` project fails with
+         *     `PROJECT_ARCHIVED` — archived projects are re-created, not resumed.
+         *
+         *     Local AO has no suspended state, so its projects are always `ready` and
+         *     the local adapter never issues this call.
+         *      */
+        post: operations["resumeProject"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/api/cloud/v1/orgs/{orgId}/github/installations": {
@@ -1028,6 +1071,22 @@ export interface components {
             hasMore: boolean;
             nextCursor?: string;
         };
+        /**
+         * @description Matches the local `/api/v1` project kind vocabulary so a shared view
+         *     renders a Cloud project and a local project with the same branch.
+         *
+         * @enum {string}
+         */
+        ProjectKind: "single_repo" | "workspace" | "scratch";
+        /**
+         * @description Cloud workspace lifecycle. `provisioning` and `suspended` are the two
+         *     states a client must render differently from `ready`: neither can accept
+         *     a session spawn until it reaches `ready`. Local AO projects are always
+         *     `ready`.
+         *
+         * @enum {string}
+         */
+        ProjectLifecycleState: "provisioning" | "ready" | "suspended" | "archived" | "error";
         Project: {
             /** Format: uuid */
             id: string;
@@ -1046,6 +1105,52 @@ export interface components {
             createdAt: string;
             /** Format: date-time */
             updatedAt: string;
+            /** @description Optional so an existing single-repository Cloud project stays valid
+             *     without a migration. Absent means `single_repo`, which is also what
+             *     a local AO single-repository project reports.
+             *
+             *     The default is stated here rather than as a schema `default:`
+             *     because `openapi-typescript` promotes a defaulted response property
+             *     to a required one, which would break the clients this field exists
+             *     to keep working.
+             *      */
+            kind?: components["schemas"]["ProjectKind"];
+            /** @description Default harness for sessions spawned in this project, named to match
+             *     the local `/api/v1` project field. Absent means the organization
+             *     default applies.
+             *      */
+            agent?: string;
+            /** @description Absent means `ready`, which is what local AO always reports. Stated
+             *     as prose rather than a schema `default:` for the reason given on
+             *     `kind`.
+             *      */
+            lifecycleState?: components["schemas"]["ProjectLifecycleState"];
+            /** @description Operator-facing detail for `error` (and, when useful, for a slow
+             *     `provisioning`). Never present when `lifecycleState` is `ready`.
+             *      */
+            lifecycleMessage?: string;
+            /**
+             * Format: uuid
+             * @description Cloud workspace backing the project. Absent for local AO, and absent
+             *     in Cloud until the workspace has been provisioned once.
+             *
+             */
+            workspaceId?: string;
+            /**
+             * Format: date-time
+             * @description Present only once `lifecycleState` is `archived`.
+             */
+            archivedAt?: string;
+        };
+        ResumeProjectInput: {
+            /**
+             * Format: uuid
+             * @description Pin the resumed workspace to one organization sandbox provider
+             *     connection. Absent uses the organization default, which is the only
+             *     behaviour a client needs unless the user picks a provider.
+             *
+             */
+            sandboxProviderConnectionId?: string;
         };
         CreateProjectInput: {
             displayName: string;
@@ -2287,10 +2392,41 @@ export interface operations {
             default: components["responses"]["Error"];
         };
     };
-    deleteProject: {
+    getProject: {
         parameters: {
             query?: never;
             header?: never;
+            path: {
+                orgId: components["parameters"]["OrgId"];
+                projectId: components["parameters"]["ProjectId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Project details. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        project: components["schemas"]["Project"];
+                    };
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    deleteProject: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Reusing a key with the same command returns the original result.
+                 *     Reusing it with a different command returns an IDEMPOTENCY_CONFLICT.
+                 *      */
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
             path: {
                 orgId: components["parameters"]["OrgId"];
                 projectId: components["parameters"]["ProjectId"];
@@ -2329,6 +2465,41 @@ export interface operations {
         responses: {
             /** @description Project settings updated. */
             200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        project: components["schemas"]["Project"];
+                    };
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    resumeProject: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Reusing a key with the same command returns the original result.
+                 *     Reusing it with a different command returns an IDEMPOTENCY_CONFLICT.
+                 *      */
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                orgId: components["parameters"]["OrgId"];
+                projectId: components["parameters"]["ProjectId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["ResumeProjectInput"];
+            };
+        };
+        responses: {
+            /** @description Workspace resume accepted, or the project was already running. */
+            202: {
                 headers: {
                     [name: string]: unknown;
                 };

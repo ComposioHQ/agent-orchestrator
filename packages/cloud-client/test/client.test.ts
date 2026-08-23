@@ -6,6 +6,7 @@ import {
   createWorkerClient,
   type AgentProfile,
   type ClientEvent,
+  type Project,
   type PullRequestSummary,
   type SessionReviewState,
 } from "../src/index.js";
@@ -161,7 +162,9 @@ describe("CloudClient", () => {
     });
 
     await expect(
-      client.deleteProject("org one", "project one"),
+      client.deleteProject("org one", "project one", {
+        idempotencyKey: "delete-project-1",
+      }),
     ).resolves.toEqual({
       project: { id: "project one", deleted: true },
     });
@@ -169,6 +172,57 @@ describe("CloudClient", () => {
       "https://cloud.example.com/api/cloud/v1/orgs/org%20one/projects/project%20one",
     );
     expect(fetchMock.mock.calls[0]?.[1]?.method).toBe("DELETE");
+    expect(
+      new Headers(fetchMock.mock.calls[0]?.[1]?.headers).get("Idempotency-Key"),
+    ).toBe("delete-project-1");
+  });
+
+  it("reads one project and resumes a suspended project workspace", async () => {
+    const suspended = {
+      id: "project one",
+      orgId: "aa4c5117-d075-4a4e-a384-149e75f7dc45",
+      displayName: "Cloud API",
+      repositoryUrl: "https://github.com/acme/cloud-api",
+      defaultBranch: "main",
+      config: {},
+      createdAt: "2026-08-19T20:00:00Z",
+      updatedAt: "2026-08-19T20:00:00Z",
+      lifecycleState: "suspended",
+    } as const satisfies Project;
+    const fetchMock = vi.fn(
+      async (input: RequestInfo | URL, _init?: RequestInit) =>
+        String(input).endsWith("/resume")
+          ? jsonResponse(
+              { project: { ...suspended, lifecycleState: "provisioning" } },
+              202,
+            )
+          : jsonResponse({ project: suspended }),
+    );
+    const client = createCloudClient({
+      baseUrl: "https://cloud.example.com",
+      getAccessToken: () => "access-token",
+      fetch: fetchMock as typeof fetch,
+    });
+
+    await expect(
+      client.getProject("org one", "project one"),
+    ).resolves.toEqual({ project: suspended });
+    expect(fetchMock.mock.calls[0]?.[0]).toBe(
+      "https://cloud.example.com/api/cloud/v1/orgs/org%20one/projects/project%20one",
+    );
+
+    const resumed = await client.resumeProject("org one", "project one", {
+      idempotencyKey: "resume-project-1",
+    });
+    expect(resumed.project.lifecycleState).toBe("provisioning");
+    expect(fetchMock.mock.calls[1]?.[0]).toBe(
+      "https://cloud.example.com/api/cloud/v1/orgs/org%20one/projects/project%20one/resume",
+    );
+    expect(fetchMock.mock.calls[1]?.[1]?.method).toBe("POST");
+    expect(JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body))).toEqual({});
+    expect(
+      new Headers(fetchMock.mock.calls[1]?.[1]?.headers).get("Idempotency-Key"),
+    ).toBe("resume-project-1");
   });
 
   it("lists runtime-supplied agent profiles for an organization", async () => {

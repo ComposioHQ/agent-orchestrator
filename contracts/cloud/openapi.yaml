@@ -232,6 +232,28 @@ paths:
     parameters:
       - $ref: "#/components/parameters/OrgId"
       - $ref: "#/components/parameters/ProjectId"
+    get:
+      operationId: getProject
+      tags: [Projects]
+      description: |
+        Read one project the caller's organization owns. Discovery pairs this
+        with `listProjects`: the page carries the same `Project` shape, so a
+        client that already has a listed project never needs this call to
+        render, only to refresh a single row.
+      responses:
+        "200":
+          description: Project details.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [project]
+                properties:
+                  project:
+                    $ref: "#/components/schemas/Project"
+        default:
+          $ref: "#/components/responses/Error"
     patch:
       operationId: updateProject
       tags: [Projects]
@@ -258,6 +280,13 @@ paths:
     delete:
       operationId: deleteProject
       tags: [Projects]
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      description: |
+        Archive the project and tear down its cloud workspace. The call is
+        idempotent under `Idempotency-Key`: a retry of the same key returns the
+        original result rather than reporting a missing project, so a client
+        that loses the response can safely repeat it.
       responses:
         "202":
           description: Project archived and sandbox teardown accepted.
@@ -265,6 +294,49 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/DeleteProjectResponse"
+        default:
+          $ref: "#/components/responses/Error"
+  /api/cloud/v1/orgs/{orgId}/projects/{projectId}/resume:
+    parameters:
+      - $ref: "#/components/parameters/OrgId"
+      - $ref: "#/components/parameters/ProjectId"
+    post:
+      operationId: resumeProject
+      tags: [Projects]
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      description: |
+        Bring a `suspended` project's cloud workspace back online so its
+        sessions can run again. Resume is asynchronous: the response carries the
+        project with `lifecycleState` set to `provisioning` (or already `ready`
+        when nothing needed starting), and the client observes completion by
+        re-reading the project or by the session events of the sessions it cares
+        about.
+
+        Resuming a `ready` project is a no-op that returns the project
+        unchanged. Resuming an `archived` project fails with
+        `PROJECT_ARCHIVED` — archived projects are re-created, not resumed.
+
+        Local AO has no suspended state, so its projects are always `ready` and
+        the local adapter never issues this call.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ResumeProjectInput"
+      responses:
+        "202":
+          description: Workspace resume accepted, or the project was already running.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [project]
+                properties:
+                  project:
+                    $ref: "#/components/schemas/Project"
         default:
           $ref: "#/components/responses/Error"
   /api/cloud/v1/orgs/{orgId}/github/installations:
@@ -1756,6 +1828,20 @@ components:
           type: boolean
         nextCursor:
           type: string
+    ProjectKind:
+      type: string
+      enum: [single_repo, workspace, scratch]
+      description: |
+        Matches the local `/api/v1` project kind vocabulary so a shared view
+        renders a Cloud project and a local project with the same branch.
+    ProjectLifecycleState:
+      type: string
+      enum: [provisioning, ready, suspended, archived, error]
+      description: |
+        Cloud workspace lifecycle. `provisioning` and `suspended` are the two
+        states a client must render differently from `ready`: neither can accept
+        a session spawn until it reaches `ready`. Local AO projects are always
+        `ready`.
     Project:
       type: object
       additionalProperties: false
@@ -1787,6 +1873,56 @@ components:
         updatedAt:
           type: string
           format: date-time
+        kind:
+          $ref: "#/components/schemas/ProjectKind"
+          description: |
+            Optional so an existing single-repository Cloud project stays valid
+            without a migration. Absent means `single_repo`, which is also what
+            a local AO single-repository project reports.
+
+            The default is stated here rather than as a schema `default:`
+            because `openapi-typescript` promotes a defaulted response property
+            to a required one, which would break the clients this field exists
+            to keep working.
+        agent:
+          type: string
+          description: |
+            Default harness for sessions spawned in this project, named to match
+            the local `/api/v1` project field. Absent means the organization
+            default applies.
+        lifecycleState:
+          $ref: "#/components/schemas/ProjectLifecycleState"
+          description: |
+            Absent means `ready`, which is what local AO always reports. Stated
+            as prose rather than a schema `default:` for the reason given on
+            `kind`.
+        lifecycleMessage:
+          type: string
+          maxLength: 2048
+          description: |
+            Operator-facing detail for `error` (and, when useful, for a slow
+            `provisioning`). Never present when `lifecycleState` is `ready`.
+        workspaceId:
+          type: string
+          format: uuid
+          description: |
+            Cloud workspace backing the project. Absent for local AO, and absent
+            in Cloud until the workspace has been provisioned once.
+        archivedAt:
+          type: string
+          format: date-time
+          description: Present only once `lifecycleState` is `archived`.
+    ResumeProjectInput:
+      type: object
+      additionalProperties: false
+      properties:
+        sandboxProviderConnectionId:
+          type: string
+          format: uuid
+          description: |
+            Pin the resumed workspace to one organization sandbox provider
+            connection. Absent uses the organization default, which is the only
+            behaviour a client needs unless the user picks a provider.
     CreateProjectInput:
       type: object
       additionalProperties: false
