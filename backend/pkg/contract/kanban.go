@@ -13,7 +13,8 @@ const (
 	// KanbanBuilding is a session with no PR yet.
 	KanbanBuilding KanbanColumn = "building"
 	// KanbanValidating is a PR inside an AO-driven loop: a review pass running
-	// on the current head, AO addressing review feedback, or AO fixing CI.
+	// on the current head, auto review holding the PR until its own pass
+	// approves, AO addressing review feedback, or AO fixing CI.
 	KanbanValidating KanbanColumn = "validating"
 	// KanbanNeedsReview is the review-feedback loop: the PR is in its review
 	// cycle and the next turn is a person's, whether that is giving the review,
@@ -95,11 +96,14 @@ func derivePRKanbanColumn(session KanbanSessionFacts, pr KanbanPRFacts) KanbanCo
 		return KanbanReady
 	case aoOwnsNextStep(session, pr):
 		return KanbanValidating
-	// A head commit AO has not reviewed yet is a validation cycle AO will run
-	// itself, so the review-feedback loop has not reached a person yet. A pass
-	// that failed or was cancelled left no verdict behind, so the head is still
-	// unreviewed and the cycle still AO's.
-	case session.AutoReview && !pr.ReviewRun.Outcome:
+	// Auto review owns this head until its own pass approves it. A head AO has
+	// not reviewed yet, a pass that failed or was cancelled, and a pass that
+	// asked for changes are all "not approved yet" -- auto review's job is to
+	// keep re-reviewing this PR until it can approve, whether or not anything
+	// is configured to act on what it finds in between. Without AutoReview, a
+	// changes-requested verdict is as far as AO's involvement goes, so it does
+	// release the PR from Validating -- see aoOwnsNextStep above.
+	case session.AutoReview && !approvedByAO(pr):
 		return KanbanValidating
 	// Fallthrough: the PR is in its review cycle and no AO loop is turning it,
 	// so the next turn is a person's -- give the review, answer the feedback
@@ -107,6 +111,13 @@ func derivePRKanbanColumn(session KanbanSessionFacts, pr KanbanPRFacts) KanbanCo
 	default:
 		return KanbanNeedsReview
 	}
+}
+
+// approvedByAO reports whether AO's own review pass approved the PR's current
+// head. A pass that requested changes, one that has not run yet, and one that
+// failed or was cancelled without a verdict are all "not approved."
+func approvedByAO(pr KanbanPRFacts) bool {
+	return pr.ReviewRun.Outcome && !pr.ReviewRun.ChangesRequested
 }
 
 // externallyApproved requires both the provider's aggregate decision (which

@@ -161,6 +161,45 @@ func TestDeriveKanbanColumnSinglePR(t *testing.T) {
 			want: contract.KanbanNeedsReview,
 		},
 		{
+			name:    "auto review keeps a changes-requested head, even without auto-inject",
+			session: contract.KanbanSessionFacts{AutoReview: true},
+			pr: contract.KanbanPRFacts{
+				URL:       "pr/1",
+				ReviewRun: contract.KanbanReviewRunFacts{Present: true, Outcome: true, ChangesRequested: true},
+			},
+			want: contract.KanbanValidating,
+		},
+		{
+			name: "auto-inject still keeps the loop moving on a changes-requested head",
+			session: contract.KanbanSessionFacts{
+				AutoReview:       true,
+				AutoInjectReview: true,
+			},
+			pr: contract.KanbanPRFacts{
+				URL:       "pr/1",
+				ReviewRun: contract.KanbanReviewRunFacts{Present: true, Outcome: true, ChangesRequested: true},
+			},
+			want: contract.KanbanValidating,
+		},
+		{
+			name:    "without auto review, a changes-requested pass hands off to a person",
+			session: contract.KanbanSessionFacts{},
+			pr: contract.KanbanPRFacts{
+				URL:       "pr/1",
+				ReviewRun: contract.KanbanReviewRunFacts{Present: true, Outcome: true, ChangesRequested: true},
+			},
+			want: contract.KanbanNeedsReview,
+		},
+		{
+			name:    "auto review does not keep a mergeable pr in validating over a stale changes request",
+			session: contract.KanbanSessionFacts{AutoReview: true},
+			pr: contract.KanbanPRFacts{
+				URL: "pr/1", Mergeability: contract.MergeMergeable,
+				ReviewRun: contract.KanbanReviewRunFacts{Present: true, Outcome: true, ChangesRequested: true},
+			},
+			want: contract.KanbanReady,
+		},
+		{
 			name:    "auto review still owns a head whose pass failed",
 			session: contract.KanbanSessionFacts{AutoReview: true},
 			pr: contract.KanbanPRFacts{

@@ -45,6 +45,15 @@ func TestSessionListDerivesKanbanColumn(t *testing.T) {
 			want: domain.KanbanNeedsReview,
 		},
 		{
+			name:   "auto review keeps a changes-requested head validating, even without auto-inject",
+			record: domain.SessionRecord{ID: "mer-1", ProjectID: "mer", AutoReviewEnabled: true},
+			pr:     &domain.PRFacts{URL: "pr1", HeadSHA: "head1"},
+			runs: []domain.CurrentHeadReviewRun{
+				{PRURL: "pr1", Status: domain.ReviewRunComplete, Verdict: domain.VerdictChangesRequested},
+			},
+			want: domain.KanbanValidating,
+		},
+		{
 			name:   "a human approval on a blocked pr is ready",
 			record: domain.SessionRecord{ID: "mer-1", ProjectID: "mer"},
 			pr: &domain.PRFacts{
