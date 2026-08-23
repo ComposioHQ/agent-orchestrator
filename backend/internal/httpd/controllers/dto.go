@@ -189,11 +189,11 @@ type SpawnSessionRequest struct {
 	Branch          string                 `json:"branch,omitempty"`
 	// Mode picks the conversation controller: chat talks to the agent over a
 	// structured connection, tui opens the agent's native terminal interface.
-	// Omitted resolves to the daemon default (tui), which is why an upgrade
-	// changes nothing. Compatible sessions may later switch through the durable
-	// interface-transition endpoint; the default never mutates existing sessions
-	// automatically. An unsupported explicit request fails rather than quietly
-	// producing the other kind of session.
+	// Omitted resolves to the daemon-owned preference, which defaults to Chat for
+	// new sessions and falls back to TUI when Chat is unavailable. The preference
+	// never mutates existing sessions automatically; compatible sessions may later
+	// switch through the durable interface-transition endpoint. An unsupported
+	// explicit request fails rather than quietly producing the other kind of session.
 	Mode   domain.SessionMode `json:"mode,omitempty" enum:"chat,tui"`
 	Prompt string             `json:"prompt,omitempty" maxLength:"4096"`
 	// Model is an optional agent model override scoped to this single spawn. Empty
@@ -342,6 +342,14 @@ type WorkspaceFileResponse struct {
 	CompareBaseSHA   string                          `json:"compareBaseSha,omitempty"`
 	CompareBaseRef   string                          `json:"compareBaseRef,omitempty"`
 	CompareMode      sessionsvc.WorkspaceCompareMode `json:"compareMode,omitempty" enum:"base,head_fallback"`
+}
+
+// DesktopWorkspaceLocationResponse is returned only by the LAN-blocked desktop
+// handoff route. Electron main consumes the absolute path and never exposes it
+// through the preload bridge.
+type DesktopWorkspaceLocationResponse struct {
+	SessionID     domain.SessionID `json:"sessionId"`
+	WorkspacePath string           `json:"workspacePath"`
 }
 
 // SessionPreviewResponse is the body of GET /api/v1/sessions/{sessionId}/preview.
@@ -730,6 +738,7 @@ type SessionPRUnresolvedReviewer struct {
 // SessionPRReviewCommentLink points to one review comment.
 type SessionPRReviewCommentLink struct {
 	URL              string `json:"url,omitempty"`
+	ReviewID         string `json:"reviewId,omitempty"`
 	File             string `json:"file,omitempty"`
 	Line             int    `json:"line,omitempty"`
 	Body             string `json:"body,omitempty"`
@@ -823,7 +832,7 @@ func newSessionPRCommentReviewers(in []sessionsvc.PRUnresolvedReviewer) []Sessio
 	for _, reviewer := range in {
 		links := make([]SessionPRReviewCommentLink, 0, len(reviewer.Links))
 		for _, link := range reviewer.Links {
-			links = append(links, SessionPRReviewCommentLink{URL: link.URL, File: link.File, Line: link.Line, Body: link.Body, AutoInjectReview: link.AutoInjectReview})
+			links = append(links, SessionPRReviewCommentLink{URL: link.URL, ReviewID: link.ReviewID, File: link.File, Line: link.Line, Body: link.Body, AutoInjectReview: link.AutoInjectReview})
 		}
 		reviewers = append(reviewers, SessionPRUnresolvedReviewer{ReviewerID: reviewer.ReviewerID, Count: reviewer.Count, Links: links, ReviewURL: reviewer.ReviewURL, IsBot: reviewer.IsBot})
 	}

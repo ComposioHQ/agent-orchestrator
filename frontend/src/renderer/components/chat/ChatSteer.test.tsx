@@ -113,9 +113,15 @@ describe("ChatWorkspace steering", () => {
 		expect(within(dock).getByText("second queued")).toBeVisible();
 	});
 
-
-	it("shows delivery indicator when a turn is running and steer is available", () => {
-		render(<ChatWorkspace snapshot={chatFixture} onSteer={vi.fn()} />);
+	it("shows the delivery indicator only for a running turn without a pending approval", () => {
+		const snapshot = {
+			...chatFixture,
+			items: chatFixture.items.filter(
+				(item) =>
+					!(item.kind === "activity" && item.activityKind === "approval" && item.status === "pending"),
+			),
+		};
+		render(<ChatWorkspace snapshot={snapshot} onSteer={vi.fn()} />);
 		expect(screen.getByText("Steer")).toBeInTheDocument();
 		expect(screen.getByText("Queue")).toBeInTheDocument();
 	});

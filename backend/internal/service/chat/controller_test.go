@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -1182,9 +1183,15 @@ func TestFreshProjectControllerRecordsNativeContextBoundary(t *testing.T) {
 
 	const replacement = domain.SessionID("p1-2")
 	if _, err := st.CreateSession(ctx, domain.SessionRecord{
-		ID: replacement, ProjectID: testProject, Kind: domain.KindOrchestrator,
-		Harness: domain.HarnessCodex, Mode: domain.SessionModeChat,
-		CreatedAt: now, UpdatedAt: now,
+		ID:        replacement,
+		ProjectID: testProject,
+		Kind:      domain.KindOrchestrator,
+		Harness:   domain.HarnessCodex,
+		Mode:      domain.SessionModeChat,
+		Activity:  domain.Activity{State: domain.ActivityActive, LastActivityAt: now},
+		Metadata:  domain.SessionMetadata{Branch: "feat/replacement", WorkspacePath: t.TempDir()},
+		CreatedAt: now,
+		UpdatedAt: now,
 	}); err != nil {
 		t.Fatalf("seed replacement session: %v", err)
 	}
@@ -1226,7 +1233,8 @@ func TestFreshProjectControllerRecordsNativeContextBoundary(t *testing.T) {
 		t.Fatalf("activities = %#v, want old history plus context boundary", snapshot.Activities)
 	}
 	boundary := snapshot.Activities[1]
-	if boundary.Kind != domain.ActivityKindSystem || boundary.ProviderItemID != "ao-context-reset:p1-2" {
+	if boundary.Kind != domain.ActivityKindSystem ||
+		boundary.ProviderItemID != domain.ConversationContextResetProviderItemID(replacement) {
 		t.Fatalf("boundary = %#v", boundary)
 	}
 	var detail map[string]string
@@ -1235,6 +1243,75 @@ func TestFreshProjectControllerRecordsNativeContextBoundary(t *testing.T) {
 	}
 	if detail["event"] != "context.reset" {
 		t.Fatalf("boundary event = %q", detail["event"])
+	}
+}
+
+func TestFreshProjectControllerStartFailureKeepsPreviousHistoryHidden(t *testing.T) {
+	st := openStore(t)
+	ctx := context.Background()
+	now := time.Date(2026, 8, 6, 10, 0, 0, 0, time.UTC)
+	conversation, err := st.CreateConversation(ctx, "project-conversation",
+		domain.ConversationScopeProject, testProject, testSession, now)
+	if err != nil {
+		t.Fatalf("CreateConversation: %v", err)
+	}
+	if _, err := st.AppendUserMessage(ctx, conversation.ID, testSession, "old-generation",
+		domain.ConversationMessage{
+			ID: "old-message", Text: "old orchestrator history", Origin: domain.MessageOriginHuman,
+		}, "old-turn", now.Add(time.Second)); err != nil {
+		t.Fatalf("seed old history: %v", err)
+	}
+
+	replacementRecord, err := st.CreateSession(ctx, domain.SessionRecord{
+		ProjectID: testProject,
+		Kind:      domain.KindOrchestrator,
+		Harness:   domain.HarnessCodex,
+		Mode:      domain.SessionModeChat,
+		Activity:  domain.Activity{State: domain.ActivityActive, LastActivityAt: now},
+		Metadata:  domain.SessionMetadata{Branch: "feat/replacement", WorkspacePath: t.TempDir()},
+		CreatedAt: now,
+		UpdatedAt: now,
+	})
+	if err != nil {
+		t.Fatalf("seed replacement session: %v", err)
+	}
+	replacement := replacementRecord.ID
+
+	svc := chatsvc.New(chatsvc.Options{
+		Store: st, Sessions: st,
+		Drivers: fakeRegistry{driver: fakeDriver{
+			start: func(ports.ChatStartConfig) (ports.ChatConversation, error) {
+				return nil, errors.New("provider failed")
+			},
+		}},
+		Log: slog.New(slog.DiscardHandler),
+		NewID: func() string {
+			return "boundary-id"
+		},
+		Now: func() time.Time { return now.Add(2 * time.Second) },
+	})
+	if _, err := svc.Start(ctx, chatsvc.StartConfig{
+		SessionID: replacement, ProjectID: testProject, Kind: domain.KindOrchestrator,
+		Harness: domain.HarnessCodex, WorkspacePath: t.TempDir(),
+	}); err == nil || !strings.Contains(err.Error(), "provider failed") {
+		t.Fatalf("Start replacement error = %v, want provider failure", err)
+	}
+
+	snapshot, err := st.LoadConversationSnapshot(ctx, conversation.ID)
+	if err != nil {
+		t.Fatalf("LoadConversationSnapshot: %v", err)
+	}
+	if len(snapshot.Activities) != 1 ||
+		snapshot.Activities[0].ProviderItemID != domain.ConversationContextResetProviderItemID(replacement) {
+		t.Fatalf("reset boundary after failed start = %#v", snapshot.Activities)
+	}
+	page, err := st.LoadConversationSnapshotPage(ctx, conversation.ID, 0, 10)
+	if err != nil {
+		t.Fatalf("LoadConversationSnapshotPage: %v", err)
+	}
+	if len(page.Messages) != 0 || len(page.Activities) != 0 || len(page.Turns) != 0 || page.HasMoreBefore {
+		t.Fatalf("page after failed start = messages %#v activities %#v turns %#v hasMore %v, want empty",
+			page.Messages, page.Activities, page.Turns, page.HasMoreBefore)
 	}
 }
 
@@ -1597,9 +1674,9 @@ func TestApprovalIsStoredPendingWithProviderDecisions(t *testing.T) {
 		ActivityStatus: domain.ActivityStatusPending,
 		Summary:        "Run ao spawn",
 		Decisions: []ports.ChatDecisionOption{
-			{ID: "accept", Label: "Approve"},
-			{ID: "acceptWithExecpolicyAmendment", Label: "Approve and remember this command"},
-			{ID: "cancel", Label: "Cancel"},
+			{ID: "accept", Label: "Approve", Kind: ports.ChatDecisionAllowOnce},
+			{ID: "acceptWithExecpolicyAmendment", Label: "Approve and remember this command", Kind: ports.ChatDecisionAllowAlways},
+			{ID: "cancel", Label: "Cancel", Kind: ports.ChatDecisionRejectOnce},
 		},
 	})
 
@@ -1618,13 +1695,18 @@ func TestApprovalIsStoredPendingWithProviderDecisions(t *testing.T) {
 	}
 
 	var detail struct {
-		Decisions []struct{ ID, Label string } `json:"decisions"`
+		Decisions []struct{ ID, Label, Kind string } `json:"decisions"`
 	}
 	if err := json.Unmarshal(approval.Detail, &detail); err != nil {
 		t.Fatalf("detail not decodable: %v (%s)", err, approval.Detail)
 	}
 	if len(detail.Decisions) != 3 {
 		t.Fatalf("stored %d decisions, want the provider's 3: %+v", len(detail.Decisions), detail.Decisions)
+	}
+	if detail.Decisions[0].Kind != string(ports.ChatDecisionAllowOnce) ||
+		detail.Decisions[1].Kind != string(ports.ChatDecisionAllowAlways) ||
+		detail.Decisions[2].Kind != string(ports.ChatDecisionRejectOnce) {
+		t.Fatalf("stored decision kinds = %+v", detail.Decisions)
 	}
 	for _, d := range detail.Decisions {
 		if d.ID == "decline" {
@@ -1644,6 +1726,22 @@ func TestApprovalIsStoredPendingWithProviderDecisions(t *testing.T) {
 	})
 	if resolved.Activities[0].Status != domain.ActivityStatusResolved {
 		t.Fatalf("status = %q, want resolved", resolved.Activities[0].Status)
+	}
+	var resolvedDetail struct {
+		Decision  string `json:"decision"`
+		Decisions []struct {
+			ID   string `json:"id"`
+			Kind string `json:"kind"`
+		} `json:"decisions"`
+	}
+	if err := json.Unmarshal(resolved.Activities[0].Detail, &resolvedDetail); err != nil {
+		t.Fatalf("resolved detail not decodable: %v (%s)", err, resolved.Activities[0].Detail)
+	}
+	if resolvedDetail.Decision != "accept" {
+		t.Fatalf("resolved decision = %q, want accept", resolvedDetail.Decision)
+	}
+	if len(resolvedDetail.Decisions) != 3 {
+		t.Fatalf("resolved decision options = %d, want preserved 3", len(resolvedDetail.Decisions))
 	}
 }
 
