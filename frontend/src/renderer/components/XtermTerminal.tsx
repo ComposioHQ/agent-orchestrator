@@ -259,6 +259,77 @@ function pageKeyReport(lines: number): string {
 	return lines < 0 ? PAGE_UP : PAGE_DOWN;
 }
 
+// How a pane's transcript moves. Both scroll gestures (wheel and selection
+// drag) have to agree on this, so the decision lives in one place: they used to
+// differ, and the drag silently scrolled nothing on every tmux pane (#4265).
+//  - "local"       xterm owns the scrollback and scrolls it itself.
+//  - "mouseReport" the pane tracks the mouse and acts on SGR wheel reports.
+//  - "pageKeys"    the pane scrolls its own transcript by keyboard only.
+type PaneScrollMode = "local" | "mouseReport" | "pageKeys";
+
+function paneScrollMode(term: Terminal, scrollsByKeyboard: boolean): PaneScrollMode {
+	// A full-screen TUI that keeps its own transcript and scrolls it only by
+	// keyboard (opencode) ignores wheel/mouse reports on every platform. Kept
+	// first so opencode is unaffected by the buffer-aware paths below.
+	if (scrollsByKeyboard) return "pageKeys";
+	// A normal-buffer pane with mouse tracking off (codex, a plain shell) prints
+	// its transcript and relies on the terminal's own scrollback — the way it
+	// scrolls in a raw terminal. Requires scrollback > 0 (see Terminal opts).
+	if (term.modes.mouseTrackingMode === "none" && term.buffer.active.type === "normal") return "local";
+	// Mouse tracking on: the pane (tmux/zellij copy-mode, or any app that tracks
+	// the mouse) acts on SGR wheel reports. On Windows conpty this reaches the
+	// app directly; under a mux it drives copy-mode.
+	if (term.modes.mouseTrackingMode !== "none") return "mouseReport";
+	// Alt-buffer pane with mouse tracking off and no keyboard-scroll hint: no
+	// scrollback to move locally, so fall back to page keys.
+	return "pageKeys";
+}
+
+// The bytes that scroll a pane by `lines` (negative = up). Only meaningful for
+// the two modes where the pane, not xterm, does the scrolling.
+function paneScrollReport(mode: Exclude<PaneScrollMode, "local">, lines: number): string {
+	if (mode === "pageKeys") return pageKeyReport(lines);
+	return sgrWheelReport(lines < 0 ? SGR_WHEEL_UP : SGR_WHEEL_DOWN, Math.abs(lines));
+}
+
+// Selection drag auto-scroll.
+//
+// xterm auto-scrolls its OWN viewport when a selection drag leaves the screen
+// box (SelectionService._dragScroll -> BufferService.scrollLines). That only
+// moves lines xterm holds in its scrollback, and every AO terminal on
+// macOS/Linux is a `tmux attach-session` client: tmux drives the attaching
+// terminal into the alternate screen (the attach stream opens with ESC[?1049h
+// plus ESC[?1000h/?1002h/?1006h), where ybase and ydisp are permanently 0, so
+// BufferService.scrollLines returns without moving anything and the pane sits
+// still under a live drag. The scrollback lives in tmux, so the drag has to
+// reach it the same way the wheel already does — by reporting to the pane.
+const SELECTION_DRAG_SCROLL_INTERVAL_MS = 50;
+// Distance past the edge at which the drag scrolls at full speed. Mirrors
+// xterm's own DRAG_SCROLL_MAX_THRESHOLD so the gesture feels unchanged on the
+// "local" panes where xterm still does the scrolling.
+const SELECTION_DRAG_MAX_THRESHOLD_PX = 50;
+// Far below xterm's local max of 15 because each line here becomes a wheel
+// report the PANE acts on, and one report moves more than one line: tmux
+// copy-mode scrolls 5. Measured against a real `tmux attach` PTY, 3 reports per
+// 50ms tick moves ~14 lines per tick — i.e. this lands back on xterm's own
+// full-speed drag scroll rather than 5x past it.
+const SELECTION_DRAG_MAX_SPEED = 3;
+// A page key moves a whole screen, so a keyboard-scroll pane gets one every N
+// ticks instead of one per tick.
+const SELECTION_DRAG_PAGE_TICKS = 8;
+
+// Lines to scroll for a pointer at `clientY`, given the screen element's box.
+// Zero while the pointer is still inside it. Same shape as xterm's
+// SelectionService._getMouseEventScrollAmount, against the same element.
+function selectionDragScrollLines(clientY: number, screen: DOMRect): number {
+	let offset = clientY - screen.top;
+	if (offset >= 0 && offset <= screen.height) return 0;
+	if (offset > screen.height) offset -= screen.height;
+	offset = Math.min(Math.max(offset, -SELECTION_DRAG_MAX_THRESHOLD_PX), SELECTION_DRAG_MAX_THRESHOLD_PX);
+	offset /= SELECTION_DRAG_MAX_THRESHOLD_PX;
+	return Math.sign(offset) + Math.round(offset * (SELECTION_DRAG_MAX_SPEED - 1));
+}
+
 function forceSelectionMode(term: Terminal): void {
 	const internal = term as XtermInternal;
 	const selectionService = internal._core?._selectionService;
@@ -799,35 +870,63 @@ export function XtermTerminal(props: XtermTerminalProps) {
 				wheelAccumPx -= lines * rowHeight;
 			}
 			if (lines === 0) return false;
-			// A full-screen TUI that keeps its own transcript and scrolls it only by
-			// keyboard (opencode) ignores wheel/mouse reports on every platform; route
-			// its wheel to page keys. Kept first so opencode is unaffected by the
-			// buffer-aware paths below.
-			if (callbacksRef.current.paneScrollsByKeyboard) {
-				emitUserInput(pageKeyReport(lines), "wheel");
-				return false;
-			}
-			// A normal-buffer pane with mouse tracking off (codex, a plain shell)
-			// prints its transcript and relies on the terminal's own scrollback — the
-			// way it scrolls in a raw terminal. Scroll xterm's viewport locally; the
-			// pane never sees these bytes. Requires scrollback > 0 (see Terminal opts).
-			if (term.modes.mouseTrackingMode === "none" && term.buffer.active.type === "normal") {
+			// Which of the three routes this pane needs is the same question the
+			// selection drag below asks, so both read it from paneScrollMode().
+			const mode = paneScrollMode(term, callbacksRef.current.paneScrollsByKeyboard === true);
+			if (mode === "local") {
+				// The pane never sees these bytes; we move xterm's own scrollback.
 				term.scrollLines(lines);
 				return false;
 			}
-			// Mouse tracking on: the pane (tmux/zellij copy-mode, or any app that
-			// tracks the mouse) acts on SGR wheel reports. On Windows conpty this
-			// reaches the app directly; under a mux it drives copy-mode.
-			if (term.modes.mouseTrackingMode !== "none") {
-				const button = lines < 0 ? SGR_WHEEL_UP : SGR_WHEEL_DOWN;
-				emitUserInput(sgrWheelReport(button, Math.abs(lines)), "wheel");
-				return false;
-			}
-			// Alt-buffer pane with mouse tracking off and no keyboard-scroll hint:
-			// no scrollback to move locally, so fall back to page keys.
-			emitUserInput(pageKeyReport(lines), "wheel");
+			emitUserInput(paneScrollReport(mode, lines), "wheel");
 			return false;
 		});
+
+		// Selection drag auto-scroll: supply the scroll a pane-owned scrollback
+		// never receives from xterm's built-in drag scroll (see the constants above).
+		// xterm keeps owning the selection model — its own _dragScroll re-pins
+		// selectionEnd to the viewport edge on every tick — so all this adds is the
+		// pane scroll itself.
+		let selectionDragLines = 0;
+		let selectionDragTicks = 0;
+		let selectionDragTimer: number | null = null;
+		const trackSelectionDrag = (event: MouseEvent) => {
+			const screen = host.querySelector<HTMLElement>(".xterm-screen");
+			selectionDragLines = screen ? selectionDragScrollLines(event.clientY, screen.getBoundingClientRect()) : 0;
+		};
+		const stopSelectionDragScroll = () => {
+			if (selectionDragTimer !== null) {
+				window.clearInterval(selectionDragTimer);
+				selectionDragTimer = null;
+			}
+			selectionDragLines = 0;
+			selectionDragTicks = 0;
+			// Capture phase on both, matching how they were added.
+			window.removeEventListener("mousemove", trackSelectionDrag, true);
+			window.removeEventListener("mouseup", stopSelectionDragScroll, true);
+		};
+		const selectionDragTick = () => {
+			if (selectionDragLines === 0 || !term.hasSelection()) return;
+			const mode = paneScrollMode(term, callbacksRef.current.paneScrollsByKeyboard === true);
+			// A "local" pane still has xterm's built-in drag scroll, which already
+			// works against its own scrollback; emitting here would scroll it twice.
+			if (mode === "local") return;
+			// One page key per tick would be twenty screens a second.
+			if (mode === "pageKeys" && selectionDragTicks++ % SELECTION_DRAG_PAGE_TICKS !== 0) return;
+			emitUserInput(paneScrollReport(mode, selectionDragLines), "wheel");
+		};
+		const startSelectionDragScroll = (event: MouseEvent) => {
+			if (event.button !== 0 || selectionDragTimer !== null) return;
+			selectionDragLines = 0;
+			selectionDragTicks = 0;
+			// Capture phase: xterm's own document-level mousemove listener calls
+			// stopImmediatePropagation() for the whole duration of a selection drag,
+			// which would silently drop a bubble-phase listener on window.
+			window.addEventListener("mousemove", trackSelectionDrag, true);
+			window.addEventListener("mouseup", stopSelectionDragScroll, true);
+			selectionDragTimer = window.setInterval(selectionDragTick, SELECTION_DRAG_SCROLL_INTERVAL_MS);
+		};
+		shell.addEventListener("mousedown", startSelectionDragScroll);
 		const pasteInput = (event: ClipboardEvent) => {
 			event.preventDefault();
 			event.stopPropagation();
@@ -985,6 +1084,10 @@ export function XtermTerminal(props: XtermTerminalProps) {
 			shell.removeEventListener("compositionend", compositionInput, true);
 			shell.removeEventListener("dragover", dragOverInput);
 			shell.removeEventListener("drop", dropInput);
+			shell.removeEventListener("mousedown", startSelectionDragScroll);
+			// Also drops the window-level drag listeners and the tick interval if the
+			// terminal is torn down mid-drag.
+			stopSelectionDragScroll();
 			contextMenuActionsRef.current = null;
 			cancelActivationPreparation?.();
 			clearSuppressNativePaste();

@@ -70,6 +70,12 @@ vi.mock("@xterm/xterm", () => ({
 		loadAddon() {}
 		open(host: HTMLElement) {
 			host.appendChild(document.createElement("textarea"));
+			// Selection drag auto-scroll measures the pointer against the screen
+			// element's box, exactly as xterm's own drag scroll does. jsdom reports a
+			// zero rect, so the test that exercises it stubs a real one.
+			const screenEl = document.createElement("div");
+			screenEl.className = "xterm-screen";
+			host.appendChild(screenEl);
 		}
 		write() {}
 		writeln() {}
@@ -1013,6 +1019,165 @@ describe("XtermTerminal", () => {
 
 		expect(state.lastTerminal!.wheelHandler!({ deltaY: -50 } as WheelEvent)).toBe(false);
 		expect(onInput).toHaveBeenLastCalledWith("\x1b[5~", "wheel");
+	});
+
+	// Selection drag auto-scroll (#4265). xterm's built-in drag scroll only moves
+	// its OWN scrollback, which is permanently empty on the alt-buffer,
+	// mouse-tracking panes every `tmux attach` produces — so the pane has to be
+	// scrolled the same way the wheel already scrolls it.
+	//
+	// Screen box is stubbed at top=100, height=200 (jsdom reports a zero rect), so
+	// clientY 60 is 40px above it and clientY 340 is 40px below: 40/50 of the way
+	// to full speed => sign + round(0.8 * (3 - 1)) = 3 lines.
+	function dragSelectionTo(clientY: number, ticks = 1) {
+		const screenEl = document.querySelector<HTMLElement>(".xterm-screen")!;
+		screenEl.getBoundingClientRect = () => ({ top: 100, height: 200 }) as DOMRect;
+		// xterm mounts into the inner host; the drag listener sits on the shell that
+		// wraps it, so the mousedown has to bubble the same way a real one does.
+		const host = screenEl.parentElement!;
+		act(() => {
+			host.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, button: 0 }));
+			window.dispatchEvent(new MouseEvent("mousemove", { bubbles: true, clientY }));
+			vi.advanceTimersByTime(50 * ticks);
+		});
+	}
+
+	it("auto-scrolls a mouse-tracking pane while a selection drag is held past the edge", () => {
+		vi.useFakeTimers();
+		try {
+			const onInput = vi.fn();
+			render(<XtermTerminal theme="dark" onReady={(terminal) => terminal.onUserInput(onInput)} />);
+			// What `tmux attach` gives us: alternate screen + SGR mouse tracking.
+			state.lastTerminal!.modes.mouseTrackingMode = "any";
+			state.lastTerminal!.buffer.active.type = "alternate";
+			state.lastTerminal!.selection = "selected";
+			onInput.mockClear();
+
+			dragSelectionTo(60);
+
+			expect(onInput).toHaveBeenCalledWith("\x1b[<64;1;1M".repeat(3), "wheel");
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it("scrolls the other way when the selection drag is held below the terminal", () => {
+		vi.useFakeTimers();
+		try {
+			const onInput = vi.fn();
+			render(<XtermTerminal theme="dark" onReady={(terminal) => terminal.onUserInput(onInput)} />);
+			state.lastTerminal!.modes.mouseTrackingMode = "any";
+			state.lastTerminal!.buffer.active.type = "alternate";
+			state.lastTerminal!.selection = "selected";
+			onInput.mockClear();
+
+			dragSelectionTo(340);
+
+			expect(onInput).toHaveBeenCalledWith("\x1b[<65;1;1M".repeat(3), "wheel");
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it("keeps auto-scrolling every tick while the drag is held, and stops on mouseup", () => {
+		vi.useFakeTimers();
+		try {
+			const onInput = vi.fn();
+			render(<XtermTerminal theme="dark" onReady={(terminal) => terminal.onUserInput(onInput)} />);
+			state.lastTerminal!.modes.mouseTrackingMode = "any";
+			state.lastTerminal!.buffer.active.type = "alternate";
+			state.lastTerminal!.selection = "selected";
+			onInput.mockClear();
+
+			dragSelectionTo(60, 4);
+			expect(onInput).toHaveBeenCalledTimes(4);
+
+			act(() => {
+				window.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
+				vi.advanceTimersByTime(500);
+			});
+			expect(onInput).toHaveBeenCalledTimes(4);
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it("does not auto-scroll while the selection drag stays inside the terminal", () => {
+		vi.useFakeTimers();
+		try {
+			const onInput = vi.fn();
+			render(<XtermTerminal theme="dark" onReady={(terminal) => terminal.onUserInput(onInput)} />);
+			state.lastTerminal!.modes.mouseTrackingMode = "any";
+			state.lastTerminal!.buffer.active.type = "alternate";
+			state.lastTerminal!.selection = "selected";
+			onInput.mockClear();
+
+			// Inside the stubbed 100..300 box: an ordinary in-pane drag must stay a
+			// plain selection and must not move the pane.
+			dragSelectionTo(200, 10);
+
+			expect(onInput).not.toHaveBeenCalled();
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it("does not auto-scroll without a selection, so a click-and-hold never moves the pane", () => {
+		vi.useFakeTimers();
+		try {
+			const onInput = vi.fn();
+			render(<XtermTerminal theme="dark" onReady={(terminal) => terminal.onUserInput(onInput)} />);
+			state.lastTerminal!.modes.mouseTrackingMode = "any";
+			state.lastTerminal!.buffer.active.type = "alternate";
+			state.lastTerminal!.selection = "";
+			onInput.mockClear();
+
+			dragSelectionTo(60, 10);
+
+			expect(onInput).not.toHaveBeenCalled();
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it("leaves normal-buffer panes to xterm's own drag scroll instead of double-scrolling them", () => {
+		vi.useFakeTimers();
+		try {
+			const onInput = vi.fn();
+			render(<XtermTerminal theme="dark" onReady={(terminal) => terminal.onUserInput(onInput)} />);
+			// codex / a plain shell / a Windows conpty shell: xterm holds the
+			// scrollback and its built-in drag scroll already moves it.
+			state.lastTerminal!.modes.mouseTrackingMode = "none";
+			state.lastTerminal!.buffer.active.type = "normal";
+			state.lastTerminal!.selection = "selected";
+			onInput.mockClear();
+
+			dragSelectionTo(60, 10);
+
+			expect(onInput).not.toHaveBeenCalled();
+			expect(state.lastTerminal!.scrollLines).not.toHaveBeenCalled();
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it("paces page keys for keyboard-scroll panes so a held drag is not twenty screens a second", () => {
+		vi.useFakeTimers();
+		try {
+			const onInput = vi.fn();
+			render(<XtermTerminal theme="dark" paneScrollsByKeyboard onReady={(terminal) => terminal.onUserInput(onInput)} />);
+			state.lastTerminal!.modes.mouseTrackingMode = "any";
+			state.lastTerminal!.selection = "selected";
+			onInput.mockClear();
+
+			// One page key on the first tick, then one every eighth: 9 ticks => 2.
+			dragSelectionTo(60, 9);
+
+			expect(onInput).toHaveBeenCalledTimes(2);
+			expect(onInput).toHaveBeenLastCalledWith("\x1b[5~", "wheel");
+		} finally {
+			vi.useRealTimers();
+		}
 	});
 
 	it("routes web links to the AO browser and does not open the system browser", () => {
