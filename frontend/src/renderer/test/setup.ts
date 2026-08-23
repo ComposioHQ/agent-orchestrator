@@ -112,6 +112,22 @@ if (typeof window !== "undefined") {
 			restart: async () => ({ state: "starting" }),
 			onStatus: () => () => undefined,
 		},
+		editorHandoff: {
+			getState: async () => ({
+				targets: [
+					{ id: "cursor", name: "Cursor", kind: "editor" },
+					{ id: "file-manager", name: "Finder", kind: "file_manager" },
+					{ id: "terminal", name: "Terminal", kind: "terminal" },
+				],
+				preferredEditorId: "cursor",
+				workspaceAvailable: true,
+			}),
+			open: async ({ targetId }) => {
+				if (targetId === "file-manager") return { id: "file-manager", name: "Finder", kind: "file_manager" };
+				if (targetId === "terminal") return { id: "terminal", name: "Terminal", kind: "terminal" };
+				return { id: targetId ?? "cursor", name: "Cursor", kind: "editor" };
+			},
+		},
 		telemetry: {
 			getBootstrap: async () => null,
 		},

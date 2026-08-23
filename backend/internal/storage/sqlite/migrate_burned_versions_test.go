@@ -107,6 +107,8 @@ var shippedMigrations = map[int64]string{
 	101: "0101_conversation_provider_ownership_epochs.sql",
 	102: "0102_canonical_usage.sql",
 	103: "0103_review_run_cdc.sql",
+	104: "0104_agent_inventory_cache.sql",
+	105: "0105_default_session_mode_chat.sql",
 }
 
 // burnedVersion reports version numbers that must never be (re)used: they

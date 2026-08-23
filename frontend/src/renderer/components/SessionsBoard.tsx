@@ -32,7 +32,7 @@ import { NotificationCenter } from "./NotificationCenter";
 import { BoardWelcome, ProjectBoardEmpty } from "./BoardEmptyStates";
 import { OrchestratorIcon } from "./icons";
 import { OrchestratorActivityIndicator } from "./OrchestratorActivityIndicator";
-import { TopbarButton, TopbarKillError, topbarProjectLabelClass } from "./TopbarButton";
+import { TopbarActionError, TopbarButton, topbarProjectLabelClass } from "./TopbarButton";
 import { isChatPreflightError, spawnOrchestrator } from "../lib/spawn-orchestrator";
 import { restartProjectOrchestrator } from "../lib/restart-orchestrator";
 import { usesPreviewWorkspaceData } from "../lib/preview-mode";
@@ -214,9 +214,9 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 	const actions = projectId ? (
 		<>
 			{visibleSpawnError && !showProjectEmpty && (
-				<TopbarKillError className="max-w-content-max truncate" title={visibleSpawnError}>
+				<TopbarActionError className="max-w-content-max truncate" title={visibleSpawnError}>
 					{visibleSpawnError}
-				</TopbarKillError>
+				</TopbarActionError>
 			)}
 			{visibleSpawnError && canCreateAsTui && !showProjectEmpty ? (
 				<TopbarButton disabled={isSpawning || isProjectRestarting} onClick={() => void openOrchestrator("tui")}>

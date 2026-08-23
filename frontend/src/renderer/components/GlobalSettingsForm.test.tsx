@@ -344,6 +344,29 @@ describe("GlobalSettingsForm", () => {
 		await waitFor(() => expect(button).toBeEnabled());
 	});
 
+	it("stops manual loading when the updater completes before the check invocation settles", async () => {
+		let emit: (status: { state: string; checkedAt?: number; requestId?: string }) => void = () => undefined;
+		updOnStatus.mockImplementation((listener: (status: unknown) => void) => {
+			emit = listener as typeof emit;
+			return () => undefined;
+		});
+		updCheck.mockReturnValue(new Promise<void>(() => undefined));
+		renderForm();
+		const button = await screen.findByRole("button", { name: "Check for updates" });
+
+		await userEvent.click(button);
+		const requestId = updCheck.mock.calls[0]?.[0]?.requestId;
+		expect(requestId).toMatch(/^manual-update-/);
+		act(() => emit({ state: "not-available", checkedAt: Date.now() }));
+		expect(screen.getByRole("status")).toHaveTextContent("Checking for updates…");
+		expect(button).toBeDisabled();
+
+		act(() => emit({ state: "not-available", checkedAt: Date.now(), requestId }));
+
+		expect(screen.getByRole("status")).toHaveTextContent("You're on the latest version.");
+		expect(button).toBeEnabled();
+	});
+
 	it("shows when the updater last completed a check", async () => {
 		const checkedAt = new Date("2026-08-19T12:51:00.000Z").getTime();
 		updGetStatus.mockResolvedValue({ state: "not-available", checkedAt });
