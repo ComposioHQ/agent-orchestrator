@@ -3,6 +3,7 @@
 package kimiacp
 
 import (
+	"fmt"
 	"log/slog"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/kimi"
@@ -22,22 +23,32 @@ func New(plugin nativeacp.Plugin, log *slog.Logger) ports.ChatDriver {
 			ports.ChatCapabilityHistory: true,
 			ports.ChatCapabilityPlans:   true,
 		},
-		Configure:      configure,
-		SessionOptions: sessionOptions,
+		Configure:            configure,
+		SessionOptions:       sessionOptions,
+		ValidateTurnSettings: validateTurnSettings,
 	}, log)
 }
 
 func configure(cfg acpdriver.LaunchConfig) ([]string, map[string]string, error) {
+	if err := validateTurnSettings(ports.ChatTurnSettings{Approval: cfg.Permissions}); err != nil {
+		return nil, nil, err
+	}
 	if err := kimi.PrepareACPInstructions(cfg.WorkspacePath, cfg.SystemPrompt); err != nil {
 		return nil, nil, err
 	}
 	return []string{"acp"}, nil, nil
 }
 
-// sessionOptions maps AO's durable turn settings onto Kimi's native ACP
-// config-option ids. Kimi advertises the complete model/thinking/mode catalog
-// during session setup; AO keeps that provider-owned catalog intact for direct
-// plan-mode and thinking selection in Chat.
+func validateTurnSettings(_ ports.PermissionMode, settings ports.ChatTurnSettings) error {
+	if mode := ports.NormalizePermissionMode(settings.Approval); mode != ports.PermissionModeDefault {
+		return fmt.Errorf("%w: Kimi ACP advertises only its default session mode; requested %q",
+			ports.ErrChatPermissionModeUnsupported, mode)
+	}
+	return nil
+}
+
+// sessionOptions maps AO's durable model choice onto Kimi's advertised legacy
+// model selector. The generic ACP transport routes it through session/set_model.
 func sessionOptions(settings ports.ChatTurnSettings) []acpdriver.SessionOption {
 	var options []acpdriver.SessionOption
 	if settings.Model != "" {

@@ -57,6 +57,10 @@ var (
 	// ErrChatConfigOptionInvalid means a client named an unknown option, sent the
 	// wrong value type, or selected a value the provider did not advertise.
 	ErrChatConfigOptionInvalid = errors.New("chat config option value is invalid")
+	// ErrChatPermissionModeUnsupported means the requested AO approval policy has
+	// no enforced mapping in this provider. Drivers must return it instead of
+	// silently running with a different permission policy.
+	ErrChatPermissionModeUnsupported = errors.New("chat permission mode is unsupported")
 	// ErrChatHistoryUnsettled means the native conversation history is not safe
 	// to project as complete. Only a ChatHistoryRefresher promises that another
 	// provider observation may make progress; rereading a snapshot need not.

@@ -2,6 +2,7 @@ package kimiacp
 
 import (
 	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"os"
@@ -55,7 +56,7 @@ func TestConfigureLaunchesNativeACPSubcommand(t *testing.T) {
 	workspace := t.TempDir()
 	args, env, err := configure(acpdriver.LaunchConfig{
 		WorkspacePath: workspace,
-		Model:         "kimi-code/kimi-for-coding", Permissions: ports.PermissionModeBypassPermissions,
+		Model:         "kimi-code/kimi-for-coding", Permissions: ports.PermissionModeDefault,
 		SystemPrompt: "AO worker instructions",
 	})
 	if err != nil {
@@ -86,6 +87,23 @@ func TestConfigureLaunchesNativeACPSubcommand(t *testing.T) {
 	}
 	if !strings.Contains(string(gitignore), "/AGENTS.md\n") {
 		t.Fatalf("Kimi ACP instructions are not gitignored:\n%s", gitignore)
+	}
+}
+
+func TestConfigureRejectsUnsupportedPermissionModes(t *testing.T) {
+	for _, mode := range []ports.PermissionMode{
+		ports.PermissionModeAcceptEdits,
+		ports.PermissionModeAuto,
+		ports.PermissionModeBypassPermissions,
+	} {
+		t.Run(string(mode), func(t *testing.T) {
+			_, _, err := configure(acpdriver.LaunchConfig{
+				WorkspacePath: t.TempDir(), Permissions: mode,
+			})
+			if !errors.Is(err, ports.ErrChatPermissionModeUnsupported) {
+				t.Fatalf("configure permissions %q error = %v, want typed unsupported-mode error", mode, err)
+			}
+		})
 	}
 }
 

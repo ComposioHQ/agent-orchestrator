@@ -56,6 +56,113 @@ type fakeAgent struct {
 	steerOut            string
 }
 
+type legacyKimiAgent struct {
+	mu          sync.Mutex
+	model       string
+	modelCalls  int
+	mode        string
+	modeCalls   int
+	configCalls int
+}
+
+func fakeLegacyKimiSpawn(agent *legacyKimiAgent) spawnFunc {
+	return func(Launch, string) (*process, error) {
+		clientToAgentR, clientToAgentW := io.Pipe()
+		agentToClientR, agentToClientW := io.Pipe()
+		go serveLegacyKimi(agent, clientToAgentR, agentToClientW)
+		var once sync.Once
+		return &process{
+			stdin: clientToAgentW, stdout: agentToClientR,
+			stop: func() error {
+				once.Do(func() {
+					_ = clientToAgentW.Close()
+					_ = clientToAgentR.Close()
+					_ = agentToClientW.Close()
+					_ = agentToClientR.Close()
+				})
+				return nil
+			},
+		}, nil
+	}
+}
+
+func serveLegacyKimi(agent *legacyKimiAgent, in io.Reader, out io.Writer) {
+	decoder := json.NewDecoder(in)
+	encoder := json.NewEncoder(out)
+	for {
+		var request struct {
+			ID     json.RawMessage `json:"id"`
+			Method string          `json:"method"`
+			Params json.RawMessage `json:"params"`
+		}
+		if err := decoder.Decode(&request); err != nil {
+			return
+		}
+		result := any(map[string]any{})
+		var responseError any
+		switch request.Method {
+		case "initialize":
+			result = map[string]any{
+				"protocolVersion": acpsdk.ProtocolVersionNumber,
+				"agentCapabilities": map[string]any{
+					"sessionCapabilities": map[string]any{"resume": map[string]any{}},
+				},
+			}
+		case "session/new":
+			result = map[string]any{
+				"sessionId": "kimi-session-1",
+				"models": map[string]any{
+					"currentModelId": "kimi-code/kimi-for-coding",
+					"availableModels": []map[string]any{{
+						"modelId": "kimi-code/kimi-for-coding",
+						"name":    "Kimi for Coding", "description": "Kimi coding model",
+					}},
+				},
+				"modes": map[string]any{
+					"currentModeId": "default",
+					"availableModes": []map[string]any{{
+						"id": "default", "name": "Default", "description": "The default mode.",
+					}},
+				},
+			}
+		case "session/set_model":
+			var params struct {
+				ModelID string `json:"modelId"`
+			}
+			_ = json.Unmarshal(request.Params, &params)
+			agent.mu.Lock()
+			agent.model = params.ModelID
+			agent.modelCalls++
+			agent.mu.Unlock()
+		case "session/set_mode":
+			var params struct {
+				ModeID string `json:"modeId"`
+			}
+			_ = json.Unmarshal(request.Params, &params)
+			agent.mu.Lock()
+			agent.mode = params.ModeID
+			agent.modeCalls++
+			agent.mu.Unlock()
+		case "session/set_config_option":
+			agent.mu.Lock()
+			agent.configCalls++
+			agent.mu.Unlock()
+			responseError = map[string]any{"code": -32601, "message": "Method not found"}
+		default:
+			responseError = map[string]any{"code": -32601, "message": "Method not found"}
+		}
+		response := map[string]any{"jsonrpc": "2.0", "id": request.ID}
+		if responseError != nil {
+			response["error"] = responseError
+		} else {
+			response["result"] = result
+		}
+		if err := encoder.Encode(response); err != nil {
+			return
+		}
+	}
+}
+
 var _ acpsdk.Agent = (*fakeAgent)(nil)
 
 func (a *fakeAgent) Authenticate(context.Context, acpsdk.AuthenticateRequest) (acpsdk.AuthenticateResponse, error) {
@@ -1279,6 +1386,62 @@ func TestACPDriverExposesAndMutatesAdvertisedConfigOptions(t *testing.T) {
 	}
 }
 
+func TestACPDriverConsumesLegacyKimiSelectorsOnSDK0135(t *testing.T) {
+	agent := &legacyKimiAgent{}
+	driver := New(Config{
+		Harness:      domain.HarnessKimi,
+		Capabilities: ports.ChatCapabilities{ports.ChatCapabilityStreaming: true},
+		Probe:        func(context.Context) error { return nil },
+		Launch:       func(context.Context, LaunchConfig) (Launch, error) { return Launch{Command: "fake"}, nil },
+		SessionOptions: func(settings ports.ChatTurnSettings) []SessionOption {
+			if settings.Model == "" {
+				return nil
+			}
+			return []SessionOption{{ID: "model", Value: settings.Model}}
+		},
+	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	driver.spawn = fakeLegacyKimiSpawn(agent)
+
+	conv, err := driver.Start(context.Background(), ports.ChatStartConfig{
+		WorkspacePath: t.TempDir(), Model: "kimi-code/kimi-for-coding",
+	})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer conv.Close()
+
+	options, err := conv.(ports.ChatConfigOptionController).ListConfigOptions(context.Background())
+	if err != nil {
+		t.Fatalf("ListConfigOptions: %v", err)
+	}
+	if len(options) != 2 || options[0].ID != "model" || options[0].Current.Select != "kimi-code/kimi-for-coding" ||
+		options[1].ID != "mode" || options[1].Current.Select != "default" {
+		t.Fatalf("legacy Kimi options = %#v, want model and default mode", options)
+	}
+
+	controller := conv.(ports.ChatConfigOptionController)
+	if _, err := controller.SetConfigOption(context.Background(), "model", ports.ChatConfigOptionValue{
+		Select: "kimi-code/kimi-for-coding",
+	}); err != nil {
+		t.Fatalf("SetConfigOption model: %v", err)
+	}
+	if _, err := controller.SetConfigOption(context.Background(), "mode", ports.ChatConfigOptionValue{
+		Select: "default",
+	}); err != nil {
+		t.Fatalf("SetConfigOption mode: %v", err)
+	}
+
+	agent.mu.Lock()
+	model, modelCalls := agent.model, agent.modelCalls
+	mode, modeCalls, configCalls := agent.mode, agent.modeCalls, agent.configCalls
+	agent.mu.Unlock()
+	if model != "kimi-code/kimi-for-coding" || modelCalls != 2 ||
+		mode != "default" || modeCalls != 1 || configCalls != 0 {
+		t.Fatalf("legacy setters: model=%q/%d mode=%q/%d config=%d",
+			model, modelCalls, mode, modeCalls, configCalls)
+	}
+}
+
 func TestACPDriverExposesDynamicAvailableCommandsAsSkills(t *testing.T) {
 	agent := &fakeAgent{}
 	driver := New(Config{
@@ -1558,6 +1721,42 @@ func TestACPDriverSendTurnPropagatesMethodNotFound(t *testing.T) {
 	})
 	if !errors.Is(err, ErrACPSetterUnsupported) {
 		t.Fatalf("SendTurn with -32601 mode setter: err = %v, want ErrACPSetterUnsupported", err)
+	}
+}
+
+func TestACPDriverRejectsUnsupportedTurnSettingsAtStartAndSend(t *testing.T) {
+	agent := &fakeAgent{}
+	driver := New(Config{
+		Harness:      domain.HarnessKimi,
+		Capabilities: ports.ChatCapabilities{ports.ChatCapabilityStreaming: true},
+		Probe:        func(context.Context) error { return nil },
+		Launch:       func(context.Context, LaunchConfig) (Launch, error) { return Launch{Command: "fake"}, nil },
+		ValidateTurnSettings: func(_ ports.PermissionMode, settings ports.ChatTurnSettings) error {
+			if ports.NormalizePermissionMode(settings.Approval) == ports.PermissionModeDefault {
+				return nil
+			}
+			return ports.ErrChatPermissionModeUnsupported
+		},
+	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	driver.spawn = fakeSpawn(agent)
+
+	_, err := driver.Start(context.Background(), ports.ChatStartConfig{
+		WorkspacePath: t.TempDir(), Permissions: ports.PermissionModeAuto,
+	})
+	if !errors.Is(err, ports.ErrChatPermissionModeUnsupported) {
+		t.Fatalf("Start unsupported permissions error = %v", err)
+	}
+
+	conv, err := driver.Start(context.Background(), ports.ChatStartConfig{WorkspacePath: t.TempDir()})
+	if err != nil {
+		t.Fatalf("Start default permissions: %v", err)
+	}
+	defer conv.Close()
+	_, err = conv.SendTurn(context.Background(), ports.ChatUserMessage{
+		Text: "do work", Settings: ports.ChatTurnSettings{Approval: ports.PermissionModeAuto},
+	})
+	if !errors.Is(err, ports.ErrChatPermissionModeUnsupported) {
+		t.Fatalf("SendTurn unsupported permissions error = %v", err)
 	}
 }
 
