@@ -1888,4 +1888,55 @@ func TestApplyUsageChunkRehomesAnOpenDuplicateToTheReplacementSource(t *testing.
 		ByteOffset: 20, State: domain.UsageSourceActive, UpdatedAt: now.Add(3 * time.Second),
 	}, []domain.ModelUsageEvent{event}), "replay twice")
 	assertHomedTo(replacement.ID, "after a repeated replay")
+
+	open, err := s.HasOpenUsageAttribution(ctx, replacement.ID)
+	mustNoError(t, err, "check open attribution")
+	if !open {
+		t.Fatal("the rehomed row is not reported open, so ingestion will not ask for a repair pass")
+	}
+}
+
+// An inferred attribution is open everywhere else, so it has to move too:
+// stranded on a retired generation it keeps a guessed provider and the cost
+// derived from it, where no observation can reach either.
+func TestApplyUsageChunkRehomesAnInferredDuplicateToTheReplacementSource(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	sess := seedUsageSession(t, s, domain.HarnessClaudeCode)
+	now := time.Unix(1700000000, 0).UTC()
+	retired := seedUsageSource(t, s, sess, now)
+
+	event := anthropicUsageEvent("inferred-event", 5, 10, 5, 4)
+	event.BillingProviderID = "anthropic"
+	event.BillingProviderSource = domain.UsageBillingProviderInferred
+	mustNoError(t, s.ApplyUsageChunk(ctx, retired.ID, 0, retired.UpdatedAt, domain.SourceCursorState{
+		ByteOffset: 10, State: domain.UsageSourceActive, UpdatedAt: now,
+	}, []domain.ModelUsageEvent{event}), "seed inferred event")
+
+	replacement, err := s.ReplaceUsageSource(ctx, retired.ID, domain.UsageErrorArtifactReplaced, domain.UsageSourceRecord{
+		BindingID:       retired.BindingID,
+		Kind:            retired.Kind,
+		NativeSessionID: retired.NativeSessionID,
+		ArtifactPath:    retired.ArtifactPath,
+		FileIdentity:    retired.FileIdentity + "-next",
+		Generation:      retired.Generation + 1,
+		State:           domain.UsageSourcePending,
+		UpdatedAt:       now.Add(time.Second),
+	}, now.Add(time.Second))
+	mustNoError(t, err, "replace source")
+
+	mustNoError(t, s.ApplyUsageChunk(ctx, replacement.ID, 0, replacement.UpdatedAt, domain.SourceCursorState{
+		ByteOffset: 10, State: domain.UsageSourceActive, UpdatedAt: now.Add(2 * time.Second),
+	}, []domain.ModelUsageEvent{event}), "replay onto the replacement")
+
+	candidates, err := s.ListLegacyUsageEvents(ctx, replacement.ID)
+	mustNoError(t, err, "list legacy events")
+	if len(candidates) != 1 || candidates[0].BillingProviderSource != domain.UsageBillingProviderInferred {
+		t.Fatalf("replacement owns %d open events, want the inferred one: %+v", len(candidates), candidates)
+	}
+	stranded, err := s.ListLegacyUsageEvents(ctx, retired.ID)
+	mustNoError(t, err, "list retired events")
+	if len(stranded) != 0 {
+		t.Fatalf("the retired generation kept %d open events", len(stranded))
+	}
 }

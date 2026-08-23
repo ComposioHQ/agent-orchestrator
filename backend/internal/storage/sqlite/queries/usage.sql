@@ -367,19 +367,36 @@ RETURNING id;
 -- skips a source retired as artifact_replaced, and the replacement owns no row
 -- for the event, so an attribution that never landed can never land.
 --
--- Only an open attribution moves. A row already attributed was collected under
--- the generation it names, and that is a fact about how it was observed.
+-- Only an open attribution moves, and open means the same thing here as
+-- everywhere else: unattributed, or attributed by inference and therefore still
+-- replaceable. Leaving an inferred row on the retired generation would strand a
+-- guess exactly where no observation can reach it. A row attributed by
+-- observation stays put: it was collected under the generation it names, and
+-- that is a fact about how it was observed rather than a stale pointer.
 UPDATE model_usage_events
 SET usage_source_id = sqlc.arg(usage_source_id)
 WHERE model_usage_events.id = sqlc.arg(id)
   AND model_usage_events.usage_source_id = sqlc.arg(expected_usage_source_id)
-  AND model_usage_events.billing_provider_id IS NULL
+  AND (model_usage_events.billing_provider_id IS NULL
+       OR model_usage_events.billing_provider_source = 'inferred')
   AND EXISTS (
       SELECT 1
       FROM usage_sources replacement
       WHERE replacement.id = sqlc.arg(usage_source_id)
         AND replacement.binding_id = model_usage_events.binding_id
   );
+
+-- name: HasOpenUsageAttribution :one
+-- Whether this source still owns an event a repair pass could finish. Cheaper
+-- than listing them, and it is asked once per applied chunk on a routed
+-- binding.
+SELECT CAST(EXISTS (
+    SELECT 1
+    FROM model_usage_events
+    WHERE model_usage_events.usage_source_id = ?
+      AND (model_usage_events.billing_provider_id IS NULL
+           OR model_usage_events.billing_provider_source = 'inferred')
+) AS INTEGER);
 
 -- name: EnrichModelUsageEventProviderUsage :execrows
 -- Replaying a durable prefix can supply the bounded provider object for an event

@@ -16,6 +16,7 @@ import (
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/activitydispatch"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
+	"github.com/aoagents/agent-orchestrator/backend/internal/pricing"
 )
 
 // sessionIDPattern bounds the AO_SESSION_ID we will place in a request path to
@@ -194,21 +195,26 @@ func claudeHookProviderHint(harness domain.AgentHarness) string {
 		return "vertex_ai"
 	}
 	if bedrock {
-		return ""
+		// Both flags set: the route is certainly not plain Anthropic, so this
+		// still has to rule out inferring one from the model.
+		return pricing.UnidentifiedBillingRoute
 	}
 	baseURL := strings.TrimSpace(os.Getenv("ANTHROPIC_BASE_URL"))
 	if baseURL == "" {
 		return "anthropic"
 	}
+	// A base URL AO cannot name still rules out inferring one from the model:
+	// the session is routed somewhere, and reporting that is the difference
+	// between "no hook has run" and "a hook ran and the route is not ours".
 	parsed, err := url.Parse(baseURL)
 	if err != nil {
-		return ""
+		return pricing.UnidentifiedBillingRoute
 	}
 	if parsed.Hostname() == "" && !strings.Contains(baseURL, "://") {
 		parsed, err = url.Parse("https://" + baseURL)
 	}
 	if err != nil || parsed.Scheme != "http" && parsed.Scheme != "https" {
-		return ""
+		return pricing.UnidentifiedBillingRoute
 	}
 	switch strings.ToLower(parsed.Hostname()) {
 	case "api.anthropic.com":
@@ -216,7 +222,7 @@ func claudeHookProviderHint(harness domain.AgentHarness) string {
 	case "api.z.ai":
 		return "zai"
 	default:
-		return ""
+		return pricing.UnidentifiedBillingRoute
 	}
 }
 

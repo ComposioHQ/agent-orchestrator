@@ -890,6 +890,16 @@ func stringOrNull(value string) sql.NullString {
 	return sql.NullString{String: value, Valid: true}
 }
 
+// HasOpenUsageAttribution reports whether a source still owns an event whose
+// billing attribution a repair pass could finish.
+func (s *Store) HasOpenUsageAttribution(ctx context.Context, sourceID int64) (bool, error) {
+	open, err := s.qr.HasOpenUsageAttribution(ctx, sourceID)
+	if err != nil {
+		return false, fmt.Errorf("check open usage attribution for source %d: %w", sourceID, err)
+	}
+	return open != 0, nil
+}
+
 func usageEventMatches(existing gen.GetModelUsageEventByKeyRow, event domain.ModelUsageEvent) bool {
 	genericMatches := existing.ProviderID == string(event.ProviderID) && existing.ModelID == event.ModelID &&
 		existing.UsageMeasurementKind == string(event.MeasurementKind) &&

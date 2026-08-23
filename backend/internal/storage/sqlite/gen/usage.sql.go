@@ -454,6 +454,26 @@ func (q *Queries) GetUsageSourceWithBindingAndSession(ctx context.Context, id in
 	return i, err
 }
 
+const hasOpenUsageAttribution = `-- name: HasOpenUsageAttribution :one
+SELECT CAST(EXISTS (
+    SELECT 1
+    FROM model_usage_events
+    WHERE model_usage_events.usage_source_id = ?
+      AND (model_usage_events.billing_provider_id IS NULL
+           OR model_usage_events.billing_provider_source = 'inferred')
+) AS INTEGER)
+`
+
+// Whether this source still owns an event a repair pass could finish. Cheaper
+// than listing them, and it is asked once per applied chunk on a routed
+// binding.
+func (q *Queries) HasOpenUsageAttribution(ctx context.Context, usageSourceID int64) (int64, error) {
+	row := q.db.QueryRowContext(ctx, hasOpenUsageAttribution, usageSourceID)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const hasPendingUsageDiscovery = `-- name: HasPendingUsageDiscovery :one
 SELECT CAST(EXISTS (
     SELECT 1
@@ -1265,7 +1285,8 @@ UPDATE model_usage_events
 SET usage_source_id = ?1
 WHERE model_usage_events.id = ?2
   AND model_usage_events.usage_source_id = ?3
-  AND model_usage_events.billing_provider_id IS NULL
+  AND (model_usage_events.billing_provider_id IS NULL
+       OR model_usage_events.billing_provider_source = 'inferred')
   AND EXISTS (
       SELECT 1
       FROM usage_sources replacement
@@ -1286,8 +1307,12 @@ type RehomeOpenUsageEventToReplacementSourceParams struct {
 // skips a source retired as artifact_replaced, and the replacement owns no row
 // for the event, so an attribution that never landed can never land.
 //
-// Only an open attribution moves. A row already attributed was collected under
-// the generation it names, and that is a fact about how it was observed.
+// Only an open attribution moves, and open means the same thing here as
+// everywhere else: unattributed, or attributed by inference and therefore still
+// replaceable. Leaving an inferred row on the retired generation would strand a
+// guess exactly where no observation can reach it. A row attributed by
+// observation stays put: it was collected under the generation it names, and
+// that is a fact about how it was observed rather than a stale pointer.
 func (q *Queries) RehomeOpenUsageEventToReplacementSource(ctx context.Context, arg RehomeOpenUsageEventToReplacementSourceParams) (int64, error) {
 	result, err := q.db.ExecContext(ctx, rehomeOpenUsageEventToReplacementSource, arg.UsageSourceID, arg.ID, arg.ExpectedUsageSourceID)
 	if err != nil {

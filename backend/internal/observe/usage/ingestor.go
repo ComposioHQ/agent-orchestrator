@@ -26,6 +26,7 @@ const (
 type ingestorStore interface {
 	GetUsageSourceForIngestion(context.Context, int64) (domain.UsageSourceContext, bool, error)
 	ApplyUsageChunk(context.Context, int64, int64, time.Time, domain.SourceCursorState, []domain.ModelUsageEvent) error
+	HasOpenUsageAttribution(context.Context, int64) (bool, error)
 	MarkUsageSourceState(context.Context, int64, domain.UsageSourceState, string, *time.Time, time.Time) (bool, error)
 	MarkUsageSourceFailure(context.Context, int64, int64, string, time.Time, time.Time) (bool, error)
 	ReplaceUsageSource(context.Context, int64, string, domain.UsageSourceRecord, time.Time) (domain.UsageSourceRecord, error)
@@ -367,7 +368,7 @@ func (i *Ingestor) Ingest(ctx context.Context, sourceID int64) (IngestResult, er
 		}
 		return result, fmt.Errorf("apply usage source %d: %w", source.Source.ID, err)
 	}
-	i.notifyLateRouteEvidence(ctx, source.Source.ID, parsed.Events)
+	i.notifyLateRouteEvidence(ctx, source.Source.ID)
 	result.Reconcile = parsed.newCodexChild
 	if parsed.Cursor.State == domain.UsageSourceComplete {
 		return result, i.completeBinding(ctx, source.Source.BindingID, now)
@@ -385,25 +386,27 @@ func (i *Ingestor) Ingest(ctx context.Context, sourceID int64) (IngestResult, er
 // nothing fires again for this binding until the daemon restarts. Re-reading
 // the source is the point — the context this chunk was parsed against is
 // precisely the stale one.
-func (i *Ingestor) notifyLateRouteEvidence(ctx context.Context, sourceID int64, events []domain.ModelUsageEvent) {
+func (i *Ingestor) notifyLateRouteEvidence(ctx context.Context, sourceID int64) {
 	if i.requestRepair == nil {
 		return
 	}
-	unattributed := false
-	for _, event := range events {
-		if event.BillingProviderID == "" {
-			unattributed = true
-			break
-		}
-	}
-	// A binding with no route yet leaves rows unattributed on every chunk, and
-	// its own hook will fire the trigger when it arrives. Only the overlap is
-	// worth a pass.
-	if !unattributed {
+	// A binding with no route yet leaves rows open on every chunk, and its own
+	// hook will fire the trigger when one arrives; a route the hook could not
+	// name is never going to produce one. Only a usable route is worth a pass.
+	source, ok, err := i.store.GetUsageSourceForIngestion(ctx, sourceID)
+	if err != nil || !ok {
 		return
 	}
-	source, ok, err := i.store.GetUsageSourceForIngestion(ctx, sourceID)
-	if err != nil || !ok || strings.TrimSpace(source.ProviderHint) == "" {
+	switch strings.TrimSpace(source.ProviderHint) {
+	case "", pricing.UnidentifiedBillingRoute:
+		return
+	}
+	// Asking the table rather than the parsed chunk catches the second way a
+	// row is left open under a known route: a replaced transcript re-emits an
+	// event, the replay deduplicates against the stored row and rehomes it, and
+	// the parsed event carrying the route is discarded with the duplicate.
+	open, err := i.store.HasOpenUsageAttribution(ctx, sourceID)
+	if err != nil || !open {
 		return
 	}
 	i.requestRepair()

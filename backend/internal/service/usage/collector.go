@@ -449,7 +449,7 @@ func trustedClaudeProviderHint(harness domain.AgentHarness, raw string) string {
 	if harness != domain.HarnessClaudeCode {
 		return ""
 	}
-	return pricing.TrustedClaudeBillingProvider(boundedUsageMetadata(raw))
+	return pricing.TrustedClaudeRoute(boundedUsageMetadata(raw))
 }
 
 func finalizingEvent(event string) bool {

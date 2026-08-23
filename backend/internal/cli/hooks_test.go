@@ -11,6 +11,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/aoagents/agent-orchestrator/backend/internal/pricing"
 )
 
 type activityCapture struct {
@@ -110,8 +112,15 @@ func TestClaudeHookUsageProviderHintUsesTrustedProcessRouting(t *testing.T) {
 		{name: "official zai api", baseURL: "https://api.z.ai/api/anthropic", want: "zai"},
 		{name: "bedrock precedence", baseURL: "https://custom.invalid", bedrock: "1", want: "bedrock"},
 		{name: "vertex precedence", baseURL: "https://api.z.ai", vertex: "true", want: "vertex_ai"},
-		{name: "conflicting flags", bedrock: "1", vertex: "1"},
-		{name: "unknown custom route", baseURL: "https://token:secret@custom.invalid/v1"},
+		// A route AO cannot name is still a route. Reporting silence would make
+		// it indistinguishable from "no hook has run", which is what lets the
+		// legacy repairer fall back to the model that answered — and that
+		// fallback would bill a proxied session at Anthropic list rates.
+		{name: "conflicting flags", bedrock: "1", vertex: "1", want: pricing.UnidentifiedBillingRoute},
+		{name: "unknown custom route", baseURL: "https://token:secret@custom.invalid/v1",
+			want: pricing.UnidentifiedBillingRoute},
+		{name: "unparseable base url", baseURL: "://nonsense", want: pricing.UnidentifiedBillingRoute},
+		{name: "non http scheme", baseURL: "ftp://example.com", want: pricing.UnidentifiedBillingRoute},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

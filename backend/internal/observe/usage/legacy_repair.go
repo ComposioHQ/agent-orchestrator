@@ -285,6 +285,14 @@ func (r *LegacyRepairer) repairSource(ctx context.Context, source domain.UsageSo
 				if match.candidate.BillingProviderSource == domain.UsageBillingProviderInferred {
 					continue
 				}
+				// A hook that ran and could not name the route has already
+				// answered the question the model would be used to guess: the
+				// session is billed by something AO has no rates for. Guessing
+				// anthropic from a bare claude-* name would price a proxy at
+				// Anthropic list rates, and no observation is coming to fix it.
+				if strings.TrimSpace(source.ProviderHint) == pricing.UnidentifiedBillingRoute {
+					continue
+				}
 				// A session collected before its first hook has no route on the
 				// binding either, so the served model name is the only evidence
 				// left. It is still evidence: the provider answered with it.
@@ -340,7 +348,13 @@ func (r *LegacyRepairer) repairSource(ctx context.Context, source domain.UsageSo
 // the same on disk as it was at ingest, so the only input that can promote it to
 // an observation is a route hint the binding did not have then.
 func replayCanImprove(source domain.UsageSourceContext, candidates []domain.LegacyUsageEvent) bool {
-	if strings.TrimSpace(source.ProviderHint) != "" {
+	hint := strings.TrimSpace(source.ProviderHint)
+	// The hook has already reported that this route has no name AO bills
+	// against, so no replay and no inference can produce one.
+	if hint == pricing.UnidentifiedBillingRoute {
+		return false
+	}
+	if hint != "" {
 		return true
 	}
 	for _, candidate := range candidates {

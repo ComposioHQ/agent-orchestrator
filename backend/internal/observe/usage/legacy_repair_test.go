@@ -536,6 +536,47 @@ func (s *startupOrderingStore) ListLegacyUsageSources(ctx context.Context) ([]do
 	return s.Store.ListLegacyUsageSources(ctx)
 }
 
+// Break caught: claudeHookProviderHint returned "" for an ANTHROPIC_BASE_URL it
+// could not name, which is indistinguishable from "no hook has run". Repair
+// therefore treated a session routed through an unknown proxy as hookless and
+// inferred anthropic from the bare claude-* model, pricing it at Anthropic list
+// rates with no observation ever coming to correct it.
+func TestLegacyRepairerDoesNotInferOverAnUnidentifiedRoute(t *testing.T) {
+	for _, test := range []struct {
+		name         string
+		hint         string
+		wantInferred bool
+	}{
+		// No hook has run, so the model that answered is the only evidence left.
+		{name: "no hook yet", hint: "", wantInferred: true},
+		// A hook ran and reported that the route is not one AO bills against.
+		{name: "hook saw an unnamed route", hint: pricing.UnidentifiedBillingRoute},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			ctx := context.Background()
+			dataDir := t.TempDir()
+			store, source, path, now := seedClaudeIngestionSource(t, dataDir, test.hint)
+			mustNoError(t, os.WriteFile(path, []byte(legacyClaudeTranscript("claude-test")), 0o600))
+			snapshot := claudePricingSnapshot(t)
+			ingestSourceFully(ctx, t, NewIngestor(store, IngestorConfig{
+				Clock:   func() time.Time { return now },
+				Pricing: pricing.NewManager(snapshot),
+			}), source.ID)
+
+			mustNoError(t, NewLegacyRepairer(store, pricing.NewManager(snapshot), LegacyRepairerConfig{
+				Clock: func() time.Time { return now.Add(time.Hour) },
+			}).Run(ctx))
+
+			if !test.wantInferred {
+				assertLegacyStillNull(t, dataDir, source.ID)
+				return
+			}
+			assertLegacyRepair(t, dataDir, source.ID, "anthropic", domain.UsageBillingProviderInferred,
+				795_000, snapshot.ProviderVersion("anthropic"))
+		})
+	}
+}
+
 func seedClaudeIngestionSource(
 	t *testing.T, dataDir, providerHint string,
 ) (*sqlite.Store, domain.UsageSourceRecord, string, time.Time) {

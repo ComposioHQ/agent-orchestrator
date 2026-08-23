@@ -12,6 +12,14 @@ func CanonicalProviderID(raw string) string {
 	return providerID
 }
 
+// UnidentifiedBillingRoute marks a Claude route the hook saw and could not
+// name: ANTHROPIC_BASE_URL pointed somewhere, but not at a host AO bills
+// against. It is deliberately not a provider — it is the difference between
+// "no hook has run yet" and "a hook ran and the answer is not one of ours",
+// which an empty hint cannot express and which decides whether the model that
+// answered is admissible evidence at all.
+const UnidentifiedBillingRoute = "unidentified"
+
 // TrustedClaudeBillingProvider narrows one routing string to a billing identity
 // AO is willing to record for a Claude session. Anthropic, z.ai, Bedrock and
 // Vertex are the four routes Claude Code can take that AO can name; anything
@@ -31,6 +39,19 @@ func TrustedClaudeBillingProvider(raw string) string {
 	default:
 		return ""
 	}
+}
+
+// TrustedClaudeRoute narrows one routing string to what may be recorded on a
+// binding: a provider AO bills against, or the sentinel saying a route was
+// observed and is not one of them.
+func TrustedClaudeRoute(raw string) string {
+	if provider := TrustedClaudeBillingProvider(raw); provider != "" {
+		return provider
+	}
+	if CanonicalProviderID(raw) == UnidentifiedBillingRoute {
+		return UnidentifiedBillingRoute
+	}
+	return ""
 }
 
 // CanonicalModelID normalizes a reported model for exact provider-local lookup.
