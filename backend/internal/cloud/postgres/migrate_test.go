@@ -14,13 +14,13 @@ func TestCloudMigrationsAreTenantScoped(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantVersions := []int64{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 60}
+	wantVersions := []int64{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 50, 59, 60}
 	if len(migrations) != len(wantVersions) {
 		t.Fatalf("migrations = %#v", migrations)
 	}
 	for i, want := range wantVersions {
 		if migrations[i].Version != want {
-			t.Fatalf("migration[%d] = %d, want %d", i, migrations[i].Version, want)
+			t.Fatalf("migration[%d].Version = %d, want %d", i, migrations[i].Version, want)
 		}
 	}
 	migration, err := migrationFS.ReadFile("migrations/00001_auth_foundation.sql")
@@ -210,5 +210,36 @@ func TestTenantTablesCoverEveryTenantTable(t *testing.T) {
 				t.Fatalf("%s creates table %q, which is missing from runtimeTables", entry.Name(), match[1])
 			}
 		}
+	}
+}
+
+func TestProductPreferenceMigrationsForceTenantRLS(t *testing.T) {
+	t.Parallel()
+	for _, fixture := range []struct {
+		file  string
+		table string
+	}{
+		{file: "migrations/00050_product_settings.sql", table: "ao_app_settings"},
+		{file: "migrations/00059_agent_inventory_cache.sql", table: "ao_agent_inventory_cache"},
+	} {
+		fixture := fixture
+		t.Run(fixture.table, func(t *testing.T) {
+			contents, err := migrationFS.ReadFile(fixture.file)
+			if err != nil {
+				t.Fatal(err)
+			}
+			sql := string(contents)
+			for _, required := range []string{
+				"org_id UUID",
+				"ENABLE ROW LEVEL SECURITY",
+				"FORCE ROW LEVEL SECURITY",
+				"org_id = ao_current_org_id()",
+				"ao_is_org_member(org_id, ao_current_user_id())",
+			} {
+				if !strings.Contains(sql, required) {
+					t.Fatalf("%s does not contain %q", fixture.file, required)
+				}
+			}
+		})
 	}
 }
