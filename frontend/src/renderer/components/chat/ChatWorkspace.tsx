@@ -1260,7 +1260,6 @@ function Timeline({
 	const drag = useRef<{ pointerId: number; startY: number; startScrollTop: number } | null>(null);
 	const pinnedRef = useRef(true);
 	const [pinned, setPinned] = useState(true);
-	const [hoveredMarker, setHoveredMarker] = useState<number | null>(null);
 	const [messageEdit, setMessageEdit] = useState<MessageEditDraft>();
 	const isInspectorOpen = useUiStore(
 		(state) => state.inspectorSessions[snapshot.sessionId]?.isOpen ?? true,
@@ -1330,8 +1329,6 @@ function Timeline({
 	);
 	const grouped = useMemo(() => groupByTurn({ ...snapshot, items }), [snapshot, items]);
 	const groups = useStableList(grouped, groupKey, sameGroup);
-	const navigableGroups = useMemo(() => groups.filter(groupHasHumanPrompt), [groups]);
-	const previews = useMemo(() => navigableGroups.map(groupPreview), [navigableGroups]);
 
 	const updateScrollbar = useCallback(() => {
 		const node = scroller.current;
@@ -1481,21 +1478,7 @@ function Timeline({
 		const active = drag.current;
 		const node = scroller.current;
 		const track = scrollTrack.current;
-		if (!node || !track) return;
-		if (!active) {
-			const pointerY = event.clientY - track.getBoundingClientRect().top;
-			let nearest = 0;
-			for (let index = 1; index < scrollbar.markers.length; index += 1) {
-				if (
-					Math.abs(scrollbar.markers[index]!.top - pointerY) <
-					Math.abs(scrollbar.markers[nearest]!.top - pointerY)
-				) {
-					nearest = index;
-				}
-			}
-			if (scrollbar.markers.length > 0) setHoveredMarker(nearest);
-			return;
-		}
+		if (!node || !track || !active) return;
 		if (active.pointerId !== event.pointerId) return;
 		const travel = Math.max(1, track.clientHeight - scrollbar.height);
 		const maxScroll = Math.max(0, node.scrollHeight - node.clientHeight);
@@ -1648,17 +1631,6 @@ function Timeline({
 				onPointerCancel={stopScrollbarDrag}
 				onWheel={onScrollbarWheel}
 				onKeyDown={onScrollbarKeyDown}
-				onFocus={() => {
-					if (scrollbar.markers.length === 0) return;
-					setHoveredMarker(
-						Math.min(
-							scrollbar.markers.length - 1,
-							Math.round((scrollbar.percent / 100) * (scrollbar.markers.length - 1)),
-						),
-					);
-				}}
-				onBlur={() => setHoveredMarker(null)}
-				onPointerLeave={() => setHoveredMarker(null)}
 				className={cn(
 					"group/scroll absolute inset-y-3 right-1 z-10 w-4 touch-none rounded-full outline-none transition-opacity focus-visible:ring-1 focus-visible:ring-logo-accent/60",
 					scrollbar.visible ? "cursor-pointer opacity-100" : "pointer-events-none opacity-0",
@@ -1666,55 +1638,25 @@ function Timeline({
 			>
 				<div className="absolute inset-0 cursor-grab group-active/scroll:cursor-grabbing">
 					{!isInspectorOpen
-						? scrollbar.markers.map((marker, index) => {
-								const distance =
-									hoveredMarker === null ? Number.POSITIVE_INFINITY : Math.abs(index - hoveredMarker);
-								return (
+						? scrollbar.markers.map((marker, index) => (
+								<span
+									key={index}
+									data-chat-scroll-marker=""
+									data-scroll-target={marker.scrollTop}
+									className="chat-scroll-marker-hit"
+									style={{ top: marker.top }}
+								>
 									<span
-										key={index}
-										data-chat-scroll-marker=""
-										data-scroll-target={marker.scrollTop}
-										onPointerEnter={() => setHoveredMarker(index)}
-										className="chat-scroll-marker-hit"
-										style={{ top: marker.top }}
-									>
-										<span
-											aria-hidden="true"
-											className={cn(
-												"chat-scroll-marker",
-												marker.visible && "chat-scroll-marker-visible",
-												distance === 0 && "chat-scroll-marker-active",
-												distance === 1 && "chat-scroll-marker-adjacent",
-												distance === 2 && "chat-scroll-marker-near",
-											)}
-										/>
-									</span>
-								);
-							})
+										aria-hidden="true"
+										className={cn(
+											"chat-scroll-marker",
+											marker.visible && "chat-scroll-marker-visible",
+										)}
+									/>
+								</span>
+							))
 						: null}
 				</div>
-
-				{!isInspectorOpen &&
-				hoveredMarker !== null &&
-				scrollbar.markers[hoveredMarker] &&
-				previews[hoveredMarker] ? (
-					<div
-						role="tooltip"
-						className="chat-scroll-preview pointer-events-none absolute right-full z-20 mr-3 w-80 rounded-xl border border-border-strong bg-raised px-3.5 py-3 shadow-lg"
-						style={{
-							top: `clamp(4rem, ${scrollbar.markers[hoveredMarker].top}px, calc(100% - 4rem))`,
-						}}
-					>
-						<strong className="line-clamp-1 text-sm font-medium leading-snug text-foreground">
-							{previews[hoveredMarker].title}
-						</strong>
-						{previews[hoveredMarker].detail ? (
-							<p className="mt-1.5 line-clamp-3 text-xs leading-relaxed text-muted-foreground">
-								{previews[hoveredMarker].detail}
-							</p>
-						) : null}
-					</div>
-				) : null}
 			</div>
 
 			{!pinned ? (
@@ -2131,31 +2073,6 @@ type TimelineGroup = {
 	rollbackable?: boolean;
 };
 
-type GroupPreview = { title: string; detail?: string };
-
-/** A turn-sized, plain-text preview for the minimap hover card. */
-function groupPreview(group: TimelineGroup): GroupPreview {
-	const userMessage = group.items.find(
-		(item) => item.kind === "message" && item.role === "user" && item.origin === "human",
-	);
-	const assistantMessage = [...group.items].reverse().find(
-		(item) => item.kind === "message" && item.role === "assistant" && item.text.trim() !== "",
-	);
-	const firstActivity = group.items.find(
-		(item): item is ConversationActivity => item.kind === "activity",
-	);
-	const title = previewText(
-		userMessage?.kind === "message" ? userMessage.text : firstActivity?.summary || "Conversation update",
-		120,
-	);
-	const detailSource =
-		assistantMessage?.kind === "message"
-			? assistantMessage.text
-			: firstActivity?.detail?.text || firstActivity?.detail?.output || firstActivity?.summary;
-	const detail = detailSource ? previewText(detailSource, 240) : undefined;
-	return { title, detail: detail && detail !== title ? detail : undefined };
-}
-
 function groupHasHumanPrompt(group: TimelineGroup): boolean {
 	return group.items.some((item) => item.kind === "message" && item.role === "user" && item.origin === "human");
 }
@@ -2183,16 +2100,6 @@ export function promptSpacerHeight({
  */
 export function promptTopInset(viewportHeight: number): number {
 	return Math.max(80, Math.round(viewportHeight * 0.2));
-}
-
-function previewText(value: string, limit: number): string {
-	const plain = value
-		.replace(/```[\s\S]*?```/g, " code sample ")
-		.replace(/\[([^\]]+)]\([^)]*\)/g, "$1")
-		.replace(/[*_`#>~]+/g, " ")
-		.replace(/\s+/g, " ")
-		.trim();
-	return plain.length > limit ? `${plain.slice(0, limit - 1).trimEnd()}…` : plain;
 }
 
 /**
