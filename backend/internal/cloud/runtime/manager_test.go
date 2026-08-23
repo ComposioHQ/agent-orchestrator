@@ -3,7 +3,9 @@ package runtime_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -272,6 +274,49 @@ func TestEnsureEnforcesQuotasWithAClearErrorContract(t *testing.T) {
 	}
 }
 
+func TestEnsureReservesQuotaAtomicallyAcrossConcurrentCreates(t *testing.T) {
+	h := newHarness(t, func(options *runtime.Options) {
+		options.Quotas = runtime.Quotas{MaxWorkersPerWorkspace: 1}
+	})
+	ctx := context.Background()
+	start := make(chan struct{})
+	errs := make(chan error, 2)
+	var ready sync.WaitGroup
+	ready.Add(2)
+
+	for index := range 2 {
+		ref := workerRef()
+		ref.SessionID = fmt.Sprintf("concurrent-%d", index)
+		go func() {
+			ready.Done()
+			<-start
+			_, err := h.manager.Ensure(ctx, ref, testLaunch())
+			errs <- err
+		}()
+	}
+	ready.Wait()
+	close(start)
+
+	var successes, quotaFailures int
+	for range 2 {
+		err := <-errs
+		switch {
+		case err == nil:
+			successes++
+		case errors.Is(err, runtime.ErrQuotaExceeded):
+			quotaFailures++
+		default:
+			t.Fatalf("concurrent Ensure error = %v", err)
+		}
+	}
+	if successes != 1 || quotaFailures != 1 {
+		t.Fatalf("successes = %d quota failures = %d, want 1 each", successes, quotaFailures)
+	}
+	if h.store.Len() != 1 || h.provider.Len() != 1 {
+		t.Fatalf("rows = %d sandboxes = %d, want one of each", h.store.Len(), h.provider.Len())
+	}
+}
+
 func TestEnsureQuotaIgnoresPlacementsBeingDeleted(t *testing.T) {
 	h := newHarness(t, func(options *runtime.Options) {
 		options.Quotas = runtime.Quotas{MaxWorkersPerWorkspace: 1}
@@ -338,7 +383,7 @@ func TestEnsureAdoptsSandboxWhoseCreateResponseWasLost(t *testing.T) {
 	h := newHarness(t)
 	ctx := context.Background()
 	ref := workerRef()
-	record, created, err := h.store.Ensure(ctx, ref, h.now)
+	record, created, err := h.store.Ensure(ctx, ref, runtime.DefaultQuotas(), h.now)
 	if err != nil || !created {
 		t.Fatalf("ensure row = %#v, %v", record, err)
 	}
