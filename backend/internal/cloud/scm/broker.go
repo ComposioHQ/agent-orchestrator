@@ -42,8 +42,8 @@ var permissionsByPurpose = map[string]map[string]string{
 // *postgres.Store; the interface exists so the broker can be unit-tested
 // without a database.
 type BrokerStore interface {
-	AllowedSCMRepository(ctx context.Context, tenant postgres.Tenant, fullName string) (domain.SCMInstallation, domain.SCMRepository, error)
-	RecordSCMTokenGrant(ctx context.Context, tenant postgres.Tenant, grant domain.SCMTokenGrant) error
+	AllowedSCMRepository(ctx context.Context, tenant postgres.SCMTenant, fullName string) (domain.SCMInstallation, domain.SCMRepository, error)
+	RecordSCMTokenGrant(ctx context.Context, tenant postgres.SCMTenant, grant domain.SCMTokenGrant) error
 }
 
 // BrokerRequest asks for one repository-scoped credential.
@@ -57,8 +57,11 @@ type BrokerRequest struct {
 	Repository string
 	// Purpose selects the permission set and is recorded in the audit ledger.
 	Purpose string
-	// WorkspaceID is optional and only used for audit attribution.
+	// WorkspaceID and SandboxID are optional and used only for audit
+	// attribution, so a leaked credential can be traced to the compute that
+	// received it.
 	WorkspaceID string
+	SandboxID   string
 }
 
 // BrokeredToken is a short-lived, repository-scoped credential plus the
@@ -123,7 +126,7 @@ func (b *Broker) BrokerToken(ctx context.Context, request BrokerRequest) (Broker
 	if !ok {
 		return BrokeredToken{}, fmt.Errorf("cloud scm: unsupported credential purpose %q", purpose)
 	}
-	tenant := postgres.Tenant{OrgID: request.OrgID, UserID: request.UserID}
+	tenant := postgres.SCMTenant{OrgID: request.OrgID, UserID: request.UserID}
 	installation, allowed, err := b.store.AllowedSCMRepository(ctx, tenant, repository)
 	if err != nil {
 		if errors.Is(err, postgres.ErrNotFound) {
@@ -135,9 +138,17 @@ func (b *Broker) BrokerToken(ctx context.Context, request BrokerRequest) (Broker
 		return BrokeredToken{}, ErrInstallationInactive
 	}
 
+	// Write credentials are never cached. A push is an on-demand act, so
+	// holding a live write token in control-plane memory between pushes buys
+	// nothing and widens what a memory disclosure would yield. Read
+	// credentials are cached: the observer polls, and re-minting on every poll
+	// would burn the app's rate limit.
+	cacheable := purpose != domain.TokenPurposePush
 	key := cacheKey(installation.ExternalInstallationID, allowed.ExternalRepositoryID, purpose)
-	if cached, fresh := b.cached(key); fresh {
-		return cached, nil
+	if cacheable {
+		if cached, fresh := b.cached(key); fresh {
+			return cached, nil
+		}
 	}
 
 	minted, err := b.app.CreateInstallationToken(ctx, TokenRequest{
@@ -163,13 +174,16 @@ func (b *Broker) BrokerToken(ctx context.Context, request BrokerRequest) (Broker
 		InstallationID: installation.ID,
 		RepositoryID:   allowed.ID,
 		WorkspaceID:    strings.TrimSpace(request.WorkspaceID),
+		SandboxID:      strings.TrimSpace(request.SandboxID),
 		Purpose:        purpose,
 		ExpiresAt:      minted.ExpiresAt,
 	}); err != nil {
 		// A credential we cannot account for is worse than a failed bootstrap.
 		return BrokeredToken{}, fmt.Errorf("cloud scm: record token grant: %w", err)
 	}
-	b.remember(key, token)
+	if cacheable {
+		b.remember(key, token)
+	}
 	return token, nil
 }
 

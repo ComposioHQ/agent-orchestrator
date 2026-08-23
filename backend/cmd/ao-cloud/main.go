@@ -15,7 +15,6 @@ import (
 	cloudconfig "github.com/aoagents/agent-orchestrator/backend/internal/cloud/config"
 	"github.com/aoagents/agent-orchestrator/backend/internal/cloud/httpapi"
 	cloudpostgres "github.com/aoagents/agent-orchestrator/backend/internal/cloud/postgres"
-	cloudscm "github.com/aoagents/agent-orchestrator/backend/internal/cloud/scm"
 )
 
 func main() {
@@ -51,10 +50,6 @@ func run(logger *slog.Logger) error {
 	if err != nil {
 		return err
 	}
-	scmOptions, err := buildSCM(cfg, store, logger)
-	if err != nil {
-		return err
-	}
 	api, err := httpapi.New(httpapi.Options{
 		Store:               store,
 		Google:              google,
@@ -62,7 +57,6 @@ func run(logger *slog.Logger) error {
 		AccessTokens:        accessTokens,
 		RefreshTokenTTL:     cfg.RefreshTokenTTL,
 		TrustSourceIPHeader: cfg.TrustSourceIPHeader,
-		SCM:                 scmOptions,
 		Logger:              logger,
 	})
 	if err != nil {
@@ -92,46 +86,4 @@ func run(logger *slog.Logger) error {
 		defer cancel()
 		return server.Shutdown(shutdownCtx)
 	}
-}
-
-// buildSCM wires the GitHub App credential boundary when one is configured. A
-// deployment without a GitHub App runs without cloud SCM rather than failing
-// to start; a misconfigured one fails loudly.
-func buildSCM(
-	cfg cloudconfig.Config,
-	store *cloudpostgres.Store,
-	logger *slog.Logger,
-) (httpapi.SCMOptions, error) {
-	if !cfg.GitHubApp.Configured() {
-		logger.Info("Cloud SCM disabled", "reason", "no github app configured")
-		return httpapi.SCMOptions{}, nil
-	}
-	bundle, err := cloudscm.NewBundle(cloudscm.BundleOptions{
-		AppID:             cfg.GitHubApp.AppID,
-		AppSlug:           cfg.GitHubApp.AppSlug,
-		PrivateKeyPEM:     cfg.GitHubApp.PrivateKeyPEM,
-		WebhookSecret:     cfg.GitHubApp.WebhookSecret,
-		OAuthClientID:     cfg.GitHubApp.OAuthClientID,
-		OAuthClientSecret: cfg.GitHubApp.OAuthClientSecret,
-		APIBase:           cfg.GitHubApp.APIBase,
-		WebBase:           cfg.GitHubApp.WebBase,
-		Store:             store,
-	})
-	if err != nil {
-		return httpapi.SCMOptions{}, err
-	}
-	options := httpapi.SCMOptions{
-		Link:                 bundle.Link,
-		InstallCompletionURL: cfg.GitHubApp.InstallCompletionURL,
-	}
-	if bundle.Webhook != nil {
-		options.Webhook = bundle.Webhook
-	}
-	logger.Info(
-		"Cloud SCM enabled",
-		"app_slug", cfg.GitHubApp.AppSlug,
-		"webhooks", bundle.Webhook != nil,
-		"user_authorization", bundle.App.RequiresUserAuthorization(),
-	)
-	return options, nil
 }

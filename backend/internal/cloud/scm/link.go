@@ -19,15 +19,15 @@ const defaultInstallStateTTL = 15 * time.Minute
 
 // LinkStore is the persistence the install/link flow needs.
 type LinkStore interface {
-	CreateSCMInstallState(ctx context.Context, tenant postgres.Tenant, stateHash []byte, expiresAt time.Time) error
+	CreateSCMInstallState(ctx context.Context, tenant postgres.SCMTenant, stateHash []byte, expiresAt time.Time) error
 	ConsumeSCMInstallState(ctx context.Context, stateHash []byte) (domain.SCMInstallationLink, error)
-	UpsertSCMInstallation(ctx context.Context, tenant postgres.Tenant, installation domain.SCMInstallation) (domain.SCMInstallation, error)
-	SCMInstallationByID(ctx context.Context, tenant postgres.Tenant, installationID string) (domain.SCMInstallation, error)
-	ListSCMInstallations(ctx context.Context, tenant postgres.Tenant) ([]domain.SCMInstallation, error)
-	DeleteSCMInstallation(ctx context.Context, tenant postgres.Tenant, installationID string) error
-	SyncSCMRepositories(ctx context.Context, tenant postgres.Tenant, installationID string, repositories []domain.SCMRepository, allowNew bool) error
-	ListSCMRepositories(ctx context.Context, tenant postgres.Tenant, installationID string) ([]domain.SCMRepository, error)
-	SetSCMRepositoryAllowlist(ctx context.Context, tenant postgres.Tenant, installationID string, allowedExternalIDs []int64) error
+	UpsertSCMInstallation(ctx context.Context, tenant postgres.SCMTenant, installation domain.SCMInstallation) (domain.SCMInstallation, error)
+	SCMInstallationByID(ctx context.Context, tenant postgres.SCMTenant, installationID string) (domain.SCMInstallation, error)
+	ListSCMInstallations(ctx context.Context, tenant postgres.SCMTenant) ([]domain.SCMInstallation, error)
+	DeleteSCMInstallation(ctx context.Context, tenant postgres.SCMTenant, installationID string) error
+	SyncSCMRepositories(ctx context.Context, tenant postgres.SCMTenant, installationID string, repositories []domain.SCMRepository, allowNew bool) error
+	ListSCMRepositories(ctx context.Context, tenant postgres.SCMTenant, installationID string) ([]domain.SCMRepository, error)
+	SetSCMRepositoryAllowlist(ctx context.Context, tenant postgres.SCMTenant, installationID string, allowedExternalIDs []int64) error
 }
 
 // LinkService owns the GitHub App installation and allowlist lifecycle.
@@ -60,7 +60,7 @@ type InstallRedirect struct {
 // returns the GitHub install URL. RLS rejects the state insert when the caller
 // cannot manage the organization, so authorization is enforced in the database
 // rather than only in the handler.
-func (s *LinkService) StartInstall(ctx context.Context, tenant postgres.Tenant) (InstallRedirect, string, error) {
+func (s *LinkService) StartInstall(ctx context.Context, tenant postgres.SCMTenant) (InstallRedirect, string, error) {
 	raw := make([]byte, 32)
 	if _, err := rand.Read(raw); err != nil {
 		return InstallRedirect{}, "", err
@@ -117,7 +117,7 @@ func (s *LinkService) CompleteInstall(ctx context.Context, params CallbackParams
 		return domain.SCMInstallation{}, err
 	}
 
-	tenant := postgres.Tenant{OrgID: link.OrgID, UserID: link.UserID}
+	tenant := postgres.SCMTenant{OrgID: link.OrgID, UserID: link.UserID}
 	status := domain.InstallationStatusActive
 	if account.Suspended {
 		status = domain.InstallationStatusSuspended
@@ -150,7 +150,7 @@ func (s *LinkService) CompleteInstall(ctx context.Context, params CallbackParams
 // never widens the allowlist.
 func (s *LinkService) SyncInstallation(
 	ctx context.Context,
-	tenant postgres.Tenant,
+	tenant postgres.SCMTenant,
 	installationID string,
 ) ([]domain.SCMRepository, error) {
 	installation, err := s.store.SCMInstallationByID(ctx, tenant, installationID)
@@ -165,7 +165,7 @@ func (s *LinkService) SyncInstallation(
 
 func (s *LinkService) syncRepositories(
 	ctx context.Context,
-	tenant postgres.Tenant,
+	tenant postgres.SCMTenant,
 	installation domain.SCMInstallation,
 	allowNew bool,
 ) error {
@@ -189,7 +189,7 @@ func (s *LinkService) syncRepositories(
 // so an admin cannot allowlist something the installation cannot see.
 func (s *LinkService) SetAllowlist(
 	ctx context.Context,
-	tenant postgres.Tenant,
+	tenant postgres.SCMTenant,
 	installationID string,
 	repositoryFullNames []string,
 ) ([]domain.SCMRepository, error) {
@@ -220,7 +220,7 @@ func (s *LinkService) SetAllowlist(
 }
 
 // ListInstallations returns the tenant's linked installations.
-func (s *LinkService) ListInstallations(ctx context.Context, tenant postgres.Tenant) ([]domain.SCMInstallation, error) {
+func (s *LinkService) ListInstallations(ctx context.Context, tenant postgres.SCMTenant) ([]domain.SCMInstallation, error) {
 	return s.store.ListSCMInstallations(ctx, tenant)
 }
 
@@ -228,7 +228,7 @@ func (s *LinkService) ListInstallations(ctx context.Context, tenant postgres.Ten
 // not, so an admin can decide.
 func (s *LinkService) ListRepositories(
 	ctx context.Context,
-	tenant postgres.Tenant,
+	tenant postgres.SCMTenant,
 	installationID string,
 ) ([]domain.SCMRepository, error) {
 	if _, err := s.store.SCMInstallationByID(ctx, tenant, installationID); err != nil {
@@ -240,6 +240,6 @@ func (s *LinkService) ListRepositories(
 // Unlink removes an installation from the organization. The GitHub-side
 // uninstall remains the user's action; unlinking only revokes AO's ability to
 // broker credentials for it.
-func (s *LinkService) Unlink(ctx context.Context, tenant postgres.Tenant, installationID string) error {
+func (s *LinkService) Unlink(ctx context.Context, tenant postgres.SCMTenant, installationID string) error {
 	return s.store.DeleteSCMInstallation(ctx, tenant, installationID)
 }

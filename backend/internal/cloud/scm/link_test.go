@@ -40,7 +40,7 @@ func newMemoryLinkStore() *memoryLinkStore {
 
 func (s *memoryLinkStore) CreateSCMInstallState(
 	_ context.Context,
-	tenant postgres.Tenant,
+	tenant postgres.SCMTenant,
 	stateHash []byte,
 	expiresAt time.Time,
 ) error {
@@ -70,7 +70,7 @@ func (s *memoryLinkStore) ConsumeSCMInstallState(
 
 func (s *memoryLinkStore) UpsertSCMInstallation(
 	_ context.Context,
-	tenant postgres.Tenant,
+	tenant postgres.SCMTenant,
 	installation domain.SCMInstallation,
 ) (domain.SCMInstallation, error) {
 	s.mu.Lock()
@@ -96,7 +96,7 @@ func (s *memoryLinkStore) UpsertSCMInstallation(
 
 func (s *memoryLinkStore) SCMInstallationByID(
 	_ context.Context,
-	tenant postgres.Tenant,
+	tenant postgres.SCMTenant,
 	installationID string,
 ) (domain.SCMInstallation, error) {
 	s.mu.Lock()
@@ -110,7 +110,7 @@ func (s *memoryLinkStore) SCMInstallationByID(
 
 func (s *memoryLinkStore) ListSCMInstallations(
 	_ context.Context,
-	tenant postgres.Tenant,
+	tenant postgres.SCMTenant,
 ) ([]domain.SCMInstallation, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -125,7 +125,7 @@ func (s *memoryLinkStore) ListSCMInstallations(
 
 func (s *memoryLinkStore) DeleteSCMInstallation(
 	_ context.Context,
-	tenant postgres.Tenant,
+	tenant postgres.SCMTenant,
 	installationID string,
 ) error {
 	s.mu.Lock()
@@ -142,7 +142,7 @@ func (s *memoryLinkStore) DeleteSCMInstallation(
 
 func (s *memoryLinkStore) SyncSCMRepositories(
 	_ context.Context,
-	_ postgres.Tenant,
+	_ postgres.SCMTenant,
 	installationID string,
 	repositories []domain.SCMRepository,
 	allowNew bool,
@@ -167,7 +167,7 @@ func (s *memoryLinkStore) SyncSCMRepositories(
 
 func (s *memoryLinkStore) ListSCMRepositories(
 	_ context.Context,
-	_ postgres.Tenant,
+	_ postgres.SCMTenant,
 	installationID string,
 ) ([]domain.SCMRepository, error) {
 	s.mu.Lock()
@@ -177,7 +177,7 @@ func (s *memoryLinkStore) ListSCMRepositories(
 
 func (s *memoryLinkStore) SetSCMRepositoryAllowlist(
 	_ context.Context,
-	_ postgres.Tenant,
+	_ postgres.SCMTenant,
 	installationID string,
 	allowedExternalIDs []int64,
 ) error {
@@ -222,7 +222,7 @@ func TestStartInstallIssuesSingleUseState(t *testing.T) {
 	store := newMemoryLinkStore()
 	service := newTestLinkService(t, fake, store, false)
 
-	redirect, state, err := service.StartInstall(context.Background(), postgres.Tenant{OrgID: "org-1", UserID: "user-1"})
+	redirect, state, err := service.StartInstall(context.Background(), postgres.SCMTenant{OrgID: "org-1", UserID: "user-1"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -257,7 +257,7 @@ func TestCompleteInstallLinksAndAllowlistsSelectedRepositories(t *testing.T) {
 	store := newMemoryLinkStore()
 	service := newTestLinkService(t, fake, store, false)
 
-	_, state, err := service.StartInstall(context.Background(), postgres.Tenant{OrgID: "org-1", UserID: "user-1"})
+	_, state, err := service.StartInstall(context.Background(), postgres.SCMTenant{OrgID: "org-1", UserID: "user-1"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -275,7 +275,7 @@ func TestCompleteInstallLinksAndAllowlistsSelectedRepositories(t *testing.T) {
 	if len(store.syncCalls) != 1 || !store.syncCalls[0] {
 		t.Fatalf("sync calls = %#v", store.syncCalls)
 	}
-	repositories, err := service.ListRepositories(context.Background(), postgres.Tenant{OrgID: "org-1", UserID: "user-1"}, installation.ID)
+	repositories, err := service.ListRepositories(context.Background(), postgres.SCMTenant{OrgID: "org-1", UserID: "user-1"}, installation.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -291,7 +291,7 @@ func TestCompleteInstallWithAllRepositoriesStaysDefaultDeny(t *testing.T) {
 	store := newMemoryLinkStore()
 	service := newTestLinkService(t, fake, store, false)
 
-	_, state, err := service.StartInstall(context.Background(), postgres.Tenant{OrgID: "org-1", UserID: "user-1"})
+	_, state, err := service.StartInstall(context.Background(), postgres.SCMTenant{OrgID: "org-1", UserID: "user-1"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -301,7 +301,7 @@ func TestCompleteInstallWithAllRepositoriesStaysDefaultDeny(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	repositories, err := service.ListRepositories(context.Background(), postgres.Tenant{OrgID: "org-1", UserID: "user-1"}, installation.ID)
+	repositories, err := service.ListRepositories(context.Background(), postgres.SCMTenant{OrgID: "org-1", UserID: "user-1"}, installation.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -315,7 +315,7 @@ func TestCompleteInstallRejectsReplayedAndForgedState(t *testing.T) {
 	store := newMemoryLinkStore()
 	service := newTestLinkService(t, fake, store, false)
 
-	_, state, err := service.StartInstall(context.Background(), postgres.Tenant{OrgID: "org-1", UserID: "user-1"})
+	_, state, err := service.StartInstall(context.Background(), postgres.SCMTenant{OrgID: "org-1", UserID: "user-1"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -347,7 +347,7 @@ func TestCompleteInstallRefusesInstallationClaimedByAnotherOrganization(t *testi
 	store := newMemoryLinkStore()
 	service := newTestLinkService(t, fake, store, false)
 
-	_, firstState, err := service.StartInstall(context.Background(), postgres.Tenant{OrgID: "org-1", UserID: "user-1"})
+	_, firstState, err := service.StartInstall(context.Background(), postgres.SCMTenant{OrgID: "org-1", UserID: "user-1"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -356,7 +356,7 @@ func TestCompleteInstallRefusesInstallationClaimedByAnotherOrganization(t *testi
 	}); err != nil {
 		t.Fatal(err)
 	}
-	_, secondState, err := service.StartInstall(context.Background(), postgres.Tenant{OrgID: "org-2", UserID: "user-2"})
+	_, secondState, err := service.StartInstall(context.Background(), postgres.SCMTenant{OrgID: "org-2", UserID: "user-2"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -376,7 +376,7 @@ func TestCompleteInstallRequiresUserAuthorizationWhenConfigured(t *testing.T) {
 
 	newState := func(t *testing.T) string {
 		t.Helper()
-		_, state, err := service.StartInstall(context.Background(), postgres.Tenant{OrgID: "org-1", UserID: "user-1"})
+		_, state, err := service.StartInstall(context.Background(), postgres.SCMTenant{OrgID: "org-1", UserID: "user-1"})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -415,7 +415,7 @@ func TestCompleteInstallRecordsSuspendedInstallation(t *testing.T) {
 	store := newMemoryLinkStore()
 	service := newTestLinkService(t, fake, store, false)
 
-	_, state, err := service.StartInstall(context.Background(), postgres.Tenant{OrgID: "org-1", UserID: "user-1"})
+	_, state, err := service.StartInstall(context.Background(), postgres.SCMTenant{OrgID: "org-1", UserID: "user-1"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -435,7 +435,7 @@ func TestCompleteInstallRequiresAnInstallationID(t *testing.T) {
 	store := newMemoryLinkStore()
 	service := newTestLinkService(t, fake, store, false)
 
-	_, state, err := service.StartInstall(context.Background(), postgres.Tenant{OrgID: "org-1", UserID: "user-1"})
+	_, state, err := service.StartInstall(context.Background(), postgres.SCMTenant{OrgID: "org-1", UserID: "user-1"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -455,7 +455,7 @@ func TestSetAllowlistIsAFullReplacementBoundedByVisibility(t *testing.T) {
 	}
 	store := newMemoryLinkStore()
 	service := newTestLinkService(t, fake, store, false)
-	tenant := postgres.Tenant{OrgID: "org-1", UserID: "user-1"}
+	tenant := postgres.SCMTenant{OrgID: "org-1", UserID: "user-1"}
 
 	_, state, err := service.StartInstall(context.Background(), tenant)
 	if err != nil {
@@ -503,7 +503,7 @@ func TestSyncInstallationNeverWidensTheAllowlist(t *testing.T) {
 	fake.repositories = []RepositoryRef{{ExternalID: 900, FullName: "acme/widgets"}}
 	store := newMemoryLinkStore()
 	service := newTestLinkService(t, fake, store, false)
-	tenant := postgres.Tenant{OrgID: "org-1", UserID: "user-1"}
+	tenant := postgres.SCMTenant{OrgID: "org-1", UserID: "user-1"}
 
 	_, state, err := service.StartInstall(context.Background(), tenant)
 	if err != nil {
@@ -542,7 +542,7 @@ func TestUnlinkScopesToTenant(t *testing.T) {
 	fake := newFakeGitHub(t)
 	store := newMemoryLinkStore()
 	service := newTestLinkService(t, fake, store, false)
-	tenant := postgres.Tenant{OrgID: "org-1", UserID: "user-1"}
+	tenant := postgres.SCMTenant{OrgID: "org-1", UserID: "user-1"}
 
 	_, state, err := service.StartInstall(context.Background(), tenant)
 	if err != nil {
@@ -552,7 +552,7 @@ func TestUnlinkScopesToTenant(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := service.Unlink(context.Background(), postgres.Tenant{OrgID: "org-2", UserID: "user-2"}, installation.ID); !errors.Is(err, postgres.ErrNotFound) {
+	if err := service.Unlink(context.Background(), postgres.SCMTenant{OrgID: "org-2", UserID: "user-2"}, installation.ID); !errors.Is(err, postgres.ErrNotFound) {
 		t.Fatalf("cross-tenant unlink error = %v", err)
 	}
 	if err := service.Unlink(context.Background(), tenant, installation.ID); err != nil {

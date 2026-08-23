@@ -253,7 +253,7 @@ func TestBrokerScopesLookupToRequestedTenant(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if len(store.tenants) != 1 || (store.tenants[0] != postgres.Tenant{OrgID: "org-1", UserID: "user-9"}) {
+	if len(store.tenants) != 1 || (store.tenants[0] != postgres.SCMTenant{OrgID: "org-1", UserID: "user-9"}) {
 		t.Fatalf("allowlist lookup ran under %#v", store.tenants)
 	}
 }

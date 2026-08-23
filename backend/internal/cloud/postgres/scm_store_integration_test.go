@@ -13,7 +13,7 @@ import (
 
 // scmTestTenant is one signed-in user plus their personal organization.
 type scmTestTenant struct {
-	Tenant
+	SCMTenant
 	principal domain.Principal
 }
 
@@ -60,14 +60,14 @@ func signUp(t *testing.T, store *Store, externalID, email string) scmTestTenant 
 		t.Fatalf("%s has no organization", externalID)
 	}
 	return scmTestTenant{
-		Tenant:    Tenant{OrgID: memberships[0].OrgID, UserID: principal.UserID},
+		SCMTenant: SCMTenant{OrgID: memberships[0].OrgID, UserID: principal.UserID},
 		principal: principal,
 	}
 }
 
 func linkInstallation(t *testing.T, store *Store, tenant scmTestTenant, externalID int64, login string) domain.SCMInstallation {
 	t.Helper()
-	installation, err := store.UpsertSCMInstallation(context.Background(), tenant.Tenant, domain.SCMInstallation{
+	installation, err := store.UpsertSCMInstallation(context.Background(), tenant.SCMTenant, domain.SCMInstallation{
 		ExternalInstallationID: externalID,
 		AccountLogin:           login,
 		AccountType:            "Organization",
@@ -88,7 +88,7 @@ func TestSCMInstallationsAreIsolatedByRowLevelSecurity(t *testing.T) {
 	bob := signUp(t, store, "scm-bob", "scm-bob@example.com")
 
 	installation := linkInstallation(t, store, alice, 910001, "alice-org")
-	if err := store.SyncSCMRepositories(ctx, alice.Tenant, installation.ID, []domain.SCMRepository{
+	if err := store.SyncSCMRepositories(ctx, alice.SCMTenant, installation.ID, []domain.SCMRepository{
 		{ExternalRepositoryID: 920001, FullName: "alice-org/widgets", Private: true},
 	}, true); err != nil {
 		t.Fatal(err)
@@ -96,7 +96,7 @@ func TestSCMInstallationsAreIsolatedByRowLevelSecurity(t *testing.T) {
 
 	// Bob cannot see, read, or destroy Alice's installation even though he
 	// knows its primary key.
-	installations, err := store.ListSCMInstallations(ctx, bob.Tenant)
+	installations, err := store.ListSCMInstallations(ctx, bob.SCMTenant)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -105,26 +105,26 @@ func TestSCMInstallationsAreIsolatedByRowLevelSecurity(t *testing.T) {
 			t.Fatal("a foreign installation was visible across tenants")
 		}
 	}
-	if _, err := store.SCMInstallationByID(ctx, bob.Tenant, installation.ID); !errors.Is(err, ErrNotFound) {
+	if _, err := store.SCMInstallationByID(ctx, bob.SCMTenant, installation.ID); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("cross-tenant read error = %v", err)
 	}
-	if _, err := store.ListSCMRepositories(ctx, bob.Tenant, installation.ID); err != nil {
+	if _, err := store.ListSCMRepositories(ctx, bob.SCMTenant, installation.ID); err != nil {
 		t.Fatal(err)
-	} else if repositories, _ := store.ListSCMRepositories(ctx, bob.Tenant, installation.ID); len(repositories) != 0 {
+	} else if repositories, _ := store.ListSCMRepositories(ctx, bob.SCMTenant, installation.ID); len(repositories) != 0 {
 		t.Fatalf("a foreign allowlist was visible: %#v", repositories)
 	}
-	if err := store.DeleteSCMInstallation(ctx, bob.Tenant, installation.ID); !errors.Is(err, ErrNotFound) {
+	if err := store.DeleteSCMInstallation(ctx, bob.SCMTenant, installation.ID); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("cross-tenant delete error = %v", err)
 	}
 
 	// Alice still has hers.
-	if _, err := store.SCMInstallationByID(ctx, alice.Tenant, installation.ID); err != nil {
+	if _, err := store.SCMInstallationByID(ctx, alice.SCMTenant, installation.ID); err != nil {
 		t.Fatal(err)
 	}
 
 	// Claiming an installation already linked elsewhere must conflict, not
 	// silently repoint it.
-	if _, err := store.UpsertSCMInstallation(ctx, bob.Tenant, domain.SCMInstallation{
+	if _, err := store.UpsertSCMInstallation(ctx, bob.SCMTenant, domain.SCMInstallation{
 		ExternalInstallationID: 910001,
 		AccountLogin:           "bob-org",
 		AccountType:            "Organization",
@@ -133,7 +133,7 @@ func TestSCMInstallationsAreIsolatedByRowLevelSecurity(t *testing.T) {
 	}); err == nil {
 		t.Fatal("an installation was re-linked into another organization")
 	}
-	refreshed, err := store.SCMInstallationByID(ctx, alice.Tenant, installation.ID)
+	refreshed, err := store.SCMInstallationByID(ctx, alice.SCMTenant, installation.ID)
 	if err != nil || refreshed.AccountLogin != "alice-org" {
 		t.Fatalf("installation = %#v, %v", refreshed, err)
 	}
@@ -147,20 +147,20 @@ func TestSCMAllowlistGatesTheBrokerLookup(t *testing.T) {
 	installation := linkInstallation(t, store, alice, 910002, "alice-allow")
 
 	// Sync without allowing: visible, but not brokerable.
-	if err := store.SyncSCMRepositories(ctx, alice.Tenant, installation.ID, []domain.SCMRepository{
+	if err := store.SyncSCMRepositories(ctx, alice.SCMTenant, installation.ID, []domain.SCMRepository{
 		{ExternalRepositoryID: 920002, FullName: "alice-allow/widgets"},
 		{ExternalRepositoryID: 920003, FullName: "alice-allow/docs"},
 	}, false); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := store.AllowedSCMRepository(ctx, alice.Tenant, "alice-allow/widgets"); !errors.Is(err, ErrNotFound) {
+	if _, _, err := store.AllowedSCMRepository(ctx, alice.SCMTenant, "alice-allow/widgets"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("a repository resolved before it was allowlisted: %v", err)
 	}
 
-	if err := store.SetSCMRepositoryAllowlist(ctx, alice.Tenant, installation.ID, []int64{920002}); err != nil {
+	if err := store.SetSCMRepositoryAllowlist(ctx, alice.SCMTenant, installation.ID, []int64{920002}); err != nil {
 		t.Fatal(err)
 	}
-	resolved, repository, err := store.AllowedSCMRepository(ctx, alice.Tenant, "alice-allow/widgets")
+	resolved, repository, err := store.AllowedSCMRepository(ctx, alice.SCMTenant, "alice-allow/widgets")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -168,19 +168,19 @@ func TestSCMAllowlistGatesTheBrokerLookup(t *testing.T) {
 		t.Fatalf("resolved = %#v %#v", resolved, repository)
 	}
 	// The unnamed repository stayed denied.
-	if _, _, err := store.AllowedSCMRepository(ctx, alice.Tenant, "alice-allow/docs"); !errors.Is(err, ErrNotFound) {
+	if _, _, err := store.AllowedSCMRepository(ctx, alice.SCMTenant, "alice-allow/docs"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("an unlisted repository resolved: %v", err)
 	}
 	// Another tenant cannot resolve it at all.
-	if _, _, err := store.AllowedSCMRepository(ctx, bob.Tenant, "alice-allow/widgets"); !errors.Is(err, ErrNotFound) {
+	if _, _, err := store.AllowedSCMRepository(ctx, bob.SCMTenant, "alice-allow/widgets"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("a foreign tenant resolved an allowlisted repository: %v", err)
 	}
 
 	// Replacing the allowlist revokes the previous entry.
-	if err := store.SetSCMRepositoryAllowlist(ctx, alice.Tenant, installation.ID, []int64{920003}); err != nil {
+	if err := store.SetSCMRepositoryAllowlist(ctx, alice.SCMTenant, installation.ID, []int64{920003}); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := store.AllowedSCMRepository(ctx, alice.Tenant, "alice-allow/widgets"); !errors.Is(err, ErrNotFound) {
+	if _, _, err := store.AllowedSCMRepository(ctx, alice.SCMTenant, "alice-allow/widgets"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("allowlist replacement did not revoke: %v", err)
 	}
 
@@ -188,7 +188,7 @@ func TestSCMAllowlistGatesTheBrokerLookup(t *testing.T) {
 	if _, err := store.SetSCMInstallationStatus(ctx, 910002, domain.InstallationStatusSuspended); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := store.AllowedSCMRepository(ctx, alice.Tenant, "alice-allow/docs"); !errors.Is(err, ErrNotFound) {
+	if _, _, err := store.AllowedSCMRepository(ctx, alice.SCMTenant, "alice-allow/docs"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("a suspended installation resolved a repository: %v", err)
 	}
 }
@@ -199,7 +199,7 @@ func TestSCMSyncPreservesAllowlistAndDropsVanishedRepositories(t *testing.T) {
 	alice := signUp(t, store, "scm-sync-alice", "scm-sync-alice@example.com")
 	installation := linkInstallation(t, store, alice, 910003, "alice-sync")
 
-	if err := store.SyncSCMRepositories(ctx, alice.Tenant, installation.ID, []domain.SCMRepository{
+	if err := store.SyncSCMRepositories(ctx, alice.SCMTenant, installation.ID, []domain.SCMRepository{
 		{ExternalRepositoryID: 920010, FullName: "alice-sync/keep"},
 		{ExternalRepositoryID: 920011, FullName: "alice-sync/drop"},
 	}, true); err != nil {
@@ -207,13 +207,13 @@ func TestSCMSyncPreservesAllowlistAndDropsVanishedRepositories(t *testing.T) {
 	}
 	// A later refresh must not clear the existing decision, and must not
 	// allowlist a newly visible repository.
-	if err := store.SyncSCMRepositories(ctx, alice.Tenant, installation.ID, []domain.SCMRepository{
+	if err := store.SyncSCMRepositories(ctx, alice.SCMTenant, installation.ID, []domain.SCMRepository{
 		{ExternalRepositoryID: 920010, FullName: "alice-sync/keep"},
 		{ExternalRepositoryID: 920012, FullName: "alice-sync/new"},
 	}, false); err != nil {
 		t.Fatal(err)
 	}
-	repositories, err := store.ListSCMRepositories(ctx, alice.Tenant, installation.ID)
+	repositories, err := store.ListSCMRepositories(ctx, alice.SCMTenant, installation.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -261,7 +261,7 @@ func TestSCMWebhookRepositoryChangesCannotWidenAccess(t *testing.T) {
 	ctx := context.Background()
 	alice := signUp(t, store, "scm-hook-alice", "scm-hook-alice@example.com")
 	installation := linkInstallation(t, store, alice, 910005, "alice-hook")
-	if err := store.SyncSCMRepositories(ctx, alice.Tenant, installation.ID, []domain.SCMRepository{
+	if err := store.SyncSCMRepositories(ctx, alice.SCMTenant, installation.ID, []domain.SCMRepository{
 		{ExternalRepositoryID: 920020, FullName: "alice-hook/widgets"},
 	}, true); err != nil {
 		t.Fatal(err)
@@ -271,14 +271,14 @@ func TestSCMWebhookRepositoryChangesCannotWidenAccess(t *testing.T) {
 	if _, err := store.AddSCMWebhookRepository(ctx, 910005, 920021, "Alice-Hook/New", true); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := store.AllowedSCMRepository(ctx, alice.Tenant, "alice-hook/new"); !errors.Is(err, ErrNotFound) {
+	if _, _, err := store.AllowedSCMRepository(ctx, alice.SCMTenant, "alice-hook/new"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("a webhook-added repository was brokerable: %v", err)
 	}
 	// Re-delivering the same add must not flip the existing allowlist entry.
 	if _, err := store.AddSCMWebhookRepository(ctx, 910005, 920020, "alice-hook/widgets", false); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := store.AllowedSCMRepository(ctx, alice.Tenant, "alice-hook/widgets"); err != nil {
+	if _, _, err := store.AllowedSCMRepository(ctx, alice.SCMTenant, "alice-hook/widgets"); err != nil {
 		t.Fatalf("a webhook redelivery revoked an allowlisted repository: %v", err)
 	}
 
@@ -286,7 +286,7 @@ func TestSCMWebhookRepositoryChangesCannotWidenAccess(t *testing.T) {
 	if _, err := store.RemoveSCMWebhookRepository(ctx, 910005, 920020); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := store.AllowedSCMRepository(ctx, alice.Tenant, "alice-hook/widgets"); !errors.Is(err, ErrNotFound) {
+	if _, _, err := store.AllowedSCMRepository(ctx, alice.SCMTenant, "alice-hook/widgets"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("a removed repository was still brokerable: %v", err)
 	}
 }
@@ -297,7 +297,7 @@ func TestSCMInstallStateIsSingleUseAndTenantBound(t *testing.T) {
 	alice := signUp(t, store, "scm-state-alice", "scm-state-alice@example.com")
 
 	digest := sha256.Sum256([]byte("state-" + alice.UserID))
-	if err := store.CreateSCMInstallState(ctx, alice.Tenant, digest[:], time.Now().UTC().Add(time.Minute)); err != nil {
+	if err := store.CreateSCMInstallState(ctx, alice.SCMTenant, digest[:], time.Now().UTC().Add(time.Minute)); err != nil {
 		t.Fatal(err)
 	}
 	link, err := store.ConsumeSCMInstallState(ctx, digest[:])
@@ -313,7 +313,7 @@ func TestSCMInstallStateIsSingleUseAndTenantBound(t *testing.T) {
 
 	// An expired state is never redeemable.
 	expired := sha256.Sum256([]byte("expired-" + alice.UserID))
-	if err := store.CreateSCMInstallState(ctx, alice.Tenant, expired[:], time.Now().UTC().Add(-time.Second)); err == nil {
+	if err := store.CreateSCMInstallState(ctx, alice.SCMTenant, expired[:], time.Now().UTC().Add(-time.Second)); err == nil {
 		t.Fatal("a state expiring in the past was accepted")
 	}
 }
@@ -324,12 +324,12 @@ func TestSCMTokenGrantLedgerIsTenantScoped(t *testing.T) {
 	alice := signUp(t, store, "scm-grant-alice", "scm-grant-alice@example.com")
 	bob := signUp(t, store, "scm-grant-bob", "scm-grant-bob@example.com")
 	installation := linkInstallation(t, store, alice, 910006, "alice-grant")
-	if err := store.SyncSCMRepositories(ctx, alice.Tenant, installation.ID, []domain.SCMRepository{
+	if err := store.SyncSCMRepositories(ctx, alice.SCMTenant, installation.ID, []domain.SCMRepository{
 		{ExternalRepositoryID: 920030, FullName: "alice-grant/widgets"},
 	}, true); err != nil {
 		t.Fatal(err)
 	}
-	_, repository, err := store.AllowedSCMRepository(ctx, alice.Tenant, "alice-grant/widgets")
+	_, repository, err := store.AllowedSCMRepository(ctx, alice.SCMTenant, "alice-grant/widgets")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -341,11 +341,11 @@ func TestSCMTokenGrantLedgerIsTenantScoped(t *testing.T) {
 		Purpose:        domain.TokenPurposeClone,
 		ExpiresAt:      time.Now().UTC().Add(time.Hour),
 	}
-	if err := store.RecordSCMTokenGrant(ctx, alice.Tenant, grant); err != nil {
+	if err := store.RecordSCMTokenGrant(ctx, alice.SCMTenant, grant); err != nil {
 		t.Fatal(err)
 	}
 	// Another tenant cannot write a grant against a foreign installation.
-	if err := store.RecordSCMTokenGrant(ctx, bob.Tenant, grant); err == nil {
+	if err := store.RecordSCMTokenGrant(ctx, bob.SCMTenant, grant); err == nil {
 		t.Fatal("a grant was written against a foreign installation")
 	}
 }

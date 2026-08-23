@@ -197,7 +197,7 @@ type memoryBrokerStore struct {
 	grants        []domain.SCMTokenGrant
 	grantErr      error
 	// tenants records the RLS scope every call ran under.
-	tenants []postgres.Tenant
+	tenants []postgres.SCMTenant
 }
 
 func newMemoryBrokerStore() *memoryBrokerStore {
@@ -241,7 +241,7 @@ func (s *memoryBrokerStore) setInstallationStatus(externalInstallationID int64, 
 
 func (s *memoryBrokerStore) AllowedSCMRepository(
 	_ context.Context,
-	tenant postgres.Tenant,
+	tenant postgres.SCMTenant,
 	fullName string,
 ) (domain.SCMInstallation, domain.SCMRepository, error) {
 	s.mu.Lock()
@@ -256,7 +256,7 @@ func (s *memoryBrokerStore) AllowedSCMRepository(
 
 func (s *memoryBrokerStore) RecordSCMTokenGrant(
 	_ context.Context,
-	tenant postgres.Tenant,
+	tenant postgres.SCMTenant,
 	grant domain.SCMTokenGrant,
 ) error {
 	s.mu.Lock()

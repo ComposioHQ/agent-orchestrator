@@ -11,22 +11,24 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/cloud/domain"
 )
 
-// Tenant is the RLS context every SCM read and write runs under. Both fields
-// are required: the SCM policies check organization membership *and* that the
-// statement targets the organization the caller declared.
-type Tenant struct {
+// SCMTenant is the RLS context every SCM read and write runs under. Both
+// fields are required: the SCM policies check organization membership *and*
+// that the statement targets the organization the caller declared. The name is
+// SCM-specific so this slice never collides with a general tenant helper in
+// the same package.
+type SCMTenant struct {
 	OrgID  string
 	UserID string
 }
 
-func (t Tenant) valid() bool {
+func (t SCMTenant) valid() bool {
 	return strings.TrimSpace(t.OrgID) != "" && strings.TrimSpace(t.UserID) != ""
 }
 
 // withTenant runs fn inside a transaction whose RLS settings are scoped to one
 // organization and user. set_config is transaction-local, so a pooled
 // connection cannot leak tenant context into the next borrower.
-func (s *Store) withTenant(ctx context.Context, tenant Tenant, readOnly bool, fn func(pgx.Tx) error) error {
+func (s *Store) withTenant(ctx context.Context, tenant SCMTenant, readOnly bool, fn func(pgx.Tx) error) error {
 	if !tenant.valid() {
 		return ErrInvalid
 	}
@@ -55,7 +57,7 @@ func (s *Store) withTenant(ctx context.Context, tenant Tenant, readOnly bool, fn
 
 // CreateSCMInstallState records the digest of a single-use install-redirect
 // state. Only org admins can create one, enforced by RLS.
-func (s *Store) CreateSCMInstallState(ctx context.Context, tenant Tenant, stateHash []byte, expiresAt time.Time) error {
+func (s *Store) CreateSCMInstallState(ctx context.Context, tenant SCMTenant, stateHash []byte, expiresAt time.Time) error {
 	if len(stateHash) != 32 {
 		return ErrInvalid
 	}
@@ -96,7 +98,7 @@ func (s *Store) ConsumeSCMInstallState(ctx context.Context, stateHash []byte) (d
 // so the caller learns only that the claim conflicts.
 func (s *Store) UpsertSCMInstallation(
 	ctx context.Context,
-	tenant Tenant,
+	tenant SCMTenant,
 	installation domain.SCMInstallation,
 ) (domain.SCMInstallation, error) {
 	var stored domain.SCMInstallation
@@ -159,7 +161,7 @@ func scanInstallation(row rowScanner, into *domain.SCMInstallation) error {
 }
 
 // ListSCMInstallations returns every installation linked to the tenant.
-func (s *Store) ListSCMInstallations(ctx context.Context, tenant Tenant) ([]domain.SCMInstallation, error) {
+func (s *Store) ListSCMInstallations(ctx context.Context, tenant SCMTenant) ([]domain.SCMInstallation, error) {
 	installations := make([]domain.SCMInstallation, 0)
 	err := s.withTenant(ctx, tenant, true, func(tx pgx.Tx) error {
 		rows, err := tx.Query(
@@ -191,7 +193,7 @@ func (s *Store) ListSCMInstallations(ctx context.Context, tenant Tenant) ([]doma
 
 // DeleteSCMInstallation unlinks an installation and cascades its repository
 // allowlist. Revoking the app on GitHub is a separate, user-side action.
-func (s *Store) DeleteSCMInstallation(ctx context.Context, tenant Tenant, installationID string) error {
+func (s *Store) DeleteSCMInstallation(ctx context.Context, tenant SCMTenant, installationID string) error {
 	return s.withTenant(ctx, tenant, false, func(tx pgx.Tx) error {
 		tag, err := tx.Exec(ctx, `DELETE FROM ao_scm_installations WHERE id = $1`, installationID)
 		if err != nil {
@@ -211,7 +213,7 @@ func (s *Store) DeleteSCMInstallation(ctx context.Context, tenant Tenant, instal
 // during installation.
 func (s *Store) SyncSCMRepositories(
 	ctx context.Context,
-	tenant Tenant,
+	tenant SCMTenant,
 	installationID string,
 	repositories []domain.SCMRepository,
 	allowNew bool,
@@ -276,7 +278,7 @@ func (s *Store) SyncSCMRepositories(
 // than an additive grant.
 func (s *Store) SetSCMRepositoryAllowlist(
 	ctx context.Context,
-	tenant Tenant,
+	tenant SCMTenant,
 	installationID string,
 	allowedExternalIDs []int64,
 ) error {
@@ -319,7 +321,7 @@ func (s *Store) SetSCMRepositoryAllowlist(
 // allowlisted or not, so an admin can see what is available to allow.
 func (s *Store) ListSCMRepositories(
 	ctx context.Context,
-	tenant Tenant,
+	tenant SCMTenant,
 	installationID string,
 ) ([]domain.SCMRepository, error) {
 	repositories := make([]domain.SCMRepository, 0)
@@ -368,7 +370,7 @@ func (s *Store) ListSCMRepositories(
 // cannot probe the organization's repository inventory.
 func (s *Store) AllowedSCMRepository(
 	ctx context.Context,
-	tenant Tenant,
+	tenant SCMTenant,
 	fullName string,
 ) (domain.SCMInstallation, domain.SCMRepository, error) {
 	normalized := strings.ToLower(strings.TrimSpace(fullName))
@@ -420,7 +422,7 @@ func (s *Store) AllowedSCMRepository(
 
 // RecordSCMTokenGrant appends to the brokered-credential audit ledger. No
 // token material is written; the row records scope, purpose, and expiry only.
-func (s *Store) RecordSCMTokenGrant(ctx context.Context, tenant Tenant, grant domain.SCMTokenGrant) error {
+func (s *Store) RecordSCMTokenGrant(ctx context.Context, tenant SCMTenant, grant domain.SCMTokenGrant) error {
 	return s.withTenant(ctx, tenant, false, func(tx pgx.Tx) error {
 		var workspaceID *string
 		if trimmed := strings.TrimSpace(grant.WorkspaceID); trimmed != "" {
@@ -430,12 +432,13 @@ func (s *Store) RecordSCMTokenGrant(ctx context.Context, tenant Tenant, grant do
 			ctx,
 			`INSERT INTO ao_scm_token_grants (
 				org_id, installation_id, repository_id, workspace_id,
-				purpose, requested_by_user_id, expires_at
-			 ) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+				sandbox_id, purpose, requested_by_user_id, expires_at
+			 ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
 			tenant.OrgID,
 			grant.InstallationID,
 			grant.RepositoryID,
 			workspaceID,
+			strings.TrimSpace(grant.SandboxID),
 			grant.Purpose,
 			tenant.UserID,
 			grant.ExpiresAt,
@@ -572,7 +575,7 @@ func IsConflict(err error) bool { return errors.Is(err, ErrConflict) }
 // SCMInstallationByID resolves one installation inside the tenant scope.
 func (s *Store) SCMInstallationByID(
 	ctx context.Context,
-	tenant Tenant,
+	tenant SCMTenant,
 	installationID string,
 ) (domain.SCMInstallation, error) {
 	var installation domain.SCMInstallation

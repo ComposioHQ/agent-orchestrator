@@ -82,6 +82,9 @@ CREATE TABLE ao_scm_token_grants (
     repository_id UUID NOT NULL
         REFERENCES ao_scm_repositories(id) ON DELETE CASCADE,
     workspace_id UUID REFERENCES ao_cloud_workspaces(id) ON DELETE SET NULL,
+    -- The compute plane's identifier for the sandbox that received the
+    -- credential. Free-form text: it is an opaque provider id, not an AO key.
+    sandbox_id TEXT NOT NULL DEFAULT '',
     purpose TEXT NOT NULL CHECK (purpose IN ('clone', 'push', 'observe')),
     requested_by_user_id UUID REFERENCES ao_users(id) ON DELETE SET NULL,
     granted_at TIMESTAMPTZ NOT NULL DEFAULT now(),

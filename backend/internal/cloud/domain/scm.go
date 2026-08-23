@@ -71,6 +71,7 @@ type SCMTokenGrant struct {
 	InstallationID    string
 	RepositoryID      string
 	WorkspaceID       string
+	SandboxID         string
 	Purpose           string
 	RequestedByUserID string
 	ExpiresAt         time.Time
