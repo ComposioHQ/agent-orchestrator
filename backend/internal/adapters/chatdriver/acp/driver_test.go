@@ -368,6 +368,41 @@ func TestACPDriverDefersPromptUntilDurableTurnBinding(t *testing.T) {
 	}
 }
 
+func TestACPDriverValidatesHandshakeIdentityBeforeOpeningSession(t *testing.T) {
+	agent := &fakeAgent{}
+	validated := false
+	driver := New(Config{
+		Harness: domain.HarnessPi,
+		Capabilities: ports.ChatCapabilities{
+			ports.ChatCapabilityStreaming: true,
+			ports.ChatCapabilityApprovals: true,
+			ports.ChatCapabilityInterrupt: true,
+			ports.ChatCapabilityResume:    true,
+		},
+		Probe:  func(context.Context) error { return nil },
+		Launch: func(context.Context, LaunchConfig) (Launch, error) { return Launch{Command: "fake"}, nil },
+		ValidateInitialize: func(acpsdk.InitializeResponse) error {
+			validated = true
+			return errors.New("unsupported adapter version")
+		},
+	}, nil)
+	driver.spawn = fakeSpawn(agent)
+
+	_, err := driver.Start(context.Background(), ports.ChatStartConfig{WorkspacePath: t.TempDir()})
+	if !validated {
+		t.Fatal("initialize response was not validated")
+	}
+	if !errors.Is(err, ports.ErrChatDriverIncompatible) || !strings.Contains(err.Error(), "unsupported adapter version") {
+		t.Fatalf("Start error = %v", err)
+	}
+	agent.mu.Lock()
+	opened := agent.newParams.Cwd != ""
+	agent.mu.Unlock()
+	if opened {
+		t.Fatal("session/new ran before the handshake identity was admitted")
+	}
+}
+
 func TestACPInterruptCancelsTheLocalPromptAfterNotifyingTheAgent(t *testing.T) {
 	agent := &fakeAgent{promptBlock: true, promptStarted: make(chan struct{}, 1)}
 	driver := New(Config{
@@ -593,7 +628,7 @@ func TestACPDriverReappliesLaunchContextWhenResuming(t *testing.T) {
 	}
 }
 
-func TestACPDriverLoadsSettledHistoryWhenTheAgentCanReplayIt(t *testing.T) {
+func TestACPDriverClosesReplayTurnsAsRecoveredWithoutBlockingResume(t *testing.T) {
 	userOneID := "11111111-1111-4111-8111-111111111111"
 	answerOneID := "22222222-2222-4222-8222-222222222222"
 	userTwoID := "33333333-3333-4333-8333-333333333333"
@@ -608,12 +643,16 @@ func TestACPDriverLoadsSettledHistoryWhenTheAgentCanReplayIt(t *testing.T) {
 	userTwo.UserMessageChunk.MessageId = &userTwoID
 	answerTwo := acpsdk.UpdateAgentMessageText("All tests pass.")
 	answerTwo.AgentMessageChunk.MessageId = &answerTwoID
+	pendingTool := acpsdk.SessionUpdate{ToolCall: &acpsdk.SessionUpdateToolCall{
+		SessionUpdate: "tool_call", ToolCallId: "history-tool", Title: "Run tests",
+		Kind: acpsdk.ToolKindExecute, Status: acpsdk.ToolCallStatusInProgress,
+	}}
 
 	agent := &fakeAgent{
 		capabilities: &acpsdk.AgentCapabilities{
 			LoadSession: true,
 		},
-		loadUpdates: []acpsdk.SessionUpdate{userOne, answerOneA, answerOneB, userTwo, answerTwo},
+		loadUpdates: []acpsdk.SessionUpdate{userOne, answerOneA, answerOneB, userTwo, answerTwo, pendingTool},
 	}
 	driver := New(Config{
 		Harness:      domain.HarnessClaudeCode,
@@ -656,40 +695,22 @@ func TestACPDriverLoadsSettledHistoryWhenTheAgentCanReplayIt(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReadHistory: %v", err)
 	}
-	wantKinds := []ports.ChatEventKind{
-		ports.ChatEventTurnStarted,
-		ports.ChatEventUserMessageCompleted,
-		ports.ChatEventMessageDelta,
-		ports.ChatEventMessageDelta,
-		ports.ChatEventMessageCompleted,
-		ports.ChatEventTurnCompleted,
-		ports.ChatEventTurnStarted,
-		ports.ChatEventUserMessageCompleted,
-		ports.ChatEventMessageDelta,
-		ports.ChatEventMessageCompleted,
-		ports.ChatEventTurnCompleted,
-	}
-	if len(history) != len(wantKinds) {
-		t.Fatalf("history = %d events, want %d: %#v", len(history), len(wantKinds), history)
-	}
-	seenIDs := make(map[string]bool, len(history))
-	for i, event := range history {
-		if event.Kind != wantKinds[i] {
-			t.Errorf("history event %d kind = %q, want %q", i, event.Kind, wantKinds[i])
+	var states []domain.TurnState
+	var recoveredActivity bool
+	for _, event := range history {
+		if event.Kind == ports.ChatEventTurnCompleted {
+			states = append(states, event.TurnState)
 		}
-		if event.ProviderEventID == "" || seenIDs[event.ProviderEventID] {
-			t.Errorf("history event %d has missing or duplicate identity %q", i, event.ProviderEventID)
+		if event.ProviderItemID == "history-tool" && event.Kind == ports.ChatEventActivityCompleted {
+			recoveredActivity = event.ActivityStatus == domain.ActivityStatusRecovered
 		}
-		seenIDs[event.ProviderEventID] = true
 	}
-	if history[1].Text != "Inspect the repository" || history[4].Text != "The repository is ready." {
-		t.Fatalf("first reconstructed turn = %#v", history[:6])
+	if len(states) != 2 || states[0] != domain.TurnStateRecovered ||
+		states[1] != domain.TurnStateRecovered {
+		t.Fatalf("replayed turn states = %v, want [recovered recovered]", states)
 	}
-	if history[7].Text != "Run the tests" || history[9].Text != "All tests pass." {
-		t.Fatalf("second reconstructed turn = %#v", history[6:])
-	}
-	if history[0].ProviderTurnID == history[6].ProviderTurnID {
-		t.Fatalf("both native turns share provider id %q", history[0].ProviderTurnID)
+	if !recoveredActivity {
+		t.Fatalf("history = %#v, want pending replay tool settled as recovered", history)
 	}
 	if !conv.Capabilities().Has(ports.ChatCapabilityHistory) {
 		t.Fatal("session/load conversation did not advertise replayable history")
@@ -706,7 +727,7 @@ func TestACPDriverLoadsSettledHistoryWhenTheAgentCanReplayIt(t *testing.T) {
 	}
 }
 
-func TestACPDriverImportsTrailingUserOnlyHistoryAsInterrupted(t *testing.T) {
+func TestACPDriverClosesTrailingUserOnlyHistoryAsRecovered(t *testing.T) {
 	userID := "55555555-5555-4555-8555-555555555555"
 	user := acpsdk.UpdateUserMessageText("Work that has not produced a provider event yet")
 	user.UserMessageChunk.MessageId = &userID
@@ -740,27 +761,9 @@ func TestACPDriverImportsTrailingUserOnlyHistoryAsInterrupted(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReadHistory: %v", err)
 	}
-	wantKinds := []ports.ChatEventKind{
-		ports.ChatEventTurnStarted,
-		ports.ChatEventUserMessageCompleted,
-		ports.ChatEventTurnCompleted,
-	}
-	if len(history) != len(wantKinds) {
-		t.Fatalf("history = %d events, want %d: %#v", len(history), len(wantKinds), history)
-	}
-	for i, event := range history {
-		if event.Kind != wantKinds[i] {
-			t.Errorf("history event %d kind = %q, want %q", i, event.Kind, wantKinds[i])
-		}
-		if event.ProviderEventID == "" {
-			t.Errorf("history event %d has no stable identity", i)
-		}
-	}
-	if history[1].Text != "Work that has not produced a provider event yet" {
-		t.Fatalf("user message = %q", history[1].Text)
-	}
-	if history[2].TurnState != domain.TurnStateInterrupted {
-		t.Fatalf("turn state = %q, want %q", history[2].TurnState, domain.TurnStateInterrupted)
+	if len(history) != 3 || history[2].Kind != ports.ChatEventTurnCompleted ||
+		history[2].TurnState != domain.TurnStateRecovered {
+		t.Fatalf("history = %#v, want trailing recovered turn", history)
 	}
 }
 

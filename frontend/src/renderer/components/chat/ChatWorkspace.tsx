@@ -2164,7 +2164,7 @@ type TimelineGroup = {
 	/** Where this group sits in the timeline: the lowest sequence it contains. */
 	anchor: number;
 	items: ConversationItem[];
-	outcome?: { state: "completed" | "interrupted" | "failed"; durationMs?: number; error?: string };
+	outcome?: { state: "completed" | "recovered" | "interrupted" | "failed"; durationMs?: number; error?: string };
 	/** What the turn changed on disk, when the daemon reported anything. */
 	diff?: TurnDiff;
 	/** The agent's plan for this turn, when it made one. */

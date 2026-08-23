@@ -528,13 +528,18 @@ func (c *conversation) emit(event ports.ChatEvent) {
 	}
 }
 
-func (c *conversation) settleOpenItems(turnID string) {
+func (c *conversation) settleOpenItems(turnID string, turnState ...domain.TurnState) {
 	c.mu.Lock()
 	messages := c.messages
 	thoughts := c.thoughts
 	nestedMessages := c.nestedMessages
 	tools := c.tools
 	c.mu.Unlock()
+	recovered := len(turnState) > 0 && turnState[0] == domain.TurnStateRecovered
+	activityStatus := domain.ActivityStatusCompleted
+	if recovered {
+		activityStatus = domain.ActivityStatusRecovered
+	}
 	messageIDs := sortedKeys(messages)
 	for _, id := range messageIDs {
 		text := messages[id]
@@ -545,7 +550,7 @@ func (c *conversation) settleOpenItems(turnID string) {
 		text := thoughts[id]
 		c.emit(ports.ChatEvent{Kind: ports.ChatEventActivityCompleted, ProviderTurnID: turnID,
 			ProviderItemID: id, ActivityKind: domain.ActivityKindReasoning,
-			ActivityStatus: domain.ActivityStatusCompleted, Summary: "Reasoning", Text: text})
+			ActivityStatus: activityStatus, Summary: "Reasoning", Text: text})
 	}
 	nestedIDs := sortedKeys(nestedMessages)
 	for _, id := range nestedIDs {
@@ -553,7 +558,7 @@ func (c *conversation) settleOpenItems(turnID string) {
 		detail, _ := json.Marshal(map[string]any{"parentProviderItemId": item.parentID, "nestedAgent": true})
 		c.emit(ports.ChatEvent{Kind: ports.ChatEventActivityCompleted, ProviderTurnID: turnID,
 			ProviderItemID: id, ActivityKind: domain.ActivityKindMCPTool,
-			ActivityStatus: domain.ActivityStatusCompleted, Summary: "Subagent response",
+			ActivityStatus: activityStatus, Summary: "Subagent response",
 			Text: item.text, Detail: detail})
 	}
 	toolIDs := sortedKeys(tools)
@@ -562,7 +567,11 @@ func (c *conversation) settleOpenItems(turnID string) {
 		if tool.status == acpsdk.ToolCallStatusPending || tool.status == acpsdk.ToolCallStatusInProgress || tool.status == "" {
 			snapshot := *tool
 			snapshot.status = acpsdk.ToolCallStatusFailed
-			c.emit(c.toolEvent(turnID, &snapshot, true))
+			event := c.toolEvent(turnID, &snapshot, true)
+			if recovered {
+				event.ActivityStatus = domain.ActivityStatusRecovered
+			}
+			c.emit(event)
 		}
 	}
 }

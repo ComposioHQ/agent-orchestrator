@@ -21,7 +21,6 @@ type historyCapture struct {
 	occurrences     map[string]int
 	turnID          string
 	turnUserID      string
-	turnHasProvider bool
 	pendingUserID   string
 	pendingUserText string
 	fallbackID      int
@@ -64,23 +63,19 @@ func (c *conversation) abortHistoryReplay() {
 	c.mu.Unlock()
 }
 
-// finishHistoryReplay settles the last reconstructed turn, then exposes the
-// captured facts through ChatHistoryReader for the controller's transactional,
-// idempotent import path.
+// finishHistoryReplay closes the capture without inventing an outcome for its
+// final turn. ACP session/load guarantees only that all stored entries were
+// replayed; it does not report their terminal outcomes. Recovered is the shared
+// terminal state for that evidence gap; service reconciliation replaces it with
+// AO's known completed/interrupted/failed result when a durable turn matches.
 func (c *conversation) finishHistoryReplay() {
 	c.historyMu.Lock()
-	interrupted := c.history != nil && c.history.turnID != "" &&
-		c.history.turnUserID != "" && !c.history.turnHasProvider
+	hasTail := c.history != nil && c.history.turnID != ""
 	c.historyMu.Unlock()
 
-	turnState := domain.TurnStateCompleted
-	if interrupted {
-		// session/load has finished, so this user-only turn cannot still be
-		// producing output. It represents a prompt interrupted before the agent
-		// emitted a provider event and remains valid replayable history.
-		turnState = domain.TurnStateInterrupted
+	if hasTail {
+		c.finishHistoryTurn(domain.TurnStateRecovered)
 	}
-	c.finishHistoryTurn(turnState)
 
 	c.historyMu.Lock()
 	if c.history != nil {
@@ -131,11 +126,6 @@ func (c *conversation) prepareHistoryUpdate(update acpsdk.SessionUpdate) bool {
 	c.flushHistoryUserMessage()
 	if seed, needsTurn := historyUpdateTurnSeed(update); needsTurn {
 		c.ensureHistoryTurn(seed)
-		c.historyMu.Lock()
-		if c.history != nil && c.history.turnID != "" {
-			c.history.turnHasProvider = true
-		}
-		c.historyMu.Unlock()
 	}
 	return false
 }
@@ -175,7 +165,7 @@ func (c *conversation) captureHistoryUserChunk(chunk *acpsdk.SessionUpdateUserMe
 	c.historyMu.Unlock()
 
 	if finishPrevious {
-		c.finishHistoryTurn(domain.TurnStateCompleted)
+		c.finishHistoryTurn(domain.TurnStateRecovered)
 		startTurn = true
 	}
 	if startTurn {
@@ -200,7 +190,6 @@ func (c *conversation) startHistoryTurn(userID string) {
 	turnID := "acp-history-turn:" + c.history.sessionID + ":" + userID
 	c.history.turnID = turnID
 	c.history.turnUserID = userID
-	c.history.turnHasProvider = false
 	c.historyMu.Unlock()
 
 	c.resetHistoryItems(turnID)
@@ -257,18 +246,19 @@ func (c *conversation) finishHistoryTurn(state domain.TurnState) {
 	turnID := c.history.turnID
 	c.historyMu.Unlock()
 
-	c.settleOpenItems(turnID)
-	c.emit(ports.ChatEvent{
-		Kind:           ports.ChatEventTurnCompleted,
-		ProviderTurnID: turnID,
-		TurnState:      state,
-	})
+	c.settleOpenItems(turnID, state)
+	if state != "" {
+		c.emit(ports.ChatEvent{
+			Kind:           ports.ChatEventTurnCompleted,
+			ProviderTurnID: turnID,
+			TurnState:      state,
+		})
+	}
 
 	c.historyMu.Lock()
 	if c.history != nil && c.history.turnID == turnID {
 		c.history.turnID = ""
 		c.history.turnUserID = ""
-		c.history.turnHasProvider = false
 		c.history.pendingUserID = ""
 		c.history.pendingUserText = ""
 	}

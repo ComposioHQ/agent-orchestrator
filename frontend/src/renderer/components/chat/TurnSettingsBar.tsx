@@ -91,7 +91,7 @@ export function TurnSettingsBar({
 	configPending?: boolean;
 	error?: string;
 	disabled?: boolean;
-	/** Inline controls that belong on the model row, such as queue vs steer. */
+	/** Inline controls on the right model row, before the mode/approval picker — queue vs steer. */
 	children?: ReactNode;
 }) {
 	const selected = models.find((model) => model.id === settings.model);
@@ -119,7 +119,7 @@ export function TurnSettingsBar({
 	const nativeModelMenu = Boolean(onChange && models.length > 0 && grouped.model.length === 0);
 	const clubbedLeft = grouped.model.length > 0 || grouped.effort.length > 0 || grouped.extra.length > 0;
 	const modeOption = grouped.mode;
-	const showRight = Boolean(onChange || modeOption);
+	const showRightDropdown = Boolean(onChange || modeOption);
 
 	return (
 		<div role="group" aria-label="Turn settings" className="flex min-w-0 flex-1 flex-col gap-0.5">
@@ -143,8 +143,6 @@ export function TurnSettingsBar({
 						/>
 					) : null}
 
-					{children}
-
 					{onChangeConfigOption && clubbedLeft && !nativeModelMenu ? (
 						<ClubbedConfigPicker
 							modelOptions={grouped.model}
@@ -156,8 +154,9 @@ export function TurnSettingsBar({
 					) : null}
 				</div>
 
-				{showRight ? (
+				{showRightDropdown || children ? (
 					<div className="flex h-7 shrink-0 items-center gap-1">
+						{children}
 						{modeOption && onChangeConfigOption ? (
 							<ConfigOptionPicker
 								option={modeOption}
