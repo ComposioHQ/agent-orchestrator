@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
+	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 	"github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite/gen"
 )
 
@@ -544,6 +545,16 @@ func (s *Store) AppendUserMessage(
 	}
 
 	err = s.inTx(ctx, "append user message", func(q *gen.Queries) error {
+		owner, err := q.GetSession(ctx, session)
+		if err != nil {
+			return fmt.Errorf("load conversation session: %w", err)
+		}
+		// Legacy/import paths can predate generation claims. Once a generation is
+		// claimed it becomes a hard fence; an empty stored value keeps those
+		// existing append callers compatible.
+		if owner.ControllerGeneration != "" && owner.ControllerGeneration != generation {
+			return nil
+		}
 		sequence, err := q.NextConversationSequence(ctx, gen.NextConversationSequenceParams{
 			UpdatedAt: now,
 			ID:        conversationID,
@@ -563,7 +574,7 @@ func (s *Store) AppendUserMessage(
 			return fmt.Errorf("insert turn: %w", err)
 		}
 
-		return q.InsertConversationMessage(ctx, gen.InsertConversationMessageParams{
+		if err := q.InsertConversationMessage(ctx, gen.InsertConversationMessageParams{
 			ID:                  msg.ID,
 			ConversationID:      conversationID,
 			TurnID:              sql.NullString{String: turnID, Valid: true},
@@ -576,12 +587,16 @@ func (s *Store) AppendUserMessage(
 			DeliveryContentJson: msg.DeliveryContentJSON,
 			CreatedAt:           now,
 			UpdatedAt:           now,
-		})
+		}); err != nil {
+			return err
+		}
+		created = true
+		return nil
 	})
 	if err != nil {
 		return false, err
 	}
-	return true, nil
+	return created, nil
 }
 
 // AdoptProviderTurn records a turn the provider started that AO never dispatched.
@@ -1888,16 +1903,7 @@ func (s *Store) ApplyProviderTitle(
 }
 
 // ConversationSnapshot is the durable read model for one conversation.
-type ConversationSnapshot struct {
-	Conversation               domain.ConversationRecord
-	Turns                      []domain.ConversationTurn
-	Messages                   []domain.ConversationMessage
-	Activities                 []domain.ConversationActivity
-	BranchPoints               []domain.ConversationBranchPoint
-	BranchedFromEarlierMessage bool
-	OldestSequence             int64
-	HasMoreBefore              bool
-}
+type ConversationSnapshot = ports.ConversationSnapshot
 
 // DefaultConversationPageSize is the standard bounded read size for conversation snapshots.
 const DefaultConversationPageSize = 200
