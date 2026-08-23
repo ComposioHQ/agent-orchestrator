@@ -74,26 +74,20 @@ func (s *Store) validateRuntimeRole(ctx context.Context) error {
 		            FROM pg_class relation
 		            JOIN pg_namespace namespace ON namespace.oid = relation.relnamespace
 		            WHERE namespace.nspname = 'public'
-		              AND relation.relname IN (
-		                  'ao_users', 'ao_auth_sessions',
-			              'ao_organizations', 'ao_org_memberships',
-			              'ao_cloud_workspaces', 'ao_cloud_session_runtimes'
-		              )
+		              AND relation.relname = ANY($1)
 		              AND relation.relowner = role.oid
 		        ),
-		        (SELECT count(*) = 6
+		        (SELECT count(*) = $2
 		         FROM pg_class relation
 		         JOIN pg_namespace namespace ON namespace.oid = relation.relnamespace
 		         WHERE namespace.nspname = 'public'
-		           AND relation.relname IN (
-		               'ao_users', 'ao_auth_sessions',
-		               'ao_organizations', 'ao_org_memberships',
-		               'ao_cloud_workspaces', 'ao_cloud_session_runtimes'
-		           )
+		           AND relation.relname = ANY($1)
 		           AND relation.relrowsecurity
 		           AND relation.relforcerowsecurity)
 		 FROM pg_roles role
 		 WHERE role.rolname = current_user`,
+		runtimeTables,
+		len(runtimeTables),
 	).Scan(&role, &superuser, &bypassRLS, &createRole, &createDB, &replication, &ownsFoundation, &allTablesForceRLS)
 	if err != nil {
 		return fmt.Errorf("inspect cloud database role: %w", err)
