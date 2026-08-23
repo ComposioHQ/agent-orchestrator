@@ -443,8 +443,11 @@ export function SessionCardView({
 			className={cn(
 				"group relative w-full rounded-lg border text-left transition-[border-color,box-shadow]",
 				badge.cardClassName ?? "border-border bg-surface",
+				// The whole card is the click target, and a drag that ends inside it
+				// still fires click — so a drag-select here would open the session
+				// instead of selecting. The same text is selectable in the inspector.
 				interactive &&
-					"cursor-pointer hover:border-border-strong hover:shadow-sm focus-within:border-border-strong focus-within:ring-2 focus-within:ring-ring/60",
+					"cursor-pointer select-none hover:border-border-strong hover:shadow-sm focus-within:border-border-strong focus-within:ring-2 focus-within:ring-ring/60",
 			)}
 			data-testid="board-session-card"
 			data-session-id={session.id}

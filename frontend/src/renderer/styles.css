@@ -1390,8 +1390,6 @@ body {
 	font-size: var(--font-size-md);
 	line-height: var(--line-height-normal);
 	-webkit-font-smoothing: antialiased;
-	-webkit-user-select: none;
-	user-select: none;
 }
 
 button,
@@ -1406,6 +1404,30 @@ textarea,
 [contenteditable="true"] {
 	-webkit-user-select: text;
 	user-select: text;
+}
+
+/* Readable content stays selectable so session details, status text, error
+ * copy, and PR metadata can be copied out of the app. #3508 turned selection
+ * off on <body> to stop drags from painting a highlight over sidebar/board
+ * chrome, but `user-select` inherits, so that also took out every content
+ * surface. The opt-out below names the chrome instead: controls and drag
+ * surfaces must act on a drag, not select text under it. Deliberately excludes
+ * a[href] — links sit inside prose (chat transcript, review markdown), and
+ * making them unselectable would punch holes in a copied paragraph. See #4268. */
+:is(
+		button,
+		summary,
+		select,
+		[role="button"],
+		[data-slot="select-trigger"],
+		[data-slot="select-item"],
+		[data-slot="dropdown-menu-item"],
+		[data-slot="resize-handle"],
+		[data-sidebar="menu-button"],
+		[data-sidebar="menu-sub-button"]
+	) {
+	-webkit-user-select: none;
+	user-select: none;
 }
 
 :is(

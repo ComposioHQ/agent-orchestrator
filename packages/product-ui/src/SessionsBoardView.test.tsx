@@ -238,4 +238,47 @@ describe("SessionsBoardView", () => {
 		expect(lastArchiveMotionTransition.current).toEqual({ duration: 0 });
 		expect(archiveButton.querySelector("svg")).toHaveClass("transition-none");
 	});
+
+	// The renderer makes content selectable again (#4268). A clickable card is a
+	// click target, not content: a drag that ends inside it still fires click, so
+	// selecting card text would open the session. Non-interactive cards carry no
+	// click handler and stay selectable.
+	it("keeps a clickable card unselectable and leaves a non-interactive card selectable", () => {
+		const labels = {
+			formatTime: () => "5m ago",
+			intakeIssue: (id: string) => `Issue ${id}`,
+			pr: {
+				short: "PR",
+				states: { closed: "closed", draft: "draft", merged: "merged", open: "open" },
+			},
+			updatedAt: (timestamp: string) => `Updated ${timestamp}`,
+		};
+		const renderAvatar = (provider: string) => (
+			<span role="img" aria-label={provider}>
+				C
+			</span>
+		);
+
+		const { rerender } = render(
+			<SessionCardView
+				externalLink={ExternalLink}
+				labels={labels}
+				onOpen={vi.fn()}
+				renderAvatar={renderAvatar}
+				session={baseSession}
+			/>,
+		);
+		expect(screen.getByTestId("board-session-card")).toHaveClass("select-none");
+
+		rerender(
+			<SessionCardView
+				externalLink={ExternalLink}
+				interactive={false}
+				labels={labels}
+				renderAvatar={renderAvatar}
+				session={baseSession}
+			/>,
+		);
+		expect(screen.getByTestId("board-session-card")).not.toHaveClass("select-none");
+	});
 });
