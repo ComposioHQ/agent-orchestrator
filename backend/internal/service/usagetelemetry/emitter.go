@@ -2,7 +2,6 @@ package usagetelemetry
 
 import (
 	"context"
-	"math"
 	"sync"
 	"time"
 
@@ -119,12 +118,10 @@ func (e *Emitter) EmitSessionUsage(ctx context.Context, id domain.SessionID) {
 	e.mu.Unlock()
 
 	model, harness := dominant(summary)
-	// Do NOT round per session: a sub-cent session summed across thousands would
-	// vanish to $0 and skew rankings. Emit integer micro-dollars for exact
-	// aggregation plus the unrounded float; round only at display.
-	cost := summaryCost(summary)
-	costMicroUSD := int64(math.Round(cost * 1_000_000))
-
+	// Emit measured token counts only. Cost in dollars is not in the transcript
+	// (providers record tokens, not a price), so it is a derived view computed
+	// at query time in PostHog (tokens x per-model rate) rather than frozen into
+	// each event with a rate that can be wrong or go stale.
 	payload := map[string]any{
 		"harness":             harness,
 		"model":               model,
@@ -132,8 +129,6 @@ func (e *Emitter) EmitSessionUsage(ctx context.Context, id domain.SessionID) {
 		"cached_input_tokens": cached,
 		"output_tokens":       output,
 		"total_tokens":        total,
-		"est_cost_usd":        cost,
-		"est_cost_microusd":   costMicroUSD,
 		"incomplete":          summary.Incomplete,
 	}
 	if org := e.githubOrg(ctx, id); org != "" {
@@ -156,17 +151,11 @@ func (e *Emitter) EmitSessionUsage(ctx context.Context, id domain.SessionID) {
 	e.telemetry.Emit(context.Background(), ev)
 }
 
-// summaryCost sums the per-model cost across every harness in the summary, so a
-// session that switched models or harnesses is priced with each model's own
-// rate rather than a single blended one.
-func summaryCost(summary domain.SessionUsageSummary) float64 {
-	var cost float64
-	for _, h := range summary.Harnesses {
-		for _, m := range h.Models {
-			cost += modelCost(m.ModelID, m.Totals)
-		}
+func deref(v *int64) int64 {
+	if v == nil {
+		return 0
 	}
-	return cost
+	return *v
 }
 
 // dominant picks the model (and its harness) that produced the most output

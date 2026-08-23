@@ -2,13 +2,14 @@ package usagetelemetry
 
 import (
 	"context"
-	"math"
 	"testing"
 	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
+
+func i64(v int64) *int64 { return &v }
 
 type fakeSummary struct {
 	summary domain.SessionUsageSummary
@@ -97,15 +98,13 @@ func TestEmitSessionUsageEmitsClassifiedEvent(t *testing.T) {
 	if p["incomplete"] != false {
 		t.Fatalf("incomplete = %v, want false", p["incomplete"])
 	}
-	wantCost := modelCost("claude-opus-4-8", opusSummary(false).Harnesses[0].Models[0].Totals)
-	if wantCost <= 0 {
-		t.Fatalf("fixture cost should be > 0, got %v", wantCost)
+	// Cost is intentionally NOT emitted: the event carries measured tokens only;
+	// dollars are a query-time view in PostHog.
+	if _, ok := p["est_cost_usd"]; ok {
+		t.Fatalf("est_cost_usd should not be emitted")
 	}
-	if p["est_cost_usd"] != wantCost {
-		t.Fatalf("est_cost_usd = %v, want unrounded %v", p["est_cost_usd"], wantCost)
-	}
-	if p["est_cost_microusd"] != int64(math.Round(wantCost*1_000_000)) {
-		t.Fatalf("est_cost_microusd = %v", p["est_cost_microusd"])
+	if _, ok := p["est_cost_microusd"]; ok {
+		t.Fatalf("est_cost_microusd should not be emitted")
 	}
 	if ev.SessionID == nil || *ev.SessionID != "ao-1" {
 		t.Fatalf("session id = %v", ev.SessionID)

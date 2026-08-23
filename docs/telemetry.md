@@ -26,10 +26,10 @@ AO sends structured events in a few broad categories:
   it to understand which organizations and developers get the most value from
   AO, so we can prioritize improvements and reach out for feedback
 - Per-session token usage at session end: input, output, and cache token
-  counts, the dominant model, and an estimated dollar cost, taken from the
-  usage totals AO already derives from the agent's own transcript. Only numeric
-  counters and the model name are sent; prompt and completion content are never
-  included. Attributed to the project's GitHub owner where available
+  counts and the dominant model, taken from the usage totals AO already derives
+  from the agent's own transcript. Only numeric counters and the model name are
+  sent; prompt and completion content are never included. Attributed to the
+  project's GitHub owner where available
 - Reliability data, such as an error type and context, a crash message and
   stack trace after path redaction, an HTTP status, or an agent waiting for
   input
