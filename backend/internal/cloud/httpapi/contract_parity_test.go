@@ -107,6 +107,14 @@ type contractDocument struct {
 	} `yaml:"components"`
 }
 
+// contractOperation is the handful of fields the well-formedness check needs.
+// It is separate from contractDocument because that one keeps operations as raw
+// nodes so the route walk does not have to model every OpenAPI keyword.
+type contractOperation struct {
+	OperationID string               `yaml:"operationId"`
+	Responses   map[string]yaml.Node `yaml:"responses"`
+}
+
 type contractSchema struct {
 	Required   []string                  `yaml:"required"`
 	Properties map[string]map[string]any `yaml:"properties"`
@@ -200,6 +208,111 @@ func TestCloudRoutesMatchContract(t *testing.T) {
 			t.Errorf("stagedOperations lists %s, which the contract no longer describes — delete that line", operation)
 		}
 	}
+}
+
+// TestContractDocumentIsWellFormed catches the structural mistakes that a
+// hand-edited 3,000-line YAML document invites and that no other check reports:
+// openapi-typescript happily generates from an operation whose responses were
+// swallowed by a neighbouring block scalar, and the resulting client compiles.
+func TestContractDocumentIsWellFormed(t *testing.T) {
+	doc := loadContract(t)
+	httpMethods := map[string]bool{
+		"get": true, "put": true, "post": true,
+		"delete": true, "patch": true, "head": true, "options": true,
+	}
+
+	seen := map[string]string{}
+	for _, path := range sortedKeys(doc.Paths) {
+		for _, method := range sortedKeys(doc.Paths[path]) {
+			if !httpMethods[strings.ToLower(method)] {
+				continue
+			}
+			node := doc.Paths[path][method]
+			var operation contractOperation
+			if err := node.Decode(&operation); err != nil {
+				t.Errorf("%s %s: decode operation: %v", strings.ToUpper(method), path, err)
+				continue
+			}
+			if operation.OperationID == "" {
+				t.Errorf("%s %s has no operationId — clients generate method names from it", strings.ToUpper(method), path)
+				continue
+			}
+			if previous, duplicate := seen[operation.OperationID]; duplicate {
+				t.Errorf("operationId %q is used by both %s and %s %s", operation.OperationID, previous, strings.ToUpper(method), path)
+			}
+			seen[operation.OperationID] = strings.ToUpper(method) + " " + path
+			if len(operation.Responses) == 0 {
+				t.Errorf("%s (%s %s) declares no responses", operation.OperationID, strings.ToUpper(method), path)
+			}
+		}
+	}
+
+	assertReferencesResolve(t, doc)
+}
+
+// assertReferencesResolve walks every $ref in the document and checks the target
+// exists. A dangling $ref generates as `unknown` rather than failing, so a typo
+// in a schema name reaches clients as a silently untyped field.
+func assertReferencesResolve(t *testing.T, doc contractDocument) {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.FromSlash(contractPath))
+	if err != nil {
+		t.Fatalf("read Cloud contract: %v", err)
+	}
+	var whole map[string]any
+	if err := yaml.Unmarshal(raw, &whole); err != nil {
+		t.Fatalf("parse Cloud contract: %v", err)
+	}
+	_ = doc
+
+	unresolved := map[string]bool{}
+	var walk func(any)
+	walk = func(node any) {
+		switch typed := node.(type) {
+		case map[string]any:
+			for key, value := range typed {
+				if key == "$ref" {
+					if reference, isString := value.(string); isString && !resolvesInDocument(whole, reference) {
+						unresolved[reference] = true
+					}
+					continue
+				}
+				walk(value)
+			}
+		case []any:
+			for _, value := range typed {
+				walk(value)
+			}
+		}
+	}
+	walk(whole)
+
+	for _, reference := range sortedKeys(unresolved) {
+		t.Errorf("$ref %s does not resolve — a dangling ref generates as `unknown`", reference)
+	}
+}
+
+// resolvesInDocument follows a local JSON pointer such as
+// "#/components/schemas/Session". External references are out of scope: the
+// contract is deliberately a single self-contained file.
+func resolvesInDocument(document map[string]any, reference string) bool {
+	pointer, found := strings.CutPrefix(reference, "#/")
+	if !found {
+		return false
+	}
+	var current any = document
+	for _, segment := range strings.Split(pointer, "/") {
+		container, isMap := current.(map[string]any)
+		if !isMap {
+			return false
+		}
+		next, exists := container[segment]
+		if !exists {
+			return false
+		}
+		current = next
+	}
+	return true
 }
 
 // TestErrorEnvelopeMatchesContract pins the one DTO every single Cloud response

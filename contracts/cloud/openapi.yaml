@@ -611,6 +611,9 @@ paths:
 
         Idempotent under `Idempotency-Key`: retrying the same key returns the
         original result instead of failing on the now-missing sandbox.
+      responses:
+        "202":
+          description: Session sandbox deletion was requested; durable history is retained.
           content:
             application/json:
               schema:
