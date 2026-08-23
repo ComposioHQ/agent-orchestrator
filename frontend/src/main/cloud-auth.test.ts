@@ -135,18 +135,35 @@ describe("AO Cloud desktop credential custody", () => {
 		});
 	});
 
-	it("creates placement, reads the normalized project, and starts a hosted orchestrator in main", async () => {
+	it("waits for workspace placement and the normalized project before starting a hosted orchestrator", async () => {
 		await beginCloudSignIn(dataDir);
 		const requests: Array<{ url: string; init?: RequestInit }> = [];
-		routes.set("https://cloud.example/api/cloud/v1/orgs/org_1/projects", (url, init) => {
+		routes.set("https://cloud.example/api/cloud/v1/orgs/org_1/workspaces", (url, init) => {
 			requests.push({ url, init });
-			return jsonResponse({ project: { id: "project_1" } }, 201);
+			if (init?.method === "POST") {
+				return jsonResponse({
+					id: "placement_1",
+					orgId: "org_1",
+					ownerUserId: "user_1",
+					state: "pending",
+					createdAt: "2026-08-23T00:00:00Z",
+					updatedAt: "2026-08-23T00:00:00Z",
+				}, 201);
+			}
+			return jsonResponse({
+				id: "placement_1",
+				orgId: "org_1",
+				ownerUserId: "user_1",
+				projectId: "project_1",
+				state: "ready",
+				createdAt: "2026-08-23T00:00:00Z",
+				updatedAt: "2026-08-23T00:00:01Z",
+			});
 		});
-		routes.set("https://cloud.example/api/v1/projects/project_1", (url, init) => {
+		routes.set("https://cloud.example/api/v1/projects", (url, init) => {
 			requests.push({ url, init });
 			return jsonResponse({
-				status: "ok",
-				project: { id: "project_1", name: "repo", kind: "single_repo", path: "https://github.com/acme/repo", repo: "acme/repo", defaultBranch: "main" },
+				projects: [{ id: "project_1", name: "repo", kind: "single_repo", path: "https://github.com/acme/repo", repo: "acme/repo", defaultBranch: "main" }],
 			});
 		});
 		routes.set("https://cloud.example/api/v1/sessions", (url, init) => {
@@ -164,21 +181,40 @@ describe("AO Cloud desktop credential custody", () => {
 		});
 
 		expect(result).toMatchObject({ project: { id: "project_1" }, session: { id: "session_1" } });
-		expect(requests).toHaveLength(3);
+		expect(requests).toHaveLength(4);
 		for (const request of requests) {
 			expect(request.init?.headers).toMatchObject({ Authorization: "Bearer ao_access_1", "X-AO-Org": "org_1" });
 		}
 		expect(requests[0]?.init?.headers).toMatchObject({ "Idempotency-Key": expect.any(String) });
-		expect(JSON.parse(String(requests[2]?.init?.body))).toMatchObject({ projectId: "project_1", kind: "orchestrator", harness: "codex" });
+		expect(JSON.parse(String(requests[0]?.init?.body))).toEqual({
+			displayName: "repo",
+			repositoryUrl: "https://github.com/acme/repo",
+			defaultBranch: "main",
+			config: {},
+		});
+		expect(requests[0]?.url).toContain("/workspaces");
+		expect(requests[0]?.url).not.toContain("/projects");
+		expect(requests.some((request) => request.url.endsWith("/api/v1/projects") && request.init?.method === "POST")).toBe(false);
+		const sessionRequest = requests.find((request) => request.url.endsWith("/api/v1/sessions"));
+		expect(JSON.parse(String(sessionRequest?.init?.body))).toMatchObject({ projectId: "project_1", kind: "orchestrator", harness: "codex" });
 	});
 
-	it("isolates the provisional placement wire contract behind the main-side client", async () => {
+	it("isolates workspace placement behind the main-side client", async () => {
 		await beginCloudSignIn(dataDir);
-		const createPlacement = vi.fn().mockResolvedValue({ projectId: "project_1" });
-		routes.set("https://cloud.example/api/v1/projects/project_1", () =>
+		const placement = {
+			id: "placement_1",
+			orgId: "org_1",
+			ownerUserId: "user_1",
+			projectId: "project_1",
+			state: "ready",
+			createdAt: "2026-08-23T00:00:00Z",
+			updatedAt: "2026-08-23T00:00:01Z",
+		};
+		const createPlacement = vi.fn().mockResolvedValue(placement);
+		const getPlacement = vi.fn().mockResolvedValue(placement);
+		routes.set("https://cloud.example/api/v1/projects", () =>
 			jsonResponse({
-				status: "ok",
-				project: { id: "project_1", name: "repo", kind: "single_repo", path: "https://github.com/acme/repo", repo: "acme/repo", defaultBranch: "main" },
+				projects: [{ id: "project_1", name: "repo", kind: "single_repo", path: "https://github.com/acme/repo", repo: "acme/repo", defaultBranch: "main" }],
 			}),
 		);
 		routes.set("https://cloud.example/api/v1/sessions", () =>
@@ -195,7 +231,7 @@ describe("AO Cloud desktop credential custody", () => {
 				config: {},
 				orchestratorHarness: "codex",
 			},
-			{ create: createPlacement },
+			{ create: createPlacement, get: getPlacement },
 		);
 
 		expect(createPlacement).toHaveBeenCalledWith(expect.objectContaining({
@@ -203,6 +239,38 @@ describe("AO Cloud desktop credential custody", () => {
 			repositoryUrl: "https://github.com/acme/repo",
 			idempotencyKey: expect.any(String),
 		}));
+		expect(getPlacement).toHaveBeenCalledWith("org_1", "placement_1");
+	});
+
+	it("surfaces a failed placement without creating a session", async () => {
+		await beginCloudSignIn(dataDir);
+		const pending = {
+			id: "placement_1",
+			orgId: "org_1",
+			ownerUserId: "user_1",
+			state: "pending",
+			createdAt: "2026-08-23T00:00:00Z",
+			updatedAt: "2026-08-23T00:00:00Z",
+		};
+		const failed = { ...pending, state: "failed", message: "Repository clone failed" };
+		routes.set("https://cloud.example/api/v1/projects", () => jsonResponse({ projects: [] }));
+
+		await expect(createCloudProject(
+			dataDir,
+			{
+				organizationId: "org_1",
+				displayName: "repo",
+				repositoryUrl: "https://github.com/acme/repo",
+				defaultBranch: "main",
+				config: {},
+				orchestratorHarness: "codex",
+			},
+			{ create: vi.fn().mockResolvedValue(pending), get: vi.fn().mockResolvedValue(failed) },
+		)).rejects.toThrow("Repository clone failed");
+		expect(globalThis.fetch).not.toHaveBeenCalledWith(
+			"https://cloud.example/api/v1/sessions",
+			expect.objectContaining({ method: "POST" }),
+		);
 	});
 
 	it("reloads durable cloud projects and sessions from the shared app API", async () => {
