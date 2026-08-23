@@ -6,7 +6,15 @@ const AVAILABLE_VERSION = "0.12.7-nightly.202608231350";
 const CHECKED_AT = Date.UTC(2026, 7, 23, 14, 23);
 
 async function openUpdates(page: Page) {
-	await page.addInitScript(() => window.localStorage.setItem("ao.theme", "dark"));
+	const theme = process.env.AO_UPDATE_THEME ?? "dark";
+	const themeStyle = process.env.AO_UPDATE_THEME_STYLE ?? "dracula";
+	await page.addInitScript(
+		({ selectedTheme, selectedStyle }) => {
+			window.localStorage.setItem("ao.theme", selectedTheme);
+			window.localStorage.setItem("ao.theme-style", selectedStyle);
+		},
+		{ selectedTheme: theme, selectedStyle: themeStyle },
+	);
 	await page.goto("/#/settings");
 	await page.getByRole("button", { name: "Updates" }).click();
 	const panel = page.locator(".update-status-panel");
@@ -37,6 +45,12 @@ test("automatic updates stay readable without asking for a manual download", asy
 
 	const panel = await openUpdates(page);
 	await captureEvidence(panel, "available");
+	const surface = await panel.evaluate((element) => ({
+		wash: getComputedStyle(element).backgroundImage,
+		texture: getComputedStyle(element, "::after").backgroundImage,
+	}));
+	expect(surface.wash).toContain("gradient");
+	expect(surface.texture).toContain("radial-gradient");
 	await expect(panel).toContainText(`v${AVAILABLE_VERSION}`);
 	await expect(panel).toContainText("Downloads automatically");
 	await expect(panel.getByRole("button", { name: /Update to/ })).toHaveCount(0);
