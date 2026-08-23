@@ -14,6 +14,7 @@ import {
 import {
 	boardKanbanColumnOrder,
 	getKanbanColumnView,
+	getSessionStatusView,
 } from "./session-presentation";
 import type { ExternalLinkProps } from "./external-link";
 
@@ -167,6 +168,40 @@ describe("SessionsBoardView", () => {
 		expect(metadataRow).toHaveClass("flex", "items-center", "gap-2");
 		expect(metadataRow).not.toHaveClass("flex-wrap");
 		expect(screen.getByText("24.6M tok").parentElement).toHaveClass("shrink-0", "whitespace-nowrap");
+	});
+
+	it("prints the daemon's display status in place of the derived status label", () => {
+		const labels = {
+			formatTime: () => "1h ago",
+			intakeIssue: (id: string) => `Issue ${id}`,
+			pr: {
+				short: "PR",
+				states: { closed: "closed", draft: "draft", merged: "merged", open: "open" },
+			},
+			updatedAt: (timestamp: string) => `Updated ${timestamp}`,
+		};
+		const { rerender } = render(
+			<SessionCardView
+				externalLink={ExternalLink}
+				labels={labels}
+				renderAvatar={(provider) => <span role="img" aria-label={provider}>C</span>}
+				session={{ ...baseSession, displayStatus: "Fixing CI failures", status: "ci_failed" }}
+			/>,
+		);
+		expect(screen.getByText("Fixing CI failures")).toBeInTheDocument();
+		expect(screen.queryByText("CI failed")).not.toBeInTheDocument();
+
+		// A daemon too old to derive one leaves the status badge in charge.
+		rerender(
+			<SessionCardView
+				externalLink={ExternalLink}
+				labels={labels}
+				renderAvatar={(provider) => <span role="img" aria-label={provider}>C</span>}
+				session={{ ...baseSession, status: "ci_failed" }}
+			/>,
+		);
+		expect(screen.queryByText("Fixing CI failures")).not.toBeInTheDocument();
+		expect(screen.getByText(getSessionStatusView("ci_failed").label)).toBeInTheDocument();
 	});
 
 	it("keeps archive toggle height and board offset classes in lockstep", () => {

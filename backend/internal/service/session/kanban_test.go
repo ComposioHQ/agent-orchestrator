@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
+	"github.com/aoagents/agent-orchestrator/backend/pkg/contract"
 )
 
 func TestSessionListDerivesKanbanColumn(t *testing.T) {
@@ -87,5 +88,95 @@ func TestSessionKanbanIgnoresPassesForAnEarlierHead(t *testing.T) {
 	}
 	if got.KanbanColumn != domain.KanbanValidating {
 		t.Fatalf("kanban column = %q, want %q for a fresh unreviewed head", got.KanbanColumn, domain.KanbanValidating)
+	}
+}
+
+func TestSessionListDerivesDisplayStatus(t *testing.T) {
+	for _, tt := range []struct {
+		name   string
+		record domain.SessionRecord
+		pr     *domain.PRFacts
+		runs   []domain.CurrentHeadReviewRun
+		want   domain.DisplayStatus
+	}{
+		{
+			name: "a working session with no pr reports the worker",
+			record: domain.SessionRecord{
+				ID: "mer-1", ProjectID: "mer",
+				Activity: domain.Activity{State: domain.ActivityActive},
+			},
+			want: contract.DisplayWorking,
+		},
+		{
+			name:   "terminated is archived",
+			record: domain.SessionRecord{ID: "mer-1", ProjectID: "mer", IsTerminated: true},
+			pr:     &domain.PRFacts{URL: "pr1", HeadSHA: "head1"},
+			want:   contract.DisplayTerminated,
+		},
+		{
+			name:   "a pass in flight is reviewing",
+			record: domain.SessionRecord{ID: "mer-1", ProjectID: "mer"},
+			pr:     &domain.PRFacts{URL: "pr1", HeadSHA: "head1"},
+			runs:   []domain.CurrentHeadReviewRun{{PRURL: "pr1", Status: domain.ReviewRunRunning}},
+			want:   contract.DisplayReviewing,
+		},
+		{
+			name:   "a cancelled pass leaves the review pending",
+			record: domain.SessionRecord{ID: "mer-1", ProjectID: "mer", AutoReviewEnabled: true},
+			pr:     &domain.PRFacts{URL: "pr1", HeadSHA: "head1"},
+			runs:   []domain.CurrentHeadReviewRun{{PRURL: "pr1", Status: domain.ReviewRunCancelled}},
+			want:   contract.DisplayReviewPending,
+		},
+		{
+			name:   "failing checks on the current head are being fixed",
+			record: domain.SessionRecord{ID: "mer-1", ProjectID: "mer", AutoInjectCI: true},
+			pr: &domain.PRFacts{
+				URL: "pr1", HeadSHA: "head1",
+				CI: domain.CIFailing, CIAtCurrentHead: true,
+			},
+			want: contract.DisplayFixingCI,
+		},
+		{
+			name:   "a merged pr reports the merge",
+			record: domain.SessionRecord{ID: "mer-1", ProjectID: "mer"},
+			pr:     &domain.PRFacts{URL: "pr1", HeadSHA: "head1", Merged: true},
+			want:   contract.DisplayMerged,
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			st := newFakeStore()
+			st.sessions[tt.record.ID] = tt.record
+			if tt.pr != nil {
+				st.pr[tt.record.ID] = *tt.pr
+			}
+			st.reviewRuns[tt.record.ID] = tt.runs
+
+			got, err := (&Service{store: st}).Get(context.Background(), tt.record.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.DisplayStatus != tt.want {
+				t.Fatalf("display status = %q, want %q", got.DisplayStatus, tt.want)
+			}
+		})
+	}
+}
+
+// CI recorded against an earlier commit describes code that is no longer the
+// PR, so it must not drive the card while the new head has no result yet.
+func TestSessionKanbanIgnoresCIForAnEarlierHead(t *testing.T) {
+	st := newFakeStore()
+	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer", AutoInjectCI: true}
+	st.pr["mer-1"] = domain.PRFacts{
+		URL: "pr1", HeadSHA: "head2",
+		CI: domain.CIFailing, CIAtCurrentHead: false,
+	}
+
+	got, err := (&Service{store: st}).Get(context.Background(), "mer-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.DisplayStatus == contract.DisplayFixingCI || got.DisplayStatus == contract.DisplayChecksFailing {
+		t.Fatalf("display status = %q, want a status the stale failure does not drive", got.DisplayStatus)
 	}
 }

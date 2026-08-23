@@ -465,7 +465,25 @@ SELECT
         FROM external_review
         WHERE external_review.pr_url = pr.url
           AND external_review.state = 'changes_requested'
-    ) AS external_changes_requested
+    ) AS external_changes_requested,
+    -- Whether ci_state can still be read as the current head's result. It is
+    -- false only when AO holds check rows for earlier commits and none for the
+    -- head: a push landed and its checks have not been observed yet, so the
+    -- aggregate describes code that is no longer the PR. With no checks stored
+    -- at all, or no known head, nothing contradicts the aggregate.
+    NOT EXISTS (
+        SELECT 1
+        FROM pr_checks
+        WHERE pr_checks.pr_url = pr.url
+          AND pr.head_sha != ''
+          AND pr_checks.commit_hash != pr.head_sha
+          AND NOT EXISTS (
+              SELECT 1
+              FROM pr_checks AS head_check
+              WHERE head_check.pr_url = pr.url
+                AND head_check.commit_hash = pr.head_sha
+          )
+    ) AS ci_at_current_head
 FROM pr
 WHERE pr.session_id = ?
 ORDER BY pr.updated_at DESC
@@ -485,6 +503,7 @@ type ListPRFactsBySessionRow struct {
 	ReviewComments           bool
 	ExternalApproved         bool
 	ExternalChangesRequested bool
+	CIAtCurrentHead          bool
 }
 
 // All PR snapshots for a session (every state), with source/target branch for
@@ -515,6 +534,7 @@ func (q *Queries) ListPRFactsBySession(ctx context.Context, sessionID domain.Ses
 			&i.ReviewComments,
 			&i.ExternalApproved,
 			&i.ExternalChangesRequested,
+			&i.CIAtCurrentHead,
 		); err != nil {
 			return nil, err
 		}

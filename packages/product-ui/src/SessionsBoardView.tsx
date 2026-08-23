@@ -32,6 +32,12 @@ export type BoardSessionPresentation = {
 	 * session's status already implied.
 	 */
 	kanbanColumn?: KanbanColumn;
+	/**
+	 * Daemon-derived phrase for what is happening inside {@link kanbanColumn}.
+	 * It arrives renderable, so the card prints it as-is. Absent for fixtures
+	 * and for a daemon too old to send one, which fall back to the status badge.
+	 */
+	displayStatus?: string;
 	provider: string;
 	status: SessionStatus;
 	statusPresentation?: BoardSessionStatusPresentation;
@@ -270,7 +276,9 @@ export function SessionCardView({
 									(showLiveActivity ? activity.indicatorClassName : "bg-current"),
 							)}
 						/>
-						<span className="min-w-0 truncate">{statusPresentation?.label ?? badge.label}</span>
+						<span className="min-w-0 truncate">
+							{statusPresentation?.label ?? session.displayStatus ?? badge.label}
+						</span>
 					</span>
 					<div className="ml-auto flex shrink-0 items-center gap-1.5 whitespace-nowrap font-mono text-2xs text-passive">
 						{usage ? renderUsage(usage) : null}

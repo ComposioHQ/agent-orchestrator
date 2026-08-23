@@ -1003,6 +1003,28 @@ describe("SessionsBoard", () => {
 		expect(within(lane("Ready sessions")).queryByText("in review worker")).toBeNull();
 	});
 
+	it("renders the daemon's display status on the card", () => {
+		workspaceQueryMock.mockReturnValue({
+			data: [
+				workspaceWithSessions([
+					boardSession({
+						id: "s-ci",
+						title: "ci worker",
+						status: "ci_failed",
+						kanbanColumn: "validating",
+						displayStatus: "Fixing CI failures",
+					}),
+				]),
+			],
+			isError: false,
+			isSuccess: true,
+		});
+
+		renderBoard("p1");
+
+		expect(screen.getByText("Fixing CI failures")).toBeInTheDocument();
+	});
+
 	// Mixed-version upgrade: an older daemon sends no kanbanColumn at all. Cards
 	// must stay in the lanes their status already put them in, not pile into the
 	// leftmost one.

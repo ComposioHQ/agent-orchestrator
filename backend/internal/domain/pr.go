@@ -30,6 +30,11 @@ type PRFacts struct {
 	// review-feedback loop is on.
 	ExternalApproved         bool
 	ExternalChangesRequested bool
+	// CIAtCurrentHead reports that CI above is not known to describe an earlier
+	// commit: AO holds a check row for HeadSHA, or holds no check rows at all.
+	// A push whose checks AO has not observed yet leaves the aggregate behind
+	// on the previous commit, and a stale verdict must not drive display.
+	CIAtCurrentHead bool
 }
 
 // PullRequest is the app-level representation of one tracked pull request as

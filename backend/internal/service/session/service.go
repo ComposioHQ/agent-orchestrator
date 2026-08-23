@@ -1031,11 +1031,15 @@ func (s *Service) toSession(ctx context.Context, rec domain.SessionRecord) (doma
 	if err != nil {
 		return domain.Session{}, err
 	}
+	now := s.now()
+	signalCapable := s.harnessSignals(rec.Harness)
+	presentation := deriveKanbanPresentation(rec, prs, runs, now, signalCapable)
 	return domain.Session{
 		SessionRecord:    rec,
-		Status:           deriveStatus(rec, prs, s.now(), s.harnessSignals(rec.Harness)),
+		Status:           deriveStatus(rec, prs, now, signalCapable),
 		SCMStatus:        deriveSCMStatus(prs),
-		KanbanColumn:     deriveKanbanColumn(rec, prs, runs),
+		KanbanColumn:     presentation.Column,
+		DisplayStatus:    presentation.DisplayStatus,
 		TerminalHandleID: rec.Metadata.RuntimeHandleID,
 		PRs:              prs,
 	}, nil
