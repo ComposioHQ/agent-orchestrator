@@ -16,7 +16,7 @@ func runConversations(t *testing.T, newHarness Factory) {
 		h := newHarness(t)
 		ctx := h.ctx()
 		mustUpsertProject(t, h, newProject("acme", "/repos/acme"))
-		session, err := createChatSession(ctx, t, h, "acme")
+		session, err := createChatSession(ctx, t, h)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -66,7 +66,7 @@ func runConversations(t *testing.T, newHarness Factory) {
 		h := newHarness(t)
 		ctx := h.ctx()
 		mustUpsertProject(t, h, newProject("acme", "/repos/acme"))
-		session, err := createChatSession(ctx, t, h, "acme")
+		session, err := createChatSession(ctx, t, h)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -94,7 +94,7 @@ func runConversations(t *testing.T, newHarness Factory) {
 		h := newHarness(t)
 		ctx := h.ctx()
 		mustUpsertProject(t, h, newProject("acme", "/repos/acme"))
-		session, err := createChatSession(ctx, t, h, "acme")
+		session, err := createChatSession(ctx, t, h)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -147,7 +147,7 @@ func runConversations(t *testing.T, newHarness Factory) {
 		h := newHarness(t)
 		ctx := h.ctx()
 		mustUpsertProject(t, h, newProject("acme", "/repos/acme"))
-		first, err := createChatSession(ctx, t, h, "acme")
+		first, err := createChatSession(ctx, t, h)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -162,7 +162,7 @@ func runConversations(t *testing.T, newHarness Factory) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		second, err := createChatSession(ctx, t, h, "acme")
+		second, err := createChatSession(ctx, t, h)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -188,9 +188,9 @@ func runConversations(t *testing.T, newHarness Factory) {
 	})
 }
 
-func createChatSession(ctx context.Context, t *testing.T, h Harness, project domain.ProjectID) (domain.SessionRecord, error) {
+func createChatSession(ctx context.Context, t *testing.T, h Harness) (domain.SessionRecord, error) {
 	t.Helper()
-	rec := newSession(project)
+	rec := newSession("acme")
 	rec.Mode = domain.SessionModeChat
 	rec.Metadata.ProviderConversationID = "provider-conversation-1"
 	return h.Sessions.CreateSession(ctx, rec)
