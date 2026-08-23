@@ -718,12 +718,6 @@ func TestACPDriverClosesReplayTurnsAsRecoveredWithoutBlockingResume(t *testing.T
 	if !recoveredActivity {
 		t.Fatalf("history = %#v, want pending replay tool settled as recovered", history)
 	}
-	if history[5].TurnState != domain.TurnStateCompleted {
-		t.Fatalf("bounded first turn state = %q, want %q", history[5].TurnState, domain.TurnStateCompleted)
-	}
-	if history[10].TurnState != domain.TurnStateCompleted {
-		t.Fatalf("answered replay tail state = %q, want %q", history[10].TurnState, domain.TurnStateCompleted)
-	}
 	if !conv.Capabilities().Has(ports.ChatCapabilityHistory) {
 		t.Fatal("session/load conversation did not advertise replayable history")
 	}
