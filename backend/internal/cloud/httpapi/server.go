@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -181,7 +182,7 @@ func (s *Server) routes() http.Handler {
 	authRateLimit := httprate.Limit(
 		20,
 		time.Minute,
-		httprate.WithKeyByRealIP(),
+		httprate.WithKeyFuncs(sourceIPKey),
 		httprate.WithLimitHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			writeError(w, r, http.StatusTooManyRequests, "rate_limited", "AUTH_RATE_LIMITED", "too many authentication requests")
 		})),
@@ -203,6 +204,20 @@ func (s *Server) routes() http.Handler {
 		runtime.Post("/{sessionID}/resize", s.resizeSessionRuntime)
 	})
 	return router
+}
+
+func sourceIPKey(r *http.Request) (string, error) {
+	// API Gateway overwrites this header from $context.identity.sourceIp before
+	// forwarding through the internal ALB. Never trust True-Client-IP,
+	// X-Real-IP, or X-Forwarded-For here: clients can prepend arbitrary values.
+	if sourceIP := strings.TrimSpace(r.Header.Get("X-AO-Source-IP")); sourceIP != "" {
+		return sourceIP, nil
+	}
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err == nil {
+		return host, nil
+	}
+	return strings.TrimSpace(r.RemoteAddr), nil
 }
 
 func (s *Server) recoverer(next http.Handler) http.Handler {

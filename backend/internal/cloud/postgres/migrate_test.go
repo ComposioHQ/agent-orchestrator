@@ -13,7 +13,7 @@ func TestCloudMigrationsAreTenantScoped(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(migrations) != 5 || migrations[0].Version != 1 || migrations[1].Version != 2 || migrations[2].Version != 3 || migrations[3].Version != 4 || migrations[4].Version != 5 {
+	if len(migrations) != 6 || migrations[0].Version != 1 || migrations[1].Version != 2 || migrations[2].Version != 3 || migrations[3].Version != 4 || migrations[4].Version != 5 || migrations[5].Version != 6 {
 		t.Fatalf("migrations = %#v", migrations)
 	}
 	migration, err := migrationFS.ReadFile("migrations/00001_auth_foundation.sql")
@@ -93,6 +93,21 @@ func TestCloudMigrationsAreTenantScoped(t *testing.T) {
 	} {
 		if !strings.Contains(authRLSSQL, required) {
 			t.Fatalf("auth RLS migration does not contain %q", required)
+		}
+	}
+	authDefinerMigration, err := migrationFS.ReadFile("migrations/00006_auth_definer_role.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	authDefinerSQL := string(authDefinerMigration)
+	for _, required := range []string{
+		"CREATE ROLE ao_cloud_auth NOLOGIN BYPASSRLS",
+		"ALTER FUNCTION ao_upsert_google_user(TEXT, TEXT, TEXT) OWNER TO ao_cloud_auth",
+		"GRANT SELECT, INSERT, UPDATE, DELETE",
+		"DROP POLICY ao_org_memberships_insert",
+	} {
+		if !strings.Contains(authDefinerSQL, required) {
+			t.Fatalf("auth definer migration does not contain %q", required)
 		}
 	}
 }

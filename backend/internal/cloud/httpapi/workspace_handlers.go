@@ -131,7 +131,12 @@ func (s *Server) getWorkspace(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	workspace, err := s.workspaceStore.Workspace(r.Context(), principal, orgID, chi.URLParam(r, "workspaceID"))
+	workspaceID := strings.TrimSpace(chi.URLParam(r, "workspaceID"))
+	if uuid.Validate(workspaceID) != nil {
+		writeError(w, r, http.StatusBadRequest, "bad_request", "INVALID_WORKSPACE_ID", "workspaceID must be a UUID")
+		return
+	}
+	workspace, err := s.workspaceStore.Workspace(r.Context(), principal, orgID, workspaceID)
 	if err != nil {
 		if errors.Is(err, postgres.ErrNotFound) {
 			writeError(w, r, http.StatusNotFound, "not_found", "WORKSPACE_NOT_FOUND", "cloud workspace not found")

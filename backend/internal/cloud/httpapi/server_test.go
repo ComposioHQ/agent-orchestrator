@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"sync"
@@ -201,7 +202,11 @@ func TestAuthenticationEndpointsAreRateLimitedByClientIP(t *testing.T) {
 			"/api/cloud/v1/auth/google",
 			bytes.NewBufferString(`{"idToken":"forged"}`),
 		)
-		request.Header.Set("X-Forwarded-For", "203.0.113.7")
+		// These common proxy headers are attacker-controlled at API Gateway and
+		// must not influence the application limiter key.
+		request.Header.Set("True-Client-IP", fmt.Sprintf("203.0.113.%d", attempt))
+		request.Header.Set("X-Real-IP", fmt.Sprintf("198.51.100.%d", attempt))
+		request.Header.Set("X-Forwarded-For", fmt.Sprintf("192.0.2.%d", attempt))
 		response := httptest.NewRecorder()
 		server.Handler().ServeHTTP(response, request)
 		if attempt <= 20 && response.Code != http.StatusUnauthorized {

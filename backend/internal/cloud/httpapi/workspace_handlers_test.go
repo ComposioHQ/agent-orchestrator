@@ -30,7 +30,7 @@ func (s *memoryWorkspaceStore) CreateWorkspace(
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.workspace = domain.Workspace{
-		ID: "workspace-1", OrgID: orgID, OwnerUserID: principal.UserID,
+		ID: "ab8fb36c-e9dc-4fde-b392-400436f48098", OrgID: orgID, OwnerUserID: principal.UserID,
 		RepositoryURL: repositoryURL, RepositoryRef: repositoryRef,
 		State: domain.WorkspacePending, CreatedAt: time.Now(), UpdatedAt: time.Now(),
 	}
@@ -153,14 +153,14 @@ func TestWorkspaceProvisioningRequiresAuthAndReturnsSignedAOConnection(t *testin
 	listRequest.Header.Set("Authorization", "Bearer "+accessToken)
 	listResponse := httptest.NewRecorder()
 	server.Handler().ServeHTTP(listResponse, listRequest)
-	if listResponse.Code != http.StatusOK || !strings.Contains(listResponse.Body.String(), `"id":"workspace-1"`) {
+	if listResponse.Code != http.StatusOK || !strings.Contains(listResponse.Body.String(), `"id":"ab8fb36c-e9dc-4fde-b392-400436f48098"`) {
 		t.Fatalf("list response = %d: %s", listResponse.Code, listResponse.Body.String())
 	}
 	if workspaceStore.listedUserID != principal.UserID || workspaceStore.listedOrgID != orgID {
 		t.Fatalf("list scope = (%q, %q), want (%q, %q)", workspaceStore.listedUserID, workspaceStore.listedOrgID, principal.UserID, orgID)
 	}
 
-	getRequest := httptest.NewRequest(http.MethodGet, "/api/cloud/v1/orgs/"+orgID+"/workspaces/workspace-1", nil)
+	getRequest := httptest.NewRequest(http.MethodGet, "/api/cloud/v1/orgs/"+orgID+"/workspaces/ab8fb36c-e9dc-4fde-b392-400436f48098", nil)
 	getRequest.Header.Set("Authorization", "Bearer "+accessToken)
 	getResponse := httptest.NewRecorder()
 	server.Handler().ServeHTTP(getResponse, getRequest)
@@ -251,7 +251,7 @@ func TestWorkspaceRoutesRejectMalformedOrganizationID(t *testing.T) {
 	}
 	for _, path := range []string{
 		"/api/cloud/v1/orgs/not-a-uuid/workspaces",
-		"/api/cloud/v1/orgs/not-a-uuid/workspaces/workspace-1",
+		"/api/cloud/v1/orgs/not-a-uuid/workspaces/ab8fb36c-e9dc-4fde-b392-400436f48098",
 	} {
 		request := httptest.NewRequest(http.MethodGet, path, nil)
 		request.Header.Set("Authorization", "Bearer "+accessToken)
@@ -260,5 +260,13 @@ func TestWorkspaceRoutesRejectMalformedOrganizationID(t *testing.T) {
 		if response.Code != http.StatusBadRequest || !strings.Contains(response.Body.String(), "INVALID_ORG_ID") {
 			t.Fatalf("%s response = %d: %s", path, response.Code, response.Body.String())
 		}
+	}
+
+	request := httptest.NewRequest(http.MethodGet, "/api/cloud/v1/orgs/f737107a-d943-4aee-9fa7-46c6f5cafef8/workspaces/not-a-uuid", nil)
+	request.Header.Set("Authorization", "Bearer "+accessToken)
+	response := httptest.NewRecorder()
+	server.Handler().ServeHTTP(response, request)
+	if response.Code != http.StatusBadRequest || !strings.Contains(response.Body.String(), "INVALID_WORKSPACE_ID") {
+		t.Fatalf("workspace ID response = %d: %s", response.Code, response.Body.String())
 	}
 }
