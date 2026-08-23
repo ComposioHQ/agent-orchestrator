@@ -4019,8 +4019,17 @@ html[data-native-browser-composition="true"] .platform-linux:has(.browser-panel[
 /* A maximized BrowserPanel is portaled directly under <body>, outside the
  * normal shell root. Clear the shell layers beneath that portal as well, or a
  * sidebar/center surface can paint an opaque sheet over the live native page
- * whenever the transparent shell is raised for its tabs/menu portals. */
+ * whenever the transparent shell is raised for its tabs/menu portals.
+ * `.app-shell-root` needs listing here for the same reason it needs listing in
+ * the docked rule above: it carries an opaque `bg-sidebar` spanning the whole
+ * window, and macOS applies neither `.platform-windows` nor `.platform-linux`,
+ * so those two selectors leave it unmatched. The docked rule cannot cover this
+ * case either — it keys off `:has(.browser-panel[data-browser-native-page="live"])`,
+ * and once the panel is portaled to <body> the panel is no longer a descendant,
+ * so `:has()` never matches. Symptom without this line: opening any overlay over
+ * a maximized browser panel on macOS blanks the live page to black. */
 html[data-native-browser-composition="true"] body:has(.browser-popout-overlay) #root,
+html[data-native-browser-composition="true"] body:has(.browser-popout-overlay) #root .app-shell-root,
 html[data-native-browser-composition="true"] body:has(.browser-popout-overlay) #root .platform-windows,
 html[data-native-browser-composition="true"] body:has(.browser-popout-overlay) #root .platform-linux,
 html[data-native-browser-composition="true"] body:has(.browser-popout-overlay) #root .center-panel-shell,

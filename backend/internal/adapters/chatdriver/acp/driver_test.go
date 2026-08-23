@@ -335,8 +335,20 @@ func TestACPDriverDefersPromptUntilDurableTurnBinding(t *testing.T) {
 		}
 		if event.Kind == ports.ChatEventApprovalRequested {
 			approvalID = event.RequestID
-			if len(event.Decisions) != 2 || event.Decisions[0].ID != "allow" {
+			if len(event.Decisions) != 2 || event.Decisions[0].ID != "allow" ||
+				event.Decisions[0].Kind != ports.ChatDecisionAllowOnce ||
+				event.Decisions[1].Kind != ports.ChatDecisionRejectOnce {
 				t.Fatalf("approval decisions = %#v", event.Decisions)
+			}
+			var detail struct {
+				SubjectKind string          `json:"subjectKind"`
+				ToolKind    acpsdk.ToolKind `json:"toolKind"`
+			}
+			if err := json.Unmarshal(event.Detail, &detail); err != nil {
+				t.Fatalf("approval detail: %v (%s)", err, event.Detail)
+			}
+			if detail.SubjectKind != string(domain.ActivityKindFileChange) || detail.ToolKind != acpsdk.ToolKindEdit {
+				t.Fatalf("approval detail = %+v, want an ACP file edit", detail)
 			}
 		}
 	}
@@ -616,7 +628,7 @@ func TestACPDriverReappliesLaunchContextWhenResuming(t *testing.T) {
 	}
 }
 
-func TestACPDriverLoadsSettledHistoryWhenTheAgentCanReplayIt(t *testing.T) {
+func TestACPDriverReportsReplayTailOutcomeAsUnsettled(t *testing.T) {
 	userOneID := "11111111-1111-4111-8111-111111111111"
 	answerOneID := "22222222-2222-4222-8222-222222222222"
 	userTwoID := "33333333-3333-4333-8333-333333333333"
@@ -675,44 +687,8 @@ func TestACPDriverLoadsSettledHistoryWhenTheAgentCanReplayIt(t *testing.T) {
 		t.Fatalf("session/load metadata = %#v, want recomputed system prompt", loadMeta)
 	}
 
-	history, err := conv.(ports.ChatHistoryReader).ReadHistory(context.Background())
-	if err != nil {
-		t.Fatalf("ReadHistory: %v", err)
-	}
-	wantKinds := []ports.ChatEventKind{
-		ports.ChatEventTurnStarted,
-		ports.ChatEventUserMessageCompleted,
-		ports.ChatEventMessageDelta,
-		ports.ChatEventMessageDelta,
-		ports.ChatEventMessageCompleted,
-		ports.ChatEventTurnCompleted,
-		ports.ChatEventTurnStarted,
-		ports.ChatEventUserMessageCompleted,
-		ports.ChatEventMessageDelta,
-		ports.ChatEventMessageCompleted,
-		ports.ChatEventTurnCompleted,
-	}
-	if len(history) != len(wantKinds) {
-		t.Fatalf("history = %d events, want %d: %#v", len(history), len(wantKinds), history)
-	}
-	seenIDs := make(map[string]bool, len(history))
-	for i, event := range history {
-		if event.Kind != wantKinds[i] {
-			t.Errorf("history event %d kind = %q, want %q", i, event.Kind, wantKinds[i])
-		}
-		if event.ProviderEventID == "" || seenIDs[event.ProviderEventID] {
-			t.Errorf("history event %d has missing or duplicate identity %q", i, event.ProviderEventID)
-		}
-		seenIDs[event.ProviderEventID] = true
-	}
-	if history[1].Text != "Inspect the repository" || history[4].Text != "The repository is ready." {
-		t.Fatalf("first reconstructed turn = %#v", history[:6])
-	}
-	if history[7].Text != "Run the tests" || history[9].Text != "All tests pass." {
-		t.Fatalf("second reconstructed turn = %#v", history[6:])
-	}
-	if history[0].ProviderTurnID == history[6].ProviderTurnID {
-		t.Fatalf("both native turns share provider id %q", history[0].ProviderTurnID)
+	if history, err := conv.(ports.ChatHistoryReader).ReadHistory(context.Background()); !errors.Is(err, ports.ErrChatHistoryUnsettled) {
+		t.Fatalf("ReadHistory = (%#v, %v), want ErrChatHistoryUnsettled", history, err)
 	}
 	if !conv.Capabilities().Has(ports.ChatCapabilityHistory) {
 		t.Fatal("session/load conversation did not advertise replayable history")

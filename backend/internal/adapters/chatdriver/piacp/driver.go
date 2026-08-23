@@ -83,7 +83,7 @@ func buildConfig(plugin piPlugin, resolve binaryResolver, log *slog.Logger) acpd
 			// prevents one project's first-start environment (notably
 			// PI_CODING_AGENT_DIR and provider keys) leaking into another.
 			env["PI_ACP_SOCKET_DIR"] = filepath.Join(cfg.DataDir, "pi-acp", string(cfg.SessionID), "run")
-			if err := prepareStandingInstructions(cfg); err != nil {
+			if err := prepareStandingInstructions(ctx, cfg); err != nil {
 				return acpdriver.Launch{}, err
 			}
 			return acpdriver.Launch{Command: binary, Env: env}, nil
@@ -106,13 +106,19 @@ func instructionDir(cfg acpdriver.LaunchConfig) string {
 	return filepath.Join(cfg.DataDir, "prompts", string(cfg.SessionID), "pi-acp")
 }
 
-func prepareStandingInstructions(cfg acpdriver.LaunchConfig) error {
+func prepareStandingInstructions(ctx context.Context, cfg acpdriver.LaunchConfig) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if strings.TrimSpace(cfg.SystemPrompt) == "" {
 		return nil
 	}
 	dir := instructionDir(cfg)
 	if err := os.MkdirAll(filepath.Join(dir, "agent"), 0o700); err != nil {
 		return fmt.Errorf("prepare Pi ACP instructions: %w", err)
+	}
+	if err := ctx.Err(); err != nil {
+		return err
 	}
 	content := strings.TrimRight(cfg.SystemPrompt, "\n") + "\n"
 	if err := os.WriteFile(filepath.Join(dir, "AGENTS.md"), []byte(content), 0o600); err != nil {

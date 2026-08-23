@@ -83,6 +83,29 @@ func TestLaunchUsesPreinstalledAdapterAndPreservesPiEnvironment(t *testing.T) {
 	}
 }
 
+func TestLaunchHonorsCanceledContextBeforeWritingStandingInstructions(t *testing.T) {
+	dataDir := t.TempDir()
+	cfg := buildConfig(
+		fakePiPlugin{status: ports.AgentAuthStatusAuthorized},
+		func(context.Context) (string, error) { return "/user/bin/pi-acp", nil },
+		nil,
+	)
+	launchCfg := acpdriver.LaunchConfig{
+		SessionID:    "session-1",
+		DataDir:      dataDir,
+		SystemPrompt: "AO standing instructions",
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	if _, err := cfg.Launch(ctx, launchCfg); !errors.Is(err, context.Canceled) {
+		t.Fatalf("Launch error = %v, want context.Canceled", err)
+	}
+	if _, err := os.Stat(instructionDir(launchCfg)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("instruction directory stat error = %v, want os.ErrNotExist", err)
+	}
+}
+
 func TestMissingPiACPDoesNotDownload(t *testing.T) {
 	want := errors.New("not found")
 	cfg := buildConfig(fakePiPlugin{}, func(context.Context) (string, error) { return "", want }, nil)
