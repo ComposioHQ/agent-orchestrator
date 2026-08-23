@@ -610,9 +610,9 @@ const reviewerVerdictTone: Record<InspectorVerdict["tone"], string> = {
 	danger: "text-error",
 };
 
-function VerdictBadge({ verdict }: { verdict: InspectorVerdict }) {
+function VerdictBadge({ className, verdict }: { className?: string; verdict: InspectorVerdict }) {
 	return (
-		<span className={cn("inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap text-2xs font-medium", reviewerVerdictTone[verdict.tone])}>
+		<span className={cn("inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap text-2xs font-medium", reviewerVerdictTone[verdict.tone], className)}>
 			<span className="size-1.5 shrink-0 rounded-full bg-current" />
 			{verdict.label}
 		</span>
@@ -676,14 +676,14 @@ function ReviewDisclosure({
 				data-testid="review-pr-row"
 			>
 				<div className="flex min-w-0 flex-col gap-1 border-b border-border/70 px-3 py-2.5">
-					<span className="flex min-w-0 items-start justify-between gap-2">
+					<span className="flex min-w-0 items-start justify-between gap-2 @max-[420px]/inspector:flex-col @max-[420px]/inspector:items-stretch">
 						<span
 							className="min-w-0 whitespace-normal break-words text-sm-md font-semibold leading-snug text-foreground"
 							title={title}
 						>
 							{title}
 						</span>
-						{verdict ? <VerdictBadge verdict={verdict} /> : null}
+						{verdict ? <VerdictBadge className="@max-[420px]/inspector:self-start" verdict={verdict} /> : null}
 					</span>
 					<span className="whitespace-normal break-words font-mono text-micro leading-snug text-passive" title={meta}>
 						{meta}
@@ -698,7 +698,7 @@ function ReviewDisclosure({
 			<button
 				aria-expanded={open}
 				data-testid="review-pr-row"
-				className="flex w-full min-w-0 items-start gap-2 px-3 py-2.5 text-left transition-colors hover:bg-interactive-hover/30"
+				className="flex w-full min-w-0 items-start gap-2 px-3 py-2.5 text-left transition-colors hover:bg-interactive-hover/30 @max-[420px]/inspector:grid @max-[420px]/inspector:grid-cols-[auto_minmax(0,1fr)]"
 				onClick={() => setOpen((current) => !current)}
 				type="button"
 			>
@@ -711,7 +711,7 @@ function ReviewDisclosure({
 						{meta}
 					</span>
 				</span>
-				{verdict ? <VerdictBadge verdict={verdict} /> : null}
+				{verdict ? <VerdictBadge className="@max-[420px]/inspector:col-start-2 @max-[420px]/inspector:row-start-2 @max-[420px]/inspector:justify-self-start" verdict={verdict} /> : null}
 			</button>
 			{open ? <div className="flex flex-col gap-3 px-3 py-3">{children}</div> : null}
 		</article>
@@ -967,7 +967,7 @@ function ExternalReviewCard({
 				</span>
 				{entry.submittedAtLabel ? <span className="font-mono text-micro text-passive">{labels.reviewedAt(entry.submittedAtLabel)}</span> : null}
 			</span>
-			<span className={cn("flex shrink-0 items-center gap-2 whitespace-nowrap pr-1 text-2xs font-medium @max-[360px]/inspector:col-start-2 @max-[360px]/inspector:row-start-2 @max-[360px]/inspector:justify-self-start", reviewerVerdictTone[entry.verdict.tone])}>
+			<span className={cn("flex shrink-0 items-center gap-2 whitespace-nowrap pr-1 text-2xs font-medium @max-[420px]/inspector:col-start-2 @max-[420px]/inspector:row-start-2 @max-[420px]/inspector:justify-self-start", reviewerVerdictTone[entry.verdict.tone])}>
 				<span>{entry.verdict.label}</span>
 				{openComments.length > 0 ? (
 					<span className="rounded-sm px-0.5 text-muted-foreground" title={labels.openInlineComments(openComments.length)}>{openComments.length}</span>
@@ -979,11 +979,11 @@ function ExternalReviewCard({
 		<article className="relative min-w-0 border-b border-border/70 py-2 first:pt-0 last:border-b-0 last:pb-0" data-testid="github-review-card">
 			<div className="grid w-full min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-x-1 rounded-md pr-1" data-testid="external-review-header">
 				{collapsible ? (
-					<button aria-expanded={open} className="grid min-w-0 grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-x-3 gap-y-1 rounded-md px-1.5 py-1.5 text-left transition-colors hover:bg-interactive-hover/30 @max-[360px]/inspector:grid-cols-[auto_minmax(0,1fr)]" onClick={() => setOpen((current) => !current)} type="button">
+					<button aria-expanded={open} className="grid min-w-0 grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-x-3 gap-y-1 rounded-md px-1.5 py-1.5 text-left transition-colors hover:bg-interactive-hover/30 @max-[420px]/inspector:grid-cols-[auto_minmax(0,1fr)] @max-[420px]/inspector:gap-x-2" onClick={() => setOpen((current) => !current)} type="button">
 						{headerContent}
 					</button>
 				) : (
-					<div className="grid min-w-0 grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-x-3 gap-y-1 px-1.5 py-1.5 text-left @max-[360px]/inspector:grid-cols-[auto_minmax(0,1fr)]">
+					<div className="grid min-w-0 grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-x-3 gap-y-1 px-1.5 py-1.5 text-left @max-[420px]/inspector:grid-cols-[auto_minmax(0,1fr)] @max-[420px]/inspector:gap-x-2">
 						{headerContent}
 					</div>
 				)}
@@ -1296,18 +1296,18 @@ function ReviewSummaryCard({
 	useEffect(() => setExpanded(false), [body]);
 	return (
 		<article className="flex min-w-0 flex-col gap-1 rounded-md bg-overlay/50 px-2.5 py-2.5">
-			<span className="flex min-w-0 items-center gap-1.5">
+			<span className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto_auto_auto] items-center gap-x-1.5 gap-y-1 @max-[420px]/inspector:grid-cols-[minmax(0,1fr)_auto]">
 				<span className="inline-flex min-w-0 items-center gap-1 text-micro font-medium text-muted-foreground">
 					{renderAvatar(actor)}
 					<span className="truncate">{actor}</span>
+					{isBot ? <span className="shrink-0 font-mono text-micro text-passive">{labels.bot}</span> : null}
 				</span>
-				{isBot ? <span className="shrink-0 font-mono text-micro text-passive">{labels.bot}</span> : null}
-				<VerdictBadge verdict={verdict} />
-				<span className="ml-auto inline-flex shrink-0 items-center gap-1.5 text-micro text-passive">
+				<VerdictBadge className="@max-[420px]/inspector:col-start-1 @max-[420px]/inspector:row-start-2 @max-[420px]/inspector:justify-self-start" verdict={verdict} />
+				<span className="ml-auto inline-flex min-w-0 shrink-0 flex-wrap items-center justify-end gap-x-1.5 gap-y-0.5 text-right text-micro text-passive @max-[420px]/inspector:col-start-2 @max-[420px]/inspector:row-start-2">
 					{isEarlier ? <span>{labels.earlierPass}</span> : null}
 					<span className="font-mono">{timestamp}</span>
 				</span>
-				<ReviewSummaryActions body={body ?? ""} externalLink={externalLink} labels={labels} onOpenInAOBrowser={onOpenInAOBrowser} onSendReviewSummary={onSendReviewSummary} reviewerId={actor} source={source} url={url} />
+				<ReviewSummaryActions body={body ?? ""} className="@max-[420px]/inspector:col-start-2 @max-[420px]/inspector:row-start-1" externalLink={externalLink} labels={labels} onOpenInAOBrowser={onOpenInAOBrowser} onSendReviewSummary={onSendReviewSummary} reviewerId={actor} source={source} url={url} />
 			</span>
 			{body ? (
 				<ReviewMarkdownBody
@@ -1386,6 +1386,7 @@ function ReviewMarkdownBody({
 
 function ReviewSummaryActions({
 	body,
+	className,
 	externalLink: ExternalLink,
 	labels,
 	onOpenInAOBrowser,
@@ -1397,6 +1398,7 @@ function ReviewSummaryActions({
 	url,
 }: {
 	body: string;
+	className?: string;
 	externalLink: ExternalLinkComponent;
 	labels: InspectorReviewLabels;
 	onOpenInAOBrowser?: (url: string) => void;
@@ -1434,7 +1436,7 @@ function ReviewSummaryActions({
 		}
 	};
 	return (
-		<span className="relative flex shrink-0" onClick={(event) => event.stopPropagation()} ref={menuRef}>
+		<span className={cn("relative flex shrink-0", className)} onClick={(event) => event.stopPropagation()} ref={menuRef}>
 			<button aria-expanded={menuOpen} aria-label={labels.reviewActions} className="inline-flex size-7 items-center justify-center rounded-md border border-border/70 text-muted-foreground transition-colors hover:border-border-strong hover:bg-interactive-hover hover:text-foreground" onClick={() => setMenuOpen((current) => !current)} type="button">
 				<MoreHorizontalIcon className="size-icon-xs" />
 			</button>
