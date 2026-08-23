@@ -371,3 +371,91 @@ func readProviderBlob(t *testing.T, root, providerID string) providerBlob {
 	}
 	return blob
 }
+
+// Break caught: the feed carried an Anthropic 1-hour cache-write rate belonging
+// to a different model — 5x too low for claude-3-opus-20240229, 12x too high
+// for claude-3-haiku-20240307. Canonical-decimal validation accepted both, so
+// the daily sync shipped them and every 1-hour cache write on those models was
+// billed against a number Anthropic never charged.
+func TestSyncDropsImplausibleAnthropicCacheTiers(t *testing.T) {
+	root := t.TempDir()
+	upstream := []byte(`{
+  "anthropic/one-hour-below-five-minute": {"litellm_provider":"anthropic","mode":"chat",
+    "input_cost_per_token":0.000015,"output_cost_per_token":0.000075,
+    "cache_creation_input_token_cost":0.00001875,
+    "cache_creation_input_token_cost_above_1hr":0.000006},
+  "anthropic/one-hour-far-above-input": {"litellm_provider":"anthropic","mode":"chat",
+    "input_cost_per_token":0.00000025,"output_cost_per_token":0.00000125,
+    "cache_creation_input_token_cost":0.0000003,
+    "cache_creation_input_token_cost_above_1hr":0.000006},
+  "anthropic/plausible": {"litellm_provider":"anthropic","mode":"chat",
+    "input_cost_per_token":0.000005,"output_cost_per_token":0.000025,
+    "cache_creation_input_token_cost":0.00000625,
+    "cache_creation_input_token_cost_above_1hr":0.00001},
+  "zai/free-cache-write": {"litellm_provider":"zai","mode":"chat",
+    "input_cost_per_token":0.0000006,"output_cost_per_token":0.000002,
+    "cache_creation_input_token_cost":0},
+  "openai/discounted-cache-write": {"litellm_provider":"openai","mode":"chat",
+    "input_cost_per_token":0.00000375,"output_cost_per_token":0.000015,
+    "cache_creation_input_token_cost":0.000001875}
+}`)
+	if _, err := Sync(root, upstream, Source{
+		Repository: "BerriAI/litellm",
+		Revision:   "0123456789abcdef0123456789abcdef01234567",
+		Path:       "model_prices_and_context_window.json",
+	}); err != nil {
+		t.Fatalf("sync: %v", err)
+	}
+
+	anthropic := readProviderBlob(t, root, "anthropic")
+	for _, test := range []struct {
+		modelID      string
+		wantWrite    string
+		wantWrite1H  string
+		wantSurvival string
+	}{
+		// The 5-minute tier is sound in both, so only the hour is dropped: an
+		// absent rate prices that bucket as unknown, which is the honest answer.
+		{modelID: "one-hour-below-five-minute", wantWrite: "0.00001875", wantSurvival: "5m survives"},
+		{modelID: "one-hour-far-above-input", wantWrite: "0.0000003", wantSurvival: "5m survives"},
+		{modelID: "plausible", wantWrite: "0.00000625", wantWrite1H: "0.00001", wantSurvival: "both survive"},
+	} {
+		modelRates := blobRates(t, anthropic, test.modelID)
+		if got := optionalRateString(modelRates.CacheWriteUSDPerToken); got != test.wantWrite {
+			t.Errorf("%s (%s) 5m write = %q, want %q", test.modelID, test.wantSurvival, got, test.wantWrite)
+		}
+		if got := optionalRateString(modelRates.CacheWrite1HUSDPerToken); got != test.wantWrite1H {
+			t.Errorf("%s (%s) 1h write = %q, want %q", test.modelID, test.wantSurvival, got, test.wantWrite1H)
+		}
+	}
+
+	// The relation is Anthropic's, not a universal law. z.ai writes to cache for
+	// free and an OpenAI fine-tune writes at half its input rate; deleting those
+	// would be the same class of error in the other direction.
+	zai := blobRates(t, readProviderBlob(t, root, "zai"), "free-cache-write")
+	if got := optionalRateString(zai.CacheWriteUSDPerToken); got != "0" {
+		t.Errorf("zai free cache write = %q, want it kept", got)
+	}
+	openai := blobRates(t, readProviderBlob(t, root, "openai"), "discounted-cache-write")
+	if got := optionalRateString(openai.CacheWriteUSDPerToken); got != "0.000001875" {
+		t.Errorf("openai discounted cache write = %q, want it kept", got)
+	}
+}
+
+func blobRates(t *testing.T, blob providerBlob, modelID string) rates {
+	t.Helper()
+	for _, model := range blob.Models {
+		if model.ModelID == modelID {
+			return model.Rates
+		}
+	}
+	t.Fatalf("model %q missing from %s blob", modelID, blob.ProviderID)
+	return rates{}
+}
+
+func optionalRateString(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return *value
+}

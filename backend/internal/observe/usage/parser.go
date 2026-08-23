@@ -680,6 +680,15 @@ func parseCodexEvent(source domain.UsageSourceContext, envelope codexEnvelope, s
 		result.Cursor.LastErrorCode = domain.UsageErrorNonMonotonicCumulativeUsage
 		return
 	}
+	// A record that carried no per-event vector still gives up its cache-write
+	// count, because the neutral counters beside it are the same subtraction of
+	// the same two native readings. Persisting it is what keeps a write-rated
+	// model priceable; see codexProviderUsage.
+	var derivedCacheWrite *int64
+	if info.Last == nil {
+		write := selected.CacheWriteInputTokens
+		derivedCacheWrite = &write
+	}
 	state.Baseline = total
 	model := firstNonEmpty(state.ModelID, source.InitialModelID, "unknown")
 	state.ModelID = model
@@ -690,7 +699,7 @@ func parseCodexEvent(source domain.UsageSourceContext, envelope codexEnvelope, s
 		ModelID:               model,
 		MeasurementKind:       domain.UsageMeasurementNativeReported,
 		Tokens:                tokens,
-		ProviderUsageJSON:     boundedProviderUsage(payload.Info),
+		ProviderUsageJSON:     codexProviderUsage(payload.Info, derivedCacheWrite),
 		CreatedAt:             parseUsageTimestamp(envelope.Timestamp),
 		SourceEventKey: stableSourceEventKey(
 			"codex",
@@ -794,6 +803,42 @@ func isJSONObject(raw json.RawMessage) bool {
 	var object map[string]json.RawMessage
 	return json.Unmarshal(raw, &object) == nil && object != nil
 }
+
+// codexProviderUsage stores the CLI's own usage object, plus the per-event
+// cache-write count when the CLI reported only cumulative totals.
+//
+// The estimator needs a per-event write bucket to price a model that publishes
+// a cache-write rate — every current gpt-5.6 variant does — and it reads that
+// bucket from last_token_usage, which is optional. On a record without one the
+// counters AO stores are already a delta of two native cumulative readings, and
+// this is that same subtraction over the same readings, so it is derived rather
+// than invented. It is namespaced instead of folded into a last_token_usage the
+// CLI never emitted: a reader must still be able to tell what the provider said
+// from what AO worked out.
+func codexProviderUsage(raw json.RawMessage, derivedCacheWrite *int64) string {
+	stored := boundedProviderUsage(raw)
+	if derivedCacheWrite == nil {
+		return stored
+	}
+	derived := json.RawMessage(strconv.FormatInt(*derivedCacheWrite, 10))
+	object := map[string]json.RawMessage{}
+	if stored != "" {
+		if err := json.Unmarshal([]byte(stored), &object); err != nil {
+			return stored
+		}
+	}
+	object[derivedCacheWriteKey] = derived
+	encoded, err := json.Marshal(object)
+	if err != nil || len(encoded) > maxProviderUsageBytes {
+		return stored
+	}
+	return string(encoded)
+}
+
+// derivedCacheWriteKey names the one member AO adds to a stored provider usage
+// object. The ao_ prefix is the whole point: nothing reading this object should
+// mistake it for something a provider reported.
+const derivedCacheWriteKey = "ao_derived_cache_write_input_tokens"
 
 // boundedProviderUsage compacts one provider usage object for durable storage.
 // It returns empty for anything that is not a JSON object or exceeds the bound,

@@ -111,9 +111,9 @@ PRAGMA foreign_keys=ON;
 
 -- +goose Down
 -- +goose StatementBegin
--- Intentionally a no-op, like 0104. Rebuilding the detail tables would have to
+-- Intentionally a no-op, like 0105. Rebuilding the detail tables would have to
 -- invent the per-provider counters this migration deliberately stopped
 -- collecting, and 0102's own Down already drops them again, so downgrading
--- below 0106 restores nothing an older binary can use.
+-- below 0107 restores nothing an older binary can use.
 SELECT 1;
 -- +goose StatementEnd

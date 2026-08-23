@@ -32,7 +32,7 @@ CREATE INDEX idx_model_usage_events_open_attribution
 
 -- +goose Down
 -- +goose StatementBegin
--- Intentionally additive, like 0104. Dropping the column would discard the only
+-- Intentionally additive, like 0105. Dropping the column would discard the only
 -- record of which attributions are safe to revise, and an older binary neither
 -- reads it nor is harmed by it.
 SELECT 1;

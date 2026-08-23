@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math/big"
 	"os"
 	"path/filepath"
 	"sort"
@@ -274,7 +275,10 @@ func build(upstream []byte, source Source) (generatedCatalog, error) {
 		sort.Strings(ids)
 		blob := providerBlob{SchemaVersion: schemaVersion, ProviderID: providerID, Models: make([]pricedModel, 0, len(ids))}
 		for _, modelID := range ids {
-			blob.Models = append(blob.Models, pricedModel{ModelID: modelID, Rates: models[modelID]})
+			blob.Models = append(blob.Models, pricedModel{
+				ModelID: modelID,
+				Rates:   withPlausibleCacheTiers(providerID, models[modelID]),
+			})
 		}
 		contents, err := canonicalJSON(blob)
 		if err != nil {
@@ -573,6 +577,86 @@ func validateManifest(m manifest) error {
 	return nil
 }
 
+// withPlausibleCacheTiers drops an Anthropic cache-write rate the upstream feed
+// cannot mean, rather than shipping it.
+//
+// Anthropic prices a 5-minute write above base input and a 1-hour write above
+// that; the feed has carried both a 1-hour rate below the 5-minute rate
+// (claude-3-opus-20240229, 5x too low) and one twenty-four times base input
+// (claude-3-haiku-20240307, 12x too high) — in both cases the value belonging
+// to a different model. An absent rate prices that bucket as unknown, which the
+// estimator already reports honestly; a wrong one is billed as fact.
+//
+// This is deliberately not applied to the other providers, whose tiers do not
+// follow that shape: z.ai writes to cache for free, and an OpenAI fine-tune
+// prices a write at half its input rate. Both are real, and a relational
+// invariant borrowed from Anthropic would delete them.
+func withPlausibleCacheTiers(providerID string, r rates) rates {
+	if providerID != "anthropic" {
+		return r
+	}
+	if err := checkAnthropicCacheTiers(r); err == nil {
+		return r
+	}
+	trimmed := r
+	trimmed.CacheWrite1HUSDPerToken = nil
+	if checkAnthropicCacheTiers(trimmed) == nil {
+		return trimmed
+	}
+	trimmed.CacheWriteUSDPerToken = nil
+	return trimmed
+}
+
+// maxAnthropicWriteMultiple bounds a 1-hour write against base input. Anthropic
+// documents 2x; the headroom leaves room for a repricing without letting a
+// value from another model's row through.
+var maxAnthropicWriteMultiple = big.NewRat(5, 2)
+
+// checkAnthropicCacheTiers reports the relationship Anthropic's published
+// pricing keeps: a write is never cheaper than plain input, a longer time to
+// live is never cheaper than a shorter one, and an hour is not an order of
+// magnitude above base input. The exact multiples are not asserted, because
+// Anthropic rounds them — claude-3-haiku's 5-minute write is 1.2x base input,
+// not the documented 1.25x.
+func checkAnthropicCacheTiers(r rates) error {
+	input, ok := new(big.Rat).SetString(r.UncachedInputUSDPerToken)
+	if !ok {
+		return fmt.Errorf("uninterpretable input rate %q", r.UncachedInputUSDPerToken)
+	}
+	write, err := optionalRat(r.CacheWriteUSDPerToken)
+	if err != nil {
+		return err
+	}
+	write1H, err := optionalRat(r.CacheWrite1HUSDPerToken)
+	if err != nil {
+		return err
+	}
+	if write != nil && write.Cmp(input) < 0 {
+		return fmt.Errorf("5m write %s is below input %s", write.RatString(), input.RatString())
+	}
+	if write1H != nil {
+		if write != nil && write1H.Cmp(write) < 0 {
+			return fmt.Errorf("1h write %s is below the 5m write %s", write1H.RatString(), write.RatString())
+		}
+		if ceiling := new(big.Rat).Mul(input, maxAnthropicWriteMultiple); write1H.Cmp(ceiling) > 0 {
+			return fmt.Errorf("1h write %s exceeds %s times input %s",
+				write1H.RatString(), maxAnthropicWriteMultiple.RatString(), input.RatString())
+		}
+	}
+	return nil
+}
+
+func optionalRat(value *string) (*big.Rat, error) {
+	if value == nil {
+		return nil, nil
+	}
+	parsed, ok := new(big.Rat).SetString(*value)
+	if !ok {
+		return nil, fmt.Errorf("uninterpretable rate %q", *value)
+	}
+	return parsed, nil
+}
+
 func validateBlob(blob providerBlob, ref providerRef) error {
 	if blob.SchemaVersion != schemaVersion || blob.ProviderID != ref.ProviderID || len(blob.Models) != ref.ModelCount {
 		return fmt.Errorf("invalid provider blob %q", ref.ProviderID)
@@ -594,6 +678,14 @@ func validateBlob(blob providerBlob, ref providerRef) error {
 				if err := validateCanonicalRate(*optional); err != nil {
 					return fmt.Errorf("provider %q invalid cache rate: %w", ref.ProviderID, err)
 				}
+			}
+		}
+		// Canonical spelling says nothing about whether a number is possible.
+		// A rate the provider cannot mean is billed as confidently as a right
+		// one, so the relationship is checked on everything that ships.
+		if ref.ProviderID == "anthropic" {
+			if err := checkAnthropicCacheTiers(model.Rates); err != nil {
+				return fmt.Errorf("provider %q model %q implausible cache tiers: %w", ref.ProviderID, model.ModelID, err)
 			}
 		}
 	}

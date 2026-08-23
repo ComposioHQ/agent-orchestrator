@@ -471,16 +471,23 @@ func cacheWriteSplitFor(event domain.ModelUsageEvent) cacheWriteSplit {
 	case domain.UsageProviderOpenAI:
 		// The neutral counters come from last_token_usage when Codex emits it,
 		// so the write bucket must be read from the same per-event object rather
-		// than from the cumulative totals beside it.
+		// than from the cumulative totals beside it. When Codex emitted no such
+		// object the parser derived the bucket from those cumulative readings
+		// and stored it under its own key; without that fallback every
+		// write-rated model prices its input as unknown.
 		var usage struct {
 			Last *struct {
 				CacheWriteInputTokens *int64 `json:"cache_write_input_tokens"`
 			} `json:"last_token_usage"`
+			Derived *int64 `json:"ao_derived_cache_write_input_tokens"`
 		}
-		if err := json.Unmarshal([]byte(event.ProviderUsageJSON), &usage); err != nil || usage.Last == nil {
+		if err := json.Unmarshal([]byte(event.ProviderUsageJSON), &usage); err != nil {
 			return cacheWriteSplit{}
 		}
-		return cacheWriteSplit{total: usage.Last.CacheWriteInputTokens}
+		if usage.Last != nil {
+			return cacheWriteSplit{total: usage.Last.CacheWriteInputTokens}
+		}
+		return cacheWriteSplit{total: usage.Derived}
 	default:
 		return cacheWriteSplit{}
 	}
