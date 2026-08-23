@@ -42,6 +42,12 @@ const (
 
 const defaultRuntimePassword = "integration-runtime-password"
 
+var pendingCoreTables = []string{
+	"ao_projects",
+	"ao_sessions",
+	"ao_session_worktrees",
+}
+
 // databaseCounter keeps names unique within one test binary; the process id
 // keeps them unique across concurrently running packages.
 var databaseCounter atomic.Int64
@@ -74,6 +80,15 @@ func Configured() (Config, bool) {
 // is configured. The database is dropped when the test finishes.
 func New(t *testing.T) *postgres.Store {
 	t.Helper()
+	return NewWithTables(t, nil)
+}
+
+// NewWithTables behaves like New and additionally grants the restricted test
+// runtime role access to tables whose centralized runtime registration belongs
+// to another integration stack. Names are quoted as PostgreSQL identifiers;
+// callers pass unqualified table names in the public schema.
+func NewWithTables(t *testing.T, additionalTables []string) *postgres.Store {
+	t.Helper()
 	cfg, ok := Configured()
 	if !ok {
 		t.Skipf("set %s and %s to run PostgreSQL tests", MigrationURLEnv, RuntimeRoleEnv)
@@ -103,8 +118,8 @@ func New(t *testing.T) *postgres.Store {
 	// Core table registration is intentionally owned by the integration branch.
 	// Grant the exact pending tables in isolated test databases so this package
 	// can verify their RLS and adapter behavior before that central placement.
-	if err := grantPendingCoreTables(ctx, migrationURL, cfg.RuntimeRole); err != nil {
-		t.Fatalf("grant pending core tables: %v", err)
+	if err := grantPendingTables(ctx, migrationURL, cfg.RuntimeRole, additionalTables); err != nil {
+		t.Fatalf("grant pending runtime tables: %v", err)
 	}
 
 	runtimeURL, err := asRole(migrationURL, cfg.RuntimeRole, cfg.RuntimePassword)
@@ -119,17 +134,39 @@ func New(t *testing.T) *postgres.Store {
 	return store
 }
 
-func grantPendingCoreTables(ctx context.Context, migrationURL, runtimeRole string) error {
+func grantPendingTables(ctx context.Context, migrationURL, runtimeRole string, additionalTables []string) error {
 	conn, err := pgx.Connect(ctx, migrationURL)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = conn.Close(ctx) }()
 	role := pgx.Identifier{runtimeRole}.Sanitize()
+	tables, err := qualifiedPendingTables(additionalTables)
+	if err != nil {
+		return err
+	}
 	_, err = conn.Exec(ctx,
-		"GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.ao_projects, public.ao_sessions, public.ao_session_worktrees TO "+role,
+		"GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE "+strings.Join(tables, ", ")+" TO "+role,
 	)
 	return err
+}
+
+func qualifiedPendingTables(additionalTables []string) ([]string, error) {
+	tables := make([]string, 0, len(pendingCoreTables)+len(additionalTables))
+	seen := make(map[string]struct{}, cap(tables))
+	allTables := append(append([]string{}, pendingCoreTables...), additionalTables...)
+	for _, table := range allTables {
+		table = strings.TrimSpace(table)
+		if table == "" {
+			return nil, fmt.Errorf("pending runtime table name is empty")
+		}
+		if _, ok := seen[table]; ok {
+			continue
+		}
+		seen[table] = struct{}{}
+		tables = append(tables, pgx.Identifier{"public", table}.Sanitize())
+	}
+	return tables, nil
 }
 
 func createDatabase(ctx context.Context, adminURL, name string) error {
