@@ -13,7 +13,7 @@ func TestCloudMigrationsAreTenantScoped(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(migrations) != 6 || migrations[0].Version != 1 || migrations[1].Version != 2 || migrations[2].Version != 3 || migrations[3].Version != 4 || migrations[4].Version != 5 || migrations[5].Version != 6 {
+	if len(migrations) != 7 || migrations[0].Version != 1 || migrations[1].Version != 2 || migrations[2].Version != 3 || migrations[3].Version != 4 || migrations[4].Version != 5 || migrations[5].Version != 6 || migrations[6].Version != 7 {
 		t.Fatalf("migrations = %#v", migrations)
 	}
 	migration, err := migrationFS.ReadFile("migrations/00001_auth_foundation.sql")
@@ -101,13 +101,24 @@ func TestCloudMigrationsAreTenantScoped(t *testing.T) {
 	}
 	authDefinerSQL := string(authDefinerMigration)
 	for _, required := range []string{
-		"CREATE ROLE ao_cloud_auth NOLOGIN BYPASSRLS",
+		"CREATE ROLE ao_cloud_auth NOLOGIN",
 		"ALTER FUNCTION ao_upsert_google_user(TEXT, TEXT, TEXT) OWNER TO ao_cloud_auth",
 		"GRANT SELECT, INSERT, UPDATE, DELETE",
+		"current_user = 'ao_cloud_auth'",
 		"DROP POLICY ao_org_memberships_insert",
 	} {
 		if !strings.Contains(authDefinerSQL, required) {
 			t.Fatalf("auth definer migration does not contain %q", required)
+		}
+	}
+	authRepairMigration, err := migrationFS.ReadFile("migrations/00007_auth_definer_policy.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	authRepairSQL := string(authRepairMigration)
+	for _, required := range []string{"ALTER ROLE ao_cloud_auth NOBYPASSRLS", "WITH SET TRUE", "ao_auth_sessions_auth_definer"} {
+		if !strings.Contains(authRepairSQL, required) {
+			t.Fatalf("auth repair migration does not contain %q", required)
 		}
 	}
 }

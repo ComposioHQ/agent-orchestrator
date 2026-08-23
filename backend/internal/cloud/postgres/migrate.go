@@ -130,12 +130,24 @@ func grantRuntimeRole(ctx context.Context, databaseURL, runtimeRole string) erro
 		"GRANT CONNECT ON DATABASE " + pgx.Identifier{databaseName}.Sanitize() + " TO " + role,
 		"GRANT USAGE ON SCHEMA public TO " + role,
 		"GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.ao_users, public.ao_auth_sessions, public.ao_organizations, public.ao_org_memberships, public.ao_cloud_workspaces, public.ao_cloud_session_runtimes TO " + role,
-		"GRANT EXECUTE ON FUNCTION public.ao_current_user_id(), public.ao_current_org_id(), public.ao_is_org_member(uuid, uuid), public.ao_can_manage_org(uuid, uuid), public.ao_upsert_google_user(text, text, text), public.ao_rotate_refresh_session(bytea, bytea), public.ao_revoke_refresh_session(bytea) TO " + role,
+		"GRANT EXECUTE ON FUNCTION public.ao_current_user_id(), public.ao_current_org_id(), public.ao_is_org_member(uuid, uuid), public.ao_can_manage_org(uuid, uuid) TO " + role,
 	}
 	for _, statement := range statements {
 		if _, err := conn.Exec(ctx, statement); err != nil {
 			return err
 		}
 	}
-	return nil
+	// The pre-authentication functions are deliberately owned by a narrowly
+	// privileged NOLOGIN role. Assume it explicitly for this one grant rather
+	// than making the migration role or runtime role able to bypass tenant RLS.
+	if _, err := conn.Exec(ctx, `SET ROLE ao_cloud_auth`); err != nil {
+		return err
+	}
+	if _, err := conn.Exec(ctx,
+		"GRANT EXECUTE ON FUNCTION public.ao_upsert_google_user(text, text, text), public.ao_rotate_refresh_session(bytea, bytea), public.ao_revoke_refresh_session(bytea) TO "+role,
+	); err != nil {
+		return err
+	}
+	_, err = conn.Exec(ctx, `RESET ROLE`)
+	return err
 }
