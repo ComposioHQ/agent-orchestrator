@@ -789,7 +789,7 @@ export function DeliveryChoice({
 		>
 			<span
 				className={cn(
-					"inline-flex h-7 items-center gap-1.5 rounded-lg px-3 text-xs leading-none transition-colors",
+					"inline-flex h-7 items-center gap-1.5 rounded-lg px-3 text-sm leading-none transition-colors",
 					disabled && "opacity-50",
 					value === "queue" ? "bg-white/5 text-foreground" : "text-muted-foreground",
 				)}
@@ -801,7 +801,7 @@ export function DeliveryChoice({
 			</span>
 			<span
 				className={cn(
-					"inline-flex h-7 items-center gap-1.5 rounded-lg px-3 text-xs leading-none transition-colors",
+					"inline-flex h-7 items-center gap-1.5 rounded-lg px-3 text-sm leading-none transition-colors",
 					disabled && "opacity-50",
 					value === "steer" ? "bg-white/5 text-foreground" : "text-muted-foreground",
 				)}
