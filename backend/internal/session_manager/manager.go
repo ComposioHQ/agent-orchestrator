@@ -748,7 +748,12 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 				"harness", cfg.Harness, "error", ports.ErrChatUnsupported)
 			mode = domain.SessionModeTUI
 		} else if err := m.chat.PreflightChat(ctx, cfg.Harness); err != nil {
-			if modeExplicitlyRequested || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			fallbackAllowed := errors.Is(err, ports.ErrChatUnsupported) ||
+				errors.Is(err, ports.ErrChatDriverUnavailable) ||
+				errors.Is(err, ports.ErrChatDriverIncompatible) ||
+				errors.Is(err, ports.ErrChatAuthRequired)
+			if modeExplicitlyRequested || !fallbackAllowed ||
+				errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 				return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn: %w", err)
 			}
 			m.logger.Warn("spawn: default Chat unavailable; falling back to TUI",

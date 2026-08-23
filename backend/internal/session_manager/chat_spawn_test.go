@@ -404,6 +404,32 @@ func TestDefaultChatSpawnFallsBackToTUIWhenUnavailable(t *testing.T) {
 	}
 }
 
+func TestDefaultChatSpawnReturnsUnexpectedPreflightError(t *testing.T) {
+	preflightErr := errors.New("probe state corrupted")
+	launcher := &recordingLauncher{preflightErr: preflightErr}
+	mgr, store, runtime := newChatManager(launcher)
+	mgr.defaults = fixedSessionModeDefaults(domain.SessionModeChat)
+
+	_, _, _, err := mgr.Spawn(context.Background(), ports.SpawnConfig{
+		ProjectID: chatTestProject,
+		Kind:      domain.KindWorker,
+		Harness:   domain.HarnessCodex,
+	})
+	if !errors.Is(err, preflightErr) {
+		t.Fatalf("Spawn error = %v, want unexpected preflight error", err)
+	}
+	if runtime.created != 0 {
+		t.Fatalf("unexpected preflight failure created %d terminal runtimes, want 0", runtime.created)
+	}
+	sessions, listErr := store.ListAllSessions(context.Background())
+	if listErr != nil {
+		t.Fatalf("list sessions: %v", listErr)
+	}
+	if len(sessions) != 0 {
+		t.Fatalf("unexpected preflight failure left %d session rows, want 0", len(sessions))
+	}
+}
+
 func TestDefaultChatSpawnUsesChatWhenAvailable(t *testing.T) {
 	launcher := &recordingLauncher{}
 	mgr, _, runtime := newChatManager(launcher)
