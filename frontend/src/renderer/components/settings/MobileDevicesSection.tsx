@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Loader2, Smartphone, X } from "lucide-react";
+import { Loader2, Smartphone, Trash2 } from "lucide-react";
 import { apiClient, apiErrorCode, apiErrorMessage } from "../../lib/api-client";
 import { cn } from "../../lib/utils";
 import { Switch } from "../ui/switch";
@@ -63,7 +63,7 @@ function lastSeenLabel(iso: string, language: string): string {
 	return relative.format(Math.round(value), "year");
 }
 
-async function fetchDevices(): Promise<MobileDevice[]> {
+export async function fetchDevices(): Promise<MobileDevice[]> {
 	const { data, error } = await apiClient.GET("/api/v1/mobile/devices");
 	if (error || !data) throw new MobileDevicesQueryError(apiErrorMessage(error), apiErrorCode(error));
 	return data.devices as MobileDevice[];
@@ -160,13 +160,13 @@ export function MobileDevicesSection() {
 			) : (
 				<>
 					{queryError && <p className="mt-3 text-caption text-error">{queryError.message}</p>}
-					<ul className="mt-3 space-y-2">
+					<ul className="mt-3 grid gap-2">
 						{sortedDevices.map((device) => {
 							const name = device.deviceName || t("mobile.devices.unnamed");
 							return (
 								<li
 									key={device.installId}
-									className="flex items-center gap-3 rounded-md border border-[var(--color-border-settings-input)] bg-[var(--color-bg-settings-input)] p-3"
+									className="flex items-center gap-3 rounded-lg border border-[var(--color-border-settings-input)] bg-[var(--color-bg-settings-input)] p-3 shadow-sm"
 								>
 									<Smartphone className="size-4 shrink-0 text-settings-muted" />
 									<div className="min-w-0 flex-1">
@@ -213,7 +213,7 @@ export function MobileDevicesSection() {
 											className="text-settings-muted hover:text-settings-label"
 											onClick={() => setConfirmingRemoval(device.installId)}
 										>
-											<X className="size-4" />
+											<Trash2 className="size-4" />
 										</button>
 									)}
 								</li>

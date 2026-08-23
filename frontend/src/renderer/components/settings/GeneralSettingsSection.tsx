@@ -9,9 +9,8 @@ import { useUiStore } from "../../stores/ui-store";
 import { SettingsOptionMenu, type SettingsOption } from "./SettingsOptionMenu";
 import { SettingsExpandableRow, SettingsRow } from "./SettingsRow";
 import { SettingsSection } from "./SettingsSection";
-import { ConnectMobileContent, fetchMobileStatus } from "./ConnectMobileContent";
+import { ConnectMobileContent, fetchMobileStatus, mobileStatusQueryKey } from "./ConnectMobileContent";
 import { MobileDevicesSection } from "./MobileDevicesSection";
-import { mobileStatusQueryKey } from "../ConnectMobileModal";
 import { Switch } from "../ui/switch";
 import { cn } from "../../lib/utils";
 import { useSettings, useUpdateSessionInterface } from "../../hooks/useSettings";
@@ -68,7 +67,7 @@ function PairedDevices() {
 	const query = useQuery({ queryKey: mobileStatusQueryKey, queryFn: fetchMobileStatus });
 	if (!query.data?.enabled) return null;
 	return (
-		<div className="px-3 pb-3 [&>section]:mt-2">
+		<div className="pb-3 [&>section]:mt-2">
 			<MobileDevicesSection />
 		</div>
 	);

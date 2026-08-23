@@ -22,7 +22,7 @@ import type { WorkspaceSession, WorkspaceSummary } from "../types/workspace";
 import { agentsQueryKey } from "../hooks/useAgentsQuery";
 import { useUiStore } from "../stores/ui-store";
 
-const { cloudSessionState, getMock, navigateMock, mockParams, renameSessionMock, spawnMock, updateStatusMock, commandPaletteEnabled } = vi.hoisted(
+const { cloudSessionState, fetchMobileDevicesMock, getMock, navigateMock, mockParams, renameSessionMock, spawnMock, updateStatusMock, commandPaletteEnabled } = vi.hoisted(
 	() => ({
 		cloudSessionState: {
 			configured: false,
@@ -31,6 +31,7 @@ const { cloudSessionState, getMock, navigateMock, mockParams, renameSessionMock,
 			signIn: vi.fn(),
 			signOut: vi.fn().mockResolvedValue(undefined),
 		},
+		fetchMobileDevicesMock: vi.fn(),
 		getMock: vi.fn(),
 		navigateMock: vi.fn(),
 		mockParams: { projectId: undefined as string | undefined, sessionId: undefined as string | undefined },
@@ -44,6 +45,10 @@ const { cloudSessionState, getMock, navigateMock, mockParams, renameSessionMock,
 vi.mock("../lib/rename-session", () => ({ renameSession: renameSessionMock }));
 vi.mock("../lib/spawn-orchestrator", () => ({ spawnOrchestrator: spawnMock }));
 vi.mock("../lib/cloud-session", () => ({ useCloudSession: () => cloudSessionState }));
+vi.mock("./settings/MobileDevicesSection", () => ({
+	mobileDevicesQueryKey: ["mobile-devices"],
+	fetchDevices: fetchMobileDevicesMock,
+}));
 
 vi.mock("../hooks/useCommandPaletteEnabled", () => ({
 	useCommandPaletteEnabled: () => commandPaletteEnabled.current,
@@ -254,7 +259,8 @@ beforeEach(() => {
 	cloudSessionState.status = "unauthenticated";
 	cloudSessionState.signIn.mockReset();
 	cloudSessionState.signOut.mockReset().mockResolvedValue(undefined);
-	useUiStore.setState({ isCommandPaletteOpen: false, settingsModal: null });
+	useUiStore.setState({ isCommandPaletteOpen: false, isConnectMobileOpen: false, settingsModal: null });
+	fetchMobileDevicesMock.mockReset().mockResolvedValue([]);
 	getMock.mockReset();
 	getMock.mockResolvedValue({
 		data: {
@@ -310,22 +316,14 @@ describe("Sidebar", () => {
 		expect(screen.getAllByRole("button", { name: "Settings" })[0]).toHaveAttribute("tabindex", "0");
 	});
 
-	it("aligns the Settings footer hairline and row height with the board Archive bar", () => {
+	it("keeps the Settings footer flush with the bottom edge", () => {
 		renderSidebar();
 
 		const footer = document.querySelector('[data-sidebar="footer"]');
 		expect(footer).toHaveClass("border-t", "border-border-strong", "!py-2");
 		expect(screen.getAllByRole("button", { name: "Settings" })[0]).toHaveClass("h-[42px]");
-		// Windowed: lift the hairline by the framed panel inset + 1px surface
-		// border. macOS also collapses that inset in native fullscreen.
-		if (footer?.className.includes("--size-center-panel-inset-mac")) {
-			expect(footer).toHaveClass(
-				"mb-[calc(var(--size-center-panel-inset-mac)+1px)]",
-				"in-[.native-fullscreen]:mb-px",
-			);
-		} else {
-			expect(footer).toHaveClass("mb-[calc(var(--size-center-panel-bottom-inset)+1px)]");
-		}
+		expect(footer?.className).not.toContain("--size-center-panel-bottom-inset");
+		expect(footer?.className).not.toContain("--size-center-panel-inset-mac");
 	});
 
 	it("keeps only the expanded Settings control keyboard-accessible while expanded", () => {
@@ -1228,6 +1226,23 @@ describe("Sidebar", () => {
 		await user.click(screen.getAllByRole("button", { name: "Settings" })[0]);
 		expect(useUiStore.getState().settingsModal).toEqual({ scope: "global" });
 		expect(navigateMock).not.toHaveBeenCalled();
+	});
+
+	it("opens the Connect Mobile modal from the footer", async () => {
+		const user = userEvent.setup();
+		renderSidebar();
+		await user.click((await screen.findAllByRole("button", { name: "Connect Mobile" }))[0]);
+		expect(useUiStore.getState().isConnectMobileOpen).toBe(true);
+		expect(useUiStore.getState().settingsModal).toBeNull();
+		expect(navigateMock).not.toHaveBeenCalled();
+	});
+
+	it("hides Connect Mobile once a phone is paired", async () => {
+		fetchMobileDevicesMock.mockResolvedValue([{ installId: "phone-1" }]);
+		renderSidebar();
+
+		await waitFor(() => expect(fetchMobileDevicesMock).toHaveBeenCalled());
+		await waitFor(() => expect(screen.queryByRole("button", { name: "Connect Mobile" })).not.toBeInTheDocument());
 	});
 
 	it("opens the command palette when Search is clicked", async () => {

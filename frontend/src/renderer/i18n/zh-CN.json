@@ -385,7 +385,7 @@
 	"mobile.devices.notificationsNotEnabled": "此设备尚未启用通知。",
 	"mobile.devices.registryUnavailable": "设备注册表不可用 — AO 无法读取已保存的设备。",
 	"mobile.devices.removeAria": "移除 {{name}}",
-	"mobile.devices.title": "设备",
+	"mobile.devices.title": "已连接的设备",
 	"mobile.devices.unnamed": "未命名设备",
 	"mobile.enable": "启用手机连接",
 	"mobile.enableHint": "在本地网络上打开受密码保护的端口，以便手机连接。",

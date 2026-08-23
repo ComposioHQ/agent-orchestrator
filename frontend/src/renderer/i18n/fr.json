@@ -387,7 +387,7 @@
 	"mobile.devices.notificationsNotEnabled": "Les notifications ne sont pas activées sur cet appareil.",
 	"mobile.devices.registryUnavailable": "Registre des appareils indisponible — AO n'a pas pu lire vos appareils enregistrés.",
 	"mobile.devices.removeAria": "Supprimer {{name}}",
-	"mobile.devices.title": "Appareils",
+	"mobile.devices.title": "Appareils connectés",
 	"mobile.devices.unnamed": "Appareil sans nom",
 	"mobile.enable": "Activer le mobile",
 	"mobile.enableHint": "Ouvrez un port protégé par mot de passe sur votre réseau local pour que votre téléphone puisse se connecter.",

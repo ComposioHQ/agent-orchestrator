@@ -385,7 +385,7 @@
 	"mobile.devices.notificationsNotEnabled": "이 기기에서는 알림이 켜져 있지 않습니다.",
 	"mobile.devices.registryUnavailable": "기기 레지스트리를 사용할 수 없습니다 — AO가 저장된 기기를 읽지 못했습니다.",
 	"mobile.devices.removeAria": "{{name}} 제거",
-	"mobile.devices.title": "기기",
+	"mobile.devices.title": "연결된 기기",
 	"mobile.devices.unnamed": "이름 없는 기기",
 	"mobile.enable": "모바일 사용",
 	"mobile.enableHint": "로컬 네트워크에 비밀번호로 보호된 포트를 열어 휴대폰에서 연결할 수 있게 합니다.",

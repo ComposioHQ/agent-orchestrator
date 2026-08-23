@@ -43,6 +43,8 @@ describe("MobileDevicesSection", () => {
 		renderSection();
 
 		expect(await screen.findByText("iPhone")).toBeInTheDocument();
+		expect(screen.getByRole("heading", { name: "Connected devices" })).toBeInTheDocument();
+		expect(screen.getAllByRole("listitem")[0]).toHaveClass("rounded-lg", "border", "shadow-sm");
 		expect(screen.getByText("Live")).toBeInTheDocument();
 		expect(screen.getByText("M31s")).toBeInTheDocument();
 		expect(screen.getByText(/2 hours ago/)).toBeInTheDocument();
@@ -68,7 +70,9 @@ describe("MobileDevicesSection", () => {
 		const del = vi.spyOn(apiClient, "DELETE").mockResolvedValue({ data: undefined } as never);
 		renderSection();
 
-		fireEvent.click(await screen.findByRole("button", { name: /remove iPhone/i }));
+		const removeButton = await screen.findByRole("button", { name: /remove iPhone/i });
+		expect(removeButton.querySelector(".lucide-trash-2")).toBeInTheDocument();
+		fireEvent.click(removeButton);
 		expect(del).not.toHaveBeenCalled();
 
 		fireEvent.click(screen.getByRole("button", { name: /confirm remove/i }));
@@ -79,7 +83,7 @@ describe("MobileDevicesSection", () => {
 		vi.spyOn(apiClient, "GET").mockResolvedValue({ data: { devices: [] } } as never);
 		renderSection();
 		await waitFor(() => expect(apiClient.GET).toHaveBeenCalled());
-		expect(screen.queryByRole("heading", { name: "Devices" })).not.toBeInTheDocument();
+		expect(screen.queryByRole("heading", { name: "Connected devices" })).not.toBeInTheDocument();
 		expect(screen.queryByText(/No devices paired yet/i)).not.toBeInTheDocument();
 	});
 

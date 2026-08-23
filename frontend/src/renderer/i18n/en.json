@@ -385,7 +385,7 @@
 	"mobile.devices.notificationsNotEnabled": "Notifications not enabled on this device.",
 	"mobile.devices.registryUnavailable": "Device registry unavailable — AO could not read your saved devices.",
 	"mobile.devices.removeAria": "Remove {{name}}",
-	"mobile.devices.title": "Devices",
+	"mobile.devices.title": "Connected devices",
 	"mobile.devices.unnamed": "Unnamed device",
 	"mobile.enable": "Enable mobile",
 	"mobile.enableHint": "Open a password-protected port on your local network so your phone can connect.",

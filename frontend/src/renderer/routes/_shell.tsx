@@ -9,6 +9,7 @@ import { DaemonFailureBanner } from "../components/DaemonFailureBanner";
 import { NotificationRuntime } from "../components/NotificationCenter";
 import { TrayRuntime } from "../components/TrayRuntime";
 import { GlobalNewTaskDialog } from "../components/GlobalNewTaskDialog";
+import { ConnectMobileModal } from "../components/ConnectMobileModal";
 import { SettingsDialog } from "../components/SettingsDialog";
 import { KeyboardShortcutsDialog } from "../components/KeyboardShortcutsDialog";
 import { KeyboardShortcutsSettingsDialog } from "../components/settings/KeyboardShortcutsSettingsDialog";
@@ -111,6 +112,8 @@ function ShellLayout() {
 	const requestNewShellTerminal = useUiStore((state) => state.requestNewShellTerminal);
 	const newShellTerminalNonce = useUiStore((state) => state.newShellTerminalNonce);
 	const setActiveShellTerminal = useUiStore((state) => state.setActiveShellTerminal);
+	const isConnectMobileOpen = useUiStore((state) => state.isConnectMobileOpen);
+	const setConnectMobileOpen = useUiStore((state) => state.setConnectMobileOpen);
 	const openShellTerminal = useOpenShellTerminal();
 	// Single subscription for sidebar clearance + drag strip (macOS no-ops inside the hook).
 	const isFullScreen = useWindowFullScreen();
@@ -729,6 +732,7 @@ function ShellLayout() {
 					</div>
 				) : null}
 				<GlobalNewTaskDialog />
+				<ConnectMobileModal open={isConnectMobileOpen} onOpenChange={setConnectMobileOpen} />
 				<SettingsDialog />
 				<KeyboardShortcutsDialog
 					open={isKeyboardShortcutsOpen}

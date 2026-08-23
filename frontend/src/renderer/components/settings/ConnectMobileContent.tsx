@@ -14,10 +14,18 @@ import { StyledQRCode } from "./StyledQRCode";
 import { Button } from "../ui/button";
 import { Switch } from "../ui/switch";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/tooltip";
-import { mobileStatusQueryKey, pairingPayload } from "../ConnectMobileModal";
 
 const QR_CODE_SIZE = 204;
 const TESTFLIGHT_QR_SIZE = 140;
+
+export const mobileStatusQueryKey = ["mobile-status"] as const;
+
+// One scan gives the mobile app every value required to connect. Keep the
+// secure key absent for plaintext payloads so older mobile builds can decode
+// the same bytes they already understand.
+export function pairingPayload(host: string, port: number, password: string, secure?: boolean): string {
+	return JSON.stringify(secure ? { v: 1, host, port, password, secure: true } : { v: 1, host, port, password });
+}
 
 /** Static junk payload for the blurred placeholder QR — deliberately not a
  *  real pairing payload so a sneaky scan through the blur gets nothing. */

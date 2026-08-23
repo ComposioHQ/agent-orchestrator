@@ -385,7 +385,7 @@
 	"mobile.devices.notificationsNotEnabled": "Benachrichtigungen sind auf diesem Gerät nicht aktiviert.",
 	"mobile.devices.registryUnavailable": "Geräteregister nicht verfügbar — AO konnte Ihre gespeicherten Geräte nicht lesen.",
 	"mobile.devices.removeAria": "{{name}} entfernen",
-	"mobile.devices.title": "Geräte",
+	"mobile.devices.title": "Verbundene Geräte",
 	"mobile.devices.unnamed": "Unbenanntes Gerät",
 	"mobile.enable": "Mobile aktivieren",
 	"mobile.enableHint": "Öffnet einen passwortgeschützten Port in Ihrem lokalen Netzwerk, damit Ihr Telefon sich verbinden kann.",

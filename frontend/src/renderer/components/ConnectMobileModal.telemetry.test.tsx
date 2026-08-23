@@ -2,6 +2,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, test, vi } from "vitest";
+import { TooltipProvider } from "./ui/tooltip";
 
 // vi.mock is hoisted above module-level consts, so the shared doubles have to
 // be created inside vi.hoisted to exist by the time the factories run.
@@ -20,7 +21,10 @@ const { captureRendererEvent, mobileStatus, post } = vi.hoisted(() => ({
 vi.mock("../lib/telemetry", () => ({ captureRendererEvent }));
 vi.mock("../lib/api-client", () => ({
 	apiClient: {
-		GET: async () => ({ data: mobileStatus, error: undefined }),
+		GET: async (path: string) =>
+			path === "/api/v1/mobile/devices"
+				? { data: { devices: [] }, error: undefined }
+				: { data: mobileStatus, error: undefined },
 		POST: post,
 	},
 	apiErrorMessage: () => "failed",
@@ -32,7 +36,9 @@ function renderModal(open = true) {
 	const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 	return render(
 		<QueryClientProvider client={client}>
-			<ConnectMobileModal open={open} onOpenChange={vi.fn()} />
+			<TooltipProvider>
+				<ConnectMobileModal open={open} onOpenChange={vi.fn()} />
+			</TooltipProvider>
 		</QueryClientProvider>,
 	);
 }
@@ -71,10 +77,10 @@ describe("Connect Mobile telemetry", () => {
 		expect(openEvents()[0][1]).toEqual({ bridge_enabled: false });
 
 		mobileStatus.enabled = true;
-		await userEvent.click(screen.getByRole("switch"));
+		await userEvent.click(screen.getByRole("button", { name: "Generate" }));
 
 		await waitFor(() => expect(toggleEvents()).toHaveLength(1));
-		await waitFor(() => expect(screen.getByRole("switch")).toBeChecked());
+		await waitFor(() => expect(screen.queryByRole("button", { name: "Generate" })).not.toBeInTheDocument());
 		expect(openEvents()).toHaveLength(1);
 	});
 
@@ -90,7 +96,7 @@ describe("Connect Mobile telemetry", () => {
 		renderModal();
 		await waitFor(() => expect(openEvents()).toHaveLength(1));
 
-		await userEvent.click(screen.getByRole("switch"));
+		await userEvent.click(screen.getByRole("button", { name: "Generate" }));
 
 		await waitFor(() => expect(toggleEvents()).toHaveLength(1));
 		expect(toggleEvents()[0][1]).toEqual({ enabled: true, outcome: "succeeded" });
@@ -108,7 +114,7 @@ describe("Connect Mobile telemetry", () => {
 		renderModal();
 		await waitFor(() => expect(openEvents()).toHaveLength(1));
 
-		await userEvent.click(screen.getByRole("switch"));
+		await userEvent.click(screen.getByRole("button", { name: "Generate" }));
 
 		await waitFor(() => expect(toggleEvents()).toHaveLength(1));
 		expect(toggleEvents()[0][1]).toEqual({ enabled: true, outcome: "failed" });
