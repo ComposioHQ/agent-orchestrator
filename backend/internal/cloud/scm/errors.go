@@ -29,6 +29,10 @@ var (
 	ErrInstallationClaimed = errors.New("cloud scm: installation is already linked to another organization")
 	// ErrInvalidSignature means a webhook body failed HMAC verification.
 	ErrInvalidSignature = errors.New("cloud scm: webhook signature is invalid")
+	// ErrWebhookReceiptUnavailable means a verified delivery could not be
+	// durably stored and leased. The HTTP boundary must not acknowledge it,
+	// because GitHub remains the only copy that can safely retry.
+	ErrWebhookReceiptUnavailable = errors.New("cloud scm: webhook receipt is unavailable")
 	// ErrDuplicateDelivery means a webhook delivery id was already processed.
 	ErrDuplicateDelivery = errors.New("cloud scm: webhook delivery already processed")
 	// ErrProviderRejected means GitHub refused a control-plane request.

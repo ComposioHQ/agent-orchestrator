@@ -168,6 +168,7 @@ SET search_path = pg_catalog, public
 AS $$
 DECLARE
     affected INTEGER;
+    already_complete BOOLEAN;
 BEGIN
     IF candidate_state NOT IN ('complete', 'retry') THEN
         RAISE EXCEPTION 'unsupported webhook processing state';
@@ -186,9 +187,23 @@ BEGIN
         external_installation_id = coalesce(candidate_external_installation_id, 0),
         updated_at = now()
     WHERE provider = candidate_provider
-      AND delivery_id = candidate_delivery_id;
+      AND delivery_id = candidate_delivery_id
+      AND processing_state = 'processing';
     GET DIAGNOSTICS affected = ROW_COUNT;
-    RETURN affected > 0;
+    IF affected > 0 THEN
+        RETURN TRUE;
+    END IF;
+    IF candidate_state = 'complete' THEN
+        SELECT EXISTS (
+            SELECT 1
+            FROM public.ao_scm_webhook_deliveries delivery
+            WHERE delivery.provider = candidate_provider
+              AND delivery.delivery_id = candidate_delivery_id
+              AND delivery.processing_state = 'complete'
+        ) INTO already_complete;
+        RETURN already_complete;
+    END IF;
+    RETURN FALSE;
 END
 $$;
 -- +goose StatementEnd

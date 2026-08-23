@@ -472,6 +472,47 @@ func (s *Store) PrepareSCMWebhookDelivery(ctx context.Context, deliveryID string
 	return prepared, nil
 }
 
+// ClaimSCMWebhookDelivery transactionally records a verified delivery and
+// acquires its initial processing lease. If either operation fails, neither is
+// committed, so the HTTP boundary can safely ask GitHub to retry.
+func (s *Store) ClaimSCMWebhookDelivery(
+	ctx context.Context,
+	deliveryID, event string,
+	body []byte,
+) (first, claimed bool, err error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return false, false, normalizeError(err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	deliveryID = strings.TrimSpace(deliveryID)
+	if deliveryID == "" {
+		return false, false, ErrInvalid
+	}
+	if err := tx.QueryRow(
+		ctx,
+		`SELECT ao_scm_record_webhook_delivery('github', $1, $2)`,
+		deliveryID, strings.TrimSpace(event),
+	).Scan(&first); err != nil {
+		return false, false, normalizeError(err)
+	}
+	if err := tx.QueryRow(
+		ctx,
+		`SELECT ao_scm_prepare_webhook_delivery('github', $1, $2)`,
+		deliveryID, body,
+	).Scan(&claimed); err != nil {
+		return false, false, normalizeError(err)
+	}
+	if first && !claimed {
+		return false, false, errors.New("cloud postgres: new webhook delivery was not leased")
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return false, false, normalizeError(err)
+	}
+	return first, claimed, nil
+}
+
 // FinishSCMWebhookDelivery records a terminal or internally retryable result.
 // errorCode must be stable and sanitized; raw provider/database errors do not
 // belong in the durable ledger.

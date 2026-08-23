@@ -34,6 +34,7 @@ type memoryWebhookStore struct {
 	states        map[string]string
 	errors        map[string]string
 	attempts      map[string]int
+	leaseExpired  map[string]bool
 }
 
 func newMemoryWebhookStore() *memoryWebhookStore {
@@ -45,7 +46,33 @@ func newMemoryWebhookStore() *memoryWebhookStore {
 		states:        map[string]string{},
 		errors:        map[string]string{},
 		attempts:      map[string]int{},
+		leaseExpired:  map[string]bool{},
 	}
+}
+
+func (s *memoryWebhookStore) ClaimSCMWebhookDelivery(
+	_ context.Context,
+	deliveryID, event string,
+	body []byte,
+) (bool, bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.recordErr != nil {
+		return false, false, s.recordErr
+	}
+	s.deliveries[deliveryID]++
+	first := s.deliveries[deliveryID] == 1
+	if first {
+		s.events[deliveryID] = event
+		s.states[deliveryID] = "received"
+	}
+	if s.states[deliveryID] != "received" {
+		return first, false, nil
+	}
+	s.bodies[deliveryID] = append([]byte(nil), body...)
+	s.states[deliveryID] = "processing"
+	s.attempts[deliveryID]++
+	return first, true, nil
 }
 
 func (s *memoryWebhookStore) RecordSCMWebhookDelivery(
@@ -89,6 +116,12 @@ func (s *memoryWebhookStore) FinishSCMWebhookDelivery(
 ) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.states[deliveryID] == webhookStateComplete && state == webhookStateComplete {
+		return nil
+	}
+	if s.states[deliveryID] != "processing" {
+		return errors.New("delivery is not processing")
+	}
 	s.states[deliveryID] = state
 	s.errors[deliveryID] = errorCode
 	return nil
@@ -99,10 +132,12 @@ func (s *memoryWebhookStore) ClaimSCMWebhookRetries(_ context.Context, limit int
 	defer s.mu.Unlock()
 	deliveries := make([]domain.SCMWebhookDelivery, 0, limit)
 	for deliveryID, state := range s.states {
-		if state != "retry" || len(deliveries) == limit {
+		due := state == "retry" || (state == "processing" && s.leaseExpired[deliveryID])
+		if !due || len(deliveries) == limit {
 			continue
 		}
 		s.states[deliveryID] = "processing"
+		s.leaseExpired[deliveryID] = false
 		s.attempts[deliveryID]++
 		deliveries = append(deliveries, domain.SCMWebhookDelivery{
 			DeliveryID: deliveryID,
@@ -241,7 +276,22 @@ func TestWebhookRejectsBadSignatureBeforeTouchingTheStore(t *testing.T) {
 	}
 }
 
-func TestWebhookIsIdempotentPerDeliveryID(t *testing.T) {
+func TestWebhookDoesNotAcknowledgeAnUndurableReceipt(t *testing.T) {
+	store := newMemoryWebhookStore()
+	store.recordErr = errors.New("database unavailable")
+	processor := newTestProcessor(t, store, nil)
+	body := []byte(`{"action":"opened","installation":{"id":55}}`)
+
+	_, err := processor.Process(context.Background(), "pull_request", "delivery-1", sign(body), body)
+	if !errors.Is(err, ErrWebhookReceiptUnavailable) {
+		t.Fatalf("error = %v", err)
+	}
+	if len(store.deliveries) != 0 {
+		t.Fatal("failed transaction left a durable delivery")
+	}
+}
+
+func TestWebhookCompleteDeliveryIsTerminalAndIdempotent(t *testing.T) {
 	store := newMemoryWebhookStore()
 	store.installations[55] = domain.SCMInstallation{
 		ID: "installation-55", OrgID: "org-1", Status: domain.InstallationStatusActive,
@@ -278,6 +328,56 @@ func TestWebhookIsIdempotentPerDeliveryID(t *testing.T) {
 	}
 	if sink.count() != 1 {
 		t.Fatalf("redelivery produced %d observations", sink.count())
+	}
+	if store.states["delivery-1"] != webhookStateComplete || store.attempts["delivery-1"] != 1 {
+		t.Fatalf("state = %q attempts = %d", store.states["delivery-1"], store.attempts["delivery-1"])
+	}
+}
+
+func TestWebhookDuplicateDuringProcessingKeepsTheLease(t *testing.T) {
+	store := newMemoryWebhookStore()
+	store.deliveries["delivery-processing"] = 1
+	store.events["delivery-processing"] = "pull_request"
+	store.bodies["delivery-processing"] = []byte(`{"installation":{"id":55}}`)
+	store.states["delivery-processing"] = "processing"
+	store.attempts["delivery-processing"] = 1
+	processor := newTestProcessor(t, store, nil)
+	body := store.bodies["delivery-processing"]
+
+	result, err := processor.Process(
+		context.Background(), "pull_request", "delivery-processing", sign(body), body,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.Duplicate || store.states["delivery-processing"] != "processing" || store.attempts["delivery-processing"] != 1 {
+		t.Fatalf("result = %#v state = %q attempts = %d", result, store.states["delivery-processing"], store.attempts["delivery-processing"])
+	}
+}
+
+func TestWebhookExpiredProcessingLeaseIsRecovered(t *testing.T) {
+	store := newMemoryWebhookStore()
+	store.installations[55] = domain.SCMInstallation{
+		ID: "installation-55", OrgID: "org-1", Status: domain.InstallationStatusActive,
+	}
+	store.deliveries["delivery-crashed"] = 1
+	store.events["delivery-crashed"] = "pull_request"
+	store.bodies["delivery-crashed"] = []byte(`{
+		"installation":{"id":55},
+		"repository":{"full_name":"acme/widgets"},
+		"pull_request":{"number":7}
+	}`)
+	store.states["delivery-crashed"] = "processing"
+	store.attempts["delivery-crashed"] = 1
+	store.leaseExpired["delivery-crashed"] = true
+	processor := newTestProcessor(t, store, &recordingSink{})
+
+	processed, err := processor.RetryPending(context.Background(), 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if processed != 1 || store.states["delivery-crashed"] != webhookStateComplete || store.attempts["delivery-crashed"] != 2 {
+		t.Fatalf("processed = %d state = %q attempts = %d", processed, store.states["delivery-crashed"], store.attempts["delivery-crashed"])
 	}
 }
 

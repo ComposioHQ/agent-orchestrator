@@ -323,6 +323,13 @@ func (s *Server) receiveSCMWebhook(w http.ResponseWriter, r *http.Request) {
 			writeError(w, r, http.StatusUnauthorized, "unauthorized", "WEBHOOK_SIGNATURE_INVALID", "webhook signature is invalid")
 			return
 		}
+		if errors.Is(err, scm.ErrWebhookReceiptUnavailable) {
+			// No durable owner exists yet. Do not acknowledge the delivery or
+			// GitHub will discard its only retryable copy.
+			s.logger.Error("Cloud SCM webhook receipt failed", "request_id", requestID(r), "error", err)
+			writeError(w, r, http.StatusServiceUnavailable, "unavailable", "WEBHOOK_RECEIPT_UNAVAILABLE", "webhook receipt is temporarily unavailable")
+			return
+		}
 		// GitHub delivery responses deliberately do not reveal or retry internal
 		// processing failures. The delivery id was claimed after HMAC validation,
 		// so a valid request always receives the same accepted response.

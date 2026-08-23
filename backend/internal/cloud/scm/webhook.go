@@ -75,8 +75,7 @@ type ObservationSink interface {
 // WebhookStore is the persistence a webhook needs: delivery dedup, tenant
 // resolution, and the narrow set of installation mutations a webhook may make.
 type WebhookStore interface {
-	RecordSCMWebhookDelivery(ctx context.Context, deliveryID, event string) (bool, error)
-	PrepareSCMWebhookDelivery(ctx context.Context, deliveryID string, body []byte) (bool, error)
+	ClaimSCMWebhookDelivery(ctx context.Context, deliveryID, event string, body []byte) (first, claimed bool, err error)
 	FinishSCMWebhookDelivery(ctx context.Context, deliveryID, state, errorCode string, externalInstallationID int64) error
 	ClaimSCMWebhookRetries(ctx context.Context, limit int) ([]domain.SCMWebhookDelivery, error)
 	SCMInstallationContext(ctx context.Context, externalInstallationID int64) (domain.SCMInstallation, error)
@@ -202,15 +201,11 @@ func (p *WebhookProcessor) Process(
 	// Claim the delivery before parsing. A signed but malformed redelivery must
 	// be idempotent too, and no attacker-controlled JSON reaches the decoder
 	// before signature verification and delivery-id deduplication succeed.
-	first, err := p.store.RecordSCMWebhookDelivery(ctx, deliveryID, event)
+	first, prepared, err := p.store.ClaimSCMWebhookDelivery(ctx, deliveryID, event, body)
 	if err != nil {
-		return WebhookResult{}, err
+		return WebhookResult{}, errors.Join(ErrWebhookReceiptUnavailable, err)
 	}
 	result := WebhookResult{Event: event, DeliveryID: deliveryID, Duplicate: !first}
-	prepared, err := p.store.PrepareSCMWebhookDelivery(ctx, deliveryID, body)
-	if err != nil {
-		return WebhookResult{}, err
-	}
 	if !prepared {
 		// A complete, retry-scheduled, or actively leased delivery remains owned
 		// by durable state. A duplicate never cancels or replaces that work.

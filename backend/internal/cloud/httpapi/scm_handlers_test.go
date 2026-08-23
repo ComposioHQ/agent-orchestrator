@@ -462,6 +462,20 @@ func TestWebhookEndpointReturnsAcceptedForInternalFailure(t *testing.T) {
 	}
 }
 
+func TestWebhookEndpointDoesNotAcknowledgeFailedDurableReceipt(t *testing.T) {
+	processor := &fakeWebhookProcessor{err: errors.Join(scm.ErrWebhookReceiptUnavailable, errors.New("database unavailable"))}
+	server, _ := newSCMServer(t, SCMOptions{Link: &fakeLinkService{}, Webhook: processor})
+	request := httptest.NewRequest(http.MethodPost, "/api/cloud/v1/github/webhook", strings.NewReader(`{"action":"opened"}`))
+	request.Header.Set(scm.EventHeader, "pull_request")
+	request.Header.Set(scm.DeliveryHeader, "delivery-receipt-failed")
+	request.Header.Set(scm.SignatureHeader, "sha256=validity-is-checked-by-the-processor")
+	response := httptest.NewRecorder()
+	server.Handler().ServeHTTP(response, request)
+	if response.Code != http.StatusServiceUnavailable || !strings.Contains(response.Body.String(), "WEBHOOK_RECEIPT_UNAVAILABLE") {
+		t.Fatalf("status = %d body = %s", response.Code, response.Body.String())
+	}
+}
+
 func TestWebhookEndpointIsAbsentWithoutASecret(t *testing.T) {
 	server, _ := newSCMServer(t, SCMOptions{Link: &fakeLinkService{}})
 	request := httptest.NewRequest(http.MethodPost, "/api/cloud/v1/github/webhook", strings.NewReader("{}"))

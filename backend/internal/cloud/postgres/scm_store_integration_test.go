@@ -281,12 +281,12 @@ func TestSCMWebhookDeliveriesAreDurablyRetried(t *testing.T) {
 	// Even after a duplicate observes the durable received row, the verified
 	// body can still acquire it for processing; dedup cannot suppress work
 	// interrupted between the record and prepare calls.
-	prepared, err := store.PrepareSCMWebhookDelivery(ctx, deliveryID, body)
+	claimFirst, prepared, err := store.ClaimSCMWebhookDelivery(ctx, deliveryID, "installation", body)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !prepared {
-		t.Fatal("first delivery body was not prepared")
+	if claimFirst || !prepared {
+		t.Fatalf("interrupted duplicate claim first=%v prepared=%v", claimFirst, prepared)
 	}
 	if err := store.FinishSCMWebhookDelivery(ctx, deliveryID, "retry", "processing_failed", 910099); err != nil {
 		t.Fatal(err)
@@ -313,6 +313,12 @@ func TestSCMWebhookDeliveriesAreDurablyRetried(t *testing.T) {
 	}
 	if err := store.FinishSCMWebhookDelivery(ctx, deliveryID, "complete", "", 910099); err != nil {
 		t.Fatal(err)
+	}
+	if err := store.FinishSCMWebhookDelivery(ctx, deliveryID, "complete", "", 910099); err != nil {
+		t.Fatalf("idempotent completion failed: %v", err)
+	}
+	if err := store.FinishSCMWebhookDelivery(ctx, deliveryID, "retry", "processing_failed", 910099); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("complete delivery regressed to retry: %v", err)
 	}
 	deliveries, err = store.ClaimSCMWebhookRetries(ctx, 10)
 	if err != nil {
