@@ -51,18 +51,23 @@ type ReaperPolicy struct {
 	// CapabilityRetention is how long expired or revoked grant rows are kept
 	// before purging.
 	CapabilityRetention time.Duration
+	// MaxProviderDeletesPerRun is a hard blast-radius limit for provider-only
+	// orphan/leak deletion. Placement cascades are credential-first and are not
+	// counted here. The pass reports and defers candidates beyond this limit.
+	MaxProviderDeletesPerRun int
 }
 
 // DefaultReaperPolicy is a conservative starting point.
 func DefaultReaperPolicy() ReaperPolicy {
 	return ReaperPolicy{
-		IdleTimeout:         30 * time.Minute,
-		AbandonedTimeout:    24 * time.Hour,
-		ProvisioningTimeout: 15 * time.Minute,
-		OrphanGrace:         30 * time.Minute,
-		UnlabeledGrace:      6 * time.Hour,
-		ReapUnlabeled:       false,
-		CapabilityRetention: 7 * 24 * time.Hour,
+		IdleTimeout:              30 * time.Minute,
+		AbandonedTimeout:         24 * time.Hour,
+		ProvisioningTimeout:      15 * time.Minute,
+		OrphanGrace:              30 * time.Minute,
+		UnlabeledGrace:           6 * time.Hour,
+		ReapUnlabeled:            false,
+		CapabilityRetention:      7 * 24 * time.Hour,
+		MaxProviderDeletesPerRun: 25,
 	}
 }
 
@@ -77,6 +82,9 @@ func (p ReaperPolicy) Validate() error {
 	}
 	if p.ReapUnlabeled && p.UnlabeledGrace <= 0 {
 		return fmt.Errorf("%w: reaping unlabelled sandboxes requires a positive grace period", ErrInvalid)
+	}
+	if p.MaxProviderDeletesPerRun <= 0 {
+		return fmt.Errorf("%w: provider delete breaker limit must be positive", ErrInvalid)
 	}
 	return nil
 }
@@ -115,6 +123,11 @@ type ReapReport struct {
 	Unattributed []string
 	// PurgedCapabilities is how many spent grant rows were dropped.
 	PurgedCapabilities int
+	// DeleteBreakerTripped reports that provider-only cleanup reached its hard
+	// per-pass deletion cap. DeferredProviderDeletes names candidates left for
+	// a later pass or operator review.
+	DeleteBreakerTripped    bool
+	DeferredProviderDeletes []string
 	// Errors are per-item failures. A pass reports them and keeps going: one
 	// wedged sandbox must not stop the rest of the fleet being reconciled.
 	Errors []error
@@ -316,13 +329,14 @@ func (r *Reaper) sweepProvider(ctx context.Context, claimed map[string]struct{},
 	}
 	now := r.now().UTC()
 	report.ProviderScanned = len(sandboxes)
+	providerDeletes := 0
 	for _, sandbox := range sandboxes {
 		if _, ok := claimed[sandbox.ID]; ok {
 			continue
 		}
 		attribution, attributed := sandbox.Attribution()
 		if !attributed {
-			r.sweepUnattributed(ctx, sandbox, now, report)
+			r.sweepUnattributed(ctx, sandbox, now, &providerDeletes, report)
 			continue
 		}
 		if attribution.Deployment != r.deployment {
@@ -338,10 +352,14 @@ func (r *Reaper) sweepProvider(ctx context.Context, claimed map[string]struct{},
 		if !r.past(sandbox.CreatedAt, r.policy.OrphanGrace, now) {
 			continue
 		}
+		if !r.allowProviderDelete(sandbox.ID, providerDeletes, report) {
+			continue
+		}
 		if err := r.manager.provider.Delete(ctx, sandbox.ID); err != nil && !errors.Is(err, ErrSandboxNotFound) {
 			report.Errors = append(report.Errors, fmt.Errorf("delete orphan sandbox %s: %w", sandbox.ID, providerFailure("delete sandbox", err)))
 			continue
 		}
+		providerDeletes++
 		r.logger.Warn("deleted orphaned cloud sandbox",
 			"provider_sandbox", sandbox.ID, "runtime", attribution.RuntimeID,
 			"org", attribution.OrgID, "workspace", attribution.WorkspaceID, "session", attribution.SessionID)
@@ -354,17 +372,30 @@ func (r *Reaper) sweepProvider(ctx context.Context, claimed map[string]struct{},
 // never landed, or a sandbox made by hand. It is deleted only when the
 // deployment has opted in, because the same rule would delete an unrelated
 // sandbox in a shared provider account.
-func (r *Reaper) sweepUnattributed(ctx context.Context, sandbox Sandbox, now time.Time, report *ReapReport) {
+func (r *Reaper) sweepUnattributed(ctx context.Context, sandbox Sandbox, now time.Time, providerDeletes *int, report *ReapReport) {
 	if !r.policy.ReapUnlabeled || !r.past(sandbox.CreatedAt, r.policy.UnlabeledGrace, now) {
 		report.Unattributed = append(report.Unattributed, sandbox.ID)
+		return
+	}
+	if !r.allowProviderDelete(sandbox.ID, *providerDeletes, report) {
 		return
 	}
 	if err := r.manager.provider.Delete(ctx, sandbox.ID); err != nil && !errors.Is(err, ErrSandboxNotFound) {
 		report.Errors = append(report.Errors, fmt.Errorf("delete unattributed sandbox %s: %w", sandbox.ID, providerFailure("delete sandbox", err)))
 		return
 	}
+	(*providerDeletes)++
 	r.logger.Warn("deleted unattributed cloud sandbox", "provider_sandbox", sandbox.ID)
 	report.Leaks = append(report.Leaks, sandbox.ID)
+}
+
+func (r *Reaper) allowProviderDelete(id string, deleted int, report *ReapReport) bool {
+	if deleted < r.policy.MaxProviderDeletesPerRun {
+		return true
+	}
+	report.DeleteBreakerTripped = true
+	report.DeferredProviderDeletes = append(report.DeferredProviderDeletes, id)
+	return false
 }
 
 // rowStillClaims re-reads the placement row a sandbox's label points at. The

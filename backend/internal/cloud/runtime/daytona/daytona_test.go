@@ -80,10 +80,12 @@ func sampleRequest(secret []byte) runtime.CreateRequest {
 	ref := sampleRef()
 	return runtime.CreateRequest{
 		Ref: ref, Labels: runtime.Labels("staging", ref, "rt-1"), Snapshot: "ao-worker",
-		CapabilityFilePath: runtime.CapabilityFilePath, ControlPlaneRedeemURL: "https://cloud.example/api/internal/sandbox-tickets/redeem",
-		SecretFiles:      []runtime.FileSecret{{Path: "/run/ao-sandbox/secrets/test-ticket", Content: secret, Mode: 0o600}},
+		Capability:       runtime.FileSecret{Path: runtime.CapabilityFilePath, Content: []byte("aocap_v1.create-capability-material"), Mode: 0o600},
+		ControlPlaneURL:  "https://cloud.example",
+		SecretFiles:      []runtime.FileSecret{{Path: "/run/ao/secrets/test-ticket", Content: secret, Mode: 0o600}},
 		Command:          "/usr/local/bin/codex",
 		Args:             []string{"exec", "it's-semantic"},
+		Env:              map[string]string{"AO_AGENT_MODE": "cloud"},
 		Resources:        runtime.Resources{CPU: 2, MemoryGB: 4, DiskGB: 10},
 		AutoStopInterval: 90 * time.Second, AutoDeleteInterval: 24 * time.Hour,
 		IdempotencyKey: "rt-1",
@@ -92,13 +94,14 @@ func sampleRequest(secret []byte) runtime.CreateRequest {
 
 func sampleStartRequest() runtime.StartRequest {
 	return runtime.StartRequest{
-		Ref:                   sampleRef(),
-		SecretFiles:           []runtime.FileSecret{{Path: "/run/ao-sandbox/secrets/test-ticket", Content: []byte("fresh-restart-ticket-material"), Mode: 0o600}},
-		Command:               "/usr/local/bin/codex",
-		Args:                  []string{"exec", "restart"},
-		BootstrapKey:          "restart-1",
-		CapabilityFilePath:    runtime.CapabilityFilePath,
-		ControlPlaneRedeemURL: "https://cloud.example/api/internal/sandbox-tickets/redeem",
+		Ref:             sampleRef(),
+		SecretFiles:     []runtime.FileSecret{{Path: "/run/ao/secrets/test-ticket", Content: []byte("fresh-restart-ticket-material"), Mode: 0o600}},
+		Command:         "/usr/local/bin/codex",
+		Args:            []string{"exec", "restart"},
+		BootstrapKey:    "restart-1",
+		RuntimeID:       "rt-1",
+		Capability:      runtime.FileSecret{Path: runtime.CapabilityFilePath, Content: []byte("aocap_v1.restart-capability-material"), Mode: 0o600},
+		ControlPlaneURL: "https://cloud.example",
 	}
 }
 
@@ -145,12 +148,12 @@ func TestCreateDeliversOwnerOnlySecretThenExecutesSemanticCommand(t *testing.T) 
 		t.Fatal("credential leaked into Daytona create request or URL")
 	}
 	capabilityUpload := stub.requests[3]
-	for _, field := range []string{
-		`"sandboxId":"sbx-1"`, `"workspaceId":"ws-1"`, `"sessionId":"sess-1"`,
-		`"controlPlaneRedeemUrl":"https://cloud.example/api/internal/sandbox-tickets/redeem"`,
-	} {
-		if !strings.Contains(capabilityUpload.body, field) {
-			t.Fatalf("capability upload missing %s: %q", field, capabilityUpload.body)
+	if !strings.Contains(capabilityUpload.body, "aocap_v1.create-capability-material") {
+		t.Fatalf("raw capability was not delivered: %q", capabilityUpload.body)
+	}
+	for _, forbidden := range []string{"sandboxId", "workspaceId", "controlPlaneRedeemUrl"} {
+		if strings.Contains(capabilityUpload.body, forbidden) {
+			t.Fatalf("obsolete capability metadata %q was delivered: %q", forbidden, capabilityUpload.body)
 		}
 	}
 	var body createPayload
@@ -159,6 +162,9 @@ func TestCreateDeliversOwnerOnlySecretThenExecutesSemanticCommand(t *testing.T) 
 	}
 	if body.Snapshot != "ao-worker" || body.CPU != 2 || body.Memory != 4 || body.Disk != 10 {
 		t.Fatalf("create body = %#v", body)
+	}
+	if body.EnvVars["AO_AGENT_MODE"] != "cloud" {
+		t.Fatalf("create environment = %#v", body.EnvVars)
 	}
 	if body.AutoStopInterval == nil || *body.AutoStopInterval != 2 || body.AutoDeleteInterval == nil || *body.AutoDeleteInterval != 1440 {
 		t.Fatalf("provider guards = %v %v", body.AutoStopInterval, body.AutoDeleteInterval)
@@ -174,7 +180,7 @@ func TestCreateDeliversOwnerOnlySecretThenExecutesSemanticCommand(t *testing.T) 
 	if err := json.Unmarshal([]byte(stub.requests[6].body), &launch); err != nil {
 		t.Fatal(err)
 	}
-	want := "exec '/usr/local/bin/ao-sandbox' '--listen' '0.0.0.0:8080' '--capability-file' '/run/ao-sandbox/capability.json' '--workspace' '/workspace' '--ready-file' '/run/ao-sandbox/ready.json' '--secret-dir' '/run/ao-sandbox/secrets' '--route-prefix' '/api/sandbox/v1' '--' '/usr/local/bin/codex' 'exec' 'it'\"'\"'s-semantic'"
+	want := "exec '/usr/local/bin/ao-sandbox' '--listen' '0.0.0.0:8080' '--control-plane-url' 'https://cloud.example' '--sandbox-id' 'rt-1' '--workspace-id' 'ws-1' '--session-id' 'sess-1' '--workspace' '/workspace' '--ready-file' '/run/ao/ready.json' '--secret-dir' '/run/ao/secrets' '--route-prefix' '/api/sandbox/v1' '--' '/usr/local/bin/codex' 'exec' 'it'\"'\"'s-semantic'"
 	if launch.Command != want || !launch.RunAsync {
 		t.Fatalf("launch = %#v, want command %q", launch, want)
 	}
@@ -198,7 +204,7 @@ func TestCreateTreatsExistingBootstrapSessionAsIdempotent(t *testing.T) {
 	}
 }
 
-func TestCreatePurgesSecretAndDeletesSandboxOnBootstrapFailure(t *testing.T) {
+func TestCreatePurgesSecretAndReturnsSandboxHandleOnBootstrapFailure(t *testing.T) {
 	stub := newAPIStub(t)
 	installCreateHandlers(stub)
 	stub.json("POST /toolbox/sbx-1/toolbox/process/session/ao-runtime-rt-1/exec", http.StatusBadGateway, map[string]string{"error": "toolbox unavailable"})
@@ -209,11 +215,15 @@ func TestCreatePurgesSecretAndDeletesSandboxOnBootstrapFailure(t *testing.T) {
 	}
 	secret := []byte("aocap_v1.must-be-purged-on-error")
 
-	if _, err := stub.provider(t).Create(context.Background(), sampleRequest(secret)); err == nil {
+	sandbox, err := stub.provider(t).Create(context.Background(), sampleRequest(secret))
+	if err == nil {
 		t.Fatal("bootstrap failure returned success")
 	}
-	if !deleted {
-		t.Fatal("half-bootstrapped sandbox was not deleted")
+	if sandbox.ID != "sbx-1" {
+		t.Fatalf("sandbox id = %q, want retained provider handle", sandbox.ID)
+	}
+	if deleted {
+		t.Fatal("bootstrap failure deleted compute before its handle could be persisted")
 	}
 	if strings.Trim(string(secret), "\x00") != "" {
 		t.Fatal("secret survived failed creation")

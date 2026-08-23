@@ -1,6 +1,7 @@
 package runtime_test
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -30,9 +31,18 @@ type harness struct {
 }
 
 type recordingCapabilities struct {
-	inner  runtime.Capabilities
+	inner  *capability.Authority
 	events *[]string
 	fail   error
+}
+
+func (c *recordingCapabilities) IssueSandbox(ctx context.Context, scope capability.Scope) ([]byte, error) {
+	*c.events = append(*c.events, "capability.issue")
+	grant, err := c.inner.Issue(ctx, scope, time.Hour)
+	if err != nil {
+		return nil, err
+	}
+	return []byte(grant.Token), nil
 }
 
 func (c *recordingCapabilities) RevokeScope(ctx context.Context, selector capability.Selector) (int, error) {
@@ -198,9 +208,9 @@ func TestEnsureInjectsSecretsThroughOwnerOnlyFiles(t *testing.T) {
 		t.Fatal(err)
 	}
 	request := h.provider.LastCreate
-	if request.CapabilityFilePath != runtime.CapabilityFilePath ||
-		request.ControlPlaneRedeemURL != "https://cloud.example"+runtime.SandboxRedeemPath {
-		t.Fatalf("capability file contract = %q %q", request.CapabilityFilePath, request.ControlPlaneRedeemURL)
+	if request.Capability.Path != runtime.CapabilityFilePath || request.Capability.Mode != 0o600 ||
+		request.ControlPlaneURL != "https://cloud.example" {
+		t.Fatalf("capability file contract = %#v %q", request.Capability, request.ControlPlaneURL)
 	}
 	if len(request.SecretFiles) != 1 || request.SecretFiles[0].Path != "/home/agent/.ssh/id_ed25519" {
 		t.Fatalf("secret files = %#v", request.SecretFiles)
@@ -379,6 +389,62 @@ func TestEnsureResumesAPlacementWhoseCreateNeverCompleted(t *testing.T) {
 	}
 }
 
+func TestEnsureRetainsProviderHandleAndRetriesBootstrapAfterCreateFailure(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	h.provider.FailAfterCreate = errors.New("toolbox bootstrap failed")
+
+	failed, err := h.manager.Ensure(ctx, workerRef(), testLaunch())
+	if !errors.Is(err, runtime.ErrProviderUnavailable) {
+		t.Fatalf("err = %v, want ErrProviderUnavailable", err)
+	}
+	if failed.Sandbox.ID == "" {
+		t.Fatal("provider did not return the allocated sandbox handle")
+	}
+	record, err := h.store.Get(ctx, workerRef())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if record.ProviderID != failed.Sandbox.ID || record.State != runtime.StateFailed {
+		t.Fatalf("failed placement = %#v, sandbox = %#v", record, failed.Sandbox)
+	}
+	if h.provider.Len() != 1 {
+		t.Fatal("bootstrap failure deleted retained compute")
+	}
+
+	recovered, err := h.manager.Ensure(ctx, workerRef(), testLaunch())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if recovered.Record.ProviderID != record.ProviderID || recovered.Record.State != runtime.StateRunning {
+		t.Fatalf("recovered placement = %#v", recovered.Record)
+	}
+	if h.provider.LastStart.BootstrapKey == "" {
+		t.Fatal("failed running sandbox was accepted without fresh bootstrap")
+	}
+}
+
+func TestEnsurePassesNonSecretEnvironmentAndCompleteStableLabels(t *testing.T) {
+	h := newHarness(t)
+	launch := testLaunch()
+	launch.Env = map[string]string{"AO_AGENT_MODE": "cloud"}
+	if _, err := h.manager.Ensure(context.Background(), workerRef(), launch); err != nil {
+		t.Fatal(err)
+	}
+	if h.provider.LastCreate.Env["AO_AGENT_MODE"] != "cloud" {
+		t.Fatalf("create env = %#v", h.provider.LastCreate.Env)
+	}
+	labels := h.provider.LastCreate.Labels
+	for _, key := range []string{
+		runtime.LabelEnvironment, runtime.LabelOrg, runtime.LabelWorkspace,
+		runtime.LabelSession, runtime.LabelRole, runtime.LabelRuntimeID,
+	} {
+		if labels[key] == "" {
+			t.Fatalf("missing stable provider label %s: %#v", key, labels)
+		}
+	}
+}
+
 func TestEnsureAdoptsSandboxWhoseCreateResponseWasLost(t *testing.T) {
 	h := newHarness(t)
 	ctx := context.Background()
@@ -440,6 +506,7 @@ func TestEnsureBootsAStoppedSandboxWithFreshCapabilityMetadata(t *testing.T) {
 		t.Fatal(err)
 	}
 	h.provider.SetState(first.Record.ProviderID, runtime.ProviderStopped)
+	firstCapability := append([]byte(nil), h.provider.LastCreateCapability...)
 
 	second, err := h.manager.Ensure(ctx, workerRef(), testLaunch())
 	if err != nil {
@@ -451,9 +518,13 @@ func TestEnsureBootsAStoppedSandboxWithFreshCapabilityMetadata(t *testing.T) {
 	if h.provider.LastStart.Command != testLaunch().Command || h.provider.LastStart.BootstrapKey == "" {
 		t.Fatalf("restart request = %#v", h.provider.LastStart)
 	}
-	if h.provider.LastStart.CapabilityFilePath != runtime.CapabilityFilePath ||
-		h.provider.LastStart.ControlPlaneRedeemURL != "https://cloud.example"+runtime.SandboxRedeemPath {
-		t.Fatalf("restart capability metadata = %#v", h.provider.LastStart)
+	if h.provider.LastStart.Capability.Path != runtime.CapabilityFilePath ||
+		h.provider.LastStart.ControlPlaneURL != "https://cloud.example" {
+		t.Fatalf("restart capability contract = %#v", h.provider.LastStart)
+	}
+	if len(firstCapability) == 0 || len(h.provider.LastStartCapability) == 0 ||
+		bytes.Equal(firstCapability, h.provider.LastStartCapability) {
+		t.Fatal("resume reused the preceding sandbox capability")
 	}
 }
 

@@ -42,10 +42,11 @@ func TestStagingLifecycle(t *testing.T) {
 	ref := runtime.Ref{OrgID: "staging", WorkspaceID: "provider-acceptance", SessionID: "session-" + suffix, UserID: "acceptance", Role: runtime.RoleWorker}
 	request := runtime.CreateRequest{
 		Ref: ref, Labels: runtime.Labels("staging-acceptance", ref, "runtime-"+suffix),
-		Snapshot: snapshot, CapabilityFilePath: runtime.CapabilityFilePath,
-		ControlPlaneRedeemURL: "https://control.staging.example/api/internal/sandbox-tickets/redeem",
-		SecretFiles:           []runtime.FileSecret{{Path: "/run/ao/acceptance-ticket", Content: []byte("one-time-staging-acceptance-ticket"), Mode: 0o600}},
-		Command:               "/bin/sh", Args: []string{"-c", "while :; do sleep 60; done"},
+		Snapshot:        snapshot,
+		Capability:      runtime.FileSecret{Path: runtime.CapabilityFilePath, Content: []byte("aocap_v1.staging-create-placeholder"), Mode: 0o600},
+		ControlPlaneURL: "https://control.staging.example",
+		SecretFiles:     []runtime.FileSecret{{Path: "/run/ao/acceptance-ticket", Content: []byte("one-time-staging-acceptance-ticket"), Mode: 0o600}},
+		Command:         "/bin/sh", Args: []string{"-c", "while :; do sleep 60; done"},
 		AutoStopInterval: 15 * time.Minute, AutoDeleteInterval: time.Hour,
 		IdempotencyKey: "ao-provider-acceptance-" + suffix,
 	}
@@ -72,10 +73,12 @@ func TestStagingLifecycle(t *testing.T) {
 		t.Fatalf("idempotent stop: %v", err)
 	}
 	if _, err := provider.Start(ctx, sandbox.ID, runtime.StartRequest{
-		Ref: ref, CapabilityFilePath: runtime.CapabilityFilePath,
-		ControlPlaneRedeemURL: "https://control.staging.example/api/internal/sandbox-tickets/redeem",
-		SecretFiles:           []runtime.FileSecret{{Path: "/run/ao/acceptance-ticket", Content: []byte("fresh-staging-acceptance-ticket"), Mode: 0o600}},
-		Command:               "/bin/sh", Args: []string{"-c", "while :; do sleep 60; done"}, BootstrapKey: "restart-" + suffix,
+		Ref:             ref,
+		Capability:      runtime.FileSecret{Path: runtime.CapabilityFilePath, Content: []byte("aocap_v1.staging-restart-placeholder"), Mode: 0o600},
+		ControlPlaneURL: "https://control.staging.example",
+		SecretFiles:     []runtime.FileSecret{{Path: "/run/ao/acceptance-ticket", Content: []byte("fresh-staging-acceptance-ticket"), Mode: 0o600}},
+		Command:         "/bin/sh", Args: []string{"-c", "while :; do sleep 60; done"}, BootstrapKey: "restart-" + suffix,
+		RuntimeID: "runtime-" + suffix,
 	}); err != nil {
 		t.Fatal(err)
 	}
