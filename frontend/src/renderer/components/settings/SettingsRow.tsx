@@ -1,5 +1,4 @@
-import { ChevronDown, ChevronRight, Pencil, type LucideIcon } from "lucide-react";
-import { motion } from "motion/react";
+import { ChevronRight, Pencil, type LucideIcon } from "lucide-react";
 import { useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { cn } from "../../lib/utils";
@@ -147,93 +146,5 @@ export function SettingsLinkRow({
 			<SettingsRowLabel icon={icon} label={label} />
 			<ChevronRight className="size-icon-base shrink-0 text-settings-muted" aria-hidden="true" />
 		</button>
-	);
-}
-
-export function SettingsExpandableRow({
-	icon,
-	label,
-	children,
-	defaultOpen = false,
-}: {
-	icon?: LucideIcon;
-	label: string;
-	children: ReactNode | ((open: boolean) => ReactNode);
-	defaultOpen?: boolean;
-}) {
-	const [open, setOpen] = useState(defaultOpen);
-	const containerRef = useRef<HTMLDivElement>(null);
-	const content = typeof children === "function" ? children(open) : children;
-
-	const scrollIntoViewIfNeeded = () => {
-		const el = containerRef.current;
-		if (!el) return;
-		requestAnimationFrame(() => {
-			const scrollParent = el.closest<HTMLElement>("[style*='overflow'], [class*='overflow']") ?? el.parentElement;
-			if (!scrollParent) return;
-			const targetTop = el.offsetTop - scrollParent.offsetTop;
-			const start = scrollParent.scrollTop;
-			const distance = targetTop - start;
-			if (Math.abs(distance) < 2) return;
-			const duration = 300;
-			const startTime = performance.now();
-			const step = (now: number) => {
-				const t = Math.min((now - startTime) / duration, 1);
-				const ease = t * (2 - t);
-				scrollParent.scrollTop = start + distance * ease;
-				if (t < 1) requestAnimationFrame(step);
-			};
-			requestAnimationFrame(step);
-		});
-	};
-
-	return (
-		<div
-			ref={containerRef}
-			className={cn(
-				"flex flex-col rounded-md bg-[var(--color-bg-settings-row)] transition-colors",
-				open ? "bg-[var(--color-bg-settings-row-hover)]" : "hover:bg-[var(--color-bg-settings-row-hover)]",
-			)}
-		>
-			<button
-				type="button"
-				onClick={() => {
-					scrollIntoViewIfNeeded();
-					setOpen(!open);
-				}}
-				aria-expanded={open}
-				className="flex h-[var(--size-settings-row)] min-h-[var(--size-settings-row)] w-full items-center justify-between gap-[var(--size-settings-row-icon-gap)] bg-transparent px-[var(--size-settings-row-padding)] py-[var(--size-settings-row-padding)] text-left focus-visible:rounded-md focus-visible:ring-1 focus-visible:ring-ring focus-visible:outline-none"
-			>
-				<SettingsRowLabel icon={icon} label={label} />
-				<ChevronDown
-					className={cn(
-						"size-icon-base shrink-0 text-settings-muted transition-transform duration-200",
-						!open && "-rotate-90",
-					)}
-					aria-hidden="true"
-				/>
-			</button>
-			{/* Content stays mounted while collapsed (hidden + inert) so the first
-			    expand only animates height — mounting a heavy subtree (QR render,
-			    queries) mid-animation is what makes first-open janky. Children get
-			    `open` via the render prop to gate network work until visible. */}
-			<motion.div
-				initial={false}
-				animate={{ height: open ? "auto" : 0, opacity: open ? 1 : 0 }}
-				transition={{
-					height: { duration: 0.15, ease: [0.23, 1, 0.32, 1] },
-					opacity: { duration: 0.1, ease: "easeOut" },
-				}}
-				className="overflow-hidden"
-				aria-hidden={!open}
-				inert={!open || undefined}
-			>
-				{/* pb matches px so content (e.g. the QR panel) sits equidistant
-				    from the right and bottom edges. */}
-				<div className="h-fit px-3 pb-3">
-					{content}
-				</div>
-			</motion.div>
-		</div>
 	);
 }

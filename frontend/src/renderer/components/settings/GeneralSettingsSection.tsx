@@ -1,39 +1,46 @@
-import { useQuery } from "@tanstack/react-query";
-import { Smartphone } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import type { ThemePreference, ThemeStyle } from "../../lib/theme";
 import type { AppLocale } from "../../i18n";
 import { useLocaleStore } from "../../stores/locale-store";
 import { useSoundNotificationsStore } from "../../stores/sound-notifications-store";
 import { useUiStore } from "../../stores/ui-store";
-import { SettingsOptionMenu, type SettingsOption } from "./SettingsOptionMenu";
-import { SettingsExpandableRow, SettingsRow } from "./SettingsRow";
-import { SettingsSection } from "./SettingsSection";
-import { ConnectMobileContent, fetchMobileStatus, mobileStatusQueryKey } from "./ConnectMobileContent";
-import { MobileDevicesSection } from "./MobileDevicesSection";
 import { Switch } from "../ui/switch";
+import { SettingsOptionMenu, type SettingsOption } from "./SettingsOptionMenu";
+import { SettingsLinkRow, SettingsRow } from "./SettingsRow";
+import { SettingsSection } from "./SettingsSection";
 import { cn } from "../../lib/utils";
 import { useSettings, useUpdateSessionInterface } from "../../hooks/useSettings";
 import type { SessionMode } from "../../types/workspace";
 
 /**
- * Default interface for new sessions. Daemon-owned so `ao spawn` and mobile
- * resolve the same value. Only affects sessions created afterwards — a
- * session's interface is fixed when it is born.
+ * The default interface for new sessions.
+ *
+ * Daemon-owned, so `ao spawn` and mobile resolve the same value. Two things this
+ * control must be honest about: it only affects sessions created afterwards —
+ * a session's interface is fixed when it is born — and chat is limited to the
+ * agents that have a structured driver today.
  */
 function SessionInterfaceRow() {
 	const { t } = useTranslation();
 	const { settings, isLoading, error } = useSettings();
 	const { update, saving, error: saveError } = useUpdateSessionInterface();
 	const interfaceOptions = [
-		{ value: "tui", label: t("settings.sessionInterface.terminal") },
-		{ value: "chat", label: t("settings.sessionInterface.chat") },
+		{
+			value: "tui",
+			label: t("settings.sessionInterface.terminal"),
+		},
+		{
+			value: "chat",
+			label: t("settings.sessionInterface.chat"),
+		},
 	] satisfies SettingsOption<SessionMode>[];
 
 	const chatAvailable = (settings?.chatHarnesses.length ?? 0) > 0;
-	// Silent when everything works; speak up only when the control is limited
-	// (no chat-capable agent installed) or a save failed.
-	const note = saveError ?? error ?? (!chatAvailable ? t("settings.sessionInterface.unavailable") : null);
+	const help = !chatAvailable
+		? t("settings.sessionInterface.unavailable")
+		: t("settings.sessionInterface.available", { harnesses: settings?.chatHarnesses.join(", ") });
+
+	const note = saveError ?? error ?? help;
 
 	return (
 		<div className="flex w-full flex-col">
@@ -46,29 +53,17 @@ function SessionInterfaceRow() {
 					disabled={isLoading || saving || !chatAvailable}
 				/>
 			</SettingsRow>
-			{note ? (
-				<p
-					className={cn(
-						"px-3 pt-0 pb-4 text-xs leading-relaxed",
-						saveError || error ? "text-destructive" : "text-muted-foreground",
-					)}
-				>
-					{note}
-				</p>
-			) : null}
-		</div>
-	);
-}
-
-/** Paired-device roster, shown below the Connect Mobile row. Mounted only
- *  while the bridge is on — the roster's mute/remove controls issue real
- *  PATCH/DELETE calls, so they must be absent from the DOM otherwise. */
-function PairedDevices() {
-	const query = useQuery({ queryKey: mobileStatusQueryKey, queryFn: fetchMobileStatus });
-	if (!query.data?.enabled) return null;
-	return (
-		<div className="pb-3 [&>section]:mt-2">
-			<MobileDevicesSection />
+			{/* Stated rather than implied: this changes what NEW sessions get. An
+			    existing session's interface is fixed when it is created, so nothing
+			    here can move a session that already exists. */}
+			<p
+				className={cn(
+					"px-3 pt-0 pb-4 text-xs leading-relaxed",
+					saveError || error ? "text-destructive" : "text-muted-foreground",
+				)}
+			>
+				{note}
+			</p>
 		</div>
 	);
 }
@@ -86,8 +81,10 @@ const COLOR_THEME_OPTIONS = [
 ] satisfies SettingsOption<ThemeStyle>[];
 
 export function GeneralSettingsSection({
+	onConnectMobile,
 	titleHidden,
 }: {
+	onConnectMobile: () => void;
 	titleHidden?: boolean;
 }) {
 	const { t } = useTranslation();
@@ -109,7 +106,10 @@ export function GeneralSettingsSection({
 	const themeOptions = [
 		{ value: "light", label: t("settings.theme.light") },
 		{ value: "dark", label: t("settings.theme.dark") },
-		{ value: "system", label: t("settings.theme.system") },
+		{
+			value: "system",
+			label: t("settings.theme.system"),
+		},
 	] satisfies SettingsOption<ThemePreference>[];
 
 	const languageOptions = [
@@ -124,81 +124,63 @@ export function GeneralSettingsSection({
 	] satisfies SettingsOption<AppLocale>[];
 
 	return (
-		<>
-			{/* Appearance */}
-			<SettingsSection title={t("settings.appearance")} titleHidden={titleHidden} grouped>
-				<SettingsRow label={t("settings.theme")}>
-					<div className="flex items-center gap-1.5">
-						<SettingsOptionMenu
-							aria-label={t("settings.colorTheme")}
-							value={themeStyle}
-							options={COLOR_THEME_OPTIONS}
-							onChange={setThemeStyle}
-						/>
-						<SettingsOptionMenu
-							aria-label={t("settings.theme")}
-							value={themePreference}
-							options={themeOptions}
-							onChange={setThemePreference}
-						/>
-					</div>
-				</SettingsRow>
-				<SettingsRow label={t("settings.language")}>
-					<SettingsOptionMenu
-						aria-label={t("settings.language")}
-						disabled={localeSaving}
-						value={locale}
-						options={languageOptions}
-						onChange={(next) => {
-							void setLocale(next);
-						}}
-					/>
-				</SettingsRow>
-				{localeSaveError ? (
-					<p role="alert" className="px-3 text-caption leading-4 text-error">
-						{t("settings.language.saveFailed")}
-					</p>
-				) : null}
-			</SettingsSection>
-
-			{/* Sessions */}
-			<SettingsSection title={t("settings.sessions")} grouped>
-				<SessionInterfaceRow />
-				<SettingsRow label={t("settings.soundNotifications")}>
-					<Switch
-						aria-label={t("settings.soundNotifications")}
-						checked={soundNotificationsEnabled}
-						disabled={soundNotificationsSaving}
-						onCheckedChange={(next) => {
-							void setSoundNotificationsEnabled(next);
-						}}
-					/>
-				</SettingsRow>
-				{soundNotificationsSaveError ? (
-					<p role="alert" className="px-3 text-caption leading-4 text-error">
-						{t("settings.soundNotifications.saveFailed")}
-					</p>
-				) : null}
-			</SettingsSection>
-
-			{/* Mobile */}
-			<SettingsSection title={t("settings.mobile")} grouped>
-				<SettingsExpandableRow icon={Smartphone} label={t("settings.connectMobile")}>
-					{(open) => <ConnectMobileContent active={open} />}
-				</SettingsExpandableRow>
-				<PairedDevices />
-			</SettingsSection>
-
-			{/* Advanced */}
-			<SettingsSection title={t("settings.advanced")} grouped>
-				<SettingsRow label={t("settings.developerMode")}>
-					<Switch
-						aria-label={t("settings.developerMode")}
-						checked={developerMode}
-						onCheckedChange={setDeveloperMode}
-					/>
-				</SettingsRow>
-			</SettingsSection>
-		</>
+		<SettingsSection title={t("settings.general")} titleHidden={titleHidden} grouped>
+			<SettingsRow label={t("settings.colorTheme")}>
+				<SettingsOptionMenu
+					aria-label={t("settings.colorTheme")}
+					value={themeStyle}
+					options={COLOR_THEME_OPTIONS}
+					onChange={setThemeStyle}
+				/>
+			</SettingsRow>
+			<SettingsRow label={t("settings.theme")}>
+				<SettingsOptionMenu
+					aria-label={t("settings.theme")}
+					value={themePreference}
+					options={themeOptions}
+					onChange={setThemePreference}
+				/>
+			</SettingsRow>
+			<SettingsRow label={t("settings.language")}>
+				<SettingsOptionMenu
+					aria-label={t("settings.language")}
+					disabled={localeSaving}
+					value={locale}
+					options={languageOptions}
+					onChange={(next) => {
+						void setLocale(next);
+					}}
+				/>
+			</SettingsRow>
+			{localeSaveError ? (
+				<p role="alert" className="px-3 text-caption leading-4 text-error">
+					{t("settings.language.saveFailed")}
+				</p>
+			) : null}
+			<SessionInterfaceRow />
+			<SettingsRow label={t("settings.soundNotifications")}>
+				<Switch
+					aria-label={t("settings.soundNotifications")}
+					checked={soundNotificationsEnabled}
+					disabled={soundNotificationsSaving}
+					onCheckedChange={(next) => {
+						void setSoundNotificationsEnabled(next);
+					}}
+				/>
+			</SettingsRow>
+			{soundNotificationsSaveError ? (
+				<p role="alert" className="px-3 text-caption leading-4 text-error">
+					{t("settings.soundNotifications.saveFailed")}
+				</p>
+			) : null}
+			<SettingsRow label={t("settings.developerMode")}>
+				<Switch
+					aria-label={t("settings.developerMode")}
+					checked={developerMode}
+					onCheckedChange={setDeveloperMode}
+				/>
+			</SettingsRow>
+			<SettingsLinkRow label={t("settings.connectMobile")} onClick={onConnectMobile} />
+		</SettingsSection>
 	);
 }

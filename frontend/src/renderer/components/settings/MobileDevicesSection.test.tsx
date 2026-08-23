@@ -43,9 +43,6 @@ describe("MobileDevicesSection", () => {
 		renderSection();
 
 		expect(await screen.findByText("iPhone")).toBeInTheDocument();
-		expect(screen.getByRole("heading", { name: "Connected devices" })).toBeInTheDocument();
-		expect(screen.getAllByRole("listitem")[0]).toHaveClass("rounded-lg", "border");
-		expect(screen.getAllByRole("listitem")[0]).not.toHaveClass("shadow-sm");
 		expect(screen.getByText("Live")).toBeInTheDocument();
 		expect(screen.getByText("M31s")).toBeInTheDocument();
 		expect(screen.getByText(/2 hours ago/)).toBeInTheDocument();
@@ -71,21 +68,17 @@ describe("MobileDevicesSection", () => {
 		const del = vi.spyOn(apiClient, "DELETE").mockResolvedValue({ data: undefined } as never);
 		renderSection();
 
-		const removeButton = await screen.findByRole("button", { name: /remove iPhone/i });
-		expect(removeButton.querySelector(".lucide-trash-2")).toBeInTheDocument();
-		fireEvent.click(removeButton);
+		fireEvent.click(await screen.findByRole("button", { name: /remove iPhone/i }));
 		expect(del).not.toHaveBeenCalled();
 
 		fireEvent.click(screen.getByRole("button", { name: /confirm remove/i }));
 		await waitFor(() => expect(del).toHaveBeenCalledTimes(1));
 	});
 
-	it("renders nothing when no devices are paired", async () => {
+	it("shows an empty state when nothing is paired", async () => {
 		vi.spyOn(apiClient, "GET").mockResolvedValue({ data: { devices: [] } } as never);
 		renderSection();
-		await waitFor(() => expect(apiClient.GET).toHaveBeenCalled());
-		expect(screen.queryByRole("heading", { name: "Connected devices" })).not.toBeInTheDocument();
-		expect(screen.queryByText(/No devices paired yet/i)).not.toBeInTheDocument();
+		expect(await screen.findByText(/No devices paired yet/i)).toBeInTheDocument();
 	});
 
 	it("shows a distinct message when the device registry is unavailable, not the empty state", async () => {

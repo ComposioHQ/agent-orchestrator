@@ -33,6 +33,14 @@ vi.mock("./GlobalSettingsForm", () => ({
 	GlobalSettingsForm: () => <div>Global settings</div>,
 }));
 
+vi.mock("./settings/KeyboardShortcutsSettingsDialog", () => ({
+	KeyboardShortcutsSettingsDialog: () => null,
+}));
+
+vi.mock("./ConnectMobileModal", () => ({
+	ConnectMobileModal: () => null,
+}));
+
 describe("SettingsDialog", () => {
 	beforeEach(() => {
 		useUiStore.setState({ settingsModal: null });

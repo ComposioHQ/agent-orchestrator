@@ -93,7 +93,6 @@
 		"motion": "^12.43.0",
 		"openapi-fetch": "^0.17.0",
 		"posthog-js": "^1.390.2",
-		"qr-code-styling": "^1.9.2",
 		"qrcode.react": "^4.2.0",
 		"radix-ui": "^1.5.0",
 		"react": "^19.2.7",

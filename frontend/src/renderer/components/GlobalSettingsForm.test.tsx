@@ -7,7 +7,6 @@ import { GlobalSettingsForm } from "./GlobalSettingsForm";
 import { useLocaleStore } from "../stores/locale-store";
 import { useSoundNotificationsStore } from "../stores/sound-notifications-store";
 import { useUiStore } from "../stores/ui-store";
-import { TooltipProvider } from "./ui/tooltip";
 
 const {
 	getUpdate,
@@ -89,9 +88,7 @@ function renderForm() {
 	const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 	render(
 		<QueryClientProvider client={qc}>
-			<TooltipProvider>
-				<GlobalSettingsForm />
-			</TooltipProvider>
+			<GlobalSettingsForm />
 		</QueryClientProvider>,
 	);
 	return qc;
@@ -154,16 +151,26 @@ beforeEach(async () => {
 });
 
 describe("GlobalSettingsForm", () => {
-	it("renders the settings sections", async () => {
+	it("renders the Figma settings sections", async () => {
 		renderForm();
 		expect(await screen.findByLabelText("Settings")).toBeInTheDocument();
-		expect(screen.getByText("Appearance")).toBeInTheDocument();
+		// "Settings" heading is now in the modal dialog header, not in the form body
+		expect(screen.getByText("General")).toBeInTheDocument();
 		expect(screen.getByText("Language")).toBeInTheDocument();
 		expect(await screen.findByText("Updates")).toBeInTheDocument();
-		expect(screen.getByText("Advanced")).toBeInTheDocument();
-		expect(screen.getByText("Report a problem")).toBeInTheDocument();
-		// Report form is inline — no dialog, fields directly present.
-		expect(screen.getByLabelText("Title")).toBeInTheDocument();
+		expect(screen.getByText("Get help")).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "Report a problem" })).toBeInTheDocument();
+	});
+
+	it("gives settings link rows internal padding and rounded borders", async () => {
+		renderForm();
+
+		const connectMobile = await screen.findByRole("button", { name: "Connect Mobile" });
+		const keyboardShortcuts = screen.getByRole("button", { name: "Keyboard shortcuts" });
+
+		for (const row of [connectMobile, keyboardShortcuts]) {
+			expect(row).toHaveClass("settings-row-bar", "settings-link-row");
+		}
 	});
 
 	it("persists Developer Mode and reveals Feature Releases", async () => {
@@ -190,17 +197,18 @@ describe("GlobalSettingsForm", () => {
 		expect(featListBuilds).toHaveBeenCalled();
 	});
 
-	it("switches settings labels to Simplified Chinese and persists locale", async () => {
+	it("switches General settings labels to Simplified Chinese and persists locale", async () => {
 		const user = userEvent.setup();
 		renderForm();
-		expect(await screen.findByLabelText("Settings")).toBeInTheDocument();
+		expect(await screen.findByText("General")).toBeInTheDocument();
 		expect(screen.getByLabelText("Language")).toBeInTheDocument();
 
 		await user.click(screen.getByLabelText("Language"));
 		await user.click(await screen.findByRole("menuitem", { name: "Simplified Chinese" }));
 
 		await waitFor(() => expect(setUiSettings).toHaveBeenCalledWith({ locale: "zh-CN" }));
-		await waitFor(() => expect(screen.getByText("语言")).toBeInTheDocument());
+		await waitFor(() => expect(screen.getByText("通用")).toBeInTheDocument());
+		expect(screen.getByText("语言")).toBeInTheDocument();
 		expect(screen.getByText("主题")).toBeInTheDocument();
 		expect(document.documentElement.lang).toBe("zh-CN");
 		expect(useLocaleStore.getState().locale).toBe("zh-CN");
@@ -235,14 +243,14 @@ describe("GlobalSettingsForm", () => {
 		setUiSettings.mockRejectedValue(new Error("disk full"));
 		const user = userEvent.setup();
 		renderForm();
-		await screen.findByLabelText("Settings");
+		await screen.findByText("General");
 
 		await user.click(screen.getByLabelText("Language"));
 		await user.click(await screen.findByRole("menuitem", { name: "Simplified Chinese" }));
 
 		expect(await screen.findByRole("alert")).toHaveTextContent("Could not save the language preference.");
 		expect(useLocaleStore.getState().locale).toBe("en");
-		expect(screen.getByText("Appearance")).toBeInTheDocument();
+		expect(screen.getByText("General")).toBeInTheDocument();
 	});
 
 	it("closes settings with Escape", async () => {
@@ -256,10 +264,15 @@ describe("GlobalSettingsForm", () => {
 		expect(navigateMock).not.toHaveBeenCalled();
 	});
 
-	it("renders the report form inline without a dialog", async () => {
+	it("lets an open settings dialog consume Escape first", async () => {
+		const user = userEvent.setup();
 		renderForm();
-		expect(await screen.findByLabelText("Title")).toBeInTheDocument();
-		expect(screen.queryByRole("dialog", { name: "Report a problem" })).not.toBeInTheDocument();
+		await user.click(await screen.findByRole("button", { name: "Report a problem" }));
+
+		await user.keyboard("{Escape}");
+
+		await waitFor(() => expect(screen.queryByRole("dialog", { name: "Report a problem" })).not.toBeInTheDocument());
+		expect(navigateMock).not.toHaveBeenCalled();
 	});
 
 	it("shows the nightly warning when the nightly channel is loaded", async () => {
@@ -422,7 +435,10 @@ describe("GlobalSettingsForm", () => {
 		});
 		renderForm();
 
-		await user.type(await screen.findByLabelText("Title"), "Create project fails in /Users/alice/private-repo");
+		await user.click(await screen.findByRole("button", { name: "Report a problem" }));
+		expect(await screen.findByRole("dialog", { name: "Report a problem" })).toBeInTheDocument();
+
+		await user.type(screen.getByLabelText("Title"), "Create project fails in /Users/alice/private-repo");
 		await user.type(
 			screen.getByLabelText("What happened?"),
 			"Open http://127.0.0.1:5173/projects/demo?access_token=local-secret and click Create. Show a clear prerequisite error.",
@@ -464,7 +480,9 @@ describe("GlobalSettingsForm", () => {
 		getDaemonStatus.mockRejectedValue(new Error("daemon unavailable"));
 		renderForm();
 
-		await user.type(await screen.findByLabelText("Title"), "Need help with setup");
+		await user.click(await screen.findByRole("button", { name: "Report a problem" }));
+		expect(await screen.findByRole("dialog", { name: "Report a problem" })).toBeInTheDocument();
+		await user.type(screen.getByLabelText("Title"), "Need help with setup");
 		await user.type(screen.getByLabelText("What happened?"), "The setup flow stalls after the first prompt.");
 
 		await user.click(screen.getByRole("radio", { name: "Discord" }));
@@ -495,10 +513,32 @@ describe("GlobalSettingsForm", () => {
 		expect(open).not.toHaveBeenCalled();
 	});
 
-	it("keeps the report form to title and details while tailoring placeholder guidance", async () => {
+	it("clears draft text when the feedback dialog closes", async () => {
+		const user = userEvent.setup();
+		const githubToken = `ghp_${"abcdefghijklmnopqrstuvwxyz"}${"1234567890AB"}`;
 		renderForm();
 
-		expect(await screen.findByLabelText("Title")).toHaveAttribute("placeholder", "Brief Title");
+		await user.click(await screen.findByRole("button", { name: "Report a problem" }));
+		expect(await screen.findByRole("dialog", { name: "Report a problem" })).toBeInTheDocument();
+		await user.type(screen.getByLabelText("Title"), "Sensitive setup problem");
+		await user.type(screen.getByLabelText("What happened?"), `Token is ${githubToken}`);
+
+		await user.click(screen.getByRole("button", { name: "Close report dialog" }));
+		await waitFor(() => expect(screen.queryByRole("dialog", { name: "Report a problem" })).not.toBeInTheDocument());
+
+		await user.click(await screen.findByRole("button", { name: "Report a problem" }));
+		expect(await screen.findByRole("dialog", { name: "Report a problem" })).toBeInTheDocument();
+		expect(screen.getByLabelText("Title")).toHaveValue("");
+		expect(screen.getByLabelText("What happened?")).toHaveValue("");
+	});
+
+	it("keeps the report form to title and details while tailoring placeholder guidance", async () => {
+		const user = userEvent.setup();
+		renderForm();
+
+		await user.click(await screen.findByRole("button", { name: "Report a problem" }));
+		expect(await screen.findByRole("dialog", { name: "Report a problem" })).toBeInTheDocument();
+		expect(screen.getByLabelText("Title")).toHaveAttribute("placeholder", "Brief Title");
 		expect(screen.getByLabelText("What happened?")).toHaveAttribute(
 			"placeholder",
 			"Share what happened, what you expected, and how to reproduce it.",

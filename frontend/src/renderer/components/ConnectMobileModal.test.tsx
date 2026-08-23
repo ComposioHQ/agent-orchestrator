@@ -2,7 +2,6 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, expect, test, vi } from "vitest";
-import { TooltipProvider } from "./ui/tooltip";
 
 // vi.mock is hoisted above module-level consts, so the shared double has to be
 // created inside vi.hoisted to exist by the time the factory runs.
@@ -28,10 +27,7 @@ const { mobileStatus } = vi.hoisted(() => ({
 vi.mock("../lib/telemetry", () => ({ captureRendererEvent: vi.fn() }));
 vi.mock("../lib/api-client", () => ({
 	apiClient: {
-		GET: async (path: string) =>
-			path === "/api/v1/mobile/devices"
-				? { data: { devices: [] }, error: undefined }
-				: { data: mobileStatus, error: undefined },
+		GET: async () => ({ data: mobileStatus, error: undefined }),
 		POST: vi.fn(async () => ({ data: {}, error: undefined })),
 	},
 	apiErrorMessage: () => "failed",
@@ -43,17 +39,16 @@ function renderModal() {
 	const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 	return render(
 		<QueryClientProvider client={client}>
-			<TooltipProvider>
-				<ConnectMobileModal open={true} onOpenChange={vi.fn()} />
-			</TooltipProvider>
+			<ConnectMobileModal open={true} onOpenChange={vi.fn()} />
 		</QueryClientProvider>,
 	);
 }
 
-// Read the payload off the wrapper used by the shared styled QR component.
+// The QR is an <svg>, so read the payload off the value the component encodes
+// rather than the DOM: qrcode.react renders paths, not text.
 function qrPayload(): string | null {
-	const qr = document.querySelector("[data-qr-value]");
-	return qr?.getAttribute("data-qr-value") ?? null;
+	const svg = document.querySelector("svg[data-qr-value]");
+	return svg?.getAttribute("data-qr-value") ?? null;
 }
 
 beforeEach(() => {
@@ -74,14 +69,6 @@ beforeEach(() => {
 test("QR payload carries host, port, and password for one-scan connect", () => {
 	const s = pairingPayload("192.168.1.42", 3011, "fake-password-for-testing");
 	expect(JSON.parse(s)).toEqual({ v: 1, host: "192.168.1.42", port: 3011, password: "fake-password-for-testing" });
-});
-
-test("uses the compact mobile-dialog width", () => {
-	renderModal();
-	expect(screen.getByRole("dialog")).toHaveClass(
-		"w-[min(var(--size-settings-mobile-dialog),calc(100vw-var(--space-8)))]",
-	);
-	expect(screen.getByRole("dialog").querySelector('[data-slot="dialog-header"]')).toHaveClass("border-b-0");
 });
 
 test("encodes the LAN address by default", async () => {
@@ -134,27 +121,6 @@ test("the address line follows the selected mode", async () => {
 
 	await userEvent.click(screen.getByRole("radio", { name: "Tailscale" }));
 	await waitFor(() => expect(within(address).getByText("100.72.46.7:3011")).toBeInTheDocument());
-});
-
-test("shows the unencrypted-traffic warning for plaintext pairing", async () => {
-	mobileStatus.warning = "Traffic on this connection is not encrypted.";
-	renderModal();
-
-	expect(await screen.findByText(mobileStatus.warning)).toBeInTheDocument();
-});
-
-test("hides the unencrypted-traffic warning when secure pairing is active", async () => {
-	mobileStatus.warning = "Traffic on this connection is not encrypted.";
-	mobileStatus.securePairing = {
-		enabled: true, available: true, active: true,
-		host: "prasads-macbook-pro.tail057d04.ts.net", port: 443, reason: "",
-	};
-	renderModal();
-	await screen.findByText(mobileStatus.warning);
-
-	await userEvent.click(screen.getByRole("radio", { name: "Tailscale" }));
-
-	await waitFor(() => expect(screen.queryByText(mobileStatus.warning)).not.toBeInTheDocument());
 });
 
 test("omits the secure key entirely for plaintext pairing", () => {
@@ -215,4 +181,19 @@ test("shows an error message when the secure-pairing toggle fails", async () => 
 	await userEvent.click(secureSwitch);
 
 	await waitFor(() => expect(screen.getByText("failed")).toBeInTheDocument());
+});
+
+// The warning is false in secure mode — the connection really is encrypted.
+test("hides the unencrypted-traffic warning when secure pairing is active", async () => {
+	mobileStatus.warning = "Traffic on this connection is not encrypted.";
+	mobileStatus.securePairing = {
+		enabled: true, available: true, active: true,
+		host: "h.tail1.ts.net", port: 443, reason: "",
+	};
+	renderModal();
+	await waitFor(() => expect(qrPayload()).not.toBeNull());
+	expect(screen.getByText(/not encrypted/i)).toBeInTheDocument();
+
+	await userEvent.click(screen.getByRole("radio", { name: "Tailscale" }));
+	await waitFor(() => expect(screen.queryByText(/not encrypted/i)).not.toBeInTheDocument());
 });

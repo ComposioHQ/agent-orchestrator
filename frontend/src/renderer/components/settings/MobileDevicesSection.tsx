@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Loader2, Smartphone, Trash2 } from "lucide-react";
+import { Loader2, Smartphone, X } from "lucide-react";
 import { apiClient, apiErrorCode, apiErrorMessage } from "../../lib/api-client";
 import { cn } from "../../lib/utils";
 import { Switch } from "../ui/switch";
@@ -63,7 +63,7 @@ function lastSeenLabel(iso: string, language: string): string {
 	return relative.format(Math.round(value), "year");
 }
 
-export async function fetchDevices(): Promise<MobileDevice[]> {
+async function fetchDevices(): Promise<MobileDevice[]> {
 	const { data, error } = await apiClient.GET("/api/v1/mobile/devices");
 	if (error || !data) throw new MobileDevicesQueryError(apiErrorMessage(error), apiErrorCode(error));
 	return data.devices as MobileDevice[];
@@ -133,10 +133,6 @@ export function MobileDevicesSection() {
 	// (an unreadable on-disk registry) that showing a stale list next to it would
 	// be misleading.
 	const hasData = query.data !== undefined;
-
-	// No paired devices (or still loading with nothing cached) → no section at
-	// all. Errors and an unreadable registry still render so they stay visible.
-	if (!registryUnavailable && !queryError && devices.length === 0) return null;
 	const mutationError =
 		(mute.error instanceof Error && mute.error.message) ||
 		(remove.error instanceof Error && remove.error.message) ||
@@ -144,7 +140,7 @@ export function MobileDevicesSection() {
 
 	return (
 		<section className="mt-6">
-			<h3 className="text-xs font-medium leading-4 text-settings-muted">{t("mobile.devices.title")}</h3>
+			<h3 className="text-sm font-medium">{t("mobile.devices.title")}</h3>
 			<p className="mt-1 text-caption text-settings-muted">{t("mobile.devices.description")}</p>
 
 			{query.isLoading ? (
@@ -160,13 +156,13 @@ export function MobileDevicesSection() {
 			) : (
 				<>
 					{queryError && <p className="mt-3 text-caption text-error">{queryError.message}</p>}
-					<ul className="mt-3 grid gap-2">
+					<ul className="mt-3 space-y-2">
 						{sortedDevices.map((device) => {
 							const name = device.deviceName || t("mobile.devices.unnamed");
 							return (
 								<li
 									key={device.installId}
-									className="flex items-center gap-3 rounded-lg border border-[var(--color-border-settings-input)] bg-[var(--color-bg-settings-input)] p-3"
+									className="flex items-center gap-3 rounded-(--radius-settings-dialog-lg) border border-[var(--color-border-settings-input)] bg-[var(--color-bg-settings-input)] p-3"
 								>
 									<Smartphone className="size-4 shrink-0 text-settings-muted" />
 									<div className="min-w-0 flex-1">
@@ -195,6 +191,14 @@ export function MobileDevicesSection() {
 										onCheckedChange={(next) =>
 											mute.mutate({ installId: device.installId, muted: !next })
 										}
+										className={cn(
+											"h-(--size-settings-mobile-switch-h) w-(--size-settings-mobile-switch-w) transition-colors duration-300 ease-out",
+											"data-[state=checked]:bg-settings-switch-on data-[state=unchecked]:bg-[var(--color-border-settings-input)]",
+											"focus-visible:ring-0 focus-visible:ring-offset-0",
+											"**:data-[slot=switch-thumb]:size-5 **:data-[slot=switch-thumb]:bg-white **:data-[slot=switch-thumb]:transition-transform **:data-[slot=switch-thumb]:duration-300 **:data-[slot=switch-thumb]:ease-out",
+											"data-[state=checked]:**:data-[slot=switch-thumb]:translate-x-(--size-settings-mobile-switch-travel)",
+											"data-[state=unchecked]:**:data-[slot=switch-thumb]:translate-x-0.5",
+										)}
 									/>
 
 									{confirmingRemoval === device.installId ? (
@@ -213,7 +217,7 @@ export function MobileDevicesSection() {
 											className="text-settings-muted hover:text-settings-label"
 											onClick={() => setConfirmingRemoval(device.installId)}
 										>
-											<Trash2 className="size-4" />
+											<X className="size-4" />
 										</button>
 									)}
 								</li>
