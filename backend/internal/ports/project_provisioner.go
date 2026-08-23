@@ -56,8 +56,11 @@ func (e *ProjectProvisionError) Unwrap() error {
 type ProjectProvisionOperation string
 
 const (
-	ProjectProvisionAdd        ProjectProvisionOperation = "add"
-	ProjectProvisionClone      ProjectProvisionOperation = "clone"
+	// ProjectProvisionAdd registers a repository already present in the execution environment.
+	ProjectProvisionAdd ProjectProvisionOperation = "add"
+	// ProjectProvisionClone clones and registers a remote repository.
+	ProjectProvisionClone ProjectProvisionOperation = "clone"
+	// ProjectProvisionInitialize initializes a repository at the requested target.
 	ProjectProvisionInitialize ProjectProvisionOperation = "initialize"
 )
 
