@@ -169,8 +169,11 @@ export async function installFakeBridge(page: Page, opts: FakeBridgeOptions = {}
 					set: async () => undefined,
 				},
 				uiSettings: {
-					get: async () => ({ locale: "en" }),
-					set: async (settings) => settings,
+					get: async () => ({ locale: "en", cloudEnabled: false }),
+					set: async (settings) => ({
+						locale: settings.locale ?? "en",
+						cloudEnabled: settings.cloudEnabled ?? false,
+					}),
 				},
 				keybindings: {
 					get: async () => ({}),
@@ -193,8 +196,10 @@ export async function installFakeBridge(page: Page, opts: FakeBridgeOptions = {}
 					getActive: async () => null,
 				},
 				cloud: {
+					getAvailability: async () => ({ available: false, enabled: false, apiBaseUrl: "" }),
 					getSession: async () => null,
-					signIn: async () => undefined,
+					getAccessToken: async () => "",
+					signIn: async () => null,
 					signOut: async () => undefined,
 					onSessionChanged: unsubscribe,
 				},
@@ -592,8 +597,11 @@ export async function installFakeAgent(page: Page, opts: FakeAgentOptions = {}):
 					set: async () => undefined,
 				},
 				uiSettings: {
-					get: async () => ({ locale: "en" }),
-					set: async (settings) => settings,
+					get: async () => ({ locale: "en", cloudEnabled: false }),
+					set: async (settings) => ({
+						locale: settings.locale ?? "en",
+						cloudEnabled: settings.cloudEnabled ?? false,
+					}),
 				},
 				keybindings: {
 					get: async () => ({}),
@@ -616,8 +624,10 @@ export async function installFakeAgent(page: Page, opts: FakeAgentOptions = {}):
 					getActive: async () => null,
 				},
 				cloud: {
+					getAvailability: async () => ({ available: false, enabled: false, apiBaseUrl: "" }),
 					getSession: async () => null,
-					signIn: async () => undefined,
+					getAccessToken: async () => "",
+					signIn: async () => null,
 					signOut: async () => undefined,
 					onSessionChanged: unsubscribe,
 				},
