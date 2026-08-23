@@ -29,6 +29,10 @@ import (
 // offers it; a listener that speaks this contract selects it.
 const Subprotocol = "ao.mux.v1"
 
+// Path is the only public terminal route. Sandboxes and the local daemon use
+// the same path so clients never need a second terminal URL convention.
+const Path = "/mux"
+
 // ticketPrefix namespaces the one-time connection ticket. The remainder of the
 // token is opaque to everything but the issuer.
 const ticketPrefix = "ao.ticket."
