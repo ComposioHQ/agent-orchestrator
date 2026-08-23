@@ -278,7 +278,7 @@ func (m *Manager) provision(ctx context.Context, record Record, now time.Time) (
 // held, and the local pattern (relaunching a worker rotates its browser
 // capability) is the same rule.
 func (m *Manager) boot(ctx context.Context, record Record, now time.Time) (Placement, error) {
-	if _, err := m.revokeCapabilities(ctx, record.Ref()); err != nil {
+	if err := m.revokeCapabilities(ctx, record.Ref()); err != nil {
 		return Placement{}, err
 	}
 	grant, err := m.issueCapability(ctx, record)
@@ -338,7 +338,7 @@ func (m *Manager) Stop(ctx context.Context, ref Ref) (Record, error) {
 		record.UpdatedAt = now
 		return m.store.Save(ctx, record)
 	}
-	if _, err := m.revokeCapabilities(ctx, record.Ref()); err != nil {
+	if err := m.revokeCapabilities(ctx, record.Ref()); err != nil {
 		return Record{}, err
 	}
 	sandbox, err := m.provider.Stop(ctx, record.ProviderID)
@@ -391,7 +391,7 @@ func (m *Manager) finishDelete(ctx context.Context, record Record) error {
 		record = saved
 	}
 	ref := record.Ref()
-	if _, err := m.revokeCapabilities(ctx, ref); err != nil {
+	if err := m.revokeCapabilities(ctx, ref); err != nil {
 		return err
 	}
 	if m.secrets != nil {
@@ -415,7 +415,7 @@ func (m *Manager) finishDelete(ctx context.Context, record Record) error {
 // purgeDetached revokes credentials and routes for a ref with no surviving
 // row, so a half-finished delete cannot leave a live capability behind.
 func (m *Manager) purgeDetached(ctx context.Context, ref Ref) error {
-	if _, err := m.revokeCapabilities(ctx, ref); err != nil {
+	if err := m.revokeCapabilities(ctx, ref); err != nil {
 		return err
 	}
 	if m.secrets != nil {
@@ -544,16 +544,16 @@ func (m *Manager) publishRoute(ctx context.Context, ref Ref, sandbox Sandbox) er
 	return nil
 }
 
-func (m *Manager) revokeCapabilities(ctx context.Context, ref Ref) (int, error) {
-	revoked, err := m.capabilities.RevokeScope(ctx, capability.Selector{
+func (m *Manager) revokeCapabilities(ctx context.Context, ref Ref) error {
+	_, err := m.capabilities.RevokeScope(ctx, capability.Selector{
 		OrgID:       ref.OrgID,
 		WorkspaceID: ref.WorkspaceID,
 		SessionID:   ref.SessionID,
 	})
 	if err != nil {
-		return 0, fmt.Errorf("revoke sandbox capabilities: %w", err)
+		return fmt.Errorf("revoke sandbox capabilities: %w", err)
 	}
-	return revoked, nil
+	return nil
 }
 
 func stateFor(state ProviderState) State {

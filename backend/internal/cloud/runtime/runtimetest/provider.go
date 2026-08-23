@@ -54,19 +54,14 @@ func (p *FakeProvider) now() time.Time {
 	return time.Now().UTC()
 }
 
-func (p *FakeProvider) take(err *error) error {
-	captured := *err
-	*err = nil
-	return captured
-}
-
 // Create records a sandbox, honouring the request's idempotency key.
 func (p *FakeProvider) Create(_ context.Context, request runtime.CreateRequest) (runtime.Sandbox, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.Calls = append(p.Calls, "create")
 	p.LastCreate = request
-	if err := p.take(&p.FailCreate); err != nil {
+	if err := p.FailCreate; err != nil {
+		p.FailCreate = nil
 		return runtime.Sandbox{}, err
 	}
 	if key := request.IdempotencyKey; key != "" {
@@ -93,7 +88,8 @@ func (p *FakeProvider) Get(_ context.Context, id string) (runtime.Sandbox, error
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.Calls = append(p.Calls, "get:"+id)
-	if err := p.take(&p.FailGet); err != nil {
+	if err := p.FailGet; err != nil {
+		p.FailGet = nil
 		return runtime.Sandbox{}, err
 	}
 	sandbox, ok := p.sandboxes[id]
@@ -108,7 +104,8 @@ func (p *FakeProvider) Start(_ context.Context, id string) (runtime.Sandbox, err
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.Calls = append(p.Calls, "start:"+id)
-	if err := p.take(&p.FailStart); err != nil {
+	if err := p.FailStart; err != nil {
+		p.FailStart = nil
 		return runtime.Sandbox{}, err
 	}
 	return p.transitionLocked(id, runtime.ProviderRunning)
@@ -119,7 +116,8 @@ func (p *FakeProvider) Stop(_ context.Context, id string) (runtime.Sandbox, erro
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.Calls = append(p.Calls, "stop:"+id)
-	if err := p.take(&p.FailStop); err != nil {
+	if err := p.FailStop; err != nil {
+		p.FailStop = nil
 		return runtime.Sandbox{}, err
 	}
 	return p.transitionLocked(id, runtime.ProviderStopped)
@@ -140,7 +138,8 @@ func (p *FakeProvider) Delete(_ context.Context, id string) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.Calls = append(p.Calls, "delete:"+id)
-	if err := p.take(&p.FailDelete); err != nil {
+	if err := p.FailDelete; err != nil {
+		p.FailDelete = nil
 		return err
 	}
 	delete(p.sandboxes, id)
