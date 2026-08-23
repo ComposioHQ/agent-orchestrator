@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
+	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 	"github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite/gen"
 )
 
@@ -1786,17 +1787,11 @@ func (s *Store) ApplyProviderTitle(
 	return applied, nil
 }
 
-// ConversationSnapshot is the durable read model for one conversation.
-type ConversationSnapshot struct {
-	Conversation               domain.ConversationRecord
-	Turns                      []domain.ConversationTurn
-	Messages                   []domain.ConversationMessage
-	Activities                 []domain.ConversationActivity
-	BranchPoints               []domain.ConversationBranchPoint
-	BranchedFromEarlierMessage bool
-	OldestSequence             int64
-	HasMoreBefore              bool
-}
+// ConversationSnapshot is the durable read model for one conversation. It is an
+// alias rather than a copy of the port's type so this store satisfies
+// ports.ConversationReader directly, without an adapter that would have to be
+// updated in lockstep every time the read model gains a field.
+type ConversationSnapshot = ports.ConversationSnapshot
 
 // DefaultConversationPageSize is the standard bounded read size for conversation snapshots.
 const DefaultConversationPageSize = 200
