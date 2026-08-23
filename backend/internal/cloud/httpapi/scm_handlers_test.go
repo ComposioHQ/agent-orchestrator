@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -85,6 +87,9 @@ func TestSCMWebhookRouteAcknowledgementBoundary(t *testing.T) {
 		t.Run(testCase.name, func(t *testing.T) {
 			server, _ := newSCMRouteServer(t, nil, testCase.processor)
 			request := httptest.NewRequest(http.MethodPost, "/api/cloud/v1/github/webhook", bytes.NewReader(testCase.body))
+			request.Header.Set(scm.EventHeader, "pull_request")
+			request.Header.Set(scm.DeliveryHeader, "delivery-1")
+			request.Header.Set(scm.SignatureHeader, "sha256=signature")
 			response := httptest.NewRecorder()
 			server.Handler().ServeHTTP(response, request)
 			if response.Code != testCase.wantStatus {
@@ -92,6 +97,41 @@ func TestSCMWebhookRouteAcknowledgementBoundary(t *testing.T) {
 			}
 			if testCase.wantStatus == http.StatusRequestEntityTooLarge && testCase.processor.calls != 0 {
 				t.Fatal("oversize payload reached processor")
+			}
+		})
+	}
+}
+
+func TestSCMWebhookRouteRejectsInvalidHeaderEnvelope(t *testing.T) {
+	cases := []struct {
+		name   string
+		mutate func(http.Header)
+	}{
+		{name: "duplicate required value", mutate: func(header http.Header) { header.Add(scm.EventHeader, "push") }},
+		{name: "noncanonical name", mutate: func(header http.Header) { header["x-extra-header"] = []string{"value"} }},
+		{name: "control value", mutate: func(header http.Header) { header.Set("X-Extra-Header", "bad\tvalue") }},
+		{name: "oversize value", mutate: func(header http.Header) {
+			header.Set("X-Extra-Header", strings.Repeat("x", maxWebhookHeaderValueBytes+1))
+		}},
+		{name: "too many fields", mutate: func(header http.Header) {
+			for index := 0; index <= maxWebhookHeaderFields; index++ {
+				header.Set(fmt.Sprintf("X-Test-%03d", index), "value")
+			}
+		}},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			processor := &stubWebhookProcessor{result: scm.WebhookResult{Durable: true}}
+			server, _ := newSCMRouteServer(t, nil, processor)
+			request := httptest.NewRequest(http.MethodPost, "/api/cloud/v1/github/webhook", bytes.NewReader([]byte(`{}`)))
+			request.Header.Set(scm.EventHeader, "pull_request")
+			request.Header.Set(scm.DeliveryHeader, "delivery-1")
+			request.Header.Set(scm.SignatureHeader, "sha256=signature")
+			testCase.mutate(request.Header)
+			response := httptest.NewRecorder()
+			server.Handler().ServeHTTP(response, request)
+			if response.Code != http.StatusBadRequest || processor.calls != 0 {
+				t.Fatalf("status = %d, calls = %d, body = %s", response.Code, processor.calls, response.Body.String())
 			}
 		})
 	}
