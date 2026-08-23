@@ -237,6 +237,9 @@ current_enabled=false
 if [[ "$current_desired_count" != "0" ]]; then
   current_enabled=true
 fi
+previous_running_tasks="$(aws ecs list-tasks \
+  --cluster "$cluster" --service-name "$service" \
+  --desired-status RUNNING --output json)"
 
 # Register the new migration image without changing or stopping the serving API
 # task. A failed migration therefore leaves the previous revision online.
@@ -268,6 +271,33 @@ if [[ "$migration_exit_code" != "0" ]]; then
 fi
 
 terraform_apply "$image_reference" "$image_reference" true
+
+# A digest change creates a task-definition revision and Terraform already
+# waits for that rolling deployment. Secret-only changes keep the same static
+# Secrets Manager ARN, so explicitly restart in that case to load the new
+# versions rather than reporting success while serving stale credentials or
+# allowlist configuration.
+new_task_definition="$(aws ecs describe-services \
+  --cluster "$cluster" --services "$service" \
+  --query 'services[0].taskDefinition' --output text)"
+if [[ "$new_task_definition" == "$current_task_definition" ]]; then
+  aws ecs update-service \
+    --cluster "$cluster" \
+    --service "$service" \
+    --force-new-deployment >/dev/null
+  aws ecs wait services-stable --cluster "$cluster" --services "$service"
+fi
+
+# Prove that the rollout replaced every task which existed before secrets were
+# written. This prevents smoke tests from accidentally succeeding against an
+# old task whose environment still contains the previous secret versions.
+current_running_tasks="$(aws ecs list-tasks \
+  --cluster "$cluster" --service-name "$service" \
+  --desired-status RUNNING --output json)"
+jq -en \
+  --argjson before "$previous_running_tasks" \
+  --argjson after "$current_running_tasks" \
+  '[ $before.taskArns[] as $old | $after.taskArns[] | select(. == $old) ] | length == 0' >/dev/null
 
 api_url="$(terraform_output api_url)"
 api_url="${api_url%/}"
