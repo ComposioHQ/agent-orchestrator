@@ -1886,6 +1886,58 @@ func TestSessionRenameMissingSessionReturnsNotFound(t *testing.T) {
 	}
 }
 
+// TestSessionRenameEnforcesDisplayNameCap keeps the cap on the service rather
+// than only on the HTTP handler, so no caller can route around it. The cap
+// counts runes: a name built from multi-byte characters is accepted at exactly
+// the cap and rejected one rune past it.
+func TestSessionRenameEnforcesDisplayNameCap(t *testing.T) {
+	st := newFakeStore()
+	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer"}
+
+	atCap := strings.Repeat("é", domain.MaxSessionDisplayNameLen)
+	if err := (&Service{store: st}).Rename(context.Background(), "mer-1", atCap); err != nil {
+		t.Fatalf("rename at the rune cap: %v", err)
+	}
+	if got := st.sessions["mer-1"].DisplayName; got != atCap {
+		t.Fatalf("display name = %q, want the name stored unchanged", got)
+	}
+
+	err := (&Service{store: st}).Rename(context.Background(), "mer-1", strings.Repeat("é", domain.MaxSessionDisplayNameLen+1))
+	var e *apierr.Error
+	if !errors.As(err, &e) || e.Kind != apierr.KindInvalid || e.Code != "DISPLAY_NAME_TOO_LONG" {
+		t.Fatalf("err = %v, want apierr Invalid DISPLAY_NAME_TOO_LONG", err)
+	}
+	if got := st.sessions["mer-1"].DisplayName; got != atCap {
+		t.Fatalf("display name = %q, want the rejected rename to leave it unchanged", got)
+	}
+}
+
+// TestSessionSpawnEnforcesDisplayNameCap asserts the spawn path shares the cap
+// and trims before measuring, so the session manager is never handed a label
+// the sidebar and rename path would reject.
+func TestSessionSpawnEnforcesDisplayNameCap(t *testing.T) {
+	st := newFakeStore()
+	svc := &Service{store: st}
+
+	_, _, _, err := svc.Spawn(context.Background(), ports.SpawnConfig{
+		ProjectID:   "mer",
+		DisplayName: strings.Repeat("é", domain.MaxSessionDisplayNameLen+1),
+	})
+	var e *apierr.Error
+	if !errors.As(err, &e) || e.Kind != apierr.KindInvalid || e.Code != "DISPLAY_NAME_TOO_LONG" {
+		t.Fatalf("err = %v, want apierr Invalid DISPLAY_NAME_TOO_LONG", err)
+	}
+
+	// Surrounding whitespace is trimmed before measuring, so a name that only
+	// exceeds the cap with its padding is a name at the cap. It gets past the
+	// display-name check and fails later on the unregistered project instead.
+	padded := " " + strings.Repeat("é", domain.MaxSessionDisplayNameLen) + " "
+	_, _, _, err = svc.Spawn(context.Background(), ports.SpawnConfig{ProjectID: "mer", DisplayName: padded})
+	if !errors.As(err, &e) || e.Code != "PROJECT_NOT_FOUND" {
+		t.Fatalf("err = %v, want the padded name to clear the cap and fail on PROJECT_NOT_FOUND", err)
+	}
+}
+
 // fakeCommander records Kill/Spawn calls so a test can assert the
 // clean-orchestrator ordering without wiring a real session engine.
 type fakeCommander struct {

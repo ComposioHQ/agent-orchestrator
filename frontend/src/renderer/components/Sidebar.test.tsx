@@ -1281,13 +1281,87 @@ describe("Sidebar", () => {
 		await waitFor(() => expect(renameSessionMock).toHaveBeenCalledWith("proj-1-1", "polish login"));
 	});
 
-	it("caps the inline rename input at 20 characters", async () => {
+	// Mirrors domain.MaxSessionDisplayNameLen. A shorter input cap would make the
+	// sidebar the strictest boundary and silently truncate names the daemon,
+	// `ao spawn --name`, and `ao session rename` all accept.
+	it("caps the inline rename input at the daemon display-name limit", async () => {
 		const user = userEvent.setup();
 		const workspaceWithSession = { ...workspace, sessions: [session] };
 		renderSidebar({ workspaces: [workspaceWithSession] });
 
 		await user.click(screen.getByLabelText("Rename fix login"));
-		expect(screen.getByLabelText("Rename fix login")).toHaveAttribute("maxlength", "20");
+		expect(screen.getByLabelText("Rename fix login")).toHaveAttribute("maxlength", "120");
+	});
+
+	it("renders a long session name in full and slides it on hover", async () => {
+		const longTitle = "Implement support for longer AO session display names end to end";
+		const workspaceWithSession = {
+			...workspace,
+			sessions: [{ ...session, title: longTitle }],
+		};
+		// jsdom does not lay out, so the label has to be told it overflows.
+		Object.defineProperty(HTMLElement.prototype, "clientWidth", {
+			configurable: true,
+			get(this: HTMLElement) {
+				return this.hasAttribute("data-session-name") ? 140 : 0;
+			},
+		});
+		Object.defineProperty(HTMLElement.prototype, "scrollWidth", {
+			configurable: true,
+			get(this: HTMLElement) {
+				return this.classList.contains("ao-session-name__text") ? 520 : 0;
+			},
+		});
+
+		try {
+			renderSidebar({ workspaces: [workspaceWithSession] });
+			const row = screen.getByText(longTitle).closest<HTMLElement>("[data-session-row]");
+			const label = row?.querySelector<HTMLElement>("[data-session-name]");
+			if (!row || !label) throw new Error("session row label not found");
+
+			// Full value, no ellipsis, and reachable as a tooltip while parked.
+			expect(label).toHaveTextContent(longTitle);
+			expect(label).toHaveAttribute("title", longTitle);
+			expect(label).toHaveAttribute("data-overflowing");
+			expect(label).not.toHaveAttribute("data-marquee");
+
+			fireEvent.pointerEnter(row);
+			expect(label).toHaveAttribute("data-marquee", "running");
+
+			fireEvent.pointerLeave(row);
+			expect(label).not.toHaveAttribute("data-marquee");
+
+			// Keyboard users get the same reveal without a pointer.
+			fireEvent.focus(screen.getByLabelText(`Open ${longTitle}`));
+			expect(label).toHaveAttribute("data-marquee", "running");
+			fireEvent.blur(screen.getByLabelText(`Open ${longTitle}`));
+			expect(label).not.toHaveAttribute("data-marquee");
+		} finally {
+			Reflect.deleteProperty(HTMLElement.prototype, "clientWidth");
+			Reflect.deleteProperty(HTMLElement.prototype, "scrollWidth");
+		}
+	});
+
+	it("reserves the session action strip so revealing it cannot reflow the label", () => {
+		const workspaceWithSession = { ...workspace, sessions: [session] };
+		renderSidebar({ workspaces: [workspaceWithSession] });
+
+		const openButton = screen.getByLabelText("Open fix login");
+		const row = openButton.closest<HTMLElement>("[data-session-row]");
+		const actions = row?.querySelector<HTMLElement>("[data-session-actions]");
+		if (!row || !actions) throw new Error("session action cluster not found");
+
+		// Padding is reserved on the open button at rest, and the cluster is taken
+		// out of flow above it — so hover changes opacity only, never width.
+		expect(openButton).toHaveClass("pr-sidebar-session-actions");
+		expect(actions).toHaveClass("absolute", "z-chrome", "opacity-0", "pointer-events-none");
+		expect(actions.className).toContain("group-hover/session-row:opacity-100");
+		expect(actions.className).toContain("group-focus-within/session-row:opacity-100");
+		// No width or margin animation left to shift the label mid-slide.
+		expect(actions.className).not.toContain("group-hover/session-row:w-");
+		for (const button of within(actions).getAllByRole("button")) {
+			expect(button.className).not.toContain("w-0");
+		}
 	});
 
 	it("cancels the inline rename on Escape without calling the daemon", async () => {

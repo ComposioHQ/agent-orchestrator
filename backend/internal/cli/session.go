@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/spf13/cobra"
 )
 
@@ -235,6 +236,7 @@ func newSessionRenameCommand(ctx *commandContext) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "rename <id> <name>",
 		Short: "Rename a session",
+		Long:  fmt.Sprintf("Rename a session.\n\n<name> is the sidebar label and must be %d characters or fewer.", maxDisplayNameLen),
 		Args:  sessionRenameArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			id, err := normalizeSessionID(args[0])
@@ -333,8 +335,14 @@ func sessionRenameArgs(cmd *cobra.Command, args []string) error {
 	if _, err := normalizeSessionID(args[0]); err != nil {
 		return err
 	}
-	if strings.TrimSpace(args[1]) == "" {
+	name := strings.TrimSpace(args[1])
+	if name == "" {
 		return usageError{errors.New("session name is required")}
+	}
+	// Rejected here rather than forwarded so an oversized label exits 2 as CLI
+	// misuse; the daemon holds direct API callers to the same cap.
+	if domain.SessionDisplayNameTooLong(name) {
+		return usageError{fmt.Errorf("session name must be %d characters or fewer", maxDisplayNameLen)}
 	}
 	return nil
 }

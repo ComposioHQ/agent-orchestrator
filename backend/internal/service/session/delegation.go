@@ -15,6 +15,11 @@ import (
 )
 
 const (
+	// delegatedTaskTitleLimit bounds the provisional label cut from the raw task
+	// brief while the orchestrator picks a real title. It is deliberately far
+	// below domain.MaxSessionDisplayNameLen: a blind slice of prose reads worse
+	// the longer it runs, so the placeholder stays short even though a chosen
+	// title may be much longer.
 	delegatedTaskTitleLimit             = 20
 	delegatedTaskUntitledName           = "Untitled task"
 	delegatedTaskTitleRefinementTimeout = time.Minute
@@ -175,7 +180,7 @@ func taskTitleDelegationMessage(workerID domain.SessionID, in DelegateTaskInput)
 	b.WriteString("Choose a concise task title from the brief and run:\n\n")
 	b.WriteString("ao session rename ")
 	b.WriteString(string(workerID))
-	b.WriteString(" \"<title, max 20 chars>\"\n\n")
+	fmt.Fprintf(&b, " \"<concise title, max %d chars>\"\n\n", domain.MaxSessionDisplayNameLen)
 	b.WriteString("Worker session id: ")
 	b.WriteString(string(workerID))
 	b.WriteString("\nTask brief:\n")

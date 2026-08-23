@@ -7562,6 +7562,7 @@ components:
     RenameSessionRequest:
       properties:
         displayName:
+          maxLength: 120
           minLength: 1
           type: string
       required:
@@ -8543,7 +8544,7 @@ components:
         branch:
           type: string
         displayName:
-          maxLength: 20
+          maxLength: 120
           type: string
         harness:
           enum:

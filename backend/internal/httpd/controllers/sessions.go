@@ -39,7 +39,6 @@ const (
 	maxPromptLen      = 4096
 	maxMessageLen     = 4096
 	maxModelLen       = 256
-	maxDisplayNameLen = 20
 	maxIdempotencyKey = 128
 
 	// Agent-authored handoffs are deliberately bounded. Deterministic AO
@@ -65,6 +64,11 @@ const (
 	// attachment.
 	maxSendBodyBytes = maxAttachmentBytes*4/3 + (2 << 20)
 )
+
+// displayNameTooLongMessage is the wire message both display-name boundaries
+// (spawn and rename) return, derived from the domain cap so bumping the cap
+// cannot leave a stale number in an API error.
+var displayNameTooLongMessage = fmt.Sprintf("displayName must be %d characters or fewer", domain.MaxSessionDisplayNameLen)
 
 // blockedAttachmentMimes contains MIME types that are explicitly rejected for
 // security reasons. SVG is excluded because it is XML that can carry active
@@ -260,8 +264,8 @@ func (c *SessionsController) spawn(w http.ResponseWriter, r *http.Request) {
 	// required CLI-side. When present, it is held to the same length cap here so
 	// a direct API call cannot exceed it.
 	displayName := strings.TrimSpace(in.DisplayName)
-	if utf8.RuneCountInString(displayName) > maxDisplayNameLen {
-		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "DISPLAY_NAME_TOO_LONG", "displayName must be 20 characters or fewer", nil)
+	if domain.SessionDisplayNameTooLong(displayName) {
+		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "DISPLAY_NAME_TOO_LONG", displayNameTooLongMessage, nil)
 		return
 	}
 	if in.Kind == "" {
@@ -964,6 +968,10 @@ func (c *SessionsController) rename(w http.ResponseWriter, r *http.Request) {
 	displayName := strings.TrimSpace(in.DisplayName)
 	if displayName == "" {
 		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "DISPLAY_NAME_REQUIRED", "displayName is required", nil)
+		return
+	}
+	if domain.SessionDisplayNameTooLong(displayName) {
+		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "DISPLAY_NAME_TOO_LONG", displayNameTooLongMessage, nil)
 		return
 	}
 	if err := c.Svc.Rename(r.Context(), sessionID(r), displayName); err != nil {

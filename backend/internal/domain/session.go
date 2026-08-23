@@ -1,6 +1,9 @@
 package domain
 
-import "time"
+import (
+	"time"
+	"unicode/utf8"
+)
 
 // These ID types are distinct string types so they can't be swapped at a call
 // site by accident.
@@ -12,6 +15,23 @@ type (
 	// IssueID identifies a tracker issue.
 	IssueID string
 )
+
+// MaxSessionDisplayNameLen bounds a session's user-facing display name, counted
+// in runes so multi-byte labels are not cut short by a byte budget. It is the
+// single authority for the cap: the session service enforces it on both the
+// spawn and rename paths, and the HTTP DTOs, the OpenAPI schema, `ao spawn
+// --name`, `ao session rename`, and the sidebar rename input all mirror it.
+// The sidebar marquees any name too wide for its row, so the cap only needs to
+// keep a label a label rather than let a whole task brief land in the session
+// list.
+const MaxSessionDisplayNameLen = 120
+
+// SessionDisplayNameTooLong reports whether a display name exceeds
+// MaxSessionDisplayNameLen. Every boundary that rejects an oversized name goes
+// through here so none of them drifts into counting bytes instead of runes.
+func SessionDisplayNameTooLong(displayName string) bool {
+	return utf8.RuneCountInString(displayName) > MaxSessionDisplayNameLen
+}
 
 // SessionKind distinguishes a worker session from an orchestrator session.
 type SessionKind string

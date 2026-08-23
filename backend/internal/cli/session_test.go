@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -10,6 +11,8 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 )
 
 type sessionRequestLog struct {
@@ -512,6 +515,45 @@ func TestSessionRename_MissingNameIsUsageError(t *testing.T) {
 	}
 	if got := ExitCode(err); got != 2 {
 		t.Fatalf("exit code = %d, want 2 (err=%v)", got, err)
+	}
+}
+
+// TestSessionRename_OverlongNameIsUsageError asserts `ao session rename` holds
+// the new label to the same cap as `ao spawn --name`, and rejects it as CLI
+// misuse before any request reaches the daemon.
+func TestSessionRename_OverlongNameIsUsageError(t *testing.T) {
+	setConfigEnv(t)
+
+	_, _, err := executeCLI(t, Deps{}, "session", "rename", "demo-1", strings.Repeat("x", domain.MaxSessionDisplayNameLen+1))
+	if err == nil {
+		t.Fatal("expected an overlong name to fail")
+	}
+	if got := ExitCode(err); got != 2 {
+		t.Fatalf("exit code = %d, want 2 (err=%v)", got, err)
+	}
+	want := fmt.Sprintf("%d characters or fewer", domain.MaxSessionDisplayNameLen)
+	if !strings.Contains(err.Error(), want) {
+		t.Fatalf("err = %v, want it to mention %q", err, want)
+	}
+}
+
+// TestSessionRename_AcceptsNameAtCap asserts a name of exactly the cap — counted
+// in multi-byte runes — is forwarded to the daemon unchanged.
+func TestSessionRename_AcceptsNameAtCap(t *testing.T) {
+	cfg := setConfigEnv(t)
+	srv, log := sessionCommandServer(t)
+	writeRunFileFor(t, cfg, srv)
+
+	atCap := strings.Repeat("é", domain.MaxSessionDisplayNameLen)
+	_, errOut, err := executeCLI(t, Deps{
+		ProcessAlive: func(int) bool { return true },
+	}, "session", "rename", "demo-1", atCap, "-p", "demo")
+	if err != nil {
+		t.Fatalf("session rename at the rune cap: %v\nstderr=%s", err, errOut)
+	}
+	want := []string{"GET /api/v1/sessions/demo-1", "PATCH /api/v1/sessions/demo-1"}
+	if got := log.all(); !reflect.DeepEqual(got, want) {
+		t.Fatalf("requests = %#v, want %#v", got, want)
 	}
 }
 

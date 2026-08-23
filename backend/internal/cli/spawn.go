@@ -10,15 +10,17 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
-	"unicode/utf8"
 
+	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 )
 
-// maxDisplayNameLen caps the sidebar label set by `--name`. Mirrored by the
-// daemon's spawn handler so a direct API call is held to the same limit.
-const maxDisplayNameLen = 20
+// maxDisplayNameLen caps the sidebar label set by `--name`. It re-exports the
+// domain cap the daemon's spawn handler and session service enforce, so a
+// direct API call is held to the same limit and the CLI can reject an oversized
+// label as a usage error before any request is made.
+const maxDisplayNameLen = domain.MaxSessionDisplayNameLen
 
 type spawnOptions struct {
 	project         string
@@ -83,7 +85,7 @@ func newSpawnCommand(ctx *commandContext) *cobra.Command {
 			if name == "" {
 				return usageError{fmt.Errorf("--name is required")}
 			}
-			if utf8.RuneCountInString(name) > maxDisplayNameLen {
+			if domain.SessionDisplayNameTooLong(name) {
 				return usageError{fmt.Errorf("--name must be %d characters or fewer", maxDisplayNameLen)}
 			}
 
@@ -198,7 +200,7 @@ func newSpawnCommand(ctx *commandContext) *cobra.Command {
 	f.StringVar(&opts.model, "model", "", "Agent model override for this session only (e.g. sonnet, gpt-5.6-sol); overrides project/role config without changing it")
 	f.StringVar(&opts.issue, "issue", "", "Issue id to associate with the session")
 	f.StringVar(&opts.trackerProvider, "tracker-provider", "github", "Issue tracker provider: github or gitlab (default: github)")
-	f.StringVar(&opts.name, "name", "", "Display name shown in the sidebar (required, max 20 characters)")
+	f.StringVar(&opts.name, "name", "", fmt.Sprintf("Display name shown in the sidebar (required, max %d characters)", maxDisplayNameLen))
 	f.StringVar(&opts.claimPR, "claim-pr", "", "Immediately claim an existing PR for the spawned session")
 	f.BoolVar(&opts.noTakeover, "no-takeover", false, "Refuse if another active session owns the claimed PR (requires --claim-pr)")
 	f.BoolVar(&opts.skipAgentCheck, "skip-agent-check", false, "Skip advisory agent catalog install/auth preflight before spawning")

@@ -232,6 +232,7 @@
 	--spacing-inspector-min: var(--size-inspector-min);
 	--spacing-textarea-min: var(--size-textarea-min);
 	--spacing-sidebar-project-actions: var(--size-sidebar-project-actions);
+	--spacing-sidebar-session-actions: var(--size-sidebar-session-actions);
 	--spacing-row-md: var(--size-row-md);
 	--spacing-empty-offset-y: var(--size-empty-offset-y);
 	--spacing-kv-label: var(--size-kv-label);
@@ -1712,6 +1713,92 @@ textarea,
 
 	.agent-switch-progress-dot,
 	.agent-switch-progress-step::before {
+		transition: none;
+	}
+}
+
+/* Sidebar session label — see SidebarSessionName.tsx.
+ *
+ * The label is clipped, never ellipsised: the distinguishing part of a session
+ * name is usually its tail, so hovering the row (or focusing its open button)
+ * slides the text far enough to read that tail and eases it back.
+ *
+ * The edges are faded with a mask rather than a background-coloured gradient.
+ * A gradient would have to name a colour, and the row sits on three different
+ * backgrounds (rest, hover, active) across two themes; the mask fades whatever
+ * is actually painted, so it is correct in every one of those combinations and
+ * hard-codes nothing. */
+.ao-session-name {
+	/* Widened only while the text is travelling, so the resting label starts
+	 * flush at the row's left edge. */
+	--ao-session-name-fade-start: 0px;
+	/* Roughly a character and a half, enough to read as passing under the
+	 * action cluster rather than being cut at a hard border. */
+	--ao-session-name-fade-end: 18px;
+}
+
+.ao-session-name[data-overflowing] {
+	mask-image: linear-gradient(
+		to right,
+		transparent 0,
+		#000 var(--ao-session-name-fade-start),
+		#000 calc(100% - var(--ao-session-name-fade-end)),
+		transparent 100%
+	);
+	-webkit-mask-image: linear-gradient(
+		to right,
+		transparent 0,
+		#000 var(--ao-session-name-fade-start),
+		#000 calc(100% - var(--ao-session-name-fade-end)),
+		transparent 100%
+	);
+}
+
+.ao-session-name[data-marquee="running"] {
+	--ao-session-name-fade-start: 12px;
+}
+
+/* Off the animation, transform returns to 0 as a transition rather than a
+ * snap, so leaving the row mid-travel reads as the label settling back. */
+.ao-session-name__text {
+	transform: translateX(0);
+	transition: transform 200ms ease-out;
+	will-change: transform;
+}
+
+.ao-session-name[data-marquee="running"] .ao-session-name__text {
+	animation: ao-session-name-marquee var(--ao-marquee-duration, 4s) linear infinite;
+	transition: none;
+}
+
+/* Dwell at each end (0-10% and 90-100%, plus the 45-55% hold at the tail) so
+ * both the start of the name and its tail are readable before the direction
+ * flips. --ao-marquee-shift is the exact overflow, so the travel stops with the
+ * last character at the track edge and never overshoots. */
+@keyframes ao-session-name-marquee {
+	0%,
+	10% {
+		transform: translateX(0);
+	}
+	45%,
+	55% {
+		transform: translateX(var(--ao-marquee-shift, 0));
+	}
+	90%,
+	100% {
+		transform: translateX(0);
+	}
+}
+
+@media (prefers-reduced-motion: reduce) {
+	/* Belt and braces: the component already refuses to set data-marquee under
+	 * this query, but a label must never travel if the media query flips while
+	 * a row is hovered. The full name stays readable through the row's tooltip
+	 * and its accessible name. */
+	.ao-session-name .ao-session-name__text,
+	.ao-session-name[data-marquee="running"] .ao-session-name__text {
+		animation: none;
+		transform: translateX(0);
 		transition: none;
 	}
 }

@@ -82,6 +82,7 @@ import { useKeybindingsStore } from "../stores/keybindings-store";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { CreateProjectFlow, type CloneProjectInput, type CreateProjectInput } from "./CreateProjectFlow";
 import { ResizeHandle } from "./ResizeHandle";
+import { SidebarSessionName } from "./SidebarSessionName";
 import { isMacPlatform, isWindowsPlatform } from "../lib/platform";
 import { useCloudSession } from "../lib/cloud-session";
 
@@ -98,6 +99,13 @@ const noDragStyle = isMac ? ({ WebkitAppRegion: "no-drag" } as React.CSSProperti
 const HOVER_ACTION_CLASS =
 	"grid size-5 shrink-0 place-items-center rounded-md text-passive transition-colors hover:text-foreground disabled:pointer-events-none disabled:opacity-50 data-[state=open]:text-foreground [&_svg]:size-icon-lg";
 
+// Session-row action buttons (pin, rename, kill). Same 20px footprint as the
+// project actions, with the smaller 12px glyph the session rows already used.
+// Visibility is the cluster's opacity, not each button's width, so the row's
+// label track keeps a constant width — see the SessionRow comment.
+const SESSION_ACTION_CLASS =
+	"grid size-5 shrink-0 place-items-center rounded-md text-passive transition-colors focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50 disabled:pointer-events-none disabled:opacity-50 [&_svg]:size-3!";
+
 // Shared nav-row chrome (Codex-style): inset pill hover/selected, 14px type, no accent bar.
 const NAV_ROW_CLASS =
 	"h-9 gap-2.5 rounded-lg px-2.5 text-sm font-medium text-muted-foreground transition-[background-color,color] hover:bg-interactive-hover hover:text-foreground active:bg-interactive-hover active:text-foreground data-[active=true]:bg-interactive-active data-[active=true]:font-medium data-[active=true]:text-foreground";
@@ -108,9 +116,11 @@ const SECTION_ROW_CLASS =
 // Hover fill only for collapsible section headers (Pinned). Projects is a static label.
 const SECTION_ROW_INTERACTIVE_CLASS = "transition-colors hover:bg-interactive-hover hover:text-foreground";
 
-// Mirrors the daemon's display-name cap (maxDisplayNameLen) and the spawn
-// `--name` flag, so inline edits never round-trip a value the API would reject.
-const MAX_DISPLAY_NAME_LEN = 20;
+// Mirrors the daemon's display-name cap (domain.MaxSessionDisplayNameLen) and
+// the spawn `--name` flag, so inline edits never round-trip a value the API
+// would reject. Names this long overflow the row; SidebarSessionName slides
+// them rather than truncating.
+const MAX_DISPLAY_NAME_LEN = 120;
 export const SIDEBAR_DEFAULT_WIDTH = 240;
 export const SIDEBAR_MIN_WIDTH = 200;
 export const SIDEBAR_MAX_WIDTH = 420;
@@ -876,6 +886,11 @@ function ProjectItem({
 // One worker-session row. Reads as a link by default; a hover-revealed pencil
 // flips the label into an inline input (Enter/blur saves, Escape cancels) that
 // persists through the daemon rename endpoint, so the new name survives reload.
+//
+// The action cluster (pin, rename, kill) is absolutely positioned over reserved
+// padding rather than laid out in-flow. Growing the buttons from zero width, as
+// this row used to, resized the label track at exactly the moment the label
+// starts to slide — so the reserved width is constant and only opacity changes.
 function SessionRow({
 	session,
 	active,
@@ -895,6 +910,12 @@ function SessionRow({
 	const switchStatusId = useId();
 	const [isEditing, setIsEditing] = useState(false);
 	const [draft, setDraft] = useState(session.title);
+	// The label marquee runs on row hover or open-button focus. Hover is tracked
+	// here rather than in CSS because the label needs the boolean in JS to decide
+	// whether to animate at all (it only animates when the text actually
+	// overflows, and never under prefers-reduced-motion).
+	const [rowHovered, setRowHovered] = useState(false);
+	const [openFocused, setOpenFocused] = useState(false);
 	// Escape must not be swallowed by the blur-to-save path: the keydown handler
 	// blurs the input, so it flags a cancel here for onBlur to honour.
 	const cancelledRef = useRef(false);
@@ -960,11 +981,13 @@ function SessionRow({
 		<SidebarMenuSubItem className={cn(indented && "pl-4.5")}>
 			<div
 				className={cn(
-					"group/session-row flex h-8 w-full items-center rounded-lg transition-[background-color,color]",
+					"group/session-row relative flex h-8 w-full items-center rounded-lg transition-[background-color,color]",
 					"hover:bg-interactive-hover hover:text-foreground focus-within:bg-interactive-hover",
 					active && "bg-interactive-active text-foreground",
 				)}
 				data-session-row=""
+				onPointerEnter={() => setRowHovered(true)}
+				onPointerLeave={() => setRowHovered(false)}
 			>
 				{/* Scale wrapper — only around the open button so action buttons don't trigger press animation */}
 				<div className="flex min-w-0 flex-1 transition-[transform] duration-[100ms] ease-out active:scale-[0.97]">
@@ -972,20 +995,22 @@ function SessionRow({
 						aria-current={active ? "page" : undefined}
 						aria-describedby={switchLabel ? switchStatusId : undefined}
 						aria-label={t("shell.openSession", { title: session.title })}
-						className="flex h-8 min-w-0 flex-1 items-center gap-1.5 rounded-lg px-2.5 py-0 text-left text-sm outline-hidden focus-visible:ring-2 focus-visible:ring-sidebar-ring"
+						className="flex h-8 min-w-0 flex-1 items-center gap-1.5 rounded-lg py-0 pr-sidebar-session-actions pl-2.5 text-left text-sm outline-hidden focus-visible:ring-2 focus-visible:ring-sidebar-ring"
+						onBlur={() => setOpenFocused(false)}
 						onClick={onOpen}
+						onFocus={() => setOpenFocused(true)}
 						type="button"
 					>
 						<SessionStatusDot session={session} />
 						<span className="flex min-w-0 flex-1 items-center gap-1.5">
-							<span
+							<SidebarSessionName
+								active={rowHovered || openFocused}
 								className={cn(
-									"min-w-0 flex-1 truncate transition-colors",
+									"transition-colors",
 									active ? "text-foreground" : "text-muted-foreground group-hover/session-row:text-foreground",
 								)}
-							>
-								{session.title}
-							</span>
+								title={session.title}
+							/>
 							{switchLabel ? (
 								<span id={switchStatusId} className="max-w-28 shrink-0 truncate text-2xs text-muted-foreground">
 									{switchLabel}
@@ -994,57 +1019,62 @@ function SessionRow({
 						</span>
 					</button>
 				</div>{/* end scale wrapper */}
-				{/* Pin, rename, kill: outside scale wrapper so clicking them doesn't trigger press animation */}
-				<button
-					aria-label={session.isPinned ? t("shell.unpinSession") : t("shell.pinSession")}
+				{/* Pin, rename, kill. Outside the scale wrapper so clicking them doesn't
+				    trigger the press animation, and stacked above the label so a long
+				    name slides under them instead of colliding with them. The cluster
+				    occupies reserved padding, so revealing it never reflows the row. */}
+				<div
 					className={cn(
-						"grid h-5 w-0 shrink-0 place-items-center overflow-hidden rounded-md text-passive opacity-0",
-						"transition-[width,margin,background-color,color,opacity] hover:bg-interactive-hover hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50 [&_svg]:size-3!",
-						"group-hover/session-row:w-5 group-hover/session-row:opacity-100",
-						"group-focus-within/session-row:w-5 group-focus-within/session-row:opacity-100",
-						session.isPinned && "text-foreground",
+						"absolute top-0 right-1 z-chrome flex h-8 items-center gap-px",
+						// Hidden means non-interactive: the cluster now always occupies
+						// its reserved strip, so without this a tap on the row's right
+						// edge could land on an invisible Kill button. Keyboard focus is
+						// unaffected, and focus-within reveals the cluster anyway.
+						"pointer-events-none opacity-0 transition-opacity",
+						"group-hover/session-row:pointer-events-auto group-hover/session-row:opacity-100",
+						"group-focus-within/session-row:pointer-events-auto group-focus-within/session-row:opacity-100",
 					)}
-					onClick={(e) => {
-						e.stopPropagation();
-						session.isPinned ? unpinSession(session) : pinSession(session);
-					}}
-					type="button"
+					data-session-actions=""
 				>
-					{session.isPinned ? <PinOff aria-hidden="true" /> : <Pin aria-hidden="true" />}
-				</button>
-				<button
-					aria-label={t("shell.renameSession", { title: session.title })}
-					className={cn(
-						"grid h-5 w-0 shrink-0 place-items-center overflow-hidden rounded-md text-passive opacity-0",
-						"transition-[width,margin,background-color,color,opacity] hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50 [&_svg]:size-3!",
-						"group-hover/session-row:mr-0.5 group-hover/session-row:w-5 group-hover/session-row:opacity-100",
-						"group-focus-within/session-row:mr-0.5 group-focus-within/session-row:w-5 group-focus-within/session-row:opacity-100",
-					)}
-					onClick={(e) => {
-						e.stopPropagation();
-						startEditing();
-					}}
-					type="button"
-				>
-					<Pencil aria-hidden="true" />
-				</button>
-				<button
-					aria-label={t("shell.killSession")}
-					className={cn(
-						"grid h-5 w-0 shrink-0 place-items-center overflow-hidden rounded-md text-passive opacity-0",
-						"transition-[width,margin,background-color,color,opacity] hover:text-destructive focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50 [&_svg]:size-3!",
-						"group-hover/session-row:mr-1 group-hover/session-row:w-5 group-hover/session-row:opacity-100",
-						"group-focus-within/session-row:mr-1 group-focus-within/session-row:w-5 group-focus-within/session-row:opacity-100",
-					)}
-				disabled={isKilling}
-				onClick={(e) => {
-					e.stopPropagation();
-					terminateSession(session);
-				}}
-					type="button"
-				>
-					<Trash2 aria-hidden="true" />
-				</button>
+					<button
+						aria-label={session.isPinned ? t("shell.unpinSession") : t("shell.pinSession")}
+						className={cn(
+							SESSION_ACTION_CLASS,
+							"hover:bg-interactive-hover hover:text-foreground",
+							session.isPinned && "text-foreground",
+						)}
+						onClick={(e) => {
+							e.stopPropagation();
+							session.isPinned ? unpinSession(session) : pinSession(session);
+						}}
+						type="button"
+					>
+						{session.isPinned ? <PinOff aria-hidden="true" /> : <Pin aria-hidden="true" />}
+					</button>
+					<button
+						aria-label={t("shell.renameSession", { title: session.title })}
+						className={cn(SESSION_ACTION_CLASS, "hover:text-foreground")}
+						onClick={(e) => {
+							e.stopPropagation();
+							startEditing();
+						}}
+						type="button"
+					>
+						<Pencil aria-hidden="true" />
+					</button>
+					<button
+						aria-label={t("shell.killSession")}
+						className={cn(SESSION_ACTION_CLASS, "hover:text-destructive")}
+						disabled={isKilling}
+						onClick={(e) => {
+							e.stopPropagation();
+							terminateSession(session);
+						}}
+						type="button"
+					>
+						<Trash2 aria-hidden="true" />
+					</button>
+				</div>
 			</div>
 		</SidebarMenuSubItem>
 	);
