@@ -81,6 +81,19 @@ func New(plugin codexPlugin, log *slog.Logger) *Driver {
 
 var _ ports.ChatDriver = (*Driver)(nil)
 
+// QuotaAccountPresent reports whether the locally configured Codex account can
+// exist without treating daemon-wide refresher registration as installation.
+func (d *Driver) QuotaAccountPresent(ctx context.Context, provider domain.QuotaProviderID, accountID domain.QuotaAccountID) (bool, error) {
+	if d == nil || d.plugin == nil || provider != "codex" || accountID != "default" {
+		return false, nil
+	}
+	_, err := d.plugin.ResolveBinary(ctx)
+	if errors.Is(err, ports.ErrAgentBinaryNotFound) {
+		return false, nil
+	}
+	return err == nil, err
+}
+
 // RefreshQuota reads the user's Codex subscription limits without creating a
 // thread, AO session, or worktree. app-server exposes this account-level read
 // immediately after initialize, so the daemon can keep Plan Usage current even

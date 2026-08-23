@@ -147,13 +147,16 @@ func (s *Store) quotaSnapshotFromAccount(ctx context.Context, row gen.QuotaAccou
 func (s *Store) RecordQuotaRefreshFailure(ctx context.Context, provider domain.QuotaProviderID, accountID domain.QuotaAccountID, message string) error {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
-	if err := s.qw.RecordQuotaRefreshFailure(ctx, gen.RecordQuotaRefreshFailureParams{
+	updated, err := s.qw.RecordQuotaRefreshFailure(ctx, gen.RecordQuotaRefreshFailureParams{
 		LastRefreshError: message,
 		Provider:         string(provider),
 		AccountID:        string(accountID),
-		ObservedAt:       time.Now().UTC(),
-	}); err != nil {
+	})
+	if err != nil {
 		return fmt.Errorf("record quota refresh failure: %w", err)
+	}
+	if updated == 0 {
+		return fmt.Errorf("record quota refresh failure: quota account %s:%s does not exist", provider, accountID)
 	}
 	return nil
 }

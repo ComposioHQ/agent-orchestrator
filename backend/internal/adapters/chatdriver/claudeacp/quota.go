@@ -29,6 +29,19 @@ func NewQuotaRefresher(plugin claudePlugin) *QuotaRefresher {
 	return &QuotaRefresher{plugin: plugin}
 }
 
+// QuotaAccountPresent reports whether Claude Code is installed without
+// confusing daemon-wide refresher registration with a configured provider.
+func (r *QuotaRefresher) QuotaAccountPresent(ctx context.Context, provider domain.QuotaProviderID, accountID domain.QuotaAccountID) (bool, error) {
+	if r == nil || r.plugin == nil || provider != "claude" || accountID != "default" {
+		return false, nil
+	}
+	_, err := r.plugin.ResolveBinary(ctx)
+	if errors.Is(err, ports.ErrAgentBinaryNotFound) {
+		return false, nil
+	}
+	return err == nil, err
+}
+
 // RefreshQuota implements quota.Refresher for Claude's default local account.
 func (r *QuotaRefresher) RefreshQuota(ctx context.Context, provider domain.QuotaProviderID, accountID domain.QuotaAccountID) (domain.QuotaSnapshot, error) {
 	if r == nil || r.plugin == nil || provider != "claude" || accountID != "default" {

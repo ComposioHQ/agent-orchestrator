@@ -2,6 +2,7 @@ package quota
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -37,7 +38,7 @@ type Service struct {
 type providerRefresher struct {
 	provider  domain.QuotaProviderID
 	accountID domain.QuotaAccountID
-	refresher Refresher
+	refresher AccountRefresher
 }
 
 type cachedRateLimits struct {
@@ -45,9 +46,21 @@ type cachedRateLimits struct {
 	observedAt time.Time
 }
 
+type refreshPreparationError struct{ err error }
+
+func (e *refreshPreparationError) Error() string { return e.err.Error() }
+func (e *refreshPreparationError) Unwrap() error { return e.err }
+
 // Refresher performs a provider-native on-demand quota read.
 type Refresher interface {
 	RefreshQuota(context.Context, domain.QuotaProviderID, domain.QuotaAccountID) (domain.QuotaSnapshot, error)
+}
+
+// AccountRefresher is a daemon-owned reader that can distinguish an installed
+// provider from one that is merely registered in the daemon wiring.
+type AccountRefresher interface {
+	Refresher
+	QuotaAccountPresent(context.Context, domain.QuotaProviderID, domain.QuotaAccountID) (bool, error)
 }
 
 // New creates a quota service backed by store.
@@ -66,7 +79,7 @@ func (s *Service) SetRefresher(refresher Refresher) {
 
 // RegisterRefresher adds a daemon-owned reader for an account that can be
 // refreshed even when no live Chat conversation exists.
-func (s *Service) RegisterRefresher(provider domain.QuotaProviderID, accountID domain.QuotaAccountID, refresher Refresher) {
+func (s *Service) RegisterRefresher(provider domain.QuotaProviderID, accountID domain.QuotaAccountID, refresher AccountRefresher) {
 	if s == nil || refresher == nil {
 		return
 	}
@@ -183,8 +196,10 @@ func (s *Service) Refresh(ctx context.Context, provider domain.QuotaProviderID, 
 	}
 	s.mu.Lock()
 	refresher := s.refresher
+	var accountRefresher AccountRefresher
 	if registered, ok := s.providers[quotaKey(provider, accountID)]; ok {
 		refresher = registered.refresher
+		accountRefresher = registered.refresher
 	}
 	s.mu.Unlock()
 	if refresher == nil {
@@ -192,17 +207,28 @@ func (s *Service) Refresh(ctx context.Context, provider domain.QuotaProviderID, 
 	}
 	key := string(provider) + "\x00" + string(accountID)
 	result, err, _ := s.refreshes.Do(key, func() (any, error) {
-		snapshot, readErr := refresher.RefreshQuota(ctx, provider, accountID)
-		if readErr != nil {
-			return nil, readErr
+		if accountRefresher != nil {
+			if prepareErr := s.ensureQuotaAccount(ctx, provider, accountID, accountRefresher); prepareErr != nil {
+				return nil, &refreshPreparationError{err: prepareErr}
+			}
 		}
-		if recordErr := s.RecordQuotaSnapshot(ctx, snapshot); recordErr != nil {
-			return nil, recordErr
+		snapshot, readErr := refresher.RefreshQuota(ctx, provider, accountID)
+		if readErr == nil {
+			readErr = s.RecordQuotaSnapshot(ctx, snapshot)
+		}
+		if readErr != nil {
+			if recordErr := s.store.RecordQuotaRefreshFailure(context.WithoutCancel(ctx), provider, accountID, readErr.Error()); recordErr != nil {
+				return nil, errors.Join(readErr, fmt.Errorf("persist quota refresh error: %w", recordErr))
+			}
+			return nil, readErr
 		}
 		return snapshot, nil
 	})
 	if err != nil {
-		_ = s.store.RecordQuotaRefreshFailure(context.WithoutCancel(ctx), provider, accountID, err.Error())
+		var prepareErr *refreshPreparationError
+		if errors.As(err, &prepareErr) {
+			return domain.QuotaSnapshot{}, prepareErr.err
+		}
 		return domain.QuotaSnapshot{}, err
 	}
 	snapshot, ok := result.(domain.QuotaSnapshot)
@@ -210,6 +236,30 @@ func (s *Service) Refresh(ctx context.Context, provider domain.QuotaProviderID, 
 		return domain.QuotaSnapshot{}, fmt.Errorf("unexpected refreshed quota result type %T", result)
 	}
 	return snapshot, nil
+}
+
+func (s *Service) ensureQuotaAccount(ctx context.Context, provider domain.QuotaProviderID, accountID domain.QuotaAccountID, refresher AccountRefresher) error {
+	_, exists, err := s.store.GetQuotaSnapshot(ctx, provider, accountID)
+	if err != nil || exists {
+		return err
+	}
+	present, err := refresher.QuotaAccountPresent(ctx, provider, accountID)
+	if err != nil {
+		return fmt.Errorf("check quota provider presence: %w", err)
+	}
+	if !present {
+		return ports.ErrQuotaRefreshUnsupported
+	}
+	return s.store.PersistQuotaObservation(ctx, domain.QuotaSnapshot{
+		Provider:     provider,
+		AccountID:    accountID,
+		Capabilities: domain.QuotaCapabilities{SupportsRead: true},
+		Completeness: domain.QuotaPartial,
+		// This row records presence, not a successful observation. Keeping its
+		// timestamp stale prevents the UI from presenting a failed first read as
+		// fresh and guarantees that a real provider observation supersedes it.
+		ObservedAt: time.Unix(0, 0).UTC(),
+	}, nil)
 }
 
 // RefreshAll refreshes stale daemon-owned accounts and then returns every

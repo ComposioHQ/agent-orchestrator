@@ -249,7 +249,7 @@ func Run() error {
 	})
 	quotaSvc.SetRefresher(chatSvc)
 	if codexDriver, err := chatDrivers.Driver(domain.HarnessCodex); err == nil {
-		if refresher, ok := codexDriver.(quotasvc.Refresher); ok {
+		if refresher, ok := codexDriver.(quotasvc.AccountRefresher); ok {
 			quotaSvc.RegisterRefresher("codex", "default", refresher)
 		}
 	}

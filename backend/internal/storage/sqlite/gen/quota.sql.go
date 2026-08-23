@@ -512,30 +512,24 @@ func (q *Queries) ListQuotaLimitsForAccount(ctx context.Context, arg ListQuotaLi
 	return items, nil
 }
 
-const recordQuotaRefreshFailure = `-- name: RecordQuotaRefreshFailure :exec
-INSERT INTO quota_accounts (
-    provider, account_id, supports_read, completeness, observed_at, last_refresh_error
-) VALUES (?, ?, 1, 'partial', ?, ?)
-ON CONFLICT (provider, account_id) DO UPDATE SET
-    supports_read = MAX(quota_accounts.supports_read, excluded.supports_read),
-    last_refresh_error = excluded.last_refresh_error
+const recordQuotaRefreshFailure = `-- name: RecordQuotaRefreshFailure :execrows
+UPDATE quota_accounts
+SET last_refresh_error = ?
+WHERE provider = ? AND account_id = ?
 `
 
 type RecordQuotaRefreshFailureParams struct {
+	LastRefreshError string
 	Provider         string
 	AccountID        string
-	ObservedAt       time.Time
-	LastRefreshError string
 }
 
-func (q *Queries) RecordQuotaRefreshFailure(ctx context.Context, arg RecordQuotaRefreshFailureParams) error {
-	_, err := q.db.ExecContext(ctx, recordQuotaRefreshFailure,
-		arg.Provider,
-		arg.AccountID,
-		arg.ObservedAt,
-		arg.LastRefreshError,
-	)
-	return err
+func (q *Queries) RecordQuotaRefreshFailure(ctx context.Context, arg RecordQuotaRefreshFailureParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, recordQuotaRefreshFailure, arg.LastRefreshError, arg.Provider, arg.AccountID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
 const upsertQuotaAccount = `-- name: UpsertQuotaAccount :exec

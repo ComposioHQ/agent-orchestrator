@@ -18,13 +18,10 @@ ON CONFLICT (provider, account_id) DO UPDATE SET
     last_refresh_error = ''
 WHERE excluded.observed_at >= quota_accounts.observed_at;
 
--- name: RecordQuotaRefreshFailure :exec
-INSERT INTO quota_accounts (
-    provider, account_id, supports_read, completeness, observed_at, last_refresh_error
-) VALUES (?, ?, 1, 'partial', ?, ?)
-ON CONFLICT (provider, account_id) DO UPDATE SET
-    supports_read = MAX(quota_accounts.supports_read, excluded.supports_read),
-    last_refresh_error = excluded.last_refresh_error;
+-- name: RecordQuotaRefreshFailure :execrows
+UPDATE quota_accounts
+SET last_refresh_error = ?
+WHERE provider = ? AND account_id = ?;
 
 -- name: InsertQuotaAlert :execrows
 INSERT OR IGNORE INTO quota_alerts (
