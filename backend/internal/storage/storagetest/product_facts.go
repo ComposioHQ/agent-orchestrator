@@ -57,6 +57,22 @@ func RunProductFactsConformance(t testing.TB, ctx context.Context, f ProductFact
 	if got, err := f.Store.ListPRReviewThreads(ctx, pr.URL); err != nil || len(got) != 1 {
 		t.Fatalf("threads = %+v err=%v", got, err)
 	}
+
+	oldURL := pr.URL
+	renamed := pr
+	renamed.URL = "https://github.com/acme/renamed/pull/7"
+	renamed.URLAlias = oldURL
+	renamed.Repo = "acme/renamed"
+	if err := f.Store.WriteSCMObservation(ctx, renamed, checks, reviews, threads, comments, ports.ReviewWriteReplace); err != nil {
+		t.Fatalf("write renamed provider identity: %v", err)
+	}
+	pr = renamed
+	if got, ok, err := f.Store.GetPR(ctx, oldURL); err != nil || !ok || got.URL != pr.URL {
+		t.Fatalf("get renamed PR through alias = %+v ok=%v err=%v", got, ok, err)
+	}
+	if got, err := f.Store.ListPRsBySession(ctx, f.SessionID); err != nil || len(got) != 1 || got[0].URL != pr.URL {
+		t.Fatalf("renamed PR list = %+v err=%v", got, err)
+	}
 	if changed, err := f.Store.MarkPRCommentResolved(ctx, pr.URL, "comment-1"); err != nil || !changed {
 		t.Fatalf("resolve comment = %v, %v", changed, err)
 	}

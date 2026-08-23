@@ -41,20 +41,20 @@ func (s *Store) ClaimPR(ctx context.Context, pr domain.PullRequest, checks []dom
 			return err
 		}
 		pr.URL = canonical
-		var owner domain.SessionID
-		var terminated bool
-		err = tx.QueryRow(ctx, `SELECT p.session_id, s.is_terminated
-			FROM ao_pull_requests p JOIN ao_sessions s
-			  ON s.org_id=p.org_id AND s.owner_user_id=p.owner_user_id AND s.id=p.session_id
-			WHERE p.org_id=$1 AND p.owner_user_id=$2 AND p.url=$3
-			FOR UPDATE OF p`, identity.OrgID, identity.UserID, pr.URL).Scan(&owner, &terminated)
-		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
-			return normalizeError(err)
+		candidates, err := findProductPRCandidates(ctx, tx, identity, pr)
+		if err != nil {
+			return err
 		}
-		if err == nil && owner != pr.SessionID {
-			outcome = ports.ClaimOutcome{PreviousOwner: owner, OwnerTerminated: terminated}
-			if !terminated && !allowActiveTakeover {
-				return ports.PRClaimedByActiveSessionError{Owner: owner}
+		for _, candidate := range candidates {
+			if candidate.SessionID == pr.SessionID {
+				continue
+			}
+			if outcome.PreviousOwner != "" && outcome.PreviousOwner != candidate.SessionID {
+				return fmt.Errorf("pr identity resolves to multiple sessions: %s and %s", outcome.PreviousOwner, candidate.SessionID)
+			}
+			outcome = ports.ClaimOutcome{PreviousOwner: candidate.SessionID, OwnerTerminated: candidate.Terminated}
+			if !candidate.Terminated && !allowActiveTakeover {
+				return ports.PRClaimedByActiveSessionError{Owner: candidate.SessionID}
 			}
 		}
 		return writeProductPRTx(ctx, tx, identity, pr, checks, reviews, threads, comments, mode, false, true)
@@ -79,14 +79,20 @@ func writeProductPRTx(ctx context.Context, tx pgx.Tx, identity tenant.Identity, 
 		return errors.New("write pull request: url and session are required")
 	}
 	pr = normalizeProductPR(pr)
-	var priorSession domain.SessionID
-	err := tx.QueryRow(ctx, `SELECT session_id FROM ao_pull_requests
-		WHERE org_id=$1 AND owner_user_id=$2 AND url=$3 FOR UPDATE`, identity.OrgID, identity.UserID, pr.URL).Scan(&priorSession)
-	if err == nil && !claim && priorSession != pr.SessionID {
-		return fmt.Errorf("pr %s already belongs to session %s", pr.URL, priorSession)
+	candidates, err := findProductPRCandidates(ctx, tx, identity, pr)
+	if err != nil {
+		return err
 	}
-	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
-		return normalizeError(err)
+	for _, candidate := range candidates {
+		if !claim && candidate.SessionID != pr.SessionID {
+			return fmt.Errorf("pr %s already belongs to session %s", candidate.URL, candidate.SessionID)
+		}
+		if candidate.URL != pr.URL && pr.ProviderID != "" {
+			if _, err := tx.Exec(ctx, `UPDATE ao_pull_requests SET provider_id=''
+				WHERE org_id=$1 AND owner_user_id=$2 AND url=$3`, identity.OrgID, identity.UserID, candidate.URL); err != nil {
+				return normalizeError(err)
+			}
+		}
 	}
 	state := productPRState(pr)
 	stateChanged := pr.StateChangedAt
@@ -131,6 +137,18 @@ func writeProductPRTx(ctx context.Context, tx pgx.Tx, identity tenant.Identity, 
 	if err != nil {
 		return normalizeError(err)
 	}
+	if _, err := tx.Exec(ctx, `DELETE FROM ao_pull_request_url_aliases
+		WHERE org_id=$1 AND owner_user_id=$2 AND alias_url=$3`, identity.OrgID, identity.UserID, pr.URL); err != nil {
+		return normalizeError(err)
+	}
+	for _, candidate := range candidates {
+		if candidate.URL == pr.URL {
+			continue
+		}
+		if err := moveProductPRAliasRows(ctx, tx, identity, candidate.URL, pr.URL); err != nil {
+			return err
+		}
+	}
 	if pr.URLAlias != "" && pr.URLAlias != pr.URL {
 		if _, err := tx.Exec(ctx, `INSERT INTO ao_pull_request_url_aliases(org_id,owner_user_id,alias_url,canonical_url)
 			VALUES($1,$2,$3,$4) ON CONFLICT(org_id,owner_user_id,alias_url) DO UPDATE SET canonical_url=EXCLUDED.canonical_url`, identity.OrgID, identity.UserID, pr.URLAlias, pr.URL); err != nil {
@@ -141,6 +159,104 @@ func writeProductPRTx(ctx context.Context, tx pgx.Tx, identity tenant.Identity, 
 		return err
 	}
 	return nil
+}
+
+type productPRCandidate struct {
+	URL        string
+	SessionID  domain.SessionID
+	Terminated bool
+}
+
+func findProductPRCandidates(ctx context.Context, tx pgx.Tx, id tenant.Identity, pr domain.PullRequest) ([]productPRCandidate, error) {
+	queries := []struct {
+		query string
+		args  []any
+	}{
+		{`SELECT p.url,p.session_id,s.is_terminated FROM ao_pull_requests p
+			JOIN ao_sessions s ON s.org_id=p.org_id AND s.owner_user_id=p.owner_user_id AND s.id=p.session_id
+			WHERE p.org_id=$1 AND p.owner_user_id=$2 AND p.url=$3 FOR UPDATE OF p`, []any{id.OrgID, id.UserID, pr.URL}},
+	}
+	if pr.URLAlias != "" && pr.URLAlias != pr.URL {
+		queries = append(queries, struct {
+			query string
+			args  []any
+		}{`SELECT p.url,p.session_id,s.is_terminated FROM ao_pull_requests p
+			JOIN ao_sessions s ON s.org_id=p.org_id AND s.owner_user_id=p.owner_user_id AND s.id=p.session_id
+			LEFT JOIN ao_pull_request_url_aliases a ON a.org_id=p.org_id AND a.owner_user_id=p.owner_user_id AND a.canonical_url=p.url
+			WHERE p.org_id=$1 AND p.owner_user_id=$2 AND (p.url=$3 OR a.alias_url=$3) FOR UPDATE OF p`, []any{id.OrgID, id.UserID, pr.URLAlias}})
+	}
+	if pr.ProviderID != "" && pr.Provider != "" && pr.Host != "" {
+		queries = append(queries, struct {
+			query string
+			args  []any
+		}{`SELECT p.url,p.session_id,s.is_terminated FROM ao_pull_requests p
+			JOIN ao_sessions s ON s.org_id=p.org_id AND s.owner_user_id=p.owner_user_id AND s.id=p.session_id
+			WHERE p.org_id=$1 AND p.owner_user_id=$2 AND p.provider=$3 AND p.host=$4 AND p.provider_id=$5
+			FOR UPDATE OF p`, []any{id.OrgID, id.UserID, pr.Provider, pr.Host, pr.ProviderID}})
+	}
+	byURL := make(map[string]productPRCandidate)
+	for _, lookup := range queries {
+		var candidate productPRCandidate
+		err := tx.QueryRow(ctx, lookup.query, lookup.args...).Scan(&candidate.URL, &candidate.SessionID, &candidate.Terminated)
+		if errors.Is(err, pgx.ErrNoRows) {
+			continue
+		}
+		if err != nil {
+			return nil, normalizeError(err)
+		}
+		byURL[candidate.URL] = candidate
+	}
+	out := make([]productPRCandidate, 0, len(byURL))
+	for _, candidate := range byURL {
+		out = append(out, candidate)
+	}
+	return out, nil
+}
+
+func moveProductPRAliasRows(ctx context.Context, tx pgx.Tx, id tenant.Identity, previousURL, canonicalURL string) error {
+	statements := []string{
+		`INSERT INTO ao_pull_request_checks(org_id,owner_user_id,pr_url,name,commit_hash,status,conclusion,url,details,log_tail,created_at)
+		 SELECT org_id,owner_user_id,$4,name,commit_hash,status,conclusion,url,details,log_tail,created_at
+		 FROM ao_pull_request_checks WHERE org_id=$1 AND owner_user_id=$2 AND pr_url=$3
+		 ON CONFLICT(org_id,owner_user_id,pr_url,name,commit_hash) DO UPDATE SET status=EXCLUDED.status,conclusion=EXCLUDED.conclusion,url=EXCLUDED.url,details=EXCLUDED.details,log_tail=EXCLUDED.log_tail`,
+		`INSERT INTO ao_pull_request_reviews(org_id,owner_user_id,pr_url,review_id,author,state,url,body,is_bot,target_sha,submitted_at,auto_inject_review)
+		 SELECT org_id,owner_user_id,$4,review_id,author,state,url,body,is_bot,target_sha,submitted_at,auto_inject_review
+		 FROM ao_pull_request_reviews WHERE org_id=$1 AND owner_user_id=$2 AND pr_url=$3
+		 ON CONFLICT(org_id,owner_user_id,pr_url,review_id) DO UPDATE SET author=EXCLUDED.author,state=EXCLUDED.state,url=EXCLUDED.url,body=EXCLUDED.body,is_bot=EXCLUDED.is_bot,target_sha=EXCLUDED.target_sha,submitted_at=EXCLUDED.submitted_at`,
+		`INSERT INTO ao_pull_request_review_threads(org_id,owner_user_id,pr_url,thread_id,path,line,resolved,is_bot,semantic_hash,updated_at)
+		 SELECT org_id,owner_user_id,$4,thread_id,path,line,resolved,is_bot,semantic_hash,updated_at
+		 FROM ao_pull_request_review_threads WHERE org_id=$1 AND owner_user_id=$2 AND pr_url=$3
+		 ON CONFLICT(org_id,owner_user_id,pr_url,thread_id) DO UPDATE SET path=EXCLUDED.path,line=EXCLUDED.line,resolved=EXCLUDED.resolved,is_bot=EXCLUDED.is_bot,semantic_hash=EXCLUDED.semantic_hash,updated_at=EXCLUDED.updated_at`,
+		`INSERT INTO ao_pull_request_comments(org_id,owner_user_id,pr_url,comment_id,thread_id,author,file,line,body,url,resolved,is_bot,auto_inject_review,created_at)
+		 SELECT org_id,owner_user_id,$4,comment_id,thread_id,author,file,line,body,url,resolved,is_bot,auto_inject_review,created_at
+		 FROM ao_pull_request_comments WHERE org_id=$1 AND owner_user_id=$2 AND pr_url=$3
+		 ON CONFLICT(org_id,owner_user_id,pr_url,comment_id) DO UPDATE SET thread_id=EXCLUDED.thread_id,author=EXCLUDED.author,file=EXCLUDED.file,line=EXCLUDED.line,body=EXCLUDED.body,url=EXCLUDED.url,resolved=EXCLUDED.resolved,is_bot=EXCLUDED.is_bot,created_at=EXCLUDED.created_at`,
+	}
+	for _, statement := range statements {
+		if _, err := tx.Exec(ctx, statement, id.OrgID, id.UserID, previousURL, canonicalURL); err != nil {
+			return normalizeError(err)
+		}
+	}
+	if _, err := tx.Exec(ctx, `UPDATE ao_notifications old SET status='read',resolved_at=COALESCE(old.resolved_at,old.created_at)
+		WHERE old.org_id=$1 AND old.owner_user_id=$2 AND old.pr_url=$3
+		AND (old.status='unread' OR old.resolved_at IS NULL)
+		AND EXISTS(SELECT 1 FROM ao_notifications current WHERE current.org_id=old.org_id AND current.owner_user_id=old.owner_user_id
+			AND current.pr_url=$4 AND current.session_id=old.session_id AND current.type=old.type
+			AND (current.status='unread' OR current.resolved_at IS NULL))`, id.OrgID, id.UserID, previousURL, canonicalURL); err != nil {
+		return normalizeError(err)
+	}
+	if _, err := tx.Exec(ctx, `UPDATE ao_notifications SET pr_url=$4 WHERE org_id=$1 AND owner_user_id=$2 AND pr_url=$3`, id.OrgID, id.UserID, previousURL, canonicalURL); err != nil {
+		return normalizeError(err)
+	}
+	if _, err := tx.Exec(ctx, `UPDATE ao_pull_request_url_aliases SET canonical_url=$4 WHERE org_id=$1 AND owner_user_id=$2 AND canonical_url=$3`, id.OrgID, id.UserID, previousURL, canonicalURL); err != nil {
+		return normalizeError(err)
+	}
+	if _, err := tx.Exec(ctx, `DELETE FROM ao_pull_requests WHERE org_id=$1 AND owner_user_id=$2 AND url=$3`, id.OrgID, id.UserID, previousURL); err != nil {
+		return normalizeError(err)
+	}
+	_, err := tx.Exec(ctx, `INSERT INTO ao_pull_request_url_aliases(org_id,owner_user_id,alias_url,canonical_url)
+		VALUES($1,$2,$3,$4) ON CONFLICT(org_id,owner_user_id,alias_url) DO UPDATE SET canonical_url=EXCLUDED.canonical_url`, id.OrgID, id.UserID, previousURL, canonicalURL)
+	return normalizeError(err)
 }
 
 func writeProductPRChildren(ctx context.Context, tx pgx.Tx, id tenant.Identity, pr domain.PullRequest, checks []domain.PullRequestCheck, reviews []domain.PullRequestReview, threads []domain.PullRequestReviewThread, comments []domain.PullRequestComment, mode ports.ReviewWriteMode, legacy bool) error {
