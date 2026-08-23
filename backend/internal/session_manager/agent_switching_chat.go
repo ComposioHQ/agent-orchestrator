@@ -278,7 +278,7 @@ func (m *Manager) executeChatAgentSwitch(
 		return result, fmt.Errorf("switch Chat agent %s: target system prompt file: %w", id, err)
 	}
 	if err := m.prepareWorkspace(
-		ctx, targetAgent, rec.ID, rec.Metadata.WorkspacePath,
+		ctx, targetAgent, cfg.TargetHarness, rec.ID, rec.Metadata.WorkspacePath,
 		finalSystemPrompt, systemPromptFile, agentConfig, targetEnv,
 	); err != nil {
 		return result, fmt.Errorf("switch Chat agent %s: prepare target workspace: %w", id, err)
@@ -493,7 +493,7 @@ func (m *Manager) rollbackStoppedChatAgentSwitchSource(
 	env := m.runtimeEnv(rec.ID, rec.ProjectID, rec.IssueID, project.Config.Env)
 	m.augmentAgentRuntimeEnv(sourceAgent, env)
 	if err := m.prepareWorkspace(
-		ctx, sourceAgent, rec.ID, rec.Metadata.WorkspacePath,
+		ctx, sourceAgent, rec.Harness, rec.ID, rec.Metadata.WorkspacePath,
 		systemPrompt, systemPromptFile, agentConfig, env,
 	); err != nil {
 		return err

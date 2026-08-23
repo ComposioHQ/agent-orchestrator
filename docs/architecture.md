@@ -144,6 +144,24 @@ graph LR
 
 ```
 
+Session placement has two authoritative ports. `SessionExecution` owns every
+mutating operation in the environment where an agent runs; its workspace,
+runtime, and messenger children are also used by restore, kill, send, and agent
+switch flows. New remote TUI sessions use an explicit provisioning transaction:
+system prompt, workspace/branch, project provisioning, attachments, agent
+installation, launch resolution, runtime binding/launch, diff-base observation,
+then commit. Any failure calls one idempotent rollback owned by the compute
+provider. The control plane does not claim distributed atomicity with its
+durable session-row write: if the row commit or post-start delivery fails, it
+requests compute rollback and records termination/preservation according to the
+reported rollback outcome.
+
+`WorkspaceObservation` is the sole content port. It owns snapshots, workspace
+list/text+diff/blob reads, change streams, and preview discovery/file reads.
+Local sessions use the existing Git/filesystem behavior behind a local adapter;
+remote sessions delegate every operation to the compute client and never open a
+sandbox path on the control-plane host.
+
 ### 2. Durable Facts, Derived Status
 
 Storage layer persists minimal facts. Service layer computes display status on-demand:

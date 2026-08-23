@@ -194,7 +194,10 @@ type Deps struct {
 	// WorkspaceObservation selects where session content operations execute.
 	// Nil preserves the local workspace behavior.
 	WorkspaceObservation ports.WorkspaceObservation
-	Logger               *slog.Logger
+	// Execution supplies the matching observation port when session placement is
+	// injected as one unit. An explicit WorkspaceObservation takes precedence.
+	Execution ports.SessionExecution
+	Logger    *slog.Logger
 	// BackgroundContext owns best-effort work that must survive an HTTP request
 	// returning but stop with the daemon. It defaults to context.Background for
 	// focused service tests and non-daemon callers.
@@ -212,6 +215,9 @@ func NewWithDeps(d Deps) *Service {
 		backgroundContext = context.Background()
 	}
 	s := &Service{manager: d.Manager, store: d.Store, prClaimer: d.PRClaimer, scm: d.SCM, tracker: d.Tracker, clock: d.Clock, dataDir: d.DataDir, signalCapable: d.SignalCapable, telemetry: d.Telemetry, logger: d.Logger, backgroundContext: backgroundContext, workspaceObservation: d.WorkspaceObservation}
+	if s.workspaceObservation == nil && d.Execution != nil {
+		s.workspaceObservation = d.Execution.Observation()
+	}
 	if s.prClaimer == nil {
 		if w, ok := d.Store.(ports.PRClaimer); ok {
 			s.prClaimer = w
