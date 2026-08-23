@@ -185,9 +185,6 @@ export const aoBridge: AoBridge =
 		cloud: {
 			getAvailability: async () => ({ available: false, enabled: false, apiBaseUrl: "" }),
 			getSession: async () => null,
-			getAccessToken: async () => {
-				throw new Error("AO Cloud is unavailable outside Electron.");
-			},
 			signIn: async () => null,
 			signOut: async () => undefined,
 			onSessionChanged: () => () => undefined,

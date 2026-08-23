@@ -364,11 +364,6 @@ const api = {
 	cloud: {
 		getAvailability: () => ipcRenderer.invoke("cloud:getAvailability") as Promise<CloudAvailability>,
 		getSession: () => ipcRenderer.invoke("cloud:getSession") as Promise<CloudAccount | null>,
-		/**
-		 * A short-lived AO access token for the renderer's cloud client. Fetched
-		 * per request and never persisted here — refresh tokens stay in main.
-		 */
-		getAccessToken: () => ipcRenderer.invoke("cloud:getAccessToken") as Promise<string>,
 		signIn: () => ipcRenderer.invoke("cloud:signIn") as Promise<CloudAccount | null>,
 		signOut: () => ipcRenderer.invoke("cloud:signOut") as Promise<void>,
 		onSessionChanged: (listener: (account: CloudAccount | null) => void) => {

@@ -13,8 +13,12 @@
 //     Electron safeStorage, mode 0600. When the OS offers no real protection we
 //     keep the session process-local rather than writing a rotating refresh
 //     token as plaintext.
-//   - The renderer never receives or stores a refresh token. It asks main for a
-//     short-lived access token per request (`cloud:getAccessToken`).
+//   - No token of any kind crosses the preload boundary. The renderer cannot
+//     ask for one: every cloud HTTP request is made by Electron main, which
+//     exposes only narrow, purpose-specific IPC (see main/cloud-ipc.ts). There
+//     is deliberately no `getAccessToken` channel and no generic authenticated
+//     fetch bridge — the access token is a main-process implementation detail
+//     that {@link getCloudAccessToken} hands to the cloud client and nothing else.
 //   - Refresh is single-flight per data dir and guarded by a generation counter,
 //     so a sign-out or a new sign-in that races an in-flight refresh cannot have
 //     the stale result written back over it.
@@ -308,9 +312,12 @@ async function refreshCloudSession(
 }
 
 /**
- * A currently valid AO access token for the renderer's cloud client. Throws
- * rather than handing back an expired token, so a failed refresh surfaces as a
- * request failure the UI can retry instead of a silent 401 loop.
+ * A currently valid AO access token, for main-process callers only — the cloud
+ * transport (main/cloud-transport.ts) is the sole consumer. Throws rather than
+ * handing back an expired token, so a failed refresh surfaces as a request
+ * failure the UI can retry instead of a silent 401 loop.
+ *
+ * Never expose this over IPC. See the custody note at the top of this file.
  */
 export async function getCloudAccessToken(dataDir: string): Promise<string> {
 	const session = await currentSession(dataDir);
@@ -482,7 +489,6 @@ export function installCloudIPC(
 ): void {
 	ipcMain.handle("cloud:getAvailability", () => cloudAvailability());
 	ipcMain.handle("cloud:getSession", () => getCloudSession(getDataDir()));
-	ipcMain.handle("cloud:getAccessToken", () => getCloudAccessToken(getDataDir()));
 	ipcMain.handle("cloud:signIn", async () => {
 		if (!cloudAuthConfigured()) {
 			await dialog.showMessageBox({
