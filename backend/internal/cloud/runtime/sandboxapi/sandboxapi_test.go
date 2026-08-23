@@ -38,15 +38,17 @@ func newFixture(t *testing.T) *fixture {
 	}
 	f.authority = authority
 	manager, err := runtime.NewManager(runtime.Options{
-		Store:        f.store,
-		Provider:     f.provider,
-		Capabilities: authority,
-		Deployment:   "staging",
-		PublicURL:    "https://cloud.example",
-		Snapshots:    map[runtime.Role]string{runtime.RoleCoordinator: "c", runtime.RoleWorker: "w"},
-		Quotas:       runtime.DefaultQuotas(),
-		Clock:        func() time.Time { return f.now },
-		Logger:       slog.New(slog.DiscardHandler),
+		Store:              f.store,
+		Provider:           f.provider,
+		Capabilities:       authority,
+		Deployment:         "staging",
+		PublicURL:          "https://cloud.example",
+		Snapshots:          map[runtime.Role]string{runtime.RoleCoordinator: "c", runtime.RoleWorker: "w"},
+		Quotas:             runtime.DefaultQuotas(),
+		AutoStopInterval:   30 * time.Minute,
+		AutoDeleteInterval: 72 * time.Hour,
+		Clock:              func() time.Time { return f.now },
+		Logger:             slog.New(slog.DiscardHandler),
 	})
 	if err != nil {
 		t.Fatal(err)

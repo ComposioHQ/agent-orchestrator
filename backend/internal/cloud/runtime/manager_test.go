@@ -117,7 +117,12 @@ func newHarness(t *testing.T, mutate ...func(*runtime.Options)) *harness {
 		PublicURL:    "https://cloud.example/",
 		Snapshots:    map[runtime.Role]string{runtime.RoleCoordinator: "ao-coordinator", runtime.RoleWorker: "ao-worker"},
 		Quotas:       runtime.DefaultQuotas(),
-		Clock:        func() time.Time { return h.now },
+		// The provider-side idle guards are mandatory, so every harness
+		// supplies them rather than relying on a zero value the manager would
+		// reject.
+		AutoStopInterval:   30 * time.Minute,
+		AutoDeleteInterval: 72 * time.Hour,
+		Clock:              func() time.Time { return h.now },
 	}
 	for _, apply := range mutate {
 		apply(&options)
@@ -621,12 +626,14 @@ func TestHeartbeatAndReportedStateAreRecorded(t *testing.T) {
 func TestNewManagerRejectsIncompleteWiring(t *testing.T) {
 	base := func() runtime.Options {
 		return runtime.Options{
-			Store:        runtimetest.NewMemoryStore(),
-			Provider:     runtimetest.NewFakeProvider(),
-			Capabilities: &recordingCapabilities{},
-			Deployment:   "staging",
-			PublicURL:    "https://cloud.example",
-			Snapshots:    map[runtime.Role]string{runtime.RoleCoordinator: "c", runtime.RoleWorker: "w"},
+			Store:              runtimetest.NewMemoryStore(),
+			Provider:           runtimetest.NewFakeProvider(),
+			Capabilities:       &recordingCapabilities{},
+			Deployment:         "staging",
+			PublicURL:          "https://cloud.example",
+			Snapshots:          map[runtime.Role]string{runtime.RoleCoordinator: "c", runtime.RoleWorker: "w"},
+			AutoStopInterval:   30 * time.Minute,
+			AutoDeleteInterval: 72 * time.Hour,
 		}
 	}
 	for name, mutate := range map[string]func(*runtime.Options){

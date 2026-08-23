@@ -117,6 +117,16 @@ func NewManager(options Options) (*Manager, error) {
 	if err := options.Quotas.Validate(); err != nil {
 		return nil, err
 	}
+	// The provider-side guards are mandatory, not optional tuning. They are
+	// the only thing that stops a fleet of sandboxes running forever if this
+	// control plane is down and the reaper never runs, so a deployment must
+	// not be able to wire the manager without them.
+	if options.AutoStopInterval <= 0 || options.AutoDeleteInterval <= 0 {
+		return nil, errors.New("compute plane requires positive provider auto-stop and auto-delete intervals")
+	}
+	if options.AutoDeleteInterval <= options.AutoStopInterval {
+		return nil, errors.New("compute plane auto-delete interval must exceed auto-stop, or a sandbox is deleted before it is ever paused")
+	}
 	if options.CapabilityTTL <= 0 {
 		options.CapabilityTTL = defaultCapabilityTTL
 	}

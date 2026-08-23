@@ -49,6 +49,15 @@ type DaytonaConfig struct {
 }
 
 const (
+	// defaultAutoStopInterval and defaultAutoDeleteInterval are the
+	// provider-side idle guards. They are non-zero by default and validated as
+	// non-zero because they are the ONLY protection that survives this control
+	// plane being down: if the reaper is not running, these are what stop the
+	// provider bill growing without bound. Disabling them has to be
+	// impossible, not merely discouraged.
+	defaultAutoStopInterval   = 30 * time.Minute
+	defaultAutoDeleteInterval = 72 * time.Hour
+
 	defaultReaperInterval = 2 * time.Minute
 	defaultSnapshotCPU    = 2
 	defaultSnapshotMemory = 4
@@ -77,9 +86,11 @@ func LoadConfig(getenv func(string) string) (Config, error) {
 			OrganizationID: strings.TrimSpace(getenv("AO_CLOUD_DAYTONA_ORGANIZATION_ID")),
 			Target:         strings.TrimSpace(getenv("AO_CLOUD_DAYTONA_TARGET")),
 		},
-		Quotas:         DefaultQuotas(),
-		Reaper:         DefaultReaperPolicy(),
-		ReaperInterval: defaultReaperInterval,
+		AutoStopInterval:   defaultAutoStopInterval,
+		AutoDeleteInterval: defaultAutoDeleteInterval,
+		Quotas:             DefaultQuotas(),
+		Reaper:             DefaultReaperPolicy(),
+		ReaperInterval:     defaultReaperInterval,
 	}
 	if !cfg.Enabled {
 		return cfg, nil
@@ -159,6 +170,15 @@ func (c Config) Validate() error {
 	}
 	if c.ReaperInterval <= 0 {
 		return errors.New("AO_CLOUD_REAPER_INTERVAL must be positive")
+	}
+	if c.AutoStopInterval <= 0 {
+		return errors.New("AO_CLOUD_SANDBOX_AUTO_STOP must be positive: it is the only idle guard that survives this control plane being down")
+	}
+	if c.AutoDeleteInterval <= 0 {
+		return errors.New("AO_CLOUD_SANDBOX_AUTO_DELETE must be positive: it is the only deletion guard that survives this control plane being down")
+	}
+	if c.AutoDeleteInterval <= c.AutoStopInterval {
+		return errors.New("AO_CLOUD_SANDBOX_AUTO_DELETE must exceed AO_CLOUD_SANDBOX_AUTO_STOP, or a sandbox is deleted before it is ever paused")
 	}
 	if err := c.Quotas.Validate(); err != nil {
 		return err

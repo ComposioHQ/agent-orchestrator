@@ -1,6 +1,7 @@
 package runtime_test
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -155,5 +156,59 @@ func TestProviderKeyMayComeFromAnOwnerOnlyFile(t *testing.T) {
 	}))
 	if err == nil {
 		t.Fatalf("missing key file accepted: %#v", missing)
+	}
+}
+
+func TestProviderIdleGuardsAreMandatoryAndNonZero(t *testing.T) {
+	// These are the only guards that survive this control plane being down. A
+	// deployment must not be able to switch them off, so "0s" is an error
+	// rather than the usual "unbounded" opt-out that quotas use.
+	cfg, err := runtime.LoadConfig(env(nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.AutoStopInterval <= 0 || cfg.AutoDeleteInterval <= 0 {
+		t.Fatalf("defaults = stop %s delete %s, want both non-zero", cfg.AutoStopInterval, cfg.AutoDeleteInterval)
+	}
+	if cfg.AutoDeleteInterval <= cfg.AutoStopInterval {
+		t.Fatalf("delete %s must exceed stop %s", cfg.AutoDeleteInterval, cfg.AutoStopInterval)
+	}
+
+	for name, overrides := range map[string]map[string]string{
+		"auto stop disabled":   {"AO_CLOUD_SANDBOX_AUTO_STOP": "0s"},
+		"auto delete disabled": {"AO_CLOUD_SANDBOX_AUTO_DELETE": "0s"},
+		"delete before stop": {
+			"AO_CLOUD_SANDBOX_AUTO_STOP":   "2h",
+			"AO_CLOUD_SANDBOX_AUTO_DELETE": "1h",
+		},
+	} {
+		if _, err := runtime.LoadConfig(env(overrides)); err == nil {
+			t.Fatalf("%s: accepted", name)
+		}
+	}
+}
+
+func TestConfiguredIdleGuardsReachTheProvider(t *testing.T) {
+	// A guard that is configured but never sent to the provider protects
+	// nothing, so assert it travels all the way into the create request.
+	cfg, err := runtime.LoadConfig(env(map[string]string{
+		"AO_CLOUD_SANDBOX_AUTO_STOP":   "15m",
+		"AO_CLOUD_SANDBOX_AUTO_DELETE": "48h",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := newHarness(t, func(options *runtime.Options) {
+		options.AutoStopInterval = cfg.AutoStopInterval
+		options.AutoDeleteInterval = cfg.AutoDeleteInterval
+	})
+	if _, err := h.manager.Ensure(context.Background(), workerRef()); err != nil {
+		t.Fatal(err)
+	}
+	if h.provider.LastCreate.AutoStopInterval != 15*time.Minute {
+		t.Fatalf("auto stop reached the provider as %s", h.provider.LastCreate.AutoStopInterval)
+	}
+	if h.provider.LastCreate.AutoDeleteInterval != 48*time.Hour {
+		t.Fatalf("auto delete reached the provider as %s", h.provider.LastCreate.AutoDeleteInterval)
 	}
 }
