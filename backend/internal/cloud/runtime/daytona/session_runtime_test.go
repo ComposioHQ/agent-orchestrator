@@ -29,6 +29,17 @@ func TestSandboxProvidedCommandMapsClaudeToPathLookup(t *testing.T) {
 	}
 }
 
+func TestSessionSandboxNameIsScopedToWorkspace(t *testing.T) {
+	one := sessionSandboxName("8278169d-6462-4fe2-8c40-5352e2a96c89", "cloud-1")
+	two := sessionSandboxName("d4dd79c8-042e-4bbe-9042-5d9fd9fe1db3", "cloud-1")
+	if one == two {
+		t.Fatalf("session sandbox names collide across workspaces: %q", one)
+	}
+	if want := "ao-session-8278169d6462-cloud1"; one != want {
+		t.Fatalf("sessionSandboxName() = %q, want %q", one, want)
+	}
+}
+
 func TestSandboxPATHIncludesResolvedClaudeDirectory(t *testing.T) {
 	got := sandboxPATH("/home/daytona", "/usr/local/share/nvm/current/bin/claude")
 	want := "/home/daytona/bin:/usr/local/share/nvm/current/bin:/usr/local/bin:/usr/bin:/bin"

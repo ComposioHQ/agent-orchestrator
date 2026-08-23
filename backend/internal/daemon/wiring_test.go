@@ -332,7 +332,7 @@ func TestWiring_SeedScratchProjectOnBootUsesDataDir(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = store.Close() })
 
-	cfg := config.Config{DataDir: t.TempDir(), Agent: string(domain.HarnessCodex)}
+	cfg := config.Config{DataDir: t.TempDir(), Agent: string(domain.HarnessCodex), ScratchProjectEnabled: true}
 	projects := projectsvc.NewWithDeps(projectsvc.Deps{Store: store, DefaultHarness: domain.HarnessCodex})
 	if err := seedScratchProjectOnBoot(ctx, cfg, projects); err != nil {
 		t.Fatalf("seedScratchProjectOnBoot: %v", err)
@@ -347,6 +347,32 @@ func TestWiring_SeedScratchProjectOnBootUsesDataDir(t *testing.T) {
 	}
 	if want := filepath.Join(cfg.DataDir, "scratch", "default"); got.Path != want {
 		t.Fatalf("path = %q, want %q", got.Path, want)
+	}
+}
+
+func TestWiring_SeedScratchProjectOnBootArchivesScratchWhenDisabled(t *testing.T) {
+	ctx := context.Background()
+	store, err := sqlitetest.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	projects := projectsvc.NewWithDeps(projectsvc.Deps{Store: store, DefaultHarness: domain.HarnessCodex})
+	localCfg := config.Config{DataDir: t.TempDir(), ScratchProjectEnabled: true}
+	if err := seedScratchProjectOnBoot(ctx, localCfg, projects); err != nil {
+		t.Fatalf("seedScratchProjectOnBoot local: %v", err)
+	}
+	cloudCfg := localCfg
+	cloudCfg.ScratchProjectEnabled = false
+	if err := seedScratchProjectOnBoot(ctx, cloudCfg, projects); err != nil {
+		t.Fatalf("seedScratchProjectOnBoot cloud: %v", err)
+	}
+
+	if got, err := store.ListProjects(ctx); err != nil {
+		t.Fatal(err)
+	} else if len(got) != 0 {
+		t.Fatalf("active projects = %#v, want Scratch archived", got)
 	}
 }
 

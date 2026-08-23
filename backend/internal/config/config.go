@@ -133,6 +133,10 @@ type Config struct {
 	// opt-in for hosted sandbox previews whose proxy would otherwise append a
 	// second Access-Control-Allow-Origin header that browsers reject.
 	CORSHeadersManagedByProxy bool
+	// ScratchProjectEnabled controls whether the daemon exposes the built-in
+	// first-run Scratch project. Hosted project coordinators disable it because
+	// their registry is scoped to one explicitly provisioned repository.
+	ScratchProjectEnabled bool
 	// Telemetry controls local/remote telemetry sinks.
 	Telemetry TelemetryConfig
 	// StartupWorkingDirectory is the daemon process cwd before startup
@@ -166,6 +170,7 @@ func (c Config) Addr() string {
 //	                     (default: a fresh id minted per daemon boot)
 //	AO_ALLOWED_ORIGINS   CORS origins, comma-separated (default DefaultAllowedOrigins)
 //	AO_CORS_HEADERS_MANAGED_BY_PROXY upstream proxy emits CORS headers off|on (default off)
+//	AO_SCRATCH_PROJECT    built-in first-run Scratch project off|on (default on)
 //	AO_TELEMETRY_EVENTS  local event capture off|on (default off)
 //	AO_TELEMETRY_METRICS local metric capture off|on (default off)
 //	AO_TELEMETRY_REMOTE  remote exporter off|posthog (default off)
@@ -177,12 +182,13 @@ func (c Config) Addr() string {
 // The bind host is not configurable: the daemon is loopback-only by design.
 func Load() (Config, error) {
 	cfg := Config{
-		Host:            LoopbackHost,
-		Port:            DefaultPort,
-		RequestTimeout:  DefaultRequestTimeout,
-		ShutdownTimeout: DefaultShutdownTimeout,
-		Agent:           DefaultAgent,
-		AllowedOrigins:  DefaultAllowedOrigins,
+		Host:                  LoopbackHost,
+		Port:                  DefaultPort,
+		RequestTimeout:        DefaultRequestTimeout,
+		ShutdownTimeout:       DefaultShutdownTimeout,
+		Agent:                 DefaultAgent,
+		AllowedOrigins:        DefaultAllowedOrigins,
+		ScratchProjectEnabled: true,
 		Telemetry: TelemetryConfig{
 			Remote:      TelemetryRemoteOff,
 			PostHogHost: DefaultTelemetryPostHogHost,
@@ -254,6 +260,14 @@ func Load() (Config, error) {
 			return Config{}, err
 		}
 		cfg.CORSHeadersManagedByProxy = v
+	}
+
+	if raw := os.Getenv("AO_SCRATCH_PROJECT"); raw != "" {
+		v, err := parseToggleEnv("AO_SCRATCH_PROJECT", raw)
+		if err != nil {
+			return Config{}, err
+		}
+		cfg.ScratchProjectEnabled = v
 	}
 
 	if raw := os.Getenv("AO_TELEMETRY_EVENTS"); raw != "" {

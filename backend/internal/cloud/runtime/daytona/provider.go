@@ -233,7 +233,7 @@ func (p *Provider) startDaemon(ctx context.Context, sandbox *daytonasdk.Sandbox,
 	logFile := filepath.Join(home, ".ao", "daemon.log")
 	askpassPath := filepath.Join(home, ".ao", "github-askpass")
 	start := "nohup env AO_DATA_DIR=" + shellQuote(dataDir) + " AO_RUN_FILE=" + shellQuote(runFile) +
-		" AO_PORT=3001 AO_CORS_HEADERS_MANAGED_BY_PROXY=on" +
+		" AO_PORT=3001 AO_CORS_HEADERS_MANAGED_BY_PROXY=on AO_SCRATCH_PROJECT=off" +
 		" GIT_TERMINAL_PROMPT=0 GIT_ASKPASS=" + shellQuote(askpassPath) +
 		" AO_CLOUD_RUNTIME_API_URL=" + shellQuote(bootstrap.ControlPlaneURL) +
 		" AO_CLOUD_RUNTIME_TOKEN=" + shellQuote(bootstrap.RuntimeToken) +

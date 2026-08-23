@@ -547,6 +547,12 @@ func seedScratchProjectOnBoot(ctx context.Context, cfg config.Config, projects *
 	if projects == nil {
 		return nil
 	}
+	if !cfg.ScratchProjectEnabled {
+		if err := projects.ArchiveDefaultScratchProject(ctx); err != nil {
+			return fmt.Errorf("disable scratch project: %w", err)
+		}
+		return nil
+	}
 	if _, err := projects.EnsureDefaultScratchProject(ctx, filepath.Join(cfg.DataDir, "scratch", "default")); err != nil {
 		return fmt.Errorf("seed scratch project: %w", err)
 	}

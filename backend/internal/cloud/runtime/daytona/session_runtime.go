@@ -28,14 +28,10 @@ var environmentKeyPattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 // with another session or with the project coordinator.
 func (p *Provider) ProvisionSessionRuntime(ctx context.Context, workspace domain.Workspace, launch domain.RuntimeLaunch) (string, error) {
 	zero := 0
-	shortID := strings.ReplaceAll(launch.SessionID, "-", "")
-	if len(shortID) > 12 {
-		shortID = shortID[:12]
-	}
 	sandbox, err := p.client.Create(ctx, types.SnapshotParams{
 		Snapshot: "daytona-small",
 		SandboxBaseParams: types.SandboxBaseParams{
-			Name: "ao-session-" + shortID,
+			Name: sessionSandboxName(workspace.ID, launch.SessionID),
 			Labels: map[string]string{
 				"ao.cloud.workspace": workspace.ID,
 				"ao.cloud.session":   launch.SessionID,
@@ -55,6 +51,18 @@ func (p *Provider) ProvisionSessionRuntime(ctx context.Context, workspace domain
 		return "", err
 	}
 	return sandbox.ID, nil
+}
+
+func sessionSandboxName(workspaceID, sessionID string) string {
+	shortWorkspaceID := strings.ReplaceAll(workspaceID, "-", "")
+	if len(shortWorkspaceID) > 12 {
+		shortWorkspaceID = shortWorkspaceID[:12]
+	}
+	shortSessionID := strings.ReplaceAll(sessionID, "-", "")
+	if len(shortSessionID) > 12 {
+		shortSessionID = shortSessionID[:12]
+	}
+	return "ao-session-" + shortWorkspaceID + "-" + shortSessionID
 }
 
 func (p *Provider) bootstrapSessionRuntime(ctx context.Context, sandbox *daytonasdk.Sandbox, workspace domain.Workspace, launch domain.RuntimeLaunch) error {
