@@ -40,7 +40,8 @@ on:
         default: false
 
 env:
-  VITE_WORKOS_CLIENT_ID: ${{ vars.VITE_WORKOS_CLIENT_ID }}
+  VITE_AO_CLOUD_API_URL: ${{ vars.VITE_AO_CLOUD_API_URL }}
+  VITE_AO_CLOUD_GOOGLE_CLIENT_ID: ${{ vars.VITE_AO_CLOUD_GOOGLE_CLIENT_ID }}
 
 jobs:
   release:
@@ -73,11 +74,11 @@ jobs:
           go-version-file: backend/go.mod
           cache-dependency-path: backend/go.sum
       - run: npm ci
-      - name: Verify WorkOS build configuration
+      - name: Verify AO Cloud build configuration
         shell: bash
         run: |
-          if [ -z "$VITE_WORKOS_CLIENT_ID" ]; then
-            echo "::error::Repository variable VITE_WORKOS_CLIENT_ID is required for desktop releases." >&2
+          if [ -z "$VITE_AO_CLOUD_API_URL" ] || [ -z "$VITE_AO_CLOUD_GOOGLE_CLIENT_ID" ]; then
+            echo "::error::Repository variables VITE_AO_CLOUD_API_URL and VITE_AO_CLOUD_GOOGLE_CLIENT_ID are required for desktop releases." >&2
             exit 1
           fi
       - name: macOS signing setup
@@ -206,11 +207,11 @@ jobs:
           go-version-file: backend/go.mod
           cache-dependency-path: backend/go.sum
       - run: npm ci
-      - name: Verify WorkOS build configuration
+      - name: Verify AO Cloud build configuration
         shell: bash
         run: |
-          if [ -z "$VITE_WORKOS_CLIENT_ID" ]; then
-            echo "::error::Repository variable VITE_WORKOS_CLIENT_ID is required for desktop releases." >&2
+          if [ -z "$VITE_AO_CLOUD_API_URL" ] || [ -z "$VITE_AO_CLOUD_GOOGLE_CLIENT_ID" ]; then
+            echo "::error::Repository variables VITE_AO_CLOUD_API_URL and VITE_AO_CLOUD_GOOGLE_CLIENT_ID are required for desktop releases." >&2
             exit 1
           fi
       - name: macOS signing setup

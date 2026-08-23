@@ -64,7 +64,7 @@ manually; that is how the 28-29 Jul misdiagnosis happened.
 - Authenticated `gh` CLI for the notes/verify steps.
 - A release approver available (see "Who can approve" below); the build jobs
   wait on the `release` environment until someone approves.
-- Repository variable `VITE_WORKOS_CLIENT_ID` set to the public AuthKit client
+- Repository variables `VITE_AO_CLOUD_API_URL` and `VITE_AO_CLOUD_GOOGLE_CLIENT_ID` set to the AO Cloud control-plane URL and public Google desktop OAuth client
   ID. Release and artifact workflows fail before packaging when it is absent,
   rather than silently shipping a desktop build with sign-in disabled.
 

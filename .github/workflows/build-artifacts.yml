@@ -27,7 +27,8 @@ permissions:
   contents: read
 
 env:
-  VITE_WORKOS_CLIENT_ID: ${{ vars.VITE_WORKOS_CLIENT_ID }}
+  VITE_AO_CLOUD_API_URL: ${{ vars.VITE_AO_CLOUD_API_URL }}
+  VITE_AO_CLOUD_GOOGLE_CLIENT_ID: ${{ vars.VITE_AO_CLOUD_GOOGLE_CLIENT_ID }}
 
 jobs:
   build:
@@ -76,11 +77,11 @@ jobs:
       - name: Install product UI dependencies
         run: npm ci
         working-directory: packages/product-ui
-      - name: Verify WorkOS build configuration
+      - name: Verify AO Cloud build configuration
         shell: bash
         run: |
-          if [ -z "$VITE_WORKOS_CLIENT_ID" ]; then
-            echo "::error::Repository variable VITE_WORKOS_CLIENT_ID is required for desktop artifacts." >&2
+          if [ -z "$VITE_AO_CLOUD_API_URL" ] || [ -z "$VITE_AO_CLOUD_GOOGLE_CLIENT_ID" ]; then
+            echo "::error::Repository variables VITE_AO_CLOUD_API_URL and VITE_AO_CLOUD_GOOGLE_CLIENT_ID are required for desktop artifacts." >&2
             exit 1
           fi
       # Same stamping mechanism as frontend-nightly.yml: rewrite package.json
