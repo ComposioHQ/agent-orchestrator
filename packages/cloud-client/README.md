@@ -1,8 +1,11 @@
 # `@aoagents/cloud-client`
 
-Runtime-neutral TypeScript contracts and a small fetch-based client for AO
-Cloud's public API. The package defines the client boundary; this repository
-does not implement the Cloud routes.
+Runtime-neutral TypeScript client for AO Cloud.
+
+Hosted product operations use the same `/api/v1` paths and generated DTOs as
+the local AO application API. The client adds `X-AO-Org` to those authenticated
+requests. Control-plane administration remains under `/api/cloud/v1`, with
+`orgId` in the path; `X-AO-Org` is never sent as an alternate admin authority.
 
 ```ts
 import { createCloudClient } from "@aoagents/cloud-client";
@@ -10,48 +13,43 @@ import { createCloudClient } from "@aoagents/cloud-client";
 const cloud = createCloudClient({
   baseUrl: "https://cloud.example.com",
   getAccessToken: () => authSession.getAccessToken(),
-  fetch,
 });
 
-const sessions = await cloud.listSessions(orgId, { limit: 50 });
+const projects = await cloud.listProjects(orgId);
+const placement = await cloud.createWorkspacePlacement(
+  orgId,
+  { displayName, repositoryUrl, defaultBranch },
+  { idempotencyKey },
+);
 ```
 
-The caller owns authentication and token refresh. `createCloudClient` asks for
-an access token immediately before a user request. `createWorkerClient` does the
-same for every authenticated worker request. It also exposes the unauthenticated
-one-time bootstrap exchange:
+Project creation is asynchronous. Poll `getWorkspacePlacement` until its state
+is `ready` or `failed`; after `ready`, discover the project through the shared
+`/api/v1/projects` response. Placement status always carries the authoritative
+`defaultBranch`.
+
+Sandbox clients receive their scoped capability out of band in the fixed
+`/run/ao/capability` file with mode `0600`. The runtime-neutral client accepts a
+getter for that already-loaded value; no API response returns or rotates it.
 
 ```ts
 import { createWorkerClient } from "@aoagents/cloud-client";
 
-let workerToken: string | null = null;
 const worker = createWorkerClient({
-  baseUrl: "https://cloud.example.com",
-  getWorkerToken: () => workerToken,
-  fetch,
+  baseUrl: controlPlaneUrl,
+  getCapability: () => capabilityReadFromProtectedFile,
 });
 
-const bootstrap = await worker.bootstrap({
-  bootstrapToken: oneTimeTicket,
-  version: workerVersion,
-  capabilities,
-});
-workerToken = bootstrap.workerToken;
-
-const heartbeat = await worker.heartbeat({ version: workerVersion, capabilities });
-workerToken = heartbeat.workerToken;
+await worker.getStatus();
+await worker.sendSessionMessage(sessionId, { message }, { idempotencyKey });
 ```
 
-Keep bootstrap, worker, agent-credential, and checkout-grant secrets only in
-memory and never log them. Secret-bearing client requests use `cache:
-"no-store"`; the credential and checkout-grant responses also require the
-server's `Cache-Control: no-store`.
+Bootstrap and checkout methods exchange only scoped, one-shot delivery IDs and
+delivery state. They never model credentials in JSON, argv, environment, or git
+configuration. Terminal creation returns a one-time ticket and the authenticated
+sandbox mux URL; there is no control-plane terminal relay.
 
-The source contract is `contracts/cloud/openapi.yaml`. Run `npm run generate`
-from this directory after changing it. The generated `src/schema.ts` file is
-committed so consumers do not need an OpenAPI toolchain.
-
-The worker client matches the control plane's bootstrap, heartbeat, event,
-fenced turn, credential, checkout-grant, child orchestration, workspace
-transport, and terminal transport routes. It intentionally excludes worker
-provisioning, database details, secret storage, and local daemon routes.
+The source contract is `contracts/cloud/openapi.yaml`. It references canonical
+shared schemas from `backend/internal/httpd/apispec/openapi.yaml`. After either
+contract changes, run `npm run generate` in this package and commit the generated
+`src/schema.ts`.
