@@ -24,7 +24,7 @@ var (
 // receives the compatibility default without turning a read into a write.
 func (s *Store) GetAppSettings(ctx context.Context) (ports.AppSettings, error) {
 	settings := ports.AppSettings{DefaultSessionMode: domain.DefaultSessionMode}
-	err := s.withProductTenantTx(ctx, pgx.TxOptions{AccessMode: pgx.ReadOnly}, func(tx pgx.Tx, identity tenant.Identity) error {
+	err := s.withProductTenantTx(ctx, pgx.TxOptions{AccessMode: pgx.ReadOnly}, func(tx pgx.Tx, identity tenant.Identity, _ ports.ChangeEventRecorder) error {
 		err := tx.QueryRow(ctx,
 			`SELECT default_session_mode, updated_at
 			 FROM ao_app_settings
@@ -45,7 +45,7 @@ func (s *Store) SetDefaultSessionMode(ctx context.Context, mode domain.SessionMo
 	if !mode.Valid() {
 		return fmt.Errorf("invalid session mode %q", mode)
 	}
-	return s.withProductTenantTx(ctx, pgx.TxOptions{}, func(tx pgx.Tx, identity tenant.Identity) error {
+	return s.withProductTenantTx(ctx, pgx.TxOptions{}, func(tx pgx.Tx, identity tenant.Identity, _ ports.ChangeEventRecorder) error {
 		_, err := tx.Exec(ctx,
 			`INSERT INTO ao_app_settings (org_id, default_session_mode, updated_at)
 			 VALUES ($1, $2, $3)
@@ -64,7 +64,7 @@ func (s *Store) SetDefaultSessionMode(ctx context.Context, mode domain.SessionMo
 func (s *Store) GetAgentInventoryCache(ctx context.Context) (string, time.Time, bool, error) {
 	var inventory string
 	var observedAt time.Time
-	err := s.withProductTenantTx(ctx, pgx.TxOptions{AccessMode: pgx.ReadOnly}, func(tx pgx.Tx, identity tenant.Identity) error {
+	err := s.withProductTenantTx(ctx, pgx.TxOptions{AccessMode: pgx.ReadOnly}, func(tx pgx.Tx, identity tenant.Identity, _ ports.ChangeEventRecorder) error {
 		return tx.QueryRow(ctx,
 			`SELECT inventory_json::text, observed_at
 			 FROM ao_agent_inventory_cache
@@ -87,7 +87,7 @@ func (s *Store) UpsertAgentInventoryCache(ctx context.Context, inventoryJSON str
 	if !json.Valid([]byte(inventoryJSON)) {
 		return errors.New("upsert agent inventory cache: inventory is not valid JSON")
 	}
-	return s.withProductTenantTx(ctx, pgx.TxOptions{}, func(tx pgx.Tx, identity tenant.Identity) error {
+	return s.withProductTenantTx(ctx, pgx.TxOptions{}, func(tx pgx.Tx, identity tenant.Identity, _ ports.ChangeEventRecorder) error {
 		_, err := tx.Exec(ctx,
 			`INSERT INTO ao_agent_inventory_cache (org_id, inventory_json, observed_at)
 			 VALUES ($1, $2::jsonb, $3)

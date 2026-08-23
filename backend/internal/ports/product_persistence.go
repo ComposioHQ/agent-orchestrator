@@ -56,6 +56,8 @@ type PRFactsReader interface {
 	ListPRReviews(context.Context, string) ([]domain.PullRequestReview, error)
 	ListPRReviewThreads(context.Context, string) ([]domain.PullRequestReviewThread, error)
 	ListPRComments(context.Context, string) ([]domain.PullRequestComment, error)
+	GetPRLastNudgeSignature(context.Context, string) (string, error)
+	UpdatePRLastNudgeSignature(context.Context, string, string) error
 }
 
 // PRFactsWriter combines the existing observation and claim contracts. Writes

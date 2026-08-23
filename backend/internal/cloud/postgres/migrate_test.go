@@ -14,7 +14,7 @@ func TestCloudMigrationsAreTenantScoped(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantVersions := []int64{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 50, 59, 60}
+	wantVersions := []int64{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 50, 51, 52, 53, 54, 55, 56, 59, 60}
 	if len(migrations) != len(wantVersions) {
 		t.Fatalf("migrations = %#v", migrations)
 	}
@@ -213,13 +213,20 @@ func TestTenantTablesCoverEveryTenantTable(t *testing.T) {
 	}
 }
 
-func TestProductPreferenceMigrationsForceTenantRLS(t *testing.T) {
+func TestProductMigrationsForceTenantRLS(t *testing.T) {
 	t.Parallel()
 	for _, fixture := range []struct {
 		file  string
 		table string
 	}{
 		{file: "migrations/00050_product_settings.sql", table: "ao_app_settings"},
+		{file: "migrations/00051_pull_requests.sql", table: "ao_pull_requests"},
+		{file: "migrations/00051_pull_requests.sql", table: "ao_pull_request_url_aliases"},
+		{file: "migrations/00052_pull_request_checks.sql", table: "ao_pull_request_checks"},
+		{file: "migrations/00053_pull_request_comments.sql", table: "ao_pull_request_comments"},
+		{file: "migrations/00054_pull_request_reviews.sql", table: "ao_pull_request_reviews"},
+		{file: "migrations/00055_pull_request_review_threads.sql", table: "ao_pull_request_review_threads"},
+		{file: "migrations/00056_notifications.sql", table: "ao_notifications"},
 		{file: "migrations/00059_agent_inventory_cache.sql", table: "ao_agent_inventory_cache"},
 	} {
 		fixture := fixture

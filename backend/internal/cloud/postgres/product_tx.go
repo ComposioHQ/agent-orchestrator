@@ -6,6 +6,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
+	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 	"github.com/aoagents/agent-orchestrator/backend/internal/tenant"
 )
 
@@ -15,7 +16,7 @@ import (
 func (s *Store) withProductTenantTx(
 	ctx context.Context,
 	options pgx.TxOptions,
-	fn func(pgx.Tx, tenant.Identity) error,
+	fn func(pgx.Tx, tenant.Identity, ports.ChangeEventRecorder) error,
 ) error {
 	identity, ok := tenant.FromContext(ctx)
 	if !ok {
@@ -34,7 +35,8 @@ func (s *Store) withProductTenantTx(
 	); err != nil {
 		return fmt.Errorf("set product tenant context: %w", err)
 	}
-	if err := fn(tx, identity); err != nil {
+	recorder := NewChangeEventRecorder(tx, identity.OrgID)
+	if err := fn(tx, identity, recorder); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)
