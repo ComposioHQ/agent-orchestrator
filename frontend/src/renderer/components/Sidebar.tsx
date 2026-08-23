@@ -33,6 +33,7 @@ import {
 } from "../types/workspace";
 import { getAgentActivityView } from "../lib/session-presentation";
 import { deriveSessionAgentSwitchPresentation } from "../lib/agent-switch-presentation";
+import { agentLabel } from "../lib/agent-options";
 import { aoBridge } from "../lib/bridge";
 import { useCommandPaletteEnabled } from "../hooks/useCommandPaletteEnabled";
 import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
@@ -74,6 +75,7 @@ import {
 	useSidebar,
 } from "./ui/sidebar";
 import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
+import { AgentAvatar } from "./AgentAvatar";
 import { OrchestratorIcon } from "./icons";
 import aoLogo from "../../../assets/ao-logo.svg";
 import { cn } from "../lib/utils";
@@ -895,6 +897,10 @@ function SessionRow({
 	const switchStatusId = useId();
 	const [isEditing, setIsEditing] = useState(false);
 	const [draft, setDraft] = useState(session.title);
+	const [isHovered, setIsHovered] = useState(false);
+	const [isFocusWithin, setIsFocusWithin] = useState(false);
+	const showActions = isHovered || isFocusWithin;
+	const sessionAgentLabel = agentLabel(session.provider) || "Unknown agent";
 	// Escape must not be swallowed by the blur-to-save path: the keydown handler
 	// blurs the input, so it flags a cancel here for onBlur to honour.
 	const cancelledRef = useRef(false);
@@ -965,6 +971,13 @@ function SessionRow({
 					active && "bg-interactive-active text-foreground",
 				)}
 				data-session-row=""
+				onBlurCapture={(event) => {
+					if (event.currentTarget.contains(event.relatedTarget as Node | null)) return;
+					setIsFocusWithin(false);
+				}}
+				onFocusCapture={() => setIsFocusWithin(true)}
+				onPointerEnter={() => setIsHovered(true)}
+				onPointerLeave={() => setIsHovered(false)}
 			>
 				{/* Scale wrapper — only around the open button so action buttons don't trigger press animation */}
 				<div className="flex min-w-0 flex-1 transition-[transform] duration-[100ms] ease-out active:scale-[0.97]">
@@ -994,57 +1007,71 @@ function SessionRow({
 						</span>
 					</button>
 				</div>{/* end scale wrapper */}
-				{/* Pin, rename, kill: outside scale wrapper so clicking them doesn't trigger press animation */}
-				<button
-					aria-label={session.isPinned ? t("shell.unpinSession") : t("shell.pinSession")}
-					className={cn(
-						"grid h-5 w-0 shrink-0 place-items-center overflow-hidden rounded-md text-passive opacity-0",
-						"transition-[width,margin,background-color,color,opacity] hover:bg-interactive-hover hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50 [&_svg]:size-3!",
-						"group-hover/session-row:w-5 group-hover/session-row:opacity-100",
-						"group-focus-within/session-row:w-5 group-focus-within/session-row:opacity-100",
-						session.isPinned && "text-foreground",
-					)}
-					onClick={(e) => {
-						e.stopPropagation();
-						session.isPinned ? unpinSession(session) : pinSession(session);
-					}}
-					type="button"
+				{/* The fixed trailing slot is always 68px wide. Its resting agent mark
+				    and action controls overlap, so hover/focus never reflows the title. */}
+				<div
+					className="relative flex h-8 w-17 shrink-0 items-center"
+					data-session-trailing-slot=""
+					data-state={showActions ? "actions" : "resting"}
 				>
-					{session.isPinned ? <PinOff aria-hidden="true" /> : <Pin aria-hidden="true" />}
-				</button>
-				<button
-					aria-label={t("shell.renameSession", { title: session.title })}
-					className={cn(
-						"grid h-5 w-0 shrink-0 place-items-center overflow-hidden rounded-md text-passive opacity-0",
-						"transition-[width,margin,background-color,color,opacity] hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50 [&_svg]:size-3!",
-						"group-hover/session-row:mr-0.5 group-hover/session-row:w-5 group-hover/session-row:opacity-100",
-						"group-focus-within/session-row:mr-0.5 group-focus-within/session-row:w-5 group-focus-within/session-row:opacity-100",
-					)}
-					onClick={(e) => {
-						e.stopPropagation();
-						startEditing();
-					}}
-					type="button"
-				>
-					<Pencil aria-hidden="true" />
-				</button>
-				<button
-					aria-label={t("shell.killSession")}
-					className={cn(
-						"grid h-5 w-0 shrink-0 place-items-center overflow-hidden rounded-md text-passive opacity-0",
-						"transition-[width,margin,background-color,color,opacity] hover:text-destructive focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50 [&_svg]:size-3!",
-						"group-hover/session-row:mr-1 group-hover/session-row:w-5 group-hover/session-row:opacity-100",
-						"group-focus-within/session-row:mr-1 group-focus-within/session-row:w-5 group-focus-within/session-row:opacity-100",
-					)}
-				disabled={isKilling}
-				onClick={(e) => {
-					e.stopPropagation();
-					terminateSession(session);
-				}}
-					type="button"
-				>
-					<Trash2 aria-hidden="true" />
-				</button>
+					<span
+						aria-label={sessionAgentLabel}
+						className={cn(
+							"pointer-events-none absolute inset-0 flex items-center justify-end pr-1 transition-opacity duration-150 ease-out motion-reduce:transition-none",
+							showActions ? "opacity-0" : "opacity-100",
+						)}
+						role="img"
+						title={sessionAgentLabel}
+					>
+						<AgentAvatar className="size-3.5" decorative provider={session.provider} />
+					</span>
+					<div
+						className={cn(
+							"relative z-10 flex w-full items-center gap-0.5 pr-1 transition-opacity duration-150 ease-out motion-reduce:transition-none",
+							showActions ? "pointer-events-auto opacity-100" : "pointer-events-none opacity-0",
+						)}
+						data-session-actions=""
+					>
+						{/* Pin, rename, kill stay outside the scale wrapper so their presses remain independent. */}
+						<button
+							aria-label={session.isPinned ? t("shell.unpinSession") : t("shell.pinSession")}
+							className={cn(
+								"grid size-5 shrink-0 place-items-center rounded-md text-passive hover:bg-interactive-hover hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50 [&_svg]:size-3!",
+								session.isPinned && "text-foreground",
+							)}
+							onClick={(e) => {
+								e.stopPropagation();
+								session.isPinned ? unpinSession(session) : pinSession(session);
+							}}
+							type="button"
+						>
+							{session.isPinned ? <PinOff aria-hidden="true" /> : <Pin aria-hidden="true" />}
+						</button>
+						<button
+							aria-label={t("shell.renameSession", { title: session.title })}
+							className="grid size-5 shrink-0 place-items-center rounded-md text-passive hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50 [&_svg]:size-3!"
+							onClick={(e) => {
+								e.stopPropagation();
+								startEditing();
+							}}
+							type="button"
+						>
+							<Pencil aria-hidden="true" />
+						</button>
+						<button
+							aria-label={t("shell.killSession")}
+							className="grid size-5 shrink-0 place-items-center rounded-md text-passive hover:text-destructive focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50 [&_svg]:size-3!"
+							disabled={isKilling}
+							onClick={(e) => {
+								e.stopPropagation();
+								terminateSession(session);
+							}}
+							type="button"
+						>
+							<Trash2 aria-hidden="true" />
+						</button>
+					</div>
+				</div>
 			</div>
 		</SidebarMenuSubItem>
 	);

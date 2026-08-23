@@ -1304,6 +1304,77 @@ describe("Sidebar", () => {
 		expect(screen.getByLabelText("Open fix login")).toBeInTheDocument();
 	});
 
+	it("shows the session agent in the resting action slot", () => {
+		renderSidebar({ workspaces: [{ ...workspace, sessions: [session] }] });
+
+		const agent = screen.getByRole("img", { name: "Claude Code" });
+		const slot = agent.closest<HTMLElement>("[data-session-trailing-slot]");
+		const actions = slot?.querySelector<HTMLElement>("[data-session-actions]");
+
+		expect(slot).toHaveAttribute("data-state", "resting");
+		expect(agent).toHaveClass("opacity-100");
+		expect(actions).toHaveClass("opacity-0");
+	});
+
+	it("fades the session agent into the existing actions on hover", () => {
+		renderSidebar({ workspaces: [{ ...workspace, sessions: [session] }] });
+
+		const row = screen.getByLabelText("Open fix login").closest<HTMLElement>("[data-session-row]");
+		const slot = row?.querySelector<HTMLElement>("[data-session-trailing-slot]");
+
+		if (!row || !slot) throw new Error("Session row trailing slot not found");
+		fireEvent.pointerEnter(row);
+
+		expect(slot).toHaveAttribute("data-state", "actions");
+		expect(within(slot).getByRole("img", { name: "Claude Code" })).toHaveClass("opacity-0");
+		expect(slot.querySelector("[data-session-actions]")).toHaveClass("opacity-100");
+	});
+
+	it("reveals session actions while keyboard focus is within the row", () => {
+		renderSidebar({ workspaces: [{ ...workspace, sessions: [session] }] });
+
+		const openButton = screen.getByLabelText("Open fix login");
+		const row = openButton.closest<HTMLElement>("[data-session-row]");
+		const slot = row?.querySelector<HTMLElement>("[data-session-trailing-slot]");
+
+		if (!slot) throw new Error("Session row trailing slot not found");
+		fireEvent.focus(openButton);
+
+		expect(slot).toHaveAttribute("data-state", "actions");
+		expect(screen.getByLabelText("Pin session")).toHaveClass("size-5");
+		expect(screen.getByLabelText("Rename fix login")).toHaveClass("size-5");
+		expect(screen.getByLabelText("Kill session")).toHaveClass("size-5");
+	});
+
+	it("uses a labeled initial when the session agent has no registered asset", () => {
+		renderSidebar({
+			workspaces: [{ ...workspace, sessions: [{ ...session, provider: "fake" }] }],
+		});
+
+		const fallback = screen.getByRole("img", { name: "fake" });
+		expect(fallback).toHaveTextContent("F");
+		expect(fallback.querySelector("img")).not.toBeInTheDocument();
+	});
+
+	it("keeps one fixed trailing width when session actions are revealed", () => {
+		renderSidebar({ workspaces: [{ ...workspace, sessions: [session] }] });
+
+		const row = screen.getByLabelText("Open fix login").closest<HTMLElement>("[data-session-row]");
+		const slot = row?.querySelector<HTMLElement>("[data-session-trailing-slot]");
+
+		if (!row || !slot) throw new Error("Session row trailing slot not found");
+		const restingClasses = slot.className;
+		expect(slot).toHaveClass("w-17", "shrink-0");
+
+		fireEvent.pointerEnter(row);
+
+		expect(slot.className).toBe(restingClasses);
+		for (const action of within(slot).getAllByRole("button")) {
+			expect(action).toHaveClass("size-5");
+			expect(action).not.toHaveClass("w-0");
+		}
+	});
+
 	it("always shows action icons and reserves padding for them", () => {
 		renderSidebar();
 
