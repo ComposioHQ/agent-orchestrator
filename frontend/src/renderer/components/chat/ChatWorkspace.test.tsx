@@ -906,6 +906,27 @@ describe("ChatWorkspace timeline", () => {
 });
 
 describe("automation reports", () => {
+	it("summarizes browser diagnostics and groups repeated details", async () => {
+		const user = userEvent.setup();
+		const source = chatFixture.items.find((item) => item.id === "m-4") as ConversationMessage;
+		const warning =
+			"[console] Error: Not connected to alive (https://github.githubassets.com/assets/app.js:2)";
+		const message: ConversationMessage = {
+			...source,
+			senderLabel: undefined,
+			text: ["Browser detected 6 issues on this page:", ...Array(6).fill(`- ${warning}`)].join("\n"),
+		};
+		render(<OriginMessage message={message} />);
+
+		expect(screen.getByText("Browser report")).toBeInTheDocument();
+		expect(screen.getByText("6 issues detected on this page")).toBeInTheDocument();
+		expect(screen.queryByText(/github\.githubassets\.com/)).not.toBeInTheDocument();
+
+		await user.click(screen.getByRole("button", { name: "Show browser details" }));
+		expect(screen.getAllByText(warning, { exact: false })).toHaveLength(1);
+		expect(screen.getByText("×6")).toBeInTheDocument();
+	});
+
 	it("uses a leading Markdown heading as the card title and formats the body", () => {
 		const source = chatFixture.items.find((item) => item.id === "m-4") as ConversationMessage;
 		const message: ConversationMessage = {

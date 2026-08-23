@@ -96,6 +96,26 @@ const ORIGIN_REPORT_COLLAPSE_AT = 600;
 const ORIGIN_REPORT_PREVIEW_LENGTH = 240;
 const ORIGIN_TITLE = /^#{1,3}[ \t]+([^\n]+)\n+(.*)$/s;
 const REVIEW_HANDOFF_TITLE = /^## (?:Review feedback|Inline review comment)(?:\r?\n|$)/;
+const BROWSER_REPORT = /^Browser detected (\d+) issues? on this page:\r?\n([\s\S]+)$/;
+
+function browserReportParts(text: string): { count: number; details: Array<{ count: number; text: string }> } | undefined {
+	const match = BROWSER_REPORT.exec(text.trim());
+	if (!match?.[1] || !match[2]) return undefined;
+	const count = Number.parseInt(match[1], 10);
+	if (!Number.isFinite(count) || count < 1) return undefined;
+
+	const grouped = new Map<string, number>();
+	for (const line of match[2].split(/\r?\n/)) {
+		const detail = line.trim().replace(/^-\s*/, "");
+		if (!detail) continue;
+		grouped.set(detail, (grouped.get(detail) ?? 0) + 1);
+	}
+	if (grouped.size === 0) return undefined;
+	return {
+		count,
+		details: [...grouped].map(([text, occurrences]) => ({ text, count: occurrences })),
+	};
+}
 
 // These are AO-owned prompt suffixes, not general markdown. Chat and spawn used
 // slightly different wording, and older conversations used "Attached images";
@@ -297,8 +317,9 @@ export function HumanMessage({
  * durable origin field, never from a prefix parsed out of the text.
  */
 export function OriginMessage({ message }: { message: ConversationMessage }) {
+	const browserReport = browserReportParts(message.text);
 	const titleMatch = ORIGIN_TITLE.exec(message.text.trimStart());
-	const title = titleMatch?.[1]?.trim() || message.senderLabel || message.origin;
+	const title = browserReport ? "Browser report" : titleMatch?.[1]?.trim() || message.senderLabel || message.origin;
 	const body = titleMatch?.[2]?.trimStart() || message.text;
 	const longReport = body.length > ORIGIN_REPORT_COLLAPSE_AT;
 	const reportNoun = title.toLowerCase().includes("review") ? "review" : "report";
@@ -316,7 +337,27 @@ export function OriginMessage({ message }: { message: ConversationMessage }) {
 					{formatTime(message.createdAt)}
 				</span>
 			</div>
-			{longReport && expanded ? (
+			{browserReport ? (
+				<>
+					<p className="text-sm leading-relaxed text-muted-foreground">
+						{browserReport.count} {browserReport.count === 1 ? "issue" : "issues"} detected on this page
+					</p>
+					{expanded ? (
+						<ul className="mt-2 space-y-1.5 border-t border-border/70 pt-2 text-xs leading-relaxed text-muted-foreground">
+							{browserReport.details.map((detail) => (
+								<li key={detail.text} className="flex min-w-0 items-start gap-2">
+									<span className="min-w-0 flex-1 break-words">{detail.text}</span>
+									{detail.count > 1 ? (
+										<span className="shrink-0 rounded bg-interactive-hover px-1.5 py-0.5 font-medium tabular-nums text-foreground">
+											×{detail.count}
+										</span>
+									) : null}
+								</li>
+							))}
+						</ul>
+					) : null}
+				</>
+			) : longReport && expanded ? (
 				<ChatMarkdown text={body} muted />
 			) : !longReport && titleMatch ? (
 				<ChatMarkdown text={body} muted />
@@ -325,7 +366,7 @@ export function OriginMessage({ message }: { message: ConversationMessage }) {
 					{preview}
 				</p>
 			)}
-			{longReport ? (
+			{browserReport || longReport ? (
 				<button
 					type="button"
 					onClick={() => setExpanded((current) => !current)}
@@ -336,7 +377,13 @@ export function OriginMessage({ message }: { message: ConversationMessage }) {
 						aria-hidden="true"
 						className={cn("size-3 transition-transform", expanded && "rotate-90")}
 					/>
-					{expanded ? `Hide ${reportNoun}` : `Show full ${reportNoun}`}
+					{browserReport
+						? expanded
+							? "Hide browser details"
+							: "Show browser details"
+						: expanded
+							? `Hide ${reportNoun}`
+							: `Show full ${reportNoun}`}
 				</button>
 			) : null}
 		</div>
