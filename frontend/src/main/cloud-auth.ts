@@ -106,7 +106,6 @@ export function cloudAvailability(): CloudAvailability {
 	return {
 		available: cloudDesktopAvailable(),
 		enabled: cloudAuthConfigured(),
-		apiBaseUrl: "",
 	};
 }
 
@@ -248,15 +247,16 @@ async function authenticatedCloudRequest<T>(
 	init: RequestInit = {},
 ): Promise<T> {
 	if (!organizationId.trim()) throw new Error("Choose an AO Cloud organization.");
+	const accessToken = await getCloudAccessToken(dataDir);
 	const session = await currentSession(dataDir);
-	if (!session || tokenExpiresSoon(session)) throw new Error("Sign in to AO Cloud first.");
+	if (!session) throw new Error("Sign in to AO Cloud first.");
 	if (!session.organizations.some((organization) => organization.id === organizationId)) {
 		throw new Error("This account is not a member of the selected AO Cloud organization.");
 	}
 	return cloudRequest<T>(route, {
 		...init,
 		headers: {
-			Authorization: `Bearer ${session.accessToken}`,
+			Authorization: `Bearer ${accessToken}`,
 			"X-AO-Org": organizationId,
 			...init.headers,
 		},
@@ -302,7 +302,7 @@ export type WorkspacePlacement = {
 	id: string;
 	orgId: string;
 	ownerUserId: string;
-	projectId?: string;
+	productProjectId?: string;
 	state: string;
 	message?: string;
 	createdAt: string;
@@ -348,48 +348,83 @@ function httpWorkspacePlacementClient(dataDir: string): WorkspacePlacementClient
 	};
 }
 
-const PLACEMENT_POLL_INTERVAL_MS = 750;
 const PLACEMENT_TIMEOUT_MS = 2 * 60_000;
+const PLACEMENT_CREATE_ATTEMPTS = 3;
+
+export type CloudProvisioningTiming = {
+	now: () => number;
+	sleep: (delayMs: number) => Promise<void>;
+	timeoutMs: number;
+};
+
+const defaultProvisioningTiming: CloudProvisioningTiming = {
+	now: Date.now,
+	sleep: (delayMs) => new Promise((resolve) => setTimeout(resolve, delayMs)),
+	timeoutMs: PLACEMENT_TIMEOUT_MS,
+};
 
 function placementFailed(placement: WorkspacePlacement): boolean {
 	return placement.state === "failed" || placement.state === "error" || placement.state === "cancelled";
 }
 
-async function waitForPlacedProject(
-	dataDir: string,
+async function waitForPlacementReady(
 	organizationId: string,
 	initialPlacement: WorkspacePlacement,
 	placements: WorkspacePlacementClient,
-): Promise<CreateCloudProjectResult["project"]> {
+	timing: CloudProvisioningTiming,
+): Promise<WorkspacePlacement> {
 	if (!initialPlacement.id) throw new Error("AO Cloud placement returned no workspace intent.");
-	const deadline = Date.now() + PLACEMENT_TIMEOUT_MS;
+	const deadline = timing.now() + timing.timeoutMs;
 	let placement = initialPlacement;
+	let pollDelayMs = 250;
 
 	while (true) {
 		if (placementFailed(placement)) {
 			throw new Error(placement.message || "AO Cloud could not provision this project.");
 		}
-		const [latestPlacement, projectsResponse] = await Promise.all([
-			placements.get(organizationId, placement.id),
-			authenticatedCloudRequest<{ projects: CloudOrganizationProjectSnapshot["projects"] }>(
-				dataDir,
-				organizationId,
-				"/api/v1/projects",
-			),
-		]);
-		placement = latestPlacement;
+		try {
+			placement = await placements.get(organizationId, placement.id);
+		} catch (error) {
+			if (!placementCreateRetryable(error) || timing.now() >= deadline) throw error;
+			await timing.sleep(pollDelayMs);
+			pollDelayMs = Math.min(pollDelayMs * 2, 4_000);
+			continue;
+		}
 		if (placementFailed(placement)) {
 			throw new Error(placement.message || "AO Cloud could not provision this project.");
 		}
-
-		const project = placement.projectId
-			? projectsResponse.projects?.find((candidate) => candidate.id === placement.projectId)
-			: undefined;
-		if (placement.state === "ready" && project) return project;
-		if (Date.now() >= deadline) {
+		if (placement.state === "ready") {
+			if (!placement.productProjectId) throw new Error("AO Cloud placement is ready without a product project.");
+			return placement;
+		}
+		if (timing.now() >= deadline) {
 			throw new Error(placement.message || "AO Cloud project provisioning timed out.");
 		}
-		await new Promise((resolve) => setTimeout(resolve, PLACEMENT_POLL_INTERVAL_MS));
+		await timing.sleep(pollDelayMs);
+		pollDelayMs = Math.min(pollDelayMs * 2, 4_000);
+	}
+}
+
+function placementCreateRetryable(error: unknown): boolean {
+	if (!error || typeof error !== "object") return true;
+	const status = (error as { status?: unknown }).status;
+	return typeof status !== "number" || status === 408 || status === 429 || status >= 500;
+}
+
+async function createWorkspacePlacement(
+	placements: WorkspacePlacementClient,
+	input: WorkspacePlacementCreateInput,
+	timing: CloudProvisioningTiming,
+): Promise<WorkspacePlacement> {
+	let retryDelayMs = 250;
+	for (let attempt = 1; ; attempt += 1) {
+		try {
+			return await placements.create(input);
+		} catch (error) {
+			if (attempt >= PLACEMENT_CREATE_ATTEMPTS || !placementCreateRetryable(error)) throw error;
+			await timing.sleep(retryDelayMs);
+			retryDelayMs *= 2;
+		}
 	}
 }
 
@@ -397,17 +432,25 @@ export async function createCloudProject(
 	dataDir: string,
 	input: CreateCloudProjectInput,
 	placements: WorkspacePlacementClient = httpWorkspacePlacementClient(dataDir),
+	timing: CloudProvisioningTiming = defaultProvisioningTiming,
 ): Promise<CreateCloudProjectResult> {
 	const organizationId = input.organizationId.trim();
-	const placement = await placements.create({
+	const placementInput: WorkspacePlacementCreateInput = {
 		organizationId,
 		displayName: input.displayName,
 		repositoryUrl: input.repositoryUrl,
 		defaultBranch: input.defaultBranch,
 		config: input.config,
 		idempotencyKey: randomUUID(),
-	});
-	const project = await waitForPlacedProject(dataDir, organizationId, placement, placements);
+	};
+	const placement = await createWorkspacePlacement(placements, placementInput, timing);
+	const readyPlacement = await waitForPlacementReady(organizationId, placement, placements, timing);
+	const projectResponse = await authenticatedCloudRequest<{
+		status: "ok" | "degraded";
+		project: CreateCloudProjectResult["project"];
+	}>(dataDir, organizationId, `/api/v1/projects/${encodeURIComponent(readyPlacement.productProjectId!)}`);
+	if (!projectResponse.project?.id) throw new Error("AO Cloud project creation returned no project.");
+	const project = projectResponse.project;
 
 	try {
 		const spawn = await authenticatedCloudRequest<{

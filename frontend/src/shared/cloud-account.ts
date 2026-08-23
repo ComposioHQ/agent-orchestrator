@@ -32,6 +32,4 @@ export interface CloudOrganization {
 export interface CloudAvailability {
 	available: boolean;
 	enabled: boolean;
-	/** Legacy compatibility field. Cloud HTTP remains in Electron main. */
-	apiBaseUrl: string;
 }

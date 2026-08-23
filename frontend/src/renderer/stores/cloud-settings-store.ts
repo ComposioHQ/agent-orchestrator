@@ -2,7 +2,7 @@ import { create } from "zustand";
 import { aoBridge } from "../lib/bridge";
 import type { CloudAvailability } from "../../shared/cloud-account";
 
-const UNAVAILABLE: CloudAvailability = { available: false, enabled: false, apiBaseUrl: "" };
+const UNAVAILABLE: CloudAvailability = { available: false, enabled: false };
 
 type CloudSettingsState = {
 	/**

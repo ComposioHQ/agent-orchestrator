@@ -196,7 +196,7 @@ export const aoBridge: AoBridge =
 			getActive: async () => null,
 		},
 		cloud: {
-			getAvailability: async () => ({ available: false, enabled: false, apiBaseUrl: "" }),
+			getAvailability: async () => ({ available: false, enabled: false }),
 			getSession: async () => null,
 			listProjects: async () => [],
 			createProject: async () => {
