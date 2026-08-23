@@ -694,7 +694,7 @@ func buildReviewThreadsQuery(ref ports.SCMPRRef, beforeCursor string, includeRev
 	}
 	reviewSelection := ""
 	if includeReviews {
-		reviewSelection = fmt.Sprintf(" reviewSummaries: reviews(last:%d, states:[APPROVED,CHANGES_REQUESTED]){ nodes{ id state url submittedAt body commit{ oid } author{ login __typename } } }", githubReviewSummaryLimit)
+		reviewSelection = fmt.Sprintf(" reviewSummaries: reviews(last:%d, states:[APPROVED,CHANGES_REQUESTED,COMMENTED]){ nodes{ id state url submittedAt body commit{ oid } author{ login __typename } } }", githubReviewSummaryLimit)
 	}
 	return fmt.Sprintf(`query{
 repo: repository(owner:%s,name:%s){ pullRequest(number:%d){ reviewDecision%s reviewThreads(last:%d, before:%s){ nodes{

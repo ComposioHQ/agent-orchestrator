@@ -2524,7 +2524,7 @@ describe("SessionInspector summary reviews", () => {
     expect(screen.getByText("External reviews")).toBeInTheDocument();
   });
 
-  it("does not show PR re-review CTAs in external review rows", async () => {
+  it("requests PR re-review from the external review actions menu", async () => {
     const previous = getMock.getMockImplementation()!;
     getMock.mockImplementation(async (path: string, opts?: unknown) => {
       if (path === "/api/v1/sessions/{sessionId}/pr") {
@@ -2558,14 +2558,22 @@ describe("SessionInspector summary reviews", () => {
 
     renderWithQuery(<SessionInspector session={session([pr(3, "open")])} />);
     await openReviewsSection();
-    expect(
-      screen.queryByRole("button", { name: "Request to re-review PR" }),
-    ).not.toBeInTheDocument();
     expect(screen.getByText("Please request another look after the fixes.")).toBeInTheDocument();
-    expect(postMock).not.toHaveBeenCalledWith(
+    await userEvent.click(screen.getByRole("button", { name: "Review actions" }));
+    await userEvent.click(screen.getByRole("button", { name: "Request to re-review PR" }));
+    await waitFor(() => expect(postMock).toHaveBeenCalledWith(
       "/api/v1/sessions/{sessionId}/reviews/rerequest",
-      expect.anything(),
-    );
+      {
+        params: { path: { sessionId: "sess-1" } },
+        body: {
+          pullRequestUrl: "https://api.github.com/repos/acme/repo/pulls/3",
+          reviewerId: "maya",
+        },
+      },
+    ));
+    expect(
+      screen.getByRole("button", { name: "Asked for re-review" }),
+    ).toBeDisabled();
   });
 
   it("marks SCM reviews and individual comments using their stored injection decision", async () => {

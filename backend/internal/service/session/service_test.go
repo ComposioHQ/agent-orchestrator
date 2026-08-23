@@ -3346,13 +3346,14 @@ func TestListPRSummariesExposesReviewSummariesButKeepsRawLogsAndCommentBodiesPri
 	}
 }
 
-func TestSummarizeReviewSurfacesApprovedAndChangesRequestedSummaries(t *testing.T) {
+func TestSummarizeReviewSurfacesSubmittedReviewSummaries(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Second)
 	reviews := []domain.PullRequestReview{
 		// alice's approved review supersedes her earlier changes_requested one.
 		{ID: "a-old", Author: "alice", State: domain.ReviewChangesRequest, Body: "old note", URL: "url-a-old", SubmittedAt: now.Add(-time.Hour)},
 		{ID: "a-new", Author: "alice", State: domain.ReviewApproved, Body: "looks good now", URL: "url-a-new", SubmittedAt: now},
 		{ID: "b", Author: "bob", State: domain.ReviewChangesRequest, Body: "please fix", URL: "url-b", SubmittedAt: now},
+		{ID: "c", Author: "charlie", State: domain.ReviewNone, Body: "non-blocking suggestion", URL: "url-c", SubmittedAt: now},
 	}
 
 	got := summarizeReview(domain.PullRequest{URL: "u", Review: domain.ReviewChangesRequest}, nil, reviews)
@@ -3361,14 +3362,17 @@ func TestSummarizeReviewSurfacesApprovedAndChangesRequestedSummaries(t *testing.
 	for _, entry := range got.Reviews {
 		byReviewer[entry.Reviewer] = entry
 	}
-	if len(got.Reviews) != 2 {
-		t.Fatalf("review summaries = %+v, want alice + bob", got.Reviews)
+	if len(got.Reviews) != 3 {
+		t.Fatalf("review summaries = %+v, want alice + bob + charlie", got.Reviews)
 	}
 	if a := byReviewer["alice"]; a.Verdict != domain.ReviewApproved || a.Body != "looks good now" || a.URL != "url-a-new" {
 		t.Fatalf("alice entry = %+v, want latest approved with its body", a)
 	}
 	if b := byReviewer["bob"]; b.Verdict != domain.ReviewChangesRequest || b.Body != "please fix" {
 		t.Fatalf("bob entry = %+v, want changes_requested with its body", b)
+	}
+	if c := byReviewer["charlie"]; c.Verdict != domain.ReviewNone || c.Body != "non-blocking suggestion" || c.URL != "url-c" {
+		t.Fatalf("charlie entry = %+v, want commented review with its body", c)
 	}
 }
 

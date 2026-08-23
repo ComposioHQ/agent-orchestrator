@@ -932,6 +932,7 @@ function ExternalReviewCard({
 	externalLink,
 	labels,
 	onOpenInAOBrowser,
+	onRequestRereview,
 	onResolveInlineComment,
 	onSendInlineComment,
 	onSendReviewSummary,
@@ -990,7 +991,7 @@ function ExternalReviewCard({
 						{headerContent}
 					</div>
 				)}
-				<ReviewSummaryActions body={body ?? ""} externalLink={externalLink} labels={labels} onOpenInAOBrowser={onOpenInAOBrowser} onSendReviewSummary={onSendReviewSummary} pullRequestUrl={entry.pullRequestUrl} reviewerId={entry.reviewerId} source="external" url={entry.reviewUrl || entry.pullRequestUrl} />
+				<ReviewSummaryActions body={body ?? ""} externalLink={externalLink} labels={labels} onOpenInAOBrowser={onOpenInAOBrowser} onRequestRereview={entry.canRequestRereview ? () => onRequestRereview?.(entry) : undefined} onSendReviewSummary={onSendReviewSummary} pullRequestUrl={entry.pullRequestUrl} reviewerId={entry.reviewerId} source="external" url={entry.reviewUrl || entry.pullRequestUrl} />
 				{collapsible ? (
 					<button aria-expanded={open} aria-label={open ? labels.showLess : labels.showMore} className="inline-flex size-7 shrink-0 items-center justify-center rounded-md text-passive transition-colors hover:bg-interactive-hover hover:text-foreground" onClick={() => setOpen((current) => !current)} type="button">
 						<ChevronIcon className="size-icon-2xs" direction={open ? "down" : "right"} />
@@ -1401,6 +1402,7 @@ function ReviewSummaryActions({
 	externalLink: ExternalLink,
 	labels,
 	onOpenInAOBrowser,
+	onRequestRereview,
 	onSendReviewSummary,
 	pullRequestUrl,
 	reviewerId,
@@ -1411,6 +1413,7 @@ function ReviewSummaryActions({
 	externalLink: ExternalLinkComponent;
 	labels: InspectorReviewLabels;
 	onOpenInAOBrowser?: (url: string) => void;
+	onRequestRereview?: () => Promise<void> | void;
 	onSendReviewSummary?: (summary: InspectorReviewSummaryAction) => Promise<void> | void;
 	pullRequestUrl?: string;
 	reviewerId: string;
@@ -1418,9 +1421,20 @@ function ReviewSummaryActions({
 	url?: string | null;
 }) {
 	const [menuOpen, setMenuOpen] = useState(false);
+	const [rereviewState, setRereviewState] = useState<"idle" | "requesting" | "requested" | "error">("idle");
 	const [sendState, setSendState] = useState<"idle" | "sending" | "sent" | "error">("idle");
 	const canSend = Boolean(body && onSendReviewSummary);
-	if (!url && !canSend) return null;
+	if (!url && !canSend && !onRequestRereview) return null;
+	const requestRereview = async () => {
+		if (!onRequestRereview || rereviewState === "requesting") return;
+		setRereviewState("requesting");
+		try {
+			await onRequestRereview();
+			setRereviewState("requested");
+		} catch {
+			setRereviewState("error");
+		}
+	};
 	const send = async () => {
 		if (!onSendReviewSummary || !body || sendState === "sending") return;
 		setSendState("sending");
@@ -1438,6 +1452,7 @@ function ReviewSummaryActions({
 			</button>
 			{menuOpen ? (
 				<span className="isolate absolute right-0 top-8 z-[100] flex w-48 flex-col rounded-md border border-border-strong bg-[var(--color-bg-settings-menu)] p-1 text-2xs shadow-[0_16px_40px_rgba(0,0,0,0.65)]">
+					{onRequestRereview ? <button className={cn("rounded px-2 py-1.5 text-left hover:bg-interactive-hover disabled:pointer-events-none", rereviewState === "requested" ? "text-success" : rereviewState === "error" ? "text-error" : "text-muted-foreground hover:text-foreground")} disabled={rereviewState === "requesting" || rereviewState === "requested"} onClick={() => void requestRereview()} type="button">{rereviewState === "requested" ? labels.rereviewRequested : rereviewState === "error" ? labels.rereviewRequestFailed : labels.requestRereviewPR}</button> : null}
 					{url && onOpenInAOBrowser ? <button className="rounded px-2 py-1.5 text-left text-muted-foreground hover:bg-interactive-hover hover:text-foreground" onClick={() => onOpenInAOBrowser(url)} type="button">{labels.openInAOBrowser}</button> : null}
 					{url ? <ExternalLink className="rounded px-2 py-1.5 text-muted-foreground no-underline hover:bg-interactive-hover hover:text-foreground" href={url}>{labels.openInSystemBrowser}</ExternalLink> : null}
 					{canSend ? <button className={cn("rounded px-2 py-1.5 text-left hover:bg-interactive-hover disabled:pointer-events-none", sendState === "sent" ? "text-success" : sendState === "error" ? "text-error" : "text-muted-foreground hover:text-foreground")} disabled={sendState === "sending" || sendState === "sent"} onClick={() => void send()} type="button">{sendState === "sent" ? labels.sentToWorkerAgent : sendState === "error" ? labels.sendToWorkerAgentError : labels.sendToWorkerAgent}</button> : null}

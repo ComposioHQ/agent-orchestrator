@@ -347,6 +347,7 @@ describe("portable inspector presentations", () => {
   });
 
   it("keeps external review actions in the header without toggling nested comments", () => {
+    const onRequestRereview = vi.fn();
     render(
       <InspectorReviewsView
         externalLink={ExternalLink}
@@ -356,7 +357,9 @@ describe("portable inspector presentations", () => {
               entries: [
                 {
                   body: "Please take another pass after fixes land.",
+                  canRequestRereview: true,
                   id: "github-review-1",
+                  pullRequestUrl: "https://example.com/pull/12",
                   reviewerId: "maya",
                   resolvedComments: [{ body: "Already addressed.", resolved: true }],
                   reviewUrl: "https://example.com/review",
@@ -375,15 +378,12 @@ describe("portable inspector presentations", () => {
         ]}
         isLoading={false}
         labels={reviewLabels}
-        onRequestRereview={vi.fn()}
+        onRequestRereview={onRequestRereview}
         renderAvatar={() => null}
         renderMarkdown={(body) => <p>{body}</p>}
       />,
     );
 
-    expect(
-      screen.queryByRole("button", { name: "Request to re-review PR" }),
-    ).not.toBeInTheDocument();
     expect(screen.getByText("Please take another pass after fixes land.")).toBeInTheDocument();
     const reviewToggle = screen.getByRole("button", { name: /maya.*Changes requested/i });
     const actionMenu = screen.getByRole("button", { name: "Review actions" });
@@ -392,6 +392,10 @@ describe("portable inspector presentations", () => {
     expect(reviewToggle).toHaveAttribute("aria-expanded", "false");
     fireEvent.click(actionMenu);
     expect(screen.getByRole("link", { name: "Open in system browser" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Request to re-review PR" }));
+    expect(onRequestRereview).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "github-review-1", reviewerId: "maya" }),
+    );
     expect(reviewToggle).toHaveAttribute("aria-expanded", "false");
     expect(screen.queryByText("Resolved comments · 1")).not.toBeInTheDocument();
     fireEvent.click(within(screen.getByTestId("external-review-header")).getByRole("button", { name: "Show more" }));
