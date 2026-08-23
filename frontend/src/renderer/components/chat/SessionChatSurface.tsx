@@ -58,6 +58,8 @@ export function SessionChatSurface({
 	onOpenShell,
 	openingShell,
 	shellError,
+	onOpenFiles,
+	onOpenFile,
 	headerActions,
 	controllerTransitioning,
 }: {
@@ -78,6 +80,10 @@ export function SessionChatSurface({
 	onOpenShell?: () => void;
 	openingShell?: boolean;
 	shellError?: string;
+	/** Opens the Files inspector from a turn's changed-files Review control. */
+	onOpenFiles?: () => void;
+	/** Opens the Files inspector focused on one changed path. */
+	onOpenFile?: (path: string) => void;
 	headerActions?: ReactNode;
 	/** The target controller is being installed by an interface handoff. */
 	controllerTransitioning?: boolean;
@@ -308,6 +314,8 @@ export function SessionChatSurface({
 				onRollback={commands.rollback}
 				rollbackPending={commands.rollbackPending}
 				rollbackError={commands.rollbackError}
+				onOpenFiles={onOpenFiles}
+				onOpenFile={onOpenFile}
 				onEditMessage={commands.editMessage}
 				editMessagePending={commands.editMessagePending}
 				editMessageError={commands.editMessageError}

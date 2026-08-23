@@ -43,7 +43,16 @@ async function openSwitchAgentDialog(page: Page) {
 	});
 
 	await page.goto(`/#/projects/${projectId}/sessions/switch-worker`);
-	await page.getByRole("button", { name: "Switch agent", exact: true }).click();
+	const switchAgentButton = page.getByRole("button", { name: "Switch agent", exact: true });
+	const primaryTerminalTab = page.locator('[data-terminal-role="primary"]');
+	const primaryTabBox = await primaryTerminalTab.boundingBox();
+	const terminalRegionBox = await page.getByTestId("session-terminal-region").boundingBox();
+	expect(primaryTabBox).not.toBeNull();
+	expect(terminalRegionBox).not.toBeNull();
+	expect(primaryTabBox!.x + primaryTabBox!.width).toBeLessThanOrEqual(
+		terminalRegionBox!.x + terminalRegionBox!.width,
+	);
+	await switchAgentButton.click();
 	const dialog = page.getByRole("dialog", { name: "Switch agent" });
 	await expect(dialog).toBeVisible();
 	return {

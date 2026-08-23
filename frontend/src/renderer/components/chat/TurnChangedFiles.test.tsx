@@ -1,6 +1,6 @@
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { ActivityRow, TurnChangedFiles } from "./ChatTimelineItems";
 import { ActivityRun } from "./ActivityRun";
 import type { ConversationActivity, TurnDiff } from "../../types/conversation";
@@ -37,27 +37,104 @@ function commandActivity(
 }
 
 describe("TurnChangedFiles", () => {
-	it("summarizes the turn's totals without being expanded", () => {
+	it("shows the bordered summary with files visible", () => {
 		render(<TurnChangedFiles diff={diff()} />);
-		expect(screen.getByText("2 files changed")).toBeInTheDocument();
-		expect(screen.getByText("+52")).toBeInTheDocument();
+		expect(screen.getByText("2 Files Changed")).toBeInTheDocument();
+		expect(screen.getByText("a.ts")).toBeInTheDocument();
+		expect(screen.getByText("new.ts")).toBeInTheDocument();
+		expect(screen.getByText("+12")).toBeInTheDocument();
+		expect(screen.getByText("+40")).toBeInTheDocument();
 		expect(screen.getByText("−3")).toBeInTheDocument();
 	});
 
-	it("lists path and per-file counts when expanded", async () => {
-		render(<TurnChangedFiles diff={diff()} />);
-		await userEvent.click(screen.getByRole("button"));
-
-		expect(screen.getByText("src/a.ts")).toBeInTheDocument();
-		expect(screen.getByText("src/new.ts")).toBeInTheDocument();
-		expect(screen.getByText("+12")).toBeInTheDocument();
-		expect(screen.getByText("+40")).toBeInTheDocument();
-		// Status is conveyed to assistive tech, not only by a coloured letter.
-		expect(screen.getByLabelText("modified")).toBeInTheDocument();
-		expect(screen.getByLabelText("added")).toBeInTheDocument();
+	it("offers Review when a handler is provided", async () => {
+		const onReview = vi.fn();
+		render(<TurnChangedFiles diff={diff()} onReview={onReview} />);
+		await userEvent.click(screen.getByRole("button", { name: "Review" }));
+		expect(onReview).toHaveBeenCalledTimes(1);
 	});
 
-	it("shows both ends of a rename, so it does not read as an addition", async () => {
+	it("opens a file in the Files panel when clicked", async () => {
+		const onOpenFile = vi.fn();
+		render(<TurnChangedFiles diff={diff()} onOpenFile={onOpenFile} />);
+		await userEvent.click(screen.getByRole("button", { name: /Open src\/a\.ts in Files/ }));
+		expect(onOpenFile).toHaveBeenCalledWith("src/a.ts");
+	});
+
+	it("shows the full path on basename hover", async () => {
+		const user = userEvent.setup();
+		render(<TurnChangedFiles diff={diff()} />);
+		await user.hover(screen.getByText("a.ts"));
+		expect(await screen.findByRole("tooltip")).toHaveTextContent("src/a.ts");
+	});
+
+	it("resolves a turn-diff basename against the turn's Edited path for the tooltip", async () => {
+		const user = userEvent.setup();
+		render(
+			<TurnChangedFiles
+				diff={{
+					files: [{ path: "random_words_1.txt", additions: 50, deletions: 0, status: "added" }],
+				}}
+				items={[
+					{
+						kind: "activity",
+						id: "a-1",
+						sequence: 1,
+						revision: 0,
+						activityKind: "file_change",
+						status: "completed",
+						summary: "Edited 1 file",
+						detail: {
+							files: [
+								{
+									path: "/Users/vaanyagoel/.ao/dev/data/worktrees/wexaai/wexaai-21/random_words_1.txt",
+									status: "added",
+									additions: 50,
+									deletions: 0,
+								},
+							],
+						},
+						createdAt: new Date().toISOString(),
+					},
+				]}
+			/>,
+		);
+		await user.hover(screen.getByText("random_words_1.txt"));
+		expect(await screen.findByRole("tooltip")).toHaveTextContent(
+			"~/.ao/dev/data/worktrees/wexaai/wexaai-21/random_words_1.txt",
+		);
+	});
+
+	it("joins a command cwd when the turn diff only has a relative path", async () => {
+		const user = userEvent.setup();
+		render(
+			<TurnChangedFiles
+				diff={{
+					files: [{ path: "notes.txt", additions: 1, deletions: 0, status: "added" }],
+				}}
+				items={[
+					{
+						kind: "activity",
+						id: "a-1",
+						sequence: 1,
+						revision: 0,
+						activityKind: "command",
+						status: "completed",
+						summary: "Ran command",
+						detail: { cwd: "/Users/me/.ao/dev/data/worktrees/demo/demo-1", command: "ls" },
+						createdAt: new Date().toISOString(),
+					},
+				]}
+			/>,
+		);
+		await user.hover(screen.getByText("notes.txt"));
+		expect(await screen.findByRole("tooltip")).toHaveTextContent(
+			"~/.ao/dev/data/worktrees/demo/demo-1/notes.txt",
+		);
+	});
+
+	it("shows both ends of a rename in the path tooltip", async () => {
+		const user = userEvent.setup();
 		render(
 			<TurnChangedFiles
 				diff={{
@@ -67,15 +144,32 @@ describe("TurnChangedFiles", () => {
 				}}
 			/>,
 		);
-		await userEvent.click(screen.getByRole("button"));
-		expect(screen.getByText("src/old.ts")).toBeInTheDocument();
-		expect(screen.getByLabelText("renamed")).toBeInTheDocument();
+		expect(screen.getByText("1 File Changed")).toBeInTheDocument();
+		expect(screen.getByText("new.ts")).toBeInTheDocument();
+		await user.hover(screen.getByText("new.ts"));
+		expect(await screen.findByRole("tooltip")).toHaveTextContent("src/old.ts → src/new.ts");
 	});
 
-	it("says the list was cut rather than presenting it as the whole change", async () => {
-		render(<TurnChangedFiles diff={diff({ truncated: true })} />);
-		await userEvent.click(screen.getByRole("button"));
+	it("says the list was cut rather than presenting it as the whole change", () => {
+		render(<TurnChangedFiles diff={diff({ truncated: true })} onReview={() => {}} />);
 		expect(screen.getByText(/changed more files than AO lists/i)).toBeInTheDocument();
+		expect(screen.getByText(/Use Review for the whole change/i)).toBeInTheDocument();
+	});
+
+	it("expands beyond the preview with Show N more", async () => {
+		const many: TurnDiff = {
+			files: Array.from({ length: 6 }, (_, i) => ({
+				path: `src/file-${i}.ts`,
+				additions: i + 1,
+				deletions: 0,
+				status: "modified" as const,
+			})),
+		};
+		render(<TurnChangedFiles diff={many} />);
+		expect(screen.getByText("file-0.ts")).toBeInTheDocument();
+		expect(screen.queryByText("file-5.ts")).not.toBeInTheDocument();
+		await userEvent.click(screen.getByRole("button", { name: "Show 2 more" }));
+		expect(screen.getByText("file-5.ts")).toBeInTheDocument();
 	});
 
 	it("marks a running turn's diff as still growing", () => {
