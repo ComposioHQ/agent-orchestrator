@@ -3,6 +3,7 @@
 package kimiacp
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 
@@ -29,11 +30,11 @@ func New(plugin nativeacp.Plugin, log *slog.Logger) ports.ChatDriver {
 	}, log)
 }
 
-func configure(cfg acpdriver.LaunchConfig) ([]string, map[string]string, error) {
-	if err := validateTurnSettings(ports.ChatTurnSettings{Approval: cfg.Permissions}); err != nil {
+func configure(ctx context.Context, cfg acpdriver.LaunchConfig) ([]string, map[string]string, error) {
+	if err := validateTurnSettings(cfg.Permissions, ports.ChatTurnSettings{Approval: cfg.Permissions}); err != nil {
 		return nil, nil, err
 	}
-	if err := kimi.PrepareACPInstructions(cfg.WorkspacePath, cfg.SystemPrompt); err != nil {
+	if err := kimi.PrepareACPInstructions(ctx, cfg.WorkspacePath, cfg.SystemPrompt); err != nil {
 		return nil, nil, err
 	}
 	return []string{"acp"}, nil, nil

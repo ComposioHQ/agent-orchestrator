@@ -35,9 +35,14 @@ func (p fakePlugin) AuthStatus(context.Context) (ports.AgentAuthStatus, error) {
 func TestBindingLaunchesExactUserInstalledBinary(t *testing.T) {
 	const userBinary = "/Users/test/.local/bin/provider"
 	var configured acpdriver.LaunchConfig
+	type contextKey struct{}
+	launchCtx := context.WithValue(context.Background(), contextKey{}, "launch-context")
 	cfg := buildConfig(fakePlugin{binary: userBinary, status: ports.AgentAuthStatusAuthorized}, Config{
 		Harness: domain.HarnessOpenCode,
-		Configure: func(_ context.Context, in acpdriver.LaunchConfig) ([]string, map[string]string, error) {
+		Configure: func(ctx context.Context, in acpdriver.LaunchConfig) ([]string, map[string]string, error) {
+			if ctx.Value(contextKey{}) != "launch-context" {
+				t.Fatal("Configure did not receive the launch context")
+			}
 			configured = in
 			return []string{"acp"}, map[string]string{"PROVIDER_CONFIG": "/ao/config.json"}, nil
 		},
@@ -46,7 +51,7 @@ func TestBindingLaunchesExactUserInstalledBinary(t *testing.T) {
 	if err := cfg.Probe(context.Background()); err != nil {
 		t.Fatalf("Probe: %v", err)
 	}
-	launch, err := cfg.Launch(context.Background(), acpdriver.LaunchConfig{
+	launch, err := cfg.Launch(launchCtx, acpdriver.LaunchConfig{
 		SessionID: "session-1", DataDir: "/ao", WorkspacePath: "/worktree",
 		Env: map[string]string{"PATH": "/user/bin", "KEEP": "yes"}, Model: "provider/model",
 		Permissions: ports.PermissionModeAcceptEdits, SystemPrompt: "AO rules",

@@ -54,7 +54,7 @@ func TestDriverReusesKimiPluginAndDeclaresNativeFeatures(t *testing.T) {
 
 func TestConfigureLaunchesNativeACPSubcommand(t *testing.T) {
 	workspace := t.TempDir()
-	args, env, err := configure(acpdriver.LaunchConfig{
+	args, env, err := configure(context.Background(), acpdriver.LaunchConfig{
 		WorkspacePath: workspace,
 		Model:         "kimi-code/kimi-for-coding", Permissions: ports.PermissionModeDefault,
 		SystemPrompt: "AO worker instructions",
@@ -97,7 +97,7 @@ func TestConfigureRejectsUnsupportedPermissionModes(t *testing.T) {
 		ports.PermissionModeBypassPermissions,
 	} {
 		t.Run(string(mode), func(t *testing.T) {
-			_, _, err := configure(acpdriver.LaunchConfig{
+			_, _, err := configure(context.Background(), acpdriver.LaunchConfig{
 				WorkspacePath: t.TempDir(), Permissions: mode,
 			})
 			if !errors.Is(err, ports.ErrChatPermissionModeUnsupported) {

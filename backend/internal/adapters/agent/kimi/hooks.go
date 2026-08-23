@@ -48,7 +48,7 @@ func (p *Plugin) GetAgentHooks(ctx context.Context, cfg ports.WorkspaceHookConfi
 	if err != nil {
 		return fmt.Errorf("kimi.GetAgentHooks: %w", err)
 	}
-	if err := PrepareACPInstructions(cfg.WorkspacePath, systemPrompt); err != nil {
+	if err := PrepareACPInstructions(ctx, cfg.WorkspacePath, systemPrompt); err != nil {
 		return fmt.Errorf("kimi.GetAgentHooks: %w", err)
 	}
 	return nil
@@ -58,7 +58,10 @@ func (p *Plugin) GetAgentHooks(ctx context.Context, cfg ports.WorkspaceHookConfi
 // discovers project-level AGENTS.md files. Chat sessions call this immediately
 // before launching `kimi acp`; unlike TUI sessions, they do not run
 // GetAgentHooks during workspace preparation.
-func PrepareACPInstructions(workspacePath, systemPrompt string) error {
+func PrepareACPInstructions(ctx context.Context, workspacePath, systemPrompt string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if strings.TrimSpace(systemPrompt) == "" {
 		return nil
 	}
@@ -71,18 +74,27 @@ func PrepareACPInstructions(workspacePath, systemPrompt string) error {
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("kimi: read ACP instructions %s: %w", instructionsPath, err)
 	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 
 	if err := os.MkdirAll(filepath.Dir(instructionsPath), 0o750); err != nil {
 		return fmt.Errorf("kimi: create ACP instruction dir: %w", err)
+	}
+	if err := ctx.Err(); err != nil {
+		return err
 	}
 	body := mergeKimiInstructionFile(string(existing), systemPrompt)
 	if err := hookutil.AtomicWriteFile(instructionsPath, []byte(body), 0o600); err != nil {
 		return fmt.Errorf("kimi: write ACP instructions %s: %w", instructionsPath, err)
 	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if err := hookutil.EnsureWorkspaceGitignore(filepath.Dir(instructionsPath), kimiInstructionsFileName); err != nil {
 		return fmt.Errorf("kimi: gitignore ACP instructions: %w", err)
 	}
-	return nil
+	return ctx.Err()
 }
 
 func kimiInstructionsPath(workspacePath string) string {
