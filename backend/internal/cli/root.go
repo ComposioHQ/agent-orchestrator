@@ -171,6 +171,9 @@ func NewRootCommand(deps Deps) *cobra.Command {
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		PersistentPreRunE: func(cmd *cobra.Command, _ []string) error {
+			if err := ctx.guardSandboxCommand(cmd); err != nil {
+				return err
+			}
 			if shouldEmitCLIInvocation(cmd) {
 				ctx.emitCLIInvoked(cmd.Context(), cmd)
 			}
@@ -236,6 +239,9 @@ func shouldEmitCLIInvocation(cmd *cobra.Command) bool {
 }
 
 func (c *commandContext) emitCLIInvoked(ctx context.Context, cmd *cobra.Command) {
+	if sandboxRequested() {
+		return
+	}
 	reqCtx, cancel := context.WithTimeout(ctx, probeTimeout)
 	defer cancel()
 	_ = c.postLoopbackJSON(reqCtx, "/internal/telemetry/cli-invoked", map[string]string{
@@ -256,6 +262,9 @@ func cliInvocationActorType(cmd *cobra.Command) string {
 }
 
 func (c *commandContext) emitCLIUsageError(ctx context.Context, args []string, err error) {
+	if sandboxRequested() {
+		return
+	}
 	command, commandPath := usageErrorCommand(args)
 	reqCtx, cancel := context.WithTimeout(ctx, probeTimeout)
 	defer cancel()

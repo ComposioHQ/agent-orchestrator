@@ -30,11 +30,16 @@ type apiError struct {
 type apiResponseError struct {
 	StatusCode int
 	ErrorBody  apiError
+	Source     string
 }
 
 func (e apiResponseError) Error() string {
 	if e.ErrorBody.Message == "" {
-		return fmt.Sprintf("daemon returned HTTP %d", e.StatusCode)
+		source := e.Source
+		if source == "" {
+			source = "daemon"
+		}
+		return fmt.Sprintf("%s returned HTTP %d", source, e.StatusCode)
 	}
 	return e.ErrorBody.String()
 }
