@@ -5,27 +5,26 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/url"
+	"sort"
 	"strings"
 	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/cloud/capability"
 )
 
-// Capabilities is the credential half of the compute plane, kept as an
-// interface so the lifecycle can be tested without a capability store.
-// *capability.Authority satisfies it.
+// Capabilities revokes every outstanding one-time sandbox ticket beneath a
+// scope. Issuance and atomic redemption stay in the online control plane; the
+// compute manager never mints or verifies credentials offline.
 type Capabilities interface {
-	Issue(ctx context.Context, scope capability.Scope, ttl time.Duration) (capability.Grant, error)
 	RevokeScope(ctx context.Context, selector capability.Selector) (int, error)
 }
 
-// Secrets are the per-launch credentials a sandbox needs (an SCM token, an
-// agent API key). Env values land in the sandbox environment; Files are
-// written inside the sandbox with owner-only permissions. Neither ever reaches
-// a command line — CreateRequest.Validate enforces that mechanically.
+// Secrets are the per-launch credentials a sandbox needs (an SCM token or an
+// agent credential). All values travel through transient owner-only files;
+// secrets are never placed in argv or the process environment.
 type Secrets struct {
-	Env   map[string]string
-	Files map[string]string
+	Files []FileSecret
 }
 
 // SecretSource mints and purges the short-lived credentials placed inside a
@@ -58,15 +57,13 @@ type Options struct {
 	// Deployment names this control plane. It is stamped on every sandbox so
 	// two deployments can share a provider account without reaping each other.
 	Deployment string
-	// PublicURL is the base URL sandboxes call back on. It is handed to the
-	// sandbox in its environment together with its capability.
+	// PublicURL is the verified HTTPS control-plane origin used to build the
+	// online ticket-redemption URL in capability.json.
 	PublicURL string
 	// Snapshots names the prebuilt image per role.
 	Snapshots map[Role]string
 	// Resources is the requested shape for new sandboxes.
 	Resources Resources
-	// CapabilityTTL bounds how long a freshly injected capability lives.
-	CapabilityTTL time.Duration
 	// AutoStopInterval and AutoDeleteInterval are the provider-side idle
 	// guards requested at creation.
 	AutoStopInterval   time.Duration
@@ -79,24 +76,21 @@ type Options struct {
 // Manager owns sandbox lifecycle: idempotent create, start, stop, and cascade
 // delete, under per-org and per-user quotas.
 type Manager struct {
-	store         Store
-	provider      Provider
-	capabilities  Capabilities
-	secrets       SecretSource
-	routes        RouteRegistry
-	deployment    string
-	publicURL     string
-	snapshots     map[Role]string
-	resources     Resources
-	capabilityTTL time.Duration
-	autoStop      time.Duration
-	autoDelete    time.Duration
-	quotas        Quotas
-	now           func() time.Time
-	logger        *slog.Logger
+	store        Store
+	provider     Provider
+	capabilities Capabilities
+	secrets      SecretSource
+	routes       RouteRegistry
+	deployment   string
+	publicURL    string
+	snapshots    map[Role]string
+	resources    Resources
+	autoStop     time.Duration
+	autoDelete   time.Duration
+	quotas       Quotas
+	now          func() time.Time
+	logger       *slog.Logger
 }
-
-const defaultCapabilityTTL = 12 * time.Hour
 
 // NewManager validates the compute-plane dependencies and builds a Manager.
 func NewManager(options Options) (*Manager, error) {
@@ -109,6 +103,10 @@ func NewManager(options Options) (*Manager, error) {
 	if strings.TrimSpace(options.PublicURL) == "" {
 		return nil, errors.New("compute plane requires the public control-plane URL sandboxes call back on")
 	}
+	publicURL, err := url.Parse(strings.TrimSpace(options.PublicURL))
+	if err != nil || publicURL.Scheme != "https" || publicURL.Host == "" || publicURL.User != nil || publicURL.RawQuery != "" || publicURL.Fragment != "" {
+		return nil, errors.New("compute plane requires an absolute HTTPS public control-plane URL")
+	}
 	for _, role := range []Role{RoleCoordinator, RoleWorker} {
 		if strings.TrimSpace(options.Snapshots[role]) == "" {
 			return nil, fmt.Errorf("compute plane requires a %s sandbox snapshot", role)
@@ -117,8 +115,13 @@ func NewManager(options Options) (*Manager, error) {
 	if err := options.Quotas.Validate(); err != nil {
 		return nil, err
 	}
-	if options.CapabilityTTL <= 0 {
-		options.CapabilityTTL = defaultCapabilityTTL
+	// Provider-side guards remain effective when the control-plane reaper is
+	// unavailable. They are mandatory rather than optional tuning.
+	if options.AutoStopInterval <= 0 || options.AutoDeleteInterval <= 0 {
+		return nil, errors.New("compute plane requires positive provider auto-stop and auto-delete intervals")
+	}
+	if options.AutoDeleteInterval <= options.AutoStopInterval {
+		return nil, errors.New("compute plane auto-delete interval must exceed auto-stop interval")
 	}
 	if options.Clock == nil {
 		options.Clock = time.Now
@@ -131,21 +134,20 @@ func NewManager(options Options) (*Manager, error) {
 		snapshots[role] = strings.TrimSpace(snapshot)
 	}
 	return &Manager{
-		store:         options.Store,
-		provider:      options.Provider,
-		capabilities:  options.Capabilities,
-		secrets:       options.Secrets,
-		routes:        options.Routes,
-		deployment:    strings.TrimSpace(options.Deployment),
-		publicURL:     strings.TrimRight(strings.TrimSpace(options.PublicURL), "/"),
-		snapshots:     snapshots,
-		resources:     options.Resources,
-		capabilityTTL: options.CapabilityTTL,
-		autoStop:      options.AutoStopInterval,
-		autoDelete:    options.AutoDeleteInterval,
-		quotas:        options.Quotas,
-		now:           options.Clock,
-		logger:        options.Logger,
+		store:        options.Store,
+		provider:     options.Provider,
+		capabilities: options.Capabilities,
+		secrets:      options.Secrets,
+		routes:       options.Routes,
+		deployment:   strings.TrimSpace(options.Deployment),
+		publicURL:    strings.TrimRight(strings.TrimSpace(options.PublicURL), "/"),
+		snapshots:    snapshots,
+		resources:    options.Resources,
+		autoStop:     options.AutoStopInterval,
+		autoDelete:   options.AutoDeleteInterval,
+		quotas:       options.Quotas,
+		now:          options.Clock,
+		logger:       options.Logger,
 	}, nil
 }
 
@@ -154,13 +156,6 @@ type Placement struct {
 	Record Record
 	// Sandbox is the provider's view when the call touched the provider.
 	Sandbox Sandbox
-	// Capability carries a bearer token ONLY when this call minted one, which
-	// happens exactly when the sandbox was created or booted by this call. An
-	// attach to an already-running sandbox returns a zero Grant: the running
-	// sandbox already holds its credential and has no way to receive a new one
-	// out of band. Callers must treat a zero Token as "nothing to deliver",
-	// never as an error.
-	Capability capability.Grant
 	// Created reports whether this call inserted the placement row.
 	Created bool
 }
@@ -171,7 +166,7 @@ type Placement struct {
 // placement row is the mutual-exclusion point, and the row is written before
 // the provider is contacted so a lost create response leaves a labelled
 // orphan the reconciler can attribute, never an untracked one.
-func (m *Manager) Ensure(ctx context.Context, ref Ref) (Placement, error) {
+func (m *Manager) Ensure(ctx context.Context, ref Ref, launch LaunchSpec) (Placement, error) {
 	ref = ref.Normalize()
 	if err := ref.Validate(); err != nil {
 		return Placement{}, err
@@ -184,7 +179,7 @@ func (m *Manager) Ensure(ctx context.Context, ref Ref) (Placement, error) {
 		if existing.State == StateDeleting {
 			return Placement{}, fmt.Errorf("%w: %s", ErrDeleting, ref)
 		}
-		return m.ensureExisting(ctx, existing, now)
+		return m.ensureExisting(ctx, existing, now, launch)
 	case errors.Is(err, ErrNotFound):
 	default:
 		return Placement{}, err
@@ -205,19 +200,51 @@ func (m *Manager) Ensure(ctx context.Context, ref Ref) (Placement, error) {
 			return Placement{}, fmt.Errorf("%w: %s", ErrDeleting, ref)
 		}
 		// Another caller won the insert race; converge on its row.
-		return m.ensureExisting(ctx, record, now)
+		return m.ensureExisting(ctx, record, now, launch)
 	}
-	placement, err := m.provision(ctx, record, now)
+	placement, err := m.provision(ctx, record, now, launch)
 	placement.Created = true
 	return placement, err
 }
 
 // ensureExisting converges an existing placement. It reconciles against the
 // provider first, because the row's State is only ever a cached observation.
-func (m *Manager) ensureExisting(ctx context.Context, record Record, now time.Time) (Placement, error) {
+func (m *Manager) ensureExisting(ctx context.Context, record Record, now time.Time, launch LaunchSpec) (Placement, error) {
 	if record.ProviderID == "" {
-		// The row was inserted but the provider call never completed. Resume.
-		return m.provision(ctx, record, now)
+		// A create response may have been lost after the provider committed it.
+		// Recover by the stable runtime label before retrying Create, otherwise a
+		// provider without native idempotency could leak a duplicate sandbox.
+		selector := Selector{Labels: map[string]string{
+			LabelManaged: "true", LabelDeployment: m.deployment, LabelRuntimeID: record.ID,
+		}}
+		sandboxes, err := m.provider.List(ctx, selector)
+		if err != nil {
+			return Placement{}, providerFailure("discover sandbox", err)
+		}
+		if len(sandboxes) > 0 {
+			sort.SliceStable(sandboxes, func(i, j int) bool {
+				if sandboxes[i].CreatedAt.Equal(sandboxes[j].CreatedAt) {
+					return sandboxes[i].ID < sandboxes[j].ID
+				}
+				return sandboxes[i].CreatedAt.Before(sandboxes[j].CreatedAt)
+			})
+			sandbox := sandboxes[0]
+			record.ProviderID = sandbox.ID
+			updated, saveErr := m.observe(ctx, record, sandbox, now)
+			if saveErr != nil {
+				return Placement{}, saveErr
+			}
+			if sandbox.State == ProviderRunning || sandbox.State == ProviderStarting {
+				if err := m.publishRoute(ctx, updated.Ref(), sandbox); err != nil {
+					return Placement{}, err
+				}
+				return Placement{Record: updated, Sandbox: sandbox}, nil
+			}
+			return m.boot(ctx, updated, now, launch)
+		}
+		// The row was inserted but provider creation never completed. Resume on
+		// the same runtime id so labels and idempotency key remain stable.
+		return m.provision(ctx, record, now, launch)
 	}
 	sandbox, err := m.provider.Get(ctx, record.ProviderID)
 	if errors.Is(err, ErrSandboxNotFound) {
@@ -233,7 +260,7 @@ func (m *Manager) ensureExisting(ctx context.Context, record Record, now time.Ti
 		if saveErr != nil {
 			return Placement{}, saveErr
 		}
-		return m.provision(ctx, saved, now)
+		return m.provision(ctx, saved, now, launch)
 	}
 	if err != nil {
 		return Placement{}, providerFailure("get sandbox", err)
@@ -244,16 +271,14 @@ func (m *Manager) ensureExisting(ctx context.Context, record Record, now time.Ti
 		updated, err := m.observe(ctx, record, sandbox, now)
 		return Placement{Record: updated, Sandbox: sandbox}, err
 	default:
-		// Stopped or broken: boot it, which is also when a fresh capability is
-		// minted, because the restart is the only moment the sandbox can
-		// receive one.
-		return m.boot(ctx, record, now)
+		// Stopped or broken: boot it with a freshly generated capability.json.
+		return m.boot(ctx, record, now, launch)
 	}
 }
 
-// provision issues a capability, gathers secrets, and creates the sandbox.
-func (m *Manager) provision(ctx context.Context, record Record, now time.Time) (Placement, error) {
-	grant, request, err := m.launchRequest(ctx, record)
+// provision gathers transient files and creates the sandbox.
+func (m *Manager) provision(ctx context.Context, record Record, now time.Time, launch LaunchSpec) (Placement, error) {
+	request, err := m.launchRequest(ctx, record, launch)
 	if err != nil {
 		return Placement{}, m.markFailed(ctx, record, now, err)
 	}
@@ -269,26 +294,24 @@ func (m *Manager) provision(ctx context.Context, record Record, now time.Time) (
 	if err := m.publishRoute(ctx, updated.Ref(), sandbox); err != nil {
 		return Placement{}, err
 	}
-	return Placement{Record: updated, Sandbox: sandbox, Capability: grant}, nil
+	return Placement{Record: updated, Sandbox: sandbox}, nil
 }
 
-// boot starts an existing stopped sandbox with a freshly minted capability.
-// The old capabilities for this placement are revoked first: a restarted
-// sandbox must not be reachable with the credential its previous incarnation
-// held, and the local pattern (relaunching a worker rotates its browser
-// capability) is the same rule.
-func (m *Manager) boot(ctx context.Context, record Record, now time.Time) (Placement, error) {
+// boot starts an existing stopped sandbox after revoking every outstanding
+// one-time ticket for its previous incarnation.
+func (m *Manager) boot(ctx context.Context, record Record, now time.Time, launch LaunchSpec) (Placement, error) {
 	if err := m.revokeCapabilities(ctx, record.Ref()); err != nil {
 		return Placement{}, err
 	}
-	grant, err := m.issueCapability(ctx, record)
+	request, err := m.restartRequest(ctx, record, launch)
 	if err != nil {
+		_ = m.revokeCapabilities(ctx, record.Ref())
 		return Placement{}, m.markFailed(ctx, record, now, err)
 	}
-	sandbox, err := m.provider.Start(ctx, record.ProviderID)
+	sandbox, err := m.provider.Start(ctx, record.ProviderID, request)
 	if err != nil {
 		if errors.Is(err, ErrSandboxNotFound) {
-			return m.ensureExisting(ctx, record, now)
+			return m.ensureExisting(ctx, record, now, launch)
 		}
 		return Placement{}, m.markFailed(ctx, record, now, providerFailure("start sandbox", err))
 	}
@@ -299,11 +322,11 @@ func (m *Manager) boot(ctx context.Context, record Record, now time.Time) (Place
 	if err := m.publishRoute(ctx, updated.Ref(), sandbox); err != nil {
 		return Placement{}, err
 	}
-	return Placement{Record: updated, Sandbox: sandbox, Capability: grant}, nil
+	return Placement{Record: updated, Sandbox: sandbox}, nil
 }
 
 // Start boots the sandbox behind an existing placement.
-func (m *Manager) Start(ctx context.Context, ref Ref) (Placement, error) {
+func (m *Manager) Start(ctx context.Context, ref Ref, launch LaunchSpec) (Placement, error) {
 	record, err := m.load(ctx, ref)
 	if err != nil {
 		return Placement{}, err
@@ -314,15 +337,14 @@ func (m *Manager) Start(ctx context.Context, ref Ref) (Placement, error) {
 	record.DesiredState = StateRunning
 	now := m.now().UTC()
 	if record.ProviderID == "" {
-		return m.provision(ctx, record, now)
+		return m.provision(ctx, record, now, launch)
 	}
-	return m.boot(ctx, record, now)
+	return m.boot(ctx, record, now, launch)
 }
 
 // Stop suspends a sandbox and revokes its capabilities. Stopping is not
 // deleting: the row and the sandbox disk survive, so the session can resume,
-// but the credential does not, because a stopped sandbox has no legitimate
-// reason to hold a live capability and Start mints a fresh one.
+// but outstanding one-time tickets do not.
 func (m *Manager) Stop(ctx context.Context, ref Ref) (Record, error) {
 	record, err := m.load(ctx, ref)
 	if err != nil {

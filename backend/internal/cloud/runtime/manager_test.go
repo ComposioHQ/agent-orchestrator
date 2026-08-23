@@ -33,11 +33,6 @@ type recordingCapabilities struct {
 	fail   error
 }
 
-func (c *recordingCapabilities) Issue(ctx context.Context, scope capability.Scope, ttl time.Duration) (capability.Grant, error) {
-	*c.events = append(*c.events, "capability.issue")
-	return c.inner.Issue(ctx, scope, ttl)
-}
-
 func (c *recordingCapabilities) RevokeScope(ctx context.Context, selector capability.Selector) (int, error) {
 	*c.events = append(*c.events, "capability.revoke")
 	if c.fail != nil {
@@ -50,14 +45,13 @@ func (c *recordingCapabilities) RevokeScope(ctx context.Context, selector capabi
 
 type recordingSecrets struct {
 	events *[]string
-	env    map[string]string
-	files  map[string]string
+	files  []runtime.FileSecret
 	fail   error
 }
 
 func (s *recordingSecrets) SandboxSecrets(context.Context, runtime.Ref) (runtime.Secrets, error) {
 	*s.events = append(*s.events, "secrets.mint")
-	return runtime.Secrets{Env: s.env, Files: s.files}, nil
+	return runtime.Secrets{Files: s.files}, nil
 }
 
 func (s *recordingSecrets) PurgeSandboxSecrets(context.Context, runtime.Ref) error {
@@ -108,16 +102,18 @@ func newHarness(t *testing.T, mutate ...func(*runtime.Options)) *harness {
 	h.secrets = &recordingSecrets{events: h.events}
 	h.routes = &recordingRoutes{events: h.events}
 	options := runtime.Options{
-		Store:        h.store,
-		Provider:     h.provider,
-		Capabilities: h.capabilities,
-		Secrets:      h.secrets,
-		Routes:       h.routes,
-		Deployment:   "staging",
-		PublicURL:    "https://cloud.example/",
-		Snapshots:    map[runtime.Role]string{runtime.RoleCoordinator: "ao-coordinator", runtime.RoleWorker: "ao-worker"},
-		Quotas:       runtime.DefaultQuotas(),
-		Clock:        func() time.Time { return h.now },
+		Store:              h.store,
+		Provider:           h.provider,
+		Capabilities:       h.capabilities,
+		Secrets:            h.secrets,
+		Routes:             h.routes,
+		Deployment:         "staging",
+		PublicURL:          "https://cloud.example/",
+		Snapshots:          map[runtime.Role]string{runtime.RoleCoordinator: "ao-coordinator", runtime.RoleWorker: "ao-worker"},
+		AutoStopInterval:   30 * time.Minute,
+		AutoDeleteInterval: 24 * time.Hour,
+		Quotas:             runtime.DefaultQuotas(),
+		Clock:              func() time.Time { return h.now },
 	}
 	for _, apply := range mutate {
 		apply(&options)
@@ -138,18 +134,22 @@ func coordinatorRef() runtime.Ref {
 	return runtime.Ref{OrgID: "org-1", WorkspaceID: "ws-1", SessionID: "coord-1", UserID: "user-1", Role: runtime.RoleCoordinator}
 }
 
+func testLaunch() runtime.LaunchSpec {
+	return runtime.LaunchSpec{Command: "/bin/sh", Args: []string{"-l"}}
+}
+
 func TestEnsureCreatesOneSandboxAndIsIdempotent(t *testing.T) {
 	h := newHarness(t)
 	ctx := context.Background()
 
-	first, err := h.manager.Ensure(ctx, workerRef())
+	first, err := h.manager.Ensure(ctx, workerRef(), testLaunch())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !first.Created || first.Record.ProviderID == "" || first.Capability.Token == "" {
+	if !first.Created || first.Record.ProviderID == "" {
 		t.Fatalf("first placement = %#v", first)
 	}
-	second, err := h.manager.Ensure(ctx, workerRef())
+	second, err := h.manager.Ensure(ctx, workerRef(), testLaunch())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -159,11 +159,6 @@ func TestEnsureCreatesOneSandboxAndIsIdempotent(t *testing.T) {
 	if second.Record.ID != first.Record.ID || second.Record.ProviderID != first.Record.ProviderID {
 		t.Fatalf("second placement drifted: %#v", second.Record)
 	}
-	// A running sandbox has no way to receive a new credential out of band, so
-	// an attach must not mint one.
-	if second.Capability.Token != "" {
-		t.Fatal("attach minted a capability the running sandbox cannot receive")
-	}
 	if h.provider.Len() != 1 || h.store.Len() != 1 {
 		t.Fatalf("sandboxes = %d rows = %d, want one of each", h.provider.Len(), h.store.Len())
 	}
@@ -171,7 +166,7 @@ func TestEnsureCreatesOneSandboxAndIsIdempotent(t *testing.T) {
 
 func TestEnsureLabelsSandboxForDiscoveryAndCleanup(t *testing.T) {
 	h := newHarness(t)
-	placement, err := h.manager.Ensure(context.Background(), workerRef())
+	placement, err := h.manager.Ensure(context.Background(), workerRef(), testLaunch())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -187,44 +182,41 @@ func TestEnsureLabelsSandboxForDiscoveryAndCleanup(t *testing.T) {
 	}
 }
 
-func TestEnsureInjectsCapabilityThroughTheEnvironmentOnly(t *testing.T) {
+func TestEnsureInjectsSecretsThroughOwnerOnlyFiles(t *testing.T) {
 	h := newHarness(t, func(options *runtime.Options) {
 		options.Secrets = &recordingSecrets{
 			events: options.Secrets.(*recordingSecrets).events,
-			env:    map[string]string{"GITHUB_TOKEN": "ghs_averyLongSecretValue"},
-			files:  map[string]string{"/home/agent/.ssh/id_ed25519": "synthetic-owner-only-key-material"},
+			files: []runtime.FileSecret{{
+				Path: "/home/agent/.ssh/id_ed25519", Content: []byte("synthetic-owner-only-key-material"), Mode: 0o600,
+			}},
 		}
 	})
-	placement, err := h.manager.Ensure(context.Background(), workerRef())
+	_, err := h.manager.Ensure(context.Background(), workerRef(), testLaunch())
 	if err != nil {
 		t.Fatal(err)
 	}
 	request := h.provider.LastCreate
-	if request.Env[runtime.EnvCapability] != placement.Capability.Token {
-		t.Fatal("capability not injected into the sandbox environment")
+	if request.CapabilityFilePath != runtime.CapabilityFilePath ||
+		request.ControlPlaneRedeemURL != "https://cloud.example"+runtime.SandboxRedeemPath {
+		t.Fatalf("capability file contract = %q %q", request.CapabilityFilePath, request.ControlPlaneRedeemURL)
 	}
-	if request.Env[runtime.EnvControlPlaneURL] != "https://cloud.example" {
-		t.Fatalf("control-plane URL = %q", request.Env[runtime.EnvControlPlaneURL])
+	if len(request.SecretFiles) != 1 || request.SecretFiles[0].Path != "/home/agent/.ssh/id_ed25519" {
+		t.Fatalf("secret files = %#v", request.SecretFiles)
 	}
-	if request.Env["GITHUB_TOKEN"] == "" || request.SecretFiles["/home/agent/.ssh/id_ed25519"] == "" {
-		t.Fatal("secret source values not delivered")
-	}
-	for _, argument := range append([]string{request.Command}, request.Args...) {
-		if argument != "" {
-			t.Fatalf("sandbox entrypoint must stay empty unless explicitly set: %q", argument)
-		}
+	if request.Command != testLaunch().Command || len(request.Args) == 0 {
+		t.Fatalf("semantic launch = %q %#v", request.Command, request.Args)
 	}
 }
 
-func TestEnsureScopesWorkerAndCoordinatorCapabilitiesDifferently(t *testing.T) {
+func TestEnsureIsolatesWorkerAndCoordinatorSandboxes(t *testing.T) {
 	h := newHarness(t)
 	ctx := context.Background()
 
-	worker, err := h.manager.Ensure(ctx, workerRef())
+	worker, err := h.manager.Ensure(ctx, workerRef(), testLaunch())
 	if err != nil {
 		t.Fatal(err)
 	}
-	coordinator, err := h.manager.Ensure(ctx, coordinatorRef())
+	coordinator, err := h.manager.Ensure(ctx, coordinatorRef(), testLaunch())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -235,24 +227,6 @@ func TestEnsureScopesWorkerAndCoordinatorCapabilitiesDifferently(t *testing.T) {
 		t.Fatalf("coordinator snapshot = %q", h.provider.LastCreate.Snapshot)
 	}
 
-	// A worker may act on its own session but may not fan out or read the
-	// workspace; a coordinator is the mirror image.
-	if _, err := h.authority.Verify(ctx, worker.Capability.Token, capability.OpSessionWrite); err != nil {
-		t.Fatalf("worker session write: %v", err)
-	}
-	for _, denied := range []capability.Operation{capability.OpWorkerProvision, capability.OpWorkspaceRead} {
-		if _, err := h.authority.Verify(ctx, worker.Capability.Token, denied); !errors.Is(err, capability.ErrNotPermitted) {
-			t.Fatalf("worker %s = %v, want ErrNotPermitted", denied, err)
-		}
-	}
-	if _, err := h.authority.Verify(ctx, coordinator.Capability.Token, capability.OpWorkerProvision); err != nil {
-		t.Fatalf("coordinator provisioning: %v", err)
-	}
-	for _, denied := range []capability.Operation{capability.OpSessionRead, capability.OpSessionWrite} {
-		if _, err := h.authority.Verify(ctx, coordinator.Capability.Token, denied); !errors.Is(err, capability.ErrNotPermitted) {
-			t.Fatalf("coordinator %s = %v, want ErrNotPermitted", denied, err)
-		}
-	}
 }
 
 func TestEnsureEnforcesQuotasWithAClearErrorContract(t *testing.T) {
@@ -265,13 +239,13 @@ func TestEnsureEnforcesQuotasWithAClearErrorContract(t *testing.T) {
 		}
 	})
 	ctx := context.Background()
-	if _, err := h.manager.Ensure(ctx, workerRef()); err != nil {
+	if _, err := h.manager.Ensure(ctx, workerRef(), testLaunch()); err != nil {
 		t.Fatal(err)
 	}
 
 	second := workerRef()
 	second.SessionID = "sess-2"
-	_, secondErr := h.manager.Ensure(ctx, second)
+	_, secondErr := h.manager.Ensure(ctx, second, testLaunch())
 	err := mustQuotaError(t, secondErr)
 	if err.Scope != runtime.ScopeWorkspace || err.Resource != "workers" || err.Limit != 1 || err.InUse != 1 || err.Subject != "ws-1" {
 		t.Fatalf("workspace quota error = %#v", err)
@@ -285,13 +259,13 @@ func TestEnsureEnforcesQuotasWithAClearErrorContract(t *testing.T) {
 	otherWorkspace := workerRef()
 	otherWorkspace.WorkspaceID = "ws-2"
 	otherWorkspace.SessionID = "sess-3"
-	if _, err := h.manager.Ensure(ctx, otherWorkspace); err != nil {
+	if _, err := h.manager.Ensure(ctx, otherWorkspace, testLaunch()); err != nil {
 		t.Fatal(err)
 	}
 	third := workerRef()
 	third.WorkspaceID = "ws-3"
 	third.SessionID = "sess-4"
-	_, thirdErr := h.manager.Ensure(ctx, third)
+	_, thirdErr := h.manager.Ensure(ctx, third, testLaunch())
 	userErr := mustQuotaError(t, thirdErr)
 	if userErr.Scope != runtime.ScopeUser || userErr.Limit != 2 || userErr.Subject != "user-1" {
 		t.Fatalf("user quota error = %#v", userErr)
@@ -303,7 +277,7 @@ func TestEnsureQuotaIgnoresPlacementsBeingDeleted(t *testing.T) {
 		options.Quotas = runtime.Quotas{MaxWorkersPerWorkspace: 1}
 	})
 	ctx := context.Background()
-	if _, err := h.manager.Ensure(ctx, workerRef()); err != nil {
+	if _, err := h.manager.Ensure(ctx, workerRef(), testLaunch()); err != nil {
 		t.Fatal(err)
 	}
 	record, err := h.store.Get(ctx, workerRef())
@@ -315,7 +289,7 @@ func TestEnsureQuotaIgnoresPlacementsBeingDeleted(t *testing.T) {
 
 	replacement := workerRef()
 	replacement.SessionID = "sess-2"
-	if _, err := h.manager.Ensure(ctx, replacement); err != nil {
+	if _, err := h.manager.Ensure(ctx, replacement, testLaunch()); err != nil {
 		t.Fatalf("a session being torn down must not block its replacement: %v", err)
 	}
 }
@@ -337,7 +311,7 @@ func TestEnsureResumesAPlacementWhoseCreateNeverCompleted(t *testing.T) {
 	ctx := context.Background()
 	h.provider.FailCreate = errors.New("provider timeout")
 
-	if _, err := h.manager.Ensure(ctx, workerRef()); !errors.Is(err, runtime.ErrProviderUnavailable) {
+	if _, err := h.manager.Ensure(ctx, workerRef(), testLaunch()); !errors.Is(err, runtime.ErrProviderUnavailable) {
 		t.Fatalf("err = %v, want runtime.ErrProviderUnavailable", err)
 	}
 	record, err := h.store.Get(ctx, workerRef())
@@ -348,28 +322,56 @@ func TestEnsureResumesAPlacementWhoseCreateNeverCompleted(t *testing.T) {
 		t.Fatalf("record = %#v", record)
 	}
 
-	placement, err := h.manager.Ensure(ctx, workerRef())
+	placement, err := h.manager.Ensure(ctx, workerRef(), testLaunch())
 	if err != nil {
 		t.Fatal(err)
 	}
 	if placement.Record.ID != record.ID {
 		t.Fatal("resume must reuse the placement row so labels stay stable")
 	}
-	if placement.Record.State != runtime.StateRunning || placement.Capability.Token == "" {
+	if placement.Record.State != runtime.StateRunning {
 		t.Fatalf("resumed placement = %#v", placement.Record)
+	}
+}
+
+func TestEnsureAdoptsSandboxWhoseCreateResponseWasLost(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	ref := workerRef()
+	record, created, err := h.store.Ensure(ctx, ref, h.now)
+	if err != nil || !created {
+		t.Fatalf("ensure row = %#v, %v", record, err)
+	}
+	orphan := h.provider.Seed(runtime.Sandbox{
+		State:     runtime.ProviderRunning,
+		Labels:    runtime.Labels("staging", ref, record.ID),
+		CreatedAt: h.now,
+	})
+
+	placement, err := h.manager.Ensure(ctx, ref, testLaunch())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if placement.Record.ProviderID != orphan.ID {
+		t.Fatalf("placement = %#v", placement)
+	}
+	for _, call := range h.provider.Calls {
+		if call == "create" {
+			t.Fatal("lost create response caused duplicate provider creation")
+		}
 	}
 }
 
 func TestEnsureReprovisionsWhenTheSandboxVanished(t *testing.T) {
 	h := newHarness(t)
 	ctx := context.Background()
-	first, err := h.manager.Ensure(ctx, workerRef())
+	first, err := h.manager.Ensure(ctx, workerRef(), testLaunch())
 	if err != nil {
 		t.Fatal(err)
 	}
 	h.provider.Remove(first.Record.ProviderID)
 
-	second, err := h.manager.Ensure(ctx, workerRef())
+	second, err := h.manager.Ensure(ctx, workerRef(), testLaunch())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -379,43 +381,41 @@ func TestEnsureReprovisionsWhenTheSandboxVanished(t *testing.T) {
 	if second.Record.ProviderID == first.Record.ProviderID {
 		t.Fatal("a replacement sandbox must be a new provider sandbox")
 	}
-	if second.Capability.Token == "" {
-		t.Fatal("a replacement sandbox needs a freshly issued capability")
-	}
 	attribution, ok := runtime.Attribute(h.provider.LastCreate.Labels)
 	if !ok || attribution.RuntimeID != first.Record.ID {
 		t.Fatalf("replacement labels = %#v", h.provider.LastCreate.Labels)
 	}
 }
 
-func TestEnsureBootsAStoppedSandboxAndRotatesItsCapability(t *testing.T) {
+func TestEnsureBootsAStoppedSandboxWithFreshCapabilityMetadata(t *testing.T) {
 	h := newHarness(t)
 	ctx := context.Background()
-	first, err := h.manager.Ensure(ctx, workerRef())
+	first, err := h.manager.Ensure(ctx, workerRef(), testLaunch())
 	if err != nil {
 		t.Fatal(err)
 	}
 	h.provider.SetState(first.Record.ProviderID, runtime.ProviderStopped)
 
-	second, err := h.manager.Ensure(ctx, workerRef())
+	second, err := h.manager.Ensure(ctx, workerRef(), testLaunch())
 	if err != nil {
 		t.Fatal(err)
 	}
 	if second.Record.State != runtime.StateRunning {
 		t.Fatalf("state = %s, want running", second.Record.State)
 	}
-	if second.Capability.Token == "" || second.Capability.Token == first.Capability.Token {
-		t.Fatal("booting must mint a fresh capability")
+	if h.provider.LastStart.Command != testLaunch().Command || h.provider.LastStart.BootstrapKey == "" {
+		t.Fatalf("restart request = %#v", h.provider.LastStart)
 	}
-	if _, err := h.authority.Verify(ctx, first.Capability.Token, capability.OpSandboxHeartbeat); !errors.Is(err, capability.ErrRevoked) {
-		t.Fatalf("previous capability = %v, want revoked", err)
+	if h.provider.LastStart.CapabilityFilePath != runtime.CapabilityFilePath ||
+		h.provider.LastStart.ControlPlaneRedeemURL != "https://cloud.example"+runtime.SandboxRedeemPath {
+		t.Fatalf("restart capability metadata = %#v", h.provider.LastStart)
 	}
 }
 
 func TestEnsureRefusesAPlacementBeingDeleted(t *testing.T) {
 	h := newHarness(t)
 	ctx := context.Background()
-	if _, err := h.manager.Ensure(ctx, workerRef()); err != nil {
+	if _, err := h.manager.Ensure(ctx, workerRef(), testLaunch()); err != nil {
 		t.Fatal(err)
 	}
 	record, err := h.store.Get(ctx, workerRef())
@@ -424,7 +424,7 @@ func TestEnsureRefusesAPlacementBeingDeleted(t *testing.T) {
 	}
 	record.State = runtime.StateDeleting
 	h.store.Put(record)
-	if _, err := h.manager.Ensure(ctx, workerRef()); !errors.Is(err, runtime.ErrDeleting) {
+	if _, err := h.manager.Ensure(ctx, workerRef(), testLaunch()); !errors.Is(err, runtime.ErrDeleting) {
 		t.Fatalf("err = %v, want runtime.ErrDeleting", err)
 	}
 }
@@ -432,7 +432,7 @@ func TestEnsureRefusesAPlacementBeingDeleted(t *testing.T) {
 func TestStopRevokesTheCapabilityAndKeepsTheRow(t *testing.T) {
 	h := newHarness(t)
 	ctx := context.Background()
-	placement, err := h.manager.Ensure(ctx, workerRef())
+	_, err := h.manager.Ensure(ctx, workerRef(), testLaunch())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -446,15 +446,12 @@ func TestStopRevokesTheCapabilityAndKeepsTheRow(t *testing.T) {
 	if h.provider.Len() != 1 {
 		t.Fatal("stopping must not destroy the sandbox")
 	}
-	if _, err := h.authority.Verify(ctx, placement.Capability.Token, capability.OpSandboxHeartbeat); !errors.Is(err, capability.ErrRevoked) {
-		t.Fatalf("capability after stop = %v, want revoked", err)
-	}
 }
 
 func TestDeleteCascadesInCredentialFirstOrder(t *testing.T) {
 	h := newHarness(t)
 	ctx := context.Background()
-	placement, err := h.manager.Ensure(ctx, workerRef())
+	_, err := h.manager.Ensure(ctx, workerRef(), testLaunch())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -479,15 +476,12 @@ func TestDeleteCascadesInCredentialFirstOrder(t *testing.T) {
 	if h.provider.Len() != 0 || h.store.Len() != 0 {
 		t.Fatalf("sandboxes = %d rows = %d, want none", h.provider.Len(), h.store.Len())
 	}
-	if _, err := h.authority.Verify(ctx, placement.Capability.Token, capability.OpSandboxHeartbeat); !errors.Is(err, capability.ErrRevoked) {
-		t.Fatalf("capability after delete = %v, want revoked", err)
-	}
 }
 
 func TestDeleteIsIdempotentAndPurgesDetachedCredentials(t *testing.T) {
 	h := newHarness(t)
 	ctx := context.Background()
-	if _, err := h.manager.Ensure(ctx, workerRef()); err != nil {
+	if _, err := h.manager.Ensure(ctx, workerRef(), testLaunch()); err != nil {
 		t.Fatal(err)
 	}
 	if err := h.manager.Delete(ctx, workerRef()); err != nil {
@@ -507,7 +501,7 @@ func TestDeleteIsIdempotentAndPurgesDetachedCredentials(t *testing.T) {
 func TestDeleteLeavesAResumableIntentWhenTheProviderFails(t *testing.T) {
 	h := newHarness(t)
 	ctx := context.Background()
-	if _, err := h.manager.Ensure(ctx, workerRef()); err != nil {
+	if _, err := h.manager.Ensure(ctx, workerRef(), testLaunch()); err != nil {
 		t.Fatal(err)
 	}
 	h.provider.FailDelete = errors.New("provider unreachable")
@@ -534,14 +528,14 @@ func TestDeleteWorkspaceCascadesEverySessionAndSurvivesOneFailure(t *testing.T) 
 	h := newHarness(t)
 	ctx := context.Background()
 	for _, ref := range []runtime.Ref{workerRef(), coordinatorRef()} {
-		if _, err := h.manager.Ensure(ctx, ref); err != nil {
+		if _, err := h.manager.Ensure(ctx, ref, testLaunch()); err != nil {
 			t.Fatal(err)
 		}
 	}
 	other := workerRef()
 	other.WorkspaceID = "ws-2"
 	other.SessionID = "sess-9"
-	if _, err := h.manager.Ensure(ctx, other); err != nil {
+	if _, err := h.manager.Ensure(ctx, other, testLaunch()); err != nil {
 		t.Fatal(err)
 	}
 
@@ -565,14 +559,14 @@ func TestDeleteWorkspaceCascadesEverySessionAndSurvivesOneFailure(t *testing.T) 
 	}
 }
 
-func TestSecretSourceCannotOverrideControlPlaneEnvironment(t *testing.T) {
+func TestSecretSourceCannotOverrideCapabilityFile(t *testing.T) {
 	h := newHarness(t, func(options *runtime.Options) {
 		options.Secrets = &recordingSecrets{
 			events: options.Secrets.(*recordingSecrets).events,
-			env:    map[string]string{runtime.EnvCapability: "aocap_v1.attacker.controlled"},
+			files:  []runtime.FileSecret{{Path: runtime.CapabilityFilePath, Content: []byte("attacker-controlled-capability"), Mode: 0o600}},
 		}
 	})
-	if _, err := h.manager.Ensure(context.Background(), workerRef()); !errors.Is(err, runtime.ErrInvalid) {
+	if _, err := h.manager.Ensure(context.Background(), workerRef(), testLaunch()); !errors.Is(err, runtime.ErrInvalid) {
 		t.Fatalf("err = %v, want runtime.ErrInvalid", err)
 	}
 	if h.provider.Len() != 0 {
@@ -583,7 +577,7 @@ func TestSecretSourceCannotOverrideControlPlaneEnvironment(t *testing.T) {
 func TestHeartbeatAndReportedStateAreRecorded(t *testing.T) {
 	h := newHarness(t)
 	ctx := context.Background()
-	if _, err := h.manager.Ensure(ctx, workerRef()); err != nil {
+	if _, err := h.manager.Ensure(ctx, workerRef(), testLaunch()); err != nil {
 		t.Fatal(err)
 	}
 	h.now = h.now.Add(5 * time.Minute)
