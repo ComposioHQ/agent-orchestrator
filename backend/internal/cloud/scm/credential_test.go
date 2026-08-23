@@ -52,6 +52,34 @@ func TestIssueCloneCredentialIsReadOnlyAndRepositoryScoped(t *testing.T) {
 	}
 }
 
+func TestIssuePushCredentialIsFreshWriteScopedAndAudited(t *testing.T) {
+	fake := newFakeGitHub(t)
+	store := newMemoryBrokerStore()
+	store.allow("org-1", "acme/widgets", 55, 900)
+	broker := newTestBroker(t, fake, store)
+
+	first, err := broker.IssuePushCredential(context.Background(), testIdentity, "acme/widgets", "sandbox-abc")
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := broker.IssuePushCredential(context.Background(), testIdentity, "acme/widgets", "sandbox-abc")
+	if err != nil {
+		t.Fatal(err)
+	}
+	minted := fake.minted()
+	if len(minted) != 2 || bytes.Equal(first.Token, second.Token) {
+		t.Fatal("push credential was reused instead of freshly minted")
+	}
+	for _, request := range minted {
+		if request.Permissions["contents"] != "write" || request.Permissions["pull_requests"] != "write" {
+			t.Fatalf("push permissions = %#v", request.Permissions)
+		}
+	}
+	if len(store.grants) != 2 || store.grants[0].Purpose != "push" || store.grants[1].Purpose != "push" {
+		t.Fatalf("push grants = %#v", store.grants)
+	}
+}
+
 func TestIssueCredentialRefusesAnUnscopedIdentity(t *testing.T) {
 	fake := newFakeGitHub(t)
 	store := newMemoryBrokerStore()

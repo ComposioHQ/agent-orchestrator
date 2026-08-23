@@ -68,13 +68,16 @@ func (c Credential) Expired(now time.Time) bool {
 	return !now.UTC().Before(c.ExpiresAt)
 }
 
-// CredentialIssuer is the narrow contract the compute plane consumes only
-// during sandbox bootstrap. It intentionally has no general token or push
-// method: the clone credential cannot become a session-long secret channel.
+// CredentialIssuer is the narrow contract the compute plane consumes for
+// repository operations. Clone credentials are issued only during sandbox
+// bootstrap; push credentials are freshly minted and audited on demand.
 type CredentialIssuer interface {
 	// IssueCloneCredential mints a read-only credential for the initial
 	// checkout. repoURL may be a clone URL or an owner/name pair.
 	IssueCloneCredential(ctx context.Context, identity tenant.Identity, repoURL, sandboxID string) (Credential, error)
+	// IssuePushCredential mints a fresh write credential for one push. It is
+	// never delivered during bootstrap or retained for the session lifetime.
+	IssuePushCredential(ctx context.Context, identity tenant.Identity, repoURL, sandboxID string) (Credential, error)
 }
 
 // Broker implements CredentialIssuer.
@@ -88,6 +91,15 @@ func (b *Broker) IssueCloneCredential(
 	repoURL, sandboxID string,
 ) (Credential, error) {
 	return b.issue(ctx, identity, repoURL, sandboxID, domain.TokenPurposeClone)
+}
+
+// IssuePushCredential mints a write-scoped credential for one push.
+func (b *Broker) IssuePushCredential(
+	ctx context.Context,
+	identity tenant.Identity,
+	repoURL, sandboxID string,
+) (Credential, error) {
+	return b.issue(ctx, identity, repoURL, sandboxID, domain.TokenPurposePush)
 }
 
 func (b *Broker) issue(

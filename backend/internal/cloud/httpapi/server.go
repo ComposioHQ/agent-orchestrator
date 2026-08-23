@@ -185,16 +185,16 @@ func (s *Server) registerSCMRoutes(router chi.Router, rateLimit func(http.Handle
 	}
 	const installations = "/api/cloud/v1/orgs/{orgId}/github/installations"
 	authed := router.With(s.requirePrincipal)
-	authed.Post(installations, s.startSCMInstall)
+	authed.Post(installations+"/start", s.startSCMInstall)
 	authed.Get(installations, s.listSCMInstallations)
 	authed.Get(installations+"/{installationID}/repositories", s.listSCMRepositories)
-	authed.Post(installations+"/{installationID}/repositories/sync", s.syncSCMRepositories)
+	authed.Post(installations+"/{installationID}/sync", s.syncSCMRepositories)
 	authed.Put(installations+"/{installationID}/allowlist", s.setSCMAllowlist)
-	authed.Delete(installations+"/{installationID}", s.unlinkSCMInstallation)
+	authed.Delete(installations+"/{installationID}/disconnect", s.unlinkSCMInstallation)
 	// GitHub drives setup and webhook requests without an AO bearer token.
 	// Setup proves possession of a single-use state; webhook proves HMAC over
 	// the raw body before parsing or durable side effects.
-	router.With(rateLimit).Get("/api/cloud/v1/github/setup", s.completeSCMInstall)
+	router.With(rateLimit).Get("/api/cloud/v1/github/installations/callback", s.completeSCMInstall)
 	if s.scm.Webhook != nil {
 		router.With(rateLimit).Post("/api/cloud/v1/github/webhook", s.receiveSCMWebhook)
 	}

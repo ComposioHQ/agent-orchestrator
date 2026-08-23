@@ -185,7 +185,7 @@ func TestSCMRoutesRequireAuthentication(t *testing.T) {
 func TestStartInstallRejectsOrganizationOutsidePrincipalMembership(t *testing.T) {
 	link := &fakeLinkService{}
 	server, accessToken := newSCMServer(t, SCMOptions{Link: link})
-	response := doSCMRequest(t, server, http.MethodPost, "/api/cloud/v1/orgs/org-2/github/installations", accessToken, nil)
+	response := doSCMRequest(t, server, http.MethodPost, "/api/cloud/v1/orgs/org-2/github/installations/start", accessToken, nil)
 	if response.Code != http.StatusForbidden {
 		t.Fatalf("status = %d body = %s", response.Code, response.Body.String())
 	}
@@ -201,7 +201,7 @@ func TestStartInstallRejectsOrganizationOutsidePrincipalMembership(t *testing.T)
 func TestSCMAdminPathCannotBeOverriddenByTenantHeader(t *testing.T) {
 	link := &fakeLinkService{}
 	server, accessToken := newSCMServer(t, SCMOptions{Link: link})
-	request := httptest.NewRequest(http.MethodPost, "/api/cloud/v1/orgs/org-2/github/installations", nil)
+	request := httptest.NewRequest(http.MethodPost, "/api/cloud/v1/orgs/org-2/github/installations/start", nil)
 	request.Header.Set("Authorization", "Bearer "+accessToken)
 	request.Header.Set(orgHeader, "org-1")
 	response := httptest.NewRecorder()
@@ -218,9 +218,14 @@ func TestSCMManagementRequiresOrgAdministrator(t *testing.T) {
 	link := &fakeLinkService{}
 	server, accessToken := newSCMServer(t, SCMOptions{Link: link})
 	server.store.(*memoryAccountStore).memberships[0].Role = "member"
-	response := doSCMRequest(t, server, http.MethodPost, "/api/cloud/v1/orgs/org-1/github/installations", accessToken, nil)
-	if response.Code != http.StatusForbidden || errorCode(t, response) != "ORG_ADMIN_REQUIRED" {
-		t.Fatalf("status = %d body = %s", response.Code, response.Body.String())
+	for _, request := range []struct{ method, path string }{
+		{http.MethodPost, "/api/cloud/v1/orgs/org-1/github/installations/start"},
+		{http.MethodGet, "/api/cloud/v1/orgs/org-1/github/installations"},
+	} {
+		response := doSCMRequest(t, server, request.method, request.path, accessToken, nil)
+		if response.Code != http.StatusForbidden || errorCode(t, response) != "ORG_ADMIN_REQUIRED" {
+			t.Fatalf("%s %s status = %d body = %s", request.method, request.path, response.Code, response.Body.String())
+		}
 	}
 	if len(link.tenants) != 0 {
 		t.Fatal("non-admin principal reached the SCM management service")
@@ -231,7 +236,7 @@ func TestStartInstallReturnsRedirectWithoutLeakingTheState(t *testing.T) {
 	link := &fakeLinkService{}
 	server, accessToken := newSCMServer(t, SCMOptions{Link: link})
 	response := doSCMRequest(
-		t, server, http.MethodPost, "/api/cloud/v1/orgs/org-1/github/installations", accessToken, nil,
+		t, server, http.MethodPost, "/api/cloud/v1/orgs/org-1/github/installations/start", accessToken, nil,
 	)
 	if response.Code != http.StatusCreated {
 		t.Fatalf("status = %d body = %s", response.Code, response.Body.String())
@@ -300,6 +305,26 @@ func TestSetAllowlistPassesRepositoriesThrough(t *testing.T) {
 	}
 }
 
+func TestCanonicalSyncAndDisconnectRoutes(t *testing.T) {
+	link := &fakeLinkService{}
+	server, accessToken := newSCMServer(t, SCMOptions{Link: link})
+	base := "/api/cloud/v1/orgs/org-1/github/installations/installation-1"
+	if response := doSCMRequest(t, server, http.MethodPost, base+"/sync", accessToken, nil); response.Code != http.StatusOK {
+		t.Fatalf("sync status = %d body = %s", response.Code, response.Body.String())
+	}
+	if response := doSCMRequest(t, server, http.MethodDelete, base+"/disconnect", accessToken, nil); response.Code != http.StatusNoContent {
+		t.Fatalf("disconnect status = %d body = %s", response.Code, response.Body.String())
+	}
+	for _, legacy := range []struct{ method, path string }{
+		{http.MethodPost, base + "/repositories/sync"},
+		{http.MethodDelete, base},
+	} {
+		if response := doSCMRequest(t, server, legacy.method, legacy.path, accessToken, nil); response.Code != http.StatusNotFound {
+			t.Fatalf("legacy %s %s status = %d", legacy.method, legacy.path, response.Code)
+		}
+	}
+}
+
 func TestSCMErrorEnvelopesAreStableAndNonRevealing(t *testing.T) {
 	cases := []struct {
 		name       string
@@ -320,7 +345,7 @@ func TestSCMErrorEnvelopesAreStableAndNonRevealing(t *testing.T) {
 			server, _ := newSCMServer(t, SCMOptions{Link: link})
 			response := doSCMRequest(
 				t, server, http.MethodGet,
-				"/api/cloud/v1/github/setup?state=abc&installation_id=55", "", nil,
+				"/api/cloud/v1/github/installations/callback?state=abc&installation_id=55", "", nil,
 			)
 			if response.Code != testCase.wantStatus {
 				t.Fatalf("status = %d body = %s", response.Code, response.Body.String())
@@ -347,7 +372,7 @@ func TestInstallCallbackRedirectsToTheCompletionURL(t *testing.T) {
 		Link:                 link,
 		InstallCompletionURL: "https://app.example.test/settings/scm?tab=github",
 	})
-	response := doSCMRequest(t, server, http.MethodGet, "/api/cloud/v1/github/setup?state=abc&installation_id=55", "", nil)
+	response := doSCMRequest(t, server, http.MethodGet, "/api/cloud/v1/github/installations/callback?state=abc&installation_id=55", "", nil)
 	if response.Code != http.StatusFound {
 		t.Fatalf("status = %d", response.Code)
 	}
@@ -357,7 +382,7 @@ func TestInstallCallbackRedirectsToTheCompletionURL(t *testing.T) {
 	}
 
 	link.completeErr = scm.ErrInvalidState
-	failed := doSCMRequest(t, server, http.MethodGet, "/api/cloud/v1/github/setup?state=abc&installation_id=55", "", nil)
+	failed := doSCMRequest(t, server, http.MethodGet, "/api/cloud/v1/github/installations/callback?state=abc&installation_id=55", "", nil)
 	if failed.Code != http.StatusFound {
 		t.Fatalf("status = %d", failed.Code)
 	}
@@ -417,7 +442,22 @@ func TestWebhookEndpointAcceptsAndDeduplicates(t *testing.T) {
 	processor.result.Duplicate = true
 	response := send()
 	// A redelivery must be a success so GitHub stops retrying.
-	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), "duplicate") {
+	if response.Code != http.StatusAccepted || !strings.Contains(response.Body.String(), "duplicate") {
+		t.Fatalf("status = %d body = %s", response.Code, response.Body.String())
+	}
+}
+
+func TestWebhookEndpointReturnsAcceptedForInternalFailure(t *testing.T) {
+	processor := &fakeWebhookProcessor{err: errors.New("database unavailable")}
+	server, _ := newSCMServer(t, SCMOptions{Link: &fakeLinkService{}, Webhook: processor})
+	body := []byte(`{"action":"opened"}`)
+	request := httptest.NewRequest(http.MethodPost, "/api/cloud/v1/github/webhook", bytes.NewReader(body))
+	request.Header.Set(scm.EventHeader, "pull_request")
+	request.Header.Set(scm.DeliveryHeader, "delivery-1")
+	request.Header.Set(scm.SignatureHeader, "sha256=validity-is-checked-by-the-processor")
+	response := httptest.NewRecorder()
+	server.Handler().ServeHTTP(response, request)
+	if response.Code != http.StatusAccepted || !strings.Contains(response.Body.String(), "accepted") {
 		t.Fatalf("status = %d body = %s", response.Code, response.Body.String())
 	}
 }

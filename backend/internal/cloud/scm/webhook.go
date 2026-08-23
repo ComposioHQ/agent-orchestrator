@@ -188,20 +188,23 @@ func (p *WebhookProcessor) Process(
 	if event == "" || deliveryID == "" {
 		return WebhookResult{}, errors.New("cloud scm: webhook event and delivery id are required")
 	}
-	var payload webhookPayload
-	if err := json.Unmarshal(body, &payload); err != nil {
-		return WebhookResult{}, errors.New("cloud scm: webhook body is not valid JSON")
-	}
-	result := WebhookResult{Event: event, Action: payload.Action, DeliveryID: deliveryID}
-
-	first, err := p.store.RecordSCMWebhookDelivery(ctx, deliveryID, event, payload.Installation.ID)
+	// Claim the delivery before parsing. A signed but malformed redelivery must
+	// be idempotent too, and no attacker-controlled JSON reaches the decoder
+	// before signature verification and delivery-id deduplication succeed.
+	first, err := p.store.RecordSCMWebhookDelivery(ctx, deliveryID, event, 0)
 	if err != nil {
 		return WebhookResult{}, err
 	}
+	result := WebhookResult{Event: event, DeliveryID: deliveryID}
 	if !first {
 		result.Duplicate = true
 		return result, nil
 	}
+	var payload webhookPayload
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return WebhookResult{}, errors.New("cloud scm: webhook body is not valid JSON")
+	}
+	result.Action = payload.Action
 	if event == "ping" {
 		return result, nil
 	}

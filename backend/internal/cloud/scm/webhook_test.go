@@ -220,6 +220,23 @@ func TestWebhookIsIdempotentPerDeliveryID(t *testing.T) {
 	}
 }
 
+func TestWebhookDeduplicatesSignedDeliveryBeforeParsing(t *testing.T) {
+	store := newMemoryWebhookStore()
+	processor := newTestProcessor(t, store, nil)
+	body := []byte(`{"not-valid-json"`)
+	signature := sign(body)
+	if _, err := processor.Process(context.Background(), "pull_request", "delivery-malformed", signature, body); err == nil {
+		t.Fatal("first malformed delivery unexpectedly succeeded")
+	}
+	result, err := processor.Process(context.Background(), "pull_request", "delivery-malformed", signature, body)
+	if err != nil {
+		t.Fatalf("duplicate malformed delivery returned error: %v", err)
+	}
+	if !result.Duplicate || store.deliveries["delivery-malformed"] != 2 {
+		t.Fatalf("duplicate result = %#v deliveries = %#v", result, store.deliveries)
+	}
+}
+
 func TestWebhookInstallationLifecycleNarrowsAccess(t *testing.T) {
 	store := newMemoryWebhookStore()
 	processor := newTestProcessor(t, store, nil)

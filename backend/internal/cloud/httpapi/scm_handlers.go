@@ -125,7 +125,7 @@ func toSCMRepositories(repositories []domain.SCMRepository) []scmRepository {
 // membership in the organization named by the canonical admin route. Unlike
 // the hosted /api/v1 application surface, X-AO-Org never selects an admin
 // tenant: the path is authoritative.
-func (s *Server) scmTenantFromRequest(w http.ResponseWriter, r *http.Request, requireManager bool) (tenant.Identity, bool) {
+func (s *Server) scmTenantFromRequest(w http.ResponseWriter, r *http.Request) (tenant.Identity, bool) {
 	principal, ok := principalFromContext(r.Context())
 	if !ok {
 		writeError(w, r, http.StatusUnauthorized, "unauthorized", "AUTH_REQUIRED", "valid AO access token required")
@@ -143,7 +143,7 @@ func (s *Server) scmTenantFromRequest(w http.ResponseWriter, r *http.Request, re
 	}
 	for _, membership := range memberships {
 		if membership.OrgID == orgID {
-			if requireManager && membership.Role != "owner" && membership.Role != "admin" {
+			if membership.Role != "owner" && membership.Role != "admin" {
 				writeError(w, r, http.StatusForbidden, "forbidden", "ORG_ADMIN_REQUIRED", "organization administrator access is required")
 				return tenant.Identity{}, false
 			}
@@ -160,7 +160,7 @@ func (s *Server) scmTenantFromRequest(w http.ResponseWriter, r *http.Request, re
 
 func (s *Server) startSCMInstall(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
-	identity, ok := s.scmTenantFromRequest(w, r, true)
+	identity, ok := s.scmTenantFromRequest(w, r)
 	if !ok {
 		return
 	}
@@ -222,7 +222,7 @@ func completionURL(base, key, value string) string {
 }
 
 func (s *Server) listSCMInstallations(w http.ResponseWriter, r *http.Request) {
-	identity, ok := s.scmTenantFromRequest(w, r, false)
+	identity, ok := s.scmTenantFromRequest(w, r)
 	if !ok {
 		return
 	}
@@ -239,7 +239,7 @@ func (s *Server) listSCMInstallations(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) listSCMRepositories(w http.ResponseWriter, r *http.Request) {
-	identity, ok := s.scmTenantFromRequest(w, r, false)
+	identity, ok := s.scmTenantFromRequest(w, r)
 	if !ok {
 		return
 	}
@@ -252,7 +252,7 @@ func (s *Server) listSCMRepositories(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) syncSCMRepositories(w http.ResponseWriter, r *http.Request) {
-	identity, ok := s.scmTenantFromRequest(w, r, true)
+	identity, ok := s.scmTenantFromRequest(w, r)
 	if !ok {
 		return
 	}
@@ -269,7 +269,7 @@ func (s *Server) setSCMAllowlist(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &input) {
 		return
 	}
-	identity, ok := s.scmTenantFromRequest(w, r, true)
+	identity, ok := s.scmTenantFromRequest(w, r)
 	if !ok {
 		return
 	}
@@ -284,7 +284,7 @@ func (s *Server) setSCMAllowlist(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) unlinkSCMInstallation(w http.ResponseWriter, r *http.Request) {
-	identity, ok := s.scmTenantFromRequest(w, r, true)
+	identity, ok := s.scmTenantFromRequest(w, r)
 	if !ok {
 		return
 	}
@@ -323,11 +323,15 @@ func (s *Server) receiveSCMWebhook(w http.ResponseWriter, r *http.Request) {
 			writeError(w, r, http.StatusUnauthorized, "unauthorized", "WEBHOOK_SIGNATURE_INVALID", "webhook signature is invalid")
 			return
 		}
-		s.writeSCMError(w, r, "process scm webhook", err)
+		// GitHub delivery responses deliberately do not reveal or retry internal
+		// processing failures. The delivery id was claimed after HMAC validation,
+		// so a valid request always receives the same accepted response.
+		s.logger.Error("Cloud SCM webhook processing failed", "request_id", requestID(r), "error", err)
+		writeJSON(w, http.StatusAccepted, map[string]string{"status": "accepted"})
 		return
 	}
 	if result.Duplicate {
-		writeJSON(w, http.StatusOK, map[string]string{"status": "duplicate"})
+		writeJSON(w, http.StatusAccepted, map[string]string{"status": "duplicate"})
 		return
 	}
 	writeJSON(w, http.StatusAccepted, map[string]string{"status": "accepted"})
