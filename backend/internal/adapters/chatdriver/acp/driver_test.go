@@ -1562,6 +1562,9 @@ func TestClaudePlanUsageNormalizesStructuredSDKResponse(t *testing.T) {
 	if quota.PlanType != "max" || quota.Completeness != domain.QuotaComplete || len(quota.Limits) != 4 {
 		t.Fatalf("Claude quota = %#v", quota)
 	}
+	if !quota.Capabilities.SupportsRead {
+		t.Fatal("structured Claude usage snapshot did not advertise on-demand read support")
+	}
 	if got := quota.Limits[0]; got.ID != "five_hour" || got.UsedPercent == nil || *got.UsedPercent != 28 ||
 		got.WindowDuration == nil || *got.WindowDuration != 5*time.Hour || got.ResetsAt == nil {
 		t.Fatalf("five-hour limit = %#v", got)

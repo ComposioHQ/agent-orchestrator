@@ -2,6 +2,7 @@ package quota
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -20,10 +21,14 @@ type memoryQuotaStore struct {
 type testRefresher struct {
 	calls    atomic.Int64
 	snapshot domain.QuotaSnapshot
+	err      error
 }
 
 func (r *testRefresher) RefreshQuota(context.Context, domain.QuotaProviderID, domain.QuotaAccountID) (domain.QuotaSnapshot, error) {
 	r.calls.Add(1)
+	if r.err != nil {
+		return domain.QuotaSnapshot{}, r.err
+	}
 	return r.snapshot, nil
 }
 
@@ -61,9 +66,16 @@ func (*memoryQuotaStore) CompactQuotaHistory(context.Context, time.Time) (int64,
 	return 0, nil
 }
 
-func (s *memoryQuotaStore) RecordQuotaRefreshFailure(_ context.Context, _ domain.QuotaProviderID, _ domain.QuotaAccountID, message string) error {
+func (s *memoryQuotaStore) RecordQuotaRefreshFailure(_ context.Context, provider domain.QuotaProviderID, accountID domain.QuotaAccountID, message string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if !s.has {
+		s.snapshot = domain.QuotaSnapshot{
+			Provider: provider, AccountID: accountID, Completeness: domain.QuotaPartial,
+			Capabilities: domain.QuotaCapabilities{SupportsRead: true}, ObservedAt: time.Now().UTC(),
+		}
+		s.has = true
+	}
 	s.snapshot.RefreshError = message
 	return nil
 }
@@ -134,6 +146,24 @@ func TestRegisteredRefresherWorksWithoutExistingSessionOrSnapshot(t *testing.T) 
 	}
 	if reader.calls.Load() != 1 || len(snapshots) != 1 || snapshots[0].Provider != "claude" {
 		t.Fatalf("calls=%d snapshots=%#v", reader.calls.Load(), snapshots)
+	}
+}
+
+func TestRegisteredRefreshPersistsFirstFailureForPresentProvider(t *testing.T) {
+	store := &memoryQuotaStore{}
+	service := New(store)
+	reader := &testRefresher{err: errors.New("helper failed")}
+	service.RegisterRefresher("claude", "default", reader)
+
+	service.RefreshRegisteredIfStale(context.Background())
+
+	snapshots, err := store.ListQuotaSnapshots(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(snapshots) != 1 || snapshots[0].Provider != "claude" || snapshots[0].AccountID != "default" ||
+		snapshots[0].RefreshError != "helper failed" {
+		t.Fatalf("snapshots = %#v, want first refresh failure row", snapshots)
 	}
 }
 

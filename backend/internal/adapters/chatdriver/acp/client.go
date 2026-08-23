@@ -789,7 +789,7 @@ func NormalizeClaudePlanUsage(value map[string]any) *ports.ChatRateLimits {
 	now := time.Now().UTC()
 	snapshot := &domain.QuotaSnapshot{
 		Provider: "claude", AccountID: "default", Completeness: domain.QuotaComplete,
-		Capabilities: domain.QuotaCapabilities{SupportsSubscribe: true}, ObservedAt: now,
+		Capabilities: domain.QuotaCapabilities{SupportsRead: true, SupportsSubscribe: true}, ObservedAt: now,
 	}
 	if planType, ok := value["subscription_type"].(string); ok {
 		snapshot.PlanType = planType

@@ -132,6 +132,23 @@ func TestPersistQuotaObservationStoresAlertsAtomically(t *testing.T) {
 	}
 }
 
+func TestRecordQuotaRefreshFailureCreatesAccountRow(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+
+	if err := store.RecordQuotaRefreshFailure(ctx, "claude", "default", "helper failed"); err != nil {
+		t.Fatal(err)
+	}
+
+	got, ok, err := store.GetQuotaSnapshot(ctx, "claude", "default")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok || got.Provider != "claude" || got.AccountID != "default" || got.RefreshError != "helper failed" {
+		t.Fatalf("snapshot = %+v, ok %v, want persisted refresh failure row", got, ok)
+	}
+}
+
 func TestPersistQuotaObservationComposesWithProviderEventProjection(t *testing.T) {
 	store, session, conversation := conversationFixture(t)
 	ctx := context.Background()

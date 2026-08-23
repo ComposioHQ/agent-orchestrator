@@ -151,6 +151,7 @@ func (s *Store) RecordQuotaRefreshFailure(ctx context.Context, provider domain.Q
 		LastRefreshError: message,
 		Provider:         string(provider),
 		AccountID:        string(accountID),
+		ObservedAt:       time.Now().UTC(),
 	}); err != nil {
 		return fmt.Errorf("record quota refresh failure: %w", err)
 	}

@@ -3,9 +3,10 @@ import type { TFunction } from "i18next";
 import { useEffect } from "react";
 import { useTranslation } from "react-i18next";
 import type { ProviderQuota } from "../../hooks/useProviderQuota";
-import { useProviderQuota, useRefreshAllProviderQuota } from "../../hooks/useProviderQuota";
+import { useProviderQuota, useRefreshAllProviderQuota, useRefreshProviderQuota } from "../../hooks/useProviderQuota";
 import { cn } from "../../lib/utils";
 import { CenterPanelShell } from "../CenterPanelShell";
+import { Button } from "../ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../ui/card";
 
 const severityColor: Record<string, string> = {
@@ -73,6 +74,7 @@ export function PlanUsagePage() {
 function ProviderQuotaCard({ quota }: { quota: ProviderQuota }) {
 	const { t } = useTranslation();
 	const title = quota.accountLabel || providerName(quota.provider);
+	const refresh = useRefreshProviderQuota(quota.provider, quota.accountId);
 	return (
 		<Card className="gap-0 border border-border-strong bg-surface py-0 shadow-none ring-0">
 			<CardHeader className="border-b border-border px-4 py-3.5">
@@ -88,14 +90,50 @@ function ProviderQuotaCard({ quota }: { quota: ProviderQuota }) {
 				</CardDescription>
 			</CardHeader>
 			<CardContent className="flex flex-col gap-4 px-4 py-4">
-				{quota.refreshError ? <p className="rounded-md bg-status-exited/5 px-3 py-2 text-xs text-status-exited" role="alert">{t("planUsage.lastRefreshError", { error: quota.refreshError })}</p> : null}
+				{quota.refreshError ? (
+					<div className="flex flex-wrap items-center justify-between gap-2 rounded-md bg-status-exited/5 px-3 py-2 text-xs text-status-exited" role="alert">
+						<span>{t("planUsage.lastRefreshError", { error: quota.refreshError })}</span>
+						{quota.capabilities.supportsRead ? (
+							<Button
+								aria-label={t("planUsage.retryProvider", { provider: title })}
+								disabled={refresh.isPending}
+								onClick={() => refresh.mutate()}
+								size="sm"
+								variant="ghost"
+							>
+								{refresh.isPending ? t("planUsage.retrying") : t("planUsage.retry")}
+							</Button>
+						) : null}
+					</div>
+				) : null}
+				{refresh.isError ? <p className="text-xs text-status-exited" role="alert">{refresh.error instanceof Error ? refresh.error.message : t("planUsage.refreshError")}</p> : null}
 				{quota.limits.length === 0 ? <p className="text-sm text-muted-foreground">{t("planUsage.waiting")}</p> : (
 					<div className="grid gap-3 sm:grid-cols-2">
 						{quota.limits.map((limit) => <QuotaLimitBar key={`${limit.id}:${limit.windowType}:${limit.scope}:${limit.scopeId ?? ""}`} limit={limit} />)}
 					</div>
 				)}
+				{quota.balances.length > 0 ? <QuotaBalances balances={quota.balances} /> : null}
 			</CardContent>
 		</Card>
+	);
+}
+
+function QuotaBalances({ balances }: { balances: ProviderQuota["balances"] }) {
+	const { t } = useTranslation();
+	return (
+		<div className="border-t border-border pt-3">
+			<p className="mb-2 text-xs font-medium text-passive">{t("planUsage.credits")}</p>
+			<div className="grid gap-2 sm:grid-cols-2">
+				{balances.map((balance) => (
+					<div className="rounded-lg border border-border bg-background/45 px-3 py-2" key={balance.id}>
+						<p className="text-xs text-passive">{balance.name || humanize(balance.id)}</p>
+						<p className="mt-0.5 text-sm font-medium tabular-nums">
+							{balance.unlimited ? t("planUsage.unlimited") : balance.value || t("planUsage.unavailable")}
+						</p>
+					</div>
+				))}
+			</div>
+		</div>
 	);
 }
 

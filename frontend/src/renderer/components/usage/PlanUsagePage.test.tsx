@@ -1,10 +1,13 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ProviderQuota } from "../../hooks/useProviderQuota";
 
 const hookState = vi.hoisted(() => ({
 	providers: [] as ProviderQuota[],
 	refreshAll: vi.fn(),
+	refreshProvider: vi.fn(),
+	refreshProviderError: null as Error | null,
+	refreshProviderPending: false,
 }));
 
 vi.mock("../../hooks/useProviderQuota", () => ({
@@ -16,6 +19,12 @@ vi.mock("../../hooks/useProviderQuota", () => ({
 		isSuccess: true,
 	}),
 	useRefreshAllProviderQuota: () => ({ mutate: hookState.refreshAll }),
+	useRefreshProviderQuota: () => ({
+		error: hookState.refreshProviderError,
+		isError: hookState.refreshProviderError != null,
+		isPending: hookState.refreshProviderPending,
+		mutate: hookState.refreshProvider,
+	}),
 }));
 
 vi.mock("../CenterPanelShell", () => ({
@@ -49,6 +58,9 @@ describe("PlanUsagePage", () => {
 	beforeEach(() => {
 		hookState.providers = [];
 		hookState.refreshAll.mockClear();
+		hookState.refreshProvider.mockClear();
+		hookState.refreshProviderError = null;
+		hookState.refreshProviderPending = false;
 	});
 
 	it("shows an actionable empty state before providers report quota", () => {
@@ -60,7 +72,7 @@ describe("PlanUsagePage", () => {
 	});
 
 	it("renders Codex and Claude through the same provider-neutral card", () => {
-			hookState.providers = [
+		hookState.providers = [
 			quota({
 				accountLabel: "Codex Team",
 				balances: [{ id: "codex:credits", name: "Codex credits", unlimited: false, value: "50" }],
@@ -107,8 +119,39 @@ describe("PlanUsagePage", () => {
 		expect(screen.getByText("8% remaining")).toHaveClass("text-status-exited");
 		expect(screen.getByText("72% remaining")).toBeInTheDocument();
 		expect(screen.queryByRole("button", { name: /refresh/i })).not.toBeInTheDocument();
-		expect(screen.queryByText("Credits and balances")).not.toBeInTheDocument();
 		expect(screen.queryByText("Observed usage history")).not.toBeInTheDocument();
+	});
+
+	it("renders reported balances and retries failed account refreshes", () => {
+		hookState.providers = [quota({
+			accountLabel: "Codex Team",
+			balances: [
+				{ id: "reset-credits", name: "Reset credits", unlimited: false, value: "2" },
+				{ id: "codex:credits", name: "Codex credits", unlimited: true },
+			],
+			capabilities: {
+				supportsCredits: true,
+				supportsHistory: false,
+				supportsRead: true,
+				supportsSpendLimits: true,
+				supportsSubscribe: true,
+			},
+			completeness: "complete",
+			provider: "codex",
+			refreshError: "provider timed out",
+		})];
+
+		render(<PlanUsagePage />);
+
+		expect(screen.getByText("Credits and balances")).toBeInTheDocument();
+		expect(screen.getByText("Reset credits")).toBeInTheDocument();
+		expect(screen.getByText("2")).toBeInTheDocument();
+		expect(screen.getByText("Codex credits")).toBeInTheDocument();
+		expect(screen.getByText("Unlimited")).toBeInTheDocument();
+
+		fireEvent.click(screen.getByRole("button", { name: "Retry Codex Team usage refresh" }));
+
+		expect(hookState.refreshProvider).toHaveBeenCalledOnce();
 	});
 
 	it("renders an unknown future provider without frontend adapter code", () => {
