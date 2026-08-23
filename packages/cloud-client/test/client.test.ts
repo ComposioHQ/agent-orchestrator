@@ -496,6 +496,7 @@ describe("CloudClient", () => {
       label: "default",
       config: { credentialType: "api_key" },
       validationState: "valid",
+      validatedAt: "2026-08-12T00:00:00Z",
       createdAt: "2026-08-12T00:00:00Z",
       updatedAt: "2026-08-12T00:00:00Z",
     };
