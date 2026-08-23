@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"strings"
 
 	"github.com/google/uuid"
 
@@ -146,16 +145,8 @@ func validatedImport(ctx context.Context, request ImportRequest) (tenant.Identit
 }
 
 func validateClaudeCodeCredential(secret []byte) error {
-	if len(bytes.TrimSpace(secret)) != len(secret) {
-		return ErrInvalid
-	}
-	var document struct {
-		ClaudeAIOAuth *struct {
-			AccessToken string `json:"accessToken"`
-		} `json:"claudeAiOauth"`
-	}
-	if err := json.Unmarshal(secret, &document); err != nil || document.ClaudeAIOAuth == nil ||
-		strings.TrimSpace(document.ClaudeAIOAuth.AccessToken) == "" {
+	trimmed := bytes.TrimSpace(secret)
+	if len(trimmed) != len(secret) || len(trimmed) < 2 || !json.Valid(trimmed) || trimmed[0] != '{' || trimmed[len(trimmed)-1] != '}' {
 		return ErrInvalid
 	}
 	return nil

@@ -40,6 +40,9 @@ func TestDeliverWaitsForExplicitHarnessAckBeforePurgeAndZero(t *testing.T) {
 	if sink.purgeCount() != 1 || !isZero(opener.secret) || store.ackCount != 1 || store.purgeCount != 1 {
 		t.Fatalf("purges=%d zero=%v acks=%d auditPurges=%d", sink.purgeCount(), isZero(opener.secret), store.ackCount, store.purgeCount)
 	}
+	if store.unboundedContexts != 0 || store.cancelledContexts != 0 {
+		t.Fatalf("detached store contexts unbounded=%d cancelled=%d", store.unboundedContexts, store.cancelledContexts)
+	}
 }
 
 func TestDeliverRejectsMissingAndFalseAcknowledgementAndPurges(t *testing.T) {
@@ -193,6 +196,39 @@ func TestDeliveryPropagatesDurableInflightAndAggregateQuotaFailures(t *testing.T
 	}
 }
 
+func TestValidateFilesRejectsDuplicateAndAlternatePathsAndHonorsExactByteBounds(t *testing.T) {
+	limits := DefaultDeliveryLimits()
+	limits.MaxItemBytes = 4
+	limits.MaxAggregateBytes = 8
+	valid := []SecretFile{
+		{Path: "one", Mode: 0o600, Content: make([]byte, 4)},
+		{Path: "two", Mode: 0o600, Content: make([]byte, 4)},
+	}
+	if err := validateFiles(valid, limits); err != nil {
+		t.Fatalf("exact per-file/aggregate boundary rejected: %v", err)
+	}
+	for name, files := range map[string][]SecretFile{
+		"duplicate normalized path": {
+			{Path: "same", Mode: 0o600, Content: []byte{1}},
+			{Path: "same", Mode: 0o600, Content: []byte{2}},
+		},
+		"redundant separator alias": {{Path: "dir//secret", Mode: 0o600, Content: []byte{1}}},
+		"backslash alias":           {{Path: `dir\secret`, Mode: 0o600, Content: []byte{1}}},
+		"per-file over boundary":    {{Path: "one", Mode: 0o600, Content: make([]byte, 5)}},
+		"aggregate over boundary": {
+			{Path: "one", Mode: 0o600, Content: make([]byte, 4)},
+			{Path: "two", Mode: 0o600, Content: make([]byte, 4)},
+			{Path: "three", Mode: 0o600, Content: []byte{1}},
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if err := validateFiles(files, limits); !errors.Is(err, ErrLimitExceeded) {
+				t.Fatalf("error = %v", err)
+			}
+		})
+	}
+}
+
 type fakeOpener struct {
 	secret    []byte
 	openCount int
@@ -242,11 +278,12 @@ func validAck(request LoadRequest) LoadAcknowledgement {
 }
 
 type fakeDeliveryStore struct {
-	mu                                 sync.Mutex
-	claim                              DeliveryClaim
-	claimErr                           error
-	ackCount, purgeCount, failureCount int
-	lastFailure                        FailureCode
+	mu                                   sync.Mutex
+	claim                                DeliveryClaim
+	claimErr                             error
+	ackCount, purgeCount, failureCount   int
+	lastFailure                          FailureCode
+	unboundedContexts, cancelledContexts int
 }
 
 func newFakeDeliveryStore() *fakeDeliveryStore { return &fakeDeliveryStore{} }
@@ -265,26 +302,38 @@ func (f *fakeDeliveryStore) ClaimDelivery(_ context.Context, lookup DeliveryLook
 	}}
 	return f.claim, nil
 }
-func (f *fakeDeliveryStore) AcknowledgeDelivery(_ context.Context, _ string, ack LoadAcknowledgement) error {
+func (f *fakeDeliveryStore) AcknowledgeDelivery(ctx context.Context, _ string, ack LoadAcknowledgement) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.observeContext(ctx)
 	f.ackCount++
 	f.claim.State = DeliveryLoaded
 	f.claim.Acknowledgement = ack
 	return nil
 }
-func (f *fakeDeliveryStore) RecordDeliveryPurge(context.Context, string) error {
+func (f *fakeDeliveryStore) RecordDeliveryPurge(ctx context.Context, _ string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.observeContext(ctx)
 	f.purgeCount++
 	return nil
 }
-func (f *fakeDeliveryStore) RecordDeliveryFailure(_ context.Context, _ string, code FailureCode) error {
+func (f *fakeDeliveryStore) RecordDeliveryFailure(ctx context.Context, _ string, code FailureCode) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.observeContext(ctx)
 	f.failureCount++
 	f.lastFailure = code
 	return nil
+}
+
+func (f *fakeDeliveryStore) observeContext(ctx context.Context) {
+	if _, bounded := ctx.Deadline(); !bounded {
+		f.unboundedContexts++
+	}
+	if ctx.Err() != nil {
+		f.cancelledContexts++
+	}
 }
 
 func mustDeliveryService(t *testing.T, store DeliveryStore, opener PlaintextOpener, limits DeliveryLimits) *DeliveryService {

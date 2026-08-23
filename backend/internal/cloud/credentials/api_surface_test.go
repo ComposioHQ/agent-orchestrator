@@ -1,6 +1,7 @@
 package credentials
 
 import (
+	"go/ast"
 	"go/parser"
 	"go/token"
 	"os"
@@ -68,5 +69,46 @@ func TestCredentialControlPlaneHasNoLocalFilesystemRuntimeOrProcessSecretImports
 				t.Fatalf("credential control plane imports forbidden local implementation %q", name)
 			}
 		}
+	}
+}
+
+func TestCredentialControlPlaneHasNoSecretBearingStringFieldsOrJSONDecode(t *testing.T) {
+	entries, err := os.ReadDir(".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".go") || strings.HasSuffix(entry.Name(), "_test.go") {
+			continue
+		}
+		file, err := parser.ParseFile(token.NewFileSet(), entry.Name(), nil, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ast.Inspect(file, func(node ast.Node) bool {
+			switch value := node.(type) {
+			case *ast.Field:
+				fieldType, isIdentifier := value.Type.(*ast.Ident)
+				if !isIdentifier || fieldType.Name != "string" {
+					return true
+				}
+				for _, name := range value.Names {
+					switch strings.ToLower(name.Name) {
+					case "accesstoken", "refreshtoken", "oauthtoken", "apikey", "secret":
+						t.Errorf("%s materializes secret-bearing immutable string field %s", entry.Name(), name.Name)
+					}
+				}
+			case *ast.CallExpr:
+				selector, ok := value.Fun.(*ast.SelectorExpr)
+				if !ok {
+					return true
+				}
+				identifier, isIdentifier := selector.X.(*ast.Ident)
+				if isIdentifier && identifier.Name == "json" && selector.Sel.Name == "Unmarshal" {
+					t.Errorf("%s decodes credential JSON into immutable Go values", entry.Name())
+				}
+			}
+			return true
+		})
 	}
 }

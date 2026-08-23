@@ -71,7 +71,7 @@ func (s *DeliveryService) Deliver(
 		if err := s.purge(ctx, sink, claim, paths); err != nil {
 			return LoadAcknowledgement{}, ErrDeliveryFailed
 		}
-		if err := s.store.RecordDeliveryPurge(context.WithoutCancel(ctx), claim.ID); err != nil {
+		if err := s.recordPurge(ctx, claim.ID); err != nil {
 			return LoadAcknowledgement{}, ErrDeliveryFailed
 		}
 		return claim.Acknowledgement, nil
@@ -100,14 +100,14 @@ func (s *DeliveryService) Deliver(
 			return ErrLoadNotAcknowledged
 		}
 		acknowledgement = ack
-		if err := s.store.AcknowledgeDelivery(context.WithoutCancel(ctx), claim.ID, ack); err != nil {
+		if err := s.acknowledge(ctx, claim.ID, ack); err != nil {
 			_ = s.purge(ctx, sink, claim, paths)
 			return ErrDeliveryFailed
 		}
 		if err := s.purge(ctx, sink, claim, paths); err != nil {
 			return ErrDeliveryFailed
 		}
-		if err := s.store.RecordDeliveryPurge(context.WithoutCancel(ctx), claim.ID); err != nil {
+		if err := s.recordPurge(ctx, claim.ID); err != nil {
 			return ErrDeliveryFailed
 		}
 		return nil
@@ -117,7 +117,7 @@ func (s *DeliveryService) Deliver(
 	}
 	code := failureCode(ctx, openErr)
 	// Failure recording is idempotent and must not contain adapter errors.
-	_ = s.store.RecordDeliveryFailure(context.WithoutCancel(ctx), claim.ID, code)
+	_ = s.recordFailure(ctx, claim.ID, code)
 	if errors.Is(openErr, ErrLoadNotAcknowledged) {
 		return LoadAcknowledgement{}, ErrLoadNotAcknowledged
 	}
@@ -128,9 +128,31 @@ func (s *DeliveryService) Deliver(
 }
 
 func (s *DeliveryService) purge(ctx context.Context, sink SecretFileSink, claim DeliveryClaim, paths []string) error {
-	purgeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), s.limits.PurgeTimeout)
+	purgeCtx, cancel := s.detachedContext(ctx)
 	defer cancel()
 	return sink.PurgeCredential(purgeCtx, claim.SandboxID, claim.Lookup.idempotencyKey, append([]string(nil), paths...))
+}
+
+func (s *DeliveryService) acknowledge(ctx context.Context, deliveryID string, ack LoadAcknowledgement) error {
+	auditCtx, cancel := s.detachedContext(ctx)
+	defer cancel()
+	return s.store.AcknowledgeDelivery(auditCtx, deliveryID, ack)
+}
+
+func (s *DeliveryService) recordPurge(ctx context.Context, deliveryID string) error {
+	auditCtx, cancel := s.detachedContext(ctx)
+	defer cancel()
+	return s.store.RecordDeliveryPurge(auditCtx, deliveryID)
+}
+
+func (s *DeliveryService) recordFailure(ctx context.Context, deliveryID string, code FailureCode) error {
+	auditCtx, cancel := s.detachedContext(ctx)
+	defer cancel()
+	return s.store.RecordDeliveryFailure(auditCtx, deliveryID, code)
+}
+
+func (s *DeliveryService) detachedContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.WithoutCancel(ctx), s.limits.PurgeTimeout)
 }
 
 func failureCode(ctx context.Context, err error) FailureCode {
@@ -150,13 +172,10 @@ func materialize(provider Provider, plaintext []byte) ([]SecretFile, error) {
 	if provider != ProviderClaudeCode || len(plaintext) == 0 || len(plaintext) > MaxCredentialBytes {
 		return nil, ErrInvalid
 	}
-	var document struct {
-		ClaudeAIOAuth *struct {
-			AccessToken string `json:"accessToken"`
-		} `json:"claudeAiOauth"`
-	}
-	if err := json.Unmarshal(plaintext, &document); err != nil || document.ClaudeAIOAuth == nil ||
-		strings.TrimSpace(document.ClaudeAIOAuth.AccessToken) == "" {
+	trimmed := bytes.TrimSpace(plaintext)
+	// Provider credential values remain opaque mutable bytes. Decoding into a
+	// Go struct or map would create unzeroable secret-bearing strings.
+	if !json.Valid(trimmed) || len(trimmed) < 2 || trimmed[0] != '{' || trimmed[len(trimmed)-1] != '}' {
 		return nil, ErrInvalid
 	}
 	return []SecretFile{{Path: claudeCredentialPath, Mode: 0o600, Content: plaintext}}, nil
@@ -174,12 +193,17 @@ func validateFiles(files []SecretFile, limits DeliveryLimits) error {
 		return ErrLimitExceeded
 	}
 	total := 0
+	seen := make(map[string]struct{}, len(files))
 	for _, file := range files {
 		clean := path.Clean(file.Path)
-		if file.Mode != 0o600 || path.IsAbs(file.Path) || clean == "." || clean == ".." ||
+		if file.Mode != 0o600 || path.IsAbs(file.Path) || strings.Contains(file.Path, `\`) || clean != file.Path || clean == "." || clean == ".." ||
 			strings.HasPrefix(clean, "../") || len(file.Content) == 0 || len(file.Content) > limits.MaxItemBytes {
 			return ErrLimitExceeded
 		}
+		if _, duplicate := seen[clean]; duplicate {
+			return ErrLimitExceeded
+		}
+		seen[clean] = struct{}{}
 		total += len(file.Content)
 		if total > limits.MaxAggregateBytes {
 			return ErrLimitExceeded

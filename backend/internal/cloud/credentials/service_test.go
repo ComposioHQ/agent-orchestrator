@@ -64,7 +64,7 @@ func TestVaultBoundsNameProviderMetadataAndCredential(t *testing.T) {
 		"invalid metadata":     func(request *ImportRequest) { request.Metadata = json.RawMessage(`{`) },
 		"empty credential":     func(request *ImportRequest) { request.Secret = nil },
 		"oversized credential": func(request *ImportRequest) { request.Secret = bytes.Repeat([]byte("x"), MaxCredentialBytes+1) },
-		"malformed credential": func(request *ImportRequest) { request.Secret = []byte(`{"claudeAiOauth":{}}`) },
+		"malformed credential": func(request *ImportRequest) { request.Secret = []byte(`["not-an-object"]`) },
 	} {
 		t.Run(name, func(t *testing.T) {
 			request := validImportRequest()

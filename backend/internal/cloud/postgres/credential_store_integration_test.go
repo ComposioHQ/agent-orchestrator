@@ -49,6 +49,7 @@ func TestCredentialMigrationsAreCiphertextOnlyScopedAndBounded(t *testing.T) {
 		"credential.owner_user_id = resolved_owner_id", "candidate_role <> 'worker'",
 		"credential aggregate limit exceeded", "credential delivery limit exceeded",
 		"ON CONFLICT DO NOTHING", "REVOKE ALL ON FUNCTION ao_claim_harness_credential_delivery",
+		"IF delivery.state = 'loading' THEN",
 	} {
 		if !strings.Contains(security, required) {
 			t.Fatalf("credential security migration missing %q", required)
@@ -122,6 +123,9 @@ func TestCredentialStoreAgainstPostgres(t *testing.T) {
 	if err := store.AcknowledgeDelivery(ctx, claim.ID, ack); err != nil {
 		t.Fatal(err)
 	}
+	if err := store.RecordDeliveryFailure(ctx, claim.ID, credentials.FailureLoad); err != nil {
+		t.Fatal(err)
+	}
 	duplicate, err := store.ClaimDelivery(ctx, lookup, credentials.DefaultDeliveryLimits())
 	if err != nil {
 		t.Fatal(err)
@@ -130,6 +134,9 @@ func TestCredentialStoreAgainstPostgres(t *testing.T) {
 		t.Fatalf("duplicate = %#v", duplicate)
 	}
 	if err := store.RecordDeliveryPurge(ctx, claim.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.RecordDeliveryFailure(ctx, claim.ID, credentials.FailureCancelled); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.RecordDeliveryPurge(ctx, claim.ID); err != nil {
