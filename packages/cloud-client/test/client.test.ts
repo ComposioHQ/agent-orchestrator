@@ -10,6 +10,8 @@ import {
   type PullRequestSummary,
   type Session,
   type SessionActivity,
+  type TerminalConnection,
+  type TerminalTicket,
   type SessionReviewState,
 } from "../src/index.js";
 
@@ -330,6 +332,85 @@ describe("CloudClient", () => {
     expect(
       new Headers(fetchMock.mock.calls[1]?.[1]?.headers).get("Idempotency-Key"),
     ).toBe("resume-project-1");
+  });
+
+  it("mints a scoped terminal ticket and attaches to the listener it names", async () => {
+    const connection: TerminalConnection = {
+      transport: "websocket",
+      protocol: "ao.terminal.v1",
+      url: "https://terminals.cloud.example.com/attach?region=us-east-1",
+      kinds: ["agent", "workspace"],
+      features: ["input", "resize", "replay"],
+      ticketPath: "/api/cloud/v1/orgs/org%20one/sessions/session%20one/terminal-ticket",
+      maxFrameBytes: 16384,
+    };
+    const ticket: TerminalTicket = {
+      ticket: "tkt_live",
+      expiresIn: 30,
+      scopes: ["terminal:read"],
+      sessionId: "a9dc6493-bd04-4c03-bb45-55733ed83784",
+      kind: "agent",
+      connection,
+      lastSequence: 4211,
+    };
+    const fetchMock = vi.fn(
+      async (input: RequestInfo | URL, _init?: RequestInit) =>
+        String(input).includes("/terminal-connection")
+          ? jsonResponse(connection)
+          : jsonResponse(ticket, 201),
+    );
+    const client = createCloudClient({
+      baseUrl: "https://cloud.example.com",
+      getAccessToken: () => "access-token",
+      fetch: fetchMock as typeof fetch,
+    });
+
+    await expect(
+      client.getTerminalConnection("org one", "session one", { kind: "agent" }),
+    ).resolves.toEqual(connection);
+    expect(fetchMock.mock.calls[0]?.[0]).toBe(
+      "https://cloud.example.com/api/cloud/v1/orgs/org%20one/sessions/session%20one/terminal-connection?kind=agent",
+    );
+
+    await expect(
+      client.createTerminalTicket("org one", "session one", "agent", {
+        scopes: ["terminal:read", "terminal:operate"],
+      }),
+    ).resolves.toEqual(ticket);
+    expect(fetchMock.mock.calls[1]?.[0]).toBe(
+      "https://cloud.example.com/api/cloud/v1/orgs/org%20one/sessions/session%20one/terminal-ticket",
+    );
+    expect(JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body))).toEqual({
+      kind: "agent",
+      scopes: ["terminal:read", "terminal:operate"],
+    });
+    // The mint response carries a ticket; it must never be cached.
+    expect(fetchMock.mock.calls[1]?.[1]?.cache).toBe("no-store");
+
+    // The listener is not the API origin, and its own query is preserved.
+    expect(
+      client.terminalUrlForTicket(ticket, { after: ticket.lastSequence }),
+    ).toBe(
+      "wss://terminals.cloud.example.com/attach?region=us-east-1&ticket=tkt_live&after=4211&kind=agent",
+    );
+  });
+
+  it("falls back to the control-plane terminal route when the ticket names no listener", () => {
+    const client = createCloudClient({
+      baseUrl: "https://cloud.example.com",
+      getAccessToken: () => "access-token",
+      fetch: vi.fn() as unknown as typeof fetch,
+    });
+
+    expect(
+      client.terminalUrlForTicket({
+        ticket: "tkt_live",
+        expiresIn: 30,
+        scopes: ["terminal:operate"],
+      }),
+    ).toBe(
+      "wss://cloud.example.com/api/cloud/v1/terminal?ticket=tkt_live&after=0&kind=workspace",
+    );
   });
 
   it("lists runtime-supplied agent profiles for an organization", async () => {

@@ -35,7 +35,9 @@ import type {
   SessionPage,
   SessionPullRequests,
   SessionReviewState,
+  TerminalConnection,
   TerminalKind,
+  TerminalScope,
   TerminalTicket,
   TerminateSessionInput,
   UpdateProjectInput,
@@ -624,31 +626,86 @@ export class CloudClient {
     }
   }
 
+  getTerminalConnection(
+    orgId: string,
+    sessionId: string,
+    options: RequestOptions & { kind?: TerminalKind } = {},
+  ): Promise<TerminalConnection> {
+    const endpoint = this.orgPath(
+      orgId,
+      `/sessions/${encodeURIComponent(sessionId)}/terminal-connection`,
+    );
+    return this.request(this.withQuery(endpoint, { kind: options.kind }), {
+      signal: options.signal,
+    });
+  }
+
   createTerminalTicket(
     orgId: string,
     sessionId: string,
     kind: TerminalKind = "workspace",
-    options: RequestOptions = {},
+    options: RequestOptions & { scopes?: TerminalScope[] } = {},
   ): Promise<TerminalTicket> {
     return this.request(
       this.orgPath(
         orgId,
         `/sessions/${encodeURIComponent(sessionId)}/terminal-ticket`,
       ),
-      { method: "POST", body: { kind }, signal: options.signal },
+      {
+        method: "POST",
+        body: options.scopes ? { kind, scopes: options.scopes } : { kind },
+        cache: "no-store",
+        signal: options.signal,
+      },
     );
   }
 
+  /**
+   * Builds the attach URL for a terminal ticket.
+   *
+   * The listener need not live on the API origin, so prefer passing the
+   * `TerminalConnection` the ticket (or `getTerminalConnection`) reported:
+   * `connection.url` is authoritative and is only replaced by the control
+   * plane's own default when it is absent.
+   */
   terminalUrl(
     ticket: string,
-    options: { after?: number; kind?: TerminalKind } = {},
+    options: {
+      after?: number;
+      kind?: TerminalKind;
+      connection?: TerminalConnection;
+    } = {},
   ): string {
-    const url = new URL(`${this.baseUrl}/api/cloud/v1/terminal`);
-    url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+    const url = new URL(
+      options.connection?.url ?? `${this.baseUrl}/api/cloud/v1/terminal`,
+    );
+    if (url.protocol === "https:" || url.protocol === "http:") {
+      url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+    }
     url.searchParams.set("ticket", ticket);
     url.searchParams.set("after", String(options.after ?? 0));
     url.searchParams.set("kind", options.kind ?? "workspace");
     return url.toString();
+  }
+
+  /**
+   * Attach URL for a minted ticket, using the metadata the mint returned.
+   *
+   * Prefer this over {@link terminalUrl}: it carries the ticket's own `kind`
+   * and connection across, so a client holding several pending tickets cannot
+   * point one at the wrong terminal.
+   */
+  terminalUrlForTicket(
+    ticket: TerminalTicket,
+    options: { after?: number; kind?: TerminalKind } = {},
+  ): string {
+    return this.terminalUrl(ticket.ticket, {
+      after: options.after,
+      // The ticket's own kind wins: it is what the server bound the ticket to.
+      // `options.kind` only covers a server that did not echo one back.
+      kind: ticket.kind ?? options.kind,
+      connection: ticket.connection,
+    });
   }
 
   listWorkspaceFiles(
@@ -797,6 +854,9 @@ export class CloudClient {
       headers,
       body:
         options.body === undefined ? undefined : JSON.stringify(options.body),
+      // Threaded like the worker client already does, so a secret-bearing
+      // route asking for "no-store" actually gets it.
+      cache: options.cache,
       signal: options.signal,
     });
     await this.throwIfError(response);

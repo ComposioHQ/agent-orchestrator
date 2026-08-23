@@ -613,7 +613,59 @@ export interface paths {
         };
         get?: never;
         put?: never;
+        /** @description Mint the credential for one terminal attachment and return, alongside
+         *     it, everything needed to make the connection.
+         *
+         *     The handoff is deliberately two-credential: the bearer token proves who
+         *     the caller is to the control plane and never leaves it, and the ticket
+         *     is what travels to the terminal listener. The ticket is single-use,
+         *     short-lived, and bound to this session, this `kind`, and the scopes
+         *     granted below, so a leaked query string cannot be replayed and cannot
+         *     reach another session.
+         *
+         *     `scopes` in the request is a *request*, not an assertion. The server
+         *     grants the intersection of what was asked for and what the caller's
+         *     organization role allows, and the response reports what was actually
+         *     granted. Asking for nothing asks for the caller's full authority. Asking
+         *     for a scope the caller does not hold is not an error — the scope is
+         *     simply absent from the response, so a read-only viewer degrades to a
+         *     read-only terminal instead of failing to open one.
+         *
+         *     The response embeds the same `TerminalConnection` that
+         *     `getTerminalConnection` returns, so a client that already intends to
+         *     attach needs exactly one round trip.
+         *      */
         post: operations["createTerminalTicket"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/cloud/v1/orgs/{orgId}/sessions/{sessionId}/terminal-connection": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                orgId: components["parameters"]["OrgId"];
+                sessionId: components["parameters"]["SessionId"];
+            };
+            cookie?: never;
+        };
+        /** @description Where and how to attach to this session's terminal, without minting a
+         *     ticket. A client calls this to decide whether to offer a terminal at all
+         *     — `kinds` reports which terminals the session actually has, and an empty
+         *     `kinds` means a session whose sandbox is not running has nothing to
+         *     attach to.
+         *
+         *     The attach host is returned rather than assumed. Cloud is free to serve
+         *     terminals from a listener that is not the control plane's own origin, so
+         *     a client must use `url` from here (or from the ticket) and must not
+         *     rebuild it from the API base URL.
+         *      */
+        get: operations["getTerminalConnection"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -627,7 +679,52 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Upgrade to a terminal WebSocket using a short-lived ticket. */
+        /**
+         * Upgrade to a terminal WebSocket using a short-lived ticket.
+         * @description Attach to a session terminal. This is the only route that authenticates
+         *     with a ticket instead of a bearer token: browsers cannot set headers on
+         *     a WebSocket handshake, so the credential travels in the query string.
+         *     That is why the ticket is single-use, short-lived, and scope-bound —
+         *     see `createTerminalTicket`.
+         *
+         *     The path shown here is the default the control plane serves. Clients
+         *     must attach to the `url` reported by `getTerminalConnection` or by the
+         *     ticket, which may point at a different listener.
+         *
+         *     Handshake. The client requests the WebSocket subprotocol named by
+         *     `TerminalConnection.protocol` (`ao.terminal.v1`). A server that does not
+         *     select it is speaking something else and the client must close rather
+         *     than guess a framing.
+         *
+         *     Framing. Every frame is a JSON text message with a `type` discriminator
+         *     — `TerminalClientFrame` inbound, `TerminalServerFrame` outbound. Byte
+         *     payloads are base64 in `data`, because PTY output is arbitrary bytes and
+         *     need not be valid UTF-8. This mirrors the base64 `data` and
+         *     `columns`/`rows` shapes the worker transport routes already use, so the
+         *     compute plane forwards frames without re-encoding them.
+         *
+         *     Ordering and replay. Every `output` frame carries a monotonically
+         *     increasing `sequence`. Passing `after` replays buffered output with a
+         *     sequence strictly greater than it and then continues live, which is what
+         *     makes a dropped connection recoverable: reconnect with the last
+         *     `sequence` the client rendered. `after=0` replays the whole retained
+         *     buffer. The server's first frame is always `ready`, carrying the current
+         *     head sequence and the authoritative grid, so a client can detect that
+         *     the buffer no longer reaches its cursor and clear its screen instead of
+         *     rendering a gap.
+         *
+         *     Authority. `input` and `resize` require the `terminal:operate` scope. A
+         *     ticket holding only `terminal:read` may attach and receive output; an
+         *     `input` frame on such a ticket is answered with an `error` frame carrying
+         *     `TERMINAL_SCOPE_REQUIRED` and the socket stays open, so a read-only
+         *     viewer is not disconnected for a stray keystroke.
+         *
+         *     Close. The server sends `exit` when the underlying process ends, then
+         *     closes. It closes with 1008 when the ticket is invalid, expired, already
+         *     used, or bound to a different session or kind, and with 1011 when the
+         *     sandbox is unreachable.
+         *
+         */
         get: operations["connectTerminal"];
         put?: never;
         post?: never;
@@ -2145,13 +2242,251 @@ export interface components {
         };
         /** @enum {string} */
         TerminalKind: "agent" | "workspace";
-        /** @enum {string} */
+        /**
+         * @description `terminal:read` receives output. `terminal:operate` additionally sends
+         *     input and drives the grid.
+         *
+         * @enum {string}
+         */
         TerminalScope: "terminal:read" | "terminal:operate";
+        /**
+         * @description An enum with one member so a later transport can be added without a
+         *     client having to guess from the URL scheme.
+         *
+         * @enum {string}
+         */
+        TerminalTransport: "websocket";
+        /**
+         * @description WebSocket subprotocol name and framing version. A client requests this
+         *     exact value in `Sec-WebSocket-Protocol` and must close if the server
+         *     selects anything else.
+         *
+         * @enum {string}
+         */
+        TerminalProtocol: "ao.terminal.v1";
+        /**
+         * @description Optional protocol capabilities the listener supports for this terminal,
+         *     independent of what the caller is *authorized* to do (that is `scopes`).
+         *     `replay` means the `after` cursor is honoured; without it a reconnect
+         *     starts from the live head. `snapshot` means the first `ready` frame
+         *     carries a rendered screen the client can paint immediately.
+         *
+         * @enum {string}
+         */
+        TerminalFeature: "input" | "resize" | "replay" | "snapshot";
+        TerminalConnection: {
+            transport: components["schemas"]["TerminalTransport"];
+            protocol: components["schemas"]["TerminalProtocol"];
+            /**
+             * Format: uri
+             * @description Absolute `wss://` (or `ws://` in development) URL to attach to. The
+             *     client appends `ticket`, `kind`, and `after` as query parameters and
+             *     otherwise treats the URL as opaque — it may name a listener that is
+             *     not the control plane's origin, and it may already carry query
+             *     parameters of its own.
+             *
+             */
+            url: string;
+            /** @description Terminal kinds this session currently has. Empty means there is
+             *     nothing to attach to yet, which is the normal answer while the
+             *     sandbox is still provisioning.
+             *      */
+            kinds: components["schemas"]["TerminalKind"][];
+            features: components["schemas"]["TerminalFeature"][];
+            /** @description Control-plane path to `POST` for a ticket, relative to the API base
+             *     URL. Present so a client can follow the contract without rebuilding
+             *     the org/session path itself.
+             *      */
+            ticketPath?: string;
+            /** @description Largest decoded `data` payload the listener accepts on one client
+             *     frame. Absent means the client should not exceed 16384, which is the
+             *     limit the worker transport routes already impose.
+             *      */
+            maxFrameBytes?: number;
+            /** @description How often the client should send `ping`. Absent means the listener
+             *     relies on WebSocket-level ping/pong and the client need not send
+             *     application pings.
+             *      */
+            heartbeatIntervalSeconds?: number;
+            /** @description Lifetime a freshly minted ticket will have, so a client can decide
+             *     whether to pre-mint. Advisory — the ticket's own `expiresIn` is
+             *     authoritative.
+             *      */
+            ticketTtlSeconds?: number;
+        };
         TerminalTicket: {
+            /** @description Single-use bearer of terminal authority. Keep it in memory, send it
+             *     only on the attach handshake, and never log it.
+             *      */
             ticket: string;
             /** @description Lifetime in seconds. */
             expiresIn: number;
+            /** @description Scopes actually granted, which may be narrower than those requested.
+             *     A client renders a read-only terminal when `terminal:operate` is
+             *     absent rather than letting the user type into a socket that will
+             *     reject the frame.
+             *      */
             scopes: components["schemas"]["TerminalScope"][];
+            /**
+             * Format: date-time
+             * @description Absolute expiry, for clients that would rather not depend on their
+             *     own clock offset when scheduling a re-mint. Absent means compute it
+             *     from `expiresIn`.
+             *
+             */
+            expiresAt?: string;
+            /**
+             * Format: uuid
+             * @description Session the ticket is bound to. Echoed so a client holding several
+             *     pending tickets cannot attach one to the wrong socket.
+             *
+             */
+            sessionId?: string;
+            /** @description Terminal kind the ticket is bound to. */
+            kind?: components["schemas"]["TerminalKind"];
+            /** @description The same metadata `getTerminalConnection` returns, so minting a
+             *     ticket and learning where to attach is one round trip. Absent means
+             *     the client must call `getTerminalConnection`.
+             *      */
+            connection?: components["schemas"]["TerminalConnection"];
+            /**
+             * Format: int64
+             * @description Sequence at the head of the retained output buffer when the ticket
+             *     was minted. A client opening a terminal for the first time can pass
+             *     it as `after` to skip the backlog, or ignore it to replay.
+             *
+             */
+            lastSequence?: number;
+        };
+        /** @description One JSON text message from client to listener on the
+         *     `ao.terminal.v1` protocol.
+         *      */
+        TerminalClientFrame: components["schemas"]["TerminalInputFrame"] | components["schemas"]["TerminalResizeFrame"] | components["schemas"]["TerminalPingFrame"];
+        /** @description Keystrokes for the PTY. Requires the `terminal:operate` scope. */
+        TerminalInputFrame: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "input";
+            /** @description Base64-encoded input, at most `maxFrameBytes` (default 16384) after
+             *     decoding.
+             *      */
+            data: string;
+        };
+        /** @description Request the PTY grid. Requires the `terminal:operate` scope. A terminal
+         *     has one grid; when several clients are attached the listener applies the
+         *     most recent request and echoes the authoritative grid back to everyone
+         *     as a server `resize`.
+         *      */
+        TerminalResizeFrame: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "resize";
+            columns: number;
+            rows: number;
+        };
+        /** @description Application-level liveness for clients that cannot observe
+         *     WebSocket-level pong. Answered with `pong`.
+         *      */
+        TerminalPingFrame: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "ping";
+        };
+        /** @description One JSON text message from listener to client on the
+         *     `ao.terminal.v1` protocol.
+         *      */
+        TerminalServerFrame: components["schemas"]["TerminalReadyFrame"] | components["schemas"]["TerminalOutputFrame"] | components["schemas"]["TerminalServerResizeFrame"] | components["schemas"]["TerminalExitFrame"] | components["schemas"]["TerminalErrorFrame"] | components["schemas"]["TerminalPongFrame"];
+        /** @description Always the first server frame. `sequence` is the head of the retained
+         *     buffer: when it is lower than the `after` the client asked for, the
+         *     buffer was truncated and the client must clear its screen rather than
+         *     render a gap.
+         *      */
+        TerminalReadyFrame: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "ready";
+            /** Format: int64 */
+            sequence: number;
+            /** @description Scopes the listener resolved for this attachment, restating the
+             *     ticket's grant so the client never has to hold the mint response to
+             *     know whether it may type.
+             *      */
+            scopes: components["schemas"]["TerminalScope"][];
+            columns?: number;
+            rows?: number;
+            /** @description Rendered screen the client can paint before any `output` arrives.
+             *     Present only when the listener advertises the `snapshot` feature.
+             *      */
+            snapshot?: string;
+        };
+        TerminalOutputFrame: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "output";
+            /**
+             * Format: int64
+             * @description Strictly increasing across the terminal's lifetime. Reconnect with
+             *     the last value rendered as `after`.
+             *
+             */
+            sequence: number;
+            /** @description Base64-encoded PTY output. */
+            data: string;
+        };
+        /** @description The authoritative PTY grid, pushed whenever it changes. A client that
+         *     did not request this size renders to it anyway rather than shrinking the
+         *     shared PTY.
+         *      */
+        TerminalServerResizeFrame: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "resize";
+            columns: number;
+            rows: number;
+        };
+        /** @description The process ended. The listener closes the socket after this frame. */
+        TerminalExitFrame: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "exit";
+            exitCode: number;
+        };
+        /** @description A frame was rejected. The socket stays open unless the listener also
+         *     closes it, so a rejected keystroke does not cost the client its
+         *     attachment.
+         *      */
+        TerminalErrorFrame: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "error";
+            /** @description Same vocabulary as `ErrorEnvelope.code`, so a client maps terminal
+             *     failures with the rules it already has.
+             *      */
+            code: string;
+            message: string;
+        };
+        TerminalPongFrame: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "pong";
         };
         WorkspaceEntry: {
             name: string;
@@ -3308,6 +3643,10 @@ export interface operations {
             content: {
                 "application/json": {
                     kind: components["schemas"]["TerminalKind"];
+                    /** @description Scopes the client intends to use. Absent requests the
+                     *     caller's full authority for this session.
+                     *      */
+                    scopes?: components["schemas"]["TerminalScope"][];
                 };
             };
         };
@@ -3324,11 +3663,47 @@ export interface operations {
             default: components["responses"]["Error"];
         };
     };
+    getTerminalConnection: {
+        parameters: {
+            query?: {
+                /** @description Restrict the answer to one terminal kind. Absent describes every
+                 *     kind the session has.
+                 *      */
+                kind?: components["schemas"]["TerminalKind"];
+            };
+            header?: never;
+            path: {
+                orgId: components["parameters"]["OrgId"];
+                sessionId: components["parameters"]["SessionId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Terminal attachment metadata for the session. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TerminalConnection"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
     connectTerminal: {
         parameters: {
             query: {
+                /** @description Single-use ticket from `createTerminalTicket`. Never log a URL
+                 *     carrying this value.
+                 *      */
                 ticket: string;
+                /** @description Replay retained output with a sequence strictly greater than this
+                 *     value before going live. Use the last `sequence` rendered.
+                 *      */
                 after?: number;
+                /** @description Must match the kind the ticket was minted for. */
                 kind: components["schemas"]["TerminalKind"];
             };
             header?: never;
@@ -3337,9 +3712,13 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description WebSocket protocol upgrade accepted. */
+            /** @description WebSocket protocol upgrade accepted. The `Sec-WebSocket-Protocol`
+             *     response header echoes the selected terminal protocol.
+             *      */
             101: {
                 headers: {
+                    /** @description Always the value of `TerminalConnection.protocol`. */
+                    "Sec-WebSocket-Protocol"?: string;
                     [name: string]: unknown;
                 };
                 content?: never;

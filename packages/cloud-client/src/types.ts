@@ -102,7 +102,22 @@ export type InterruptRequestedEvent = Schemas["InterruptRequestedEvent"];
 
 export type TerminalKind = Schemas["TerminalKind"];
 export type TerminalScope = Schemas["TerminalScope"];
+export type TerminalTransport = Schemas["TerminalTransport"];
+export type TerminalProtocol = Schemas["TerminalProtocol"];
+export type TerminalFeature = Schemas["TerminalFeature"];
+export type TerminalConnection = Schemas["TerminalConnection"];
 export type TerminalTicket = Schemas["TerminalTicket"];
+export type TerminalClientFrame = Schemas["TerminalClientFrame"];
+export type TerminalInputFrame = Schemas["TerminalInputFrame"];
+export type TerminalResizeFrame = Schemas["TerminalResizeFrame"];
+export type TerminalPingFrame = Schemas["TerminalPingFrame"];
+export type TerminalServerFrame = Schemas["TerminalServerFrame"];
+export type TerminalReadyFrame = Schemas["TerminalReadyFrame"];
+export type TerminalOutputFrame = Schemas["TerminalOutputFrame"];
+export type TerminalServerResizeFrame = Schemas["TerminalServerResizeFrame"];
+export type TerminalExitFrame = Schemas["TerminalExitFrame"];
+export type TerminalErrorFrame = Schemas["TerminalErrorFrame"];
+export type TerminalPongFrame = Schemas["TerminalPongFrame"];
 
 export type WorkspaceEntry = Schemas["WorkspaceEntry"];
 export type WorkspaceEntryPage = Schemas["WorkspaceEntryPage"];

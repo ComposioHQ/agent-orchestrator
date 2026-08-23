@@ -42,8 +42,41 @@ const heartbeat = await worker.heartbeat({ version: workerVersion, capabilities 
 workerToken = heartbeat.workerToken;
 ```
 
-Keep bootstrap, worker, agent-credential, and checkout-grant secrets only in
-memory and never log them. Secret-bearing client requests use `cache:
+## Attaching to a session terminal
+
+Terminal attachment is a two-credential handoff. The bearer token proves who the
+caller is to the control plane and never leaves it; the ticket is a single-use,
+short-lived, scope-bound credential that travels to the terminal listener in the
+WebSocket URL, because a browser cannot set headers on a handshake.
+
+The listener is not necessarily the API origin, so never rebuild the attach URL
+from `baseUrl` — use the connection the server reported:
+
+```ts
+const ticket = await cloud.createTerminalTicket(orgId, sessionId, "agent", {
+  scopes: ["terminal:read", "terminal:operate"],
+});
+const socket = new WebSocket(
+  cloud.terminalUrlForTicket(ticket, { after: lastRenderedSequence }),
+  ticket.connection?.protocol ?? "ao.terminal.v1",
+);
+```
+
+`createTerminalTicket` grants the intersection of the scopes asked for and the
+caller's authority, so check `ticket.scopes` for `terminal:operate` before
+letting the user type. Call `getTerminalConnection` instead when you only need
+to know whether a terminal exists yet — an empty `kinds` is the normal answer
+while a sandbox is still provisioning.
+
+Frames are JSON text messages discriminated by `type` (`TerminalClientFrame` and
+`TerminalServerFrame`), with byte payloads base64-encoded in `data`. Every
+`output` frame carries a monotonic `sequence`; reconnect with the last one
+rendered as `after` to replay the gap. The first server frame is always `ready`,
+and a `ready.sequence` lower than the requested `after` means the retained buffer
+no longer reaches your cursor — clear the screen rather than render a gap.
+
+Keep terminal tickets, bootstrap, worker, agent-credential, and checkout-grant
+secrets only in memory and never log them. Secret-bearing client requests use `cache:
 "no-store"`; the credential and checkout-grant responses also require the
 server's `Cache-Control: no-store`.
 
