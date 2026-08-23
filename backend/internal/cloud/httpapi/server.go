@@ -53,6 +53,9 @@ type Options struct {
 	// limiter key. Leave false unless the edge overwrites X-AO-Source-IP.
 	TrustSourceIPHeader bool
 	Logger              *slog.Logger
+	// SCM wires the GitHub App credential boundary. Zero value disables the
+	// SCM routes entirely.
+	SCM SCMOptions
 }
 
 // Server owns the Cloud foundation HTTP handler.
@@ -63,6 +66,7 @@ type Server struct {
 	accessTokens        *auth.AccessTokenManager
 	refreshTokenTTL     time.Duration
 	trustSourceIPHeader bool
+	scm                 SCMOptions
 	logger              *slog.Logger
 	handler             http.Handler
 }
@@ -88,6 +92,7 @@ func New(options Options) (*Server, error) {
 		accessTokens:        options.AccessTokens,
 		refreshTokenTTL:     options.RefreshTokenTTL,
 		trustSourceIPHeader: options.TrustSourceIPHeader,
+		scm:                 options.SCM,
 		logger:              options.Logger,
 	}
 	server.handler = server.routes()
@@ -140,7 +145,29 @@ func (s *Server) routes() http.Handler {
 	router.With(authRateLimit).Post("/api/cloud/v1/auth/refresh", s.refresh)
 	router.With(authRateLimit).Post("/api/cloud/v1/auth/logout", s.logout)
 	router.With(s.requirePrincipal).Get("/api/cloud/v1/me", s.me)
+	s.registerSCMRoutes(router, authRateLimit)
 	return router
+}
+
+// registerSCMRoutes mounts the SCM credential boundary. Nothing is mounted
+// when no GitHub App is configured, so a partially configured deployment
+// cannot expose an install flow that can never mint a credential.
+func (s *Server) registerSCMRoutes(router chi.Router, rateLimit func(http.Handler) http.Handler) {
+	if s.scm.Link == nil {
+		return
+	}
+	router.With(s.requirePrincipal).Post("/api/cloud/v1/scm/github/installations", s.startSCMInstall)
+	router.With(s.requirePrincipal).Get("/api/cloud/v1/scm/github/installations", s.listSCMInstallations)
+	router.With(s.requirePrincipal).Get("/api/cloud/v1/scm/github/installations/{installationID}/repositories", s.listSCMRepositories)
+	router.With(s.requirePrincipal).Post("/api/cloud/v1/scm/github/installations/{installationID}/repositories/sync", s.syncSCMRepositories)
+	router.With(s.requirePrincipal).Put("/api/cloud/v1/scm/github/installations/{installationID}/allowlist", s.setSCMAllowlist)
+	router.With(s.requirePrincipal).Delete("/api/cloud/v1/scm/github/installations/{installationID}", s.unlinkSCMInstallation)
+	// The setup callback carries no bearer token; the single-use state does
+	// the authenticating. Rate-limit it like the other unauthenticated routes.
+	router.With(rateLimit).Get("/api/cloud/v1/scm/github/setup", s.completeSCMInstall)
+	if s.scm.Webhook != nil {
+		router.Post("/api/cloud/v1/scm/github/webhook", s.receiveSCMWebhook)
+	}
 }
 
 func (s *Server) sourceIPKey(r *http.Request) (string, error) {

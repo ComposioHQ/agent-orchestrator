@@ -148,6 +148,8 @@ func grantRuntimeRole(ctx context.Context, databaseURL, runtimeRole string) erro
 	); err != nil {
 		return err
 	}
-	_, err = conn.Exec(ctx, `RESET ROLE`)
-	return err
+	if _, err = conn.Exec(ctx, `RESET ROLE`); err != nil {
+		return err
+	}
+	return grantSCMRuntimeRole(ctx, conn, runtimeRole)
 }

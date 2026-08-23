@@ -32,6 +32,9 @@ type Config struct {
 	AccessTokenTTL      time.Duration
 	RefreshTokenTTL     time.Duration
 	TrustSourceIPHeader bool
+	// GitHubApp configures the SCM credential boundary. It is optional: a
+	// deployment without it simply has no cloud SCM routes.
+	GitHubApp GitHubAppConfig
 }
 
 // Load reads control-plane configuration from the process environment.
@@ -78,6 +81,11 @@ func load(getenv func(string) string) (Config, error) {
 	if len(cfg.AccessTokenKey) < 32 {
 		return Config{}, errors.New("AO_CLOUD_ACCESS_TOKEN_KEY_BASE64 must decode to at least 32 bytes")
 	}
+	githubApp, err := loadGitHubApp(getenv)
+	if err != nil {
+		return Config{}, err
+	}
+	cfg.GitHubApp = githubApp
 	return cfg, nil
 }
 
