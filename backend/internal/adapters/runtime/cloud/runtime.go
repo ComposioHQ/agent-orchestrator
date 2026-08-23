@@ -175,6 +175,9 @@ func (r *Runtime) send(ctx context.Context, handle ports.RuntimeHandle, input st
 
 // Attach opens a polling terminal stream over the HTTPS control-plane path.
 func (r *Runtime) Attach(ctx context.Context, handle ports.RuntimeHandle, rows, cols uint16) (ports.Stream, error) {
+	if err := r.resize(ctx, handle, rows, cols); err != nil {
+		return nil, err
+	}
 	attachCtx, cancel := context.WithCancel(ctx)
 	reader, writer := io.Pipe()
 	result := &pollingStream{runtime: r, handle: handle, reader: reader, cancel: cancel}
@@ -207,8 +210,12 @@ func (s *pollingStream) Write(value []byte) (int, error) {
 	}
 	return len(value), nil
 }
-func (s *pollingStream) Close() error                { s.cancel(); return s.reader.Close() }
-func (s *pollingStream) Resize(uint16, uint16) error { return nil }
+func (s *pollingStream) Close() error { s.cancel(); return s.reader.Close() }
+func (s *pollingStream) Resize(rows, cols uint16) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	return s.runtime.resize(ctx, s.handle, rows, cols)
+}
 func (s *pollingStream) poll(ctx context.Context, writer *io.PipeWriter) {
 	defer func() { _ = writer.Close() }()
 	ticker := time.NewTicker(500 * time.Millisecond)
@@ -220,14 +227,8 @@ func (s *pollingStream) poll(ctx context.Context, writer *io.PipeWriter) {
 			_ = writer.CloseWithError(err)
 			return
 		}
-		var next string
-		if strings.HasPrefix(output, last) {
-			next = strings.TrimPrefix(output, last)
-		} else if output != last {
-			next = "\x1b[2J\x1b[H" + output
-		}
-		if next != "" {
-			if _, err = io.WriteString(writer, next); err != nil {
+		if output != last {
+			if _, err = io.WriteString(writer, "\x1b[2J\x1b[H"+terminalSnapshot(output)); err != nil {
 				return
 			}
 		}
@@ -238,6 +239,20 @@ func (s *pollingStream) poll(ctx context.Context, writer *io.PipeWriter) {
 		case <-ticker.C:
 		}
 	}
+}
+
+func terminalSnapshot(output string) string {
+	// capture-pane returns display lines, not a raw PTY byte stream. xterm's
+	// default LF handling deliberately preserves the current column, so captured
+	// lines must carry CRLF to reconstruct the tmux screen from column zero.
+	return strings.ReplaceAll(strings.ReplaceAll(output, "\r\n", "\n"), "\n", "\r\n")
+}
+
+func (r *Runtime) resize(ctx context.Context, handle ports.RuntimeHandle, rows, cols uint16) error {
+	if rows == 0 || cols == 0 {
+		return errors.New("cloud terminal rows and cols must be positive")
+	}
+	return r.requestJSON(ctx, http.MethodPost, r.runtimeURL(handle.ID)+"/resize", map[string]uint16{"rows": rows, "cols": cols}, nil)
 }
 
 func (r *Runtime) runtimeURL(sessionID string) string {

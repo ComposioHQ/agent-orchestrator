@@ -212,6 +212,31 @@ func (s *Server) interruptSessionRuntime(w http.ResponseWriter, r *http.Request)
 	w.WriteHeader(http.StatusNoContent)
 }
 
+type runtimeResizeRequest struct {
+	Rows uint16 `json:"rows"`
+	Cols uint16 `json:"cols"`
+}
+
+func (s *Server) resizeSessionRuntime(w http.ResponseWriter, r *http.Request) {
+	var input runtimeResizeRequest
+	if !decodeJSON(w, r, &input) {
+		return
+	}
+	if input.Rows == 0 || input.Cols == 0 {
+		writeError(w, r, http.StatusBadRequest, "bad_request", "INVALID_TERMINAL_SIZE", "rows and cols must be positive")
+		return
+	}
+	runtime, ok := s.authorizedRuntime(w, r)
+	if !ok {
+		return
+	}
+	if err := s.sessionRuntimes.SessionRuntimeResize(r.Context(), runtime.SandboxID, input.Rows, input.Cols); err != nil {
+		s.internalError(w, r, "resize cloud session runtime", err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 func (s *Server) authorizedRuntime(w http.ResponseWriter, r *http.Request) (domain.SessionRuntime, bool) {
 	principal, _ := principalFromContext(r.Context())
 	workspace, _ := r.Context().Value(workspaceContextKey{}).(domain.Workspace)

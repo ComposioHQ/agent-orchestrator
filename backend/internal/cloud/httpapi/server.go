@@ -71,6 +71,7 @@ type SessionRuntimeProvisioner interface {
 	SessionRuntimeOutput(context.Context, string, int) (string, error)
 	SessionRuntimeInput(context.Context, string, string, bool) error
 	SessionRuntimeInterrupt(context.Context, string) error
+	SessionRuntimeResize(context.Context, string, uint16, uint16) error
 }
 
 // Options supplies the dependencies for a control-plane HTTP server.
@@ -188,6 +189,7 @@ func (s *Server) routes() http.Handler {
 		runtime.Delete("/{sessionID}", s.deleteSessionRuntime)
 		runtime.Post("/{sessionID}/input", s.inputSessionRuntime)
 		runtime.Post("/{sessionID}/interrupt", s.interruptSessionRuntime)
+		runtime.Post("/{sessionID}/resize", s.resizeSessionRuntime)
 	})
 	return router
 }

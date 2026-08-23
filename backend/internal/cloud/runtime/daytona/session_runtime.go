@@ -228,7 +228,7 @@ func (p *Provider) SessionRuntimeOutput(ctx context.Context, sandboxID string, l
 	if err != nil {
 		return "", err
 	}
-	return run(ctx, sandbox, "tmux capture-pane -p -t "+shellQuote(sessionName)+" -S -"+strconv.Itoa(lines), time.Minute)
+	return run(ctx, sandbox, "tmux capture-pane -p -e -t "+shellQuote(sessionName)+" -S -"+strconv.Itoa(lines), time.Minute)
 }
 
 // SessionRuntimeInput pastes input and optionally submits it.
@@ -252,6 +252,20 @@ func (p *Provider) SessionRuntimeInterrupt(ctx context.Context, sandboxID string
 		return err
 	}
 	_, err = run(ctx, sandbox, "tmux send-keys -t "+shellQuote(sessionName)+" C-c", time.Minute)
+	return err
+}
+
+// SessionRuntimeResize keeps the detached tmux window aligned with the desktop
+// terminal grid. Without an explicit size, tmux retains its default 80x24 pane
+// and full-screen agent interfaces wrap before their captured output is sent.
+func (p *Provider) SessionRuntimeResize(ctx context.Context, sandboxID string, rows, cols uint16) error {
+	sandbox, err := p.client.Get(ctx, strings.TrimSpace(sandboxID))
+	if err != nil {
+		return err
+	}
+	command := "tmux set-option -t " + shellQuote(sessionName) + " window-size manual" +
+		" && tmux resize-window -t " + shellQuote(sessionName) + " -x " + strconv.Itoa(int(cols)) + " -y " + strconv.Itoa(int(rows))
+	_, err = run(ctx, sandbox, command, time.Minute)
 	return err
 }
 

@@ -48,7 +48,10 @@ func (s *memoryRuntimeStore) UpdateSessionRuntime(_ context.Context, _ domain.Pr
 	return nil
 }
 
-type fakeSessionProvisioner struct{ launch chan domain.RuntimeLaunch }
+type fakeSessionProvisioner struct {
+	launch chan domain.RuntimeLaunch
+	resize chan runtimeResizeRequest
+}
 
 func (p *fakeSessionProvisioner) ProvisionSessionRuntime(_ context.Context, _ domain.Workspace, launch domain.RuntimeLaunch) (string, error) {
 	p.launch <- launch
@@ -65,6 +68,12 @@ func (*fakeSessionProvisioner) SessionRuntimeInput(context.Context, string, stri
 	return nil
 }
 func (*fakeSessionProvisioner) SessionRuntimeInterrupt(context.Context, string) error { return nil }
+func (p *fakeSessionProvisioner) SessionRuntimeResize(_ context.Context, _ string, rows, cols uint16) error {
+	if p.resize != nil {
+		p.resize <- runtimeResizeRequest{Rows: rows, Cols: cols}
+	}
+	return nil
+}
 
 func TestWorkspaceCapabilityCreatesOneSessionRuntime(t *testing.T) {
 	principal := domain.Principal{UserID: "user-1"}
@@ -75,7 +84,7 @@ func TestWorkspaceCapabilityCreatesOneSessionRuntime(t *testing.T) {
 	}
 	workspace := domain.Workspace{ID: "workspace-1", OrgID: "org-1", OwnerUserID: principal.UserID, RepositoryURL: "https://github.com/org/repo"}
 	store := &memoryRuntimeStore{workspace: workspace, running: make(chan struct{})}
-	provider := &fakeSessionProvisioner{launch: make(chan domain.RuntimeLaunch, 1)}
+	provider := &fakeSessionProvisioner{launch: make(chan domain.RuntimeLaunch, 1), resize: make(chan runtimeResizeRequest, 1)}
 	server, err := New(Options{Store: accounts, Google: &staticIdentityVerifier{}, AllowedEmails: []string{"person@example.com"}, AccessTokens: tokens, RefreshTokenTTL: time.Hour, SessionStore: store, SessionRuntimes: provider, PublicURL: "https://cloud.example"})
 	if err != nil {
 		t.Fatal(err)
@@ -117,5 +126,16 @@ func TestWorkspaceCapabilityCreatesOneSessionRuntime(t *testing.T) {
 	server.Handler().ServeHTTP(wrongResponse, wrong)
 	if wrongResponse.Code != http.StatusUnauthorized {
 		t.Fatalf("desktop token status=%d", wrongResponse.Code)
+	}
+
+	resize := httptest.NewRequest(http.MethodPost, "/api/cloud/internal/v1/workspaces/workspace-1/runtimes/orchestrator-1/resize", bytes.NewBufferString(`{"rows":42,"cols":132}`))
+	resize.Header.Set("Authorization", "Bearer "+capability)
+	resizeResponse := httptest.NewRecorder()
+	server.Handler().ServeHTTP(resizeResponse, resize)
+	if resizeResponse.Code != http.StatusNoContent {
+		t.Fatalf("resize status=%d body=%s", resizeResponse.Code, resizeResponse.Body.String())
+	}
+	if got := <-provider.resize; got.Rows != 42 || got.Cols != 132 {
+		t.Fatalf("resize=%#v", got)
 	}
 }

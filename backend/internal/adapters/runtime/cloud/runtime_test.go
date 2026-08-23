@@ -101,3 +101,11 @@ func TestReferencedFilesSkipsSandboxProvidedClaude(t *testing.T) {
 		t.Fatalf("referenced files = %#v, want only prompt", files)
 	}
 }
+
+func TestTerminalSnapshotReturnsCapturedLinesToColumnZero(t *testing.T) {
+	got := terminalSnapshot("first line\nsecond line\r\nthird line")
+	want := "first line\r\nsecond line\r\nthird line"
+	if got != want {
+		t.Fatalf("terminalSnapshot() = %q, want %q", got, want)
+	}
+}
