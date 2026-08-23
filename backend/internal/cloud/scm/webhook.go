@@ -8,6 +8,8 @@ import (
 	"encoding/json"
 	"errors"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/cloud/domain"
 )
@@ -21,6 +23,8 @@ const (
 	signaturePrefix         = "sha256="
 	webhookErrorInvalidJSON = "invalid_json"
 	webhookErrorProcessing  = "processing_failed"
+	maxWebhookDeliveryIDLen = 255
+	maxWebhookEventLen      = 128
 )
 
 // WebhookStore deliberately exposes one ingest operation. There is no API
@@ -72,6 +76,9 @@ func NewWebhookProcessor(secret []byte, store WebhookStore, sink ObservationSink
 	if store == nil {
 		return nil, errors.New("cloud scm: webhook processor requires a store")
 	}
+	if sink == nil {
+		return nil, errors.New("cloud scm: webhook processor requires an observation sink")
+	}
 	return &WebhookProcessor{secret: append([]byte(nil), secret...), store: store, sink: sink}, nil
 }
 
@@ -106,9 +113,12 @@ func (p *WebhookProcessor) Process(ctx context.Context, event, deliveryID, signa
 	if err := VerifyWebhookSignature(p.secret, body, signature); err != nil {
 		return WebhookResult{}, err
 	}
+	if containsInvalidHeaderRune(event) || containsInvalidHeaderRune(deliveryID) {
+		return WebhookResult{}, ErrInvalidWebhookHeaders
+	}
 	event = strings.TrimSpace(event)
 	deliveryID = strings.TrimSpace(deliveryID)
-	if event == "" || deliveryID == "" {
+	if !validWebhookHeader(event, maxWebhookEventLen) || !validWebhookHeader(deliveryID, maxWebhookDeliveryIDLen) {
 		return WebhookResult{}, ErrInvalidWebhookHeaders
 	}
 
@@ -161,10 +171,8 @@ func (p *WebhookProcessor) processClaim(ctx context.Context, claim domain.SCMWeb
 			return p.retryClaim(ctx, claim, result, errors.New("cloud scm: durable webhook classification no longer matches payload"))
 		}
 		result.Signal = &signal
-		if p.sink != nil {
-			if err := p.sink.ObserveSCMSignal(ctx, claim.DeliveryID, signal); err != nil {
-				return p.retryClaim(ctx, claim, result, err)
-			}
+		if err := p.sink.ObserveSCMSignal(ctx, claim.DeliveryID, signal); err != nil {
+			return p.retryClaim(ctx, claim, result, err)
 		}
 	}
 	finished, err := p.store.FinishSCMWebhook(
@@ -177,6 +185,17 @@ func (p *WebhookProcessor) processClaim(ctx context.Context, claim domain.SCMWeb
 		return result, ErrWebhookLeaseLost
 	}
 	return result, nil
+}
+
+func validWebhookHeader(value string, maxRunes int) bool {
+	return value != "" && utf8.RuneCountInString(value) <= maxRunes
+}
+
+func containsInvalidHeaderRune(value string) bool {
+	if !utf8.ValidString(value) {
+		return true
+	}
+	return strings.IndexFunc(value, unicode.IsControl) >= 0
 }
 
 func (p *WebhookProcessor) retryClaim(ctx context.Context, claim domain.SCMWebhookClaim, result WebhookResult, cause error) (WebhookResult, error) {

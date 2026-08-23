@@ -163,7 +163,7 @@ func TestSCMWebhookLifecycleAgainstPostgres(t *testing.T) {
 
 	t.Run("malformed JSON is terminal and never due", func(t *testing.T) {
 		secret := []byte("real-pg-webhook-secret")
-		processor, err := scm.NewWebhookProcessor(secret, h.store, nil)
+		processor, err := scm.NewWebhookProcessor(secret, h.store, noopSCMObservationSink{})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -392,6 +392,12 @@ func webhookSignature(secret, body []byte) string {
 
 type pgIdempotentObservationSink struct {
 	conn *pgxpool.Conn
+}
+
+type noopSCMObservationSink struct{}
+
+func (noopSCMObservationSink) ObserveSCMSignal(context.Context, string, scm.ObservationSignal) error {
+	return nil
 }
 
 func (s *pgIdempotentObservationSink) ObserveSCMSignal(ctx context.Context, deliveryID string, signal scm.ObservationSignal) error {

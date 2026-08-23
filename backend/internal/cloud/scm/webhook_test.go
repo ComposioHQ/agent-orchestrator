@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -149,6 +150,12 @@ type idempotentSink struct {
 	fail       bool
 }
 
+type noopIdempotentSink struct{}
+
+func (noopIdempotentSink) ObserveSCMSignal(context.Context, string, ObservationSignal) error {
+	return nil
+}
+
 func (s *idempotentSink) ObserveSCMSignal(_ context.Context, deliveryID string, signal ObservationSignal) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -174,13 +181,20 @@ func newTestProcessor(t *testing.T, store WebhookStore, sink ObservationSink) *W
 	return processor
 }
 
+func TestNewWebhookProcessorRequiresObservationSink(t *testing.T) {
+	processor, err := NewWebhookProcessor(testWebhookSecret, newMemoryWebhookStore(), nil)
+	if err == nil || processor != nil {
+		t.Fatalf("processor = %#v, error = %v", processor, err)
+	}
+}
+
 func observationBody() []byte {
 	return []byte(`{"action":"synchronize","installation":{"id":55},"repository":{"full_name":"Acme/Widgets"},"pull_request":{"number":7,"html_url":"https://github.com/acme/widgets/pull/7","head":{"sha":"abc123"}}}`)
 }
 
 func TestWebhookRejectsInvalidInputBeforeDurability(t *testing.T) {
 	store := newMemoryWebhookStore()
-	processor := newTestProcessor(t, store, nil)
+	processor := newTestProcessor(t, store, noopIdempotentSink{})
 	body := observationBody()
 	if _, err := processor.Process(context.Background(), "pull_request", "bad-signature", "sha256=deadbeef", body); !errors.Is(err, ErrInvalidSignature) {
 		t.Fatalf("signature error = %v", err)
@@ -188,6 +202,17 @@ func TestWebhookRejectsInvalidInputBeforeDurability(t *testing.T) {
 	oversize := make([]byte, MaxWebhookBodyBytes+1)
 	if _, err := processor.Process(context.Background(), "pull_request", "oversize", signed(oversize), oversize); !errors.Is(err, ErrPayloadTooLarge) {
 		t.Fatalf("oversize error = %v", err)
+	}
+	for _, headers := range []struct{ event, deliveryID string }{
+		{event: strings.Repeat("e", maxWebhookEventLen+1), deliveryID: "delivery"},
+		{event: "pull_request", deliveryID: strings.Repeat("d", maxWebhookDeliveryIDLen+1)},
+		{event: "pull\nrequest", deliveryID: "delivery"},
+		{event: "\npull_request", deliveryID: "delivery"},
+		{event: "pull_request", deliveryID: "delivery\u007fcontrol"},
+	} {
+		if _, err := processor.Process(context.Background(), headers.event, headers.deliveryID, signed(body), body); !errors.Is(err, ErrInvalidWebhookHeaders) {
+			t.Fatalf("headers event=%q delivery=%q error = %v", headers.event, headers.deliveryID, err)
+		}
 	}
 	if len(store.deliveries) != 0 {
 		t.Fatalf("rejected deliveries reached store: %#v", store.deliveries)
@@ -197,7 +222,7 @@ func TestWebhookRejectsInvalidInputBeforeDurability(t *testing.T) {
 func TestWebhookPreDurableFailureIsRetryable(t *testing.T) {
 	store := newMemoryWebhookStore()
 	store.ingestErr = errors.New("database unavailable")
-	processor := newTestProcessor(t, store, nil)
+	processor := newTestProcessor(t, store, noopIdempotentSink{})
 	body := observationBody()
 	result, err := processor.Process(context.Background(), "pull_request", "unavailable", signed(body), body)
 	if !errors.Is(err, ErrWebhookReceiptUnavailable) || result.Durable {
@@ -210,7 +235,7 @@ func TestWebhookPreDurableFailureIsRetryable(t *testing.T) {
 
 func TestWebhookMalformedJSONIsDurablyTerminal(t *testing.T) {
 	store := newMemoryWebhookStore()
-	processor := newTestProcessor(t, store, nil)
+	processor := newTestProcessor(t, store, noopIdempotentSink{})
 	body := []byte(`{"unterminated"`)
 	result, err := processor.Process(context.Background(), "pull_request", "malformed", signed(body), body)
 	if err != nil || !result.Durable || !result.Terminal {
