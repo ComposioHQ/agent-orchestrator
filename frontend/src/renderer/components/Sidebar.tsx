@@ -1023,7 +1023,7 @@ function SessionRow({
 						role="img"
 						title={sessionAgentLabel}
 					>
-						<AgentAvatar className="size-3.5" decorative provider={session.provider} />
+						<AgentAvatar className="size-2" decorative provider={session.provider} />
 					</span>
 					<div
 						className={cn(
