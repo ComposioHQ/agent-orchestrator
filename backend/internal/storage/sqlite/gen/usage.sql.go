@@ -279,8 +279,8 @@ func (q *Queries) FinalizeUsageBindingsForSessionLaunch(ctx context.Context, arg
 
 const getModelUsageEventByKey = `-- name: GetModelUsageEventByKey :one
 SELECT
-    event.id, event.provider_id, event.billing_provider_id, event.model_id,
-    event.usage_measurement_kind,
+    event.id, event.usage_source_id, event.provider_id, event.billing_provider_id,
+    event.model_id, event.usage_measurement_kind,
     event.input_tokens, event.cached_input_tokens,
     event.uncached_input_tokens, event.output_tokens,
     event.provider_usage_json, event.created_at
@@ -295,6 +295,7 @@ type GetModelUsageEventByKeyParams struct {
 
 type GetModelUsageEventByKeyRow struct {
 	ID                   int64
+	UsageSourceID        int64
 	ProviderID           string
 	BillingProviderID    sql.NullString
 	ModelID              string
@@ -312,6 +313,7 @@ func (q *Queries) GetModelUsageEventByKey(ctx context.Context, arg GetModelUsage
 	var i GetModelUsageEventByKeyRow
 	err := row.Scan(
 		&i.ID,
+		&i.UsageSourceID,
 		&i.ProviderID,
 		&i.BillingProviderID,
 		&i.ModelID,
@@ -1256,6 +1258,42 @@ func (q *Queries) ListWatchableUsageSources(ctx context.Context) ([]UsageSource,
 		return nil, err
 	}
 	return items, nil
+}
+
+const rehomeOpenUsageEventToReplacementSource = `-- name: RehomeOpenUsageEventToReplacementSource :execrows
+UPDATE model_usage_events
+SET usage_source_id = ?1
+WHERE model_usage_events.id = ?2
+  AND model_usage_events.usage_source_id = ?3
+  AND model_usage_events.billing_provider_id IS NULL
+  AND EXISTS (
+      SELECT 1
+      FROM usage_sources replacement
+      WHERE replacement.id = ?1
+        AND replacement.binding_id = model_usage_events.binding_id
+  )
+`
+
+type RehomeOpenUsageEventToReplacementSourceParams struct {
+	UsageSourceID         int64
+	ID                    int64
+	ExpectedUsageSourceID int64
+}
+
+// A physically replaced transcript re-emits the same logical event under the
+// same stable key, so the replay deduplicates against the row the retired
+// generation left behind and the row keeps pointing at that generation. Repair
+// skips a source retired as artifact_replaced, and the replacement owns no row
+// for the event, so an attribution that never landed can never land.
+//
+// Only an open attribution moves. A row already attributed was collected under
+// the generation it names, and that is a fact about how it was observed.
+func (q *Queries) RehomeOpenUsageEventToReplacementSource(ctx context.Context, arg RehomeOpenUsageEventToReplacementSourceParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, rehomeOpenUsageEventToReplacementSource, arg.UsageSourceID, arg.ID, arg.ExpectedUsageSourceID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
 const touchUsageBinding = `-- name: TouchUsageBinding :exec

@@ -2453,7 +2453,7 @@ describe("SessionInspector summary reviews", () => {
     expect(within(summary).getByText("Ship it").tagName).toBe("LI");
     expect(summary).not.toHaveTextContent("**ready**");
     expect(
-      within(externalReview).getByText("Reviewed 3d"),
+      within(externalReview).getByText("Reviewed 3d ago"),
     ).toBeInTheDocument();
     expect(
       within(externalReview).queryByRole("link", { name: "View on PR" }),

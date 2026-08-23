@@ -849,7 +849,7 @@
 	"shell.spawningDots": "시작 중...",
 	"shell.terminateSession": "세션 종료",
 	"shell.terminateNamed": "{{title}} 종료",
-	"shell.updatedAt": "업데이트: {{time}}",
+	"shell.updatedAt": "업데이트: {{time}} 전",
 	"shell.versionReady": "v{{version}} 준비됨",
 	"shell.workingSessions": "작업 중 세션",
 	"shortcut.add": "추가",

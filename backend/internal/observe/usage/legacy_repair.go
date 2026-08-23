@@ -30,11 +30,16 @@ type LegacyRepairerConfig struct {
 	// RaceRetry is the first delay before retrying a pass that lost its cursor
 	// guard to concurrent ingestion. It doubles up to maxRaceRetry.
 	RaceRetry time.Duration
+	// StartupSettle delays one follow-up pass after the first. Startup
+	// ingestion begins after the repairer does, so the first pass can read the
+	// table before the rows it exists to repair are in it.
+	StartupSettle time.Duration
 }
 
 const (
-	defaultRaceRetry = 30 * time.Second
-	maxRaceRetry     = 5 * time.Minute
+	defaultRaceRetry     = 30 * time.Second
+	maxRaceRetry         = 5 * time.Minute
+	defaultStartupSettle = 30 * time.Second
 )
 
 // LegacyRepairer repairs provider-null historical rows: once at startup, and
@@ -75,6 +80,9 @@ func NewLegacyRepairer(
 	if config.RaceRetry <= 0 {
 		config.RaceRetry = defaultRaceRetry
 	}
+	if config.StartupSettle <= 0 {
+		config.StartupSettle = defaultStartupSettle
+	}
 	return &LegacyRepairer{
 		store: store, pricing: manager, config: config,
 		trigger: make(chan struct{}, 1), done: make(chan struct{}),
@@ -100,6 +108,11 @@ func (r *LegacyRepairer) Start(ctx context.Context) error {
 			}
 		}()
 		retry := r.config.RaceRetry
+		// The daemon starts pricing before it starts ingesting, so the first
+		// pass can read the table before startup ingestion has written to it.
+		// A hookless source registered afterwards has no hook coming to fire a
+		// trigger, so without this it waits for the next daemon start.
+		startupPending := true
 		for {
 			raced, err := r.run(ctx)
 			if err != nil && ctx.Err() == nil {
@@ -113,14 +126,20 @@ func (r *LegacyRepairer) Start(ctx context.Context) error {
 			// outrun. Backing off lets a busy source settle instead of
 			// spinning on it; a clean pass resets the delay.
 			var settle <-chan time.Time
-			if raced && ctx.Err() == nil {
+			switch {
+			case raced && ctx.Err() == nil:
 				settleTimer = time.NewTimer(retry)
 				settle = settleTimer.C
 				retry *= 2
 				if retry > maxRaceRetry {
 					retry = maxRaceRetry
 				}
-			} else {
+			case startupPending && ctx.Err() == nil:
+				startupPending = false
+				settleTimer = time.NewTimer(r.config.StartupSettle)
+				settle = settleTimer.C
+				retry = r.config.RaceRetry
+			default:
 				retry = r.config.RaceRetry
 			}
 			select {

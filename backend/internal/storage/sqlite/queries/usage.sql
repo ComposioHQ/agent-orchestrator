@@ -340,8 +340,8 @@ WHERE id = sqlc.arg(usage_binding_id)
 
 -- name: GetModelUsageEventByKey :one
 SELECT
-    event.id, event.provider_id, event.billing_provider_id, event.model_id,
-    event.usage_measurement_kind,
+    event.id, event.usage_source_id, event.provider_id, event.billing_provider_id,
+    event.model_id, event.usage_measurement_kind,
     event.input_tokens, event.cached_input_tokens,
     event.uncached_input_tokens, event.output_tokens,
     event.provider_usage_json, event.created_at
@@ -359,6 +359,27 @@ INSERT INTO model_usage_events (
     source_event_key, created_at
 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 RETURNING id;
+
+-- name: RehomeOpenUsageEventToReplacementSource :execrows
+-- A physically replaced transcript re-emits the same logical event under the
+-- same stable key, so the replay deduplicates against the row the retired
+-- generation left behind and the row keeps pointing at that generation. Repair
+-- skips a source retired as artifact_replaced, and the replacement owns no row
+-- for the event, so an attribution that never landed can never land.
+--
+-- Only an open attribution moves. A row already attributed was collected under
+-- the generation it names, and that is a fact about how it was observed.
+UPDATE model_usage_events
+SET usage_source_id = sqlc.arg(usage_source_id)
+WHERE model_usage_events.id = sqlc.arg(id)
+  AND model_usage_events.usage_source_id = sqlc.arg(expected_usage_source_id)
+  AND model_usage_events.billing_provider_id IS NULL
+  AND EXISTS (
+      SELECT 1
+      FROM usage_sources replacement
+      WHERE replacement.id = sqlc.arg(usage_source_id)
+        AND replacement.binding_id = model_usage_events.binding_id
+  );
 
 -- name: EnrichModelUsageEventProviderUsage :execrows
 -- Replaying a durable prefix can supply the bounded provider object for an event

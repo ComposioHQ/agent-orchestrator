@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -452,6 +453,87 @@ func TestIngestorDoesNotRequestRepairWithoutARoute(t *testing.T) {
 	if requested != 0 {
 		t.Fatalf("repair requested %d times for a binding with no route", requested)
 	}
+}
+
+// Break caught: the daemon starts pricing before it starts ingesting, so the
+// repairer's first pass can read the table before startup ingestion has written
+// to it. A hookless source registered afterwards has no hook coming to fire the
+// trigger, so its rows stayed unattributed and unpriced until the next daemon
+// start — the one case the ingestor's late-route notify deliberately skips,
+// because that source has no route at all.
+func TestLegacyRepairerRunsAgainAfterStartupIngestionSettles(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	dataDir := t.TempDir()
+	store, source, path, now := seedClaudeIngestionSource(t, dataDir, "")
+	snapshot := claudePricingSnapshot(t)
+
+	// Order the two passes against ingestion rather than racing them: the first
+	// reads an empty table, and the second cannot start until ingestion has
+	// written the rows it is supposed to find.
+	ordered := &startupOrderingStore{
+		Store:      store,
+		firstPass:  make(chan struct{}),
+		ingestDone: make(chan struct{}),
+	}
+	repairer := NewLegacyRepairer(ordered, pricing.NewManager(snapshot), LegacyRepairerConfig{
+		Clock:         func() time.Time { return now.Add(time.Hour) },
+		StartupSettle: time.Millisecond,
+	})
+	mustNoError(t, repairer.Start(ctx))
+	<-ordered.firstPass
+
+	// Nothing after this point fires a trigger: no hook runs for this binding.
+	mustNoError(t, os.WriteFile(path, []byte(legacyClaudeTranscript("claude-test")), 0o600))
+	ingestSourceFully(ctx, t, NewIngestor(store, IngestorConfig{
+		Clock:   func() time.Time { return now },
+		Pricing: pricing.NewManager(snapshot),
+	}), source.ID)
+	assertLegacyStillNull(t, dataDir, source.ID)
+	close(ordered.ingestDone)
+
+	db := openUsageRawDB(t, dataDir)
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		var provider sql.NullString
+		var total sql.NullInt64
+		mustNoError(t, db.QueryRow(`SELECT billing_provider_id, estimated_cost_nanos
+FROM model_usage_events WHERE usage_source_id = ?`, source.ID).Scan(&provider, &total))
+		if provider.Valid && total.Valid {
+			if provider.String != "anthropic" || total.Int64 != 795_000 {
+				t.Fatalf("settled repair = provider %q total %d", provider.String, total.Int64)
+			}
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("startup ingestion never got a repair pass without route evidence or a restart")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+// startupOrderingStore makes the startup race deterministic: the first pass sees
+// the table as it is before ingestion, and every later pass waits for ingestion
+// to finish first.
+type startupOrderingStore struct {
+	*sqlite.Store
+	firstPass  chan struct{}
+	ingestDone chan struct{}
+	passes     atomic.Int64
+}
+
+func (s *startupOrderingStore) ListLegacyUsageSources(ctx context.Context) ([]domain.UsageSourceContext, error) {
+	if s.passes.Add(1) == 1 {
+		sources, err := s.Store.ListLegacyUsageSources(ctx)
+		close(s.firstPass)
+		return sources, err
+	}
+	select {
+	case <-s.ingestDone:
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+	return s.Store.ListLegacyUsageSources(ctx)
 }
 
 func seedClaudeIngestionSource(

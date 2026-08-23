@@ -860,7 +860,7 @@
 	"shell.spawningDots": "Iniciando...",
 	"shell.terminateSession": "Encerrar sessão",
 	"shell.terminateNamed": "Encerrar {{title}}",
-	"shell.updatedAt": "Atualizado {{time}}",
+	"shell.updatedAt": "Atualizado há {{time}}",
 	"shell.versionReady": "v{{version}} pronta",
 	"shell.workingSessions": "Sessões em andamento",
 	"shortcut.add": "Adicionar",

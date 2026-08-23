@@ -849,7 +849,7 @@
 	"shell.spawningDots": "起動中...",
 	"shell.terminateSession": "セッションを終了",
 	"shell.terminateNamed": "{{title}} を終了",
-	"shell.updatedAt": "更新: {{time}}",
+	"shell.updatedAt": "更新: {{time}}前",
 	"shell.versionReady": "v{{version}} の準備完了",
 	"shell.workingSessions": "作業中セッション",
 	"shortcut.add": "追加",

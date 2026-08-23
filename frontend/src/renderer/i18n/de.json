@@ -849,7 +849,7 @@
 	"shell.spawningDots": "Wird gestartet...",
 	"shell.terminateSession": "Sitzung beenden",
 	"shell.terminateNamed": "{{title}} beenden",
-	"shell.updatedAt": "Aktualisiert {{time}}",
+	"shell.updatedAt": "Aktualisiert vor {{time}}",
 	"shell.versionReady": "v{{version}} bereit",
 	"shell.workingSessions": "Aktive Sitzungen",
 	"shortcut.add": "Hinzufügen",

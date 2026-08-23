@@ -1827,3 +1827,65 @@ func mustNoError(t testing.TB, err error, context ...string) {
 		t.Fatal(err)
 	}
 }
+
+// Break caught: a physically replaced transcript re-emits the same logical event
+// under the same stable key, so replay deduplicates against the row the retired
+// generation left behind and the row keeps pointing at that generation. The
+// legacy repairer skips a source retired as artifact_replaced and the
+// replacement owns no row for the event, so an attribution that never landed
+// could never land — the cost stayed NULL for the life of the row.
+func TestApplyUsageChunkRehomesAnOpenDuplicateToTheReplacementSource(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	sess := seedUsageSession(t, s, domain.HarnessClaudeCode)
+	now := time.Unix(1700000000, 0).UTC()
+	retired := seedUsageSource(t, s, sess, now)
+
+	// Unattributed on the original generation, exactly what the repairer exists
+	// to finish.
+	event := anthropicUsageEvent("replaced-event", 5, 10, 5, 4)
+	mustNoError(t, s.ApplyUsageChunk(ctx, retired.ID, 0, retired.UpdatedAt, domain.SourceCursorState{
+		ByteOffset: 10, State: domain.UsageSourceActive, UpdatedAt: now,
+	}, []domain.ModelUsageEvent{event}), "seed unattributed event")
+
+	replacement, err := s.ReplaceUsageSource(ctx, retired.ID, domain.UsageErrorArtifactReplaced, domain.UsageSourceRecord{
+		BindingID:       retired.BindingID,
+		Kind:            retired.Kind,
+		NativeSessionID: retired.NativeSessionID,
+		ArtifactPath:    retired.ArtifactPath,
+		FileIdentity:    retired.FileIdentity + "-next",
+		Generation:      retired.Generation + 1,
+		State:           domain.UsageSourcePending,
+		UpdatedAt:       now.Add(time.Second),
+	}, now.Add(time.Second))
+	mustNoError(t, err, "replace source")
+
+	// The replacement replays a byte-identical logical event.
+	mustNoError(t, s.ApplyUsageChunk(ctx, replacement.ID, 0, replacement.UpdatedAt, domain.SourceCursorState{
+		ByteOffset: 10, State: domain.UsageSourceActive, UpdatedAt: now.Add(2 * time.Second),
+	}, []domain.ModelUsageEvent{event}), "replay onto the replacement")
+
+	assertHomedTo := func(want int64, why string) {
+		t.Helper()
+		candidates, err := s.ListLegacyUsageEvents(ctx, want)
+		mustNoError(t, err, "list legacy events")
+		if len(candidates) != 1 {
+			t.Fatalf("%s: source %d owns %d open events, want 1", why, want, len(candidates))
+		}
+	}
+	assertHomedTo(replacement.ID, "after replacement replay")
+
+	sources, err := s.ListLegacyUsageSources(ctx)
+	mustNoError(t, err, "list legacy sources")
+	for _, candidate := range sources {
+		if candidate.Source.ID == retired.ID {
+			t.Fatal("the retired generation still owns the open event, where repair will never reach it")
+		}
+	}
+
+	// Idempotent: replaying again neither duplicates the row nor moves it back.
+	mustNoError(t, s.ApplyUsageChunk(ctx, replacement.ID, 10, now.Add(2*time.Second), domain.SourceCursorState{
+		ByteOffset: 20, State: domain.UsageSourceActive, UpdatedAt: now.Add(3 * time.Second),
+	}, []domain.ModelUsageEvent{event}), "replay twice")
+	assertHomedTo(replacement.ID, "after a repeated replay")
+}

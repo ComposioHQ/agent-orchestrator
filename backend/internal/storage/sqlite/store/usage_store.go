@@ -403,6 +403,22 @@ func (s *Store) ApplyUsageChunk(
 				if !usageEventMatches(existing, ev) {
 					return fmt.Errorf("%w: binding %d event %q", domain.ErrUsageSourceEventConflict, source.BindingID, ev.SourceEventKey)
 				}
+				// A replaced transcript re-emits the same logical event under
+				// the same stable key, so this dedup hit can be a row still
+				// pointing at the retired generation. Repair skips that
+				// generation, so leaving it there strands the attribution.
+				if existing.UsageSourceID != sourceID {
+					if _, err := q.RehomeOpenUsageEventToReplacementSource(
+						ctx,
+						gen.RehomeOpenUsageEventToReplacementSourceParams{
+							UsageSourceID:         sourceID,
+							ID:                    existing.ID,
+							ExpectedUsageSourceID: existing.UsageSourceID,
+						},
+					); err != nil {
+						return err
+					}
+				}
 				if existing.ProviderUsageJson.Valid || ev.ProviderUsageJSON == "" {
 					continue
 				}

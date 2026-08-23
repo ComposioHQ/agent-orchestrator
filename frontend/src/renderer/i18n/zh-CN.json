@@ -835,7 +835,7 @@
 	"shell.spawningDots": "正在启动...",
 	"shell.terminateSession": "终止会话",
 	"shell.terminateNamed": "终止 {{title}}",
-	"shell.updatedAt": "更新于 {{time}}",
+	"shell.updatedAt": "更新于 {{time}}前",
 	"shell.usageTokens": "{{count}} 个令牌",
 	"usage.cachedInput": "缓存输入",
 	"usage.estimatedCost": "预计费用",

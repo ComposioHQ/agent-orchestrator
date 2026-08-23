@@ -365,18 +365,20 @@ describe("SessionsBoard", () => {
 		// The card shows cost and tokens and nothing else. The word "processed"
 		// only survives where a screen reader needs the count named.
 		const activeUsage = screen.getByText("$1.24 · 12.3K");
-		expect(activeUsage).toHaveAttribute("aria-label", "$1.24 · 12,300 tokens");
+		expect(activeUsage).toHaveAttribute("aria-hidden", "true");
+		expect(screen.getByText("$1.24 · 12,300 tokens")).toHaveClass("sr-only");
 		expect(screen.queryByText(/processed/i)).not.toBeInTheDocument();
 		// A session with neither cost nor tokens carries no usage line at all.
 		const emptyCard = screen.getByText("empty worker").closest('[data-testid="board-session-card"]') as HTMLElement;
-		expect(within(emptyCard).queryByLabelText(/tokens$/)).not.toBeInTheDocument();
+		expect(within(emptyCard).queryByText(/tokens$/)).not.toBeInTheDocument();
 		const tokensOnlyCard = screen.getByText("tokens worker").closest('[data-testid="board-session-card"]') as HTMLElement;
-		expect(within(tokensOnlyCard).getByText("800")).toHaveAttribute("aria-label", "800 tokens");
+		expect(within(tokensOnlyCard).getByText("800")).toHaveAttribute("aria-hidden", "true");
+		expect(within(tokensOnlyCard).getByText("800 tokens")).toHaveClass("sr-only");
 		expect(tokensOnlyCard).not.toHaveTextContent(/[≈≥]\$/);
 		expect(usageQueryMock).toHaveBeenCalledWith("p1");
 
 		const archive = await expandArchive();
-		expect(within(archive).getByText("$0.02 · 1.9K")).toHaveAttribute("aria-label", "$0.02 · 1,900 tokens");
+		expect(within(archive).getByText("$0.02 · 1,900 tokens")).toHaveClass("sr-only");
 	});
 
 	// The breakdown lived behind a tooltip whose trigger was a real button, so
@@ -419,7 +421,11 @@ describe("SessionsBoard", () => {
 		const card = screen.getByText("keyboard worker").closest('[data-testid="board-session-card"]') as HTMLElement;
 		const usage = within(card).getByText("$1.24 · 12.4K");
 		expect(usage.tagName).toBe("SPAN");
-		expect(usage).toHaveAttribute("aria-label", "$1.24 · 12,400 tokens");
+		// The compact text is decorative; the full label is real off-screen text
+		// rather than an aria-label on a generic span, which is not reliably
+		// exposed. Neither is a tab stop and neither opens a tooltip.
+		expect(usage).toHaveAttribute("aria-hidden", "true");
+		expect(within(card).getByText("$1.24 · 12,400 tokens")).toHaveClass("sr-only");
 		expect(within(card).queryByRole("button", { name: /Estimated cost/ })).not.toBeInTheDocument();
 
 		within(card).getByRole("button", { name: "keyboard worker" }).focus();
