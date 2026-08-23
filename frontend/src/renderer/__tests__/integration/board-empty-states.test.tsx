@@ -54,6 +54,7 @@ function respondWith(projects: Project[], sessions: Session[]) {
 					requirements: [
 						{ id: "git", label: "git", satisfied: true, required: true, detail: "/usr/bin/git" },
 						{ id: "tmux", label: "tmux", satisfied: true, required: true, detail: "/usr/bin/tmux" },
+						{ id: "harness", label: "agent harness", satisfied: true, required: true, detail: "Claude Code" },
 						{ id: "gh", label: "gh", satisfied: true, required: false, detail: "/usr/bin/gh" },
 					],
 				},

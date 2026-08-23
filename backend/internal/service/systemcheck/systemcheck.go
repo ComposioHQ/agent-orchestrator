@@ -1,7 +1,8 @@
 // Package systemcheck reports lightweight executable prerequisites the desktop
-// app checks before showing the board: git, tmux (macOS/Linux only), and the
-// advisory GitHub CLI. It also supports a deeper, user-triggered agent-harness
-// inventory check, which is intentionally excluded from first-render startup.
+// app checks before showing the board: git, tmux (macOS/Linux only), one agent
+// executable, and the advisory GitHub CLI. It also supports a deeper,
+// user-triggered agent-harness inventory check, which is intentionally
+// excluded from first-render startup.
 package systemcheck
 
 import (
@@ -34,6 +35,7 @@ type Report struct {
 // recheck cannot be answered by the normal short-lived inventory cache.
 type HarnessCatalog interface {
 	RefreshFresh(ctx context.Context) (agentsvc.Inventory, error)
+	FindInstalledBinary(ctx context.Context) (agentsvc.Info, bool)
 }
 
 // Service runs the startup requirements gate.
@@ -70,6 +72,7 @@ func (s *Service) CheckStartup(ctx context.Context) (Report, error) {
 	return reportFor([]Requirement{
 		s.checkGit(),
 		s.checkTmux(),
+		s.checkStartupHarness(ctx),
 		s.checkGH(),
 	}), nil
 }
@@ -146,6 +149,21 @@ func (s *Service) checkHarness(ctx context.Context) Requirement {
 		labels = append(labels, info.Label)
 	}
 	return Requirement{ID: "harness", Label: label, Satisfied: true, Required: true, Detail: strings.Join(labels, ", ")}
+}
+
+// checkStartupHarness verifies only that one supported agent executable can
+// be resolved. Authentication is intentionally deferred: many agent CLIs
+// determine it by starting a process, which must not delay first render.
+func (s *Service) checkStartupHarness(ctx context.Context) Requirement {
+	const label = "agent harness"
+	info, ok := s.harnesses.FindInstalledBinary(ctx)
+	if !ok {
+		return Requirement{
+			ID: "harness", Label: label, Required: true,
+			Detail: "No agent CLI (Claude Code, Codex, etc.) was found on PATH or in a supported install location.",
+		}
+	}
+	return Requirement{ID: "harness", Label: label, Satisfied: true, Required: true, Detail: info.Label}
 }
 
 // checkGH probes for the GitHub CLI. It is advisory only (Required: false):

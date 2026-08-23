@@ -9,14 +9,22 @@ import (
 )
 
 type fakeHarnessCatalog struct {
-	inventory agentsvc.Inventory
-	err       error
-	calls     int
+	inventory   agentsvc.Inventory
+	err         error
+	calls       int
+	binary      agentsvc.Info
+	binaryOK    bool
+	binaryCalls int
 }
 
 func (f *fakeHarnessCatalog) RefreshFresh(context.Context) (agentsvc.Inventory, error) {
 	f.calls++
 	return f.inventory, f.err
+}
+
+func (f *fakeHarnessCatalog) FindInstalledBinary(context.Context) (agentsvc.Info, bool) {
+	f.binaryCalls++
+	return f.binary, f.binaryOK
 }
 
 func lookPathFound(paths map[string]string) func(string) (string, error) {
@@ -64,7 +72,11 @@ func TestCheck_AllSatisfied(t *testing.T) {
 }
 
 func TestCheckStartup_OnlyUsesExecutableLookups(t *testing.T) {
-	catalog := &fakeHarnessCatalog{err: errors.New("agent probe must not run at startup")}
+	catalog := &fakeHarnessCatalog{
+		err:      errors.New("agent auth probe must not run at startup"),
+		binary:   agentsvc.Info{ID: "claude-code", Label: "Claude Code"},
+		binaryOK: true,
+	}
 	svc := NewWithLookPath(catalog, lookPathFound(map[string]string{
 		"git":  "/usr/bin/git",
 		"tmux": "/usr/bin/tmux",
@@ -81,13 +93,34 @@ func TestCheckStartup_OnlyUsesExecutableLookups(t *testing.T) {
 	if catalog.calls != 0 {
 		t.Fatalf("RefreshFresh calls = %d, want 0", catalog.calls)
 	}
-	if len(report.Requirements) != 3 {
-		t.Fatalf("len(Requirements) = %d, want 3", len(report.Requirements))
+	if catalog.binaryCalls != 1 {
+		t.Fatalf("FindInstalledBinary calls = %d, want 1", catalog.binaryCalls)
 	}
-	for i, want := range []string{"git", "tmux", "gh"} {
+	if len(report.Requirements) != 4 {
+		t.Fatalf("len(Requirements) = %d, want 4", len(report.Requirements))
+	}
+	for i, want := range []string{"git", "tmux", "harness", "gh"} {
 		if report.Requirements[i].ID != want {
 			t.Fatalf("Requirements[%d].ID = %q, want %q", i, report.Requirements[i].ID, want)
 		}
+	}
+}
+
+func TestCheckStartup_NoAgentBinaryBlocksReady(t *testing.T) {
+	svc := NewWithLookPath(&fakeHarnessCatalog{}, lookPathFound(map[string]string{
+		"git":  "/usr/bin/git",
+		"tmux": "/usr/bin/tmux",
+	}))
+
+	report, err := svc.CheckStartup(context.Background())
+	if err != nil {
+		t.Fatalf("CheckStartup() error = %v", err)
+	}
+	if report.Ready {
+		t.Fatalf("Ready = true, want false")
+	}
+	if harness := requirementByID(t, report, "harness"); harness.Satisfied || !harness.Required {
+		t.Fatalf("harness = %+v, want required unsatisfied requirement", harness)
 	}
 }
 

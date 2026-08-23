@@ -311,6 +311,29 @@ func TestListReturnsInitialSupportedInventoryWithoutProbing(t *testing.T) {
 	}
 }
 
+func TestFindInstalledBinary_ResolvesWithoutRefreshingInventory(t *testing.T) {
+	svc := NewWithAgents([]agentregistry.HarnessAgent{
+		harnessAgent("missing", "Missing", ports.ErrAgentBinaryNotFound),
+		harnessAgent("codex", "Codex", nil),
+	})
+
+	got, ok := svc.FindInstalledBinary(context.Background())
+	if !ok {
+		t.Fatal("FindInstalledBinary() found no binary, want Codex")
+	}
+	if got.ID != "codex" || got.Label != "Codex" {
+		t.Fatalf("FindInstalledBinary() = %#v, want Codex", got)
+	}
+
+	inventory, err := svc.List(context.Background())
+	if err != nil {
+		t.Fatalf("List() error = %v", err)
+	}
+	if len(inventory.Installed) != 0 || len(inventory.Authorized) != 0 {
+		t.Fatalf("inventory = %#v, want no inventory/auth refresh", inventory)
+	}
+}
+
 func TestListLoadsPersistedInventoryWithoutProbing(t *testing.T) {
 	probed := false
 	cached := Inventory{
