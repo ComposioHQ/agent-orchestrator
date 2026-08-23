@@ -15,16 +15,10 @@ import (
 )
 
 // Store is the durable preference surface.
-type Store interface {
-	GetAppSettings(ctx context.Context) (Snapshot, error)
-	SetDefaultSessionMode(ctx context.Context, mode domain.SessionMode, now time.Time) error
-}
+type Store = ports.SettingsStore
 
 // Snapshot is the current preference set.
-type Snapshot struct {
-	DefaultSessionMode domain.SessionMode
-	UpdatedAt          time.Time
-}
+type Snapshot = ports.AppSettings
 
 // ChatCapability reports which harnesses can run in chat mode, so the UI can warn
 // that choosing chat narrows the agents available rather than letting the user

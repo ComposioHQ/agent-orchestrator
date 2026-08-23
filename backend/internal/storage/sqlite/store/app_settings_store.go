@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
+	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 	"github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite/gen"
 )
 
@@ -16,14 +17,9 @@ import (
 
 // AppSettings is the durable preference set. Field-compatible with
 // service/settings.Snapshot, which the daemon wiring adapts.
-type AppSettings struct {
-	// DefaultSessionMode is the interface a new session gets when the spawn does
-	// not name one. Never applied to an existing session: only an explicit
-	// interface transition changes a live session's committed mode, so
-	// changing this only affects sessions created afterwards.
-	DefaultSessionMode domain.SessionMode
-	UpdatedAt          time.Time
-}
+type AppSettings = ports.AppSettings
+
+var _ ports.SettingsStore = (*Store)(nil)
 
 // GetAppSettings reads the preference row.
 func (s *Store) GetAppSettings(ctx context.Context) (AppSettings, error) {
