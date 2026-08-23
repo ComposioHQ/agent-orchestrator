@@ -65,6 +65,7 @@ import {
 	OriginMessage,
 	SteerMessage,
 	TurnChangedFiles,
+	TurnDuration,
 	TurnOutcome,
 } from "./ChatTimelineItems";
 import { HumanMessageEditor } from "./HumanMessageEditor";
@@ -540,6 +541,23 @@ export function ChatWorkspace({
 
 	const brokenServers = useMemo(() => brokenMcpServers(snapshot), [snapshot]);
 	const editHumanMessage = can(snapshot, "fork") ? onEditMessage : undefined;
+	const pendingApproval = useMemo(
+		() =>
+			snapshot.items.reduce<ConversationActivity | undefined>((latest, item) => {
+				if (
+					item.kind !== "activity" ||
+					item.activityKind !== "approval" ||
+					item.status !== "pending" ||
+					(item.turnId ? item.turnId !== turn?.id : !turn)
+				) {
+					return latest;
+				}
+				if (latest?.turnId && !item.turnId) return latest;
+				if (item.turnId && !latest?.turnId) return item;
+				return !latest || item.sequence > latest.sequence ? item : latest;
+			}, undefined),
+		[snapshot.items, turn],
+	);
 	// Empty chats center the prompt; once a turn or item exists the composer docks
 	// at the bottom and stays there for the rest of the session.
 	const conversationEmpty = snapshot.items.length === 0 && !turn;
@@ -768,6 +786,16 @@ export function ChatWorkspace({
 									turn?.state === "running" && queuedMessages.length > 0 ? (
 										<QueuedMessageDock messages={queuedMessages} />
 									) : null
+								}
+								approval={
+									pendingApproval ? (
+										<ApprovalCard
+											activity={pendingApproval}
+											onDecide={onDecide}
+											busy={busy}
+											embedded
+										/>
+									) : undefined
 								}
 								onSend={(text, attachments) => onSend?.(text, attachments)}
 								onInterrupt={turn ? onInterrupt : undefined}
@@ -1841,6 +1869,11 @@ const TurnGroup = memo(function TurnGroup({
 								? () => onRollback(group.turnId as string)
 								: undefined
 						}
+						durationMs={
+							run.items[0]?.id === copyableMessageId
+								? group.outcome?.durationMs
+								: undefined
+						}
 						showStreamingIndicator={group.live && run.items[0]?.id === latestItemId}
 					/>
 				),
@@ -1864,27 +1897,34 @@ const TurnGroup = memo(function TurnGroup({
 			{group.live ? (
 				<TurnLiveStatus startedAt={group.liveStartedAt} blocked={group.blocked} />
 			) : null}
-			{/* No assistant prose to hang the undo on — still offer it before the outcome
-			    divider so a tool-only turn is not stuck without a way back. */}
-			{canRollback && !copyableMessageId ? (
-				<div className="mt-2 flex h-[18px] items-center">
-					<button
-						type="button"
-						onClick={() => onRollback(group.turnId as string)}
-						aria-label="Roll back to here"
-						title="Roll back to here"
-						className="flex items-center rounded px-1.5 py-0.5 text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground"
-					>
-						<Undo2 aria-hidden="true" className="size-3" />
-					</button>
+			{/* No assistant prose to hang the undo / duration on — still offer them
+			    before the outcome divider so a tool-only turn is not stuck without a
+			    way back or a record of how long it took. */}
+			{!copyableMessageId &&
+			(canRollback ||
+				(group.outcome?.durationMs !== undefined && group.outcome.durationMs > 0)) ? (
+				<div className="mt-2 flex h-[18px] items-center gap-0.5">
+					{canRollback ? (
+						<button
+							type="button"
+							onClick={() => onRollback(group.turnId as string)}
+							aria-label="Roll back to here"
+							title="Roll back to here"
+							className="flex items-center rounded px-1.5 py-0.5 text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground"
+						>
+							<Undo2 aria-hidden="true" className="size-3" />
+						</button>
+					) : null}
+					{group.outcome?.durationMs !== undefined && group.outcome.durationMs > 0 ? (
+						<TurnDuration durationMs={group.outcome.durationMs} />
+					) : null}
 				</div>
 			) : null}
-			{group.outcome ? (
-				<TurnOutcome
-					state={group.outcome.state}
-					durationMs={group.outcome.durationMs}
-					error={group.outcome.error}
-				/>
+			{/* Completed turns need no divider — duration lives on the action row.
+			    Interrupted/failed still get a labelled boundary so the reader can see
+			    how the turn ended. */}
+			{group.outcome && group.outcome.state !== "completed" ? (
+				<TurnOutcome state={group.outcome.state} error={group.outcome.error} />
 			) : null}
 		</div>
 	);
@@ -1899,27 +1939,26 @@ function TurnLiveStatus({ startedAt, blocked }: { startedAt?: string; blocked?: 
 		return () => clearInterval(timer);
 	}, [blocked, startedAt]);
 
+	if (blocked) {
+		return (
+			<span role="alert" className="sr-only">
+				The agent is waiting for your decision.
+			</span>
+		);
+	}
+
 	return (
 		<div className="flex min-h-6 items-center gap-2 px-1 py-0.5" data-testid="live-turn-status">
-			{blocked ? (
-				<span role="alert" className="sr-only">
-					The agent is waiting for your decision.
-				</span>
-			) : null}
-			{blocked ? (
-				<TriangleAlert aria-hidden="true" className="size-3.5 shrink-0 text-warning" />
-			) : (
-				<Loader2
-					aria-hidden="true"
-					className="size-3 shrink-0 animate-spin text-status-working opacity-100"
-				/>
-			)}
+			<Loader2
+				aria-hidden="true"
+				className="size-3 shrink-0 animate-spin text-status-working opacity-100"
+			/>
 			<span
-				role={blocked ? undefined : "status"}
-				aria-live={blocked ? undefined : "polite"}
-				className={cn("text-xs font-medium", blocked ? "text-warning" : "text-muted-foreground")}
+				role="status"
+				aria-live="polite"
+				className="text-xs font-medium text-muted-foreground"
 			>
-				{blocked ? "Waiting for your decision" : `Working for ${elapsed}`}
+				Working for {elapsed}
 			</span>
 		</div>
 	);
@@ -1960,6 +1999,7 @@ function TimelineItem({
 	queued,
 	showCopy,
 	onRollback,
+	durationMs,
 	showStreamingIndicator,
 }: {
 	item: ConversationItem;
@@ -1991,6 +2031,8 @@ function TimelineItem({
 	showCopy?: boolean;
 	/** Undo this finished turn from the answer that owns its copy action. */
 	onRollback?: () => void;
+	/** Finished-turn duration; shown next to rollback on the final answer. */
+	durationMs?: number;
 	/** This message is the live edge of its turn, rather than an earlier fragment
 	 * followed by tool activity. */
 	showStreamingIndicator?: boolean;
@@ -2002,6 +2044,7 @@ function TimelineItem({
 					message={item}
 					showCopy={showCopy}
 					onRollback={onRollback}
+					durationMs={durationMs}
 					showStreamingIndicator={showStreamingIndicator}
 				/>
 			);
@@ -2038,6 +2081,9 @@ function TimelineItem({
 		return <OriginMessage message={item} />;
 	}
 	if (item.activityKind === "approval") {
+		// Pending approval owns the composer. Keeping it in the grouping model still
+		// marks the live turn as blocked, while omitting the timeline card itself.
+		if (item.status === "pending") return null;
 		return <ApprovalCard activity={item} onDecide={onDecide} busy={busy} />;
 	}
 	if (item.activityKind === "user_input") {

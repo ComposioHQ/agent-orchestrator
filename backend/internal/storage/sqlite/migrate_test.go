@@ -38,6 +38,65 @@ var expectedUsageTableColumns = map[string][]string{
 	},
 }
 
+func TestMigrateDefaultsSessionInterfaceToChat(t *testing.T) {
+	db := openMigratedTestDB(t)
+
+	var mode string
+	if err := db.QueryRow(`SELECT default_session_mode FROM app_settings WHERE id = 1`).Scan(&mode); err != nil {
+		t.Fatalf("read default session mode: %v", err)
+	}
+	if mode != "chat" {
+		t.Fatalf("default session mode = %q, want chat", mode)
+	}
+}
+
+func TestMigrateUpdatesExistingSessionInterfaceDefaultToChat(t *testing.T) {
+	db, err := sql.Open("sqlite", "file:"+filepath.Join(t.TempDir(), "ao.db")+pragmas)
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	upTo(t, db, 103)
+
+	if _, err := db.Exec(`UPDATE app_settings SET default_session_mode = 'tui' WHERE id = 1`); err != nil {
+		t.Fatalf("seed existing TUI default: %v", err)
+	}
+	if err := migrate(db); err != nil {
+		t.Fatalf("migrate existing database: %v", err)
+	}
+
+	var mode string
+	if err := db.QueryRow(`SELECT default_session_mode FROM app_settings WHERE id = 1`).Scan(&mode); err != nil {
+		t.Fatalf("read default session mode: %v", err)
+	}
+	if mode != "chat" {
+		t.Fatalf("default session mode = %q, want chat after upgrade", mode)
+	}
+}
+
+func TestMigrateRollbackPreservesSessionInterfacePreference(t *testing.T) {
+	db, err := sql.Open("sqlite", "file:"+filepath.Join(t.TempDir(), "ao.db")+pragmas)
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	upTo(t, db, 103)
+
+	if _, err := db.Exec(`UPDATE app_settings SET default_session_mode = 'chat' WHERE id = 1`); err != nil {
+		t.Fatalf("seed deliberate Chat default: %v", err)
+	}
+	upTo(t, db, 105)
+	downTo(t, db, 104)
+
+	var mode string
+	if err := db.QueryRow(`SELECT default_session_mode FROM app_settings WHERE id = 1`).Scan(&mode); err != nil {
+		t.Fatalf("read default session mode: %v", err)
+	}
+	if mode != "chat" {
+		t.Fatalf("default session mode after rollback = %q, want preserved chat", mode)
+	}
+}
+
 func TestUsageTablesKeepOnlyDurableCollectionState(t *testing.T) {
 	db := openMigratedTestDB(t)
 	for table, wantColumns := range expectedUsageTableColumns {

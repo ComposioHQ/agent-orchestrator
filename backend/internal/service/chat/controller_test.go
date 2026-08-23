@@ -1674,9 +1674,9 @@ func TestApprovalIsStoredPendingWithProviderDecisions(t *testing.T) {
 		ActivityStatus: domain.ActivityStatusPending,
 		Summary:        "Run ao spawn",
 		Decisions: []ports.ChatDecisionOption{
-			{ID: "accept", Label: "Approve"},
-			{ID: "acceptWithExecpolicyAmendment", Label: "Approve and remember this command"},
-			{ID: "cancel", Label: "Cancel"},
+			{ID: "accept", Label: "Approve", Kind: ports.ChatDecisionAllowOnce},
+			{ID: "acceptWithExecpolicyAmendment", Label: "Approve and remember this command", Kind: ports.ChatDecisionAllowAlways},
+			{ID: "cancel", Label: "Cancel", Kind: ports.ChatDecisionRejectOnce},
 		},
 	})
 
@@ -1695,13 +1695,18 @@ func TestApprovalIsStoredPendingWithProviderDecisions(t *testing.T) {
 	}
 
 	var detail struct {
-		Decisions []struct{ ID, Label string } `json:"decisions"`
+		Decisions []struct{ ID, Label, Kind string } `json:"decisions"`
 	}
 	if err := json.Unmarshal(approval.Detail, &detail); err != nil {
 		t.Fatalf("detail not decodable: %v (%s)", err, approval.Detail)
 	}
 	if len(detail.Decisions) != 3 {
 		t.Fatalf("stored %d decisions, want the provider's 3: %+v", len(detail.Decisions), detail.Decisions)
+	}
+	if detail.Decisions[0].Kind != string(ports.ChatDecisionAllowOnce) ||
+		detail.Decisions[1].Kind != string(ports.ChatDecisionAllowAlways) ||
+		detail.Decisions[2].Kind != string(ports.ChatDecisionRejectOnce) {
+		t.Fatalf("stored decision kinds = %+v", detail.Decisions)
 	}
 	for _, d := range detail.Decisions {
 		if d.ID == "decline" {
@@ -1721,6 +1726,22 @@ func TestApprovalIsStoredPendingWithProviderDecisions(t *testing.T) {
 	})
 	if resolved.Activities[0].Status != domain.ActivityStatusResolved {
 		t.Fatalf("status = %q, want resolved", resolved.Activities[0].Status)
+	}
+	var resolvedDetail struct {
+		Decision  string `json:"decision"`
+		Decisions []struct {
+			ID   string `json:"id"`
+			Kind string `json:"kind"`
+		} `json:"decisions"`
+	}
+	if err := json.Unmarshal(resolved.Activities[0].Detail, &resolvedDetail); err != nil {
+		t.Fatalf("resolved detail not decodable: %v (%s)", err, resolved.Activities[0].Detail)
+	}
+	if resolvedDetail.Decision != "accept" {
+		t.Fatalf("resolved decision = %q, want accept", resolvedDetail.Decision)
+	}
+	if len(resolvedDetail.Decisions) != 3 {
+		t.Fatalf("resolved decision options = %d, want preserved 3", len(resolvedDetail.Decisions))
 	}
 }
 
