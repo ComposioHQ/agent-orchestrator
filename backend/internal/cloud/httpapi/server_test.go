@@ -311,6 +311,14 @@ func TestReadinessFailsClosedWhenPostgresIsUnavailable(t *testing.T) {
 
 func newTestServer(t *testing.T, store AccountStore, verifier IdentityVerifier) *Server {
 	t.Helper()
+	return newTestServerWithApp(t, store, verifier, nil)
+}
+
+// newTestServerWithApp builds a control plane with the shared application API
+// mounted alongside the auth foundation. A nil app leaves the foundation-only
+// surface the auth tests exercise.
+func newTestServerWithApp(t *testing.T, store AccountStore, verifier IdentityVerifier, app http.Handler) *Server {
+	t.Helper()
 	tokens, err := auth.NewAccessTokenManager(
 		[]byte("0123456789abcdef0123456789abcdef"),
 		"ao-cloud-test",
@@ -326,6 +334,7 @@ func newTestServer(t *testing.T, store AccountStore, verifier IdentityVerifier) 
 		AccessTokens:    tokens,
 		RefreshTokenTTL: time.Hour,
 		AllowedEmails:   []string{"person@example.com"},
+		App:             app,
 	})
 	if err != nil {
 		t.Fatal(err)
