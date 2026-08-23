@@ -18,9 +18,9 @@
 
 CREATE TABLE ao_projects (
     org_id UUID NOT NULL REFERENCES ao_organizations(id) ON DELETE CASCADE,
-    id TEXT NOT NULL CHECK (btrim(id) <> ''),
+    id TEXT COLLATE "C" NOT NULL CHECK (btrim(id) <> ''),
     owner_user_id UUID NOT NULL REFERENCES ao_users(id) ON DELETE CASCADE,
-    path TEXT NOT NULL CHECK (btrim(path) <> ''),
+    path TEXT COLLATE "C" NOT NULL CHECK (btrim(path) <> ''),
     repo_origin_url TEXT NOT NULL DEFAULT '',
     display_name TEXT NOT NULL DEFAULT '',
     kind TEXT NOT NULL DEFAULT 'single_repo'
@@ -47,8 +47,8 @@ CREATE INDEX ao_projects_active_idx
 CREATE TABLE ao_workspace_repos (
     org_id UUID NOT NULL,
     owner_user_id UUID NOT NULL REFERENCES ao_users(id) ON DELETE CASCADE,
-    project_id TEXT NOT NULL,
-    name TEXT NOT NULL CHECK (btrim(name) <> ''),
+    project_id TEXT COLLATE "C" NOT NULL,
+    name TEXT COLLATE "C" NOT NULL CHECK (btrim(name) <> ''),
     relative_path TEXT NOT NULL DEFAULT '',
     repo_origin_url TEXT NOT NULL DEFAULT '',
     default_branch TEXT NOT NULL DEFAULT '',
@@ -66,8 +66,8 @@ CREATE TABLE ao_workspace_repos (
 -- so there is deliberately no status column to write.
 CREATE TABLE ao_sessions (
     org_id UUID NOT NULL,
-    id TEXT NOT NULL CHECK (btrim(id) <> ''),
-    project_id TEXT NOT NULL,
+    id TEXT COLLATE "C" NOT NULL CHECK (btrim(id) <> ''),
+    project_id TEXT COLLATE "C" NOT NULL,
     owner_user_id UUID NOT NULL REFERENCES ao_users(id) ON DELETE CASCADE,
     -- The per-project counter behind the "{project}-{num}" identity.
     num BIGINT NOT NULL CHECK (num > 0),
@@ -137,8 +137,8 @@ CREATE INDEX ao_sessions_org_project_num_idx
 CREATE TABLE ao_session_worktrees (
     org_id UUID NOT NULL,
     owner_user_id UUID NOT NULL REFERENCES ao_users(id) ON DELETE CASCADE,
-    session_id TEXT NOT NULL,
-    repo_name TEXT NOT NULL CHECK (btrim(repo_name) <> ''),
+    session_id TEXT COLLATE "C" NOT NULL,
+    repo_name TEXT COLLATE "C" NOT NULL CHECK (btrim(repo_name) <> ''),
     branch TEXT NOT NULL DEFAULT '',
     base_sha TEXT NOT NULL DEFAULT '',
     base_ref TEXT NOT NULL DEFAULT '',
