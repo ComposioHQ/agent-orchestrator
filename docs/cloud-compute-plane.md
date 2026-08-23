@@ -237,8 +237,9 @@ listener, err := sandboxapi.New(sandboxapi.Options{
 ### Store adapters
 
 `runtimetest.MemoryStore` and `capability.MemoryStore` are the reference
-implementations and the executable definition of the semantics a PostgreSQL
-adapter must reproduce:
+implementations. A PostgreSQL adapter proves it matches by passing the same
+conformance suites they do — `runtimetest.RunStoreConformance` and
+`capabilitytest.RunStoreConformance` — rather than being reviewed by eye:
 
 - `Ensure` never resurrects a row in `deleting`; it returns `created=false`.
 - `Save` is generation-checked and returns `ErrConflict` on a stale generation.

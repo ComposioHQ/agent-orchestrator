@@ -634,3 +634,56 @@ func TestNewManagerRejectsIncompleteWiring(t *testing.T) {
 		}
 	}
 }
+
+func TestResumingAnIdleStoppedSessionSticks(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	if _, err := h.manager.Ensure(ctx, workerRef()); err != nil {
+		t.Fatal(err)
+	}
+	// The reaper stopped it for idleness, which records a desired stop.
+	if _, err := h.manager.Stop(ctx, workerRef()); err != nil {
+		t.Fatal(err)
+	}
+	placement, err := h.manager.Ensure(ctx, workerRef())
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Booting is the intent to run: leaving the desired state at stopped would
+	// have the next reconciliation pass immediately stop the resumed session.
+	if placement.Record.DesiredState != runtime.StateRunning {
+		t.Fatalf("desired state = %s, want running", placement.Record.DesiredState)
+	}
+}
+
+func TestARetriedCreateDoesNotLeakASecondSandbox(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	// Model a create whose response was lost: the sandbox exists at the
+	// provider, but the manager saw a failure and left the row without a
+	// provider id. The retry must land on the same sandbox.
+	record, created, err := h.store.Ensure(ctx, workerRef(), h.now)
+	if err != nil || !created {
+		t.Fatalf("staging the row failed: %v", err)
+	}
+	first, err := h.provider.Create(ctx, runtime.CreateRequest{
+		Ref:            workerRef(),
+		Labels:         runtime.Labels("staging", workerRef(), record.ID),
+		Snapshot:       "ao-worker",
+		IdempotencyKey: record.ID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	placement, err := h.manager.Ensure(ctx, workerRef())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if placement.Record.ProviderID != first.ID {
+		t.Fatalf("retry created %s, want the original %s", placement.Record.ProviderID, first.ID)
+	}
+	if h.provider.Len() != 1 {
+		t.Fatalf("sandboxes = %d, want the retry to collapse onto one", h.provider.Len())
+	}
+}

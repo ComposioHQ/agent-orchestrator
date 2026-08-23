@@ -278,6 +278,10 @@ func (m *Manager) provision(ctx context.Context, record Record, now time.Time) (
 // held, and the local pattern (relaunching a worker rotates its browser
 // capability) is the same rule.
 func (m *Manager) boot(ctx context.Context, record Record, now time.Time) (Placement, error) {
+	// Booting IS the intent to run. Without this, a session resumed after the
+	// reaper stopped it for idleness would keep DesiredState stopped, and the
+	// next reconciliation pass would immediately stop it again.
+	record.DesiredState = StateRunning
 	if err := m.revokeCapabilities(ctx, record.Ref()); err != nil {
 		return Placement{}, err
 	}
