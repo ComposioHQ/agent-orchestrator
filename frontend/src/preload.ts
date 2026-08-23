@@ -25,6 +25,11 @@ import type { TelemetryBootstrap } from "./shared/telemetry";
 import type { MigrationState } from "./main/app-state";
 import type { UpdateSettings, UpdateStatus } from "./main/update-settings";
 import type { CloudAccount, CloudAvailability } from "./shared/cloud-account";
+import type {
+	CloudOrganizationProjectSnapshot,
+	CreateCloudProjectInput,
+	CreateCloudProjectResult,
+} from "./shared/cloud-projects";
 import type { UpdateOutcome } from "./shared/update-telemetry";
 import type { UiSettings } from "./main/ui-settings";
 import type { UpdateCheckOptions } from "./main/auto-updater";
@@ -412,6 +417,10 @@ const api = {
 	cloud: {
 		getAvailability: () => ipcRenderer.invoke("cloud:getAvailability") as Promise<CloudAvailability>,
 		getSession: () => ipcRenderer.invoke("cloud:getSession") as Promise<CloudAccount | null>,
+		listProjects: () =>
+			ipcRenderer.invoke("cloud:listProjects") as Promise<CloudOrganizationProjectSnapshot[]>,
+		createProject: (input: CreateCloudProjectInput) =>
+			ipcRenderer.invoke("cloud:createProject", input) as Promise<CreateCloudProjectResult>,
 		signIn: () => ipcRenderer.invoke("cloud:signIn") as Promise<CloudAccount | null>,
 		signOut: () => ipcRenderer.invoke("cloud:signOut") as Promise<void>,
 		onSessionChanged: (listener: (account: CloudAccount | null) => void) => {

@@ -18,6 +18,9 @@ export type ShellContextValue = {
 	cloneProject: (input: {
 		remoteUrl: string;
 		destinationParent: string;
+		location?: "local" | "cloud";
+		organizationId?: string;
+		defaultBranch?: string;
 		workerAgent: string;
 		orchestratorAgent: string;
 		trackerIntake?: components["schemas"]["TrackerIntakeConfig"];

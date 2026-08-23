@@ -60,6 +60,8 @@ export type AgentSwitchSummary = {
 
 export type WorkspaceSession = {
 	id: string;
+	location?: "local" | "cloud";
+	organizationId?: string;
 	terminalHandleId?: string;
 	workspaceId: string;
 	workspaceName: string;
@@ -265,6 +267,8 @@ export type { AttentionZone } from "../lib/session-presentation";
 
 export type WorkspaceSummary = {
 	id: string;
+	location?: "local" | "cloud";
+	organizationId?: string;
 	name: string;
 	kind?: ProjectKind;
 	path: string;

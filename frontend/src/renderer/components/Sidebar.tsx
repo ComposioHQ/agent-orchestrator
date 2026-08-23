@@ -1383,6 +1383,7 @@ function CreateProjectButton({
 	onInitializeProject,
 }: Pick<SidebarProps, "onCloneProject" | "onCreateProject" | "onInitializeProject"> & { hideTrigger?: boolean }) {
 	const { t } = useTranslation();
+	const cloud = useCloudSession();
 	// Single CreateProjectFlow owner for the sidebar: the header "+" stays mounted
 	// (CSS-hidden when collapsed or on the empty start page) so it can own
 	// openSignal for ⌘N on every shell route. The collapsed rail button below
@@ -1391,6 +1392,7 @@ function CreateProjectButton({
 	const folderDropRequest = useUiStore((state) => state.folderDropRequest);
 	return (
 		<CreateProjectFlow
+			cloudOrganizations={cloud.enabled && cloud.status === "authenticated" ? (cloud.session?.organizations ?? []) : []}
 			droppedPath={folderDropRequest}
 			mode="choose"
 			onCloneProject={onCloneProject}

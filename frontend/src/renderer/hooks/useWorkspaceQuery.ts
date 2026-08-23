@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import type { components } from "../../api/schema";
 import { apiClient, hasTrustedApiBaseUrl } from "../lib/api-client";
+import { aoBridge } from "../lib/bridge";
 import { mockWorkspaces } from "../lib/mock-data";
 import { usesPreviewWorkspaceData } from "../lib/preview-mode";
 import { toReviewerHarnessId } from "../lib/reviewer-harnesses";
@@ -77,7 +78,7 @@ async function fetchWorkspaces(): Promise<WorkspaceSummary[]> {
 
 	if (projectsError || sessionsError) throw projectsError ?? sessionsError;
 
-	return (projectsData?.projects ?? []).map((project) => {
+	const local: WorkspaceSummary[] = (projectsData?.projects ?? []).map((project) => {
 		const kind = toProjectKind(project.kind);
 		return {
 			id: project.id,
@@ -132,6 +133,50 @@ async function fetchWorkspaces(): Promise<WorkspaceSummary[]> {
 				}),
 		};
 	});
+
+	const cloudSnapshots = await aoBridge.cloud.listProjects().catch(() => []);
+	const cloud: WorkspaceSummary[] = cloudSnapshots.flatMap((snapshot) =>
+		snapshot.projects.map((project) => ({
+			id: project.id,
+			name: project.name,
+			kind: toProjectKind(project.kind),
+			path: project.path,
+			location: "cloud" as const,
+			organizationId: snapshot.organizationId,
+			orchestratorAgent: project.orchestratorAgent ? toAgentProvider(project.orchestratorAgent) : undefined,
+			sessions: snapshot.sessions
+				.filter((session) => session.projectId === project.id)
+				.map((session) => ({
+					id: session.id,
+					terminalHandleId: session.terminalHandleId,
+					location: "cloud" as const,
+					organizationId: snapshot.organizationId,
+					workspaceId: project.id,
+					workspaceName: project.name,
+					title: session.displayName ?? session.issueId ?? session.id,
+					issueId: session.issueId,
+					provider: toAgentProvider(session.harness),
+					reviewerHarness: toReviewerHarnessId(session.reviewerHarness),
+					autoReviewEnabled: session.autoReviewEnabled ?? false,
+					kind: session.kind === "orchestrator" ? "orchestrator" as const : session.kind === "worker" ? "worker" as const : undefined,
+					mode: session.mode === "chat" ? "chat" as const : "tui" as const,
+					branch: session.branch || undefined,
+					status: toSessionStatus(session.status, session.isTerminated),
+					scmStatus: session.scmStatus ? toSessionStatus(session.scmStatus) : undefined,
+					isTerminated: session.isTerminated,
+					terminateOnPrMerge: session.terminateOnPrMerge ?? false,
+					autoInjectReview: session.autoInjectReview ?? true,
+					autoInjectCI: session.autoInjectCI ?? true,
+					createdAt: session.createdAt,
+					updatedAt: session.updatedAt,
+					activity: toSessionActivity(session.activity),
+					isPinned: session.isPinned ?? false,
+					pinnedAt: session.pinnedAt ?? undefined,
+					prs: (session.prs ?? []).map(toPullRequestFacts),
+				})),
+		})),
+	);
+	return [...local, ...cloud];
 }
 
 // Shared so route loaders can prefetch via queryClient.ensureQueryData (paired
