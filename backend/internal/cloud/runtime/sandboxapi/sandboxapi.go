@@ -152,7 +152,7 @@ func (s *Server) heartbeat(writer http.ResponseWriter, request *http.Request) {
 	}
 	record, err := s.compute.Heartbeat(request.Context(), refFor(verified.Scope), s.now().UTC())
 	if err != nil {
-		s.writeComputeError(writer, request, err)
+		s.writeFailure(writer, request, err)
 		return
 	}
 	s.writeJSON(writer, http.StatusOK, heartbeatResponse{
@@ -186,7 +186,7 @@ func (s *Server) reportState(writer http.ResponseWriter, request *http.Request) 
 		body.Error,
 	)
 	if err != nil {
-		s.writeComputeError(writer, request, err)
+		s.writeFailure(writer, request, err)
 		return
 	}
 	s.writeJSON(writer, http.StatusOK, heartbeatResponse{
@@ -212,43 +212,39 @@ func (s *Server) rotate(writer http.ResponseWriter, request *http.Request) {
 	}
 	grant, err := s.rotator.Rotate(request.Context(), token)
 	if err != nil {
-		s.writeCapabilityError(writer, request, err)
+		s.writeFailure(writer, request, err)
 		return
 	}
 	s.writeJSON(writer, http.StatusOK, rotateResponse{Capability: grant.Token, ExpiresAt: grant.ExpiresAt})
 }
 
-// writeComputeError maps the compute plane's error contract onto statuses.
-// Nothing here echoes the caller's input back, and an unmapped error is
-// reported as an internal failure rather than as a tenant mistake.
-func (s *Server) writeComputeError(writer http.ResponseWriter, request *http.Request, err error) {
-	switch {
-	case errors.Is(err, runtime.ErrNotFound):
-		s.writeError(writer, request, http.StatusNotFound, "sandbox_not_found", "no sandbox is registered for this capability")
-	case errors.Is(err, runtime.ErrDeleting):
-		s.writeError(writer, request, http.StatusConflict, "sandbox_deleting", "this sandbox is being deleted")
-	case errors.Is(err, runtime.ErrInvalid):
-		s.writeError(writer, request, http.StatusBadRequest, "invalid_request", "the request is not valid for this sandbox")
-	case errors.Is(err, runtime.ErrConflict):
-		s.writeError(writer, request, http.StatusConflict, "sandbox_conflict", "the sandbox record changed concurrently")
-	default:
-		s.logger.Error("sandbox listener request failed", "error", err, "request_id", middleware.GetReqID(request.Context()))
-		s.writeError(writer, request, http.StatusInternalServerError, "internal_error", "the request could not be completed")
-	}
-}
-
-func (s *Server) writeCapabilityError(writer http.ResponseWriter, request *http.Request, err error) {
+// writeFailure maps both error families the listener can produce — the
+// compute plane's contract and the capability authority's — onto statuses in
+// one place. Credential outcomes are checked first so a rotation refused for
+// scope reasons is a 403 rather than being swallowed by a later branch.
+//
+// No branch echoes the caller's input back, and an unmapped error is an
+// internal failure rather than a tenant mistake.
+func (s *Server) writeFailure(writer http.ResponseWriter, request *http.Request, err error) {
 	switch {
 	case errors.Is(err, capability.ErrNotPermitted):
-		s.writeError(writer, request, http.StatusForbidden, "capability_forbidden", "this capability may not be rotated")
+		s.writeError(writer, request, http.StatusForbidden, "capability_forbidden", "this capability does not permit the request")
 	case errors.Is(err, capability.ErrExpired):
 		s.writeError(writer, request, http.StatusUnauthorized, "capability_expired", "the capability has expired")
 	case errors.Is(err, capability.ErrRevoked):
 		s.writeError(writer, request, http.StatusUnauthorized, "capability_revoked", "the capability was revoked")
 	case errors.Is(err, capability.ErrInvalidToken):
 		s.writeError(writer, request, http.StatusUnauthorized, "capability_invalid", "the capability is not valid")
+	case errors.Is(err, runtime.ErrNotFound):
+		s.writeError(writer, request, http.StatusNotFound, "sandbox_not_found", "no sandbox is registered for this capability")
+	case errors.Is(err, runtime.ErrDeleting):
+		s.writeError(writer, request, http.StatusConflict, "sandbox_deleting", "this sandbox is being deleted")
+	case errors.Is(err, runtime.ErrConflict):
+		s.writeError(writer, request, http.StatusConflict, "sandbox_conflict", "the sandbox record changed concurrently")
+	case errors.Is(err, runtime.ErrInvalid):
+		s.writeError(writer, request, http.StatusBadRequest, "invalid_request", "the request is not valid for this sandbox")
 	default:
-		s.logger.Error("capability rotation failed", "error", err, "request_id", middleware.GetReqID(request.Context()))
+		s.logger.Error("sandbox listener request failed", "error", err, "request_id", middleware.GetReqID(request.Context()))
 		s.writeError(writer, request, http.StatusInternalServerError, "internal_error", "the request could not be completed")
 	}
 }

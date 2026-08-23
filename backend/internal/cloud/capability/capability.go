@@ -179,13 +179,14 @@ func (s Scope) Allows(op Operation) bool {
 // digest binds to. Fields are length-prefixed so no combination of ids can be
 // rearranged into the same byte string.
 func (s Scope) fingerprint() string {
-	parts := []string{s.OrgID, s.WorkspaceID, s.SessionID, s.Role}
+	parts := make([]string, 0, 4+len(s.Operations))
+	parts = append(parts, s.OrgID, s.WorkspaceID, s.SessionID, s.Role)
 	for _, op := range s.Operations {
 		parts = append(parts, string(op))
 	}
 	var builder strings.Builder
 	for _, part := range parts {
-		fmt.Fprintf(&builder, "%d:%s\x00", len(part), part)
+		_, _ = fmt.Fprintf(&builder, "%d:%s\x00", len(part), part)
 	}
 	return builder.String()
 }
@@ -262,7 +263,7 @@ func (s Selector) Validate() error {
 func digest(parts ...string) string {
 	h := sha256.New()
 	for _, part := range parts {
-		fmt.Fprintf(h, "%d:", len(part))
+		_, _ = fmt.Fprintf(h, "%d:", len(part))
 		_, _ = h.Write([]byte(part))
 		_, _ = h.Write([]byte{0})
 	}

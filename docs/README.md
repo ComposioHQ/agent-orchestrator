@@ -15,6 +15,7 @@ Start with [architecture.md](architecture.md) for the current backend model and
 | [architecture.md](architecture.md)                     | Current backend model, package layout, status derivation, persistence/CDC, and load-bearing rules.                    |
 | [backend-code-structure.md](backend-code-structure.md) | Package ownership rules for the Go backend: domain, services, ports, adapters, storage, HTTP, CLI, and daemon wiring. |
 | [cli/README.md](cli/README.md)                         | CLI commands and daemon control surface.                                                                              |
+| [cloud-compute-plane.md](cloud-compute-plane.md)       | Sandbox isolation, scoped capabilities, lifecycle ordering, quotas, reconciliation, and the published sandbox listener.                |
 | [cloud-control-plane.md](cloud-control-plane.md)       | Runnable PostgreSQL and Google/AO authentication foundation, security boundaries, and deferred scope.                 |
 | [cloud-development.md](cloud-development.md)           | Integrated Cloud development workflow and staged implementation order.                                                |
 | [cloud-refactor.md](cloud-refactor.md)                 | Shared contracts, generated Cloud schema types, typed client, reusable product UI, and implementation boundaries.     |
