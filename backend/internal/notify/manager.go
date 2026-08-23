@@ -14,22 +14,7 @@ import (
 )
 
 // Store is the write-side notification persistence boundary.
-type Store interface {
-	CreateNotification(ctx context.Context, rec domain.NotificationRecord) (domain.NotificationRecord, bool, error)
-	ResolveSessionNotifications(
-		ctx context.Context,
-		id domain.SessionID,
-		typ domain.NotificationType,
-		at time.Time,
-	) ([]domain.NotificationRecord, error)
-	ResolvePRNotifications(
-		ctx context.Context,
-		prURL string,
-		typ domain.NotificationType,
-		at time.Time,
-	) ([]domain.NotificationRecord, error)
-	ReconcileResolvedNotifications(ctx context.Context, at time.Time) ([]domain.NotificationRecord, error)
-}
+type Store = ports.NotificationWriter
 
 // Publisher pushes notification events to live dashboard subscribers.
 type Publisher interface {
