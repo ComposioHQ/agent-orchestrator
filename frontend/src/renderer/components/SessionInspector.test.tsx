@@ -2114,13 +2114,23 @@ describe("SessionInspector summary reviews", () => {
       expect(postMock).toHaveBeenCalledWith("/api/v1/sessions/{sessionId}/send", {
         params: { path: { sessionId: "sess-1" } },
         body: {
-          message: expect.stringContaining("Review summary:\nPlease tighten validation and add a regression test."),
+          message: expect.stringContaining(
+            "## Review feedback\n\n**Source:** AO agent review · codex",
+          ),
         },
       }),
     );
     expect(postMock).toHaveBeenCalledWith("/api/v1/sessions/{sessionId}/send", {
       params: { path: { sessionId: "sess-1" } },
-      body: { message: expect.stringContaining(`Review URL: ${reviewUrl}`) },
+      body: {
+        message: expect.stringContaining(
+          "### Feedback\n\nPlease tighten validation and add a regression test.",
+        ),
+      },
+    });
+    expect(postMock).toHaveBeenCalledWith("/api/v1/sessions/{sessionId}/send", {
+      params: { path: { sessionId: "sess-1" } },
+      body: { message: expect.stringContaining(`[Open review](${reviewUrl})`) },
     });
     expect(onWorkerMessageSent).toHaveBeenCalledTimes(1);
     expect(screen.getByText("Sent to worker agent")).toBeInTheDocument();
@@ -2232,9 +2242,18 @@ describe("SessionInspector summary reviews", () => {
 
     await userEvent.click(screen.getAllByRole("button", { name: "Comment actions" })[0]!);
     await userEvent.click(screen.getByRole("button", { name: "Send to worker agent" }));
-    expect(postMock).toHaveBeenCalledWith("/api/v1/sessions/{sessionId}/send", expect.objectContaining({
+    expect(postMock).toHaveBeenCalledWith("/api/v1/sessions/{sessionId}/send", {
       params: { path: { sessionId: "sess-1" } },
-    }));
+      body: {
+        message: expect.stringContaining(
+          "## Inline review comment\n\n**Reviewer:** @codebanditssss  \n**Location:** `src/current.ts:11`",
+        ),
+      },
+    });
+    expect(postMock).toHaveBeenCalledWith("/api/v1/sessions/{sessionId}/send", {
+      params: { path: { sessionId: "sess-1" } },
+      body: { message: expect.stringContaining("### Comment\n\nCurrent-pass comment.") },
+    });
     expect(onWorkerMessageSent).toHaveBeenCalledTimes(1);
     await userEvent.click(screen.getAllByRole("button", { name: "Comment actions" })[0]!);
     await userEvent.click(screen.getByRole("button", { name: "View in file" }));
@@ -2689,7 +2708,7 @@ describe("SessionInspector summary reviews", () => {
         {
           params: { path: { sessionId: "sess-1" } },
           body: {
-            message: expect.stringContaining("Location: a.ts:9"),
+            message: expect.stringContaining("**Location:** `a.ts:9`"),
           },
         },
       ),
@@ -2698,14 +2717,14 @@ describe("SessionInspector summary reviews", () => {
       params: { path: { sessionId: "sess-1" } },
       body: {
         message: expect.stringContaining(
-          "commit the fix, and push the branch to GitHub",
+          "commit the fix, and push the branch",
         ),
       },
     });
     expect(postMock).toHaveBeenCalledWith("/api/v1/sessions/{sessionId}/send", {
       params: { path: { sessionId: "sess-1" } },
       body: {
-        message: expect.stringContaining("Reviewer: @maya"),
+        message: expect.stringContaining("**Reviewer:** @maya"),
       },
     });
     expect(

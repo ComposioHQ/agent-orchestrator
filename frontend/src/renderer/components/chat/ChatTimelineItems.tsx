@@ -94,6 +94,7 @@ const timeFormatter = new Intl.DateTimeFormat(undefined, {
 
 const ORIGIN_REPORT_COLLAPSE_AT = 600;
 const ORIGIN_REPORT_PREVIEW_LENGTH = 240;
+const ORIGIN_TITLE = /^#{1,3}[ \t]+([^\n]+)\n+(.*)$/s;
 
 // These are AO-owned prompt suffixes, not general markdown. Chat and spawn used
 // slightly different wording, and older conversations used "Attached images";
@@ -289,23 +290,29 @@ export function HumanMessage({
  * durable origin field, never from a prefix parsed out of the text.
  */
 export function OriginMessage({ message }: { message: ConversationMessage }) {
-	const longReport = message.text.length > ORIGIN_REPORT_COLLAPSE_AT;
+	const titleMatch = ORIGIN_TITLE.exec(message.text.trimStart());
+	const title = titleMatch?.[1]?.trim() || message.senderLabel || message.origin;
+	const body = titleMatch?.[2]?.trimStart() || message.text;
+	const longReport = body.length > ORIGIN_REPORT_COLLAPSE_AT;
+	const reportNoun = title.toLowerCase().includes("review") ? "review" : "report";
 	const [expanded, setExpanded] = useState(false);
 	const preview = longReport
-		? `${message.text.slice(0, ORIGIN_REPORT_PREVIEW_LENGTH).trimEnd()}…`
-		: message.text;
+		? `${body.slice(0, ORIGIN_REPORT_PREVIEW_LENGTH).trimEnd()}…`
+		: body;
 
 	return (
 		<div className="cursor-chat-origin-message rounded-md border border-border border-l-2 border-l-logo-accent/60 px-3.5 py-2.5">
 			<div className="mb-1.5 flex items-center gap-2 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
 				<CircleAlert aria-hidden="true" className="size-3.5 shrink-0 text-logo-accent" />
-				<span className="truncate">{message.senderLabel ?? message.origin}</span>
+				<span className="truncate">{title}</span>
 				<span className="ml-auto shrink-0 font-normal tabular-nums">
 					{formatTime(message.createdAt)}
 				</span>
 			</div>
 			{longReport && expanded ? (
-				<ChatMarkdown text={message.text} muted />
+				<ChatMarkdown text={body} muted />
+			) : !longReport && titleMatch ? (
+				<ChatMarkdown text={body} muted />
 			) : (
 				<p className={cn("text-sm leading-relaxed text-muted-foreground", longReport && "line-clamp-3")}>
 					{preview}
@@ -322,7 +329,7 @@ export function OriginMessage({ message }: { message: ConversationMessage }) {
 						aria-hidden="true"
 						className={cn("size-3 transition-transform", expanded && "rotate-90")}
 					/>
-					{expanded ? "Hide report" : "Show full report"}
+					{expanded ? `Hide ${reportNoun}` : `Show full ${reportNoun}`}
 				</button>
 			) : null}
 		</div>

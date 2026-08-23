@@ -886,6 +886,36 @@ describe("ChatWorkspace timeline", () => {
 });
 
 describe("automation reports", () => {
+	it("uses a leading Markdown heading as the card title and formats the body", () => {
+		const source = chatFixture.items.find((item) => item.id === "m-4") as ConversationMessage;
+		const message: ConversationMessage = {
+			...source,
+			senderLabel: undefined,
+			text: "## Review feedback\n\n**Source:** AO agent review · codex\n\n### Feedback\n\n- Tighten validation\n- Add a regression test",
+		};
+		render(<OriginMessage message={message} />);
+
+		expect(screen.getByText("Review feedback")).toBeInTheDocument();
+		expect(screen.queryByText("automation")).not.toBeInTheDocument();
+		expect(screen.getByText("Source:")).toBeInTheDocument();
+		expect(screen.getAllByRole("listitem")).toHaveLength(2);
+	});
+
+	it("labels a collapsed titled handoff as a review instead of a generic report", () => {
+		const source = chatFixture.items.find((item) => item.id === "m-4") as ConversationMessage;
+		const message: ConversationMessage = {
+			...source,
+			senderLabel: undefined,
+			text: `## Review feedback\n\n### Feedback\n\n${"Actionable review detail. ".repeat(30)}`,
+		};
+		render(<OriginMessage message={message} />);
+
+		expect(screen.getByRole("button", { name: "Show full review" })).toHaveAttribute(
+			"aria-expanded",
+			"false",
+		);
+	});
+
 	it("collapses a long report until the reader asks to expand it", async () => {
 		const user = userEvent.setup();
 		const source = chatFixture.items.find((item) => item.id === "m-4") as ConversationMessage;

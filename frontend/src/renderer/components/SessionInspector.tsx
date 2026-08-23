@@ -1937,18 +1937,24 @@ function formatInlineReviewCommentMessage(comment: InspectorInlineComment & { re
 	const body = sanitizeWorkerMessagePart(comment.body?.trim() || "No comment body provided.");
 	const url = sanitizeWorkerMessagePart(comment.url?.trim() || "");
 	const lines = [
-		`A reviewer left an unresolved inline comment on your PR. Address it, commit the fix, and push the branch to GitHub.`,
+		"## Inline review comment",
 		"",
-		`Reviewer: @${reviewer}`,
-		`Location: ${location}`,
-		"",
-		"Comment:",
-		body,
+		`**Reviewer:** @${reviewer}  `,
+		`**Location:** \`${location}\``,
 	];
 	if (url) {
-		lines.push("", `Comment URL: ${url}`);
+		lines.push(`**Comment:** [Open on GitHub](${url})`);
 	}
-	lines.push("", "You should not need to re-fetch review data unless you need additional context beyond what AO has provided here.");
+	lines.push(
+		"",
+		"### Comment",
+		"",
+		body,
+		"",
+		"### Next step",
+		"",
+		"Address this comment, run relevant tests, commit the fix, and push the branch. AO has included the available review context above.",
+	);
 	return lines.join("\n");
 }
 
@@ -1958,12 +1964,21 @@ function formatReviewSummaryMessage(summary: InspectorReviewSummaryAction): stri
 	const url = sanitizeWorkerMessagePart((summary.url || summary.pullRequestUrl || "").trim());
 	const source = summary.source === "agent" ? "AO agent review" : "external PR review";
 	const lines = [
-		`A ${source} from ${reviewer} has feedback for your pull request. Address the actionable items, run relevant tests, commit the fixes, and push the branch.`,
+		"## Review feedback",
 		"",
-		"Review summary:",
-		body,
+		`**Source:** ${source} · ${reviewer}`,
 	];
-	if (url) lines.push("", `Review URL: ${url}`);
+	if (url) lines.push(`**Review:** [Open review](${url})`);
+	lines.push(
+		"",
+		"### Feedback",
+		"",
+		body || "No review summary was provided.",
+		"",
+		"### Next step",
+		"",
+		"Address the actionable items, run relevant tests, commit the fixes, and push the branch.",
+	);
 	return lines.join("\n");
 }
 
