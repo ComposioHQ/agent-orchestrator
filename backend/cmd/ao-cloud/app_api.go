@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	cloudconfig "github.com/aoagents/agent-orchestrator/backend/internal/cloud/config"
+	cloudpostgres "github.com/aoagents/agent-orchestrator/backend/internal/cloud/postgres"
 	"github.com/aoagents/agent-orchestrator/backend/internal/config"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd"
 )
@@ -35,7 +36,12 @@ import (
 // refuses those routes even if a local implementation were injected by
 // mistake, so a wrong entry below cannot expose the user's filesystem or a
 // host process to a hosted tenant.
-func buildAppAPI(cfg cloudconfig.Config, logger *slog.Logger) http.Handler {
+func buildAppAPI(
+	cfg cloudconfig.Config,
+	logger *slog.Logger,
+	store *cloudpostgres.Store,
+	events *cloudpostgres.EventHub,
+) http.Handler {
 	if !cfg.AppAPIEnabled {
 		return nil
 	}
@@ -48,6 +54,11 @@ func buildAppAPI(cfg cloudconfig.Config, logger *slog.Logger) http.Handler {
 			RequestTimeout: config.DefaultRequestTimeout,
 		},
 		logger,
-		httpd.APIDeps{},
+		//nolint:exhaustruct // product services are filled as their PG adapters land
+		httpd.APIDeps{
+			CDC:                store,
+			Events:             events,
+			NotificationStream: events,
+		},
 	)
 }

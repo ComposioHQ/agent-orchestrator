@@ -37,6 +37,14 @@ func run(logger *slog.Logger) error {
 		return err
 	}
 	defer store.Close()
+	var eventHub *cloudpostgres.EventHub
+	if cfg.AppAPIEnabled {
+		eventHub = cloudpostgres.NewEventHub(store, cloudpostgres.EventHubConfig{Logger: logger})
+		if err := eventHub.Start(ctx); err != nil {
+			return err
+		}
+		defer eventHub.Close()
+	}
 	google, err := auth.NewGoogleVerifier(ctx, cfg.GoogleIssuer, cfg.GoogleJWKSURL, cfg.GoogleClientIDs)
 	if err != nil {
 		return err
@@ -58,7 +66,7 @@ func run(logger *slog.Logger) error {
 		RefreshTokenTTL:     cfg.RefreshTokenTTL,
 		TrustSourceIPHeader: cfg.TrustSourceIPHeader,
 		Logger:              logger,
-		App:                 buildAppAPI(cfg, logger),
+		App:                 buildAppAPI(cfg, logger, store, eventHub),
 	})
 	if err != nil {
 		return err
