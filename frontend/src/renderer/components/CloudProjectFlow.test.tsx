@@ -98,7 +98,14 @@ describe("CloudProjectFlow", () => {
 			.mockResolvedValueOnce({
 				groups: [{
 					organization: account.organizations[0],
-					projects: [{ id: "project-1", name: "App", path: "/sandbox/app", kind: "single_repo", sessionPrefix: "app" }],
+					projects: [{
+						id: "project-1",
+						name: "App",
+						path: "/sandbox/app",
+						repo: "https://github.com/acme/app.git",
+						defaultBranch: "release/2026",
+						kind: "single_repo",
+					}],
 				}],
 			});
 		render(<CloudProjectFlow open onOpenChange={vi.fn()} />);
@@ -114,7 +121,7 @@ describe("CloudProjectFlow", () => {
 		expect(screen.getByText(/Provisioning App/)).toHaveTextContent("release/2026");
 		await act(async () => { await vi.advanceTimersByTimeAsync(500); });
 
-		expect(bridge.getProjectOperation).toHaveBeenCalledWith({ organizationId: "org-1", operationId: "operation-1" });
+		expect(bridge.getProjectOperation).toHaveBeenCalledWith({ organizationId: "org-1", operationId: "operation-1", defaultBranch: "release/2026" });
 		expect(bridge.createProject).toHaveBeenCalledWith(expect.objectContaining({ defaultBranch: "release/2026" }));
 		expect(screen.getByText("App is ready.")).toBeInTheDocument();
 		expect(screen.getByText(/ready for a sandbox session/)).toBeInTheDocument();
@@ -122,6 +129,56 @@ describe("CloudProjectFlow", () => {
 		await act(async () => { await Promise.resolve(); });
 		expect(bridge.startProjectSession).toHaveBeenCalledWith({ organizationId: "org-1", projectId: "project-1" });
 		expect(screen.getByText("Sandbox session session-1 started.")).toBeInTheDocument();
+	});
+
+	it("keeps poll failures actionable and shows a terminal placement failure after retry", async () => {
+		vi.useFakeTimers();
+		bridge.createProject.mockResolvedValue(pending);
+		bridge.getProjectOperation
+			.mockRejectedValueOnce(new Error("Placement status is unavailable"))
+			.mockResolvedValueOnce({
+				...pending,
+				state: "failed",
+				failure: { message: "Repository access was denied" },
+			});
+		render(<CloudProjectFlow open onOpenChange={vi.fn()} />);
+		await act(async () => { await Promise.resolve(); });
+		fireEvent.change(screen.getByLabelText("Organization"), { target: { value: "org-1" } });
+		fireEvent.change(screen.getByLabelText("Project name"), { target: { value: "App" } });
+		fireEvent.change(screen.getByLabelText("Repository URL"), { target: { value: "https://github.com/acme/app.git" } });
+		fireEvent.change(screen.getByLabelText("Default branch"), { target: { value: "release/2026" } });
+		fireEvent.click(screen.getByRole("button", { name: "Create cloud project" }));
+		await act(async () => { await Promise.resolve(); });
+
+		await act(async () => { await vi.advanceTimersByTimeAsync(500); });
+		expect(screen.getByRole("alert")).toHaveTextContent("Placement status is unavailable");
+		fireEvent.click(screen.getByRole("button", { name: "Retry status" }));
+		await act(async () => { await vi.advanceTimersByTimeAsync(500); });
+
+		expect(screen.getByRole("alert")).toHaveTextContent("Repository access was denied");
+		expect(screen.getByRole("button", { name: "Try again" })).toBeInTheDocument();
+	});
+
+	it("keeps a canonical refresh failure visible after placement becomes ready", async () => {
+		vi.useFakeTimers();
+		bridge.createProject.mockResolvedValue(pending);
+		bridge.getProjectOperation.mockResolvedValue({ ...pending, state: "ready", projectId: "project-1" });
+		bridge.listProjects
+			.mockResolvedValueOnce(emptySnapshot)
+			.mockRejectedValueOnce(new Error("Canonical project refresh failed"));
+		render(<CloudProjectFlow open onOpenChange={vi.fn()} />);
+		await act(async () => { await Promise.resolve(); });
+		fireEvent.change(screen.getByLabelText("Organization"), { target: { value: "org-1" } });
+		fireEvent.change(screen.getByLabelText("Project name"), { target: { value: "App" } });
+		fireEvent.change(screen.getByLabelText("Repository URL"), { target: { value: "https://github.com/acme/app.git" } });
+		fireEvent.change(screen.getByLabelText("Default branch"), { target: { value: "release/2026" } });
+		fireEvent.click(screen.getByRole("button", { name: "Create cloud project" }));
+		await act(async () => { await Promise.resolve(); });
+
+		await act(async () => { await vi.advanceTimersByTimeAsync(500); });
+
+		expect(screen.getByRole("alert")).toHaveTextContent("Canonical project refresh failed");
+		expect(screen.getByRole("button", { name: "Retry list" })).toBeInTheDocument();
 	});
 
 	it("cancels scheduled polling when the dialog unmounts", async () => {
