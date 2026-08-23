@@ -325,7 +325,7 @@ const api = {
 	},
 	uiSettings: {
 		get: () => ipcRenderer.invoke("uiSettings:get") as Promise<UiSettings>,
-		set: (settings: Partial<UiSettings>) => ipcRenderer.invoke("uiSettings:set", settings) as Promise<UiSettings>,
+		set: (settings: UiSettings) => ipcRenderer.invoke("uiSettings:set", settings) as Promise<UiSettings>,
 	},
 	keybindings: {
 		get: () => ipcRenderer.invoke("keybindings:get") as Promise<KeybindingOverrides>,
@@ -361,8 +361,6 @@ const api = {
 		getActive: () => ipcRenderer.invoke("featureBuilds:getActive") as Promise<{ pr: number } | null>,
 	},
 	cloud: {
-		isAvailable: () => ipcRenderer.sendSync("cloud:isAvailable") === true,
-		isEnabled: () => ipcRenderer.sendSync("cloud:isEnabled") === true,
 		getSession: () => ipcRenderer.invoke("cloud:getSession") as Promise<CloudAccount | null>,
 		signIn: () => ipcRenderer.invoke("cloud:signIn") as Promise<void>,
 		signOut: () => ipcRenderer.invoke("cloud:signOut") as Promise<void>,
@@ -373,12 +371,6 @@ const api = {
 				ipcRenderer.off("cloud:sessionChanged", wrapped);
 			};
 		},
-		createWorkspace: (input: { repositoryUrl: string; repositoryRef?: string }) =>
-			ipcRenderer.invoke("cloud:createWorkspace", input) as Promise<import("./shared/cloud-workspace").CloudWorkspaceResponse>,
-		listWorkspaces: (input: { orgId: string }) =>
-			ipcRenderer.invoke("cloud:listWorkspaces", input) as Promise<import("./shared/cloud-workspace").CloudWorkspaceListResponse>,
-		getWorkspace: (input: { orgId: string; workspaceId: string }) =>
-			ipcRenderer.invoke("cloud:getWorkspace", input) as Promise<import("./shared/cloud-workspace").CloudWorkspaceResponse>,
 	},
 };
 

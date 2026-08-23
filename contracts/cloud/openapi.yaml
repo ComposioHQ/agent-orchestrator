@@ -4,9 +4,9 @@ info:
   version: 1.0.0
   description: |
     Client-facing contract for AO Cloud. The control-plane foundation in this
-    repository serves Google authentication, current-account, and the cloud
-    workspace POC. The remaining project, session, worker, SCM, and terminal
-    routes are staged contracts for later implementation.
+    repository currently serves the Google authentication and current-account
+    routes. Project, session, worker, SCM, terminal, and workspace routes remain
+    staged contracts for later implementation.
 security:
   - bearerAuth: []
 tags:
@@ -103,55 +103,6 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/CurrentAccount"
-        default:
-          $ref: "#/components/responses/Error"
-  /api/cloud/v1/orgs/{orgId}/workspaces:
-    parameters:
-      - $ref: "#/components/parameters/OrgId"
-    get:
-      operationId: listCloudWorkspaces
-      tags: [Workspace]
-      responses:
-        "200":
-          description: Cloud workspaces visible to the authenticated organization member, newest first.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/CloudWorkspaceListResponse"
-        default:
-          $ref: "#/components/responses/Error"
-    post:
-      operationId: createCloudWorkspace
-      tags: [Workspace]
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/CreateCloudWorkspaceInput"
-      responses:
-        "202":
-          description: Cloud workspace provisioning was accepted.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/CloudWorkspaceResponse"
-        default:
-          $ref: "#/components/responses/Error"
-  /api/cloud/v1/orgs/{orgId}/workspaces/{workspaceId}:
-    parameters:
-      - $ref: "#/components/parameters/OrgId"
-      - $ref: "#/components/parameters/CloudWorkspaceId"
-    get:
-      operationId: getCloudWorkspace
-      tags: [Workspace]
-      responses:
-        "200":
-          description: Current provisioning state and a fresh signed AO preview URL when ready.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/CloudWorkspaceResponse"
         default:
           $ref: "#/components/responses/Error"
   /api/cloud/v1/github/user:
@@ -1511,13 +1462,6 @@ components:
       schema:
         type: string
         format: uuid
-    CloudWorkspaceId:
-      name: workspaceId
-      in: path
-      required: true
-      schema:
-        type: string
-        format: uuid
     SessionId:
       name: sessionId
       in: path
@@ -1696,77 +1640,6 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/OrganizationMembership"
-    CloudWorkspaceState:
-      type: string
-      enum: [pending, provisioning, ready, failed]
-    CreateCloudWorkspaceInput:
-      type: object
-      additionalProperties: false
-      required: [repositoryUrl, claudeCredentialsBase64]
-      properties:
-        repositoryUrl:
-          type: string
-          format: uri
-          pattern: "^https://github\\.com/[^/]+/[^/]+(?:\\.git)?$"
-        repositoryRef:
-          type: string
-          maxLength: 200
-        claudeCredentialsBase64:
-          type: string
-          format: byte
-          maxLength: 349528
-          description: >-
-            Base64-encoded Claude Code credential read by the trusted desktop
-            main process. The control plane must never log or persist it and
-            may retain it only while provisioning this workspace.
-    CloudWorkspace:
-      type: object
-      additionalProperties: false
-      required: [id, orgId, repositoryUrl, state, createdAt, updatedAt]
-      properties:
-        id:
-          type: string
-          format: uuid
-        orgId:
-          type: string
-          format: uuid
-        repositoryUrl:
-          type: string
-          format: uri
-        repositoryRef:
-          type: string
-        sandboxId:
-          type: string
-        state:
-          $ref: "#/components/schemas/CloudWorkspaceState"
-        error:
-          type: string
-        createdAt:
-          type: string
-          format: date-time
-        updatedAt:
-          type: string
-          format: date-time
-    CloudWorkspaceResponse:
-      type: object
-      additionalProperties: false
-      required: [workspace]
-      properties:
-        workspace:
-          $ref: "#/components/schemas/CloudWorkspace"
-        previewUrl:
-          type: string
-          format: uri
-          description: One-hour signed AO connection URL. Treat as an in-memory credential.
-    CloudWorkspaceListResponse:
-      type: object
-      additionalProperties: false
-      required: [workspaces]
-      properties:
-        workspaces:
-          type: array
-          items:
-            $ref: "#/components/schemas/CloudWorkspace"
     GoogleIdentityExchange:
       type: object
       additionalProperties: false
@@ -3746,7 +3619,7 @@ components:
               type: boolean
     ProviderName:
       type: string
-      enum: [ao-cloud, claude-code, codex, cursor]
+      enum: [daytona, claude-code, codex, cursor]
     ProviderPublicConfig:
       type: object
       additionalProperties: false

@@ -13,10 +13,6 @@ RUN --mount=type=cache,target=/go/pkg/mod \
     go build -trimpath -ldflags="-s -w" -o /out/ao-cloud ./cmd/ao-cloud && \
     CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
     go build -trimpath -ldflags="-s -w" -o /out/ao-cloud-migrate ./cmd/ao-cloud-migrate
-RUN --mount=type=cache,target=/go/pkg/mod \
-    --mount=type=cache,target=/root/.cache/go-build \
-    CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
-    go build -trimpath -ldflags="-s -w" -o /out/ao ./cmd/ao
 
 FROM debian:12-slim AS database-certs
 # This staging image is deliberately regional. deploy-staging.sh rejects any
@@ -31,7 +27,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
 FROM gcr.io/distroless/static-debian12:nonroot
 COPY --from=build --chown=nonroot:nonroot /out/ao-cloud /ao-cloud
 COPY --from=build --chown=nonroot:nonroot /out/ao-cloud-migrate /ao-cloud-migrate
-COPY --from=build --chown=nonroot:nonroot /out/ao /ao
 COPY --from=database-certs --chown=nonroot:nonroot /rds-ca-bundle.pem /etc/ssl/certs/rds-ca-bundle.pem
 EXPOSE 8080
 ENTRYPOINT ["/ao-cloud"]

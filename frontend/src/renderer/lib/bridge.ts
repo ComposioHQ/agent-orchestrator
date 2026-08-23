@@ -161,8 +161,8 @@ export const aoBridge: AoBridge =
 			set: async () => undefined,
 		},
 		uiSettings: {
-			get: async () => ({ locale: "en" as const, cloudEnabled: false }),
-			set: async (settings) => ({ locale: coerceLocale(settings.locale), cloudEnabled: settings.cloudEnabled === true }),
+			get: async () => ({ locale: "en" as const }),
+			set: async (settings) => ({ locale: coerceLocale(settings.locale) }),
 		},
 		keybindings: {
 			get: async () => ({}),
@@ -183,18 +183,9 @@ export const aoBridge: AoBridge =
 			getActive: async () => null,
 		},
 		cloud: {
-			isAvailable: () => false,
-			isEnabled: () => false,
 			getSession: async () => null,
 			signIn: async () => undefined,
 			signOut: async () => undefined,
 			onSessionChanged: () => () => undefined,
-			createWorkspace: async () => {
-				throw new Error("Cloud workspaces are unavailable in browser preview mode.");
-			},
-			listWorkspaces: async () => ({ workspaces: [] }),
-			getWorkspace: async () => {
-				throw new Error("Cloud workspaces are unavailable in browser preview mode.");
-			},
 		},
 	} satisfies AoBridge);

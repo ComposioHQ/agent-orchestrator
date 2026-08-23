@@ -5,7 +5,7 @@ import { DEFAULT_UI_SETTINGS, coerceUiSettings, type UiSettings } from "../share
 export { DEFAULT_UI_SETTINGS, coerceUiSettings } from "../shared/ui-locale";
 export type { AppLocale, UiSettings } from "../shared/ui-locale";
 
-/** File holding lightweight UI prefs under the ~/.ao state dir. */
+/** File holding lightweight UI prefs (locale) under the ~/.ao state dir. */
 export const UI_SETTINGS_FILE_NAME = "ui-settings.json";
 
 let settingsOperationQueue: Promise<void> = Promise.resolve();
@@ -52,12 +52,4 @@ export async function readUiSettings(stateDir: string): Promise<UiSettings> {
 /** Atomically and serially write UI settings (temp file + rename). */
 export async function writeUiSettings(stateDir: string, settings: UiSettings): Promise<UiSettings> {
 	return runSettingsOperation(() => writeUiSettingsUnlocked(stateDir, settings));
-}
-
-/** Atomically merge and persist a subset of UI settings. */
-export async function updateUiSettings(stateDir: string, patch: Partial<UiSettings>): Promise<UiSettings> {
-	return runSettingsOperation(async () => {
-		const current = await readUiSettingsUnlocked(stateDir);
-		return writeUiSettingsUnlocked(stateDir, { ...current, ...patch });
-	});
 }

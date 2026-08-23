@@ -605,30 +605,6 @@ func (m *Service) EnsureDefaultScratchProject(ctx context.Context, scratchPath s
 	return m.projectFromRow(ctx, row), nil
 }
 
-// ArchiveDefaultScratchProject idempotently hides a Scratch project seeded by
-// an earlier daemon version. Hosted coordinators call this during boot because
-// their project registry must contain only the explicitly provisioned cloud
-// repository. Historical session rows remain durable.
-func (m *Service) ArchiveDefaultScratchProject(ctx context.Context) error {
-	m.addMu.Lock()
-	defer m.addMu.Unlock()
-
-	row, ok, err := m.store.GetProject(ctx, "scratch")
-	if err != nil {
-		return apierr.Internal("PROJECT_LOAD_FAILED", "Failed to load projects")
-	}
-	if !ok || !row.ArchivedAt.IsZero() {
-		return nil
-	}
-	if row.Kind.WithDefault() != domain.ProjectKindScratch {
-		return nil
-	}
-	if _, err = m.store.ArchiveProject(ctx, "scratch", m.clock().UTC()); err != nil {
-		return apierr.Internal("PROJECT_REMOVE_FAILED", "Failed to remove project")
-	}
-	return nil
-}
-
 // SetConfig replaces the project's stored config. The typed config is validated
 // here so a bad value is rejected when set rather than surfacing at spawn.
 func (m *Service) SetConfig(ctx context.Context, id domain.ProjectID, in SetConfigInput) (Project, error) {

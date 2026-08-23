@@ -68,43 +68,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/cloud/v1/orgs/{orgId}/workspaces": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                orgId: components["parameters"]["OrgId"];
-            };
-            cookie?: never;
-        };
-        get: operations["listCloudWorkspaces"];
-        put?: never;
-        post: operations["createCloudWorkspace"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/cloud/v1/orgs/{orgId}/workspaces/{workspaceId}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                orgId: components["parameters"]["OrgId"];
-                workspaceId: components["parameters"]["CloudWorkspaceId"];
-            };
-            cookie?: never;
-        };
-        get: operations["getCloudWorkspace"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/cloud/v1/github/user": {
         parameters: {
             query?: never;
@@ -1012,45 +975,6 @@ export interface components {
             user: components["schemas"]["CurrentUser"];
             organizations: components["schemas"]["OrganizationMembership"][];
         };
-        /** @enum {string} */
-        CloudWorkspaceState: "pending" | "provisioning" | "ready" | "failed";
-        CreateCloudWorkspaceInput: {
-            /** Format: uri */
-            repositoryUrl: string;
-            repositoryRef?: string;
-            /**
-             * Format: byte
-             * @description Base64-encoded Claude Code credential read by the trusted desktop main process. The control plane must never log or persist it and may retain it only while provisioning this workspace.
-             */
-            claudeCredentialsBase64: string;
-        };
-        CloudWorkspace: {
-            /** Format: uuid */
-            id: string;
-            /** Format: uuid */
-            orgId: string;
-            /** Format: uri */
-            repositoryUrl: string;
-            repositoryRef?: string;
-            sandboxId?: string;
-            state: components["schemas"]["CloudWorkspaceState"];
-            error?: string;
-            /** Format: date-time */
-            createdAt: string;
-            /** Format: date-time */
-            updatedAt: string;
-        };
-        CloudWorkspaceResponse: {
-            workspace: components["schemas"]["CloudWorkspace"];
-            /**
-             * Format: uri
-             * @description One-hour signed AO connection URL. Treat as an in-memory credential.
-             */
-            previewUrl?: string;
-        };
-        CloudWorkspaceListResponse: {
-            workspaces: components["schemas"]["CloudWorkspace"][];
-        };
         GoogleIdentityExchange: {
             /** @description Google OpenID Connect ID token obtained through desktop PKCE. */
             idToken: string;
@@ -1957,7 +1881,7 @@ export interface components {
             };
         };
         /** @enum {string} */
-        ProviderName: "ao-cloud" | "claude-code" | "codex" | "cursor";
+        ProviderName: "daytona" | "claude-code" | "codex" | "cursor";
         ProviderPublicConfig: {
             /** Format: uri */
             apiUrl?: string;
@@ -2069,7 +1993,6 @@ export interface components {
     parameters: {
         OrgId: string;
         ProjectId: string;
-        CloudWorkspaceId: string;
         SessionId: string;
         TurnId: string;
         WorkerRequestId: string;
@@ -2189,80 +2112,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["CurrentAccount"];
-                };
-            };
-            default: components["responses"]["Error"];
-        };
-    };
-    listCloudWorkspaces: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                orgId: components["parameters"]["OrgId"];
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Cloud workspaces visible to the authenticated organization member, newest first. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["CloudWorkspaceListResponse"];
-                };
-            };
-            default: components["responses"]["Error"];
-        };
-    };
-    createCloudWorkspace: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                orgId: components["parameters"]["OrgId"];
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["CreateCloudWorkspaceInput"];
-            };
-        };
-        responses: {
-            /** @description Cloud workspace provisioning was accepted. */
-            202: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["CloudWorkspaceResponse"];
-                };
-            };
-            default: components["responses"]["Error"];
-        };
-    };
-    getCloudWorkspace: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                orgId: components["parameters"]["OrgId"];
-                workspaceId: components["parameters"]["CloudWorkspaceId"];
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Current provisioning state and a fresh signed AO preview URL when ready. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["CloudWorkspaceResponse"];
                 };
             };
             default: components["responses"]["Error"];

@@ -21,7 +21,6 @@ import {
 import type { WorkspaceSession, WorkspaceSummary } from "../types/workspace";
 import { agentsQueryKey } from "../hooks/useAgentsQuery";
 import { useUiStore } from "../stores/ui-store";
-import { setCloudApiBaseUrl } from "../lib/api-client";
 
 const { getMock, navigateMock, mockParams, renameSessionMock, spawnMock, updateStatusMock, commandPaletteEnabled } = vi.hoisted(
 	() => ({
@@ -65,11 +64,6 @@ vi.mock("../lib/bridge", async (importOriginal) => {
 
 vi.mock("../lib/api-client", () => ({
 	apiClient: { GET: getMock },
-	activateCloudApi: () => true,
-	clearCloudApiBaseUrl: vi.fn(),
-	isCloudApiActive: () => false,
-	setCloudApiBaseUrl: vi.fn(),
-	subscribeApiBaseUrl: () => () => undefined,
 	apiErrorMessage: (error: unknown) => {
 		if (error instanceof Error) return error.message;
 		if (typeof error === "object" && error !== null && "message" in error && typeof error.message === "string") {
@@ -190,7 +184,6 @@ function renderSidebar({
 					onInitializeProject={onInitializeProject}
 					onRemoveProject={onRemoveProject}
 					workspaces={workspaces}
-					workspacesSettled
 				/>
 			</SidebarProvider>
 		</QueryClientProvider>,
@@ -277,70 +270,9 @@ beforeEach(() => {
 
 afterEach(() => {
 	vi.restoreAllMocks();
-	vi.unstubAllEnvs();
 });
 
 describe("Sidebar", () => {
-	it("hides Cloud sign-in and Cloud project creation when the feature flag is disabled", async () => {
-		const isEnabled = vi.spyOn(window.ao!.cloud, "isEnabled").mockReturnValue(false);
-		const user = userEvent.setup();
-		renderSidebar();
-
-		await waitFor(() => expect(isEnabled).toHaveBeenCalled());
-		expect(screen.queryByLabelText("Sign in to AO Cloud")).not.toBeInTheDocument();
-		await user.click(screen.getByLabelText("New project"));
-		expect(screen.queryByRole("menuitem", { name: "Create cloud project" })).not.toBeInTheDocument();
-		expect(screen.getByRole("dialog", { name: "Add code to Agent Orchestrator" })).toBeInTheDocument();
-	});
-
-	it("offers local and cloud project creation from the project button", async () => {
-		vi.spyOn(window.ao!.cloud, "isEnabled").mockReturnValue(true);
-		vi.spyOn(window.ao!.cloud, "getSession").mockResolvedValue({
-			authProvider: "google",
-			user: { id: "user-1", email: "person@example.com", displayName: "Person" },
-			organizations: [],
-			storedAt: new Date().toISOString(),
-		});
-		const user = userEvent.setup();
-		renderSidebar();
-
-		await waitFor(() => expect(screen.getByLabelText("New project")).toBeEnabled());
-		await user.click(screen.getByLabelText("New project"));
-
-		expect(screen.getByRole("menuitem", { name: "Create local project" })).toBeInTheDocument();
-		expect(screen.getByRole("menuitem", { name: "Create cloud project" })).toBeInTheDocument();
-		await user.click(screen.getByRole("menuitem", { name: "Create local project" }));
-		expect(setCloudApiBaseUrl).toHaveBeenCalledWith(null);
-		expect(screen.getByRole("dialog", { name: "Add code to Agent Orchestrator" })).toBeInTheDocument();
-	});
-
-	it("rediscovers the newest ready cloud project after a desktop restart", async () => {
-		vi.spyOn(window.ao!.cloud, "isEnabled").mockReturnValue(true);
-		vi.spyOn(window.ao!.cloud, "getSession").mockResolvedValue({
-			authProvider: "google",
-			user: { id: "user-1", email: "person@example.com", displayName: "Person" },
-			organizations: [{ id: "org-1", slug: "person", displayName: "Person", role: "owner" }],
-			storedAt: new Date().toISOString(),
-		});
-		vi.spyOn(window.ao!.cloud, "listWorkspaces").mockResolvedValue({
-			workspaces: [{
-				id: "workspace-1", orgId: "org-1", repositoryUrl: "https://github.com/org/repo",
-				state: "ready", createdAt: "2026-08-22T00:00:00Z", updatedAt: "2026-08-22T00:00:00Z",
-			}],
-		});
-		vi.spyOn(window.ao!.cloud, "getWorkspace").mockResolvedValue({
-			workspace: {
-				id: "workspace-1", orgId: "org-1", repositoryUrl: "https://github.com/org/repo",
-				state: "ready", createdAt: "2026-08-22T00:00:00Z", updatedAt: "2026-08-22T00:00:00Z",
-			},
-			previewUrl: "https://cloud-workspace.example",
-		});
-
-		renderSidebar();
-
-		await waitFor(() => expect(setCloudApiBaseUrl).toHaveBeenCalledWith("https://cloud-workspace.example"));
-	});
-
 	it("suppresses focus chrome without removing keyboard focusability", () => {
 		renderSidebar();
 

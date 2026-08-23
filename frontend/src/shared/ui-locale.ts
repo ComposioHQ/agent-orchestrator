@@ -7,10 +7,9 @@ export const DEFAULT_LOCALE: AppLocale = "en";
 
 export interface UiSettings {
 	locale: AppLocale;
-	cloudEnabled: boolean;
 }
 
-export const DEFAULT_UI_SETTINGS: UiSettings = { locale: DEFAULT_LOCALE, cloudEnabled: false };
+export const DEFAULT_UI_SETTINGS: UiSettings = { locale: DEFAULT_LOCALE };
 
 /** Normalize an unknown value to a supported UI locale. */
 export function coerceLocale(raw: unknown): AppLocale {
@@ -22,9 +21,7 @@ export function coerceLocale(raw: unknown): AppLocale {
 
 /** Normalize unknown persisted or IPC data to the supported UI-settings schema. */
 export function coerceUiSettings(raw: unknown): UiSettings {
-	const value = typeof raw === "object" && raw !== null ? (raw as Record<string, unknown>) : {};
-	return {
-		locale: coerceLocale(value.locale),
-		cloudEnabled: value.cloudEnabled === true,
-	};
+	const locale =
+		typeof raw === "object" && raw !== null ? coerceLocale((raw as Record<string, unknown>).locale) : DEFAULT_LOCALE;
+	return { locale };
 }

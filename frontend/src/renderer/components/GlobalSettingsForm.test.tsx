@@ -1,12 +1,11 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { appI18n } from "../i18n";
 import { GlobalSettingsForm } from "./GlobalSettingsForm";
 import { useLocaleStore } from "../stores/locale-store";
 import { useUiStore } from "../stores/ui-store";
-import { useCloudSettingsStore } from "../stores/cloud-settings-store";
 
 const {
 	getUpdate,
@@ -29,7 +28,6 @@ const {
 	getKeybindings,
 	setKeybindings,
 	setKeybindingRecording,
-	cloudIsAvailable,
 } = vi.hoisted(() => ({
 	getUpdate: vi.fn(),
 	setUpdate: vi.fn(),
@@ -51,7 +49,6 @@ const {
 	getKeybindings: vi.fn(),
 	setKeybindings: vi.fn(),
 	setKeybindingRecording: vi.fn(),
-	cloudIsAvailable: vi.fn(),
 }));
 
 vi.mock("@tanstack/react-router", async (importOriginal) => {
@@ -83,7 +80,6 @@ vi.mock("../lib/bridge", () => ({
 			onStatus: updOnStatus,
 		},
 		featureBuilds: { list: featListBuilds, getActive: featGetActive },
-		cloud: { isAvailable: cloudIsAvailable },
 	},
 }));
 
@@ -119,16 +115,14 @@ beforeEach(async () => {
 		getKeybindings,
 		setKeybindings,
 		setKeybindingRecording,
-		cloudIsAvailable,
 	]) {
 		m.mockReset();
 	}
 	getUpdate.mockResolvedValue({ enabled: true, channel: "latest", nightlyAck: false, feature: null });
 	setUpdate.mockResolvedValue(undefined);
-	getUiSettings.mockResolvedValue({ locale: "en", cloudEnabled: false });
-	setUiSettings.mockImplementation(async (settings: { locale?: "en"; cloudEnabled?: boolean }) => ({
-		locale: settings.locale ?? "en",
-		cloudEnabled: settings.cloudEnabled === true,
+	getUiSettings.mockResolvedValue({ locale: "en" });
+	setUiSettings.mockImplementation(async (settings: { locale: string }) => ({
+		locale: settings.locale,
 	}));
 	updGetStatus.mockResolvedValue({ state: "idle" });
 	updCheck.mockResolvedValue(undefined);
@@ -145,17 +139,11 @@ beforeEach(async () => {
 	getKeybindings.mockResolvedValue({});
 	setKeybindings.mockImplementation(async (overrides) => overrides);
 	setKeybindingRecording.mockResolvedValue(undefined);
-	cloudIsAvailable.mockReturnValue(true);
 	// Locale defaults to English so existing copy assertions stay green.
 	await appI18n.changeLanguage("en");
 	useLocaleStore.setState({ locale: "en", loaded: false, saving: false, saveError: false });
 	useUiStore.setState({ developerMode: false });
-	useCloudSettingsStore.setState({ enabled: false, loaded: false, saving: false, saveError: false });
 	document.documentElement.lang = "en";
-});
-
-afterEach(() => {
-	vi.restoreAllMocks();
 });
 
 describe("GlobalSettingsForm", () => {
@@ -191,30 +179,6 @@ describe("GlobalSettingsForm", () => {
 		expect(window.localStorage.getItem("ao.developerMode")).toBe("true");
 		await user.click(screen.getByLabelText("Updates channel"));
 		expect(await screen.findByRole("menuitem", { name: "Feature Releases" })).toBeInTheDocument();
-	});
-
-	it("shows the AO Cloud early-access toggle only in Developer Mode", async () => {
-		const user = userEvent.setup();
-		renderForm();
-		expect(screen.queryByRole("switch", { name: "AO Cloud (Early Access)" })).not.toBeInTheDocument();
-
-		await user.click(await screen.findByRole("switch", { name: "Developer Mode" }));
-		const cloudToggle = await screen.findByRole("switch", { name: "AO Cloud (Early Access)" });
-		expect(screen.getByText("AO Cloud will only work if you have been granted early access.")).toBeInTheDocument();
-		expect(cloudToggle).toHaveAttribute("aria-checked", "false");
-
-		await user.click(cloudToggle);
-		await waitFor(() => expect(setUiSettings).toHaveBeenCalledWith({ cloudEnabled: true }));
-		expect(cloudToggle).toHaveAttribute("aria-checked", "true");
-	});
-
-	it("does not offer AO Cloud when this desktop has no Cloud configuration", async () => {
-		cloudIsAvailable.mockReturnValue(false);
-		useUiStore.getState().setDeveloperMode(true);
-
-		renderForm();
-
-		expect(screen.queryByRole("switch", { name: "AO Cloud (Early Access)" })).not.toBeInTheDocument();
 	});
 
 	it("shows the available feature builds after choosing Feature Releases", async () => {

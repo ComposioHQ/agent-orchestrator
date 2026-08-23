@@ -117,12 +117,8 @@ type RuntimeRestarter interface {
 type RuntimeConfig struct {
 	SessionID     domain.SessionID
 	WorkspacePath string
-	// Branch names the isolated checkout being launched. Local runtimes already
-	// run inside WorkspacePath and ignore it; cloud runtimes use it to recreate
-	// the same checkout in session-scoped compute.
-	Branch string
-	Argv   []string
-	Env    map[string]string
+	Argv          []string
+	Env           map[string]string
 }
 
 // RuntimeHandle identifies a live runtime instance. Its ID is opaque outside

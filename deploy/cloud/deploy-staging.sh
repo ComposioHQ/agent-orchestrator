@@ -10,9 +10,6 @@ AWS_MAX_ATTEMPTS="${AWS_MAX_ATTEMPTS:-10}"
 ENVIRONMENT="${AO_CLOUD_ENVIRONMENT:-staging}"
 GOOGLE_CLIENT_IDS="${AO_CLOUD_GOOGLE_CLIENT_IDS:-}"
 ALLOWED_EMAILS="${AO_CLOUD_ALLOWED_EMAILS:-}"
-DAYTONA_API_KEY_VALUE="${DAYTONA_API_KEY:-}"
-DAYTONA_API_URL_VALUE="${DAYTONA_API_URL:-https://app.daytona.io/api}"
-DAYTONA_TARGET_VALUE="${DAYTONA_TARGET:-us}"
 SOURCE_COMMIT="${AO_CLOUD_SOURCE_COMMIT:-$(git rev-parse HEAD)}"
 IMAGE_TAG="${AO_CLOUD_IMAGE_TAG:-${SOURCE_COMMIT:0:12}}"
 ACCOUNT_ID="$(aws sts get-caller-identity --query Account --output text)"
@@ -162,21 +159,11 @@ access_token_key="$(jq -r '.accessTokenKeyBase64 // empty' <<<"${existing_applic
 if [[ -z "$access_token_key" ]]; then
   access_token_key="$(openssl rand -base64 32 | tr -d '\n')"
 fi
-if [[ -z "$DAYTONA_API_KEY_VALUE" ]]; then
-  DAYTONA_API_KEY_VALUE="$(jq -r '.daytonaApiKey // empty' <<<"${existing_application_secret:-{}}" 2>/dev/null || true)"
-fi
-if [[ -z "$DAYTONA_API_KEY_VALUE" ]]; then
-  echo "DAYTONA_API_KEY is required for workspace provisioning" >&2
-  exit 2
-fi
 jq -n \
   --arg googleClientIds "$GOOGLE_CLIENT_IDS" \
   --arg allowedEmails "$ALLOWED_EMAILS" \
   --arg accessTokenKeyBase64 "$access_token_key" \
-  --arg daytonaApiKey "$DAYTONA_API_KEY_VALUE" \
-  --arg daytonaApiUrl "$DAYTONA_API_URL_VALUE" \
-  --arg daytonaTarget "$DAYTONA_TARGET_VALUE" \
-  '{googleClientIds:$googleClientIds,allowedEmails:$allowedEmails,accessTokenKeyBase64:$accessTokenKeyBase64,daytonaApiKey:$daytonaApiKey,daytonaApiUrl:$daytonaApiUrl,daytonaTarget:$daytonaTarget}' \
+  '{googleClientIds:$googleClientIds,allowedEmails:$allowedEmails,accessTokenKeyBase64:$accessTokenKeyBase64}' \
   >"$temporary_directory/application.json"
 aws secretsmanager put-secret-value \
   --secret-id "$application_secret_arn" \

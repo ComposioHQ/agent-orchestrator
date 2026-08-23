@@ -1,32 +1,32 @@
 # Cloud control-plane foundation
 
-This repository now contains the first hosted AO control-plane slice. It is a
-small, independently runnable Go service built around PostgreSQL, Google
-identity, and Daytona. A cloud project has a lightweight AO coordinator daemon,
-while every orchestrator and worker session is launched in its own Daytona
-sandbox. The coordinator continues to expose the existing daemon API, so the
-desktop's project, session, SCM, and terminal components remain unchanged.
+This repository contains the first hosted AO control-plane slice: a small Go
+service backed by PostgreSQL and Google identity, plus an AWS staging stack. The
+slice is intentionally limited to authentication, tenancy, and deployment. It
+does **not** expose cloud projects or sessions yet.
+
+That limit is architectural, not merely a feature flag. Cloud product state
+must not live in a sandbox-local SQLite database. A sandbox is disposable
+compute; PostgreSQL is the durable multi-device authority for hosted projects,
+sessions, lifecycle facts, SCM observations, notifications, and chat state.
+The cloud project/session UI will be enabled only after those existing AO
+service boundaries are backed by a tenant-scoped PostgreSQL adapter.
 
 ## Included in this foundation
 
-- `backend/cmd/ao-cloud`: HTTP service with liveness, readiness, Google
-  identity exchange, AO session refresh/logout, and current-account routes.
+- `backend/cmd/ao-cloud`: liveness, readiness, Google identity exchange, AO
+  session refresh/logout, and current-account routes.
 - `backend/cmd/ao-cloud-migrate`: migration-only command using a separate
   privileged database connection.
 - `backend/internal/cloud/auth`: Google OpenID Connect verification, short-lived
   AO JWT access tokens, and opaque refresh tokens.
 - `backend/internal/cloud/postgres`: users, hashed refresh sessions,
-  organizations, memberships, and forced row-level security.
-- `backend/internal/cloud/httpapi`: the implemented subset of the public Cloud
-  contract.
-- `backend/internal/cloud/runtime/daytona`: a coordinator sandbox per cloud
-  project plus one isolated sandbox per orchestrator/worker session.
-- `backend/internal/adapters/runtime/cloud`: the existing daemon runtime port
-  implemented as authenticated control-plane calls. This is the seam that
-  makes the ordinary AO lifecycle create remote compute without UI branching.
+  organizations, memberships, placement-schema groundwork, and forced RLS.
+- `backend/internal/cloud/httpapi`: the implemented public auth/account surface.
+- `deploy/cloud`: a digest-pinned, least-privilege AWS staging deployment.
 
-The existing daemon is unchanged. It remains loopback-only and continues to
-own every local project and session.
+The local daemon remains loopback-only and continues to use SQLite. No Electron
+cloud-project controls or sandbox provider are included in this PR.
 
 ## HTTP surface
 
@@ -34,66 +34,94 @@ own every local project and session.
 | --- | --- | --- |
 | `GET /healthz` | none | Process liveness |
 | `GET /readyz` | none | PostgreSQL readiness |
-| `POST /api/cloud/v1/auth/google` | Google ID token in JSON | Verify Google identity and issue an AO session |
+| `POST /api/cloud/v1/auth/google` | Google ID token in JSON | Verify identity and issue an AO session |
 | `POST /api/cloud/v1/auth/refresh` | Rotating refresh token in JSON | Atomically consume and replace a refresh token |
 | `POST /api/cloud/v1/auth/logout` | Refresh token in JSON | Revoke a refresh token |
-| `GET /api/cloud/v1/me` | AO bearer access token | Return the current user and live organization memberships |
-| `GET /api/cloud/v1/orgs/{orgId}/workspaces` | AO bearer access token | List the current user's cloud workspaces for desktop rediscovery |
-| `POST /api/cloud/v1/orgs/{orgId}/workspaces` | AO bearer access token | Record intent and asynchronously provision a Daytona AO workspace |
-| `GET /api/cloud/v1/orgs/{orgId}/workspaces/{workspaceId}` | AO bearer access token | Poll lifecycle state and obtain a fresh signed AO URL when ready |
-
-Coordinator-only `/api/cloud/internal/v1/workspaces/{workspaceId}/runtimes/*`
-routes create, inspect, message, interrupt, and destroy session sandboxes. They
-accept a workspace-scoped, 24-hour capability with a distinct JWT audience;
-neither desktop access tokens nor a capability for another project are valid.
+| `GET /api/cloud/v1/me` | AO bearer access token | Return the user and live organization memberships |
 
 Google establishes identity only. A verified Google hosted-domain claim never
 creates, selects, or authorizes an AO organization. First sign-in atomically
-creates the user, a personal organization, and its owner membership.
+creates the user, a personal organization, and its owner membership. The
+required `AO_CLOUD_ALLOWED_EMAILS` gate is checked both at exchange and refresh.
 
-AO access tokens contain the AO user ID but no organization membership. Every
-authenticated account read reloads memberships from PostgreSQL, so disabling a
-membership takes effect without waiting for an access token to expire.
+Access tokens contain the AO user ID but no organization membership. Every
+account read reloads memberships from PostgreSQL, so disabling a membership
+takes effect without waiting for token expiry. Refresh tokens are opaque random
+values and only their SHA-256 digests are stored. Rotation preserves the
+original absolute expiry instead of extending a session indefinitely.
 
-Refresh tokens are random opaque values. PostgreSQL stores only SHA-256
-digests. Rotation deletes the old digest and inserts its replacement in one
-transaction, so concurrent replay has at most one winner. A rotated token keeps
-the refresh session's original creation time and absolute expiry;
-`AO_CLOUD_REFRESH_TOKEN_TTL` therefore caps the entire session lifetime and is
-never extended by refresh activity.
+## Durable-state architecture
 
-## PostgreSQL boundaries
+Local and cloud deployments share domain types, services, HTTP DTOs, and React
+components. Only outbound implementations differ:
 
-Migration and runtime credentials are intentionally separate:
+```text
+Electron / typed API client
+          |
+          +-- local project --> loopback AO API --> services --> SQLite store
+          |
+          +-- cloud project --> hosted AO API  --> same services --> PostgreSQL store (RLS)
+                                                    |
+                                                    +--> compute/runtime adapter
+                                                         --> isolated disposable sandbox
+```
 
-- `AO_CLOUD_MIGRATION_DATABASE_URL` belongs only to `ao-cloud-migrate` and
-  owns schema changes.
-- `AO_CLOUD_DATABASE_URL` belongs to `ao-cloud` and must use the restricted
-  role named by `AO_CLOUD_RUNTIME_DATABASE_ROLE` during migration.
-- Runtime startup rejects roles with `SUPERUSER` or `BYPASSRLS`.
+Rules for the cloud implementation:
 
-When `AO_CLOUD_RUNTIME_DATABASE_PASSWORD` is set, the migration command creates
-the restricted runtime login role if it does not exist. An existing role is
-validated but never altered or elevated. It then applies the embedded Goose
-migration and grants that role only the tables and tenant helper functions in
-this foundation. The AWS deployment generates and stores the runtime password
-outside Terraform state.
+1. PostgreSQL is the single durable authority. There is no SQLite/PostgreSQL
+   replication, backup-on-stop protocol, or dual write.
+2. The hosted API executes the same service layer and exposes the same product
+   contract used by local AO. The renderer does not switch to a provider-
+   specific API or fork project/session/terminal components.
+3. Store interfaces are consumer-owned and narrow. SQLite and PostgreSQL adapt
+   to those interfaces; domain and service packages do not import either
+   database implementation.
+4. Every cloud request carries a verified principal and selected organization.
+   PostgreSQL transactions set both tenant contexts and RLS is forced on every
+   tenant table. Explicit tenant predicates remain in queries as defense in
+   depth.
+5. Sandboxes contain a repository checkout, caches, and live runtime processes
+   only. Losing or reaping one cannot lose projects, sessions, prompts, PR
+   facts, or lifecycle history.
+6. Orchestrators and workers use separate sandboxes. Their capabilities are
+   session-scoped, short-lived, revocable, and cannot call arbitrary coordinator
+   APIs or obtain another session's credentials.
+7. Terminal bytes use an authenticated WAN relay with bounded replay cursors,
+   resize, backpressure, and reconnect. Durable terminal/session facts still
+   flow through the normal service and event boundaries.
+8. SCM credentials are per-user/per-installation, repository-scoped, and
+   short-lived. No shared operator token is written into tenant compute.
 
-All six control-plane tables, including `ao_users` and `ao_auth_sessions`, have
-forced row-level security. Pre-authentication identity upsert and refresh-token
-rotation are available only through narrowly scoped, fixed-search-path
-`SECURITY DEFINER` functions; runtime startup verifies that every tenant table
-has both RLS flags enabled. Tenant reads are authorized through the current AO
-user. Writes additionally
-require an AO-selected organization transaction context, and administrative
-updates require an active owner or admin membership.
+The existing placement migrations (`ao_cloud_workspaces` and
+`ao_cloud_session_runtimes`) are retained because staging has already applied
+them and they model control-plane placement, not AO product state. They are not
+currently exposed by handlers. Product tables will be added in independently
+reviewable migrations alongside each PostgreSQL store slice.
+
+## PostgreSQL and authentication boundaries
+
+Migration and runtime credentials are separate:
+
+- `AO_CLOUD_MIGRATION_DATABASE_URL` belongs only to `ao-cloud-migrate`.
+- `AO_CLOUD_DATABASE_URL` belongs to `ao-cloud` and uses the restricted role
+  named by `AO_CLOUD_RUNTIME_DATABASE_ROLE`.
+- Runtime startup rejects `SUPERUSER` and `BYPASSRLS` roles.
+
+All six current control-plane tables, including `ao_users` and
+`ao_auth_sessions`, have forced RLS. Pre-auth identity upsert and refresh-token
+rotation are available only through fixed-search-path `SECURITY DEFINER`
+functions owned by a narrowly privileged `NOLOGIN` role. Startup validates RLS
+and FORCE RLS on every tenant table.
+
+Authentication routes are limited per source IP in-process; API Gateway also
+applies a stage-wide burst/rate limit and overwrites the trusted source-IP
+header. The public service has no sandbox credentials or customer SCM/agent
+credentials in this foundation.
 
 ## Configuration
 
-The API requires:
-
 ```bash
-export AO_CLOUD_DATABASE_URL='postgres://ao_runtime:...@127.0.0.1:5432/ao_cloud'
+export AO_CLOUD_DATABASE_URL='postgres://ao_runtime:...@db.example/ao_cloud?sslmode=verify-full&sslrootcert=/path/to/rds.pem'
 export AO_CLOUD_GOOGLE_CLIENT_IDS='desktop-oauth-client.apps.googleusercontent.com'
 export AO_CLOUD_ALLOWED_EMAILS='maintainer@example.com'
 export AO_CLOUD_ACCESS_TOKEN_KEY_BASE64="$(openssl rand -base64 32)"
@@ -109,155 +137,38 @@ export AO_CLOUD_ACCESS_TOKEN_TTL='15m'
 export AO_CLOUD_REFRESH_TOKEN_TTL='720h'
 ```
 
-Workspace provisioning additionally requires server-side secret injection:
+Run migrations and the API:
 
 ```bash
-export DAYTONA_API_KEY='...'
-export DAYTONA_API_URL='https://app.daytona.io/api'
-export DAYTONA_TARGET='us'
-export AO_CLOUD_SANDBOX_AO_BINARY='/ao'
-export AO_CLOUD_PUBLIC_URL='https://cloud.example.com'
-```
-
-AO Cloud is an explicit opt-in desktop preview. In a normally configured
-desktop build, the user must first enable Developer Mode in Settings and then
-enable **AO Cloud (Early Access)**. The toggle is hidden unless Developer Mode
-is enabled, defaults off, and warns that it works only for accounts granted
-early access. The Electron main process exposes Cloud auth and workspace
-creation only when the API URL and Google client ID are configured and the
-persisted preference is enabled.
-
-Development and dedicated feature builds can force the preview on with either
-of these overrides:
-
-```bash
-# Per-launch opt-in for development and early-access users.
-export AO_CLOUD_ENABLED=1
-
-# Build-time opt-in for a dedicated feature build.
-export VITE_AO_CLOUD_ENABLED=1
-```
-
-Normal release builds leave both overrides unset, so the existing local-only
-project creation flow remains the default until a developer explicitly opts
-in. The server-side `AO_CLOUD_ALLOWED_EMAILS` allowlist remains a second,
-independent rollout gate: enabling the desktop preference does not grant early
-access.
-
-The Electron main process performs Google installed-app PKCE on a temporary
-loopback callback and encrypts AO access/refresh tokens with Electron
-`safeStorage`. The renderer receives account metadata, never bearer tokens. A
-signed Daytona preview URL is held in memory and rebases the existing AO REST,
-SSE, and `/mux` transports, so the local and cloud paths render the same React
-components. At cloud-project creation, Electron main reads the current Claude
-Code credential from the macOS Keychain (or Claude's credential file on other
-platforms), sends it only over the authenticated TLS request, and the control
-plane passes it in memory to Daytona. It is written directly into that user's
-sandbox and is never exposed to the renderer, stored in Postgres, logged, or
-kept as a shared deployment secret. The coordinator receives a scoped runtime
-capability, not Daytona credentials. On every AO runtime `Create`, it sends the
-prepared worktree overlay and launch specification to the control plane. The
-control plane clones the repository into fresh compute, overlays that exact
-worktree, installs the per-user Claude credential, and starts the agent under a
-tmux-backed terminal. Orchestrator and worker launches use the identical path.
-
-### Cloud harness capability boundary
-
-Cloud projects do not use the desktop machine's installed-binary inventory.
-The coordinator starts with `AO_CLOUD_HARNESSES`, populated from
-`backend/internal/cloud/harnesscatalog`, and `/api/v1/agents` exposes only those
-entries as installed and authorized by the managed runtime. The shared React
-selectors therefore remain backend-agnostic: local daemons report local probe
-results, while cloud coordinators report cloud provisioning capabilities.
-
-The catalog intentionally contains only `claude-code` today. A harness must not
-be added merely to make it selectable. Its catalog entry is the final step
-after these provider pieces exist:
-
-1. a sandbox install command and executable mapping;
-2. an AO-held credential reader, validation policy, and sandbox destination;
-3. any first-run/trust configuration required for unattended startup; and
-4. an isolated-runtime launch test proving the harness reaches a live terminal.
-
-Both project-coordinator bootstrap and session-sandbox bootstrap consume the
-same catalog entry. Adding a completed harness integration therefore updates
-the cloud inventory and both installation paths together, without branching
-the task/session UI or consulting local installation state.
-
-### Postgres and coordinator SQLite responsibilities
-
-Postgres is the multi-tenant control-plane database; it is not a second copy of
-the AO product database. It stores users and refresh sessions, organizations
-and memberships, cloud workspace provisioning records, and the mapping from an
-AO session id to its isolated runtime. Tenant tables use Postgres row-level
-security scoped by the authenticated user and organization.
-
-Every cloud project coordinator runs the same `ao` daemon binary as desktop and
-owns an ordinary AO SQLite database inside its durable workspace. Projects,
-sessions, configuration, activity, PR state, notifications, and the other
-product-facing records continue to use the normal SQLite migrations and service
-layer. Consequently there is no Postgres/SQLite schema replication or dual
-write to keep synchronized: Postgres answers control-plane ownership and
-placement questions, while the coordinator SQLite database answers the shared
-`/api/v1` product API.
-
-Cloud images must therefore ship the coordinator from the same source revision
-as the API contract expected by the desktop. New SQLite migrations run through
-normal daemon startup, just as they do locally. Production rollout still needs
-an explicit desktop/coordinator compatibility window and durable backup or
-snapshot policy for coordinator data; copying product tables into Postgres
-would create two authorities and is intentionally not the synchronization
-strategy.
-
-Run migrations and start the service:
-
-```bash
-export AO_CLOUD_MIGRATION_DATABASE_URL='postgres://migration_owner:...@127.0.0.1:5432/ao_cloud'
+export AO_CLOUD_MIGRATION_DATABASE_URL='postgres://migration_owner:...@db.example/ao_cloud'
 export AO_CLOUD_RUNTIME_DATABASE_ROLE='ao_cloud_runtime'
-export AO_CLOUD_RUNTIME_DATABASE_PASSWORD='generate-and-store-this-securely'
+export AO_CLOUD_RUNTIME_DATABASE_PASSWORD='generate-and-store-securely'
 cd backend
 go run ./cmd/ao-cloud-migrate
 go run ./cmd/ao-cloud
 ```
 
-The service intentionally speaks plain HTTP inside its task network. The AWS
-staging deployment terminates public TLS at API Gateway and reaches the service
-through a VPC link and internal load balancer. See
-[`deploy/cloud/README.md`](../deploy/cloud/README.md).
+The service speaks plain HTTP only inside the ECS task network. AWS terminates
+public TLS at API Gateway and reaches ECS through a VPC link and internal ALB.
+Database connections use hostname verification and the checksum-pinned regional
+RDS CA bundle. See [`deploy/cloud/README.md`](../deploy/cloud/README.md).
 
-## POC limits
+## Merge gates for project/session support
 
-- Provisioning is asynchronous but not yet recovered by a durable reconciler
-  after a control-plane process restart.
-- Cloud project creation currently supports public GitHub repositories only.
-  Private repositories and authenticated SCM operations remain disabled until
-  per-workspace, repository-scoped, short-lived GitHub App tokens replace the
-  former shared operator credential. No shared GitHub token is injected into
-  tenant compute.
-- Terminal output currently uses bounded polling through API Gateway. A
-  production terminal relay with resize, backpressure, and replay cursors is a
-  follow-up; this does not change the frontend terminal contract.
-- Prepared worktrees are capped at 24 MiB compressed for this POC. Production
-  will move overlays and caches to object storage/prebuilt images.
-- Prepared-worktree overlays represent changed and untracked files only. They
-  cannot remove files, so deletions and the old side of renames may remain in a
-  session sandbox. They are also applied to the requested remote ref, not to
-  unpushed coordinator commits. Production synchronization needs an explicit
-  deletion manifest and an immutable base commit.
-- Workspace capabilities expire after 24 hours; background renewal is deferred.
-- The signed coordinator URL injected into each isolated agent sandbox expires
-  after 24 hours and is not yet renewed in place. Long-running orchestrators
-  lose `ao` CLI connectivity until their session is relaunched.
-- A signed URL is refreshed when the desktop polls the workspace, but automatic
-  renewal for an already-connected window remains.
-- Ready coordinators are restarted when the desktop polls the workspace. The
-  staging provider currently serializes those checks globally; use per-workspace
-  coordination and a cheap already-running fast path before broad multi-tenant
-  access.
-- Cloud feature availability is queried through synchronous Electron IPC in
-  this developer-gated preview. Cache and push availability changes before the
-  feature is enabled by default so renderer paths never wait on main-process
-  work.
-- Stop, pause, archive, delete, quotas, billing, and idle reaping remain.
+Cloud project controls remain absent until all of these are true:
 
-Those production lifecycle pieces should remain separately reviewable follow-ups.
+- project and session writes use tenant-scoped PostgreSQL store adapters behind
+  the existing service interfaces;
+- hosted reads and mutations pass contract-parity tests against the same API
+  shapes used by local AO;
+- change delivery has a durable Postgres event/outbox source and reconnect
+  cursor semantics;
+- compute capabilities are session-scoped rather than coordinator-wide;
+- workspace/session quotas, idempotent delete, idle pause, expiry, and failed-
+  provisioning cleanup are enforced by a durable reconciler;
+- cross-tenant integration tests exercise owner, co-member, disabled-member,
+  and foreign-organization cases against real PostgreSQL; and
+- no customer credential or durable AO state depends on sandbox lifetime.
+
+This prevents the staging POC from becoming an accidental second product
+architecture that the team would later have to migrate in place.

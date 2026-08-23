@@ -209,10 +209,9 @@ if (typeof window !== "undefined") {
 			set: async () => undefined,
 		},
 		uiSettings: {
-			get: async () => ({ locale: "en" as const, cloudEnabled: false }),
-			set: async (settings) => ({
-				locale: settings.locale === undefined ? "en" as const : settings.locale,
-				cloudEnabled: settings.cloudEnabled === true,
+			get: async () => ({ locale: "en" as const }),
+			set: async (settings: { locale: string }) => ({
+				locale: settings.locale as "en",
 			}),
 		},
 		keybindings: {
@@ -234,19 +233,10 @@ if (typeof window !== "undefined") {
 			getActive: async () => null,
 		},
 		cloud: {
-			isAvailable: () => true,
-			isEnabled: () => false,
 			getSession: async () => null,
 			signIn: async () => undefined,
 			signOut: async () => undefined,
 			onSessionChanged: () => () => undefined,
-			createWorkspace: async () => {
-				throw new Error("not configured");
-			},
-			listWorkspaces: async () => ({ workspaces: [] }),
-			getWorkspace: async () => {
-				throw new Error("not configured");
-			},
 		},
 	};
 } // end if (typeof window !== "undefined")

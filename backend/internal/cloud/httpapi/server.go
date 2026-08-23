@@ -25,7 +25,6 @@ import (
 const maxRequestBodyBytes = 1 << 20
 
 type principalContextKey struct{}
-type workspaceContextKey struct{}
 
 // IdentityVerifier validates one external identity token.
 type IdentityVerifier interface {
@@ -43,40 +42,6 @@ type AccountStore interface {
 	ListMemberships(context.Context, domain.Principal) ([]domain.Membership, error)
 }
 
-// WorkspaceStore persists the durable intent and observed provisioning state.
-type WorkspaceStore interface {
-	CreateWorkspace(context.Context, domain.Principal, string, string, string) (domain.Workspace, error)
-	ListWorkspaces(context.Context, domain.Principal, string) ([]domain.Workspace, error)
-	Workspace(context.Context, domain.Principal, string, string) (domain.Workspace, error)
-	UpdateWorkspaceProvisioning(context.Context, domain.Workspace, string, string, string) error
-}
-
-// WorkspaceProvisioner owns the remote sandbox lifecycle used by this POC.
-type WorkspaceProvisioner interface {
-	Provision(context.Context, domain.Workspace, domain.WorkspaceBootstrap) (string, error)
-	Resume(context.Context, domain.Workspace, domain.WorkspaceBootstrap) error
-	PreviewURL(context.Context, string) (string, error)
-}
-
-// SessionRuntimeStore persists the one-session/one-sandbox mapping.
-type SessionRuntimeStore interface {
-	RuntimeWorkspace(context.Context, domain.Principal, string, string) (domain.Workspace, error)
-	CreateSessionRuntime(context.Context, domain.Principal, domain.Workspace, string) (domain.SessionRuntime, error)
-	SessionRuntime(context.Context, domain.Principal, string, string, string) (domain.SessionRuntime, error)
-	UpdateSessionRuntime(context.Context, domain.Principal, domain.SessionRuntime, string, string, string) error
-}
-
-// SessionRuntimeProvisioner owns isolated agent compute and terminal access.
-type SessionRuntimeProvisioner interface {
-	ProvisionSessionRuntime(context.Context, domain.Workspace, domain.RuntimeLaunch) (string, error)
-	DeleteSessionRuntime(context.Context, string) error
-	SessionRuntimeAlive(context.Context, string) (bool, error)
-	SessionRuntimeOutput(context.Context, string, int) (string, error)
-	SessionRuntimeInput(context.Context, string, string, bool) error
-	SessionRuntimeInterrupt(context.Context, string) error
-	SessionRuntimeResize(context.Context, string, uint16, uint16) error
-}
-
 // Options supplies the dependencies for a control-plane HTTP server.
 type Options struct {
 	Store           AccountStore
@@ -85,11 +50,6 @@ type Options struct {
 	AccessTokens    *auth.AccessTokenManager
 	RefreshTokenTTL time.Duration
 	Logger          *slog.Logger
-	Workspaces      WorkspaceProvisioner
-	WorkspaceStore  WorkspaceStore
-	SessionRuntimes SessionRuntimeProvisioner
-	SessionStore    SessionRuntimeStore
-	PublicURL       string
 }
 
 // Server owns the Cloud foundation HTTP handler.
@@ -100,11 +60,6 @@ type Server struct {
 	accessTokens    *auth.AccessTokenManager
 	refreshTokenTTL time.Duration
 	logger          *slog.Logger
-	workspaces      WorkspaceProvisioner
-	workspaceStore  WorkspaceStore
-	sessionRuntimes SessionRuntimeProvisioner
-	sessionStore    SessionRuntimeStore
-	publicURL       string
 	handler         http.Handler
 }
 
@@ -115,12 +70,6 @@ func New(options Options) (*Server, error) {
 	}
 	if len(emailSet(options.AllowedEmails)) == 0 {
 		return nil, errors.New("at least one cloud account email must be allowed")
-	}
-	if options.Workspaces != nil && options.WorkspaceStore == nil {
-		return nil, errors.New("cloud workspace store is required when a workspace provisioner is configured")
-	}
-	if options.SessionRuntimes != nil && (options.SessionStore == nil || strings.TrimSpace(options.PublicURL) == "") {
-		return nil, errors.New("cloud session store and public URL are required when session runtimes are configured")
 	}
 	if options.RefreshTokenTTL <= 0 {
 		return nil, errors.New("cloud refresh-token lifetime must be positive")
@@ -135,11 +84,6 @@ func New(options Options) (*Server, error) {
 		accessTokens:    options.AccessTokens,
 		refreshTokenTTL: options.RefreshTokenTTL,
 		logger:          options.Logger,
-		workspaces:      options.Workspaces,
-		workspaceStore:  options.WorkspaceStore,
-		sessionRuntimes: options.SessionRuntimes,
-		sessionStore:    options.SessionStore,
-		publicURL:       strings.TrimRight(strings.TrimSpace(options.PublicURL), "/"),
 	}
 	server.handler = server.routes()
 	return server, nil
@@ -191,25 +135,12 @@ func (s *Server) routes() http.Handler {
 	router.With(authRateLimit).Post("/api/cloud/v1/auth/refresh", s.refresh)
 	router.With(authRateLimit).Post("/api/cloud/v1/auth/logout", s.logout)
 	router.With(s.requirePrincipal).Get("/api/cloud/v1/me", s.me)
-	router.With(s.requirePrincipal).Get("/api/cloud/v1/orgs/{orgID}/workspaces", s.listWorkspaces)
-	router.With(s.requirePrincipal).Post("/api/cloud/v1/orgs/{orgID}/workspaces", s.createWorkspace)
-	router.With(s.requirePrincipal).Get("/api/cloud/v1/orgs/{orgID}/workspaces/{workspaceID}", s.getWorkspace)
-	router.Route("/api/cloud/internal/v1/workspaces/{workspaceID}/runtimes", func(runtime chi.Router) {
-		runtime.Use(s.requireWorkspace)
-		runtime.Post("/", s.createSessionRuntime)
-		runtime.Get("/{sessionID}", s.getSessionRuntime)
-		runtime.Delete("/{sessionID}", s.deleteSessionRuntime)
-		runtime.Post("/{sessionID}/input", s.inputSessionRuntime)
-		runtime.Post("/{sessionID}/interrupt", s.interruptSessionRuntime)
-		runtime.Post("/{sessionID}/resize", s.resizeSessionRuntime)
-	})
 	return router
 }
 
 func sourceIPKey(r *http.Request) (string, error) {
 	// API Gateway overwrites this header from $context.identity.sourceIp before
-	// forwarding through the internal ALB. Never trust True-Client-IP,
-	// X-Real-IP, or X-Forwarded-For here: clients can prepend arbitrary values.
+	// forwarding through the internal ALB. Never trust forwarded client headers.
 	if sourceIP := strings.TrimSpace(r.Header.Get("X-AO-Source-IP")); sourceIP != "" {
 		return sourceIP, nil
 	}
@@ -261,30 +192,6 @@ func (s *Server) requirePrincipal(next http.Handler) http.Handler {
 			return
 		}
 		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), principalContextKey{}, principal)))
-	})
-}
-
-func (s *Server) requireWorkspace(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		parts := strings.Fields(r.Header.Get("Authorization"))
-		if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") {
-			writeError(w, r, http.StatusUnauthorized, "unauthorized", "WORKSPACE_AUTH_REQUIRED", "valid workspace capability required")
-			return
-		}
-		claims, err := s.accessTokens.VerifyWorkspace(parts[1])
-		if err != nil || claims.WorkspaceID != chi.URLParam(r, "workspaceID") {
-			writeError(w, r, http.StatusUnauthorized, "unauthorized", "INVALID_WORKSPACE_TOKEN", "valid workspace capability required")
-			return
-		}
-		principal := domain.Principal{UserID: claims.Subject}
-		workspace, err := s.sessionStore.RuntimeWorkspace(r.Context(), principal, claims.OrgID, claims.WorkspaceID)
-		if err != nil {
-			writeError(w, r, http.StatusUnauthorized, "unauthorized", "INVALID_WORKSPACE_TOKEN", "valid workspace capability required")
-			return
-		}
-		ctx := context.WithValue(r.Context(), principalContextKey{}, principal)
-		ctx = context.WithValue(ctx, workspaceContextKey{}, workspace)
-		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
 

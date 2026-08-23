@@ -13,7 +13,6 @@ const electronMocks = vi.hoisted(() => {
 			listeners.set(channel, listener);
 		}),
 		send: vi.fn(),
-		sendSync: vi.fn(),
 	};
 });
 
@@ -24,7 +23,6 @@ vi.mock("electron", () => ({
 		off: electronMocks.off,
 		on: electronMocks.on,
 		send: electronMocks.send,
-		sendSync: electronMocks.sendSync,
 	},
 }));
 
@@ -42,7 +40,6 @@ beforeEach(() => {
 	electronMocks.off.mockClear();
 	electronMocks.on.mockClear();
 	electronMocks.send.mockClear();
-	electronMocks.sendSync.mockReset();
 });
 
 describe("preload new-session shortcut bridge", () => {
@@ -119,24 +116,13 @@ describe("preload keybinding recording bridge", () => {
 
 describe("preload uiSettings bridge", () => {
 	it("invokes get and set over IPC", async () => {
-		electronMocks.invoke.mockResolvedValueOnce({ locale: "en", cloudEnabled: false });
-		electronMocks.invoke.mockResolvedValueOnce({ locale: "zh-CN", cloudEnabled: true });
+		electronMocks.invoke.mockResolvedValueOnce({ locale: "en" });
+		electronMocks.invoke.mockResolvedValueOnce({ locale: "zh-CN" });
 
-		await expect(exposedBridge().uiSettings.get()).resolves.toEqual({ locale: "en", cloudEnabled: false });
-		await expect(exposedBridge().uiSettings.set({ cloudEnabled: true })).resolves.toEqual({ locale: "zh-CN", cloudEnabled: true });
+		await expect(exposedBridge().uiSettings.get()).resolves.toEqual({ locale: "en" });
+		await expect(exposedBridge().uiSettings.set({ locale: "zh-CN" })).resolves.toEqual({ locale: "zh-CN" });
 
 		expect(electronMocks.invoke).toHaveBeenNthCalledWith(1, "uiSettings:get");
-		expect(electronMocks.invoke).toHaveBeenNthCalledWith(2, "uiSettings:set", { cloudEnabled: true });
-	});
-});
-
-describe("preload Cloud availability", () => {
-	it("exposes configuration availability separately from enablement", () => {
-		electronMocks.sendSync.mockReturnValueOnce(true).mockReturnValueOnce(false);
-
-		expect(exposedBridge().cloud.isAvailable()).toBe(true);
-		expect(exposedBridge().cloud.isEnabled()).toBe(false);
-		expect(electronMocks.sendSync).toHaveBeenNthCalledWith(1, "cloud:isAvailable");
-		expect(electronMocks.sendSync).toHaveBeenNthCalledWith(2, "cloud:isEnabled");
+		expect(electronMocks.invoke).toHaveBeenNthCalledWith(2, "uiSettings:set", { locale: "zh-CN" });
 	});
 });

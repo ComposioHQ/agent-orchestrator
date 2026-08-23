@@ -24,7 +24,7 @@ import { useDaemonStatus } from "../hooks/useDaemonStatus";
 import { useOpenShellTerminal } from "../hooks/useShellTerminals";
 import { useWindowFullScreen } from "../hooks/useWindowFullScreen";
 import { useWorkspaceQuery, workspaceQueryKey, workspaceQueryOptions } from "../hooks/useWorkspaceQuery";
-import { apiClient, apiErrorCode, apiErrorMessage, hasTrustedApiBaseUrl, setCloudApiBaseUrl } from "../lib/api-client";
+import { apiClient, apiErrorCode, apiErrorMessage, hasTrustedApiBaseUrl } from "../lib/api-client";
 import { refreshDaemonStatus } from "../lib/daemon-status";
 import { usesPreviewWorkspaceData } from "../lib/preview-mode";
 import { addRendererExceptionStep, captureRendererEvent, captureRendererException } from "../lib/telemetry";
@@ -327,8 +327,6 @@ function ShellLayout() {
 			trackerIntake?: components["schemas"]["TrackerIntakeConfig"];
 			asWorkspace?: boolean;
 		}) => {
-			setCloudApiBaseUrl(null);
-			queryClient.clear();
 			void addRendererExceptionStep("Project add requested", {
 				source: "project-add",
 				operation: "project_add",
@@ -359,7 +357,7 @@ function ShellLayout() {
 			if (!data?.project) throw new Error("Project creation returned no project");
 			await completeProjectCreation(data.project, input, "project_add");
 		},
-		[completeProjectCreation, queryClient],
+		[completeProjectCreation],
 	);
 
 	const cloneProject = useCallback(
@@ -370,8 +368,6 @@ function ShellLayout() {
 			orchestratorAgent: string;
 			trackerIntake?: components["schemas"]["TrackerIntakeConfig"];
 		}) => {
-			setCloudApiBaseUrl(null);
-			queryClient.clear();
 			void addRendererExceptionStep("Project clone requested", {
 				source: "project-clone",
 				operation: "project_clone",
@@ -402,12 +398,10 @@ function ShellLayout() {
 			if (!data?.project) throw new Error("Project clone returned no project");
 			await completeProjectCreation(data.project, input, "project_clone");
 		},
-		[completeProjectCreation, queryClient],
+		[completeProjectCreation],
 	);
 
 	const initializeProjectRepository = useCallback(async (path: string) => {
-		setCloudApiBaseUrl(null);
-		queryClient.clear();
 		const { error } = await apiClient.POST("/api/v1/projects/initialize", {
 			body: { path },
 		});
@@ -416,7 +410,7 @@ function ShellLayout() {
 			failure.code = apiErrorCode(error);
 			throw failure;
 		}
-	}, [queryClient]);
+	}, []);
 
 	const removeProject = useCallback(
 		async (projectId: string) => {
@@ -790,7 +784,6 @@ function ShellLayout() {
 						onRemoveProject={removeProject}
 						workspaceError={workspaceQuery.isError ? errorMessage(workspaceQuery.error) : undefined}
 						workspaces={workspaces}
-						workspacesSettled={!workspaceQuery.isPending}
 					/>
 					<main className={cn("flex min-w-0 flex-1 flex-col overflow-x-hidden", !isSidebarOpen && "sidebar-hidden")}>
 						<div className="min-h-0 flex-1 overflow-x-hidden">
