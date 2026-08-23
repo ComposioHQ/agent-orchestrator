@@ -7,6 +7,10 @@ on:
     paths:
       - "backend/**"
       - "frontend/src/api/schema.ts"
+      # The Cloud contract lives outside the Go module, but
+      # internal/cloud/httpapi's contract-parity tests read it — so a
+      # contract-only change must still run this workflow.
+      - "contracts/cloud/**"
       - "package.json"
       - ".github/workflows/go.yml"
 
