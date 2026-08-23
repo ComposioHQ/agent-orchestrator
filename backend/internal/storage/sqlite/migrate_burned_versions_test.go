@@ -107,6 +107,10 @@ var shippedMigrations = map[int64]string{
 	101: "0101_conversation_provider_ownership_epochs.sql",
 	102: "0102_canonical_usage.sql",
 	103: "0103_review_run_cdc.sql",
+	// 104-106 are upstream's (agent inventory cache, default session mode,
+	// pr comment review id). This branch predates them; 107 is claimed here so
+	// the number survives a rebase onto them without collision.
+	107: "0107_notification_turn_complete.sql",
 }
 
 // burnedVersion reports version numbers that must never be (re)used: they
