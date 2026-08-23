@@ -38,15 +38,7 @@ type WebhookStore interface {
 
 // ObservationSignal is a normalized refresh hint, not authoritative provider
 // state. Consumers re-read GitHub before writing observation facts.
-type ObservationSignal struct {
-	ExternalInstallationID int64
-	Repository             string
-	PullRequestNumber      int
-	PullRequestURL         string
-	HeadSHA                string
-	Event                  string
-	Action                 string
-}
+type ObservationSignal = domain.SCMObservationSignal
 
 // ObservationSink must make its durable write idempotent on deliveryID. The
 // separate required parameter makes omitting the dedup key impossible at the

@@ -77,7 +77,7 @@ func (b *Broker) withCredential(ctx context.Context, identity tenant.Identity, r
 	}
 	sandboxID = canonicalSandboxID
 	if err := b.store.AuthorizeSCMSandbox(ctx, identity, sandboxID); err != nil {
-		return err
+		return errors.Join(ErrSandboxNotAuthorized, err)
 	}
 	normalized, err := NormalizeRepository(repository)
 	if err != nil {

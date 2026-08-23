@@ -13,7 +13,7 @@ func TestCloudMigrationsAreTenantScoped(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantVersions := []int64{1, 2, 3, 4, 5, 6, 7, 8, 9, 31}
+	wantVersions := []int64{1, 2, 3, 4, 5, 6, 7, 8, 9, 30, 31, 32}
 	if len(migrations) != len(wantVersions) {
 		t.Fatalf("migrations = %#v", migrations)
 	}
@@ -83,6 +83,27 @@ func TestCloudMigrationsAreTenantScoped(t *testing.T) {
 	if !strings.Contains(string(generationMigration), "ADD COLUMN generation BIGINT NOT NULL DEFAULT 1") {
 		t.Fatal("runtime generation migration does not add the concurrency guard")
 	}
+	installationMigration, err := migrationFS.ReadFile("migrations/00030_scm_installations.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	installationSQL := string(installationMigration)
+	for _, required := range []string{
+		"CREATE TABLE ao_scm_installations",
+		"CREATE TABLE ao_scm_repositories",
+		"CREATE TABLE ao_scm_install_states",
+		"CREATE TABLE ao_scm_token_grants",
+		"allowed BOOLEAN NOT NULL DEFAULT FALSE",
+		"UNIQUE (provider, external_installation_id)",
+		"ALTER TABLE ao_scm_token_grants FORCE ROW LEVEL SECURITY",
+		"CREATE FUNCTION ao_scm_upsert_installation",
+		"CREATE FUNCTION ao_scm_consume_install_state",
+		"REVOKE ALL ON FUNCTION ao_scm_consume_install_state(BYTEA) FROM PUBLIC",
+	} {
+		if !strings.Contains(installationSQL, required) {
+			t.Fatalf("SCM installation migration does not contain %q", required)
+		}
+	}
 	webhookMigration, err := migrationFS.ReadFile("migrations/00031_scm_webhooks.sql")
 	if err != nil {
 		t.Fatal(err)
@@ -97,6 +118,22 @@ func TestCloudMigrationsAreTenantScoped(t *testing.T) {
 	} {
 		if !strings.Contains(webhookSQL, required) {
 			t.Fatalf("SCM webhook migration does not contain %q", required)
+		}
+	}
+	observationMigration, err := migrationFS.ReadFile("migrations/00032_scm_observations.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	observationSQL := string(observationMigration)
+	for _, required := range []string{
+		"CREATE TABLE ao_scm_observations",
+		"PRIMARY KEY (provider, delivery_id)",
+		"ALTER TABLE ao_scm_observations FORCE ROW LEVEL SECURITY",
+		"CREATE FUNCTION ao_scm_record_observation",
+		"ON CONFLICT (provider, delivery_id) DO NOTHING",
+	} {
+		if !strings.Contains(observationSQL, required) {
+			t.Fatalf("SCM observation migration does not contain %q", required)
 		}
 	}
 	authRLSMigration, err := migrationFS.ReadFile("migrations/00005_auth_rls.sql")
