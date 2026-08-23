@@ -111,7 +111,7 @@ SELECT CAST(EXISTS (
     FROM usage_bindings ub
     JOIN sessions s ON s.id = ub.session_id
     WHERE (s.is_terminated = 0 OR ub.state = 'finalizing')
-      AND ub.harness IN ('claude-code', 'codex')
+      AND ub.harness IN ('claude-code', 'codex', 'qwen')
       AND (
           ub.state = 'discovering'
           OR ub.last_error_code = 'source_discovery_pending'
@@ -161,13 +161,13 @@ SELECT ub.*
 FROM usage_bindings ub
 JOIN sessions s ON s.id = ub.session_id
 WHERE (s.is_terminated = 0 OR ub.state = 'finalizing')
-  AND ub.harness IN ('claude-code', 'codex')
+  AND ub.harness IN ('claude-code', 'codex', 'qwen')
   AND (
       ub.state IN ('discovering', 'active', 'finalizing')
       OR (ub.state = 'partial' AND ub.last_error_code = 'codex_source_budget_exceeded')
   )
   AND (
-      ub.harness = 'claude-code'
+      ub.harness IN ('claude-code', 'qwen')
       OR ub.state = 'discovering'
       OR ub.state = 'finalizing'
       OR ub.last_error_code = 'codex_source_budget_exceeded'

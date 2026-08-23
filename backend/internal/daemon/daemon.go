@@ -388,6 +388,7 @@ func Run() error {
 			roots.ClaudeProjects,
 			roots.CodexSessions,
 			roots.CodexArchived,
+			roots.QwenUsage,
 		}, usagepipeline.CoordinatorConfig{
 			Logger:     log,
 			Initialize: usageCollector.BackfillActive,

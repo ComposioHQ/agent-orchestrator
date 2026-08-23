@@ -62,6 +62,7 @@ type SourceRoots struct {
 	ClaudeProjects string
 	CodexSessions  string
 	CodexArchived  string
+	QwenUsage      string
 }
 
 // DefaultSourceRoots resolves the native Claude Code and Codex transcript
@@ -82,6 +83,7 @@ func DefaultSourceRoots(ctx context.Context) (SourceRoots, error) {
 		ClaudeProjects: filepath.Join(home, ".claude", "projects"),
 		CodexSessions:  filepath.Join(codexHome, "sessions"),
 		CodexArchived:  filepath.Join(codexHome, "archived_sessions"),
+		QwenUsage:      filepath.Join(home, ".qwen", "usage"),
 	}, nil
 }
 
@@ -275,7 +277,8 @@ func (c *Collector) RecordHook(ctx context.Context, sessionID domain.SessionID, 
 		}
 	}
 	if signal.NativeSessionID != "" && mainPath == "" &&
-		(session.Harness == domain.HarnessCodex || finalizing && !existsForDiscovery) {
+		(session.Harness == domain.HarnessCodex || session.Harness == domain.HarnessQwen ||
+			finalizing && !existsForDiscovery) {
 		mainPath, err = c.discoverPath(ctx, session.Harness, signal.NativeSessionID)
 		if err != nil {
 			return err
@@ -368,8 +371,11 @@ func (c *Collector) RecordHook(ctx context.Context, sessionID domain.SessionID, 
 
 	if mainArtifact != nil {
 		kind := domain.UsageSourceClaudeMain
-		if session.Harness == domain.HarnessCodex {
+		switch session.Harness {
+		case domain.HarnessCodex:
 			kind = domain.UsageSourceCodexRollout
+		case domain.HarnessQwen:
+			kind = domain.UsageSourceQwenMonthly
 		}
 		changed, err := c.registerHookSource(
 			ctx,
@@ -612,18 +618,24 @@ func (c *Collector) backfillSession(ctx context.Context, session domain.SessionR
 	}
 
 	kind := domain.UsageSourceClaudeMain
-	if session.Harness == domain.HarnessCodex {
+	switch session.Harness {
+	case domain.HarnessCodex:
 		kind = domain.UsageSourceCodexRollout
+	case domain.HarnessQwen:
+		kind = domain.UsageSourceQwenMonthly
 	}
 	if _, err := c.registerSource(ctx, binding, kind, nativeID, "", path, now, false); err != nil {
 		return err
 	}
-	if session.Harness == domain.HarnessClaudeCode {
+	switch session.Harness {
+	case domain.HarnessClaudeCode:
 		if err := c.registerDiscoveredClaudeSubagents(ctx, binding, path, now, false); err != nil {
 			return err
 		}
-	} else if err := c.registerDiscoveredCodexChildren(ctx, binding, now); err != nil {
-		return err
+	case domain.HarnessCodex:
+		if err := c.registerDiscoveredCodexChildren(ctx, binding, now); err != nil {
+			return err
+		}
 	}
 	if state == domain.UsageBindingFinalizing {
 		return c.settleFinalizingBinding(ctx, binding.ID, now)
@@ -861,18 +873,24 @@ func (c *Collector) reconcileBinding(ctx context.Context, binding domain.UsageBi
 	}
 
 	kind := domain.UsageSourceClaudeMain
-	if binding.Harness == domain.HarnessCodex {
+	switch binding.Harness {
+	case domain.HarnessCodex:
 		kind = domain.UsageSourceCodexRollout
+	case domain.HarnessQwen:
+		kind = domain.UsageSourceQwenMonthly
 	}
 	if _, err := c.registerSource(ctx, binding, kind, binding.NativeRootID, "", path, now, false); err != nil {
 		return err
 	}
-	if binding.Harness == domain.HarnessClaudeCode {
+	switch binding.Harness {
+	case domain.HarnessClaudeCode:
 		if err := c.registerDiscoveredClaudeSubagents(ctx, binding, path, now, false); err != nil {
 			return err
 		}
-	} else if err := c.registerDiscoveredCodexChildren(ctx, binding, now); err != nil {
-		return err
+	case domain.HarnessCodex:
+		if err := c.registerDiscoveredCodexChildren(ctx, binding, now); err != nil {
+			return err
+		}
 	}
 	lastErrorCode := ""
 	if binding.Harness == domain.HarnessCodex &&
@@ -1698,6 +1716,11 @@ func validateSourceAttribution(
 			filepath.Base(resolved) != "agent-"+subagentID+".jsonl" {
 			return rejected()
 		}
+	case domain.UsageSourceQwenMonthly:
+		if binding.Harness != domain.HarnessQwen || nativeSessionID != binding.NativeRootID ||
+			subagentID != "" || !qwenUsageFilename(filepath.Base(resolved)) {
+			return rejected()
+		}
 	default:
 		return rejected()
 	}
@@ -1710,6 +1733,8 @@ func (c *Collector) allowedRoots(harness domain.AgentHarness) []string {
 		return []string{c.roots.ClaudeProjects}
 	case domain.HarnessCodex:
 		return []string{c.roots.CodexSessions, c.roots.CodexArchived}
+	case domain.HarnessQwen:
+		return []string{c.roots.QwenUsage}
 	default:
 		return nil
 	}
@@ -1757,6 +1782,8 @@ func (c *Collector) discoverPath(ctx context.Context, harness domain.AgentHarnes
 		patterns = []string{filepath.Join(c.roots.ClaudeProjects, "*", nativeID+".jsonl")}
 	case domain.HarnessCodex:
 		return c.discoverCodexPath(ctx, nativeID, "")
+	case domain.HarnessQwen:
+		return c.discoverQwenPath(ctx)
 	}
 	type candidate struct {
 		path string
@@ -1788,6 +1815,42 @@ func (c *Collector) discoverPath(ctx context.Context, harness domain.AgentHarnes
 		return "", nil
 	}
 	return matches[0].path, nil
+}
+
+func qwenUsageFilename(name string) bool {
+	if !strings.HasPrefix(name, "token-usage-") || !strings.HasSuffix(name, ".jsonl") {
+		return false
+	}
+	month := strings.TrimSuffix(strings.TrimPrefix(name, "token-usage-"), ".jsonl")
+	if len(month) != 7 || month[4] != '-' {
+		return false
+	}
+	_, err := time.Parse("2006-01", month)
+	return err == nil
+}
+
+func (c *Collector) discoverQwenPath(ctx context.Context) (string, error) {
+	paths, err := filepath.Glob(filepath.Join(c.roots.QwenUsage, "token-usage-*.jsonl"))
+	if err != nil {
+		return "", err
+	}
+	valid := paths[:0]
+	for _, path := range paths {
+		if err := ctx.Err(); err != nil {
+			return "", err
+		}
+		if !qwenUsageFilename(filepath.Base(path)) {
+			continue
+		}
+		if info, statErr := os.Stat(path); statErr == nil && info.Mode().IsRegular() {
+			valid = append(valid, path)
+		}
+	}
+	if len(valid) == 0 {
+		return "", nil
+	}
+	sort.Strings(valid)
+	return valid[len(valid)-1], nil
 }
 
 func (c *Collector) discoverCodexPath(ctx context.Context, nativeID, parentID string) (string, error) {
