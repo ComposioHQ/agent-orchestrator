@@ -39,6 +39,27 @@ import (
 // with a wildcard scheme, everything).
 type Operation string
 
+// Binding says WHICH sessions an operation may touch. It is a property of the
+// operation, not of the grant, so the blast radius of a leaked credential is
+// decided once — in this table — instead of at each call site.
+type Binding string
+
+const (
+	// BindGrant operations act on the caller's own placement and need no
+	// target: heartbeating, reporting state, rotating the credential.
+	BindGrant Binding = "grant"
+	// BindWorkspace operations may reach any session in the granted
+	// workspace. Orchestration is inherently workspace-wide: a coordinator
+	// must send to, read, and spawn its workers.
+	BindWorkspace Binding = "workspace"
+	// BindSelf operations may reach ONLY the grant's own session. These are
+	// the per-session surfaces a worker legitimately drives for itself —
+	// preview, browser, activity — and precisely the ones that must not become
+	// a lever onto a sibling session. A self-bound operation on a grant with
+	// no session id authorizes nothing.
+	BindSelf Binding = "self"
+)
+
 const (
 	// OpSandboxHeartbeat lets a sandbox report that it is alive and learn the
 	// state the control plane wants it in.
@@ -49,25 +70,44 @@ const (
 	// OpCapabilityRotate lets a holder exchange a live capability for a
 	// successor with the same scope and the same absolute expiry.
 	OpCapabilityRotate Operation = "capability.rotate"
-	// OpSessionRead lets a worker read its own session's control-plane facts.
+
+	// OpSessionSend writes into a session's agent pane.
+	OpSessionSend Operation = "session.send"
+	// OpSessionRead reads a session's control-plane facts.
 	OpSessionRead Operation = "session.read"
-	// OpSessionWrite lets a worker publish progress for its own session.
-	OpSessionWrite Operation = "session.write"
-	// OpWorkspaceRead lets a coordinator enumerate its workspace's sessions.
-	OpWorkspaceRead Operation = "workspace.read"
-	// OpWorkerProvision lets a coordinator ask the control plane to provision
-	// worker sandboxes inside its own workspace. Workers never hold it.
-	OpWorkerProvision Operation = "worker.provision"
+	// OpSessionSpawn creates a new session, and with it a worker sandbox.
+	OpSessionSpawn Operation = "session.spawn"
+
+	// OpSessionPreview drives the session's preview surface.
+	OpSessionPreview Operation = "session.preview"
+	// OpSessionBrowser drives the session's browser surface.
+	OpSessionBrowser Operation = "session.browser"
+	// OpSessionActivity publishes the session's activity and progress.
+	OpSessionActivity Operation = "session.activity"
 )
 
-var knownOperations = map[Operation]struct{}{
-	OpSandboxHeartbeat:   {},
-	OpSandboxReportState: {},
-	OpCapabilityRotate:   {},
-	OpSessionRead:        {},
-	OpSessionWrite:       {},
-	OpWorkspaceRead:      {},
-	OpWorkerProvision:    {},
+// operationBindings is the authorization table. Adding an operation without an
+// entry here makes it unissuable, which is the safe direction: an unbound
+// operation would otherwise default to the widest interpretation.
+var operationBindings = map[Operation]Binding{
+	OpSandboxHeartbeat:   BindGrant,
+	OpSandboxReportState: BindGrant,
+	OpCapabilityRotate:   BindGrant,
+
+	OpSessionSend:  BindWorkspace,
+	OpSessionRead:  BindWorkspace,
+	OpSessionSpawn: BindWorkspace,
+
+	OpSessionPreview:  BindSelf,
+	OpSessionBrowser:  BindSelf,
+	OpSessionActivity: BindSelf,
+}
+
+// Binding returns the operation's binding class. ok is false for an
+// unregistered operation, which is never authorized.
+func (o Operation) Binding() (Binding, bool) {
+	binding, ok := operationBindings[o]
+	return binding, ok
 }
 
 // Errors returned by the authority. Callers may distinguish them; the HTTP
@@ -148,7 +188,7 @@ func (s Scope) Normalize() (Scope, error) {
 		if normalized == "" {
 			continue
 		}
-		if _, ok := knownOperations[normalized]; !ok {
+		if _, ok := normalized.Binding(); !ok {
 			return Scope{}, fmt.Errorf("%w: unknown operation %q", ErrInvalidScope, op)
 		}
 		seen[normalized] = struct{}{}
@@ -158,10 +198,66 @@ func (s Scope) Normalize() (Scope, error) {
 	}
 	out.Operations = make([]Operation, 0, len(seen))
 	for op := range seen {
+		// A self-bound operation names the grant's own session as its only
+		// legal target. Granting one to a scope with no session id would mint
+		// a credential that can never authorize anything — a silent denial
+		// that would be debugged in production instead of at issuance.
+		if binding, _ := op.Binding(); binding == BindSelf && out.SessionID == "" {
+			return Scope{}, fmt.Errorf("%w: %s is self-bound and requires a session", ErrInvalidScope, op)
+		}
 		out.Operations = append(out.Operations, op)
 	}
 	sort.Slice(out.Operations, func(i, j int) bool { return out.Operations[i] < out.Operations[j] })
 	return out, nil
+}
+
+// Target is the thing a request wants to act on. Handlers resolve it from the
+// route and the session's own record — never from a value the caller supplied
+// alongside its token — and pass it to Authorize.
+//
+// WorkspaceID is mandatory for every target-bound operation. Leaving it empty
+// fails closed: a handler that forgets to resolve the target must not end up
+// with an unbounded authorization.
+type Target struct {
+	WorkspaceID string
+	SessionID   string
+}
+
+// authorizeTarget applies the operation's binding to a concrete target.
+func (s Scope) authorizeTarget(op Operation, target Target) error {
+	binding, known := op.Binding()
+	if !known {
+		return fmt.Errorf("%w: unknown operation %q", ErrNotPermitted, op)
+	}
+	workspace := strings.TrimSpace(target.WorkspaceID)
+	session := strings.TrimSpace(target.SessionID)
+	switch binding {
+	case BindGrant:
+		// Verify passes no target for these. A caller that supplies one is
+		// confused about the operation; refuse rather than ignore it.
+		if workspace != "" || session != "" {
+			return fmt.Errorf("%w: %s acts on the grant itself and takes no target", ErrNotPermitted, op)
+		}
+		return nil
+	case BindWorkspace:
+		if workspace == "" {
+			return fmt.Errorf("%w: %s requires a resolved target workspace", ErrNotPermitted, op)
+		}
+		if workspace != s.WorkspaceID {
+			return fmt.Errorf("%w: %s may not reach another workspace", ErrNotPermitted, op)
+		}
+		return nil
+	case BindSelf:
+		if workspace == "" || session == "" {
+			return fmt.Errorf("%w: %s requires a resolved target session", ErrNotPermitted, op)
+		}
+		if workspace != s.WorkspaceID || session != s.SessionID {
+			return fmt.Errorf("%w: %s may only reach the granted session", ErrNotPermitted, op)
+		}
+		return nil
+	default:
+		return fmt.Errorf("%w: %s has no binding", ErrNotPermitted, op)
+	}
 }
 
 // Allows reports whether the scope permits one operation.

@@ -29,26 +29,38 @@ const (
 	EnvRuntimeID = "AO_CLOUD_RUNTIME_ID"
 )
 
-// coordinatorOperations is what a workspace coordinator may do. It may read
-// its workspace and ask for worker sandboxes; it may not read or write another
-// session's data, and it holds no operation that would let it mint credentials.
+// coordinatorOperations is what a workspace coordinator may do.
+//
+// Orchestration is inherently workspace-wide, so the coordinator holds the
+// workspace-bound session operations: it sends to its workers, reads them, and
+// spawns them. It also holds the self-bound surfaces for its OWN sandbox. It
+// holds nothing that mints or reads a credential.
 var coordinatorOperations = []capability.Operation{
 	capability.OpSandboxHeartbeat,
 	capability.OpSandboxReportState,
 	capability.OpCapabilityRotate,
-	capability.OpWorkspaceRead,
-	capability.OpWorkerProvision,
+	capability.OpSessionSend,
+	capability.OpSessionRead,
+	capability.OpSessionSpawn,
+	capability.OpSessionPreview,
+	capability.OpSessionBrowser,
+	capability.OpSessionActivity,
 }
 
-// workerOperations is what one worker agent may do: keep itself alive and act
-// on its OWN session. It cannot enumerate the workspace and cannot provision
-// more compute, so a compromised worker cannot fan out.
+// workerOperations is what one worker agent may do: keep itself alive and
+// drive its OWN session's surfaces.
+//
+// It holds no workspace-bound operation at all. That is the containment
+// property: a compromised worker cannot read a sibling session, cannot write
+// into one, and cannot spawn more compute — so it cannot fan out, and the
+// blast radius of one bad agent is exactly one sandbox.
 var workerOperations = []capability.Operation{
 	capability.OpSandboxHeartbeat,
 	capability.OpSandboxReportState,
 	capability.OpCapabilityRotate,
-	capability.OpSessionRead,
-	capability.OpSessionWrite,
+	capability.OpSessionPreview,
+	capability.OpSessionBrowser,
+	capability.OpSessionActivity,
 }
 
 // CapabilityScope builds the scope for one placement. It is exported so the

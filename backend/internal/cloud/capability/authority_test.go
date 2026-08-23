@@ -25,7 +25,7 @@ func workerScope() Scope {
 		WorkspaceID: "workspace-1",
 		SessionID:   "session-1",
 		Role:        RoleWorker,
-		Operations:  []Operation{OpSandboxHeartbeat, OpSessionWrite},
+		Operations:  []Operation{OpSandboxHeartbeat, OpSessionActivity},
 	}
 }
 
@@ -92,8 +92,8 @@ func TestVerifyAuthorizesOnlyGrantedOperations(t *testing.T) {
 	if verified.Scope.SessionID != "session-1" || verified.ID != grant.ID {
 		t.Fatalf("verified = %#v", verified)
 	}
-	if _, err := authority.Verify(context.Background(), grant.Token, OpWorkerProvision); !errors.Is(err, ErrNotPermitted) {
-		t.Fatalf("worker provisioning error = %v, want ErrNotPermitted", err)
+	if _, err := authority.Verify(context.Background(), grant.Token, OpSessionSpawn); !errors.Is(err, ErrNotPermitted) {
+		t.Fatalf("worker spawn error = %v, want ErrNotPermitted", err)
 	}
 }
 
@@ -129,7 +129,7 @@ func TestVerifyRejectsMalformedUnknownAndTamperedTokens(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	record.Scope.Operations = append(record.Scope.Operations, OpWorkerProvision)
+	record.Scope.Operations = append(record.Scope.Operations, OpSessionSpawn)
 	store.records[record.ID] = record
 	if _, err := authority.Verify(context.Background(), grant.Token, OpSandboxHeartbeat); !errors.Is(err, ErrInvalidToken) {
 		t.Fatalf("scope-tampered verify err = %v, want ErrInvalidToken", err)
@@ -361,7 +361,7 @@ func TestScopeNormalizationRules(t *testing.T) {
 		WorkspaceID: "workspace-1",
 		SessionID:   "session-1",
 		Role:        "Worker",
-		Operations:  []Operation{OpSessionWrite, OpSandboxHeartbeat, OpSessionWrite},
+		Operations:  []Operation{OpSessionActivity, OpSandboxHeartbeat, OpSessionActivity},
 	}.Normalize()
 	if err != nil {
 		t.Fatal(err)
@@ -369,13 +369,13 @@ func TestScopeNormalizationRules(t *testing.T) {
 	if valid.OrgID != "org-1" || valid.Role != RoleWorker {
 		t.Fatalf("normalized = %#v", valid)
 	}
-	if len(valid.Operations) != 2 || valid.Operations[0] != OpSandboxHeartbeat || valid.Operations[1] != OpSessionWrite {
+	if len(valid.Operations) != 2 || valid.Operations[0] != OpSandboxHeartbeat || valid.Operations[1] != OpSessionActivity {
 		t.Fatalf("operations = %#v, want sorted and deduped", valid.Operations)
 	}
 
 	for name, scope := range map[string]Scope{
-		"no org":            {WorkspaceID: "w", Role: RoleCoordinator, Operations: []Operation{OpWorkspaceRead}},
-		"no workspace":      {OrgID: "o", Role: RoleCoordinator, Operations: []Operation{OpWorkspaceRead}},
+		"no org":            {WorkspaceID: "w", Role: RoleCoordinator, Operations: []Operation{OpSessionRead}},
+		"no workspace":      {OrgID: "o", Role: RoleCoordinator, Operations: []Operation{OpSessionRead}},
 		"worker no session": {OrgID: "o", WorkspaceID: "w", Role: RoleWorker, Operations: []Operation{OpSessionRead}},
 		"unknown role":      {OrgID: "o", WorkspaceID: "w", Role: "admin", Operations: []Operation{OpSessionRead}},
 		"unknown operation": {OrgID: "o", WorkspaceID: "w", Role: RoleCoordinator, Operations: []Operation{"root.shell"}},

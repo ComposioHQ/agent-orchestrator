@@ -3,8 +3,10 @@ package capability
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
@@ -45,7 +47,7 @@ func TestRequireAttachesScopeAndPinsTheOperation(t *testing.T) {
 	request := httptest.NewRequest(http.MethodPost, "/sandbox/heartbeat", nil)
 	request.Header.Set("Authorization", "Bearer aocap_v1.abc.def")
 	// A body naming a different operation must not change what is authorized.
-	request.Header.Set("X-AO-Operation", string(OpWorkerProvision))
+	request.Header.Set("X-AO-Operation", string(OpSessionSpawn))
 
 	response := serve(t, verifier, OpSandboxHeartbeat, request)
 	if response.Code != http.StatusOK {
@@ -120,5 +122,105 @@ func TestRequireMapsCredentialFailuresToStatuses(t *testing.T) {
 		if body.Error.Code != testCase.code {
 			t.Fatalf("%s: code = %q, want %q", name, body.Error.Code, testCase.code)
 		}
+	}
+}
+
+func TestRequireRefusesATargetBoundOperation(t *testing.T) {
+	// Require has no way to say what the request acts on, so wiring a
+	// target-bound operation through it must fail rather than authorize an
+	// unbounded action. The authority enforces this; the middleware surfaces
+	// it as a 403.
+	authority, err := New(NewMemoryStore(), time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	grant, err := authority.Issue(context.Background(), Scope{
+		OrgID: "org-1", WorkspaceID: "ws-1", SessionID: "sess-1", Role: RoleWorker,
+		Operations: []Operation{OpSessionActivity},
+	}, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(http.MethodPost, "/activity", nil)
+	request.Header.Set("Authorization", "Bearer "+grant.Token)
+	response := serve(t, authority, OpSessionActivity, request)
+	if response.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403", response.Code)
+	}
+}
+
+func serveTarget(t *testing.T, authorizer Authorizer, op Operation, resolve TargetResolver, request *http.Request) *httptest.ResponseRecorder {
+	t.Helper()
+	handler := RequireTarget(authorizer, op, resolve)(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		writer.WriteHeader(http.StatusOK)
+	}))
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, request)
+	return recorder
+}
+
+func TestRequireTargetAuthorizesAgainstTheResolvedTargetNotTheBody(t *testing.T) {
+	authority, err := New(NewMemoryStore(), time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	grant, err := authority.Issue(context.Background(), Scope{
+		OrgID: "org-1", WorkspaceID: "ws-1", SessionID: "sess-1", Role: RoleWorker,
+		Operations: []Operation{OpSessionBrowser},
+	}, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// The route resolves the target from the path. A caller that puts a
+	// different session in a header or body cannot move it.
+	resolve := func(request *http.Request) (Target, error) {
+		session := strings.TrimPrefix(request.URL.Path, "/sessions/")
+		if session == "" {
+			return Target{}, errors.New("no session in path")
+		}
+		return Target{WorkspaceID: "ws-1", SessionID: session}, nil
+	}
+
+	own := httptest.NewRequest(http.MethodPost, "/sessions/sess-1", nil)
+	own.Header.Set("Authorization", "Bearer "+grant.Token)
+	own.Header.Set("X-AO-Session", "sess-2")
+	if response := serveTarget(t, authority, OpSessionBrowser, resolve, own); response.Code != http.StatusOK {
+		t.Fatalf("own session status = %d", response.Code)
+	}
+
+	sibling := httptest.NewRequest(http.MethodPost, "/sessions/sess-2", nil)
+	sibling.Header.Set("Authorization", "Bearer "+grant.Token)
+	// A client-supplied "this is really my session" hint must not help.
+	sibling.Header.Set("X-AO-Session", "sess-1")
+	if response := serveTarget(t, authority, OpSessionBrowser, resolve, sibling); response.Code != http.StatusForbidden {
+		t.Fatalf("sibling session status = %d, want 403", response.Code)
+	}
+}
+
+func TestRequireTargetReportsAnUnresolvableTargetAsABadRequest(t *testing.T) {
+	// An unresolvable target is the route's problem, not a credential problem;
+	// reporting 401 would send a caller chasing its token.
+	authority, err := New(NewMemoryStore(), time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	grant, err := authority.Issue(context.Background(), Scope{
+		OrgID: "org-1", WorkspaceID: "ws-1", SessionID: "sess-1", Role: RoleWorker,
+		Operations: []Operation{OpSessionBrowser},
+	}, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(http.MethodPost, "/sessions/", nil)
+	request.Header.Set("Authorization", "Bearer "+grant.Token)
+	response := serveTarget(t, authority, OpSessionBrowser, func(*http.Request) (Target, error) {
+		return Target{}, errors.New("session not found")
+	}, request)
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", response.Code)
+	}
+	if !strings.Contains(response.Body.String(), "target_unresolved") {
+		t.Fatalf("body = %s", response.Body.String())
 	}
 }

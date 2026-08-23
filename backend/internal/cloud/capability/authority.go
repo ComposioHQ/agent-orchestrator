@@ -144,11 +144,24 @@ type Verified struct {
 	ExpiresAt time.Time
 }
 
-// Verify authenticates an opaque capability and authorizes one operation.
+// Verify authenticates an opaque capability and authorizes one GRANT-BOUND
+// operation — one that acts on the caller's own placement and needs no target.
+//
+// It refuses a workspace- or self-bound operation outright. That is the whole
+// point of the split: a handler that authorizes "session.send" without saying
+// which session it resolved has not actually checked anything, and silently
+// treating that as permission is how one tenant ends up steering another's
+// agent. Such handlers must call Authorize.
+func (a *Authority) Verify(ctx context.Context, token string, op Operation) (Verified, error) {
+	return a.Authorize(ctx, token, op, Target{})
+}
+
+// Authorize authenticates an opaque capability and authorizes one operation
+// against a concrete target.
 //
 // A missing grant is reported as ErrInvalidToken rather than ErrNotFound so an
 // attacker cannot use the error to enumerate live grant ids.
-func (a *Authority) Verify(ctx context.Context, token string, op Operation) (Verified, error) {
+func (a *Authority) Authorize(ctx context.Context, token string, op Operation, target Target) (Verified, error) {
 	id, secret, err := parseToken(token)
 	if err != nil {
 		return Verified{}, err
@@ -169,6 +182,9 @@ func (a *Authority) Verify(ctx context.Context, token string, op Operation) (Ver
 	}
 	if !record.Scope.Allows(op) {
 		return Verified{}, fmt.Errorf("%w: %s", ErrNotPermitted, op)
+	}
+	if err := record.Scope.authorizeTarget(op, target); err != nil {
+		return Verified{}, err
 	}
 	return Verified{ID: record.ID, Scope: record.Scope, ExpiresAt: record.ExpiresAt}, nil
 }

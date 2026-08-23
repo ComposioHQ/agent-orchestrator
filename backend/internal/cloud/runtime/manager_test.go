@@ -235,23 +235,34 @@ func TestEnsureScopesWorkerAndCoordinatorCapabilitiesDifferently(t *testing.T) {
 		t.Fatalf("coordinator snapshot = %q", h.provider.LastCreate.Snapshot)
 	}
 
-	// A worker may act on its own session but may not fan out or read the
-	// workspace; a coordinator is the mirror image.
-	if _, err := h.authority.Verify(ctx, worker.Capability.Token, capability.OpSessionWrite); err != nil {
-		t.Fatalf("worker session write: %v", err)
+	// A worker drives its own session's surfaces and holds no workspace-bound
+	// operation at all, so it cannot reach a sibling session or fan out.
+	workerSelf := capability.Target{WorkspaceID: "ws-1", SessionID: "sess-1"}
+	if _, err := h.authority.Authorize(ctx, worker.Capability.Token, capability.OpSessionActivity, workerSelf); err != nil {
+		t.Fatalf("worker activity on its own session: %v", err)
 	}
-	for _, denied := range []capability.Operation{capability.OpWorkerProvision, capability.OpWorkspaceRead} {
-		if _, err := h.authority.Verify(ctx, worker.Capability.Token, denied); !errors.Is(err, capability.ErrNotPermitted) {
+	for _, denied := range []capability.Operation{
+		capability.OpSessionSend, capability.OpSessionRead, capability.OpSessionSpawn,
+	} {
+		_, err := h.authority.Authorize(ctx, worker.Capability.Token, denied, capability.Target{WorkspaceID: "ws-1", SessionID: "sess-2"})
+		if !errors.Is(err, capability.ErrNotPermitted) {
 			t.Fatalf("worker %s = %v, want ErrNotPermitted", denied, err)
 		}
 	}
-	if _, err := h.authority.Verify(ctx, coordinator.Capability.Token, capability.OpWorkerProvision); err != nil {
-		t.Fatalf("coordinator provisioning: %v", err)
-	}
-	for _, denied := range []capability.Operation{capability.OpSessionRead, capability.OpSessionWrite} {
-		if _, err := h.authority.Verify(ctx, coordinator.Capability.Token, denied); !errors.Is(err, capability.ErrNotPermitted) {
-			t.Fatalf("coordinator %s = %v, want ErrNotPermitted", denied, err)
+
+	// A coordinator orchestrates across its workspace but its self-bound
+	// surfaces still stop at its own sandbox.
+	coordinatorTarget := capability.Target{WorkspaceID: "ws-1", SessionID: "sess-1"}
+	for _, allowed := range []capability.Operation{
+		capability.OpSessionSend, capability.OpSessionRead, capability.OpSessionSpawn,
+	} {
+		if _, err := h.authority.Authorize(ctx, coordinator.Capability.Token, allowed, coordinatorTarget); err != nil {
+			t.Fatalf("coordinator %s across its workspace: %v", allowed, err)
 		}
+	}
+	_, err = h.authority.Authorize(ctx, coordinator.Capability.Token, capability.OpSessionBrowser, coordinatorTarget)
+	if !errors.Is(err, capability.ErrNotPermitted) {
+		t.Fatalf("coordinator browser on a worker session = %v, want ErrNotPermitted", err)
 	}
 }
 

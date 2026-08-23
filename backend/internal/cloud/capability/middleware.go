@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 )
@@ -12,10 +13,16 @@ type verifiedContextKey struct{}
 
 type bearerContextKey struct{}
 
-// Verifier is the narrow interface an HTTP surface needs. *Authority satisfies
-// it; tests substitute a stub.
+// Verifier is the narrow interface a grant-bound HTTP surface needs.
+// *Authority satisfies it; tests substitute a stub.
 type Verifier interface {
 	Verify(ctx context.Context, token string, op Operation) (Verified, error)
+}
+
+// Authorizer is what a target-bound HTTP surface needs. *Authority satisfies
+// it.
+type Authorizer interface {
+	Authorize(ctx context.Context, token string, op Operation, target Target) (Verified, error)
 }
 
 // FromContext returns the verified capability attached by Require.
@@ -34,13 +41,49 @@ func BearerFromContext(ctx context.Context) (string, bool) {
 }
 
 // Require builds middleware that authenticates the Authorization bearer
-// capability and authorizes exactly one operation.
+// capability and authorizes exactly one GRANT-BOUND operation.
 //
 // The operation is fixed per route rather than derived from the request body:
 // a sandbox must not be able to widen its own authorization by naming a
 // different operation in a payload. Handlers read the granted scope from the
 // context and must ignore org/workspace/session ids sent in the body.
+//
+// A workspace- or self-bound operation cannot be used here; the authority
+// rejects it. Use RequireTarget, which forces the route to say what it
+// resolved.
 func Require(verifier Verifier, op Operation) func(http.Handler) http.Handler {
+	return authorizeWith(op, func(ctx context.Context, token string, _ *http.Request) (Verified, error) {
+		return verifier.Verify(ctx, token, op)
+	})
+}
+
+// TargetResolver derives the target of a request from the route. It must read
+// the target from the path and from durable records — never from a body field
+// the caller controls, which would let a token holder nominate its own target
+// and defeat the binding entirely.
+//
+// Returning an error rejects the request as a bad request.
+type TargetResolver func(*http.Request) (Target, error)
+
+// RequireTarget builds middleware for a workspace- or self-bound operation.
+// The resolver runs before authorization, so the binding is always applied to
+// a target the server derived.
+func RequireTarget(authorizer Authorizer, op Operation, resolve TargetResolver) func(http.Handler) http.Handler {
+	return authorizeWith(op, func(ctx context.Context, token string, request *http.Request) (Verified, error) {
+		target, err := resolve(request)
+		if err != nil {
+			return Verified{}, fmt.Errorf("%w: %w", errUnresolvedTarget, err)
+		}
+		return authorizer.Authorize(ctx, token, op, target)
+	})
+}
+
+// errUnresolvedTarget separates "the route could not work out what is being
+// acted on" from a credential failure, so an unresolvable target is a 400
+// rather than a misleading 401.
+var errUnresolvedTarget = errors.New("target could not be resolved")
+
+func authorizeWith(_ Operation, decide func(context.Context, string, *http.Request) (Verified, error)) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 			token, ok := bearerToken(request)
@@ -48,7 +91,7 @@ func Require(verifier Verifier, op Operation) func(http.Handler) http.Handler {
 				writeAuthError(writer, http.StatusUnauthorized, "capability_required", "a capability token is required")
 				return
 			}
-			verified, err := verifier.Verify(request.Context(), token, op)
+			verified, err := decide(request.Context(), token, request)
 			if err != nil {
 				status, code := authErrorFor(err)
 				writeAuthError(writer, status, code, http.StatusText(status))
@@ -81,6 +124,8 @@ func bearerToken(request *http.Request) (string, bool) {
 
 func authErrorFor(err error) (int, string) {
 	switch {
+	case errors.Is(err, errUnresolvedTarget):
+		return http.StatusBadRequest, "target_unresolved"
 	case errors.Is(err, ErrNotPermitted):
 		return http.StatusForbidden, "capability_forbidden"
 	case errors.Is(err, ErrExpired):
