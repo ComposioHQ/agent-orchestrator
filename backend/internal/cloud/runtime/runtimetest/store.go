@@ -55,6 +55,9 @@ func (s *MemoryStore) Ensure(_ context.Context, ref runtime.Ref, now time.Time) 
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if existing, ok := s.findLocked(ref); ok {
+		if existing.Role != ref.Role {
+			return runtime.Record{}, false, runtime.ErrConflict
+		}
 		return existing, false, nil
 	}
 	s.nextID++

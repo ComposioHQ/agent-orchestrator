@@ -252,3 +252,68 @@ The placement schema (`ao_cloud_session_runtimes`) needs `role`, `user_id`,
 `desired_state`, and `last_heartbeat_at` columns and `deleting` added to its
 state constraint, plus a capability-grant table. Those migrations are not in
 this package.
+
+### Appendix: the schema the adapters need
+
+The compute plane ships no migration: `backend/internal/cloud/postgres` is
+owned by the storage slice, and this is the DDL its next migration has to
+carry. It extends the existing placement table rather than replacing it, so
+the staging database that already applied `00003` migrates forward.
+
+```sql
+ALTER TABLE ao_cloud_session_runtimes
+    ADD COLUMN role TEXT NOT NULL DEFAULT 'worker'
+        CHECK (role IN ('coordinator', 'worker')),
+    ADD COLUMN owner_user_id UUID REFERENCES ao_users(id) ON DELETE CASCADE,
+    ADD COLUMN desired_state TEXT NOT NULL DEFAULT 'running'
+        CHECK (desired_state IN ('running', 'stopped', 'deleting')),
+    ADD COLUMN last_heartbeat_at TIMESTAMPTZ;
+
+-- 'deleting' is the durable teardown intent the cascade writes before it
+-- touches the provider, and the reconciler resumes from.
+ALTER TABLE ao_cloud_session_runtimes
+    DROP CONSTRAINT ao_cloud_session_runtimes_state_check;
+ALTER TABLE ao_cloud_session_runtimes
+    ADD CONSTRAINT ao_cloud_session_runtimes_state_check
+        CHECK (state IN ('provisioning', 'running', 'stopped', 'failed', 'deleting'));
+
+-- Quota counts and the reaper's idle scan are the two hot reads.
+CREATE INDEX ao_cloud_session_runtimes_org_live_idx
+    ON ao_cloud_session_runtimes(org_id) WHERE state <> 'deleting';
+CREATE INDEX ao_cloud_session_runtimes_owner_live_idx
+    ON ao_cloud_session_runtimes(owner_user_id) WHERE state <> 'deleting';
+CREATE INDEX ao_cloud_session_runtimes_heartbeat_idx
+    ON ao_cloud_session_runtimes(last_heartbeat_at);
+
+CREATE TABLE ao_cloud_capabilities (
+    id TEXT PRIMARY KEY,
+    org_id UUID NOT NULL REFERENCES ao_organizations(id) ON DELETE CASCADE,
+    workspace_id UUID NOT NULL REFERENCES ao_cloud_workspaces(id) ON DELETE CASCADE,
+    session_id TEXT NOT NULL DEFAULT '',
+    role TEXT NOT NULL CHECK (role IN ('coordinator', 'worker')),
+    operations TEXT[] NOT NULL CHECK (cardinality(operations) > 0),
+    -- One-way digest only. The bearer secret is returned once at issuance and
+    -- is never persisted.
+    verifier TEXT NOT NULL,
+    issued_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    expires_at TIMESTAMPTZ NOT NULL,
+    revoked_at TIMESTAMPTZ,
+    rotated_to_id TEXT
+);
+CREATE INDEX ao_cloud_capabilities_scope_idx
+    ON ao_cloud_capabilities(org_id, workspace_id, session_id) WHERE revoked_at IS NULL;
+CREATE INDEX ao_cloud_capabilities_spent_idx
+    ON ao_cloud_capabilities(expires_at, revoked_at);
+```
+
+Both tables need forced RLS and tenant policies matching the existing pattern.
+Note that the **reconciler is a system actor**: it walks every tenant's
+placements and therefore cannot satisfy a policy keyed on `ao.user_id` /
+`ao.org_id`. Give it fixed-`search_path` `SECURITY DEFINER` functions owned by
+a narrowly privileged `NOLOGIN` role, the way `00006` does for pre-auth
+identity, rather than granting the runtime role `BYPASSRLS`.
+
+Three existing call sites enumerate tables explicitly and must be updated in
+the same change: `migrate.go`'s `grantRuntimeRole` (GRANT list),
+`store.go`'s `validateRuntimeRole` (the hardcoded table list and count), and
+`migrate_test.go`'s migration-count assertion.

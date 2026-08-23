@@ -73,6 +73,20 @@ func RunStoreConformance(t *testing.T, newStore StoreFactory) {
 		}
 	})
 
+	t.Run("ensure refuses a role change on an existing placement", func(t *testing.T) {
+		store := newStore(t)
+		if _, _, err := store.Ensure(ctx, ref, now); err != nil {
+			t.Fatal(err)
+		}
+		confused := ref
+		confused.Role = runtime.RoleCoordinator
+		// Handing back the worker's row would run a coordinator under a
+		// worker's capability scope.
+		if _, _, err := store.Ensure(ctx, confused, now); !errors.Is(err, runtime.ErrConflict) {
+			t.Fatalf("role-changing Ensure err = %v, want ErrConflict", err)
+		}
+	})
+
 	t.Run("get and getByID agree and report absence", func(t *testing.T) {
 		store := newStore(t)
 		record, _, err := store.Ensure(ctx, ref, now)

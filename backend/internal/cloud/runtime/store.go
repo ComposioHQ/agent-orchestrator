@@ -23,6 +23,11 @@ type Store interface {
 	// A row in StateDeleting must NOT be resurrected: implementations return
 	// the existing record with created=false, and the caller maps that to
 	// ErrDeleting.
+	//
+	// A placement is keyed on (org, workspace, session). If an existing row
+	// carries a different role, Ensure returns ErrConflict rather than
+	// silently handing back the other role's placement: a coordinator that
+	// received a worker's row would run under the wrong capability scope.
 	Ensure(ctx context.Context, ref Ref, now time.Time) (record Record, created bool, err error)
 	// Get loads the placement for a ref, returning ErrNotFound when absent.
 	Get(ctx context.Context, ref Ref) (Record, error)
