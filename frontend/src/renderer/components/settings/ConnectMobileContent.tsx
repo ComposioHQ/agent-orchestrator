@@ -250,7 +250,7 @@ export function ConnectMobileContent({ active }: { active: boolean }) {
 					{/* One walkthrough per platform × connection combo. Steps are plain
 					    text with a trailing "Join now ↗" link; address/password join
 					    the list once the QR is generated. */}
-					<ol className="settings-mobile-steps mt-4 !text-sm !leading-6 !text-settings-label">
+					<ol className="settings-mobile-steps mt-4 !text-[13px] !leading-6 !text-[color-mix(in_oklch,var(--color-settings-label)_75%,var(--color-text-settings-muted))]">
 						{platform === "ios" ? (
 							<>
 								<li>{t("mobile.ios.step1")}</li>
