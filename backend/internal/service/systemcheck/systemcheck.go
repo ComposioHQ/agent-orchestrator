@@ -1,10 +1,7 @@
-// Package systemcheck reports whether the local machine satisfies the
-// prerequisites AO needs before the desktop app shows the board: git, tmux
-// (macOS/Linux only), and at least one installed agent-harness CLI. It also
-// probes for gh (the GitHub CLI), which is advisory only and never blocks
-// readiness. It is the backend gate the Electron loading screen polls; the
-// checks are pure existence probes (LookPath), not the deeper
-// version/compatibility checks `ao doctor` runs.
+// Package systemcheck reports lightweight executable prerequisites the desktop
+// app checks before showing the board: git, tmux (macOS/Linux only), and the
+// advisory GitHub CLI. It also supports a deeper, user-triggered agent-harness
+// inventory check, which is intentionally excluded from first-render startup.
 package systemcheck
 
 import (
@@ -25,10 +22,11 @@ type Requirement struct {
 	Detail    string `json:"detail,omitempty" description:"Extra context: the resolved path when satisfied, or why it is not."`
 }
 
-// Report is the full startup requirements gate result.
+// Report is a requirements result suitable for either the lightweight startup
+// preflight or a deeper, user-triggered environment check.
 type Report struct {
 	Ready        bool          `json:"ready" description:"True iff every requirement with Required=true is satisfied. Requirements with Required=false (e.g. gh) are advisory and never block readiness."`
-	Requirements []Requirement `json:"requirements" description:"Individual checks, in stable order: git, tmux, harness, gh."`
+	Requirements []Requirement `json:"requirements" description:"Individual checks in stable order for the selected probe."`
 }
 
 // HarnessCatalog is the subset of agent.Service the harness requirement needs.
@@ -60,9 +58,24 @@ func NewWithLookPath(harnesses HarnessCatalog, lookPath func(string) (string, er
 	return New(harnesses, executableFinderFunc(lookPath))
 }
 
-// Check runs the four startup requirement probes and reports whether the
-// machine is ready to run AO sessions. gh is advisory (Required: false) and
-// never affects Ready.
+// CheckStartup runs only the inexpensive executable lookups that must be
+// known before AO presents its primary session UI. It deliberately excludes
+// agent inventory/authentication: those provider probes can invoke several
+// CLIs and have their own timeouts, so they belong in a later background or
+// launch-time check rather than the first-render critical path.
+func (s *Service) CheckStartup(ctx context.Context) (Report, error) {
+	if err := ctx.Err(); err != nil {
+		return Report{}, err
+	}
+	return reportFor([]Requirement{
+		s.checkGit(),
+		s.checkTmux(),
+		s.checkGH(),
+	}), nil
+}
+
+// Check runs the complete, user-triggered requirements probe, including a
+// fresh agent inventory. Startup callers should use CheckStartup instead.
 func (s *Service) Check(ctx context.Context) (Report, error) {
 	if err := ctx.Err(); err != nil {
 		return Report{}, err
@@ -75,6 +88,10 @@ func (s *Service) Check(ctx context.Context) (Report, error) {
 		s.checkGH(),
 	}
 
+	return reportFor(requirements), nil
+}
+
+func reportFor(requirements []Requirement) Report {
 	ready := true
 	for _, req := range requirements {
 		if req.Required && !req.Satisfied {
@@ -82,7 +99,7 @@ func (s *Service) Check(ctx context.Context) (Report, error) {
 			break
 		}
 	}
-	return Report{Ready: ready, Requirements: requirements}, nil
+	return Report{Ready: ready, Requirements: requirements}
 }
 
 func (s *Service) checkGit() Requirement {

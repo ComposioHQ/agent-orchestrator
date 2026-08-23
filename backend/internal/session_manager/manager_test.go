@@ -7428,6 +7428,50 @@ func TestReconcile_LivePassUsesConfiguredConcurrency(t *testing.T) {
 	}
 }
 
+func TestReconcileStartupSafetyDefersRuntimeReconciliation(t *testing.T) {
+	st := newFakeStore()
+	st.projects["p1"] = domain.ProjectRecord{ID: "p1", Config: testRoleAgents()}
+	st.sessions["s1"] = domain.SessionRecord{
+		ID: "s1", ProjectID: "p1", Harness: domain.HarnessClaudeCode,
+		Metadata: domain.SessionMetadata{Branch: "ao/s1/root", WorkspacePath: "/wt/s1", RuntimeHandleID: "s1"},
+	}
+	release := make(chan struct{})
+	rt := &blockingAliveRuntime{
+		fakeRuntime: &fakeRuntime{},
+		entered:     make(chan domain.SessionID, 1),
+		release:     release,
+	}
+	m := New(Deps{
+		Runtime: rt, Agents: fakeAgents{}, Workspace: &fakeWorkspace{}, Store: st,
+		Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st},
+		LookPath: func(string) (string, error) { return "/bin/true", nil },
+	})
+
+	if err := m.ReconcileStartupSafety(context.Background()); err != nil {
+		t.Fatalf("ReconcileStartupSafety: %v", err)
+	}
+	select {
+	case id := <-rt.entered:
+		t.Fatalf("startup safety unexpectedly probed runtime %s", id)
+	default:
+	}
+
+	done := make(chan error, 1)
+	go func() { done <- m.ReconcileBackground(context.Background()) }()
+	select {
+	case id := <-rt.entered:
+		if id != "s1" {
+			t.Fatalf("runtime probe = %s, want s1", id)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("background reconciliation did not probe the live runtime")
+	}
+	close(release)
+	if err := <-done; err != nil {
+		t.Fatalf("ReconcileBackground: %v", err)
+	}
+}
+
 // TestReconcileLive_ProbeErrorIsNotDeath locks the invariant that a failed
 // IsAlive probe is NOT treated as proof that the session is dead. reconcileLive
 // must propagate the error and must NOT stash, terminate, or destroy.

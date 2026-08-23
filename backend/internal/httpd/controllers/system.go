@@ -11,10 +11,10 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/service/systemcheck"
 )
 
-// SystemChecker is the controller-facing contract for the startup requirements
-// gate: the desktop loading screen polls this before showing the board.
+// SystemChecker is the controller-facing contract for the lightweight startup
+// preflight the desktop loading screen runs before showing the board.
 type SystemChecker interface {
-	Check(ctx context.Context) (systemcheck.Report, error)
+	CheckStartup(ctx context.Context) (systemcheck.Report, error)
 }
 
 // SystemController owns the /system routes.
@@ -32,7 +32,7 @@ func (c *SystemController) requirements(w http.ResponseWriter, r *http.Request) 
 		apispec.NotImplemented(w, r, "GET", "/api/v1/system/requirements")
 		return
 	}
-	report, err := c.Checks.Check(r.Context())
+	report, err := c.Checks.CheckStartup(r.Context())
 	if err != nil {
 		envelope.WriteError(w, r, err)
 		return

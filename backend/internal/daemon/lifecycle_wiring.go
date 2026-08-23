@@ -127,6 +127,8 @@ func (l *lifecycleStack) Stop() {
 // the method here is a visible, reviewable interface change.
 type sessionLifecycle interface {
 	Reconcile(ctx context.Context) error
+	ReconcileStartupSafety(ctx context.Context) error
+	ReconcileBackground(ctx context.Context) error
 	RestoreAll(ctx context.Context) error
 	WaitAgentSwitchWorkers(ctx context.Context) error
 	Kill(ctx context.Context, id domain.SessionID) (bool, error)

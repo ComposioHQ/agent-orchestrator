@@ -2340,7 +2340,13 @@ func (m *Manager) reconcileReap(ctx context.Context, rec domain.SessionRecord) e
 	return nil
 }
 
-// Reconcile is the boot-time consistency pass. It replaces the bare RestoreAll
+// Reconcile is the full boot-time consistency pass. It remains the synchronous
+// entry point for callers that need reconciliation to have completed before
+// proceeding. The daemon uses ReconcileStartupSafety before it starts serving,
+// then runs ReconcileBackground after its listener is live so durable project
+// metadata is available without waiting on worktree and runtime restoration.
+//
+// It replaces the bare RestoreAll
 // call so that however the previous daemon died (clean shutdown, SIGKILL, or
 // crash), live reality matches the DB:
 //
@@ -2356,6 +2362,16 @@ func (m *Manager) reconcileReap(ctx context.Context, rec domain.SessionRecord) e
 // pass so the daemon cannot serve with an unknown switch and an open input
 // fence.
 func (m *Manager) Reconcile(ctx context.Context) error {
+	if err := m.ReconcileStartupSafety(ctx); err != nil {
+		return err
+	}
+	return m.ReconcileBackground(ctx)
+}
+
+// ReconcileStartupSafety closes durable agent-switch and interface-transition
+// state that would otherwise lose its in-memory input fence across a daemon
+// restart. This must complete before the API accepts user input.
+func (m *Manager) ReconcileStartupSafety(ctx context.Context) error {
 	// A daemon restart destroys the in-memory input fence. Close any durable
 	// non-terminal switch before adopting runtimes so the API never implies an
 	// unconfirmed continuation was delivered.
@@ -2367,6 +2383,14 @@ func (m *Manager) Reconcile(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("reconcile: interface transitions: %w", err)
 	}
+	return nil
+}
+
+// ReconcileBackground performs the potentially slow runtime, worktree, and
+// saved-session restoration passes. It is deliberately separate from the
+// startup safety pass so the daemon can serve durable SQLite-backed project
+// and session metadata while this best-effort work continues.
+func (m *Manager) ReconcileBackground(ctx context.Context) error {
 	recs, err := m.store.ListAllSessions(ctx)
 	if err != nil {
 		return fmt.Errorf("reconcile: list sessions: %w", err)

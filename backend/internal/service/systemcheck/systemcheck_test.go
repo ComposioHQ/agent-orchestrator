@@ -11,9 +11,11 @@ import (
 type fakeHarnessCatalog struct {
 	inventory agentsvc.Inventory
 	err       error
+	calls     int
 }
 
 func (f *fakeHarnessCatalog) RefreshFresh(context.Context) (agentsvc.Inventory, error) {
+	f.calls++
 	return f.inventory, f.err
 }
 
@@ -57,6 +59,34 @@ func TestCheck_AllSatisfied(t *testing.T) {
 		}
 		if report.Requirements[i].Required != wantRequired[id] {
 			t.Fatalf("Requirements[%d] (%s).Required = %v, want %v", i, id, report.Requirements[i].Required, wantRequired[id])
+		}
+	}
+}
+
+func TestCheckStartup_OnlyUsesExecutableLookups(t *testing.T) {
+	catalog := &fakeHarnessCatalog{err: errors.New("agent probe must not run at startup")}
+	svc := NewWithLookPath(catalog, lookPathFound(map[string]string{
+		"git":  "/usr/bin/git",
+		"tmux": "/usr/bin/tmux",
+		"gh":   "/usr/bin/gh",
+	}))
+
+	report, err := svc.CheckStartup(context.Background())
+	if err != nil {
+		t.Fatalf("CheckStartup() error = %v", err)
+	}
+	if !report.Ready {
+		t.Fatalf("Ready = false, want true; requirements=%+v", report.Requirements)
+	}
+	if catalog.calls != 0 {
+		t.Fatalf("RefreshFresh calls = %d, want 0", catalog.calls)
+	}
+	if len(report.Requirements) != 3 {
+		t.Fatalf("len(Requirements) = %d, want 3", len(report.Requirements))
+	}
+	for i, want := range []string{"git", "tmux", "gh"} {
+		if report.Requirements[i].ID != want {
+			t.Fatalf("Requirements[%d].ID = %q, want %q", i, report.Requirements[i].ID, want)
 		}
 	}
 }

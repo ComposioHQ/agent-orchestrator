@@ -344,12 +344,12 @@ func Run() error {
 		log.Warn("pr action service disabled: no usable SCM provider")
 	}
 
-	// Durable agent-switch reconciliation is a startup safety boundary. The
-	// in-memory input fence disappeared with the previous daemon; if AO cannot
-	// prove and recover every active saga, do not bind a usable API with user
-	// input accidentally reopened. This runs after session-scoped shell wiring
-	// (ordinary recovery may tear down a worktree) but before HTTP is bound.
-	if reconcileErr := sessMgr.Reconcile(ctx); reconcileErr != nil {
+	// Durable agent-switch and interface-transition recovery is the startup
+	// safety boundary. The in-memory input fence disappeared with the previous
+	// daemon; if AO cannot prove and close every active saga, do not bind a
+	// usable API with user input accidentally reopened. Runtime/worktree
+	// restoration follows in the background after the listener is live.
+	if reconcileErr := sessMgr.ReconcileStartupSafety(ctx); reconcileErr != nil {
 		stop()
 		managedPreview.Close()
 		lcStack.Stop()
@@ -357,9 +357,6 @@ func Run() error {
 			log.Error("cdc pipeline shutdown", "err", cdcErr)
 		}
 		return fmt.Errorf("reconcile sessions on boot: %w", reconcileErr)
-	}
-	if reconcileErr := lcStack.ReconcileRuntime(ctx); reconcileErr != nil {
-		log.Error("reconcile agent processes on boot failed", "err", reconcileErr)
 	}
 	autoReview := autoreview.New(store, reviewSvc, autoreview.Config{Logger: log})
 	lcStack.autoReviewDone = autoReview.Start(ctx)
@@ -502,7 +499,20 @@ func Run() error {
 		}()
 	}
 
-	runErr := srv.Run(ctx)
+	var startupReconcileDone <-chan struct{}
+	runErr := srv.RunWithReady(ctx, func() {
+		done := make(chan struct{})
+		startupReconcileDone = done
+		go func() {
+			defer close(done)
+			if reconcileErr := sessMgr.ReconcileBackground(ctx); reconcileErr != nil {
+				log.Error("background session reconciliation on boot failed", "err", reconcileErr)
+			}
+			if reconcileErr := lcStack.ReconcileRuntime(ctx); reconcileErr != nil {
+				log.Error("background agent-process reconciliation on boot failed", "err", reconcileErr)
+			}
+		}()
+	})
 
 	// Both graceful shutdown paths (SIGTERM and POST /shutdown) funnel through
 	// srv.Run returning. We deliberately do NOT tear down sessions here: they
@@ -515,6 +525,9 @@ func Run() error {
 	// via defer) avoids the LIFO trap where a Stop() that blocks on ctx-cancel
 	// runs before the cancel: a non-signal exit path would hang otherwise.
 	stop()
+	if startupReconcileDone != nil {
+		<-startupReconcileDone
+	}
 	switchStopCtx, switchCancel := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
 	if err := sessMgr.WaitAgentSwitchWorkers(switchStopCtx); err != nil {
 		log.Error("agent switch worker shutdown", "err", err)
