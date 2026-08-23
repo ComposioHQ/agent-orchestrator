@@ -30,7 +30,7 @@ func TestCloudContractIsControlPlaneOnly(t *testing.T) {
 		if strings.Contains(name, "Project") {
 			t.Errorf("cloud contract contains independent product Project schema %s", name)
 		}
-		if strings.Contains(name, "Session") && !strings.Contains(name, "WorkerSession") {
+		if name == "Session" || name == "AOSession" {
 			t.Errorf("cloud contract contains independent product Session schema %s", name)
 		}
 		assertNoString(t, name, schema, "backend/internal/httpd/apispec")
@@ -76,7 +76,8 @@ func TestCloudContractLocksWorkspacePlacementRoutes(t *testing.T) {
 }
 
 func TestCloudContractLocksFullWorkerSurface(t *testing.T) {
-	paths := objectAt(t, loadCloudOpenAPI(t), "paths")
+	cloud := loadCloudOpenAPI(t)
+	paths := objectAt(t, cloud, "paths")
 	want := map[string][]string{
 		"/api/cloud/v1/worker/status":                              {"get"},
 		"/api/cloud/v1/worker/sessions":                            {"get", "post"},
@@ -116,6 +117,30 @@ func TestCloudContractLocksFullWorkerSurface(t *testing.T) {
 	}
 	transport := mapValue(t, objectAt(t, loadCloudOpenAPI(t), "components", "schemas"), "WorkerWorkspaceTransportRequest")
 	assertNoString(t, "WorkerWorkspaceTransportRequest", transport, "terminal.")
+
+	schemas := objectAt(t, cloud, "components", "schemas")
+	for _, name := range []string{
+		"WorkerStatusResponse", "SpawnWorkerSessionInput", "SendWorkerMessageInput",
+		"WorkerAcceptedResponse", "ClaimWorkerPRInput", "WorkerPRState",
+		"SubmitWorkerReviewInput", "WorkerReviewResult",
+	} {
+		if _, ok := schemas[name]; !ok {
+			t.Errorf("cloud contract is missing canonical worker schema %s", name)
+		}
+	}
+	for _, name := range []string{
+		"WorkerStatus", "WorkerSessionCreateInput", "WorkerMessageInput",
+		"WorkerPullRequestClaimInput", "WorkerPullRequest", "WorkerReviewSubmitInput", "WorkerReview",
+	} {
+		if _, ok := schemas[name]; ok {
+			t.Errorf("cloud contract retained superseded worker schema %s", name)
+		}
+	}
+	assertMutation(t, paths, "/api/cloud/v1/worker/sessions", "post", "202")
+	assertMutation(t, paths, "/api/cloud/v1/worker/sessions/{sessionId}", "delete", "202")
+	assertMutation(t, paths, "/api/cloud/v1/worker/sessions/{sessionId}/messages", "post", "202")
+	assertNoIdempotencyKey(t, paths, "/api/cloud/v1/worker/sessions/{sessionId}/pr/claim", "post")
+	assertNoIdempotencyKey(t, paths, "/api/cloud/v1/worker/sessions/{sessionId}/reviews/submit", "post")
 }
 
 func TestCloudContractLocksSCMVaultAndTerminalRoutes(t *testing.T) {
@@ -187,7 +212,7 @@ func TestCloudContractPreservesErrorsTenancyAndSecretlessWorkerDelivery(t *testi
 	}
 	for _, name := range []string{
 		"WorkerBootstrapInput", "WorkerBootstrapGrant", "WorkerHeartbeatInput",
-		"WorkerStatus", "WorkerCheckoutGrantInput", "WorkerCheckoutGrant",
+		"WorkerStatusResponse", "WorkerCheckoutGrantInput", "WorkerCheckoutGrant",
 	} {
 		assertNoSecretProperty(t, name, mapValue(t, schemas, name))
 	}
@@ -202,6 +227,14 @@ func assertMutation(t *testing.T, paths map[string]any, path, method, status str
 	responses := mapValue(t, operation, "responses")
 	if _, ok := responses[status]; !ok {
 		t.Errorf("%s %s does not return %s", strings.ToUpper(method), path, status)
+	}
+}
+
+func assertNoIdempotencyKey(t *testing.T, paths map[string]any, path, method string) {
+	t.Helper()
+	operation := mapValue(t, mapValue(t, paths, path), method)
+	if hasParameterRef(anySlice(operation["parameters"]), "#/components/parameters/IdempotencyKey") {
+		t.Errorf("%s %s unexpectedly requires Idempotency-Key", strings.ToUpper(method), path)
 	}
 }
 

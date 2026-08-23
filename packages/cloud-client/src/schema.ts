@@ -869,14 +869,19 @@ export interface components {
             version: string;
             capabilities: string[];
         };
-        WorkerStatus: {
+        WorkerStatusResponse: {
             scope: components["schemas"]["WorkerScope"];
             /** @enum {string} */
             placementState: "pending" | "running" | "stopping" | "stopped" | "failed";
             /** Format: date-time */
             observedAt: string;
         };
-        WorkerSessionCreateInput: {
+        WorkerAcceptedResponse: {
+            operationId: string;
+            /** @enum {string} */
+            state: "accepted";
+        };
+        SpawnWorkerSessionInput: {
             projectId: string;
             /** @enum {string} */
             role: "coordinator" | "worker";
@@ -902,7 +907,7 @@ export interface components {
             sessions: components["schemas"]["WorkerSessionRecord"][];
             pageInfo: components["schemas"]["PageInfo"];
         };
-        WorkerMessageInput: {
+        SendWorkerMessageInput: {
             message: string;
         };
         WorkerMessage: {
@@ -918,11 +923,11 @@ export interface components {
             messages: components["schemas"]["WorkerMessage"][];
             pageInfo: components["schemas"]["PageInfo"];
         };
-        WorkerPullRequestClaimInput: {
+        ClaimWorkerPRInput: {
             /** Format: uri */
             url: string;
         };
-        WorkerPullRequest: {
+        WorkerPRState: {
             /** Format: uri */
             url: string;
             number: number;
@@ -932,9 +937,9 @@ export interface components {
             headSha?: string;
         };
         WorkerPullRequestPage: {
-            pullRequests: components["schemas"]["WorkerPullRequest"][];
+            pullRequests: components["schemas"]["WorkerPRState"][];
         };
-        WorkerReview: {
+        WorkerReviewResult: {
             id: string;
             /** @enum {string} */
             status: "queued" | "running" | "passed" | "failed" | "cancelled";
@@ -947,9 +952,9 @@ export interface components {
             updatedAt: string;
         };
         WorkerReviewPage: {
-            reviews: components["schemas"]["WorkerReview"][];
+            reviews: components["schemas"]["WorkerReviewResult"][];
         };
-        WorkerReviewSubmitInput: {
+        SubmitWorkerReviewInput: {
             /** @enum {string} */
             verdict: "approve" | "comment" | "request_changes";
             summary: string;
@@ -1803,7 +1808,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["WorkerStatus"];
+                    "application/json": components["schemas"]["WorkerStatusResponse"];
                 };
             };
             401: components["responses"]["WorkerUnauthorized"];
@@ -1830,7 +1835,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["WorkerStatus"];
+                    "application/json": components["schemas"]["WorkerStatusResponse"];
                 };
             };
             401: components["responses"]["WorkerUnauthorized"];
@@ -1875,7 +1880,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["WorkerSessionCreateInput"];
+                "application/json": components["schemas"]["SpawnWorkerSessionInput"];
             };
         };
         responses: {
@@ -1940,7 +1945,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["WorkerSessionRecord"];
+                    "application/json": components["schemas"]["WorkerAcceptedResponse"];
                 };
             };
             401: components["responses"]["WorkerUnauthorized"];
@@ -1992,17 +1997,17 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["WorkerMessageInput"];
+                "application/json": components["schemas"]["SendWorkerMessageInput"];
             };
         };
         responses: {
             /** @description Message accepted. */
-            200: {
+            202: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["WorkerMessage"];
+                    "application/json": components["schemas"]["WorkerAcceptedResponse"];
                 };
             };
             400: components["responses"]["BadRequest"];
@@ -2016,9 +2021,7 @@ export interface operations {
     claimWorkerSessionPullRequest: {
         parameters: {
             query?: never;
-            header: {
-                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
-            };
+            header?: never;
             path: {
                 sessionId: components["parameters"]["SessionId"];
             };
@@ -2026,7 +2029,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["WorkerPullRequestClaimInput"];
+                "application/json": components["schemas"]["ClaimWorkerPRInput"];
             };
         };
         responses: {
@@ -2036,7 +2039,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["WorkerPullRequest"];
+                    "application/json": components["schemas"]["WorkerPRState"];
                 };
             };
             400: components["responses"]["BadRequest"];
@@ -2102,9 +2105,7 @@ export interface operations {
     submitWorkerSessionReview: {
         parameters: {
             query?: never;
-            header: {
-                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
-            };
+            header?: never;
             path: {
                 sessionId: components["parameters"]["SessionId"];
             };
@@ -2112,7 +2113,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["WorkerReviewSubmitInput"];
+                "application/json": components["schemas"]["SubmitWorkerReviewInput"];
             };
         };
         responses: {
@@ -2122,7 +2123,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["WorkerReview"];
+                    "application/json": components["schemas"]["WorkerReviewResult"];
                 };
             };
             400: components["responses"]["BadRequest"];

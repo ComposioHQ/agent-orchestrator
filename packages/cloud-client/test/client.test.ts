@@ -180,14 +180,12 @@ describe("WorkerClient control plane", () => {
     await client.claimPullRequest(
       "session/one",
       { url: "https://github.com/ao/ao/pull/1" },
-      { idempotencyKey: "claim-1" },
     );
     await client.listPullRequests("session/one");
     await client.listReviews("session/one");
     await client.submitReview(
       "session/one",
       { verdict: "approve", summary: "looks good" },
-      { idempotencyKey: "review-1" },
     );
 
     expect(fetchMock.mock.calls.map((_, i) => requestOf(fetchMock, i).url)).toEqual([

@@ -544,7 +544,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/WorkerStatus"
+                $ref: "#/components/schemas/WorkerStatusResponse"
         "401": { $ref: "#/components/responses/WorkerUnauthorized" }
         "403": { $ref: "#/components/responses/WorkerForbidden" }
         "500": { $ref: "#/components/responses/InternalError" }
@@ -567,7 +567,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/WorkerStatus"
+                $ref: "#/components/schemas/WorkerStatusResponse"
         "401": { $ref: "#/components/responses/WorkerUnauthorized" }
         "403": { $ref: "#/components/responses/WorkerForbidden" }
         "500": { $ref: "#/components/responses/InternalError" }
@@ -601,7 +601,7 @@ paths:
         required: true
         content:
           application/json:
-            schema: { $ref: "#/components/schemas/WorkerSessionCreateInput" }
+            schema: { $ref: "#/components/schemas/SpawnWorkerSessionInput" }
       responses:
         "202":
           description: Worker session creation accepted.
@@ -644,7 +644,7 @@ paths:
           description: Worker session deletion accepted.
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/WorkerSessionRecord" }
+              schema: { $ref: "#/components/schemas/WorkerAcceptedResponse" }
         "401": { $ref: "#/components/responses/WorkerUnauthorized" }
         "403": { $ref: "#/components/responses/WorkerForbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
@@ -684,14 +684,14 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/WorkerMessageInput"
+              $ref: "#/components/schemas/SendWorkerMessageInput"
       responses:
-        "200":
+        "202":
           description: Message accepted.
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/WorkerMessage"
+                $ref: "#/components/schemas/WorkerAcceptedResponse"
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/WorkerUnauthorized" }
         "403": { $ref: "#/components/responses/WorkerForbidden" }
@@ -707,19 +707,17 @@ paths:
       tags: [Worker]
       security:
         - workerAuth: []
-      parameters:
-        - $ref: "#/components/parameters/IdempotencyKey"
       requestBody:
         required: true
         content:
           application/json:
-            schema: { $ref: "#/components/schemas/WorkerPullRequestClaimInput" }
+            schema: { $ref: "#/components/schemas/ClaimWorkerPRInput" }
       responses:
         "200":
           description: Pull request claim result.
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/WorkerPullRequest" }
+              schema: { $ref: "#/components/schemas/WorkerPRState" }
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/WorkerUnauthorized" }
         "403": { $ref: "#/components/responses/WorkerForbidden" }
@@ -775,19 +773,17 @@ paths:
       tags: [Worker]
       security:
         - workerAuth: []
-      parameters:
-        - $ref: "#/components/parameters/IdempotencyKey"
       requestBody:
         required: true
         content:
           application/json:
-            schema: { $ref: "#/components/schemas/WorkerReviewSubmitInput" }
+            schema: { $ref: "#/components/schemas/SubmitWorkerReviewInput" }
       responses:
         "200":
           description: Review submitted.
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/WorkerReview" }
+              schema: { $ref: "#/components/schemas/WorkerReviewResult" }
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/WorkerUnauthorized" }
         "403": { $ref: "#/components/responses/WorkerForbidden" }
@@ -1391,7 +1387,7 @@ components:
           type: array
           uniqueItems: true
           items: { type: string }
-    WorkerStatus:
+    WorkerStatusResponse:
       type: object
       additionalProperties: false
       required: [scope, placementState, observedAt]
@@ -1399,7 +1395,14 @@ components:
         scope: { $ref: "#/components/schemas/WorkerScope" }
         placementState: { type: string, enum: [pending, running, stopping, stopped, failed] }
         observedAt: { type: string, format: date-time }
-    WorkerSessionCreateInput:
+    WorkerAcceptedResponse:
+      type: object
+      additionalProperties: false
+      required: [operationId, state]
+      properties:
+        operationId: { type: string, minLength: 1 }
+        state: { type: string, enum: [accepted] }
+    SpawnWorkerSessionInput:
       type: object
       additionalProperties: false
       required: [projectId, role, harness]
@@ -1430,7 +1433,7 @@ components:
           type: array
           items: { $ref: "#/components/schemas/WorkerSessionRecord" }
         pageInfo: { $ref: "#/components/schemas/PageInfo" }
-    WorkerMessageInput:
+    SendWorkerMessageInput:
       type: object
       additionalProperties: false
       required: [message]
@@ -1455,13 +1458,13 @@ components:
           type: array
           items: { $ref: "#/components/schemas/WorkerMessage" }
         pageInfo: { $ref: "#/components/schemas/PageInfo" }
-    WorkerPullRequestClaimInput:
+    ClaimWorkerPRInput:
       type: object
       additionalProperties: false
       required: [url]
       properties:
         url: { type: string, format: uri }
-    WorkerPullRequest:
+    WorkerPRState:
       type: object
       additionalProperties: false
       required: [url, number, state, title]
@@ -1478,8 +1481,8 @@ components:
       properties:
         pullRequests:
           type: array
-          items: { $ref: "#/components/schemas/WorkerPullRequest" }
-    WorkerReview:
+          items: { $ref: "#/components/schemas/WorkerPRState" }
+    WorkerReviewResult:
       type: object
       additionalProperties: false
       required: [id, status, createdAt, updatedAt]
@@ -1497,8 +1500,8 @@ components:
       properties:
         reviews:
           type: array
-          items: { $ref: "#/components/schemas/WorkerReview" }
-    WorkerReviewSubmitInput:
+          items: { $ref: "#/components/schemas/WorkerReviewResult" }
+    SubmitWorkerReviewInput:
       type: object
       additionalProperties: false
       required: [verdict, summary]

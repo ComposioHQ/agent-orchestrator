@@ -1,6 +1,6 @@
 import type {
   CloudTokenSet,
-  WorkerSessionCreateInput,
+  SpawnWorkerSessionInput,
   CreateWorkspacePlacementInput,
   CurrentAccount,
   ErrorEnvelope,
@@ -21,6 +21,7 @@ import type {
   TerminalTicketRequest,
   WorkerBootstrapGrant,
   WorkerBootstrapInput,
+  WorkerAcceptedResponse,
   WorkerCancellationResponse,
   WorkerClaimTurnResponse,
   WorkerCheckoutGrant,
@@ -33,18 +34,18 @@ import type {
   WorkerFinishTurnResponse,
   WorkerHeartbeatInput,
   WorkerMessage,
-  WorkerMessageInput,
+  SendWorkerMessageInput,
   WorkerMessagePage,
   WorkerOKResponse,
-  WorkerPullRequest,
-  WorkerPullRequestClaimInput,
+  WorkerPRState,
+  ClaimWorkerPRInput,
   WorkerPullRequestPage,
-  WorkerReview,
+  WorkerReviewResult,
   WorkerReviewPage,
-  WorkerReviewSubmitInput,
+  SubmitWorkerReviewInput,
   WorkerSessionRecord,
   WorkerSessionRecordPage,
-  WorkerStatus,
+  WorkerStatusResponse,
   WorkerWorkspaceTransportRequest,
   WorkspacePlacement,
   WorkspacePlacementPage,
@@ -418,14 +419,14 @@ export class WorkerClient extends JSONClient {
     });
   }
 
-  getStatus(options: RequestOptions = {}): Promise<WorkerStatus> {
+  getStatus(options: RequestOptions = {}): Promise<WorkerStatusResponse> {
     return this.request("/api/cloud/v1/worker/status", options);
   }
 
   heartbeat(
     input: WorkerHeartbeatInput,
     options: RequestOptions = {},
-  ): Promise<WorkerStatus> {
+  ): Promise<WorkerStatusResponse> {
     return this.request("/api/cloud/v1/worker/heartbeat", {
       method: "POST",
       body: input,
@@ -440,9 +441,9 @@ export class WorkerClient extends JSONClient {
   }
 
   createSession(
-    input: WorkerSessionCreateInput,
+    input: SpawnWorkerSessionInput,
     options: IdempotentRequestOptions,
-  ): Promise<WorkerSessionRecord> {
+  ): Promise<WorkerAcceptedResponse> {
     return this.request("/api/cloud/v1/worker/sessions", mutation(input, options));
   }
 
@@ -453,7 +454,7 @@ export class WorkerClient extends JSONClient {
   deleteSession(
     sessionId: string,
     options: IdempotentRequestOptions,
-  ): Promise<WorkerSessionRecord> {
+  ): Promise<WorkerAcceptedResponse> {
     return this.request(this.sessionPath(sessionId), {
       method: "DELETE",
       idempotencyKey: options.idempotencyKey,
@@ -472,9 +473,9 @@ export class WorkerClient extends JSONClient {
 
   sendMessage(
     sessionId: string,
-    input: WorkerMessageInput,
+    input: SendWorkerMessageInput,
     options: IdempotentRequestOptions,
-  ): Promise<WorkerMessage> {
+  ): Promise<WorkerAcceptedResponse> {
     return this.request(
       `${this.sessionPath(sessionId)}/messages`,
       mutation(input, options),
@@ -483,12 +484,12 @@ export class WorkerClient extends JSONClient {
 
   claimPullRequest(
     sessionId: string,
-    input: WorkerPullRequestClaimInput,
-    options: IdempotentRequestOptions,
-  ): Promise<WorkerPullRequest> {
+    input: ClaimWorkerPRInput,
+    options: RequestOptions = {},
+  ): Promise<WorkerPRState> {
     return this.request(
       `${this.sessionPath(sessionId)}/pr/claim`,
-      mutation(input, options),
+      { method: "POST", body: input, signal: options.signal },
     );
   }
 
@@ -508,12 +509,12 @@ export class WorkerClient extends JSONClient {
 
   submitReview(
     sessionId: string,
-    input: WorkerReviewSubmitInput,
-    options: IdempotentRequestOptions,
-  ): Promise<WorkerReview> {
+    input: SubmitWorkerReviewInput,
+    options: RequestOptions = {},
+  ): Promise<WorkerReviewResult> {
     return this.request(
       `${this.sessionPath(sessionId)}/reviews/submit`,
-      mutation(input, options),
+      { method: "POST", body: input, signal: options.signal },
     );
   }
 
