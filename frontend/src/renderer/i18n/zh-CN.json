@@ -456,6 +456,7 @@
 	"notify.retry": "重试",
 	"notify.restoreUnavailable": "此会话已无法恢复。",
 	"notify.title": "通知",
+	"notify.turnComplete": "Turn complete",
 	"notify.unreadCount": "{{count}} 条未读通知",
 	"notify.workspaceLoadFailed": "无法加载会话。恢复与打开可能暂不可用。",
 	"pr.botSuffix": "{{name}} 机器人",

@@ -44,6 +44,7 @@ import {
 	markAllCachedNotificationsRead,
 	mergeUnreadNotification,
 	NOTIFICATION_PAGE_SIZE,
+	UNRESOLVABLE_TYPES,
 	recentNotificationsQueryKey,
 	unreadNotificationsQueryKey,
 } from "./notifications";
@@ -378,6 +379,13 @@ describe("notification cache helpers", () => {
 });
 
 describe("createNotificationsTransport", () => {
+	it("counts turn_complete as unresolved", () => {
+		expect(UNRESOLVABLE_TYPES.has("needs_input")).toBe(true);
+		expect(UNRESOLVABLE_TYPES.has("turn_complete")).toBe(true);
+		expect(UNRESOLVABLE_TYPES.has("ready_to_merge")).toBe(true);
+		expect(UNRESOLVABLE_TYPES.has("pr_merged")).toBe(false);
+	});
+
 	it("opens the notification stream and invalidates unread notifications on open", () => {
 		const qc = queryClient();
 		const invalidateSpy = vi.spyOn(qc, "invalidateQueries");
@@ -428,12 +436,12 @@ describe("createNotificationsTransport", () => {
 		expect(qc.getQueryData<NotificationsCache>(recentNotificationsQueryKey)?.pages[0]?.unresolvedCount).toBe(0);
 	});
 
-	it("suppresses the needs_input toast for the session the user is already watching", () => {
+	it.each(["needs_input", "turn_complete"] as const)("suppresses the %s toast for the session the user is already watching", (type) => {
 		setWindowState({ focused: true, visible: true });
 		const qc = queryClient();
 		createNotificationsTransport(qc, () => "mer-1").connect();
 
-		EventSourceStub.instances[0].dispatch("notification_created", notification());
+		EventSourceStub.instances[0].dispatch("notification_created", notification({ type }));
 
 		expect(getCachedNotifications(qc.getQueryData<NotificationsCache>(unreadNotificationsQueryKey))).toHaveLength(1);
 		expect(showNotificationMock).not.toHaveBeenCalled();

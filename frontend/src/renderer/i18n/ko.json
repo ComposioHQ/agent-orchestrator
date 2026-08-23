@@ -468,6 +468,7 @@
 	"notify.restoreUnavailable": "이 세션은 더 이상 복원할 수 없습니다.",
 	"notify.title": "알림",
 	"notify.unread": "읽지 않음",
+	"notify.turnComplete": "Turn complete",
 	"notify.unreadCount": "읽지 않은 알림 {{count}}개",
 	"notify.unseen": "미확인",
 	"notify.unresolved": "미해결",

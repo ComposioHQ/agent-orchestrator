@@ -7205,6 +7205,7 @@ components:
         type:
           enum:
           - needs_input
+          - turn_complete
           - ready_to_merge
           - pr_merged
           - pr_closed_unmerged

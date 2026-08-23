@@ -456,6 +456,7 @@
 	"notify.retry": "Retry",
 	"notify.restoreUnavailable": "This session can no longer be restored.",
 	"notify.title": "Notifications",
+	"notify.turnComplete": "Turn complete",
 	"notify.unreadCount": "{{count}} unread notifications",
 	"notify.workspaceLoadFailed": "Could not load sessions. Restore and open may be unavailable.",
 	"pr.botSuffix": "{{name}} bot",

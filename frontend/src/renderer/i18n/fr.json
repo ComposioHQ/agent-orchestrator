@@ -470,6 +470,7 @@
 	"notify.restoreUnavailable": "Cette session ne peut plus être restaurée.",
 	"notify.title": "Notifications",
 	"notify.unread": "Non lues",
+	"notify.turnComplete": "Turn complete",
 	"notify.unreadCount": "{{count}} notifications non lues",
 	"notify.unseen": "Non vues",
 	"notify.unresolved": "Non résolues",

@@ -468,6 +468,7 @@
 	"notify.restoreUnavailable": "このセッションは復元できなくなりました。",
 	"notify.title": "通知",
 	"notify.unread": "未読",
+	"notify.turnComplete": "Turn complete",
 	"notify.unreadCount": "未読通知 {{count}} 件",
 	"notify.unseen": "未確認",
 	"notify.unresolved": "未解決",

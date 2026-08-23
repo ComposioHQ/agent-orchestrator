@@ -2958,6 +2958,84 @@ func TestActivity_WaitingInputSameStateDoesNotEmitNotification(t *testing.T) {
 	}
 }
 
+func TestActivity_TurnCompletePredicate(t *testing.T) {
+	now := time.Date(2026, 8, 23, 10, 0, 0, 0, time.UTC)
+	for _, tt := range []struct {
+		name       string
+		previous   domain.ActivityState
+		kind       domain.SessionKind
+		mode       domain.SessionMode
+		terminated bool
+		want       bool
+	}{
+		{name: "active to idle", previous: domain.ActivityActive, kind: domain.KindWorker, mode: domain.SessionModeTUI, want: true},
+		{name: "waiting input to idle", previous: domain.ActivityWaitingInput, kind: domain.KindWorker, mode: domain.SessionModeTUI, want: true},
+		{name: "blocked to idle", previous: domain.ActivityBlocked, kind: domain.KindWorker, mode: domain.SessionModeTUI, want: true},
+		{name: "idle to idle", previous: domain.ActivityIdle, kind: domain.KindWorker, mode: domain.SessionModeTUI, want: false},
+		{name: "exited to idle", previous: domain.ActivityExited, kind: domain.KindWorker, mode: domain.SessionModeTUI, want: false},
+		{name: "orchestrator", previous: domain.ActivityActive, kind: domain.KindOrchestrator, mode: domain.SessionModeTUI, want: false},
+		{name: "chat", previous: domain.ActivityActive, kind: domain.KindWorker, mode: domain.SessionModeChat, want: false},
+		{name: "terminated", previous: domain.ActivityActive, kind: domain.KindWorker, mode: domain.SessionModeTUI, terminated: true, want: false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			st := newFakeStore()
+			sink := &fakeNotificationSink{}
+			m := New(st, nil, WithNotificationSink(sink))
+			m.clock = func() time.Time { return now }
+			st.sessions["mer-1"] = domain.SessionRecord{
+				ID: "mer-1", ProjectID: "mer", Kind: tt.kind, Mode: tt.mode, IsTerminated: tt.terminated,
+				Activity: domain.Activity{State: tt.previous, LastActivityAt: now.Add(-time.Minute)}, FirstSignalAt: now.Add(-time.Minute),
+			}
+
+			err := m.ApplyActivitySignal(ctx, "mer-1", ports.ActivitySignal{Valid: true, State: domain.ActivityIdle, Timestamp: now})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := len(sink.intents) == 1 && sink.intents[0].Type == domain.NotificationTurnComplete; got != tt.want {
+				t.Fatalf("turn-complete intent = %v, intents = %+v, want %v", got, sink.intents, tt.want)
+			}
+		})
+	}
+}
+
+func TestActivity_TurnCompleteResolutionOnMoreWork(t *testing.T) {
+	st := newFakeStore()
+	sink := &fakeNotificationSink{}
+	m := New(st, nil, WithNotificationSink(sink))
+	now := time.Date(2026, 8, 23, 10, 0, 0, 0, time.UTC)
+	m.clock = func() time.Time { return now }
+	st.sessions["mer-1"] = domain.SessionRecord{
+		ID: "mer-1", ProjectID: "mer", Kind: domain.KindWorker, Mode: domain.SessionModeTUI,
+		Activity: domain.Activity{State: domain.ActivityIdle, LastActivityAt: now}, FirstSignalAt: now,
+	}
+
+	if err := m.ApplyActivitySignal(ctx, "mer-1", ports.ActivitySignal{Valid: true, State: domain.ActivityActive, Timestamp: now}); err != nil {
+		t.Fatal(err)
+	}
+	if len(sink.resolutions) != 1 || sink.resolutions[0].Type != domain.NotificationTurnComplete || !sink.resolutions[0].ResolvedAt.Equal(now) {
+		t.Fatalf("resolutions = %+v, want one turn-complete resolution at %v", sink.resolutions, now)
+	}
+}
+
+func TestMarkTerminated_ResolvesTurnCompleteNotification(t *testing.T) {
+	st := newFakeStore()
+	sink := &fakeNotificationSink{}
+	m := New(st, nil, WithNotificationSink(sink))
+	now := time.Date(2026, 8, 23, 10, 0, 0, 0, time.UTC)
+	m.clock = func() time.Time { return now }
+	st.sessions["mer-1"] = domain.SessionRecord{
+		ID: "mer-1", ProjectID: "mer", Kind: domain.KindWorker, Mode: domain.SessionModeTUI,
+		Activity: domain.Activity{State: domain.ActivityIdle, LastActivityAt: now},
+	}
+
+	if err := m.MarkTerminated(ctx, "mer-1"); err != nil {
+		t.Fatal(err)
+	}
+	if len(sink.resolutions) != 1 || sink.resolutions[0].Type != domain.NotificationTurnComplete || !sink.resolutions[0].ResolvedAt.Equal(now) {
+		t.Fatalf("resolutions = %+v, want one turn-complete resolution at %v", sink.resolutions, now)
+	}
+}
+
 func TestActivity_BlockedTransitionEmitsNotification(t *testing.T) {
 	st := newFakeStore()
 	sink := &fakeNotificationSink{}
@@ -3148,7 +3226,11 @@ func TestSCMObservation_Notifications(t *testing.T) {
 			st := newFakeStore()
 			sink := &fakeNotificationSink{}
 			m := New(st, nil, WithNotificationSink(sink))
-			st.sessions["mer-1"] = working("mer-1")
+			rec := working("mer-1")
+			rec.Kind = domain.KindWorker
+			rec.Mode = domain.SessionModeTUI
+			rec.Activity.State = domain.ActivityIdle
+			st.sessions["mer-1"] = rec
 			if err := m.ApplySCMObservation(ctx, "mer-1", tc.obs); err != nil {
 				t.Fatal(err)
 			}

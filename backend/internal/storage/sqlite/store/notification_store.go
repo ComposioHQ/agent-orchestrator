@@ -206,6 +206,11 @@ func (s *Store) ReconcileResolvedNotifications(ctx context.Context, at time.Time
 		return nil, fmt.Errorf("reconcile needs-input notifications: %w", err)
 	}
 	resolved := notificationsFromGen(needsInput)
+	turnComplete, err := s.qw.ResolveStaleTurnCompleteNotifications(ctx, nullTime(at))
+	if err != nil {
+		return nil, fmt.Errorf("reconcile turn-complete notifications: %w", err)
+	}
+	resolved = append(resolved, notificationsFromGen(turnComplete)...)
 	for _, prURL := range stalePRs {
 		rows, err := s.qw.ResolvePRNotificationsByType(ctx, gen.ResolvePRNotificationsByTypeParams{
 			ResolvedAt: nullTime(at),
