@@ -297,18 +297,19 @@ function SourceStep({
 				return (
 				<button
 					aria-pressed={selected}
-					className={`flex items-center justify-between rounded-lg border p-3 text-left transition-[background-color,border-color,box-shadow,color] ${selected ? "border-accent bg-accent text-accent-foreground shadow-sm ring-2 ring-accent ring-offset-2 ring-offset-background" : "border-border hover:bg-interactive-hover"}`}
+					className={`flex items-center gap-3 rounded-lg border-2 p-3 text-left text-foreground transition-[background-color,border-color,box-shadow] ${selected ? "border-accent bg-settings-menu-selected shadow-sm ring-1 ring-accent/50" : "border-border hover:bg-interactive-hover"}`}
 					data-selected={selected ? "true" : "false"}
 					key={source.id}
 					onClick={() => onSelect(source.id)}
 					type="button"
 				>
-					<span>
+					<span aria-hidden="true" className={`h-8 w-1 shrink-0 rounded-full ${selected ? "bg-accent" : "bg-transparent"}`} />
+					<span className="min-w-0 flex-1">
 						<span className="block text-sm font-semibold">{source.name}</span>
-						<span className={`block text-xs ${selected ? "text-accent-foreground/80" : "text-muted-foreground"}`}>{t("settings.browserImport.profileCount", { count: source.profiles.length })}</span>
+						<span className="block text-xs text-muted-foreground">{t("settings.browserImport.profileCount", { count: source.profiles.length })}</span>
 					</span>
 					{selected ? (
-						<span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-accent-foreground text-accent shadow-sm">
+						<span className="flex size-6 shrink-0 items-center justify-center rounded-full border-2 border-accent bg-background text-accent shadow-sm">
 							<CheckCircle2 aria-hidden="true" className="size-4" />
 						</span>
 					) : null}

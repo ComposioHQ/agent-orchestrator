@@ -68,8 +68,7 @@ describe("BrowserImportDialog", () => {
 		const firefoxButton = screen.getByRole("button", { name: /Firefox/ });
 		expect(chromeButton).toHaveAttribute("aria-pressed", "true");
 		expect(chromeButton).toHaveAttribute("data-selected", "true");
-		expect(chromeButton).toHaveClass("ring-2");
-		expect(chromeButton).toHaveClass("bg-accent", "text-accent-foreground");
+		expect(chromeButton).toHaveClass("border-accent", "bg-settings-menu-selected", "text-foreground");
 		await userEvent.click(firefoxButton);
 		expect(firefoxButton).toHaveAttribute("aria-pressed", "true");
 		expect(chromeButton).toHaveAttribute("aria-pressed", "false");
