@@ -1,12 +1,10 @@
 package conformance
 
 import (
-	"errors"
 	"testing"
 	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
-	storageports "github.com/aoagents/agent-orchestrator/backend/internal/storage/ports"
 )
 
 var (
@@ -542,13 +540,4 @@ func assertSessionEqual(t *testing.T, got, want domain.SessionRecord) {
 	if got.Metadata != want.Metadata {
 		t.Fatalf("metadata = %#v, want %#v", got.Metadata, want.Metadata)
 	}
-}
-
-// errIsPortError keeps the suite honest about the shared error vocabulary
-// without forcing an implementation to return a specific wrapped message.
-func errIsPortError(err error) bool {
-	return errors.Is(err, storageports.ErrNotFound) ||
-		errors.Is(err, storageports.ErrConflict) ||
-		errors.Is(err, storageports.ErrInvalid) ||
-		errors.Is(err, storageports.ErrTenantRequired)
 }

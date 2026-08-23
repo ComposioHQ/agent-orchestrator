@@ -1,6 +1,7 @@
 package postgres
 
 import (
+	"regexp"
 	"strings"
 	"testing"
 
@@ -13,8 +14,15 @@ func TestCloudMigrationsAreTenantScoped(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(migrations) != 8 || migrations[0].Version != 1 || migrations[1].Version != 2 || migrations[2].Version != 3 || migrations[3].Version != 4 || migrations[4].Version != 5 || migrations[5].Version != 6 || migrations[6].Version != 7 || migrations[7].Version != 8 {
-		t.Fatalf("migrations = %#v", migrations)
+	// Versions must be contiguous from 1. A gap means a migration was deleted
+	// after being applied somewhere, which goose cannot reconcile.
+	if len(migrations) != 9 {
+		t.Fatalf("collected %d migrations, want 9", len(migrations))
+	}
+	for i, migration := range migrations {
+		if migration.Version != int64(i+1) {
+			t.Fatalf("migration %d has version %d, want %d", i, migration.Version, i+1)
+		}
 	}
 	migration, err := migrationFS.ReadFile("migrations/00001_auth_foundation.sql")
 	if err != nil {
@@ -131,5 +139,64 @@ func TestCloudMigrationsAreTenantScoped(t *testing.T) {
 			t.Fatalf("workspace runtime scope migration does not contain %q", required)
 		}
 	}
+	controlPlaneMigration, err := migrationFS.ReadFile("migrations/00009_control_plane_state.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	controlPlaneSQL := string(controlPlaneMigration)
+	for _, required := range []string{
+		"CREATE TABLE ao_projects",
+		"CREATE TABLE ao_workspace_repos",
+		"CREATE TABLE ao_sessions",
+		"CREATE TABLE ao_session_worktrees",
+		// Every AO identifier is scoped by org: two tenants may both call a
+		// project "acme", so a single-column key would merge them.
+		"PRIMARY KEY (org_id, id)",
+		"PRIMARY KEY (org_id, project_id, name)",
+		"PRIMARY KEY (org_id, session_id, repo_name)",
+		"UNIQUE (org_id, project_id, num)",
+		"ALTER TABLE ao_projects FORCE ROW LEVEL SECURITY",
+		"ALTER TABLE ao_workspace_repos FORCE ROW LEVEL SECURITY",
+		"ALTER TABLE ao_sessions FORCE ROW LEVEL SECURITY",
+		"ALTER TABLE ao_session_worktrees FORCE ROW LEVEL SECURITY",
+		"REVOKE ALL ON TABLE ao_projects",
+	} {
+		if !strings.Contains(controlPlaneSQL, required) {
+			t.Fatalf("control plane migration does not contain %q", required)
+		}
+	}
+	// Session status is derived from durable facts at read time. A bare
+	// "status" column would let a write path persist a second, divergent
+	// answer. git_status and activity_state are facts, not derived status.
+	if regexp.MustCompile(`(?m)^\s+status\s`).MatchString(controlPlaneSQL) {
+		t.Fatal("control plane migration persists a derived session status")
+	}
+}
 
+// TestTenantTablesCoverEveryTenantTable keeps the Go-side list that drives the
+// runtime GRANT and the row-level-security check in step with the migrations. A
+// table missing from the list is not a loud failure at runtime — it is a table
+// the runtime role cannot read, or one whose RLS nobody verified.
+func TestTenantTablesCoverEveryTenantTable(t *testing.T) {
+	entries, err := migrationFS.ReadDir("migrations")
+	if err != nil {
+		t.Fatal(err)
+	}
+	declared := map[string]bool{}
+	for _, table := range tenantTables {
+		declared[table] = true
+	}
+	created := regexp.MustCompile(`(?m)^CREATE TABLE (ao_\w+)`)
+	for _, entry := range entries {
+		body, err := migrationFS.ReadFile("migrations/" + entry.Name())
+		if err != nil {
+			t.Fatal(err)
+		}
+		up, _, _ := strings.Cut(string(body), "-- +goose Down")
+		for _, match := range created.FindAllStringSubmatch(up, -1) {
+			if !declared[match[1]] {
+				t.Fatalf("%s creates table %q, which is missing from tenantTables", entry.Name(), match[1])
+			}
+		}
+	}
 }

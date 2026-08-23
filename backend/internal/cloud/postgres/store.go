@@ -60,7 +60,8 @@ func (s *Store) Ping(ctx context.Context) error {
 
 func (s *Store) validateRuntimeRole(ctx context.Context) error {
 	var role string
-	var superuser, bypassRLS, createRole, createDB, replication, ownsFoundation, allTablesForceRLS bool
+	var superuser, bypassRLS, createRole, createDB, replication, ownsTenantTable bool
+	var forcedTables int
 	err := s.pool.QueryRow(
 		ctx,
 		`SELECT role.rolname,
@@ -74,32 +75,34 @@ func (s *Store) validateRuntimeRole(ctx context.Context) error {
 		            FROM pg_class relation
 		            JOIN pg_namespace namespace ON namespace.oid = relation.relnamespace
 		            WHERE namespace.nspname = 'public'
-		              AND relation.relname IN (
-		                  'ao_users', 'ao_auth_sessions',
-			              'ao_organizations', 'ao_org_memberships',
-			              'ao_cloud_workspaces', 'ao_cloud_session_runtimes'
-		              )
+		              AND relation.relname = ANY($1::text[])
 		              AND relation.relowner = role.oid
 		        ),
-		        (SELECT count(*) = 6
+		        (SELECT count(*)
 		         FROM pg_class relation
 		         JOIN pg_namespace namespace ON namespace.oid = relation.relnamespace
 		         WHERE namespace.nspname = 'public'
-		           AND relation.relname IN (
-		               'ao_users', 'ao_auth_sessions',
-		               'ao_organizations', 'ao_org_memberships',
-		               'ao_cloud_workspaces', 'ao_cloud_session_runtimes'
-		           )
+		           AND relation.relname = ANY($1::text[])
 		           AND relation.relrowsecurity
 		           AND relation.relforcerowsecurity)
 		 FROM pg_roles role
 		 WHERE role.rolname = current_user`,
-	).Scan(&role, &superuser, &bypassRLS, &createRole, &createDB, &replication, &ownsFoundation, &allTablesForceRLS)
+		tenantTables,
+	).Scan(&role, &superuser, &bypassRLS, &createRole, &createDB, &replication, &ownsTenantTable, &forcedTables)
 	if err != nil {
 		return fmt.Errorf("inspect cloud database role: %w", err)
 	}
-	if superuser || bypassRLS || createRole || createDB || replication || ownsFoundation || !allTablesForceRLS {
-		return fmt.Errorf("cloud runtime database role %q is privileged or owns foundation tables", role)
+	if superuser || bypassRLS || createRole || createDB || replication || ownsTenantTable {
+		return fmt.Errorf("cloud runtime database role %q is privileged or owns tenant tables", role)
+	}
+	// Every tenant table must both have row-level security and force it on its
+	// own owner. A count short of the full list means a table is missing its
+	// policy, or the migrations have not been applied.
+	if forcedTables != len(tenantTables) {
+		return fmt.Errorf(
+			"cloud database has %d of %d tenant tables under forced row-level security",
+			forcedTables, len(tenantTables),
+		)
 	}
 	return nil
 }
