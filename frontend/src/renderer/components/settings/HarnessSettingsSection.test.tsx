@@ -25,6 +25,10 @@ const plans = {
 			agentId: "codex", available: true, automatic: true, method: "npm",
 			command: "npm install -g @openai/codex", documentationUrl: "https://github.com/openai/codex",
 		},
+		{
+			agentId: "aider", available: true, automatic: true, method: "pipx",
+			command: "pipx install aider-chat", documentationUrl: "https://aider.chat/docs/install.html",
+		},
 	],
 };
 
@@ -79,5 +83,30 @@ describe("HarnessSettingsSection", () => {
 		}));
 		await waitFor(() => expect(codexRow).toHaveTextContent("npm failed"));
 		expect(codexRow).toHaveTextContent("Retry");
+	});
+
+	it("keeps concurrent installs independent with one progress indicator per row", async () => {
+		vi.mocked(apiClient.POST).mockImplementation(async (path, options) => {
+			if (path === "/api/v1/agents/{agent}/install") {
+				const agent = (options as { params: { path: { agent: string } } }).params.path.agent;
+				return { data: { target: agent, status: "running" } } as never;
+			}
+			return { data: undefined } as never;
+		});
+		const user = userEvent.setup();
+		renderSection();
+		const codexRow = (await screen.findByText("Codex")).closest('[data-agent="codex"]');
+		const aiderRow = (await screen.findByText("Aider")).closest('[data-agent="aider"]');
+		expect(codexRow).not.toBeNull();
+		expect(aiderRow).not.toBeNull();
+		await waitFor(() => expect(within(codexRow as HTMLElement).getByRole("button", { name: "Install" })).toBeEnabled());
+
+		await user.click(within(codexRow as HTMLElement).getByRole("button", { name: "Install" }));
+		await waitFor(() => expect(within(codexRow as HTMLElement).getByRole("progressbar")).toBeInTheDocument());
+		await user.click(within(aiderRow as HTMLElement).getByRole("button", { name: "Install" }));
+
+		await waitFor(() => expect(within(aiderRow as HTMLElement).getByRole("progressbar")).toBeInTheDocument());
+		expect(within(codexRow as HTMLElement).getAllByText("Installing…")).toHaveLength(1);
+		expect(within(aiderRow as HTMLElement).getAllByText("Installing…")).toHaveLength(1);
 	});
 });

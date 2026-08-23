@@ -1,6 +1,6 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Check, Copy, Download, ExternalLink, LoaderCircle, RefreshCw, Search, TriangleAlert } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { components } from "../../../api/schema";
 import { useAgentsQuery, agentsQueryKey, refreshAgents, refreshAgentsIfStale, type AgentCatalog } from "../../hooks/useAgentsQuery";
@@ -14,6 +14,12 @@ import { SettingsSection } from "./SettingsSection";
 
 type AgentInstallPlan = components["schemas"]["AgentInstallPlan"];
 type InstallJob = components["schemas"]["InstallJob"];
+type AgentInstallState = {
+	job: InstallJob | null;
+	error: string | null;
+	verifying: boolean;
+};
+type AgentInstallStates = Partial<Record<AgentId, AgentInstallState>>;
 
 const installerQueryKey = ["agent-installers"] as const;
 const POLL_INTERVAL_MS = 1_000;
@@ -37,12 +43,16 @@ export function HarnessSettingsSection({ titleHidden = false }: { titleHidden?: 
 	const agents = useAgentsQuery();
 	const installers = useQuery({ queryKey: installerQueryKey, queryFn: fetchInstallers, staleTime: 60_000 });
 	const [search, setSearch] = useState("");
-	const [activeAgent, setActiveAgent] = useState<AgentId | null>(null);
-	const [job, setJob] = useState<InstallJob | null>(null);
-	const [actionError, setActionError] = useState<string | null>(null);
-	const [verifying, setVerifying] = useState(false);
+	const [installStates, setInstallStates] = useState<AgentInstallStates>({});
+	const [refreshError, setRefreshError] = useState<string | null>(null);
 	const [copiedAgent, setCopiedAgent] = useState<AgentId | null>(null);
-	const verificationRef = useRef<string | null>(null);
+	const verificationRef = useRef(new Set<AgentId>());
+	const updateInstallState = useCallback((agentId: AgentId, patch: Partial<AgentInstallState>) => {
+		setInstallStates((current) => ({
+			...current,
+			[agentId]: { job: null, error: null, verifying: false, ...current[agentId], ...patch },
+		}));
+	}, []);
 
 	useEffect(() => {
 		void refreshAgentsIfStale().then((fresh) => {
@@ -54,54 +64,62 @@ export function HarnessSettingsSection({ titleHidden = false }: { titleHidden?: 
 	const installed = useMemo(() => new Set(agents.data?.installed.map((agent) => agent.id) ?? []), [agents.data]);
 	const normalizedSearch = search.trim().toLowerCase();
 	const rows = AGENT_OPTIONS.filter((agentId) => agentLabel(agentId).toLowerCase().includes(normalizedSearch));
-	const isBusy = job?.status === "running" || verifying;
+	const runningAgentKey = useMemo(
+		() => AGENT_OPTIONS.filter((agentId) => installStates[agentId]?.job?.status === "running").join(","),
+		[installStates],
+	);
+	const succeededAgentKey = useMemo(
+		() => AGENT_OPTIONS.filter((agentId) => installStates[agentId]?.job?.status === "succeeded").join(","),
+		[installStates],
+	);
 
 	useEffect(() => {
-		if (!activeAgent || job?.status !== "running") return;
+		const runningAgents = runningAgentKey ? (runningAgentKey.split(",") as AgentId[]) : [];
+		if (runningAgents.length === 0) return;
 		const timer = window.setInterval(() => {
-			void (async () => {
+			void Promise.all(runningAgents.map(async (agentId) => {
 				const { data, error } = await apiClient.GET("/api/v1/agents/{agent}/install", {
-					params: { path: { agent: activeAgent } },
+					params: { path: { agent: agentId } },
 				});
-				if (!error && data) setJob(data);
-			})();
+				if (!error && data) updateInstallState(agentId, { job: data });
+			}));
 		}, POLL_INTERVAL_MS);
 		return () => window.clearInterval(timer);
-	}, [activeAgent, job?.status]);
+	}, [runningAgentKey, updateInstallState]);
 
 	useEffect(() => {
-		if (!activeAgent || job?.status !== "succeeded" || verificationRef.current === activeAgent) return;
-		verificationRef.current = activeAgent;
-		setVerifying(true);
-		void (async () => {
-			const { data, error } = await apiClient.POST("/api/v1/agents/{agent}/probe", {
-				params: { path: { agent: activeAgent } },
-			});
-			if (error || !data?.installed) {
-				setActionError(
-					apiErrorMessage(error, t("settings.harness.verifyFailed", { agent: agentLabel(activeAgent) })),
-				);
-				return;
-			}
-			queryClient.setQueryData<AgentCatalog | undefined>(agentsQueryKey, (current) => addInstalledAgent(current, activeAgent));
-			await queryClient.invalidateQueries({ queryKey: agentsQueryKey });
-		})().finally(() => setVerifying(false));
-	}, [activeAgent, job?.status, queryClient, t]);
+		const succeededAgents = succeededAgentKey ? (succeededAgentKey.split(",") as AgentId[]) : [];
+		for (const agentId of succeededAgents) {
+			if (verificationRef.current.has(agentId)) continue;
+			verificationRef.current.add(agentId);
+			updateInstallState(agentId, { verifying: true, error: null });
+			void (async () => {
+				const { data, error } = await apiClient.POST("/api/v1/agents/{agent}/probe", {
+					params: { path: { agent: agentId } },
+				});
+				if (error || !data?.installed) {
+					updateInstallState(agentId, {
+						error: apiErrorMessage(error, t("settings.harness.verifyFailed", { agent: agentLabel(agentId) })),
+					});
+					return;
+				}
+				queryClient.setQueryData<AgentCatalog | undefined>(agentsQueryKey, (current) => addInstalledAgent(current, agentId));
+				await queryClient.invalidateQueries({ queryKey: agentsQueryKey });
+			})().finally(() => updateInstallState(agentId, { verifying: false }));
+		}
+	}, [queryClient, succeededAgentKey, t, updateInstallState]);
 
 	const startInstall = async (agentId: AgentId) => {
-		setActiveAgent(agentId);
-		setJob(null);
-		setActionError(null);
-		setVerifying(false);
-		verificationRef.current = null;
+		updateInstallState(agentId, { job: null, error: null, verifying: false });
+		verificationRef.current.delete(agentId);
 		const { data, error } = await apiClient.POST("/api/v1/agents/{agent}/install", {
 			params: { path: { agent: agentId } },
 		});
 		if (error || !data) {
-			setActionError(apiErrorMessage(error, t("settings.harness.startFailed")));
+			updateInstallState(agentId, { error: apiErrorMessage(error, t("settings.harness.startFailed")) });
 			return;
 		}
-		setJob(data);
+		updateInstallState(agentId, { job: data });
 	};
 
 	const copyCommand = async (agentId: AgentId, command: string) => {
@@ -111,7 +129,7 @@ export function HarnessSettingsSection({ titleHidden = false }: { titleHidden?: 
 	};
 
 	const refresh = async () => {
-		setActionError(null);
+		setRefreshError(null);
 		try {
 			const [fresh] = await Promise.all([
 				refreshAgents(),
@@ -119,7 +137,7 @@ export function HarnessSettingsSection({ titleHidden = false }: { titleHidden?: 
 			]);
 			queryClient.setQueryData(agentsQueryKey, fresh);
 		} catch (error) {
-			setActionError(error instanceof Error ? error.message : t("settings.harness.loadFailed"));
+			setRefreshError(error instanceof Error ? error.message : t("settings.harness.loadFailed"));
 		}
 	};
 
@@ -146,10 +164,10 @@ export function HarnessSettingsSection({ titleHidden = false }: { titleHidden?: 
 				{t("settings.harness.summary", { installed: installed.size, total: AGENT_OPTIONS.length })}
 			</p>
 
-			{installers.isError || agents.isError || (actionError && !activeAgent) ? (
+			{installers.isError || agents.isError || refreshError ? (
 				<div className="flex items-center gap-2 rounded-md border border-error/30 bg-error/10 px-3 py-2 text-xs text-error">
 					<TriangleAlert className="size-4" aria-hidden="true" />
-					{actionError && !activeAgent ? actionError : t("settings.harness.loadFailed")}
+					{refreshError ?? t("settings.harness.loadFailed")}
 				</div>
 			) : null}
 
@@ -157,27 +175,24 @@ export function HarnessSettingsSection({ titleHidden = false }: { titleHidden?: 
 				{rows.map((agentId) => {
 					const plan = plans.get(agentId);
 					const isInstalled = installed.has(agentId);
-					const isActive = activeAgent === agentId;
-					const activeStatus = isActive ? job?.status : undefined;
-					const failed = isActive && (activeStatus === "failed" || activeStatus === "unsupported" || actionError);
-					const running = isActive && activeStatus === "running";
-					const rowVerifying = isActive && verifying;
+					const installState = installStates[agentId];
+					const rowJob = installState?.job;
+					const failed = rowJob?.status === "failed" || rowJob?.status === "unsupported" || Boolean(installState?.error);
+					const running = rowJob?.status === "running";
+					const rowVerifying = installState?.verifying === true;
+					const statusId = `harness-agent-${agentId}-status`;
 					return (
-						<div className="settings-row-bar min-h-14 gap-3" data-agent={agentId} key={agentId}>
+						<div className="settings-row-bar relative min-h-14 gap-3 overflow-hidden" data-agent={agentId} key={agentId}>
 							<AgentAvatar className="size-7 shrink-0" decorative provider={agentId} />
 							<div className="min-w-0 flex-1">
-								<p className="truncate text-sm font-medium text-settings-label">{agentLabel(agentId)}</p>
-								<p className={cn("truncate text-xs text-settings-muted", failed && "text-error")} title={failed ? (actionError ?? job?.error) : plan?.reason}>
+								<p className="truncate text-sm font-medium text-settings-label" id={`harness-agent-${agentId}`}>{agentLabel(agentId)}</p>
+								<p className={cn("truncate text-xs text-settings-muted", failed && "text-error")} title={failed ? (installState?.error ?? rowJob?.error) : plan?.reason}>
 									{isInstalled
 										? t("settings.harness.installed")
-										: running
-											? t("settings.harness.installing")
-											: rowVerifying
-												? t("settings.harness.verifying")
-												: failed
-													? (actionError ?? job?.error ?? t("settings.harness.installFailed"))
-													: plan?.available
-														? t("settings.harness.availableWith", { method: plan.method })
+										: failed
+											? (installState?.error ?? rowJob?.error ?? t("settings.harness.installFailed"))
+												: plan?.available
+													? t("settings.harness.availableWith", { method: plan.method })
 														: (plan?.reason ?? t("settings.harness.manualRequired"))}
 								</p>
 							</div>
@@ -187,7 +202,7 @@ export function HarnessSettingsSection({ titleHidden = false }: { titleHidden?: 
 									{t("settings.harness.installed")}
 								</span>
 							) : running || rowVerifying ? (
-								<span className="inline-flex items-center gap-1.5 text-xs text-settings-muted" role="status">
+								<span className="inline-flex items-center gap-1.5 text-xs text-settings-muted" id={statusId} role="status">
 									<LoaderCircle className="size-4 animate-spin" aria-hidden="true" />
 									{running ? t("settings.harness.installing") : t("settings.harness.verifying")}
 								</span>
@@ -196,7 +211,7 @@ export function HarnessSettingsSection({ titleHidden = false }: { titleHidden?: 
 									<LoaderCircle className="size-4 animate-spin" aria-hidden="true" />
 								</span>
 							) : plan?.available && plan.automatic ? (
-								<Button disabled={isBusy && !isActive} size="sm" onClick={() => void startInstall(agentId)}>
+								<Button size="sm" onClick={() => void startInstall(agentId)}>
 									<Download aria-hidden="true" />
 									{failed ? t("settings.harness.retry") : t("settings.harness.install")}
 								</Button>
@@ -211,6 +226,15 @@ export function HarnessSettingsSection({ titleHidden = false }: { titleHidden?: 
 									{t("settings.harness.instructions")}
 								</Button>
 							)}
+							{running || rowVerifying ? (
+								<div
+									aria-labelledby={`harness-agent-${agentId} ${statusId}`}
+									className="absolute inset-x-0 bottom-0 h-0.5 overflow-hidden bg-settings-menu-selected"
+									role="progressbar"
+								>
+									<div className="h-full w-2/5 bg-primary harness-install-progress-indicator" />
+								</div>
+							) : null}
 						</div>
 					);
 				})}
