@@ -20,6 +20,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/runtime/ptyexec"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
+	"github.com/aoagents/agent-orchestrator/backend/internal/tmuxbin"
 )
 
 const (
@@ -49,7 +50,7 @@ var getenv = os.Getenv
 // Options configures a tmux Runtime. Every field has a sensible default (see
 // New), so the zero value is usable.
 type Options struct {
-	Binary     string        // default $AO_TMUX_BINARY, else "tmux" (resolved via exec.LookPath)
+	Binary     string        // default configured/bundled/system tmux resolution
 	SocketName string        // default $AO_TMUX_SOCKET_NAME; empty uses tmux's machine-wide default socket
 	Shell      string        // default $SHELL else /bin/sh
 	Timeout    time.Duration // default 5s
@@ -239,17 +240,18 @@ func stableRunDir() string {
 }
 
 // New builds a tmux Runtime, filling unset Options with defaults: binary from
-// $AO_TMUX_BINARY when the packaged desktop app pins its bundled tmux, otherwise
-// "tmux" resolved via exec.LookPath; shell from $SHELL (else /bin/sh); and the
+// AO's configured/bundled/system resolver; shell from $SHELL (else /bin/sh); and the
 // default timeout and output chunk size.
 func New(opts Options) *Runtime {
 	binary := opts.Binary
 	if binary == "" {
-		binary = strings.TrimSpace(getenv("AO_TMUX_BINARY"))
-	}
-	if binary == "" {
-		if path, err := exec.LookPath("tmux"); err == nil {
-			binary = path
+		resolution, err := tmuxbin.Resolve()
+		if err == nil {
+			binary = resolution.Path
+		} else if configured := strings.TrimSpace(getenv("AO_TMUX_BINARY")); configured != "" {
+			// Keep the configured path on failure so packaged builds fail closed
+			// when they eventually execute it instead of selecting machine tmux.
+			binary = configured
 		} else {
 			binary = "tmux"
 		}

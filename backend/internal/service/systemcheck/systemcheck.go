@@ -15,6 +15,7 @@ import (
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 	agentsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/agent"
+	"github.com/aoagents/agent-orchestrator/backend/internal/tmuxbin"
 )
 
 // Requirement is one named startup gate check.
@@ -103,22 +104,19 @@ func (s *Service) checkTmux() Requirement {
 			Detail: "Not required on Windows — AO uses the built-in ConPTY terminal runtime instead of tmux.",
 		}
 	}
-	executable := strings.TrimSpace(os.Getenv("AO_TMUX_BINARY"))
-	if executable == "" {
-		executable = "tmux"
-	}
-	path, err := s.executables.LookPath(executable)
-	if err != nil || path == "" {
+	configured := strings.TrimSpace(os.Getenv("AO_TMUX_BINARY"))
+	resolution, err := tmuxbin.ResolveWith(configured, os.Executable, s.executables.LookPath)
+	if err != nil || resolution.Path == "" {
 		detail := "tmux was not found on PATH; it is required on macOS/Linux to start sessions."
-		if executable != "tmux" {
-			detail = "AO's bundled tmux is missing or not executable: " + executable
+		if configured != "" {
+			detail = "AO's bundled tmux is missing or not executable: " + configured
 		}
 		return Requirement{
 			ID: "tmux", Label: "tmux", Required: true,
 			Detail: detail,
 		}
 	}
-	return Requirement{ID: "tmux", Label: "tmux", Satisfied: true, Required: true, Detail: path}
+	return Requirement{ID: "tmux", Label: "tmux", Satisfied: true, Required: true, Detail: resolution.Path}
 }
 
 func (s *Service) checkHarness(ctx context.Context) Requirement {
