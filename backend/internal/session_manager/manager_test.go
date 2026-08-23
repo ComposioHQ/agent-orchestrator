@@ -1252,6 +1252,156 @@ func TestSpawn_ResolvesProjectConfig(t *testing.T) {
 	}
 }
 
+// TestSpawn_CrossHarnessRoleOverride verifies that when a project's role override
+// pins one harness with a model/mode, an explicit spawn for a different harness
+// launches with the project's baseline model/mode instead of leaking the override's
+// harness-specific model/mode. It also verifies that harness-agnostic permissions
+// configured on the role override still survive across the harness mismatch, and that
+// spawns matching the role override's pinned harness receive the full override.
+func TestSpawn_CrossHarnessRoleOverride(t *testing.T) {
+	st := newFakeStore()
+	st.projects["proj"] = domain.ProjectRecord{
+		ID: "proj",
+		Config: domain.ProjectConfig{
+			AgentConfig: domain.AgentConfig{
+				Model:       "base-model",
+				Mode:        "low",
+				Permissions: domain.PermissionModeAuto,
+			},
+			// Worker role override pins Codex and specifies codex model/mode and default permissions.
+			// Permissions intentionally differs from the baseline ("auto" vs "default") so the
+			// assertion fails if the override permissions are dropped or ignored.
+			Worker: domain.RoleOverride{
+				Harness: domain.HarnessCodex,
+				AgentConfig: domain.AgentConfig{
+					Model:       "codex-model",
+					Mode:        "high",
+					Permissions: domain.PermissionModeDefault,
+				},
+			},
+		},
+	}
+	agent := &recordingAgent{}
+	rt := &fakeRuntime{}
+	ws := &fakeWorkspace{}
+	lookPath := func(string) (string, error) { return "/bin/true", nil }
+	m := New(Deps{
+		Runtime:   rt,
+		Agents:    singleAgent{agent: agent},
+		Workspace: ws,
+		Store:     st,
+		Messenger: &fakeMessenger{},
+		Lifecycle: &fakeLCM{store: st},
+		LookPath:  lookPath,
+	})
+
+	// 1. Cross-harness spawn: worker role override pins Codex, but spawn explicitly asks for Claude Code.
+	// Model and Mode must NOT leak from the Codex override; they must fall back to the project baseline.
+	// Permissions is harness-agnostic, so the override's "default" permission MUST still apply.
+	recCross, _, _, err := m.Spawn(ctx, ports.SpawnConfig{
+		ProjectID: "proj",
+		Kind:      domain.KindWorker,
+		Harness:   domain.HarnessClaudeCode,
+	})
+	if err != nil {
+		t.Fatalf("cross-harness spawn: %v", err)
+	}
+
+	if recCross.Harness != domain.HarnessClaudeCode {
+		t.Fatalf("cross-harness rec.Harness = %q, want %q", recCross.Harness, domain.HarnessClaudeCode)
+	}
+	if durable, ok := st.sessions[recCross.ID]; !ok {
+		t.Fatalf("cross-harness session %s not found in store", recCross.ID)
+	} else if durable.Harness != domain.HarnessClaudeCode {
+		t.Fatalf("cross-harness durable Harness = %q, want %q", durable.Harness, domain.HarnessClaudeCode)
+	} else if durable.Metadata.Model != "base-model" {
+		t.Fatalf("cross-harness durable metadata model = %q, want baseline base-model", durable.Metadata.Model)
+	}
+
+	if recCross.Metadata.Model != "base-model" {
+		t.Fatalf("cross-harness rec.Metadata.Model = %q, want baseline base-model", recCross.Metadata.Model)
+	}
+	if agent.lastConfig.Model != "base-model" {
+		t.Fatalf("cross-harness launch config model = %q, want baseline base-model (no override leak)", agent.lastConfig.Model)
+	}
+	if agent.lastConfig.Mode != "low" {
+		t.Fatalf("cross-harness launch config mode = %q, want baseline low (no override leak)", agent.lastConfig.Mode)
+	}
+	if agent.lastConfig.Permissions != domain.PermissionModeDefault {
+		t.Fatalf("cross-harness launch config permissions = %q, want override default", agent.lastConfig.Permissions)
+	}
+	if agent.lastLaunch.Permissions != domain.PermissionModeDefault {
+		t.Fatalf("cross-harness launch permissions = %q, want override default", agent.lastLaunch.Permissions)
+	}
+
+	// 2. Matching-harness spawn (implicit harness from worker role override).
+	// Model, Mode, and Permissions from the Codex override must all apply.
+	agent.lastConfig = ports.AgentConfig{}
+	agent.lastLaunch = ports.LaunchConfig{}
+	recMatch, _, _, err := m.Spawn(ctx, ports.SpawnConfig{
+		ProjectID: "proj",
+		Kind:      domain.KindWorker,
+	})
+	if err != nil {
+		t.Fatalf("matching-harness spawn: %v", err)
+	}
+
+	if recMatch.Harness != domain.HarnessCodex {
+		t.Fatalf("matching-harness rec.Harness = %q, want %q", recMatch.Harness, domain.HarnessCodex)
+	}
+	if durable, ok := st.sessions[recMatch.ID]; !ok {
+		t.Fatalf("matching-harness session %s not found in store", recMatch.ID)
+	} else if durable.Harness != domain.HarnessCodex {
+		t.Fatalf("matching-harness durable Harness = %q, want %q", durable.Harness, domain.HarnessCodex)
+	} else if durable.Metadata.Model != "codex-model" {
+		t.Fatalf("matching-harness durable metadata model = %q, want override codex-model", durable.Metadata.Model)
+	}
+
+	if recMatch.Metadata.Model != "codex-model" {
+		t.Fatalf("matching-harness rec.Metadata.Model = %q, want override codex-model", recMatch.Metadata.Model)
+	}
+	if agent.lastConfig.Model != "codex-model" {
+		t.Fatalf("matching-harness launch config model = %q, want override codex-model", agent.lastConfig.Model)
+	}
+	if agent.lastConfig.Mode != "high" {
+		t.Fatalf("matching-harness launch config mode = %q, want override high", agent.lastConfig.Mode)
+	}
+	if agent.lastConfig.Permissions != domain.PermissionModeDefault {
+		t.Fatalf("matching-harness launch config permissions = %q, want override default", agent.lastConfig.Permissions)
+	}
+	if agent.lastLaunch.Permissions != domain.PermissionModeDefault {
+		t.Fatalf("matching-harness launch permissions = %q, want override default", agent.lastLaunch.Permissions)
+	}
+
+	// 3. Explicit matching-harness spawn (explicit Harness: domain.HarnessCodex).
+	agent.lastConfig = ports.AgentConfig{}
+	agent.lastLaunch = ports.LaunchConfig{}
+	recExplicitMatch, _, _, err := m.Spawn(ctx, ports.SpawnConfig{
+		ProjectID: "proj",
+		Kind:      domain.KindWorker,
+		Harness:   domain.HarnessCodex,
+	})
+	if err != nil {
+		t.Fatalf("explicit matching-harness spawn: %v", err)
+	}
+
+	if recExplicitMatch.Harness != domain.HarnessCodex {
+		t.Fatalf("explicit matching-harness rec.Harness = %q, want %q", recExplicitMatch.Harness, domain.HarnessCodex)
+	}
+	if agent.lastConfig.Model != "codex-model" {
+		t.Fatalf("explicit matching-harness launch config model = %q, want override codex-model", agent.lastConfig.Model)
+	}
+	if agent.lastConfig.Mode != "high" {
+		t.Fatalf("explicit matching-harness launch config mode = %q, want override high", agent.lastConfig.Mode)
+	}
+	if agent.lastConfig.Permissions != domain.PermissionModeDefault {
+		t.Fatalf("explicit matching-harness launch config permissions = %q, want override default", agent.lastConfig.Permissions)
+	}
+	if agent.lastLaunch.Permissions != domain.PermissionModeDefault {
+		t.Fatalf("explicit matching-harness launch permissions = %q, want override default", agent.lastLaunch.Permissions)
+	}
+}
+
 // TestSpawnModelValidation asserts spawn rejects models a fixed-catalog harness
 // cannot honor, while harnesses that accept arbitrary model ids pass through.
 func TestSpawnModelValidation(t *testing.T) {
