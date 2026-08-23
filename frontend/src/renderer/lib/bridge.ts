@@ -1,5 +1,5 @@
 import type { AoBridge } from "../../preload";
-import { coerceLocale } from "../../shared/ui-locale";
+import { DEFAULT_UI_SETTINGS, coerceLocale } from "../../shared/ui-locale";
 export type { FeatureBuild } from "../../main/feature-builds";
 
 export const aoBridge: AoBridge =
@@ -161,8 +161,8 @@ export const aoBridge: AoBridge =
 			set: async () => undefined,
 		},
 		uiSettings: {
-			get: async () => ({ locale: "en" as const }),
-			set: async (settings) => ({ locale: coerceLocale(settings.locale) }),
+			get: async () => ({ ...DEFAULT_UI_SETTINGS }),
+			set: async (patch) => ({ ...DEFAULT_UI_SETTINGS, ...patch, locale: coerceLocale(patch.locale) }),
 		},
 		keybindings: {
 			get: async () => ({}),
@@ -183,8 +183,12 @@ export const aoBridge: AoBridge =
 			getActive: async () => null,
 		},
 		cloud: {
+			getAvailability: async () => ({ available: false, enabled: false, apiBaseUrl: "" }),
 			getSession: async () => null,
-			signIn: async () => undefined,
+			getAccessToken: async () => {
+				throw new Error("AO Cloud is unavailable outside Electron.");
+			},
+			signIn: async () => null,
 			signOut: async () => undefined,
 			onSessionChanged: () => () => undefined,
 		},

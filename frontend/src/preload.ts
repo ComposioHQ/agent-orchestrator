@@ -19,7 +19,7 @@ import type { DaemonStatus } from "./shared/daemon-status";
 import type { TelemetryBootstrap } from "./shared/telemetry";
 import type { MigrationState } from "./main/app-state";
 import type { UpdateSettings, UpdateStatus } from "./main/update-settings";
-import type { CloudAccount } from "./shared/cloud-account";
+import type { CloudAccount, CloudAvailability } from "./shared/cloud-account";
 import type { UpdateOutcome } from "./shared/update-telemetry";
 import type { UiSettings } from "./main/ui-settings";
 import type { UpdateCheckOptions } from "./main/auto-updater";
@@ -325,7 +325,8 @@ const api = {
 	},
 	uiSettings: {
 		get: () => ipcRenderer.invoke("uiSettings:get") as Promise<UiSettings>,
-		set: (settings: UiSettings) => ipcRenderer.invoke("uiSettings:set", settings) as Promise<UiSettings>,
+		/** Partial patch: main merges it into the persisted settings. */
+		set: (patch: Partial<UiSettings>) => ipcRenderer.invoke("uiSettings:set", patch) as Promise<UiSettings>,
 	},
 	keybindings: {
 		get: () => ipcRenderer.invoke("keybindings:get") as Promise<KeybindingOverrides>,
@@ -361,8 +362,14 @@ const api = {
 		getActive: () => ipcRenderer.invoke("featureBuilds:getActive") as Promise<{ pr: number } | null>,
 	},
 	cloud: {
+		getAvailability: () => ipcRenderer.invoke("cloud:getAvailability") as Promise<CloudAvailability>,
 		getSession: () => ipcRenderer.invoke("cloud:getSession") as Promise<CloudAccount | null>,
-		signIn: () => ipcRenderer.invoke("cloud:signIn") as Promise<void>,
+		/**
+		 * A short-lived AO access token for the renderer's cloud client. Fetched
+		 * per request and never persisted here — refresh tokens stay in main.
+		 */
+		getAccessToken: () => ipcRenderer.invoke("cloud:getAccessToken") as Promise<string>,
+		signIn: () => ipcRenderer.invoke("cloud:signIn") as Promise<CloudAccount | null>,
 		signOut: () => ipcRenderer.invoke("cloud:signOut") as Promise<void>,
 		onSessionChanged: (listener: (account: CloudAccount | null) => void) => {
 			const wrapped = (_event: Electron.IpcRendererEvent, account: CloudAccount | null) => listener(account);

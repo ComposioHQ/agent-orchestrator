@@ -1052,12 +1052,13 @@ function SessionRow({
 }
 
 // CloudAccountRow: shown above the Settings button. When unauthenticated it
-// starts the native WorkOS PKCE flow. When authenticated it shows the user's
-// email with a sign-out action in a dropdown.
+// starts the native Google PKCE flow in Electron main. When authenticated it
+// shows the user's email with a sign-out action in a dropdown. Hidden entirely
+// until the developer early-access flag is on.
 function CloudAccountRow({ tabIndex }: { tabIndex: number }) {
 	const { t } = useTranslation();
-	const { configured, session, status, signIn, signOut } = useCloudSession();
-	if (!configured || status === "loading") return null;
+	const { enabled, session, status, signIn, signOut } = useCloudSession();
+	if (!enabled || status === "loading") return null;
 
 	if (status === "unauthenticated") {
 		return (
@@ -1118,8 +1119,8 @@ function CloudAccountRow({ tabIndex }: { tabIndex: number }) {
 // Icon-rail variant for collapsed sidebar.
 function CloudAccountRailButton({ tabIndex }: { tabIndex: number }) {
 	const { t } = useTranslation();
-	const { configured, session, status, signIn, signOut } = useCloudSession();
-	if (!configured || status === "loading") return null;
+	const { enabled, session, status, signIn, signOut } = useCloudSession();
+	if (!enabled || status === "loading") return null;
 
 	if (status === "unauthenticated") {
 		return (

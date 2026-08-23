@@ -1,370 +1,323 @@
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const ACCESS_TOKEN = `header.${Buffer.from(
-  JSON.stringify({ exp: 4_102_444_800, sid: "session_123" }),
-).toString("base64url")}.signature`;
-const EXPIRED_ACCESS_TOKEN = `header.${Buffer.from(
-  JSON.stringify({ exp: 1, sid: "session_123" }),
-).toString("base64url")}.signature`;
-
 const mocks = vi.hoisted(() => ({
-  authenticateWithCode: vi.fn(),
-  authenticateWithRefreshToken: vi.fn(),
-  decryptString: vi.fn((value: Buffer) => value.toString("utf8")),
-  encryptString: vi.fn((value: string) => Buffer.from(value, "utf8")),
-  encryptionAvailable: true,
-  selectedStorageBackend: "gnome_libsecret",
-  getAuthorizationUrlWithPKCE: vi.fn(),
-  openExternal: vi.fn(),
-  showMessageBox: vi.fn(),
-}));
-
-vi.mock("@workos-inc/node", () => ({
-  createWorkOS: () => ({
-    userManagement: {
-      authenticateWithCode: mocks.authenticateWithCode,
-      authenticateWithRefreshToken: mocks.authenticateWithRefreshToken,
-      getAuthorizationUrlWithPKCE: mocks.getAuthorizationUrlWithPKCE,
-    },
-  }),
+	decryptString: vi.fn((value: Buffer) => value.toString("utf8")),
+	encryptString: vi.fn((value: string) => Buffer.from(value, "utf8")),
+	encryptionAvailable: true,
+	isPackaged: true,
+	selectedStorageBackend: "gnome_libsecret",
+	openExternal: vi.fn(),
+	showMessageBox: vi.fn(),
+	handle: vi.fn(),
 }));
 
 vi.mock("electron", () => ({
-  app: {
-    setAsDefaultProtocolClient: vi.fn(),
-  },
-  dialog: { showMessageBox: mocks.showMessageBox },
-  ipcMain: { handle: vi.fn() },
-  safeStorage: {
-    decryptString: mocks.decryptString,
-    encryptString: mocks.encryptString,
-    getSelectedStorageBackend: () => mocks.selectedStorageBackend,
-    isEncryptionAvailable: () => mocks.encryptionAvailable,
-  },
-  shell: { openExternal: mocks.openExternal },
+	app: {
+		get isPackaged() {
+			return mocks.isPackaged;
+		},
+	},
+	dialog: { showMessageBox: mocks.showMessageBox },
+	ipcMain: { handle: mocks.handle },
+	safeStorage: {
+		decryptString: mocks.decryptString,
+		encryptString: mocks.encryptString,
+		getSelectedStorageBackend: () => mocks.selectedStorageBackend,
+		isEncryptionAvailable: () => mocks.encryptionAvailable,
+	},
+	shell: { openExternal: mocks.openExternal },
 }));
 
 import {
-  beginCloudSignIn,
-  getCloudSession,
-  handleCloudDeepLink,
-  showCloudSignInFailure,
-  signOutCloud,
+	beginCloudSignIn,
+	cloudAvailability,
+	getCloudAccessToken,
+	getCloudSession,
+	setCloudPreferenceEnabled,
+	showCloudSignInFailure,
+	signOutCloud,
 } from "./cloud-auth";
 
-describe("native WorkOS authentication", () => {
-  let dataDir: string;
+const STORE_FILE = "cloud-auth.bin";
+const realFetch = globalThis.fetch;
 
-  beforeEach(async () => {
-    vi.clearAllMocks();
-    mocks.encryptionAvailable = true;
-    mocks.selectedStorageBackend = "gnome_libsecret";
-    dataDir = await mkdtemp(path.join(os.tmpdir(), "ao-cloud-auth-"));
-    mocks.getAuthorizationUrlWithPKCE.mockResolvedValue({
-      url: "https://workos.example/authorize",
-      state: "state_123",
-      codeVerifier: "verifier_123",
-    });
-    mocks.authenticateWithCode.mockResolvedValue({
-      accessToken: ACCESS_TOKEN,
-      refreshToken: "refresh_123",
-      user: {
-        id: "user_123",
-        email: "person@example.com",
-        name: "Person Example",
-        firstName: "Person",
-        lastName: "Example",
-      },
-    });
-  });
+function aoSession(overrides: Record<string, unknown> = {}) {
+	return {
+		accessToken: "ao_access_1",
+		refreshToken: "ao_refresh_1",
+		expiresAt: new Date(Date.now() + 15 * 60_000).toISOString(),
+		user: { id: "user_1", email: "dev@example.com", displayName: "Dev", authProvider: "google" },
+		organizations: [{ id: "org_1", slug: "dev", displayName: "Dev", role: "owner" }],
+		...overrides,
+	};
+}
 
-  afterEach(async () => {
-    vi.restoreAllMocks();
-    await rm(dataDir, { recursive: true, force: true });
-  });
+function jsonResponse(body: unknown, status = 200): Response {
+	return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
+}
 
-  it("starts PKCE and exchanges the callback without an AO website", async () => {
-    await beginCloudSignIn(dataDir);
-    expect(mocks.openExternal).toHaveBeenCalledWith(
-      "https://workos.example/authorize",
-    );
-    expect(mocks.getAuthorizationUrlWithPKCE).toHaveBeenCalledWith(
-      expect.objectContaining({
-        provider: "authkit",
-        prompt: "login",
-        maxAge: 0,
-        redirectUri: "ao-app://callback",
-      }),
-    );
+/** Routes Google/control-plane calls to the stub and lets loopback calls through. */
+type RouteHandler = (url: string, init?: RequestInit) => Response | Promise<Response>;
+let routes: Map<string, RouteHandler>;
 
-    const session = await handleCloudDeepLink(
-      "ao-app://callback?code=code_123&state=state_123",
-      dataDir,
-    );
-    expect(session).toMatchObject({
-      authProvider: "workos",
-      user: {
-        id: "user_123",
-        email: "person@example.com",
-        displayName: "Person Example",
-      },
-    });
-    expect(session).not.toHaveProperty("accessToken");
-    expect(session).not.toHaveProperty("refreshToken");
-    await expect(getCloudSession(dataDir)).resolves.toMatchObject({
-      user: { email: "person@example.com" },
-    });
-  });
+function stubFetch(): void {
+	globalThis.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+		const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+		if (url.startsWith("http://127.0.0.1:")) return realFetch(input as RequestInfo, init);
+		for (const [prefix, handler] of routes) {
+			if (url.startsWith(prefix)) return handler(url, init);
+		}
+		throw new Error(`unexpected fetch: ${url}`);
+	}) as typeof globalThis.fetch;
+}
 
-  it("rejects callbacks whose OAuth state does not match", async () => {
-    await beginCloudSignIn(dataDir);
-    await expect(
-      handleCloudDeepLink(
-        "ao-app://callback?code=code_123&state=attacker_state",
-        dataDir,
-      ),
-    ).rejects.toThrow("state did not match");
-  });
+/** Drive the browser half of the loopback PKCE flow from the authorize URL. */
+function completeGoogleRedirect(options: { state?: string; error?: string; omitCode?: boolean } = {}): void {
+	mocks.openExternal.mockImplementation(async (authorizeUrl: string) => {
+		const authorize = new URL(authorizeUrl);
+		const redirect = new URL(authorize.searchParams.get("redirect_uri") ?? "");
+		if (options.error) redirect.searchParams.set("error", options.error);
+		else {
+			redirect.searchParams.set("state", options.state ?? (authorize.searchParams.get("state") as string));
+			if (!options.omitCode) redirect.searchParams.set("code", "google_code_1");
+		}
+		await realFetch(redirect.toString());
+	});
+}
 
-  it("keeps the auth store in memory when OS encryption is unavailable", async () => {
-    mocks.encryptionAvailable = false;
-    await beginCloudSignIn(dataDir);
-    const account = await handleCloudDeepLink(
-      "ao-app://callback?code=code_123&state=state_123",
-      dataDir,
-    );
+async function readStoredSession(dataDir: string): Promise<Record<string, unknown>> {
+	const raw = await readFile(path.join(dataDir, STORE_FILE), "utf8");
+	return (JSON.parse(raw) as { session: Record<string, unknown> }).session;
+}
 
-    expect(account?.user.email).toBe("person@example.com");
-    await expect(
-      readFile(path.join(dataDir, "cloud-auth.bin")),
-    ).rejects.toMatchObject({ code: "ENOENT" });
-    await expect(getCloudSession(dataDir)).resolves.toMatchObject({
-      user: { email: "person@example.com" },
-    });
-    await signOutCloud(dataDir);
-  });
+describe("AO Cloud desktop credential custody", () => {
+	let dataDir: string;
 
-  it("keeps the auth store in memory with Linux basic_text storage", async () => {
-    vi.spyOn(process, "platform", "get").mockReturnValue("linux");
-    mocks.selectedStorageBackend = "basic_text";
-    await beginCloudSignIn(dataDir);
-    const account = await handleCloudDeepLink(
-      "ao-app://callback?code=code_123&state=state_123",
-      dataDir,
-    );
+	beforeEach(async () => {
+		vi.clearAllMocks();
+		mocks.encryptionAvailable = true;
+		mocks.isPackaged = true;
+		mocks.selectedStorageBackend = "gnome_libsecret";
+		mocks.decryptString.mockImplementation((value: Buffer) => value.toString("utf8"));
+		mocks.encryptString.mockImplementation((value: string) => Buffer.from(value, "utf8"));
+		setCloudPreferenceEnabled(true);
+		dataDir = await mkdtemp(path.join(os.tmpdir(), "ao-cloud-auth-"));
+		routes = new Map<string, RouteHandler>([
+			["https://oauth2.googleapis.com/token", () => jsonResponse({ id_token: "google_id_token" })],
+			["https://cloud.example/api/cloud/v1/auth/google", () => jsonResponse(aoSession())],
+		]);
+		stubFetch();
+		completeGoogleRedirect();
+	});
 
-    expect(account?.user.email).toBe("person@example.com");
-    await expect(
-      readFile(path.join(dataDir, "cloud-auth.bin")),
-    ).rejects.toMatchObject({ code: "ENOENT" });
-    await expect(getCloudSession(dataDir)).resolves.toMatchObject({
-      user: { email: "person@example.com" },
-    });
-    await signOutCloud(dataDir);
-  });
+	afterEach(async () => {
+		globalThis.fetch = realFetch;
+		setCloudPreferenceEnabled(false);
+		await rm(dataDir, { recursive: true, force: true });
+	});
 
-  it("shows a bounded error when the callback cannot be completed", async () => {
-    await showCloudSignInFailure(
-      new Error("The WorkOS sign-in request expired with secret details"),
-    );
+	it("gates every cloud surface behind the developer early-access opt-in", async () => {
+		setCloudPreferenceEnabled(false);
+		expect(cloudAvailability()).toEqual({ available: true, enabled: false, apiBaseUrl: "" });
+		await expect(getCloudSession(dataDir)).resolves.toBeNull();
+		await expect(beginCloudSignIn(dataDir)).rejects.toThrow("not configured");
 
-    expect(mocks.showMessageBox).toHaveBeenCalledWith({
-      type: "error",
-      title: "AO Cloud sign-in failed",
-      message: "Unable to sign in to AO Cloud",
-      detail:
-        "The WorkOS sign-in request expired. Start sign-in again to continue.",
-    });
-  });
+		setCloudPreferenceEnabled(true);
+		expect(cloudAvailability()).toEqual({
+			available: true,
+			enabled: true,
+			apiBaseUrl: "https://cloud.example",
+		});
+	});
 
-  it("shares one rotating-token refresh between concurrent callers", async () => {
-    mocks.authenticateWithCode.mockResolvedValueOnce({
-      accessToken: EXPIRED_ACCESS_TOKEN,
-      refreshToken: "refresh_123",
-      user: {
-        id: "user_123",
-        email: "person@example.com",
-        name: "Person Example",
-      },
-    });
-    let resolveRefresh:
-      | ((value: {
-          accessToken: string;
-          refreshToken: string;
-          user: {
-            id: string;
-            email: string;
-            name: string;
-          };
-        }) => void)
-      | undefined;
-    mocks.authenticateWithRefreshToken.mockReturnValueOnce(
-      new Promise((resolve) => {
-        resolveRefresh = resolve;
-      }),
-    );
-    await beginCloudSignIn(dataDir);
-    await handleCloudDeepLink(
-      "ao-app://callback?code=code_123&state=state_123",
-      dataDir,
-    );
+	it("completes Google PKCE against the loopback redirect and stores the AO session", async () => {
+		const account = await beginCloudSignIn(dataDir);
 
-    const first = getCloudSession(dataDir);
-    const second = getCloudSession(dataDir);
-    await vi.waitFor(() =>
-      expect(mocks.authenticateWithRefreshToken).toHaveBeenCalledOnce(),
-    );
-    resolveRefresh?.({
-      accessToken: ACCESS_TOKEN,
-      refreshToken: "refresh_456",
-      user: {
-        id: "user_123",
-        email: "person@example.com",
-        name: "Person Example",
-      },
-    });
+		expect(account).toMatchObject({
+			authProvider: "google",
+			user: { id: "user_1", email: "dev@example.com", displayName: "Dev" },
+			organizations: [{ id: "org_1", slug: "dev", displayName: "Dev", role: "owner" }],
+		});
+		// Tokens must never reach the renderer-visible account shape.
+		expect(account).not.toHaveProperty("accessToken");
+		expect(account).not.toHaveProperty("refreshToken");
 
-    const [firstAccount, secondAccount] = await Promise.all([first, second]);
-    expect(firstAccount).toEqual(secondAccount);
-    expect(firstAccount).not.toHaveProperty("accessToken");
-    expect(mocks.authenticateWithRefreshToken).toHaveBeenCalledOnce();
-  });
+		const authorize = new URL(mocks.openExternal.mock.calls[0]?.[0] as string);
+		expect(authorize.origin + authorize.pathname).toBe("https://accounts.google.com/o/oauth2/v2/auth");
+		expect(authorize.searchParams.get("code_challenge_method")).toBe("S256");
+		expect(authorize.searchParams.get("code_challenge")).toBeTruthy();
+		expect(authorize.searchParams.get("redirect_uri")).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/callback$/);
 
-  it("clears an expired session when token refresh fails", async () => {
-    mocks.authenticateWithCode.mockResolvedValueOnce({
-      accessToken: EXPIRED_ACCESS_TOKEN,
-      refreshToken: "refresh_123",
-      user: {
-        id: "user_123",
-        email: "person@example.com",
-        name: "Person Example",
-      },
-    });
-    mocks.authenticateWithRefreshToken.mockRejectedValueOnce(
-      new Error("refresh token already consumed"),
-    );
-    await beginCloudSignIn(dataDir);
-    await handleCloudDeepLink(
-      "ao-app://callback?code=code_123&state=state_123",
-      dataDir,
-    );
+		await expect(getCloudAccessToken(dataDir)).resolves.toBe("ao_access_1");
+	});
 
-    await expect(getCloudSession(dataDir)).resolves.toBeNull();
-    await expect(getCloudSession(dataDir)).resolves.toBeNull();
-    expect(mocks.authenticateWithRefreshToken).toHaveBeenCalledOnce();
-  });
+	it("writes the encrypted store under the AO data dir with owner-only permissions", async () => {
+		await beginCloudSignIn(dataDir);
 
-  it("preserves encrypted credentials after a retryable refresh failure", async () => {
-    mocks.authenticateWithCode.mockResolvedValueOnce({
-      accessToken: EXPIRED_ACCESS_TOKEN,
-      refreshToken: "refresh_123",
-      user: {
-        id: "user_123",
-        email: "person@example.com",
-        name: "Person Example",
-      },
-    });
-    mocks.authenticateWithRefreshToken
-      .mockRejectedValueOnce(
-        Object.assign(new Error("WorkOS temporarily unavailable"), {
-          status: 503,
-        }),
-      )
-      .mockResolvedValueOnce({
-        accessToken: ACCESS_TOKEN,
-        refreshToken: "refresh_456",
-        user: {
-          id: "user_123",
-          email: "person@example.com",
-          name: "Person Example",
-        },
-      });
-    await beginCloudSignIn(dataDir);
-    await handleCloudDeepLink(
-      "ao-app://callback?code=code_123&state=state_123",
-      dataDir,
-    );
+		const stored = await readStoredSession(dataDir);
+		expect(stored.refreshToken).toBe("ao_refresh_1");
+		expect(mocks.encryptString).toHaveBeenCalled();
+		const { mode } = await import("node:fs/promises").then((fs) => fs.stat(path.join(dataDir, STORE_FILE)));
+		expect(mode & 0o777).toBe(0o600);
+	});
 
-    await expect(getCloudSession(dataDir)).resolves.toMatchObject({
-      user: { email: "person@example.com" },
-    });
-    await expect(
-      readFile(path.join(dataDir, "cloud-auth.bin")),
-    ).resolves.toBeInstanceOf(Buffer);
-    await expect(getCloudSession(dataDir)).resolves.toMatchObject({
-      user: { email: "person@example.com" },
-    });
-    expect(mocks.authenticateWithRefreshToken).toHaveBeenCalledTimes(2);
-  });
+	it("keeps the session process-local when the OS offers no protected storage", async () => {
+		mocks.encryptionAvailable = false;
 
-  it("does not restore a refreshed session after explicit sign-out", async () => {
-    mocks.authenticateWithCode.mockResolvedValueOnce({
-      accessToken: EXPIRED_ACCESS_TOKEN,
-      refreshToken: "refresh_123",
-      user: {
-        id: "user_123",
-        email: "person@example.com",
-        name: "Person Example",
-      },
-    });
-    let resolveRefresh:
-      | ((value: {
-          accessToken: string;
-          refreshToken: string;
-          user: {
-            id: string;
-            email: string;
-            name: string;
-          };
-        }) => void)
-      | undefined;
-    mocks.authenticateWithRefreshToken.mockReturnValueOnce(
-      new Promise((resolve) => {
-        resolveRefresh = resolve;
-      }),
-    );
-    await beginCloudSignIn(dataDir);
-    await handleCloudDeepLink(
-      "ao-app://callback?code=code_123&state=state_123",
-      dataDir,
-    );
+		await beginCloudSignIn(dataDir);
 
-    const pendingSession = getCloudSession(dataDir);
-    await vi.waitFor(() =>
-      expect(mocks.authenticateWithRefreshToken).toHaveBeenCalledOnce(),
-    );
-    await signOutCloud(dataDir);
-    resolveRefresh?.({
-      accessToken: ACCESS_TOKEN,
-      refreshToken: "refresh_456",
-      user: {
-        id: "user_123",
-        email: "person@example.com",
-        name: "Person Example",
-      },
-    });
+		await expect(readFile(path.join(dataDir, STORE_FILE))).rejects.toThrow();
+		await expect(getCloudAccessToken(dataDir)).resolves.toBe("ao_access_1");
+	});
 
-    await expect(pendingSession).resolves.toBeNull();
-    await expect(getCloudSession(dataDir)).resolves.toBeNull();
-    await expect(
-      readFile(path.join(dataDir, "cloud-auth.bin")),
-    ).rejects.toMatchObject({ code: "ENOENT" });
-  });
+	it("refuses Linux's unprotected basic_text backend", async () => {
+		Object.defineProperty(process, "platform", { value: "linux", configurable: true });
+		mocks.selectedStorageBackend = "basic_text";
+		try {
+			await beginCloudSignIn(dataDir);
+			await expect(readFile(path.join(dataDir, STORE_FILE))).rejects.toThrow();
+		} finally {
+			Object.defineProperty(process, "platform", { value: "darwin", configurable: true });
+		}
+	});
 
-  it("signs out locally without opening the browser", async () => {
-    await beginCloudSignIn(dataDir);
-    await handleCloudDeepLink(
-      "ao-app://callback?code=code_123&state=state_123",
-      dataDir,
-    );
-    mocks.openExternal.mockClear();
+	it("rejects a callback whose state does not match the authorization request", async () => {
+		completeGoogleRedirect({ state: "attacker_state" });
+		await expect(beginCloudSignIn(dataDir)).rejects.toThrow("state did not match");
+	});
 
-    await signOutCloud(dataDir);
+	it("surfaces a Google-reported error instead of exchanging a code", async () => {
+		completeGoogleRedirect({ error: "access_denied" });
+		await expect(beginCloudSignIn(dataDir)).rejects.toThrow("access_denied");
+	});
 
-    expect(mocks.openExternal).not.toHaveBeenCalled();
-    await expect(getCloudSession(dataDir)).resolves.toBeNull();
-  });
+	it("rotates the refresh token when the access token is near expiry", async () => {
+		routes.set("https://cloud.example/api/cloud/v1/auth/google", () =>
+			jsonResponse(aoSession({ expiresAt: new Date(Date.now() + 1_000).toISOString() })),
+		);
+		await beginCloudSignIn(dataDir);
+
+		const refresh = vi.fn(() =>
+			jsonResponse(aoSession({ accessToken: "ao_access_2", refreshToken: "ao_refresh_2" })),
+		);
+		routes.set("https://cloud.example/api/cloud/v1/auth/refresh", refresh);
+
+		await expect(getCloudAccessToken(dataDir)).resolves.toBe("ao_access_2");
+		expect(await readStoredSession(dataDir)).toMatchObject({ refreshToken: "ao_refresh_2" });
+	});
+
+	it("refreshes once for concurrent readers", async () => {
+		routes.set("https://cloud.example/api/cloud/v1/auth/google", () =>
+			jsonResponse(aoSession({ expiresAt: new Date(Date.now() + 1_000).toISOString() })),
+		);
+		await beginCloudSignIn(dataDir);
+
+		const refresh = vi.fn(async () => {
+			await new Promise((resolve) => setTimeout(resolve, 10));
+			return jsonResponse(aoSession({ accessToken: "ao_access_2", refreshToken: "ao_refresh_2" }));
+		});
+		routes.set("https://cloud.example/api/cloud/v1/auth/refresh", refresh);
+
+		const [a, b, c] = await Promise.all([
+			getCloudSession(dataDir),
+			getCloudSession(dataDir),
+			getCloudSession(dataDir),
+		]);
+
+		expect(refresh).toHaveBeenCalledTimes(1);
+		expect([a, b, c].every((account) => account?.user.id === "user_1")).toBe(true);
+	});
+
+	it("keeps the session through a transient refresh failure but refuses to hand out a stale token", async () => {
+		routes.set("https://cloud.example/api/cloud/v1/auth/google", () =>
+			jsonResponse(aoSession({ expiresAt: new Date(Date.now() + 1_000).toISOString() })),
+		);
+		await beginCloudSignIn(dataDir);
+		routes.set("https://cloud.example/api/cloud/v1/auth/refresh", () => {
+			throw new TypeError("fetch failed");
+		});
+
+		await expect(getCloudSession(dataDir)).resolves.toMatchObject({ user: { id: "user_1" } });
+		await expect(getCloudAccessToken(dataDir)).rejects.toThrow("could not be refreshed");
+		expect(await readStoredSession(dataDir)).toMatchObject({ refreshToken: "ao_refresh_1" });
+	});
+
+	it("drops custody when the control plane rejects the refresh token", async () => {
+		routes.set("https://cloud.example/api/cloud/v1/auth/google", () =>
+			jsonResponse(aoSession({ expiresAt: new Date(Date.now() + 1_000).toISOString() })),
+		);
+		await beginCloudSignIn(dataDir);
+		routes.set("https://cloud.example/api/cloud/v1/auth/refresh", () =>
+			jsonResponse({ code: "INVALID_REFRESH_TOKEN", message: "consumed", requestId: "r1" }, 401),
+		);
+
+		await expect(getCloudSession(dataDir)).resolves.toBeNull();
+		await expect(readFile(path.join(dataDir, STORE_FILE))).rejects.toThrow();
+	});
+
+	it("revokes the refresh token on sign-out and clears local custody", async () => {
+		await beginCloudSignIn(dataDir);
+		let logoutBody: string | undefined;
+		routes.set("https://cloud.example/api/cloud/v1/auth/logout", (_url, init) => {
+			logoutBody = String(init?.body);
+			return jsonResponse({ ok: true });
+		});
+
+		await signOutCloud(dataDir);
+
+		expect(JSON.parse(logoutBody ?? "null")).toEqual({ refreshToken: "ao_refresh_1" });
+		await expect(readFile(path.join(dataDir, STORE_FILE))).rejects.toThrow();
+		await expect(getCloudSession(dataDir)).resolves.toBeNull();
+	});
+
+	it("clears local custody even when the revoke call cannot reach the control plane", async () => {
+		await beginCloudSignIn(dataDir);
+		routes.set("https://cloud.example/api/cloud/v1/auth/logout", () => {
+			throw new TypeError("fetch failed");
+		});
+
+		await signOutCloud(dataDir);
+
+		await expect(readFile(path.join(dataDir, STORE_FILE))).rejects.toThrow();
+	});
+
+	it("does not resurrect a signed-out session from an in-flight refresh", async () => {
+		routes.set("https://cloud.example/api/cloud/v1/auth/google", () =>
+			jsonResponse(aoSession({ expiresAt: new Date(Date.now() + 1_000).toISOString() })),
+		);
+		await beginCloudSignIn(dataDir);
+		routes.set("https://cloud.example/api/cloud/v1/auth/logout", () => jsonResponse({ ok: true }));
+		routes.set("https://cloud.example/api/cloud/v1/auth/refresh", async () => {
+			await new Promise((resolve) => setTimeout(resolve, 20));
+			return jsonResponse(aoSession({ accessToken: "ao_access_2", refreshToken: "ao_refresh_2" }));
+		});
+
+		const pending = getCloudSession(dataDir);
+		await signOutCloud(dataDir);
+		await pending;
+
+		await expect(readFile(path.join(dataDir, STORE_FILE))).rejects.toThrow();
+		await expect(getCloudSession(dataDir)).resolves.toBeNull();
+	});
+
+	it("discards an unreadable store instead of failing every later read", async () => {
+		await beginCloudSignIn(dataDir);
+		await writeFile(path.join(dataDir, STORE_FILE), "not-encrypted-json");
+		mocks.decryptString.mockImplementation(() => {
+			throw new Error("bad ciphertext");
+		});
+
+		await expect(getCloudSession(dataDir)).resolves.toBeNull();
+		await expect(readFile(path.join(dataDir, STORE_FILE))).rejects.toThrow();
+	});
+
+	it("explains sign-in failures in product language", async () => {
+		await showCloudSignInFailure(new Error("The Google sign-in request expired."));
+		expect(mocks.showMessageBox).toHaveBeenCalledWith(
+			expect.objectContaining({ detail: expect.stringContaining("expired") }),
+		);
+	});
 });

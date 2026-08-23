@@ -6,6 +6,7 @@ import path from "node:path";
 import {
 	coerceUiSettings,
 	readUiSettings,
+	updateUiSettings,
 	writeUiSettings,
 	UI_SETTINGS_FILE_NAME,
 	DEFAULT_UI_SETTINGS,
@@ -25,10 +26,24 @@ describe("ui-settings", () => {
 	});
 
 	it("round-trips written locale", async () => {
-		await writeUiSettings(dir, { locale: "zh-CN" });
-		expect(await readUiSettings(dir)).toEqual({ locale: "zh-CN" });
-		await writeUiSettings(dir, { locale: "en" });
-		expect(await readUiSettings(dir)).toEqual({ locale: "en" });
+		await writeUiSettings(dir, { locale: "zh-CN", cloudEnabled: false });
+		expect(await readUiSettings(dir)).toEqual({ locale: "zh-CN", cloudEnabled: false });
+		await writeUiSettings(dir, { locale: "en", cloudEnabled: false });
+		expect(await readUiSettings(dir)).toEqual({ locale: "en", cloudEnabled: false });
+	});
+
+	it("merges a partial update without clobbering the other store's field", async () => {
+		await updateUiSettings(dir, { locale: "fr" });
+		await updateUiSettings(dir, { cloudEnabled: true });
+		expect(await readUiSettings(dir)).toEqual({ locale: "fr", cloudEnabled: true });
+
+		await updateUiSettings(dir, { locale: "ja" });
+		expect(await readUiSettings(dir)).toEqual({ locale: "ja", cloudEnabled: true });
+	});
+
+	it("serializes concurrent partial updates from independent stores", async () => {
+		await Promise.all([updateUiSettings(dir, { locale: "de" }), updateUiSettings(dir, { cloudEnabled: true })]);
+		expect(await readUiSettings(dir)).toEqual({ locale: "de", cloudEnabled: true });
 	});
 
 	it("falls back to defaults on garbage", async () => {
@@ -37,17 +52,17 @@ describe("ui-settings", () => {
 	});
 
 	it("coerces unknown locale to en and accepts supported locales", () => {
-		expect(coerceUiSettings({ locale: "xx" })).toEqual({ locale: "en" });
-		expect(coerceUiSettings({ locale: "zh" })).toEqual({ locale: "en" });
-		expect(coerceUiSettings({})).toEqual({ locale: "en" });
-		expect(coerceUiSettings(null)).toEqual({ locale: "en" });
-		expect(coerceUiSettings({ locale: "zh-CN" })).toEqual({ locale: "zh-CN" });
-		expect(coerceUiSettings({ locale: "fr" })).toEqual({ locale: "fr" });
-		expect(coerceUiSettings({ locale: "pt-BR" })).toEqual({ locale: "pt-BR" });
+		expect(coerceUiSettings({ locale: "xx" })).toEqual(DEFAULT_UI_SETTINGS);
+		expect(coerceUiSettings({ locale: "zh" })).toEqual(DEFAULT_UI_SETTINGS);
+		expect(coerceUiSettings({})).toEqual(DEFAULT_UI_SETTINGS);
+		expect(coerceUiSettings(null)).toEqual(DEFAULT_UI_SETTINGS);
+		expect(coerceUiSettings({ locale: "zh-CN" })).toEqual({ locale: "zh-CN", cloudEnabled: false });
+		expect(coerceUiSettings({ locale: "fr" })).toEqual({ locale: "fr", cloudEnabled: false });
+		expect(coerceUiSettings({ locale: "pt-BR" })).toEqual({ locale: "pt-BR", cloudEnabled: false });
 	});
 
 	it("atomic write leaves no temp file behind", async () => {
-		await writeUiSettings(dir, { locale: "zh-CN" });
+		await writeUiSettings(dir, { locale: "zh-CN", cloudEnabled: false });
 		const entries = await readdir(dir);
 		expect(entries).toEqual([UI_SETTINGS_FILE_NAME]);
 	});
