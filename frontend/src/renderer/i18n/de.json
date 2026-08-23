@@ -487,6 +487,7 @@
 	"notify.restoreUnavailable": "Diese Sitzung kann nicht mehr wiederhergestellt werden.",
 	"notify.title": "Benachrichtigungen",
 	"notify.unread": "Ungelesen",
+	"notify.turnComplete": "Turn complete",
 	"notify.unreadCount": "{{count}} ungelesene Benachrichtigungen",
 	"notify.unseen": "Ungesehen",
 	"notify.unresolved": "Ungelöst",

@@ -4,7 +4,7 @@
 import type { Theme } from "./theme";
 
 export type NotificationVisual = {
-	icon: "message-circle" | "git-merge" | "git-pull-request" | "x-circle" | "bell";
+	icon: "message-circle" | "check-circle" | "git-merge" | "git-pull-request" | "x-circle" | "bell";
 	color: string;
 	label: string;
 };
@@ -14,6 +14,8 @@ export function notificationVisual(t: Theme, type: string): NotificationVisual {
 	switch (type) {
 		case "needs_input":
 			return { icon: "message-circle", color: t.amber, label: "Needs input" };
+		case "turn_complete":
+			return { icon: "check-circle", color: t.green, label: "Turn complete" };
 		case "ready_to_merge":
 			return { icon: "git-merge", color: t.green, label: "Ready to merge" };
 		case "pr_merged":
@@ -32,7 +34,9 @@ export function notificationVisual(t: Theme, type: string): NotificationVisual {
  * twice.
  */
 export function notificationTarget(n: { type: string; sessionId?: string }): string {
-	return n.type === "needs_input" && n.sessionId ? `/session/${n.sessionId}` : "/prs";
+	return (n.type === "needs_input" || n.type === "turn_complete") && n.sessionId
+		? `/session/${n.sessionId}`
+		: "/prs";
 }
 
 /** Compact "3m" / "4h" / "2d" stamp. Returns "" for an unparseable timestamp. */

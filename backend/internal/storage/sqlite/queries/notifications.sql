@@ -23,7 +23,7 @@ LIMIT sqlc.arg(page_limit);
 SELECT *
 FROM notifications
 WHERE resolved_at IS NULL
-  AND type IN ('needs_input', 'ready_to_merge')
+  AND type IN ('needs_input', 'turn_complete', 'ready_to_merge')
   AND (
     CAST(sqlc.arg(before_id) AS TEXT) = ''
     OR created_at < sqlc.arg(before_created_at)
@@ -52,7 +52,19 @@ WHERE status = 'unread';
 SELECT COUNT(*)
 FROM notifications
 WHERE resolved_at IS NULL
-  AND type IN ('needs_input', 'ready_to_merge');
+  AND type IN ('needs_input', 'turn_complete', 'ready_to_merge');
+
+-- name: ResolveStaleTurnCompleteNotifications :many
+UPDATE notifications
+SET resolved_at = sqlc.arg(resolved_at)
+WHERE type = 'turn_complete'
+  AND resolved_at IS NULL
+  AND session_id IN (
+    SELECT id FROM sessions
+    WHERE is_terminated = TRUE
+       OR activity_state <> 'idle'
+  )
+RETURNING *;
 
 -- name: MarkNotificationRead :one
 UPDATE notifications

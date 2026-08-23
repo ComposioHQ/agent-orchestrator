@@ -1,4 +1,5 @@
 import { useQueryClient } from "@tanstack/react-query";
+import type { TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
 import { useParams } from "@tanstack/react-router";
 import {
@@ -6,6 +7,7 @@ import {
 	Bell,
 	BellRing,
 	CheckCheck,
+	CircleCheck,
 	CircleAlert,
 	GitMerge,
 	GitPullRequestArrow,
@@ -461,6 +463,7 @@ function NotificationItem({
 	const sessionId = notification.target.sessionId || notification.sessionId;
 	const canOpenSession = Boolean(sessionId) && sessionsReady && (!terminated || !offerRestore);
 	const copy = notificationCopy(notification, meta?.sessionName);
+	const label = notificationLabel(notification.type, t);
 	const titleLink = notificationPRTitleLink(notification, copy.title);
 	const showSessionMeta = Boolean(meta?.sessionName) && !notificationMentions(copy, meta?.sessionName ?? "");
 	const openRow = () => {
@@ -489,6 +492,7 @@ function NotificationItem({
 				title={canOpenSession ? t("notify.openSessionTitle") : undefined}
 			>
 				<div
+					aria-label={label}
 					className={cn(
 						"grid size-notification-icon shrink-0 place-items-center transition-transform duration-fast group-hover:brightness-110 group-active:scale-90",
 						notificationIconClass(notification.type),
@@ -637,6 +641,8 @@ function notificationIcon(type: string) {
 	switch (type) {
 		case "needs_input":
 			return MessageSquareDot;
+		case "turn_complete":
+			return CircleCheck;
 		case "ready_to_merge":
 			return GitPullRequestArrow;
 		case "pr_merged":
@@ -648,6 +654,23 @@ function notificationIcon(type: string) {
 	}
 }
 
+function notificationLabel(type: string, translate: TFunction): string {
+	switch (type) {
+		case "needs_input":
+			return translate("status.needs_input");
+		case "turn_complete":
+			return translate("notify.turnComplete");
+		case "ready_to_merge":
+			return translate("status.mergeable");
+		case "pr_merged":
+			return translate("status.merged");
+		case "pr_closed_unmerged":
+			return translate("pr.card.closed");
+		default:
+			return translate("notify.bell");
+	}
+}
+
 // Bare colored glyph per type (no tile). Merged uses GitHub's PR-merged purple;
 // the accent token is a near-black surface color in this theme and reads as
 // invisible, so it must not be used for a glyph.
@@ -655,6 +678,8 @@ function notificationIconClass(type: string): string {
 	switch (type) {
 		case "needs_input":
 			return "text-warning";
+		case "turn_complete":
+			return "text-success";
 		case "ready_to_merge":
 			return "text-success";
 		case "pr_merged":

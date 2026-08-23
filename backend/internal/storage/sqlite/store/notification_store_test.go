@@ -3,6 +3,7 @@ package store_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -406,5 +407,48 @@ func TestNotificationStore_MarkNotificationsReadOnlyTouchesGivenIDs(t *testing.T
 	count, err := s.CountUnreadNotifications(ctx)
 	if err != nil || count != 1 {
 		t.Fatalf("unread count = %d err=%v, want 1 (ntf_3 must stay reachable)", count, err)
+	}
+}
+
+// Every type the domain can produce must be insertable. `turn_complete` reached
+// the domain, the DTO enum and the notification queries without ever being
+// added to the schema's CHECK, so the lifecycle manager emitted it correctly and
+// the store rejected every one. Notification writes are best-effort — the error
+// was logged and swallowed — so nothing failed loudly and no test noticed. This
+// asserts the schema accepts the whole domain enum rather than one new member,
+// so the next type added cannot repeat it.
+func TestNotificationStore_AcceptsEveryDomainNotificationType(t *testing.T) {
+	types := []domain.NotificationType{
+		domain.NotificationNeedsInput,
+		domain.NotificationTurnComplete,
+		domain.NotificationReadyToMerge,
+		domain.NotificationPRMerged,
+		domain.NotificationPRClosedUnmerged,
+	}
+	for i, typ := range types {
+		t.Run(string(typ), func(t *testing.T) {
+			s := newTestStore(t)
+			ctx := context.Background()
+			seedProject(t, s, "mer")
+			sess, err := s.CreateSession(ctx, sampleRecord("mer"))
+			if err != nil {
+				t.Fatalf("create session: %v", err)
+			}
+			_, inserted, err := s.CreateNotification(ctx, domain.NotificationRecord{
+				ID:        fmt.Sprintf("ntf_type_%d", i),
+				SessionID: sess.ID,
+				ProjectID: sess.ProjectID,
+				Type:      typ,
+				Title:     string(typ) + " fired",
+				Status:    domain.NotificationUnread,
+				CreatedAt: time.Now().UTC().Truncate(time.Second),
+			})
+			if err != nil {
+				t.Fatalf("CreateNotification(%s): %v", typ, err)
+			}
+			if !inserted {
+				t.Fatalf("CreateNotification(%s) inserted = false, want true", typ)
+			}
+		})
 	}
 }

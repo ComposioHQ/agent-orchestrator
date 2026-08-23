@@ -333,7 +333,8 @@ func (m *Manager) mutate(ctx context.Context, id domain.SessionID, fn func(domai
 	m.mu.Unlock()
 	// Notification side effects run outside the reducer lock, like the activity
 	// path does: a slow notification store must never stall lifecycle writes.
-	m.resolveNotifications(ctx, needsInputResolutions(rec, next, now)...)
+	resolutions := append(needsInputResolutions(rec, next, now), turnCompleteResolutions(rec, next, now)...)
+	m.resolveNotifications(ctx, resolutions...)
 	return nil
 }
 
@@ -349,6 +350,23 @@ func needsInputResolutions(prev, next domain.SessionRecord, now time.Time) []por
 	}
 	return []ports.NotificationResolution{{
 		Type:       domain.NotificationNeedsInput,
+		SessionID:  next.ID,
+		ResolvedAt: now,
+	}}
+}
+
+// turnCompleteResolutions reports the turn-complete notification a session
+// write just made stale. A worker that leaves idle has received more work, and
+// a terminated session cannot remain waiting at its prompt.
+func turnCompleteResolutions(prev, next domain.SessionRecord, now time.Time) []ports.NotificationResolution {
+	if prev.Activity.State != domain.ActivityIdle {
+		return nil
+	}
+	if next.Activity.State == domain.ActivityIdle && !next.IsTerminated {
+		return nil
+	}
+	return []ports.NotificationResolution{{
+		Type:       domain.NotificationTurnComplete,
 		SessionID:  next.ID,
 		ResolvedAt: now,
 	}}
@@ -617,10 +635,20 @@ func (m *Manager) ApplyActivitySignal(ctx context.Context, id domain.SessionID, 
 			CreatedAt:          next.Activity.LastActivityAt,
 			SessionDisplayName: next.DisplayName,
 		}
+	} else if next.Activity.State == domain.ActivityIdle &&
+		(prevState == domain.ActivityActive || prevState == domain.ActivityWaitingInput || prevState == domain.ActivityBlocked) &&
+		!next.IsTerminated && next.Kind == domain.KindWorker && next.Mode == domain.SessionModeTUI {
+		intent = &ports.NotificationIntent{
+			Type:               domain.NotificationTurnComplete,
+			SessionID:          next.ID,
+			ProjectID:          next.ProjectID,
+			CreatedAt:          next.Activity.LastActivityAt,
+			SessionDisplayName: next.DisplayName,
+		}
 	}
 	// Leaving the needs-input family is the user answering: the notification
 	// that pinged them has nothing left to resolve.
-	resolutions := needsInputResolutions(rec, next, now)
+	resolutions := append(needsInputResolutions(rec, next, now), turnCompleteResolutions(rec, next, now)...)
 	waitingEvents := m.waitingInputEvents(next, prevState, prevAt, now)
 	m.mu.Unlock()
 	if err := m.acknowledgeAgentSwitchTarget(ctx, id, s, now); err != nil {
@@ -1056,7 +1084,7 @@ func (m *Manager) CommitControllerEpoch(
 	next.Activity = domain.Activity{State: domain.ActivityIdle, LastActivityAt: now}
 	next.UpdatedAt = now
 	delete(m.flights, id)
-	resolutions := needsInputResolutions(previous, next, now)
+	resolutions := append(needsInputResolutions(previous, next, now), turnCompleteResolutions(previous, next, now)...)
 	waitingEvents := m.waitingInputEvents(
 		next, previous.Activity.State, previous.Activity.LastActivityAt, now,
 	)

@@ -4,10 +4,17 @@ import { darkTheme } from "./theme";
 
 describe("notificationVisual", () => {
 	it("gives every known type its own label", () => {
-		const labels = ["needs_input", "ready_to_merge", "pr_merged", "pr_closed_unmerged"].map(
+		const labels = ["needs_input", "turn_complete", "ready_to_merge", "pr_merged", "pr_closed_unmerged"].map(
 			(t) => notificationVisual(darkTheme, t).label,
 		);
-		expect(new Set(labels).size).toBe(4);
+		expect(new Set(labels).size).toBe(5);
+	});
+
+	it("renders turn_complete with a green check-circle icon", () => {
+		const visual = notificationVisual(darkTheme, "turn_complete");
+		expect(visual.icon).toBe("check-circle");
+		expect(visual.color).toBe(darkTheme.green);
+		expect(visual.label).toBe("Turn complete");
 	});
 
 	it("falls back to a usable label for an unknown type", () => {
@@ -23,14 +30,21 @@ describe("notificationTarget", () => {
 		expect(notificationTarget({ type: "needs_input", sessionId: "abc" })).toBe("/session/abc");
 	});
 
+	it("opens the session for a turn_complete notification", () => {
+		expect(notificationTarget({ type: "turn_complete", sessionId: "abc" })).toBe("/session/abc");
+	});
+
 	it("falls back to the PRs tab when there is no session to open", () => {
 		expect(notificationTarget({ type: "needs_input", sessionId: "" })).toBe("/prs");
 		expect(notificationTarget({ type: "needs_input" })).toBe("/prs");
+		expect(notificationTarget({ type: "turn_complete", sessionId: "" })).toBe("/prs");
+		expect(notificationTarget({ type: "turn_complete" })).toBe("/prs");
 	});
 
 	it("sends PR notifications to the PRs tab", () => {
 		expect(notificationTarget({ type: "ready_to_merge", sessionId: "abc" })).toBe("/prs");
 		expect(notificationTarget({ type: "pr_merged", sessionId: "abc" })).toBe("/prs");
+		expect(notificationTarget({ type: "pr_closed_unmerged", sessionId: "abc" })).toBe("/prs");
 	});
 
 	// A tray payload carries no guarantee of a type field, and PushManager passes

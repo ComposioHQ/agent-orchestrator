@@ -11,6 +11,8 @@ type NotificationType string
 const (
 	// NotificationNeedsInput means an agent session is waiting for user input.
 	NotificationNeedsInput NotificationType = "needs_input"
+	// NotificationTurnComplete means a TUI worker finished its turn and is waiting at an empty prompt.
+	NotificationTurnComplete NotificationType = "turn_complete"
 	// NotificationReadyToMerge means a PR has no known merge blockers.
 	NotificationReadyToMerge NotificationType = "ready_to_merge"
 	// NotificationPRMerged means a tracked PR was merged.
@@ -22,7 +24,7 @@ const (
 // Valid reports whether t is one of the v1 notification kinds.
 func (t NotificationType) Valid() bool {
 	switch t {
-	case NotificationNeedsInput, NotificationReadyToMerge, NotificationPRMerged, NotificationPRClosedUnmerged:
+	case NotificationNeedsInput, NotificationTurnComplete, NotificationReadyToMerge, NotificationPRMerged, NotificationPRClosedUnmerged:
 		return true
 	default:
 		return false
@@ -30,11 +32,12 @@ func (t NotificationType) Valid() bool {
 }
 
 // NeedsResolution reports whether t describes an issue that stays open until
-// something changes (an agent waiting on the user, a PR waiting on a merge).
+// something changes (an agent waiting on the user or at an empty prompt, or a
+// PR waiting on a merge).
 // Terminal facts — a PR that merged or closed — describe something that already
 // happened, so they are surfaced once as unseen and never held as unresolved.
 func (t NotificationType) NeedsResolution() bool {
-	return t == NotificationNeedsInput || t == NotificationReadyToMerge
+	return t == NotificationNeedsInput || t == NotificationTurnComplete || t == NotificationReadyToMerge
 }
 
 // NotificationStatus is the seen state for a stored notification. The stored

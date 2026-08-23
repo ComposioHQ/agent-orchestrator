@@ -119,7 +119,8 @@ export function PushManager(): null {
 	function route(data: PushData, coldStart = false) {
 		// Reuse the one routing rule so the reported target can't disagree with
 		// where the tap actually lands: notificationTarget returns /session/:id
-		// only for a needs_input with a sessionId, and /prs for everything else.
+		// for session notifications (needs_input, turn_complete) with a sessionId,
+		// and /prs for everything else.
 		const destination = notificationTarget({ type: data.type ?? "", sessionId: data.sessionId });
 		const target = destination.startsWith("/session") ? "session" : "prs";
 		mobileTelemetry()?.capture(MOBILE_EVENTS.notificationOpened, { target, cold_start: coldStart });

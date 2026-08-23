@@ -633,6 +633,138 @@ describe("NotificationCenter", () => {
 		});
 	});
 
+	it("renders a turn_complete notification with translated label and routes to the session on click", async () => {
+		notificationQueryMock.mockImplementation((status: NotificationListStatus) =>
+			status === "all"
+				? {
+						...notificationQueryResult(status),
+						data: {
+							pageParams: [""],
+							pages: [
+								{
+									notifications: [
+										{
+											id: "ntf_turn",
+											sessionId: "sess-1",
+											projectId: "proj-1",
+											prUrl: "",
+											type: "turn_complete",
+											title: "Checkout flow turn finished",
+											body: "The agent has completed the turn.",
+											status: "unread",
+											createdAt: "2026-07-21T10:00:00Z",
+											target: { kind: "session", sessionId: "sess-1" },
+										},
+									],
+									unreadCount: 1,
+									unresolvedCount: 1,
+								},
+							],
+						},
+					}
+				: notificationQueryResult(status),
+		);
+		renderNotificationCenter();
+		await clickOpen();
+
+		const iconTile = screen.getByLabelText("Turn complete");
+		expect(iconTile).toBeInTheDocument();
+		expect(iconTile).toHaveClass("text-success");
+
+		await userEvent.click(screen.getByText("The agent has completed the turn."));
+		expect(navigateMock).toHaveBeenCalledWith({
+			to: "/projects/$projectId/sessions/$sessionId",
+			params: { projectId: "proj-1", sessionId: "sess-1" },
+		});
+	});
+
+	// A turn_complete notification describes a finished turn rather than an agent
+	// paused on input. A terminated session behind one should stay viewable directly
+	// instead of offering or requiring a restore action.
+	it("opens a terminated session directly for a turn_complete notification, with no restore option", async () => {
+		notificationQueryMock.mockImplementation((status: NotificationListStatus) =>
+			status === "all"
+				? {
+						...notificationQueryResult(status),
+						data: {
+							pageParams: [""],
+							pages: [
+								{
+									notifications: [
+										{
+											id: "ntf_dead_turn",
+											sessionId: "sess-dead",
+											projectId: "proj-1",
+											prUrl: "",
+											type: "turn_complete",
+											title: "Old PR turn complete",
+											body: "The agent finished its turn before the session ended.",
+											status: "read",
+											createdAt: "2026-07-19T09:00:00Z",
+											target: { kind: "session", sessionId: "sess-dead" },
+										},
+									],
+									unreadCount: 0,
+									unresolvedCount: 0,
+								},
+							],
+						},
+					}
+				: notificationQueryResult(status),
+		);
+		renderNotificationCenter();
+		await clickOpen();
+
+		expect(screen.queryByRole("button", { name: "Restore session" })).not.toBeInTheDocument();
+
+		await userEvent.click(screen.getByText("The agent finished its turn before the session ended."));
+		expect(restoreSessionMock).not.toHaveBeenCalled();
+		expect(navigateMock).toHaveBeenCalledWith({
+			to: "/projects/$projectId/sessions/$sessionId",
+			params: { projectId: "proj-1", sessionId: "sess-dead" },
+		});
+	});
+
+	it("falls back to the default notification label and styling for an unknown notification kind", async () => {
+		notificationQueryMock.mockImplementation((status: NotificationListStatus) =>
+			status === "all"
+				? {
+						...notificationQueryResult(status),
+						data: {
+							pageParams: [""],
+							pages: [
+								{
+									notifications: [
+										{
+											id: "ntf_unknown",
+											sessionId: "sess-1",
+											projectId: "proj-1",
+											prUrl: "",
+											type: "unknown_future_kind",
+											title: "Custom event happened",
+											body: "Some unknown event payload.",
+											status: "read",
+											createdAt: "2026-07-21T10:00:00Z",
+											target: { kind: "session", sessionId: "sess-1" },
+										},
+									],
+									unreadCount: 0,
+									unresolvedCount: 0,
+								},
+							],
+						},
+					}
+				: notificationQueryResult(status),
+		);
+		renderNotificationCenter();
+		await clickOpen();
+
+		const row = screen.getByRole("listitem");
+		const iconTile = within(row).getByLabelText("Notifications");
+		expect(iconTile).toBeInTheDocument();
+		expect(iconTile).toHaveClass("text-muted-foreground");
+	});
+
 	it("does not open sessions while workspace facts are still loading", async () => {
 		workspaceQueryMock.mockReturnValue({
 			data: undefined,

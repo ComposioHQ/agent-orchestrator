@@ -16,12 +16,14 @@ const SSE_RETRY_MS = 5_000;
 const EVENTSOURCE_CLOSED = 2;
 
 /**
- * Only these two kinds describe something still waiting on the user.
+ * These kinds describe something still waiting on the user or at an empty prompt.
  * `pr_merged` / `pr_closed_unmerged` report something that already happened.
  * Mirrors NotificationType.NeedsResolution on the backend — used here only to
  * keep `unresolvedCount` accurate on the unread/all caches.
  */
-const UNRESOLVABLE_TYPES = new Set(["needs_input", "ready_to_merge"]);
+export const UNRESOLVABLE_TYPES = new Set(["needs_input", "turn_complete", "ready_to_merge"]);
+
+const TOAST_SUPPRESSED_TYPES = new Set(["needs_input", "turn_complete"]);
 
 type NotificationsQueryKey = typeof unreadNotificationsQueryKey | typeof recentNotificationsQueryKey;
 
@@ -267,7 +269,7 @@ export function keepLatestNotificationsPage(
  * reviewer tab hides the agent while the URL still names that session. The
  * caller resolves that, passing the session only while its agent pane shows.
  *
- * Only `needs_input` is suppressed. PR outcomes (`ready_to_merge`,
+ * Only user-actionable session pauses (`needs_input`, `turn_complete`) are suppressed. PR outcomes (`ready_to_merge`,
  * `pr_merged`, `pr_closed_unmerged`) are not visible in the terminal pane, so
  * they still deserve a toast even for the session in the foreground.
  */
@@ -275,7 +277,7 @@ function suppressToastForWatchedSession(
 	notification: NotificationDTO,
 	visibleAgentSessionId: string | undefined,
 ): boolean {
-	if (notification.type !== "needs_input") return false;
+	if (!TOAST_SUPPRESSED_TYPES.has(notification.type)) return false;
 	if (!notification.sessionId || notification.sessionId !== visibleAgentSessionId) return false;
 	return document.visibilityState === "visible" && document.hasFocus();
 }
