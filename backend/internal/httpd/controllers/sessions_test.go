@@ -1176,6 +1176,20 @@ func TestSessionsAPI_SpawnRejectsUnknownExplicitMode(t *testing.T) {
 	}
 }
 
+func TestSessionsAPI_SpawnsOMPChat(t *testing.T) {
+	svc := newFakeSessionService()
+	srv := newSessionTestServer(t, svc)
+
+	body, status, _ := doRequest(t, srv, http.MethodPost, "/api/v1/sessions",
+		`{"projectId":"ao","harness":"omp","mode":"chat","prompt":"fix"}`)
+	if status != http.StatusCreated {
+		t.Fatalf("spawn OMP Chat = %d, want 201; body=%s", status, body)
+	}
+	if svc.lastSpawn.Harness != domain.HarnessOMP || svc.lastSpawn.RequestedMode != domain.SessionModeChat {
+		t.Fatalf("spawn config = %#v, want OMP Chat", svc.lastSpawn)
+	}
+}
+
 func TestSessionsAPI_SpawnPassesModelToService(t *testing.T) {
 	svc := newFakeSessionService()
 	srv := newSessionTestServer(t, svc)
@@ -2426,6 +2440,20 @@ func TestSessionsAPI_DelegateTask(t *testing.T) {
 	}
 	if got := svc.delegationInput.Attachments[0]; got.Ext != ".png" || string(got.Data) != "\x01\x02\x03" {
 		t.Fatalf("attachment = %#v, want decoded png", got)
+	}
+}
+
+func TestSessionsAPI_DelegatesOMPChat(t *testing.T) {
+	svc := newFakeSessionService()
+	srv := newSessionTestServer(t, svc)
+
+	body, status, _ := doRequest(t, srv, http.MethodPost, "/api/v1/orchestrators/delegate",
+		`{"projectId":"ao","brief":"Fix it","agent":"omp","mode":"chat"}`)
+	if status != http.StatusAccepted {
+		t.Fatalf("delegate OMP Chat = %d, want 202; body=%s", status, body)
+	}
+	if svc.delegationInput.RequestedAgent != domain.HarnessOMP || svc.delegationInput.RequestedMode != domain.SessionModeChat {
+		t.Fatalf("delegation input = %#v, want OMP Chat", svc.delegationInput)
 	}
 }
 

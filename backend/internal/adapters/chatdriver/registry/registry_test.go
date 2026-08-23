@@ -13,8 +13,8 @@ import (
 // Registration is the whole capability gate — a harness with no driver here cannot
 // run chat mode — so the shipped set is a release decision, not an implementation
 // detail. Codex uses its native app-server; Claude, Cursor, OpenCode, Droid,
-// Kimchi, and Pi use the reusable ACP transport. Every remaining harness is
-// deliberately TUI-only.
+// Kimchi, Pi, and OMP use the reusable ACP transport. Every remaining harness
+// is deliberately TUI-only.
 func TestShippedChatDrivers(t *testing.T) {
 	r := Build(nil)
 
@@ -26,6 +26,7 @@ func TestShippedChatDrivers(t *testing.T) {
 		domain.HarnessKimchi,
 		domain.HarnessPi,
 		domain.HarnessCursor,
+		domain.HarnessOMP,
 	} {
 		if !r.SupportsChat(harness) {
 			t.Errorf("%s has no chat driver", harness)

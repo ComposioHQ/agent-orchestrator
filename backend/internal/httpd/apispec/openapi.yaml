@@ -6651,6 +6651,7 @@ components:
           - vibe
           - pi
           - kimchi
+          - omp
           - prime-agent
           - autohand
           - fake
@@ -8633,6 +8634,7 @@ components:
           - vibe
           - pi
           - kimchi
+          - omp
           - prime-agent
           - autohand
           type: string
