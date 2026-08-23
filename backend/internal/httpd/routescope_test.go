@@ -180,10 +180,136 @@ func TestCloudStreamRoutesListsHostedStreamsOnly(t *testing.T) {
 	}
 }
 
-// The terminal multiplex is long-lived AND local-only: hosted panes ride the
-// compute plane's own published listener, so /mux must never appear in the
-// hosted stream list.
-func TestTerminalMuxIsAStreamAndNeverHosted(t *testing.T) {
+// parityExemptPrefixes are the surfaces the hosted product may permanently do
+// without. Everything else that the desktop shows must reach the hosted plane
+// eventually — either already cloud-mounted, or local-only with a named port
+// blocking it.
+//
+// Usage is exempt by explicit product decision: the figures come from tailing
+// the agent CLIs' logs on the user's own machine, and the UI handles the
+// surface being unavailable. The rest are desktop and device integrations that
+// have no hosted meaning at all.
+//
+// /mux is exempt for a different reason, worth keeping distinct: hosted
+// terminals reach full parity, just not through this route. The desktop dials
+// the sandbox's own authenticated published /mux with a scoped, single-use
+// control-plane-minted ticket rather than having the control plane proxy every
+// pane byte. Exempt here means "parity is delivered by another transport", not
+// "the hosted product does without terminals" — see the /mux entry in
+// routeClasses and TestHostedTerminalsBypassTheControlPlane below.
+var parityExemptPrefixes = []string{
+	"/healthz",
+	"/readyz",
+	"/shutdown",
+	"/mux",
+	"/internal/telemetry/",
+	"/api/v1/usage/",
+	"/api/v1/mobile",
+	"/api/v1/push/",
+	"/api/v1/browser/",
+	"/api/v1/import",
+	"/api/v1/dev/",
+	"/api/v1/shell-terminals",
+}
+
+func parityExempt(pattern string) bool {
+	for _, prefix := range parityExemptPrefixes {
+		if strings.HasPrefix(pattern, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+// TestParityRequiredRoutesAreNeverPermanentlyLocal is the guard against the
+// classification quietly becoming a product decision.
+//
+// "Local-only" has to mean two different things — this can never be hosted,
+// and this is not built yet — and without a distinction the second decays into
+// the first: a route excluded as scaffolding stays excluded because nothing
+// ever forces the question again. So every route outside the explicitly exempt
+// surfaces must be either cloud-mounted or local-only with a named blocking
+// port. Shipping that port is then the trigger to flip it.
+//
+// Adding a prefix to parityExemptPrefixes is how you record "the hosted
+// product does without this" — deliberately a visible, reviewable edit rather
+// than something achieved by leaving a reason string vague.
+func TestParityRequiredRoutesAreNeverPermanentlyLocal(t *testing.T) {
+	for key, class := range routeClasses {
+		if class.Scope == ScopeCloud || parityExempt(key.Pattern) {
+			continue
+		}
+		if !class.Pending() {
+			t.Errorf("%s %s is permanently local-only but is not an exempt surface; "+
+				"either name the port that will make it hostable (pending(...)) or add it to parityExemptPrefixes",
+				key.Method, key.Pattern)
+		}
+	}
+}
+
+// The named views the desktop and the hosted client must both be able to show.
+// Spot-checking them by name catches an exemption prefix that is widened until
+// it swallows a surface that was supposed to reach parity.
+func TestNamedParityViewsReachTheHostedPlane(t *testing.T) {
+	for _, pattern := range []string{
+		// Terminal is deliberately absent: it reaches parity over the
+		// sandbox's own published listener, not this route. See
+		// TestHostedTerminalsBypassTheControlPlane.
+		"/api/v1/projects",                             // project
+		"/api/v1/sessions",                             // session
+		"/api/v1/sessions/{sessionId}/conversation",    // chat
+		"/api/v1/sessions/{sessionId}/pr",              // PR
+		"/api/v1/sessions/{sessionId}/reviews",         // review
+		"/api/v1/sessions/{sessionId}/workspace/files", // workspace
+		"/api/v1/sessions/{sessionId}/preview",         // preview
+		"/api/v1/sessions/{sessionId}/attachments",     // attachment staging
+	} {
+		found := false
+		for key, class := range routeClasses {
+			if key.Pattern != pattern {
+				continue
+			}
+			found = true
+			if class.Scope != ScopeCloud && !class.Pending() {
+				t.Errorf("%s %s must reach the hosted plane but is permanently local-only",
+					key.Method, key.Pattern)
+			}
+		}
+		if !found {
+			t.Errorf("%s is not classified at all", pattern)
+		}
+	}
+}
+
+// A pending entry whose port is unnamed is indistinguishable from a permanent
+// exclusion, which is the exact failure this axis exists to prevent.
+func TestPendingRoutesNameTheirBlockingPort(t *testing.T) {
+	for key, class := range routeClasses {
+		if class.Pending() && strings.TrimSpace(class.PendingPort) == "" {
+			t.Errorf("%s %s is pending with no named port", key.Method, key.Pattern)
+		}
+		if class.Scope == ScopeCloud && class.Pending() {
+			t.Errorf("%s %s is already cloud-mounted; it should not still name a pending port",
+				key.Method, key.Pattern)
+		}
+	}
+}
+
+// TestHostedTerminalsBypassTheControlPlane pins the settled terminal
+// architecture at the one place a future change would have to pass through.
+//
+// Hosted panes do not go through the control plane at all: Electron's main
+// process dials the sandbox's authenticated published /mux with a scoped,
+// single-use control-plane-minted ticket. A control-plane forwarder was
+// considered and rejected — it dials an address derived from request state
+// from the most privileged position in the system, and adds a second hop for
+// no security gain. Either mistake would show up here as /mux becoming
+// cloud-mounted or appearing in the hosted stream list.
+//
+// If hosted terminals are ever genuinely re-routed through the control plane,
+// this test is the deliberate stop: update it together with the /mux entry in
+// routeClasses, not around it.
+func TestHostedTerminalsBypassTheControlPlane(t *testing.T) {
 	class, ok := ClassifyRoute(http.MethodGet, "/mux")
 	if !ok {
 		t.Fatal("/mux is not classified")
@@ -192,12 +318,27 @@ func TestTerminalMuxIsAStreamAndNeverHosted(t *testing.T) {
 		t.Error("/mux must be classified as a stream: it is the long-lived terminal transport")
 	}
 	if class.Scope != ScopeLocalOnly {
-		t.Errorf("/mux scope = %q, want local-only", class.Scope)
+		t.Errorf("/mux scope = %q, want local-only: hosted terminals dial the sandbox directly", class.Scope)
+	}
+	if class.Pending() {
+		t.Errorf("/mux names pending port %q, but not hosting it is a settled decision, not a gap",
+			class.PendingPort)
 	}
 	for _, key := range CloudStreamRoutes() {
 		if key.Pattern == "/mux" {
-			t.Error("/mux appears in the hosted stream list")
+			t.Error("/mux appears in the hosted stream list; the control plane must not carry pane bytes")
 		}
+	}
+}
+
+// The cloud handler must not mount /mux under any composition. There is no
+// seam to wire a forwarder through, and the guard refuses the route regardless.
+func TestCloudHandlerNeverMountsTheTerminalMux(t *testing.T) {
+	handler := NewCloudAPIHandler(config.Config{}, discardLogger(), APIDeps{})
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/mux", nil))
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("GET /mux on the cloud handler = %d, want 404", rec.Code)
 	}
 }
 
