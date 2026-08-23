@@ -63,6 +63,34 @@ describe("preload getPathForFile bridge", () => {
 	});
 });
 
+describe("preload cloud project bridge", () => {
+	it("exposes only purpose-specific project operations over IPC", async () => {
+		const createInput = {
+			organizationId: "org-1",
+			displayName: "App",
+			repositoryUrl: "https://github.com/acme/app.git",
+			defaultBranch: "release/2026",
+		};
+		await exposedBridge().cloud.listProjects();
+		await exposedBridge().cloud.createProject(createInput);
+		await exposedBridge().cloud.getProjectOperation({ organizationId: "org-1", operationId: "operation-1" });
+		await exposedBridge().cloud.startProjectSession({ organizationId: "org-1", projectId: "project-1" });
+
+		expect(electronMocks.invoke).toHaveBeenNthCalledWith(1, "cloud:listProjects");
+		expect(electronMocks.invoke).toHaveBeenNthCalledWith(2, "cloud:createProject", createInput);
+		expect(electronMocks.invoke).toHaveBeenNthCalledWith(3, "cloud:getProjectOperation", {
+			organizationId: "org-1",
+			operationId: "operation-1",
+		});
+		expect(electronMocks.invoke).toHaveBeenNthCalledWith(4, "cloud:startProjectSession", {
+			organizationId: "org-1",
+			projectId: "project-1",
+		});
+		expect(exposedBridge().cloud).not.toHaveProperty("getAccessToken");
+		expect(exposedBridge().cloud).not.toHaveProperty("apiBaseUrl");
+	});
+});
+
 describe("preload openFolderPath bridge", () => {
 	// The dispatcher's "active listener" is module-level state that outlives a
 	// single test, exactly like the real renderer's mounted subscription — so

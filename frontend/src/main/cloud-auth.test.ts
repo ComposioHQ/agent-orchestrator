@@ -55,6 +55,13 @@ function aoSession(overrides: Record<string, unknown> = {}) {
 	};
 }
 
+function currentAccount() {
+	return {
+		user: { id: "user_1", email: "dev@example.com", displayName: "Dev" },
+		organizations: [{ orgId: "org_1", orgSlug: "dev", displayName: "Dev", role: "owner" }],
+	};
+}
+
 function jsonResponse(body: unknown, status = 200): Response {
 	return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
 }
@@ -108,6 +115,7 @@ describe("AO Cloud desktop credential custody", () => {
 		routes = new Map<string, RouteHandler>([
 			["https://oauth2.googleapis.com/token", () => jsonResponse({ id_token: "google_id_token" })],
 			["https://cloud.example/api/cloud/v1/auth/google", () => jsonResponse(aoSession())],
+			["https://cloud.example/api/cloud/v1/me", () => jsonResponse(currentAccount())],
 		]);
 		stubFetch();
 		completeGoogleRedirect();
