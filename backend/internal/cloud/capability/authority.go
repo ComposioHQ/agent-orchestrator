@@ -8,28 +8,15 @@ import (
 	"fmt"
 	"io"
 	"time"
+
+	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
 // Store is the durable half of the authority, kept narrow on purpose: the
 // capability package owns the credential rules and the persistence adapter
 // owns nothing but rows. Implementations must be safe for concurrent use.
 type Store interface {
-	// Insert persists a newly minted grant. It must reject a duplicate id.
-	Insert(ctx context.Context, record Record) error
-	// ByID loads one grant, returning ErrNotFound when absent.
-	ByID(ctx context.Context, id string) (Record, error)
-	// Revoke marks one grant revoked at the supplied instant and, when the
-	// grant was retired by rotation, records its successor. Revoking an
-	// already-revoked grant must succeed without moving RevokedAt, so a
-	// retried cascade delete stays idempotent.
-	Revoke(ctx context.Context, id string, at time.Time, rotatedToID string) error
-	// RevokeScope revokes every live grant inside a selector and reports how
-	// many it changed.
-	RevokeScope(ctx context.Context, selector Selector, at time.Time) (int, error)
-	// DeleteExpired removes grants that expired or were revoked before the
-	// cutoff. Revoked rows are kept until the cutoff so a rotation storm cannot
-	// silently resurrect an id.
-	DeleteExpired(ctx context.Context, before time.Time) (int, error)
+	ports.ComputeCapabilityStore[Record, Selector]
 }
 
 // Authority is the capability issuance and verification service.

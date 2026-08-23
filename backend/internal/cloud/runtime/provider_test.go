@@ -12,27 +12,29 @@ import (
 func validCreateRequest() runtime.CreateRequest {
 	ref := workerRef()
 	return runtime.CreateRequest{
-		Ref:      ref,
-		Labels:   runtime.Labels("staging", ref, "rt-1"),
-		Snapshot: "ao-worker",
-		Env:      map[string]string{"AO_CLOUD_CAPABILITY": "aocap_v1.abcdefgh.ijklmnopqrstuvwx"},
+		Ref:             ref,
+		Labels:          runtime.Labels("staging", ref, "rt-1"),
+		Snapshot:        "ao-worker",
+		Capability:      runtime.FileSecret{Path: runtime.CapabilityFilePath, Content: []byte("aocap_v1.valid-capability-material"), Mode: 0o600},
+		ControlPlaneURL: "https://cloud.example",
+		Env:             map[string]string{},
+		Command:         "/bin/sh",
+		Args:            []string{"-l"},
 	}
 }
 
 func TestCreateRequestRejectsSecretsOnTheCommandLine(t *testing.T) {
 	request := validCreateRequest()
-	request.SecretFiles = map[string]string{"/run/secrets/gh": "ghs_thisIsALongLivedToken"}
+	request.SecretFiles = []runtime.FileSecret{{Path: "/run/secrets/gh", Content: []byte("ghs_thisIsALongLivedToken"), Mode: 0o600}}
 	request.Command = "/usr/bin/ao-agent"
-	request.Args = []string{"--token", "ghs_thisIsALongLivedToken", "--capability=aocap_v1.abcdefgh.ijklmnopqrstuvwx"}
+	request.Args = []string{"--token", "ghs_thisIsALongLivedToken"}
 
 	err := request.Validate()
 	if !errors.Is(err, runtime.ErrInvalid) {
 		t.Fatalf("err = %v, want ErrInvalid", err)
 	}
-	// Both the env secret and the file secret must be named, so an operator
-	// fixing the entrypoint sees every value that has to move.
-	if !strings.Contains(err.Error(), "AO_CLOUD_CAPABILITY") || !strings.Contains(err.Error(), "/run/secrets/gh") {
-		t.Fatalf("error = %q, want both leaked values named", err.Error())
+	if !strings.Contains(err.Error(), "/run/secrets/gh") {
+		t.Fatalf("error = %q, want leaked file named", err.Error())
 	}
 }
 
@@ -45,6 +47,19 @@ func TestCreateRequestAllowsShortNonSecretValuesInArguments(t *testing.T) {
 	request.Args = []string{"--verbosity", "1"}
 	if err := request.Validate(); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestCreateRequestRejectsSecretBearingEnvironment(t *testing.T) {
+	request := validCreateRequest()
+	request.Env["GITHUB_TOKEN"] = "secret-value"
+	if err := request.Validate(); !errors.Is(err, runtime.ErrInvalid) {
+		t.Fatalf("err = %v, want ErrInvalid", err)
+	}
+	request = validCreateRequest()
+	request.Env["GITHUB_TOKEN_FILE"] = "/run/ao/github-token"
+	if err := request.Validate(); err != nil {
+		t.Fatalf("non-secret file path rejected: %v", err)
 	}
 }
 
@@ -73,11 +88,12 @@ func TestAttributeRejectsPartialAndForeignLabels(t *testing.T) {
 		t.Fatal("complete label set rejected")
 	}
 	for name, mutate := range map[string]func(map[string]string){
-		"missing runtime":  func(labels map[string]string) { delete(labels, runtime.LabelRuntimeID) },
-		"blank org":        func(labels map[string]string) { labels[runtime.LabelOrg] = "  " },
-		"unmanaged":        func(labels map[string]string) { labels[runtime.LabelManaged] = "false" },
-		"unknown role":     func(labels map[string]string) { labels[runtime.LabelRole] = "admin" },
-		"missing deployer": func(labels map[string]string) { delete(labels, runtime.LabelDeployment) },
+		"missing runtime":     func(labels map[string]string) { delete(labels, runtime.LabelRuntimeID) },
+		"blank org":           func(labels map[string]string) { labels[runtime.LabelOrg] = "  " },
+		"unmanaged":           func(labels map[string]string) { labels[runtime.LabelManaged] = "false" },
+		"unknown role":        func(labels map[string]string) { labels[runtime.LabelRole] = "admin" },
+		"missing deployer":    func(labels map[string]string) { delete(labels, runtime.LabelDeployment) },
+		"missing environment": func(labels map[string]string) { delete(labels, runtime.LabelEnvironment) },
 	} {
 		labels := runtime.Labels("staging", ref, "rt-1")
 		mutate(labels)

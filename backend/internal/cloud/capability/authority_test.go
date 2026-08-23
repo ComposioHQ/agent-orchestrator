@@ -29,6 +29,33 @@ func workerScope() Scope {
 	}
 }
 
+func TestHostedRoleOperationsKeepWorkerProvisionCoordinatorOnly(t *testing.T) {
+	worker, err := OperationsForRole(RoleWorker)
+	if err != nil {
+		t.Fatal(err)
+	}
+	coordinator, err := OperationsForRole(RoleCoordinator)
+	if err != nil {
+		t.Fatal(err)
+	}
+	contains := func(operations []Operation, wanted Operation) bool {
+		for _, operation := range operations {
+			if operation == wanted {
+				return true
+			}
+		}
+		return false
+	}
+	for _, operation := range []Operation{OpSessionRead, OpSessionSend, OpPreviewSelf, OpBrowserSelf, OpActivitySelf} {
+		if !contains(worker, operation) || !contains(coordinator, operation) {
+			t.Fatalf("shared operation %s missing: worker=%v coordinator=%v", operation, worker, coordinator)
+		}
+	}
+	if contains(worker, OpWorkerProvision) || !contains(coordinator, OpWorkerProvision) {
+		t.Fatalf("worker provisioning profile mismatch: worker=%v coordinator=%v", worker, coordinator)
+	}
+}
+
 func TestIssueMintsOpaqueTokenAndStoresOnlyAVerifier(t *testing.T) {
 	now := time.Date(2026, 8, 22, 12, 0, 0, 0, time.UTC)
 	authority, store := testAuthority(t, &now)

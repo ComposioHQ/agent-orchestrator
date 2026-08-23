@@ -3,138 +3,124 @@ package runtime
 import (
 	"context"
 	"fmt"
+	"maps"
+	"path/filepath"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/cloud/capability"
 )
 
-// Environment variables handed to a sandbox at launch. They mirror the local
-// daemon's AO_* launch environment (session_manager.runtimeEnv) so the agent
-// harness inside the sandbox sees the same shape it sees locally.
 const (
-	// EnvControlPlaneURL is the base URL the sandbox calls back on.
-	EnvControlPlaneURL = "AO_CLOUD_URL"
-	// EnvCapability carries the sandbox's opaque scoped capability. It is the
-	// ONLY credential the sandbox gets for the control plane, and it is
-	// injected through the environment because a command line is readable by
-	// every process in the sandbox and by provider audit logs.
-	EnvCapability = "AO_CLOUD_CAPABILITY"
-	// EnvOrgID, EnvWorkspaceID, EnvSessionID, and EnvRole identify the
-	// placement. They are conveniences for the harness: the control plane
-	// authorizes from the capability's scope and never from these values.
-	EnvOrgID       = "AO_CLOUD_ORG_ID"
-	EnvWorkspaceID = "AO_CLOUD_WORKSPACE_ID"
-	EnvSessionID   = "AO_CLOUD_SESSION_ID"
-	EnvRole        = "AO_CLOUD_ROLE"
-	// EnvRuntimeID is the placement row id, used for support correlation.
-	EnvRuntimeID = "AO_CLOUD_RUNTIME_ID"
+	// CapabilityFilePath is the exact launch contract consumed by ao-sandbox.
+	CapabilityFilePath = "/run/ao/capability"
+	// SandboxRuntimeCommand is baked into the Daytona snapshot image.
+	SandboxRuntimeCommand = "/usr/local/bin/ao-sandbox"
+	// SandboxReadyFilePath is atomically published once mux and PTY are live.
+	SandboxReadyFilePath = "/run/ao/ready.json"
+	// SandboxSecretDir is a path, not credential material.
+	//nolint:gosec // The identifier names the runtime's protected directory.
+	SandboxSecretDir = "/run/ao/secrets"
+	// SandboxWorkspacePath is the checkout root inside compute.
+	SandboxWorkspacePath = "/workspace"
+	// SandboxRoutePrefix is the authenticated runtime API prefix.
+	SandboxRoutePrefix = "/api/sandbox/v1"
 )
 
-// coordinatorOperations is what a workspace coordinator may do. It may read
-// its workspace and ask for worker sandboxes; it may not read or write another
-// session's data, and it holds no operation that would let it mint credentials.
-var coordinatorOperations = []capability.Operation{
-	capability.OpSandboxHeartbeat,
-	capability.OpSandboxReportState,
-	capability.OpCapabilityRotate,
-	capability.OpWorkspaceRead,
-	capability.OpWorkerProvision,
+// LaunchSpec is the semantic PTY child command run by the thin sandbox
+// runtime. Command is an absolute executable path; Args are preserved as argv
+// and never contain credentials.
+type LaunchSpec struct {
+	Command string
+	Args    []string
+	// Env is non-secret process configuration applied when the sandbox is
+	// created. Credentials must use FileSecret instead.
+	Env map[string]string
 }
 
-// workerOperations is what one worker agent may do: keep itself alive and act
-// on its OWN session. It cannot enumerate the workspace and cannot provision
-// more compute, so a compromised worker cannot fan out.
-var workerOperations = []capability.Operation{
-	capability.OpSandboxHeartbeat,
-	capability.OpSandboxReportState,
-	capability.OpCapabilityRotate,
-	capability.OpSessionRead,
-	capability.OpSessionWrite,
-}
-
-// CapabilityScope builds the scope for one placement. It is exported so the
-// integrator's HTTP layer can assert that a request's granted scope matches
-// the placement it names, rather than re-deriving the operation lists.
-func CapabilityScope(ref Ref) capability.Scope {
-	operations := workerOperations
-	if ref.Role == RoleCoordinator {
-		operations = coordinatorOperations
+// Validate rejects a launch that ao-sandbox cannot execute semantically.
+func (s LaunchSpec) Validate() error {
+	if !filepath.IsAbs(s.Command) {
+		return fmt.Errorf("%w: sandbox agent command must be absolute", ErrInvalid)
 	}
-	return capability.Scope{
-		OrgID:       ref.OrgID,
-		WorkspaceID: ref.WorkspaceID,
-		SessionID:   ref.SessionID,
-		Role:        string(ref.Role),
-		Operations:  operations,
-	}
+	return nil
 }
 
-func (m *Manager) issueCapability(ctx context.Context, record Record) (capability.Grant, error) {
-	grant, err := m.capabilities.Issue(ctx, CapabilityScope(record.Ref()), m.capabilityTTL)
+func (m *Manager) launchRequest(ctx context.Context, record Record, launch LaunchSpec) (CreateRequest, error) {
+	if err := launch.Validate(); err != nil {
+		return CreateRequest{}, err
+	}
+	capabilityFile, files, err := m.launchFiles(ctx, record.Ref())
 	if err != nil {
-		return capability.Grant{}, fmt.Errorf("issue sandbox capability: %w", err)
-	}
-	if grant.Token == "" {
-		return capability.Grant{}, fmt.Errorf("%w: capability authority returned an empty credential", ErrInvalid)
-	}
-	return grant, nil
-}
-
-// launchRequest mints the sandbox's capability, collects its secrets, and
-// assembles the provider create request.
-//
-// Ordering matters: the capability is issued BEFORE the provider call, so the
-// verifier is durable before any sandbox could present the token. That is the
-// same race the local daemon closes by persisting the browser capability
-// verifier before the worker runtime starts.
-func (m *Manager) launchRequest(ctx context.Context, record Record) (capability.Grant, CreateRequest, error) {
-	ref := record.Ref()
-	grant, err := m.issueCapability(ctx, record)
-	if err != nil {
-		return capability.Grant{}, CreateRequest{}, err
-	}
-	env := map[string]string{
-		EnvControlPlaneURL: m.publicURL,
-		EnvCapability:      grant.Token,
-		EnvOrgID:           ref.OrgID,
-		EnvWorkspaceID:     ref.WorkspaceID,
-		EnvSessionID:       ref.SessionID,
-		EnvRole:            string(ref.Role),
-		EnvRuntimeID:       record.ID,
-	}
-	var files map[string]string
-	if m.secrets != nil {
-		secrets, err := m.secrets.SandboxSecrets(ctx, ref)
-		if err != nil {
-			return capability.Grant{}, CreateRequest{}, fmt.Errorf("collect sandbox secrets: %w", err)
-		}
-		for name, value := range secrets.Env {
-			// Deployment-supplied secrets must not silently replace the
-			// control-plane variables: an env override of AO_CLOUD_CAPABILITY
-			// would hand the sandbox a credential the control plane did not
-			// issue.
-			if _, reserved := env[name]; reserved {
-				return capability.Grant{}, CreateRequest{}, fmt.Errorf("%w: secret source may not override %s", ErrInvalid, name)
-			}
-			env[name] = value
-		}
-		files = secrets.Files
+		return CreateRequest{}, err
 	}
 	request := CreateRequest{
-		Ref:                ref,
-		Labels:             Labels(m.deployment, ref, record.ID),
-		Snapshot:           m.snapshots[ref.Role],
-		Env:                env,
+		Ref:                record.Ref(),
+		Labels:             Labels(m.deployment, record.Ref(), record.ID),
+		Snapshot:           m.snapshots[record.Role],
 		SecretFiles:        files,
+		Capability:         capabilityFile,
+		ControlPlaneURL:    m.publicURL,
+		Command:            launch.Command,
+		Args:               append([]string(nil), launch.Args...),
+		Env:                maps.Clone(launch.Env),
 		Resources:          m.resources,
 		AutoStopInterval:   m.autoStop,
 		AutoDeleteInterval: m.autoDelete,
-		// The placement row id is stable across retries of the same launch, so
-		// a provider that honours idempotency keys collapses a retried create
-		// into the original sandbox instead of leaking a second one.
-		IdempotencyKey: record.ID,
+		IdempotencyKey:     record.ID,
 	}
 	if err := request.Validate(); err != nil {
-		return capability.Grant{}, CreateRequest{}, err
+		PurgeFileSecrets(request.SecretFiles)
+		PurgeFileSecrets([]FileSecret{request.Capability})
+		return CreateRequest{}, err
 	}
-	return grant, request, nil
+	return request, nil
+}
+
+func (m *Manager) restartRequest(ctx context.Context, record Record, launch LaunchSpec) (StartRequest, error) {
+	if err := launch.Validate(); err != nil {
+		return StartRequest{}, err
+	}
+	capabilityFile, files, err := m.launchFiles(ctx, record.Ref())
+	if err != nil {
+		return StartRequest{}, err
+	}
+	request := StartRequest{
+		Ref:             record.Ref(),
+		SecretFiles:     files,
+		Capability:      capabilityFile,
+		ControlPlaneURL: m.publicURL,
+		Command:         launch.Command,
+		Args:            append([]string(nil), launch.Args...),
+		BootstrapKey:    fmt.Sprintf("%s-%d", record.ID, record.Generation),
+		RuntimeID:       record.ID,
+	}
+	if err := request.Validate(); err != nil {
+		PurgeFileSecrets(request.SecretFiles)
+		PurgeFileSecrets([]FileSecret{request.Capability})
+		return StartRequest{}, err
+	}
+	return request, nil
+}
+
+func (m *Manager) launchFiles(ctx context.Context, ref Ref) (FileSecret, []FileSecret, error) {
+	operations, err := capability.OperationsForRole(string(ref.Role))
+	if err != nil {
+		return FileSecret{}, nil, err
+	}
+	raw, err := m.capabilities.IssueSandbox(ctx, capability.Scope{
+		OrgID: ref.OrgID, WorkspaceID: ref.WorkspaceID, SessionID: ref.SessionID,
+		Role: string(ref.Role), Operations: operations,
+	})
+	if err != nil {
+		return FileSecret{}, nil, fmt.Errorf("issue sandbox capability: %w", err)
+	}
+	capabilityFile := FileSecret{Path: CapabilityFilePath, Content: raw, Mode: 0o600}
+	if m.secrets == nil {
+		return capabilityFile, nil, nil
+	}
+	secrets, err := m.secrets.SandboxSecrets(ctx, ref)
+	if err != nil {
+		PurgeFileSecrets([]FileSecret{capabilityFile})
+		return FileSecret{}, nil, fmt.Errorf("collect sandbox secrets: %w", err)
+	}
+	return capabilityFile, secrets.Files, nil
 }

@@ -51,11 +51,14 @@ func (s *MemoryStore) findLocked(ref runtime.Ref) (runtime.Record, bool) {
 }
 
 // Ensure inserts a placement row when absent.
-func (s *MemoryStore) Ensure(_ context.Context, ref runtime.Ref, now time.Time) (runtime.Record, bool, error) {
+func (s *MemoryStore) Ensure(_ context.Context, ref runtime.Ref, quotas runtime.Quotas, now time.Time) (runtime.Record, bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if existing, ok := s.findLocked(ref); ok {
 		return existing, false, nil
+	}
+	if err := s.checkQuotaLocked(ref, quotas); err != nil {
+		return runtime.Record{}, false, err
 	}
 	s.nextID++
 	record := runtime.Record{
@@ -73,6 +76,40 @@ func (s *MemoryStore) Ensure(_ context.Context, ref runtime.Ref, now time.Time) 
 	}
 	s.records[record.ID] = record
 	return record, true, nil
+}
+
+func (s *MemoryStore) checkQuotaLocked(ref runtime.Ref, quotas runtime.Quotas) error {
+	type check struct {
+		limit    int
+		scope    runtime.QuotaScope
+		resource string
+		subject  string
+		filter   runtime.Filter
+	}
+	workspaceLimit := quotas.MaxWorkersPerWorkspace
+	if ref.Role == runtime.RoleCoordinator {
+		workspaceLimit = quotas.MaxCoordinatorsPerWorkspace
+	}
+	checks := []check{
+		{quotas.MaxSandboxesPerOrg, runtime.ScopeOrg, "sandboxes", ref.OrgID, runtime.Filter{OrgID: ref.OrgID, ExcludeTerminal: true}},
+		{quotas.MaxSandboxesPerUser, runtime.ScopeUser, "sandboxes", ref.UserID, runtime.Filter{UserID: ref.UserID, ExcludeTerminal: true}},
+		{workspaceLimit, runtime.ScopeWorkspace, string(ref.Role) + "s", ref.WorkspaceID, runtime.Filter{WorkspaceID: ref.WorkspaceID, Role: ref.Role, ExcludeTerminal: true}},
+	}
+	for _, candidate := range checks {
+		if candidate.limit <= 0 {
+			continue
+		}
+		inUse := 0
+		for _, record := range s.records {
+			if candidate.filter.Matches(record) {
+				inUse++
+			}
+		}
+		if inUse >= candidate.limit {
+			return &runtime.QuotaError{Scope: candidate.scope, Resource: candidate.resource, Subject: candidate.subject, Limit: candidate.limit, InUse: inUse}
+		}
+	}
+	return nil
 }
 
 // Get loads a placement by reference.

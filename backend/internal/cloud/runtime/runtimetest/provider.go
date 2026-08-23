@@ -29,12 +29,18 @@ type FakeProvider struct {
 	// FailCreate, FailStart, FailStop, FailGet, and FailDelete, when non-nil,
 	// are returned by the corresponding call and then cleared.
 	FailCreate error
-	FailStart  error
-	FailStop   error
-	FailGet    error
-	FailDelete error
+	// FailAfterCreate returns the newly retained sandbox with an error, modeling
+	// a provider bootstrap failure after allocation.
+	FailAfterCreate error
+	FailStart       error
+	FailStop        error
+	FailGet         error
+	FailDelete      error
 	// LastCreate is the most recent create request, for argument assertions.
-	LastCreate runtime.CreateRequest
+	LastCreate           runtime.CreateRequest
+	LastStart            runtime.StartRequest
+	LastCreateCapability []byte
+	LastStartCapability  []byte
 }
 
 // NewFakeProvider returns an empty provider fake.
@@ -58,8 +64,14 @@ func (p *FakeProvider) now() time.Time {
 func (p *FakeProvider) Create(_ context.Context, request runtime.CreateRequest) (runtime.Sandbox, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	defer runtime.PurgeFileSecrets(request.SecretFiles)
+	defer runtime.PurgeFileSecrets([]runtime.FileSecret{request.Capability})
 	p.Calls = append(p.Calls, "create")
 	p.LastCreate = request
+	p.LastCreateCapability = append([]byte(nil), request.Capability.Content...)
+	if err := request.Validate(); err != nil {
+		return runtime.Sandbox{}, err
+	}
 	if err := p.FailCreate; err != nil {
 		p.FailCreate = nil
 		return runtime.Sandbox{}, err
@@ -79,6 +91,10 @@ func (p *FakeProvider) Create(_ context.Context, request runtime.CreateRequest) 
 	p.sandboxes[sandbox.ID] = sandbox
 	if request.IdempotencyKey != "" {
 		p.byKey[request.IdempotencyKey] = sandbox.ID
+	}
+	if err := p.FailAfterCreate; err != nil {
+		p.FailAfterCreate = nil
+		return sandbox, err
 	}
 	return sandbox, nil
 }
@@ -100,10 +116,17 @@ func (p *FakeProvider) Get(_ context.Context, id string) (runtime.Sandbox, error
 }
 
 // Start boots a sandbox.
-func (p *FakeProvider) Start(_ context.Context, id string) (runtime.Sandbox, error) {
+func (p *FakeProvider) Start(_ context.Context, id string, request runtime.StartRequest) (runtime.Sandbox, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	defer runtime.PurgeFileSecrets(request.SecretFiles)
+	defer runtime.PurgeFileSecrets([]runtime.FileSecret{request.Capability})
 	p.Calls = append(p.Calls, "start:"+id)
+	p.LastStart = request
+	p.LastStartCapability = append([]byte(nil), request.Capability.Content...)
+	if err := request.Validate(); err != nil {
+		return runtime.Sandbox{}, err
+	}
 	if err := p.FailStart; err != nil {
 		p.FailStart = nil
 		return runtime.Sandbox{}, err
