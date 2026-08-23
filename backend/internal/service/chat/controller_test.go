@@ -1106,6 +1106,126 @@ func TestInterfaceHandoffDoesNotAnchorReplayCheckpointOnFailedTurn(t *testing.T)
 	}
 }
 
+func TestInterfaceHandoffDoesNotAnchorReplayBeforeProviderCoordinationBoundary(t *testing.T) {
+	st := openStore(t)
+	now := time.Date(2026, 8, 23, 17, 0, 0, 0, time.UTC)
+	existing, err := st.CreateConversation(context.Background(), "provider-boundary-conversation",
+		domain.ConversationScopeSession, testProject, testSession, now)
+	if err != nil {
+		t.Fatalf("CreateConversation: %v", err)
+	}
+	if err := st.ClaimChatControllerGeneration(context.Background(), testSession, "old-generation", now); err != nil {
+		t.Fatalf("ClaimChatControllerGeneration: %v", err)
+	}
+
+	// This completed turn belongs to the provider that owned the session before
+	// the agent switch. The new provider receives it through hidden handoff
+	// instructions, so its native thread cannot replay the old provider IDs.
+	created, err := st.AppendUserMessage(context.Background(), existing.ID, testSession, "old-generation",
+		domain.ConversationMessage{
+			ID: "old-provider-user", Text: "Finish the earlier task.", Origin: domain.MessageOriginHuman,
+			ClientMessageID: "old-provider-client",
+		}, "old-provider-turn", now)
+	if err != nil || !created {
+		t.Fatalf("AppendUserMessage old provider: created=%v err=%v", created, err)
+	}
+	if err := st.BindTurnToProvider(context.Background(), "old-provider-turn", "old-provider-turn-id", now); err != nil {
+		t.Fatalf("BindTurnToProvider old provider: %v", err)
+	}
+	if err := st.SettleAssistantMessage(context.Background(), existing.ID,
+		"old-provider-answer-id", "old-provider-turn-id", "Earlier work finished.", "old-provider-answer", now); err != nil {
+		t.Fatalf("SettleAssistantMessage old provider: %v", err)
+	}
+	if err := st.SettleTurn(context.Background(), existing.ID, "old-provider-turn-id",
+		domain.TurnStateCompleted, "", now); err != nil {
+		t.Fatalf("SettleTurn old provider: %v", err)
+	}
+
+	// The first native turn in the replacement provider is AO's handoff marker.
+	// It is a durable boundary even when the provider rejected that turn.
+	boundaryAt := now.Add(time.Minute)
+	created, err = st.AppendUserMessage(context.Background(), existing.ID, testSession, "old-generation",
+		domain.ConversationMessage{
+			ID:     "coordination-user",
+			Text:   "AO transferred the previous agent's context in hidden system instructions. Continue the task.",
+			Origin: domain.MessageOriginDaemon, ClientMessageID: "coordination-client",
+		}, "coordination-turn", boundaryAt)
+	if err != nil || !created {
+		t.Fatalf("AppendUserMessage coordination: created=%v err=%v", created, err)
+	}
+	if err := st.BindTurnToProvider(context.Background(), "coordination-turn", "new-provider-boundary", boundaryAt); err != nil {
+		t.Fatalf("BindTurnToProvider coordination: %v", err)
+	}
+	if err := st.SettleTurn(context.Background(), existing.ID, "new-provider-boundary",
+		domain.TurnStateFailed, "unsupported model", boundaryAt); err != nil {
+		t.Fatalf("SettleTurn coordination: %v", err)
+	}
+
+	rec, found, err := st.GetSession(context.Background(), testSession)
+	if err != nil || !found {
+		t.Fatalf("load session: found=%v err=%v", found, err)
+	}
+	rec.Metadata.LatestUserPrompt = "Run the current provider check."
+	if err := st.UpdateSession(context.Background(), rec); err != nil {
+		t.Fatalf("seed native replay checkpoint: %v", err)
+	}
+
+	conv := &nativeHistoryConversation{
+		fakeConversation: newFakeConversation(),
+		events: []ports.ChatEvent{
+			{Kind: ports.ChatEventTurnStarted, ProviderEventID: "boundary-start", ProviderTurnID: "new-provider-boundary"},
+			{
+				Kind: ports.ChatEventUserMessageCompleted, ProviderEventID: "boundary-user",
+				ProviderTurnID: "new-provider-boundary", ProviderItemID: "boundary-item",
+				Text: "AO transferred the previous agent's context in hidden system instructions. Continue the task.",
+			},
+			{
+				Kind: ports.ChatEventTurnCompleted, ProviderEventID: "boundary-complete",
+				ProviderTurnID: "new-provider-boundary", TurnState: domain.TurnStateFailed,
+			},
+			{Kind: ports.ChatEventTurnStarted, ProviderEventID: "current-start", ProviderTurnID: "new-provider-turn"},
+			{
+				Kind: ports.ChatEventUserMessageCompleted, ProviderEventID: "current-user",
+				ProviderTurnID: "new-provider-turn", ProviderItemID: "current-user-item",
+				Text: "Run the current provider check.",
+			},
+			{
+				Kind: ports.ChatEventMessageCompleted, ProviderEventID: "current-answer",
+				ProviderTurnID: "new-provider-turn", ProviderItemID: "current-answer-item",
+				Text: "The current provider check passed.",
+			},
+			{
+				Kind: ports.ChatEventTurnCompleted, ProviderEventID: "current-complete",
+				ProviderTurnID: "new-provider-turn", TurnState: domain.TurnStateCompleted,
+			},
+		},
+	}
+	svc := chatsvc.New(chatsvc.Options{
+		Store: st, Sessions: st,
+		Reader: chatsvc.SnapshotReaderFunc(func(ctx context.Context, conversationID string) (chatsvc.ConversationRows, error) {
+			rows, err := st.LoadConversationSnapshot(ctx, conversationID)
+			if err != nil {
+				return chatsvc.ConversationRows{}, err
+			}
+			return chatsvc.ConversationRows{
+				Conversation: rows.Conversation,
+				Turns:        rows.Turns, Messages: rows.Messages, Activities: rows.Activities,
+			}, nil
+		}),
+		Drivers: fakeRegistry{driver: fakeDriver{conv: conv}},
+		Log:     slog.New(slog.DiscardHandler),
+		NewID:   func() string { return fmt.Sprintf("provider-boundary-%d", time.Now().UnixNano()) },
+	})
+	t.Cleanup(func() { _ = svc.Stop(context.Background(), testSession) })
+
+	if _, err := svc.Start(context.Background(), chatsvc.StartConfig{
+		SessionID: testSession, ProjectID: testProject, Harness: domain.HarnessCodex,
+		WorkspacePath: t.TempDir(), ProviderConversationID: "new-provider-thread", RequireNativeHistory: true,
+	}); err != nil {
+		t.Fatalf("Start resume = %v, want success after the replacement-provider boundary", err)
+	}
+}
+
 func TestSlowNativeHistoryDoesNotBlockOtherControllerLookups(t *testing.T) {
 	st := openStore(t)
 	conv := &blockingHistoryConversation{
