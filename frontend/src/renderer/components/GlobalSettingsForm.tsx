@@ -3,7 +3,6 @@ import { useTranslation } from "react-i18next";
 import { GeneralSettingsSection } from "./settings/GeneralSettingsSection";
 import { KeyboardShortcutsContent } from "./settings/KeyboardShortcutsContent";
 import { ReportProblemContent } from "./settings/ReportProblemContent";
-import { SettingsExpandableRow } from "./settings/SettingsRow";
 import { SettingsSection } from "./settings/SettingsSection";
 
 const UpdatesSection = lazy(async () => {
@@ -11,7 +10,13 @@ const UpdatesSection = lazy(async () => {
 	return { default: module.UpdatesSection };
 });
 
-export type GlobalSettingsSection = "general" | "updates" | "help" | "all";
+export type GlobalSettingsSection = "general" | "shortcuts" | "updates" | "help" | "all";
+
+/** Full-width panel for page-level content (forms, editors) — matches the
+ *  grouped-row surface so pages read as one coherent family. */
+function SettingsContentPanel({ children }: { children: React.ReactNode }) {
+	return <div className="rounded-md bg-[var(--color-bg-settings-row)] px-4 py-4">{children}</div>;
+}
 
 export function GlobalSettingsForm({
 	section = "all",
@@ -19,7 +24,10 @@ export function GlobalSettingsForm({
 	section?: GlobalSettingsSection;
 }) {
 	const { t } = useTranslation();
-	const leadingTitleHidden = section !== "all";
+	const all = section === "all";
+	// One section per page means the dialog header already names it, so a
+	// leading in-page heading would just repeat that title.
+	const titleHidden = !all;
 
 	return (
 		<div
@@ -27,26 +35,27 @@ export function GlobalSettingsForm({
 			className="flex w-full flex-col gap-(--size-settings-section-gap)"
 			data-testid="settings-page"
 		>
-			{(section === "all" || section === "general") && (
-				<>
-					<GeneralSettingsSection titleHidden={leadingTitleHidden} />
-					<SettingsSection title={t("settings.preferences")} grouped>
-						<SettingsExpandableRow label={t("settings.keyboardShortcuts")}>
-							{(open) => <KeyboardShortcutsContent active={open} />}
-						</SettingsExpandableRow>
-					</SettingsSection>
-				</>
+			{(all || section === "general") && <GeneralSettingsSection titleHidden={titleHidden} />}
+
+			{(all || section === "shortcuts") && (
+				<SettingsSection title={t("settings.keyboardShortcuts")} titleHidden={titleHidden}>
+					<SettingsContentPanel>
+						<KeyboardShortcutsContent active />
+					</SettingsContentPanel>
+				</SettingsSection>
 			)}
-			{(section === "all" || section === "updates") && (
-				<Suspense fallback={<UpdatesSectionSkeleton titleHidden={leadingTitleHidden} />}>
-					<UpdatesSection titleHidden={leadingTitleHidden} />
+
+			{(all || section === "updates") && (
+				<Suspense fallback={<UpdatesSectionSkeleton titleHidden={titleHidden} />}>
+					<UpdatesSection titleHidden={titleHidden} />
 				</Suspense>
 			)}
-			{(section === "all" || section === "help") && (
-				<SettingsSection title={t("settings.getHelp")} titleHidden={leadingTitleHidden} grouped>
-					<SettingsExpandableRow label={t("settings.reportProblem")}>
-						{(open) => <ReportProblemContent active={open} />}
-					</SettingsExpandableRow>
+
+			{(all || section === "help") && (
+				<SettingsSection title={t("settings.reportProblem")} titleHidden={titleHidden}>
+					<SettingsContentPanel>
+						<ReportProblemContent active />
+					</SettingsContentPanel>
 				</SettingsSection>
 			)}
 		</div>

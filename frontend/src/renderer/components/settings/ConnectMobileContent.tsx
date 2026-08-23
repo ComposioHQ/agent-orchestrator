@@ -1,19 +1,64 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { useEffect, useRef, useState } from "react";
-import { Check, Copy, Info, Loader2 } from "lucide-react";
-import { QRCodeSVG } from "qrcode.react";
+import { ArrowUpRight, Check, Copy, Loader2 } from "lucide-react";
+import { motion } from "motion/react";
+import { RadioGroup } from "radix-ui";
 import { apiClient, apiErrorMessage } from "../../lib/api-client";
+import { aoBridge } from "../../lib/bridge";
 import { captureRendererEvent } from "../../lib/telemetry";
 import { cn } from "../../lib/utils";
-import { ConnectMobileGetApp } from "./ConnectMobileGetApp";
-import { ConnectMobileSetup, type SetupMode } from "./ConnectMobileSetup";
-import { MobileDevicesSection } from "./MobileDevicesSection";
+import { ANDROID_SIGNUP_URL, TESTFLIGHT_URL } from "./ConnectMobileGetApp";
+import { reasonMessage, type SetupMode } from "./ConnectMobileSetup";
+import { StyledQRCode } from "./StyledQRCode";
 import { Button } from "../ui/button";
 import { Switch } from "../ui/switch";
+import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/tooltip";
 import { mobileStatusQueryKey, pairingPayload } from "../ConnectMobileModal";
 
 const QR_CODE_SIZE = 204;
+const TESTFLIGHT_QR_SIZE = 140;
+
+/** Static junk payload for the blurred placeholder QR — deliberately not a
+ *  real pairing payload so a sneaky scan through the blur gets nothing. */
+const PLACEHOLDER_QR_VALUE = "agent-orchestrator";
+
+type MobilePlatform = "ios" | "android";
+
+/** Trailing "Join now ↗" link at the end of a walkthrough step. Border-bottom
+ *  instead of text-decoration so the underline runs under the arrow too. */
+const STEP_LINK_CLASS =
+	"inline-flex items-center gap-0.5 border-b border-[color-mix(in_oklch,var(--color-settings-label)_45%,transparent)] align-baseline text-settings-label transition-colors hover:border-current hover:text-settings-title";
+
+/** Radix segment item whose checked highlight is a shared motion layout
+ *  element, so the indicator slides between options instead of jumping. */
+function SegmentItem({
+	value,
+	indicatorId,
+	selected,
+	children,
+}: {
+	value: string;
+	indicatorId: string;
+	selected: boolean;
+	children: React.ReactNode;
+}) {
+	return (
+		<RadioGroup.Item
+			value={value}
+			className="settings-segment-item relative rounded-[calc(var(--radius-settings-action)-2px)] data-[state=checked]:!bg-transparent"
+		>
+			{selected && (
+				<motion.span
+					layoutId={indicatorId}
+					className="absolute inset-0 rounded-[calc(var(--radius-settings-action)-2px)] bg-[color-mix(in_oklch,var(--color-bg-settings-menu-selected)_78%,var(--color-text-settings-title))]"
+					transition={{ type: "spring", duration: 0.3, bounce: 0 }}
+				/>
+			)}
+			<span className="relative">{children}</span>
+		</RadioGroup.Item>
+	);
+}
 
 interface MobileStatus {
 	enabled: boolean;
@@ -32,7 +77,7 @@ interface MobileStatus {
 	};
 }
 
-async function fetchMobileStatus(): Promise<MobileStatus> {
+export async function fetchMobileStatus(): Promise<MobileStatus> {
 	const { data, error } = await apiClient.GET("/api/v1/mobile/status");
 	if (error || !data) throw new Error(apiErrorMessage(error));
 	return data;
@@ -43,6 +88,7 @@ export function ConnectMobileContent({ active }: { active: boolean }) {
 	const queryClient = useQueryClient();
 	const [copied, setCopied] = useState(false);
 	const copiedTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+	const [platform, setPlatform] = useState<MobilePlatform>("ios");
 	const [mode, setMode] = useState<SetupMode>("lan");
 
 	useEffect(() => {
@@ -83,15 +129,6 @@ export function ConnectMobileContent({ active }: { active: boolean }) {
 		onSuccess: invalidate,
 	});
 
-	const disable = useMutation({
-		mutationFn: async () => {
-			const { data, error } = await apiClient.POST("/api/v1/mobile/disable");
-			if (error) throw new Error(apiErrorMessage(error));
-			return data;
-		},
-		onSuccess: invalidate,
-	});
-
 	const regenerate = useMutation({
 		mutationFn: async () => {
 			const { data, error } = await apiClient.POST("/api/v1/mobile/regenerate");
@@ -120,11 +157,10 @@ export function ConnectMobileContent({ active }: { active: boolean }) {
 			: (status?.host ?? "");
 	const activePort = secureActive ? status!.securePairing.port : (status?.port ?? 0);
 	const secureBlocked = mode === "tailscale" && (status?.securePairing?.enabled ?? false) && !secureActive;
-	const busy = enable.isPending || disable.isPending || regenerate.isPending || setSecure.isPending;
+	const busy = enable.isPending || regenerate.isPending || setSecure.isPending;
 
 	const clearActionErrors = () => {
 		enable.reset();
-		disable.reset();
 		regenerate.reset();
 		setSecure.reset();
 	};
@@ -141,166 +177,244 @@ export function ConnectMobileContent({ active }: { active: boolean }) {
 		}
 	};
 
-	const onToggle = (next: boolean) => {
-		if (busy) return;
+	const reportToggle = (next: boolean, outcome: "succeeded" | "failed") => {
+		void captureRendererEvent("ao.renderer.mobile_bridge_toggled", { enabled: next, outcome });
+	};
+
+	const startBridge = () => {
+		if (busy || enabled) return;
 		clearActionErrors();
-		const report = (outcome: "succeeded" | "failed") => {
-			void captureRendererEvent("ao.renderer.mobile_bridge_toggled", { enabled: next, outcome });
-		};
-		const mutation = next ? enable : disable;
-		mutation.mutate(undefined, { onSuccess: () => report("succeeded"), onError: () => report("failed") });
+		enable.mutate(undefined, {
+			onSuccess: () => reportToggle(true, "succeeded"),
+			onError: () => reportToggle(true, "failed"),
+		});
 	};
 
 	const actionError =
 		(enable.error instanceof Error && enable.error.message) ||
-		(disable.error instanceof Error && disable.error.message) ||
 		(regenerate.error instanceof Error && regenerate.error.message) ||
 		(setSecure.error instanceof Error && setSecure.error.message) ||
 		null;
+
+	if (query.isLoading) {
+		return <p className="py-4 text-center text-xs text-settings-muted">{t("mobile.checkingStatus")}</p>;
+	}
+	if (query.isError) {
+		return (
+			<p className="py-4 text-center text-xs text-error">
+				{query.error instanceof Error ? query.error.message : t("mobile.loadFailed")}
+			</p>
+		);
+	}
+	if (!status) return null;
+
+	const showRealQR = enabled && activeHost && !secureBlocked;
+	const secureReasonText = reasonMessage(status.securePairing?.reason ?? "", t);
 
 	return (
 		<div className="flex flex-col gap-4">
 			<p className="text-xs leading-4 text-settings-muted">{t("mobile.description")}</p>
 
-			<ConnectMobileGetApp />
-
-			{query.isLoading ? (
-				<p className="text-center text-xs text-settings-muted">{t("mobile.checkingStatus")}</p>
-			) : query.isError ? (
-				<p className="text-center text-xs text-error">
-					{query.error instanceof Error ? query.error.message : t("mobile.loadFailed")}
-				</p>
-			) : status ? (
-				<div className="flex flex-col">
-					<div className="relative flex items-start justify-between gap-3 py-3">
-						<div className="flex min-w-0 flex-col gap-1 pr-2">
-							<span className="text-subtitle leading-(--leading-settings-mobile-title) text-settings-label">
-								{t("mobile.enable")}
-							</span>
-							<span className="text-caption leading-(--leading-settings-mobile-hint) text-settings-muted">
-								{t("mobile.enableHint")}
-							</span>
-						</div>
-						<div className="flex shrink-0 items-center gap-2 pt-0.5">
-							{busy && <Loader2 className="size-4 animate-spin text-settings-muted" aria-hidden="true" />}
-							<Switch
-								checked={enabled}
-								onCheckedChange={onToggle}
-								disabled={busy}
-								aria-label={t("mobile.enable")}
-							/>
-						</div>
+			<div className="flex flex-col gap-6 sm:flex-row sm:items-start">
+				{/* Left: platform + connection pickers above one combined walkthrough. */}
+				<div className="flex min-w-0 flex-1 flex-col">
+					<div className="flex flex-wrap items-center gap-2">
+						<RadioGroup.Root
+							value={platform}
+							onValueChange={(value) => setPlatform(value as MobilePlatform)}
+							aria-label={t("mobile.getApp")}
+							className="settings-segment"
+						>
+							<SegmentItem value="ios" indicatorId="mobile-platform-indicator" selected={platform === "ios"}>
+								{t("mobile.ios")}
+							</SegmentItem>
+							<SegmentItem value="android" indicatorId="mobile-platform-indicator" selected={platform === "android"}>
+								{t("mobile.android")}
+							</SegmentItem>
+						</RadioGroup.Root>
+						<RadioGroup.Root
+							value={mode}
+							onValueChange={(value) => setMode(value as SetupMode)}
+							aria-label={t("mobile.connectionMethod")}
+							className="settings-segment"
+						>
+							<SegmentItem value="lan" indicatorId="mobile-mode-indicator" selected={mode === "lan"}>
+								{t("mobile.lan")}
+							</SegmentItem>
+							<SegmentItem value="tailscale" indicatorId="mobile-mode-indicator" selected={mode === "tailscale"}>
+								{t("mobile.tailscale")}
+							</SegmentItem>
+						</RadioGroup.Root>
 					</div>
 
-					{actionError && <p className="mt-3 text-xs text-error">{actionError}</p>}
-
-					<div
-						className={cn(
-							"grid transition-[grid-template-rows] duration-300 ease-out",
-							enabled ? "grid-rows-[1fr]" : "grid-rows-[0fr]",
+					{/* One walkthrough per platform × connection combo. Steps are plain
+					    text with a trailing "Join now ↗" link; address/password join
+					    the list once the QR is generated. */}
+					<ol className="settings-mobile-steps mt-4 !text-sm !leading-6 !text-settings-label">
+						{platform === "ios" ? (
+							<>
+								<li>{t("mobile.ios.step1")}</li>
+								<li>
+									{t("mobile.ios.step2")}{" "}
+									<Tooltip>
+										<TooltipTrigger asChild>
+											<button
+												type="button"
+												className={STEP_LINK_CLASS}
+												aria-label={t("mobile.joinTestFlightAria")}
+												onClick={() => void aoBridge.app.openExternal(TESTFLIGHT_URL)}
+											>
+												{t("mobile.joinNow")}
+												<ArrowUpRight className="size-3.5" aria-hidden="true" />
+											</button>
+										</TooltipTrigger>
+										<TooltipContent side="bottom" className="p-2" data-testid="testflight-qr">
+											<div className="flex flex-col items-center gap-2">
+												<div className="rounded-md bg-(--color-bg-settings-input) p-2">
+													<StyledQRCode value={TESTFLIGHT_URL} size={TESTFLIGHT_QR_SIZE} showLogo={false} className="block" />
+												</div>
+												<p className="text-caption">{t("mobile.qrHint")}</p>
+											</div>
+										</TooltipContent>
+									</Tooltip>
+								</li>
+							</>
+						) : (
+							<>
+								<li>
+									{t("mobile.android.step1")}{" "}
+									<button
+										type="button"
+										className={STEP_LINK_CLASS}
+										aria-label={t("mobile.androidSignupAria")}
+										onClick={() => void aoBridge.app.openExternal(ANDROID_SIGNUP_URL)}
+									>
+										{t("mobile.joinNow")}
+										<ArrowUpRight className="size-3.5" aria-hidden="true" />
+									</button>
+								</li>
+								<li>{t("mobile.android.step2")}</li>
+							</>
 						)}
-						aria-hidden={!enabled}
-					>
-						<div className="overflow-hidden">
-							<div
-								className={cn(
-									"mt-4 flex flex-col items-center transition-opacity duration-300 ease-out",
-									enabled ? "opacity-100" : "opacity-0",
-								)}
-							>
-								<ConnectMobileSetup
-									mode={mode}
-									onModeChange={setMode}
-									enabled={enabled}
-									busy={busy}
-									secure={{
-										enabled: status.securePairing?.enabled ?? false,
-										reason: status.securePairing?.reason ?? "",
-									}}
-									onSecureChange={(on) => {
+						{mode === "lan" ? (
+							<li>{t("mobile.lan.step1")}</li>
+						) : (
+							<li>{t("mobile.tailscale.step1")}</li>
+						)}
+						<li>{platform === "ios" ? t("mobile.ios.step3") : t("mobile.android.step3")}</li>
+						{showRealQR && (
+							<>
+								<li data-testid="mobile-pairing-address">
+									{t("mobile.address")}:{" "}
+									<span className="tracking-settings-mono text-settings-label">{`${activeHost}:${activePort}`}</span>
+								</li>
+								<li>
+									{t("mobile.password")}:{" "}
+									<span className="tracking-settings-mono text-settings-label">{status.password}</span>
+									<button
+										type="button"
+										aria-label={copied ? t("mobile.passwordCopied") : t("mobile.copyPassword")}
+										className="ml-1.5 inline-flex size-5 items-center justify-center align-middle text-settings-muted transition-colors hover:text-settings-label"
+										onClick={() => void copyPassword()}
+									>
+										{copied ? <Check className="size-3.5" aria-hidden="true" /> : <Copy className="size-3.5" aria-hidden="true" />}
+									</button>
+								</li>
+							</>
+						)}
+					</ol>
+
+					{/* Tailscale extras: secure pairing (required on iPhone) + status. */}
+					{mode === "tailscale" && (
+						<div className="mt-4 flex flex-col gap-3">
+							<div className="relative flex items-start justify-between gap-3 rounded-md border border-[var(--color-border-settings-input)] bg-[var(--color-bg-settings-input)] px-3.5 py-2.5">
+								<div className="flex min-w-0 flex-col gap-1 pr-2">
+									<span className="text-subtitle leading-(--leading-settings-mobile-title) text-settings-label">
+										{t("mobile.securePairing")}
+									</span>
+									<span className="text-caption leading-(--leading-settings-mobile-hint) text-settings-muted">
+										{t("mobile.securePairing.hint")}
+									</span>
+								</div>
+								<Switch
+									checked={status.securePairing?.enabled ?? false}
+									onCheckedChange={(on) => {
 										clearActionErrors();
 										setSecure.mutate(on);
 									}}
+									disabled={busy}
+									aria-label={t("mobile.securePairing")}
 								/>
-
-								<div className="mt-6 flex w-(--size-settings-mobile-qr) flex-col items-center">
-									{activeHost && !secureBlocked ? (
-										<>
-											<div className="rounded-md border border-(--color-border-settings-input) bg-white p-2">
-												<QRCodeSVG
-													value={pairingPayload(activeHost, activePort, status.password, secureActive)}
-													data-qr-value={pairingPayload(activeHost, activePort, status.password, secureActive)}
-													size={QR_CODE_SIZE}
-													className="block size-(--size-settings-mobile-qr-code)"
-												/>
-											</div>
-											<p className="mt-4 text-sm leading-5 text-settings-muted">{t("mobile.scanToPair")}</p>
-										</>
-									) : (
-										<div className="flex size-(--size-settings-mobile-qr-code) items-center justify-center rounded-md border border-(--color-border-settings-input) bg-(--color-bg-settings-input) p-4">
-											<p className="text-center text-caption leading-(--leading-settings-mobile-hint) text-settings-muted">
-												{mode === "tailscale" ? t("mobile.noTailscaleHost") : t("mobile.noPairingHost")}
-											</p>
-										</div>
-									)}
-								</div>
-
-								{status.warning && !secureActive && (
-									<p className="mt-6 flex w-full max-w-(--size-settings-mobile-warning) items-start gap-2 text-caption leading-(--leading-settings-mobile-warning) text-warning">
-										<Info className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
-										<span>{status.warning}</span>
-									</p>
-								)}
-
-								<div className="mt-6 flex w-full flex-col gap-1">
-									<div className="flex items-center gap-6 text-sm leading-5" data-testid="mobile-pairing-address">
-										<span className="w-(--size-settings-mobile-label) shrink-0 text-settings-muted">{t("mobile.address")}</span>
-										<span className="tracking-settings-mono text-settings-label">
-											{activeHost ? `${activeHost}:${activePort}` : "—"}
-										</span>
-									</div>
-									<div className="flex items-center gap-6 text-sm leading-5">
-										<span className="w-(--size-settings-mobile-label) shrink-0 text-settings-muted">{t("mobile.password")}</span>
-										<div className="flex min-w-0 items-center gap-2">
-											<span className="tracking-settings-mono text-settings-label">{status.password}</span>
-											<button
-												type="button"
-												aria-label={copied ? t("mobile.passwordCopied") : t("mobile.copyPassword")}
-												tabIndex={enabled ? 0 : -1}
-												className="inline-flex size-6 shrink-0 items-center justify-center text-settings-muted transition-colors hover:text-settings-label"
-												onClick={() => void copyPassword()}
-											>
-												{copied ? (
-													<Check className="size-4" aria-hidden="true" />
-												) : (
-													<Copy className="size-4" aria-hidden="true" />
-												)}
-											</button>
-										</div>
-									</div>
-								</div>
-
-								<Button
-									type="button"
-									variant="footer"
-									className="mt-5 w-(--size-settings-mobile-regen-width) rounded-md"
-									onClick={() => {
-										clearActionErrors();
-										regenerate.mutate();
-									}}
-									disabled={busy || !enabled}
-									tabIndex={enabled ? 0 : -1}
-								>
-									{regenerate.isPending && <Loader2 className="mr-2 size-4 animate-spin" aria-hidden="true" />}
-									{t("mobile.regenerate")}
-								</Button>
-
-								{enabled && <MobileDevicesSection />}
 							</div>
+							{platform === "ios" && (
+								<p className="text-caption leading-(--leading-settings-mobile-hint) text-settings-muted">
+									{t("mobile.tailscale.iosHint")}
+								</p>
+							)}
+							{(status.securePairing?.enabled ?? false) && secureReasonText && (
+								<p className="text-caption leading-(--leading-settings-mobile-hint) text-warning">{secureReasonText}</p>
+							)}
 						</div>
-					</div>
+					)}
+
+					{actionError && <p className="mt-3 text-xs text-error">{actionError}</p>}
 				</div>
-			) : null}
+
+				{/* Right: dedicated pairing-QR panel — square, clipping, flush with
+				    the content's right edge so bottom/right spacing match. */}
+				<div className="flex w-full shrink-0 flex-col gap-3 self-start sm:w-60">
+					<div className="relative aspect-square w-full overflow-hidden rounded-md border border-(--color-border-settings-input) bg-(--color-bg-settings-input)">
+						{enabled && !activeHost ? (
+							<div className="flex size-full items-center justify-center bg-(--color-bg-settings-input) p-4">
+								<p className="text-center text-caption leading-(--leading-settings-mobile-hint) text-settings-muted">
+									{mode === "tailscale" ? t("mobile.noTailscaleHost") : t("mobile.noPairingHost")}
+								</p>
+							</div>
+						) : (
+							<>
+								<div className={cn("size-full", !showRealQR && "opacity-60 blur-[6px]")} aria-hidden={!showRealQR}>
+									<StyledQRCode
+										value={showRealQR ? pairingPayload(activeHost, activePort, status.password, secureActive) : PLACEHOLDER_QR_VALUE}
+										data-qr-value={showRealQR ? pairingPayload(activeHost, activePort, status.password, secureActive) : undefined}
+										size={QR_CODE_SIZE}
+										className="block size-full p-4 [&_svg]:size-full"
+									/>
+								</div>
+								{!showRealQR && (
+									<div className="absolute inset-0 flex items-center justify-center">
+										<Button
+											type="button"
+											variant="footer-primary"
+											className="rounded-md shadow-lg"
+											onClick={startBridge}
+											disabled={busy || (enabled && secureBlocked)}
+										>
+											{enable.isPending && <Loader2 className="mr-2 size-4 animate-spin" aria-hidden="true" />}
+											{t("mobile.generate")}
+										</Button>
+									</div>
+								)}
+							</>
+						)}
+					</div>
+
+					{showRealQR ? (
+						<Button
+							type="button"
+							variant="footer"
+							className="w-full rounded-md"
+							onClick={() => {
+								clearActionErrors();
+								regenerate.mutate();
+							}}
+							disabled={busy}
+						>
+							{regenerate.isPending && <Loader2 className="mr-2 size-4 animate-spin" aria-hidden="true" />}
+							{t("mobile.regenerate")}
+						</Button>
+					) : null}
+				</div>
+			</div>
 		</div>
 	);
 }

@@ -309,7 +309,7 @@ export function KeyboardShortcutsContent({
 					/>
 				</label>
 
-				<div className="flex max-h-80 flex-col gap-2 overflow-y-auto scrollbar-none">
+				<div className="flex flex-col gap-2">
 					{filteredShortcuts.map((shortcut) => {
 						const bindings = effectiveShortcutBindings(shortcut.id, isMac, overrides);
 						const modified = Object.hasOwn(overrides, shortcut.id);
@@ -462,7 +462,7 @@ export function KeyboardShortcutsContent({
 
 				{toast ? (
 					<div
-						className="pointer-events-auto absolute bottom-0 right-0 z-10 flex w-[min(24rem,100%)] items-start gap-3 rounded-xl border border-(--color-border-settings-dialog) bg-settings-dialog px-4 py-3 shadow-[var(--shadow-settings-dialog)]"
+						className="pointer-events-auto sticky bottom-2 z-10 ml-auto flex w-[min(24rem,100%)] items-start gap-3 rounded-xl border border-(--color-border-settings-dialog) bg-settings-dialog px-4 py-3 shadow-[var(--shadow-settings-dialog)]"
 						role="status"
 						aria-live="polite"
 						aria-atomic="true"

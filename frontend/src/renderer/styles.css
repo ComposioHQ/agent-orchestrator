@@ -1509,6 +1509,28 @@ textarea,
 	background: transparent;
 }
 
+.settings-thin-scrollbar {
+	scrollbar-width: thin;
+	scrollbar-color: color-mix(in srgb, var(--color-scrollbar) 16%, transparent) transparent;
+}
+
+.settings-thin-scrollbar::-webkit-scrollbar {
+	width: 3px;
+}
+
+.settings-thin-scrollbar::-webkit-scrollbar-track {
+	background: transparent;
+}
+
+.settings-thin-scrollbar::-webkit-scrollbar-thumb {
+	border-radius: 999px;
+	background-color: color-mix(in srgb, var(--color-scrollbar) 16%, transparent);
+}
+
+.settings-thin-scrollbar:hover::-webkit-scrollbar-thumb {
+	background-color: color-mix(in srgb, var(--color-scrollbar) 28%, transparent);
+}
+
 /* Chromium uses the desktop theme's chunky native horizontal scrollbar on
    Linux. Keep the board scroller compact and rounded there without changing
    macOS overlay scrollbars or Windows behavior. */

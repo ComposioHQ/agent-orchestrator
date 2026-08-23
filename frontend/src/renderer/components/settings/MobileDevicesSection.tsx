@@ -140,7 +140,7 @@ export function MobileDevicesSection() {
 
 	return (
 		<section className="mt-6">
-			<h3 className="text-sm font-medium">{t("mobile.devices.title")}</h3>
+			<h3 className="text-xs font-medium leading-4 text-settings-muted">{t("mobile.devices.title")}</h3>
 			<p className="mt-1 text-caption text-settings-muted">{t("mobile.devices.description")}</p>
 
 			{query.isLoading ? (
@@ -162,7 +162,7 @@ export function MobileDevicesSection() {
 							return (
 								<li
 									key={device.installId}
-									className="flex items-center gap-3 rounded-(--radius-settings-dialog-lg) border border-[var(--color-border-settings-input)] bg-[var(--color-bg-settings-input)] p-3"
+									className="flex items-center gap-3 rounded-md border border-[var(--color-border-settings-input)] bg-[var(--color-bg-settings-input)] p-3"
 								>
 									<Smartphone className="size-4 shrink-0 text-settings-muted" />
 									<div className="min-w-0 flex-1">
@@ -191,14 +191,6 @@ export function MobileDevicesSection() {
 										onCheckedChange={(next) =>
 											mute.mutate({ installId: device.installId, muted: !next })
 										}
-										className={cn(
-											"h-(--size-settings-mobile-switch-h) w-(--size-settings-mobile-switch-w) transition-colors duration-300 ease-out",
-											"data-[state=checked]:bg-settings-switch-on data-[state=unchecked]:bg-[var(--color-border-settings-input)]",
-											"focus-visible:ring-0 focus-visible:ring-offset-0",
-											"**:data-[slot=switch-thumb]:size-5 **:data-[slot=switch-thumb]:bg-white **:data-[slot=switch-thumb]:transition-transform **:data-[slot=switch-thumb]:duration-300 **:data-[slot=switch-thumb]:ease-out",
-											"data-[state=checked]:**:data-[slot=switch-thumb]:translate-x-(--size-settings-mobile-switch-travel)",
-											"data-[state=unchecked]:**:data-[slot=switch-thumb]:translate-x-0.5",
-										)}
 									/>
 
 									{confirmingRemoval === device.installId ? (

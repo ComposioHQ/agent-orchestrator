@@ -1,5 +1,5 @@
 import { ChevronDown, ChevronRight, Pencil, type LucideIcon } from "lucide-react";
-import { AnimatePresence, motion } from "motion/react";
+import { motion } from "motion/react";
 import { useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { cn } from "../../lib/utils";
@@ -175,7 +175,7 @@ export function SettingsExpandableRow({
 			const start = scrollParent.scrollTop;
 			const distance = targetTop - start;
 			if (Math.abs(distance) < 2) return;
-			const duration = 200;
+			const duration = 300;
 			const startTime = performance.now();
 			const step = (now: number) => {
 				const t = Math.min((now - startTime) / duration, 1);
@@ -197,7 +197,10 @@ export function SettingsExpandableRow({
 		>
 			<button
 				type="button"
-				onClick={() => setOpen(!open)}
+				onClick={() => {
+					scrollIntoViewIfNeeded();
+					setOpen(!open);
+				}}
 				aria-expanded={open}
 				className="flex h-[var(--size-settings-row)] min-h-[var(--size-settings-row)] w-full items-center justify-between gap-[var(--size-settings-row-icon-gap)] bg-transparent px-[var(--size-settings-row-padding)] py-[var(--size-settings-row-padding)] text-left focus-visible:rounded-md focus-visible:ring-1 focus-visible:ring-ring focus-visible:outline-none"
 			>
@@ -210,22 +213,27 @@ export function SettingsExpandableRow({
 					aria-hidden="true"
 				/>
 			</button>
-			<AnimatePresence initial={false}>
-				{open && (
-					<motion.div
-						initial={{ height: 0 }}
-						animate={{ height: "auto" }}
-						exit={{ height: 0 }}
-						transition={{ duration: 0.12, ease: [0.25, 0.1, 0.25, 1] }}
-						onAnimationComplete={() => { if (open) scrollIntoViewIfNeeded(); }}
-						className="overflow-hidden"
-					>
-						<div className="h-fit px-3 pb-4">
-							{content}
-						</div>
-					</motion.div>
-				)}
-			</AnimatePresence>
+			{/* Content stays mounted while collapsed (hidden + inert) so the first
+			    expand only animates height — mounting a heavy subtree (QR render,
+			    queries) mid-animation is what makes first-open janky. Children get
+			    `open` via the render prop to gate network work until visible. */}
+			<motion.div
+				initial={false}
+				animate={{ height: open ? "auto" : 0, opacity: open ? 1 : 0 }}
+				transition={{
+					height: { duration: 0.15, ease: [0.23, 1, 0.32, 1] },
+					opacity: { duration: 0.1, ease: "easeOut" },
+				}}
+				className="overflow-hidden"
+				aria-hidden={!open}
+				inert={!open || undefined}
+			>
+				{/* pb matches px so content (e.g. the QR panel) sits equidistant
+				    from the right and bottom edges. */}
+				<div className="h-fit px-3 pb-3">
+					{content}
+				</div>
+			</motion.div>
 		</div>
 	);
 }

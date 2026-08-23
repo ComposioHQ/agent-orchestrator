@@ -9,7 +9,7 @@ export type SetupMode = "lan" | "tailscale";
 // Maps a `securePairing.reason` from the daemon to the copy explaining it. An
 // unknown reason (e.g. a newer daemon build) returns undefined and renders
 // nothing rather than a raw translation key.
-function reasonMessage(reason: string, t: TFunction): string | undefined {
+export function reasonMessage(reason: string, t: TFunction): string | undefined {
 	switch (reason) {
 		case "no_cli":
 		case "no_magicdns":

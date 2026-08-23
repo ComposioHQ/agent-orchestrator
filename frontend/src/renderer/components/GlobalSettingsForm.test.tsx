@@ -154,25 +154,16 @@ beforeEach(async () => {
 });
 
 describe("GlobalSettingsForm", () => {
-	it("renders the Figma settings sections", async () => {
+	it("renders the settings sections", async () => {
 		renderForm();
 		expect(await screen.findByLabelText("Settings")).toBeInTheDocument();
-		expect(screen.getAllByText("General").length).toBeGreaterThanOrEqual(1);
+		expect(screen.getByText("Appearance")).toBeInTheDocument();
 		expect(screen.getByText("Language")).toBeInTheDocument();
 		expect(await screen.findByText("Updates")).toBeInTheDocument();
-		expect(screen.getByText("Get help")).toBeInTheDocument();
-		expect(screen.getByRole("button", { name: "Report a problem" })).toBeInTheDocument();
-	});
-
-	it("gives expandable rows internal padding and rounded borders", async () => {
-		renderForm();
-
-		const connectMobile = await screen.findByRole("button", { name: "Connect Mobile" });
-		const keyboardShortcuts = screen.getByRole("button", { name: "Keyboard shortcuts" });
-
-		for (const row of [connectMobile, keyboardShortcuts]) {
-			expect(row.parentElement).toHaveClass("rounded-md");
-		}
+		expect(screen.getByText("Advanced")).toBeInTheDocument();
+		expect(screen.getByText("Report a problem")).toBeInTheDocument();
+		// Report form is inline — no dialog, fields directly present.
+		expect(screen.getByLabelText("Title")).toBeInTheDocument();
 	});
 
 	it("persists Developer Mode and reveals Feature Releases", async () => {
@@ -199,7 +190,7 @@ describe("GlobalSettingsForm", () => {
 		expect(featListBuilds).toHaveBeenCalled();
 	});
 
-	it("switches General settings labels to Simplified Chinese and persists locale", async () => {
+	it("switches settings labels to Simplified Chinese and persists locale", async () => {
 		const user = userEvent.setup();
 		renderForm();
 		expect(await screen.findByLabelText("Settings")).toBeInTheDocument();
@@ -209,8 +200,7 @@ describe("GlobalSettingsForm", () => {
 		await user.click(await screen.findByRole("menuitem", { name: "Simplified Chinese" }));
 
 		await waitFor(() => expect(setUiSettings).toHaveBeenCalledWith({ locale: "zh-CN" }));
-		await waitFor(() => expect(screen.getAllByText("通用").length).toBeGreaterThanOrEqual(1));
-		expect(screen.getByText("语言")).toBeInTheDocument();
+		await waitFor(() => expect(screen.getByText("语言")).toBeInTheDocument());
 		expect(screen.getByText("主题")).toBeInTheDocument();
 		expect(document.documentElement.lang).toBe("zh-CN");
 		expect(useLocaleStore.getState().locale).toBe("zh-CN");
@@ -252,7 +242,7 @@ describe("GlobalSettingsForm", () => {
 
 		expect(await screen.findByRole("alert")).toHaveTextContent("Could not save the language preference.");
 		expect(useLocaleStore.getState().locale).toBe("en");
-		expect(screen.getAllByText("General").length).toBeGreaterThanOrEqual(1);
+		expect(screen.getByText("Appearance")).toBeInTheDocument();
 	});
 
 	it("closes settings with Escape", async () => {
@@ -266,15 +256,8 @@ describe("GlobalSettingsForm", () => {
 		expect(navigateMock).not.toHaveBeenCalled();
 	});
 
-	it("expands report section inline without opening a separate dialog", async () => {
-		const user = userEvent.setup();
+	it("renders the report form inline without a dialog", async () => {
 		renderForm();
-		const trigger = await screen.findByRole("button", { name: "Report a problem" });
-		expect(trigger).toHaveAttribute("aria-expanded", "false");
-
-		await user.click(trigger);
-
-		expect(trigger).toHaveAttribute("aria-expanded", "true");
 		expect(await screen.findByLabelText("Title")).toBeInTheDocument();
 		expect(screen.queryByRole("dialog", { name: "Report a problem" })).not.toBeInTheDocument();
 	});
@@ -439,8 +422,6 @@ describe("GlobalSettingsForm", () => {
 		});
 		renderForm();
 
-		await user.click(await screen.findByRole("button", { name: "Report a problem" }));
-
 		await user.type(await screen.findByLabelText("Title"), "Create project fails in /Users/alice/private-repo");
 		await user.type(
 			screen.getByLabelText("What happened?"),
@@ -483,7 +464,6 @@ describe("GlobalSettingsForm", () => {
 		getDaemonStatus.mockRejectedValue(new Error("daemon unavailable"));
 		renderForm();
 
-		await user.click(await screen.findByRole("button", { name: "Report a problem" }));
 		await user.type(await screen.findByLabelText("Title"), "Need help with setup");
 		await user.type(screen.getByLabelText("What happened?"), "The setup flow stalls after the first prompt.");
 
@@ -515,33 +495,9 @@ describe("GlobalSettingsForm", () => {
 		expect(open).not.toHaveBeenCalled();
 	});
 
-	it("clears draft text when the report section collapses and reopens", async () => {
-		const user = userEvent.setup();
-		const githubToken = `ghp_${"abcdefghijklmnopqrstuvwxyz"}${"1234567890AB"}`;
-		renderForm();
-
-		await user.click(await screen.findByRole("button", { name: "Report a problem" }));
-		await user.type(await screen.findByLabelText("Title"), "Sensitive setup problem");
-		await user.type(screen.getByLabelText("What happened?"), `Token is ${githubToken}`);
-
-		// Collapse the section
-		await user.click(screen.getByRole("button", { name: "Report a problem" }));
-		// Wait for exit animation to unmount content
-		await waitFor(() => expect(screen.queryByLabelText("Title")).not.toBeInTheDocument());
-
-		// Re-expand — the form should be cleared (fresh mount)
-		await user.click(screen.getByRole("button", { name: "Report a problem" }));
-		await waitFor(() => {
-			expect(screen.getByLabelText("Title")).toHaveValue("");
-			expect(screen.getByLabelText("What happened?")).toHaveValue("");
-		});
-	});
-
 	it("keeps the report form to title and details while tailoring placeholder guidance", async () => {
-		const user = userEvent.setup();
 		renderForm();
 
-		await user.click(await screen.findByRole("button", { name: "Report a problem" }));
 		expect(await screen.findByLabelText("Title")).toHaveAttribute("placeholder", "Brief Title");
 		expect(screen.getByLabelText("What happened?")).toHaveAttribute(
 			"placeholder",

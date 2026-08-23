@@ -124,7 +124,7 @@ export const settingsDialogHeaderClass =
 	"flex shrink-0 flex-col gap-1 border-b border-(--color-border-settings-dialog-header) p-(--size-modal-padding)";
 
 export const settingsDialogBodyClass =
-	"flex min-h-0 flex-col gap-4 overflow-y-auto p-(--size-modal-padding)";
+	"flex min-h-0 flex-col gap-4 overflow-y-auto p-(--size-modal-padding) settings-thin-scrollbar";
 
 export const settingsDialogFooterClass =
 	"flex shrink-0 flex-wrap items-center justify-end gap-3 border-t border-[var(--color-border-settings-dialog-header)] p-(--size-modal-padding)";
