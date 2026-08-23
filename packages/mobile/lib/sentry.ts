@@ -2,8 +2,20 @@
 // so both classify errors identically. No-op until BOTH hold:
 //   1. a DSN is configured via EXPO_PUBLIC_SENTRY_DSN, and
 //   2. the @sentry/react-native SDK is installed.
-// Ship-time steps (no code change): `npx expo install @sentry/react-native`,
-// set EXPO_PUBLIC_SENTRY_DSN, and add source-map upload for OTA builds.
+//
+// The SDK is intentionally NOT added to package.json yet: @sentry/react-native
+// is a native module, so installing it correctly means `npx expo install
+// @sentry/react-native` (to pick the SDK-54-compatible version) plus a prebuild
+// cycle to regenerate the committed native projects, and the config plugin for
+// source maps. Adding it without that would leave the committed ios/ prebuild
+// inconsistent. Ship steps, in order:
+//   1. `npx expo install @sentry/react-native`  (do not hand-pin the version)
+//   2. add the @sentry/react-native Expo config plugin, then `npx expo prebuild`
+//   3. wire EAS build-time source-map upload (there is no OTA: no expo-updates,
+//      so maps are keyed by release + dist at EAS build time, not at OTA push)
+//   4. set EXPO_PUBLIC_SENTRY_DSN and update the store Data-Safety / App-Privacy
+//      declarations (a second processor gates the mobile release)
+// Until then this file compiles and runs as a no-op with no native dependency.
 
 import { classifyError, type ClassifyInput, type Triage } from "./observability";
 
@@ -38,8 +50,28 @@ function scrubEvent(event: Record<string, unknown>): Record<string, unknown> {
 	return event;
 }
 
-export type MobileObservabilityContext = { release?: string; distinctId?: string };
+export type MobileObservabilityContext = { release?: string; distinctId?: string; daemonVersion?: string };
 let ctx: MobileObservabilityContext = {};
+
+// A nightly/edge/pr release is not stable; keep those out of stable release
+// health. release on mobile is version@build.
+function channelOf(release: string): string {
+	const v = release.toLowerCase();
+	if (v.includes("nightly")) return "nightly";
+	if (v.includes("edge") || v.includes("pr")) return "development";
+	return "stable";
+}
+
+/**
+ * The mobile app talks to the user's own daemon over Tailscale, which can be
+ * older than the app. A mobile issue is uninterpretable without knowing which
+ * daemon produced the failure, so it rides every event as a tag. Set it once
+ * the paired daemon's version is known (desktop bundles its daemon, so this is
+ * mobile-only).
+ */
+export function setMobileDaemonVersion(version: string): void {
+	ctx = { ...ctx, daemonVersion: version };
+}
 
 /** Initialize once. No DSN → stays a no-op forever. */
 export async function initMobileSentry(context: MobileObservabilityContext = {}): Promise<void> {
@@ -58,7 +90,19 @@ export async function initMobileSentry(context: MobileObservabilityContext = {})
 		mod.init({
 			dsn: d,
 			release: context.release,
+			environment: channelOf(context.release ?? ""),
 			enableAutoSessionTracking: false,
+			// No PII (no device name, no IP-derived fields we can avoid).
+			sendDefaultPii: false,
+			// Deny-by-default. @sentry/react-native auto-captures fetch/XHR
+			// breadcrumbs with FULL URLs — on mobile that is the user's Tailscale
+			// host, exactly what must never leave the device. Cap breadcrumbs to
+			// zero (none retained or sent) and turn off auto performance/HTTP
+			// tracing rather than relying on scrubbing. Events reach Sentry only
+			// through our capture seams with safe enum/id tags.
+			maxBreadcrumbs: 0,
+			enableAutoPerformanceTracing: false,
+			tracesSampleRate: 0,
 			beforeSend: (event: Record<string, unknown>) => scrubEvent(event),
 			beforeBreadcrumb: (crumb: Record<string, unknown> | null) => (crumb ? scrubEvent(crumb) : crumb),
 		});
@@ -82,6 +126,7 @@ function tagsFor(meta: CaptureMeta, triage: Triage) {
 		apierr_kind: meta.kind,
 		severity: triage.severity,
 		owner: triage.owner,
+		daemon_version: ctx.daemonVersion,
 	};
 }
 
