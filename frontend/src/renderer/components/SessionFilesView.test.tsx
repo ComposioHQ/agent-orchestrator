@@ -28,7 +28,12 @@ function renderWithQuery(children: ReactNode) {
 	const client = new QueryClient({
 		defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
 	});
-	return render(<QueryClientProvider client={client}>{children}</QueryClientProvider>);
+	const result = render(<QueryClientProvider client={client}>{children}</QueryClientProvider>);
+	return {
+		...result,
+		rerender: (next: ReactNode) =>
+			result.rerender(<QueryClientProvider client={client}>{next}</QueryClientProvider>),
+	};
 }
 
 /**
@@ -304,6 +309,71 @@ describe("SessionFilesView", () => {
 		expect(target).toHaveTextContent("line twelve");
 		expect(scrollIntoView).toHaveBeenCalledWith({ block: "center" });
 		focus.mockRestore();
+	});
+
+	it("focuses the new-side row when revealing a context line in split view", async () => {
+		const scrollIntoView = vi.fn();
+		Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
+			configurable: true,
+			value: scrollIntoView,
+		});
+		getMock.mockImplementation(async (path: string, options?: unknown) => {
+			if (path === "/api/v1/sessions/{sessionId}/workspace/files") {
+				return {
+					data: {
+						sessionId: "sess-1",
+						truncated: false,
+						compareMode: "base",
+						files: [
+							{
+								path: "src/App.tsx",
+								status: "modified",
+								additions: 2,
+								deletions: 1,
+								size: 120,
+								binary: false,
+							},
+						],
+					},
+				};
+			}
+			if (path === "/api/v1/sessions/{sessionId}/workspace/file") {
+				const query = options as { params?: { query?: { path?: string } } };
+				return {
+					data: {
+						sessionId: "sess-1",
+						path: query.params?.query?.path ?? "src/App.tsx",
+						status: "modified",
+						additions: 2,
+						deletions: 1,
+						size: 120,
+						binary: false,
+						deleted: false,
+						content: "",
+						contentTruncated: false,
+						diff: multiHunkDiff,
+						diffTruncated: false,
+						compareMode: "base",
+					},
+				};
+			}
+			return { data: undefined };
+		});
+
+		const { rerender } = renderWithQuery(<SessionFilesView sessionId="sess-1" />);
+		await userEvent.click(await screen.findByRole("button", { name: "Expand src/App.tsx" }));
+		await screen.findByText(diffLine("line twelve"));
+		await userEvent.click(screen.getByRole("button", { name: "Split diff view" }));
+
+		rerender(<SessionFilesView revealFile={{ path: "src/App.tsx", line: 11, requestId: 1 }} sessionId="sess-1" />);
+
+		const matchingRows = await waitFor(() => {
+			const rows = document.querySelectorAll<HTMLElement>('[data-diff-row][data-new-no="11"]');
+			expect(rows).toHaveLength(2);
+			return rows;
+		});
+		await waitFor(() => expect(document.activeElement).toBe(matchingRows[1]));
+		expect(scrollIntoView).toHaveBeenCalledWith({ block: "center" });
 	});
 
 	it("resolves a requested previous path to its renamed file", async () => {

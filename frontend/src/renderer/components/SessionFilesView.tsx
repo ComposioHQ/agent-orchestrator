@@ -141,6 +141,7 @@ export function SessionFilesView({
 			return next;
 		});
 		window.requestAnimationFrame(() => {
+			if (revealFile.line && document.activeElement?.matches("[data-diff-row]")) return;
 			const row = Array.from(rootRef.current?.querySelectorAll<HTMLElement>("[data-file-path]") ?? [])
 				.find((candidate) => candidate.dataset.filePath === match.path);
 			row?.scrollIntoView?.({ block: "nearest" });
@@ -813,12 +814,14 @@ function DiffView({
 		if (!revealLineNumber) return;
 		const newSideIndex = rows.findIndex((row) => row.newNo === revealLineNumber);
 		const rowIndex = newSideIndex >= 0 ? newSideIndex : rows.findIndex((row) => row.oldNo === revealLineNumber);
+		const targetSide = newSideIndex >= 0 ? "new" : "old";
 		if (rowIndex < 0 || (shouldVirtualize && !scrollElement)) return;
 
 		if (shouldVirtualize) virtualizer.scrollToIndex(rowIndex, { align: "center" });
 		let retryFrame: number | undefined;
 		const focusRow = () => {
-			const row = containerRef.current?.querySelector<HTMLElement>(`[data-diff-row][data-row-index="${rowIndex}"]`);
+			const sideSelector = split ? `[data-diff-side="${targetSide}"]` : "";
+			const row = containerRef.current?.querySelector<HTMLElement>(`[data-diff-row][data-row-index="${rowIndex}"]${sideSelector}`);
 			if (!row) return false;
 			row.scrollIntoView({ block: "center" });
 			row.focus({ preventScroll: true });
@@ -831,7 +834,7 @@ function DiffView({
 			window.cancelAnimationFrame(frame);
 			if (retryFrame !== undefined) window.cancelAnimationFrame(retryFrame);
 		};
-	}, [revealLineNumber, revealRequestId, rows, scrollElement, shouldVirtualize, virtualizer]);
+	}, [revealLineNumber, revealRequestId, rows, scrollElement, shouldVirtualize, split, virtualizer]);
 
 	useEffect(() => {
 		const onSelectionChange = () => {
@@ -1175,6 +1178,7 @@ function SplitSide({
 				tone,
 			)}
 			data-diff-row=""
+			data-diff-side={side}
 			data-kind={row.kind}
 			data-new-no={row.newNo ?? ""}
 			data-old-no={row.oldNo ?? ""}

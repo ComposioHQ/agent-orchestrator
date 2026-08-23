@@ -294,7 +294,7 @@
 	"inspector.unresolvedCount": "{{count}} unresolved comments",
 	"inspector.openComments": "Open comments",
 	"inspector.openInAOBrowser": "Open in AO Browser",
-	"inspector.openInSystemBrowser": "Open in system browser",
+	"inspector.openInSystemBrowser": "Open in System Browser",
 	"inspector.openInlineComments": "{{count}} open comments",
 	"inspector.requestRereviewPR": "Request to re-review PR",
 	"inspector.reviewActions": "Review actions",

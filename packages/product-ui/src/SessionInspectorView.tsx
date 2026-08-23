@@ -1408,6 +1408,7 @@ function ReviewSummaryActions({
 	url?: string | null;
 }) {
 	const [menuOpen, setMenuOpen] = useState(false);
+	const menuRef = useClickAway<HTMLSpanElement>(menuOpen, () => setMenuOpen(false));
 	const [rereviewState, setRereviewState] = useState<"idle" | "requesting" | "requested" | "error">("idle");
 	const [sendState, setSendState] = useState<"idle" | "sending" | "sent" | "error">("idle");
 	const canSend = Boolean(body && onSendReviewSummary);
@@ -1433,20 +1434,35 @@ function ReviewSummaryActions({
 		}
 	};
 	return (
-		<span className="relative flex shrink-0" onClick={(event) => event.stopPropagation()}>
-			<button aria-expanded={menuOpen} aria-label={labels.reviewActions} className="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground" onClick={() => setMenuOpen((current) => !current)} type="button">
+		<span className="relative flex shrink-0" onClick={(event) => event.stopPropagation()} ref={menuRef}>
+			<button aria-expanded={menuOpen} aria-label={labels.reviewActions} className="inline-flex size-7 items-center justify-center rounded-md border border-border/70 text-muted-foreground transition-colors hover:border-border-strong hover:bg-interactive-hover hover:text-foreground" onClick={() => setMenuOpen((current) => !current)} type="button">
 				<MoreHorizontalIcon className="size-icon-xs" />
 			</button>
 			{menuOpen ? (
 				<span className="isolate absolute right-0 top-8 z-[100] flex w-48 flex-col rounded-md border border-border-strong bg-[var(--color-bg-settings-menu)] p-1 text-2xs shadow-[0_16px_40px_rgba(0,0,0,0.65)]">
+					{canSend ? <button className={cn("rounded px-2 py-1.5 text-left hover:bg-interactive-hover disabled:pointer-events-none", sendState === "sent" ? "text-success" : sendState === "error" ? "text-error" : "text-muted-foreground hover:text-foreground")} disabled={sendState === "sending" || sendState === "sent"} onClick={() => void send()} type="button">{sendState === "sent" ? labels.sentToWorkerAgent : sendState === "error" ? labels.sendToWorkerAgentError : labels.sendToWorkerAgent}</button> : null}
 					{onRequestRereview ? <button className={cn("rounded px-2 py-1.5 text-left hover:bg-interactive-hover disabled:pointer-events-none", rereviewState === "requested" ? "text-success" : rereviewState === "error" ? "text-error" : "text-muted-foreground hover:text-foreground")} disabled={rereviewState === "requesting" || rereviewState === "requested"} onClick={() => void requestRereview()} type="button">{rereviewState === "requested" ? labels.rereviewRequested : rereviewState === "error" ? labels.rereviewRequestFailed : labels.requestRereviewPR}</button> : null}
 					{url && onOpenInAOBrowser ? <button className="rounded px-2 py-1.5 text-left text-muted-foreground hover:bg-interactive-hover hover:text-foreground" onClick={() => onOpenInAOBrowser(url)} type="button">{labels.openInAOBrowser}</button> : null}
 					{url ? <ExternalLink className="rounded px-2 py-1.5 text-muted-foreground no-underline hover:bg-interactive-hover hover:text-foreground" href={url}>{labels.openInSystemBrowser}</ExternalLink> : null}
-					{canSend ? <button className={cn("rounded px-2 py-1.5 text-left hover:bg-interactive-hover disabled:pointer-events-none", sendState === "sent" ? "text-success" : sendState === "error" ? "text-error" : "text-muted-foreground hover:text-foreground")} disabled={sendState === "sending" || sendState === "sent"} onClick={() => void send()} type="button">{sendState === "sent" ? labels.sentToWorkerAgent : sendState === "error" ? labels.sendToWorkerAgentError : labels.sendToWorkerAgent}</button> : null}
 				</span>
 			) : null}
 		</span>
 	);
+}
+
+function useClickAway<T extends HTMLElement>(open: boolean, onDismiss: () => void) {
+	const ref = useRef<T | null>(null);
+	const onDismissRef = useRef(onDismiss);
+	onDismissRef.current = onDismiss;
+	useEffect(() => {
+		if (!open) return;
+		const onPointerDown = (event: PointerEvent) => {
+			if (!ref.current?.contains(event.target as Node)) onDismissRef.current();
+		};
+		document.addEventListener("pointerdown", onPointerDown);
+		return () => document.removeEventListener("pointerdown", onPointerDown);
+	}, [open]);
+	return ref;
 }
 
 function ReviewLinks({

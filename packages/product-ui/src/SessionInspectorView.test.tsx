@@ -391,7 +391,7 @@ describe("portable inspector presentations", () => {
     expect(reviewToggle).not.toContainElement(actionMenu);
     expect(reviewToggle).toHaveAttribute("aria-expanded", "false");
     fireEvent.click(actionMenu);
-    expect(screen.getByRole("link", { name: "Open in system browser" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Open in System Browser" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Request to re-review PR" }));
     expect(onRequestRereview).toHaveBeenCalledWith(
       expect.objectContaining({ id: "github-review-1", reviewerId: "maya" }),
@@ -559,6 +559,7 @@ describe("portable inspector presentations", () => {
       });
       expect(sentStatuses).toHaveLength(2);
       expect(sentStatuses[0]).toHaveClass("text-success");
+      expect(sentStatuses[0]).toHaveAttribute("title", "Sent to worker agent");
     });
     fireEvent.click(screen.getAllByRole("button", { name: "Comment actions" })[0]!);
     fireEvent.click(screen.getByRole("button", { name: "Resolve comment" }));
@@ -917,10 +918,18 @@ describe("portable inspector presentations", () => {
       />,
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "Review actions" }));
+    const reviewActions = screen.getByRole("button", { name: "Review actions" });
+    expect(reviewActions).toHaveClass("border");
+    fireEvent.click(reviewActions);
+    const sendAction = screen.getByRole("button", { name: "Send to worker agent" });
+    expect(sendAction.parentElement?.firstElementChild).toBe(sendAction);
+    expect(screen.getByRole("link", { name: "Open in System Browser" })).toBeInTheDocument();
+    fireEvent.pointerDown(document.body);
+    expect(screen.queryByRole("link", { name: "Open in System Browser" })).not.toBeInTheDocument();
+    fireEvent.click(reviewActions);
     fireEvent.click(screen.getByRole("button", { name: "Open in AO Browser" }));
     expect(onOpenInAOBrowser).toHaveBeenCalledWith("https://github.com/example/repo/pull/12#pullrequestreview-1");
-    expect(screen.getByRole("link", { name: "Open in system browser" })).toHaveAttribute(
+    expect(screen.getByRole("link", { name: "Open in System Browser" })).toHaveAttribute(
       "href",
       "https://github.com/example/repo/pull/12#pullrequestreview-1",
     );
@@ -945,7 +954,7 @@ const reviewLabels: InspectorReviewLabels = {
   notInjected: "Not injected",
   openComments: "Open comments",
   openInAOBrowser: "Open in AO Browser",
-  openInSystemBrowser: "Open in system browser",
+  openInSystemBrowser: "Open in System Browser",
   openInlineComments: (count) => `${count} open comments`,
   requestRereviewPR: "Request to re-review PR",
   reviewActions: "Review actions",
