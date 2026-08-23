@@ -54,7 +54,10 @@ func newSCMWebhookPGHarness(t *testing.T) *scmWebhookPGHarness {
 		 ao_scm_finish_webhook(TEXT, TEXT, UUID, TEXT, TEXT),
 		 ao_scm_prune_webhooks(INTERVAL),
 		 ao_scm_upsert_installation(UUID, UUID, BIGINT, TEXT, TEXT, TEXT, TEXT, TEXT),
-		 ao_scm_consume_install_state(BYTEA),
+		 ao_scm_claim_install_state(BYTEA, BYTEA, BIGINT),
+		 ao_scm_get_install_claim(BYTEA),
+		 ao_scm_release_install_claim(BYTEA),
+		 ao_scm_finalize_install_state(BYTEA),
 		ao_scm_record_observation(TEXT, BIGINT, TEXT, TEXT, TEXT, INTEGER, TEXT, TEXT) TO `+role)
 	if err != nil {
 		admin.Close()
@@ -152,16 +155,31 @@ func TestSCMInstallationBoundaryAgainstPostgres(t *testing.T) {
 	identityA := tenant.Identity{OrgID: orgA, UserID: userA, Role: "owner"}
 	identityB := tenant.Identity{OrgID: orgB, UserID: userB, Role: "owner"}
 
-	t.Run("install state is one shot", func(t *testing.T) {
+	t.Run("install state claim releases and finalizes", func(t *testing.T) {
 		digest := sha256.Sum256([]byte(h.prefix + "-state"))
+		oauthDigest := sha256.Sum256([]byte(h.prefix + "-oauth"))
 		if err := h.store.CreateSCMInstallState(ctx, identityA, digest[:], time.Now().Add(time.Minute)); err != nil {
 			t.Fatal(err)
 		}
-		link, err := h.store.ConsumeSCMInstallState(ctx, digest[:])
+		link, err := h.store.ClaimSCMInstallState(ctx, digest[:], oauthDigest[:], 42)
 		if err != nil || link.OrgID != orgA || link.UserID != userA {
 			t.Fatalf("link=%#v error=%v", link, err)
 		}
-		if _, err := h.store.ConsumeSCMInstallState(ctx, digest[:]); !errors.Is(err, domain.ErrSCMNotFound) {
+		claim, err := h.store.SCMInstallClaim(ctx, oauthDigest[:])
+		if err != nil || claim.ExternalInstallationID != 42 {
+			t.Fatalf("claim=%#v error=%v", claim, err)
+		}
+		if err := h.store.ReleaseSCMInstallClaim(ctx, oauthDigest[:]); err != nil {
+			t.Fatal(err)
+		}
+		secondOAuth := sha256.Sum256([]byte(h.prefix + "-oauth-2"))
+		if _, err := h.store.ClaimSCMInstallState(ctx, digest[:], secondOAuth[:], 43); err != nil {
+			t.Fatalf("reclaim after bad callback: %v", err)
+		}
+		if err := h.store.FinalizeSCMInstallState(ctx, secondOAuth[:]); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := h.store.SCMInstallClaim(ctx, secondOAuth[:]); !errors.Is(err, domain.ErrSCMNotFound) {
 			t.Fatalf("replay error=%v", err)
 		}
 	})

@@ -50,9 +50,14 @@ CREATE TABLE ao_scm_install_states (
     org_id UUID NOT NULL REFERENCES ao_organizations(id) ON DELETE CASCADE,
     user_id UUID NOT NULL REFERENCES ao_users(id) ON DELETE CASCADE,
     provider TEXT NOT NULL CHECK (provider = 'github'),
+    oauth_state_hash BYTEA UNIQUE CHECK (oauth_state_hash IS NULL OR octet_length(oauth_state_hash) = 32),
+    external_installation_id BIGINT CHECK (external_installation_id IS NULL OR external_installation_id > 0),
+    claimed_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
     expires_at TIMESTAMPTZ NOT NULL,
-    CHECK (expires_at > created_at)
+    CHECK (expires_at > created_at),
+    CHECK ((oauth_state_hash IS NULL AND external_installation_id IS NULL AND claimed_at IS NULL)
+        OR (oauth_state_hash IS NOT NULL AND external_installation_id IS NOT NULL AND claimed_at IS NOT NULL))
 );
 CREATE INDEX ao_scm_install_states_expiry_idx ON ao_scm_install_states(expires_at);
 
@@ -203,7 +208,7 @@ $$;
 
 GRANT USAGE ON SCHEMA public TO ao_cloud_scm;
 GRANT SELECT, INSERT, UPDATE ON ao_scm_installations TO ao_cloud_scm;
-GRANT SELECT, DELETE ON ao_scm_install_states TO ao_cloud_scm;
+GRANT SELECT, UPDATE, DELETE ON ao_scm_install_states TO ao_cloud_scm;
 GRANT EXECUTE ON FUNCTION ao_current_user_id(), ao_current_org_id(),
     ao_is_org_member(UUID, UUID), ao_can_manage_org(UUID, UUID) TO ao_cloud_scm;
 CREATE POLICY ao_scm_installations_definer ON ao_scm_installations
@@ -287,25 +292,84 @@ GRANT CREATE ON SCHEMA public TO ao_cloud_scm;
 ALTER FUNCTION ao_scm_upsert_installation(UUID, UUID, BIGINT, TEXT, TEXT, TEXT, TEXT, TEXT) OWNER TO ao_cloud_scm;
 REVOKE ALL ON FUNCTION ao_scm_upsert_installation(UUID, UUID, BIGINT, TEXT, TEXT, TEXT, TEXT, TEXT) FROM PUBLIC;
 
+-- Setup validation creates a replaceable OAuth claim without consuming the
+-- AO-admin-bound state. Bad/spoofed callbacks cannot burn the install attempt.
 -- +goose StatementBegin
-CREATE FUNCTION ao_scm_consume_install_state(candidate_hash BYTEA)
+CREATE FUNCTION ao_scm_claim_install_state(candidate_hash BYTEA, candidate_oauth_hash BYTEA, candidate_installation_id BIGINT)
 RETURNS TABLE (org_id UUID, user_id UUID)
 LANGUAGE sql
 SECURITY DEFINER
 SET search_path = pg_catalog, public
 AS $$
-    DELETE FROM public.ao_scm_install_states state
+    UPDATE public.ao_scm_install_states state
+    SET oauth_state_hash = candidate_oauth_hash,
+        external_installation_id = candidate_installation_id,
+        claimed_at = clock_timestamp()
     WHERE state.state_hash = candidate_hash
       AND state.expires_at > clock_timestamp()
     RETURNING state.org_id, state.user_id
 $$;
 -- +goose StatementEnd
-ALTER FUNCTION ao_scm_consume_install_state(BYTEA) OWNER TO ao_cloud_scm;
+ALTER FUNCTION ao_scm_claim_install_state(BYTEA, BYTEA, BIGINT) OWNER TO ao_cloud_scm;
+
+-- +goose StatementBegin
+CREATE FUNCTION ao_scm_get_install_claim(candidate_oauth_hash BYTEA)
+RETURNS TABLE (org_id UUID, user_id UUID, external_installation_id BIGINT)
+LANGUAGE sql
+SECURITY DEFINER
+SET search_path = pg_catalog, public
+AS $$
+    SELECT state.org_id, state.user_id, state.external_installation_id
+    FROM public.ao_scm_install_states state
+    WHERE state.oauth_state_hash = candidate_oauth_hash
+      AND state.expires_at > clock_timestamp()
+$$;
+-- +goose StatementEnd
+ALTER FUNCTION ao_scm_get_install_claim(BYTEA) OWNER TO ao_cloud_scm;
+
+-- +goose StatementBegin
+CREATE FUNCTION ao_scm_release_install_claim(candidate_oauth_hash BYTEA)
+RETURNS BOOLEAN
+LANGUAGE sql
+SECURITY DEFINER
+SET search_path = pg_catalog, public
+AS $$
+    WITH released AS (
+        UPDATE public.ao_scm_install_states state
+        SET oauth_state_hash = NULL, external_installation_id = NULL, claimed_at = NULL
+        WHERE state.oauth_state_hash = candidate_oauth_hash
+        RETURNING 1
+    ) SELECT EXISTS (SELECT 1 FROM released)
+$$;
+-- +goose StatementEnd
+ALTER FUNCTION ao_scm_release_install_claim(BYTEA) OWNER TO ao_cloud_scm;
+
+-- +goose StatementBegin
+CREATE FUNCTION ao_scm_finalize_install_state(candidate_oauth_hash BYTEA)
+RETURNS BOOLEAN
+LANGUAGE sql
+SECURITY DEFINER
+SET search_path = pg_catalog, public
+AS $$
+    WITH finalized AS (
+        DELETE FROM public.ao_scm_install_states state
+        WHERE state.oauth_state_hash = candidate_oauth_hash
+        RETURNING 1
+    ) SELECT EXISTS (SELECT 1 FROM finalized)
+$$;
+-- +goose StatementEnd
+ALTER FUNCTION ao_scm_finalize_install_state(BYTEA) OWNER TO ao_cloud_scm;
 REVOKE CREATE ON SCHEMA public FROM ao_cloud_scm;
-REVOKE ALL ON FUNCTION ao_scm_consume_install_state(BYTEA) FROM PUBLIC;
+REVOKE ALL ON FUNCTION ao_scm_claim_install_state(BYTEA, BYTEA, BIGINT) FROM PUBLIC;
+REVOKE ALL ON FUNCTION ao_scm_get_install_claim(BYTEA) FROM PUBLIC;
+REVOKE ALL ON FUNCTION ao_scm_release_install_claim(BYTEA) FROM PUBLIC;
+REVOKE ALL ON FUNCTION ao_scm_finalize_install_state(BYTEA) FROM PUBLIC;
 
 -- +goose Down
-DROP FUNCTION IF EXISTS ao_scm_consume_install_state(BYTEA);
+DROP FUNCTION IF EXISTS ao_scm_finalize_install_state(BYTEA);
+DROP FUNCTION IF EXISTS ao_scm_release_install_claim(BYTEA);
+DROP FUNCTION IF EXISTS ao_scm_get_install_claim(BYTEA);
+DROP FUNCTION IF EXISTS ao_scm_claim_install_state(BYTEA, BYTEA, BIGINT);
 DROP FUNCTION IF EXISTS ao_scm_upsert_installation(UUID, UUID, BIGINT, TEXT, TEXT, TEXT, TEXT, TEXT);
 DROP POLICY IF EXISTS ao_scm_install_states_definer ON ao_scm_install_states;
 DROP POLICY IF EXISTS ao_scm_installations_definer ON ao_scm_installations;

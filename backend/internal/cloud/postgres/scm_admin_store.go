@@ -46,14 +46,14 @@ func (s *Store) CreateSCMInstallState(ctx context.Context, identity tenant.Ident
 	})
 }
 
-// ConsumeSCMInstallState atomically resolves and destroys an unexpired state.
-func (s *Store) ConsumeSCMInstallState(ctx context.Context, stateHash []byte) (domain.SCMInstallationLink, error) {
-	if len(stateHash) != 32 {
+// ClaimSCMInstallState binds a validated setup callback to a replaceable OAuth state.
+func (s *Store) ClaimSCMInstallState(ctx context.Context, stateHash, oauthHash []byte, externalID int64) (domain.SCMInstallationLink, error) {
+	if len(stateHash) != 32 || len(oauthHash) != 32 || externalID <= 0 {
 		return domain.SCMInstallationLink{}, ErrInvalid
 	}
 	var link domain.SCMInstallationLink
 	if err := s.pool.QueryRow(ctx,
-		`SELECT org_id, user_id FROM ao_scm_consume_install_state($1)`, stateHash,
+		`SELECT org_id, user_id FROM ao_scm_claim_install_state($1, $2, $3)`, stateHash, oauthHash, externalID,
 	).Scan(&link.OrgID, &link.UserID); err != nil {
 		normalized := normalizeError(err)
 		if errors.Is(normalized, ErrNotFound) {
@@ -62,6 +62,46 @@ func (s *Store) ConsumeSCMInstallState(ctx context.Context, stateHash []byte) (d
 		return domain.SCMInstallationLink{}, normalized
 	}
 	return link, nil
+}
+
+// SCMInstallClaim resolves an unexpired OAuth phase without consuming it.
+func (s *Store) SCMInstallClaim(ctx context.Context, oauthHash []byte) (domain.SCMInstallationLink, error) {
+	if len(oauthHash) != 32 {
+		return domain.SCMInstallationLink{}, ErrInvalid
+	}
+	var link domain.SCMInstallationLink
+	if err := s.pool.QueryRow(ctx, `SELECT org_id, user_id, external_installation_id FROM ao_scm_get_install_claim($1)`, oauthHash).
+		Scan(&link.OrgID, &link.UserID, &link.ExternalInstallationID); err != nil {
+		if errors.Is(normalizeError(err), ErrNotFound) {
+			return domain.SCMInstallationLink{}, domain.ErrSCMNotFound
+		}
+		return domain.SCMInstallationLink{}, normalizeError(err)
+	}
+	return link, nil
+}
+
+// ReleaseSCMInstallClaim makes the original installation state retryable.
+func (s *Store) ReleaseSCMInstallClaim(ctx context.Context, oauthHash []byte) error {
+	return s.changeSCMInstallClaim(ctx, `SELECT ao_scm_release_install_claim($1)`, oauthHash)
+}
+
+// FinalizeSCMInstallState consumes a successfully linked installation state.
+func (s *Store) FinalizeSCMInstallState(ctx context.Context, oauthHash []byte) error {
+	return s.changeSCMInstallClaim(ctx, `SELECT ao_scm_finalize_install_state($1)`, oauthHash)
+}
+
+func (s *Store) changeSCMInstallClaim(ctx context.Context, query string, oauthHash []byte) error {
+	if len(oauthHash) != 32 {
+		return ErrInvalid
+	}
+	var changed bool
+	if err := s.pool.QueryRow(ctx, query, oauthHash).Scan(&changed); err != nil {
+		return normalizeError(err)
+	}
+	if !changed {
+		return domain.ErrSCMNotFound
+	}
+	return nil
 }
 
 // UpsertSCMInstallation links a GitHub installation to exactly one tenant.

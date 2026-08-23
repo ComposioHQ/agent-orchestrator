@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -72,6 +73,10 @@ func TestAppClientInstallationTokenRepositoriesAndOwnership(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatal(err)
+	}
+	authorizationURL, err := url.Parse(client.AuthorizationURL("oauth-state"))
+	if err != nil || authorizationURL.Path != "/login/oauth/authorize" || authorizationURL.Query().Get("client_id") != "client" || authorizationURL.Query().Get("state") != "oauth-state" {
+		t.Fatalf("authorization URL=%v error=%v", authorizationURL, err)
 	}
 	account, err := client.Installation(t.Context(), 55)
 	if err != nil || account.AccountLogin != "Acme" || account.ExternalID != 55 {

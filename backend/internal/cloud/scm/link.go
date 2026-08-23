@@ -32,6 +32,7 @@ type CallbackParams struct {
 // LinkProvider is the provider boundary required by installation management.
 type LinkProvider interface {
 	InstallURL(string) string
+	AuthorizationURL(string) string
 	RequiresUserAuthorization() bool
 	Installation(context.Context, int64) (InstallationAccount, error)
 	VerifyUserInstallation(context.Context, string, int64) error
@@ -41,7 +42,10 @@ type LinkProvider interface {
 // LinkStore persists install state, installation ownership, and repository policy.
 type LinkStore interface {
 	CreateSCMInstallState(context.Context, tenant.Identity, []byte, time.Time) error
-	ConsumeSCMInstallState(context.Context, []byte) (domain.SCMInstallationLink, error)
+	ClaimSCMInstallState(context.Context, []byte, []byte, int64) (domain.SCMInstallationLink, error)
+	SCMInstallClaim(context.Context, []byte) (domain.SCMInstallationLink, error)
+	ReleaseSCMInstallClaim(context.Context, []byte) error
+	FinalizeSCMInstallState(context.Context, []byte) error
 	UpsertSCMInstallation(context.Context, tenant.Identity, domain.SCMInstallation) (domain.SCMInstallation, error)
 	SCMInstallationByID(context.Context, tenant.Identity, string) (domain.SCMInstallation, error)
 	ListSCMInstallations(context.Context, tenant.Identity) ([]domain.SCMInstallation, error)
@@ -70,22 +74,55 @@ func NewLinkService(provider LinkProvider, store LinkStore) (*InstallationServic
 	return &InstallationService{provider: provider, store: store, stateTTL: defaultInstallStateTTL, now: time.Now}, nil
 }
 
+// BeginInstallAuthorization handles GitHub's setup redirect and starts the
+// separate user authorization flow without consuming the AO-bound state.
+func (s *InstallationService) BeginInstallAuthorization(ctx context.Context, params CallbackParams) (string, error) {
+	state := strings.TrimSpace(params.State)
+	if state == "" || params.ExternalInstallationID <= 0 || (params.SetupAction != "install" && params.SetupAction != "update") {
+		return "", ErrInvalidState
+	}
+	account, err := s.provider.Installation(ctx, params.ExternalInstallationID)
+	if err != nil {
+		return "", err
+	}
+	if account.ExternalID != params.ExternalInstallationID {
+		return "", ErrInstallationNotFound
+	}
+	oauthState, oauthDigest, err := newInstallState()
+	if err != nil {
+		return "", err
+	}
+	digest := sha256.Sum256([]byte(state))
+	if _, err := s.store.ClaimSCMInstallState(ctx, digest[:], oauthDigest, params.ExternalInstallationID); err != nil {
+		return "", ErrInvalidState
+	}
+	return s.provider.AuthorizationURL(oauthState), nil
+}
+
 // StartInstall persists a one-shot state digest and returns the provider URL.
 func (s *InstallationService) StartInstall(ctx context.Context, identity tenant.Identity) (InstallRedirect, error) {
 	if !identity.Valid() {
 		return InstallRedirect{}, tenant.ErrNoTenant
 	}
-	raw := make([]byte, 32)
-	if _, err := rand.Read(raw); err != nil {
+	state, digest, err := newInstallState()
+	if err != nil {
 		return InstallRedirect{}, err
 	}
-	state := base64.RawURLEncoding.EncodeToString(raw)
-	digest := sha256.Sum256([]byte(state))
 	expiresAt := s.now().UTC().Add(s.stateTTL)
-	if err := s.store.CreateSCMInstallState(ctx, identity, digest[:], expiresAt); err != nil {
+	if err := s.store.CreateSCMInstallState(ctx, identity, digest, expiresAt); err != nil {
 		return InstallRedirect{}, err
 	}
 	return InstallRedirect{InstallURL: s.provider.InstallURL(state), ExpiresAt: expiresAt}, nil
+}
+
+func newInstallState() (string, []byte, error) {
+	raw := make([]byte, 32)
+	if _, err := rand.Read(raw); err != nil {
+		return "", nil, err
+	}
+	state := base64.RawURLEncoding.EncodeToString(raw)
+	digest := sha256.Sum256([]byte(state))
+	return state, digest[:], nil
 }
 
 // CompleteInstall consumes state, proves user ownership, and links one installation.
@@ -95,21 +132,20 @@ func (s *InstallationService) CompleteInstall(ctx context.Context, params Callba
 		return domain.SCMInstallation{}, ErrInvalidState
 	}
 	digest := sha256.Sum256([]byte(state))
-	link, err := s.store.ConsumeSCMInstallState(ctx, digest[:])
+	link, err := s.store.SCMInstallClaim(ctx, digest[:])
 	if err != nil {
 		if errors.Is(err, domain.ErrSCMNotFound) {
 			return domain.SCMInstallation{}, ErrInvalidState
 		}
 		return domain.SCMInstallation{}, err
 	}
-	if params.ExternalInstallationID <= 0 {
-		return domain.SCMInstallation{}, ErrInstallationNotFound
-	}
-	account, err := s.provider.Installation(ctx, params.ExternalInstallationID)
+	account, err := s.provider.Installation(ctx, link.ExternalInstallationID)
 	if err != nil {
+		_ = s.store.ReleaseSCMInstallClaim(ctx, digest[:])
 		return domain.SCMInstallation{}, err
 	}
-	if err := s.provider.VerifyUserInstallation(ctx, params.Code, params.ExternalInstallationID); err != nil {
+	if err := s.provider.VerifyUserInstallation(ctx, params.Code, link.ExternalInstallationID); err != nil {
+		_ = s.store.ReleaseSCMInstallClaim(ctx, digest[:])
 		return domain.SCMInstallation{}, err
 	}
 	identity := tenant.Identity{OrgID: link.OrgID, UserID: link.UserID}
@@ -130,6 +166,9 @@ func (s *InstallationService) CompleteInstall(ctx context.Context, params Callba
 		return domain.SCMInstallation{}, err
 	}
 	if err := s.sync(ctx, identity, installation); err != nil {
+		return domain.SCMInstallation{}, err
+	}
+	if err := s.store.FinalizeSCMInstallState(ctx, digest[:]); err != nil {
 		return domain.SCMInstallation{}, err
 	}
 	return installation, nil

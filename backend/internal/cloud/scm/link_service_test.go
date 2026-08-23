@@ -22,7 +22,14 @@ func (*linkProviderStub) RequiresUserAuthorization() bool { return true }
 func (*linkProviderStub) InstallURL(state string) string {
 	return "https://github.com/apps/ao/installations/new?state=" + url.QueryEscape(state)
 }
-func (p *linkProviderStub) Installation(context.Context, int64) (InstallationAccount, error) {
+func (*linkProviderStub) AuthorizationURL(state string) string {
+	return "https://github.com/login/oauth/authorize?client_id=client&state=" + url.QueryEscape(state)
+}
+
+func (p *linkProviderStub) Installation(_ context.Context, externalID int64) (InstallationAccount, error) {
+	if p.account.ExternalID != externalID {
+		return InstallationAccount{}, ErrInstallationNotFound
+	}
 	return p.account, nil
 }
 func (p *linkProviderStub) VerifyUserInstallation(_ context.Context, code string, _ int64) error {
@@ -40,6 +47,8 @@ type linkStoreStub struct {
 	stateHash    []byte
 	stateLink    domain.SCMInstallationLink
 	stateUsed    bool
+	oauthHash    []byte
+	externalID   int64
 	installation domain.SCMInstallation
 	repositories []domain.SCMRepository
 	allowed      []int64
@@ -50,12 +59,34 @@ func (s *linkStoreStub) CreateSCMInstallState(_ context.Context, identity tenant
 	s.stateLink = domain.SCMInstallationLink{OrgID: identity.OrgID, UserID: identity.UserID}
 	return nil
 }
-func (s *linkStoreStub) ConsumeSCMInstallState(_ context.Context, hash []byte) (domain.SCMInstallationLink, error) {
+func (s *linkStoreStub) ClaimSCMInstallState(_ context.Context, hash, oauthHash []byte, externalID int64) (domain.SCMInstallationLink, error) {
 	if s.stateUsed || !equalBytes(hash, s.stateHash) {
 		return domain.SCMInstallationLink{}, domain.ErrSCMNotFound
 	}
-	s.stateUsed = true
+	s.oauthHash = append([]byte(nil), oauthHash...)
+	s.externalID = externalID
 	return s.stateLink, nil
+}
+func (s *linkStoreStub) SCMInstallClaim(_ context.Context, hash []byte) (domain.SCMInstallationLink, error) {
+	if s.stateUsed || !equalBytes(hash, s.oauthHash) {
+		return domain.SCMInstallationLink{}, domain.ErrSCMNotFound
+	}
+	link := s.stateLink
+	link.ExternalInstallationID = s.externalID
+	return link, nil
+}
+func (s *linkStoreStub) ReleaseSCMInstallClaim(_ context.Context, hash []byte) error {
+	if equalBytes(hash, s.oauthHash) {
+		s.oauthHash, s.externalID = nil, 0
+	}
+	return nil
+}
+func (s *linkStoreStub) FinalizeSCMInstallState(_ context.Context, hash []byte) error {
+	if !equalBytes(hash, s.oauthHash) {
+		return domain.ErrSCMNotFound
+	}
+	s.stateUsed = true
+	return nil
 }
 func (s *linkStoreStub) UpsertSCMInstallation(_ context.Context, identity tenant.Identity, installation domain.SCMInstallation) (domain.SCMInstallation, error) {
 	installation.ID, installation.OrgID, installation.LinkedByUserID = "installation", identity.OrgID, identity.UserID
@@ -118,7 +149,13 @@ func TestInstallationServiceStateOwnershipAndDefaultDeny(t *testing.T) {
 	if state == "" || !equalBytes(digest[:], store.stateHash) {
 		t.Fatal("install state was not persisted as a digest")
 	}
-	installation, err := service.CompleteInstall(t.Context(), CallbackParams{State: state, ExternalInstallationID: 55, Code: "oauth-code"})
+	authorizationURL, err := service.BeginInstallAuthorization(t.Context(), CallbackParams{State: state, ExternalInstallationID: 55, SetupAction: "install"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	authorization, _ := url.Parse(authorizationURL)
+	oauthState := authorization.Query().Get("state")
+	installation, err := service.CompleteInstall(t.Context(), CallbackParams{State: oauthState, Code: "oauth-code"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -128,8 +165,36 @@ func TestInstallationServiceStateOwnershipAndDefaultDeny(t *testing.T) {
 	if len(store.repositories) != 1 || store.repositories[0].Allowed {
 		t.Fatalf("repositories=%#v", store.repositories)
 	}
-	if _, err := service.CompleteInstall(t.Context(), CallbackParams{State: state, ExternalInstallationID: 55, Code: "oauth-code"}); !errors.Is(err, ErrInvalidState) {
+	if _, err := service.CompleteInstall(t.Context(), CallbackParams{State: oauthState, Code: "oauth-code"}); !errors.Is(err, ErrInvalidState) {
 		t.Fatalf("replayed state error = %v", err)
+	}
+}
+
+func TestInstallationServiceBadSetupDoesNotBurnState(t *testing.T) {
+	provider := &linkProviderStub{account: InstallationAccount{ExternalID: 55}}
+	store := &linkStoreStub{}
+	service, _ := NewLinkService(provider, store)
+	redirect, err := service.StartInstall(t.Context(), tenant.Identity{OrgID: "org", UserID: "user"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	stateURL, _ := url.Parse(redirect.InstallURL)
+	state := stateURL.Query().Get("state")
+	provider.account.ExternalID = 0
+	if _, err := service.BeginInstallAuthorization(t.Context(), CallbackParams{State: state, ExternalInstallationID: 999, SetupAction: "install"}); err == nil {
+		t.Fatal("bad installation was accepted")
+	}
+	provider.account.ExternalID = 55
+	authorizationURL, err := service.BeginInstallAuthorization(t.Context(), CallbackParams{State: state, ExternalInstallationID: 55, SetupAction: "install"})
+	if err != nil {
+		t.Fatalf("valid retry after bad setup: %v", err)
+	}
+	authorization, _ := url.Parse(authorizationURL)
+	if _, err := service.CompleteInstall(t.Context(), CallbackParams{State: authorization.Query().Get("state")}); !errors.Is(err, ErrInstallationNotOwned) {
+		t.Fatalf("bad ownership error=%v", err)
+	}
+	if _, err := service.BeginInstallAuthorization(t.Context(), CallbackParams{State: state, ExternalInstallationID: 55, SetupAction: "install"}); err != nil {
+		t.Fatalf("valid retry after bad ownership: %v", err)
 	}
 }
 

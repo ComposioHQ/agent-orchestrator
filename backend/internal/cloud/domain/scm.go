@@ -37,8 +37,9 @@ type SCMInstallation struct {
 
 // SCMInstallationLink is the tenant identity recovered from one install state.
 type SCMInstallationLink struct {
-	OrgID  string
-	UserID string
+	OrgID                  string
+	UserID                 string
+	ExternalInstallationID int64
 }
 
 const (
