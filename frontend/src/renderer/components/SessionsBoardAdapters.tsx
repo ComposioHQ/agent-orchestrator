@@ -46,6 +46,7 @@ export function toBoardSessionPresentation(
 		branch: session.branch,
 		id: session.id,
 		kanbanColumn: session.kanbanColumn,
+		displayStatus: session.displayStatus,
 		provider: session.provider,
 		status: session.status,
 		statusPresentation:

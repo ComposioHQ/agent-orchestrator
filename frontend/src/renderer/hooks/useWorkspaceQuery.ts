@@ -116,6 +116,7 @@ async function fetchWorkspaces(): Promise<WorkspaceSummary[]> {
 						status,
 						scmStatus,
 						kanbanColumn,
+						displayStatus: session.displayStatus || undefined,
 						isTerminated: session.isTerminated,
 						terminateOnPrMerge: session.terminateOnPrMerge ?? false,
 						autoInjectReview: session.autoInjectReview ?? true,

@@ -94,6 +94,14 @@ export type WorkspaceSession = {
 	 * implied rather than inventing a new one.
 	 */
 	kanbanColumn?: KanbanColumn;
+	/**
+	 * Phrase the daemon derived for what is happening inside
+	 * {@link kanbanColumn} — "Reviewing", "Fixing CI failures", "Needs human
+	 * review". It arrives renderable, so the UI prints it rather than mapping it.
+	 * Absent from a daemon too old to send one, which keeps the label
+	 * {@link status} already produced.
+	 */
+	displayStatus?: string;
 	/** Durable runtime fact from the daemon; independent of the derived SCM-aware status. */
 	isTerminated?: boolean;
 	/** User preference to tear down this session when its PR set completes through a merge. */

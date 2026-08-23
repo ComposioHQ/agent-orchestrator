@@ -30,6 +30,7 @@ import (
 	previewutil "github.com/aoagents/agent-orchestrator/backend/internal/preview"
 	"github.com/aoagents/agent-orchestrator/backend/internal/previewserver"
 	sessionsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/session"
+	"github.com/aoagents/agent-orchestrator/backend/pkg/contract"
 )
 
 type fakeSessionService struct {
@@ -956,6 +957,7 @@ func TestSessionsAPI_ListSpawnGetAndActions(t *testing.T) {
 	s.Metadata = domain.SessionMetadata{Branch: "qa/modal-worker", WorkspacePath: "/tmp/private-worktree", RuntimeHandleID: "runtime-1", Prompt: "private prompt"}
 	s.SCMStatus = domain.StatusReviewPending
 	s.KanbanColumn = domain.KanbanNeedsReview
+	s.DisplayStatus = contract.DisplayNeedsHumanReview
 	svc.sessions["ao-1"] = s
 	srv := newSessionTestServer(t, svc)
 
@@ -972,6 +974,9 @@ func TestSessionsAPI_ListSpawnGetAndActions(t *testing.T) {
 	}
 	if list.Sessions[0].KanbanColumn != string(domain.KanbanNeedsReview) {
 		t.Fatalf("kanbanColumn = %q, want the derived column on the wire", list.Sessions[0].KanbanColumn)
+	}
+	if list.Sessions[0].DisplayStatus != string(contract.DisplayNeedsHumanReview) {
+		t.Fatalf("displayStatus = %q, want the derived phrase on the wire", list.Sessions[0].DisplayStatus)
 	}
 	if list.Sessions[0].Branch != "qa/modal-worker" {
 		t.Fatalf("branch = %q, want qa/modal-worker", list.Sessions[0].Branch)
@@ -2745,6 +2750,7 @@ type sessionBody struct {
 	Status           string `json:"status"`
 	SCMStatus        string `json:"scmStatus"`
 	KanbanColumn     string `json:"kanbanColumn"`
+	DisplayStatus    string `json:"displayStatus"`
 	TerminalHandleID string `json:"terminalHandleId"`
 }
 

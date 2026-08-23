@@ -13,7 +13,7 @@ import { motion, useReducedMotion } from "motion/react";
 import type { ExternalLinkComponent } from "./external-link";
 import { ChevronIcon, GitBranchIcon } from "./icons";
 import {
-	getAgentActivityView,
+	getDisplayStatusLabel,
 	getSessionStatusView,
 	toKanbanColumn,
 	type KanbanColumnView,
@@ -32,6 +32,18 @@ export type BoardSessionPresentation = {
 	 * session's status already implied.
 	 */
 	kanbanColumn?: KanbanColumn;
+	/**
+	 * Daemon-derived phrase for what is happening inside {@link kanbanColumn}
+	 * ("Fixing CI failures", "Needs human review"), replacing {@link status} as
+	 * the card's status text. Translated via `getDisplayStatusLabel` for known
+	 * phrases (see {@link DisplayStatus}); an unrecognized one -- a newer
+	 * daemon that shipped a phrase before this build -- renders as the raw,
+	 * already-renderable English text the API guarantees. Rendered as plain,
+	 * uncolored text for now; the Figma visual treatment is tracked separately
+	 * in #4264. A daemon too old to send one falls back to the translated
+	 * {@link status} label.
+	 */
+	displayStatus?: string;
 	provider: string;
 	status: SessionStatus;
 	statusPresentation?: BoardSessionStatusPresentation;
@@ -203,8 +215,6 @@ export function SessionCardView({
 	usage,
 }: SessionCardViewProps) {
 	const badge = getSessionStatusView(session.status, translate);
-	const activity = getAgentActivityView(session.activity, translate);
-	const showLiveActivity = session.status === "working" && activity.state === "active";
 	const statusPresentation = session.statusPresentation;
 	const branch = session.branch ?? "";
 	const showBranch = branch !== "" && !sameLabel(branch, session.title) && !sameLabel(branch, session.id);
@@ -258,19 +268,21 @@ export function SessionCardView({
 					<span
 						className={cn(
 							"inline-flex min-w-0 flex-1 items-center gap-1.5 text-2xs font-medium",
-							statusPresentation?.className ?? badge.className,
+							statusPresentation?.className ?? "text-passive",
 						)}
-						style={!statusPresentation && showLiveActivity ? { color: activity.tone } : undefined}
 					>
-						<span
-							aria-hidden="true"
-							className={cn(
-								"size-dot-sm shrink-0 rounded-full",
-								statusPresentation?.indicatorClassName ??
-									(showLiveActivity ? activity.indicatorClassName : "bg-current"),
-							)}
-						/>
-						<span className="min-w-0 truncate">{statusPresentation?.label ?? badge.label}</span>
+						{statusPresentation && (
+							<span
+								aria-hidden="true"
+								className={cn("size-dot-sm shrink-0 rounded-full", statusPresentation.indicatorClassName)}
+							/>
+						)}
+						<span className="min-w-0 truncate">
+							{statusPresentation?.label ??
+								(session.displayStatus
+									? getDisplayStatusLabel(session.displayStatus, translate)
+									: badge.label)}
+						</span>
 					</span>
 					<div className="ml-auto flex shrink-0 items-center gap-1.5 whitespace-nowrap font-mono text-2xs text-passive">
 						{usage ? renderUsage(usage) : null}
