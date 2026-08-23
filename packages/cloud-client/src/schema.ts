@@ -162,19 +162,13 @@ export interface paths {
             };
             cookie?: never;
         };
-        /**
-         * @deprecated
-         * @description **Superseded** by `GET /api/v1/projects/{id}` on the hosted app API,
-         *     which already returns this project. Kept until the reconciliation
-         *     described in `CHANGELOG.md` lands so nothing breaks mid-flight; do not
-         *     build new work against it.
+        /** @description Read one project placement the caller's organization owns.
          *
-         *     Read one project the caller's organization owns. Discovery pairs this
-         *     with `listProjects`: the page carries the same `Project` shape, so a
-         *     client that already has a listed project never needs this call to
-         *     render, only to refresh a single row.
-         *
-         */
+         *     This is placement discovery, not a product read: it answers where a
+         *     project is provisioned and what state that provisioning is in. Anything
+         *     a user sees about the project — its name, its settings, its sessions —
+         *     comes from the app API's own project routes at `/api/v1`.
+         *      */
         get: operations["getProject"];
         put?: never;
         post?: never;
@@ -186,7 +180,7 @@ export interface paths {
         delete: operations["deleteProject"];
         options?: never;
         head?: never;
-        patch: operations["updateProject"];
+        patch?: never;
         trace?: never;
     };
     "/api/cloud/v1/orgs/{orgId}/projects/{projectId}/resume": {
@@ -350,285 +344,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/cloud/v1/orgs/{orgId}/sessions": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                orgId: components["parameters"]["OrgId"];
-            };
-            cookie?: never;
-        };
-        get: operations["listSessions"];
-        put?: never;
-        post: operations["createSession"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/cloud/v1/orgs/{orgId}/sessions/{sessionId}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                orgId: components["parameters"]["OrgId"];
-                sessionId: components["parameters"]["SessionId"];
-            };
-            cookie?: never;
-        };
-        get: operations["getSession"];
-        put?: never;
-        post?: never;
-        /** @description Delete the session's sandbox permanently. Durable history — messages,
-         *     events, pull-request observations — is retained, so the session stays
-         *     readable but can never be restored. Use `terminateSession` for the
-         *     reversible stop.
-         *
-         *     Idempotent under `Idempotency-Key`: retrying the same key returns the
-         *     original result instead of failing on the now-missing sandbox.
-         *      */
-        delete: operations["deleteSession"];
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/cloud/v1/orgs/{orgId}/sessions/{sessionId}/terminate": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                orgId: components["parameters"]["OrgId"];
-                sessionId: components["parameters"]["SessionId"];
-            };
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * @deprecated
-         * @description **Superseded** by `POST /api/v1/sessions/{sessionId}/kill`, which is the
-         *     same reversible stop and already exists on the hosted app API. Kept
-         *     until the reconciliation in `CHANGELOG.md` lands.
-         *
-         *     Stop the agent and release the session's compute, keeping the session
-         *     and its history restorable. This is the Cloud counterpart of the local
-         *     `POST /api/v1/sessions/{sessionId}/kill`, and the same reversible
-         *     contract: `isTerminated` becomes true, `activityState` becomes `exited`,
-         *     `status` becomes `terminated`, and `restoreSession` can bring it back.
-         *
-         *     Termination is asynchronous — the response reports the session with the
-         *     terminal intent already recorded, while the sandbox may still be
-         *     stopping. Terminating an already-terminated session is a no-op that
-         *     returns the session unchanged.
-         *
-         */
-        post: operations["terminateSession"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/cloud/v1/orgs/{orgId}/sessions/{sessionId}/restore": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                orgId: components["parameters"]["OrgId"];
-                sessionId: components["parameters"]["SessionId"];
-            };
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * @deprecated
-         * @description **Superseded** by `POST /api/v1/sessions/{sessionId}/restore`, which
-         *     already exists on the hosted app API. Kept until the reconciliation in
-         *     `CHANGELOG.md` lands.
-         *
-         *     Bring a terminated session back: re-provision a sandbox, restore the
-         *     workspace at the branch the session owns, and resume the agent with its
-         *     transcript. Counterpart of the local
-         *     `POST /api/v1/sessions/{sessionId}/restore`.
-         *
-         *     Asynchronous, like terminate: the response carries the session with
-         *     `isTerminated` already false and `sandbox.state` reporting how far the
-         *     re-provision has got. A restore whose project is `suspended` fails with
-         *     `PROJECT_SUSPENDED` — resume the project first. A session whose sandbox
-         *     was deleted with `deleteSession` fails with `SESSION_SANDBOX_DELETED`.
-         *
-         */
-        post: operations["restoreSession"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/cloud/v1/orgs/{orgId}/sessions/{sessionId}/activity": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                orgId: components["parameters"]["OrgId"];
-                sessionId: components["parameters"]["SessionId"];
-            };
-            cookie?: never;
-        };
-        /** @description The session's current activity, runtime, and sandbox state without the
-         *     rest of the session record. Intended for the poll a client runs while a
-         *     spawn, terminate, restore, or project resume settles — the payload is
-         *     small enough to poll at a few seconds without the cost of a full
-         *     `getSession`.
-         *
-         *     Steady-state clients should prefer `streamClientEvents`; this route
-         *     exists because sandbox transitions are not turn events and so do not
-         *     appear on that stream.
-         *
-         *     This is the only place sandbox state is published. It is deliberately
-         *     not on the `Session` DTO: that DTO is what the desktop's existing
-         *     components render, and compute-plane lifecycle is not something a
-         *     session row should have to know about. A client polls here while a
-         *     transition is in flight and otherwise ignores it.
-         *
-         *     Unlike local AO's `POST /api/v1/sessions/{sessionId}/activity`, which is
-         *     how an agent hook *reports* a state, this is read-only. Cloud agents
-         *     report activity over the worker route (`publishEvent`), never here.
-         *
-         *     Partly superseded: the agent half of this payload is already on the app
-         *     API's session record, which carries `activity`. The sandbox half is not
-         *     — no `/api/v1` route reports compute-plane lifecycle, because a local
-         *     daemon has none. That is why this route is not deprecated alongside the
-         *     others; see `CHANGELOG.md`.
-         *      */
-        get: operations["getSessionActivity"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/cloud/v1/orgs/{orgId}/sessions/{sessionId}/pull-requests": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                orgId: components["parameters"]["OrgId"];
-                sessionId: components["parameters"]["SessionId"];
-            };
-            cookie?: never;
-        };
-        get: operations["listSessionPullRequests"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/cloud/v1/orgs/{orgId}/sessions/{sessionId}/reviews": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                orgId: components["parameters"]["OrgId"];
-                sessionId: components["parameters"]["SessionId"];
-            };
-            cookie?: never;
-        };
-        get: operations["getSessionReviewState"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/cloud/v1/orgs/{orgId}/sessions/{sessionId}/messages": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                orgId: components["parameters"]["OrgId"];
-                sessionId: components["parameters"]["SessionId"];
-            };
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        post: operations["sendMessage"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/cloud/v1/orgs/{orgId}/sessions/{sessionId}/turns/{turnId}/cancel": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                orgId: components["parameters"]["OrgId"];
-                sessionId: components["parameters"]["SessionId"];
-                turnId: components["parameters"]["TurnId"];
-            };
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        post: operations["cancelTurn"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/cloud/v1/orgs/{orgId}/sessions/{sessionId}/chat-events": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                orgId: components["parameters"]["OrgId"];
-                sessionId: components["parameters"]["SessionId"];
-            };
-            cookie?: never;
-        };
-        get: operations["replayClientEvents"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/cloud/v1/orgs/{orgId}/sessions/{sessionId}/events": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                orgId: components["parameters"]["OrgId"];
-                sessionId: components["parameters"]["SessionId"];
-            };
-            cookie?: never;
-        };
-        get: operations["streamClientEvents"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/cloud/v1/orgs/{orgId}/sessions/{sessionId}/terminal-ticket": {
         parameters: {
             query?: never;
@@ -664,36 +379,6 @@ export interface paths {
          *     attach needs exactly one round trip.
          *      */
         post: operations["createTerminalTicket"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/cloud/v1/orgs/{orgId}/sessions/{sessionId}/terminal-connection": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                orgId: components["parameters"]["OrgId"];
-                sessionId: components["parameters"]["SessionId"];
-            };
-            cookie?: never;
-        };
-        /** @description Where and how to attach to this session's terminal, without minting a
-         *     ticket. A client calls this to decide whether to offer a terminal at all
-         *     — `kinds` reports which terminals the session actually has, and an empty
-         *     `kinds` means a session whose sandbox is not running has nothing to
-         *     attach to.
-         *
-         *     The attach host is returned rather than assumed. Cloud is free to serve
-         *     terminals from a listener that is not the control plane's own origin, so
-         *     a client must use `url` from here (or from the ticket) and must not
-         *     rebuild it from the API base URL.
-         *      */
-        get: operations["getTerminalConnection"];
-        put?: never;
-        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -754,63 +439,6 @@ export interface paths {
          *
          */
         get: operations["connectTerminal"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/cloud/v1/orgs/{orgId}/sessions/{sessionId}/workspace/files": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                orgId: components["parameters"]["OrgId"];
-                sessionId: components["parameters"]["SessionId"];
-            };
-            cookie?: never;
-        };
-        get: operations["listWorkspaceFiles"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/cloud/v1/orgs/{orgId}/sessions/{sessionId}/workspace/file": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                orgId: components["parameters"]["OrgId"];
-                sessionId: components["parameters"]["SessionId"];
-            };
-            cookie?: never;
-        };
-        get: operations["readWorkspaceFile"];
-        put: operations["writeWorkspaceFile"];
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/cloud/v1/orgs/{orgId}/sessions/{sessionId}/workspace/diff": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                orgId: components["parameters"]["OrgId"];
-                sessionId: components["parameters"]["SessionId"];
-            };
-            cookie?: never;
-        };
-        get: operations["getWorkspaceDiff"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1304,13 +932,6 @@ export interface components {
             nextCursor?: string;
         };
         /**
-         * @description Matches the local `/api/v1` project kind vocabulary so a shared view
-         *     renders a Cloud project and a local project with the same branch.
-         *
-         * @enum {string}
-         */
-        ProjectKind: "single_repo" | "workspace" | "scratch";
-        /**
          * @description Cloud workspace lifecycle. `provisioning` and `suspended` are the two
          *     states a client must render differently from `ready`: neither can accept
          *     a session spawn until it reaches `ready`. Local AO projects are always
@@ -1335,23 +956,9 @@ export interface components {
             };
             /** Format: date-time */
             createdAt: string;
-            /** Format: date-time */
+            /** Format: date-time
+            The default is stated here rather than as a schema `default:` because `openapi-typescript` promotes a defaulted response property to a required one, which would break the clients this field exists to keep working. */
             updatedAt: string;
-            /** @description Optional so an existing single-repository Cloud project stays valid
-             *     without a migration. Absent means `single_repo`, which is also what
-             *     a local AO single-repository project reports.
-             *
-             *     The default is stated here rather than as a schema `default:`
-             *     because `openapi-typescript` promotes a defaulted response property
-             *     to a required one, which would break the clients this field exists
-             *     to keep working.
-             *      */
-            kind?: components["schemas"]["ProjectKind"];
-            /** @description Default harness for sessions spawned in this project, named to match
-             *     the local `/api/v1` project field. Absent means the organization
-             *     default applies.
-             *      */
-            agent?: string;
             /** @description Absent means `ready`, which is what local AO always reports. Stated
              *     as prose rather than a schema `default:` for the reason given on
              *     `kind`.
@@ -1385,10 +992,6 @@ export interface components {
             config?: {
                 [key: string]: unknown;
             };
-        };
-        UpdateProjectInput: {
-            displayName: string;
-            defaultBranch: string;
         };
         DeleteProjectResponse: {
             project: {
@@ -1501,11 +1104,26 @@ export interface components {
         CreateGitHubScratchProjectResponse: {
             project: components["schemas"]["Project"];
             repository: components["schemas"]["GitHubRepository"];
-            session: components["schemas"]["Session"];
+            /**
+             * Format: uuid
+             * @description The first orchestrator session, by identifier only. Read it from the
+             *     app API — this route provisions, it does not become a second source
+             *     of truth for session state.
+             *
+             */
+            sessionId: string;
         };
         /** @enum {string} */
         SessionKind: "worker" | "orchestrator";
-        /** @enum {string} */
+        /**
+         * @description Permission mode a session's agent runs under. Used on worker launch and
+         *     provisioning inputs only — it is not a presentation field, and it is not
+         *     the local `/api/v1` session `mode`, which means `chat` or `tui`. Those
+         *     two meanings colliding is why the duplicate user-facing session type was
+         *     removed; this one survives because the compute plane genuinely needs it.
+         *
+         * @enum {string}
+         */
         SessionMode: "read-only" | "standard" | "trusted";
         /**
          * @description Identical vocabulary to the local `/api/v1` agent activity state, so a
@@ -1515,88 +1133,8 @@ export interface components {
          * @enum {string}
          */
         SessionActivityState: "active" | "idle" | "waiting_input" | "blocked" | "exited";
-        /**
-         * @description Which interface the session presents, matching the local `/api/v1`
-         *     session `mode` field. Named `interfaceMode` on `Session` because Cloud's
-         *     `mode` already means the permission mode (`SessionMode`); a client
-         *     porting local code must read `interfaceMode`, not `mode`.
-         *
-         * @enum {string}
-         */
-        SessionInterfaceMode: "chat" | "tui";
-        /**
-         * @description Compute-plane lifecycle of the session's sandbox, reported by the
-         *     provider. Only `running` accepts messages and terminal attachment.
-         *     `stopped` is restorable; `deleted` is not.
-         *
-         * @enum {string}
-         */
-        SandboxState: "provisioning" | "starting" | "running" | "suspended" | "stopping" | "stopped" | "deleting" | "deleted" | "error";
-        /** @description AO's own abstraction over whatever runs the session, deliberately
-         *     vendor-neutral: no provider name, no provider-assigned identifier, and
-         *     no placement. A client renders and retries from `state` alone, so
-         *     changing or adding a compute provider is invisible to every client and
-         *     cannot become a compatibility problem.
-         *      */
-        SessionSandbox: {
-            state: components["schemas"]["SandboxState"];
-            /** Format: date-time */
-            lastTransitionAt?: string;
-            /** @description Operator-facing detail, present when `state` is `error` and
-             *     otherwise only when a transition is unusually slow. Must not carry a
-             *     provider name, a provider-assigned identifier, or a region — the
-             *     control plane redacts those before they reach a client.
-             *      */
-            message?: string;
-        };
-        SessionActivity: {
-            state: components["schemas"]["SessionActivityState"];
-            /** Format: date-time */
-            lastActivityAt: string;
-            /** @description Absent means the caller should fall back to `Session.runtimeConnected`. */
-            runtimeConnected?: boolean;
-            sandbox?: components["schemas"]["SessionSandbox"];
-            activeTurn?: components["schemas"]["Turn"];
-        };
-        TerminateSessionInput: {
-            /** @description Recorded on the session for the operator-facing history. */
-            reason?: string;
-        };
-        RestoreSessionInput: {
-            /**
-             * Format: uuid
-             * @description Pin the restored sandbox to one organization provider connection.
-             *     Absent reuses the connection the session last ran on, falling back
-             *     to the organization default when that connection is gone.
-             *
-             */
-            sandboxProviderConnectionId?: string;
-            /** @description Message to deliver once the agent is back. Absent restores the
-             *     session idle, which is what a client that is only reopening a
-             *     terminated session wants.
-             *      */
-            prompt?: string;
-        };
         /** @enum {string} */
         SessionStatus: "working" | "needs_input" | "pr_open" | "draft" | "review_pending" | "ci_failed" | "changes_requested" | "approved" | "mergeable" | "merged" | "exited" | "idle" | "terminated" | "no_signal";
-        Turn: {
-            id: string;
-            sessionId: string;
-            /** Format: int64 */
-            userMessageSequence: number;
-            /** @enum {string} */
-            state: "queued" | "provisioning" | "running" | "cancel_requested" | "completed" | "failed";
-            attemptCount: number;
-            errorMessage?: string;
-            /** Format: date-time */
-            startedAt?: string;
-            /** Format: date-time */
-            completedAt?: string;
-            /** Format: date-time */
-            createdAt: string;
-            /** Format: date-time */
-            updatedAt: string;
-        };
         WorkerBootstrapInput: {
             /** @description One-time bootstrap ticket. Never log or persist this value. */
             bootstrapToken: string;
@@ -1759,6 +1297,19 @@ export interface components {
             path: string;
         };
         WorkerWorkspaceWritePayload: components["schemas"]["WorkspaceFileWriteInput"];
+        /** @description One entry in a sandbox directory listing, returned over the worker
+         *     transport. The product's own file browsing goes through the app API.
+         *      */
+        WorkspaceEntry: {
+            name: string;
+            path: string;
+            isDir: boolean;
+            /** Format: int64 */
+            size: number;
+            mode: string;
+            /** Format: date-time */
+            modTime: string;
+        };
         WorkerWorkspaceEntryPage: {
             path: string;
             items: components["schemas"]["WorkspaceEntry"][];
@@ -1933,220 +1484,36 @@ export interface components {
                 desiredState: "deleted";
             };
         };
-        Session: {
+        /** @description The minimum a worker orchestrator needs to reason about a child session
+         *     it spawned. It is deliberately **not** a product DTO and must never grow
+         *     into one: the product contract for sessions is the app API's own session
+         *     record at `/api/v1`, and a second user-facing session type here is what
+         *     created the `mode` collision this schema was cut down to remove.
+         *
+         *     Nothing on it describes presentation, and nothing on it names or hints
+         *     at a compute vendor. A client rendering a session reads the app API.
+         *      */
+        WorkerChildSession: {
             /** Format: uuid */
             id: string;
-            /** Format: uuid */
-            orgId: string;
             /** Format: uuid */
             projectId: string;
             kind: components["schemas"]["SessionKind"];
             harness: string;
             displayName: string;
             branch: string;
-            mode: components["schemas"]["SessionMode"];
-            deniedCommands: string[];
             activityState: components["schemas"]["SessionActivityState"];
             status: components["schemas"]["SessionStatus"];
             capabilities?: components["schemas"]["AgentCapability"][];
-            runtimeConnected: boolean;
-            runtimeState?: string;
-            runtimeError?: string;
-            activeTurn?: components["schemas"]["Turn"];
             isTerminated: boolean;
             /** Format: date-time */
             createdAt: string;
             /** Format: date-time */
             updatedAt: string;
-            /** @description Same `{state, lastActivityAt}` shape the local `/api/v1` session
-             *     carries, so a component that already reads `session.activity`
-             *     renders a Cloud session unchanged. Absent means the client derives
-             *     it from `activityState` and `updatedAt`.
-             *      */
-            activity?: components["schemas"]["SessionActivity"];
-            /** @description Absent means `chat`. */
-            interfaceMode?: components["schemas"]["SessionInterfaceMode"];
-            /** @description Model the harness is running, when the harness reports one. Absent
-             *     means the harness default.
-             *      */
-            model?: string;
-            /** @description Tracker issue this session was spawned for, when there was one. */
-            issueId?: string;
-            /** @description Absent means false. */
-            isPinned?: boolean;
-            /** Format: date-time */
-            pinnedAt?: string | null;
-            /** @description Absent means false. */
-            terminateOnPrMerge?: boolean;
-            /** @description Absent means the project setting applies. */
-            autoReviewEnabled?: boolean;
-            /** @description Absent means false. */
-            autoInjectReview?: boolean;
-            /** @description Absent means false. */
-            autoInjectCI?: boolean;
-            /**
-             * Format: date-time
-             * @description Present only while `isTerminated` is true.
-             */
-            terminatedAt?: string;
         };
-        CreateSessionInput: {
-            /** Format: uuid */
-            projectId: string;
-            kind: components["schemas"]["SessionKind"];
-            harness: string;
-            displayName: string;
-            prompt: string;
-            /** @default trusted */
-            mode: components["schemas"]["SessionMode"];
-            /** @default [] */
-            deniedCommands: string[];
-            /** Format: uuid */
-            sandboxProviderConnectionId?: string;
-            /** @default chat */
-            interfaceMode: components["schemas"]["SessionInterfaceMode"];
-            issueId?: string;
-            model?: string;
-        };
-        SessionPage: {
-            items: components["schemas"]["Session"][];
+        WorkerChildSessionPage: {
+            items: components["schemas"]["WorkerChildSession"][];
             page: components["schemas"]["PageInfo"];
-        };
-        /** @enum {string} */
-        PullRequestState: "draft" | "open" | "merged" | "closed";
-        /** @enum {string} */
-        CIState: "unknown" | "pending" | "passing" | "failing";
-        /** @enum {string} */
-        PullRequestCheckStatus: "unknown" | "queued" | "in_progress" | "passed" | "failed" | "skipped" | "cancelled";
-        /** @enum {string} */
-        ReviewDecision: "none" | "approved" | "changes_requested" | "review_required";
-        /** @enum {string} */
-        MergeabilityState: "unknown" | "mergeable" | "conflicting" | "blocked" | "unstable";
-        PullRequestFailingCheck: {
-            name: string;
-            status: components["schemas"]["PullRequestCheckStatus"];
-            conclusion: string;
-            url?: string;
-        };
-        PullRequestCISummary: {
-            state: components["schemas"]["CIState"];
-            failingChecks: components["schemas"]["PullRequestFailingCheck"][];
-        };
-        PullRequestReviewCommentLink: {
-            url?: string;
-            file?: string;
-            line?: number;
-            autoInjectReview: boolean;
-        };
-        PullRequestUnresolvedReviewer: {
-            reviewerId: string;
-            count: number;
-            links: components["schemas"]["PullRequestReviewCommentLink"][];
-            reviewUrl?: string;
-            isBot?: boolean;
-        };
-        PullRequestSubmittedReview: {
-            reviewerId: string;
-            verdict: components["schemas"]["ReviewDecision"];
-            body?: string;
-            reviewUrl?: string;
-            /** Format: date-time */
-            submittedAt: string;
-            isBot?: boolean;
-            autoInjectReview: boolean;
-        };
-        PullRequestReviewSummary: {
-            decision: components["schemas"]["ReviewDecision"];
-            hasUnresolvedHumanComments: boolean;
-            unresolvedBy: components["schemas"]["PullRequestUnresolvedReviewer"][];
-            reviews: components["schemas"]["PullRequestSubmittedReview"][];
-        };
-        PullRequestConflictFile: {
-            path: string;
-            url?: string;
-        };
-        PullRequestMergeabilitySummary: {
-            state: components["schemas"]["MergeabilityState"];
-            reasons: string[];
-            pullRequestUrl: string;
-            conflictFiles: components["schemas"]["PullRequestConflictFile"][];
-        };
-        PullRequestSummary: {
-            url: string;
-            htmlUrl?: string;
-            number: number;
-            title: string;
-            state: components["schemas"]["PullRequestState"];
-            provider: string;
-            repository: string;
-            author: string;
-            sourceBranch: string;
-            targetBranch: string;
-            headSha: string;
-            additions: number;
-            deletions: number;
-            changedFiles: number;
-            ci: components["schemas"]["PullRequestCISummary"];
-            review: components["schemas"]["PullRequestReviewSummary"];
-            mergeability: components["schemas"]["PullRequestMergeabilitySummary"];
-            /** Format: date-time */
-            stateChangedAt?: string;
-            /** Format: date-time */
-            createdAt?: string;
-            /** Format: date-time */
-            updatedAt: string;
-            /** Format: date-time */
-            observedAt: string;
-            /** Format: date-time */
-            ciObservedAt: string;
-            /** Format: date-time */
-            reviewObservedAt: string;
-        };
-        SessionPullRequests: {
-            sessionId: string;
-            pullRequests: components["schemas"]["PullRequestSummary"][];
-        };
-        /** @enum {string} */
-        AOReviewRunStatus: "running" | "complete" | "delivered" | "failed" | "cancelled";
-        /** @enum {string} */
-        AOReviewVerdict: "" | "approved" | "changes_requested";
-        /** @enum {string} */
-        AOReviewState: "needs_review" | "running" | "up_to_date" | "changes_requested" | "ineligible";
-        AOReviewRun: {
-            id: string;
-            reviewId: string;
-            sessionId: string;
-            batchId: string;
-            harness: string;
-            pullRequestUrl: string;
-            targetSha: string;
-            status: components["schemas"]["AOReviewRunStatus"];
-            verdict: components["schemas"]["AOReviewVerdict"];
-            body: string;
-            providerReviewId: string;
-            /** Format: date-time */
-            createdAt: string;
-            /** Format: date-time */
-            deliveredAt?: string;
-            autoInjectReview: boolean;
-        };
-        AOPullRequestReviewState: {
-            pullRequestUrl: string;
-            pullRequestNumber: number;
-            title: string;
-            targetSha: string;
-            status: components["schemas"]["AOReviewState"];
-            /** @description Head SHA of the newest completed run that does not match targetSha. */
-            staleTargetSha?: string;
-            latestRun?: components["schemas"]["AOReviewRun"];
-            previousRun?: components["schemas"]["AOReviewRun"];
-        };
-        SessionReviewState: {
-            sessionId: string;
-            reviewerHandleId?: string;
-            reviewerHarness?: string;
-            reviews: components["schemas"]["AOPullRequestReviewState"][];
-            runs: components["schemas"]["AOReviewRun"][];
         };
         UserMessageEvent: {
             sessionId: string;
@@ -2159,98 +1526,6 @@ export interface components {
             };
             /** Format: date-time */
             createdAt: string;
-        };
-        AssistantDeltaEvent: {
-            sessionId: string;
-            /** Format: int64 */
-            sequence: number;
-            /** @constant */
-            type: "chat.assistant_delta";
-            payload: components["schemas"]["WorkerOutputPayload"];
-            /** Format: date-time */
-            createdAt: string;
-        };
-        TurnStartedEvent: {
-            sessionId: string;
-            /** Format: int64 */
-            sequence: number;
-            /** @constant */
-            type: "chat.turn_started";
-            payload: {
-                /** Format: uuid */
-                turnId: string;
-                attempt: number;
-                /** Format: int64 */
-                workerEpoch: number;
-            };
-            /** Format: date-time */
-            createdAt: string;
-        };
-        TurnCompletedEvent: {
-            sessionId: string;
-            /** Format: int64 */
-            sequence: number;
-            /** @constant */
-            type: "chat.turn_completed";
-            payload: {
-                /** Format: uuid */
-                turnId: string;
-                attempt: number;
-            };
-            /** Format: date-time */
-            createdAt: string;
-        };
-        TurnInterruptedEvent: {
-            sessionId: string;
-            /** Format: int64 */
-            sequence: number;
-            /** @constant */
-            type: "chat.turn_interrupted";
-            payload: {
-                /** Format: uuid */
-                turnId: string;
-                attempt: number;
-            };
-            /** Format: date-time */
-            createdAt: string;
-        };
-        TurnAbortedEvent: {
-            sessionId: string;
-            /** Format: int64 */
-            sequence: number;
-            /** @constant */
-            type: "chat.turn_aborted";
-            payload: {
-                /** Format: uuid */
-                turnId: string;
-                attempt: number;
-                error: string;
-            };
-            /** Format: date-time */
-            createdAt: string;
-        };
-        InterruptRequestedEvent: {
-            sessionId: string;
-            /** Format: int64 */
-            sequence: number;
-            /** @constant */
-            type: "chat.interrupt_requested";
-            payload: {
-                /** Format: uuid */
-                turnId: string;
-            };
-            /** Format: date-time */
-            createdAt: string;
-        };
-        ClientEvent: components["schemas"]["UserMessageEvent"] | components["schemas"]["AssistantDeltaEvent"] | components["schemas"]["TurnStartedEvent"] | components["schemas"]["TurnCompletedEvent"] | components["schemas"]["TurnInterruptedEvent"] | components["schemas"]["TurnAbortedEvent"] | components["schemas"]["InterruptRequestedEvent"];
-        ClientEventPage: {
-            events: components["schemas"]["ClientEvent"][];
-            hasMore: boolean;
-            /**
-             * Format: int64
-             * @description Highest sequence returned, or the supplied after cursor when the page is empty.
-             */
-            nextAfter: number;
         };
         /** @enum {string} */
         TerminalKind: "agent" | "workspace";
@@ -2500,56 +1775,9 @@ export interface components {
              */
             type: "pong";
         };
-        WorkspaceEntry: {
-            name: string;
-            path: string;
-            isDir: boolean;
-            /** Format: int64 */
-            size: number;
-            mode: string;
-            /** Format: date-time */
-            modTime: string;
-        };
-        WorkspaceEntryPage: {
-            path: string;
-            items: components["schemas"]["WorkspaceEntry"][];
-            page: components["schemas"]["PageInfo"];
-        };
-        WorkspaceFile: {
-            path: string;
-            content: string;
-            /** Format: int64 */
-            size: number;
-        };
         WorkspaceFileWriteInput: {
             path: string;
             content: string;
-        };
-        /** @enum {string} */
-        WorkspaceFileStatus: "unmodified" | "modified" | "added" | "deleted" | "renamed" | "untracked" | "copied" | "changed";
-        WorkspaceDiffFile: {
-            path: string;
-            oldPath?: string;
-            status: components["schemas"]["WorkspaceFileStatus"];
-            staged?: string;
-            unstaged?: string;
-            additions: number;
-            deletions: number;
-            binary: boolean;
-        };
-        WorkspaceDiff: {
-            status: string;
-            unstaged: string;
-            staged: string;
-            combined: string;
-            diffBaseRef: string;
-            diffBaseSha?: string;
-            files: components["schemas"]["WorkspaceDiffFile"][];
-            untrackedFiles: string[];
-            truncated: {
-                combined: boolean;
-                stats: boolean;
-            };
         };
         /** @enum {string} */
         ProviderName: "daytona" | "claude-code" | "codex" | "cursor";
@@ -3025,36 +2253,6 @@ export interface operations {
             default: components["responses"]["Error"];
         };
     };
-    updateProject: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                orgId: components["parameters"]["OrgId"];
-                projectId: components["parameters"]["ProjectId"];
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["UpdateProjectInput"];
-            };
-        };
-        responses: {
-            /** @description Project settings updated. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        project: components["schemas"]["Project"];
-                    };
-                };
-            };
-            default: components["responses"]["Error"];
-        };
-    };
     resumeProject: {
         parameters: {
             query?: never;
@@ -3282,388 +2480,6 @@ export interface operations {
             default: components["responses"]["Error"];
         };
     };
-    listSessions: {
-        parameters: {
-            query?: {
-                cursor?: components["parameters"]["Cursor"];
-                limit?: components["parameters"]["Limit"];
-                projectId?: string;
-            };
-            header?: never;
-            path: {
-                orgId: components["parameters"]["OrgId"];
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description A page of sessions in the tenant. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["SessionPage"];
-                };
-            };
-            default: components["responses"]["Error"];
-        };
-    };
-    createSession: {
-        parameters: {
-            query?: never;
-            header: {
-                /** @description Reusing a key with the same command returns the original result.
-                 *     Reusing it with a different command returns an IDEMPOTENCY_CONFLICT.
-                 *      */
-                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
-            };
-            path: {
-                orgId: components["parameters"]["OrgId"];
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["CreateSessionInput"];
-            };
-        };
-        responses: {
-            /** @description Session created. */
-            201: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        session: components["schemas"]["Session"];
-                    };
-                };
-            };
-            default: components["responses"]["Error"];
-        };
-    };
-    getSession: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                orgId: components["parameters"]["OrgId"];
-                sessionId: components["parameters"]["SessionId"];
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Session details. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        session: components["schemas"]["Session"];
-                    };
-                };
-            };
-            default: components["responses"]["Error"];
-        };
-    };
-    deleteSession: {
-        parameters: {
-            query?: never;
-            header: {
-                /** @description Reusing a key with the same command returns the original result.
-                 *     Reusing it with a different command returns an IDEMPOTENCY_CONFLICT.
-                 *      */
-                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
-            };
-            path: {
-                orgId: components["parameters"]["OrgId"];
-                sessionId: components["parameters"]["SessionId"];
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Session sandbox deletion was requested; durable history is retained. */
-            202: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DeleteSessionResponse"];
-                };
-            };
-            default: components["responses"]["Error"];
-        };
-    };
-    terminateSession: {
-        parameters: {
-            query?: never;
-            header: {
-                /** @description Reusing a key with the same command returns the original result.
-                 *     Reusing it with a different command returns an IDEMPOTENCY_CONFLICT.
-                 *      */
-                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
-            };
-            path: {
-                orgId: components["parameters"]["OrgId"];
-                sessionId: components["parameters"]["SessionId"];
-            };
-            cookie?: never;
-        };
-        requestBody?: {
-            content: {
-                "application/json": components["schemas"]["TerminateSessionInput"];
-            };
-        };
-        responses: {
-            /** @description Termination recorded; sandbox teardown may still be in flight. */
-            202: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        session: components["schemas"]["Session"];
-                    };
-                };
-            };
-            default: components["responses"]["Error"];
-        };
-    };
-    restoreSession: {
-        parameters: {
-            query?: never;
-            header: {
-                /** @description Reusing a key with the same command returns the original result.
-                 *     Reusing it with a different command returns an IDEMPOTENCY_CONFLICT.
-                 *      */
-                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
-            };
-            path: {
-                orgId: components["parameters"]["OrgId"];
-                sessionId: components["parameters"]["SessionId"];
-            };
-            cookie?: never;
-        };
-        requestBody?: {
-            content: {
-                "application/json": components["schemas"]["RestoreSessionInput"];
-            };
-        };
-        responses: {
-            /** @description Restore accepted; the sandbox may still be provisioning. */
-            202: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        session: components["schemas"]["Session"];
-                    };
-                };
-            };
-            default: components["responses"]["Error"];
-        };
-    };
-    getSessionActivity: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                orgId: components["parameters"]["OrgId"];
-                sessionId: components["parameters"]["SessionId"];
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description The session's activity snapshot. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["SessionActivity"];
-                };
-            };
-            default: components["responses"]["Error"];
-        };
-    };
-    listSessionPullRequests: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                orgId: components["parameters"]["OrgId"];
-                sessionId: components["parameters"]["SessionId"];
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Normalized provider pull-request observations for the session. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["SessionPullRequests"];
-                };
-            };
-            default: components["responses"]["Error"];
-        };
-    };
-    getSessionReviewState: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                orgId: components["parameters"]["OrgId"];
-                sessionId: components["parameters"]["SessionId"];
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description AO review planning state and recorded runs for the session. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["SessionReviewState"];
-                };
-            };
-            default: components["responses"]["Error"];
-        };
-    };
-    sendMessage: {
-        parameters: {
-            query?: never;
-            header: {
-                /** @description Reusing a key with the same command returns the original result.
-                 *     Reusing it with a different command returns an IDEMPOTENCY_CONFLICT.
-                 *      */
-                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
-            };
-            path: {
-                orgId: components["parameters"]["OrgId"];
-                sessionId: components["parameters"]["SessionId"];
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": {
-                    text: string;
-                };
-            };
-        };
-        responses: {
-            /** @description Message accepted and durably appended. */
-            202: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        event: components["schemas"]["UserMessageEvent"];
-                    };
-                };
-            };
-            default: components["responses"]["Error"];
-        };
-    };
-    cancelTurn: {
-        parameters: {
-            query?: never;
-            header: {
-                /** @description Reusing a key with the same command returns the original result.
-                 *     Reusing it with a different command returns an IDEMPOTENCY_CONFLICT.
-                 *      */
-                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
-            };
-            path: {
-                orgId: components["parameters"]["OrgId"];
-                sessionId: components["parameters"]["SessionId"];
-                turnId: components["parameters"]["TurnId"];
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Cancellation was durably requested for the turn. */
-            202: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["WorkerOKResponse"];
-                };
-            };
-            default: components["responses"]["Error"];
-        };
-    };
-    replayClientEvents: {
-        parameters: {
-            query?: {
-                /** @description Return events with a sequence strictly greater than this value. */
-                after?: components["parameters"]["After"];
-                limit?: components["parameters"]["EventLimit"];
-            };
-            header?: never;
-            path: {
-                orgId: components["parameters"]["OrgId"];
-                sessionId: components["parameters"]["SessionId"];
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Client-visible events after the supplied sequence. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ClientEventPage"];
-                };
-            };
-            default: components["responses"]["Error"];
-        };
-    };
-    streamClientEvents: {
-        parameters: {
-            query?: {
-                /** @description Return events with a sequence strictly greater than this value. */
-                after?: components["parameters"]["After"];
-            };
-            header?: never;
-            path: {
-                orgId: components["parameters"]["OrgId"];
-                sessionId: components["parameters"]["SessionId"];
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Replay followed by live client-visible events. Each SSE data field
-             *     contains a ClientEvent; the SSE id is its sequence.
-             *      */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "text/event-stream": string;
-                };
-            };
-            default: components["responses"]["Error"];
-        };
-    };
     createTerminalTicket: {
         parameters: {
             query?: never;
@@ -3693,35 +2509,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["TerminalTicket"];
-                };
-            };
-            default: components["responses"]["Error"];
-        };
-    };
-    getTerminalConnection: {
-        parameters: {
-            query?: {
-                /** @description Restrict the answer to one terminal kind. Absent describes every
-                 *     kind the session has.
-                 *      */
-                kind?: components["schemas"]["TerminalKind"];
-            };
-            header?: never;
-            path: {
-                orgId: components["parameters"]["OrgId"];
-                sessionId: components["parameters"]["SessionId"];
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Terminal attachment metadata for the session. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["TerminalConnection"];
                 };
             };
             default: components["responses"]["Error"];
@@ -3757,112 +2544,6 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
-            };
-            default: components["responses"]["Error"];
-        };
-    };
-    listWorkspaceFiles: {
-        parameters: {
-            query?: {
-                path?: string;
-                cursor?: components["parameters"]["Cursor"];
-                limit?: components["parameters"]["Limit"];
-            };
-            header?: never;
-            path: {
-                orgId: components["parameters"]["OrgId"];
-                sessionId: components["parameters"]["SessionId"];
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description A page of entries in a workspace directory. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["WorkspaceEntryPage"];
-                };
-            };
-            default: components["responses"]["Error"];
-        };
-    };
-    readWorkspaceFile: {
-        parameters: {
-            query: {
-                path: string;
-            };
-            header?: never;
-            path: {
-                orgId: components["parameters"]["OrgId"];
-                sessionId: components["parameters"]["SessionId"];
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description UTF-8 workspace file contents. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["WorkspaceFile"];
-                };
-            };
-            default: components["responses"]["Error"];
-        };
-    };
-    writeWorkspaceFile: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                orgId: components["parameters"]["OrgId"];
-                sessionId: components["parameters"]["SessionId"];
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["WorkspaceFileWriteInput"];
-            };
-        };
-        responses: {
-            /** @description The updated UTF-8 workspace file. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["WorkspaceFile"];
-                };
-            };
-            default: components["responses"]["Error"];
-        };
-    };
-    getWorkspaceDiff: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                orgId: components["parameters"]["OrgId"];
-                sessionId: components["parameters"]["SessionId"];
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Workspace changes relative to the session compare base. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["WorkspaceDiff"];
-                };
             };
             default: components["responses"]["Error"];
         };
@@ -4231,7 +2912,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["SessionPage"];
+                    "application/json": components["schemas"]["WorkerChildSessionPage"];
                 };
             };
             400: components["responses"]["BadRequest"];
@@ -4265,7 +2946,7 @@ export interface operations {
                 };
                 content: {
                     "application/json": {
-                        session: components["schemas"]["Session"];
+                        session: components["schemas"]["WorkerChildSession"];
                     };
                 };
             };

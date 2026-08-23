@@ -1,8 +1,16 @@
 # `@aoagents/cloud-client`
 
 Runtime-neutral TypeScript contracts and a small fetch-based client for AO
-Cloud's public API. The package defines the client boundary; this repository
-does not implement the Cloud routes.
+Cloud's **control plane**: authentication, organization administration, project
+placement, terminal ticket minting, and GitHub App installation.
+
+**This is not the product API.** Sessions, messages, events, pull requests,
+reviews and workspace files all live on the app API at `/api/v1`, whose types
+are generated into `frontend/src/api/schema.ts`. A hosted deployment serves
+those same routes with an `X-AO-Organization-ID` header after the bearer token;
+the DTOs and controller semantics are identical to a local daemon's, so a
+component that renders local AO renders hosted AO unchanged. Do not reach for
+this package to read or mutate a session — it deliberately cannot.
 
 ```ts
 import { createCloudClient } from "@aoagents/cloud-client";
@@ -13,7 +21,7 @@ const cloud = createCloudClient({
   fetch,
 });
 
-const sessions = await cloud.listSessions(orgId, { limit: 50 });
+const projects = await cloud.listProjects(orgId, { limit: 50 });
 ```
 
 The caller owns authentication and token refresh. `createCloudClient` asks for
@@ -64,9 +72,8 @@ const socket = new WebSocket(
 
 `createTerminalTicket` grants the intersection of the scopes asked for and the
 caller's authority, so check `ticket.scopes` for `terminal:operate` before
-letting the user type. Call `getTerminalConnection` instead when you only need
-to know whether a terminal exists yet — an empty `kinds` is the normal answer
-while a sandbox is still provisioning.
+letting the user type. Call The ticket carries a `connection`
+describing where and how to attach, so minting and connecting is one round trip.
 
 Frames are JSON text messages discriminated by `type` (`TerminalClientFrame` and
 `TerminalServerFrame`), with byte payloads base64-encoded in `data`. Every

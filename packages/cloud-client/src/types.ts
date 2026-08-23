@@ -21,11 +21,9 @@ export type AgentAvailability = Schemas["AgentAvailability"];
 export type AgentProfile = Schemas["AgentProfile"];
 
 export type Project = Schemas["Project"];
-export type ProjectKind = Schemas["ProjectKind"];
 export type ProjectLifecycleState = Schemas["ProjectLifecycleState"];
 export type CreateProjectInput = Schemas["CreateProjectInput"];
 export type ResumeProjectInput = Schemas["ResumeProjectInput"];
-export type UpdateProjectInput = Schemas["UpdateProjectInput"];
 export type DeleteProjectResponse = Schemas["DeleteProjectResponse"];
 export type ProjectPage = Schemas["ProjectPage"];
 
@@ -47,58 +45,15 @@ export type CreateGitHubScratchProjectInput =
 export type CreateGitHubScratchProjectResponse =
   Schemas["CreateGitHubScratchProjectResponse"];
 
-export type Session = Schemas["Session"];
 export type SessionKind = Schemas["SessionKind"];
+export type WorkerChildSession = Schemas["WorkerChildSession"];
+export type WorkerChildSessionPage = Schemas["WorkerChildSessionPage"];
+export type DeleteSessionResponse = Schemas["DeleteSessionResponse"];
 export type SessionMode = Schemas["SessionMode"];
 export type SessionActivityState = Schemas["SessionActivityState"];
-export type SessionInterfaceMode = Schemas["SessionInterfaceMode"];
 export type SessionStatus = Schemas["SessionStatus"];
-export type SandboxState = Schemas["SandboxState"];
-export type SessionSandbox = Schemas["SessionSandbox"];
-export type SessionActivity = Schemas["SessionActivity"];
-export type Turn = Schemas["Turn"];
-export type CreateSessionInput = Schemas["CreateSessionInput"];
-export type TerminateSessionInput = Schemas["TerminateSessionInput"];
-export type RestoreSessionInput = Schemas["RestoreSessionInput"];
-export type DeleteSessionResponse = Schemas["DeleteSessionResponse"];
-export type SessionPage = Schemas["SessionPage"];
 
-export type PullRequestState = Schemas["PullRequestState"];
-export type CIState = Schemas["CIState"];
-export type PullRequestCheckStatus = Schemas["PullRequestCheckStatus"];
-export type ReviewDecision = Schemas["ReviewDecision"];
-export type MergeabilityState = Schemas["MergeabilityState"];
-export type PullRequestFailingCheck = Schemas["PullRequestFailingCheck"];
-export type PullRequestCISummary = Schemas["PullRequestCISummary"];
-export type PullRequestReviewCommentLink =
-  Schemas["PullRequestReviewCommentLink"];
-export type PullRequestUnresolvedReviewer =
-  Schemas["PullRequestUnresolvedReviewer"];
-export type PullRequestSubmittedReview =
-  Schemas["PullRequestSubmittedReview"];
-export type PullRequestReviewSummary = Schemas["PullRequestReviewSummary"];
-export type PullRequestConflictFile = Schemas["PullRequestConflictFile"];
-export type PullRequestMergeabilitySummary =
-  Schemas["PullRequestMergeabilitySummary"];
-export type PullRequestSummary = Schemas["PullRequestSummary"];
-export type SessionPullRequests = Schemas["SessionPullRequests"];
-
-export type AOReviewRunStatus = Schemas["AOReviewRunStatus"];
-export type AOReviewVerdict = Schemas["AOReviewVerdict"];
-export type AOReviewState = Schemas["AOReviewState"];
-export type AOReviewRun = Schemas["AOReviewRun"];
-export type AOPullRequestReviewState = Schemas["AOPullRequestReviewState"];
-export type SessionReviewState = Schemas["SessionReviewState"];
-
-export type ClientEvent = Schemas["ClientEvent"];
-export type ClientEventPage = Schemas["ClientEventPage"];
 export type UserMessageEvent = Schemas["UserMessageEvent"];
-export type AssistantDeltaEvent = Schemas["AssistantDeltaEvent"];
-export type TurnStartedEvent = Schemas["TurnStartedEvent"];
-export type TurnCompletedEvent = Schemas["TurnCompletedEvent"];
-export type TurnInterruptedEvent = Schemas["TurnInterruptedEvent"];
-export type TurnAbortedEvent = Schemas["TurnAbortedEvent"];
-export type InterruptRequestedEvent = Schemas["InterruptRequestedEvent"];
 
 export type TerminalKind = Schemas["TerminalKind"];
 export type TerminalScope = Schemas["TerminalScope"];
@@ -120,12 +75,7 @@ export type TerminalErrorFrame = Schemas["TerminalErrorFrame"];
 export type TerminalPongFrame = Schemas["TerminalPongFrame"];
 
 export type WorkspaceEntry = Schemas["WorkspaceEntry"];
-export type WorkspaceEntryPage = Schemas["WorkspaceEntryPage"];
-export type WorkspaceFile = Schemas["WorkspaceFile"];
 export type WorkspaceFileWriteInput = Schemas["WorkspaceFileWriteInput"];
-export type WorkspaceFileStatus = Schemas["WorkspaceFileStatus"];
-export type WorkspaceDiffFile = Schemas["WorkspaceDiffFile"];
-export type WorkspaceDiff = Schemas["WorkspaceDiff"];
 
 export type ProviderName = Schemas["ProviderName"];
 export type ProviderPublicConfig = Schemas["ProviderPublicConfig"];

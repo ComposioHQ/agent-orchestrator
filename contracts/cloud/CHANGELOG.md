@@ -21,7 +21,73 @@ Two conventions this file exists to keep visible:
   operation here means adding a line there; mounting its handler means deleting
   that line. The test fails in both directions.
 
-## Unreleased — the product surface is `/api/v1`, not a copy of it here
+## Unreleased — the duplicate product API is removed
+
+Directed by the integrating session (140) on 2026-08-22: the earlier draft
+recreated a product API that already exists and must not be merged as-is. This
+revision deletes it.
+
+**The product contract is the generated app OpenAPI at `/api/v1`.** Once a
+project exists, every product read and mutation uses those routes with their
+exact existing DTOs and controller semantics. This document now covers only what
+a local daemon has no equivalent for: authentication and organization admin,
+project **placement** (create/list/get/resume/delete), terminal ticket minting,
+SCM installation, and the worker/compute-plane API.
+
+### Removed
+
+| Removed | Use instead |
+| --- | --- |
+| All `/orgs/{orgId}/sessions/**` routes — list, get, create, delete, terminate, restore, activity, messages, turn cancel, chat-events, events, pull-requests, reviews | The app API's session routes at `/api/v1` |
+| The workspace routes — files, file, diff | `/api/v1/sessions/{sessionId}/workspace/*` |
+| `updateProject` | `/api/v1/projects/{id}` |
+| `getTerminalConnection` | The `connection` embedded in the minted ticket |
+| `Session`, `SessionPage`, `CreateSessionInput`, `SessionActivity`, `SessionSandbox`, `SandboxState`, `SessionInterfaceMode`, `Turn`, `UpdateProjectInput`, the `ClientEvent` family, the `PullRequest` and `AOReview` families, the `Workspace` shapes | The app API's DTOs |
+| `Project.kind`, `Project.agent` | The app API's project DTO |
+
+The client drops the matching methods and type aliases. `streamEvents` and its
+SSE helpers go with the event routes.
+
+### The `mode` collision is gone, not reconciled
+
+Cloud's `Session.mode` meant a permission mode; the app's means `chat` or `tui`.
+Rather than rename either, **the duplicate user-facing session type was deleted**,
+which removes the collision at its source. There is no mapper to write.
+
+`SessionMode` survives as a schema because worker launch and provisioning inputs
+genuinely need a permission mode, and it now says so explicitly.
+
+### `WorkerChildSession` replaces `Session`
+
+Worker orchestration still needs a session record — `/worker/children` returns
+one. It is cut down to what an orchestrator reasons about: identity, project,
+kind, harness, display name, branch, activity state, status, termination and
+timestamps. Nothing about presentation, nothing naming a vendor. It must not
+grow into a product DTO, and a test now says so.
+
+`createGitHubScratchProject` returns `sessionId` rather than a session object,
+so provisioning does not become a second source of truth for session state.
+
+### No vendor names anywhere user-facing
+
+Per an explicit user decision. `TestNoVendorIdentityOutsideProviderAdmin` scans
+*every* schema — not a named few — for `provider`, `providerSandboxId`,
+`region`, `zone`, `host`, `instanceId`, `workspaceId` and similar, and for any
+reference to `ProviderName`. Two schemas are allowed to name a provider:
+`RedactedProviderConnection` (the org-admin view of a connection an operator
+configured) and `WorkerCredentialResponse` (which tells a worker which *agent*
+vendor its credential is for). Generic provisioning status lives only on
+`Project.lifecycleState`.
+
+`TestNoDuplicateProductSurface` rejects any reintroduced product schema or
+session product route, so the duplicate API cannot come back by accident.
+
+### Idempotency
+
+Required on placement create, delete and resume, and on the GitHub provisioning
+routes. Nothing else here creates or destroys durable state.
+
+## Superseded — the product surface is `/api/v1`, not a copy of it here
 
 Decided by the integrating session (140) on 2026-08-22, after the revision
 below had already landed. Recorded here because it changes where work belongs,

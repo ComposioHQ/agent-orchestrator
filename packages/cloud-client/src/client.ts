@@ -1,19 +1,15 @@
 import type {
-  AOSession,
   AgentProfile,
-  ClientEvent,
-  ClientEventPage,
-  CreateWorkerChildInput,
+  AOSession,
   CreateGitHubProjectInput,
   CreateGitHubScratchProjectInput,
   CreateGitHubScratchProjectResponse,
   CreateProjectInput,
-  CreateSessionInput,
+  CreateWorkerChildInput,
   CurrentAccount,
   DeleteProjectResponse,
   DeleteSessionResponse,
   ErrorEnvelope,
-  EventReplayOptions,
   GitHubInstallation,
   GitHubInstallationStart,
   GitHubRepositoryPage,
@@ -24,28 +20,23 @@ import type {
   PaginationOptions,
   Project,
   ProjectPage,
-  ResumeProjectInput,
   PutAgentProviderConnectionInput,
   RedactedProviderConnection,
   RefreshTokenInput,
   RequestOptions,
-  RestoreSessionInput,
-  Session,
-  SessionActivity,
-  SessionPage,
-  SessionPullRequests,
-  SessionReviewState,
+  ResumeProjectInput,
   TerminalConnection,
   TerminalKind,
   TerminalScope,
   TerminalTicket,
-  TerminateSessionInput,
-  UpdateProjectInput,
   UserMessageEvent,
+  WorkerAgentTerminalResponse,
   WorkerBootstrapInput,
   WorkerBootstrapResponse,
   WorkerCancellationResponse,
   WorkerCheckoutGrantResponse,
+  WorkerChildSession,
+  WorkerChildSessionPage,
   WorkerCompleteTransportInput,
   WorkerCompleteTurnInput,
   WorkerCredentialResponse,
@@ -55,16 +46,12 @@ import type {
   WorkerFinishTurnResponse,
   WorkerHeartbeatInput,
   WorkerHeartbeatResponse,
-  WorkerAgentTerminalResponse,
   WorkerOKResponse,
   WorkerTerminalExitInput,
   WorkerTerminalOutputInput,
   WorkerTerminalOutputResponse,
   WorkerTransportRequest,
   WorkerTurn,
-  WorkspaceDiff,
-  WorkspaceEntryPage,
-  WorkspaceFile,
   WorkspaceFileWriteInput,
 } from "./types.js";
 
@@ -216,22 +203,6 @@ export class CloudClient {
     );
   }
 
-  updateProject(
-    orgId: string,
-    projectId: string,
-    input: UpdateProjectInput,
-    options: RequestOptions = {},
-  ): Promise<{ project: Project }> {
-    return this.request(
-      this.orgPath(orgId, `/projects/${encodeURIComponent(projectId)}`),
-      {
-        method: "PATCH",
-        body: input,
-        signal: options.signal,
-      },
-    );
-  }
-
   deleteProject(
     orgId: string,
     projectId: string,
@@ -372,286 +343,6 @@ export class CloudClient {
     });
   }
 
-  listSessions(
-    orgId: string,
-    options: PaginationOptions & { projectId?: string } = {},
-  ): Promise<SessionPage> {
-    return this.request(
-      this.withQuery(this.orgPath(orgId, "/sessions"), {
-        cursor: options.cursor,
-        limit: options.limit,
-        projectId: options.projectId,
-      }),
-      { signal: options.signal },
-    );
-  }
-
-  getSession(
-    orgId: string,
-    sessionId: string,
-    options: RequestOptions = {},
-  ): Promise<{ session: Session }> {
-    return this.request(
-      this.orgPath(orgId, `/sessions/${encodeURIComponent(sessionId)}`),
-      options,
-    );
-  }
-
-  createSession(
-    orgId: string,
-    input: CreateSessionInput,
-    options: IdempotentRequestOptions,
-  ): Promise<{ session: Session }> {
-    return this.request(this.orgPath(orgId, "/sessions"), {
-      method: "POST",
-      body: input,
-      idempotencyKey: options.idempotencyKey,
-      signal: options.signal,
-    });
-  }
-
-  deleteSession(
-    orgId: string,
-    sessionId: string,
-    options: IdempotentRequestOptions,
-  ): Promise<DeleteSessionResponse> {
-    return this.request(
-      this.orgPath(orgId, `/sessions/${encodeURIComponent(sessionId)}`),
-      {
-        method: "DELETE",
-        idempotencyKey: options.idempotencyKey,
-        signal: options.signal,
-      },
-    );
-  }
-
-  /**
-   * @deprecated Superseded by `POST /api/v1/sessions/{sessionId}/kill`, the
-   * same reversible stop. See `contracts/cloud/CHANGELOG.md`.
-   */
-  terminateSession(
-    orgId: string,
-    sessionId: string,
-    options: IdempotentRequestOptions & { input?: TerminateSessionInput },
-  ): Promise<{ session: Session }> {
-    return this.request(
-      this.orgPath(
-        orgId,
-        `/sessions/${encodeURIComponent(sessionId)}/terminate`,
-      ),
-      {
-        method: "POST",
-        body: options.input ?? {},
-        idempotencyKey: options.idempotencyKey,
-        signal: options.signal,
-      },
-    );
-  }
-
-  /**
-   * @deprecated Superseded by `POST /api/v1/sessions/{sessionId}/restore`.
-   * See `contracts/cloud/CHANGELOG.md`.
-   */
-  restoreSession(
-    orgId: string,
-    sessionId: string,
-    options: IdempotentRequestOptions & { input?: RestoreSessionInput },
-  ): Promise<{ session: Session }> {
-    return this.request(
-      this.orgPath(orgId, `/sessions/${encodeURIComponent(sessionId)}/restore`),
-      {
-        method: "POST",
-        body: options.input ?? {},
-        idempotencyKey: options.idempotencyKey,
-        signal: options.signal,
-      },
-    );
-  }
-
-  getSessionActivity(
-    orgId: string,
-    sessionId: string,
-    options: RequestOptions = {},
-  ): Promise<SessionActivity> {
-    return this.request(
-      this.orgPath(orgId, `/sessions/${encodeURIComponent(sessionId)}/activity`),
-      options,
-    );
-  }
-
-  listSessionPullRequests(
-    orgId: string,
-    sessionId: string,
-    options: RequestOptions = {},
-  ): Promise<SessionPullRequests> {
-    return this.request(
-      this.orgPath(
-        orgId,
-        `/sessions/${encodeURIComponent(sessionId)}/pull-requests`,
-      ),
-      options,
-    );
-  }
-
-  getSessionReviewState(
-    orgId: string,
-    sessionId: string,
-    options: RequestOptions = {},
-  ): Promise<SessionReviewState> {
-    return this.request(
-      this.orgPath(
-        orgId,
-        `/sessions/${encodeURIComponent(sessionId)}/reviews`,
-      ),
-      options,
-    );
-  }
-
-  sendMessage(
-    orgId: string,
-    sessionId: string,
-    text: string,
-    options: IdempotentRequestOptions,
-  ): Promise<{ event: UserMessageEvent }> {
-    return this.request(
-      this.orgPath(
-        orgId,
-        `/sessions/${encodeURIComponent(sessionId)}/messages`,
-      ),
-      {
-        method: "POST",
-        body: { text },
-        idempotencyKey: options.idempotencyKey,
-        signal: options.signal,
-      },
-    );
-  }
-
-  cancelTurn(
-    orgId: string,
-    sessionId: string,
-    turnId: string,
-    options: IdempotentRequestOptions,
-  ): Promise<WorkerOKResponse> {
-    return this.request(
-      this.orgPath(
-        orgId,
-        `/sessions/${encodeURIComponent(sessionId)}/turns/${encodeURIComponent(turnId)}/cancel`,
-      ),
-      {
-        method: "POST",
-        idempotencyKey: options.idempotencyKey,
-        signal: options.signal,
-      },
-    );
-  }
-
-  replayEvents(
-    orgId: string,
-    sessionId: string,
-    options: EventReplayOptions = {},
-  ): Promise<ClientEventPage> {
-    const path = this.orgPath(
-      orgId,
-      `/sessions/${encodeURIComponent(sessionId)}/chat-events`,
-    );
-    return this.request(
-      this.withQuery(path, {
-        after: options.after ?? 0,
-        limit: options.limit,
-      }),
-      { signal: options.signal },
-    );
-  }
-
-  async *streamEvents(
-    orgId: string,
-    sessionId: string,
-    options: Omit<EventReplayOptions, "limit"> = {},
-  ): AsyncGenerator<ClientEvent, void, void> {
-    const endpoint = this.orgPath(
-      orgId,
-      `/sessions/${encodeURIComponent(sessionId)}/events`,
-    );
-    let after = options.after ?? 0;
-    let retryAttempt = 0;
-
-    while (!options.signal?.aborted) {
-      let receivedEvent = false;
-      try {
-        const path = this.withQuery(endpoint, { after });
-        const response = await this.authorizedFetch(path, {
-          headers: { Accept: "text/event-stream" },
-          signal: options.signal,
-        });
-        await this.throwIfError(response);
-        if (!response.body) {
-          throw this.invalidResponse(
-            response.status,
-            "Cloud event stream returned no response body.",
-          );
-        }
-
-        const reader = response.body.getReader();
-        const decoder = new TextDecoder();
-        let buffer = "";
-        try {
-          while (!options.signal?.aborted) {
-            const { done, value } = await reader.read();
-            buffer += decoder.decode(value, { stream: !done });
-            buffer = buffer.replaceAll("\r\n", "\n");
-
-            let boundary = buffer.indexOf("\n\n");
-            while (boundary >= 0) {
-              const event = parseSSEBlock(buffer.slice(0, boundary));
-              buffer = buffer.slice(boundary + 2);
-              if (event && event.sequence > after) {
-                after = event.sequence;
-                receivedEvent = true;
-                yield event;
-              }
-              boundary = buffer.indexOf("\n\n");
-            }
-
-            if (done) {
-              const event = parseSSEBlock(buffer);
-              if (event && event.sequence > after) {
-                after = event.sequence;
-                receivedEvent = true;
-                yield event;
-              }
-              break;
-            }
-          }
-        } finally {
-          await reader.cancel().catch(() => undefined);
-          reader.releaseLock();
-        }
-      } catch (error) {
-        if (options.signal?.aborted) return;
-        if (!isRetryableStreamError(error)) throw error;
-      }
-
-      if (options.signal?.aborted) return;
-      retryAttempt = receivedEvent ? 0 : retryAttempt + 1;
-      await waitForRetry(retryAttempt, options.signal);
-    }
-  }
-
-  getTerminalConnection(
-    orgId: string,
-    sessionId: string,
-    options: RequestOptions & { kind?: TerminalKind } = {},
-  ): Promise<TerminalConnection> {
-    const endpoint = this.orgPath(
-      orgId,
-      `/sessions/${encodeURIComponent(sessionId)}/terminal-connection`,
-    );
-    return this.request(this.withQuery(endpoint, { kind: options.kind }), {
-      signal: options.signal,
-    });
-  }
-
   createTerminalTicket(
     orgId: string,
     sessionId: string,
@@ -718,68 +409,6 @@ export class CloudClient {
       kind: ticket.kind ?? options.kind,
       connection: ticket.connection,
     });
-  }
-
-  listWorkspaceFiles(
-    orgId: string,
-    sessionId: string,
-    path = "",
-    options: PaginationOptions = {},
-  ): Promise<WorkspaceEntryPage> {
-    const endpoint = this.orgPath(
-      orgId,
-      `/sessions/${encodeURIComponent(sessionId)}/workspace/files`,
-    );
-    return this.request(
-      this.withQuery(endpoint, {
-        path,
-        cursor: options.cursor,
-        limit: options.limit,
-      }),
-      { signal: options.signal },
-    );
-  }
-
-  readWorkspaceFile(
-    orgId: string,
-    sessionId: string,
-    path: string,
-    options: RequestOptions = {},
-  ): Promise<WorkspaceFile> {
-    const endpoint = this.orgPath(
-      orgId,
-      `/sessions/${encodeURIComponent(sessionId)}/workspace/file`,
-    );
-    return this.request(this.withQuery(endpoint, { path }), options);
-  }
-
-  writeWorkspaceFile(
-    orgId: string,
-    sessionId: string,
-    input: WorkspaceFileWriteInput,
-    options: RequestOptions = {},
-  ): Promise<WorkspaceFile> {
-    return this.request(
-      this.orgPath(
-        orgId,
-        `/sessions/${encodeURIComponent(sessionId)}/workspace/file`,
-      ),
-      { ...options, method: "PUT", body: input },
-    );
-  }
-
-  getWorkspaceDiff(
-    orgId: string,
-    sessionId: string,
-    options: RequestOptions = {},
-  ): Promise<WorkspaceDiff> {
-    return this.request(
-      this.orgPath(
-        orgId,
-        `/sessions/${encodeURIComponent(sessionId)}/workspace/diff`,
-      ),
-      options,
-    );
   }
 
   async listProviderConnections(
@@ -1071,7 +700,7 @@ export class WorkerClient {
 
   listChildren(
     options: PaginationOptions = {},
-  ): Promise<SessionPage> {
+  ): Promise<WorkerChildSessionPage> {
     const query = new URLSearchParams();
     if (options.cursor !== undefined) query.set("cursor", options.cursor);
     if (options.limit !== undefined) query.set("limit", String(options.limit));
@@ -1084,7 +713,7 @@ export class WorkerClient {
   createChild(
     input: CreateWorkerChildInput,
     options: IdempotentRequestOptions,
-  ): Promise<{ session: Session }> {
+  ): Promise<{ session: WorkerChildSession }> {
     return this.request("/api/cloud/v1/worker/children", {
       method: "POST",
       body: input,
@@ -1260,25 +889,6 @@ function validateIdempotencyKey(value: string): string {
     throw new TypeError("idempotencyKey must contain between 1 and 200 characters.");
   }
   return key;
-}
-
-function parseSSEBlock(block: string): ClientEvent | undefined {
-  const data = block
-    .split("\n")
-    .filter((line) => line.startsWith("data:"))
-    .map((line) => line.slice(5).trimStart())
-    .join("\n");
-  return data ? (JSON.parse(data) as ClientEvent) : undefined;
-}
-
-function isRetryableStreamError(error: unknown): boolean {
-  if (!(error instanceof CloudApiError)) return true;
-  return (
-    error.status === 408 ||
-    error.status === 425 ||
-    error.status === 429 ||
-    error.status >= 500
-  );
 }
 
 async function waitForRetry(

@@ -3,13 +3,33 @@ info:
   title: AO Cloud Public API
   version: 1.0.0
   description: |
-    Client-facing contract for AO Cloud. The control-plane foundation in this
-    repository currently serves the Google authentication and current-account
-    routes. Project, session, worker, SCM, terminal, and workspace routes remain
-    staged contracts for later implementation.
-    `backend/internal/cloud/httpapi` holds a parity test that fails if a route
-    is mounted without an entry here, or contracted without being listed as
-    still owed.
+    Control-plane contract for AO Cloud: authentication, organization
+    administration, project **placement**, terminal ticket minting, SCM
+    installation, and the worker/compute-plane API.
+
+    ## This is not the product API
+
+    **The product contract is the generated app OpenAPI at `/api/v1`**
+    (`backend/internal/httpd/apispec/openapi.yaml`). Once a project exists,
+    every product read and mutation — sessions, messages, events, pull
+    requests, reviews, workspace files — goes to those routes, with their exact
+    existing DTOs and controller semantics. A hosted deployment mounts them
+    unchanged; it does not restate them here.
+
+    This document deliberately contains no `Session` schema, no session product
+    routes, and no workspace or event routes. An earlier draft did, and it was
+    wrong twice over: it duplicated an API that already existed, and its second
+    user-facing session type collided with the app's — Cloud's `mode` meant a
+    permission mode while the app's meant chat-versus-TUI. The duplicate type
+    was deleted rather than reconciled, which removes the collision at its
+    source. `WorkerChildSession` is the one remaining session record; it exists
+    for worker orchestration, carries nothing about presentation, and must not
+    grow into a product DTO.
+
+    What stays here is what a local daemon has no equivalent for: who you are,
+    which organization you act in, where a project is provisioned and how to
+    resume it, the credential that lets a client attach to a terminal, and the
+    GitHub App installation that grants repository access.
 
     ## Conventions
 
@@ -20,34 +40,28 @@ info:
     (a WebSocket handshake cannot carry headers, so it uses a single-use
     ticket), and the worker routes, which use their own `Worker` credential.
 
-    ## Where the product surface lives
+    **Tenant scoping.** On these control-plane routes the organization is in the
+    path, because here the organization *is* the resource being administered. A
+    caller without a membership in `{orgId}` gets the same answer as one asking
+    for an org that does not exist, so the surface cannot be used to probe for
+    tenants. Account-wide routes (`/me`, `/github/user`) have no `{orgId}`
+    because they describe the user rather than a tenant.
 
-    Decided by the integrating session, 2026-08-22. **The hosted product API is
-    the existing app API at `/api/v1`, not a second copy of it here.** A hosted
-    deployment mounts the app routes unchanged and scopes them with a header;
-    `/api/cloud/v1` keeps only what has no local equivalent — authentication and
-    organization administration.
+    Hosted **app** routes at `/api/v1` scope differently: they carry
+    `X-AO-Organization-ID` after the bearer token, and middleware verifies an
+    active membership and injects the tenant context. Project and session
+    identifiers stay exactly where they already are in those routes and bodies,
+    and the stores enforce workspace ownership. A local daemon serves the same
+    routes with no header and no tenant, which is what keeps local AO a complete
+    product rather than a degraded cloud client. See the `OrganizationHeader`
+    parameter.
 
-    This document still describes product operations under
-    `/api/cloud/v1/orgs/{orgId}/...`. Those predate the decision. They are being
-    reconciled; see `CHANGELOG.md` for status and do not build new work against
-    them without checking there first.
-
-    **Tenant scoping on hosted app routes.** `/api/v1` routes carry
-    `X-AO-Organization-ID` after the bearer token. Middleware verifies the
-    caller holds an active membership in that organization and injects the
-    tenant context; project and session identifiers stay exactly where they are
-    in the existing routes and bodies, and the stores enforce workspace
-    ownership. A local daemon serves the same routes with no header and no
-    tenant, which is what keeps local AO a complete product rather than a
-    degraded cloud client.
-
-    **Tenant scoping on `/api/cloud/v1`.** The organization is in the path,
-    because on these routes the organization *is* the resource being
-    administered. A caller without a membership in `{orgId}` gets the same
-    answer as one asking for an org that does not exist, so the surface cannot
-    be used to probe for tenants. Account-wide routes (`/me`, `/github/user`)
-    have no `{orgId}` because they describe the user rather than a tenant.
+    **No vendor names.** Nothing a user can see names, or hints at, a compute
+    provider. There is no sandbox provider, provider-assigned identifier,
+    region, or workspace identifier on any client-facing DTO. Generic
+    provisioning status lives only on the placement DTO, as
+    `Project.lifecycleState`. The organization-admin provider-connection routes
+    name providers because configuring one is their entire purpose.
 
     **Errors.** Every non-2xx response is an `ErrorEnvelope`, including the
     WebSocket upgrade failures. `code` is the stable machine-readable value —
@@ -59,33 +73,25 @@ info:
     `page.hasMore` is true. Cursors are opaque and single-use for a given
     ordering — never construct or persist one.
 
-    **Idempotency.** Every route that creates or destroys durable state requires
-    `Idempotency-Key`. Replaying a key with the same command returns the original
-    result, so a client that lost the response can retry without creating a
-    second project or reviving a deleted session; replaying it with a different
-    command is `IDEMPOTENCY_CONFLICT`. Reads and updates do not take the header —
-    `updateProject` is a full-value PATCH and is naturally idempotent.
+    **Idempotency.** Placement create, delete and resume require
+    `Idempotency-Key`, as do the provisioning routes that create a project from
+    GitHub. Replaying a key with the same command returns the original result,
+    so a client that lost the response can retry without provisioning a second
+    workspace; replaying it with a different command is `IDEMPOTENCY_CONFLICT`.
 
-    **Local parity.** Fields that exist only to keep the desktop's existing
-    `/api/v1` components working against Cloud are optional, and their local
-    default is stated on the field. Cloud-only fields — org, workspace, and
-    provider state — are optional too and are simply absent for local AO. Note
-    that defaults are documented in prose rather than as a schema `default:`:
+    **Local defaults in prose.** Where a field has a documented default, it is
+    stated in the description rather than as a schema `default:`.
     `openapi-typescript` promotes a defaulted response property to a *required*
-    one, which would defeat the point.
+    one, which would defeat the purpose of an optional field.
 security:
   - bearerAuth: []
 tags:
   - name: Account
   - name: Agents
   - name: Projects
-  - name: Sessions
+    description: Project placement — provisioning and discovery, not product reads.
   - name: GitHub
-  - name: Pull Requests
-  - name: Reviews
-  - name: Events
   - name: Terminal
-  - name: Workspace
   - name: Providers
   - name: Worker Lifecycle
   - name: Worker Execution
@@ -301,43 +307,16 @@ paths:
     get:
       operationId: getProject
       tags: [Projects]
-      deprecated: true
       description: |
-        **Superseded** by `GET /api/v1/projects/{id}` on the hosted app API,
-        which already returns this project. Kept until the reconciliation
-        described in `CHANGELOG.md` lands so nothing breaks mid-flight; do not
-        build new work against it.
+        Read one project placement the caller's organization owns.
 
-        Read one project the caller's organization owns. Discovery pairs this
-        with `listProjects`: the page carries the same `Project` shape, so a
-        client that already has a listed project never needs this call to
-        render, only to refresh a single row.
+        This is placement discovery, not a product read: it answers where a
+        project is provisioned and what state that provisioning is in. Anything
+        a user sees about the project — its name, its settings, its sessions —
+        comes from the app API's own project routes at `/api/v1`.
       responses:
         "200":
           description: Project details.
-          content:
-            application/json:
-              schema:
-                type: object
-                additionalProperties: false
-                required: [project]
-                properties:
-                  project:
-                    $ref: "#/components/schemas/Project"
-        default:
-          $ref: "#/components/responses/Error"
-    patch:
-      operationId: updateProject
-      tags: [Projects]
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/UpdateProjectInput"
-      responses:
-        "200":
-          description: Project settings updated.
           content:
             application/json:
               schema:
@@ -541,7 +520,7 @@ paths:
       - $ref: "#/components/parameters/OrgId"
     post:
       operationId: createGitHubScratchProject
-      tags: [GitHub, Projects, Sessions]
+      tags: [GitHub, Projects]
       parameters:
         - $ref: "#/components/parameters/IdempotencyKey"
       requestBody:
@@ -557,350 +536,6 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/CreateGitHubScratchProjectResponse"
-        default:
-          $ref: "#/components/responses/Error"
-  /api/cloud/v1/orgs/{orgId}/sessions:
-    parameters:
-      - $ref: "#/components/parameters/OrgId"
-    get:
-      operationId: listSessions
-      tags: [Sessions]
-      parameters:
-        - $ref: "#/components/parameters/Cursor"
-        - $ref: "#/components/parameters/Limit"
-        - name: projectId
-          in: query
-          schema:
-            type: string
-      responses:
-        "200":
-          description: A page of sessions in the tenant.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/SessionPage"
-        default:
-          $ref: "#/components/responses/Error"
-    post:
-      operationId: createSession
-      tags: [Sessions]
-      parameters:
-        - $ref: "#/components/parameters/IdempotencyKey"
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/CreateSessionInput"
-      responses:
-        "201":
-          description: Session created.
-          content:
-            application/json:
-              schema:
-                type: object
-                required: [session]
-                properties:
-                  session:
-                    $ref: "#/components/schemas/Session"
-        default:
-          $ref: "#/components/responses/Error"
-  /api/cloud/v1/orgs/{orgId}/sessions/{sessionId}:
-    parameters:
-      - $ref: "#/components/parameters/OrgId"
-      - $ref: "#/components/parameters/SessionId"
-    get:
-      operationId: getSession
-      tags: [Sessions]
-      responses:
-        "200":
-          description: Session details.
-          content:
-            application/json:
-              schema:
-                type: object
-                required: [session]
-                properties:
-                  session:
-                    $ref: "#/components/schemas/Session"
-        default:
-          $ref: "#/components/responses/Error"
-    delete:
-      operationId: deleteSession
-      tags: [Sessions]
-      parameters:
-        - $ref: "#/components/parameters/IdempotencyKey"
-      description: |
-        Delete the session's sandbox permanently. Durable history — messages,
-        events, pull-request observations — is retained, so the session stays
-        readable but can never be restored. Use `terminateSession` for the
-        reversible stop.
-
-        Idempotent under `Idempotency-Key`: retrying the same key returns the
-        original result instead of failing on the now-missing sandbox.
-      responses:
-        "202":
-          description: Session sandbox deletion was requested; durable history is retained.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/DeleteSessionResponse"
-        default:
-          $ref: "#/components/responses/Error"
-  /api/cloud/v1/orgs/{orgId}/sessions/{sessionId}/terminate:
-    parameters:
-      - $ref: "#/components/parameters/OrgId"
-      - $ref: "#/components/parameters/SessionId"
-    post:
-      operationId: terminateSession
-      tags: [Sessions]
-      deprecated: true
-      parameters:
-        - $ref: "#/components/parameters/IdempotencyKey"
-      description: |
-        **Superseded** by `POST /api/v1/sessions/{sessionId}/kill`, which is the
-        same reversible stop and already exists on the hosted app API. Kept
-        until the reconciliation in `CHANGELOG.md` lands.
-
-        Stop the agent and release the session's compute, keeping the session
-        and its history restorable. This is the Cloud counterpart of the local
-        `POST /api/v1/sessions/{sessionId}/kill`, and the same reversible
-        contract: `isTerminated` becomes true, `activityState` becomes `exited`,
-        `status` becomes `terminated`, and `restoreSession` can bring it back.
-
-        Termination is asynchronous — the response reports the session with the
-        terminal intent already recorded, while the sandbox may still be
-        stopping. Terminating an already-terminated session is a no-op that
-        returns the session unchanged.
-      requestBody:
-        required: false
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/TerminateSessionInput"
-      responses:
-        "202":
-          description: Termination recorded; sandbox teardown may still be in flight.
-          content:
-            application/json:
-              schema:
-                type: object
-                additionalProperties: false
-                required: [session]
-                properties:
-                  session:
-                    $ref: "#/components/schemas/Session"
-        default:
-          $ref: "#/components/responses/Error"
-  /api/cloud/v1/orgs/{orgId}/sessions/{sessionId}/restore:
-    parameters:
-      - $ref: "#/components/parameters/OrgId"
-      - $ref: "#/components/parameters/SessionId"
-    post:
-      operationId: restoreSession
-      tags: [Sessions]
-      deprecated: true
-      parameters:
-        - $ref: "#/components/parameters/IdempotencyKey"
-      description: |
-        **Superseded** by `POST /api/v1/sessions/{sessionId}/restore`, which
-        already exists on the hosted app API. Kept until the reconciliation in
-        `CHANGELOG.md` lands.
-
-        Bring a terminated session back: re-provision a sandbox, restore the
-        workspace at the branch the session owns, and resume the agent with its
-        transcript. Counterpart of the local
-        `POST /api/v1/sessions/{sessionId}/restore`.
-
-        Asynchronous, like terminate: the response carries the session with
-        `isTerminated` already false and `sandbox.state` reporting how far the
-        re-provision has got. A restore whose project is `suspended` fails with
-        `PROJECT_SUSPENDED` — resume the project first. A session whose sandbox
-        was deleted with `deleteSession` fails with `SESSION_SANDBOX_DELETED`.
-      requestBody:
-        required: false
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/RestoreSessionInput"
-      responses:
-        "202":
-          description: Restore accepted; the sandbox may still be provisioning.
-          content:
-            application/json:
-              schema:
-                type: object
-                additionalProperties: false
-                required: [session]
-                properties:
-                  session:
-                    $ref: "#/components/schemas/Session"
-        default:
-          $ref: "#/components/responses/Error"
-  /api/cloud/v1/orgs/{orgId}/sessions/{sessionId}/activity:
-    parameters:
-      - $ref: "#/components/parameters/OrgId"
-      - $ref: "#/components/parameters/SessionId"
-    get:
-      operationId: getSessionActivity
-      tags: [Sessions]
-      description: |
-        The session's current activity, runtime, and sandbox state without the
-        rest of the session record. Intended for the poll a client runs while a
-        spawn, terminate, restore, or project resume settles — the payload is
-        small enough to poll at a few seconds without the cost of a full
-        `getSession`.
-
-        Steady-state clients should prefer `streamClientEvents`; this route
-        exists because sandbox transitions are not turn events and so do not
-        appear on that stream.
-
-        This is the only place sandbox state is published. It is deliberately
-        not on the `Session` DTO: that DTO is what the desktop's existing
-        components render, and compute-plane lifecycle is not something a
-        session row should have to know about. A client polls here while a
-        transition is in flight and otherwise ignores it.
-
-        Unlike local AO's `POST /api/v1/sessions/{sessionId}/activity`, which is
-        how an agent hook *reports* a state, this is read-only. Cloud agents
-        report activity over the worker route (`publishEvent`), never here.
-
-        Partly superseded: the agent half of this payload is already on the app
-        API's session record, which carries `activity`. The sandbox half is not
-        — no `/api/v1` route reports compute-plane lifecycle, because a local
-        daemon has none. That is why this route is not deprecated alongside the
-        others; see `CHANGELOG.md`.
-      responses:
-        "200":
-          description: The session's activity snapshot.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/SessionActivity"
-        default:
-          $ref: "#/components/responses/Error"
-  /api/cloud/v1/orgs/{orgId}/sessions/{sessionId}/pull-requests:
-    parameters:
-      - $ref: "#/components/parameters/OrgId"
-      - $ref: "#/components/parameters/SessionId"
-    get:
-      operationId: listSessionPullRequests
-      tags: [Pull Requests]
-      responses:
-        "200":
-          description: Normalized provider pull-request observations for the session.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/SessionPullRequests"
-        default:
-          $ref: "#/components/responses/Error"
-  /api/cloud/v1/orgs/{orgId}/sessions/{sessionId}/reviews:
-    parameters:
-      - $ref: "#/components/parameters/OrgId"
-      - $ref: "#/components/parameters/SessionId"
-    get:
-      operationId: getSessionReviewState
-      tags: [Reviews]
-      responses:
-        "200":
-          description: AO review planning state and recorded runs for the session.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/SessionReviewState"
-        default:
-          $ref: "#/components/responses/Error"
-  /api/cloud/v1/orgs/{orgId}/sessions/{sessionId}/messages:
-    parameters:
-      - $ref: "#/components/parameters/OrgId"
-      - $ref: "#/components/parameters/SessionId"
-    post:
-      operationId: sendMessage
-      tags: [Sessions]
-      parameters:
-        - $ref: "#/components/parameters/IdempotencyKey"
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [text]
-              properties:
-                text:
-                  type: string
-                  minLength: 1
-                  maxLength: 65536
-      responses:
-        "202":
-          description: Message accepted and durably appended.
-          content:
-            application/json:
-              schema:
-                type: object
-                required: [event]
-                properties:
-                  event:
-                    $ref: "#/components/schemas/UserMessageEvent"
-        default:
-          $ref: "#/components/responses/Error"
-  /api/cloud/v1/orgs/{orgId}/sessions/{sessionId}/turns/{turnId}/cancel:
-    parameters:
-      - $ref: "#/components/parameters/OrgId"
-      - $ref: "#/components/parameters/SessionId"
-      - $ref: "#/components/parameters/TurnId"
-    post:
-      operationId: cancelTurn
-      tags: [Sessions]
-      parameters:
-        - $ref: "#/components/parameters/IdempotencyKey"
-      responses:
-        "202":
-          description: Cancellation was durably requested for the turn.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/WorkerOKResponse"
-        default:
-          $ref: "#/components/responses/Error"
-  /api/cloud/v1/orgs/{orgId}/sessions/{sessionId}/chat-events:
-    parameters:
-      - $ref: "#/components/parameters/OrgId"
-      - $ref: "#/components/parameters/SessionId"
-    get:
-      operationId: replayClientEvents
-      tags: [Events]
-      parameters:
-        - $ref: "#/components/parameters/After"
-        - $ref: "#/components/parameters/EventLimit"
-      responses:
-        "200":
-          description: Client-visible events after the supplied sequence.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ClientEventPage"
-        default:
-          $ref: "#/components/responses/Error"
-  /api/cloud/v1/orgs/{orgId}/sessions/{sessionId}/events:
-    parameters:
-      - $ref: "#/components/parameters/OrgId"
-      - $ref: "#/components/parameters/SessionId"
-    get:
-      operationId: streamClientEvents
-      tags: [Events]
-      parameters:
-        - $ref: "#/components/parameters/After"
-      responses:
-        "200":
-          description: |
-            Replay followed by live client-visible events. Each SSE data field
-            contains a ClientEvent; the SSE id is its sequence.
-          content:
-            text/event-stream:
-              schema:
-                type: string
         default:
           $ref: "#/components/responses/Error"
   /api/cloud/v1/orgs/{orgId}/sessions/{sessionId}/terminal-ticket:
@@ -958,41 +593,6 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/TerminalTicket"
-        default:
-          $ref: "#/components/responses/Error"
-  /api/cloud/v1/orgs/{orgId}/sessions/{sessionId}/terminal-connection:
-    parameters:
-      - $ref: "#/components/parameters/OrgId"
-      - $ref: "#/components/parameters/SessionId"
-    get:
-      operationId: getTerminalConnection
-      tags: [Terminal]
-      description: |
-        Where and how to attach to this session's terminal, without minting a
-        ticket. A client calls this to decide whether to offer a terminal at all
-        — `kinds` reports which terminals the session actually has, and an empty
-        `kinds` means a session whose sandbox is not running has nothing to
-        attach to.
-
-        The attach host is returned rather than assumed. Cloud is free to serve
-        terminals from a listener that is not the control plane's own origin, so
-        a client must use `url` from here (or from the ticket) and must not
-        rebuild it from the API base URL.
-      parameters:
-        - name: kind
-          in: query
-          description: |
-            Restrict the answer to one terminal kind. Absent describes every
-            kind the session has.
-          schema:
-            $ref: "#/components/schemas/TerminalKind"
-      responses:
-        "200":
-          description: Terminal attachment metadata for the session.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/TerminalConnection"
         default:
           $ref: "#/components/responses/Error"
   /api/cloud/v1/terminal:
@@ -1080,87 +680,6 @@ paths:
               schema:
                 type: string
               description: Always the value of `TerminalConnection.protocol`.
-        default:
-          $ref: "#/components/responses/Error"
-  /api/cloud/v1/orgs/{orgId}/sessions/{sessionId}/workspace/files:
-    parameters:
-      - $ref: "#/components/parameters/OrgId"
-      - $ref: "#/components/parameters/SessionId"
-    get:
-      operationId: listWorkspaceFiles
-      tags: [Workspace]
-      parameters:
-        - name: path
-          in: query
-          schema:
-            type: string
-            default: ""
-        - $ref: "#/components/parameters/Cursor"
-        - $ref: "#/components/parameters/Limit"
-      responses:
-        "200":
-          description: A page of entries in a workspace directory.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/WorkspaceEntryPage"
-        default:
-          $ref: "#/components/responses/Error"
-  /api/cloud/v1/orgs/{orgId}/sessions/{sessionId}/workspace/file:
-    parameters:
-      - $ref: "#/components/parameters/OrgId"
-      - $ref: "#/components/parameters/SessionId"
-    get:
-      operationId: readWorkspaceFile
-      tags: [Workspace]
-      parameters:
-        - name: path
-          in: query
-          required: true
-          schema:
-            type: string
-            minLength: 1
-      responses:
-        "200":
-          description: UTF-8 workspace file contents.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/WorkspaceFile"
-        default:
-          $ref: "#/components/responses/Error"
-    put:
-      operationId: writeWorkspaceFile
-      tags: [Workspace]
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/WorkspaceFileWriteInput"
-      responses:
-        "200":
-          description: The updated UTF-8 workspace file.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/WorkspaceFile"
-        default:
-          $ref: "#/components/responses/Error"
-  /api/cloud/v1/orgs/{orgId}/sessions/{sessionId}/workspace/diff:
-    parameters:
-      - $ref: "#/components/parameters/OrgId"
-      - $ref: "#/components/parameters/SessionId"
-    get:
-      operationId: getWorkspaceDiff
-      tags: [Workspace]
-      responses:
-        "200":
-          description: Workspace changes relative to the session compare base.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/WorkspaceDiff"
         default:
           $ref: "#/components/responses/Error"
   /api/cloud/v1/orgs/{orgId}/provider-connections:
@@ -1543,7 +1062,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/SessionPage"
+                $ref: "#/components/schemas/WorkerChildSessionPage"
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
@@ -1576,7 +1095,7 @@ paths:
                 required: [session]
                 properties:
                   session:
-                    $ref: "#/components/schemas/Session"
+                    $ref: "#/components/schemas/WorkerChildSession"
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
@@ -2183,12 +1702,6 @@ components:
           type: boolean
         nextCursor:
           type: string
-    ProjectKind:
-      type: string
-      enum: [single_repo, workspace, scratch]
-      description: |
-        Matches the local `/api/v1` project kind vocabulary so a shared view
-        renders a Cloud project and a local project with the same branch.
     ProjectLifecycleState:
       type: string
       enum: [provisioning, ready, suspended, archived, error]
@@ -2228,23 +1741,11 @@ components:
         updatedAt:
           type: string
           format: date-time
-        kind:
-          $ref: "#/components/schemas/ProjectKind"
-          description: |
-            Optional so an existing single-repository Cloud project stays valid
-            without a migration. Absent means `single_repo`, which is also what
-            a local AO single-repository project reports.
 
             The default is stated here rather than as a schema `default:`
             because `openapi-typescript` promotes a defaulted response property
             to a required one, which would break the clients this field exists
             to keep working.
-        agent:
-          type: string
-          description: |
-            Default harness for sessions spawned in this project, named to match
-            the local `/api/v1` project field. Absent means the organization
-            default applies.
         lifecycleState:
           $ref: "#/components/schemas/ProjectLifecycleState"
           description: |
@@ -2292,19 +1793,6 @@ components:
         config:
           type: object
           additionalProperties: true
-    UpdateProjectInput:
-      type: object
-      additionalProperties: false
-      required: [displayName, defaultBranch]
-      properties:
-        displayName:
-          type: string
-          minLength: 1
-          maxLength: 120
-        defaultBranch:
-          type: string
-          minLength: 1
-          maxLength: 255
     DeleteProjectResponse:
       type: object
       additionalProperties: false
@@ -2547,20 +2035,31 @@ components:
     CreateGitHubScratchProjectResponse:
       type: object
       additionalProperties: false
-      required: [project, repository, session]
+      required: [project, repository, sessionId]
       properties:
         project:
           $ref: "#/components/schemas/Project"
         repository:
           $ref: "#/components/schemas/GitHubRepository"
-        session:
-          $ref: "#/components/schemas/Session"
+        sessionId:
+          type: string
+          format: uuid
+          description: |
+            The first orchestrator session, by identifier only. Read it from the
+            app API — this route provisions, it does not become a second source
+            of truth for session state.
     SessionKind:
       type: string
       enum: [worker, orchestrator]
     SessionMode:
       type: string
       enum: [read-only, standard, trusted]
+      description: |
+        Permission mode a session's agent runs under. Used on worker launch and
+        provisioning inputs only — it is not a presentation field, and it is not
+        the local `/api/v1` session `mode`, which means `chat` or `tui`. Those
+        two meanings colliding is why the duplicate user-facing session type was
+        removed; this one survives because the compute plane genuinely needs it.
     SessionActivityState:
       type: string
       enum: [active, idle, waiting_input, blocked, exited]
@@ -2568,97 +2067,6 @@ components:
         Identical vocabulary to the local `/api/v1` agent activity state, so a
         shared view classifies a Cloud session and a local session with the same
         rule.
-    SessionInterfaceMode:
-      type: string
-      enum: [chat, tui]
-      description: |
-        Which interface the session presents, matching the local `/api/v1`
-        session `mode` field. Named `interfaceMode` on `Session` because Cloud's
-        `mode` already means the permission mode (`SessionMode`); a client
-        porting local code must read `interfaceMode`, not `mode`.
-    SandboxState:
-      type: string
-      enum:
-        - provisioning
-        - starting
-        - running
-        - suspended
-        - stopping
-        - stopped
-        - deleting
-        - deleted
-        - error
-      description: |
-        Compute-plane lifecycle of the session's sandbox, reported by the
-        provider. Only `running` accepts messages and terminal attachment.
-        `stopped` is restorable; `deleted` is not.
-    SessionSandbox:
-      type: object
-      additionalProperties: false
-      required: [state]
-      description: |
-        AO's own abstraction over whatever runs the session, deliberately
-        vendor-neutral: no provider name, no provider-assigned identifier, and
-        no placement. A client renders and retries from `state` alone, so
-        changing or adding a compute provider is invisible to every client and
-        cannot become a compatibility problem.
-      properties:
-        state:
-          $ref: "#/components/schemas/SandboxState"
-        lastTransitionAt:
-          type: string
-          format: date-time
-        message:
-          type: string
-          maxLength: 2048
-          description: |
-            Operator-facing detail, present when `state` is `error` and
-            otherwise only when a transition is unusually slow. Must not carry a
-            provider name, a provider-assigned identifier, or a region — the
-            control plane redacts those before they reach a client.
-    SessionActivity:
-      type: object
-      additionalProperties: false
-      required: [state, lastActivityAt]
-      properties:
-        state:
-          $ref: "#/components/schemas/SessionActivityState"
-        lastActivityAt:
-          type: string
-          format: date-time
-        runtimeConnected:
-          type: boolean
-          description: Absent means the caller should fall back to `Session.runtimeConnected`.
-        sandbox:
-          $ref: "#/components/schemas/SessionSandbox"
-        activeTurn:
-          $ref: "#/components/schemas/Turn"
-    TerminateSessionInput:
-      type: object
-      additionalProperties: false
-      properties:
-        reason:
-          type: string
-          maxLength: 2048
-          description: Recorded on the session for the operator-facing history.
-    RestoreSessionInput:
-      type: object
-      additionalProperties: false
-      properties:
-        sandboxProviderConnectionId:
-          type: string
-          format: uuid
-          description: |
-            Pin the restored sandbox to one organization provider connection.
-            Absent reuses the connection the session last ran on, falling back
-            to the organization default when that connection is gone.
-        prompt:
-          type: string
-          maxLength: 65536
-          description: |
-            Message to deliver once the agent is back. Absent restores the
-            session idle, which is what a client that is only reopening a
-            terminated session wants.
     SessionStatus:
       type: string
       enum:
@@ -2676,39 +2084,6 @@ components:
         - idle
         - terminated
         - no_signal
-    Turn:
-      type: object
-      additionalProperties: false
-      required: [id, sessionId, userMessageSequence, state, attemptCount, createdAt, updatedAt]
-      properties:
-        id:
-          type: string
-        sessionId:
-          type: string
-        userMessageSequence:
-          type: integer
-          format: int64
-          maximum: 9007199254740991
-        state:
-          type: string
-          enum: [queued, provisioning, running, cancel_requested, completed, failed]
-        attemptCount:
-          type: integer
-          minimum: 0
-        errorMessage:
-          type: string
-        startedAt:
-          type: string
-          format: date-time
-        completedAt:
-          type: string
-          format: date-time
-        createdAt:
-          type: string
-          format: date-time
-        updatedAt:
-          type: string
-          format: date-time
     WorkerBootstrapInput:
       type: object
       additionalProperties: false
@@ -3088,6 +2463,28 @@ components:
           maxLength: 4096
     WorkerWorkspaceWritePayload:
       $ref: "#/components/schemas/WorkspaceFileWriteInput"
+    WorkspaceEntry:
+      type: object
+      additionalProperties: false
+      required: [name, path, isDir, size, mode, modTime]
+      description: |
+        One entry in a sandbox directory listing, returned over the worker
+        transport. The product's own file browsing goes through the app API.
+      properties:
+        name:
+          type: string
+        path:
+          type: string
+        isDir:
+          type: boolean
+        size:
+          type: integer
+          format: int64
+        mode:
+          type: string
+        modTime:
+          type: string
+          format: date-time
     WorkerWorkspaceEntryPage:
       type: object
       additionalProperties: false
@@ -3420,30 +2817,32 @@ components:
             desiredState:
               type: string
               const: deleted
-    Session:
+    WorkerChildSession:
       type: object
       additionalProperties: false
       required:
         - id
-        - orgId
         - projectId
         - kind
         - harness
         - displayName
         - branch
-        - mode
-        - deniedCommands
         - activityState
         - status
-        - runtimeConnected
         - isTerminated
         - createdAt
         - updatedAt
+      description: |
+        The minimum a worker orchestrator needs to reason about a child session
+        it spawned. It is deliberately **not** a product DTO and must never grow
+        into one: the product contract for sessions is the app API's own session
+        record at `/api/v1`, and a second user-facing session type here is what
+        created the `mode` collision this schema was cut down to remove.
+
+        Nothing on it describes presentation, and nothing on it names or hints
+        at a compute vendor. A client rendering a session reads the app API.
       properties:
         id:
-          type: string
-          format: uuid
-        orgId:
           type: string
           format: uuid
         projectId:
@@ -3457,12 +2856,6 @@ components:
           type: string
         branch:
           type: string
-        mode:
-          $ref: "#/components/schemas/SessionMode"
-        deniedCommands:
-          type: array
-          items:
-            type: string
         activityState:
           $ref: "#/components/schemas/SessionActivityState"
         status:
@@ -3471,14 +2864,6 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/AgentCapability"
-        runtimeConnected:
-          type: boolean
-        runtimeState:
-          type: string
-        runtimeError:
-          type: string
-        activeTurn:
-          $ref: "#/components/schemas/Turn"
         isTerminated:
           type: boolean
         createdAt:
@@ -3487,90 +2872,7 @@ components:
         updatedAt:
           type: string
           format: date-time
-        activity:
-          $ref: "#/components/schemas/SessionActivity"
-          description: |
-            Same `{state, lastActivityAt}` shape the local `/api/v1` session
-            carries, so a component that already reads `session.activity`
-            renders a Cloud session unchanged. Absent means the client derives
-            it from `activityState` and `updatedAt`.
-        interfaceMode:
-          $ref: "#/components/schemas/SessionInterfaceMode"
-          description: Absent means `chat`.
-        model:
-          type: string
-          maxLength: 200
-          description: |
-            Model the harness is running, when the harness reports one. Absent
-            means the harness default.
-        issueId:
-          type: string
-          maxLength: 200
-          description: Tracker issue this session was spawned for, when there was one.
-        isPinned:
-          type: boolean
-          description: Absent means false.
-        pinnedAt:
-          type: [string, "null"]
-          format: date-time
-        terminateOnPrMerge:
-          type: boolean
-          description: Absent means false.
-        autoReviewEnabled:
-          type: boolean
-          description: Absent means the project setting applies.
-        autoInjectReview:
-          type: boolean
-          description: Absent means false.
-        autoInjectCI:
-          type: boolean
-          description: Absent means false.
-        terminatedAt:
-          type: string
-          format: date-time
-          description: Present only while `isTerminated` is true.
-    CreateSessionInput:
-      type: object
-      additionalProperties: false
-      required: [projectId, kind, harness, displayName, prompt]
-      properties:
-        projectId:
-          type: string
-          format: uuid
-        kind:
-          $ref: "#/components/schemas/SessionKind"
-        harness:
-          type: string
-          minLength: 1
-          maxLength: 120
-        displayName:
-          type: string
-          minLength: 1
-          maxLength: 80
-        prompt:
-          type: string
-          maxLength: 65536
-        mode:
-          $ref: "#/components/schemas/SessionMode"
-          default: trusted
-        deniedCommands:
-          type: array
-          items:
-            type: string
-          default: []
-        sandboxProviderConnectionId:
-          type: string
-          format: uuid
-        interfaceMode:
-          $ref: "#/components/schemas/SessionInterfaceMode"
-          default: chat
-        issueId:
-          type: string
-          maxLength: 200
-        model:
-          type: string
-          maxLength: 200
-    SessionPage:
+    WorkerChildSessionPage:
       type: object
       additionalProperties: false
       required: [items, page]
@@ -3578,334 +2880,9 @@ components:
         items:
           type: array
           items:
-            $ref: "#/components/schemas/Session"
+            $ref: "#/components/schemas/WorkerChildSession"
         page:
           $ref: "#/components/schemas/PageInfo"
-    PullRequestState:
-      type: string
-      enum: [draft, open, merged, closed]
-    CIState:
-      type: string
-      enum: [unknown, pending, passing, failing]
-    PullRequestCheckStatus:
-      type: string
-      enum: [unknown, queued, in_progress, passed, failed, skipped, cancelled]
-    ReviewDecision:
-      type: string
-      enum: [none, approved, changes_requested, review_required]
-    MergeabilityState:
-      type: string
-      enum: [unknown, mergeable, conflicting, blocked, unstable]
-    PullRequestFailingCheck:
-      type: object
-      additionalProperties: false
-      required: [name, status, conclusion]
-      properties:
-        name:
-          type: string
-        status:
-          $ref: "#/components/schemas/PullRequestCheckStatus"
-        conclusion:
-          type: string
-        url:
-          type: string
-    PullRequestCISummary:
-      type: object
-      additionalProperties: false
-      required: [state, failingChecks]
-      properties:
-        state:
-          $ref: "#/components/schemas/CIState"
-        failingChecks:
-          type: array
-          items:
-            $ref: "#/components/schemas/PullRequestFailingCheck"
-    PullRequestReviewCommentLink:
-      type: object
-      additionalProperties: false
-      required: [autoInjectReview]
-      properties:
-        url:
-          type: string
-        file:
-          type: string
-        line:
-          type: integer
-          minimum: 0
-        autoInjectReview:
-          type: boolean
-    PullRequestUnresolvedReviewer:
-      type: object
-      additionalProperties: false
-      required: [reviewerId, count, links]
-      properties:
-        reviewerId:
-          type: string
-        count:
-          type: integer
-          minimum: 0
-        links:
-          type: array
-          items:
-            $ref: "#/components/schemas/PullRequestReviewCommentLink"
-        reviewUrl:
-          type: string
-        isBot:
-          type: boolean
-    PullRequestSubmittedReview:
-      type: object
-      additionalProperties: false
-      required: [reviewerId, verdict, submittedAt, autoInjectReview]
-      properties:
-        reviewerId:
-          type: string
-        verdict:
-          $ref: "#/components/schemas/ReviewDecision"
-        body:
-          type: string
-        reviewUrl:
-          type: string
-        submittedAt:
-          type: string
-          format: date-time
-        isBot:
-          type: boolean
-        autoInjectReview:
-          type: boolean
-    PullRequestReviewSummary:
-      type: object
-      additionalProperties: false
-      required: [decision, hasUnresolvedHumanComments, unresolvedBy, reviews]
-      properties:
-        decision:
-          $ref: "#/components/schemas/ReviewDecision"
-        hasUnresolvedHumanComments:
-          type: boolean
-        unresolvedBy:
-          type: array
-          items:
-            $ref: "#/components/schemas/PullRequestUnresolvedReviewer"
-        reviews:
-          type: array
-          items:
-            $ref: "#/components/schemas/PullRequestSubmittedReview"
-    PullRequestConflictFile:
-      type: object
-      additionalProperties: false
-      required: [path]
-      properties:
-        path:
-          type: string
-        url:
-          type: string
-    PullRequestMergeabilitySummary:
-      type: object
-      additionalProperties: false
-      required: [state, reasons, pullRequestUrl, conflictFiles]
-      properties:
-        state:
-          $ref: "#/components/schemas/MergeabilityState"
-        reasons:
-          type: array
-          items:
-            type: string
-        pullRequestUrl:
-          type: string
-        conflictFiles:
-          type: array
-          items:
-            $ref: "#/components/schemas/PullRequestConflictFile"
-    PullRequestSummary:
-      type: object
-      additionalProperties: false
-      required:
-        - url
-        - number
-        - title
-        - state
-        - provider
-        - repository
-        - author
-        - sourceBranch
-        - targetBranch
-        - headSha
-        - additions
-        - deletions
-        - changedFiles
-        - ci
-        - review
-        - mergeability
-        - updatedAt
-        - observedAt
-        - ciObservedAt
-        - reviewObservedAt
-      properties:
-        url:
-          type: string
-        htmlUrl:
-          type: string
-        number:
-          type: integer
-          minimum: 1
-        title:
-          type: string
-        state:
-          $ref: "#/components/schemas/PullRequestState"
-        provider:
-          type: string
-        repository:
-          type: string
-        author:
-          type: string
-        sourceBranch:
-          type: string
-        targetBranch:
-          type: string
-        headSha:
-          type: string
-        additions:
-          type: integer
-          minimum: 0
-        deletions:
-          type: integer
-          minimum: 0
-        changedFiles:
-          type: integer
-          minimum: 0
-        ci:
-          $ref: "#/components/schemas/PullRequestCISummary"
-        review:
-          $ref: "#/components/schemas/PullRequestReviewSummary"
-        mergeability:
-          $ref: "#/components/schemas/PullRequestMergeabilitySummary"
-        stateChangedAt:
-          type: string
-          format: date-time
-        createdAt:
-          type: string
-          format: date-time
-        updatedAt:
-          type: string
-          format: date-time
-        observedAt:
-          type: string
-          format: date-time
-        ciObservedAt:
-          type: string
-          format: date-time
-        reviewObservedAt:
-          type: string
-          format: date-time
-    SessionPullRequests:
-      type: object
-      additionalProperties: false
-      required: [sessionId, pullRequests]
-      properties:
-        sessionId:
-          type: string
-        pullRequests:
-          type: array
-          items:
-            $ref: "#/components/schemas/PullRequestSummary"
-    AOReviewRunStatus:
-      type: string
-      enum: [running, complete, delivered, failed, cancelled]
-    AOReviewVerdict:
-      type: string
-      enum: ["", approved, changes_requested]
-    AOReviewState:
-      type: string
-      enum: [needs_review, running, up_to_date, changes_requested, ineligible]
-    AOReviewRun:
-      type: object
-      additionalProperties: false
-      required:
-        - id
-        - reviewId
-        - sessionId
-        - batchId
-        - harness
-        - pullRequestUrl
-        - targetSha
-        - status
-        - verdict
-        - body
-        - providerReviewId
-        - createdAt
-        - autoInjectReview
-      properties:
-        id:
-          type: string
-        reviewId:
-          type: string
-        sessionId:
-          type: string
-        batchId:
-          type: string
-        harness:
-          type: string
-        pullRequestUrl:
-          type: string
-        targetSha:
-          type: string
-        status:
-          $ref: "#/components/schemas/AOReviewRunStatus"
-        verdict:
-          $ref: "#/components/schemas/AOReviewVerdict"
-        body:
-          type: string
-        providerReviewId:
-          type: string
-        createdAt:
-          type: string
-          format: date-time
-        deliveredAt:
-          type: string
-          format: date-time
-        autoInjectReview:
-          type: boolean
-    AOPullRequestReviewState:
-      type: object
-      additionalProperties: false
-      required: [pullRequestUrl, pullRequestNumber, title, targetSha, status]
-      properties:
-        pullRequestUrl:
-          type: string
-        pullRequestNumber:
-          type: integer
-          minimum: 1
-        title:
-          type: string
-        targetSha:
-          type: string
-        status:
-          $ref: "#/components/schemas/AOReviewState"
-        staleTargetSha:
-          type: string
-          description: Head SHA of the newest completed run that does not match targetSha.
-        latestRun:
-          $ref: "#/components/schemas/AOReviewRun"
-        previousRun:
-          $ref: "#/components/schemas/AOReviewRun"
-    SessionReviewState:
-      type: object
-      additionalProperties: false
-      required: [sessionId, reviews, runs]
-      properties:
-        sessionId:
-          type: string
-        reviewerHandleId:
-          type: string
-        reviewerHarness:
-          type: string
-        reviews:
-          type: array
-          items:
-            $ref: "#/components/schemas/AOPullRequestReviewState"
-        runs:
-          type: array
-          items:
-            $ref: "#/components/schemas/AOReviewRun"
     UserMessageEvent:
       type: object
       additionalProperties: false
@@ -3929,188 +2906,6 @@ components:
         createdAt:
           type: string
           format: date-time
-    AssistantDeltaEvent:
-      type: object
-      additionalProperties: false
-      required: [sessionId, sequence, type, payload, createdAt]
-      properties:
-        sessionId:
-          type: string
-        sequence:
-          type: integer
-          format: int64
-          maximum: 9007199254740991
-        type:
-          const: chat.assistant_delta
-        payload:
-          $ref: "#/components/schemas/WorkerOutputPayload"
-        createdAt:
-          type: string
-          format: date-time
-    TurnStartedEvent:
-      type: object
-      additionalProperties: false
-      required: [sessionId, sequence, type, payload, createdAt]
-      properties:
-        sessionId:
-          type: string
-        sequence:
-          type: integer
-          format: int64
-          maximum: 9007199254740991
-        type:
-          const: chat.turn_started
-        payload:
-          type: object
-          additionalProperties: false
-          required: [turnId, attempt, workerEpoch]
-          properties:
-            turnId:
-              type: string
-              format: uuid
-            attempt:
-              type: integer
-              minimum: 1
-            workerEpoch:
-              type: integer
-              format: int64
-              minimum: 1
-        createdAt:
-          type: string
-          format: date-time
-    TurnCompletedEvent:
-      type: object
-      additionalProperties: false
-      required: [sessionId, sequence, type, payload, createdAt]
-      properties:
-        sessionId:
-          type: string
-        sequence:
-          type: integer
-          format: int64
-          maximum: 9007199254740991
-        type:
-          const: chat.turn_completed
-        payload:
-          type: object
-          additionalProperties: false
-          required: [turnId, attempt]
-          properties:
-            turnId:
-              type: string
-              format: uuid
-            attempt:
-              type: integer
-              minimum: 1
-        createdAt:
-          type: string
-          format: date-time
-    TurnInterruptedEvent:
-      type: object
-      additionalProperties: false
-      required: [sessionId, sequence, type, payload, createdAt]
-      properties:
-        sessionId:
-          type: string
-        sequence:
-          type: integer
-          format: int64
-          maximum: 9007199254740991
-        type:
-          const: chat.turn_interrupted
-        payload:
-          type: object
-          additionalProperties: false
-          required: [turnId, attempt]
-          properties:
-            turnId:
-              type: string
-              format: uuid
-            attempt:
-              type: integer
-              minimum: 1
-        createdAt:
-          type: string
-          format: date-time
-    TurnAbortedEvent:
-      type: object
-      additionalProperties: false
-      required: [sessionId, sequence, type, payload, createdAt]
-      properties:
-        sessionId:
-          type: string
-        sequence:
-          type: integer
-          format: int64
-          maximum: 9007199254740991
-        type:
-          const: chat.turn_aborted
-        payload:
-          type: object
-          additionalProperties: false
-          required: [turnId, attempt, error]
-          properties:
-            turnId:
-              type: string
-              format: uuid
-            attempt:
-              type: integer
-              minimum: 1
-            error:
-              type: string
-        createdAt:
-          type: string
-          format: date-time
-    InterruptRequestedEvent:
-      type: object
-      additionalProperties: false
-      required: [sessionId, sequence, type, payload, createdAt]
-      properties:
-        sessionId:
-          type: string
-        sequence:
-          type: integer
-          format: int64
-          maximum: 9007199254740991
-        type:
-          const: chat.interrupt_requested
-        payload:
-          type: object
-          additionalProperties: false
-          required: [turnId]
-          properties:
-            turnId:
-              type: string
-              format: uuid
-        createdAt:
-          type: string
-          format: date-time
-    ClientEvent:
-      oneOf:
-        - $ref: "#/components/schemas/UserMessageEvent"
-        - $ref: "#/components/schemas/AssistantDeltaEvent"
-        - $ref: "#/components/schemas/TurnStartedEvent"
-        - $ref: "#/components/schemas/TurnCompletedEvent"
-        - $ref: "#/components/schemas/TurnInterruptedEvent"
-        - $ref: "#/components/schemas/TurnAbortedEvent"
-        - $ref: "#/components/schemas/InterruptRequestedEvent"
-    ClientEventPage:
-      type: object
-      additionalProperties: false
-      required: [events, hasMore, nextAfter]
-      properties:
-        events:
-          type: array
-          items:
-            $ref: "#/components/schemas/ClientEvent"
-        hasMore:
-          type: boolean
-        nextAfter:
-          type: integer
-          format: int64
-          minimum: 0
-          maximum: 9007199254740991
-          description: Highest sequence returned, or the supplied after cursor when the page is empty.
     TerminalKind:
       type: string
       enum: [agent, workspace]
@@ -4454,50 +3249,6 @@ components:
         type:
           type: string
           const: pong
-    WorkspaceEntry:
-      type: object
-      additionalProperties: false
-      required: [name, path, isDir, size, mode, modTime]
-      properties:
-        name:
-          type: string
-        path:
-          type: string
-        isDir:
-          type: boolean
-        size:
-          type: integer
-          format: int64
-        mode:
-          type: string
-        modTime:
-          type: string
-          format: date-time
-    WorkspaceEntryPage:
-      type: object
-      additionalProperties: false
-      required: [path, items, page]
-      properties:
-        path:
-          type: string
-        items:
-          type: array
-          items:
-            $ref: "#/components/schemas/WorkspaceEntry"
-        page:
-          $ref: "#/components/schemas/PageInfo"
-    WorkspaceFile:
-      type: object
-      additionalProperties: false
-      required: [path, content, size]
-      properties:
-        path:
-          type: string
-        content:
-          type: string
-        size:
-          type: integer
-          format: int64
     WorkspaceFileWriteInput:
       type: object
       additionalProperties: false
@@ -4510,66 +3261,6 @@ components:
         content:
           type: string
           maxLength: 1048576
-    WorkspaceFileStatus:
-      type: string
-      enum: [unmodified, modified, added, deleted, renamed, untracked, copied, changed]
-    WorkspaceDiffFile:
-      type: object
-      additionalProperties: false
-      required: [path, status, additions, deletions, binary]
-      properties:
-        path:
-          type: string
-        oldPath:
-          type: string
-        status:
-          $ref: "#/components/schemas/WorkspaceFileStatus"
-        staged:
-          type: string
-        unstaged:
-          type: string
-        additions:
-          type: integer
-          minimum: 0
-        deletions:
-          type: integer
-          minimum: 0
-        binary:
-          type: boolean
-    WorkspaceDiff:
-      type: object
-      additionalProperties: false
-      required: [status, unstaged, staged, combined, diffBaseRef, files, untrackedFiles, truncated]
-      properties:
-        status:
-          type: string
-        unstaged:
-          type: string
-        staged:
-          type: string
-        combined:
-          type: string
-        diffBaseRef:
-          type: string
-        diffBaseSha:
-          type: string
-        files:
-          type: array
-          items:
-            $ref: "#/components/schemas/WorkspaceDiffFile"
-        untrackedFiles:
-          type: array
-          items:
-            type: string
-        truncated:
-          type: object
-          additionalProperties: false
-          required: [combined, stats]
-          properties:
-            combined:
-              type: boolean
-            stats:
-              type: boolean
     ProviderName:
       type: string
       enum: [daytona, claude-code, codex, cursor]

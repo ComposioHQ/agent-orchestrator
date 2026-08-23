@@ -38,66 +38,47 @@ const contractPrefix = "/api/cloud/v1/"
 //
 // Delete a line the moment its handler is mounted.
 var stagedOperations = map[string]bool{
-	"GET /api/cloud/v1/github/user":                                                    true,
 	"DELETE /api/cloud/v1/github/user":                                                 true,
-	"POST /api/cloud/v1/github/user/authorize":                                         true,
+	"DELETE /api/cloud/v1/orgs/{orgId}/projects/{projectId}":                           true,
+	"DELETE /api/cloud/v1/orgs/{orgId}/provider-connections/agents/{provider}":         true,
+	"DELETE /api/cloud/v1/worker/children/{sessionId}":                                 true,
+	"GET /api/cloud/v1/github/user":                                                    true,
 	"GET /api/cloud/v1/github/user/callback":                                           true,
 	"GET /api/cloud/v1/orgs/{orgId}/agents":                                            true,
-	"GET /api/cloud/v1/orgs/{orgId}/projects":                                          true,
-	"POST /api/cloud/v1/orgs/{orgId}/projects":                                         true,
-	"GET /api/cloud/v1/orgs/{orgId}/projects/{projectId}":                              true,
-	"PATCH /api/cloud/v1/orgs/{orgId}/projects/{projectId}":                            true,
-	"DELETE /api/cloud/v1/orgs/{orgId}/projects/{projectId}":                           true,
-	"POST /api/cloud/v1/orgs/{orgId}/projects/{projectId}/resume":                      true,
-	"POST /api/cloud/v1/orgs/{orgId}/projects/scratch":                                 true,
 	"GET /api/cloud/v1/orgs/{orgId}/github/installations":                              true,
-	"POST /api/cloud/v1/orgs/{orgId}/github/installations/start":                       true,
-	"POST /api/cloud/v1/orgs/{orgId}/github/installations/{installationId}/sync":       true,
-	"POST /api/cloud/v1/orgs/{orgId}/github/installations/{installationId}/disconnect": true,
 	"GET /api/cloud/v1/orgs/{orgId}/github/repositories":                               true,
-	"POST /api/cloud/v1/orgs/{orgId}/github/projects":                                  true,
-	"GET /api/cloud/v1/orgs/{orgId}/sessions":                                          true,
-	"POST /api/cloud/v1/orgs/{orgId}/sessions":                                         true,
-	"GET /api/cloud/v1/orgs/{orgId}/sessions/{sessionId}":                              true,
-	"DELETE /api/cloud/v1/orgs/{orgId}/sessions/{sessionId}":                           true,
-	"POST /api/cloud/v1/orgs/{orgId}/sessions/{sessionId}/terminate":                   true,
-	"POST /api/cloud/v1/orgs/{orgId}/sessions/{sessionId}/restore":                     true,
-	"GET /api/cloud/v1/orgs/{orgId}/sessions/{sessionId}/activity":                     true,
-	"GET /api/cloud/v1/orgs/{orgId}/sessions/{sessionId}/pull-requests":                true,
-	"GET /api/cloud/v1/orgs/{orgId}/sessions/{sessionId}/reviews":                      true,
-	"POST /api/cloud/v1/orgs/{orgId}/sessions/{sessionId}/messages":                    true,
-	"POST /api/cloud/v1/orgs/{orgId}/sessions/{sessionId}/turns/{turnId}/cancel":       true,
-	"GET /api/cloud/v1/orgs/{orgId}/sessions/{sessionId}/chat-events":                  true,
-	"GET /api/cloud/v1/orgs/{orgId}/sessions/{sessionId}/events":                       true,
-	"POST /api/cloud/v1/orgs/{orgId}/sessions/{sessionId}/terminal-ticket":             true,
-	"GET /api/cloud/v1/orgs/{orgId}/sessions/{sessionId}/terminal-connection":          true,
-	"GET /api/cloud/v1/terminal":                                                       true,
-	"GET /api/cloud/v1/orgs/{orgId}/sessions/{sessionId}/workspace/files":              true,
-	"GET /api/cloud/v1/orgs/{orgId}/sessions/{sessionId}/workspace/file":               true,
-	"PUT /api/cloud/v1/orgs/{orgId}/sessions/{sessionId}/workspace/file":               true,
-	"GET /api/cloud/v1/orgs/{orgId}/sessions/{sessionId}/workspace/diff":               true,
+	"GET /api/cloud/v1/orgs/{orgId}/projects":                                          true,
+	"GET /api/cloud/v1/orgs/{orgId}/projects/{projectId}":                              true,
 	"GET /api/cloud/v1/orgs/{orgId}/provider-connections":                              true,
-	"PUT /api/cloud/v1/orgs/{orgId}/provider-connections/agents/{provider}":            true,
-	"DELETE /api/cloud/v1/orgs/{orgId}/provider-connections/agents/{provider}":         true,
-	"POST /api/cloud/v1/worker/bootstrap":                                              true,
-	"POST /api/cloud/v1/worker/heartbeat":                                              true,
-	"POST /api/cloud/v1/worker/events":                                                 true,
-	"POST /api/cloud/v1/worker/turns/claim":                                            true,
-	"GET /api/cloud/v1/worker/turns/{turnId}/cancellation":                             true,
-	"POST /api/cloud/v1/worker/turns/{turnId}/complete":                                true,
-	"POST /api/cloud/v1/worker/turns/{turnId}/fail":                                    true,
-	"GET /api/cloud/v1/worker/credential":                                              true,
-	"POST /api/cloud/v1/worker/checkout-grant":                                         true,
+	"GET /api/cloud/v1/terminal":                                                       true,
 	"GET /api/cloud/v1/worker/children":                                                true,
+	"GET /api/cloud/v1/worker/credential":                                              true,
+	"GET /api/cloud/v1/worker/turns/{turnId}/cancellation":                             true,
+	"POST /api/cloud/v1/github/user/authorize":                                         true,
+	"POST /api/cloud/v1/orgs/{orgId}/github/installations/start":                       true,
+	"POST /api/cloud/v1/orgs/{orgId}/github/installations/{installationId}/disconnect": true,
+	"POST /api/cloud/v1/orgs/{orgId}/github/installations/{installationId}/sync":       true,
+	"POST /api/cloud/v1/orgs/{orgId}/github/projects":                                  true,
+	"POST /api/cloud/v1/orgs/{orgId}/projects":                                         true,
+	"POST /api/cloud/v1/orgs/{orgId}/projects/scratch":                                 true,
+	"POST /api/cloud/v1/orgs/{orgId}/projects/{projectId}/resume":                      true,
+	"POST /api/cloud/v1/orgs/{orgId}/sessions/{sessionId}/terminal-ticket":             true,
+	"POST /api/cloud/v1/worker/bootstrap":                                              true,
+	"POST /api/cloud/v1/worker/checkout-grant":                                         true,
 	"POST /api/cloud/v1/worker/children":                                               true,
-	"DELETE /api/cloud/v1/worker/children/{sessionId}":                                 true,
 	"POST /api/cloud/v1/worker/children/{sessionId}/messages":                          true,
+	"POST /api/cloud/v1/worker/events":                                                 true,
+	"POST /api/cloud/v1/worker/heartbeat":                                              true,
+	"POST /api/cloud/v1/worker/terminals/agent":                                        true,
+	"POST /api/cloud/v1/worker/terminals/{terminalId}/exit":                            true,
+	"POST /api/cloud/v1/worker/terminals/{terminalId}/output":                          true,
 	"POST /api/cloud/v1/worker/transport/claim":                                        true,
 	"POST /api/cloud/v1/worker/transport/{requestId}/complete":                         true,
 	"POST /api/cloud/v1/worker/transport/{requestId}/fail":                             true,
-	"POST /api/cloud/v1/worker/terminals/agent":                                        true,
-	"POST /api/cloud/v1/worker/terminals/{terminalId}/output":                          true,
-	"POST /api/cloud/v1/worker/terminals/{terminalId}/exit":                            true,
+	"POST /api/cloud/v1/worker/turns/claim":                                            true,
+	"POST /api/cloud/v1/worker/turns/{turnId}/complete":                                true,
+	"POST /api/cloud/v1/worker/turns/{turnId}/fail":                                    true,
+	"PUT /api/cloud/v1/orgs/{orgId}/provider-connections/agents/{provider}":            true,
 }
 
 type contractDocument struct {
@@ -316,69 +297,98 @@ func resolvesInDocument(document map[string]any, reference string) bool {
 }
 
 // vendorLeakingFields are property names that would put a compute vendor's
-// identity, placement, or own identifiers into a client-visible DTO. The
-// control plane publishes an abstract state instead, so that swapping or adding
-// a provider is invisible to clients and cannot become a compatibility problem.
+// identity, placement, or own identifiers into the contract.
 var vendorLeakingFields = []string{
 	"provider", "providerSandboxId", "providerId", "vendor",
 	"region", "zone", "availabilityZone", "datacenter",
 	"host", "hostname", "node", "instanceId", "machineId",
+	"workspaceId",
 }
 
-// TestSandboxStateIsVendorNeutral keeps compute-plane detail out of the
-// client-visible contract. Prose in a 3,700-line document does not survive
-// contact with a hurried edit; this does.
-func TestSandboxStateIsVendorNeutral(t *testing.T) {
+// providerNamingSchemas may name a provider, because naming one is the point.
+// RedactedProviderConnection is the organization-admin view of a connection the
+// operator configured; WorkerCredentialResponse tells a worker which *agent*
+// vendor its credential is for. Neither is a user-facing session or project.
+var providerNamingSchemas = map[string]bool{
+	"RedactedProviderConnection": true,
+	"WorkerCredentialResponse":   true,
+}
+
+// TestNoVendorIdentityOutsideProviderAdmin enforces the standing rule that
+// vendor names never reach a user-facing DTO. Scanning every schema rather than
+// a named few means a future DTO cannot reintroduce the leak somewhere this
+// test was not told to look.
+func TestNoVendorIdentityOutsideProviderAdmin(t *testing.T) {
 	doc := loadContract(t)
-	sandbox, ok := doc.Components.Schemas["SessionSandbox"]
-	if !ok {
-		t.Fatal("contract has no SessionSandbox schema")
-	}
-	for _, banned := range vendorLeakingFields {
-		if _, leaked := sandbox.Properties[banned]; leaked {
-			t.Errorf("SessionSandbox.%s exposes compute-plane identity or placement to clients; publish an abstract state instead", banned)
+	for _, name := range sortedKeys(doc.Components.Schemas) {
+		if providerNamingSchemas[name] {
+			continue
+		}
+		properties := doc.Components.Schemas[name].Properties
+		for _, banned := range vendorLeakingFields {
+			if _, leaked := properties[banned]; leaked {
+				t.Errorf("%s.%s exposes compute identity or placement; publish an abstract state instead", name, banned)
+			}
 		}
 	}
 
-	// ProviderName carries literal vendor names, so a client-visible DTO must
-	// never reference it. It stays legitimate on the provider-connection admin
-	// routes, where naming the vendor is the entire point.
+	// ProviderName enumerates literal vendor names, so only the admin surface
+	// may reference it.
 	raw, err := os.ReadFile(filepath.FromSlash(contractPath))
 	if err != nil {
 		t.Fatalf("read Cloud contract: %v", err)
 	}
-	for _, schema := range []string{"SessionSandbox", "SessionActivity", "Session", "Project"} {
-		body, found := schemaBody(string(raw), schema)
-		if !found {
-			t.Errorf("contract has no %s schema", schema)
+	for _, name := range sortedKeys(doc.Components.Schemas) {
+		if providerNamingSchemas[name] {
 			continue
 		}
-		if strings.Contains(body, "ProviderName") {
-			t.Errorf("%s references ProviderName, which enumerates real vendor names", schema)
+		body, found := schemaBody(string(raw), name)
+		if found && strings.Contains(body, "ProviderName") {
+			t.Errorf("%s references ProviderName, which enumerates real vendor names", name)
 		}
 	}
 }
 
-// TestUIDTOsOmitCloudOnlyPlacement keeps the DTOs the desktop already renders
-// free of fields that exist only because Cloud has a compute plane. Sandbox
-// lifecycle is published by getSessionActivity, which exists for exactly that.
-//
-// If one of these genuinely becomes essential to render, delete its line here
-// with the reason — the point is that it is a decision, not a drift.
-func TestUIDTOsOmitCloudOnlyPlacement(t *testing.T) {
+// productSchemas are the DTOs the app API owns. The Cloud contract covers
+// authentication, organization administration, project placement, terminal
+// ticket minting and SCM installation; the product contract is the generated
+// app OpenAPI at /api/v1. A second definition of a session, its events, its
+// pull requests or its workspace here is the duplicate API that was removed —
+// and a second user-facing session type is what created the `mode` collision,
+// where Cloud meant a permission mode and the app meant chat-versus-TUI.
+var productSchemas = []string{
+	"Session", "SessionPage", "CreateSessionInput", "SessionActivity",
+	"SessionSandbox", "SandboxState", "SessionInterfaceMode",
+	"TerminateSessionInput", "RestoreSessionInput", "UpdateProjectInput",
+	"ClientEvent", "ClientEventPage", "SessionPullRequests",
+	"SessionReviewState", "PullRequestSummary", "WorkspaceEntryPage",
+	"WorkspaceDiff", "WorkspaceFile", "Turn",
+}
+
+// TestNoDuplicateProductSurface keeps the Cloud contract from growing a second
+// copy of the app API.
+func TestNoDuplicateProductSurface(t *testing.T) {
 	doc := loadContract(t)
-	for _, testCase := range []struct{ schema, field string }{
-		{"Session", "sandbox"},
-		{"Session", "workspaceId"},
-		{"Project", "workspaceId"},
-	} {
-		schema, ok := doc.Components.Schemas[testCase.schema]
-		if !ok {
-			t.Fatalf("contract has no %s schema", testCase.schema)
+	for _, name := range productSchemas {
+		if _, present := doc.Components.Schemas[name]; present {
+			t.Errorf("schema %s duplicates a DTO the app API owns; the product contract is the generated /api/v1 spec", name)
 		}
-		if _, present := schema.Properties[testCase.field]; present {
-			t.Errorf("%s.%s is cloud-only placement on a DTO the desktop renders; publish it on getSessionActivity instead", testCase.schema, testCase.field)
+	}
+
+	// Session product routes likewise. Terminal ticket minting is the one
+	// session-scoped Cloud concern: the ticket is a control-plane credential,
+	// and a local daemon has no equivalent.
+	for _, path := range sortedKeys(doc.Paths) {
+		if !strings.Contains(path, "/sessions") {
+			continue
 		}
+		if strings.HasSuffix(path, "/terminal-ticket") {
+			continue
+		}
+		if strings.HasPrefix(path, "/api/cloud/v1/worker/") {
+			continue // worker orchestration, not a product route
+		}
+		t.Errorf("path %s duplicates the app API's session surface", path)
 	}
 }
 
