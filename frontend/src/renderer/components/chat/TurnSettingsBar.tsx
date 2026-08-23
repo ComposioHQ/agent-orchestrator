@@ -58,7 +58,7 @@ const APPROVAL_ORDER: ApprovalMode[] = [
 ];
 
 const TRIGGER_CLASS =
-	"h-7 gap-1 bg-transparent rounded-lg px-3 text-sm leading-none text-muted-foreground hover:bg-white/5 hover:text-foreground data-[state=open]:bg-white/5 data-[state=open]:text-foreground";
+	"h-7 gap-1 bg-transparent rounded-lg px-3 text-[12px]! leading-none text-muted-foreground hover:bg-white/5 hover:text-foreground data-[state=open]:bg-white/5 data-[state=open]:text-foreground";
 
 export function TurnSettingsBar({
 	models,
@@ -185,7 +185,7 @@ export function TurnSettingsBar({
 									>
 										<span
 											className={cn(
-												"text-xs",
+														"text-xs",
 												mode === (settings.approvalMode ?? "default")
 													? "text-foreground"
 													: "text-muted-foreground",
@@ -313,7 +313,7 @@ function ModelEffortPicker({
 										<span className="flex w-full items-baseline gap-2">
 											<span
 												className={cn(
-													"text-xs",
+																"text-xs",
 													model.id === settings.model
 														? "text-foreground"
 														: "text-muted-foreground",

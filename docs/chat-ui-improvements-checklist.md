@@ -15,5 +15,6 @@
 - [x] Set user messages and AI responses to 14px.
 - [x] Keep chat composer text explicitly at 16px.
 - [x] Set all bottom composer controls to 14px.
+- [x] Keep chat composer dropdown triggers and menu labels at 12px.
 - [x] Make the composer fade an overlay so it does not add layout padding.
 - [x] Run focused tests and review the final diff. Frontend typecheck was attempted but is blocked by missing workspace dependencies (`react`/`motion` in `packages/product-ui`).
