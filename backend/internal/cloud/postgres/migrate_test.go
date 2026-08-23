@@ -13,8 +13,14 @@ func TestCloudMigrationsAreTenantScoped(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(migrations) != 8 || migrations[0].Version != 1 || migrations[1].Version != 2 || migrations[2].Version != 3 || migrations[3].Version != 4 || migrations[4].Version != 5 || migrations[5].Version != 6 || migrations[6].Version != 7 || migrations[7].Version != 8 {
+	wantVersions := []int64{1, 2, 3, 4, 5, 6, 7, 8, 50, 51, 52, 53, 54, 55, 56, 59}
+	if len(migrations) != len(wantVersions) {
 		t.Fatalf("migrations = %#v", migrations)
+	}
+	for i, want := range wantVersions {
+		if migrations[i].Version != want {
+			t.Fatalf("migration[%d].Version = %d, want %d", i, migrations[i].Version, want)
+		}
 	}
 	migration, err := migrationFS.ReadFile("migrations/00001_auth_foundation.sql")
 	if err != nil {
@@ -132,4 +138,60 @@ func TestCloudMigrationsAreTenantScoped(t *testing.T) {
 		}
 	}
 
+}
+
+func TestProductMigrationsForceTenantRLS(t *testing.T) {
+	t.Parallel()
+	fixtures := []struct {
+		file   string
+		tables []string
+	}{
+		{file: "00050_product_settings.sql", tables: []string{"ao_app_settings"}},
+		{file: "00051_pull_requests.sql", tables: []string{"ao_pull_requests", "ao_pull_request_url_aliases"}},
+		{file: "00052_pull_request_checks.sql", tables: []string{"ao_pull_request_checks"}},
+		{file: "00053_pull_request_comments.sql", tables: []string{"ao_pull_request_comments"}},
+		{file: "00054_pull_request_reviews.sql", tables: []string{"ao_pull_request_reviews"}},
+		{file: "00055_pull_request_review_threads.sql", tables: []string{"ao_pull_request_review_threads"}},
+		{file: "00056_notifications.sql", tables: []string{"ao_notifications"}},
+		{file: "00059_agent_inventory_cache.sql", tables: []string{"ao_agent_inventory_cache"}},
+	}
+	for _, fixture := range fixtures {
+		contents, err := migrationFS.ReadFile("migrations/" + fixture.file)
+		if err != nil {
+			t.Fatal(err)
+		}
+		sql := string(contents)
+		for _, table := range fixture.tables {
+			for _, required := range []string{
+				"CREATE TABLE " + table,
+				"ALTER TABLE " + table + " ENABLE ROW LEVEL SECURITY",
+				"ALTER TABLE " + table + " FORCE ROW LEVEL SECURITY",
+				"CREATE POLICY " + table + "_tenant ON " + table,
+			} {
+				if !strings.Contains(sql, required) {
+					t.Fatalf("%s does not contain %q", fixture.file, required)
+				}
+			}
+		}
+		for _, required := range []string{
+			"org_id = ao_current_org_id()",
+			"ao_is_org_member(org_id, ao_current_user_id())",
+			"REVOKE ALL ON TABLE",
+		} {
+			if !strings.Contains(sql, required) {
+				t.Fatalf("%s does not contain %q", fixture.file, required)
+			}
+		}
+	}
+}
+
+func TestProductSettingsDefaultToChatInDatabase(t *testing.T) {
+	t.Parallel()
+	contents, err := migrationFS.ReadFile("migrations/00050_product_settings.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(contents), "default_session_mode TEXT NOT NULL DEFAULT 'chat'") {
+		t.Fatal("settings migration does not define the database-level chat default")
+	}
 }
