@@ -3,6 +3,7 @@ package scm
 import (
 	"context"
 	"errors"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -12,10 +13,18 @@ import (
 )
 
 type brokerStoreStub struct {
-	installation domain.SCMInstallation
-	repository   domain.SCMRepository
-	grants       []domain.SCMTokenGrant
-	grantErr     error
+	installation      domain.SCMInstallation
+	repository        domain.SCMRepository
+	grants            []domain.SCMTokenGrant
+	grantErr          error
+	authorizedSandbox string
+}
+
+func (s *brokerStoreStub) AuthorizeSCMSandbox(_ context.Context, _ tenant.Identity, sandboxID string) error {
+	if sandboxID != s.authorizedSandbox {
+		return ErrSandboxNotAuthorized
+	}
+	return nil
 }
 
 func (s *brokerStoreStub) AllowedSCMRepository(context.Context, tenant.Identity, string) (domain.SCMInstallation, domain.SCMRepository, error) {
@@ -42,7 +51,7 @@ func (m *minterStub) MintInstallationToken(_ context.Context, _, _ int64, permis
 	m.permissions = append(m.permissions, permissions)
 	token := append([]byte(nil), m.token...)
 	if m.token == nil {
-		token = []byte{byte(m.calls), 2, 3, 4}
+		token = []byte("ghs_token" + strconv.Itoa(m.calls))
 	}
 	expiresAt := m.expiresAt
 	if expiresAt.IsZero() {
@@ -55,8 +64,9 @@ func (m *minterStub) MintInstallationToken(_ context.Context, _, _ int64, permis
 func newBrokerTest(t *testing.T) (*Broker, *brokerStoreStub, *minterStub) {
 	t.Helper()
 	store := &brokerStoreStub{
-		installation: domain.SCMInstallation{ID: "installation", OrgID: "org", ExternalInstallationID: 11, Status: domain.InstallationStatusActive},
-		repository:   domain.SCMRepository{ID: "repository", ExternalRepositoryID: 22, FullName: "acme/widgets", Allowed: true},
+		installation:      domain.SCMInstallation{ID: "installation", OrgID: "org", ExternalInstallationID: 11, Status: domain.InstallationStatusActive},
+		repository:        domain.SCMRepository{ID: "repository", ExternalRepositoryID: 22, FullName: "acme/widgets", Allowed: true},
+		authorizedSandbox: "sandbox",
 	}
 	minter := &minterStub{}
 	broker, err := NewBroker(store, minter)
@@ -75,7 +85,7 @@ func TestBrokerCredentialsAreFreshAuditedAndZeroed(t *testing.T) {
 		if credential.Repository != "https://github.com/acme/widgets.git" {
 			t.Fatalf("clone target = %q", credential.Repository)
 		}
-		if credential.Token[0] != 1 {
+		if string(credential.Token) != "ghs_token1" {
 			t.Fatalf("clone token = %v", credential.Token)
 		}
 		return nil
@@ -84,7 +94,7 @@ func TestBrokerCredentialsAreFreshAuditedAndZeroed(t *testing.T) {
 	}
 	if err := broker.WithPushCredential(context.Background(), identity, "acme/widgets", "sandbox", func(credential *Credential) error {
 		pushBytes = credential.Token
-		if credential.Token[0] != 2 {
+		if string(credential.Token) != "ghs_token2" {
 			t.Fatalf("push token = %v", credential.Token)
 		}
 		return nil
@@ -117,6 +127,18 @@ func TestBrokerRejectsInvalidSandboxBeforeMintOrAudit(t *testing.T) {
 	}
 }
 
+func TestBrokerRejectsSandboxOutsideTenantBinding(t *testing.T) {
+	broker, store, minter := newBrokerTest(t)
+	used := false
+	err := broker.WithCloneCredential(context.Background(), tenant.Identity{OrgID: "org", UserID: "user"}, "acme/widgets", "another-sandbox", func(*Credential) error {
+		used = true
+		return nil
+	})
+	if !errors.Is(err, ErrSandboxNotAuthorized) || used || minter.calls != 0 || len(store.grants) != 0 {
+		t.Fatalf("error=%v used=%v calls=%d grants=%d", err, used, minter.calls, len(store.grants))
+	}
+}
+
 func TestBrokerRejectsUnusableMintedToken(t *testing.T) {
 	cases := []struct {
 		name      string
@@ -124,8 +146,11 @@ func TestBrokerRejectsUnusableMintedToken(t *testing.T) {
 		expiresAt time.Time
 	}{
 		{name: "empty token", token: []byte{}, expiresAt: time.Now().Add(time.Hour)},
-		{name: "expired token", token: []byte("expired"), expiresAt: time.Now().Add(-time.Second)},
-		{name: "zero expiry", token: []byte("zero"), expiresAt: time.Unix(1, 0)},
+		{name: "missing github prefix", token: []byte("tokenvalue"), expiresAt: time.Now().Add(time.Hour)},
+		{name: "control character", token: []byte("ghs_bad\nvalue"), expiresAt: time.Now().Add(time.Hour)},
+		{name: "oversized token", token: []byte("ghs_" + strings.Repeat("a", maxInstallationTokenBytes)), expiresAt: time.Now().Add(time.Hour)},
+		{name: "expired token", token: []byte("ghs_expired"), expiresAt: time.Now().Add(-time.Second)},
+		{name: "zero expiry", token: []byte("ghs_zero"), expiresAt: time.Unix(1, 0)},
 	}
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {
