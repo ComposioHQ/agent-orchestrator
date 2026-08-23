@@ -19,7 +19,6 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/envelope"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 	"github.com/aoagents/agent-orchestrator/backend/internal/telemetrymeta"
-	"github.com/aoagents/agent-orchestrator/backend/internal/terminal"
 )
 
 // ControlDeps carries the daemon-control hooks the router exposes, such as the
@@ -43,7 +42,7 @@ type ControlDeps struct {
 //
 // The per-request timeout is deliberately not global: it wraps only bounded
 // REST routes, never long-lived terminal streams or health probes.
-func NewRouterWithControl(cfg config.Config, log *slog.Logger, termMgr *terminal.Manager, deps APIDeps, control ControlDeps) chi.Router {
+func NewRouterWithControl(cfg config.Config, log *slog.Logger, termMgr TerminalMux, deps APIDeps, control ControlDeps) chi.Router {
 	log = loggerOrDefault(log)
 	deps = normalizeAPIDeps(deps, log)
 	r := chi.NewRouter()

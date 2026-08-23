@@ -17,11 +17,24 @@ import (
 // still bounding memory per message.
 const terminalMuxReadLimit = 1 << 20
 
+// TerminalMux is the terminal-transport seam the router mounts at /mux: it
+// takes an upgraded, JSON-framed connection and drives the stream. httpd owns
+// only the WebSocket upgrade; all stream logic lives behind this interface.
+//
+// The local daemon supplies *terminal.Manager, backed by the host runtime
+// (tmux on macOS/Linux, conpty on Windows). Keeping the parameter an interface
+// rather than the concrete manager is what lets a different composition — the
+// hosted control plane, whose panes live in remote sandboxes — supply its own
+// transport without httpd depending on either implementation.
+type TerminalMux interface {
+	Serve(ctx context.Context, conn terminal.WSConn)
+}
+
 // mountTerminalMux registers the long-lived terminal-multiplexing WebSocket at /mux. It
 // is intentionally outside the per-request Timeout middleware (the connection is
 // long-lived). When mgr is nil the route is not mounted — the daemon simply has
 // no terminal surface yet.
-func mountTerminalMux(r chi.Router, mgr *terminal.Manager, log *slog.Logger) {
+func mountTerminalMux(r chi.Router, mgr TerminalMux, log *slog.Logger) {
 	if mgr == nil {
 		return
 	}
@@ -31,7 +44,7 @@ func mountTerminalMux(r chi.Router, mgr *terminal.Manager, log *slog.Logger) {
 // terminalMuxHandler upgrades the request to a WebSocket and hands the connection to the
 // terminal manager. httpd owns only the upgrade and the transport adaptation;
 // all stream logic lives in internal/terminal.
-func terminalMuxHandler(mgr *terminal.Manager, log *slog.Logger) http.HandlerFunc {
+func terminalMuxHandler(mgr TerminalMux, log *slog.Logger) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		// InsecureSkipVerify disables coder/websocket's same-origin check: the
 		// daemon binds loopback only and the desktop renderer's origin differs

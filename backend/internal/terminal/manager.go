@@ -31,6 +31,11 @@ type wsConn interface {
 	Close(reason string) error
 }
 
+// WSConn exports the transport seam under its own name so other packages can
+// declare interfaces over Manager.Serve. It is an alias, not a new type, so
+// every existing implementation of wsConn satisfies it unchanged.
+type WSConn = wsConn
+
 const (
 	defaultHeartbeat   = 15 * time.Second
 	defaultWriteBuffer = 1024
