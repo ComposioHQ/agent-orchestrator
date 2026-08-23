@@ -3,6 +3,8 @@ package daytona
 import (
 	"encoding/json"
 	"testing"
+
+	"github.com/aoagents/agent-orchestrator/backend/internal/cloud/harnesscatalog"
 )
 
 func TestEnvironmentKeyPattern(t *testing.T) {
@@ -20,11 +22,12 @@ func TestEnvironmentKeyPattern(t *testing.T) {
 }
 
 func TestSandboxProvidedCommandMapsClaudeToPathLookup(t *testing.T) {
-	got, ok := sandboxProvidedCommand("/usr/local/share/nvm/current/bin/claude")
+	harness, _ := harnesscatalog.Lookup("claude-code")
+	got, ok := sandboxProvidedCommand("/usr/local/share/nvm/current/bin/claude", harness)
 	if !ok || got != "claude" {
 		t.Fatalf("sandboxProvidedCommand() = %q, %v, want claude, true", got, ok)
 	}
-	if got, ok = sandboxProvidedCommand("/tmp/prompt.txt"); ok || got != "" {
+	if got, ok = sandboxProvidedCommand("/tmp/prompt.txt", harness); ok || got != "" {
 		t.Fatalf("sandboxProvidedCommand(prompt) = %q, %v, want empty, false", got, ok)
 	}
 }

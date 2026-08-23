@@ -266,6 +266,31 @@ func TestListReturnsInitialSupportedInventoryWithoutProbing(t *testing.T) {
 	}
 }
 
+func TestCloudManagedCatalogIgnoresCoordinatorInstallation(t *testing.T) {
+	svc := newServiceWithCloudHarnesses([]agentregistry.HarnessAgent{
+		harnessAgent("claude-code", "Claude Code", ports.ErrAgentBinaryNotFound),
+		harnessAgent("codex", "Codex", nil),
+	}, nil, nil, nil, []string{"claude-code"})
+
+	got, err := svc.Refresh(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Supported) != 1 || got.Supported[0].ID != "claude-code" {
+		t.Fatalf("supported = %#v", got.Supported)
+	}
+	if len(got.Installed) != 1 || got.Installed[0].ID != "claude-code" || got.Installed[0].AuthStatus != ports.AgentAuthStatusAuthorized {
+		t.Fatalf("installed = %#v", got.Installed)
+	}
+	probe, err := svc.Probe(context.Background(), "claude-code")
+	if err != nil || !probe.Supported || !probe.Installed {
+		t.Fatalf("Probe = %#v, %v", probe, err)
+	}
+	if probe, err = svc.Probe(context.Background(), "codex"); err != nil || probe.Supported {
+		t.Fatalf("unmanaged Probe = %#v, %v", probe, err)
+	}
+}
+
 func TestDefaultCatalogDisplaysPrimeAgent(t *testing.T) {
 	got, err := New().List(context.Background())
 	if err != nil {

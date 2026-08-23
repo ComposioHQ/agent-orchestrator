@@ -157,6 +157,29 @@ control plane clones the repository into fresh compute, overlays that exact
 worktree, installs the per-user Claude credential, and starts the agent under a
 tmux-backed terminal. Orchestrator and worker launches use the identical path.
 
+### Cloud harness capability boundary
+
+Cloud projects do not use the desktop machine's installed-binary inventory.
+The coordinator starts with `AO_CLOUD_HARNESSES`, populated from
+`backend/internal/cloud/harnesscatalog`, and `/api/v1/agents` exposes only those
+entries as installed and authorized by the managed runtime. The shared React
+selectors therefore remain backend-agnostic: local daemons report local probe
+results, while cloud coordinators report cloud provisioning capabilities.
+
+The catalog intentionally contains only `claude-code` today. A harness must not
+be added merely to make it selectable. Its catalog entry is the final step
+after these provider pieces exist:
+
+1. a sandbox install command and executable mapping;
+2. an AO-held credential reader, validation policy, and sandbox destination;
+3. any first-run/trust configuration required for unattended startup; and
+4. an isolated-runtime launch test proving the harness reaches a live terminal.
+
+Both project-coordinator bootstrap and session-sandbox bootstrap consume the
+same catalog entry. Adding a completed harness integration therefore updates
+the cloud inventory and both installation paths together, without branching
+the task/session UI or consulting local installation state.
+
 Run migrations and start the service:
 
 ```bash

@@ -17,6 +17,7 @@ import (
 	"github.com/daytona/clients/sdk-go/pkg/types"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/cloud/domain"
+	"github.com/aoagents/agent-orchestrator/backend/internal/cloud/harnesscatalog"
 )
 
 const sessionName = "ao-agent"
@@ -66,6 +67,10 @@ func sessionSandboxName(workspaceID, sessionID string) string {
 }
 
 func (p *Provider) bootstrapSessionRuntime(ctx context.Context, sandbox *daytonasdk.Sandbox, workspace domain.Workspace, launch domain.RuntimeLaunch) error {
+	harness, ok := harnesscatalog.DetectLaunch(launch.Argv)
+	if !ok {
+		return errors.New("cloud harness is not provisionable")
+	}
 	homeResult, err := run(ctx, sandbox, `printf %s "$HOME"`, time.Minute)
 	if err != nil {
 		return err
@@ -76,31 +81,37 @@ func (p *Provider) bootstrapSessionRuntime(ctx context.Context, sandbox *daytona
 	}
 	root := filepath.Join(home, "workspace")
 	archivePath := filepath.Join(home, ".ao", "workspace.tar.gz")
-	claudePath := filepath.Join(home, ".claude", ".credentials.json")
+	credentialPath := filepath.Join(home, harness.CredentialRelativePath)
 	githubTokenPath := filepath.Join(home, ".ao", "github-token")
 	askpassPath := filepath.Join(home, ".ao", "github-askpass")
 	aoPath := filepath.Join(home, "bin", "ao")
 	filesRoot := filepath.Join(home, ".ao", "runtime-files")
 
-	if _, err = run(ctx, sandbox, `sudo apt-get update -qq && sudo apt-get install -y -qq ca-certificates curl git tmux && sudo env PATH="$PATH" npm install -g @anthropic-ai/claude-code`, 10*time.Minute); err != nil {
+	if _, err = run(ctx, sandbox, `sudo apt-get update -qq && sudo apt-get install -y -qq ca-certificates curl git tmux`, 10*time.Minute); err != nil {
 		return fmt.Errorf("install session dependencies: %w", err)
 	}
-	claudeResult, err := run(ctx, sandbox, "command -v claude", time.Minute)
+	if _, err = run(ctx, sandbox, harness.InstallCommand, 10*time.Minute); err != nil {
+		return fmt.Errorf("install cloud harness %s: %w", harness.ID, err)
+	}
+	executableResult, err := run(ctx, sandbox, "command -v "+shellQuote(harness.Executable), time.Minute)
 	if err != nil {
-		return fmt.Errorf("resolve sandbox Claude executable: %w", err)
+		return fmt.Errorf("resolve sandbox harness executable: %w", err)
 	}
-	claudeBinary := strings.TrimSpace(claudeResult)
-	if !filepath.IsAbs(claudeBinary) {
-		return errors.New("sandbox returned an invalid Claude executable path")
+	executable := strings.TrimSpace(executableResult)
+	if !filepath.IsAbs(executable) {
+		return errors.New("sandbox returned an invalid harness executable path")
 	}
-	if _, err = run(ctx, sandbox, "mkdir -p "+shellQuote(filepath.Dir(archivePath))+" "+shellQuote(filepath.Dir(claudePath))+" "+shellQuote(filepath.Dir(aoPath))+" "+shellQuote(filesRoot), time.Minute); err != nil {
+	if _, err = run(ctx, sandbox, "mkdir -p "+shellQuote(filepath.Dir(archivePath))+" "+shellQuote(filepath.Dir(credentialPath))+" "+shellQuote(filepath.Dir(aoPath))+" "+shellQuote(filesRoot), time.Minute); err != nil {
 		return err
 	}
 	if err = sandbox.FileSystem.UploadFile(ctx, p.aoBinary, aoPath); err != nil {
 		return fmt.Errorf("upload AO binary: %w", err)
 	}
-	if err = sandbox.FileSystem.UploadFile(ctx, launch.ClaudeCredentials, claudePath); err != nil {
-		return fmt.Errorf("upload Claude credentials: %w", err)
+	if harness.CredentialKind != harnesscatalog.CredentialClaudeOAuth {
+		return fmt.Errorf("cloud harness %s has no credential adapter", harness.ID)
+	}
+	if err = sandbox.FileSystem.UploadFile(ctx, launch.ClaudeCredentials, credentialPath); err != nil {
+		return fmt.Errorf("upload harness credentials: %w", err)
 	}
 	claudeConfig, err := sandboxClaudeConfig(root)
 	if err != nil {
@@ -118,7 +129,7 @@ func (p *Provider) bootstrapSessionRuntime(ctx context.Context, sandbox *daytona
 			return err
 		}
 	}
-	if _, err = run(ctx, sandbox, "chmod 0755 "+shellQuote(aoPath)+" "+shellQuote(askpassPath)+" && chmod 0600 "+shellQuote(claudePath)+" "+shellQuote(githubTokenPath), time.Minute); err != nil {
+	if _, err = run(ctx, sandbox, "chmod 0755 "+shellQuote(aoPath)+" "+shellQuote(askpassPath)+" && chmod 0600 "+shellQuote(credentialPath)+" "+shellQuote(githubTokenPath), time.Minute); err != nil {
 		return err
 	}
 
@@ -151,8 +162,8 @@ func (p *Provider) bootstrapSessionRuntime(ctx context.Context, sandbox *daytona
 	argv := append([]string(nil), launch.Argv...)
 	pathMap := map[string]string{launch.SourceWorkspace: root}
 	for _, argument := range argv {
-		if replacement, ok := sandboxProvidedCommand(argument); ok {
-			// Claude Code is installed during sandbox bootstrap. The coordinator's
+		if replacement, ok := sandboxProvidedCommand(argument, harness); ok {
+			// The harness is installed during sandbox bootstrap. The coordinator's
 			// absolute executable path is host-specific and must not be uploaded or
 			// invoked inside the isolated runtime.
 			pathMap[argument] = replacement
@@ -182,7 +193,7 @@ func (p *Provider) bootstrapSessionRuntime(ctx context.Context, sandbox *daytona
 	}
 	env["HOME"] = home
 	env["TERM"] = "xterm-256color"
-	env["PATH"] = sandboxPATH(home, claudeBinary)
+	env["PATH"] = sandboxPATH(home, executable)
 	coordinatorURL, err := p.previewURL(ctx, workspace.SandboxID, 24*time.Hour)
 	if err != nil {
 		return fmt.Errorf("create coordinator capability: %w", err)
@@ -277,9 +288,9 @@ func (p *Provider) SessionRuntimeResize(ctx context.Context, sandboxID string, r
 	return err
 }
 
-func sandboxProvidedCommand(argument string) (string, bool) {
-	if filepath.IsAbs(argument) && filepath.Base(argument) == "claude" {
-		return "claude", true
+func sandboxProvidedCommand(argument string, harness harnesscatalog.Spec) (string, bool) {
+	if filepath.IsAbs(argument) && filepath.Base(argument) == harness.Executable {
+		return harness.Executable, true
 	}
 	return "", false
 }
@@ -297,8 +308,8 @@ func sandboxClaudeConfig(root string) ([]byte, error) {
 	return append(value, '\n'), nil
 }
 
-func sandboxPATH(home, claudeBinary string) string {
-	parts := []string{filepath.Join(home, "bin"), filepath.Dir(claudeBinary), "/usr/local/bin", "/usr/bin", "/bin"}
+func sandboxPATH(home, harnessBinary string) string {
+	parts := []string{filepath.Join(home, "bin"), filepath.Dir(harnessBinary), "/usr/local/bin", "/usr/bin", "/bin"}
 	result := make([]string, 0, len(parts))
 	for _, part := range parts {
 		if !slices.Contains(result, part) {

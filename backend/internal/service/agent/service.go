@@ -81,13 +81,14 @@ type Inventory struct {
 // Service reports supported agent adapters and best-effort local readiness
 // probes. Catalog readiness is advisory UI metadata, not a spawn precheck.
 type Service struct {
-	agents      []agentregistry.HarnessAgent
-	cache       ports.AgentModelCatalogCache
-	discoverer  ports.AgentModelDiscoverer
-	projects    ProjectLookup
-	resolverMu  map[string]*sync.Mutex
-	modelCallMu sync.Mutex
-	modelCalls  map[string]*modelCatalogCall
+	agents       []agentregistry.HarnessAgent
+	cloudManaged bool
+	cache        ports.AgentModelCatalogCache
+	discoverer   ports.AgentModelDiscoverer
+	projects     ProjectLookup
+	resolverMu   map[string]*sync.Mutex
+	modelCallMu  sync.Mutex
+	modelCalls   map[string]*modelCatalogCall
 
 	mu          sync.RWMutex
 	inventory   Inventory
@@ -100,6 +101,9 @@ type Deps struct {
 	Cache      ports.AgentModelCatalogCache
 	Discoverer ports.AgentModelDiscoverer
 	Projects   ProjectLookup
+	// CloudHarnesses replaces local binary/auth probing with the capability
+	// catalog guaranteed by the cloud runtime. Empty preserves local behavior.
+	CloudHarnesses []string
 }
 
 // ProjectLookup resolves the registered working directory used for model
@@ -116,7 +120,7 @@ func New() *Service {
 
 // NewWithDeps returns the production service with durable model-catalog cache.
 func NewWithDeps(deps Deps) *Service {
-	return newService(agentregistry.Harnessed(), deps.Cache, deps.Projects, deps.Discoverer)
+	return newServiceWithCloudHarnesses(agentregistry.Harnessed(), deps.Cache, deps.Projects, deps.Discoverer, deps.CloudHarnesses)
 }
 
 // NewWithAgents returns an inventory service over a caller-provided adapter
@@ -126,14 +130,27 @@ func NewWithAgents(agents []agentregistry.HarnessAgent) *Service {
 }
 
 func newService(agents []agentregistry.HarnessAgent, cache ports.AgentModelCatalogCache, projects ProjectLookup, discoverer ports.AgentModelDiscoverer) *Service {
+	return newServiceWithCloudHarnesses(agents, cache, projects, discoverer, nil)
+}
+
+func newServiceWithCloudHarnesses(agents []agentregistry.HarnessAgent, cache ports.AgentModelCatalogCache, projects ProjectLookup, discoverer ports.AgentModelDiscoverer, cloudHarnesses []string) *Service {
+	cloudManaged := len(cloudHarnesses) > 0
+	if cloudManaged {
+		agents = filterHarnesses(agents, cloudHarnesses)
+	}
 	resolverMu := make(map[string]*sync.Mutex, len(agents))
 	for _, item := range agents {
 		resolverMu[string(item.Harness)] = &sync.Mutex{}
 	}
-	return &Service{agents: agents, cache: cache, discoverer: discoverer, projects: projects, resolverMu: resolverMu, modelCalls: map[string]*modelCatalogCall{}, inventory: Inventory{
-		Supported:  supportedInfos(agents),
-		Installed:  []Info{},
-		Authorized: []Info{},
+	supported := supportedInfos(agents)
+	installed := []Info{}
+	authorized := []Info{}
+	if cloudManaged {
+		installed = authorizedInfos(supported)
+		authorized = cloneInfos(installed)
+	}
+	return &Service{agents: agents, cloudManaged: cloudManaged, cache: cache, discoverer: discoverer, projects: projects, resolverMu: resolverMu, modelCalls: map[string]*modelCatalogCall{}, inventory: Inventory{
+		Supported: supported, Installed: installed, Authorized: authorized,
 	}}
 }
 
@@ -156,6 +173,9 @@ func (s *Service) List(ctx context.Context) (Inventory, error) {
 func (s *Service) Refresh(ctx context.Context) (Inventory, error) {
 	if err := ctx.Err(); err != nil {
 		return Inventory{}, err
+	}
+	if s.cloudManaged {
+		return s.List(ctx)
 	}
 	s.refreshMu.Lock()
 	defer s.refreshMu.Unlock()
@@ -224,6 +244,10 @@ func (s *Service) Probe(ctx context.Context, agentID string) (ProbeResult, error
 		}
 		if info.ID != agentID {
 			continue
+		}
+		if s.cloudManaged {
+			info.AuthStatus = ports.AgentAuthStatusAuthorized
+			return ProbeResult{Agent: info, Supported: true, Installed: true}, nil
 		}
 		res := s.probeAgent(ctx, item)
 		return ProbeResult{
@@ -469,6 +493,28 @@ func supportedInfos(agents []agentregistry.HarnessAgent) []Info {
 	}
 	sortInfos(supported)
 	return supported
+}
+
+func authorizedInfos(infos []Info) []Info {
+	result := cloneInfos(infos)
+	for index := range result {
+		result[index].AuthStatus = ports.AgentAuthStatusAuthorized
+	}
+	return result
+}
+
+func filterHarnesses(agents []agentregistry.HarnessAgent, ids []string) []agentregistry.HarnessAgent {
+	wanted := make(map[string]struct{}, len(ids))
+	for _, id := range ids {
+		wanted[id] = struct{}{}
+	}
+	result := make([]agentregistry.HarnessAgent, 0, len(ids))
+	for _, item := range agents {
+		if _, ok := wanted[string(item.Harness)]; ok {
+			result = append(result, item)
+		}
+	}
+	return result
 }
 
 func cloneInventory(in Inventory) Inventory {

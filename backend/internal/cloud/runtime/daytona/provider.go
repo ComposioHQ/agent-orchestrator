@@ -16,6 +16,7 @@ import (
 	"github.com/daytona/clients/sdk-go/pkg/types"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/cloud/domain"
+	"github.com/aoagents/agent-orchestrator/backend/internal/cloud/harnesscatalog"
 )
 
 const daemonPort = 3001
@@ -138,16 +139,20 @@ func (p *Provider) bootstrap(ctx context.Context, sandbox *daytonasdk.Sandbox, w
 		return err
 	}
 	binPath := filepath.Join(home, "bin", "ao")
-	claudePath := filepath.Join(home, ".claude", ".credentials.json")
+	defaultHarness, _ := harnesscatalog.Lookup("claude-code")
+	claudePath := filepath.Join(home, defaultHarness.CredentialRelativePath)
 	claudeConfigPath := filepath.Join(home, ".claude.json")
 	githubTokenPath := filepath.Join(home, ".ao", "github-token")
 	askpassPath := filepath.Join(home, ".ao", "github-askpass")
 	workspacePath := filepath.Join(home, "workspace", "ao-"+strings.ReplaceAll(workspace.ID, "-", "")[:12])
 
-	if _, err := run(ctx, sandbox,
-		`sudo apt-get update -qq && sudo apt-get install -y -qq ca-certificates curl git tmux && sudo env PATH="$PATH" npm install -g @anthropic-ai/claude-code`,
-		10*time.Minute); err != nil {
+	if _, err := run(ctx, sandbox, `sudo apt-get update -qq && sudo apt-get install -y -qq ca-certificates curl git tmux`, 10*time.Minute); err != nil {
 		return fmt.Errorf("install sandbox dependencies: %w", err)
+	}
+	for _, harness := range harnesscatalog.All() {
+		if _, err := run(ctx, sandbox, harness.InstallCommand, 10*time.Minute); err != nil {
+			return fmt.Errorf("install cloud harness %s: %w", harness.ID, err)
+		}
 	}
 	if _, err := run(ctx, sandbox, "mkdir -p "+shellQuote(filepath.Dir(binPath))+" "+
 		shellQuote(filepath.Dir(claudePath))+" "+shellQuote(filepath.Dir(githubTokenPath))+" "+
@@ -234,6 +239,7 @@ func (p *Provider) startDaemon(ctx context.Context, sandbox *daytonasdk.Sandbox,
 	askpassPath := filepath.Join(home, ".ao", "github-askpass")
 	start := "nohup env AO_DATA_DIR=" + shellQuote(dataDir) + " AO_RUN_FILE=" + shellQuote(runFile) +
 		" AO_PORT=3001 AO_CORS_HEADERS_MANAGED_BY_PROXY=on AO_SCRATCH_PROJECT=off" +
+		" AO_CLOUD_HARNESSES=" + shellQuote(harnesscatalog.CSV()) +
 		" GIT_TERMINAL_PROMPT=0 GIT_ASKPASS=" + shellQuote(askpassPath) +
 		" AO_CLOUD_RUNTIME_API_URL=" + shellQuote(bootstrap.ControlPlaneURL) +
 		" AO_CLOUD_RUNTIME_TOKEN=" + shellQuote(bootstrap.RuntimeToken) +
