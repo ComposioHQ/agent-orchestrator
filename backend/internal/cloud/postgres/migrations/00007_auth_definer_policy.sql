@@ -2,7 +2,21 @@
 -- Forward repair for staging, where migration 00006 briefly used BYPASSRLS.
 -- Fresh databases already have these grants and policies; DROP/CREATE keeps the
 -- repair idempotent across both histories and removes the bypass attribute.
-ALTER ROLE ao_cloud_auth NOBYPASSRLS;
+-- Merely naming NOBYPASSRLS requires the caller to hold BYPASSRLS, even when
+-- the role is already non-bypass. Avoid that operation on portable fresh
+-- installs, where migration 00006 created the role without the attribute.
+-- +goose StatementBegin
+DO $$
+BEGIN
+    IF EXISTS (
+        SELECT 1 FROM pg_roles
+        WHERE rolname = 'ao_cloud_auth' AND rolbypassrls
+    ) THEN
+        ALTER ROLE ao_cloud_auth NOBYPASSRLS;
+    END IF;
+END
+$$;
+-- +goose StatementEnd
 -- +goose StatementBegin
 DO $$
 BEGIN

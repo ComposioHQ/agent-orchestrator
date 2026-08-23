@@ -8,8 +8,10 @@ DO $$
 BEGIN
     IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'ao_cloud_auth') THEN
         CREATE ROLE ao_cloud_auth NOLOGIN;
+        EXECUTE format('GRANT ao_cloud_auth TO %I WITH SET TRUE', current_user);
+    ELSIF NOT pg_has_role(current_user, 'ao_cloud_auth', 'SET') THEN
+        RAISE EXCEPTION 'migration role % must be able to SET ROLE ao_cloud_auth', current_user;
     END IF;
-    EXECUTE format('GRANT ao_cloud_auth TO %I WITH SET TRUE', current_user);
 END
 $$;
 -- +goose StatementEnd
