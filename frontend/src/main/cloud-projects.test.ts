@@ -119,6 +119,25 @@ describe("Electron-main cloud project boundary", () => {
 			.rejects.toThrow("placement unavailable");
 	});
 
+	it("surfaces degraded canonical projects instead of silently hiding them", async () => {
+		appClient.listProjects.mockResolvedValue({
+			projects: [{ id: "project-1", name: "App", path: "/workspace/app", kind: "single_repo" }],
+		});
+		appClient.getProject.mockResolvedValue({
+			status: "degraded",
+			project: {
+				id: "project-1",
+				name: "App",
+				path: "/workspace/app",
+				kind: "single_repo",
+				resolveError: "Provisioned checkout is not ready",
+			},
+		});
+		const service = createCloudProjectsService({ placementClient, appClient, getAccount: async () => account });
+
+		await expect(service.list()).rejects.toThrow("Provisioned checkout is not ready");
+	});
+
 	it("can proceed from a ready project to a generated-client sandbox session without inventing a main branch", async () => {
 		appClient.spawnSession.mockResolvedValue({ session: { id: "session-1" } });
 		const service = createCloudProjectsService({
