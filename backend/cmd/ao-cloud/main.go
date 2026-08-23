@@ -58,6 +58,7 @@ func run(logger *slog.Logger) error {
 		RefreshTokenTTL:     cfg.RefreshTokenTTL,
 		TrustSourceIPHeader: cfg.TrustSourceIPHeader,
 		Logger:              logger,
+		App:                 buildAppAPI(cfg, logger),
 	})
 	if err != nil {
 		return err
