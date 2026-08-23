@@ -147,20 +147,21 @@ type scmProvider interface {
 // session operations to the internal sessionmanager.Manager and owns read-model
 // assembly, including user-facing display status derivation.
 type Service struct {
-	manager             commander
-	store               Store
-	prClaimer           ports.PRClaimer
-	scm                 scmProvider
-	tracker             ports.Tracker
-	clock               func() time.Time
-	dataDir             string
-	telemetry           ports.EventSink
-	logger              *slog.Logger
-	backgroundContext   context.Context
-	runBackground       func(func())
-	orchestratorLocksMu sync.Mutex
-	orchestratorLocks   map[domain.ProjectID]*sync.Mutex
-	workspaceCache      *workspaceCache
+	manager              commander
+	store                Store
+	prClaimer            ports.PRClaimer
+	scm                  scmProvider
+	tracker              ports.Tracker
+	clock                func() time.Time
+	dataDir              string
+	telemetry            ports.EventSink
+	logger               *slog.Logger
+	backgroundContext    context.Context
+	runBackground        func(func())
+	orchestratorLocksMu  sync.Mutex
+	orchestratorLocks    map[domain.ProjectID]*sync.Mutex
+	workspaceCache       *workspaceCache
+	workspaceObservation ports.WorkspaceObservation
 	// workspaceGroup coalesces concurrent cache-miss compare/status lookups
 	// for the same (session, root): "Expand All" on many files fires that
 	// many GetWorkspaceFile calls at once, and without this each one would
@@ -190,7 +191,10 @@ type Deps struct {
 	Clock     func() time.Time
 	DataDir   string
 	Telemetry ports.EventSink
-	Logger    *slog.Logger
+	// WorkspaceObservation selects where session content operations execute.
+	// Nil preserves the local workspace behavior.
+	WorkspaceObservation ports.WorkspaceObservation
+	Logger               *slog.Logger
 	// BackgroundContext owns best-effort work that must survive an HTTP request
 	// returning but stop with the daemon. It defaults to context.Background for
 	// focused service tests and non-daemon callers.
@@ -207,7 +211,7 @@ func NewWithDeps(d Deps) *Service {
 	if backgroundContext == nil {
 		backgroundContext = context.Background()
 	}
-	s := &Service{manager: d.Manager, store: d.Store, prClaimer: d.PRClaimer, scm: d.SCM, tracker: d.Tracker, clock: d.Clock, dataDir: d.DataDir, signalCapable: d.SignalCapable, telemetry: d.Telemetry, logger: d.Logger, backgroundContext: backgroundContext}
+	s := &Service{manager: d.Manager, store: d.Store, prClaimer: d.PRClaimer, scm: d.SCM, tracker: d.Tracker, clock: d.Clock, dataDir: d.DataDir, signalCapable: d.SignalCapable, telemetry: d.Telemetry, logger: d.Logger, backgroundContext: backgroundContext, workspaceObservation: d.WorkspaceObservation}
 	if s.prClaimer == nil {
 		if w, ok := d.Store.(ports.PRClaimer); ok {
 			s.prClaimer = w
@@ -217,6 +221,9 @@ func NewWithDeps(d Deps) *Service {
 		s.clock = time.Now
 	}
 	s.workspaceCache = newWorkspaceCache(workspaceCacheTTL, s.clock)
+	if s.workspaceObservation == nil {
+		s.workspaceObservation = &localWorkspaceObservation{service: s}
+	}
 	return s
 }
 

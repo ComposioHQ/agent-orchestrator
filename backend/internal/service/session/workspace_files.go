@@ -18,6 +18,7 @@ import (
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/apierr"
+	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 	aoprocess "github.com/aoagents/agent-orchestrator/backend/internal/process"
 )
 
@@ -31,75 +32,41 @@ const (
 )
 
 // WorkspaceFileStatus describes a session-worktree file relative to its compare base.
-type WorkspaceFileStatus string
+type WorkspaceFileStatus = ports.WorkspaceFileStatus
 
 // Workspace file status values reported by the session workspace browser.
 const (
-	WorkspaceFileUnmodified WorkspaceFileStatus = "unmodified"
-	WorkspaceFileModified   WorkspaceFileStatus = "modified"
-	WorkspaceFileAdded      WorkspaceFileStatus = "added"
-	WorkspaceFileDeleted    WorkspaceFileStatus = "deleted"
-	WorkspaceFileRenamed    WorkspaceFileStatus = "renamed"
+	WorkspaceFileUnmodified = ports.WorkspaceFileUnmodified
+	WorkspaceFileModified   = ports.WorkspaceFileModified
+	WorkspaceFileAdded      = ports.WorkspaceFileAdded
+	WorkspaceFileDeleted    = ports.WorkspaceFileDeleted
+	WorkspaceFileRenamed    = ports.WorkspaceFileRenamed
 )
 
 // WorkspaceCompareMode describes the Git revision used for workspace diffs.
-type WorkspaceCompareMode string
+type WorkspaceCompareMode = ports.WorkspaceCompareMode
 
 const (
 	// WorkspaceCompareBase means diffs are against the session's recorded base.
-	WorkspaceCompareBase WorkspaceCompareMode = "base"
+	WorkspaceCompareBase = ports.WorkspaceCompareBase
 	// WorkspaceCompareHeadFallback means AO could not resolve a base and used the
 	// previous HEAD-only behavior.
-	WorkspaceCompareHeadFallback WorkspaceCompareMode = "head_fallback"
+	WorkspaceCompareHeadFallback = ports.WorkspaceCompareHeadFallback
 )
 
 // WorkspaceFiles is the read model for the session workspace file browser.
-type WorkspaceFiles struct {
-	SessionID      domain.SessionID
-	CompareBaseSHA string
-	CompareBaseRef string
-	CompareMode    WorkspaceCompareMode
-	Files          []WorkspaceFileSummary
-	Truncated      bool
-}
+type WorkspaceFiles = ports.WorkspaceFiles
 
 // WorkspaceFileSummary is one file row in the session workspace browser.
-type WorkspaceFileSummary struct {
-	Path         string
-	PreviousPath string
-	Status       WorkspaceFileStatus
-	Additions    int
-	Deletions    int
-	Size         int64
-	Binary       bool
-}
+type WorkspaceFileSummary = ports.WorkspaceFileSummary
 
 // WorkspaceFileDetail is the selected file's current content and diff.
-type WorkspaceFileDetail struct {
-	SessionID          domain.SessionID
-	Path               string
-	PreviousPath       string
-	Status             WorkspaceFileStatus
-	Additions          int
-	Deletions          int
-	Size               int64
-	Binary             bool
-	Deleted            bool
-	ImageMediaType     string
-	Content            string
-	ContentTruncated   bool
-	Diff               string
-	DiffTruncated      bool
-	WorkspaceTruncated bool
-	CompareBaseSHA     string
-	CompareBaseRef     string
-	CompareMode        WorkspaceCompareMode
-}
+type WorkspaceFileDetail = ports.WorkspaceFile
 
 // WorkspaceWatchPaths returns every worktree that contributes files to a
 // session workspace read model. Workspace projects include child repositories
 // that are deliberately ignored by the parent Git repository.
-func (s *Service) WorkspaceWatchPaths(ctx context.Context, id domain.SessionID) ([]string, error) {
+func (s *Service) localWorkspaceWatchPaths(ctx context.Context, id domain.SessionID) ([]string, error) {
 	rec, err := s.sessionWorkspaceRecord(ctx, id)
 	if err != nil {
 		return nil, err
@@ -133,14 +100,14 @@ func (s *Service) WorkspaceWatchPaths(ctx context.Context, id domain.SessionID) 
 // a session. Called from the workspace SSE stream the instant its filesystem
 // watcher observes a real change, so a list/detail request racing a fresh
 // git mutation never returns stale cached state.
-func (s *Service) InvalidateWorkspaceCache(id domain.SessionID) {
+func (s *Service) localInvalidateWorkspaceCache(id domain.SessionID) {
 	s.workspaceCache.invalidateSession(id)
 }
 
 // ListWorkspaceFiles returns all tracked and untracked, non-ignored files in a
 // session worktree, annotated with their current git status against the
 // session's recorded base when available.
-func (s *Service) ListWorkspaceFiles(ctx context.Context, id domain.SessionID) (WorkspaceFiles, error) {
+func (s *Service) localListWorkspaceFiles(ctx context.Context, id domain.SessionID) (WorkspaceFiles, error) {
 	rec, err := s.sessionWorkspaceRecord(ctx, id)
 	if err != nil {
 		return WorkspaceFiles{}, err
@@ -187,7 +154,7 @@ func (s *Service) ListWorkspaceFiles(ctx context.Context, id domain.SessionID) (
 
 // GetWorkspaceFile returns one session-worktree file's current text content and
 // the git diff for that path. Binary or deleted files omit content.
-func (s *Service) GetWorkspaceFile(ctx context.Context, id domain.SessionID, rawPath string) (WorkspaceFileDetail, error) {
+func (s *Service) localGetWorkspaceFile(ctx context.Context, id domain.SessionID, rawPath string) (WorkspaceFileDetail, error) {
 	target, err := s.resolveWorkspaceFileTarget(ctx, id, rawPath)
 	if err != nil {
 		return WorkspaceFileDetail{}, err
@@ -251,28 +218,23 @@ func (s *Service) resolveWorkspaceFileTarget(ctx context.Context, id domain.Sess
 }
 
 // WorkspaceFileBlobSide selects which revision of a workspace file to read.
-type WorkspaceFileBlobSide string
+type WorkspaceFileBlobSide = ports.WorkspaceBlobSide
 
 const (
 	// WorkspaceBlobBefore is the file as it exists in the compare base.
-	WorkspaceBlobBefore WorkspaceFileBlobSide = "before"
+	WorkspaceBlobBefore = ports.WorkspaceBlobBefore
 	// WorkspaceBlobAfter is the file as it exists in the session worktree.
-	WorkspaceBlobAfter WorkspaceFileBlobSide = "after"
+	WorkspaceBlobAfter = ports.WorkspaceBlobAfter
 )
 
 // WorkspaceFileBlob is one revision of a workspace file's raw bytes.
-type WorkspaceFileBlob struct {
-	Path      string
-	Side      WorkspaceFileBlobSide
-	MediaType string
-	Data      []byte
-}
+type WorkspaceFileBlob = ports.WorkspaceBlob
 
 // GetWorkspaceFileBlob returns the raw bytes of one side of a workspace file so
 // the diff viewer can render an image change. Only image media types are
 // served: text content already travels in the file detail response, and the
 // diff viewer is this route's only consumer.
-func (s *Service) GetWorkspaceFileBlob(ctx context.Context, id domain.SessionID, rawPath string, side WorkspaceFileBlobSide) (WorkspaceFileBlob, error) {
+func (s *Service) localGetWorkspaceFileBlob(ctx context.Context, id domain.SessionID, rawPath string, side WorkspaceFileBlobSide) (WorkspaceFileBlob, error) {
 	if side != WorkspaceBlobBefore && side != WorkspaceBlobAfter {
 		return WorkspaceFileBlob{}, apierr.Invalid("INVALID_WORKSPACE_BLOB_SIDE", "side must be before or after", nil)
 	}
