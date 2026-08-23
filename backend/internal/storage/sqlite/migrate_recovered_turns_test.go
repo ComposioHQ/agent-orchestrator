@@ -5,9 +5,9 @@ import (
 	"time"
 )
 
-func TestMigration0106PreservesTurnsAndAllowsRecoveredHistory(t *testing.T) {
+func TestMigration0107PreservesTurnsAndAllowsRecoveredHistory(t *testing.T) {
 	db := openTestDB(t)
-	upTo(t, db, 105)
+	upTo(t, db, 106)
 	now := time.Date(2026, time.August, 23, 12, 0, 0, 0, time.UTC)
 
 	mustExec(t, db, `
@@ -50,7 +50,7 @@ INSERT INTO conversation_activities (
     'completed', 'known outcome', ?, ?, 'conversation-1:root'
 );`, now, now)
 
-	upTo(t, db, 106)
+	upTo(t, db, 107)
 
 	var knownState, messageTurn string
 	if err := db.QueryRow(`SELECT state FROM conversation_turns WHERE id = 'turn-known'`).Scan(&knownState); err != nil {
