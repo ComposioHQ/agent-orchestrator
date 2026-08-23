@@ -9,6 +9,7 @@ package systemcheck
 
 import (
 	"context"
+	"os"
 	"runtime"
 	"strings"
 
@@ -102,11 +103,19 @@ func (s *Service) checkTmux() Requirement {
 			Detail: "Not required on Windows — AO uses the built-in ConPTY terminal runtime instead of tmux.",
 		}
 	}
-	path, err := s.executables.LookPath("tmux")
+	executable := strings.TrimSpace(os.Getenv("AO_TMUX_BINARY"))
+	if executable == "" {
+		executable = "tmux"
+	}
+	path, err := s.executables.LookPath(executable)
 	if err != nil || path == "" {
+		detail := "tmux was not found on PATH; it is required on macOS/Linux to start sessions."
+		if executable != "tmux" {
+			detail = "AO's bundled tmux is missing or not executable: " + executable
+		}
 		return Requirement{
 			ID: "tmux", Label: "tmux", Required: true,
-			Detail: "tmux was not found on PATH; it is required on macOS/Linux to start sessions.",
+			Detail: detail,
 		}
 	}
 	return Requirement{ID: "tmux", Label: "tmux", Satisfied: true, Required: true, Detail: path}

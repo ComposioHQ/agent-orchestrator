@@ -106,6 +106,36 @@ func TestNewPicksUpShellFromEnv(t *testing.T) {
 	}
 }
 
+func TestNewPrefersBundledTmuxFromEnv(t *testing.T) {
+	t.Setenv("AO_TMUX_BINARY", "/opt/ao/resources/tmux/bin/tmux")
+	r := New(Options{})
+	if got := r.binary; got != "/opt/ao/resources/tmux/bin/tmux" {
+		t.Fatalf("binary = %q, want bundled tmux", got)
+	}
+}
+
+func TestNewExplicitBinaryOverridesBundledTmuxEnv(t *testing.T) {
+	t.Setenv("AO_TMUX_BINARY", "/opt/ao/resources/tmux/bin/tmux")
+	r := New(Options{Binary: "tmux-test"})
+	if got := r.binary; got != "tmux-test" {
+		t.Fatalf("binary = %q, want explicit option", got)
+	}
+}
+
+func TestNewUsesAppOwnedTmuxSocketFromEnv(t *testing.T) {
+	t.Setenv("AO_TMUX_SOCKET_NAME", "ao")
+	r := New(Options{Binary: "tmux-test"})
+	fr := &fakeRunner{}
+	r.runner = fr
+
+	if _, err := r.run(context.Background(), "list-sessions"); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if got, want := fr.calls[0].args, []string{"-L", "ao", "list-sessions"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("args = %#v, want %#v", got, want)
+	}
+}
+
 // TestExecRunnerRunsFromStableDir is the direct regression test for Fix 1:
 // execRunner.Run must pin cmd.Dir to os.TempDir() rather than inheriting
 // whatever the daemon process's own cwd happens to be. The first tmux CLI
@@ -1197,6 +1227,18 @@ func TestAttachCommandReturnsExpectedArgv(t *testing.T) {
 		t.Fatalf("AttachCommand: %v", err)
 	}
 	want := []string{"/usr/bin/tmux", "-u", "-T", "RGB", "attach-session", "-t", "sess-1"}
+	if !reflect.DeepEqual(argv, want) {
+		t.Fatalf("argv = %#v, want %#v", argv, want)
+	}
+}
+
+func TestAttachCommandUsesAppOwnedSocket(t *testing.T) {
+	r := New(Options{Binary: "/opt/ao/resources/tmux/bin/tmux", SocketName: "ao", Timeout: time.Second})
+	argv, err := r.attachCommand(ports.RuntimeHandle{ID: "sess-1"})
+	if err != nil {
+		t.Fatalf("AttachCommand: %v", err)
+	}
+	want := []string{"/opt/ao/resources/tmux/bin/tmux", "-L", "ao", "-u", "-T", "RGB", "attach-session", "-t", "sess-1"}
 	if !reflect.DeepEqual(argv, want) {
 		t.Fatalf("argv = %#v, want %#v", argv, want)
 	}

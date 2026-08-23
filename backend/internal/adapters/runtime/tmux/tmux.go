@@ -49,7 +49,8 @@ var getenv = os.Getenv
 // Options configures a tmux Runtime. Every field has a sensible default (see
 // New), so the zero value is usable.
 type Options struct {
-	Binary     string        // default "tmux" (resolved via exec.LookPath)
+	Binary     string        // default $AO_TMUX_BINARY, else "tmux" (resolved via exec.LookPath)
+	SocketName string        // default $AO_TMUX_SOCKET_NAME; empty uses tmux's machine-wide default socket
 	Shell      string        // default $SHELL else /bin/sh
 	Timeout    time.Duration // default 5s
 	ChunkSize  int           // default 16*1024
@@ -61,6 +62,7 @@ type Options struct {
 // CLI. It implements ports.Runtime.
 type Runtime struct {
 	binary       string
+	socketName   string
 	shell        string
 	timeout      time.Duration
 	chunkSize    int
@@ -236,11 +238,15 @@ func stableRunDir() string {
 	return ""
 }
 
-// New builds a tmux Runtime, filling unset Options with defaults: binary "tmux"
-// (resolved via exec.LookPath), shell from $SHELL (else /bin/sh), and the
+// New builds a tmux Runtime, filling unset Options with defaults: binary from
+// $AO_TMUX_BINARY when the packaged desktop app pins its bundled tmux, otherwise
+// "tmux" resolved via exec.LookPath; shell from $SHELL (else /bin/sh); and the
 // default timeout and output chunk size.
 func New(opts Options) *Runtime {
 	binary := opts.Binary
+	if binary == "" {
+		binary = strings.TrimSpace(getenv("AO_TMUX_BINARY"))
+	}
 	if binary == "" {
 		if path, err := exec.LookPath("tmux"); err == nil {
 			binary = path
@@ -271,8 +277,13 @@ func New(opts Options) *Runtime {
 	if reapGrace <= 0 {
 		reapGrace = defaultReapGrace
 	}
+	socketName := strings.TrimSpace(opts.SocketName)
+	if socketName == "" {
+		socketName = strings.TrimSpace(getenv("AO_TMUX_SOCKET_NAME"))
+	}
 	return &Runtime{
 		binary:       binary,
+		socketName:   socketName,
 		shell:        shellPath,
 		timeout:      timeout,
 		chunkSize:    chunkSize,
@@ -733,7 +744,11 @@ func (r *Runtime) attachCommand(handle ports.RuntimeHandle) ([]string, error) {
 	// The embedded xterm renderer supports 24-bit SGR colors. Tell this tmux
 	// client explicitly so tmux forwards RGB instead of quantizing it to the
 	// xterm-256color palette. -T is available in AO's minimum tmux version (3.2).
-	return []string{r.binary, "-u", "-T", "RGB", "attach-session", "-t", id}, nil
+	argv := []string{r.binary}
+	if r.socketName != "" {
+		argv = append(argv, "-L", r.socketName)
+	}
+	return append(argv, "-u", "-T", "RGB", "attach-session", "-t", id), nil
 }
 
 func attachEnv(base []string) []string {
@@ -761,6 +776,9 @@ func attachEnv(base []string) []string {
 
 // run wraps runner.Run with a per-call timeout context.
 func (r *Runtime) run(ctx context.Context, args ...string) ([]byte, error) {
+	if r.socketName != "" {
+		args = append([]string{"-L", r.socketName}, args...)
+	}
 	return r.runCommand(ctx, r.binary, args...)
 }
 

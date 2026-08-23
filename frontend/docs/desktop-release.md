@@ -23,6 +23,11 @@ on `main`; the PR-based flow below supersedes it.
   tracks the last released version; the `desktop-v*` tag then points at that
   merge commit. Nightlies stamp the version at build time from the highest
   `desktop-v*` tag, so they are unaffected by whatever `main` currently carries.
+- macOS and Linux packages build and ship a pinned tmux under
+  `resources/tmux/bin/tmux`. The Electron supervisor pins the daemon to that
+  executable and an AO-owned tmux socket, so releases never depend on or attach
+  to the machine's tmux installation/server. Windows uses ConPTY and carries no
+  tmux resource.
 
 ## Hard rule: exactly one publisher
 

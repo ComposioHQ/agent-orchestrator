@@ -81,6 +81,7 @@ import {
 } from "./shared/daemon-attach";
 import { browserDaemonOwnershipDecision, shouldReplacePortHolder } from "./shared/daemon-takeover";
 import { buildDaemonEnv, resolveShellEnv, type ShellRunner } from "./shared/shell-env";
+import { bundledTmuxBinaryPath } from "./shared/bundled-tmux";
 import {
 	handleCloudDeepLink,
 	installCloudIPC,
@@ -760,6 +761,7 @@ function daemonEnv(forceKeep = keepDaemonAlive(process.env)): NodeJS.ProcessEnv 
 	// is how the daemon recognises the previous run's shells as orphans and
 	// destroys them (see internal/service/shellterm).
 	const AO_OWNER = forceKeep ? "persistent" : "app";
+	const bundledTmuxBinary = bundledTmuxBinaryPath(app.isPackaged, process.resourcesPath, process.platform);
 	const ownerTag = {
 		AO_OWNER,
 		AO_APP_RUN_ID: appRunId,
@@ -781,6 +783,7 @@ function daemonEnv(forceKeep = keepDaemonAlive(process.env)): NodeJS.ProcessEnv 
 			(app.isPackaged
 				? path.join(process.resourcesPath, "acp-runtime")
 				: path.join(app.getAppPath(), "resources", "acp-runtime")),
+		...(bundledTmuxBinary ? { AO_TMUX_BINARY: bundledTmuxBinary, AO_TMUX_SOCKET_NAME: "ao" } : {}),
 	};
 	// In dev mode, inject isolation defaults so the dev daemon never collides with
 	// the installed app. User-set env vars take priority (checked first).
