@@ -1,7 +1,6 @@
 import type { BrowserProfile } from "./browser-profiles";
 
 export const BROWSER_IMPORT_MAX_SOURCE_PROFILES = 16;
-export const BROWSER_IMPORT_MAX_DOMAINS = 64;
 export const BROWSER_IMPORT_MAX_HISTORY_ENTRIES = 5_000;
 export const BROWSER_IMPORT_MAX_COOKIES = 20_000;
 
@@ -42,7 +41,6 @@ export type BrowserImportRequest = {
 	profileIds: string[];
 	includeCookies: boolean;
 	includeHistory: boolean;
-	domains: string[];
 	destination: BrowserImportDestination;
 };
 

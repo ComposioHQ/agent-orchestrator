@@ -47,7 +47,6 @@ export function BrowserImportDialog({
 	const [destinationMode, setDestinationMode] = useState<"separate" | "merge">("separate");
 	const [destinationNames, setDestinationNames] = useState<Record<string, string>>({});
 	const [mergeName, setMergeName] = useState("");
-	const [domains, setDomains] = useState("");
 	const [loading, setLoading] = useState(false);
 	const [error, setError] = useState("");
 	const [progress, setProgress] = useState<BrowserImportProgress | null>(null);
@@ -69,7 +68,6 @@ export function BrowserImportDialog({
 		setDestinationMode("separate");
 		setDestinationNames({});
 		setMergeName("");
-		setDomains("");
 		setError("");
 		setProgress(null);
 		setResult(null);
@@ -140,7 +138,6 @@ export function BrowserImportDialog({
 				profileIds: selectedProfiles.map((profile) => profile.id),
 				includeCookies,
 				includeHistory,
-				domains: domains.split(/[\s,;]+/u).filter(Boolean),
 				destination:
 					destinationMode === "merge"
 						? { mode: "merge", name: mergeName.trim() }
@@ -207,7 +204,6 @@ export function BrowserImportDialog({
 						<OptionsStep
 							destinationMode={destinationMode}
 							destinationNames={destinationNames}
-							domains={domains}
 							error={error}
 							includeCookies={includeCookies}
 							includeHistory={includeHistory}
@@ -215,7 +211,6 @@ export function BrowserImportDialog({
 							profiles={selectedProfiles}
 							setDestinationMode={setDestinationMode}
 							setDestinationNames={setDestinationNames}
-							setDomains={setDomains}
 							setIncludeCookies={setIncludeCookies}
 							setIncludeHistory={setIncludeHistory}
 							setMergeName={setMergeName}
@@ -351,14 +346,12 @@ function OptionsStep({
 	destinationMode,
 	destinationNames,
 	mergeName,
-	domains,
 	error,
 	setIncludeCookies,
 	setIncludeHistory,
 	setDestinationMode,
 	setDestinationNames,
 	setMergeName,
-	setDomains,
 }: {
 	source: BrowserImportSource;
 	profiles: BrowserImportSource["profiles"];
@@ -367,14 +360,12 @@ function OptionsStep({
 	destinationMode: "separate" | "merge";
 	destinationNames: Record<string, string>;
 	mergeName: string;
-	domains: string;
 	error: string;
 	setIncludeCookies: (value: boolean) => void;
 	setIncludeHistory: (value: boolean) => void;
 	setDestinationMode: (value: "separate" | "merge") => void;
 	setDestinationNames: React.Dispatch<React.SetStateAction<Record<string, string>>>;
 	setMergeName: (value: string) => void;
-	setDomains: (value: string) => void;
 }) {
 	const { t } = useTranslation();
 	return (
@@ -423,12 +414,6 @@ function OptionsStep({
 						))}
 					</div>
 				)}
-			</section>
-
-			<section className="space-y-2">
-				<h3 className="text-sm font-semibold">{t("settings.browserImport.domainsTitle")}</h3>
-				<Input onChange={(event) => setDomains(event.target.value)} placeholder={t("settings.browserImport.domainsPlaceholder")} value={domains} />
-				<p className="text-xs text-muted-foreground">{t("settings.browserImport.domainsHelp")}</p>
 			</section>
 			{error ? <p className="text-xs text-destructive" role="alert">{error}</p> : null}
 		</div>

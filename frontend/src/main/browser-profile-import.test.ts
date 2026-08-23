@@ -142,7 +142,6 @@ describe("BrowserProfileImportService", () => {
 				profileIds: [source.profiles[0]!.id],
 				includeCookies: true,
 				includeHistory: true,
-				domains: ["example.com"],
 				destination: { mode: "merge", name: "Imported Firefox" },
 			}, vi.fn());
 
@@ -197,7 +196,6 @@ describe("BrowserProfileImportService", () => {
 			profileIds: [source.profiles[0]!.id],
 			includeCookies: true,
 			includeHistory: true,
-			domains: [],
 			destination: { mode: "merge", name: "History-only Firefox" },
 		}, vi.fn());
 
@@ -209,7 +207,7 @@ describe("BrowserProfileImportService", () => {
 		expect(setCookie).not.toHaveBeenCalled();
 	});
 
-	it("discovers path-hidden profiles and atomically imports filtered cookies and history", async () => {
+	it("discovers path-hidden profiles and atomically imports supported cookies and history", async () => {
 		const root = await fixtureRoot();
 		const { localAppData } = await createChromeFixture(root);
 		const stateDir = path.join(root, "ao-state");
@@ -244,16 +242,15 @@ describe("BrowserProfileImportService", () => {
 			profileIds: [sourceProfile.id],
 			includeCookies: true,
 			includeHistory: true,
-			domains: ["github.com"],
 			destination: { mode: "merge", name: "Imported Chrome" },
 		}, progress);
 
-		expect(result.entries[0]).toMatchObject({ importedCookies: 2, skippedCookies: 2, importedHistoryEntries: 1 });
+		expect(result.entries[0]).toMatchObject({ importedCookies: 3, skippedCookies: 2, importedHistoryEntries: 2 });
 		expect(result.entries[0]!.warnings).toEqual(expect.arrayContaining([
 			expect.objectContaining({ code: "encrypted-cookies-skipped", count: 1 }),
 			expect.objectContaining({ code: "expired-cookies-skipped", count: 1 }),
 		]));
-		expect([...cookiesByPartition.values()][0]).toHaveLength(2);
+		expect([...cookiesByPartition.values()][0]).toHaveLength(3);
 		expect(progress).toHaveBeenLastCalledWith(expect.objectContaining({ phase: "importing", completed: 1, total: 1 }));
 		const importedProfile = result.entries[0]!.destinationProfile;
 		expect(await new BrowserHistoryStore({ stateDir }).suggest(importedProfile.id, "openai")).toEqual([
@@ -267,7 +264,6 @@ describe("BrowserProfileImportService", () => {
 			profileIds: [sourceProfile.id],
 			includeCookies: true,
 			includeHistory: false,
-			domains: [],
 			destination: { mode: "merge", name: "Imported Chrome" },
 		}, vi.fn())).rejects.toThrow("already exists");
 		expect(cleared).toEqual([]);
@@ -297,7 +293,6 @@ describe("BrowserProfileImportService", () => {
 			profileIds: [source.profiles[0]!.id],
 			includeCookies: false,
 			includeHistory: true,
-			domains: [],
 			destination: { mode: "merge" as const, name: "Retryable" },
 		};
 		await expect(service.import(request, vi.fn())).rejects.toThrow("disk full");
@@ -333,7 +328,6 @@ describe("BrowserProfileImportService", () => {
 			profileIds: [source.profiles[0]!.id],
 			includeCookies: true,
 			includeHistory: false,
-			domains: [],
 			destination: { mode: "merge" as const, name: "Retry Session" },
 		};
 
@@ -373,7 +367,6 @@ describe("BrowserProfileImportService", () => {
 			profileIds: [source.profiles[0]!.id],
 			includeCookies: false,
 			includeHistory: true,
-			domains: [],
 			destination: { mode: "merge", name: "Too Large" },
 		}, vi.fn())).rejects.toThrow("size limit");
 		expect(profileStore.profiles).toEqual([]);
@@ -415,7 +408,6 @@ describe("BrowserProfileImportService", () => {
 			profileIds: [source.profiles[0]!.id],
 			includeCookies: false,
 			includeHistory: true,
-			domains: [],
 			destination: { mode: "merge", name: "Contained" },
 		}, vi.fn());
 

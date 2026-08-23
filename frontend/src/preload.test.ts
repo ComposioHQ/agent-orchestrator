@@ -157,7 +157,6 @@ describe("preload browser profile bridge", () => {
 			profileIds: ["b".repeat(32)],
 			includeCookies: true,
 			includeHistory: true,
-			domains: [],
 			destination: { mode: "merge", name: "Work" },
 		});
 

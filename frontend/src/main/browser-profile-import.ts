@@ -18,7 +18,6 @@ import Database from "better-sqlite3";
 import type { CookiesSetDetails } from "electron";
 import {
 	BROWSER_IMPORT_MAX_COOKIES,
-	BROWSER_IMPORT_MAX_DOMAINS,
 	BROWSER_IMPORT_MAX_HISTORY_ENTRIES,
 	BROWSER_IMPORT_MAX_SOURCE_PROFILES,
 	type BrowserImportCookieSupportReason,
@@ -511,8 +510,6 @@ function validateRequest(
 		throw new Error("Selected browser profiles are invalid.");
 	}
 	if (request.includeCookies !== true && request.includeHistory !== true) throw new Error("Select cookies, history, or both.");
-	if (!Array.isArray(request.domains) || request.domains.length > BROWSER_IMPORT_MAX_DOMAINS) throw new Error("Domain filters are invalid.");
-	const domains = normalizeDomains(request.domains);
 	const destination = request.destination;
 	if (!isRecord(destination) || (destination.mode !== "separate" && destination.mode !== "merge")) {
 		throw new Error("Browser import destination is invalid.");
@@ -535,29 +532,7 @@ function validateRequest(
 	if (new Set(normalizedNames).size !== normalizedNames.length) throw new Error("Destination profile names must be unique.");
 	const existing = new Set(existingProfiles.map((profile) => profile.name.toLowerCase()));
 	if (normalizedNames.some((name) => existing.has(name))) throw new Error("A destination browser profile already exists.");
-	return { ...request, domains };
-}
-
-function normalizeDomains(values: string[]): string[] {
-	const domains: string[] = [];
-	const seen = new Set<string>();
-	for (const raw of values) {
-		if (typeof raw !== "string") throw new Error("Domain filters are invalid.");
-		let value = raw.trim().toLowerCase();
-		if (value.startsWith("*.")) value = value.slice(2);
-		while (value.startsWith(".")) value = value.slice(1);
-		if (!value || value.length > 253 || value.includes("/") || value.includes(":")) throw new Error("Domain filters are invalid.");
-		let hostname: string;
-		try {
-			hostname = new URL(`https://${value}`).hostname.toLowerCase();
-		} catch {
-			throw new Error("Domain filters are invalid.");
-		}
-		if (hostname !== value || seen.has(hostname)) continue;
-		seen.add(hostname);
-		domains.push(hostname);
-	}
-	return domains;
+	return request;
 }
 
 async function readProfileData(
@@ -582,8 +557,8 @@ async function readProfileData(
 		} else {
 			const snapshot = await snapshotSQLite(cookieDatabase, profile.root, staging, budget);
 			const outcome = source.descriptor.family === "chromium"
-				? readChromiumCookies(snapshot, request.domains, decryptor, now)
-				: readFirefoxCookies(snapshot, request.domains, now);
+				? readChromiumCookies(snapshot, decryptor, now)
+				: readFirefoxCookies(snapshot, now);
 			if (!outcome) {
 				warnings.push({ code: "cookie-database-missing" });
 			} else {
@@ -600,8 +575,8 @@ async function readProfileData(
 		} else {
 			const snapshot = await snapshotSQLite(historyDatabase, profile.root, staging, budget);
 			history = source.descriptor.family === "chromium"
-				? readChromiumHistory(snapshot, request.domains)
-				: readFirefoxHistory(snapshot, request.domains);
+				? readChromiumHistory(snapshot)
+				: readFirefoxHistory(snapshot);
 		}
 	}
 	return { profile, cookies, history, warnings: mergeWarnings(warnings), skippedCookies };
@@ -685,7 +660,7 @@ function withReadOnlyDatabase<T>(file: string, read: (database: Database) => T):
 	}
 }
 
-function readFirefoxCookies(file: string, domains: string[], now: Date): { cookies: ImportedCookie[]; skipped: number; warnings: BrowserImportWarning[] } | null {
+function readFirefoxCookies(file: string, now: Date): { cookies: ImportedCookie[]; skipped: number; warnings: BrowserImportWarning[] } | null {
 	return withReadOnlyDatabase(file, (database) => {
 		if (!hasTable(database, "moz_cookies")) return null;
 		const rows = database.prepare(`
@@ -702,13 +677,12 @@ function readFirefoxCookies(file: string, domains: string[], now: Date): { cooki
 			secure: booleanValue(row.isSecure),
 			httpOnly: booleanValue(row.isHttpOnly),
 			sameSite: firefoxSameSite(numberValue(row.sameSite)),
-		})), domains, now);
+		})), now);
 	});
 }
 
 function readChromiumCookies(
 	file: string,
-	domains: string[],
 	decryptor: ChromiumCookieDecryptor,
 	now: Date,
 ): { cookies: ImportedCookie[]; skipped: number; warnings: BrowserImportWarning[] } {
@@ -743,7 +717,7 @@ function readChromiumCookies(
 				sameSite: chromiumSameSite(numberValue(row.samesite)),
 			});
 		}
-		const normalized = normalizeCookieRows(raw, domains, now);
+		const normalized = normalizeCookieRows(raw, now);
 		if (encryptedSkipped > 0) normalized.warnings.push({ code: "encrypted-cookies-skipped", count: encryptedSkipped });
 		normalized.skipped += encryptedSkipped;
 		return normalized;
@@ -752,7 +726,6 @@ function readChromiumCookies(
 
 function normalizeCookieRows(
 	rows: Array<Record<string, unknown>>,
-	domains: string[],
 	now: Date,
 ): { cookies: ImportedCookie[]; skipped: number; warnings: BrowserImportWarning[] } {
 	const cookies: ImportedCookie[] = [];
@@ -761,7 +734,7 @@ function normalizeCookieRows(
 	for (const row of rows) {
 		const domain = stringValue(row.domain).trim().toLowerCase();
 		const hostname = domain.replace(/^\.+/, "");
-		if (!hostname || !domainMatches(hostname, domains)) continue;
+		if (!hostname) continue;
 		const name = stringValue(row.name);
 		const value = stringValue(row.value);
 		if (!name) {
@@ -800,7 +773,7 @@ function normalizeCookieRows(
 	return { cookies, skipped: expired + invalid, warnings };
 }
 
-function readFirefoxHistory(file: string, domains: string[]): BrowserHistoryEntry[] {
+function readFirefoxHistory(file: string): BrowserHistoryEntry[] {
 	return withReadOnlyDatabase(file, (database) => {
 		requireTable(database, "moz_places", "The selected Firefox profile does not contain supported history data.");
 		return (database.prepare(`
@@ -811,12 +784,12 @@ function readFirefoxHistory(file: string, domains: string[]): BrowserHistoryEntr
 			LIMIT ${BROWSER_IMPORT_MAX_HISTORY_ENTRIES}
 		`).all() as Record<string, unknown>[]).flatMap((row) => {
 			const timestamp = numberValue(row.last_visit_date) / 1_000;
-			return normalizeHistoryRow(row.url, row.title, row.visit_count, timestamp, domains);
+			return normalizeHistoryRow(row.url, row.title, row.visit_count, timestamp);
 		});
 	});
 }
 
-function readChromiumHistory(file: string, domains: string[]): BrowserHistoryEntry[] {
+function readChromiumHistory(file: string): BrowserHistoryEntry[] {
 	return withReadOnlyDatabase(file, (database) => {
 		requireTable(database, "urls", "The selected Chromium profile does not contain supported history data.");
 		return (database.prepare(`
@@ -826,7 +799,7 @@ function readChromiumHistory(file: string, domains: string[]): BrowserHistoryEnt
 			ORDER BY last_visit_time DESC
 			LIMIT ${BROWSER_IMPORT_MAX_HISTORY_ENTRIES}
 		`).all() as Record<string, unknown>[]).flatMap((row) =>
-			normalizeHistoryRow(row.url, row.title, row.visit_count, chromiumTimestamp(numberValue(row.last_visit_time)) * 1_000, domains),
+			normalizeHistoryRow(row.url, row.title, row.visit_count, chromiumTimestamp(numberValue(row.last_visit_time)) * 1_000),
 		);
 	});
 }
@@ -844,11 +817,10 @@ function normalizeHistoryRow(
 	rawTitle: unknown,
 	rawVisitCount: unknown,
 	timestampMs: number,
-	domains: string[],
 ): BrowserHistoryEntry[] {
 	try {
 		const url = new URL(stringValue(rawURL));
-		if ((url.protocol !== "http:" && url.protocol !== "https:") || !domainMatches(url.hostname, domains)) return [];
+		if (url.protocol !== "http:" && url.protocol !== "https:") return [];
 		const title = stringValue(rawTitle).trim().slice(0, 512);
 		const lastVisited = Number.isFinite(timestampMs) && timestampMs > 0 ? new Date(timestampMs).toISOString() : new Date(0).toISOString();
 		return [{
@@ -891,12 +863,6 @@ function numberValue(value: unknown): number {
 
 function booleanValue(value: unknown): boolean {
 	return value === true || value === 1 || value === 1n;
-}
-
-function domainMatches(host: string, domains: string[]): boolean {
-	if (domains.length === 0) return true;
-	const normalized = host.toLowerCase().replace(/^\.+/, "");
-	return domains.some((domain) => normalized === domain || normalized.endsWith(`.${domain}`));
 }
 
 function dedupeCookies(cookies: ImportedCookie[]): ImportedCookie[] {

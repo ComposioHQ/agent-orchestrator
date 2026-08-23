@@ -181,7 +181,6 @@ describe("browser profile IPC", () => {
 			profileIds: ["b".repeat(32)],
 			includeCookies: true,
 			includeHistory: true,
-			domains: [],
 			destination: { mode: "merge", name: "Imported" },
 		};
 
