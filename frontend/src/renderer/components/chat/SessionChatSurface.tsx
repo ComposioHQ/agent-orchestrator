@@ -266,6 +266,7 @@ export function SessionChatSurface({
 				onRenameShellTerminal={onRenameShellTerminal}
 				switchAgentControl={
 					<TerminalSwitchAgentButton
+						agentSwitch={selectedDurableAgentSwitch}
 						container={switchSelectorContainer}
 						onOpenChange={setSwitchSelectorOpen}
 						open={switchSelectorOpen}
