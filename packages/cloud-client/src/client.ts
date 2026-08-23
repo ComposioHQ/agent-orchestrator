@@ -1,6 +1,6 @@
 import type {
-  AOSession,
-  CreateWorkerSessionInput,
+  CloudTokenSet,
+  WorkerSessionCreateInput,
   CreateWorkspacePlacementInput,
   CurrentAccount,
   ErrorEnvelope,
@@ -42,8 +42,8 @@ import type {
   WorkerReview,
   WorkerReviewPage,
   WorkerReviewSubmitInput,
-  WorkerSession,
-  WorkerSessionPage,
+  WorkerSessionRecord,
+  WorkerSessionRecordPage,
   WorkerStatus,
   WorkerWorkspaceTransportRequest,
   WorkspacePlacement,
@@ -140,7 +140,7 @@ export class CloudClient extends JSONClient {
   exchangeGoogleIdentity(
     input: GoogleIdentityExchange,
     options: RequestOptions = {},
-  ): Promise<AOSession> {
+  ): Promise<CloudTokenSet> {
     return this.unauthenticatedRequest("/api/cloud/v1/auth/google", {
       method: "POST",
       body: input,
@@ -152,7 +152,7 @@ export class CloudClient extends JSONClient {
   refreshSession(
     input: RefreshTokenInput,
     options: RequestOptions = {},
-  ): Promise<AOSession> {
+  ): Promise<CloudTokenSet> {
     return this.unauthenticatedRequest("/api/cloud/v1/auth/refresh", {
       method: "POST",
       body: input,
@@ -433,27 +433,27 @@ export class WorkerClient extends JSONClient {
     });
   }
 
-  listSessions(options: PaginationOptions = {}): Promise<WorkerSessionPage> {
+  listSessions(options: PaginationOptions = {}): Promise<WorkerSessionRecordPage> {
     return this.request(withQuery("/api/cloud/v1/worker/sessions", options), {
       signal: options.signal,
     });
   }
 
   createSession(
-    input: CreateWorkerSessionInput,
+    input: WorkerSessionCreateInput,
     options: IdempotentRequestOptions,
-  ): Promise<WorkerSession> {
+  ): Promise<WorkerSessionRecord> {
     return this.request("/api/cloud/v1/worker/sessions", mutation(input, options));
   }
 
-  getSession(sessionId: string, options: RequestOptions = {}): Promise<WorkerSession> {
+  getSession(sessionId: string, options: RequestOptions = {}): Promise<WorkerSessionRecord> {
     return this.request(this.sessionPath(sessionId), options);
   }
 
   deleteSession(
     sessionId: string,
     options: IdempotentRequestOptions,
-  ): Promise<WorkerSession> {
+  ): Promise<WorkerSessionRecord> {
     return this.request(this.sessionPath(sessionId), {
       method: "DELETE",
       idempotencyKey: options.idempotencyKey,

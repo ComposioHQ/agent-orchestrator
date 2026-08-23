@@ -27,6 +27,12 @@ func TestCloudContractIsControlPlaneOnly(t *testing.T) {
 		if strings.HasPrefix(name, "App") {
 			t.Errorf("cloud contract contains copied App* product schema %s", name)
 		}
+		if strings.Contains(name, "Project") {
+			t.Errorf("cloud contract contains independent product Project schema %s", name)
+		}
+		if strings.Contains(name, "Session") && !strings.Contains(name, "WorkerSession") {
+			t.Errorf("cloud contract contains independent product Session schema %s", name)
+		}
 		assertNoString(t, name, schema, "backend/internal/httpd/apispec")
 	}
 }

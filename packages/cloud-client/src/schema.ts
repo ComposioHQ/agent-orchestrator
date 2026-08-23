@@ -681,7 +681,7 @@ export interface components {
         RefreshTokenInput: {
             refreshToken: string;
         };
-        AOSession: {
+        CloudTokenSet: {
             accessToken: string;
             refreshToken: string;
             /** Format: date-time */
@@ -876,14 +876,14 @@ export interface components {
             /** Format: date-time */
             observedAt: string;
         };
-        CreateWorkerSessionInput: {
+        WorkerSessionCreateInput: {
             projectId: string;
             /** @enum {string} */
             role: "coordinator" | "worker";
             harness: string;
             prompt?: string;
         };
-        WorkerSession: {
+        WorkerSessionRecord: {
             id: string;
             /** Format: uuid */
             workspaceId: string;
@@ -898,8 +898,8 @@ export interface components {
             /** Format: date-time */
             updatedAt: string;
         };
-        WorkerSessionPage: {
-            sessions: components["schemas"]["WorkerSession"][];
+        WorkerSessionRecordPage: {
+            sessions: components["schemas"]["WorkerSessionRecord"][];
             pageInfo: components["schemas"]["PageInfo"];
         };
         WorkerMessageInput: {
@@ -1138,7 +1138,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["AOSession"];
+                    "application/json": components["schemas"]["CloudTokenSet"];
                 };
             };
             400: components["responses"]["BadRequest"];
@@ -1166,7 +1166,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["AOSession"];
+                    "application/json": components["schemas"]["CloudTokenSet"];
                 };
             };
             400: components["responses"]["BadRequest"];
@@ -1856,7 +1856,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["WorkerSessionPage"];
+                    "application/json": components["schemas"]["WorkerSessionRecordPage"];
                 };
             };
             401: components["responses"]["WorkerUnauthorized"];
@@ -1875,7 +1875,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["CreateWorkerSessionInput"];
+                "application/json": components["schemas"]["WorkerSessionCreateInput"];
             };
         };
         responses: {
@@ -1885,7 +1885,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["WorkerSession"];
+                    "application/json": components["schemas"]["WorkerSessionRecord"];
                 };
             };
             400: components["responses"]["BadRequest"];
@@ -1912,7 +1912,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["WorkerSession"];
+                    "application/json": components["schemas"]["WorkerSessionRecord"];
                 };
             };
             401: components["responses"]["WorkerUnauthorized"];
@@ -1940,7 +1940,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["WorkerSession"];
+                    "application/json": components["schemas"]["WorkerSessionRecord"];
                 };
             };
             401: components["responses"]["WorkerUnauthorized"];
