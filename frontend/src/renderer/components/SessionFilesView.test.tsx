@@ -1,7 +1,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { SessionFilesView } from "./SessionFilesView";
 
@@ -230,6 +230,66 @@ describe("SessionFilesView", () => {
 			}),
 		);
 		expect(await screen.findByText(diffLine("const value = 1;"))).toBeInTheDocument();
+	});
+
+	it("keeps a chat file focus request pending through a cold files load", async () => {
+		let resolveFiles!: (value: unknown) => void;
+		const filesRequest = new Promise<unknown>((resolve) => {
+			resolveFiles = resolve;
+		});
+		const previousGet = getMock.getMockImplementation()!;
+		getMock.mockImplementation((path: string, ...args: unknown[]) => {
+			if (path === "/api/v1/sessions/{sessionId}/workspace/files") return filesRequest;
+			return previousGet(path, ...args);
+		});
+		const onFocusPathConsumed = vi.fn();
+		function ColdLoadFocusHarness() {
+			const [focusPath, setFocusPath] = useState<string | null>("docs/guide.md");
+			return (
+				<SessionFilesView
+					focusPath={focusPath}
+					onFocusPathConsumed={() => {
+						onFocusPathConsumed();
+						setFocusPath(null);
+					}}
+					sessionId="sess-1"
+				/>
+			);
+		}
+
+		renderWithQuery(<ColdLoadFocusHarness />);
+
+		await waitFor(() =>
+			expect(getMock).toHaveBeenCalledWith("/api/v1/sessions/{sessionId}/workspace/files", {
+				params: { path: { sessionId: "sess-1" } },
+			}),
+		);
+		expect(onFocusPathConsumed).not.toHaveBeenCalled();
+
+		await act(async () => {
+			resolveFiles({
+				data: {
+					sessionId: "sess-1",
+					truncated: false,
+					compareBaseSha: "base-sha",
+					compareBaseRef: "main",
+					compareMode: "base",
+					files: [
+						{
+							path: "docs/guide.md",
+							status: "added",
+							additions: 3,
+							deletions: 0,
+							size: 90,
+							binary: false,
+						},
+					],
+				},
+			});
+		});
+
+		expect(await screen.findByRole("button", { name: "Collapse docs/guide.md" })).toBeInTheDocument();
+		expect(onFocusPathConsumed).toHaveBeenCalledTimes(1);
 	});
 
 	it("reveals and focuses a file requested by a review comment", async () => {

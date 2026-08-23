@@ -179,6 +179,7 @@ export function SessionFilesView({
 			changedFiles.find((file) => file.path === focusPath) ??
 			changedFiles.find((file) => file.path === focusPath.replace(/^\.\//, "")) ??
 			changedFiles.find((file) => file.path.endsWith(`/${focusPath}`) || file.path === focusPath);
+		if (!match && !filesQuery.isSuccess) return;
 		const target = match?.path ?? focusPath;
 		setExpandedPaths((current) => {
 			if (current.has(target)) return current;
@@ -193,7 +194,7 @@ export function SessionFilesView({
 			);
 			toggle?.scrollIntoView({ block: "nearest" });
 		});
-	}, [changedFiles, focusPath, onFocusPathConsumed]);
+	}, [changedFiles, filesQuery.isSuccess, focusPath, onFocusPathConsumed]);
 
 	useEffect(
 		() => () => {
