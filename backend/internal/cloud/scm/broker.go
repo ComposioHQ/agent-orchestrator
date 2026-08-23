@@ -3,8 +3,11 @@ package scm
 import (
 	"context"
 	"errors"
+	"net/url"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/cloud/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/tenant"
@@ -27,13 +30,19 @@ type InstallationTokenMinter interface {
 type Broker struct {
 	store  BrokerStore
 	minter InstallationTokenMinter
+	now    func() time.Time
 }
+
+const (
+	githubRepositoryHost = "github.com"
+	maxSandboxIDRunes    = 255
+)
 
 func NewBroker(store BrokerStore, minter InstallationTokenMinter) (*Broker, error) {
 	if store == nil || minter == nil {
 		return nil, errors.New("cloud scm: broker requires store and token minter")
 	}
-	return &Broker{store: store, minter: minter}, nil
+	return &Broker{store: store, minter: minter, now: time.Now}, nil
 }
 
 // WithCloneCredential is the bootstrap-only delivery seam. A fresh read-only
@@ -55,6 +64,11 @@ func (b *Broker) withCredential(ctx context.Context, identity tenant.Identity, r
 	if use == nil {
 		return errors.New("cloud scm: credential callback is required")
 	}
+	canonicalSandboxID := strings.TrimSpace(sandboxID)
+	if sandboxID != canonicalSandboxID || !validSandboxID(canonicalSandboxID) {
+		return errors.New("cloud scm: sandbox id is invalid")
+	}
+	sandboxID = canonicalSandboxID
 	normalized, err := NormalizeRepository(repository)
 	if err != nil {
 		return err
@@ -69,16 +83,25 @@ func (b *Broker) withCredential(ctx context.Context, identity tenant.Identity, r
 	if installation.Status != domain.InstallationStatusActive {
 		return ErrInstallationInactive
 	}
+	allowedName, err := NormalizeRepository(allowed.FullName)
+	if err != nil || allowedName != normalized {
+		return ErrRepositoryNotAllowed
+	}
 	permissions := permissionsByPurpose[purpose]
 	token, expiresAt, err := b.minter.MintInstallationToken(ctx, installation.ExternalInstallationID, allowed.ExternalRepositoryID, clonePermissions(permissions))
 	if err != nil {
 		return err
 	}
-	credential := Credential{Username: CloneUsername, Token: token, ExpiresAt: expiresAt.UTC(), Repository: allowed.FullName}
+	expiresAt = expiresAt.UTC()
+	if len(token) == 0 || !expiresAt.After(b.now().UTC()) {
+		zeroBytes(token)
+		return errors.New("cloud scm: provider returned an unusable installation token")
+	}
+	credential := Credential{Username: CloneUsername, Token: token, ExpiresAt: expiresAt, Repository: canonicalGitHubHTTPSRepository(allowedName)}
 	defer credential.Zero()
 	if err := b.store.RecordSCMTokenGrant(ctx, identity, domain.SCMTokenGrant{
 		OrgID: installation.OrgID, InstallationID: installation.ID, RepositoryID: allowed.ID,
-		SandboxID: strings.TrimSpace(sandboxID), Purpose: purpose,
+		SandboxID: sandboxID, Purpose: purpose,
 		RequestedByUserID: identity.UserID, ExpiresAt: expiresAt.UTC(),
 	}); err != nil {
 		return err
@@ -96,20 +119,64 @@ func clonePermissions(source map[string]string) map[string]string {
 
 func NormalizeRepository(reference string) (string, error) {
 	value := strings.TrimSpace(reference)
-	if index := strings.Index(value, "://"); index >= 0 {
-		value = value[index+3:]
-		if slash := strings.IndexByte(value, '/'); slash >= 0 {
-			value = value[slash+1:]
+	if strings.HasPrefix(value, "git@") {
+		const prefix = "git@" + githubRepositoryHost + ":"
+		if !strings.HasPrefix(value, prefix) {
+			return "", ErrInvalidRepository
 		}
-	} else if strings.HasPrefix(value, "git@") {
-		if colon := strings.IndexByte(value, ':'); colon >= 0 {
-			value = value[colon+1:]
-		}
+		return normalizeRepositoryPath(strings.TrimPrefix(value, prefix))
 	}
-	value = strings.TrimSuffix(strings.Trim(value, "/"), ".git")
+	if strings.Contains(value, "://") {
+		parsed, err := url.Parse(value)
+		if err != nil || parsed.RawQuery != "" || parsed.Fragment != "" || parsed.RawPath != "" || parsed.Port() != "" {
+			return "", ErrInvalidRepository
+		}
+		switch parsed.Scheme {
+		case "https":
+			if parsed.Host != githubRepositoryHost || parsed.User != nil {
+				return "", ErrInvalidRepository
+			}
+		case "ssh":
+			if parsed.Host != githubRepositoryHost || parsed.User == nil || parsed.User.String() != "git" {
+				return "", ErrInvalidRepository
+			}
+		default:
+			return "", ErrInvalidRepository
+		}
+		return normalizeRepositoryPath(strings.TrimPrefix(parsed.Path, "/"))
+	}
+	return normalizeRepositoryPath(value)
+}
+
+func normalizeRepositoryPath(value string) (string, error) {
+	if value != strings.TrimSpace(value) || strings.HasSuffix(value, "/") {
+		return "", ErrInvalidRepository
+	}
+	value = strings.TrimSuffix(value, ".git")
 	parts := strings.Split(strings.ToLower(value), "/")
-	if len(parts) != 2 || parts[0] == "" || parts[1] == "" || strings.ContainsAny(value, "@ :\\?#\t") {
+	if len(parts) != 2 || parts[0] == "" || parts[1] == "" || strings.ContainsAny(value, "@ :\\?#\t") || containsInvalidRepositoryRune(value) {
 		return "", ErrInvalidRepository
 	}
 	return parts[0] + "/" + parts[1], nil
+}
+
+func containsInvalidRepositoryRune(value string) bool {
+	return !utf8.ValidString(value) || strings.IndexFunc(value, func(character rune) bool {
+		return unicode.IsControl(character) || unicode.IsSpace(character)
+	}) >= 0
+}
+
+func canonicalGitHubHTTPSRepository(fullName string) string {
+	return "https://" + githubRepositoryHost + "/" + fullName + ".git"
+}
+
+func validSandboxID(value string) bool {
+	return value != "" && utf8.ValidString(value) && utf8.RuneCountInString(value) <= maxSandboxIDRunes &&
+		strings.IndexFunc(value, unicode.IsControl) < 0
+}
+
+func zeroBytes(value []byte) {
+	for index := range value {
+		value[index] = 0
+	}
 }

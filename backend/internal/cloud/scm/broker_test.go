@@ -3,6 +3,7 @@ package scm
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -32,14 +33,23 @@ type minterStub struct {
 	calls       int
 	permissions []map[string]string
 	tokens      [][]byte
+	token       []byte
+	expiresAt   time.Time
 }
 
 func (m *minterStub) MintInstallationToken(_ context.Context, _, _ int64, permissions map[string]string) ([]byte, time.Time, error) {
 	m.calls++
 	m.permissions = append(m.permissions, permissions)
-	token := []byte{byte(m.calls), 2, 3, 4}
+	token := append([]byte(nil), m.token...)
+	if m.token == nil {
+		token = []byte{byte(m.calls), 2, 3, 4}
+	}
+	expiresAt := m.expiresAt
+	if expiresAt.IsZero() {
+		expiresAt = time.Now().Add(time.Hour)
+	}
 	m.tokens = append(m.tokens, token)
-	return token, time.Now().Add(time.Hour), nil
+	return token, expiresAt, nil
 }
 
 func newBrokerTest(t *testing.T) (*Broker, *brokerStoreStub, *minterStub) {
@@ -62,6 +72,9 @@ func TestBrokerCredentialsAreFreshAuditedAndZeroed(t *testing.T) {
 	var cloneBytes, pushBytes []byte
 	if err := broker.WithCloneCredential(context.Background(), identity, "https://github.com/acme/widgets.git", "sandbox", func(credential *Credential) error {
 		cloneBytes = credential.Token
+		if credential.Repository != "https://github.com/acme/widgets.git" {
+			t.Fatalf("clone target = %q", credential.Repository)
+		}
 		if credential.Token[0] != 1 {
 			t.Fatalf("clone token = %v", credential.Token)
 		}
@@ -90,6 +103,72 @@ func TestBrokerCredentialsAreFreshAuditedAndZeroed(t *testing.T) {
 	for _, value := range append(cloneBytes, pushBytes...) {
 		if value != 0 {
 			t.Fatalf("credential bytes survived callback: %v %v", cloneBytes, pushBytes)
+		}
+	}
+}
+
+func TestBrokerRejectsInvalidSandboxBeforeMintOrAudit(t *testing.T) {
+	for _, sandboxID := range []string{"", strings.Repeat("s", maxSandboxIDRunes+1), "sandbox\ncontrol", " sandbox"} {
+		broker, store, minter := newBrokerTest(t)
+		err := broker.WithCloneCredential(context.Background(), tenant.Identity{OrgID: "org", UserID: "user"}, "acme/widgets", sandboxID, func(*Credential) error { return nil })
+		if err == nil || minter.calls != 0 || len(store.grants) != 0 {
+			t.Fatalf("sandbox=%q error=%v calls=%d grants=%d", sandboxID, err, minter.calls, len(store.grants))
+		}
+	}
+}
+
+func TestBrokerRejectsUnusableMintedToken(t *testing.T) {
+	cases := []struct {
+		name      string
+		token     []byte
+		expiresAt time.Time
+	}{
+		{name: "empty token", token: []byte{}, expiresAt: time.Now().Add(time.Hour)},
+		{name: "expired token", token: []byte("expired"), expiresAt: time.Now().Add(-time.Second)},
+		{name: "zero expiry", token: []byte("zero"), expiresAt: time.Unix(1, 0)},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			broker, store, minter := newBrokerTest(t)
+			minter.token = testCase.token
+			minter.expiresAt = testCase.expiresAt
+			used := false
+			err := broker.WithCloneCredential(context.Background(), tenant.Identity{OrgID: "org", UserID: "user"}, "acme/widgets", "sandbox", func(*Credential) error { used = true; return nil })
+			if err == nil || used || len(store.grants) != 0 {
+				t.Fatalf("error=%v used=%v grants=%d", err, used, len(store.grants))
+			}
+			for _, value := range minter.tokens[0] {
+				if value != 0 {
+					t.Fatalf("rejected token not zeroed: %v", minter.tokens[0])
+				}
+			}
+		})
+	}
+}
+
+func TestNormalizeRepositoryAllowsOnlyCanonicalGitHubTargets(t *testing.T) {
+	valid := []string{
+		"Acme/Widgets",
+		"https://github.com/Acme/Widgets.git",
+		"git@github.com:Acme/Widgets.git",
+		"ssh://git@github.com/Acme/Widgets.git",
+	}
+	for _, input := range valid {
+		if normalized, err := NormalizeRepository(input); err != nil || normalized != "acme/widgets" {
+			t.Fatalf("input=%q normalized=%q error=%v", input, normalized, err)
+		}
+	}
+	invalid := []string{
+		"https://evil.example/acme/widgets.git",
+		"git@evil.example:acme/widgets.git",
+		"https://github.com.evil.example/acme/widgets.git",
+		"http://github.com/acme/widgets.git",
+		"https://github.com/acme/widgets.git?token=leak",
+		"ssh://root@github.com/acme/widgets.git",
+	}
+	for _, input := range invalid {
+		if normalized, err := NormalizeRepository(input); err == nil {
+			t.Fatalf("input=%q unexpectedly normalized to %q", input, normalized)
 		}
 	}
 }
