@@ -232,19 +232,19 @@ type WorkspaceDefaultBranch struct {
 	BaseRef string
 }
 
-// WorkspaceObserver is an optional read-only capability implemented by
+// WorkspaceSnapshotter is an optional snapshot capability implemented by
 // workspace adapters that can describe the durable state an agent handoff
 // must treat as authoritative. The session manager consumes it before and
 // after replacing an agent process; it never infers Git state from terminal
 // prose supplied by a model.
-type WorkspaceObserver interface {
-	ObserveWorkspace(ctx context.Context, info WorkspaceInfo) (WorkspaceObservation, error)
+type WorkspaceSnapshotter interface {
+	ObserveWorkspace(ctx context.Context, info WorkspaceInfo) (WorkspaceSnapshot, error)
 }
 
-// WorkspaceObservation is a bounded, provider-neutral snapshot of one
+// WorkspaceSnapshot is a bounded, provider-neutral snapshot of one
 // materialized workspace. Git-backed adapters populate repository facts;
 // scratch adapters return the path with Git fields empty.
-type WorkspaceObservation struct {
+type WorkspaceSnapshot struct {
 	Path      string
 	Branch    string
 	HeadSHA   string

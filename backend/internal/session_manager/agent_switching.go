@@ -1523,7 +1523,7 @@ func (m *Manager) captureSourceTranscriptFact(ctx context.Context, agent ports.A
 }
 
 func (m *Manager) captureWorkspaceFacts(ctx context.Context, rec domain.SessionRecord) []switchWorkspaceFact {
-	observer, ok := m.workspace.(ports.WorkspaceObserver)
+	observer, ok := m.workspace.(ports.WorkspaceSnapshotter)
 	if !ok {
 		return nil
 	}

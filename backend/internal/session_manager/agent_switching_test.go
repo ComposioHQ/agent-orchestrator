@@ -712,11 +712,11 @@ type switchTestWorkspace struct {
 	onObserve func()
 }
 
-func (w switchTestWorkspace) ObserveWorkspace(_ context.Context, info ports.WorkspaceInfo) (ports.WorkspaceObservation, error) {
+func (w switchTestWorkspace) ObserveWorkspace(_ context.Context, info ports.WorkspaceInfo) (ports.WorkspaceSnapshot, error) {
 	if w.onObserve != nil {
 		w.onObserve()
 	}
-	return ports.WorkspaceObservation{Path: info.Path, Branch: info.Branch, HeadSHA: "abc123", Dirty: true, Changes: []ports.WorkspaceChange{{Status: " M", Path: "main.go"}}}, nil
+	return ports.WorkspaceSnapshot{Path: info.Path, Branch: info.Branch, HeadSHA: "abc123", Dirty: true, Changes: []ports.WorkspaceChange{{Status: " M", Path: "main.go"}}}, nil
 }
 
 func newSwitchTestManager(t *testing.T, runtime runtimeController) (*Manager, *switchTestStore, *fakeMessenger) {

@@ -30,6 +30,7 @@ import (
 	previewutil "github.com/aoagents/agent-orchestrator/backend/internal/preview"
 	"github.com/aoagents/agent-orchestrator/backend/internal/previewserver"
 	sessionsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/session"
+	"github.com/aoagents/agent-orchestrator/backend/internal/workspacewatch"
 )
 
 type fakeSessionService struct {
@@ -558,6 +559,45 @@ func (f *fakeSessionService) WorkspaceWatchPaths(_ context.Context, id domain.Se
 	}
 	return []string{session.Metadata.WorkspacePath}, nil
 }
+
+func (f *fakeSessionService) WatchWorkspace(ctx context.Context, id domain.SessionID) (<-chan ports.WorkspaceEvent, error) {
+	paths, err := f.WorkspaceWatchPaths(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	changes, err := workspacewatch.Watch(ctx, paths...)
+	if err != nil {
+		return nil, err
+	}
+	ch := make(chan ports.WorkspaceEvent)
+	go func() {
+		defer close(ch)
+		for range changes {
+			ch <- ports.WorkspaceEvent{}
+		}
+	}()
+	return ch, nil
+}
+
+func (f *fakeSessionService) ReadPreviewFile(_ context.Context, id domain.SessionID, path string) (ports.PreviewFile, error) {
+	file, info, clean, err := previewutil.OpenWorkspaceFile(f.sessions[id].Metadata.WorkspacePath, path)
+	if err != nil {
+		return ports.PreviewFile{}, apierr.NotFound("PREVIEW_FILE_NOT_FOUND", "Preview file not found")
+	}
+	defer file.Close()
+	data, err := io.ReadAll(file)
+	if err != nil {
+		return ports.PreviewFile{}, err
+	}
+	return ports.PreviewFile{Path: clean, Name: info.Name(), Data: data, Size: info.Size(), ModTime: info.ModTime()}, nil
+}
+
+func (f *fakeSessionService) DiscoverPreview(_ context.Context, id domain.SessionID) (string, bool, error) {
+	entry, ok := previewutil.DiscoverEntry(f.sessions[id].Metadata.WorkspacePath)
+	return entry.Path, ok, nil
+}
+
+func (f *fakeSessionService) UsesLocalWorkspaceObservation() bool { return true }
 
 func (f *fakeSessionService) GetWorkspaceFile(_ context.Context, id domain.SessionID, path string) (sessionsvc.WorkspaceFileDetail, error) {
 	if f.workspaceErr != nil {
