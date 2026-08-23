@@ -139,7 +139,7 @@ const (
 	// there is one, and makes this label wrong in an obvious way if the type
 	// is ever renamed.
 	portWorkspaceObservation = "ports.WorkspaceObservation (list/read/watch/diff inside the sandbox)"
-	portPreviewAdapter       = "runtime preview adapter (preview server lifecycle inside the sandbox)"
+	portPreviewAdapter       = "runtime preview adapter (preview server start/stop/status inside the sandbox)"
 	portProjectProvisioner   = "runtime project provisioner (clone/init inside the sandbox)"
 	portAgentCatalog         = "sandbox-executing agent catalog (refresh/probe without a host CLI)"
 )
@@ -271,7 +271,12 @@ var routeClasses = map[RouteKey]RouteClass{
 	{"GET", "/api/v1/sessions/{sessionId}/preview/server"}:    pending(portPreviewAdapter, "drives a local preview server process; hosted lifecycle is the runtime preview adapter"),
 	{"POST", "/api/v1/sessions/{sessionId}/preview/server"}:   pending(portPreviewAdapter, "drives a local preview server process; hosted lifecycle is the runtime preview adapter"),
 	{"DELETE", "/api/v1/sessions/{sessionId}/preview/server"}: pending(portPreviewAdapter, "drives a local preview server process; hosted lifecycle is the runtime preview adapter"),
-	{"GET", "/api/v1/sessions/{sessionId}/preview/files/*"}:   pending(portPreviewAdapter, "serves files from the local worktree; hosted serving goes through the runtime preview adapter"),
+	// Serving a preview file is a read of workspace data, so it belongs to the
+	// workspace observation port rather than the preview adapter — the split is
+	// by what the route touches, not by which UI surface it sits under. The
+	// preview adapter covers lifecycle only: start, stop, status.
+	{"GET", "/api/v1/sessions/{sessionId}/preview/files/*"}: pending(portWorkspaceObservation,
+		"serves files from the local worktree; hosted serving is a workspace observation read"),
 
 	// ---- Orchestrators -----------------------------------------------------
 	{"GET", "/api/v1/orchestrators"}:           cloud(),
