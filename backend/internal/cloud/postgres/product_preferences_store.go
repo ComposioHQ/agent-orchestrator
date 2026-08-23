@@ -23,7 +23,10 @@ var (
 // GetAppSettings reads the tenant preference row. A tenant with no row yet
 // receives the compatibility default without turning a read into a write.
 func (s *Store) GetAppSettings(ctx context.Context) (ports.SettingsSnapshot, error) {
-	settings := ports.SettingsSnapshot{DefaultSessionMode: domain.DefaultSessionMode}
+	// Hosted tenants have no singleton row until the first write. Match the
+	// database column default and the seeded SQLite preference on that first
+	// read; domain.DefaultSessionMode is only the failure fallback.
+	settings := ports.SettingsSnapshot{DefaultSessionMode: domain.SessionModeChat}
 	err := s.withTenantTx(ctx, pgx.TxOptions{AccessMode: pgx.ReadOnly}, func(tx pgx.Tx, identity tenant.Identity) error {
 		err := tx.QueryRow(ctx,
 			`SELECT default_session_mode, updated_at
