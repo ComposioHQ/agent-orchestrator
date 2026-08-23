@@ -13,8 +13,14 @@ func TestCloudMigrationsAreTenantScoped(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(migrations) != 9 || migrations[0].Version != 1 || migrations[1].Version != 2 || migrations[2].Version != 3 || migrations[3].Version != 4 || migrations[4].Version != 5 || migrations[5].Version != 6 || migrations[6].Version != 7 || migrations[7].Version != 8 || migrations[8].Version != 9 {
+	wantVersions := []int64{1, 2, 3, 4, 5, 6, 7, 8, 9, 31}
+	if len(migrations) != len(wantVersions) {
 		t.Fatalf("migrations = %#v", migrations)
+	}
+	for index, want := range wantVersions {
+		if migrations[index].Version != want {
+			t.Fatalf("migration %d version = %d, want %d", index, migrations[index].Version, want)
+		}
 	}
 	migration, err := migrationFS.ReadFile("migrations/00001_auth_foundation.sql")
 	if err != nil {
@@ -76,6 +82,22 @@ func TestCloudMigrationsAreTenantScoped(t *testing.T) {
 	}
 	if !strings.Contains(string(generationMigration), "ADD COLUMN generation BIGINT NOT NULL DEFAULT 1") {
 		t.Fatal("runtime generation migration does not add the concurrency guard")
+	}
+	webhookMigration, err := migrationFS.ReadFile("migrations/00031_scm_webhooks.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	webhookSQL := string(webhookMigration)
+	for _, required := range []string{
+		"CREATE TABLE ao_scm_webhook_deliveries",
+		"ALTER TABLE ao_scm_webhook_deliveries FORCE ROW LEVEL SECURITY",
+		"CREATE FUNCTION ao_scm_ingest_and_claim_webhook",
+		"processing_state IN ('complete', 'dead_letter')",
+		"FOR UPDATE SKIP LOCKED",
+	} {
+		if !strings.Contains(webhookSQL, required) {
+			t.Fatalf("SCM webhook migration does not contain %q", required)
+		}
 	}
 	authRLSMigration, err := migrationFS.ReadFile("migrations/00005_auth_rls.sql")
 	if err != nil {
