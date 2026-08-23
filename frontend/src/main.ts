@@ -35,7 +35,13 @@ import {
 	inspectInstalledBundle,
 	installedBundlePath,
 } from "./main/relocation";
-import { coerceUiSettings, readUiSettings, writeUiSettings, type UiSettings } from "./main/ui-settings";
+import {
+	coerceUiSettings,
+	DEFAULT_UI_SETTINGS,
+	readUiSettings,
+	writeUiSettings,
+	type UiSettings,
+} from "./main/ui-settings";
 import { spawn, type ChildProcess } from "node:child_process";
 import { randomBytes, randomUUID } from "node:crypto";
 import { closeSync, existsSync, openSync, readFileSync } from "node:fs";
@@ -46,6 +52,10 @@ import { pathToFileURL } from "node:url";
 import { type DaemonLaunchSpec, bundledDaemonIdentityError, resolveDaemonLaunch } from "./shared/daemon-launch";
 import { createListenPortScanner, defaultRunFilePath, parseRunFile } from "./shared/daemon-discovery";
 import type { DaemonStatus } from "./shared/daemon-status";
+import {
+	refreshSlowDaemonStartupDetails,
+	slowDaemonStartupStatus,
+} from "./shared/daemon-startup-status";
 import { attachAppShortcuts } from "./main/app-shortcuts";
 import {
 	KEYBOARD_SHORTCUTS_HELP_CHANNEL,
@@ -85,9 +95,10 @@ import { connectBrowserRuntime, type BrowserRuntimeLinkHandle } from "./main/bro
 import { keepDaemonAlive, shouldLinkOnAttach } from "./main/daemon-owner";
 import { readMigrationState, updateMigration, writeAppStateMarker, type MigrationState } from "./main/app-state";
 import { isAllowedAppExternalURL, openAllowedAppExternalURL } from "./main/external-open";
-import { shouldSignalAttention, shouldToast } from "./main/notification-signals";
+import { dockBounceType, shouldReplaceBounce, shouldSignalAttention, shouldToast } from "./main/notification-signals";
 import { buildWindowsAppMenuTemplate } from "./main/menu";
 import { ancestorRepositorySetupWarning, scanImportFolder } from "./main/import-folder-scan";
+import { parseOpenFolderPathArg } from "./main/open-folder-arg";
 
 // Globals injected at compile time by @electron-forge/plugin-vite.
 declare const MAIN_WINDOW_VITE_DEV_SERVER_URL: string | undefined;
@@ -116,6 +127,18 @@ if (process.platform === "win32") {
 	app.setAppUserModelId("dev.agent-orchestrator.desktop");
 }
 
+// Escape hatch for hosts whose GPU driver stack crashes Chromium on startup
+// (Linux/Wayland in practice, #3961). Chromium still runs a GPU process; what
+// this drops is the vendor driver, falling the process back to Electron's
+// bundled SwiftShader. There is no window yet when the crashes happen, so an
+// in-app setting is unreachable and an env var is the only knob that works.
+// Truthy allowlist mirrors keepDaemonAlive() so "off"/"no" cannot accidentally
+// turn the GPU off. Must run before app ready — the call throws after that.
+const disableGpu = process.env.AO_DISABLE_GPU?.trim().toLowerCase();
+if (disableGpu === "1" || disableGpu === "true" || disableGpu === "yes" || disableGpu === "on") {
+	app.disableHardwareAcceleration();
+}
+
 // Pin ALL Electron-owned state (Chromium cache, cookies, local/session storage,
 // crash dumps) under the canonical AO home at ~/.ao instead of Electron's macOS
 // default ~/Library/Application Support/<name>. Keeps the app's entire footprint
@@ -139,6 +162,13 @@ const trayLifecycle = createTrayLifecycle({
 	getTrayController: () => trayController,
 	focusWindow: () => focusMainWindow(),
 });
+// Icon/taskbar-shortcut folder drop, mirroring VS Code: relayed to the
+// renderer's global drop handling so it opens the same create-project flow.
+const OPEN_FOLDER_PATH_CHANNEL = "app:openFolderPath";
+// Folder path from a cold-start launch (icon/shortcut drop while not running)
+// whose renderer isn't mounted yet. Flushed once the shell signals readiness
+// via TRAY_RENDERER_READY_CHANNEL — see the OPEN_FOLDER_PATH_CHANNEL handler.
+let pendingFolderPath: string | null = null;
 let daemonProcess: ChildProcess | null = null;
 let daemonStoppingProcess: ChildProcess | null = null;
 let daemonRestartAfterExitProcess: ChildProcess | null = null;
@@ -163,6 +193,14 @@ let terminalFocused = false;
 let supervisorLink: SupervisorLinkHandle | null = null;
 // Guard: prevents stacking multiple flashFrame(true) calls when notifications arrive rapidly.
 let isFlashing = false;
+// macOS: the in-flight dock bounce, cancelled once the window regains focus
+// so a "critical" bounce stops as soon as the user looks at the app. Held as
+// one object so the id and its criticality can never drift apart; a pending
+// critical bounce is not replaced by a later informational notification.
+let pendingBounce: { id: number; critical: boolean } | null = null;
+// Live mirror of the persisted `soundNotificationsEnabled` UI setting, kept in sync by the
+// uiSettings:set handler so a toggle flip takes effect without an app restart.
+let soundNotificationsEnabled = DEFAULT_UI_SETTINGS.soundNotificationsEnabled;
 
 const isDev = !app.isPackaged;
 
@@ -173,11 +211,6 @@ const isDev = !app.isPackaged;
 const DEV_DAEMON_PORT = 3002;
 const DEV_STATE_SUBDIR = "dev"; // ~/.ao/dev/
 
-// Height (px) of the custom Windows title bar. Must stay in sync with
-// --size-window-titlebar (tokens.css) and .window-titlebar, plus the Window
-// Controls Overlay height passed to BaseWindow, so the native min/max/close
-// buttons line up with the app's bar.
-const TITLEBAR_HEIGHT = 36;
 // Traffic lights stay fixed across sidebar expand/collapse. Y matches the
 // natural macOS titlebar band (TitlebarNav is h-traffic-light-clearance).
 const MAC_WINDOW_BUTTON_X = 14;
@@ -310,6 +343,8 @@ const MAX_DAEMON_OUTPUT_CHARS = 12_000;
 
 function appendDaemonOutput(text: string): void {
 	daemonOutput = (daemonOutput + text).slice(-MAX_DAEMON_OUTPUT_CHARS);
+	const nextStatus = refreshSlowDaemonStartupDetails(daemonStatus, daemonOutput);
+	if (nextStatus !== daemonStatus) setDaemonStatus(nextStatus);
 }
 
 // Menu installed on Windows where the native menu bar is hidden. The bar stays
@@ -376,18 +411,15 @@ async function createWindowInternal(): Promise<void> {
 		title: "Agent Orchestrator",
 		icon: windowIconPath(),
 		backgroundColor: NATIVE_WINDOW_BACKGROUND_DARK,
-		// Windows goes frameless with a Window Controls Overlay: Electron still draws
-		// native min/max/close on the right, while the renderer paints its own
-		// VS Code-style title bar (logo + menu) on the left. macOS/Linux keep the
-		// inset traffic-light chrome. Overlay colours are re-synced to the active
-		// theme from the renderer via the window:setOverlay IPC.
+		// Windows goes frameless and the renderer paints the whole titlebar,
+		// including custom min/max/close controls. macOS/Linux keep the inset
+		// traffic-light chrome.
 		...(process.platform === "win32"
 			? {
 					titleBarStyle: "hidden" as const,
 					// Hide the native menu bar. A role-based menu is still installed (for
 					// accelerators) below; the visible menu is painted by WindowTitlebar.
 					autoHideMenuBar: true,
-					titleBarOverlay: { color: "#17181c", symbolColor: "#c7ccd4", height: TITLEBAR_HEIGHT },
 				}
 			: {
 					titleBarStyle: "hiddenInset" as const,
@@ -482,8 +514,14 @@ async function createWindowInternal(): Promise<void> {
 		if (!mainWindow) return;
 		getShellWebContents()?.send("window:fullscreen", mainWindow.isFullScreen());
 	};
+	const pushMaximized = () => {
+		if (!mainWindow) return;
+		getShellWebContents()?.send("window:maximized", mainWindow.isMaximized());
+	};
 	mainWindow.on("enter-full-screen", pushFullScreen);
 	mainWindow.on("leave-full-screen", pushFullScreen);
+	mainWindow.on("maximize", pushMaximized);
+	mainWindow.on("unmaximize", pushMaximized);
 	mainWindow.on("blur", () => {
 		keybindingRecordingActive = false;
 	});
@@ -505,6 +543,10 @@ async function createWindowInternal(): Promise<void> {
 			composition.dispose();
 		});
 		mainWindow = null;
+		// Drop any pending dock bounce with the window it was attached to: its
+		// focus listener died with the window, so leaving the id set would make
+		// the next bounce skip attaching one to the replacement window.
+		cancelDockBounce();
 		trayLifecycle.clearPendingTarget();
 	});
 }
@@ -600,7 +642,7 @@ const runLoginShell: ShellRunner = (shellPath, args) =>
 		};
 		let child: ReturnType<typeof spawn>;
 		try {
-			child = spawn(shellPath, args, { stdio: ["ignore", "pipe", "ignore"] });
+			child = spawn(shellPath, args, { stdio: ["ignore", "pipe", "ignore"], windowsHide: true });
 		} catch {
 			finish(null);
 			return;
@@ -936,6 +978,27 @@ function resolvedDaemonPort(): number {
 	return isDev && !process.env.AO_PORT ? DEV_DAEMON_PORT : expectedDaemonPort(process.env);
 }
 
+function daemonLaunchEnv(): NodeJS.ProcessEnv {
+	if (!isDev || process.platform !== "win32") {
+		return process.env;
+	}
+	try {
+		const daemonDir = path.resolve(app.getAppPath(), "daemon");
+		const manifestPath = path.join(daemonDir, "dev-daemon.json");
+		const parsed = JSON.parse(readFileSync(manifestPath, "utf8")) as { path?: unknown };
+		if (typeof parsed.path === "string") {
+			const daemonPath = path.resolve(parsed.path.trim());
+			const relativePath = path.relative(daemonDir, daemonPath);
+			if (relativePath && !relativePath.startsWith("..") && !path.isAbsolute(relativePath)) {
+				return { ...process.env, AO_DEV_DAEMON_BINARY: daemonPath };
+			}
+		}
+	} catch {
+		// Fall back to the legacy fixed dev path; build-daemon writes the manifest.
+	}
+	return process.env;
+}
+
 async function startDaemonInner(startEpoch: number): Promise<DaemonStatus> {
 	if (daemonProcess) {
 		return daemonStatus;
@@ -947,7 +1010,7 @@ async function startDaemonInner(startEpoch: number): Promise<DaemonStatus> {
 	await ensureShellEnv();
 
 	const launch = resolveDaemonLaunch(
-		process.env,
+		daemonLaunchEnv(),
 		app.isPackaged,
 		process.resourcesPath,
 		app.getAppPath(),
@@ -1298,30 +1361,22 @@ async function startDaemonInner(startEpoch: number): Promise<DaemonStatus> {
 		}, RUN_FILE_POLL_MS);
 	}
 
-	// Neither source confirmed startup. Surface the captured process output so
-	// the renderer can explain why boot stalled instead of spinning forever or
-	// attempting workspace requests against an assumed port.
+	// Neither source confirmed startup yet. The child is still alive and both
+	// discovery mechanisms remain active, so surface this as slow progress rather
+	// than a failure. A later listen line or running.json handshake still moves
+	// the same launch to ready.
 	fallbackTimer = setTimeout(() => {
 		if (portConfirmed || daemonProcess !== child || daemonStoppingProcess === child) return;
-		// Keep running.json polling alive after surfacing the timeout. In
+		// Keep running.json polling alive after surfacing slow startup. In
 		// keep-daemon mode there are no stdout/stderr scanners, so the run file is
 		// the only way a slow-but-successful boot can still recover to ready.
 		fallbackTimer = undefined;
-		setDaemonStatus({
-			state: "error",
-			message: "AO daemon did not finish starting within 30 seconds.",
-			details:
-				daemonOutput.trim() ||
-				[
-					"No startup output was captured.",
-					`Executable: ${launch.command}`,
-					`Working directory: ${launch.cwd}`,
-					`Expected port confirmation from: ${handshakePath ?? "running.json"}`,
-				].join("\n"),
-			code: "not_ready",
+		setDaemonStatus(slowDaemonStartupStatus({
+			output: daemonOutput,
 			executablePath: launch.command,
 			workingDirectory: launch.cwd,
-		});
+			handshakePath,
+		}));
 	}, PORT_DISCOVERY_TIMEOUT_MS);
 
 	child.once("error", (error) => {
@@ -1476,19 +1531,8 @@ ipcMain.handle("app:openExternal", async (_event, url: string) => {
 	await openAllowedAppExternalURL(url, shell);
 });
 
-// Re-tint the native window-button overlay (min/max/close) to match the active
-// theme; the renderer calls this on theme change. No-op unless the window was
-// created with a titleBarOverlay (Windows only).
-ipcMain.handle("window:setOverlay", (_event, overlay: { color: string; symbolColor: string }) => {
-	if (process.platform !== "win32" || !mainWindow) return;
-	try {
-		mainWindow.setTitleBarOverlay({ ...overlay, height: TITLEBAR_HEIGHT });
-	} catch {
-		// Window has no overlay on this platform; ignore.
-	}
-});
-
 ipcMain.handle("window:isFullScreen", () => mainWindow?.isFullScreen() ?? false);
+ipcMain.handle("window:isMaximized", () => mainWindow?.isMaximized() ?? false);
 
 // Drive Electron's nativeTheme from the app's theme preference so embedded
 // preview WebContentsViews (which follow prefers-color-scheme) flip in step with
@@ -1545,10 +1589,12 @@ ipcMain.handle("menu:action", (_event, action: string) => {
 		case "view.reload":
 			return wc.reload();
 		case "view.devtools":
-			return browserViewHost?.toggleDevToolsForLastFocused().then((state) => {
-				if (state) return state;
-				return wc.toggleDevTools();
-			}).catch(() => wc.toggleDevTools()) ?? wc.toggleDevTools();
+			if (browserViewHost) {
+				return browserViewHost.toggleDevToolsForLastFocused().then((state) => {
+					if (!state) wc?.toggleDevTools();
+				}).catch(() => wc?.toggleDevTools());
+			}
+			return wc?.toggleDevTools();
 		case "view.zoomIn":
 			return wc.setZoomLevel(wc.getZoomLevel() + 0.5);
 		case "view.zoomOut":
@@ -1654,13 +1700,14 @@ ipcMain.handle("updateSettings:set", async (_event, settings: UpdateSettings) =>
 
 ipcMain.handle("uiSettings:get", async (): Promise<UiSettings> => {
 	const runFile = runFilePath();
-	if (!runFile) return { locale: "en" };
+	if (!runFile) return { ...DEFAULT_UI_SETTINGS };
 	return readUiSettings(path.dirname(runFile));
 });
-	ipcMain.handle("uiSettings:set", async (_event, settings: UiSettings): Promise<UiSettings> => {
+	ipcMain.handle("uiSettings:set", async (_event, settings: Partial<UiSettings>): Promise<UiSettings> => {
 		const runFile = runFilePath();
 	const result = !runFile ? coerceUiSettings(settings) : await writeUiSettings(path.dirname(runFile), settings);
 	trayController?.setLocale(result.locale);
+	soundNotificationsEnabled = result.soundNotificationsEnabled;
 	return result;
 	});
 
@@ -1697,6 +1744,13 @@ ipcMain.handle("updates:install", () => {
 	quitAndInstallUpdate();
 });
 
+function cancelDockBounce(): void {
+	if (pendingBounce === null) return;
+	const { id } = pendingBounce;
+	pendingBounce = null;
+	app.dock?.cancelBounce(id);
+}
+
 ipcMain.handle(
 	"notifications:show",
 	(_event, notification: { id: string; title: string; body?: string; type?: string }) => {
@@ -1726,22 +1780,39 @@ ipcMain.handle(
 			toast.show();
 		}
 
-		// Dock (macOS) / taskbar (Windows/Linux) attention signal — only for the
-		// actionable types. A merged/closed PR still toasts above, but shouldn't
-		// bounce the dock as insistently as an agent blocked waiting on the user.
-		if (shouldSignalAttention(notification.type)) {
-			if (process.platform === "darwin" && app.dock) {
-				app.dock.bounce("informational");
-			} else if (process.platform === "win32" || process.platform === "linux") {
-				if (!isFlashing) {
-					isFlashing = true;
-					mainWindow.flashFrame(true);
-					mainWindow.once("focus", () => {
-						isFlashing = false;
-						mainWindow?.flashFrame(false);
-					});
+		// Dock (macOS) / taskbar (Windows/Linux) attention signal. On macOS every
+		// notification bounces the dock — urgency is carried by the bounce type,
+		// so a merged PR bounces once while a blocked agent keeps bouncing. On
+		// Windows/Linux only the actionable types flash (see
+		// shouldSignalAttention), preserving the pre-existing behavior there.
+		if (process.platform === "darwin" && app.dock) {
+			// A pending critical bounce (agent blocked on the user) is never
+			// replaced: a later informational notification must not downgrade it
+			// to a one-shot bounce.
+			if (shouldReplaceBounce(pendingBounce)) {
+				// A focus listener from an earlier un-cancelled bounce still works for
+				// the new id, so only attach one at a time.
+				const hadPendingBounce = pendingBounce !== null;
+				cancelDockBounce();
+				const bounceType = dockBounceType(notification.type);
+				const id = app.dock.bounce(bounceType);
+				if (typeof id === "number" && id >= 0) {
+					pendingBounce = { id, critical: bounceType === "critical" };
+					if (!hadPendingBounce) mainWindow.once("focus", cancelDockBounce);
 				}
 			}
+		} else if ((process.platform === "win32" || process.platform === "linux") && shouldSignalAttention(notification.type)) {
+			if (!isFlashing) {
+				isFlashing = true;
+				mainWindow.flashFrame(true);
+				mainWindow.once("focus", () => {
+					isFlashing = false;
+					mainWindow?.flashFrame(false);
+				});
+			}
+		}
+		if (shouldSignalAttention(notification.type) && soundNotificationsEnabled) {
+			shell.beep();
 		}
 	},
 );
@@ -1760,6 +1831,9 @@ if (!app.isPackaged) {
 			setTimeout(() => {
 				mainWindow?.flashFrame(false);
 			}, 2000);
+		}
+		if (soundNotificationsEnabled) {
+			shell.beep();
 		}
 	});
 }
@@ -1798,7 +1872,13 @@ ipcMain.handle("notifications:setBadge", (_event, count: number) => {
 
 ipcMain.on(TRAY_SET_ATTENTION_STATE_CHANNEL, (event, state) => trayLifecycle.handleSetAttentionState(event, state));
 
-ipcMain.on(TRAY_RENDERER_READY_CHANNEL, (event) => trayLifecycle.handleRendererReady(event));
+ipcMain.on(TRAY_RENDERER_READY_CHANNEL, (event) => {
+	trayLifecycle.handleRendererReady(event);
+	if (pendingFolderPath && event.sender === getShellWebContents()) {
+		event.sender.send(OPEN_FOLDER_PATH_CHANNEL, pendingFolderPath);
+		pendingFolderPath = null;
+	}
+});
 
 // Cloud auth IPC — cloud:getSession, cloud:signIn, cloud:signOut.
 // Data dir resolves to ~/.ao (prod) or ~/.ao/dev (dev) matching daemon conventions.
@@ -1848,6 +1928,28 @@ app.on("second-instance", (_event, argv) => {
 	const deepLink = argv.find((value) => value.startsWith("ao-app://"));
 	if (deepLink) {
 		void handleCloudDeepLinkAndFocus(deepLink);
+		return;
+	}
+	// A folder dropped on the taskbar icon/shortcut while already running.
+	// Usually the renderer is already mounted and listening, so send directly
+	// — but this can still fire while the first instance is early in
+	// app.whenReady() or creating its window, before any shell WebContents
+	// exists. Fall back to the same pendingFolderPath queue the cold-start
+	// path uses rather than silently dropping it.
+	const folderPath = parseOpenFolderPathArg(argv);
+	if (folderPath) {
+		const window = BaseWindow.getAllWindows()[0];
+		if (window) {
+			if (window.isMinimized()) window.restore();
+			window.show();
+			window.focus();
+		}
+		const contents = getShellWebContents();
+		if (contents) {
+			contents.send(OPEN_FOLDER_PATH_CHANNEL, folderPath);
+		} else {
+			pendingFolderPath = folderPath;
+		}
 		return;
 	}
 	const window = BaseWindow.getAllWindows()[0];
@@ -1974,8 +2076,11 @@ app.whenReady().then(async () => {
 
 	registerRendererProtocol();
 	applyRuntimeAppIcon();
+	const initialUiSettings = keybindingRunFile
+		? await readUiSettings(path.dirname(keybindingRunFile))
+		: { ...DEFAULT_UI_SETTINGS };
+	soundNotificationsEnabled = initialUiSettings.soundNotificationsEnabled;
 	if (isTrayEnabled(process.platform, app.isPackaged, app.getVersion())) {
-		const initialUiSettings = keybindingRunFile ? await readUiSettings(path.dirname(keybindingRunFile)) : { locale: "en" as const };
 		trayController = createTrayController({
 			focusWindow: focusMainWindow,
 			openSession: trayLifecycle.openSession,
@@ -1991,6 +2096,14 @@ app.whenReady().then(async () => {
 	const deepLinkArg = process.argv.find((a) => a.startsWith("ao-app://"));
 	if (deepLinkArg) {
 		void handleCloudDeepLinkAndFocus(deepLinkArg);
+	}
+
+	// Windows/Linux: a folder dropped on the taskbar icon/shortcut while the
+	// app was not running launches it with the folder's path in argv. The
+	// renderer isn't mounted yet — queue it, flushed on TRAY_RENDERER_READY_CHANNEL.
+	const folderPathArg = parseOpenFolderPathArg(process.argv);
+	if (folderPathArg) {
+		pendingFolderPath = folderPathArg;
 	}
 
 	app.on("activate", () => {

@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { ChatComposer } from "./ChatComposer";
@@ -29,6 +29,50 @@ const textFile = (name = "notes.txt") => new File(["hello"], name, { type: "text
 /* ---- the keyboard contract the composer already had ---------------------- */
 
 describe("send keys", () => {
+	it("focuses the message field when the chat composer opens", () => {
+		const { field } = renderComposer({ autoFocusKey: "session-1" });
+		expect(document.activeElement).toBe(field);
+	});
+
+	it("refocuses the message field when the active chat session changes", () => {
+		const { rerender } = render(
+			<>
+				<button type="button">Outside</button>
+				<ChatComposer onSend={vi.fn()} autoFocusKey="session-1" />
+			</>,
+		);
+		const field = screen.getByLabelText("Message the agent");
+		expect(document.activeElement).toBe(field);
+
+		screen.getByRole("button", { name: "Outside" }).focus();
+		expect(document.activeElement).not.toBe(field);
+
+		rerender(
+			<>
+				<button type="button">Outside</button>
+				<ChatComposer onSend={vi.fn()} autoFocusKey="session-2" />
+			</>,
+		);
+		expect(document.activeElement).toBe(field);
+	});
+
+	it("refocuses the message field when returning to the chat window", () => {
+		const { field } = renderComposer({ autoFocusKey: "session-1" });
+		field.blur();
+		expect(document.activeElement).not.toBe(field);
+
+		act(() => {
+			window.dispatchEvent(new Event("focus"));
+		});
+
+		expect(document.activeElement).toBe(field);
+	});
+
+	it("does not focus the hidden or inactive chat composer", () => {
+		const { field } = renderComposer({ autoFocus: false, autoFocusKey: "session-1" });
+		expect(document.activeElement).not.toBe(field);
+	});
+
 	it("grows with the draft, then scrolls after the seven-line cap", () => {
 		const { field } = renderComposer();
 		let scrollHeight = 112;
@@ -70,18 +114,44 @@ describe("send keys", () => {
 		expect(within(tools).getByRole("button", { name: "Model" })).toBeInTheDocument();
 
 		const actions = screen.getByRole("group", { name: "Send message controls" });
-		expect(within(actions).getByRole("button", { name: "Send message" })).toBeInTheDocument();
-		expect(within(actions).getByText("Enter to send")).toBeInTheDocument();
+		// The destination Enter is armed with rides on the send control itself rather
+		// than as a line of prose beside it.
+		expect(within(actions).getByRole("button", { name: "Send message" })).toHaveAttribute(
+			"title",
+			"Enter to send",
+		);
 	});
 
-	it("uses the AO logo palette for the send control", async () => {
+
+	it("keeps a taller resting field for the redesigned composer", () => {
+		const { field } = renderComposer();
+		expect(field).toHaveAttribute("rows", "1");
+		expect(field).toHaveClass("min-h-[4.5rem]");
+	});
+
+	it("uses a muted circular send control that lights up when armed", async () => {
 		const { field } = renderComposer();
 		const send = screen.getByRole("button", { name: "Send message" });
-		expect(send).toHaveClass("bg-logo-accent", "text-logo-accent-foreground");
+		expect(send).toHaveClass("rounded-full", "bg-primary", "text-primary-foreground");
+		expect(send).toBeDisabled();
 
 		await userEvent.type(field, "hello");
 		expect(send).toBeEnabled();
-		expect(send).toHaveClass("hover:bg-logo-accent-bright", "focus-visible:ring-logo-accent/45");
+		expect(send).toHaveClass("bg-foreground", "text-background");
+	});
+
+	it("turns the empty send action into Stop while the agent is working", async () => {
+		const onInterrupt = vi.fn();
+		const { field } = renderComposer({ willQueue: true, onInterrupt });
+
+		const stop = screen.getByRole("button", { name: "Stop turn" });
+		expect(screen.queryByRole("button", { name: "Send message" })).not.toBeInTheDocument();
+		await userEvent.click(stop);
+		expect(onInterrupt).toHaveBeenCalledOnce();
+
+		await userEvent.type(field, "queue this next");
+		expect(screen.queryByRole("button", { name: "Stop turn" })).not.toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "Send message" })).toBeEnabled();
 	});
 
 	it("sends on Enter", async () => {
@@ -129,6 +199,119 @@ describe("send keys", () => {
 	it("renders command failures from the live surface", () => {
 		render(<ChatComposer onSend={vi.fn()} commandError="The approval could not be submitted" />);
 		expect(screen.getByRole("alert")).toHaveTextContent("The approval could not be submitted");
+	});
+});
+
+/* ---- steering -------------------------------------------------------------
+   Queueing and steering are different promises to the user: a queued message
+   waits for a cold start, a steer lands in the turn already running. The chord
+   is the only way to pick the second one now, so each path that can reach it —
+   Cmd, Ctrl, and the send control while a modifier is held — is pinned here.
+--------------------------------------------------------------------------- */
+
+describe("steering", () => {
+	function renderSteerable(props: Partial<Parameters<typeof ChatComposer>[0]> = {}) {
+		const onSend = vi.fn();
+		const onSteer = vi.fn().mockResolvedValue(undefined);
+		render(<ChatComposer onSend={onSend} onSteer={onSteer} canSteer willQueue {...props} />);
+		return {
+			onSend,
+			onSteer,
+			field: screen.getByLabelText("Message the agent") as HTMLTextAreaElement,
+		};
+	}
+
+	it("steers on Cmd+Enter rather than queueing, and trims the body first", async () => {
+		const { onSend, onSteer, field } = renderSteerable();
+
+		await userEvent.type(field, "  change course  ");
+		await userEvent.keyboard("{Meta>}{Enter}{/Meta}");
+
+		await waitFor(() => expect(onSteer).toHaveBeenCalledWith("change course"));
+		expect(onSend).not.toHaveBeenCalled();
+	});
+
+	it("steers on Ctrl+Enter, so the chord exists off macOS too", async () => {
+		const { onSend, onSteer, field } = renderSteerable();
+
+		await userEvent.type(field, "change course");
+		await userEvent.keyboard("{Control>}{Enter}{/Control}");
+
+		await waitFor(() => expect(onSteer).toHaveBeenCalledWith("change course"));
+		expect(onSend).not.toHaveBeenCalled();
+	});
+
+	it("queues on a bare Enter even while a turn is running", async () => {
+		const { onSend, onSteer, field } = renderSteerable();
+
+		await userEvent.type(field, "wait your turn");
+		await userEvent.keyboard("{Enter}");
+
+		await waitFor(() => expect(onSend).toHaveBeenCalledWith("wait your turn"));
+		expect(onSteer).not.toHaveBeenCalled();
+	});
+
+	// The modifier is a request, not a guarantee: a harness that cannot steer must
+	// still deliver the message rather than swallow the keystroke.
+	it("falls back to queueing on Cmd+Enter when the harness cannot steer", async () => {
+		const onSend = vi.fn();
+		render(<ChatComposer onSend={onSend} willQueue />);
+		const field = screen.getByLabelText("Message the agent") as HTMLTextAreaElement;
+
+		await userEvent.type(field, "no steering here");
+		await userEvent.keyboard("{Meta>}{Enter}{/Meta}");
+
+		await waitFor(() => expect(onSend).toHaveBeenCalledWith("no steering here"));
+	});
+
+	// The indicator beside the send control is painted from a window-level view of
+	// the modifier, so clicking has to read that same state or the button would
+	// contradict the label sitting next to it.
+	it("steers when the send control is clicked with a modifier held", async () => {
+		const { onSend, onSteer, field } = renderSteerable();
+
+		await userEvent.type(field, "pointer agrees with the chip");
+		act(() => {
+			window.dispatchEvent(new KeyboardEvent("keydown", { key: "Meta", metaKey: true }));
+		});
+
+		await userEvent.click(screen.getByRole("button", { name: "Send message" }));
+
+		await waitFor(() => expect(onSteer).toHaveBeenCalledWith("pointer agrees with the chip"));
+		expect(onSend).not.toHaveBeenCalled();
+	});
+
+	it("releasing the modifier returns the send control to queueing", async () => {
+		const { onSend, onSteer, field } = renderSteerable();
+
+		await userEvent.type(field, "back to the queue");
+		act(() => {
+			window.dispatchEvent(new KeyboardEvent("keydown", { key: "Meta", metaKey: true }));
+		});
+		act(() => {
+			window.dispatchEvent(new KeyboardEvent("keyup", { key: "Meta", metaKey: false }));
+		});
+
+		await userEvent.click(screen.getByRole("button", { name: "Send message" }));
+
+		await waitFor(() => expect(onSend).toHaveBeenCalledWith("back to the queue"));
+		expect(onSteer).not.toHaveBeenCalled();
+	});
+
+	// A refused steer is an ordinary outcome — the turn may have ended mid-keystroke —
+	// so the draft has to survive for the user to send it the other way.
+	it("keeps the draft when the provider refuses the steer", async () => {
+		const onSend = vi.fn();
+		const onSteer = vi.fn().mockRejectedValue(new Error("the turn already finished"));
+		render(<ChatComposer onSend={onSend} onSteer={onSteer} canSteer willQueue />);
+		const field = screen.getByLabelText("Message the agent") as HTMLTextAreaElement;
+
+		await userEvent.type(field, "do not lose this");
+		await userEvent.keyboard("{Meta>}{Enter}{/Meta}");
+
+		await waitFor(() => expect(onSteer).toHaveBeenCalledWith("do not lose this"));
+		expect(field.value).toBe("do not lose this");
+		expect(onSend).not.toHaveBeenCalled();
 	});
 });
 
@@ -433,5 +616,28 @@ describe("unavailable states", () => {
 	it("says a mid-turn message will be held", () => {
 		const { field } = renderComposer({ willQueue: true });
 		expect(field.placeholder).toContain("sends when it finishes");
+	});
+
+	it("turns the primary composer action into stop while the agent is working and the draft is empty", async () => {
+		const onSend = vi.fn();
+		const onInterrupt = vi.fn();
+		render(<ChatComposer onSend={onSend} willQueue onInterrupt={onInterrupt} />);
+
+		await userEvent.click(screen.getByRole("button", { name: "Stop turn" }));
+
+		expect(onInterrupt).toHaveBeenCalledTimes(1);
+		expect(onSend).not.toHaveBeenCalled();
+	});
+
+	it("keeps the primary action as queue while the agent is working and a draft exists", async () => {
+		const onSend = vi.fn();
+		const onInterrupt = vi.fn();
+		render(<ChatComposer onSend={onSend} willQueue onInterrupt={onInterrupt} />);
+
+		await userEvent.type(screen.getByLabelText("Message the agent"), "follow up");
+		await userEvent.click(screen.getByRole("button", { name: "Send message" }));
+
+		expect(onSend).toHaveBeenCalledWith("follow up");
+		expect(onInterrupt).not.toHaveBeenCalled();
 	});
 });

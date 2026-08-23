@@ -38,8 +38,10 @@ type fakeStore struct {
 	worktrees           map[domain.SessionID][]domain.SessionWorktreeRecord
 	checks              map[string][]domain.PullRequestCheck
 	reviews             map[string][]domain.PullRequestReview
+	reviewsErr          error
 	threads             map[string][]domain.PullRequestReviewThread
 	comments            map[string][]domain.PullRequestComment
+	commentsErr         error
 	num                 int
 }
 
@@ -274,6 +276,9 @@ func (f *fakeStore) ListChecks(_ context.Context, prURL string) ([]domain.PullRe
 }
 
 func (f *fakeStore) ListPRReviews(_ context.Context, prURL string) ([]domain.PullRequestReview, error) {
+	if f.reviewsErr != nil {
+		return nil, f.reviewsErr
+	}
 	return append([]domain.PullRequestReview(nil), f.reviews[prURL]...), nil
 }
 
@@ -282,6 +287,9 @@ func (f *fakeStore) ListPRReviewThreads(_ context.Context, prURL string) ([]doma
 }
 
 func (f *fakeStore) ListPRComments(_ context.Context, prURL string) ([]domain.PullRequestComment, error) {
+	if f.commentsErr != nil {
+		return nil, f.commentsErr
+	}
 	return append([]domain.PullRequestComment(nil), f.comments[prURL]...), nil
 }
 
@@ -593,6 +601,238 @@ func TestGetWorkspaceFileReturnsContentAndDiff(t *testing.T) {
 	}
 }
 
+// pngBytes is a byte sequence that reads as binary (it carries a NUL) and
+// carries a PNG signature, standing in for a real image in workspace tests.
+func pngBytes(tail string) string {
+	return "\x89PNG\r\n\x1a\n\x00" + tail
+}
+
+func TestGetWorkspaceFileReportsImageMediaType(t *testing.T) {
+	repo := newWorkspaceRepo(t)
+	writeWorkspaceFile(t, repo, "docs/logo.png", pngBytes("before"))
+	runGit(t, repo, "add", ".")
+	runGit(t, repo, "commit", "-m", "add logo")
+	writeWorkspaceFile(t, repo, "docs/logo.png", pngBytes("after"))
+	st := newFakeStore()
+	st.sessions["ao-1"] = domain.SessionRecord{ID: "ao-1", Metadata: domain.SessionMetadata{WorkspacePath: repo}}
+
+	got, err := (&Service{store: st}).GetWorkspaceFile(context.Background(), "ao-1", "docs/logo.png")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.Binary || got.ImageMediaType != "image/png" {
+		t.Fatalf("binary = %v, imageMediaType = %q, want true and image/png", got.Binary, got.ImageMediaType)
+	}
+	if got.Content != "" {
+		t.Fatalf("content = %q, want empty for a binary file", got.Content)
+	}
+}
+
+func TestGetWorkspaceFileLeavesTextFilesWithoutImageMediaType(t *testing.T) {
+	repo := newWorkspaceRepo(t)
+	// An SVG is text, so it keeps its line diff instead of an image preview.
+	writeWorkspaceFile(t, repo, "docs/icon.svg", "<svg></svg>\n")
+	st := newFakeStore()
+	st.sessions["ao-1"] = domain.SessionRecord{ID: "ao-1", Metadata: domain.SessionMetadata{WorkspacePath: repo}}
+
+	got, err := (&Service{store: st}).GetWorkspaceFile(context.Background(), "ao-1", "docs/icon.svg")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.ImageMediaType != "" {
+		t.Fatalf("imageMediaType = %q, want empty for a text file", got.ImageMediaType)
+	}
+}
+
+func TestGetWorkspaceFileBlobReturnsBothSides(t *testing.T) {
+	repo := newWorkspaceRepo(t)
+	writeWorkspaceFile(t, repo, "docs/logo.png", pngBytes("before"))
+	runGit(t, repo, "add", ".")
+	runGit(t, repo, "commit", "-m", "add logo")
+	writeWorkspaceFile(t, repo, "docs/logo.png", pngBytes("after"))
+	st := newFakeStore()
+	st.sessions["ao-1"] = domain.SessionRecord{ID: "ao-1", Metadata: domain.SessionMetadata{WorkspacePath: repo}}
+	svc := &Service{store: st}
+
+	before, err := svc.GetWorkspaceFileBlob(context.Background(), "ao-1", "docs/logo.png", WorkspaceBlobBefore)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(before.Data) != pngBytes("before") || before.MediaType != "image/png" {
+		t.Fatalf("before blob = %q (%s)", before.Data, before.MediaType)
+	}
+	after, err := svc.GetWorkspaceFileBlob(context.Background(), "ao-1", "docs/logo.png", WorkspaceBlobAfter)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(after.Data) != pngBytes("after") || after.Path != "docs/logo.png" {
+		t.Fatalf("after blob = %q (%s)", after.Data, after.Path)
+	}
+}
+
+// gitWorkspaceBlob asks git for the object size before it asks for the bytes,
+// so a blob past the limit is refused instead of buffered into memory.
+func TestGitWorkspaceBlobRefusesOversizedObjectBeforeReadingIt(t *testing.T) {
+	repo := newWorkspaceRepo(t)
+	writeWorkspaceFile(t, repo, "docs/logo.png", pngBytes(strings.Repeat("x", 4096)))
+	runGit(t, repo, "add", ".")
+	runGit(t, repo, "commit", "-m", "add logo")
+
+	if _, err := gitWorkspaceBlob(context.Background(), repo, "HEAD", "docs/logo.png", 64); err == nil {
+		t.Fatal("oversized blob: want error, got nil")
+	} else {
+		var e *apierr.Error
+		if !errors.As(err, &e) || e.Kind != apierr.KindInvalid || e.Code != "WORKSPACE_BLOB_TOO_LARGE" {
+			t.Fatalf("err = %v, want apierr.Invalid WORKSPACE_BLOB_TOO_LARGE", err)
+		}
+	}
+	if _, err := gitWorkspaceBlob(context.Background(), repo, "HEAD", "docs/logo.png", 1<<20); err != nil {
+		t.Fatalf("blob within the limit: %v", err)
+	}
+}
+
+func TestGetWorkspaceFileBlobHasNoBeforeSideForAddedFile(t *testing.T) {
+	repo := newWorkspaceRepo(t)
+	writeWorkspaceFile(t, repo, "docs/logo.png", pngBytes("new"))
+	st := newFakeStore()
+	st.sessions["ao-1"] = domain.SessionRecord{ID: "ao-1", Metadata: domain.SessionMetadata{WorkspacePath: repo}}
+	svc := &Service{store: st}
+
+	if _, err := svc.GetWorkspaceFileBlob(context.Background(), "ao-1", "docs/logo.png", WorkspaceBlobBefore); err == nil {
+		t.Fatal("before blob for an added file: want error, got nil")
+	} else {
+		var e *apierr.Error
+		if !errors.As(err, &e) || e.Kind != apierr.KindNotFound || e.Code != "WORKSPACE_BLOB_NOT_FOUND" {
+			t.Fatalf("err = %v, want apierr.NotFound WORKSPACE_BLOB_NOT_FOUND", err)
+		}
+	}
+	after, err := svc.GetWorkspaceFileBlob(context.Background(), "ao-1", "docs/logo.png", WorkspaceBlobAfter)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(after.Data) != pngBytes("new") {
+		t.Fatalf("after blob = %q", after.Data)
+	}
+}
+
+func TestGetWorkspaceFileBlobHasNoAfterSideForDeletedFile(t *testing.T) {
+	repo := newWorkspaceRepo(t)
+	writeWorkspaceFile(t, repo, "docs/logo.png", pngBytes("before"))
+	runGit(t, repo, "add", ".")
+	runGit(t, repo, "commit", "-m", "add logo")
+	if err := os.Remove(filepath.Join(repo, "docs", "logo.png")); err != nil {
+		t.Fatal(err)
+	}
+	st := newFakeStore()
+	st.sessions["ao-1"] = domain.SessionRecord{ID: "ao-1", Metadata: domain.SessionMetadata{WorkspacePath: repo}}
+	svc := &Service{store: st}
+
+	before, err := svc.GetWorkspaceFileBlob(context.Background(), "ao-1", "docs/logo.png", WorkspaceBlobBefore)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(before.Data) != pngBytes("before") {
+		t.Fatalf("before blob = %q", before.Data)
+	}
+	if _, err := svc.GetWorkspaceFileBlob(context.Background(), "ao-1", "docs/logo.png", WorkspaceBlobAfter); err == nil {
+		t.Fatal("after blob for a deleted file: want error, got nil")
+	}
+	detail, err := svc.GetWorkspaceFile(context.Background(), "ao-1", "docs/logo.png")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !detail.Deleted || detail.ImageMediaType != "image/png" {
+		t.Fatalf("deleted = %v, imageMediaType = %q", detail.Deleted, detail.ImageMediaType)
+	}
+}
+
+func TestGetWorkspaceFileBlobReadsRenamedFileFromPreviousPath(t *testing.T) {
+	repo := newWorkspaceRepo(t)
+	writeWorkspaceFile(t, repo, "docs/logo.png", pngBytes("before"))
+	runGit(t, repo, "add", ".")
+	runGit(t, repo, "commit", "-m", "add logo")
+	runGit(t, repo, "mv", "docs/logo.png", "docs/brand.png")
+	st := newFakeStore()
+	st.sessions["ao-1"] = domain.SessionRecord{ID: "ao-1", Metadata: domain.SessionMetadata{WorkspacePath: repo}}
+
+	before, err := (&Service{store: st}).GetWorkspaceFileBlob(context.Background(), "ao-1", "docs/brand.png", WorkspaceBlobBefore)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(before.Data) != pngBytes("before") {
+		t.Fatalf("before blob = %q", before.Data)
+	}
+}
+
+func TestGetWorkspaceFileBlobTypesRenamedBeforeSideByItsOwnPath(t *testing.T) {
+	repo := newWorkspaceRepo(t)
+	writeWorkspaceFile(t, repo, "docs/logo.png", pngBytes("before"))
+	runGit(t, repo, "add", ".")
+	runGit(t, repo, "commit", "-m", "add logo")
+	runGit(t, repo, "mv", "docs/logo.png", "docs/logo.gif")
+	st := newFakeStore()
+	st.sessions["ao-1"] = domain.SessionRecord{ID: "ao-1", Metadata: domain.SessionMetadata{WorkspacePath: repo}}
+	svc := &Service{store: st}
+
+	// A rename that changes the extension must not type the historical bytes by
+	// the new path: the controller sends nosniff, so a PNG labelled image/gif
+	// never renders.
+	before, err := svc.GetWorkspaceFileBlob(context.Background(), "ao-1", "docs/logo.gif", WorkspaceBlobBefore)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if before.MediaType != "image/png" {
+		t.Fatalf("before mediaType = %q, want image/png", before.MediaType)
+	}
+	after, err := svc.GetWorkspaceFileBlob(context.Background(), "ao-1", "docs/logo.gif", WorkspaceBlobAfter)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.MediaType != "image/gif" {
+		t.Fatalf("after mediaType = %q, want image/gif", after.MediaType)
+	}
+}
+
+func TestGetWorkspaceFileBlobRejectsRenameFromANonImagePath(t *testing.T) {
+	repo := newWorkspaceRepo(t)
+	writeWorkspaceFile(t, repo, "docs/logo.bin", pngBytes("before"))
+	runGit(t, repo, "add", ".")
+	runGit(t, repo, "commit", "-m", "add blob")
+	runGit(t, repo, "mv", "docs/logo.bin", "docs/logo.png")
+	st := newFakeStore()
+	st.sessions["ao-1"] = domain.SessionRecord{ID: "ao-1", Metadata: domain.SessionMetadata{WorkspacePath: repo}}
+
+	_, err := (&Service{store: st}).GetWorkspaceFileBlob(context.Background(), "ao-1", "docs/logo.png", WorkspaceBlobBefore)
+	var e *apierr.Error
+	if !errors.As(err, &e) || e.Kind != apierr.KindInvalid || e.Code != "UNSUPPORTED_WORKSPACE_BLOB" {
+		t.Fatalf("err = %v, want apierr.Invalid UNSUPPORTED_WORKSPACE_BLOB", err)
+	}
+}
+
+func TestGetWorkspaceFileBlobRejectsNonImagePaths(t *testing.T) {
+	repo := newWorkspaceRepo(t)
+	st := newFakeStore()
+	st.sessions["ao-1"] = domain.SessionRecord{ID: "ao-1", Metadata: domain.SessionMetadata{WorkspacePath: repo}}
+
+	_, err := (&Service{store: st}).GetWorkspaceFileBlob(context.Background(), "ao-1", "README.md", WorkspaceBlobAfter)
+	var e *apierr.Error
+	if !errors.As(err, &e) || e.Kind != apierr.KindInvalid || e.Code != "UNSUPPORTED_WORKSPACE_BLOB" {
+		t.Fatalf("err = %v, want apierr.Invalid UNSUPPORTED_WORKSPACE_BLOB", err)
+	}
+}
+
+func TestGetWorkspaceFileBlobRejectsUnknownSide(t *testing.T) {
+	repo := newWorkspaceRepo(t)
+	st := newFakeStore()
+	st.sessions["ao-1"] = domain.SessionRecord{ID: "ao-1", Metadata: domain.SessionMetadata{WorkspacePath: repo}}
+
+	_, err := (&Service{store: st}).GetWorkspaceFileBlob(context.Background(), "ao-1", "docs/logo.png", "sideways")
+	var e *apierr.Error
+	if !errors.As(err, &e) || e.Kind != apierr.KindInvalid || e.Code != "INVALID_WORKSPACE_BLOB_SIDE" {
+		t.Fatalf("err = %v, want apierr.Invalid INVALID_WORKSPACE_BLOB_SIDE", err)
+	}
+}
+
 func TestWorkspaceFilesIncludeCommittedBranchDiffAgainstRecordedBase(t *testing.T) {
 	repo := newWorkspaceRepo(t)
 	base := strings.TrimSpace(runGit(t, repo, "rev-parse", "HEAD"))
@@ -759,6 +999,321 @@ func TestWorkspaceFilesExcludeMainChangesMergedInAfterStaleOriginRef(t *testing.
 	}
 	if got, ok := byPath["unrelated-2.go"]; ok && got.Status != WorkspaceFileUnmodified {
 		t.Fatalf("unrelated-2.go leaked into the diff via a stale origin/main tracking ref: %#v (compare base %q)", got, files.CompareBaseSHA)
+	}
+}
+
+// newDivergentForcePushRepo builds a repo shaped like a target-branch
+// force-push: the session's stale tracking ref (B) and the PR's
+// provider-observed replacement base (X) descend from a common ancestor but
+// neither is an ancestor of the other, while the session branch HEAD has
+// incorporated both — B through its own fork point, X through a later merge.
+func newDivergentForcePushRepo(t *testing.T) (repo, head, staleRef, replacementBase string) {
+	t.Helper()
+	repo = newWorkspaceRepo(t)
+	runGit(t, repo, "branch", "-M", "main")
+
+	// B: main's tip before the force-push. The session's tracking ref is
+	// fetched here and never refreshed.
+	writeWorkspaceFile(t, repo, "old-main.go", "package main\n")
+	runGit(t, repo, "add", "old-main.go")
+	runGit(t, repo, "commit", "-m", "old main line")
+	b := strings.TrimSpace(runGit(t, repo, "rev-parse", "HEAD"))
+	runGit(t, repo, "update-ref", "refs/remotes/origin/main", b)
+
+	// The session forks from B and makes its own change.
+	runGit(t, repo, "switch", "-c", "ao/work")
+	writeWorkspaceFile(t, repo, "pr-file.go", "package main\n")
+	runGit(t, repo, "add", "pr-file.go")
+	runGit(t, repo, "commit", "-m", "pr change")
+
+	// X: main is force-pushed to a replacement line rooted at the same
+	// initial commit as B, not descended from B.
+	runGit(t, repo, "switch", "main")
+	initial := strings.TrimSpace(runGit(t, repo, "rev-list", "--max-parents=0", "HEAD"))
+	runGit(t, repo, "reset", "--hard", initial)
+	writeWorkspaceFile(t, repo, "new-main.go", "package main\n")
+	runGit(t, repo, "add", "new-main.go")
+	runGit(t, repo, "commit", "-m", "replacement main line (force-pushed)")
+	x := strings.TrimSpace(runGit(t, repo, "rev-parse", "HEAD"))
+
+	// The session merges the force-pushed main in, so HEAD now retains B
+	// (through its own fork point) and X (through this merge) without B and
+	// X being ancestors of each other.
+	runGit(t, repo, "switch", "ao/work")
+	runGit(t, repo, "merge", "main", "-m", "merge force-pushed main")
+	h := strings.TrimSpace(runGit(t, repo, "rev-parse", "HEAD"))
+
+	return repo, h, b, x
+}
+
+func TestWorkspaceFilesCompareForcePushDivergentHistoryPrefersPRWhenHeadMatches(t *testing.T) {
+	repo, head, _, replacementBase := newDivergentForcePushRepo(t)
+
+	st := newFakeStore()
+	st.projects["proj"] = domain.ProjectRecord{ID: "proj", Config: domain.ProjectConfig{DefaultBranch: "main"}}
+	st.sessions["ao-1"] = domain.SessionRecord{
+		ID:        "ao-1",
+		ProjectID: "proj",
+		Metadata:  domain.SessionMetadata{WorkspacePath: repo, DiffBaseRef: "origin/main"},
+	}
+	// The PR sync has observed the exact commit the Files tab is displaying.
+	st.prs["ao-1"] = []domain.PullRequest{
+		{URL: "pr", SessionID: "ao-1", Number: 1, TargetBranch: "main", BaseSHA: replacementBase, HeadSHA: head},
+	}
+
+	files, err := (&Service{store: st}).ListWorkspaceFiles(context.Background(), "ao-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if files.CompareBaseSHA != replacementBase {
+		t.Fatalf("compare base = %q, want the PR's replacement base %q when pr.HeadSHA matches local HEAD", files.CompareBaseSHA, replacementBase)
+	}
+	byPath := map[string]WorkspaceFileSummary{}
+	for _, file := range files.Files {
+		byPath[file.Path] = file
+	}
+	if byPath["pr-file.go"].Status != WorkspaceFileAdded {
+		t.Fatalf("pr-file.go status = %q, want added", byPath["pr-file.go"].Status)
+	}
+	if got, ok := byPath["new-main.go"]; ok && got.Status != WorkspaceFileUnmodified {
+		t.Fatalf("new-main.go leaked into the diff: %#v", got)
+	}
+}
+
+func TestWorkspaceFilesCompareForcePushDivergentHistoryKeepsLocalWhenPRHeadStale(t *testing.T) {
+	repo, _, staleRef, replacementBase := newDivergentForcePushRepo(t)
+
+	st := newFakeStore()
+	st.projects["proj"] = domain.ProjectRecord{ID: "proj", Config: domain.ProjectConfig{DefaultBranch: "main"}}
+	st.sessions["ao-1"] = domain.SessionRecord{
+		ID:        "ao-1",
+		ProjectID: "proj",
+		Metadata:  domain.SessionMetadata{WorkspacePath: repo, DiffBaseRef: "origin/main"},
+	}
+	// The persisted PR snapshot is stale: it still names an earlier local
+	// commit, not the branch's current HEAD (which has since merged the
+	// force-pushed main).
+	st.prs["ao-1"] = []domain.PullRequest{
+		{URL: "pr", SessionID: "ao-1", Number: 1, TargetBranch: "main", BaseSHA: replacementBase, HeadSHA: "0000000000000000000000000000000000dead"},
+	}
+
+	files, err := (&Service{store: st}).ListWorkspaceFiles(context.Background(), "ao-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if files.CompareBaseSHA != staleRef {
+		t.Fatalf("compare base = %q, want the local ref candidate %q when the PR snapshot's head doesn't match local HEAD", files.CompareBaseSHA, staleRef)
+	}
+	byPath := map[string]WorkspaceFileSummary{}
+	for _, file := range files.Files {
+		byPath[file.Path] = file
+	}
+	if byPath["pr-file.go"].Status != WorkspaceFileAdded {
+		t.Fatalf("pr-file.go status = %q, want added", byPath["pr-file.go"].Status)
+	}
+	// old-main.go predates the stale local candidate itself, so it must not
+	// show up as changed against it.
+	if got, ok := byPath["old-main.go"]; ok && got.Status != WorkspaceFileUnmodified {
+		t.Fatalf("old-main.go = %#v, want unmodified against the stale local candidate", got)
+	}
+	// new-main.go legitimately postdates the stale local candidate, so
+	// falling back to it (rather than trusting the unmatched PR snapshot)
+	// correctly reports it as added — this is the expected cost of rejecting
+	// a PR snapshot that doesn't describe local HEAD, not a leak.
+	if byPath["new-main.go"].Status != WorkspaceFileAdded {
+		t.Fatalf("new-main.go = %#v, want added against the stale local candidate", byPath["new-main.go"])
+	}
+}
+
+func TestWorkspaceFilesCompareKeepsNewerRefCandidateOverOlderPR(t *testing.T) {
+	repo := newWorkspaceRepo(t)
+	runGit(t, repo, "branch", "-M", "main")
+	older := strings.TrimSpace(runGit(t, repo, "rev-parse", "HEAD"))
+
+	writeWorkspaceFile(t, repo, "newer-main.go", "package main\n")
+	runGit(t, repo, "add", "newer-main.go")
+	runGit(t, repo, "commit", "-m", "main advanced further than the PR snapshot knows")
+	newer := strings.TrimSpace(runGit(t, repo, "rev-parse", "HEAD"))
+	runGit(t, repo, "update-ref", "refs/remotes/origin/main", newer)
+
+	runGit(t, repo, "switch", "-c", "ao/work")
+	writeWorkspaceFile(t, repo, "pr-file.go", "package main\n")
+	runGit(t, repo, "add", "pr-file.go")
+	runGit(t, repo, "commit", "-m", "pr change")
+
+	st := newFakeStore()
+	st.projects["proj"] = domain.ProjectRecord{ID: "proj", Config: domain.ProjectConfig{DefaultBranch: "main"}}
+	st.sessions["ao-1"] = domain.SessionRecord{
+		ID:        "ao-1",
+		ProjectID: "proj",
+		Metadata:  domain.SessionMetadata{WorkspacePath: repo, DiffBaseRef: "origin/main"},
+	}
+	// The PR sync hasn't caught up to main's latest commit yet.
+	st.prs["ao-1"] = []domain.PullRequest{
+		{URL: "pr", SessionID: "ao-1", Number: 1, TargetBranch: "main", BaseSHA: older},
+	}
+
+	files, err := (&Service{store: st}).ListWorkspaceFiles(context.Background(), "ao-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if files.CompareBaseSHA != newer {
+		t.Fatalf("compare base = %q, want the newer ref-based candidate %q regardless of candidate order", files.CompareBaseSHA, newer)
+	}
+	byPath := map[string]WorkspaceFileSummary{}
+	for _, file := range files.Files {
+		byPath[file.Path] = file
+	}
+	if got, ok := byPath["newer-main.go"]; ok && got.Status != WorkspaceFileUnmodified {
+		t.Fatalf("newer-main.go leaked into the diff via a stale PR base: %#v", got)
+	}
+}
+
+func TestWorkspaceFilesCompareMissingRefKeepsRecordedSHAOverOlderPR(t *testing.T) {
+	repo := newWorkspaceRepo(t)
+	runGit(t, repo, "branch", "-M", "main")
+
+	writeWorkspaceFile(t, repo, "older.go", "package main\n")
+	runGit(t, repo, "add", "older.go")
+	runGit(t, repo, "commit", "-m", "older main point")
+	older := strings.TrimSpace(runGit(t, repo, "rev-parse", "HEAD"))
+
+	writeWorkspaceFile(t, repo, "newer.go", "package main\n")
+	runGit(t, repo, "add", "newer.go")
+	runGit(t, repo, "commit", "-m", "newer recorded point")
+	recorded := strings.TrimSpace(runGit(t, repo, "rev-parse", "HEAD"))
+
+	runGit(t, repo, "switch", "-c", "ao/work")
+	writeWorkspaceFile(t, repo, "pr-file.go", "package main\n")
+	runGit(t, repo, "add", "pr-file.go")
+	runGit(t, repo, "commit", "-m", "pr change")
+
+	st := newFakeStore()
+	st.projects["proj"] = domain.ProjectRecord{ID: "proj", Config: domain.ProjectConfig{DefaultBranch: "main"}}
+	// No DiffBaseRef recorded — only the spawn-time recorded SHA.
+	st.sessions["ao-1"] = domain.SessionRecord{
+		ID:        "ao-1",
+		ProjectID: "proj",
+		Metadata:  domain.SessionMetadata{WorkspacePath: repo, DiffBaseSHA: recorded},
+	}
+	// A stale PR snapshot whose base predates the session's recorded base.
+	st.prs["ao-1"] = []domain.PullRequest{
+		{URL: "pr", SessionID: "ao-1", Number: 1, TargetBranch: "main", BaseSHA: older},
+	}
+
+	files, err := (&Service{store: st}).ListWorkspaceFiles(context.Background(), "ao-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if files.CompareBaseSHA != recorded {
+		t.Fatalf("compare base = %q, want recordedSHA %q (newer than the stale PR base) even with no recorded ref", files.CompareBaseSHA, recorded)
+	}
+	byPath := map[string]WorkspaceFileSummary{}
+	for _, file := range files.Files {
+		byPath[file.Path] = file
+	}
+	if got, ok := byPath["newer.go"]; ok && got.Status != WorkspaceFileUnmodified {
+		t.Fatalf("newer.go leaked into the diff via a stale PR base: %#v", got)
+	}
+}
+
+func TestWorkspaceFilesCompareRejectsPRBaseWithNoCommonAncestor(t *testing.T) {
+	repo := newWorkspaceRepo(t)
+	runGit(t, repo, "branch", "-M", "main")
+	base := strings.TrimSpace(runGit(t, repo, "rev-parse", "HEAD"))
+
+	// An orphan commit sharing no history with main: it exists locally (as if
+	// fetched for some unrelated reason) but has no common ancestor with HEAD.
+	runGit(t, repo, "checkout", "--orphan", "unrelated-history")
+	runGit(t, repo, "rm", "-rf", ".")
+	writeWorkspaceFile(t, repo, "unrelated-root.go", "package main\n")
+	runGit(t, repo, "add", "unrelated-root.go")
+	runGit(t, repo, "commit", "-m", "unrelated root commit")
+	unrelated := strings.TrimSpace(runGit(t, repo, "rev-parse", "HEAD"))
+
+	runGit(t, repo, "checkout", "main")
+	runGit(t, repo, "switch", "-c", "ao/work")
+	writeWorkspaceFile(t, repo, "pr-file.go", "package main\n")
+	runGit(t, repo, "add", "pr-file.go")
+	runGit(t, repo, "commit", "-m", "pr change")
+
+	st := newFakeStore()
+	st.projects["proj"] = domain.ProjectRecord{ID: "proj", Config: domain.ProjectConfig{DefaultBranch: "main"}}
+	st.sessions["ao-1"] = domain.SessionRecord{
+		ID:        "ao-1",
+		ProjectID: "proj",
+		Metadata:  domain.SessionMetadata{WorkspacePath: repo, DiffBaseSHA: base, DiffBaseRef: "main"},
+	}
+	st.prs["ao-1"] = []domain.PullRequest{
+		{URL: "pr", SessionID: "ao-1", Number: 1, TargetBranch: "main", BaseSHA: unrelated},
+	}
+
+	files, err := (&Service{store: st}).ListWorkspaceFiles(context.Background(), "ao-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if files.CompareBaseSHA == unrelated {
+		t.Fatalf("compare base resolved to the unrelated PR SHA %q, which shares no history with HEAD", unrelated)
+	}
+	byPath := map[string]WorkspaceFileSummary{}
+	for _, file := range files.Files {
+		byPath[file.Path] = file
+	}
+	if byPath["pr-file.go"].Status != WorkspaceFileAdded {
+		t.Fatalf("pr-file.go status = %q, want added", byPath["pr-file.go"].Status)
+	}
+	// A raw two-tree diff against the unrelated commit would make the
+	// orphan's file appear "added" in the session's diff.
+	if got, ok := byPath["unrelated-root.go"]; ok && got.Status != WorkspaceFileUnmodified {
+		t.Fatalf("unrelated-root.go leaked into the diff via the rejected PR base: %#v", got)
+	}
+}
+
+// TestWorkspaceFilesCompareRejectsPRBaseWithNoCommonAncestorAndNoLocalCandidate
+// is the sharpest form of the no-common-ancestor problem: with no recorded
+// ref or recorded SHA to fall back on, a PR base whose merge-base derivation
+// fails must not be returned as a raw, unrelated SHA.
+func TestWorkspaceFilesCompareRejectsPRBaseWithNoCommonAncestorAndNoLocalCandidate(t *testing.T) {
+	repo := newWorkspaceRepo(t)
+	runGit(t, repo, "branch", "-M", "main")
+
+	runGit(t, repo, "checkout", "--orphan", "unrelated-history")
+	runGit(t, repo, "rm", "-rf", ".")
+	writeWorkspaceFile(t, repo, "unrelated-root.go", "package main\n")
+	runGit(t, repo, "add", "unrelated-root.go")
+	runGit(t, repo, "commit", "-m", "unrelated root commit")
+	unrelated := strings.TrimSpace(runGit(t, repo, "rev-parse", "HEAD"))
+
+	runGit(t, repo, "checkout", "main")
+	writeWorkspaceFile(t, repo, "pr-file.go", "package main\n")
+	runGit(t, repo, "add", "pr-file.go")
+	runGit(t, repo, "commit", "-m", "pr change")
+
+	st := newFakeStore()
+	st.projects["proj"] = domain.ProjectRecord{ID: "proj", Config: domain.ProjectConfig{DefaultBranch: "does-not-exist"}}
+	// No recorded ref, no recorded SHA: the PR base is the only candidate.
+	st.sessions["ao-1"] = domain.SessionRecord{
+		ID:        "ao-1",
+		ProjectID: "proj",
+		Metadata:  domain.SessionMetadata{WorkspacePath: repo},
+	}
+	st.prs["ao-1"] = []domain.PullRequest{
+		{URL: "pr", SessionID: "ao-1", Number: 1, TargetBranch: "does-not-exist", BaseSHA: unrelated},
+	}
+
+	files, err := (&Service{store: st}).ListWorkspaceFiles(context.Background(), "ao-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if files.CompareBaseSHA == unrelated {
+		t.Fatalf("compare base resolved to the unrelated, raw PR SHA %q with no local candidate to fall back on", files.CompareBaseSHA)
+	}
+	byPath := map[string]WorkspaceFileSummary{}
+	for _, file := range files.Files {
+		byPath[file.Path] = file
+	}
+	if got, ok := byPath["unrelated-root.go"]; ok && got.Status != WorkspaceFileUnmodified {
+		t.Fatalf("unrelated-root.go leaked into the diff via the rejected raw PR base: %#v", got)
 	}
 }
 
@@ -1020,8 +1575,8 @@ func TestWorkspaceFilesIncludeWorkspaceProjectChildRepoDiffs(t *testing.T) {
 	if detail.CompareMode != WorkspaceCompareBase || detail.CompareBaseSHA != childBase {
 		t.Fatalf("child detail compare = mode:%q sha:%q, want base %s", detail.CompareMode, detail.CompareBaseSHA, childBase)
 	}
-	if detail.CompareBaseRef != "main" {
-		t.Fatalf("child detail compare ref = %q, want main", detail.CompareBaseRef)
+	if detail.CompareBaseRef != "" {
+		t.Fatalf("child detail compare ref = %q, want empty when only the recorded SHA is authoritative", detail.CompareBaseRef)
 	}
 }
 
@@ -1053,7 +1608,7 @@ func TestWorkspaceProjectChildRepoRecomputesBaseAfterRebase(t *testing.T) {
 	runGit(t, child, "rebase", "main")
 
 	st := newFakeStore()
-	st.projects["ws"] = domain.ProjectRecord{ID: "ws", Kind: domain.ProjectKindWorkspace, Config: domain.ProjectConfig{DefaultBranch: "main"}}
+	st.projects["ws"] = domain.ProjectRecord{ID: "ws", Kind: domain.ProjectKindWorkspace}
 	st.sessions["ws-1"] = domain.SessionRecord{
 		ID:        "ws-1",
 		ProjectID: "ws",
@@ -1061,7 +1616,7 @@ func TestWorkspaceProjectChildRepoRecomputesBaseAfterRebase(t *testing.T) {
 	}
 	st.worktrees["ws-1"] = []domain.SessionWorktreeRecord{
 		{SessionID: "ws-1", RepoName: domain.RootWorkspaceRepoName, WorktreePath: root, BaseSHA: rootBase},
-		{SessionID: "ws-1", RepoName: "api", WorktreePath: child, BaseSHA: oldChildBase},
+		{SessionID: "ws-1", RepoName: "api", WorktreePath: child, BaseSHA: oldChildBase, BaseRef: "refs/heads/main"},
 	}
 
 	files, err := (&Service{store: st}).ListWorkspaceFiles(context.Background(), "ws-1")
@@ -1083,8 +1638,8 @@ func TestWorkspaceProjectChildRepoRecomputesBaseAfterRebase(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if detail.CompareMode != WorkspaceCompareBase || detail.CompareBaseSHA != newChildBase || detail.CompareBaseRef != "main" {
-		t.Fatalf("child detail compare = mode:%q sha:%q ref:%q, want base %s main", detail.CompareMode, detail.CompareBaseSHA, detail.CompareBaseRef, newChildBase)
+	if detail.CompareMode != WorkspaceCompareBase || detail.CompareBaseSHA != newChildBase || detail.CompareBaseRef != "refs/heads/main" {
+		t.Fatalf("child detail compare = mode:%q sha:%q ref:%q, want base %s refs/heads/main", detail.CompareMode, detail.CompareBaseSHA, detail.CompareBaseRef, newChildBase)
 	}
 }
 
@@ -1152,8 +1707,8 @@ func TestWorkspaceBaseRefCandidatesPreferRemoteDefault(t *testing.T) {
 	}
 
 	got = workspaceBaseRefCandidates("")
-	if strings.Join(got, ",") != strings.Join(want, ",") {
-		t.Fatalf("empty workspace base candidates = %#v, want %#v", got, want)
+	if len(got) != 0 {
+		t.Fatalf("empty workspace base candidates = %#v, want none rather than a guessed main", got)
 	}
 }
 
@@ -2082,6 +2637,7 @@ func TestToAPIErrorMapsWorkspaceBranchSentinels(t *testing.T) {
 		wantCode string
 	}{
 		{"checked out elsewhere", fmt.Errorf("spawn mer-1: workspace: %w: \"x\" is checked out at \"/tmp\"", ports.ErrWorkspaceBranchCheckedOutElsewhere), apierr.KindConflict, "BRANCH_CHECKED_OUT_ELSEWHERE"},
+		{"default branch unresolved", fmt.Errorf("spawn mer-1: %w: configure defaultBranch", ports.ErrWorkspaceDefaultBranchUnresolved), apierr.KindInvalid, "DEFAULT_BRANCH_UNRESOLVED"},
 		{"not fetched", fmt.Errorf("spawn mer-1: workspace: %w: \"x\" has no local head", ports.ErrWorkspaceBranchNotFetched), apierr.KindInvalid, "BRANCH_NOT_FETCHED"},
 		{"invalid branch", fmt.Errorf("spawn mer-1: workspace: %w: \"bad!!\" (exit 1)", ports.ErrWorkspaceBranchInvalid), apierr.KindInvalid, "INVALID_BRANCH"},
 		{"agent binary not found", fmt.Errorf("spawn mer-1: %w", ports.ErrAgentBinaryNotFound), apierr.KindInvalid, "AGENT_BINARY_NOT_FOUND"},
@@ -2111,6 +2667,9 @@ func TestToAPIErrorMapsWorkspaceBranchSentinels(t *testing.T) {
 		{"chat driver unavailable", fmt.Errorf("spawn: %w", ports.ErrChatDriverUnavailable), apierr.KindConflict, "CHAT_DRIVER_UNAVAILABLE"},
 		{"chat driver incompatible", fmt.Errorf("spawn: %w", ports.ErrChatDriverIncompatible), apierr.KindConflict, "CHAT_DRIVER_INCOMPATIBLE"},
 		{"chat auth required", fmt.Errorf("spawn: %w", ports.ErrChatAuthRequired), apierr.KindConflict, "CHAT_AUTH_REQUIRED"},
+		{"interface notice not acknowledgeable", fmt.Errorf("acknowledge interface notice: %w", sessionmanager.ErrInterfaceTransitionNoticeNotAcknowledgeable), apierr.KindConflict, "INTERFACE_TRANSITION_NOTICE_NOT_ACKNOWLEDGEABLE"},
+		{"native conversation missing", fmt.Errorf("switch interface: %w", sessionmanager.ErrNativeConversationMissing), apierr.KindConflict, "NATIVE_SESSION_MISSING"},
+		{"native conversation unverified", fmt.Errorf("switch interface: %w", sessionmanager.ErrNativeConversationUnverified), apierr.KindConflict, "NATIVE_SESSION_UNVERIFIED"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -2488,6 +3047,7 @@ func TestDelegateTaskPassesAttachmentsToSpawnConfig(t *testing.T) {
 type fakePRClaimer struct {
 	out        errorFreeClaimOutcome
 	err        error
+	gotPR      domain.PullRequest
 	gotMode    ports.ReviewWriteMode
 	gotThreads []domain.PullRequestReviewThread
 	called     bool
@@ -2497,7 +3057,8 @@ type errorFreeClaimOutcome struct {
 	ports.ClaimOutcome
 }
 
-func (f *fakePRClaimer) ClaimPR(_ context.Context, _ domain.PullRequest, _ []domain.PullRequestCheck, _ []domain.PullRequestReview, threads []domain.PullRequestReviewThread, _ []domain.PullRequestComment, mode ports.ReviewWriteMode, _ bool) (ports.ClaimOutcome, error) {
+func (f *fakePRClaimer) ClaimPR(_ context.Context, pr domain.PullRequest, _ []domain.PullRequestCheck, _ []domain.PullRequestReview, threads []domain.PullRequestReviewThread, _ []domain.PullRequestComment, mode ports.ReviewWriteMode, _ bool) (ports.ClaimOutcome, error) {
+	f.gotPR = pr
 	f.gotMode = mode
 	f.gotThreads = threads
 	f.called = true
@@ -2538,8 +3099,12 @@ func TestClaimRowsFromSCMSnapshotsSessionReviewPolicy(t *testing.T) {
 type noopSCMProvider struct{}
 
 func (noopSCMProvider) ParseRepository(string) (ports.SCMRepo, bool) { return ports.SCMRepo{}, false }
-func (noopSCMProvider) FetchPullRequests(context.Context, []ports.SCMPRRef) ([]ports.SCMObservation, error) {
-	return nil, nil
+func (noopSCMProvider) FetchPullRequests(_ context.Context, refs []ports.SCMPRRef) ([]ports.SCMObservation, error) {
+	out := make([]ports.SCMObservation, len(refs))
+	for i := range out {
+		out[i].Error = ports.ErrSCMNotFound
+	}
+	return out, nil
 }
 func (noopSCMProvider) FetchReviewThreads(context.Context, ports.SCMPRRef) (ports.SCMReviewObservation, error) {
 	return ports.SCMReviewObservation{}, nil
@@ -2553,14 +3118,21 @@ func (f fakeSCM) ParseRepository(remote string) (ports.SCMRepo, bool) {
 	return ports.SCMRepo{Provider: providerKey(host), Host: host, Owner: owner, Name: repo, Repo: owner + "/" + repo}, true
 }
 
-func (f fakeSCM) FetchPullRequests(context.Context, []ports.SCMPRRef) ([]ports.SCMObservation, error) {
+func (f fakeSCM) FetchPullRequests(_ context.Context, refs []ports.SCMPRRef) ([]ports.SCMObservation, error) {
 	if f.fetchErr != nil {
 		return nil, f.fetchErr
 	}
+	out := make([]ports.SCMObservation, len(refs))
 	if !f.obs.Fetched && f.obs.PR.URL == "" && f.obs.PR.Number == 0 {
-		return nil, nil
+		for i := range out {
+			out[i].Error = ports.ErrSCMNotFound
+		}
+		return out, nil
 	}
-	return []ports.SCMObservation{f.obs}, nil
+	for i := range out {
+		out[i] = f.obs
+	}
+	return out, nil
 }
 
 func (f fakeSCM) FetchReviewThreads(context.Context, ports.SCMPRRef) (ports.SCMReviewObservation, error) {
@@ -2612,8 +3184,12 @@ func TestClaimPRMapsObserverAndStoreErrors(t *testing.T) {
 		want error
 	}{
 		{"missing scm", NewWithDeps(Deps{Store: st}), ErrSCMUnavailable},
-		{"not found", NewWithDeps(Deps{Store: st, PRClaimer: &fakePRClaimer{}, SCM: fakeSCM{fetchErr: ports.ErrSCMNotFound}}), ErrPRNotFound},
+		{"not found error", NewWithDeps(Deps{Store: st, PRClaimer: &fakePRClaimer{}, SCM: fakeSCM{fetchErr: ports.ErrSCMNotFound}}), ErrPRNotFound},
+		{"not found placeholder", NewWithDeps(Deps{Store: st, PRClaimer: &fakePRClaimer{}, SCM: fakeSCM{}}), ErrPRNotFound},
 		{"closed", NewWithDeps(Deps{Store: st, PRClaimer: &fakePRClaimer{}, SCM: fakeSCM{obs: ports.SCMObservation{Fetched: true, Provider: "github", Host: "github.com", Repo: "acme/repo", PR: ports.SCMPRObservation{URL: "https://github.com/acme/repo/pull/7", Number: 7, Closed: true}}}}), ErrPRNotOpen},
+		{"merged", NewWithDeps(Deps{Store: st, PRClaimer: &fakePRClaimer{}, SCM: fakeSCM{obs: ports.SCMObservation{Fetched: true, Provider: "github", Host: "github.com", Repo: "acme/repo", PR: ports.SCMPRObservation{URL: "https://github.com/acme/repo/pull/7", Number: 7, Merged: true}}}}), ErrPRNotOpen},
+		{"draft merged", NewWithDeps(Deps{Store: st, PRClaimer: &fakePRClaimer{}, SCM: fakeSCM{obs: ports.SCMObservation{Fetched: true, Provider: "github", Host: "github.com", Repo: "acme/repo", PR: ports.SCMPRObservation{URL: "https://github.com/acme/repo/pull/7", Number: 7, Draft: true, Merged: true}}}}), ErrPRNotOpen},
+		{"draft closed", NewWithDeps(Deps{Store: st, PRClaimer: &fakePRClaimer{}, SCM: fakeSCM{obs: ports.SCMObservation{Fetched: true, Provider: "github", Host: "github.com", Repo: "acme/repo", PR: ports.SCMPRObservation{URL: "https://github.com/acme/repo/pull/7", Number: 7, Draft: true, Closed: true}}}}), ErrPRNotOpen},
 		{"active owner", NewWithDeps(Deps{Store: st, PRClaimer: &fakePRClaimer{err: ports.PRClaimedByActiveSessionError{Owner: "mer-2"}}, SCM: fakeSCM{obs: ports.SCMObservation{Fetched: true, Provider: "github", Host: "github.com", Repo: "acme/repo", PR: ports.SCMPRObservation{URL: "https://github.com/acme/repo/pull/7", Number: 7}}}}), ports.ErrPRClaimedByActiveSession},
 	}
 	for _, tc := range cases {
@@ -2633,6 +3209,45 @@ func TestClaimPRMapsObserverAndStoreErrors(t *testing.T) {
 	}
 	if len(res.TakenOverFrom) != 1 || res.TakenOverFrom[0] != "mer-2" || len(res.PRs) != 1 || res.PRs[0].URL == "" {
 		t.Fatalf("claim result = %+v", res)
+	}
+}
+
+// TestClaimPRAllowsDraftPR pins the fix for #4171: a draft PR is open work and
+// must be claimable, with the draft fact carried onto the persisted PR row and
+// the returned read model rather than being rejected as PR_NOT_OPEN.
+func TestClaimPRAllowsDraftPR(t *testing.T) {
+	st := newFakeStore()
+	now := time.Date(2026, 8, 20, 12, 0, 0, 0, time.UTC)
+	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer", Kind: domain.KindWorker, Metadata: domain.SessionMetadata{WorkspacePath: "/ws"}}
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", RepoOriginURL: "https://github.com/acme/repo"}
+	// Stands in for the row the claimer would have written.
+	st.pr["mer-1"] = domain.PRFacts{URL: "https://github.com/acme/repo/pull/7", Number: 7, Draft: true, CI: domain.CIPending, UpdatedAt: now}
+
+	claimer := &fakePRClaimer{out: errorFreeClaimOutcome{ports.ClaimOutcome{}}}
+	svc := NewWithDeps(Deps{
+		Store:     st,
+		PRClaimer: claimer,
+		SCM: fakeSCM{obs: ports.SCMObservation{
+			Fetched:  true,
+			Provider: "github",
+			Host:     "github.com",
+			Repo:     "acme/repo",
+			PR:       ports.SCMPRObservation{URL: "https://github.com/acme/repo/pull/7", Number: 7, Draft: true},
+		}},
+	})
+
+	res, err := svc.ClaimPR(context.Background(), "mer-1", "7", ClaimPROptions{})
+	if err != nil {
+		t.Fatalf("claim draft PR: %v", err)
+	}
+	if !claimer.called {
+		t.Fatal("ClaimPR was not called for a draft PR")
+	}
+	if !claimer.gotPR.Draft || claimer.gotPR.Merged || claimer.gotPR.Closed {
+		t.Fatalf("persisted PR = %+v, want draft preserved and not merged/closed", claimer.gotPR)
+	}
+	if len(res.PRs) != 1 || res.PRs[0].URL != "https://github.com/acme/repo/pull/7" || !res.PRs[0].Draft {
+		t.Fatalf("claim result = %+v, want the draft PR", res.PRs)
 	}
 }
 
@@ -2910,6 +3525,7 @@ func TestListPRSummariesExposesReviewSummariesButKeepsRawLogsAndCommentBodiesPri
 	stList.comments[prURL] = []domain.PullRequestComment{
 		{Author: "reviewer-a", File: "main.go", Line: 12, Body: "raw body must stay private", URL: "https://github.com/acme/repo/pull/7#discussion_r1", AutoInjectReview: false},
 		{Author: "ci-bot", File: "main.go", Line: 13, Body: "bot body", URL: "https://github.com/acme/repo/pull/7#discussion_r2", IsBot: true},
+		{Author: "reviewer-a", File: "main.go", Line: 14, Body: "resolved body", URL: "https://github.com/acme/repo/pull/7#discussion_r4", Resolved: true},
 		{Author: "reviewer-a", File: "test.go", Line: 22, Body: "another raw body", URL: "https://github.com/acme/repo/pull/7#discussion_r3", AutoInjectReview: true},
 	}
 
@@ -2938,6 +3554,9 @@ func TestListPRSummariesExposesReviewSummariesButKeepsRawLogsAndCommentBodiesPri
 		t.Fatalf("comment injection decisions = %+v, want false then true", reviewer.Links)
 	} else if reviewer.Links[0].Body != "raw body must stay private" || reviewer.Links[1].Body != "another raw body" {
 		t.Fatalf("comment bodies = %+v", reviewer.Links)
+	}
+	if len(pr.Review.ResolvedBy) != 1 || pr.Review.ResolvedBy[0].Count != 1 || pr.Review.ResolvedBy[0].Links[0].Body != "resolved body" {
+		t.Fatalf("resolved comments = %+v", pr.Review.ResolvedBy)
 	}
 	if pr.Mergeability.State != domain.MergeConflicting || len(pr.Mergeability.ConflictFiles) != 0 || !containsString(pr.Mergeability.Reasons, "conflicts") {
 		t.Fatalf("mergeability = %+v", pr.Mergeability)

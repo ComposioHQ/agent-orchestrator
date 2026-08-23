@@ -16,6 +16,7 @@ import {
 	memo,
 	useCallback,
 	useEffect,
+	useLayoutEffect,
 	useMemo,
 	useRef,
 	useState,
@@ -27,26 +28,34 @@ import {
 	type WheelEvent as ReactWheelEvent,
 } from "react";
 import {
-	Archive,
 	ArrowDown,
 	CornerDownRight,
 	GitBranch,
 	Loader2,
-	MessageSquare,
-	Square,
 	TriangleAlert,
 	Undo2,
 } from "lucide-react";
 import { cn } from "../../lib/utils";
 import { sameContent, useStableList } from "../../lib/stable-list";
 import { getApiBaseUrl, subscribeApiBaseUrl } from "../../lib/api-client";
+import { aoBridge } from "../../lib/bridge";
+import {
+	TERMINAL_FONT_SIZE_DEFAULT,
+	TERMINAL_FONT_SIZE_MAX,
+	TERMINAL_FONT_SIZE_MIN,
+} from "../../lib/design-tokens";
 import { isLinuxPlatform, isMacPlatform } from "../../lib/platform";
+import { handleTerminalTabListKeyDown } from "../../lib/terminal-tabs";
+import type { ShellTerminal } from "../../hooks/useShellTerminals";
 import { useUiStore } from "../../stores/ui-store";
-import type { SessionKind } from "../../types/workspace";
+import type { TerminalTarget } from "../../types/terminal";
+import type { SessionKind, WorkspaceSession } from "../../types/workspace";
 import { AgentAvatar } from "../AgentAvatar";
 import { Button } from "../ui/button";
 import { ConfirmDialog } from "../ConfirmDialog";
 import { SessionTopbarPortal } from "../SessionTopbarPortal";
+import { ShellTerminalTab } from "../ShellTerminalTab";
+import { TerminalPane } from "../TerminalPane";
 import {
 	ActivityRow,
 	ApprovalCard,
@@ -77,8 +86,6 @@ import {
 	can,
 	isCompaction,
 	isSteer,
-	pendingApproval,
-	pendingUserInput,
 	queuedTurnIds,
 	type ConversationPlan,
 	type ConversationSnapshot,
@@ -97,6 +104,28 @@ import {
 } from "../../types/conversation";
 
 const CHAT_FONT_SIZE_DEFAULT = 12;
+
+// Reviewer panes share the terminal font-size preference with CenterPane, so a
+// reviewer opened inside the Chat surface matches a reviewer opened in TUI mode.
+const terminalFontSizeStorageKey = "ao.terminal.fontSize";
+const WHEEL_ZOOM_THRESHOLD = 80;
+const WHEEL_ZOOM_RESET_MS = 250;
+
+function clampTerminalFontSize(size: number): number {
+	return Math.min(TERMINAL_FONT_SIZE_MAX, Math.max(TERMINAL_FONT_SIZE_MIN, size));
+}
+
+function initialTerminalFontSize(): number {
+	if (typeof window === "undefined") return TERMINAL_FONT_SIZE_DEFAULT;
+	const raw = window.localStorage?.getItem(terminalFontSizeStorageKey);
+	const parsed = raw === null ? Number.NaN : Number(raw);
+	if (!Number.isFinite(parsed)) return TERMINAL_FONT_SIZE_DEFAULT;
+	return clampTerminalFontSize(parsed);
+}
+
+type ReviewerTerminalTarget = Extract<TerminalTarget, { kind: "reviewer" }>;
+type ShellTerminalTarget = Extract<TerminalTarget, { kind: "shell" }>;
+
 const isMac = isMacPlatform();
 const isLinux = isLinuxPlatform();
 
@@ -122,6 +151,8 @@ export interface ChatWorkspaceProps {
 	headerActions?: ReactNode;
 	/** Suppress a transient stopped snapshot while a mode handoff installs Chat. */
 	controllerTransitioning?: boolean;
+	/** Freeze agent-owned Chat controls while a durable session mutation owns input. */
+	agentInputDisabled?: boolean;
 	reviewerTerminal?: { handleId: string; harness: string };
 	onOpenReviewerTerminal?: (target: { handleId: string; harness: string }) => void;
 	/** Older durable history is available but not loaded into the DOM yet. */
@@ -152,6 +183,28 @@ export interface ChatWorkspaceProps {
 	busy?: boolean;
 	/** The provider's model catalog. Empty hides the model control. */
 	models?: ChatModel[];
+	/** The AO session this surface renders for. Used to attach the reviewer pane. */
+	session?: WorkspaceSession;
+	/** The selected reviewer pane. Kept even while its tab is temporarily unavailable. */
+	reviewerTarget?: ReviewerTerminalTarget;
+	/** Switch the active tab back to the chat timeline. */
+	onSelectChat?: () => void;
+	/** This session's standalone shells, rendered as tabs after the reviewer. */
+	shellTerminals?: ShellTerminal[];
+	/** The selected shell pane, if any. Mirrors reviewerTarget. */
+	shellTarget?: ShellTerminalTarget;
+	onSelectShellTerminal?: (handleId: string) => void;
+	onCloseShellTerminal?: (handleId: string) => void;
+	onRenameShellTerminal?: (handleId: string, title: string) => void;
+	/** The in-place agent-switch control. Owned by the surface (which owns query
+	    wiring) so this pure view stays renderable without query providers. */
+	switchAgentControl?: ReactNode;
+	/** Receives the body element the agent-switch dialog anchors to. */
+	switchDialogContainer?: (node: HTMLDivElement | null) => void;
+	/** Daemon readiness for the reviewer terminal pane. */
+	daemonReady?: boolean;
+	/** Resolved color theme for the reviewer terminal pane. */
+	theme?: "light" | "dark";
 	onChooseSettings?: (settings: TurnSettings) => void;
 	/** Live provider-owned options, such as ACP model, effort, mode, and fast mode. */
 	configOptions?: ChatConfigOption[];
@@ -203,8 +256,6 @@ export interface ChatWorkspaceProps {
 	 * is worse than none.
 	 */
 	onSteer?: (text: string) => Promise<unknown>;
-	/** Promote one already queued turn into the running turn. */
-	onPromoteQueuedTurn?: (turnId: string) => Promise<unknown>;
 	steerPending?: boolean;
 	/** Why the last steer was refused, from the daemon's typed answer. */
 	steerRefusal?: string;
@@ -220,8 +271,21 @@ export function ChatWorkspace({
 	sessionRole = "worker",
 	headerActions,
 	controllerTransitioning,
+	agentInputDisabled = false,
 	reviewerTerminal,
 	onOpenReviewerTerminal,
+	session,
+	reviewerTarget,
+	onSelectChat,
+	shellTerminals,
+	shellTarget,
+	onSelectShellTerminal,
+	onCloseShellTerminal,
+	onRenameShellTerminal,
+	switchAgentControl,
+	switchDialogContainer,
+	daemonReady,
+	theme,
 	hasOlder,
 	loadingOlder,
 	onLoadOlder,
@@ -262,7 +326,6 @@ export function ChatWorkspace({
 	onStageAttachments,
 	nativeImages,
 	onSteer,
-	onPromoteQueuedTurn,
 	steerPending,
 	steerRefusal,
 	onReloadMcpServers,
@@ -270,9 +333,11 @@ export function ChatWorkspace({
 	mcpReloadError,
 }: ChatWorkspaceProps) {
 	const turn = activeTurn(snapshot);
-	const approval = pendingApproval(snapshot);
-	const userInput = pendingUserInput(snapshot);
-	const queuedCount = queuedTurnIds(snapshot).size;
+	// Selection is durable UI state; availability only controls whether the tab is
+	// offered. Keeping these separate preserves a selected reviewer while an active
+	// session temporarily becomes terminated and later returns.
+	const reviewerActive = Boolean(reviewerTarget && session);
+	const shellActive = Boolean(shellTarget && session);
 	const queuedMessages = useMemo(() => {
 		const messagesByTurn = new Map(
 			snapshot.items
@@ -292,6 +357,10 @@ export function ChatWorkspace({
 	// the agent knows, so it is never one click.
 	const [confirming, setConfirming] = useState<string | undefined>(undefined);
 	const surfaceRef = useRef<HTMLElement | null>(null);
+	const lastWheelZoomAtRef = useRef(0);
+	const wheelZoomRemainderRef = useRef(0);
+	const [terminalFontSize, setTerminalFontSize] = useState(initialTerminalFontSize);
+	const [isFullscreen, setIsFullscreen] = useState(false);
 	const [topbarBounds, setTopbarBounds] = useState<TopbarBounds>({
 		leftInset: 0,
 		rightInset: 0,
@@ -326,6 +395,138 @@ export function ChatWorkspace({
 		return () => observer.disconnect();
 	}, []);
 
+	useEffect(() => {
+		const handleFullscreenChange = () => {
+			setIsFullscreen(document.fullscreenElement === surfaceRef.current);
+		};
+		document.addEventListener("fullscreenchange", handleFullscreenChange);
+		return () => document.removeEventListener("fullscreenchange", handleFullscreenChange);
+	}, []);
+
+	const updateTerminalFontSize = useCallback((delta: number) => {
+		setTerminalFontSize((current) => {
+			const next = clampTerminalFontSize(current + delta);
+			window.localStorage?.setItem(terminalFontSizeStorageKey, String(next));
+			return next;
+		});
+	}, []);
+
+	const handleWheelZoom = useCallback(
+		(event: ReactWheelEvent<HTMLDivElement>) => {
+			if (!event.ctrlKey && !event.metaKey) return;
+			event.preventDefault();
+			event.stopPropagation();
+
+			if (event.timeStamp - lastWheelZoomAtRef.current > WHEEL_ZOOM_RESET_MS) {
+				wheelZoomRemainderRef.current = 0;
+			}
+			lastWheelZoomAtRef.current = event.timeStamp;
+			wheelZoomRemainderRef.current += event.deltaY;
+
+			const steps = Math.floor(Math.abs(wheelZoomRemainderRef.current) / WHEEL_ZOOM_THRESHOLD);
+			if (steps === 0) return;
+
+			const direction = wheelZoomRemainderRef.current > 0 ? -1 : 1;
+			updateTerminalFontSize(direction * steps);
+			wheelZoomRemainderRef.current -=
+				Math.sign(wheelZoomRemainderRef.current) * steps * WHEEL_ZOOM_THRESHOLD;
+		},
+		[updateTerminalFontSize],
+	);
+
+	const toggleFullscreen = useCallback(async () => {
+		const surface = surfaceRef.current;
+		if (!surface) return;
+		try {
+			if (document.fullscreenElement === surface) {
+				await document.exitFullscreen();
+				return;
+			}
+			await surface.requestFullscreen();
+		} catch (error) {
+			console.warn("Unable to toggle chat reviewer fullscreen", error);
+		}
+	}, []);
+
+	// Cycle chat → reviewer → shells in strip order, wrapping. With no auxiliary
+	// tabs there is nothing to cycle to and the shortcut is a no-op.
+	const selectAdjacentTab = useCallback((direction: -1 | 1) => {
+		const tabs = [
+			{ kind: "chat" as const },
+			...(reviewerTerminal ? [{ kind: "reviewer" as const }] : []),
+			...(shellTerminals ?? []).map((shell) => ({ kind: "shell" as const, handleId: shell.handleId })),
+		];
+		if (tabs.length <= 1) return;
+		const activeIndex = shellActive
+			? tabs.findIndex((tab) => tab.kind === "shell" && tab.handleId === shellTarget?.handleId)
+			: reviewerActive
+				? tabs.findIndex((tab) => tab.kind === "reviewer")
+				: 0;
+		const currentIndex = activeIndex >= 0 ? activeIndex : 0;
+		const next = tabs[(currentIndex + direction + tabs.length) % tabs.length];
+		if (!next) return;
+		if (next.kind === "chat") {
+			onSelectChat?.();
+			return;
+		}
+		if (next.kind === "reviewer") {
+			if (reviewerTerminal) onOpenReviewerTerminal?.(reviewerTerminal);
+			return;
+		}
+		onSelectShellTerminal?.(next.handleId);
+	}, [
+		onOpenReviewerTerminal,
+		onSelectChat,
+		onSelectShellTerminal,
+		reviewerActive,
+		reviewerTerminal,
+		shellActive,
+		shellTarget,
+		shellTerminals,
+	]);
+	const handleChatTabsKeyDown = useCallback(
+		(event: ReactKeyboardEvent<HTMLDivElement>) => {
+			if (
+				event.target instanceof HTMLElement &&
+				event.target.getAttribute("role") === "tab" &&
+				event.key === "Tab" &&
+				event.ctrlKey &&
+				!event.altKey &&
+				!event.metaKey
+			) {
+				event.preventDefault();
+				selectAdjacentTab(event.shiftKey ? -1 : 1);
+				return;
+			}
+			handleTerminalTabListKeyDown(event);
+		},
+		[selectAdjacentTab],
+	);
+
+	useEffect(
+		() =>
+			aoBridge.app.onCloseShellTerminalShortcut(() => {
+				if (shellTarget) onCloseShellTerminal?.(shellTarget.handleId);
+			}),
+		[onCloseShellTerminal, shellTarget],
+	);
+
+	useEffect(() => {
+		const disposePrevious = aoBridge.app.onPreviousTabShortcut(() => selectAdjacentTab(-1));
+		const disposeNext = aoBridge.app.onNextTabShortcut(() => selectAdjacentTab(1));
+		return () => {
+			disposePrevious();
+			disposeNext();
+		};
+	}, [selectAdjacentTab]);
+
+	useEffect(() => {
+		aoBridge.app.setCloseShellTerminalShortcutEnabled(
+			Boolean(shellTarget && onCloseShellTerminal),
+		);
+		return () => aoBridge.app.setCloseShellTerminalShortcutEnabled(false);
+	}, [onCloseShellTerminal, shellTarget]);
+
 	// Offered only while the agent is idle. The daemon refuses a rollback mid-turn,
 	// and a control that exists to be refused is worse than one that waits.
 	const rollbackTarget = onRollback && !turn ? (id: string) => setConfirming(id) : undefined;
@@ -333,6 +534,85 @@ export function ChatWorkspace({
 
 	const brokenServers = useMemo(() => brokenMcpServers(snapshot), [snapshot]);
 	const editHumanMessage = can(snapshot, "fork") ? onEditMessage : undefined;
+	const pendingApproval = useMemo(
+		() =>
+			snapshot.items.reduce<ConversationActivity | undefined>((latest, item) => {
+				if (
+					item.kind !== "activity" ||
+					item.activityKind !== "approval" ||
+					item.status !== "pending" ||
+					(item.turnId ? item.turnId !== turn?.id : !turn)
+				) {
+					return latest;
+				}
+				if (latest?.turnId && !item.turnId) return latest;
+				if (item.turnId && !latest?.turnId) return item;
+				return !latest || item.sequence > latest.sequence ? item : latest;
+			}, undefined),
+		[snapshot.items, turn],
+	);
+	// Empty chats center the prompt; once a turn or item exists the composer docks
+	// at the bottom and stays there for the rest of the session.
+	const conversationEmpty = snapshot.items.length === 0 && !turn;
+	const composerDockRef = useRef<HTMLDivElement>(null);
+	const composerCenteredTopRef = useRef<number | null>(null);
+	const composerFlipDyRef = useRef<number | null>(null);
+	const composerSessionRef = useRef(snapshot.sessionId);
+
+	useLayoutEffect(() => {
+		const dock = composerDockRef.current;
+		if (!dock) return;
+
+		const sessionChanged = composerSessionRef.current !== snapshot.sessionId;
+		if (sessionChanged) {
+			composerSessionRef.current = snapshot.sessionId;
+			composerCenteredTopRef.current = null;
+			composerFlipDyRef.current = null;
+			dock.style.transition = "";
+			dock.style.transform = "";
+			dock.removeAttribute("data-composer-motion");
+		}
+
+		if (conversationEmpty) {
+			composerCenteredTopRef.current = dock.getBoundingClientRect().top;
+			composerFlipDyRef.current = null;
+			return;
+		}
+
+		// Capture the centered→docked delta once. Keep it across Strict Mode's
+		// setup→cleanup→setup so the docking motion still plays.
+		if (composerFlipDyRef.current == null && composerCenteredTopRef.current != null) {
+			composerFlipDyRef.current =
+				composerCenteredTopRef.current - dock.getBoundingClientRect().top;
+			composerCenteredTopRef.current = null;
+		}
+
+		const dy = composerFlipDyRef.current;
+		const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+		if (dy == null || reduceMotion || Math.abs(dy) < 1) {
+			composerFlipDyRef.current = null;
+			return;
+		}
+
+		dock.dataset.composerMotion = "animating";
+		dock.style.transition = "none";
+		dock.style.transform = `translateY(${dy}px)`;
+		void dock.offsetHeight;
+		dock.style.transition = "transform 500ms cubic-bezier(0.22, 1, 0.36, 1)";
+		dock.style.transform = "translateY(0)";
+
+		const onEnd = (event: TransitionEvent) => {
+			if (event.target !== dock || event.propertyName !== "transform") return;
+			composerFlipDyRef.current = null;
+			dock.style.transition = "";
+			dock.style.transform = "";
+			dock.removeAttribute("data-composer-motion");
+		};
+		dock.addEventListener("transitionend", onEnd);
+		return () => {
+			dock.removeEventListener("transitionend", onEnd);
+		};
+	}, [conversationEmpty, snapshot.sessionId]);
 
 	return (
 		<section
@@ -348,122 +628,213 @@ export function ChatWorkspace({
 				sessionTitle={sessionTitle}
 				reviewerTerminal={reviewerTerminal}
 				onOpenReviewerTerminal={onOpenReviewerTerminal}
+				reviewerActive={reviewerActive}
+				onSelectChat={onSelectChat}
+				shellTerminals={shellTerminals}
+				shellActiveHandleId={shellActive ? shellTarget?.handleId : undefined}
+				onSelectShellTerminal={onSelectShellTerminal}
+				onCloseShellTerminal={onCloseShellTerminal}
+				onRenameShellTerminal={onRenameShellTerminal}
+				onTabsKeyDown={handleChatTabsKeyDown}
+				switchAgentControl={switchAgentControl}
 				headerActions={headerActions}
+				inline={isFullscreen}
 				topbarBounds={topbarBounds}
 			/>
-			{/* Ordered by what blocks what. A session that needs credentials cannot make
-			    progress at all, so it is stated first; the controller's own health next;
-			    then the two that degrade a session rather than stopping it. */}
-			{snapshot.account ? (
-				<ReauthBanner account={snapshot.account} harness={snapshot.harness} />
-			) : null}
-			<ControllerBanner
-				controller={snapshot.controller}
-				transitioning={controllerTransitioning}
-				onResume={onResumeAgent}
-				resuming={resumingAgent}
-				resumeError={resumeError}
-				onOpenShell={onOpenShell}
-				openingShell={openingShell}
-				shellError={shellError}
-			/>
-			{snapshot.threadState ? <ThreadStateBanner threadState={snapshot.threadState} /> : null}
-			<McpServerBanner
-				servers={brokenServers}
-				onReload={onReloadMcpServers}
-				reloading={reloadingMcpServers}
-				turnInFlight={Boolean(turn)}
-				error={mcpReloadError}
-			/>
-			<ChatLinkProvider onLinkOpen={onLinkOpen}>
-				<Timeline
-					snapshot={snapshot}
-					hasOlder={hasOlder}
-					loadingOlder={loadingOlder}
-					onLoadOlder={onLoadOlder}
-					onDecide={onDecide}
-					onResolveInput={onResolveInput}
-					busy={busy}
-					onRollback={rollbackTarget}
-					onEditHumanMessage={editHumanMessage}
-					editPending={editMessagePending}
-					editBusy={Boolean(turn)}
-					editError={editMessageError}
-					onActivateBranch={onActivateBranch}
-					activateBranchPending={activateBranchPending}
-					activateBranchError={activateBranchError}
-				/>
-			</ChatLinkProvider>
-
-			<div className="cursor-chat-composer-dock shrink-0 px-4 pb-3 pt-2">
-				<div className="mx-auto flex w-full max-w-3xl flex-col gap-2">
-					<div className="flex items-center justify-end">
-						<CompactButton
-							onCompact={onCompact}
-							compacting={compacting}
-							unavailable={compactUnavailable}
-							turnInFlight={Boolean(turn)}
-							compactedAt={snapshot.compactedAt}
+			{/* The body host anchors the agent-switch dialog and holds whichever tab is
+			    active: the reviewer pane, a shell pane, or the chat timeline. The
+			    container ref is handed up so the surface (not this pure view) owns the
+			    dialog's state. */}
+			<div
+				className="relative flex min-h-0 flex-1 flex-col"
+				ref={switchDialogContainer}
+			>
+			{reviewerTarget && session ? (
+				<div
+					aria-label="Reviewer terminal"
+					className="relative min-h-0 flex-1"
+					data-testid="chat-reviewer-panel"
+					onWheelCapture={handleWheelZoom}
+					role="tabpanel"
+				>
+					<div
+						className="h-full min-h-0 pl-2"
+						data-testid="chat-reviewer-terminal"
+					>
+						<TerminalPane
+							daemonReady={Boolean(daemonReady)}
+							fontSize={terminalFontSize}
+							isFullscreen={isFullscreen}
+							onChangeFontSize={updateTerminalFontSize}
+							onToggleFullscreen={toggleFullscreen}
+							session={session}
+							terminalTarget={reviewerTarget}
+							theme={theme ?? "dark"}
 						/>
 					</div>
-					{discarded > 0 ? <RolledBackNotice count={discarded} /> : null}
-					{snapshot.branchedFromEarlierMessage ? (
-						<p className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
-							<GitBranch aria-hidden="true" className="size-3 shrink-0" />
-							Conversation branched; worktree files were left unchanged.
-						</p>
-					) : null}
-					{turn ? (
-						<LiveTurnBar
-							startedAt={turn.startedAt ?? turn.requestedAt}
-							blocked={Boolean(approval || userInput)}
-							queuedCount={queuedCount}
-							onInterrupt={onInterrupt}
-						/>
-					) : null}
-					{turn?.state === "running" && queuedMessages.length > 0 ? (
-						<QueuedMessageDock
-							messages={queuedMessages}
-							onSteer={onPromoteQueuedTurn}
-						/>
-					) : null}
-					<ChatComposer
-						attachedTop={turn?.state === "running" && queuedMessages.length > 0}
-						onSend={(text, attachments) => onSend?.(text, attachments)}
-						commandError={commandError}
-						settings={
-							onChooseSettings || onChooseConfigOption ? (
-								<TurnSettingsBar
-									models={models ?? []}
-									settings={snapshot.settings}
-									reroute={snapshot.modelReroute}
-									onChange={onChooseSettings}
-									configOptions={configOptions ?? []}
-									onChangeConfigOption={onChooseConfigOption}
-									configPending={configOptionPending}
-									error={configOptionError}
-									disabled={
-										snapshot.controller.state === "stopped" || configOptionPending
-									}
-								/>
-							) : null
-						}
-						busy={busy}
-						willQueue={Boolean(turn)}
-						disabled={snapshot.controller.state === "stopped"}
-						skills={skills}
-						filePaths={filePaths}
-						filePathsTruncated={filePathsTruncated}
-						onStageAttachments={onStageAttachments}
-						nativeImages={nativeImages}
-						// Steering is only meaningful into a turn that is running. A queued turn
-						// has not reached the provider, so there is nothing to steer.
-						onSteer={onSteer}
-						canSteer={Boolean(onSteer) && turn?.state === "running"}
-						steerPending={steerPending}
-						steerRefusal={steerRefusal}
-					/>
 				</div>
+			) : null}
+			{shellTarget && session ? (
+				<div
+					aria-label="Shell terminal"
+					className="relative min-h-0 flex-1"
+					data-testid="chat-shell-panel"
+					onWheelCapture={handleWheelZoom}
+					role="tabpanel"
+				>
+					<div className="h-full min-h-0 pl-2" data-testid="chat-shell-terminal">
+						<TerminalPane
+							daemonReady={Boolean(daemonReady)}
+							fontSize={terminalFontSize}
+							isFullscreen={isFullscreen}
+							onChangeFontSize={updateTerminalFontSize}
+							onToggleFullscreen={toggleFullscreen}
+							session={session}
+							terminalTarget={shellTarget}
+							theme={theme ?? "dark"}
+						/>
+					</div>
+				</div>
+			) : null}
+			<div
+				aria-hidden={reviewerActive || shellActive}
+				aria-label="Chat conversation"
+				className="flex min-h-0 flex-1 flex-col"
+				data-testid="chat-conversation-panel"
+				hidden={reviewerActive || shellActive}
+				inert={reviewerActive || shellActive || agentInputDisabled ? true : undefined}
+				role="tabpanel"
+			>
+				{/* Ordered by what blocks what. A session that needs credentials cannot make
+				    progress at all, so it is stated first; the controller's own health next;
+				    then the two that degrade a session rather than stopping it. */}
+				{snapshot.account ? (
+					<ReauthBanner account={snapshot.account} harness={snapshot.harness} />
+				) : null}
+				<ControllerBanner
+					controller={snapshot.controller}
+					transitioning={controllerTransitioning}
+					onResume={onResumeAgent}
+					resuming={resumingAgent}
+					resumeError={resumeError}
+					onOpenShell={onOpenShell}
+					openingShell={openingShell}
+					shellError={shellError}
+				/>
+				{snapshot.threadState ? <ThreadStateBanner threadState={snapshot.threadState} /> : null}
+				<McpServerBanner
+					servers={brokenServers}
+					onReload={onReloadMcpServers}
+					reloading={reloadingMcpServers}
+					turnInFlight={Boolean(turn)}
+					error={mcpReloadError}
+				/>
+				<div
+					className={cn(
+						"flex min-h-0 flex-1 flex-col",
+						conversationEmpty && "justify-center",
+					)}
+					data-composer-placement={conversationEmpty ? "center" : "dock"}
+				>
+					<ChatLinkProvider onLinkOpen={onLinkOpen}>
+						<Timeline
+							snapshot={snapshot}
+							hasOlder={hasOlder}
+							loadingOlder={loadingOlder}
+							onLoadOlder={onLoadOlder}
+							onDecide={onDecide}
+							onResolveInput={onResolveInput}
+							busy={busy}
+							onRollback={rollbackTarget}
+							onEditHumanMessage={editHumanMessage}
+							editPending={editMessagePending}
+							editBusy={Boolean(turn)}
+							editError={editMessageError}
+							onActivateBranch={onActivateBranch}
+							activateBranchPending={activateBranchPending}
+							activateBranchError={activateBranchError}
+						/>
+					</ChatLinkProvider>
+
+					<div
+						ref={composerDockRef}
+						className="cursor-chat-composer-dock shrink-0 px-4 pb-3 pt-2"
+					>
+						<div
+							data-empty={conversationEmpty || undefined}
+							className="mx-auto flex w-full max-w-3xl flex-col gap-2 transition-[max-width] duration-500 ease-out data-[empty]:max-w-2xl"
+						>
+							{discarded > 0 ? <RolledBackNotice count={discarded} /> : null}
+							{snapshot.branchedFromEarlierMessage ? (
+								<p className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+									<GitBranch aria-hidden="true" className="size-3 shrink-0" />
+									Conversation branched; worktree files were left unchanged.
+								</p>
+							) : null}
+							<ChatComposer
+								attachedTop={turn?.state === "running" && queuedMessages.length > 0}
+								queuedDock={
+									turn?.state === "running" && queuedMessages.length > 0 ? (
+										<QueuedMessageDock messages={queuedMessages} />
+									) : null
+								}
+								approval={
+									pendingApproval ? (
+										<ApprovalCard
+											activity={pendingApproval}
+											onDecide={onDecide}
+											busy={busy}
+											embedded
+										/>
+									) : undefined
+								}
+								onSend={(text, attachments) => onSend?.(text, attachments)}
+								onInterrupt={turn ? onInterrupt : undefined}
+								commandError={commandError}
+								settings={
+									onChooseSettings || onChooseConfigOption
+										? (
+												<TurnSettingsBar
+													models={models ?? []}
+													settings={snapshot.settings}
+													reroute={snapshot.modelReroute}
+													onChange={onChooseSettings}
+													configOptions={configOptions ?? []}
+													onChangeConfigOption={onChooseConfigOption}
+													configPending={configOptionPending}
+													error={configOptionError}
+													disabled={
+														snapshot.controller.state === "stopped" || configOptionPending
+													}
+												/>
+											)
+										: null
+								}
+								busy={busy}
+								willQueue={Boolean(turn)}
+								disabled={snapshot.controller.state === "stopped"}
+								skills={skills}
+								filePaths={filePaths}
+								filePathsTruncated={filePathsTruncated}
+								onStageAttachments={onStageAttachments}
+								nativeImages={nativeImages}
+								autoFocus={!reviewerActive}
+								autoFocusKey={snapshot.sessionId}
+								// Steering is only meaningful into a turn that is running. A queued turn
+								// has not reached the provider, so there is nothing to steer.
+								onSteer={onSteer}
+								canSteer={Boolean(onSteer) && turn?.state === "running"}
+								steerPending={steerPending}
+								steerRefusal={steerRefusal}
+								onCompact={onCompact}
+								compacting={compacting}
+								compactUnavailable={compactUnavailable}
+								compactBlocked={Boolean(turn)}
+							/>
+						</div>
+					</div>
+				</div>
+			</div>
 			</div>
 
 			{/* The copy has to be honest about the cost: this is not "hide these
@@ -471,7 +842,7 @@ export function ChatWorkspace({
 			    reverted either, and a user who assumed otherwise would be badly
 			    surprised, so it is said out loud. */}
 			<ConfirmDialog
-				open={Boolean(confirming)}
+				open={Boolean(confirming) && !reviewerActive && !shellActive}
 				onOpenChange={(open) => {
 					if (!open) setConfirming(undefined);
 				}}
@@ -503,6 +874,7 @@ export function ChatWorkspace({
 		</section>
 	);
 }
+
 
 /**
  * What an undo took away.
@@ -612,127 +984,149 @@ function ChatHeader({
 	sessionTitle,
 	reviewerTerminal,
 	onOpenReviewerTerminal,
+	reviewerActive,
+	onSelectChat,
+	shellTerminals,
+	shellActiveHandleId,
+	onSelectShellTerminal,
+	onCloseShellTerminal,
+	onRenameShellTerminal,
+	onTabsKeyDown,
+	switchAgentControl,
 	headerActions,
+	inline,
 	topbarBounds,
 }: {
 	snapshot: ConversationSnapshot;
 	sessionTitle?: string;
 	reviewerTerminal?: { handleId: string; harness: string };
 	onOpenReviewerTerminal?: (target: { handleId: string; harness: string }) => void;
+	/** The reviewer tab is selected; the chat tab is the clickable alternative. */
+	reviewerActive?: boolean;
+	/** Return the tab strip to the chat tab. */
+	onSelectChat?: () => void;
+	/** This session's standalone shells, as tabs after the reviewer. */
+	shellTerminals?: ShellTerminal[];
+	/** The selected shell tab, if any. */
+	shellActiveHandleId?: string;
+	onSelectShellTerminal?: (handleId: string) => void;
+	onCloseShellTerminal?: (handleId: string) => void;
+	onRenameShellTerminal?: (handleId: string, title: string) => void;
+	onTabsKeyDown?: (event: ReactKeyboardEvent<HTMLDivElement>) => void;
+	/** The in-place agent-switch control, same entry point as the terminal pane. */
+	switchAgentControl?: ReactNode;
 	headerActions?: ReactNode;
+	/** Fullscreen content cannot see the normal topbar portal outside its subtree. */
+	inline?: boolean;
 	topbarBounds: TopbarBounds;
 }) {
 	const label = sessionTitle || snapshot.title || snapshot.sessionId;
+	// The chat tab is "selected" only when neither terminal pane is the body.
+	const timelineActive = !reviewerActive && !shellActiveHandleId;
 	// Match CenterPane: when the sidebar is off-canvas, the fixed TitlebarNav
 	// cluster sits over the session tab strip. Terminal already reserves that
 	// space; chat must too or the back/forward buttons land on the tab label.
 	const isSidebarOpen = useUiStore((state) => state.isSidebarOpen);
-	return (
-		<SessionTopbarPortal>
-			<header className="flex h-inspector-tabs w-full shrink-0 items-stretch bg-sidebar">
-				<div className="session-topbar-surface flex min-w-0 flex-1" data-testid="session-workspace-topbar">
+	const header = (
+		<header className="flex h-inspector-tabs w-full shrink-0 items-stretch bg-sidebar">
+			<div className="session-topbar-surface flex min-w-0 flex-1" data-testid="session-workspace-topbar">
+				<div
+					className={cn(
+						"flex min-w-0 shrink items-center pr-3",
+						!isSidebarOpen && isMac && "session-topbar-titlebar-clearance-mac",
+						!isSidebarOpen && isLinux && "session-topbar-titlebar-clearance-linux",
+					)}
+					data-testid="session-terminal-region"
+					style={{ width: topbarBounds.width > 0 ? topbarBounds.width : "100%" }}
+				>
 					<div
-						className={cn(
-							"flex min-w-0 shrink items-center pr-3",
-							!isSidebarOpen && isMac && "session-topbar-titlebar-clearance-mac",
-							!isSidebarOpen && isLinux && "session-topbar-titlebar-clearance-linux",
-						)}
-						data-testid="session-terminal-region"
-						style={{ width: topbarBounds.width > 0 ? topbarBounds.width : "100%" }}
+						aria-label="Chat tabs"
+						className="scrollbar-none flex h-full min-w-flex-min flex-1 items-center overflow-x-auto"
+						onKeyDown={onTabsKeyDown ?? handleTerminalTabListKeyDown}
+						role="tablist"
 					>
-						<div
-							aria-label="Chat tabs"
-							className="scrollbar-none flex h-full min-w-flex-min flex-1 items-center overflow-x-auto"
-							role="tablist"
+						<span
+							data-terminal-role="primary"
+							className={cn(
+								"group relative inline-flex min-w-shell-tab-min self-stretch items-center gap-1.5 border-r border-border px-3",
+								timelineActive
+									? "bg-overlay text-foreground after:absolute after:inset-x-0 after:bottom-0 after:h-0.5 after:bg-foreground/80"
+									: "text-muted-foreground hover:bg-raised hover:text-foreground",
+							)}
 						>
-							<span
-								data-terminal-role="primary"
-								className="group relative inline-flex min-w-shell-tab-min self-stretch items-center gap-1.5 border-r border-border bg-overlay px-3 text-foreground after:absolute after:inset-x-0 after:bottom-0 after:h-0.5 after:bg-foreground/80"
+							<AgentAvatar className="size-icon-base" decorative provider={snapshot.harness} />
+							<button
+								aria-current={timelineActive ? true : undefined}
+								aria-label={label}
+								aria-selected={timelineActive}
+								className={cn(
+									"inline-flex min-w-flex-min max-w-shell-tab-max items-center gap-1.5 text-control font-medium leading-none transition-colors",
+									timelineActive ? "text-foreground" : "text-muted-foreground",
+								)}
+								onClick={timelineActive ? undefined : onSelectChat}
+								role="tab"
+								tabIndex={timelineActive || (!reviewerTerminal && !shellTerminals?.length) ? 0 : -1}
+								title={label}
+								type="button"
 							>
-								<AgentAvatar className="size-icon-base" decorative provider={snapshot.harness} />
+								<span className="truncate">{label}</span>
+							</button>
+						</span>
+						{reviewerTerminal ? (
+							<span
+								className={cn(
+									"group relative inline-flex min-w-shell-tab-min self-stretch items-center gap-1.5 border-r border-border px-3",
+									reviewerActive
+										? "bg-overlay text-foreground after:absolute after:inset-x-0 after:bottom-0 after:h-0.5 after:bg-foreground/80"
+										: "text-muted-foreground hover:bg-raised hover:text-foreground",
+								)}
+							>
+								<AgentAvatar className="size-icon-base" decorative provider={reviewerTerminal.harness} />
 								<button
-									aria-current
-									aria-label={label}
-									aria-selected
-									className="inline-flex min-w-flex-min max-w-shell-tab-max items-center gap-1.5 text-control font-medium leading-none text-foreground transition-colors"
+									aria-current={reviewerActive ? true : undefined}
+									aria-label="Reviewer"
+									aria-selected={Boolean(reviewerActive)}
+									className={cn(
+										"inline-flex min-w-flex-min max-w-shell-tab-max items-center gap-1.5 text-control font-medium leading-none",
+										reviewerActive ? "text-foreground" : "text-muted-foreground",
+									)}
+									onClick={() => onOpenReviewerTerminal?.(reviewerTerminal)}
 									role="tab"
-									tabIndex={0}
-									title={label}
+									tabIndex={reviewerActive ? 0 : -1}
+									title={reviewerTerminal.harness}
 									type="button"
 								>
-									<span className="truncate">{label}</span>
+									<span className="truncate">Reviewer</span>
 								</button>
 							</span>
-							{reviewerTerminal ? (
-								<span className="group relative inline-flex min-w-shell-tab-min self-stretch items-center gap-1.5 border-r border-border px-3 text-muted-foreground hover:bg-raised hover:text-foreground">
-									<AgentAvatar className="size-icon-base" decorative provider={reviewerTerminal.harness} />
-									<button
-										aria-label="Reviewer"
-										className="inline-flex min-w-flex-min max-w-shell-tab-max items-center gap-1.5 text-control font-medium leading-none"
-										onClick={() => onOpenReviewerTerminal?.(reviewerTerminal)}
-										role="tab"
-										tabIndex={0}
-										title={reviewerTerminal.harness}
-										type="button"
-									>
-										<span className="truncate">Reviewer</span>
-									</button>
-								</span>
-							) : null}
-						</div>
-					</div>
-					<div className="ml-auto flex shrink-0 items-center px-3" data-testid="session-action-region">
-						{headerActions}
+						) : null}
+						{/* The same shared shell tab the terminal pane strip and the
+						    standalone terminals screen use, so all three never drift. */}
+						{(shellTerminals ?? []).map((shell) => (
+							<ShellTerminalTab
+								key={shell.handleId}
+								appearance="connected"
+								isActive={shell.handleId === shellActiveHandleId}
+								onClose={() => onCloseShellTerminal?.(shell.handleId)}
+								onRename={
+									onRenameShellTerminal
+										? (title) => onRenameShellTerminal(shell.handleId, title)
+										: undefined
+								}
+								onSelect={() => onSelectShellTerminal?.(shell.handleId)}
+								shell={shell}
+							/>
+						))}
 					</div>
 				</div>
-			</header>
-		</SessionTopbarPortal>
+				<div className="ml-auto flex shrink-0 items-center gap-1 px-3" data-testid="session-action-region">
+					{switchAgentControl}
+					{headerActions}
+				</div>
+			</div>
+		</header>
 	);
-}
-
-function CompactButton({
-	onCompact,
-	compacting,
-	unavailable,
-	turnInFlight,
-	compactedAt,
-}: {
-	onCompact?: () => void;
-	compacting?: boolean;
-	unavailable?: string;
-	turnInFlight?: boolean;
-	compactedAt?: string;
-}) {
-	if (!onCompact) return null;
-	if (unavailable === "This agent cannot compact its history") {
-		return <span className="text-[11px] text-muted-foreground">{unavailable}</span>;
-	}
-
-	const title = turnInFlight
-		? "Finish or stop the current turn before compacting"
-		: compactedAt
-			? `Summarize earlier history to reclaim context. Last compacted ${new Date(compactedAt).toLocaleString()}.`
-			: "Summarize earlier history to reclaim context";
-
-	return (
-		<Button
-			type="button"
-			size="sm"
-			variant="ghost"
-			onClick={onCompact}
-			disabled={compacting || turnInFlight}
-			title={title}
-			aria-label="Compact conversation history"
-			className="h-5 gap-1 px-1.5 text-[11px]"
-		>
-			{compacting ? (
-				<Loader2 aria-hidden="true" className="size-3 animate-spin" />
-			) : (
-				<Archive aria-hidden="true" className="size-3" />
-			)}
-			{compacting ? "Compacting…" : "Compact"}
-		</Button>
-	);
+	return inline ? header : <SessionTopbarPortal>{header}</SessionTopbarPortal>;
 }
 
 /**
@@ -832,6 +1226,11 @@ function ControllerBanner({
  * Once they scroll up to read, new output must not yank them away — it surfaces a
  * jump control instead.
  *
+ * A trailing spacer sizes itself so the latest human prompt can sit near the top
+ * of the viewport when following — the Cursor/ChatGPT "drop a prompt and the
+ * history moves up" behaviour. As the reply grows the spacer shrinks, which keeps
+ * the prompt in place without fighting the reader.
+ *
  * Finished turns are memoized so a targeted live-event invalidation only redraws
  * the turn that changed. Older pages are prepended explicitly instead of keeping
  * an unbounded history in every snapshot response.
@@ -871,11 +1270,17 @@ function Timeline({
 }) {
 	const scroller = useRef<HTMLDivElement>(null);
 	const scrollContent = useRef<HTMLDivElement>(null);
+	const promptSpacer = useRef<HTMLDivElement>(null);
 	const scrollTrack = useRef<HTMLDivElement>(null);
 	const drag = useRef<{ pointerId: number; startY: number; startScrollTop: number } | null>(null);
+	const pinnedRef = useRef(true);
 	const [pinned, setPinned] = useState(true);
 	const [hoveredMarker, setHoveredMarker] = useState<number | null>(null);
 	const [messageEdit, setMessageEdit] = useState<MessageEditDraft>();
+	const isInspectorOpen = useUiStore(
+		(state) => state.inspectorSessions[snapshot.sessionId]?.isOpen ?? true,
+	);
+	const turn = activeTurn(snapshot);
 	const [scrollbar, setScrollbar] = useState({
 		visible: false,
 		top: 0,
@@ -902,6 +1307,9 @@ function Timeline({
 	);
 
 	useEffect(() => setMessageEdit(undefined), [snapshot.sessionId]);
+	useEffect(() => {
+		pinnedRef.current = pinned;
+	}, [pinned]);
 
 	const startMessageEdit = useCallback((message: ConversationMessage) => {
 		if (!message.turnId) return;
@@ -955,7 +1363,9 @@ function Timeline({
 		const anchors = Array.from(
 			scrollContent.current?.querySelectorAll<HTMLElement>("[data-chat-scroll-anchor]") ?? [],
 		);
-		const markerGap = anchors.length > 1 ? Math.min(18, (trackHeight - 12) / (anchors.length - 1)) : 0;
+		// 8px is the Cursor-chat cadence: a 2px dash with a ~6px gap. 18px left
+		// a sparse ladder when the conversation only had a handful of turns.
+		const markerGap = anchors.length > 1 ? Math.min(8, (trackHeight - 12) / (anchors.length - 1)) : 0;
 		const markerStart = (trackHeight - markerGap * Math.max(0, anchors.length - 1)) / 2;
 		const markers = anchors.map((anchor, index) => {
 			const rect = anchor.getBoundingClientRect();
@@ -993,23 +1403,53 @@ function Timeline({
 		);
 	}, []);
 
-	useEffect(() => {
-		if (!pinned) return;
+	/**
+	 * Size the trailing spacer so scrolling to the bottom parks the latest human
+	 * prompt below a band of prior chat — matching Cursor, where a little of the
+	 * previous turn stays visible above the new prompt instead of flush to the top.
+	 * Shrinks naturally as that reply grows.
+	 */
+	const syncPromptSpacer = useCallback(() => {
 		const node = scroller.current;
-		if (node) {
-			node.scrollTop = node.scrollHeight;
-			updateScrollbar();
+		const pad = promptSpacer.current;
+		if (!node || !pad) return;
+
+		const anchors = scrollContent.current?.querySelectorAll<HTMLElement>("[data-chat-scroll-anchor]");
+		const anchor = anchors && anchors.length > 0 ? anchors[anchors.length - 1] : null;
+		const nextHeight = anchor
+			? promptSpacerHeight({
+					viewportHeight: node.clientHeight,
+					contentHeightWithoutSpacer: node.scrollHeight - pad.offsetHeight,
+					anchorOffset: anchor.getBoundingClientRect().top - node.getBoundingClientRect().top + node.scrollTop,
+					topInset: promptTopInset(node.clientHeight),
+				})
+			: 0;
+		if (Math.abs(pad.offsetHeight - nextHeight) > 0.5) {
+			pad.style.height = `${nextHeight}px`;
 		}
-	}, [pinned, snapshot.latestSequence, updateScrollbar]);
+	}, []);
+
+	const syncScrollLayout = useCallback(() => {
+		syncPromptSpacer();
+		const node = scroller.current;
+		if (node && pinnedRef.current) {
+			node.scrollTop = node.scrollHeight;
+		}
+		updateScrollbar();
+	}, [syncPromptSpacer, updateScrollbar]);
 
 	useEffect(() => {
-		updateScrollbar();
+		syncScrollLayout();
+	}, [pinned, snapshot.latestSequence, groups.length, messageEdit?.turnId, syncScrollLayout]);
+
+	useEffect(() => {
+		syncScrollLayout();
 		if (typeof ResizeObserver === "undefined") return;
-		const observer = new ResizeObserver(updateScrollbar);
+		const observer = new ResizeObserver(syncScrollLayout);
 		if (scroller.current) observer.observe(scroller.current);
 		if (scrollContent.current) observer.observe(scrollContent.current);
 		return () => observer.disconnect();
-	}, [groups.length, updateScrollbar]);
+	}, [groups.length, syncScrollLayout]);
 
 	function onScroll() {
 		const node = scroller.current;
@@ -1111,8 +1551,8 @@ function Timeline({
 		updateScrollbar();
 	}
 
-	if (items.length === 0 && !messageEdit) {
-		return <EmptyState harness={snapshot.harness} />;
+	if (items.length === 0 && !messageEdit && !turn) {
+		return null;
 	}
 
 	return (
@@ -1120,7 +1560,7 @@ function Timeline({
 			<div
 				ref={scroller}
 				onScroll={onScroll}
-				className="chat-scroll-viewport cursor-chat-timeline h-full min-w-0 select-text overflow-x-hidden overflow-y-auto px-4 py-5"
+				className="chat-scroll-viewport cursor-chat-timeline h-full min-w-0 select-text overflow-x-hidden overflow-y-auto px-4 pt-5 pb-0"
 				role="log"
 				aria-live="polite"
 				aria-label="Conversation"
@@ -1176,6 +1616,9 @@ function Timeline({
 							/>
 						</div>
 					))}
+					{turn && !groups.some((group) => group.turnId === turn.id) ? (
+						<TurnLiveStatus startedAt={turn.startedAt ?? turn.requestedAt} />
+					) : null}
 					{messageEdit && !editedMessageVisible ? (
 						<div className="flex justify-end" data-chat-scroll-anchor="">
 							<HumanMessageEditor
@@ -1190,6 +1633,14 @@ function Timeline({
 							/>
 						</div>
 					) : null}
+					{/* Pushes the latest prompt toward the top of the viewport when following,
+					    then shrinks as the reply fills the space below it. */}
+					<div
+						ref={promptSpacer}
+						aria-hidden="true"
+						className="chat-prompt-spacer"
+						data-testid="chat-prompt-spacer"
+					/>
 				</div>
 			</div>
 
@@ -1225,33 +1676,39 @@ function Timeline({
 				)}
 			>
 				<div className="absolute inset-0 cursor-grab group-active/scroll:cursor-grabbing">
-					{scrollbar.markers.map((marker, index) => {
-						const distance = hoveredMarker === null ? Number.POSITIVE_INFINITY : Math.abs(index - hoveredMarker);
-						return (
-							<span
-								key={index}
-								data-chat-scroll-marker=""
-								data-scroll-target={marker.scrollTop}
-								onPointerEnter={() => setHoveredMarker(index)}
-								className="chat-scroll-marker-hit"
-								style={{ top: marker.top }}
-							>
-								<span
-									aria-hidden="true"
-									className={cn(
-										"chat-scroll-marker",
-										marker.visible && "chat-scroll-marker-visible",
-										distance === 0 && "chat-scroll-marker-active",
-										distance === 1 && "chat-scroll-marker-adjacent",
-										distance === 2 && "chat-scroll-marker-near",
-									)}
-								/>
-							</span>
-						);
-					})}
+					{!isInspectorOpen
+						? scrollbar.markers.map((marker, index) => {
+								const distance =
+									hoveredMarker === null ? Number.POSITIVE_INFINITY : Math.abs(index - hoveredMarker);
+								return (
+									<span
+										key={index}
+										data-chat-scroll-marker=""
+										data-scroll-target={marker.scrollTop}
+										onPointerEnter={() => setHoveredMarker(index)}
+										className="chat-scroll-marker-hit"
+										style={{ top: marker.top }}
+									>
+										<span
+											aria-hidden="true"
+											className={cn(
+												"chat-scroll-marker",
+												marker.visible && "chat-scroll-marker-visible",
+												distance === 0 && "chat-scroll-marker-active",
+												distance === 1 && "chat-scroll-marker-adjacent",
+												distance === 2 && "chat-scroll-marker-near",
+											)}
+										/>
+									</span>
+								);
+							})
+						: null}
 				</div>
 
-				{hoveredMarker !== null && scrollbar.markers[hoveredMarker] && previews[hoveredMarker] ? (
+				{!isInspectorOpen &&
+				hoveredMarker !== null &&
+				scrollbar.markers[hoveredMarker] &&
+				previews[hoveredMarker] ? (
 					<div
 						role="tooltip"
 						className="chat-scroll-preview pointer-events-none absolute right-full z-20 mr-3 w-80 rounded-xl border border-border-strong bg-raised px-3.5 py-3 shadow-lg"
@@ -1274,13 +1731,14 @@ function Timeline({
 			{!pinned ? (
 				<Button
 					type="button"
-					size="sm"
+					size="icon-sm"
 					variant="outline"
+					aria-label="Jump to latest"
+					title="Jump to latest"
 					onClick={() => setPinned(true)}
-					className="absolute bottom-3 left-1/2 -translate-x-1/2 gap-1.5 bg-raised shadow-sm hover:bg-surface dark:bg-raised dark:hover:bg-surface"
+					className="absolute bottom-3 left-1/2 size-12 -translate-x-1/2 rounded-full border-border-strong bg-raised p-0 text-foreground shadow-sm hover:bg-surface dark:bg-raised dark:hover:bg-surface"
 				>
-					<ArrowDown aria-hidden="true" className="size-3.5" />
-					Jump to latest
+					<ArrowDown aria-hidden="true" className="size-5" />
 				</Button>
 			) : null}
 		</div>
@@ -1385,6 +1843,11 @@ const TurnGroup = memo(function TurnGroup({
 						busy={busy}
 						queued={queued}
 						showCopy={run.items[0]?.id === copyableMessageId}
+						onRollback={
+							canRollback && run.items[0]?.id === copyableMessageId
+								? () => onRollback(group.turnId as string)
+								: undefined
+						}
 						showStreamingIndicator={group.live && run.items[0]?.id === latestItemId}
 					/>
 				),
@@ -1397,17 +1860,79 @@ const TurnGroup = memo(function TurnGroup({
 			{/* Above the outcome divider: the changed files are part of what the turn
 			    did, and belong inside it rather than after it closes. */}
 			{group.diff ? <TurnChangedFiles diff={group.diff} live={group.live} /> : null}
+			{group.live ? (
+				<TurnLiveStatus startedAt={group.liveStartedAt} blocked={group.blocked} />
+			) : null}
+			{/* No assistant prose to hang the undo on — still offer it before the outcome
+			    divider so a tool-only turn is not stuck without a way back. */}
+			{canRollback && !copyableMessageId ? (
+				<div className="mt-2 flex h-[18px] items-center">
+					<button
+						type="button"
+						onClick={() => onRollback(group.turnId as string)}
+						aria-label="Roll back to here"
+						title="Roll back to here"
+						className="flex items-center rounded px-1.5 py-0.5 text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground"
+					>
+						<Undo2 aria-hidden="true" className="size-3" />
+					</button>
+				</div>
+			) : null}
 			{group.outcome ? (
 				<TurnOutcome
 					state={group.outcome.state}
 					durationMs={group.outcome.durationMs}
 					error={group.outcome.error}
-					onRollback={canRollback ? () => onRollback(group.turnId as string) : undefined}
 				/>
 			) : null}
 		</div>
 	);
 });
+
+function TurnLiveStatus({ startedAt, blocked }: { startedAt?: string; blocked?: boolean }) {
+	const [elapsed, setElapsed] = useState(() => elapsedSince(startedAt));
+
+	useEffect(() => {
+		if (blocked) return;
+		const timer = setInterval(() => setElapsed(elapsedSince(startedAt)), 1000);
+		return () => clearInterval(timer);
+	}, [blocked, startedAt]);
+
+	if (blocked) {
+		return (
+			<span role="alert" className="sr-only">
+				The agent is waiting for your decision.
+			</span>
+		);
+	}
+
+	return (
+		<div className="flex min-h-6 items-center gap-2 px-1 py-0.5" data-testid="live-turn-status">
+			<Loader2
+				aria-hidden="true"
+				className="size-3 shrink-0 animate-spin text-status-working opacity-100"
+			/>
+			<span
+				role="status"
+				aria-live="polite"
+				className="text-xs font-medium text-muted-foreground"
+			>
+				Working for {elapsed}
+			</span>
+		</div>
+	);
+}
+
+function elapsedSince(iso?: string): string {
+	if (!iso) return "0s";
+	const start = new Date(iso).getTime();
+	if (Number.isNaN(start)) return "0s";
+	const seconds = Math.max(0, Math.round((Date.now() - start) / 1000));
+	if (seconds < 60) return `${seconds}s`;
+	const minutes = Math.floor(seconds / 60);
+	if (minutes < 60) return `${minutes}m`;
+	return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
+}
 
 function TimelineItem({
 	item,
@@ -1432,6 +1957,7 @@ function TimelineItem({
 	busy,
 	queued,
 	showCopy,
+	onRollback,
 	showStreamingIndicator,
 }: {
 	item: ConversationItem;
@@ -1461,6 +1987,8 @@ function TimelineItem({
 	queued?: boolean;
 	/** This is the final assistant response of a turn that has finished. */
 	showCopy?: boolean;
+	/** Undo this finished turn from the answer that owns its copy action. */
+	onRollback?: () => void;
 	/** This message is the live edge of its turn, rather than an earlier fragment
 	 * followed by tool activity. */
 	showStreamingIndicator?: boolean;
@@ -1471,6 +1999,7 @@ function TimelineItem({
 				<AssistantMessage
 					message={item}
 					showCopy={showCopy}
+					onRollback={onRollback}
 					showStreamingIndicator={showStreamingIndicator}
 				/>
 			);
@@ -1507,6 +2036,9 @@ function TimelineItem({
 		return <OriginMessage message={item} />;
 	}
 	if (item.activityKind === "approval") {
+		// Pending approval owns the composer. Keeping it in the grouping model still
+		// marks the live turn as blocked, while omitting the timeline card itself.
+		if (item.status === "pending") return null;
 		return <ApprovalCard activity={item} onDecide={onDecide} busy={busy} />;
 	}
 	if (item.activityKind === "user_input") {
@@ -1594,6 +2126,8 @@ type TimelineGroup = {
 	plan?: ConversationPlan;
 	/** The turn is still running, so its diff and plan can still change. */
 	live?: boolean;
+	liveStartedAt?: string;
+	blocked?: boolean;
 	/** The provider accepted this turn, so there is history it can be asked to drop. */
 	rollbackable?: boolean;
 };
@@ -1625,6 +2159,31 @@ function groupPreview(group: TimelineGroup): GroupPreview {
 
 function groupHasHumanPrompt(group: TimelineGroup): boolean {
 	return group.items.some((item) => item.kind === "message" && item.role === "user" && item.origin === "human");
+}
+
+/** How tall the trailing spacer must be to park `anchorOffset` near the top when scrolled to the end. */
+export function promptSpacerHeight({
+	viewportHeight,
+	contentHeightWithoutSpacer,
+	anchorOffset,
+	topInset = 12,
+}: {
+	viewportHeight: number;
+	contentHeightWithoutSpacer: number;
+	anchorOffset: number;
+	topInset?: number;
+}): number {
+	const afterAnchor = Math.max(0, contentHeightWithoutSpacer - anchorOffset);
+	return Math.max(0, Math.round(viewportHeight - topInset - afterAnchor));
+}
+
+/**
+ * Leave a band of prior chat above the latest prompt (Cursor-style), not flush to
+ * the top edge. Scales with the timeline viewport, with a floor so short panes
+ * still keep a peek of history.
+ */
+export function promptTopInset(viewportHeight: number): number {
+	return Math.max(80, Math.round(viewportHeight * 0.2));
 }
 
 function previewText(value: string, limit: number): string {
@@ -1703,6 +2262,13 @@ function groupByTurn(snapshot: ConversationSnapshot): TimelineGroup[] {
 		group.diff = turn.diff;
 		group.plan = turn.plan?.steps.length ? turn.plan : undefined;
 		group.live = turn.state === "running";
+		group.liveStartedAt = turn.startedAt ?? turn.requestedAt;
+		group.blocked = group.items.some(
+			(item) =>
+				item.kind === "activity" &&
+				(item.activityKind === "approval" || item.activityKind === "user_input") &&
+				item.status === "pending",
+		);
 		if (turn.state === "running" || turn.state === "queued") continue;
 		group.rollbackable = Boolean(turn.providerTurnId);
 		group.outcome = {
@@ -1718,165 +2284,47 @@ function groupByTurn(snapshot: ConversationSnapshot): TimelineGroup[] {
 	return groups;
 }
 
-function EmptyState({ harness }: { harness: string }) {
-	return (
-		<div className="flex min-h-0 flex-1 items-center justify-center px-6">
-			<div className="flex max-w-sm flex-col items-center gap-2 text-center">
-				<MessageSquare aria-hidden="true" className="size-6 text-muted-foreground" />
-				<strong className="text-sm font-medium text-foreground">Start the conversation</strong>
-				<p className="text-xs leading-relaxed text-muted-foreground">
-					This session talks to {harness} over a structured connection. Tool calls, file changes,
-					and approvals appear here as they happen. The Terminal tab opens a plain shell in the
-					same worktree — it is not a second copy of the agent.
-				</p>
-			</div>
-		</div>
-	);
-}
-
 /* -------------------------------------------------------------------------- */
 
 function QueuedMessageDock({
 	messages,
-	onSteer,
 }: {
 	messages: Array<{ turnId: string; message: ConversationMessage }>;
-	onSteer?: (turnId: string) => Promise<unknown>;
 }) {
-	const [steeringTurnId, setSteeringTurnId] = useState<string>();
-	const [errors, setErrors] = useState<Record<string, string>>({});
+	const [errors] = useState<Record<string, string>>({});
 
-	async function steer(turnId: string) {
-		if (!onSteer || steeringTurnId) return;
-		setSteeringTurnId(turnId);
-		setErrors((current) => {
-			const next = { ...current };
-			delete next[turnId];
-			return next;
-		});
-		try {
-			await onSteer(turnId);
-		} catch {
-			setErrors((current) => ({
-				...current,
-				[turnId]: "Could not steer this message. It remains queued.",
-			}));
-		} finally {
-			setSteeringTurnId(undefined);
-		}
-	}
+	const reversed = [...messages].reverse();
+	const lastIndex = reversed.length - 1;
 
 	return (
 		<div
-			className="-mb-2 max-h-40 overflow-y-auto rounded-t-[10px] border border-b-0 border-border-strong bg-surface"
+			className="-mb-2 max-h-40 overflow-y-auto rounded-t-[var(--radius-chat-composer)] border border-b-0 border-border-strong bg-surface"
 			data-testid="queued-message-dock"
 		>
-			{messages.map(({ turnId, message }) => {
-				const steering = steeringTurnId === turnId;
-				return (
-					<div
-						key={turnId}
-						className="border-b border-border px-3 py-2 last:border-b-0"
-						data-testid={`queued-message-${turnId}`}
-					>
-						<div className="flex min-h-7 min-w-0 items-center gap-2">
-							<CornerDownRight aria-hidden="true" className="size-3.5 shrink-0 text-muted-foreground" />
-							<span className="min-w-0 flex-1 truncate text-sm text-foreground" title={message.text}>
-								{message.text}
-							</span>
-							{onSteer ? (
-								<Button
-									type="button"
-									size="sm"
-									variant="ghost"
-									disabled={Boolean(steeringTurnId)}
-									onClick={() => void steer(turnId)}
-								>
-									<CornerDownRight aria-hidden="true" className="size-3" />
-									{steering ? "Steering…" : "Steer"}
-								</Button>
+			{reversed.map(({ turnId, message }, index) => {
+					const isNext = index === lastIndex;
+					return (
+						<div
+							key={turnId}
+							className="border-b border-border last:border-b-0"
+							data-testid={`queued-message-${turnId}`}
+						>
+							<div className="flex h-8 min-w-0 items-center gap-2 px-3">
+								<span className="min-w-0 flex-1 truncate text-xs text-muted-foreground" title={message.text}>
+									{message.text}
+								</span>
+								{isNext ? (
+									<CornerDownRight aria-hidden="true" className="size-3 shrink-0 text-muted-foreground" />
+								) : null}
+							</div>
+							{errors[turnId] ? (
+								<p role="status" className="px-3 pb-1 text-[11px] text-warning">
+									{errors[turnId]}
+								</p>
 							) : null}
 						</div>
-						{errors[turnId] ? (
-							<p role="status" className="mt-1 text-[11px] text-warning">
-								{errors[turnId]}
-							</p>
-						) : null}
-					</div>
-				);
-			})}
+					);
+				})}
 		</div>
 	);
-}
-
-/**
- * The in-flight turn. Elapsed time is shown because a long silence is otherwise
- * indistinguishable from a hang, and "waiting on you" is called out so a blocked
- * turn is not mistaken for a slow one.
- */
-function LiveTurnBar({
-	startedAt,
-	blocked,
-	queuedCount = 0,
-	onInterrupt,
-}: {
-	startedAt: string;
-	blocked?: boolean;
-	/** Messages typed during this turn, waiting to be sent after it. */
-	queuedCount?: number;
-	onInterrupt?: () => void;
-}) {
-	const [elapsed, setElapsed] = useState(() => since(startedAt));
-
-	useEffect(() => {
-		const timer = setInterval(() => setElapsed(since(startedAt)), 1000);
-		return () => clearInterval(timer);
-	}, [startedAt]);
-
-	return (
-		<div className="flex items-center gap-2.5 rounded-md border border-border bg-surface px-3 py-2">
-			{blocked ? (
-				<span role="alert" className="sr-only">
-					The agent is waiting for your decision.
-				</span>
-			) : null}
-			{blocked ? (
-				<TriangleAlert aria-hidden="true" className="size-3.5 shrink-0 text-warning" />
-			) : (
-				<Loader2
-					aria-hidden="true"
-					className="size-3.5 shrink-0 animate-spin text-status-working opacity-100"
-				/>
-			)}
-			<strong className={cn("text-xs font-medium", blocked ? "text-warning" : "text-foreground")}>
-				{blocked ? "Waiting for your decision" : "Working"}
-			</strong>
-			<span className="text-[11px] tabular-nums text-muted-foreground">{elapsed}</span>
-			{queuedCount > 0 ? (
-				<span className="text-[11px] text-muted-foreground">
-					{queuedCount} {queuedCount === 1 ? "message" : "messages"} queued
-				</span>
-			) : null}
-			<Button
-				type="button"
-				size="sm"
-				variant="ghost"
-				onClick={onInterrupt}
-				className="ml-auto gap-1.5"
-			>
-				<Square aria-hidden="true" className="size-3" />
-				{queuedCount > 0 ? "Stop and clear queue" : "Stop turn"}
-			</Button>
-		</div>
-	);
-}
-
-function since(iso: string): string {
-	const start = new Date(iso).getTime();
-	if (Number.isNaN(start)) return "";
-	const seconds = Math.max(0, Math.round((Date.now() - start) / 1000));
-	if (seconds < 60) return `${seconds}s`;
-	const minutes = Math.floor(seconds / 60);
-	if (minutes < 60) return `${minutes}m ${seconds % 60}s`;
-	return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
 }

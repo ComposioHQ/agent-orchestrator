@@ -11,22 +11,20 @@ import {
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
 import { useEffect, useState } from "react";
-import { Pencil, RefreshCw } from "lucide-react";
+import { Info, Pencil } from "lucide-react";
 import type { components } from "../../api/schema";
 import {
 	agentModelsQueryKey,
 	agentModelsQueryOptions,
-	refreshAgentModels,
 	revalidateAgentModels,
 	type AgentModelCatalog,
 } from "../hooks/useAgentModelsQuery";
-import { agentsQueryKey, agentsQueryOptions, refreshAgents } from "../hooks/useAgentsQuery";
+import { agentsQueryKey, agentsQueryOptions, refreshAgentsIfStale } from "../hooks/useAgentsQuery";
 import { useWorkspaceQuery, workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { apiClient, apiErrorMessage } from "../lib/api-client";
 import { captureOrchestratorReplacementFailure } from "../lib/orchestrator-replacement-telemetry";
 import { OrchestratorSpawnError, spawnOrchestrator } from "../lib/spawn-orchestrator";
 import { captureRendererEvent } from "../lib/telemetry";
-import { cn } from "../lib/utils";
 import { type OrchestratorReplacementFailure, useUiStore } from "../stores/ui-store";
 import { newestActiveOrchestrator } from "../types/workspace";
 import { RequiredAgentField } from "./CreateProjectAgentSheet";
@@ -36,12 +34,15 @@ import { ReviewerSelect, reviewerTrustWarning } from "./ReviewerSelect";
 import { AgentModelCombobox } from "./settings/AgentModelCombobox";
 import { SettingsOptionMenu } from "./settings/SettingsOptionMenu";
 import { SettingsRow } from "./settings/SettingsRow";
+import { Switch } from "./ui/switch";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "./ui/tooltip";
 
 type Project = components["schemas"]["Project"];
 type ProjectConfig = components["schemas"]["ProjectConfig"];
 type TrackerIntakeConfig = components["schemas"]["TrackerIntakeConfig"];
 
 const PERMISSION_MODE_VALUES = ["default", "accept-edits", "auto", "bypass-permissions"] as const;
+const DEFAULT_BRANCH_AUTO = "auto";
 
 const projectQueryKey = (id: string) => ["project", id] as const;
 
@@ -138,7 +139,7 @@ function SettingsBody({
 	const intake: TrackerIntakeConfig = config.trackerIntake ?? {};
 	const [form, setForm] = useState({
 		displayName: project.name,
-		defaultBranch: config.defaultBranch ?? project.defaultBranch ?? "",
+		defaultBranch: config.defaultBranch ?? DEFAULT_BRANCH_AUTO,
 		sessionPrefix: config.sessionPrefix ?? "",
 		workerAgent: config.worker?.agent ?? "",
 		orchestratorAgent: config.orchestrator?.agent ?? "",
@@ -148,6 +149,7 @@ function SettingsBody({
 		orchestratorMode: config.orchestrator?.agentConfig?.mode ?? config.agentConfig?.mode ?? "",
 		permissions: config.agentConfig?.permissions ?? "",
 		reviewerHarness: config.reviewers?.[0]?.harness ?? "",
+		autoReview: config.autoReview ?? false,
 		intakeEnabled: intake.enabled ?? false,
 		intakeRepo: intake.repo ?? "",
 		intakeAssignee: intake.assignee ?? "",
@@ -160,10 +162,11 @@ function SettingsBody({
 	const missingRequiredAgent = form.workerAgent === "" || form.orchestratorAgent === "";
 	const agentsQuery = useQuery(agentsQueryOptions);
 	const agentCatalog = agentsQuery.data;
-	const refreshAgentsMutation = useMutation({
-		mutationFn: refreshAgents,
-		onSuccess: (next) => queryClient.setQueryData(agentsQueryKey, next),
-	});
+	useEffect(() => {
+		void refreshAgentsIfStale().then((next) => {
+			if (next) queryClient.setQueryData(agentsQueryKey, next);
+		});
+	}, [queryClient]);
 
 	const intakeForm: IntakeForm = {
 		enabled: form.intakeEnabled,
@@ -213,7 +216,10 @@ function SettingsBody({
 					}
 				: {
 						...config,
-						defaultBranch: form.defaultBranch || undefined,
+						defaultBranch:
+							form.defaultBranch.trim() === DEFAULT_BRANCH_AUTO
+								? undefined
+								: form.defaultBranch || undefined,
 						sessionPrefix: form.sessionPrefix || undefined,
 						worker: {
 							...config.worker,
@@ -235,6 +241,7 @@ function SettingsBody({
 						}),
 						reviewers: form.reviewerHarness ? [{ harness: form.reviewerHarness }] : undefined,
 						trackerIntake: buildIntake(intakeForm),
+						autoReview: form.autoReview,
 					};
 			const { error } = await apiClient.PUT("/api/v1/projects/{id}", {
 				params: { path: { id: projectId } },
@@ -476,34 +483,64 @@ function SettingsBody({
 							),
 							label: t("settings.project.permissionMode"),
 						}}
-						refresh={{
-							actionIcon: (
-								<RefreshCw
-									className={cn(
-										"size-icon-base",
-										refreshAgentsMutation.isPending && "animate-spin",
-									)}
-									aria-hidden="true"
-								/>
-							),
-							disabled: refreshAgentsMutation.isPending,
-							label: t("settings.project.refreshAgents"),
-							onClick: () => refreshAgentsMutation.mutate(),
-							value: refreshAgentsMutation.isPending
-								? t("settings.project.refreshing")
-								: t("settings.project.refresh"),
-						}}
-						error={
-							refreshAgentsMutation.isError
-								? refreshAgentsMutation.error instanceof Error
-									? refreshAgentsMutation.error.message
-									: t("settings.project.refreshFailed")
-								: null
-						}
 						missingRequiredMessage={
 							missingRequiredAgent ? t("settings.project.agentsRequired") : null
 						}
 					/>
+				{!isScratchProject && (
+					<ProjectSettingsSection title={t("settings.project.reviewer")} grouped>
+						<SettingsRow label={t("settings.project.defaultReviewer")}>
+							<ReviewerSelect
+								value={form.reviewerHarness}
+								onChange={(v) => setForm((f) => ({ ...f, reviewerHarness: v }))}
+								ariaLabel={t("settings.project.defaultReviewer")}
+								authorized={agentCatalog?.authorized}
+								defaultOptionLabel={t("settings.project.default")}
+								defaultTriggerLabel={t("settings.project.default")}
+								installed={agentCatalog?.installed}
+								supported={agentCatalog?.supported}
+								disabled={agentsQuery.isFetching && agentCatalog === undefined}
+							/>
+						</SettingsRow>
+						{reviewerWarning && (
+							<p className="px-1 text-xs leading-row text-warning" role="status">
+								{reviewerWarning}
+							</p>
+						)}
+						<div className="settings-row-bar">
+							<div className="flex shrink-0 items-center gap-1.5">
+								<span className="whitespace-nowrap text-sm leading-5 text-settings-label">
+									{t("settings.project.autoReviewToggle")}
+								</span>
+								<TooltipProvider delayDuration={0}>
+									<Tooltip>
+										<TooltipTrigger asChild>
+											<button
+												type="button"
+												className="inline-flex size-5 items-center justify-center rounded-md text-settings-muted transition-colors hover:bg-settings-menu-selected hover:text-settings-label focus-visible:ring-1 focus-visible:ring-ring focus-visible:outline-none"
+												aria-label={t("settings.project.autoReviewDescription")}
+											>
+												<Info className="size-icon-sm" aria-hidden="true" />
+											</button>
+										</TooltipTrigger>
+										<TooltipContent className="max-w-72 leading-normal" side="top">
+											{t("settings.project.autoReviewDescription")}
+										</TooltipContent>
+									</Tooltip>
+								</TooltipProvider>
+							</div>
+							<div className="flex min-w-0 flex-1 items-center justify-end">
+								<Switch
+									aria-label={t("settings.project.autoReviewToggle")}
+									checked={form.autoReview}
+									id="project-auto-review"
+									onCheckedChange={(checked) => setForm((f) => ({ ...f, autoReview: checked }))}
+									size="sm"
+								/>
+							</div>
+						</div>
+					</ProjectSettingsSection>
+				)}
 				</>
 			)}
 
@@ -532,20 +569,6 @@ function SettingsBody({
 										label: t("settings.project.sessionPrefix"),
 									}),
 								}}
-								reviewerControl={
-									<ReviewerSelect
-										value={form.reviewerHarness}
-										onChange={(v) => setForm((f) => ({ ...f, reviewerHarness: v }))}
-										ariaLabel={t("settings.project.defaultReviewer")}
-										authorized={agentCatalog?.authorized}
-										defaultOptionLabel={t("settings.project.default")}
-										defaultTriggerLabel={t("settings.project.default")}
-										installed={agentCatalog?.installed}
-										supported={agentCatalog?.supported}
-										disabled={agentsQuery.isFetching && agentCatalog === undefined}
-									/>
-								}
-								reviewerWarning={reviewerWarning}
 							/>
 						</>
 					) : (
@@ -608,19 +631,10 @@ function AgentModelField({
 			queryClient.setQueryData(agentModelsQueryKey(agentId, projectId), revalidationQuery.data);
 		}
 	}, [agentId, projectId, queryClient, revalidationQuery.data]);
-	const refreshMutation = useMutation({
-		mutationFn: () => refreshAgentModels(agentId, projectId),
-		onSuccess: (catalog) => queryClient.setQueryData(agentModelsQueryKey(agentId, projectId), catalog),
-	});
 	const isMode = catalog?.selectionMode === "mode";
 	const label = t(`settings.models.${role}${isMode ? "Mode" : "Model"}`);
 	const datalistID = `${role}-model-options`;
 	const warning =
-		(refreshMutation.isError
-			? refreshMutation.error instanceof Error
-				? refreshMutation.error.message
-				: t("settings.models.refreshFailed")
-			: undefined) ??
 		(revalidationQuery.isError
 			? revalidationQuery.error instanceof Error
 				? revalidationQuery.error.message
@@ -638,12 +652,6 @@ function AgentModelField({
 			<>
 				<SettingsRow label={label}>
 					<div className="flex min-w-0 items-center gap-2">
-						<ModelRefreshButton
-							label={label}
-							pending={refreshMutation.isPending}
-							disabled={agentId === ""}
-							onClick={() => refreshMutation.mutate()}
-						/>
 						<SettingsOptionMenu
 							aria-label={label}
 							value={mode || "__default__"}
@@ -678,12 +686,6 @@ function AgentModelField({
 		<>
 			<SettingsRow label={label}>
 				<div className="flex min-w-0 items-center gap-2">
-					<ModelRefreshButton
-						label={label}
-						pending={refreshMutation.isPending}
-						disabled={agentId === ""}
-						onClick={() => refreshMutation.mutate()}
-					/>
 					{hasCatalog && !showCustomInput ? (
 						<AgentModelCombobox
 							aria-label={label}
@@ -726,32 +728,6 @@ function AgentModelField({
 			</SettingsRow>
 			{warning && <p className="px-1 text-xs leading-row text-warning">{warning}</p>}
 		</>
-	);
-}
-
-function ModelRefreshButton({
-	label,
-	pending,
-	disabled,
-	onClick,
-}: {
-	label: string;
-	pending: boolean;
-	disabled: boolean;
-	onClick: () => void;
-}) {
-	const { t } = useTranslation();
-	return (
-		<button
-			type="button"
-			aria-label={t("settings.models.refreshAria", { label: label.toLocaleLowerCase() })}
-			title={t("settings.models.refreshAria", { label: label.toLocaleLowerCase() })}
-			className="settings-option-trigger shrink-0 disabled:pointer-events-none disabled:opacity-50"
-			disabled={disabled || pending}
-			onClick={onClick}
-		>
-			<RefreshCw className={cn("size-icon-sm", pending && "animate-spin")} aria-hidden="true" />
-		</button>
 	);
 }
 
@@ -819,7 +795,7 @@ function scratchSupportedConfig(config: ProjectConfig): ProjectConfig {
 		autoReview: _legacyAutoReview,
 		trackerIntake: _trackerIntake,
 		...supported
-	} = config as ProjectConfig & { autoReview?: unknown };
+	} = config as ProjectConfig;
 	return supported;
 }
 

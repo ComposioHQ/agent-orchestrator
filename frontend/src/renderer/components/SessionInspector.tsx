@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { useNavigate } from "@tanstack/react-router";
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useId, useState, type ReactNode } from "react";
 import type { TFunction } from "i18next";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -14,6 +14,8 @@ import {
 	SessionInspectorSummaryView,
 	inspectorEmptyClass,
 	type InspectorPullRequest,
+	type InspectorInlineComment,
+	type InspectorGithubReview,
 	type InspectorReviewGroup,
 	type InspectorReviewLabels,
 	type InspectorTimelineEvent,
@@ -21,6 +23,8 @@ import {
 } from "@aoagents/product-ui";
 import {
 	ArrowUpRight,
+	ChevronDown,
+	ChevronRight,
 	Files as FilesIcon,
 	GitPullRequest,
 	GitMerge,
@@ -42,9 +46,11 @@ import {
 	useSessionScmSummary,
 	type SessionPRSummary,
 } from "../hooks/useSessionScmSummary";
+import { useSessionUsage, type SessionUsage } from "../hooks/useSessionUsage";
 import { useSessionWorkspaceFilesChangedCount } from "../hooks/useSessionWorkspaceFiles";
 import { clearTerminateSessionState, useTerminateSession } from "../hooks/useTerminateSession";
 import { prBrowserUrl, prCardPresentation, prNounKeys, sessionPRDisplaySummaries } from "../lib/pr-display";
+import { formatTokenCount } from "../lib/format-token-count";
 import type { WorkspaceSession, WorkspaceSummary } from "../types/workspace";
 import { findProjectOrchestrator, sortedPRs } from "../types/workspace";
 import { getAgentActivityView, getSessionTimelinePillView } from "../lib/session-presentation";
@@ -56,6 +62,7 @@ import { Button } from "./ui/button";
 import { cn } from "../lib/utils";
 import { SessionTerminationPopover } from "./SessionTerminationPopover";
 import { ReviewerSelect } from "./ReviewerSelect";
+import { agentLabel } from "../lib/agent-options";
 import { agentsQueryOptions } from "../hooks/useAgentsQuery";
 import { Switch } from "./ui/switch";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "./ui/tooltip";
@@ -168,8 +175,19 @@ export function SessionInspector({
 		onViewChange?.(next);
 		if (next === "files") onOpenFiles?.();
 	};
-	const view: InspectorView = requestedView;
-	const tabs = VIEW_DEFS.map((entry) => {
+	// A persisted/controlled Reviews selection can outlive the last reviewable PR.
+	// Keep the shell on a real, visible tab instead of rendering an empty, unlabelled body.
+	const reviewsAvailable = reviewsTabVisible(session);
+	const availableViewDefs = reviewsAvailable
+		? VIEW_DEFS
+		: VIEW_DEFS.filter((entry) => entry.id !== "reviews");
+	const view: InspectorView = availableViewDefs.some((entry) => entry.id === requestedView) ? requestedView : "summary";
+	useEffect(() => {
+		if (view === requestedView) return;
+		setInternalView(view);
+		onViewChange?.(view);
+	}, [onViewChange, requestedView, view]);
+	const tabs = availableViewDefs.map((entry) => {
 		const label = t(entry.labelKey);
 		return {
 			...entry,
@@ -182,41 +200,80 @@ export function SessionInspector({
 		};
 	});
 	return (
-		<SessionInspectorShellView
-			activeView={view}
-			ariaLabel={t("inspector.aria")}
-			browserPoppedOut={browserPoppedOut}
-			browserView={
-				session ? (
-					<BrowserView
-						browserPoppedOut={browserPoppedOut}
-						browserAnnotationQueue={browserAnnotationQueue}
-						browserView={browserView}
-						isActive={isInspectorVisible && !browserPoppedOut}
-						onTogglePopOut={onToggleBrowserPopOut}
-						session={session}
-					/>
-				) : undefined
-			}
-			filesView={session ? <FilesView filesView={filesView} onOpenFiles={onOpenFiles} /> : undefined}
-			headerActions={<span aria-hidden="true" className="session-inspector-actions-spacer" />}
-			isVisible={isInspectorVisible}
-			loadingText={session ? undefined : t("inspector.loadingSession")}
-			onViewChange={setView}
-			reviewsView={
-				session ? <ReviewsView onOpenReviewerTerminal={onOpenReviewerTerminal} session={session} /> : undefined
-			}
-			summaryView={
-				session ? <SummaryView session={session} /> : undefined
-			}
-			tabs={tabs}
-		/>
+		// SessionInspectorShellView (packages/product-ui) doesn't accept a
+		// className, but styles.css's native-composition transparency cascade
+		// targets a `.session-inspector` ancestor around it (to punch a
+		// see-through hole for the live browser page when the compositor's
+		// shell is raised for an overlay). `contents` keeps this wrapper out of
+		// layout/flex entirely — it exists purely as a CSS selector anchor.
+		<div className="session-inspector contents">
+			<SessionInspectorShellView
+				activeView={view}
+				ariaLabel={t("inspector.aria")}
+				browserPoppedOut={browserPoppedOut}
+				browserView={
+					session ? (
+						<BrowserView
+							browserPoppedOut={browserPoppedOut}
+							browserAnnotationQueue={browserAnnotationQueue}
+							browserView={browserView}
+							isActive={isInspectorVisible && !browserPoppedOut}
+							onTogglePopOut={onToggleBrowserPopOut}
+							session={session}
+						/>
+					) : undefined
+				}
+				filesView={session ? <FilesView filesView={filesView} onOpenFiles={onOpenFiles} /> : undefined}
+				headerActions={<span aria-hidden="true" className="session-inspector-actions-spacer" />}
+				isVisible={isInspectorVisible}
+				loadingText={session ? undefined : t("inspector.loadingSession")}
+				onViewChange={setView}
+				reviewsView={
+					session ? <ReviewsView onOpenReviewerTerminal={onOpenReviewerTerminal} session={session} /> : undefined
+				}
+				summaryView={
+					session ? <SummaryView canOpenReviews={reviewsAvailable} onOpenReviews={() => setView("reviews")} session={session} /> : undefined
+				}
+				tabs={tabs}
+			/>
+		</div>
 	);
 }
 
-function SummaryView({ session }: { session: WorkspaceSession }) {
+function reviewsTabVisible(session: WorkspaceSession | undefined): boolean {
+	if (!session) return true;
+	return sortedPRs(session).some((pr) => pr.state === "open" || pr.state === "draft");
+}
+
+function externalReviewActorMatchesPRAuthor(actor: string | undefined, author: string | undefined): boolean {
+	const normalizedActor = normalizeReviewerId(actor);
+	const normalizedAuthor = normalizeReviewerId(author);
+	return normalizedActor !== "" && normalizedActor === normalizedAuthor;
+}
+
+function normalizeReviewerId(value: string | undefined): string {
+	return value?.trim().replace(/^@+/, "").toLowerCase() ?? "";
+}
+
+function SummaryView({
+	canOpenReviews,
+	onOpenReviews,
+	session,
+}: {
+	canOpenReviews: boolean;
+	onOpenReviews: () => void;
+	session: WorkspaceSession;
+}) {
 	const { t } = useTranslation();
 	const query = useSessionScmSummary(session.id);
+	const developerMode = useUiStore((state) => state.developerMode);
+	const usageQuery = useSessionUsage(session.id, developerMode);
+	const showUsage =
+		developerMode &&
+		!usageQuery.isLoading &&
+		!usageQuery.isError &&
+		hasMeaningfulSessionUsage(usageQuery.data);
+	const showUsageError = developerMode && usageQuery.isError;
 	const prSummaries = sessionPRDisplaySummaries(session, query.data);
 	const prSectionTitle = prSummaries.length > 1 ? t("inspector.pullRequests", { count: prSummaries.length }) : t("inspector.pullRequest");
 	const hasPRs = prSummaries.length > 0;
@@ -234,7 +291,13 @@ function SummaryView({ session }: { session: WorkspaceSession }) {
 				<div className="flex flex-col gap-1.5">
 					{hasPRs ? (
 						prSummaries.map((pr) => (
-							<PRSummaryCard key={pr.url || pr.htmlUrl || pr.number} pr={pr} sessionId={session.id} />
+							<PRSummaryCard
+								canOpenReviews={canOpenReviews}
+								key={pr.url || pr.htmlUrl || pr.number}
+								onOpenReviews={onOpenReviews}
+								pr={pr}
+								sessionId={session.id}
+							/>
 						))
 					) : (
 						<p className={inspectorEmptyClass}>{t("inspector.noPROpened")}</p>
@@ -242,6 +305,19 @@ function SummaryView({ session }: { session: WorkspaceSession }) {
 				</div>
 			}
 			pullRequestTitle={prSectionTitle}
+			usage={
+				showUsageError ? (
+					<Section title={t("inspector.usage.title")}>
+						<p className={inspectorEmptyClass} role="alert">
+							{t("inspector.usage.processedTokensUnavailable")}
+						</p>
+					</Section>
+				) : showUsage && usageQuery.data ? (
+					<Section title={t("inspector.usage.title")}>
+						<UsageCostTelemetry usage={usageQuery.data} />
+					</Section>
+				) : null
+			}
 		/>
 	);
 }
@@ -312,6 +388,136 @@ function InspectorPolicyRow({
 	);
 }
 
+function UsageCostTelemetry({ usage }: { usage: SessionUsage }) {
+	const { t } = useTranslation();
+	const processedTokens = usageProcessedTokens(usage.totals);
+	const exactProcessed = processedTokens?.toLocaleString("en-US");
+
+	return (
+		<div>
+			<div className="grid grid-cols-2 gap-4">
+				<div className="min-w-0">
+					<p className="text-2xs text-settings-muted">{t("inspector.usage.processedTokens")}</p>
+					<p
+						aria-label={
+							processedTokens === null
+								? t("inspector.usage.processedTokensUnavailable")
+								: t("inspector.usage.processedTokensAria", { count: exactProcessed })
+						}
+						className="mt-0.5 truncate font-mono text-md-sm font-medium text-settings-label"
+						title={processedTokens === null ? undefined : t("inspector.usage.processedTokensAria", { count: exactProcessed })}
+					>
+						{processedTokens === null ? t("inspector.usage.noUsageYet") : formatTelemetryTokenValue(processedTokens)}
+					</p>
+				</div>
+				<div className="min-w-0 text-right">
+					<p className="text-2xs text-settings-muted">{t("inspector.usage.estimatedCost")}</p>
+					<p
+						className="mt-0.5 truncate text-sm-md text-settings-muted"
+						title={t("inspector.usage.costComingSoon")}
+					>
+						{t("inspector.usage.comingSoon")}
+					</p>
+				</div>
+			</div>
+
+			<div className="mt-3">
+				<div
+					className="rounded-lg border border-(--color-border-settings-input) bg-(--color-bg-settings-input) px-2.5 py-2.5"
+					data-testid="session-usage-metrics"
+				>
+					<UsageMetrics totals={usage.totals} />
+				</div>
+			</div>
+
+			{usage.harnesses.length === 1 ? (
+				<UsageAgentAttribution harness={usage.harnesses[0]} />
+			) : usage.harnesses.length > 1 ? (
+				<div className="mt-2 border-t border-(--color-border-settings-input) pt-1.5">
+					<div className="grid grid-cols-[minmax(0,1fr)_4.5rem_5.5rem] items-center gap-2 px-1 pb-0.5 text-2xs text-settings-muted">
+						<span>{t("inspector.usage.agent")}</span>
+						<span className="text-right">{t("inspector.usage.tokens")}</span>
+						<span className="text-right">{t("inspector.usage.cost")}</span>
+					</div>
+					{usage.harnesses.map((harness, index) => (
+						<UsageProviderRow
+							harness={harness}
+							key={`${harness.harness}:${index}`}
+						/>
+					))}
+				</div>
+			) : null}
+		</div>
+	);
+}
+
+function UsageAgentAttribution({ harness }: { harness: SessionUsage["harnesses"][number] }) {
+	const { t } = useTranslation();
+	const [open, setOpen] = useState(false);
+	const detailID = useId();
+	const harnessName = formatHarnessName(harness.harness);
+	const canExpand = harness.models.length > 1;
+	const modelSummary =
+		harness.models.length === 1
+			? formatModelName(harness.models[0].modelId)
+			: harness.models.length > 1
+				? t("inspector.usage.models", { count: harness.models.length })
+				: null;
+	const modelSummaryTitle = harness.models.length === 1 ? harness.models[0].modelId : modelSummary;
+	const attribution = (
+		<>
+			<AgentAvatar className="size-4" decorative provider={harness.harness} />
+			<span className="shrink-0 text-sm-md text-settings-label">{harnessName}</span>
+			{modelSummary ? (
+				<>
+					<span aria-hidden="true" className="text-settings-muted">
+						·
+					</span>
+					<span className="truncate text-2xs text-settings-muted" title={modelSummaryTitle ?? undefined}>
+						{modelSummary}
+					</span>
+				</>
+			) : null}
+		</>
+	);
+
+	return (
+		<div className="mt-2 border-t border-(--color-border-settings-input) pt-1.5">
+			{canExpand ? (
+				<>
+					<button
+						aria-controls={detailID}
+						aria-expanded={open}
+						aria-label={t("inspector.usage.providerDetails", { name: harnessName })}
+						className="flex w-full min-w-0 items-center gap-1.5 rounded-md px-1 py-0.5 text-left outline-none transition-colors hover:bg-interactive-hover focus-visible:bg-interactive-hover focus-visible:ring-1 focus-visible:ring-ring"
+						onClick={() => setOpen((current) => !current)}
+						type="button"
+					>
+						{open ? (
+							<ChevronDown aria-hidden="true" className="size-3 shrink-0 text-settings-muted" />
+						) : (
+							<ChevronRight aria-hidden="true" className="size-3 shrink-0 text-settings-muted" />
+						)}
+						{attribution}
+					</button>
+					{open ? (
+						<div
+							aria-label={t("inspector.usage.providerPeek", { name: harnessName })}
+							className="mx-1 my-0.5 border-l border-(--color-border-settings-input) py-0.5 pl-2"
+							id={detailID}
+							role="region"
+						>
+							<ProviderUsageDetails harness={harness} />
+						</div>
+					) : null}
+				</>
+			) : (
+				<div className="flex min-w-0 items-center gap-1.5 px-1 py-0.5">{attribution}</div>
+			)}
+		</div>
+	);
+}
+
 function AutoInjectCIPolicyControl({ session }: { session: WorkspaceSession }) {
 	const { t } = useTranslation();
 	const queryClient = useQueryClient();
@@ -366,6 +572,40 @@ function AutoInjectCIPolicyControl({ session }: { session: WorkspaceSession }) {
 				</p>
 			) : null}
 		</>
+	);
+}
+
+function UsageProviderRow({ harness }: { harness: SessionUsage["harnesses"][number] }) {
+	const { t } = useTranslation();
+	const harnessName = formatHarnessName(harness.harness);
+
+	return (
+		<UsageDisclosureRow
+			detailsLabel={t("inspector.usage.providerDetails", { name: harnessName })}
+			icon={<AgentAvatar className="size-4" decorative provider={harness.harness} />}
+			name={harnessName}
+			nameClassName="text-sm-md"
+			regionLabel={t("inspector.usage.providerPeek", { name: harnessName })}
+			totals={harness.totals}
+		>
+			<ProviderUsageDetails harness={harness} />
+		</UsageDisclosureRow>
+	);
+}
+
+function ProviderUsageDetails({ harness }: { harness: SessionUsage["harnesses"][number] }) {
+	const { t } = useTranslation();
+
+	return (
+		<div>
+			{harness.models.length > 0 ? (
+				harness.models.map((model, index) => (
+					<UsageModelRow key={`${model.modelId}:${index}`} model={model} />
+				))
+			) : (
+				<p className="px-1 py-1 text-2xs text-settings-muted">{t("inspector.usage.noModelTelemetry")}</p>
+			)}
+		</div>
 	);
 }
 
@@ -427,6 +667,258 @@ function updateSessionAutoInjectCI(
 			candidate.id === sessionId ? { ...candidate, autoInjectCI } : candidate,
 		),
 	}));
+}
+
+function UsageModelRow({
+	model,
+}: {
+	model: SessionUsage["harnesses"][number]["models"][number];
+}) {
+	const { t } = useTranslation();
+	const modelName = formatModelName(model.modelId);
+
+	return (
+		<UsageDisclosureRow
+			detailsLabel={t("inspector.usage.modelDetails", { name: modelName })}
+			name={modelName}
+			nameClassName="text-2xs"
+			nameTitle={model.modelId}
+			regionLabel={t("inspector.usage.modelPeek", { name: modelName })}
+			totals={model.totals}
+		>
+			<UsageMetrics totals={model.totals} />
+		</UsageDisclosureRow>
+	);
+}
+
+function UsageDisclosureRow({
+	children,
+	detailsLabel,
+	icon,
+	name,
+	nameClassName,
+	nameTitle,
+	regionLabel,
+	totals,
+}: {
+	children: ReactNode;
+	detailsLabel: string;
+	icon?: ReactNode;
+	name: string;
+	nameClassName: string;
+	nameTitle?: string;
+	regionLabel: string;
+	totals: SessionUsage["totals"];
+}) {
+	const { t } = useTranslation();
+	const [open, setOpen] = useState(false);
+	const detailID = useId();
+	const processedTokens = usageProcessedTokens(totals);
+	const exactProcessed = processedTokens?.toLocaleString("en-US");
+
+	return (
+		<div className="px-1 py-0.5">
+			<button
+				aria-controls={detailID}
+				aria-expanded={open}
+				aria-label={detailsLabel}
+				className="grid w-full grid-cols-[minmax(0,1fr)_4.5rem_5.5rem] items-center gap-2 rounded-md px-1 py-1 text-left outline-none transition-colors hover:bg-interactive-hover focus-visible:bg-interactive-hover focus-visible:ring-1 focus-visible:ring-ring"
+				onClick={() => setOpen((current) => !current)}
+				type="button"
+			>
+				<span className={`flex min-w-0 items-center gap-1 text-settings-label ${nameClassName}`}>
+					{open ? (
+						<ChevronDown aria-hidden="true" className="size-3 shrink-0 text-settings-muted" />
+					) : (
+						<ChevronRight aria-hidden="true" className="size-3 shrink-0 text-settings-muted" />
+					)}
+					{icon}
+					<span className="truncate" title={nameTitle}>{name}</span>
+				</span>
+				<span
+					className="text-right font-mono text-2xs text-settings-label"
+					title={processedTokens === null ? undefined : t("inspector.usage.processedTokensAria", { count: exactProcessed })}
+				>
+					{processedTokens === null ? "—" : formatTelemetryTokenValue(processedTokens)}
+				</span>
+				<UsageCostPlaceholder />
+			</button>
+			{open ? (
+				<div
+					aria-label={regionLabel}
+					className="mx-1 mb-0.5 border-l border-(--color-border-settings-input) py-0.5 pl-2"
+					id={detailID}
+					role="region"
+				>
+					{children}
+				</div>
+			) : null}
+		</div>
+	);
+}
+
+function UsageCostPlaceholder() {
+	const { t } = useTranslation();
+	const label = t("inspector.usage.metricUnavailable", { label: t("inspector.usage.cost") });
+	return (
+		<span aria-label={label} className="text-right font-mono text-2xs text-settings-muted" title={label}>
+			—
+		</span>
+	);
+}
+
+function UsageMetrics({ totals }: { totals: SessionUsage["totals"] }) {
+	const { t } = useTranslation();
+	const cacheHitRate = formatCacheHitRate(totals.cachedInputTokens, totals.inputTokens);
+	return (
+		<dl className="grid grid-cols-2 gap-x-4 gap-y-2 @max-[300px]/inspector:grid-cols-1" data-testid="session-usage-metrics">
+			<UsageMetric label={t("inspector.usage.uncachedInputTokens")} metric={totals.uncachedInputTokens} />
+			<UsageMetric label={t("inspector.usage.cachedInputTokens")} metric={totals.cachedInputTokens} />
+			<UsageMetric label={t("inspector.usage.outputTokens")} metric={totals.outputTokens} />
+			<UsageRateMetric rate={cacheHitRate} />
+		</dl>
+	);
+}
+
+function UsageRateMetric({ rate }: { rate: string | null }) {
+	const { t } = useTranslation();
+	const label = t("inspector.usage.cacheHitRate");
+	const description =
+		rate === null
+			? t("inspector.usage.metricUnavailable", { label })
+			: t("inspector.usage.cacheHitRateDescription", { rate });
+	return (
+		<div className="min-w-0">
+			<dt className="truncate text-2xs text-settings-muted">{label}</dt>
+			<dd
+				aria-label={description}
+				className="mt-0.5 truncate font-mono text-sm-md text-settings-label"
+				title={description}
+			>
+				{rate === null ? "—" : `${rate}%`}
+			</dd>
+		</div>
+	);
+}
+
+function UsageMetric({ label, metric }: { label: string; metric: number | null | undefined }) {
+	const { t } = useTranslation();
+	const value = typeof metric === "number" && Number.isFinite(metric) ? metric : null;
+	const exactValue = value?.toLocaleString("en-US");
+	const accessibleLabel =
+		value === null
+			? t("inspector.usage.metricUnavailable", { label })
+			: t("inspector.usage.metricAria", { label, count: exactValue });
+	return (
+		<div className="min-w-0">
+			<dt className="truncate text-2xs text-settings-muted">{label}</dt>
+			<dd
+				aria-label={accessibleLabel}
+				className="mt-0.5 truncate font-mono text-sm-md text-settings-label"
+				title={
+					value === null
+						? t("inspector.usage.metricUnavailable", { label })
+						: t("inspector.usage.tokensExact", { count: exactValue })
+				}
+			>
+				{value === null ? "—" : formatTelemetryTokenValue(value)}
+			</dd>
+		</div>
+	);
+}
+
+function formatCacheHitRate(
+	cachedInputTokens: number | null | undefined,
+	inputTokens: number | null | undefined,
+): string | null {
+	if (
+		typeof cachedInputTokens !== "number" ||
+		!Number.isFinite(cachedInputTokens) ||
+		typeof inputTokens !== "number" ||
+		!Number.isFinite(inputTokens) ||
+		inputTokens <= 0
+	) {
+		return null;
+	}
+	const percentage = Math.min(100, Math.max(0, (cachedInputTokens / inputTokens) * 100));
+	return percentage.toFixed(1).replace(/\.0$/, "");
+}
+
+const usageMetricKeys = [
+	"processedTokens",
+	"inputTokens",
+	"cachedInputTokens",
+	"uncachedInputTokens",
+	"outputTokens",
+] as const;
+
+function usageScopes(usage: SessionUsage): SessionUsage["totals"][] {
+	return [
+		usage.totals,
+		...usage.harnesses.flatMap((harness) => [
+			harness.totals,
+			...harness.models.map((model) => model.totals),
+		]),
+	];
+}
+
+function hasMeaningfulSessionUsage(usage?: SessionUsage): usage is SessionUsage {
+	if (!usage) return false;
+	return usageScopes(usage).some((totals) =>
+		usageMetricKeys.some((key) => (totals[key] ?? 0) > 0),
+	);
+}
+
+function formatTelemetryTokenValue(totalTokens: number): string {
+	return formatTokenCount(totalTokens).replace(/ tok$/, "");
+}
+
+function usageProcessedTokens(totals: SessionUsage["totals"]): number | null {
+	return totals.processedTokens;
+}
+
+function formatHarnessName(harness: string): string {
+	const knownNames: Record<string, string> = {
+		"claude-code": "Claude",
+		claude: "Claude",
+		codex: "Codex",
+		glm: "GLM",
+		kimi: "Kimi",
+	};
+	if (knownNames[harness]) return knownNames[harness];
+	return harness
+		.split(/[-_]/)
+		.filter(Boolean)
+		.map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+		.join(" ");
+}
+
+function formatModelName(modelID: string): string {
+	let parts = modelID.trim().split(/[-_]+/).filter(Boolean);
+	const isClaude = parts[0]?.toLowerCase() === "claude";
+	if (isClaude) {
+		parts = parts.slice(1);
+		if (/^\d{8}$/.test(parts.at(-1) ?? "")) parts = parts.slice(0, -1);
+		const familyIndex = parts.findIndex((part) => ["haiku", "sonnet", "opus"].includes(part.toLowerCase()));
+		if (familyIndex >= 0) {
+			const family = parts[familyIndex];
+			parts = [family, ...parts.slice(0, familyIndex), ...parts.slice(familyIndex + 1)];
+		}
+	}
+
+	const formatted: string[] = [];
+	for (let index = 0; index < parts.length; index += 1) {
+		const part = parts[index];
+		const next = parts[index + 1];
+		if (/^\d+$/.test(part) && /^\d+$/.test(next ?? "")) {
+			formatted.push(`${part}.${next}`);
+			index += 1;
+			continue;
+		}
+		const normalized = part.toLowerCase();
+		formatted.push(normalized === "gpt" || normalized === "glm" ? normalized.toUpperCase() : `${part.charAt(0).toUpperCase()}${part.slice(1)}`);
+	}
+	return formatted.join(" ") || modelID;
 }
 
 function ResumeAgentControl({ session }: { session: WorkspaceSession }) {
@@ -535,6 +1027,7 @@ function SessionControls({ session }: { session: WorkspaceSession }) {
 	return (
 		<Section title={t("inspector.sessionControls")}>
 			<AutoInjectCIPolicyControl session={session} />
+			<AutoInjectReviewPolicyControl session={session} />
 			{session.kind === "orchestrator" ? null : canTerminateNow ? (
 				<div className="flex items-center justify-between gap-3 py-1">
 					<span className="min-w-0 text-xs font-medium text-settings-label">{t("inspector.terminateShort")}</span>
@@ -591,14 +1084,25 @@ function updateSessionMergePolicy(
 	}));
 }
 
-function PRSummaryCard({ pr, sessionId }: { pr: SessionPRSummary; sessionId: string }) {
+function PRSummaryCard({
+	canOpenReviews,
+	onOpenReviews,
+	pr,
+	sessionId,
+}: {
+	canOpenReviews: boolean;
+	onOpenReviews: () => void;
+	pr: SessionPRSummary;
+	sessionId: string;
+}) {
 	const { t } = useTranslation();
 	const queryClient = useQueryClient();
 	const presentation = prCardPresentation(pr);
 	const canMerge =
 		pr.state === "open" &&
-		presentation.primary.key === "merge" &&
-		presentation.primary.tone === "success" &&
+		pr.ci.state === "passing" &&
+		pr.review.decision === "approved" &&
+		pr.mergeability.state === "mergeable" &&
 		Boolean(pr.url && pr.headSha);
 	const mergePr = useMutation({
 		mutationFn: async () => {
@@ -622,6 +1126,11 @@ function PRSummaryCard({ pr, sessionId }: { pr: SessionPRSummary; sessionId: str
 		card: presentation,
 		href: prBrowserUrl(pr),
 		stateLabel: t(prStateLabelKeys[pr.state]),
+		reviewDetailsAction: canOpenReviews && pr.review.decision !== "none" ? (
+			<button className="whitespace-nowrap text-2xs text-settings-muted underline-offset-2 hover:underline" onClick={onOpenReviews} type="button">
+				{t("pr.review.viewDetails")} ↗
+			</button>
+		) : undefined,
 	};
 	return (
 		<InspectorPullRequestCardView
@@ -632,7 +1141,7 @@ function PRSummaryCard({ pr, sessionId }: { pr: SessionPRSummary; sessionId: str
 				canMerge ? (
 					<Button
 						aria-label={t("pr.merge.actionFor", { number: pr.number })}
-						className="gap-1 px-2"
+						className="gap-1 bg-success px-2 text-xs text-background hover:bg-success/80"
 						disabled={mergePr.isPending}
 						onClick={() => mergePr.mutate()}
 						size="sm"
@@ -651,88 +1160,103 @@ function PRSummaryCard({ pr, sessionId }: { pr: SessionPRSummary; sessionId: str
 			openLabel={t("inspector.openPR", { number: pr.number })}
 			pr={viewModel}
 			pullRequestIcon={<GitPullRequest className="size-icon-sm shrink-0" aria-hidden="true" />}
-			statusNotice={
-				pr.ci.state === "failing" && !pr.ci.autoInjectCI ? (
-					<p className="mt-2 text-2xs font-medium leading-normal text-warning">
-						{t("inspector.ci.notInjected")}
-					</p>
-				) : undefined
-			}
 		/>
 	);
 }
 
-function ActivityTimeline({ prs, session }: { prs: SessionPRSummary[]; session: WorkspaceSession }) {
-	const history: InspectorTimelineEvent[] = [];
+type SortableTimelineEvent = InspectorTimelineEvent & { sortTime: number };
 
-	history.push({
-		tone: "neutral",
-		content: <>{appI18n.t("inspector.timeline.createdWorkspace")}</>,
-		timestamp: formatTimeCompact(session.createdAt ?? session.updatedAt),
-	});
+function ActivityTimeline({ prs, session }: { prs: SessionPRSummary[]; session: WorkspaceSession }) {
+	const events: SortableTimelineEvent[] = [];
+	const pushEvent = (event: InspectorTimelineEvent, timestamp?: string | null) => {
+		events.push({ ...event, sortTime: timelineSortTime(timestamp) });
+	};
+	const createdAt = session.createdAt ?? session.updatedAt;
+
+	pushEvent(
+		{
+			tone: "neutral",
+			content: <>{appI18n.t("inspector.timeline.createdWorkspace")}</>,
+			timestamp: formatTimeCompact(createdAt),
+		},
+		createdAt,
+	);
 
 	for (const pr of prs.filter((pr) => pr.state === "draft")) {
-		history.push({
-			tone: "neutral",
-			content: <PRTimelineLink pr={pr} verb={appI18n.t("inspector.timeline.draft")} />,
-			timestamp: prStateTime(pr),
-		});
+		pushEvent(
+			{
+				tone: "neutral",
+				content: <PRTimelineLink pr={pr} verb={appI18n.t("inspector.timeline.draft")} />,
+				timestamp: prStateTime(pr),
+			},
+			pr.stateChangedAt,
+		);
 	}
 
 	for (const pr of prs.filter((pr) => pr.state !== "draft")) {
-		history.push({
-			tone: "neutral",
-			content: <PRTimelineLink pr={pr} verb={appI18n.t("inspector.timeline.opened")} />,
-			timestamp: prCreatedTime(pr),
-		});
+		pushEvent(
+			{
+				tone: "neutral",
+				content: <PRTimelineLink pr={pr} verb={appI18n.t("inspector.timeline.opened")} />,
+				timestamp: prCreatedTime(pr),
+			},
+			pr.createdAt,
+		);
 	}
 
 	for (const pr of prs.filter((pr) => pr.state === "merged")) {
-		history.push({
-			tone: "good",
-			content: <PRTimelineLink pr={pr} verb={appI18n.t("inspector.timeline.merged")} />,
-			timestamp: prStateTime(pr),
-		});
+		pushEvent(
+			{
+				tone: "good",
+				content: <PRTimelineLink pr={pr} verb={appI18n.t("inspector.timeline.merged")} />,
+				timestamp: prStateTime(pr),
+			},
+			pr.stateChangedAt,
+		);
 	}
 
 	if (session.status === "merged") {
-		history.push({
-			tone: "good",
-			content: <>{appI18n.t("inspector.timeline.done")}</>,
-			timestamp: latestMergedTime(prs),
-		});
+		const mergedAt = latestMergedTimestamp(prs);
+		pushEvent(
+			{
+				tone: "good",
+				content: <>{appI18n.t("inspector.timeline.done")}</>,
+				timestamp: mergedAt ? formatTimeCompact(mergedAt) : null,
+			},
+			mergedAt,
+		);
 	}
 
-	// Current activity is a live reading, not a historical event. Keep it above
-	// the optional reverse-chronological history and do not imply that its last
-	// hook time is when the state transition occurred.
 	const activityView = getAgentActivityView(session.activity);
-	const current = {
-		tone: "now",
-		content: (
-			<span className="inline-flex flex-wrap items-center gap-1.5">
-				<span className="inline-flex align-middle">
-					<InspectorActivityPill activity={session.activity} />
-				</span>
-				{session.status === "no_signal" ? (
+	const activityAt = session.activity?.lastActivityAt ?? session.updatedAt ?? session.createdAt;
+	pushEvent(
+		{
+			tone: "now",
+			content: (
+				<span className="inline-flex flex-wrap items-center gap-1.5">
 					<span className="inline-flex align-middle">
-						<TimelinePill {...getSessionTimelinePillView("no_signal")} />
-				</span>
-			) : null}
-				{scmTimelineStates(session).map((state) => (
-					<span key={state} className="inline-flex align-middle">
-						<InspectorScmPill state={state} />
+						<InspectorActivityPill activity={session.activity} />
 					</span>
-				))}
-			</span>
-		),
-		timestamp: null,
-		markerTone: activityView.tone,
-		markerBreathe: activityView.breathe,
-	} satisfies InspectorTimelineEvent;
-	const events = [current, ...history.reverse()];
+					{session.status === "no_signal" ? (
+						<span className="inline-flex align-middle">
+							<TimelinePill {...getSessionTimelinePillView("no_signal")} />
+						</span>
+					) : null}
+					{scmTimelineStates(session).map((state) => (
+						<span key={state} className="inline-flex align-middle">
+							<InspectorScmPill state={state} />
+						</span>
+					))}
+				</span>
+			),
+			timestamp: activityAt ? formatTimeCompact(activityAt) : null,
+			markerTone: activityView.tone,
+			markerBreathe: activityView.breathe,
+		} satisfies InspectorTimelineEvent,
+		activityAt,
+	);
 
-	return <InspectorActivityTimelineView events={events} />;
+	return <InspectorActivityTimelineView events={[...events].sort((a, b) => b.sortTime - a.sortTime)} />;
 }
 
 function PRTimelineLink({ pr, verb }: { pr: SessionPRSummary; verb: string }) {
@@ -759,7 +1283,7 @@ function prCreatedTime(pr: SessionPRSummary): string | null {
 	return pr.createdAt ? formatTimeCompact(pr.createdAt) : null;
 }
 
-function latestMergedTime(prs: SessionPRSummary[]): string | null {
+function latestMergedTimestamp(prs: SessionPRSummary[]): string | null {
 	let latest: { timestamp: string; milliseconds: number } | undefined;
 	for (const pr of prs) {
 		if (pr.state !== "merged" || !pr.stateChangedAt) continue;
@@ -769,7 +1293,13 @@ function latestMergedTime(prs: SessionPRSummary[]): string | null {
 			latest = { timestamp: pr.stateChangedAt, milliseconds };
 		}
 	}
-	return latest ? formatTimeCompact(latest.timestamp) : null;
+	return latest?.timestamp ?? null;
+}
+
+function timelineSortTime(timestamp: string | null | undefined): number {
+	if (!timestamp) return Number.NEGATIVE_INFINITY;
+	const milliseconds = Date.parse(timestamp);
+	return Number.isFinite(milliseconds) ? milliseconds : Number.NEGATIVE_INFINITY;
 }
 
 type ScmTimelineState = "ci_failed" | "changes_requested" | "conflict";
@@ -819,6 +1349,20 @@ function scmTimelineStates(session: WorkspaceSession): ScmTimelineState[] {
 type ReviewerHarness = NonNullable<components["schemas"]["TriggerReviewRequest"]["harness"]>;
 type AgentInfo = components["schemas"]["AgentInfo"];
 type AgentCatalog = { supported?: AgentInfo[]; installed?: AgentInfo[]; authorized?: AgentInfo[] };
+
+const WORKER_DEFAULT_REVIEWERS: Partial<Record<WorkspaceSession["provider"], ReviewerHarness>> = {
+	"claude-code": "claude-code",
+	codex: "codex",
+	opencode: "opencode",
+	muse: "muse",
+	kimchi: "kimchi",
+};
+
+function resolveDefaultReviewerHarness(config: ProjectConfig | undefined, workerHarness: WorkspaceSession["provider"]): ReviewerHarness {
+	const configuredHarness = config?.reviewers?.[0]?.harness;
+	if (configuredHarness) return configuredHarness as ReviewerHarness;
+	return WORKER_DEFAULT_REVIEWERS[workerHarness] ?? "claude-code";
+}
 
 function ReviewsSection({
 	session,
@@ -953,19 +1497,12 @@ function ReviewsSection({
 	const prSummaries = sessionPRDisplaySummaries(session, scmSummary.data);
 	const githubReviews = prSummaries.filter(
 		(pr) =>
-			pr.state === "open" &&
+			(pr.state === "open" || pr.state === "draft") &&
 			((pr.review?.reviews?.length ?? 0) > 0 ||
 				(pr.review?.unresolvedBy ?? []).some((reviewer) => reviewer.count > 0)),
 	);
-	const hasPRs = sortedPRs(session).length > 0;
-
 	return (
 		<div className="p-2">
-			{hasPRs ? null : (
-				<Section surface title={t("inspector.review.controls")}>
-					<AutoInjectReviewPolicyControl session={session} />
-				</Section>
-			)}
 			{/* Running a review is an action; reading them is a list. The action stays
 			    on top, then one list carrying both sources keyed by PR. */}
 			<ReviewPanel
@@ -1032,6 +1569,7 @@ function MergedReviewsSection({
 	session: WorkspaceSession;
 }) {
 	const { t } = useTranslation();
+	const queryClient = useQueryClient();
 	const openReviewStates = openReviewStatesFor(session, reviewStates);
 	const runsByPR = runsByPRFrom(openReviewStates, runs);
 	const aoStates = triggeredReviewStatesFrom(openReviewStates, runs);
@@ -1046,13 +1584,45 @@ function MergedReviewsSection({
 	}
 	const rows = [...byNumber.entries()].sort(([a], [b]) => b - a);
 	const labels = reviewLabels(t);
+	const requestRereview = async (review: InspectorGithubReview) => {
+		const { error } = await apiClient.POST("/api/v1/sessions/{sessionId}/reviews/rerequest", {
+			params: { path: { sessionId: session.id } },
+			body: { pullRequestUrl: review.pullRequestUrl, reviewerId: review.reviewerId },
+		});
+		if (error) throw new Error(apiErrorMessage(error, "Unable to request re-review"));
+	};
+	const resolveInlineComment = async (comment: InspectorInlineComment) => {
+		const { error } = await apiClient.POST("/api/v1/sessions/{sessionId}/reviews/comments/resolve", {
+			params: { path: { sessionId: session.id } },
+			body: { pullRequestUrl: comment.pullRequestUrl, commentUrl: comment.url ?? "" },
+		});
+		if (error) throw new Error(apiErrorMessage(error, "Unable to resolve review comment"));
+		void queryClient.invalidateQueries({ queryKey: sessionScmSummaryQueryKey(session.id) });
+		void queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
+	};
+	const sendInlineCommentToWorker = async (comment: InspectorInlineComment & { reviewerId?: string }) => {
+		const { error } = await apiClient.POST("/api/v1/sessions/{sessionId}/send", {
+			params: { path: { sessionId: session.id } },
+			body: { message: formatInlineReviewCommentMessage(comment) },
+		});
+		if (error) throw new Error(apiErrorMessage(error, "Unable to send review comment to worker agent"));
+	};
 	const groups: InspectorReviewGroup[] = rows.map(([number, { ao, github }]) => {
 		const aoRuns = ao ? [...(runsByPR.get(ao.prUrl) ?? [])].sort((a, b) => b.createdAt.localeCompare(a.createdAt)) : [];
-		const entries = github?.review?.reviews ?? [];
-		const unresolved = (github?.review?.unresolvedBy ?? []).reduce((count, reviewer) => count + reviewer.count, 0);
+		const entries = (github?.review?.reviews ?? []).filter(
+			(entry) => !externalReviewActorMatchesPRAuthor(entry.reviewerId, github?.author),
+		);
+		const unresolvedReviewers = (github?.review?.unresolvedBy ?? []).filter(
+			(reviewer) => !externalReviewActorMatchesPRAuthor(reviewer.reviewerId, github?.author),
+		);
+		const resolvedReviewers = (github?.review?.resolvedBy ?? []).filter(
+			(reviewer) => !externalReviewActorMatchesPRAuthor(reviewer.reviewerId, github?.author),
+		);
+		const unresolved = unresolvedReviewers.reduce((count, reviewer) => count + reviewer.count, 0);
 		const reviewRuns = aoRuns.map((run) => {
 			const reviewUrl = aoReviewCommentUrl(run);
 			return {
+				autoInjectReview: run.autoInjectReview,
 				body: run.body,
 				createdAtLabel: formatTimeCompact(run.createdAt),
 				harness: run.harness || "reviewer",
@@ -1062,39 +1632,134 @@ function MergedReviewsSection({
 				verdict: githubVerdict(run.verdict, t),
 			};
 		});
+		const unresolvedByReviewer = new Map(
+			unresolvedReviewers.map((reviewer) => [reviewer.reviewerId, reviewer]),
+		);
+		const resolvedByReviewer = new Map(
+			resolvedReviewers.map((reviewer) => [reviewer.reviewerId, reviewer]),
+		);
+		const externalEntries = entries.map((entry) => {
+			const reviewer = unresolvedByReviewer.get(entry.reviewerId);
+			const resolvedReviewer = resolvedByReviewer.get(entry.reviewerId);
+			unresolvedByReviewer.delete(entry.reviewerId);
+			resolvedByReviewer.delete(entry.reviewerId);
+			return {
+				body: entry.body,
+				canRequestRereview: canRequestPRRereview(entry.verdict, github?.url),
+				id: entry.reviewUrl || `${entry.reviewerId}:${entry.submittedAt}`,
+				pullRequestUrl: github?.url,
+				inlineComments: (reviewer?.links ?? []).map((link) => ({
+					autoInjectReview: link.autoInjectReview,
+					body: link.body,
+					file: link.file,
+					line: link.line,
+					pullRequestUrl: github?.url,
+					url: link.url || reviewer?.reviewUrl,
+				})),
+				resolvedComments: (resolvedReviewer?.links ?? []).map((link) => ({
+					autoInjectReview: link.autoInjectReview,
+					body: link.body,
+					file: link.file,
+					line: link.line,
+					pullRequestUrl: github?.url,
+					resolved: true,
+					url: link.url || resolvedReviewer?.reviewUrl,
+				})),
+				isBot: entry.isBot,
+				reviewerId: entry.reviewerId,
+				reviewUrl: entry.reviewUrl,
+				submittedAt: entry.submittedAt,
+				submittedAtLabel: formatTimeCompact(entry.submittedAt),
+				verdict: githubVerdict(entry.verdict, t),
+			};
+		});
+		for (const reviewer of unresolvedByReviewer.values()) {
+			const resolvedReviewer = resolvedByReviewer.get(reviewer.reviewerId);
+			resolvedByReviewer.delete(reviewer.reviewerId);
+			externalEntries.push({
+				body: undefined,
+				canRequestRereview: canRequestPRRereview("changes_requested", github?.url),
+				id: `unresolved:${reviewer.reviewerId}:${number}`,
+				pullRequestUrl: github?.url,
+				inlineComments: reviewer.links.map((link) => ({
+					autoInjectReview: link.autoInjectReview,
+					body: link.body,
+					file: link.file,
+					line: link.line,
+					pullRequestUrl: github?.url,
+					url: link.url || reviewer.reviewUrl,
+				})),
+				resolvedComments: (resolvedReviewer?.links ?? []).map((link) => ({
+					autoInjectReview: link.autoInjectReview,
+					body: link.body,
+					file: link.file,
+					line: link.line,
+					pullRequestUrl: github?.url,
+					resolved: true,
+					url: link.url || resolvedReviewer?.reviewUrl,
+				})),
+				isBot: reviewer.isBot,
+				reviewerId: reviewer.reviewerId,
+				reviewUrl: reviewer.reviewUrl,
+				submittedAt: "",
+				submittedAtLabel: "",
+				verdict: githubVerdict("none", t),
+			});
+		}
+		for (const reviewer of resolvedByReviewer.values()) {
+			externalEntries.push({
+				body: undefined,
+				canRequestRereview: false,
+				id: `resolved:${reviewer.reviewerId}:${number}`,
+				pullRequestUrl: github?.url,
+				inlineComments: [],
+				resolvedComments: reviewer.links.map((link) => ({
+					autoInjectReview: link.autoInjectReview,
+					body: link.body,
+					file: link.file,
+					line: link.line,
+					pullRequestUrl: github?.url,
+					resolved: true,
+					url: link.url || reviewer.reviewUrl,
+				})),
+				isBot: reviewer.isBot,
+				reviewerId: reviewer.reviewerId,
+				reviewUrl: reviewer.reviewUrl,
+				submittedAt: "",
+				submittedAtLabel: "",
+				verdict: githubVerdict("none", t),
+			});
+		}
 		return {
 			ao: ao
 				? {
 						dimmed: ao.status === "ineligible",
+						historical:
+							ao.status === "needs_review" &&
+							Boolean(ao.previousRun) &&
+							(!ao.latestRun || ao.latestRun.status === "failed" || ao.latestRun.status === "cancelled"),
 						notInjected: aoRuns.some((run) => run.autoInjectReview === false),
 						runs: reviewRuns,
 					}
 				: undefined,
 			github: github
 				? {
-						entries: entries.map((entry) => ({
-							body: entry.body,
-							id: entry.reviewUrl || `${entry.reviewerId}:${entry.submittedAt}`,
-							isBot: entry.isBot,
-							reviewerId: entry.reviewerId,
-							reviewUrl: entry.reviewUrl,
-							submittedAt: entry.submittedAt,
-							submittedAtLabel: formatTimeCompact(entry.submittedAt),
-							verdict: githubVerdict(entry.verdict, t),
-						})),
+						entries: externalEntries,
 						notInjected:
 							entries.some((review) => review.autoInjectReview === false) ||
-							(github.review?.unresolvedBy ?? []).some((reviewer) =>
+							unresolvedReviewers.some((reviewer) =>
 								reviewer.links.some((link) => link.autoInjectReview === false),
 							),
 						unresolved,
-						unresolvedBy: (github.review?.unresolvedBy ?? []).map((reviewer) => ({
+						unresolvedBy: unresolvedReviewers.map((reviewer) => ({
 							count: reviewer.count,
 							isBot: reviewer.isBot,
 							links: reviewer.links.map((link) => ({
+								autoInjectReview: link.autoInjectReview,
 								body: link.body,
 								file: link.file,
 								line: link.line,
+								pullRequestUrl: github?.url,
 								url: link.url,
 							})),
 							reviewerId: reviewer.reviewerId,
@@ -1112,19 +1777,29 @@ function MergedReviewsSection({
 			title: (ao?.title ?? github?.title)?.trim() || `PR #${number}`,
 			verdict: ao ? reviewVerdict(ao) : undefined,
 		};
-	});
+	}).filter((group) =>
+		Boolean(group.ao || (group.github && (group.github.entries.length > 0 || group.github.unresolved > 0))),
+	);
 	return (
 		<InspectorReviewsView
 			externalLink={ProductExternalLink}
 			groups={groups}
 			isLoading={isLoading}
 			labels={labels}
+			onRequestRereview={requestRereview}
+			onResolveInlineComment={resolveInlineComment}
+			onSendInlineComment={sendInlineCommentToWorker}
 			renderAvatar={(harness) => (
-				<AgentAvatar className="size-icon-sm shrink-0" decorative provider={harness} />
+				<AgentAvatar className="size-5 shrink-0" decorative provider={harness} />
 			)}
 			renderMarkdown={renderReviewMarkdown}
 		/>
 	);
+}
+
+function canRequestPRRereview(verdict: string | undefined, pullRequestUrl: string | undefined): boolean {
+	if (!pullRequestUrl) return false;
+	return verdict !== "approved";
 }
 
 function reviewLabels(t: TFunction): InspectorReviewLabels {
@@ -1138,12 +1813,27 @@ function reviewLabels(t: TFunction): InspectorReviewLabels {
 		noPastReviewSummaries: t("inspector.noPastReviewSummaries"),
 		notInjected: t("inspector.review.notInjected"),
 		openComments: t("inspector.openComments"),
+		openInlineComments: (count) => t("inspector.openInlineComments", { count }),
+		requestRereviewPR: t("inspector.requestRereviewPR"),
 		reviews: t("inspector.reviews"),
+		reviewedAt: (time) => t("inspector.reviewedAt", { time }),
+		resolvedComments: (count) => t("inspector.resolvedComments", { count }),
+		rereviewRequested: t("inspector.rereviewRequested"),
+		rereviewRequestFailed: t("inspector.rereviewRequestFailed"),
+		resolveComment: t("inspector.resolveComment"),
+		resolvedReview: t("inspector.resolvedReview"),
+		resolveReviewFailed: t("inspector.resolveReviewFailed"),
+		sendToWorkerAgent: t("inspector.sendToWorkerAgent"),
+		sentToWorkerAgent: t("inspector.sentToWorkerAgent"),
+		sendToWorkerAgentError: t("inspector.sendToWorkerAgentError"),
+		workerAgentWorkingOnFeedback: t("inspector.workerAgentWorkingOnFeedback"),
 		showLatestReviewOnly: t("inspector.showLatestReviewOnly"),
 		showLess: t("inspector.showLess"),
 		showMore: t("inspector.showMore"),
 		commentNumber: (number) => t("inspector.commentNumber", { number }),
 		unresolvedCount: (count) => t("inspector.unresolvedCount", { count }),
+		viewInFile: t("inspector.viewInFile"),
+		viewInFileWorkInProgress: t("inspector.viewInFileWorkInProgress"),
 		viewOnPR: t("inspector.viewOnPR"),
 	};
 }
@@ -1163,6 +1853,32 @@ function renderReviewMarkdown(body: string) {
 			{body}
 		</ReactMarkdown>
 	);
+}
+
+function formatInlineReviewCommentMessage(comment: InspectorInlineComment & { reviewerId?: string }): string {
+	const reviewer = sanitizeWorkerMessagePart(comment.reviewerId?.trim() || "unknown reviewer");
+	const file = sanitizeWorkerMessagePart(comment.file?.trim() || "");
+	const location = file ? `${file}${comment.line ? `:${comment.line}` : ""}` : "general PR comment";
+	const body = sanitizeWorkerMessagePart(comment.body?.trim() || "No comment body provided.");
+	const url = sanitizeWorkerMessagePart(comment.url?.trim() || "");
+	const lines = [
+		`A reviewer left an unresolved inline comment on your PR. Address it, commit the fix, and push the branch to GitHub.`,
+		"",
+		`Reviewer: @${reviewer}`,
+		`Location: ${location}`,
+		"",
+		"Comment:",
+		body,
+	];
+	if (url) {
+		lines.push("", `Comment URL: ${url}`);
+	}
+	lines.push("", "You should not need to re-fetch review data unless you need additional context beyond what AO has provided here.");
+	return lines.join("\n");
+}
+
+function sanitizeWorkerMessagePart(value: string): string {
+	return value.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, "");
 }
 
 function projectConfig(project: components["schemas"]["ProjectOrDegraded"] | undefined): ProjectConfig | undefined {
@@ -1258,10 +1974,11 @@ function ReviewPanel({
 		.filter((run): run is NonNullable<typeof run> => Boolean(run))
 		.sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
 	const latest = runningRun ?? newestRun;
+	const resolvedDefaultHarness = resolveDefaultReviewerHarness(config, session.provider);
+	const effectiveReviewerHarness = reviewerOverride || resolvedDefaultHarness;
+	const activeReviewerHarness = latest?.harness || effectiveReviewerHarness;
 	const autoReviewFailure =
 		latestAutoFailure && latestAutoFailure.id !== dismissedAutoFailureId ? latestAutoFailure.body.trim() : null;
-	const harness = latest?.harness || config?.reviewers?.[0]?.harness || "claude-code";
-	const projectDefaultLabel = t("newTask.projectDefault");
 	const hasReviewerSession = reviewerHandleId.trim() !== "";
 	const reviewRunning = reviewIsRunning(openReviewStates);
 	const reviewHasRun = reviewRunning || Boolean(latest);
@@ -1327,15 +2044,16 @@ function ReviewPanel({
 							ariaLabel={t("inspector.selectReviewerAgent")}
 							authorized={agentCatalog?.authorized}
 							contentAlign="end"
-							defaultHarness={harness}
-							defaultOptionLabel={harness ? `${projectDefaultLabel} (${harness})` : projectDefaultLabel}
-							defaultTriggerLabel={harness || projectDefaultLabel}
+							defaultHarness={resolvedDefaultHarness}
+							defaultOptionLabel={agentLabel(resolvedDefaultHarness)}
 							disabled={reviewRunning || autoReviewEnabled || isKilling || isSwitchingReviewer || isTriggering || isCancelling}
 							installed={agentCatalog?.installed}
 							onChange={(next) => onReviewerOverrideChange(next as ReviewerHarness | "")}
 							supported={agentCatalog?.supported}
 							triggerClassName="review-run-agent-select ml-auto h-control-md w-auto min-w-0 max-w-[11rem] shrink-0 justify-end px-2 text-right text-xs"
 							value={reviewerOverride}
+							excludedHarness={resolvedDefaultHarness}
+							showDefaultOption
 						/>
 					</div>
 					<InspectorPolicyRow
@@ -1379,13 +2097,14 @@ function ReviewPanel({
 							) : null}
 						</div>
 					</div>
-					<AutoInjectReviewPolicyControl session={session} />
-					</div>
+				</div>
 				{reviewRunning ? (
 					<div className="mt-3 flex items-center gap-2 border-t border-border pt-3">
 						<Loader2 aria-hidden="true" className="size-icon-sm shrink-0 animate-spin text-muted-foreground" />
 						<span className="min-w-0 flex-1 truncate text-2xs font-medium text-muted-foreground">
-							{isCancelling ? t("inspector.review.cancelling") : `Review in progress · ${harness}`}
+							{isCancelling
+								? t("inspector.review.cancelling")
+								: `Review in progress · ${agentLabel(activeReviewerHarness)}`}
 						</span>
 					</div>
 				) : null}
@@ -1451,6 +2170,14 @@ function triggeredReviewStatesFrom(openReviewStates: PRReviewState[], runs: Revi
 }
 
 function aoReviewMeta(reviewState: PRReviewState): string {
+	if (
+		reviewState.status === "needs_review" &&
+		(!reviewState.latestRun ||
+			reviewState.latestRun.status === "failed" ||
+			reviewState.latestRun.status === "cancelled")
+	) {
+		return appI18n.t("inspector.latestCommitNotReviewedMeta", { number: reviewState.prNumber });
+	}
 	const displayRun = reviewState.latestRun ?? reviewState.previousRun;
 	if (displayRun?.createdAt) {
 		return `#${reviewState.prNumber} · ${formatTimeCompact(displayRun.createdAt)}`;
@@ -1472,6 +2199,9 @@ function reviewVerdict(reviewState: PRReviewState): {
 	label: string;
 	tone: "neutral" | "running" | "success" | "danger";
 } {
+	if (reviewState.status === "needs_review") {
+		return { label: appI18n.t("inspector.review.needed"), tone: "neutral" };
+	}
 	if (reviewState.latestRun?.status === "failed") {
 		return { label: appI18n.t("inspector.review.failed"), tone: "danger" };
 	}
@@ -1485,7 +2215,6 @@ function reviewVerdict(reviewState: PRReviewState): {
 			return { label: appI18n.t("inspector.review.approved"), tone: "success" };
 		case "changes_requested":
 			return { label: appI18n.t("inspector.review.changesRequested"), tone: "danger" };
-		case "needs_review":
 		case "ineligible":
 			return { label: appI18n.t("inspector.review.notRun"), tone: "neutral" };
 	}

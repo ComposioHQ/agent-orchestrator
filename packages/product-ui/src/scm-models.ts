@@ -79,6 +79,7 @@ export type PullRequestReviewSummary = {
 	decision: ReviewDecision;
 	hasUnresolvedHumanComments: boolean;
 	unresolvedBy: PullRequestUnresolvedReviewer[];
+	resolvedBy?: PullRequestUnresolvedReviewer[];
 	reviews: PullRequestSubmittedReview[];
 };
 

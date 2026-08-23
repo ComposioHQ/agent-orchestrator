@@ -72,6 +72,10 @@ type agentSwitchTargetActivationStore interface {
 	ActivateAgentSwitchTarget(context.Context, domain.AgentSwitchTargetActivation) (bool, error)
 }
 
+type agentSwitchChatTargetActivationStore interface {
+	ActivateChatAgentSwitchTarget(context.Context, domain.AgentSwitchChatTargetActivation) (bool, error)
+}
+
 // notificationSink is the optional lifecycle-to-notification-producer boundary.
 type notificationSink interface {
 	Notify(ctx context.Context, intent ports.NotificationIntent) error
@@ -532,6 +536,7 @@ func (m *Manager) ApplyActivitySignal(ctx context.Context, id domain.SessionID, 
 	// (old CLIs, adapters without tool identity) pass through untouched —
 	// last-writer-wins, exactly as before.
 	metadataChanged := (s.AgentSessionID != "" && rec.Metadata.AgentSessionID != s.AgentSessionID) ||
+		(s.AgentSessionID != "" && rec.Metadata.AgentSessionIDLaunchID != s.LaunchID) ||
 		(s.LatestUserPrompt != "" && rec.Metadata.LatestUserPrompt != s.LatestUserPrompt) ||
 		(s.LatestAssistantUpdate != "" && rec.Metadata.LatestAssistantUpdate != s.LatestAssistantUpdate) ||
 		(s.TranscriptPath != "" && rec.Metadata.NativeTranscriptPath != s.TranscriptPath)
@@ -1045,6 +1050,7 @@ func (m *Manager) CommitControllerEpoch(
 	next.Metadata.RuntimeHandleID = ""
 	next.Metadata.RuntimeLaunchID = ""
 	next.Metadata.AgentSessionID = nativeConversationID
+	next.Metadata.AgentSessionIDLaunchID = ""
 	next.Metadata.ProviderConversationID = nativeConversationID
 	next.Metadata.ControllerGeneration = ""
 	next.Activity = domain.Activity{State: domain.ActivityIdle, LastActivityAt: now}
@@ -1095,6 +1101,21 @@ func (m *Manager) ActivateAgentSwitchTarget(
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return writer.ActivateAgentSwitchTarget(ctx, activation)
+}
+
+// ActivateChatAgentSwitchTarget atomically transfers a stopped Chat session to
+// the structured controller generation that Chat Service already claimed.
+func (m *Manager) ActivateChatAgentSwitchTarget(
+	ctx context.Context,
+	activation domain.AgentSwitchChatTargetActivation,
+) (bool, error) {
+	writer, ok := m.store.(agentSwitchChatTargetActivationStore)
+	if !ok {
+		return false, fmt.Errorf("lifecycle: Chat agent-switch target activation persistence is unavailable")
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return writer.ActivateChatAgentSwitchTarget(ctx, activation)
 }
 
 // MarkTerminated marks a session terminated. Runtime/workspace teardown is the
@@ -1250,9 +1271,12 @@ func mergeMetadata(base, in domain.SessionMetadata) domain.SessionMetadata {
 	set(&base.Branch, in.Branch)
 	set(&base.WorkspacePath, in.WorkspacePath)
 	set(&base.WorkspaceRepoPath, in.WorkspaceRepoPath)
+	set(&base.DiffBaseSHA, in.DiffBaseSHA)
+	set(&base.DiffBaseRef, in.DiffBaseRef)
 	set(&base.RuntimeHandleID, in.RuntimeHandleID)
 	base.RuntimeLaunchID = in.RuntimeLaunchID
 	set(&base.AgentSessionID, in.AgentSessionID)
+	set(&base.AgentSessionIDLaunchID, in.AgentSessionIDLaunchID)
 	set(&base.Prompt, in.Prompt)
 	set(&base.LatestUserPrompt, in.LatestUserPrompt)
 	set(&base.LatestAssistantUpdate, in.LatestAssistantUpdate)
@@ -1272,6 +1296,7 @@ func mergeMetadata(base, in domain.SessionMetadata) domain.SessionMetadata {
 func applyActivityMetadata(meta *domain.SessionMetadata, signal ports.ActivitySignal) {
 	if signal.AgentSessionID != "" {
 		meta.AgentSessionID = signal.AgentSessionID
+		meta.AgentSessionIDLaunchID = signal.LaunchID
 	}
 	if signal.LatestUserPrompt != "" {
 		meta.LatestUserPrompt = signal.LatestUserPrompt

@@ -1244,6 +1244,43 @@ paths:
       summary: Replace a project's per-project config
       tags:
       - projects
+  /api/v1/projects/clone:
+    post:
+      operationId: cloneProject
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CloneProjectInput'
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProjectResponse'
+          description: Created
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+      summary: Clone and register a project from a git repository URL
+      tags:
+      - projects
   /api/v1/projects/initialize:
     post:
       operationId: initializeProjectRepository
@@ -3234,6 +3271,58 @@ paths:
       summary: Switch a live session between its TUI and Chat controllers
       tags:
       - sessions
+  /api/v1/sessions/{sessionId}/interface-transition/{transitionId}/notice-acknowledgement:
+    put:
+      operationId: acknowledgeSessionInterfaceTransitionNotice
+      parameters:
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      - description: Durable interface-transition identifier.
+        in: path
+        name: transitionId
+        required: true
+        schema:
+          description: Durable interface-transition identifier.
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AcknowledgeSessionInterfaceTransitionNoticeResponse'
+          description: OK
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Acknowledge a failed or recovered interface handoff notice
+      tags:
+      - sessions
   /api/v1/sessions/{sessionId}/kill:
     post:
       operationId: killSession
@@ -4082,6 +4171,57 @@ paths:
       summary: Cancel a running code review
       tags:
       - reviews
+  /api/v1/sessions/{sessionId}/reviews/comments/resolve:
+    post:
+      operationId: resolveReviewComment
+      parameters:
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ControllersResolveReviewCommentRequest'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ControllersResolveReviewCommentResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Unprocessable Entity
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Resolve an external review comment thread
+      tags:
+      - reviews
   /api/v1/sessions/{sessionId}/reviews/kill:
     post:
       operationId: killReviewSession
@@ -4119,6 +4259,57 @@ paths:
                 $ref: '#/components/schemas/APIError'
           description: Not Implemented
       summary: Kill a worker's reviewer terminal session
+      tags:
+      - reviews
+  /api/v1/sessions/{sessionId}/reviews/rerequest:
+    post:
+      operationId: requestRereview
+      parameters:
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ControllersRequestRereviewRequest'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ControllersRequestRereviewResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Unprocessable Entity
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Ask an external reviewer to re-review a worker's PR
       tags:
       - reviews
   /api/v1/sessions/{sessionId}/reviews/restore:
@@ -4550,6 +4741,77 @@ paths:
       summary: Read one session workspace file and its git diff
       tags:
       - sessions
+  /api/v1/sessions/{sessionId}/workspace/file/blob:
+    get:
+      operationId: getSessionWorkspaceFileBlob
+      parameters:
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      - description: Session-worktree-relative file path.
+        in: query
+        name: path
+        required: true
+        schema:
+          description: Session-worktree-relative file path.
+          type: string
+      - description: 'Which revision to read: the compare base (before) or the session
+          worktree (after). Defaults to after.'
+        in: query
+        name: side
+        schema:
+          description: 'Which revision to read: the compare base (before) or the session
+            worktree (after). Defaults to after.'
+          enum:
+          - before
+          - after
+          type: string
+      - description: Cache-busting token. Ignored by the server; the response is never
+          cached.
+        in: query
+        name: v
+        schema:
+          description: Cache-busting token. Ignored by the server; the response is
+            never cached.
+          type: string
+      responses:
+        "200":
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Read one side of a session workspace image file
+      tags:
+      - sessions
   /api/v1/sessions/{sessionId}/workspace/files:
     get:
       operationId: listSessionWorkspaceFiles
@@ -4843,6 +5105,113 @@ paths:
       summary: Rename a standalone shell terminal tab
       tags:
       - shellTerminals
+  /api/v1/system/install/{target}:
+    get:
+      operationId: getSystemInstallStatus
+      parameters:
+      - description: 'Install target identifier: tmux, gh, claude, codex, opencode,
+          or copilot.'
+        in: path
+        name: target
+        required: true
+        schema:
+          description: 'Install target identifier: tmux, gh, claude, codex, opencode,
+            or copilot.'
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InstallJob'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Get the current or last known install job status for a system target
+      tags:
+      - system
+    post:
+      operationId: startSystemInstall
+      parameters:
+      - description: 'Install target identifier: tmux, gh, claude, codex, opencode,
+          or copilot.'
+        in: path
+        name: target
+        required: true
+        schema:
+          description: 'Install target identifier: tmux, gh, claude, codex, opencode,
+            or copilot.'
+          type: string
+      responses:
+        "202":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InstallJob'
+          description: Accepted
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Start (or return the already-running) install job for a fixed system
+        target
+      tags:
+      - system
+  /api/v1/system/requirements:
+    get:
+      operationId: getSystemRequirements
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SystemRequirementsResponse'
+          description: OK
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Check local machine readiness (git, tmux, agent harness, gh)
+      tags:
+      - system
   /api/v1/usage/sessions:
     get:
       operationId: listCompactSessionUsage
@@ -4934,6 +5303,19 @@ components:
       - code
       - message
       type: object
+    AcknowledgeSessionInterfaceTransitionNoticeResponse:
+      properties:
+        ok:
+          type: boolean
+        sessionId:
+          type: string
+        transition:
+          $ref: '#/components/schemas/SessionInterfaceTransition'
+      required:
+      - ok
+      - sessionId
+      - transition
+      type: object
     ActivateConversationBranchResponse:
       properties:
         activeBranchId:
@@ -4983,6 +5365,16 @@ components:
           type: string
         label:
           type: string
+        lastUsedAt:
+          description: Creation time of the newest retained session currently attributed
+            to this agent.
+          format: date-time
+          type:
+          - "null"
+          - string
+        usageCount:
+          description: Number of retained sessions currently attributed to this agent.
+          type: integer
       required:
       - id
       - label
@@ -5131,6 +5523,34 @@ components:
       required:
       - switch
       type: object
+    AnthropicUsageDetailsResponse:
+      properties:
+        anthropicCacheCreation1hInputTokens:
+          minimum: 0
+          type:
+          - "null"
+          - integer
+        anthropicCacheCreation5mInputTokens:
+          minimum: 0
+          type:
+          - "null"
+          - integer
+        anthropicCacheCreationInputTokens:
+          minimum: 0
+          type:
+          - "null"
+          - integer
+        anthropicDirectUncachedInputTokens:
+          minimum: 0
+          type:
+          - "null"
+          - integer
+      required:
+      - anthropicDirectUncachedInputTokens
+      - anthropicCacheCreationInputTokens
+      - anthropicCacheCreation5mInputTokens
+      - anthropicCacheCreation1hInputTokens
+      type: object
     AttachmentInput:
       properties:
         data:
@@ -5268,6 +5688,28 @@ components:
       - sessionId
       - reason
       type: object
+    CloneProjectInput:
+      properties:
+        config:
+          $ref: '#/components/schemas/ProjectConfig'
+        destinationParent:
+          minLength: 1
+          type: string
+        name:
+          type:
+          - "null"
+          - string
+        projectId:
+          type:
+          - "null"
+          - string
+        remoteUrl:
+          minLength: 1
+          type: string
+      required:
+      - remoteUrl
+      - destinationParent
+      type: object
     CompactConversationResponse:
       properties:
         tokensAfter:
@@ -5281,14 +5723,23 @@ components:
       properties:
         incomplete:
           type: boolean
+        processedTokens:
+          description: Canonical input plus output. Null when either component is
+            unknown.
+          minimum: 0
+          type:
+          - "null"
+          - integer
         sessionId:
           type: string
         totalTokens:
+          description: Deprecated compatibility alias for processedTokens.
           format: int64
           minimum: 0
           type: integer
       required:
       - sessionId
+      - processedTokens
       - totalTokens
       - incomplete
       type: object
@@ -5296,6 +5747,44 @@ components:
       properties:
         disabled:
           type: boolean
+      type: object
+    ControllersRequestRereviewRequest:
+      properties:
+        pullRequestUrl:
+          description: Tracked pull request URL. Required when the session has multiple
+            PRs.
+          type: string
+        reviewerId:
+          description: Provider login of the reviewer to ask for another review.
+          type: string
+      required:
+      - reviewerId
+      type: object
+    ControllersRequestRereviewResponse:
+      properties:
+        ok:
+          type: boolean
+      required:
+      - ok
+      type: object
+    ControllersResolveReviewCommentRequest:
+      properties:
+        commentUrl:
+          description: Provider URL of the unresolved review comment to resolve.
+          type: string
+        pullRequestUrl:
+          description: Tracked pull request URL. Required when the session has multiple
+            PRs.
+          type: string
+      required:
+      - commentUrl
+      type: object
+    ControllersResolveReviewCommentResponse:
+      properties:
+        ok:
+          type: boolean
+      required:
+      - ok
       type: object
     ControllersSecurePairingStatus:
       properties:
@@ -5354,6 +5843,8 @@ components:
           enum:
           - chat
           - tui
+          type: string
+        model:
           type: string
         pinnedAt:
           format: date-time
@@ -6314,6 +6805,54 @@ components:
       required:
       - path
       type: object
+    InstallJob:
+      properties:
+        command:
+          description: Human-readable install command, e.g. "brew install tmux", for
+            display even before/without output.
+          type: string
+        error:
+          description: 'Set on failure or when the target is unsupported on this machine:
+            the exec error, the Unsupported reason, or a timeout message.'
+          type: string
+        finishedAt:
+          description: Absent until the job finishes.
+          format: date-time
+          type:
+          - "null"
+          - string
+        output:
+          description: Combined stdout+stderr from the install command, tail-capped
+            to the last ~4000 bytes.
+          type: string
+        startedAt:
+          format: date-time
+          type:
+          - "null"
+          - string
+        status:
+          description: Current lifecycle state of the job.
+          enum:
+          - idle
+          - running
+          - succeeded
+          - failed
+          - unsupported
+          type: string
+        target:
+          description: Install target this job ran (or is running) for.
+          enum:
+          - tmux
+          - gh
+          - claude
+          - codex
+          - opencode
+          - copilot
+          type: string
+      required:
+      - target
+      - status
+      type: object
     KillReviewResponse:
       properties:
         reviewerHandleId:
@@ -6697,6 +7236,22 @@ components:
       - kind
       - sessionId
       type: object
+    OpenAIUsageDetailsResponse:
+      properties:
+        openaiCacheWriteInputTokens:
+          minimum: 0
+          type:
+          - "null"
+          - integer
+        openaiReasoningOutputTokens:
+          minimum: 0
+          type:
+          - "null"
+          - integer
+      required:
+      - openaiReasoningOutputTokens
+      - openaiCacheWriteInputTokens
+      type: object
     OpenShellTerminalRequest:
       properties:
         projectId:
@@ -6841,6 +7396,8 @@ components:
           type: string
         agentRulesFile:
           type: string
+        autoReview:
+          type: boolean
         containerReap:
           $ref: '#/components/schemas/ContainerReapConfig'
         defaultBranch:
@@ -7287,6 +7844,11 @@ components:
           type: string
         id:
           type: string
+        noticeAcknowledgedAt:
+          format: date-time
+          type:
+          - "null"
+          - string
         phase:
           enum:
           - requested
@@ -7526,6 +8088,10 @@ components:
           type: string
         hasUnresolvedHumanComments:
           type: boolean
+        resolvedBy:
+          items:
+            $ref: '#/components/schemas/SessionPRUnresolvedReviewer'
+          type: array
         reviews:
           items:
             $ref: '#/components/schemas/SessionPRReviewEntry'
@@ -8020,6 +8586,9 @@ components:
           - chat
           - tui
           type: string
+        model:
+          maxLength: 256
+          type: string
         projectId:
           type: string
         prompt:
@@ -8190,6 +8759,51 @@ components:
       required:
       - targetHarness
       type: object
+    SystemRequirement:
+      properties:
+        detail:
+          description: 'Extra context: the resolved path when satisfied, or why it
+            is not.'
+          type: string
+        id:
+          description: Stable requirement identifier.
+          enum:
+          - git
+          - tmux
+          - harness
+          - gh
+          type: string
+        label:
+          description: Human-readable requirement name.
+          type: string
+        required:
+          description: Whether this requirement blocks the overall Ready state.
+          type: boolean
+        satisfied:
+          description: Whether this requirement is currently met.
+          type: boolean
+      required:
+      - id
+      - label
+      - satisfied
+      - required
+      type: object
+    SystemRequirementsResponse:
+      properties:
+        ready:
+          description: True iff every requirement with Required=true is satisfied.
+            Requirements with Required=false (e.g. gh) are advisory and never block
+            readiness.
+          type: boolean
+        requirements:
+          description: 'Individual checks, in stable order: git, tmux, harness, gh.'
+          items:
+            $ref: '#/components/schemas/SystemRequirement'
+          type: array
+      required:
+      - ready
+      - requirements
+      type: object
     TrackerIntakeConfig:
       properties:
         assignee:
@@ -8330,6 +8944,42 @@ components:
       required:
       - harness
       type: object
+    UsageMetricProvenanceResponse:
+      properties:
+        cachedInputTokens:
+          enum:
+          - reported
+          - derived
+          - unsupported
+          - unknown
+          type: string
+        inputTokens:
+          enum:
+          - reported
+          - derived
+          - unsupported
+          - unknown
+          type: string
+        outputTokens:
+          enum:
+          - reported
+          - derived
+          - unsupported
+          - unknown
+          type: string
+        uncachedInputTokens:
+          enum:
+          - reported
+          - derived
+          - unsupported
+          - unknown
+          type: string
+      required:
+      - inputTokens
+      - cachedInputTokens
+      - uncachedInputTokens
+      - outputTokens
+      type: object
     UsageModelResponse:
       properties:
         modelId:
@@ -8340,39 +8990,83 @@ components:
       - modelId
       - totals
       type: object
+    UsageProviderDetailsResponse:
+      properties:
+        anthropic:
+          $ref: '#/components/schemas/AnthropicUsageDetailsResponse'
+        openai:
+          $ref: '#/components/schemas/OpenAIUsageDetailsResponse'
+      type: object
     UsageTotalsResponse:
       properties:
         cacheReadTokens:
+          description: Deprecated compatibility alias for cachedInputTokens.
+          minimum: 0
           type:
           - "null"
           - integer
         cacheWriteTokens:
+          description: Deprecated compatibility aggregate of provider cache-write
+            input counters.
+          minimum: 0
+          type:
+          - "null"
+          - integer
+        cachedInputTokens:
+          description: Input read from an existing provider cache. Cache hit percentage
+            uses cachedInputTokens divided by inclusive inputTokens.
+          minimum: 0
           type:
           - "null"
           - integer
         inputTokens:
+          description: Total input, including cached and uncached input.
+          minimum: 0
           type:
           - "null"
           - integer
         outputTokens:
+          description: Total output, including provider-specific subsets such as reasoning
+            output.
+          minimum: 0
           type:
           - "null"
           - integer
+        processedTokens:
+          description: Canonical input plus output. Null when either component is
+            unknown.
+          minimum: 0
+          type:
+          - "null"
+          - integer
+        provenance:
+          $ref: '#/components/schemas/UsageMetricProvenanceResponse'
+        providerDetails:
+          $ref: '#/components/schemas/UsageProviderDetailsResponse'
         reasoningTokens:
+          description: Deprecated compatibility alias for the OpenAI reasoning-output
+            subset.
+          minimum: 0
           type:
           - "null"
           - integer
         uncachedInputTokens:
+          description: Input not read from an existing provider cache.
+          minimum: 0
           type:
           - "null"
           - integer
       required:
       - inputTokens
+      - cachedInputTokens
       - uncachedInputTokens
+      - outputTokens
+      - processedTokens
       - cacheReadTokens
       - cacheWriteTokens
-      - outputTokens
       - reasoningTokens
+      - provenance
+      - providerDetails
       type: object
     WorkspaceFileResponse:
       properties:
@@ -8401,6 +9095,8 @@ components:
           type: string
         diffTruncated:
           type: boolean
+        imageMediaType:
+          type: string
         path:
           type: string
         previousPath:
@@ -8505,3 +9201,6 @@ tags:
   name: mobile
 - description: Target-isolated desktop browser runtime (loopback only)
   name: browser
+- description: Local machine readiness checks the desktop app runs before showing
+    the board
+  name: system

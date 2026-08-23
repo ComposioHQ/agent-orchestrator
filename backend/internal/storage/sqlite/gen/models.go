@@ -12,6 +12,12 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 )
 
+type AgentInventoryCache struct {
+	ID            int64
+	InventoryJson string
+	ObservedAt    time.Time
+}
+
 type AgentModelCatalog struct {
 	AgentID       string
 	ProjectID     string
@@ -57,6 +63,14 @@ type AgentSwitch struct {
 	UpdatedAt               time.Time
 	FinalHandoffPath        string
 	FinalHandoffHash        string
+}
+
+type AnthropicUsageEventDetail struct {
+	EventID                             int64
+	AnthropicDirectUncachedInputTokens  sql.NullInt64
+	AnthropicCacheCreationInputTokens   sql.NullInt64
+	AnthropicCacheCreation5mInputTokens sql.NullInt64
+	AnthropicCacheCreation1hInputTokens sql.NullInt64
 }
 
 type AppSetting struct {
@@ -192,17 +206,21 @@ type ConversationTurn struct {
 }
 
 type ModelUsageEvent struct {
-	ID                  int64
-	BindingID           int64
-	UsageSourceID       int64
-	ModelID             string
-	InputTokens         int64
-	UncachedInputTokens int64
-	CacheReadTokens     int64
-	CacheWriteTokens    int64
-	OutputTokens        int64
-	ReasoningTokens     sql.NullInt64
-	SourceEventKey      string
+	ID                      int64
+	BindingID               int64
+	UsageSourceID           int64
+	ProviderID              string
+	ModelID                 string
+	InputTokens             sql.NullInt64
+	InputProvenance         string
+	CachedInputTokens       sql.NullInt64
+	CachedInputProvenance   string
+	UncachedInputTokens     sql.NullInt64
+	UncachedInputProvenance string
+	OutputTokens            sql.NullInt64
+	OutputProvenance        string
+	SourceEventKey          string
+	CreatedAt               sql.NullTime
 }
 
 type Notification struct {
@@ -216,6 +234,13 @@ type Notification struct {
 	Status     domain.NotificationStatus
 	CreatedAt  time.Time
 	ResolvedAt sql.NullTime
+}
+
+type OpenaiUsageEventDetail struct {
+	EventID                     int64
+	OpenaiReasoningOutputTokens sql.NullInt64
+	OpenaiCacheWriteInputTokens sql.NullInt64
+	OpenaiReportedTotalTokens   sql.NullInt64
 }
 
 type PR struct {
@@ -260,6 +285,7 @@ type PR struct {
 	LastNudgeSignature       string
 	StateChangedAt           sql.NullTime
 	AutoInjectCI             bool
+	ProviderID               string
 }
 
 type PRCheck struct {
@@ -311,6 +337,11 @@ type PRReviewThread struct {
 	IsBot        int64
 	SemanticHash string
 	UpdatedAt    time.Time
+}
+
+type PRURLAlias struct {
+	AliasURL     string
+	CanonicalURL string
 }
 
 type Project struct {
@@ -394,6 +425,8 @@ type Session struct {
 	NativeTranscriptPath      string
 	AutoInjectCI              bool
 	AutoReviewEnabled         bool
+	AgentSessionIDLaunchID    string
+	Model                     string
 }
 
 type SessionCleanupFact struct {
@@ -420,6 +453,7 @@ type SessionInterfaceTransition struct {
 	CreatedAt            time.Time
 	UpdatedAt            time.Time
 	CompletedAt          sql.NullTime
+	NoticeAcknowledgedAt sql.NullTime
 }
 
 type SessionInterfaceTransitionMessage struct {
@@ -439,6 +473,7 @@ type SessionWorktree struct {
 	WorktreePath string
 	PreservedRef string
 	State        string
+	BaseRef      string
 }
 
 type ShellTerminal struct {

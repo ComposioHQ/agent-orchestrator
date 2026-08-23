@@ -13,6 +13,8 @@ import (
 	agentsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/agent"
 	projectsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/project"
 	sessionsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/session"
+	"github.com/aoagents/agent-orchestrator/backend/internal/service/systemcheck"
+	"github.com/aoagents/agent-orchestrator/backend/internal/service/systeminstall"
 )
 
 // HTTP response envelopes for the projects surface — the SINGLE definition of
@@ -114,6 +116,12 @@ type AgentSwitchIDParam struct {
 	SwitchID string `path:"switchId" description:"Durable agent-switch identifier."`
 }
 
+// SessionInterfaceTransitionIDParam is the {transitionId} path parameter for a
+// durable interface handoff.
+type SessionInterfaceTransitionIDParam struct {
+	TransitionID string `path:"transitionId" description:"Durable interface-transition identifier."`
+}
+
 // ListSessionsQuery is the query string accepted by GET /api/v1/sessions.
 type ListSessionsQuery struct {
 	Project          string `query:"project,omitempty" description:"Project id filter."`
@@ -132,6 +140,16 @@ type WorkspaceFileQuery struct {
 	Path string `query:"path" description:"Session-worktree-relative file path."`
 }
 
+// WorkspaceFileBlobQuery is the query string accepted by GET /api/v1/sessions/{sessionId}/workspace/file/blob.
+type WorkspaceFileBlobQuery struct {
+	// The handler rejects a missing path with WORKSPACE_PATH_REQUIRED, so mark it
+	// required: query params carry no json tag, and requiredFromJSONTag only
+	// derives `required` from those.
+	Path string `query:"path" required:"true" description:"Session-worktree-relative file path."`
+	Side string `query:"side,omitempty" enum:"before,after" description:"Which revision to read: the compare base (before) or the session worktree (after). Defaults to after."`
+	V    string `query:"v,omitempty" description:"Cache-busting token. Ignored by the server; the response is never cached."`
+}
+
 // SessionView is the session wire shape: the domain read model plus the
 // display-safe branch name and the session's attributed pull requests in the
 // curated SessionPRFacts shape. One session can own many PRs (e.g. a stack), so
@@ -148,7 +166,10 @@ type SessionView struct {
 	// unchanged) so the desktop browser panel can re-navigate / refresh on a
 	// repeated preview of the same target. Pulled from the json:"-" domain
 	// Metadata.
-	PreviewRevision   int64            `json:"previewRevision,omitempty"`
+	PreviewRevision int64 `json:"previewRevision,omitempty"`
+	// Model is the agent model this session resolved to at spawn time. Empty
+	// means the agent's default model. Pulled from the json:"-" domain Metadata.
+	Model             string           `json:"model,omitempty"`
 	PRs               []SessionPRFacts `json:"prs"`
 	ActiveAgentSwitch *AgentSwitchView `json:"activeAgentSwitch,omitempty"`
 }
@@ -168,13 +189,17 @@ type SpawnSessionRequest struct {
 	Branch          string                 `json:"branch,omitempty"`
 	// Mode picks the conversation controller: chat talks to the agent over a
 	// structured connection, tui opens the agent's native terminal interface.
-	// Omitted resolves to the daemon default (tui), which is why an upgrade
-	// changes nothing. Compatible sessions may later switch through the durable
-	// interface-transition endpoint; the default never mutates existing sessions
-	// automatically. An unsupported explicit request fails rather than quietly
-	// producing the other kind of session.
+	// Omitted resolves to the daemon-owned preference, which defaults to Chat for
+	// new sessions and falls back to TUI when Chat is unavailable. The preference
+	// never mutates existing sessions automatically; compatible sessions may later
+	// switch through the durable interface-transition endpoint. An unsupported
+	// explicit request fails rather than quietly producing the other kind of session.
 	Mode   domain.SessionMode `json:"mode,omitempty" enum:"chat,tui"`
 	Prompt string             `json:"prompt,omitempty" maxLength:"4096"`
+	// Model is an optional agent model override scoped to this single spawn. Empty
+	// keeps the resolved project/role default. The daemon validates that the
+	// selected harness can honor the model before launching.
+	Model string `json:"model,omitempty" maxLength:"256"`
 
 	// DisplayName is the sidebar label for the session, capped at 20 characters.
 	// `ao spawn --name` always sets it; other clients (e.g. the desktop new-task
@@ -309,6 +334,7 @@ type WorkspaceFileResponse struct {
 	Size             int64                           `json:"size"`
 	Binary           bool                            `json:"binary"`
 	Deleted          bool                            `json:"deleted"`
+	ImageMediaType   string                          `json:"imageMediaType,omitempty"`
 	Content          string                          `json:"content"`
 	ContentTruncated bool                            `json:"contentTruncated"`
 	Diff             string                          `json:"diff"`
@@ -497,17 +523,18 @@ type StartSessionInterfaceTransitionRequest struct {
 // provider-native conversation id is intentionally not exposed: clients need
 // controller state, not an adapter implementation detail.
 type SessionInterfaceTransitionView struct {
-	ID          string                                  `json:"id"`
-	SessionID   domain.SessionID                        `json:"sessionId"`
-	SourceMode  domain.SessionMode                      `json:"sourceMode" enum:"chat,tui"`
-	TargetMode  domain.SessionMode                      `json:"targetMode" enum:"chat,tui"`
-	Policy      domain.SessionInterfaceTransitionPolicy `json:"policy" enum:"drain,interrupt"`
-	Phase       domain.SessionInterfaceTransitionPhase  `json:"phase" enum:"requested,preflighting,draining,source_stopping,source_stopped,target_starting,activating,completed,failed,cancelled,recovery_required"`
-	ErrorCode   string                                  `json:"errorCode,omitempty"`
-	ErrorDetail string                                  `json:"errorDetail,omitempty"`
-	CreatedAt   time.Time                               `json:"createdAt"`
-	UpdatedAt   time.Time                               `json:"updatedAt"`
-	CompletedAt *time.Time                              `json:"completedAt,omitempty"`
+	ID                   string                                  `json:"id"`
+	SessionID            domain.SessionID                        `json:"sessionId"`
+	SourceMode           domain.SessionMode                      `json:"sourceMode" enum:"chat,tui"`
+	TargetMode           domain.SessionMode                      `json:"targetMode" enum:"chat,tui"`
+	Policy               domain.SessionInterfaceTransitionPolicy `json:"policy" enum:"drain,interrupt"`
+	Phase                domain.SessionInterfaceTransitionPhase  `json:"phase" enum:"requested,preflighting,draining,source_stopping,source_stopped,target_starting,activating,completed,failed,cancelled,recovery_required"`
+	ErrorCode            string                                  `json:"errorCode,omitempty"`
+	ErrorDetail          string                                  `json:"errorDetail,omitempty"`
+	CreatedAt            time.Time                               `json:"createdAt"`
+	UpdatedAt            time.Time                               `json:"updatedAt"`
+	CompletedAt          *time.Time                              `json:"completedAt,omitempty"`
+	NoticeAcknowledgedAt *time.Time                              `json:"noticeAcknowledgedAt,omitempty"`
 }
 
 // SessionInterfaceTransitionStatusResponse is the body of GET
@@ -531,6 +558,14 @@ type StartSessionInterfaceTransitionResponse struct {
 type CancelSessionInterfaceTransitionResponse struct {
 	OK        bool             `json:"ok"`
 	SessionID domain.SessionID `json:"sessionId"`
+}
+
+// InterfaceTransitionNoticeAckResponse returns the retained transition with
+// its durable notice acknowledgement.
+type InterfaceTransitionNoticeAckResponse struct {
+	OK         bool                           `json:"ok"`
+	SessionID  domain.SessionID               `json:"sessionId"`
+	Transition SessionInterfaceTransitionView `json:"transition"`
 }
 
 // KillSessionResponse is the body of POST /api/v1/sessions/{sessionId}/kill.
@@ -667,6 +702,7 @@ type SessionPRReviewSummary struct {
 	Decision                   domain.ReviewDecision         `json:"decision" enum:"none,approved,changes_requested,review_required"`
 	HasUnresolvedHumanComments bool                          `json:"hasUnresolvedHumanComments"`
 	UnresolvedBy               []SessionPRUnresolvedReviewer `json:"unresolvedBy"`
+	ResolvedBy                 []SessionPRUnresolvedReviewer `json:"resolvedBy,omitempty"`
 	Reviews                    []SessionPRReviewEntry        `json:"reviews,omitempty"`
 }
 
@@ -682,7 +718,7 @@ type SessionPRReviewEntry struct {
 	AutoInjectReview bool                  `json:"autoInjectReview"`
 }
 
-// SessionPRUnresolvedReviewer groups unresolved human comments by reviewer.
+// SessionPRUnresolvedReviewer groups review comments by reviewer.
 type SessionPRUnresolvedReviewer struct {
 	ReviewerID string                       `json:"reviewerId"`
 	Count      int                          `json:"count"`
@@ -691,7 +727,7 @@ type SessionPRUnresolvedReviewer struct {
 	IsBot      bool                         `json:"isBot,omitempty"`
 }
 
-// SessionPRReviewCommentLink points to one unresolved review comment.
+// SessionPRReviewCommentLink points to one review comment.
 type SessionPRReviewCommentLink struct {
 	URL              string `json:"url,omitempty"`
 	File             string `json:"file,omitempty"`
@@ -765,14 +801,8 @@ func newSessionPRCISummary(in sessionsvc.PRCISummary) SessionPRCISummary {
 }
 
 func newSessionPRReviewSummary(in sessionsvc.PRReviewSummary) SessionPRReviewSummary {
-	reviewers := make([]SessionPRUnresolvedReviewer, 0, len(in.UnresolvedBy))
-	for _, reviewer := range in.UnresolvedBy {
-		links := make([]SessionPRReviewCommentLink, 0, len(reviewer.Links))
-		for _, link := range reviewer.Links {
-			links = append(links, SessionPRReviewCommentLink{URL: link.URL, File: link.File, Line: link.Line, Body: link.Body, AutoInjectReview: link.AutoInjectReview})
-		}
-		reviewers = append(reviewers, SessionPRUnresolvedReviewer{ReviewerID: reviewer.ReviewerID, Count: reviewer.Count, Links: links, ReviewURL: reviewer.ReviewURL, IsBot: reviewer.IsBot})
-	}
+	reviewers := newSessionPRCommentReviewers(in.UnresolvedBy)
+	resolvedReviewers := newSessionPRCommentReviewers(in.ResolvedBy)
 	entries := make([]SessionPRReviewEntry, 0, len(in.Reviews))
 	for _, review := range in.Reviews {
 		entries = append(entries, SessionPRReviewEntry{
@@ -785,7 +815,19 @@ func newSessionPRReviewSummary(in sessionsvc.PRReviewSummary) SessionPRReviewSum
 			AutoInjectReview: review.AutoInjectReview,
 		})
 	}
-	return SessionPRReviewSummary{Decision: in.Decision, HasUnresolvedHumanComments: in.HasUnresolvedHumanComments, UnresolvedBy: reviewers, Reviews: entries}
+	return SessionPRReviewSummary{Decision: in.Decision, HasUnresolvedHumanComments: in.HasUnresolvedHumanComments, UnresolvedBy: reviewers, ResolvedBy: resolvedReviewers, Reviews: entries}
+}
+
+func newSessionPRCommentReviewers(in []sessionsvc.PRUnresolvedReviewer) []SessionPRUnresolvedReviewer {
+	reviewers := make([]SessionPRUnresolvedReviewer, 0, len(in))
+	for _, reviewer := range in {
+		links := make([]SessionPRReviewCommentLink, 0, len(reviewer.Links))
+		for _, link := range reviewer.Links {
+			links = append(links, SessionPRReviewCommentLink{URL: link.URL, File: link.File, Line: link.Line, Body: link.Body, AutoInjectReview: link.AutoInjectReview})
+		}
+		reviewers = append(reviewers, SessionPRUnresolvedReviewer{ReviewerID: reviewer.ReviewerID, Count: reviewer.Count, Links: links, ReviewURL: reviewer.ReviewURL, IsBot: reviewer.IsBot})
+	}
+	return reviewers
 }
 
 func newSessionPRMergeabilitySummary(in sessionsvc.PRMergeabilitySummary) SessionPRMergeabilitySummary {
@@ -938,9 +980,10 @@ type ListUsageSessionsQuery struct {
 
 // CompactSessionUsageResponse is one session card's token-only usage summary.
 type CompactSessionUsageResponse struct {
-	SessionID   domain.SessionID `json:"sessionId"`
-	TotalTokens int64            `json:"totalTokens" minimum:"0"`
-	Incomplete  bool             `json:"incomplete"`
+	SessionID       domain.SessionID `json:"sessionId"`
+	ProcessedTokens *int64           `json:"processedTokens" minimum:"0" description:"Canonical input plus output. Null when either component is unknown."`
+	TotalTokens     int64            `json:"totalTokens" minimum:"0" description:"Deprecated compatibility alias for processedTokens."`
+	Incomplete      bool             `json:"incomplete"`
 }
 
 // ListCompactSessionUsageResponse is the batch dashboard usage response.
@@ -948,14 +991,47 @@ type ListCompactSessionUsageResponse struct {
 	Sessions []CompactSessionUsageResponse `json:"sessions"`
 }
 
-// UsageTotalsResponse is the normalized telemetry aggregate for one scope.
+// UsageMetricProvenanceResponse records how each canonical metric was obtained.
+type UsageMetricProvenanceResponse struct {
+	InputTokens         domain.UsageMetricProvenance `json:"inputTokens" enum:"reported,derived,unsupported,unknown"`
+	CachedInputTokens   domain.UsageMetricProvenance `json:"cachedInputTokens" enum:"reported,derived,unsupported,unknown"`
+	UncachedInputTokens domain.UsageMetricProvenance `json:"uncachedInputTokens" enum:"reported,derived,unsupported,unknown"`
+	OutputTokens        domain.UsageMetricProvenance `json:"outputTokens" enum:"reported,derived,unsupported,unknown"`
+}
+
+// OpenAIUsageDetailsResponse exposes namespaced counters outside the shared
+// four-metric vocabulary.
+type OpenAIUsageDetailsResponse struct {
+	OpenAIReasoningOutputTokens *int64 `json:"openaiReasoningOutputTokens" minimum:"0"`
+	OpenAICacheWriteInputTokens *int64 `json:"openaiCacheWriteInputTokens" minimum:"0"`
+}
+
+// AnthropicUsageDetailsResponse exposes namespaced prompt-cache components.
+type AnthropicUsageDetailsResponse struct {
+	AnthropicDirectUncachedInputTokens  *int64 `json:"anthropicDirectUncachedInputTokens" minimum:"0"`
+	AnthropicCacheCreationInputTokens   *int64 `json:"anthropicCacheCreationInputTokens" minimum:"0"`
+	AnthropicCacheCreation5mInputTokens *int64 `json:"anthropicCacheCreation5mInputTokens" minimum:"0"`
+	AnthropicCacheCreation1hInputTokens *int64 `json:"anthropicCacheCreation1hInputTokens" minimum:"0"`
+}
+
+// UsageProviderDetailsResponse groups optional provider-native counters.
+type UsageProviderDetailsResponse struct {
+	OpenAI    *OpenAIUsageDetailsResponse    `json:"openai,omitempty"`
+	Anthropic *AnthropicUsageDetailsResponse `json:"anthropic,omitempty"`
+}
+
+// UsageTotalsResponse is the canonical telemetry aggregate for one scope.
 type UsageTotalsResponse struct {
-	InputTokens         *int64 `json:"inputTokens"`
-	UncachedInputTokens *int64 `json:"uncachedInputTokens"`
-	CacheReadTokens     *int64 `json:"cacheReadTokens"`
-	CacheWriteTokens    *int64 `json:"cacheWriteTokens"`
-	OutputTokens        *int64 `json:"outputTokens"`
-	ReasoningTokens     *int64 `json:"reasoningTokens"`
+	InputTokens         *int64                        `json:"inputTokens" minimum:"0" description:"Total input, including cached and uncached input."`
+	CachedInputTokens   *int64                        `json:"cachedInputTokens" minimum:"0" description:"Input read from an existing provider cache. Cache hit percentage uses cachedInputTokens divided by inclusive inputTokens."`
+	UncachedInputTokens *int64                        `json:"uncachedInputTokens" minimum:"0" description:"Input not read from an existing provider cache."`
+	OutputTokens        *int64                        `json:"outputTokens" minimum:"0" description:"Total output, including provider-specific subsets such as reasoning output."`
+	ProcessedTokens     *int64                        `json:"processedTokens" minimum:"0" description:"Canonical input plus output. Null when either component is unknown."`
+	CacheReadTokens     *int64                        `json:"cacheReadTokens" minimum:"0" description:"Deprecated compatibility alias for cachedInputTokens."`
+	CacheWriteTokens    *int64                        `json:"cacheWriteTokens" minimum:"0" description:"Deprecated compatibility aggregate of provider cache-write input counters."`
+	ReasoningTokens     *int64                        `json:"reasoningTokens" minimum:"0" description:"Deprecated compatibility alias for the OpenAI reasoning-output subset."`
+	Provenance          UsageMetricProvenanceResponse `json:"provenance"`
+	ProviderDetails     UsageProviderDetailsResponse  `json:"providerDetails"`
 }
 
 // UsageModelResponse is telemetry grouped by exact model id.
@@ -978,6 +1054,20 @@ type SessionUsageResponse struct {
 	Totals     UsageTotalsResponse    `json:"totals"`
 	Harnesses  []UsageHarnessResponse `json:"harnesses"`
 }
+
+// SystemRequirementsResponse is the body of GET /api/v1/system/requirements.
+type SystemRequirementsResponse = systemcheck.Report
+
+// InstallTargetParam is the {target} path parameter for /system/install routes.
+type InstallTargetParam struct {
+	Target string `path:"target" description:"Install target identifier: tmux, gh, claude, codex, opencode, or copilot."`
+}
+
+// StartInstallResponse is the body of POST /api/v1/system/install/{target} (202).
+type StartInstallResponse = systeminstall.Job
+
+// InstallStatusResponse is the body of GET /api/v1/system/install/{target}.
+type InstallStatusResponse = systeminstall.Job
 
 // ListNotificationsQuery is the query string accepted by GET /api/v1/notifications.
 type ListNotificationsQuery struct {
@@ -1821,6 +1911,28 @@ func capabilityNames(caps ports.ChatCapabilities) []string {
 // cannot change what another session in the project runs.
 type TriggerReviewRequest struct {
 	Harness domain.ReviewerHarness `json:"harness,omitempty" enum:"claude-code,codex,copilot,cursor,kilocode,opencode,kiro,pi,qwen,agy,continue,goose,vibe,devin,droid,kimi,kimchi,muse,amp,aider,grok,crush,auggie,cline,autohand"`
+}
+
+// ResolveReviewCommentRequest is the body of POST /api/v1/sessions/{sessionId}/reviews/comments/resolve.
+type ResolveReviewCommentRequest struct {
+	PullRequestURL string `json:"pullRequestUrl,omitempty" description:"Tracked pull request URL. Required when the session has multiple PRs."`
+	CommentURL     string `json:"commentUrl" description:"Provider URL of the unresolved review comment to resolve."`
+}
+
+// ResolveReviewCommentResponse is returned after AO resolves a provider review thread.
+type ResolveReviewCommentResponse struct {
+	OK bool `json:"ok"`
+}
+
+// RequestRereviewRequest is the body of POST /api/v1/sessions/{sessionId}/reviews/rerequest.
+type RequestRereviewRequest struct {
+	PullRequestURL string `json:"pullRequestUrl,omitempty" description:"Tracked pull request URL. Required when the session has multiple PRs."`
+	ReviewerID     string `json:"reviewerId" description:"Provider login of the reviewer to ask for another review."`
+}
+
+// RequestRereviewResponse is returned after AO asks the SCM provider for another review.
+type RequestRereviewResponse struct {
+	OK bool `json:"ok"`
 }
 
 // MobileDeviceResponse is one row of the desktop's mobile-device roster: the

@@ -166,7 +166,8 @@ func (d *Driver) Start(ctx context.Context, cfg ports.ChatStartConfig) (ports.Ch
 
 // Resume reconnects to the stored ACP session. When the agent advertises
 // session/load, AO uses it to recover both provider context and the normalized
-// transcript; newer resume-only agents still recover context without a replay.
+// transcript; resume-only agents recover context but explicitly report that no
+// typed history replay is available.
 func (d *Driver) Resume(ctx context.Context, cfg ports.ChatResumeConfig) (ports.ChatConversation, error) {
 	if cfg.ProviderConversationID == "" {
 		return nil, fmt.Errorf("%w: no stored ACP session id", ports.ErrChatResumeFailed)
@@ -176,15 +177,15 @@ func (d *Driver) Resume(ctx context.Context, cfg ports.ChatResumeConfig) (ports.
 	}
 	launchCfg := LaunchConfig{
 		SessionID: cfg.SessionID, DataDir: cfg.DataDir, WorkspacePath: cfg.WorkspacePath,
-		Env: cfg.Env, Permissions: cfg.Permissions, SystemPrompt: cfg.SystemPrompt,
+		Env: cfg.Env, Model: cfg.Model, Permissions: cfg.Permissions, SystemPrompt: cfg.SystemPrompt,
 	}
 	conv, init, err := d.connect(ctx, launchCfg)
 	if err != nil {
 		return nil, err
 	}
-	if init.AgentCapabilities.SessionCapabilities.Resume == nil {
+	if !init.AgentCapabilities.LoadSession && init.AgentCapabilities.SessionCapabilities.Resume == nil {
 		_ = conv.Close()
-		return nil, fmt.Errorf("%w: ACP agent does not support session/resume", ports.ErrChatResumeFailed)
+		return nil, fmt.Errorf("%w: ACP agent supports neither session/load nor session/resume", ports.ErrChatResumeFailed)
 	}
 	additional, err := normalizeAdditionalDirectories(cfg.WorkspacePath, cfg.AdditionalDirectories,
 		init.AgentCapabilities.SessionCapabilities.AdditionalDirectories != nil)
@@ -242,7 +243,7 @@ func (d *Driver) Resume(ctx context.Context, cfg ports.ChatResumeConfig) (ports.
 		cfg.ProviderConversationID, conversationCapabilities(d.cfg.Capabilities, init),
 		d.cfg.SessionMode, d.cfg.SessionOptions, configOptions,
 	)
-	if err := conv.applyTurnSettings(ctx, ports.ChatTurnSettings{Approval: cfg.Permissions}); err != nil {
+	if err := conv.applyTurnSettings(ctx, ports.ChatTurnSettings{Model: cfg.Model, Approval: cfg.Permissions}); err != nil {
 		if !errors.Is(err, ErrACPSetterUnsupported) {
 			_ = conv.Close()
 			return nil, fmt.Errorf("%w: configure ACP session: %w", ports.ErrChatResumeFailed, err)
@@ -317,6 +318,7 @@ func conversationCapabilities(
 	if init.AgentCapabilities.SessionCapabilities.Resume == nil {
 		caps[ports.ChatCapabilityResume] = false
 	}
+	caps[ports.ChatCapabilityHistory] = init.AgentCapabilities.LoadSession
 	if extensionSupported(init.Meta, "steering") {
 		caps[ports.ChatCapabilitySteer] = true
 	}

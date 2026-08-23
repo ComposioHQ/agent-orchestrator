@@ -512,7 +512,10 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 			options,
 			entry,
 			() => entries.get(session.viewId)?.activeTabId === entry.tabId,
-			() => applySessionBounds(session, entry),
+			() => {
+				if (session.devtools && isBlankBrowserEntry(entry)) destroyDevTools(session);
+				applySessionBounds(session, entry);
+			},
 			() => pushTabsState(options, session),
 		);
 		wireFaviconEvents(view.webContents, entry, () => pushTabsState(options, session));
@@ -611,13 +614,52 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 			// The human-facing BrowserView state is authoritative. Selecting through
 			// agent-browser updates its independent active_page_index before another
 			// native command is allowed to run.
-			await options.agentBrowserRuntime.runAction(
-				session.sessionId,
-				"tab-select",
-				{ tabId },
-				agentBrowserTargets(session),
-				signal,
-			);
+			try {
+				await options.agentBrowserRuntime.runAction(
+					session.sessionId,
+					"tab-select",
+					{ tabId },
+					agentBrowserTargets(session),
+					signal,
+				);
+			} catch (error) {
+				// The runtime keeps its own tab registry (a real, separate process —
+				// not derived live from session.tabs), which can drift after enough
+				// tab churn: observed live as "Tab tX not found; run `agent-browser
+				// tab` to list open tabs" for a tabId session.tabs still has. Retrying
+				// the exact same tab-select would fail identically forever, and every
+				// native browser operation for this session (select, close, click,
+				// snapshot, ...) routes through this loop — so a bare retry
+				// permanently wedges the whole session, not just this one call.
+				// Do what the runtime's own error message suggests: ask it to
+				// re-list tabs (which re-derives from session.tabs) before trying
+				// the select once more.
+				if (!isAgentBrowserCommandFailure(error)) throw error;
+				try {
+					await options.agentBrowserRuntime.runAction(session.sessionId, "tabs", {}, agentBrowserTargets(session), signal);
+					await options.agentBrowserRuntime.runAction(
+						session.sessionId,
+						"tab-select",
+						{ tabId },
+						agentBrowserTargets(session),
+						signal,
+					);
+				} catch (resyncError) {
+					if (!isAgentBrowserCommandFailure(resyncError)) throw resyncError;
+					// Still desynced after asking it to refresh — accept the drift
+					// rather than wedge the session forever. AO's own tab state
+					// (WebContentsView activation/close) doesn't depend on this and is
+					// unaffected either way; only the automation runtime's targeting of
+					// *this* tab stays stale until a future tab-new/tab-close resyncs
+					// it from its side — meaning a subsequent agent click/fill/snapshot
+					// can silently land on a different tab than intended. Every native
+					// operation routes through this loop first, so this is the one place
+					// that can log it without spamming on every call.
+					console.warn(
+						`[browser] automation runtime still can't target tab ${tabId} in session ${session.sessionId} after a resync attempt — accepting drift`,
+					);
+				}
+			}
 			session.nativeActiveTabId = tabId;
 		}
 	};
@@ -645,8 +687,19 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		if (normalizedURL) {
 			const navigation = navigateEntry(entry, normalizedURL);
 			pushTabsState(options, session, { kind: reason, tabId: entry.tabId });
-			const state = await navigation;
-			if (state.error) throw browserError("NAVIGATION_FAILED", state.error);
+			// A failed load still yields a real, usable tab, exactly like
+			// navigating an *existing* tab to a dead URL — navigateEntry sets
+			// `.error` on the nav state (surfaced separately via
+			// browser:navState) and resolves normally rather than throwing.
+			// pushTabsState above already told the renderer this tab exists, so
+			// rejecting afterward corrupted every caller that inferred "tab
+			// exists" from "call succeeded": a dead localhost dev server (the
+			// overwhelmingly common case for Recently Closed entries — that's
+			// what ao preview produces) left reopenClosedTab's cap-failure
+			// rollback treating the failed load as "nothing happened," which
+			// resurrected the entry and restored it, forever, on every retry,
+			// while the tab it claimed didn't exist sat open with an error page.
+			await navigation;
 		} else {
 			pushTabsState(options, session, { kind: reason, tabId: entry.tabId });
 		}
@@ -661,6 +714,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 			applyBrowserViewBounds(previous.view, OFFSCREEN_BOUNDS, false);
 		}
 		session.activeTabId = tabId;
+		if (session.devtools && isBlankBrowserEntry(next)) destroyDevTools(session);
 		applySessionBounds(session, next);
 		pushNavState(options, next);
 		if (notify) pushTabsState(options, session, { kind: "selected", tabId });
@@ -671,6 +725,18 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		return next;
 	}
 
+	// Re-verified 2026-08-19: a long-session report claimed tab close buttons
+	// eventually "stop working" (tab stays in the rail / count badge doesn't
+	// decrement). An accelerated stress repro -- open to MAX_BROWSER_TABS and
+	// close back to one, 20 cycles, interleaving selectTab/DevTools
+	// open-close/annotation-mode toggles -- against this real closeTab/
+	// destroyTabView path (see "browser tab lifecycle stress" in
+	// browser-view-host.test.ts) completed cleanly with no stuck or leaked
+	// tab. Several stabilization fixes already landed on main since the
+	// original report and likely already covered it: 73aa2c9bc (stabilize
+	// browser tab controls), 7d80f4a32 (prevent wrong tab content after
+	// switching), b00aa0414 (cancel stale overlay captures), and 4a98e4a92
+	// (release tab menu mirror on selection).
 	function closeTab(session: BrowserSessionEntry, tabId = session.activeTabId): BrowserTabsState {
 		if (session.tabs.size === 1) {
 			throw browserError("CANNOT_CLOSE_LAST_TAB", "The only browser tab cannot be closed");
@@ -774,6 +840,10 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		session: BrowserSessionEntry,
 	): Promise<BrowserDevToolsState> => {
 		const entry = activeEntry(session);
+		if (isBlankBrowserEntry(entry)) {
+			if (session.devtools) destroyDevTools(session);
+			return pushDevToolsState(session);
+		}
 		if (!entry.view.webContents.openDevTools) {
 			throw browserError("BROWSER_DEVTOOLS_UNAVAILABLE", "Browser DevTools are unavailable");
 		}
@@ -935,6 +1005,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		if (!session) throw browserError("BROWSER_TARGET_UNAVAILABLE", "Browser target is unavailable");
 		const entry = activeEntry(session);
 		cancelAnnotation(options, entry, "navigation");
+		if (session.devtools) destroyDevTools(session);
 		session.visible = false;
 		session.bounds = OFFSCREEN_BOUNDS;
 		applySessionBounds(session, entry);
@@ -1147,12 +1218,35 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		if (!options.agentBrowserRuntime) return closeTab(session, input.tabId);
 		return queueNativeOperation(session, async () => {
 			await ensureNativeActiveTab(session);
-			await options.agentBrowserRuntime!.runAction(
-				session.sessionId,
-				"tab-close",
-				{ tabId: input.tabId },
-				agentBrowserTargets(session),
-			);
+			try {
+				await options.agentBrowserRuntime!.runAction(
+					session.sessionId,
+					"tab-close",
+					{ tabId: input.tabId },
+					agentBrowserTargets(session),
+				);
+			} catch (error) {
+				// The automation runtime's own internal tab registry can drift from
+				// session.tabs over a long-running session (observed in practice as
+				// "Tab t5 not found; run `agent-browser tab` to list open tabs" even
+				// though session.tabs.has(input.tabId) above just confirmed AO still
+				// tracks it) — the runtime is a separate process AO doesn't fully
+				// control the internal bookkeeping of. Letting that failure bubble up
+				// left the tab stuck open with no way for the user to close it at all.
+				// The user's intent is unambiguous either way: close this tab. Fall
+				// back to AO's own close path, which only depends on session.tabs and
+				// the real WebContentsView, not the runtime's registry.
+				if (!isAgentBrowserCommandFailure(error)) throw error;
+				// runAction("tab-close") can partially succeed: the CDP bridge's own
+				// Target.closeTarget handling calls this same internal closeTab
+				// before the runtime reports the overall command as failed (observed
+				// live — the tab was already gone by the time this catch ran). Calling
+				// closeTab again here would throw TAB_NOT_FOUND for a tab that's
+				// already closed, exactly the outcome the user wanted — so treat
+				// "already gone" as success instead of retrying the close.
+				if (!session.tabs.has(input.tabId)) return listTabs(session);
+				return closeTab(session, input.tabId);
+			}
 			session.nativeActiveTabId = undefined;
 			await ensureNativeActiveTab(session);
 			return listTabs(session);
@@ -1172,8 +1266,30 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 	handle("browser:openTab", async (event, input: BrowserOpenTabInput) => {
 		const session = entries.get(input.viewId);
 		if (!session || !isRendererOwned(event, input.viewId)) return emptyTabsState(input.viewId);
-		await openTab(session, input.url, true);
-		return listTabs(session);
+		let url = input.url;
+		if (url) {
+			const normalized = normalizeBrowserURL(url);
+			if (!isAllowedBrowserURL(normalized.href, options.rendererOrigin)) {
+				throw browserError("NAVIGATION_FAILED", "Unsupported browser URL");
+			}
+			url = normalized.href;
+		}
+		if (!options.agentBrowserRuntime) {
+			await openTab(session, url, true);
+			return listTabs(session);
+		}
+		return queueNativeOperation(session, async () => {
+			// Let agent-browser create UI tabs too so its stable tab registry and
+			// AO's WebContentsView IDs stay aligned for later select/close commands.
+			await options.agentBrowserRuntime!.runAction(
+				session.sessionId,
+				"tab-new",
+				{ url },
+				agentBrowserTargets(session),
+			);
+			session.nativeActiveTabId = session.activeTabId;
+			return listTabs(session);
+		});
 	});
 	handle("browser:annotation:setMode", (event, input: BrowserAnnotationModeInput) => setAnnotationMode(event, input));
 	on("browser:destroy", (event, viewId: string) => {
@@ -1459,6 +1575,21 @@ function activeEntry(session: BrowserSessionEntry): BrowserEntry {
 	const entry = session.tabs.get(session.activeTabId);
 	if (!entry) throw browserError("BROWSER_TARGET_UNAVAILABLE", "Active browser tab is unavailable");
 	return entry;
+}
+
+function isBlankBrowserEntry(entry: BrowserEntry): boolean {
+	const url = entry.view.webContents.getURL();
+	return !url || url === "about:blank";
+}
+
+// agent-browser-runtime.ts's parseAgentBrowserJSON throws this exact code for
+// any command the automation runtime's own process reports success:false for
+// (e.g. its internal tab registry not recognizing a tabId session.tabs still
+// has) — distinguishing it from an unrelated failure (the binary missing,
+// the runtime already disposed, a malformed response) that a close-tab
+// fallback should NOT quietly swallow.
+function isAgentBrowserCommandFailure(error: unknown): boolean {
+	return Boolean(error && typeof error === "object" && "code" in error && error.code === "AGENT_BROWSER_COMMAND_FAILED");
 }
 
 function tabResult(entry: BrowserEntry, active: boolean): BrowserTabState & { untrustedExternalContent: true } {

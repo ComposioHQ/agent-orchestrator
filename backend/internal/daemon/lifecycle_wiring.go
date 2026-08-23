@@ -30,6 +30,8 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite"
 )
 
+const startupReconcileWorkers = 4
+
 type notificationSink interface {
 	Notify(context.Context, ports.NotificationIntent) error
 	Resolve(context.Context, ports.NotificationResolution) error
@@ -202,8 +204,10 @@ func startSession(ctx context.Context, cfg config.Config, runtime runtimeselect.
 		Browser:             browserLifecycle,
 		BrowserCapabilities: browserCapabilities,
 		DataDir:             cfg.DataDir,
+		RunFilePath:         cfg.RunFilePath,
 		BackgroundContext:   ctx,
 		Logger:              log,
+		ReconcileWorkers:    startupReconcileWorkers,
 	})
 	scmProvider := newMultiSCMProvider(cfg.GitLab, log)
 	// Build the multi-tracker dispatching to both GitHub and GitLab. The
@@ -243,9 +247,17 @@ func startSession(ctx context.Context, cfg config.Config, runtime runtimeselect.
 			reviewcore.WithRunFilePath(cfg.RunFilePath),
 			reviewcore.WithAgentAuth(reviewerAgentAuth{agents: agents})),
 	})
-	reviewSvc := reviewsvc.New(reviewEngine, store,
+	reviewOpts := []reviewsvc.Option{
 		reviewsvc.WithLifecycleReducer(lcm),
-		reviewsvc.WithTelemetry(telemetry))
+		reviewsvc.WithTelemetry(telemetry),
+	}
+	if scmProvider != nil {
+		reviewOpts = append(reviewOpts,
+			reviewsvc.WithReviewRequester(scmProvider),
+			reviewsvc.WithReviewResolver(scmProvider),
+		)
+	}
+	reviewSvc := reviewsvc.New(reviewEngine, store, reviewOpts...)
 	mgr.SetReviewerTerminator(reviewSvc)
 	return sessionSvc, reviewSvc, mgr, nil
 }
@@ -452,26 +464,31 @@ func (c chatLauncher) PreflightChat(ctx context.Context, harness domain.AgentHar
 
 func (c chatLauncher) StartChat(ctx context.Context, cfg sessionmanager.ChatStart) (sessionmanager.ChatStarted, error) {
 	out, err := c.svc.StartChat(ctx, chatsvc.StartRequest{
-		SessionID:              cfg.SessionID,
-		ProjectID:              cfg.ProjectID,
-		Kind:                   cfg.Kind,
-		Harness:                cfg.Harness,
-		DataDir:                cfg.DataDir,
-		WorkspacePath:          cfg.WorkspacePath,
-		Env:                    cfg.Env,
-		Model:                  cfg.Model,
-		Permissions:            cfg.Permissions,
-		SystemPrompt:           cfg.SystemPrompt,
-		AdditionalDirectories:  cfg.AdditionalDirectories,
-		ProviderConversationID: cfg.ProviderConversationID,
-		ControllerReady: func(out chatsvc.StartResult) error {
+		SessionID:               cfg.SessionID,
+		ProjectID:               cfg.ProjectID,
+		Kind:                    cfg.Kind,
+		Harness:                 cfg.Harness,
+		DataDir:                 cfg.DataDir,
+		WorkspacePath:           cfg.WorkspacePath,
+		Env:                     cfg.Env,
+		Model:                   cfg.Model,
+		Permissions:             cfg.Permissions,
+		SystemPrompt:            cfg.SystemPrompt,
+		AdditionalDirectories:   cfg.AdditionalDirectories,
+		ProviderConversationID:  cfg.ProviderConversationID,
+		ControllerGeneration:    cfg.ControllerGeneration,
+		RequireNativeHistory:    cfg.RequireNativeHistory,
+		SkipNativeHistoryImport: cfg.SkipNativeHistoryImport,
+		ControllerReady: func(out chatsvc.StartResult) (chatsvc.ControllerCommit, error) {
 			if cfg.ControllerReady == nil {
-				return nil
+				return chatsvc.ControllerCommit{}, nil
 			}
-			return cfg.ControllerReady(sessionmanager.ChatStarted{
+			commit, err := cfg.ControllerReady(sessionmanager.ChatStarted{
 				ProviderConversationID: out.ProviderConversationID,
 				ControllerGeneration:   out.ControllerGeneration,
+				Conversation:           out.Conversation,
 			})
+			return chatsvc.ControllerCommit{Conversation: commit.Conversation}, err
 		},
 	})
 	if err != nil {

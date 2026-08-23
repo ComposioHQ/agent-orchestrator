@@ -469,6 +469,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/projects/clone": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Clone and register a project from a git repository URL */
+        post: operations["cloneProject"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/projects/initialize": {
         parameters: {
             query?: never;
@@ -1085,6 +1102,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/sessions/{sessionId}/interface-transition/{transitionId}/notice-acknowledgement": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Acknowledge a failed or recovered interface handoff notice */
+        put: operations["acknowledgeSessionInterfaceTransitionNotice"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/sessions/{sessionId}/kill": {
         parameters: {
             query?: never;
@@ -1311,6 +1345,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/sessions/{sessionId}/reviews/comments/resolve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Resolve an external review comment thread */
+        post: operations["resolveReviewComment"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/sessions/{sessionId}/reviews/kill": {
         parameters: {
             query?: never;
@@ -1322,6 +1373,23 @@ export interface paths {
         put?: never;
         /** Kill a worker's reviewer terminal session */
         post: operations["killReviewSession"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/sessions/{sessionId}/reviews/rerequest": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Ask an external reviewer to re-review a worker's PR */
+        post: operations["requestRereview"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1481,6 +1549,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/sessions/{sessionId}/workspace/file/blob": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read one side of a session workspace image file */
+        get: operations["getSessionWorkspaceFileBlob"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/sessions/{sessionId}/workspace/files": {
         parameters: {
             query?: never;
@@ -1585,6 +1670,41 @@ export interface paths {
         patch: operations["renameShellTerminal"];
         trace?: never;
     };
+    "/api/v1/system/install/{target}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get the current or last known install job status for a system target */
+        get: operations["getSystemInstallStatus"];
+        put?: never;
+        /** Start (or return the already-running) install job for a fixed system target */
+        post: operations["startSystemInstall"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/system/requirements": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Check local machine readiness (git, tmux, agent harness, gh) */
+        get: operations["getSystemRequirements"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/usage/sessions": {
         parameters: {
             query?: never;
@@ -1632,6 +1752,11 @@ export interface components {
             message: string;
             requestId?: string;
         };
+        AcknowledgeSessionInterfaceTransitionNoticeResponse: {
+            ok: boolean;
+            sessionId: string;
+            transition: components["schemas"]["SessionInterfaceTransition"];
+        };
         ActivateConversationBranchResponse: {
             activeBranchId: string;
         };
@@ -1655,6 +1780,13 @@ export interface components {
             authStatus?: "authorized" | "unauthorized" | "unknown";
             id: string;
             label: string;
+            /**
+             * Format: date-time
+             * @description Creation time of the newest retained session currently attributed to this agent.
+             */
+            lastUsedAt?: null | string;
+            /** @description Number of retained sessions currently attributed to this agent. */
+            usageCount?: number;
         };
         AgentModelInfo: {
             id: string;
@@ -1701,6 +1833,12 @@ export interface components {
         };
         AgentSwitchResponse: {
             switch: components["schemas"]["AgentSwitch"];
+        };
+        AnthropicUsageDetailsResponse: {
+            anthropicCacheCreation1hInputTokens: null | number;
+            anthropicCacheCreation5mInputTokens: null | number;
+            anthropicCacheCreationInputTokens: null | number;
+            anthropicDirectUncachedInputTokens: null | number;
         };
         AttachmentInput: {
             data: string;
@@ -1754,6 +1892,13 @@ export interface components {
             reason: string;
             sessionId: string;
         };
+        CloneProjectInput: {
+            config?: components["schemas"]["ProjectConfig"];
+            destinationParent: string;
+            name?: null | string;
+            projectId?: null | string;
+            remoteUrl: string;
+        };
         CompactConversationResponse: {
             /** Format: int64 */
             tokensAfter?: number;
@@ -1762,12 +1907,35 @@ export interface components {
         };
         CompactSessionUsageResponse: {
             incomplete: boolean;
+            /** @description Canonical input plus output. Null when either component is unknown. */
+            processedTokens: null | number;
             sessionId: string;
-            /** Format: int64 */
+            /**
+             * Format: int64
+             * @description Deprecated compatibility alias for processedTokens.
+             */
             totalTokens: number;
         };
         ContainerReapConfig: {
             disabled?: boolean;
+        };
+        ControllersRequestRereviewRequest: {
+            /** @description Tracked pull request URL. Required when the session has multiple PRs. */
+            pullRequestUrl?: string;
+            /** @description Provider login of the reviewer to ask for another review. */
+            reviewerId: string;
+        };
+        ControllersRequestRereviewResponse: {
+            ok: boolean;
+        };
+        ControllersResolveReviewCommentRequest: {
+            /** @description Provider URL of the unresolved review comment to resolve. */
+            commentUrl: string;
+            /** @description Tracked pull request URL. Required when the session has multiple PRs. */
+            pullRequestUrl?: string;
+        };
+        ControllersResolveReviewCommentResponse: {
+            ok: boolean;
         };
         ControllersSecurePairingStatus: {
             active: boolean;
@@ -1795,6 +1963,7 @@ export interface components {
             kind: string;
             /** @enum {string} */
             mode: "chat" | "tui";
+            model?: string;
             /** Format: date-time */
             pinnedAt?: null | string;
             /** Format: int64 */
@@ -2135,6 +2304,31 @@ export interface components {
         InitializeRepositoryResult: {
             path: string;
         };
+        InstallJob: {
+            /** @description Human-readable install command, e.g. "brew install tmux", for display even before/without output. */
+            command?: string;
+            /** @description Set on failure or when the target is unsupported on this machine: the exec error, the Unsupported reason, or a timeout message. */
+            error?: string;
+            /**
+             * Format: date-time
+             * @description Absent until the job finishes.
+             */
+            finishedAt?: null | string;
+            /** @description Combined stdout+stderr from the install command, tail-capped to the last ~4000 bytes. */
+            output?: string;
+            /** Format: date-time */
+            startedAt?: null | string;
+            /**
+             * @description Current lifecycle state of the job.
+             * @enum {string}
+             */
+            status: "idle" | "running" | "succeeded" | "failed" | "unsupported";
+            /**
+             * @description Install target this job ran (or is running) for.
+             * @enum {string}
+             */
+            target: "tmux" | "gh" | "claude" | "codex" | "opencode" | "copilot";
+        };
         KillReviewResponse: {
             reviewerHandleId: string;
             reviewerHarness?: string;
@@ -2284,6 +2478,10 @@ export interface components {
             prUrl?: string;
             sessionId: string;
         };
+        OpenAIUsageDetailsResponse: {
+            openaiCacheWriteInputTokens: null | number;
+            openaiReasoningOutputTokens: null | number;
+        };
         OpenShellTerminalRequest: {
             /** @description Project whose root the shell starts in. Omitted opens the shell in the daemon data dir. */
             projectId?: string;
@@ -2340,6 +2538,7 @@ export interface components {
             agentConfig?: components["schemas"]["AgentConfig"];
             agentRules?: string;
             agentRulesFile?: string;
+            autoReview?: boolean;
             containerReap?: components["schemas"]["ContainerReapConfig"];
             defaultBranch?: string;
             env?: {
@@ -2520,6 +2719,8 @@ export interface components {
             errorCode?: string;
             errorDetail?: string;
             id: string;
+            /** Format: date-time */
+            noticeAcknowledgedAt?: null | string;
             /** @enum {string} */
             phase: "requested" | "preflighting" | "draining" | "source_stopping" | "source_stopped" | "target_starting" | "activating" | "completed" | "failed" | "cancelled" | "recovery_required";
             /** @enum {string} */
@@ -2601,6 +2802,7 @@ export interface components {
             /** @enum {string} */
             decision: "none" | "approved" | "changes_requested" | "review_required";
             hasUnresolvedHumanComments: boolean;
+            resolvedBy?: components["schemas"]["SessionPRUnresolvedReviewer"][];
             reviews?: components["schemas"]["SessionPRReviewEntry"][];
             unresolvedBy: components["schemas"]["SessionPRUnresolvedReviewer"][];
         };
@@ -2790,6 +2992,7 @@ export interface components {
             kind?: "worker" | "orchestrator";
             /** @enum {string} */
             mode?: "chat" | "tui";
+            model?: string;
             projectId: string;
             prompt?: string;
             /** @enum {string} */
@@ -2869,6 +3072,27 @@ export interface components {
              */
             targetHarness: "claude-code" | "codex";
         };
+        SystemRequirement: {
+            /** @description Extra context: the resolved path when satisfied, or why it is not. */
+            detail?: string;
+            /**
+             * @description Stable requirement identifier.
+             * @enum {string}
+             */
+            id: "git" | "tmux" | "harness" | "gh";
+            /** @description Human-readable requirement name. */
+            label: string;
+            /** @description Whether this requirement blocks the overall Ready state. */
+            required: boolean;
+            /** @description Whether this requirement is currently met. */
+            satisfied: boolean;
+        };
+        SystemRequirementsResponse: {
+            /** @description True iff every requirement with Required=true is satisfied. Requirements with Required=false (e.g. gh) are advisory and never block readiness. */
+            ready: boolean;
+            /** @description Individual checks, in stable order: git, tmux, harness, gh. */
+            requirements: components["schemas"]["SystemRequirement"][];
+        };
         TrackerIntakeConfig: {
             assignee?: string;
             enabled?: boolean;
@@ -2916,16 +3140,42 @@ export interface components {
             subagentTranscriptPath?: string;
             transcriptPath?: string;
         };
+        UsageMetricProvenanceResponse: {
+            /** @enum {string} */
+            cachedInputTokens: "reported" | "derived" | "unsupported" | "unknown";
+            /** @enum {string} */
+            inputTokens: "reported" | "derived" | "unsupported" | "unknown";
+            /** @enum {string} */
+            outputTokens: "reported" | "derived" | "unsupported" | "unknown";
+            /** @enum {string} */
+            uncachedInputTokens: "reported" | "derived" | "unsupported" | "unknown";
+        };
         UsageModelResponse: {
             modelId: string;
             totals: components["schemas"]["UsageTotalsResponse"];
         };
+        UsageProviderDetailsResponse: {
+            anthropic?: components["schemas"]["AnthropicUsageDetailsResponse"];
+            openai?: components["schemas"]["OpenAIUsageDetailsResponse"];
+        };
         UsageTotalsResponse: {
+            /** @description Deprecated compatibility alias for cachedInputTokens. */
             cacheReadTokens: null | number;
+            /** @description Deprecated compatibility aggregate of provider cache-write input counters. */
             cacheWriteTokens: null | number;
+            /** @description Input read from an existing provider cache. Cache hit percentage uses cachedInputTokens divided by inclusive inputTokens. */
+            cachedInputTokens: null | number;
+            /** @description Total input, including cached and uncached input. */
             inputTokens: null | number;
+            /** @description Total output, including provider-specific subsets such as reasoning output. */
             outputTokens: null | number;
+            /** @description Canonical input plus output. Null when either component is unknown. */
+            processedTokens: null | number;
+            provenance: components["schemas"]["UsageMetricProvenanceResponse"];
+            providerDetails: components["schemas"]["UsageProviderDetailsResponse"];
+            /** @description Deprecated compatibility alias for the OpenAI reasoning-output subset. */
             reasoningTokens: null | number;
+            /** @description Input not read from an existing provider cache. */
             uncachedInputTokens: null | number;
         };
         WorkspaceFileResponse: {
@@ -2941,6 +3191,7 @@ export interface components {
             deletions: number;
             diff: string;
             diffTruncated: boolean;
+            imageMediaType?: string;
             path: string;
             previousPath?: string;
             sessionId: string;
@@ -4579,6 +4830,57 @@ export interface operations {
             };
             /** @description Not Found */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    cloneProject: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CloneProjectInput"];
+            };
+        };
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProjectResponse"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Conflict */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -7035,6 +7337,67 @@ export interface operations {
             };
         };
     };
+    acknowledgeSessionInterfaceTransitionNotice: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Session identifier, e.g. project-1. */
+                sessionId: string;
+                /** @description Durable interface-transition identifier. */
+                transitionId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AcknowledgeSessionInterfaceTransitionNoticeResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
     killSession: {
         parameters: {
             query?: never;
@@ -8117,6 +8480,69 @@ export interface operations {
             };
         };
     };
+    resolveReviewComment: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Session identifier, e.g. project-1. */
+                sessionId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ControllersResolveReviewCommentRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ControllersResolveReviewCommentResponse"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
     killReviewSession: {
         parameters: {
             query?: never;
@@ -8136,6 +8562,69 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["KillReviewResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    requestRereview: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Session identifier, e.g. project-1. */
+                sessionId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ControllersRequestRereviewRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ControllersRequestRereviewResponse"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
                 };
             };
             /** @description Not Found */
@@ -8703,6 +9192,72 @@ export interface operations {
             };
         };
     };
+    getSessionWorkspaceFileBlob: {
+        parameters: {
+            query: {
+                /** @description Session-worktree-relative file path. */
+                path: string;
+                /** @description Which revision to read: the compare base (before) or the session worktree (after). Defaults to after. */
+                side?: "before" | "after";
+                /** @description Cache-busting token. Ignored by the server; the response is never cached. */
+                v?: string;
+            };
+            header?: never;
+            path: {
+                /** @description Session identifier, e.g. project-1. */
+                sessionId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/octet-stream": string;
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
     listSessionWorkspaceFiles: {
         parameters: {
             query?: never;
@@ -9079,6 +9634,144 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    getSystemInstallStatus: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Install target identifier: tmux, gh, claude, codex, opencode, or copilot. */
+                target: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InstallJob"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    startSystemInstall: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Install target identifier: tmux, gh, claude, codex, opencode, or copilot. */
+                target: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Accepted */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InstallJob"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    getSystemRequirements: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SystemRequirementsResponse"];
                 };
             };
             /** @description Internal Server Error */

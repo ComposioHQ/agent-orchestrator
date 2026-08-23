@@ -20,6 +20,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/aoagents/agent-orchestrator/backend/internal/attachmentstore"
 	"github.com/aoagents/agent-orchestrator/backend/internal/config"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd"
@@ -42,8 +43,10 @@ type fakeSessionService struct {
 	cleanupSkipped      []sessionsvc.CleanupSkipped
 	workspaceFiles      sessionsvc.WorkspaceFiles
 	workspaceFile       sessionsvc.WorkspaceFileDetail
+	workspaceBlob       sessionsvc.WorkspaceFileBlob
 	workspacePaths      []string
 	spawnErr            error
+	lastSpawn           ports.SpawnConfig
 	orchestratorMode    domain.SessionMode
 	claimErr            error
 	listPRErr           error
@@ -59,6 +62,46 @@ type fakeSessionService struct {
 	handoffSource       domain.AgentGenerationID
 	autoInjectCISession domain.SessionID
 	autoInjectCIEnabled bool
+}
+
+type fakeInterfaceTransitionSessionService struct {
+	*fakeSessionService
+	transition             domain.SessionInterfaceTransition
+	acknowledgedSessionID  domain.SessionID
+	acknowledgedTransition string
+}
+
+func (f *fakeInterfaceTransitionSessionService) InterfaceTransitionStatus(
+	context.Context,
+	domain.SessionID,
+) (sessionsvc.InterfaceTransitionStatus, error) {
+	return sessionsvc.InterfaceTransitionStatus{Supported: true, Transition: &f.transition}, nil
+}
+
+func (f *fakeInterfaceTransitionSessionService) StartInterfaceTransition(
+	context.Context,
+	domain.SessionID,
+	domain.SessionMode,
+	domain.SessionInterfaceTransitionPolicy,
+) (domain.SessionInterfaceTransition, error) {
+	return f.transition, nil
+}
+
+func (f *fakeInterfaceTransitionSessionService) CancelInterfaceTransition(
+	context.Context,
+	domain.SessionID,
+) error {
+	return nil
+}
+
+func (f *fakeInterfaceTransitionSessionService) AcknowledgeInterfaceTransitionNotice(
+	_ context.Context,
+	sessionID domain.SessionID,
+	transitionID string,
+) (domain.SessionInterfaceTransition, error) {
+	f.acknowledgedSessionID = sessionID
+	f.acknowledgedTransition = transitionID
+	return f.transition, nil
 }
 
 type fakeManagedPreviewServer struct {
@@ -145,6 +188,7 @@ func (f *fakeSessionService) List(_ context.Context, filter sessionsvc.ListFilte
 }
 
 func (f *fakeSessionService) Spawn(_ context.Context, cfg ports.SpawnConfig) (domain.Session, int, int, error) {
+	f.lastSpawn = cfg
 	if f.spawnErr != nil {
 		return domain.Session{}, 0, 0, f.spawnErr
 	}
@@ -528,6 +572,21 @@ func (f *fakeSessionService) GetWorkspaceFile(_ context.Context, id domain.Sessi
 	return sessionsvc.WorkspaceFileDetail{SessionID: id, Path: path}, nil
 }
 
+func (f *fakeSessionService) GetWorkspaceFileBlob(_ context.Context, id domain.SessionID, path string, side sessionsvc.WorkspaceFileBlobSide) (sessionsvc.WorkspaceFileBlob, error) {
+	if f.workspaceErr != nil {
+		return sessionsvc.WorkspaceFileBlob{}, f.workspaceErr
+	}
+	if _, ok := f.sessions[id]; !ok {
+		return sessionsvc.WorkspaceFileBlob{}, apierr.NotFound("SESSION_NOT_FOUND", "Unknown session")
+	}
+	if f.workspaceBlob.MediaType != "" {
+		blob := f.workspaceBlob
+		blob.Side = side
+		return blob, nil
+	}
+	return sessionsvc.WorkspaceFileBlob{Path: path, Side: side, MediaType: "image/png"}, nil
+}
+
 func TestSessionsAPI_AgentSwitchLifecycle(t *testing.T) {
 	svc := newFakeSessionService()
 	srv := newSessionTestServer(t, svc)
@@ -783,6 +842,41 @@ func TestSessionsRoutes_DefaultToStubsWithoutService(t *testing.T) {
 	body, status, headers := doRequest(t, srv, "GET", "/api/v1/sessions", "")
 	assertJSON(t, headers)
 	assertErrorCode(t, body, status, http.StatusNotImplemented, "NOT_IMPLEMENTED")
+}
+
+func TestSessionsAPI_AcknowledgeInterfaceTransitionNotice(t *testing.T) {
+	acknowledgedAt := time.Date(2026, 8, 13, 8, 0, 0, 0, time.UTC)
+	svc := &fakeInterfaceTransitionSessionService{
+		fakeSessionService: newFakeSessionService(),
+		transition: domain.SessionInterfaceTransition{
+			ID: "transition-1", SessionID: "ao-1",
+			SourceMode: domain.SessionModeChat, TargetMode: domain.SessionModeTUI,
+			Policy:    domain.SessionInterfaceTransitionDrain,
+			Phase:     domain.SessionInterfaceTransitionRecovery,
+			CreatedAt: acknowledgedAt.Add(-time.Hour), UpdatedAt: acknowledgedAt.Add(-time.Minute),
+			CompletedAt: acknowledgedAt.Add(-time.Minute), NoticeAcknowledgedAt: acknowledgedAt,
+		},
+	}
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	srv := httptest.NewServer(httpd.NewRouterWithControl(
+		config.Config{}, log, nil, httpd.APIDeps{Sessions: svc}, httpd.ControlDeps{},
+	))
+	t.Cleanup(srv.Close)
+
+	body, status, _ := doRequest(t, srv, http.MethodPut,
+		"/api/v1/sessions/ao-1/interface-transition/transition-1/notice-acknowledgement", "")
+	if status != http.StatusOK {
+		t.Fatalf("acknowledge notice = %d, want 200; body=%s", status, body)
+	}
+	if svc.acknowledgedSessionID != "ao-1" || svc.acknowledgedTransition != "transition-1" {
+		t.Fatalf("acknowledgement target = %s/%s", svc.acknowledgedSessionID, svc.acknowledgedTransition)
+	}
+	var response controllers.InterfaceTransitionNoticeAckResponse
+	mustJSON(t, body, &response)
+	if !response.OK || response.Transition.NoticeAcknowledgedAt == nil ||
+		!response.Transition.NoticeAcknowledgedAt.Equal(acknowledgedAt) {
+		t.Fatalf("acknowledgement response = %+v", response)
+	}
 }
 
 func TestSessionsAPI_ListSpawnGetAndActions(t *testing.T) {
@@ -1079,6 +1173,20 @@ func TestSessionsAPI_SpawnRejectsUnknownExplicitMode(t *testing.T) {
 	assertErrorCode(t, body, status, http.StatusBadRequest, "SESSION_MODE_INVALID")
 	if len(svc.sessions) != 1 {
 		t.Fatalf("invalid mode created a session: %#v", svc.sessions)
+	}
+}
+
+func TestSessionsAPI_SpawnPassesModelToService(t *testing.T) {
+	svc := newFakeSessionService()
+	srv := newSessionTestServer(t, svc)
+
+	body, status, _ := doRequest(t, srv, "POST", "/api/v1/sessions",
+		`{"projectId":"ao","kind":"worker","harness":"codex","prompt":"fix","displayName":"my worker","model":"sonnet"}`)
+	if status != http.StatusCreated {
+		t.Fatalf("POST session = %d, want 201; body=%s", status, body)
+	}
+	if svc.lastSpawn.AgentConfig.Model != "sonnet" {
+		t.Fatalf("service AgentConfig.Model = %q, want sonnet", svc.lastSpawn.AgentConfig.Model)
 	}
 }
 
@@ -1454,6 +1562,71 @@ func TestSessionsAPI_PreviewOriginResolvesRootRelativeAssetsFromEntryDirectory(t
 	}
 }
 
+func TestSessionsAPI_PreviewFileServesCanonicalAttachmentWithoutWorkspace(t *testing.T) {
+	dataDir := t.TempDir()
+	workspace := filepath.Join(t.TempDir(), "ao-1")
+	if err := os.MkdirAll(workspace, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	want := []byte("durable-image-bytes")
+	store := attachmentstore.New(dataDir)
+	if err := store.Put(context.Background(), "ao-1", workspace, "attachment-durable.png", want); err != nil {
+		t.Fatalf("Put attachment: %v", err)
+	}
+	if err := os.RemoveAll(workspace); err != nil {
+		t.Fatal(err)
+	}
+
+	svc := newFakeSessionService()
+	session := svc.sessions["ao-1"]
+	session.Metadata = domain.SessionMetadata{WorkspacePath: workspace}
+	svc.sessions["ao-1"] = session
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	srv := httptest.NewServer(httpd.NewRouterWithControl(
+		config.Config{DataDir: dataDir}, log, nil, httpd.APIDeps{Sessions: svc}, httpd.ControlDeps{},
+	))
+	t.Cleanup(srv.Close)
+
+	body, status, _ := doRequest(t, srv, http.MethodGet,
+		"/api/v1/sessions/ao-1/preview/files/.ao/attachments/attachment-durable.png?cache-bust=1", "")
+	if status != http.StatusOK {
+		t.Fatalf("canonical attachment response = %d, body=%s", status, body)
+	}
+	if !bytes.Equal(body, want) {
+		t.Fatalf("canonical attachment body = %q, want %q", body, want)
+	}
+}
+
+func TestSessionsAPI_PreviewFileDoesNotCrossSessionThroughCanonicalSymlink(t *testing.T) {
+	dataDir := t.TempDir()
+	workspace := t.TempDir()
+	name := "attachment-private.png"
+	store := attachmentstore.New(dataDir)
+	if err := store.Put(context.Background(), "ao-1", workspace, name, []byte("session-one-bytes")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("ao-1", filepath.Join(dataDir, "attachments", "ao-2")); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+
+	svc := newFakeSessionService()
+	second := svc.sessions["ao-1"]
+	second.ID = "ao-2"
+	second.Metadata.WorkspacePath = t.TempDir()
+	svc.sessions[second.ID] = second
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	srv := httptest.NewServer(httpd.NewRouterWithControl(
+		config.Config{DataDir: dataDir}, log, nil, httpd.APIDeps{Sessions: svc}, httpd.ControlDeps{},
+	))
+	t.Cleanup(srv.Close)
+
+	body, status, _ := doRequest(t, srv, http.MethodGet,
+		"/api/v1/sessions/ao-2/preview/files/.ao/attachments/"+name, "")
+	if status != http.StatusNotFound || !bytes.Contains(body, []byte(`"code":"PREVIEW_FILE_NOT_FOUND"`)) {
+		t.Fatalf("cross-session preview = %d, %s; want PREVIEW_FILE_NOT_FOUND", status, body)
+	}
+}
+
 func TestSessionsAPI_PreviewOriginErrorContract(t *testing.T) {
 	svc := newFakeSessionService()
 	workspace := t.TempDir()
@@ -1665,6 +1838,25 @@ func TestSessionsAPI_SetPreviewRejectsAbsoluteFilesOutsideWorkspace(t *testing.T
 		body, status, _ := doRequest(t, srv, http.MethodPost, "/api/v1/sessions/ao-1/preview", `{"url":`+strconv.Quote(target)+`}`)
 		if status != http.StatusForbidden || !bytes.Contains(body, []byte(`"code":"PREVIEW_FILE_OUTSIDE_WORKSPACE"`)) {
 			t.Fatalf("set outside preview %q = %d, body=%s; want 403 workspace error", target, status, body)
+		}
+	}
+	if got := svc.sessions["ao-1"].Metadata.PreviewURL; got != "http://localhost:4321/docs" {
+		t.Fatalf("persisted previewUrl = %q, want existing target preserved", got)
+	}
+}
+
+func TestSessionsAPI_SetPreviewRejectsRelativeParentTraversal(t *testing.T) {
+	svc := newFakeSessionService()
+	s := svc.sessions["ao-1"]
+	s.Metadata.WorkspacePath = t.TempDir()
+	s.Metadata.PreviewURL = "http://localhost:4321/docs"
+	svc.sessions["ao-1"] = s
+	srv := newSessionTestServer(t, svc)
+
+	for _, target := range []string{"../README.md", "docs/../../README.md", `..\README.md`} {
+		body, status, _ := doRequest(t, srv, http.MethodPost, "/api/v1/sessions/ao-1/preview", `{"url":`+strconv.Quote(target)+`}`)
+		if status != http.StatusForbidden || !bytes.Contains(body, []byte(`"code":"PREVIEW_FILE_OUTSIDE_WORKSPACE"`)) {
+			t.Fatalf("set parent traversal preview %q = %d, body=%s; want 403 workspace error", target, status, body)
 		}
 	}
 	if got := svc.sessions["ao-1"].Metadata.PreviewURL; got != "http://localhost:4321/docs" {
@@ -2007,6 +2199,41 @@ func TestSessionsAPI_GetWorkspaceFileRequiresPath(t *testing.T) {
 	srv := newSessionTestServer(t, newFakeSessionService())
 
 	body, status, headers := doRequest(t, srv, "GET", "/api/v1/sessions/ao-1/workspace/file", "")
+	assertJSON(t, headers)
+	assertErrorCode(t, body, status, http.StatusBadRequest, "WORKSPACE_PATH_REQUIRED")
+}
+
+func TestSessionsAPI_GetWorkspaceFileBlob(t *testing.T) {
+	svc := newFakeSessionService()
+	svc.workspaceBlob = sessionsvc.WorkspaceFileBlob{
+		Path:      "docs/logo.png",
+		MediaType: "image/png",
+		Data:      []byte{0x89, 'P', 'N', 'G'},
+	}
+	srv := newSessionTestServer(t, svc)
+
+	body, status, headers := doRequest(t, srv, "GET", "/api/v1/sessions/ao-1/workspace/file/blob?side=before&path="+url.QueryEscape("docs/logo.png"), "")
+	if status != http.StatusOK {
+		t.Fatalf("GET workspace blob = %d, want 200; body=%s", status, body)
+	}
+	if contentType := headers.Get("Content-Type"); contentType != "image/png" {
+		t.Fatalf("Content-Type = %q, want image/png", contentType)
+	}
+	if cache := headers.Get("Cache-Control"); cache != "no-store" {
+		t.Fatalf("Cache-Control = %q, want no-store", cache)
+	}
+	if !bytes.Equal(body, []byte{0x89, 'P', 'N', 'G'}) {
+		t.Fatalf("body = %q, want raw png bytes", body)
+	}
+	if svc.workspaceBlob.Side != "" {
+		t.Fatalf("fake blob mutated: %#v", svc.workspaceBlob)
+	}
+}
+
+func TestSessionsAPI_GetWorkspaceFileBlobRequiresPath(t *testing.T) {
+	srv := newSessionTestServer(t, newFakeSessionService())
+
+	body, status, headers := doRequest(t, srv, "GET", "/api/v1/sessions/ao-1/workspace/file/blob?side=after", "")
 	assertJSON(t, headers)
 	assertErrorCode(t, body, status, http.StatusBadRequest, "WORKSPACE_PATH_REQUIRED")
 }

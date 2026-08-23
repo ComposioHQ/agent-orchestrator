@@ -335,8 +335,20 @@ func TestACPDriverDefersPromptUntilDurableTurnBinding(t *testing.T) {
 		}
 		if event.Kind == ports.ChatEventApprovalRequested {
 			approvalID = event.RequestID
-			if len(event.Decisions) != 2 || event.Decisions[0].ID != "allow" {
+			if len(event.Decisions) != 2 || event.Decisions[0].ID != "allow" ||
+				event.Decisions[0].Kind != ports.ChatDecisionAllowOnce ||
+				event.Decisions[1].Kind != ports.ChatDecisionRejectOnce {
 				t.Fatalf("approval decisions = %#v", event.Decisions)
+			}
+			var detail struct {
+				SubjectKind string          `json:"subjectKind"`
+				ToolKind    acpsdk.ToolKind `json:"toolKind"`
+			}
+			if err := json.Unmarshal(event.Detail, &detail); err != nil {
+				t.Fatalf("approval detail: %v (%s)", err, event.Detail)
+			}
+			if detail.SubjectKind != string(domain.ActivityKindFileChange) || detail.ToolKind != acpsdk.ToolKindEdit {
+				t.Fatalf("approval detail = %+v, want an ACP file edit", detail)
 			}
 		}
 	}
@@ -532,6 +544,12 @@ func TestACPDriverReappliesLaunchContextWhenResuming(t *testing.T) {
 		SessionMeta: func(cfg LaunchConfig) map[string]any {
 			return map[string]any{"systemPrompt": map[string]any{"append": cfg.SystemPrompt}}
 		},
+		SessionOptions: func(settings ports.ChatTurnSettings) []SessionOption {
+			if settings.Model == "" {
+				return nil
+			}
+			return []SessionOption{{ID: "model", Value: settings.Model}}
+		},
 	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	driver.spawn = fakeSpawn(agent)
 
@@ -541,19 +559,21 @@ func TestACPDriverReappliesLaunchContextWhenResuming(t *testing.T) {
 		ProviderConversationID: "provider-session-1",
 		WorkspacePath:          workspace,
 		Env:                    map[string]string{"KEEP": "yes"},
+		Model:                  "selected-resume-model",
 		SystemPrompt:           "Recomputed AO instructions",
 	})
 	if err != nil {
 		t.Fatalf("Resume: %v", err)
 	}
 	defer conv.Close()
-	if got.SessionID != "worker-1" || got.WorkspacePath != workspace ||
+	if got.SessionID != "worker-1" || got.WorkspacePath != workspace || got.Model != "selected-resume-model" ||
 		got.Env["KEEP"] != "yes" || got.SystemPrompt != "Recomputed AO instructions" {
 		t.Fatalf("launch config = %#v", got)
 	}
 	agent.mu.Lock()
 	resumeCalls, loadCalls := agent.resumeCalls, agent.loadCalls
 	resumeMeta := agent.resumeParams.Meta
+	resumeModel := agent.options["model"]
 	agent.mu.Unlock()
 	if resumeCalls != 1 || loadCalls != 0 {
 		t.Fatalf("resume calls = %d, load calls = %d; want resume fallback", resumeCalls, loadCalls)
@@ -561,6 +581,15 @@ func TestACPDriverReappliesLaunchContextWhenResuming(t *testing.T) {
 	prompt, ok := resumeMeta["systemPrompt"].(map[string]any)
 	if !ok || prompt["append"] != "Recomputed AO instructions" {
 		t.Fatalf("session/resume metadata = %#v, want recomputed system prompt", resumeMeta)
+	}
+	if resumeModel != "selected-resume-model" {
+		t.Fatalf("resumed ACP model = %q, want selected-resume-model", resumeModel)
+	}
+	if conv.Capabilities().Has(ports.ChatCapabilityHistory) {
+		t.Fatal("resume-only ACP conversation advertised replayable history")
+	}
+	if _, err := conv.(ports.ChatHistoryReader).ReadHistory(context.Background()); !errors.Is(err, ports.ErrChatHistoryUnavailable) {
+		t.Fatalf("ReadHistory error = %v, want ErrChatHistoryUnavailable after session/resume", err)
 	}
 }
 
@@ -583,9 +612,6 @@ func TestACPDriverLoadsSettledHistoryWhenTheAgentCanReplayIt(t *testing.T) {
 	agent := &fakeAgent{
 		capabilities: &acpsdk.AgentCapabilities{
 			LoadSession: true,
-			SessionCapabilities: acpsdk.SessionCapabilities{
-				Resume: &acpsdk.SessionResumeCapabilities{},
-			},
 		},
 		loadUpdates: []acpsdk.SessionUpdate{userOne, answerOneA, answerOneB, userTwo, answerTwo},
 	}
@@ -609,6 +635,9 @@ func TestACPDriverLoadsSettledHistoryWhenTheAgentCanReplayIt(t *testing.T) {
 		t.Fatalf("Resume: %v", err)
 	}
 	defer conv.Close()
+	if _, ok := conv.(ports.ChatHistoryRefresher); ok {
+		t.Fatal("ACP session/load replay is a frozen snapshot, not refreshable history")
+	}
 
 	agent.mu.Lock()
 	loadCalls, resumeCalls := agent.loadCalls, agent.resumeCalls
@@ -662,6 +691,9 @@ func TestACPDriverLoadsSettledHistoryWhenTheAgentCanReplayIt(t *testing.T) {
 	if history[0].ProviderTurnID == history[6].ProviderTurnID {
 		t.Fatalf("both native turns share provider id %q", history[0].ProviderTurnID)
 	}
+	if !conv.Capabilities().Has(ports.ChatCapabilityHistory) {
+		t.Fatal("session/load conversation did not advertise replayable history")
+	}
 
 	ready := nextEvent(t, conv.Events())
 	if ready.Kind != ports.ChatEventControllerState || ready.ControllerState != ports.ChatControllerReady {
@@ -671,6 +703,64 @@ func TestACPDriverLoadsSettledHistoryWhenTheAgentCanReplayIt(t *testing.T) {
 	case event := <-conv.Events():
 		t.Fatalf("history leaked onto the live event stream: %#v", event)
 	case <-time.After(30 * time.Millisecond):
+	}
+}
+
+func TestACPDriverImportsTrailingUserOnlyHistoryAsInterrupted(t *testing.T) {
+	userID := "55555555-5555-4555-8555-555555555555"
+	user := acpsdk.UpdateUserMessageText("Work that has not produced a provider event yet")
+	user.UserMessageChunk.MessageId = &userID
+	agent := &fakeAgent{
+		capabilities: &acpsdk.AgentCapabilities{
+			LoadSession: true,
+			SessionCapabilities: acpsdk.SessionCapabilities{
+				Resume: &acpsdk.SessionResumeCapabilities{},
+			},
+		},
+		loadUpdates: []acpsdk.SessionUpdate{user},
+	}
+	driver := New(Config{
+		Harness:      domain.HarnessClaudeCode,
+		Capabilities: ports.ChatCapabilities{ports.ChatCapabilityStreaming: true},
+		Probe:        func(context.Context) error { return nil },
+		Launch:       func(context.Context, LaunchConfig) (Launch, error) { return Launch{Command: "fake"}, nil },
+	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	driver.spawn = fakeSpawn(agent)
+
+	conv, err := driver.Resume(context.Background(), ports.ChatResumeConfig{
+		ProviderConversationID: "provider-session-1",
+		WorkspacePath:          t.TempDir(),
+	})
+	if err != nil {
+		t.Fatalf("Resume: %v", err)
+	}
+	defer conv.Close()
+
+	history, err := conv.(ports.ChatHistoryReader).ReadHistory(context.Background())
+	if err != nil {
+		t.Fatalf("ReadHistory: %v", err)
+	}
+	wantKinds := []ports.ChatEventKind{
+		ports.ChatEventTurnStarted,
+		ports.ChatEventUserMessageCompleted,
+		ports.ChatEventTurnCompleted,
+	}
+	if len(history) != len(wantKinds) {
+		t.Fatalf("history = %d events, want %d: %#v", len(history), len(wantKinds), history)
+	}
+	for i, event := range history {
+		if event.Kind != wantKinds[i] {
+			t.Errorf("history event %d kind = %q, want %q", i, event.Kind, wantKinds[i])
+		}
+		if event.ProviderEventID == "" {
+			t.Errorf("history event %d has no stable identity", i)
+		}
+	}
+	if history[1].Text != "Work that has not produced a provider event yet" {
+		t.Fatalf("user message = %q", history[1].Text)
+	}
+	if history[2].TurnState != domain.TurnStateInterrupted {
+		t.Fatalf("turn state = %q, want %q", history[2].TurnState, domain.TurnStateInterrupted)
 	}
 }
 
@@ -817,6 +907,93 @@ func TestACPDriverPreservesNestedToolAndTerminalMetadata(t *testing.T) {
 	}
 	if detail["parentProviderItemId"] != "agent-tool" || detail["terminalId"] != "child-tool" || detail["output"] != "ok\n" {
 		t.Fatalf("tool detail = %#v", detail)
+	}
+}
+
+func TestACPDriverExtractsCommandFromExecuteToolInput(t *testing.T) {
+	agent := &fakeAgent{}
+	driver := New(Config{
+		Harness:      domain.HarnessClaudeCode,
+		Capabilities: ports.ChatCapabilities{ports.ChatCapabilityStreaming: true},
+		Probe:        func(context.Context) error { return nil },
+		Launch:       func(context.Context, LaunchConfig) (Launch, error) { return Launch{Command: "fake"}, nil },
+	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	driver.spawn = fakeSpawn(agent)
+	opened, err := driver.Start(context.Background(), ports.ChatStartConfig{WorkspacePath: t.TempDir()})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer opened.Close()
+	_ = nextEvent(t, opened.Events())
+	conv := opened.(*conversation)
+	conv.mu.Lock()
+	conv.activeTurn = "turn-1"
+	conv.mu.Unlock()
+
+	// claude-code's Bash tool reports rawInput as {"command": "..."} — exactly
+	// the shape the neutral `detail.command` contract must be filled from.
+	rawInput := map[string]any{"command": "/bin/zsh -lc 'ao session ls'"}
+	if err := agent.conn.SessionUpdate(context.Background(), acpsdk.SessionNotification{
+		SessionId: acpsdk.SessionId(opened.ProviderConversationID()),
+		Update: acpsdk.SessionUpdate{ToolCall: &acpsdk.SessionUpdateToolCall{
+			SessionUpdate: "tool_call", ToolCallId: "bash-1", Title: "List sessions",
+			Kind: acpsdk.ToolKindExecute, Status: acpsdk.ToolCallStatusPending,
+			RawInput: rawInput,
+		}},
+	}); err != nil {
+		t.Fatalf("tool start: %v", err)
+	}
+	started := nextEvent(t, opened.Events())
+	if started.Kind != ports.ChatEventActivityStarted {
+		t.Fatalf("started event = %#v", started)
+	}
+	var detail map[string]any
+	if err := json.Unmarshal(started.Detail, &detail); err != nil {
+		t.Fatalf("detail: %v", err)
+	}
+	if detail["command"] != "ao session ls" {
+		t.Fatalf("detail.command = %#v, want unwrapped %q", detail["command"], "ao session ls")
+	}
+	if detail["rawCommand"] != "/bin/zsh -lc 'ao session ls'" {
+		t.Fatalf("detail.rawCommand = %#v, want the verbatim provider command", detail["rawCommand"])
+	}
+	if detail["input"] == nil {
+		t.Fatalf("detail.input dropped: %#v", detail)
+	}
+}
+
+func TestRawCommandFromInput(t *testing.T) {
+	tests := []struct {
+		name string
+		raw  any
+		want string
+	}{
+		{name: "nil", raw: nil, want: ""},
+		{name: "string passthrough is not an object", raw: "go test ./...", want: ""},
+		{
+			name: "claude-code bash",
+			raw:  map[string]any{"command": "rg -n pattern src/", "description": "search"},
+			want: "rg -n pattern src/",
+		},
+		{
+			name: "shell-wrapped command",
+			raw:  map[string]any{"command": "/bin/bash -c 'go build ./...'"},
+			want: "/bin/bash -c 'go build ./...'",
+		},
+		{name: "empty command", raw: map[string]any{"command": "  "}, want: ""},
+		{name: "cmd key", raw: map[string]any{"cmd": "ls"}, want: "ls"},
+		{
+			name: "edit tool input has no command",
+			raw:  map[string]any{"file_path": "/tmp/x", "old": "a", "new": "b"},
+			want: "",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := rawCommandFromInput(tt.raw); got != tt.want {
+				t.Fatalf("rawCommandFromInput(%v) = %q, want %q", tt.raw, got, tt.want)
+			}
+		})
 	}
 }
 

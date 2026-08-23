@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
@@ -47,6 +48,8 @@ type Service struct {
 	startConfigs map[domain.SessionID]StartConfig
 	gateMu       sync.Mutex
 	gates        map[domain.SessionID]controllerGate
+	probeMu      sync.Mutex
+	probed       map[domain.AgentHarness]struct{}
 }
 
 // controllerGate serializes start/stop for one session without making provider
@@ -103,6 +106,7 @@ func New(opts Options) *Service {
 		controllers:  make(map[domain.SessionID]*Controller),
 		startConfigs: make(map[domain.SessionID]StartConfig),
 		gates:        make(map[domain.SessionID]controllerGate),
+		probed:       make(map[domain.AgentHarness]struct{}),
 	}
 }
 
@@ -133,28 +137,49 @@ type StartConfig struct {
 	MCPServers            []ports.ChatMCPServerConfig
 	// ProviderConversationID resumes an existing provider conversation when set.
 	ProviderConversationID string
+	// ControllerGeneration is supplied by a durable replacement saga that must
+	// fence the target before starting it. Ordinary starts leave it empty.
+	ControllerGeneration string
+	// RequireNativeHistory makes a missing typed provider replay fatal. Interface
+	// handoff sets it because provider context without a visible transcript would
+	// make completed Terminal work disappear from Chat.
+	RequireNativeHistory bool
+	// SkipNativeHistoryImport resumes provider context without projecting its old
+	// events before ControllerReady. Agent switching uses this because its atomic
+	// provider boundary does not exist until ControllerReady commits; AO already
+	// retains the unified timeline and the finalized continuation separately.
+	SkipNativeHistoryImport bool
 	// ControllerReady commits the controller's durable generation before event
 	// consumption starts. A controller that exits immediately must report after
 	// the launch has been marked live, so its exited signal cannot be overwritten
 	// by a later launch-completion write.
-	ControllerReady func(StartResult) error
+	ControllerReady func(StartResult) (ControllerCommit, error)
+}
+
+// ControllerCommit is the conversation state committed by ControllerReady.
+// Carrying it back across the callback avoids a fallible database read after an
+// irreversible ownership transfer.
+type ControllerCommit struct {
+	Conversation domain.ConversationRecord
 }
 
 func controllerStartResult(controller *Controller) StartResult {
 	return StartResult{
 		ProviderConversationID: controller.ProviderConversationID(),
 		ControllerGeneration:   controller.Generation(),
+		Conversation:           controller.conversation,
 	}
 }
 
-func notifyControllerReady(cfg StartConfig, controller *Controller) error {
+func notifyControllerReady(cfg StartConfig, controller *Controller) (ControllerCommit, error) {
 	if cfg.ControllerReady == nil {
-		return nil
+		return ControllerCommit{}, nil
 	}
-	if err := cfg.ControllerReady(controllerStartResult(controller)); err != nil {
-		return fmt.Errorf("commit chat controller: %w", err)
+	commit, err := cfg.ControllerReady(controllerStartResult(controller))
+	if err != nil {
+		return ControllerCommit{}, fmt.Errorf("commit chat controller: %w", err)
 	}
-	return nil
+	return commit, nil
 }
 
 func cloneStartConfig(cfg StartConfig) StartConfig {
@@ -212,6 +237,22 @@ func (s *Service) Start(ctx context.Context, cfg StartConfig) (*Controller, erro
 	}
 	defer gate.unlock()
 
+	replayCheckpoint := nativeHistoryCheckpoint{}
+	if cfg.RequireNativeHistory {
+		if s.sessions == nil {
+			return nil, errors.New("native history replay requires a session reader")
+		}
+		rec, found, err := s.sessions.GetSession(ctx, cfg.SessionID)
+		if err != nil {
+			return nil, fmt.Errorf("read native history checkpoint: %w", err)
+		}
+		if !found {
+			return nil, ports.ErrSessionNotFound
+		}
+		replayCheckpoint.latestUserPrompt = strings.TrimSpace(rec.Metadata.LatestUserPrompt)
+		replayCheckpoint.latestAssistantUpdate = strings.TrimSpace(rec.Metadata.LatestAssistantUpdate)
+	}
+
 	s.mu.RLock()
 	existing := s.controllers[cfg.SessionID]
 	s.mu.RUnlock()
@@ -240,20 +281,43 @@ func (s *Service) Start(ctx context.Context, cfg StartConfig) (*Controller, erro
 		return nil, fmt.Errorf("chat driver for %s: %w", cfg.Harness, err)
 	}
 
-	caps, err := driver.Probe(ctx)
-	if err != nil {
+	if err := s.ensureDriverReady(ctx, cfg.Harness, driver); err != nil {
 		return nil, err
-	}
-	if missing := ports.MissingProductionCapabilities(caps); len(missing) > 0 {
-		return nil, fmt.Errorf("%w: %s lacks %v", ports.ErrChatUnsupported, cfg.Harness, missing)
 	}
 
 	scope := domain.ConversationScopeSession
 	if cfg.Kind == domain.KindOrchestrator {
 		scope = domain.ConversationScopeProject
 	}
-	conversation, err := s.store.CreateConversation(
-		ctx, s.newID(), scope, cfg.ProjectID, cfg.SessionID, s.now())
+	now := s.now()
+	var resetBoundary domain.ConversationActivity
+	freshProjectContext := scope == domain.ConversationScopeProject && cfg.ProviderConversationID == ""
+	if freshProjectContext {
+		detail, marshalErr := json.Marshal(map[string]string{
+			"event":  "context.reset",
+			"reason": "native conversation was unavailable",
+		})
+		if marshalErr != nil {
+			return nil, fmt.Errorf("encode fresh context boundary: %w", marshalErr)
+		}
+		resetBoundary = domain.ConversationActivity{
+			ID:             s.newID(),
+			Kind:           domain.ActivityKindSystem,
+			Status:         domain.ActivityStatusCompleted,
+			Summary:        "Agent context reset.",
+			Detail:         detail,
+			ProviderItemID: domain.ConversationContextResetProviderItemID(cfg.SessionID),
+		}
+	}
+	conversationID := s.newID()
+	var conversation domain.ConversationRecord
+	if freshProjectContext {
+		conversation, err = s.store.CreateProjectConversationWithContextReset(
+			ctx, conversationID, cfg.ProjectID, cfg.SessionID, resetBoundary, now)
+	} else {
+		conversation, err = s.store.CreateConversation(
+			ctx, conversationID, scope, cfg.ProjectID, cfg.SessionID, now)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("open conversation: %w", err)
 	}
@@ -266,6 +330,7 @@ func (s *Service) Start(ctx context.Context, cfg StartConfig) (*Controller, erro
 			DataDir:                cfg.DataDir,
 			WorkspacePath:          cfg.WorkspacePath,
 			Env:                    cfg.Env,
+			Model:                  cfg.Model,
 			Permissions:            cfg.Permissions,
 			SystemPrompt:           cfg.SystemPrompt,
 			AdditionalDirectories:  cfg.AdditionalDirectories,
@@ -291,7 +356,10 @@ func (s *Service) Start(ctx context.Context, cfg StartConfig) (*Controller, erro
 	// Claim the durable fence before the controller starts consuming events. An
 	// older controller's projection transaction compares its generation with this
 	// session row and becomes a no-op after this point.
-	generation := s.newID()
+	generation := strings.TrimSpace(cfg.ControllerGeneration)
+	if generation == "" {
+		generation = s.newID()
+	}
 	if err := s.store.ClaimChatControllerGeneration(ctx, cfg.SessionID, generation, s.now()); err != nil {
 		_ = conv.Close()
 		return nil, fmt.Errorf("claim chat controller: %w", err)
@@ -307,34 +375,11 @@ func (s *Service) Start(ctx context.Context, cfg StartConfig) (*Controller, erro
 	// it. Settling here covers every way a controller can come up, and is a no-op
 	// for a session that has none of it.
 	s.settleOrphanedWork(ctx, cfg.SessionID, conversation.ID)
-	if conversation.Scope == domain.ConversationScopeProject &&
-		conversation.LatestSequence > 0 && cfg.ProviderConversationID == "" {
-		detail, marshalErr := json.Marshal(map[string]string{
-			"event":  "context.reset",
-			"reason": "native conversation was unavailable",
-		})
-		if marshalErr != nil {
-			_ = conv.Close()
-			return nil, fmt.Errorf("encode fresh context boundary: %w", marshalErr)
-		}
-		if boundaryErr := s.store.UpsertActivity(ctx, conversation.ID, "", domain.ConversationActivity{
-			ID:             s.newID(),
-			Kind:           domain.ActivityKindSystem,
-			Status:         domain.ActivityStatusCompleted,
-			Summary:        "Started a fresh agent context. Earlier project history remains visible in AO but was not loaded into this agent.",
-			Detail:         detail,
-			ProviderItemID: "ao-context-reset:" + string(cfg.SessionID),
-		}, s.now()); boundaryErr != nil {
-			_ = conv.Close()
-			return nil, fmt.Errorf("record fresh context boundary: %w", boundaryErr)
-		}
-	}
-
 	// A fresh generation per launch, so events from the controller this one
 	// replaced can be told apart from the current one's.
 	controller := newController(
 		cfg.SessionID, conversation, generation, conv, s.store, s.activity, s.log, s.newID, s.now)
-	if cfg.ProviderConversationID != "" {
+	if cfg.ProviderConversationID != "" && !cfg.SkipNativeHistoryImport {
 		// The provider's native thread is the continuity authority across TUI and
 		// Chat. Import it before the live projector starts so the first notification
 		// cannot appear ahead of the older prompt, tool work, and answer it follows.
@@ -352,16 +397,34 @@ func (s *Service) Start(ctx context.Context, cfg StartConfig) (*Controller, erro
 				return nil, fmt.Errorf("load conversation before native history import: %w", err)
 			}
 		}
+		if cfg.RequireNativeHistory {
+			replayCheckpoint.captureAOHighWater(
+				cfg.SessionID, existing.Turns, existing.Messages, existing.Activities,
+			)
+		}
 		if err := controller.importNativeHistory(
 			ctx, existing.Turns, existing.Messages, existing.Activities,
+			cfg.RequireNativeHistory, replayCheckpoint,
 		); err != nil {
 			_ = conv.Close()
 			return nil, err
 		}
 	}
-	if err := notifyControllerReady(cfg, controller); err != nil {
+	commit, err := notifyControllerReady(cfg, controller)
+	if err != nil {
 		_ = conv.Close()
 		return nil, err
+	}
+	if commit.Conversation.ID != "" {
+		// The controller has not been published and its projector has not started,
+		// so this is the one safe point where the activation-mutated cache fields
+		// move together. Preserve immutable identity from the controller itself:
+		// after ControllerReady commits ownership, synchronization must be an
+		// infallible assignment rather than another operation that can strand it.
+		controller.conversation.ActiveBranchID = commit.Conversation.ActiveBranchID
+		controller.conversation.Settings = commit.Conversation.Settings
+		controller.conversation.UpdatedAt = commit.Conversation.UpdatedAt
+		controller.settings = commit.Conversation.Settings
 	}
 	s.mu.Lock()
 	s.controllers[cfg.SessionID] = controller
@@ -801,6 +864,21 @@ func (s *Service) PreflightChat(ctx context.Context, harness domain.AgentHarness
 	if err != nil {
 		return fmt.Errorf("%w: %s has no chat driver", ports.ErrChatUnsupported, harness)
 	}
+	return s.ensureDriverReady(ctx, harness, driver)
+}
+
+// ensureDriverReady performs the provider capability probe once per harness for
+// the lifetime of this service. Reconciliation can resume many sessions using
+// the same provider; launching a throwaway provider process for every one makes
+// startup scale with twice the number of sessions. Only successful production-
+// capable probes are cached, so a repaired install can be retried without a
+// daemon restart.
+func (s *Service) ensureDriverReady(ctx context.Context, harness domain.AgentHarness, driver ports.ChatDriver) error {
+	s.probeMu.Lock()
+	defer s.probeMu.Unlock()
+	if _, ok := s.probed[harness]; ok {
+		return nil
+	}
 	caps, err := driver.Probe(ctx)
 	if err != nil {
 		return err
@@ -808,6 +886,7 @@ func (s *Service) PreflightChat(ctx context.Context, harness domain.AgentHarness
 	if missing := ports.MissingProductionCapabilities(caps); len(missing) > 0 {
 		return fmt.Errorf("%w: %s lacks %v", ports.ErrChatUnsupported, harness, missing)
 	}
+	s.probed[harness] = struct{}{}
 	return nil
 }
 
@@ -836,16 +915,20 @@ type StartRequest struct {
 	AdditionalDirectories []string
 	MCPServers            []ports.ChatMCPServerConfig
 	// ProviderConversationID resumes a stored conversation. Empty starts fresh.
-	ProviderConversationID string
+	ProviderConversationID  string
+	ControllerGeneration    string
+	RequireNativeHistory    bool
+	SkipNativeHistoryImport bool
 	// ControllerReady runs after the provider and generation exist but before
 	// live event projection starts.
-	ControllerReady func(StartResult) error
+	ControllerReady func(StartResult) (ControllerCommit, error)
 }
 
 // StartResult is the durable outcome of a launch.
 type StartResult struct {
 	ProviderConversationID string
 	ControllerGeneration   string
+	Conversation           domain.ConversationRecord
 }
 
 // StartChatTurn delivers the initial prompt as a normal turn.

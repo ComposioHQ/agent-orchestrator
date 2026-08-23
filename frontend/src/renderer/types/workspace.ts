@@ -212,14 +212,44 @@ function sessionNewer(a: WorkspaceSession, b: WorkspaceSession): boolean {
 	return a.id > b.id;
 }
 
+function sessionRecentlyUpdatedNewer(a: WorkspaceSession, b: WorkspaceSession): boolean {
+	const aUpdated = timestamp(a.updatedAt);
+	const bUpdated = timestamp(b.updatedAt);
+	if (aUpdated !== bUpdated) return aUpdated > bUpdated;
+	const aLastActive = sessionLastActiveTimestamp(a);
+	const bLastActive = sessionLastActiveTimestamp(b);
+	if (aLastActive !== bLastActive) return aLastActive > bLastActive;
+	return a.id > b.id;
+}
+
+function sessionLastActiveTimestamp(session: WorkspaceSession): number {
+	return (
+		validTimestamp(session.activity?.lastActivityAt) ??
+		validTimestamp(session.updatedAt) ??
+		validTimestamp(session.createdAt) ??
+		0
+	);
+}
+
 function timestamp(value?: string): number {
-	if (!value) return 0;
+	return validTimestamp(value) ?? 0;
+}
+
+function validTimestamp(value?: string): number | undefined {
+	if (!value) return undefined;
 	const parsed = Date.parse(value);
-	return Number.isNaN(parsed) ? 0 : parsed;
+	return Number.isNaN(parsed) ? undefined : parsed;
 }
 
 export function workerSessions(sessions: WorkspaceSession[]): WorkspaceSession[] {
 	return sessions.filter((s) => !isOrchestratorSession(s));
+}
+
+/** Worker sessions ordered by session update time, newest first. */
+export function sortedWorkerSessions(sessions: WorkspaceSession[]): WorkspaceSession[] {
+	return workerSessions(sessions).sort((a, b) =>
+		sessionRecentlyUpdatedNewer(b, a) ? 1 : sessionRecentlyUpdatedNewer(a, b) ? -1 : 0,
+	);
 }
 
 export function sessionIsActive(session: WorkspaceSession): boolean {

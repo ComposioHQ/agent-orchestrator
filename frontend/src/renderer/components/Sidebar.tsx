@@ -8,7 +8,6 @@ import {
 	ChevronRight,
 	Folder,
 	FolderOpen,
-	LogIn,
 	LogOut,
 	MoreVertical,
 	Pencil,
@@ -29,6 +28,7 @@ import {
 	newestActiveOrchestrator,
 	type WorkspaceSession,
 	type WorkspaceSummary,
+	sortedWorkerSessions,
 	workerSessions,
 } from "../types/workspace";
 import { getAgentActivityView, getBoardStatusDotTone } from "../lib/session-presentation";
@@ -80,7 +80,7 @@ import { cn } from "../lib/utils";
 import { useUiStore } from "../stores/ui-store"
 import { useKeybindingsStore } from "../stores/keybindings-store";
 import { ConfirmDialog } from "./ConfirmDialog";
-import { CreateProjectFlow, type CreateProjectInput } from "./CreateProjectFlow";
+import { CreateProjectFlow, type CloneProjectInput, type CreateProjectInput } from "./CreateProjectFlow";
 import { ResizeHandle } from "./ResizeHandle";
 import { isMacPlatform, isWindowsPlatform } from "../lib/platform";
 import { useCloudSession } from "../lib/cloud-session";
@@ -126,6 +126,7 @@ type SidebarProps = {
 	onPreviewLeave?: () => void;
 	workspaceError?: string;
 	workspaces: WorkspaceSummary[];
+	onCloneProject: (input: CloneProjectInput) => Promise<void>;
 	onCreateProject: (input: CreateProjectInput) => Promise<void>;
 	onInitializeProject: (path: string) => Promise<void>;
 	onRemoveProject: (projectId: string) => Promise<void>;
@@ -181,6 +182,7 @@ export function Sidebar({
 	onPreviewLeave,
 	workspaceError,
 	workspaces,
+	onCloneProject,
 	onCreateProject,
 	onInitializeProject,
 	onRemoveProject,
@@ -385,6 +387,7 @@ export function Sidebar({
 						trailing={
 							<CreateProjectButton
 								hideTrigger={workspaces.length === 0}
+								onCloneProject={onCloneProject}
 								onCreateProject={onCreateProject}
 								onInitializeProject={onInitializeProject}
 							/>
@@ -393,7 +396,7 @@ export function Sidebar({
 				</div>
 			</div>
 
-			<SidebarContent className="gap-0 px-2 group-data-[collapsible=icon]:items-center group-data-[collapsible=icon]:px-1.5">
+			<SidebarContent className="project-sidebar-scrollbar gap-0 px-2 group-data-[collapsible=icon]:items-center group-data-[collapsible=icon]:px-1.5">
 				<SidebarGroup className="p-0">
 					{/* Tree (project-sidebar__tree) */}
 					<SidebarGroupContent>
@@ -547,7 +550,7 @@ function ProjectItem({
 	// Keep completed PR sessions reachable while their runtime still exists.
 	// Only termination removes a worker from the sidebar; archived sessions stay
 	// reachable through SessionsBoard.
-	const sessions = workerSessions(workspace.sessions).filter((session) => session.isTerminated !== true);
+	const sessions = sortedWorkerSessions(workspace.sessions).filter((session) => session.isTerminated !== true);
 	// The project's live orchestrator (if any) backs the hover Orchestrator
 	// button: navigate to it when present, otherwise spawn one first.
 	const orchestrator = newestActiveOrchestrator(workspace.sessions);
@@ -1049,38 +1052,13 @@ function SessionRow({
 	);
 }
 
-// CloudAccountRow: shown above the Settings button. When unauthenticated it
-// starts the native WorkOS PKCE flow. When authenticated it shows the user's
-// email with a sign-out action in a dropdown.
+// CloudAccountRow: shown above the Settings button for an existing cloud
+// session. The unauthenticated sign-in entry stays hidden until that flow is
+// ready to expose in the app again.
 function CloudAccountRow({ tabIndex }: { tabIndex: number }) {
 	const { t } = useTranslation();
-	const { configured, session, status, signIn, signOut } = useCloudSession();
-	if (!configured || status === "loading") return null;
-
-	if (status === "unauthenticated") {
-		return (
-			<Tooltip>
-				<TooltipTrigger asChild>
-					<button
-						aria-label={t("shell.signInToAOCloud")}
-						className={cn(
-							NAV_ROW_CLASS,
-							"flex h-9 w-full items-center text-left [&_svg]:size-icon-md [&_svg]:shrink-0",
-						)}
-						onClick={() => signIn()}
-						tabIndex={tabIndex}
-						type="button"
-					>
-						<User aria-hidden="true" />
-						<span className="tracking-tight">{t("shell.signIn")}</span>
-					</button>
-				</TooltipTrigger>
-				<TooltipContent side="right" hidden={tabIndex !== -1}>
-					{t("shell.signInToAOCloud")}
-				</TooltipContent>
-			</Tooltip>
-		);
-	}
+	const { configured, session, status, signOut } = useCloudSession();
+	if (!configured || status !== "authenticated") return null;
 
 	return (
 		<DropdownMenu>
@@ -1116,27 +1094,8 @@ function CloudAccountRow({ tabIndex }: { tabIndex: number }) {
 // Icon-rail variant for collapsed sidebar.
 function CloudAccountRailButton({ tabIndex }: { tabIndex: number }) {
 	const { t } = useTranslation();
-	const { configured, session, status, signIn, signOut } = useCloudSession();
-	if (!configured || status === "loading") return null;
-
-	if (status === "unauthenticated") {
-		return (
-			<Tooltip>
-				<TooltipTrigger asChild>
-					<button
-						aria-label={t("shell.signInToAOCloud")}
-						className="grid size-control-board place-items-center rounded-lg text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground [&_svg]:size-icon-base"
-						onClick={() => signIn()}
-						tabIndex={tabIndex}
-						type="button"
-					>
-						<LogIn aria-hidden="true" />
-					</button>
-				</TooltipTrigger>
-				<TooltipContent side="right">{t("shell.signInToAOCloud")}</TooltipContent>
-			</Tooltip>
-		);
-	}
+	const { configured, session, status, signOut } = useCloudSession();
+	if (!configured || status !== "authenticated") return null;
 
 	return (
 		<Tooltip>
@@ -1353,18 +1312,22 @@ function SidebarSearchButton({ onOpen }: { onOpen: () => void }) {
 
 function CreateProjectButton({
 	hideTrigger = false,
+	onCloneProject,
 	onCreateProject,
 	onInitializeProject,
-}: Pick<SidebarProps, "onCreateProject" | "onInitializeProject"> & { hideTrigger?: boolean }) {
+}: Pick<SidebarProps, "onCloneProject" | "onCreateProject" | "onInitializeProject"> & { hideTrigger?: boolean }) {
 	const { t } = useTranslation();
 	// Single CreateProjectFlow owner for the sidebar: the header "+" stays mounted
 	// (CSS-hidden when collapsed or on the empty start page) so it can own
 	// openSignal for ⌘N on every shell route. The collapsed rail button below
 	// reuses this flow via requestCreateProject().
 	const createProjectNonce = useUiStore((state) => state.createProjectNonce);
+	const folderDropRequest = useUiStore((state) => state.folderDropRequest);
 	return (
 		<CreateProjectFlow
+			droppedPath={folderDropRequest}
 			mode="choose"
+			onCloneProject={onCloneProject}
 			onCreateProject={onCreateProject}
 			onInitializeProject={onInitializeProject}
 			openSignal={createProjectNonce}

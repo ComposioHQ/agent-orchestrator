@@ -19,6 +19,7 @@ import (
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/agentbase"
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/binaryutil"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/hookutil"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 	"github.com/aoagents/agent-orchestrator/backend/pkg/agentruntime"
@@ -164,6 +165,14 @@ func ResolveCursorBinary(ctx context.Context) (string, error) {
 				return "", err
 			}
 		}
+		for _, candidate := range binaryutil.WindowsPackageManagerBinCandidates("cursor-agent") {
+			if hookutil.IsExecutableFile(candidate) {
+				return candidate, nil
+			}
+			if err := ctx.Err(); err != nil {
+				return "", err
+			}
+		}
 		return "", fmt.Errorf("cursor: %w", ports.ErrAgentBinaryNotFound)
 	}
 
@@ -174,6 +183,7 @@ func ResolveCursorBinary(ctx context.Context) (string, error) {
 	candidates := []string{}
 	if home, err := os.UserHomeDir(); err == nil {
 		candidates = append(candidates, filepath.Join(home, ".local", "bin", "cursor-agent"))
+		candidates = append(candidates, binaryutil.UnixPackageManagerBinCandidates(home, "cursor-agent")...)
 	}
 	candidates = append(candidates,
 		"/usr/local/bin/cursor-agent",

@@ -86,6 +86,8 @@ describe("createEventTransport", () => {
 		expect(EventSourceStub.instances[0].url).toBe("http://127.0.0.1:3001/api/v1/events");
 		// All CDC event types plus onmessage are wired up.
 		expect(EventSourceStub.instances[0].listeners).toContain("session_updated");
+		expect(EventSourceStub.instances[0].listeners).toContain("review_run_created");
+		expect(EventSourceStub.instances[0].listeners).toContain("review_run_updated");
 		expect(EventSourceStub.instances[0].onmessage).toBeTypeOf("function");
 	});
 
@@ -173,6 +175,36 @@ describe("createEventTransport", () => {
 			expect(queryClient.invalidateQueries).not.toHaveBeenCalledWith({ queryKey: ["workspaces"] });
 			expect(queryClient.invalidateQueries).not.toHaveBeenCalledWith({
 				queryKey: ["session-scm-summary"],
+			});
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it("invalidates the named interface transition status for transition CDC", () => {
+		vi.useFakeTimers();
+		try {
+			const queryClient = fakeQueryClient();
+			createEventTransport(queryClient).connect();
+			EventSourceStub.instances[0].emit(
+				"session_updated",
+				JSON.stringify({
+					seq: 43,
+					projectId: "proj-1",
+					sessionId: "session-1",
+					type: "session_updated",
+					payload: {
+						id: "session-1",
+						interfaceTransitionId: "transition-1",
+						interfaceTransitionPhase: "recovery_required",
+					},
+					createdAt: "2026-08-13T08:00:00Z",
+				}),
+			);
+
+			vi.advanceTimersByTime(200);
+			expect(queryClient.invalidateQueries).toHaveBeenCalledWith({
+				queryKey: ["session-interface-transition", "session-1"],
 			});
 		} finally {
 			vi.useRealTimers();

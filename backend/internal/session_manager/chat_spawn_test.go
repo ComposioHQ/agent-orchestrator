@@ -32,6 +32,12 @@ func newChatManager(chat ChatLauncher) (*Manager, *fakeStore, *fakeRuntime) {
 
 const chatTestProject = domain.ProjectID("mer")
 
+type fixedSessionModeDefaults domain.SessionMode
+
+func (d fixedSessionModeDefaults) DefaultSessionMode(context.Context) domain.SessionMode {
+	return domain.SessionMode(d)
+}
+
 // The load-bearing property of the split: exactly one controller starts. A chat
 // spawn must not touch the terminal runtime, and a TUI spawn must not touch the
 // chat launcher. Anything else means two writers on one conversation.
@@ -48,8 +54,12 @@ type recordingLauncher struct {
 	turns       []string
 	// relayed is what arrived through Manager.Send rather than as an initial
 	// prompt, kept separate so a test can tell the two apart.
-	relayed []string
-	stopped []domain.SessionID
+	relayed  []string
+	relayIDs []string
+	stopped  []domain.SessionID
+	armed    []domain.SessionID
+	prepared []domain.SessionID
+	aborted  []domain.SessionID
 }
 
 func (l *recordingLauncher) SupportsChat(_ domain.AgentHarness) bool { return true }
@@ -68,8 +78,11 @@ func (l *recordingLauncher) StartChat(_ context.Context, cfg ChatStart) (ChatSta
 		ProviderConversationID: "thread-1",
 		ControllerGeneration:   "gen-1",
 	}
+	if cfg.ControllerGeneration != "" {
+		started.ControllerGeneration = cfg.ControllerGeneration
+	}
 	if cfg.ControllerReady != nil {
-		if err := cfg.ControllerReady(started); err != nil {
+		if _, err := cfg.ControllerReady(started); err != nil {
 			return ChatStarted{}, err
 		}
 	}
@@ -86,11 +99,13 @@ func (l *recordingLauncher) StartChatTurn(_ context.Context, _ domain.SessionID,
 
 func (l *recordingLauncher) RelayChatTurn(_ context.Context, _ domain.SessionID, text string) (string, error) {
 	l.relayed = append(l.relayed, text)
+	l.relayIDs = append(l.relayIDs, "")
 	return "turn-relay", l.turnErr
 }
 
-func (l *recordingLauncher) RelayChatTurnWithID(_ context.Context, _ domain.SessionID, text, _ string) (string, error) {
+func (l *recordingLauncher) RelayChatTurnWithID(_ context.Context, _ domain.SessionID, text, clientMessageID string) (string, error) {
 	l.relayed = append(l.relayed, text)
+	l.relayIDs = append(l.relayIDs, clientMessageID)
 	return "turn-relay", l.turnErr
 }
 
@@ -102,6 +117,55 @@ func (l *recordingLauncher) StopChat(_ context.Context, id domain.SessionID) err
 
 func (l *recordingLauncher) HasLiveChatController(domain.SessionID) bool {
 	return l.live
+}
+
+func (l *recordingLauncher) ArmChatHandoff(_ context.Context, id domain.SessionID, _ domain.SessionInterfaceTransitionPolicy) error {
+	l.armed = append(l.armed, id)
+	return nil
+}
+
+func (l *recordingLauncher) PrepareChatHandoff(_ context.Context, id domain.SessionID, _ domain.SessionInterfaceTransitionPolicy) error {
+	l.prepared = append(l.prepared, id)
+	return nil
+}
+
+func (l *recordingLauncher) AbortChatHandoff(id domain.SessionID) {
+	l.aborted = append(l.aborted, id)
+}
+
+func TestReconcileLive_ChatRelaunchesInExistingWorktree(t *testing.T) {
+	launcher := &recordingLauncher{}
+	m, st, rt := newChatManager(launcher)
+	ws := m.workspace.(*fakeWorkspace)
+	lcm := m.lcm.(*fakeLCM)
+	rec := domain.SessionRecord{
+		ID: "mer-1", ProjectID: chatTestProject, Kind: domain.KindWorker,
+		Harness: domain.HarnessCodex, Mode: domain.SessionModeChat,
+		Metadata: domain.SessionMetadata{
+			Branch: "ao/mer-1/root", WorkspacePath: "/ws/mer-1",
+			ProviderConversationID: "thread-existing",
+		},
+	}
+	st.sessions[rec.ID] = rec
+
+	if err := m.reconcileLive(context.Background(), rec); err != nil {
+		t.Fatalf("reconcileLive: %v", err)
+	}
+	if len(launcher.started) != 1 || launcher.started[0].ProviderConversationID != "thread-existing" {
+		t.Fatalf("chat starts = %+v, want one native resume", launcher.started)
+	}
+	if rt.created != 0 {
+		t.Fatalf("terminal runtime Create calls = %d, want 0 for Chat", rt.created)
+	}
+	if ws.stashCalls != 0 {
+		t.Fatalf("StashUncommitted calls = %d, want 0", ws.stashCalls)
+	}
+	if lcm.terminated[rec.ID] != 0 || st.sessions[rec.ID].IsTerminated {
+		t.Fatalf("chat session was terminated during in-place recovery: calls=%d row=%+v", lcm.terminated[rec.ID], st.sessions[rec.ID])
+	}
+	if len(ws.restoreConfigs) != 1 || ws.restoreConfigs[0].Path != rec.Metadata.WorkspacePath {
+		t.Fatalf("Restore configs = %+v, want existing Chat worktree", ws.restoreConfigs)
+	}
 }
 
 func seedChatResumeSession(store *fakeStore, state domain.ActivityState) {
@@ -294,6 +358,100 @@ func TestChatSpawnWithoutLauncherIsRefusedNotDowngraded(t *testing.T) {
 	}
 	if runtime.created != 0 {
 		t.Fatalf("a refused chat spawn created %d runtimes — it downgraded to TUI", runtime.created)
+	}
+}
+
+func TestDefaultChatSpawnFallsBackToTUIWhenUnavailable(t *testing.T) {
+	tests := []struct {
+		name            string
+		withoutLauncher bool
+		preflightErr    error
+	}{
+		{name: "launcher not configured", withoutLauncher: true},
+		{name: "harness unsupported", preflightErr: ports.ErrChatUnsupported},
+		{name: "driver unavailable", preflightErr: ports.ErrChatDriverUnavailable},
+		{name: "driver incompatible", preflightErr: ports.ErrChatDriverIncompatible},
+		{name: "authentication required", preflightErr: ports.ErrChatAuthRequired},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			launcher := &recordingLauncher{preflightErr: tt.preflightErr}
+			var chat ChatLauncher = launcher
+			if tt.withoutLauncher {
+				chat = nil
+			}
+			mgr, _, runtime := newChatManager(chat)
+			mgr.defaults = fixedSessionModeDefaults(domain.SessionModeChat)
+
+			rec, _, _, err := mgr.Spawn(context.Background(), ports.SpawnConfig{
+				ProjectID: chatTestProject,
+				Kind:      domain.KindWorker,
+				Harness:   domain.HarnessCodex,
+			})
+			if err != nil {
+				t.Fatalf("Spawn: %v", err)
+			}
+			if rec.Mode != domain.SessionModeTUI {
+				t.Fatalf("mode = %q, want TUI fallback", rec.Mode)
+			}
+			if runtime.created == 0 {
+				t.Fatal("TUI fallback created no terminal runtime")
+			}
+			if len(launcher.started) != 0 {
+				t.Fatalf("fallback started %d Chat controllers, want 0", len(launcher.started))
+			}
+		})
+	}
+}
+
+func TestDefaultChatSpawnReturnsUnexpectedPreflightError(t *testing.T) {
+	preflightErr := errors.New("probe state corrupted")
+	launcher := &recordingLauncher{preflightErr: preflightErr}
+	mgr, store, runtime := newChatManager(launcher)
+	mgr.defaults = fixedSessionModeDefaults(domain.SessionModeChat)
+
+	_, _, _, err := mgr.Spawn(context.Background(), ports.SpawnConfig{
+		ProjectID: chatTestProject,
+		Kind:      domain.KindWorker,
+		Harness:   domain.HarnessCodex,
+	})
+	if !errors.Is(err, preflightErr) {
+		t.Fatalf("Spawn error = %v, want unexpected preflight error", err)
+	}
+	if runtime.created != 0 {
+		t.Fatalf("unexpected preflight failure created %d terminal runtimes, want 0", runtime.created)
+	}
+	sessions, listErr := store.ListAllSessions(context.Background())
+	if listErr != nil {
+		t.Fatalf("list sessions: %v", listErr)
+	}
+	if len(sessions) != 0 {
+		t.Fatalf("unexpected preflight failure left %d session rows, want 0", len(sessions))
+	}
+}
+
+func TestDefaultChatSpawnUsesChatWhenAvailable(t *testing.T) {
+	launcher := &recordingLauncher{}
+	mgr, _, runtime := newChatManager(launcher)
+	mgr.defaults = fixedSessionModeDefaults(domain.SessionModeChat)
+
+	rec, _, _, err := mgr.Spawn(context.Background(), ports.SpawnConfig{
+		ProjectID: chatTestProject,
+		Kind:      domain.KindWorker,
+		Harness:   domain.HarnessCodex,
+	})
+	if err != nil {
+		t.Fatalf("Spawn: %v", err)
+	}
+	if rec.Mode != domain.SessionModeChat {
+		t.Fatalf("mode = %q, want chat", rec.Mode)
+	}
+	if runtime.created != 0 {
+		t.Fatalf("default Chat spawn created %d terminal runtimes, want 0", runtime.created)
+	}
+	if len(launcher.preflighted) != 1 || len(launcher.started) != 1 {
+		t.Fatalf("default Chat dispatch: preflight=%v started=%d, want one of each",
+			launcher.preflighted, len(launcher.started))
 	}
 }
 

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ServerConfig } from "../config";
 import {
+	acknowledgeSessionInterfaceTransitionNotice,
 	cancelSessionInterfaceTransition,
 	getSessionInterfaceTransition,
 	startSessionInterfaceTransition,
@@ -25,6 +26,8 @@ export function useInterfaceTransition(
 	const [loading, setLoading] = useState(Boolean(cfg && sessionId));
 	const [starting, setStarting] = useState(false);
 	const [cancelling, setCancelling] = useState(false);
+	const [acknowledgingNotice, setAcknowledgingNotice] = useState(false);
+	const [acknowledgeNoticeError, setAcknowledgeNoticeError] = useState<string>();
 	const [error, setError] = useState<string>();
 	const settledRef = useRef("");
 	const onSettledRef = useRef(onSettled);
@@ -98,5 +101,43 @@ export function useInterfaceTransition(
 		}
 	}, [cfg, refresh, sessionId]);
 
-	return { status, transition: status?.transition, loading, starting, cancelling, error, start, cancel, refresh };
+	const acknowledgeNotice = useCallback(
+		async (transitionId: string) => {
+			if (!cfg) throw new Error("No AO server configured");
+			setAcknowledgingNotice(true);
+			setAcknowledgeNoticeError(undefined);
+			try {
+				const transition = await acknowledgeSessionInterfaceTransitionNotice(
+					cfg,
+					sessionId,
+					transitionId,
+				);
+				setStatus((current) =>
+					current?.transition?.id === transition.id ? { ...current, transition } : current,
+				);
+			} catch (cause) {
+				const message = cause instanceof Error ? cause.message : String(cause);
+				setAcknowledgeNoticeError(message);
+				throw cause;
+			} finally {
+				setAcknowledgingNotice(false);
+			}
+		},
+		[cfg, sessionId],
+	);
+
+	return {
+		status,
+		transition: status?.transition,
+		loading,
+		starting,
+		cancelling,
+		acknowledgingNotice,
+		error,
+		acknowledgeNoticeError,
+		start,
+		cancel,
+		acknowledgeNotice,
+		refresh,
+	};
 }

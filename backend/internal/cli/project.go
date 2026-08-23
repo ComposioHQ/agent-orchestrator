@@ -110,6 +110,7 @@ type projectConfig struct {
 	Worker            roleOverride        `json:"worker,omitempty"`
 	Orchestrator      roleOverride        `json:"orchestrator,omitempty"`
 	TrackerIntake     trackerIntakeConfig `json:"trackerIntake,omitempty"`
+	AutoReview        bool                `json:"autoReview,omitempty"`
 }
 
 // setConfigRequest mirrors the daemon's SetConfigInput body for
@@ -310,7 +311,7 @@ func newProjectSetConfigCommand(ctx *commandContext) *cobra.Command {
 		},
 	}
 	f := cmd.Flags()
-	f.StringVar(&opts.defaultBranch, "default-branch", "", "Base branch new session worktrees are created from")
+	f.StringVar(&opts.defaultBranch, "default-branch", "", "Base branch for new worktrees; auto infers each repository's Git default")
 	f.StringVar(&opts.sessionPrefix, "session-prefix", "", "Displayed session-id prefix")
 	f.StringVar(&opts.model, "model", "", "Agent model override (e.g. claude-opus-4-5)")
 	f.StringVar(&opts.permission, "permission", "", "Permission mode: default, accept-edits, auto, bypass-permissions")

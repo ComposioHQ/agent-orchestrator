@@ -73,6 +73,14 @@ export function BotIcon(props: IconProps) {
 	);
 }
 
+export function CheckIcon(props: IconProps) {
+	return (
+		<Icon name="check" {...props}>
+			<path d="M20 6 9 17l-5-5" />
+		</Icon>
+	);
+}
+
 export function FileCodeIcon(props: IconProps) {
 	return (
 		<Icon name="file-code-2" {...props}>
@@ -130,6 +138,16 @@ export function MessageSquareIcon(props: IconProps) {
 	return (
 		<Icon name="message-square" {...props}>
 			<path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z" />
+		</Icon>
+	);
+}
+
+export function MoreHorizontalIcon(props: IconProps) {
+	return (
+		<Icon name="more-horizontal" {...props}>
+			<circle cx="12" cy="12" r="1" />
+			<circle cx="19" cy="12" r="1" />
+			<circle cx="5" cy="12" r="1" />
 		</Icon>
 	);
 }

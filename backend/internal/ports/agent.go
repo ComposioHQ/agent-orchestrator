@@ -71,6 +71,14 @@ type AgentBinaryResolver interface {
 	ResolveBinary(ctx context.Context) (path string, err error)
 }
 
+// AgentNativeSessionTerminator is an optional adapter capability used before
+// AO destroys a terminal runtime or worktree whose agent may keep running in a
+// detached native process. Implementations must affect only the supplied
+// session and leave its transcript resumable.
+type AgentNativeSessionTerminator interface {
+	TerminateNativeSession(ctx context.Context, session SessionRef) error
+}
+
 // AgentInterfaceHandoff is an OPTIONAL capability for a TUI adapter whose
 // native resume identity is also understood by its structured Chat driver.
 // Merely supporting GetRestoreCommand is not enough: some harnesses expose a
@@ -147,6 +155,13 @@ type CachedAgentModelCatalog struct {
 	CatalogJSON   string
 	Source        string
 	FetchedAt     time.Time
+}
+
+// AgentInventoryCache persists the last successful advisory installation and
+// authentication probe across daemon restarts.
+type AgentInventoryCache interface {
+	GetAgentInventoryCache(ctx context.Context) (inventoryJSON string, observedAt time.Time, ok bool, err error)
+	UpsertAgentInventoryCache(ctx context.Context, inventoryJSON string, observedAt time.Time) error
 }
 
 // AgentModelCatalogCache persists normalized model catalogs across daemon
@@ -413,6 +428,9 @@ type SessionRef struct {
 	ID            string
 	Metadata      map[string]string
 	WorkspacePath string
+	// DataDir is AO's isolated state root. Native lifecycle commands must use it
+	// as their stable working/configuration root, never the session worktree.
+	DataDir string
 }
 
 // SessionInfo contains agent-owned session metadata.

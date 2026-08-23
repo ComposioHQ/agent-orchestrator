@@ -53,6 +53,8 @@ type UiState = {
 	resolvedTheme: Theme;
 	/** Named color style theme (e.g. "catppuccin", "nord") — independent of light/dark mode. */
 	themeStyle: ThemeStyle;
+	/** When true, developer-only release controls are available. Default off. */
+	developerMode: boolean;
 	restartingProjectIds: ReadonlySet<string>;
 	orchestratorReplacementErrors: Record<string, OrchestratorReplacementFailure>;
 	orchestratorStartupErrors: Record<string, string>;
@@ -64,6 +66,12 @@ type UiState = {
 	// Bumps to ask the sidebar's create-project flow to open (the ⌘N fallback
 	// when no project is in scope).
 	createProjectNonce: number;
+	// Transient "a folder was dropped onto the app window — open the
+	// create-project flow for this path" signal, mirroring newTaskRequest: the
+	// nonce always bumps so dropping the same folder twice in a row still
+	// re-fires. Consumed by the same CreateProjectFlow instance that owns
+	// openSignal for ⌘N (Sidebar's CreateProjectButton).
+	folderDropRequest: { path: string; nonce: number } | null;
 	// Bumps to ask for a new standalone shell terminal. Like newTaskRequest this
 	// is a one-shot signal, not state: the tab-strip + button and Ctrl+Shift+` both
 	// raise it so they cannot drift apart, and a repeat press re-fires because
@@ -83,6 +91,7 @@ type UiState = {
 	setWorkbenchTab: (tab: WorkbenchTab) => void;
 	setThemePreference: (theme: ThemePreference) => void;
 	setThemeStyle: (style: ThemeStyle) => void;
+	setDeveloperMode: (enabled: boolean) => void;
 	openGlobalSettings: () => void;
 	openProjectSettings: (projectId: string) => void;
 	closeSettings: () => void;
@@ -100,6 +109,7 @@ type UiState = {
 	setOrchestratorStartupError: (projectId: string, message: string | null) => void;
 	requestNewTask: (projectId: string) => void;
 	requestCreateProject: () => void;
+	requestCreateProjectFromPath: (path: string) => void;
 	requestNewShellTerminal: () => void;
 	setActiveShellTerminal: (handleId: string | null) => void;
 	setVisibleTerminalKind: (sessionId: string, kind: TerminalTarget["kind"]) => void;
@@ -113,6 +123,7 @@ export type OrchestratorReplacementFailure = {
 };
 
 const sidebarStorageKey = "ao.sidebar.open";
+const developerModeStorageKey = "ao.developerMode";
 function getLocalStorage() {
 	if (typeof window === "undefined" || !window.localStorage) return null;
 	return window.localStorage;
@@ -120,6 +131,10 @@ function getLocalStorage() {
 
 function initialSidebarOpen() {
 	return getLocalStorage()?.getItem(sidebarStorageKey) !== "false";
+}
+
+function initialDeveloperMode() {
+	return getLocalStorage()?.getItem(developerModeStorageKey) === "true";
 }
 
 function inspectorState(sessions: Record<string, InspectorSessionState>, sessionId: string): InspectorSessionState {
@@ -138,11 +153,13 @@ export const useUiStore = create<UiState>((set, get) => ({
 	themePreference: initialThemePreference,
 	resolvedTheme: resolveTheme(initialThemePreference),
 	themeStyle: initialThemeStyle,
+	developerMode: initialDeveloperMode(),
 	restartingProjectIds: new Set<string>(),
 	orchestratorReplacementErrors: {},
 	orchestratorStartupErrors: {},
 	newTaskRequest: null,
 	createProjectNonce: 0,
+	folderDropRequest: null,
 	newShellTerminalNonce: 0,
 	activeShellTerminalHandleId: null,
 	visibleTerminalKindBySession: {},
@@ -163,6 +180,10 @@ export const useUiStore = create<UiState>((set, get) => ({
 			applyDocumentThemeStyle(themeStyle);
 			set({ themeStyle });
 		});
+	},
+	setDeveloperMode: (developerMode) => {
+		getLocalStorage()?.setItem(developerModeStorageKey, String(developerMode));
+		set({ developerMode });
 	},
 	openGlobalSettings: () => set({ settingsModal: { scope: "global" } }),
 	openProjectSettings: (projectId) => set({ settingsModal: { scope: "project", projectId } }),
@@ -274,6 +295,8 @@ export const useUiStore = create<UiState>((set, get) => ({
 	requestNewTask: (projectId) =>
 		set((state) => ({ newTaskRequest: { projectId, nonce: (state.newTaskRequest?.nonce ?? 0) + 1 } })),
 	requestCreateProject: () => set((state) => ({ createProjectNonce: state.createProjectNonce + 1 })),
+	requestCreateProjectFromPath: (path) =>
+		set((state) => ({ folderDropRequest: { path, nonce: (state.folderDropRequest?.nonce ?? 0) + 1 } })),
 	requestNewShellTerminal: () => set((state) => ({ newShellTerminalNonce: state.newShellTerminalNonce + 1 })),
 	setActiveShellTerminal: (activeShellTerminalHandleId) => set({ activeShellTerminalHandleId }),
 	setVisibleTerminalKind: (sessionId, kind) =>

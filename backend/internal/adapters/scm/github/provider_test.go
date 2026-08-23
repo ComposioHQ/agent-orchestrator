@@ -1260,6 +1260,42 @@ func TestSCMObservationUsesRollupStateWhenContextsPaginated(t *testing.T) {
 	}
 }
 
+func TestSCMBatchQueryRequestsStablePullRequestID(t *testing.T) {
+	query, _ := buildSCMBatchQuery([]ports.SCMPRRef{{
+		Repo:   ports.SCMRepo{Provider: "github", Host: "github.com", Owner: "octocat", Name: "hello"},
+		Number: 42,
+	}})
+	if !strings.Contains(query, "number id url") {
+		t.Fatalf("batch query does not request the stable pull request id:\n%s", query)
+	}
+}
+
+func TestSCMObservationCarriesStableIDAndRequestedURLAlias(t *testing.T) {
+	fx := basePRFixture()
+	var pr map[string]any
+	fx.prData(func(m map[string]any) {
+		pr = m
+		m["id"] = "PR_kwDOStable"
+		m["url"] = "https://github.com/new-owner/hello/pull/42"
+	})
+	ref := ports.SCMPRRef{
+		Repo:   ports.SCMRepo{Provider: "github", Host: "github.com", Owner: "old-owner", Name: "hello", Repo: "old-owner/hello"},
+		Number: 42,
+		URL:    "https://github.com/old-owner/hello/pull/42",
+	}
+
+	obs := scmObservationFromGraphQL(ref, pr)
+	if obs.PR.ProviderID != "PR_kwDOStable" {
+		t.Fatalf("ProviderID = %q, want PR_kwDOStable", obs.PR.ProviderID)
+	}
+	if obs.PR.URLAlias != ref.URL {
+		t.Fatalf("URLAlias = %q, want %s", obs.PR.URLAlias, ref.URL)
+	}
+	if obs.Repo != "new-owner/hello" {
+		t.Fatalf("Repo = %q, want canonical new-owner/hello", obs.Repo)
+	}
+}
+
 func TestSCMMergeabilityBlocksReviewRequiredAndDraft(t *testing.T) {
 	cases := []struct {
 		name        string
@@ -1280,6 +1316,41 @@ func TestSCMMergeabilityBlocksReviewRequiredAndDraft(t *testing.T) {
 				t.Fatalf("blockers = %v, want %q", got.Blockers, tc.wantBlocker)
 			}
 		})
+	}
+}
+
+func TestFetchPullRequestsMarksMissingPRNotFound(t *testing.T) {
+	fake := newFakeGH(t)
+	fx := basePRFixture()
+	var pr map[string]any
+	fx.prData(func(m map[string]any) { pr = m })
+	fake.on(http.MethodPost, "/graphql", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"data": map[string]any{
+				"pr0": map[string]any{"pullRequest": nil},
+				"pr1": map[string]any{"pullRequest": pr},
+			},
+		})
+	})
+	p := newProviderForTest(t, fake)
+	repo := ports.SCMRepo{Provider: "github", Host: "github.com", Owner: "octocat", Name: "hello", Repo: "octocat/hello"}
+
+	obs, err := p.FetchPullRequests(ctx(), []ports.SCMPRRef{
+		{Repo: repo, Number: 404},
+		{Repo: repo, Number: 42},
+	})
+	if err != nil {
+		t.Fatalf("FetchPullRequests: %v", err)
+	}
+	if len(obs) != 2 {
+		t.Fatalf("observations = %d, want 2", len(obs))
+	}
+	if obs[0].Fetched || !errors.Is(obs[0].Error, ports.ErrSCMNotFound) {
+		t.Fatalf("missing observation = %+v, want Fetched=false ErrSCMNotFound", obs[0])
+	}
+	if !obs[1].Fetched || obs[1].PR.Number != 42 {
+		t.Fatalf("second observation = %+v, want fetched PR 42", obs[1])
 	}
 }
 
@@ -1693,5 +1764,47 @@ func TestCommitChecksGuard_PaginatedFingerprintInvalidatesLaterPageRun(t *testin
 	}
 	if res.NotModified {
 		t.Fatal("guard stayed NotModified after a page-2 run transitioned (fingerprint bug)")
+	}
+}
+
+// A ref the batch query cannot resolve (null pullRequest — deleted repo,
+// revoked access, dead rename redirect) yields a positionally aligned
+// Fetched=false placeholder carrying ErrNotFound, so the observer can log the
+// permanent miss at Debug instead of warning every tick.
+func TestFetchPullRequestsStampsNotFoundPlaceholder(t *testing.T) {
+	fake := newFakeGH(t)
+	fx := basePRFixture()
+	var pr map[string]any
+	fx.prData(func(m map[string]any) { pr = m })
+	fake.on(http.MethodPost, "/graphql", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"data": map[string]any{
+				"pr0": map[string]any{"pullRequest": nil},
+				"pr1": map[string]any{"pullRequest": pr},
+			},
+		})
+	})
+	p := newProviderForTest(t, fake)
+	repoGone := ports.SCMRepo{Provider: "github", Host: "github.com", Owner: "gone", Name: "repo", Repo: "gone/repo"}
+	repoOK := ports.SCMRepo{Provider: "github", Host: "github.com", Owner: "octocat", Name: "hello", Repo: "octocat/hello"}
+	obs, err := p.FetchPullRequests(ctx(), []ports.SCMPRRef{
+		{Repo: repoGone, Number: 7, URL: "https://github.com/gone/repo/pull/7"},
+		{Repo: repoOK, Number: 42},
+	})
+	if err != nil {
+		t.Fatalf("FetchPullRequests: %v", err)
+	}
+	if len(obs) != 2 {
+		t.Fatalf("observations = %d, want 2 (positionally aligned)", len(obs))
+	}
+	if obs[0].Fetched || !errors.Is(obs[0].Error, ports.ErrSCMNotFound) {
+		t.Fatalf("missing PR placeholder = Fetched:%v Error:%v, want Fetched=false wrapping ErrSCMNotFound", obs[0].Fetched, obs[0].Error)
+	}
+	if obs[0].Repo != "gone/repo" || obs[0].PR.Number != 7 {
+		t.Fatalf("placeholder identity = %s#%d, want gone/repo#7", obs[0].Repo, obs[0].PR.Number)
+	}
+	if !obs[1].Fetched || obs[1].PR.Number != 42 {
+		t.Fatalf("aligned hit = Fetched:%v #%d, want fetched #42 at index 1", obs[1].Fetched, obs[1].PR.Number)
 	}
 }

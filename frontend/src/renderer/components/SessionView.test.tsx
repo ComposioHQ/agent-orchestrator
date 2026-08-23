@@ -16,10 +16,30 @@ const interfaceTransitionMock = vi.hoisted(() => ({
 	start: vi.fn(),
 	resetStartError: vi.fn(),
 	cancel: vi.fn(),
+	acknowledgeNotice: vi.fn(),
 }));
 const interfaceTransitionState = vi.hoisted(() => ({
 	status: undefined as
-		| { supported: boolean; targetMode?: "chat" | "tui"; reason?: string; reasonCode?: string }
+		| {
+				supported: boolean;
+				targetMode?: "chat" | "tui";
+				reason?: string;
+				reasonCode?: string;
+				transition?: {
+					id: string;
+					sessionId: string;
+					sourceMode: "chat" | "tui";
+					targetMode: "chat" | "tui";
+					policy: "drain" | "interrupt";
+					phase: "failed" | "recovery_required";
+					errorCode?: string;
+					errorDetail?: string;
+					createdAt: string;
+					updatedAt: string;
+					completedAt?: string;
+					noticeAcknowledgedAt?: string;
+				};
+		  }
 		| undefined,
 }));
 const reviewGetMock = vi.hoisted(() => vi.fn());
@@ -40,9 +60,18 @@ vi.mock("../hooks/useWindowFullScreen", () => ({
 }));
 vi.mock("../hooks/useSessionInterfaceTransition", () => ({
 	interfaceTransitionIsActive: () => false,
+	interfaceTransitionHasUnacknowledgedNotice: (transition?: {
+		phase?: string;
+		noticeAcknowledgedAt?: string;
+	}) =>
+		Boolean(
+			transition &&
+				!transition.noticeAcknowledgedAt &&
+				(transition.phase === "failed" || transition.phase === "recovery_required"),
+		),
 	useSessionInterfaceTransition: () => ({
 		status: interfaceTransitionState.status,
-		transition: undefined,
+		transition: interfaceTransitionState.status?.transition,
 		isLoading: false,
 		statusError: undefined,
 		start: interfaceTransitionMock.start,
@@ -52,6 +81,9 @@ vi.mock("../hooks/useSessionInterfaceTransition", () => ({
 		cancel: interfaceTransitionMock.cancel,
 		cancelling: false,
 		cancelError: undefined,
+		acknowledgeNotice: interfaceTransitionMock.acknowledgeNotice,
+		acknowledgingNotice: false,
+		acknowledgeNoticeError: undefined,
 	}),
 }));
 
@@ -140,11 +172,21 @@ vi.mock("./chat/SessionChatSurface", () => ({
 		headerActions,
 		reviewerTerminal,
 		onOpenReviewerTerminal,
+		reviewerTarget,
+		onSelectChat,
+		shellTerminals = [],
+		shellTarget,
+		onSelectShellTerminal,
 	}: {
 		onOpenShell?: () => void;
 		headerActions?: ReactNode;
 		reviewerTerminal?: { handleId: string; harness: string };
 		onOpenReviewerTerminal?: (target: { handleId: string; harness: string }) => void;
+		reviewerTarget?: { kind: "reviewer"; handleId: string; harness: string; sessionId: string };
+		onSelectChat?: () => void;
+		shellTerminals?: Array<{ handleId: string; title: string }>;
+		shellTarget?: { kind: "shell"; handleId: string };
+		onSelectShellTerminal?: (handleId: string) => void;
 	}) => (
 		<div data-testid="chat-surface">
 			chat surface
@@ -152,6 +194,31 @@ vi.mock("./chat/SessionChatSurface", () => ({
 			{reviewerTerminal ? (
 				<button type="button" onClick={() => onOpenReviewerTerminal?.(reviewerTerminal)}>
 					Reviewer
+				</button>
+			) : null}
+			{reviewerTarget ? (
+				<div data-testid="terminal-target">reviewer</div>
+			) : null}
+			{reviewerTarget ? (
+				<button type="button" onClick={onSelectChat}>
+					select chat tab
+				</button>
+			) : null}
+			<div data-testid="shell-tabs">
+				{shellTerminals.map((shell) => (
+					<button
+						key={shell.handleId}
+						onClick={() => onSelectShellTerminal?.(shell.handleId)}
+						type="button"
+					>
+						{shell.title}
+					</button>
+				))}
+			</div>
+			{shellTarget ? <div data-testid="terminal-target">shell</div> : null}
+			{shellTarget ? (
+				<button type="button" onClick={onSelectChat}>
+					select chat tab
 				</button>
 			) : null}
 			<button type="button" onClick={onOpenShell}>
@@ -398,7 +465,8 @@ describe("SessionView", () => {
 	closeShellTerminalMock.mockReset();
 	interfaceTransitionMock.start.mockReset();
 		interfaceTransitionMock.resetStartError.mockReset();
-		interfaceTransitionMock.cancel.mockReset();
+	interfaceTransitionMock.cancel.mockReset();
+		interfaceTransitionMock.acknowledgeNotice.mockReset();
 		interfaceTransitionState.status = undefined;
 		reviewGetMock.mockReset();
 		reviewGetMock.mockResolvedValue({ data: { reviewerHandleId: "", reviews: [], runs: [] }, error: undefined });
@@ -477,12 +545,15 @@ describe("SessionView", () => {
 		render(<SessionView sessionId="sess-1" />);
 		expect(screen.getByTestId("chat-surface")).toBeInTheDocument();
 
+		// Selecting the shell keeps the chat surface mounted — the shell renders
+		// as a tab inside it instead of swapping in the terminal CenterPane.
 		act(() => useUiStore.getState().setActiveShellTerminal("chat-shell"));
-		expect(screen.getByText("terminal center")).toBeInTheDocument();
-		expect(screen.queryByTestId("chat-surface")).not.toBeInTheDocument();
-
-		fireEvent.click(screen.getByRole("button", { name: "select agent tab" }));
 		expect(screen.getByTestId("chat-surface")).toBeInTheDocument();
+		expect(screen.getByTestId("terminal-target")).toHaveTextContent("shell");
+
+		fireEvent.click(screen.getByRole("button", { name: "select chat tab" }));
+		expect(screen.getByTestId("chat-surface")).toBeInTheDocument();
+		expect(screen.queryByTestId("terminal-target")).not.toBeInTheDocument();
 	});
 
 	// The strip only ever shows the session on screen — pinning another session's
@@ -531,12 +602,16 @@ describe("SessionView", () => {
 		render(<SessionView sessionId="sess-1" />);
 		expect(screen.getByText("chat surface")).toBeInTheDocument();
 
+		// Opening a shell from chat keeps the chat surface mounted: the shell is
+		// a tab in its header and renders as the surface's active pane.
 		fireEvent.click(screen.getByRole("button", { name: "open shell from chat" }));
-		expect(screen.getByText("terminal center")).toBeInTheDocument();
-		expect(screen.getByTestId("shell-tabs")).toHaveTextContent("chat shell");
-
-		fireEvent.click(screen.getByRole("button", { name: "select agent tab" }));
 		expect(screen.getByText("chat surface")).toBeInTheDocument();
+		expect(screen.getByTestId("shell-tabs")).toHaveTextContent("chat shell");
+		expect(screen.getByTestId("terminal-target")).toHaveTextContent("shell");
+
+		fireEvent.click(screen.getByRole("button", { name: "select chat tab" }));
+		expect(screen.getByText("chat surface")).toBeInTheDocument();
+		expect(screen.queryByTestId("terminal-target")).not.toBeInTheDocument();
 	});
 
 	it.each([
@@ -666,6 +741,37 @@ describe("SessionView", () => {
 		expect(interfaceTransitionMock.start).toHaveBeenCalledWith({ targetMode: "chat", policy: "drain" });
 	});
 
+	it("does not resurrect an acknowledged recovery notice after the session view remounts", async () => {
+		const transition = {
+			id: "transition-recovered",
+			sessionId: "sess-1",
+			sourceMode: "chat" as const,
+			targetMode: "tui" as const,
+			policy: "drain" as const,
+			phase: "recovery_required" as const,
+			errorCode: "DAEMON_RESTARTED",
+			errorDetail: "AO recovered the session in its last committed mode.",
+			createdAt: "2026-08-12T10:00:00Z",
+			updatedAt: "2026-08-12T10:01:00Z",
+			completedAt: "2026-08-12T10:01:00Z",
+		};
+		interfaceTransitionState.status = { supported: true, targetMode: "chat", transition };
+		interfaceTransitionMock.acknowledgeNotice.mockImplementation(async () => {
+			Object.assign(transition, { noticeAcknowledgedAt: "2026-08-13T08:00:00Z" });
+		});
+
+		const view = render(<SessionView sessionId="sess-1" />);
+		expect(screen.getByText(transition.errorDetail)).toBeInTheDocument();
+		fireEvent.click(screen.getByRole("button", { name: "Dismiss interface switch message" }));
+		await waitFor(() =>
+			expect(interfaceTransitionMock.acknowledgeNotice).toHaveBeenCalledWith("transition-recovered"),
+		);
+
+		view.unmount();
+		render(<SessionView sessionId="sess-1" />);
+		expect(screen.queryByText(transition.errorDetail)).not.toBeInTheDocument();
+	});
+
 	it.each([
 		["worker", "sess-1"],
 		["orchestrator", "sess-orch"],
@@ -773,7 +879,13 @@ describe("SessionView", () => {
 		render(<SessionView sessionId="sess-1" />);
 		await screen.findByRole("button", { name: "Reviewer" });
 		fireEvent.click(screen.getByRole("button", { name: "Reviewer" }));
+		// The chat surface stays mounted; the reviewer pane renders inside it.
+		expect(screen.getByTestId("chat-surface")).toBeInTheDocument();
 		expect(screen.getByTestId("terminal-target")).toHaveTextContent("reviewer");
+		// Selecting the chat tab returns to the chat timeline.
+		fireEvent.click(screen.getByRole("button", { name: "select chat tab" }));
+		expect(screen.queryByTestId("terminal-target")).not.toBeInTheDocument();
+		expect(screen.getByTestId("chat-surface")).toBeInTheDocument();
 	});
 
 	it("returns to the session terminal when the reviewer handle is cleared", async () => {
@@ -808,43 +920,49 @@ describe("SessionView", () => {
 		expect(screen.queryByRole("button", { name: "select reviewer tab" })).not.toBeInTheDocument();
 	});
 
-	it("restores the selected reviewer terminal when the session becomes active again", async () => {
-		const worker = workerSession("sess-1");
-		worker.prs = [
-			{
-				url: "https://github.com/acme/repo/pull/7",
-				number: 7,
-				state: "open",
-				ci: "passing",
-				review: "none",
-				mergeability: "mergeable",
-				reviewComments: false,
-				updatedAt: "2026-06-15T00:00:00Z",
-			},
-		];
-		reviewGetMock.mockResolvedValueOnce({
-			data: { reviewerHandleId: "review-sess-1", reviewerHarness: "codex", reviews: [] },
-			error: undefined,
-		});
+	it.each(["tui", "chat"] as const)(
+		"restores the selected reviewer terminal when a %s session becomes active again",
+		async (mode) => {
+			const worker = workerSession("sess-1");
+			worker.mode = mode;
+			worker.prs = [
+				{
+					url: "https://github.com/acme/repo/pull/7",
+					number: 7,
+					state: "open",
+					ci: "passing",
+					review: "none",
+					mergeability: "mergeable",
+					reviewComments: false,
+					updatedAt: "2026-06-15T00:00:00Z",
+				},
+			];
+			reviewGetMock.mockResolvedValueOnce({
+				data: { reviewerHandleId: "review-sess-1", reviewerHarness: "codex", reviews: [] },
+				error: undefined,
+			});
 
-		const view = render(<SessionView sessionId="sess-1" />);
-		await screen.findByRole("button", { name: "select reviewer tab" });
-		fireEvent.click(screen.getByRole("button", { name: "select reviewer tab" }));
-		expect(screen.getByTestId("terminal-target")).toHaveTextContent("reviewer");
+			const view = render(<SessionView sessionId="sess-1" />);
+			const reviewerButtonName = mode === "chat" ? "Reviewer" : "select reviewer tab";
+			await screen.findByRole("button", { name: reviewerButtonName });
+			fireEvent.click(screen.getByRole("button", { name: reviewerButtonName }));
+			expect(screen.getByTestId("terminal-target")).toHaveTextContent("reviewer");
 
-		worker.status = "terminated";
-		worker.isTerminated = true;
-		view.rerender(<SessionView sessionId="sess-1" />);
-		expect(screen.getByTestId("terminal-target")).toHaveTextContent("reviewer");
-		expect(screen.queryByRole("button", { name: "select reviewer tab" })).not.toBeInTheDocument();
+			worker.status = "terminated";
+			worker.isTerminated = true;
+			view.rerender(<SessionView sessionId="sess-1" />);
+			if (mode === "chat") expect(screen.getByTestId("chat-surface")).toBeInTheDocument();
+			expect(screen.getByTestId("terminal-target")).toHaveTextContent("reviewer");
+			expect(screen.queryByRole("button", { name: reviewerButtonName })).not.toBeInTheDocument();
 
-		worker.status = "working";
-		worker.isTerminated = false;
-		view.rerender(<SessionView sessionId="sess-1" />);
+			worker.status = "working";
+			worker.isTerminated = false;
+			view.rerender(<SessionView sessionId="sess-1" />);
 
-		await screen.findByRole("button", { name: "select reviewer tab" });
-		expect(screen.getByTestId("terminal-target")).toHaveTextContent("reviewer");
-	});
+			await screen.findByRole("button", { name: reviewerButtonName });
+			expect(screen.getByTestId("terminal-target")).toHaveTextContent("reviewer");
+		},
+	);
 
 	it("opens the inspector with the shared sidebar spring tokens", () => {
 		render(<SessionView sessionId="sess-1" />);
@@ -959,7 +1077,7 @@ describe("SessionView", () => {
 		}
 	});
 
-	it("locks responsive inspector labels to the opening target throughout the transition", () => {
+	it("keeps inspector labels expanded at the default width throughout the opening transition", () => {
 		vi.useFakeTimers();
 		try {
 			act(() => useUiStore.getState().setInspectorOpen("sess-1", false));
@@ -1039,18 +1157,20 @@ describe("SessionView", () => {
 		expect(inspectorOpen("sess-1")).toBe(true);
 	});
 
-	it("keeps one inspector action cluster mounted while the panel opens and closes", () => {
+	it("keeps the inspector toggle and trailing notification pinned while the panel changes state", () => {
 		act(() => useUiStore.getState().setInspectorOpen("sess-1", true));
 		render(<SessionView sessionId="sess-1" />);
-		const actions = screen.getByTestId("session-inspector-actions");
-		const notification = screen.getByRole("button", { name: "Notifications" });
-		const toggle = screen.getByRole("button", { name: "Close inspector panel" });
+		const actions = screen.getByTestId("session-pinned-actions");
+		const toggle = within(actions).getByRole("button", { name: "Close inspector panel" });
+		const notification = within(actions).getByRole("button", { name: "Notifications" });
+		const buttons = within(actions).getAllByRole("button");
+		expect(buttons.indexOf(notification)).toBeGreaterThan(buttons.indexOf(toggle));
 		expect(toggle).toHaveAttribute("aria-pressed", "true");
 
 		fireEvent.click(toggle);
 
 		expect(inspectorOpen("sess-1")).toBe(false);
-		expect(screen.getByTestId("session-inspector-actions")).toBe(actions);
+		expect(screen.getByTestId("session-pinned-actions")).toBe(actions);
 		expect(screen.getByRole("button", { name: "Notifications" })).toBe(notification);
 		expect(screen.getByRole("button", { name: "Open inspector panel" })).toBe(toggle);
 		expect(toggle).toHaveAttribute("aria-pressed", "false");
@@ -1060,7 +1180,7 @@ describe("SessionView", () => {
 		window.localStorage.setItem("ao.inspector.widthPx", "240");
 		act(() => useUiStore.getState().setInspectorOpen("sess-1", true));
 		render(<SessionView sessionId="sess-1" />);
-		expect(document.documentElement.style.getPropertyValue("--ao-inspector-w")).toBe("360px");
+		expect(document.documentElement.style.getPropertyValue("--ao-inspector-w")).toBe("280px");
 	});
 
 	it("mounts the inspector in sync when navigating from an orchestrator session", () => {
@@ -1189,22 +1309,23 @@ describe("SessionView", () => {
 		expect(document.querySelector(".files-popout-overlay")).not.toHaveClass("files-popout-overlay--mac-windowed");
 	});
 
-	it("opens Browser for a new live `ao preview` target", () => {
+	it("badges Browser as unseen for a new live `ao preview` target instead of auto-opening it", () => {
 		const worker = workerSession("sess-1");
 		const { rerender } = render(<SessionView sessionId="sess-1" />);
+		const viewBefore = inspectorButton().getAttribute("data-view");
+		const openBefore = inspectorOpen("sess-1");
 
 		worker.previewUrl = "http://localhost:5173/";
 		worker.previewRevision = 1;
 		rerender(<SessionView sessionId="sess-1" />);
 
 		expect(screen.getByText("terminal center")).toBeInTheDocument();
-		expect(inspectorOpen("sess-1")).toBe(true);
-		expect(inspectorButton()).toHaveAttribute("data-view", "browser");
-		expect(browserUnseen("sess-1")).toBe(false);
-		expect(browserViewOptions.current).toMatchObject({ active: true });
+		expect(inspectorOpen("sess-1")).toBe(openBefore);
+		expect(inspectorButton()).toHaveAttribute("data-view", viewBefore);
+		expect(browserUnseen("sess-1")).toBe(true);
 	});
 
-	it("opens a collapsed inspector when a new live preview arrives", () => {
+	it("badges Browser as unseen without opening a collapsed inspector when a new live preview arrives", () => {
 		const worker = workerSession("sess-1");
 		act(() => useUiStore.getState().setInspectorOpen("sess-1", false));
 		const { rerender } = render(<SessionView sessionId="sess-1" />);
@@ -1213,14 +1334,12 @@ describe("SessionView", () => {
 		worker.previewRevision = 1;
 		rerender(<SessionView sessionId="sess-1" />);
 
-		expect(inspectorOpen("sess-1")).toBe(true);
-		expect(inspectorButton()).toHaveAttribute("data-view", "browser");
-		expect(browserUnseen("sess-1")).toBe(false);
-		expect(browserViewOptions.current).toMatchObject({ active: true });
-		expect(screen.getByTestId("panel-inspector")).toHaveAttribute("data-state", "expanded");
+		expect(inspectorOpen("sess-1")).toBe(false);
+		expect(inspectorButton()).toHaveAttribute("data-view", "summary");
+		expect(browserUnseen("sess-1")).toBe(true);
 	});
 
-	it("keeps Summary on session entry and opens Browser for later preview work", () => {
+	it("keeps Summary on session entry and badges Browser as unseen for later preview work", () => {
 		const secondWorker = workerSession("sess-2");
 		secondWorker.previewUrl = "http://localhost:5173/";
 		secondWorker.previewRevision = 1;
@@ -1237,9 +1356,8 @@ describe("SessionView", () => {
 
 		secondWorker.previewRevision = 2;
 		rerender(<SessionView sessionId="sess-2" />);
-		expect(inspectorOpen("sess-2")).toBe(true);
-		expect(inspectorButton()).toHaveAttribute("data-view", "browser");
-		expect(browserUnseen("sess-2")).toBe(false);
+		expect(inspectorButton()).toHaveAttribute("data-view", "summary");
+		expect(browserUnseen("sess-2")).toBe(true);
 	});
 
 	it("keeps Summary selected when preview content arrives with the async workspace response", () => {
@@ -1332,8 +1450,8 @@ describe("SessionView", () => {
 		worker.previewUrl = "http://localhost:5173/";
 		worker.previewRevision = 1;
 		rerender(<SessionView sessionId="sess-1" />);
-		expect(inspectorButton()).toHaveAttribute("data-view", "browser");
-		expect(browserUnseen("sess-1")).toBe(false);
+		expect(inspectorButton()).toHaveAttribute("data-view", "summary");
+		expect(browserUnseen("sess-1")).toBe(true);
 
 		act(() => {
 			useUiStore.getState().setInspectorView("sess-1", "summary");
@@ -1352,9 +1470,9 @@ describe("SessionView", () => {
 		worker.previewRevision = 3;
 		rerender(<SessionView sessionId="sess-1" />);
 
-		expect(inspectorOpen("sess-1")).toBe(true);
-		expect(inspectorButton()).toHaveAttribute("data-view", "browser");
-		expect(browserUnseen("sess-1")).toBe(false);
+		expect(inspectorOpen("sess-1")).toBe(false);
+		expect(inspectorButton()).toHaveAttribute("data-view", "summary");
+		expect(browserUnseen("sess-1")).toBe(true);
 	});
 
 	// Regression: a terminated session's `previewUrl` is a stale DB fact —

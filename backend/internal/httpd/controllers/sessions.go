@@ -8,10 +8,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"log/slog"
 	"mime"
 	"net/http"
 	"net/url"
+	"os"
 	"path"
 	"path/filepath"
 	"strconv"
@@ -21,6 +23,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/aoagents/agent-orchestrator/backend/internal/attachmentstore"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/apispec"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/envelope"
@@ -48,8 +51,8 @@ const (
 	// are pasted/dropped into the task brief and inlined as base64 in the JSON
 	// body, so the caps are deliberately conservative.
 	maxAttachments      = 8
-	maxAttachmentBytes  = 10 << 20 // 10 MiB per file, decoded
-	maxAttachmentsBytes = 25 << 20 // 25 MiB total, decoded
+	maxAttachmentBytes  = attachmentstore.MaxFileBytes // 10 MiB per file, decoded
+	maxAttachmentsBytes = 25 << 20                     // 25 MiB total, decoded
 	// maxSpawnBodyBytes bounds the raw request body before it is decoded. The
 	// per-attachment and total caps above only apply after the whole body is
 	// materialized, so without this an oversized body (base64 inflates the
@@ -105,6 +108,7 @@ type SessionService interface {
 	WorkspaceWatchPaths(ctx context.Context, id domain.SessionID) ([]string, error)
 	ListWorkspaceFiles(ctx context.Context, id domain.SessionID) (sessionsvc.WorkspaceFiles, error)
 	GetWorkspaceFile(ctx context.Context, id domain.SessionID, path string) (sessionsvc.WorkspaceFileDetail, error)
+	GetWorkspaceFileBlob(ctx context.Context, id domain.SessionID, path string, side sessionsvc.WorkspaceFileBlobSide) (sessionsvc.WorkspaceFileBlob, error)
 	InvalidateWorkspaceCache(id domain.SessionID)
 	Pin(ctx context.Context, id domain.SessionID) (domain.Session, error)
 	Unpin(ctx context.Context, id domain.SessionID) (domain.Session, error)
@@ -145,6 +149,7 @@ type SessionsController struct {
 	Svc           SessionService
 	Activity      ActivityRecorder
 	Usage         UsageHookRecorder
+	Attachments   *attachmentstore.Store
 	PreviewServer ManagedPreviewServer
 	Capabilities  SessionCapabilityValidator
 }
@@ -165,6 +170,7 @@ func (c *SessionsController) Register(r chi.Router) {
 	r.Post("/sessions/{sessionId}/attachments", c.stageAttachments)
 	r.Get("/sessions/{sessionId}/workspace/files", c.listWorkspaceFiles)
 	r.Get("/sessions/{sessionId}/workspace/file", c.getWorkspaceFile)
+	r.Get("/sessions/{sessionId}/workspace/file/blob", c.getWorkspaceFileBlob)
 	r.Get("/sessions/{sessionId}/pr", c.listPRs)
 	r.Post("/sessions/{sessionId}/pr/claim", c.claimPR)
 	r.Patch("/sessions/{sessionId}", c.rename)
@@ -182,6 +188,7 @@ func (c *SessionsController) Register(r chi.Router) {
 	r.Get("/sessions/{sessionId}/interface-transition", c.interfaceTransitionStatus)
 	r.Post("/sessions/{sessionId}/interface-transition", c.startInterfaceTransition)
 	r.Delete("/sessions/{sessionId}/interface-transition", c.cancelInterfaceTransition)
+	r.Put("/sessions/{sessionId}/interface-transition/{transitionId}/notice-acknowledgement", c.acknowledgeInterfaceTransitionNotice)
 	r.Post("/sessions/{sessionId}/kill", c.kill)
 	r.Post("/sessions/{sessionId}/rollback", c.rollback)
 	r.Post("/sessions/{sessionId}/send", c.send)
@@ -265,7 +272,7 @@ func (c *SessionsController) spawn(w http.ResponseWriter, r *http.Request) {
 		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", attachErr.code, attachErr.message, nil)
 		return
 	}
-	sess, promptBytes, systemPromptBytes, err := c.Svc.Spawn(r.Context(), ports.SpawnConfig{ProjectID: in.ProjectID, IssueID: in.IssueID, TrackerProvider: in.TrackerProvider, Kind: in.Kind, Harness: in.Harness, Branch: in.Branch, RequestedMode: in.Mode, Prompt: in.Prompt, DisplayName: displayName, Attachments: attachments})
+	sess, promptBytes, systemPromptBytes, err := c.Svc.Spawn(r.Context(), ports.SpawnConfig{ProjectID: in.ProjectID, IssueID: in.IssueID, TrackerProvider: in.TrackerProvider, Kind: in.Kind, Harness: in.Harness, Branch: in.Branch, RequestedMode: in.Mode, Prompt: in.Prompt, DisplayName: displayName, Attachments: attachments, AgentConfig: ports.AgentConfig{Model: in.Model}})
 	if err != nil {
 		envelope.WriteError(w, r, err)
 		return
@@ -423,7 +430,16 @@ func (c *SessionsController) previewFile(w http.ResponseWriter, r *http.Request)
 		envelope.WriteError(w, r, err)
 		return
 	}
-	c.serveWorkspacePreviewFile(w, r, sess.Metadata.WorkspacePath, chi.URLParam(r, "*"))
+	assetPath := chi.URLParam(r, "*")
+	if name, ok := attachmentstore.NameFromWorkspacePath(assetPath); ok && c.Attachments != nil {
+		file, info, openErr := c.Attachments.Open(r.Context(), sess.ID, name)
+		if openErr == nil {
+			defer func() { _ = file.Close() }()
+			serveOpenedPreviewFile(w, r, file, info, assetPath)
+			return
+		}
+	}
+	c.serveWorkspacePreviewFile(w, r, sess.Metadata.WorkspacePath, assetPath)
 }
 
 // PreviewOrigin serves a workspace preview from its isolated *.localhost
@@ -499,6 +515,10 @@ func (c *SessionsController) serveWorkspacePreviewFile(w http.ResponseWriter, r 
 		return
 	}
 	defer func() { _ = file.Close() }()
+	serveOpenedPreviewFile(w, r, file, info, clean)
+}
+
+func serveOpenedPreviewFile(w http.ResponseWriter, r *http.Request, file *os.File, info fs.FileInfo, clean string) {
 	if !previewutil.IsMarkdownPath(clean) {
 		http.ServeContent(w, r, info.Name(), info.ModTime(), file)
 		return
@@ -549,6 +569,39 @@ func (c *SessionsController) getWorkspaceFile(w http.ResponseWriter, r *http.Req
 		return
 	}
 	envelope.WriteJSON(w, http.StatusOK, workspaceFileResponse(file))
+}
+
+// getWorkspaceFileBlob streams one side of an image file's diff. The renderer
+// points an <img> straight at this route, so the response is the raw bytes with
+// their media type rather than a JSON envelope.
+func (c *SessionsController) getWorkspaceFileBlob(w http.ResponseWriter, r *http.Request) {
+	if c.Svc == nil {
+		apispec.NotImplemented(w, r, "GET", "/api/v1/sessions/{sessionId}/workspace/file/blob")
+		return
+	}
+	relPath := strings.TrimSpace(r.URL.Query().Get("path"))
+	if relPath == "" {
+		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "WORKSPACE_PATH_REQUIRED", "path is required", nil)
+		return
+	}
+	side := sessionsvc.WorkspaceFileBlobSide(strings.TrimSpace(r.URL.Query().Get("side")))
+	if side == "" {
+		side = sessionsvc.WorkspaceBlobAfter
+	}
+	blob, err := c.Svc.GetWorkspaceFileBlob(r.Context(), sessionID(r), relPath, side)
+	if err != nil {
+		envelope.WriteError(w, r, err)
+		return
+	}
+	h := w.Header()
+	h.Set("Content-Type", blob.MediaType)
+	h.Set("Content-Length", strconv.Itoa(len(blob.Data)))
+	// The worktree changes under the viewer, and the URL carries no content
+	// hash, so a cached response would show a stale image after every edit.
+	h.Set("Cache-Control", "no-store")
+	h.Set("X-Content-Type-Options", "nosniff")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(blob.Data)
 }
 
 func (c *SessionsController) streamWorkspaceChanges(w http.ResponseWriter, r *http.Request) {
@@ -1579,8 +1632,9 @@ func discoverPreviewEntry(workspacePath string) (string, bool) {
 // "./dist/index.html") to its preview/files proxy URL when the path resolves to
 // a regular file inside the session workspace. It returns ok=false for anything
 // that already looks like a URL (an http(s)/file scheme, or a host:port dev
-// server) and for paths that escape the workspace or do not point at a file, so
-// the caller keeps those targets verbatim.
+// server) and for paths that do not point at a workspace file, so the caller
+// keeps those targets verbatim. Explicit parent traversal is rejected by
+// resolvePreviewTarget before this function is called.
 func resolveLocalPreview(r *http.Request, id domain.SessionID, workspacePath, raw string) (string, bool, error) {
 	if raw == "" || hasURLScheme(raw) {
 		return "", false, nil
@@ -1604,10 +1658,23 @@ func resolvePreviewTarget(r *http.Request, id domain.SessionID, workspacePath, r
 	if isAbsolutePreviewPath(raw) {
 		return workspaceAbsolutePreviewURL(r, id, workspacePath, raw)
 	}
+	if !hasURLScheme(raw) && containsParentPathSegment(raw) {
+		return "", errPreviewFileOutsideWorkspace
+	}
 	if resolved, ok, err := resolveLocalPreview(r, id, workspacePath, raw); ok || err != nil {
 		return resolved, err
 	}
 	return raw, nil
+}
+
+func containsParentPathSegment(raw string) bool {
+	raw = strings.ReplaceAll(raw, `\`, "/")
+	for _, segment := range strings.Split(raw, "/") {
+		if segment == ".." {
+			return true
+		}
+	}
+	return false
 }
 
 func isAbsolutePreviewPath(raw string) bool {
@@ -1717,6 +1784,7 @@ func sessionView(s domain.Session) SessionView {
 		Branch:          s.Metadata.Branch,
 		PreviewURL:      s.Metadata.PreviewURL,
 		PreviewRevision: s.Metadata.PreviewRevision,
+		Model:           s.Metadata.Model,
 		PRs:             sessionPRFacts(s.PRs),
 	}
 	if s.ActiveAgentSwitch != nil {
@@ -1809,6 +1877,7 @@ func workspaceFileResponse(file sessionsvc.WorkspaceFileDetail) WorkspaceFileRes
 		Size:             file.Size,
 		Binary:           file.Binary,
 		Deleted:          file.Deleted,
+		ImageMediaType:   file.ImageMediaType,
 		Content:          file.Content,
 		ContentTruncated: file.ContentTruncated,
 		Diff:             file.Diff,

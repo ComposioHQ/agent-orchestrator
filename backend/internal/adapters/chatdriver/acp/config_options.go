@@ -91,18 +91,58 @@ func (c *conversation) SetConfigOption(
 	if err != nil {
 		return nil, fmt.Errorf("set ACP session config option %q: %w", id, err)
 	}
-	c.replaceConfigOptions(resp.ConfigOptions)
+	// ACP marks the response's configOptions required and defines it as the full
+	// rebuilt catalog, but some agents accept the change and answer without it.
+	// Replacing wholesale on that emptied the catalog and made the entire
+	// turn-settings picker vanish mid-session. Returning the pre-change catalog
+	// instead would be just as wrong in the other direction — the agent applied
+	// the value, so a UI that snaps back to the old one is lying about state the
+	// provider already changed. Record the accepted value against the catalog we
+	// hold and let a later ConfigOptionUpdate deliver any rebuild.
+	if len(resp.ConfigOptions) == 0 {
+		c.applyAcceptedConfigOption(id, value)
+	} else {
+		c.replaceConfigOptions(resp.ConfigOptions)
+	}
 	return c.ListConfigOptions(ctx)
 }
 
+// replaceConfigOptions installs an authoritative catalog. Callers reach this
+// with a replacement the agent stated outright — the session/update
+// notification and session setup — so an empty list means the session really
+// has no options and is applied as given.
 func (c *conversation) replaceConfigOptions(options []acpsdk.SessionConfigOption) {
 	normalized := normalizeConfigOptions(options)
 	c.mu.Lock()
+	defer c.mu.Unlock()
 	c.configOptions = normalized
 	if len(normalized) > 0 {
 		c.capabilities[ports.ChatCapabilityConfigOptions] = true
 	}
-	c.mu.Unlock()
+}
+
+// applyAcceptedConfigOption records a value the agent accepted but did not echo
+// a catalog for. Only the selected option moves; anything the change should have
+// rebuilt stays as it was until the agent says otherwise, which is the most this
+// can honestly claim from a response that carried no catalog.
+func (c *conversation) applyAcceptedConfigOption(id string, value ports.ChatConfigOptionValue) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for i := range c.configOptions {
+		if c.configOptions[i].ID != id {
+			continue
+		}
+		switch c.configOptions[i].Type {
+		case ports.ChatConfigOptionSelect:
+			c.configOptions[i].Current = ports.ChatConfigOptionValue{Select: value.Select}
+		case ports.ChatConfigOptionBoolean:
+			if value.Boolean != nil {
+				accepted := *value.Boolean
+				c.configOptions[i].Current = ports.ChatConfigOptionValue{Boolean: &accepted}
+			}
+		}
+		return
+	}
 }
 
 func normalizeConfigOptions(options []acpsdk.SessionConfigOption) []ports.ChatConfigOption {
