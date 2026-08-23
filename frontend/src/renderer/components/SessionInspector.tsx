@@ -2107,6 +2107,7 @@ function ReviewPanel({
 			? t("inspector.review.cancelling")
 			: t("inspector.review.cancel")
 		: runAction;
+	const runningReviewLabel = `Review in progress · ${agentLabel(activeReviewerHarness)}`;
 	const killDisabled = autoReviewEnabled || isKilling || isTriggering || isSwitchingReviewer || !hasReviewerSession;
 
 	return (
@@ -2196,8 +2197,16 @@ function ReviewPanel({
 								type="button"
 								variant={reviewRunning ? "ghost" : reviewHasRun ? "secondary" : "primary"}
 							>
-								{reviewRunning ? <X aria-hidden="true" /> : <Play aria-hidden="true" />}
-								<span className="review-run-action-label">{primaryReviewActionLabel}</span>
+								{reviewRunning && isCancelling ? (
+									<Loader2 aria-hidden="true" className="animate-spin" />
+								) : reviewRunning ? (
+									<X aria-hidden="true" />
+								) : (
+									<Play aria-hidden="true" />
+								)}
+								<span className={cn("review-run-action-label", reviewRunning && "review-run-action-label--running")}>
+									{reviewRunning ? (isCancelling ? primaryReviewActionLabel : runningReviewLabel) : primaryReviewActionLabel}
+								</span>
 							</Button>
 							{hasReviewerSession ? (
 								<Button
@@ -2216,16 +2225,6 @@ function ReviewPanel({
 						</div>
 					</div>
 				</div>
-				{reviewRunning ? (
-					<div className="mt-3 flex items-center gap-2 border-t border-border pt-3">
-						<Loader2 aria-hidden="true" className="size-icon-sm shrink-0 animate-spin text-muted-foreground" />
-						<span className="min-w-0 flex-1 truncate text-2xs font-medium text-muted-foreground">
-							{isCancelling
-								? t("inspector.review.cancelling")
-								: `Review in progress · ${agentLabel(activeReviewerHarness)}`}
-						</span>
-					</div>
-				) : null}
 			</Section>
 		</div>
 	);

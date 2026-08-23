@@ -95,6 +95,7 @@ const timeFormatter = new Intl.DateTimeFormat(undefined, {
 const ORIGIN_REPORT_COLLAPSE_AT = 600;
 const ORIGIN_REPORT_PREVIEW_LENGTH = 240;
 const ORIGIN_TITLE = /^#{1,3}[ \t]+([^\n]+)\n+(.*)$/s;
+const REVIEW_HANDOFF_TITLE = /^## (?:Review feedback|Inline review comment)(?:\r?\n|$)/;
 
 // These are AO-owned prompt suffixes, not general markdown. Chat and spawn used
 // slightly different wording, and older conversations used "Attached images";
@@ -227,7 +228,13 @@ export function HumanMessage({
 							: "bg-raised text-foreground",
 					)}
 				>
-					{body ? <p className="break-words whitespace-pre-wrap text-pretty">{body}</p> : null}
+					{body ? (
+						REVIEW_HANDOFF_TITLE.test(body.trimStart()) ? (
+							<ChatMarkdown text={body} />
+						) : (
+							<p className="break-words whitespace-pre-wrap text-pretty">{body}</p>
+						)
+					) : null}
 					{attachments.length > 0 ? (
 						<ul aria-label="Attached files" className={cn("flex max-w-full flex-wrap gap-2", body && "mt-2")}>
 							{attachments.map((path) => {

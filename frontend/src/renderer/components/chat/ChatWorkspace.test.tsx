@@ -144,6 +144,26 @@ const chatSession = {
 } satisfies WorkspaceSession;
 
 describe("HumanMessage attachments", () => {
+	it("renders AO review handoff markdown instead of showing its syntax", () => {
+		const { container } = render(
+			<HumanMessage
+				message={humanMessage(
+					"## Review feedback\n\n**Source:** AO agent review · codex\n**Review:** [Open review](https://github.com/acme/repo/pull/2)\n\n### Feedback\n\nUse the exact CLI.",
+				)}
+				sessionId="ao-1"
+			/>,
+		);
+
+		expect(screen.getByRole("heading", { name: "Review feedback", level: 4 })).toBeInTheDocument();
+		expect(screen.getByRole("link", { name: "Open review" })).toHaveAttribute(
+			"href",
+			"https://github.com/acme/repo/pull/2",
+		);
+		expect(container.querySelector(".cursor-chat-human-message")?.parentElement).toHaveClass("items-end");
+		expect(container).not.toHaveTextContent("## Review feedback");
+		expect(container).not.toHaveTextContent("**Source:**");
+	});
+
 	function renderImageAttachment(header: string, name: string) {
 		render(
 			<HumanMessage

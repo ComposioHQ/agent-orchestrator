@@ -531,13 +531,14 @@ func (l *agentLauncher) runtimeEnv(ctx context.Context, spec LaunchSpec, argv []
 	if strings.TrimSpace(l.runFile) != "" {
 		env[EnvRunFile] = l.runFile
 	}
-	path, err := sessionmanager.HookPATH(l.executable, os.Getenv, env)
-	if err == nil {
+	path, pathErr := sessionmanager.HookPATH(l.executable, os.Getenv, env)
+	if pathErr == nil {
 		env["PATH"] = path
-	} else if shimDir, shimErr := l.ensureAOShimDir(); shimErr == nil {
+	}
+	if shimDir, shimErr := l.ensureAOShimDir(); shimErr == nil {
 		env["PATH"] = prependPathDir(shimDir, env["PATH"])
-	} else {
-		env[EnvAOCommandWarning] = fmt.Sprintf("PATH pin failed: %v; AO shim fallback failed: %v", err, shimErr)
+	} else if pathErr != nil {
+		env[EnvAOCommandWarning] = fmt.Sprintf("PATH pin failed: %v; AO shim fallback failed: %v", pathErr, shimErr)
 	}
 	sessionmanager.AugmentRuntimePATHForLaunchBinary(ctx, env, argv, exec.LookPath)
 	return env
@@ -596,6 +597,12 @@ func (l *agentLauncher) Notify(ctx context.Context, handleID string, spec Launch
 	reviewer, ok := l.reviewers.Reviewer(spec.Harness)
 	if !ok {
 		return fmt.Errorf("no reviewer adapter for harness %q", spec.Harness)
+	}
+	// Reviewer panes survive daemon restarts. Refresh the stable shim before
+	// notifying one so its existing PATH reaches this daemon binary rather than
+	// an expired go-run path or an older globally installed AO CLI.
+	if _, err := l.ensureAOShimDir(); err != nil {
+		return fmt.Errorf("refresh reviewer AO command: %w", err)
 	}
 	inv, err := l.prepareInvocation(ctx, spec)
 	if err != nil {

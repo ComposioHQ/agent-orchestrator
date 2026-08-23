@@ -77,12 +77,13 @@ func TestLauncherSpawnEnvCannotOverrideWorkerContext(t *testing.T) {
 func TestLauncherSpawnPinsPATHToAOExecutable(t *testing.T) {
 	aoDir := t.TempDir()
 	aoExe := filepath.Join(aoDir, "ao")
+	dataDir := t.TempDir()
 	reviewer := &fakeReviewer{env: map[string]string{"PATH": "/reviewer/bin"}}
 	rt := &fakeRuntime{}
 	l := NewLauncher(
 		fakeReviewerResolver{reviewer: reviewer, ok: true},
 		rt,
-		t.TempDir(),
+		dataDir,
 		WithExecutable(func() (string, error) { return aoExe, nil }),
 	)
 
@@ -91,8 +92,48 @@ func TestLauncherSpawnPinsPATHToAOExecutable(t *testing.T) {
 	}
 
 	parts := strings.Split(rt.createCfg.Env["PATH"], string(os.PathListSeparator))
-	if len(parts) < 2 || parts[0] != aoDir || parts[1] != "/reviewer/bin" {
-		t.Fatalf("reviewer PATH = %q, want AO dir before adapter PATH", rt.createCfg.Env["PATH"])
+	shimDir := filepath.Join(dataDir, "reviewer-runtime", "bin")
+	if len(parts) < 3 || parts[0] != shimDir || parts[1] != aoDir || parts[2] != "/reviewer/bin" {
+		t.Fatalf("reviewer PATH = %q, want stable AO shim then executable dir before adapter PATH", rt.createCfg.Env["PATH"])
+	}
+}
+
+func TestLauncherSpawnPinsPATHToStableAOShim(t *testing.T) {
+	dataDir := t.TempDir()
+	firstExe := filepath.Join(t.TempDir(), "ao")
+	secondExe := filepath.Join(t.TempDir(), "ao")
+	currentExe := firstExe
+	reviewer := &fakeReviewer{env: map[string]string{"PATH": "/reviewer/bin"}}
+	rt := &fakeRuntime{}
+	l := NewLauncher(
+		fakeReviewerResolver{reviewer: reviewer, ok: true},
+		rt,
+		dataDir,
+		WithExecutable(func() (string, error) { return currentExe, nil }),
+	)
+
+	if _, err := l.Spawn(context.Background(), launchSpec()); err != nil {
+		t.Fatalf("first Spawn: %v", err)
+	}
+	shimDir := filepath.Join(dataDir, "reviewer-runtime", "bin")
+	if got := strings.Split(rt.createCfg.Env["PATH"], string(os.PathListSeparator))[0]; got != shimDir {
+		t.Fatalf("reviewer PATH starts with %q, want stable shim dir %q", got, shimDir)
+	}
+
+	currentExe = secondExe
+	if err := l.Notify(context.Background(), "review-mer-1", launchSpec()); err != nil {
+		t.Fatalf("Notify: %v", err)
+	}
+	shimPath := filepath.Join(shimDir, "ao")
+	if runtime.GOOS == "windows" {
+		shimPath += ".cmd"
+	}
+	shim, err := os.ReadFile(shimPath)
+	if err != nil {
+		t.Fatalf("read AO shim: %v", err)
+	}
+	if !strings.Contains(string(shim), secondExe) || strings.Contains(string(shim), firstExe) {
+		t.Fatalf("refreshed AO shim = %q, want only current executable %q", shim, secondExe)
 	}
 }
 
@@ -578,8 +619,9 @@ func TestLauncherRestoreTerminalUsesReviewerRestoreCommandWhenAvailable(t *testi
 		t.Fatalf("runtime argv = %#v", rt.createCfg.Argv)
 	}
 	parts := strings.Split(rt.createCfg.Env["PATH"], string(os.PathListSeparator))
-	if len(parts) < 2 || parts[0] != aoDir || parts[1] != "/restore/bin" {
-		t.Fatalf("restore PATH = %q, want AO dir before restore command PATH", rt.createCfg.Env["PATH"])
+	shimDir := filepath.Join(dataDir, "reviewer-runtime", "bin")
+	if len(parts) < 3 || parts[0] != shimDir || parts[1] != aoDir || parts[2] != "/restore/bin" {
+		t.Fatalf("restore PATH = %q, want stable AO shim then executable dir before restore command PATH", rt.createCfg.Env["PATH"])
 	}
 	if rt.createCfg.Env[EnvRunFile] != runFile {
 		t.Fatalf("restore %s = %q, want %q", EnvRunFile, rt.createCfg.Env[EnvRunFile], runFile)

@@ -1921,6 +1921,9 @@ describe("SessionInspector summary reviews", () => {
     expect(
       screen.queryByRole("button", { name: "Run review" }),
     ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Stop review" }),
+    ).toHaveTextContent("Review in progress · Codex");
   });
 
   it("hides review summary sections when no review data exists", async () => {
