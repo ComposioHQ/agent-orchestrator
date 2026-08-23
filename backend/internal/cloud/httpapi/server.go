@@ -53,6 +53,14 @@ type Options struct {
 	// limiter key. Leave false unless the edge overwrites X-AO-Source-IP.
 	TrustSourceIPHeader bool
 	Logger              *slog.Logger
+
+	// App is the shared AO application API — build it with
+	// httpd.NewCloudAPIHandler, composed with cloud storage and runtime ports.
+	// It is served under /api/v1 behind authentication and tenant resolution,
+	// so a hosted client speaks the same API as a desktop client. Nil leaves
+	// the control plane serving only the auth foundation, which is what the
+	// auth-only tests and any deployment without a composed app want.
+	App http.Handler
 }
 
 // Server owns the Cloud foundation HTTP handler.
@@ -64,6 +72,7 @@ type Server struct {
 	refreshTokenTTL     time.Duration
 	trustSourceIPHeader bool
 	logger              *slog.Logger
+	app                 http.Handler
 	handler             http.Handler
 }
 
@@ -89,6 +98,7 @@ func New(options Options) (*Server, error) {
 		refreshTokenTTL:     options.RefreshTokenTTL,
 		trustSourceIPHeader: options.TrustSourceIPHeader,
 		logger:              options.Logger,
+		app:                 options.App,
 	}
 	server.handler = server.routes()
 	return server, nil
@@ -140,7 +150,24 @@ func (s *Server) routes() http.Handler {
 	router.With(authRateLimit).Post("/api/cloud/v1/auth/refresh", s.refresh)
 	router.With(authRateLimit).Post("/api/cloud/v1/auth/logout", s.logout)
 	router.With(s.requirePrincipal).Get("/api/cloud/v1/me", s.me)
-	return router
+
+	app := s.appHandler()
+	if app == nil {
+		return router
+	}
+	// The application API is dispatched by path prefix rather than mounted as
+	// a chi sub-router. Nesting it would rewrite the routing path and prepend
+	// this router's pattern to chi's RoutePattern, which the shared surface
+	// reads for error fingerprinting and for its own scope guard. Dispatching
+	// hands the app handler an untouched request, so it routes exactly as it
+	// does inside the daemon.
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if isAppPath(r.URL.Path) {
+			app.ServeHTTP(w, r)
+			return
+		}
+		router.ServeHTTP(w, r)
+	})
 }
 
 func (s *Server) sourceIPKey(r *http.Request) (string, error) {
