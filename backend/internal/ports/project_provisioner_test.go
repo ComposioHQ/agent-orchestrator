@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
@@ -23,15 +24,42 @@ func TestProjectProvisionerPublicSurfaceIsMinimal(t *testing.T) {
 
 	for _, typ := range []reflect.Type{
 		reflect.TypeOf(ProjectProvisionRequest{}),
+		reflect.TypeOf(ProjectAddRequest{}),
+		reflect.TypeOf(ProjectCloneRequest{}),
+		reflect.TypeOf(ProjectInitializeRequest{}),
 		reflect.TypeOf(ProjectProvision{}),
 		reflect.TypeOf(ProjectPlacement{}),
 	} {
 		for _, forbidden := range []string{
 			"AttemptID", "State", "Checkpoint", "Retry", "ResumeFrom",
-			"Compensation", "Undo", "Provider", "Sandbox",
+			"Compensation", "Undo", "Provider", "Sandbox", "Credential",
+			"Credentials", "Token", "Secret", "Secrets", "Password",
 		} {
 			if _, ok := typ.FieldByName(forbidden); ok {
 				t.Errorf("%s exports forbidden saga/provider field %s", typ.Name(), forbidden)
+			}
+		}
+	}
+}
+
+func TestProjectProvisionBoundaryCarriesNoCredentialMaterial(t *testing.T) {
+	t.Parallel()
+
+	for _, typ := range []reflect.Type{
+		reflect.TypeOf(ProjectProvisionRequest{}),
+		reflect.TypeOf(ProjectAddRequest{}),
+		reflect.TypeOf(ProjectCloneRequest{}),
+		reflect.TypeOf(ProjectInitializeRequest{}),
+		reflect.TypeOf(ProjectProvision{}),
+		reflect.TypeOf(ProjectPlacement{}),
+	} {
+		for index := 0; index < typ.NumField(); index++ {
+			field := typ.Field(index)
+			if field.Type == reflect.TypeOf([]byte(nil)) {
+				t.Errorf("%s.%s exposes mutable credential bytes", typ.Name(), field.Name)
+			}
+			if isCredentialField(field.Name) {
+				t.Errorf("%s.%s exposes credential material", typ.Name(), field.Name)
 			}
 		}
 	}
@@ -104,4 +132,13 @@ func (p *conformanceProvisioner) Provision(_ context.Context, request ProjectPro
 		Placement:     ProjectPlacement{ID: p.placementID, Path: p.path},
 		DefaultBranch: request.DefaultBranch,
 	}, nil
+}
+
+func isCredentialField(name string) bool {
+	for _, marker := range []string{"Credential", "Token", "Secret", "Password"} {
+		if strings.Contains(name, marker) {
+			return true
+		}
+	}
+	return false
 }
