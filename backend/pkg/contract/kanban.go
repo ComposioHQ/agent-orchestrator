@@ -263,7 +263,7 @@ func displayStatusInColumn(
 	case KanbanValidating:
 		return validatingDisplayStatus(session, pr)
 	case KanbanNeedsReview:
-		return inReviewDisplayStatus(pr)
+		return inReviewDisplayStatus(session, pr)
 	case KanbanReady:
 		return readyDisplayStatus(pr)
 	default:
@@ -321,13 +321,20 @@ func validatingDisplayStatus(session KanbanSessionFacts, pr KanbanPRFacts) Displ
 }
 
 // inReviewDisplayStatus reports the review-feedback loop from the person's
-// side: this column is reached only when no AO loop claimed the PR. Feedback AO
-// is addressing, and checks AO is fixing, are validating work and report from
-// there.
-func inReviewDisplayStatus(pr KanbanPRFacts) DisplayStatus {
+// side. By the column rule, aoOwnsNextStep already routes a PR with failing CI
+// under AutoInjectCI, or an AO-addressed changes request, to Validating before
+// this ever runs -- so these guards do not change today's output. They stay
+// here, matching validatingDisplayStatus's shape, so this function reports the
+// AO-policy phrase correctly on its own rather than depending on a rule
+// enforced in a different function for its correctness.
+func inReviewDisplayStatus(session KanbanSessionFacts, pr KanbanPRFacts) DisplayStatus {
 	switch {
+	case pr.CI == CIFailing && session.AutoInjectCI:
+		return DisplayFixingCI
 	case pr.CI == CIFailing:
 		return DisplayChecksFailing
+	case pr.ExternalReview.ChangesRequested && session.AutoInjectReview:
+		return DisplayAddressingComments
 	case pr.ExternalReview.ChangesRequested:
 		return DisplayChangesRequested
 	default:
