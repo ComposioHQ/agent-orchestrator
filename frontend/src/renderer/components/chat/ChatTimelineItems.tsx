@@ -60,6 +60,7 @@ import { ConversationBranchNavigator } from "./ConversationBranchNavigator";
 import { ConversationContentItems } from "./ConversationContentItems";
 import {
 	ACTIVITY_SUMMARY_BUTTON_CLASS,
+	commandBinaryLabel,
 	commandCategory,
 	exploredFileCount,
 	isNonzeroCommandExit,
@@ -519,7 +520,9 @@ function GenericActivityRow({ activity }: { activity: ConversationActivity }) {
 				)}
 				{singleEdit ? (
 					<span className="flex min-w-0 items-center gap-1 text-[11.5px] font-normal">
-						<span className="shrink-0 text-muted-foreground">Edited</span>
+						<span className="shrink-0 text-muted-foreground">
+							{fileChangeVerb(singleEdit.status ?? "modified")}
+						</span>
 						<FileLocationLabel path={singleEdit.path} oldPath={singleEdit.oldPath} />
 					</span>
 				) : (
@@ -564,7 +567,9 @@ function GenericActivityRow({ activity }: { activity: ConversationActivity }) {
 			</button>
 
 			{open && hasBody ? (
-				compactSummary && (detail?.command || detail?.output || detail?.terminalInput) ? (
+				compactSummary &&
+				activity.activityKind === "command" &&
+				(detail?.command || detail?.output || detail?.terminalInput) ? (
 					<CommandExploreBody activity={activity} />
 				) : (
 					<div className="flex flex-col gap-1.5 px-1 pb-1 pt-0.5">
@@ -658,16 +663,6 @@ function CommandExploreBody({ activity }: { activity: ConversationActivity }) {
 			{detail?.output ? <CommandOutput activity={activity} embedded /> : null}
 		</div>
 	);
-}
-
-function commandBinaryLabel(command: string): string | undefined {
-	const trimmed = command.trim();
-	if (!trimmed) return undefined;
-	const space = trimmed.indexOf(" ");
-	const head = space > 0 ? trimmed.slice(0, space) : trimmed;
-	const slash = head.lastIndexOf("/");
-	const binary = slash >= 0 ? head.slice(slash + 1) : head;
-	return binary || undefined;
 }
 
 /**
@@ -805,8 +800,10 @@ function splitSummary(activity: ConversationActivity): { label: string; path?: s
 	}
 	const files = fileChangeFiles(activity);
 	if (activity.activityKind === "file_change" && files.length === 1) {
-		// Basename sits in the chip next to "Edited"; the full path is the hover.
-		return { label: `Edited ${fileBasename(files[0]!.path)}` };
+		// Basename sits in the chip next to the status verb; the full path is the hover.
+		return {
+			label: `${fileChangeVerb(files[0]!.status ?? "modified")} ${fileBasename(files[0]!.path)}`,
+		};
 	}
 	return { label: activity.summary };
 }
@@ -906,7 +903,9 @@ function FileChangeRow({ file }: { file: FileChangeFile }) {
 	const line = (
 		<>
 			<span className="sr-only">{status.label}</span>
-			<span className="shrink-0 text-[11.5px] text-muted-foreground">Edited</span>
+			<span className="shrink-0 text-[11.5px] text-muted-foreground">
+				{fileChangeVerb(file.status ?? "modified")}
+			</span>
 			<FileLocationLabel path={file.path} oldPath={file.oldPath} />
 			<span className="shrink-0 font-mono text-[10px] tabular-nums text-success">
 				+{file.additions}
@@ -1892,6 +1891,20 @@ const diffStatusMark: Record<DiffStatus, { mark: string; tone: string; label: st
 	renamed: { mark: "R", tone: "text-muted-foreground", label: "renamed" },
 };
 
+/** Match the daemon's file_change summary verbs (Created/Deleted/Renamed/Edited). */
+function fileChangeVerb(status: DiffStatus): string {
+	switch (status) {
+		case "added":
+			return "Created";
+		case "deleted":
+			return "Deleted";
+		case "renamed":
+			return "Renamed";
+		default:
+			return "Edited";
+	}
+}
+
 /**
  * What a turn changed on disk.
  *
@@ -1935,8 +1948,9 @@ export function TurnChangedFiles({
 	return (
 		<div className="overflow-hidden rounded-lg bg-surface">
 			<div className="flex items-center gap-2 px-3 py-2">
-				<span className="shrink-0 text-[11px] text-muted-foreground">
-					{diff.files.length === 1 ? "1 File Changed" : `${diff.files.length} Files Changed`}
+				<FileDiff aria-hidden="true" className="size-3.5 shrink-0 text-muted-foreground" />
+				<span className="text-xs font-semibold text-foreground">
+					{diff.files.length === 1 ? "1 file changed" : `${diff.files.length} files changed`}
 				</span>
 				{live ? (
 					<Loader2
@@ -2097,12 +2111,21 @@ function fileLocationLabel(path: string, oldPath?: string): string {
  * turn-diff basename can be shown like the Edited tooltip.
  */
 type TurnPathHints = {
-	byBase: Map<string, string>;
+	byBase: Map<string, string | undefined>;
 	cwd?: string;
 };
 
+function rememberTurnPathHint(byBase: Map<string, string | undefined>, absolutePath: string) {
+	const base = fileBasename(absolutePath);
+	if (!byBase.has(base)) {
+		byBase.set(base, absolutePath);
+		return;
+	}
+	if (byBase.get(base) !== absolutePath) byBase.set(base, undefined);
+}
+
 function turnPathHints(items: ConversationItem[] | undefined): TurnPathHints {
-	const byBase = new Map<string, string>();
+	const byBase = new Map<string, string | undefined>();
 	let cwd: string | undefined;
 	if (!items?.length) return { byBase, cwd };
 
@@ -2111,13 +2134,8 @@ function turnPathHints(items: ConversationItem[] | undefined): TurnPathHints {
 		if (!cwd && item.detail?.cwd) cwd = item.detail.cwd;
 		if (item.activityKind !== "file_change") continue;
 		for (const file of fileChangeFiles(item)) {
-			if (looksAbsolutePath(file.path)) {
-				byBase.set(fileBasename(file.path), file.path);
-				byBase.set(file.path, file.path);
-			}
-			if (file.oldPath && looksAbsolutePath(file.oldPath)) {
-				byBase.set(fileBasename(file.oldPath), file.oldPath);
-			}
+			if (looksAbsolutePath(file.path)) rememberTurnPathHint(byBase, file.path);
+			if (file.oldPath && looksAbsolutePath(file.oldPath)) rememberTurnPathHint(byBase, file.oldPath);
 		}
 	}
 	return { byBase, cwd };
@@ -2130,8 +2148,8 @@ function looksAbsolutePath(path: string): boolean {
 /** Prefer an absolute path from the turn; otherwise join the worktree cwd. */
 function resolveTurnFilePath(path: string, hints: TurnPathHints): string {
 	if (looksAbsolutePath(path)) return path;
-	const fromActivity = hints.byBase.get(path) ?? hints.byBase.get(fileBasename(path));
-	if (fromActivity) return fromActivity;
+	const fromBasename = hints.byBase.get(fileBasename(path));
+	if (fromBasename) return fromBasename;
 	if (hints.cwd) {
 		const rel = path.replace(/^\.\//, "");
 		return `${hints.cwd.replace(/\/$/, "")}/${rel}`;

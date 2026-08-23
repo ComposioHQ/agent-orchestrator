@@ -151,7 +151,7 @@ export function SessionFilesView({
 		const match =
 			changedFiles.find((file) => file.path === focusPath) ??
 			changedFiles.find((file) => file.path === focusPath.replace(/^\.\//, "")) ??
-			changedFiles.find((file) => file.path.endsWith(`/${focusPath}`) || file.path.endsWith(focusPath));
+			changedFiles.find((file) => file.path.endsWith(`/${focusPath}`) || file.path === focusPath);
 		const target = match?.path ?? focusPath;
 		setExpandedPaths((current) => {
 			if (current.has(target)) return current;

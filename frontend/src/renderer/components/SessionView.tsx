@@ -648,13 +648,10 @@ export function SessionView({ sessionId }: SessionViewProps) {
 
 	const handleOpenFile = useCallback(
 		(path: string) => {
-			setBrowserPopOutState({ sessionId, poppedOut: false });
-			setFilesPoppedOut(false);
-			setInspectorViewForSession(sessionId, "files");
-			setInspectorOpenForSession(sessionId, true);
+			handleOpenFiles();
 			setFilesFocusPath(path);
 		},
-		[sessionId, setInspectorOpenForSession, setInspectorViewForSession],
+		[handleOpenFiles, setFilesFocusPath],
 	);
 
 	const handleFilesFocusConsumed = useCallback(() => setFilesFocusPath(null), []);

@@ -512,7 +512,7 @@ describe("file changes", () => {
 				})}
 			/>,
 		);
-		await userEvent.click(screen.getByRole("button", { name: /Edited/ }));
+		await userEvent.click(screen.getByRole("button", { name: /Created/ }));
 		expect(screen.getByText(/longer than AO stores/i)).toBeInTheDocument();
 	});
 
