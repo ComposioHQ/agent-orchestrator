@@ -40,6 +40,7 @@ type CreateProjectFlowMode = ProjectKind | "choose";
 // Every source converges on the same agent sheet and project-start behavior.
 export function CreateProjectFlow({
 	children,
+	cloudEnabled = false,
 	cloudOrganizations = [],
 	droppedPath,
 	embedded = false,
@@ -47,10 +48,12 @@ export function CreateProjectFlow({
 	mode = "single_repo",
 	onCloneProject,
 	onCreateProject,
+	onCloudSignIn,
 	onInitializeProject,
 	openSignal,
 }: {
 	children?: (state: { choosePath: () => void; disabled: boolean; error: string | null; label: string }) => ReactNode;
+	cloudEnabled?: boolean;
 	cloudOrganizations?: CloudOrganization[];
 	// A folder was dropped on the app window (ShellLayout owns the global
 	// listener). Mirrors openSignal but carries a path: skips straight to the
@@ -63,6 +66,7 @@ export function CreateProjectFlow({
 	mode?: CreateProjectFlowMode;
 	onCloneProject: (input: CloneProjectInput) => Promise<void>;
 	onCreateProject: (input: CreateProjectInput) => Promise<void>;
+	onCloudSignIn?: () => Promise<{ organizations: CloudOrganization[] } | null>;
 	onInitializeProject: (path: string) => Promise<void>;
 	// Monotonic counter: each new value opens the flow programmatically (the ⌘N
 	// "no project in scope" fallback). Lets the shortcut reuse the sidebar's own
@@ -301,6 +305,7 @@ export function CreateProjectFlow({
 					{cloneDialogOpen ? (
 						<Suspense fallback={<CloneRepositoryDialogSkeleton />}>
 							<CloneRepositoryDialog
+								cloudEnabled={cloudEnabled}
 								cloudOrganizations={cloudOrganizations}
 								disabled={isBusy}
 								error={error}
@@ -317,6 +322,7 @@ export function CreateProjectFlow({
 									setCloneDialogOpen(false);
 									setError(null);
 								}}
+								onCloudSignIn={onCloudSignIn}
 								onContinue={(next) => {
 									setCloneSelection(next);
 									setSelectedKind("single_repo");

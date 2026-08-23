@@ -24,22 +24,26 @@ export type CloneRepositorySelection = CloneRepositoryDetails & {
 export const LAST_CLONE_DESTINATION_KEY = "ao.clone.lastDestinationParent";
 
 export default function CloneRepositoryDialog({
+	cloudEnabled = false,
 	cloudOrganizations = [],
 	disabled,
 	error,
 	onBack,
 	onChange,
 	onClose,
+	onCloudSignIn,
 	onContinue,
 	open,
 	value,
 }: {
+	cloudEnabled?: boolean;
 	cloudOrganizations?: CloudOrganization[];
 	disabled: boolean;
 	error: string | null;
 	onBack: () => void;
 	onChange: (value: CloneRepositoryDetails) => void;
 	onClose: () => void;
+	onCloudSignIn?: () => Promise<{ organizations: CloudOrganization[] } | null>;
 	onContinue: (selection: CloneRepositorySelection) => void;
 	open: boolean;
 	value: CloneRepositoryDetails;
@@ -48,7 +52,8 @@ export default function CloneRepositoryDialog({
 	const [submitted, setSubmitted] = useState(false);
 	const [choosingDestination, setChoosingDestination] = useState(false);
 	const [destinationPickerError, setDestinationPickerError] = useState<string | null>(null);
-	const isCloud = cloudOrganizations.length > 0 && value.location === "cloud";
+	const [cloudSignInError, setCloudSignInError] = useState<string | null>(null);
+	const isCloud = cloudEnabled && value.location === "cloud";
 	const repositoryName = repositoryNameFromGitUrl(value.remoteUrl);
 	const targetPath = !isCloud && repositoryName && value.destinationParent
 		? joinCloneDestination(value.destinationParent, repositoryName)
@@ -103,6 +108,24 @@ export default function CloneRepositoryDialog({
 		});
 	};
 
+	const selectLocation = async (location: "local" | "cloud") => {
+		setCloudSignInError(null);
+		if (location === "local") {
+			onChange({ ...value, location, organizationId: undefined });
+			return;
+		}
+		const currentOrganizationId = value.organizationId || cloudOrganizations[0]?.id;
+		onChange({ ...value, location, organizationId: currentOrganizationId });
+		if (currentOrganizationId) return;
+		const account = await onCloudSignIn?.().catch(() => null);
+		const organizationId = account?.organizations[0]?.id;
+		if (!organizationId) {
+			setCloudSignInError(t("shell.cloudSignInRequired"));
+			return;
+		}
+		onChange({ ...value, location, organizationId });
+	};
+
 	return (
 		<Dialog.Root open={open} onOpenChange={(next) => !next && !disabled && onClose()}>
 			<Dialog.Portal>
@@ -140,13 +163,13 @@ export default function CloneRepositoryDialog({
 
 					<form className="min-h-0 overflow-y-auto" onSubmit={submit}>
 						<div className="space-y-5 p-(--size-import-dialog-padding)">
-							{error || destinationPickerError ? (
+							{error || destinationPickerError || cloudSignInError ? (
 								<div className="rounded-lg border border-destructive/40 bg-destructive/10 px-4 py-3 text-pretty text-[12px] leading-5 text-destructive" role="alert">
-									{destinationPickerError ?? error}
+									{destinationPickerError ?? cloudSignInError ?? error}
 								</div>
 							) : null}
 
-							{cloudOrganizations.length > 0 ? (
+							{cloudEnabled ? (
 								<div className="space-y-2">
 									<Label htmlFor="cloneProjectLocation" className="text-[13px] font-semibold text-[var(--color-text-import-title)]">
 										{t("shell.projectLocation")}
@@ -154,11 +177,7 @@ export default function CloneRepositoryDialog({
 									<Select
 										value={isCloud ? "cloud" : "local"}
 										disabled={disabled}
-										onValueChange={(location) => onChange({
-											...value,
-											location: location as "local" | "cloud",
-											organizationId: location === "cloud" ? (value.organizationId || cloudOrganizations[0]?.id) : undefined,
-										})}
+										onValueChange={(location) => void selectLocation(location as "local" | "cloud")}
 									>
 										<SelectTrigger id="cloneProjectLocation" aria-label={t("shell.projectLocation")} className="w-full bg-[var(--color-bg-import-card)]">
 											<SelectValue />
