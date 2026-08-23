@@ -13,6 +13,7 @@ import (
 	"time"
 
 	daytonasdk "github.com/daytona/clients/sdk-go/pkg/daytona"
+	sdkerrors "github.com/daytona/clients/sdk-go/pkg/errors"
 	"github.com/daytona/clients/sdk-go/pkg/options"
 	"github.com/daytona/clients/sdk-go/pkg/types"
 
@@ -214,6 +215,12 @@ func (p *Provider) DeleteSessionRuntime(ctx context.Context, sandboxID string) e
 func (p *Provider) SessionRuntimeAlive(ctx context.Context, sandboxID string) (bool, error) {
 	sandbox, err := p.client.Get(ctx, strings.TrimSpace(sandboxID))
 	if err != nil {
+		// Runtime rows deliberately outlive provider compute so the control plane
+		// can preserve the session record. A reaped sandbox is therefore an
+		// ordinary terminal lifecycle fact, not an internal API failure.
+		if errors.Is(err, sdkerrors.ErrNotFound) {
+			return false, nil
+		}
 		return false, fmt.Errorf("get Daytona session sandbox: %w", err)
 	}
 	// A stopped/paused sandbox has no container IP and the process API returns a
