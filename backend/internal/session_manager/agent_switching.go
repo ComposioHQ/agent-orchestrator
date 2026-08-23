@@ -668,7 +668,7 @@ func (m *Manager) executeAgentSwitch(ctx context.Context, admitted *admittedAgen
 	// Only now may the target mutate workspace-local hooks/instructions. The
 	// source snapshot above therefore cannot contain target preflight artifacts.
 	// A pre-activation failure removes this provider-owned state.
-	if err := m.prepareWorkspace(ctx, target.agent, rec.ID, rec.Metadata.WorkspacePath, target.launch.SystemPrompt, target.launch.SystemPromptFile, target.launch.Config, target.env); err != nil {
+	if err := m.prepareWorkspace(ctx, target.agent, target.harness, rec.ID, rec.Metadata.WorkspacePath, target.launch.SystemPrompt, target.launch.SystemPromptFile, target.launch.Config, target.env); err != nil {
 		return result, fmt.Errorf("switch agent %s: prepare target workspace: %w", id, err)
 	}
 	targetWorkspacePrepared = true
@@ -692,7 +692,7 @@ func (m *Manager) executeAgentSwitch(ctx context.Context, admitted *admittedAgen
 	runtimeCfg := ports.RuntimeConfig{
 		SessionID: id, WorkspacePath: rec.Metadata.WorkspacePath, Argv: target.argv, Env: target.env,
 	}
-	handle, createErr := m.runtime.Create(ctx, runtimeCfg)
+	handle, createErr := m.createExecutionRuntime(ctx, runtimeCfg)
 	if strings.TrimSpace(handle.ID) == "" {
 		// Without an opaque target handle AO cannot safely prove or clean up a
 		// partially-created target. In particular, the source handle is already
@@ -1204,10 +1204,9 @@ func (m *Manager) prepareTargetActivation(ctx context.Context, store ports.Agent
 			return preparedTargetActivation{}, fmt.Errorf("launch command: %w", err)
 		}
 	}
-	if err := m.validateAgentBinary(argv); err != nil {
+	if err := m.resolveExecutionLaunch(ctx, argv, env); err != nil {
 		return preparedTargetActivation{}, err
 	}
-	m.augmentRuntimePATHForLaunchBinary(ctx, env, argv)
 	argv, rawLaunchID, err := m.superviseAgentProcessForSwitch(agent, rec.ID, env, argv)
 	if err != nil {
 		return preparedTargetActivation{}, fmt.Errorf("supervisor: %w", err)
@@ -1335,10 +1334,9 @@ func (m *Manager) prepareTargetLaunchPrompt(ctx context.Context, rec domain.Sess
 			return fmt.Errorf("launch command: %w", buildErr)
 		}
 	}
-	if err := m.validateAgentBinary(raw); err != nil {
+	if err := m.resolveExecutionLaunch(ctx, raw, target.env); err != nil {
 		return err
 	}
-	m.augmentRuntimePATHForLaunchBinary(ctx, target.env, raw)
 	wrapped, err := m.wrapAgentProcessWithLaunchID(target.agent, rec.ID, target.env, raw, string(target.launchID), true)
 	if err != nil {
 		return fmt.Errorf("supervisor: %w", err)

@@ -20,6 +20,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/modelcatalog"
+	localexecution "github.com/aoagents/agent-orchestrator/backend/internal/adapters/sessionexecution/local"
 	"github.com/aoagents/agent-orchestrator/backend/internal/attachmentstore"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
@@ -336,10 +337,12 @@ type Store interface {
 // Manager coordinates internal session spawn, restore, kill, and cleanup over
 // the outbound ports. User-facing read-model assembly lives in the service package.
 type Manager struct {
-	runtime   runtimeController
-	agents    ports.AgentResolver
-	workspace ports.Workspace
-	store     Store
+	runtime           runtimeController
+	agents            ports.AgentResolver
+	execution         ports.SessionExecution
+	executionInjected bool
+	workspace         ports.Workspace
+	store             Store
 	// messenger is a sessionguard.Guard wrapping the raw messenger, so every
 	// pane write is guarded (re-read state, refuse a blocked session) without
 	// each call site re-deriving the check. Send/confirmActive use Deliver for
@@ -603,6 +606,7 @@ type Deps struct {
 	Runtime   runtimeController
 	Agents    ports.AgentResolver
 	Workspace ports.Workspace
+	Execution ports.SessionExecution
 	Store     Store
 	Messenger ports.AgentMessenger
 	// Defaults supplies the daemon-owned default session interface for spawns that
@@ -722,9 +726,66 @@ func New(d Deps) *Manager {
 	if m.logger == nil {
 		m.logger = slog.Default()
 	}
+	m.execution = d.Execution
+	m.executionInjected = d.Execution != nil
+	if m.execution == nil {
+		m.execution = localexecution.New(localexecution.Config{
+			Workspace: d.Workspace, Runtime: d.Runtime, Messenger: d.Messenger,
+			StageSystemPrompt: func(_ context.Context, id domain.SessionID, prompt string) (string, error) {
+				return m.writeSystemPromptFileLocal(id, prompt)
+			},
+			DiscardSystemPrompt: func(_ context.Context, id domain.SessionID) error {
+				return os.RemoveAll(m.systemPromptDir(id))
+			},
+			ProvisionWorkspace: func(ctx context.Context, spec ports.WorkspaceProvisionSpec) error {
+				if err := applySymlinks(spec.ProjectPath, spec.WorkspacePath, spec.Symlinks); err != nil {
+					return err
+				}
+				return runPostCreate(ctx, spec.WorkspacePath, spec.PostCreate)
+			},
+			StageAttachments: m.writeSpawnAttachmentsLocal,
+			InstallAgent: func(ctx context.Context, spec ports.RemoteAgentPrepareSpec) error {
+				agent, ok := m.agents.Agent(spec.Harness)
+				if !ok {
+					return fmt.Errorf("agent %q unavailable", spec.Harness)
+				}
+				return m.prepareWorkspace(ctx, agent, spec.Harness, spec.SessionID, spec.Hooks.WorkspacePath, spec.Hooks.SystemPrompt, spec.Hooks.SystemPromptFile, spec.Hooks.Config, spec.Hooks.Env)
+			},
+			ResolveLaunch: func(ctx context.Context, argv []string, env map[string]string) (map[string]string, error) {
+				if err := m.validateAgentBinary(argv); err != nil {
+					return env, err
+				}
+				m.augmentRuntimePATHForLaunchBinary(ctx, env, argv)
+				return env, nil
+			},
+			ResolveDiffBase: resolveSpawnDiffBase,
+			ReadProjectFile: func(_ context.Context, projectPath, rel string) ([]byte, error) {
+				path, err := projectRelativeFile(projectPath, rel)
+				if err != nil {
+					return nil, err
+				}
+				return os.ReadFile(path) //nolint:gosec // validated repo-relative path
+			},
+			ImportAttachments: func(ctx context.Context, id domain.SessionID, path string) error {
+				return m.attachments.ImportWorkspace(ctx, id, path)
+			},
+			RestoreAttachments: func(ctx context.Context, id domain.SessionID, path string) (bool, error) {
+				return m.attachments.MaterializeWorkspace(ctx, id, path)
+			},
+			RemoveAttachments: func(ctx context.Context, id domain.SessionID) error { return m.attachments.RemoveSession(ctx, id) },
+		})
+	}
+	m.workspace = m.execution.Workspace()
+	if rt, ok := m.execution.Runtime().(runtimeController); ok {
+		m.runtime = rt
+	}
+	messenger := d.Messenger
+	if selected := m.execution.Messenger(); selected != nil {
+		messenger = selected
+	}
 	// messenger is the raw d.Messenger wrapped in a Guard (needs m.logger, so it
 	// is built after the logger default).
-	m.messenger = sessionguard.New(d.Store, d.Messenger, m.logger)
+	m.messenger = sessionguard.New(d.Store, messenger, m.logger)
 	m.messenger.SetInputLease(m)
 	return m
 }
@@ -802,7 +863,7 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 
 	// A chat session runs no agent inside a terminal runtime, so the terminal
 	// prerequisites are not its concern.
-	if mode == domain.SessionModeTUI {
+	if mode == domain.SessionModeTUI && !m.executionInjected {
 		if err := m.validateRuntimePrerequisites(); err != nil {
 			return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn: %w", err)
 		}
@@ -820,30 +881,58 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 		return domain.SessionRecord{}, 0, 0, wrapSpawnStageEarly(ErrSpawnCreate, err)
 	}
 	id := rec.ID
-	systemPromptFile, err := m.prepareSystemPromptFile(id, cfg.Harness, systemPrompt)
-	if err != nil {
-		m.rollbackSpawnSeedRow(ctx, id)
-		return domain.SessionRecord{}, 0, 0, wrapSpawnStage(id, ErrSpawnSystemPrompt, err)
-	}
-
 	branch := cfg.Branch
 	if branch == "" {
 		branch = DefaultSpawnBranch(id, cfg.Kind, sessionPrefix(project), projectKind, m.dataDir)
 	}
+	var provision ports.SessionProvision
+	if mode == domain.SessionModeTUI && m.executionInjected {
+		provision, err = m.execution.BeginSession(ctx, ports.ExecutionSpec{SessionID: id, ProjectID: cfg.ProjectID, Kind: cfg.Kind, Harness: cfg.Harness, Branch: branch})
+		if err != nil {
+			m.rollbackSpawnSeedRow(ctx, id)
+			return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn %s: execution environment: %w", id, err)
+		}
+	}
+	var systemPromptFile string
+	if provision != nil {
+		systemPromptFile, err = provision.StageSystemPrompt(ctx, id, systemPrompt)
+		if err != nil && systemPromptFile == "" && !systemPromptFileRequired(cfg.Harness) {
+			m.logger.Warn("system prompt file unavailable; falling back to inline system prompt", "session", id, "harness", cfg.Harness, "err", err)
+			err = nil
+		}
+	} else {
+		systemPromptFile, err = m.prepareSystemPromptFile(id, cfg.Harness, systemPrompt)
+	}
+	if err != nil {
+		if provision != nil {
+			provision.Rollback(ctx)
+		}
+		m.rollbackSpawnSeedRow(ctx, id)
+		return domain.SessionRecord{}, 0, 0, wrapSpawnStage(id, ErrSpawnSystemPrompt, err)
+	}
+
 	baseRefs := m.refreshDefaultBranchesBestEffort(ctx, project)
-	ws, workspaceProject, err := m.createSessionWorkspace(ctx, project, cfg, id, branch, baseRefs)
+	ws, workspaceProject, err := m.createSessionWorkspace(ctx, provision, project, cfg, id, branch, baseRefs)
 	if err != nil {
 		// Nothing observable exists yet — no worktree, no runtime — so the seed
 		// row is deleted outright instead of accumulating as a terminated orphan
 		// in session lists (e.g. when gitworktree refuses the branch).
+		if provision != nil {
+			provision.Rollback(ctx)
+		}
 		m.rollbackSpawnSeedRow(ctx, id)
 		return domain.SessionRecord{}, 0, 0, wrapSpawnStage(id, ErrWorkspaceCreate, err)
 	}
 
 	// Per-project workspace provisioning: symlink shared files, then run any
 	// post-create commands (e.g. `pnpm install`) before the agent launches.
-	if err := m.provisionWorkspace(ctx, project, ws.Path); err != nil {
-		m.rollbackSeedSpawnWorkspace(ctx, rec, ws, workspaceProject, false)
+	if provision != nil {
+		err = provision.ProvisionWorkspace(ctx, ports.WorkspaceProvisionSpec{ProjectPath: project.Path, WorkspacePath: ws.Path, Symlinks: project.Config.Symlinks, PostCreate: project.Config.PostCreate})
+	} else {
+		err = m.provisionWorkspace(ctx, project, ws.Path)
+	}
+	if err != nil {
+		m.rollbackSeedSpawnExecution(ctx, provision, rec, ws, workspaceProject, false)
 		return domain.SessionRecord{}, 0, 0, wrapSpawnStage(id, ErrWorkspaceProvision, err)
 	}
 
@@ -853,9 +942,14 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	// exists) and before the launch command is built (so the references reach
 	// the agent).
 	if len(cfg.Attachments) > 0 {
-		refs, err := m.writeSpawnAttachments(ctx, id, ws.Path, cfg.Attachments)
+		var refs []string
+		if provision != nil {
+			refs, err = provision.StageAttachments(ctx, id, ws.Path, cfg.Attachments)
+		} else {
+			refs, err = m.writeSpawnAttachments(ctx, id, ws.Path, cfg.Attachments)
+		}
 		if err != nil {
-			m.rollbackSeedSpawnWorkspace(ctx, rec, ws, workspaceProject, false)
+			m.rollbackSeedSpawnExecution(ctx, provision, rec, ws, workspaceProject, false)
 			return domain.SessionRecord{}, 0, 0, wrapSpawnStage(id, ErrSpawnAttachments, err)
 		}
 		// Keep the attachments dir out of git status. Best-effort: the images are
@@ -888,22 +982,27 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 
 	agent, ok := m.agents.Agent(cfg.Harness)
 	if !ok {
-		m.rollbackSeedSpawnWorkspace(ctx, rec, ws, workspaceProject, false)
+		m.rollbackSeedSpawnExecution(ctx, provision, rec, ws, workspaceProject, false)
 		return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn %s: %w: no agent adapter for harness %q", id, ErrUnknownHarness, cfg.Harness)
 	}
 	env, browserCapabilityVerifier, err := m.launchRuntimeEnv(id, cfg.ProjectID, cfg.IssueID, project.Config.Env)
 	if err != nil {
-		m.rollbackSeedSpawnWorkspace(ctx, rec, ws, workspaceProject, true)
+		m.rollbackSeedSpawnExecution(ctx, provision, rec, ws, workspaceProject, true)
 		return domain.SessionRecord{}, 0, 0, wrapSpawnStage(id, ErrSpawnBrowser, err)
 	}
 	rec, err = m.persistBrowserCapabilityVerifier(ctx, rec, browserCapabilityVerifier)
 	if err != nil {
-		m.rollbackSeedSpawnWorkspace(ctx, rec, ws, workspaceProject, true)
+		m.rollbackSeedSpawnExecution(ctx, provision, rec, ws, workspaceProject, true)
 		return domain.SessionRecord{}, 0, 0, wrapSpawnStage(id, ErrSpawnBrowser, err)
 	}
 	m.augmentAgentRuntimeEnv(agent, env)
-	if err := m.prepareWorkspace(ctx, agent, id, ws.Path, systemPrompt, systemPromptFile, adapterConfig, env); err != nil {
-		m.rollbackSeedSpawnWorkspace(ctx, rec, ws, workspaceProject, false)
+	if provision != nil {
+		err = provision.InstallAgent(ctx, ports.RemoteAgentPrepareSpec{Harness: cfg.Harness, SessionID: id, Hooks: ports.WorkspaceHookConfig{SessionID: string(id), WorkspacePath: ws.Path, DataDir: m.dataDir, Env: env, SystemPrompt: systemPrompt, SystemPromptFile: systemPromptFile, Config: adapterConfig}, PreLaunch: ports.LaunchConfig{DataDir: m.dataDir, SessionID: string(id), WorkspacePath: ws.Path}})
+	} else {
+		err = m.prepareWorkspace(ctx, agent, cfg.Harness, id, ws.Path, systemPrompt, systemPromptFile, adapterConfig, env)
+	}
+	if err != nil {
+		m.rollbackSeedSpawnExecution(ctx, provision, rec, ws, workspaceProject, false)
 		return domain.SessionRecord{}, 0, 0, wrapSpawnStage(id, ErrSpawnPrepare, err)
 	}
 	launchCfg := ports.LaunchConfig{
@@ -920,7 +1019,7 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	}
 	delivery, err := agent.GetPromptDeliveryStrategy(ctx, launchCfg)
 	if err != nil {
-		m.rollbackSeedSpawnWorkspace(ctx, rec, ws, workspaceProject, true)
+		m.rollbackSeedSpawnExecution(ctx, provision, rec, ws, workspaceProject, true)
 		return domain.SessionRecord{}, 0, 0, wrapSpawnStage(id, ErrSpawnPromptDelivery, err)
 	}
 	if delivery == ports.PromptDeliveryAfterStart {
@@ -928,36 +1027,50 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	}
 	argv, err := agent.GetLaunchCommand(ctx, launchCfg)
 	if err != nil {
-		m.rollbackSeedSpawnWorkspace(ctx, rec, ws, workspaceProject, true)
+		m.rollbackSeedSpawnExecution(ctx, provision, rec, ws, workspaceProject, true)
 		return domain.SessionRecord{}, 0, 0, wrapSpawnStage(id, ErrSpawnLaunchCommand, err)
 	}
 	// Pre-flight: confirm argv[0] actually exists on PATH (or as an absolute
 	// path the adapter returned) BEFORE handing the launch to the runtime.
 	// tmux happily creates a session+pane around a missing command, so an
 	// unresolved binary would leak through as a "live" session that never ran.
-	if err := m.validateAgentBinary(argv); err != nil {
-		m.rollbackSeedSpawnWorkspace(ctx, rec, ws, workspaceProject, true)
+	if provision != nil {
+		_, err = provision.ResolveLaunch(ctx, argv, env)
+	} else {
+		err = m.validateAgentBinary(argv)
+		m.augmentRuntimePATHForLaunchBinary(ctx, env, argv)
+	}
+	if err != nil {
+		m.rollbackSeedSpawnExecution(ctx, provision, rec, ws, workspaceProject, true)
 		return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn %s: %w", id, err)
 	}
-	m.augmentRuntimePATHForLaunchBinary(ctx, env, argv)
 	argv, launchID, err := m.superviseAgentProcess(agent, id, env, argv)
 	if err != nil {
-		m.rollbackSeedSpawnWorkspace(ctx, rec, ws, workspaceProject, true)
+		m.rollbackSeedSpawnExecution(ctx, provision, rec, ws, workspaceProject, true)
 		return domain.SessionRecord{}, 0, 0, wrapSpawnStage(id, ErrSpawnSupervisor, err)
 	}
 	if err := m.lcm.PrepareLaunch(id, launchID); err != nil {
-		m.rollbackSeedSpawnWorkspace(ctx, rec, ws, workspaceProject, true)
+		m.rollbackSeedSpawnExecution(ctx, provision, rec, ws, workspaceProject, true)
 		return domain.SessionRecord{}, 0, 0, wrapSpawnStage(id, ErrSpawnPrepareLaunch, err)
 	}
 	defer m.lcm.CancelLaunch(id, launchID)
-	handle, err := m.runtime.Create(ctx, ports.RuntimeConfig{
+	runtimeCfg := ports.RuntimeConfig{
 		SessionID:     id,
 		WorkspacePath: ws.Path,
 		Argv:          argv,
 		Env:           env,
-	})
+	}
+	var handle ports.RuntimeHandle
+	if provision != nil {
+		runtimeCfg, err = provision.BindRuntime(ctx, runtimeCfg)
+		if err == nil {
+			handle, err = provision.LaunchRuntime(ctx, runtimeCfg)
+		}
+	} else {
+		handle, err = m.runtime.Create(ctx, runtimeCfg)
+	}
 	if err != nil {
-		m.rollbackSeedSpawnWorkspace(ctx, rec, ws, workspaceProject, true)
+		m.rollbackSeedSpawnExecution(ctx, provision, rec, ws, workspaceProject, true)
 		return domain.SessionRecord{}, 0, 0, wrapSpawnStage(id, ErrRuntimeCreate, err)
 	}
 
@@ -976,24 +1089,45 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 		Model: resolvedModelForMetadata(cfg.Harness, agentConfig, adapterConfig),
 	}
 	if projectKind == domain.ProjectKindSingleRepo {
-		metadata.DiffBaseSHA, metadata.DiffBaseRef = resolveSpawnDiffBase(ctx, ws.Path, ws.BaseRef)
+		if provision != nil {
+			metadata.DiffBaseSHA, metadata.DiffBaseRef = provision.ResolveDiffBase(ctx, ws.Path, ws.BaseRef)
+		} else {
+			metadata.DiffBaseSHA, metadata.DiffBaseRef = resolveSpawnDiffBase(ctx, ws.Path, ws.BaseRef)
+		}
 	}
 	if err := m.lcm.MarkSpawned(ctx, id, metadata); err != nil {
-		runtimeDestroyed := m.runtime.Destroy(ctx, handle) == nil
-		m.rollbackPreparedSpawnWorkspace(ctx, rec, ws, workspaceProject, runtimeDestroyed)
+		runtimeDestroyed := false
+		if provision == nil {
+			runtimeDestroyed = m.runtime.Destroy(ctx, handle) == nil
+		}
+		m.rollbackPreparedSpawnExecution(ctx, provision, rec, ws, workspaceProject, runtimeDestroyed)
 		m.markSpawnFailedTerminated(ctx, id)
 		return domain.SessionRecord{}, 0, 0, wrapSpawnStage(id, ErrSpawnCommit, err)
 	}
 	if delivery == ports.PromptDeliveryAfterStart && prompt != "" {
 		if err := m.deliverAfterStartPrompt(ctx, agent, launchCfg, handle, id, prompt); err != nil {
-			runtimeDestroyed := m.runtime.Destroy(ctx, handle) == nil
-			workspaceDestroyed := m.rollbackPreparedSpawnWorkspace(ctx, rec, ws, workspaceProject, runtimeDestroyed)
+			runtimeDestroyed := false
+			if provision == nil {
+				runtimeDestroyed = m.runtime.Destroy(ctx, handle) == nil
+			}
+			workspaceDestroyed := m.rollbackPreparedSpawnExecution(ctx, provision, rec, ws, workspaceProject, runtimeDestroyed)
 			if runtimeDestroyed && workspaceDestroyed {
 				m.markSpawnFailedTerminatedWithoutWorkspace(ctx, id)
 			} else {
 				m.markSpawnFailedTerminated(ctx, id)
 			}
 			return domain.SessionRecord{}, 0, 0, wrapSpawnStage(id, ErrSpawnDeliverPrompt, err)
+		}
+	}
+	if provision != nil {
+		if err := provision.Commit(ctx); err != nil {
+			workspaceDestroyed := m.rollbackPreparedSpawnExecution(ctx, provision, rec, ws, workspaceProject, false)
+			if workspaceDestroyed {
+				m.markSpawnFailedTerminatedWithoutWorkspace(ctx, id)
+			} else {
+				m.markSpawnFailedTerminated(ctx, id)
+			}
+			return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn %s: execution commit: %w", id, err)
 		}
 	}
 	rec, err = m.getRecord(ctx, id)
@@ -1103,14 +1237,14 @@ func (m *Manager) refreshDefaultBranchesBestEffort(ctx context.Context, project 
 	return baseRefs
 }
 
-func (m *Manager) createSessionWorkspace(ctx context.Context, project domain.ProjectRecord, cfg ports.SpawnConfig, id domain.SessionID, branch string, baseRefs map[string]string) (ports.WorkspaceInfo, *ports.WorkspaceProjectInfo, error) {
+func (m *Manager) createSessionWorkspace(ctx context.Context, provision ports.SessionProvision, project domain.ProjectRecord, cfg ports.SpawnConfig, id domain.SessionID, branch string, baseRefs map[string]string) (ports.WorkspaceInfo, *ports.WorkspaceProjectInfo, error) {
 	projectKind := project.Kind.WithDefault()
 	if projectKind != domain.ProjectKindWorkspace {
 		baseBranch := project.Config.WorktreeBaseBranch()
 		if projectKind == domain.ProjectKindScratch {
 			baseBranch = ""
 		}
-		ws, err := m.workspace.Create(ctx, ports.WorkspaceConfig{
+		workspaceCfg := ports.WorkspaceConfig{
 			ProjectID:     cfg.ProjectID,
 			SessionID:     id,
 			Kind:          cfg.Kind,
@@ -1118,12 +1252,17 @@ func (m *Manager) createSessionWorkspace(ctx context.Context, project domain.Pro
 			Branch:        branch,
 			BaseBranch:    baseBranch,
 			BaseRef:       baseRefs[filepath.Clean(project.Path)],
-		})
+		}
+		if provision != nil {
+			ws, _, err := provision.CreateWorkspace(ctx, ports.WorkspaceCreateSpec{Workspace: workspaceCfg})
+			return ws, nil, err
+		}
+		ws, err := m.workspace.Create(ctx, workspaceCfg)
 		return ws, nil, err
 	}
 	workspaceProject, ok := m.workspace.(ports.WorkspaceProject)
-	if !ok {
-		return ports.WorkspaceInfo{}, nil, errors.New("workspace project materialization is not supported by workspace adapter")
+	if provision == nil && !ok {
+		return ports.WorkspaceInfo{}, nil, ports.ErrWorkspaceProjectUnsupported
 	}
 	repos, err := m.store.ListWorkspaceRepos(ctx, project.ID)
 	if err != nil {
@@ -1146,7 +1285,7 @@ func (m *Manager) createSessionWorkspace(ctx context.Context, project domain.Pro
 			BaseRef:    baseRefs[filepath.Clean(repoPath)],
 		})
 	}
-	info, err := workspaceProject.CreateWorkspaceProject(ctx, ports.WorkspaceProjectConfig{
+	projectCfg := ports.WorkspaceProjectConfig{
 		ProjectID:     cfg.ProjectID,
 		SessionID:     id,
 		Kind:          cfg.Kind,
@@ -1156,7 +1295,20 @@ func (m *Manager) createSessionWorkspace(ctx context.Context, project domain.Pro
 		BaseBranch:    project.Config.WorktreeBaseBranch(),
 		BaseRef:       baseRefs[filepath.Clean(project.Path)],
 		Repos:         childRepos,
-	})
+	}
+	var info ports.WorkspaceProjectInfo
+	if provision != nil {
+		_, created, createErr := provision.CreateWorkspace(ctx, ports.WorkspaceCreateSpec{Project: &projectCfg})
+		if createErr != nil {
+			return ports.WorkspaceInfo{}, nil, createErr
+		}
+		if created == nil {
+			return ports.WorkspaceInfo{}, nil, errors.New("execution returned no workspace project")
+		}
+		info = *created
+	} else {
+		info, err = workspaceProject.CreateWorkspaceProject(ctx, projectCfg)
+	}
 	if err != nil {
 		return ports.WorkspaceInfo{}, nil, err
 	}
@@ -1257,6 +1409,36 @@ func (m *Manager) rollbackSeedSpawnWorkspace(ctx context.Context, rec domain.Ses
 	}
 	m.preserveFailedSpawnWorkspace(ctx, rec.ID, ws, true)
 	m.markSpawnFailedTerminated(ctx, rec.ID)
+}
+
+func (m *Manager) rollbackSeedSpawnExecution(ctx context.Context, provision ports.SessionProvision, rec domain.SessionRecord, ws ports.WorkspaceInfo, project *ports.WorkspaceProjectInfo, prepared bool) {
+	if provision == nil {
+		m.rollbackSeedSpawnWorkspace(ctx, rec, ws, project, prepared)
+		return
+	}
+	outcome := provision.Rollback(ctx)
+	_ = m.store.DeleteSessionWorktrees(ctx, rec.ID)
+	if outcome.WorkspaceDestroyed {
+		if prepared {
+			m.cleanupAgentWorkspace(ctx, rec, ws.Path)
+		}
+		m.rollbackSpawnSeedRow(ctx, rec.ID)
+		return
+	}
+	m.markSpawnFailedTerminated(ctx, rec.ID)
+}
+
+func (m *Manager) rollbackPreparedSpawnExecution(ctx context.Context, provision ports.SessionProvision, rec domain.SessionRecord, ws ports.WorkspaceInfo, project *ports.WorkspaceProjectInfo, runtimeDestroyed bool) bool {
+	if provision == nil {
+		return m.rollbackPreparedSpawnWorkspace(ctx, rec, ws, project, runtimeDestroyed)
+	}
+	outcome := provision.Rollback(ctx)
+	_ = m.store.DeleteSessionWorktrees(ctx, rec.ID)
+	if outcome.WorkspaceDestroyed {
+		m.cleanupAgentWorkspace(ctx, rec, ws.Path)
+		return true
+	}
+	return false
 }
 
 func (m *Manager) preserveFailedSpawnWorkspace(ctx context.Context, id domain.SessionID, ws ports.WorkspaceInfo, runtimeDestroyed bool) {
@@ -1979,7 +2161,7 @@ func (m *Manager) relaunchSessionWithPolicy(ctx context.Context, operation strin
 		return RestoreResult{}, fmt.Errorf("%s %s: persist browser capability: %w", operation, rec.ID, err)
 	}
 	m.augmentAgentRuntimeEnv(agent, env)
-	if err := m.prepareWorkspace(ctx, agent, rec.ID, ws.Path, systemPrompt, systemPromptFile, agentConfig, env); err != nil {
+	if err := m.prepareWorkspace(ctx, agent, rec.Harness, rec.ID, ws.Path, systemPrompt, systemPromptFile, agentConfig, env); err != nil {
 		return RestoreResult{}, fmt.Errorf("%s %s: %w", operation, rec.ID, err)
 	}
 	var argv []string
@@ -1996,11 +2178,10 @@ func (m *Manager) relaunchSessionWithPolicy(ctx context.Context, operation strin
 		m.cleanupSystemPromptDir(rec.ID)
 		return RestoreResult{}, fmt.Errorf("%s %s: %w", operation, rec.ID, err)
 	}
-	if err := m.validateAgentBinary(argv); err != nil {
+	if err := m.resolveExecutionLaunch(ctx, argv, env); err != nil {
 		m.cleanupSystemPromptDir(rec.ID)
 		return RestoreResult{}, fmt.Errorf("%s %s: %w", operation, rec.ID, err)
 	}
-	m.augmentRuntimePATHForLaunchBinary(ctx, env, argv)
 	argv, launchID, err := m.superviseAgentProcess(agent, rec.ID, env, argv)
 	if err != nil {
 		m.cleanupSystemPromptDir(rec.ID)
@@ -2019,7 +2200,7 @@ func (m *Manager) relaunchSessionWithPolicy(ctx context.Context, operation strin
 	}
 	var handle ports.RuntimeHandle
 	if restartHandle == nil {
-		handle, err = m.runtime.Create(ctx, runtimeCfg)
+		handle, err = m.createExecutionRuntime(ctx, runtimeCfg)
 	} else {
 		handle, err = m.restartRuntime(ctx, *restartHandle, runtimeCfg)
 	}
@@ -2097,7 +2278,7 @@ func (m *Manager) restartRuntime(ctx context.Context, handle ports.RuntimeHandle
 			return ports.RuntimeHandle{}, fmt.Errorf("destroy existing runtime: %w", err)
 		}
 	}
-	return m.runtime.Create(ctx, cfg)
+	return m.createExecutionRuntime(ctx, cfg)
 }
 
 func (m *Manager) getRecord(ctx context.Context, id domain.SessionID) (domain.SessionRecord, error) {
@@ -3432,6 +3613,10 @@ const attachmentsDir = attachmentstore.WorkspaceDir
 // attachment-1<ext>, attachment-2<ext>, ... and returns the worktree-relative
 // paths in order. The projections are excluded from git via info/exclude.
 func (m *Manager) writeSpawnAttachments(ctx context.Context, id domain.SessionID, workspacePath string, attachments []ports.SpawnAttachment) ([]string, error) {
+	return m.writeSpawnAttachmentsLocal(ctx, id, workspacePath, attachments)
+}
+
+func (m *Manager) writeSpawnAttachmentsLocal(ctx context.Context, id domain.SessionID, workspacePath string, attachments []ports.SpawnAttachment) ([]string, error) {
 	refs := make([]string, 0, len(attachments))
 	for i, a := range attachments {
 		ext := a.Ext
@@ -3452,11 +3637,20 @@ func (m *Manager) importAttachments(ctx context.Context, rec domain.SessionRecor
 	if rec.Metadata.WorkspacePath == "" {
 		return nil
 	}
+	if m.executionInjected {
+		return m.execution.ImportAttachments(ctx, rec.ID, rec.Metadata.WorkspacePath)
+	}
 	return m.attachments.ImportWorkspace(ctx, rec.ID, rec.Metadata.WorkspacePath)
 }
 
 func (m *Manager) restoreAttachments(ctx context.Context, id domain.SessionID, workspace ports.WorkspaceInfo) error {
-	materialized, err := m.attachments.MaterializeWorkspace(ctx, id, workspace.Path)
+	var materialized bool
+	var err error
+	if m.executionInjected {
+		materialized, err = m.execution.RestoreAttachments(ctx, id, workspace.Path)
+	} else {
+		materialized, err = m.attachments.MaterializeWorkspace(ctx, id, workspace.Path)
+	}
 	if err != nil {
 		return err
 	}
@@ -3470,7 +3664,13 @@ func (m *Manager) restoreAttachments(ctx context.Context, id domain.SessionID, w
 }
 
 func (m *Manager) cleanupAttachments(ctx context.Context, id domain.SessionID) {
-	if err := m.attachments.RemoveSession(ctx, id); err != nil {
+	var err error
+	if m.executionInjected {
+		err = m.execution.RemoveAttachments(ctx, id)
+	} else {
+		err = m.attachments.RemoveSession(ctx, id)
+	}
+	if err != nil {
 		m.logger.Warn("attachment cleanup failed", "sessionID", id, "error", err)
 	}
 }
@@ -3534,11 +3734,17 @@ func (m *Manager) buildSystemPrompt(ctx context.Context, kind domain.SessionKind
 		if ok {
 			cfg.OrchestratorSessionID = string(orchestratorID)
 		}
-		rules, err := buildProjectRules(projectRulesConfig{
+		rulesConfig := projectRulesConfig{
 			ProjectPath:    project.Path,
 			AgentRules:     project.Config.AgentRules,
 			AgentRulesFile: project.Config.AgentRulesFile,
-		})
+		}
+		var rules string
+		if m.executionInjected {
+			rules, err = buildProjectRulesWithReader(ctx, rulesConfig, m.execution.ReadProjectFile)
+		} else {
+			rules, err = buildProjectRules(rulesConfig)
+		}
 		if err != nil {
 			return "", err
 		}
@@ -3617,6 +3823,10 @@ func (m *Manager) activeOrchestratorSessionID(ctx context.Context, project domai
 }
 
 func (m *Manager) writeSystemPromptFile(id domain.SessionID, systemPrompt string) (string, error) {
+	return m.writeSystemPromptFileLocal(id, systemPrompt)
+}
+
+func (m *Manager) writeSystemPromptFileLocal(id domain.SessionID, systemPrompt string) (string, error) {
 	if systemPrompt == "" || strings.TrimSpace(m.dataDir) == "" {
 		return "", nil
 	}
@@ -3631,7 +3841,13 @@ func (m *Manager) writeSystemPromptFile(id domain.SessionID, systemPrompt string
 }
 
 func (m *Manager) prepareSystemPromptFile(id domain.SessionID, harness domain.AgentHarness, systemPrompt string) (string, error) {
-	path, err := m.writeSystemPromptFile(id, systemPrompt)
+	var path string
+	var err error
+	if m.executionInjected {
+		path, err = m.execution.StageSystemPrompt(context.Background(), id, systemPrompt)
+	} else {
+		path, err = m.writeSystemPromptFile(id, systemPrompt)
+	}
 	if err == nil || path != "" {
 		return path, err
 	}
@@ -3665,6 +3881,12 @@ func (m *Manager) systemPromptDir(id domain.SessionID) string {
 }
 
 func (m *Manager) cleanupSystemPromptDir(id domain.SessionID) {
+	if m.executionInjected {
+		if err := m.execution.DiscardSystemPrompt(context.Background(), id); err != nil {
+			m.logger.Warn("system prompt cleanup failed", "session", id, "err", err)
+		}
+		return
+	}
 	dir := m.systemPromptDir(id)
 	if dir == "" {
 		return
@@ -3929,7 +4151,14 @@ func (m *Manager) augmentAgentRuntimeEnv(agent ports.Agent, env map[string]strin
 // starts the agent: installing the workspace-local activity hooks (so early
 // startup hooks can update the already-created session row), then any optional
 // PreLaunch step. Shared by Spawn and Restore.
-func (m *Manager) prepareWorkspace(ctx context.Context, agent ports.Agent, id domain.SessionID, workspacePath, systemPrompt, systemPromptFile string, agentConfig ports.AgentConfig, env map[string]string) error {
+func (m *Manager) prepareWorkspace(ctx context.Context, agent ports.Agent, harness domain.AgentHarness, id domain.SessionID, workspacePath, systemPrompt, systemPromptFile string, agentConfig ports.AgentConfig, env map[string]string) error {
+	if m.executionInjected {
+		return m.execution.InstallAgent(ctx, ports.RemoteAgentPrepareSpec{
+			Harness: harness, SessionID: id,
+			Hooks:     ports.WorkspaceHookConfig{SessionID: string(id), WorkspacePath: workspacePath, DataDir: m.dataDir, Env: env, SystemPrompt: systemPrompt, SystemPromptFile: systemPromptFile, Config: agentConfig},
+			PreLaunch: ports.LaunchConfig{DataDir: m.dataDir, SessionID: string(id), WorkspacePath: workspacePath},
+		})
+	}
 	if err := agent.GetAgentHooks(ctx, ports.WorkspaceHookConfig{
 		SessionID:        string(id),
 		WorkspacePath:    workspacePath,
@@ -4198,6 +4427,29 @@ func (m *Manager) validateAgentBinary(argv []string) error {
 		return fmt.Errorf("agent binary %q: %w", bin, ports.ErrAgentBinaryNotFound)
 	}
 	return nil
+}
+
+func (m *Manager) resolveExecutionLaunch(ctx context.Context, argv []string, env map[string]string) error {
+	if m.executionInjected {
+		_, err := m.execution.ResolveLaunch(ctx, argv, env)
+		return err
+	}
+	if err := m.validateAgentBinary(argv); err != nil {
+		return err
+	}
+	m.augmentRuntimePATHForLaunchBinary(ctx, env, argv)
+	return nil
+}
+
+func (m *Manager) createExecutionRuntime(ctx context.Context, cfg ports.RuntimeConfig) (ports.RuntimeHandle, error) {
+	if m.executionInjected {
+		bound, err := m.execution.BindRuntime(ctx, cfg)
+		if err != nil {
+			return ports.RuntimeHandle{}, err
+		}
+		cfg = bound
+	}
+	return m.runtime.Create(ctx, cfg)
 }
 
 func launchBinary(argv []string) (string, bool) {
