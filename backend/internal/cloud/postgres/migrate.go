@@ -130,7 +130,7 @@ func grantRuntimeRole(ctx context.Context, databaseURL, runtimeRole string) erro
 		"GRANT CONNECT ON DATABASE " + pgx.Identifier{databaseName}.Sanitize() + " TO " + role,
 		"GRANT USAGE ON SCHEMA public TO " + role,
 		"GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.ao_users, public.ao_auth_sessions, public.ao_organizations, public.ao_org_memberships, public.ao_cloud_workspaces, public.ao_cloud_session_runtimes TO " + role,
-		"GRANT EXECUTE ON FUNCTION public.ao_current_user_id(), public.ao_current_org_id(), public.ao_is_org_member(uuid, uuid), public.ao_can_manage_org(uuid, uuid) TO " + role,
+		"GRANT EXECUTE ON FUNCTION public.ao_current_user_id(), public.ao_current_org_id(), public.ao_current_workspace_id(), public.ao_is_org_member(uuid, uuid), public.ao_can_manage_org(uuid, uuid) TO " + role,
 	}
 	for _, statement := range statements {
 		if _, err := conn.Exec(ctx, statement); err != nil {

@@ -75,6 +75,9 @@ an active owner/admin membership.
 
 The workspace and session-runtime tables are placement-schema groundwork only.
 This PR exposes no handlers for them and stores no AO product data in them.
+Session-runtime RLS requires the selected workspace as well as user and
+organization context, and verifies that the current user owns that workspace;
+organization membership alone cannot address another workspace's runtimes.
 
 ## Configuration
 
