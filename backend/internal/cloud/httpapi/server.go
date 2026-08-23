@@ -128,10 +128,10 @@ func (s *Server) routes() http.Handler {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	})
 	router.Get("/readyz", s.ready)
-	authRateLimit := httprate.Limit(
+	authRateLimit := httprate.LimitBy(
 		20,
 		time.Minute,
-		httprate.WithKeyFuncs(s.sourceIPKey),
+		s.sourceIPKey,
 		httprate.WithLimitHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			writeError(w, r, http.StatusTooManyRequests, "rate_limited", "AUTH_RATE_LIMITED", "too many authentication requests")
 		})),
