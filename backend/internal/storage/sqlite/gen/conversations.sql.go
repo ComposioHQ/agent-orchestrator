@@ -36,8 +36,8 @@ func (q *Queries) ActivateConversationBranch(ctx context.Context, arg ActivateCo
 const adoptProviderConversationTurn = `-- name: AdoptProviderConversationTurn :exec
 INSERT OR IGNORE INTO conversation_turns (
     id, conversation_id, handled_by_session_id, provider_turn_id,
-    controller_generation, state, requested_at, started_at
-) VALUES (?, ?, ?, ?, ?, 'running', ?, ?)
+    controller_generation, state, requested_at, started_at, sequence
+) VALUES (?, ?, ?, ?, ?, 'running', ?, ?, ?)
 `
 
 type AdoptProviderConversationTurnParams struct {
@@ -48,6 +48,7 @@ type AdoptProviderConversationTurnParams struct {
 	ControllerGeneration string
 	RequestedAt          time.Time
 	StartedAt            sql.NullTime
+	Sequence             int64
 }
 
 // A turn the PROVIDER started that AO never dispatched: a compaction runs as its
@@ -65,6 +66,7 @@ func (q *Queries) AdoptProviderConversationTurn(ctx context.Context, arg AdoptPr
 		arg.ControllerGeneration,
 		arg.RequestedAt,
 		arg.StartedAt,
+		arg.Sequence,
 	)
 	return err
 }
@@ -700,8 +702,8 @@ func (q *Queries) InsertConversationProviderEvent(ctx context.Context, arg Inser
 const insertConversationTurn = `-- name: InsertConversationTurn :exec
 INSERT INTO conversation_turns (
     id, conversation_id, handled_by_session_id, provider_turn_id,
-    controller_generation, state, requested_at
-) VALUES (?, ?, ?, ?, ?, ?, ?)
+    controller_generation, state, requested_at, sequence
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 `
 
 type InsertConversationTurnParams struct {
@@ -712,6 +714,7 @@ type InsertConversationTurnParams struct {
 	ControllerGeneration string
 	State                domain.TurnState
 	RequestedAt          time.Time
+	Sequence             int64
 }
 
 func (q *Queries) InsertConversationTurn(ctx context.Context, arg InsertConversationTurnParams) error {
@@ -723,6 +726,7 @@ func (q *Queries) InsertConversationTurn(ctx context.Context, arg InsertConversa
 		arg.ControllerGeneration,
 		arg.State,
 		arg.RequestedAt,
+		arg.Sequence,
 	)
 	return err
 }
@@ -779,7 +783,7 @@ WHERE conversation_turns.conversation_id = ?1
       WHERE lineage_activity.turn_id = conversation_turns.id
         AND lineage_activity.sequence <= path.max_sequence
   ))
-ORDER BY conversation_turns.requested_at, conversation_turns.rowid
+ORDER BY conversation_turns.sequence
 `
 
 // The running turns visible on the active branch, in the same order as the
@@ -852,8 +856,8 @@ UPDATE conversation_turns
 SET rolled_back_at = ?
 WHERE conversation_turns.conversation_id = ?
   AND conversation_turns.rolled_back_at IS NULL
-  AND conversation_turns.rowid >= (
-      SELECT anchor.rowid FROM conversation_turns AS anchor WHERE anchor.id = ?
+  AND conversation_turns.sequence >= (
+      SELECT anchor.sequence FROM conversation_turns AS anchor WHERE anchor.id = ?
   )
 `
 
@@ -867,10 +871,8 @@ type MarkConversationTurnsRolledBackParams struct {
 // an undo discards. Inclusive of the named turn: the state a person wants back is
 // the one from before they sent the message they pointed at.
 //
-// The cut is on rowid rather than requested_at because rowid is assigned by the
-// insert and strictly increasing, so it orders turns recorded in the same clock tick
-// the same way SelectConversationTurns does. Two turns sharing a timestamp is
-// ordinary; two turns sharing a rowid is impossible.
+// The durable per-conversation sequence is the ordering and rollback boundary.
+// Timestamps remain display metadata and ties never depend on SQLite row layout.
 func (q *Queries) MarkConversationTurnsRolledBack(ctx context.Context, arg MarkConversationTurnsRolledBackParams) (int64, error) {
 	result, err := q.db.ExecContext(ctx, markConversationTurnsRolledBack, arg.RolledBackAt, arg.ConversationID, arg.ID)
 	if err != nil {
@@ -896,6 +898,20 @@ func (q *Queries) NextConversationSequence(ctx context.Context, arg NextConversa
 	var latest_sequence int64
 	err := row.Scan(&latest_sequence)
 	return latest_sequence, err
+}
+
+const nextConversationTurnSequence = `-- name: NextConversationTurnSequence :one
+UPDATE conversations
+SET latest_turn_sequence = latest_turn_sequence + 1
+WHERE id = ?
+RETURNING latest_turn_sequence
+`
+
+func (q *Queries) NextConversationTurnSequence(ctx context.Context, id string) (int64, error) {
+	row := q.db.QueryRowContext(ctx, nextConversationTurnSequence, id)
+	var latest_turn_sequence int64
+	err := row.Scan(&latest_turn_sequence)
+	return latest_turn_sequence, err
 }
 
 const recomputeConversationCompactedAt = `-- name: RecomputeConversationCompactedAt :exec
@@ -1361,7 +1377,7 @@ func (q *Queries) SelectConversationBranches(ctx context.Context, conversationID
 }
 
 const selectConversationByID = `-- name: SelectConversationByID :one
-SELECT id, scope, project_id, session_id, current_session_id, latest_sequence, created_at, updated_at, model, reasoning_effort, approval_mode, compacted_at, context_used, context_window, usage_input_tokens, usage_output_tokens, usage_cached_tokens, usage_total_tokens, rate_limit_primary_percent, rate_limit_secondary_percent, rate_limit_primary_resets_in, rate_limit_secondary_resets_in, rate_limit_plan, provider_title, applied_title, model_reroute_json, account_json, thread_state_json, mcp_servers_json, usage_cost, usage_currency, active_branch_id FROM conversations WHERE id = ? LIMIT 1
+SELECT id, scope, project_id, session_id, current_session_id, latest_sequence, created_at, updated_at, model, reasoning_effort, approval_mode, compacted_at, context_used, context_window, usage_input_tokens, usage_output_tokens, usage_cached_tokens, usage_total_tokens, rate_limit_primary_percent, rate_limit_secondary_percent, rate_limit_primary_resets_in, rate_limit_secondary_resets_in, rate_limit_plan, provider_title, applied_title, model_reroute_json, account_json, thread_state_json, mcp_servers_json, usage_cost, usage_currency, active_branch_id, latest_turn_sequence FROM conversations WHERE id = ? LIMIT 1
 `
 
 func (q *Queries) SelectConversationByID(ctx context.Context, id string) (Conversation, error) {
@@ -1400,12 +1416,13 @@ func (q *Queries) SelectConversationByID(ctx context.Context, id string) (Conver
 		&i.UsageCost,
 		&i.UsageCurrency,
 		&i.ActiveBranchID,
+		&i.LatestTurnSequence,
 	)
 	return i, err
 }
 
 const selectConversationBySession = `-- name: SelectConversationBySession :one
-SELECT id, scope, project_id, session_id, current_session_id, latest_sequence, created_at, updated_at, model, reasoning_effort, approval_mode, compacted_at, context_used, context_window, usage_input_tokens, usage_output_tokens, usage_cached_tokens, usage_total_tokens, rate_limit_primary_percent, rate_limit_secondary_percent, rate_limit_primary_resets_in, rate_limit_secondary_resets_in, rate_limit_plan, provider_title, applied_title, model_reroute_json, account_json, thread_state_json, mcp_servers_json, usage_cost, usage_currency, active_branch_id FROM conversations WHERE current_session_id = ? LIMIT 1
+SELECT id, scope, project_id, session_id, current_session_id, latest_sequence, created_at, updated_at, model, reasoning_effort, approval_mode, compacted_at, context_used, context_window, usage_input_tokens, usage_output_tokens, usage_cached_tokens, usage_total_tokens, rate_limit_primary_percent, rate_limit_secondary_percent, rate_limit_primary_resets_in, rate_limit_secondary_resets_in, rate_limit_plan, provider_title, applied_title, model_reroute_json, account_json, thread_state_json, mcp_servers_json, usage_cost, usage_currency, active_branch_id, latest_turn_sequence FROM conversations WHERE current_session_id = ? LIMIT 1
 `
 
 func (q *Queries) SelectConversationBySession(ctx context.Context, currentSessionID *domain.SessionID) (Conversation, error) {
@@ -1444,6 +1461,7 @@ func (q *Queries) SelectConversationBySession(ctx context.Context, currentSessio
 		&i.UsageCost,
 		&i.UsageCurrency,
 		&i.ActiveBranchID,
+		&i.LatestTurnSequence,
 	)
 	return i, err
 }
@@ -1872,7 +1890,7 @@ func (q *Queries) SelectConversationProviderEvents(ctx context.Context, arg Sele
 }
 
 const selectConversationTurnByID = `-- name: SelectConversationTurnByID :one
-SELECT id, conversation_id, handled_by_session_id, provider_turn_id, controller_generation, state, error_message, requested_at, started_at, completed_at, diff_json, rolled_back_at, plan_json, branch_id, promotion_started_at, promoted_to_turn_id FROM conversation_turns WHERE id = ? LIMIT 1
+SELECT id, conversation_id, handled_by_session_id, provider_turn_id, controller_generation, state, error_message, requested_at, started_at, completed_at, diff_json, rolled_back_at, plan_json, branch_id, promotion_started_at, promoted_to_turn_id, sequence FROM conversation_turns WHERE id = ? LIMIT 1
 `
 
 func (q *Queries) SelectConversationTurnByID(ctx context.Context, id string) (ConversationTurn, error) {
@@ -1895,12 +1913,13 @@ func (q *Queries) SelectConversationTurnByID(ctx context.Context, id string) (Co
 		&i.BranchID,
 		&i.PromotionStartedAt,
 		&i.PromotedToTurnID,
+		&i.Sequence,
 	)
 	return i, err
 }
 
 const selectConversationTurnByProviderID = `-- name: SelectConversationTurnByProviderID :one
-SELECT id, conversation_id, handled_by_session_id, provider_turn_id, controller_generation, state, error_message, requested_at, started_at, completed_at, diff_json, rolled_back_at, plan_json, branch_id, promotion_started_at, promoted_to_turn_id FROM conversation_turns
+SELECT id, conversation_id, handled_by_session_id, provider_turn_id, controller_generation, state, error_message, requested_at, started_at, completed_at, diff_json, rolled_back_at, plan_json, branch_id, promotion_started_at, promoted_to_turn_id, sequence FROM conversation_turns
 WHERE conversation_id = ? AND provider_turn_id = ?
 LIMIT 1
 `
@@ -1932,6 +1951,7 @@ func (q *Queries) SelectConversationTurnByProviderID(ctx context.Context, arg Se
 		&i.BranchID,
 		&i.PromotionStartedAt,
 		&i.PromotedToTurnID,
+		&i.Sequence,
 	)
 	return i, err
 }
@@ -1952,7 +1972,7 @@ WITH RECURSIVE active_path(branch_id, max_sequence) AS (
     JOIN conversation_branches AS branch ON branch.id = path.branch_id
     WHERE branch.parent_branch_id IS NOT NULL
 )
-SELECT conversation_turns.id, conversation_turns.conversation_id, conversation_turns.handled_by_session_id, conversation_turns.provider_turn_id, conversation_turns.controller_generation, conversation_turns.state, conversation_turns.error_message, conversation_turns.requested_at, conversation_turns.started_at, conversation_turns.completed_at, conversation_turns.diff_json, conversation_turns.rolled_back_at, conversation_turns.plan_json, conversation_turns.branch_id, conversation_turns.promotion_started_at, conversation_turns.promoted_to_turn_id FROM conversation_turns
+SELECT conversation_turns.id, conversation_turns.conversation_id, conversation_turns.handled_by_session_id, conversation_turns.provider_turn_id, conversation_turns.controller_generation, conversation_turns.state, conversation_turns.error_message, conversation_turns.requested_at, conversation_turns.started_at, conversation_turns.completed_at, conversation_turns.diff_json, conversation_turns.rolled_back_at, conversation_turns.plan_json, conversation_turns.branch_id, conversation_turns.promotion_started_at, conversation_turns.promoted_to_turn_id, conversation_turns.sequence FROM conversation_turns
 JOIN active_path AS path ON path.branch_id = conversation_turns.branch_id
 WHERE conversation_turns.conversation_id = ?1
   AND conversation_turns.promoted_to_turn_id IS NULL
@@ -1965,7 +1985,7 @@ WHERE conversation_turns.conversation_id = ?1
       WHERE lineage_activity.turn_id = conversation_turns.id
         AND lineage_activity.sequence <= path.max_sequence
   ))
-ORDER BY conversation_turns.requested_at, conversation_turns.rowid
+ORDER BY conversation_turns.sequence
 `
 
 // Turns are read in full, rolled-back ones included. They carry rolled_back_at, so
@@ -1999,6 +2019,7 @@ func (q *Queries) SelectConversationTurns(ctx context.Context, conversationID st
 			&i.BranchID,
 			&i.PromotionStartedAt,
 			&i.PromotedToTurnID,
+			&i.Sequence,
 		); err != nil {
 			return nil, err
 		}
@@ -2029,7 +2050,7 @@ WITH RECURSIVE active_path(branch_id, max_sequence) AS (
     JOIN conversation_branches AS branch ON branch.id = path.branch_id
     WHERE branch.parent_branch_id IS NOT NULL
 )
-SELECT conversation_turns.id, conversation_turns.conversation_id, conversation_turns.handled_by_session_id, conversation_turns.provider_turn_id, conversation_turns.controller_generation, conversation_turns.state, conversation_turns.error_message, conversation_turns.requested_at, conversation_turns.started_at, conversation_turns.completed_at, conversation_turns.diff_json, conversation_turns.rolled_back_at, conversation_turns.plan_json, conversation_turns.branch_id, conversation_turns.promotion_started_at, conversation_turns.promoted_to_turn_id FROM conversation_turns
+SELECT conversation_turns.id, conversation_turns.conversation_id, conversation_turns.handled_by_session_id, conversation_turns.provider_turn_id, conversation_turns.controller_generation, conversation_turns.state, conversation_turns.error_message, conversation_turns.requested_at, conversation_turns.started_at, conversation_turns.completed_at, conversation_turns.diff_json, conversation_turns.rolled_back_at, conversation_turns.plan_json, conversation_turns.branch_id, conversation_turns.promotion_started_at, conversation_turns.promoted_to_turn_id, conversation_turns.sequence FROM conversation_turns
 JOIN active_path AS path ON path.branch_id = conversation_turns.branch_id
 WHERE conversation_turns.conversation_id = ?1
   AND conversation_turns.promoted_to_turn_id IS NULL
@@ -2058,7 +2079,7 @@ WHERE conversation_turns.conversation_id = ?1
         AND conversation_activities.sequence < ?3
     )
   )
-ORDER BY conversation_turns.requested_at, conversation_turns.rowid
+ORDER BY conversation_turns.sequence
 `
 
 type SelectConversationTurnsPageParams struct {
@@ -2095,6 +2116,7 @@ func (q *Queries) SelectConversationTurnsPage(ctx context.Context, arg SelectCon
 			&i.BranchID,
 			&i.PromotionStartedAt,
 			&i.PromotedToTurnID,
+			&i.Sequence,
 		); err != nil {
 			return nil, err
 		}
@@ -2163,7 +2185,7 @@ JOIN conversation_messages
 WHERE conversation_turns.conversation_id = ?
   AND conversation_turns.state = 'queued'
   AND conversation_turns.promotion_started_at IS NULL
-ORDER BY conversation_turns.requested_at, conversation_turns.rowid
+ORDER BY conversation_turns.sequence
 LIMIT 1
 `
 
@@ -2195,7 +2217,7 @@ func (q *Queries) SelectNextQueuedConversationTurn(ctx context.Context, conversa
 }
 
 const selectProjectConversation = `-- name: SelectProjectConversation :one
-SELECT id, scope, project_id, session_id, current_session_id, latest_sequence, created_at, updated_at, model, reasoning_effort, approval_mode, compacted_at, context_used, context_window, usage_input_tokens, usage_output_tokens, usage_cached_tokens, usage_total_tokens, rate_limit_primary_percent, rate_limit_secondary_percent, rate_limit_primary_resets_in, rate_limit_secondary_resets_in, rate_limit_plan, provider_title, applied_title, model_reroute_json, account_json, thread_state_json, mcp_servers_json, usage_cost, usage_currency, active_branch_id FROM conversations WHERE project_id = ? AND scope = 'project' LIMIT 1
+SELECT id, scope, project_id, session_id, current_session_id, latest_sequence, created_at, updated_at, model, reasoning_effort, approval_mode, compacted_at, context_used, context_window, usage_input_tokens, usage_output_tokens, usage_cached_tokens, usage_total_tokens, rate_limit_primary_percent, rate_limit_secondary_percent, rate_limit_primary_resets_in, rate_limit_secondary_resets_in, rate_limit_plan, provider_title, applied_title, model_reroute_json, account_json, thread_state_json, mcp_servers_json, usage_cost, usage_currency, active_branch_id, latest_turn_sequence FROM conversations WHERE project_id = ? AND scope = 'project' LIMIT 1
 `
 
 func (q *Queries) SelectProjectConversation(ctx context.Context, projectID domain.ProjectID) (Conversation, error) {
@@ -2234,6 +2256,7 @@ func (q *Queries) SelectProjectConversation(ctx context.Context, projectID domai
 		&i.UsageCost,
 		&i.UsageCurrency,
 		&i.ActiveBranchID,
+		&i.LatestTurnSequence,
 	)
 	return i, err
 }

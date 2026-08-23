@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
+	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 	"github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite/gen"
 )
 
@@ -551,6 +552,10 @@ func (s *Store) AppendUserMessage(
 		if err != nil {
 			return fmt.Errorf("allocate sequence: %w", err)
 		}
+		turnSequence, err := q.NextConversationTurnSequence(ctx, conversationID)
+		if err != nil {
+			return fmt.Errorf("allocate turn sequence: %w", err)
+		}
 
 		if err := q.InsertConversationTurn(ctx, gen.InsertConversationTurnParams{
 			ID:                   turnID,
@@ -559,11 +564,12 @@ func (s *Store) AppendUserMessage(
 			ControllerGeneration: generation,
 			State:                domain.TurnStateQueued,
 			RequestedAt:          now,
+			Sequence:             turnSequence,
 		}); err != nil {
 			return fmt.Errorf("insert turn: %w", err)
 		}
 
-		return q.InsertConversationMessage(ctx, gen.InsertConversationMessageParams{
+		if err := q.InsertConversationMessage(ctx, gen.InsertConversationMessageParams{
 			ID:                  msg.ID,
 			ConversationID:      conversationID,
 			TurnID:              sql.NullString{String: turnID, Valid: true},
@@ -576,7 +582,10 @@ func (s *Store) AppendUserMessage(
 			DeliveryContentJson: msg.DeliveryContentJSON,
 			CreatedAt:           now,
 			UpdatedAt:           now,
-		})
+		}); err != nil {
+			return err
+		}
+		return nil
 	})
 	if err != nil {
 		return false, err
@@ -598,20 +607,27 @@ func (s *Store) AdoptProviderTurn(
 	generation, turnID, providerTurnID string,
 	now time.Time,
 ) error {
-	q, unlock := s.conversationWriter(ctx)
-	defer unlock()
-	if err := q.AdoptProviderConversationTurn(ctx, gen.AdoptProviderConversationTurnParams{
-		ID:                   turnID,
-		ConversationID:       conversationID,
-		HandledBySessionID:   session,
-		ProviderTurnID:       providerTurnID,
-		ControllerGeneration: generation,
-		RequestedAt:          now,
-		StartedAt:            sql.NullTime{Time: now, Valid: true},
-	}); err != nil {
-		return fmt.Errorf("adopt provider turn %s: %w", providerTurnID, err)
-	}
-	return nil
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	return s.inTx(ctx, "adopt provider turn", func(q *gen.Queries) error {
+		sequence, err := q.NextConversationTurnSequence(ctx, conversationID)
+		if err != nil {
+			return fmt.Errorf("allocate turn sequence: %w", err)
+		}
+		if err := q.AdoptProviderConversationTurn(ctx, gen.AdoptProviderConversationTurnParams{
+			ID:                   turnID,
+			ConversationID:       conversationID,
+			HandledBySessionID:   session,
+			ProviderTurnID:       providerTurnID,
+			ControllerGeneration: generation,
+			RequestedAt:          now,
+			StartedAt:            sql.NullTime{Time: now, Valid: true},
+			Sequence:             sequence,
+		}); err != nil {
+			return fmt.Errorf("adopt provider turn %s: %w", providerTurnID, err)
+		}
+		return nil
+	})
 }
 
 // AppendImportedUserMessage records a user prompt recovered from the provider's
@@ -1888,16 +1904,7 @@ func (s *Store) ApplyProviderTitle(
 }
 
 // ConversationSnapshot is the durable read model for one conversation.
-type ConversationSnapshot struct {
-	Conversation               domain.ConversationRecord
-	Turns                      []domain.ConversationTurn
-	Messages                   []domain.ConversationMessage
-	Activities                 []domain.ConversationActivity
-	BranchPoints               []domain.ConversationBranchPoint
-	BranchedFromEarlierMessage bool
-	OldestSequence             int64
-	HasMoreBefore              bool
-}
+type ConversationSnapshot = ports.ConversationSnapshot
 
 // DefaultConversationPageSize is the standard bounded read size for conversation snapshots.
 const DefaultConversationPageSize = 200

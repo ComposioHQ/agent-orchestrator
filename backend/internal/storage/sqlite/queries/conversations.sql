@@ -320,8 +320,14 @@ RETURNING latest_sequence;
 -- name: InsertConversationTurn :exec
 INSERT INTO conversation_turns (
     id, conversation_id, handled_by_session_id, provider_turn_id,
-    controller_generation, state, requested_at
-) VALUES (?, ?, ?, ?, ?, ?, ?);
+    controller_generation, state, requested_at, sequence
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?);
+
+-- name: NextConversationTurnSequence :one
+UPDATE conversations
+SET latest_turn_sequence = latest_turn_sequence + 1
+WHERE id = ?
+RETURNING latest_turn_sequence;
 
 -- A turn the PROVIDER started that AO never dispatched: a compaction runs as its
 -- own turn, and so does work resumed inside the provider's own history. Without a
@@ -332,8 +338,8 @@ INSERT INTO conversation_turns (
 -- name: AdoptProviderConversationTurn :exec
 INSERT OR IGNORE INTO conversation_turns (
     id, conversation_id, handled_by_session_id, provider_turn_id,
-    controller_generation, state, requested_at, started_at
-) VALUES (?, ?, ?, ?, ?, 'running', ?, ?);
+    controller_generation, state, requested_at, started_at, sequence
+) VALUES (?, ?, ?, ?, ?, 'running', ?, ?, ?);
 
 -- Correlating a provider notification back to its turn happens on every streamed
 -- event, so it is a keyed lookup rather than a scan.
@@ -424,7 +430,7 @@ WHERE conversation_turns.conversation_id = sqlc.arg(conversation_id)
       WHERE lineage_activity.turn_id = conversation_turns.id
         AND lineage_activity.sequence <= path.max_sequence
   ))
-ORDER BY conversation_turns.requested_at, conversation_turns.rowid;
+ORDER BY conversation_turns.sequence;
 
 -- Overwrite the turn's changed-file summary. The provider re-sends the whole diff
 -- on every update, so the latest payload is the complete answer and there is
@@ -485,7 +491,7 @@ WHERE conversation_turns.conversation_id = sqlc.arg(conversation_id)
       WHERE lineage_activity.turn_id = conversation_turns.id
         AND lineage_activity.sequence <= path.max_sequence
   ))
-ORDER BY conversation_turns.requested_at, conversation_turns.rowid;
+ORDER BY conversation_turns.sequence;
 
 -- Turns represented by one bounded timeline page. Active turns are included
 -- even before their first item arrives, so the live-turn controls never vanish.
@@ -534,23 +540,21 @@ WHERE conversation_turns.conversation_id = sqlc.arg(conversation_id)
         AND conversation_activities.sequence < sqlc.arg(before_sequence)
     )
   )
-ORDER BY conversation_turns.requested_at, conversation_turns.rowid;
+ORDER BY conversation_turns.sequence;
 
 -- Everything from the named turn to the end of the conversation, which is the range
 -- an undo discards. Inclusive of the named turn: the state a person wants back is
 -- the one from before they sent the message they pointed at.
 --
--- The cut is on rowid rather than requested_at because rowid is assigned by the
--- insert and strictly increasing, so it orders turns recorded in the same clock tick
--- the same way SelectConversationTurns does. Two turns sharing a timestamp is
--- ordinary; two turns sharing a rowid is impossible.
+-- The durable per-conversation sequence is the ordering and rollback boundary.
+-- Timestamps remain display metadata and ties never depend on SQLite row layout.
 -- name: MarkConversationTurnsRolledBack :execrows
 UPDATE conversation_turns
 SET rolled_back_at = ?
 WHERE conversation_turns.conversation_id = ?
   AND conversation_turns.rolled_back_at IS NULL
-  AND conversation_turns.rowid >= (
-      SELECT anchor.rowid FROM conversation_turns AS anchor WHERE anchor.id = ?
+  AND conversation_turns.sequence >= (
+      SELECT anchor.sequence FROM conversation_turns AS anchor WHERE anchor.id = ?
   );
 
 -- A discarded turn that never reached the provider settles as interrupted rather
@@ -637,7 +641,7 @@ JOIN conversation_messages
 WHERE conversation_turns.conversation_id = ?
   AND conversation_turns.state = 'queued'
   AND conversation_turns.promotion_started_at IS NULL
-ORDER BY conversation_turns.requested_at, conversation_turns.rowid
+ORDER BY conversation_turns.sequence
 LIMIT 1;
 
 -- Claim one selected queue item before contacting the provider. execrows is the
