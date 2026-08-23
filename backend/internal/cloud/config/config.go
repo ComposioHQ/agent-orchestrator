@@ -32,6 +32,12 @@ type Config struct {
 	AccessTokenTTL      time.Duration
 	RefreshTokenTTL     time.Duration
 	TrustSourceIPHeader bool
+
+	// AppAPIEnabled mounts the shared AO application API under /api/v1,
+	// behind authentication and tenant resolution. Defaults on; set
+	// AO_CLOUD_APP_API=false to serve only the auth foundation, which is the
+	// lever for rolling the hosted app surface out one environment at a time.
+	AppAPIEnabled bool
 }
 
 // Load reads control-plane configuration from the process environment.
@@ -65,6 +71,7 @@ func load(getenv func(string) string) (Config, error) {
 		AccessTokenTTL:      accessTTL,
 		RefreshTokenTTL:     refreshTTL,
 		TrustSourceIPHeader: strings.EqualFold(strings.TrimSpace(getenv("AO_CLOUD_TRUST_SOURCE_IP_HEADER")), "true"),
+		AppAPIEnabled:       !strings.EqualFold(strings.TrimSpace(getenv("AO_CLOUD_APP_API")), "false"),
 	}
 	if cfg.DatabaseURL == "" {
 		return Config{}, errors.New("AO_CLOUD_DATABASE_URL is required")
