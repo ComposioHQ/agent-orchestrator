@@ -11,25 +11,26 @@
 package cdc
 
 import (
-	"encoding/json"
-	"time"
+	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
 // EventType mirrors the event_type values the DB triggers write.
-type EventType string
+type EventType = ports.ChangeEventType
 
 // Event types, one per row-change the DB triggers emit into change_log.
 const (
-	EventSessionCreated         EventType = "session_created"
-	EventSessionUpdated         EventType = "session_updated"
-	EventPRCreated              EventType = "pr_created"
-	EventPRUpdated              EventType = "pr_updated"
-	EventPRCheckRecorded        EventType = "pr_check_recorded"
-	EventPRSessionChanged       EventType = "pr_session_changed"
-	EventPRReviewThreadAdded    EventType = "pr_review_thread_added"
-	EventPRReviewThreadResolved EventType = "pr_review_thread_resolved"
-	EventReviewRunCreated       EventType = "review_run_created"
-	EventReviewRunUpdated       EventType = "review_run_updated"
+	EventSessionCreated         = ports.ChangeEventSessionCreated
+	EventSessionUpdated         = ports.ChangeEventSessionUpdated
+	EventPRCreated              = ports.ChangeEventPRCreated
+	EventPRUpdated              = ports.ChangeEventPRUpdated
+	EventPRCheckRecorded        = ports.ChangeEventPRCheckRecorded
+	EventPRSessionChanged       = ports.ChangeEventPRSessionChanged
+	EventPRReviewThreadAdded    = ports.ChangeEventPRReviewThreadAdded
+	EventPRReviewThreadResolved = ports.ChangeEventPRReviewThreadResolved
+	EventReviewRunCreated       = ports.ChangeEventReviewRunCreated
+	EventReviewRunUpdated       = ports.ChangeEventReviewRunUpdated
+	EventNotificationCreated    = ports.ChangeEventNotificationCreated
+	EventNotificationResolved   = ports.ChangeEventNotificationResolved
 )
 
 // Event is one CDC change read from change_log. Seq is the monotonic ordering +
@@ -37,11 +38,4 @@ const (
 // events. Payload is the trigger-built JSON, kept raw so a typed transport can
 // narrow it by Type (the discriminated-union decode lives at the transport edge,
 // not here).
-type Event struct {
-	Seq       int64           `json:"seq"`
-	ProjectID string          `json:"projectId"`
-	SessionID string          `json:"sessionId,omitempty"`
-	Type      EventType       `json:"type"`
-	Payload   json.RawMessage `json:"payload"`
-	CreatedAt time.Time       `json:"createdAt"`
-}
+type Event = ports.ChangeEvent

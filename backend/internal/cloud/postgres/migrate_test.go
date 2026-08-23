@@ -13,7 +13,7 @@ func TestCloudMigrationsAreTenantScoped(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(migrations) != 8 || migrations[0].Version != 1 || migrations[1].Version != 2 || migrations[2].Version != 3 || migrations[3].Version != 4 || migrations[4].Version != 5 || migrations[5].Version != 6 || migrations[6].Version != 7 || migrations[7].Version != 8 {
+	if len(migrations) != 10 || migrations[0].Version != 1 || migrations[1].Version != 2 || migrations[2].Version != 3 || migrations[3].Version != 4 || migrations[4].Version != 5 || migrations[5].Version != 6 || migrations[6].Version != 7 || migrations[7].Version != 8 || migrations[8].Version != 60 || migrations[9].Version != 61 {
 		t.Fatalf("migrations = %#v", migrations)
 	}
 	migration, err := migrationFS.ReadFile("migrations/00001_auth_foundation.sql")
@@ -129,6 +129,46 @@ func TestCloudMigrationsAreTenantScoped(t *testing.T) {
 	for _, required := range []string{"ao_current_workspace_id", "workspace_id = ao_current_workspace_id()", "workspace.owner_user_id = ao_current_user_id()"} {
 		if !strings.Contains(workspaceScopeSQL, required) {
 			t.Fatalf("workspace runtime scope migration does not contain %q", required)
+		}
+	}
+	changeMigration, err := migrationFS.ReadFile("migrations/00060_change_events.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	changeSQL := string(changeMigration)
+	for _, required := range []string{
+		"CREATE TABLE ao_change_heads",
+		"CREATE TABLE ao_change_log",
+		"CREATE TABLE ao_change_cursors",
+		"ALTER TABLE ao_change_log FORCE ROW LEVEL SECURITY",
+		"CREATE FUNCTION ao_capture_change_event()",
+		"INSERT INTO public.ao_change_log",
+		"PERFORM pg_notify('ao_change_events'",
+	} {
+		if !strings.Contains(changeSQL, required) {
+			t.Fatalf("change event migration does not contain %q", required)
+		}
+	}
+	triggerMigration, err := migrationFS.ReadFile("migrations/00061_change_event_triggers.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	triggerSQL := string(triggerMigration)
+	for _, required := range []string{
+		"ao_sessions_change_created",
+		"ao_sessions_change_updated",
+		"ao_pull_requests_change_created",
+		"ao_pull_requests_change_updated",
+		"ao_pull_requests_change_session",
+		"ao_pull_request_checks_change_inserted",
+		"ao_pull_request_checks_change_updated",
+		"ao_pull_request_review_threads_change_added",
+		"ao_pull_request_review_threads_change_resolved",
+		"ao_notifications_change_created",
+		"ao_notifications_change_resolved",
+	} {
+		if !strings.Contains(triggerSQL, required) {
+			t.Fatalf("change trigger migration does not contain %q", required)
 		}
 	}
 

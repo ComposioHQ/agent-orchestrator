@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"log/slog"
 	"time"
+
+	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
 // DefaultPollInterval is how often the poller checks change_log for new rows.
@@ -17,10 +19,7 @@ const DefaultBatch = 512
 
 // Source is the poller's view of the durable log: read events after a seq, and
 // the current head seq. The storage layer implements it (the change_log table).
-type Source interface {
-	EventsAfter(ctx context.Context, after int64, limit int) ([]Event, error)
-	LatestSeq(ctx context.Context) (int64, error)
-}
+type Source = ports.ChangeEventSource
 
 // Poller tails change_log and fans each new event out through the Broadcaster,
 // in seq order. It holds only an in-memory cursor (lastSeq): it is the LIVE push
