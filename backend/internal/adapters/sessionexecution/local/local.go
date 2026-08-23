@@ -29,54 +29,55 @@ type Config struct {
 	RemoveAttachments   func(context.Context, domain.SessionID) error
 }
 
-type Execution struct{ cfg Config }
+type execution struct{ cfg Config }
 
-var _ ports.SessionExecution = (*Execution)(nil)
+var _ ports.SessionExecution = (*execution)(nil)
 
-func New(cfg Config) *Execution                              { return &Execution{cfg: cfg} }
-func (e *Execution) Workspace() ports.Workspace              { return e.cfg.Workspace }
-func (e *Execution) Runtime() ports.Runtime                  { return e.cfg.Runtime }
-func (e *Execution) Messenger() ports.AgentMessenger         { return e.cfg.Messenger }
-func (e *Execution) Observation() ports.WorkspaceObservation { return e.cfg.Observation }
-func (e *Execution) StageSystemPrompt(ctx context.Context, id domain.SessionID, prompt string) (string, error) {
+// New constructs a provider-neutral session execution adapter.
+func New(cfg Config) *execution                              { return &execution{cfg: cfg} }
+func (e *execution) Workspace() ports.Workspace              { return e.cfg.Workspace }
+func (e *execution) Runtime() ports.Runtime                  { return e.cfg.Runtime }
+func (e *execution) Messenger() ports.AgentMessenger         { return e.cfg.Messenger }
+func (e *execution) Observation() ports.WorkspaceObservation { return e.cfg.Observation }
+func (e *execution) StageSystemPrompt(ctx context.Context, id domain.SessionID, prompt string) (string, error) {
 	return e.cfg.StageSystemPrompt(ctx, id, prompt)
 }
-func (e *Execution) DiscardSystemPrompt(ctx context.Context, id domain.SessionID) error {
+func (e *execution) DiscardSystemPrompt(ctx context.Context, id domain.SessionID) error {
 	if e.cfg.DiscardSystemPrompt == nil {
 		return nil
 	}
 	return e.cfg.DiscardSystemPrompt(ctx, id)
 }
-func (e *Execution) InstallAgent(ctx context.Context, spec ports.RemoteAgentPrepareSpec) error {
+func (e *execution) InstallAgent(ctx context.Context, spec ports.RemoteAgentPrepareSpec) error {
 	return e.cfg.InstallAgent(ctx, spec)
 }
-func (e *Execution) ResolveLaunch(ctx context.Context, argv []string, env map[string]string) (map[string]string, error) {
+func (e *execution) ResolveLaunch(ctx context.Context, argv []string, env map[string]string) (map[string]string, error) {
 	return e.cfg.ResolveLaunch(ctx, argv, env)
 }
-func (e *Execution) BindRuntime(ctx context.Context, cfg ports.RuntimeConfig) (ports.RuntimeConfig, error) {
+func (e *execution) BindRuntime(ctx context.Context, cfg ports.RuntimeConfig) (ports.RuntimeConfig, error) {
 	if e.cfg.BindRuntime == nil {
 		return cfg, nil
 	}
 	return e.cfg.BindRuntime(ctx, cfg)
 }
-func (e *Execution) ReadProjectFile(ctx context.Context, projectPath, rel string) ([]byte, error) {
+func (e *execution) ReadProjectFile(ctx context.Context, projectPath, rel string) ([]byte, error) {
 	return e.cfg.ReadProjectFile(ctx, projectPath, rel)
 }
-func (e *Execution) ImportAttachments(ctx context.Context, id domain.SessionID, path string) error {
+func (e *execution) ImportAttachments(ctx context.Context, id domain.SessionID, path string) error {
 	return e.cfg.ImportAttachments(ctx, id, path)
 }
-func (e *Execution) RestoreAttachments(ctx context.Context, id domain.SessionID, path string) (bool, error) {
+func (e *execution) RestoreAttachments(ctx context.Context, id domain.SessionID, path string) (bool, error) {
 	return e.cfg.RestoreAttachments(ctx, id, path)
 }
-func (e *Execution) RemoveAttachments(ctx context.Context, id domain.SessionID) error {
+func (e *execution) RemoveAttachments(ctx context.Context, id domain.SessionID) error {
 	return e.cfg.RemoveAttachments(ctx, id)
 }
-func (e *Execution) BeginSession(context.Context, ports.ExecutionSpec) (ports.SessionProvision, error) {
+func (e *execution) BeginSession(context.Context, ports.ExecutionSpec) (ports.SessionProvision, error) {
 	return &provision{execution: e}, nil
 }
 
 type provision struct {
-	execution *Execution
+	execution *execution
 	workspace ports.WorkspaceInfo
 	project   *ports.WorkspaceProjectInfo
 	runtime   ports.RuntimeHandle

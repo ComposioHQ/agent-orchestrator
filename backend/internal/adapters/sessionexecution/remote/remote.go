@@ -11,50 +11,51 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
-type Execution struct {
+type execution struct {
 	client      ports.RemoteSessionExecutionClient
 	observation ports.WorkspaceObservation
 }
 
-var _ ports.SessionExecution = (*Execution)(nil)
+var _ ports.SessionExecution = (*execution)(nil)
 
-func New(client ports.RemoteSessionExecutionClient) *Execution {
-	return &Execution{client: client, observation: observationremote.New(client.ObservationClient())}
+// New constructs a provider-neutral session execution adapter.
+func New(client ports.RemoteSessionExecutionClient) *execution {
+	return &execution{client: client, observation: observationremote.New(client.ObservationClient())}
 }
 
-func (e *Execution) Workspace() ports.Workspace              { return e.client.WorkspaceClient() }
-func (e *Execution) Runtime() ports.Runtime                  { return e.client.RuntimeClient() }
-func (e *Execution) Messenger() ports.AgentMessenger         { return e.client.MessengerClient() }
-func (e *Execution) Observation() ports.WorkspaceObservation { return e.observation }
-func (e *Execution) StageSystemPrompt(ctx context.Context, id domain.SessionID, prompt string) (string, error) {
+func (e *execution) Workspace() ports.Workspace              { return e.client.WorkspaceClient() }
+func (e *execution) Runtime() ports.Runtime                  { return e.client.RuntimeClient() }
+func (e *execution) Messenger() ports.AgentMessenger         { return e.client.MessengerClient() }
+func (e *execution) Observation() ports.WorkspaceObservation { return e.observation }
+func (e *execution) StageSystemPrompt(ctx context.Context, id domain.SessionID, prompt string) (string, error) {
 	return e.client.StageExistingSystemPrompt(ctx, id, prompt)
 }
-func (e *Execution) DiscardSystemPrompt(ctx context.Context, id domain.SessionID) error {
+func (e *execution) DiscardSystemPrompt(ctx context.Context, id domain.SessionID) error {
 	return e.client.DiscardExistingSystemPrompt(ctx, id)
 }
-func (e *Execution) InstallAgent(ctx context.Context, spec ports.RemoteAgentPrepareSpec) error {
+func (e *execution) InstallAgent(ctx context.Context, spec ports.RemoteAgentPrepareSpec) error {
 	return e.client.InstallExistingAgent(ctx, spec)
 }
-func (e *Execution) ResolveLaunch(ctx context.Context, argv []string, env map[string]string) (map[string]string, error) {
+func (e *execution) ResolveLaunch(ctx context.Context, argv []string, env map[string]string) (map[string]string, error) {
 	return e.client.ResolveExistingLaunch(ctx, argv, env)
 }
-func (e *Execution) BindRuntime(ctx context.Context, cfg ports.RuntimeConfig) (ports.RuntimeConfig, error) {
+func (e *execution) BindRuntime(ctx context.Context, cfg ports.RuntimeConfig) (ports.RuntimeConfig, error) {
 	return e.client.BindExistingRuntime(ctx, cfg)
 }
-func (e *Execution) ReadProjectFile(ctx context.Context, projectPath, rel string) ([]byte, error) {
+func (e *execution) ReadProjectFile(ctx context.Context, projectPath, rel string) ([]byte, error) {
 	return e.client.ReadExecutionProjectFile(ctx, projectPath, rel)
 }
-func (e *Execution) ImportAttachments(ctx context.Context, id domain.SessionID, path string) error {
+func (e *execution) ImportAttachments(ctx context.Context, id domain.SessionID, path string) error {
 	return e.client.ImportExecutionAttachments(ctx, id, path)
 }
-func (e *Execution) RestoreAttachments(ctx context.Context, id domain.SessionID, path string) (bool, error) {
+func (e *execution) RestoreAttachments(ctx context.Context, id domain.SessionID, path string) (bool, error) {
 	return e.client.RestoreExecutionAttachments(ctx, id, path)
 }
-func (e *Execution) RemoveAttachments(ctx context.Context, id domain.SessionID) error {
+func (e *execution) RemoveAttachments(ctx context.Context, id domain.SessionID) error {
 	return e.client.RemoveExecutionAttachments(ctx, id)
 }
 
-func (e *Execution) BeginSession(ctx context.Context, spec ports.ExecutionSpec) (ports.SessionProvision, error) {
+func (e *execution) BeginSession(ctx context.Context, spec ports.ExecutionSpec) (ports.SessionProvision, error) {
 	id, err := e.client.BeginExecution(ctx, spec)
 	if err != nil {
 		return nil, err
@@ -90,13 +91,13 @@ type provision struct {
 	closed bool
 }
 
-func (p *provision) advance(min, next step) error {
+func (p *provision) advance(minimum, next step) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.closed {
 		return errors.New("remote session execution: transaction closed")
 	}
-	if p.step < min || p.step >= next {
+	if p.step < minimum || p.step >= next {
 		return fmt.Errorf("remote session execution: invalid order at step %d before %d", p.step, next)
 	}
 	p.step = next

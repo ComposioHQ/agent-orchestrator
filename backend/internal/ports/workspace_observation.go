@@ -26,8 +26,10 @@ type WorkspaceObservationClient interface {
 	WorkspaceObservation
 }
 
+// WorkspaceFileStatus classifies a workspace path relative to its compare base.
 type WorkspaceFileStatus string
 
+// Workspace file status values.
 const (
 	WorkspaceFileUnmodified WorkspaceFileStatus = "unmodified"
 	WorkspaceFileModified   WorkspaceFileStatus = "modified"
@@ -36,13 +38,16 @@ const (
 	WorkspaceFileRenamed    WorkspaceFileStatus = "renamed"
 )
 
+// WorkspaceCompareMode describes how the comparison base was resolved.
 type WorkspaceCompareMode string
 
+// Workspace comparison modes.
 const (
 	WorkspaceCompareBase         WorkspaceCompareMode = "base"
 	WorkspaceCompareHeadFallback WorkspaceCompareMode = "head_fallback"
 )
 
+// WorkspaceFiles is a bounded semantic listing for one session workspace.
 type WorkspaceFiles struct {
 	SessionID      domain.SessionID
 	CompareBaseSHA string
@@ -52,6 +57,7 @@ type WorkspaceFiles struct {
 	Truncated      bool
 }
 
+// WorkspaceFileSummary describes one changed or tracked workspace path.
 type WorkspaceFileSummary struct {
 	Path         string
 	PreviousPath string
@@ -86,13 +92,16 @@ type WorkspaceFile struct {
 	CompareMode        WorkspaceCompareMode
 }
 
+// WorkspaceBlobSide selects the before or after image of a workspace file.
 type WorkspaceBlobSide string
 
+// Workspace blob sides.
 const (
 	WorkspaceBlobBefore WorkspaceBlobSide = "before"
 	WorkspaceBlobAfter  WorkspaceBlobSide = "after"
 )
 
+// WorkspaceBlob contains bounded binary data for one side of a workspace file.
 type WorkspaceBlob struct {
 	Path      string
 	Side      WorkspaceBlobSide

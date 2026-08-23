@@ -105,30 +105,37 @@ func (o *localWorkspaceObservation) InvalidateWorkspace(id domain.SessionID) {
 	o.service.localInvalidateWorkspaceCache(id)
 }
 
+// ListWorkspaceFiles returns the semantic file listing from the selected workspace observation adapter.
 func (s *Service) ListWorkspaceFiles(ctx context.Context, id domain.SessionID) (WorkspaceFiles, error) {
 	return s.workspaceObserver().ListWorkspaceFiles(ctx, id)
 }
 
+// GetWorkspaceFile returns one semantic workspace file and its diff.
 func (s *Service) GetWorkspaceFile(ctx context.Context, id domain.SessionID, path string) (WorkspaceFileDetail, error) {
 	return s.workspaceObserver().ReadWorkspaceFile(ctx, id, path)
 }
 
+// GetWorkspaceFileBlob returns one bounded binary side of a workspace file.
 func (s *Service) GetWorkspaceFileBlob(ctx context.Context, id domain.SessionID, path string, side WorkspaceFileBlobSide) (WorkspaceFileBlob, error) {
 	return s.workspaceObserver().ReadWorkspaceBlob(ctx, id, path, side)
 }
 
+// WatchWorkspace reports coalesced workspace changes until the context ends.
 func (s *Service) WatchWorkspace(ctx context.Context, id domain.SessionID) (<-chan ports.WorkspaceEvent, error) {
 	return s.workspaceObserver().WatchWorkspace(ctx, id)
 }
 
+// ReadPreviewFile returns a bounded, workspace-confined preview asset.
 func (s *Service) ReadPreviewFile(ctx context.Context, id domain.SessionID, path string) (ports.PreviewFile, error) {
 	return s.workspaceObserver().ReadPreviewFile(ctx, id, path)
 }
 
+// DiscoverPreview locates the current preview entry within the selected workspace.
 func (s *Service) DiscoverPreview(ctx context.Context, id domain.SessionID) (string, bool, error) {
 	return s.workspaceObserver().DiscoverPreview(ctx, id)
 }
 
+// InvalidateWorkspaceCache clears cached semantic workspace observations for a session.
 func (s *Service) InvalidateWorkspaceCache(id domain.SessionID) {
 	s.workspaceObserver().InvalidateWorkspace(id)
 }

@@ -91,7 +91,7 @@ func (f *fakeClient) RemoveExecutionAttachments(context.Context, domain.SessionI
 
 func TestProvisionEnforcesRemoteLifecycleOrderAndAtomicCommit(t *testing.T) {
 	client := &fakeClient{}
-	execution := &Execution{client: client}
+	execution := &execution{client: client}
 	p, err := execution.BeginSession(context.Background(), ports.ExecutionSpec{})
 	if err != nil {
 		t.Fatal(err)
@@ -137,7 +137,7 @@ func TestProvisionEnforcesRemoteLifecycleOrderAndAtomicCommit(t *testing.T) {
 
 func TestProvisionRejectsOutOfOrderLaunchAndRollsBackOnce(t *testing.T) {
 	client := &fakeClient{}
-	p, err := (&Execution{client: client}).BeginSession(context.Background(), ports.ExecutionSpec{})
+	p, err := (&execution{client: client}).BeginSession(context.Background(), ports.ExecutionSpec{})
 	if err != nil {
 		t.Fatal(err)
 	}

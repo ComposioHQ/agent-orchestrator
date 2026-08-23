@@ -9,36 +9,37 @@ import (
 
 // Observation forwards semantic content operations to the compute plane. It
 // intentionally contains no path, os, or process fallback.
-type Observation struct {
+type observation struct {
 	client ports.WorkspaceObservationClient
 }
 
-var _ ports.WorkspaceObservation = (*Observation)(nil)
+var _ ports.WorkspaceObservation = (*observation)(nil)
 
-func New(client ports.WorkspaceObservationClient) *Observation { return &Observation{client: client} }
+// New constructs a workspace observation adapter that forwards to the compute plane.
+func New(client ports.WorkspaceObservationClient) *observation { return &observation{client: client} }
 
-func (o *Observation) ListWorkspaceFiles(ctx context.Context, id domain.SessionID) (ports.WorkspaceFiles, error) {
+func (o *observation) ListWorkspaceFiles(ctx context.Context, id domain.SessionID) (ports.WorkspaceFiles, error) {
 	return o.client.ListWorkspaceFiles(ctx, id)
 }
 
-func (o *Observation) ReadWorkspaceFile(ctx context.Context, id domain.SessionID, path string) (ports.WorkspaceFile, error) {
+func (o *observation) ReadWorkspaceFile(ctx context.Context, id domain.SessionID, path string) (ports.WorkspaceFile, error) {
 	return o.client.ReadWorkspaceFile(ctx, id, path)
 }
 
-func (o *Observation) ReadWorkspaceBlob(ctx context.Context, id domain.SessionID, path string, side ports.WorkspaceBlobSide) (ports.WorkspaceBlob, error) {
+func (o *observation) ReadWorkspaceBlob(ctx context.Context, id domain.SessionID, path string, side ports.WorkspaceBlobSide) (ports.WorkspaceBlob, error) {
 	return o.client.ReadWorkspaceBlob(ctx, id, path, side)
 }
 
-func (o *Observation) WatchWorkspace(ctx context.Context, id domain.SessionID) (<-chan ports.WorkspaceEvent, error) {
+func (o *observation) WatchWorkspace(ctx context.Context, id domain.SessionID) (<-chan ports.WorkspaceEvent, error) {
 	return o.client.WatchWorkspace(ctx, id)
 }
 
-func (o *Observation) ReadPreviewFile(ctx context.Context, id domain.SessionID, path string) (ports.PreviewFile, error) {
+func (o *observation) ReadPreviewFile(ctx context.Context, id domain.SessionID, path string) (ports.PreviewFile, error) {
 	return o.client.ReadPreviewFile(ctx, id, path)
 }
 
-func (o *Observation) DiscoverPreview(ctx context.Context, id domain.SessionID) (string, bool, error) {
+func (o *observation) DiscoverPreview(ctx context.Context, id domain.SessionID) (string, bool, error) {
 	return o.client.DiscoverPreview(ctx, id)
 }
 
-func (o *Observation) InvalidateWorkspace(id domain.SessionID) { o.client.InvalidateWorkspace(id) }
+func (o *observation) InvalidateWorkspace(id domain.SessionID) { o.client.InvalidateWorkspace(id) }
