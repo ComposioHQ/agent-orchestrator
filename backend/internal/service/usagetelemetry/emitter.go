@@ -29,8 +29,9 @@ type SCMParser interface {
 }
 
 // Emitter emits one ao.session.token_usage event per session once its usage is
-// fully settled (all transcript ingestion complete), attributed to the owning
-// GitHub org with an estimated cost.
+// fully settled (all transcript ingestion complete), carrying measured token
+// counts attributed to the owning GitHub org. Cost is intentionally not
+// emitted: it is a query-time view in PostHog (tokens x per-model rate).
 //
 // It is driven by the usage pipeline's settle signal, NOT by session exit: at
 // exit the pipeline has only been *poked*, so the transcript is typically not
