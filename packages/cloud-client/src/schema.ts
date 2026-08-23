@@ -467,6 +467,12 @@ export interface paths {
          *     exists because sandbox transitions are not turn events and so do not
          *     appear on that stream.
          *
+         *     This is the only place sandbox state is published. It is deliberately
+         *     not on the `Session` DTO: that DTO is what the desktop's existing
+         *     components render, and compute-plane lifecycle is not something a
+         *     session row should have to know about. A client polls here while a
+         *     transition is in flight and otherwise ignores it.
+         *
          *     Unlike local AO's `POST /api/v1/sessions/{sessionId}/activity`, which is
          *     how an agent hook *reports* a state, this is read-only. Cloud agents
          *     report activity over the worker route (`publishEvent`), never here.
@@ -1328,13 +1334,6 @@ export interface components {
              *      */
             lifecycleMessage?: string;
             /**
-             * Format: uuid
-             * @description Cloud workspace backing the project. Absent for local AO, and absent
-             *     in Cloud until the workspace has been provisioned once.
-             *
-             */
-            workspaceId?: string;
-            /**
              * Format: date-time
              * @description Present only once `lifecycleState` is `archived`.
              */
@@ -1505,18 +1504,20 @@ export interface components {
          * @enum {string}
          */
         SandboxState: "provisioning" | "starting" | "running" | "suspended" | "stopping" | "stopped" | "deleting" | "deleted" | "error";
+        /** @description AO's own abstraction over whatever runs the session, deliberately
+         *     vendor-neutral: no provider name, no provider-assigned identifier, and
+         *     no placement. A client renders and retries from `state` alone, so
+         *     changing or adding a compute provider is invisible to every client and
+         *     cannot become a compatibility problem.
+         *      */
         SessionSandbox: {
             state: components["schemas"]["SandboxState"];
-            provider?: components["schemas"]["ProviderName"];
-            /** @description The provider's own identifier, surfaced for support and correlation.
-             *     Clients must treat it as opaque and never route on it.
-             *      */
-            providerSandboxId?: string;
-            region?: string;
             /** Format: date-time */
             lastTransitionAt?: string;
             /** @description Operator-facing detail, present when `state` is `error` and
-             *     otherwise only when a transition is unusually slow.
+             *     otherwise only when a transition is unusually slow. Must not carry a
+             *     provider name, a provider-assigned identifier, or a region — the
+             *     control plane redacts those before they reach a client.
              *      */
             message?: string;
         };
@@ -1960,17 +1961,6 @@ export interface components {
              * @description Present only while `isTerminated` is true.
              */
             terminatedAt?: string;
-            /**
-             * Format: uuid
-             * @description Cloud workspace the session's sandbox belongs to. Absent for local
-             *     AO, and absent in Cloud before the first sandbox exists.
-             *
-             */
-            workspaceId?: string;
-            /** @description Compute-plane state. Absent for local AO, whose sessions run as
-             *     local processes with no sandbox lifecycle.
-             *      */
-            sandbox?: components["schemas"]["SessionSandbox"];
         };
         CreateSessionInput: {
             /** Format: uuid */

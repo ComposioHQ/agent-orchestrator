@@ -60,7 +60,6 @@ session, and is what a client should assume when the field is absent.
 | `Project` | `agent` | Default harness, named as the local field is. | org default |
 | `Project` | `lifecycleState` | Cloud workspace lifecycle. | always `ready` |
 | `Project` | `lifecycleMessage` | Operator detail for `error`. | absent |
-| `Project` | `workspaceId` | Cloud workspace backing the project. | absent |
 | `Project` | `archivedAt` | Set once archived. | absent |
 | `Session` | `activity` | Exactly the local `{state, lastActivityAt}` shape. | derive from `activityState` + `updatedAt` |
 | `Session` | `interfaceMode` | The local session `mode` (`chat`/`tui`). **See the collision note below.** | `chat` |
@@ -71,8 +70,6 @@ session, and is what a client should assume when the field is absent.
 | `Session` | `autoReviewEnabled` | Local auto-review field. | project setting |
 | `Session` | `autoInjectReview`, `autoInjectCI` | Local auto-inject fields. | `false` |
 | `Session` | `terminatedAt` | Set while `isTerminated`. | absent |
-| `Session` | `workspaceId` | Cloud workspace of the sandbox. | absent |
-| `Session` | `sandbox` | Compute-plane state. | absent — local sessions are processes, not sandboxes |
 | `TerminalTicket` | `connection` | Where and how to attach. | n/a |
 | `TerminalTicket` | `expiresAt`, `sessionId`, `kind`, `lastSequence` | Binding and replay cursor. | n/a |
 
@@ -89,6 +86,21 @@ was not renamed. The local meaning is therefore carried as
 A mapper ported from local code must read `interfaceMode`, not `mode`. Renaming
 Cloud's to `permissionMode` would remove the trap at the cost of breaking every
 existing reader — open decision, not taken unilaterally.
+
+#### Compute-plane state is not on the UI DTOs
+
+Sandbox lifecycle is published only by `getSessionActivity`, never on `Session`
+or `Project`. Those DTOs are what the desktop's existing components render, and
+a session row should not have to know that a compute plane exists.
+
+`SessionSandbox` is vendor-neutral by construction: no provider name, no
+provider-assigned identifier, no region. A client renders and retries from
+`state` alone, so adding or swapping a compute provider is invisible to every
+client. `SandboxState` is AO's own abstraction, not a provider's vocabulary.
+
+Both rules are enforced by `TestSandboxStateIsVendorNeutral` and
+`TestUIDTOsOmitCloudOnlyPlacement`, so re-adding a `provider`, `region`, or
+`workspaceId` field fails the build rather than quietly shipping.
 
 #### Not carried over
 

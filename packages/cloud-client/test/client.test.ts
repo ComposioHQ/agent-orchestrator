@@ -142,12 +142,8 @@ describe("CloudClient", () => {
       status: "terminated",
       runtimeConnected: false,
       terminatedAt: "2026-08-19T20:05:00Z",
-      sandbox: { state: "stopping" },
     };
-    const restored: Session = {
-      ...base,
-      sandbox: { state: "provisioning", provider: "daytona" },
-    };
+    const restored: Session = { ...base, activityState: "idle" };
     const fetchMock = vi.fn(
       async (input: RequestInfo | URL, _init?: RequestInit) =>
         jsonResponse(
@@ -197,7 +193,7 @@ describe("CloudClient", () => {
       state: "idle",
       lastActivityAt: "2026-08-19T20:00:00Z",
       runtimeConnected: false,
-      sandbox: { state: "starting", provider: "daytona", region: "us-east-1" },
+      sandbox: { state: "starting", lastTransitionAt: "2026-08-19T19:59:00Z" },
     };
     const fetchMock = vi.fn(
       async (_input: RequestInfo | URL, _init?: RequestInit) =>

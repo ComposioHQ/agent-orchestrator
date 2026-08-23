@@ -315,6 +315,98 @@ func resolvesInDocument(document map[string]any, reference string) bool {
 	return true
 }
 
+// vendorLeakingFields are property names that would put a compute vendor's
+// identity, placement, or own identifiers into a client-visible DTO. The
+// control plane publishes an abstract state instead, so that swapping or adding
+// a provider is invisible to clients and cannot become a compatibility problem.
+var vendorLeakingFields = []string{
+	"provider", "providerSandboxId", "providerId", "vendor",
+	"region", "zone", "availabilityZone", "datacenter",
+	"host", "hostname", "node", "instanceId", "machineId",
+}
+
+// TestSandboxStateIsVendorNeutral keeps compute-plane detail out of the
+// client-visible contract. Prose in a 3,700-line document does not survive
+// contact with a hurried edit; this does.
+func TestSandboxStateIsVendorNeutral(t *testing.T) {
+	doc := loadContract(t)
+	sandbox, ok := doc.Components.Schemas["SessionSandbox"]
+	if !ok {
+		t.Fatal("contract has no SessionSandbox schema")
+	}
+	for _, banned := range vendorLeakingFields {
+		if _, leaked := sandbox.Properties[banned]; leaked {
+			t.Errorf("SessionSandbox.%s exposes compute-plane identity or placement to clients; publish an abstract state instead", banned)
+		}
+	}
+
+	// ProviderName carries literal vendor names, so a client-visible DTO must
+	// never reference it. It stays legitimate on the provider-connection admin
+	// routes, where naming the vendor is the entire point.
+	raw, err := os.ReadFile(filepath.FromSlash(contractPath))
+	if err != nil {
+		t.Fatalf("read Cloud contract: %v", err)
+	}
+	for _, schema := range []string{"SessionSandbox", "SessionActivity", "Session", "Project"} {
+		body, found := schemaBody(string(raw), schema)
+		if !found {
+			t.Errorf("contract has no %s schema", schema)
+			continue
+		}
+		if strings.Contains(body, "ProviderName") {
+			t.Errorf("%s references ProviderName, which enumerates real vendor names", schema)
+		}
+	}
+}
+
+// TestUIDTOsOmitCloudOnlyPlacement keeps the DTOs the desktop already renders
+// free of fields that exist only because Cloud has a compute plane. Sandbox
+// lifecycle is published by getSessionActivity, which exists for exactly that.
+//
+// If one of these genuinely becomes essential to render, delete its line here
+// with the reason — the point is that it is a decision, not a drift.
+func TestUIDTOsOmitCloudOnlyPlacement(t *testing.T) {
+	doc := loadContract(t)
+	for _, testCase := range []struct{ schema, field string }{
+		{"Session", "sandbox"},
+		{"Session", "workspaceId"},
+		{"Project", "workspaceId"},
+	} {
+		schema, ok := doc.Components.Schemas[testCase.schema]
+		if !ok {
+			t.Fatalf("contract has no %s schema", testCase.schema)
+		}
+		if _, present := schema.Properties[testCase.field]; present {
+			t.Errorf("%s.%s is cloud-only placement on a DTO the desktop renders; publish it on getSessionActivity instead", testCase.schema, testCase.field)
+		}
+	}
+}
+
+// schemaBody returns the YAML text of one component schema, from its key to the
+// next sibling key at the same indentation.
+func schemaBody(raw, name string) (string, bool) {
+	const indent = "\n    "
+	marker := indent + name + ":\n"
+	start := strings.Index(raw, marker)
+	if start < 0 {
+		return "", false
+	}
+	rest := raw[start+len(marker):]
+	for offset := 0; ; {
+		next := strings.Index(rest[offset:], indent)
+		if next < 0 {
+			return rest, true
+		}
+		absolute := offset + next
+		after := rest[absolute+len(indent):]
+		// A sibling key starts with a non-space character at this indent.
+		if after != "" && after[0] != ' ' {
+			return rest[:absolute], true
+		}
+		offset = absolute + 1
+	}
+}
+
 // TestErrorEnvelopeMatchesContract pins the one DTO every single Cloud response
 // can return. A rename here breaks every client's error handling at once, which
 // is exactly the drift worth failing a build over.
