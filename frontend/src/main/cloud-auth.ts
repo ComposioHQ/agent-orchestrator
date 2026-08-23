@@ -292,9 +292,9 @@ export async function listCloudProjects(dataDir: string): Promise<CloudOrganizat
 export type WorkspacePlacementCreateInput = {
 	organizationId: string;
 	displayName: string;
-	repositoryUrl: string;
-	defaultBranch: string;
-	config: CreateCloudProjectInput["config"];
+	repositoryUrl?: string;
+	defaultBranch?: string;
+	config?: CreateCloudProjectInput["config"];
 	idempotencyKey: string;
 };
 
