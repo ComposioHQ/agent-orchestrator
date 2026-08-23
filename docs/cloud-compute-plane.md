@@ -28,64 +28,90 @@ processes.
 
 The compute package does not register tables itself. The cloud integrator must
 allocate migrations in the shared `00020`-`00029` window and wire adapters for
-the three ports in `backend/internal/ports/compute.go`. The minimum DDL is:
+the three ports in `backend/internal/ports/compute.go`. The existing
+`ao_cloud_session_runtimes` table is the placement authority and is already in
+the canonical `runtimeTables` registry. Extend it rather than creating a
+second placement table. The minimum migration delta is:
 
 ```sql
-CREATE TABLE cloud_runtime_placements (
-  id text PRIMARY KEY,                         -- public runtime handle
-  org_id text NOT NULL,
-  workspace_id text NOT NULL,
-  session_id text NOT NULL,
-  user_id text NOT NULL,
-  role text NOT NULL CHECK (role IN ('coordinator', 'worker')),
-  provider_sandbox_id text,
-  state text NOT NULL CHECK (state IN
+ALTER TABLE ao_cloud_session_runtimes
+  ADD COLUMN user_id uuid REFERENCES ao_users(id),
+  ADD COLUMN role text NOT NULL DEFAULT 'worker'
+    CHECK (role IN ('coordinator', 'worker')),
+  ADD COLUMN desired_state text NOT NULL DEFAULT 'running'
+    CHECK (desired_state IN ('running', 'stopped', 'deleting')),
+  ADD COLUMN last_heartbeat_at timestamptz;
+UPDATE ao_cloud_session_runtimes runtime
+SET user_id = workspace.owner_user_id
+FROM ao_cloud_workspaces workspace
+WHERE workspace.id = runtime.workspace_id;
+ALTER TABLE ao_cloud_session_runtimes
+  ALTER COLUMN user_id SET NOT NULL,
+  DROP CONSTRAINT ao_cloud_session_runtimes_state_check,
+  ADD CONSTRAINT ao_cloud_session_runtimes_state_check CHECK (state IN
     ('provisioning', 'running', 'stopped', 'failed', 'deleting')),
-  desired_state text NOT NULL CHECK (desired_state IN
-    ('running', 'stopped', 'deleting')),
-  error text NOT NULL DEFAULT '',
-  generation bigint NOT NULL DEFAULT 1 CHECK (generation > 0),
-  last_heartbeat_at timestamptz,
-  created_at timestamptz NOT NULL,
-  updated_at timestamptz NOT NULL,
-  UNIQUE (org_id, workspace_id, session_id, role)
-);
-CREATE UNIQUE INDEX cloud_runtime_provider_handle_uq
-  ON cloud_runtime_placements (provider_sandbox_id)
-  WHERE provider_sandbox_id IS NOT NULL;
-CREATE INDEX cloud_runtime_workspace_idx
-  ON cloud_runtime_placements (org_id, workspace_id, created_at, id);
-CREATE INDEX cloud_runtime_reaper_idx
-  ON cloud_runtime_placements (state, updated_at);
-CREATE INDEX cloud_runtime_user_quota_idx
-  ON cloud_runtime_placements (user_id) WHERE state <> 'deleting';
+  ADD CONSTRAINT ao_cloud_session_runtimes_generation_check
+    CHECK (generation > 0);
+CREATE UNIQUE INDEX ao_cloud_session_runtimes_provider_id_uq
+  ON ao_cloud_session_runtimes (sandbox_id) WHERE sandbox_id <> '';
+CREATE INDEX ao_cloud_session_runtimes_reaper_idx
+  ON ao_cloud_session_runtimes (state, updated_at);
+CREATE INDEX ao_cloud_session_runtimes_user_quota_idx
+  ON ao_cloud_session_runtimes (user_id) WHERE state <> 'deleting';
 
-CREATE TABLE cloud_capability_grants (
+CREATE TABLE ao_cloud_capability_grants (
   id text PRIMARY KEY,
   verifier text NOT NULL,                      -- one-way digest, never bearer
-  org_id text NOT NULL,
-  workspace_id text NOT NULL,
+  org_id uuid NOT NULL REFERENCES ao_organizations(id) ON DELETE CASCADE,
+  workspace_id uuid NOT NULL REFERENCES ao_cloud_workspaces(id) ON DELETE CASCADE,
   session_id text,
   role text NOT NULL CHECK (role IN ('coordinator', 'worker')),
   operations text[] NOT NULL CHECK (cardinality(operations) > 0),
   issued_at timestamptz NOT NULL,
   expires_at timestamptz NOT NULL,
   revoked_at timestamptz,
-  rotated_to_id text REFERENCES cloud_capability_grants(id)
+  rotated_to_id text REFERENCES ao_cloud_capability_grants(id)
 );
-CREATE INDEX cloud_capability_scope_idx
-  ON cloud_capability_grants (org_id, workspace_id, session_id)
+CREATE INDEX ao_cloud_capability_grants_scope_idx
+  ON ao_cloud_capability_grants (org_id, workspace_id, session_id)
   WHERE revoked_at IS NULL;
-CREATE INDEX cloud_capability_expiry_idx
-  ON cloud_capability_grants (expires_at, revoked_at);
+CREATE INDEX ao_cloud_capability_grants_expiry_idx
+  ON ao_cloud_capability_grants (expires_at, revoked_at);
+ALTER TABLE ao_cloud_capability_grants ENABLE ROW LEVEL SECURITY;
+ALTER TABLE ao_cloud_capability_grants FORCE ROW LEVEL SECURITY;
+CREATE POLICY ao_cloud_capability_grants_workspace
+  ON ao_cloud_capability_grants FOR ALL
+  USING (
+    workspace_id = ao_current_workspace_id()
+    AND org_id = ao_current_org_id()
+    AND ao_is_org_member(org_id, ao_current_user_id())
+    AND EXISTS (
+      SELECT 1 FROM ao_cloud_workspaces workspace
+      WHERE workspace.id = ao_cloud_capability_grants.workspace_id
+        AND workspace.org_id = ao_cloud_capability_grants.org_id
+        AND workspace.owner_user_id = ao_current_user_id()
+    )
+  )
+  WITH CHECK (
+    workspace_id = ao_current_workspace_id()
+    AND org_id = ao_current_org_id()
+    AND ao_is_org_member(org_id, ao_current_user_id())
+    AND EXISTS (
+      SELECT 1 FROM ao_cloud_workspaces workspace
+      WHERE workspace.id = ao_cloud_capability_grants.workspace_id
+        AND workspace.org_id = ao_cloud_capability_grants.org_id
+        AND workspace.owner_user_id = ao_current_user_id()
+    )
+  );
+REVOKE ALL ON TABLE ao_cloud_capability_grants FROM PUBLIC;
 
-CREATE TABLE cloud_terminal_tickets (
+CREATE TABLE ao_cloud_terminal_tickets (
   id text PRIMARY KEY,
   verifier bytea NOT NULL UNIQUE,               -- SHA-256-sized digest
-  org_id text NOT NULL,
-  workspace_id text NOT NULL,
+  org_id uuid NOT NULL REFERENCES ao_organizations(id) ON DELETE CASCADE,
+  workspace_id uuid NOT NULL REFERENCES ao_cloud_workspaces(id) ON DELETE CASCADE,
   session_id text NOT NULL,
-  sandbox_id text NOT NULL REFERENCES cloud_runtime_placements(id),
+  sandbox_id uuid NOT NULL REFERENCES ao_cloud_session_runtimes(id) ON DELETE CASCADE,
   role text NOT NULL CHECK (role IN ('coordinator', 'worker')),
   scopes text[] NOT NULL CHECK (cardinality(scopes) > 0),
   issued_at timestamptz NOT NULL,
@@ -94,12 +120,46 @@ CREATE TABLE cloud_terminal_tickets (
   revoked_at timestamptz,
   CHECK (octet_length(verifier) = 32)
 );
-CREATE INDEX cloud_terminal_ticket_scope_idx
-  ON cloud_terminal_tickets (org_id, workspace_id, session_id, sandbox_id)
+CREATE INDEX ao_cloud_terminal_tickets_scope_idx
+  ON ao_cloud_terminal_tickets (org_id, workspace_id, session_id, sandbox_id)
   WHERE consumed_at IS NULL AND revoked_at IS NULL;
-CREATE INDEX cloud_terminal_ticket_expiry_idx
-  ON cloud_terminal_tickets (expires_at, consumed_at, revoked_at);
+CREATE INDEX ao_cloud_terminal_tickets_expiry_idx
+  ON ao_cloud_terminal_tickets (expires_at, consumed_at, revoked_at);
+ALTER TABLE ao_cloud_terminal_tickets ENABLE ROW LEVEL SECURITY;
+ALTER TABLE ao_cloud_terminal_tickets FORCE ROW LEVEL SECURITY;
+CREATE POLICY ao_cloud_terminal_tickets_workspace
+  ON ao_cloud_terminal_tickets FOR ALL
+  USING (
+    workspace_id = ao_current_workspace_id()
+    AND org_id = ao_current_org_id()
+    AND ao_is_org_member(org_id, ao_current_user_id())
+    AND EXISTS (
+      SELECT 1 FROM ao_cloud_workspaces workspace
+      WHERE workspace.id = ao_cloud_terminal_tickets.workspace_id
+        AND workspace.org_id = ao_cloud_terminal_tickets.org_id
+        AND workspace.owner_user_id = ao_current_user_id()
+    )
+  )
+  WITH CHECK (
+    workspace_id = ao_current_workspace_id()
+    AND org_id = ao_current_org_id()
+    AND ao_is_org_member(org_id, ao_current_user_id())
+    AND EXISTS (
+      SELECT 1 FROM ao_cloud_workspaces workspace
+      WHERE workspace.id = ao_cloud_terminal_tickets.workspace_id
+        AND workspace.org_id = ao_cloud_terminal_tickets.org_id
+        AND workspace.owner_user_id = ao_current_user_id()
+    )
+  );
+REVOKE ALL ON TABLE ao_cloud_terminal_tickets FROM PUBLIC;
 ```
+
+Append exactly `ao_cloud_capability_grants` and
+`ao_cloud_terminal_tickets` to `runtimeTables`; `ao_cloud_session_runtimes` is
+already present. No compute-specific function needs an `EXECUTE` grant: quota
+reservation, generation CAS, revocation, and one-time ticket consumption use
+ordinary tenant-scoped transactions and `UPDATE ... RETURNING` through the
+restricted runtime role, not `SECURITY DEFINER` helpers.
 
 The placement adapter must implement `Ensure` as a single quota reservation
 transaction. Acquire transaction advisory locks in the fixed order org, user,
