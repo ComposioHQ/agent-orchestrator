@@ -15,4 +15,5 @@ var (
 	ErrInstallationInactive      = errors.New("cloud scm: installation is not active")
 	ErrRepositoryNotAllowed      = errors.New("cloud scm: repository is not allowlisted")
 	ErrInvalidRepository         = errors.New("cloud scm: repository must be owner/name")
+	ErrSandboxNotAuthorized      = errors.New("cloud scm: sandbox is not authorized for this tenant")
 )

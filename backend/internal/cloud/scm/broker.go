@@ -1,6 +1,7 @@
 package scm
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"net/url"
@@ -19,6 +20,7 @@ var permissionsByPurpose = map[string]map[string]string{
 }
 
 type BrokerStore interface {
+	AuthorizeSCMSandbox(context.Context, tenant.Identity, string) error
 	AllowedSCMRepository(context.Context, tenant.Identity, string) (domain.SCMInstallation, domain.SCMRepository, error)
 	RecordSCMTokenGrant(context.Context, tenant.Identity, domain.SCMTokenGrant) error
 }
@@ -34,8 +36,9 @@ type Broker struct {
 }
 
 const (
-	githubRepositoryHost = "github.com"
-	maxSandboxIDRunes    = 255
+	githubRepositoryHost      = "github.com"
+	maxSandboxIDRunes         = 255
+	maxInstallationTokenBytes = 255
 )
 
 func NewBroker(store BrokerStore, minter InstallationTokenMinter) (*Broker, error) {
@@ -69,6 +72,9 @@ func (b *Broker) withCredential(ctx context.Context, identity tenant.Identity, r
 		return errors.New("cloud scm: sandbox id is invalid")
 	}
 	sandboxID = canonicalSandboxID
+	if err := b.store.AuthorizeSCMSandbox(ctx, identity, sandboxID); err != nil {
+		return err
+	}
 	normalized, err := NormalizeRepository(repository)
 	if err != nil {
 		return err
@@ -93,7 +99,7 @@ func (b *Broker) withCredential(ctx context.Context, identity tenant.Identity, r
 		return err
 	}
 	expiresAt = expiresAt.UTC()
-	if len(token) == 0 || !expiresAt.After(b.now().UTC()) {
+	if !validInstallationToken(token) || !expiresAt.After(b.now().UTC()) {
 		zeroBytes(token)
 		return errors.New("cloud scm: provider returned an unusable installation token")
 	}
@@ -179,4 +185,16 @@ func zeroBytes(value []byte) {
 	for index := range value {
 		value[index] = 0
 	}
+}
+
+func validInstallationToken(token []byte) bool {
+	if len(token) < len("ghs_")+1 || len(token) > maxInstallationTokenBytes || !bytes.HasPrefix(token, []byte("ghs_")) {
+		return false
+	}
+	for _, character := range token[len("ghs_"):] {
+		if (character < 'a' || character > 'z') && (character < 'A' || character > 'Z') && (character < '0' || character > '9') {
+			return false
+		}
+	}
+	return true
 }
