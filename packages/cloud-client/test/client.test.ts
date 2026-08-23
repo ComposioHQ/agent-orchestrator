@@ -161,11 +161,10 @@ describe("CloudClient", () => {
   it("mints a scoped terminal ticket and attaches to the listener it names", async () => {
     const connection: TerminalConnection = {
       transport: "websocket",
-      protocol: "ao.terminal.v1",
+      protocol: "ao.mux.v1",
       url: "https://terminals.cloud.example.com/attach?region=us-east-1",
       kinds: ["agent", "workspace"],
       features: ["input", "resize", "replay"],
-      ticketPath: "/api/cloud/v1/orgs/org%20one/sessions/session%20one/terminal-ticket",
       maxFrameBytes: 16384,
     };
     const ticket: TerminalTicket = {
@@ -203,14 +202,44 @@ describe("CloudClient", () => {
     expect(fetchMock.mock.calls[0]?.[1]?.cache).toBe("no-store");
 
     // The listener is not the API origin, and its own query is preserved.
-    expect(
-      client.terminalUrlForTicket(ticket, { after: ticket.lastSequence }),
-    ).toBe(
-      "wss://terminals.cloud.example.com/attach?region=us-east-1&ticket=tkt_live&after=4211&kind=agent",
+    const url = client.terminalUrl({
+      connection,
+      after: ticket.lastSequence,
+    });
+    expect(url).toBe(
+      "wss://terminals.cloud.example.com/attach?region=us-east-1&after=4211",
     );
+    // The ticket must not reach the URL: a query string lands in proxy logs,
+    // browser history and referrers.
+    expect(url).not.toContain("tkt_live");
+
+    expect(client.terminalSubprotocols(ticket)).toEqual([
+      "ao.mux.v1",
+      "ao.ticket.tkt_live",
+    ]);
   });
 
-  it("falls back to the control-plane terminal route when the ticket names no listener", () => {
+  it("falls back to the control-plane terminal route and default subprotocols", () => {
+    const client = createCloudClient({
+      baseUrl: "https://cloud.example.com",
+      getAccessToken: () => "access-token",
+      fetch: vi.fn() as unknown as typeof fetch,
+    });
+
+    expect(client.terminalUrl()).toBe(
+      "wss://cloud.example.com/api/cloud/v1/terminal",
+    );
+    // A server that reported no connection still gets the documented defaults.
+    expect(
+      client.terminalSubprotocols({
+        ticket: "tkt_live",
+        expiresIn: 30,
+        scopes: ["terminal:operate"],
+      }),
+    ).toEqual(["ao.mux.v1", "ao.ticket.tkt_live"]);
+  });
+
+  it("honours a listener that versions its ticket subprotocol prefix", () => {
     const client = createCloudClient({
       baseUrl: "https://cloud.example.com",
       getAccessToken: () => "access-token",
@@ -218,14 +247,20 @@ describe("CloudClient", () => {
     });
 
     expect(
-      client.terminalUrlForTicket({
+      client.terminalSubprotocols({
         ticket: "tkt_live",
         expiresIn: 30,
         scopes: ["terminal:operate"],
+        connection: {
+          transport: "websocket",
+          protocol: "ao.mux.v1",
+          url: "wss://terminals.example.com/attach",
+          kinds: ["workspace"],
+          features: [],
+          ticketSubprotocolPrefix: "ao.ticket2.",
+        },
       }),
-    ).toBe(
-      "wss://cloud.example.com/api/cloud/v1/terminal?ticket=tkt_live&after=0&kind=workspace",
-    );
+    ).toEqual(["ao.mux.v1", "ao.ticket2.tkt_live"]);
   });
 
   it("lists runtime-supplied agent profiles for an organization", async () => {

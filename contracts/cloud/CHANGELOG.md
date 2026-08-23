@@ -21,6 +21,41 @@ Two conventions this file exists to keep visible:
   operation here means adding a line there; mounting its handler means deleting
   that line. The test fails in both directions.
 
+## Unreleased — terminal framing is the local mux, not a parallel protocol
+
+The provisional `ao.terminal.v1` framing is replaced. It was a single-terminal
+protocol invented alongside the daemon's existing one; the contract now
+describes **the local mux itself** — same channels, same field names — so the
+xterm client that already talks to a local daemon attaches to a hosted session
+unchanged, which was the whole point.
+
+| Was | Now |
+| --- | --- |
+| `ao.terminal.v1` | `ao.mux.v1` |
+| Single terminal per socket | `ch`-tagged channels: `terminal`, `subscribe`, `sessions`, `system` |
+| `columns` / `rows` | `cols` / `rows`, as the daemon names them |
+| Variant frames per message type | One `MuxClientFrame` / `MuxServerFrame` with optional fields, mirroring the daemon's `clientMsg` / `serverMsg` structs |
+| Required `sequence` on every output frame | Optional `seq` on `terminal`/`data` |
+| Ticket in the query string | Ticket as the `ao.ticket.<opaque>` subprotocol |
+
+`seq` is optional because a local daemon retains no replay buffer. Making it
+required would have forced a hosted-only field into the shared client.
+
+**The ticket moved out of the URL.** A query string reaches proxy logs, browser
+history and referrers, so a ticket there is a credential written to disk in
+three places. The client now offers two subprotocols —
+`["ao.mux.v1", "ao.ticket.<opaque>"]` — and the server authenticates from the
+second while selecting only the first, so the credential is never echoed back.
+`connection.ticketSubprotocolPrefix` lets the pair be versioned together.
+
+Client: `terminalUrl()` no longer takes a ticket and no longer puts one in the
+URL; `terminalSubprotocols(ticket)` returns the pair to offer.
+`terminalUrlForTicket` is gone.
+
+Frames removed: `TerminalClientFrame`, `TerminalServerFrame` and their nine
+member frames. Added: `MuxChannel`, `MuxClientFrame`, `MuxClientFrameType`,
+`MuxClientRole`, `MuxServerFrame`, `MuxServerFrameType`, `MuxSessionUpdate`.
+
 ## Unreleased — tenant header is `X-AO-Org`
 
 162's shared app mount is integrated, and the header it reads is `X-AO-Org`,

@@ -393,49 +393,41 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * Upgrade to a terminal WebSocket using a short-lived ticket.
-         * @description Attach to a session terminal. This is the only route that authenticates
-         *     with a ticket instead of a bearer token: browsers cannot set headers on
-         *     a WebSocket handshake, so the credential travels in the query string.
-         *     That is why the ticket is single-use, short-lived, and scope-bound —
-         *     see `createTerminalTicket`.
+         * Attach to a session terminal over the mux WebSocket.
+         * @description Attach to a hosted session's terminal. The framing is the local daemon's
+         *     terminal mux (`MuxClientFrame` / `MuxServerFrame`): the same channels,
+         *     the same field names, so the xterm client that already talks to a local
+         *     daemon attaches here unchanged.
          *
-         *     The path shown here is the default the control plane serves. Clients
-         *     must attach to the `url` reported by `getTerminalConnection` or by the
-         *     ticket, which may point at a different listener.
+         *     **The credential travels as a WebSocket subprotocol, not a query
+         *     parameter.** A browser cannot set headers on a handshake, and a query
+         *     string ends up in proxy logs, browser history and referrers — a ticket
+         *     there is a credential written to disk in three places. So the client
+         *     offers two subprotocols:
          *
-         *     Handshake. The client requests the WebSocket subprotocol named by
-         *     `TerminalConnection.protocol` (`ao.terminal.v1`). A server that does not
-         *     select it is speaking something else and the client must close rather
-         *     than guess a framing.
+         *     ```
+         *     Sec-WebSocket-Protocol: ao.mux.v1, ao.ticket.<opaque>
+         *     ```
          *
-         *     Framing. Every frame is a JSON text message with a `type` discriminator
-         *     — `TerminalClientFrame` inbound, `TerminalServerFrame` outbound. Byte
-         *     payloads are base64 in `data`, because PTY output is arbitrary bytes and
-         *     need not be valid UTF-8. This mirrors the base64 `data` and
-         *     `columns`/`rows` shapes the worker transport routes already use, so the
-         *     compute plane forwards frames without re-encoding them.
+         *     where `<opaque>` is the `ticket` value from `createTerminalTicket`,
+         *     verbatim. The server authenticates from the `ao.ticket.` entry and
+         *     selects **only** `ao.mux.v1` in its response, so the credential is never
+         *     echoed back. A client that sees anything other than `ao.mux.v1` selected
+         *     must close rather than guess a framing.
          *
-         *     Ordering and replay. Every `output` frame carries a monotonically
-         *     increasing `sequence`. Passing `after` replays buffered output with a
-         *     sequence strictly greater than it and then continues live, which is what
-         *     makes a dropped connection recoverable: reconnect with the last
-         *     `sequence` the client rendered. `after=0` replays the whole retained
-         *     buffer. The server's first frame is always `ready`, carrying the current
-         *     head sequence and the authoritative grid, so a client can detect that
-         *     the buffer no longer reaches its cursor and clear its screen instead of
-         *     rendering a gap.
+         *     Attach to the `url` reported on the ticket's `connection`. It may name a
+         *     listener that is not the control plane's origin, so do not rebuild it
+         *     from the API base URL.
          *
-         *     Authority. `input` and `resize` require the `terminal:operate` scope. A
-         *     ticket holding only `terminal:read` may attach and receive output; an
-         *     `input` frame on such a ticket is answered with an `error` frame carrying
-         *     `TERMINAL_SCOPE_REQUIRED` and the socket stays open, so a read-only
+         *     Authority. `data` and `resize` frames require the `terminal:operate`
+         *     scope. A ticket holding only `terminal:read` may attach and receive
+         *     output; an operate frame on such a ticket is answered with a
+         *     `terminal`/`error` frame and the socket stays open, so a read-only
          *     viewer is not disconnected for a stray keystroke.
          *
-         *     Close. The server sends `exit` when the underlying process ends, then
-         *     closes. It closes with 1008 when the ticket is invalid, expired, already
-         *     used, or bound to a different session or kind, and with 1011 when the
-         *     sandbox is unreachable.
+         *     Close. The listener closes with 1008 when the ticket is invalid,
+         *     expired, already used, or bound to a different session, and with 1011
+         *     when the sandbox is unreachable.
          *
          */
         get: operations["connectTerminal"];
@@ -1297,6 +1289,104 @@ export interface components {
             path: string;
         };
         WorkerWorkspaceWritePayload: components["schemas"]["WorkspaceFileWriteInput"];
+        /**
+         * @description One socket multiplexes every logical stream, tagged by `ch`:
+         *
+         *     - `terminal` — per-pane byte stream, keyed by the runtime handle in `id`
+         *     - `subscribe` — the client opting into the session-state channel
+         *     - `sessions` — server-pushed session-state changes
+         *     - `system` — liveness; WebSocket ping/pong also runs underneath
+         *
+         * @enum {string}
+         */
+        MuxChannel: "terminal" | "subscribe" | "sessions" | "system";
+        /** @enum {string} */
+        MuxClientFrameType: "open" | "data" | "resize" | "close" | "subscribe" | "ping";
+        /** @enum {string} */
+        MuxServerFrameType: "opened" | "data" | "resize" | "exited" | "error" | "snapshot" | "pong";
+        /** @description One inbound frame. Fields are shared across channels; which apply
+         *     depends on `ch` and `type`, exactly as in the local daemon's mux:
+         *
+         *     - `terminal`/`open` — `id`, optionally `cols`, `rows`, `role`
+         *     - `terminal`/`data` — `id`, `data`
+         *     - `terminal`/`resize` — `id`, `cols`, `rows`, optionally `force`
+         *     - `terminal`/`close` — `id`
+         *     - `subscribe`/`subscribe` — no payload
+         *     - `system`/`ping` — no payload
+         *
+         *     `data` and `resize` require the `terminal:operate` scope. A frame sent
+         *     without it is answered with an `error` frame and the socket stays open,
+         *     so a read-only viewer is not disconnected for a stray keystroke.
+         *      */
+        MuxClientFrame: {
+            ch: components["schemas"]["MuxChannel"];
+            type: components["schemas"]["MuxClientFrameType"];
+            /** @description Opaque runtime handle for the pane, on `ch` `terminal`. */
+            id?: string;
+            /** @description Base64-encoded keystrokes. Base64 because PTY bytes need not be
+             *     valid UTF-8 and so could not survive a raw JSON string.
+             *      */
+            data?: string;
+            cols?: number;
+            rows?: number;
+            /** @description Re-signal an unchanged grid for attach recovery. Duplicate frames
+             *     are otherwise ignored so they cannot trigger another TUI repaint.
+             *      */
+            force?: boolean;
+            role?: components["schemas"]["MuxClientRole"];
+        };
+        /**
+         * @description A pane has one grid. When several clients view it at once the primary
+         *     drives that grid and secondaries render the authoritative size rather
+         *     than shrinking the PTY. Unset means primary, which is what keeps
+         *     existing clients driving the size.
+         *
+         * @enum {string}
+         */
+        MuxClientRole: "secondary";
+        /** @description One outbound frame, mirroring the local daemon's server frames:
+         *
+         *     - `terminal`/`opened` — `id`
+         *     - `terminal`/`data` — `id`, `data`, optionally `seq`
+         *     - `terminal`/`resize` — `id`, `cols`, `rows`; the authoritative grid,
+         *       pushed so followers render the size the PTY is actually using
+         *     - `terminal`/`exited` — `id`
+         *     - `terminal`/`error` — `error`, optionally `id`
+         *     - `sessions`/`snapshot` — `session`
+         *     - `system`/`pong` — no payload
+         *      */
+        MuxServerFrame: {
+            ch: components["schemas"]["MuxChannel"];
+            type: components["schemas"]["MuxServerFrameType"];
+            id?: string;
+            /** @description Base64-encoded PTY output. */
+            data?: string;
+            cols?: number;
+            rows?: number;
+            error?: string;
+            session?: components["schemas"]["MuxSessionUpdate"];
+            /**
+             * Format: int64
+             * @description Optional monotonic cursor on a `terminal`/`data` frame. Present only
+             *     where the listener retains a replay buffer, which a local daemon
+             *     does not — hence optional, so the same client code works against
+             *     both. When present, reconnect with the last value rendered as
+             *     `after` to replay the gap; when absent, a reconnect starts live.
+             *
+             */
+            seq?: number;
+        };
+        /** @description The `sessions` channel payload: one change projected to the fields a
+         *     client needs in order to know it should refetch. It deliberately omits
+         *     the change payload itself — detail comes from the app API.
+         *      */
+        MuxSessionUpdate: {
+            /** Format: int64 */
+            seq: number;
+            projectId: string;
+            sessionId?: string;
+            eventType: string;
+        };
         /** @description One entry in a sandbox directory listing, returned over the worker
          *     transport. The product's own file browsing goes through the app API.
          *      */
@@ -1544,13 +1634,17 @@ export interface components {
          */
         TerminalTransport: "websocket";
         /**
-         * @description WebSocket subprotocol name and framing version. A client requests this
-         *     exact value in `Sec-WebSocket-Protocol` and must close if the server
-         *     selects anything else.
+         * @description WebSocket subprotocol naming the framing version. This is the local
+         *     daemon's terminal mux protocol, not a Cloud-specific one: the same
+         *     channel-tagged frames, the same field names, so the xterm client that
+         *     already talks to a local daemon attaches to a hosted session unchanged.
+         *
+         *     A client offers this value in `Sec-WebSocket-Protocol` and must close if
+         *     the server selects anything else.
          *
          * @enum {string}
          */
-        TerminalProtocol: "ao.terminal.v1";
+        TerminalProtocol: "ao.mux.v1";
         /**
          * @description Optional protocol capabilities the listener supports for this terminal,
          *     independent of what the caller is *authorized* to do (that is `scopes`).
@@ -1564,6 +1658,12 @@ export interface components {
         TerminalConnection: {
             transport: components["schemas"]["TerminalTransport"];
             protocol: components["schemas"]["TerminalProtocol"];
+            /** @description Prefix the client prepends to the ticket to form the credential
+             *     subprotocol — `ao.ticket.` — offered alongside `protocol` on the
+             *     handshake. Reported rather than assumed so the pair can be versioned
+             *     together. Absent means `ao.ticket.`.
+             *      */
+            ticketSubprotocolPrefix?: string;
             /**
              * Format: uri
              * @description Absolute `wss://` (or `ws://` in development) URL to attach to. The
@@ -1602,8 +1702,10 @@ export interface components {
             ticketTtlSeconds?: number;
         };
         TerminalTicket: {
-            /** @description Single-use bearer of terminal authority. Keep it in memory, send it
-             *     only on the attach handshake, and never log it.
+            /** @description Single-use bearer of terminal authority. It travels as the
+             *     `ao.ticket.<opaque>` WebSocket subprotocol on the attach handshake —
+             *     never in a URL, where it would reach proxy logs and browser history.
+             *     Keep it in memory and never log it.
              *      */
             ticket: string;
             /** @description Lifetime in seconds. */
@@ -1638,142 +1740,14 @@ export interface components {
             connection?: components["schemas"]["TerminalConnection"];
             /**
              * Format: int64
-             * @description Sequence at the head of the retained output buffer when the ticket
-             *     was minted. A client opening a terminal for the first time can pass
-             *     it as `after` to skip the backlog, or ignore it to replay.
+             * @description The `seq` at the head of the retained output buffer when the ticket
+             *     was minted, where the listener keeps one. A client opening a
+             *     terminal for the first time can pass it as `after` to skip the
+             *     backlog, or ignore it to replay. Absent means the listener does not
+             *     retain output, which is the local daemon's behaviour.
              *
              */
             lastSequence?: number;
-        };
-        /** @description One JSON text message from client to listener on the
-         *     `ao.terminal.v1` protocol.
-         *      */
-        TerminalClientFrame: components["schemas"]["TerminalInputFrame"] | components["schemas"]["TerminalResizeFrame"] | components["schemas"]["TerminalPingFrame"];
-        /** @description Keystrokes for the PTY. Requires the `terminal:operate` scope. */
-        TerminalInputFrame: {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            type: "input";
-            /** @description Base64-encoded input, at most `maxFrameBytes` (default 16384) after
-             *     decoding.
-             *      */
-            data: string;
-        };
-        /** @description Request the PTY grid. Requires the `terminal:operate` scope. A terminal
-         *     has one grid; when several clients are attached the listener applies the
-         *     most recent request and echoes the authoritative grid back to everyone
-         *     as a server `resize`.
-         *      */
-        TerminalResizeFrame: {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            type: "resize";
-            columns: number;
-            rows: number;
-        };
-        /** @description Application-level liveness for clients that cannot observe
-         *     WebSocket-level pong. Answered with `pong`.
-         *      */
-        TerminalPingFrame: {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            type: "ping";
-        };
-        /** @description One JSON text message from listener to client on the
-         *     `ao.terminal.v1` protocol.
-         *      */
-        TerminalServerFrame: components["schemas"]["TerminalReadyFrame"] | components["schemas"]["TerminalOutputFrame"] | components["schemas"]["TerminalServerResizeFrame"] | components["schemas"]["TerminalExitFrame"] | components["schemas"]["TerminalErrorFrame"] | components["schemas"]["TerminalPongFrame"];
-        /** @description Always the first server frame. `sequence` is the head of the retained
-         *     buffer: when it is lower than the `after` the client asked for, the
-         *     buffer was truncated and the client must clear its screen rather than
-         *     render a gap.
-         *      */
-        TerminalReadyFrame: {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            type: "ready";
-            /** Format: int64 */
-            sequence: number;
-            /** @description Scopes the listener resolved for this attachment, restating the
-             *     ticket's grant so the client never has to hold the mint response to
-             *     know whether it may type.
-             *      */
-            scopes: components["schemas"]["TerminalScope"][];
-            columns?: number;
-            rows?: number;
-            /** @description Rendered screen the client can paint before any `output` arrives.
-             *     Present only when the listener advertises the `snapshot` feature.
-             *      */
-            snapshot?: string;
-        };
-        TerminalOutputFrame: {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            type: "output";
-            /**
-             * Format: int64
-             * @description Strictly increasing across the terminal's lifetime. Reconnect with
-             *     the last value rendered as `after`.
-             *
-             */
-            sequence: number;
-            /** @description Base64-encoded PTY output. */
-            data: string;
-        };
-        /** @description The authoritative PTY grid, pushed whenever it changes. A client that
-         *     did not request this size renders to it anyway rather than shrinking the
-         *     shared PTY.
-         *      */
-        TerminalServerResizeFrame: {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            type: "resize";
-            columns: number;
-            rows: number;
-        };
-        /** @description The process ended. The listener closes the socket after this frame. */
-        TerminalExitFrame: {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            type: "exit";
-            exitCode: number;
-        };
-        /** @description A frame was rejected. The socket stays open unless the listener also
-         *     closes it, so a rejected keystroke does not cost the client its
-         *     attachment.
-         *      */
-        TerminalErrorFrame: {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            type: "error";
-            /** @description Same vocabulary as `ErrorEnvelope.code`, so a client maps terminal
-             *     failures with the rules it already has.
-             *      */
-            code: string;
-            message: string;
-        };
-        TerminalPongFrame: {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            type: "pong";
         };
         WorkspaceFileWriteInput: {
             path: string;
@@ -2527,17 +2501,13 @@ export interface operations {
     };
     connectTerminal: {
         parameters: {
-            query: {
-                /** @description Single-use ticket from `createTerminalTicket`. Never log a URL
-                 *     carrying this value.
-                 *      */
-                ticket: string;
-                /** @description Replay retained output with a sequence strictly greater than this
-                 *     value before going live. Use the last `sequence` rendered.
+            query?: {
+                /** @description Replay retained output with a `seq` strictly greater than this value
+                 *     before going live, where the listener keeps a replay buffer. Use the
+                 *     last `seq` rendered. Omit — or pass 0 — to take whatever the
+                 *     listener offers, which for a local daemon is the live stream only.
                  *      */
                 after?: number;
-                /** @description Must match the kind the ticket was minted for. */
-                kind: components["schemas"]["TerminalKind"];
             };
             header?: never;
             path?: never;
@@ -2545,12 +2515,12 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description WebSocket protocol upgrade accepted. The `Sec-WebSocket-Protocol`
-             *     response header echoes the selected terminal protocol.
+            /** @description WebSocket upgrade accepted. `Sec-WebSocket-Protocol` echoes
+             *     `ao.mux.v1` alone — never the ticket subprotocol.
              *      */
             101: {
                 headers: {
-                    /** @description Always the value of `TerminalConnection.protocol`. */
+                    /** @description Always `ao.mux.v1`. */
                     "Sec-WebSocket-Protocol"?: string;
                     [name: string]: unknown;
                 };

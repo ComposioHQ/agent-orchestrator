@@ -417,6 +417,73 @@ func schemaBody(raw, name string) (string, bool) {
 	}
 }
 
+// TestTerminalFramingIsTheLocalMux keeps the terminal contract describing the
+// daemon's existing multiplexed protocol rather than a parallel one invented
+// beside it. A second framing would mean the xterm client that already talks to
+// a local daemon needs a hosted-only code path, which is the cost this contract
+// exists to avoid.
+func TestTerminalFramingIsTheLocalMux(t *testing.T) {
+	doc := loadContract(t)
+	raw, err := os.ReadFile(filepath.FromSlash(contractPath))
+	if err != nil {
+		t.Fatalf("read Cloud contract: %v", err)
+	}
+	if body, found := schemaBody(string(raw), "TerminalProtocol"); !found {
+		t.Error("contract has no TerminalProtocol schema")
+	} else {
+		if !strings.Contains(body, "ao.mux.v1") {
+			t.Error("TerminalProtocol no longer names ao.mux.v1, the daemon's own framing")
+		}
+		if strings.Contains(body, "ao.terminal.") {
+			t.Error("TerminalProtocol names a parallel terminal protocol; the framing is the local mux")
+		}
+	}
+
+	// Field names must match backend/internal/terminal/protocol.go. `columns`
+	// instead of `cols` compiles and generates fine, and fails only at runtime
+	// against a real daemon.
+	for _, frame := range []string{"MuxClientFrame", "MuxServerFrame"} {
+		schema, ok := doc.Components.Schemas[frame]
+		if !ok {
+			t.Errorf("contract has no %s schema", frame)
+			continue
+		}
+		for _, required := range []string{"ch", "type"} {
+			if _, present := schema.Properties[required]; !present {
+				t.Errorf("%s has no %q property; the mux tags every frame with both", frame, required)
+			}
+		}
+		if _, wrong := schema.Properties["columns"]; wrong {
+			t.Errorf("%s.columns should be %s.cols — the daemon's field is `cols`", frame, frame)
+		}
+	}
+
+	// The ticket must not be reachable as a query parameter: a query string
+	// lands in proxy logs, browser history and referrers.
+	terminal, ok := doc.Paths["/api/cloud/v1/terminal"]
+	if !ok {
+		t.Fatal("contract has no /api/cloud/v1/terminal path")
+	}
+	node, ok := terminal["get"]
+	if !ok {
+		t.Fatal("/api/cloud/v1/terminal has no GET operation")
+	}
+	var operation struct {
+		Parameters []struct {
+			Name string `yaml:"name"`
+			In   string `yaml:"in"`
+		} `yaml:"parameters"`
+	}
+	if err := node.Decode(&operation); err != nil {
+		t.Fatalf("decode connectTerminal: %v", err)
+	}
+	for _, parameter := range operation.Parameters {
+		if parameter.In == "query" && strings.EqualFold(parameter.Name, "ticket") {
+			t.Error("connectTerminal takes the ticket as a query parameter; it belongs in the ao.ticket.<opaque> subprotocol")
+		}
+	}
+}
+
 // TestErrorEnvelopeMatchesContract pins the one DTO every single Cloud response
 // can return. A rename here breaks every client's error handling at once, which
 // is exactly the drift worth failing a build over.

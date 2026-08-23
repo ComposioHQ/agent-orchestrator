@@ -389,20 +389,19 @@ export class CloudClient {
   }
 
   /**
-   * Builds the attach URL for a terminal ticket.
+   * Attach URL for a terminal ticket.
    *
-   * The listener need not live on the API origin, so prefer passing the
-   * `TerminalConnection` the ticket (or `getTerminalConnection`) reported:
-   * `connection.url` is authoritative and is only replaced by the control
-   * plane's own default when it is absent.
+   * The ticket is deliberately **not** in this URL: it travels as a WebSocket
+   * subprotocol (see {@link terminalSubprotocols}), because a query string
+   * reaches proxy logs, browser history and referrers, and a credential in
+   * three such places is a credential leaked.
+   *
+   * The listener need not live on the API origin, so the ticket's own
+   * `connection.url` wins; the control plane's default is used only when the
+   * server reported none.
    */
   terminalUrl(
-    ticket: string,
-    options: {
-      after?: number;
-      kind?: TerminalKind;
-      connection?: TerminalConnection;
-    } = {},
+    options: { after?: number; connection?: TerminalConnection } = {},
   ): string {
     const url = new URL(
       options.connection?.url ?? `${this.baseUrl}/api/cloud/v1/terminal`,
@@ -410,30 +409,24 @@ export class CloudClient {
     if (url.protocol === "https:" || url.protocol === "http:") {
       url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
     }
-    url.searchParams.set("ticket", ticket);
-    url.searchParams.set("after", String(options.after ?? 0));
-    url.searchParams.set("kind", options.kind ?? "workspace");
+    if (options.after !== undefined) {
+      url.searchParams.set("after", String(options.after));
+    }
     return url.toString();
   }
 
   /**
-   * Attach URL for a minted ticket, using the metadata the mint returned.
+   * Subprotocols to offer on the attach handshake: the framing version, then
+   * the ticket as `ao.ticket.<opaque>`.
    *
-   * Prefer this over {@link terminalUrl}: it carries the ticket's own `kind`
-   * and connection across, so a client holding several pending tickets cannot
-   * point one at the wrong terminal.
+   * The server authenticates from the ticket entry and selects only the framing
+   * one, so the credential is never echoed back. Close the socket if anything
+   * other than the framing protocol is selected rather than guessing a framing.
    */
-  terminalUrlForTicket(
-    ticket: TerminalTicket,
-    options: { after?: number; kind?: TerminalKind } = {},
-  ): string {
-    return this.terminalUrl(ticket.ticket, {
-      after: options.after,
-      // The ticket's own kind wins: it is what the server bound the ticket to.
-      // `options.kind` only covers a server that did not echo one back.
-      kind: ticket.kind ?? options.kind,
-      connection: ticket.connection,
-    });
+  terminalSubprotocols(ticket: TerminalTicket): [string, string] {
+    const connection = ticket.connection;
+    const prefix = connection?.ticketSubprotocolPrefix ?? "ao.ticket.";
+    return [connection?.protocol ?? "ao.mux.v1", `${prefix}${ticket.ticket}`];
   }
 
   async listProviderConnections(
