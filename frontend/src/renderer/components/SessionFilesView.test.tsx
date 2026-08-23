@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -1021,6 +1021,95 @@ describe("SessionFilesView", () => {
 			await waitFor(() =>
 				expect(screen.getByText(diffLine("new line 0 with some different content entirely"))).toBeInTheDocument(),
 			);
+		});
+	});
+
+	describe("git-state sections", () => {
+		function sectionedWorkspaceFilesResponse() {
+			return {
+				data: {
+					sessionId: "sess-1",
+					truncated: false,
+					compareBaseSha: "base-sha",
+					compareBaseRef: "main",
+					compareMode: "base",
+					files: [
+						{ path: "committed.go", status: "added", additions: 4, deletions: 0, size: 40, binary: false },
+						{ path: "README.md", status: "modified", additions: 2, deletions: 1, size: 80, binary: false },
+						{ path: "scratch.txt", status: "added", additions: 1, deletions: 0, size: 20, binary: false },
+					],
+					sections: {
+						committed: [{ path: "committed.go", status: "added", additions: 4, deletions: 0, size: 40, binary: false }],
+						staged: [{ path: "README.md", status: "modified", additions: 1, deletions: 0, size: 80, binary: false }],
+						unstaged: [{ path: "README.md", status: "modified", additions: 1, deletions: 1, size: 80, binary: false }],
+						untracked: [{ path: "scratch.txt", status: "added", additions: 1, deletions: 0, size: 20, binary: false }],
+					},
+					commits: [
+						{ sha: "abc1234def", subject: "agent: add committed.go", author: "AO Agent", timestamp: "2026-08-20T10:00:00Z" },
+					],
+					summary: { files: 3, additions: 7, deletions: 1 },
+					ahead: 2,
+					behind: 1,
+				},
+			};
+		}
+
+		it("groups changed files into git-state sections with a commit list", async () => {
+			getMock.mockImplementation(async (path: string) => {
+				if (path === "/api/v1/sessions/{sessionId}/workspace/files") return sectionedWorkspaceFilesResponse();
+				return { data: undefined };
+			});
+
+			renderWithQuery(<SessionFilesView sessionId="sess-1" />);
+
+			expect(await screen.findByRole("button", { name: /Committed/ })).toBeInTheDocument();
+			expect(screen.getByRole("button", { name: /Staged/ })).toBeInTheDocument();
+			expect(screen.getByRole("button", { name: /Unstaged/ })).toBeInTheDocument();
+			expect(screen.getByRole("button", { name: /Untracked/ })).toBeInTheDocument();
+			expect(screen.getByText("agent: add committed.go")).toBeInTheDocument();
+			// README.md is partially staged, so it appears under both Staged and Unstaged.
+			expect(screen.getAllByText("README.md").length).toBeGreaterThanOrEqual(2);
+		});
+
+		it("shows the workspace summary and ahead/behind counts in the header", async () => {
+			getMock.mockImplementation(async (path: string) => {
+				if (path === "/api/v1/sessions/{sessionId}/workspace/files") return sectionedWorkspaceFilesResponse();
+				return { data: undefined };
+			});
+
+			renderWithQuery(<SessionFilesView sessionId="sess-1" />);
+
+			const summary = within(await screen.findByLabelText("Workspace summary"));
+			expect(summary.getByText("+7")).toBeInTheDocument();
+			expect(summary.getByText("-1")).toBeInTheDocument();
+			expect(summary.getByText("↑2")).toBeInTheDocument();
+			expect(summary.getByText("↓1")).toBeInTheDocument();
+		});
+
+		it("falls back to the flat file list when git-state sections are empty", async () => {
+			getMock.mockImplementation(async (path: string) => {
+				if (path === "/api/v1/sessions/{sessionId}/workspace/files") {
+					return {
+						data: {
+							sessionId: "sess-1",
+							truncated: false,
+							compareMode: "base",
+							files: [
+								{ path: "repo-a/src/app.go", status: "modified", additions: 2, deletions: 1, size: 90, binary: false },
+							],
+							sections: { committed: [], staged: [], unstaged: [], untracked: [] },
+							commits: [],
+							summary: { files: 1, additions: 2, deletions: 1 },
+						},
+					};
+				}
+				return { data: undefined };
+			});
+
+			renderWithQuery(<SessionFilesView sessionId="sess-1" />);
+
+			expect(await screen.findByText("repo-a/src/app.go")).toBeInTheDocument();
+			expect(screen.queryByRole("button", { name: /Committed/ })).not.toBeInTheDocument();
 		});
 	});
 });

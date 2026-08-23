@@ -1844,26 +1844,61 @@ func sessionPRSummaries(prs []sessionsvc.PRSummary) []SessionPRSummary {
 }
 
 func workspaceFilesResponse(files sessionsvc.WorkspaceFiles) ListWorkspaceFilesResponse {
-	out := make([]WorkspaceFileSummary, 0, len(files.Files))
-	for _, file := range files.Files {
-		out = append(out, WorkspaceFileSummary{
-			Path:         file.Path,
-			PreviousPath: file.PreviousPath,
-			Status:       file.Status,
-			Additions:    file.Additions,
-			Deletions:    file.Deletions,
-			Size:         file.Size,
-			Binary:       file.Binary,
-		})
-	}
 	return ListWorkspaceFilesResponse{
 		SessionID:      files.SessionID,
 		CompareBaseSHA: files.CompareBaseSHA,
 		CompareBaseRef: files.CompareBaseRef,
 		CompareMode:    files.CompareMode,
-		Files:          out,
+		Files:          workspaceFileSummariesResponse(files.Files),
 		Truncated:      files.Truncated,
+		Sections:       workspaceFileSectionsResponse(files.Sections),
+		Commits:        workspaceCommitsResponse(files.Commits),
+		Summary:        WorkspaceSummary(files.Summary),
+		Ahead:          files.Ahead,
+		Behind:         files.Behind,
 	}
+}
+
+func workspaceFileSummaryResponse(file sessionsvc.WorkspaceFileSummary) WorkspaceFileSummary {
+	return WorkspaceFileSummary{
+		Path:         file.Path,
+		PreviousPath: file.PreviousPath,
+		Status:       file.Status,
+		Additions:    file.Additions,
+		Deletions:    file.Deletions,
+		Size:         file.Size,
+		Binary:       file.Binary,
+	}
+}
+
+func workspaceFileSummariesResponse(files []sessionsvc.WorkspaceFileSummary) []WorkspaceFileSummary {
+	out := make([]WorkspaceFileSummary, 0, len(files))
+	for _, file := range files {
+		out = append(out, workspaceFileSummaryResponse(file))
+	}
+	return out
+}
+
+func workspaceFileSectionsResponse(sections sessionsvc.WorkspaceFileSections) WorkspaceFileSections {
+	return WorkspaceFileSections{
+		Staged:    workspaceFileSummariesResponse(sections.Staged),
+		Unstaged:  workspaceFileSummariesResponse(sections.Unstaged),
+		Untracked: workspaceFileSummariesResponse(sections.Untracked),
+		Committed: workspaceFileSummariesResponse(sections.Committed),
+	}
+}
+
+func workspaceCommitsResponse(commits []sessionsvc.CommitSummary) []WorkspaceCommitSummary {
+	out := make([]WorkspaceCommitSummary, 0, len(commits))
+	for _, commit := range commits {
+		out = append(out, WorkspaceCommitSummary{
+			SHA:       commit.SHA,
+			Subject:   commit.Subject,
+			Author:    commit.Author,
+			Timestamp: commit.Timestamp,
+		})
+	}
+	return out
 }
 
 func workspaceFileResponse(file sessionsvc.WorkspaceFileDetail) WorkspaceFileResponse {

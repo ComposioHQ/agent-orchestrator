@@ -34,8 +34,11 @@ import { apiClient, apiErrorMessage } from "../lib/api-client";
 import {
 	isChangedWorkspaceFile,
 	sessionWorkspaceFilesQueryOptions,
+	type WorkspaceCommitSummary,
 	type WorkspaceCompareMode,
+	type WorkspaceFileSections,
 	type WorkspaceFileSummary,
+	type WorkspaceSummary,
 } from "../hooks/useSessionWorkspaceFiles";
 import { useParsedDiff } from "../hooks/useParsedDiff";
 import { cn } from "../lib/utils";
@@ -74,6 +77,9 @@ type SessionFilesViewProps = {
 };
 
 const emptyFiles: WorkspaceFileSummary[] = [];
+const emptyCommits: WorkspaceCommitSummary[] = [];
+
+type WorkspaceSectionKey = "committed" | "staged" | "unstaged" | "untracked";
 
 const statusLabel: Record<WorkspaceFileStatus, string> = {
 	added: "A",
@@ -87,8 +93,8 @@ const statusTone: Record<WorkspaceFileStatus, string> = {
 	added: "text-success",
 	deleted: "text-error",
 	modified: "text-warning",
-	renamed: "text-accent",
-	unmodified: "text-passive",
+	renamed: "text-status-working",
+	unmodified: "text-muted-foreground",
 };
 
 // Split (old | new) view only means something when both sides have content to
@@ -121,6 +127,21 @@ export function SessionFilesView({
 	useEffect(() => subscribeWorkspaceFileChanges(sessionId, queryClient), [queryClient, sessionId]);
 	const files = filesQuery.data?.files ?? emptyFiles;
 	const changedFiles = useMemo(() => files.filter(isChangedWorkspaceFile), [files]);
+	const sections = filesQuery.data?.sections;
+	const commits = filesQuery.data?.commits ?? emptyCommits;
+	const summary = filesQuery.data?.summary;
+	const ahead = filesQuery.data?.ahead ?? null;
+	const behind = filesQuery.data?.behind ?? null;
+	// Sections are only populated for single-repo sessions (see backend
+	// workspaceGitState). Workspace-project and scratch sessions fall back to
+	// the flat base..worktree list below instead of showing an empty panel.
+	const useSections = Boolean(
+		sections &&
+			(sections.staged.length > 0 ||
+				sections.unstaged.length > 0 ||
+				sections.untracked.length > 0 ||
+				sections.committed.length > 0),
+	);
 
 	useEffect(() => {
 		annotationGenerationRef.current += 1;
@@ -215,24 +236,40 @@ export function SessionFilesView({
 	};
 
 	const normalizedFilter = filter.trim().toLowerCase();
-	const visibleFiles = useMemo(
-		() =>
-			normalizedFilter
-				? changedFiles.filter((file) => fileSearchText(file).includes(normalizedFilter))
-				: changedFiles,
-		[changedFiles, normalizedFilter],
+	const filterFiles = useCallback(
+		(list: WorkspaceFileSummary[]) =>
+			normalizedFilter ? list.filter((file) => fileSearchText(file).includes(normalizedFilter)) : list,
+		[normalizedFilter],
 	);
+	const visibleFiles = useMemo(() => filterFiles(changedFiles), [changedFiles, filterFiles]);
+	const visibleSections = useMemo<WorkspaceFileSections | null>(() => {
+		if (!sections) return null;
+		return {
+			committed: filterFiles(sections.committed),
+			staged: filterFiles(sections.staged),
+			unstaged: filterFiles(sections.unstaged),
+			untracked: filterFiles(sections.untracked),
+		};
+	}, [sections, filterFiles]);
 	const changedCount = changedFiles.length;
-	const expandedVisibleCount = visibleFiles.filter((file) => expandedPaths.has(file.path)).length;
+	const allVisibleFiles = useSections
+		? [
+				...(visibleSections?.committed ?? []),
+				...(visibleSections?.staged ?? []),
+				...(visibleSections?.unstaged ?? []),
+				...(visibleSections?.untracked ?? []),
+			]
+		: visibleFiles;
+	const expandedVisibleCount = allVisibleFiles.filter((file) => expandedPaths.has(file.path)).length;
 
 	const toggleVisibleFiles = () => {
 		setExpandedPaths((current) => {
 			const next = new Set(current);
 			if (expandedVisibleCount > 0) {
-				for (const file of visibleFiles) next.delete(file.path);
+				for (const file of allVisibleFiles) next.delete(file.path);
 				return next;
 			}
-			for (const file of visibleFiles) next.add(file.path);
+			for (const file of allVisibleFiles) next.add(file.path);
 			return next;
 		});
 	};
@@ -277,10 +314,11 @@ export function SessionFilesView({
 						value={filter}
 					/>
 				</label>
+				<WorkspaceHeaderStats ahead={ahead} behind={behind} summary={summary} />
 				<Button
 					aria-label={expandedVisibleCount > 0 ? t("files.collapseAll") : t("files.expandAll")}
 					className="shrink-0"
-					disabled={visibleFiles.length === 0}
+					disabled={allVisibleFiles.length === 0}
 					onClick={toggleVisibleFiles}
 					size="icon-sm"
 					type="button"
@@ -330,19 +368,36 @@ export function SessionFilesView({
 				data-files-scroll-root=""
 			>
 				<div className={cn("flex w-full flex-col px-0", !isMaximized && "mx-auto max-w-[1200px]")}>
-					<ReviewFileList
-						annotation={annotation}
-						compareMode={filesQuery.data?.compareMode}
-						error={filesQuery.error}
-						expandedPaths={expandedPaths}
-						files={visibleFiles}
-						isLoading={filesQuery.isPending}
-						onExpandedPathsChange={setExpandedPaths}
-						onRetry={() => void filesQuery.refetch()}
-						sessionId={sessionId}
-						split={split}
-						wrap={true}
-					/>
+					{useSections && visibleSections ? (
+						<SectionedFileList
+							annotation={annotation}
+							commits={commits}
+							compareMode={filesQuery.data?.compareMode}
+							error={filesQuery.error}
+							expandedPaths={expandedPaths}
+							isLoading={filesQuery.isPending}
+							onExpandedPathsChange={setExpandedPaths}
+							onRetry={() => void filesQuery.refetch()}
+							sections={visibleSections}
+							sessionId={sessionId}
+							split={split}
+							wrap={true}
+						/>
+					) : (
+						<ReviewFileList
+							annotation={annotation}
+							compareMode={filesQuery.data?.compareMode}
+							error={filesQuery.error}
+							expandedPaths={expandedPaths}
+							files={visibleFiles}
+							isLoading={filesQuery.isPending}
+							onExpandedPathsChange={setExpandedPaths}
+							onRetry={() => void filesQuery.refetch()}
+							sessionId={sessionId}
+							split={split}
+							wrap={true}
+						/>
+					)}
 				</div>
 			</div>
 		</section>
@@ -387,11 +442,59 @@ function ReviewFileList({
 		return <PanelMessage>{emptyFilesMessage(compareMode, t)}</PanelMessage>;
 	}
 	return (
+		<FileAccordionList
+			annotation={annotation}
+			expandedPaths={expandedPaths}
+			files={files}
+			onExpandedPathsChange={onExpandedPathsChange}
+			sessionId={sessionId}
+			split={split}
+			wrap={wrap}
+		/>
+	);
+}
+
+// FileAccordionList is one Radix Accordion instance over one flat file list.
+// SectionedFileList mounts several of these side by side (one per git-state
+// group), each scoped to its own files but sharing the single `expandedPaths`
+// set: `value` is filtered down to the paths this instance owns, and
+// onValueChange writes its own paths back into the shared set rather than
+// replacing it outright (Radix's onValueChange reports only this instance's
+// open values, which would otherwise clobber every other section's expanded
+// state).
+function FileAccordionList({
+	annotation,
+	expandedPaths,
+	files,
+	onExpandedPathsChange,
+	sessionId,
+	split,
+	wrap,
+}: {
+	annotation: FileAnnotationModel;
+	expandedPaths: Set<string>;
+	files: WorkspaceFileSummary[];
+	onExpandedPathsChange: (next: Set<string>) => void;
+	sessionId: string;
+	split: boolean;
+	wrap: boolean;
+}) {
+	const ownPaths = useMemo(() => new Set(files.map((file) => file.path)), [files]);
+	const openValues = useMemo(
+		() => Array.from(expandedPaths).filter((path) => ownPaths.has(path)),
+		[expandedPaths, ownPaths],
+	);
+	return (
 		<Accordion
 			asChild
-			onValueChange={(next: string[]) => onExpandedPathsChange(new Set(next))}
+			onValueChange={(next: string[]) => {
+				const merged = new Set(expandedPaths);
+				for (const path of ownPaths) merged.delete(path);
+				for (const path of next) merged.add(path);
+				onExpandedPathsChange(merged);
+			}}
 			type="multiple"
-			value={Array.from(expandedPaths)}
+			value={openValues}
 		>
 			<ul className="session-files-review-list flex flex-col gap-0.5">
 				{files.map((file) => (
@@ -407,6 +510,192 @@ function ReviewFileList({
 				))}
 			</ul>
 		</Accordion>
+	);
+}
+
+function SectionedFileList({
+	annotation,
+	commits,
+	compareMode,
+	error,
+	expandedPaths,
+	isLoading,
+	onExpandedPathsChange,
+	onRetry,
+	sections,
+	sessionId,
+	split,
+	wrap,
+}: {
+	annotation: FileAnnotationModel;
+	commits: WorkspaceCommitSummary[];
+	compareMode?: WorkspaceCompareMode;
+	error: Error | null;
+	expandedPaths: Set<string>;
+	isLoading: boolean;
+	onExpandedPathsChange: (next: Set<string>) => void;
+	onRetry: () => void;
+	sections: WorkspaceFileSections;
+	sessionId: string;
+	split: boolean;
+	wrap: boolean;
+}) {
+	const { t } = useTranslation();
+	const [collapsedSections, setCollapsedSections] = useState<Set<WorkspaceSectionKey>>(() => new Set());
+	if (isLoading) {
+		return <PanelMessage>{t("files.loading")}</PanelMessage>;
+	}
+	if (error) {
+		return (
+			<PanelMessage action={<RetryButton onClick={onRetry} />}>{error.message || t("files.error.load")}</PanelMessage>
+		);
+	}
+	const groups: Array<{ key: WorkspaceSectionKey; label: string; files: WorkspaceFileSummary[] }> = [
+		{ key: "committed", label: t("files.section.committed"), files: sections.committed },
+		{ key: "staged", label: t("files.section.staged"), files: sections.staged },
+		{ key: "unstaged", label: t("files.section.unstaged"), files: sections.unstaged },
+		{ key: "untracked", label: t("files.section.untracked"), files: sections.untracked },
+	];
+	if (groups.every((group) => group.files.length === 0)) {
+		return <PanelMessage>{emptyFilesMessage(compareMode, t)}</PanelMessage>;
+	}
+	const toggleSection = (key: WorkspaceSectionKey) => {
+		setCollapsedSections((current) => {
+			const next = new Set(current);
+			if (next.has(key)) next.delete(key);
+			else next.add(key);
+			return next;
+		});
+	};
+	return (
+		<div className="flex flex-col gap-2 py-1.5">
+			{groups.map((group) =>
+				group.files.length === 0 ? null : (
+					<SectionGroup
+						annotation={annotation}
+						collapsed={collapsedSections.has(group.key)}
+						commits={group.key === "committed" ? commits : undefined}
+						expandedPaths={expandedPaths}
+						files={group.files}
+						key={group.key}
+						label={group.label}
+						onExpandedPathsChange={onExpandedPathsChange}
+						onToggleCollapsed={() => toggleSection(group.key)}
+						sessionId={sessionId}
+						split={split}
+						wrap={wrap}
+					/>
+				),
+			)}
+		</div>
+	);
+}
+
+function SectionGroup({
+	annotation,
+	collapsed,
+	commits,
+	expandedPaths,
+	files,
+	label,
+	onExpandedPathsChange,
+	onToggleCollapsed,
+	sessionId,
+	split,
+	wrap,
+}: {
+	annotation: FileAnnotationModel;
+	collapsed: boolean;
+	commits?: WorkspaceCommitSummary[];
+	expandedPaths: Set<string>;
+	files: WorkspaceFileSummary[];
+	label: string;
+	onExpandedPathsChange: (next: Set<string>) => void;
+	onToggleCollapsed: () => void;
+	sessionId: string;
+	split: boolean;
+	wrap: boolean;
+}) {
+	return (
+		<section>
+			<button
+				aria-expanded={!collapsed}
+				className="flex w-full items-center gap-1.5 px-2.5 py-1 text-left hover:bg-interactive-hover/50"
+				onClick={onToggleCollapsed}
+				type="button"
+			>
+				{collapsed ? (
+					<ChevronRight className="size-icon-sm shrink-0 text-muted-foreground" aria-hidden="true" />
+				) : (
+					<ChevronDown className="size-icon-sm shrink-0 text-muted-foreground" aria-hidden="true" />
+				)}
+				<span className="text-caption font-bold uppercase tracking-wide text-foreground">{label}</span>
+				<span className="rounded-full bg-muted px-1.5 py-0.25 text-caption font-medium text-muted-foreground">
+					{files.length}
+				</span>
+			</button>
+			{collapsed ? null : (
+				<div className="flex flex-col gap-1.5 px-2.5 pb-1">
+					{commits && commits.length > 0 ? <CommitList commits={commits} /> : null}
+					<FileAccordionList
+						annotation={annotation}
+						expandedPaths={expandedPaths}
+						files={files}
+						onExpandedPathsChange={onExpandedPathsChange}
+						sessionId={sessionId}
+						split={split}
+						wrap={wrap}
+					/>
+				</div>
+			)}
+		</section>
+	);
+}
+
+function CommitList({ commits }: { commits: WorkspaceCommitSummary[] }) {
+	return (
+		<ul className="flex flex-col gap-0.5 border-b border-border/40 pb-1.5">
+			{commits.map((commit) => (
+				<li className="flex items-center gap-1.5 py-0.5 font-mono text-caption text-passive" key={commit.sha}>
+					<span className="shrink-0 text-passive/70">{commit.sha.slice(0, 7)}</span>
+					<span className="min-w-0 flex-1 truncate text-foreground">{commit.subject}</span>
+				</li>
+			))}
+		</ul>
+	);
+}
+
+function WorkspaceHeaderStats({
+	ahead,
+	behind,
+	summary,
+}: {
+	ahead: number | null;
+	behind: number | null;
+	summary?: WorkspaceSummary;
+}) {
+	const { t } = useTranslation();
+	const hasSummary = Boolean(summary && summary.files > 0);
+	const hasAheadBehind = Boolean(ahead || behind);
+	if (!hasSummary && !hasAheadBehind) return null;
+	return (
+		<span
+			aria-label={t("files.workspaceSummary")}
+			className="flex shrink-0 items-center gap-2 px-1 font-mono text-caption"
+		>
+			{hasSummary && summary ? (
+				<span className="flex items-center gap-1">
+					{summary.additions > 0 ? <span className="text-success">+{summary.additions}</span> : null}
+					{summary.deletions > 0 ? <span className="text-error">-{summary.deletions}</span> : null}
+				</span>
+			) : null}
+			{hasAheadBehind ? (
+				<span className="flex items-center gap-1.5 text-passive">
+					{ahead ? <span title={t("files.aheadCount", { count: ahead })}>↑{ahead}</span> : null}
+					{behind ? <span title={t("files.behindCount", { count: behind })}>↓{behind}</span> : null}
+				</span>
+			) : null}
+		</span>
 	);
 }
 
@@ -1310,7 +1599,7 @@ function StatusMark({ status }: { status: WorkspaceFileStatus }) {
 	return (
 		<span
 			className={cn(
-				"inline-flex w-5 shrink-0 items-center justify-center font-mono text-caption font-medium",
+				"inline-flex w-5 shrink-0 items-center justify-center font-mono text-caption font-bold",
 				statusTone[status],
 			)}
 			title={t(`files.status.${status}`)}

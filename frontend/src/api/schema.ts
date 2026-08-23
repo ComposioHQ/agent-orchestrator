@@ -2380,12 +2380,17 @@ export interface components {
             shellTerminals: components["schemas"]["ShellTerminalResponse"][];
         };
         ListWorkspaceFilesResponse: {
+            ahead?: null | number;
+            behind?: null | number;
+            commits: components["schemas"]["WorkspaceCommitSummary"][];
             compareBaseRef?: string;
             compareBaseSha?: string;
             /** @enum {string} */
             compareMode?: "base" | "head_fallback";
             files: components["schemas"]["WorkspaceFileSummary"][];
+            sections: components["schemas"]["WorkspaceFileSections"];
             sessionId: string;
+            summary: components["schemas"]["WorkspaceSummary"];
             truncated: boolean;
         };
         MarkAllNotificationsReadRequest: {
@@ -3178,6 +3183,13 @@ export interface components {
             /** @description Input not read from an existing provider cache. */
             uncachedInputTokens: null | number;
         };
+        WorkspaceCommitSummary: {
+            author: string;
+            sha: string;
+            subject: string;
+            /** Format: date-time */
+            timestamp: string;
+        };
         WorkspaceFileResponse: {
             additions: number;
             binary: boolean;
@@ -3200,6 +3212,12 @@ export interface components {
             /** @enum {string} */
             status: "unmodified" | "modified" | "added" | "deleted" | "renamed";
         };
+        WorkspaceFileSections: {
+            committed: components["schemas"]["WorkspaceFileSummary"][];
+            staged: components["schemas"]["WorkspaceFileSummary"][];
+            unstaged: components["schemas"]["WorkspaceFileSummary"][];
+            untracked: components["schemas"]["WorkspaceFileSummary"][];
+        };
         WorkspaceFileSummary: {
             additions: number;
             binary: boolean;
@@ -3216,6 +3234,11 @@ export interface components {
             name: string;
             relativePath: string;
             repo: string;
+        };
+        WorkspaceSummary: {
+            additions: number;
+            deletions: number;
+            files: number;
         };
     };
     responses: never;
