@@ -33,7 +33,6 @@ import type {
   WorkerFailTurnInput,
   WorkerFinishTurnResponse,
   WorkerHeartbeatInput,
-  WorkerMessage,
   SendWorkerMessageInput,
   WorkerMessagePage,
   WorkerOKResponse,

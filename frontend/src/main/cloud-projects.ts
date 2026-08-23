@@ -122,17 +122,22 @@ export function installCloudProjectIPC(input: {
 	getAccessToken: () => Promise<string>;
 	getAccount: () => Promise<CloudAccount | null>;
 }): void {
-	const service = createCloudProjectsService({
-		placementClient: createCloudClient({ baseUrl: input.baseUrl, getAccessToken: input.getAccessToken }),
-		appClient: createHostedAppClient({ baseUrl: input.baseUrl, getAccessToken: input.getAccessToken }),
-		getAccount: input.getAccount,
-	});
-	ipcMain.handle("cloud:listProjects", () => service.list());
-	ipcMain.handle("cloud:createProject", (_event, request: CreateCloudProjectInput) => service.create(request));
+	let service: ReturnType<typeof createCloudProjectsService> | undefined;
+	const getService = () => {
+		if (!input.baseUrl.trim()) throw new Error("AO Cloud is not configured.");
+		service ??= createCloudProjectsService({
+			placementClient: createCloudClient({ baseUrl: input.baseUrl, getAccessToken: input.getAccessToken }),
+			appClient: createHostedAppClient({ baseUrl: input.baseUrl, getAccessToken: input.getAccessToken }),
+			getAccount: input.getAccount,
+		});
+		return service;
+	};
+	ipcMain.handle("cloud:listProjects", () => getService().list());
+	ipcMain.handle("cloud:createProject", (_event, request: CreateCloudProjectInput) => getService().create(request));
 	ipcMain.handle("cloud:getProjectOperation", (_event, request: GetCloudProjectOperationInput) =>
-		service.getOperation(request),
+		getService().getOperation(request),
 	);
 	ipcMain.handle("cloud:startProjectSession", (_event, request: StartCloudProjectSessionInput) =>
-		service.startSession(request),
+		getService().startSession(request),
 	);
 }
