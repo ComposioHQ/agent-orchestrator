@@ -126,28 +126,47 @@ func grantRuntimeRole(ctx context.Context, databaseURL, runtimeRole string) erro
 	if err := conn.QueryRow(ctx, `SELECT current_database()`).Scan(&databaseName); err != nil {
 		return err
 	}
-	statements := []string{
-		"GRANT CONNECT ON DATABASE " + pgx.Identifier{databaseName}.Sanitize() + " TO " + role,
-		"GRANT USAGE ON SCHEMA public TO " + role,
-		"GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE " + qualifiedRuntimeTables() + " TO " + role,
-		"GRANT EXECUTE ON FUNCTION public.ao_current_user_id(), public.ao_current_org_id(), public.ao_current_workspace_id(), public.ao_is_org_member(uuid, uuid), public.ao_can_manage_org(uuid, uuid) TO " + role,
-	}
+	statements := make([]string, 0, 3+len(runtimeTableGrants))
+	statements = append(statements,
+		"GRANT CONNECT ON DATABASE "+pgx.Identifier{databaseName}.Sanitize()+" TO "+role,
+		"GRANT USAGE ON SCHEMA public TO "+role,
+		"GRANT EXECUTE ON FUNCTION public.ao_current_user_id(), public.ao_current_org_id(), public.ao_current_workspace_id(), public.ao_is_org_member(uuid, uuid), public.ao_can_manage_org(uuid, uuid) TO "+role,
+	)
+	statements = append(statements, runtimeTableGrantStatements(role)...)
 	for _, statement := range statements {
 		if _, err := conn.Exec(ctx, statement); err != nil {
 			return err
 		}
 	}
-	// The pre-authentication functions are deliberately owned by a narrowly
-	// privileged NOLOGIN role. Assume it explicitly for this one grant rather
-	// than making the migration role or runtime role able to bypass tenant RLS.
-	if _, err := conn.Exec(ctx, `SET ROLE ao_cloud_auth`); err != nil {
+	if err := grantOwnedFunctions(ctx, conn, "ao_cloud_scm", role, strings.Join([]string{
+		"public.ao_scm_upsert_installation(uuid, uuid, bigint, text, text, text, text, text)",
+		"public.ao_scm_claim_install_state(bytea, bytea, bigint)",
+		"public.ao_scm_get_install_claim(bytea)",
+		"public.ao_scm_release_install_claim(bytea)",
+		"public.ao_scm_finalize_install_state(bytea)",
+		"public.ao_scm_ingest_and_claim_webhook(text, text, text, bytea, text, text)",
+		"public.ao_scm_claim_due_webhooks(text, integer)",
+		"public.ao_scm_finish_webhook(text, text, uuid, text, text)",
+		"public.ao_scm_prune_webhooks(interval)",
+		"public.ao_scm_record_observation(text, bigint, text, text, text, integer, text, text)",
+	}, ", ")); err != nil {
 		return err
 	}
-	if _, err := conn.Exec(ctx,
-		"GRANT EXECUTE ON FUNCTION public.ao_upsert_google_user(text, text, text), public.ao_rotate_refresh_session(bytea, bytea), public.ao_revoke_refresh_session(bytea) TO "+role,
-	); err != nil {
+	return grantOwnedFunctions(ctx, conn, "ao_cloud_auth", role,
+		"public.ao_upsert_google_user(text, text, text), public.ao_rotate_refresh_session(bytea, bytea), public.ao_revoke_refresh_session(bytea)")
+}
+
+// grantOwnedFunctions assumes a narrowly privileged NOLOGIN owner only long
+// enough to delegate EXECUTE. Neither the migrator nor runtime role owns the
+// SECURITY DEFINER functions or receives the owner's table privileges.
+func grantOwnedFunctions(ctx context.Context, conn *pgx.Conn, ownerRole, runtimeRole, functions string) error {
+	if _, err := conn.Exec(ctx, "SET ROLE "+pgx.Identifier{ownerRole}.Sanitize()); err != nil {
 		return err
 	}
-	_, err = conn.Exec(ctx, `RESET ROLE`)
-	return err
+	_, grantErr := conn.Exec(ctx, "GRANT EXECUTE ON FUNCTION "+functions+" TO "+runtimeRole)
+	_, resetErr := conn.Exec(ctx, `RESET ROLE`)
+	if grantErr != nil {
+		return grantErr
+	}
+	return resetErr
 }

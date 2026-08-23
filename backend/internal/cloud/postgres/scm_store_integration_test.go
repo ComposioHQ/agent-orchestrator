@@ -47,29 +47,6 @@ func newSCMWebhookPGHarness(t *testing.T) *scmWebhookPGHarness {
 	if err != nil {
 		t.Fatal(err)
 	}
-	role := pgx.Identifier{runtimeRole}.Sanitize()
-	_, err = admin.Exec(ctx, `GRANT EXECUTE ON FUNCTION
-		ao_scm_ingest_and_claim_webhook(TEXT, TEXT, TEXT, BYTEA, TEXT, TEXT),
-		ao_scm_claim_due_webhooks(TEXT, INTEGER),
-		 ao_scm_finish_webhook(TEXT, TEXT, UUID, TEXT, TEXT),
-		 ao_scm_prune_webhooks(INTERVAL),
-		 ao_scm_upsert_installation(UUID, UUID, BIGINT, TEXT, TEXT, TEXT, TEXT, TEXT),
-		 ao_scm_claim_install_state(BYTEA, BYTEA, BIGINT),
-		 ao_scm_get_install_claim(BYTEA),
-		 ao_scm_release_install_claim(BYTEA),
-		 ao_scm_finalize_install_state(BYTEA),
-		ao_scm_record_observation(TEXT, BIGINT, TEXT, TEXT, TEXT, INTEGER, TEXT, TEXT) TO `+role)
-	if err != nil {
-		admin.Close()
-		t.Fatal(err)
-	}
-	_, err = admin.Exec(ctx, `GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE
-		ao_scm_installations, ao_scm_repositories, ao_scm_install_states,
-		ao_scm_token_grants TO `+role)
-	if err != nil {
-		admin.Close()
-		t.Fatal(err)
-	}
 	scmConfig, err := pgxpool.ParseConfig(migrationURL)
 	if err != nil {
 		admin.Close()
@@ -303,13 +280,15 @@ func TestSCMWebhookLifecycleAgainstPostgres(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("clean runtime role is default deny", func(t *testing.T) {
-		var count int
-		err := h.store.pool.QueryRow(ctx, `SELECT count(*) FROM ao_scm_webhook_deliveries`).Scan(&count)
-		if err == nil {
-			t.Fatal("runtime role could read the webhook ledger directly")
-		}
-		if !strings.Contains(err.Error(), "permission denied") {
-			t.Fatalf("direct read error = %v", err)
+		for _, table := range []string{"ao_scm_webhook_deliveries", "ao_scm_observations", "ao_scm_install_states"} {
+			var count int
+			err := h.store.pool.QueryRow(ctx, `SELECT count(*) FROM `+pgx.Identifier{table}.Sanitize()).Scan(&count)
+			if err == nil {
+				t.Fatalf("runtime role could read %s directly", table)
+			}
+			if !strings.Contains(err.Error(), "permission denied") {
+				t.Fatalf("direct %s read error = %v", table, err)
+			}
 		}
 	})
 
