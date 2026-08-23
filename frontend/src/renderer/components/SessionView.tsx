@@ -57,9 +57,11 @@ import { terminalTargetBelongsToSession, type TerminalTarget } from "../types/te
 import { matchesRendererShortcut } from "../stores/keybindings-store";
 import { useResolvedTheme, useUiStore, type InspectorView } from "../stores/ui-store";
 
-const INSPECTOR_DEFAULT_PX = 360;
-const INSPECTOR_MIN_PX = 280;
-const INSPECTOR_MAX_PERCENT = 50;
+const WORKSPACE_DEFAULT_PX = 500;
+const WORKSPACE_MIN_PX = 340;
+const WORKSPACE_MAX_PERCENT = 55;
+const CHAT_READABLE_MIN_PX = 560;
+const WORKSPACE_ABSOLUTE_MIN_PX = 300;
 const INSPECTOR_SEPARATOR_RESERVE_PX = 8;
 // The inspector tab labels respond to the tablist's remaining width. The
 // 239px tablist breakpoint plus the 76px pinned-action reserve and 10px leading
@@ -68,9 +70,13 @@ const INSPECTOR_COMPACT_MAX_PX = 325;
 const TOPBAR_SECONDARY_COMPACT_MAX_PX = 759;
 const inspectorWidthStorageKey = "ao.inspector.widthPx";
 const inspectorWidthVar = "--ao-inspector-w";
-const INSPECTOR_SPRING_MS = 400;
+// Closely matches SHELL_PANEL_SPRING's visual settle time. Keeping the CSS
+// width interpolation on the same clock prevents the sidebar from stopping
+// while the browser rail is still visibly drifting.
+const INSPECTOR_SPRING_MS = 300;
 const INSPECTOR_SPRING_EASING =
 	"linear(0, 0.333 12.5%, 0.642 25%, 0.813 37.5%, 0.902 50%, 0.949 62.5%, 0.974 75%, 0.986 87.5%, 1)";
+const BROWSER_POPOUT_MOTION_MS = 320;
 const shellTopbarHiddenByPlatform = hidesShellTopbar();
 const isMac = isMacPlatform();
 const noDragStyle = isMac ? ({ WebkitAppRegion: "no-drag" } as CSSProperties) : undefined;
@@ -79,19 +85,66 @@ const newTerminalShortcutLabel = shortcutBindingLabel(defaultShortcutBindings("n
 type ReviewsResponse = components["schemas"]["ListReviewsResponse"];
 type ReviewerTerminalTarget = { handleId: string; harness: string };
 
-function inspectorMaxWidthPx(availableWidth?: number): number | undefined {
-	if (!Number.isFinite(availableWidth) || !availableWidth || availableWidth <= 0) return undefined;
-	return Math.floor((availableWidth * INSPECTOR_MAX_PERCENT) / 100);
+type WorkspaceLayoutMode = "utility" | "browser" | "files";
+
+type InspectorSizing = {
+	defaultWidth: number;
+	minWidth: number;
+	maxPercent: number;
+	mode: WorkspaceLayoutMode;
+	storageKey: string;
+};
+
+function inspectorSizing(view: InspectorView): InspectorSizing {
+	return {
+		defaultWidth: WORKSPACE_DEFAULT_PX,
+		minWidth: WORKSPACE_MIN_PX,
+		maxPercent: WORKSPACE_MAX_PERCENT,
+		mode: view === "browser" ? "browser" : view === "files" ? "files" : "utility",
+		storageKey: inspectorWidthStorageKey,
+	};
 }
 
-function initialInspectorSize(availableWidth?: number): string {
-	const raw = typeof window === "undefined" ? null : window.localStorage?.getItem(inspectorWidthStorageKey);
+function inspectorMaxWidthPx(availableWidth?: number, maxPercent = WORKSPACE_MAX_PERCENT): number | undefined {
+	if (!Number.isFinite(availableWidth) || !availableWidth || availableWidth <= 0) return undefined;
+	const percentageCap = Math.floor((availableWidth * maxPercent) / 100);
+	const readableChatCap = Math.max(WORKSPACE_ABSOLUTE_MIN_PX, availableWidth - CHAT_READABLE_MIN_PX);
+	return Math.min(availableWidth, percentageCap, readableChatCap);
+}
+
+function inspectorMaxWidthCss(maxPercent: number): string {
+	return `min(${maxPercent}%, max(${WORKSPACE_ABSOLUTE_MIN_PX}px, calc(100% - ${CHAT_READABLE_MIN_PX}px)))`;
+}
+
+function initialInspectorSize(sizing: InspectorSizing, availableWidth?: number): string {
+	const raw = typeof window === "undefined" ? null : window.localStorage?.getItem(sizing.storageKey);
 	const parsed = raw === null ? Number.NaN : Number(raw);
 	const requestedWidth = Number.isFinite(parsed)
-		? Math.max(INSPECTOR_MIN_PX, Math.round(parsed))
-		: INSPECTOR_DEFAULT_PX;
-	const maxWidth = inspectorMaxWidthPx(availableWidth);
+		? Math.max(sizing.minWidth, Math.round(parsed))
+		: sizing.defaultWidth;
+	const maxWidth = inspectorMaxWidthPx(availableWidth, sizing.maxPercent);
 	return maxWidth === undefined ? `${requestedWidth}px` : `${Math.min(requestedWidth, maxWidth)}px`;
+}
+
+function workspaceDemandPx(sizing: InspectorSizing): number {
+	return (
+		CHAT_READABLE_MIN_PX +
+		Number.parseFloat(initialInspectorSize(sizing)) +
+		INSPECTOR_SEPARATOR_RESERVE_PX
+	);
+}
+
+type BrowserPopOutPhase = "docked" | "opening" | "open" | "closing";
+type BrowserPopOutRect = { top: number; left: number; width: number; height: number };
+type BrowserPopOutState = {
+	sessionId: string;
+	phase: BrowserPopOutPhase;
+	dockRect?: BrowserPopOutRect;
+};
+
+function browserPopOutRect(rect?: DOMRectReadOnly | null): BrowserPopOutRect | undefined {
+	if (!rect || rect.width <= 0 || rect.height <= 0) return undefined;
+	return { top: rect.top, left: rect.left, width: rect.width, height: rect.height };
 }
 
 function topbarSecondaryLabelMode(width: number): "compact" | "expanded" {
@@ -130,6 +183,7 @@ function SessionInspectorRail({
 	isOpen,
 	onExpand,
 	onCloseAnimationComplete,
+	sizing,
 	settledClosed,
 	splitRef,
 }: {
@@ -137,17 +191,28 @@ function SessionInspectorRail({
 	isOpen: boolean;
 	onExpand: () => void;
 	onCloseAnimationComplete?: () => void;
+	sizing: InspectorSizing;
 	settledClosed: boolean;
 	splitRef: RefObject<HTMLDivElement | null>;
 }) {
 	const prefersReducedMotion = useReducedMotion();
-	const [range, setRange] = useState({ min: INSPECTOR_MIN_PX, max: INSPECTOR_DEFAULT_PX * 2 });
+	const rangeRef = useRef({ min: sizing.minWidth, max: sizing.defaultWidth * 2 });
+	const rangeModeRef = useRef(sizing.mode);
+	if (rangeModeRef.current !== sizing.mode) {
+		rangeModeRef.current = sizing.mode;
+		// The CSS max-width remains the live visual clamp while the shell moves.
+		// Start a new profile with an unconstrained destination; ResizeObserver
+		// updates only the pointer-drag limits without rerendering the browser.
+		rangeRef.current = { min: sizing.minWidth, max: sizing.defaultWidth * 2 };
+	}
+	const minWidth = useCallback(() => rangeRef.current.min, []);
+	const maxWidth = useCallback(() => rangeRef.current.max, []);
 	const { onPointerDown, onCollapsedPointerDown, onDoubleClick } = useResizable({
 		cssVar: inspectorWidthVar,
-		storageKey: inspectorWidthStorageKey,
-		defaultWidth: INSPECTOR_DEFAULT_PX,
-		min: range.min,
-		max: range.max,
+		storageKey: sizing.storageKey,
+		defaultWidth: sizing.defaultWidth,
+		min: minWidth,
+		max: maxWidth,
 		edge: "left",
 		onExpand,
 	});
@@ -157,16 +222,16 @@ function SessionInspectorRail({
 		if (!split) return;
 		const updateRange = () => {
 			const availableWidth = Math.max(0, split.clientWidth - INSPECTOR_SEPARATOR_RESERVE_PX);
-			const maxWidth = inspectorMaxWidthPx(availableWidth) ?? INSPECTOR_DEFAULT_PX;
-			const minWidth = Math.min(INSPECTOR_MIN_PX, maxWidth);
-			setRange((current) => (current.min === minWidth && current.max === maxWidth ? current : { min: minWidth, max: maxWidth }));
+			const maxWidth = inspectorMaxWidthPx(availableWidth, sizing.maxPercent) ?? sizing.defaultWidth;
+			const minWidth = Math.min(sizing.minWidth, maxWidth);
+			rangeRef.current = { min: minWidth, max: maxWidth };
 		};
 		updateRange();
 		if (typeof ResizeObserver === "undefined") return;
 		const observer = new ResizeObserver(updateRange);
 		observer.observe(split);
 		return () => observer.disconnect();
-	}, [splitRef]);
+	}, [sizing.defaultWidth, sizing.maxPercent, sizing.minWidth, splitRef]);
 
 	const transition = prefersReducedMotion ? { duration: 0 } : SHELL_PANEL_SPRING;
 	const hidden = !isOpen && settledClosed;
@@ -179,19 +244,20 @@ function SessionInspectorRail({
 		<>
 			<motion.div
 				aria-hidden="true"
-				className="relative max-w-[50%] shrink-0"
+				className="relative max-w-(--session-inspector-max-width) shrink-0"
 				data-slot="inspector-gap"
 				initial={false}
-				animate={{ width: isOpen ? `var(${inspectorWidthVar}, ${INSPECTOR_DEFAULT_PX}px)` : 0 }}
+				animate={{ width: isOpen ? `var(${inspectorWidthVar}, ${sizing.defaultWidth}px)` : 0 }}
 				transition={transition}
 			/>
 			<motion.div
 				aria-hidden={hidden}
-				className="absolute inset-y-0 right-0 z-chrome flex h-full max-w-[50%] flex-col overflow-hidden border-l border-border-strong bg-background"
+				className="absolute inset-y-0 right-0 z-chrome flex h-full max-w-(--session-inspector-max-width) flex-col overflow-hidden border-l border-border-strong bg-background"
 				data-panel=""
 				data-settled={settledClosed ? "true" : "false"}
 				data-slot="inspector-container"
 				data-state={isOpen ? "expanded" : "collapsed"}
+				data-workspace-mode={sizing.mode}
 				data-testid="panel-inspector"
 				hidden={hidden}
 				id="inspector"
@@ -199,7 +265,7 @@ function SessionInspectorRail({
 				initial={false}
 				animate={{ x: isOpen ? "0%" : "100%" }}
 				onAnimationComplete={handleAnimationComplete}
-				style={{ width: `var(${inspectorWidthVar}, ${INSPECTOR_DEFAULT_PX}px)` }}
+				style={{ width: `var(${inspectorWidthVar}, ${sizing.defaultWidth}px)` }}
 				transition={transition}
 			>
 				<ResizeHandle
@@ -234,15 +300,14 @@ function SessionInspectorRail({
 // handle gets a clean xterm/mux binding.
 //
 // The inspector uses the same Motion spring as the left sidebar (gap width +
-// x-transform). Dragging is useResizable and clamps at the responsive minimum;
-// only the explicit controls (topbar button / ⌘⇧B) collapse it. The preferred
-// 280px floor is clamped to the 50% maximum on narrow session splits, where
-// the inspector tabs compact to icons.
+// x-transform). Summary, Files, and Browser share one stable divider position;
+// chat readability clamps the rail before it can become unusably narrow.
 export function SessionView({ sessionId }: SessionViewProps) {
 	const { t } = useTranslation();
 	const workspaceQuery = useWorkspaceQuery();
 	const workspaces = workspaceQuery.data ?? [];
 	const theme = useResolvedTheme();
+	const prefersReducedMotion = useReducedMotion();
 	const isInspectorOpen = useUiStore((state) => state.inspectorSessions[sessionId]?.isOpen ?? true);
 	const inspectorView = useUiStore((state) => state.inspectorSessions[sessionId]?.view ?? "summary");
 	const setInspectorOpenForSession = useUiStore((state) => state.setInspectorOpen);
@@ -250,6 +315,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	const setInspectorViewForSession = useUiStore((state) => state.setInspectorView);
 	const setBrowserContentRevealed = useUiStore((state) => state.setBrowserContentRevealed);
 	const setBrowserUnseen = useUiStore((state) => state.setBrowserUnseen);
+	const setSidebarWorkspaceDemand = useUiStore((state) => state.setSidebarWorkspaceDemand);
 	const { daemonStatus } = useShell();
 	const previewBaselineRef = useRef<{ sessionId: string; key: string } | null>(null);
 	const sessionSplitRef = useRef<HTMLDivElement | null>(null);
@@ -258,12 +324,16 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	const [inspectorSettledClosed, setInspectorSettledClosed] = useState(!isInspectorOpen);
 	const inspectorPanelVisible = isInspectorOpen || !inspectorSettledClosed;
 	const [terminalTarget, setTerminalTarget] = useState<TerminalTarget>({ kind: "worker" });
-	const [browserPopOutState, setBrowserPopOutState] = useState({ sessionId, poppedOut: false });
+	const [browserPopOutState, setBrowserPopOutState] = useState<BrowserPopOutState>({
+		sessionId,
+		phase: "docked",
+	});
 	const [filesPoppedOut, setFilesPoppedOut] = useState(false);
 	const [reviewFileTarget, setReviewFileTarget] = useState<ReviewFileTarget | undefined>();
 	useEffect(() => setReviewFileTarget(undefined), [sessionId]);
 	const [filesFocusPath, setFilesFocusPath] = useState<string | null>(null);
-	const browserPoppedOut = browserPopOutState.sessionId === sessionId && browserPopOutState.poppedOut;
+	const browserPopOutPhase = browserPopOutState.sessionId === sessionId ? browserPopOutState.phase : "docked";
+	const browserPoppedOut = browserPopOutPhase !== "docked";
 	const [interfaceSwitchDialogOpen, setInterfaceSwitchDialogOpen] = useState(false);
 	const isNativeFullScreen = useWindowFullScreen();
 	const stopTerminalLiveResize = useCallback(() => {
@@ -469,6 +539,44 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	const isOrchestrator = session ? isOrchestratorSession(session) : false;
 	// Orchestrators get the full workspace width; only workers need the inspector rail.
 	const hasInspector = Boolean(session && !isOrchestrator);
+	const sizing = useMemo(() => inspectorSizing(inspectorView), [inspectorView]);
+	const adaptiveWorkspaceActive =
+		hasInspector && isInspectorOpen && !browserPoppedOut && !filesPoppedOut;
+
+	const publishWorkspaceDemand = useCallback(
+		(nextSizing: InspectorSizing, active = adaptiveWorkspaceActive) => {
+			setSidebarWorkspaceDemand(active ? workspaceDemandPx(nextSizing) : null);
+		},
+		[adaptiveWorkspaceActive, setSidebarWorkspaceDemand],
+	);
+
+	const transitionInspectorView = useCallback(
+		(next: InspectorView) => {
+			if (next === inspectorView) return;
+			const nextSizing = inspectorSizing(next);
+			publishWorkspaceDemand(nextSizing);
+			setInspectorViewForSession(sessionId, next);
+		},
+		[
+			inspectorView,
+			publishWorkspaceDemand,
+			sessionId,
+			setInspectorViewForSession,
+		],
+	);
+
+	// Publish a declarative width demand; the persistent shell is the sole owner
+	// of measuring the outer row and deciding whether navigation should compact.
+	useLayoutEffect(() => {
+		publishWorkspaceDemand(sizing);
+	}, [publishWorkspaceDemand, sizing]);
+
+	useLayoutEffect(
+		() => () => {
+			setSidebarWorkspaceDemand(null);
+		},
+		[setSidebarWorkspaceDemand],
+	);
 	const activeInterfaceTransition = interfaceTransitionIsActive(interfaceSwitch.transition);
 	const chatControllerTransitioning = Boolean(
 		interfaceSwitch.transition?.targetMode === "chat" &&
@@ -613,7 +721,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 
 	useLayoutEffect(() => {
 		setTerminalTarget({ kind: "worker" });
-		setBrowserPopOutState({ sessionId, poppedOut: false });
+		setBrowserPopOutState({ sessionId, phase: "docked" });
 		setFilesPoppedOut(false);
 		setFilesFocusPath(null);
 	}, [sessionId]);
@@ -647,19 +755,19 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	}, [clearVisibleTerminalKind, routedTerminalTarget.kind, sessionId, setVisibleTerminalKind]);
 
 	const handleOpenFiles = useCallback(() => {
-		setBrowserPopOutState({ sessionId, poppedOut: false });
+		setBrowserPopOutState({ sessionId, phase: "docked" });
 		setFilesPoppedOut(false);
-		setInspectorViewForSession(sessionId, "files");
+		transitionInspectorView("files");
 		setInspectorOpenForSession(sessionId, true);
-	}, [sessionId, setInspectorOpenForSession, setInspectorViewForSession]);
+	}, [sessionId, setInspectorOpenForSession, transitionInspectorView]);
 
 	const handleOpenReviewFile = useCallback((target: { line?: number; path: string }) => {
 		setReviewFileTarget((current) => ({ ...target, requestId: (current?.requestId ?? 0) + 1 }));
-		setBrowserPopOutState({ sessionId, poppedOut: false });
+		setBrowserPopOutState({ sessionId, phase: "docked" });
 		setFilesPoppedOut(false);
-		setInspectorViewForSession(sessionId, "files");
+		transitionInspectorView("files");
 		setInspectorOpenForSession(sessionId, true);
-	}, [sessionId, setInspectorOpenForSession, setInspectorViewForSession]);
+	}, [sessionId, setInspectorOpenForSession, transitionInspectorView]);
 
 	const handleOpenFile = useCallback(
 		(path: string) => {
@@ -673,21 +781,73 @@ export function SessionView({ sessionId }: SessionViewProps) {
 
 	const handleToggleFilesPopOut = useCallback(
 		(next: boolean) => {
-			if (next) setBrowserPopOutState({ sessionId, poppedOut: false });
+			if (next) setBrowserPopOutState({ sessionId, phase: "docked" });
 			setFilesPoppedOut(next);
-			setInspectorViewForSession(sessionId, "files");
+			transitionInspectorView("files");
 			setInspectorOpenForSession(sessionId, true);
 		},
-		[sessionId, setInspectorOpenForSession, setInspectorViewForSession],
+		[sessionId, setInspectorOpenForSession, transitionInspectorView],
 	);
 
+	const measureBrowserDockRect = useCallback(() => {
+		const target = sessionSplitRef.current?.querySelector<HTMLElement>("[data-browser-dock-target]");
+		return browserPopOutRect(target?.getBoundingClientRect());
+	}, []);
+
 	const handleToggleBrowserPopOut = useCallback(
-		(next: boolean) => {
+		(next: boolean, sourceRect?: DOMRectReadOnly) => {
 			if (next) setFilesPoppedOut(false);
-			setBrowserPopOutState({ sessionId, poppedOut: next });
+			setBrowserPopOutState((current) => {
+				if (next) {
+					if (current.sessionId === sessionId && current.phase !== "docked") return current;
+					return {
+						sessionId,
+						phase: prefersReducedMotion ? "open" : "opening",
+						dockRect: browserPopOutRect(sourceRect) ?? measureBrowserDockRect(),
+					};
+				}
+				if (current.sessionId !== sessionId || current.phase === "docked") return current;
+				if (prefersReducedMotion) return { sessionId, phase: "docked" };
+				return {
+					sessionId,
+					phase: "closing",
+					dockRect: measureBrowserDockRect() ?? current.dockRect,
+				};
+			});
 		},
-		[sessionId],
+		[measureBrowserDockRect, prefersReducedMotion, sessionId],
 	);
+
+	// Mount the portal at the exact docked geometry for one painted frame, then
+	// let CSS interpolate its real box. The native WebContentsView follows that
+	// moving slot through its ResizeObserver instead of snapping full-screen.
+	useEffect(() => {
+		if (browserPopOutPhase !== "opening") return;
+		const frame = window.requestAnimationFrame(() => {
+			setBrowserPopOutState((current) =>
+				current.sessionId === sessionId && current.phase === "opening"
+					? { ...current, phase: "open" }
+					: current,
+			);
+		});
+		return () => window.cancelAnimationFrame(frame);
+	}, [browserPopOutPhase, sessionId]);
+
+	const finishBrowserPopOutClose = useCallback(() => {
+		setBrowserPopOutState((current) =>
+			current.sessionId === sessionId && current.phase === "closing"
+				? { sessionId, phase: "docked" }
+				: current,
+		);
+	}, [sessionId]);
+
+	// transitionend is the normal path; the timer protects restore when a window
+	// resize or compositor interruption suppresses that DOM event.
+	useEffect(() => {
+		if (browserPopOutPhase !== "closing") return;
+		const timer = window.setTimeout(finishBrowserPopOutClose, BROWSER_POPOUT_MOTION_MS + 80);
+		return () => window.clearTimeout(timer);
+	}, [browserPopOutPhase, finishBrowserPopOutClose]);
 
 	useEffect(() => {
 		if (!hasInspector) return;
@@ -769,16 +929,30 @@ export function SessionView({ sessionId }: SessionViewProps) {
 		}
 	}, [browserPoppedOut, hasInspector, inspectorView, isInspectorOpen, sessionId, setBrowserUnseen]);
 
+	const handleToggleInspector = useCallback(() => {
+		const nextOpen = !isInspectorOpen;
+		publishWorkspaceDemand(sizing, nextOpen && !browserPoppedOut && !filesPoppedOut);
+		toggleInspector(sessionId);
+	}, [
+		browserPoppedOut,
+		filesPoppedOut,
+		isInspectorOpen,
+		publishWorkspaceDemand,
+		sessionId,
+		sizing,
+		toggleInspector,
+	]);
+
 	useEffect(() => {
 		if (!hasInspector) return;
 		const handleKeyDown = (event: KeyboardEvent) => {
 			if (!matchesRendererShortcut("toggle-inspector", event)) return;
 			event.preventDefault();
-			toggleInspector(sessionId);
+			handleToggleInspector();
 		};
 		window.addEventListener("keydown", handleKeyDown);
 		return () => window.removeEventListener("keydown", handleKeyDown);
-	}, [hasInspector, sessionId, toggleInspector]);
+	}, [handleToggleInspector, hasInspector]);
 
 	const inspectorMotionReadyRef = useRef(false);
 	const handleInspectorCloseAnimationComplete = useCallback(() => {
@@ -800,7 +974,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 			setInspectorSettledClosed(false);
 			const groupWidth = sessionSplitRef.current?.clientWidth || window.innerWidth;
 			const availableWidth = Math.max(0, groupWidth - INSPECTOR_SEPARATOR_RESERVE_PX);
-			const targetInspectorWidth = Number.parseFloat(initialInspectorSize(availableWidth));
+			const targetInspectorWidth = Number.parseFloat(initialInspectorSize(sizing, availableWidth));
 			startTerminalLiveResize(
 				targetInspectorWidth <= INSPECTOR_COMPACT_MAX_PX ? "compact" : "expanded",
 				topbarSecondaryLabelMode(Math.max(0, availableWidth - targetInspectorWidth)),
@@ -809,7 +983,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 		}
 		const groupWidth = sessionSplitRef.current?.clientWidth || window.innerWidth;
 		startTerminalLiveResize("expanded", topbarSecondaryLabelMode(groupWidth));
-	}, [hasInspector, isInspectorOpen, startTerminalLiveResize]);
+	}, [hasInspector, isInspectorOpen, sizing, startTerminalLiveResize]);
 	useEffect(() => {
 		if (!hasInspector) {
 			inspectorMotionReadyRef.current = false;
@@ -833,11 +1007,12 @@ export function SessionView({ sessionId }: SessionViewProps) {
 			<div
 				className="session-split relative flex min-h-0 flex-1 overflow-hidden"
 				data-testid="panel-group"
+				data-workspace-mode={sizing.mode}
 				id="session-workspace"
 				ref={sessionSplitRef}
 				style={
 					{
-						"--session-inspector-max-width": `${INSPECTOR_MAX_PERCENT}%`,
+						"--session-inspector-max-width": inspectorMaxWidthCss(sizing.maxPercent),
 						"--session-inspector-motion-duration": `${INSPECTOR_SPRING_MS}ms`,
 						"--session-inspector-motion-easing": INSPECTOR_SPRING_EASING,
 					} as CSSProperties
@@ -927,6 +1102,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 						isOpen={isInspectorOpen}
 						onCloseAnimationComplete={handleInspectorCloseAnimationComplete}
 						onExpand={() => setInspectorOpenForSession(sessionId, true)}
+						sizing={sizing}
 						settledClosed={!isInspectorOpen && inspectorSettledClosed}
 						splitRef={sessionSplitRef}
 					>
@@ -949,7 +1125,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 							onOpenReviewFile={handleOpenReviewFile}
 							onOpenReviewerTerminal={selectReviewerTerminal}
 							onToggleBrowserPopOut={handleToggleBrowserPopOut}
-							onViewChange={(next: InspectorView) => setInspectorViewForSession(sessionId, next)}
+							onViewChange={transitionInspectorView}
 							view={inspectorView}
 							browserView={browserView}
 							session={session}
@@ -962,7 +1138,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 					<TopbarButton
 						aria-label={isInspectorOpen ? t("shell.closeInspector") : t("shell.openInspector")}
 						aria-pressed={isInspectorOpen}
-						onClick={() => toggleInspector(sessionId)}
+						onClick={handleToggleInspector}
 						style={noDragStyle}
 						title={isInspectorOpen ? t("shell.closeInspectorTitle") : t("shell.openInspectorTitle")}
 						variant="icon"
@@ -1008,19 +1184,41 @@ export function SessionView({ sessionId }: SessionViewProps) {
 			{browserPoppedOut && session
 				? createPortal(
 						<div
+							aria-busy={browserPopOutPhase === "opening" || browserPopOutPhase === "closing"}
 							className={cn(
 								"browser-popout-overlay",
 								shellTopbarHiddenByPlatform && !isNativeFullScreen && "browser-popout-overlay--mac-windowed",
 							)}
+							data-phase={browserPopOutPhase}
+							style={
+								browserPopOutState.sessionId === sessionId && browserPopOutState.dockRect
+									? ({
+											"--browser-popout-dock-top": `${browserPopOutState.dockRect.top}px`,
+											"--browser-popout-dock-left": `${browserPopOutState.dockRect.left}px`,
+											"--browser-popout-dock-width": `${browserPopOutState.dockRect.width}px`,
+											"--browser-popout-dock-height": `${browserPopOutState.dockRect.height}px`,
+										} as CSSProperties)
+									: undefined
+							}
 						>
-							<BrowserPanelView
-								active
-								annotationQueue={browserAnnotationQueue}
-								browserView={browserView}
-								onTogglePopOut={handleToggleBrowserPopOut}
-								poppedOut
-								session={session}
-							/>
+							<div aria-hidden="true" className="browser-popout-backdrop" />
+							<div
+								className="browser-popout-frame"
+								onTransitionEnd={(event) => {
+									if (event.target === event.currentTarget && event.propertyName === "width") {
+										finishBrowserPopOutClose();
+									}
+								}}
+							>
+								<BrowserPanelView
+									active
+									annotationQueue={browserAnnotationQueue}
+									browserView={browserView}
+									onTogglePopOut={handleToggleBrowserPopOut}
+									poppedOut
+									session={session}
+								/>
+							</div>
 						</div>,
 						document.body,
 					)

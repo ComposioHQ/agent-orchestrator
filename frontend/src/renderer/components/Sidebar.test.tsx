@@ -155,6 +155,7 @@ function renderSidebar({
 	seedAgents = true,
 	workspaces = [workspace],
 	initialOpen = true,
+	autoCompact = false,
 }: {
 	onCloneProject?: CloneProjectHandler;
 	onCreateProject?: CreateProjectHandler;
@@ -163,6 +164,7 @@ function renderSidebar({
 	seedAgents?: boolean;
 	workspaces?: WorkspaceSummary[];
 	initialOpen?: boolean;
+	autoCompact?: boolean;
 } = {}) {
 	const queryClient = new QueryClient({
 		defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
@@ -187,6 +189,7 @@ function renderSidebar({
 		<QueryClientProvider client={queryClient}>
 				<SidebarProvider defaultOpen={initialOpen}>
 					<Sidebar
+						autoCompact={autoCompact}
 						onCloneProject={onCloneProject}
 						onCreateProject={onCreateProject}
 					onInitializeProject={onInitializeProject}
@@ -1360,6 +1363,16 @@ describe("Sidebar", () => {
 		// Sidebar stays expanded; dragging no longer collapses it.
 		expect(document.querySelector('[data-slot="sidebar"][data-state="expanded"]')).toBeInTheDocument();
 		expect(document.documentElement.style.getPropertyValue("--ao-sidebar-w")).toBe(`${SIDEBAR_MIN_WIDTH}px`);
+	});
+
+	it("keeps an icon navigation rail when workspace pressure compacts the sidebar", () => {
+		renderSidebar({ autoCompact: true, initialOpen: false });
+
+		const sidebar = document.querySelector('[data-slot="sidebar"][data-state="collapsed"]');
+		expect(sidebar).toHaveAttribute("data-collapsible", "icon");
+		expect(document.querySelector('[data-slot="sidebar-gap"]')).toHaveStyle({
+			width: "var(--sidebar-width-icon)",
+		});
 	});
 
 	it("flushes any queued rAF frame on pointer-up and persists the clamped width", async () => {

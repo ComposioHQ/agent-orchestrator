@@ -3834,7 +3834,6 @@ body.is-resizing-x [data-slot="inspector-container"] {
    hides the shell topbar; windowed mode reserves the native traffic-light band,
    while native fullscreen keeps a 0px top inset. Linux keeps its ShellTopbar
    offset below. */
-.browser-popout-overlay,
 .files-popout-overlay {
 	position: fixed;
 	inset: env(titlebar-area-height, 0px) 0 0;
@@ -3846,25 +3845,99 @@ body.is-resizing-x [data-slot="inspector-container"] {
 	-webkit-app-region: no-drag;
 }
 
+/* Browser maximize is a real geometry transition, not a full-screen layer that
+   appears after the docked panel disappears. The portal spans the viewport;
+   its frame begins at the measured inspector rect and the native browser slot
+   follows that box on every animation frame. */
+.browser-popout-overlay {
+	--browser-popout-top: env(titlebar-area-height, 0px);
+	--browser-popout-easing: linear(0, 0.333 12.5%, 0.642 25%, 0.813 37.5%, 0.902 50%, 0.949 62.5%, 0.974 75%, 0.986 87.5%, 1);
+	position: fixed;
+	inset: 0;
+	z-index: 40;
+	overflow: hidden;
+	background: transparent;
+	-webkit-app-region: no-drag;
+}
+
+.browser-popout-backdrop {
+	position: absolute;
+	top: var(--browser-popout-top);
+	right: 0;
+	bottom: 0;
+	left: 0;
+	background: color-mix(in srgb, var(--bg) 94%, black);
+	opacity: 1;
+	transition: opacity 240ms ease-out;
+}
+
+.browser-popout-frame {
+	position: absolute;
+	top: var(--browser-popout-top);
+	left: 0;
+	width: 100vw;
+	height: calc(100vh - var(--browser-popout-top));
+	overflow: hidden;
+	border-radius: 0;
+	background: var(--bg);
+	box-shadow: none;
+	transition:
+		top 320ms var(--browser-popout-easing),
+		left 320ms var(--browser-popout-easing),
+		width 320ms var(--browser-popout-easing),
+		height 320ms var(--browser-popout-easing),
+		border-radius 240ms ease-out,
+		box-shadow 240ms ease-out;
+	will-change: top, left, width, height, border-radius;
+}
+
+.browser-popout-overlay[data-phase="opening"] .browser-popout-frame,
+.browser-popout-overlay[data-phase="closing"] .browser-popout-frame {
+	top: var(--browser-popout-dock-top, var(--browser-popout-top));
+	left: var(--browser-popout-dock-left, 0px);
+	width: var(--browser-popout-dock-width, 100vw);
+	height: var(--browser-popout-dock-height, calc(100vh - var(--browser-popout-top)));
+	border-radius: var(--radius-lg);
+	box-shadow: 0 18px 55px color-mix(in srgb, black 30%, transparent);
+}
+
+.browser-popout-overlay[data-phase="opening"] .browser-popout-frame {
+	transition: none;
+}
+
+.browser-popout-overlay[data-phase="opening"] .browser-popout-backdrop,
+.browser-popout-overlay[data-phase="closing"] .browser-popout-backdrop {
+	opacity: 0;
+}
+
 /* Keep native browser/files surfaces below the custom Windows titlebar. */
-html[data-native-browser-composition="true"][data-ao-platform="win32"] .browser-popout-overlay,
 html[data-native-browser-composition="true"][data-ao-platform="win32"] .files-popout-overlay {
 	top: var(--size-window-titlebar);
+}
+
+html[data-native-browser-composition="true"][data-ao-platform="win32"] .browser-popout-overlay {
+	--browser-popout-top: var(--size-window-titlebar);
 }
 
 /* Web preview has no preload platform attribute. The popouts are direct body
    portals, so detect the Windows shell in #root instead of using a descendant
    selector that cannot reach them. */
-body:has(#root .platform-windows) > .browser-popout-overlay,
 body:has(#root .platform-windows) > .files-popout-overlay {
 	top: var(--size-window-titlebar);
 }
 
+body:has(#root .platform-windows) > .browser-popout-overlay {
+	--browser-popout-top: var(--size-window-titlebar);
+}
+
 /* macOS keeps the native traffic lights visible while the window is not in
    native fullscreen. Reserve that band instead of rendering beneath them. */
-.browser-popout-overlay--mac-windowed,
 .files-popout-overlay--mac-windowed {
 	top: var(--size-traffic-light-clearance);
+}
+
+.browser-popout-overlay--mac-windowed {
+	--browser-popout-top: var(--size-traffic-light-clearance);
 }
 
 .browser-popout-overlay .browser-panel__toolbar,
@@ -3872,9 +3945,12 @@ body:has(#root .platform-windows) > .files-popout-overlay {
 	-webkit-app-region: no-drag;
 }
 
-.platform-linux .browser-popout-overlay,
 .platform-linux .files-popout-overlay {
 	top: var(--size-shell-topbar);
+}
+
+body:has(#root .platform-linux) > .browser-popout-overlay {
+	--browser-popout-top: var(--size-shell-topbar);
 }
 
 .browser-popout-overlay .browser-panel {
@@ -4140,20 +4216,14 @@ html[data-native-browser-composition="true"] .browser-popout-overlay {
 	background: transparent;
 }
 
-@keyframes browser-popout-in {
-	from {
-		opacity: 0.94;
-		transform: scale(0.992);
-	}
-	to {
-		opacity: 1;
-		transform: scale(1);
-	}
+html[data-native-browser-composition="true"] .browser-popout-backdrop {
+	background: transparent;
 }
 
 @media (prefers-reduced-motion: reduce) {
-	.browser-popout-overlay {
-		animation: none;
+	.browser-popout-frame,
+	.browser-popout-backdrop {
+		transition: none;
 	}
 
 	.browser-panel,
