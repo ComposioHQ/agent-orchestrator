@@ -7,6 +7,51 @@ info:
     repository currently serves the Google authentication and current-account
     routes. Project, session, worker, SCM, terminal, and workspace routes remain
     staged contracts for later implementation.
+    `backend/internal/cloud/httpapi` holds a parity test that fails if a route
+    is mounted without an entry here, or contracted without being listed as
+    still owed.
+
+    ## Conventions
+
+    **Authentication.** Every route takes `Authorization: Bearer <accessToken>`
+    from the AO session issued by `exchangeGoogleIdentity` or
+    `refreshAOSession`. The exceptions are deliberate and marked `security: []`:
+    the three auth routes themselves, the GitHub callback, `connectTerminal`
+    (a WebSocket handshake cannot carry headers, so it uses a single-use
+    ticket), and the worker routes, which use their own `Worker` credential.
+
+    **Tenant scoping.** The organization is in the path, not a header or a token
+    claim, so every request states the tenant it means and a misrouted request
+    fails loudly instead of resolving against whichever org the token happened
+    to carry. A caller without a membership in `{orgId}` gets the same answer as
+    one asking for an org that does not exist, so the surface cannot be used to
+    probe for tenants. Account-wide routes (`/me`, `/github/user`) have no
+    `{orgId}` because they describe the user rather than a tenant.
+
+    **Errors.** Every non-2xx response is an `ErrorEnvelope`, including the
+    WebSocket upgrade failures. `code` is the stable machine-readable value —
+    branch on it, never on `message`, which is prose and may change. `requestId`
+    is what to quote in a support request.
+
+    **Pagination.** List routes take `cursor` and `limit` and answer with
+    `{items, page}`, where `page.nextCursor` is present only while
+    `page.hasMore` is true. Cursors are opaque and single-use for a given
+    ordering — never construct or persist one.
+
+    **Idempotency.** Every route that creates or destroys durable state requires
+    `Idempotency-Key`. Replaying a key with the same command returns the original
+    result, so a client that lost the response can retry without creating a
+    second project or reviving a deleted session; replaying it with a different
+    command is `IDEMPOTENCY_CONFLICT`. Reads and updates do not take the header —
+    `updateProject` is a full-value PATCH and is naturally idempotent.
+
+    **Local parity.** Fields that exist only to keep the desktop's existing
+    `/api/v1` components working against Cloud are optional, and their local
+    default is stated on the field. Cloud-only fields — org, workspace, and
+    provider state — are optional too and are simply absent for local AO. Note
+    that defaults are documented in prose rather than as a schema `default:`:
+    `openapi-typescript` promotes a defaulted response property to a *required*
+    one, which would defeat the point.
 security:
   - bearerAuth: []
 tags:
