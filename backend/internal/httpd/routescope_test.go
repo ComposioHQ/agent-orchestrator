@@ -180,24 +180,147 @@ func TestCloudStreamRoutesListsHostedStreamsOnly(t *testing.T) {
 	}
 }
 
-// The terminal multiplex is long-lived AND local-only: hosted panes ride the
-// compute plane's own published listener, so /mux must never appear in the
-// hosted stream list.
-func TestTerminalMuxIsAStreamAndNeverHosted(t *testing.T) {
+// parityExemptPrefixes are the surfaces the hosted product may permanently do
+// without. Everything else that the desktop shows must reach the hosted plane
+// eventually — either already cloud-mounted, or local-only with a named port
+// blocking it.
+//
+// Usage is exempt by explicit product decision: the figures come from tailing
+// the agent CLIs' logs on the user's own machine, and the UI handles the
+// surface being unavailable. The rest are desktop and device integrations that
+// have no hosted meaning at all.
+var parityExemptPrefixes = []string{
+	"/healthz",
+	"/readyz",
+	"/shutdown",
+	"/internal/telemetry/",
+	"/api/v1/usage/",
+	"/api/v1/mobile",
+	"/api/v1/push/",
+	"/api/v1/browser/",
+	"/api/v1/import",
+	"/api/v1/dev/",
+	"/api/v1/shell-terminals",
+}
+
+func parityExempt(pattern string) bool {
+	for _, prefix := range parityExemptPrefixes {
+		if strings.HasPrefix(pattern, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+// TestParityRequiredRoutesAreNeverPermanentlyLocal is the guard against the
+// classification quietly becoming a product decision.
+//
+// "Local-only" has to mean two different things — this can never be hosted,
+// and this is not built yet — and without a distinction the second decays into
+// the first: a route excluded as scaffolding stays excluded because nothing
+// ever forces the question again. So every route outside the explicitly exempt
+// surfaces must be either cloud-mounted or local-only with a named blocking
+// port. Shipping that port is then the trigger to flip it.
+//
+// Adding a prefix to parityExemptPrefixes is how you record "the hosted
+// product does without this" — deliberately a visible, reviewable edit rather
+// than something achieved by leaving a reason string vague.
+func TestParityRequiredRoutesAreNeverPermanentlyLocal(t *testing.T) {
+	for key, class := range routeClasses {
+		if class.Scope == ScopeCloud || parityExempt(key.Pattern) {
+			continue
+		}
+		if !class.Pending() {
+			t.Errorf("%s %s is permanently local-only but is not an exempt surface; "+
+				"either name the port that will make it hostable (pending(...)) or add it to parityExemptPrefixes",
+				key.Method, key.Pattern)
+		}
+	}
+}
+
+// The named views the desktop and the hosted client must both be able to show.
+// Spot-checking them by name catches an exemption prefix that is widened until
+// it swallows a surface that was supposed to reach parity.
+func TestNamedParityViewsReachTheHostedPlane(t *testing.T) {
+	for _, pattern := range []string{
+		"/mux",             // terminal
+		"/api/v1/projects", // project
+		"/api/v1/sessions", // session
+		"/api/v1/sessions/{sessionId}/conversation",    // chat
+		"/api/v1/sessions/{sessionId}/pr",              // PR
+		"/api/v1/sessions/{sessionId}/reviews",         // review
+		"/api/v1/sessions/{sessionId}/workspace/files", // workspace
+		"/api/v1/sessions/{sessionId}/preview",         // preview
+		"/api/v1/sessions/{sessionId}/attachments",     // attachment staging
+	} {
+		found := false
+		for key, class := range routeClasses {
+			if key.Pattern != pattern {
+				continue
+			}
+			found = true
+			if class.Scope != ScopeCloud && !class.Pending() {
+				t.Errorf("%s %s must reach the hosted plane but is permanently local-only",
+					key.Method, key.Pattern)
+			}
+		}
+		if !found {
+			t.Errorf("%s is not classified at all", pattern)
+		}
+	}
+}
+
+// A pending entry whose port is unnamed is indistinguishable from a permanent
+// exclusion, which is the exact failure this axis exists to prevent.
+func TestPendingRoutesNameTheirBlockingPort(t *testing.T) {
+	for key, class := range routeClasses {
+		if class.Pending() && strings.TrimSpace(class.PendingPort) == "" {
+			t.Errorf("%s %s is pending with no named port", key.Method, key.Pattern)
+		}
+		if class.Scope == ScopeCloud && class.Pending() {
+			t.Errorf("%s %s is already cloud-mounted; it should not still name a pending port",
+				key.Method, key.Pattern)
+		}
+	}
+}
+
+// The terminal relay terminates on the control plane. If /mux were ever
+// classified cloud while the desktop was expected to dial a provider URL
+// instead, the client would be on a connection the control plane cannot
+// authenticate or revoke — so the route must stay the desktop's single
+// terminal entry point on both planes.
+func TestTerminalRouteIsTheSameOnBothPlanes(t *testing.T) {
 	class, ok := ClassifyRoute(http.MethodGet, "/mux")
 	if !ok {
 		t.Fatal("/mux is not classified")
 	}
 	if !class.Stream() {
-		t.Error("/mux must be classified as a stream: it is the long-lived terminal transport")
+		t.Error("/mux must be a stream")
 	}
-	if class.Scope != ScopeLocalOnly {
-		t.Errorf("/mux scope = %q, want local-only", class.Scope)
+	if class.Scope != ScopeCloud && class.PendingPort == "" {
+		t.Error("/mux must either be cloud-mounted or name the relay port blocking it")
 	}
-	for _, key := range CloudStreamRoutes() {
-		if key.Pattern == "/mux" {
-			t.Error("/mux appears in the hosted stream list")
+}
+
+// An injected relay mounts /mux on the hosted handler, but the guard still
+// refuses it while the route is pending — flipping the classification is the
+// deliberate second step, and this pins both halves so neither can drift into
+// serving a terminal the classification has not approved.
+func TestCloudHandlerMountsRelayButHonoursClassification(t *testing.T) {
+	handler := NewCloudAPIHandler(config.Config{}, discardLogger(), stubTerminalMux{}, APIDeps{})
+
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/mux", nil))
+
+	class, _ := ClassifyRoute(http.MethodGet, "/mux")
+	if class.Scope == ScopeCloud {
+		if rec.Code == http.StatusNotFound {
+			t.Fatal("/mux is classified cloud-mounted but the handler refused it")
 		}
+		return
+	}
+	if rec.Code != http.StatusNotFound || !strings.Contains(rec.Body.String(), "ROUTE_NOT_AVAILABLE") {
+		t.Fatalf("/mux is still pending but was not refused: status %d body %s", rec.Code, rec.Body.String())
 	}
 }
 
@@ -252,7 +375,7 @@ func TestCloudHandlerMountsTheSameAPI(t *testing.T) {
 // Connect Mobile surface lands here). Every cloud route must reach the router,
 // which with empty deps answers 501 NOT_IMPLEMENTED — anything but a 404.
 func TestCloudScopeGuardRefusesLocalOnlyRoutes(t *testing.T) {
-	handler := NewCloudAPIHandler(config.Config{DataDir: t.TempDir()}, discardLogger(), APIDeps{})
+	handler := NewCloudAPIHandler(config.Config{DataDir: t.TempDir()}, discardLogger(), nil, APIDeps{})
 
 	for key, class := range routeClasses {
 		if !strings.HasPrefix(key.Pattern, "/api/v1/") {
@@ -301,7 +424,7 @@ func TestCloudScopeGuardDeniesUnclassifiedRoutes(t *testing.T) {
 // A path that matches no route keeps the router's ordinary 404 envelope, so a
 // client typo is not reported as "this route exists but is hosted elsewhere".
 func TestCloudScopeGuardLeavesUnmatchedPathsAlone(t *testing.T) {
-	handler := NewCloudAPIHandler(config.Config{}, discardLogger(), APIDeps{})
+	handler := NewCloudAPIHandler(config.Config{}, discardLogger(), nil, APIDeps{})
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/no-such-route", nil))
 	if rec.Code != http.StatusNotFound {
@@ -319,7 +442,7 @@ func TestCloudScopeGuardLeavesUnmatchedPathsAlone(t *testing.T) {
 // 404 as unknown paths rather than as scope refusals — excluded twice over,
 // since each is also classified local-only.
 func TestCloudHandlerOmitsDaemonProcessRoutes(t *testing.T) {
-	handler := NewCloudAPIHandler(config.Config{}, discardLogger(), APIDeps{})
+	handler := NewCloudAPIHandler(config.Config{}, discardLogger(), nil, APIDeps{})
 	for _, probe := range []struct {
 		method string
 		path   string
@@ -356,7 +479,6 @@ func TestExcludedSurfacesAreClassifiedLocalOnly(t *testing.T) {
 		{Method: http.MethodPost, Pattern: "/shutdown"},
 		{Method: http.MethodPost, Pattern: "/internal/telemetry/cli-invoked"},
 		{Method: http.MethodPost, Pattern: "/internal/telemetry/cli-usage-error"},
-		{Method: http.MethodGet, Pattern: "/mux"},
 	} {
 		assertLocalOnly(t, key)
 	}
