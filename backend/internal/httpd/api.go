@@ -20,7 +20,21 @@ import (
 	reviewsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/review"
 )
 
-// APIDeps bundles every service the API layer's controllers depend on.
+// APIDeps bundles every service the API layer's controllers depend on, and is
+// the seam that lets one API surface serve two very different compositions.
+//
+// Every field is an interface (or an explicitly injectable value), so the
+// controllers never reach for a store, a runtime, or a filesystem path of
+// their own: the desktop daemon fills these with SQLite- and host-runtime-
+// backed services, and the hosted control plane fills them with
+// Postgres- and sandbox-backed ones that read their organization scope from
+// the request context (internal/tenant). A nil field is not a wiring error —
+// its controller answers an OpenAPI-backed 501 — which is what lets a
+// composition ship the routes it can serve and grow into the rest.
+//
+// Which routes a given composition may serve at all is a separate, explicit
+// decision recorded in routescope.go, not something inferred from which fields
+// happen to be set here.
 type APIDeps struct {
 	Agents             controllers.AgentCatalog
 	Projects           projectsvc.Manager
