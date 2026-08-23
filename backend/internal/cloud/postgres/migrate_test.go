@@ -14,8 +14,14 @@ func TestCloudMigrationsAreTenantScoped(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(migrations) != 11 || migrations[0].Version != 1 || migrations[1].Version != 2 || migrations[2].Version != 3 || migrations[3].Version != 4 || migrations[4].Version != 5 || migrations[5].Version != 6 || migrations[6].Version != 7 || migrations[7].Version != 8 || migrations[8].Version != 9 || migrations[9].Version != 10 || migrations[10].Version != 11 {
+	wantVersions := []int64{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 60}
+	if len(migrations) != len(wantVersions) {
 		t.Fatalf("migrations = %#v", migrations)
+	}
+	for i, want := range wantVersions {
+		if migrations[i].Version != want {
+			t.Fatalf("migration[%d] = %d, want %d", i, migrations[i].Version, want)
+		}
 	}
 	migration, err := migrationFS.ReadFile("migrations/00001_auth_foundation.sql")
 	if err != nil {
@@ -162,6 +168,22 @@ func TestCloudMigrationsAreTenantScoped(t *testing.T) {
 	} {
 		if !strings.Contains(productSQL, required) {
 			t.Fatalf("product migration does not contain %q", required)
+		}
+	}
+	changeMigration, err := migrationFS.ReadFile("migrations/00060_change_events.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	changeSQL := string(changeMigration)
+	for _, required := range []string{
+		"CREATE TABLE ao_change_heads",
+		"CREATE TABLE ao_change_log",
+		"CREATE TABLE ao_change_cursors",
+		"ALTER TABLE ao_change_log FORCE ROW LEVEL SECURITY",
+		"PERFORM pg_notify('ao_change_events'",
+	} {
+		if !strings.Contains(changeSQL, required) {
+			t.Fatalf("change event migration does not contain %q", required)
 		}
 	}
 

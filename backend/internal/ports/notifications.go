@@ -1,10 +1,21 @@
 package ports
 
 import (
+	"context"
 	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 )
+
+// NotificationSubscriber is the live notification fan-out boundary. Hosted
+// implementations scope subscriptions to the tenant in ctx; local adapters
+// are single tenant. Durable catch-up remains the notification list API.
+type NotificationSubscriber interface {
+	SubscribeNotifications(
+		ctx context.Context,
+		projectID domain.ProjectID,
+	) (events <-chan domain.NotificationEvent, unsubscribe func(), err error)
+}
 
 // NotificationIntent is the lifecycle-to-notification-producer contract. It is
 // not an HTTP DTO; lifecycle fills it from facts it already has after the

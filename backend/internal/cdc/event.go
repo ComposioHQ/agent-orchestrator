@@ -29,6 +29,8 @@ const (
 	EventPRReviewThreadResolved = ports.ChangeEventPRReviewThreadResolved
 	EventReviewRunCreated       = ports.ChangeEventReviewRunCreated
 	EventReviewRunUpdated       = ports.ChangeEventReviewRunUpdated
+	EventNotificationCreated    = ports.ChangeEventNotificationCreated
+	EventNotificationResolved   = ports.ChangeEventNotificationResolved
 )
 
 // Event is one CDC change read from change_log. Seq is the monotonic ordering +

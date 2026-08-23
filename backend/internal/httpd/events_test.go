@@ -36,7 +36,7 @@ type fakeEventSubscriber struct {
 	fn func(cdc.Event)
 }
 
-func (s *fakeEventSubscriber) Subscribe(fn func(cdc.Event)) func() {
+func (s *fakeEventSubscriber) SubscribeChanges(_ context.Context, fn func(cdc.Event)) (func(), error) {
 	s.mu.Lock()
 	s.fn = fn
 	s.mu.Unlock()
@@ -44,7 +44,7 @@ func (s *fakeEventSubscriber) Subscribe(fn func(cdc.Event)) func() {
 		s.mu.Lock()
 		s.fn = nil
 		s.mu.Unlock()
-	}
+	}, nil
 }
 
 func (s *fakeEventSubscriber) hasSubscriber() bool {

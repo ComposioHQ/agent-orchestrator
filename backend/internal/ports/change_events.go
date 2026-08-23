@@ -21,6 +21,8 @@ const (
 	ChangeEventPRReviewThreadResolved ChangeEventType = "pr_review_thread_resolved"
 	ChangeEventReviewRunCreated       ChangeEventType = "review_run_created"
 	ChangeEventReviewRunUpdated       ChangeEventType = "review_run_updated"
+	ChangeEventNotificationCreated    ChangeEventType = "notification_created"
+	ChangeEventNotificationResolved   ChangeEventType = "notification_resolved"
 )
 
 // ChangeEvent is one committed event from a durable change log. Seq is scoped
@@ -59,4 +61,21 @@ type ChangeEventRecorder interface {
 type ChangeEventSource interface {
 	EventsAfter(ctx context.Context, after int64, limit int) ([]ChangeEvent, error)
 	LatestSeq(ctx context.Context) (int64, error)
+}
+
+// ChangeEventSubscriber is the live wake-up boundary layered on durable
+// replay. Implementations scope subscriptions to the tenant in ctx. Delivery
+// may contain replay overlap, so consumers must suppress Seq values already
+// observed through ChangeEventSource.
+type ChangeEventSubscriber interface {
+	SubscribeChanges(ctx context.Context, fn func(ChangeEvent)) (unsubscribe func(), err error)
+}
+
+// ChangeEventCursorStore persists offsets for background consumers. A cursor
+// name is scoped to the tenant in ctx and advances monotonically, making a
+// retried delivery idempotent without letting one tenant move another's
+// checkpoint.
+type ChangeEventCursorStore interface {
+	LoadChangeCursor(ctx context.Context, consumer string) (int64, error)
+	AdvanceChangeCursor(ctx context.Context, consumer string, seq int64) error
 }

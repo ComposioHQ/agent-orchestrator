@@ -49,12 +49,15 @@ func (f *fakeNotificationService) MarkAllRead(_ context.Context, ids []string) (
 	return f.markAllCount, f.err
 }
 
-func (f *fakeNotificationStream) Subscribe(projectID domain.ProjectID) (<-chan domain.NotificationEvent, func()) {
+func (f *fakeNotificationStream) SubscribeNotifications(
+	_ context.Context,
+	projectID domain.ProjectID,
+) (<-chan domain.NotificationEvent, func(), error) {
 	f.gotProject = projectID
 	if f.ch == nil {
 		f.ch = make(chan domain.NotificationEvent, 1)
 	}
-	return f.ch, func() {}
+	return f.ch, func() {}, nil
 }
 
 func newNotificationTestServer(t *testing.T, svc controllers.NotificationService) *httptest.Server {
