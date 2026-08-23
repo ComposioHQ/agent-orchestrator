@@ -123,6 +123,126 @@ func TestAccountFoundationAgainstPostgres(t *testing.T) {
 		t.Fatalf("Bob memberships = %#v", bobMemberships)
 	}
 
+	// Session-runtime placement is scoped to one owned workspace, not merely to
+	// organization membership. A capability for one workspace must not observe
+	// or mutate another workspace's runtime rows.
+	placementTx, err := store.pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := placementTx.Exec(
+		ctx,
+		`SELECT set_config('ao.user_id', $1, true),
+		        set_config('ao.org_id', $2, true)`,
+		bob.UserID,
+		bobMemberships[0].OrgID,
+	); err != nil {
+		_ = placementTx.Rollback(ctx)
+		t.Fatal(err)
+	}
+	var firstWorkspaceID, secondWorkspaceID string
+	if err := placementTx.QueryRow(
+		ctx,
+		`INSERT INTO ao_cloud_workspaces (org_id, owner_user_id, repository_url)
+		 VALUES ($1, $2, 'https://github.com/example/first.git') RETURNING id`,
+		bobMemberships[0].OrgID,
+		bob.UserID,
+	).Scan(&firstWorkspaceID); err != nil {
+		_ = placementTx.Rollback(ctx)
+		t.Fatal(err)
+	}
+	if err := placementTx.QueryRow(
+		ctx,
+		`INSERT INTO ao_cloud_workspaces (org_id, owner_user_id, repository_url)
+		 VALUES ($1, $2, 'https://github.com/example/second.git') RETURNING id`,
+		bobMemberships[0].OrgID,
+		bob.UserID,
+	).Scan(&secondWorkspaceID); err != nil {
+		_ = placementTx.Rollback(ctx)
+		t.Fatal(err)
+	}
+	if err := placementTx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	createRuntime := func(workspaceID, sessionID string) string {
+		t.Helper()
+		runtimeTx, beginErr := store.pool.Begin(ctx)
+		if beginErr != nil {
+			t.Fatal(beginErr)
+		}
+		defer func() { _ = runtimeTx.Rollback(ctx) }()
+		if _, execErr := runtimeTx.Exec(
+			ctx,
+			`SELECT set_config('ao.user_id', $1, true),
+			        set_config('ao.org_id', $2, true),
+			        set_config('ao.workspace_id', $3, true)`,
+			bob.UserID,
+			bobMemberships[0].OrgID,
+			workspaceID,
+		); execErr != nil {
+			t.Fatal(execErr)
+		}
+		var runtimeID string
+		if queryErr := runtimeTx.QueryRow(
+			ctx,
+			`INSERT INTO ao_cloud_session_runtimes (workspace_id, org_id, session_id)
+			 VALUES ($1, $2, $3) RETURNING id`,
+			workspaceID,
+			bobMemberships[0].OrgID,
+			sessionID,
+		).Scan(&runtimeID); queryErr != nil {
+			t.Fatal(queryErr)
+		}
+		if commitErr := runtimeTx.Commit(ctx); commitErr != nil {
+			t.Fatal(commitErr)
+		}
+		return runtimeID
+	}
+	firstRuntimeID := createRuntime(firstWorkspaceID, "first-session")
+	secondRuntimeID := createRuntime(secondWorkspaceID, "second-session")
+
+	firstScopeTx, err := store.pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = firstScopeTx.Rollback(ctx) }()
+	if _, err := firstScopeTx.Exec(
+		ctx,
+		`SELECT set_config('ao.user_id', $1, true),
+		        set_config('ao.org_id', $2, true),
+		        set_config('ao.workspace_id', $3, true)`,
+		bob.UserID,
+		bobMemberships[0].OrgID,
+		firstWorkspaceID,
+	); err != nil {
+		t.Fatal(err)
+	}
+	var visibleRuntimeID string
+	if err := firstScopeTx.QueryRow(
+		ctx,
+		`SELECT id FROM ao_cloud_session_runtimes`,
+	).Scan(&visibleRuntimeID); err != nil {
+		t.Fatal(err)
+	}
+	if visibleRuntimeID != firstRuntimeID {
+		t.Fatalf("first workspace saw runtime %q, want %q", visibleRuntimeID, firstRuntimeID)
+	}
+	result, err := firstScopeTx.Exec(
+		ctx,
+		`UPDATE ao_cloud_session_runtimes SET state = 'stopped' WHERE id = $1`,
+		secondRuntimeID,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.RowsAffected() != 0 {
+		t.Fatalf("first workspace updated %d second-workspace rows", result.RowsAffected())
+	}
+	if err := firstScopeTx.Rollback(ctx); err != nil {
+		t.Fatal(err)
+	}
+
 	tx, err := store.pool.Begin(ctx)
 	if err != nil {
 		t.Fatal(err)
