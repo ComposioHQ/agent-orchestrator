@@ -752,7 +752,14 @@ function DiffView({
 	const [menuState, setMenuState] = useState<DiffViewMenuState | null>(null);
 	const shouldVirtualize = !split && rows.length > ROW_VIRTUALIZE_THRESHOLD;
 	const { listRef, virtualizer } = useSharedScrollRowVirtualizer(containerRef, rows.length, shouldVirtualize);
-	const runs = useDiffHighlight(rows, path);
+	const highlight = useDiffHighlight(rows, path, previousPath);
+	// Unified view shows each row once, so a del row reads its old-file color and
+	// every other row (context, add) reads its new-file color — same convention
+	// toSplitRows already uses to decide which side "owns" a context row.
+	const runs = useMemo(
+		() => rows.map((row, index) => (row.kind === "del" ? highlight.oldSide[index] : highlight.newSide[index])),
+		[rows, highlight],
+	);
 
 	useEffect(() => {
 		const onSelectionChange = () => {
@@ -817,7 +824,15 @@ function DiffView({
 				ref={containerRef}
 			>
 				{split ? (
-					<SplitDiff annotation={annotation} path={path} previousPath={previousPath} rows={rows} runs={runs} t={t} />
+					<SplitDiff
+						annotation={annotation}
+						newRuns={highlight.newSide}
+						oldRuns={highlight.oldSide}
+						path={path}
+						previousPath={previousPath}
+						rows={rows}
+						t={t}
+					/>
 				) : shouldVirtualize ? (
 					<div
 						className={cn("relative", !wrap && "min-w-max")}
@@ -1020,17 +1035,19 @@ function toSplitRows(rows: DiffRow[]): SplitRow[] {
 
 function SplitDiff({
 	annotation,
+	newRuns,
+	oldRuns,
 	path,
 	previousPath,
 	rows,
-	runs,
 	t,
 }: {
 	annotation: FileAnnotationModel;
+	newRuns: DiffRun[][];
+	oldRuns: DiffRun[][];
 	path: string;
 	previousPath?: string;
 	rows: DiffRow[];
-	runs: DiffRun[][];
 	t: TFunction;
 }) {
 	const splitRows = useMemo(() => toSplitRows(rows), [rows]);
@@ -1048,7 +1065,7 @@ function SplitDiff({
 								previousPath={previousPath}
 								row={splitRow.left}
 								rowIndex={splitRow.leftIndex}
-								runs={splitRow.leftIndex === null ? null : runs[splitRow.leftIndex]}
+								runs={splitRow.leftIndex === null ? null : oldRuns[splitRow.leftIndex]}
 								side="old"
 								t={t}
 							/>
@@ -1058,7 +1075,7 @@ function SplitDiff({
 								previousPath={previousPath}
 								row={splitRow.right}
 								rowIndex={splitRow.rightIndex}
-								runs={splitRow.rightIndex === null ? null : runs[splitRow.rightIndex]}
+								runs={splitRow.rightIndex === null ? null : newRuns[splitRow.rightIndex]}
 								side="new"
 								t={t}
 							/>
