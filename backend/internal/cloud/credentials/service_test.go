@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io/fs"
 	"testing"
 	"time"
 
@@ -139,20 +140,24 @@ func TestServiceFailsClosedWithoutTenantAndRejectsUnsupportedProvider(t *testing
 }
 
 type recordingSecretSink struct {
-	files    []FileSecret
+	names    []string
+	modes    []fs.FileMode
 	snapshot []byte
-	purged   []string
+	received []byte
+	purged   bool
 	err      error
 }
 
-func (s *recordingSecretSink) DeliverSecretFiles(_ context.Context, _ string, files []FileSecret) error {
-	s.files = files
-	s.snapshot = append([]byte(nil), files[0].Content...)
-	return s.err
+func (s *recordingSecretSink) Deliver(name string, content []byte, mode fs.FileMode) (string, error) {
+	s.names = append(s.names, name)
+	s.modes = append(s.modes, mode)
+	s.snapshot = append([]byte(nil), content...)
+	s.received = content
+	return "/home/agent/.claude/" + name, s.err
 }
 
-func (s *recordingSecretSink) PurgeSecretFiles(_ context.Context, _ string, paths []string) error {
-	s.purged = append([]string(nil), paths...)
+func (s *recordingSecretSink) Purge() error {
+	s.purged = true
 	return nil
 }
 
@@ -166,20 +171,27 @@ func TestDeliverToSandboxUses0600FileErasesBytesAndAuditsLifecycle(t *testing.T)
 		t.Fatal(err)
 	}
 	sink := &recordingSecretSink{}
-	if err := service.DeliverToSandbox(context.Background(), BootstrapScope{OrgID: "org-1", WorkspaceID: "workspace-1", SandboxID: "sandbox-1", Harness: HarnessClaudeCode}, sink); err != nil {
+	cleanup, err := service.MaterializeForSandbox(context.Background(), BootstrapScope{OrgID: "org-1", WorkspaceID: "workspace-1", SandboxID: "sandbox-1", Harness: HarnessClaudeCode}, sink)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if len(sink.files) != 1 || sink.files[0].Path != ".claude/.credentials.json" || sink.files[0].Mode != 0o600 {
-		t.Fatalf("files = %#v", sink.files)
+	if len(sink.names) != 1 || sink.names[0] != ".credentials.json" || sink.modes[0] != 0o600 {
+		t.Fatalf("delivered = names %#v, modes %#v", sink.names, sink.modes)
 	}
 	if !bytes.Contains(sink.snapshot, []byte("sandbox-secret")) {
 		t.Fatal("sandbox did not receive credential")
 	}
-	if len(sink.purged) != 1 || sink.purged[0] != ".claude/.credentials.json" {
-		t.Fatalf("purged paths = %#v", sink.purged)
+	if !allZero(sink.received) {
+		t.Fatal("control-plane file buffer was not erased after delivery")
 	}
-	if !allZero(sink.files[0].Content) {
-		t.Fatal("materialized file buffer was not erased")
+	if sink.purged {
+		t.Fatal("credential file was purged before the harness could consume it")
+	}
+	if err := cleanup(); err != nil {
+		t.Fatal(err)
+	}
+	if !sink.purged {
+		t.Fatal("credential file was not purged after bootstrap")
 	}
 	want := []string{"credential.created", "credential.decrypted", "credential.materialized", "credential.purged"}
 	if !equalStrings(store.audits, want) {

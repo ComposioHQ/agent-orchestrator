@@ -2,7 +2,6 @@ package credentials
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -15,22 +14,22 @@ type Harness string
 
 const HarnessClaudeCode Harness = ProviderClaudeCode
 
-// FileSecret is the transport-neutral file contract consumed by sandbox
+// CredentialFile is the provider-neutral file contract consumed by sandbox
 // bootstrap. Content is transient and must be erased after the sandbox API
 // has accepted a copy. Path is always relative to the sandbox user's home.
-type FileSecret struct {
+type CredentialFile struct {
 	Path    string
 	Mode    fs.FileMode
 	Content []byte
 }
 
-func (f FileSecret) Erase() { Erase(f.Content) }
+func (f CredentialFile) Erase() { Erase(f.Content) }
 
 // HarnessCredentialProvider isolates provider-specific validation and file layout.
 type HarnessCredentialProvider interface {
 	Harness() Harness
 	Inspect([]byte) (credentialType string, error error)
-	Materialize([]byte) ([]FileSecret, error)
+	Materialize([]byte) ([]CredentialFile, error)
 }
 
 type ClaudeCodeProvider struct{}
@@ -61,12 +60,12 @@ func (ClaudeCodeProvider) Inspect(plaintext []byte) (string, error) {
 	return TypeOAuthToken, nil
 }
 
-func (ClaudeCodeProvider) Materialize(plaintext []byte) ([]FileSecret, error) {
+func (ClaudeCodeProvider) Materialize(plaintext []byte) ([]CredentialFile, error) {
 	if err := parseClaudeCredential(plaintext); err != nil {
 		return nil, err
 	}
 	content := append([]byte(nil), plaintext...)
-	return []FileSecret{{Path: ".claude/.credentials.json", Mode: 0o600, Content: content}}, nil
+	return []CredentialFile{{Path: ".claude/.credentials.json", Mode: 0o600, Content: content}}, nil
 }
 
 type ProviderRegistry struct {
@@ -106,14 +105,12 @@ func (r *ProviderRegistry) Provider(harness Harness) (HarnessCredentialProvider,
 	return provider, nil
 }
 
-// SecretFileSink is implemented by the sandbox bootstrap transport owned by
-// the runtime layer. It receives byte slices and a fixed 0600 mode, never argv.
+// SecretFileSink is exactly the interface implemented by worker 181's
+// sandboxruntime.FileSecret. The caller constructs it with the harness config
+// directory as its root (for Claude Code, $HOME/.claude).
 type SecretFileSink interface {
-	// DeliverSecretFiles writes the files, starts/bootstraps the harness, and
-	// returns only after the harness has consumed them.
-	DeliverSecretFiles(context.Context, string, []FileSecret) error
-	// PurgeSecretFiles removes the named files even after partial delivery.
-	PurgeSecretFiles(context.Context, string, []string) error
+	Deliver(string, []byte, fs.FileMode) (string, error)
+	Purge() error
 }
 
 type BootstrapScope struct {
@@ -130,7 +127,7 @@ func (s BootstrapScope) validate() error {
 	return nil
 }
 
-func validateFileSecrets(files []FileSecret) error {
+func validateFileSecrets(files []CredentialFile) error {
 	if len(files) == 0 {
 		return errors.New("credential provider produced no files")
 	}

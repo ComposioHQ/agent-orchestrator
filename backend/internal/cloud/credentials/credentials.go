@@ -7,7 +7,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -134,32 +136,34 @@ func (s *Service) Put(ctx context.Context, provider, credentialType string, secr
 	return metadata(record), nil
 }
 
-// DeliverToSandbox decrypts only after a workspace-scoped store lookup, renders
-// provider files, passes them to bootstrap, and erases every control-plane copy.
-func (s *Service) DeliverToSandbox(ctx context.Context, scope BootstrapScope, sink SecretFileSink) error {
+// MaterializeForSandbox decrypts only after a workspace-scoped store lookup,
+// writes through worker 181's owner-only FileSecret, erases every control-plane
+// byte slice, and returns the cleanup that bootstrap must call after the harness
+// consumes the file. Cleanup is idempotent and records the purge audit event.
+func (s *Service) MaterializeForSandbox(ctx context.Context, scope BootstrapScope, sink SecretFileSink) (func() error, error) {
 	if err := scope.validate(); err != nil {
-		return err
+		return nil, err
 	}
 	if sink == nil {
-		return errors.New("credential bootstrap requires a secret-file sink")
+		return nil, errors.New("credential bootstrap requires a secret-file sink")
 	}
 	provider, err := s.registry.Provider(scope.Harness)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	record, err := s.store.GetForWorkspace(ctx, scope.OrgID, scope.WorkspaceID, string(scope.Harness), scope.SandboxID)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	binding := map[string]string{"ao:org-id": record.OrgID, "ao:user-id": record.OwnerUserID, "ao:provider": record.Provider}
 	secret, err := s.envelope.Decrypt(ctx, record.Material, binding)
 	if err != nil {
-		return fmt.Errorf("decrypt bootstrap credential: %w", err)
+		return nil, fmt.Errorf("decrypt bootstrap credential: %w", err)
 	}
 	defer Erase(secret)
 	files, err := provider.Materialize(secret)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer func() {
 		for _, file := range files {
@@ -167,29 +171,40 @@ func (s *Service) DeliverToSandbox(ctx context.Context, scope BootstrapScope, si
 		}
 	}()
 	if err := validateFileSecrets(files); err != nil {
-		return err
+		return nil, err
 	}
-	deliveryErr := sink.DeliverSecretFiles(ctx, scope.SandboxID, files)
-	var materializedErr error
-	if deliveryErr == nil {
-		materializedErr = s.store.AuditWorkspace(ctx, scope.OrgID, scope.WorkspaceID, scope.SandboxID, record.Provider, "credential.materialized", record.Version)
-	}
-	paths := make([]string, 0, len(files))
+	var deliveryErr error
 	for _, file := range files {
-		paths = append(paths, file.Path)
-	}
-	remotePurgeErr := sink.PurgeSecretFiles(ctx, scope.SandboxID, paths)
-	var purgeAuditErr error
-	if remotePurgeErr == nil {
-		purgeAuditErr = s.store.AuditWorkspace(ctx, scope.OrgID, scope.WorkspaceID, scope.SandboxID, record.Provider, "credential.purged", record.Version)
+		if _, err := sink.Deliver(filepath.Base(file.Path), file.Content, file.Mode); err != nil {
+			deliveryErr = fmt.Errorf("deliver credential file: %w", err)
+			break
+		}
 	}
 	if deliveryErr != nil {
-		deliveryErr = fmt.Errorf("deliver credential files: %w", deliveryErr)
+		purgeErr := sink.Purge()
+		if purgeErr == nil {
+			purgeErr = s.store.AuditWorkspace(ctx, scope.OrgID, scope.WorkspaceID, scope.SandboxID, record.Provider, "credential.purged", record.Version)
+		}
+		return nil, errors.Join(deliveryErr, purgeErr)
 	}
-	if remotePurgeErr != nil {
-		remotePurgeErr = fmt.Errorf("purge credential files: %w", remotePurgeErr)
+	if err := s.store.AuditWorkspace(ctx, scope.OrgID, scope.WorkspaceID, scope.SandboxID, record.Provider, "credential.materialized", record.Version); err != nil {
+		_ = sink.Purge()
+		return nil, err
 	}
-	return errors.Join(deliveryErr, materializedErr, remotePurgeErr, purgeAuditErr)
+	var once sync.Once
+	var cleanupErr error
+	cleanup := func() error {
+		once.Do(func() {
+			purgeErr := sink.Purge()
+			var auditErr error
+			if purgeErr == nil {
+				auditErr = s.store.AuditWorkspace(ctx, scope.OrgID, scope.WorkspaceID, scope.SandboxID, record.Provider, "credential.purged", record.Version)
+			}
+			cleanupErr = errors.Join(purgeErr, auditErr)
+		})
+		return cleanupErr
+	}
+	return cleanup, nil
 }
 
 func (s *Service) List(ctx context.Context) ([]Metadata, error) { return s.store.List(ctx) }
