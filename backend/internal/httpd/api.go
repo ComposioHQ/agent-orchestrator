@@ -49,6 +49,13 @@ type APIDeps struct {
 	PreviewServer       controllers.ManagedPreviewServer
 	SessionCapabilities controllers.SessionCapabilityValidator
 
+	// Attachments stages inbound session attachments on disk. Nil falls back
+	// to the local store rooted at cfg.DataDir, which is what the daemon
+	// wants; it is a field so a composition that has no local data dir (the
+	// hosted control plane) can inject its own rather than have NewAPI reach
+	// for the filesystem behind its back.
+	Attachments *attachmentstore.Store
+
 	// Presence tracks which mobile devices are currently running the app.
 	// Nil disables presence tracking (the roster then reports every device offline).
 	Presence *presence.Tracker
@@ -111,6 +118,10 @@ type API struct {
 // per-request timeout so the REST group can apply it without re-reading the
 // environment.
 func NewAPI(cfg config.Config, deps APIDeps) *API {
+	attachments := deps.Attachments
+	if attachments == nil {
+		attachments = attachmentstore.New(cfg.DataDir)
+	}
 	return &API{
 		cfg:  cfg,
 		deps: deps,
@@ -124,7 +135,7 @@ func NewAPI(cfg config.Config, deps APIDeps) *API {
 			Svc:           deps.Sessions,
 			Activity:      deps.Activity,
 			Usage:         deps.UsageHooks,
-			Attachments:   attachmentstore.New(cfg.DataDir),
+			Attachments:   attachments,
 			PreviewServer: deps.PreviewServer,
 			Capabilities:  deps.SessionCapabilities,
 		},

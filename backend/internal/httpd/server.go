@@ -13,7 +13,6 @@ import (
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/config"
 	"github.com/aoagents/agent-orchestrator/backend/internal/runfile"
-	"github.com/aoagents/agent-orchestrator/backend/internal/terminal"
 )
 
 // Server is the daemon's HTTP server together with its lifecycle: bind the
@@ -41,7 +40,7 @@ type Server struct {
 // supervisor stuck on "daemon not ready". The actual bound port is logged
 // ("daemon listening") and written to running.json, both of which the supervisor
 // reads, so the fallback propagates to the renderer with no UI changes.
-func NewWithDeps(cfg config.Config, log *slog.Logger, termMgr *terminal.Manager, deps APIDeps) (*Server, error) {
+func NewWithDeps(cfg config.Config, log *slog.Logger, termMgr TerminalMux, deps APIDeps) (*Server, error) {
 	log = loggerOrDefault(log)
 	ln, err := net.Listen("tcp", cfg.Addr())
 	if err != nil {
