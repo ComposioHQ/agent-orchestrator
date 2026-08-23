@@ -204,6 +204,30 @@ describe("SessionsBoardView", () => {
 		expect(screen.getByText(getSessionStatusView("ci_failed").label)).toBeInTheDocument();
 	});
 
+	it("renders the display status as plain uncolored text with no dot, ahead of the design pass", () => {
+		render(
+			<SessionCardView
+				externalLink={ExternalLink}
+				labels={{
+					formatTime: () => "1h ago",
+					intakeIssue: (id) => `Issue ${id}`,
+					pr: {
+						short: "PR",
+						states: { closed: "closed", draft: "draft", merged: "merged", open: "open" },
+					},
+					updatedAt: (timestamp) => `Updated ${timestamp}`,
+				}}
+				renderAvatar={(provider) => <span role="img" aria-label={provider}>C</span>}
+				session={{ ...baseSession, displayStatus: "Fixing CI failures", status: "ci_failed" }}
+			/>,
+		);
+
+		const label = screen.getByText("Fixing CI failures");
+		expect(label.parentElement).toHaveClass("text-passive");
+		expect(label.parentElement).not.toHaveClass("bg-current");
+		expect(label.parentElement?.querySelector(".rounded-full")).toBeNull();
+	});
+
 	it("keeps archive toggle height and board offset classes in lockstep", () => {
 		expect(archiveToggleHeightClassName).toBe(`h-[${ARCHIVE_TOGGLE_HEIGHT_PX}px]`);
 		expect(archiveToggleOffsetClassName).toBe(`pb-[${ARCHIVE_TOGGLE_HEIGHT_PX}px]`);

@@ -368,7 +368,10 @@ describe("SessionsBoard", () => {
 		renderBoard("p1");
 		const card = screen.getByText("active-card-task").closest('[data-testid="board-session-card"]') as HTMLElement;
 		const working = within(card).getByText("Working").parentElement as HTMLElement;
-		expect(working.querySelector('[aria-hidden="true"]')).toHaveClass("bg-status-working", "animate-status-pulse");
+		// The board no longer color-codes or pulses the status label by runtime
+		// activity: the derived status is plain text until the Figma pass (#4264).
+		expect(working).toHaveClass("text-passive");
+		expect(working.querySelector('[aria-hidden="true"]')).toBeNull();
 	});
 
 	it("keeps a spawning card labeled Working when raw activity has not become active", () => {
@@ -419,7 +422,7 @@ describe("SessionsBoard", () => {
 		expect(within(card).queryByText("Exited")).not.toBeInTheDocument();
 	});
 
-	it("uses distinct card badge tones for idle, no signal, and draft PR sessions", () => {
+	it("keeps idle, no signal, and draft PR sessions on the plain status text treatment", () => {
 		workspaceQueryMock.mockReturnValue({
 			data: [
 				{
@@ -474,9 +477,11 @@ describe("SessionsBoard", () => {
 		const noSignalCard = screen.getByText("no-signal-card-task").closest('[data-testid="board-session-card"]') as HTMLElement;
 		const draftCard = screen.getByText("draft-card-task").closest('[data-testid="board-session-card"]') as HTMLElement;
 
-		expect(within(idleCard).getByText("Idle").parentElement).toHaveClass("text-status-idle");
-		expect(within(noSignalCard).getByText("No signal").parentElement).toHaveClass("text-status-unknown");
-		expect(within(draftCard).getByText("Draft PR").parentElement).toHaveClass("text-status-in-review");
+		// Distinct statuses share the same plain text treatment until the Figma
+		// pass (#4264) gives the board its own per-status visual language.
+		expect(within(idleCard).getByText("Idle").parentElement).toHaveClass("text-passive");
+		expect(within(noSignalCard).getByText("No signal").parentElement).toHaveClass("text-passive");
+		expect(within(draftCard).getByText("Draft PR").parentElement).toHaveClass("text-passive");
 	});
 
 	it("keeps a PR-less exited session in the building lane with an Exited badge", () => {
@@ -511,7 +516,7 @@ describe("SessionsBoard", () => {
 		// whatever its runtime status. The card keeps its Exited badge.
 		const buildingColumn = screen.getByLabelText("Building sessions");
 		expect(within(buildingColumn).getByText("agent-exited-task")).toBeInTheDocument();
-		expect(within(buildingColumn).getByText("Exited").parentElement).toHaveClass("text-status-exited");
+		expect(within(buildingColumn).getByText("Exited").parentElement).toHaveClass("text-passive");
 	});
 
 	it("swaps the building lane's cards when navigating between project boards", () => {
@@ -1130,7 +1135,7 @@ describe("SessionsBoard", () => {
 		expect(
 			within(archivedMergedCard!).queryByRole("button", { name: "Terminate archived merged worker" }),
 		).not.toBeInTheDocument();
-		expect(within(archivedMergedCard!).getByText("Merged").parentElement).toHaveClass("text-status-merged");
+		expect(within(archivedMergedCard!).getByText("Merged").parentElement).toHaveClass("text-passive");
 		expect(within(archive).getByRole("button", { name: "Restore archived merged worker" })).toBeInTheDocument();
 	});
 

@@ -13,7 +13,6 @@ import { motion, useReducedMotion } from "motion/react";
 import type { ExternalLinkComponent } from "./external-link";
 import { ChevronIcon, GitBranchIcon } from "./icons";
 import {
-	getAgentActivityView,
 	getSessionStatusView,
 	toKanbanColumn,
 	type KanbanColumnView,
@@ -33,9 +32,11 @@ export type BoardSessionPresentation = {
 	 */
 	kanbanColumn?: KanbanColumn;
 	/**
-	 * Daemon-derived phrase for what is happening inside {@link kanbanColumn}.
-	 * It arrives renderable, so the card prints it as-is. Absent for fixtures
-	 * and for a daemon too old to send one, which fall back to the status badge.
+	 * Daemon-derived phrase for what is happening inside {@link kanbanColumn}
+	 * ("Fixing CI failures", "Needs human review"), replacing {@link status} as
+	 * the card's status text. Rendered as plain, uncolored text for now; the
+	 * Figma visual treatment is tracked separately in #4264. A daemon too old
+	 * to send one falls back to the translated {@link status} label.
 	 */
 	displayStatus?: string;
 	provider: string;
@@ -209,8 +210,6 @@ export function SessionCardView({
 	usage,
 }: SessionCardViewProps) {
 	const badge = getSessionStatusView(session.status, translate);
-	const activity = getAgentActivityView(session.activity, translate);
-	const showLiveActivity = session.status === "working" && activity.state === "active";
 	const statusPresentation = session.statusPresentation;
 	const branch = session.branch ?? "";
 	const showBranch = branch !== "" && !sameLabel(branch, session.title) && !sameLabel(branch, session.id);
@@ -264,18 +263,15 @@ export function SessionCardView({
 					<span
 						className={cn(
 							"inline-flex min-w-0 flex-1 items-center gap-1.5 text-2xs font-medium",
-							statusPresentation?.className ?? badge.className,
+							statusPresentation?.className ?? "text-passive",
 						)}
-						style={!statusPresentation && showLiveActivity ? { color: activity.tone } : undefined}
 					>
-						<span
-							aria-hidden="true"
-							className={cn(
-								"size-dot-sm shrink-0 rounded-full",
-								statusPresentation?.indicatorClassName ??
-									(showLiveActivity ? activity.indicatorClassName : "bg-current"),
-							)}
-						/>
+						{statusPresentation && (
+							<span
+								aria-hidden="true"
+								className={cn("size-dot-sm shrink-0 rounded-full", statusPresentation.indicatorClassName)}
+							/>
+						)}
 						<span className="min-w-0 truncate">
 							{statusPresentation?.label ?? session.displayStatus ?? badge.label}
 						</span>
