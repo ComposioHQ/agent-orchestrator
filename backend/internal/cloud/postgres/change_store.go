@@ -25,56 +25,53 @@ func (s *Store) EventsAfter(ctx context.Context, after int64, limit int) ([]port
 	if limit <= 0 || limit > maxChangeEventBatch {
 		return nil, fmt.Errorf("read change events: limit must be between 1 and %d", maxChangeEventBatch)
 	}
-	tx, identity, err := s.beginChangeTenantTx(ctx, pgx.TxOptions{AccessMode: pgx.ReadOnly})
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = tx.Rollback(ctx) }()
-	rows, err := tx.Query(ctx,
-		`SELECT seq, project_id, session_id, event_type, payload, created_at
-		 FROM ao_change_log
-		 WHERE org_id = $1 AND seq > $2
-		 ORDER BY seq
-		 LIMIT $3`,
-		identity.OrgID,
-		after,
-		limit,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("read change events after %d: %w", after, normalizeError(err))
-	}
-	events, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (ports.ChangeEvent, error) {
-		var event ports.ChangeEvent
-		err := row.Scan(&event.Seq, &event.ProjectID, &event.SessionID, &event.Type, &event.Payload, &event.CreatedAt)
-		return event, err
+	var events []ports.ChangeEvent
+	err := s.withTenantTx(ctx, pgx.TxOptions{AccessMode: pgx.ReadOnly}, func(tx pgx.Tx, identity tenant.Identity) error {
+		rows, err := tx.Query(ctx,
+			`SELECT seq, project_id, session_id, event_type, payload, created_at
+			 FROM ao_change_log
+			 WHERE org_id = $1 AND seq > $2
+			 ORDER BY seq
+			 LIMIT $3`,
+			identity.OrgID,
+			after,
+			limit,
+		)
+		if err != nil {
+			return fmt.Errorf("read change events after %d: %w", after, normalizeError(err))
+		}
+		events, err = pgx.CollectRows(rows, func(row pgx.CollectableRow) (ports.ChangeEvent, error) {
+			var event ports.ChangeEvent
+			err := row.Scan(&event.Seq, &event.ProjectID, &event.SessionID, &event.Type, &event.Payload, &event.CreatedAt)
+			return event, err
+		})
+		if err != nil {
+			return fmt.Errorf("scan change events: %w", err)
+		}
+		return nil
 	})
 	if err != nil {
-		return nil, fmt.Errorf("scan change events: %w", err)
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return nil, fmt.Errorf("commit change event read: %w", err)
+		return nil, err
 	}
 	return events, nil
 }
 
 // LatestSeq returns the committed organization-local log head.
 func (s *Store) LatestSeq(ctx context.Context) (int64, error) {
-	tx, identity, err := s.beginChangeTenantTx(ctx, pgx.TxOptions{AccessMode: pgx.ReadOnly})
+	var seq int64
+	err := s.withTenantTx(ctx, pgx.TxOptions{AccessMode: pgx.ReadOnly}, func(tx pgx.Tx, identity tenant.Identity) error {
+		if err := tx.QueryRow(ctx,
+			`SELECT COALESCE((
+			     SELECT last_seq FROM ao_change_heads WHERE org_id = $1
+			 ), 0)`,
+			identity.OrgID,
+		).Scan(&seq); err != nil {
+			return fmt.Errorf("read latest change sequence: %w", normalizeError(err))
+		}
+		return nil
+	})
 	if err != nil {
 		return 0, err
-	}
-	defer func() { _ = tx.Rollback(ctx) }()
-	var seq int64
-	if err := tx.QueryRow(ctx,
-		`SELECT COALESCE((
-		     SELECT last_seq FROM ao_change_heads WHERE org_id = $1
-		 ), 0)`,
-		identity.OrgID,
-	).Scan(&seq); err != nil {
-		return 0, fmt.Errorf("read latest change sequence: %w", normalizeError(err))
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return 0, fmt.Errorf("commit latest change sequence read: %w", err)
 	}
 	return seq, nil
 }
@@ -85,25 +82,25 @@ func (s *Store) LoadChangeCursor(ctx context.Context, consumer string) (int64, e
 	if err != nil {
 		return 0, err
 	}
-	tx, identity, err := s.beginChangeTenantTx(ctx, pgx.TxOptions{AccessMode: pgx.ReadOnly})
+	var seq int64
+	err = s.withTenantTx(ctx, pgx.TxOptions{AccessMode: pgx.ReadOnly}, func(tx pgx.Tx, identity tenant.Identity) error {
+		err := tx.QueryRow(ctx,
+			`SELECT last_seq FROM ao_change_cursors
+			 WHERE org_id = $1 AND consumer = $2`,
+			identity.OrgID,
+			consumer,
+		).Scan(&seq)
+		if errors.Is(err, pgx.ErrNoRows) {
+			seq = 0
+			return nil
+		}
+		if err != nil {
+			return fmt.Errorf("load change cursor: %w", normalizeError(err))
+		}
+		return nil
+	})
 	if err != nil {
 		return 0, err
-	}
-	defer func() { _ = tx.Rollback(ctx) }()
-	var seq int64
-	err = tx.QueryRow(ctx,
-		`SELECT last_seq FROM ao_change_cursors
-		 WHERE org_id = $1 AND consumer = $2`,
-		identity.OrgID,
-		consumer,
-	).Scan(&seq)
-	if errors.Is(err, pgx.ErrNoRows) {
-		seq = 0
-	} else if err != nil {
-		return 0, fmt.Errorf("load change cursor: %w", normalizeError(err))
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return 0, fmt.Errorf("commit change cursor read: %w", err)
 	}
 	return seq, nil
 }
@@ -118,37 +115,31 @@ func (s *Store) AdvanceChangeCursor(ctx context.Context, consumer string, seq in
 	if seq < 0 {
 		return errors.New("advance change cursor: sequence must be non-negative")
 	}
-	tx, identity, err := s.beginChangeTenantTx(ctx, pgx.TxOptions{})
-	if err != nil {
-		return err
-	}
-	defer func() { _ = tx.Rollback(ctx) }()
-	result, err := tx.Exec(ctx,
-		`INSERT INTO ao_change_cursors (org_id, consumer, last_seq)
-		 SELECT $1, $2, $3
-		 WHERE $3 <= COALESCE((
-		     SELECT last_seq FROM ao_change_heads WHERE org_id = $1
-		 ), 0)
-		 ON CONFLICT (org_id, consumer) DO UPDATE
-		 SET last_seq = GREATEST(ao_change_cursors.last_seq, EXCLUDED.last_seq),
-		     updated_at = CASE
-		         WHEN EXCLUDED.last_seq > ao_change_cursors.last_seq THEN now()
-		         ELSE ao_change_cursors.updated_at
-		     END`,
-		identity.OrgID,
-		consumer,
-		seq,
-	)
-	if err != nil {
-		return fmt.Errorf("advance change cursor: %w", normalizeError(err))
-	}
-	if result.RowsAffected() == 0 {
-		return errors.New("advance change cursor: sequence is ahead of the committed log")
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return fmt.Errorf("commit change cursor: %w", err)
-	}
-	return nil
+	return s.withTenantTx(ctx, pgx.TxOptions{}, func(tx pgx.Tx, identity tenant.Identity) error {
+		result, err := tx.Exec(ctx,
+			`INSERT INTO ao_change_cursors (org_id, consumer, last_seq)
+			 SELECT $1, $2, $3
+			 WHERE $3 <= COALESCE((
+			     SELECT last_seq FROM ao_change_heads WHERE org_id = $1
+			 ), 0)
+			 ON CONFLICT (org_id, consumer) DO UPDATE
+			 SET last_seq = GREATEST(ao_change_cursors.last_seq, EXCLUDED.last_seq),
+			     updated_at = CASE
+			         WHEN EXCLUDED.last_seq > ao_change_cursors.last_seq THEN now()
+			         ELSE ao_change_cursors.updated_at
+			     END`,
+			identity.OrgID,
+			consumer,
+			seq,
+		)
+		if err != nil {
+			return fmt.Errorf("advance change cursor: %w", normalizeError(err))
+		}
+		if result.RowsAffected() == 0 {
+			return errors.New("advance change cursor: sequence is ahead of the committed log")
+		}
+		return nil
+	})
 }
 
 func validateChangeConsumer(consumer string) (string, error) {
@@ -157,27 +148,6 @@ func validateChangeConsumer(consumer string) (string, error) {
 		return "", errors.New("change cursor consumer must contain 1 to 255 bytes")
 	}
 	return consumer, nil
-}
-
-func (s *Store) beginChangeTenantTx(ctx context.Context, options pgx.TxOptions) (pgx.Tx, tenant.Identity, error) {
-	identity, ok := tenant.FromContext(ctx)
-	if !ok {
-		return nil, tenant.Identity{}, tenant.ErrNoTenant
-	}
-	tx, err := s.pool.BeginTx(ctx, options)
-	if err != nil {
-		return nil, tenant.Identity{}, fmt.Errorf("begin tenant change transaction: %w", err)
-	}
-	if _, err := tx.Exec(ctx,
-		`SELECT set_config('ao.user_id', $1, true),
-		        set_config('ao.org_id', $2, true)`,
-		identity.UserID,
-		identity.OrgID,
-	); err != nil {
-		_ = tx.Rollback(ctx)
-		return nil, tenant.Identity{}, fmt.Errorf("scope tenant change transaction: %w", err)
-	}
-	return tx, identity, nil
 }
 
 var (

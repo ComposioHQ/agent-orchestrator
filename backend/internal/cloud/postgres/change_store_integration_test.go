@@ -605,6 +605,28 @@ func grantChangeTestRuntimeAccess(
 			t.Fatal(err)
 		}
 	}
+	// The centralized runtimeTables update belongs to the integration owner.
+	// Grant the already-migrated source tables only inside this isolated test
+	// database so direct mutations still execute as the restricted runtime role.
+	productTables := []string{
+		"ao_projects", "ao_workspace_repos", "ao_sessions",
+		"ao_conversations", "ao_conversation_provider_events",
+		"ao_pull_requests", "ao_pull_request_checks", "ao_pull_request_comments",
+		"ao_pull_request_reviews", "ao_pull_request_review_threads", "ao_notifications",
+	}
+	for _, table := range productTables {
+		var exists bool
+		if err := pool.QueryRow(ctx, `SELECT to_regclass('public.' || $1) IS NOT NULL`, table).Scan(&exists); err != nil {
+			t.Fatal(err)
+		}
+		if !exists {
+			continue
+		}
+		statement := "GRANT SELECT, INSERT, UPDATE, DELETE ON " + pgx.Identifier{table}.Sanitize() + " TO " + role
+		if _, err := pool.Exec(ctx, statement); err != nil {
+			t.Fatal(err)
+		}
+	}
 }
 
 func beginChangeTestTx(t *testing.T, ctx context.Context, store *Store, identity tenant.Identity) pgx.Tx {
