@@ -166,6 +166,14 @@ var routeClasses = map[RouteKey]RouteClass{
 	// of every pane through the control plane for no security gain — the
 	// ticket already scopes and expires the connection.
 	//
+	// /mux is the reserved path on both listeners a client can reach — this
+	// loopback one and a sandbox's published one — so the desktop speaks one
+	// path and one JSON frame contract either way, and Electron's main process
+	// keeps a single terminal implementation behind the existing TerminalMux
+	// IPC contract. What differs is which listener answers and whether a ticket
+	// is required; see internal/terminal/muxproto for the handshake. The
+	// control plane's /mux specifically must never be exposed publicly.
+	//
 	// Two invariants ride on this and are worth stating where the route is
 	// classified. The ticket is one-time and control-plane-issued, so a leaked
 	// URL is not a durable credential. And the provider URL, token and vendor

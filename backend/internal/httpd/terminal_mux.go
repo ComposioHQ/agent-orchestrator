@@ -30,7 +30,12 @@ type TerminalMux interface {
 	Serve(ctx context.Context, conn terminal.WSConn)
 }
 
-// mountTerminalMux registers the long-lived terminal-multiplexing WebSocket at /mux. It
+// mountTerminalMux registers the long-lived terminal-multiplexing WebSocket at
+// the reserved /mux path — reserved because a sandbox's published listener
+// serves the same path with the same JSON frame contract, so a client needs
+// one terminal implementation for both. This listener is loopback and takes no
+// ticket; a published listener authenticates the handshake with the ticket
+// subprotocol in internal/terminal/muxproto. It
 // is intentionally outside the per-request Timeout middleware (the connection is
 // long-lived). When mgr is nil the route is not mounted — the daemon simply has
 // no terminal surface yet.
