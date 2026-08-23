@@ -39,6 +39,13 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON
     ao_scm_installations, ao_scm_repositories,
     ao_scm_install_states, ao_scm_webhook_deliveries
     TO ao_cloud_scm;
+-- Postgres checks EXECUTE permission on every policy expression it plans, not
+-- only the ones that decide the row. The definer role therefore needs the
+-- tenant helpers even though its own policy never calls them.
+GRANT EXECUTE ON FUNCTION
+    ao_current_user_id(), ao_current_org_id(),
+    ao_is_org_member(UUID, UUID), ao_can_manage_org(UUID, UUID)
+    TO ao_cloud_scm;
 
 CREATE POLICY ao_scm_installations_scm_definer ON ao_scm_installations
     FOR ALL USING (current_user = 'ao_cloud_scm')

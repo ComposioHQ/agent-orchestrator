@@ -232,9 +232,9 @@ func (s *Store) SyncSCMRepositories(
 					installation_id, org_id, external_repository_id, full_name,
 					private, allowed, allowed_by_user_id, allowed_at
 				 ) VALUES (
-					$1, $2, $3, $4, $5, $6,
-					CASE WHEN $6 THEN $7::UUID END,
-					CASE WHEN $6 THEN now() END
+					$1, $2, $3, $4, $5, $6::BOOLEAN,
+					CASE WHEN $6::BOOLEAN THEN $7::UUID END,
+					CASE WHEN $6::BOOLEAN THEN now() END
 				 )
 				 ON CONFLICT (installation_id, external_repository_id) DO UPDATE
 				 SET full_name = EXCLUDED.full_name,
@@ -422,9 +422,9 @@ func (s *Store) AllowedSCMRepository(
 // token material is written; the row records scope, purpose, and expiry only.
 func (s *Store) RecordSCMTokenGrant(ctx context.Context, tenant Tenant, grant domain.SCMTokenGrant) error {
 	return s.withTenant(ctx, tenant, false, func(tx pgx.Tx) error {
-		var workspaceID any
-		if strings.TrimSpace(grant.WorkspaceID) != "" {
-			workspaceID = grant.WorkspaceID
+		var workspaceID *string
+		if trimmed := strings.TrimSpace(grant.WorkspaceID); trimmed != "" {
+			workspaceID = &trimmed
 		}
 		if _, err := tx.Exec(
 			ctx,

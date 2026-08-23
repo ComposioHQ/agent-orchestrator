@@ -182,12 +182,38 @@ CREATE POLICY ao_scm_token_grants_select ON ao_scm_token_grants
         org_id = ao_current_org_id()
         AND ao_is_org_member(org_id, ao_current_user_id())
     );
+-- The foreign keys below are checked by the system with RLS bypassed, so the
+-- policy has to re-prove that the installation, repository, and workspace this
+-- grant names all belong to the writing organization. Without that, a tenant
+-- could append audit rows referencing another tenant's installation.
 CREATE POLICY ao_scm_token_grants_insert ON ao_scm_token_grants
     FOR INSERT
     WITH CHECK (
         org_id = ao_current_org_id()
         AND ao_is_org_member(org_id, ao_current_user_id())
         AND requested_by_user_id = ao_current_user_id()
+        AND EXISTS (
+            SELECT 1
+            FROM ao_scm_installations installation
+            WHERE installation.id = ao_scm_token_grants.installation_id
+              AND installation.org_id = ao_scm_token_grants.org_id
+        )
+        AND EXISTS (
+            SELECT 1
+            FROM ao_scm_repositories repository
+            WHERE repository.id = ao_scm_token_grants.repository_id
+              AND repository.installation_id = ao_scm_token_grants.installation_id
+              AND repository.org_id = ao_scm_token_grants.org_id
+        )
+        AND (
+            workspace_id IS NULL
+            OR EXISTS (
+                SELECT 1
+                FROM ao_cloud_workspaces workspace
+                WHERE workspace.id = ao_scm_token_grants.workspace_id
+                  AND workspace.org_id = ao_scm_token_grants.org_id
+            )
+        )
     );
 
 REVOKE ALL ON TABLE

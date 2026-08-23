@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/cloud/domain"
+	"github.com/aoagents/agent-orchestrator/backend/internal/cloud/postgres"
 )
 
 // SignatureHeader and DeliveryHeader are the GitHub webhook headers the
@@ -40,7 +41,7 @@ func VerifyWebhookSignature(secret, body []byte, header string) error {
 		return ErrInvalidSignature
 	}
 	mac := hmac.New(sha256.New, secret)
-	mac.Write(body)
+	_, _ = mac.Write(body)
 	if !hmac.Equal(provided, mac.Sum(nil)) {
 		return ErrInvalidSignature
 	}
@@ -220,8 +221,12 @@ func (p *WebhookProcessor) Process(
 	installation, err := p.store.SCMInstallationContext(ctx, payload.Installation.ID)
 	if err != nil {
 		// An event for an installation this control plane does not know about
-		// is not an error: another AO deployment may share the app.
-		return result, nil
+		// is not an error: another AO deployment may share the app. Any other
+		// failure is real and must surface so GitHub retries.
+		if errors.Is(err, postgres.ErrNotFound) {
+			return result, nil
+		}
+		return WebhookResult{}, err
 	}
 	if installation.Status != domain.InstallationStatusActive {
 		return result, nil

@@ -17,6 +17,7 @@ Start with [architecture.md](architecture.md) for the current backend model and
 | [cli/README.md](cli/README.md)                         | CLI commands and daemon control surface.                                                                              |
 | [cloud-control-plane.md](cloud-control-plane.md)       | Runnable PostgreSQL and Google/AO authentication foundation, security boundaries, and deferred scope.                 |
 | [cloud-development.md](cloud-development.md)           | Integrated Cloud development workflow and staged implementation order.                                                |
+| [cloud-scm-credentials.md](cloud-scm-credentials.md)   | Hosted GitHub App installation linking, repository allowlist, short-lived token broker, and webhook boundary.         |
 | [cloud-refactor.md](cloud-refactor.md)                 | Shared contracts, generated Cloud schema types, typed client, reusable product UI, and implementation boundaries.     |
 | [development.md](development.md)                       | Prerequisites, build steps, running tests, and troubleshooting for local development.                                 |
 | [STATUS.md](STATUS.md)                                 | What is shipped on `main` today and what is still in flight.                                                          |
