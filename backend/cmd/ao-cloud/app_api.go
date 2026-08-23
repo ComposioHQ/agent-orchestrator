@@ -37,6 +37,7 @@ func buildAppAPI(cfg cloudconfig.Config, logger *slog.Logger) http.Handler {
 		return nil
 	}
 	return httpd.NewCloudAPIHandler(
+		//nolint:exhaustruct // see below: the hosted composition is filled in as ports land
 		config.Config{
 			// The hosted plane has no data dir: it must never resolve a path
 			// on the machine the process happens to run on. Every route that
@@ -44,6 +45,11 @@ func buildAppAPI(cfg cloudconfig.Config, logger *slog.Logger) http.Handler {
 			RequestTimeout: config.DefaultRequestTimeout,
 		},
 		logger,
+		// No terminal relay yet. When the runtime adapter can back one, pass it
+		// here and flip /mux to cloudStream() in internal/httpd/routescope.go —
+		// the desktop then connects to the control plane's own /mux, never to a
+		// provider-issued sandbox URL.
+		nil,
 		httpd.APIDeps{},
 	)
 }

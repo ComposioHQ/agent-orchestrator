@@ -70,10 +70,28 @@ type RouteClass struct {
 	Scope     RouteScope
 	Transport RouteTransport
 	Reason    string
+
+	// PendingPort names the injected port that will make this route hostable.
+	// A non-empty value says the exclusion is temporary scaffolding, not a
+	// decision that the hosted product does without this surface: the route is
+	// refused today only because nothing can serve it yet.
+	//
+	// This distinction is load-bearing. Without it, "local-only" silently
+	// doubles as both "this can never be hosted" and "this is not built yet",
+	// and the second quietly becomes the first. Whether the hosted UX may
+	// permanently lack a surface is a product decision, so
+	// TestParityRequiredRoutesAreNeverPermanentlyLocal enforces it for the
+	// views that must reach parity — project, session, terminal, chat, PR —
+	// which may be ScopeCloud or pending, never permanently local.
+	PendingPort string
 }
 
 // Stream reports whether the route holds a long-lived connection.
 func (c RouteClass) Stream() bool { return c.Transport == TransportStream }
+
+// Pending reports whether the route is destined for the hosted surface and
+// waiting only on a port.
+func (c RouteClass) Pending() bool { return c.PendingPort != "" }
 
 func cloud() RouteClass { return RouteClass{Scope: ScopeCloud, Transport: TransportBounded} }
 
@@ -87,6 +105,17 @@ func localStream(reason string) RouteClass {
 	return RouteClass{Scope: ScopeLocalOnly, Transport: TransportStream, Reason: reason}
 }
 
+// pending marks a route that belongs on the hosted surface and is refused only
+// until port exists. Flipping it to cloud() is then a one-line change plus the
+// composition that supplies the port.
+func pending(port, reason string) RouteClass {
+	return RouteClass{Scope: ScopeLocalOnly, Transport: TransportBounded, Reason: reason, PendingPort: port}
+}
+
+func pendingStream(port, reason string) RouteClass {
+	return RouteClass{Scope: ScopeLocalOnly, Transport: TransportStream, Reason: reason, PendingPort: port}
+}
+
 // Reasons shared by whole route families. Naming them keeps the table below
 // scannable and makes "why is this local-only" one grep away.
 const (
@@ -95,6 +124,19 @@ const (
 	reasonDesktopOnly    = "desktop/supervisor integration: local browser control, daemon control, dev import"
 	reasonLANBridge      = "Connect Mobile LAN bridge and its locally-stored device registry"
 	reasonCloudNative    = "the hosted plane serves its own equivalent under /api/cloud/v1"
+)
+
+// Ports that hosted equivalents of the currently-excluded surfaces are waiting
+// on. Naming them here rather than inline keeps "what is actually blocking
+// parity" a single grep, and keeps the pending entries below honest: a port
+// that ships flips every route that named it.
+const (
+	portTerminalRelay      = "control-plane terminal relay (httpd.TerminalMux backed by the runtime adapter)"
+	portAttachmentStore    = "object-storage attachment port"
+	portWorkspaceAdapter   = "runtime workspace adapter (file read/list/watch inside the sandbox)"
+	portPreviewAdapter     = "runtime preview adapter (preview server lifecycle inside the sandbox)"
+	portProjectProvisioner = "runtime project provisioner (clone/init inside the sandbox)"
+	portAgentCatalog       = "sandbox-executing agent catalog (refresh/probe without a host CLI)"
 )
 
 // routeClasses is the single explicit classification of every route the router
@@ -114,8 +156,15 @@ var routeClasses = map[RouteKey]RouteClass{
 	{"GET", "/healthz"}:   local(reasonCloudNative),
 	{"GET", "/readyz"}:    local(reasonCloudNative),
 	{"POST", "/shutdown"}: local(reasonDesktopOnly + "; stops this daemon process"),
-	{"GET", "/mux"}: localStream("terminal transport bound to the host runtime; hosted panes ride the " +
-		"compute plane's authenticated published listener, not this route"),
+	// The desktop always connects to this route, on whichever plane it is
+	// talking to. Hosted, it is a relay: the control plane terminates the
+	// client connection and the injected TerminalMux forwards to the sandbox
+	// via the runtime adapter. The desktop must never be pointed at a
+	// provider-issued preview or sandbox URL — that would put the client on a
+	// connection the control plane neither authenticates nor can revoke.
+	// Refused today only because no relay is injected yet.
+	{"GET", "/mux"}: pendingStream(portTerminalRelay,
+		"no terminal relay is injected yet; the hosted mount serves this route once one is"),
 	{"POST", "/internal/telemetry/cli-invoked"}:     local("loopback-only CLI telemetry intake (localControlRequest)"),
 	{"POST", "/internal/telemetry/cli-usage-error"}: local("loopback-only CLI telemetry intake (localControlRequest)"),
 
@@ -128,9 +177,9 @@ var routeClasses = map[RouteKey]RouteClass{
 	// the catalog is backed by a sandbox-executing implementation.
 	{"GET", "/api/v1/agents"}:                         cloud(),
 	{"GET", "/api/v1/agents/{agent}/models"}:          cloud(),
-	{"POST", "/api/v1/agents/refresh"}:                local(reasonHostProcess),
-	{"POST", "/api/v1/agents/{agent}/models/refresh"}: local(reasonHostProcess),
-	{"POST", "/api/v1/agents/{agent}/probe"}:          local(reasonHostProcess),
+	{"POST", "/api/v1/agents/refresh"}:                pending(portAgentCatalog, "discovery executes the agent CLIs installed on the host"),
+	{"POST", "/api/v1/agents/{agent}/models/refresh"}: pending(portAgentCatalog, "discovery executes the agent CLIs installed on the host"),
+	{"POST", "/api/v1/agents/{agent}/probe"}:          pending(portAgentCatalog, "probes the agent CLI installed on the host"),
 
 	// ---- Projects ----------------------------------------------------------
 	// Registration and settings are store-backed; clone and initialize write a
@@ -141,8 +190,8 @@ var routeClasses = map[RouteKey]RouteClass{
 	{"PUT", "/api/v1/projects/{id}"}:        cloud(),
 	{"PUT", "/api/v1/projects/{id}/config"}: cloud(),
 	{"DELETE", "/api/v1/projects/{id}"}:     cloud(),
-	{"POST", "/api/v1/projects/clone"}:      local(reasonHostFilesystem),
-	{"POST", "/api/v1/projects/initialize"}: local(reasonHostFilesystem),
+	{"POST", "/api/v1/projects/clone"}:      pending(portProjectProvisioner, "clones into the local filesystem; hosted clones happen inside the sandbox"),
+	{"POST", "/api/v1/projects/initialize"}: pending(portProjectProvisioner, "initializes on the local filesystem; hosted init happens inside the sandbox"),
 
 	// ---- Sessions ----------------------------------------------------------
 	{"GET", "/api/v1/sessions"}:                                                                        cloud(),
@@ -174,17 +223,21 @@ var routeClasses = map[RouteKey]RouteClass{
 
 	// Attachments land in the local data dir; the workspace and preview
 	// surfaces read the local worktree and drive a local dev server.
-	{"POST", "/api/v1/sessions/{sessionId}/attachments"}:      local(reasonHostFilesystem),
-	{"GET", "/api/v1/sessions/{sessionId}/workspace/files"}:   local(reasonHostFilesystem),
-	{"GET", "/api/v1/sessions/{sessionId}/workspace/file"}:    local(reasonHostFilesystem),
-	{"GET", "/api/v1/sessions/{sessionId}/workspace/events"}:  localStream(reasonHostFilesystem),
-	{"GET", "/api/v1/sessions/{sessionId}/preview"}:           local(reasonHostFilesystem),
-	{"POST", "/api/v1/sessions/{sessionId}/preview"}:          local(reasonHostFilesystem),
-	{"DELETE", "/api/v1/sessions/{sessionId}/preview"}:        local(reasonHostFilesystem),
-	{"GET", "/api/v1/sessions/{sessionId}/preview/server"}:    local(reasonHostProcess),
-	{"POST", "/api/v1/sessions/{sessionId}/preview/server"}:   local(reasonHostProcess),
-	{"DELETE", "/api/v1/sessions/{sessionId}/preview/server"}: local(reasonHostProcess),
-	{"GET", "/api/v1/sessions/{sessionId}/preview/files/*"}:   local(reasonHostFilesystem),
+	{"POST", "/api/v1/sessions/{sessionId}/attachments"}: pending(portAttachmentStore,
+		"attachment staging writes the local data dir; hosted staging needs an object-storage port"),
+	{"GET", "/api/v1/sessions/{sessionId}/workspace/files"}: pending(portWorkspaceAdapter,
+		"reads the local worktree; hosted reads go through the runtime workspace adapter"),
+	{"GET", "/api/v1/sessions/{sessionId}/workspace/file"}: pending(portWorkspaceAdapter,
+		"reads the local worktree; hosted reads go through the runtime workspace adapter"),
+	{"GET", "/api/v1/sessions/{sessionId}/workspace/events"}: pendingStream(portWorkspaceAdapter,
+		"watches the local worktree; hosted watches go through the runtime workspace adapter"),
+	{"GET", "/api/v1/sessions/{sessionId}/preview"}:           pending(portPreviewAdapter, "preview state is local; hosted preview goes through the runtime preview adapter"),
+	{"POST", "/api/v1/sessions/{sessionId}/preview"}:          pending(portPreviewAdapter, "preview state is local; hosted preview goes through the runtime preview adapter"),
+	{"DELETE", "/api/v1/sessions/{sessionId}/preview"}:        pending(portPreviewAdapter, "preview state is local; hosted preview goes through the runtime preview adapter"),
+	{"GET", "/api/v1/sessions/{sessionId}/preview/server"}:    pending(portPreviewAdapter, "drives a local preview server process; hosted lifecycle is the runtime preview adapter"),
+	{"POST", "/api/v1/sessions/{sessionId}/preview/server"}:   pending(portPreviewAdapter, "drives a local preview server process; hosted lifecycle is the runtime preview adapter"),
+	{"DELETE", "/api/v1/sessions/{sessionId}/preview/server"}: pending(portPreviewAdapter, "drives a local preview server process; hosted lifecycle is the runtime preview adapter"),
+	{"GET", "/api/v1/sessions/{sessionId}/preview/files/*"}:   pending(portPreviewAdapter, "serves files from the local worktree; hosted serving goes through the runtime preview adapter"),
 
 	// ---- Orchestrators -----------------------------------------------------
 	{"GET", "/api/v1/orchestrators"}:           cloud(),
@@ -316,15 +369,22 @@ func RouteClasses() map[RouteKey]RouteClass {
 // the storage and runtime ports, and the returned handler is wrapped in a
 // classification guard that refuses every route not marked ScopeCloud.
 //
+// relay is the control-plane terminal relay: the desktop connects to /mux here
+// exactly as it does against a local daemon, and the relay forwards to the
+// sandbox through the runtime adapter. Passing nil leaves /mux unmounted. The
+// desktop must never be pointed at a provider-issued sandbox or preview URL
+// instead — that would put the client on a connection the control plane
+// neither authenticates nor can revoke.
+//
 // Deliberately not mounted here: health probes (the control plane serves its
-// own), daemon control, CLI telemetry intake, the Connect Mobile bridge, and
-// the terminal mux. Those are local-only by classification too, so they are
-// refused twice over — once by never being registered, once by the guard.
+// own), daemon control, CLI telemetry intake, and the Connect Mobile bridge.
+// Those are local-only by classification too, so they are refused twice over —
+// once by never being registered, once by the guard.
 //
 // The caller is responsible for authentication and for putting a tenant
 // identity on the request context before this handler runs; the guard does not
 // authenticate.
-func NewCloudAPIHandler(cfg config.Config, log *slog.Logger, deps APIDeps) http.Handler {
+func NewCloudAPIHandler(cfg config.Config, log *slog.Logger, relay TerminalMux, deps APIDeps) http.Handler {
 	log = loggerOrDefault(log)
 	deps = normalizeAPIDeps(deps, log)
 
@@ -338,8 +398,26 @@ func NewCloudAPIHandler(cfg config.Config, log *slog.Logger, deps APIDeps) http.
 	r.MethodNotAllowed(methodNotAllowedJSON)
 
 	NewAPI(cfg, deps).Register(r)
+	mountTerminalMux(r, relay, log)
+
+	// A relay wired up while /mux is still classified pending would be dead
+	// weight: the guard refuses the route and the desktop sees a 404 with
+	// nothing in the logs to explain it. Say so once, at construction.
+	if relay != nil {
+		if class, ok := ClassifyRoute(http.MethodGet, "/mux"); !ok || class.Scope != ScopeCloud {
+			log.Warn("terminal relay injected but /mux is not classified cloud-mounted; the route will be refused",
+				"pending_port", classPendingPort(class))
+		}
+	}
 
 	return CloudScopeGuard(r)
+}
+
+func classPendingPort(class RouteClass) string {
+	if class.PendingPort == "" {
+		return "none"
+	}
+	return class.PendingPort
 }
 
 // CloudScopeGuard wraps a router so only ScopeCloud routes reach it.
