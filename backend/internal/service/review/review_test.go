@@ -719,32 +719,6 @@ func TestTriggerReportsWhoStartedThePass(t *testing.T) {
 	}
 }
 
-// A skipped automatic pass succeeded without doing any work. Counting it as a
-// trigger would overstate how often auto-review actually reviews anything.
-func TestSkippedAutoTriggerReportsReasonNotATrigger(t *testing.T) {
-	sink := &recordingSink{}
-	svc := New(nil, &fakeStore{}, WithTelemetry(sink))
-	svc.engineTrigger = func(
-		_ context.Context, _ domain.SessionID, _ domain.ReviewerHarness, _ domain.ReviewTriggerSource,
-	) (reviewcore.TriggerResult, error) {
-		return reviewcore.TriggerResult{SkipReason: "worker_active"}, nil
-	}
-
-	if _, err := svc.TriggerAuto(context.Background(), "worker-1", "codex"); err != nil {
-		t.Fatalf("TriggerAuto: %v", err)
-	}
-	if got := sink.named("ao.review.triggered"); len(got) != 0 {
-		t.Fatalf("ao.review.triggered count = %d, want 0 for a skipped pass", len(got))
-	}
-	got := sink.named("ao.review.trigger_skipped")
-	if len(got) != 1 {
-		t.Fatalf("ao.review.trigger_skipped count = %d, want 1", len(got))
-	}
-	if got[0].Payload["reason"] != "worker_active" || got[0].Payload["trigger"] != "auto" {
-		t.Fatalf("payload = %#v, want reason=worker_active trigger=auto", got[0].Payload)
-	}
-}
-
 func TestTriggerFailureReportsWhichPassFailed(t *testing.T) {
 	sink := &recordingSink{}
 	svc := New(nil, &fakeStore{}, WithTelemetry(sink))
@@ -797,92 +771,6 @@ func TestSubmitReportsPassShapeNotItsContents(t *testing.T) {
 		t.Fatalf("auto_inject = %#v, want false for a session with the policy off", p["auto_inject"])
 	}
 }
-
-// A changes-requested review that reaches nobody is this feature's quietest
-// failure: a red verdict the worker never hears about, with nothing saying why.
-func TestWithheldReasonNamesWhyFeedbackReachedNobody(t *testing.T) {
-	delivered := time.Now().UTC()
-	cases := []struct {
-		name string
-		runs []domain.ReviewRun
-		want string
-	}{
-		{
-			name: "approved batch is not withheld",
-			runs: []domain.ReviewRun{{Verdict: domain.VerdictApproved, Status: domain.ReviewRunComplete}},
-			want: "",
-		},
-		{
-			name: "policy off",
-			runs: []domain.ReviewRun{{Verdict: domain.VerdictChangesRequested, Status: domain.ReviewRunComplete}},
-			want: "auto_inject_off",
-		},
-		{
-			name: "already delivered",
-			runs: []domain.ReviewRun{{
-				Verdict: domain.VerdictChangesRequested, Status: domain.ReviewRunComplete,
-				AutoInjectReview: true, DeliveredAt: &delivered,
-			}},
-			want: "already_delivered",
-		},
-		{
-			name: "head moved while the reviewer worked",
-			runs: []domain.ReviewRun{{
-				Verdict: domain.VerdictChangesRequested, Status: domain.ReviewRunComplete,
-				AutoInjectReview: true,
-			}},
-			want: "stale_head",
-		},
-	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			if got := withheldReason(c.runs); got != c.want {
-				t.Fatalf("withheldReason = %q, want %q", got, c.want)
-			}
-		})
-	}
-}
-
-// Found by running the real coordinator against a real open PR: while a review
-// is running, the once-a-minute sweep calls TriggerAuto again, the engine
-// reports success with nothing created, and every sweep emitted another
-// ao.review.triggered. A six-minute review produced seven "triggers" for one
-// real pass, inflating the headline count and spending the per-name daily rate
-// limit that real triggers need.
-func TestReusedAutoPassIsNotCountedAsATrigger(t *testing.T) {
-	sink := &recordingSink{}
-	svc := New(nil, &fakeStore{}, WithTelemetry(sink))
-	svc.engineTrigger = func(
-		_ context.Context, _ domain.SessionID, _ domain.ReviewerHarness, _ domain.ReviewTriggerSource,
-	) (reviewcore.TriggerResult, error) {
-		// What the engine returns when a reviewer is already running for this
-		// worker: success, a reusable run, nothing created.
-		return reviewcore.TriggerResult{
-			Run:         domain.ReviewRun{Harness: "claude-code"},
-			CreatedRuns: nil,
-		}, nil
-	}
-
-	for i := 0; i < 6; i++ {
-		if _, err := svc.TriggerAuto(context.Background(), "worker-1", "claude-code"); err != nil {
-			t.Fatalf("TriggerAuto %d: %v", i, err)
-		}
-	}
-	if got := sink.named("ao.review.triggered"); len(got) != 0 {
-		t.Fatalf("ao.review.triggered count = %d, want 0 for six reused sweeps", len(got))
-	}
-	skipped := sink.named("ao.review.trigger_skipped")
-	if len(skipped) != 6 {
-		t.Fatalf("ao.review.trigger_skipped count = %d, want 6", len(skipped))
-	}
-	if skipped[0].Payload["reason"] != "reused" || skipped[0].Payload["trigger"] != "auto" {
-		t.Fatalf("payload = %#v, want reason=reused trigger=auto", skipped[0].Payload)
-	}
-}
-
-// A manual reuse is a real user action: they pressed the button and AO decided
-// the existing pass covered it. That must stay counted, with reused=true saying
-// what happened.
 func TestReusedManualPassStaysATrigger(t *testing.T) {
 	sink := &recordingSink{}
 	svc := New(nil, &fakeStore{}, WithTelemetry(sink))
@@ -902,7 +790,48 @@ func TestReusedManualPassStaysATrigger(t *testing.T) {
 	if got[0].Payload["reused"] != true || got[0].Payload["trigger"] != "manual" {
 		t.Fatalf("payload = %#v, want reused=true trigger=manual", got[0].Payload)
 	}
-	if n := len(sink.named("ao.review.trigger_skipped")); n != 0 {
-		t.Fatalf("trigger_skipped count = %d, want 0 for a manual reuse", n)
+	if n := len(sink.events); n != 1 {
+		t.Fatalf("emitted %d events, want only the trigger for a manual reuse", n)
+	}
+}
+
+// Found by running the real coordinator against a real open PR: while a review
+// is running, the once-a-minute sweep calls TriggerAuto again and the engine
+// reports success with nothing created. Every sweep used to emit another
+// ao.review.triggered -- a six-minute review produced seven "triggers" for one
+// real pass, inflating the headline count and spending the per-name daily rate
+// limit that real triggers need. An automatic pass that did no work reports
+// nothing at all.
+func TestReusedOrSkippedAutoPassReportsNothing(t *testing.T) {
+	cases := []struct {
+		name   string
+		result reviewcore.TriggerResult
+	}{
+		{"reused: a reviewer is already running", reviewcore.TriggerResult{
+			Run: domain.ReviewRun{Harness: "claude-code"}, CreatedRuns: nil,
+		}},
+		{"skipped: the session changed under the coordinator", reviewcore.TriggerResult{
+			SkipReason: "worker_active",
+		}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			sink := &recordingSink{}
+			svc := New(nil, &fakeStore{}, WithTelemetry(sink))
+			svc.engineTrigger = func(
+				_ context.Context, _ domain.SessionID, _ domain.ReviewerHarness, _ domain.ReviewTriggerSource,
+			) (reviewcore.TriggerResult, error) {
+				return c.result, nil
+			}
+
+			for i := 0; i < 6; i++ {
+				if _, err := svc.TriggerAuto(context.Background(), "worker-1", "claude-code"); err != nil {
+					t.Fatalf("TriggerAuto %d: %v", i, err)
+				}
+			}
+			if got := len(sink.events); got != 0 {
+				t.Fatalf("emitted %d event(s) for six no-op automatic sweeps: %#v", got, sink.events)
+			}
+		})
 	}
 }

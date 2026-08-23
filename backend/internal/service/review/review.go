@@ -418,27 +418,15 @@ func (s *Service) triggerWithSource(
 		})
 		return result, err
 	}
-	// A skipped automatic pass is a success with no work: the coordinator's read
-	// of the session lost a race with the user. Reporting it as a trigger would
-	// overstate how often auto-review actually runs, so it gets its own shape.
-	if result.SkipReason != "" {
-		s.emit("ao.review.trigger_skipped", workerID, map[string]any{
-			"reason":  result.SkipReason,
-			"trigger": string(source),
-		})
-		return result, nil
-	}
-	// A reused automatic pass did no work: the once-a-minute sweep found a review
-	// already running, or the current head already covered. Counting that as a
-	// trigger inflates how often auto-review actually reviews anything by one
-	// event per sweep for the whole life of a long review, and spends the
-	// per-name daily rate limit that real triggers need. A manual reuse is a
-	// different fact: the user pressed the button, and that is worth counting.
-	if source == domain.ReviewTriggerAuto && len(result.CreatedRuns) == 0 {
-		s.emit("ao.review.trigger_skipped", workerID, map[string]any{
-			"reason":  "reused",
-			"trigger": string(source),
-		})
+	// An automatic pass that did no work must not be reported as a trigger. Two
+	// shapes reach here: the coordinator's read of the session lost a race with
+	// the user (SkipReason), or the sweep found a review already running or the
+	// current head already covered (nothing created). Counting either inflates
+	// how often auto-review actually reviews anything, by one event per sweep for
+	// the whole life of a long review, and spends the per-name daily rate limit
+	// that real triggers need. A manual reuse is a different fact: the user
+	// pressed the button, and that is worth counting.
+	if source == domain.ReviewTriggerAuto && (result.SkipReason != "" || len(result.CreatedRuns) == 0) {
 		return result, nil
 	}
 	// created_runs distinguishes a genuinely new pass from a reuse of a running
@@ -678,15 +666,6 @@ func (s *Service) deliverSubmitted(ctx context.Context, workerID domain.SessionI
 		return nil, err
 	}
 	if len(deliverable) == 0 {
-		// A changes-requested review that reaches nobody is the quietest failure
-		// this feature has: the user sees a red verdict, the worker never hears
-		// about it, and nothing in the product says why. Name the reason.
-		if reason := withheldReason(runs); reason != "" {
-			s.emit("ao.review.feedback_withheld", workerID, map[string]any{
-				"reason": reason,
-				"runs":   len(runs),
-			})
-		}
 		return nil, nil
 	}
 	results := reviewResults(workerID, deliverable)
@@ -729,36 +708,6 @@ func (s *Service) deliverableRuns(ctx context.Context, workerID domain.SessionID
 		deliverable = append(deliverable, run)
 	}
 	return deliverable, nil
-}
-
-// withheldReason classifies why a submission produced no deliverable feedback.
-// Only changes-requested results are ever delivered, so an all-approved batch is
-// not "withheld" and reports no reason at all. The first blocking cause across
-// the batch wins, checked in the order a user would ask about them.
-func withheldReason(runs []domain.ReviewRun) string {
-	reason := ""
-	for _, run := range runs {
-		if run.Verdict != domain.VerdictChangesRequested {
-			continue
-		}
-		switch {
-		case !run.AutoInjectReview:
-			return "auto_inject_off"
-		case run.DeliveredAt != nil:
-			if reason == "" {
-				reason = "already_delivered"
-			}
-		case run.Status != domain.ReviewRunComplete:
-			if reason == "" {
-				reason = "not_complete"
-			}
-		default:
-			// Complete, injectable, undelivered: deliverableRuns dropped it because
-			// the PR head moved on while the reviewer was still working.
-			return "stale_head"
-		}
-	}
-	return reason
 }
 
 func reviewResults(workerID domain.SessionID, runs []domain.ReviewRun) []lifecycle.ReviewResult {

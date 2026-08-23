@@ -581,19 +581,9 @@ export async function sanitizeRendererProperties(
 			break;
 		}
 		case "ao.renderer.review_auto_review_toggled":
-		case "ao.renderer.review_auto_inject_toggled":
-			// Session-scoped switches. Both duplicate a project-level setting, so
-			// whether anyone reaches for them decides if they stay separate controls.
+			// The session-scoped switch duplicates a project-level setting, so
+			// whether anyone reaches for it decides if it stays a separate control.
 			if (typeof properties?.enabled === "boolean") safe.enabled = properties.enabled;
-			break;
-		case "ao.renderer.review_reviewer_overridden":
-			// A per-session reviewer override is the least discoverable review
-			// control there is; cleared separates "picked another agent" from
-			// "went back to the project default".
-			if (typeof properties?.harness === "string" && KNOWN_REVIEWER_HARNESS_IDS.has(properties.harness)) {
-				safe.harness = properties.harness;
-			}
-			if (typeof properties?.cleared === "boolean") safe.cleared = properties.cleared;
 			break;
 		case "ao.renderer.review_triggered":
 			// Manual review is the low-commitment on-ramp for users who will not
@@ -604,23 +594,6 @@ export async function sanitizeRendererProperties(
 			}
 			if (typeof properties?.has_override === "boolean") safe.has_override = properties.has_override;
 			break;
-		case "ao.renderer.review_stopped":
-			// Stopping a review mid-flight is a dissatisfaction signal: the user
-			// asked for it, watched it, and decided it was not worth finishing.
-			if (properties?.action === "cancel" || properties?.action === "kill") safe.action = properties.action;
-			break;
-		case "ao.renderer.review_tab_opened":
-			// Separates reading the findings from trusting the verdict. Capped by
-			// reserveCapture like every other name, which is fine for a rate here.
-			if (typeof properties?.has_runs === "boolean") safe.has_runs = properties.has_runs;
-			if (typeof properties?.latest_verdict === "string" && REVIEW_VERDICT_SET.has(properties.latest_verdict)) {
-				safe.latest_verdict = properties.latest_verdict;
-			}
-			break;
-		case "ao.renderer.review_comment_sent_to_worker":
-			// A human relaying one review comment to the agent by hand is the
-			// clearest evidence that automatic delivery did not do the job.
-			break;
 		case "ao.renderer.mobile_bridge_toggled":
 			// The host, port, and connection password in the QR never leave the
 			// machine: only the direction of the switch and whether it worked.
@@ -630,9 +603,6 @@ export async function sanitizeRendererProperties(
 	}
 	return safe;
 }
-
-// Closed verdict vocabulary, matching domain.ReviewVerdict on the daemon.
-const REVIEW_VERDICT_SET: ReadonlySet<string> = new Set(["approved", "changes_requested"]);
 
 function exceptionName(error: unknown): string {
 	if (error instanceof Error && error.name.trim() !== "") return error.name.trim();

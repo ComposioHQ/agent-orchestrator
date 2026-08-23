@@ -167,10 +167,6 @@ var remotePayloadAllowlist = map[string]map[string]struct{}{
 		"error_kind": {},
 		"trigger":    {},
 	},
-	"ao.review.trigger_skipped": {
-		"reason":  {},
-		"trigger": {},
-	},
 	"ao.review.submitted": {
 		"auto_inject":        {},
 		"body_bytes":         {},
@@ -182,34 +178,6 @@ var remotePayloadAllowlist = map[string]map[string]struct{}{
 	},
 	"ao.review.cancelled": {
 		"cancelled_runs": {},
-	},
-	// rereview_requested and comment_resolved were emitted with payloads that
-	// never shipped, because an event name missing from this map exports with no
-	// properties at all rather than failing loudly.
-	"ao.review.rereview_requested": {
-		"provider": {},
-	},
-	"ao.review.comment_resolved": {
-		"provider": {},
-	},
-	"ao.review.feedback_withheld": {
-		"reason": {},
-		"runs":   {},
-	},
-	"ao.review.feedback_delivered": {
-		"outcome": {},
-		"results": {},
-	},
-	"ao.review.auto_skipped": {
-		"reason": {},
-	},
-	"ao.review.pr_closed": {
-		"changes_requested_outstanding": {},
-		"harness":                       {},
-		"last_verdict":                  {},
-		"merged":                        {},
-		"review_rounds":                 {},
-		"was_reviewed":                  {},
 	},
 	"ao.projects.created": {
 		"has_git_remote": {},

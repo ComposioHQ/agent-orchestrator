@@ -165,34 +165,6 @@ describe("telemetry sanitizers", () => {
 		expect(safe.auto_review).toBe(false);
 	});
 
-	it("reports the session review switches with only their direction", async () => {
-		for (const event of [
-			"ao.renderer.review_auto_review_toggled",
-			"ao.renderer.review_auto_inject_toggled",
-		] as const) {
-			const safe = await sanitizeRendererProperties(event, {
-				enabled: true,
-				session_id: "sess-1",
-				session_name: "fix the login bug",
-			});
-			expect(safe).toEqual({ enabled: true });
-		}
-	});
-
-	it("separates a reviewer override from a return to the project default", async () => {
-		const picked = await sanitizeRendererProperties("ao.renderer.review_reviewer_overridden", {
-			harness: "codex",
-			cleared: false,
-		});
-		expect(picked).toEqual({ harness: "codex", cleared: false });
-
-		const cleared = await sanitizeRendererProperties("ao.renderer.review_reviewer_overridden", {
-			harness: "",
-			cleared: true,
-		});
-		expect(cleared).toEqual({ cleared: true });
-	});
-
 	it("reports a manual review with the action offered and whether it was overridden", async () => {
 		const safe = await sanitizeRendererProperties("ao.renderer.review_triggered", {
 			action: "rerun",
@@ -207,34 +179,14 @@ describe("telemetry sanitizers", () => {
 		expect(bogus.action).toBeUndefined();
 	});
 
-	it("reports stopping a review with only which stop it was", async () => {
-		expect(await sanitizeRendererProperties("ao.renderer.review_stopped", { action: "kill" })).toEqual({
-			action: "kill",
+	it("reports the session auto-review switch with only its direction", async () => {
+		const safe = await sanitizeRendererProperties("ao.renderer.review_auto_review_toggled", {
+			enabled: true,
+			// Must be dropped: the session's id and the title the user typed.
+			session_id: "sess-1",
+			session_name: "fix the login bug",
 		});
-		expect(await sanitizeRendererProperties("ao.renderer.review_stopped", { action: "abandon" })).toEqual({});
-	});
-
-	it("reports a reviews-tab open with only the verdict vocabulary", async () => {
-		const safe = await sanitizeRendererProperties("ao.renderer.review_tab_opened", {
-			has_runs: true,
-			latest_verdict: "changes_requested",
-			// Must be dropped: the review text itself.
-			body: "leaks credentials in src/config/prod.ts",
-		});
-		expect(safe).toEqual({ has_runs: true, latest_verdict: "changes_requested" });
-
-		const bogus = await sanitizeRendererProperties("ao.renderer.review_tab_opened", {
-			latest_verdict: "looks-fine-to-me",
-		});
-		expect(bogus.latest_verdict).toBeUndefined();
-	});
-
-	it("reports a hand-relayed review comment with no properties at all", async () => {
-		const safe = await sanitizeRendererProperties("ao.renderer.review_comment_sent_to_worker", {
-			body: "this rename is wrong",
-			file: "src/config/prod.ts",
-		});
-		expect(safe).toEqual({});
+		expect(safe).toEqual({ enabled: true });
 	});
 
 	it("reports the mobile connect open with only the bridge state", async () => {

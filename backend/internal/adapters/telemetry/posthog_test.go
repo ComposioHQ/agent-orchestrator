@@ -269,23 +269,16 @@ func TestPostHogSinkStampsAppVersionWhenSupplied(t *testing.T) {
 }
 
 // An event name missing from remotePayloadAllowlist exports with no properties
-// at all rather than failing loudly, which is how ao.review.rereview_requested
-// and ao.review.comment_resolved shipped bare for as long as they existed.
-// These assertions are what a review-funnel dashboard actually reads, so a
-// renamed key here is a silently broken chart rather than a build failure.
+// at all rather than failing loudly, so a key added at an emit site and not
+// here ships silently stripped. These assertions are what a review-funnel
+// dashboard actually reads: a renamed key is a broken chart, not a build
+// failure, and nothing ties the emit sites to this map at compile time.
 func TestReviewPayloadAllowlistCoversTheReviewFunnel(t *testing.T) {
 	want := map[string][]string{
-		"ao.review.triggered":          {"harness", "created_runs", "reused", "trigger"},
-		"ao.review.trigger_failed":     {"error_kind", "trigger"},
-		"ao.review.trigger_skipped":    {"reason", "trigger"},
-		"ao.review.submitted":          {"harness", "verdict", "duration_ms", "posted_to_provider", "trigger", "body_bytes", "auto_inject"},
-		"ao.review.cancelled":          {"cancelled_runs"},
-		"ao.review.rereview_requested": {"provider"},
-		"ao.review.comment_resolved":   {"provider"},
-		"ao.review.feedback_withheld":  {"reason", "runs"},
-		"ao.review.feedback_delivered": {"outcome", "results"},
-		"ao.review.auto_skipped":       {"reason"},
-		"ao.review.pr_closed":          {"merged", "was_reviewed", "review_rounds", "last_verdict", "changes_requested_outstanding", "harness"},
+		"ao.review.triggered":      {"harness", "created_runs", "reused", "trigger"},
+		"ao.review.trigger_failed": {"error_kind", "trigger"},
+		"ao.review.submitted":      {"harness", "verdict", "duration_ms", "posted_to_provider", "trigger", "body_bytes", "auto_inject"},
+		"ao.review.cancelled":      {"cancelled_runs"},
 	}
 	for name, keys := range want {
 		allowed, ok := remotePayloadAllowlist[name]
