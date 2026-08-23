@@ -46,7 +46,7 @@ export function DaemonStartupLoader() {
 				</div>
 				<p className="mt-5 text-base font-semibold tracking-tight text-foreground">Agent Orchestrator</p>
 				<p className="mt-2 min-h-5 text-md-sm text-muted-foreground">
-					<span aria-hidden="true" className="ao-startup-status" key={phrase}>
+					<span aria-hidden="true" className={phraseIndex === 0 ? undefined : "ao-startup-status"} key={phraseIndex}>
 						{phrase}
 					</span>
 				</p>

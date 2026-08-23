@@ -23,8 +23,8 @@ describe("DaemonStartupLoader", () => {
 		render(<DaemonStartupLoader />);
 
 		expect(screen.getByRole("status", { name: "Agent Orchestrator is starting" })).toBeInTheDocument();
-		expect(screen.getByText("Starting local services")).toBeInTheDocument();
+		expect(screen.getByText("Starting local services")).not.toHaveClass("ao-startup-status");
 		act(() => vi.advanceTimersByTime(2_200));
-		expect(screen.getByText("Connecting to the daemon")).toBeInTheDocument();
+		expect(screen.getByText("Connecting to the daemon")).toHaveClass("ao-startup-status");
 	});
 });
