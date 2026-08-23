@@ -22,7 +22,9 @@ AO sends structured events in a few broad categories:
 - The GitHub organization or account that owns a project's configured remote,
   recorded on project-add events. Only the owner segment is sent, never the
   repository name, path, or URL. For a personal repository this owner is the
-  user's own GitHub username, so this particular value is not anonymous
+  user's own GitHub username, so this particular value is not anonymous. We use
+  it to understand which organizations and developers get the most value from
+  AO, so we can prioritize improvements and reach out for feedback
 - Reliability data, such as an error type and context, a crash message and
   stack trace after path redaction, an HTTP status, or an agent waiting for
   input
