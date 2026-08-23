@@ -10,6 +10,7 @@ import (
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/claudecode"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/codex"
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/droid"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/muse"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
@@ -160,6 +161,72 @@ func TestPollLeavesOtherHarnessesUntouched(t *testing.T) {
 	sink := &fakeSink{}
 	runtime := &fakeRuntime{output: "› prompt\nmodel · ~/project\n"}
 	observer := New(
+		fakeSessions{rows: []domain.SessionRecord{activeSession(now, domain.HarnessDroid)}},
+		sink,
+		runtime,
+		fakeAgents{domain.HarnessDroid: droid.New()},
+		Config{Clock: func() time.Time { return now }, Logger: testLogger()},
+	)
+
+	if err := observer.Poll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if runtime.calls != 0 || len(sink.signals) != 0 {
+		t.Fatalf("unaffected harness: output calls=%d signals=%+v", runtime.calls, sink.signals)
+	}
+}
+
+// claudeStuckActiveScreen is the rendered Claude Code surface after a turn
+// aborted without its Stop hook (expired login): idle composer holding an
+// unsent draft, provider footer below, no active chrome. This is the screen a
+// session stranded in durable "active" actually shows.
+const claudeStuckActiveScreen = "⏺ Login expired · Please run /login\n" +
+	"\n" +
+	"✻ Worked for 0s\n" +
+	"\n" +
+	"────────────────────────────────────────────────\n" +
+	"❯ so btw, the status isn't permanently stuck\n" +
+	"────────────────────────────────────────────────\n" +
+	"\n" +
+	"  ⏵⏵ bypass permissions on (shift+tab to cycle) · PR #4090\n"
+
+func TestPollReconcilesStaleClaudeCodeAfterAbortedTurn(t *testing.T) {
+	now := time.Unix(500, 0).UTC()
+	session := activeSession(now, domain.HarnessClaudeCode)
+	sink := &fakeSink{}
+	runtime := &fakeRuntime{output: claudeStuckActiveScreen}
+	observer := New(
+		fakeSessions{rows: []domain.SessionRecord{session}},
+		sink,
+		runtime,
+		fakeAgents{domain.HarnessClaudeCode: claudecode.New()},
+		Config{Clock: func() time.Time { return now }, Logger: testLogger()},
+	)
+
+	if err := observer.Poll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(sink.signals) != 1 {
+		t.Fatalf("signals = %d, want 1", len(sink.signals))
+	}
+	signal := sink.signals[0]
+	if sink.id != session.ID || signal.State != domain.ActivityIdle || signal.Event != "terminal-idle" {
+		t.Fatalf("unexpected reconciliation: id=%q signal=%+v", sink.id, signal)
+	}
+	if !signal.ExpectedUpdatedAt.Equal(session.UpdatedAt) || signal.LaunchID != "launch-1" {
+		t.Fatalf("reconciliation fence = %+v, want updatedAt=%v launch=launch-1", signal, session.UpdatedAt)
+	}
+}
+
+func TestPollKeepsGenuineLongClaudeTurnActive(t *testing.T) {
+	now := time.Unix(500, 0).UTC()
+	sink := &fakeSink{}
+	runtime := &fakeRuntime{output: "✻ Computing… (3m 10s · ↓ 114 tokens)\n" +
+		"────────────────────────────────────────────────\n" +
+		"❯\n" +
+		"────────────────────────────────────────────────\n" +
+		"⏵⏵ auto mode on (shift+tab to cycle) · esc to interrupt · ← for agents\n"}
+	observer := New(
 		fakeSessions{rows: []domain.SessionRecord{activeSession(now, domain.HarnessClaudeCode)}},
 		sink,
 		runtime,
@@ -170,8 +237,8 @@ func TestPollLeavesOtherHarnessesUntouched(t *testing.T) {
 	if err := observer.Poll(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if runtime.calls != 0 || len(sink.signals) != 0 {
-		t.Fatalf("unaffected harness: output calls=%d signals=%+v", runtime.calls, sink.signals)
+	if len(sink.signals) != 0 {
+		t.Fatalf("long active turn emitted reconciliation: %+v", sink.signals)
 	}
 }
 

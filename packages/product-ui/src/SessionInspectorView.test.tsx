@@ -1,5 +1,4 @@
 import {
-  act,
   fireEvent,
   render,
   screen,
@@ -339,8 +338,7 @@ describe("portable inspector presentations", () => {
     expect(screen.queryByText(newerBody)).not.toBeInTheDocument();
   });
 
-  it("requests re-review before marking an external review as asked", async () => {
-    const onRequestRereview = vi.fn().mockResolvedValue(undefined);
+  it("keeps external review actions inside comments and does not show re-review CTAs", () => {
     render(
       <InspectorReviewsView
         externalLink={ExternalLink}
@@ -368,31 +366,20 @@ describe("portable inspector presentations", () => {
         ]}
         isLoading={false}
         labels={reviewLabels}
-        onRequestRereview={onRequestRereview}
+        onRequestRereview={vi.fn()}
         renderAvatar={() => null}
         renderMarkdown={(body) => <p>{body}</p>}
       />,
     );
 
-    expect(
-      screen.queryByRole("button", { name: "Request to re-review PR" }),
-    ).not.toBeInTheDocument();
     fireEvent.click(
       screen.getByRole("button", { name: /maya.*Changes requested/ }),
     );
-    fireEvent.click(
-      screen.getByRole("button", { name: "Request to re-review PR" }),
-    );
 
-    await waitFor(() => {
-      expect(onRequestRereview).toHaveBeenCalledWith(
-        expect.objectContaining({ reviewerId: "maya" }),
-      );
-      expect(screen.getByText("Asked for re-review")).toBeInTheDocument();
-      expect(
-        screen.queryByRole("button", { name: "Request to re-review PR" }),
-      ).not.toBeInTheDocument();
-    });
+    expect(
+      screen.queryByRole("button", { name: "Request to re-review PR" }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByText("Please take another pass after fixes land.")).toBeInTheDocument();
   });
 
   it("does not offer re-review for an approved external review", () => {
@@ -436,65 +423,8 @@ describe("portable inspector presentations", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("keeps the re-review action available and shows an error when the callback fails", async () => {
-    const onRequestRereview = vi
-      .fn()
-      .mockRejectedValue(new Error("request failed"));
-    render(
-      <InspectorReviewsView
-        externalLink={ExternalLink}
-        groups={[
-          {
-            github: {
-              entries: [
-                {
-                  body: "Please take another pass after fixes land.",
-                  id: "github-review-1",
-                  reviewerId: "maya",
-                  reviewUrl: "https://example.com/review",
-                  submittedAt: "2026-08-09T10:00:00Z",
-                  submittedAtLabel: "1h ago",
-                  verdict: { label: "Changes requested", tone: "danger" },
-                },
-              ],
-              unresolved: 0,
-              unresolvedBy: [],
-            },
-            meta: "#12",
-            number: 12,
-            title: "Portable inspector",
-          },
-        ]}
-        isLoading={false}
-        labels={reviewLabels}
-        onRequestRereview={onRequestRereview}
-        renderAvatar={() => null}
-        renderMarkdown={(body) => <p>{body}</p>}
-      />,
-    );
-
-    fireEvent.click(
-      screen.getByRole("button", { name: /maya.*Changes requested/ }),
-    );
-    fireEvent.click(
-      screen.getByRole("button", { name: "Request to re-review PR" }),
-    );
-
-    await waitFor(() =>
-      expect(onRequestRereview).toHaveBeenCalledWith(
-        expect.objectContaining({ reviewerId: "maya" }),
-      ),
-    );
-    expect(screen.getByText("Unable to request re-review")).toHaveClass(
-      "text-error",
-    );
-    expect(
-      screen.getByRole("button", { name: "Request to re-review PR" }),
-    ).toBeInTheDocument();
-    expect(screen.queryByText("Asked for re-review")).not.toBeInTheDocument();
-  });
-
   it("shows unresolved inline review comments inside each reviewer dropdown", async () => {
+    const onResolveInlineComment = vi.fn().mockResolvedValue(undefined);
     const onSendInlineComment = vi.fn().mockResolvedValue(undefined);
     render(
       <InspectorReviewsView
@@ -514,6 +444,7 @@ describe("portable inspector presentations", () => {
                   inlineComments: [
                     {
                       body: "This branch leaks the resize listener on unmount.",
+                      autoInjectReview: false,
                       file: "src/panel.tsx",
                       line: 42,
                       url: "https://example.com/comment",
@@ -533,6 +464,7 @@ describe("portable inspector presentations", () => {
                   links: [
                     {
                       body: "This branch leaks the resize listener on unmount.",
+                      autoInjectReview: false,
                       file: "src/panel.tsx",
                       line: 42,
                       url: "https://example.com/comment",
@@ -555,6 +487,7 @@ describe("portable inspector presentations", () => {
         ]}
         isLoading={false}
         labels={reviewLabels}
+        onResolveInlineComment={onResolveInlineComment}
         onSendInlineComment={onSendInlineComment}
         renderAvatar={() => null}
         renderMarkdown={(body) => <p>{body}</p>}
@@ -572,13 +505,12 @@ describe("portable inspector presentations", () => {
     ).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /maya.*Commented/i }));
     expect(screen.getByTestId("github-inline-comments")).toBeInTheDocument();
-    expect(screen.getByText("Open comments")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Open comments · 2" })).toBeInTheDocument();
     expect(screen.getByText("#12 · 2 unresolved")).toBeInTheDocument();
     expect(screen.getByText("src/panel.tsx:42")).toBeInTheDocument();
     expect(
       screen.getByText("This branch leaks the resize listener on unmount."),
     ).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Show more" }));
     fireEvent.click(
       screen.getByRole("button", { name: "Send to worker agent" }),
     );
@@ -594,14 +526,24 @@ describe("portable inspector presentations", () => {
     await waitFor(() => {
       const sentLabels = screen.getAllByText("Sent to worker agent");
       expect(sentLabels).toHaveLength(2);
-      expect(sentLabels[0]?.closest("span")).toHaveClass("text-muted-foreground");
-      expect(sentLabels[0]?.closest("span")?.querySelector("svg")).toHaveClass(
-        "text-success",
-      );
+      expect(sentLabels[0]?.closest("span")).toHaveClass("text-success");
     });
-    expect(screen.getAllByRole("link", { name: "View in file" })).toHaveLength(
-      2,
+    fireEvent.click(screen.getAllByRole("button", { name: "Comment actions" })[0]!);
+    fireEvent.click(screen.getByRole("button", { name: "Resolve comment" }));
+    expect(onResolveInlineComment).toHaveBeenCalledWith(
+      expect.objectContaining({
+        body: "This branch leaks the resize listener on unmount.",
+        file: "src/panel.tsx",
+        line: 42,
+        reviewerId: "maya",
+        url: "https://example.com/comment",
+      }),
     );
+    await waitFor(() => expect(screen.getByText("Resolved")).toBeInTheDocument());
+    expect(screen.getByRole("link", { name: "View in file" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Open on GitHub" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Copy comment link" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Copy file path" })).not.toBeInTheDocument();
   });
 
   it("surfaces inline review comment send failures", async () => {
@@ -621,6 +563,7 @@ describe("portable inspector presentations", () => {
                   inlineComments: [
                     {
                       body: "Please tighten this spacing.",
+                      autoInjectReview: false,
                       url: "https://example.com/comment",
                     },
                   ],
@@ -638,6 +581,7 @@ describe("portable inspector presentations", () => {
                   links: [
                     {
                       body: "Please tighten this spacing.",
+                      autoInjectReview: false,
                       url: "https://example.com/comment",
                     },
                   ],
@@ -674,8 +618,7 @@ describe("portable inspector presentations", () => {
     expect(screen.queryByText("Sent to worker agent")).not.toBeInTheDocument();
   });
 
-  it("shows a resolved comment before removing it from the list", async () => {
-    const onResolveInlineComment = vi.fn().mockResolvedValue(undefined);
+  it("keeps resolved comments collapsed until requested", () => {
     render(
       <InspectorReviewsView
         externalLink={ExternalLink}
@@ -685,10 +628,14 @@ describe("portable inspector presentations", () => {
               entries: [
                 {
                   body: undefined,
-                  id: "unresolved-maya",
-                  inlineComments: [
+                  id: "review-maya",
+                  inlineComments: [],
+                  resolvedComments: [
                     {
-                      body: "Please tighten this spacing.",
+                      body: "This resolved note stays hidden by default.",
+                      file: "src/panel.tsx",
+                      line: 8,
+                      resolved: true,
                       url: "https://example.com/comment",
                     },
                   ],
@@ -699,45 +646,30 @@ describe("portable inspector presentations", () => {
                   verdict: { label: "Commented", tone: "neutral" },
                 },
               ],
-              unresolved: 1,
-              unresolvedBy: [
-                {
-                  count: 1,
-                  links: [
-                    {
-                      body: "Please tighten this spacing.",
-                      url: "https://example.com/comment",
-                    },
-                  ],
-                  reviewerId: "maya",
-                },
-              ],
+              unresolved: 0,
+              unresolvedBy: [],
             },
-            meta: "#12 · 1 unresolved",
+            meta: "#12",
             number: 12,
             title: "Portable inspector",
           },
         ]}
         isLoading={false}
         labels={reviewLabels}
-        onResolveInlineComment={onResolveInlineComment}
         renderAvatar={() => null}
         renderMarkdown={(body) => <p>{body}</p>}
       />,
     );
 
     fireEvent.click(screen.getByRole("button", { name: /maya.*Commented/i }));
-    fireEvent.click(screen.getByRole("button", { name: "Resolve comment" }));
-    await waitFor(() => {
-      expect(onResolveInlineComment).toHaveBeenCalledTimes(1);
-      expect(screen.getByText("Resolved")).toBeInTheDocument();
-    });
-
-    await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 1100));
-    });
-    expect(screen.queryByText("Please tighten this spacing.")).not.toBeInTheDocument();
-    expect(screen.queryByText("Resolved")).not.toBeInTheDocument();
+    expect(screen.getByText("Resolved comments · 1")).toBeInTheDocument();
+    expect(
+      screen.queryByText("This resolved note stays hidden by default."),
+    ).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Resolved comments · 1" }));
+    expect(
+      screen.getByText("This resolved note stays hidden by default."),
+    ).toBeInTheDocument();
   });
 
   it("tracks URL-less inline comments independently when they share a review URL", async () => {
@@ -755,11 +687,13 @@ describe("portable inspector presentations", () => {
                   inlineComments: [
                     {
                       body: "Fix the first comment.",
+                      autoInjectReview: false,
                       file: "src/panel.tsx",
                       line: 10,
                     },
                     {
                       body: "Fix the second comment.",
+                      autoInjectReview: false,
                       file: "src/panel.tsx",
                       line: 20,
                     },
@@ -778,11 +712,13 @@ describe("portable inspector presentations", () => {
                   links: [
                     {
                       body: "Fix the first comment.",
+                      autoInjectReview: false,
                       file: "src/panel.tsx",
                       line: 10,
                     },
                     {
                       body: "Fix the second comment.",
+                      autoInjectReview: false,
                       file: "src/panel.tsx",
                       line: 20,
                     },
@@ -806,7 +742,6 @@ describe("portable inspector presentations", () => {
     );
 
     fireEvent.click(screen.getByRole("button", { name: /maya.*Commented/i }));
-    fireEvent.click(screen.getByRole("button", { name: "Show more" }));
     const sendButtons = screen.getAllByRole("button", {
       name: "Send to worker agent",
     });
@@ -842,7 +777,7 @@ const reviewLabels: InspectorReviewLabels = {
   noPastReviewSummaries: "No summaries",
   notInjected: "Not injected",
   openComments: "Open comments",
-  openInlineComments: (count) => `${count} open inline comments`,
+  openInlineComments: (count) => `${count} open comments`,
   requestRereviewPR: "Request to re-review PR",
   reviews: "Reviews",
   reviewedAt: (time) => `Reviewed ${time}`,
@@ -855,11 +790,13 @@ const reviewLabels: InspectorReviewLabels = {
   sendToWorkerAgent: "Send to worker agent",
   sentToWorkerAgent: "Sent to worker agent",
   sendToWorkerAgentError: "Unable to send. Retry.",
+  workerAgentWorkingOnFeedback: "Worker agent is working on this feedback.",
   showLatestReviewOnly: "Show latest only",
   showLess: "Show less",
   showMore: "Show more",
   commentNumber: (number) => `Comment ${number}`,
   unresolvedCount: (count) => `${count} unresolved`,
   viewInFile: "View in file",
+  viewInFileWorkInProgress: "View in file is coming soon.",
   viewOnPR: "View on PR",
 };

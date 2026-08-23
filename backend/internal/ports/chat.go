@@ -56,9 +56,9 @@ var (
 	// ErrChatConfigOptionInvalid means a client named an unknown option, sent the
 	// wrong value type, or selected a value the provider did not advertise.
 	ErrChatConfigOptionInvalid = errors.New("chat config option value is invalid")
-	// ErrChatHistoryUnsettled means the native conversation still contains a
-	// running or queued turn. Callers may retry until the provider reaches a
-	// settled boundary; they must not project a partial replay as complete.
+	// ErrChatHistoryUnsettled means the native conversation history is not safe
+	// to project as complete. Only a ChatHistoryRefresher promises that another
+	// provider observation may make progress; rereading a snapshot need not.
 	ErrChatHistoryUnsettled = errors.New("chat conversation history is not settled")
 	// ErrChatHistoryUnavailable means the provider can resume its model context
 	// but cannot replay that context as typed history. ACP session/resume has this
@@ -193,7 +193,9 @@ type ChatResumeConfig struct {
 	DataDir                string
 	WorkspacePath          string
 	Env                    map[string]string
-	Permissions            PermissionMode
+	// Model is optional; empty keeps the provider conversation's current model.
+	Model       string
+	Permissions PermissionMode
 	// SystemPrompt is recomputed by the session manager on restore and reapplied
 	// to the provider process. It is not persisted in the conversation transcript.
 	SystemPrompt          string
@@ -544,10 +546,25 @@ type ChatDecisionOption struct {
 	ID string
 	// Label is a human-readable form when the provider supplies one.
 	Label string
+	// Kind is the provider-neutral consent meaning. Provider IDs and labels may
+	// be opaque or localized, so clients must not infer approval semantics from
+	// either one.
+	Kind ChatDecisionKind
 	// Raw is the provider's own encoding, preserved so a structured decision
 	// (one carrying a policy amendment, say) can be echoed back exactly.
 	Raw []byte
 }
+
+// ChatDecisionKind is the semantic effect of a provider-owned decision.
+type ChatDecisionKind string
+
+// Provider-neutral decision kinds exposed to chat clients.
+const (
+	ChatDecisionAllowOnce    ChatDecisionKind = "allow_once"
+	ChatDecisionAllowAlways  ChatDecisionKind = "allow_always"
+	ChatDecisionRejectOnce   ChatDecisionKind = "reject_once"
+	ChatDecisionRejectAlways ChatDecisionKind = "reject_always"
+)
 
 // ChatDecision is the answer to a pending request.
 type ChatDecision struct {
@@ -841,6 +858,15 @@ type ChatConversation interface {
 // into the Chat service.
 type ChatHistoryReader interface {
 	ReadHistory(ctx context.Context) ([]ChatEvent, error)
+}
+
+// ChatHistoryRefresher refines ChatHistoryReader for a provider that can make a
+// new authoritative history observation. RefreshHistory must perform provider
+// I/O or wait for a real provider signal; returning the previous capture does not
+// qualify. Callers may use it for bounded convergence after an unsettled read.
+type ChatHistoryRefresher interface {
+	ChatHistoryReader
+	RefreshHistory(ctx context.Context) ([]ChatEvent, error)
 }
 
 // ChatDriverRegistry resolves the driver for a harness.

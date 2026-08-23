@@ -45,10 +45,11 @@ import (
 // feature-detects each interface, and a missing method would read as "the provider
 // cannot do this" with nothing anywhere to notice.
 var (
-	_ ports.ChatRollbacker    = (*conversation)(nil)
-	_ ports.ChatForker        = (*conversation)(nil)
-	_ ports.ChatRenamer       = (*conversation)(nil)
-	_ ports.ChatHistoryReader = (*conversation)(nil)
+	_ ports.ChatRollbacker       = (*conversation)(nil)
+	_ ports.ChatForker           = (*conversation)(nil)
+	_ ports.ChatRenamer          = (*conversation)(nil)
+	_ ports.ChatHistoryReader    = (*conversation)(nil)
+	_ ports.ChatHistoryRefresher = (*conversation)(nil)
 )
 
 // providerRefusal marks a request the provider rejected on its own terms, as
@@ -191,6 +192,13 @@ func (c *conversation) ReadHistory(ctx context.Context) ([]ports.ChatEvent, erro
 		events = append(events, completed)
 	}
 	return events, nil
+}
+
+// RefreshHistory performs another authoritative thread/read. Codex exposes a
+// repeatable native read rather than a replay captured during resume, so bounded
+// settle polling can observe provider progress here.
+func (c *conversation) RefreshHistory(ctx context.Context) ([]ports.ChatEvent, error) {
+	return c.ReadHistory(ctx)
 }
 
 func historyEventID(parts ...string) string {

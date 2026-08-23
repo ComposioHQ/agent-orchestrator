@@ -27,6 +27,8 @@ export interface UpdateStatus {
 	version?: string;
 	percent?: number;
 	message?: string;
+	/** Epoch ms when the updater most recently finished checking the feed. */
+	checkedAt?: number;
 	/** Present for statuses owned by a renderer-requested updater operation. */
 	requestId?: string;
 	// Present only when state === "downloaded".

@@ -617,8 +617,8 @@ describe("SessionInspector PR section", () => {
       screen
         .getByRole("switch", { name })
         .closest("[data-slot='inspector-policy-row']") as HTMLElement;
-    const ciRow = policyRow("Automatically send CI failures");
-    const reviewRow = policyRow("Automatically send reviews");
+    const ciRow = policyRow("Automatically fix CI failures");
+    const reviewRow = policyRow("Automatically fix review comments");
     const terminateRow = policyRow(
       "Terminate session when pull requests merge",
     );
@@ -639,9 +639,11 @@ describe("SessionInspector PR section", () => {
       "border",
       "bg-surface",
     );
+
+
     for (const name of [
-      "Automatically send CI failures",
-      "Automatically send reviews",
+      "Automatically fix CI failures",
+      "Automatically fix review comments",
       "Terminate session when pull requests merge",
     ]) {
       const toggle = screen.getByRole("switch", { name });
@@ -653,7 +655,7 @@ describe("SessionInspector PR section", () => {
     }
     expect(
       screen.getByRole("button", {
-        name: "Sets the default for newly created pull requests. When disabled, CI failures are not sent to the worker agent to fix.",
+        name: "Sends CI failures to the worker.",
       }),
     ).toBeInTheDocument();
     expect(
@@ -667,16 +669,17 @@ describe("SessionInspector PR section", () => {
       await screen.findByRole("button", { name: "Run review" }),
     ).toBeInTheDocument();
     expect(
-      screen.queryByRole("switch", { name: "Automatically send reviews" }),
+      screen.queryByRole("switch", { name: "Automatically fix review comments" }),
     ).not.toBeInTheDocument();
     expect(screen.getByRole("switch", { name: "Auto review" })).toBeInTheDocument();
+
   });
 
   it("persists the CI injection default before a PR exists", async () => {
     renderWithQuery(<SessionInspector session={session([])} />);
 
     const toggle = screen.getByRole("switch", {
-      name: "Automatically send CI failures",
+      name: "Automatically fix CI failures",
     });
     expect(toggle).toBeChecked();
     await userEvent.click(toggle);
@@ -701,7 +704,7 @@ describe("SessionInspector PR section", () => {
     renderWithQuery(<SessionInspector session={session([pr(7, "open")])} />);
 
     const toggle = screen.getByRole("switch", {
-      name: "Automatically send CI failures",
+      name: "Automatically fix CI failures",
     });
     await userEvent.click(toggle);
 
@@ -768,14 +771,23 @@ describe("SessionInspector PR section", () => {
 describe("SessionInspector usage", () => {
 	it("shows detailed token statistics only when Developer Mode is enabled", async () => {
 		useUiStore.getState().setDeveloperMode(true);
+		const totals = {
+			inputTokens: 1200,
+			cachedInputTokens: 1000,
+			uncachedInputTokens: 200,
+			outputTokens: 300,
+			processedTokens: 1500,
+			provenance: { inputTokens: "reported", cachedInputTokens: "reported", uncachedInputTokens: "derived", outputTokens: "reported" },
+			providerDetails: { openai: { openaiReasoningOutputTokens: 5, openaiCacheWriteInputTokens: 0 } },
+		};
 		getMock.mockImplementation(async (path: string) => {
 			if (path === "/api/v1/usage/sessions/{sessionId}") {
 				return {
 					data: {
 						sessionId: "sess-1",
 						incomplete: false,
-						totals: { inputTokens: 1200, outputTokens: 300, cacheReadTokens: 12, cacheWriteTokens: 0, reasoningTokens: 5, uncachedInputTokens: 20 },
-						harnesses: [{ harness: "codex", totals: { inputTokens: 1200, outputTokens: 300, cacheReadTokens: 12, cacheWriteTokens: 0, reasoningTokens: 5, uncachedInputTokens: 20 }, models: [] }],
+						totals,
+						harnesses: [{ harness: "codex", totals, models: [{ modelId: "gpt-5.5", totals }, { modelId: "gpt-5.5-mini", totals }] }],
 					},
 					error: undefined,
 				};
@@ -785,8 +797,77 @@ describe("SessionInspector usage", () => {
 
 		renderWithQuery(<SessionInspector session={session([])} />);
 		expect(await screen.findByText("Usage & cost")).toBeInTheDocument();
-		expect(screen.getByText("Total tokens")).toBeInTheDocument();
-		expect(screen.getByText("Codex")).toBeInTheDocument();
+		expect(screen.getByText("Tokens processed")).toBeInTheDocument();
+		expect(screen.getByLabelText("1,500 tokens processed")).toBeInTheDocument();
+		const metrics = screen.getAllByTestId("session-usage-metrics")[0];
+		expect(within(metrics).getAllByRole("term").map((term) => term.textContent)).toEqual([
+			"Fresh Input", "Cache Reads", "Output", "Cache Hit Rate",
+		]);
+		expect(within(metrics).getByLabelText("Cache Reads: 1,000 tokens")).toHaveTextContent("1K");
+		expect(within(metrics).getByLabelText("83.3% cache hit rate (cache reads / total input)")).toHaveTextContent("83.3%");
+		expect(within(metrics).queryByText("Cached Output")).not.toBeInTheDocument();
+		expect(screen.queryByText("Cache write tokens")).not.toBeInTheDocument();
+		expect(screen.queryByText("Reasoning (included in output)")).not.toBeInTheDocument();
+		const agentAttribution = screen.getByText("Codex").parentElement;
+		expect(agentAttribution?.querySelector("img")).toBeInTheDocument();
+		const agentDisclosure = screen.getByRole("button", { name: "Codex usage details" });
+		await userEvent.click(agentDisclosure);
+		const details = screen.getByRole("region", { name: "Codex usage peek" });
+		expect(within(details).getByRole("button", { name: "GPT 5.5 usage details" })).toBeInTheDocument();
+		expect(within(details).getByRole("button", { name: "GPT 5.5 Mini usage details" })).toBeInTheDocument();
+		expect(within(details).queryByText("2 models")).not.toBeInTheDocument();
+		expect(within(details).queryByText("Processed")).not.toBeInTheDocument();
+		expect(within(details).queryByText("Cost")).not.toBeInTheDocument();
+	});
+
+	it("shows icon disclosures without repeated metrics when multiple agents contributed", async () => {
+		useUiStore.getState().setDeveloperMode(true);
+		const totals = {
+			inputTokens: 1200,
+			cachedInputTokens: 1000,
+			uncachedInputTokens: 200,
+			outputTokens: 300,
+			processedTokens: 1500,
+			provenance: { inputTokens: "reported", cachedInputTokens: "reported", uncachedInputTokens: "derived", outputTokens: "reported" },
+			providerDetails: {},
+		};
+		getMock.mockImplementation(async (path: string) => {
+			if (path === "/api/v1/usage/sessions/{sessionId}") {
+				return {
+					data: {
+						sessionId: "sess-1",
+						incomplete: false,
+						totals,
+						harnesses: [
+							{ harness: "codex", totals, models: [{ modelId: "gpt-5.5", totals }] },
+							{ harness: "claude-code", totals, models: [{ modelId: "claude-haiku-4-5-20251001", totals }] },
+						],
+					},
+					error: undefined,
+				};
+			}
+			return { data: undefined };
+		});
+
+		renderWithQuery(<SessionInspector session={session([])} />);
+		const codexDisclosure = await screen.findByRole("button", { name: "Codex usage details" });
+		expect(codexDisclosure.querySelector("img")).toBeInTheDocument();
+
+		await userEvent.click(codexDisclosure);
+		const details = screen.getByRole("region", { name: "Codex usage peek" });
+		expect(within(details).getByRole("button", { name: "GPT 5.5 usage details" })).toBeInTheDocument();
+		expect(within(details).queryByText("1 model")).not.toBeInTheDocument();
+		expect(within(details).queryByText("Processed")).not.toBeInTheDocument();
+		expect(within(details).queryByText("Cost")).not.toBeInTheDocument();
+		expect(within(details).queryByText("Fresh Input")).not.toBeInTheDocument();
+
+		await userEvent.click(screen.getByRole("button", { name: "Claude usage details" }));
+		const claudeDetails = screen.getByRole("region", { name: "Claude usage peek" });
+		const haikuDisclosure = within(claudeDetails).getByRole("button", { name: "Haiku 4.5 usage details" });
+		expect(within(haikuDisclosure).getByText("Haiku 4.5")).toHaveAttribute(
+			"title",
+			"claude-haiku-4-5-20251001",
+		);
 	});
 });
 
@@ -1447,6 +1528,34 @@ describe("SessionInspector tabs", () => {
     expect(screen.queryByText("Pull request")).not.toBeInTheDocument();
   });
 
+  it("keeps the Reviews tab available for draft PRs", async () => {
+    mockCommonGets([], "", [reviewState(1, "needs_review")]);
+    renderWithQuery(<SessionInspector session={session([pr(1, "draft")])} />);
+
+    await userEvent.click(screen.getByRole("tab", { name: "Reviews" }));
+
+    expect(await screen.findByText("Review controls")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Review latest commit" })).not.toBeDisabled();
+  });
+
+  it("hides the Reviews tab when every PR is merged or closed", async () => {
+    mockCommonGets([], "", [reviewState(1, "up_to_date"), reviewState(2, "up_to_date")]);
+    renderWithQuery(
+      <SessionInspector
+        session={session([pr(1, "merged"), pr(2, "closed")])}
+        view="reviews"
+      />,
+    );
+
+    expect(screen.queryByRole("tab", { name: "Reviews" })).not.toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Summary" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    expect(screen.queryByText("Review controls")).not.toBeInTheDocument();
+    expect(screen.queryByText("View review details")).not.toBeInTheDocument();
+  });
+
   it("does not render the overview card in the summary", () => {
     renderWithQuery(
       <SessionInspector
@@ -2051,6 +2160,7 @@ describe("SessionInspector summary reviews", () => {
                 url: "https://example.com/pr/3",
                 htmlUrl: "https://example.com/pr/3",
                 state: "open",
+                author: "ada",
                 ci: {
                   state: "passing",
                   failingChecks: [],
@@ -2103,8 +2213,7 @@ describe("SessionInspector summary reviews", () => {
       screen.getByRole("button", { name: /maya.*Commented/i }),
     );
     const comments = screen.getByTestId("github-inline-comments");
-    await userEvent.click(screen.getByRole("button", { name: "Show more" }));
-    expect(comments).toHaveTextContent("Open comments");
+    expect(comments).toHaveTextContent("Open comments · 2");
     expect(comments).not.toHaveTextContent("maya");
     expect(comments).toHaveTextContent("Sent to worker agent");
     expect(comments).toHaveTextContent("a.ts:3");
@@ -2139,6 +2248,7 @@ describe("SessionInspector summary reviews", () => {
                 url: "https://example.com/pr/3",
                 htmlUrl: "https://example.com/pr/3",
                 state: "open",
+                author: "ada",
                 ci: {
                   state: "passing",
                   failingChecks: [],
@@ -2163,8 +2273,30 @@ describe("SessionInspector summary reviews", () => {
                         "https://example.com/pr/3#pullrequestreview-456",
                       autoInjectReview: true,
                     },
+                    {
+                      reviewerId: "ada",
+                      verdict: "changes_requested",
+                      submittedAt: "2026-06-16T12:00:00Z",
+                      body: "Self review should stay hidden.",
+                      reviewUrl:
+                        "https://example.com/pr/3#pullrequestreview-789",
+                      autoInjectReview: true,
+                    },
                   ],
-                  unresolvedBy: [],
+                  unresolvedBy: [
+                    {
+                      reviewerId: "ada",
+                      count: 1,
+                      links: [
+                        {
+                          body: "Self comment should stay hidden.",
+                          file: "self.ts",
+                          line: 1,
+                          autoInjectReview: true,
+                        },
+                      ],
+                    },
+                  ],
                 },
               },
             ],
@@ -2184,6 +2316,9 @@ describe("SessionInspector summary reviews", () => {
     await userEvent.click(reviewCard);
     const summary = await screen.findByTestId("github-review-summary");
     const externalReview = summary.closest("article") as HTMLElement;
+    expect(screen.queryByRole("button", { name: /ada/i })).not.toBeInTheDocument();
+    expect(screen.queryByText("Self review should stay hidden.")).not.toBeInTheDocument();
+    expect(screen.queryByText("Self comment should stay hidden.")).not.toBeInTheDocument();
     expect(summary).toHaveClass("select-text");
     expect(within(summary).getByText("ready").tagName).toBe("STRONG");
     expect(within(summary).getByText("Ship it").tagName).toBe("LI");
@@ -2200,7 +2335,7 @@ describe("SessionInspector summary reviews", () => {
     expect(screen.getByText("External reviews")).toBeInTheDocument();
   });
 
-  it("requests a PR re-review with the reviewer and PR identity before showing success", async () => {
+  it("does not show PR re-review CTAs in external review rows", async () => {
     const previous = getMock.getMockImplementation()!;
     getMock.mockImplementation(async (path: string, opts?: unknown) => {
       if (path === "/api/v1/sessions/{sessionId}/pr") {
@@ -2237,88 +2372,15 @@ describe("SessionInspector summary reviews", () => {
     await userEvent.click(
       await screen.findByRole("button", { name: /maya.*Changes requested/i }),
     );
-    await userEvent.click(
-      screen.getByRole("button", { name: "Request to re-review PR" }),
-    );
 
-    await waitFor(() => {
-      expect(postMock).toHaveBeenCalledWith(
-        "/api/v1/sessions/{sessionId}/reviews/rerequest",
-        {
-          params: { path: { sessionId: "sess-1" } },
-          body: {
-            pullRequestUrl: "https://api.github.com/repos/acme/repo/pulls/3",
-            reviewerId: "maya",
-          },
-        },
-      );
-      expect(screen.getByText("Asked for re-review")).toBeInTheDocument();
-    });
     expect(
       screen.queryByRole("button", { name: "Request to re-review PR" }),
     ).not.toBeInTheDocument();
-  });
-
-  it("keeps the PR re-review action available when the API request fails", async () => {
-    const previous = getMock.getMockImplementation()!;
-    getMock.mockImplementation(async (path: string, opts?: unknown) => {
-      if (path === "/api/v1/sessions/{sessionId}/pr") {
-        return {
-          data: {
-            prs: [
-              prSummary(3, "open", {
-                review: {
-                  decision: "changes_requested",
-                  hasUnresolvedHumanComments: false,
-                  reviews: [
-                    {
-                      reviewerId: "maya",
-                      verdict: "changes_requested",
-                      submittedAt: "2026-06-16T11:00:00Z",
-                      reviewUrl:
-                        "https://example.com/pr/3#pullrequestreview-456",
-                      body: "Please request another look after the fixes.",
-                      autoInjectReview: false,
-                    },
-                  ],
-                  unresolvedBy: [],
-                },
-              }),
-            ],
-          },
-        };
-      }
-      return previous(path, opts);
-    });
-    postMock.mockImplementation(async (path: string) => {
-      if (path === "/api/v1/sessions/{sessionId}/reviews/rerequest") {
-        return { error: { message: "GitHub rejected the request" } };
-      }
-      return { data: { ok: true, sessionId: "sess-1" }, error: undefined };
-    });
-
-    renderWithQuery(<SessionInspector session={session([pr(3, "open")])} />);
-    await openReviewsSection();
-    await userEvent.click(
-      await screen.findByRole("button", { name: /maya.*Changes requested/i }),
+    expect(screen.getByText("Please request another look after the fixes.")).toBeInTheDocument();
+    expect(postMock).not.toHaveBeenCalledWith(
+      "/api/v1/sessions/{sessionId}/reviews/rerequest",
+      expect.anything(),
     );
-    await userEvent.click(
-      screen.getByRole("button", { name: "Request to re-review PR" }),
-    );
-
-    await waitFor(() =>
-      expect(postMock).toHaveBeenCalledWith(
-        "/api/v1/sessions/{sessionId}/reviews/rerequest",
-        expect.objectContaining({
-          body: expect.objectContaining({ reviewerId: "maya" }),
-        }),
-      ),
-    );
-    expect(screen.getByText("Unable to request re-review")).toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: "Request to re-review PR" }),
-    ).toBeInTheDocument();
-    expect(screen.queryByText("Asked for re-review")).not.toBeInTheDocument();
   });
 
   it("marks SCM reviews and individual comments using their stored injection decision", async () => {
@@ -2375,7 +2437,6 @@ describe("SessionInspector summary reviews", () => {
     await userEvent.click(
       screen.getByRole("button", { name: /maya.*Changes requested/i }),
     );
-    await userEvent.click(screen.getByRole("button", { name: "Show more" }));
     const sendButton = screen.getByRole("button", {
       name: "Send to worker agent",
     });
@@ -2406,23 +2467,9 @@ describe("SessionInspector summary reviews", () => {
         message: expect.stringContaining("Reviewer: @maya"),
       },
     });
-    const resolveButton = screen
-      .getAllByRole("button", { name: "Resolve comment" })
-      .find((button) => !button.hasAttribute("disabled"));
-    expect(resolveButton).toBeDefined();
-    await userEvent.click(resolveButton!);
-    await waitFor(() =>
-      expect(postMock).toHaveBeenCalledWith(
-        "/api/v1/sessions/{sessionId}/reviews/comments/resolve",
-        {
-          params: { path: { sessionId: "sess-1" } },
-          body: {
-            pullRequestUrl: "https://api.github.com/repos/acme/repo/pulls/3",
-            commentUrl: "https://example.com/comment-9",
-          },
-        },
-      ),
-    );
+    expect(
+      screen.queryByRole("button", { name: "Resolve comment" }),
+    ).not.toBeInTheDocument();
     expect(screen.getAllByText("Sent to worker agent")).toHaveLength(2);
   });
 
@@ -2445,7 +2492,7 @@ describe("SessionInspector summary reviews", () => {
     renderWithQuery(<SessionInspector session={session([pr(3, "open")])} />);
 
     const toggle = screen.getByRole("switch", {
-      name: "Automatically send reviews",
+      name: "Automatically fix review comments",
     });
     expect(toggle).toBeChecked();
     await userEvent.click(toggle);
@@ -2872,7 +2919,7 @@ describe("SessionInspector summary reviews", () => {
       "Files",
     ]);
     expect(
-      screen.getByRole("switch", { name: "Automatically send reviews" }),
+      screen.getByRole("switch", { name: "Automatically fix review comments" }),
     ).toBeInTheDocument();
     expect(screen.getByText("No pull request opened yet.")).toBeInTheDocument();
   });
