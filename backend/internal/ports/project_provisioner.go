@@ -2,19 +2,19 @@ package ports
 
 import (
 	"context"
-	"errors"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 )
 
-// ProjectProvisioner materializes a project and commits its durable placement.
+// ProjectProvisioner materializes and durably registers a project.
 // Provision is idempotent for a non-empty IdempotencyKey: retrying the same
 // semantic request returns the same completed provision, while reusing the key
-// for a different request returns ErrProjectProvisionIdempotencyConflict.
+// for a different request returns a permanent ProjectProvisionError that wraps
+// the service's existing conflict error.
 //
-// A returned error never represents a partially visible project/placement pair.
-// ErrProjectProvisionUnavailable means completion is not yet known and callers
-// may retry the identical request with the same key. Reconciliation,
+// A returned error never represents a partially visible project. A retryable
+// ProjectProvisionError means completion is not yet known and callers may retry
+// the identical request with the same key. Reconciliation, placement,
 // compensation, checkpoints, and provider retries are adapter-private.
 //
 // Remote implementations obtain one-shot SCM credentials from the SCM issuer
@@ -24,24 +24,51 @@ import (
 // argv/environment/Git configuration, or returned to callers, and both the
 // issuer credential and delivered file buffer must be zeroed after use.
 type ProjectProvisioner interface {
-	Provision(ctx context.Context, request ProjectProvisionRequest) (ProjectProvision, error)
+	Provision(ctx context.Context, request ProjectProvisionRequest) (ProjectProvisionResult, error)
 }
 
-var (
-	// ErrProjectProvisionIdempotencyConflict reports reuse of an idempotency key
-	// with a semantically different request.
-	ErrProjectProvisionIdempotencyConflict = errors.New("project provision: idempotency key reused with a different request")
-	// ErrProjectProvisionUnavailable reports that a provision did not produce a
-	// final result. Retrying the identical request and key is always safe.
-	ErrProjectProvisionUnavailable = errors.New("project provision: final result unavailable")
+// ProjectProvisionError classifies a failed provision only by whether retrying
+// the identical request and idempotency key is safe. Err remains in the error
+// chain so existing apierr kind/code/details mappings survive this boundary.
+// A false Retryable value is a permanent failure.
+type ProjectProvisionError struct {
+	Retryable bool
+	Err       error
+}
+
+func (e *ProjectProvisionError) Error() string {
+	if e == nil || e.Err == nil {
+		return "project provision failed"
+	}
+	return e.Err.Error()
+}
+
+// Unwrap preserves the established service error mapping.
+func (e *ProjectProvisionError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.Err
+}
+
+// ProjectProvisionOperation identifies the existing project creation behavior
+// represented by a request.
+type ProjectProvisionOperation string
+
+const (
+	ProjectProvisionAdd        ProjectProvisionOperation = "add"
+	ProjectProvisionClone      ProjectProvisionOperation = "clone"
+	ProjectProvisionInitialize ProjectProvisionOperation = "initialize"
 )
 
 // ProjectProvisionRequest describes one existing project creation operation.
-// Exactly one operation payload must be non-nil. DefaultBranch is authoritative
-// for remote materialization and must be carried through without inspecting a
-// control-plane filesystem checkout.
+// Exactly one operation payload must be non-nil and it must match Operation.
+// When DefaultBranch is non-empty it is authoritative for materialization. A
+// remote adapter may discover it inside compute when omitted, but must never
+// inspect a control-plane filesystem checkout to do so.
 type ProjectProvisionRequest struct {
 	IdempotencyKey string
+	Operation      ProjectProvisionOperation
 	DefaultBranch  string
 	Add            *ProjectAddRequest
 	Clone          *ProjectCloneRequest
@@ -76,22 +103,20 @@ type ProjectInitializeRequest struct {
 	Path string
 }
 
-// ProjectProvision is the final provider-neutral result. Project is the shared
-// durable project model rather than a cloud-only DTO. DefaultBranch repeats the
-// authoritative request value so downstream workspace creation never needs to
-// probe the control-plane filesystem or Git metadata.
-type ProjectProvision struct {
-	Project         domain.ProjectRecord
-	WorkspaceRepos  []domain.WorkspaceRepoRecord
-	Placement       ProjectPlacement
-	DefaultBranch   string
-	InitializedPath string
+// ProjectInitialization is the existing initialize operation result.
+type ProjectInitialization struct {
+	Path string
 }
 
-// ProjectPlacement identifies where the project was materialized. ID is opaque
-// outside the provisioner; local implementations may leave it empty and return
-// only Path.
-type ProjectPlacement struct {
-	ID   string
-	Path string
+// ProjectProvisionResult is the final provider-neutral semantic result.
+// Project is the shared durable model rather than a cloud-only DTO. Placement
+// and all intermediate adapter state remain private. DefaultBranch is the
+// materialized repository default; a remote adapter may discover it when the
+// request leaves it empty, and downstream code must consume this value without
+// probing control-plane filesystem or Git metadata.
+type ProjectProvisionResult struct {
+	Project        domain.ProjectRecord
+	WorkspaceRepos []domain.WorkspaceRepoRecord
+	DefaultBranch  string
+	Initialization ProjectInitialization
 }
