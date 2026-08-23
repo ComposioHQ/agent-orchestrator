@@ -51,7 +51,7 @@ jobs:
         run: |
           psql -h 127.0.0.1 -U postgres -d postgres -v ON_ERROR_STOP=1 <<'SQL'
           CREATE ROLE ao_cloud_migrator
-            LOGIN CREATEROLE NOBYPASSRLS NOSUPERUSER
+            LOGIN CREATEDB CREATEROLE NOBYPASSRLS NOSUPERUSER
             PASSWORD 'integration-migration-password';
           CREATE DATABASE ao_cloud_test OWNER ao_cloud_migrator;
           SQL
