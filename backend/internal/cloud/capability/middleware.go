@@ -10,6 +10,8 @@ import (
 
 type verifiedContextKey struct{}
 
+type bearerContextKey struct{}
+
 // Verifier is the narrow interface an HTTP surface needs. *Authority satisfies
 // it; tests substitute a stub.
 type Verifier interface {
@@ -20,6 +22,15 @@ type Verifier interface {
 func FromContext(ctx context.Context) (Verified, bool) {
 	verified, ok := ctx.Value(verifiedContextKey{}).(Verified)
 	return verified, ok
+}
+
+// BearerFromContext returns the raw presented capability. Only rotation needs
+// it — every other handler must authorize from the verified scope, never from
+// the token — so it is deliberately a separate accessor rather than a field on
+// Verified that a handler could log by printing the struct.
+func BearerFromContext(ctx context.Context) (string, bool) {
+	token, ok := ctx.Value(bearerContextKey{}).(string)
+	return token, ok
 }
 
 // Require builds middleware that authenticates the Authorization bearer
@@ -44,6 +55,7 @@ func Require(verifier Verifier, op Operation) func(http.Handler) http.Handler {
 				return
 			}
 			ctx := context.WithValue(request.Context(), verifiedContextKey{}, verified)
+			ctx = context.WithValue(ctx, bearerContextKey{}, token)
 			next.ServeHTTP(writer, request.WithContext(ctx))
 		})
 	}

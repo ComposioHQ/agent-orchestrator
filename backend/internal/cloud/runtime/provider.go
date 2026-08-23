@@ -103,7 +103,7 @@ type Resources struct {
 // perfect, but they are not broadcast. This check is mechanical: every secret
 // VALUE the request carries must be absent from the command and its arguments.
 func (r CreateRequest) Validate() error {
-	if err := r.Ref.Validate(); err != nil {
+	if err := r.Ref.ValidateForPlacement(); err != nil {
 		return err
 	}
 	if strings.TrimSpace(r.Snapshot) == "" {

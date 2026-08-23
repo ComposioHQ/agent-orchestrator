@@ -74,9 +74,13 @@ type Ref struct {
 	Role        Role
 }
 
-// Validate rejects a partially populated ref.
+// Validate rejects a ref that cannot identify a placement. UserID is NOT
+// required here: it exists only for quota accounting, and a request
+// authenticated by a sandbox capability carries the org, workspace, session,
+// and role from the credential's scope but no user identity. Paths that add
+// compute call ValidateForPlacement instead.
 func (r Ref) Validate() error {
-	missing := make([]string, 0, 4)
+	missing := make([]string, 0, 3)
 	if strings.TrimSpace(r.OrgID) == "" {
 		missing = append(missing, "organization")
 	}
@@ -86,14 +90,23 @@ func (r Ref) Validate() error {
 	if strings.TrimSpace(r.SessionID) == "" {
 		missing = append(missing, "session")
 	}
-	if strings.TrimSpace(r.UserID) == "" {
-		missing = append(missing, "user")
-	}
 	if len(missing) > 0 {
 		return fmt.Errorf("%w: sandbox reference is missing %s", ErrInvalid, strings.Join(missing, ", "))
 	}
 	if !r.Role.Valid() {
 		return fmt.Errorf("%w: unknown sandbox role %q", ErrInvalid, r.Role)
+	}
+	return nil
+}
+
+// ValidateForPlacement additionally requires the owning user, without which
+// the per-user quota cannot be counted.
+func (r Ref) ValidateForPlacement() error {
+	if err := r.Validate(); err != nil {
+		return err
+	}
+	if strings.TrimSpace(r.UserID) == "" {
+		return fmt.Errorf("%w: sandbox reference is missing user", ErrInvalid)
 	}
 	return nil
 }

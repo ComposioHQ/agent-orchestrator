@@ -173,7 +173,7 @@ type Placement struct {
 // orphan the reconciler can attribute, never an untracked one.
 func (m *Manager) Ensure(ctx context.Context, ref Ref) (Placement, error) {
 	ref = ref.Normalize()
-	if err := ref.Validate(); err != nil {
+	if err := ref.ValidateForPlacement(); err != nil {
 		return Placement{}, err
 	}
 	now := m.now().UTC()
