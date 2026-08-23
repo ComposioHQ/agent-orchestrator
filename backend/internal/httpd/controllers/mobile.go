@@ -113,6 +113,14 @@ type BridgeService struct {
 	QueryTS     func() mobilebridge.TailscaleInfo
 	ServeTarget func() int
 
+	// RevokeAllSessions, when set, is called whenever the connection password
+	// changes (Enable/Regenerate) or the bridge is disabled — every existing web
+	// session cookie is invalidated (websession/session.go's Store.RevokeAll),
+	// matching HANDOFF.md §5.5: "Password regeneration or disabling the bridge
+	// revokes all sessions." Nil when the web login route isn't wired
+	// (identity-only deployments, or tests that don't exercise it).
+	RevokeAllSessions func()
+
 	// serveErr records the last Apply failure so Status can report serve_failed.
 	serveErr error
 }
@@ -285,6 +293,9 @@ func (b *BridgeService) enableWithPassword(pw string) (MobileStatusResponse, err
 	if st, _ := mobilebridge.Load(b.ConfigPath); st.SecurePairing {
 		b.serveErr = b.applyServe(port)
 	}
+	if b.RevokeAllSessions != nil {
+		b.RevokeAllSessions()
+	}
 	return b.Status(), nil
 }
 
@@ -348,7 +359,13 @@ func (b *BridgeService) Disable() error {
 		_ = b.clearServe()
 	}
 	st.Enabled = false
-	return mobilebridge.Save(b.ConfigPath, st)
+	if err := mobilebridge.Save(b.ConfigPath, st); err != nil {
+		return err
+	}
+	if b.RevokeAllSessions != nil {
+		b.RevokeAllSessions()
+	}
+	return nil
 }
 
 // ShutdownServe removes the tailnet proxy this bridge installed, for use on
