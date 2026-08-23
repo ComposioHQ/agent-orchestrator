@@ -1313,7 +1313,7 @@ describe("Sidebar", () => {
 
 		expect(slot).toHaveAttribute("data-state", "resting");
 		expect(agent).toHaveClass("opacity-100");
-		expect(agent.firstElementChild).toHaveClass("size-2");
+		expect(agent.firstElementChild).toHaveClass("size-2!");
 		expect(actions).toHaveClass("opacity-0");
 	});
 
