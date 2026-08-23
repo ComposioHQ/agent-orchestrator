@@ -15,8 +15,12 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { getApiBaseUrl } from "../lib/api-client";
+import { cloudClientFor } from "../lib/cloud-api";
+import { createCloudTerminalMux } from "../lib/cloud-terminal-mux";
+import { transportOf } from "../lib/project-transport";
 import { captureRendererEvent } from "../lib/telemetry";
 import { createTerminalMux, muxUrlFromApiBase, type TerminalMux } from "../lib/terminal-mux";
+import { cloudTransportSnapshot } from "../stores/cloud-store";
 import { sessionIsActive, type WorkspaceSession } from "../types/workspace";
 import { workspaceQueryKey } from "./useWorkspaceQuery";
 
@@ -140,8 +144,24 @@ const REPLAY_WRITE_BATCH_BYTES = 256 * 1024;
 // QUIET_MS would uncover panes that were about to draw.
 const REPLAY_FIRST_BYTE_MS = 250;
 
-function defaultCreateMux(): TerminalMux {
-	// Resolved per connect, not per hook: a daemon restart can change the port.
+/**
+ * Build the transport for this attachment.
+ *
+ * Resolved per connect, not per hook: a daemon restart can change the local
+ * port, and a cloud attachment needs a freshly minted ticket each time. The
+ * choice is made from the SESSION's own location — nothing consults a shared,
+ * swappable API base URL — so a local and a cloud session can be attached side
+ * by side in the same window.
+ */
+function defaultCreateMux(session: WorkspaceSession | undefined): TerminalMux {
+	const transport = session ? transportOf(session) : { location: "local" as const };
+	if (transport.location === "cloud") {
+		const { apiBaseUrl } = cloudTransportSnapshot();
+		const client = cloudClientFor(apiBaseUrl);
+		if (client && session) {
+			return createCloudTerminalMux({ client, orgId: transport.orgId, sessionId: session.id });
+		}
+	}
 	return createTerminalMux(muxUrlFromApiBase(getApiBaseUrl()));
 }
 
@@ -328,7 +348,7 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 		r.inputReady = false;
 		teardownMux();
 
-		const mux = (optionsRef.current.createMux ?? defaultCreateMux)();
+		const mux = optionsRef.current.createMux?.() ?? defaultCreateMux(sessionRef.current);
 		r.mux = mux;
 
 		let pendingReplayWrites = 0;
@@ -723,7 +743,12 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 	const attach = useCallback(
 		(terminal: AttachableTerminal) => {
 			const r = runtime.current;
-			const handle = optionsRef.current.shellTerminalHandleId ?? sessionRef.current?.terminalHandleId ?? null;
+			// A cloud session carries no local runtime handle: the hosted relay keys
+			// the stream by session id and authorizes each attach with its own
+			// short-lived ticket.
+			const cloudHandle = sessionRef.current?.location === "cloud" ? (sessionRef.current.id ?? null) : null;
+			const handle =
+				optionsRef.current.shellTerminalHandleId ?? sessionRef.current?.terminalHandleId ?? cloudHandle;
 			r.terminal = terminal;
 			r.handle = handle;
 			r.detached = false;
