@@ -312,12 +312,13 @@ describe("GlobalSettingsForm", () => {
 
 	it("shows the current app version", async () => {
 		renderForm();
-		expect(await screen.findByText(/Current version - v1\.4\.0/)).toBeInTheDocument();
+		expect(await screen.findByText("Current version")).toBeInTheDocument();
+		expect(screen.getByTestId("app-version")).toHaveTextContent("v1.4.0");
 	});
 
 	it("shows an explicit idle update state and triggers a manual check", async () => {
 		renderForm();
-		expect(await screen.findByText(/Current version - v1\.4\.0/)).toBeInTheDocument();
+		expect(await screen.findByTestId("app-version")).toHaveTextContent("v1.4.0");
 		expect(screen.getByText("No update check yet.")).toBeInTheDocument();
 		await userEvent.click(screen.getByRole("button", { name: "Check for updates" }));
 		expect(updCheck).toHaveBeenCalled();
@@ -373,7 +374,8 @@ describe("GlobalSettingsForm", () => {
 		renderForm();
 
 		const formatted = new Intl.DateTimeFormat("en", { dateStyle: "medium", timeStyle: "short" }).format(checkedAt);
-		expect(await screen.findByTestId("update-checked-at")).toHaveTextContent(`Last checked ${formatted}`);
+		expect(await screen.findByText("Last checked")).toBeInTheDocument();
+		expect(screen.getByTestId("update-checked-at")).toHaveTextContent(formatted);
 		expect(screen.getByRole("status")).toHaveTextContent("You're on the latest version.");
 	});
 

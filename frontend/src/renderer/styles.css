@@ -671,6 +671,17 @@
 	animation: update-status-content-in 180ms var(--ease-out);
 }
 
+.update-status-meta {
+	display: grid;
+	grid-template-columns: repeat(auto-fit, minmax(min(100%, 14rem), 1fr));
+	column-gap: 1.5rem;
+	row-gap: 0.75rem;
+}
+
+.update-status-meta dd {
+	overflow-wrap: anywhere;
+}
+
 .update-download-progress {
 	transition: transform 160ms var(--ease-out);
 }

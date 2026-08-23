@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
-import { AlertCircle, AlertTriangle, CheckCircle2, CircleDashed, Clock3, Download, Loader2, RefreshCw } from "lucide-react";
+import { AlertCircle, AlertTriangle, CheckCircle2, CircleDashed, Download, Loader2, RefreshCw } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { aoBridge } from "../../lib/bridge";
 import { cn } from "../../lib/utils";
@@ -370,20 +370,35 @@ function UpdateActions({ status, automaticUpdatesEnabled }: { status: UpdateStat
 						{automaticDownload && (
 							<p className="mt-1 text-xs leading-5 text-settings-muted">{t("settings.updates.automaticDownload")}</p>
 						)}
-						<div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] leading-4 text-settings-muted">
-							<span className="font-mono tabular-nums" data-testid="app-version">
-								{t("settings.updates.currentVersion", { version: version.data ? `v${version.data}` : "…" })}
-							</span>
-							{checkedAt && (
-								<>
-									<span className="hidden size-0.5 rounded-full bg-current opacity-50 sm:block" aria-hidden="true" />
-									<span className="inline-flex items-center gap-1.5 tabular-nums" data-testid="update-checked-at">
-										<Clock3 className="size-3" aria-hidden="true" />
-										{t("settings.updates.lastChecked", { time: checkedAt })}
-									</span>
-								</>
-							)}
-						</div>
+						<dl className="update-status-meta mt-3">
+							<div className="min-w-0">
+								<dt className="text-2xs font-medium leading-4 text-settings-muted">
+									{t("settings.updates.currentVersionLabel")}
+								</dt>
+								<dd className="mt-0.5 min-w-0 font-mono text-xs leading-4 text-settings-label tabular-nums" data-testid="app-version">
+									{version.data ? `v${version.data}` : "…"}
+								</dd>
+							</div>
+							{displayStatus.state === "downloaded" && displayStatus.version ? (
+								<div className="min-w-0">
+									<dt className="text-2xs font-medium leading-4 text-settings-muted">
+										{t("settings.updates.updateVersionLabel")}
+									</dt>
+									<dd className="mt-0.5 min-w-0 font-mono text-xs leading-4 text-settings-label tabular-nums">
+										v{displayStatus.version}
+									</dd>
+								</div>
+							) : checkedAt ? (
+								<div className="min-w-0">
+									<dt className="text-2xs font-medium leading-4 text-settings-muted">
+										{t("settings.updates.lastCheckedLabel")}
+									</dt>
+									<dd className="mt-0.5 text-xs leading-4 text-settings-label tabular-nums" data-testid="update-checked-at">
+										{checkedAt}
+									</dd>
+								</div>
+							) : null}
+						</dl>
 					</div>
 				</div>
 
@@ -442,6 +457,7 @@ function UpdateStatusLine({ status }: { status: UpdateStatus }) {
 	const { t } = useTranslation();
 	let className = "text-settings-muted";
 	let label: string;
+	let description: string | null = null;
 
 	switch (status.state) {
 		case "checking":
@@ -458,6 +474,7 @@ function UpdateStatusLine({ status }: { status: UpdateStatus }) {
 		case "downloaded":
 			className = "text-success";
 			label = t("settings.updates.downloaded");
+			description = t("settings.updates.downloadedDescription");
 			break;
 		case "not-available":
 			className = "text-success";
@@ -476,7 +493,12 @@ function UpdateStatusLine({ status }: { status: UpdateStatus }) {
 			label = t("settings.updates.notChecked");
 	}
 
-	return <p className={cn("text-pretty text-[15px] font-medium leading-5", className)}>{label}</p>;
+	return (
+		<>
+			<p className={cn("text-balance text-[15px] font-medium leading-5", className)}>{label}</p>
+			{description && <p className="mt-1 text-pretty text-xs leading-5 text-settings-muted">{description}</p>}
+		</>
+	);
 }
 
 function UpdateStatusIcon({ status }: { status: UpdateStatus }) {
