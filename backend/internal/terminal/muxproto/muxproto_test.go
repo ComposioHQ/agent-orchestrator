@@ -62,6 +62,8 @@ func TestTicketSubprotocolRejectsUnsendableTickets(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			if _, err := muxproto.TicketSubprotocol(ticket); err == nil {
 				t.Fatalf("ticket %q was accepted", ticket)
+			} else if ticket != "" && strings.Contains(err.Error(), ticket) {
+				t.Fatal("ticket validation error disclosed the credential")
 			}
 			if _, err := muxproto.Offer(ticket); ticket != "" && err == nil {
 				t.Fatalf("Offer accepted ticket %q", ticket)

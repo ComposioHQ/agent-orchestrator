@@ -22,7 +22,6 @@ package muxproto
 
 import (
 	"errors"
-	"fmt"
 	"strings"
 )
 
@@ -54,7 +53,9 @@ func TicketSubprotocol(ticket string) (string, error) {
 		return "", errors.New("muxproto: ticket is empty")
 	}
 	if !validToken(ticket) {
-		return "", fmt.Errorf("muxproto: ticket %q is not a valid subprotocol token", ticket)
+		// Never echo the credential into an error: handshake failures commonly
+		// reach logs, and a malformed ticket is still a secret until it expires.
+		return "", errors.New("muxproto: ticket is not a valid subprotocol token")
 	}
 	return ticketPrefix + ticket, nil
 }
