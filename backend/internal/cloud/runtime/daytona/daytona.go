@@ -132,9 +132,12 @@ type createPayload struct {
 // Create provisions, delivers transient files, and starts the semantic
 // command. Daytona snapshot creation does not accept a per-sandbox entrypoint,
 // so the adapter starts one stable asynchronous process session after the
-// sandbox is ready. Any bootstrap failure destroys the half-created sandbox.
+// sandbox is ready. Once Daytona returns an id, a later bootstrap failure
+// returns that sandbox alongside the error so the manager can persist its
+// handle and reconcile or delete it durably.
 func (p *Provider) Create(ctx context.Context, request runtime.CreateRequest) (sandbox runtime.Sandbox, err error) {
 	defer func() { runtime.PurgeFileSecrets(request.SecretFiles) }()
+	defer func() { runtime.PurgeFileSecrets([]runtime.FileSecret{request.Capability}) }()
 	if err := request.Validate(); err != nil {
 		return runtime.Sandbox{}, err
 	}
@@ -161,24 +164,14 @@ func (p *Provider) Create(ctx context.Context, request runtime.CreateRequest) (s
 	if strings.TrimSpace(sandbox.ID) == "" {
 		return runtime.Sandbox{}, errors.New("daytona create returned an empty sandbox id")
 	}
-	cleanup := func(cause error) error {
-		if deleteErr := p.Delete(ctx, sandbox.ID); deleteErr != nil {
-			p.logger.Error("could not remove failed cloud sandbox; reconciler will retry",
-				"provider_sandbox", sandbox.ID, "error", deleteErr)
-		}
-		return cause
+	files := append(append([]runtime.FileSecret(nil), request.SecretFiles...), request.Capability)
+	if err := p.deliverSecretFiles(ctx, sandbox.ID, files); err != nil {
+		return sandbox, err
 	}
-	capabilityFile, err := launchCapabilityFile(sandbox.ID, request.Ref, request.CapabilityFilePath, request.ControlPlaneRedeemURL)
+	runtimeID := request.Labels[runtime.LabelRuntimeID]
+	launched, err := p.bootstrap(ctx, sandbox.ID, runtimeID, request.Ref, request.ControlPlaneURL, request.Command, request.Args, runtimeID)
 	if err != nil {
-		return runtime.Sandbox{}, cleanup(err)
-	}
-	request.SecretFiles = append(request.SecretFiles, capabilityFile)
-	if err := p.deliverSecretFiles(ctx, sandbox.ID, request.SecretFiles); err != nil {
-		return runtime.Sandbox{}, cleanup(err)
-	}
-	launched, err := p.bootstrap(ctx, sandbox.ID, request.Command, request.Args, request.Labels[runtime.LabelRuntimeID])
-	if err != nil {
-		return runtime.Sandbox{}, cleanup(err)
+		return sandbox, err
 	}
 	if !launched {
 		p.logger.Debug("cloud sandbox bootstrap session already exists", "provider_sandbox", sandbox.ID)
@@ -198,9 +191,10 @@ func (p *Provider) Get(ctx context.Context, id string) (runtime.Sandbox, error) 
 	return toSandbox(payload), nil
 }
 
-// Start boots a sandbox and launches ao-sandbox with fresh protected metadata.
+// Start boots a sandbox and launches ao-sandbox with a fresh capability file.
 func (p *Provider) Start(ctx context.Context, id string, request runtime.StartRequest) (sandbox runtime.Sandbox, err error) {
 	defer func() { runtime.PurgeFileSecrets(request.SecretFiles) }()
+	defer func() { runtime.PurgeFileSecrets([]runtime.FileSecret{request.Capability}) }()
 	if err := request.Validate(); err != nil {
 		return runtime.Sandbox{}, err
 	}
@@ -208,25 +202,15 @@ func (p *Provider) Start(ctx context.Context, id string, request runtime.StartRe
 	if err != nil {
 		return runtime.Sandbox{}, err
 	}
-	cleanup := func(cause error) error {
-		if deleteErr := p.Delete(ctx, id); deleteErr != nil {
-			p.logger.Error("could not remove failed restarted sandbox; reconciler will retry", "provider_sandbox", id, "error", deleteErr)
-		}
-		return cause
-	}
-	capabilityFile, err := launchCapabilityFile(id, request.Ref, request.CapabilityFilePath, request.ControlPlaneRedeemURL)
-	if err != nil {
-		return runtime.Sandbox{}, cleanup(err)
-	}
-	request.SecretFiles = append(request.SecretFiles, capabilityFile)
-	if err := p.deliverSecretFiles(ctx, id, request.SecretFiles); err != nil {
-		return runtime.Sandbox{}, cleanup(err)
+	files := append(append([]runtime.FileSecret(nil), request.SecretFiles...), request.Capability)
+	if err := p.deliverSecretFiles(ctx, id, files); err != nil {
+		return sandbox, err
 	}
 	if err := p.cleanupBootstrapSessions(ctx, id, bootstrapSessionPrefix+request.BootstrapKey); err != nil {
-		return runtime.Sandbox{}, cleanup(err)
+		return sandbox, err
 	}
-	if _, err := p.bootstrap(ctx, id, request.Command, request.Args, request.BootstrapKey); err != nil {
-		return runtime.Sandbox{}, cleanup(err)
+	if _, err := p.bootstrap(ctx, id, request.RuntimeID, request.Ref, request.ControlPlaneURL, request.Command, request.Args, request.BootstrapKey); err != nil {
+		return sandbox, err
 	}
 	return sandbox, nil
 }
@@ -298,9 +282,9 @@ func (p *Provider) List(ctx context.Context, selector runtime.Selector) ([]runti
 // bootstrap starts request.Command and Args exactly once for an idempotency
 // key. Daytona's process endpoint accepts a shell command string, so every
 // semantic argv element is POSIX-quoted and prefixed with exec.
-func (p *Provider) bootstrap(ctx context.Context, sandboxID, command string, args []string, bootstrapKey string) (bool, error) {
+func (p *Provider) bootstrap(ctx context.Context, providerID, runtimeID string, ref runtime.Ref, controlPlaneURL, command string, args []string, bootstrapKey string) (bool, error) {
 	sessionID := bootstrapSessionPrefix + strings.TrimSpace(bootstrapKey)
-	created, err := p.createProcessSession(ctx, sandboxID, sessionID)
+	created, err := p.createProcessSession(ctx, providerID, sessionID)
 	if err != nil || !created {
 		return created, err
 	}
@@ -308,7 +292,10 @@ func (p *Provider) bootstrap(ctx context.Context, sandboxID, command string, arg
 	runtimeArgv = append(runtimeArgv,
 		runtime.SandboxRuntimeCommand,
 		"--listen", "0.0.0.0:8080",
-		"--capability-file", runtime.CapabilityFilePath,
+		"--control-plane-url", controlPlaneURL,
+		"--sandbox-id", runtimeID,
+		"--workspace-id", ref.WorkspaceID,
+		"--session-id", ref.SessionID,
 		"--workspace", runtime.SandboxWorkspacePath,
 		"--ready-file", runtime.SandboxReadyFilePath,
 		"--secret-dir", runtime.SandboxSecretDir,
@@ -321,29 +308,11 @@ func (p *Provider) bootstrap(ctx context.Context, sandboxID, command string, arg
 		Command  string `json:"command"`
 		RunAsync bool   `json:"runAsync"`
 	}{Command: command, RunAsync: true}
-	path := "/toolbox/" + url.PathEscape(sandboxID) + "/toolbox/process/session/" + url.PathEscape(sessionID) + "/exec"
+	path := "/toolbox/" + url.PathEscape(providerID) + "/toolbox/process/session/" + url.PathEscape(sessionID) + "/exec"
 	if err := p.call(ctx, http.MethodPost, path, nil, nil, body, nil); err != nil {
 		return false, fmt.Errorf("start sandbox command: %w", err)
 	}
 	return true, nil
-}
-
-type capabilityFile struct {
-	SandboxID             string `json:"sandboxId"`
-	WorkspaceID           string `json:"workspaceId"`
-	SessionID             string `json:"sessionId"`
-	ControlPlaneRedeemURL string `json:"controlPlaneRedeemUrl"`
-}
-
-func launchCapabilityFile(sandboxID string, ref runtime.Ref, path, redeemURL string) (runtime.FileSecret, error) {
-	raw, err := json.Marshal(capabilityFile{
-		SandboxID: sandboxID, WorkspaceID: ref.WorkspaceID, SessionID: ref.SessionID,
-		ControlPlaneRedeemURL: redeemURL,
-	})
-	if err != nil {
-		return runtime.FileSecret{}, errors.New("encode sandbox capability file")
-	}
-	return runtime.FileSecret{Path: path, Content: raw, Mode: 0o600}, nil
 }
 
 func (p *Provider) createProcessSession(ctx context.Context, sandboxID, sessionID string) (bool, error) {

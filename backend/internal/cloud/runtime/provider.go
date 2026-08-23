@@ -75,10 +75,11 @@ type CreateRequest struct {
 	// owner-only permissions. Providers must purge Content before Create
 	// returns, whether creation succeeds or fails.
 	SecretFiles []FileSecret
-	// CapabilityFilePath receives the 0600 sandbox-runtime launch metadata.
-	// The provider fills in the provider sandbox id after creation.
-	CapabilityFilePath    string
-	ControlPlaneRedeemURL string
+	// Capability is the raw rotating sandbox-to-control-plane credential. It
+	// is delivered at the fixed 181 path with mode 0600 and never serialized
+	// into a provider request body, argv, environment, URL, label, or log.
+	Capability      FileSecret
+	ControlPlaneURL string
 	// Command and Args, when set, are the sandbox entrypoint. They must never
 	// contain secret material.
 	Command string
@@ -106,44 +107,49 @@ type Resources struct {
 // StartRequest supplies the fresh, short-lived launch material needed when a
 // stopped sandbox boots again. A revoked capability file must never be reused.
 type StartRequest struct {
-	SecretFiles           []FileSecret
-	Command               string
-	Args                  []string
-	BootstrapKey          string
-	Ref                   Ref
-	CapabilityFilePath    string
-	ControlPlaneRedeemURL string
+	SecretFiles     []FileSecret
+	Command         string
+	Args            []string
+	BootstrapKey    string
+	RuntimeID       string
+	Ref             Ref
+	Capability      FileSecret
+	ControlPlaneURL string
 }
 
-// Validate enforces fresh launch metadata and secret-free semantic argv.
+// Validate enforces a fresh launch capability and secret-free semantic argv.
 func (r StartRequest) Validate() error {
-	if strings.TrimSpace(r.Command) == "" || strings.TrimSpace(r.BootstrapKey) == "" {
-		return fmt.Errorf("%w: restart command and bootstrap key are required", ErrInvalid)
+	if strings.TrimSpace(r.Command) == "" || strings.TrimSpace(r.BootstrapKey) == "" || strings.TrimSpace(r.RuntimeID) == "" {
+		return fmt.Errorf("%w: restart command, bootstrap key, and runtime handle are required", ErrInvalid)
 	}
-	if err := validateCapabilityFile(r.Ref, r.CapabilityFilePath, r.ControlPlaneRedeemURL); err != nil {
+	if err := validateCapabilityFile(r.Ref, r.Capability, r.ControlPlaneURL); err != nil {
 		return err
 	}
 	if err := validateFileSecrets(r.SecretFiles); err != nil {
 		return err
 	}
 	for _, secret := range r.SecretFiles {
-		if secret.Path == r.CapabilityFilePath {
+		if secret.Path == r.Capability.Path {
 			return fmt.Errorf("%w: secret source may not replace the sandbox capability file", ErrInvalid)
 		}
 	}
-	return guardFileSecretsArgv(r.Command, r.Args, r.SecretFiles)
+	allSecrets := append(append([]FileSecret(nil), r.SecretFiles...), r.Capability)
+	return guardFileSecretsArgv(r.Command, r.Args, allSecrets)
 }
 
-func validateCapabilityFile(ref Ref, path, redeemURL string) error {
+func validateCapabilityFile(ref Ref, file FileSecret, controlPlaneURL string) error {
 	if err := ref.Validate(); err != nil {
 		return err
 	}
-	if strings.TrimSpace(path) != CapabilityFilePath {
+	if strings.TrimSpace(file.Path) != CapabilityFilePath {
 		return fmt.Errorf("%w: capability file path must be %s", ErrInvalid, CapabilityFilePath)
 	}
-	parsed, err := url.Parse(strings.TrimSpace(redeemURL))
+	if err := validateFileSecrets([]FileSecret{file}); err != nil {
+		return err
+	}
+	parsed, err := url.Parse(strings.TrimSpace(controlPlaneURL))
 	if err != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
-		return fmt.Errorf("%w: control-plane redemption URL must be absolute HTTPS", ErrInvalid)
+		return fmt.Errorf("%w: control-plane URL must be absolute HTTPS", ErrInvalid)
 	}
 	return nil
 }
@@ -179,7 +185,7 @@ func (r CreateRequest) Validate() error {
 	if strings.TrimSpace(r.Command) == "" {
 		return fmt.Errorf("%w: sandbox command is required", ErrInvalid)
 	}
-	if err := validateCapabilityFile(r.Ref, r.CapabilityFilePath, r.ControlPlaneRedeemURL); err != nil {
+	if err := validateCapabilityFile(r.Ref, r.Capability, r.ControlPlaneURL); err != nil {
 		return err
 	}
 	if err := validateConfigEnv(r.Env); err != nil {
@@ -189,11 +195,15 @@ func (r CreateRequest) Validate() error {
 		return err
 	}
 	for _, secret := range r.SecretFiles {
-		if secret.Path == r.CapabilityFilePath {
+		if secret.Path == r.Capability.Path {
 			return fmt.Errorf("%w: secret source may not replace the sandbox capability file", ErrInvalid)
 		}
 	}
-	if err := guardFileSecretsArgv(r.Command, r.Args, r.SecretFiles); err != nil {
+	allSecrets := append(append([]FileSecret(nil), r.SecretFiles...), r.Capability)
+	if err := guardFileSecretsArgv(r.Command, r.Args, allSecrets); err != nil {
+		return err
+	}
+	if err := guardFileSecretsEnv(r.Env, allSecrets); err != nil {
 		return err
 	}
 	return nil
@@ -276,6 +286,26 @@ func guardFileSecretsArgv(command string, args []string, secrets []FileSecret) e
 	}
 	sort.Strings(leaked)
 	return fmt.Errorf("%w: sandbox arguments must not contain secret file values (%s)", ErrInvalid, strings.Join(leaked, ", "))
+}
+
+func guardFileSecretsEnv(env map[string]string, secrets []FileSecret) error {
+	leaked := make([]string, 0)
+	for _, secret := range secrets {
+		if len(secret.Content) < minimumGuardedSecretLength {
+			continue
+		}
+		for _, value := range env {
+			if bytes.Contains([]byte(value), secret.Content) {
+				leaked = append(leaked, secret.Path)
+				break
+			}
+		}
+	}
+	if len(leaked) == 0 {
+		return nil
+	}
+	sort.Strings(leaked)
+	return fmt.Errorf("%w: sandbox environment must not contain secret file values (%s)", ErrInvalid, strings.Join(leaked, ", "))
 }
 
 // Selector filters a provider listing. An empty map matches everything, which

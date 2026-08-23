@@ -54,11 +54,20 @@ const (
 	OpSessionRead Operation = "session.read"
 	// OpSessionWrite lets a worker publish progress for its own session.
 	OpSessionWrite Operation = "session.write"
+	// OpSessionSend lets either sandbox role send a message to the session in
+	// its own scope. It never grants access to a sibling session.
+	OpSessionSend Operation = "session.send"
 	// OpWorkspaceRead lets a coordinator enumerate its workspace's sessions.
 	OpWorkspaceRead Operation = "workspace.read"
 	// OpWorkerProvision lets a coordinator ask the control plane to provision
 	// worker sandboxes inside its own workspace. Workers never hold it.
 	OpWorkerProvision Operation = "worker.provision"
+	// OpPreviewSelf authorizes only the preview bound to the verified scope.
+	OpPreviewSelf Operation = "preview.self"
+	// OpBrowserSelf authorizes only the browser bound to the verified scope.
+	OpBrowserSelf Operation = "browser.self"
+	// OpActivitySelf authorizes only activity bound to the verified scope.
+	OpActivitySelf Operation = "activity.self"
 )
 
 var knownOperations = map[Operation]struct{}{
@@ -67,8 +76,30 @@ var knownOperations = map[Operation]struct{}{
 	OpCapabilityRotate:   {},
 	OpSessionRead:        {},
 	OpSessionWrite:       {},
+	OpSessionSend:        {},
 	OpWorkspaceRead:      {},
 	OpWorkerProvision:    {},
+	OpPreviewSelf:        {},
+	OpBrowserSelf:        {},
+	OpActivitySelf:       {},
+}
+
+// OperationsForRole returns the least-privilege hosted sandbox profile. Both
+// roles can read/send within their own session and use their own interactive
+// surfaces; only a coordinator can enumerate a workspace or spawn workers.
+func OperationsForRole(role string) ([]Operation, error) {
+	shared := []Operation{
+		OpSandboxHeartbeat, OpSandboxReportState, OpSessionRead, OpSessionSend,
+		OpPreviewSelf, OpBrowserSelf, OpActivitySelf,
+	}
+	switch strings.ToLower(strings.TrimSpace(role)) {
+	case RoleWorker:
+		return shared, nil
+	case RoleCoordinator:
+		return append(shared, OpWorkspaceRead, OpWorkerProvision), nil
+	default:
+		return nil, fmt.Errorf("%w: unknown role %q", ErrInvalidScope, role)
+	}
 }
 
 // Errors returned by the authority. Callers may distinguish them; the HTTP

@@ -1,8 +1,9 @@
 package runtime
 
 import (
-	"context"
 	"time"
+
+	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
 // Store is the compute plane's durable placement port. It is consumer-owned
@@ -15,31 +16,7 @@ import (
 // returns ErrConflict otherwise. That is what makes concurrent Ensure/Stop/
 // Delete calls and the reconciler safe against each other without a lock.
 type Store interface {
-	// Ensure returns the live placement for a ref, creating it in
-	// StateProvisioning when absent. created reports whether this call was the
-	// one that inserted the row, which is how the lifecycle keeps create
-	// idempotent under concurrent callers.
-	//
-	// A row in StateDeleting must NOT be resurrected: implementations return
-	// the existing record with created=false, and the caller maps that to
-	// ErrDeleting.
-	// Quota evaluation and insertion are one atomic reservation. Adapters must
-	// serialize competing reservations for the affected org/user/workspace
-	// (for example with transaction-scoped advisory locks in PostgreSQL).
-	Ensure(ctx context.Context, ref Ref, quotas Quotas, now time.Time) (record Record, created bool, err error)
-	// Get loads the placement for a ref, returning ErrNotFound when absent.
-	Get(ctx context.Context, ref Ref) (Record, error)
-	// GetByID loads a placement by row id, returning ErrNotFound when absent.
-	GetByID(ctx context.Context, id string) (Record, error)
-	// Save persists a mutated record, returning ErrConflict when the presented
-	// generation is stale. The returned record carries the new generation.
-	Save(ctx context.Context, record Record) (Record, error)
-	// Delete removes a row that has already been torn down at the provider. It
-	// returns ErrConflict on a stale generation and succeeds when the row is
-	// already gone, so a retried cascade converges.
-	Delete(ctx context.Context, id string, generation int64) error
-	// List returns placements matching a filter, oldest first.
-	List(ctx context.Context, filter Filter) ([]Record, error)
+	ports.ComputePlacementStore[Ref, Quotas, Record, Filter]
 }
 
 // Filter selects placements. Empty string fields are wildcards; the zero

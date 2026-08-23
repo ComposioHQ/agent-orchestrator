@@ -125,6 +125,9 @@ const (
 	// sharing a provider account with production cannot reap production's
 	// sandboxes.
 	LabelDeployment = "ao.deployment"
+	// LabelEnvironment is the stable deployment environment used for provider
+	// inventory and billing attribution.
+	LabelEnvironment = "ao.env"
 	// LabelOrg, LabelWorkspace, and LabelSession attribute the sandbox.
 	LabelOrg       = "ao.org"
 	LabelWorkspace = "ao.workspace"
@@ -139,25 +142,27 @@ const (
 // requiredLabels is the set every managed sandbox must carry. Cleanup treats a
 // sandbox missing any of them as unattributable.
 var requiredLabels = []string{
-	LabelManaged, LabelDeployment, LabelOrg, LabelWorkspace, LabelSession, LabelRole, LabelRuntimeID,
+	LabelManaged, LabelDeployment, LabelEnvironment, LabelOrg, LabelWorkspace, LabelSession, LabelRole, LabelRuntimeID,
 }
 
 // Labels builds the provider label set for one placement.
 func Labels(deployment string, ref Ref, runtimeID string) map[string]string {
 	return map[string]string{
-		LabelManaged:    "true",
-		LabelDeployment: strings.TrimSpace(deployment),
-		LabelOrg:        ref.OrgID,
-		LabelWorkspace:  ref.WorkspaceID,
-		LabelSession:    ref.SessionID,
-		LabelRole:       string(ref.Role),
-		LabelRuntimeID:  runtimeID,
+		LabelManaged:     "true",
+		LabelDeployment:  strings.TrimSpace(deployment),
+		LabelEnvironment: strings.TrimSpace(deployment),
+		LabelOrg:         ref.OrgID,
+		LabelWorkspace:   ref.WorkspaceID,
+		LabelSession:     ref.SessionID,
+		LabelRole:        string(ref.Role),
+		LabelRuntimeID:   runtimeID,
 	}
 }
 
 // Attribution is what cleanup recovers from a sandbox's labels.
 type Attribution struct {
 	Deployment  string
+	Environment string
 	OrgID       string
 	WorkspaceID string
 	SessionID   string
@@ -182,6 +187,7 @@ func Attribute(labels map[string]string) (Attribution, bool) {
 	}
 	return Attribution{
 		Deployment:  strings.TrimSpace(labels[LabelDeployment]),
+		Environment: strings.TrimSpace(labels[LabelEnvironment]),
 		OrgID:       strings.TrimSpace(labels[LabelOrg]),
 		WorkspaceID: strings.TrimSpace(labels[LabelWorkspace]),
 		SessionID:   strings.TrimSpace(labels[LabelSession]),

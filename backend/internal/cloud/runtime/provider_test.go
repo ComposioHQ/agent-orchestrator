@@ -12,14 +12,14 @@ import (
 func validCreateRequest() runtime.CreateRequest {
 	ref := workerRef()
 	return runtime.CreateRequest{
-		Ref:                   ref,
-		Labels:                runtime.Labels("staging", ref, "rt-1"),
-		Snapshot:              "ao-worker",
-		CapabilityFilePath:    runtime.CapabilityFilePath,
-		ControlPlaneRedeemURL: "https://cloud.example/api/internal/sandbox-tickets/redeem",
-		Env:                   map[string]string{},
-		Command:               "/bin/sh",
-		Args:                  []string{"-l"},
+		Ref:             ref,
+		Labels:          runtime.Labels("staging", ref, "rt-1"),
+		Snapshot:        "ao-worker",
+		Capability:      runtime.FileSecret{Path: runtime.CapabilityFilePath, Content: []byte("aocap_v1.valid-capability-material"), Mode: 0o600},
+		ControlPlaneURL: "https://cloud.example",
+		Env:             map[string]string{},
+		Command:         "/bin/sh",
+		Args:            []string{"-l"},
 	}
 }
 
@@ -88,11 +88,12 @@ func TestAttributeRejectsPartialAndForeignLabels(t *testing.T) {
 		t.Fatal("complete label set rejected")
 	}
 	for name, mutate := range map[string]func(map[string]string){
-		"missing runtime":  func(labels map[string]string) { delete(labels, runtime.LabelRuntimeID) },
-		"blank org":        func(labels map[string]string) { labels[runtime.LabelOrg] = "  " },
-		"unmanaged":        func(labels map[string]string) { labels[runtime.LabelManaged] = "false" },
-		"unknown role":     func(labels map[string]string) { labels[runtime.LabelRole] = "admin" },
-		"missing deployer": func(labels map[string]string) { delete(labels, runtime.LabelDeployment) },
+		"missing runtime":     func(labels map[string]string) { delete(labels, runtime.LabelRuntimeID) },
+		"blank org":           func(labels map[string]string) { labels[runtime.LabelOrg] = "  " },
+		"unmanaged":           func(labels map[string]string) { labels[runtime.LabelManaged] = "false" },
+		"unknown role":        func(labels map[string]string) { labels[runtime.LabelRole] = "admin" },
+		"missing deployer":    func(labels map[string]string) { delete(labels, runtime.LabelDeployment) },
+		"missing environment": func(labels map[string]string) { delete(labels, runtime.LabelEnvironment) },
 	} {
 		labels := runtime.Labels("staging", ref, "rt-1")
 		mutate(labels)

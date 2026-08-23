@@ -6,10 +6,9 @@ import (
 	"time"
 )
 
-// MemoryStore keeps grants in process memory. It is the reference
-// implementation of Store: single-process deployments and every test in the
-// compute plane use it, and a PostgreSQL adapter must reproduce its semantics
-// (idempotent revoke, revoked-and-expired retention, selector matching).
+// MemoryStore keeps grants in process memory for deterministic tests only.
+// Hosted deployments must use durable storage; accepting this implementation
+// in production would make a process restart resurrect revoked credentials.
 type MemoryStore struct {
 	mu      sync.RWMutex
 	records map[string]Record
