@@ -83,6 +83,7 @@ import { useUiStore } from "../stores/ui-store"
 import { useKeybindingsStore } from "../stores/keybindings-store";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { CreateProjectFlow, type CloneProjectInput, type CreateProjectInput } from "./CreateProjectFlow";
+import { Button } from "./ui/button";
 import { ResizeHandle } from "./ResizeHandle";
 import { isMacPlatform, isWindowsPlatform } from "../lib/platform";
 import { useCloudSession } from "../lib/cloud-session";
@@ -124,6 +125,7 @@ type SidebarProps = {
 	/** Chrome height to clear when underTopbar is set. Defaults to --size-toolbar. */
 	topbarOffset?: "toolbar" | "titlebar" | "trafficLights" | "session";
 	workspaceError?: string;
+	onRetryWorkspaces?: () => void;
 	workspaces: WorkspaceSummary[];
 	onCloneProject: (input: CloneProjectInput) => Promise<void>;
 	onCreateProject: (input: CreateProjectInput) => Promise<void>;
@@ -175,6 +177,7 @@ export function Sidebar({
 	topbarOffset = "toolbar",
 	workspaceError,
 	workspaces,
+	onRetryWorkspaces,
 	onCloneProject,
 	onCreateProject,
 	onInitializeProject,
@@ -387,8 +390,14 @@ export function Sidebar({
 							<div className="sidebar-expanded-chrome px-2.5 py-3 group-data-[collapsible=icon]:hidden">
 								<p className="text-sm text-foreground">{t("shell.couldNotLoadProjects")}</p>
 								<p className="mt-1 text-caption text-passive">{workspaceError}</p>
+								{onRetryWorkspaces ? (
+									<Button className="mt-2" size="sm" variant="outline" onClick={onRetryWorkspaces}>
+										{t("shell.retryProjects")}
+									</Button>
+								) : null}
 							</div>
-						) : workspaces.length === 0 ? null : (
+						) : null}
+						{workspaces.length === 0 ? null : (
 							<SidebarMenu className="gap-0.5 rounded-lg overflow-hidden group-data-[collapsible=icon]:gap-1 group-data-[collapsible=icon]:rounded-none group-data-[collapsible=icon]:overflow-visible">
 								{workspaces.map((workspace) => (
 									<ProjectItem
