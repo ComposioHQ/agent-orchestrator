@@ -166,13 +166,12 @@ func (c *AppClient) ListInstallationRepositories(ctx context.Context, externalID
 		return nil, err
 	}
 	defer zeroBytes(token)
-	authorization := "Bearer " + string(token)
 	result := make([]RepositoryRef, 0, repositoryPageSize)
 	for page := 1; page <= maxRepositoryPages; page++ {
-		body, listErr := c.do(ctx, http.MethodGet, fmt.Sprintf(
+		body, listErr := c.doWithToken(ctx, http.MethodGet, fmt.Sprintf(
 			"%s/installation/repositories?per_page=%d&page=%d",
 			c.apiBase, repositoryPageSize, page,
-		), authorization, nil, "")
+		), token, nil, "")
 		if listErr != nil {
 			return nil, listErr
 		}
@@ -242,15 +241,16 @@ func (c *AppClient) mint(
 	if err != nil {
 		return nil, time.Time{}, err
 	}
+	defer zeroBytes(body)
 	var response struct {
-		Token     string    `json:"token"`
-		ExpiresAt time.Time `json:"expires_at"`
+		Token     secretJSONBytes `json:"token"`
+		ExpiresAt time.Time       `json:"expires_at"`
 	}
 	if err := json.Unmarshal(body, &response); err != nil {
 		return nil, time.Time{}, errors.New("cloud scm: decode github installation token")
 	}
 	token := []byte(response.Token)
-	response.Token = ""
+	response.Token = nil
 	if !validInstallationToken(token) || !response.ExpiresAt.After(time.Now().UTC()) {
 		zeroBytes(token)
 		return nil, time.Time{}, errors.New("cloud scm: github returned an unusable installation token")
@@ -274,20 +274,20 @@ func (c *AppClient) VerifyUserInstallation(ctx context.Context, code string, ext
 	if err != nil {
 		return err
 	}
+	defer zeroBytes(body)
 	var exchange struct {
-		AccessToken string `json:"access_token"`
+		AccessToken secretJSONBytes `json:"access_token"`
 	}
-	if err := json.Unmarshal(body, &exchange); err != nil || strings.TrimSpace(exchange.AccessToken) == "" {
+	if err := json.Unmarshal(body, &exchange); err != nil || !validGitHubUserToken(exchange.AccessToken) {
 		return ErrInstallationNotOwned
 	}
 	token := []byte(exchange.AccessToken)
-	exchange.AccessToken = ""
+	exchange.AccessToken = nil
 	defer zeroBytes(token)
-	authorization := "Bearer " + string(token)
 	for page := 1; page <= maxRepositoryPages; page++ {
-		payload, listErr := c.do(ctx, http.MethodGet, fmt.Sprintf(
+		payload, listErr := c.doWithToken(ctx, http.MethodGet, fmt.Sprintf(
 			"%s/user/installations?per_page=%d&page=%d", c.apiBase, repositoryPageSize, page,
-		), authorization, nil, "")
+		), token, nil, "")
 		if listErr != nil {
 			return listErr
 		}
@@ -309,6 +309,37 @@ func (c *AppClient) VerifyUserInstallation(ctx context.Context, code string, ext
 		}
 	}
 	return ErrInstallationNotOwned
+}
+
+// secretJSONBytes decodes a bounded unescaped JSON string directly into
+// mutable storage. GitHub tokens are ASCII and never require JSON escapes.
+type secretJSONBytes []byte
+
+func (value *secretJSONBytes) UnmarshalJSON(encoded []byte) error {
+	if len(encoded) < 2 || len(encoded) > maxInstallationTokenBytes+2 || encoded[0] != '"' || encoded[len(encoded)-1] != '"' {
+		return errors.New("cloud scm: secret token JSON value is invalid")
+	}
+	decoded := encoded[1 : len(encoded)-1]
+	for _, character := range decoded {
+		if character < 0x21 || character > 0x7e || character == '\\' || character == '"' {
+			return errors.New("cloud scm: secret token JSON value is invalid")
+		}
+	}
+	*value = append((*value)[:0], decoded...)
+	return nil
+}
+
+func validGitHubUserToken(token []byte) bool {
+	if len(token) <= 4 || len(token) > maxInstallationTokenBytes ||
+		(!bytes.HasPrefix(token, []byte("gho_")) && !bytes.HasPrefix(token, []byte("ghu_"))) {
+		return false
+	}
+	for _, character := range token[4:] {
+		if (character < 'a' || character > 'z') && (character < 'A' || character > 'Z') && (character < '0' || character > '9') {
+			return false
+		}
+	}
+	return true
 }
 
 type providerStatusError struct{ status int }
@@ -340,7 +371,7 @@ func (c *AppClient) do(
 	if err != nil {
 		return nil, fmt.Errorf("cloud scm: github request failed: %w", err)
 	}
-	defer response.Body.Close()
+	defer func() { _ = response.Body.Close() }()
 	limited := io.LimitReader(response.Body, maxProviderResponseBytes+1)
 	payload, err := io.ReadAll(limited)
 	if err != nil {
@@ -355,13 +386,25 @@ func (c *AppClient) do(
 	return payload, nil
 }
 
+func (c *AppClient) doWithToken(
+	ctx context.Context,
+	method, target string,
+	token, body []byte,
+	contentType string,
+) ([]byte, error) {
+	// net/http requires an immutable header string. Keep that unavoidable copy
+	// local to one request rather than retaining it across pagination.
+	authorization := "Bearer " + string(token)
+	return c.do(ctx, method, target, authorization, body, contentType)
+}
+
 func normalizeProviderBase(raw, fallback string) (string, error) {
 	value := strings.TrimRight(valueOr(raw, fallback), "/")
 	parsed, err := url.Parse(value)
 	if err != nil || parsed.Hostname() == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
 		return "", errors.New("base URL is invalid")
 	}
-	if parsed.Scheme != "https" && !(parsed.Scheme == "http" && isLoopbackHost(parsed.Hostname())) {
+	if parsed.Scheme != "https" && (parsed.Scheme != "http" || !isLoopbackHost(parsed.Hostname())) {
 		return "", errors.New("base URL must use HTTPS")
 	}
 	return value, nil

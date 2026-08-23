@@ -136,6 +136,21 @@ func TestCloudMigrationsAreTenantScoped(t *testing.T) {
 			t.Fatalf("SCM observation migration does not contain %q", required)
 		}
 	}
+	for name, migrationSQL := range map[string]string{
+		"00030": installationSQL,
+		"00031": webhookSQL,
+		"00032": observationSQL,
+	} {
+		grant := "GRANT CREATE ON SCHEMA public TO ao_cloud_scm"
+		revoke := "REVOKE CREATE ON SCHEMA public FROM ao_cloud_scm"
+		if strings.Count(migrationSQL, grant) != 1 || strings.Count(migrationSQL, revoke) != 1 ||
+			strings.Index(migrationSQL, grant) >= strings.Index(migrationSQL, revoke) {
+			t.Fatalf("SCM migration %s does not scope schema CREATE to one ownership transfer", name)
+		}
+		if strings.Contains(migrationSQL, "GRANT USAGE, CREATE ON SCHEMA public TO ao_cloud_scm") {
+			t.Fatalf("SCM migration %s combines durable schema usage with temporary CREATE", name)
+		}
+	}
 	authRLSMigration, err := migrationFS.ReadFile("migrations/00005_auth_rls.sql")
 	if err != nil {
 		t.Fatal(err)

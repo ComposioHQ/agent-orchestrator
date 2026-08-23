@@ -2,6 +2,9 @@ package scm
 
 import (
 	"encoding/json"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -13,8 +16,7 @@ import (
 
 func TestAppClientInstallationTokenRepositoriesAndOwnership(t *testing.T) {
 	expiresAt := time.Now().UTC().Add(time.Hour).Truncate(time.Second)
-	var server *httptest.Server
-	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
 		case "/app/installations/55":
@@ -118,6 +120,7 @@ func TestAppClientRejectsUnusableInstallationTokens(t *testing.T) {
 	for _, testCase := range []struct{ name, response string }{
 		{name: "empty", response: `{"token":"","expires_at":"2099-01-01T00:00:00Z"}`},
 		{name: "expired", response: `{"token":"ghs_expired","expires_at":"2000-01-01T00:00:00Z"}`},
+		{name: "escaped", response: `{"token":"ghs_bad\u0041","expires_at":"2099-01-01T00:00:00Z"}`},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -141,6 +144,28 @@ func TestAppClientRejectsUnusableInstallationTokens(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestGitHubAppSecretJSONFieldsAreMutableBytes(t *testing.T) {
+	file, err := parser.ParseFile(token.NewFileSet(), "githubapp.go", nil, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ast.Inspect(file, func(node ast.Node) bool {
+		field, ok := node.(*ast.Field)
+		if !ok || field.Tag == nil {
+			return true
+		}
+		tag := field.Tag.Value
+		if !strings.Contains(tag, `json:"token"`) && !strings.Contains(tag, `json:"access_token"`) {
+			return true
+		}
+		fieldType, ok := field.Type.(*ast.Ident)
+		if !ok || fieldType.Name != "secretJSONBytes" {
+			t.Errorf("secret JSON field %s must use secretJSONBytes", tag)
+		}
+		return true
+	})
 }
 
 func TestAppClientRejectsUntrustedProviderBases(t *testing.T) {
