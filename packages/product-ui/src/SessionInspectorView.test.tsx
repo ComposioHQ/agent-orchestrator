@@ -51,6 +51,12 @@ function setRenderedOverflow(
   fireEvent(window, new Event("resize"));
 }
 
+function expandFirstReviewGroup() {
+  const row = screen.getAllByTestId("review-pr-row")[0]!;
+  if (row.getAttribute("aria-expanded") === "false") fireEvent.click(row);
+  return row;
+}
+
 const tabs = [
   { id: "summary" as const, icon: <svg />, label: "Summary" },
   { id: "reviews" as const, icon: <svg />, label: "Reviews" },
@@ -278,7 +284,11 @@ describe("portable inspector presentations", () => {
     );
 
     const row = screen.getByTestId("review-pr-row");
-    expect(row).not.toHaveAttribute("aria-expanded");
+    expect(row).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByText("Looks good.")).not.toBeInTheDocument();
+    expect(screen.queryByText("Ship it.")).not.toBeInTheDocument();
+    fireEvent.click(row);
+    expect(row).toHaveAttribute("aria-expanded", "true");
     expect(screen.getByText("Looks good.")).toBeInTheDocument();
     expect(screen.getByText("Ship it.")).toBeInTheDocument();
     expect(screen.queryByRole("button", {
@@ -325,6 +335,7 @@ describe("portable inspector presentations", () => {
       />
     );
     const { rerender } = render(view([olderReview]));
+    expandFirstReviewGroup();
     expect(screen.getByText(olderBody)).toBeInTheDocument();
 
     rerender(
@@ -384,11 +395,14 @@ describe("portable inspector presentations", () => {
       />,
     );
 
+    expandFirstReviewGroup();
     expect(screen.getByText("Please take another pass after fixes land.")).toBeInTheDocument();
     const reviewToggle = screen.getByRole("button", { name: /maya.*Changes requested/i });
     const actionMenu = screen.getByRole("button", { name: "Review actions" });
+    const detailsToggle = screen.getByRole("button", { name: "Show more" });
     expect(screen.getByTestId("external-review-header")).toContainElement(actionMenu);
     expect(reviewToggle).not.toContainElement(actionMenu);
+    expect(reviewToggle).not.toContainElement(detailsToggle);
     expect(reviewToggle).toHaveAttribute("aria-expanded", "false");
     fireEvent.click(actionMenu);
     expect(screen.getByRole("link", { name: "Open in System Browser" })).toBeInTheDocument();
@@ -403,8 +417,9 @@ describe("portable inspector presentations", () => {
         name: "Show more",
       }),
     ).not.toBeInTheDocument();
-    fireEvent.click(reviewToggle);
+    fireEvent.click(detailsToggle);
     expect(reviewToggle).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByRole("button", { name: "Show less" })).toBeInTheDocument();
     expect(screen.getByText("Resolved comments · 1")).toBeInTheDocument();
   });
 
@@ -523,6 +538,7 @@ describe("portable inspector presentations", () => {
     expect(
       screen.queryByTestId("github-inline-comments"),
     ).not.toBeInTheDocument();
+    expandFirstReviewGroup();
     expect(
       screen.getByRole("button", { name: /maya.*Commented/i }),
     ).toHaveAttribute("aria-expanded", "false");
@@ -638,6 +654,7 @@ describe("portable inspector presentations", () => {
       />,
     );
 
+    expandFirstReviewGroup();
     fireEvent.click(screen.getByRole("button", { name: /maya.*Commented/i }));
     fireEvent.click(screen.getByRole("button", { name: "Comment actions" }));
     fireEvent.click(
@@ -701,6 +718,7 @@ describe("portable inspector presentations", () => {
       />,
     );
 
+    expandFirstReviewGroup();
     fireEvent.click(screen.getByRole("button", { name: /maya.*Commented/i }));
     expect(screen.getByText("Resolved comments · 1")).toBeInTheDocument();
     expect(
@@ -781,6 +799,7 @@ describe("portable inspector presentations", () => {
       />,
     );
 
+    expandFirstReviewGroup();
     fireEvent.click(screen.getByRole("button", { name: /maya.*Commented/i }));
     const actionButtons = screen.getAllByRole("button", { name: "Comment actions" });
     fireEvent.click(actionButtons[0]!);
@@ -833,6 +852,7 @@ describe("portable inspector presentations", () => {
       />,
     );
 
+    expandFirstReviewGroup();
     const summary = screen.getByTestId("review-run-summary");
     setRenderedOverflow(summary, "vertical", false);
     expect(screen.queryByRole("button", { name: "Show more" })).not.toBeInTheDocument();
@@ -876,6 +896,7 @@ describe("portable inspector presentations", () => {
       />,
     );
 
+    expandFirstReviewGroup();
     fireEvent.click(screen.getByRole("button", { name: /maya.*Commented/i }));
     const preview = screen.getByText("A short comment");
     setRenderedOverflow(preview, "horizontal", false);
@@ -918,6 +939,7 @@ describe("portable inspector presentations", () => {
       />,
     );
 
+    expandFirstReviewGroup();
     const reviewActions = screen.getByRole("button", { name: "Review actions" });
     expect(reviewActions).toHaveClass("border");
     fireEvent.click(reviewActions);

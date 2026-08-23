@@ -543,10 +543,9 @@ export function InspectorReviewsView({
 	return (
 		<InspectorSection surface={false} title={labels.reviews} titleClassName="text-foreground [&>span:first-child]:text-xs [&>span:first-child]:tracking-wide">
 			<div className="flex flex-col gap-2">
-				{groups.map((group, index) => (
+				{groups.map((group) => (
 					<ReviewDisclosure
-						collapsible={groups.length > 1}
-						defaultOpen={index === 0 || Boolean(group.github?.unresolved)}
+						defaultOpen={false}
 						key={group.number}
 						meta={group.meta}
 						title={group.title}
@@ -992,6 +991,11 @@ function ExternalReviewCard({
 			<div className="flex min-w-0 flex-col gap-3 px-1 pt-2 text-left">
 				{body ? (
 					<ReviewMarkdownBody body={body} clamped={!open} elementRef={bodyRef} renderMarkdown={renderMarkdown} testId="github-review-summary" />
+				) : null}
+				{collapsible ? (
+					<button aria-expanded={open} className="w-fit rounded-md px-1.5 py-1 text-micro font-medium text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground" onClick={() => setOpen((current) => !current)} type="button">
+						{open ? labels.showLess : labels.showMore}
+					</button>
 				) : null}
 				{open ? <GithubInlineComments comments={openComments} externalLink={externalLink} labels={labels} onResolveInlineComment={onResolveInlineComment} onSendInlineComment={onSendInlineComment} onViewInlineCommentInFile={onViewInlineCommentInFile} reviewerId={entry.reviewerId} reviewUrl={entry.reviewUrl} /> : null}
 				{open && resolvedComments.length > 0 ? <ResolvedInlineComments comments={resolvedComments} externalLink={externalLink} labels={labels} onViewInlineCommentInFile={onViewInlineCommentInFile} reviewerId={entry.reviewerId} reviewUrl={entry.reviewUrl} /> : null}

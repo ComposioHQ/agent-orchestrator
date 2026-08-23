@@ -15,8 +15,12 @@ test("the Reviews tab renders the reviewer panel for a session that owns PRs", a
 	// action — never the empty state, since this session owns a PR.
 	await expect(inspector.getByText("No pull request opened yet.")).toHaveCount(0);
 	const reviewRow = inspector.getByTestId("review-pr-row");
-	await expect(reviewRow.getByText("codex")).toBeVisible();
-	await expect(reviewRow.getByText("Approved", { exact: true }).first()).toBeVisible();
+	await expect(reviewRow).toHaveAttribute("aria-expanded", "false");
+	await expect(inspector.getByText("codex", { exact: true })).toHaveCount(0);
+	await reviewRow.click();
+	await expect(reviewRow).toHaveAttribute("aria-expanded", "true");
+	await expect(inspector.getByText("codex", { exact: true })).toBeVisible();
+	await expect(inspector.getByText("Approved", { exact: true }).first()).toBeVisible();
 	await expect(inspector.getByRole("button", { name: "Re-run review" })).toBeVisible();
 	await expect(inspector.getByRole("button", { name: "Open terminal" })).toHaveCount(0);
 });
@@ -40,7 +44,6 @@ test("review content stays inside the inspector at its minimum width", async ({ 
 	const inspector = page.locator("#inspector");
 	await inspector.getByRole("tab", { name: "Reviews" }).click();
 	await expect(inspector.getByText("Review controls")).toBeVisible();
-	await expect(inspector.getByText("External reviews")).toBeVisible();
 
 	const reviewerLabel = inspector.getByText("Select reviewer agent", { exact: true });
 	const reviewerSelect = inspector.getByRole("button", { name: "Select reviewer agent" });
@@ -52,6 +55,10 @@ test("review content stays inside the inspector at its minimum width", async ({ 
 	expect(reviewerSelectBox.y).toBeGreaterThanOrEqual(reviewerLabelBox.y + reviewerLabelBox.height);
 
 	const prRow = inspector.getByTestId("review-pr-row");
+	await expect(prRow).toHaveAttribute("aria-expanded", "false");
+	await prRow.click();
+	await expect(prRow).toHaveAttribute("aria-expanded", "true");
+	await expect(inspector.getByText("External reviews")).toBeVisible();
 	const [prTitleBox, prVerdictBox] = await Promise.all([
 		prRow.getByText("Terminal polish feedback", { exact: true }).boundingBox(),
 		prRow.getByText("Changes requested", { exact: true }).first().boundingBox(),
