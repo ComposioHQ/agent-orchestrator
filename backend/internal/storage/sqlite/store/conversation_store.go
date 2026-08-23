@@ -545,22 +545,16 @@ func (s *Store) AppendUserMessage(
 	}
 
 	err = s.inTx(ctx, "append user message", func(q *gen.Queries) error {
-		owner, err := q.GetSession(ctx, session)
-		if err != nil {
-			return fmt.Errorf("load conversation session: %w", err)
-		}
-		// Legacy/import paths can predate generation claims. Once a generation is
-		// claimed it becomes a hard fence; an empty stored value keeps those
-		// existing append callers compatible.
-		if owner.ControllerGeneration != "" && owner.ControllerGeneration != generation {
-			return nil
-		}
 		sequence, err := q.NextConversationSequence(ctx, gen.NextConversationSequenceParams{
 			UpdatedAt: now,
 			ID:        conversationID,
 		})
 		if err != nil {
 			return fmt.Errorf("allocate sequence: %w", err)
+		}
+		turnSequence, err := q.NextConversationTurnSequence(ctx, conversationID)
+		if err != nil {
+			return fmt.Errorf("allocate turn sequence: %w", err)
 		}
 
 		if err := q.InsertConversationTurn(ctx, gen.InsertConversationTurnParams{
@@ -570,6 +564,7 @@ func (s *Store) AppendUserMessage(
 			ControllerGeneration: generation,
 			State:                domain.TurnStateQueued,
 			RequestedAt:          now,
+			Sequence:             turnSequence,
 		}); err != nil {
 			return fmt.Errorf("insert turn: %w", err)
 		}
@@ -590,13 +585,12 @@ func (s *Store) AppendUserMessage(
 		}); err != nil {
 			return err
 		}
-		created = true
 		return nil
 	})
 	if err != nil {
 		return false, err
 	}
-	return created, nil
+	return true, nil
 }
 
 // AdoptProviderTurn records a turn the provider started that AO never dispatched.
@@ -613,20 +607,27 @@ func (s *Store) AdoptProviderTurn(
 	generation, turnID, providerTurnID string,
 	now time.Time,
 ) error {
-	q, unlock := s.conversationWriter(ctx)
-	defer unlock()
-	if err := q.AdoptProviderConversationTurn(ctx, gen.AdoptProviderConversationTurnParams{
-		ID:                   turnID,
-		ConversationID:       conversationID,
-		HandledBySessionID:   session,
-		ProviderTurnID:       providerTurnID,
-		ControllerGeneration: generation,
-		RequestedAt:          now,
-		StartedAt:            sql.NullTime{Time: now, Valid: true},
-	}); err != nil {
-		return fmt.Errorf("adopt provider turn %s: %w", providerTurnID, err)
-	}
-	return nil
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	return s.inTx(ctx, "adopt provider turn", func(q *gen.Queries) error {
+		sequence, err := q.NextConversationTurnSequence(ctx, conversationID)
+		if err != nil {
+			return fmt.Errorf("allocate turn sequence: %w", err)
+		}
+		if err := q.AdoptProviderConversationTurn(ctx, gen.AdoptProviderConversationTurnParams{
+			ID:                   turnID,
+			ConversationID:       conversationID,
+			HandledBySessionID:   session,
+			ProviderTurnID:       providerTurnID,
+			ControllerGeneration: generation,
+			RequestedAt:          now,
+			StartedAt:            sql.NullTime{Time: now, Valid: true},
+			Sequence:             sequence,
+		}); err != nil {
+			return fmt.Errorf("adopt provider turn %s: %w", providerTurnID, err)
+		}
+		return nil
+	})
 }
 
 // AppendImportedUserMessage records a user prompt recovered from the provider's

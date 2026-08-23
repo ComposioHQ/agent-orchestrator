@@ -121,6 +121,7 @@ type Conversation struct {
 	UsageCost                  sql.NullFloat64
 	UsageCurrency              sql.NullString
 	ActiveBranchID             string
+	LatestTurnSequence         int64
 }
 
 type ConversationActivity struct {
@@ -203,6 +204,7 @@ type ConversationTurn struct {
 	BranchID             string
 	PromotionStartedAt   sql.NullTime
 	PromotedToTurnID     sql.NullString
+	Sequence             int64
 }
 
 type ModelUsageEvent struct {

@@ -62,7 +62,7 @@ func runConversations(t *testing.T, newHarness Factory) {
 		}
 	})
 
-	t.Run("stale generation cannot project", func(t *testing.T) {
+	t.Run("turn order is monotonic when timestamps tie", func(t *testing.T) {
 		h := newHarness(t)
 		ctx := h.ctx()
 		mustUpsertProject(t, h, newProject("acme", "/repos/acme"))
@@ -70,23 +70,31 @@ func runConversations(t *testing.T, newHarness Factory) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := h.Sessions.ClaimChatControllerGeneration(ctx, session.ID, "current", updatedAt); err != nil {
+		if err := h.Sessions.ClaimChatControllerGeneration(ctx, session.ID, "gen-1", updatedAt); err != nil {
 			t.Fatal(err)
 		}
 		conversation, err := h.Conversations.CreateConversation(ctx, "conversation-1", domain.ConversationScopeSession, session.ProjectID, session.ID, createdAt)
 		if err != nil {
 			t.Fatal(err)
 		}
-		created, err := h.Conversations.AppendUserMessage(ctx, conversation.ID, session.ID, "stale", domain.ConversationMessage{ID: "message-1", ClientMessageID: "client-1", Origin: domain.MessageOriginHuman, Text: "leak"}, "turn-1", updatedAt)
-		if err != nil || created {
-			t.Fatalf("stale append = %v, %v", created, err)
+		for i, id := range []string{"turn-z", "turn-a"} {
+			_, err := h.Conversations.AppendUserMessage(ctx, conversation.ID, session.ID, "gen-1", domain.ConversationMessage{
+				ID: "message-" + id, ClientMessageID: "client-" + id,
+				Origin: domain.MessageOriginHuman, Text: id,
+			}, id, updatedAt)
+			if err != nil {
+				t.Fatalf("append turn %d: %v", i, err)
+			}
 		}
 		snapshot, err := h.Conversations.LoadConversationSnapshot(ctx, conversation.ID)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if len(snapshot.Messages) != 0 {
-			t.Fatalf("stale generation wrote %#v", snapshot.Messages)
+		if len(snapshot.Turns) != 2 || snapshot.Turns[0].ID != "turn-z" || snapshot.Turns[1].ID != "turn-a" {
+			t.Fatalf("turn order = %#v", snapshot.Turns)
+		}
+		if _, err := h.Conversations.LoadConversationSnapshot(ctx, "missing"); !errors.Is(err, domain.ErrNoConversation) {
+			t.Fatalf("missing conversation = %v", err)
 		}
 	})
 
