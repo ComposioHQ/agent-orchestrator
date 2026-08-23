@@ -17,6 +17,12 @@ var runtimeTables = []string{
 	"ao_org_memberships",
 	"ao_cloud_workspaces",
 	"ao_cloud_session_runtimes",
+	"ao_projects",
+	"ao_workspace_repos",
+	"ao_sessions",
+	"ao_session_worktrees",
+	"ao_conversations",
+	"ao_conversation_provider_events",
 }
 
 func qualifiedRuntimeTables() string {
