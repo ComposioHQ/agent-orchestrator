@@ -65,9 +65,22 @@ describe("ConnectMobileModal device roster mounting", () => {
 
 	test("mounts the device roster once the bridge is enabled", async () => {
 		mobileStatus.enabled = true;
+		// The section renders nothing when the roster is empty, so give it one
+		// device — this test is about mounting/fetching, not the empty state.
+		devices.devices = [
+			{
+				installId: "device-1",
+				deviceName: "Test iPhone",
+				muted: false,
+				live: true,
+				notificationsEnabled: true,
+				lastSeenAt: new Date().toISOString(),
+			},
+		];
 		renderModal();
 
 		expect(await screen.findByRole("heading", { name: "Devices" })).toBeInTheDocument();
 		await waitFor(() => expect(get).toHaveBeenCalledWith("/api/v1/mobile/devices"));
+		devices.devices = [];
 	});
 });

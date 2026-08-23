@@ -133,6 +133,10 @@ export function MobileDevicesSection() {
 	// (an unreadable on-disk registry) that showing a stale list next to it would
 	// be misleading.
 	const hasData = query.data !== undefined;
+
+	// No paired devices (or still loading with nothing cached) → no section at
+	// all. Errors and an unreadable registry still render so they stay visible.
+	if (!registryUnavailable && !queryError && devices.length === 0) return null;
 	const mutationError =
 		(mute.error instanceof Error && mute.error.message) ||
 		(remove.error instanceof Error && remove.error.message) ||

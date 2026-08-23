@@ -48,7 +48,7 @@ export function StyledQRCode({
 				dotsOptions: { color, type: "rounded" },
 				cornersSquareOptions: { color, type: "extra-rounded" },
 				cornersDotOptions: { color, type: "dot" },
-				imageOptions: { imageSize: 0.35, margin: 4, hideBackgroundDots: true, crossOrigin: "anonymous" },
+				imageOptions: { imageSize: 0.45, margin: 8, hideBackgroundDots: true, crossOrigin: "anonymous" },
 			});
 			el.replaceChildren();
 			qr.append(el);

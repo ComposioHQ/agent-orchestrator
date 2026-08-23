@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { useEffect, useRef, useState } from "react";
-import { ArrowUpRight, Check, Copy, Loader2 } from "lucide-react";
+import { ArrowUpRight, Check, Copy, Loader2, RotateCcw } from "lucide-react";
 import { motion } from "motion/react";
 import { RadioGroup } from "radix-ui";
 import { apiClient, apiErrorMessage } from "../../lib/api-client";
@@ -319,6 +319,23 @@ export function ConnectMobileContent({ active }: { active: boolean }) {
 									>
 										{copied ? <Check className="size-3.5" aria-hidden="true" /> : <Copy className="size-3.5" aria-hidden="true" />}
 									</button>
+									<button
+										type="button"
+										aria-label={t("mobile.regenerate")}
+										title={t("mobile.regenerate")}
+										className="ml-0.5 inline-flex size-5 items-center justify-center align-middle text-settings-muted transition-colors hover:text-settings-label disabled:opacity-50"
+										disabled={busy}
+										onClick={() => {
+											clearActionErrors();
+											regenerate.mutate();
+										}}
+									>
+										{regenerate.isPending ? (
+											<Loader2 className="size-3.5 animate-spin" aria-hidden="true" />
+										) : (
+											<RotateCcw className="size-3.5" aria-hidden="true" />
+										)}
+									</button>
 								</li>
 							</>
 						)}
@@ -398,22 +415,7 @@ export function ConnectMobileContent({ active }: { active: boolean }) {
 						)}
 					</div>
 
-					{showRealQR ? (
-						<Button
-							type="button"
-							variant="footer"
-							className="w-full rounded-md"
-							onClick={() => {
-								clearActionErrors();
-								regenerate.mutate();
-							}}
-							disabled={busy}
-						>
-							{regenerate.isPending && <Loader2 className="mr-2 size-4 animate-spin" aria-hidden="true" />}
-							{t("mobile.regenerate")}
-						</Button>
-					) : null}
-				</div>
+					</div>
 			</div>
 		</div>
 	);

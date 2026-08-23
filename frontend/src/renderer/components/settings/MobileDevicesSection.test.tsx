@@ -75,10 +75,12 @@ describe("MobileDevicesSection", () => {
 		await waitFor(() => expect(del).toHaveBeenCalledTimes(1));
 	});
 
-	it("shows an empty state when nothing is paired", async () => {
+	it("renders nothing when no devices are paired", async () => {
 		vi.spyOn(apiClient, "GET").mockResolvedValue({ data: { devices: [] } } as never);
 		renderSection();
-		expect(await screen.findByText(/No devices paired yet/i)).toBeInTheDocument();
+		await waitFor(() => expect(apiClient.GET).toHaveBeenCalled());
+		expect(screen.queryByRole("heading", { name: "Devices" })).not.toBeInTheDocument();
+		expect(screen.queryByText(/No devices paired yet/i)).not.toBeInTheDocument();
 	});
 
 	it("shows a distinct message when the device registry is unavailable, not the empty state", async () => {
