@@ -123,8 +123,8 @@ if [[ -z "$runtime_password" ]]; then
 fi
 owner_password_encoded="$(jq -rn --arg value "$owner_password" '$value|@uri')"
 runtime_password_encoded="$(jq -rn --arg value "$runtime_password" '$value|@uri')"
-migration_url="postgres://${owner_user}:${owner_password_encoded}@${database_address}:5432/${database_name}?sslmode=require"
-runtime_url="postgres://${runtime_user}:${runtime_password_encoded}@${database_address}:5432/${database_name}?sslmode=require"
+migration_url="postgres://${owner_user}:${owner_password_encoded}@${database_address}:5432/${database_name}?sslmode=verify-full&sslrootcert=system"
+runtime_url="postgres://${runtime_user}:${runtime_password_encoded}@${database_address}:5432/${database_name}?sslmode=verify-full&sslrootcert=system"
 jq -n \
   --arg migrationUrl "$migration_url" \
   --arg runtimeUrl "$runtime_url" \
