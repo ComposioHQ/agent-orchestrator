@@ -1596,11 +1596,21 @@ describe("Sidebar", () => {
 		expect(screen.queryByLabelText("Open merged terminated task")).not.toBeInTheDocument();
 	});
 
-	it("does not render the restart-to-update row unless an update is downloaded", async () => {
+	it("shows update activity before an available update finishes downloading", async () => {
 		updateStatusMock.mockResolvedValue({ state: "available", version: "9.9.9" });
 		renderSidebar();
 
 		await waitFor(() => expect(updateStatusMock).toHaveBeenCalled());
+		expect(screen.getByText("Update available (v9.9.9).")).toBeInTheDocument();
+		expect(screen.queryByLabelText(/Restart to install update/)).not.toBeInTheDocument();
+	});
+
+	it("keeps showing update activity while the automatic download is in progress", async () => {
+		updateStatusMock.mockResolvedValue({ state: "downloading", version: "9.9.9", percent: 42 });
+		renderSidebar();
+
+		await waitFor(() => expect(updateStatusMock).toHaveBeenCalled());
+		expect(screen.getByText("Downloading… 42%")).toBeInTheDocument();
 		expect(screen.queryByLabelText(/Restart to install update/)).not.toBeInTheDocument();
 	});
 

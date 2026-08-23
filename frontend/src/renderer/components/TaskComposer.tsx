@@ -5,7 +5,7 @@ import {
 	type TaskComposerModelCatalog,
 	type TaskComposerModelControl,
 } from "@aoagents/product-ui";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Loader2 } from "lucide-react";
 import { RequiredAgentField } from "./CreateProjectAgentSheet";
@@ -69,6 +69,12 @@ export function TaskComposer({
 	autoFocusTitle,
 }: TaskComposerProps) {
 	const { t } = useTranslation();
+	const taskPlaceholder = useMemo(() => {
+		const placeholders = t("newTask.taskPlaceholders" as never, { returnObjects: true }) as string[];
+		return Array.isArray(placeholders)
+			? (placeholders[Math.floor(Math.random() * placeholders.length)] ?? "")
+			: "";
+	}, [t]);
 	const queryClient = useQueryClient();
 	const [prompt, setPrompt] = useState("");
 	const [model, setModel] = useState("");
@@ -283,7 +289,7 @@ export function TaskComposer({
 				start: t("newTask.start"),
 				starting: t("newTask.starting"),
 				task: t("newTask.task"),
-				taskPlaceholder: t("newTask.taskPlaceholder"),
+				taskPlaceholder,
 			}}
 			agent={{
 				label: t("newTask.agent"),

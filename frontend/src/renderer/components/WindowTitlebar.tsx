@@ -138,11 +138,7 @@ function WindowControls({
   );
 }
 
-export function WindowTitlebar({
-  onSidebarPreviewEnter,
-}: {
-  onSidebarPreviewEnter?: React.PointerEventHandler<HTMLButtonElement>;
-}) {
+export function WindowTitlebar() {
   const { t } = useTranslation();
   const { isSidebarOpen, toggleSidebar } = useUiStore();
   const router = useRouter();
@@ -191,7 +187,6 @@ export function WindowTitlebar({
         }
         className="window-titlebar__toggle"
         onClick={toggleSidebar}
-        onPointerEnter={onSidebarPreviewEnter}
         title={
           isSidebarOpen
             ? t("shell.collapseSidebarTitle")

@@ -262,6 +262,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	const [filesPoppedOut, setFilesPoppedOut] = useState(false);
 	const [reviewFileTarget, setReviewFileTarget] = useState<ReviewFileTarget | undefined>();
 	useEffect(() => setReviewFileTarget(undefined), [sessionId]);
+	const [filesFocusPath, setFilesFocusPath] = useState<string | null>(null);
 	const browserPoppedOut = browserPopOutState.sessionId === sessionId && browserPopOutState.poppedOut;
 	const [interfaceSwitchDialogOpen, setInterfaceSwitchDialogOpen] = useState(false);
 	const isNativeFullScreen = useWindowFullScreen();
@@ -614,6 +615,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 		setTerminalTarget({ kind: "worker" });
 		setBrowserPopOutState({ sessionId, poppedOut: false });
 		setFilesPoppedOut(false);
+		setFilesFocusPath(null);
 	}, [sessionId]);
 
 	// Route props change one render before the passive reset above. Reject the
@@ -653,6 +655,16 @@ export function SessionView({ sessionId }: SessionViewProps) {
 		setInspectorViewForSession(sessionId, "files");
 		setInspectorOpenForSession(sessionId, true);
 	}, [sessionId, setInspectorOpenForSession, setInspectorViewForSession]);
+
+	const handleOpenFile = useCallback(
+		(path: string) => {
+			handleOpenFiles();
+			setFilesFocusPath(path);
+		},
+		[handleOpenFiles, setFilesFocusPath],
+	);
+
+	const handleFilesFocusConsumed = useCallback(() => setFilesFocusPath(null), []);
 
 	const handleToggleFilesPopOut = useCallback(
 		(next: boolean) => {
@@ -864,6 +876,8 @@ export function SessionView({ sessionId }: SessionViewProps) {
 									shellError={
 										openShellTerminal.error ? apiErrorMessage(openShellTerminal.error) : undefined
 									}
+									onOpenFiles={handleOpenFiles}
+									onOpenFile={handleOpenFile}
 								/>
 							) : (
 								<CenterPane
@@ -916,7 +930,13 @@ export function SessionView({ sessionId }: SessionViewProps) {
 							browserPoppedOut={browserPoppedOut}
 							filesView={
 								session ? (
-									<SessionFilesView onToggleMaximized={handleToggleFilesPopOut} revealFile={reviewFileTarget} sessionId={session.id} />
+									<SessionFilesView
+										focusPath={filesFocusPath}
+										onFocusPathConsumed={handleFilesFocusConsumed}
+										onToggleMaximized={handleToggleFilesPopOut}
+										revealFile={reviewFileTarget}
+										sessionId={session.id}
+									/>
 								) : null
 							}
 							isInspectorVisible={inspectorPanelVisible}
