@@ -351,7 +351,7 @@ export function ChatWorkspace({
 				event.altKey ||
 				event.ctrlKey ||
 				event.metaKey ||
-				!turn ||
+				turn?.state !== "running" ||
 				hasPendingApproval ||
 				!onInterrupt
 			)
