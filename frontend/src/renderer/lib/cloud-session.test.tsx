@@ -36,7 +36,7 @@ const ACCOUNT = {
 
 function resetStore(): void {
 	useCloudSettingsStore.setState({
-		availability: { available: false, enabled: false, apiBaseUrl: "" },
+		availability: { available: false, enabled: false },
 		loaded: false,
 		saving: false,
 		saveError: false,
@@ -55,37 +55,27 @@ describe("useCloudSession", () => {
 	});
 
 	it("reports nothing and never asks for an account while early access is off", async () => {
-		bridge.getAvailability.mockResolvedValue({ available: true, enabled: false, apiBaseUrl: "" });
+		bridge.getAvailability.mockResolvedValue({ available: true, enabled: false });
 
 		const { result } = renderHook(() => useCloudSession());
 
 		await waitFor(() => expect(result.current.available).toBe(true));
 		expect(result.current.enabled).toBe(false);
-		expect(result.current.apiBaseUrl).toBe("");
 		expect(bridge.getSession).not.toHaveBeenCalled();
 	});
 
 	it("loads the signed-in account once early access is on", async () => {
-		bridge.getAvailability.mockResolvedValue({
-			available: true,
-			enabled: true,
-			apiBaseUrl: "https://cloud.example",
-		});
+		bridge.getAvailability.mockResolvedValue({ available: true, enabled: true });
 		bridge.getSession.mockResolvedValue(ACCOUNT);
 
 		const { result } = renderHook(() => useCloudSession());
 
 		await waitFor(() => expect(result.current.status).toBe("authenticated"));
 		expect(result.current.session?.user.email).toBe("dev@example.com");
-		expect(result.current.apiBaseUrl).toBe("https://cloud.example");
 	});
 
 	it("treats a failed account read as signed out rather than surfacing an error", async () => {
-		bridge.getAvailability.mockResolvedValue({
-			available: true,
-			enabled: true,
-			apiBaseUrl: "https://cloud.example",
-		});
+		bridge.getAvailability.mockResolvedValue({ available: true, enabled: true });
 		bridge.getSession.mockRejectedValue(new Error("offline"));
 
 		const { result } = renderHook(() => useCloudSession());
@@ -95,11 +85,7 @@ describe("useCloudSession", () => {
 	});
 
 	it("adopts the account main returns from sign-in", async () => {
-		bridge.getAvailability.mockResolvedValue({
-			available: true,
-			enabled: true,
-			apiBaseUrl: "https://cloud.example",
-		});
+		bridge.getAvailability.mockResolvedValue({ available: true, enabled: true });
 		bridge.getSession.mockResolvedValue(null);
 		bridge.signIn.mockResolvedValue(ACCOUNT);
 
@@ -114,11 +100,7 @@ describe("useCloudSession", () => {
 	});
 
 	it("stays signed out when main reports a cancelled sign-in", async () => {
-		bridge.getAvailability.mockResolvedValue({
-			available: true,
-			enabled: true,
-			apiBaseUrl: "https://cloud.example",
-		});
+		bridge.getAvailability.mockResolvedValue({ available: true, enabled: true });
 		bridge.getSession.mockResolvedValue(null);
 		bridge.signIn.mockResolvedValue(null);
 
@@ -133,11 +115,7 @@ describe("useCloudSession", () => {
 	});
 
 	it("clears the account on sign-out", async () => {
-		bridge.getAvailability.mockResolvedValue({
-			available: true,
-			enabled: true,
-			apiBaseUrl: "https://cloud.example",
-		});
+		bridge.getAvailability.mockResolvedValue({ available: true, enabled: true });
 		bridge.getSession.mockResolvedValue(ACCOUNT);
 		bridge.signOut.mockResolvedValue(undefined);
 
@@ -162,7 +140,7 @@ describe("cloud settings store", () => {
 	it("re-reads availability from main instead of trusting the toggle", async () => {
 		bridge.setUiSettings.mockResolvedValue({ locale: "en", cloudEnabled: true });
 		// Main refuses to enable a build with no control plane configured.
-		bridge.getAvailability.mockResolvedValue({ available: false, enabled: false, apiBaseUrl: "" });
+		bridge.getAvailability.mockResolvedValue({ available: false, enabled: false });
 
 		await useCloudSettingsStore.getState().setEnabled(true);
 
@@ -181,11 +159,7 @@ describe("cloud settings store", () => {
 	});
 
 	it("loads availability once for concurrent readers", async () => {
-		bridge.getAvailability.mockResolvedValue({
-			available: true,
-			enabled: true,
-			apiBaseUrl: "https://cloud.example",
-		});
+		bridge.getAvailability.mockResolvedValue({ available: true, enabled: true });
 
 		await Promise.all([
 			useCloudSettingsStore.getState().load(),
@@ -194,6 +168,6 @@ describe("cloud settings store", () => {
 		]);
 
 		expect(bridge.getAvailability).toHaveBeenCalledTimes(1);
-		expect(useCloudSettingsStore.getState().availability.apiBaseUrl).toBe("https://cloud.example");
+		expect(useCloudSettingsStore.getState().availability).toEqual({ available: true, enabled: true });
 	});
 });

@@ -135,7 +135,7 @@ beforeEach(async () => {
 			...settings,
 		}),
 	);
-	getCloudAvailability.mockResolvedValue({ available: false, enabled: false, apiBaseUrl: "" });
+	getCloudAvailability.mockResolvedValue({ available: false, enabled: false });
 	updGetStatus.mockResolvedValue({ state: "idle" });
 	updCheck.mockResolvedValue(undefined);
 	updReturnHome.mockResolvedValue(undefined);
@@ -157,7 +157,7 @@ beforeEach(async () => {
 	useSoundNotificationsStore.setState({ enabled: true, loaded: false, saving: false, saveError: false });
 	useUiStore.setState({ developerMode: false });
 	useCloudSettingsStore.setState({
-		availability: { available: false, enabled: false, apiBaseUrl: "" },
+		availability: { available: false, enabled: false },
 		loaded: false,
 		saving: false,
 		saveError: false,
@@ -201,7 +201,7 @@ describe("GlobalSettingsForm", () => {
 	});
 
 	it("keeps AO Cloud early access hidden until Developer Mode is on", async () => {
-		getCloudAvailability.mockResolvedValue({ available: true, enabled: false, apiBaseUrl: "" });
+		getCloudAvailability.mockResolvedValue({ available: true, enabled: false });
 		const user = userEvent.setup();
 		renderForm();
 
@@ -215,7 +215,7 @@ describe("GlobalSettingsForm", () => {
 	});
 
 	it("hides AO Cloud early access on a build with no control plane configured", async () => {
-		getCloudAvailability.mockResolvedValue({ available: false, enabled: false, apiBaseUrl: "" });
+		getCloudAvailability.mockResolvedValue({ available: false, enabled: false });
 		const user = userEvent.setup();
 		renderForm();
 
@@ -227,8 +227,8 @@ describe("GlobalSettingsForm", () => {
 
 	it("persists the AO Cloud early-access opt-in through the shared UI settings", async () => {
 		getCloudAvailability
-			.mockResolvedValueOnce({ available: true, enabled: false, apiBaseUrl: "" })
-			.mockResolvedValue({ available: true, enabled: true, apiBaseUrl: "https://cloud.example" });
+			.mockResolvedValueOnce({ available: true, enabled: false })
+			.mockResolvedValue({ available: true, enabled: true });
 		const user = userEvent.setup();
 		renderForm();
 

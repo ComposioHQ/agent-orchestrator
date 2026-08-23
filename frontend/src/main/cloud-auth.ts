@@ -101,7 +101,6 @@ export function cloudAvailability(): CloudAvailability {
 	return {
 		available: cloudDesktopAvailable(),
 		enabled: cloudAuthConfigured(),
-		apiBaseUrl: cloudAuthConfigured() ? CLOUD_API_URL : "",
 	};
 }
 
