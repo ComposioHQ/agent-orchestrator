@@ -22,7 +22,8 @@
 		"baseUrl": ".",
 		"paths": {
 			"@/*": ["./src/renderer/*"],
-			"@aoagents/product-ui": ["../packages/product-ui/src/index.ts"]
+			"@aoagents/product-ui": ["../packages/product-ui/src/index.ts"],
+			"@aoagents/cloud-client": ["../packages/cloud-client/src/index.ts"]
 		}
 	},
 	"include": [

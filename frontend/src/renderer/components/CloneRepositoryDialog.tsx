@@ -1,24 +1,34 @@
 import * as Dialog from "@radix-ui/react-dialog";
-import { ChevronLeft, Folder, GitBranch, Link2, X } from "lucide-react";
+import { ChevronLeft, Cloud, Folder, GitBranch, Link2, X } from "lucide-react";
 import { type FormEvent, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { aoBridge } from "../lib/bridge";
+import type { ProjectLocation } from "../lib/project-transport";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { Label } from "./ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
+
+export const CLOUD_DEFAULT_BRANCH = "main";
 
 export type CloneRepositoryDetails = {
 	remoteUrl: string;
 	destinationParent: string;
+	/** Where the project will live. Absent/local keeps the existing clone flow. */
+	location?: ProjectLocation;
+	/** Branch the hosted workspace checks out; local clones use the remote HEAD. */
+	defaultBranch?: string;
 };
 
 export type CloneRepositorySelection = CloneRepositoryDetails & {
+	/** Local clone target. Empty for a cloud project, which has no local path. */
 	targetPath: string;
 };
 
 export const LAST_CLONE_DESTINATION_KEY = "ao.clone.lastDestinationParent";
 
 export default function CloneRepositoryDialog({
+	cloudAvailable = false,
 	disabled,
 	error,
 	onBack,
@@ -28,6 +38,12 @@ export default function CloneRepositoryDialog({
 	open,
 	value,
 }: {
+	/**
+	 * Offer AO Cloud as a destination. False (the default) keeps this dialog
+	 * byte-for-byte the local clone form it has always been, which is what every
+	 * build without cloud early access sees.
+	 */
+	cloudAvailable?: boolean;
 	disabled: boolean;
 	error: string | null;
 	onBack: () => void;
@@ -41,12 +57,21 @@ export default function CloneRepositoryDialog({
 	const [submitted, setSubmitted] = useState(false);
 	const [choosingDestination, setChoosingDestination] = useState(false);
 	const [destinationPickerError, setDestinationPickerError] = useState<string | null>(null);
+	const location: ProjectLocation = cloudAvailable && value.location === "cloud" ? "cloud" : "local";
+	const isCloud = location === "cloud";
 	const repositoryName = repositoryNameFromGitUrl(value.remoteUrl);
-	const targetPath = repositoryName && value.destinationParent
+	const targetPath = !isCloud && repositoryName && value.destinationParent
 		? joinCloneDestination(value.destinationParent, repositoryName)
 		: "";
-	const urlError = submitted && !repositoryName ? t("createProject.cloneInvalidUrl") : null;
-	const destinationError = submitted && !value.destinationParent ? t("createProject.cloneDestinationRequired") : null;
+	// A hosted project is created from an https clone URL the control plane can
+	// reach; ssh/scp remotes and local paths have no meaning there.
+	const cloudUrlError =
+		submitted && isCloud && !value.remoteUrl.trim().startsWith("https://")
+			? t("createProject.cloudRepositoryUrlHttps")
+			: null;
+	const urlError = (submitted && !repositoryName ? t("createProject.cloneInvalidUrl") : null) ?? cloudUrlError;
+	const destinationError =
+		submitted && !isCloud && !value.destinationParent ? t("createProject.cloneDestinationRequired") : null;
 
 	const chooseDestination = async () => {
 		setDestinationPickerError(null);
@@ -71,9 +96,22 @@ export default function CloneRepositoryDialog({
 	const submit = (event: FormEvent<HTMLFormElement>) => {
 		event.preventDefault();
 		setSubmitted(true);
-		if (!repositoryName || !value.destinationParent || disabled) return;
+		if (!repositoryName || disabled) return;
+		if (isCloud) {
+			if (!value.remoteUrl.trim().startsWith("https://")) return;
+			onContinue({
+				...value,
+				location: "cloud",
+				defaultBranch: (value.defaultBranch ?? "").trim() || CLOUD_DEFAULT_BRANCH,
+				remoteUrl: value.remoteUrl.trim(),
+				targetPath: "",
+			});
+			return;
+		}
+		if (!value.destinationParent) return;
 		onContinue({
 			...value,
+			location: "local",
 			remoteUrl: value.remoteUrl.trim(),
 			targetPath: joinCloneDestination(value.destinationParent, repositoryName),
 		});
@@ -122,6 +160,34 @@ export default function CloneRepositoryDialog({
 								</div>
 							) : null}
 
+							{cloudAvailable ? (
+								<div className="space-y-2">
+									<Label
+										htmlFor="cloneProjectLocation"
+										className="text-[13px] font-semibold text-[var(--color-text-import-title)]"
+									>
+										{t("shell.projectLocation")}
+									</Label>
+									<Select
+										value={location}
+										disabled={disabled}
+										onValueChange={(next) => onChange({ ...value, location: next as ProjectLocation })}
+									>
+										<SelectTrigger
+											id="cloneProjectLocation"
+											aria-label={t("shell.projectLocation")}
+											className="w-full bg-[var(--color-bg-import-card)]"
+										>
+											<SelectValue />
+										</SelectTrigger>
+										<SelectContent>
+											<SelectItem value="local">{t("shell.projectLocationLocal")}</SelectItem>
+											<SelectItem value="cloud">{t("shell.projectLocationCloud")}</SelectItem>
+										</SelectContent>
+									</Select>
+								</div>
+							) : null}
+
 							<div className="space-y-2">
 								<Label htmlFor="cloneRepositoryUrl" className="text-[13px] font-semibold text-[var(--color-text-import-title)]">
 									{t("createProject.cloneRepositoryUrl")}
@@ -156,6 +222,32 @@ export default function CloneRepositoryDialog({
 								)}
 							</div>
 
+							{isCloud ? (
+								<div className="space-y-2">
+									<Label
+										htmlFor="cloudDefaultBranch"
+										className="text-[13px] font-semibold text-[var(--color-text-import-title)]"
+									>
+										{t("shell.cloudDefaultBranch")}
+									</Label>
+									<div className="relative">
+										<span className="pointer-events-none absolute inset-y-0 left-3 flex w-4 items-center justify-center text-[var(--color-text-import-muted)]">
+											<GitBranch className="size-4" aria-hidden="true" />
+										</span>
+										<Input
+											id="cloudDefaultBranch"
+											autoCapitalize="none"
+											autoComplete="off"
+											className="bg-[var(--color-bg-import-card)] pl-10 font-mono text-[13px]"
+											disabled={disabled}
+											placeholder={CLOUD_DEFAULT_BRANCH}
+											spellCheck={false}
+											value={value.defaultBranch ?? ""}
+											onChange={(event) => onChange({ ...value, defaultBranch: event.target.value })}
+										/>
+									</div>
+								</div>
+							) : (
 							<div className="space-y-2">
 								<Label htmlFor="cloneDestination" className="text-[13px] font-semibold text-[var(--color-text-import-title)]">
 									{t("createProject.cloneDestination")}
@@ -191,6 +283,23 @@ export default function CloneRepositoryDialog({
 									</p>
 								) : null}
 							</div>
+							)}
+
+							{isCloud && repositoryName ? (
+								<div className="flex items-center gap-3 rounded-lg border border-[var(--color-border-import-modal)] bg-[var(--color-bg-import-card)] px-3 py-3">
+									<span className="grid size-4 shrink-0 place-items-center text-[var(--color-text-import-muted)]">
+										<Cloud className="size-4" aria-hidden="true" />
+									</span>
+									<div className="min-w-0">
+										<p className="text-[12px] font-medium text-[var(--color-text-import-muted)]">
+											{t("createProject.cloneWillCreate")}
+										</p>
+										<p className="mt-0.5 truncate font-mono text-[13px] font-semibold text-[var(--color-text-import-title)]">
+											{repositoryName}
+										</p>
+									</div>
+								</div>
+							) : null}
 
 							{targetPath ? (
 								<div className="flex items-center gap-3 rounded-lg border border-[var(--color-border-import-modal)] bg-[var(--color-bg-import-card)] px-3 py-3">

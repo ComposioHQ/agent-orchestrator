@@ -132,6 +132,8 @@ type CreateProjectHandler = (input: CreateProjectInput) => Promise<void>;
 type CloneProjectHandler = (input: {
 	remoteUrl: string;
 	destinationParent: string;
+	location?: "local" | "cloud";
+	defaultBranch?: string;
 	workerAgent: string;
 	orchestratorAgent: string;
 	trackerIntake?: unknown;
@@ -665,6 +667,8 @@ describe("Sidebar", () => {
 			expect(onCloneProject).toHaveBeenCalledWith({
 				remoteUrl: "git@github.com:acme/web-app.git",
 				destinationParent: "/repo",
+				location: "local",
+				defaultBranch: undefined,
 				workerAgent: "claude-code",
 				orchestratorAgent: "claude-code",
 				trackerIntake: undefined,

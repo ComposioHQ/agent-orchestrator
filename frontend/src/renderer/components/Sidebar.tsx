@@ -6,6 +6,7 @@ import { useTranslation } from "react-i18next";
 import { useNavigate, useParams, useRouterState } from "@tanstack/react-router";
 import {
 	ChevronRight,
+	Cloud,
 	Folder,
 	FolderOpen,
 	LogIn,
@@ -545,6 +546,7 @@ function ProjectItem({
 	}, []);
 	const restartingProjectIds = useUiStore((state) => state.restartingProjectIds);
 	const isProjectRestarting = restartingProjectIds.has(workspace.id);
+	const isCloudProject = workspace.location === "cloud";
 	const requestNewTask = useUiStore((state) => state.requestNewTask);
 	// Keep completed PR sessions reachable while their runtime still exists.
 	// Only termination removes a worker from the sidebar; archived sessions stay
@@ -710,6 +712,15 @@ function ProjectItem({
 		>
 			{workspace.name}
 		</span>
+		{/* The only visual difference between a local and a cloud project row.
+		    Everything else — sessions, status, actions — renders identically. */}
+		{workspace.location === "cloud" ? (
+			<Cloud
+				aria-label={t("shell.cloudProject")}
+				className="sidebar-expanded-chrome size-3.5! shrink-0 text-muted-foreground group-data-[collapsible=icon]:hidden"
+				data-project-cloud=""
+			/>
+		) : null}
 	</SidebarMenuButton>
 	{/* Folder disclosure toggle: sibling of the nav button, absolutely positioned over
 	    the icon area so it intercepts clicks there without nesting buttons. */}
@@ -772,20 +783,28 @@ function ProjectItem({
 						<Plus aria-hidden="true" />
 						{t("shell.newSession")}
 					</DropdownMenuItem>
-					<DropdownMenuSeparator />
-					<DropdownMenuItem onSelect={() => selection.goSettings(workspace.id)}>
-						<Settings aria-hidden="true" />
-						{t("shell.projectSettings")}
-					</DropdownMenuItem>
-					<DropdownMenuSeparator />
-					<DropdownMenuItem
-						className="text-destructive focus:text-destructive [&_svg]:text-destructive"
-						disabled={isRemoving}
-						onSelect={() => void removeProject()}
-					>
-						<Trash2 aria-hidden="true" />
-						{t("shell.removeProjectTitle")}
-					</DropdownMenuItem>
+					{/* Project settings and removal read and write through the local
+					    daemon's project routes. The hosted equivalents are not
+					    implemented yet, so a cloud project offers neither rather than
+					    opening a view that can only fail. */}
+					{isCloudProject ? null : (
+						<>
+							<DropdownMenuSeparator />
+							<DropdownMenuItem onSelect={() => selection.goSettings(workspace.id)}>
+								<Settings aria-hidden="true" />
+								{t("shell.projectSettings")}
+							</DropdownMenuItem>
+							<DropdownMenuSeparator />
+							<DropdownMenuItem
+								className="text-destructive focus:text-destructive [&_svg]:text-destructive"
+								disabled={isRemoving}
+								onSelect={() => void removeProject()}
+							>
+								<Trash2 aria-hidden="true" />
+								{t("shell.removeProjectTitle")}
+							</DropdownMenuItem>
+						</>
+					)}
 				</DropdownMenuContent>
 			</DropdownMenu>
 		</div>
@@ -1361,6 +1380,9 @@ function CreateProjectButton({
 	onInitializeProject,
 }: Pick<SidebarProps, "onCloneProject" | "onCreateProject" | "onInitializeProject"> & { hideTrigger?: boolean }) {
 	const { t } = useTranslation();
+	// AO Cloud is offered as a destination only when early access is on AND the
+	// user is signed in; otherwise the flow is exactly the local one.
+	const cloud = useCloudSession();
 	// Single CreateProjectFlow owner for the sidebar: the header "+" stays mounted
 	// (CSS-hidden when collapsed or on the empty start page) so it can own
 	// openSignal for ⌘N on every shell route. The collapsed rail button below
@@ -1368,6 +1390,7 @@ function CreateProjectButton({
 	const createProjectNonce = useUiStore((state) => state.createProjectNonce);
 	return (
 		<CreateProjectFlow
+			cloudAvailable={cloud.enabled && cloud.status === "authenticated"}
 			mode="choose"
 			onCloneProject={onCloneProject}
 			onCreateProject={onCreateProject}

@@ -23,7 +23,10 @@ import type { CloneRepositoryDetails, CloneRepositorySelection } from "./CloneRe
 import { Button } from "./ui/button";
 
 export type CreateProjectInput = { path: string; asWorkspace?: boolean } & CreateProjectAgentSelection;
-export type CloneProjectInput = Pick<CloneRepositorySelection, "remoteUrl" | "destinationParent"> &
+export type CloneProjectInput = Pick<
+	CloneRepositorySelection,
+	"remoteUrl" | "destinationParent" | "location" | "defaultBranch"
+> &
 	CreateProjectAgentSelection;
 
 const CloneRepositoryDialog = lazy(() => import("./CloneRepositoryDialog"));
@@ -39,12 +42,15 @@ export function CreateProjectFlow({
 	embedded = false,
 	idleLabel,
 	mode = "single_repo",
+	cloudAvailable = false,
 	onCloneProject,
 	onCreateProject,
 	onInitializeProject,
 	openSignal,
 }: {
 	children?: (state: { choosePath: () => void; disabled: boolean; error: string | null; label: string }) => ReactNode;
+	/** Offer AO Cloud as a project destination (early access + signed in). */
+	cloudAvailable?: boolean;
 	// When true, render the Workspace/Project chooser inline (start page) instead
 	// of behind a trigger + dialog. Folder validation + agent sheet stay modal.
 	embedded?: boolean;
@@ -169,6 +175,8 @@ export function CreateProjectFlow({
 				await onCloneProject({
 					remoteUrl: cloneSelection.remoteUrl,
 					destinationParent: cloneSelection.destinationParent,
+					location: cloneSelection.location,
+					defaultBranch: cloneSelection.defaultBranch,
 					...selection,
 				});
 				setSelectedPath(null);
@@ -256,6 +264,7 @@ export function CreateProjectFlow({
 					{cloneDialogOpen ? (
 						<Suspense fallback={<CloneRepositoryDialogSkeleton />}>
 							<CloneRepositoryDialog
+								cloudAvailable={cloudAvailable}
 								disabled={isBusy}
 								error={error}
 								onBack={() => {
@@ -274,7 +283,9 @@ export function CreateProjectFlow({
 								onContinue={(next) => {
 									setCloneSelection(next);
 									setSelectedKind("single_repo");
-									setSelectedPath(next.targetPath);
+									// A cloud project has no local worktree; its repository URL is
+									// the identity the rest of the app shows in place of a path.
+									setSelectedPath(next.targetPath || next.remoteUrl);
 									setCloneDialogOpen(false);
 								}}
 								open

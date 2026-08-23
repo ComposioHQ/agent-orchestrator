@@ -25,7 +25,7 @@ vi.mock("./bridge", () => ({
 }));
 
 import { useCloudSession } from "./cloud-session";
-import { useCloudSettingsStore } from "../stores/cloud-settings-store";
+import { useCloudStore } from "../stores/cloud-store";
 
 const ACCOUNT = {
 	authProvider: "google" as const,
@@ -35,9 +35,11 @@ const ACCOUNT = {
 };
 
 function resetStore(): void {
-	useCloudSettingsStore.setState({
+	useCloudStore.setState({
 		availability: { available: false, enabled: false, apiBaseUrl: "" },
+		account: null,
 		loaded: false,
+		accountLoaded: false,
 		saving: false,
 		saveError: false,
 	});
@@ -164,18 +166,18 @@ describe("cloud settings store", () => {
 		// Main refuses to enable a build with no control plane configured.
 		bridge.getAvailability.mockResolvedValue({ available: false, enabled: false, apiBaseUrl: "" });
 
-		await useCloudSettingsStore.getState().setEnabled(true);
+		await useCloudStore.getState().setEnabled(true);
 
 		expect(bridge.setUiSettings).toHaveBeenCalledWith({ cloudEnabled: true });
-		expect(useCloudSettingsStore.getState().availability.enabled).toBe(false);
+		expect(useCloudStore.getState().availability.enabled).toBe(false);
 	});
 
 	it("surfaces a save failure without flipping the gate", async () => {
 		bridge.setUiSettings.mockRejectedValue(new Error("no run file"));
 
-		await useCloudSettingsStore.getState().setEnabled(true);
+		await useCloudStore.getState().setEnabled(true);
 
-		const state = useCloudSettingsStore.getState();
+		const state = useCloudStore.getState();
 		expect(state.saveError).toBe(true);
 		expect(state.availability.enabled).toBe(false);
 	});
@@ -188,12 +190,12 @@ describe("cloud settings store", () => {
 		});
 
 		await Promise.all([
-			useCloudSettingsStore.getState().load(),
-			useCloudSettingsStore.getState().load(),
-			useCloudSettingsStore.getState().load(),
+			useCloudStore.getState().load(),
+			useCloudStore.getState().load(),
+			useCloudStore.getState().load(),
 		]);
 
 		expect(bridge.getAvailability).toHaveBeenCalledTimes(1);
-		expect(useCloudSettingsStore.getState().availability.apiBaseUrl).toBe("https://cloud.example");
+		expect(useCloudStore.getState().availability.apiBaseUrl).toBe("https://cloud.example");
 	});
 });

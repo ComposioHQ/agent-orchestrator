@@ -1,6 +1,7 @@
 import { createFileRoute, Outlet, useMatchRoute, useNavigate, useParams } from "@tanstack/react-router";
 import { isCancelledError, useQueryClient } from "@tanstack/react-query";
 import { type CSSProperties, useCallback, useEffect, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { CommandPalette } from "../components/CommandPalette";
 import { CenterPanelShell } from "../components/CenterPanelShell";
 import { DaemonFailureBanner } from "../components/DaemonFailureBanner";
@@ -25,6 +26,9 @@ import { useOpenShellTerminal } from "../hooks/useShellTerminals";
 import { useWindowFullScreen } from "../hooks/useWindowFullScreen";
 import { useWorkspaceQuery, workspaceQueryKey, workspaceQueryOptions } from "../hooks/useWorkspaceQuery";
 import { apiClient, apiErrorCode, apiErrorMessage, hasTrustedApiBaseUrl } from "../lib/api-client";
+import { cloudClientFor } from "../lib/cloud-api";
+import { toCloudWorkspaceSummary } from "../lib/cloud-workspaces";
+import type { ProjectLocation } from "../lib/project-transport";
 import { refreshDaemonStatus } from "../lib/daemon-status";
 import { usesPreviewWorkspaceData } from "../lib/preview-mode";
 import { addRendererExceptionStep, captureRendererEvent, captureRendererException } from "../lib/telemetry";
@@ -42,6 +46,7 @@ import {
 	usesFramedAppTopbar,
 	hidesShellTopbar,
 } from "../lib/platform";
+import { cloudTransportSnapshot } from "../stores/cloud-store";
 import { useUiStore } from "../stores/ui-store";
 import { matchesRendererShortcut } from "../stores/keybindings-store";
 import { sessionIsActive, toProjectKind, type WorkspaceSummary } from "../types/workspace";
@@ -78,6 +83,17 @@ export function createProjectConfig(input: CreateProjectConfigInput): components
 	};
 }
 
+/**
+ * A recognizable name for a hosted project. The control plane requires a display
+ * name and has no local folder to borrow one from, so use the repository's own
+ * last path segment — the same name a local clone would create on disk.
+ */
+export function cloudProjectDisplayName(repositoryUrl: string): string {
+	const trimmed = repositoryUrl.trim().replace(/\/+$/, "");
+	const segment = trimmed.split("/").pop() ?? "";
+	return segment.replace(/\.git$/, "") || trimmed || "Project";
+}
+
 const isMac = isMacPlatform();
 const isWindows = isWindowsPlatform();
 const isLinux = isLinuxPlatform();
@@ -91,6 +107,7 @@ const shellTopbarHiddenByPlatform = hidesShellTopbar();
 function ShellLayout() {
 	// Reports how many agents this install has available, once per launch.
 	useAgentInventoryTelemetry();
+	const { t } = useTranslation();
 	const navigate = useNavigate();
 	const matchRoute = useMatchRoute();
 	const queryClient = useQueryClient();
@@ -360,14 +377,66 @@ function ShellLayout() {
 		[completeProjectCreation],
 	);
 
-	const cloneProject = useCallback(
+	/**
+	 * Create the project on the hosted control plane instead of the local daemon.
+	 *
+	 * Routed here by the project's own location — nothing swaps a shared API base
+	 * URL — and the result is mapped into the same WorkspaceSummary the local path
+	 * produces, so the new project appears in the same sidebar and board.
+	 *
+	 * No orchestrator is spawned: the hosted session route is not implemented yet,
+	 * so this lands the user on the project board rather than a dead session.
+	 */
+	const createCloudProject = useCallback(
 		async (input: {
 			remoteUrl: string;
-			destinationParent: string;
+			defaultBranch?: string;
 			workerAgent: string;
 			orchestratorAgent: string;
 			trackerIntake?: components["schemas"]["TrackerIntakeConfig"];
 		}) => {
+			void captureRendererEvent("ao.renderer.cloud_project_add_requested");
+			const { enabled, apiBaseUrl, organizations } = cloudTransportSnapshot();
+			const orgId = organizations[0]?.id;
+			const client = enabled ? cloudClientFor(apiBaseUrl) : null;
+			if (!client || !orgId) throw new Error(t("shell.cloudSignInRequired"));
+
+			const displayName = cloudProjectDisplayName(input.remoteUrl);
+			const { project } = await client.createProject(
+				orgId,
+				{
+					displayName,
+					repositoryUrl: input.remoteUrl,
+					defaultBranch: input.defaultBranch?.trim() || "main",
+					config: createProjectConfig(input),
+				},
+				{ idempotencyKey: crypto.randomUUID() },
+			);
+			void captureRendererEvent("ao.renderer.cloud_project_add_succeeded", { project_id: project.id });
+			updateWorkspaces((current) => [
+				toCloudWorkspaceSummary(project, []),
+				...current.filter((item) => item.id !== project.id),
+			]);
+			await queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
+			void navigate({ to: "/projects/$projectId", params: { projectId: project.id } });
+		},
+		[navigate, queryClient, t, updateWorkspaces],
+	);
+
+	const cloneProject = useCallback(
+		async (input: {
+			remoteUrl: string;
+			destinationParent: string;
+			location?: ProjectLocation;
+			defaultBranch?: string;
+			workerAgent: string;
+			orchestratorAgent: string;
+			trackerIntake?: components["schemas"]["TrackerIntakeConfig"];
+		}) => {
+			if (input.location === "cloud") {
+				await createCloudProject(input);
+				return;
+			}
 			void addRendererExceptionStep("Project clone requested", {
 				source: "project-clone",
 				operation: "project_clone",
@@ -398,7 +467,7 @@ function ShellLayout() {
 			if (!data?.project) throw new Error("Project clone returned no project");
 			await completeProjectCreation(data.project, input, "project_clone");
 		},
-		[completeProjectCreation],
+		[completeProjectCreation, createCloudProject],
 	);
 
 	const initializeProjectRepository = useCallback(async (path: string) => {

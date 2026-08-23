@@ -10,7 +10,7 @@ import { SettingsSection } from "./SettingsSection";
 import { cn } from "../../lib/utils";
 import { Switch } from "../ui/switch";
 import { useSettings, useUpdateSessionInterface } from "../../hooks/useSettings";
-import { useCloudSettingsStore } from "../../stores/cloud-settings-store";
+import { useCloudStore } from "../../stores/cloud-store";
 import type { SessionMode } from "../../types/workspace";
 
 /**
@@ -77,12 +77,12 @@ function SessionInterfaceRow() {
  */
 function CloudEarlyAccessRow() {
 	const { t } = useTranslation();
-	const availability = useCloudSettingsStore((state) => state.availability);
-	const loaded = useCloudSettingsStore((state) => state.loaded);
-	const saving = useCloudSettingsStore((state) => state.saving);
-	const saveError = useCloudSettingsStore((state) => state.saveError);
-	const load = useCloudSettingsStore((state) => state.load);
-	const setEnabled = useCloudSettingsStore((state) => state.setEnabled);
+	const availability = useCloudStore((state) => state.availability);
+	const loaded = useCloudStore((state) => state.loaded);
+	const saving = useCloudStore((state) => state.saving);
+	const saveError = useCloudStore((state) => state.saveError);
+	const load = useCloudStore((state) => state.load);
+	const setEnabled = useCloudStore((state) => state.setEnabled);
 
 	useEffect(() => {
 		void load();

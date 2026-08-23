@@ -141,6 +141,7 @@
 	"createProject.closeAgents": "Projekt-Agenten-Dialog schließen",
 	"createProject.closeDialog": "Dialog „Neues Projekt“ schließen",
 	"createProject.closeImport": "Import-Dialog schließen",
+	"createProject.cloudRepositoryUrlHttps": "AO Cloud benötigt eine erreichbare https://-Clone-URL.",
 	"createProject.couldNotAdd": "Projekt konnte nicht hinzugefügt werden",
 	"createProject.couldNotLoadAgents": "Agentenkatalog konnte nicht geladen werden.",
 	"createProject.couldNotRefreshAgents": "Agentenkatalog konnte nicht aktualisiert werden.",

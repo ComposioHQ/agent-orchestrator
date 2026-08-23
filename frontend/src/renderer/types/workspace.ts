@@ -9,10 +9,13 @@ import {
 	type SessionStatus,
 } from "@aoagents/product-ui";
 
+import type { ProjectLocation } from "../lib/project-transport";
 import type { ReviewerHarnessId } from "../lib/reviewer-harnesses";
 
 export { toSessionActivity, toSessionStatus };
 export type { SessionActivity, SessionActivityState, SessionStatus };
+
+export type { ProjectLocation };
 
 export type AgentProvider = AgentId | "fake";
 
@@ -61,6 +64,14 @@ export type AgentSwitchSummary = {
 export type WorkspaceSession = {
 	id: string;
 	terminalHandleId?: string;
+	/**
+	 * Where this session runs. Carried on the session itself so the terminal
+	 * attachment and every other id-only call site can route without consulting
+	 * a shared, mutable API base URL. Absent means local.
+	 */
+	location?: ProjectLocation;
+	/** Owning cloud organization; set only for cloud sessions. */
+	orgId?: string;
 	workspaceId: string;
 	workspaceName: string;
 	title: string;
@@ -267,6 +278,11 @@ export type WorkspaceSummary = {
 	id: string;
 	name: string;
 	kind?: ProjectKind;
+	/** Where this project runs; absent means local. Sidebar/board render identically. */
+	location?: ProjectLocation;
+	/** Owning cloud organization; set only for cloud projects. */
+	orgId?: string;
+	/** Local worktree path, or the repository URL for a cloud project. */
 	path: string;
 	workspaceRepos?: WorkspaceRepoSummary[];
 	type?: "main" | "worktree";

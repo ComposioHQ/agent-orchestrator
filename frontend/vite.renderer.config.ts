@@ -105,6 +105,9 @@ export default defineConfig({
 			"@aoagents/product-ui": fileURLToPath(
 				new URL("../packages/product-ui/src/index.ts", import.meta.url),
 			),
+			"@aoagents/cloud-client": fileURLToPath(
+				new URL("../packages/cloud-client/src/index.ts", import.meta.url),
+			),
 		},
 	},
 	// Dev proxy for VITE_NO_ELECTRON=1 browser preview — forwards /api and /mux

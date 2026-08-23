@@ -142,6 +142,7 @@
 	"createProject.closeAgents": "Cerrar diálogo de agentes del proyecto",
 	"createProject.closeDialog": "Cerrar diálogo de nuevo proyecto",
 	"createProject.closeImport": "Cerrar diálogo de importación",
+	"createProject.cloudRepositoryUrlHttps": "AO Cloud necesita una URL de clonación https:// accesible.",
 	"createProject.couldNotAdd": "No se pudo añadir el proyecto",
 	"createProject.couldNotLoadAgents": "No se pudo cargar el catálogo de agentes.",
 	"createProject.couldNotRefreshAgents": "No se pudo actualizar el catálogo de agentes.",

@@ -3,20 +3,30 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ReactNode } from "react";
 
-const { captureRendererEventMock, getMock, hasTrustedApiBaseUrlMock } = vi.hoisted(() => ({
-	captureRendererEventMock: vi.fn().mockResolvedValue(undefined),
-	getMock: vi.fn(),
-	hasTrustedApiBaseUrlMock: vi.fn(() => true),
-}));
+const { captureRendererEventMock, getMock, hasTrustedApiBaseUrlMock, listProjectsMock, listSessionsMock } =
+	vi.hoisted(() => ({
+		captureRendererEventMock: vi.fn().mockResolvedValue(undefined),
+		getMock: vi.fn(),
+		hasTrustedApiBaseUrlMock: vi.fn(() => true),
+		listProjectsMock: vi.fn(),
+		listSessionsMock: vi.fn(),
+	}));
 
 vi.mock("../lib/api-client", () => ({
 	apiClient: { GET: getMock },
 	hasTrustedApiBaseUrl: hasTrustedApiBaseUrlMock,
 }));
 
+vi.mock("../lib/cloud-api", () => ({
+	cloudClientFor: (baseUrl: string) =>
+		baseUrl ? { listProjects: listProjectsMock, listSessions: listSessionsMock } : null,
+}));
+
 vi.mock("../lib/telemetry", () => ({ captureRendererEvent: captureRendererEventMock }));
 
 import { useWorkspaceQuery } from "./useWorkspaceQuery";
+import { transportForProject, transportForSession } from "../lib/project-transport";
+import { useCloudStore } from "../stores/cloud-store";
 
 function wrapper({ children }: { children: ReactNode }) {
 	// The hook pins its own retry policy; retryDelay 0 keeps the error tests fast.
@@ -35,10 +45,65 @@ function respondWith(payload: {
 	});
 }
 
+function signedIntoCloud(): void {
+	useCloudStore.setState({
+		availability: { available: true, enabled: true, apiBaseUrl: "https://cloud.example" },
+		account: {
+			authProvider: "google",
+			user: { id: "user_1", email: "dev@example.com", displayName: "Dev" },
+			organizations: [{ id: "org_1", slug: "dev", displayName: "Dev", role: "owner" }],
+			storedAt: "2026-08-22T00:00:00.000Z",
+		},
+		loaded: true,
+		accountLoaded: true,
+		saving: false,
+		saveError: false,
+	});
+}
+
+const cloudProject = {
+	id: "cloud_proj_1",
+	orgId: "org_1",
+	displayName: "Cloud Project",
+	repositoryUrl: "https://github.com/example/cloud-project",
+	defaultBranch: "main",
+	config: {},
+	createdAt: "2026-08-22T00:00:00.000Z",
+	updatedAt: "2026-08-22T00:00:00.000Z",
+};
+
+const cloudSession = {
+	id: "cloud_sess_1",
+	orgId: "org_1",
+	projectId: "cloud_proj_1",
+	kind: "worker",
+	harness: "claude-code",
+	displayName: "hosted task",
+	branch: "ao/hosted",
+	mode: "standard",
+	deniedCommands: [],
+	activityState: "active",
+	status: "working",
+	runtimeConnected: true,
+	isTerminated: false,
+	createdAt: "2026-08-22T00:00:00.000Z",
+	updatedAt: "2026-08-22T00:00:00.000Z",
+};
+
 beforeEach(() => {
 	captureRendererEventMock.mockClear();
 	getMock.mockReset();
 	hasTrustedApiBaseUrlMock.mockReset().mockReturnValue(true);
+	listProjectsMock.mockReset();
+	listSessionsMock.mockReset();
+	useCloudStore.setState({
+		availability: { available: false, enabled: false, apiBaseUrl: "" },
+		account: null,
+		loaded: true,
+		accountLoaded: true,
+		saving: false,
+		saveError: false,
+	});
 });
 
 describe("useWorkspaceQuery", () => {
@@ -345,6 +410,86 @@ describe("useWorkspaceQuery", () => {
 			projects: { data: { projects: [{ id: "proj-1", name: "my-app", path: "/p" }] }, error: undefined },
 			sessions: { data: undefined, error: failure },
 		});
+
+		const { result } = renderHook(() => useWorkspaceQuery(), { wrapper });
+
+		await waitFor(() => expect(result.current.isError).toBe(true), { timeout: 3_000 });
+		expect(result.current.error).toBe(failure);
+	});
+
+	it("never touches the control plane while cloud early access is off", async () => {
+		respondWith({
+			projects: { data: { projects: [{ id: "proj-1", name: "my-app", path: "/p" }] }, error: undefined },
+		});
+
+		const { result } = renderHook(() => useWorkspaceQuery(), { wrapper });
+		await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+		expect(listProjectsMock).not.toHaveBeenCalled();
+		expect(result.current.data?.map((workspace) => workspace.id)).toEqual(["proj-1"]);
+	});
+
+	it("returns local and cloud projects in one list", async () => {
+		signedIntoCloud();
+		respondWith({
+			projects: { data: { projects: [{ id: "proj-1", name: "my-app", path: "/p" }] }, error: undefined },
+			sessions: {
+				data: { sessions: [{ id: "sess-1", projectId: "proj-1", status: "working", updatedAt: "2026-08-22" }] },
+				error: undefined,
+			},
+		});
+		listProjectsMock.mockResolvedValue({ items: [cloudProject], page: { hasMore: false } });
+		listSessionsMock.mockResolvedValue({ items: [cloudSession], page: { hasMore: false } });
+
+		const { result } = renderHook(() => useWorkspaceQuery(), { wrapper });
+		await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+		expect(result.current.data?.map((workspace) => workspace.id)).toEqual(["proj-1", "cloud_proj_1"]);
+		expect(result.current.data?.[0]?.location).toBeUndefined();
+		expect(result.current.data?.[1]).toMatchObject({ location: "cloud", orgId: "org_1" });
+	});
+
+	it("indexes each project and session for per-session transport routing", async () => {
+		signedIntoCloud();
+		respondWith({
+			projects: { data: { projects: [{ id: "proj-1", name: "my-app", path: "/p" }] }, error: undefined },
+			sessions: {
+				data: { sessions: [{ id: "sess-1", projectId: "proj-1", status: "working", updatedAt: "2026-08-22" }] },
+				error: undefined,
+			},
+		});
+		listProjectsMock.mockResolvedValue({ items: [cloudProject], page: { hasMore: false } });
+		listSessionsMock.mockResolvedValue({ items: [cloudSession], page: { hasMore: false } });
+
+		const { result } = renderHook(() => useWorkspaceQuery(), { wrapper });
+		await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+		expect(transportForProject("proj-1")).toEqual({ location: "local" });
+		expect(transportForSession("sess-1")).toEqual({ location: "local" });
+		expect(transportForProject("cloud_proj_1")).toEqual({ location: "cloud", orgId: "org_1" });
+		expect(transportForSession("cloud_sess_1")).toEqual({ location: "cloud", orgId: "org_1" });
+	});
+
+	it("keeps local projects when the control plane is unreachable", async () => {
+		signedIntoCloud();
+		respondWith({
+			projects: { data: { projects: [{ id: "proj-1", name: "my-app", path: "/p" }] }, error: undefined },
+		});
+		listProjectsMock.mockRejectedValue(new TypeError("Failed to fetch"));
+		listSessionsMock.mockRejectedValue(new TypeError("Failed to fetch"));
+
+		const { result } = renderHook(() => useWorkspaceQuery(), { wrapper });
+		await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+		expect(result.current.data?.map((workspace) => workspace.id)).toEqual(["proj-1"]);
+	});
+
+	it("still fails the query when the local daemon fails, even with cloud projects available", async () => {
+		signedIntoCloud();
+		const failure = new TypeError("Failed to fetch");
+		respondWith({ projects: { data: undefined, error: failure } });
+		listProjectsMock.mockResolvedValue({ items: [cloudProject], page: { hasMore: false } });
+		listSessionsMock.mockResolvedValue({ items: [], page: { hasMore: false } });
 
 		const { result } = renderHook(() => useWorkspaceQuery(), { wrapper });
 

@@ -141,6 +141,7 @@
 	"createProject.closeAgents": "프로젝트 에이전트 대화상자 닫기",
 	"createProject.closeDialog": "새 프로젝트 대화상자 닫기",
 	"createProject.closeImport": "가져오기 대화상자 닫기",
+	"createProject.cloudRepositoryUrlHttps": "AO Cloud에서 접근할 수 있는 https:// 클론 URL이 필요합니다.",
 	"createProject.couldNotAdd": "프로젝트를 추가할 수 없습니다",
 	"createProject.couldNotLoadAgents": "에이전트 카탈로그를 불러올 수 없습니다.",
 	"createProject.couldNotRefreshAgents": "에이전트 카탈로그를 새로고침할 수 없습니다.",

@@ -141,6 +141,7 @@
 	"createProject.closeAgents": "关闭项目代理对话框",
 	"createProject.closeDialog": "关闭新建项目对话框",
 	"createProject.closeImport": "关闭导入对话框",
+	"createProject.cloudRepositoryUrlHttps": "AO Cloud 需要可访问的 https:// 克隆地址。",
 	"createProject.couldNotAdd": "无法添加项目",
 	"createProject.couldNotLoadAgents": "无法加载代理目录。",
 	"createProject.couldNotRefreshAgents": "无法刷新代理目录。",

@@ -141,6 +141,7 @@
 	"createProject.closeAgents": "Close project agents dialog",
 	"createProject.closeDialog": "Close new project dialog",
 	"createProject.closeImport": "Close import dialog",
+	"createProject.cloudRepositoryUrlHttps": "AO Cloud needs an https:// clone URL it can reach.",
 	"createProject.couldNotAdd": "Could not add project",
 	"createProject.couldNotLoadAgents": "Could not load agent catalog.",
 	"createProject.couldNotRefreshAgents": "Could not refresh agent catalog.",

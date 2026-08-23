@@ -6,7 +6,7 @@ import { appI18n } from "../i18n";
 import { GlobalSettingsForm } from "./GlobalSettingsForm";
 import { useLocaleStore } from "../stores/locale-store";
 import { useUiStore } from "../stores/ui-store";
-import { useCloudSettingsStore } from "../stores/cloud-settings-store";
+import { useCloudStore } from "../stores/cloud-store";
 
 const {
 	getUpdate,
@@ -30,6 +30,7 @@ const {
 	setKeybindings,
 	setKeybindingRecording,
 	getCloudAvailability,
+	getCloudSession,
 } = vi.hoisted(() => ({
 	getUpdate: vi.fn(),
 	setUpdate: vi.fn(),
@@ -52,6 +53,7 @@ const {
 	setKeybindings: vi.fn(),
 	setKeybindingRecording: vi.fn(),
 	getCloudAvailability: vi.fn(),
+	getCloudSession: vi.fn(),
 }));
 
 vi.mock("@tanstack/react-router", async (importOriginal) => {
@@ -83,7 +85,7 @@ vi.mock("../lib/bridge", () => ({
 			onStatus: updOnStatus,
 		},
 		featureBuilds: { list: featListBuilds, getActive: featGetActive },
-		cloud: { getAvailability: getCloudAvailability },
+		cloud: { getAvailability: getCloudAvailability, getSession: getCloudSession },
 	},
 }));
 
@@ -120,6 +122,7 @@ beforeEach(async () => {
 		setKeybindings,
 		setKeybindingRecording,
 		getCloudAvailability,
+		getCloudSession,
 	]) {
 		m.mockReset();
 	}
@@ -131,6 +134,7 @@ beforeEach(async () => {
 		cloudEnabled: patch.cloudEnabled ?? false,
 	}));
 	getCloudAvailability.mockResolvedValue({ available: false, enabled: false, apiBaseUrl: "" });
+	getCloudSession.mockResolvedValue(null);
 	updGetStatus.mockResolvedValue({ state: "idle" });
 	updCheck.mockResolvedValue(undefined);
 	updReturnHome.mockResolvedValue(undefined);
@@ -150,9 +154,11 @@ beforeEach(async () => {
 	await appI18n.changeLanguage("en");
 	useLocaleStore.setState({ locale: "en", loaded: false, saving: false, saveError: false });
 	useUiStore.setState({ developerMode: false });
-	useCloudSettingsStore.setState({
+	useCloudStore.setState({
 		availability: { available: false, enabled: false, apiBaseUrl: "" },
+		account: null,
 		loaded: false,
+		accountLoaded: false,
 		saving: false,
 		saveError: false,
 	});
@@ -215,7 +221,7 @@ describe("GlobalSettingsForm", () => {
 
 		await user.click(await screen.findByRole("switch", { name: "Developer Mode" }));
 
-		await waitFor(() => expect(useCloudSettingsStore.getState().loaded).toBe(true));
+		await waitFor(() => expect(useCloudStore.getState().loaded).toBe(true));
 		expect(screen.queryByRole("switch", { name: "AO Cloud (early access)" })).not.toBeInTheDocument();
 	});
 

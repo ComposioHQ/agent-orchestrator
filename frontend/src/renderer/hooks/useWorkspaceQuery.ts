@@ -1,8 +1,12 @@
 import { useQuery } from "@tanstack/react-query";
 import type { components } from "../../api/schema";
 import { apiClient, hasTrustedApiBaseUrl } from "../lib/api-client";
+import { cloudClientFor } from "../lib/cloud-api";
+import { fetchCloudWorkspaces } from "../lib/cloud-workspaces";
+import { indexWorkspaceTransports } from "../lib/project-transport";
 import { mockWorkspaces } from "../lib/mock-data";
 import { usesPreviewWorkspaceData } from "../lib/preview-mode";
+import { cloudTransportSnapshot } from "../stores/cloud-store";
 import { toReviewerHarnessId } from "../lib/reviewer-harnesses";
 import { captureRendererEvent } from "../lib/telemetry";
 import {
@@ -60,14 +64,27 @@ function reportUnknownSessionField(field: "status" | "activity", value?: string)
 // and always hits the real daemon.
 type FakeAgentSeam = { snapshot: () => WorkspaceSummary[] };
 
-async function fetchWorkspaces(): Promise<WorkspaceSummary[]> {
-	if (usesPreviewWorkspaceData) {
-		const fake =
-			typeof window !== "undefined"
-				? (window as unknown as { __aoFakeAgent?: FakeAgentSeam }).__aoFakeAgent
-				: undefined;
-		return fake ? fake.snapshot() : mockWorkspaces;
+/**
+ * Cloud projects the signed-in user can reach, or [] when cloud is off, signed
+ * out, or unreachable.
+ *
+ * Cloud discovery is strictly additive: a control plane that is down, an expired
+ * session, or an org the user lost access to must never take the user's LOCAL
+ * projects off the sidebar, so every failure here degrades to an empty list.
+ */
+async function fetchCloudProjects(): Promise<WorkspaceSummary[]> {
+	const { enabled, apiBaseUrl, organizations } = cloudTransportSnapshot();
+	if (!enabled || organizations.length === 0) return [];
+	const client = cloudClientFor(apiBaseUrl);
+	if (!client) return [];
+	try {
+		return await fetchCloudWorkspaces(client, organizations);
+	} catch {
+		return [];
 	}
+}
+
+async function fetchLocalWorkspaces(): Promise<WorkspaceSummary[]> {
 	if (!hasTrustedApiBaseUrl()) {
 		throw new Error("AO daemon API is not ready");
 	}
@@ -132,6 +149,31 @@ async function fetchWorkspaces(): Promise<WorkspaceSummary[]> {
 				}),
 		};
 	});
+}
+
+/**
+ * One list for the whole renderer. Local and cloud projects are concatenated
+ * into the same WorkspaceSummary[], differing only by `location`, so the
+ * sidebar, board, and session views render both without a forked component or a
+ * shared API base URL that has to be swapped between them.
+ */
+async function fetchWorkspaces(): Promise<WorkspaceSummary[]> {
+	if (usesPreviewWorkspaceData) {
+		const fake =
+			typeof window !== "undefined"
+				? (window as unknown as { __aoFakeAgent?: FakeAgentSeam }).__aoFakeAgent
+				: undefined;
+		const previewWorkspaces = fake ? fake.snapshot() : mockWorkspaces;
+		indexWorkspaceTransports(previewWorkspaces);
+		return previewWorkspaces;
+	}
+
+	// Started together, but only the local read may fail the query: cloud is an
+	// addition to the user's projects, never a precondition for seeing them.
+	const cloudProjects = fetchCloudProjects();
+	const workspaces = [...(await fetchLocalWorkspaces()), ...(await cloudProjects)];
+	indexWorkspaceTransports(workspaces);
+	return workspaces;
 }
 
 // Shared so route loaders can prefetch via queryClient.ensureQueryData (paired

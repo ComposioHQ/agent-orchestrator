@@ -141,6 +141,7 @@
 	"createProject.closeAgents": "プロジェクトエージェントのダイアログを閉じる",
 	"createProject.closeDialog": "新規プロジェクトのダイアログを閉じる",
 	"createProject.closeImport": "インポートダイアログを閉じる",
+	"createProject.cloudRepositoryUrlHttps": "AO Cloud からアクセスできる https:// のクローン URL が必要です。",
 	"createProject.couldNotAdd": "プロジェクトを追加できませんでした",
 	"createProject.couldNotLoadAgents": "エージェントカタログを読み込めませんでした。",
 	"createProject.couldNotRefreshAgents": "エージェントカタログを更新できませんでした。",
