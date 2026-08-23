@@ -21,7 +21,11 @@ import (
 )
 
 const (
-	RPCPrefix = "/rpc/v1"
+	// DefaultRoutePrefix is the non-secret launch contract shared with the
+	// compute provider. It identifies ao-sandbox's private authenticated RPC
+	// surface; the control plane itself never mounts these routes.
+	DefaultRoutePrefix = "/api/sandbox/v1"
+	RPCPrefix          = DefaultRoutePrefix
 
 	RouteSnapshot        = RPCPrefix + "/workspace/snapshot"
 	RouteWorkspaceFiles  = RPCPrefix + "/workspace/files"

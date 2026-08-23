@@ -3,6 +3,7 @@ package sandboxruntime
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -16,6 +17,7 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
+	"github.com/coder/websocket/wsjson"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
@@ -397,5 +399,139 @@ func TestListenerMuxRequiresNormalTLSVerification(t *testing.T) {
 	muxURL := (&url.URL{Scheme: "wss", Host: strings.TrimPrefix(server.URL, "https://"), Path: RouteMux}).String()
 	if _, _, err := websocket.Dial(context.Background(), muxURL, &websocket.DialOptions{Subprotocols: offer}); err == nil {
 		t.Fatal("mux client trusted an unknown TLS certificate")
+	}
+}
+
+type muxPTYRuntime struct {
+	fakeRuntime
+	attached chan *muxPTYStream
+}
+
+func (r *muxPTYRuntime) Attach(context.Context, ports.RuntimeHandle, uint16, uint16) (ports.Stream, error) {
+	reader, output := io.Pipe()
+	stream := &muxPTYStream{reader: reader, output: output, input: make(chan []byte, 1), resized: make(chan [2]uint16, 2)}
+	r.attached <- stream
+	return stream, nil
+}
+
+type muxPTYStream struct {
+	reader  *io.PipeReader
+	output  *io.PipeWriter
+	input   chan []byte
+	resized chan [2]uint16
+}
+
+func (s *muxPTYStream) Read(p []byte) (int, error) { return s.reader.Read(p) }
+func (s *muxPTYStream) Write(p []byte) (int, error) {
+	s.input <- append([]byte(nil), p...)
+	return len(p), nil
+}
+func (s *muxPTYStream) Close() error {
+	_ = s.output.Close()
+	return s.reader.Close()
+}
+func (s *muxPTYStream) Resize(rows, cols uint16) error {
+	s.resized <- [2]uint16{rows, cols}
+	return nil
+}
+
+func TestListenerMuxPreservesPTYProtocolParity(t *testing.T) {
+	tickets := newAtomicTickets()
+	ptyRuntime := &muxPTYRuntime{attached: make(chan *muxPTYStream, 1)}
+	manager := terminal.NewManager(ptyRuntime, nil, nil, terminal.WithHeartbeat(time.Hour))
+	defer manager.Close()
+	listener, err := NewListener(ListenerOptions{
+		Observation: &fakeObservation{events: make(chan ports.WorkspaceEvent)},
+		Runtime:     ptyRuntime,
+		Mux:         manager,
+		Tickets:     tickets,
+		SessionID:   "session-1",
+		Shutdown:    func() {},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewTLSServer(listener)
+	defer server.Close()
+	tickets.issue("pty-ticket", OperationMux)
+	offer, err := muxproto.Offer("pty-ticket")
+	if err != nil {
+		t.Fatal(err)
+	}
+	conn, _, err := websocket.Dial(context.Background(), "wss"+strings.TrimPrefix(server.URL, "https")+RouteMux,
+		&websocket.DialOptions{HTTPClient: server.Client(), Subprotocols: offer})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.CloseNow()
+
+	if err := wsjson.Write(context.Background(), conn, map[string]any{
+		"ch": "terminal", "id": "runtime-1", "type": "open", "cols": 80, "rows": 24,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	var stream *muxPTYStream
+	select {
+	case stream = <-ptyRuntime.attached:
+	case <-time.After(2 * time.Second):
+		t.Fatal("mux did not attach PTY")
+	}
+	if _, err := stream.output.Write([]byte("hello")); err != nil {
+		t.Fatal(err)
+	}
+
+	seenOpened, seenData := false, false
+	for !seenOpened || !seenData {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		var frame struct {
+			Ch   string `json:"ch"`
+			Type string `json:"type"`
+			Data string `json:"data"`
+		}
+		err := wsjson.Read(ctx, conn, &frame)
+		cancel()
+		if err != nil {
+			t.Fatal(err)
+		}
+		seenOpened = seenOpened || frame.Type == "opened"
+		if frame.Type == "data" {
+			decoded, err := base64.StdEncoding.DecodeString(frame.Data)
+			if err != nil || string(decoded) != "hello" {
+				t.Fatalf("data frame = %#v, decoded=%q, err=%v", frame, decoded, err)
+			}
+			seenData = true
+		}
+	}
+
+	input := base64.StdEncoding.EncodeToString([]byte("hi"))
+	if err := wsjson.Write(context.Background(), conn, map[string]any{
+		"ch": "terminal", "id": "runtime-1", "type": "data", "data": input,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case received := <-stream.input:
+		if string(received) != "hi" {
+			t.Fatalf("PTY input = %q", received)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("mux input did not reach PTY")
+	}
+
+	if err := wsjson.Write(context.Background(), conn, map[string]any{
+		"ch": "terminal", "id": "runtime-1", "type": "resize", "cols": 100, "rows": 30,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.After(2 * time.Second)
+	for {
+		select {
+		case size := <-stream.resized:
+			if size == [2]uint16{30, 100} {
+				return
+			}
+		case <-deadline:
+			t.Fatal("mux resize did not reach PTY")
+		}
 	}
 }
