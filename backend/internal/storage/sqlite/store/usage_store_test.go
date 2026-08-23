@@ -1678,6 +1678,45 @@ func seedUsageSession(t *testing.T, s *sqlite.Store, harness domain.AgentHarness
 	return got
 }
 
+// TestKimiUsageEventRoundTrip catches schema or validation changes that accept
+// Kimi sessions in the app but reject their certified usage source or canonical
+// Anthropic-shaped token event at the storage boundary.
+func TestKimiUsageEventRoundTrip(t *testing.T) {
+	s := newTestStore(t)
+	now := time.Date(2026, 8, 23, 12, 0, 0, 0, time.UTC)
+	session := seedUsageSession(t, s, domain.HarnessKimi)
+	binding := mustUpsertUsageBinding(t, s, session, now, domain.UsageBindingRecord{
+		NativeRootID: "kimi-session",
+		State:        domain.UsageBindingActive,
+	})
+	source := mustInsertUsageSource(t, s, now, domain.UsageSourceRecord{
+		BindingID:       binding.ID,
+		Kind:            domain.UsageSourceKimiWire,
+		NativeSessionID: "kimi-session",
+		ArtifactPath:    "/tmp/kimi/sessions/kimi-session/agents/main/wire.jsonl",
+		FileIdentity:    "dev:ino",
+		State:           domain.UsageSourcePending,
+	})
+	event := anthropicUsageEvent("kimi-event", 13, 8, 21, 5)
+	event.ModelID = "kimi-for-coding"
+	if err := s.ApplyUsageChunk(context.Background(), source.ID, 0, source.UpdatedAt, domain.SourceCursorState{
+		ByteOffset: 100, State: domain.UsageSourceActive, ParserStateJSON: `{}`,
+		UpdatedAt: now,
+	}, []domain.ModelUsageEvent{event}); err != nil {
+		t.Fatalf("apply Kimi usage: %v", err)
+	}
+
+	models, err := s.ListUsageModelAggregates(context.Background(), session.ID)
+	mustNoError(t, err)
+	if len(models) != 1 || models[0].Harness != domain.HarnessKimi || models[0].ModelID != "kimi-for-coding" ||
+		usageTokenValue(models[0].Tokens.InputTokens) != 42 ||
+		usageTokenValue(models[0].Tokens.CachedInputTokens) != 21 ||
+		usageTokenValue(models[0].Tokens.UncachedInputTokens) != 21 ||
+		usageTokenValue(models[0].Tokens.OutputTokens) != 5 {
+		t.Fatalf("Kimi aggregate = %+v", models)
+	}
+}
+
 func seedUsageSource(t *testing.T, s *sqlite.Store, sess domain.SessionRecord, now time.Time) domain.UsageSourceRecord {
 	t.Helper()
 	initialModelID := "gpt-5"

@@ -359,7 +359,7 @@ func Run() error {
 			usagePricing.Wait()
 		}()
 	}
-	if roots, rootsErr := usagesvc.DefaultSourceRoots(ctx); rootsErr != nil {
+	if roots, rootsErr := usagesvc.DefaultSourceRoots(ctx, cfg.DataDir); rootsErr != nil {
 		log.Warn("usage collection disabled", "err", rootsErr)
 	} else {
 		usageCollector = usagesvc.NewCollector(store, roots, func(reconcile bool) {

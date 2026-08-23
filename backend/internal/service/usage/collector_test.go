@@ -1845,6 +1845,57 @@ func TestDiscoverCodexPathRequiresConfiguredRoots(t *testing.T) {
 	}
 }
 
+func TestDefaultSourceRootsIncludesManagedKimiHome(t *testing.T) {
+	home := t.TempDir()
+	dataDir := filepath.Join(home, ".ao", "data")
+	t.Setenv("HOME", home)
+	t.Setenv("CODEX_HOME", "")
+
+	got, err := DefaultSourceRoots(context.Background(), dataDir)
+	mustNoError(t, err)
+	if got.KimiHome != filepath.Join(dataDir, "kimi") {
+		t.Fatalf("Kimi home = %q, want %q", got.KimiHome, filepath.Join(dataDir, "kimi"))
+	}
+}
+
+func TestCollectorDiscoversKimiWireSourcesFromSessionIndex(t *testing.T) {
+	const nativeID = "kimi-session-1"
+	store := collectorTestStore(t)
+	session := collectorTestSession(t, store, domain.HarnessKimi, nativeID, false)
+	home := t.TempDir()
+	sessionDir := filepath.Join(home, "sessions", "wd_agent-orchestrator", nativeID)
+	mainPath := filepath.Join(sessionDir, "agents", "main", "wire.jsonl")
+	childPath := filepath.Join(sessionDir, "agents", "researcher", "wire.jsonl")
+	writeUsageFixture(t, mainPath, "{}\n")
+	writeUsageFixture(t, childPath, "{}\n")
+	writeUsageFixture(t, filepath.Join(home, "session_index.jsonl"),
+		fmt.Sprintf(`{"sessionId":%q,"sessionDir":%q,"workDir":"/repo"}`+"\n", nativeID, sessionDir))
+	collector := NewCollector(store, SourceRoots{KimiHome: home}, nil)
+
+	mustNoError(t, collector.RecordHook(context.Background(), session.ID, HookSignal{
+		Harness: domain.HarnessKimi, Event: "session-start", NativeSessionID: nativeID,
+	}))
+	bindings, err := store.ListUsageBindingsForSession(context.Background(), session.ID)
+	if err != nil || len(bindings) != 1 {
+		t.Fatalf("bindings=%+v err=%v", bindings, err)
+	}
+	sources, err := store.ListUsageSourcesForBinding(context.Background(), bindings[0].ID)
+	if err != nil || len(sources) != 2 {
+		t.Fatalf("sources=%+v err=%v", sources, err)
+	}
+	pathsBySubagent := make(map[string]string, len(sources))
+	for _, source := range sources {
+		if source.Kind != domain.UsageSourceKimiWire || source.NativeSessionID != nativeID {
+			t.Fatalf("source=%+v", source)
+		}
+		pathsBySubagent[source.SubagentID] = source.ArtifactPath
+	}
+	if pathsBySubagent[""] != canonicalUsagePath(t, mainPath) ||
+		pathsBySubagent["researcher"] != canonicalUsagePath(t, childPath) {
+		t.Fatalf("paths by subagent = %+v", pathsBySubagent)
+	}
+}
+
 func TestDiscoverClaudePathRejectsGlobMetadata(t *testing.T) {
 	root := t.TempDir()
 	writeUsageFixture(t, filepath.Join(root, "project", "native-session.jsonl"), "{}\n")

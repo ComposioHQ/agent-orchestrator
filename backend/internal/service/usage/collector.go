@@ -62,11 +62,12 @@ type SourceRoots struct {
 	ClaudeProjects string
 	CodexSessions  string
 	CodexArchived  string
+	KimiHome       string
 }
 
-// DefaultSourceRoots resolves the native Claude Code and Codex transcript
-// directories for the current user.
-func DefaultSourceRoots(ctx context.Context) (SourceRoots, error) {
+// DefaultSourceRoots resolves provider-owned transcript directories. dataDir
+// is AO's already-resolved durable data directory.
+func DefaultSourceRoots(ctx context.Context, dataDir string) (SourceRoots, error) {
 	if err := ctx.Err(); err != nil {
 		return SourceRoots{}, err
 	}
@@ -78,10 +79,14 @@ func DefaultSourceRoots(ctx context.Context) (SourceRoots, error) {
 	if codexHome == "" {
 		codexHome = filepath.Join(home, ".codex")
 	}
+	if strings.TrimSpace(dataDir) == "" {
+		dataDir = filepath.Join(home, ".ao", "data")
+	}
 	return SourceRoots{
 		ClaudeProjects: filepath.Join(home, ".claude", "projects"),
 		CodexSessions:  filepath.Join(codexHome, "sessions"),
 		CodexArchived:  filepath.Join(codexHome, "archived_sessions"),
+		KimiHome:       filepath.Join(dataDir, "kimi"),
 	}, nil
 }
 
@@ -275,7 +280,8 @@ func (c *Collector) RecordHook(ctx context.Context, sessionID domain.SessionID, 
 		}
 	}
 	if signal.NativeSessionID != "" && mainPath == "" &&
-		(session.Harness == domain.HarnessCodex || finalizing && !existsForDiscovery) {
+		(session.Harness == domain.HarnessCodex || session.Harness == domain.HarnessKimi ||
+			finalizing && !existsForDiscovery) {
 		mainPath, err = c.discoverPath(ctx, session.Harness, signal.NativeSessionID)
 		if err != nil {
 			return err
@@ -368,8 +374,11 @@ func (c *Collector) RecordHook(ctx context.Context, sessionID domain.SessionID, 
 
 	if mainArtifact != nil {
 		kind := domain.UsageSourceClaudeMain
-		if session.Harness == domain.HarnessCodex {
+		switch session.Harness {
+		case domain.HarnessCodex:
 			kind = domain.UsageSourceCodexRollout
+		case domain.HarnessKimi:
+			kind = domain.UsageSourceKimiWire
 		}
 		changed, err := c.registerHookSource(
 			ctx,
@@ -386,6 +395,11 @@ func (c *Collector) RecordHook(ctx context.Context, sessionID domain.SessionID, 
 			return err
 		}
 		inventoryChanged = inventoryChanged || changed
+		if session.Harness == domain.HarnessKimi {
+			if err := c.registerDiscoveredKimiAgents(ctx, binding, mainArtifact.path, now, false); err != nil {
+				return err
+			}
+		}
 		sourceErrorCode := ""
 		if c.codexDiscoveryStillPending(ctx, signal.Event, signal.TranscriptPath, mainPath) {
 			sourceErrorCode = domain.UsageErrorSourceDiscoveryPending
@@ -612,18 +626,28 @@ func (c *Collector) backfillSession(ctx context.Context, session domain.SessionR
 	}
 
 	kind := domain.UsageSourceClaudeMain
-	if session.Harness == domain.HarnessCodex {
+	switch session.Harness {
+	case domain.HarnessCodex:
 		kind = domain.UsageSourceCodexRollout
+	case domain.HarnessKimi:
+		kind = domain.UsageSourceKimiWire
 	}
 	if _, err := c.registerSource(ctx, binding, kind, nativeID, "", path, now, false); err != nil {
 		return err
 	}
-	if session.Harness == domain.HarnessClaudeCode {
+	switch session.Harness {
+	case domain.HarnessClaudeCode:
 		if err := c.registerDiscoveredClaudeSubagents(ctx, binding, path, now, false); err != nil {
 			return err
 		}
-	} else if err := c.registerDiscoveredCodexChildren(ctx, binding, now); err != nil {
-		return err
+	case domain.HarnessCodex:
+		if err := c.registerDiscoveredCodexChildren(ctx, binding, now); err != nil {
+			return err
+		}
+	case domain.HarnessKimi:
+		if err := c.registerDiscoveredKimiAgents(ctx, binding, path, now, false); err != nil {
+			return err
+		}
 	}
 	if state == domain.UsageBindingFinalizing {
 		return c.settleFinalizingBinding(ctx, binding.ID, now)
@@ -861,18 +885,28 @@ func (c *Collector) reconcileBinding(ctx context.Context, binding domain.UsageBi
 	}
 
 	kind := domain.UsageSourceClaudeMain
-	if binding.Harness == domain.HarnessCodex {
+	switch binding.Harness {
+	case domain.HarnessCodex:
 		kind = domain.UsageSourceCodexRollout
+	case domain.HarnessKimi:
+		kind = domain.UsageSourceKimiWire
 	}
 	if _, err := c.registerSource(ctx, binding, kind, binding.NativeRootID, "", path, now, false); err != nil {
 		return err
 	}
-	if binding.Harness == domain.HarnessClaudeCode {
+	switch binding.Harness {
+	case domain.HarnessClaudeCode:
 		if err := c.registerDiscoveredClaudeSubagents(ctx, binding, path, now, false); err != nil {
 			return err
 		}
-	} else if err := c.registerDiscoveredCodexChildren(ctx, binding, now); err != nil {
-		return err
+	case domain.HarnessCodex:
+		if err := c.registerDiscoveredCodexChildren(ctx, binding, now); err != nil {
+			return err
+		}
+	case domain.HarnessKimi:
+		if err := c.registerDiscoveredKimiAgents(ctx, binding, path, now, false); err != nil {
+			return err
+		}
 	}
 	lastErrorCode := ""
 	if binding.Harness == domain.HarnessCodex &&
@@ -1096,7 +1130,7 @@ func (c *Collector) registerHookSource(
 	if kind == domain.UsageSourceCodexRollout && subagentID != "" {
 		expectedParentID = binding.NativeRootID
 	}
-	if err := validateSourceAttribution(
+	if err := c.validateSourceAttribution(
 		binding,
 		kind,
 		nativeSessionID,
@@ -1141,7 +1175,7 @@ func (c *Collector) registerSourceWithExpectedParent(
 	if err != nil {
 		return false, err
 	}
-	if err := validateSourceAttribution(
+	if err := c.validateSourceAttribution(
 		binding,
 		kind,
 		nativeSessionID,
@@ -1187,7 +1221,7 @@ func (c *Collector) registerSourceWithInventory(
 	if err != nil {
 		return false, err
 	}
-	if err := validateSourceAttribution(
+	if err := c.validateSourceAttribution(
 		binding,
 		kind,
 		nativeSessionID,
@@ -1377,6 +1411,48 @@ func (c *Collector) registerDiscoveredClaudeSubagents(
 			domain.UsageSourceClaudeSubagent,
 			binding.NativeRootID,
 			boundedUsageMetadata(subagentID),
+			path,
+			now,
+			reactivateExisting,
+		); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	return errors.Join(errs...)
+}
+
+func (c *Collector) registerDiscoveredKimiAgents(
+	ctx context.Context,
+	binding domain.UsageBindingRecord,
+	mainPath string,
+	now time.Time,
+	reactivateExisting bool,
+) error {
+	sessionDir := filepath.Dir(filepath.Dir(filepath.Dir(mainPath)))
+	paths, err := filepath.Glob(filepath.Join(sessionDir, "agents", "*", "wire.jsonl"))
+	if err != nil {
+		return err
+	}
+	sort.Strings(paths)
+	var errs []error
+	for _, path := range paths {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		agentID := boundedUsageMetadata(filepath.Base(filepath.Dir(path)))
+		if agentID == "" || !nativeUsageIDPattern.MatchString(agentID) {
+			continue
+		}
+		subagentID := agentID
+		if agentID == "main" {
+			subagentID = ""
+		}
+		if _, err := c.registerSource(
+			ctx,
+			binding,
+			domain.UsageSourceKimiWire,
+			binding.NativeRootID,
+			subagentID,
 			path,
 			now,
 			reactivateExisting,
@@ -1698,8 +1774,55 @@ func validateSourceAttribution(
 			filepath.Base(resolved) != "agent-"+subagentID+".jsonl" {
 			return rejected()
 		}
+	case domain.UsageSourceKimiWire:
+		agentDir := filepath.Dir(resolved)
+		agentsDir := filepath.Dir(agentDir)
+		sessionDir := filepath.Dir(agentsDir)
+		agentID := filepath.Base(agentDir)
+		wantSubagent := agentID
+		if agentID == "main" {
+			wantSubagent = ""
+		}
+		if binding.Harness != domain.HarnessKimi || nativeSessionID != binding.NativeRootID ||
+			filepath.Base(resolved) != "wire.jsonl" || filepath.Base(agentsDir) != "agents" ||
+			filepath.Base(sessionDir) != binding.NativeRootID || subagentID != wantSubagent {
+			return rejected()
+		}
 	default:
 		return rejected()
+	}
+	return nil
+}
+
+func (c *Collector) validateSourceAttribution(
+	binding domain.UsageBindingRecord,
+	kind domain.UsageSourceKind,
+	nativeSessionID string,
+	subagentID string,
+	resolved string,
+	expectedParentID string,
+) error {
+	if err := validateSourceAttribution(
+		binding,
+		kind,
+		nativeSessionID,
+		subagentID,
+		resolved,
+		expectedParentID,
+	); err != nil {
+		return err
+	}
+	if kind != domain.UsageSourceKimiWire {
+		return nil
+	}
+	expectedRoot, err := filepath.EvalSymlinks(filepath.Join(c.roots.KimiHome, "sessions"))
+	if err != nil {
+		return errors.New(domain.UsageErrorArtifactPathRejected)
+	}
+	actualSessionDir := filepath.Dir(filepath.Dir(filepath.Dir(resolved)))
+	rel, err := filepath.Rel(expectedRoot, actualSessionDir)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return errors.New(domain.UsageErrorArtifactPathRejected)
 	}
 	return nil
 }
@@ -1710,6 +1833,8 @@ func (c *Collector) allowedRoots(harness domain.AgentHarness) []string {
 		return []string{c.roots.ClaudeProjects}
 	case domain.HarnessCodex:
 		return []string{c.roots.CodexSessions, c.roots.CodexArchived}
+	case domain.HarnessKimi:
+		return []string{c.roots.KimiHome}
 	default:
 		return nil
 	}
@@ -1757,6 +1882,8 @@ func (c *Collector) discoverPath(ctx context.Context, harness domain.AgentHarnes
 		patterns = []string{filepath.Join(c.roots.ClaudeProjects, "*", nativeID+".jsonl")}
 	case domain.HarnessCodex:
 		return c.discoverCodexPath(ctx, nativeID, "")
+	case domain.HarnessKimi:
+		return c.discoverKimiPath(ctx, nativeID)
 	}
 	type candidate struct {
 		path string
@@ -1788,6 +1915,54 @@ func (c *Collector) discoverPath(ctx context.Context, harness domain.AgentHarnes
 		return "", nil
 	}
 	return matches[0].path, nil
+}
+
+type kimiIndexRecord struct {
+	SessionID  string `json:"sessionId"`
+	SessionDir string `json:"sessionDir"`
+	Deleted    bool   `json:"deleted"`
+}
+
+func (c *Collector) discoverKimiPath(ctx context.Context, nativeID string) (string, error) {
+	index, err := os.Open(filepath.Join(c.roots.KimiHome, "session_index.jsonl")) //nolint:gosec // configured provider-owned root.
+	if errors.Is(err, os.ErrNotExist) {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = index.Close() }()
+
+	var latest kimiIndexRecord
+	scanner := bufio.NewScanner(index)
+	scanner.Buffer(make([]byte, 4096), 64<<10)
+	for scanner.Scan() {
+		if err := ctx.Err(); err != nil {
+			return "", err
+		}
+		var record kimiIndexRecord
+		if json.Unmarshal(scanner.Bytes(), &record) == nil && record.SessionID == nativeID {
+			latest = record
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return "", err
+	}
+	if latest.Deleted || latest.SessionID == "" || !filepath.IsAbs(latest.SessionDir) ||
+		filepath.Base(filepath.Clean(latest.SessionDir)) != nativeID ||
+		!pathWithinRoot(ctx, latest.SessionDir, filepath.Join(c.roots.KimiHome, "sessions")) {
+		return "", nil
+	}
+	mainPath := filepath.Join(latest.SessionDir, "agents", "main", "wire.jsonl")
+	if info, err := os.Stat(mainPath); err == nil && info.Mode().IsRegular() {
+		return mainPath, nil
+	}
+	paths, err := filepath.Glob(filepath.Join(latest.SessionDir, "agents", "*", "wire.jsonl"))
+	if err != nil || len(paths) == 0 {
+		return "", err
+	}
+	sort.Strings(paths)
+	return paths[0], nil
 }
 
 func (c *Collector) discoverCodexPath(ctx context.Context, nativeID, parentID string) (string, error) {
