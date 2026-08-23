@@ -34,79 +34,9 @@ const (
 	nativeHistorySettleLimit = 45 * time.Second
 )
 
-// Store is the durable conversation surface the controller needs. Implemented by
-// the SQLite store.
-type Store interface {
-	CreateConversation(ctx context.Context, id string, scope domain.ConversationScope, project domain.ProjectID, session domain.SessionID, now time.Time) (domain.ConversationRecord, error)
-	CreateProjectConversationWithContextReset(ctx context.Context, id string, project domain.ProjectID, session domain.SessionID, reset domain.ConversationActivity, now time.Time) (domain.ConversationRecord, error)
-	ConversationForSession(ctx context.Context, session domain.SessionID) (domain.ConversationRecord, error)
-	ClaimChatControllerGeneration(ctx context.Context, session domain.SessionID, generation string, now time.Time) error
-	ConversationBranch(ctx context.Context, conversationID, branchID string) (domain.ConversationBranch, error)
-	ConversationEditAnchor(ctx context.Context, conversationID, replacedTurnID string) (domain.ConversationEditAnchor, error)
-	CreateAndActivateConversationBranch(ctx context.Context, sessionID domain.SessionID, branch domain.ConversationBranch, generation string, now time.Time) error
-	ActivateConversationBranch(ctx context.Context, sessionID domain.SessionID, conversationID, branchID, providerConversationID, generation string, now time.Time) error
-	UpdateConversationBranchReplacement(ctx context.Context, branchID, replacementTurnID string) error
-
-	AdoptProviderTurn(ctx context.Context, conversationID string, session domain.SessionID, generation, turnID, providerTurnID string, now time.Time) error
-	AppendImportedUserMessage(ctx context.Context, conversationID, providerTurnID string, msg domain.ConversationMessage, now time.Time) error
-
-	AppendUserMessage(ctx context.Context, conversationID string, session domain.SessionID, generation string, msg domain.ConversationMessage, turnID string, now time.Time) (bool, error)
-	BindTurnToProvider(ctx context.Context, turnID, providerTurnID string, now time.Time) error
-	SettleTurn(ctx context.Context, conversationID, providerTurnID string, state domain.TurnState, errMessage string, now time.Time) error
-	SettleTurnByID(ctx context.Context, turnID string, state domain.TurnState, errMessage string, now time.Time) error
-	SettleOrphanedTurns(ctx context.Context, session domain.SessionID, now time.Time) error
-	ListVisibleRunningTurnProviderIDs(ctx context.Context, conversationID string) ([]string, error)
-
-	SetConversationSettings(ctx context.Context, conversationID string, settings domain.ConversationSettings, now time.Time) error
-
-	// Usage and rate limits are current state, not timeline entries: each write
-	// replaces the last. The provider reports usage after every tool call, so an
-	// append-per-report is what buried the conversation the first time round.
-	RecordUsage(ctx context.Context, conversationID string, usage domain.ConversationUsage) error
-	RecordRateLimits(ctx context.Context, conversationID string, limits domain.ConversationRateLimits) error
-
-	NextQueuedTurn(ctx context.Context, conversationID string) (domain.QueuedTurn, error)
-	ReserveQueuedTurnForPromotion(ctx context.Context, conversationID, turnID string, now time.Time) (domain.QueuedTurn, error)
-	ReleaseQueuedTurnPromotion(ctx context.Context, conversationID, turnID string) error
-	CompleteQueuedTurnPromotion(ctx context.Context, conversationID, sourceTurnID, providerTurnID string, activity domain.ConversationActivity, now time.Time) error
-	CancelQueuedTurns(ctx context.Context, conversationID string, cutoff, now time.Time) error
-	CancelAllQueuedTurns(ctx context.Context, conversationID string, now time.Time) error
-
-	TurnByID(ctx context.Context, turnID string) (domain.ConversationTurn, error)
-	RollbackTurns(ctx context.Context, conversationID, turnID string, now time.Time) (int, error)
-
-	SetProviderTitle(ctx context.Context, conversationID, title string, now time.Time) error
-	ApplyProviderTitle(ctx context.Context, conversationID string, session domain.SessionID, title string, now time.Time) (bool, error)
-
-	AppendAssistantDelta(ctx context.Context, conversationID, providerItemID, providerTurnID, delta, messageID string, now time.Time) error
-	SettleAssistantMessage(ctx context.Context, conversationID, providerItemID, providerTurnID, text, messageID string, now time.Time) error
-
-	AppendCommandOutput(ctx context.Context, conversationID, providerItemID, delta string, now time.Time) (bool, error)
-	SetTurnDiff(ctx context.Context, conversationID, providerTurnID string, diff domain.ConversationTurnDiff, now time.Time) (bool, error)
-
-	// Streamed provider prose for an activity: reasoning summaries, terminal
-	// keystrokes, tool progress. Appended many times and then replaced by the
-	// settled form, which is why it is two calls rather than one upsert.
-	AppendActivityStreamedText(ctx context.Context, conversationID, providerItemID, delta string, now time.Time) (bool, error)
-	SettleActivityStreamedText(ctx context.Context, conversationID, providerItemID, text string, now time.Time) (bool, error)
-
-	SetTurnPlan(ctx context.Context, conversationID, providerTurnID string, plan domain.ConversationPlan) (bool, error)
-
-	// Latest-wins provider state that belongs to the conversation rather than to a
-	// turn. Each write replaces the last.
-	RecordModelReroute(ctx context.Context, conversationID string, reroute domain.ConversationModelReroute) error
-	RecordAccount(ctx context.Context, conversationID string, account domain.ConversationAccount, now time.Time) error
-	RecordThreadState(ctx context.Context, conversationID string, state domain.ConversationThreadState) error
-	RecordMCPServers(ctx context.Context, conversationID string, servers []domain.ConversationMCPServer) error
-
-	UpsertActivity(ctx context.Context, conversationID, providerTurnID string, activity domain.ConversationActivity, now time.Time) error
-	MarkCompacted(ctx context.Context, conversationID string, at time.Time) error
-	ResolveApproval(ctx context.Context, conversationID, requestID, detailJSON string, now time.Time) error
-	FailPendingApprovals(ctx context.Context, conversationID string, now time.Time) error
-	FailPendingInputs(ctx context.Context, conversationID string, now time.Time) error
-
-	ProjectProviderEvent(ctx context.Context, conversationID string, session domain.SessionID, generation, providerEventID, method, payloadJSON string, now time.Time, project func(context.Context) error) (bool, error)
-}
+// Store is the durable conversation port shared by local SQLite and hosted
+// PostgreSQL compositions.
+type Store = ports.ConversationStore
 
 // ActivityRecorder feeds derived session status.
 //
