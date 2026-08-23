@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,6 +13,7 @@ import (
 	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
+	"github.com/aoagents/agent-orchestrator/backend/internal/lifecycle"
 	usagesvc "github.com/aoagents/agent-orchestrator/backend/internal/service/usage"
 	"github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite"
 )
@@ -624,6 +626,73 @@ func TestCoordinatorCollectsCodexUsageFromFilesystemEvents(t *testing.T) {
 	waitForTokenAggregate(t, store, session.ID, 180)
 }
 
+func TestPipelineRetriesPiDiscoveryAfterMarkSpawnedRace(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	now := time.Now().UTC()
+	store, session := seedUsageTestSession(
+		t, t.TempDir(), "usage", domain.HarnessPi, domain.ActivityIdle, "", now,
+	)
+	workspace := t.TempDir()
+	piRoot := t.TempDir()
+	pipelineStore := &pendingDiscoverySignalStore{
+		Store:   store,
+		checked: make(chan struct{}, 8),
+	}
+
+	var pipeline *Pipeline
+	collector := usagesvc.NewCollector(store, usagesvc.SourceRoots{PiSessions: piRoot}, func(reconcile bool) {
+		if pipeline == nil {
+			return
+		}
+		if reconcile {
+			pipeline.NotifySourcesChanged()
+			return
+		}
+		pipeline.NotifyInventoryChanged()
+	})
+	pipeline = NewPipeline(pipelineStore, NewIngestor(store, IngestorConfig{}), []string{piRoot}, CoordinatorConfig{
+		Workers:    1,
+		RetryDelay: 20 * time.Millisecond,
+		Initialize: collector.BackfillActive,
+		Reconcile: func(reconcileCtx context.Context) error {
+			return collector.ReconcileSources(reconcileCtx, 0)
+		},
+		ReconcilePath: collector.ReconcilePath,
+	})
+	done := pipeline.Start(ctx)
+	t.Cleanup(func() {
+		cancel()
+		select {
+		case <-done:
+		case <-time.After(5 * time.Second):
+			t.Error("usage pipeline did not stop")
+		}
+	})
+	waitForPendingDiscoveryCheck(t, pipelineStore.checked)
+
+	manager := lifecycle.New(store, nil)
+	manager.SetUsageFinalizer(collector)
+	mustNoError(t, manager.MarkSpawned(ctx, session.ID, domain.SessionMetadata{
+		RuntimeLaunchID: "launch-pi-late",
+		WorkspacePath:   workspace,
+	}))
+	waitForPendingDiscoveryCheck(t, pipelineStore.checked)
+
+	path := filepath.Join(piRoot, "project", "late.jsonl")
+	mustNoError(t, os.MkdirAll(filepath.Dir(path), 0o700))
+	mustNoError(t, os.WriteFile(path, []byte(fmt.Sprintf(
+		`{"type":"session","id":"pi-late","cwd":%q,"version":3}`+"\n", workspace,
+	)), 0o600))
+
+	waitForUsageBinding(t, store, session.ID, "pi-late")
+	pending, err := store.HasPendingUsageDiscovery(ctx)
+	mustNoError(t, err)
+	if pending {
+		t.Fatal("Pi discovery remained pending after binding was registered")
+	}
+}
+
 func TestIngestorPersistsAppendOnlyUsageAcrossRestartAndFinalization(t *testing.T) {
 	ctx := context.Background()
 	now := time.Unix(1700000000, 0).UTC()
@@ -1030,6 +1099,45 @@ func waitForWatchableSource(ctx context.Context, t *testing.T, store *sqlite.Sto
 		time.Sleep(10 * time.Millisecond)
 	}
 	t.Fatalf("usage source %q was not registered", path)
+}
+
+func waitForUsageBinding(t *testing.T, store *sqlite.Store, sessionID domain.SessionID, nativeRootID string) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		bindings, err := store.ListUsageBindingsForSession(context.Background(), sessionID)
+		mustNoError(t, err)
+		for _, binding := range bindings {
+			if binding.NativeRootID == nativeRootID {
+				return
+			}
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("usage binding %q was not registered for session %q", nativeRootID, sessionID)
+}
+
+type pendingDiscoverySignalStore struct {
+	*sqlite.Store
+	checked chan struct{}
+}
+
+func (s *pendingDiscoverySignalStore) HasPendingUsageDiscovery(ctx context.Context) (bool, error) {
+	pending, err := s.Store.HasPendingUsageDiscovery(ctx)
+	select {
+	case s.checked <- struct{}{}:
+	default:
+	}
+	return pending, err
+}
+
+func waitForPendingDiscoveryCheck(t *testing.T, checked <-chan struct{}) {
+	t.Helper()
+	select {
+	case <-checked:
+	case <-time.After(5 * time.Second):
+		t.Fatal("usage pipeline did not check pending discovery")
+	}
 }
 
 func appendJSONLRecord(t *testing.T, path string, record []byte) {
