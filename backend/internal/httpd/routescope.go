@@ -1,0 +1,323 @@
+package httpd
+
+import (
+	"log/slog"
+	"net/http"
+	"strings"
+
+	"github.com/go-chi/chi/v5"
+	"github.com/go-chi/chi/v5/middleware"
+
+	"github.com/aoagents/agent-orchestrator/backend/internal/config"
+	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/envelope"
+)
+
+// RouteScope says where one route may be served.
+type RouteScope string
+
+const (
+	// ScopeCloud marks a route the hosted control plane serves. Everything it
+	// touches must come through an injected port — the durable store, the
+	// runtime/sandbox plane — never the host the process happens to run on.
+	ScopeCloud RouteScope = "cloud"
+
+	// ScopeLocalOnly marks a route that only makes sense inside the desktop
+	// daemon: it reads or writes the user's filesystem, drives a host process
+	// (tmux/conpty, a preview server, an agent CLI), talks to the Electron
+	// supervisor, or manages the LAN bridge to the user's phone. The cloud
+	// mount refuses these.
+	ScopeLocalOnly RouteScope = "local-only"
+)
+
+// RouteKey identifies one registered route by its HTTP method and its chi
+// pattern (the pattern, not the concrete path, so `{sessionId}` classifies
+// every session).
+type RouteKey struct {
+	Method  string
+	Pattern string
+}
+
+// RouteClass is a route's scope plus, for a local-only route, the reason it
+// cannot be hosted. The reason is required for local-only entries: it is what a
+// future reader needs in order to decide whether a port has since made the
+// route hostable, and TestRouteClassificationIsComplete enforces its presence.
+type RouteClass struct {
+	Scope  RouteScope
+	Reason string
+}
+
+func cloud() RouteClass { return RouteClass{Scope: ScopeCloud} }
+
+func local(reason string) RouteClass {
+	return RouteClass{Scope: ScopeLocalOnly, Reason: reason}
+}
+
+// Reasons shared by whole route families. Naming them keeps the table below
+// scannable and makes "why is this local-only" one grep away.
+const (
+	reasonHostProcess    = "drives a process on the user's machine (tmux/conpty shell, preview server, agent CLI)"
+	reasonHostFilesystem = "reads or writes the user's filesystem (worktrees, data dir, agent usage logs)"
+	reasonDesktopOnly    = "desktop/supervisor integration: local browser control, daemon control, dev import"
+	reasonLANBridge      = "Connect Mobile LAN bridge and its locally-stored device registry"
+	reasonCloudNative    = "the hosted plane serves its own equivalent under /api/cloud/v1"
+)
+
+// routeClasses is the single explicit classification of every route the router
+// registers. It is deliberately exhaustive and deliberately not pattern-based:
+// a prefix rule ("everything under /sessions is cloud") is exactly how a new
+// local-filesystem route slips into the hosted surface unnoticed.
+// TestRouteClassificationIsComplete walks the fully-wired local router and
+// fails if any registered route is missing here, or if any entry here no longer
+// corresponds to a registered route. Adding a route therefore forces an
+// explicit decision about whether the hosted plane may serve it.
+//
+// The cloud mount is deny-by-default on top of that: an unclassified route
+// (one that somehow reached production without the test running) is refused,
+// not served.
+var routeClasses = map[RouteKey]RouteClass{
+	// ---- Daemon-process surface -------------------------------------------
+	{"GET", "/healthz"}:   local(reasonCloudNative),
+	{"GET", "/readyz"}:    local(reasonCloudNative),
+	{"POST", "/shutdown"}: local(reasonDesktopOnly + "; stops this daemon process"),
+	{"GET", "/mux"}: local("terminal transport bound to the host runtime; hosted panes ride the " +
+		"compute plane's authenticated published listener, not this route"),
+	{"POST", "/internal/telemetry/cli-invoked"}:     local("loopback-only CLI telemetry intake (localControlRequest)"),
+	{"POST", "/internal/telemetry/cli-usage-error"}: local("loopback-only CLI telemetry intake (localControlRequest)"),
+
+	// ---- Spec --------------------------------------------------------------
+	{"GET", "/api/v1/openapi.yaml"}: cloud(),
+
+	// ---- Agents ------------------------------------------------------------
+	// Reads come off the store-backed catalog cache; refresh and probe execute
+	// the agent CLIs installed on the host. They become cloud-eligible the day
+	// the catalog is backed by a sandbox-executing implementation.
+	{"GET", "/api/v1/agents"}:                         cloud(),
+	{"GET", "/api/v1/agents/{agent}/models"}:          cloud(),
+	{"POST", "/api/v1/agents/refresh"}:                local(reasonHostProcess),
+	{"POST", "/api/v1/agents/{agent}/models/refresh"}: local(reasonHostProcess),
+	{"POST", "/api/v1/agents/{agent}/probe"}:          local(reasonHostProcess),
+
+	// ---- Projects ----------------------------------------------------------
+	// Registration and settings are store-backed; clone and initialize write a
+	// git checkout into a local path.
+	{"GET", "/api/v1/projects"}:             cloud(),
+	{"POST", "/api/v1/projects"}:            cloud(),
+	{"GET", "/api/v1/projects/{id}"}:        cloud(),
+	{"PUT", "/api/v1/projects/{id}"}:        cloud(),
+	{"PUT", "/api/v1/projects/{id}/config"}: cloud(),
+	{"DELETE", "/api/v1/projects/{id}"}:     cloud(),
+	{"POST", "/api/v1/projects/clone"}:      local(reasonHostFilesystem),
+	{"POST", "/api/v1/projects/initialize"}: local(reasonHostFilesystem),
+
+	// ---- Sessions ----------------------------------------------------------
+	{"GET", "/api/v1/sessions"}:                                                                        cloud(),
+	{"POST", "/api/v1/sessions"}:                                                                       cloud(),
+	{"POST", "/api/v1/sessions/cleanup"}:                                                               cloud(),
+	{"GET", "/api/v1/sessions/{sessionId}"}:                                                            cloud(),
+	{"PATCH", "/api/v1/sessions/{sessionId}"}:                                                          cloud(),
+	{"POST", "/api/v1/sessions/{sessionId}/kill"}:                                                      cloud(),
+	{"POST", "/api/v1/sessions/{sessionId}/restore"}:                                                   cloud(),
+	{"POST", "/api/v1/sessions/{sessionId}/rollback"}:                                                  cloud(),
+	{"POST", "/api/v1/sessions/{sessionId}/send"}:                                                      cloud(),
+	{"POST", "/api/v1/sessions/{sessionId}/activity"}:                                                  cloud(),
+	{"POST", "/api/v1/sessions/{sessionId}/pin"}:                                                       cloud(),
+	{"DELETE", "/api/v1/sessions/{sessionId}/pin"}:                                                     cloud(),
+	{"PATCH", "/api/v1/sessions/{sessionId}/merge-policy"}:                                             cloud(),
+	{"PATCH", "/api/v1/sessions/{sessionId}/auto-inject-review"}:                                       cloud(),
+	{"PATCH", "/api/v1/sessions/{sessionId}/auto-inject-ci"}:                                           cloud(),
+	{"PUT", "/api/v1/sessions/{sessionId}/reviewer"}:                                                   cloud(),
+	{"PUT", "/api/v1/sessions/{sessionId}/auto-review"}:                                                cloud(),
+	{"POST", "/api/v1/sessions/{sessionId}/resume-agent"}:                                              cloud(),
+	{"POST", "/api/v1/sessions/{sessionId}/switch-agent"}:                                              cloud(),
+	{"GET", "/api/v1/sessions/{sessionId}/agent-switches"}:                                             cloud(),
+	{"POST", "/api/v1/sessions/{sessionId}/agent-switches/{switchId}/recover"}:                         cloud(),
+	{"POST", "/api/v1/sessions/{sessionId}/agent-switches/{switchId}/handoff"}:                         cloud(),
+	{"GET", "/api/v1/sessions/{sessionId}/interface-transition"}:                                       cloud(),
+	{"POST", "/api/v1/sessions/{sessionId}/interface-transition"}:                                      cloud(),
+	{"DELETE", "/api/v1/sessions/{sessionId}/interface-transition"}:                                    cloud(),
+	{"PUT", "/api/v1/sessions/{sessionId}/interface-transition/{transitionId}/notice-acknowledgement"}: cloud(),
+
+	// Attachments land in the local data dir; the workspace and preview
+	// surfaces read the local worktree and drive a local dev server.
+	{"POST", "/api/v1/sessions/{sessionId}/attachments"}:      local(reasonHostFilesystem),
+	{"GET", "/api/v1/sessions/{sessionId}/workspace/files"}:   local(reasonHostFilesystem),
+	{"GET", "/api/v1/sessions/{sessionId}/workspace/file"}:    local(reasonHostFilesystem),
+	{"GET", "/api/v1/sessions/{sessionId}/workspace/events"}:  local(reasonHostFilesystem),
+	{"GET", "/api/v1/sessions/{sessionId}/preview"}:           local(reasonHostFilesystem),
+	{"POST", "/api/v1/sessions/{sessionId}/preview"}:          local(reasonHostFilesystem),
+	{"DELETE", "/api/v1/sessions/{sessionId}/preview"}:        local(reasonHostFilesystem),
+	{"GET", "/api/v1/sessions/{sessionId}/preview/server"}:    local(reasonHostProcess),
+	{"POST", "/api/v1/sessions/{sessionId}/preview/server"}:   local(reasonHostProcess),
+	{"DELETE", "/api/v1/sessions/{sessionId}/preview/server"}: local(reasonHostProcess),
+	{"GET", "/api/v1/sessions/{sessionId}/preview/files/*"}:   local(reasonHostFilesystem),
+
+	// ---- Orchestrators -----------------------------------------------------
+	{"GET", "/api/v1/orchestrators"}:           cloud(),
+	{"POST", "/api/v1/orchestrators"}:          cloud(),
+	{"POST", "/api/v1/orchestrators/delegate"}: cloud(),
+	{"GET", "/api/v1/orchestrators/{id}"}:      cloud(),
+
+	// ---- Conversations (chat) ----------------------------------------------
+	{"GET", "/api/v1/sessions/{sessionId}/conversation"}:                                cloud(),
+	{"GET", "/api/v1/sessions/{sessionId}/conversation/models"}:                         cloud(),
+	{"GET", "/api/v1/sessions/{sessionId}/conversation/skills"}:                         cloud(),
+	{"GET", "/api/v1/sessions/{sessionId}/conversation/config-options"}:                 cloud(),
+	{"PATCH", "/api/v1/sessions/{sessionId}/conversation/config-options/{configId}"}:    cloud(),
+	{"PATCH", "/api/v1/sessions/{sessionId}/conversation/settings"}:                     cloud(),
+	{"PUT", "/api/v1/sessions/{sessionId}/conversation/title"}:                          cloud(),
+	{"POST", "/api/v1/sessions/{sessionId}/conversation/messages"}:                      cloud(),
+	{"POST", "/api/v1/sessions/{sessionId}/conversation/steer"}:                         cloud(),
+	{"POST", "/api/v1/sessions/{sessionId}/conversation/interrupt"}:                     cloud(),
+	{"POST", "/api/v1/sessions/{sessionId}/conversation/compact"}:                       cloud(),
+	{"POST", "/api/v1/sessions/{sessionId}/conversation/mcp/reload"}:                    cloud(),
+	{"POST", "/api/v1/sessions/{sessionId}/conversation/approvals/{requestId}/resolve"}: cloud(),
+	{"POST", "/api/v1/sessions/{sessionId}/conversation/inputs/{requestId}/resolve"}:    cloud(),
+	{"POST", "/api/v1/sessions/{sessionId}/conversation/branches/{branchId}/activate"}:  cloud(),
+	{"POST", "/api/v1/sessions/{sessionId}/conversation/turns/{turnId}/edit"}:           cloud(),
+	{"POST", "/api/v1/sessions/{sessionId}/conversation/turns/{turnId}/rollback"}:       cloud(),
+	{"POST", "/api/v1/sessions/{sessionId}/conversation/turns/{turnId}/steer"}:          cloud(),
+
+	// ---- Reviews and PRs ---------------------------------------------------
+	{"GET", "/api/v1/sessions/{sessionId}/reviews"}:                   cloud(),
+	{"POST", "/api/v1/sessions/{sessionId}/reviews/trigger"}:          cloud(),
+	{"POST", "/api/v1/sessions/{sessionId}/reviews/cancel"}:           cloud(),
+	{"POST", "/api/v1/sessions/{sessionId}/reviews/kill"}:             cloud(),
+	{"POST", "/api/v1/sessions/{sessionId}/reviews/restore"}:          cloud(),
+	{"POST", "/api/v1/sessions/{sessionId}/reviews/submit"}:           cloud(),
+	{"POST", "/api/v1/sessions/{sessionId}/reviews/switch"}:           cloud(),
+	{"POST", "/api/v1/sessions/{sessionId}/reviews/rerequest"}:        cloud(),
+	{"POST", "/api/v1/sessions/{sessionId}/reviews/comments/resolve"}: cloud(),
+	{"POST", "/api/v1/reviews/{reviewSessionID}/activity"}:            cloud(),
+	{"GET", "/api/v1/sessions/{sessionId}/pr"}:                        cloud(),
+	{"POST", "/api/v1/sessions/{sessionId}/pr/claim"}:                 cloud(),
+	{"POST", "/api/v1/prs/{id}/merge"}:                                cloud(),
+	{"POST", "/api/v1/prs/{id}/resolve-comments"}:                     cloud(),
+
+	// ---- Notifications, events, settings -----------------------------------
+	{"GET", "/api/v1/notifications"}:                cloud(),
+	{"PATCH", "/api/v1/notifications/{id}"}:         cloud(),
+	{"POST", "/api/v1/notifications/read-all"}:      cloud(),
+	{"GET", "/api/v1/notifications/stream"}:         cloud(),
+	{"GET", "/api/v1/events"}:                       cloud(),
+	{"GET", "/api/v1/settings"}:                     cloud(),
+	{"PATCH", "/api/v1/settings/session-interface"}: cloud(),
+
+	// ---- Usage -------------------------------------------------------------
+	// Usage rows are collected by tailing ~/.claude and ~/.codex on the host.
+	{"GET", "/api/v1/usage/sessions"}:             local(reasonHostFilesystem),
+	{"GET", "/api/v1/usage/sessions/{sessionId}"}: local(reasonHostFilesystem),
+
+	// ---- Shell terminals ---------------------------------------------------
+	{"GET", "/api/v1/shell-terminals"}:               local(reasonHostProcess),
+	{"POST", "/api/v1/shell-terminals"}:              local(reasonHostProcess),
+	{"PATCH", "/api/v1/shell-terminals/{handleId}"}:  local(reasonHostProcess),
+	{"DELETE", "/api/v1/shell-terminals/{handleId}"}: local(reasonHostProcess),
+
+	// ---- Local browser control ---------------------------------------------
+	{"GET", "/api/v1/browser/status"}:    local(reasonDesktopOnly),
+	{"POST", "/api/v1/browser/commands"}: local(reasonDesktopOnly),
+
+	// ---- Import / dev import -----------------------------------------------
+	{"GET", "/api/v1/import"}:               local(reasonHostFilesystem),
+	{"POST", "/api/v1/import"}:              local(reasonHostFilesystem),
+	{"POST", "/api/v1/dev/import-projects"}: local(reasonDesktopOnly),
+
+	// ---- Connect Mobile and push -------------------------------------------
+	{"GET", "/api/v1/mobile/status"}:                 local(reasonLANBridge),
+	{"POST", "/api/v1/mobile/enable"}:                local(reasonLANBridge),
+	{"POST", "/api/v1/mobile/disable"}:               local(reasonLANBridge),
+	{"POST", "/api/v1/mobile/regenerate"}:            local(reasonLANBridge),
+	{"POST", "/api/v1/mobile/secure-pairing"}:        local(reasonLANBridge),
+	{"GET", "/api/v1/mobile/devices"}:                local(reasonLANBridge),
+	{"PATCH", "/api/v1/mobile/devices/{installId}"}:  local(reasonLANBridge),
+	{"DELETE", "/api/v1/mobile/devices/{installId}"}: local(reasonLANBridge),
+	{"POST", "/api/v1/push/devices"}:                 local(reasonLANBridge),
+	{"DELETE", "/api/v1/push/devices/{token}"}:       local(reasonLANBridge),
+	{"DELETE", "/api/v1/push/pairings/{id}"}:         local(reasonLANBridge),
+}
+
+// ClassifyRoute returns the recorded class for one method + chi pattern.
+// The bool is false when the route is not classified at all, which the cloud
+// mount treats as "deny".
+func ClassifyRoute(method, pattern string) (RouteClass, bool) {
+	class, ok := routeClasses[RouteKey{Method: strings.ToUpper(method), Pattern: pattern}]
+	return class, ok
+}
+
+// RouteClasses returns a copy of the classification table, for tests and for
+// operators who want to render the hosted surface.
+func RouteClasses() map[RouteKey]RouteClass {
+	out := make(map[RouteKey]RouteClass, len(routeClasses))
+	for key, class := range routeClasses {
+		out[key] = class
+	}
+	return out
+}
+
+// NewCloudAPIHandler builds the application API for the hosted control plane.
+//
+// It mounts the same API object the local daemon mounts — the same controllers
+// registered by the same API.Register call — so the two surfaces cannot drift.
+// What differs is composition, not code: deps carry cloud implementations of
+// the storage and runtime ports, and the returned handler is wrapped in a
+// classification guard that refuses every route not marked ScopeCloud.
+//
+// Deliberately not mounted here: health probes (the control plane serves its
+// own), daemon control, CLI telemetry intake, the Connect Mobile bridge, and
+// the terminal mux. Those are local-only by classification too, so they are
+// refused twice over — once by never being registered, once by the guard.
+//
+// The caller is responsible for authentication and for putting a tenant
+// identity on the request context before this handler runs; the guard does not
+// authenticate.
+func NewCloudAPIHandler(cfg config.Config, log *slog.Logger, deps APIDeps) http.Handler {
+	log = loggerOrDefault(log)
+	deps = normalizeAPIDeps(deps, log)
+
+	r := chi.NewRouter()
+	r.Use(middleware.RequestID)
+	r.Use(middleware.RealIP)
+	r.Use(requestLogger(log, deps.Telemetry))
+	r.Use(recoverTelemetry(log, deps.Telemetry))
+	r.Use(corsMiddleware(cfg.AllowedOrigins))
+	r.NotFound(notFoundJSON)
+	r.MethodNotAllowed(methodNotAllowedJSON)
+
+	NewAPI(cfg, deps).Register(r)
+
+	return CloudScopeGuard(r)
+}
+
+// CloudScopeGuard wraps a router so only ScopeCloud routes reach it.
+//
+// The check runs before the router, against a throwaway route context, so it
+// sees the chi pattern the request would match without disturbing the real
+// routing pass. Deny-by-default: a route with no entry in routeClasses is
+// refused exactly like an explicitly local-only one, so a route added without
+// a classification fails closed in production as well as failing the test.
+//
+// A request that matches nothing falls through to the router's own 404/405
+// envelope rather than being reported as "not available", so a typo stays a
+// typo.
+func CloudScopeGuard(router chi.Router) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		rctx := chi.NewRouteContext()
+		if router.Match(rctx, r.Method, routeMatchPath(r)) {
+			if class, ok := ClassifyRoute(r.Method, rctx.RoutePattern()); !ok || class.Scope != ScopeCloud {
+				envelope.WriteAPIError(w, r, http.StatusNotFound, "not_found", "ROUTE_NOT_AVAILABLE",
+					r.Method+" "+r.URL.Path+" is not available on the hosted control plane", nil)
+				return
+			}
+		}
+		router.ServeHTTP(w, r)
+	})
+}
+
+// routeMatchPath mirrors how chi picks the path it routes on, so the dry-run
+// match resolves the same pattern the real routing pass will.
+func routeMatchPath(r *http.Request) string {
+	if r.URL.RawPath != "" {
+		return r.URL.RawPath
+	}
+	return r.URL.Path
+}
