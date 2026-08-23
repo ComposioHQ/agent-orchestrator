@@ -23,6 +23,11 @@ var runtimeTables = []string{
 	"ao_session_worktrees",
 	"ao_conversations",
 	"ao_conversation_provider_events",
+	"ao_app_settings",
+	"ao_agent_inventory_cache",
+	"ao_change_heads",
+	"ao_change_log",
+	"ao_change_cursors",
 }
 
 func qualifiedRuntimeTables() string {
