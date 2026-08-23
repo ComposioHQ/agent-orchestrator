@@ -6,7 +6,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/cloud/domain"
@@ -27,75 +26,14 @@ func (s *Store) UpsertGoogleUser(ctx context.Context, principal domain.Principal
 		principal.DisplayName = principal.Email
 	}
 
-	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
-	if err != nil {
-		return domain.Principal{}, err
-	}
-	defer func() { _ = tx.Rollback(ctx) }()
-	if err := tx.QueryRow(
+	if err := s.pool.QueryRow(
 		ctx,
-		`INSERT INTO ao_users (auth_provider, external_user_id, email, display_name)
-		 VALUES ('google', $1, $2, $3)
-		 ON CONFLICT (auth_provider, external_user_id)
-		 DO UPDATE SET email = EXCLUDED.email,
-		               display_name = EXCLUDED.display_name,
-		               updated_at = now()
-		 RETURNING id`,
+		`SELECT ao_upsert_google_user($1, $2, $3)`,
 		principal.ExternalID,
 		principal.Email,
 		principal.DisplayName,
 	).Scan(&principal.UserID); err != nil {
 		return domain.Principal{}, normalizeError(err)
-	}
-	if _, err := tx.Exec(
-		ctx,
-		`SELECT set_config('ao.user_id', $1, true),
-		        pg_advisory_xact_lock(hashtextextended($1, 0))`,
-		principal.UserID,
-	); err != nil {
-		return domain.Principal{}, err
-	}
-	var hasAnyMembership bool
-	if err := tx.QueryRow(
-		ctx,
-		`SELECT EXISTS (
-			SELECT 1 FROM ao_org_memberships
-			WHERE user_id = $1
-		)`,
-		principal.UserID,
-	).Scan(&hasAnyMembership); err != nil {
-		return domain.Principal{}, err
-	}
-	if !hasAnyMembership {
-		orgID := uuid.NewString()
-		if _, err := tx.Exec(ctx, `SELECT set_config('ao.org_id', $1, true)`, orgID); err != nil {
-			return domain.Principal{}, err
-		}
-		slug := "personal-" + strings.ReplaceAll(principal.UserID, "-", "")
-		if _, err := tx.Exec(
-			ctx,
-			`INSERT INTO ao_organizations (
-				id, slug, display_name, kind, owner_user_id, created_by_user_id
-			) VALUES ($1, $2, $3, 'personal', $4, $4)`,
-			orgID,
-			slug,
-			principal.DisplayName+"'s organization",
-			principal.UserID,
-		); err != nil {
-			return domain.Principal{}, normalizeError(err)
-		}
-		if _, err := tx.Exec(
-			ctx,
-			`INSERT INTO ao_org_memberships (org_id, user_id, role)
-			 VALUES ($1, $2, 'owner')`,
-			orgID,
-			principal.UserID,
-		); err != nil {
-			return domain.Principal{}, normalizeError(err)
-		}
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return domain.Principal{}, err
 	}
 	return principal, nil
 }
@@ -103,8 +41,16 @@ func (s *Store) UpsertGoogleUser(ctx context.Context, principal domain.Principal
 // PrincipalByID resolves the current user for an already verified AO access
 // token. Memberships are loaded separately and never trusted from token claims.
 func (s *Store) PrincipalByID(ctx context.Context, userID string) (domain.Principal, error) {
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{AccessMode: pgx.ReadOnly})
+	if err != nil {
+		return domain.Principal{}, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err = tx.Exec(ctx, `SELECT set_config('ao.user_id', $1, true)`, strings.TrimSpace(userID)); err != nil {
+		return domain.Principal{}, err
+	}
 	var principal domain.Principal
-	err := s.pool.QueryRow(
+	err = tx.QueryRow(
 		ctx,
 		`SELECT id, auth_provider, external_user_id, email, display_name
 		 FROM ao_users WHERE id = $1`,
@@ -119,12 +65,23 @@ func (s *Store) PrincipalByID(ctx context.Context, userID string) (domain.Princi
 	if err != nil {
 		return domain.Principal{}, normalizeError(err)
 	}
+	if err := tx.Commit(ctx); err != nil {
+		return domain.Principal{}, err
+	}
 	return principal, nil
 }
 
 // CreateRefreshSession persists only a refresh-token digest.
 func (s *Store) CreateRefreshSession(ctx context.Context, userID string, tokenHash []byte, expiresAt time.Time) error {
-	_, err := s.pool.Exec(
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err = tx.Exec(ctx, `SELECT set_config('ao.user_id', $1, true)`, strings.TrimSpace(userID)); err != nil {
+		return err
+	}
+	_, err = tx.Exec(
 		ctx,
 		`WITH expired AS (
 			DELETE FROM ao_auth_sessions WHERE expires_at <= now()
@@ -135,7 +92,10 @@ func (s *Store) CreateRefreshSession(ctx context.Context, userID string, tokenHa
 		tokenHash,
 		expiresAt,
 	)
-	return normalizeError(err)
+	if err != nil {
+		return normalizeError(err)
+	}
+	return tx.Commit(ctx)
 }
 
 // RotateRefreshSession consumes an old refresh token and inserts its
@@ -146,39 +106,12 @@ func (s *Store) RotateRefreshSession(
 	ctx context.Context,
 	oldHash, newHash []byte,
 ) (domain.Principal, error) {
-	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
-	if err != nil {
-		return domain.Principal{}, err
-	}
-	defer func() { _ = tx.Rollback(ctx) }()
-	var userID string
-	var createdAt, expiresAt time.Time
-	if err := tx.QueryRow(
-		ctx,
-		`DELETE FROM ao_auth_sessions
-		 WHERE token_hash = $1 AND expires_at > now()
-		 RETURNING user_id, created_at, expires_at`,
-		oldHash,
-	).Scan(&userID, &createdAt, &expiresAt); err != nil {
-		return domain.Principal{}, normalizeError(err)
-	}
-	if _, err := tx.Exec(
-		ctx,
-		`INSERT INTO ao_auth_sessions (user_id, token_hash, created_at, expires_at)
-		 VALUES ($1, $2, $3, $4)`,
-		userID,
-		newHash,
-		createdAt,
-		expiresAt,
-	); err != nil {
-		return domain.Principal{}, normalizeError(err)
-	}
 	var principal domain.Principal
-	if err := tx.QueryRow(
+	if err := s.pool.QueryRow(
 		ctx,
-		`SELECT id, auth_provider, external_user_id, email, display_name
-		 FROM ao_users WHERE id = $1`,
-		userID,
+		`SELECT user_id, auth_provider, external_user_id, email, display_name
+		 FROM ao_rotate_refresh_session($1, $2)`,
+		oldHash, newHash,
 	).Scan(
 		&principal.UserID,
 		&principal.Provider,
@@ -188,16 +121,13 @@ func (s *Store) RotateRefreshSession(
 	); err != nil {
 		return domain.Principal{}, normalizeError(err)
 	}
-	if err := tx.Commit(ctx); err != nil {
-		return domain.Principal{}, err
-	}
 	return principal, nil
 }
 
 // RevokeRefreshSession removes one refresh-token digest. Revocation is
 // idempotent so logout does not reveal whether a token existed.
 func (s *Store) RevokeRefreshSession(ctx context.Context, tokenHash []byte) error {
-	_, err := s.pool.Exec(ctx, `DELETE FROM ao_auth_sessions WHERE token_hash = $1`, tokenHash)
+	_, err := s.pool.Exec(ctx, `SELECT ao_revoke_refresh_session($1)`, tokenHash)
 	return err
 }
 

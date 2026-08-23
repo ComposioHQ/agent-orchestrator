@@ -51,11 +51,13 @@ func run(logger *slog.Logger) error {
 		return err
 	}
 	api, err := httpapi.New(httpapi.Options{
-		Store:           store,
-		Google:          google,
-		AccessTokens:    accessTokens,
-		RefreshTokenTTL: cfg.RefreshTokenTTL,
-		Logger:          logger,
+		Store:               store,
+		Google:              google,
+		AllowedEmails:       cfg.AllowedEmails,
+		AccessTokens:        accessTokens,
+		RefreshTokenTTL:     cfg.RefreshTokenTTL,
+		TrustSourceIPHeader: cfg.TrustSourceIPHeader,
+		Logger:              logger,
 	})
 	if err != nil {
 		return err

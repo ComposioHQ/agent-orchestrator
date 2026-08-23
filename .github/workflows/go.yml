@@ -16,6 +16,22 @@ permissions:
 jobs:
   build-test:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      AO_CLOUD_TEST_MIGRATION_DATABASE_URL: postgres://ao_cloud_migrator:integration-migration-password@127.0.0.1:5432/ao_cloud_test?sslmode=disable
+      AO_CLOUD_TEST_RUNTIME_DATABASE_ROLE: ao_cloud_runtime
+      AO_CLOUD_TEST_DATABASE_URL: postgres://ao_cloud_runtime:integration-runtime-password@127.0.0.1:5432/ao_cloud_test?sslmode=disable
     defaults:
       run:
         working-directory: backend
@@ -28,6 +44,17 @@ jobs:
           # (it previously pinned 1.22 while go.mod declared 1.25).
           go-version-file: backend/go.mod
           cache: false
+
+      - name: Create least-privilege migration database
+        env:
+          PGPASSWORD: postgres
+        run: |
+          psql -h 127.0.0.1 -U postgres -d postgres -v ON_ERROR_STOP=1 <<'SQL'
+          CREATE ROLE ao_cloud_migrator
+            LOGIN CREATEROLE NOBYPASSRLS NOSUPERUSER
+            PASSWORD 'integration-migration-password';
+          CREATE DATABASE ao_cloud_test OWNER ao_cloud_migrator;
+          SQL
 
       - name: Check formatting
         run: |
