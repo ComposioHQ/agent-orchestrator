@@ -1896,9 +1896,9 @@ const diffStatusMark: Record<DiffStatus, { mark: string; tone: string; label: st
 /**
  * What a turn changed on disk.
  *
- * A bordered summary card at the end of the turn (kept near rollback), not the
- * compact explore line used for mid-turn activity. Always shows the changed
- * files; Review opens the Files rail, and clicking a row focuses that path.
+ * FileDiff icon, white “N files changed”, and +/− totals on the header; the
+ * file list stays visible below. Review opens the Files rail, and clicking a
+ * row focuses that path.
  *
  * Rendered only when the daemon reported a diff. An agent that cannot report one
  * gets no empty panel implying it changed nothing.
@@ -1930,6 +1930,8 @@ export function TurnChangedFiles({
 	const previewLimit = 4;
 	const hidden = Math.max(0, diff.files.length - previewLimit);
 	const visible = expanded ? diff.files : diff.files.slice(0, previewLimit);
+	const additions = diff.files.reduce((sum, file) => sum + file.additions, 0);
+	const deletions = diff.files.reduce((sum, file) => sum + file.deletions, 0);
 
 	return (
 		<div className="overflow-hidden rounded-lg bg-surface">
@@ -1944,6 +1946,10 @@ export function TurnChangedFiles({
 					/>
 				) : null}
 				<span className="flex-1" />
+				<span className="shrink-0 font-mono text-[10.5px] tabular-nums">
+					<span className="text-success">+{additions}</span>{" "}
+					<span className="text-destructive">&minus;{deletions}</span>
+				</span>
 				{onReview ? (
 					<button
 						type="button"
