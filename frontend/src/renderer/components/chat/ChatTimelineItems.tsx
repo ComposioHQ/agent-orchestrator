@@ -107,7 +107,9 @@ const IMAGE_ATTACHMENT_PATH = /\.(?:png|jpe?g|gif|webp|bmp)$/i;
 const STREAM_CHARACTER_INTERVAL_MS = 12;
 
 function useSmoothStreamingText(message: ConversationMessage): string {
-	const [visibleText, setVisibleText] = useState(() => (message.streaming ? "" : message.text));
+	// A snapshot can first reach the renderer after the provider has already emitted
+	// text. Keep that first durable burst visible; only later deltas need smoothing.
+	const [visibleText, setVisibleText] = useState(() => message.text);
 	const visibleRef = useRef(visibleText);
 	const targetRef = useRef(message.text);
 	const messageIdRef = useRef(message.id);
@@ -137,7 +139,7 @@ function useSmoothStreamingText(message: ConversationMessage): string {
 		if (message.id !== messageIdRef.current) {
 			messageIdRef.current = message.id;
 			targetRef.current = message.text;
-			const initial = message.streaming ? "" : message.text;
+			const initial = message.text;
 			visibleRef.current = initial;
 			setVisibleText(initial);
 			return;
