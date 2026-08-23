@@ -211,6 +211,7 @@ func TestCloudMigrationsAreTenantScoped(t *testing.T) {
 		"ao_pull_request_reviews_change_inserted",
 		"ao_notifications_change_created",
 		"ao_notifications_change_resolved",
+		"ao_notifications_change_deleted",
 	} {
 		if !strings.Contains(triggerSQL, required) {
 			t.Fatalf("change trigger migration does not contain %q", required)

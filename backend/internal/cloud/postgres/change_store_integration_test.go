@@ -136,6 +136,32 @@ func TestChangeDeliveryAgainstPostgres(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+		mutated := beginChangeTestTx(t, aliceCtx, writer, alice)
+		if _, err := mutated.Exec(aliceCtx,
+			`UPDATE ao_pull_requests SET pr_state = 'merged', updated_at = now()
+			 WHERE org_id = $1 AND owner_user_id = $2 AND url = 'https://example.test/pr/1'`,
+			alice.OrgID, alice.UserID,
+		); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := mutated.Exec(aliceCtx,
+			`DELETE FROM ao_notifications
+			 WHERE org_id = $1 AND owner_user_id = $2 AND id = 'notification-1'`,
+			alice.OrgID, alice.UserID,
+		); err != nil {
+			t.Fatal(err)
+		}
+		if err := mutated.Commit(aliceCtx); err != nil {
+			t.Fatal(err)
+		}
+		mutations, err := writer.EventsAfter(aliceCtx, head, 10)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(mutations) != 2 || mutations[0].Type != ports.ChangeEventPRUpdated || mutations[1].Type != ports.ChangeEventNotificationResolved {
+			t.Fatalf("raw update/delete events = %#v", mutations)
+		}
+		head = mutations[len(mutations)-1].Seq
 		rolledBack := beginChangeTestTx(t, aliceCtx, writer, alice)
 		if _, err := rolledBack.Exec(aliceCtx,
 			`UPDATE ao_sessions SET activity_state = 'active', updated_at = now()
@@ -162,22 +188,23 @@ func TestChangeDeliveryAgainstPostgres(t *testing.T) {
 			t.Fatal(err)
 		}
 		second := beginChangeTestTx(t, aliceCtx, writer, alice)
-		secondRecorded := make(chan error, 1)
+		secondCommitted := make(chan error, 1)
 		go func() {
-			secondRecorded <- insertChangeTestFact(aliceCtx, second, alice, "after-rollback")
+			if err := insertChangeTestFact(aliceCtx, second, alice, "after-rollback"); err != nil {
+				secondCommitted <- err
+				return
+			}
+			secondCommitted <- second.Commit(aliceCtx)
 		}()
 		select {
-		case err := <-secondRecorded:
-			t.Fatalf("second allocator did not wait for the org head lock: %v", err)
+		case err := <-secondCommitted:
+			t.Fatalf("later writer committed before earlier rollback: %v", err)
 		case <-time.After(100 * time.Millisecond):
 		}
 		if err := first.Rollback(aliceCtx); err != nil {
 			t.Fatal(err)
 		}
-		if err := <-secondRecorded; err != nil {
-			t.Fatal(err)
-		}
-		if err := second.Commit(aliceCtx); err != nil {
+		if err := <-secondCommitted; err != nil {
 			t.Fatal(err)
 		}
 		events, err := writer.EventsAfter(aliceCtx, baseline, 10)
@@ -193,22 +220,23 @@ func TestChangeDeliveryAgainstPostgres(t *testing.T) {
 			t.Fatal(err)
 		}
 		fourth := beginChangeTestTx(t, aliceCtx, writer, alice)
-		fourthRecorded := make(chan error, 1)
+		fourthCommitted := make(chan error, 1)
 		go func() {
-			fourthRecorded <- insertChangeTestFact(aliceCtx, fourth, alice, "commit-second")
+			if err := insertChangeTestFact(aliceCtx, fourth, alice, "commit-second"); err != nil {
+				fourthCommitted <- err
+				return
+			}
+			fourthCommitted <- fourth.Commit(aliceCtx)
 		}()
 		select {
-		case err := <-fourthRecorded:
-			t.Fatalf("later commit allocated before prior commit: %v", err)
+		case err := <-fourthCommitted:
+			t.Fatalf("later writer committed before prior commit: %v", err)
 		case <-time.After(100 * time.Millisecond):
 		}
 		if err := third.Commit(aliceCtx); err != nil {
 			t.Fatal(err)
 		}
-		if err := <-fourthRecorded; err != nil {
-			t.Fatal(err)
-		}
-		if err := fourth.Commit(aliceCtx); err != nil {
+		if err := <-fourthCommitted; err != nil {
 			t.Fatal(err)
 		}
 		events, err = writer.EventsAfter(aliceCtx, baseline+1, 10)
@@ -409,7 +437,7 @@ func requireProductionChangeTriggers(t *testing.T, ctx context.Context, pool *pg
 		{"ao_pull_request_review_threads", []string{"ao_pull_request_review_threads_change_added", "ao_pull_request_review_threads_change_resolved"}},
 		{"ao_pull_request_comments", []string{"ao_pull_request_comments_change_inserted", "ao_pull_request_comments_change_updated"}},
 		{"ao_pull_request_reviews", []string{"ao_pull_request_reviews_change_inserted", "ao_pull_request_reviews_change_updated"}},
-		{"ao_notifications", []string{"ao_notifications_change_created", "ao_notifications_change_resolved"}},
+		{"ao_notifications", []string{"ao_notifications_change_created", "ao_notifications_change_resolved", "ao_notifications_change_deleted"}},
 	}
 	for _, want := range wants {
 		var tableExists bool

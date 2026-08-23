@@ -172,6 +172,11 @@ BEGIN
         WHEN (OLD.resolved_at IS NULL AND NEW.resolved_at IS NOT NULL)
         EXECUTE FUNCTION ao_capture_change_event(
             'notification_resolved', 'project_id', 'session_id', 'notification');
+
+        CREATE TRIGGER ao_notifications_change_deleted
+        AFTER DELETE ON ao_notifications
+        FOR EACH ROW EXECUTE FUNCTION ao_capture_change_event(
+            'notification_resolved', 'project_id', 'session_id', 'notification');
     END IF;
 END
 $$;
@@ -190,6 +195,7 @@ BEGIN
         DROP TRIGGER IF EXISTS ao_pull_request_comments_change_inserted ON ao_pull_request_comments;
     END IF;
     IF to_regclass('public.ao_notifications') IS NOT NULL THEN
+        DROP TRIGGER IF EXISTS ao_notifications_change_deleted ON ao_notifications;
         DROP TRIGGER IF EXISTS ao_notifications_change_resolved ON ao_notifications;
         DROP TRIGGER IF EXISTS ao_notifications_change_created ON ao_notifications;
     END IF;
