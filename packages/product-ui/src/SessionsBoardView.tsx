@@ -155,24 +155,16 @@ function BoardColumnView<TSession extends BoardSessionPresentation>({
 			data-testid="board-column"
 			data-column={column.column}
 		>
-			<div
-				className="flex h-12 shrink-0 items-center gap-2.5 px-4"
-				style={{ backgroundImage: `linear-gradient(90deg, ${column.glow}, transparent 72%)` }}
-			>
+			<div className="flex h-12 shrink-0 items-center gap-2.5 px-4">
 				<span
 					data-testid="board-column-swatch"
-					className="size-[var(--size-swatch)] rounded-[var(--radius-swatch)]"
-					style={{
-						background: column.dot,
-						boxShadow: column.dotGlow
-							? `0 0 7px color-mix(in srgb, ${column.dot} 60%, transparent)`
-							: undefined,
-					}}
+					className="size-[var(--size-swatch)] rounded-full"
+					style={{ backgroundColor: column.dot }}
 				/>
-				<span className={cn("font-mono text-2xs font-medium uppercase tracking-wide-sm", column.titleClassName)}>
+				<span className={cn("text-xs font-medium", column.titleClassName)}>
 					{column.label}
 				</span>
-				<span className="ml-auto font-mono text-2xs leading-none text-passive">{ordered.length}</span>
+				<span className="ml-auto tabular-nums text-xs leading-none text-passive">{ordered.length}</span>
 			</div>
 			<div className="board-scrollbar min-h-0 flex-1 overflow-y-auto px-3 pb-3 pt-3">
 				<div className="flex min-h-full flex-col gap-2.5">

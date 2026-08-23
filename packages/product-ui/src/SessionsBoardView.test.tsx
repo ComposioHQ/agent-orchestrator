@@ -90,11 +90,16 @@ describe("SessionsBoardView", () => {
 
 		const buildingLane = screen.getByRole("region", { name: "Building sessions" });
 		const buildingHeader = buildingLane.firstElementChild as HTMLElement;
-		expect(buildingHeader.style.backgroundImage).toContain("var(--color-status-working)");
-		expect(within(buildingLane).getByTestId("board-column-swatch")).toHaveClass(
-			"size-[var(--size-swatch)]",
-			"rounded-[var(--radius-swatch)]",
-		);
+		expect(buildingHeader).not.toHaveAttribute("style");
+		const swatch = within(buildingLane).getByTestId("board-column-swatch");
+		expect(swatch).toHaveClass("size-[var(--size-swatch)]", "rounded-full");
+		expect(swatch.style.boxShadow).toBe("");
+		const title = within(buildingLane).getByText("Building");
+		expect(title).toHaveClass("text-xs", "font-medium");
+		expect(title).not.toHaveClass("font-mono", "uppercase", "tracking-wide-sm");
+		const count = within(buildingLane).getByText("2");
+		expect(count).toHaveClass("tabular-nums", "text-xs");
+		expect(count).not.toHaveClass("font-mono");
 		expect(
 			within(buildingLane)
 				.getAllByTestId(/^card-/)
