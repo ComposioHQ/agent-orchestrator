@@ -8,12 +8,14 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
+	"github.com/go-chi/httprate"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/cloud/auth"
 	"github.com/aoagents/agent-orchestrator/backend/internal/cloud/domain"
@@ -44,25 +46,34 @@ type AccountStore interface {
 type Options struct {
 	Store           AccountStore
 	Google          IdentityVerifier
+	AllowedEmails   []string
 	AccessTokens    *auth.AccessTokenManager
 	RefreshTokenTTL time.Duration
-	Logger          *slog.Logger
+	// TrustSourceIPHeader allows an infrastructure-owned proxy to supply the
+	// limiter key. Leave false unless the edge overwrites X-AO-Source-IP.
+	TrustSourceIPHeader bool
+	Logger              *slog.Logger
 }
 
 // Server owns the Cloud foundation HTTP handler.
 type Server struct {
-	store           AccountStore
-	google          IdentityVerifier
-	accessTokens    *auth.AccessTokenManager
-	refreshTokenTTL time.Duration
-	logger          *slog.Logger
-	handler         http.Handler
+	store               AccountStore
+	google              IdentityVerifier
+	allowedEmails       map[string]struct{}
+	accessTokens        *auth.AccessTokenManager
+	refreshTokenTTL     time.Duration
+	trustSourceIPHeader bool
+	logger              *slog.Logger
+	handler             http.Handler
 }
 
 // New constructs the control-plane auth and account routes.
 func New(options Options) (*Server, error) {
 	if options.Store == nil || options.Google == nil || options.AccessTokens == nil {
 		return nil, errors.New("cloud HTTP store, Google verifier, and access-token manager are required")
+	}
+	if len(emailSet(options.AllowedEmails)) == 0 {
+		return nil, errors.New("at least one cloud account email must be allowed")
 	}
 	if options.RefreshTokenTTL <= 0 {
 		return nil, errors.New("cloud refresh-token lifetime must be positive")
@@ -71,14 +82,31 @@ func New(options Options) (*Server, error) {
 		options.Logger = slog.Default()
 	}
 	server := &Server{
-		store:           options.Store,
-		google:          options.Google,
-		accessTokens:    options.AccessTokens,
-		refreshTokenTTL: options.RefreshTokenTTL,
-		logger:          options.Logger,
+		store:               options.Store,
+		google:              options.Google,
+		allowedEmails:       emailSet(options.AllowedEmails),
+		accessTokens:        options.AccessTokens,
+		refreshTokenTTL:     options.RefreshTokenTTL,
+		trustSourceIPHeader: options.TrustSourceIPHeader,
+		logger:              options.Logger,
 	}
 	server.handler = server.routes()
 	return server, nil
+}
+
+func emailSet(emails []string) map[string]struct{} {
+	result := make(map[string]struct{}, len(emails))
+	for _, email := range emails {
+		if normalized := strings.ToLower(strings.TrimSpace(email)); normalized != "" {
+			result[normalized] = struct{}{}
+		}
+	}
+	return result
+}
+
+func (s *Server) emailAllowed(email string) bool {
+	_, allowed := s.allowedEmails[strings.ToLower(strings.TrimSpace(email))]
+	return allowed
 }
 
 // Handler returns the complete HTTP handler for the Cloud foundation.
@@ -100,11 +128,35 @@ func (s *Server) routes() http.Handler {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	})
 	router.Get("/readyz", s.ready)
-	router.Post("/api/cloud/v1/auth/google", s.exchangeGoogle)
-	router.Post("/api/cloud/v1/auth/refresh", s.refresh)
-	router.Post("/api/cloud/v1/auth/logout", s.logout)
+	authRateLimit := httprate.Limit(
+		20,
+		time.Minute,
+		httprate.WithKeyFuncs(s.sourceIPKey),
+		httprate.WithLimitHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			writeError(w, r, http.StatusTooManyRequests, "rate_limited", "AUTH_RATE_LIMITED", "too many authentication requests")
+		})),
+	)
+	router.With(authRateLimit).Post("/api/cloud/v1/auth/google", s.exchangeGoogle)
+	router.With(authRateLimit).Post("/api/cloud/v1/auth/refresh", s.refresh)
+	router.With(authRateLimit).Post("/api/cloud/v1/auth/logout", s.logout)
 	router.With(s.requirePrincipal).Get("/api/cloud/v1/me", s.me)
 	return router
+}
+
+func (s *Server) sourceIPKey(r *http.Request) (string, error) {
+	// API Gateway overwrites this header from $context.identity.sourceIp before
+	// forwarding through the internal ALB. Never trust it in direct deployments.
+	if s.trustSourceIPHeader {
+		sourceIP := strings.TrimSpace(r.Header.Get("X-AO-Source-IP"))
+		if sourceIP != "" {
+			return sourceIP, nil
+		}
+	}
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err == nil {
+		return host, nil
+	}
+	return strings.TrimSpace(r.RemoteAddr), nil
 }
 
 func (s *Server) recoverer(next http.Handler) http.Handler {

@@ -13,7 +13,8 @@ identity. It does not provision sandboxes or implement projects and sessions.
 - `backend/internal/cloud/auth`: Google OpenID Connect verification, short-lived
   AO JWT access tokens, and opaque refresh tokens.
 - `backend/internal/cloud/postgres`: users, hashed refresh sessions,
-  organizations, memberships, and forced row-level security.
+  organizations, memberships, placement-schema groundwork, and forced
+  row-level security.
 - `backend/internal/cloud/httpapi`: the implemented subset of the public Cloud
   contract.
 
@@ -34,6 +35,9 @@ own every local project and session.
 Google establishes identity only. A verified Google hosted-domain claim never
 creates, selects, or authorizes an AO organization. First sign-in atomically
 creates the user, a personal organization, and its owner membership.
+The required `AO_CLOUD_ALLOWED_EMAILS` gate is enforced both at exchange and
+refresh, so removing an account takes effect without waiting for its refresh
+session to expire. Authentication routes are rate-limited per source IP.
 
 AO access tokens contain the AO user ID but no organization membership. Every
 authenticated account read reloads memberships from PostgreSQL, so disabling a
@@ -56,15 +60,21 @@ Migration and runtime credentials are intentionally separate:
   role named by `AO_CLOUD_RUNTIME_DATABASE_ROLE` during migration.
 - Runtime startup rejects roles with `SUPERUSER` or `BYPASSRLS`.
 
-The migration command expects the runtime login role to already exist. It
-applies the embedded Goose migration and grants that role only the tables and
-tenant helper functions in this foundation. It does not create or rotate
-database passwords; deployment automation will own that later.
+When `AO_CLOUD_RUNTIME_DATABASE_PASSWORD` is provided, the migration command
+creates a separate restricted runtime login if it does not exist. Existing
+roles are validated, never elevated. It applies the embedded Goose migrations
+and grants only the tables and helper functions in this foundation.
 
-`ao_organizations` and `ao_org_memberships` have forced row-level security.
-Tenant reads are authorized through the current AO user. Writes additionally
-require an AO-selected organization transaction context, and administrative
-updates require an active owner or admin membership.
+All six current control-plane tables, including `ao_users` and
+`ao_auth_sessions`, have forced row-level security. Pre-auth identity upsert,
+refresh rotation, and logout use fixed-search-path `SECURITY DEFINER` functions
+owned by a narrowly privileged `NOLOGIN` role. Runtime startup verifies both
+RLS flags on every tenant table. Tenant reads are authorized through the
+current AO user; administrative writes require the selected organization and
+an active owner/admin membership.
+
+The workspace and session-runtime tables are placement-schema groundwork only.
+This PR exposes no handlers for them and stores no AO product data in them.
 
 ## Configuration
 
@@ -73,6 +83,7 @@ The API requires:
 ```bash
 export AO_CLOUD_DATABASE_URL='postgres://ao_runtime:...@127.0.0.1:5432/ao_cloud'
 export AO_CLOUD_GOOGLE_CLIENT_IDS='desktop-oauth-client.apps.googleusercontent.com'
+export AO_CLOUD_ALLOWED_EMAILS='maintainer@example.com'
 export AO_CLOUD_ACCESS_TOKEN_KEY_BASE64="$(openssl rand -base64 32)"
 ```
 
@@ -86,11 +97,16 @@ export AO_CLOUD_ACCESS_TOKEN_TTL='15m'
 export AO_CLOUD_REFRESH_TOKEN_TTL='720h'
 ```
 
+`AO_CLOUD_TRUST_SOURCE_IP_HEADER=true` is reserved for a managed edge that
+overwrites `X-AO-Source-IP`; never enable it behind a proxy that merely appends
+or forwards client-supplied headers.
+
 Run migrations and start the service:
 
 ```bash
 export AO_CLOUD_MIGRATION_DATABASE_URL='postgres://migration_owner:...@127.0.0.1:5432/ao_cloud'
 export AO_CLOUD_RUNTIME_DATABASE_ROLE='ao_cloud_runtime'
+export AO_CLOUD_RUNTIME_DATABASE_PASSWORD='generate-and-store-securely'
 cd backend
 go run ./cmd/ao-cloud-migrate
 go run ./cmd/ao-cloud
@@ -105,8 +121,7 @@ PR will place it behind managed TLS; do not expose this listener directly.
 - Daytona or any sandbox provider
 - project, session, lifecycle, worker, event, terminal, or workspace handlers
 - GitHub App, SCM synchronization, or credential brokering
-- Electron Google PKCE and protected refresh-token custody
-- Cloud/local project placement and shared UI wiring
+- cloud project/session controls or provider-specific API switching
 
 Those pieces should land as separately reviewable follow-ups on top of this
 foundation.

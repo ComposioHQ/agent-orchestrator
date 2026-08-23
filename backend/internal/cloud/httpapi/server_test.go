@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"sync"
@@ -192,6 +193,61 @@ func TestGoogleExchangeRejectsUnverifiedIdentity(t *testing.T) {
 	}
 }
 
+func TestAuthenticationEndpointsAreRateLimitedByClientIP(t *testing.T) {
+	store := &memoryAccountStore{refreshes: make(map[string]string)}
+	server := newTestServer(t, store, &staticIdentityVerifier{err: auth.ErrInvalidToken})
+	for attempt := 1; attempt <= 21; attempt++ {
+		request := httptest.NewRequest(
+			http.MethodPost,
+			"/api/cloud/v1/auth/google",
+			bytes.NewBufferString(`{"idToken":"forged"}`),
+		)
+		// These common proxy headers are attacker-controlled at API Gateway and
+		// must not influence the application limiter key.
+		request.Header.Set("True-Client-IP", fmt.Sprintf("203.0.113.%d", attempt))
+		request.Header.Set("X-Real-IP", fmt.Sprintf("198.51.100.%d", attempt))
+		request.Header.Set("X-Forwarded-For", fmt.Sprintf("192.0.2.%d", attempt))
+		response := httptest.NewRecorder()
+		server.Handler().ServeHTTP(response, request)
+		if attempt <= 20 && response.Code != http.StatusUnauthorized {
+			t.Fatalf("attempt %d status = %d: %s", attempt, response.Code, response.Body.String())
+		}
+		if attempt == 21 {
+			if response.Code != http.StatusTooManyRequests {
+				t.Fatalf("rate-limited status = %d: %s", response.Code, response.Body.String())
+			}
+			var responseError errorEnvelope
+			if err := json.Unmarshal(response.Body.Bytes(), &responseError); err != nil {
+				t.Fatal(err)
+			}
+			if responseError.Code != "AUTH_RATE_LIMITED" {
+				t.Fatalf("code = %q, want AUTH_RATE_LIMITED", responseError.Code)
+			}
+		}
+	}
+}
+
+func TestGoogleExchangeRejectsAccountOutsideAllowlist(t *testing.T) {
+	store := &memoryAccountStore{refreshes: make(map[string]string)}
+	server := newTestServer(t, store, &staticIdentityVerifier{principal: domain.Principal{
+		ExternalID: "google-subject",
+		Email:      "outsider@example.com",
+	}})
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"/api/cloud/v1/auth/google",
+		bytes.NewBufferString(`{"idToken":"google-id-token"}`),
+	)
+	response := httptest.NewRecorder()
+	server.Handler().ServeHTTP(response, request)
+	if response.Code != http.StatusForbidden {
+		t.Fatalf("status = %d: %s", response.Code, response.Body.String())
+	}
+	if store.principal.UserID != "" {
+		t.Fatal("disallowed Google account was persisted")
+	}
+}
+
 func TestGoogleExchangeReturnsConflictForDuplicateAccountState(t *testing.T) {
 	store := &memoryAccountStore{
 		refreshes: make(map[string]string),
@@ -269,6 +325,7 @@ func newTestServer(t *testing.T, store AccountStore, verifier IdentityVerifier) 
 		Google:          verifier,
 		AccessTokens:    tokens,
 		RefreshTokenTTL: time.Hour,
+		AllowedEmails:   []string{"person@example.com"},
 	})
 	if err != nil {
 		t.Fatal(err)
