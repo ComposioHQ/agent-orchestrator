@@ -231,7 +231,7 @@ describe("Chat message timestamps", () => {
 			...user,
 			id: "assistant-message",
 			role: "assistant",
-			origin: "assistant",
+			origin: "provider",
 			text: "assistant message",
 		} satisfies ConversationMessage;
 		const { container } = render(

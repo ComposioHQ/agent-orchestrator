@@ -4,13 +4,13 @@ import { DropdownMenu as DropdownMenuPrimitive } from "radix-ui";
 import { cn } from "../../lib/utils";
 
 const SURFACE =
-	"settings-menu-surface min-w-[14rem] rounded-(--radius-settings-panel) border-settings-menu bg-settings-menu p-1 gap-px text-[12px]!";
+	"settings-menu-surface min-w-[14rem] rounded-(--radius-settings-panel) border-settings-menu bg-settings-menu p-1 gap-px";
 
 const ROW =
-	"min-w-0 cursor-default rounded-[10px] px-3 py-2 text-[12px]! outline-none whitespace-nowrap focus:bg-settings-menu-selected focus:text-settings-title focus:text-foreground data-highlighted:bg-settings-menu-selected data-highlighted:text-settings-title data-highlighted:text-foreground data-[active=true]:bg-settings-menu-selected data-[active=true]:text-foreground";
+	"min-w-0 cursor-default rounded-[10px] px-3 py-2 outline-none whitespace-nowrap focus:bg-settings-menu-selected focus:text-settings-title focus:text-foreground data-highlighted:bg-settings-menu-selected data-highlighted:text-settings-title data-highlighted:text-foreground data-[active=true]:bg-settings-menu-selected data-[active=true]:text-foreground";
 
 const LABEL =
-	"px-3 py-2 text-[12px]! font-normal tracking-normal text-settings-muted";
+	"px-3 py-2 text-[length:var(--font-size-base)] font-normal tracking-normal text-settings-muted";
 
 /**
  * The quiet filled trigger both this menu and the Settings pickers wear —
@@ -132,7 +132,7 @@ export function OptionMenuSubTrigger({
 }) {
 	return (
 		<DropdownMenuPrimitive.SubTrigger
-			className={cn(ROW, "flex items-center justify-between gap-3 text-[12px]! text-foreground data-[state=open]:bg-settings-menu-selected data-[state=open]:text-foreground", className)}
+			className={cn(ROW, "flex items-center justify-between gap-3 text-xs text-foreground data-[state=open]:bg-settings-menu-selected data-[state=open]:text-foreground", className)}
 			// Stop the click reaching the composer's click-to-focus handler without
 			// calling preventDefault, which Radix's composeEventHandlers reads as a
 			// signal to skip its own open/close handling.
