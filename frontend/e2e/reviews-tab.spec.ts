@@ -60,12 +60,15 @@ test("review content stays inside the inspector at its minimum width", async ({ 
 	expect(prVerdictBox.y).toBeGreaterThanOrEqual(prTitleBox.y + prTitleBox.height);
 
 	const agentSummary = inspector.getByTestId("review-run-summary").first().locator("xpath=ancestor::article[1]");
-	const [agentActionBox, agentVerdictBox] = await Promise.all([
+	const [agentActorBox, agentActionBox, agentVerdictBox] = await Promise.all([
+		agentSummary.getByText("codex", { exact: true }).boundingBox(),
 		agentSummary.getByRole("button", { name: "Review actions" }).boundingBox(),
 		agentSummary.getByText("Changes requested", { exact: true }).boundingBox(),
 	]);
-	if (!agentActionBox || !agentVerdictBox) throw new Error("agent review header is not visible");
-	expect(agentVerdictBox.y).toBeGreaterThanOrEqual(agentActionBox.y + agentActionBox.height);
+	if (!agentActorBox || !agentActionBox || !agentVerdictBox) throw new Error("agent review header is not visible");
+	const actorCenterY = agentActorBox.y + agentActorBox.height / 2;
+	const verdictCenterY = agentVerdictBox.y + agentVerdictBox.height / 2;
+	expect(Math.abs(actorCenterY - verdictCenterY)).toBeLessThanOrEqual(2);
 
 	const overflows = await inspector.evaluate((root) => {
 		const targets = [
