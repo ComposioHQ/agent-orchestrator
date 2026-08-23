@@ -115,7 +115,7 @@ function NestedAgentRun({ nodes }: { nodes: ActivityNode[] }) {
 				onClick={() => setOpen((current) => !current)}
 				aria-label={`Subagent ${count} ${count === 1 ? "step" : "steps"}`}
 				aria-expanded={open}
-				className="flex min-h-8 w-full items-center gap-2 px-2.5 text-left text-[11px] text-muted-foreground transition-colors hover:bg-interactive-hover"
+				className="flex min-h-8 w-full items-center gap-2 px-2.5 text-left text-[11px] text-muted-foreground outline-none transition-colors hover:bg-interactive-hover focus-visible:outline-none"
 			>
 				<ChevronRight aria-hidden="true" className={cn("size-3 transition-transform", open && "rotate-90")} />
 				<span className="font-medium text-foreground/80">Subagent</span>

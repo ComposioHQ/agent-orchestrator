@@ -2189,6 +2189,7 @@ describe("SessionInspector summary reviews", () => {
     expect(screen.queryByText("Earlier-pass comment.")).not.toBeInTheDocument();
     expect(screen.getByText("Resolved comments · 1")).toBeInTheDocument();
 
+    await userEvent.click(screen.getAllByRole("button", { name: "Comment actions" })[0]!);
     await userEvent.click(screen.getByRole("button", { name: "Send to worker agent" }));
     expect(postMock).toHaveBeenCalledWith("/api/v1/sessions/{sessionId}/send", expect.objectContaining({
       params: { path: { sessionId: "sess-1" } },
@@ -2629,6 +2630,9 @@ describe("SessionInspector summary reviews", () => {
     ).not.toBeInTheDocument();
     await userEvent.click(
       screen.getByRole("button", { name: /maya.*Changes requested/i }),
+    );
+    await userEvent.click(
+      screen.getAllByRole("button", { name: "Comment actions" })[1]!,
     );
     const sendButton = screen.getByRole("button", {
       name: "Send to worker agent",

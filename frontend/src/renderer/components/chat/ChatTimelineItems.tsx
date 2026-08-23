@@ -12,8 +12,10 @@ import {
 	AlertTriangle,
 	Archive,
 	Brain,
+	ChevronDown,
 	ChevronRight,
 	CircleAlert,
+	CornerDownLeft,
 	CornerDownRight,
 	File as FileIcon,
 	FileDiff,
@@ -29,6 +31,7 @@ import {
 	ShieldQuestion,
 	ShieldX,
 	SquareTerminal,
+	Undo2,
 	User,
 } from "lucide-react";
 
@@ -61,7 +64,12 @@ import {
 	exploredFileCount,
 	isNonzeroCommandExit,
 } from "./activity-command";
-import { Button } from "../ui/button";
+import {
+	DropdownMenu,
+	DropdownMenuContent,
+	DropdownMenuItem,
+	DropdownMenuTrigger,
+} from "../ui/dropdown-menu";
 import {
 	fileChangeFiles,
 	reviewedPaths,
@@ -233,20 +241,20 @@ export function HumanMessage({
 				</div>
 			)}
 			{editing ? null : (
-				<div className="flex h-[18px] items-center gap-0.5">
-					<div className="flex items-center opacity-0 transition-opacity duration-150 focus-within:opacity-100 group-hover/message:opacity-100">
-						<CopyButton text={message.text} label="Copy user message" compact className="-mr-1" />
+				<div className="mt-2 flex h-[18px] items-center gap-1">
+					<div className="flex items-center gap-1 opacity-0 transition-opacity duration-150 focus-within:opacity-100 group-hover/message:opacity-100">
 						{onEdit && onEditStart && message.turnId ? (
 							<button
 								type="button"
 								onClick={onEditStart}
 								aria-label="Edit user message"
-								title="Edit user message"
 								className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[10.5px] text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground"
 							>
 								<Pencil aria-hidden="true" className="size-3" />
+								Edit
 							</button>
 						) : null}
+						<CopyButton text={message.text} label="Copy user message" />
 					</div>
 					{branchPoint && onActivateBranch ? (
 						<ConversationBranchNavigator
@@ -319,17 +327,24 @@ export function OriginMessage({ message }: { message: ConversationMessage }) {
 export function AssistantMessage({
 	message,
 	showCopy = false,
+	onRollback,
 	showStreamingIndicator = message.streaming,
 }: {
 	message: ConversationMessage;
 	/** Only the final answer of a finished turn owns the turn's copy action. */
 	showCopy?: boolean;
+	/**
+	 * Discard this turn and everything after it. Lives next to copy so the finished
+	 * answer owns both "keep this" and "undo from here".
+	 */
+	onRollback?: () => void;
 	/** Only the newest item can still be visibly writing; older streaming fragments
 	 * are waiting on a tool rather than missing content. */
 	showStreamingIndicator?: boolean;
 }) {
 	const visiblyStreaming = message.streaming && showStreamingIndicator;
 	const hasText = message.text.trim().length > 0;
+	const showActions = !visiblyStreaming && (showCopy || Boolean(onRollback));
 	return (
 		<div className={cn("group/message relative", visiblyStreaming && hasText && "chat-assistant-streaming")}>
 			<ChatMarkdown text={message.text} streaming={message.streaming} />
@@ -346,18 +361,32 @@ export function AssistantMessage({
 						Writing…
 					</span>
 				)
-			) : showCopy ? (
-				// One action for the completed answer, not one after every prose fragment
-				// the provider emitted while working.
-				<div className="flex h-[18px] items-center opacity-0 transition-opacity duration-150 focus-within:opacity-100 group-hover/message:opacity-100">
-					{/* The stored markdown, not a re-serialization of what was rendered:
-					    pasting it into an editor has to give back what the agent wrote. */}
-					<CopyButton
-						text={message.text}
-						label="Copy message as markdown"
-						compact
-						className="-ml-1.5"
-					/>
+			) : showActions ? (
+				// One action row for the completed answer, not one after every prose
+				// fragment the provider emitted while working. Always visible: hover-only
+				// chrome is easy to miss next to a short reply.
+				<div className="mt-2 flex h-[18px] items-center gap-0.5">
+					{showCopy ? (
+						/* The stored markdown, not a re-serialization of what was rendered:
+						   pasting it into an editor has to give back what the agent wrote. */
+						<CopyButton
+							text={message.text}
+							label="Copy message as markdown"
+							compact
+							className="-ml-1.5"
+						/>
+					) : null}
+					{onRollback ? (
+						<button
+							type="button"
+							onClick={onRollback}
+							aria-label="Roll back to here"
+							title="Roll back to here"
+							className="flex items-center rounded px-1.5 py-0.5 text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground"
+						>
+							<Undo2 aria-hidden="true" className="size-3" />
+						</button>
+					) : null}
 				</div>
 			) : null}
 		</div>
@@ -1418,88 +1447,285 @@ export function SteerMessage({ activity }: { activity: ConversationActivity }) {
 /**
  * A decision the agent is blocked on.
  *
- * Buttons come from `activity.decisions` — the provider's own list — never from a
- * fixed set. A real captured approval offered `accept`, an object-shaped
- * `acceptWithExecpolicyAmendment`, and `cancel`, and offered **no decline**: a
- * hardcoded three-button row would have drawn a control that cannot be honored.
+ * Decisions come from `activity.decisions` — the provider's own list — never from
+ * a fixed set. The UI still presents common permission choices with AO/Codex copy
+ * so provider-flavored labels do not leak into the chat surface.
  */
 export function ApprovalCard({
 	activity,
 	onDecide,
 	busy,
+	embedded,
 }: {
 	activity: ConversationActivity;
 	onDecide?: (requestId: string, decisionId: string) => void;
 	busy?: boolean;
+	/** Render inside the shared chat composer instead of drawing another card shell. */
+	embedded?: boolean;
 }) {
 	const resolved = activity.status !== "pending";
-	const decisions: DecisionOption[] = activity.decisions ?? [];
+	const decisions = orderedApprovalDecisions(activity.decisions ?? []);
 	const detail = activity.detail;
+	const command = detail?.command ?? activity.summary;
+	const subjectKind = approvalSubjectKind(activity);
+	const rejectOnceDecision = decisions.find(
+		(decision) => approvalDecisionKind(decision) === "reject_once",
+	);
+	const denyDecision =
+		rejectOnceDecision ??
+		decisions.find((decision) => approvalDecisionKind(decision) === "reject_always");
+	const allowOnceDecision = decisions.find(
+		(decision) => approvalDecisionKind(decision) === "allow_once",
+	);
+	const alternateAllowDecisions = allowOnceDecision
+		? decisions.filter((decision) => approvalDecisionKind(decision) === "allow_always")
+		: [];
+	const otherDecisions = decisions.filter(
+		(decision) =>
+			decision !== denyDecision &&
+			decision !== allowOnceDecision &&
+			!alternateAllowDecisions.includes(decision),
+	);
+	const requestId = activity.requestId ?? "";
+	const cardRef = useRef<HTMLDivElement>(null);
+
+	useEffect(() => {
+		if (!embedded || resolved || busy || !requestId) return;
+		const card = cardRef.current;
+		if (card && (document.activeElement === document.body || !document.activeElement)) card.focus();
+	}, [busy, embedded, requestId, resolved]);
+
+	if (resolved) {
+		return <ResolvedApprovalRow activity={activity} command={command} />;
+	}
 
 	return (
 		<div
+			ref={cardRef}
+			role="group"
+			tabIndex={-1}
+			aria-label={`Approval request ${requestId}`.trim()}
 			className={cn(
-				"rounded-lg border bg-surface",
-				resolved ? "border-border" : "border-warning/40 ring-1 ring-warning/10",
+				"cursor-chat-activity-panel",
+				embedded ? "px-1 py-0.5" : "rounded-lg border border-border px-3 py-2.5",
 			)}
+			onKeyDown={(event) => {
+				if (busy || event.defaultPrevented || event.altKey || event.ctrlKey || event.metaKey) return;
+				if (event.key === "Escape" && rejectOnceDecision) {
+					event.preventDefault();
+					onDecide?.(requestId, rejectOnceDecision.id);
+					return;
+				}
+				const target = event.target;
+				const interactive =
+					target instanceof HTMLElement &&
+					Boolean(target.closest("button, a, input, textarea, select, [contenteditable='true']"));
+				if (event.key === "Enter" && !event.shiftKey && !interactive && allowOnceDecision) {
+					event.preventDefault();
+					onDecide?.(requestId, allowOnceDecision.id);
+				}
+			}}
 		>
-			<div className="flex items-center gap-2 border-b border-border px-3.5 py-2.5">
-				<ShieldQuestion
-					aria-hidden="true"
-					className={cn("size-4 shrink-0", resolved ? "text-muted-foreground" : "text-warning")}
-				/>
-				<strong className="text-xs font-semibold text-foreground">
-					{resolved ? "Approval resolved" : "Approval required"}
-				</strong>
-				<span className="ml-auto shrink-0 font-mono text-[11px] text-muted-foreground">
-					req {activity.requestId}
-				</span>
-			</div>
+			<div className="flex flex-col">
+				<p className="whitespace-pre-wrap text-[13.5px] leading-[1.4] text-foreground/90">
+					{detail?.reason ?? approvalPrompt(subjectKind)}
+				</p>
 
-			<div className="flex flex-col gap-2.5 px-3.5 py-3">
-				{detail?.reason ? (
-					<p className="text-sm leading-relaxed text-muted-foreground">{detail.reason}</p>
-				) : null}
+				<pre className="mt-2 max-h-32 overflow-auto whitespace-pre-wrap break-words rounded-md border border-border/70 bg-background/45 px-2.5 py-1.5 font-mono text-[12px] leading-[1.45] text-muted-foreground">
+					{detail?.rawCommand ?? command}
+				</pre>
 
-				<dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1 rounded bg-background px-2.5 py-2 font-mono text-[11px] leading-relaxed">
-					<dt className="text-muted-foreground">command</dt>
-					<dd className="min-w-0 break-all text-foreground">{detail?.command ?? activity.summary}</dd>
-					{detail?.cwd ? (
-						<>
-							<dt className="text-muted-foreground">cwd</dt>
-							<dd className="min-w-0 break-all text-muted-foreground">{detail.cwd}</dd>
-						</>
+				<div className="mt-2 flex flex-wrap justify-end gap-1.5">
+					{denyDecision ? (
+						<button
+							type="button"
+							className="inline-flex h-7 items-center gap-1.5 rounded-full border border-border-strong bg-background/20 px-2.5 text-[12.5px] text-foreground/90 transition-colors hover:bg-interactive-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40 disabled:pointer-events-none disabled:opacity-50"
+							disabled={busy}
+							onClick={() => onDecide?.(requestId, denyDecision.id)}
+						>
+							{approvalDecisionLabel(denyDecision, subjectKind)}
+							{denyDecision === rejectOnceDecision ? (
+								<kbd className="rounded-full bg-foreground/10 px-1.5 py-0.5 font-sans text-[10.5px] leading-none text-muted-foreground">
+									Esc
+								</kbd>
+							) : null}
+						</button>
 					) : null}
-				</dl>
 
-				{resolved ? (
-					<p className="text-[11px] text-muted-foreground">
-						Already answered. This card is kept for the record.
-					</p>
-				) : (
-					<div className="flex flex-wrap gap-2 pt-0.5">
-						{decisions.map((decision, index) => (
-							<Button
-								key={decision.id}
+					{allowOnceDecision ? (
+						<div className="flex h-7 overflow-hidden rounded-full bg-logo-accent text-logo-accent-foreground shadow-sm">
+							<button
 								type="button"
-								size="sm"
-								variant={index === 0 ? "primary" : "outline"}
+								className="inline-flex items-center gap-1.5 px-2.5 text-[12.5px] transition-colors hover:bg-logo-accent-bright focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50"
 								disabled={busy}
-								onClick={() => onDecide?.(activity.requestId ?? "", decision.id)}
+								onClick={() => onDecide?.(requestId, allowOnceDecision.id)}
 							>
-								{decision.label}
-							</Button>
-						))}
-						{decisions.length === 0 ? (
-							<p className="text-[11px] text-warning">
-								The agent offered no decisions AO can present. Open diagnostics.
-							</p>
-						) : null}
-					</div>
-				)}
+								Allow once
+								<kbd className="rounded-full bg-logo-accent-foreground/15 p-0.5" aria-label="Press Return">
+									<CornerDownLeft aria-hidden="true" className="size-3" />
+								</kbd>
+							</button>
+							{alternateAllowDecisions.length > 0 ? (
+								<DropdownMenu>
+									<DropdownMenuTrigger asChild>
+										<button
+											type="button"
+											aria-label="More approval options"
+											className="flex w-7 items-center justify-center border-l border-logo-accent-foreground/20 transition-colors hover:bg-logo-accent-bright focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50"
+											disabled={busy}
+										>
+											<ChevronDown aria-hidden="true" className="size-3.5" />
+										</button>
+									</DropdownMenuTrigger>
+									<DropdownMenuContent
+										align="end"
+										side="bottom"
+										className="min-w-52"
+										data-approval-menu=""
+										onEscapeKeyDown={(event) => event.stopPropagation()}
+									>
+										{alternateAllowDecisions.map((decision) => (
+											<DropdownMenuItem
+												key={decision.id}
+												disabled={busy}
+												onSelect={() => onDecide?.(activity.requestId ?? "", decision.id)}
+											>
+												{approvalDecisionLabel(decision, subjectKind)}
+											</DropdownMenuItem>
+										))}
+									</DropdownMenuContent>
+								</DropdownMenu>
+							) : null}
+						</div>
+					) : null}
+					{otherDecisions.map((decision) => (
+						<button
+							key={decision.id}
+							type="button"
+							className="inline-flex h-7 items-center rounded-full border border-border-strong bg-background/20 px-2.5 text-[12.5px] text-foreground/90 transition-colors hover:bg-interactive-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40 disabled:pointer-events-none disabled:opacity-50"
+							disabled={busy}
+							onClick={() => onDecide?.(requestId, decision.id)}
+						>
+							{approvalDecisionLabel(decision, subjectKind)}
+						</button>
+					))}
+					{decisions.length === 0 ? (
+						<p className="text-[11px] text-warning">
+							The agent offered no decisions AO can present. Open diagnostics.
+						</p>
+					) : null}
+				</div>
 			</div>
 		</div>
 	);
+}
+
+function approvalSubjectKind(activity: ConversationActivity): ActivityKind | undefined {
+	if (activity.detail?.subjectKind) return activity.detail.subjectKind;
+	if (activity.detail?.method === "item/fileChange/requestApproval") return "file_change";
+	if (activity.detail?.method === "item/commandExecution/requestApproval") return "command";
+	return undefined;
+}
+
+function approvalPrompt(subjectKind?: ActivityKind): string {
+	return subjectKind === "file_change"
+		? "Do you want to allow these file changes?"
+		: "Do you want to run this command?";
+}
+
+function approvalDecisionKind(decision: DecisionOption): DecisionOption["kind"] | "unknown" {
+	return decision.kind ?? "unknown";
+}
+
+function approvalDecisionRank(decision: DecisionOption): number {
+	switch (approvalDecisionKind(decision)) {
+		case "reject_once":
+			return 10;
+		case "reject_always":
+			return 15;
+		case "allow_once":
+			return 20;
+		case "allow_always":
+			return 30;
+		default:
+			return 40;
+	}
+}
+
+function approvalDecisionLabel(decision: DecisionOption, subjectKind?: ActivityKind): string {
+	switch (approvalDecisionKind(decision)) {
+		case "allow_always":
+			return subjectKind === "file_change"
+				? "Always allow these file changes"
+				: "Always allow this command";
+		case "allow_once":
+			return "Allow once";
+		case "reject_once":
+			return "Deny";
+		case "reject_always":
+			return "Always deny";
+		default:
+			return decision.label;
+	}
+}
+
+function orderedApprovalDecisions(decisions: DecisionOption[]): DecisionOption[] {
+	return decisions
+		.map((decision, index) => ({ decision, index }))
+		.sort((left, right) => {
+			const byRank = approvalDecisionRank(left.decision) - approvalDecisionRank(right.decision);
+			return byRank || left.index - right.index;
+		})
+		.map(({ decision }) => decision);
+}
+
+function ResolvedApprovalRow({
+	activity,
+	command,
+}: {
+	activity: ConversationActivity;
+	command: string;
+}) {
+	const detail = activity.detail;
+	const decision = typeof detail?.decision === "string" ? detail.decision : undefined;
+	const decisionKind = activity.decisions?.find((option) => option.id === decision)?.kind;
+	const outcome = resolvedApprovalOutcome(activity.status, decision, detail?.resolvedBy, decisionKind);
+	const title = detail?.cwd ? `${command}\n${detail.cwd}` : command;
+
+	return (
+		<div className="grid min-w-0 grid-cols-[auto_minmax(0,1fr)] items-center gap-3 rounded-md border border-border/80 bg-surface/45 px-2.5 py-1.5 text-[11.5px] text-muted-foreground">
+			<strong className="shrink-0 font-medium text-foreground">{outcome.label}</strong>
+			<span className="min-w-0 truncate text-right font-mono" title={title}>
+				{command}
+			</span>
+		</div>
+	);
+}
+
+function resolvedApprovalOutcome(
+	status: ConversationActivity["status"],
+	decision?: string,
+	resolvedBy?: string,
+	decisionKind?: DecisionOption["kind"],
+): { label: string; success: boolean } {
+	const value = decision?.toLowerCase() ?? "";
+	if (status === "failed") return { label: "Approval expired", success: false };
+	if (
+		status === "cancelled" ||
+		decisionKind === "reject_once" ||
+		decisionKind === "reject_always" ||
+		/(deny|decline|reject|cancel)/.test(value)
+	) {
+		return { label: "Cancelled", success: false };
+	}
+	if (decisionKind === "allow_always" || /(remember|always|amendment|policy)/.test(value)) {
+		return { label: "Approved and remembered", success: true };
+	}
+	if (decisionKind === "allow_once" || /(allow|approve|accept)/.test(value)) {
+		return { label: "Approved", success: true };
+	}
+	if (resolvedBy === "provider") return { label: "Resolved elsewhere", success: false };
+	return { label: "Resolved", success: false };
 }
 
 /* -------------------------------------------------------------------------- */
@@ -1683,17 +1909,10 @@ export function TurnOutcome({
 	state,
 	durationMs,
 	error,
-	onRollback,
 }: {
 	state: "completed" | "interrupted" | "failed";
 	durationMs?: number;
 	error?: string;
-	/**
-	 * Discard this turn and everything after it. Absent means the operation is not
-	 * available right now — the agent cannot undo, or it is mid-turn — and the
-	 * control is not drawn rather than drawn and then refused.
-	 */
-	onRollback?: () => void;
 }) {
 	const copy = {
 		completed: { label: "Done", tone: "text-muted-foreground/70" },
@@ -1702,20 +1921,8 @@ export function TurnOutcome({
 	}[state];
 
 	return (
-		<div className="group/turn flex items-center gap-2 pt-1">
-			<span aria-hidden="true" className="h-px flex-1 bg-border" />
-			{onRollback ? (
-				// Revealed on hover or keyboard focus. Undo belongs on the turn it undoes,
-				// but a permanent button on every turn would compete with the conversation
-				// for attention.
-				<button
-					type="button"
-					onClick={onRollback}
-					className="shrink-0 rounded px-1 text-[10px] uppercase tracking-[0.08em] text-muted-foreground/70 opacity-0 transition-opacity hover:text-foreground focus-visible:opacity-100 group-hover/turn:opacity-100"
-				>
-					Roll back to here
-				</button>
-			) : null}
+		<div className="flex items-center gap-2 pt-1">
+			<span aria-hidden="true" className="h-px min-w-0 flex-1 bg-border" />
 			<span className={cn("shrink-0 text-[10px] uppercase tracking-[0.08em]", copy.tone)}>
 				{copy.label}
 			</span>
@@ -1725,10 +1932,11 @@ export function TurnOutcome({
 				</span>
 			) : null}
 			{error ? (
-				<span className="shrink-0 text-[10px] text-destructive" title={error}>
-					{error.slice(0, 60)}
+				<span className="max-w-[40%] shrink truncate text-[10px] text-destructive" title={error}>
+					{error}
 				</span>
 			) : null}
+			<span aria-hidden="true" className="h-px min-w-0 flex-1 bg-border" />
 		</div>
 	);
 }

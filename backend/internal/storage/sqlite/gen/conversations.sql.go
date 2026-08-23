@@ -998,8 +998,13 @@ func (q *Queries) ResetConversationAgentOverridesForSession(ctx context.Context,
 
 const resolveConversationApproval = `-- name: ResolveConversationApproval :exec
 UPDATE conversation_activities
-SET status = 'resolved', detail_json = ?, revision = revision + 1, updated_at = ?
-WHERE conversation_id = ? AND request_id = ? AND status = 'pending'
+SET status = 'resolved',
+    detail_json = json_patch(detail_json, CAST(?1 AS TEXT)),
+    revision = revision + 1,
+    updated_at = ?2
+WHERE conversation_id = ?3
+  AND request_id = ?4
+  AND status = 'pending'
 `
 
 type ResolveConversationApprovalParams struct {
@@ -1011,6 +1016,8 @@ type ResolveConversationApprovalParams struct {
 
 // Resolving an approval matches on the provider's request id, so a card the user
 // left on screen cannot answer a request that replaced it.
+// Merge the resolution into the provider payload so the offered decision kinds
+// remain available to audit/history readers after the request is answered.
 func (q *Queries) ResolveConversationApproval(ctx context.Context, arg ResolveConversationApprovalParams) error {
 	_, err := q.db.ExecContext(ctx, resolveConversationApproval,
 		arg.DetailJson,
@@ -1439,6 +1446,26 @@ func (q *Queries) SelectConversationBySession(ctx context.Context, currentSessio
 		&i.ActiveBranchID,
 	)
 	return i, err
+}
+
+const selectConversationContextResetSequence = `-- name: SelectConversationContextResetSequence :one
+SELECT CAST(COALESCE(MAX(sequence), 0) AS INTEGER) AS sequence
+FROM conversation_activities
+WHERE conversation_id = ?
+  AND kind = 'system'
+  AND provider_item_id = ?
+`
+
+type SelectConversationContextResetSequenceParams struct {
+	ConversationID string
+	ProviderItemID string
+}
+
+func (q *Queries) SelectConversationContextResetSequence(ctx context.Context, arg SelectConversationContextResetSequenceParams) (int64, error) {
+	row := q.db.QueryRowContext(ctx, selectConversationContextResetSequence, arg.ConversationID, arg.ProviderItemID)
+	var sequence int64
+	err := row.Scan(&sequence)
+	return sequence, err
 }
 
 const selectConversationEditAnchor = `-- name: SelectConversationEditAnchor :one

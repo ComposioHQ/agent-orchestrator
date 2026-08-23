@@ -532,6 +532,10 @@ describe("portable inspector presentations", () => {
     expect(
       screen.getByText("This branch leaks the resize listener on unmount."),
     ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Send to worker agent" }),
+    ).not.toBeInTheDocument();
+    fireEvent.click(screen.getAllByRole("button", { name: "Comment actions" })[0]!);
     fireEvent.click(
       screen.getByRole("button", { name: "Send to worker agent" }),
     );
@@ -627,6 +631,7 @@ describe("portable inspector presentations", () => {
     );
 
     fireEvent.click(screen.getByRole("button", { name: /maya.*Commented/i }));
+    fireEvent.click(screen.getByRole("button", { name: "Comment actions" }));
     fireEvent.click(
       screen.getByRole("button", { name: "Send to worker agent" }),
     );
@@ -636,6 +641,7 @@ describe("portable inspector presentations", () => {
         "text-error",
       ),
     );
+    fireEvent.click(screen.getByRole("button", { name: "Comment actions" }));
     expect(
       screen.getByRole("button", { name: "Send to worker agent" }),
     ).toBeInTheDocument();
@@ -766,15 +772,14 @@ describe("portable inspector presentations", () => {
     );
 
     fireEvent.click(screen.getByRole("button", { name: /maya.*Commented/i }));
-    const sendButtons = screen.getAllByRole("button", {
-      name: "Send to worker agent",
-    });
-    expect(sendButtons).toHaveLength(2);
-    fireEvent.click(sendButtons[0]!);
+    const actionButtons = screen.getAllByRole("button", { name: "Comment actions" });
+    fireEvent.click(actionButtons[0]!);
+    fireEvent.click(screen.getByRole("button", { name: "Send to worker agent" }));
 
     await waitFor(() =>
       expect(screen.getByText("Sent to worker agent")).toBeInTheDocument(),
     );
+    fireEvent.click(actionButtons[1]!);
     expect(
       screen.getAllByRole("button", { name: "Send to worker agent" }),
     ).toHaveLength(1);

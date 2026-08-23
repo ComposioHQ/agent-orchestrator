@@ -45,6 +45,7 @@ import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "./
 import { subscribeWorkspaceFileChanges } from "../lib/workspace-file-events";
 import { Button } from "./ui/button";
 import { DiffSelectionMenu } from "./DiffSelectionMenu";
+import { ImageDiffView } from "./ImageDiffView";
 import { Input } from "./ui/input";
 
 type WorkspaceFileDetail = components["schemas"]["WorkspaceFileResponse"] & {
@@ -74,6 +75,7 @@ type SessionFilesViewProps = {
 };
 
 export type ReviewFileTarget = { line?: number; path: string; requestId: number };
+type ReviewLineTarget = { line: number; requestId: number };
 
 const emptyFiles: WorkspaceFileSummary[] = [];
 
@@ -363,6 +365,7 @@ export function SessionFilesView({
 						isLoading={filesQuery.isPending}
 						onExpandedPathsChange={setExpandedPaths}
 						onRetry={() => void filesQuery.refetch()}
+						revealFile={revealFile}
 						sessionId={sessionId}
 						split={split}
 						wrap={true}
@@ -382,6 +385,7 @@ function ReviewFileList({
 	isLoading,
 	onExpandedPathsChange,
 	onRetry,
+	revealFile,
 	sessionId,
 	split,
 	wrap,
@@ -394,6 +398,7 @@ function ReviewFileList({
 	isLoading: boolean;
 	onExpandedPathsChange: (next: Set<string>) => void;
 	onRetry: () => void;
+	revealFile?: ReviewFileTarget;
 	sessionId: string;
 	split: boolean;
 	wrap: boolean;
@@ -424,6 +429,12 @@ function ReviewFileList({
 						expanded={expandedPaths.has(file.path)}
 						file={file}
 						key={file.path}
+						revealLine={
+							revealFile?.line &&
+							(file.path === revealFile.path || file.previousPath === revealFile.path)
+								? { line: revealFile.line, requestId: revealFile.requestId }
+								: undefined
+						}
 						sessionId={sessionId}
 						split={split}
 						wrap={wrap}
@@ -438,6 +449,7 @@ function ReviewFileCard({
 	annotation,
 	expanded,
 	file,
+	revealLine,
 	sessionId,
 	split,
 	wrap,
@@ -445,6 +457,7 @@ function ReviewFileCard({
 	annotation: FileAnnotationModel;
 	expanded: boolean;
 	file: WorkspaceFileSummary;
+	revealLine?: ReviewLineTarget;
 	sessionId: string;
 	split: boolean;
 	wrap: boolean;
@@ -499,8 +512,10 @@ function ReviewFileCard({
 						<ReviewDiffBody
 							annotation={annotation}
 							detail={detailQuery.data}
+							detailLoadedAt={detailQuery.dataUpdatedAt}
 							filePath={file.path}
 							onActiveSelectionChange={setSelectionOrMenuActive}
+							revealLine={revealLine}
 							sessionId={sessionId}
 							split={split && canSplitCompare(file.status)}
 							wrap={wrap}
@@ -571,22 +586,39 @@ async function loadWorkspaceFile(sessionId: string, path: string, t: TFunction) 
 function ReviewDiffBody({
 	annotation,
 	detail,
+	detailLoadedAt,
 	filePath,
 	onActiveSelectionChange,
+	revealLine,
 	sessionId,
 	split,
 	wrap,
 }: {
 	annotation: FileAnnotationModel;
 	detail: WorkspaceFileDetail;
+	detailLoadedAt: number;
 	filePath: string;
 	onActiveSelectionChange: (active: boolean) => void;
+	revealLine?: ReviewLineTarget;
 	sessionId: string;
 	split: boolean;
 	wrap: boolean;
 }) {
 	const { t } = useTranslation();
 	const { rows, pending } = useParsedDiff(detail.diff);
+	// An image has no readable line diff, so it renders as the images themselves
+	// rather than the binary placeholder.
+	if (detail.imageMediaType) {
+		return (
+			<ImageDiffView
+				path={detail.path}
+				sessionId={sessionId}
+				split={split}
+				status={detail.status}
+				version={detailLoadedAt}
+			/>
+		);
+	}
 	if (detail.binary) {
 		return <PanelMessage compact>{t("files.binaryUnavailable")}</PanelMessage>;
 	}
@@ -603,6 +635,7 @@ function ReviewDiffBody({
 			onActiveSelectionChange={onActiveSelectionChange}
 			path={detail.path}
 			previousPath={detail.previousPath}
+			revealLine={revealLine}
 			rows={rows}
 			sessionId={sessionId}
 			split={split}
@@ -739,7 +772,7 @@ function useSharedScrollRowVirtualizer(
 		scrollMargin,
 	});
 
-	return { listRef, virtualizer };
+	return { listRef, scrollElement, virtualizer };
 }
 
 function DiffView({
@@ -748,6 +781,7 @@ function DiffView({
 	onActiveSelectionChange,
 	path,
 	previousPath,
+	revealLine,
 	rows,
 	sessionId,
 	split,
@@ -759,6 +793,7 @@ function DiffView({
 	onActiveSelectionChange: (active: boolean) => void;
 	path: string;
 	previousPath?: string;
+	revealLine?: ReviewLineTarget;
 	rows: DiffRow[];
 	sessionId: string;
 	split: boolean;
@@ -770,7 +805,33 @@ function DiffView({
 	const [hasSelection, setHasSelection] = useState(false);
 	const [menuState, setMenuState] = useState<DiffViewMenuState | null>(null);
 	const shouldVirtualize = !split && rows.length > ROW_VIRTUALIZE_THRESHOLD;
-	const { listRef, virtualizer } = useSharedScrollRowVirtualizer(containerRef, rows.length, shouldVirtualize);
+	const { listRef, scrollElement, virtualizer } = useSharedScrollRowVirtualizer(containerRef, rows.length, shouldVirtualize);
+	const revealLineNumber = revealLine?.line;
+	const revealRequestId = revealLine?.requestId;
+
+	useEffect(() => {
+		if (!revealLineNumber) return;
+		const newSideIndex = rows.findIndex((row) => row.newNo === revealLineNumber);
+		const rowIndex = newSideIndex >= 0 ? newSideIndex : rows.findIndex((row) => row.oldNo === revealLineNumber);
+		if (rowIndex < 0 || (shouldVirtualize && !scrollElement)) return;
+
+		if (shouldVirtualize) virtualizer.scrollToIndex(rowIndex, { align: "center" });
+		let retryFrame: number | undefined;
+		const focusRow = () => {
+			const row = containerRef.current?.querySelector<HTMLElement>(`[data-diff-row][data-row-index="${rowIndex}"]`);
+			if (!row) return false;
+			row.scrollIntoView({ block: "center" });
+			row.focus({ preventScroll: true });
+			return true;
+		};
+		const frame = window.requestAnimationFrame(() => {
+			if (!focusRow()) retryFrame = window.requestAnimationFrame(focusRow);
+		});
+		return () => {
+			window.cancelAnimationFrame(frame);
+			if (retryFrame !== undefined) window.cancelAnimationFrame(retryFrame);
+		};
+	}, [revealLineNumber, revealRequestId, rows, scrollElement, shouldVirtualize, virtualizer]);
 
 	useEffect(() => {
 		const onSelectionChange = () => {
@@ -926,12 +987,16 @@ function DiffRowContentInner({ annotation, index, path, previousPath, row, t, wr
 	return (
 		<div>
 			<div
-				className={cn("group/line relative flex", diffRowTone[row.kind])}
+				className={cn(
+					"group/line relative flex focus:outline-none focus:ring-1 focus:ring-inset focus:ring-accent",
+					diffRowTone[row.kind],
+				)}
 				data-diff-row=""
 				data-kind={row.kind}
 				data-new-no={row.newNo ?? ""}
 				data-old-no={row.oldNo ?? ""}
 				data-row-index={index}
+				tabIndex={-1}
 			>
 				<LineFeedbackButton
 					active={isAnnotationRow(annotation.target, path, index)}
@@ -1105,12 +1170,16 @@ function SplitSide({
 	const target = lineNo == null ? null : lineAnnotationTarget(path, previousPath, row, rowIndex, side);
 	return (
 		<div
-			className={cn("group/line relative flex min-w-0", tone)}
+			className={cn(
+				"group/line relative flex min-w-0 focus:outline-none focus:ring-1 focus:ring-inset focus:ring-accent",
+				tone,
+			)}
 			data-diff-row=""
 			data-kind={row.kind}
 			data-new-no={row.newNo ?? ""}
 			data-old-no={row.oldNo ?? ""}
 			data-row-index={rowIndex}
+			tabIndex={-1}
 		>
 			{target ? (
 				<LineFeedbackButton

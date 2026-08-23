@@ -66,6 +66,8 @@ type Info struct {
 	ID         string                `json:"id"`
 	Label      string                `json:"label"`
 	AuthStatus ports.AgentAuthStatus `json:"authStatus,omitempty" enum:"authorized,unauthorized,unknown" description:"Advisory local auth probe result. authorized means a recent local probe passed; spawn remains the authoritative validation point."`
+	UsageCount int                   `json:"usageCount,omitempty" description:"Number of retained sessions currently attributed to this agent."`
+	LastUsedAt *time.Time            `json:"lastUsedAt,omitempty" format:"date-time" description:"Creation time of the newest retained session currently attributed to this agent."`
 }
 
 // Inventory describes all daemon-supported agents and best-effort local probe
@@ -78,28 +80,39 @@ type Inventory struct {
 	Authorized []Info `json:"authorized" description:"Compatibility list of installed agents whose local auth probe recently returned authorized. Advisory and stale-prone; spawn may still fail."`
 }
 
+type cachedInventory struct {
+	Installed  []Info `json:"installed"`
+	Authorized []Info `json:"authorized"`
+}
+
 // Service reports supported agent adapters and best-effort local readiness
 // probes. Catalog readiness is advisory UI metadata, not a spawn precheck.
 type Service struct {
-	agents      []agentregistry.HarnessAgent
-	cache       ports.AgentModelCatalogCache
-	discoverer  ports.AgentModelDiscoverer
-	projects    ProjectLookup
-	resolverMu  map[string]*sync.Mutex
-	modelCallMu sync.Mutex
-	modelCalls  map[string]*modelCatalogCall
+	agents         []agentregistry.HarnessAgent
+	cache          ports.AgentModelCatalogCache
+	inventoryCache ports.AgentInventoryCache
+	discoverer     ports.AgentModelDiscoverer
+	projects       ProjectLookup
+	sessions       SessionUsageLookup
+	resolverMu     map[string]*sync.Mutex
+	modelCallMu    sync.Mutex
+	modelCalls     map[string]*modelCatalogCall
 
-	mu          sync.RWMutex
-	inventory   Inventory
-	lastRefresh time.Time
-	refreshMu   sync.Mutex
+	mu              sync.RWMutex
+	inventory       Inventory
+	inventoryLoaded bool
+	inventoryLoadMu sync.Mutex
+	lastRefresh     time.Time
+	refreshMu       sync.Mutex
 }
 
 // Deps contains optional durable dependencies for the agent catalog service.
 type Deps struct {
-	Cache      ports.AgentModelCatalogCache
-	Discoverer ports.AgentModelDiscoverer
-	Projects   ProjectLookup
+	Cache          ports.AgentModelCatalogCache
+	InventoryCache ports.AgentInventoryCache
+	Discoverer     ports.AgentModelDiscoverer
+	Projects       ProjectLookup
+	Sessions       SessionUsageLookup
 }
 
 // ProjectLookup resolves the registered working directory used for model
@@ -108,15 +121,25 @@ type ProjectLookup interface {
 	GetProject(ctx context.Context, id string) (domain.ProjectRecord, bool, error)
 }
 
+// SessionUsageLookup provides durable session facts used to rank agent choices.
+// The SQLite store satisfies this narrow read boundary.
+type SessionUsageLookup interface {
+	ListAllSessions(ctx context.Context) ([]domain.SessionRecord, error)
+}
+
 // New returns an agent inventory service backed by the daemon's shipped
 // adapter registry.
 func New() *Service {
 	return NewWithDeps(Deps{})
 }
 
-// NewWithDeps returns the production service with durable model-catalog cache.
+// NewWithDeps returns the production service with durable inventory and model-catalog caches.
 func NewWithDeps(deps Deps) *Service {
-	return newService(agentregistry.Harnessed(), deps.Cache, deps.Projects, deps.Discoverer)
+	svc := newService(agentregistry.Harnessed(), deps.Cache, deps.Projects, deps.Discoverer)
+	svc.inventoryCache = deps.InventoryCache
+	svc.inventoryLoaded = deps.InventoryCache == nil
+	svc.sessions = deps.Sessions
+	return svc
 }
 
 // NewWithAgents returns an inventory service over a caller-provided adapter
@@ -138,16 +161,25 @@ func newService(agents []agentregistry.HarnessAgent, cache ports.AgentModelCatal
 }
 
 // List returns the cached agent inventory without running probes. Installed and
-// authorized entries come from the last explicit Refresh call and are advisory:
-// they can be stale by the time a user starts a session, and session spawn
-// performs the authoritative binary/runtime validation.
+// authorized entries come from the latest persisted or in-process Refresh and
+// are advisory: they can be stale by the time a user starts a session, and
+// session spawn performs the authoritative binary/runtime validation.
 func (s *Service) List(ctx context.Context) (Inventory, error) {
 	if err := ctx.Err(); err != nil {
 		return Inventory{}, err
 	}
+	if err := s.loadCachedInventory(ctx); err != nil {
+		// Inventory is advisory cache data. A corrupt row or transient SQLite
+		// failure must not hide the adapters supported by this daemon build; the
+		// background refresh can repair the persisted snapshot.
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return Inventory{}, err
+		}
+	}
 	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return cloneInventory(s.inventory), nil
+	inventory := cloneInventory(s.inventory)
+	s.mu.RUnlock()
+	return s.withSessionUsage(ctx, inventory)
 }
 
 // Refresh runs the bounded local binary/auth probes, updates the cached
@@ -170,12 +202,16 @@ func (s *Service) refresh(ctx context.Context, force bool) (Inventory, error) {
 	}
 	s.refreshMu.Lock()
 	defer s.refreshMu.Unlock()
+	// A persisted snapshot makes List useful immediately after restart. A corrupt
+	// or temporarily unavailable cache must not prevent a fresh system probe from
+	// repairing it, so Refresh deliberately continues when this read fails.
+	_ = s.loadCachedInventory(ctx)
 
 	s.mu.RLock()
 	if !force && !s.lastRefresh.IsZero() && time.Since(s.lastRefresh) < agentRefreshMinInterval {
 		cached := cloneInventory(s.inventory)
 		s.mu.RUnlock()
-		return cached, nil
+		return s.withSessionUsage(ctx, cached)
 	}
 	s.mu.RUnlock()
 
@@ -214,11 +250,122 @@ func (s *Service) refresh(ctx context.Context, force bool) (Inventory, error) {
 		Installed:  installed,
 		Authorized: authorized,
 	}
+	if s.inventoryCache != nil {
+		data, err := json.Marshal(cachedInventory{Installed: next.Installed, Authorized: next.Authorized})
+		if err != nil {
+			return next, fmt.Errorf("encode agent inventory cache: %w", err)
+		}
+		if err := s.inventoryCache.UpsertAgentInventoryCache(ctx, string(data), time.Now().UTC()); err != nil {
+			return next, err
+		}
+	}
 	s.mu.Lock()
 	s.inventory = cloneInventory(next)
+	s.inventoryLoaded = true
 	s.lastRefresh = time.Now()
 	s.mu.Unlock()
-	return next, nil
+	return s.withSessionUsage(ctx, next)
+}
+
+type sessionUsage struct {
+	count      int
+	lastUsedAt time.Time
+}
+
+func (s *Service) withSessionUsage(ctx context.Context, inventory Inventory) (Inventory, error) {
+	if s.sessions == nil {
+		return inventory, nil
+	}
+	records, err := s.sessions.ListAllSessions(ctx)
+	if err != nil {
+		return Inventory{}, fmt.Errorf("list sessions for agent usage: %w", err)
+	}
+	usageByAgent := make(map[string]sessionUsage)
+	for _, record := range records {
+		if record.Harness == "" {
+			continue
+		}
+		usage := usageByAgent[string(record.Harness)]
+		usage.count++
+		if record.CreatedAt.After(usage.lastUsedAt) {
+			usage.lastUsedAt = record.CreatedAt
+		}
+		usageByAgent[string(record.Harness)] = usage
+	}
+	decorate := func(infos []Info) {
+		for i := range infos {
+			usage := usageByAgent[infos[i].ID]
+			infos[i].UsageCount = usage.count
+			if !usage.lastUsedAt.IsZero() {
+				lastUsedAt := usage.lastUsedAt
+				infos[i].LastUsedAt = &lastUsedAt
+			}
+		}
+		sortInfosByUsage(infos)
+	}
+	decorate(inventory.Supported)
+	decorate(inventory.Installed)
+	decorate(inventory.Authorized)
+	return inventory, nil
+}
+
+func (s *Service) loadCachedInventory(ctx context.Context) error {
+	s.mu.RLock()
+	loaded := s.inventoryLoaded
+	s.mu.RUnlock()
+	if loaded || s.inventoryCache == nil {
+		return nil
+	}
+
+	s.inventoryLoadMu.Lock()
+	defer s.inventoryLoadMu.Unlock()
+	s.mu.RLock()
+	loaded = s.inventoryLoaded
+	s.mu.RUnlock()
+	if loaded {
+		return nil
+	}
+
+	data, _, ok, err := s.inventoryCache.GetAgentInventoryCache(ctx)
+	if err != nil {
+		return err
+	}
+	next := Inventory{Supported: supportedInfos(s.agents), Installed: []Info{}, Authorized: []Info{}}
+	if ok {
+		var cached cachedInventory
+		if err := json.Unmarshal([]byte(data), &cached); err != nil {
+			return fmt.Errorf("decode agent inventory cache: %w", err)
+		}
+		next = reconcileCachedInventory(next.Supported, cached)
+	}
+	s.mu.Lock()
+	if !s.inventoryLoaded {
+		s.inventory = cloneInventory(next)
+		s.inventoryLoaded = true
+	}
+	s.mu.Unlock()
+	return nil
+}
+
+func reconcileCachedInventory(supported []Info, cached cachedInventory) Inventory {
+	byID := make(map[string]Info, len(supported))
+	for _, item := range supported {
+		byID[item.ID] = item
+	}
+	filter := func(items []Info) []Info {
+		out := make([]Info, 0, len(items))
+		for _, item := range items {
+			current, ok := byID[item.ID]
+			if !ok {
+				continue
+			}
+			current.AuthStatus = item.AuthStatus
+			out = append(out, current)
+		}
+		sortInfos(out)
+		return out
+	}
+	return Inventory{Supported: cloneInfos(supported), Installed: filter(cached.Installed), Authorized: filter(cached.Authorized)}
 }
 
 // Probe runs a fresh bounded binary/auth probe for one agent, bypassing the
@@ -257,8 +404,8 @@ func (s *Service) Models(ctx context.Context, agentID, projectID string, refresh
 	return s.coalesceModelLoad(ctx, agentID, projectID, mode)
 }
 
-// RevalidateModels applies the same installed-version check as the normal read
-// path. It remains as a compatibility route for older clients.
+// RevalidateModels rediscovers a cache-first catalog after the normal read path
+// marks it old enough to refresh in the background.
 func (s *Service) RevalidateModels(ctx context.Context, agentID, projectID string) (ports.AgentModelCatalog, error) {
 	return s.coalesceModelLoad(ctx, agentID, projectID, modelLoadRevalidate)
 }
@@ -336,7 +483,7 @@ func (s *Service) loadModels(ctx context.Context, agentID, projectID string, mod
 	// Fingerprints the same inputs the discovery run would read, so a change to
 	// either the executable or the configuration behind it invalidates the cache.
 	version := s.discoverer.CatalogFingerprint(ctx, request)
-	if hasCached && mode != modelLoadRefresh && cached.BinaryVersion == version {
+	if hasCached && mode == modelLoadCached && cached.BinaryVersion == version {
 		// A command-backed catalog can drift without the binary or its config
 		// changing (a provider adds a model), which no fingerprint can see. Ask
 		// cache-first clients to revalidate in the background once the catalog is
@@ -541,6 +688,28 @@ func authStatus(ctx context.Context, a ports.Agent) ports.AgentAuthStatus {
 
 func sortInfos(infos []Info) {
 	sort.Slice(infos, func(i, j int) bool {
+		return infos[i].ID < infos[j].ID
+	})
+}
+
+func sortInfosByUsage(infos []Info) {
+	sort.SliceStable(infos, func(i, j int) bool {
+		if infos[i].UsageCount != infos[j].UsageCount {
+			return infos[i].UsageCount > infos[j].UsageCount
+		}
+		var left, right time.Time
+		if infos[i].LastUsedAt != nil {
+			left = *infos[i].LastUsedAt
+		}
+		if infos[j].LastUsedAt != nil {
+			right = *infos[j].LastUsedAt
+		}
+		if !left.Equal(right) {
+			return left.After(right)
+		}
+		if infos[i].Label != infos[j].Label {
+			return infos[i].Label < infos[j].Label
+		}
 		return infos[i].ID < infos[j].ID
 	})
 }

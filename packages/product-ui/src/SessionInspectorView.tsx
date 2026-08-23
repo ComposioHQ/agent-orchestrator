@@ -1230,10 +1230,6 @@ function InlineCommentRow({
 								<CheckIcon className="size-icon-xs shrink-0" />
 								{labels.sentToWorkerAgent}
 							</span>
-						) : onSend ? (
-							<button className="inline-flex h-control-md shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-md border border-transparent bg-secondary bg-clip-padding px-2.5 text-xs font-normal text-secondary-foreground transition-[background-color,border-color,color,box-shadow,transform,opacity] duration-[100ms] ease-out hover:bg-[color-mix(in_oklch,var(--secondary),var(--foreground)_5%)] focus-visible:border-ring focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/30 active:scale-[0.97] active:translate-y-px disabled:pointer-events-none disabled:opacity-50" disabled={sending} onClick={onSend} type="button">
-								{labels.sendToWorkerAgent}
-							</button>
 						) : null}
 					</span>
 					<span className="relative flex shrink-0 items-start justify-end" onClick={(event) => event.stopPropagation()}>
@@ -1242,6 +1238,7 @@ function InlineCommentRow({
 						</button>
 						{menuOpen ? (
 							<div className="isolate absolute right-0 top-8 z-[100] flex w-40 flex-col rounded-md border border-border-strong bg-[var(--color-bg-settings-menu)] p-1 text-2xs shadow-[0_16px_40px_rgba(0,0,0,0.65)]">
+								{onSend && !sent ? <button className="rounded px-2 py-1.5 text-left text-muted-foreground hover:bg-interactive-hover hover:text-foreground disabled:pointer-events-none disabled:opacity-60" disabled={sending} onClick={() => { setMenuOpen(false); onSend(); }} type="button">{labels.sendToWorkerAgent}</button> : null}
 								{onResolve ? <button className="rounded px-2 py-1.5 text-left text-muted-foreground hover:bg-interactive-hover hover:text-foreground disabled:pointer-events-none disabled:opacity-60" disabled={resolving} onClick={() => void onResolve()} type="button">{labels.resolveComment}</button> : null}
 								{onViewInFile ? <button className="rounded px-2 py-1.5 text-left text-muted-foreground hover:bg-interactive-hover hover:text-foreground" onClick={onViewInFile} type="button">{labels.viewInFile}</button> : null}
 								{comment.url ? <ExternalLink className="rounded px-2 py-1.5 text-muted-foreground no-underline hover:bg-interactive-hover hover:text-foreground" href={comment.url}>Open on GitHub</ExternalLink> : null}
