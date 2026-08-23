@@ -51,11 +51,54 @@ matching. This is the local daemon's browser-capability pattern
 `launchRuntimeEnv` / `persistBrowserCapabilityVerifier`) with two additions a
 hosted control plane needs: scoping and revocation.
 
+### Binding
+
+The scope names one org, workspace, and session. **Binding** decides which
+sessions each granted operation may actually touch, and it is a property of the
+operation rather than of the grant, so the blast radius of a leaked credential
+is decided once instead of at each call site.
+
+| Binding | Operations | May reach |
+| --- | --- | --- |
+| grant | `sandbox.heartbeat`, `sandbox.report-state`, `capability.rotate` | the caller's own placement; takes no target |
+| workspace | `session.send`, `session.read`, `session.spawn` | any session in the granted workspace |
+| self | `session.preview`, `session.browser`, `session.activity` | only the grant's own session |
+
+Orchestration is inherently workspace-wide — a coordinator must send to, read,
+and spawn its workers — while a session's own surfaces must never become a
+lever onto a sibling. Hence the split.
+
+`Authorize(ctx, token, op, target)` applies the binding to the target the route
+resolved. `Verify(ctx, token, op)` handles grant-bound operations only and
+**refuses** a target-bound one: a handler that authorizes `session.send`
+without saying which session it resolved has checked nothing, and treating that
+as permission is how one tenant ends up steering another's agent. Use the
+`RequireTarget` middleware, which forces the route to supply a resolver — and
+that resolver must read the path and durable records, never a client-controlled
+body field.
+
+Granting a self-bound operation to a scope with no session id is rejected at
+issuance rather than producing a credential that silently authorizes nothing.
+
+### Role grants
+
+| Role | Operations |
+| --- | --- |
+| coordinator | grant-bound trio + `session.send`, `session.read`, `session.spawn` + its own `preview`/`browser`/`activity` |
+| worker | grant-bound trio + `preview`/`browser`/`activity` on its own session only |
+
+A worker holds **no** workspace-bound operation at all. That is the containment
+property: a compromised worker cannot read a sibling session, write into one,
+or spawn more compute.
+
+### Lifecycle of a grant
+
 - **Issuance** happens exactly when a sandbox is created or booted — the only
   moments it can receive a credential. Attaching to an already-running sandbox
   mints nothing.
-- **Rotation** preserves the original absolute expiry, so a compromised sandbox
-  cannot extend its own access by rotating on a timer.
+- **Rotation** preserves the original absolute expiry and the scope, so a
+  compromised sandbox cannot extend its access or widen its binding by rotating
+  on a timer.
 - **Revocation** is idempotent and can select a session, a workspace, or an
   organization. Stopping a sandbox revokes; deleting revokes first, before
   anything else.
@@ -64,6 +107,19 @@ The credential is injected through the sandbox environment. `CreateRequest`
 validation mechanically rejects any request whose entrypoint contains a secret
 value: argv is readable by every process in the sandbox and lands in provider
 audit logs. Secret files are written owner-only (0600).
+
+## No durable state in a sandbox
+
+A sandbox holds a checkout, caches, and live processes. It never holds product
+state, and it is never pointed at a store that could become one. Two structural
+guards, not conventions:
+
+- an import-boundary test walks the compute plane's packages, following imports
+  within the module, and fails if any of them can reach `database/sql`, a
+  driver, `internal/storage`, or `internal/cloud/postgres`;
+- a launch test asserts the injected environment contains only the callback
+  URL, the placement identifiers, the capability, and the deployment's own
+  secrets — and specifically no `AO_DATA_DIR`, `AO_RUN_FILE`, or database URL.
 
 ## Lifecycle ordering
 
@@ -201,8 +257,13 @@ preferred: the file's permissions are verified at startup, which is the only
 moment an operator notices a world-readable credential.
 
 `AO_CLOUD_SANDBOX_AUTO_STOP` and `AO_CLOUD_SANDBOX_AUTO_DELETE` ask Daytona for
-its own idle guards. They are belt and braces behind the reaper: if this
-control plane is down, the provider still stops paying for idle compute.
+its own idle guards, and both are **mandatory and non-zero** — validated in
+`LoadConfig` and again in `NewManager`, with auto-delete required to exceed
+auto-stop. Unlike a quota, `0` is an error rather than an "unbounded" opt-out:
+these are the only guards that survive this control plane being down, so if the
+reaper never runs they are what stops the provider bill growing without bound.
+Disabling them has to be impossible, not merely discouraged. Defaults are 30m
+and 72h.
 
 ## Wiring
 

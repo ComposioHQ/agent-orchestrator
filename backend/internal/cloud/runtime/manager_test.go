@@ -705,3 +705,48 @@ func TestARetriedCreateDoesNotLeakASecondSandbox(t *testing.T) {
 		t.Fatalf("sandboxes = %d, want the retry to collapse onto one", h.provider.Len())
 	}
 }
+
+func TestTheSandboxEnvironmentCarriesNoDurableStateLocation(t *testing.T) {
+	// A sandbox must not be pointed at a durable store. Injecting a data
+	// directory or a database URL is exactly how a disposable sandbox would
+	// acquire a second, divergent copy of product state — the sandbox-local
+	// SQLite architecture the cloud design rules out. The control plane hands
+	// a sandbox only its callback URL, its identifiers, and its capability.
+	h := newHarness(t, func(options *runtime.Options) {
+		options.Secrets = &recordingSecrets{
+			events: options.Secrets.(*recordingSecrets).events,
+			env:    map[string]string{"GITHUB_TOKEN": "ghs_averyLongSecretValue"},
+		}
+	})
+	if _, err := h.manager.Ensure(context.Background(), workerRef()); err != nil {
+		t.Fatal(err)
+	}
+
+	injected := h.provider.LastCreate.Env
+	controlPlaneKeys := map[string]struct{}{
+		runtime.EnvControlPlaneURL: {}, runtime.EnvCapability: {},
+		runtime.EnvOrgID: {}, runtime.EnvWorkspaceID: {},
+		runtime.EnvSessionID: {}, runtime.EnvRole: {}, runtime.EnvRuntimeID: {},
+	}
+	for name := range injected {
+		if _, isControlPlane := controlPlaneKeys[name]; isControlPlane {
+			continue
+		}
+		if name != "GITHUB_TOKEN" {
+			t.Fatalf("unexpected variable %q injected into the sandbox", name)
+		}
+	}
+	for _, forbidden := range []string{
+		"AO_DATA_DIR", "AO_RUN_FILE", "AO_CLOUD_DATABASE_URL",
+		"AO_CLOUD_MIGRATION_DATABASE_URL", "DATABASE_URL",
+	} {
+		if _, present := injected[forbidden]; present {
+			t.Fatalf("%s was injected into the sandbox", forbidden)
+		}
+	}
+	for _, required := range []string{runtime.EnvControlPlaneURL, runtime.EnvCapability} {
+		if injected[required] == "" {
+			t.Fatalf("%s missing: the sandbox cannot reach the control plane", required)
+		}
+	}
+}
