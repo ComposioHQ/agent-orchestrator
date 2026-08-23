@@ -16,7 +16,7 @@ export interface UseCloudSessionResult {
 	apiBaseUrl: string;
 	session: CloudAccount | null;
 	status: CloudSessionStatus;
-	signIn: () => void;
+	signIn: () => Promise<CloudAccount | null>;
 	signOut: () => Promise<void>;
 }
 
@@ -62,12 +62,12 @@ export function useCloudSession(): UseCloudSessionResult {
 		};
 	}, [availability.enabled]);
 
-	const signIn = () => {
-		void aoBridge.cloud.signIn().then((account) => {
-			if (!account) return;
-			setSession(account);
-			setStatus("authenticated");
-		});
+	const signIn = async () => {
+		const account = await aoBridge.cloud.signIn();
+		if (!account) return null;
+		setSession(account);
+		setStatus("authenticated");
+		return account;
 	};
 
 	const signOut = async () => {

@@ -1392,11 +1392,13 @@ function CreateProjectButton({
 	const folderDropRequest = useUiStore((state) => state.folderDropRequest);
 	return (
 		<CreateProjectFlow
+			cloudEnabled={cloud.enabled}
 			cloudOrganizations={cloud.enabled && cloud.status === "authenticated" ? (cloud.session?.organizations ?? []) : []}
 			droppedPath={folderDropRequest}
 			mode="choose"
 			onCloneProject={onCloneProject}
 			onCreateProject={onCreateProject}
+			onCloudSignIn={cloud.signIn}
 			onInitializeProject={onInitializeProject}
 			openSignal={createProjectNonce}
 		>
