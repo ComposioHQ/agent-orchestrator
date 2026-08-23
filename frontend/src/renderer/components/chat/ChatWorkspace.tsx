@@ -1352,6 +1352,7 @@ function Timeline({
 	const readable = useMemo(() => readableItems(snapshot), [snapshot]);
 	const items = useStableList(readable, itemKey, sameContent);
 	const seenHumanMessageIds = useRef<Set<string> | undefined>(undefined);
+	const lastSeenLatestSequence = useRef<number | undefined>(undefined);
 	const [newHumanMessageIds, setNewHumanMessageIds] = useState<ReadonlySet<string>>(new Set());
 	const editedMessageVisible = Boolean(
 		messageEdit &&
@@ -1360,21 +1361,29 @@ function Timeline({
 			),
 	);
 	useEffect(() => {
-		const humanMessageIds = new Set(
-			items
-				.filter((item): item is ConversationMessage => item.kind === "message" && item.role === "user" && item.origin === "human")
-				.map((item) => item.id),
+		const humanMessages = items.filter(
+			(item): item is ConversationMessage =>
+				item.kind === "message" && item.role === "user" && item.origin === "human",
 		);
+		const humanMessageIds = new Set(humanMessages.map((item) => item.id));
 		if (!seenHumanMessageIds.current) {
 			seenHumanMessageIds.current = humanMessageIds;
+			lastSeenLatestSequence.current = snapshot.latestSequence;
 			return;
 		}
 		const added = new Set(
-			[...humanMessageIds].filter((id) => !seenHumanMessageIds.current?.has(id)),
+			humanMessages
+				.filter(
+					(item) =>
+						!seenHumanMessageIds.current?.has(item.id) &&
+						item.sequence > (lastSeenLatestSequence.current ?? -Infinity),
+				)
+				.map((item) => item.id),
 		);
 		seenHumanMessageIds.current = humanMessageIds;
+		lastSeenLatestSequence.current = snapshot.latestSequence;
 		if (added.size > 0) setNewHumanMessageIds(added);
-	}, [items]);
+	}, [items, snapshot.latestSequence]);
 	const grouped = useMemo(() => groupByTurn({ ...snapshot, items }), [snapshot, items]);
 	const groups = useStableList(grouped, groupKey, sameGroup);
 	const navigableGroups = useMemo(() => groups.filter(groupHasHumanPrompt), [groups]);
