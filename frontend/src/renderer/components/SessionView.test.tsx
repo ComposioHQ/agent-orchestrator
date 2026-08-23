@@ -363,6 +363,7 @@ vi.mock("./SessionInspector", () => ({
 		isInspectorVisible = true,
 		onOpenFiles,
 		onOpenReviewFile,
+		onWorkerMessageSent,
 		onToggleBrowserPopOut,
 		view,
 	}: {
@@ -370,6 +371,7 @@ vi.mock("./SessionInspector", () => ({
 		isInspectorVisible?: boolean;
 		onOpenFiles?: () => void;
 		onOpenReviewFile?: (target: { line?: number; path: string }) => void;
+		onWorkerMessageSent?: () => void;
 		onToggleBrowserPopOut?: () => void;
 		view?: string;
 	}) => {
@@ -384,6 +386,9 @@ vi.mock("./SessionInspector", () => ({
 				</button>
 				<button type="button" onClick={() => onOpenReviewFile?.({ path: "src/panel.tsx", line: 42 })}>
 					view review file
+				</button>
+				<button type="button" onClick={onWorkerMessageSent}>
+					send review to worker
 				</button>
 				{view === "files" ? filesView : null}
 			</div>
@@ -924,6 +929,39 @@ describe("SessionView", () => {
 		fireEvent.click(screen.getByRole("button", { name: "select chat tab" }));
 		expect(screen.queryByTestId("terminal-target")).not.toBeInTheDocument();
 		expect(screen.getByTestId("chat-surface")).toBeInTheDocument();
+	});
+
+	it.each([
+		{ label: "Chat", mode: "chat" as const, reviewerButton: "Reviewer", expectedTarget: undefined },
+		{ label: "TUI", mode: undefined, reviewerButton: "select reviewer tab", expectedTarget: "reviewer" },
+	])("routes sent review feedback correctly for $label sessions", async ({ mode, reviewerButton, expectedTarget }) => {
+		const worker = workerSession("sess-1");
+		worker.mode = mode;
+		worker.prs = [{
+			url: "https://github.com/acme/repo/pull/7",
+			number: 7,
+			state: "open",
+			ci: "passing",
+			review: "none",
+			mergeability: "mergeable",
+			reviewComments: false,
+			updatedAt: "2026-06-15T00:00:00Z",
+		}];
+		reviewGetMock.mockResolvedValueOnce({
+			data: { reviewerHandleId: "review-sess-1", reviewerHarness: "codex", reviews: [], runs: [] },
+			error: undefined,
+		});
+
+		render(<SessionView sessionId="sess-1" />);
+		await screen.findByRole("button", { name: reviewerButton });
+		fireEvent.click(screen.getByRole("button", { name: reviewerButton }));
+		expect(screen.getByTestId("terminal-target")).toHaveTextContent("reviewer");
+
+		fireEvent.click(screen.getByRole("button", { name: "send review to worker" }));
+
+		const target = screen.queryByTestId("terminal-target");
+		if (expectedTarget) expect(target).toHaveTextContent(expectedTarget);
+		else expect(target).not.toBeInTheDocument();
 	});
 
 	it("returns to the session terminal when the reviewer handle is cleared", async () => {

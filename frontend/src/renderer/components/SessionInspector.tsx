@@ -147,6 +147,7 @@ export function SessionInspector({
 	onToggleBrowserPopOut,
 	onOpenFiles,
 	onOpenReviewFile,
+	onWorkerMessageSent,
 	filesView,
 	browserView,
 	view: viewProp,
@@ -160,6 +161,7 @@ export function SessionInspector({
 	onToggleBrowserPopOut?: (next: boolean) => void;
 	onOpenFiles?: () => void;
 	onOpenReviewFile?: (target: { line?: number; path: string }) => void;
+	onWorkerMessageSent?: () => void;
 	filesView?: ReactNode;
 	browserView?: BrowserViewModel;
 	/** Controlled active tab. Omit to let the inspector own its own selection. */
@@ -233,7 +235,7 @@ export function SessionInspector({
 				loadingText={session ? undefined : t("inspector.loadingSession")}
 				onViewChange={setView}
 				reviewsView={
-					session ? <ReviewsView onOpenReviewFile={onOpenReviewFile} onOpenReviewerTerminal={onOpenReviewerTerminal} session={session} /> : undefined
+					session ? <ReviewsView onOpenReviewFile={onOpenReviewFile} onOpenReviewerTerminal={onOpenReviewerTerminal} onWorkerMessageSent={onWorkerMessageSent} session={session} /> : undefined
 				}
 				summaryView={
 					session ? <SummaryView canOpenReviews={reviewsAvailable} onOpenReviews={() => setView("reviews")} session={session} /> : undefined
@@ -330,14 +332,16 @@ function ReviewsView({
 	session,
 	onOpenReviewFile,
 	onOpenReviewerTerminal,
+	onWorkerMessageSent,
 }: {
 	session: WorkspaceSession;
 	onOpenReviewFile?: (target: { line?: number; path: string }) => void;
 	onOpenReviewerTerminal?: OpenReviewerTerminal;
+	onWorkerMessageSent?: () => void;
 }) {
 	return (
 		<div role="tabpanel">
-			<ReviewsSection onOpenReviewFile={onOpenReviewFile} onOpenReviewerTerminal={onOpenReviewerTerminal} session={session} />
+			<ReviewsSection onOpenReviewFile={onOpenReviewFile} onOpenReviewerTerminal={onOpenReviewerTerminal} onWorkerMessageSent={onWorkerMessageSent} session={session} />
 		</div>
 	);
 }
@@ -1374,10 +1378,12 @@ function ReviewsSection({
 	session,
 	onOpenReviewFile,
 	onOpenReviewerTerminal,
+	onWorkerMessageSent,
 }: {
 	session: WorkspaceSession;
 	onOpenReviewFile?: (target: { line?: number; path: string }) => void;
 	onOpenReviewerTerminal?: OpenReviewerTerminal;
+	onWorkerMessageSent?: () => void;
 }) {
 	const { t } = useTranslation();
 	const hasPr = sortedPRs(session).length > 0;
@@ -1550,6 +1556,7 @@ function ReviewsSection({
 				githubPRs={githubReviews}
 				isLoading={scmSummary.isLoading}
 				onOpenReviewFile={onOpenReviewFile}
+				onWorkerMessageSent={onWorkerMessageSent}
 				reviewStates={reviewStates}
 				runs={reviewsQuery.data?.runs ?? []}
 				session={session}
@@ -1569,6 +1576,7 @@ function MergedReviewsSection({
 	githubPRs,
 	isLoading,
 	onOpenReviewFile,
+	onWorkerMessageSent,
 	reviewStates,
 	runs,
 	session,
@@ -1576,6 +1584,7 @@ function MergedReviewsSection({
 	githubPRs: SessionPRSummary[];
 	isLoading: boolean;
 	onOpenReviewFile?: (target: { line?: number; path: string }) => void;
+	onWorkerMessageSent?: () => void;
 	reviewStates: PRReviewState[];
 	runs: ReviewRunFacts[];
 	session: WorkspaceSession;
@@ -1619,6 +1628,7 @@ function MergedReviewsSection({
 			body: { message: formatInlineReviewCommentMessage(comment) },
 		});
 		if (error) throw new Error(apiErrorMessage(error, "Unable to send review comment to worker agent"));
+		onWorkerMessageSent?.();
 	};
 	const sendReviewSummaryToWorker = async (summary: InspectorReviewSummaryAction) => {
 		const { error } = await apiClient.POST("/api/v1/sessions/{sessionId}/send", {
@@ -1626,6 +1636,7 @@ function MergedReviewsSection({
 			body: { message: formatReviewSummaryMessage(summary) },
 		});
 		if (error) throw new Error(apiErrorMessage(error, "Unable to send review summary to worker agent"));
+		onWorkerMessageSent?.();
 	};
 	const groups: InspectorReviewGroup[] = rows.map(([number, { ao, github }]) => {
 		const aoRuns = ao ? [...(runsByPR.get(ao.prUrl) ?? [])].sort((a, b) => b.createdAt.localeCompare(a.createdAt)) : [];
