@@ -14,6 +14,8 @@ import { act, fireEvent, render, screen, waitFor, within } from "@testing-librar
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+	PROJECT_DND_ID,
+	sessionDndId,
 	Sidebar,
 	SIDEBAR_DEFAULT_WIDTH,
 	SIDEBAR_MIN_WIDTH,
@@ -21,9 +23,13 @@ import {
 import type { WorkspaceSession, WorkspaceSummary } from "../types/workspace";
 import { agentsQueryKey } from "../hooks/useAgentsQuery";
 import { useUiStore } from "../stores/ui-store";
+import { hydrateSidebarOrderFromStorage, useSidebarOrderStore } from "../stores/sidebar-order-store";
 
-const { cloudSessionState, getMock, navigateMock, mockParams, renameSessionMock, spawnMock, updateStatusMock, commandPaletteEnabled } = vi.hoisted(
+const { cloudSessionState, dragEndHandlers, getMock, navigateMock, mockParams, renameSessionMock, spawnMock, updateStatusMock, commandPaletteEnabled } = vi.hoisted(
 	() => ({
+		// Captured per DndContext id so a test can fire the exact drop the pointer
+		// sensor would produce — jsdom has no layout for dnd-kit to measure.
+		dragEndHandlers: new Map<string, (event: { active: { id: string }; over: { id: string } | null }) => void>(),
 		cloudSessionState: {
 			configured: false,
 			session: null as null | { user: { email: string } },
@@ -40,6 +46,27 @@ const { cloudSessionState, getMock, navigateMock, mockParams, renameSessionMock,
 		commandPaletteEnabled: { current: true },
 	}),
 );
+
+// Keep the sortable hooks real (they must survive without a live drag context)
+// but swap the provider for a pass-through that records its onDragEnd.
+vi.mock("@dnd-kit/core", async (importOriginal) => {
+	const actual = await importOriginal<typeof import("@dnd-kit/core")>();
+	return {
+		...actual,
+		DndContext: ({
+			children,
+			id,
+			onDragEnd,
+		}: {
+			children: React.ReactNode;
+			id?: string;
+			onDragEnd?: (event: { active: { id: string }; over: { id: string } | null }) => void;
+		}) => {
+			if (id && onDragEnd) dragEndHandlers.set(id, onDragEnd);
+			return children;
+		},
+	};
+});
 
 vi.mock("../lib/rename-session", () => ({ renameSession: renameSessionMock }));
 vi.mock("../lib/spawn-orchestrator", () => ({ spawnOrchestrator: spawnMock }));
@@ -247,6 +274,8 @@ async function openCreateProjectDialog(
 
 beforeEach(() => {
 	window.localStorage.clear();
+	dragEndHandlers.clear();
+	useSidebarOrderStore.setState({ projectOrder: [], sessionOrderByProject: {} });
 	document.documentElement.style.removeProperty("--ao-sidebar-w");
 	commandPaletteEnabled.current = true;
 	cloudSessionState.configured = false;
@@ -1314,8 +1343,11 @@ describe("Sidebar", () => {
 		expect(projectRow).toHaveClass("pr-sidebar-project-actions");
 		expect(actionCluster).toHaveAttribute("data-project-actions");
 		expect(actionCluster).toHaveClass("right-0.5", "gap-px");
-		expect(within(actionCluster as HTMLElement).getAllByRole("button")).toHaveLength(2);
+		// Orchestrator + kebab are always visible; the reorder grip is the third
+		// child but stays collapsed to 0px so the reserved padding is unchanged.
+		expect(within(actionCluster as HTMLElement).getAllByRole("button")).toHaveLength(3);
 		expect(screen.getByLabelText("Project actions for Project One")).not.toHaveClass("opacity-0");
+		expect(screen.getByTestId("project-reorder-handle")).toHaveClass("w-0", "opacity-0");
 	});
 
 	it("scales project actions with the row without scaling for action-button presses", () => {
@@ -1630,5 +1662,230 @@ describe("Sidebar", () => {
 			expect(button).toHaveClass("text-working", "bg-working/12");
 		}
 		expect(screen.getByText("v9.9.9 ready")).toBeInTheDocument();
+	});
+});
+
+describe("Sidebar reordering", () => {
+	const projectA: WorkspaceSummary = { ...workspace, id: "proj-a", name: "Alpha", sessions: [] };
+	const projectB: WorkspaceSummary = { ...workspace, id: "proj-b", name: "Bravo", sessions: [] };
+	const projectC: WorkspaceSummary = { ...workspace, id: "proj-c", name: "Charlie", sessions: [] };
+
+	/** A worker session for `projectId`, `minutesAgo` old (newest sorts first). */
+	function workerSession(projectId: string, id: string, title: string, minutesAgo: number): WorkspaceSession {
+		const updatedAt = new Date(Date.UTC(2026, 5, 30, 12, 0, 0) - minutesAgo * 60_000).toISOString();
+		return { ...session, id, title, workspaceId: projectId, updatedAt };
+	}
+
+	const projectNames = () =>
+		Array.from(document.querySelectorAll<HTMLElement>("[data-project-label]")).map((label) => label.textContent);
+
+	const sessionTitles = (projectId: string) =>
+		Array.from(
+			screen.getByTestId(`session-list-${projectId}`).querySelectorAll<HTMLButtonElement>('button[aria-label^="Open "]'),
+		).map((button) => button.getAttribute("aria-label"));
+
+	const projectHandle = (name: string) => within(projectRow(name)).getByTestId("project-reorder-handle");
+
+	function projectRow(name: string): HTMLElement {
+		const label = Array.from(document.querySelectorAll<HTMLElement>("[data-project-label]")).find(
+			(node) => node.textContent === name,
+		);
+		const row = label?.closest<HTMLElement>('[data-slot="sidebar-menu-item"]');
+		if (!row) throw new Error(`Project row not found: ${name}`);
+		return row;
+	}
+
+	function sessionHandle(title: string): HTMLElement {
+		const row = screen.getByLabelText(`Open ${title}`).closest<HTMLElement>("[data-session-row]");
+		if (!row) throw new Error(`Session row not found: ${title}`);
+		return within(row).getByTestId("session-reorder-handle");
+	}
+
+	function dragTo(contextId: string, activeId: string, overId: string | null) {
+		const handler = dragEndHandlers.get(contextId);
+		if (!handler) throw new Error(`No drag context registered for ${contextId}`);
+		act(() => handler({ active: { id: activeId }, over: overId === null ? null : { id: overId } }));
+	}
+
+	it("reorders projects by dragging one onto another and persists the result", () => {
+		renderSidebar({ workspaces: [projectA, projectB, projectC] });
+		expect(projectNames()).toEqual(["Alpha", "Bravo", "Charlie"]);
+
+		dragTo(PROJECT_DND_ID, "proj-c", "proj-a");
+
+		expect(projectNames()).toEqual(["Charlie", "Alpha", "Bravo"]);
+		expect(useSidebarOrderStore.getState().projectOrder).toEqual(["proj-c", "proj-a", "proj-b"]);
+		expect(JSON.parse(window.localStorage.getItem("ao.sidebar.order") ?? "null")).toMatchObject({
+			projects: ["proj-c", "proj-a", "proj-b"],
+		});
+	});
+
+	it("reorders projects from the keyboard and announces the new position", async () => {
+		const user = userEvent.setup();
+		renderSidebar({ workspaces: [projectA, projectB, projectC] });
+
+		projectHandle("Alpha").focus();
+		await user.keyboard("{ArrowDown}");
+
+		expect(projectNames()).toEqual(["Bravo", "Alpha", "Charlie"]);
+		expect(screen.getByTestId("project-reorder-status")).toHaveTextContent("Alpha moved to position 2 of 3");
+		expect(useSidebarOrderStore.getState().projectOrder).toEqual(["proj-b", "proj-a", "proj-c"]);
+	});
+
+	it("stops a project at the ends of the list", async () => {
+		const user = userEvent.setup();
+		renderSidebar({ workspaces: [projectA, projectB] });
+
+		projectHandle("Alpha").focus();
+		await user.keyboard("{ArrowUp}");
+
+		expect(projectNames()).toEqual(["Alpha", "Bravo"]);
+		expect(useSidebarOrderStore.getState().projectOrder).toEqual([]);
+	});
+
+	it("reorders sessions inside their own project", () => {
+		const sessions = [
+			workerSession("proj-a", "a-1", "first", 1),
+			workerSession("proj-a", "a-2", "second", 2),
+			workerSession("proj-a", "a-3", "third", 3),
+		];
+		renderSidebar({ workspaces: [{ ...projectA, sessions }] });
+		expect(sessionTitles("proj-a")).toEqual(["Open first", "Open second", "Open third"]);
+
+		dragTo(sessionDndId("proj-a"), "a-3", "a-1");
+
+		expect(sessionTitles("proj-a")).toEqual(["Open third", "Open first", "Open second"]);
+		expect(useSidebarOrderStore.getState().sessionOrderByProject).toEqual({ "proj-a": ["a-3", "a-1", "a-2"] });
+	});
+
+	it("reorders sessions from the keyboard and announces the new position", async () => {
+		const user = userEvent.setup();
+		const sessions = [workerSession("proj-a", "a-1", "first", 1), workerSession("proj-a", "a-2", "second", 2)];
+		renderSidebar({ workspaces: [{ ...projectA, sessions }] });
+
+		sessionHandle("first").focus();
+		await user.keyboard("{ArrowDown}");
+
+		expect(sessionTitles("proj-a")).toEqual(["Open second", "Open first"]);
+		expect(screen.getByTestId("session-reorder-status")).toHaveTextContent("first moved to position 2 of 2");
+	});
+
+	it("gives every project its own session drag context", () => {
+		renderSidebar({
+			workspaces: [
+				{ ...projectA, sessions: [workerSession("proj-a", "a-1", "alpha task", 1)] },
+				{ ...projectB, sessions: [workerSession("proj-b", "b-1", "bravo task", 1)] },
+			],
+		});
+
+		expect(dragEndHandlers.has(sessionDndId("proj-a"))).toBe(true);
+		expect(dragEndHandlers.has(sessionDndId("proj-b"))).toBe(true);
+	});
+
+	it("ignores a drop that names a session from another project", () => {
+		const workspaces = [
+			{
+				...projectA,
+				sessions: [workerSession("proj-a", "a-1", "alpha one", 1), workerSession("proj-a", "a-2", "alpha two", 2)],
+			},
+			{ ...projectB, sessions: [workerSession("proj-b", "b-1", "bravo one", 1)] },
+		];
+		renderSidebar({ workspaces });
+
+		// Dropped over another project's session, and dragged in from one.
+		dragTo(sessionDndId("proj-a"), "a-1", "b-1");
+		dragTo(sessionDndId("proj-a"), "b-1", "a-2");
+		// And a drop that landed on nothing at all.
+		dragTo(sessionDndId("proj-a"), "a-1", null);
+
+		expect(sessionTitles("proj-a")).toEqual(["Open alpha one", "Open alpha two"]);
+		expect(sessionTitles("proj-b")).toEqual(["Open bravo one"]);
+		expect(useSidebarOrderStore.getState().sessionOrderByProject).toEqual({});
+		expect(window.localStorage.getItem("ao.sidebar.order")).toBeNull();
+	});
+
+	it("keeps arrow keys from walking a session into a neighbouring project", async () => {
+		const user = userEvent.setup();
+		const workspaces = [
+			{ ...projectA, sessions: [workerSession("proj-a", "a-1", "alpha one", 1)] },
+			{ ...projectB, sessions: [workerSession("proj-b", "b-1", "bravo one", 1)] },
+		];
+		renderSidebar({ workspaces });
+
+		sessionHandle("alpha one").focus();
+		await user.keyboard("{ArrowDown}{ArrowDown}{ArrowUp}");
+
+		expect(sessionTitles("proj-a")).toEqual(["Open alpha one"]);
+		expect(sessionTitles("proj-b")).toEqual(["Open bravo one"]);
+		expect(useSidebarOrderStore.getState().sessionOrderByProject).toEqual({});
+	});
+
+	it("restores the persisted order on a fresh renderer boot", () => {
+		window.localStorage.setItem(
+			"ao.sidebar.order",
+			JSON.stringify({
+				version: 1,
+				projects: ["proj-c", "proj-a", "proj-b"],
+				sessionsByProject: { "proj-a": ["a-2", "a-1"] },
+			}),
+		);
+		hydrateSidebarOrderFromStorage();
+
+		const sessions = [workerSession("proj-a", "a-1", "first", 1), workerSession("proj-a", "a-2", "second", 2)];
+		renderSidebar({ workspaces: [{ ...projectA, sessions }, projectB, projectC] });
+
+		expect(projectNames()).toEqual(["Charlie", "Alpha", "Bravo"]);
+		expect(sessionTitles("proj-a")).toEqual(["Open second", "Open first"]);
+	});
+
+	it("keeps a project added after the last drag at the end and a new session on top", () => {
+		useSidebarOrderStore.setState({
+			projectOrder: ["proj-b", "proj-a"],
+			sessionOrderByProject: { "proj-a": ["a-2", "a-1"] },
+		});
+		const sessions = [
+			workerSession("proj-a", "a-new", "brand new", 0),
+			workerSession("proj-a", "a-1", "first", 1),
+			workerSession("proj-a", "a-2", "second", 2),
+		];
+		renderSidebar({ workspaces: [{ ...projectA, sessions }, projectB, projectC] });
+
+		expect(projectNames()).toEqual(["Bravo", "Alpha", "Charlie"]);
+		expect(sessionTitles("proj-a")).toEqual(["Open brand new", "Open second", "Open first"]);
+	});
+
+	it("leaves the pinned list unordered by hand", () => {
+		const pinned = {
+			...workerSession("proj-a", "a-1", "pinned task", 1),
+			isPinned: true,
+			pinnedAt: "2026-06-30T00:00:00Z",
+		};
+		renderSidebar({ workspaces: [{ ...projectA, sessions: [pinned] }] });
+
+		const pinnedList = screen.getByTestId("pinned-session-list");
+		expect(within(pinnedList).queryByTestId("session-reorder-handle")).not.toBeInTheDocument();
+	});
+
+	it("does not navigate, collapse, or open a menu when a grip is clicked", async () => {
+		const user = userEvent.setup();
+		const sessions = [workerSession("proj-a", "a-1", "first", 1), workerSession("proj-a", "a-2", "second", 2)];
+		renderSidebar({ workspaces: [{ ...projectA, sessions }] });
+
+		await user.click(projectHandle("Alpha"));
+		await user.click(sessionHandle("first"));
+
+		expect(navigateMock).not.toHaveBeenCalled();
+		expect(sessionTitles("proj-a")).toEqual(["Open first", "Open second"]);
+		expect(projectNames()).toEqual(["Alpha"]);
+	});
+
+	it("keeps the project row's own click behaviour after reordering", async () => {
+		const user = userEvent.setup();
+		renderSidebar({ workspaces: [projectA, projectB] });
+
+		dragTo(PROJECT_DND_ID, "proj-b", "proj-a");
+		await user.click(screen.getByText("Alpha"));
+
+		expect(navigateMock).toHaveBeenCalledWith({ to: "/projects/$projectId", params: { projectId: "proj-a" } });
 	});
 });

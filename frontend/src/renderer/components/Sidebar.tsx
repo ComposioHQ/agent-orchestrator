@@ -5,10 +5,22 @@ import {
 import { useTranslation } from "react-i18next";
 import { useNavigate, useParams, useRouterState } from "@tanstack/react-router";
 import {
+	DndContext,
+	PointerSensor,
+	closestCenter,
+	useSensor,
+	useSensors,
+	type DragEndEvent,
+	type DraggableSyntheticListeners,
+} from "@dnd-kit/core";
+import { SortableContext, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
+import {
 	ChevronRight,
 	Download,
 	Folder,
 	FolderOpen,
+	GripVertical,
 	LogOut,
 	MoreVertical,
 	Pencil,
@@ -21,7 +33,19 @@ import {
 	Trash2,
 	User,
 } from "lucide-react";
-import { useEffect, useId, useLayoutEffect, useRef, useState, type KeyboardEvent, type MouseEvent, type ReactNode } from "react";
+import {
+	useCallback,
+	useEffect,
+	useId,
+	useLayoutEffect,
+	useMemo,
+	useRef,
+	useState,
+	type CSSProperties,
+	type KeyboardEvent,
+	type MouseEvent,
+	type ReactNode,
+} from "react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import type { UpdateStatus } from "../../main/update-settings";
 import {
@@ -80,6 +104,8 @@ import aoLogo from "../../../assets/ao-logo.svg";
 import { cn } from "../lib/utils";
 import { useUiStore } from "../stores/ui-store"
 import { useKeybindingsStore } from "../stores/keybindings-store";
+import { useSidebarOrderStore } from "../stores/sidebar-order-store";
+import { applyManualOrder, moveByOffset, reorderById } from "../lib/sidebar-order";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { CreateProjectFlow, type CloneProjectInput, type CreateProjectInput } from "./CreateProjectFlow";
 import { ResizeHandle } from "./ResizeHandle";
@@ -112,6 +138,30 @@ const SECTION_ROW_INTERACTIVE_CLASS = "transition-colors hover:bg-interactive-ho
 // Mirrors the daemon's display-name cap (maxDisplayNameLen) and the spawn
 // `--name` flag, so inline edits never round-trip a value the API would reject.
 const MAX_DISPLAY_NAME_LEN = 20;
+
+// Reorder drags start from a grip handle, never the row itself, so the row's
+// click/press/context-menu behaviour is untouched. The 4px activation distance
+// keeps a plain click (or a keyboard focus) on the grip from starting a drag.
+const REORDER_ACTIVATION_DISTANCE = 4;
+
+/** Stable drag-context ids: one for the project list, one per project's sessions. */
+export const PROJECT_DND_ID = "sidebar-projects";
+export const sessionDndId = (projectId: string) => `sidebar-sessions-${projectId}`;
+
+function useReorderSensors() {
+	return useSensors(useSensor(PointerSensor, { activationConstraint: { distance: REORDER_ACTIVATION_DISTANCE } }));
+}
+
+type SortableRow = ReturnType<typeof useSortable>;
+
+/** Vertical-only transform: a dragged row must never drift out of the rail. */
+function sortableRowStyle({ transform, transition }: Pick<SortableRow, "transform" | "transition">): CSSProperties {
+	return {
+		transform: transform ? CSS.Transform.toString({ ...transform, x: 0 }) : undefined,
+		transition: transition ?? undefined,
+	};
+}
+
 export const SIDEBAR_DEFAULT_WIDTH = 240;
 export const SIDEBAR_MIN_WIDTH = 200;
 export const SIDEBAR_MAX_WIDTH = 420;
@@ -239,6 +289,39 @@ export function Sidebar({
 		edge: "right",
 		onExpand: () => setOpen(true),
 	});
+
+	// Manual project order (persisted in the sidebar-order store). Projects the
+	// user has never dragged keep the daemon's order at the end of the list.
+	const projectOrder = useSidebarOrderStore((state) => state.projectOrder);
+	const setProjectOrder = useSidebarOrderStore((state) => state.setProjectOrder);
+	const orderedWorkspaces = useMemo(
+		() => applyManualOrder(workspaces, (workspace) => workspace.id, projectOrder, "end"),
+		[projectOrder, workspaces],
+	);
+	const projectIds = useMemo(() => orderedWorkspaces.map((workspace) => workspace.id), [orderedWorkspaces]);
+	const reorderSensors = useReorderSensors();
+	const [projectAnnouncement, setProjectAnnouncement] = useState("");
+
+	const commitProjectOrder = useCallback(
+		(next: string[] | null, projectId: string) => {
+			if (!next) return;
+			setProjectOrder(next);
+			const name = orderedWorkspaces.find((workspace) => workspace.id === projectId)?.name ?? projectId;
+			setProjectAnnouncement(
+				t("shell.reorderMoved", { name, position: next.indexOf(projectId) + 1, total: next.length }),
+			);
+		},
+		[orderedWorkspaces, setProjectOrder, t],
+	);
+
+	const onProjectDragEnd = useCallback(
+		({ active, over }: DragEndEvent) => {
+			if (!over) return;
+			const projectId = String(active.id);
+			commitProjectOrder(reorderById(projectIds, projectId, String(over.id)), projectId);
+		},
+		[commitProjectOrder, projectIds],
+	);
 
 	const pinnedSessions = workspaces
 		.flatMap((w) => workerSessions(w.sessions))
@@ -388,19 +471,48 @@ export function Sidebar({
 								<p className="mt-1 text-caption text-passive">{workspaceError}</p>
 							</div>
 						) : workspaces.length === 0 ? null : (
-							<SidebarMenu className="gap-0.5 rounded-lg overflow-hidden group-data-[collapsible=icon]:gap-1 group-data-[collapsible=icon]:rounded-none group-data-[collapsible=icon]:overflow-visible">
-								{workspaces.map((workspace) => (
-									<ProjectItem
-										key={workspace.id}
-										workspace={workspace}
-										expanded={!collapsedIds.has(workspace.id)}
-										selection={selection}
-										onToggle={() => toggleCollapsed(workspace.id)}
-										onRemoveProject={onRemoveProject}
-									/>
-								))}
-								{isCollapsed && <CreateProjectListItem />}
-							</SidebarMenu>
+							<>
+									{/* aria-live without role="status": the sidebar already owns a
+								    role="status" node (project removal progress), and a second one
+								    would make an unqualified status lookup ambiguous. */}
+								<span
+									aria-atomic="true"
+									aria-live="polite"
+									className="sr-only"
+									data-testid="project-reorder-status"
+								>
+									{projectAnnouncement}
+								</span>
+								{/* One DndContext per list: projects here, each project's sessions in
+								    their own context below. Separate contexts make a cross-list drop
+								    structurally impossible, which is the semantics we want — this is
+								    ordering, not moving a session between projects. */}
+								<DndContext
+									collisionDetection={closestCenter}
+									id={PROJECT_DND_ID}
+									onDragEnd={onProjectDragEnd}
+									sensors={reorderSensors}
+								>
+									<SortableContext items={projectIds} strategy={verticalListSortingStrategy}>
+										<SidebarMenu className="gap-0.5 rounded-lg overflow-hidden group-data-[collapsible=icon]:gap-1 group-data-[collapsible=icon]:rounded-none group-data-[collapsible=icon]:overflow-visible">
+											{orderedWorkspaces.map((workspace) => (
+												<ProjectItem
+													key={workspace.id}
+													workspace={workspace}
+													expanded={!collapsedIds.has(workspace.id)}
+													selection={selection}
+													onMove={(offset) =>
+														commitProjectOrder(moveByOffset(projectIds, workspace.id, offset), workspace.id)
+													}
+													onToggle={() => toggleCollapsed(workspace.id)}
+													onRemoveProject={onRemoveProject}
+												/>
+											))}
+											{isCollapsed && <CreateProjectListItem />}
+										</SidebarMenu>
+									</SortableContext>
+								</DndContext>
+							</>
 						)}
 					</SidebarGroupContent>
 				</SidebarGroup>
@@ -492,12 +604,15 @@ function ProjectItem({
 	workspace,
 	expanded,
 	selection,
+	onMove,
 	onToggle,
 	onRemoveProject,
 }: {
 	workspace: WorkspaceSummary;
 	expanded: boolean;
 	selection: Selection;
+	/** Keyboard fallback for the grip: nudge this project one slot up or down. */
+	onMove: (offset: number) => void;
 	onToggle: () => void;
 	onRemoveProject: (projectId: string) => Promise<void>;
 }) {
@@ -529,10 +644,45 @@ function ProjectItem({
 	const restartingProjectIds = useUiStore((state) => state.restartingProjectIds);
 	const isProjectRestarting = restartingProjectIds.has(workspace.id);
 	const requestNewTask = useUiStore((state) => state.requestNewTask);
+	const { isDragging, listeners, setActivatorNodeRef, setNodeRef, transform, transition } = useSortable({
+		id: workspace.id,
+	});
 	// Keep completed PR sessions reachable while their runtime still exists.
 	// Only termination removes a worker from the sidebar; archived sessions stay
 	// reachable through SessionsBoard.
-	const sessions = sortedWorkerSessions(workspace.sessions).filter((session) => session.isTerminated !== true);
+	const visibleSessions = useMemo(
+		() => sortedWorkerSessions(workspace.sessions).filter((session) => session.isTerminated !== true),
+		[workspace.sessions],
+	);
+	// Manual session order, scoped to this project. Sessions the user has never
+	// dragged keep the derived newest-first position at the top, so a freshly
+	// spawned session still surfaces where it always did.
+	const sessionOrder = useSidebarOrderStore((state) => state.sessionOrderByProject[workspace.id]);
+	const setSessionOrder = useSidebarOrderStore((state) => state.setSessionOrder);
+	const sessions = useMemo(
+		() => applyManualOrder(visibleSessions, (session) => session.id, sessionOrder, "start"),
+		[sessionOrder, visibleSessions],
+	);
+	const sessionIds = useMemo(() => sessions.map((session) => session.id), [sessions]);
+	const sessionSensors = useReorderSensors();
+	const [sessionAnnouncement, setSessionAnnouncement] = useState("");
+
+	const commitSessionOrder = (next: string[] | null, sessionId: string) => {
+		if (!next) return;
+		setSessionOrder(workspace.id, next);
+		const title = sessions.find((session) => session.id === sessionId)?.title ?? sessionId;
+		setSessionAnnouncement(
+			t("shell.reorderMoved", { name: title, position: next.indexOf(sessionId) + 1, total: next.length }),
+		);
+	};
+
+	const onSessionDragEnd = ({ active, over }: DragEndEvent) => {
+		if (!over) return;
+		const sessionId = String(active.id);
+		// reorderById rejects any id that is not in THIS project's list, so a stray
+		// cross-project drop leaves both projects' orders untouched.
+		commitSessionOrder(reorderById(sessionIds, sessionId, String(over.id)), sessionId);
+	};
 	// The project's live orchestrator (if any) backs the hover Orchestrator
 	// button: navigate to it when present, otherwise spawn one first.
 	const orchestrator = newestActiveOrchestrator(workspace.sessions);
@@ -619,9 +769,17 @@ function ProjectItem({
 		<ContextMenu>
 		<ContextMenuTrigger asChild>
 		<SidebarMenuItem
-			className="group-data-[collapsible=icon]:mb-0"
+			className={cn(
+				"group-data-[collapsible=icon]:mb-0",
+				// Lifted + translucent while dragging; the gap the sortable list opens
+				// under the cursor is the drop indicator.
+				isDragging && "z-chrome opacity-60 [&_[data-project-press]]:rounded-lg [&_[data-project-press]]:ring-1 [&_[data-project-press]]:ring-accent",
+			)}
+			data-dragging={isDragging ? "true" : undefined}
 			onMouseEnter={() => setRowHovered(true)}
 			onMouseLeave={() => setRowHovered(false)}
+			ref={setNodeRef}
+			style={sortableRowStyle({ transform, transition })}
 		>
 		{/* The whole visual row scales when its navigation surface is pressed.
 		    Action-button presses stop before reaching this boundary. */}
@@ -717,6 +875,16 @@ function ProjectItem({
 			onClick={(event) => event.stopPropagation()}
 			onPointerDown={(event) => event.stopPropagation()}
 		>
+			{/* Grip stays collapsed to 0px until the row is hovered or it takes focus,
+			    so the reserved action padding (and label truncation) is unchanged. */}
+			<ReorderHandle
+				label={t("shell.reorderProject", { name: workspace.name })}
+				listeners={listeners}
+				onMove={onMove}
+				revealed={rowHovered || isDragging}
+				setActivatorNodeRef={setActivatorNodeRef}
+				testId="project-reorder-handle"
+			/>
 			<Tooltip>
 				<TooltipTrigger asChild>
 					<button
@@ -801,16 +969,35 @@ function ProjectItem({
 						exit={{ y: -12, opacity: 0 }}
 						transition={prefersReducedMotion ? { duration: 0 } : { duration: 0.14, ease: [0.25, 0.46, 0.45, 0.94] }}
 					>
-						<SidebarMenuSub className="mx-0 ml-3.5 translate-x-0 gap-px border-l-0 px-0 py-1">
-							{sessions.map((session) => (
-								<SessionRow
-									key={session.id}
-									session={session}
-									active={selection.activeSessionId === session.id}
-									onOpen={() => selection.goSession(workspace.id, session.id)}
-								/>
-							))}
-						</SidebarMenuSub>
+						<span aria-atomic="true" aria-live="polite" className="sr-only" data-testid="session-reorder-status">
+							{sessionAnnouncement}
+						</span>
+						{/* This project's own drag context: its sortable ids are exactly this
+						    project's sessions, so nothing from another project can be dropped
+						    here and nothing here can be dropped elsewhere. */}
+						<DndContext
+							collisionDetection={closestCenter}
+							id={sessionDndId(workspace.id)}
+							onDragEnd={onSessionDragEnd}
+							sensors={sessionSensors}
+						>
+							<SortableContext items={sessionIds} strategy={verticalListSortingStrategy}>
+								<SidebarMenuSub
+									className="mx-0 ml-3.5 translate-x-0 gap-px border-l-0 px-0 py-1"
+									data-testid={`session-list-${workspace.id}`}
+								>
+									{sessions.map((session) => (
+										<SortableSessionRow
+											key={session.id}
+											session={session}
+											active={selection.activeSessionId === session.id}
+											onMove={(offset) => commitSessionOrder(moveByOffset(sessionIds, session.id, offset), session.id)}
+											onOpen={() => selection.goSession(workspace.id, session.id)}
+										/>
+									))}
+								</SidebarMenuSub>
+							</SortableContext>
+						</DndContext>
 					</motion.div>
 				</motion.div>
 			)}
@@ -857,6 +1044,36 @@ function ProjectItem({
 	);
 }
 
+// A session row inside its project's drag context. The Pinned section renders
+// plain SessionRows instead: that list is ordered by pin time, not by hand.
+function SortableSessionRow({
+	session,
+	active,
+	onMove,
+	onOpen,
+}: {
+	session: WorkspaceSession;
+	active: boolean;
+	onMove: (offset: number) => void;
+	onOpen: () => void;
+}) {
+	const { isDragging, listeners, setActivatorNodeRef, setNodeRef, transform, transition } = useSortable({
+		id: session.id,
+	});
+	return (
+		<SessionRow
+			session={session}
+			active={active}
+			onOpen={onOpen}
+			reorder={{ isDragging, listeners, onMove, setActivatorNodeRef, setNodeRef, transform, transition }}
+		/>
+	);
+}
+
+type SessionReorder = Pick<SortableRow, "isDragging" | "listeners" | "setActivatorNodeRef" | "setNodeRef" | "transform" | "transition"> & {
+	onMove: (offset: number) => void;
+};
+
 // One worker-session row. Reads as a link by default; a hover-revealed pencil
 // flips the label into an inline input (Enter/blur saves, Escape cancels) that
 // persists through the daemon rename endpoint, so the new name survives reload.
@@ -865,11 +1082,14 @@ function SessionRow({
 	active,
 	indented = true,
 	onOpen,
+	reorder,
 }: {
 	session: WorkspaceSession;
 	active: boolean;
 	indented?: boolean;
 	onOpen: () => void;
+	/** Present only for rows inside a reorderable project list. */
+	reorder?: SessionReorder;
 }) {
 	const { t } = useTranslation();
 	const switchPresentation = deriveSessionAgentSwitchPresentation(session);
@@ -941,12 +1161,18 @@ function SessionRow({
 	}
 
 	return (
-		<SidebarMenuSubItem className={cn(indented && "pl-4.5")}>
+		<SidebarMenuSubItem
+			className={cn(indented && "pl-4.5", reorder?.isDragging && "z-chrome opacity-60")}
+			data-dragging={reorder?.isDragging ? "true" : undefined}
+			ref={reorder?.setNodeRef}
+			style={reorder ? sortableRowStyle(reorder) : undefined}
+		>
 			<div
 				className={cn(
 					"group/session-row flex h-8 w-full items-center rounded-lg transition-[background-color,color]",
 					"hover:bg-interactive-hover hover:text-foreground focus-within:bg-interactive-hover",
 					active && "bg-interactive-active text-foreground",
+					reorder?.isDragging && "ring-1 ring-accent",
 				)}
 				data-session-row=""
 			>
@@ -978,7 +1204,18 @@ function SessionRow({
 						</span>
 					</button>
 				</div>{/* end scale wrapper */}
-				{/* Pin, rename, kill: outside scale wrapper so clicking them doesn't trigger press animation */}
+				{/* Reorder, pin, rename, kill: outside scale wrapper so clicking them doesn't trigger press animation */}
+				{reorder ? (
+					<ReorderHandle
+						className="group-hover/session-row:w-5 group-hover/session-row:opacity-100 group-focus-within/session-row:w-5 group-focus-within/session-row:opacity-100"
+						label={t("shell.reorderSession", { title: session.title })}
+						listeners={reorder.listeners}
+						onMove={reorder.onMove}
+						revealed={reorder.isDragging}
+						setActivatorNodeRef={reorder.setActivatorNodeRef}
+						testId="session-reorder-handle"
+					/>
+				) : null}
 				<button
 					aria-label={session.isPinned ? t("shell.unpinSession") : t("shell.pinSession")}
 					className={cn(
@@ -1031,6 +1268,59 @@ function SessionRow({
 				</button>
 			</div>
 		</SidebarMenuSubItem>
+	);
+}
+
+// The single reorder affordance for both project and session rows: a grip that
+// stays out of the way (0px wide) until the row is hovered or the grip itself
+// takes focus. Pointer drags go through dnd-kit; ArrowUp/ArrowDown on the
+// focused grip is the keyboard fallback, which is also the whole story for
+// anyone who cannot drag — it needs no pointer, no measurement, and it stops at
+// the ends of the list rather than spilling into a neighbouring one.
+function ReorderHandle({
+	className,
+	label,
+	listeners,
+	onMove,
+	revealed = false,
+	setActivatorNodeRef,
+	testId,
+}: {
+	className?: string;
+	label: string;
+	listeners: DraggableSyntheticListeners;
+	onMove: (offset: number) => void;
+	revealed?: boolean;
+	setActivatorNodeRef: (node: HTMLElement | null) => void;
+	testId: string;
+}) {
+	return (
+		<button
+			aria-keyshortcuts="ArrowUp ArrowDown"
+			aria-label={label}
+			className={cn(
+				"grid h-5 w-0 shrink-0 cursor-grab place-items-center overflow-hidden rounded-md text-passive opacity-0",
+				"transition-[width,opacity,background-color,color] hover:bg-interactive-hover hover:text-foreground",
+				"focus-visible:w-5 focus-visible:opacity-100 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50",
+				"active:cursor-grabbing [&_svg]:size-3!",
+				revealed && "w-5 opacity-100",
+				className,
+			)}
+			data-testid={testId}
+			// The row underneath navigates on click; a grip click must not.
+			onClick={(event) => event.stopPropagation()}
+			onKeyDown={(event: KeyboardEvent<HTMLButtonElement>) => {
+				if (event.key !== "ArrowUp" && event.key !== "ArrowDown") return;
+				event.preventDefault();
+				event.stopPropagation();
+				onMove(event.key === "ArrowUp" ? -1 : 1);
+			}}
+			ref={setActivatorNodeRef}
+			type="button"
+			{...listeners}
+		>
+			<GripVertical aria-hidden="true" />
+		</button>
 	);
 }
 
