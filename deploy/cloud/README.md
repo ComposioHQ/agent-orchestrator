@@ -79,3 +79,9 @@ migration and runtime connections use full certificate and hostname
 verification. A failed migration restores the previous database secret and
 leaves the serving revision online. Production still requires a separately
 reviewed expand/migrate/contract rollout for incompatible schema changes.
+
+This staging image and deploy script intentionally support `us-west-2` only.
+When AWS rotates the regional RDS bundle, download it from the AWS RDS
+trust-store endpoint, inspect the certificate subjects and validity windows,
+then update `RDS_CA_BUNDLE_SHA256` in `Dockerfile`; never remove the checksum
+check merely to make a build pass.

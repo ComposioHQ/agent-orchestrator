@@ -19,6 +19,8 @@ RUN --mount=type=cache,target=/go/pkg/mod \
     go build -trimpath -ldflags="-s -w" -o /out/ao ./cmd/ao
 
 FROM debian:12-slim AS database-certs
+# This staging image is deliberately regional. deploy-staging.sh rejects any
+# region other than us-west-2 so the trust bundle and RDS endpoint stay aligned.
 ARG RDS_CA_BUNDLE_SHA256=733b52e4b589586377e3e00f7c4625b61e14cbf0b5e08cace28b4f8aecc27c66
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl && \
     curl -fsS --proto '=https' --tlsv1.2 \

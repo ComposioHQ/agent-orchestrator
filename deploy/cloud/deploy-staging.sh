@@ -23,6 +23,10 @@ PLACEHOLDER_IMAGE="public.ecr.aws/docker/library/busybox:1.36"
 
 export AWS_REGION AWS_DEFAULT_REGION AWS_RETRY_MODE AWS_MAX_ATTEMPTS
 
+if [[ "$AWS_REGION" != "us-west-2" ]]; then
+  echo "deploy-staging.sh currently supports only us-west-2 (the image pins that regional RDS CA bundle)" >&2
+  exit 2
+fi
 if [[ -z "$GOOGLE_CLIENT_IDS" ]]; then
   echo "AO_CLOUD_GOOGLE_CLIENT_IDS is required" >&2
   exit 2
@@ -265,11 +269,6 @@ fi
 
 terraform_apply "$image_reference" "$image_reference" true
 
-aws ecs update-service \
-  --cluster "$cluster" \
-  --service "$service" \
-  --force-new-deployment >/dev/null
-aws ecs wait services-stable --cluster "$cluster" --services "$service"
 api_url="$(terraform_output api_url)"
 api_url="${api_url%/}"
 
