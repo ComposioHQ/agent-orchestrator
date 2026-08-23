@@ -273,12 +273,12 @@ func (m *Manager) executeChatAgentSwitch(
 		return result, fmt.Errorf("switch Chat agent %s: record finalized handoff: %w", id, err)
 	}
 	finalSystemPrompt := appendAgentSwitchContinuation(systemPrompt, continuation)
-	systemPromptFile, err := m.prepareSystemPromptFile(rec.ID, cfg.TargetHarness, finalSystemPrompt)
+	systemPromptFile, err := m.prepareSystemPromptFileIn(ctx, m.execution, rec.ID, cfg.TargetHarness, finalSystemPrompt)
 	if err != nil {
 		return result, fmt.Errorf("switch Chat agent %s: target system prompt file: %w", id, err)
 	}
-	if err := m.prepareWorkspace(
-		ctx, targetAgent, rec.ID, rec.Metadata.WorkspacePath,
+	if err := m.prepareWorkspaceIn(
+		ctx, m.execution, targetAgent, cfg.TargetHarness, rec.ID, rec.Metadata.WorkspacePath,
 		finalSystemPrompt, systemPromptFile, agentConfig, targetEnv,
 	); err != nil {
 		return result, fmt.Errorf("switch Chat agent %s: prepare target workspace: %w", id, err)
@@ -485,15 +485,15 @@ func (m *Manager) rollbackStoppedChatAgentSwitchSource(
 	if err != nil {
 		return err
 	}
-	systemPromptFile, err := m.prepareSystemPromptFile(rec.ID, rec.Harness, systemPrompt)
+	systemPromptFile, err := m.prepareSystemPromptFileIn(ctx, m.execution, rec.ID, rec.Harness, systemPrompt)
 	if err != nil {
 		return err
 	}
 	agentConfig := effectiveAgentConfig(rec.Kind, project.Config)
 	env := m.runtimeEnv(rec.ID, rec.ProjectID, rec.IssueID, project.Config.Env)
 	m.augmentAgentRuntimeEnv(sourceAgent, env)
-	if err := m.prepareWorkspace(
-		ctx, sourceAgent, rec.ID, rec.Metadata.WorkspacePath,
+	if err := m.prepareWorkspaceIn(
+		ctx, m.execution, sourceAgent, rec.Harness, rec.ID, rec.Metadata.WorkspacePath,
 		systemPrompt, systemPromptFile, agentConfig, env,
 	); err != nil {
 		return err

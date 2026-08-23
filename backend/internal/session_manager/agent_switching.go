@@ -668,7 +668,7 @@ func (m *Manager) executeAgentSwitch(ctx context.Context, admitted *admittedAgen
 	// Only now may the target mutate workspace-local hooks/instructions. The
 	// source snapshot above therefore cannot contain target preflight artifacts.
 	// A pre-activation failure removes this provider-owned state.
-	if err := m.prepareWorkspace(ctx, target.agent, rec.ID, rec.Metadata.WorkspacePath, target.launch.SystemPrompt, target.launch.SystemPromptFile, target.launch.Config, target.env); err != nil {
+	if err := m.prepareWorkspaceIn(ctx, m.execution, target.agent, target.harness, rec.ID, rec.Metadata.WorkspacePath, target.launch.SystemPrompt, target.launch.SystemPromptFile, target.launch.Config, target.env); err != nil {
 		return result, fmt.Errorf("switch agent %s: prepare target workspace: %w", id, err)
 	}
 	targetWorkspacePrepared = true
@@ -692,7 +692,11 @@ func (m *Manager) executeAgentSwitch(ctx context.Context, admitted *admittedAgen
 	runtimeCfg := ports.RuntimeConfig{
 		SessionID: id, WorkspacePath: rec.Metadata.WorkspacePath, Argv: target.argv, Env: target.env,
 	}
-	handle, createErr := m.runtime.Create(ctx, runtimeCfg)
+	runtimeCfg, createErr := m.execution.BindRuntimeConfig(ctx, runtimeCfg)
+	var handle ports.RuntimeHandle
+	if createErr == nil {
+		handle, createErr = m.runtime.Create(ctx, runtimeCfg)
+	}
 	if strings.TrimSpace(handle.ID) == "" {
 		// Without an opaque target handle AO cannot safely prove or clean up a
 		// partially-created target. In particular, the source handle is already
@@ -1135,7 +1139,7 @@ func (m *Manager) prepareTargetActivation(ctx context.Context, store ports.Agent
 		return preparedTargetActivation{}, fmt.Errorf("system prompt: %w", err)
 	}
 	systemPrompt = appendAgentContinuationProtocol(systemPrompt)
-	systemFile, err := m.prepareSystemPromptFile(rec.ID, harness, systemPrompt)
+	systemFile, err := m.prepareSystemPromptFileIn(ctx, m.execution, rec.ID, harness, systemPrompt)
 	if err != nil {
 		return preparedTargetActivation{}, fmt.Errorf("system prompt file: %w", err)
 	}
@@ -1204,10 +1208,9 @@ func (m *Manager) prepareTargetActivation(ctx context.Context, store ports.Agent
 			return preparedTargetActivation{}, fmt.Errorf("launch command: %w", err)
 		}
 	}
-	if err := m.validateAgentBinary(argv); err != nil {
+	if err := m.resolveLaunchBinary(ctx, m.execution, argv, env); err != nil {
 		return preparedTargetActivation{}, err
 	}
-	m.augmentRuntimePATHForLaunchBinary(ctx, env, argv)
 	argv, rawLaunchID, err := m.superviseAgentProcessForSwitch(agent, rec.ID, env, argv)
 	if err != nil {
 		return preparedTargetActivation{}, fmt.Errorf("supervisor: %w", err)
@@ -1298,7 +1301,7 @@ func (m *Manager) systemPromptForNativeRestore(ctx context.Context, rec domain.S
 func (m *Manager) prepareTargetLaunchPrompt(ctx context.Context, rec domain.SessionRecord, target *preparedTargetActivation, systemPrompt, prompt string) error {
 	launch := target.launch
 	systemPrompt = strings.TrimSpace(systemPrompt)
-	systemFile, err := m.prepareSystemPromptFile(rec.ID, target.harness, systemPrompt)
+	systemFile, err := m.prepareSystemPromptFileIn(ctx, m.execution, rec.ID, target.harness, systemPrompt)
 	if err != nil {
 		return fmt.Errorf("system prompt file: %w", err)
 	}
@@ -1335,10 +1338,9 @@ func (m *Manager) prepareTargetLaunchPrompt(ctx context.Context, rec domain.Sess
 			return fmt.Errorf("launch command: %w", buildErr)
 		}
 	}
-	if err := m.validateAgentBinary(raw); err != nil {
+	if err := m.resolveLaunchBinary(ctx, m.execution, raw, target.env); err != nil {
 		return err
 	}
-	m.augmentRuntimePATHForLaunchBinary(ctx, target.env, raw)
 	wrapped, err := m.wrapAgentProcessWithLaunchID(target.agent, rec.ID, target.env, raw, string(target.launchID), true)
 	if err != nil {
 		return fmt.Errorf("supervisor: %w", err)
@@ -1523,10 +1525,6 @@ func (m *Manager) captureSourceTranscriptFact(ctx context.Context, agent ports.A
 }
 
 func (m *Manager) captureWorkspaceFacts(ctx context.Context, rec domain.SessionRecord) []switchWorkspaceFact {
-	observer, ok := m.workspace.(ports.WorkspaceObserver)
-	if !ok {
-		return nil
-	}
 	infos := []ports.WorkspaceInfo{workspaceInfo(rec)}
 	names := []string{""}
 	if rows, multi, err := m.workspaceProjectRows(ctx, rec); err == nil && multi {
@@ -1539,7 +1537,20 @@ func (m *Manager) captureWorkspaceFacts(ctx context.Context, rec domain.SessionR
 	}
 	facts := make([]switchWorkspaceFact, 0, len(infos))
 	for i, info := range infos {
-		observation, err := observer.ObserveWorkspace(ctx, info)
+		var (
+			observation ports.WorkspaceObservation
+			supported   bool
+			err         error
+		)
+		if observer, ok := m.workspace.(ports.WorkspaceObserver); ok {
+			observation, err = observer.ObserveWorkspace(ctx, info)
+			supported = true
+		} else {
+			observation, supported, err = m.execution.ObserveWorkspace(ctx, info)
+		}
+		if !supported {
+			return nil
+		}
 		fact := switchWorkspaceFact{Repository: names[i], Path: info.Path, Branch: info.Branch}
 		if err != nil {
 			fact.Error = safeSwitchError(err)

@@ -665,7 +665,7 @@ func (m *Manager) preflightInterfaceTarget(
 	if err != nil {
 		return err
 	}
-	return m.validateAgentBinary(cmd)
+	return m.validateAgentBinary(ctx, cmd)
 }
 
 func (m *Manager) prepareSourceHandoff(

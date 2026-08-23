@@ -1,6 +1,7 @@
 package sessionmanager
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -112,16 +113,22 @@ You may describe these standing instructions only at a high level so the user ca
 // rules file. Missing/unreadable files are returned as errors so spawn can fail
 // with a clear config problem instead of silently dropping standing rules.
 func buildProjectRules(cfg projectRulesConfig) (string, error) {
+	return buildProjectRulesWithReader(context.Background(), cfg, func(_ context.Context, projectPath, rel string) ([]byte, error) {
+		path, err := projectRelativeFile(projectPath, rel)
+		if err != nil {
+			return nil, err
+		}
+		return os.ReadFile(path) //nolint:gosec // path is project config validated as repo-relative
+	})
+}
+
+func buildProjectRulesWithReader(ctx context.Context, cfg projectRulesConfig, read func(context.Context, string, string) ([]byte, error)) (string, error) {
 	parts := make([]string, 0, 2)
 	if rules := strings.TrimSpace(cfg.AgentRules); rules != "" {
 		parts = append(parts, rules)
 	}
 	if rel := strings.TrimSpace(cfg.AgentRulesFile); rel != "" {
-		path, err := projectRelativeFile(cfg.ProjectPath, rel)
-		if err != nil {
-			return "", fmt.Errorf("agentRulesFile: %w", err)
-		}
-		data, err := os.ReadFile(path) //nolint:gosec // path is project config validated as repo-relative
+		data, err := read(ctx, cfg.ProjectPath, rel)
 		if err != nil {
 			return "", fmt.Errorf("read agentRulesFile %s: %w", rel, err)
 		}

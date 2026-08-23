@@ -111,6 +111,7 @@ type chatSpawn struct {
 	project          domain.ProjectRecord
 	projectKind      domain.ProjectKind
 	record           domain.SessionRecord
+	provision        ports.SessionProvision
 	workspace        ports.WorkspaceInfo
 	workspaceProject *ports.WorkspaceProjectInfo
 	prompt           string
@@ -136,7 +137,7 @@ func (m *Manager) launchChatController(ctx context.Context, in chatSpawn) (domai
 	env := m.runtimeEnv(id, in.cfg.ProjectID, in.cfg.IssueID, in.project.Config.Env)
 	var diffBaseSHA, diffBaseRef string
 	if in.projectKind == domain.ProjectKindSingleRepo {
-		diffBaseSHA, diffBaseRef = resolveSpawnDiffBase(
+		diffBaseSHA, diffBaseRef = in.provision.ResolveDiffBase(
 			ctx, in.workspace.Path, in.workspace.BaseRef)
 	}
 
@@ -179,7 +180,7 @@ func (m *Manager) launchChatController(ctx context.Context, in chatSpawn) (domai
 	if err != nil {
 		if completionErr != nil || controllerCommitted {
 			m.stopChatBestEffort(ctx, id)
-			m.rollbackPreparedSpawnWorkspace(ctx, in.record, in.workspace, in.workspaceProject, true)
+			m.rollbackPreparedSpawnWorkspace(ctx, in.provision, in.record, in.workspace, true)
 			m.markSpawnFailedTerminated(ctx, id)
 			if completionErr != nil {
 				return domain.SessionRecord{}, wrapSpawnStage(id, ErrSpawnCommit, completionErr)
@@ -188,7 +189,7 @@ func (m *Manager) launchChatController(ctx context.Context, in chatSpawn) (domai
 		}
 		// No controller exists, so nothing provider-side needs closing. The
 		// runtime was never touched, hence runtimeDestroyed=false.
-		m.rollbackSeedSpawnWorkspace(ctx, in.record, in.workspace, in.workspaceProject, false)
+		m.rollbackSeedSpawnWorkspace(ctx, in.provision, in.record, in.workspace, false)
 		return domain.SessionRecord{}, wrapSpawnStage(id, ErrChatController, err)
 	}
 
@@ -198,10 +199,16 @@ func (m *Manager) launchChatController(ctx context.Context, in chatSpawn) (domai
 	if in.prompt != "" {
 		if _, err := m.chat.StartChatTurn(ctx, id, in.prompt); err != nil {
 			m.stopChatBestEffort(ctx, id)
-			m.rollbackPreparedSpawnWorkspace(ctx, in.record, in.workspace, in.workspaceProject, true)
+			m.rollbackPreparedSpawnWorkspace(ctx, in.provision, in.record, in.workspace, true)
 			m.markSpawnFailedTerminated(ctx, id)
 			return domain.SessionRecord{}, wrapSpawnStage(id, ErrSpawnDeliverPrompt, err)
 		}
+	}
+	if err := in.provision.Commit(ctx); err != nil {
+		m.stopChatBestEffort(ctx, id)
+		m.rollbackPreparedSpawnWorkspace(ctx, in.provision, in.record, in.workspace, true)
+		m.markSpawnFailedTerminated(ctx, id)
+		return domain.SessionRecord{}, fmt.Errorf("spawn %s: commit execution environment: %w", id, err)
 	}
 
 	return m.getRecord(ctx, id)
