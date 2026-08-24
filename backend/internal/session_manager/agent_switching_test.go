@@ -3319,6 +3319,49 @@ func TestSwitchAgentMarksAndRecoversUnconfirmedSourceStop(t *testing.T) {
 	}
 }
 
+func TestRecoverAgentSwitchReleasesSourceWhenProbeRemainsInconclusive(t *testing.T) {
+	probeErr := errors.New("runtime probe unavailable")
+	runtime := &fakeRestartRuntime{fakeRuntime: &fakeRuntime{
+		destroyErr: errors.New("teardown unavailable"),
+		aliveErr:   probeErr,
+	}}
+	manager, store, _ := newSwitchTestManager(t, runtime)
+
+	sw, err := switchAgentSynchronously(context.Background(), manager, "proj-1", SwitchAgentConfig{
+		TargetHarness: domain.HarnessCodex, IdempotencyKey: "stop-probe-stays-inconclusive",
+	})
+	if !errors.Is(err, ErrSwitchSourceStopUnconfirmed) {
+		t.Fatalf("switch error = %v, want ErrSwitchSourceStopUnconfirmed", err)
+	}
+	if sw.State != domain.AgentSwitchStoppingSource || !sw.RequiresSourceStopRecovery() {
+		t.Fatalf("switch = state %q code %q, want retained source-stop recovery", sw.State, sw.ErrorCode)
+	}
+	destroyedBeforeRecovery := runtime.destroyed
+
+	if _, err := manager.RecoverAgentSwitch(context.Background(), "proj-1", sw.ID); err != nil {
+		t.Fatalf("recover retained source stop: %v", err)
+	}
+	waitForSwitchWorkers(t, manager)
+
+	recovered := store.switches[sw.ID]
+	if recovered.State != domain.AgentSwitchFailed || recovered.ErrorCode != domain.AgentSwitchErrorSourceStopUnconfirmed {
+		t.Fatalf("recovered switch = state %q code %q, want failed/source_stop_unconfirmed",
+			recovered.State, recovered.ErrorCode)
+	}
+	if got := store.sessions["proj-1"]; got.Harness != domain.HarnessClaudeCode || got.Metadata.RuntimeHandleID != "proj-1" {
+		t.Fatalf("source ownership changed during inconclusive recovery: %+v", got)
+	}
+	if runtime.created != 0 {
+		t.Fatalf("target or replacement runtime created %d times, want none", runtime.created)
+	}
+	if runtime.destroyed != destroyedBeforeRecovery {
+		t.Fatalf("recovery retried ambiguous teardown: destroy calls = %d, want %d", runtime.destroyed, destroyedBeforeRecovery)
+	}
+	if manager.SessionMutationInProgress("proj-1") {
+		t.Fatal("inconclusive source probe left the switch input gate closed")
+	}
+}
+
 func TestSwitchAgentInstallsTargetWorkspaceOnlyAfterFinalSourceSnapshot(t *testing.T) {
 	runtime := &fakeRestartRuntime{fakeRuntime: &fakeRuntime{}}
 	manager, _, _ := newSwitchTestManager(t, runtime)
@@ -3536,7 +3579,7 @@ func TestReconcileAgentSwitchesUsesDurableBoundaries(t *testing.T) {
 		{name: "stopped source is restored", state: domain.AgentSwitchStoppingSource, runtimeAlive: false, wantState: domain.AgentSwitchFailed, wantHarness: domain.HarnessClaudeCode, wantErrorCode: "daemon_restart_post_stop", wantActivity: domain.ActivityIdle},
 		{name: "failed source restore remains recoverable", state: domain.AgentSwitchStoppingSource, runtimeAlive: false, rollbackErr: errors.New("source relaunch unavailable"), wantState: domain.AgentSwitchSourceStopped, wantHarness: domain.HarnessClaudeCode, wantErrorCode: domain.AgentSwitchErrorSourceRestoreUnconfirmed, wantError: "source relaunch unavailable", wantGated: true, wantActivity: domain.ActivityExited},
 		{name: "missing rollback project remains recoverable", state: domain.AgentSwitchStoppingSource, runtimeAlive: false, projectErr: errors.New("project unavailable"), wantState: domain.AgentSwitchSourceStopped, wantHarness: domain.HarnessClaudeCode, wantErrorCode: domain.AgentSwitchErrorSourceRestoreUnconfirmed, wantError: "project unavailable", wantGated: true, wantActivity: domain.ActivityExited},
-		{name: "inconclusive source probe remains available for explicit recovery", state: domain.AgentSwitchStoppingSource, runtimeErr: errors.New("probe unavailable"), wantState: domain.AgentSwitchStoppingSource, wantHarness: domain.HarnessClaudeCode, wantErrorCode: domain.AgentSwitchErrorSourceStopUnconfirmed, wantGated: true},
+		{name: "inconclusive source probe returns ownership to source", state: domain.AgentSwitchStoppingSource, runtimeErr: errors.New("probe unavailable"), wantState: domain.AgentSwitchFailed, wantHarness: domain.HarnessClaudeCode, wantErrorCode: domain.AgentSwitchErrorSourceStopUnconfirmed},
 		{name: "exact starting target is adopted by opaque handle without delivery", state: domain.AgentSwitchStartingTarget, runtimeAlive: true, targetHandle: "opaque-target-handle", wantState: domain.AgentSwitchFailed, wantHarness: domain.HarnessCodex, wantHandle: "opaque-target-handle", wantErrorCode: "daemon_restart_before_delivery"},
 		{name: "starting target without a durable handle requires recovery", state: domain.AgentSwitchStartingTarget, runtimeAlive: true, wantState: domain.AgentSwitchStartingTarget, wantHarness: domain.HarnessClaudeCode, wantErrorCode: domain.AgentSwitchErrorTargetStartUnconfirmed, wantGated: true},
 		{name: "acknowledged delivery completes", state: domain.AgentSwitchDelivering, runtimeAlive: true, acknowledged: true, wantState: domain.AgentSwitchCompleted, wantHarness: domain.HarnessCodex},

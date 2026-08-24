@@ -63,7 +63,11 @@ const noDragStyle = isMac ? ({ WebkitAppRegion: "no-drag" } as React.CSSProperti
 const PADDING_DEFAULT = 18; // 1.125rem
 const PADDING_CLEARANCE = 170;
 const PADDING_CLEARANCE_FULLSCREEN = 112;
-const PADDING_CLEARANCE_LINUX = 94;
+// Off-canvas the Linux cluster shifts right to clear the framed panel border, so
+// measure the reserve from that inset, relative to the panel's own left edge:
+// --size-titlebar-cluster-left-linux-panel (26) + --size-titlebar-cluster-width
+// (92) + --size-titlebar-content-gap (12) - --size-center-panel-inline-inset (16).
+const PADDING_CLEARANCE_LINUX = 114;
 
 export function ShellTopbar({
 	embedded = false,

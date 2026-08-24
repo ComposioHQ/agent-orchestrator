@@ -71,9 +71,10 @@ declare module "@tanstack/react-router" {
 }
 
 async function renderApp(): Promise<void> {
-	// Resolve the persisted locale before mounting so translated text never
-	// flashes in English for users who selected another language.
-	await useLocaleStore.getState().load();
+	// The persisted locale is cosmetic; do not leave a newly opened native
+	// window blank while its IPC read completes. The router's pending screen
+	// renders immediately, then i18n updates if the user chose another locale.
+	void useLocaleStore.getState().load();
 	// The sound-notifications toggle only needs to be right by the time
 	// Settings renders, so it loads in the background rather than blocking mount.
 	void useSoundNotificationsStore.getState().load();

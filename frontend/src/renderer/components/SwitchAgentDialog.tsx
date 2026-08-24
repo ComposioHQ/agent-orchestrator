@@ -5,6 +5,7 @@ import { useTranslation } from "react-i18next";
 import {
 	agentSwitchesQueryKey,
 	agentSwitchNeedsRecovery,
+	agentSwitchNeedsSourceRecovery,
 	agentSwitchNeedsSourceStopRecovery,
 	agentSwitchNeedsSourceRestore,
 	isTerminalAgentSwitch,
@@ -19,7 +20,7 @@ import {
 } from "../hooks/useSwitchAgent";
 import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { AGENT_LABELS, AGENT_OPTIONS, agentLabel } from "../lib/agent-options";
-import type { WorkspaceSession } from "../types/workspace";
+import type { AgentSwitchSummary, WorkspaceSession } from "../types/workspace";
 import { AgentAvatar } from "./AgentAvatar";
 import { AgentModelPicker } from "./AgentModelPicker";
 import { SettingsOptionMenu } from "./settings/SettingsOptionMenu";
@@ -107,13 +108,14 @@ function SwitchTargetPicker({
 }
 
 type SwitchAgentDialogProps = {
+	agentSwitch?: AgentSwitchSummary;
 	container: HTMLElement;
 	open: boolean;
 	session: WorkspaceSession;
 	onOpenChange: (open: boolean) => void;
 };
 
-export function SwitchAgentDialog({ container, open, session, onOpenChange }: SwitchAgentDialogProps) {
+export function SwitchAgentDialog({ agentSwitch, container, open, session, onOpenChange }: SwitchAgentDialogProps) {
 	const { t } = useTranslation();
 	const queryClient = useQueryClient();
 	const defaultTargetHarness: SwitchAgentHarness = session.provider === "claude-code" ? "codex" : "claude-code";
@@ -125,11 +127,14 @@ export function SwitchAgentDialog({ container, open, session, onOpenChange }: Sw
 	const recoverAgentSwitch = useRecoverAgentSwitch();
 	const switchMutation = useSwitchAgentState(session.id);
 	const admissionPending = switchMutation.isPending;
-	const durableSwitch = session.activeAgentSwitch;
+	// Agent-switch history has its own bounded polling fallback. Prefer that
+	// observation over the compact workspace projection so a settled recovery
+	// cannot leave this dialog pinned to an older recovery-required snapshot.
+	const durableSwitch = agentSwitch ?? session.activeAgentSwitch;
 	const recoveryRequired = durableSwitch ? agentSwitchNeedsRecovery(durableSwitch) : false;
 	const sourceStopRecoveryRequired = durableSwitch ? agentSwitchNeedsSourceStopRecovery(durableSwitch) : false;
 	const sourceRestoreRequired = durableSwitch ? agentSwitchNeedsSourceRestore(durableSwitch) : false;
-	const sourceRecoveryRequired = sourceStopRecoveryRequired || sourceRestoreRequired;
+	const sourceRecoveryRequired = durableSwitch ? agentSwitchNeedsSourceRecovery(durableSwitch) : false;
 	const sourceLabel = durableSwitch
 		? agentLabel(durableSwitch.fromHarness)
 		: agentLabel(session.provider);
