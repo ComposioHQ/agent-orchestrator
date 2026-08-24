@@ -6585,6 +6585,8 @@ components:
           type: string
         requestedAt:
           type: string
+        retryOfTurnId:
+          type: string
         rolledBack:
           type: boolean
         startedAt:

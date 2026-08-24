@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -64,6 +65,7 @@ type fakeConversation struct {
 
 	mu        sync.Mutex
 	sent      []ports.ChatUserMessage
+	caps      ports.ChatCapabilities
 	resolved  map[string]ports.ChatDecision
 	turnSeq   int
 	sendErr   error
@@ -179,9 +181,21 @@ func newFakeConversation() *fakeConversation {
 	}
 }
 
-func (f *fakeConversation) ProviderConversationID() string       { return f.providerConversationID }
-func (f *fakeConversation) Capabilities() ports.ChatCapabilities { return productionCaps() }
-func (f *fakeConversation) Events() <-chan ports.ChatEvent       { return f.events }
+func (f *fakeConversation) ProviderConversationID() string { return f.providerConversationID }
+func (f *fakeConversation) Capabilities() ports.ChatCapabilities {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.caps == nil {
+		return productionCaps()
+	}
+	return maps.Clone(f.caps)
+}
+func (f *fakeConversation) setCapabilities(caps ports.ChatCapabilities) {
+	f.mu.Lock()
+	f.caps = maps.Clone(caps)
+	f.mu.Unlock()
+}
+func (f *fakeConversation) Events() <-chan ports.ChatEvent { return f.events }
 
 func (f *fakeConversation) SendTurn(_ context.Context, msg ports.ChatUserMessage) (ports.ChatTurnRef, error) {
 	f.mu.Lock()

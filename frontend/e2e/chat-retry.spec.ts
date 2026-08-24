@@ -120,7 +120,7 @@ test("retry stays disabled while another turn is running @T0", async ({ page }) 
 test("retry refusal is visible beside the failed turn @T0", async ({ page }) => {
 	await installRetryConversation(page, false);
 	await page.getByRole("button", { name: "Retry this turn" }).click();
-	await page.waitForTimeout(250);
+	const refusal = page.getByRole("alert");
+	await expect(refusal).toContainText("stop the current turn before retrying this one");
 	await capture(page, "retry-visible-error");
-	await expect(page.getByRole("alert")).toContainText("stop the current turn before retrying this one");
 });

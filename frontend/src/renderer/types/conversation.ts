@@ -98,6 +98,8 @@ export interface ConversationTurn {
 	 */
 	rolledBack?: boolean;
 	providerTurnId?: string;
+	/** Failed source whose durable prompt created this retry attempt. */
+	retryOfTurnId?: string;
 	errorMessage?: string;
 	requestedAt: string;
 	startedAt?: string;

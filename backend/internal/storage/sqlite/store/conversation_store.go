@@ -1999,6 +1999,10 @@ func (s *Store) LoadConversationSnapshotPage(
 	if err != nil {
 		return ConversationSnapshot{}, fmt.Errorf("select turn page: %w", err)
 	}
+	retrySources, err := s.conversationRetrySources(ctx, conversationID)
+	if err != nil {
+		return ConversationSnapshot{}, err
+	}
 
 	snapshot := ConversationSnapshot{
 		Conversation:               conversationToDomain(conv),
@@ -2012,6 +2016,7 @@ func (s *Store) LoadConversationSnapshotPage(
 			continue
 		}
 		turn := turnToDomain(row)
+		turn.RetryOfTurnID = retrySources[turn.ID]
 		presentation.filterInactiveProviderTurn(&turn)
 		snapshot.Turns = append(snapshot.Turns, turn)
 	}
@@ -2111,6 +2116,10 @@ func (s *Store) LoadConversationSnapshot(
 	if err != nil {
 		return ConversationSnapshot{}, fmt.Errorf("select turns: %w", err)
 	}
+	retrySources, err := s.conversationRetrySources(ctx, conversationID)
+	if err != nil {
+		return ConversationSnapshot{}, err
+	}
 	// Messages and activities exclude anything attached to a rolled-back turn: the
 	// agent has forgotten those, and a timeline that still showed them would be
 	// describing a conversation the agent is not in.
@@ -2131,6 +2140,7 @@ func (s *Store) LoadConversationSnapshot(
 	}
 	for _, row := range turnRows {
 		turn := turnToDomain(row)
+		turn.RetryOfTurnID = retrySources[turn.ID]
 		presentation.filterInactiveProviderTurn(&turn)
 		snapshot.Turns = append(snapshot.Turns, turn)
 	}
@@ -2141,6 +2151,18 @@ func (s *Store) LoadConversationSnapshot(
 		snapshot.Activities = append(snapshot.Activities, activityToDomain(row))
 	}
 	return snapshot, nil
+}
+
+func (s *Store) conversationRetrySources(ctx context.Context, conversationID string) (map[string]string, error) {
+	rows, err := s.qr.SelectConversationRetryRelations(ctx, conversationID)
+	if err != nil {
+		return nil, fmt.Errorf("select conversation retry relations: %w", err)
+	}
+	sources := make(map[string]string, len(rows))
+	for _, row := range rows {
+		sources[row.RetryTurnID] = row.SourceTurnID
+	}
+	return sources, nil
 }
 
 type conversationHistoryPresentation struct {
@@ -2516,20 +2538,19 @@ func (s *Store) ProviderEventsSince(
 // RetryPrompt returns the durable human prompt of a failed turn, for
 // re-dispatching it as a new turn. The content is loaded from AO's own rows
 // rather than from a client request that could be stale or substituted.
-func (s *Store) RetryPrompt(ctx context.Context, conversationID, turnID string) (domain.QueuedTurn, bool, error) {
+func (s *Store) RetryPrompt(ctx context.Context, conversationID, turnID string) (domain.RetryPrompt, error) {
 	row, err := s.qr.SelectRetryableConversationPrompt(ctx, gen.SelectRetryableConversationPromptParams{
 		ID: turnID, ConversationID: conversationID,
 	})
 	if err != nil {
-		return domain.QueuedTurn{}, false, err
+		return domain.RetryPrompt{}, err
 	}
-	return domain.QueuedTurn{
-		TurnID:              row.ID,
+	return domain.RetryPrompt{
 		Text:                row.Text,
-		ClientMessageID:     row.ClientMessageID,
 		Origin:              row.Origin,
 		DeliveryContentJSON: row.DeliveryContentJson,
-	}, row.ActiveLineage, nil
+		ActiveLineage:       row.ActiveLineage,
+	}, nil
 }
 
 // TurnIDForClientMessage returns the turn id (if any) that is already

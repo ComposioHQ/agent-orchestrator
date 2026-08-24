@@ -37,7 +37,7 @@ function failedSnapshot(): ConversationSnapshot {
 describe("ChatWorkspace retry", () => {
 	it("offers a retry on the failed turn and reports the clicked turn", async () => {
 		const onRetryTurn = vi.fn();
-		render(<ChatWorkspace snapshot={failedSnapshot()} onRetryTurn={onRetryTurn} />);
+		render(<ChatWorkspace snapshot={failedSnapshot()} retryControl={{ retry: onRetryTurn }} />);
 
 		const retry = screen.getByRole("button", { name: "Retry this turn" });
 		expect(retry).toBeDefined();
@@ -60,7 +60,7 @@ describe("ChatWorkspace retry", () => {
 					: turn,
 			),
 		};
-		render(<ChatWorkspace snapshot={completed} onRetryTurn={vi.fn()} />);
+		render(<ChatWorkspace snapshot={completed} retryControl={{ retry: vi.fn() }} />);
 		expect(screen.queryByRole("button", { name: "Retry this turn" })).toBeNull();
 	});
 
@@ -78,7 +78,7 @@ describe("ChatWorkspace retry", () => {
 				: turn,
 		);
 
-		render(<ChatWorkspace snapshot={snapshot} onRetryTurn={vi.fn()} />);
+		render(<ChatWorkspace snapshot={snapshot} retryControl={{ retry: vi.fn() }} />);
 
 		expect(screen.getByRole("button", { name: "Retry this turn" })).toBeDisabled();
 	});
@@ -87,14 +87,60 @@ describe("ChatWorkspace retry", () => {
 		render(
 			<ChatWorkspace
 				snapshot={failedSnapshot()}
-				onRetryTurn={vi.fn()}
-				retryTurnError="Stop the current turn before retrying this one"
-				retryTurnId="turn-1"
+				retryControl={{
+					retry: vi.fn(),
+					error: "Stop the current turn before retrying this one",
+					turnId: "turn-1",
+				}}
 			/>,
 		);
 
 		expect(screen.getByRole("alert")).toHaveTextContent(
 			"Stop the current turn before retrying this one",
 		);
+	});
+
+	it("shows and disables the pending retry on the affected turn", () => {
+		render(
+			<ChatWorkspace
+				snapshot={failedSnapshot()}
+				retryControl={{ retry: vi.fn(), pending: true, turnId: "turn-1" }}
+			/>,
+		);
+
+		const retry = screen.getByRole("button", { name: "Retry this turn" });
+		expect(retry).toBeDisabled();
+		expect(retry).toHaveTextContent("Retrying…");
+	});
+
+	it("hides retry when delivery was never provider-confirmed", () => {
+		const snapshot = failedSnapshot();
+		snapshot.turns = snapshot.turns.map((turn) =>
+			turn.id === "turn-1" ? { ...turn, providerTurnId: undefined } : turn,
+		);
+
+		render(<ChatWorkspace snapshot={snapshot} retryControl={{ retry: vi.fn() }} />);
+
+		expect(screen.queryByRole("button", { name: "Retry this turn" })).toBeNull();
+	});
+
+	it("hides a source retry after its attempt is rolled back out of the timeline", () => {
+		const snapshot = failedSnapshot();
+		snapshot.turns = [
+			...snapshot.turns,
+			{
+				id: "turn-retry",
+				state: "completed",
+				providerTurnId: "provider-retry",
+				retryOfTurnId: "turn-1",
+				rolledBack: true,
+				requestedAt: snapshot.turns[0]!.requestedAt,
+				completedAt: snapshot.turns[0]!.requestedAt,
+			},
+		];
+
+		render(<ChatWorkspace snapshot={snapshot} retryControl={{ retry: vi.fn() }} />);
+
+		expect(screen.queryByRole("button", { name: "Retry this turn" })).toBeNull();
 	});
 });

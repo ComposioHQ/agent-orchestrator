@@ -152,6 +152,12 @@ func writeConversationRetryError(w http.ResponseWriter, r *http.Request, err err
 		envelope.WriteAPIError(w, r, http.StatusConflict, "conflict",
 			"CHAT_RETRY_STALE_BRANCH",
 			"this turn is no longer on the active conversation branch", nil)
+	case errors.Is(err, chatsvc.ErrRetryContentInvalid):
+		envelope.WriteAPIError(w, r, http.StatusBadRequest, "validation",
+			"CHAT_RETRY_CONTENT_INVALID", err.Error(), nil)
+	case errors.Is(err, chatsvc.ErrRetryUnsupported):
+		envelope.WriteAPIError(w, r, http.StatusConflict, "conflict",
+			"CHAT_RETRY_UNSUPPORTED", err.Error(), nil)
 	case errors.Is(err, chatsvc.ErrTurnRunning), errors.Is(err, chatsvc.ErrControllerHandoff):
 		envelope.WriteAPIError(w, r, http.StatusConflict, "conflict",
 			"CHAT_RETRY_BUSY", "stop the current turn before retrying this one", nil)
@@ -861,6 +867,7 @@ func conversationSnapshotResponse(s chatsvc.Snapshot) ConversationSnapshotRespon
 			ID:             turn.ID,
 			State:          string(turn.State),
 			ProviderTurnID: turn.ProviderTurnID,
+			RetryOfTurnID:  turn.RetryOfTurnID,
 			ErrorMessage:   turn.ErrorMessage,
 			RequestedAt:    turn.RequestedAt.UTC().Format(time.RFC3339),
 			StartedAt:      optionalTimestamp(turn.StartedAt),

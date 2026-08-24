@@ -196,6 +196,8 @@ func TestRetryTurnRouteRefusalsAreTyped(t *testing.T) {
 		{"not retryable", chatsvc.ErrTurnNotRetryable, http.StatusConflict, "CHAT_RETRY_NOT_RETRYABLE"},
 		{"delivery uncertain", chatsvc.ErrRetryDeliveryUncertain, http.StatusConflict, "CHAT_RETRY_DELIVERY_UNCERTAIN"},
 		{"stale branch", chatsvc.ErrRetryStaleBranch, http.StatusConflict, "CHAT_RETRY_STALE_BRANCH"},
+		{"invalid content", chatsvc.ErrRetryContentInvalid, http.StatusBadRequest, "CHAT_RETRY_CONTENT_INVALID"},
+		{"unsupported content", chatsvc.ErrRetryUnsupported, http.StatusConflict, "CHAT_RETRY_UNSUPPORTED"},
 		{"busy", chatsvc.ErrTurnRunning, http.StatusConflict, "CHAT_RETRY_BUSY"},
 		{"missing turn", domain.ErrNoConversationTurn, http.StatusNotFound, "CHAT_RETRY_TURN_NOT_FOUND"},
 	}

@@ -42,6 +42,9 @@ func turnByID(s store.ConversationSnapshot, id string) (domain.ConversationTurn,
 func TestRetryTurnDispatchesFailedPromptAsNewTurn(t *testing.T) {
 	h := newHarness(t)
 	ctx := context.Background()
+	caps := productionCaps()
+	caps[ports.ChatCapabilityEmbeddedContext] = true
+	h.conv.setCapabilities(caps)
 
 	turn, err := h.svc.Send(ctx, testSession, ports.ChatUserMessage{
 		Text:            "summarize the failing CI run",
@@ -70,6 +73,12 @@ func TestRetryTurnDispatchesFailedPromptAsNewTurn(t *testing.T) {
 	if failed.ErrorMessage != "stream disconnected before completion" {
 		t.Fatalf("failed turn error = %q, want the transport error", failed.ErrorMessage)
 	}
+	settings := domain.ConversationSettings{
+		Model: "current-model", ReasoningEffort: "high", ApprovalMode: domain.PermissionModeAcceptEdits,
+	}
+	if _, err := h.svc.SetTurnSettings(ctx, testSession, settings); err != nil {
+		t.Fatalf("SetTurnSettings: %v", err)
+	}
 
 	// Retry re-dispatches the same durable prompt as a brand-new turn.
 	retried, err := h.svc.RetryTurn(ctx, testSession, turn.ID)
@@ -83,13 +92,20 @@ func TestRetryTurnDispatchesFailedPromptAsNewTurn(t *testing.T) {
 		t.Fatalf("retried turn state = %q, want running", retried.State)
 	}
 
-	// The provider received exactly two sends, with the same prompt text.
-	sent := h.conv.sentTexts()
+	// The provider received exactly two sends, with the same prompt, structured
+	// content, and the conversation's current next-turn settings.
+	sent := h.conv.sentMessages()
 	if len(sent) != 2 {
 		t.Fatalf("provider received %d sends, want 2: %v", len(sent), sent)
 	}
-	if sent[1] != "summarize the failing CI run" {
-		t.Fatalf("second send text = %q, want the original prompt", sent[1])
+	if sent[1].Text != "summarize the failing CI run" {
+		t.Fatalf("second send text = %q, want the original prompt", sent[1].Text)
+	}
+	if len(sent[1].Content) != 1 || sent[1].Content[0].URI != "file:///worktree/ci-log.txt" || sent[1].Content[0].Name != "ci-log.txt" {
+		t.Fatalf("second send content = %+v, want the original resource", sent[1].Content)
+	}
+	if sent[1].Settings.Model != settings.Model || sent[1].Settings.Effort != settings.ReasoningEffort || sent[1].Settings.Approval != settings.ApprovalMode {
+		t.Fatalf("second send settings = %+v, want current settings %+v", sent[1].Settings, settings)
 	}
 
 	// Both attempts are durable: the original is still failed, the retry is a
@@ -104,6 +120,105 @@ func TestRetryTurnDispatchesFailedPromptAsNewTurn(t *testing.T) {
 	}
 	if original.ErrorMessage != "stream disconnected before completion" {
 		t.Fatalf("original turn error changed to %q, want it preserved", original.ErrorMessage)
+	}
+	retryAttempt, ok := turnByID(after, retried.ID)
+	if !ok || retryAttempt.RetryOfTurnID != turn.ID {
+		t.Fatalf("retry correlation = %+v, want source %q", retryAttempt, turn.ID)
+	}
+
+	// Rollback hides the retry's message, but its durable relation still consumes
+	// the source action: replaying the source can only return this existing turn.
+	h.conv.emit(ports.ChatEvent{
+		Kind: ports.ChatEventTurnCompleted, ProviderTurnID: retried.ProviderTurnID,
+		TurnState: domain.TurnStateCompleted,
+	})
+	h.awaitSnapshot(t, func(s store.ConversationSnapshot) bool {
+		settled, ok := turnByID(s, retried.ID)
+		return ok && settled.State == domain.TurnStateCompleted
+	})
+	if _, err := h.st.RollbackTurns(ctx, h.ctrl.ConversationID(), retried.ID, h.now()); err != nil {
+		t.Fatalf("RollbackTurns retry: %v", err)
+	}
+	rolledBack, err := h.st.LoadConversationSnapshot(ctx, h.ctrl.ConversationID())
+	if err != nil {
+		t.Fatalf("LoadConversationSnapshot after rollback: %v", err)
+	}
+	retryAttempt, ok = turnByID(rolledBack, retried.ID)
+	if !ok || retryAttempt.RolledBackAt == nil || retryAttempt.RetryOfTurnID != turn.ID {
+		t.Fatalf("rolled-back retry correlation = %+v, want source %q", retryAttempt, turn.ID)
+	}
+	for _, message := range rolledBack.Messages {
+		if message.TurnID == retried.ID {
+			t.Fatalf("rolled-back retry message remained visible: %+v", message)
+		}
+	}
+}
+
+func TestRetryTurnRejectsInvalidDurableContentClearly(t *testing.T) {
+	cases := []struct {
+		name string
+		raw  string
+	}{
+		{name: "malformed JSON", raw: `{broken`},
+		{name: "invalid image", raw: `[{"type":"image"}]`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newHarness(t)
+			ctx := context.Background()
+			created, err := h.st.AppendUserMessage(ctx, h.ctrl.ConversationID(), testSession,
+				h.ctrl.Generation(), domain.ConversationMessage{
+					ID: "invalid-content-message", Text: "retry stored content", Origin: domain.MessageOriginHuman,
+					ClientMessageID: "invalid-content-source", DeliveryContentJSON: tc.raw,
+				}, "invalid-content-turn", h.now())
+			if err != nil || !created {
+				t.Fatalf("AppendUserMessage: created=%v err=%v", created, err)
+			}
+			if err := h.st.BindTurnToProvider(ctx, "invalid-content-turn", "provider-invalid-content", h.now()); err != nil {
+				t.Fatalf("BindTurnToProvider: %v", err)
+			}
+			if err := h.st.SettleTurnByID(ctx, "invalid-content-turn", domain.TurnStateFailed, "source failed", h.now()); err != nil {
+				t.Fatalf("SettleTurnByID: %v", err)
+			}
+
+			if _, err := h.svc.RetryTurn(ctx, testSession, "invalid-content-turn"); !errors.Is(err, chatsvc.ErrRetryContentInvalid) {
+				t.Fatalf("RetryTurn invalid content = %v, want ErrRetryContentInvalid", err)
+			}
+			if sent := h.conv.sentMessages(); len(sent) != 0 {
+				t.Fatalf("provider received %d sends for invalid content, want 0", len(sent))
+			}
+		})
+	}
+}
+
+func TestRetryTurnRefusesContentUnsupportedByCurrentProvider(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	caps := productionCaps()
+	caps[ports.ChatCapabilityImages] = true
+	h.conv.setCapabilities(caps)
+
+	turn, err := h.svc.Send(ctx, testSession, ports.ChatUserMessage{
+		Text: "inspect this image", ClientMessageID: "image-source", Origin: domain.MessageOriginHuman,
+		Content: []ports.ChatContent{{Type: "image", Data: "aGVsbG8=", MIMEType: "image/png"}},
+	})
+	if err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	h.conv.emit(ports.ChatEvent{
+		Kind: ports.ChatEventTurnCompleted, ProviderTurnID: turn.ProviderTurnID,
+		TurnState: domain.TurnStateFailed, Err: errors.New("source failed"),
+	})
+	failedTurnSnapshot(t, h, turn.ID)
+
+	// An in-place provider change can leave older prompts visible while the new
+	// provider negotiates fewer structured-content capabilities.
+	h.conv.setCapabilities(productionCaps())
+	if _, err := h.svc.RetryTurn(ctx, testSession, turn.ID); !errors.Is(err, chatsvc.ErrRetryUnsupported) {
+		t.Fatalf("RetryTurn unsupported content = %v, want ErrRetryUnsupported", err)
+	}
+	if sent := h.conv.sentMessages(); len(sent) != 1 {
+		t.Fatalf("provider received %d sends after unsupported retry, want original only", len(sent))
 	}
 }
 

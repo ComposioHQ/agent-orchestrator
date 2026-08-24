@@ -2226,6 +2226,7 @@ export interface components {
             plan?: components["schemas"]["ConversationPlanResponse"];
             providerTurnId?: string;
             requestedAt: string;
+            retryOfTurnId?: string;
             rolledBack?: boolean;
             startedAt?: null | string;
             /** @enum {string} */

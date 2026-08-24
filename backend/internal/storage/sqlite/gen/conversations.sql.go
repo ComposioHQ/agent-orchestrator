@@ -1871,6 +1871,46 @@ func (q *Queries) SelectConversationProviderEvents(ctx context.Context, arg Sele
 	return items, nil
 }
 
+const selectConversationRetryRelations = `-- name: SelectConversationRetryRelations :many
+SELECT CAST(turn_id AS TEXT) AS retry_turn_id,
+       CAST(substr(client_message_id, length('retry/') + 1) AS TEXT) AS source_turn_id
+FROM conversation_messages
+WHERE conversation_id = ?1
+  AND turn_id IS NOT NULL
+  AND client_message_id LIKE 'retry/%'
+`
+
+type SelectConversationRetryRelationsRow struct {
+	RetryTurnID  string
+	SourceTurnID string
+}
+
+// Retry correlation remains readable even when rollback hides the retry's
+// message from the visible timeline. The source affordance must stay consumed:
+// replaying it only returns this existing attempt and never starts new work.
+func (q *Queries) SelectConversationRetryRelations(ctx context.Context, conversationID string) ([]SelectConversationRetryRelationsRow, error) {
+	rows, err := q.db.QueryContext(ctx, selectConversationRetryRelations, conversationID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []SelectConversationRetryRelationsRow{}
+	for rows.Next() {
+		var i SelectConversationRetryRelationsRow
+		if err := rows.Scan(&i.RetryTurnID, &i.SourceTurnID); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const selectConversationTurnByID = `-- name: SelectConversationTurnByID :one
 SELECT id, conversation_id, handled_by_session_id, provider_turn_id, controller_generation, state, error_message, requested_at, started_at, completed_at, diff_json, rolled_back_at, plan_json, branch_id, promotion_started_at, promoted_to_turn_id FROM conversation_turns WHERE id = ? LIMIT 1
 `
@@ -2321,9 +2361,7 @@ WITH RECURSIVE active_path(branch_id, max_sequence) AS (
     JOIN conversation_branches AS branch ON branch.id = path.branch_id
     WHERE branch.parent_branch_id IS NOT NULL
 )
-SELECT conversation_turns.id,
-       conversation_messages.text,
-       conversation_messages.client_message_id,
+SELECT conversation_messages.text,
        conversation_messages.origin,
        conversation_messages.delivery_content_json,
        EXISTS (
@@ -2348,9 +2386,7 @@ type SelectRetryableConversationPromptParams struct {
 }
 
 type SelectRetryableConversationPromptRow struct {
-	ID                  string
 	Text                string
-	ClientMessageID     string
 	Origin              domain.MessageOrigin
 	DeliveryContentJson string
 	ActiveLineage       bool
@@ -2363,9 +2399,7 @@ func (q *Queries) SelectRetryableConversationPrompt(ctx context.Context, arg Sel
 	row := q.db.QueryRowContext(ctx, selectRetryableConversationPrompt, arg.ID, arg.ConversationID)
 	var i SelectRetryableConversationPromptRow
 	err := row.Scan(
-		&i.ID,
 		&i.Text,
-		&i.ClientMessageID,
 		&i.Origin,
 		&i.DeliveryContentJson,
 		&i.ActiveLineage,

@@ -1081,9 +1081,7 @@ WITH RECURSIVE active_path(branch_id, max_sequence) AS (
     JOIN conversation_branches AS branch ON branch.id = path.branch_id
     WHERE branch.parent_branch_id IS NOT NULL
 )
-SELECT conversation_turns.id,
-       conversation_messages.text,
-       conversation_messages.client_message_id,
+SELECT conversation_messages.text,
        conversation_messages.origin,
        conversation_messages.delivery_content_json,
        EXISTS (
@@ -1109,3 +1107,14 @@ SELECT turn_id FROM conversation_messages
 WHERE conversation_id = sqlc.arg(conversation_id)
   AND client_message_id = sqlc.arg(client_message_id)
 LIMIT 1;
+
+-- Retry correlation remains readable even when rollback hides the retry's
+-- message from the visible timeline. The source affordance must stay consumed:
+-- replaying it only returns this existing attempt and never starts new work.
+-- name: SelectConversationRetryRelations :many
+SELECT CAST(turn_id AS TEXT) AS retry_turn_id,
+       CAST(substr(client_message_id, length('retry/') + 1) AS TEXT) AS source_turn_id
+FROM conversation_messages
+WHERE conversation_id = sqlc.arg(conversation_id)
+  AND turn_id IS NOT NULL
+  AND client_message_id LIKE 'retry/%';
