@@ -10,11 +10,13 @@ import (
 
 type fakeHarnessCatalog struct {
 	inventory agentsvc.Inventory
-	err       error
 }
 
-func (f *fakeHarnessCatalog) RefreshFresh(context.Context) (agentsvc.Inventory, error) {
-	return f.inventory, f.err
+func (f *fakeHarnessCatalog) FindInstalledBinary(context.Context) (agentsvc.Info, bool) {
+	if len(f.inventory.Installed) == 0 {
+		return agentsvc.Info{}, false
+	}
+	return f.inventory.Installed[0], true
 }
 
 func lookPathFound(paths map[string]string) func(string) (string, error) {
@@ -132,29 +134,6 @@ func TestCheck_NoHarnessInstalled(t *testing.T) {
 	}
 	if harness.Detail == "" {
 		t.Fatalf("harness.Detail is empty, want a not-found message")
-	}
-}
-
-func TestCheck_HarnessCatalogError(t *testing.T) {
-	catalog := &fakeHarnessCatalog{err: errors.New("probe boom")}
-	svc := NewWithLookPath(catalog, lookPathFound(map[string]string{
-		"git":  "/usr/bin/git",
-		"tmux": "/usr/bin/tmux",
-	}))
-
-	report, err := svc.Check(context.Background())
-	if err != nil {
-		t.Fatalf("Check() error = %v, want nil (harness errors fold into the requirement)", err)
-	}
-	if report.Ready {
-		t.Fatalf("Ready = true, want false")
-	}
-	harness := requirementByID(t, report, "harness")
-	if harness.Satisfied {
-		t.Fatalf("harness.Satisfied = true, want false")
-	}
-	if harness.Detail != "probe boom" {
-		t.Fatalf("harness.Detail = %q, want %q", harness.Detail, "probe boom")
 	}
 }
 

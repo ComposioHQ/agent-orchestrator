@@ -34,6 +34,7 @@ const shellMocks = vi.hoisted(() => {
 	};
 	return {
 		navigate: vi.fn(),
+		refreshAgents: vi.fn(),
 		onNewSessionShortcut: vi.fn((listener: () => void) => {
 			state.newSessionListener = listener;
 			return vi.fn();
@@ -147,8 +148,8 @@ vi.mock("../hooks/useShellTerminals", () => ({
 
 vi.mock("../hooks/useAgentsQuery", () => ({
 	agentsQueryKey: ["agents"],
-	agentsQueryOptions: {},
-	refreshAgents: vi.fn(),
+	agentsQueryOptions: { queryKey: ["agents"] },
+	refreshAgents: shellMocks.refreshAgents,
 	// The shell reports the install's agent inventory once per launch, so the
 	// mock has to answer this too. Undefined data means the hook reports nothing,
 	// which keeps these shortcut tests free of telemetry side effects.
@@ -271,6 +272,7 @@ function emitShortcut() {
 
 beforeEach(() => {
 	shellMocks.navigate.mockReset();
+	shellMocks.refreshAgents.mockReset();
 	shellMocks.onNewSessionShortcut.mockClear();
 	shellMocks.onKeyboardShortcutsHelp.mockClear();
 	shellMocks.onNewShellTerminalShortcut.mockClear();
@@ -313,6 +315,17 @@ beforeEach(() => {
 });
 
 describe("shell workspace startup", () => {
+	it("does not schedule a full agent/auth refresh during shell startup", async () => {
+		shellMocks.state.daemonStatus = { state: "ready", port: 4777 };
+		shellMocks.queryClient.fetchQuery.mockResolvedValue(workspaces);
+
+		await renderShell();
+
+		expect(shellMocks.queryClient.fetchQuery).not.toHaveBeenCalledWith(
+			expect.objectContaining({ queryFn: shellMocks.refreshAgents }),
+		);
+	});
+
 	it("leaves the session topbar row to the session split instead of reserving a full-width shell row", async () => {
 		shellMocks.state.routeParams = { sessionId: "sess-1" };
 		await renderShell();

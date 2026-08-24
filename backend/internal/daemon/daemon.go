@@ -270,12 +270,10 @@ func Run() error {
 	}
 	lcStack.trackerDone = startTrackerIntake(ctx, store, sessionSvc, log)
 
+	// Keep full agent binary/auth probing off daemon startup. The requirements
+	// gate performs a path-only check, and agent-selection surfaces request a
+	// fresh inventory when the user opens them.
 	agentSvc := agentsvc.NewWithDeps(agentsvc.Deps{Cache: store, InventoryCache: store, Discoverer: modelcatalog.Discoverer{}, Projects: store, Sessions: store})
-	go func() {
-		if _, err := agentSvc.Refresh(ctx); err != nil {
-			log.Warn("initial agent catalog refresh failed", "err", err)
-		}
-	}()
 	hostCommands := systemexec.Adapter{}
 	systemChecks := systemcheck.New(agentSvc, hostCommands)
 	systemInstall := systeminstall.New(hostCommands, hostCommands)

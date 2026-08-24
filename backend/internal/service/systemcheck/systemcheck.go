@@ -2,15 +2,13 @@
 // prerequisites AO needs before the desktop app shows the board: git, tmux
 // (macOS/Linux only), and at least one installed agent-harness CLI. It also
 // probes for gh (the GitHub CLI), which is advisory only and never blocks
-// readiness. It is the backend gate the Electron loading screen polls; the
-// checks are pure existence probes (LookPath), not the deeper
-// version/compatibility checks `ao doctor` runs.
+// readiness. These checks only resolve executable paths; agent authentication
+// and compatibility probes are deferred until the user opens an agent picker.
 package systemcheck
 
 import (
 	"context"
 	"runtime"
-	"strings"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 	agentsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/agent"
@@ -31,11 +29,10 @@ type Report struct {
 	Requirements []Requirement `json:"requirements" description:"Individual checks, in stable order: git, tmux, harness, gh."`
 }
 
-// HarnessCatalog is the subset of agent.Service the harness requirement needs.
-// agent.Service satisfies this with a forced refresh so a user-triggered
-// recheck cannot be answered by the normal short-lived inventory cache.
+// HarnessCatalog is the path-only subset of agent.Service the startup harness
+// requirement needs.
 type HarnessCatalog interface {
-	RefreshFresh(ctx context.Context) (agentsvc.Inventory, error)
+	FindInstalledBinary(ctx context.Context) (agentsvc.Info, bool)
 }
 
 // Service runs the startup requirements gate.
@@ -114,21 +111,14 @@ func (s *Service) checkTmux() Requirement {
 
 func (s *Service) checkHarness(ctx context.Context) Requirement {
 	const label = "agent harness"
-	inv, err := s.harnesses.RefreshFresh(ctx)
-	if err != nil {
-		return Requirement{ID: "harness", Label: label, Required: true, Detail: err.Error()}
-	}
-	if len(inv.Installed) == 0 {
+	info, ok := s.harnesses.FindInstalledBinary(ctx)
+	if !ok {
 		return Requirement{
 			ID: "harness", Label: label, Required: true,
-			Detail: "No agent CLI (Claude Code, Codex, etc.) was found on PATH.",
+			Detail: "No agent CLI (Claude Code, Codex, etc.) was found on PATH or in a supported install location.",
 		}
 	}
-	labels := make([]string, 0, len(inv.Installed))
-	for _, info := range inv.Installed {
-		labels = append(labels, info.Label)
-	}
-	return Requirement{ID: "harness", Label: label, Satisfied: true, Required: true, Detail: strings.Join(labels, ", ")}
+	return Requirement{ID: "harness", Label: label, Satisfied: true, Required: true, Detail: info.Label}
 }
 
 // checkGH probes for the GitHub CLI. It is advisory only (Required: false):

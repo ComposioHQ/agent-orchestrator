@@ -30,6 +30,15 @@ type fakeAuthAgent struct {
 	authDelay time.Duration
 }
 
+type panicAuthAgent struct {
+	fakeAgent
+}
+
+type presenceOnlyAgent struct {
+	fakeAgent
+	path string
+}
+
 type probeTrackingAgent struct {
 	fakeAgent
 	onProbe func()
@@ -277,6 +286,14 @@ func (f fakeAuthAgent) AuthStatus(ctx context.Context) (ports.AgentAuthStatus, e
 	return f.status, f.authErr
 }
 
+func (panicAuthAgent) AuthStatus(context.Context) (ports.AgentAuthStatus, error) {
+	panic("startup binary presence probe must not check authentication")
+}
+
+func (f presenceOnlyAgent) ResolveBinaryPresence(context.Context) (string, error) {
+	return f.path, nil
+}
+
 func TestListReturnsInitialSupportedInventoryWithoutProbing(t *testing.T) {
 	probed := false
 	svc := NewWithAgents([]agentregistry.HarnessAgent{
@@ -308,6 +325,42 @@ func TestListReturnsInitialSupportedInventoryWithoutProbing(t *testing.T) {
 	}
 	if got.Authorized == nil {
 		t.Fatal("Authorized = nil, want empty slice")
+	}
+}
+
+func TestFindInstalledBinaryDoesNotProbeAuthOrMutateInventory(t *testing.T) {
+	svc := NewWithAgents([]agentregistry.HarnessAgent{{
+		Harness:  domain.AgentHarness("codex"),
+		Manifest: adapters.Manifest{ID: "codex", Name: "Codex"},
+		Agent:    panicAuthAgent{},
+	}})
+
+	got, ok := svc.FindInstalledBinary(context.Background())
+	if !ok || got.ID != "codex" || got.Label != "Codex" {
+		t.Fatalf("FindInstalledBinary() = (%#v, %v), want Codex", got, ok)
+	}
+	inventory, err := svc.List(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(inventory.Installed) != 0 || len(inventory.Authorized) != 0 {
+		t.Fatalf("inventory = %#v, want no inventory/auth refresh", inventory)
+	}
+}
+
+func TestFindInstalledBinaryUsesPresenceOnlyResolver(t *testing.T) {
+	svc := NewWithAgents([]agentregistry.HarnessAgent{{
+		Harness:  domain.AgentHarness("muse"),
+		Manifest: adapters.Manifest{ID: "muse", Name: "Muse Code"},
+		Agent: presenceOnlyAgent{
+			fakeAgent: fakeAgent{err: errors.New("full resolution must not run")},
+			path:      "/usr/local/bin/muse",
+		},
+	}})
+
+	got, ok := svc.FindInstalledBinary(context.Background())
+	if !ok || got.ID != "muse" {
+		t.Fatalf("FindInstalledBinary() = (%#v, %v), want Muse", got, ok)
 	}
 }
 
