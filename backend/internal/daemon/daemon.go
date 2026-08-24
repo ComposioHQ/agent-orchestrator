@@ -312,8 +312,7 @@ func Run() error {
 	} else {
 		// Emit per-session token-usage ranking telemetry when the pipeline has
 		// actually settled a session's usage (see usageSettleStore), not at
-		// session exit where nothing is ingested yet. The collector runs on the
-		// wrapped store so its settle call drives the emitter.
+		// session exit where nothing is ingested yet.
 		var usageSCM usagetelemetry.SCMParser
 		if p := newMultiSCMProvider(cfg.GitLab, log); p != nil {
 			usageSCM = p
@@ -325,30 +324,9 @@ func Run() error {
 			telemetrySink,
 			nil,
 		)
-		collectorStore := newUsageSettleStore(store, usageEmitter)
-		usageCollector = usagesvc.NewCollector(collectorStore, roots, func(reconcile bool) {
-			if usagePipeline == nil {
-				return
-			}
-			if reconcile {
-				usagePipeline.NotifySourcesChanged()
-			} else {
-				usagePipeline.NotifyInventoryChanged()
-			}
-		})
-		ingestor := usagepipeline.NewIngestor(store, usagepipeline.IngestorConfig{})
-		usagePipeline = usagepipeline.NewPipeline(store, ingestor, []string{
-			roots.ClaudeProjects,
-			roots.CodexSessions,
-			roots.CodexArchived,
-		}, usagepipeline.CoordinatorConfig{
-			Logger:     log,
-			Initialize: usageCollector.BackfillActive,
-			Reconcile: func(reconcileCtx context.Context) error {
-				return usageCollector.ReconcileSources(reconcileCtx, 0)
-			},
-			ReconcilePath: usageCollector.ReconcilePath,
-		})
+		uc := buildUsageCollection(store, roots, usageEmitter, usagepipeline.IngestorConfig{}, log)
+		usageCollector = uc.collector
+		usagePipeline = uc.pipeline
 		lcStack.LCM.SetUsageFinalizer(usageCollector)
 	}
 	lcStack.scmDone = startSCMObserver(ctx, store, lcStack.LCM, cfg.GitLab, log)
@@ -564,6 +542,57 @@ func Run() error {
 		log.Error("cdc pipeline shutdown", "err", err)
 	}
 	return runErr
+}
+
+// usageCollection is the wired per-session token-usage telemetry stack.
+type usageCollection struct {
+	collector *usagesvc.Collector
+	pipeline  *usagepipeline.Pipeline
+	ingestor  *usagepipeline.Ingestor
+	settle    *usageSettleStore
+}
+
+// buildUsageCollection wires the usage-telemetry stack. The collector AND the
+// ingestor both run on the wrapped settle store so the normal settle —
+// CompleteUsageBindingIfSettled, called by the ingestor once a transcript is
+// fully read — flows through the emitter. The collector populates the shared
+// bindingID->sessionID map the ingestor's settle reads. Wiring the ingestor to
+// the raw store instead silently disables usage telemetry on the normal path
+// (the wrapper never sees the settle); TestIngestorOnSettleStoreEmitsExactlyOneUsageEvent
+// exercises exactly this construction and fails if it regresses.
+func buildUsageCollection(
+	store *sqlite.Store,
+	roots usagesvc.SourceRoots,
+	emitter *usagetelemetry.Emitter,
+	ingestCfg usagepipeline.IngestorConfig,
+	log *slog.Logger,
+) usageCollection {
+	settle := newUsageSettleStore(store, emitter)
+	uc := usageCollection{settle: settle}
+	uc.collector = usagesvc.NewCollector(settle, roots, func(reconcile bool) {
+		if uc.pipeline == nil {
+			return
+		}
+		if reconcile {
+			uc.pipeline.NotifySourcesChanged()
+		} else {
+			uc.pipeline.NotifyInventoryChanged()
+		}
+	})
+	uc.ingestor = usagepipeline.NewIngestor(settle, ingestCfg)
+	uc.pipeline = usagepipeline.NewPipeline(store, uc.ingestor, []string{
+		roots.ClaudeProjects,
+		roots.CodexSessions,
+		roots.CodexArchived,
+	}, usagepipeline.CoordinatorConfig{
+		Logger:     log,
+		Initialize: uc.collector.BackfillActive,
+		Reconcile: func(reconcileCtx context.Context) error {
+			return uc.collector.ReconcileSources(reconcileCtx, 0)
+		},
+		ReconcilePath: uc.collector.ReconcilePath,
+	})
+	return uc
 }
 
 func seedScratchProjectOnBoot(ctx context.Context, cfg config.Config, projects *projectsvc.Service) error {
