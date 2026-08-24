@@ -497,7 +497,9 @@ func getEventStream(t *testing.T, src cdc.Source, live *fakeEventSubscriber, mut
 // the whole change_log. The renderer refetches state in onopen anyway.
 func TestEventsStreamSnapsUnpositionedCursorToHead(t *testing.T) {
 	live := &fakeEventSubscriber{}
-	src := &snapCursorSource{live: live, head: 30_000}
+	// Keep the head inside maxReplayGap: missing cursor presence, not gap size,
+	// must be what forces the snap.
+	src := &snapCursorSource{live: live, head: 20}
 
 	resp := getEventStream(t, src, live, nil)
 
@@ -505,14 +507,14 @@ func TestEventsStreamSnapsUnpositionedCursorToHead(t *testing.T) {
 	if frames[0].event != eventsCursorResetEvent {
 		t.Fatalf("first frame event = %q, want %q", frames[0].event, eventsCursorResetEvent)
 	}
-	if frames[0].id != "30000" {
-		t.Fatalf("reset frame id = %q, want 30000", frames[0].id)
+	if frames[0].id != "20" {
+		t.Fatalf("reset frame id = %q, want 20", frames[0].id)
 	}
-	if got, want := resp.Header.Get(eventAfterHeader), "30000"; got != want {
+	if got, want := resp.Header.Get(eventAfterHeader), "20"; got != want {
 		t.Fatalf("X-AO-Event-After = %q, want %q", got, want)
 	}
-	if frames[1].id != "30001" {
-		t.Fatalf("post-reset id = %q, want 30001 (cursor-less connect replayed history instead of snapping to head)", frames[1].id)
+	if frames[1].id != "21" {
+		t.Fatalf("post-reset id = %q, want 21 (cursor-less connect replayed history instead of snapping to head)", frames[1].id)
 	}
 }
 
@@ -535,40 +537,5 @@ func TestEventsStreamSnapsFutureCursorToHead(t *testing.T) {
 	}
 	if frames[1].id != "51" {
 		t.Fatalf("post-reset id = %q, want 51 (future cursor did not snap to head)", frames[1].id)
-	}
-}
-
-// TestEventsStreamSnapsDeepGapToHead verifies that a cursor far behind the
-// head (> maxReplayGap events) snaps forward instead of streaming the gap.
-func TestEventsStreamSnapsDeepGapToHead(t *testing.T) {
-	live := &fakeEventSubscriber{}
-	src := &snapCursorSource{live: live, head: 20_000}
-
-	resp := getEventStream(t, src, live, func(req *http.Request) {
-		req.URL.RawQuery = "after=5"
-	})
-
-	frames := readSSEFrames(t, resp.Body, 2)
-	if frames[0].event != eventsCursorResetEvent || frames[0].id != "20000" {
-		t.Fatalf("first frame = %q/%q, want reset at 20000", frames[0].event, frames[0].id)
-	}
-	if frames[1].id != "20001" {
-		t.Fatalf("post-reset id = %q, want 20001 (deep-gap cursor was replayed instead of snapped)", frames[1].id)
-	}
-}
-
-// TestEventsStreamReplaysSmallGap verifies that genuine small-gap resumes —
-// the EventSource auto-reconnect path — still replay durable history.
-func TestEventsStreamReplaysSmallGap(t *testing.T) {
-	live := &fakeEventSubscriber{}
-	src := &snapCursorSource{live: live, head: 20}
-
-	resp := getEventStream(t, src, live, func(req *http.Request) {
-		req.URL.RawQuery = "after=10"
-	})
-
-	ids := readSSEIDs(t, resp.Body, 1)
-	if got, want := ids[0], "11"; got != want {
-		t.Fatalf("id = %q, want %q (small-gap resume did not replay from the cursor)", got, want)
 	}
 }

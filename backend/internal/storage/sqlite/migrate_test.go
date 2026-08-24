@@ -38,6 +38,18 @@ var expectedUsageTableColumns = map[string][]string{
 	},
 }
 
+func TestMigrateEnablesIncrementalAutoVacuum(t *testing.T) {
+	db := openMigratedTestDB(t)
+
+	var mode int
+	if err := db.QueryRow(`PRAGMA auto_vacuum`).Scan(&mode); err != nil {
+		t.Fatalf("read auto_vacuum mode: %v", err)
+	}
+	if mode != 2 {
+		t.Fatalf("auto_vacuum = %d, want 2 (INCREMENTAL)", mode)
+	}
+}
+
 func TestMigrateDefaultsSessionInterfaceToChat(t *testing.T) {
 	db := openMigratedTestDB(t)
 

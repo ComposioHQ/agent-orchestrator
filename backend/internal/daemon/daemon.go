@@ -176,7 +176,7 @@ func Run() error {
 	agents, err := buildAgentResolver(defaultAgent, log)
 	if err != nil {
 		stop()
-		if cdcErr := cdcPipe.Stop(); cdcErr != nil {
+		if cdcErr := stopCDCPipeline(context.Background(), cdcPipe, cfg.ShutdownTimeout); cdcErr != nil {
 			log.Error("cdc pipeline shutdown", "err", cdcErr)
 		}
 		return fmt.Errorf("wire agent resolver: %w", err)
@@ -248,7 +248,7 @@ func Run() error {
 	if err != nil {
 		stop()
 		lcStack.Stop()
-		if cdcErr := cdcPipe.Stop(); cdcErr != nil {
+		if cdcErr := stopCDCPipeline(context.Background(), cdcPipe, cfg.ShutdownTimeout); cdcErr != nil {
 			log.Error("cdc pipeline shutdown", "err", cdcErr)
 		}
 		return fmt.Errorf("wire session service: %w", err)
@@ -263,7 +263,7 @@ func Run() error {
 	if err := seedScratchProjectOnBoot(ctx, cfg, projectSvc); err != nil {
 		stop()
 		lcStack.Stop()
-		if cdcErr := cdcPipe.Stop(); cdcErr != nil {
+		if cdcErr := stopCDCPipeline(context.Background(), cdcPipe, cfg.ShutdownTimeout); cdcErr != nil {
 			log.Error("cdc pipeline shutdown", "err", cdcErr)
 		}
 		return err
@@ -353,7 +353,7 @@ func Run() error {
 		stop()
 		managedPreview.Close()
 		lcStack.Stop()
-		if cdcErr := cdcPipe.Stop(); cdcErr != nil {
+		if cdcErr := stopCDCPipeline(context.Background(), cdcPipe, cfg.ShutdownTimeout); cdcErr != nil {
 			log.Error("cdc pipeline shutdown", "err", cdcErr)
 		}
 		return fmt.Errorf("reconcile sessions on boot: %w", reconcileErr)
@@ -443,7 +443,7 @@ func Run() error {
 	if err != nil {
 		stop()
 		lcStack.Stop()
-		if cdcErr := cdcPipe.Stop(); cdcErr != nil {
+		if cdcErr := stopCDCPipeline(context.Background(), cdcPipe, cfg.ShutdownTimeout); cdcErr != nil {
 			log.Error("cdc pipeline shutdown", "err", cdcErr)
 		}
 		return err
@@ -543,7 +543,7 @@ func Run() error {
 	if err := lan.Stop(lanStopCtx); err != nil {
 		log.Error("mobile LAN listener shutdown", "err", err)
 	}
-	if err := cdcPipe.Stop(); err != nil {
+	if err := stopCDCPipeline(context.Background(), cdcPipe, cfg.ShutdownTimeout); err != nil {
 		log.Error("cdc pipeline shutdown", "err", err)
 	}
 	return runErr

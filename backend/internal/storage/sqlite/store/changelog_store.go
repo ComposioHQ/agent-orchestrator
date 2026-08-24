@@ -36,36 +36,53 @@ func (s *Store) LatestSeq(ctx context.Context) (int64, error) {
 // refetch state on reconnect instead of replaying history (see httpd.events).
 const ChangeLogRetentionRows = 100_000
 
-// PruneChangeLog deletes change_log rows beyond the newest keep events so the
-// append-only CDC log cannot grow unbounded (#3963). The delete runs by the seq
-// PK directly rather than through sqlc: sqlc 1.31's SQLite parser mangles
-// DELETE placeholders (see queries/changelog.sql), and nothing references
-// change_log, so there is no FK fallout. A truncating WAL checkpoint follows a
-// successful prune (best effort) so freed pages return to the OS promptly.
-func (s *Store) PruneChangeLog(ctx context.Context, keep int64) (int64, error) {
+// PruneChangeLog deletes acknowledged change_log rows beyond the newest keep
+// events so the CDC log cannot grow unbounded (#3963). broadcastThrough is the
+// live poller's watermark: rows newer than it have not reached connected
+// subscribers and must not be removed. The delete runs by the seq PK directly
+// rather than through sqlc because sqlc 1.31 mangles this nullable-table DELETE
+// shape (see queries/changelog.sql). Incremental vacuuming and a truncating WAL
+// checkpoint return freed pages to the OS after a successful prune.
+func (s *Store) PruneChangeLog(ctx context.Context, keep, broadcastThrough int64) (int64, error) {
 	if keep <= 0 {
 		keep = ChangeLogRetentionRows
 	}
-	s.writeMu.Lock()
-	defer s.writeMu.Unlock()
-	maxSeq, err := s.qw.MaxChangeLogSeq(ctx)
-	if err != nil {
-		return 0, fmt.Errorf("max change_log seq: %w", err)
-	}
-	floor := maxSeq - keep
-	if floor <= 0 {
+	if broadcastThrough <= 0 {
 		return 0, nil
 	}
-	res, err := s.writeDB.ExecContext(ctx, `DELETE FROM change_log WHERE seq <= ?`, floor)
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+
+	// Select the (keep+1)th newest row rather than subtracting sequence numbers:
+	// session deletion can leave gaps in the AUTOINCREMENT sequence.
+	var pruneThrough int64
+	if err := s.writeDB.QueryRowContext(ctx, `
+SELECT COALESCE((
+    SELECT seq FROM change_log ORDER BY seq DESC LIMIT 1 OFFSET ?
+), 0)`, keep).Scan(&pruneThrough); err != nil {
+		return 0, fmt.Errorf("find change_log retention boundary: %w", err)
+	}
+	if pruneThrough <= 0 {
+		return 0, nil
+	}
+	if broadcastThrough < pruneThrough {
+		pruneThrough = broadcastThrough
+	}
+	res, err := s.writeDB.ExecContext(ctx, `DELETE FROM change_log WHERE seq <= ?`, pruneThrough)
 	if err != nil {
-		return 0, fmt.Errorf("prune change_log through %d: %w", floor, err)
+		return 0, fmt.Errorf("prune change_log through %d: %w", pruneThrough, err)
 	}
 	n, err := res.RowsAffected()
 	if err != nil {
-		return 0, fmt.Errorf("prune change_log through %d: rows affected: %w", floor, err)
+		return 0, fmt.Errorf("prune change_log through %d: rows affected: %w", pruneThrough, err)
 	}
 	if n > 0 {
-		_, _ = s.writeDB.ExecContext(ctx, `PRAGMA wal_checkpoint(TRUNCATE)`)
+		if _, err := s.writeDB.ExecContext(ctx, `PRAGMA incremental_vacuum`); err != nil {
+			return n, fmt.Errorf("incremental vacuum after change_log prune: %w", err)
+		}
+		if _, err := s.writeDB.ExecContext(ctx, `PRAGMA wal_checkpoint(TRUNCATE)`); err != nil {
+			return n, fmt.Errorf("checkpoint after change_log prune: %w", err)
+		}
 	}
 	return n, nil
 }

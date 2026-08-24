@@ -2,8 +2,12 @@ package store_test
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"testing"
+	"time"
 
+	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite"
 )
 
@@ -30,7 +34,7 @@ func TestPruneChangeLogKeepsNewestRows(t *testing.T) {
 	ctx := context.Background()
 	head := seedChangeLogRows(t, s, "mer", 150)
 
-	n, err := s.PruneChangeLog(ctx, 50)
+	n, err := s.PruneChangeLog(ctx, 50, head)
 	if err != nil {
 		t.Fatalf("prune: %v", err)
 	}
@@ -55,7 +59,11 @@ func TestPruneChangeLogNoopBelowCap(t *testing.T) {
 	ctx := context.Background()
 	seedChangeLogRows(t, s, "mer", 10)
 
-	n, err := s.PruneChangeLog(ctx, 100)
+	head, err := s.LatestSeq(ctx)
+	if err != nil {
+		t.Fatalf("latest seq: %v", err)
+	}
+	n, err := s.PruneChangeLog(ctx, 100, head)
 	if err != nil {
 		t.Fatalf("prune: %v", err)
 	}
@@ -69,14 +77,142 @@ func TestPruneChangeLogIdempotent(t *testing.T) {
 	ctx := context.Background()
 	seedChangeLogRows(t, s, "mer", 120)
 
-	if _, err := s.PruneChangeLog(ctx, 50); err != nil {
+	head, err := s.LatestSeq(ctx)
+	if err != nil {
+		t.Fatalf("latest seq: %v", err)
+	}
+	if _, err := s.PruneChangeLog(ctx, 50, head); err != nil {
 		t.Fatalf("first prune: %v", err)
 	}
-	n, err := s.PruneChangeLog(ctx, 50)
+	n, err := s.PruneChangeLog(ctx, 50, head)
 	if err != nil {
 		t.Fatalf("second prune: %v", err)
 	}
 	if n != 0 {
 		t.Fatalf("second prune removed %d rows, want 0", n)
+	}
+}
+
+func TestPruneChangeLogCountsRowsAcrossSequenceGaps(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	seedProject(t, s, "mer")
+	now := time.Now().UTC().Truncate(time.Second)
+	ids := make([]domain.SessionID, 150)
+	for i := range ids {
+		created, err := s.CreateSession(ctx, domain.SessionRecord{
+			ProjectID: "mer",
+			Kind:      domain.KindWorker,
+			Harness:   domain.HarnessClaudeCode,
+			Activity:  domain.Activity{State: domain.ActivityIdle, LastActivityAt: now},
+			CreatedAt: now,
+			UpdatedAt: now,
+		})
+		if err != nil {
+			t.Fatalf("seed session %d: %v", i, err)
+		}
+		ids[i] = created.ID
+	}
+	// Seed-session deletion removes its CDC row. Delete most recent-ish rows
+	// while leaving the head intact so a maxSeq-keep boundary would retain only
+	// ten events instead of the requested fifty.
+	for _, id := range ids[100:140] {
+		deleted, err := s.DeleteSession(ctx, id)
+		if err != nil || !deleted {
+			t.Fatalf("delete seed session %s: deleted=%v err=%v", id, deleted, err)
+		}
+	}
+	before, err := s.EventsAfter(ctx, 0, 1000)
+	if err != nil {
+		t.Fatalf("events before gap-aware prune: %v", err)
+	}
+	head, err := s.LatestSeq(ctx)
+	if err != nil {
+		t.Fatalf("latest seq: %v", err)
+	}
+
+	n, err := s.PruneChangeLog(ctx, 50, head)
+	if err != nil {
+		t.Fatalf("prune across sequence gaps: %v", err)
+	}
+	if got, want := n, int64(len(before)-50); got != want {
+		t.Fatalf("pruned = %d, want %d", got, want)
+	}
+	after, err := s.EventsAfter(ctx, 0, 1000)
+	if err != nil {
+		t.Fatalf("events after gap-aware prune: %v", err)
+	}
+	if got, want := len(after), 50; got != want {
+		t.Fatalf("remaining events = %d, want %d", got, want)
+	}
+	wantOldest := before[len(before)-50].Seq
+	if got := after[0].Seq; got != wantOldest {
+		t.Fatalf("oldest retained seq = %d, want %d", got, wantOldest)
+	}
+}
+
+func TestPruneChangeLogPreservesRowsBeyondPollerWatermark(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	head := seedChangeLogRows(t, s, "mer", 150)
+	watermark := head - 75
+
+	n, err := s.PruneChangeLog(ctx, 50, watermark)
+	if err != nil {
+		t.Fatalf("prune at lagging watermark: %v", err)
+	}
+	if n != watermark {
+		t.Fatalf("pruned = %d, want %d acknowledged rows", n, watermark)
+	}
+	events, err := s.EventsAfter(ctx, 0, 1000)
+	if err != nil {
+		t.Fatalf("events after watermark-limited prune: %v", err)
+	}
+	if got, want := events[0].Seq, watermark+1; got != want {
+		t.Fatalf("oldest retained seq = %d, want unread seq %d", got, want)
+	}
+	if got, want := len(events), int(head-watermark); got != want {
+		t.Fatalf("remaining events = %d, want %d", got, want)
+	}
+}
+
+func TestPruneChangeLogReturnsFreedPagesToOS(t *testing.T) {
+	dir := t.TempDir()
+	store, err := sqlite.Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	seedChangeLogRows(t, store, "vacuum", 2_000)
+	if err := store.Close(); err != nil {
+		t.Fatalf("close seeded store: %v", err)
+	}
+	dbPath := filepath.Join(dir, "ao.db")
+	before, err := os.Stat(dbPath)
+	if err != nil {
+		t.Fatalf("stat database before prune: %v", err)
+	}
+
+	store, err = sqlite.Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	head, err := store.LatestSeq(context.Background())
+	if err != nil {
+		_ = store.Close()
+		t.Fatalf("latest seq: %v", err)
+	}
+	if _, err := store.PruneChangeLog(context.Background(), 50, head); err != nil {
+		_ = store.Close()
+		t.Fatalf("prune: %v", err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("close pruned store: %v", err)
+	}
+	after, err := os.Stat(dbPath)
+	if err != nil {
+		t.Fatalf("stat database after prune: %v", err)
+	}
+	if after.Size() >= before.Size() {
+		t.Fatalf("database size after prune = %d, want less than %d", after.Size(), before.Size())
 	}
 }

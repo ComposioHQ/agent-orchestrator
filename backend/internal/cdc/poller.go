@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"sync/atomic"
 	"time"
 )
 
@@ -33,7 +34,7 @@ type Poller struct {
 	interval time.Duration
 	batch    int
 	logger   *slog.Logger
-	lastSeq  int64
+	lastSeq  atomic.Int64
 }
 
 // PollerConfig holds optional knobs; zero values fall back to defaults. StartSeq
@@ -54,8 +55,8 @@ func NewPoller(src Source, bcast *Broadcaster, cfg PollerConfig) *Poller {
 		interval: cfg.Interval,
 		batch:    cfg.Batch,
 		logger:   cfg.Logger,
-		lastSeq:  cfg.StartSeq,
 	}
+	p.lastSeq.Store(cfg.StartSeq)
 	if p.interval <= 0 {
 		p.interval = DefaultPollInterval
 	}
@@ -75,7 +76,7 @@ func (p *Poller) SeekToHead(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("cdc poller seek: %w", err)
 	}
-	p.lastSeq = seq
+	p.lastSeq.Store(seq)
 	return nil
 }
 
@@ -105,19 +106,21 @@ func (p *Poller) Start(ctx context.Context) <-chan struct{} {
 // advancing the cursor. Exported so tests (and a daemon) can drive a cycle
 // synchronously.
 func (p *Poller) Poll(ctx context.Context) error {
-	evs, err := p.src.EventsAfter(ctx, p.lastSeq, p.batch)
+	lastSeq := p.lastSeq.Load()
+	evs, err := p.src.EventsAfter(ctx, lastSeq, p.batch)
 	if err != nil {
-		return fmt.Errorf("cdc poller: read after %d: %w", p.lastSeq, err)
+		return fmt.Errorf("cdc poller: read after %d: %w", lastSeq, err)
 	}
 	for _, e := range evs {
-		if e.Seq <= p.lastSeq {
+		if e.Seq <= lastSeq {
 			continue // idempotent guard
 		}
 		p.bcast.Publish(e)
-		p.lastSeq = e.Seq
+		lastSeq = e.Seq
+		p.lastSeq.Store(lastSeq)
 	}
 	return nil
 }
 
 // LastSeq returns the poller's current cursor (the highest seq broadcast).
-func (p *Poller) LastSeq() int64 { return p.lastSeq }
+func (p *Poller) LastSeq() int64 { return p.lastSeq.Load() }

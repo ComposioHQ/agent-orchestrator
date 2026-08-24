@@ -56,7 +56,7 @@ func (c *EventsController) stream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	after, err := parseEventsAfter(r)
+	after, positioned, err := parseEventsAfter(r)
 	if err != nil {
 		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "INVALID_AFTER",
 			"after must be a non-negative integer", nil)
@@ -75,7 +75,7 @@ func (c *EventsController) stream(w http.ResponseWriter, r *http.Request) {
 	// head; only genuine small-gap resumes replay durable history. Unbounded
 	// replay here re-marshaled the entire change_log on every cursor-less UI
 	// reconnect and starved the writer under GC/mutex load (#3963).
-	if after > latestSeq || latestSeq-after > maxReplayGap {
+	if !positioned || after > latestSeq || latestSeq-after > maxReplayGap {
 		after = latestSeq
 	}
 
@@ -157,19 +157,22 @@ func (c *EventsController) replay(ctx context.Context, w http.ResponseWriter, fl
 	}
 }
 
-func parseEventsAfter(r *http.Request) (int64, error) {
+// parseEventsAfter returns the requested cursor and whether the client actually
+// supplied one. Cursor presence matters: numeric zero is a valid positioned
+// cursor, while a fresh EventSource supplies no cursor and must snap to head.
+func parseEventsAfter(r *http.Request) (int64, bool, error) {
 	raw := r.URL.Query().Get("after")
 	if raw == "" {
 		raw = r.Header.Get("Last-Event-ID")
 	}
 	if raw == "" {
-		return 0, nil
+		return 0, false, nil
 	}
 	seq, err := strconv.ParseInt(raw, 10, 64)
 	if err != nil || seq < 0 {
-		return 0, fmt.Errorf("invalid after: %q", raw)
+		return 0, false, fmt.Errorf("invalid after: %q", raw)
 	}
-	return seq, nil
+	return seq, true, nil
 }
 
 // writeSSEReset emits the cursor-reset control event. It carries no CDC
