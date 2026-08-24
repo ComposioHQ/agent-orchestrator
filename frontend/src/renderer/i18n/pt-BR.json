@@ -886,7 +886,7 @@
 	"shell.updateAvailable": "Atualização disponível",
 	"shell.updateCheckFailed": "Falha ao buscar atualizações",
 	"shell.updatedAt": "Atualizado {{time}}",
-	"shell.versionAvailable": "v{{version}} disponível",
+	"shell.versionAvailable": "v{{version}}",
 	"shell.versionReady": "v{{version}} pronta",
 	"shell.workingSessions": "Sessões em andamento",
 	"shortcut.add": "Adicionar",

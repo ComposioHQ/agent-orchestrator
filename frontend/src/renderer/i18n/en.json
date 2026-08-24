@@ -880,7 +880,7 @@
 	"shell.updatedAt": "Updated {{time}}",
 	"shell.usageProcessed": "{{count}} tokens processed",
 	"shell.usageProcessedCompact": "{{count}} processed",
-	"shell.versionAvailable": "v{{version}} available",
+	"shell.versionAvailable": "v{{version}}",
 	"shell.versionReady": "v{{version}} ready",
 	"shell.workingSessions": "Working sessions",
 	"shortcut.add": "Add",

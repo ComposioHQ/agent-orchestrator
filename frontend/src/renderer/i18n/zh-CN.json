@@ -863,7 +863,7 @@
 	"shell.updatedAt": "更新于 {{time}}",
 	"shell.usageProcessed": "已处理 {{count}} 个令牌",
 	"shell.usageProcessedCompact": "{{count}} 已处理",
-	"shell.versionAvailable": "v{{version}} 可用",
+	"shell.versionAvailable": "v{{version}}",
 	"shell.versionReady": "v{{version}} 已就绪",
 	"shell.workingSessions": "工作中会话",
 	"shortcut.add": "添加",

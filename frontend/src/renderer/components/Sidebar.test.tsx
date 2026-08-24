@@ -1651,7 +1651,7 @@ describe("Sidebar", () => {
 		const buttons = await screen.findAllByLabelText("Download update v9.9.9");
 		expect(buttons.length).toBeGreaterThan(0);
 		expect(screen.getByText("Update available")).toBeInTheDocument();
-		expect(screen.getByText("v9.9.9 available")).toBeInTheDocument();
+		expect(screen.getByText("v9.9.9")).toBeInTheDocument();
 		// Nothing is staged yet, so the restart action must not be offered.
 		expect(screen.queryByLabelText(/Restart to install update/)).not.toBeInTheDocument();
 

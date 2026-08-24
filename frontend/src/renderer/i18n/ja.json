@@ -875,7 +875,7 @@
 	"shell.updateAvailable": "アップデートがあります",
 	"shell.updateCheckFailed": "アップデートの確認に失敗しました",
 	"shell.updatedAt": "更新: {{time}}",
-	"shell.versionAvailable": "v{{version}} が利用可能",
+	"shell.versionAvailable": "v{{version}}",
 	"shell.versionReady": "v{{version}} の準備完了",
 	"shell.workingSessions": "作業中セッション",
 	"shortcut.add": "追加",
