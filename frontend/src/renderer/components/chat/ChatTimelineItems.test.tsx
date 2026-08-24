@@ -106,10 +106,12 @@ describe("AssistantMessage streaming", () => {
 		const view = render(
 			<AssistantMessage
 				message={message({ createdAt: new Date().toISOString(), text: "Timestamped answer", streaming: false })}
+				showCopy
 			/>,
 		);
 
 		expect(view.container.querySelector("[title]")?.getAttribute("title")).toMatch(/^\d{2}:\d{2}$/);
+		expect(screen.getByLabelText(/^Sent \d{2}:\d{2}$/)).toBeInTheDocument();
 	});
 
 	it("survives StrictMode effect cleanup and keeps draining", () => {

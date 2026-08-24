@@ -449,6 +449,12 @@ export function HumanMessage({
 			{editing ? null : (
 				<div className="mt-2 flex h-[18px] items-center gap-1">
 					<div className="flex items-center gap-1 opacity-0 transition-opacity duration-150 focus-within:opacity-100 group-hover/message:opacity-100">
+						<span
+							className="w-12 shrink-0 px-1 text-[11px] tabular-nums text-muted-foreground/75"
+							aria-label={`Sent ${formatMessageTimestamp(message.createdAt)}`}
+						>
+							{formatMessageTimestamp(message.createdAt)}
+						</span>
 						{onEdit && onEditStart && message.turnId ? (
 							<button
 								type="button"
@@ -581,6 +587,12 @@ export function AssistantMessage({
 						</button>
 					) : null}
 					{hasDuration ? <TurnDuration durationMs={durationMs} /> : null}
+					<span
+						className="w-12 shrink-0 px-1 text-[11px] tabular-nums text-muted-foreground/75 opacity-0 transition-opacity duration-150 group-hover/message:opacity-100 group-focus-within/message:opacity-100"
+						aria-label={`Sent ${formatMessageTimestamp(message.createdAt)}`}
+					>
+						{formatMessageTimestamp(message.createdAt)}
+					</span>
 				</div>
 			) : null}
 		</div>
