@@ -45,6 +45,12 @@ beforeEach(() => {
 afterEach(() => vi.restoreAllMocks());
 
 describe("TurnOutcome", () => {
+	it("keeps a recovered historical turn distinct from success", () => {
+		render(<TurnOutcome state="recovered" />);
+		expect(screen.getByText("This turn was recovered from an earlier session")).toBeInTheDocument();
+		expect(screen.queryByText("Done")).not.toBeInTheDocument();
+	});
+
 	it("shows the message above a full-width rule", () => {
 		const { container } = render(<TurnOutcome state="failed" error="Provider error" />);
 
@@ -87,6 +93,13 @@ describe("AssistantMessage streaming", () => {
 
 		expect(screen.getByText("aThe complete answer")).toBeInTheDocument();
 		expect(screen.getByRole("button", { name: "Copy message as markdown" })).toBeInTheDocument();
+	});
+
+	it("hides message actions while text is still buffered", () => {
+		const view = render(<AssistantMessage message={message()} showCopy />);
+		view.rerender(<AssistantMessage message={message({ text: "a buffered answer" })} showCopy />);
+
+		expect(screen.queryByRole("button", { name: "Copy message as markdown" })).not.toBeInTheDocument();
 	});
 
 	it("survives StrictMode effect cleanup and keeps draining", () => {
