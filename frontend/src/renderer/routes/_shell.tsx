@@ -186,6 +186,13 @@ function ShellLayout() {
 		document.addEventListener("click", handleModifierLinkClick);
 		return () => document.removeEventListener("click", handleModifierLinkClick);
 	}, []);
+	useEffect(
+		() =>
+			aoBridge.cloud.onSessionChanged((account) => {
+				if (account) void navigate({ to: "/cloud" });
+			}),
+		[navigate],
+	);
 	// Drop a folder anywhere in the app window to add it as a project, mirroring
 	// VS Code's "drop a folder to open it". A depth counter (not a relatedTarget
 	// check) tracks dragenter/dragleave so the overlay doesn't flicker as the
