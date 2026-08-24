@@ -49,7 +49,7 @@ type Service struct {
 	gateMu       sync.Mutex
 	gates        map[domain.SessionID]controllerGate
 	probeMu      sync.Mutex
-	probed       map[domain.AgentHarness]struct{}
+	probed       map[domain.AgentHarness]ports.ChatCapabilities
 }
 
 // controllerGate serializes start/stop for one session without making provider
@@ -106,7 +106,7 @@ func New(opts Options) *Service {
 		controllers:  make(map[domain.SessionID]*Controller),
 		startConfigs: make(map[domain.SessionID]StartConfig),
 		gates:        make(map[domain.SessionID]controllerGate),
-		probed:       make(map[domain.AgentHarness]struct{}),
+		probed:       make(map[domain.AgentHarness]ports.ChatCapabilities),
 	}
 }
 
@@ -281,8 +281,14 @@ func (s *Service) Start(ctx context.Context, cfg StartConfig) (*Controller, erro
 		return nil, fmt.Errorf("chat driver for %s: %w", cfg.Harness, err)
 	}
 
-	if err := s.ensureDriverReady(ctx, cfg.Harness, driver); err != nil {
+	caps, err := s.driverCapabilities(ctx, cfg.Harness, driver)
+	if err != nil {
 		return nil, err
+	}
+	if cfg.ProviderConversationID == "" {
+		if err := capabilityAdmissionError(cfg.Harness, caps, cfg.Permissions); err != nil {
+			return nil, err
+		}
 	}
 
 	scope := domain.ConversationScopeSession
@@ -320,6 +326,19 @@ func (s *Service) Start(ctx context.Context, cfg StartConfig) (*Controller, erro
 	}
 	if err != nil {
 		return nil, fmt.Errorf("open conversation: %w", err)
+	}
+	if cfg.ProviderConversationID != "" && conversation.Settings.ApprovalMode != "" {
+		cfg.Permissions = conversation.Settings.ApprovalMode
+	}
+	if err := capabilityAdmissionError(cfg.Harness, caps, cfg.Permissions); err != nil {
+		return nil, err
+	}
+	if cfg.ProviderConversationID == "" {
+		conversation.Settings.Model = cfg.Model
+		conversation.Settings.ApprovalMode = cfg.Permissions
+		if err := s.store.SetConversationSettings(ctx, conversation.ID, conversation.Settings, s.now()); err != nil {
+			return nil, fmt.Errorf("record initial conversation settings: %w", err)
+		}
 	}
 
 	var conv ports.ChatConversation
@@ -859,35 +878,66 @@ func (s *Service) SupportsChat(harness domain.AgentHarness) bool {
 // Called before any durable state exists, so an unsupported request costs nothing
 // — no terminated orphan row, no wasted worktree. It never downgrades to TUI:
 // that would put the user in a terminal they did not ask for.
-func (s *Service) PreflightChat(ctx context.Context, harness domain.AgentHarness) error {
+func (s *Service) PreflightChat(
+	ctx context.Context,
+	harness domain.AgentHarness,
+	permissions ports.PermissionMode,
+) error {
 	driver, err := s.drivers.Driver(harness)
 	if err != nil {
 		return fmt.Errorf("%w: %s has no chat driver", ports.ErrChatUnsupported, harness)
 	}
-	return s.ensureDriverReady(ctx, harness, driver)
-}
-
-// ensureDriverReady performs the provider capability probe once per harness for
-// the lifetime of this service. Reconciliation can resume many sessions using
-// the same provider; launching a throwaway provider process for every one makes
-// startup scale with twice the number of sessions. Only successful production-
-// capable probes are cached, so a repaired install can be retried without a
-// daemon restart.
-func (s *Service) ensureDriverReady(ctx context.Context, harness domain.AgentHarness, driver ports.ChatDriver) error {
-	s.probeMu.Lock()
-	defer s.probeMu.Unlock()
-	if _, ok := s.probed[harness]; ok {
-		return nil
-	}
-	caps, err := driver.Probe(ctx)
+	caps, err := s.driverCapabilities(ctx, harness, driver)
 	if err != nil {
 		return err
 	}
-	if missing := ports.MissingProductionCapabilities(caps); len(missing) > 0 {
-		return fmt.Errorf("%w: %s lacks %v", ports.ErrChatUnsupported, harness, missing)
+	return capabilityAdmissionError(harness, caps, permissions)
+}
+
+func capabilityAdmissionError(
+	harness domain.AgentHarness,
+	caps ports.ChatCapabilities,
+	permissions ports.PermissionMode,
+) error {
+	missing := ports.MissingCapabilitiesForPermissions(caps, permissions)
+	if len(missing) == 0 {
+		return nil
 	}
-	s.probed[harness] = struct{}{}
-	return nil
+	var allowed []ports.PermissionMode
+	if ports.NormalizePermissionMode(permissions) != ports.PermissionModeBypassPermissions &&
+		len(ports.MissingCapabilitiesForPermissions(caps, ports.PermissionModeBypassPermissions)) == 0 {
+		allowed = []ports.PermissionMode{ports.PermissionModeBypassPermissions}
+	}
+	return &ports.ChatCapabilityError{
+		Harness:                harness,
+		Missing:                append([]ports.ChatCapability(nil), missing...),
+		AllowedPermissionModes: allowed,
+	}
+}
+
+// driverCapabilities performs the provider capability probe once per harness for
+// the lifetime of this service. Reconciliation can resume many sessions using
+// the same provider; launching a throwaway provider process for every one makes
+// startup scale with twice the number of sessions. Only successful probes are
+// cached, so a repaired install can be retried without a daemon restart. The raw
+// capabilities are cached because admission depends on each session's requested
+// permission mode.
+func (s *Service) driverCapabilities(
+	ctx context.Context,
+	harness domain.AgentHarness,
+	driver ports.ChatDriver,
+) (ports.ChatCapabilities, error) {
+	s.probeMu.Lock()
+	defer s.probeMu.Unlock()
+	if caps, ok := s.probed[harness]; ok {
+		return caps, nil
+	}
+	caps, err := driver.Probe(ctx)
+	if err != nil {
+		return nil, err
+	}
+	s.probed[harness] = caps
+	return caps, nil
 }
 
 // StartChat launches the controller for a freshly created session.

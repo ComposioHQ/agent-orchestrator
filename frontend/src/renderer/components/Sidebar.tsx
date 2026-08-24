@@ -32,7 +32,7 @@ import {
 	sortedWorkerSessions,
 	workerSessions,
 } from "../types/workspace";
-import { getAgentActivityView } from "../lib/session-presentation";
+import { getSessionStatusDotView } from "../lib/session-presentation";
 import { deriveSessionAgentSwitchPresentation } from "../lib/agent-switch-presentation";
 import { aoBridge } from "../lib/bridge";
 import { useCommandPaletteEnabled } from "../hooks/useCommandPaletteEnabled";
@@ -153,15 +153,20 @@ function useSelection() {
 	};
 }
 
-// Agent activity is the shared source for both color and motion. PR and CI
-// state is presented on cards and board lanes instead of repainting this dot.
+// Colour tracks the session's board section, preserving SCM state while the
+// agent runs; motion stays on raw agent activity. A no-PR idle session turns
+// blue when it starts working. See getSessionStatusDotView for the lane mapping.
 function SessionStatusDot({ session }: { session: WorkspaceSession }) {
-	const activity = getAgentActivityView(session.activity);
+	const dot = getSessionStatusDotView(session);
 	return (
 		<span
 			aria-hidden="true"
-			className={cn("size-2 shrink-0 rounded-full", activity.indicatorClassName)}
-			data-session-status=""
+			className={cn(
+				"size-2 shrink-0 rounded-full",
+				dot.className,
+				dot.breathe && "animate-status-pulse",
+			)}
+			data-session-status={session.status}
 		/>
 	);
 }
