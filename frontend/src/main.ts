@@ -48,7 +48,7 @@ import {
 import { spawn, type ChildProcess } from "node:child_process";
 import { randomBytes, randomUUID } from "node:crypto";
 import { closeSync, existsSync, openSync, readFileSync } from "node:fs";
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, copyFile, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -81,6 +81,7 @@ import {
 } from "./shared/daemon-attach";
 import { browserDaemonOwnershipDecision, shouldReplacePortHolder } from "./shared/daemon-takeover";
 import { buildDaemonEnv, resolveShellEnv, type ShellRunner } from "./shared/shell-env";
+import { bundledTmuxBinaryPath, stableBundledTmuxBinaryPath } from "./shared/bundled-tmux";
 import {
 	handleCloudDeepLink,
 	installCloudIPC,
@@ -762,6 +763,36 @@ function ensureShellEnv(): Promise<void> {
 // AO_APP_RUN_ID in the environment wins, which lets a test or a wrapper pin it.
 const appRunId = process.env.AO_APP_RUN_ID ?? `apprun-${randomUUID()}`;
 const browserRuntimeToken = randomBytes(32).toString("base64url");
+let stagedBundledTmuxBinary: string | null = null;
+
+async function ensureBundledTmuxStaged(): Promise<void> {
+	const source = bundledTmuxBinaryPath(app.isPackaged, process.resourcesPath, process.platform);
+	const destination = stableBundledTmuxBinaryPath(
+		app.isPackaged,
+		process.env.AO_DATA_DIR?.trim() || path.join(os.homedir(), ".ao"),
+		app.getVersion(),
+		process.platform,
+		process.arch,
+	);
+	if (!source || !destination) {
+		stagedBundledTmuxBinary = null;
+		return;
+	}
+	if (existsSync(destination)) {
+		stagedBundledTmuxBinary = destination;
+		return;
+	}
+	await mkdir(path.dirname(destination), { recursive: true, mode: 0o750 });
+	const temporary = `${destination}.tmp-${process.pid}-${randomUUID()}`;
+	try {
+		await copyFile(source, temporary);
+		await chmod(temporary, 0o755);
+		await rename(temporary, destination);
+	} finally {
+		await rm(temporary, { force: true });
+	}
+	stagedBundledTmuxBinary = destination;
+}
 
 function daemonEnv(forceKeep = keepDaemonAlive(process.env)): NodeJS.ProcessEnv {
 	// AO_OWNER is the daemon's durable spawn-mode record: the daemon writes it
@@ -777,6 +808,7 @@ function daemonEnv(forceKeep = keepDaemonAlive(process.env)): NodeJS.ProcessEnv 
 	// is how the daemon recognises the previous run's shells as orphans and
 	// destroys them (see internal/service/shellterm).
 	const AO_OWNER = forceKeep ? "persistent" : "app";
+	const bundledTmuxBinary = stagedBundledTmuxBinary;
 	const ownerTag = {
 		AO_OWNER,
 		AO_APP_RUN_ID: appRunId,
@@ -798,6 +830,7 @@ function daemonEnv(forceKeep = keepDaemonAlive(process.env)): NodeJS.ProcessEnv 
 			(app.isPackaged
 				? path.join(process.resourcesPath, "acp-runtime")
 				: path.join(app.getAppPath(), "resources", "acp-runtime")),
+		...(bundledTmuxBinary ? { AO_TMUX_BINARY: bundledTmuxBinary, AO_TMUX_SOCKET_NAME: "ao" } : {}),
 	};
 	// In dev mode, inject isolation defaults so the dev daemon never collides with
 	// the installed app. User-set env vars take priority (checked first).
@@ -1254,6 +1287,16 @@ async function startDaemonInner(startEpoch: number): Promise<DaemonStatus> {
 		setDaemonStatus({
 			state: "error",
 			message: `Bundled AO daemon binary was not found at ${launch.command}. Rebuild the desktop package.`,
+			code: "binary_missing",
+		});
+		return daemonStatus;
+	}
+	try {
+		await ensureBundledTmuxStaged();
+	} catch (err) {
+		setDaemonStatus({
+			state: "error",
+			message: `Could not stage AO's bundled tmux under the AO data directory: ${(err as Error).message}`,
 			code: "binary_missing",
 		});
 		return daemonStatus;
