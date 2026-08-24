@@ -58,7 +58,6 @@ export type ComposerEditorHandle = {
 	clear(): void;
 	setText(text: string): void;
 	insertToken(trigger: ComposerTrigger, value: string): void;
-	getText(): string;
 	getSnapshot(): ComposerEditorSnapshot;
 };
 
@@ -190,7 +189,7 @@ function $insertComposerToken(trigger: ComposerTrigger, value: string): boolean 
 	const before = text.slice(0, trigger.start);
 	const after = text.slice(trigger.end);
 	const token = $createComposerTokenNode(trigger.kind, value);
-	const tail = $createTextNode(` ${after}`);
+	const tail = $createTextNode(/^\s/.test(after) ? after : ` ${after}`);
 	if (before) {
 		const head = $createTextNode(before);
 		node.replace(head);
@@ -252,11 +251,14 @@ function focusEditor(editor: LexicalEditor): void {
 const EditorBridge = forwardRef<
 	ComposerEditorHandle,
 	{
+		disabled?: boolean;
 		onChange: (snapshot: ComposerEditorSnapshot) => void;
 		onComplete: (snapshot: ComposerEditorSnapshot, key: "Enter" | "Tab") => string | undefined;
 	}
->(function EditorBridge({ onChange, onComplete }, ref) {
+>(function EditorBridge({ disabled, onChange, onComplete }, ref) {
 	const [editor] = useLexicalComposerContext();
+
+	useEffect(() => editor.setEditable(!disabled), [disabled, editor]);
 
 	useImperativeHandle(
 		ref,
@@ -275,7 +277,6 @@ const EditorBridge = forwardRef<
 					$insertComposerToken(trigger, value);
 				});
 			},
-			getText: () => editor.getEditorState().read($serializeComposer),
 			getSnapshot: () => editor.getEditorState().read(editorSnapshot),
 		}),
 		[editor],
@@ -332,6 +333,7 @@ export const ComposerEditor = forwardRef<
 		activeIndex: number;
 		onChange: (snapshot: ComposerEditorSnapshot) => void;
 		onComplete: (snapshot: ComposerEditorSnapshot, key: "Enter" | "Tab") => string | undefined;
+		onCompositionChange: (isComposing: boolean) => void;
 		onKeyDown: (event: KeyboardEvent<HTMLDivElement>) => void;
 		onPaste: (event: ClipboardEvent<HTMLDivElement>) => void;
 	}
@@ -345,6 +347,7 @@ export const ComposerEditor = forwardRef<
 		activeIndex,
 		onChange,
 		onComplete,
+		onCompositionChange,
 		onKeyDown,
 		onPaste,
 	},
@@ -353,6 +356,7 @@ export const ComposerEditor = forwardRef<
 	const initialConfig = {
 		namespace: "AOChatComposer",
 		nodes: [ComposerTokenNode],
+		editable: !disabled,
 		theme: { paragraph: "m-0" },
 		onError(error: Error) {
 			throw error;
@@ -385,7 +389,8 @@ export const ComposerEditor = forwardRef<
 								menuOpen ? `${menuId}-option-${activeIndex}` : undefined
 							}
 							aria-autocomplete="list"
-							contentEditable={!disabled}
+							onCompositionStart={() => onCompositionChange(true)}
+							onCompositionEnd={() => onCompositionChange(false)}
 							onKeyDown={(event) => {
 								if (!completionHandledEvents.has(event.nativeEvent)) onKeyDown(event);
 							}}
@@ -402,7 +407,12 @@ export const ComposerEditor = forwardRef<
 					ErrorBoundary={LexicalErrorBoundary}
 				/>
 				<HistoryPlugin />
-				<EditorBridge ref={ref} onChange={onChange} onComplete={onComplete} />
+				<EditorBridge
+					ref={ref}
+					disabled={disabled}
+					onChange={onChange}
+					onComplete={onComplete}
+				/>
 			</div>
 		</LexicalComposer>
 	);

@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import {
-	applySuggestion,
 	findActiveTrigger,
 	moveHighlight,
 	rankFiles,
@@ -169,40 +168,6 @@ describe("rankFiles", () => {
 	it("prefers a shallower path among equal matches", () => {
 		const ranked = rankFiles(["a/b/c/notes.md", "notes.md"], "notes");
 		expect(ranked[0]?.value).toBe("notes.md");
-	});
-});
-
-describe("applySuggestion", () => {
-	it("keeps the slash for a skill, because that is what the provider resolves", () => {
-		const trigger = findActiveTrigger("/rev", 4)!;
-		expect(applySuggestion("/rev", trigger, "review")).toEqual({
-			text: "/review ",
-			caret: 8,
-		});
-	});
-
-	// A bare path is what resolves on disk; a leading sigil would not.
-	it("drops the at-sign for a file and inserts the whole path", () => {
-		const trigger = findActiveTrigger("look at @Chat", 13)!;
-		expect(applySuggestion("look at @Chat", trigger, "src/ChatComposer.tsx")).toEqual({
-			text: "look at src/ChatComposer.tsx ",
-			caret: 29,
-		});
-	});
-
-	it("replaces only the trigger, leaving text after the caret alone", () => {
-		const text = "see @Chat and then stop";
-		const trigger = findActiveTrigger(text, 9)!;
-		expect(applySuggestion(text, trigger, "a/b.tsx").text).toBe("see a/b.tsx  and then stop");
-	});
-
-	// An unquoted path with a space reads as two arguments to anything that splits
-	// on whitespace, which is most of what an agent does with a path.
-	it("quotes a path containing whitespace", () => {
-		const trigger = findActiveTrigger("@my", 3)!;
-		expect(applySuggestion("@my", trigger, "my notes/todo.md").text).toBe(
-			'"my notes/todo.md" ',
-		);
 	});
 });
 

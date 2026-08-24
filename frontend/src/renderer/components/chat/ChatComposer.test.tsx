@@ -6,6 +6,7 @@ import { ChatComposer } from "./ChatComposer";
 import type { ChatSkill } from "../../types/conversation";
 import {
 	lexicalEditorText,
+	placeLexicalCaret,
 	typeAndPressInLexicalEditor,
 	typeInLexicalEditor,
 } from "../../test/lexical";
@@ -96,7 +97,7 @@ describe("send keys", () => {
 		expect(document.activeElement).not.toBe(field);
 	});
 
-	it("grows naturally and scrolls after the seven-line cap", () => {
+	it("applies the natural-growth and seven-line scroll-cap styles", () => {
 		const { field } = renderComposer();
 		expect(field).toHaveClass(
 			"chat-composer-scrollbar",
@@ -230,6 +231,7 @@ describe("send keys", () => {
 			<ChatComposer onSend={onSend} draftSeed={{ id: "second", text: "replacement draft" }} />,
 		);
 		await waitFor(() => expect(field).toHaveTextContent("replacement draft"));
+		field.focus();
 		await userEvent.keyboard("{Meta>}z{/Meta}");
 
 		expect(field).toHaveTextContent("replacement draft");
@@ -490,6 +492,7 @@ describe("slash commands", () => {
 		await waitFor(() => {
 			expect(field.querySelector('[data-composer-token="skill"]')).toHaveTextContent("/review");
 		});
+		expect(field.querySelectorAll('[data-composer-token="skill"]')).toHaveLength(1);
 	});
 
 	it("does not complete or send when Enter confirms IME composition", async () => {
@@ -499,6 +502,22 @@ describe("slash commands", () => {
 
 		expect(onSend).not.toHaveBeenCalled();
 		expect(field.querySelector('[data-composer-token="skill"]')).toBeNull();
+	});
+
+	it("does not auto-complete an exact skill during IME composition", async () => {
+		const onSend = vi.fn();
+		const view = render(<ChatComposer onSend={onSend} skills={[]} />);
+		const field = screen.getByLabelText("Message the agent");
+		await typeInComposer(field, "/ship");
+		fireEvent.compositionStart(field);
+		view.rerender(<ChatComposer onSend={onSend} skills={SKILLS} />);
+
+		expect(field.querySelector('[data-composer-token="skill"]')).toBeNull();
+		fireEvent.compositionEnd(field);
+
+		await waitFor(() => {
+			expect(field.querySelector('[data-composer-token="skill"]')).toHaveTextContent("/ship");
+		});
 	});
 
 	it("keeps Shift+Enter as a newline while the skill menu is open", async () => {
@@ -536,6 +555,15 @@ describe("slash commands", () => {
 		await waitFor(() => {
 			expect(field.querySelector('[data-composer-token="skill"]')).toHaveTextContent("/review-pr");
 		});
+	});
+
+	it("does not duplicate existing whitespace after an accepted completion", async () => {
+		const { field } = renderComposer({ skills: SKILLS });
+		await typeInComposer(field, "/rev x");
+		await placeLexicalCaret(field, 4);
+		await userEvent.keyboard("{Enter}");
+
+		expect(composerWireText(field)).toBe("/review x");
 	});
 
 	it("sends a skill chip as its plain slash command", async () => {
@@ -618,6 +646,7 @@ describe("file mentions", () => {
 				"backend/internal/ports/chat.go",
 			);
 		});
+		expect(field.querySelectorAll('[data-composer-token="file"]')).toHaveLength(1);
 	});
 
 	it("keeps Shift+Enter as a newline while the file menu is open", async () => {
@@ -820,6 +849,9 @@ describe("unavailable states", () => {
 	it("explains a stopped controller and refuses to send", async () => {
 		const { onSend, field } = renderComposer({ disabled: true, skills: SKILLS });
 		expect(field).toHaveAttribute("aria-placeholder", expect.stringContaining("not connected"));
+		expect(field).toHaveAttribute("contenteditable", "false");
+		expect(field).toHaveAttribute("aria-readonly", "true");
+		expect(field).toHaveAttribute("tabindex", "-1");
 		await userEvent.keyboard("{Enter}");
 		expect(onSend).not.toHaveBeenCalled();
 	});

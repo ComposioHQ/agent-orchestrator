@@ -5,9 +5,9 @@
  * which is highlighted, and what a selection inserts are all decided by the
  * composer, so the keyboard and the mouse cannot disagree about what is selected.
  *
- * Not a Popover or a Command: both want focus. The textarea must keep it — the user
+ * Not a Popover or a Command: both want focus. The editor must keep it — the user
  * is still typing, and every keystroke has to reach the field and re-filter the
- * list. So this is a plain positioned panel wired to the textarea's own key
+ * list. So this is a plain positioned panel wired to the editor's own key
  * handling, following the listbox pattern (`aria-activedescendant` on the input
  * rather than a focus move).
  */
@@ -26,7 +26,7 @@ export function ComposerSuggestMenu({
 	onPick,
 	truncated,
 }: {
-	/** Shared with the textarea's `aria-controls`, so the pairing is announced. */
+	/** Shared with the editor's `aria-controls`, so the pairing is announced. */
 	id: string;
 	kind: TriggerKind;
 	items: Suggestion[];
@@ -72,8 +72,10 @@ export function ComposerSuggestMenu({
 	}, [highlighted, items]);
 
 	useLayoutEffect(() => {
-		updateScrollIndicators();
 		const node = list.current;
+		scrollDirection.current = null;
+		lastScrollTop.current = node?.scrollTop ?? 0;
+		updateScrollIndicators();
 		if (!node || typeof ResizeObserver === "undefined") return;
 		const observer = new ResizeObserver(updateScrollIndicators);
 		observer.observe(node);

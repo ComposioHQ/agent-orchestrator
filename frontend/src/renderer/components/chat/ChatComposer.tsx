@@ -166,6 +166,7 @@ export function ChatComposer({
 	const dismissedKeyRef = useRef<string | null>(null);
 	const [highlighted, setHighlighted] = useState(0);
 	const highlightedRef = useRef(0);
+	const [isComposing, setIsComposing] = useState(false);
 	const [dragging, setDragging] = useState(false);
 	const [sendError, setSendError] = useState<string | null>(null);
 	// The DOM event is the source of truth while React catches up with the draft
@@ -334,7 +335,7 @@ export function ChatComposer({
 	}, []);
 
 	useEffect(() => {
-		if (!trigger || trigger.kind !== "skill" || trigger.key === dismissedKey) return;
+		if (isComposing || !trigger || trigger.kind !== "skill" || trigger.key === dismissedKey) return;
 		const query = trigger.query.toLowerCase();
 		if (!query) return;
 		const exact = slashCommands.find((skill) => skill.name.toLowerCase() === query);
@@ -348,7 +349,7 @@ export function ChatComposer({
 			return name.length > query.length && name.startsWith(query);
 		});
 		if (!hasLongerPrefix) pick(exact.name);
-	}, [dismissedKey, pick, slashCommands, trigger]);
+	}, [dismissedKey, isComposing, pick, slashCommands, trigger]);
 
 	const completeFromEditor = useCallback(
 		(snapshot: ComposerEditorSnapshot, key: "Enter" | "Tab"): string | undefined => {
@@ -679,6 +680,7 @@ export function ChatComposer({
 					activeIndex={activeIndex}
 					onChange={onEditorChange}
 					onComplete={completeFromEditor}
+					onCompositionChange={setIsComposing}
 					onKeyDown={onKeyDown}
 					onPaste={onPaste}
 				/>

@@ -206,44 +206,6 @@ function firstLine(text: string | undefined): string | undefined {
 	return line === "" ? undefined : line;
 }
 
-/** The result of accepting a suggestion: new text and where the caret goes. */
-export interface Insertion {
-	text: string;
-	caret: number;
-}
-
-/**
- * Replace an active trigger with the chosen value.
- *
- * A trailing space is added because the trigger is finished: without it the menu
- * would reopen on the text just inserted, and the next keystroke would filter a
- * list the user is done with.
- *
- * The sigil is kept for a skill (`/review`) and dropped for a file (a bare path),
- * because that is what each side has to resolve: Codex reads a leading slash as a
- * skill invocation, while a path only resolves if nothing is prefixed to it.
- */
-export function applySuggestion(
-	text: string,
-	trigger: ActiveTrigger,
-	value: string,
-): Insertion {
-	const caret = trigger.start + 1 + trigger.query.length;
-	const inserted = trigger.kind === "skill" ? `/${value} ` : `${quotePath(value)} `;
-	const next = text.slice(0, trigger.start) + inserted + text.slice(caret);
-	return { text: next, caret: trigger.start + inserted.length };
-}
-
-/**
- * Quote a path that contains whitespace.
- *
- * An unquoted `my notes/todo.md` reads as two arguments to anything that splits on
- * spaces, which is most of what an agent does with a path.
- */
-function quotePath(path: string): string {
-	return /\s/.test(path) ? `"${path}"` : path;
-}
-
 /**
  * Move the highlighted row, wrapping at both ends.
  *

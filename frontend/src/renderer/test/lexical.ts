@@ -1,5 +1,10 @@
 import { act } from "@testing-library/react";
-import { $getRoot, CONTROLLED_TEXT_INSERTION_COMMAND, type LexicalEditor } from "lexical";
+import {
+	$getRoot,
+	$isTextNode,
+	CONTROLLED_TEXT_INSERTION_COMMAND,
+	type LexicalEditor,
+} from "lexical";
 
 function lexicalEditor(field: HTMLElement): LexicalEditor {
 	const editor = (field as HTMLElement & { __lexicalEditor?: LexicalEditor }).__lexicalEditor;
@@ -33,6 +38,20 @@ export async function typeAndPressInLexicalEditor(
 			editor.dispatchCommand(CONTROLLED_TEXT_INSERTION_COMMAND, character);
 		}
 		field.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true }));
+	});
+}
+
+export async function placeLexicalCaret(field: HTMLElement, offset: number): Promise<void> {
+	const editor = lexicalEditor(field);
+	await act(async () => {
+		editor.update(
+			() => {
+				const node = $getRoot().getFirstDescendant();
+				if (!$isTextNode(node)) throw new Error("Expected composer text");
+				node.select(offset, offset);
+			},
+			{ discrete: true },
+		);
 	});
 }
 
