@@ -1,4 +1,4 @@
-import { MoreHorizontal, X } from "lucide-react";
+import { MoreHorizontal, Plus, X } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { cn } from "../lib/utils";
 import type { SessionFileTabState } from "../lib/session-file-tabs";
@@ -12,11 +12,13 @@ function basename(path: string): string {
 
 export function SessionFileTabs({
 	state,
+	onAddFeedback,
 	onActivateFile,
 	onCloseFile,
 	onCloseAll,
 }: {
 	state: SessionFileTabState;
+	onAddFeedback: (path: string) => void;
 	onActivateFile: (path: string) => void;
 	onCloseFile: (path: string) => void;
 	onCloseAll: () => void;
@@ -51,6 +53,16 @@ export function SessionFileTabs({
 							<WorkspaceEntryIcon className="size-icon-base shrink-0" kind="file" name={name} />
 							<span className="truncate">{name}</span>
 						</button>
+						{active ? (
+							<button
+								aria-label={t("files.addFileFeedback", { file: path })}
+								className="grid size-5 shrink-0 place-items-center rounded-sm text-passive hover:bg-interactive-hover hover:text-foreground"
+								onClick={() => onAddFeedback(path)}
+								type="button"
+							>
+								<Plus className="size-3" aria-hidden="true" />
+							</button>
+						) : null}
 						<button
 							aria-label={t("files.closeTab", { name })}
 							className="grid size-5 shrink-0 place-items-center rounded-sm text-passive opacity-70 hover:bg-interactive-hover hover:text-foreground hover:opacity-100"

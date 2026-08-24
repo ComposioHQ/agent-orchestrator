@@ -36,6 +36,7 @@ import { ShellTopbar } from "./ShellTopbar";
 import { SessionTopbarHost } from "./SessionTopbarPortal";
 import { TopbarButton } from "./TopbarButton";
 import { useBrowserView } from "../hooks/useBrowserView";
+import { useFileAnnotation } from "../hooks/useFileAnnotation";
 import { useResizable } from "../hooks/useResizable";
 import {
 	useCloseShellTerminal,
@@ -613,9 +614,11 @@ export function SessionView({ sessionId }: SessionViewProps) {
 			<ShellTopbar embedded sessionAction={sessionLocalActions} />
 		</>
 	);
+	const fileAnnotation = useFileAnnotation(sessionId);
 	const centerFileTabs = (
 		<SessionFileTabs
 			state={fileTabs}
+			onAddFeedback={(path) => fileAnnotation.begin({ path, side: "file" })}
 			onActivateFile={activateCenterFile}
 			onCloseFile={closeCenterFile}
 			onCloseAll={closeAllCenterFiles}
@@ -960,7 +963,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 							</div>
 							{fileTabs.activePath ? (
 								<div className="absolute inset-0">
-									<SessionFileWorkspace path={fileTabs.activePath} sessionId={sessionId} />
+									<SessionFileWorkspace annotation={fileAnnotation} path={fileTabs.activePath} sessionId={sessionId} />
 								</div>
 							) : null}
 							{interfaceTransitionHasUnacknowledgedNotice(interfaceSwitch.transition) ? (

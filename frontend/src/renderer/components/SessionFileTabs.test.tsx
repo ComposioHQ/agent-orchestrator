@@ -6,11 +6,13 @@ import { SessionFileTabs } from "./SessionFileTabs";
 describe("SessionFileTabs", () => {
 	it("activates and closes language-aware file tabs", async () => {
 		const onActivateFile = vi.fn();
+		const onAddFeedback = vi.fn();
 		const onCloseFile = vi.fn();
 		render(
 			<div role="tablist">
 				<SessionFileTabs
 					state={{ openPaths: ["src/App.tsx"], activePath: "src/App.tsx" }}
+					onAddFeedback={onAddFeedback}
 					onActivateFile={onActivateFile}
 					onCloseFile={onCloseFile}
 					onCloseAll={vi.fn()}
@@ -22,6 +24,8 @@ describe("SessionFileTabs", () => {
 		expect(languageIcon).toBeInTheDocument();
 		await userEvent.click(languageIcon!);
 		expect(onActivateFile).toHaveBeenCalledWith("src/App.tsx");
+		await userEvent.click(screen.getByRole("button", { name: "Add feedback for file src/App.tsx" }));
+		expect(onAddFeedback).toHaveBeenCalledWith("src/App.tsx");
 		await userEvent.click(screen.getByRole("button", { name: "Close App.tsx" }));
 		expect(onCloseFile).toHaveBeenCalledWith("src/App.tsx");
 	});
@@ -32,6 +36,7 @@ describe("SessionFileTabs", () => {
 			<div role="tablist">
 				<SessionFileTabs
 					state={{ openPaths: ["README.md"], activePath: null }}
+					onAddFeedback={vi.fn()}
 					onActivateFile={vi.fn()}
 					onCloseFile={vi.fn()}
 					onCloseAll={onCloseAll}
