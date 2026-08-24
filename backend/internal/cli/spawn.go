@@ -375,6 +375,11 @@ func resolveSpawnHarness(explicit, kind string, project projectDetails) (string,
 func (c *commandContext) preflightSpawnAgentAuth(ctx context.Context, cmd *cobra.Command, agentID string) error {
 	inv, err := c.fetchAgentInventory(ctx, true)
 	if err != nil {
+		// The catalog is advisory for spawn: a refresh failure (schema drift,
+		// transient DB error) must not turn into an opaque INTERNAL_ERROR that
+		// blocks the core workflow. Warn and let spawn validate runtime
+		// readiness, mirroring the agentProbeUnavailable degradation below.
+		_, err = fmt.Fprintf(cmd.ErrOrStderr(), "warning: agent catalog refresh failed (%v); skipping preflight and letting spawn validate runtime readiness\n", err)
 		return err
 	}
 	state := agentCatalogStateFor(inv, agentID)

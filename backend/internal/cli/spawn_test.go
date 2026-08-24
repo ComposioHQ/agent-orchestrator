@@ -807,6 +807,48 @@ func TestSpawnFreshProbeServerErrorBlocks(t *testing.T) {
 	}
 }
 
+// TestSpawnCatalogRefreshFailureDegradesToWarning verifies that a failed
+// agent-catalog refresh (the preflight dependency of spawn) does not block
+// spawn with an opaque error: the CLI warns and lets spawn validate runtime
+// readiness, mirroring the agentProbeUnavailable degradation.
+func TestSpawnCatalogRefreshFailureDegradesToWarning(t *testing.T) {
+	cfg := setConfigEnv(t)
+	var requests []string
+	var req spawnRequest
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		appendPrimaryRequest(&requests, r)
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/projects/demo":
+			_, _ = io.WriteString(w, `{"status":"ok","project":{"id":"demo","name":"Demo","path":"/repo/demo"}}`)
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/agents/refresh":
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = io.WriteString(w, `{"message":"Internal server error","code":"INTERNAL_ERROR","requestId":"req-1"}`)
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/sessions":
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				t.Fatal(err)
+			}
+			_, _ = io.WriteString(w, `{"session":{"id":"demo-15","status":"idle"}}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	writeRunFileFor(t, cfg, srv)
+
+	_, errOut, err := executeCLI(t, Deps{ProcessAlive: func(int) bool { return true }}, "spawn", "--project", "demo", "--agent", "codex", "--name", "worker")
+	if err != nil {
+		t.Fatalf("spawn failed on catalog refresh: %v stderr=%s", err, errOut)
+	}
+	if !strings.Contains(errOut, "warning: agent catalog refresh failed") {
+		t.Fatalf("stderr = %q, want catalog refresh warning", errOut)
+	}
+	want := []string{"GET /api/v1/projects/demo", "POST /api/v1/agents/refresh", "POST /api/v1/sessions"}
+	if !reflect.DeepEqual(requests, want) {
+		t.Fatalf("requests=%#v want %#v", requests, want)
+	}
+}
+
 func TestSpawnSkipAgentCheckBypassesOnlyPreflight(t *testing.T) {
 	cfg := setConfigEnv(t)
 	var requests []string

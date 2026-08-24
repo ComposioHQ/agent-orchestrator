@@ -59,6 +59,11 @@ type APIDeps struct {
 	// DeviceRoster and DeviceLive back the desktop-only mobile device roster.
 	DeviceRoster controllers.DeviceRoster
 	DeviceLive   controllers.LiveSet
+
+	// Readiness is the daemon's self-reported readiness state, reflected by
+	// /readyz. Nil means the daemon reports ready unconditionally (the default
+	// in tests and in callers that predate the state).
+	Readiness *Readiness
 }
 
 // normalizeAPIDeps closes the Presence/DeviceLive duplication trap structurally.

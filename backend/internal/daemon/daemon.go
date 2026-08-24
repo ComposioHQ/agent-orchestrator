@@ -323,6 +323,16 @@ func Run() error {
 	lcStack.trackerDone = startTrackerIntake(ctx, store, sessionSvc, tracker, log)
 
 	agentSvc := agentsvc.NewWithDeps(agentsvc.Deps{Cache: store, InventoryCache: store, Discoverer: modelcatalog.Discoverer{}, Projects: store, Sessions: store})
+	// The agent catalog is the preflight dependency of ao spawn. A failure here
+	// must not be swallowed into a WARN nothing else reads: mark the daemon
+	// degraded so /readyz stops reporting ready until the catalog recovers.
+	readiness := httpd.NewReadiness()
+	go func() {
+		if _, err := agentSvc.Refresh(ctx); err != nil {
+			log.Warn("initial agent catalog refresh failed", "err", err)
+			readiness.SetDegraded("agent catalog refresh failed: " + err.Error())
+		}
+	}()
 	hostCommands := systemexec.Adapter{}
 	systemChecks := systemcheck.New(agentSvc, hostCommands)
 	systemInstall := systeminstall.New(hostCommands, hostCommands)
@@ -507,6 +517,7 @@ func Run() error {
 		Browser:             browserService,
 		PreviewServer:       managedPreview,
 		SessionCapabilities: browserAuthority,
+		Readiness:           readiness,
 	})
 	if err != nil {
 		stop()
