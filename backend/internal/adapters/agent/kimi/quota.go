@@ -217,7 +217,8 @@ func hostedCredentialFromConfig(path string) (kimiHostedCredential, bool, error)
 	if providerType := strings.TrimSpace(provider.Type); providerType != "" && providerType != "kimi" {
 		return kimiHostedCredential{}, false, ports.ErrQuotaRefreshUnsupported
 	}
-	if baseURL := strings.TrimSpace(provider.BaseURL); baseURL != "" && !isHostedKimiBaseURL(baseURL) {
+	effectiveBaseURL := firstNonBlank(provider.BaseURL, provider.Env["KIMI_BASE_URL"])
+	if effectiveBaseURL != "" && !isHostedKimiBaseURL(effectiveBaseURL) {
 		return kimiHostedCredential{}, false, ports.ErrQuotaRefreshUnsupported
 	}
 	if token := strings.TrimSpace(provider.APIKey); token != "" {

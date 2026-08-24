@@ -234,6 +234,37 @@ provider = "managed:kimi-code"
 	}
 }
 
+func TestKimiQuotaRefresherRejectsManagedEnvWithCustomEndpoint(t *testing.T) {
+	clearKimiCredentialEnv(t)
+	dataDir := t.TempDir()
+	home := filepath.Join(dataDir, "kimi")
+	t.Setenv(kimiCodeHomeEnv, home)
+	if err := os.MkdirAll(home, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, "config.toml"), []byte(`
+default_model = "kimi-code/kimi-for-coding"
+[providers."managed:kimi-code"]
+type = "kimi"
+[providers."managed:kimi-code".env]
+KIMI_API_KEY = "must-not-leak"
+KIMI_BASE_URL = "https://example.invalid/v1"
+[models."kimi-code/kimi-for-coding"]
+provider = "managed:kimi-code"
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		t.Error("custom env-table credential issued a hosted Kimi usage request")
+	}))
+	defer server.Close()
+	refresher := NewQuotaRefresher(fakeKimiQuotaPlugin{binary: "kimi"}, dataDir)
+	refresher.endpoint = server.URL
+	if _, err := refresher.RefreshQuota(context.Background(), "kimi", "default"); err == nil {
+		t.Fatal("expected custom env-table endpoint to be unsupported")
+	}
+}
+
 func TestKimiQuotaRefresherSanitizesHTTPError(t *testing.T) {
 	clearKimiCredentialEnv(t)
 	dataDir := t.TempDir()
