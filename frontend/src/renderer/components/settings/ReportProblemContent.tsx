@@ -85,12 +85,12 @@ export function ReportProblemContent({ active }: { active: boolean }) {
 			return;
 		}
 		void captureRendererEvent("ao.renderer.support_opened");
-		let cancelled = true;
+		let cancelled = false;
 		void collectReportProblemDiagnostics().then((nextDiagnostics) => {
-			if (cancelled) setDiagnostics(nextDiagnostics);
+			if (!cancelled) setDiagnostics(nextDiagnostics);
 		});
 		return () => {
-			cancelled = false;
+			cancelled = true;
 		};
 	}, [active]);
 
