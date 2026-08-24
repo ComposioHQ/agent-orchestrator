@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { FileIcon, FolderIcon } from "@react-symbols/icons/utils";
 import { useTranslation } from "react-i18next";
 import { Tree, type NodeApi, type NodeRendererProps, type RowRendererProps, type TreeApi } from "react-arborist";
 import { ChevronRight } from "lucide-react";
 import { cn } from "../lib/utils";
+import { WorkspaceEntryIcon } from "./WorkspaceEntryIcon";
 import { statusLabel, statusTone } from "../lib/workspace-file-status";
 import {
 	sessionWorkspaceTreeQueryOptions,
@@ -208,20 +208,9 @@ function FileTreeRow({ node, style, dragHandle }: NodeRendererProps<TreeNode>) {
 				<span aria-hidden="true" className="size-3 shrink-0" />
 			)}
 			{isDir ? (
-				<FolderIcon
-					aria-hidden="true"
-					className="size-icon-md shrink-0"
-					data-testid={`folder-icon-${entry.name}`}
-					folderName={entry.name.toLowerCase()}
-				/>
+				<WorkspaceEntryIcon kind="dir" name={entry.name} testId={`folder-icon-${entry.name}`} />
 			) : (
-				<FileIcon
-					aria-hidden="true"
-					autoAssign
-					className="size-icon-md shrink-0"
-					data-testid={`file-icon-${entry.name}`}
-					fileName={entry.name}
-				/>
+				<WorkspaceEntryIcon kind="file" name={entry.name} testId={`file-icon-${entry.name}`} />
 			)}
 			<span className="min-w-0 flex-1 truncate font-mono">{entry.name}</span>
 			{isDir && entry.hasChanges ? (

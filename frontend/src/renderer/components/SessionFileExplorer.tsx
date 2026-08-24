@@ -3,10 +3,9 @@ import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { ChevronLeft, Columns2, Maximize2, Minimize2, Rows3, Search } from "lucide-react";
 import { cn } from "../lib/utils";
-import { formatFileAnnotationMessage } from "../../shared/file-annotations";
-import { apiClient, apiErrorMessage } from "../lib/api-client";
 import { sessionWorkspaceFilesQueryOptions } from "../hooks/useSessionWorkspaceFiles";
-import { buildChangedOnlyTree } from "../hooks/useSessionWorkspaceTree";
+import { buildChangedOnlyTree, type TreeNode } from "../hooks/useSessionWorkspaceTree";
+import { useFileAnnotation } from "../hooks/useFileAnnotation";
 import { useUiStore } from "../stores/ui-store";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
@@ -14,30 +13,28 @@ import { Switch } from "./ui/switch";
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "./ui/resizable";
 import { FileTree } from "./FileTree";
 import { FileContentPane } from "./FileContentPane";
-import type {
-	ActiveFileAnnotationTarget,
-	FileAnnotationModel,
-	FileAnnotationStatus,
-} from "./WorkspaceDiffView";
 
 type SessionFileExplorerProps = {
 	sessionId: string;
 	isMaximized?: boolean;
+	activePath?: string | null;
+	onOpenFile?: (path: string) => void;
 	onToggleMaximized?: (next: boolean) => void;
 };
 
-export function SessionFileExplorer({ sessionId, isMaximized = false, onToggleMaximized }: SessionFileExplorerProps) {
+export function SessionFileExplorer({
+	sessionId,
+	isMaximized = false,
+	activePath,
+	onOpenFile,
+	onToggleMaximized,
+}: SessionFileExplorerProps) {
 	const { t } = useTranslation();
 	const [filter, setFilter] = useState("");
 	const [split, setSplit] = useState(false);
 	const [selectedPath, setSelectedPath] = useState<string | null>(null);
-	const [annotationTarget, setAnnotationTarget] = useState<ActiveFileAnnotationTarget | null>(null);
-	const [annotationDraft, setAnnotationDraft] = useState("");
-	const [annotationStatus, setAnnotationStatus] = useState<FileAnnotationStatus>("idle");
-	const [annotationError, setAnnotationError] = useState("");
-	const annotationGenerationRef = useRef(0);
-	const annotationSentTimerRef = useRef<number | null>(null);
 	const rootRef = useRef<HTMLElement>(null);
+	const annotation = useFileAnnotation(sessionId);
 
 	const changedOnly = useUiStore((state) => Boolean(state.inspectorSessions[sessionId]?.filesChangedOnly));
 	const setFilesChangedOnly = useUiStore((state) => state.setFilesChangedOnly);
@@ -52,21 +49,9 @@ export function SessionFileExplorer({ sessionId, isMaximized = false, onToggleMa
 	);
 
 	useEffect(() => {
-		annotationGenerationRef.current += 1;
 		setSelectedPath(null);
 		setFilter("");
-		setAnnotationTarget(null);
-		setAnnotationDraft("");
-		setAnnotationStatus("idle");
-		setAnnotationError("");
 	}, [sessionId]);
-
-	useEffect(
-		() => () => {
-			if (annotationSentTimerRef.current !== null) window.clearTimeout(annotationSentTimerRef.current);
-		},
-		[],
-	);
 
 	// Routes vertical wheel scroll landing on the diff's own horizontal
 	// scrollbar back up to the shared scroll root, so scrolling down over a
@@ -94,57 +79,14 @@ export function SessionFileExplorer({ sessionId, isMaximized = false, onToggleMa
 		return () => root.removeEventListener("wheel", routeDiffWheel, { capture: true });
 	}, []);
 
-	const beginAnnotation = (target: ActiveFileAnnotationTarget) => {
-		annotationGenerationRef.current += 1;
-		if (annotationSentTimerRef.current !== null) window.clearTimeout(annotationSentTimerRef.current);
-		annotationSentTimerRef.current = null;
-		setAnnotationTarget(target);
-		setAnnotationDraft("");
-		setAnnotationStatus("idle");
-		setAnnotationError("");
-	};
-	const cancelAnnotation = () => {
-		annotationGenerationRef.current += 1;
-		setAnnotationTarget(null);
-		setAnnotationDraft("");
-		setAnnotationStatus("idle");
-		setAnnotationError("");
-	};
-	const submitAnnotation = async () => {
-		if (!annotationTarget || !annotationDraft.trim() || annotationStatus === "sending") return;
-		const sendGeneration = annotationGenerationRef.current;
-		const sendTarget = annotationTarget;
-		const sendFeedback = annotationDraft;
-		setAnnotationStatus("sending");
-		setAnnotationError("");
-		try {
-			const { error } = await apiClient.POST("/api/v1/sessions/{sessionId}/send", {
-				params: { path: { sessionId } },
-				body: { message: formatFileAnnotationMessage(sendTarget, sendFeedback) },
-			});
-			if (sendGeneration !== annotationGenerationRef.current) return;
-			if (error) throw new Error(apiErrorMessage(error, t("files.feedbackError")));
-			setAnnotationStatus("sent");
-			annotationSentTimerRef.current = window.setTimeout(() => {
-				annotationSentTimerRef.current = null;
-				cancelAnnotation();
-			}, 1_200);
-		} catch (error) {
-			if (sendGeneration !== annotationGenerationRef.current) return;
-			setAnnotationStatus("error");
-			setAnnotationError(apiErrorMessage(error, t("files.feedbackError")));
+	const handleSelectPath = (node: TreeNode) => {
+		if (!isMaximized && onOpenFile) {
+			onOpenFile(node.path);
+			return;
 		}
+		setSelectedPath(node.path);
 	};
-	const annotation: FileAnnotationModel = {
-		target: annotationTarget,
-		draft: annotationDraft,
-		status: annotationStatus,
-		error: annotationError,
-		begin: beginAnnotation,
-		setDraft: setAnnotationDraft,
-		cancel: cancelAnnotation,
-		submit: submitAnnotation,
-	};
+	const treeSelectedPath = !isMaximized && onOpenFile ? (activePath ?? null) : selectedPath;
 
 	return (
 		<section
@@ -213,8 +155,8 @@ export function SessionFileExplorer({ sessionId, isMaximized = false, onToggleMa
 							changedOnly={changedOnly}
 							changedOnlyData={changedOnlyData}
 							filterText={filter}
-							onSelectPath={(node) => setSelectedPath(node.path)}
-							selectedPath={selectedPath}
+							onSelectPath={handleSelectPath}
+							selectedPath={treeSelectedPath}
 							sessionId={sessionId}
 						/>
 					</ResizablePanel>
@@ -225,6 +167,15 @@ export function SessionFileExplorer({ sessionId, isMaximized = false, onToggleMa
 						</ContentScrollArea>
 					</ResizablePanel>
 				</ResizablePanelGroup>
+			) : onOpenFile ? (
+				<FileTree
+					changedOnly={changedOnly}
+					changedOnlyData={changedOnlyData}
+					filterText={filter}
+					onSelectPath={handleSelectPath}
+					selectedPath={treeSelectedPath}
+					sessionId={sessionId}
+				/>
 			) : (
 				// Docked in the 316px inspector rail there isn't room for the tree
 				// and the content side by side (see git history for the version that
@@ -238,8 +189,8 @@ export function SessionFileExplorer({ sessionId, isMaximized = false, onToggleMa
 							changedOnly={changedOnly}
 							changedOnlyData={changedOnlyData}
 							filterText={filter}
-							onSelectPath={(node) => setSelectedPath(node.path)}
-							selectedPath={selectedPath}
+							onSelectPath={handleSelectPath}
+							selectedPath={treeSelectedPath}
 							sessionId={sessionId}
 						/>
 					</div>

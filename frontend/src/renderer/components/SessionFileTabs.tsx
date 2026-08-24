@@ -1,0 +1,78 @@
+import { MoreHorizontal, X } from "lucide-react";
+import { cn } from "../lib/utils";
+import type { SessionFileTabState } from "../lib/session-file-tabs";
+import { Button } from "./ui/button";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "./ui/dropdown-menu";
+import { WorkspaceEntryIcon } from "./WorkspaceEntryIcon";
+
+function basename(path: string): string {
+	return path.split("/").pop() || path;
+}
+
+export function SessionFileTabs({
+	state,
+	onActivateFile,
+	onCloseFile,
+	onCloseAll,
+}: {
+	state: SessionFileTabState;
+	onActivateFile: (path: string) => void;
+	onCloseFile: (path: string) => void;
+	onCloseAll: () => void;
+}) {
+	if (state.openPaths.length === 0) return null;
+	return (
+		<>
+			{state.openPaths.map((path) => {
+				const name = basename(path);
+				const active = state.activePath === path;
+				return (
+					<span
+						className={cn(
+							"group relative inline-flex min-w-shell-tab-min max-w-shell-tab-max self-stretch items-center gap-1.5 border-r border-border px-3",
+							active
+								? "bg-overlay text-foreground after:absolute after:inset-x-0 after:bottom-0 after:h-0.5 after:bg-foreground/80"
+								: "text-muted-foreground hover:bg-raised hover:text-foreground",
+						)}
+						key={path}
+					>
+						<WorkspaceEntryIcon className="size-icon-base" kind="file" name={name} />
+						<button
+							aria-label={name}
+							aria-selected={active}
+							className="min-w-0 flex-1 truncate text-left text-control font-medium leading-none"
+							onClick={() => onActivateFile(path)}
+							role="tab"
+							tabIndex={active ? 0 : -1}
+							title={path}
+							type="button"
+						>
+							{name}
+						</button>
+						<button
+							aria-label={`Close ${name}`}
+							className="grid size-5 shrink-0 place-items-center rounded-sm text-passive opacity-70 hover:bg-interactive-hover hover:text-foreground hover:opacity-100"
+							onClick={(event) => {
+								event.stopPropagation();
+								onCloseFile(path);
+							}}
+							type="button"
+						>
+							<X className="size-3" aria-hidden="true" />
+						</button>
+					</span>
+				);
+			})}
+			<DropdownMenu>
+				<DropdownMenuTrigger asChild>
+					<Button aria-label="File tab actions" className="mx-1 self-center" size="icon-sm" type="button" variant="ghost">
+						<MoreHorizontal className="size-icon-sm" aria-hidden="true" />
+					</Button>
+				</DropdownMenuTrigger>
+				<DropdownMenuContent align="end">
+					<DropdownMenuItem onSelect={onCloseAll}>Close all files</DropdownMenuItem>
+				</DropdownMenuContent>
+			</DropdownMenu>
+		</>
+	);
+}

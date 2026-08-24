@@ -59,6 +59,8 @@ export function SessionChatSurface({
 	openingShell,
 	shellError,
 	headerActions,
+	workspaceTabs,
+	workspaceFileActive,
 	controllerTransitioning,
 }: {
 	session: WorkspaceSession;
@@ -79,6 +81,8 @@ export function SessionChatSurface({
 	openingShell?: boolean;
 	shellError?: string;
 	headerActions?: ReactNode;
+	workspaceTabs?: ReactNode;
+	workspaceFileActive?: boolean;
 	/** The target controller is being installed by an interface handoff. */
 	controllerTransitioning?: boolean;
 }) {
@@ -276,6 +280,8 @@ export function SessionChatSurface({
 				daemonReady={daemonReady}
 				theme={theme}
 				headerActions={headerActions}
+				workspaceTabs={workspaceTabs}
+				workspaceFileActive={workspaceFileActive}
 				controllerTransitioning={controllerTransitioning}
 				hasOlder={hasOlder}
 				loadingOlder={isLoadingOlder}

@@ -149,6 +149,9 @@ export interface ChatWorkspaceProps {
 	sessionRole?: SessionKind;
 	/** Session-level actions owned above the conversation surface. */
 	headerActions?: ReactNode;
+	/** File tabs coordinated by SessionView, appended to the native chat tab strip. */
+	workspaceTabs?: ReactNode;
+	workspaceFileActive?: boolean;
 	/** Suppress a transient stopped snapshot while a mode handoff installs Chat. */
 	controllerTransitioning?: boolean;
 	/** Freeze agent-owned Chat controls while a durable session mutation owns input. */
@@ -270,6 +273,8 @@ export function ChatWorkspace({
 	sessionTitle,
 	sessionRole = "worker",
 	headerActions,
+	workspaceTabs,
+	workspaceFileActive = false,
 	controllerTransitioning,
 	agentInputDisabled = false,
 	reviewerTerminal,
@@ -621,6 +626,8 @@ export function ChatWorkspace({
 				onTabsKeyDown={handleChatTabsKeyDown}
 				switchAgentControl={switchAgentControl}
 				headerActions={headerActions}
+				workspaceTabs={workspaceTabs}
+				workspaceFileActive={workspaceFileActive}
 				inline={isFullscreen}
 				topbarBounds={topbarBounds}
 			/>
@@ -967,6 +974,8 @@ function ChatHeader({
 	onTabsKeyDown,
 	switchAgentControl,
 	headerActions,
+	workspaceTabs,
+	workspaceFileActive = false,
 	inline,
 	topbarBounds,
 }: {
@@ -989,13 +998,15 @@ function ChatHeader({
 	/** The in-place agent-switch control, same entry point as the terminal pane. */
 	switchAgentControl?: ReactNode;
 	headerActions?: ReactNode;
+	workspaceTabs?: ReactNode;
+	workspaceFileActive?: boolean;
 	/** Fullscreen content cannot see the normal topbar portal outside its subtree. */
 	inline?: boolean;
 	topbarBounds: TopbarBounds;
 }) {
 	const label = sessionTitle || snapshot.title || snapshot.sessionId;
 	// The chat tab is "selected" only when neither terminal pane is the body.
-	const timelineActive = !reviewerActive && !shellActiveHandleId;
+	const timelineActive = !workspaceFileActive && !reviewerActive && !shellActiveHandleId;
 	// Match CenterPane: when the sidebar is off-canvas, the fixed TitlebarNav
 	// cluster sits over the session tab strip. Terminal already reserves that
 	// space; chat must too or the back/forward buttons land on the tab label.
@@ -1090,6 +1101,7 @@ function ChatHeader({
 								shell={shell}
 							/>
 						))}
+						{workspaceTabs}
 					</div>
 				</div>
 				<div className="ml-auto flex shrink-0 items-center gap-1 px-3" data-testid="session-action-region">

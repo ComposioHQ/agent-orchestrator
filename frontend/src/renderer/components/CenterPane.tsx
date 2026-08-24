@@ -65,6 +65,8 @@ type CenterPaneProps = {
 	onRenameShellTerminal?: (handleId: string, title: string) => void;
 	/** Session actions consolidated into the terminal bar by SessionView. */
 	topbarActions?: ReactNode;
+	workspaceTabs?: ReactNode;
+	workspaceFileActive?: boolean;
 	/** Stop forwarding the agent pane's keystrokes while its controller drains. */
 	agentInputDisabled?: boolean;
 };
@@ -129,6 +131,8 @@ export function CenterPane({
 	onCloseShellTerminal,
 	onRenameShellTerminal,
 	topbarActions,
+	workspaceTabs,
+	workspaceFileActive = false,
 	agentInputDisabled = false,
 }: CenterPaneProps) {
 	const { t } = useTranslation();
@@ -544,7 +548,7 @@ export function CenterPane({
 							{/* The owning session is permanent and never participates in overflow or reordering. */}
 							{session ? (
 				<SessionPaneTab
-					isActive={target.kind === "worker"}
+									isActive={target.kind === "worker" && !workspaceFileActive}
 					label={sessionTabLabel}
 					onSelect={onSelectSessionTerminal}
 					session={session}
@@ -597,6 +601,7 @@ export function CenterPane({
 										</DraggableTerminalTab>
 									))}
 								</Reorder.Group>
+								{workspaceTabs}
 							</div>
 					</div>
 				</div>

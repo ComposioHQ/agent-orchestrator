@@ -79,6 +79,16 @@ describe("SessionFileExplorer", () => {
 		expect(screen.getByTestId("tree-changed-only")).toBeInTheDocument();
 	});
 
+	it("opens docked files in the coordinated center workspace and keeps the tree visible", async () => {
+		const onOpenFile = vi.fn();
+		renderWithQuery(<SessionFileExplorer onOpenFile={onOpenFile} sessionId="sess-explorer-center" />);
+
+		await userEvent.click(screen.getByRole("button", { name: "select src/App.tsx" }));
+		expect(onOpenFile).toHaveBeenCalledWith("src/App.tsx");
+		expect(screen.getByTestId("tree-changed-only")).toBeVisible();
+		expect(screen.queryByTestId("content-pane")).not.toBeInTheDocument();
+	});
+
 	it("keeps the tree and content side by side when maximized", async () => {
 		const widthSpy = vi.spyOn(HTMLElement.prototype, "offsetWidth", "get").mockReturnValue(500);
 		const { container } = renderWithQuery(<SessionFileExplorer isMaximized sessionId="sess-explorer-maximized" />);

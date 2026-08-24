@@ -177,6 +177,7 @@ vi.mock("./chat/SessionChatSurface", () => ({
 		shellTerminals = [],
 		shellTarget,
 		onSelectShellTerminal,
+		workspaceTabs,
 	}: {
 		onOpenShell?: () => void;
 		headerActions?: ReactNode;
@@ -187,10 +188,12 @@ vi.mock("./chat/SessionChatSurface", () => ({
 		shellTerminals?: Array<{ handleId: string; title: string }>;
 		shellTarget?: { kind: "shell"; handleId: string };
 		onSelectShellTerminal?: (handleId: string) => void;
+		workspaceTabs?: ReactNode;
 	}) => (
 		<div data-testid="chat-surface">
 			chat surface
 			{headerActions}
+			<div role="tablist">{workspaceTabs}</div>
 			{reviewerTerminal ? (
 				<button type="button" onClick={() => onOpenReviewerTerminal?.(reviewerTerminal)}>
 					Reviewer
@@ -236,6 +239,7 @@ vi.mock("./CenterPane", () => ({
 		onSelectSessionTerminal,
 		onSelectReviewerTerminal,
 		topbarActions,
+		workspaceTabs,
 		reviewerTerminal,
 		terminalTarget,
 	}: {
@@ -246,12 +250,14 @@ vi.mock("./CenterPane", () => ({
 		onSelectSessionTerminal?: () => void;
 		onSelectReviewerTerminal?: (target: { handleId: string; harness: string }) => void;
 		topbarActions?: ReactNode;
+		workspaceTabs?: ReactNode;
 		reviewerTerminal?: { handleId: string; harness: string };
 		terminalTarget?: { kind: string; handleId?: string };
 	}) => (
 		<div>
 			terminal center
 			{topbarActions}
+			<div role="tablist">{workspaceTabs}</div>
 			<div data-testid="terminal-target">
 				{terminalTarget?.kind === "shell" ? terminalTarget.handleId : (terminalTarget?.kind ?? "worker")}
 			</div>
@@ -305,15 +311,27 @@ vi.mock("./BrowserPanel", () => ({
 vi.mock("./SessionFileExplorer", () => ({
 	SessionFileExplorer: ({
 		isMaximized,
+		onOpenFile,
 		onToggleMaximized,
 	}: {
 		isMaximized?: boolean;
+		onOpenFile?: (path: string) => void;
 		onToggleMaximized?: (next: boolean) => void;
 	}) => (
-		<button type="button" onClick={() => onToggleMaximized?.(!isMaximized)}>
-			{isMaximized ? "files center" : "files rail"}
-		</button>
+		<div>
+			<button type="button" onClick={() => onToggleMaximized?.(!isMaximized)}>
+				{isMaximized ? "files center" : "files rail"}
+			</button>
+			{!isMaximized && onOpenFile ? (
+				<button type="button" onClick={() => onOpenFile("src/App.tsx")}>
+					open src/App.tsx
+				</button>
+			) : null}
+		</div>
 	),
+}));
+vi.mock("./SessionFileWorkspace", () => ({
+	SessionFileWorkspace: ({ path }: { path: string }) => <div data-testid="session-file-workspace">{path}</div>,
 }));
 const { browserDestroy, browserViewOptions, browserViewState } = vi.hoisted(() => ({
 	browserDestroy: vi.fn(),
@@ -1275,6 +1293,22 @@ describe("SessionView", () => {
 		).toBeInTheDocument();
 		expect(screen.queryByRole("button", { name: "files center" })).not.toBeInTheDocument();
 		expect(screen.getByText("terminal center")).toBeInTheDocument();
+	});
+
+	it("opens docked files as center tabs while preserving the agent surface", () => {
+		act(() => useUiStore.getState().setInspectorOpen("sess-1", true));
+		render(<SessionView sessionId="sess-1" />);
+
+		fireEvent.click(screen.getByRole("button", { name: "open files" }));
+		fireEvent.click(screen.getByRole("button", { name: "open src/App.tsx" }));
+
+		expect(screen.getByRole("tab", { name: "App.tsx" })).toHaveAttribute("aria-selected", "true");
+		expect(screen.getByTestId("session-file-workspace")).toHaveTextContent("src/App.tsx");
+		expect(screen.getByText("terminal center")).toBeInTheDocument();
+
+		fireEvent.click(screen.getByRole("button", { name: "select agent tab" }));
+		expect(screen.queryByTestId("session-file-workspace")).not.toBeInTheDocument();
+		expect(screen.getByRole("tab", { name: "App.tsx" })).toHaveAttribute("aria-selected", "false");
 	});
 
 	it("maximizes files over the whole app window and returns to the rail", () => {
