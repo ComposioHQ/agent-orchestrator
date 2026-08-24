@@ -87,8 +87,14 @@ import {
 } from "../../types/conversation";
 
 const timeFormatter = new Intl.DateTimeFormat(undefined, {
-	hour: "numeric",
+	hour: "2-digit",
 	minute: "2-digit",
+	hourCycle: "h23",
+});
+const dateFormatter = new Intl.DateTimeFormat(undefined, {
+	month: "short",
+	day: "numeric",
+	year: "numeric",
 });
 
 const ORIGIN_REPORT_COLLAPSE_AT = 600;
@@ -334,6 +340,18 @@ function formatTime(iso: string): string {
 	return Number.isNaN(parsed.getTime()) ? "" : timeFormatter.format(parsed);
 }
 
+function formatMessageTimestamp(iso: string, now = new Date()): string {
+	const parsed = new Date(iso);
+	if (Number.isNaN(parsed.getTime())) return "";
+
+	const messageDay = new Date(parsed.getFullYear(), parsed.getMonth(), parsed.getDate()).getTime();
+	const today = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+	const daysAgo = Math.round((today - messageDay) / 86_400_000);
+	if (daysAgo === 0) return timeFormatter.format(parsed);
+	if (daysAgo === 1) return "Yesterday";
+	return dateFormatter.format(parsed);
+}
+
 /* -------------------------------------------------------------------------- */
 /* messages                                                                    */
 /* -------------------------------------------------------------------------- */
@@ -400,6 +418,7 @@ export function HumanMessage({
 				/>
 			) : (
 				<div
+					title={formatMessageTimestamp(message.createdAt) || undefined}
 					className={cn(
 						"cursor-chat-human-message w-fit max-w-[min(78%,560px)] rounded-[10px] px-3 py-2.5 text-sm leading-[1.55]",
 						queued
@@ -533,7 +552,7 @@ export function AssistantMessage({
 	const hasDuration = durationMs !== undefined && durationMs > 0;
 	const showActions = !renderingStreaming && (showCopy || Boolean(onRollback) || hasDuration);
 	return (
-		<div className="group/message relative">
+		<div className="group/message relative" title={formatMessageTimestamp(message.createdAt) || undefined}>
 			<ChatMarkdown text={visibleText} streaming={renderingStreaming} />
 			{showActions ? (
 				// One action row for the completed answer, not one after every prose

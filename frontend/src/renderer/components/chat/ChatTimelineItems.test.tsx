@@ -102,6 +102,16 @@ describe("AssistantMessage streaming", () => {
 		expect(screen.queryByRole("button", { name: "Copy message as markdown" })).not.toBeInTheDocument();
 	});
 
+	it("shows the message timestamp on hover", () => {
+		const view = render(
+			<AssistantMessage
+				message={message({ createdAt: new Date().toISOString(), text: "Timestamped answer", streaming: false })}
+			/>,
+		);
+
+		expect(view.container.querySelector("[title]")?.getAttribute("title")).toMatch(/^\d{2}:\d{2}$/);
+	});
+
 	it("survives StrictMode effect cleanup and keeps draining", () => {
 		const view = render(
 			<StrictMode>
