@@ -140,7 +140,44 @@ var (
 	// would answer it on the user's behalf. The API maps it to a 409; the
 	// caller retries once the user has answered in the terminal.
 	ErrAwaitingDecision = errors.New("session: awaiting a user decision")
+
+	// Spawn-stage sentinels. Each is the existing log word after "spawn" /
+	// "spawn <id>:" so wrapping them does not change daemon-log wording, while
+	// errors.Is can tell the service which stage failed. More specific wrapped
+	// sentinels (branch, agent binary, chat preflight) still match first.
+	ErrSpawnPrompt         = errors.New("prompt")
+	ErrSpawnCreate         = errors.New("create")
+	ErrSpawnSystemPrompt   = errors.New("system prompt file")
+	ErrWorkspaceCreate     = errors.New("workspace")
+	ErrWorkspaceProvision  = errors.New("provision")
+	ErrSpawnAttachments    = errors.New("attachments")
+	ErrSpawnBrowser        = errors.New("browser capability")
+	ErrSpawnPrepare        = errors.New("prepare")
+	ErrSpawnPromptDelivery = errors.New("prompt delivery")
+	ErrSpawnLaunchCommand  = errors.New("launch command")
+	ErrSpawnSupervisor     = errors.New("supervisor")
+	ErrSpawnPrepareLaunch  = errors.New("prepare launch")
+	ErrRuntimeCreate       = errors.New("runtime")
+	ErrSpawnCommit         = errors.New("completed")
+	ErrSpawnDeliverPrompt  = errors.New("deliver prompt")
+	ErrChatController      = errors.New("chat controller")
 )
+
+// wrapSpawnStage annotates a spawn failure with a stage sentinel. The original
+// error stays in the chain so errors.Is still matches inner sentinels.
+func wrapSpawnStage(id domain.SessionID, stage, err error) error {
+	if err == nil {
+		return fmt.Errorf("spawn %s: %w", id, stage)
+	}
+	return fmt.Errorf("spawn %s: %w: %w", id, stage, err)
+}
+
+func wrapSpawnStageEarly(stage, err error) error {
+	if err == nil {
+		return fmt.Errorf("spawn: %w", stage)
+	}
+	return fmt.Errorf("spawn: %w: %w", stage, err)
+}
 
 // Env vars a spawned process reads to learn who it is. A worker that starts
 // its own Docker containers (a database, a queue, any ad-hoc service) should
@@ -310,8 +347,8 @@ type Manager struct {
 	// admitted path while ordinary input remains fenced out.
 	messenger *sessionguard.Guard
 	// chat launches the structured controller for a chat-mode session. Nil means
-	// this build cannot run chat sessions, and a chat spawn is refused rather
-	// than silently downgraded to a terminal.
+	// this build cannot run chat sessions. Explicit Chat requests are refused;
+	// an inherited Chat preference falls back to TUI.
 	// defaults resolves the daemon-owned default session interface for a spawn
 	// that names no mode. Nil falls back to the compatibility default, so a build
 	// without it behaves exactly as before.
@@ -572,8 +609,8 @@ type Deps struct {
 	// name no mode. Nil means always use the compatibility default.
 	Defaults SessionModeDefaults
 	// Chat launches the structured controller for a chat-mode session. Nil means
-	// chat mode is unavailable, and a chat spawn is refused rather than silently
-	// downgraded to a terminal.
+	// chat mode is unavailable. Explicit Chat requests are refused; an inherited
+	// Chat preference falls back to TUI.
 	Chat                ChatLauncher
 	Lifecycle           lifecycleRecorder
 	Preview             PreviewLifecycle
@@ -711,7 +748,6 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	if cfg.Harness == "" {
 		return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn: %w: configure project %s.agent or pass --harness", ErrMissingHarness, roleConfigName(cfg.Kind))
 	}
-
 	// Reject an unknown harness before any durable state is created. Doing this
 	// after CreateSession would leave a terminated orphan row and waste a
 	// worktree on a spawn that can never launch.
@@ -733,17 +769,32 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	adapterConfig := normalizeAgentConfigForHarness(cfg.Harness, agentConfig)
 
 	// Resolve the controller mode here, before anything durable is created, for
-	// the same reason an unknown harness is rejected above: a chat request AO
-	// cannot honor should cost nothing, not leave a terminated row and a worktree
-	// behind. It never falls back to TUI — that would put the user in a terminal
-	// they deliberately did not ask for.
+	// the same reason an unknown harness is rejected above: an explicit Chat
+	// request AO cannot honor should cost nothing, not leave a terminated row and
+	// a worktree behind. Chat inherited from the daemon preference is best-effort:
+	// if it is unavailable for this harness or installation, fall back to TUI.
+	modeExplicitlyRequested := cfg.RequestedMode.Valid()
 	mode := m.resolveSessionMode(ctx, cfg.RequestedMode)
 	if mode == domain.SessionModeChat {
 		if m.chat == nil {
-			return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn: %w: chat mode is not available in this build", ports.ErrChatUnsupported)
-		}
-		if err := m.chat.PreflightChat(ctx, cfg.Harness); err != nil {
-			return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn: %w", err)
+			if modeExplicitlyRequested {
+				return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn: %w: chat mode is not available in this build", ports.ErrChatUnsupported)
+			}
+			m.logger.Warn("spawn: default Chat unavailable; falling back to TUI",
+				"harness", cfg.Harness, "error", ports.ErrChatUnsupported)
+			mode = domain.SessionModeTUI
+		} else if err := m.chat.PreflightChat(ctx, cfg.Harness, agentConfig.Permissions); err != nil {
+			fallbackAllowed := errors.Is(err, ports.ErrChatUnsupported) ||
+				errors.Is(err, ports.ErrChatDriverUnavailable) ||
+				errors.Is(err, ports.ErrChatDriverIncompatible) ||
+				errors.Is(err, ports.ErrChatAuthRequired)
+			if modeExplicitlyRequested || !fallbackAllowed ||
+				errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+				return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn: %w", err)
+			}
+			m.logger.Warn("spawn: default Chat unavailable; falling back to TUI",
+				"harness", cfg.Harness, "error", err)
+			mode = domain.SessionModeTUI
 		}
 	}
 	cfg.RequestedMode = mode
@@ -758,20 +809,20 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 
 	prompt, systemPrompt, err := m.buildSpawnTexts(ctx, cfg)
 	if err != nil {
-		return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn: prompt: %w", err)
+		return domain.SessionRecord{}, 0, 0, wrapSpawnStageEarly(ErrSpawnPrompt, err)
 	}
 	promptBytes := len(prompt)
 	systemPromptBytes := len(systemPrompt)
 
 	rec, err := m.store.CreateSession(ctx, seedRecord(cfg, project.Config, m.clock()))
 	if err != nil {
-		return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn: create: %w", err)
+		return domain.SessionRecord{}, 0, 0, wrapSpawnStageEarly(ErrSpawnCreate, err)
 	}
 	id := rec.ID
 	systemPromptFile, err := m.prepareSystemPromptFile(id, cfg.Harness, systemPrompt)
 	if err != nil {
 		m.rollbackSpawnSeedRow(ctx, id)
-		return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn %s: system prompt file: %w", id, err)
+		return domain.SessionRecord{}, 0, 0, wrapSpawnStage(id, ErrSpawnSystemPrompt, err)
 	}
 
 	branch := cfg.Branch
@@ -785,14 +836,14 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 		// row is deleted outright instead of accumulating as a terminated orphan
 		// in session lists (e.g. when gitworktree refuses the branch).
 		m.rollbackSpawnSeedRow(ctx, id)
-		return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn %s: workspace: %w", id, err)
+		return domain.SessionRecord{}, 0, 0, wrapSpawnStage(id, ErrWorkspaceCreate, err)
 	}
 
 	// Per-project workspace provisioning: symlink shared files, then run any
 	// post-create commands (e.g. `pnpm install`) before the agent launches.
 	if err := m.provisionWorkspace(ctx, project, ws.Path); err != nil {
 		m.rollbackSeedSpawnWorkspace(ctx, rec, ws, workspaceProject, false)
-		return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn %s: provision: %w", id, err)
+		return domain.SessionRecord{}, 0, 0, wrapSpawnStage(id, ErrWorkspaceProvision, err)
 	}
 
 	// CLI agents receive the prompt as text and cannot consume inline binary
@@ -804,7 +855,7 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 		refs, err := m.writeSpawnAttachments(ctx, id, ws.Path, cfg.Attachments)
 		if err != nil {
 			m.rollbackSeedSpawnWorkspace(ctx, rec, ws, workspaceProject, false)
-			return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn %s: attachments: %w", id, err)
+			return domain.SessionRecord{}, 0, 0, wrapSpawnStage(id, ErrSpawnAttachments, err)
 		}
 		// Keep the attachments dir out of git status. Best-effort: the images are
 		// already written and usable, so an exclude failure must not fail the spawn.
@@ -837,22 +888,22 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	agent, ok := m.agents.Agent(cfg.Harness)
 	if !ok {
 		m.rollbackSeedSpawnWorkspace(ctx, rec, ws, workspaceProject, false)
-		return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn %s: no agent adapter for harness %q", id, cfg.Harness)
+		return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn %s: %w: no agent adapter for harness %q", id, ErrUnknownHarness, cfg.Harness)
 	}
 	env, browserCapabilityVerifier, err := m.launchRuntimeEnv(id, cfg.ProjectID, cfg.IssueID, project.Config.Env)
 	if err != nil {
 		m.rollbackSeedSpawnWorkspace(ctx, rec, ws, workspaceProject, true)
-		return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn %s: browser capability: %w", id, err)
+		return domain.SessionRecord{}, 0, 0, wrapSpawnStage(id, ErrSpawnBrowser, err)
 	}
 	rec, err = m.persistBrowserCapabilityVerifier(ctx, rec, browserCapabilityVerifier)
 	if err != nil {
 		m.rollbackSeedSpawnWorkspace(ctx, rec, ws, workspaceProject, true)
-		return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn %s: persist browser capability: %w", id, err)
+		return domain.SessionRecord{}, 0, 0, wrapSpawnStage(id, ErrSpawnBrowser, err)
 	}
 	m.augmentAgentRuntimeEnv(agent, env)
 	if err := m.prepareWorkspace(ctx, agent, id, ws.Path, systemPrompt, systemPromptFile, adapterConfig, env); err != nil {
 		m.rollbackSeedSpawnWorkspace(ctx, rec, ws, workspaceProject, false)
-		return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn %s: %w", id, err)
+		return domain.SessionRecord{}, 0, 0, wrapSpawnStage(id, ErrSpawnPrepare, err)
 	}
 	launchCfg := ports.LaunchConfig{
 		DataDir:          m.dataDir,
@@ -869,7 +920,7 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	delivery, err := agent.GetPromptDeliveryStrategy(ctx, launchCfg)
 	if err != nil {
 		m.rollbackSeedSpawnWorkspace(ctx, rec, ws, workspaceProject, true)
-		return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn %s: prompt delivery: %w", id, err)
+		return domain.SessionRecord{}, 0, 0, wrapSpawnStage(id, ErrSpawnPromptDelivery, err)
 	}
 	if delivery == ports.PromptDeliveryAfterStart {
 		launchCfg.Prompt = ""
@@ -877,7 +928,7 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	argv, err := agent.GetLaunchCommand(ctx, launchCfg)
 	if err != nil {
 		m.rollbackSeedSpawnWorkspace(ctx, rec, ws, workspaceProject, true)
-		return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn %s: launch command: %w", id, err)
+		return domain.SessionRecord{}, 0, 0, wrapSpawnStage(id, ErrSpawnLaunchCommand, err)
 	}
 	// Pre-flight: confirm argv[0] actually exists on PATH (or as an absolute
 	// path the adapter returned) BEFORE handing the launch to the runtime.
@@ -891,11 +942,11 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	argv, launchID, err := m.superviseAgentProcess(agent, id, env, argv)
 	if err != nil {
 		m.rollbackSeedSpawnWorkspace(ctx, rec, ws, workspaceProject, true)
-		return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn %s: supervisor: %w", id, err)
+		return domain.SessionRecord{}, 0, 0, wrapSpawnStage(id, ErrSpawnSupervisor, err)
 	}
 	if err := m.lcm.PrepareLaunch(id, launchID); err != nil {
 		m.rollbackSeedSpawnWorkspace(ctx, rec, ws, workspaceProject, true)
-		return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn %s: prepare launch: %w", id, err)
+		return domain.SessionRecord{}, 0, 0, wrapSpawnStage(id, ErrSpawnPrepareLaunch, err)
 	}
 	defer m.lcm.CancelLaunch(id, launchID)
 	handle, err := m.runtime.Create(ctx, ports.RuntimeConfig{
@@ -906,7 +957,7 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	})
 	if err != nil {
 		m.rollbackSeedSpawnWorkspace(ctx, rec, ws, workspaceProject, true)
-		return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn %s: runtime: %w", id, err)
+		return domain.SessionRecord{}, 0, 0, wrapSpawnStage(id, ErrRuntimeCreate, err)
 	}
 
 	metadata := domain.SessionMetadata{
@@ -930,7 +981,7 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 		runtimeDestroyed := m.runtime.Destroy(ctx, handle) == nil
 		m.rollbackPreparedSpawnWorkspace(ctx, rec, ws, workspaceProject, runtimeDestroyed)
 		m.markSpawnFailedTerminated(ctx, id)
-		return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn %s: completed: %w", id, err)
+		return domain.SessionRecord{}, 0, 0, wrapSpawnStage(id, ErrSpawnCommit, err)
 	}
 	if delivery == ports.PromptDeliveryAfterStart && prompt != "" {
 		if err := m.deliverAfterStartPrompt(ctx, agent, launchCfg, handle, id, prompt); err != nil {
@@ -941,7 +992,7 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 			} else {
 				m.markSpawnFailedTerminated(ctx, id)
 			}
-			return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn %s: deliver prompt: %w", id, err)
+			return domain.SessionRecord{}, 0, 0, wrapSpawnStage(id, ErrSpawnDeliverPrompt, err)
 		}
 	}
 	rec, err = m.getRecord(ctx, id)
@@ -1985,14 +2036,14 @@ func (m *Manager) relaunchSessionWithPolicy(ctx context.Context, operation strin
 		Prompt:                    rec.Metadata.Prompt,
 		BrowserCapabilityVerifier: browserCapabilityVerifier,
 	}
-	// The interface coordinator has already frozen and stopped the Chat source,
-	// transferred its structured provider id, and required native history for
-	// this exact restore. Bind that id to the target launch immediately: passive
-	// TUI resumes do not necessarily emit a provider SessionStart hook until the
-	// next user turn, which would otherwise make an already-correct round trip
-	// appear unverified forever. Ordinary restores do not take this path and must
-	// still receive current-generation identity proof from their hooks.
-	if requireNativeHistory && !forceFresh && strings.TrimSpace(metadata.AgentSessionID) != "" {
+	// Bind an exact native resume to the target launch immediately. Passive Codex
+	// resumes do not necessarily emit SessionStart until the next user turn, but
+	// `codex resume <id>` cannot silently select a different conversation. The
+	// interface coordinator provides the same guarantee after it freezes Chat and
+	// transfers the required native history. Fresh and fallback launches still
+	// require current-generation identity proof from their hooks.
+	bindNativeIdentity := mode == RestoreModeNative && rec.Harness == domain.HarnessCodex
+	if (bindNativeIdentity || (requireNativeHistory && !forceFresh)) && strings.TrimSpace(metadata.AgentSessionID) != "" {
 		metadata.AgentSessionIDLaunchID = launchID
 	}
 	if err := m.lcm.MarkSpawned(ctx, rec.ID, metadata); err != nil {
@@ -2289,7 +2340,13 @@ func (m *Manager) reconcileReap(ctx context.Context, rec domain.SessionRecord) e
 	return nil
 }
 
-// Reconcile is the boot-time consistency pass. It replaces the bare RestoreAll
+// Reconcile is the full boot-time consistency pass. It remains the synchronous
+// entry point for callers that need reconciliation to have completed before
+// proceeding. The daemon uses ReconcileStartupSafety before it starts serving,
+// then runs ReconcileBackground after its listener is live so durable project
+// metadata is available without waiting on worktree and runtime restoration.
+//
+// It replaces the bare RestoreAll
 // call so that however the previous daemon died (clean shutdown, SIGKILL, or
 // crash), live reality matches the DB:
 //
@@ -2305,6 +2362,16 @@ func (m *Manager) reconcileReap(ctx context.Context, rec domain.SessionRecord) e
 // pass so the daemon cannot serve with an unknown switch and an open input
 // fence.
 func (m *Manager) Reconcile(ctx context.Context) error {
+	if err := m.ReconcileStartupSafety(ctx); err != nil {
+		return err
+	}
+	return m.ReconcileBackground(ctx)
+}
+
+// ReconcileStartupSafety closes durable agent-switch and interface-transition
+// state that would otherwise lose its in-memory input fence across a daemon
+// restart. This must complete before the API accepts user input.
+func (m *Manager) ReconcileStartupSafety(ctx context.Context) error {
 	// A daemon restart destroys the in-memory input fence. Close any durable
 	// non-terminal switch before adopting runtimes so the API never implies an
 	// unconfirmed continuation was delivered.
@@ -2316,6 +2383,14 @@ func (m *Manager) Reconcile(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("reconcile: interface transitions: %w", err)
 	}
+	return nil
+}
+
+// ReconcileBackground performs the potentially slow runtime, worktree, and
+// saved-session restoration passes. It is deliberately separate from the
+// startup safety pass so the daemon can serve durable SQLite-backed project
+// and session metadata while this best-effort work continues.
+func (m *Manager) ReconcileBackground(ctx context.Context) error {
 	recs, err := m.store.ListAllSessions(ctx)
 	if err != nil {
 		return fmt.Errorf("reconcile: list sessions: %w", err)

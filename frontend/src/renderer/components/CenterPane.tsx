@@ -874,10 +874,10 @@ function SessionPaneTab({
 		<span
 			data-terminal-role={connected ? undefined : "primary"}
 			className={cn(
-				"group relative inline-flex min-w-shell-tab-min shrink-0 self-stretch items-center gap-1.5 transition-colors",
+				"group relative inline-flex self-stretch items-center gap-1.5 transition-colors",
 				connected
-					? "w-shell-tab-connected border-x border-transparent px-2"
-					: "border-r border-border bg-surface px-3 text-foreground",
+					? "w-shell-tab-connected min-w-shell-tab-min shrink-0 border-x border-transparent px-2"
+					: "min-w-0 shrink overflow-hidden border-r border-border bg-surface px-3 text-foreground",
 				connected
 					? isActive
 						? "border-border-strong bg-overlay text-foreground after:absolute after:inset-x-0 after:bottom-0 after:h-0.5 after:bg-foreground/80"

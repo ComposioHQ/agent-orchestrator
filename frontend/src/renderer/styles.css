@@ -455,7 +455,7 @@
 }
 
 /* A fully hidden sidebar no longer contributes a left layout gutter. Restore
- * the shared frame inset while transient hover previews overlay this surface. */
+ * the shared frame inset. */
 .sidebar-hidden .center-panel-shell {
 	padding-left: var(--size-center-panel-inline-inset);
 }
@@ -1755,10 +1755,12 @@ textarea,
 }
 
 .ao-startup-screen {
-	position: relative;
-	flex: 1 1 0%;
-	min-width: 0;
-	min-height: 0;
+	/* Startup precedes all app chrome, so it must not inherit the inset center
+	 * panel's asymmetric frame. Cover the renderer viewport until the board is
+	 * ready, including the sidebar and titlebar-adjacent space. */
+	position: fixed;
+	inset: 0;
+	z-index: 50;
 }
 
 .ao-startup-logo {
@@ -2137,6 +2139,23 @@ body.is-resizing-x [data-slot="inspector-container"] {
 	background: color-mix(in srgb, var(--color-bg-secondary) 62%, transparent);
 }
 
+/* Explore / command expansion: one soft chat card; command and output share
+   the surface and split on a hairline — no nested near-black wells. */
+.cursor-chat-explore-box {
+	border-color: color-mix(in oklch, var(--color-border-strong) 55%, transparent);
+	background: color-mix(in srgb, var(--color-bg-elevated) 42%, var(--color-bg-secondary));
+}
+
+.cursor-chat-explore-command {
+	background: color-mix(in srgb, var(--color-bg-elevated) 28%, transparent);
+	color: color-mix(in oklch, var(--color-text-primary) 88%, transparent);
+}
+
+.cursor-chat-explore-output {
+	background: transparent;
+	color: color-mix(in oklch, var(--color-text-muted) 96%, var(--color-text-primary));
+}
+
 :root[data-theme="light"] .cursor-chat-surface {
 	background: var(--color-bg-primary);
 }
@@ -2182,6 +2201,21 @@ body.is-resizing-x [data-slot="inspector-container"] {
 :root[data-theme="light"] .cursor-chat-activity-panel {
 	background: color-mix(in srgb, var(--color-bg-tertiary) 66%, transparent);
 	border-color: color-mix(in oklch, var(--color-text-primary) 12%, transparent);
+}
+
+:root[data-theme="light"] .cursor-chat-explore-box {
+	border-color: color-mix(in oklch, var(--color-text-primary) 12%, transparent);
+	background: color-mix(in srgb, var(--color-bg-secondary) 82%, var(--color-bg-tertiary));
+}
+
+:root[data-theme="light"] .cursor-chat-explore-command {
+	background: color-mix(in srgb, var(--color-bg-tertiary) 55%, transparent);
+	color: color-mix(in oklch, var(--color-text-primary) 86%, transparent);
+}
+
+:root[data-theme="light"] .cursor-chat-explore-output {
+	background: transparent;
+	color: color-mix(in oklch, var(--color-text-primary) 58%, transparent);
 }
 
 /* The live caret belongs to the text being written. A separate block after the
@@ -2356,6 +2390,26 @@ body.is-resizing-x [data-slot="inspector-container"] {
 .workspace-topbar-actions .topbar-control--labeled,
 .workspace-topbar-actions .topbar-control--feature {
 	padding-inline: var(--space-2_5);
+}
+
+/* Split workspace handoff control. The generic .topbar-control rule above rounds
+   all four corners and clamps every control to a square minimum, which makes the
+   two halves read as separate chips crammed together rather than one button.
+   Square the joining edge, let the label half breathe, and keep the chevron half
+   narrower than a full square so the pair stays compact. */
+.workspace-topbar-actions .topbar-control--split-main {
+	padding-inline: var(--space-3);
+	gap: var(--space-1_5);
+	border-start-end-radius: 0;
+	border-end-end-radius: 0;
+}
+
+.workspace-topbar-actions .topbar-control--split-trigger {
+	min-width: var(--space-5_5);
+	width: var(--space-5_5);
+	padding-inline: 0;
+	border-start-start-radius: 0;
+	border-end-start-radius: 0;
 }
 
 .workspace-topbar-actions [data-compact-label] {
@@ -4019,8 +4073,17 @@ html[data-native-browser-composition="true"] .platform-linux:has(.browser-panel[
 /* A maximized BrowserPanel is portaled directly under <body>, outside the
  * normal shell root. Clear the shell layers beneath that portal as well, or a
  * sidebar/center surface can paint an opaque sheet over the live native page
- * whenever the transparent shell is raised for its tabs/menu portals. */
+ * whenever the transparent shell is raised for its tabs/menu portals.
+ * `.app-shell-root` needs listing here for the same reason it needs listing in
+ * the docked rule above: it carries an opaque `bg-sidebar` spanning the whole
+ * window, and macOS applies neither `.platform-windows` nor `.platform-linux`,
+ * so those two selectors leave it unmatched. The docked rule cannot cover this
+ * case either — it keys off `:has(.browser-panel[data-browser-native-page="live"])`,
+ * and once the panel is portaled to <body> the panel is no longer a descendant,
+ * so `:has()` never matches. Symptom without this line: opening any overlay over
+ * a maximized browser panel on macOS blanks the live page to black. */
 html[data-native-browser-composition="true"] body:has(.browser-popout-overlay) #root,
+html[data-native-browser-composition="true"] body:has(.browser-popout-overlay) #root .app-shell-root,
 html[data-native-browser-composition="true"] body:has(.browser-popout-overlay) #root .platform-windows,
 html[data-native-browser-composition="true"] body:has(.browser-popout-overlay) #root .platform-linux,
 html[data-native-browser-composition="true"] body:has(.browser-popout-overlay) #root .center-panel-shell,

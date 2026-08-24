@@ -24,9 +24,9 @@ const DEFAULT_SETTINGS: UpdateSettings = { enabled: false, channel: "latest", ni
 
 let updateRequestSequence = 0;
 
-function nextUpdateRequestId(): string {
+function nextUpdateRequestId(prefix = "feature-update"): string {
 	updateRequestSequence += 1;
-	return `feature-update-${updateRequestSequence}`;
+	return `${prefix}-${updateRequestSequence}`;
 }
 
 export function UpdatesSection({ titleHidden }: { titleHidden?: boolean } = {}) {
@@ -289,8 +289,9 @@ function FeatureBuildsSelect({
 function UpdateActions({ status }: { status: UpdateStatus }) {
 	const { t, i18n } = useTranslation();
 	const version = useQuery({ queryKey: ["app-version"], queryFn: () => aoBridge.app.getVersion() });
-	const [manualCheckPending, setManualCheckPending] = useState(false);
+	const [manualCheckRequestId, setManualCheckRequestId] = useState<string | null>(null);
 
+	const manualCheckPending = manualCheckRequestId !== null;
 	const checking = status.state === "checking" || manualCheckPending;
 	const downloading = status.state === "downloading";
 	const busy = checking || downloading;
@@ -304,14 +305,20 @@ function UpdateActions({ status }: { status: UpdateStatus }) {
 			}).format(status.checkedAt)
 		: null;
 
+	useEffect(() => {
+		if (manualCheckRequestId === null || status.requestId !== manualCheckRequestId) return;
+		if (status.state !== "checking") setManualCheckRequestId(null);
+	}, [manualCheckRequestId, status.requestId, status.state]);
+
 	const checkNow = async () => {
-		setManualCheckPending(true);
+		const requestId = nextUpdateRequestId("manual-update");
+		setManualCheckRequestId(requestId);
 		try {
-			await aoBridge.updates.check();
+			await aoBridge.updates.check({ requestId });
 		} catch {
 			// The main process publishes the actionable updater error state.
 		} finally {
-			setManualCheckPending(false);
+			setManualCheckRequestId((pending) => (pending === requestId ? null : pending));
 		}
 	};
 

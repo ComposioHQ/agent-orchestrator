@@ -18,10 +18,10 @@ export async function refreshAgents(): Promise<AgentCatalog> {
 	return data as AgentCatalog;
 }
 
-// The daemon probes agent binaries once at boot, so an agent installed or
-// authenticated afterwards stays invisible until something re-probes. Surfaces
-// that ask the user to pick an agent freshen the inventory on open instead of
-// offering a "Refresh agents" link: probing is the app's job, not the reader's.
+// Full agent discovery may start every supported CLI and check its auth state.
+// Keep that work off the startup path: surfaces that ask the user to pick an
+// agent freshen the inventory on open instead of offering a "Refresh agents"
+// link. Probing is the app's job, but only when the reader needs that catalog.
 // Throttled because a probe spawns one subprocess per supported agent.
 const AGENT_REFRESH_THROTTLE_MS = 5 * 60 * 1000;
 let lastAgentRefreshAt = 0;

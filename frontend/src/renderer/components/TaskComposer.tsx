@@ -5,7 +5,7 @@ import {
 	type TaskComposerModelCatalog,
 	type TaskComposerModelControl,
 } from "@aoagents/product-ui";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Loader2 } from "lucide-react";
 import { RequiredAgentField } from "./CreateProjectAgentSheet";
@@ -33,6 +33,7 @@ type CreateTaskInput = {
 	agent?: DelegateAgent;
 	model?: string;
 	mode?: "tui";
+	approvalMode?: "bypass-permissions";
 	attachments?: FileAttachmentPayload[];
 };
 
@@ -47,10 +48,18 @@ class TaskCreateError extends Error {
 	constructor(
 		message: string,
 		readonly code?: string,
+		readonly details?: components["schemas"]["APIError"]["details"],
 	) {
 		super(message);
 		this.name = "TaskCreateError";
 	}
+}
+
+type FallbackAction = "tui" | "bypass-permissions";
+
+function hasErrorDetail(details: components["schemas"]["APIError"]["details"] | undefined, key: string, value: string) {
+	const values = details?.[key];
+	return Array.isArray(values) && values.includes(value);
 }
 
 export type TaskComposerProps = {
@@ -69,6 +78,12 @@ export function TaskComposer({
 	autoFocusTitle,
 }: TaskComposerProps) {
 	const { t } = useTranslation();
+	const taskPlaceholder = useMemo(() => {
+		const placeholders = t("newTask.taskPlaceholders" as never, { returnObjects: true }) as string[];
+		return Array.isArray(placeholders)
+			? (placeholders[Math.floor(Math.random() * placeholders.length)] ?? "")
+			: "";
+	}, [t]);
 	const queryClient = useQueryClient();
 	const [prompt, setPrompt] = useState("");
 	const [model, setModel] = useState("");
@@ -78,7 +93,7 @@ export function TaskComposer({
 	const [modelTouched, setModelTouched] = useState(false);
 	const [isSubmitting, setIsSubmitting] = useState(false);
 	const [error, setError] = useState<string | undefined>();
-	const [canCreateAsTUI, setCanCreateAsTUI] = useState(false);
+	const [fallbackAction, setFallbackAction] = useState<FallbackAction>();
 	const {
 		attachments,
 		error: attachmentError,
@@ -98,6 +113,7 @@ export function TaskComposer({
 						agent: input.agent,
 						model: input.model,
 						...(input.mode ? { mode: input.mode } : {}),
+						...(input.approvalMode ? { approvalMode: input.approvalMode } : {}),
 						...(input.attachments && input.attachments.length > 0 ? { attachments: input.attachments } : {}),
 					},
 				});
@@ -105,6 +121,7 @@ export function TaskComposer({
 					throw new TaskCreateError(
 						apiErrorMessage(error, t("newTask.unableToStart")),
 						apiErrorCode(error),
+						error.details,
 					);
 				}
 				if (!data?.workerId) throw new Error(t("newTask.noSession"));
@@ -231,7 +248,10 @@ export function TaskComposer({
 	useEffect(() => () => onSubmittingChange?.(false), [onSubmittingChange]);
 	useEffect(() => () => clearAttachments(), [clearAttachments]);
 
-	const submitTask = async (interfaceMode?: "tui") => {
+	const submitTask = async (
+		interfaceMode?: "tui",
+		approvalMode?: "bypass-permissions",
+	) => {
 		if (!projectId || isSubmitting) return;
 
 		const cleanModel = model.trim();
@@ -243,7 +263,7 @@ export function TaskComposer({
 
 		setIsSubmitting(true);
 		setError(undefined);
-		setCanCreateAsTUI(false);
+		setFallbackAction(undefined);
 		try {
 			const attachmentPayloads = await toSettledPayload();
 			const sessionId = await createTask({
@@ -254,14 +274,24 @@ export function TaskComposer({
 				agent: selectedAgent ? (selectedAgent as CreateTaskInput["agent"]) : undefined,
 				model: requestedModel,
 				mode: interfaceMode,
+				approvalMode,
 				attachments: attachmentPayloads.length > 0 ? attachmentPayloads : undefined,
 			});
 			onCreated(sessionId);
 		} catch (err) {
-			setCanCreateAsTUI(
-				interfaceMode !== "tui" &&
-					err instanceof TaskCreateError &&
-					Boolean(err.code && CHAT_PREFLIGHT_CODES.has(err.code)),
+			const canBypassApprovals =
+				err instanceof TaskCreateError &&
+				err.code === "SESSION_MODE_UNSUPPORTED" &&
+				hasErrorDetail(err.details, "missingCapabilities", "approvals") &&
+				hasErrorDetail(err.details, "allowedApprovalModes", "bypass-permissions");
+			setFallbackAction(
+				canBypassApprovals
+					? "bypass-permissions"
+					: interfaceMode !== "tui" &&
+							err instanceof TaskCreateError &&
+							Boolean(err.code && CHAT_PREFLIGHT_CODES.has(err.code))
+						? "tui"
+						: undefined,
 			);
 			setError(err instanceof Error ? err.message : t("newTask.unableToStart"));
 		} finally {
@@ -277,13 +307,15 @@ export function TaskComposer({
 			onPromptChange={setPrompt}
 			labels={{
 				addFile: t("newTask.addFile"),
-				createAsTui: t("newTask.createAsTui"),
+				fallbackAction: fallbackAction === "bypass-permissions"
+					? t("newTask.startWithoutApprovals", { defaultValue: "Start without approvals" })
+					: t("newTask.createAsTui"),
 				removeFile: (name) => t("newTask.removeFile", { name }),
 				runsWith: t("newTask.runsWith"),
 				start: t("newTask.start"),
 				starting: t("newTask.starting"),
 				task: t("newTask.task"),
-				taskPlaceholder: t("newTask.taskPlaceholder"),
+				taskPlaceholder,
 			}}
 			agent={{
 				label: t("newTask.agent"),
@@ -313,7 +345,6 @@ export function TaskComposer({
 					selectedAgent !== "" &&
 					modelCatalogQuery.isFetching &&
 					modelCatalogQuery.data === undefined,
-				refreshing: false,
 				onModelChange: (value) => {
 					setModel(value);
 					setMode("");
@@ -332,12 +363,15 @@ export function TaskComposer({
 				onRemove: removeAttachment,
 			}}
 			submission={{
-				canCreateAsTui: canCreateAsTUI,
+				showFallbackAction: fallbackAction !== undefined,
 				error,
 				isSubmitting,
 				modelWarning,
+				onFallbackAction: () =>
+					void (fallbackAction === "bypass-permissions"
+						? submitTask(undefined, "bypass-permissions")
+						: submitTask("tui")),
 				onSubmit: () => void submitTask(requiresTuiFallback ? "tui" : undefined),
-				onSubmitAsTui: () => void submitTask("tui"),
 			}}
 			renderAgentControl={(control) => <DesktopAgentControl {...control} />}
 			renderModelControl={(control) => <TaskModelPicker {...control} />}

@@ -14,7 +14,7 @@
 export type SessionMode = "chat" | "tui";
 
 /** One request and the agent work that followed it. */
-export type TurnState = "queued" | "running" | "completed" | "interrupted" | "failed";
+export type TurnState = "queued" | "running" | "completed" | "recovered" | "interrupted" | "failed";
 
 export type MessageRole = "user" | "assistant";
 
@@ -47,9 +47,17 @@ export type ActivityKind =
 
 /**
  * `cancelled` means the enclosing turn stopped before the provider completed the
- * item. It is intentionally distinct from `failed`: the user stopped the work.
+ * item. `recovered` means replay proved the item is historical but carried no
+ * portable outcome. Both are intentionally distinct from `failed`.
  */
-export type ActivityStatus = "running" | "completed" | "failed" | "cancelled" | "pending" | "resolved";
+export type ActivityStatus =
+	| "running"
+	| "completed"
+	| "recovered"
+	| "failed"
+	| "cancelled"
+	| "pending"
+	| "resolved";
 
 /**
  * Delivery state for a message AO sent. `uncertain` is deliberately not merged
@@ -166,6 +174,22 @@ export interface DecisionOption {
 	/** e.g. "accept", "acceptForSession", "acceptWithExecpolicyAmendment". */
 	id: string;
 	label: string;
+	/** Provider-neutral consent meaning; IDs and labels may be opaque or localized. */
+	kind?: "allow_once" | "allow_always" | "reject_once" | "reject_always";
+}
+
+/** Provider context retained before and after a human approval decision. */
+export interface ApprovalDetail {
+	/** The provider request shape, used to choose command or file-change copy. */
+	method?: string;
+	/** The provider decision id AO successfully returned. */
+	decision?: string;
+	/** Present when another connected client resolved the request. */
+	resolvedBy?: string;
+	/** The normalized activity the provider wants permission to perform. */
+	subjectKind?: ActivityKind;
+	/** ACP's tool category, retained for diagnostics and forward compatibility. */
+	toolKind?: string;
 }
 
 export interface CommandDetail {
@@ -454,6 +478,7 @@ export interface ConversationActivity {
 	 * something a provider may not report.
 	 */
 	detail?: CommandDetail &
+		ApprovalDetail &
 		FileChangeDetail &
 		UsageDetail &
 		CompactionDetail &

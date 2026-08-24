@@ -123,6 +123,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/desktop/sessions/{sessionId}/workspace": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Resolve a session workspace for the loopback desktop supervisor */
+        get: operations["getDesktopSessionWorkspace"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/dev/import-projects": {
         parameters: {
             query?: never;
@@ -2011,7 +2028,7 @@ export interface components {
             /** Format: int64 */
             sequence: number;
             /** @enum {string} */
-            status: "running" | "completed" | "failed" | "cancelled" | "pending" | "resolved";
+            status: "running" | "completed" | "recovered" | "failed" | "cancelled" | "pending" | "resolved";
             summary: string;
             turnId?: string;
         };
@@ -2195,7 +2212,7 @@ export interface components {
             rolledBack?: boolean;
             startedAt?: null | string;
             /** @enum {string} */
-            state: "queued" | "running" | "completed" | "interrupted" | "failed";
+            state: "queued" | "running" | "completed" | "recovered" | "interrupted" | "failed";
         };
         ConversationTurnSettingsPayload: {
             /** @enum {string} */
@@ -2229,7 +2246,9 @@ export interface components {
         };
         DelegateTaskRequest: {
             /** @enum {string} */
-            agent?: "claude-code" | "codex" | "aider" | "opencode" | "grok" | "droid" | "amp" | "agy" | "crush" | "cursor" | "qwen" | "copilot" | "goose" | "auggie" | "continue" | "devin" | "cline" | "kimi" | "muse" | "kiro" | "kilocode" | "vibe" | "pi" | "kimchi" | "prime-agent" | "autohand" | "fake";
+            agent?: "claude-code" | "codex" | "aider" | "opencode" | "grok" | "droid" | "amp" | "agy" | "crush" | "cursor" | "qwen" | "copilot" | "goose" | "auggie" | "continue" | "devin" | "cline" | "kimi" | "muse" | "kiro" | "kilocode" | "vibe" | "pi" | "kimchi" | "omp" | "prime-agent" | "autohand" | "fake";
+            /** @enum {string} */
+            approvalMode?: "default" | "accept-edits" | "auto" | "bypass-permissions";
             attachments?: components["schemas"]["AttachmentInput"][];
             brief: string;
             /** @enum {string} */
@@ -2241,6 +2260,10 @@ export interface components {
             ok: boolean;
             orchestratorId?: string;
             workerId: string;
+        };
+        DesktopWorkspaceLocationResponse: {
+            sessionId: string;
+            workspacePath: string;
         };
         DevImportProjectsConflict: {
             path: string;
@@ -2282,7 +2305,7 @@ export interface components {
             providerTurnId?: string;
             sourceBranchId: string;
             /** @enum {string} */
-            state?: "queued" | "running" | "completed" | "interrupted" | "failed";
+            state?: "queued" | "running" | "completed" | "recovered" | "interrupted" | "failed";
             turnId?: string;
         };
         ImportReport: {
@@ -2699,7 +2722,7 @@ export interface components {
             duplicate: boolean;
             providerTurnId?: string;
             /** @enum {string} */
-            state?: "queued" | "running" | "completed" | "interrupted" | "failed";
+            state?: "queued" | "running" | "completed" | "recovered" | "interrupted" | "failed";
             turnId?: string;
         };
         SendSessionMessageRequest: {
@@ -2785,6 +2808,7 @@ export interface components {
             body?: string;
             file?: string;
             line?: number;
+            reviewId?: string;
             url?: string;
         };
         SessionPRReviewEntry: {
@@ -2986,7 +3010,7 @@ export interface components {
             branch?: string;
             displayName?: string;
             /** @enum {string} */
-            harness?: "claude-code" | "codex" | "aider" | "opencode" | "grok" | "droid" | "amp" | "agy" | "crush" | "cursor" | "qwen" | "copilot" | "goose" | "auggie" | "continue" | "devin" | "cline" | "kimi" | "muse" | "kiro" | "kilocode" | "vibe" | "pi" | "kimchi" | "prime-agent" | "autohand";
+            harness?: "claude-code" | "codex" | "aider" | "opencode" | "grok" | "droid" | "amp" | "agy" | "crush" | "cursor" | "qwen" | "copilot" | "goose" | "auggie" | "continue" | "devin" | "cline" | "kimi" | "muse" | "kiro" | "kilocode" | "vibe" | "pi" | "kimchi" | "omp" | "prime-agent" | "autohand";
             issueId?: string;
             /** @enum {string} */
             kind?: "worker" | "orchestrator";
@@ -3090,7 +3114,7 @@ export interface components {
         SystemRequirementsResponse: {
             /** @description True iff every requirement with Required=true is satisfied. Requirements with Required=false (e.g. gh) are advisory and never block readiness. */
             ready: boolean;
-            /** @description Individual checks, in stable order: git, tmux, harness, gh. */
+            /** @description Individual checks in stable order for the selected probe. */
             requirements: components["schemas"]["SystemRequirement"][];
         };
         TrackerIntakeConfig: {
@@ -3621,6 +3645,56 @@ export interface operations {
             };
             /** @description Conflict */
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    getDesktopSessionWorkspace: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Session identifier, e.g. project-1. */
+                sessionId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DesktopWorkspaceLocationResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
                 headers: {
                     [name: string]: unknown;
                 };
