@@ -40,6 +40,24 @@ function renderButton() {
 }
 
 describe("TopbarOpenEditorButton", () => {
+	// Regression: an ipcMain rejection arrives wrapped as "Error invoking remote
+	// method 'editorHandoff:open': Error: <reason>", and the topbar used to paint
+	// that whole string into the actions row.
+	it("shows the reason, not Electron's remote-method wrapper, when the open fails", async () => {
+		setState(availableState);
+		window.ao!.editorHandoff.open = vi.fn().mockRejectedValue(
+			new Error("Error invoking remote method 'editorHandoff:open': Error: Session workspace is not available"),
+		);
+		renderButton();
+
+		await userEvent.click(await screen.findByRole("button", { name: "Open in Cursor" }));
+
+		const alert = await screen.findByRole("alert");
+		expect(alert).toHaveTextContent("Session workspace is not available");
+		expect(alert.textContent).not.toContain("Error invoking remote method");
+	});
+
+
 	beforeEach(() => {
 		openMock.mockClear();
 		openMock.mockImplementation(async ({ targetId }: OpenSessionTargetInput) => {

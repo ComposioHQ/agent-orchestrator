@@ -1,7 +1,7 @@
 import { ChevronDown, Code2, FolderOpen, SquareTerminal } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import type { OpenTarget, OpenTargetId } from "../../shared/editor-handoff";
-import { useEditorHandoffState, useOpenSessionTarget } from "../hooks/useEditorHandoff";
+import { editorHandoffErrorMessage, useEditorHandoffState, useOpenSessionTarget } from "../hooks/useEditorHandoff";
 import { TopbarActionError, TopbarButton } from "./TopbarButton";
 import {
 	DropdownMenu,
@@ -89,7 +89,7 @@ export function TopbarOpenEditorButton({
 		open.reset();
 		open.mutate({ sessionId, projectId, ...(targetId ? { targetId } : {}) });
 	};
-	const launchError = open.error instanceof Error ? open.error.message : null;
+	const launchError = editorHandoffErrorMessage(open.error);
 	const guidance = !stateQuery.isPending && !workspaceAvailable
 		? state?.unavailableReason ?? t("editor.workspaceUnavailable")
 		: !stateQuery.isPending && editors.length === 0
