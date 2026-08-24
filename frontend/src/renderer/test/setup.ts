@@ -12,6 +12,40 @@ expect.extend(jestDomMatchers);
 // routes setupFiles here, so only install the DOM stubs when a DOM exists.
 // ponytail: single guard; node env has no DOM to stub.
 if (typeof window !== "undefined") {
+	const emptyRect = () => ({
+		bottom: 0,
+		height: 0,
+		left: 0,
+		right: 0,
+		top: 0,
+		width: 0,
+		x: 0,
+		y: 0,
+		toJSON: () => ({}),
+	});
+
+	// JSDOM does not implement the selection geometry rich text editors use to
+	// keep the caret visible. Lexical only reads these values; zero geometry is
+	// sufficient for component tests.
+	if (!Range.prototype.getBoundingClientRect) {
+		Range.prototype.getBoundingClientRect = emptyRect;
+	}
+	if (!Range.prototype.getClientRects) {
+		Range.prototype.getClientRects = () => [] as unknown as DOMRectList;
+	}
+	if (!(Text.prototype as Text & { getBoundingClientRect?: () => DOMRect }).getBoundingClientRect) {
+		Object.defineProperty(Text.prototype, "getBoundingClientRect", {
+			configurable: true,
+			value: emptyRect,
+		});
+	}
+	if (typeof globalThis.ClipboardEvent === "undefined") {
+		Object.defineProperty(globalThis, "ClipboardEvent", {
+			configurable: true,
+			value: class ClipboardEventStub extends Event {},
+		});
+	}
+
 	class ResizeObserverStub {
 		observe() {}
 		unobserve() {}

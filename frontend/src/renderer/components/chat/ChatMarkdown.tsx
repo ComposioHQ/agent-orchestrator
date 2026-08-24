@@ -149,7 +149,7 @@ function CodeBlock({ code, language }: { code: string; language?: string }) {
 						aria-label="Wrap long lines"
 						title="Wrap long lines"
 						className={cn(
-							"flex items-center rounded px-1.5 py-0.5 transition-colors hover:bg-interactive-hover hover:text-foreground",
+							"flex size-7 items-center justify-center rounded-md transition-[background-color,color,transform] hover:bg-interactive-hover hover:text-foreground",
 							wrap ? "text-accent" : "text-muted-foreground",
 						)}
 					>
