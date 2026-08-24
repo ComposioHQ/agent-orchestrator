@@ -649,6 +649,7 @@ function FileDetailBody({
 	file,
 	onActiveSelectionChange,
 	onViewModeChange,
+	revealLine,
 	sessionId,
 	split,
 	viewMode,
@@ -660,6 +661,7 @@ function FileDetailBody({
 	file: WorkspaceFileSummary;
 	onActiveSelectionChange: (active: boolean) => void;
 	onViewModeChange: (mode: "source" | "rendered") => void;
+	revealLine?: ReviewLineTarget;
 	sessionId: string;
 	split: boolean;
 	viewMode: "source" | "rendered";
@@ -673,6 +675,7 @@ function FileDetailBody({
 			detailLoadedAt={detailLoadedAt}
 			filePath={file.path}
 			onActiveSelectionChange={onActiveSelectionChange}
+			revealLine={revealLine}
 			sessionId={sessionId}
 			split={split && canSplitCompare(file.status)}
 			wrap={wrap}
