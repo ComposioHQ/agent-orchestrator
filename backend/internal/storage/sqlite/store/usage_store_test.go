@@ -105,6 +105,38 @@ func TestUsageBindingAndSourceIdempotency(t *testing.T) {
 	}
 }
 
+// TestActiveKimiBindingRemainsDiscoverable catches removing live Kimi
+// bindings from the bounded reconciliation queue after the main source exists.
+func TestActiveKimiBindingRemainsDiscoverable(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	sess := seedUsageSession(t, s, domain.HarnessKimi)
+	now := time.Unix(1700000000, 0).UTC()
+	binding := mustUpsertUsageBinding(t, s, sess, now, domain.UsageBindingRecord{
+		NativeRootID: "kimi-live",
+		State:        domain.UsageBindingActive,
+	})
+	mustInsertUsageSource(t, s, now, domain.UsageSourceRecord{
+		BindingID:       binding.ID,
+		Kind:            domain.UsageSourceKimiWire,
+		NativeSessionID: binding.NativeRootID,
+		ArtifactPath:    "/tmp/kimi/main/wire.jsonl",
+		FileIdentity:    "kimi-main",
+		State:           domain.UsageSourceActive,
+	})
+
+	pending, err := s.HasPendingUsageDiscovery(ctx)
+	mustNoError(t, err)
+	if !pending {
+		t.Fatal("active Kimi binding did not keep bounded child discovery active")
+	}
+	discovery, err := s.ListUsageDiscoveryBindings(ctx, 8)
+	mustNoError(t, err)
+	if len(discovery) != 1 || discovery[0].ID != binding.ID {
+		t.Fatalf("discovery bindings = %+v, want Kimi binding %d", discovery, binding.ID)
+	}
+}
+
 func TestListLatestRetiredCodexReplacementClaimsByPath(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()

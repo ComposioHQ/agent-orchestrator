@@ -1896,6 +1896,124 @@ func TestCollectorDiscoversKimiWireSourcesFromSessionIndex(t *testing.T) {
 	}
 }
 
+// TestCollectorReconcileDiscoversKimiChildCreatedAfterStart catches dropping
+// child agents that appear after the initial Kimi source scan.
+func TestCollectorReconcileDiscoversKimiChildCreatedAfterStart(t *testing.T) {
+	const nativeID = "kimi-session-late-child"
+	store := collectorTestStore(t)
+	session := collectorTestSession(t, store, domain.HarnessKimi, nativeID, false)
+	home := t.TempDir()
+	sessionDir := filepath.Join(home, "sessions", "wd_agent-orchestrator", nativeID)
+	mainPath := filepath.Join(sessionDir, "agents", "main", "wire.jsonl")
+	childPath := filepath.Join(sessionDir, "agents", "researcher", "wire.jsonl")
+	writeUsageFixture(t, mainPath, "{}\n")
+	writeUsageFixture(t, filepath.Join(home, "session_index.jsonl"),
+		fmt.Sprintf(`{"sessionId":%q,"sessionDir":%q,"workDir":"/repo"}`+"\n", nativeID, sessionDir))
+	collector := NewCollector(store, SourceRoots{KimiHome: home}, nil)
+
+	mustNoError(t, collector.RecordHook(context.Background(), session.ID, HookSignal{
+		Harness: domain.HarnessKimi, Event: "session-start", NativeSessionID: nativeID,
+	}))
+	writeUsageFixture(t, childPath, "{}\n")
+	mustNoError(t, collector.ReconcileSources(context.Background(), 8))
+
+	bindings, err := store.ListUsageBindingsForSession(context.Background(), session.ID)
+	if err != nil || len(bindings) != 1 {
+		t.Fatalf("bindings=%+v err=%v", bindings, err)
+	}
+	sources, err := store.ListUsageSourcesForBinding(context.Background(), bindings[0].ID)
+	if err != nil || len(sources) != 2 {
+		t.Fatalf("sources=%+v err=%v, want main and late child", sources, err)
+	}
+	subagents := map[string]bool{}
+	for _, source := range sources {
+		subagents[source.SubagentID] = true
+	}
+	if !subagents[""] || !subagents["researcher"] {
+		t.Fatalf("sources=%+v, want main and researcher", sources)
+	}
+}
+
+func TestDiscoverKimiPathRejectsUntrustedIndexRecords(t *testing.T) {
+	const nativeID = "kimi-session-untrusted"
+	tests := []struct {
+		name  string
+		setup func(t *testing.T, home string) string
+	}{
+		{
+			name: "absolute path outside sessions root",
+			setup: func(t *testing.T, home string) string {
+				t.Helper()
+				outside := filepath.Join(t.TempDir(), nativeID)
+				writeUsageFixture(t, filepath.Join(outside, "agents", "main", "wire.jsonl"), "{}\n")
+				return fmt.Sprintf(`{"sessionId":%q,"sessionDir":%q}`+"\n", nativeID, outside)
+			},
+		},
+		{
+			name: "symlink escape",
+			setup: func(t *testing.T, home string) string {
+				t.Helper()
+				outside := filepath.Join(t.TempDir(), nativeID)
+				writeUsageFixture(t, filepath.Join(outside, "agents", "main", "wire.jsonl"), "{}\n")
+				link := filepath.Join(home, "sessions", nativeID)
+				mustNoError(t, os.MkdirAll(filepath.Dir(link), 0o700))
+				if err := os.Symlink(outside, link); err != nil {
+					t.Skipf("symlink unavailable: %v", err)
+				}
+				return fmt.Sprintf(`{"sessionId":%q,"sessionDir":%q}`+"\n", nativeID, link)
+			},
+		},
+		{
+			name: "deleted latest record",
+			setup: func(t *testing.T, home string) string {
+				t.Helper()
+				sessionDir := filepath.Join(home, "sessions", nativeID)
+				writeUsageFixture(t, filepath.Join(sessionDir, "agents", "main", "wire.jsonl"), "{}\n")
+				return fmt.Sprintf(`{"sessionId":%q,"sessionDir":%q}`+"\n"+`{"sessionId":%q,"sessionDir":%q,"deleted":true}`+"\n", nativeID, sessionDir, nativeID, sessionDir)
+			},
+		},
+		{
+			name: "malformed index",
+			setup: func(t *testing.T, _ string) string {
+				t.Helper()
+				return `{"sessionId":` + "\n"
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			home := t.TempDir()
+			writeUsageFixture(t, filepath.Join(home, "session_index.jsonl"), tt.setup(t, home))
+			collector := NewCollector(collectorTestStore(t), SourceRoots{KimiHome: home}, nil)
+
+			path, err := collector.discoverKimiPath(context.Background(), nativeID)
+			mustNoError(t, err)
+			if path != "" {
+				t.Fatalf("untrusted index record discovered %q", path)
+			}
+		})
+	}
+}
+
+func TestSourceKindForHarness(t *testing.T) {
+	tests := []struct {
+		harness domain.AgentHarness
+		want    domain.UsageSourceKind
+		ok      bool
+	}{
+		{harness: domain.HarnessClaudeCode, want: domain.UsageSourceClaudeMain, ok: true},
+		{harness: domain.HarnessCodex, want: domain.UsageSourceCodexRollout, ok: true},
+		{harness: domain.HarnessKimi, want: domain.UsageSourceKimiWire, ok: true},
+		{harness: domain.HarnessAider, ok: false},
+	}
+	for _, tt := range tests {
+		got, ok := sourceKindForHarness(tt.harness)
+		if got != tt.want || ok != tt.ok {
+			t.Fatalf("sourceKindForHarness(%q) = %q, %v; want %q, %v", tt.harness, got, ok, tt.want, tt.ok)
+		}
+	}
+}
+
 func TestDiscoverClaudePathRejectsGlobMetadata(t *testing.T) {
 	root := t.TempDir()
 	writeUsageFixture(t, filepath.Join(root, "project", "native-session.jsonl"), "{}\n")

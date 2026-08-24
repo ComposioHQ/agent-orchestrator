@@ -373,12 +373,9 @@ func (c *Collector) RecordHook(ctx context.Context, sessionID domain.SessionID, 
 	}
 
 	if mainArtifact != nil {
-		kind := domain.UsageSourceClaudeMain
-		switch session.Harness {
-		case domain.HarnessCodex:
-			kind = domain.UsageSourceCodexRollout
-		case domain.HarnessKimi:
-			kind = domain.UsageSourceKimiWire
+		kind, ok := sourceKindForHarness(session.Harness)
+		if !ok {
+			return fmt.Errorf("usage: unsupported harness %q", session.Harness)
 		}
 		changed, err := c.registerHookSource(
 			ctx,
@@ -625,12 +622,9 @@ func (c *Collector) backfillSession(ctx context.Context, session domain.SessionR
 		return nil
 	}
 
-	kind := domain.UsageSourceClaudeMain
-	switch session.Harness {
-	case domain.HarnessCodex:
-		kind = domain.UsageSourceCodexRollout
-	case domain.HarnessKimi:
-		kind = domain.UsageSourceKimiWire
+	kind, ok := sourceKindForHarness(session.Harness)
+	if !ok {
+		return fmt.Errorf("usage: unsupported harness %q", session.Harness)
 	}
 	if _, err := c.registerSource(ctx, binding, kind, nativeID, "", path, now, false); err != nil {
 		return err
@@ -884,12 +878,9 @@ func (c *Collector) reconcileBinding(ctx context.Context, binding domain.UsageBi
 		targetState = domain.UsageBindingActive
 	}
 
-	kind := domain.UsageSourceClaudeMain
-	switch binding.Harness {
-	case domain.HarnessCodex:
-		kind = domain.UsageSourceCodexRollout
-	case domain.HarnessKimi:
-		kind = domain.UsageSourceKimiWire
+	kind, ok := sourceKindForHarness(binding.Harness)
+	if !ok {
+		return fmt.Errorf("usage: unsupported harness %q", binding.Harness)
 	}
 	if _, err := c.registerSource(ctx, binding, kind, binding.NativeRootID, "", path, now, false); err != nil {
 		return err
@@ -1837,6 +1828,19 @@ func (c *Collector) allowedRoots(harness domain.AgentHarness) []string {
 		return []string{c.roots.KimiHome}
 	default:
 		return nil
+	}
+}
+
+func sourceKindForHarness(harness domain.AgentHarness) (domain.UsageSourceKind, bool) {
+	switch harness {
+	case domain.HarnessClaudeCode:
+		return domain.UsageSourceClaudeMain, true
+	case domain.HarnessCodex:
+		return domain.UsageSourceCodexRollout, true
+	case domain.HarnessKimi:
+		return domain.UsageSourceKimiWire, true
+	default:
+		return "", false
 	}
 }
 

@@ -3,6 +3,7 @@ package usage
 import (
 	"encoding/json"
 	"strconv"
+	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 )
@@ -55,14 +56,15 @@ func parseKimi(source domain.UsageSourceContext, records []jsonlRecord, result *
 			recordMalformed(result)
 			continue
 		}
-		identity := firstNonEmpty(native.ID, kimiRecordTimeIdentity(native.Time), strconv.FormatInt(record.Offset, 10))
+		recordTime := decodeKimiRecordTime(native.Time)
+		identity := firstNonEmpty(native.ID, recordTime.Identity, strconv.FormatInt(record.Offset, 10))
 		event := domain.ModelUsageEvent{
 			ProviderID:        domain.UsageProviderAnthropic,
 			ModelID:           model,
 			MeasurementKind:   domain.UsageMeasurementNativeReported,
 			Tokens:            tokens,
 			ProviderUsageJSON: boundedProviderUsage(native.Usage),
-			CreatedAt:         parseUsageTimestamp(kimiRecordTimeIdentity(native.Time)),
+			CreatedAt:         recordTime.Time,
 			SourceEventKey: stableSourceEventKey(
 				"kimi",
 				source.NativeRootID,
@@ -83,17 +85,28 @@ func parseKimi(source domain.UsageSourceContext, records []jsonlRecord, result *
 	}
 }
 
-func kimiRecordTimeIdentity(raw json.RawMessage) string {
+type kimiRecordTime struct {
+	Identity string
+	Time     time.Time
+}
+
+func decodeKimiRecordTime(raw json.RawMessage) kimiRecordTime {
 	if len(raw) == 0 || string(raw) == "null" {
-		return ""
+		return kimiRecordTime{}
 	}
 	var text string
 	if err := json.Unmarshal(raw, &text); err == nil {
-		return text
+		return kimiRecordTime{Identity: text, Time: parseUsageTimestamp(text)}
 	}
 	var number json.Number
-	if err := json.Unmarshal(raw, &number); err == nil {
-		return number.String()
+	if err := json.Unmarshal(raw, &number); err != nil {
+		return kimiRecordTime{}
 	}
-	return ""
+	decoded := kimiRecordTime{Identity: number.String()}
+	milliseconds, err := number.Int64()
+	if err != nil {
+		return decoded
+	}
+	decoded.Time = time.UnixMilli(milliseconds).UTC()
+	return decoded
 }
