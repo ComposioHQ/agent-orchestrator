@@ -84,8 +84,8 @@ export function ConnectMobileContent({ active }: { active: boolean }) {
 	const [platform, setPlatform] = useState<MobilePlatform>("ios");
 	const [mode, setMode] = useState<SetupMode>("lan");
 	const platformOptions = [
-		{ value: "ios", label: t("mobile.ios"), icon: <AppleIcon className="size-4 shrink-0" /> },
-		{ value: "android", label: t("mobile.android"), icon: <AndroidIcon className="size-4 shrink-0" /> },
+		{ value: "ios", label: t("mobile.ios"), icon: <AppleIcon className="size-4 shrink-0 !text-settings-title" /> },
+		{ value: "android", label: t("mobile.android"), icon: <AndroidIcon className="size-4 shrink-0 !text-settings-title" /> },
 	] satisfies SettingsOption<MobilePlatform>[];
 	const modeOptions = [
 		{ value: "lan", label: t("mobile.lan") },
