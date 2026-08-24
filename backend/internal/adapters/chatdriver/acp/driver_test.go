@@ -1883,6 +1883,83 @@ func TestNormalizeMCPServersEmptyReturnsEmptySlice(t *testing.T) {
 	}
 }
 
+// TestACPDriverSendsStdioMCPServersToSpecMinimalAgent is the end-to-end half of
+// the stdio baseline contract. It drives the real driver over a real ACP
+// connection against an agent that advertises only what the spec requires
+// (McpCapabilities{}: no acp, no http, no sse) and asserts the agent actually
+// received the configured stdio MCP server on both reachable paths —
+// session/new from Start and session/load from Resume. Before the fix both
+// calls failed inside the client and no request ever reached the agent.
+func TestACPDriverSendsStdioMCPServersToSpecMinimalAgent(t *testing.T) {
+	stdioServer := ports.ChatMCPServerConfig{
+		Name: "filesystem", Type: "stdio", Command: "mcp-server-filesystem",
+		Args: []string{"--root", "/repo"}, Env: map[string]string{"MCP_LOG": "debug"},
+	}
+	newSpecMinimalDriver := func(agent *fakeAgent) *Driver {
+		driver := New(Config{
+			Harness:      domain.HarnessClaudeCode,
+			Capabilities: ports.ChatCapabilities{ports.ChatCapabilityStreaming: true},
+			Probe:        func(context.Context) error { return nil },
+			Launch:       func(context.Context, LaunchConfig) (Launch, error) { return Launch{Command: "fake"}, nil },
+		}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+		driver.spawn = fakeSpawn(agent)
+		return driver
+	}
+	assertStdioServerArrived := func(t *testing.T, method string, servers []acpsdk.McpServer) {
+		t.Helper()
+		if len(servers) != 1 || servers[0].Stdio == nil {
+			t.Fatalf("%s mcpServers = %#v, want one stdio server", method, servers)
+		}
+		got := servers[0].Stdio
+		if got.Name != stdioServer.Name || got.Command != stdioServer.Command {
+			t.Fatalf("%s stdio server = %+v, want name %q command %q",
+				method, got, stdioServer.Name, stdioServer.Command)
+		}
+		// These values were decoded by the agent side of the connection; re-encode
+		// them so the test transcript shows the payload the agent was handed.
+		wire, err := json.Marshal(servers)
+		if err != nil {
+			t.Fatalf("marshal %s mcpServers: %v", method, err)
+		}
+		t.Logf("%s mcpServers received by a spec-minimal agent: %s", method, wire)
+	}
+
+	t.Run("session/new", func(t *testing.T) {
+		agent := &fakeAgent{capabilities: &acpsdk.AgentCapabilities{}}
+		conv, err := newSpecMinimalDriver(agent).Start(context.Background(), ports.ChatStartConfig{
+			WorkspacePath: t.TempDir(),
+			MCPServers:    []ports.ChatMCPServerConfig{stdioServer},
+		})
+		if err != nil {
+			t.Fatalf("Start with a stdio MCP server against an agent advertising no MCP capability: %v", err)
+		}
+		defer conv.Close()
+
+		agent.mu.Lock()
+		servers := agent.newParams.McpServers
+		agent.mu.Unlock()
+		assertStdioServerArrived(t, "session/new", servers)
+	})
+
+	t.Run("session/load", func(t *testing.T) {
+		agent := &fakeAgent{capabilities: &acpsdk.AgentCapabilities{LoadSession: true}}
+		conv, err := newSpecMinimalDriver(agent).Resume(context.Background(), ports.ChatResumeConfig{
+			ProviderConversationID: "provider-session-1",
+			WorkspacePath:          t.TempDir(),
+			MCPServers:             []ports.ChatMCPServerConfig{stdioServer},
+		})
+		if err != nil {
+			t.Fatalf("Resume with a stdio MCP server against an agent advertising no MCP capability: %v", err)
+		}
+		defer conv.Close()
+
+		agent.mu.Lock()
+		servers := agent.loadParams.McpServers
+		agent.mu.Unlock()
+		assertStdioServerArrived(t, "session/load", servers)
+	})
+}
+
 // TestACPDriverPreservesEarlyConfigOptionUpdates verifies that config option
 // updates received via session/update during session/new are not overwritten
 // when the NewSession response carries an empty config options catalog.
