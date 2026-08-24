@@ -74,7 +74,42 @@ func WriteError(w http.ResponseWriter, r *http.Request, err error) {
 		WriteAPIError(w, r, status, kind, e.Code, e.Message, e.Details)
 		return
 	}
+	// A transient failure (the database was momentarily busy/locked, or a
+	// server-side deadline elapsed) is retryable, not a server fault. Map it to
+	// 503 with a stable code so it is not counted or alerted as an
+	// INTERNAL_ERROR 500 and so clients can back off and retry.
+	if isTransient(err) {
+		WriteAPIError(w, r, http.StatusServiceUnavailable, "unavailable", "SERVICE_UNAVAILABLE",
+			"The service is momentarily unavailable, please retry.", nil)
+		return
+	}
 	WriteAPIError(w, r, http.StatusInternalServerError, "internal", "INTERNAL_ERROR", "Internal server error", nil)
+}
+
+// SQLite primary result codes for a busy/locked database. Extended codes (e.g.
+// SQLITE_BUSY_SNAPSHOT) carry these in their low byte. Declared here rather
+// than imported so the envelope layer does not depend on the DB driver; the
+// modernc.org/sqlite error type is matched structurally by its Code() method.
+const (
+	sqliteBusy   = 5
+	sqliteLocked = 6
+)
+
+// isTransient reports whether err is a retryable contention/timeout condition
+// rather than a genuine server fault. It matches the SQLite driver's error via
+// a Code() method (no driver import), plus server-side context deadlines.
+// Context cancellation (the client went away) is deliberately excluded — the
+// response never reaches that caller, and it is not retryable.
+func isTransient(err error) bool {
+	if errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+	var coder interface{ Code() int }
+	if errors.As(err, &coder) {
+		c := coder.Code()
+		return c == sqliteBusy || c == sqliteLocked || c&0xFF == sqliteBusy || c&0xFF == sqliteLocked
+	}
+	return false
 }
 
 // httpStatus maps a semantic failure Kind to its HTTP status and wire word.
@@ -88,6 +123,8 @@ func httpStatus(k apierr.Kind) (int, string) {
 		return http.StatusConflict, "conflict"
 	case apierr.KindForbidden:
 		return http.StatusForbidden, "forbidden"
+	case apierr.KindUnavailable:
+		return http.StatusServiceUnavailable, "unavailable"
 	case apierr.KindInternal:
 		return http.StatusInternalServerError, "internal"
 	default:
