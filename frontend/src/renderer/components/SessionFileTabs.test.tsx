@@ -17,7 +17,10 @@ describe("SessionFileTabs", () => {
 				/>
 			</div>,
 		);
-		await userEvent.click(screen.getByRole("tab", { name: "App.tsx" }));
+		const tab = screen.getByRole("tab", { name: "App.tsx" });
+		const languageIcon = tab.querySelector('[aria-hidden="true"]');
+		expect(languageIcon).toBeInTheDocument();
+		await userEvent.click(languageIcon!);
 		expect(onActivateFile).toHaveBeenCalledWith("src/App.tsx");
 		await userEvent.click(screen.getByRole("button", { name: "Close App.tsx" }));
 		expect(onCloseFile).toHaveBeenCalledWith("src/App.tsx");

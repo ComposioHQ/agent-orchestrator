@@ -38,18 +38,18 @@ export function SessionFileTabs({
 						)}
 						key={path}
 					>
-						<WorkspaceEntryIcon className="size-icon-base" kind="file" name={name} />
 						<button
 							aria-label={name}
 							aria-selected={active}
-							className="min-w-0 flex-1 truncate text-left text-control font-medium leading-none"
+							className="inline-flex min-w-0 flex-1 items-center gap-1.5 truncate text-left text-control font-medium leading-none"
 							onClick={() => onActivateFile(path)}
 							role="tab"
 							tabIndex={active ? 0 : -1}
 							title={path}
 							type="button"
 						>
-							{name}
+							<WorkspaceEntryIcon className="size-icon-base shrink-0" kind="file" name={name} />
+							<span className="truncate">{name}</span>
 						</button>
 						<button
 							aria-label={t("files.closeTab", { name })}
