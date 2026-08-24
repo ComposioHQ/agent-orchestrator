@@ -106,6 +106,36 @@ func TestNewPicksUpShellFromEnv(t *testing.T) {
 	}
 }
 
+func TestNewPrefersBundledTmuxFromEnv(t *testing.T) {
+	t.Setenv("AO_TMUX_BINARY", "/opt/ao/resources/tmux/bin/tmux")
+	r := New(Options{})
+	if got := r.binary; got != "/opt/ao/resources/tmux/bin/tmux" {
+		t.Fatalf("binary = %q, want bundled tmux", got)
+	}
+}
+
+func TestNewExplicitBinaryOverridesBundledTmuxEnv(t *testing.T) {
+	t.Setenv("AO_TMUX_BINARY", "/opt/ao/resources/tmux/bin/tmux")
+	r := New(Options{Binary: "tmux-test"})
+	if got := r.binary; got != "tmux-test" {
+		t.Fatalf("binary = %q, want explicit option", got)
+	}
+}
+
+func TestNewUsesAppOwnedTmuxSocketFromEnv(t *testing.T) {
+	t.Setenv("AO_TMUX_SOCKET_NAME", "ao")
+	r := New(Options{Binary: "tmux-test"})
+	fr := &fakeRunner{}
+	r.runner = fr
+
+	if _, err := r.run(context.Background(), "list-sessions"); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if got, want := fr.calls[0].args, []string{"-L", "ao", "list-sessions"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("args = %#v, want %#v", got, want)
+	}
+}
+
 // TestExecRunnerRunsFromStableDir is the direct regression test for Fix 1:
 // execRunner.Run must pin cmd.Dir to os.TempDir() rather than inheriting
 // whatever the daemon process's own cwd happens to be. The first tmux CLI
@@ -665,6 +695,39 @@ func TestRestartRejectsMismatchedSessionHandle(t *testing.T) {
 	}
 }
 
+func TestIsAliveAdoptsSessionFromLegacyDefaultSocket(t *testing.T) {
+	r := New(Options{Binary: "tmux-test", SocketName: "ao", Timeout: time.Second})
+	fr := &fakeRunnerSequence{results: []fakeRunnerResult{
+		{out: []byte("can't find session: sess-1"), err: &exec.ExitError{}},
+		{}, // legacy default-socket discovery
+		{}, // first has-session call after discovery
+		{}, // cached second has-session call
+	}}
+	r.runner = fr
+	handle := ports.RuntimeHandle{ID: "sess-1"}
+
+	for i := 0; i < 2; i++ {
+		alive, err := r.IsAlive(context.Background(), handle)
+		if err != nil || !alive {
+			t.Fatalf("IsAlive call %d = (%v, %v), want (true, nil)", i+1, alive, err)
+		}
+	}
+	want := [][]string{
+		append([]string{"-L", "ao"}, hasSessionArgs("sess-1")...),
+		hasSessionArgs("sess-1"),
+		hasSessionArgs("sess-1"),
+		hasSessionArgs("sess-1"),
+	}
+	if len(fr.calls) != len(want) {
+		t.Fatalf("calls = %d, want %d: %+v", len(fr.calls), len(want), fr.calls)
+	}
+	for i := range want {
+		if !reflect.DeepEqual(fr.calls[i].args, want[i]) {
+			t.Fatalf("call %d args = %#v, want %#v", i, fr.calls[i].args, want[i])
+		}
+	}
+}
+
 // -- Destroy tests --
 
 func TestDestroyIsIdempotentWhenSessionMissing(t *testing.T) {
@@ -1197,6 +1260,18 @@ func TestAttachCommandReturnsExpectedArgv(t *testing.T) {
 		t.Fatalf("AttachCommand: %v", err)
 	}
 	want := []string{"/usr/bin/tmux", "-u", "-T", "RGB", "attach-session", "-t", "sess-1"}
+	if !reflect.DeepEqual(argv, want) {
+		t.Fatalf("argv = %#v, want %#v", argv, want)
+	}
+}
+
+func TestAttachCommandUsesAppOwnedSocket(t *testing.T) {
+	r := New(Options{Binary: "/opt/ao/resources/tmux/bin/tmux", SocketName: "ao", Timeout: time.Second})
+	argv, err := r.attachCommand(ports.RuntimeHandle{ID: "sess-1"})
+	if err != nil {
+		t.Fatalf("AttachCommand: %v", err)
+	}
+	want := []string{"/opt/ao/resources/tmux/bin/tmux", "-L", "ao", "-u", "-T", "RGB", "attach-session", "-t", "sess-1"}
 	if !reflect.DeepEqual(argv, want) {
 		t.Fatalf("argv = %#v, want %#v", argv, want)
 	}

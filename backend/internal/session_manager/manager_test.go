@@ -5110,6 +5110,7 @@ func TestSpawn_RejectsMissingTmuxBeforeSessionRow(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("Windows uses ConPTY, not tmux")
 	}
+	t.Setenv("AO_TMUX_BINARY", "")
 	st := newFakeStore()
 	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: testRoleAgents()}
 	rt := &fakeRuntime{}
@@ -5134,6 +5135,26 @@ func TestSpawn_RejectsMissingTmuxBeforeSessionRow(t *testing.T) {
 	}
 	if rt.created != 0 {
 		t.Fatal("runtime must not be created when tmux is missing")
+	}
+}
+
+func TestValidateRuntimePrerequisites_AllowsConfiguredBundledTmux(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows uses ConPTY, not tmux")
+	}
+	bundled := filepath.Join(t.TempDir(), "resources", "tmux", "bin", "tmux")
+	t.Setenv("AO_TMUX_BINARY", bundled)
+	m := &Manager{
+		executable: func() (string, error) { return "", errors.New("unexpected executable lookup") },
+		lookPath: func(name string) (string, error) {
+			if name == bundled {
+				return bundled, nil
+			}
+			return "", fmt.Errorf("exec: %q: not found", name)
+		},
+	}
+	if err := m.validateRuntimePrerequisites(); err != nil {
+		t.Fatalf("validateRuntimePrerequisites() = %v, want configured bundled tmux accepted", err)
 	}
 }
 

@@ -58,7 +58,8 @@ const APPROVAL_ORDER: ApprovalMode[] = [
 ];
 
 const TRIGGER_CLASS =
-	"h-7 gap-1 bg-transparent rounded-lg px-3 text-xs leading-none text-muted-foreground hover:bg-white/5 hover:text-foreground data-[state=open]:bg-white/5 data-[state=open]:text-foreground";
+	"h-7 gap-1 bg-transparent rounded-lg px-3 text-[12px]! leading-none text-muted-foreground hover:bg-white/5 hover:text-foreground data-[state=open]:bg-white/5 data-[state=open]:text-foreground";
+const CHAT_MENU_CLASS = "chat-settings-menu text-[12px]!";
 
 export function TurnSettingsBar({
 	models,
@@ -170,7 +171,7 @@ export function TurnSettingsBar({
 								disabled={disabled}
 							>
 								<OptionMenuLabel
-									className={cn("flex items-baseline justify-between gap-2")}
+									className={cn("flex items-baseline justify-between gap-2 text-[12px]!")}
 								>
 									<span>Approvals</span>
 									<span className="text-[11px] font-normal text-muted-foreground">
@@ -185,7 +186,7 @@ export function TurnSettingsBar({
 									>
 										<span
 											className={cn(
-												"text-xs",
+														"text-xs",
 												mode === (settings.approvalMode ?? "default")
 													? "text-foreground"
 													: "text-muted-foreground",
@@ -289,12 +290,12 @@ function ModelEffortPicker({
 						/>
 					) : null}
 				</OptionMenuTrigger>
-			<OptionMenuContent align="start" >
+			<OptionMenuContent align="start" className={CHAT_MENU_CLASS}>
 				<OptionMenuSub onOpenChange={setModelSubOpen}>
 					<OptionMenuSubTrigger label="Model" value={modelLabel} />
 					{/* Scroll on an inner strip: the surface utility caps height but wheel
 					    events do not reliably reach an outer overflow on nested submenus. */}
-					<OptionMenuSubContent scrollable>
+					<OptionMenuSubContent scrollable className={CHAT_MENU_CLASS}>
 						<div className="relative grid min-h-0 flex-1 grid-rows-[minmax(0,1fr)] overflow-hidden">
 							<div
 								ref={modelScrollRef}
@@ -313,7 +314,7 @@ function ModelEffortPicker({
 										<span className="flex w-full items-baseline gap-2">
 											<span
 												className={cn(
-													"text-xs",
+																"text-xs",
 													model.id === settings.model
 														? "text-foreground"
 														: "text-muted-foreground",
@@ -346,7 +347,7 @@ function ModelEffortPicker({
 				{efforts.length > 0 ? (
 					<OptionMenuSub>
 						<OptionMenuSubTrigger label="Effort" value={effortLabel ? capitalize(effortLabel) : "Effort"} />
-						<OptionMenuSubContent>
+						<OptionMenuSubContent className={CHAT_MENU_CLASS}>
 							{efforts.map((effort) => (
 								<OptionMenuItem
 									key={effort}
@@ -418,7 +419,7 @@ function ClubbedConfigPicker({
 				>
 					<span className="min-w-0 max-w-[22ch] truncate">{groupLabel}</span>
 				</OptionMenuTrigger>
-			<OptionMenuContent align="start" >
+			<OptionMenuContent align="start" className={CHAT_MENU_CLASS}>
 				{modelOptions.map((option) => (
 					<OptionSubmenu key={option.id} option={option} onChange={onChange} scrollable />
 				))}
@@ -443,7 +444,7 @@ function MoreOptionsSubmenu({
 	return (
 		<OptionMenuSub>
 			<OptionMenuSubTrigger label="More" />
-			<OptionMenuSubContent >
+			<OptionMenuSubContent className={CHAT_MENU_CLASS}>
 				{options.map((option) => (
 					<OptionSubmenu key={option.id} option={option} onChange={onChange} />
 				))}
@@ -465,7 +466,7 @@ function OptionSubmenu({
 	return (
 		<OptionMenuSub>
 			<OptionMenuSubTrigger label={option.name} value={current} />
-			<OptionMenuSubContent scrollable={scrollable}>
+			<OptionMenuSubContent scrollable={scrollable} className={CHAT_MENU_CLASS}>
 				{scrollable ? (
 					<div className="relative grid min-h-0 flex-1 grid-rows-[minmax(0,1fr)] overflow-hidden">
 						<div className="model-menu-scroll flex min-h-0 flex-col gap-px overflow-y-auto overscroll-contain pb-1">
@@ -606,7 +607,7 @@ function Picker({
 					<span className="min-w-0 max-w-[16ch] truncate">{label}</span>
 					{badge}
 				</OptionMenuTrigger>
-			<OptionMenuContent align="end" >
+			<OptionMenuContent align="end" className={CHAT_MENU_CLASS}>
 				{children}
 			</OptionMenuContent>
 		</OptionMenu>
