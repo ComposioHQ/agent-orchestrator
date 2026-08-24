@@ -31,7 +31,7 @@ export function SessionFileTabs({
 				return (
 					<span
 						className={cn(
-							"group relative inline-flex min-w-shell-tab-min max-w-shell-tab-max self-stretch items-center gap-1.5 border-r border-border px-3",
+							"group relative inline-flex min-w-shell-tab-min max-w-shell-tab-max self-stretch items-center gap-1.5 border-r border-border py-0 pl-3 pr-1.5",
 							active
 								? "bg-overlay text-foreground after:absolute after:inset-x-0 after:bottom-0 after:h-0.5 after:bg-foreground/80"
 								: "text-muted-foreground hover:bg-raised hover:text-foreground",

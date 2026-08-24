@@ -717,7 +717,7 @@ function LineFeedbackButton({
 	);
 }
 
-function FileAnnotationComposer({ annotation }: { annotation: FileAnnotationModel }) {
+export function FileAnnotationComposer({ annotation }: { annotation: FileAnnotationModel }) {
 	const { t } = useTranslation();
 	const target = annotation.target;
 	if (!target) return null;
