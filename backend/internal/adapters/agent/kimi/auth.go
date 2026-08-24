@@ -118,9 +118,11 @@ type kimiOAuthRef struct {
 }
 
 type kimiCredentialSource struct {
-	APIKey string            `json:"api_key" toml:"api_key"`
-	Env    map[string]string `json:"env" toml:"env"`
-	OAuth  *kimiOAuthRef     `json:"oauth" toml:"oauth"`
+	Type    string            `json:"type" toml:"type"`
+	APIKey  string            `json:"api_key" toml:"api_key"`
+	BaseURL string            `json:"base_url" toml:"base_url"`
+	Env     map[string]string `json:"env" toml:"env"`
+	OAuth   *kimiOAuthRef     `json:"oauth" toml:"oauth"`
 }
 
 type kimiAuthConfig struct {

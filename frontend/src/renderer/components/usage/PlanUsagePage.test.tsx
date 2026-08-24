@@ -163,9 +163,11 @@ describe("PlanUsagePage", () => {
 	});
 
 	it("renders Kimi dynamic quota windows through the generic card", () => {
+		const fiveHoursFromNow = new Date(Date.now() + 5 * 60 * 60 * 1000).toISOString();
 		hookState.providers = [quota({
 			accountLabel: "Kimi",
 			completeness: "complete",
+			planType: "Ultra",
 			limits: [
 				{
 					category: "rate_limit",
@@ -182,6 +184,7 @@ describe("PlanUsagePage", () => {
 					id: "5h",
 					name: "5h limit",
 					remainingPercent: 100,
+					resetsAt: fiveHoursFromNow,
 					scope: "account",
 					severity: "normal",
 					usedPercent: 0,
@@ -195,9 +198,11 @@ describe("PlanUsagePage", () => {
 		render(<PlanUsagePage />);
 
 		expect(screen.getByText("Kimi")).toBeInTheDocument();
+		expect(screen.getByText("Ultra")).toBeInTheDocument();
 		expect(screen.getByText("Weekly limit")).toBeInTheDocument();
 		expect(screen.getByText("5h limit")).toBeInTheDocument();
 		expect(screen.getByText("91% remaining")).toBeInTheDocument();
 		expect(screen.getByText("100% remaining")).toBeInTheDocument();
+		expect(screen.getByText("Resets in 5h")).toBeInTheDocument();
 	});
 });

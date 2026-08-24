@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters"
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/kimi"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/runtime/runtimeselect"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/runtime/tmux"
 	telemetryadapter "github.com/aoagents/agent-orchestrator/backend/internal/adapters/telemetry"
@@ -137,6 +138,13 @@ func TestWiring_AgentResolverResolvesRealAdapters(t *testing.T) {
 	}
 	if _, ok := resolver.Agent(""); ok {
 		t.Fatal("empty harness resolved to an agent; want a miss")
+	}
+	kimiAgent, ok := resolver.Agent(domain.HarnessKimi)
+	if !ok {
+		t.Fatal("Kimi adapter missing from resolver")
+	}
+	if _, ok := kimiAgent.(kimi.QuotaPlugin); !ok {
+		t.Fatalf("Kimi adapter %T does not expose the quota registration capability", kimiAgent)
 	}
 }
 
