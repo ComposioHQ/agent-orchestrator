@@ -1,5 +1,3 @@
-import { useQuery } from "@tanstack/react-query";
-import { Smartphone } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import type { ThemePreference, ThemeStyle } from "../../lib/theme";
 import type { AppLocale } from "../../i18n";
@@ -7,10 +5,8 @@ import { useLocaleStore } from "../../stores/locale-store";
 import { useSoundNotificationsStore } from "../../stores/sound-notifications-store";
 import { useUiStore } from "../../stores/ui-store";
 import { SettingsOptionMenu, type SettingsOption } from "./SettingsOptionMenu";
-import { SettingsExpandableRow, SettingsRow } from "./SettingsRow";
+import { SettingsRow } from "./SettingsRow";
 import { SettingsSection } from "./SettingsSection";
-import { ConnectMobileContent, fetchMobileStatus, mobileStatusQueryKey } from "./ConnectMobileContent";
-import { MobileDevicesSection } from "./MobileDevicesSection";
 import { Switch } from "../ui/switch";
 import { cn } from "../../lib/utils";
 import { useSettings, useUpdateSessionInterface } from "../../hooks/useSettings";
@@ -56,19 +52,6 @@ function SessionInterfaceRow() {
 					{note}
 				</p>
 			) : null}
-		</div>
-	);
-}
-
-/** Paired-device roster, shown below the Connect Mobile row. Mounted only
- *  while the bridge is on — the roster's mute/remove controls issue real
- *  PATCH/DELETE calls, so they must be absent from the DOM otherwise. */
-function PairedDevices() {
-	const query = useQuery({ queryKey: mobileStatusQueryKey, queryFn: fetchMobileStatus });
-	if (!query.data?.enabled) return null;
-	return (
-		<div className="pb-3 [&>section]:mt-2">
-			<MobileDevicesSection />
 		</div>
 	);
 }
@@ -179,14 +162,6 @@ export function GeneralSettingsSection({
 						{t("settings.soundNotifications.saveFailed")}
 					</p>
 				) : null}
-			</SettingsSection>
-
-			{/* Mobile */}
-			<SettingsSection title={t("settings.mobile")} grouped>
-				<SettingsExpandableRow icon={Smartphone} label={t("settings.connectMobile")}>
-					{(open) => <ConnectMobileContent active={open} />}
-				</SettingsExpandableRow>
-				<PairedDevices />
 			</SettingsSection>
 
 			{/* Advanced */}

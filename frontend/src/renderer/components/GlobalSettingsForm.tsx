@@ -1,7 +1,10 @@
 import { lazy, Suspense } from "react";
 import { useTranslation } from "react-i18next";
+import type { GlobalSettingsSection as GlobalSettingsPage } from "../stores/ui-store";
 import { GeneralSettingsSection } from "./settings/GeneralSettingsSection";
+import { ConnectMobileContent } from "./settings/ConnectMobileContent";
 import { KeyboardShortcutsContent } from "./settings/KeyboardShortcutsContent";
+import { MobileDevicesSection } from "./settings/MobileDevicesSection";
 import { ReportProblemContent } from "./settings/ReportProblemContent";
 import { SettingsSection } from "./settings/SettingsSection";
 
@@ -10,7 +13,7 @@ const UpdatesSection = lazy(async () => {
 	return { default: module.UpdatesSection };
 });
 
-export type GlobalSettingsSection = "general" | "shortcuts" | "updates" | "help" | "all";
+export type GlobalSettingsSection = GlobalSettingsPage | "all";
 
 /** Full-width panel for page-level content (forms, editors) — matches the
  *  grouped-row surface so pages read as one coherent family. */
@@ -36,6 +39,15 @@ export function GlobalSettingsForm({
 			data-testid="settings-page"
 		>
 			{(all || section === "general") && <GeneralSettingsSection titleHidden={titleHidden} />}
+
+			{(all || section === "mobile") && (
+				<SettingsSection title={t("settings.mobile")} titleHidden={titleHidden}>
+					<SettingsContentPanel>
+						<ConnectMobileContent active />
+						<MobileDevicesSection />
+					</SettingsContentPanel>
+				</SettingsSection>
+			)}
 
 			{(all || section === "shortcuts") && (
 				<SettingsSection title={t("settings.keyboardShortcuts")} titleHidden={titleHidden}>

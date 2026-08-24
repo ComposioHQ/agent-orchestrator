@@ -253,7 +253,7 @@ beforeEach(() => {
 	cloudSessionState.status = "unauthenticated";
 	cloudSessionState.signIn.mockReset();
 	cloudSessionState.signOut.mockReset().mockResolvedValue(undefined);
-	useUiStore.setState({ isCommandPaletteOpen: false, isConnectMobileOpen: false, settingsModal: null });
+	useUiStore.setState({ isCommandPaletteOpen: false, settingsModal: null });
 	getMock.mockReset();
 	getMock.mockResolvedValue({
 		data: {
@@ -1221,12 +1221,11 @@ describe("Sidebar", () => {
 		expect(navigateMock).not.toHaveBeenCalled();
 	});
 
-	it("opens the Connect Mobile modal from the footer", async () => {
+	it("opens the Mobile settings page from the footer", async () => {
 		const user = userEvent.setup();
 		renderSidebar();
 		await user.click((await screen.findAllByRole("button", { name: "Connect Mobile" }))[0]);
-		expect(useUiStore.getState().isConnectMobileOpen).toBe(true);
-		expect(useUiStore.getState().settingsModal).toBeNull();
+		expect(useUiStore.getState().settingsModal).toEqual({ scope: "global", section: "mobile" });
 		expect(navigateMock).not.toHaveBeenCalled();
 	});
 

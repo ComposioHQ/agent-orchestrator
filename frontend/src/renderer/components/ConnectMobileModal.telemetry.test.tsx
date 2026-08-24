@@ -30,14 +30,14 @@ vi.mock("../lib/api-client", () => ({
 	apiErrorMessage: () => "failed",
 }));
 
-import { ConnectMobileModal } from "./ConnectMobileModal";
+import { ConnectMobileContent } from "./settings/ConnectMobileContent";
 
-function renderModal(open = true) {
+function renderMobileSettings(active = true) {
 	const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 	return render(
 		<QueryClientProvider client={client}>
 			<TooltipProvider>
-				<ConnectMobileModal open={open} onOpenChange={vi.fn()} />
+				<ConnectMobileContent active={active} />
 			</TooltipProvider>
 		</QueryClientProvider>,
 	);
@@ -61,7 +61,7 @@ describe("Connect Mobile telemetry", () => {
 
 	test("reports the open once, carrying the real bridge state", async () => {
 		mobileStatus.enabled = true;
-		renderModal();
+		renderMobileSettings();
 
 		await waitFor(() => expect(openEvents()).toHaveLength(1));
 		expect(openEvents()[0][1]).toEqual({ bridge_enabled: true });
@@ -69,10 +69,10 @@ describe("Connect Mobile telemetry", () => {
 
 	test("does not re-report the open when the bridge is toggled on", async () => {
 		// The status query is invalidated by every enable/disable/regenerate, so
-		// bridge_enabled changes while the modal stays open. Without the once-per-open
+		// bridge_enabled changes while the Mobile page stays open. Without the once-per-open
 		// guard the effect re-fires on that change and a single visit reports an open
 		// for each toggle, inflating the top of the funnel it is supposed to measure.
-		renderModal();
+		renderMobileSettings();
 		await waitFor(() => expect(openEvents()).toHaveLength(1));
 		expect(openEvents()[0][1]).toEqual({ bridge_enabled: false });
 
@@ -85,7 +85,7 @@ describe("Connect Mobile telemetry", () => {
 	});
 
 	test("reports nothing while closed", async () => {
-		renderModal(false);
+		renderMobileSettings(false);
 		// The status query is disabled while closed, so there is no state to report
 		// and nothing should be emitted.
 		await new Promise((r) => setTimeout(r, 20));
@@ -93,7 +93,7 @@ describe("Connect Mobile telemetry", () => {
 	});
 
 	test("reports a successful enable, and never the pairing secrets", async () => {
-		renderModal();
+		renderMobileSettings();
 		await waitFor(() => expect(openEvents()).toHaveLength(1));
 
 		await userEvent.click(screen.getByRole("button", { name: "Generate" }));
@@ -111,7 +111,7 @@ describe("Connect Mobile telemetry", () => {
 
 	test("reports a failed enable as failed rather than staying silent", async () => {
 		post.mockResolvedValue({ data: undefined, error: { message: "bind failed" } });
-		renderModal();
+		renderMobileSettings();
 		await waitFor(() => expect(openEvents()).toHaveLength(1));
 
 		await userEvent.click(screen.getByRole("button", { name: "Generate" }));

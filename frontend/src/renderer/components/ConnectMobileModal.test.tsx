@@ -37,14 +37,14 @@ vi.mock("../lib/api-client", () => ({
 	apiErrorMessage: () => "failed",
 }));
 
-import { ConnectMobileModal, pairingPayload } from "./ConnectMobileModal";
+import { ConnectMobileContent, pairingPayload } from "./settings/ConnectMobileContent";
 
-function renderModal() {
+function renderMobileSettings() {
 	const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 	return render(
 		<QueryClientProvider client={client}>
 			<TooltipProvider>
-				<ConnectMobileModal open={true} onOpenChange={vi.fn()} />
+				<ConnectMobileContent active />
 			</TooltipProvider>
 		</QueryClientProvider>,
 	);
@@ -76,22 +76,14 @@ test("QR payload carries host, port, and password for one-scan connect", () => {
 	expect(JSON.parse(s)).toEqual({ v: 1, host: "192.168.1.42", port: 3011, password: "fake-password-for-testing" });
 });
 
-test("uses the compact mobile-dialog width", () => {
-	renderModal();
-	expect(screen.getByRole("dialog")).toHaveClass(
-		"w-[min(var(--size-settings-mobile-dialog),calc(100vw-var(--space-8)))]",
-	);
-	expect(screen.getByRole("dialog").querySelector('[data-slot="dialog-header"]')).toHaveClass("border-b-0", "pb-0");
-});
-
 test("encodes the LAN address by default", async () => {
-	renderModal();
+	renderMobileSettings();
 	await waitFor(() => expect(qrPayload()).not.toBeNull());
 	expect(JSON.parse(qrPayload()!).host).toBe("192.168.1.42");
 });
 
 test("shows a square Google Play QR tooltip for Android", async () => {
-	renderModal();
+	renderMobileSettings();
 	await userEvent.click(await screen.findByRole("radio", { name: "Android" }));
 	await userEvent.hover(screen.getByRole("button", { name: "Open Agent Orchestrator on Google Play" }));
 
@@ -99,7 +91,7 @@ test("shows a square Google Play QR tooltip for Android", async () => {
 });
 
 test("shows a QR-only TestFlight tooltip", async () => {
-	renderModal();
+	renderMobileSettings();
 	await userEvent.hover(await screen.findByRole("button", { name: "Join the TestFlight beta" }));
 
 	const tooltip = await screen.findByTestId("testflight-qr");
@@ -108,7 +100,7 @@ test("shows a QR-only TestFlight tooltip", async () => {
 });
 
 test("re-encodes the QR with the Tailscale address when that mode is selected", async () => {
-	renderModal();
+	renderMobileSettings();
 	await waitFor(() => expect(qrPayload()).not.toBeNull());
 
 	await userEvent.click(screen.getByRole("radio", { name: "Tailscale" }));
@@ -125,7 +117,7 @@ test("re-encodes the QR with the Tailscale address when that mode is selected", 
 
 test("shows a hint instead of a QR when Tailscale is not running", async () => {
 	mobileStatus.tailscaleHost = "";
-	renderModal();
+	renderMobileSettings();
 	await waitFor(() => expect(qrPayload()).not.toBeNull());
 
 	await userEvent.click(screen.getByRole("radio", { name: "Tailscale" }));
@@ -139,13 +131,13 @@ test("shows a hint instead of a QR when Tailscale is not running", async () => {
 // generated itself.
 test("shows a hint instead of an unscannable QR when there is no LAN address", async () => {
 	mobileStatus.host = "";
-	renderModal();
+	renderMobileSettings();
 	await waitFor(() => expect(screen.getByText(/No network address found/i)).toBeInTheDocument());
 	expect(qrPayload()).toBeNull();
 });
 
 test("the address line follows the selected mode", async () => {
-	renderModal();
+	renderMobileSettings();
 	const address = await screen.findByTestId("mobile-pairing-address");
 	expect(within(address).getByText("192.168.1.42:3011")).toBeInTheDocument();
 
@@ -155,7 +147,7 @@ test("the address line follows the selected mode", async () => {
 
 test("shows the unencrypted-traffic warning for plaintext pairing", async () => {
 	mobileStatus.warning = "Traffic on this connection is not encrypted.";
-	renderModal();
+	renderMobileSettings();
 
 	expect(await screen.findByText(mobileStatus.warning)).toBeInTheDocument();
 });
@@ -166,7 +158,7 @@ test("hides the unencrypted-traffic warning when secure pairing is active", asyn
 		enabled: true, available: true, active: true,
 		host: "prasads-macbook-pro.tail057d04.ts.net", port: 443, reason: "",
 	};
-	renderModal();
+	renderMobileSettings();
 	await screen.findByText(mobileStatus.warning);
 
 	await userEvent.click(screen.getByRole("radio", { name: "Tailscale" }));
@@ -191,7 +183,7 @@ test("Tailscale tab encodes the MagicDNS host over 443 when secure pairing is ac
 		enabled: true, available: true, active: true,
 		host: "prasads-macbook-pro.tail057d04.ts.net", port: 443, reason: "",
 	};
-	renderModal();
+	renderMobileSettings();
 	await waitFor(() => expect(qrPayload()).not.toBeNull());
 	await userEvent.click(screen.getByRole("radio", { name: "Tailscale" }));
 
@@ -208,7 +200,7 @@ test("shows setup steps and no QR when certs are not enabled", async () => {
 		enabled: true, available: false, active: false,
 		host: "h.tail1.ts.net", port: 0, reason: "no_certs",
 	};
-	renderModal();
+	renderMobileSettings();
 	await waitFor(() => expect(qrPayload()).not.toBeNull());
 	await userEvent.click(screen.getByRole("radio", { name: "Tailscale" }));
 
@@ -224,7 +216,7 @@ test("shows an error message when the secure-pairing toggle fails", async () => 
 		data: undefined,
 		error: { message: "secure pairing failed" },
 	}));
-	renderModal();
+	renderMobileSettings();
 	await waitFor(() => expect(qrPayload()).not.toBeNull());
 	await userEvent.click(screen.getByRole("radio", { name: "Tailscale" }));
 

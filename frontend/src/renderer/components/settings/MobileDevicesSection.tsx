@@ -72,10 +72,6 @@ export async function fetchDevices(): Promise<MobileDevice[]> {
 // MobileDevicesSection lists every paired phone with whether its app is open right
 // now, a per-device mute switch, and a remove action. Live status comes from the
 // daemon's presence tracker, which is fed by each phone's own REST poll.
-//
-// The caller (ConnectMobileModal) must only mount this while the bridge is
-// enabled — it is not gated on that itself, and its Switch/remove buttons issue
-// real PATCH/DELETE calls the moment they're interacted with.
 export function MobileDevicesSection() {
 	const { t, i18n } = useTranslation();
 	const queryClient = useQueryClient();
@@ -143,7 +139,7 @@ export function MobileDevicesSection() {
 		null;
 
 	return (
-		<section className="mt-6">
+		<section className="mt-8 border-t border-[var(--color-border-settings-input)] pt-5">
 			<h3 className="text-xs font-medium leading-4 text-settings-muted">{t("mobile.devices.title")}</h3>
 			<p className="mt-1 text-caption text-settings-muted">{t("mobile.devices.description")}</p>
 
@@ -160,13 +156,13 @@ export function MobileDevicesSection() {
 			) : (
 				<>
 					{queryError && <p className="mt-3 text-caption text-error">{queryError.message}</p>}
-					<ul className="mt-3 grid gap-2">
+					<ul className="mt-3 overflow-hidden rounded-md border border-[var(--color-border-settings-input)] divide-y divide-[var(--color-border-settings-input)]">
 						{sortedDevices.map((device) => {
 							const name = device.deviceName || t("mobile.devices.unnamed");
 							return (
 								<li
 									key={device.installId}
-									className="flex items-center gap-3 rounded-lg border border-[var(--color-border-settings-input)] bg-[var(--color-bg-settings-input)] p-3"
+									className="flex min-h-12 items-center gap-3 px-3 py-2.5"
 								>
 									<Smartphone className="size-4 shrink-0 text-settings-muted" />
 									<div className="min-w-0 flex-1">
@@ -200,7 +196,7 @@ export function MobileDevicesSection() {
 									{confirmingRemoval === device.installId ? (
 										<button
 											type="button"
-											className="text-caption text-error"
+											className="min-h-10 px-1 text-caption text-error"
 											disabled={remove.isPending}
 											onClick={() => remove.mutate(device.installId)}
 										>
@@ -210,7 +206,7 @@ export function MobileDevicesSection() {
 										<button
 											type="button"
 											aria-label={t("mobile.devices.removeAria", { name })}
-											className="text-settings-muted hover:text-settings-label"
+											className="grid size-10 place-items-center rounded-md text-settings-muted transition-colors hover:bg-interactive-hover hover:text-settings-label focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
 											onClick={() => setConfirmingRemoval(device.installId)}
 										>
 											<Trash2 className="size-4" />
