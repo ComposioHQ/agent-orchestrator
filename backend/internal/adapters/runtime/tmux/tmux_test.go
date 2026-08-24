@@ -136,6 +136,44 @@ func TestNewUsesAppOwnedTmuxSocketFromEnv(t *testing.T) {
 	}
 }
 
+func TestNewUsesSystemTmuxForLegacyDefaultSocket(t *testing.T) {
+	binDir := t.TempDir()
+	systemTmux := filepath.Join(binDir, "tmux")
+	if err := os.WriteFile(systemTmux, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	bundledTmux := filepath.Join(t.TempDir(), "bundled-tmux")
+	if err := os.WriteFile(bundledTmux, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", binDir)
+	t.Setenv("AO_TMUX_BINARY", bundledTmux)
+	t.Setenv("AO_TMUX_SOCKET_NAME", "ao")
+
+	r := New(Options{})
+	if got := r.binary; got != bundledTmux {
+		t.Fatalf("binary = %q, want bundled tmux %q", got, bundledTmux)
+	}
+	if got := r.legacyBinary; got != systemTmux {
+		t.Fatalf("legacy binary = %q, want system tmux %q", got, systemTmux)
+	}
+}
+
+func TestNewFallsBackToPrimaryTmuxForLegacySocketWithoutSystemTmux(t *testing.T) {
+	bundledTmux := filepath.Join(t.TempDir(), "bundled-tmux")
+	if err := os.WriteFile(bundledTmux, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", t.TempDir())
+	t.Setenv("AO_TMUX_BINARY", bundledTmux)
+	t.Setenv("AO_TMUX_SOCKET_NAME", "ao")
+
+	r := New(Options{})
+	if got := r.legacyBinary; got != bundledTmux {
+		t.Fatalf("legacy binary = %q, want primary fallback %q", got, bundledTmux)
+	}
+}
+
 // TestExecRunnerRunsFromStableDir is the direct regression test for Fix 1:
 // execRunner.Run must pin cmd.Dir to os.TempDir() rather than inheriting
 // whatever the daemon process's own cwd happens to be. The first tmux CLI
@@ -696,7 +734,12 @@ func TestRestartRejectsMismatchedSessionHandle(t *testing.T) {
 }
 
 func TestIsAliveAdoptsSessionFromLegacyDefaultSocket(t *testing.T) {
-	r := New(Options{Binary: "tmux-test", SocketName: "ao", Timeout: time.Second})
+	r := New(Options{
+		Binary:       "bundled-tmux-test",
+		LegacyBinary: "system-tmux-test",
+		SocketName:   "ao",
+		Timeout:      time.Second,
+	})
 	fr := &fakeRunnerSequence{results: []fakeRunnerResult{
 		{out: []byte("can't find session: sess-1"), err: &exec.ExitError{}},
 		{}, // legacy default-socket discovery
@@ -718,10 +761,19 @@ func TestIsAliveAdoptsSessionFromLegacyDefaultSocket(t *testing.T) {
 		hasSessionArgs("sess-1"),
 		hasSessionArgs("sess-1"),
 	}
+	wantBinaries := []string{
+		"bundled-tmux-test",
+		"system-tmux-test",
+		"system-tmux-test",
+		"system-tmux-test",
+	}
 	if len(fr.calls) != len(want) {
 		t.Fatalf("calls = %d, want %d: %+v", len(fr.calls), len(want), fr.calls)
 	}
 	for i := range want {
+		if fr.calls[i].name != wantBinaries[i] {
+			t.Fatalf("call %d binary = %q, want %q", i, fr.calls[i].name, wantBinaries[i])
+		}
 		if !reflect.DeepEqual(fr.calls[i].args, want[i]) {
 			t.Fatalf("call %d args = %#v, want %#v", i, fr.calls[i].args, want[i])
 		}
@@ -1272,6 +1324,20 @@ func TestAttachCommandUsesAppOwnedSocket(t *testing.T) {
 		t.Fatalf("AttachCommand: %v", err)
 	}
 	want := []string{"/opt/ao/resources/tmux/bin/tmux", "-L", "ao", "-u", "-T", "RGB", "attach-session", "-t", "sess-1"}
+	if !reflect.DeepEqual(argv, want) {
+		t.Fatalf("argv = %#v, want %#v", argv, want)
+	}
+}
+
+func TestAttachCommandUsesSystemTmuxForLegacyDefaultSocket(t *testing.T) {
+	r := New(Options{
+		Binary:       "/opt/ao/resources/tmux/bin/tmux",
+		LegacyBinary: "/opt/homebrew/bin/tmux",
+		SocketName:   "ao",
+		Timeout:      time.Second,
+	})
+	argv := r.attachCommandForSocket("sess-1", "")
+	want := []string{"/opt/homebrew/bin/tmux", "-u", "-T", "RGB", "attach-session", "-t", "sess-1"}
 	if !reflect.DeepEqual(argv, want) {
 		t.Fatalf("argv = %#v, want %#v", argv, want)
 	}

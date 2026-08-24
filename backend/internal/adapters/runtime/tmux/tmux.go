@@ -51,19 +51,21 @@ var getenv = os.Getenv
 // Options configures a tmux Runtime. Every field has a sensible default (see
 // New), so the zero value is usable.
 type Options struct {
-	Binary     string        // default configured/bundled/system tmux resolution
-	SocketName string        // default $AO_TMUX_SOCKET_NAME; empty uses tmux's machine-wide default socket
-	Shell      string        // default $SHELL else /bin/sh
-	Timeout    time.Duration // default 5s
-	ChunkSize  int           // default 16*1024
-	EnterDelay time.Duration // pause after pasting a non-empty message before pressing Enter; default defaultEnterDelay. Conpty already does this (ptyInputEnterDelay); tmux lacked it, so a large multiline paste could absorb the trailing Enter and leave the prompt unsubmitted (issue #2342).
-	ReapGrace  time.Duration // grace between SIGTERM and SIGKILL when reaping a pane's leftover background processes on Destroy; default defaultReapGrace.
+	Binary       string        // default configured/bundled/system tmux resolution
+	LegacyBinary string        // default system tmux from PATH when SocketName is set; used only for pre-private-socket sessions
+	SocketName   string        // default $AO_TMUX_SOCKET_NAME; empty uses tmux's machine-wide default socket
+	Shell        string        // default $SHELL else /bin/sh
+	Timeout      time.Duration // default 5s
+	ChunkSize    int           // default 16*1024
+	EnterDelay   time.Duration // pause after pasting a non-empty message before pressing Enter; default defaultEnterDelay. Conpty already does this (ptyInputEnterDelay); tmux lacked it, so a large multiline paste could absorb the trailing Enter and leave the prompt unsubmitted (issue #2342).
+	ReapGrace    time.Duration // grace between SIGTERM and SIGKILL when reaping a pane's leftover background processes on Destroy; default defaultReapGrace.
 }
 
 // Runtime runs agent sessions inside tmux sessions, driving them via the tmux
 // CLI. It implements ports.Runtime.
 type Runtime struct {
 	binary         string
+	legacyBinary   string
 	socketName     string
 	shell          string
 	timeout        time.Duration
@@ -286,8 +288,22 @@ func New(opts Options) *Runtime {
 	if socketName == "" {
 		socketName = strings.TrimSpace(getenv("AO_TMUX_SOCKET_NAME"))
 	}
+	legacyBinary := opts.LegacyBinary
+	if legacyBinary == "" && socketName != "" {
+		// Sessions created before AO introduced its private socket were started by
+		// the machine tmux from PATH. Use that matching client for the legacy
+		// default socket: tmux's client/server protocol is not guaranteed across
+		// versions, so AO's pinned bundled client may be unable to adopt them.
+		if systemTmux, err := exec.LookPath("tmux"); err == nil {
+			legacyBinary = systemTmux
+		}
+	}
+	if legacyBinary == "" {
+		legacyBinary = binary
+	}
 	return &Runtime{
 		binary:         binary,
+		legacyBinary:   legacyBinary,
 		socketName:     socketName,
 		shell:          shellPath,
 		timeout:        timeout,
@@ -758,7 +774,7 @@ func (r *Runtime) attachCommandForSocket(id, socketName string) []string {
 	// The embedded xterm renderer supports 24-bit SGR colors. Tell this tmux
 	// client explicitly so tmux forwards RGB instead of quantizing it to the
 	// xterm-256color palette. -T is available in AO's minimum tmux version (3.2).
-	argv := []string{r.binary}
+	argv := []string{r.binaryForSocket(socketName)}
 	if socketName != "" {
 		argv = append(argv, "-L", socketName)
 	}
@@ -797,7 +813,14 @@ func (r *Runtime) runOnSocket(ctx context.Context, socketName string, args ...st
 	if socketName != "" {
 		args = append([]string{"-L", socketName}, args...)
 	}
-	return r.runCommand(ctx, r.binary, args...)
+	return r.runCommand(ctx, r.binaryForSocket(socketName), args...)
+}
+
+func (r *Runtime) binaryForSocket(socketName string) string {
+	if socketName == "" && r.socketName != "" {
+		return r.legacyBinary
+	}
+	return r.binary
 }
 
 // runForSession routes sessions created before AO introduced its private tmux
