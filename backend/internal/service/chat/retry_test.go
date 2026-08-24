@@ -175,6 +175,46 @@ func TestRetryTurnRefusesWhileBusy(t *testing.T) {
 	}
 }
 
+func TestRetryTurnRefusesFailedTurnOutsideActiveBranch(t *testing.T) {
+	h, _, driver := newEditHarness(t)
+	ctx := context.Background()
+
+	first := completeTurn(t, h, "first prompt", "provider-turn-1")
+	h.awaitSnapshot(t, func(s store.ConversationSnapshot) bool { return len(s.Messages) == 2 })
+	stale, err := h.svc.Send(ctx, testSession, ports.ChatUserMessage{
+		Text: "stale failed prompt", Origin: domain.MessageOriginHuman, ClientMessageID: "stale-source",
+	})
+	if err != nil {
+		t.Fatalf("Send stale source: %v", err)
+	}
+	h.conv.emit(ports.ChatEvent{
+		Kind: ports.ChatEventTurnCompleted, ProviderTurnID: stale.ProviderTurnID,
+		TurnState: domain.TurnStateFailed, Err: errors.New("source failed"),
+	})
+	failedTurnSnapshot(t, h, stale.ID)
+
+	// Editing the first prompt forks before the failed second turn, so the
+	// failed source remains durable but is no longer on the active lineage.
+	edited, err := h.svc.EditMessage(ctx, testSession, first, ports.ChatUserMessage{
+		Text: "edited first prompt", Origin: domain.MessageOriginHuman, ClientMessageID: "edited-first",
+	})
+	if err != nil {
+		t.Fatalf("EditMessage: %v", err)
+	}
+	driver.fresh.emit(
+		ports.ChatEvent{Kind: ports.ChatEventTurnStarted, ProviderTurnID: edited.Turn.ProviderTurnID},
+		ports.ChatEvent{Kind: ports.ChatEventTurnCompleted, ProviderTurnID: edited.Turn.ProviderTurnID, TurnState: domain.TurnStateCompleted},
+	)
+	h.awaitSnapshot(t, func(s store.ConversationSnapshot) bool {
+		turn, ok := turnByID(s, edited.Turn.ID)
+		return ok && turn.State == domain.TurnStateCompleted
+	})
+
+	if _, err := h.svc.RetryTurn(ctx, testSession, stale.ID); !errors.Is(err, chatsvc.ErrRetryStaleBranch) {
+		t.Fatalf("RetryTurn outside active branch = %v, want ErrRetryStaleBranch", err)
+	}
+}
+
 func TestRetryTurnRefusesNonHumanPrompt(t *testing.T) {
 	h := newHarness(t)
 	ctx := context.Background()

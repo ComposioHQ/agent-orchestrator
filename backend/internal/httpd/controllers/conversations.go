@@ -148,6 +148,10 @@ func writeConversationRetryError(w http.ResponseWriter, r *http.Request, err err
 		envelope.WriteAPIError(w, r, http.StatusConflict, "conflict",
 			"CHAT_RETRY_DELIVERY_UNCERTAIN",
 			"delivery of this turn was never confirmed by the agent, so retrying it could run the work twice", nil)
+	case errors.Is(err, chatsvc.ErrRetryStaleBranch):
+		envelope.WriteAPIError(w, r, http.StatusConflict, "conflict",
+			"CHAT_RETRY_STALE_BRANCH",
+			"this turn is no longer on the active conversation branch", nil)
 	case errors.Is(err, chatsvc.ErrTurnRunning), errors.Is(err, chatsvc.ErrControllerHandoff):
 		envelope.WriteAPIError(w, r, http.StatusConflict, "conflict",
 			"CHAT_RETRY_BUSY", "stop the current turn before retrying this one", nil)

@@ -2237,6 +2237,7 @@ export function TurnOutcome({
 	onRetry,
 	retryPending,
 	retryError,
+	retryDisabled,
 }: {
 	state: "recovered" | "interrupted" | "failed";
 	error?: string;
@@ -2244,6 +2245,7 @@ export function TurnOutcome({
 	onRetry?: () => void;
 	retryPending?: boolean;
 	retryError?: string;
+	retryDisabled?: boolean;
 }) {
 	const copy = {
 		recovered: { label: "Outcome unknown", tone: "text-muted-foreground/70" },
@@ -2262,13 +2264,24 @@ export function TurnOutcome({
 					{error}
 				</span>
 			) : null}
+			{retryError ? (
+				<span
+					role="alert"
+					className="max-w-[50%] text-pretty text-right text-[10px] leading-tight text-destructive"
+				>
+					{retryError}
+				</span>
+			) : null}
 			{onRetry ? (
 				<button
 					type="button"
 					onClick={onRetry}
-					disabled={retryPending}
+					disabled={retryPending || retryDisabled}
 					aria-label="Retry this turn"
-					title={retryError ?? "Send this prompt again as a new turn"}
+					title={
+						retryError ??
+						(retryDisabled ? "Wait for the current turn to finish" : "Send this prompt again as a new turn")
+					}
 					data-testid="retry-turn"
 					className="shrink-0 rounded px-1.5 py-0.5 text-[10px] uppercase tracking-[0.08em] text-muted-foreground/70 transition-colors hover:text-foreground focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring disabled:pointer-events-none disabled:opacity-50"
 				>

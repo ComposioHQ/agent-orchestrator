@@ -434,6 +434,7 @@ export function useConversationCommands(sessionId: string | undefined) {
 		retryTurn: (turnId: string) => retryTurn.mutateAsync(turnId),
 		retryTurnPending: retryTurn.isPending,
 		retryTurnError: retryTurn.error ? apiErrorMessage(retryTurn.error) : undefined,
+		retryTurnId: retryTurn.variables,
 		editMessage: (turnId: string, text: string) => editMessage.mutateAsync({ turnId, text }),
 		editMessagePending: editMessage.isPending,
 		editMessageError: editMessage.error ? apiErrorMessage(editMessage.error) : undefined,

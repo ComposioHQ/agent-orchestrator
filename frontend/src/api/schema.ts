@@ -1971,12 +1971,6 @@ export interface components {
         ControllersResolveReviewCommentResponse: {
             ok: boolean;
         };
-        ControllersRetryTurnResponse: {
-            providerTurnId?: string;
-            /** @enum {string} */
-            state?: "queued" | "running" | "completed" | "interrupted" | "failed";
-            turnId?: string;
-        };
         ControllersSecurePairingStatus: {
             active: boolean;
             available: boolean;
@@ -2696,6 +2690,12 @@ export interface components {
             resumeMode: "native" | "saved_prompt" | "fresh";
             session: components["schemas"]["ControllersSessionView"];
             sessionId: string;
+        };
+        RetryTurnResponse: {
+            providerTurnId?: string;
+            /** @enum {string} */
+            state?: "queued" | "running" | "completed" | "interrupted" | "failed";
+            turnId?: string;
         };
         ReviewRun: {
             autoInjectReview: boolean;
@@ -7133,7 +7133,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ControllersRetryTurnResponse"];
+                    "application/json": components["schemas"]["RetryTurnResponse"];
                 };
             };
             /** @description Not Found */

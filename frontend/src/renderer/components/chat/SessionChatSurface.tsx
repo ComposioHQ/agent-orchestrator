@@ -320,6 +320,7 @@ export function SessionChatSurface({
 				onRetryTurn={commands.retryTurn}
 				retryTurnPending={commands.retryTurnPending}
 				retryTurnError={commands.retryTurnError}
+				retryTurnId={commands.retryTurnId}
 				onEditMessage={commands.editMessage}
 				editMessagePending={commands.editMessagePending}
 				editMessageError={commands.editMessageError}

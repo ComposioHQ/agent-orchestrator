@@ -1066,11 +1066,32 @@ LIMIT sqlc.arg(page_limit);
 -- loaded from AO's own rows, never from the caller, so the daemon owns what gets
 -- sent again.
 -- name: SelectRetryableConversationPrompt :one
+WITH RECURSIVE active_path(branch_id, max_sequence) AS (
+    SELECT conversations.active_branch_id, CAST(NULL AS INTEGER)
+    FROM conversations
+    WHERE conversations.id = sqlc.arg(conversation_id)
+    UNION ALL
+    SELECT branch.parent_branch_id,
+           CASE
+               WHEN path.max_sequence IS NULL THEN branch.fork_after_sequence
+               WHEN branch.fork_after_sequence < path.max_sequence THEN branch.fork_after_sequence
+               ELSE path.max_sequence
+           END
+    FROM active_path AS path
+    JOIN conversation_branches AS branch ON branch.id = path.branch_id
+    WHERE branch.parent_branch_id IS NOT NULL
+)
 SELECT conversation_turns.id,
        conversation_messages.text,
        conversation_messages.client_message_id,
        conversation_messages.origin,
-       conversation_messages.delivery_content_json
+       conversation_messages.delivery_content_json,
+       EXISTS (
+           SELECT 1
+           FROM active_path AS path
+           WHERE path.branch_id = conversation_messages.branch_id
+             AND (path.max_sequence IS NULL OR conversation_messages.sequence <= path.max_sequence)
+       ) AS active_lineage
 FROM conversation_turns
 JOIN conversation_messages
     ON conversation_messages.turn_id = conversation_turns.id

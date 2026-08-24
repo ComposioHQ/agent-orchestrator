@@ -240,6 +240,7 @@ export interface ChatWorkspaceProps {
 	onRetryTurn?: (turnId: string) => void | Promise<unknown>;
 	retryTurnPending?: boolean;
 	retryTurnError?: string;
+	retryTurnId?: string;
 	/** Create a conversation branch by replacing a prior human prompt. */
 	onEditMessage?: (turnId: string, text: string) => void | Promise<unknown>;
 	editMessagePending?: boolean;
@@ -332,6 +333,7 @@ export function ChatWorkspace({
 	onRetryTurn,
 	retryTurnPending,
 	retryTurnError,
+	retryTurnId,
 	onEditMessage,
 	editMessagePending,
 	editMessageError,
@@ -769,6 +771,7 @@ export function ChatWorkspace({
 							onRetryTurn={onRetryTurn}
 							retryTurnPending={retryTurnPending}
 							retryTurnError={retryTurnError}
+							retryTurnId={retryTurnId}
 							onEditHumanMessage={editHumanMessage}
 							editPending={editMessagePending}
 							editBusy={Boolean(turn)}
@@ -1273,6 +1276,7 @@ function Timeline({
 	onRetryTurn,
 	retryTurnPending,
 	retryTurnError,
+	retryTurnId,
 	onEditHumanMessage,
 	editPending,
 	editBusy,
@@ -1291,9 +1295,10 @@ function Timeline({
 	onRollback?: (turnId: string) => void;
 	onOpenFiles?: () => void;
 	onOpenFile?: (path: string) => void;
-	onRetryTurn?: (turnId: string) => void;
+	onRetryTurn?: (turnId: string) => void | Promise<unknown>;
 	retryTurnPending?: boolean;
 	retryTurnError?: string;
+	retryTurnId?: string;
 	onEditHumanMessage?: (turnId: string, text: string) => Promise<unknown> | void;
 	editPending?: boolean;
 	editBusy?: boolean;
@@ -1660,9 +1665,12 @@ function Timeline({
 								onOpenFiles={onOpenFiles ? openFiles : undefined}
 								onOpenFile={onOpenFile ? openFile : undefined}
 								onRetryTurn={retryTurn}
-								canRetry={Boolean(onRetryTurn)}
-								retryTurnPending={retryTurnPending}
-								retryTurnError={retryTurnError}
+								canRetry={Boolean(onRetryTurn && groupHasHumanPrompt(group))}
+								retryDisabled={Boolean(turn)}
+								retryTurnPending={retryTurnPending && (!retryTurnId || retryTurnId === group.turnId)}
+								retryTurnError={
+									!retryTurnId || retryTurnId === group.turnId ? retryTurnError : undefined
+								}
 								onEditHumanMessage={canEditHumanMessage ? editHumanMessage : undefined}
 								messageEdit={messageEdit}
 								onStartMessageEdit={startMessageEdit}
@@ -1847,6 +1855,7 @@ const TurnGroup = memo(function TurnGroup({
 	canRollback,
 	onRetryTurn,
 	canRetry,
+	retryDisabled,
 	retryTurnPending,
 	retryTurnError,
 	busy,
@@ -1878,9 +1887,11 @@ const TurnGroup = memo(function TurnGroup({
 	/** The daemon would accept a rollback of this turn, so offer the affordance. */
 	canRollback: boolean;
 	/** Re-dispatch this failed turn's prompt as a new turn. */
-	onRetryTurn?: (turnId: string) => void;
+	onRetryTurn?: (turnId: string) => void | Promise<unknown>;
 	/** The daemon offers retry for this turn, so draw the affordance. */
 	canRetry: boolean;
+	/** A different turn is running, so keep the affordance visible but inert. */
+	retryDisabled?: boolean;
 	retryTurnPending?: boolean;
 	retryTurnError?: string;
 	busy?: boolean;
@@ -1996,11 +2007,14 @@ const TurnGroup = memo(function TurnGroup({
 					error={group.outcome.error}
 					onRetry={
 						group.outcome.state === "failed" && canRetry && group.turnId
-							? () => onRetryTurn?.(group.turnId as string)
+							? () => {
+									void Promise.resolve(onRetryTurn?.(group.turnId as string)).catch(() => undefined);
+								}
 							: undefined
 					}
 					retryPending={retryTurnPending}
 					retryError={retryTurnError}
+					retryDisabled={retryDisabled}
 				/>
 			) : null}
 		</div>

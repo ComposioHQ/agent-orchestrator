@@ -180,6 +180,7 @@ var schemaNames = map[string]string{
 	"ControllersReloadConversationMCPServersResponse": "ReloadConversationMCPServersResponse",
 	"ControllersCompactConversationResponse":          "CompactConversationResponse",
 	"ControllersRollbackConversationResponse":         "RollbackConversationResponse",
+	"ControllersRetryTurnResponse":                    "RetryTurnResponse",
 	"ControllersSetConversationTitleRequest":          "SetConversationTitleRequest",
 	"ControllersSetConversationTitleResponse":         "SetConversationTitleResponse",
 	"ControllersSteerConversationRequest":             "SteerConversationRequest",

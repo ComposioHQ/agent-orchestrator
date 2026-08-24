@@ -72,7 +72,7 @@ type Store interface {
 	CancelQueuedTurns(ctx context.Context, conversationID string, cutoff, now time.Time) error
 	CancelAllQueuedTurns(ctx context.Context, conversationID string, now time.Time) error
 
-	RetryPrompt(ctx context.Context, conversationID, turnID string) (domain.QueuedTurn, error)
+	RetryPrompt(ctx context.Context, conversationID, turnID string) (domain.QueuedTurn, bool, error)
 	TurnIDForClientMessage(ctx context.Context, conversationID, clientMessageID string) (string, bool, error)
 
 	TurnByID(ctx context.Context, turnID string) (domain.ConversationTurn, error)
@@ -225,6 +225,11 @@ var ErrControllerHandoff = errors.New("chat controller is switching interfaces")
 // the user authored. A retry is only ever offered for an eligible failed human
 // turn.
 var ErrTurnNotRetryable = errors.New("turn is not retryable")
+
+// ErrRetryStaleBranch reports a durable failed turn that is no longer visible
+// on the conversation's active branch. Retrying it would inject abandoned
+// history into the provider thread the user is currently viewing.
+var ErrRetryStaleBranch = errors.New("turn is not on the active conversation branch")
 
 // ErrRetryDeliveryUncertain reports a failed turn whose dispatch was never
 // acknowledged by the provider. Settling it failed was AO's safe guess rather
@@ -966,9 +971,12 @@ func (c *Controller) RetryTurn(ctx context.Context, turnID string) (domain.Conve
 		return domain.ConversationTurn{}, fmt.Errorf("%w: %s", ErrTurnNotRetryable, turnID)
 	}
 
-	prompt, err := c.store.RetryPrompt(ctx, c.conversation.ID, turnID)
+	prompt, activeLineage, err := c.store.RetryPrompt(ctx, c.conversation.ID, turnID)
 	if err != nil {
 		return domain.ConversationTurn{}, fmt.Errorf("%w: %s", ErrTurnNotRetryable, turnID)
+	}
+	if !activeLineage {
+		return domain.ConversationTurn{}, fmt.Errorf("%w: %s", ErrRetryStaleBranch, turnID)
 	}
 	if prompt.Origin != domain.MessageOriginHuman {
 		return domain.ConversationTurn{}, fmt.Errorf("%w: %s", ErrTurnNotRetryable, turnID)
@@ -984,7 +992,7 @@ func (c *Controller) RetryTurn(ctx context.Context, turnID string) (domain.Conve
 
 	// The replay check comes before the busy check on purpose: returning an
 	// already-recorded attempt must stay true even while that attempt runs.
-	key := retryClientMessageID(turnID)
+	key := "retry/" + turnID
 	if existingID, found, lookupErr := c.store.TurnIDForClientMessage(ctx, c.conversation.ID, key); lookupErr != nil {
 		return domain.ConversationTurn{}, lookupErr
 	} else if found {
@@ -1036,13 +1044,6 @@ func (c *Controller) RetryTurn(ctx context.Context, turnID string) (domain.Conve
 		Origin:          prompt.Origin,
 		ClientMessageID: key,
 	}, now)
-}
-
-// retryClientMessageID derives the idempotency key for the one retry attempt a
-// source turn can own. Deterministic in the source's own id, so every replay of
-// the same request collides with the same row instead of minting a new attempt.
-func retryClientMessageID(turnID string) string {
-	return "retry/" + turnID
 }
 
 // Settings reports the provider choices for the next turn.

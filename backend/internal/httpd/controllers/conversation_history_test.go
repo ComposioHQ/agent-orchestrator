@@ -160,6 +160,56 @@ func TestRollbackRouteReportsWhatWasDiscarded(t *testing.T) {
 	}
 }
 
+func TestRetryTurnRouteDispatchesANewTurn(t *testing.T) {
+	svc := &fakeChatService{retryTurn: domain.ConversationTurn{
+		ID: "turn-retry", ProviderTurnID: "provider-retry", State: domain.TurnStateRunning,
+	}}
+	srv := newChatTestServer(t, svc)
+
+	body, status, headers := doRequest(t, srv, http.MethodPost,
+		"/api/v1/sessions/ao-1/conversation/turns/turn-failed/retry", "")
+	assertJSON(t, headers)
+	if status != http.StatusAccepted {
+		t.Fatalf("status = %d, want 202; body=%s", status, body)
+	}
+	if svc.gotTurnID != "turn-failed" {
+		t.Fatalf("turn id = %q, want turn-failed", svc.gotTurnID)
+	}
+	var got struct {
+		TurnID         string           `json:"turnId"`
+		ProviderTurnID string           `json:"providerTurnId"`
+		State          domain.TurnState `json:"state"`
+	}
+	mustJSON(t, body, &got)
+	if got.TurnID != "turn-retry" || got.ProviderTurnID != "provider-retry" || got.State != domain.TurnStateRunning {
+		t.Fatalf("response = %+v", got)
+	}
+}
+
+func TestRetryTurnRouteRefusalsAreTyped(t *testing.T) {
+	cases := []struct {
+		name       string
+		err        error
+		wantStatus int
+		wantCode   string
+	}{
+		{"not retryable", chatsvc.ErrTurnNotRetryable, http.StatusConflict, "CHAT_RETRY_NOT_RETRYABLE"},
+		{"delivery uncertain", chatsvc.ErrRetryDeliveryUncertain, http.StatusConflict, "CHAT_RETRY_DELIVERY_UNCERTAIN"},
+		{"stale branch", chatsvc.ErrRetryStaleBranch, http.StatusConflict, "CHAT_RETRY_STALE_BRANCH"},
+		{"busy", chatsvc.ErrTurnRunning, http.StatusConflict, "CHAT_RETRY_BUSY"},
+		{"missing turn", domain.ErrNoConversationTurn, http.StatusNotFound, "CHAT_RETRY_TURN_NOT_FOUND"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := newChatTestServer(t, &fakeChatService{retryErr: tc.err})
+			body, status, headers := doRequest(t, srv, http.MethodPost,
+				"/api/v1/sessions/ao-1/conversation/turns/turn-failed/retry", "")
+			assertJSON(t, headers)
+			assertErrorCode(t, body, status, tc.wantStatus, tc.wantCode)
+		})
+	}
+}
+
 func TestEditConversationRouteAcceptsReplacement(t *testing.T) {
 	svc := &fakeChatService{edit: chatsvc.EditMessageResult{
 		SourceBranchID: "branch-root", ActiveBranchID: "branch-child",
@@ -327,6 +377,7 @@ func TestConversationHistoryRoutesStubWithoutAService(t *testing.T) {
 
 	for _, tc := range []struct{ method, path, body string }{
 		{"POST", "/api/v1/sessions/ao-1/conversation/turns/turn-1/rollback", ""},
+		{"POST", "/api/v1/sessions/ao-1/conversation/turns/turn-1/retry", ""},
 		{"PUT", "/api/v1/sessions/ao-1/conversation/title", `{"title":"A Name"}`},
 	} {
 		body, status, headers := doRequest(t, srv, tc.method, tc.path, tc.body)

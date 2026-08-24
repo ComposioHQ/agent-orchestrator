@@ -2306,11 +2306,32 @@ func (q *Queries) SelectReservedConversationTurnForPromotion(ctx context.Context
 }
 
 const selectRetryableConversationPrompt = `-- name: SelectRetryableConversationPrompt :one
+WITH RECURSIVE active_path(branch_id, max_sequence) AS (
+    SELECT conversations.active_branch_id, CAST(NULL AS INTEGER)
+    FROM conversations
+    WHERE conversations.id = ?2
+    UNION ALL
+    SELECT branch.parent_branch_id,
+           CASE
+               WHEN path.max_sequence IS NULL THEN branch.fork_after_sequence
+               WHEN branch.fork_after_sequence < path.max_sequence THEN branch.fork_after_sequence
+               ELSE path.max_sequence
+           END
+    FROM active_path AS path
+    JOIN conversation_branches AS branch ON branch.id = path.branch_id
+    WHERE branch.parent_branch_id IS NOT NULL
+)
 SELECT conversation_turns.id,
        conversation_messages.text,
        conversation_messages.client_message_id,
        conversation_messages.origin,
-       conversation_messages.delivery_content_json
+       conversation_messages.delivery_content_json,
+       EXISTS (
+           SELECT 1
+           FROM active_path AS path
+           WHERE path.branch_id = conversation_messages.branch_id
+             AND (path.max_sequence IS NULL OR conversation_messages.sequence <= path.max_sequence)
+       ) AS active_lineage
 FROM conversation_turns
 JOIN conversation_messages
     ON conversation_messages.turn_id = conversation_turns.id
@@ -2332,6 +2353,7 @@ type SelectRetryableConversationPromptRow struct {
 	ClientMessageID     string
 	Origin              domain.MessageOrigin
 	DeliveryContentJson string
+	ActiveLineage       bool
 }
 
 // A retry re-dispatches a failed turn's durable prompt as a NEW turn. Content is
@@ -2346,6 +2368,7 @@ func (q *Queries) SelectRetryableConversationPrompt(ctx context.Context, arg Sel
 		&i.ClientMessageID,
 		&i.Origin,
 		&i.DeliveryContentJson,
+		&i.ActiveLineage,
 	)
 	return i, err
 }

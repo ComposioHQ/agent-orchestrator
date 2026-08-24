@@ -2516,12 +2516,12 @@ func (s *Store) ProviderEventsSince(
 // RetryPrompt returns the durable human prompt of a failed turn, for
 // re-dispatching it as a new turn. The content is loaded from AO's own rows
 // rather than from a client request that could be stale or substituted.
-func (s *Store) RetryPrompt(ctx context.Context, conversationID, turnID string) (domain.QueuedTurn, error) {
+func (s *Store) RetryPrompt(ctx context.Context, conversationID, turnID string) (domain.QueuedTurn, bool, error) {
 	row, err := s.qr.SelectRetryableConversationPrompt(ctx, gen.SelectRetryableConversationPromptParams{
 		ID: turnID, ConversationID: conversationID,
 	})
 	if err != nil {
-		return domain.QueuedTurn{}, err
+		return domain.QueuedTurn{}, false, err
 	}
 	return domain.QueuedTurn{
 		TurnID:              row.ID,
@@ -2529,7 +2529,7 @@ func (s *Store) RetryPrompt(ctx context.Context, conversationID, turnID string) 
 		ClientMessageID:     row.ClientMessageID,
 		Origin:              row.Origin,
 		DeliveryContentJSON: row.DeliveryContentJson,
-	}, nil
+	}, row.ActiveLineage, nil
 }
 
 // TurnIDForClientMessage returns the turn id (if any) that is already

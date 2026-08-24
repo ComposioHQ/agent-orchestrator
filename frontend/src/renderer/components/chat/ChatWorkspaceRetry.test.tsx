@@ -68,4 +68,33 @@ describe("ChatWorkspace retry", () => {
 		render(<ChatWorkspace snapshot={failedSnapshot()} />);
 		expect(screen.queryByRole("button", { name: "Retry this turn" })).toBeNull();
 	});
+
+	it("disables retry while another turn is running", () => {
+		const snapshot = failedSnapshot();
+		snapshot.controller = { state: "busy" };
+		snapshot.turns = snapshot.turns.map((turn) =>
+			turn.id === "turn-2"
+				? { ...turn, state: "running" as const, completedAt: undefined }
+				: turn,
+		);
+
+		render(<ChatWorkspace snapshot={snapshot} onRetryTurn={vi.fn()} />);
+
+		expect(screen.getByRole("button", { name: "Retry this turn" })).toBeDisabled();
+	});
+
+	it("shows a retry refusal next to the affected turn", () => {
+		render(
+			<ChatWorkspace
+				snapshot={failedSnapshot()}
+				onRetryTurn={vi.fn()}
+				retryTurnError="Stop the current turn before retrying this one"
+				retryTurnId="turn-1"
+			/>,
+		);
+
+		expect(screen.getByRole("alert")).toHaveTextContent(
+			"Stop the current turn before retrying this one",
+		);
+	});
 });
