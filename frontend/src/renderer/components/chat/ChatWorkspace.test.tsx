@@ -376,6 +376,23 @@ describe("ChatWorkspace timeline", () => {
 		expect(onInterrupt).toHaveBeenCalledOnce();
 	});
 
+	it("focuses the composer from conversation whitespace but preserves button focus", async () => {
+		const user = userEvent.setup();
+		const snapshot = structuredClone(chatFixture);
+		snapshot.items = snapshot.items.filter(
+			(item) => !(item.kind === "activity" && item.activityKind === "approval" && item.status === "pending"),
+		);
+
+		render(<ChatWorkspace snapshot={snapshot} onInterrupt={vi.fn()} />);
+		const composer = screen.getByLabelText("Message the agent");
+		await user.click(screen.getByRole("log", { name: "Conversation" }));
+		expect(document.activeElement).toBe(composer);
+
+		const stop = screen.getByRole("button", { name: "Stop turn" });
+		await user.click(stop);
+		expect(document.activeElement).toBe(stop);
+	});
+
 	it("does not interrupt while a menu or elicitation is open", () => {
 		const onInterrupt = vi.fn();
 		const snapshot = structuredClone(chatFixture);
