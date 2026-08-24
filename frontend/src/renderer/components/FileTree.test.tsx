@@ -67,6 +67,7 @@ describe("FileTree", () => {
 		expect(getMock).toHaveBeenCalledWith("/api/v1/sessions/{sessionId}/workspace/tree", {
 			params: { path: { sessionId: "sess-1" }, query: {} },
 		});
+		expect(screen.getByRole("tree", { name: "File tree" }).firstElementChild).toHaveClass("board-scrollbar");
 	});
 
 	it("renders distinct technology icons from file and folder names", async () => {

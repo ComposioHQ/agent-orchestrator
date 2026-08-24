@@ -99,7 +99,7 @@ export function SessionFileExplorer({
 					<Search className="pointer-events-none absolute left-2.5 top-1/2 size-icon-sm -translate-y-1/2 text-passive" />
 					<Input
 						aria-label={t("files.explorer.filter")}
-						className="h-8 pl-8 font-mono text-xs"
+						className="h-8 rounded-l-none pl-8 font-mono text-xs"
 						onChange={(event) => setFilter(event.target.value)}
 						placeholder={t("files.explorer.filterPlaceholder")}
 						value={filter}

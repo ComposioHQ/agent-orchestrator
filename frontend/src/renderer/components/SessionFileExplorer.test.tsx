@@ -54,6 +54,7 @@ describe("SessionFileExplorer", () => {
 
 		expect(container.querySelector("section")).toHaveClass("rounded-none");
 		expect(container.querySelector("header")).toHaveClass("rounded-none");
+		expect(screen.getByRole("textbox", { name: "Filter files" })).toHaveClass("rounded-l-none");
 	});
 
 	beforeEach(() => {

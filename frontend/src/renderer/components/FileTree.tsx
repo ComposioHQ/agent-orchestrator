@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
+import { forwardRef, useCallback, useEffect, useRef, useState, type HTMLAttributes, type RefObject } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { Tree, type NodeApi, type NodeRendererProps, type RowRendererProps, type TreeApi } from "react-arborist";
@@ -14,6 +14,12 @@ import {
 
 const ROW_HEIGHT = 28;
 const INDENT = 14;
+
+const FileTreeScrollElement = forwardRef<HTMLDivElement, HTMLAttributes<HTMLDivElement>>(
+	function FileTreeScrollElement({ className, ...props }, ref) {
+		return <div ref={ref} className={cn("board-scrollbar", className)} {...props} />;
+	},
+);
 
 function entryToNode(entry: WorkspaceTreeEntry): TreeNode {
 	if (entry.type === "dir") {
@@ -154,6 +160,7 @@ export function FileTree({
 					height={size.height}
 					padding={4}
 					aria-label={t("files.explorer.tree")}
+					outerElementType={FileTreeScrollElement}
 					renderRow={FileTreeRowContainer}
 				>
 					{FileTreeRow}
