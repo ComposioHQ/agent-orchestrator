@@ -362,6 +362,7 @@ export function HumanMessage({
 	sessionId,
 	apiBaseUrl = getApiBaseUrl(),
 	queued,
+	animateIn = false,
 	onEdit,
 	editing = false,
 	editText,
@@ -383,6 +384,8 @@ export function HumanMessage({
 	apiBaseUrl?: string;
 	/** Typed while the agent was busy, and not sent yet. */
 	queued?: boolean;
+	/** True only for a human message added after the timeline first mounted. */
+	animateIn?: boolean;
 	onEdit?: (turnId: string, text: string) => Promise<unknown> | void;
 	editing?: boolean;
 	editText?: string;
@@ -421,6 +424,7 @@ export function HumanMessage({
 					title={formatMessageTimestamp(message.createdAt) || undefined}
 					className={cn(
 						"cursor-chat-human-message w-fit max-w-[min(78%,560px)] rounded-[10px] px-3 py-2.5 text-sm leading-[1.55]",
+						animateIn && "chat-human-message-enter",
 						queued
 							? "border border-dashed border-border-strong bg-transparent text-muted-foreground"
 							: "bg-raised text-foreground",
