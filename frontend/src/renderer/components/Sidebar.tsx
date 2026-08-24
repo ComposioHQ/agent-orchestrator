@@ -11,7 +11,6 @@ import {
 	useSensor,
 	useSensors,
 	type DragEndEvent,
-	type DraggableSyntheticListeners,
 } from "@dnd-kit/core";
 import { SortableContext, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
@@ -20,7 +19,6 @@ import {
 	Download,
 	Folder,
 	FolderOpen,
-	GripVertical,
 	LogOut,
 	MoreVertical,
 	Pencil,
@@ -139,9 +137,9 @@ const SECTION_ROW_INTERACTIVE_CLASS = "transition-colors hover:bg-interactive-ho
 // `--name` flag, so inline edits never round-trip a value the API would reject.
 const MAX_DISPLAY_NAME_LEN = 20;
 
-// Reorder drags start from a grip handle, never the row itself, so the row's
-// click/press/context-menu behaviour is untouched. The 4px activation distance
-// keeps a plain click (or a keyboard focus) on the grip from starting a drag.
+// Reorder drags start from the row's primary click surface. The 4px activation
+// distance keeps a plain navigation/disclosure click from starting a drag;
+// nested action buttons remain outside that activator surface.
 const REORDER_ACTIVATION_DISTANCE = 4;
 
 /** Stable drag-context ids: one for the project list, one per project's sessions. */
@@ -611,7 +609,7 @@ function ProjectItem({
 	workspace: WorkspaceSummary;
 	expanded: boolean;
 	selection: Selection;
-	/** Keyboard fallback for the grip: nudge this project one slot up or down. */
+	/** Keyboard fallback for the focused row: nudge this project one slot up or down. */
 	onMove: (offset: number) => void;
 	onToggle: () => void;
 	onRemoveProject: (projectId: string) => Promise<void>;
@@ -644,7 +642,7 @@ function ProjectItem({
 	const restartingProjectIds = useUiStore((state) => state.restartingProjectIds);
 	const isProjectRestarting = restartingProjectIds.has(workspace.id);
 	const requestNewTask = useUiStore((state) => state.requestNewTask);
-	const { isDragging, listeners, setActivatorNodeRef, setNodeRef, transform, transition } = useSortable({
+	const { attributes, isDragging, listeners, setActivatorNodeRef, setNodeRef, transform, transition } = useSortable({
 		id: workspace.id,
 	});
 	// Keep completed PR sessions reachable while their runtime still exists.
@@ -738,6 +736,12 @@ function ProjectItem({
 	};
 
 	const onProjectKeyDown = (event: KeyboardEvent<HTMLButtonElement>) => {
+		if (event.altKey && (event.key === "ArrowUp" || event.key === "ArrowDown")) {
+			event.preventDefault();
+			event.stopPropagation();
+			onMove(event.key === "ArrowUp" ? -1 : 1);
+			return;
+		}
 		if (event.key !== "Enter" && event.key !== " ") return;
 		event.preventDefault();
 		onProjectClick();
@@ -797,17 +801,21 @@ function ProjectItem({
 		<div>
 		{/* project-sidebar__proj-row */}
 	<SidebarMenuButton
+		{...attributes}
 		aria-current={dashboardActive ? "page" : undefined}
 		aria-expanded={expanded}
+		aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown"
 		isActive={projectActive}
 		tooltip={workspace.name}
+		{...listeners}
 		onClick={onProjectClick}
 		onKeyDown={onProjectKeyDown}
+		ref={setActivatorNodeRef}
 		className={cn(
 			NAV_ROW_CLASS,
 			// gap-2 matches SectionDisclosure so project icons/labels share the
 			// Projects header's left edge (NAV_ROW defaults to gap-2.5).
-			"gap-2 pr-sidebar-project-actions [&_svg]:size-icon-md",
+			"cursor-grab gap-2 pr-sidebar-project-actions active:cursor-grabbing [&_svg]:size-icon-md",
 			"group-data-[collapsible=icon]:size-control-board! group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:rounded-lg group-data-[collapsible=icon]:p-0! group-data-[collapsible=icon]:font-semibold",
 		)}
 	>
@@ -875,16 +883,6 @@ function ProjectItem({
 			onClick={(event) => event.stopPropagation()}
 			onPointerDown={(event) => event.stopPropagation()}
 		>
-			{/* Grip stays collapsed to 0px until the row is hovered or it takes focus,
-			    so the reserved action padding (and label truncation) is unchanged. */}
-			<ReorderHandle
-				label={t("shell.reorderProject", { name: workspace.name })}
-				listeners={listeners}
-				onMove={onMove}
-				revealed={rowHovered || isDragging}
-				setActivatorNodeRef={setActivatorNodeRef}
-				testId="project-reorder-handle"
-			/>
 			<Tooltip>
 				<TooltipTrigger asChild>
 					<button
@@ -1057,7 +1055,7 @@ function SortableSessionRow({
 	onMove: (offset: number) => void;
 	onOpen: () => void;
 }) {
-	const { isDragging, listeners, setActivatorNodeRef, setNodeRef, transform, transition } = useSortable({
+	const { attributes, isDragging, listeners, setActivatorNodeRef, setNodeRef, transform, transition } = useSortable({
 		id: session.id,
 	});
 	return (
@@ -1065,12 +1063,12 @@ function SortableSessionRow({
 			session={session}
 			active={active}
 			onOpen={onOpen}
-			reorder={{ isDragging, listeners, onMove, setActivatorNodeRef, setNodeRef, transform, transition }}
+			reorder={{ attributes, isDragging, listeners, onMove, setActivatorNodeRef, setNodeRef, transform, transition }}
 		/>
 	);
 }
 
-type SessionReorder = Pick<SortableRow, "isDragging" | "listeners" | "setActivatorNodeRef" | "setNodeRef" | "transform" | "transition"> & {
+type SessionReorder = Pick<SortableRow, "attributes" | "isDragging" | "listeners" | "setActivatorNodeRef" | "setNodeRef" | "transform" | "transition"> & {
 	onMove: (offset: number) => void;
 };
 
@@ -1179,11 +1177,28 @@ function SessionRow({
 				{/* Scale wrapper — only around the open button so action buttons don't trigger press animation */}
 				<div className="flex min-w-0 flex-1 transition-[transform] duration-[100ms] ease-out active:scale-[0.97]">
 					<button
+						{...(reorder?.attributes ?? {})}
 						aria-current={active ? "page" : undefined}
 						aria-describedby={switchLabel ? switchStatusId : undefined}
+						aria-keyshortcuts={reorder ? "Alt+ArrowUp Alt+ArrowDown" : undefined}
 						aria-label={t("shell.openSession", { title: session.title })}
-						className="flex h-8 min-w-0 flex-1 items-center gap-1.5 rounded-lg px-2.5 py-0 text-left text-sm outline-hidden focus-visible:ring-2 focus-visible:ring-sidebar-ring"
+						className={cn(
+							"flex h-8 min-w-0 flex-1 items-center gap-1.5 rounded-lg px-2.5 py-0 text-left text-sm outline-hidden focus-visible:ring-2 focus-visible:ring-sidebar-ring",
+							reorder && "cursor-grab active:cursor-grabbing",
+						)}
+						{...(reorder?.listeners ?? {})}
 						onClick={onOpen}
+						onKeyDown={(event) => {
+							if (
+								!reorder ||
+								!event.altKey ||
+								(event.key !== "ArrowUp" && event.key !== "ArrowDown")
+							) return;
+							event.preventDefault();
+							event.stopPropagation();
+							reorder.onMove(event.key === "ArrowUp" ? -1 : 1);
+						}}
+						ref={reorder?.setActivatorNodeRef}
 						type="button"
 					>
 						<SessionStatusDot session={session} />
@@ -1204,18 +1219,7 @@ function SessionRow({
 						</span>
 					</button>
 				</div>{/* end scale wrapper */}
-				{/* Reorder, pin, rename, kill: outside scale wrapper so clicking them doesn't trigger press animation */}
-				{reorder ? (
-					<ReorderHandle
-						className="group-hover/session-row:w-5 group-hover/session-row:opacity-100 group-focus-within/session-row:w-5 group-focus-within/session-row:opacity-100"
-						label={t("shell.reorderSession", { title: session.title })}
-						listeners={reorder.listeners}
-						onMove={reorder.onMove}
-						revealed={reorder.isDragging}
-						setActivatorNodeRef={reorder.setActivatorNodeRef}
-						testId="session-reorder-handle"
-					/>
-				) : null}
+				{/* Pin, rename, kill: outside the draggable open button so their actions stay independent. */}
 				<button
 					aria-label={session.isPinned ? t("shell.unpinSession") : t("shell.pinSession")}
 					className={cn(
@@ -1268,59 +1272,6 @@ function SessionRow({
 				</button>
 			</div>
 		</SidebarMenuSubItem>
-	);
-}
-
-// The single reorder affordance for both project and session rows: a grip that
-// stays out of the way (0px wide) until the row is hovered or the grip itself
-// takes focus. Pointer drags go through dnd-kit; ArrowUp/ArrowDown on the
-// focused grip is the keyboard fallback, which is also the whole story for
-// anyone who cannot drag — it needs no pointer, no measurement, and it stops at
-// the ends of the list rather than spilling into a neighbouring one.
-function ReorderHandle({
-	className,
-	label,
-	listeners,
-	onMove,
-	revealed = false,
-	setActivatorNodeRef,
-	testId,
-}: {
-	className?: string;
-	label: string;
-	listeners: DraggableSyntheticListeners;
-	onMove: (offset: number) => void;
-	revealed?: boolean;
-	setActivatorNodeRef: (node: HTMLElement | null) => void;
-	testId: string;
-}) {
-	return (
-		<button
-			aria-keyshortcuts="ArrowUp ArrowDown"
-			aria-label={label}
-			className={cn(
-				"grid h-5 w-0 shrink-0 cursor-grab place-items-center overflow-hidden rounded-md text-passive opacity-0",
-				"transition-[width,opacity,background-color,color] hover:bg-interactive-hover hover:text-foreground",
-				"focus-visible:w-5 focus-visible:opacity-100 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50",
-				"active:cursor-grabbing [&_svg]:size-3!",
-				revealed && "w-5 opacity-100",
-				className,
-			)}
-			data-testid={testId}
-			// The row underneath navigates on click; a grip click must not.
-			onClick={(event) => event.stopPropagation()}
-			onKeyDown={(event: KeyboardEvent<HTMLButtonElement>) => {
-				if (event.key !== "ArrowUp" && event.key !== "ArrowDown") return;
-				event.preventDefault();
-				event.stopPropagation();
-				onMove(event.key === "ArrowUp" ? -1 : 1);
-			}}
-			ref={setActivatorNodeRef}
-			type="button"
-			{...listeners}
-		>
-			<GripVertical aria-hidden="true" />
-		</button>
 	);
 }
 

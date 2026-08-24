@@ -1343,11 +1343,12 @@ describe("Sidebar", () => {
 		expect(projectRow).toHaveClass("pr-sidebar-project-actions");
 		expect(actionCluster).toHaveAttribute("data-project-actions");
 		expect(actionCluster).toHaveClass("right-0.5", "gap-px");
-		// Orchestrator + kebab are always visible; the reorder grip is the third
-		// child but stays collapsed to 0px so the reserved padding is unchanged.
-		expect(within(actionCluster as HTMLElement).getAllByRole("button")).toHaveLength(3);
+		// Only orchestrator + kebab are present; dragging uses the row itself and
+		// does not add another action or consume the reserved label space.
+		expect(within(actionCluster as HTMLElement).getAllByRole("button")).toHaveLength(2);
 		expect(screen.getByLabelText("Project actions for Project One")).not.toHaveClass("opacity-0");
-		expect(screen.getByTestId("project-reorder-handle")).toHaveClass("w-0", "opacity-0");
+		expect(projectRow).toHaveClass("cursor-grab");
+		expect(projectRow).toHaveAttribute("aria-keyshortcuts", "Alt+ArrowUp Alt+ArrowDown");
 	});
 
 	it("scales project actions with the row without scaling for action-button presses", () => {
@@ -1684,8 +1685,6 @@ describe("Sidebar reordering", () => {
 			screen.getByTestId(`session-list-${projectId}`).querySelectorAll<HTMLButtonElement>('button[aria-label^="Open "]'),
 		).map((button) => button.getAttribute("aria-label"));
 
-	const projectHandle = (name: string) => within(projectRow(name)).getByTestId("project-reorder-handle");
-
 	function projectRow(name: string): HTMLElement {
 		const label = Array.from(document.querySelectorAll<HTMLElement>("[data-project-label]")).find(
 			(node) => node.textContent === name,
@@ -1695,10 +1694,16 @@ describe("Sidebar reordering", () => {
 		return row;
 	}
 
-	function sessionHandle(title: string): HTMLElement {
-		const row = screen.getByLabelText(`Open ${title}`).closest<HTMLElement>("[data-session-row]");
-		if (!row) throw new Error(`Session row not found: ${title}`);
-		return within(row).getByTestId("session-reorder-handle");
+	function projectActivator(name: string): HTMLButtonElement {
+		const button = projectRow(name)
+			.querySelector<HTMLElement>("[data-project-label]")
+			?.closest<HTMLButtonElement>("button");
+		if (!button) throw new Error(`Project drag surface not found: ${name}`);
+		return button;
+	}
+
+	function sessionActivator(title: string): HTMLButtonElement {
+		return screen.getByLabelText(`Open ${title}`);
 	}
 
 	function dragTo(contextId: string, activeId: string, overId: string | null) {
@@ -1724,8 +1729,8 @@ describe("Sidebar reordering", () => {
 		const user = userEvent.setup();
 		renderSidebar({ workspaces: [projectA, projectB, projectC] });
 
-		projectHandle("Alpha").focus();
-		await user.keyboard("{ArrowDown}");
+		projectActivator("Alpha").focus();
+		await user.keyboard("{Alt>}{ArrowDown}{/Alt}");
 
 		expect(projectNames()).toEqual(["Bravo", "Alpha", "Charlie"]);
 		expect(screen.getByTestId("project-reorder-status")).toHaveTextContent("Alpha moved to position 2 of 3");
@@ -1736,8 +1741,8 @@ describe("Sidebar reordering", () => {
 		const user = userEvent.setup();
 		renderSidebar({ workspaces: [projectA, projectB] });
 
-		projectHandle("Alpha").focus();
-		await user.keyboard("{ArrowUp}");
+		projectActivator("Alpha").focus();
+		await user.keyboard("{Alt>}{ArrowUp}{/Alt}");
 
 		expect(projectNames()).toEqual(["Alpha", "Bravo"]);
 		expect(useSidebarOrderStore.getState().projectOrder).toEqual([]);
@@ -1763,8 +1768,8 @@ describe("Sidebar reordering", () => {
 		const sessions = [workerSession("proj-a", "a-1", "first", 1), workerSession("proj-a", "a-2", "second", 2)];
 		renderSidebar({ workspaces: [{ ...projectA, sessions }] });
 
-		sessionHandle("first").focus();
-		await user.keyboard("{ArrowDown}");
+		sessionActivator("first").focus();
+		await user.keyboard("{Alt>}{ArrowDown}{/Alt}");
 
 		expect(sessionTitles("proj-a")).toEqual(["Open second", "Open first"]);
 		expect(screen.getByTestId("session-reorder-status")).toHaveTextContent("first moved to position 2 of 2");
@@ -1812,8 +1817,8 @@ describe("Sidebar reordering", () => {
 		];
 		renderSidebar({ workspaces });
 
-		sessionHandle("alpha one").focus();
-		await user.keyboard("{ArrowDown}{ArrowDown}{ArrowUp}");
+		sessionActivator("alpha one").focus();
+		await user.keyboard("{Alt>}{ArrowDown}{ArrowDown}{ArrowUp}{/Alt}");
 
 		expect(sessionTitles("proj-a")).toEqual(["Open alpha one"]);
 		expect(sessionTitles("proj-b")).toEqual(["Open bravo one"]);
@@ -1854,7 +1859,7 @@ describe("Sidebar reordering", () => {
 		expect(sessionTitles("proj-a")).toEqual(["Open brand new", "Open second", "Open first"]);
 	});
 
-	it("leaves the pinned list unordered by hand", () => {
+	it("leaves pinned rows without row-drag affordances", () => {
 		const pinned = {
 			...workerSession("proj-a", "a-1", "pinned task", 1),
 			isPinned: true,
@@ -1863,20 +1868,19 @@ describe("Sidebar reordering", () => {
 		renderSidebar({ workspaces: [{ ...projectA, sessions: [pinned] }] });
 
 		const pinnedList = screen.getByTestId("pinned-session-list");
-		expect(within(pinnedList).queryByTestId("session-reorder-handle")).not.toBeInTheDocument();
+		const pinnedRow = within(pinnedList).getByLabelText("Open pinned task");
+		expect(pinnedRow).not.toHaveClass("cursor-grab");
+		expect(pinnedRow).not.toHaveAttribute("aria-keyshortcuts");
 	});
 
-	it("does not navigate, collapse, or open a menu when a grip is clicked", async () => {
-		const user = userEvent.setup();
+	it("uses the existing row surfaces instead of dedicated reorder buttons", () => {
 		const sessions = [workerSession("proj-a", "a-1", "first", 1), workerSession("proj-a", "a-2", "second", 2)];
 		renderSidebar({ workspaces: [{ ...projectA, sessions }] });
 
-		await user.click(projectHandle("Alpha"));
-		await user.click(sessionHandle("first"));
-
-		expect(navigateMock).not.toHaveBeenCalled();
-		expect(sessionTitles("proj-a")).toEqual(["Open first", "Open second"]);
-		expect(projectNames()).toEqual(["Alpha"]);
+		expect(screen.queryByRole("button", { name: "Reorder Alpha" })).not.toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: "Reorder first" })).not.toBeInTheDocument();
+		expect(projectActivator("Alpha")).toHaveClass("cursor-grab");
+		expect(sessionActivator("first")).toHaveClass("cursor-grab");
 	});
 
 	it("keeps the project row's own click behaviour after reordering", async () => {
