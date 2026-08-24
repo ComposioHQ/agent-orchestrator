@@ -72,3 +72,22 @@ func TestCollectorQwenRegistersLaterMonthlyRollover(t *testing.T) {
 		t.Fatalf("paths=%v want=%v", got, want)
 	}
 }
+
+func TestSourceKindForHarness(t *testing.T) {
+	tests := []struct {
+		harness domain.AgentHarness
+		want    domain.UsageSourceKind
+		ok      bool
+	}{
+		{harness: domain.HarnessClaudeCode, want: domain.UsageSourceClaudeMain, ok: true},
+		{harness: domain.HarnessCodex, want: domain.UsageSourceCodexRollout, ok: true},
+		{harness: domain.HarnessQwen, want: domain.UsageSourceQwenMonthly, ok: true},
+		{harness: domain.HarnessAider, ok: false},
+	}
+	for _, tt := range tests {
+		got, ok := sourceKindForHarness(tt.harness)
+		if got != tt.want || ok != tt.ok {
+			t.Fatalf("sourceKindForHarness(%q) = %q, %v; want %q, %v", tt.harness, got, ok, tt.want, tt.ok)
+		}
+	}
+}
