@@ -45,7 +45,7 @@ export function ConnectMobileModal({ open, onOpenChange }: ConnectMobileModalPro
 						<X className="size-5" aria-hidden="true" />
 					</button>
 				</DialogClose>
-				<DialogHeader className={cn(settingsDialogHeaderClass, "items-start border-b-0 text-left")}>
+				<DialogHeader className={cn(settingsDialogHeaderClass, "items-start border-b-0 pb-0 text-left")}>
 					<DialogTitle className="settings-dialog-title text-left">{t("mobile.title")}</DialogTitle>
 					<DialogDescription className="sr-only">{t("mobile.description")}</DialogDescription>
 				</DialogHeader>

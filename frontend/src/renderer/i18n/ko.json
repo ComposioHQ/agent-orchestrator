@@ -416,6 +416,7 @@
 	"mobile.password": "비밀번호",
 	"mobile.passwordCopied": "비밀번호가 복사되었습니다",
 	"mobile.qrHint": "TestFlight를 설치한 뒤 스캔하여 베타에 참여",
+	"mobile.scanTestFlight": "이 QR 코드를 TestFlight에서 스캔",
 	"mobile.regenerate": "비밀번호 다시 생성",
 	"mobile.scanToPair": "스캔하여 페어링",
 	"mobile.securePairing": "보안 페어링(TLS)",

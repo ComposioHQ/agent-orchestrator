@@ -418,6 +418,7 @@
 	"mobile.password": "Contraseña",
 	"mobile.passwordCopied": "Contraseña copiada",
 	"mobile.qrHint": "Instala TestFlight y luego escanea para unirte a la beta",
+	"mobile.scanTestFlight": "Escanea este código QR en TestFlight",
 	"mobile.regenerate": "Regenerar contraseña",
 	"mobile.scanToPair": "Escanear para emparejar",
 	"mobile.securePairing": "Emparejamiento seguro (TLS)",

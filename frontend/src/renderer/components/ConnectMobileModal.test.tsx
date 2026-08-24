@@ -81,7 +81,7 @@ test("uses the compact mobile-dialog width", () => {
 	expect(screen.getByRole("dialog")).toHaveClass(
 		"w-[min(var(--size-settings-mobile-dialog),calc(100vw-var(--space-8)))]",
 	);
-	expect(screen.getByRole("dialog").querySelector('[data-slot="dialog-header"]')).toHaveClass("border-b-0");
+	expect(screen.getByRole("dialog").querySelector('[data-slot="dialog-header"]')).toHaveClass("border-b-0", "pb-0");
 });
 
 test("encodes the LAN address by default", async () => {
@@ -96,6 +96,15 @@ test("shows a square Google Play QR tooltip for Android", async () => {
 	await userEvent.hover(screen.getByRole("button", { name: "Open Agent Orchestrator on Google Play" }));
 
 	expect(await screen.findByTestId("android-play-qr")).toHaveClass("p-2");
+});
+
+test("shows a QR-only TestFlight tooltip", async () => {
+	renderModal();
+	await userEvent.hover(await screen.findByRole("button", { name: "Join the TestFlight beta" }));
+
+	const tooltip = await screen.findByTestId("testflight-qr");
+	expect(tooltip).not.toHaveTextContent("Scan this QR on TestFlight");
+	expect(tooltip.querySelector("svg")).toBeInTheDocument();
 });
 
 test("re-encodes the QR with the Tailscale address when that mode is selected", async () => {

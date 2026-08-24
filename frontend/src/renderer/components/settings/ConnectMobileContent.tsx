@@ -278,16 +278,13 @@ export function ConnectMobileContent({ active }: { active: boolean }) {
 												aria-label={t("mobile.joinTestFlightAria")}
 												onClick={() => void aoBridge.app.openExternal(TESTFLIGHT_URL)}
 											>
-												{t("mobile.joinNow")}
+												{t("mobile.scanTestFlight")}
 												<ArrowUpRight className="size-3.5" aria-hidden="true" />
 											</button>
 										</TooltipTrigger>
 										<TooltipContent side="bottom" className="p-2" data-testid="testflight-qr">
-											<div className="flex flex-col items-center gap-2">
-												<div className="rounded-md bg-(--color-bg-settings-input) p-2">
-													<StyledQRCode value={TESTFLIGHT_URL} size={TESTFLIGHT_QR_SIZE} showLogo={false} className="block" />
-												</div>
-												<p className="text-caption">{t("mobile.qrHint")}</p>
+											<div className="rounded-md bg-(--color-bg-settings-input) p-2">
+												<StyledQRCode value={TESTFLIGHT_URL} size={TESTFLIGHT_QR_SIZE} showLogo={false} className="block" />
 											</div>
 										</TooltipContent>
 									</Tooltip>

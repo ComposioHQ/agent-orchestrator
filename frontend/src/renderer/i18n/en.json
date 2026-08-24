@@ -416,6 +416,7 @@
 	"mobile.password": "Password",
 	"mobile.passwordCopied": "Password copied",
 	"mobile.qrHint": "Install TestFlight, then scan to join the beta",
+	"mobile.scanTestFlight": "Scan this QR on TestFlight",
 	"mobile.regenerate": "Regenerate password",
 	"mobile.scanToPair": "Scan to pair",
 	"mobile.securePairing": "Secure pairing (TLS)",

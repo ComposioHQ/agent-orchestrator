@@ -416,6 +416,7 @@
 	"mobile.password": "密码",
 	"mobile.passwordCopied": "密码已复制",
 	"mobile.qrHint": "安装 TestFlight 后扫描以加入测试",
+	"mobile.scanTestFlight": "在 TestFlight 中扫描此二维码",
 	"mobile.regenerate": "重新生成密码",
 	"mobile.scanToPair": "扫码配对",
 	"mobile.securePairing": "安全配对（TLS）",

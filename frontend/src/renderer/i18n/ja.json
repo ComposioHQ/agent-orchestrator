@@ -416,6 +416,7 @@
 	"mobile.password": "パスワード",
 	"mobile.passwordCopied": "パスワードをコピーしました",
 	"mobile.qrHint": "TestFlight をインストールしてからスキャンし、ベータに参加",
+	"mobile.scanTestFlight": "この QR コードを TestFlight でスキャン",
 	"mobile.regenerate": "パスワードを再生成",
 	"mobile.scanToPair": "スキャンしてペアリング",
 	"mobile.securePairing": "セキュアペアリング（TLS）",
