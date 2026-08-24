@@ -1635,7 +1635,8 @@ describe("Sidebar", () => {
 		);
 	});
 
-	it("reveals the active project when opening a worker-session deep link", () => {
+	it("reveals the active project when opening a worker-session deep link", async () => {
+		const user = userEvent.setup();
 		mockParams.projectId = workspace.id;
 		mockParams.sessionId = session.id;
 		renderSidebar({
@@ -1647,6 +1648,13 @@ describe("Sidebar", () => {
 		expect(screen.getByRole("button", { name: "Toggle Project One sessions" })).toHaveAttribute(
 			"aria-expanded",
 			"true",
+		);
+
+		await user.click(screen.getByRole("button", { name: "Toggle Project One sessions" }));
+		expect(screen.queryByLabelText("Open fix login")).not.toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "Toggle Project One sessions" })).toHaveAttribute(
+			"aria-expanded",
+			"false",
 		);
 	});
 

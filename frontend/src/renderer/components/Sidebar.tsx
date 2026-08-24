@@ -227,22 +227,25 @@ export function Sidebar({
 	const [dismissedInitialActiveProjectIds, setDismissedInitialActiveProjectIds] = useState<ReadonlySet<string>>(
 		() => new Set(),
 	);
-	const toggleCollapsed = (id: string) =>
+	const toggleProjectDisclosure = (id: string) => {
+		const routeFallbackActive =
+			initialActiveSessionProjectId === id && !dismissedInitialActiveProjectIds.has(id);
+		const currentlyExpanded = expandedIds.has(id) || routeFallbackActive;
 		setExpandedIds((prev) => {
 			const next = new Set(prev);
-			next.has(id) ? next.delete(id) : next.add(id);
+			currentlyExpanded ? next.delete(id) : next.add(id);
 			if (typeof window !== "undefined") {
 				window.localStorage?.setItem(expandedProjectsStorageKey, JSON.stringify([...next]));
 			}
 			return next;
 		});
-	const toggleInitialActiveProject = (id: string) =>
 		setDismissedInitialActiveProjectIds((prev) => {
 			if (initialActiveSessionProjectId !== id) return prev;
 			const next = new Set(prev);
-			prev.has(id) ? next.delete(id) : next.add(id);
+			currentlyExpanded ? next.add(id) : next.delete(id);
 			return next;
 		});
+	};
 	// Section disclosure: Pinned header collapses its body. Projects stays open.
 	const [pinnedOpen, setPinnedOpen] = useState(true);
 	// Fetch the running app version to derive the build channel. Channel is
@@ -434,10 +437,7 @@ export function Sidebar({
 										}
 										suppressInitialExpandAnimation={expandedIds.has(workspace.id)}
 										selection={selection}
-										onToggle={() => {
-											toggleCollapsed(workspace.id);
-											toggleInitialActiveProject(workspace.id);
-										}}
+										onToggle={() => toggleProjectDisclosure(workspace.id)}
 										onRemoveProject={onRemoveProject}
 									/>
 								))}
