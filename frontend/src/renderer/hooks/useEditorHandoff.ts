@@ -45,6 +45,9 @@ export function useOpenSessionTarget() {
 			try {
 				return await aoBridge.editorHandoff.open({ sessionId, ...(targetId ? { targetId } : {}) });
 			} catch (error) {
+				// Normalize here, once, so every consumer of this mutation gets the
+				// reason rather than the IPC wrapper. Callers render error.message
+				// directly and should not each have to strip it.
 				throw new Error(editorHandoffErrorMessage(error) ?? String(error));
 			}
 		},
