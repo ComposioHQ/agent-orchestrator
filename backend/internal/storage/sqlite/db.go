@@ -155,6 +155,12 @@ func migrate(db *sql.DB) error {
 	if err := prepareQueuedTurnPromotionMigration(db); err != nil {
 		return fmt.Errorf("prepare queued-turn promotion migration: %w", err)
 	}
+	if err := prepareLegacyPipelineCDCBeforeReviewRunMigration(db); err != nil {
+		return fmt.Errorf("prepare legacy pipeline CDC migration: %w", err)
+	}
+	if err := prepareAppSettingsSingletonMigration(db); err != nil {
+		return fmt.Errorf("prepare app settings singleton migration: %w", err)
+	}
 	// Builds can advance a database past a migration that is added or
 	// renumbered later (notably across fast-moving Nightly releases). Apply
 	// those embedded migrations instead of permanently wedging daemon startup
@@ -163,6 +169,138 @@ func migrate(db *sql.DB) error {
 		return fmt.Errorf("run migrations: %w", err)
 	}
 	return reconcileSchema(db)
+}
+
+// prepareLegacyPipelineCDCBeforeReviewRunMigration repairs Nightly databases
+// that briefly carried the abandoned pipeline CDC schema. The 0103 migration
+// rebuilds change_log; SQLite refuses to drop that table while these old trigger
+// bodies still reference it, and any retained pipeline_* event rows would fail
+// 0103's narrower CHECK constraint.
+func prepareLegacyPipelineCDCBeforeReviewRunMigration(db *sql.DB) error {
+	var gooseTable int
+	if err := db.QueryRow(
+		`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'goose_db_version'`,
+	).Scan(&gooseTable); err != nil {
+		return err
+	}
+	if gooseTable == 0 {
+		return nil
+	}
+
+	var applied103 int
+	if err := db.QueryRow(`
+SELECT COALESCE((
+    SELECT is_applied FROM goose_db_version
+    WHERE version_id = 103 ORDER BY id DESC LIMIT 1
+), 0)`).Scan(&applied103); err != nil {
+		return err
+	}
+	if applied103 != 0 {
+		return nil
+	}
+
+	if _, err := db.Exec(`
+DROP TRIGGER IF EXISTS pipeline_definitions_cdc_insert;
+DROP TRIGGER IF EXISTS pipeline_definitions_cdc_update;
+DROP TRIGGER IF EXISTS pipeline_definitions_cdc_delete;
+DROP TRIGGER IF EXISTS pipeline_runs_cdc_insert;
+DROP TRIGGER IF EXISTS pipeline_runs_cdc_update;
+DROP TRIGGER IF EXISTS pipeline_stage_runs_cdc_insert;
+DROP TRIGGER IF EXISTS pipeline_stage_runs_cdc_update;
+DROP TRIGGER IF EXISTS pipeline_artifacts_cdc_insert;
+DROP TRIGGER IF EXISTS pipeline_artifacts_cdc_update;`); err != nil {
+		return err
+	}
+
+	var changeLogTable int
+	if err := db.QueryRow(
+		`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'change_log'`,
+	).Scan(&changeLogTable); err != nil {
+		return err
+	}
+	if changeLogTable == 0 {
+		return nil
+	}
+
+	_, err := db.Exec(`
+DELETE FROM change_log
+WHERE event_type IN (
+    'pipeline_definition_changed',
+    'pipeline_run_updated',
+    'pipeline_stage_run_updated',
+    'pipeline_artifact_updated'
+);`)
+	return err
+}
+
+// prepareAppSettingsSingletonMigration repairs development databases whose
+// app_settings table came from an older key/value experiment while 0067 is
+// already marked applied. Later migrations update the singleton row by id, so
+// normalize the physical schema before goose reaches those migrations.
+func prepareAppSettingsSingletonMigration(db *sql.DB) error {
+	var tableExists int
+	if err := db.QueryRow(
+		`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'app_settings'`,
+	).Scan(&tableExists); err != nil {
+		return err
+	}
+	if tableExists == 0 {
+		return nil
+	}
+
+	var idColumn, modeColumn, keyColumn, valueColumn int
+	if err := db.QueryRow(
+		`SELECT COUNT(*) FROM pragma_table_info('app_settings') WHERE name = 'id'`,
+	).Scan(&idColumn); err != nil {
+		return err
+	}
+	if err := db.QueryRow(
+		`SELECT COUNT(*) FROM pragma_table_info('app_settings') WHERE name = 'default_session_mode'`,
+	).Scan(&modeColumn); err != nil {
+		return err
+	}
+	if idColumn > 0 && modeColumn > 0 {
+		return nil
+	}
+	if err := db.QueryRow(
+		`SELECT COUNT(*) FROM pragma_table_info('app_settings') WHERE name = 'key'`,
+	).Scan(&keyColumn); err != nil {
+		return err
+	}
+	if err := db.QueryRow(
+		`SELECT COUNT(*) FROM pragma_table_info('app_settings') WHERE name = 'value'`,
+	).Scan(&valueColumn); err != nil {
+		return err
+	}
+
+	var defaultMode string
+	if keyColumn > 0 && valueColumn > 0 {
+		if err := db.QueryRow(`
+SELECT COALESCE((
+    SELECT value FROM app_settings
+    WHERE key = 'default_session_mode' AND value IN ('chat', 'tui')
+    LIMIT 1
+), 'tui')`).Scan(&defaultMode); err != nil {
+			return err
+		}
+	} else {
+		defaultMode = "tui"
+	}
+
+	_, err := db.Exec(`
+BEGIN;
+ALTER TABLE app_settings RENAME TO app_settings_legacy_before_0067_repair;
+CREATE TABLE app_settings (
+    id                   INTEGER PRIMARY KEY CHECK (id = 1),
+    default_session_mode TEXT NOT NULL DEFAULT 'tui'
+        CHECK (default_session_mode IN ('chat', 'tui')),
+    updated_at           TIMESTAMP NOT NULL
+);
+INSERT INTO app_settings (id, default_session_mode, updated_at)
+VALUES (1, ?, CURRENT_TIMESTAMP);
+DROP TABLE app_settings_legacy_before_0067_repair;
+COMMIT;`, defaultMode)
+	return err
 }
 
 // prepareAutoInjectReviewMigration preserves development databases whose
