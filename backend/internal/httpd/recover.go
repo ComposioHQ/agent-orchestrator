@@ -51,7 +51,9 @@ func recoverTelemetry(log *slog.Logger, sink ports.EventSink) func(http.Handler)
 							},
 						})
 					}
-					// Capture the panic to Sentry with its Go stack.
+					// Capture the panic to Sentry with its Go stack, then mark this
+					// request captured so the outer 5xx logger does not emit a second
+					// generic event for the 500 this recovery is about to write.
 					sentryobs.CapturePanic(r.Context(), rec, stack, map[string]string{
 						"component":  "httpd",
 						"operation":  "http_request_panic",
@@ -60,6 +62,7 @@ func recoverTelemetry(log *slog.Logger, sink ports.EventSink) func(http.Handler)
 						"panic_kind": panicKind,
 						"request_id": middleware.GetReqID(r.Context()),
 					}, fingerprint)
+					markSentryCaptured(r.Context())
 					writeRecoveredError(w, r)
 				}
 			}()

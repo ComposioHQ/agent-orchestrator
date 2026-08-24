@@ -24,19 +24,29 @@ func TestScrubRedactsLocalPaths(t *testing.T) {
 	}
 }
 
-func TestShouldCaptureStatus(t *testing.T) {
+func TestShouldCapture(t *testing.T) {
 	t.Parallel()
-	cases := map[int]bool{
-		200: false,
-		404: false,
-		500: true,
-		502: true,
-		503: false, // transient contention (see #4325) — never an issue
-		504: true,
+	cases := []struct {
+		status int
+		code   string
+		want   bool
+	}{
+		{status: 200, want: false},
+		{status: 404, want: false},
+		{status: 500, want: true},
+		{status: 502, want: true},
+		{status: 504, want: true},
+		// 503 is captured or suppressed based on the typed code, not status alone.
+		{status: 503, code: "SERVICE_UNAVAILABLE", want: false}, // deliberate backpressure
+		{status: 503, code: "SCM_UNAVAILABLE", want: true},      // real outage
+		{status: 503, code: "BROWSER_RUNTIME_UNAVAILABLE", want: true},
+		{status: 503, code: "DEVICE_REGISTRY_UNAVAILABLE", want: true},
+		{status: 503, code: "", want: true},                    // untyped 503 is treated as a fault
+		{status: 500, code: "SERVICE_UNAVAILABLE", want: true}, // code only suppresses on 503
 	}
-	for status, want := range cases {
-		if got := ShouldCaptureStatus(status); got != want {
-			t.Fatalf("ShouldCaptureStatus(%d) = %v, want %v", status, got, want)
+	for _, c := range cases {
+		if got := ShouldCapture(c.status, c.code); got != c.want {
+			t.Fatalf("ShouldCapture(%d, %q) = %v, want %v", c.status, c.code, got, c.want)
 		}
 	}
 }

@@ -34,6 +34,9 @@ func requestLogger(log *slog.Logger, sink ports.EventSink) func(http.Handler) ht
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			ww := middleware.NewWrapResponseWriter(w, r.ProtoMajor)
 			r, capturedErr := envelope.WithErrorCapture(r)
+			// Install the single-capture marker before the inner recover
+			// middleware runs, so a recovered panic captures exactly once.
+			r = withSentryCaptureState(r)
 			start := time.Now()
 			defer func() {
 				attrs := []any{
@@ -86,8 +89,11 @@ func requestLogger(log *slog.Logger, sink ports.EventSink) func(http.Handler) ht
 						})
 					}
 					// Capture genuine faults to Sentry with the real error/stack.
-					// 503 (transient contention) is excluded by ShouldCaptureStatus.
-					if sentryobs.ShouldCaptureStatus(ww.Status()) {
+					// Skip when the panic recover middleware already captured this
+					// failure (otherwise one panic becomes two issues), and skip the
+					// deliberate SERVICE_UNAVAILABLE backpressure 503 (other typed
+					// 503 outages are still captured).
+					if !sentryAlreadyCaptured(r.Context()) && sentryobs.ShouldCapture(ww.Status(), errorCode) {
 						err := capErr
 						if err == nil {
 							err = fmt.Errorf("HTTP %d %s %s", ww.Status(), r.Method, path)
