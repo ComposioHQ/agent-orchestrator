@@ -86,7 +86,7 @@ func (r *QuotaRefresher) RefreshQuota(ctx context.Context, provider domain.Quota
 	}
 	readCtx, cancel := context.WithTimeout(ctx, r.timeout)
 	defer cancel()
-	req, err := http.NewRequestWithContext(readCtx, http.MethodGet, r.endpoint, nil)
+	req, err := http.NewRequestWithContext(readCtx, http.MethodGet, r.endpoint, http.NoBody)
 	if err != nil {
 		return domain.QuotaSnapshot{}, fmt.Errorf("create Kimi usage request: %w", err)
 	}
@@ -95,25 +95,25 @@ func (r *QuotaRefresher) RefreshQuota(ctx context.Context, provider domain.Quota
 	resp, err := r.client.Do(req)
 	if err != nil {
 		if errors.Is(readCtx.Err(), context.DeadlineExceeded) {
-			return domain.QuotaSnapshot{}, fmt.Errorf("Kimi usage read timed out: %w", readCtx.Err())
+			return domain.QuotaSnapshot{}, fmt.Errorf("kimi usage read timed out: %w", readCtx.Err())
 		}
 		if readCtx.Err() != nil {
 			return domain.QuotaSnapshot{}, fmt.Errorf("read Kimi usage: %w", readCtx.Err())
 		}
 		return domain.QuotaSnapshot{}, fmt.Errorf("read Kimi usage: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
 		switch resp.StatusCode {
 		case http.StatusUnauthorized:
-			return domain.QuotaSnapshot{}, fmt.Errorf("Kimi authentication failed; sign in again (HTTP %d)", resp.StatusCode)
+			return domain.QuotaSnapshot{}, fmt.Errorf("kimi authentication failed; sign in again (HTTP %d)", resp.StatusCode)
 		case http.StatusTooManyRequests:
-			return domain.QuotaSnapshot{}, fmt.Errorf("Kimi usage request was rate limited (HTTP %d)", resp.StatusCode)
+			return domain.QuotaSnapshot{}, fmt.Errorf("kimi usage request was rate limited (HTTP %d)", resp.StatusCode)
 		default:
 			if resp.StatusCode >= http.StatusInternalServerError {
-				return domain.QuotaSnapshot{}, fmt.Errorf("Kimi usage service failed (HTTP %d)", resp.StatusCode)
+				return domain.QuotaSnapshot{}, fmt.Errorf("kimi usage service failed (HTTP %d)", resp.StatusCode)
 			}
-			return domain.QuotaSnapshot{}, fmt.Errorf("Kimi usage request failed with HTTP %d", resp.StatusCode)
+			return domain.QuotaSnapshot{}, fmt.Errorf("kimi usage request failed with HTTP %d", resp.StatusCode)
 		}
 	}
 	body, err := io.ReadAll(io.LimitReader(resp.Body, maxUsageBody+1))
@@ -121,7 +121,7 @@ func (r *QuotaRefresher) RefreshQuota(ctx context.Context, provider domain.Quota
 		return domain.QuotaSnapshot{}, fmt.Errorf("read Kimi usage response: %w", err)
 	}
 	if len(body) > maxUsageBody {
-		return domain.QuotaSnapshot{}, errors.New("Kimi usage response exceeded size limit")
+		return domain.QuotaSnapshot{}, errors.New("kimi usage response exceeded size limit")
 	}
 	var payload kimiUsagePayload
 	if err := json.Unmarshal(body, &payload); err != nil {
@@ -304,7 +304,7 @@ func (n *kimiNumber) UnmarshalJSON(data []byte) error {
 	}
 	value, err := strconv.ParseFloat(text, 64)
 	if err != nil || math.IsNaN(value) || math.IsInf(value, 0) {
-		return errors.New("Kimi usage value must be a finite number")
+		return errors.New("kimi usage value must be a finite number")
 	}
 	*n = kimiNumber(math.Trunc(value))
 	return nil
@@ -330,7 +330,7 @@ func normalizeUsagePayload(payload kimiUsagePayload, observedAt time.Time) (doma
 		}
 	}
 	if len(limits) == 0 {
-		return domain.QuotaSnapshot{}, errors.New("Kimi usage response contained no valid limits")
+		return domain.QuotaSnapshot{}, errors.New("kimi usage response contained no valid limits")
 	}
 	return domain.NormalizeQuotaSnapshot(domain.QuotaSnapshot{
 		Provider:     "kimi",
@@ -380,7 +380,7 @@ func normalizeKimiLimit(raw kimiUsageDetail, window kimiUsageWindow, fallbackLab
 		RemainingValue: remaining,
 		TotalValue:     total,
 		Unit:           "requests",
-		WindowType:     firstNonBlank(windowID(window), string(fallbackID)),
+		WindowType:     firstNonBlank(windowID(window), fallbackID),
 		ObservedAt:     observedAt,
 	}
 	if duration, ok := windowDuration(window); ok {
