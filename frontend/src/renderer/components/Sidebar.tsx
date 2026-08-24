@@ -210,6 +210,9 @@ export function Sidebar({
 	const daemonStatus = useShellMaybe()?.daemonStatus ?? null;
 	const commandPaletteEnabled = useCommandPaletteEnabled();
 	const setCommandPaletteOpen = useUiStore((s) => s.setCommandPaletteOpen);
+	const initialActiveSessionProjectId = useRef(
+		selection.activeSessionId ? selection.activeProjectId : undefined,
+	).current;
 	useLayoutEffect(() => {
 		// Offcanvas: the panel slides off-screen on collapse — no need to hide content.
 		// Reveal immediately on expand so there's no fade-in delay.
@@ -221,6 +224,9 @@ export function Sidebar({
 	// Disclosure state is persisted as the IDs of projects that were expanded.
 	// An empty/missing store intentionally means all projects start collapsed.
 	const [expandedIds, setExpandedIds] = useState<ReadonlySet<string>>(() => readExpandedProjectIds());
+	const [dismissedInitialActiveProjectIds, setDismissedInitialActiveProjectIds] = useState<ReadonlySet<string>>(
+		() => new Set(),
+	);
 	const toggleCollapsed = (id: string) =>
 		setExpandedIds((prev) => {
 			const next = new Set(prev);
@@ -228,6 +234,13 @@ export function Sidebar({
 			if (typeof window !== "undefined") {
 				window.localStorage?.setItem(expandedProjectsStorageKey, JSON.stringify([...next]));
 			}
+			return next;
+		});
+	const toggleInitialActiveProject = (id: string) =>
+		setDismissedInitialActiveProjectIds((prev) => {
+			if (initialActiveSessionProjectId !== id) return prev;
+			const next = new Set(prev);
+			prev.has(id) ? next.delete(id) : next.add(id);
 			return next;
 		});
 	// Section disclosure: Pinned header collapses its body. Projects stays open.
@@ -414,10 +427,17 @@ export function Sidebar({
 									<ProjectItem
 										key={workspace.id}
 										workspace={workspace}
-										expanded={expandedIds.has(workspace.id)}
+										expanded={
+											expandedIds.has(workspace.id) ||
+											(initialActiveSessionProjectId === workspace.id &&
+												!dismissedInitialActiveProjectIds.has(workspace.id))
+										}
 										suppressInitialExpandAnimation={expandedIds.has(workspace.id)}
 										selection={selection}
-										onToggle={() => toggleCollapsed(workspace.id)}
+										onToggle={() => {
+											toggleCollapsed(workspace.id);
+											toggleInitialActiveProject(workspace.id);
+										}}
 										onRemoveProject={onRemoveProject}
 									/>
 								))}

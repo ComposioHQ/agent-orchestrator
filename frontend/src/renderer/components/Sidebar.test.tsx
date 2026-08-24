@@ -1635,6 +1635,21 @@ describe("Sidebar", () => {
 		);
 	});
 
+	it("reveals the active project when opening a worker-session deep link", () => {
+		mockParams.projectId = workspace.id;
+		mockParams.sessionId = session.id;
+		renderSidebar({
+			expandedProjectIds: [],
+			workspaces: [{ ...workspace, sessions: [session] }],
+		});
+
+		expect(screen.getByLabelText("Open fix login")).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "Toggle Project One sessions" })).toHaveAttribute(
+			"aria-expanded",
+			"true",
+		);
+	});
+
 	it("restores only the projects saved as expanded and persists toggles", async () => {
 		const user = userEvent.setup();
 		const secondWorkspace = {
