@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { useEffect, useRef, useState } from "react";
-import { ArrowUpRight, Check, Copy, Loader2, RotateCcw } from "lucide-react";
+import { Apple, ArrowUpRight, Check, Copy, Loader2, RotateCcw } from "lucide-react";
 import { apiClient, apiErrorMessage } from "../../lib/api-client";
 import { aoBridge } from "../../lib/bridge";
 import { captureRendererEvent } from "../../lib/telemetry";
@@ -31,6 +31,14 @@ export function pairingPayload(host: string, port: number, password: string, sec
 const PLACEHOLDER_QR_VALUE = "agent-orchestrator";
 
 type MobilePlatform = "ios" | "android";
+
+function AndroidIcon({ className }: { className?: string }) {
+	return (
+		<svg aria-hidden="true" className={className} fill="currentColor" viewBox="0 0 24 24">
+			<path d="M17.6 9.48 19.44 6.3a.58.58 0 0 0-1-0.59l-1.88 3.24A11.9 11.9 0 0 0 12 8c-1.7 0-3.3.35-4.55.95L5.57 5.71a.58.58 0 0 0-1 .59L6.4 9.48A6.96 6.96 0 0 0 3 14h18a6.96 6.96 0 0 0-3.4-4.52ZM7 13a1 1 0 1 1 0-2 1 1 0 0 1 0 2Zm10 0a1 1 0 1 1 0-2 1 1 0 0 1 0 2ZM3 16a2 2 0 0 0 2 2h1v3.5a1.5 1.5 0 0 0 3 0V18h6v3.5a1.5 1.5 0 0 0 3 0V18h1a2 2 0 0 0 2-2v-1H3v1Z" />
+		</svg>
+	);
+}
 
 /** Trailing "Join now ↗" link at the end of a walkthrough step. Border-bottom
  *  instead of text-decoration so the underline runs under the arrow too. */
@@ -68,8 +76,8 @@ export function ConnectMobileContent({ active }: { active: boolean }) {
 	const [platform, setPlatform] = useState<MobilePlatform>("ios");
 	const [mode, setMode] = useState<SetupMode>("lan");
 	const platformOptions = [
-		{ value: "ios", label: t("mobile.ios") },
-		{ value: "android", label: t("mobile.android") },
+		{ value: "ios", label: t("mobile.ios"), icon: <Apple aria-hidden="true" className="size-4 shrink-0" /> },
+		{ value: "android", label: t("mobile.android"), icon: <AndroidIcon className="size-4 shrink-0" /> },
 	] satisfies SettingsOption<MobilePlatform>[];
 	const modeOptions = [
 		{ value: "lan", label: t("mobile.lan") },
