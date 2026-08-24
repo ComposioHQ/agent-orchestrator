@@ -40,9 +40,20 @@ type SCMParser interface {
 //
 // Idempotent: it remembers the last total emitted per session and skips a
 // repeat with the same total, so the retries and multi-binding settles the
-// pipeline performs never double-count. A later genuine increase (a reactivated
-// session that runs more) re-emits with the higher total, which downstream
-// ranking treats as the session's latest figure.
+// pipeline performs never double-count.
+//
+// Event contract — total_tokens is a CUMULATIVE snapshot of the session's whole
+// lifetime, not a per-emit delta. One session can emit several of these: a
+// Restore reuses the AO session id and preserves its stored usage, so after the
+// session settles, is restored, runs more, and settles again, it emits a second,
+// larger snapshot (e.g. 120 then 180). The two events are two readings of the
+// same running total, not two separate usages. A ranking must therefore take the
+// LATEST event per session (argMax(total_tokens) by time) before summing across
+// sessions; summing a single session's own snapshots double-counts (120 + 180 =
+// 300 for a session that actually used 180). This also makes the contract robust
+// to a daemon restart, which clears the in-memory dedupe below and re-emits the
+// current cumulative total — still the correct latest reading, never an inflated
+// sum.
 type Emitter struct {
 	summary   SummaryReader
 	store     SessionStore

@@ -136,6 +136,48 @@ func TestEmitSessionUsageReemitsOnHigherTotal(t *testing.T) {
 	}
 }
 
+// Reproduces the restore/reactivation double-count concern: a session settles at
+// 120, is restored (same AO session id, usage preserved), runs 60 more, and
+// settles again at a cumulative 180. Both events must carry the CUMULATIVE
+// snapshot (120 then 180), not a delta — so the correct per-session figure is the
+// latest (180), and a naive SUM across the two snapshots (300) is wrong by
+// contract. This pins the "latest per session, never sum a session's snapshots"
+// event contract the ranking query relies on.
+func TestEmitSessionUsageRestoreEmitsCumulativeSnapshotNotDelta(t *testing.T) {
+	summaryWithTotal := func(input, output int64) domain.SessionUsageSummary {
+		totals := domain.UsageMetricTotals{InputTokens: i64(input), OutputTokens: i64(output)}
+		return domain.SessionUsageSummary{
+			SessionID: "ao-1",
+			Totals:    totals,
+			Harnesses: []domain.HarnessUsageSummary{{
+				Harness: domain.HarnessClaudeCode,
+				Models:  []domain.ModelUsageSummary{{ModelID: "claude-opus-4-8", Totals: totals}},
+			}},
+		}
+	}
+
+	e, sum, sink := newEmitter(summaryWithTotal(100, 20)) // first lifetime: 120 total
+	e.EmitSessionUsage(context.Background(), "ao-1")
+
+	// Restore: same session id, cumulative stored usage grows to 180.
+	sum.summary = summaryWithTotal(100, 80)
+	e.EmitSessionUsage(context.Background(), "ao-1")
+
+	if len(sink.events) != 2 {
+		t.Fatalf("restore should re-emit the new cumulative snapshot: got %d events, want 2", len(sink.events))
+	}
+	first := sink.events[0].Payload["total_tokens"]
+	second := sink.events[1].Payload["total_tokens"]
+	if first != int64(120) {
+		t.Fatalf("first snapshot total_tokens = %v, want 120", first)
+	}
+	// The second event is the CUMULATIVE 180, not a 60 delta. Latest-per-session
+	// gives the correct 180; summing snapshots would give an inflated 300.
+	if second != int64(180) {
+		t.Fatalf("second snapshot total_tokens = %v, want cumulative 180 (not a 60 delta)", second)
+	}
+}
+
 func TestEmitSessionUsagePendingIngestionDoesNotEmit(t *testing.T) {
 	// At exit before ingestion the summary reads zero; emitting would be useless
 	// and (with the old design) permanently dropped. Now it simply no-ops until
