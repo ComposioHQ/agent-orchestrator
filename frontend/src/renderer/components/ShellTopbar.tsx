@@ -217,7 +217,9 @@ export function ShellTopbar({
 	return (
 		<LayoutGroup id="shell-topbar">
 		<motion.header
-			className={embedded ? "contents" : cn(topbarHeaderClass, "workspace-topbar-container")}
+			className={
+				embedded ? "contents" : cn(topbarHeaderClass, "workspace-topbar-container", isSessionRoute && "pr-2")
+			}
 			style={embedded ? undefined : { ...dragStyle, paddingLeft }}
 		>
 			{!embedded ? (
@@ -375,7 +377,7 @@ export function ShellTopbar({
 						    remains a separate visual target in the outer top-bar row. */}
 						{!isOrchestrator && session && (sessionAction || sessionIsActive(session)) ? (
 							<div
-								className="mr-0.5 inline-flex shrink-0 items-center gap-px"
+								className="inline-flex shrink-0 items-center gap-2"
 								data-testid="session-local-actions"
 								style={noDragStyle}
 							>

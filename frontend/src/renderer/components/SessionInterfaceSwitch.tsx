@@ -321,7 +321,7 @@ export function SessionInterfaceTransitionNotice({
 }
 
 export function SessionInterfaceActionGroup({ children }: { children: ReactNode }) {
-	return <div className="inline-flex shrink-0 items-center gap-px">{children}</div>;
+	return <div className="inline-flex shrink-0 items-center gap-2">{children}</div>;
 }
 
 export function SessionInterfaceSwitchMenuItem({

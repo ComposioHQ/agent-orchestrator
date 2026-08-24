@@ -186,6 +186,14 @@ beforeEach(() => {
 });
 
 describe("ShellTopbar status pill", () => {
+	it("matches the session action edge inset to the toolbar spacing", () => {
+		renderTopbar(sessionWith());
+
+		const header = screen.getByTestId("workspace-topbar-actions").closest("header");
+		expect(header).toHaveClass("pr-2");
+		expect(header).not.toHaveClass("pr-4");
+	});
+
 	it("shows the worker session name and activity in the full topbar identity", () => {
 		renderTopbar(sessionWith());
 
@@ -239,8 +247,8 @@ describe("ShellTopbar status pill", () => {
 		expect(screen.queryByText("ao/sess-1")).toBeNull();
 		expect(screen.queryByText("Working")).toBeNull();
 		const localActions = screen.getByTestId("session-local-actions");
-		expect(localActions.classList.contains("gap-px")).toBe(true);
-		expect(localActions.classList.contains("mr-0.5")).toBe(true);
+		expect(localActions).toHaveClass("gap-2");
+		expect(localActions).not.toHaveClass("gap-px", "mr-0.5");
 		expect(localActions.contains(screen.getByRole("button", { name: "New terminal" }))).toBe(true);
 		expect(localActions.contains(screen.getByRole("button", { name: "Switch agent" }))).toBe(true);
 		expect(localActions.contains(screen.getByRole("button", { name: "Switch to chat UI" }))).toBe(true);

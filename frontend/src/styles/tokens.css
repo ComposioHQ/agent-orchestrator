@@ -192,6 +192,9 @@
 	--duration-fast: 120ms;
 	--duration-normal: 150ms;
 
+	/* State opacity */
+	--opacity-control-disabled: 0.35;
+
 	/* ═══════════════════════════════════════════════════════════════
 	   SPACING — 4px base (audit: 4/6/8/10/12/14/16/18 most common)
 	   Prefer even steps; map odd pixels (5/7/9/11/13/15) to nearest.

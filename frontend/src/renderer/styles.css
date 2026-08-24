@@ -2486,11 +2486,14 @@ html.sidebar-reordering * {
 	padding-inline: var(--space-2_5);
 }
 
-/* Split workspace handoff control. The generic .topbar-control rule above rounds
-   all four corners and clamps every control to a square minimum, which makes the
-   two halves read as separate chips crammed together rather than one button.
-   Square the joining edge, let the label half breathe, and keep the chevron half
-   narrower than a full square so the pair stays compact. */
+.topbar-control--disabled-affordance:disabled {
+	cursor: not-allowed;
+	opacity: var(--opacity-control-disabled);
+}
+
+/* The editor handoff stays one joined split control. All measurements use the
+   shared spacing/control tokens; only gaps between separate controls use the
+   workspace toolbar gap. */
 .workspace-topbar-actions .topbar-control--split-main {
 	padding-inline: var(--space-2_5);
 	gap: var(--space-1_5);
@@ -3260,57 +3263,6 @@ html.sidebar-reordering * {
 .session-inspector__tab-button {
 	flex: none;
 	gap: 0;
-}
-
-.session-inspector__responsive-label {
-	max-width: 5.5rem;
-	margin-left: var(--space-0_5);
-	overflow: hidden;
-	/* Clip during the collapse animation — never ellipsize mid-label. */
-	text-overflow: clip;
-	opacity: 1;
-	transform: translateX(0);
-	transition:
-		max-width 170ms cubic-bezier(0.2, 0.8, 0.2, 1),
-		margin-left 170ms cubic-bezier(0.2, 0.8, 0.2, 1),
-		opacity 120ms ease-out,
-		transform 170ms cubic-bezier(0.2, 0.8, 0.2, 1);
-}
-
-.session-inspector__tablist {
-	container: inspector-tabs / inline-size;
-	justify-content: flex-start;
-}
-
-/* Keep labels until they nearly meet the pinned actions, then collapse to a
- * tight icon cluster. Tuned just under the ~270px labeled content width so the
- * default inspector (~274px tablist) still shows full words. */
-@container inspector-tabs (max-width: 268px) {
-	.session-inspector__responsive-label {
-		max-width: 0;
-		margin-left: 0;
-		opacity: 0;
-		transform: translateX(-4px);
-	}
-}
-
-/* Keep one label layout for the full automatic panel transition. Without this
- * lock, crossing the compact container threshold near the end of the resize
- * makes the tab text reflow after the inspector itself has nearly settled. */
-.session-split[data-terminal-live-resize="true"][data-inspector-label-mode="expanded"]
-	.session-inspector__responsive-label {
-	max-width: 5.5rem;
-	margin-left: var(--space-0_5);
-	opacity: 1;
-	transform: translateX(0);
-}
-
-.session-split[data-terminal-live-resize="true"][data-inspector-label-mode="compact"]
-	.session-inspector__responsive-label {
-	max-width: 0;
-	margin-left: 0;
-	opacity: 0;
-	transform: translateX(-4px);
 }
 
 .session-inspector__toggle {
@@ -4552,8 +4504,7 @@ html[data-native-browser-composition="true"] .browser-popout-backdrop {
 }
 
 @media (prefers-reduced-motion: reduce) {
-	.notification-row-enter,
-	.session-inspector__responsive-label {
+	.notification-row-enter {
 		animation: none;
 		transition: none;
 	}
