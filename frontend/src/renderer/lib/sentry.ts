@@ -10,6 +10,7 @@
 // happens once a DSN is present.
 
 import { classifyError, type ClassifyInput, type Triage } from "../../shared/observability";
+import { DEFAULT_SENTRY_DSN } from "../../shared/sentry-config";
 
 type SentryLike = {
 	init: (opts: Record<string, unknown>) => void;
@@ -23,9 +24,10 @@ let initStarted = false;
 
 function dsn(): string {
 	try {
-		return (import.meta as unknown as { env?: Record<string, string> }).env?.VITE_AO_SENTRY_DSN ?? "";
+		const configured = (import.meta as unknown as { env?: Record<string, string> }).env?.VITE_AO_SENTRY_DSN?.trim();
+		return configured || DEFAULT_SENTRY_DSN;
 	} catch {
-		return "";
+		return DEFAULT_SENTRY_DSN;
 	}
 }
 
