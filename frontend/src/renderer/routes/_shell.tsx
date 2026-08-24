@@ -103,7 +103,11 @@ function ShellLayout() {
 	const [workspaceStartupState, setWorkspaceStartupState] = useState<"loading" | "ready" | "error">("loading");
 	const workspaceStartupBaselineRef = useRef(0);
 	const agentCatalogPortRef = useRef<number | undefined>(undefined);
-	const { themePreference, resolvedTheme, themeStyle, isSidebarOpen, toggleSidebar } = useUiStore();
+	const themePreference = useUiStore((state) => state.themePreference);
+	const resolvedTheme = useUiStore((state) => state.resolvedTheme);
+	const themeStyle = useUiStore((state) => state.themeStyle);
+	const isSidebarOpen = useUiStore((state) => state.isSidebarOpen);
+	const toggleSidebar = useUiStore((state) => state.toggleSidebar);
 	const syncSystemTheme = useUiStore((state) => state.syncSystemTheme);
 	const requestNewTask = useUiStore((state) => state.requestNewTask);
 	const requestCreateProject = useUiStore((state) => state.requestCreateProject);

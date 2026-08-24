@@ -13,6 +13,7 @@ vi.mock("motion/react", async (importOriginal) => {
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { Profiler, type ProfilerOnRenderCallback } from "react";
 import {
 	PROJECT_DND_ID,
 	sessionDndId,
@@ -235,6 +236,7 @@ function renderSidebar({
 	seedAgents = true,
 	workspaces = [workspace],
 	initialOpen = true,
+	onRender,
 }: {
 	onCloneProject?: CloneProjectHandler;
 	onCreateProject?: CreateProjectHandler;
@@ -243,6 +245,7 @@ function renderSidebar({
 	seedAgents?: boolean;
 	workspaces?: WorkspaceSummary[];
 	initialOpen?: boolean;
+	onRender?: ProfilerOnRenderCallback;
 } = {}) {
 	const queryClient = new QueryClient({
 		defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
@@ -266,14 +269,16 @@ function renderSidebar({
 	render(
 		<QueryClientProvider client={queryClient}>
 				<SidebarProvider defaultOpen={initialOpen}>
-					<Sidebar
-						onCloneProject={onCloneProject}
-						onCreateProject={onCreateProject}
-					onInitializeProject={onInitializeProject}
-					onRemoveProject={onRemoveProject}
-					workspaces={workspaces}
-				/>
-			</SidebarProvider>
+					<Profiler id="sidebar" onRender={onRender ?? (() => {})}>
+						<Sidebar
+							onCloneProject={onCloneProject}
+							onCreateProject={onCreateProject}
+							onInitializeProject={onInitializeProject}
+							onRemoveProject={onRemoveProject}
+							workspaces={workspaces}
+						/>
+					</Profiler>
+				</SidebarProvider>
 		</QueryClientProvider>,
 	);
 	return onRemoveProject;
@@ -1951,6 +1956,25 @@ describe("Sidebar reordering", () => {
 		expect(JSON.parse(window.localStorage.getItem("ao.sidebar.order") ?? "null")).toMatchObject({
 			projects: ["proj-c", "proj-a", "proj-b"],
 		});
+	});
+
+	it("does not rerender the sidebar while the project drop boundary is unchanged", () => {
+		const updates: number[] = [];
+		renderSidebar({
+			workspaces: [projectA, projectB, projectC],
+			onRender: (_id, phase) => {
+				if (phase === "update") updates.push(1);
+			},
+		});
+
+		startDrag(PROJECT_DND_ID, "proj-a");
+		dragMove(PROJECT_DND_ID, "proj-a", "proj-c", "after");
+		updates.length = 0;
+		for (let index = 0; index < 10; index += 1) {
+			dragMove(PROJECT_DND_ID, "proj-a", "proj-c", "after");
+		}
+
+		expect(updates).toHaveLength(0);
 	});
 
 	it("keeps the project list stationary and previews the expanded project with its sessions", () => {

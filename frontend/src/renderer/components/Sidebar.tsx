@@ -43,6 +43,7 @@ import {
 	useEffect,
 	useId,
 	useLayoutEffect,
+	memo,
 	useMemo,
 	useRef,
 	useState,
@@ -307,22 +308,33 @@ function useSelection() {
 	const pathname = useRouterState({
 		select: (state) => state.location.pathname,
 	});
-	return {
-		isHome: pathname === "/",
-		activeProjectId: params.projectId,
-		activeSessionId: params.sessionId,
-		goHome: () => void navigate({ to: "/" }),
-		// Settings is a modal — open it in place so the current page (session
-		// terminal, board, etc.) stays underneath.
-		goGlobalSettings: () => openGlobalSettings(),
-		goSettings: (projectId: string) => openProjectSettings(projectId),
-		goProject: (projectId: string) => void navigate({ to: "/projects/$projectId", params: { projectId } }),
-		goSession: (projectId: string, sessionId: string) =>
+	const goHome = useCallback(() => void navigate({ to: "/" }), [navigate]);
+	const goGlobalSettings = useCallback(() => openGlobalSettings(), [openGlobalSettings]);
+	const goSettings = useCallback((projectId: string) => openProjectSettings(projectId), [openProjectSettings]);
+	const goProject = useCallback(
+		(projectId: string) => void navigate({ to: "/projects/$projectId", params: { projectId } }),
+		[navigate],
+	);
+	const goSession = useCallback(
+		(projectId: string, sessionId: string) =>
 			void navigate({
 				to: "/projects/$projectId/sessions/$sessionId",
 				params: { projectId, sessionId },
 			}),
-	};
+		[navigate],
+	);
+	return useMemo(() => ({
+		isHome: pathname === "/",
+		activeProjectId: params.projectId,
+		activeSessionId: params.sessionId,
+		goHome,
+		// Settings is a modal — open it in place so the current page (session
+		// terminal, board, etc.) stays underneath.
+		goGlobalSettings,
+		goSettings,
+		goProject,
+		goSession,
+	}), [goGlobalSettings, goHome, goProject, goSession, goSettings, params.projectId, params.sessionId, pathname]);
 }
 
 // Agent activity is the shared source for both color and motion. PR and CI
@@ -375,12 +387,12 @@ export function Sidebar({
 	// Disclosure state: projects are expanded by default; a project id present in
 	// this set is collapsed (sessions hidden).
 	const [collapsedIds, setCollapsedIds] = useState<ReadonlySet<string>>(() => new Set());
-	const toggleCollapsed = (id: string) =>
+	const toggleCollapsed = useCallback((id: string) =>
 		setCollapsedIds((prev) => {
 			const next = new Set(prev);
 			next.has(id) ? next.delete(id) : next.add(id);
 			return next;
-		});
+		}), []);
 	// Section disclosure: Pinned header collapses its body. Projects stays open.
 	const [pinnedOpen, setPinnedOpen] = useState(true);
 	// Fetch the running app version to derive the build channel. Channel is
@@ -463,6 +475,12 @@ export function Sidebar({
 		},
 		[orderedWorkspaces, setProjectOrder, t],
 	);
+	const moveProject = useCallback(
+		(projectId: string, offset: number) => {
+			commitProjectOrder(moveByOffset(projectIds, projectId, offset), projectId);
+		},
+		[commitProjectOrder, projectIds],
+	);
 
 	const onProjectDragEnd = useCallback(
 		({ active, over }: DragEndEvent) => {
@@ -505,7 +523,11 @@ export function Sidebar({
 		const overId = over ? String(over.id) : null;
 		if (!over || activeId === overId) {
 			projectDropTargetRef.current = null;
-			setProjectDragState((previous) => ({ ...previous, overId, placement: null }));
+			setProjectDragState((previous) =>
+				previous.overId === overId && previous.placement === null
+					? previous
+					: { ...previous, overId, placement: null },
+			);
 			return;
 		}
 		const pointerY = activatorEvent && "clientY" in activatorEvent && typeof activatorEvent.clientY === "number"
@@ -519,11 +541,12 @@ export function Sidebar({
 			: boundaryReference <= over.rect.top + over.rect.height / 2 ? "before" : "after";
 		projectDropTargetRef.current = { overId: overId!, placement };
 		const changesOrder = reorderAtProjectBoundary(projectIds, activeId, overId!, placement) !== null;
-		setProjectDragState((previous) => ({
-			...previous,
-			overId,
-			placement: changesOrder ? placement : null,
-		}));
+		const visiblePlacement = changesOrder ? placement : null;
+		setProjectDragState((previous) =>
+			previous.overId === overId && previous.placement === visiblePlacement
+				? previous
+				: { ...previous, overId, placement: visiblePlacement },
+		);
 	}, [projectIds]);
 	const onProjectDragCancel = useCallback(() => {
 		projectDragBoundsRef.current = null;
@@ -531,14 +554,17 @@ export function Sidebar({
 		setProjectDragState({ activeId: null, overId: null, placement: null });
 	}, []);
 
-	const pinnedSessions = workspaces
-		.flatMap((w) => workerSessions(w.sessions))
-		.filter((s) => s.isPinned && s.isTerminated !== true)
-		.sort((a, b) => {
-			const aTime = a.pinnedAt ? new Date(a.pinnedAt).getTime() : 0;
-			const bTime = b.pinnedAt ? new Date(b.pinnedAt).getTime() : 0;
-			return bTime - aTime;
-		});
+	const pinnedSessions = useMemo(
+		() => workspaces
+			.flatMap((w) => workerSessions(w.sessions))
+			.filter((s) => s.isPinned && s.isTerminated !== true)
+			.sort((a, b) => {
+				const aTime = a.pinnedAt ? new Date(a.pinnedAt).getTime() : 0;
+				const bTime = b.pinnedAt ? new Date(b.pinnedAt).getTime() : 0;
+				return bTime - aTime;
+			}),
+		[workspaces],
+	);
 
 	return (
 		// Pinned sidebars start below shell chrome.
@@ -638,14 +664,13 @@ export function Sidebar({
 								className="sidebar-expanded-chrome mx-0 ml-0 translate-x-0 gap-0.5 border-l-0 px-0 py-0.5 mb-2"
 								data-testid="pinned-session-list"
 							>
-								{pinnedSessions.map((session) => (
-									<SessionRow
-										key={session.id}
-										session={session}
-										active={selection.activeSessionId === session.id}
-										indented={false}
-										onOpen={() => selection.goSession(session.workspaceId, session.id)}
-									/>
+							{pinnedSessions.map((session) => (
+								<PinnedSessionRow
+									key={session.id}
+									session={session}
+									active={selection.activeSessionId === session.id}
+									onOpenSession={selection.goSession}
+								/>
 								))}
 							</SidebarMenuSub>
 						) : null}
@@ -722,8 +747,8 @@ export function Sidebar({
 														draggingProjectId={projectDragState.activeId}
 														dropIndicator={projectDragState.overId === workspace.id ? projectDragState.placement ?? undefined : undefined}
 														consumeDragClick={projectDragClickGuard.consumeClick}
-														onMove={(offset) => commitProjectOrder(moveByOffset(projectIds, workspace.id, offset), workspace.id)}
-														onToggle={() => toggleCollapsed(workspace.id)}
+														onMove={moveProject}
+														onToggle={toggleCollapsed}
 														onRemoveProject={onRemoveProject}
 													/>
 												);
@@ -834,7 +859,7 @@ export function Sidebar({
 
 type Selection = ReturnType<typeof useSelection>;
 
-function ProjectItem({
+const ProjectItem = memo(function ProjectItem({
 	workspace,
 	expanded,
 	selection,
@@ -852,8 +877,8 @@ function ProjectItem({
 	dropIndicator?: "before" | "after";
 	consumeDragClick: (id: string) => boolean;
 	/** Keyboard fallback for the focused row: nudge this project one slot up or down. */
-	onMove: (offset: number) => void;
-	onToggle: () => void;
+	onMove: (projectId: string, offset: number) => void;
+	onToggle: (projectId: string) => void;
 	onRemoveProject: (projectId: string) => Promise<void>;
 }) {
 	const { t } = useTranslation();
@@ -881,8 +906,7 @@ function ProjectItem({
 		const id = requestAnimationFrame(() => setAnimReady(true));
 		return () => cancelAnimationFrame(id);
 	}, []);
-	const restartingProjectIds = useUiStore((state) => state.restartingProjectIds);
-	const isProjectRestarting = restartingProjectIds.has(workspace.id);
+	const isProjectRestarting = useUiStore((state) => state.restartingProjectIds.has(workspace.id));
 	const requestNewTask = useUiStore((state) => state.requestNewTask);
 	const { attributes, listeners, setActivatorNodeRef, setDraggableNodeRef, setDroppableNodeRef } = useSortable({
 		id: workspace.id,
@@ -908,8 +932,9 @@ function ProjectItem({
 	const sessionSensors = useReorderSensors();
 	const sessionDragClickGuard = usePostDragClickGuard();
 	const [sessionAnnouncement, setSessionAnnouncement] = useState("");
+	const [sessionDragging, setSessionDragging] = useState(false);
 
-	const commitSessionOrder = (next: string[] | null, sessionId: string) => {
+	const commitSessionOrder = useCallback((next: string[] | null, sessionId: string) => {
 		if (!next) return;
 		setSessionOrder(workspace.id, next);
 		const title = sessions.find((session) => session.id === sessionId)?.title ?? sessionId;
@@ -920,16 +945,23 @@ function ProjectItem({
 				total: next.length,
 			}),
 		);
-	};
+	}, [sessions, setSessionOrder, t, workspace.id]);
 
-	const onSessionDragEnd = ({ active, over }: DragEndEvent) => {
+	const onSessionDragEnd = useCallback(({ active, over }: DragEndEvent) => {
+		setSessionDragging(false);
 		const sessionId = String(active.id);
 		sessionDragClickGuard.markDragEnded(sessionId);
 		if (!over) return;
 		// reorderById rejects any id that is not in THIS project's list, so a stray
 		// cross-project drop leaves both projects' orders untouched.
 		commitSessionOrder(reorderById(sessionIds, sessionId, String(over.id)), sessionId);
-	};
+	}, [commitSessionOrder, sessionDragClickGuard, sessionIds]);
+	const moveSession = useCallback((sessionId: string, offset: number) => {
+		commitSessionOrder(moveByOffset(sessionIds, sessionId, offset), sessionId);
+	}, [commitSessionOrder, sessionIds]);
+	const openSession = useCallback((sessionId: string) => {
+		selection.goSession(workspace.id, sessionId);
+	}, [selection, workspace.id]);
 	// The project's live orchestrator (if any) backs the hover Orchestrator
 	// button: navigate to it when present, otherwise spawn one first.
 	const orchestrator = newestActiveOrchestrator(workspace.sessions);
@@ -940,7 +972,7 @@ function ProjectItem({
 	// session list — otherwise the tree stays shut while you're inside it.
 	const openOrchestrator = async () => {
 		if (isProjectRestarting) return;
-		if (!expanded) onToggle();
+		if (!expanded) onToggle(workspace.id);
 		if (orchestrator) {
 			selection.goSession(workspace.id, orchestrator.id);
 			return;
@@ -968,10 +1000,10 @@ function ProjectItem({
 	const onProjectClick = () => {
 		if (consumeDragClick(workspace.id)) return;
 		if (!expanded) {
-			onToggle();
+			onToggle(workspace.id);
 			selection.goProject(workspace.id);
 		} else if (dashboardActive) {
-			onToggle();
+			onToggle(workspace.id);
 		} else {
 			selection.goProject(workspace.id);
 		}
@@ -982,14 +1014,14 @@ function ProjectItem({
 	// select click then a second click (felt like a double-click).
 	const onFolderClick = (event: MouseEvent) => {
 		event.stopPropagation();
-		onToggle();
+		onToggle(workspace.id);
 	};
 
 	const onProjectKeyDown = (event: KeyboardEvent<HTMLButtonElement>) => {
 		if (event.altKey && (event.key === "ArrowUp" || event.key === "ArrowDown")) {
 			event.preventDefault();
 			event.stopPropagation();
-			onMove(event.key === "ArrowUp" ? -1 : 1);
+			onMove(workspace.id, event.key === "ArrowUp" ? -1 : 1);
 			return;
 		}
 		if (event.key !== "Enter" && event.key !== " ") return;
@@ -1032,7 +1064,7 @@ function ProjectItem({
 					data-project-id={workspace.id}
 					data-sidebar="menu-item"
 					data-slot="sidebar-menu-item"
-					layout="position"
+					layout={draggingProjectId ? false : "position"}
 					onMouseEnter={() => setRowHovered(true)}
 					onMouseLeave={() => setRowHovered(false)}
 					ref={setDroppableNodeRef}
@@ -1267,6 +1299,8 @@ function ProjectItem({
 										collisionDetection={closestCenter}
 										modifiers={[restrictToListBounds]}
 										id={sessionDndId(workspace.id)}
+										onDragStart={() => setSessionDragging(true)}
+										onDragCancel={() => setSessionDragging(false)}
 										onDragEnd={onSessionDragEnd}
 										sensors={sessionSensors}
 									>
@@ -1281,8 +1315,9 @@ function ProjectItem({
 														session={session}
 														active={selection.activeSessionId === session.id}
 														consumeDragClick={sessionDragClickGuard.consumeClick}
-														onMove={(offset) => commitSessionOrder(moveByOffset(sessionIds, session.id, offset), session.id)}
-														onOpen={() => selection.goSession(workspace.id, session.id)}
+														listIsDragging={sessionDragging}
+														onMove={moveSession}
+														onOpen={openSession}
 													/>
 												))}
 											</SidebarMenuSub>
@@ -1330,11 +1365,11 @@ function ProjectItem({
 			</ContextMenuContent>
 		</ContextMenu>
 	);
-}
+});
 
 /** Non-interactive drag snapshot: the project row is the anchor, while its
  * visible sessions travel with it without becoming collision targets. */
-function ProjectDragPreview({ workspace, expanded, selection }: { workspace: WorkspaceSummary; expanded: boolean; selection: Selection }) {
+const ProjectDragPreview = memo(function ProjectDragPreview({ workspace, expanded, selection }: { workspace: WorkspaceSummary; expanded: boolean; selection: Selection }) {
 	const { t } = useTranslation();
 	const sessionOrder = useSidebarOrderStore((state) => state.sessionOrderByProject[workspace.id]);
 	const sessions = useMemo(() => {
@@ -1385,22 +1420,37 @@ function ProjectDragPreview({ workspace, expanded, selection }: { workspace: Wor
 			) : null}
 		</div>
 	);
-}
+});
+
+const PinnedSessionRow = memo(function PinnedSessionRow({
+	session,
+	active,
+	onOpenSession,
+}: {
+	session: WorkspaceSession;
+	active: boolean;
+	onOpenSession: (projectId: string, sessionId: string) => void;
+}) {
+	const onOpen = useCallback(() => onOpenSession(session.workspaceId, session.id), [onOpenSession, session.id, session.workspaceId]);
+	return <SessionRow session={session} active={active} indented={false} onOpen={onOpen} />;
+});
 
 // A session row inside its project's drag context. The Pinned section renders
 // plain SessionRows instead: that list is ordered by pin time, not by hand.
-function SortableSessionRow({
+const SortableSessionRow = memo(function SortableSessionRow({
 	session,
 	active,
 	consumeDragClick,
+	listIsDragging,
 	onMove,
 	onOpen,
 }: {
 	session: WorkspaceSession;
 	active: boolean;
 	consumeDragClick: (id: string) => boolean;
-	onMove: (offset: number) => void;
-	onOpen: () => void;
+	listIsDragging: boolean;
+	onMove: (sessionId: string, offset: number) => void;
+	onOpen: (sessionId: string) => void;
 }) {
 	const { attributes, isDragging, listeners, setActivatorNodeRef, setNodeRef, transform, transition } = useSortable({
 		id: session.id,
@@ -1410,13 +1460,14 @@ function SortableSessionRow({
 			session={session}
 			active={active}
 			onOpen={() => {
-				if (!consumeDragClick(session.id)) onOpen();
+				if (!consumeDragClick(session.id)) onOpen(session.id);
 			}}
+			listIsDragging={listIsDragging}
 			reorder={{
 				attributes,
 				isDragging,
 				listeners,
-				onMove,
+				onMove: (offset) => onMove(session.id, offset),
 				setActivatorNodeRef,
 				setNodeRef,
 				transform,
@@ -1424,7 +1475,7 @@ function SortableSessionRow({
 			}}
 		/>
 	);
-}
+});
 
 type SessionReorder = Pick<SortableRow, "attributes" | "isDragging" | "listeners" | "setActivatorNodeRef" | "setNodeRef" | "transform" | "transition"> & {
 	onMove: (offset: number) => void;
@@ -1437,12 +1488,14 @@ function SessionRow({
 	session,
 	active,
 	indented = true,
+	listIsDragging = false,
 	onOpen,
 	reorder,
 }: {
 	session: WorkspaceSession;
 	active: boolean;
 	indented?: boolean;
+	listIsDragging?: boolean;
 	onOpen: () => void;
 	/** Present only for rows inside a reorderable project list. */
 	reorder?: SessionReorder;
@@ -1466,14 +1519,11 @@ function SessionRow({
 	const cancelledRef = useRef(false);
 
 	const queryClient = useQueryClient();
-	const { mutate: pinSession } = usePinSession();
-	const { mutate: unpinSession } = useUnpinSession();
-	const { mutate: terminateSession, isPending: isKilling } = useTerminateSession();
 
-	const startEditing = () => {
+	const startEditing = useCallback(() => {
 		setDraft(session.title);
 		setIsEditing(true);
-	};
+	}, [session.title]);
 
 	const commit = async () => {
 		if (cancelledRef.current) {
@@ -1530,7 +1580,7 @@ function SessionRow({
 			style={reorder ? sortableRowStyle(reorder) : undefined}
 		>
 			<motion.div
-				layout={reorder?.isDragging ? false : "position"}
+				layout={listIsDragging ? false : "position"}
 				transition={prefersReducedMotion ? { duration: 0 } : { type: "spring", stiffness: 520, damping: 42, mass: 0.55 }}
 			>
 				<div
@@ -1594,55 +1644,78 @@ function SessionRow({
 					{/* Pin, rename, kill stay in a reserved strip so showing them never
 				    changes the label width. The strip fades as a group; its glyphs
 				    remain transparent/no-fill until focused or hovered. */}
-					<div
-						className={cn(
-							"pointer-events-none absolute inset-y-0 right-0 z-chrome flex items-center gap-px px-1 opacity-0 transition-opacity duration-150",
-							!reorder?.isDragging &&
-								"group-hover/session-row:pointer-events-auto group-hover/session-row:opacity-100 group-focus-within/session-row:pointer-events-auto group-focus-within/session-row:opacity-100",
-							reorder?.isDragging && "transition-none",
-						)}
-						data-session-actions=""
-					>
-						<button
-							aria-label={session.isPinned ? t("shell.unpinSession") : t("shell.pinSession")}
-							className={cn(SESSION_ACTION_CLASS, session.isPinned && "text-foreground")}
-							onClick={(e) => {
-								e.stopPropagation();
-								session.isPinned ? unpinSession(session) : pinSession(session);
-							}}
-							type="button"
-						>
-							{session.isPinned ? <PinOff aria-hidden="true" /> : <Pin aria-hidden="true" />}
-						</button>
-						<button
-							aria-label={t("shell.renameSession", { title: session.title })}
-							className={SESSION_ACTION_CLASS}
-							onClick={(e) => {
-								e.stopPropagation();
-								startEditing();
-							}}
-							type="button"
-						>
-							<Pencil aria-hidden="true" />
-						</button>
-						<button
-							aria-label={t("shell.killSession")}
-							className={cn(SESSION_ACTION_CLASS, "hover:text-destructive")}
-							disabled={isKilling}
-							onClick={(e) => {
-								e.stopPropagation();
-								terminateSession(session);
-							}}
-							type="button"
-						>
-							<Trash2 aria-hidden="true" />
-						</button>
-					</div>
+					<SessionActions
+						isDragging={Boolean(reorder?.isDragging)}
+						onStartEditing={startEditing}
+						session={session}
+					/>
 				</div>
 			</motion.div>
 		</SidebarMenuSubItem>
 	);
 }
+
+const SessionActions = memo(function SessionActions({
+	session,
+	isDragging,
+	onStartEditing,
+}: {
+	session: WorkspaceSession;
+	isDragging: boolean;
+	onStartEditing: () => void;
+}) {
+	const { t } = useTranslation();
+	const { mutate: pinSession } = usePinSession();
+	const { mutate: unpinSession } = useUnpinSession();
+	const { mutate: terminateSession, isPending: isKilling } = useTerminateSession();
+
+	return (
+		<div
+			className={cn(
+				"pointer-events-none absolute inset-y-0 right-0 z-chrome flex items-center gap-px px-1 opacity-0 transition-opacity duration-150",
+				!isDragging &&
+					"group-hover/session-row:pointer-events-auto group-hover/session-row:opacity-100 group-focus-within/session-row:pointer-events-auto group-focus-within/session-row:opacity-100",
+				isDragging && "transition-none",
+			)}
+			data-session-actions=""
+		>
+			<button
+				aria-label={session.isPinned ? t("shell.unpinSession") : t("shell.pinSession")}
+				className={cn(SESSION_ACTION_CLASS, session.isPinned && "text-foreground")}
+				onClick={(event) => {
+					event.stopPropagation();
+					session.isPinned ? unpinSession(session) : pinSession(session);
+				}}
+				type="button"
+			>
+				{session.isPinned ? <PinOff aria-hidden="true" /> : <Pin aria-hidden="true" />}
+			</button>
+			<button
+				aria-label={t("shell.renameSession", { title: session.title })}
+				className={SESSION_ACTION_CLASS}
+				onClick={(event) => {
+					event.stopPropagation();
+					onStartEditing();
+				}}
+				type="button"
+			>
+				<Pencil aria-hidden="true" />
+			</button>
+			<button
+				aria-label={t("shell.killSession")}
+				className={cn(SESSION_ACTION_CLASS, "hover:text-destructive")}
+				disabled={isKilling}
+				onClick={(event) => {
+					event.stopPropagation();
+					terminateSession(session);
+				}}
+				type="button"
+			>
+				<Trash2 aria-hidden="true" />
+			</button>
+		</div>
+	);
+});
 
 // CloudAccountRow: shown above the Settings button for an existing cloud
 // session. The unauthenticated sign-in entry stays hidden until that flow is
