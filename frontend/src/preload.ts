@@ -25,6 +25,15 @@ import type { TelemetryBootstrap } from "./shared/telemetry";
 import type { MigrationState } from "./main/app-state";
 import type { UpdateSettings, UpdateStatus } from "./main/update-settings";
 import type { CloudAccount } from "./shared/cloud-account";
+import type {
+	CloudBetaOverview,
+	CloudHarness,
+	CloudProject,
+	CloudSessionSummary,
+	ConnectCloudHarnessResult,
+	CreateCloudProjectInput,
+	CreateCloudSessionInput,
+} from "./shared/cloud-beta";
 import type { UpdateOutcome } from "./shared/update-telemetry";
 import type { UiSettings } from "./main/ui-settings";
 import type { UpdateCheckOptions } from "./main/auto-updater";
@@ -410,6 +419,14 @@ const api = {
 	},
 	cloud: {
 		getSession: () => ipcRenderer.invoke("cloud:getSession") as Promise<CloudAccount | null>,
+		isBetaEnabled: () => ipcRenderer.invoke("cloud:isBetaEnabled") as Promise<boolean>,
+		getOverview: () => ipcRenderer.invoke("cloud:getOverview") as Promise<CloudBetaOverview>,
+		createProject: (orgId: string, input: CreateCloudProjectInput) =>
+			ipcRenderer.invoke("cloud:createProject", orgId, input) as Promise<CloudProject>,
+		createSession: (input: CreateCloudSessionInput) =>
+			ipcRenderer.invoke("cloud:createSession", input) as Promise<CloudSessionSummary>,
+		connectLocalHarness: (harness: CloudHarness) =>
+			ipcRenderer.invoke("cloud:connectLocalHarness", harness) as Promise<ConnectCloudHarnessResult>,
 		signIn: () => ipcRenderer.invoke("cloud:signIn") as Promise<void>,
 		signOut: () => ipcRenderer.invoke("cloud:signOut") as Promise<void>,
 		onSessionChanged: (listener: (account: CloudAccount | null) => void) => {

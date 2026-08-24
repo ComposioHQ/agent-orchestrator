@@ -602,6 +602,26 @@ export class CloudClient {
     return response.providerConnections;
   }
 
+  async listUserProviderConnections(
+    options: RequestOptions = {},
+  ): Promise<RedactedProviderConnection[]> {
+    const response = await this.request<{
+      providerConnections: RedactedProviderConnection[];
+    }>("/api/cloud/v1/me/providers", options);
+    return response.providerConnections;
+  }
+
+  putUserAgentProviderConnection(
+    provider: "claude-code" | "codex",
+    input: PutAgentProviderConnectionInput,
+    options: RequestOptions = {},
+  ): Promise<{ providerConnection: RedactedProviderConnection }> {
+    return this.request(
+      `/api/cloud/v1/me/providers/${encodeURIComponent(provider)}`,
+      { method: "PUT", body: input, signal: options.signal },
+    );
+  }
+
   putAgentProviderConnection(
     orgId: string,
     provider: "claude-code" | "codex" | "cursor",

@@ -4,10 +4,10 @@ import { useNavigate, useParams, useRouterState } from "@tanstack/react-router";
 import {
 	AlertTriangle,
 	ChevronRight,
+	Cloud,
 	Download,
 	Folder,
 	FolderOpen,
-	LogOut,
 	MoreVertical,
 	Pencil,
 	Pin,
@@ -18,7 +18,6 @@ import {
 	Settings,
 	Smartphone,
 	Trash2,
-	User,
 } from "lucide-react";
 import { useEffect, useId, useLayoutEffect, useRef, useState, type KeyboardEvent, type MouseEvent, type ReactNode } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
@@ -1067,45 +1066,20 @@ function SessionRow({
 // ready to expose in the app again.
 function CloudAccountRow({ tabIndex }: { tabIndex: number }) {
 	const { t } = useTranslation();
-	const { configured, session, status, signOut } = useCloudSession();
-	if (!configured || status !== "authenticated") return null;
-
-	return (
-		<DropdownMenu>
-			<DropdownMenuTrigger asChild>
-				<button
-					aria-label={t("shell.signedInAs", { email: session?.user.email ?? "AO Cloud" })}
-					className={cn(
-						NAV_ROW_CLASS,
-						"flex h-9 w-full items-center text-left [&_svg]:size-icon-md [&_svg]:shrink-0",
-					)}
-					tabIndex={tabIndex}
-					type="button"
-				>
-					<User aria-hidden="true" />
-					<span className="min-w-0 flex-1 truncate tracking-tight">
-						{session?.user.email ?? "AO Cloud"}
-					</span>
-				</button>
-			</DropdownMenuTrigger>
-			<DropdownMenuContent side="top" align="start" className="min-w-44">
-				<DropdownMenuItem
-					className="text-destructive focus:text-destructive [&_svg]:text-destructive"
-					onSelect={() => void signOut()}
-				>
-					<LogOut aria-hidden="true" />
-					{t("shell.signOut")}
-				</DropdownMenuItem>
-			</DropdownMenuContent>
-		</DropdownMenu>
-	);
+	const navigate = useNavigate();
+	const { configured, session, status, signIn } = useCloudSession();
+	const authenticated = status === "authenticated";
+	if (!configured || (!authenticated && import.meta.env.VITE_AO_CLOUD_BETA !== "true")) return null;
+	return <button aria-label={authenticated ? t("shell.signedInAs", { email: session?.user.email ?? "AO Cloud" }) : "Sign in to AO Cloud"} className={cn(NAV_ROW_CLASS, "flex h-9 w-full items-center text-left [&_svg]:size-icon-md [&_svg]:shrink-0")} onClick={() => authenticated ? void navigate({ to: "/cloud" }) : signIn()} tabIndex={tabIndex} type="button"><Cloud aria-hidden="true" /><span className="min-w-0 flex-1 truncate tracking-tight">{authenticated ? "AO Cloud" : "Sign in to AO Cloud"}</span><span className="rounded bg-accent/10 px-1 text-[10px] font-medium text-accent">BETA</span></button>;
 }
 
 // Icon-rail variant for collapsed sidebar.
 function CloudAccountRailButton({ tabIndex }: { tabIndex: number }) {
 	const { t } = useTranslation();
-	const { configured, session, status, signOut } = useCloudSession();
-	if (!configured || status !== "authenticated") return null;
+	const navigate = useNavigate();
+	const { configured, session, status, signIn } = useCloudSession();
+	const authenticated = status === "authenticated";
+	if (!configured || (!authenticated && import.meta.env.VITE_AO_CLOUD_BETA !== "true")) return null;
 
 	return (
 		<Tooltip>
@@ -1113,15 +1087,15 @@ function CloudAccountRailButton({ tabIndex }: { tabIndex: number }) {
 				<button
 					aria-label={t("shell.signedInAs", { email: session?.user.email ?? "AO Cloud" })}
 					className="grid size-control-board place-items-center rounded-lg text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground [&_svg]:size-icon-base"
-					onClick={() => void signOut()}
+					onClick={() => authenticated ? void navigate({ to: "/cloud" }) : signIn()}
 					tabIndex={tabIndex}
 					type="button"
 				>
-					<User aria-hidden="true" />
+					<Cloud aria-hidden="true" />
 				</button>
 			</TooltipTrigger>
 			<TooltipContent side="right">
-				{t("shell.signOutWithEmail", { email: session?.user.email ?? "AO Cloud" })}
+				{authenticated ? `AO Cloud · ${session?.user.email ?? "signed in"}` : "Sign in to AO Cloud"}
 			</TooltipContent>
 		</Tooltip>
 	);

@@ -1655,7 +1655,7 @@ components:
     Project:
       type: object
       additionalProperties: false
-      required: [id, orgId, displayName, repositoryUrl, defaultBranch, config, createdAt, updatedAt]
+      required: [id, orgId, displayName, repositoryUrl, defaultBranch, executionLocation, config, createdAt, updatedAt]
       properties:
         id:
           type: string
@@ -1670,6 +1670,11 @@ components:
           format: uri
         defaultBranch:
           type: string
+        executionLocation:
+          type: string
+          enum: [cloud]
+          readOnly: true
+          description: Immutable project execution boundary. Cloud API projects can only contain Cloud sessions.
         githubRepositoryId:
           type: string
           pattern: "^[1-9][0-9]*$"

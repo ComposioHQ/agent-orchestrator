@@ -285,6 +285,11 @@ if (typeof window !== "undefined") {
 		},
 		cloud: {
 			getSession: async () => null,
+			isBetaEnabled: async () => false,
+			getOverview: async () => { throw new Error("AO Cloud is disabled in tests."); },
+			createProject: async () => { throw new Error("AO Cloud is disabled in tests."); },
+			createSession: async () => { throw new Error("AO Cloud is disabled in tests."); },
+			connectLocalHarness: async () => { throw new Error("AO Cloud is disabled in tests."); },
 			signIn: async () => undefined,
 			signOut: async () => undefined,
 			onSessionChanged: () => () => undefined,

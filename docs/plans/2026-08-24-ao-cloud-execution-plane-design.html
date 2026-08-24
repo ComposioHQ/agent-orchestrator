@@ -1,0 +1,820 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>AO Cloud POC Beta — Engineering Design</title>
+  <style>
+    :root {
+      --text: #20242a;
+      --muted: #5d6672;
+      --line: #d9dee5;
+      --soft: #f5f7f9;
+      --note: #eef5ff;
+      --warn: #fff7e6;
+      --decision: #eef8f2;
+      --accent: #185abc;
+      --max: 1080px;
+    }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: auto; }
+    body {
+      margin: 0;
+      color: var(--text);
+      background: #fff;
+      font: 16px/1.58 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    }
+    main { max-width: var(--max); margin: 0 auto; padding: 52px 28px 100px; }
+    h1, h2, h3, h4 { line-height: 1.25; color: #11161c; }
+    h1 { font-size: 2.35rem; margin: 0 0 12px; letter-spacing: -0.035em; }
+    h2 { font-size: 1.55rem; margin: 54px 0 18px; padding-bottom: 8px; border-bottom: 1px solid var(--line); }
+    h3 { font-size: 1.12rem; margin: 30px 0 10px; }
+    h4 { font-size: 1rem; margin: 22px 0 8px; }
+    p { margin: 10px 0 16px; }
+    a { color: var(--accent); }
+    code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+    code { background: var(--soft); padding: 0.12em 0.3em; border-radius: 3px; font-size: 0.92em; }
+    pre {
+      margin: 16px 0 24px;
+      padding: 20px;
+      border: 1px solid var(--line);
+      background: #fafbfc;
+      overflow-x: auto;
+      font-size: 13px;
+      line-height: 1.55;
+      border-radius: 5px;
+    }
+    ul, ol { padding-left: 24px; }
+    li { margin: 5px 0; }
+    table { width: 100%; border-collapse: collapse; margin: 18px 0 28px; font-size: 0.94rem; }
+    th, td { border: 1px solid var(--line); padding: 10px 12px; text-align: left; vertical-align: top; }
+    th { background: var(--soft); font-weight: 650; }
+    .lede { font-size: 1.15rem; color: #343b44; max-width: 850px; }
+    .meta { display: flex; flex-wrap: wrap; gap: 8px 22px; color: var(--muted); font-size: 0.9rem; margin: 20px 0 30px; }
+    .status { display: inline-block; padding: 2px 8px; border: 1px solid #75a987; background: var(--decision); border-radius: 99px; color: #235c36; font-weight: 650; }
+    .toc { background: var(--soft); border: 1px solid var(--line); padding: 18px 22px; margin: 28px 0 38px; }
+    .toc strong { display: block; margin-bottom: 8px; }
+    .toc ol { columns: 2; margin: 0; }
+    .callout { border-left: 4px solid var(--accent); background: var(--note); padding: 14px 18px; margin: 20px 0; }
+    .callout.decision { border-color: #43835a; background: var(--decision); }
+    .callout.warning { border-color: #c88413; background: var(--warn); }
+    .callout strong { display: block; margin-bottom: 4px; }
+    .diagram-title { font-weight: 650; margin-bottom: -8px; }
+    .small { color: var(--muted); font-size: 0.9rem; }
+    .checklist { list-style: none; padding-left: 0; }
+    .checklist li::before { content: "□"; margin-right: 9px; color: var(--accent); }
+    .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+    .panel { border: 1px solid var(--line); padding: 16px 18px; }
+    .panel h3 { margin-top: 0; }
+    .decision-id { white-space: nowrap; font-weight: 700; color: var(--accent); }
+    .footer { margin-top: 60px; padding-top: 20px; border-top: 1px solid var(--line); color: var(--muted); font-size: 0.9rem; }
+    @media (max-width: 760px) {
+      main { padding: 32px 18px 70px; }
+      h1 { font-size: 1.9rem; }
+      .toc ol { columns: 1; }
+      .two-col { grid-template-columns: 1fr; }
+      table { font-size: 0.86rem; }
+      th, td { padding: 8px; }
+    }
+    @media print {
+      main { max-width: none; padding: 0; }
+      .toc { break-after: page; }
+      h2, h3 { break-after: avoid; }
+      pre, table, .callout, .panel { break-inside: avoid; }
+      a { color: inherit; text-decoration: none; }
+    }
+  </style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>AO Cloud POC Beta: Engineering Design</h1>
+    <p class="lede">
+      Move AO execution from the user's machine into isolated cloud sandboxes while
+      preserving the existing product experience. Each agent session—including the
+      orchestrator—runs in its own sandbox. An AWS-hosted AO control plane owns durable
+      state, authentication, policy, and routing.
+    </p>
+    <div class="meta">
+      <span><strong>Status:</strong> <span class="status">Proposed for implementation</span></span>
+      <span><strong>Date:</strong> 24 August 2026</span>
+      <span><strong>Revision:</strong> 09</span>
+      <span><strong>Scope:</strong> internal POC beta</span>
+    </div>
+  </header>
+
+  <nav class="toc" aria-label="Table of contents">
+    <strong>Contents</strong>
+    <ol>
+      <li><a href="#summary">Executive summary</a></li>
+      <li><a href="#context">Context and starting point</a></li>
+      <li><a href="#goals">Goals and non-goals</a></li>
+      <li><a href="#decisions">Engineering decisions</a></li>
+      <li><a href="#architecture">Architecture</a></li>
+      <li><a href="#lifecycle">Session creation without a reconciler</a></li>
+      <li><a href="#protocol">Worker protocol and product experience</a></li>
+      <li><a href="#security">Security model</a></li>
+      <li><a href="#data">Data and API changes</a></li>
+      <li><a href="#implementation">Implementation plan</a></li>
+      <li><a href="#testing">Verification and rollout</a></li>
+      <li><a href="#future">When to add a reconciler</a></li>
+      <li><a href="#questions">Open questions</a></li>
+    </ol>
+  </nav>
+
+  <section id="summary">
+    <h2>1. Executive summary</h2>
+    <p>
+      The POC will add Cloud projects beside AO's existing local projects. Execution
+      location is a project-level invariant: a project is either entirely local or entirely
+      Cloud, and its orchestrator and every child session inherit that choice. A Cloud
+      project uses the authenticated AO API in AWS; creating any session in it directly
+      provisions one sandbox, bootstraps an AO worker, clones the repository, and waits
+      for the worker to report ready.
+    </p>
+    <div class="callout decision">
+      <strong>Core POC decision</strong>
+      Provision synchronously from the create-session path. Do not run a background
+      reconciler for this first beta. Persist the provider identity and the original
+      error, then fix failures at their source instead of building a recovery system in advance.
+    </div>
+    <p>
+      Local and Cloud execution are never mixed inside one project. There is no
+      session-level location selector and no path for a Cloud orchestrator to create a
+      local child (or the reverse). Moving work between locations means creating a
+      separate project.
+    </p>
+    <p>
+      Harness authentication should feel equally continuous. If Claude Code or Codex is
+      already connected on the user's computer, AO offers one explicit “Use in Cloud”
+      action. The user does not copy an API key or sign in again for every project or
+      sandbox. The connection is encrypted once at user scope and delivered only to that
+      user's authenticated Cloud workers.
+    </p>
+    <p>
+      The initial Cloud agent catalog contains exactly two harnesses:
+      <code>claude-code</code> and <code>codex</code>. Other harnesses that AO supports
+      locally remain local-only until we intentionally add and verify them in Cloud.
+    </p>
+    <p>
+      We will reuse the private <code>ao-cloud</code> control plane, PostgreSQL model,
+      provider adapters, worker protocol, GitHub brokering, and shared product UI. The
+      implementation change is to introduce a small direct provisioner and route the POC
+      session-creation path through it, without depending on the existing reconciliation
+      scheduler.
+    </p>
+  </section>
+
+  <section id="context">
+    <h2>2. Context and starting point</h2>
+
+    <h3>2.1 Current local model</h3>
+    <p>
+      Today, the desktop supervises a loopback AO daemon. The daemon owns local SQLite
+      state and starts agent processes in local worktrees. Terminal, files, diffs, browser
+      sessions, Git operations, and agent lifecycle all depend on the user's machine.
+    </p>
+
+    <h3>2.2 Desired Cloud model</h3>
+    <p>
+      The Cloud product should preserve the interaction model while changing the execution
+      location. Users still create projects, create sessions, send prompts, inspect activity,
+      open terminals, review files and diffs, and work with pull requests. The difference is
+      that each session has isolated cloud compute and a durable control-plane identity.
+    </p>
+
+    <h3>2.3 Foundation already available</h3>
+    <table>
+      <thead><tr><th>Area</th><th>Available foundation</th><th>POC work</th></tr></thead>
+      <tbody>
+        <tr><td>Public AO</td><td>Cloud OpenAPI contracts, typed client, shared product UI, agent runtime primitives</td><td>Only change public contracts if the direct-provisioning response requires it</td></tr>
+        <tr><td>Control plane</td><td>Go API, PostgreSQL with tenant isolation, WorkOS auth, durable sessions/events, AWS deployment</td><td>Add project execution location and direct provisioning orchestration</td></tr>
+        <tr><td>Execution</td><td>Provider-neutral interface, Docker and hosted provider adapters, AO worker, worker epochs and bootstrap tickets</td><td>Reuse these pieces outside the background controller loop</td></tr>
+        <tr><td>Workspace</td><td>Outbound worker requests, files/diffs, terminal tickets, replayable events</td><td>Verify the chosen client surface exercises the complete path</td></tr>
+        <tr><td>SCM</td><td>GitHub App/OAuth flows, repository grants, short-lived checkout credentials</td><td>Verify clone and branch push from a hosted sandbox</td></tr>
+        <tr><td>Hosted acceptance</td><td>Local Docker lifecycle acceptance and provider conformance tests</td><td>Run the first live hosted-provider acceptance with real credentials</td></tr>
+      </tbody>
+    </table>
+
+    <div class="callout">
+      <strong>Important distinction</strong>
+      The private Cloud repository already contains a reconciler. “No reconciler in the
+      POC” means the feature-flagged creation path will not require or run that loop. We
+      can retain its tested provider and bootstrap building blocks and leave the controller
+      code dormant rather than deleting useful future work.
+    </div>
+  </section>
+
+  <section id="goals">
+    <h2>3. Goals and non-goals</h2>
+    <div class="two-col">
+      <div class="panel">
+        <h3>POC must prove</h3>
+        <ul>
+          <li>A user can create a Cloud project and orchestrator session.</li>
+          <li>The orchestrator runs in its own sandbox.</li>
+          <li>The orchestrator can spawn a child session in a different sandbox.</li>
+          <li>Prompts, activity, files, diffs, and terminal traffic cross the Cloud boundary.</li>
+          <li>A worker can clone the approved repository and push its own branch.</li>
+          <li>Infrastructure credentials never enter a sandbox; harness auth is confined to that session's process/home and never enters the workspace or another session.</li>
+          <li>Feature-off behavior and sandbox teardown are safe and observable.</li>
+          <li>The existing local AO path does not regress.</li>
+          <li>A project and all of its sessions use exactly one execution location.</li>
+          <li>A user connects each harness once and can use it across their Cloud projects.</li>
+          <li>No sandbox requires a separate interactive harness login.</li>
+          <li>Claude Code and Codex both complete the Cloud session lifecycle.</li>
+        </ul>
+      </div>
+      <div class="panel">
+        <h3>Not required for the first beta</h3>
+        <ul>
+          <li>Automatic repair, reconciliation, orphan collection, or self-healing.</li>
+          <li>Automatic pause/resume and cost optimization.</li>
+          <li>Multiple sandbox providers in production.</li>
+          <li>Multi-region placement, warm pools, or formal availability targets.</li>
+          <li>Billing, metering, or broad self-service onboarding.</li>
+          <li>Moving an existing project or session between local and Cloud.</li>
+          <li>Any agent harness beyond Claude Code and Codex.</li>
+          <li>Native agent-TUI attachment if chat and workspace terminal satisfy the POC.</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section id="decisions">
+    <h2>4. Engineering decisions</h2>
+    <table>
+      <thead><tr><th>ID</th><th>Decision</th><th>Reasoning</th><th>Consequence</th></tr></thead>
+      <tbody>
+        <tr><td class="decision-id">D1</td><td>Run the AO control plane in AWS; keep PostgreSQL as durable authority.</td><td>Cloud clients and workers need a common tenant-aware authority that survives sandbox replacement.</td><td>API replicas remain stateless between requests; no sandbox filesystem is authoritative.</td></tr>
+        <tr><td class="decision-id">D2</td><td>Allocate exactly one sandbox per agent session, including orchestrators.</td><td>This matches AO's session isolation model and prevents branches, agent homes, terminals, or secrets from leaking between sessions.</td><td>An orchestrator is a normal session with extra scoped orchestration permissions, not privileged shared compute.</td></tr>
+        <tr><td class="decision-id">D3</td><td>Workers initiate outbound HTTPS/WebSocket connections to the control plane.</td><td>It avoids public ingress to sandboxes and works across providers with different network models.</td><td>The worker polls or streams commands; the control plane never depends on a routable sandbox address for normal operation.</td></tr>
+        <tr><td class="decision-id">D4</td><td>Provision directly in the session-creation request; omit the reconciler.</td><td>The beta needs the shortest debuggable path. A controller adds leases, scheduling, retry policy, and asynchronous state transitions before we have real failure data.</td><td>Creation can take tens of seconds. A failure is surfaced directly so we can diagnose and fix its cause.</td></tr>
+        <tr><td class="decision-id">D5</td><td>Keep the provider-neutral interface, but launch with one already-integrated hosted provider.</td><td>Provider-neutral domain types are already present; building a second provider before the first live loop works delays learning.</td><td>Use the existing hosted <code>nodeops</code> path first. Evaluate Daytona only if the live probe exposes a blocking limitation.</td></tr>
+        <tr><td class="decision-id">D6</td><td>Choose execution location at project creation and never mix locations within a project.</td><td>Project-scoped orchestration, repository state, session listing, and lifecycle remain much simpler when every session has the same host.</td><td><code>execution_location</code> is <code>local</code> or <code>cloud</code>, is not editable, and is inherited by orchestrators and children. Sessions have no location selector.</td></tr>
+        <tr><td class="decision-id">D7</td><td>Reuse shared Cloud contracts and product UI through host adapters.</td><td>Local and Cloud should present one AO product without making the local daemon switch transports internally.</td><td>The local adapter continues calling loopback APIs; the Cloud adapter calls authenticated hosted APIs.</td></tr>
+        <tr><td class="decision-id">D8</td><td>Use one-time bootstrap tickets and scoped, just-in-time credentials.</td><td>A sandbox needs harness auth to run the agent, but it never needs AWS, database, sandbox-provider, WorkOS, or GitHub App authority.</td><td>The control plane brokers only the selected harness credential and operation-specific grants to the current worker epoch.</td></tr>
+        <tr><td class="decision-id">D9</td><td>Persist lifecycle facts; derive user-facing status.</td><td>“Running” must mean the AO worker is usable, not merely that the provider reports a booted VM.</td><td>Provider state, worker readiness, turn state, and errors remain separate facts. UI labels are computed from them.</td></tr>
+        <tr><td class="decision-id">D10</td><td>Do not build generalized failure handling yet.</td><td>We do not know which failures will occur in practice or which ones will remain after their root causes are fixed.</td><td>The POC records and returns the real provider or worker error. We add a targeted recovery path only for a recurring failure that cannot reasonably be eliminated.</td></tr>
+        <tr><td class="decision-id">D11</td><td>Make harness subscription auth a one-time, user-scoped Cloud connection.</td><td>Requiring API keys, repeated device login, or per-project setup would make Cloud feel worse than local AO.</td><td>The desktop can import a supported local subscription credential with consent. Cloud stores it encrypted once and brokers it to the user's current sandbox when a turn starts.</td></tr>
+        <tr><td class="decision-id">D12</td><td>Launch with a closed Cloud catalog of Claude Code and Codex.</td><td>Each harness needs its own image installation, auth bridge, launch policy, event handling, and acceptance coverage. Adding the entire local catalog would multiply the POC surface.</td><td>Cloud project/session APIs reject every other harness. Local AO's broader catalog is unchanged. New Cloud harnesses are added one at a time after conformance and hosted acceptance.</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section id="architecture">
+    <h2>5. Architecture</h2>
+
+    <p class="diagram-title">System context</p>
+    <pre aria-label="AO Cloud system architecture diagram">
+┌────────────────────────── Client surfaces ──────────────────────────┐
+│  AO Desktop (local adapter / Cloud adapter)     AO Cloud Web        │
+└──────────────────────────────┬───────────────────────────────────────┘
+                               │ authenticated REST · SSE · WebSocket
+                               ▼
+┌──────────────────────── AWS control plane ──────────────────────────┐
+│                                                                    │
+│  ┌───────────────┐       ┌────────────────┐      ┌──────────────┐  │
+│  │ AO Cloud API  │──────▶│ PostgreSQL/RDS │      │ Secret broker│  │
+│  │               │       │ durable truth  │      │ KMS + grants │  │
+│  └───────┬───────┘       └────────────────┘      └──────────────┘  │
+│          │ direct create / get / delete                            │
+└──────────┼─────────────────────────────────────────────────────────┘
+           │ provider credential stays here
+           ▼
+┌────────────────────── Sandbox provider ─────────────────────────────┐
+│                                                                    │
+│  ┌──────────────────────┐      ┌──────────────────────┐            │
+│  │ Orchestrator sandbox │      │ Child worker sandbox │   ...      │
+│  │ AO worker + agent    │      │ AO worker + agent    │            │
+│  │ isolated checkout    │      │ isolated checkout    │            │
+│  └──────────┬───────────┘      └──────────┬───────────┘            │
+└─────────────┼──────────────────────────────┼────────────────────────┘
+              └── outbound channel (Worker token + epoch) ──▶ AO Cloud API
+
+External services: WorkOS authenticates users; GitHub grants repository access;
+the sandbox provider creates compute. Their long-lived credentials stay in the
+control plane.</pre>
+
+    <h3>5.1 Component responsibilities</h3>
+    <table>
+      <thead><tr><th>Component</th><th>Owns</th><th>Must not own</th></tr></thead>
+      <tbody>
+        <tr><td>Desktop / Cloud Web</td><td>Presentation, navigation, user intent, stream cursors</td><td>Provider credentials, lifecycle policy, durable authority</td></tr>
+        <tr><td>AO Cloud API</td><td>Authentication, authorization, Cloud projects, session commands, inline provisioning, event routing</td><td>Repository working files, agent-local state, or local-project sessions</td></tr>
+        <tr><td>PostgreSQL</td><td>Organizations, projects, sessions, sandboxes, turns, events, worker epochs, audits, command idempotency</td><td>Raw secret values or transient terminal bytes beyond bounded replay</td></tr>
+        <tr><td>Sandbox provider adapter</td><td>Translation between AO lifecycle calls and one provider API</td><td>AO tenant policy or client-facing status</td></tr>
+        <tr><td>AO worker</td><td>Checkout, agent process, workspace operations, PTYs, activity and heartbeat reporting</td><td>Cross-session access or durable control-plane truth</td></tr>
+        <tr><td>Orchestrator agent</td><td>Planning and child-session commands within its project scope</td><td>Provider API access, arbitrary organization access, or direct sandbox creation</td></tr>
+      </tbody>
+    </table>
+
+    <h3>5.2 Orchestrator fan-out</h3>
+    <pre aria-label="Orchestrator child session flow">
+User creates project orchestrator
+          │
+          ▼
+AO API provisions sandbox O ──────▶ AO worker starts orchestrator agent
+                                             │
+                                             │ POST scoped child-session command
+                                             ▼
+                                      AO Cloud API
+                                             │
+                   ┌─────────────────────────┴─────────────────────────┐
+                   ▼                                                   ▼
+          provision sandbox A                                provision sandbox B
+          branch: feature/a                                  branch: feature/b
+
+The orchestrator can list, create, message, and observe children only inside the
+same organization and project. It receives no sandbox-provider credential.</pre>
+
+    <h3>5.3 Sandbox authentication</h3>
+    <p>
+      A sandbox does not receive or impersonate the user's WorkOS session. The AO worker
+      inside each sandbox authenticates as its own machine identity:
+    </p>
+    <pre aria-label="Sandbox worker authentication sequence diagram">
+AO API                 Sandbox provider          AO worker in sandbox
+  │                           │                           │
+  │ create sandbox with one-time bootstrap ticket        │
+  ├──────────────────────────▶│──────────────────────────▶│
+  │                           │                           │
+  │ POST /worker/bootstrap { ticket }                    │
+  │◀──────────────────────────────────────────────────────┤
+  │ atomically consume ticket; register worker + epoch    │
+  │──────────────────────────────────────────────────────▶│
+  │ short-lived signed Worker token + launch context      │
+  │                           │                           │
+  │ Authorization: Worker &lt;token&gt; on every worker call   │
+  │◀─────────────────────────────────────────────────────▶│
+  │ heartbeat verifies identity and renews token          │
+
+The bootstrap endpoint is the only worker route that does not require a Worker
+token. Possession of the single-use ticket is its proof.</pre>
+
+    <table>
+      <thead><tr><th>Credential</th><th>Contents and lifetime</th><th>Enforcement</th></tr></thead>
+      <tbody>
+        <tr><td>Bootstrap ticket</td><td>Random, single-use, short-lived, stored only as a hash; bound to organization, session, worker epoch, purpose, and initial scopes</td><td>Consumed atomically. An expired, invalid, or replayed ticket is rejected.</td></tr>
+        <tr><td>Worker token</td><td>Signed 15-minute token containing <code>orgId</code>, <code>sessionId</code>, <code>workerId</code>, <code>epoch</code>, expiry, and scopes</td><td>Every call verifies signature, expiry, current worker epoch, and the required scope. Heartbeats renew it.</td></tr>
+        <tr><td>Orchestrator authority</td><td>The same worker token plus <code>worker:orchestrate</code></td><td>Only an orchestrator session receives this scope. Child operations are also restricted to the session's organization and project.</td></tr>
+        <tr><td>Ordinary worker authority</td><td>Scopes for connection, events, turns, transport, Git, and the selected agent credential</td><td><code>worker:orchestrate</code> is removed, so a normal worker cannot create or control sibling sessions.</td></tr>
+      </tbody>
+    </table>
+    <p>
+      Provider credentials, WorkOS tokens, database credentials, and GitHub App keys never
+      enter the sandbox. Repository credentials are short-lived grants; harness credentials
+      are delivered separately and only after the Worker identity and scope are accepted.
+    </p>
+  </section>
+
+  <section id="lifecycle">
+    <h2>6. Session creation without a reconciler</h2>
+
+    <h3>6.1 Direct request flow</h3>
+    <pre aria-label="Direct sandbox provisioning sequence diagram">
+Client          AO API             PostgreSQL       Provider         AO Worker
+  │                │                    │                │                │
+  │ POST session   │                    │                │                │
+  │ Idempotency-Key│                    │                │                │
+  ├───────────────▶│ validate gates     │                │                │
+  │                ├───────────────────▶│ reserve session│                │
+  │                │                    │ + sandbox fact │                │
+  │                │                    │ + quota slot   │                │
+  │                │ create(session ID, deterministic label)             │
+  │                ├────────────────────────────────────▶│                │
+  │                │◀────────────────────────────────────┤ provider ID    │
+  │                ├───────────────────▶│ persist ID     │                │
+  │                │ bootstrap(ticket, worker spec)      │                │
+  │                ├────────────────────────────────────▶│───────────────▶│
+  │                │                    │                │  redeem ticket │
+  │                │◀────────────────────────────────────────────────────┤
+  │                ├───────────────────▶│ worker ready + current epoch    │
+  │◀───────────────┤ 201 session + derived running status                 │
+  │                │                    │                │                │
+
+Any provider, bootstrap, or readiness error is recorded on the session and returned
+to the caller. The next step is diagnosis and a root-cause fix, not automatic recovery.</pre>
+
+    <h3>6.2 Provisioner algorithm</h3>
+    <ol>
+      <li><strong>Validate.</strong> Require a Cloud project, organization access, a healthy configured provider, <code>claude-code</code> or <code>codex</code>, and an idempotency key.</li>
+      <li><strong>Reserve.</strong> In one transaction, create or replay the command receipt, session, branch, initial turn/event, sandbox record, and organization quota reservation.</li>
+      <li><strong>Create.</strong> Call <code>Provider.Create</code> outside the transaction with a deterministic session name and labels containing environment, organization, and session identifiers.</li>
+      <li><strong>Persist identity.</strong> Store the provider environment ID immediately after it is returned, before worker upload or bootstrap.</li>
+      <li><strong>Bootstrap.</strong> Mint a one-time ticket, construct the worker specification, install/start the AO worker, and let it redeem the ticket for an epoch-scoped credential.</li>
+      <li><strong>Materialize.</strong> The worker obtains a short-lived checkout grant, validates repository identity, clones the repository, and starts the selected agent.</li>
+      <li><strong>Resolve.</strong> Wait up to a bounded deadline for worker readiness. Mark the sandbox running or failed, retain the original error, and return the session.</li>
+    </ol>
+
+    <h3>6.3 State model</h3>
+    <pre aria-label="POC sandbox lifecycle state diagram">
+requested ──▶ provisioning ──▶ bootstrapping ──▶ running
+                  │                   │             │
+                  │ error             │ error       │ delete
+                  ▼                   ▼             ▼
+                failed ◀──────────── failed       deleting ──▶ deleted
+
+User-facing labels are derived from these lifecycle facts plus worker/turn facts.
+The session table does not persist a separate display status.</pre>
+
+    <h3>6.4 Failure policy</h3>
+    <p>
+      Keep failure handling intentionally small. Preserve AO's existing command idempotency
+      so a repeated client request returns the original result. Use the session ID in the
+      provider name or labels so a sandbox can be identified during debugging. Beyond that:
+    </p>
+    <ul>
+      <li>Return the underlying provider or worker error with the session and request IDs.</li>
+      <li>Inspect the logs and provider state.</li>
+      <li>Fix the configuration, image, network, credential, quota, or code issue that caused it.</li>
+      <li>Clean up a partially created sandbox manually before trying again.</li>
+      <li>Add automated handling only when the same unavoidable failure recurs.</li>
+    </ul>
+
+    <div class="callout warning">
+      <strong>Accepted POC limitation</strong>
+      A failed attempt may require inspecting or deleting a sandbox in the provider console.
+      That is acceptable for an internal beta. We will not build a generic
+      retry, repair, or orphan-recovery framework until actual experience requires one.
+    </div>
+
+    <h3>6.5 Deletion</h3>
+    <p>
+      Deletion is also direct. Mark deletion requested, call the provider with the stored ID
+      (or unique session label), confirm absence using <code>ErrNotFound</code>, and then record
+      deleted. A failed or unknown provider probe is not proof that compute is gone. The
+      durable session transcript may remain after compute is deleted.
+    </p>
+  </section>
+
+  <section id="protocol">
+    <h2>7. Worker protocol and product experience</h2>
+
+    <h3>7.1 Worker bootstrap</h3>
+    <ul>
+      <li>The control plane creates a short-lived, single-use bootstrap ticket and stores only its hash.</li>
+      <li>The ticket is bound to organization, session, purpose, worker epoch, and expiry.</li>
+      <li>The worker redeems it over TLS and receives only the scopes needed for that session.</li>
+      <li>A replacement worker increments the epoch; older workers cannot claim or complete new work.</li>
+      <li>The worker reports ready only after its workspace and agent runtime are usable.</li>
+    </ul>
+
+    <h3>7.2 Runtime traffic</h3>
+    <table>
+      <thead><tr><th>Experience</th><th>Cloud transport</th><th>Durability rule</th></tr></thead>
+      <tbody>
+        <tr><td>Chat and agent activity</td><td>REST commands plus replayable SSE events</td><td>Turns and canonical events are durable; reconnect resumes from sequence</td></tr>
+        <tr><td>Files and diffs</td><td>Bounded worker requests through the control plane</td><td>Request/result metadata is durable; sandbox filesystem is the live source</td></tr>
+        <tr><td>Workspace terminal</td><td>Short-lived terminal ticket and direct WebSocket</td><td>Tickets are single-use and epoch-bound; output has bounded sequence replay</td></tr>
+        <tr><td>Browser/preview</td><td>Worker-created preview capability proxied through an authenticated gateway</td><td>No public sandbox port; capability expires with the session/epoch</td></tr>
+        <tr><td>SCM</td><td>Control-plane brokered GitHub grant and durable webhook/API observations</td><td>Checkout tokens are short-lived; PR/check/review facts live in the control plane</td></tr>
+      </tbody>
+    </table>
+
+    <h3>7.3 Harness subscription authentication</h3>
+    <div class="callout decision">
+      <strong>UX requirement</strong>
+      A user who already runs Claude Code or Codex locally should need at most one consent
+      action to use the same subscription in AO Cloud. Never ask them to find, copy, or
+      paste a token, and never ask them to authenticate separately in each sandbox.
+    </div>
+
+    <p class="diagram-title">One-time local-to-Cloud connection</p>
+    <pre aria-label="Harness subscription authentication transport diagram">
+Local harness auth       AO Desktop main       AO Cloud API        PostgreSQL
+(keychain/auth store)    (credential bridge)   (secret broker)     (ciphertext only)
+        │                       │                     │                    │
+        │ AO detects signed-in harness               │                    │
+        ├──────────────────────▶│                     │                    │
+        │                       │ “Use in Cloud?”     │                    │
+User ───┼──────────────────────▶│ one consent         │                    │
+        │ minimal portable auth material             │                    │
+        ├──────────────────────▶│                     │                    │
+        │                       │ TLS + WorkOS user   │                    │
+        │                       ├────────────────────▶│ validate + encrypt │
+        │                       │                     ├───────────────────▶│
+        │                       │◀────────────────────┤ connected metadata │
+
+The renderer receives connection status only. The secret moves from the privileged
+desktop process directly to the authenticated Cloud API and is never exposed to React,
+the workspace, logs, analytics, command arguments, or durable events.</pre>
+
+    <p class="diagram-title">Delivery to a sandbox</p>
+    <pre aria-label="Harness credential delivery to cloud sandbox diagram">
+AO worker                 AO Cloud API             encrypted user connection
+   │ Worker token + worker:credential:read                 │
+   ├────────────────────────▶│                              │
+   │                         │ verify org/session/epoch     │
+   │                         │ resolve session creator      │
+   │                         ├─────────────────────────────▶│
+   │                         │◀─────────────────────────────┤ ciphertext
+   │                         │ decrypt at HTTP edge         │
+   │◀────────────────────────┤ no-store credential response │
+   │
+   ├─ Claude Code: pass OAuth token only to the child-process environment
+   └─ Codex: pass access token over stdin to `codex login` in a 0700 session CODEX_HOME
+
+The worker requests the credential when it is about to run the harness. It does not
+receive provider secrets in its bootstrap environment or sandbox-provider metadata.</pre>
+
+    <div class="callout warning">
+      <strong>Sandbox exposure boundary</strong>
+      The harness must receive a usable subscription credential, so processes running as
+      that sandbox user may be able to read it. The POC confines the credential to one
+      session's harness process or private harness home. It is never baked into an image,
+      placed in the repository workspace, sent through provider metadata, shared across
+      users, or written to AO logs/events. Deleting the sandbox deletes its local copy.
+    </div>
+
+    <h4>Storage and ownership</h4>
+    <ul>
+      <li>The connection belongs to the AO user, not to a project or sandbox, so one connection works across all of that user's Cloud projects.</li>
+      <li>The Cloud API validates the credential before saving it and stores authenticated ciphertext plus a nonce in the existing user-provider connection record.</li>
+      <li>Encryption associated data binds the ciphertext to the user, harness, and connection label, preventing it from being moved to another owner or provider.</li>
+      <li>API responses expose only provider, account/plan metadata when available, validation state, and last-updated time—never the secret.</li>
+      <li>An organization-managed harness credential may be added later; the POC defaults to the session creator's personal subscription.</li>
+    </ul>
+
+    <h4>Desktop credential bridge</h4>
+    <ul>
+      <li>Each harness gets a small adapter that can detect local sign-in and obtain only an officially portable token or credential bundle.</li>
+      <li>The adapter runs in Electron main (or another privileged native process), where AO already keeps Cloud account tokens. The renderer can request an import but cannot read its result.</li>
+      <li>Do not upload the harness's entire home directory. Settings, MCP configuration, conversation history, project trust, and telemetry identifiers are not authentication and stay local.</li>
+      <li>Do not depend on undocumented keychain item names or blindly scrape arbitrary files. If a harness does not expose a safe portable credential, AO launches that harness's official browser/device login once and stores the resulting Cloud connection.</li>
+    </ul>
+
+    <h4>Expiration and reconnect UX</h4>
+    <p>
+      The POC does not add background token-refresh infrastructure. The harness uses the
+      imported subscription credential normally. If the provider rejects it, AO marks the
+      user connection as needing reconnection and shows one action: <strong>Reconnect
+      Claude Code</strong> or <strong>Reconnect Codex</strong>. Reconnecting replaces the
+      encrypted user connection; because workers fetch the credential when starting a
+      turn, the next turn uses the new value without recreating projects or sandboxes.
+    </p>
+
+    <h4>Supported Cloud catalog</h4>
+    <table>
+      <thead><tr><th>Harness</th><th>Cloud credential form</th><th>Sandbox materialization</th><th>User experience</th></tr></thead>
+      <tbody>
+        <tr><td>Claude Code</td><td>Portable Claude Code OAuth/subscription token</td><td><code>CLAUDE_CODE_OAUTH_TOKEN</code> in the harness process environment only</td><td>Import an existing supported local token, otherwise run Claude's official account connection once</td></tr>
+        <tr><td>Codex</td><td>ChatGPT/Codex access token accepted by <code>codex login --with-access-token</code></td><td>Token through stdin into a 0700 session <code>CODEX_HOME</code>, deleted with the sandbox</td><td>Import an existing supported access token, otherwise complete the official browser/device login once</td></tr>
+      </tbody>
+    </table>
+    <p class="small">API-key authentication may remain as an advanced credential option for these two harnesses, but it does not add another harness to the Cloud catalog.</p>
+
+    <h3>7.4 Execution location belongs to the project</h3>
+    <pre aria-label="Local and cloud UI adapter diagram">
+                          shared product UI
+                       (board, chat, inspector)
+                                  │
+                  ┌───────────────┴────────────────┐
+                  ▼                                ▼
+        local project adapter              Cloud project adapter
+        execution=local                    execution=cloud
+                  │                                │
+                  ▼                                ▼
+        loopback AO daemon                 hosted AO Cloud API
+        SQLite + local process             PostgreSQL + sandboxes
+
+The choice is made once when the project is created. Every session and orchestrator
+action routes through that project's adapter. The loopback daemon does not switch
+transports, and a session cannot override its project's execution location.</pre>
+  </section>
+
+  <section id="security">
+    <h2>8. Security model</h2>
+    <table>
+      <thead><tr><th>Boundary</th><th>Control</th><th>Reason</th></tr></thead>
+      <tbody>
+        <tr><td>User → API</td><td>WorkOS identity, organization membership, route authorization</td><td>Every Cloud operation is tenant scoped</td></tr>
+        <tr><td>Organization data</td><td>PostgreSQL row-level security plus explicit service checks</td><td>Defense in depth against cross-tenant reads/writes</td></tr>
+        <tr><td>API → provider</td><td>Provider credential held only by control plane secret storage</td><td>A compromised sandbox cannot create or enumerate other compute</td></tr>
+        <tr><td>Worker → API</td><td>One-time bootstrap, rotating JWT, session scopes, worker epoch</td><td>Limits replay and stale-worker authority</td></tr>
+        <tr><td>Worker → GitHub</td><td>Repository- and environment-scoped short-lived grant via askpass/wrapper</td><td>No user token in URL, argv, git config, or durable events</td></tr>
+        <tr><td>Session isolation</td><td>One sandbox, workspace, branch, agent home, PTY pool, and credential set per session</td><td>Prevents one agent from observing another session</td></tr>
+        <tr><td>Network</td><td>Outbound-only worker channel; authenticated preview/terminal capabilities</td><td>No general public ingress to a sandbox</td></tr>
+      </tbody>
+    </table>
+
+    <p><strong>Secrets that must never enter a sandbox:</strong> AWS credentials, sandbox-provider API keys, WorkOS server keys, database credentials, GitHub App private keys, and organization-wide agent secrets.</p>
+  </section>
+
+  <section id="data">
+    <h2>9. Data and API changes</h2>
+
+    <h3>9.1 Data model</h3>
+    <p>
+      Reuse the existing session, sandbox, access-ticket, worker-epoch, command-receipt,
+      turn, event, and audit records. The POC should avoid a new job queue or lease table.
+      The direct provisioner needs these facts:
+    </p>
+    <table>
+      <thead><tr><th>Fact</th><th>Purpose</th></tr></thead>
+      <tbody>
+        <tr><td><code>project.execution_location</code></td><td>Immutable <code>local</code> or <code>cloud</code> project boundary inherited by every session</td></tr>
+        <tr><td><code>user_provider_connection</code></td><td>User-scoped encrypted harness subscription credential, reusable across the user's Cloud projects</td></tr>
+        <tr><td><code>session_id</code>, <code>org_id</code>, <code>project_id</code></td><td>Stable ownership and provider labels</td></tr>
+        <tr><td><code>provider</code>, <code>provider_environment_id</code></td><td>Locate and operate the sandbox</td></tr>
+        <tr><td><code>observed_state</code>, <code>last_error</code>, timestamps</td><td>Expose factual lifecycle progress and the original failure</td></tr>
+        <tr><td><code>worker_epoch</code>, <code>worker_last_seen_at</code></td><td>Readiness and stale-worker fencing</td></tr>
+        <tr><td>idempotency command receipt</td><td>Return the original result for repeated create input</td></tr>
+        <tr><td>resource and bootstrap context</td><td>Construct a reproducible provider and worker request without storing plaintext secrets</td></tr>
+      </tbody>
+    </table>
+
+    <h3>9.2 API behavior</h3>
+    <ul>
+      <li>Project creation requires <code>execution_location</code>. Local hosts create <code>local</code> projects; the Cloud host creates <code>cloud</code> projects. The field is immutable.</li>
+      <li>The desktop can create or replace the signed-in user's harness connection over an authenticated, no-store endpoint. The renderer can list connection metadata but never read the secret.</li>
+      <li><code>POST /orgs/{orgId}/sessions</code> retains its required <code>Idempotency-Key</code>, loads the parent project, and provisions a sandbox only for a Cloud project.</li>
+      <li>The create response includes the session projection and factual sandbox progress. If the existing contract can represent this, do not add a second POC-only DTO.</li>
+      <li>Orchestrator child-session routes call the same creation service and enforce same-organization, same-project scope. They inherit location from the project.</li>
+    </ul>
+
+    <h3>9.3 Project execution invariant</h3>
+    <pre aria-label="Project execution location decision flow">
+create project ──▶ choose execution_location once
+                         │
+                 ┌───────┴────────┐
+                 ▼                ▼
+               local            cloud
+                 │                │
+        loopback daemon      AO Cloud API
+        local sessions       sandbox sessions
+                 │                │
+                 └── cannot mix ──┘
+
+Session creation reads location from the project. It never accepts a location
+override. To use the other location, create a separate project.</pre>
+  </section>
+
+  <section id="implementation">
+    <h2>10. Implementation plan</h2>
+
+    <h3>Slice 0 — Establish the live baseline</h3>
+    <ul class="checklist">
+      <li>Initialize the private <code>ao-cloud</code> checkout at the compatible commit.</li>
+      <li>Run its unit/integration suite and local Docker lifecycle acceptance.</li>
+      <li>Configure staging AWS, WorkOS, GitHub, and hosted-provider credentials without writing them to the repository.</li>
+      <li>Verify staging API/database health and run a read-only provider capability probe.</li>
+    </ul>
+
+    <h3>Slice 1 — Add project location and the direct provisioner</h3>
+    <ul class="checklist">
+      <li>Add immutable <code>execution_location</code> to the shared project model and creation flow.</li>
+      <li>Make session and orchestrator creation inherit location from the parent project.</li>
+      <li>Add desktop credential bridges for Claude Code and Codex; keep both secrets out of the renderer.</li>
+      <li>Make the Cloud catalog return only <code>claude-code</code> and <code>codex</code>; reject other harness IDs at session creation.</li>
+      <li>Do not start the sandbox reconciler for direct-POC deployments.</li>
+      <li>Extract provider create/bootstrap logic into a small service callable from the HTTP session path.</li>
+      <li>Reuse <code>internal/sandbox.Provider</code>, bootstrap-ticket creation, worker-spec construction, quota reservation, and epoch fencing.</li>
+      <li>Label the provider environment with the session ID and persist its ID before bootstrap.</li>
+      <li>Add bounded create and readiness deadlines; return the original failure clearly.</li>
+    </ul>
+
+    <p class="small"><strong>Likely private code areas:</strong> <code>cmd/ao-cloud/main.go</code>, <code>internal/httpapi/resource_handlers.go</code>, a small direct-provisioning service, <code>internal/postgres/sandbox_store.go</code>, and existing <code>internal/sandbox/*</code> adapters. Contract artifacts change only if the current session projection cannot express provisioning facts.</p>
+
+    <h3>Slice 2 — Complete one hosted session</h3>
+    <ul class="checklist">
+      <li>Create one Cloud project and session against the live hosted provider.</li>
+      <li>Connect each user's local Claude Code and Codex subscription once and verify each sandbox starts without another login prompt.</li>
+      <li>Redeem the worker ticket, clone an approved repository, and report ready.</li>
+      <li>Send an initial and follow-up prompt; verify durable event replay after reconnect.</li>
+      <li>Inspect files and diff, open a workspace terminal, and push a branch.</li>
+      <li>Delete the sandbox and confirm provider absence without deleting durable history.</li>
+    </ul>
+
+    <h3>Slice 3 — Prove orchestrator fan-out</h3>
+    <ul class="checklist">
+      <li>Provision an orchestrator through the same session path.</li>
+      <li>Give it only project-scoped list/create/message/observe permissions.</li>
+      <li>Have it create one child; confirm distinct provider IDs, workspaces, branches, homes, and worker credentials.</li>
+      <li>Have the orchestrator message the child and observe its durable progress.</li>
+      <li>Confirm a cross-project or cross-organization child request fails closed.</li>
+    </ul>
+
+    <h3>Slice 4 — Expose the hidden beta</h3>
+    <ul class="checklist">
+      <li>Render local or Cloud controls from the selected project's execution location.</li>
+      <li>Show provisioning, running, and failed states with the original actionable error.</li>
+      <li>Document the single manual cleanup procedure used during the internal beta.</li>
+      <li>Add basic logs and timing for provisioning and worker readiness.</li>
+      <li>Verify a project cannot contain sessions from both locations.</li>
+    </ul>
+
+    <h3>Implementation rule</h3>
+    <div class="callout decision">
+      Each slice ends with a real, inspectable result. We do not build later lifecycle
+      automation until the preceding vertical path works against the actual hosted
+      provider.
+    </div>
+  </section>
+
+  <section id="testing">
+    <h2>11. Verification and rollout</h2>
+
+    <h3>11.1 Automated coverage</h3>
+    <table>
+      <thead><tr><th>Level</th><th>Required cases</th></tr></thead>
+      <tbody>
+        <tr><td>Unit</td><td>Project-location inheritance; mixed-location rejection; credential-bridge redaction; provider error propagation; session labels; bootstrap deadline; status derivation; orchestrator authorization</td></tr>
+        <tr><td>PostgreSQL integration</td><td>User-scoped encrypted credential ownership; current-worker credential access; atomic reservation; idempotent replay; quota concurrency; environment-ID persistence; worker epoch fencing; tenant isolation</td></tr>
+        <tr><td>Provider conformance</td><td>Create/get/delete and truthful translation of the provider's basic lifecycle states</td></tr>
+        <tr><td>Local Docker E2E</td><td>Create → bootstrap → clone → prompt → files/terminal → branch → delete, with no leaked container or volume</td></tr>
+        <tr><td>Hosted acceptance</td><td>Repeat the complete hosted loop for Claude Code and Codex; each local subscription connection powers an orchestrator and child without another harness login</td></tr>
+        <tr><td>Regression</td><td>Public contracts, shared UI, Cloud client, and existing local AO tests remain green</td></tr>
+      </tbody>
+    </table>
+
+    <h3>11.2 Beta release gates</h3>
+    <ul>
+      <li><strong>E2E:</strong> one internal user completes the full hosted loop.</li>
+      <li><strong>1 → N:</strong> one sandboxed orchestrator creates and controls at least one isolated child.</li>
+      <li><strong>PROJECT BOUNDARY:</strong> local and Cloud projects work independently; neither can create a session in the other location.</li>
+      <li><strong>SECURITY:</strong> credential logs and sandbox environments contain no long-lived control-plane secret.</li>
+      <li><strong>ONBOARDING:</strong> for both Claude Code and Codex, a locally authenticated user connects once and starts an orchestrator plus child without copying a key or repeating provider login.</li>
+      <li><strong>CLEANUP:</strong> every test sandbox is accounted for by session ID and can be deleted deterministically.</li>
+    </ul>
+
+    <h3>11.3 Minimum debugging signal</h3>
+    <p>Every provisioning attempt should produce one structured log trail containing:</p>
+    <ul>
+      <li>request ID, organization ID, session ID, provider, release, and attempt;</li>
+      <li>time spent reserving, creating, persisting identity, bootstrapping, checkout, and waiting for ready;</li>
+      <li>provider result class without credential or prompt content;</li>
+      <li>the original provider, bootstrap, checkout, or readiness error.</li>
+    </ul>
+
+    <h3>11.4 Rollback</h3>
+    <ol>
+      <li>Stop creating new Cloud projects in the internal POC environment.</li>
+      <li>Use session/provider IDs to delete active test sandboxes explicitly.</li>
+      <li>Roll back the application image; do not reverse compatible database migrations.</li>
+    </ol>
+  </section>
+
+  <section id="future">
+    <h2>12. When to add a reconciler</h2>
+    <p>
+      A reconciler is a background control loop that repeatedly compares desired state
+      (“this sandbox should be running”) with observed provider state and performs the
+      next safe action. It becomes valuable when lifecycle operations must continue after
+      an HTTP request or process ends.
+    </p>
+    <p>
+      It was part of the earlier design because the production target implies provider
+      timeouts, API restarts, multiple replicas, automatic resume, replacement workers,
+      cleanup, and eventual consistency. The existing private implementation also already
+      uses that architecture. Those are legitimate production concerns, but they are not
+      prerequisites for learning from a tightly controlled POC.
+    </p>
+
+    <div class="callout decision">
+      <strong>Decision</strong>
+      Do not schedule reconciler work in the initial implementation. Revisit it only when
+      observed operations or a committed product requirement makes synchronous manual
+      handling inadequate.
+    </div>
+
+    <h3>Concrete triggers for revisiting the decision</h3>
+    <ul>
+      <li>Provider calls regularly outlive the API request budget.</li>
+      <li>Orphaned or duplicate sandboxes recur after their immediate causes have been fixed.</li>
+      <li>Automatic pause/resume, replacement, or crash recovery becomes a beta requirement.</li>
+      <li>Provisioning must remain correct across multiple active API replicas.</li>
+      <li>Operators spend meaningful time retrying or cleaning up sessions.</li>
+      <li>Users need creation to return immediately while work continues reliably in the background.</li>
+    </ul>
+    <p>
+      If triggered, the direct provisioner should become the operation primitive used by
+      a controller rather than being discarded. The later reconciler would add durable
+      scheduling, leases, backoff, and convergence around the same provider and bootstrap
+      services.
+    </p>
+  </section>
+
+  <section id="questions">
+    <h2>13. Open questions for the implementation session</h2>
+    <table>
+      <thead><tr><th>Question</th><th>Recommended POC default</th><th>When to decide</th></tr></thead>
+      <tbody>
+        <tr><td>Which hosted provider account do we use first?</td><td>Use the existing <code>nodeops</code> adapter and supplied credentials; switch only if the live probe blocks the vertical slice.</td><td>Slice 0</td></tr>
+        <tr><td>Which client surface is the acceptance surface?</td><td>Use the private Cloud web app for the core flow and direct authenticated stream endpoints for terminal/preview; use desktop only where it shortens an actual blocker.</td><td>Slice 0</td></tr>
+        <tr><td>How long may session creation block?</td><td>Start with a two-minute total deadline and measure create/ready distribution before changing it.</td><td>Slice 1</td></tr>
+        <tr><td>What sandbox size/image?</td><td>One pinned worker image and one conservative resource profile for all beta sessions.</td><td>Slice 1</td></tr>
+        <tr><td>Can the first harness safely export its current local subscription credential?</td><td>Use an official portable credential when available. Otherwise launch the provider's official browser/device flow once; do not scrape undocumented keychain entries.</td><td>Slice 1</td></tr>
+        <tr><td>What persists after sandbox deletion?</td><td>Keep durable session transcript, events, audit, branch and provider identifiers; delete ephemeral compute and workspace unless a beta requirement says otherwise.</td><td>Slice 2</td></tr>
+        <tr><td>Who enters the beta?</td><td>Internal users in the POC environment.</td><td>Slice 4</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <footer class="footer">
+    This document is the working implementation plan for the feature-flagged AO Cloud POC.
+    It should be updated when a live acceptance run changes a decision or reveals a new constraint.
+  </footer>
+</main>
+</body>
+</html>

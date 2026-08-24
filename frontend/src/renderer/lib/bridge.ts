@@ -197,6 +197,11 @@ export const aoBridge: AoBridge =
 		},
 		cloud: {
 			getSession: async () => null,
+			isBetaEnabled: async () => false,
+			getOverview: async () => { throw new Error("AO Cloud is unavailable in the web preview."); },
+			createProject: async () => { throw new Error("AO Cloud is unavailable in the web preview."); },
+			createSession: async () => { throw new Error("AO Cloud is unavailable in the web preview."); },
+			connectLocalHarness: async () => { throw new Error("AO Cloud is unavailable in the web preview."); },
 			signIn: async () => undefined,
 			signOut: async () => undefined,
 			onSessionChanged: () => () => undefined,

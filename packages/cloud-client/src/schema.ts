@@ -972,6 +972,11 @@ export interface components {
             /** Format: uri */
             repositoryUrl: string;
             defaultBranch: string;
+            /**
+             * @description Immutable project execution boundary. Cloud API projects can only contain Cloud sessions.
+             * @enum {string}
+             */
+            readonly executionLocation: "cloud";
             /** @description GitHub's integer repository ID encoded as a decimal string to preserve precision. */
             githubRepositoryId?: string;
             config: {

@@ -9,6 +9,14 @@ import {
 } from "node:fs/promises";
 import path from "node:path";
 import type { CloudAccount } from "../shared/cloud-account";
+import type { CloudHarness, CreateCloudProjectInput, CreateCloudSessionInput } from "../shared/cloud-beta";
+import {
+  cloudBetaEnabled,
+  connectLocalHarness,
+  createCloudProject,
+  createCloudSession,
+  loadCloudBetaOverview,
+} from "./cloud-beta";
 
 const CLIENT_ID =
   import.meta.env.VITE_WORKOS_CLIENT_ID?.trim() ||
@@ -237,6 +245,13 @@ export async function getCloudSession(
   }
 }
 
+async function getCloudAccessToken(dataDir: string): Promise<string> {
+  await getCloudSession(dataDir);
+  const session = (await readAuthStore(dataDir)).session;
+  if (!session?.accessToken) throw new Error("Sign in to AO Cloud to continue.");
+  return session.accessToken;
+}
+
 async function refreshCloudSession(
   dataDir: string,
   storedSession: StoredSession,
@@ -396,6 +411,25 @@ export function installCloudIPC(
   notifyRenderers: (session: CloudAccount | null) => void,
 ): void {
   ipcMain.handle("cloud:getSession", () => getCloudSession(getDataDir()));
+  ipcMain.handle("cloud:isBetaEnabled", () => cloudBetaEnabled());
+  ipcMain.handle("cloud:getOverview", async () =>
+    loadCloudBetaOverview(await getCloudAccessToken(getDataDir())),
+  );
+  ipcMain.handle(
+    "cloud:createProject",
+    async (_event, orgId: string, input: CreateCloudProjectInput) =>
+      createCloudProject(await getCloudAccessToken(getDataDir()), orgId, input),
+  );
+  ipcMain.handle(
+    "cloud:createSession",
+    async (_event, input: CreateCloudSessionInput) =>
+      createCloudSession(await getCloudAccessToken(getDataDir()), input),
+  );
+  ipcMain.handle(
+    "cloud:connectLocalHarness",
+    async (_event, harness: CloudHarness) =>
+      connectLocalHarness(await getCloudAccessToken(getDataDir()), harness),
+  );
   ipcMain.handle("cloud:signIn", async () => {
     if (!workos) {
       await dialog.showMessageBox({

@@ -13,6 +13,7 @@ import { Route as ShellRouteImport } from './routes/_shell'
 import { Route as ShellIndexRouteImport } from './routes/_shell.index'
 import { Route as ShellTerminalsRouteImport } from './routes/_shell.terminals'
 import { Route as ShellSettingsRouteImport } from './routes/_shell.settings'
+import { Route as ShellCloudRouteImport } from './routes/_shell.cloud'
 import { Route as ShellSessionsSessionIdRouteImport } from './routes/_shell.sessions.$sessionId'
 import { Route as ShellProjectsProjectIdRouteImport } from './routes/_shell.projects.$projectId'
 import { Route as ShellProjectsProjectIdSettingsRouteImport } from './routes/_shell.projects.$projectId_.settings'
@@ -35,6 +36,11 @@ const ShellTerminalsRoute = ShellTerminalsRouteImport.update({
 const ShellSettingsRoute = ShellSettingsRouteImport.update({
   id: '/settings',
   path: '/settings',
+  getParentRoute: () => ShellRoute,
+} as any)
+const ShellCloudRoute = ShellCloudRouteImport.update({
+  id: '/cloud',
+  path: '/cloud',
   getParentRoute: () => ShellRoute,
 } as any)
 const ShellSessionsSessionIdRoute = ShellSessionsSessionIdRouteImport.update({
@@ -62,6 +68,7 @@ const ShellProjectsProjectIdSessionsSessionIdRoute =
 
 export interface FileRoutesByFullPath {
   '/': typeof ShellIndexRoute
+  '/cloud': typeof ShellCloudRoute
   '/settings': typeof ShellSettingsRoute
   '/terminals': typeof ShellTerminalsRoute
   '/projects/$projectId': typeof ShellProjectsProjectIdRoute
@@ -70,6 +77,7 @@ export interface FileRoutesByFullPath {
   '/projects/$projectId/sessions/$sessionId': typeof ShellProjectsProjectIdSessionsSessionIdRoute
 }
 export interface FileRoutesByTo {
+  '/cloud': typeof ShellCloudRoute
   '/settings': typeof ShellSettingsRoute
   '/terminals': typeof ShellTerminalsRoute
   '/': typeof ShellIndexRoute
@@ -81,6 +89,7 @@ export interface FileRoutesByTo {
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/_shell': typeof ShellRouteWithChildren
+  '/_shell/cloud': typeof ShellCloudRoute
   '/_shell/settings': typeof ShellSettingsRoute
   '/_shell/terminals': typeof ShellTerminalsRoute
   '/_shell/': typeof ShellIndexRoute
@@ -93,6 +102,7 @@ export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
+    | '/cloud'
     | '/settings'
     | '/terminals'
     | '/projects/$projectId'
@@ -101,6 +111,7 @@ export interface FileRouteTypes {
     | '/projects/$projectId/sessions/$sessionId'
   fileRoutesByTo: FileRoutesByTo
   to:
+    | '/cloud'
     | '/settings'
     | '/terminals'
     | '/'
@@ -111,6 +122,7 @@ export interface FileRouteTypes {
   id:
     | '__root__'
     | '/_shell'
+    | '/_shell/cloud'
     | '/_shell/settings'
     | '/_shell/terminals'
     | '/_shell/'
@@ -154,6 +166,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ShellSettingsRouteImport
       parentRoute: typeof ShellRoute
     }
+    '/_shell/cloud': {
+      id: '/_shell/cloud'
+      path: '/cloud'
+      fullPath: '/cloud'
+      preLoaderRoute: typeof ShellCloudRouteImport
+      parentRoute: typeof ShellRoute
+    }
     '/_shell/sessions/$sessionId': {
       id: '/_shell/sessions/$sessionId'
       path: '/sessions/$sessionId'
@@ -186,6 +205,7 @@ declare module '@tanstack/react-router' {
 }
 
 interface ShellRouteChildren {
+  ShellCloudRoute: typeof ShellCloudRoute
   ShellSettingsRoute: typeof ShellSettingsRoute
   ShellTerminalsRoute: typeof ShellTerminalsRoute
   ShellIndexRoute: typeof ShellIndexRoute
@@ -196,6 +216,7 @@ interface ShellRouteChildren {
 }
 
 const ShellRouteChildren: ShellRouteChildren = {
+  ShellCloudRoute: ShellCloudRoute,
   ShellSettingsRoute: ShellSettingsRoute,
   ShellTerminalsRoute: ShellTerminalsRoute,
   ShellIndexRoute: ShellIndexRoute,

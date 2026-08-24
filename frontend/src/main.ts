@@ -157,7 +157,11 @@ if (disableGpu === "1" || disableGpu === "true" || disableGpu === "yes" || disab
 // the daemon data dir into ~/.ao/dev.
 app.setPath(
 	"userData",
-	app.isPackaged ? path.join(os.homedir(), ".ao", "electron") : path.join(os.homedir(), ".ao", "dev", "electron"),
+	process.env.AO_DATA_DIR?.trim()
+		? path.join(path.resolve(process.env.AO_DATA_DIR.trim()), "electron")
+		: app.isPackaged
+			? path.join(os.homedir(), ".ao", "electron")
+			: path.join(os.homedir(), ".ao", "dev", "electron"),
 );
 
 // Init main-process Sentry as early as possible so startup crashes are caught,
@@ -2026,6 +2030,8 @@ ipcMain.on(TRAY_RENDERER_READY_CHANNEL, (event) => {
 // Cloud auth IPC — cloud:getSession, cloud:signIn, cloud:signOut.
 // Data dir resolves to ~/.ao (prod) or ~/.ao/dev (dev) matching daemon conventions.
 function cloudDataDir(): string {
+	const configured = process.env.AO_DATA_DIR?.trim();
+	if (configured) return path.resolve(configured);
 	return isDev
 		? path.join(os.homedir(), ".ao", DEV_STATE_SUBDIR)
 		: path.join(os.homedir(), ".ao");
