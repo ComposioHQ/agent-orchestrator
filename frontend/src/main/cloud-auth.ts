@@ -397,7 +397,7 @@ export async function showCloudSignInFailure(error: unknown): Promise<void> {
 }
 
 export function registerCloudProtocol(): void {
-  if (process.defaultApp && process.argv.length >= 2) {
+  if (!app.isPackaged && process.argv.length >= 2) {
     app.setAsDefaultProtocolClient("ao-app", process.execPath, [
       path.resolve(process.argv[1]),
     ]);

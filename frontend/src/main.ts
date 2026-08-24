@@ -2179,7 +2179,11 @@ app.whenReady().then(async () => {
 		}
 	}
 
-	if (process.platform === "darwin" && app.isPackaged) {
+	if (
+		process.platform === "darwin" &&
+		app.isPackaged &&
+		process.env.AO_SKIP_APP_RELOCATION !== "1"
+	) {
 		const bundlePath = resolveBundlePath();
 		const action = decideRelocation({
 			inApplicationsFolder: app.isInApplicationsFolder(),

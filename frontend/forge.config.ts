@@ -20,6 +20,8 @@ const DEFAULT_RELEASE_REPO = "Untrivial-ai/agent-orchestrator";
 // shortcut/launcher at the SAME name. Drift here means a broken Start menu
 // shortcut on Windows (#2414) or "could not find the Electron app binary" on deb.
 const EXECUTABLE_NAME = "agent-orchestrator";
+const APP_BUNDLE_ID = process.env.AO_APP_BUNDLE_ID?.trim() || "dev.agent-orchestrator.desktop";
+const APP_NAME = process.env.AO_APP_NAME?.trim() || "Agent Orchestrator";
 const AUTH_PROTOCOL = {
 	name: "Agent Orchestrator authentication callback",
 	schemes: ["ao-app"],
@@ -55,8 +57,8 @@ function parseReleaseRepo(value: string | undefined): { owner: string; name: str
 const config: ForgeConfig = {
 	packagerConfig: {
 		asar: true,
-		appBundleId: "dev.agent-orchestrator.desktop",
-		name: "Agent Orchestrator",
+		appBundleId: APP_BUNDLE_ID,
+		name: APP_NAME,
 		executableName: EXECUTABLE_NAME,
 		protocols: [AUTH_PROTOCOL],
 		appCategoryType: "public.app-category.developer-tools",

@@ -20,6 +20,7 @@ const mocks = vi.hoisted(() => ({
   getAuthorizationUrlWithPKCE: vi.fn(),
   openExternal: vi.fn(),
   showMessageBox: vi.fn(),
+  setAsDefaultProtocolClient: vi.fn(),
 }));
 
 vi.mock("@workos-inc/node", () => ({
@@ -34,7 +35,8 @@ vi.mock("@workos-inc/node", () => ({
 
 vi.mock("electron", () => ({
   app: {
-    setAsDefaultProtocolClient: vi.fn(),
+    isPackaged: false,
+    setAsDefaultProtocolClient: mocks.setAsDefaultProtocolClient,
   },
   dialog: { showMessageBox: mocks.showMessageBox },
   ipcMain: { handle: vi.fn() },
@@ -51,6 +53,7 @@ import {
   beginCloudSignIn,
   getCloudSession,
   handleCloudDeepLink,
+  registerCloudProtocol,
   showCloudSignInFailure,
   signOutCloud,
 } from "./cloud-auth";
@@ -117,6 +120,16 @@ describe("native WorkOS authentication", () => {
     await expect(getCloudSession(dataDir)).resolves.toMatchObject({
       user: { email: "person@example.com" },
     });
+  });
+
+  it("registers the checkout path for development deep links", () => {
+    registerCloudProtocol();
+
+    expect(mocks.setAsDefaultProtocolClient).toHaveBeenCalledWith(
+      "ao-app",
+      process.execPath,
+      [path.resolve(process.argv[1])],
+    );
   });
 
   it("rejects callbacks whose OAuth state does not match", async () => {
