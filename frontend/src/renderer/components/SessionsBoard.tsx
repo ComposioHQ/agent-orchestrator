@@ -345,24 +345,20 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 						spawnError={visibleSpawnError}
 					/>
 				) : (
-					// The desktop frames the board inside a rounded surface; inset the
-					// lane grid so column dividers and cards never touch that border.
-					<div className="h-full px-2 pb-2 pt-1.5">
-						<SessionsBoardGridView
-							columns={columns}
-							key={projectId ?? "all"}
-							labels={boardLabels}
-							renderSessionCard={(session) => (
-								<BoardSessionCardAdapter
-									onOpen={() => openSession(session)}
-									onTerminate={() => terminateSession.mutate(session)}
-									session={session}
-									usage={usageBySession.get(session.id)}
-								/>
-							)}
-							sessions={activeSessions}
-						/>
-					</div>
+					<SessionsBoardGridView
+						columns={columns}
+						key={projectId ?? "all"}
+						labels={boardLabels}
+						renderSessionCard={(session) => (
+							<BoardSessionCardAdapter
+								onOpen={() => openSession(session)}
+								onTerminate={() => terminateSession.mutate(session)}
+								session={session}
+								usage={usageBySession.get(session.id)}
+							/>
+						)}
+						sessions={activeSessions}
+					/>
 				)}
 			</div>
 
