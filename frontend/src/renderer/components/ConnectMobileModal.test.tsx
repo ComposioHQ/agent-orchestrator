@@ -90,6 +90,14 @@ test("encodes the LAN address by default", async () => {
 	expect(JSON.parse(qrPayload()!).host).toBe("192.168.1.42");
 });
 
+test("shows a square Google Play QR tooltip for Android", async () => {
+	renderModal();
+	await userEvent.click(await screen.findByRole("radio", { name: "Android" }));
+	await userEvent.hover(screen.getByRole("button", { name: "Open Agent Orchestrator on Google Play" }));
+
+	expect(await screen.findByTestId("android-play-qr")).toHaveClass("p-2");
+});
+
 test("re-encodes the QR with the Tailscale address when that mode is selected", async () => {
 	renderModal();
 	await waitFor(() => expect(qrPayload()).not.toBeNull());

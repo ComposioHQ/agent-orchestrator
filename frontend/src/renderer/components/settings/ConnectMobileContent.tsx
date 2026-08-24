@@ -297,15 +297,24 @@ export function ConnectMobileContent({ active }: { active: boolean }) {
 							<>
 								<li>
 									{t("mobile.android.step1")}{" "}
-									<button
-										type="button"
-										className={STEP_LINK_CLASS}
-										aria-label={t("mobile.androidSignupAria")}
-										onClick={() => void aoBridge.app.openExternal(ANDROID_PLAY_STORE_URL)}
-									>
-										{t("mobile.getApp")}
-										<ArrowUpRight className="size-3.5" aria-hidden="true" />
-									</button>
+									<Tooltip>
+										<TooltipTrigger asChild>
+											<button
+												type="button"
+												className={STEP_LINK_CLASS}
+												aria-label={t("mobile.androidSignupAria")}
+												onClick={() => void aoBridge.app.openExternal(ANDROID_PLAY_STORE_URL)}
+											>
+												{t("mobile.getApp")}
+												<ArrowUpRight className="size-3.5" aria-hidden="true" />
+											</button>
+										</TooltipTrigger>
+										<TooltipContent side="bottom" className="p-2" data-testid="android-play-qr">
+											<div className="rounded-md bg-(--color-bg-settings-input) p-2">
+												<StyledQRCode value={ANDROID_PLAY_STORE_URL} size={TESTFLIGHT_QR_SIZE} showLogo={false} className="block" />
+											</div>
+										</TooltipContent>
+									</Tooltip>
 								</li>
 							</>
 						)}
