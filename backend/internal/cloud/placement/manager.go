@@ -41,6 +41,7 @@ type Manager struct {
 	executor Executor
 }
 
+// New builds a placement manager around durable storage and an async executor.
 func New(store Store, executor Executor) (*Manager, error) {
 	if store == nil {
 		return nil, errors.New("workspace placement store is required")
@@ -48,6 +49,7 @@ func New(store Store, executor Executor) (*Manager, error) {
 	return &Manager{store: store, executor: executor}, nil
 }
 
+// Create durably accepts a placement and schedules convergence.
 func (m *Manager) Create(ctx context.Context, input domain.CreateWorkspacePlacement) (domain.WorkspacePlacement, error) {
 	input.DisplayName = strings.TrimSpace(input.DisplayName)
 	input.RepositoryURL = strings.TrimSpace(input.RepositoryURL)
@@ -68,14 +70,17 @@ func (m *Manager) Create(ctx context.Context, input domain.CreateWorkspacePlacem
 	return record, nil
 }
 
+// Get returns one tenant-scoped placement.
 func (m *Manager) Get(ctx context.Context, id string) (domain.WorkspacePlacement, error) {
 	return m.store.GetWorkspacePlacement(ctx, strings.TrimSpace(id))
 }
 
+// List returns one stable page of tenant-scoped placements.
 func (m *Manager) List(ctx context.Context, cursor string, limit int) (domain.WorkspacePlacementPage, error) {
 	return m.store.ListWorkspacePlacements(ctx, strings.TrimSpace(cursor), limit)
 }
 
+// Delete accepts an idempotent delete intent and schedules convergence.
 func (m *Manager) Delete(ctx context.Context, id, idempotencyKey string) (domain.WorkspacePlacement, error) {
 	record, changed, err := m.store.RequestWorkspacePlacementDelete(ctx, strings.TrimSpace(id), strings.TrimSpace(idempotencyKey))
 	if err != nil {
@@ -89,6 +94,7 @@ func (m *Manager) Delete(ctx context.Context, id, idempotencyKey string) (domain
 	return record, nil
 }
 
+// Resume accepts an idempotent resume intent and schedules convergence.
 func (m *Manager) Resume(ctx context.Context, id, idempotencyKey string) (domain.WorkspacePlacement, error) {
 	record, changed, err := m.store.RequestWorkspacePlacementResume(ctx, strings.TrimSpace(id), strings.TrimSpace(idempotencyKey))
 	if err != nil {
@@ -107,7 +113,7 @@ func (m *Manager) enqueue(ctx context.Context, record domain.WorkspacePlacement)
 		return ErrUnavailable
 	}
 	if err := m.executor.Enqueue(ctx, record); err != nil {
-		return fmt.Errorf("%w: %v", ErrUnavailable, err)
+		return fmt.Errorf("%w: %w", ErrUnavailable, err)
 	}
 	return nil
 }

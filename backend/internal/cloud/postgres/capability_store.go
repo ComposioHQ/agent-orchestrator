@@ -16,10 +16,12 @@ import (
 // intentionally use Insert/DeleteExpired with different record types.
 type CapabilityStore struct{ store *Store }
 
+// NewCapabilityStore binds capability persistence to the shared cloud store.
 func NewCapabilityStore(store *Store) *CapabilityStore { return &CapabilityStore{store: store} }
 
 var _ capability.Store = (*CapabilityStore)(nil)
 
+// Insert persists a scoped capability verifier.
 func (s *CapabilityStore) Insert(ctx context.Context, record capability.Record) error {
 	normalized, err := record.Scope.Normalize()
 	if err != nil {
@@ -60,6 +62,7 @@ func scanCapability(row runtimeRowScanner, out *capability.Record) error {
 	return nil
 }
 
+// ByID loads one tenant-scoped capability record.
 func (s *CapabilityStore) ByID(ctx context.Context, id string) (out capability.Record, err error) {
 	err = s.store.withTenantTx(ctx, pgx.TxOptions{}, func(tx pgx.Tx, _ tenant.Identity) error {
 		return scanCapability(tx.QueryRow(ctx, `SELECT `+capabilityColumns+` FROM ao_compute_capabilities WHERE id=$1`, id), &out)
@@ -67,6 +70,7 @@ func (s *CapabilityStore) ByID(ctx context.Context, id string) (out capability.R
 	return out, err
 }
 
+// Revoke marks one capability unusable.
 func (s *CapabilityStore) Revoke(ctx context.Context, id string, at time.Time, rotatedToID string) error {
 	return s.store.withTenantTx(ctx, pgx.TxOptions{}, func(tx pgx.Tx, _ tenant.Identity) error {
 		result, err := tx.Exec(ctx, `UPDATE ao_compute_capabilities SET revoked_at=COALESCE(revoked_at,$2),rotated_to_id=COALESCE(rotated_to_id,NULLIF($3,'')) WHERE id=$1`, id, at.UTC(), rotatedToID)
@@ -80,9 +84,10 @@ func (s *CapabilityStore) Revoke(ctx context.Context, id string, at time.Time, r
 	})
 }
 
+// RevokeScope revokes every active capability matching selector.
 func (s *CapabilityStore) RevokeScope(ctx context.Context, selector capability.Selector, at time.Time) (changed int, err error) {
-	if err = selector.Validate(); err != nil {
-		return 0, err
+	if validateErr := selector.Validate(); validateErr != nil {
+		return 0, validateErr
 	}
 	err = s.store.withTenantTx(ctx, pgx.TxOptions{}, func(tx pgx.Tx, identity tenant.Identity) error {
 		if identity.OrgID != selector.OrgID {
@@ -108,6 +113,7 @@ func (s *CapabilityStore) RevokeScope(ctx context.Context, selector capability.S
 	return changed, err
 }
 
+// DeleteExpired removes expired or revoked capability records.
 func (s *CapabilityStore) DeleteExpired(ctx context.Context, before time.Time) (deleted int, err error) {
 	err = s.store.withTenantTx(ctx, pgx.TxOptions{}, func(tx pgx.Tx, _ tenant.Identity) error {
 		result, e := tx.Exec(ctx, `DELETE FROM ao_compute_capabilities WHERE expires_at<$1 OR revoked_at<$1`, before.UTC())

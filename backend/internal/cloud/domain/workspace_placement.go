@@ -11,9 +11,12 @@ import (
 type WorkspacePlacementIntent string
 
 const (
+	// WorkspacePlacementProvision creates a hosted project placement.
 	WorkspacePlacementProvision WorkspacePlacementIntent = "provision"
-	WorkspacePlacementResume    WorkspacePlacementIntent = "resume"
-	WorkspacePlacementDelete    WorkspacePlacementIntent = "delete"
+	// WorkspacePlacementResume retries a failed or stopped placement.
+	WorkspacePlacementResume WorkspacePlacementIntent = "resume"
+	// WorkspacePlacementDelete tears down a placement.
+	WorkspacePlacementDelete WorkspacePlacementIntent = "delete"
 )
 
 // WorkspacePlacementState is the provider-neutral state exposed by the Cloud
@@ -21,9 +24,12 @@ const (
 type WorkspacePlacementState string
 
 const (
+	// WorkspacePlacementPending is an accepted operation still converging.
 	WorkspacePlacementPending WorkspacePlacementState = "pending"
-	WorkspacePlacementFailed  WorkspacePlacementState = "failed"
-	WorkspacePlacementReady   WorkspacePlacementState = "ready"
+	// WorkspacePlacementFailed is a terminal failed operation.
+	WorkspacePlacementFailed WorkspacePlacementState = "failed"
+	// WorkspacePlacementReady is a completed usable placement.
+	WorkspacePlacementReady WorkspacePlacementState = "ready"
 )
 
 // CreateWorkspacePlacement describes the immutable request accepted for a

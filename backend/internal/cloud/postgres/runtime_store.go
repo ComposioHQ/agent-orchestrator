@@ -113,6 +113,7 @@ func scanRuntime(row runtimeRowScanner, out *cloudruntime.Record) error {
 	return nil
 }
 
+// Get loads the runtime placement for ref.
 func (s *Store) Get(ctx context.Context, ref cloudruntime.Ref) (out cloudruntime.Record, err error) {
 	err = s.withRuntimeTx(ctx, ref.WorkspaceID, func(tx pgx.Tx, _ tenant.Identity) error {
 		return scanRuntime(tx.QueryRow(ctx, runtimeSelect+` WHERE org_id=$1 AND workspace_id=$2 AND session_id=$3`, ref.OrgID, ref.WorkspaceID, ref.SessionID), &out)
@@ -120,6 +121,7 @@ func (s *Store) Get(ctx context.Context, ref cloudruntime.Ref) (out cloudruntime
 	return out, err
 }
 
+// GetByID loads one runtime placement by durable ID.
 func (s *Store) GetByID(ctx context.Context, id string) (out cloudruntime.Record, err error) {
 	identity, ok := tenant.FromContext(ctx)
 	if !ok {
@@ -138,6 +140,7 @@ func (s *Store) GetByID(ctx context.Context, id string) (out cloudruntime.Record
 	return out, err
 }
 
+// Save updates one runtime using generation compare-and-swap.
 func (s *Store) Save(ctx context.Context, record cloudruntime.Record) (out cloudruntime.Record, err error) {
 	err = s.withRuntimeTx(ctx, record.WorkspaceID, func(tx pgx.Tx, _ tenant.Identity) error {
 		row := tx.QueryRow(ctx, `UPDATE ao_cloud_session_runtimes SET sandbox_id=$1,state=$2,desired_state=$3,error=$4,last_heartbeat_at=$5,updated_at=$6,generation=generation+1 WHERE id=$7 AND generation=$8 RETURNING `+runtimeColumns,
@@ -154,6 +157,7 @@ func (s *Store) Save(ctx context.Context, record cloudruntime.Record) (out cloud
 	return out, err
 }
 
+// Delete removes one runtime using generation compare-and-swap.
 func (s *Store) Delete(ctx context.Context, id string, generation int64) error {
 	record, err := s.GetByID(ctx, id)
 	if errors.Is(err, cloudruntime.ErrNotFound) {
@@ -174,6 +178,7 @@ func (s *Store) Delete(ctx context.Context, id string, generation int64) error {
 	})
 }
 
+// List returns tenant-scoped runtime placements matching filter.
 func (s *Store) List(ctx context.Context, filter cloudruntime.Filter) (out []cloudruntime.Record, err error) {
 	identity, ok := tenant.FromContext(ctx)
 	if !ok {
@@ -191,8 +196,8 @@ func (s *Store) List(ctx context.Context, filter cloudruntime.Filter) (out []clo
 			defer rows.Close()
 			for rows.Next() {
 				var id string
-				if e = rows.Scan(&id); e != nil {
-					return e
+				if scanErr := rows.Scan(&id); scanErr != nil {
+					return scanErr
 				}
 				workspaces = append(workspaces, id)
 			}
@@ -211,8 +216,8 @@ func (s *Store) List(ctx context.Context, filter cloudruntime.Filter) (out []clo
 			defer rows.Close()
 			for rows.Next() {
 				var r cloudruntime.Record
-				if e = scanRuntime(rows, &r); e != nil {
-					return e
+				if scanErr := scanRuntime(rows, &r); scanErr != nil {
+					return scanErr
 				}
 				if filter.Matches(r) {
 					out = append(out, r)
@@ -228,6 +233,7 @@ func (s *Store) List(ctx context.Context, filter cloudruntime.Filter) (out []clo
 	return out, nil
 }
 
+// Count returns the number of tenant-scoped runtime placements matching filter.
 func (s *Store) Count(ctx context.Context, filter cloudruntime.Filter) (int, error) {
 	rows, err := s.List(ctx, filter)
 	return len(rows), err

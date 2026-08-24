@@ -15,23 +15,33 @@ import (
 	"time"
 )
 
+// Scope is one operation a direct terminal connection may perform.
 type Scope string
 
 const (
-	ScopeRead    Scope = "terminal:read"
+	// ScopeRead allows reading terminal output.
+	ScopeRead Scope = "terminal:read"
+	// ScopeOperate allows sending terminal input.
 	ScopeOperate Scope = "terminal:operate"
+	// ScopeObserve allows reading workspace observations.
 	ScopeObserve Scope = "workspace:observe"
 )
 
 var (
-	ErrInvalid  = errors.New("invalid terminal ticket")
-	ErrExpired  = errors.New("terminal ticket expired")
+	// ErrInvalid reports malformed tickets or mismatched bindings.
+	ErrInvalid = errors.New("invalid terminal ticket")
+	// ErrExpired reports a ticket whose lifetime ended.
+	ErrExpired = errors.New("terminal ticket expired")
+	// ErrConsumed reports a replayed one-time ticket.
 	ErrConsumed = errors.New("terminal ticket already consumed")
+	// ErrConflict reports a duplicate durable ticket identifier.
 	ErrConflict = errors.New("terminal ticket already exists")
 )
 
+// Binding ties a ticket to exactly one sandbox session.
 type Binding struct{ OrgID, WorkspaceID, SessionID, SandboxID string }
 
+// Validate rejects incomplete bindings.
 func (b Binding) Validate() error {
 	if strings.TrimSpace(b.OrgID) == "" || strings.TrimSpace(b.WorkspaceID) == "" || strings.TrimSpace(b.SessionID) == "" || strings.TrimSpace(b.SandboxID) == "" {
 		return ErrInvalid
@@ -39,6 +49,7 @@ func (b Binding) Validate() error {
 	return nil
 }
 
+// Record is the durable verifier-only ticket representation.
 type Record struct {
 	ID                              string
 	Binding                         Binding
@@ -46,24 +57,30 @@ type Record struct {
 	Verifier                        string
 	IssuedAt, ExpiresAt, ConsumedAt time.Time
 }
+
+// Ticket is returned once to an authenticated client at issue time.
 type Ticket struct {
 	Token     string
 	Binding   Binding
 	Scopes    []Scope
 	ExpiresAt time.Time
 }
+
+// Grant is the authorization recovered from a consumed ticket.
 type Grant struct {
 	Binding   Binding
 	Scopes    []Scope
 	ExpiresAt time.Time
 }
 
+// Store persists verifiers and atomically consumes tickets.
 type Store interface {
 	Insert(context.Context, Record) error
 	Consume(context.Context, string, Binding, time.Time) (Record, error)
 	DeleteExpired(context.Context, time.Time) (int, error)
 }
 
+// Authority mints opaque tickets and redeems them once.
 type Authority struct {
 	store   Store
 	ttl     time.Duration
@@ -71,6 +88,7 @@ type Authority struct {
 	entropy io.Reader
 }
 
+// New builds a terminal ticket authority with a positive lifetime.
 func New(store Store, ttl time.Duration) (*Authority, error) {
 	if store == nil || ttl <= 0 {
 		return nil, errors.New("terminal ticket store and positive lifetime are required")
@@ -78,6 +96,7 @@ func New(store Store, ttl time.Duration) (*Authority, error) {
 	return &Authority{store: store, ttl: ttl, now: time.Now, entropy: rand.Reader}, nil
 }
 
+// Issue mints and persists a verifier for a new one-time ticket.
 func (a *Authority) Issue(ctx context.Context, binding Binding, scopes []Scope) (Ticket, error) {
 	if err := binding.Validate(); err != nil {
 		return Ticket{}, err
@@ -103,6 +122,7 @@ func (a *Authority) Issue(ctx context.Context, binding Binding, scopes []Scope) 
 	return Ticket{Token: token, Binding: binding, Scopes: scopes, ExpiresAt: record.ExpiresAt}, nil
 }
 
+// Consume atomically redeems a ticket for its exact binding.
 func (a *Authority) Consume(ctx context.Context, token string, binding Binding) (Grant, error) {
 	if !strings.HasPrefix(token, "ao.ticket.") || binding.Validate() != nil {
 		return Grant{}, ErrInvalid

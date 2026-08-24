@@ -40,7 +40,6 @@ func TestPostgresRuntimeReservationIsAtomicAndCASChecked(t *testing.T) {
 	var wg sync.WaitGroup
 	errs := make(chan error, 2)
 	for _, ref := range refs {
-		ref := ref
 		wg.Add(1)
 		go func() { defer wg.Done(); _, _, err := store.Reserve(ctx, ref, quotas, time.Now()); errs <- err }()
 	}

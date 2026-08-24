@@ -11,14 +11,17 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/tenant"
 )
 
+// TerminalTicketStore persists one-time terminal ticket verifiers.
 type TerminalTicketStore struct{ store *Store }
 
+// NewTerminalTicketStore binds terminal ticket persistence to the cloud store.
 func NewTerminalTicketStore(store *Store) *TerminalTicketStore {
 	return &TerminalTicketStore{store: store}
 }
 
 var _ terminalticket.Store = (*TerminalTicketStore)(nil)
 
+// Insert persists a terminal ticket verifier.
 func (s *TerminalTicketStore) Insert(ctx context.Context, record terminalticket.Record) error {
 	return s.store.withRuntimeTx(ctx, record.Binding.WorkspaceID, func(tx pgx.Tx, identity tenant.Identity) error {
 		if identity.OrgID != record.Binding.OrgID {
@@ -33,6 +36,7 @@ func (s *TerminalTicketStore) Insert(ctx context.Context, record terminalticket.
 	})
 }
 
+// Consume atomically redeems one unexpired ticket for its exact binding.
 func (s *TerminalTicketStore) Consume(ctx context.Context, verifier string, binding terminalticket.Binding, now time.Time) (out terminalticket.Record, err error) {
 	err = s.store.withRuntimeTx(ctx, binding.WorkspaceID, func(tx pgx.Tx, identity tenant.Identity) error {
 		if identity.OrgID != binding.OrgID {
@@ -55,6 +59,7 @@ func (s *TerminalTicketStore) Consume(ctx context.Context, verifier string, bind
 	return out, err
 }
 
+// DeleteExpired removes expired or previously consumed tickets.
 func (s *TerminalTicketStore) DeleteExpired(ctx context.Context, before time.Time) (deleted int, err error) {
 	err = s.store.withTenantTx(ctx, pgx.TxOptions{}, func(tx pgx.Tx, _ tenant.Identity) error {
 		result, e := tx.Exec(ctx, `DELETE FROM ao_terminal_tickets WHERE expires_at<$1 OR consumed_at<$1`, before.UTC())

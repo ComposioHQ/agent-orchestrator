@@ -1,6 +1,7 @@
 package postgres
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -235,11 +236,12 @@ func scanWorkspacePlacement(row placementRowScanner, placement *domain.Workspace
 	if mutationIntent != nil {
 		placement.MutationIntent = domain.WorkspacePlacementIntent(*mutationIntent)
 	}
-	if persistedState == "ready" {
+	switch persistedState {
+	case "ready":
 		placement.State = domain.WorkspacePlacementReady
-	} else if persistedState == "failed" {
+	case "failed":
 		placement.State = domain.WorkspacePlacementFailed
-	} else {
+	default:
 		placement.State = domain.WorkspacePlacementPending
 	}
 	return nil
@@ -270,7 +272,7 @@ func jsonEqual(left, right json.RawMessage) bool {
 	}
 	lc, _ := json.Marshal(l)
 	rc, _ := json.Marshal(r)
-	return string(lc) == string(rc)
+	return bytes.Equal(lc, rc)
 }
 
 func encodeWorkspacePlacementCursor(createdAt time.Time, id string) string {
