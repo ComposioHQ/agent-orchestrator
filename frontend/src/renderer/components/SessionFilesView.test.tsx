@@ -232,61 +232,41 @@ describe("SessionFilesView", () => {
 		expect(await screen.findByText(diffLine("const value = 1;"))).toBeInTheDocument();
 	});
 
-	it("toggles a changed markdown file between its source diff and rendered content", async () => {
-		getMock.mockImplementation(async (path: string, options?: unknown) => {
-			if (path === "/api/v1/sessions/{sessionId}/workspace/files") {
-				return {
-					data: {
-						sessionId: "sess-1",
-						truncated: false,
-						compareMode: "base",
-						files: [
-							{
-								path: "docs/guide.md",
-								status: "added",
-								additions: 2,
-								deletions: 0,
-								size: 24,
-								binary: false,
-							},
-						],
-					},
-				};
-			}
-			if (path === "/api/v1/sessions/{sessionId}/workspace/file") {
-				const query = options as { params?: { query?: { path?: string } } };
-				return {
-					data: {
-						sessionId: "sess-1",
-						path: query.params?.query?.path ?? "docs/guide.md",
-						status: "added",
-						additions: 2,
-						deletions: 0,
-						size: 24,
-						binary: false,
-						deleted: false,
-						content: "# Guide\n\nRendered prose.",
-						contentTruncated: true,
-						diff: "@@\n+# Guide\n+Rendered prose.\n",
-						diffTruncated: false,
-						compareMode: "base",
-					},
-				};
-			}
-			return { data: undefined };
-		});
-
+	it("puts the markdown tab strip in the file's own title row, not above its body", async () => {
 		renderWithQuery(<SessionFilesView sessionId="sess-1" />);
-		await userEvent.click(await screen.findByRole("button", { name: "Expand docs/guide.md" }));
 
-		expect(await screen.findByRole("tab", { name: "Source diff" })).toHaveAttribute("data-state", "active");
-		expect(screen.getByText(diffLine("Rendered prose."))).toBeInTheDocument();
+		const trigger = await screen.findByRole("button", { name: "Expand docs/guide.md" });
+		expect(screen.queryByRole("tab", { name: "Diff" })).not.toBeInTheDocument();
 
-		await userEvent.click(screen.getByRole("tab", { name: "Rendered" }));
+		await userEvent.click(trigger);
 
-		expect(screen.getByRole("heading", { name: "Guide" })).toBeInTheDocument();
-		expect(screen.getByText("Rendered preview truncated.")).toBeInTheDocument();
-		expect(screen.queryByText(diffLine("Rendered prose."))).not.toBeInTheDocument();
+		const diffTab = await screen.findByRole("tab", { name: "Diff" });
+		const previewTab = screen.getByRole("tab", { name: "Preview" });
+		// Same row as the expand trigger, and a sibling of it rather than a
+		// descendant — a <button> inside a <button> would be invalid, and clicking
+		// a tab would collapse the file.
+		const row = trigger.parentElement;
+		expect(row).toContainElement(diffTab);
+		expect(trigger).not.toContainElement(diffTab);
+		expect(diffTab).toHaveAttribute("aria-selected", "true");
+
+		await userEvent.click(previewTab);
+
+		expect(previewTab).toHaveAttribute("aria-selected", "true");
+		expect(diffTab).toHaveAttribute("aria-selected", "false");
+		// The row survives the panel swap: the strip is outside the content Radix
+		// unmounts, and the ref the scroll anchor rides composes through both
+		// `asChild` roots onto the same element.
+		expect(trigger.parentElement).toContainElement(previewTab);
+	});
+
+	it("keeps the tab strip off files that cannot render as markdown", async () => {
+		renderWithQuery(<SessionFilesView sessionId="sess-1" />);
+
+		await userEvent.click(await screen.findByRole("button", { name: "Expand src/App.tsx" }));
+
+		expect(await screen.findByText(diffLine("const value = 1;"))).toBeInTheDocument();
+		expect(screen.queryByRole("tab", { name: "Diff" })).not.toBeInTheDocument();
 	});
 
 	it("keeps a chat file focus request pending through a cold files load", async () => {

@@ -14,7 +14,7 @@ import { getApiBaseUrl } from "./api-client";
 const ABSOLUTE_SRC = /^[a-z][a-z0-9+.-]*:/i;
 
 /** True for a scheme-qualified URL (`https:`, `data:`, ...) or a root-relative path. */
-function isAbsoluteMarkdownAssetSrc(src: string): boolean {
+export function isAbsoluteMarkdownAssetSrc(src: string): boolean {
 	return ABSOLUTE_SRC.test(src) || src.startsWith("/");
 }
 
@@ -38,7 +38,7 @@ function normalizeSegments(joined: string): string {
 }
 
 /** The workspace-relative path a markdown-relative `src` refers to. */
-function resolveMarkdownAssetPath(markdownFilePath: string, rawSrc: string): string {
+export function resolveMarkdownAssetPath(markdownFilePath: string, rawSrc: string): string {
 	// A trailing query/fragment on the image reference isn't meaningful once
 	// folded into the blob route's own `path=`/`side=` query string.
 	const withoutQueryOrFragment = rawSrc.replace(/[?#].*$/, "");
@@ -58,9 +58,17 @@ function resolveMarkdownAssetPath(markdownFilePath: string, rawSrc: string): str
 	return normalizeSegments(joined);
 }
 
-/** Matches `ImageDiffView.tsx`'s `workspaceImageUrl` — the same blob route, `side=after` for current content. */
-function buildWorkspaceBlobUrl(sessionId: string, path: string): string {
-	const query = new URLSearchParams({ path, side: "after" });
+/**
+ * Matches `ImageDiffView.tsx`'s `workspaceImageUrl` — the same blob route,
+ * `side=after` for current content.
+ *
+ * `version` is not decoration. The blob route sets `no-store`, so as
+ * `ImageDiffView` puts it: without a changing URL the element never refetches at
+ * all. Pass the file detail's load timestamp so an image the agent rewrites
+ * actually reloads instead of sitting on the copy the browser already has.
+ */
+export function buildWorkspaceBlobUrl(sessionId: string, path: string, version: number): string {
+	const query = new URLSearchParams({ path, side: "after", v: String(version) });
 	return `${getApiBaseUrl()}/api/v1/sessions/${encodeURIComponent(sessionId)}/workspace/file/blob?${query}`;
 }
 
@@ -69,8 +77,9 @@ export function resolveMarkdownImageSrc(
 	sessionId: string,
 	markdownFilePath: string,
 	rawSrc: string | undefined,
+	version: number,
 ): string | undefined {
 	if (!rawSrc) return undefined;
 	if (isAbsoluteMarkdownAssetSrc(rawSrc)) return rawSrc;
-	return buildWorkspaceBlobUrl(sessionId, resolveMarkdownAssetPath(markdownFilePath, rawSrc));
+	return buildWorkspaceBlobUrl(sessionId, resolveMarkdownAssetPath(markdownFilePath, rawSrc), version);
 }

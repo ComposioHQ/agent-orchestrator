@@ -11,8 +11,16 @@ afterEach(() => {
 	vi.restoreAllMocks();
 });
 
-function view(content: string, filePath = "docs/README.md") {
-	return <MarkdownFileView content={content} filePath={filePath} sessionId="sess-1" />;
+function view(content: string, filePath = "docs/README.md", truncated = false) {
+	return (
+		<MarkdownFileView
+			content={content}
+			filePath={filePath}
+			sessionId="sess-1"
+			truncated={truncated}
+			version={7}
+		/>
+	);
 }
 
 describe("MarkdownFileView", () => {
@@ -58,6 +66,12 @@ describe("MarkdownFileView", () => {
 		expect(openExternal).toHaveBeenCalledWith("https://example.com/docs");
 	});
 
+	it("warns when the daemon returned only a prefix of the file", () => {
+		render(view("# Partial guide", "docs/README.md", true));
+
+		expect(screen.getByText("Rendered preview truncated.")).toBeInTheDocument();
+	});
+
 	it("scrolls the clicked heading when multiple previews contain the same slug", () => {
 		const writeText = vi.spyOn(aoBridge.clipboard, "writeText").mockResolvedValue(undefined);
 		const { container } = render(
@@ -77,7 +91,7 @@ describe("MarkdownFileView", () => {
 
 		expect(firstScroll).not.toHaveBeenCalled();
 		expect(secondScroll).toHaveBeenCalledWith({ behavior: "smooth", block: "start" });
-		expect(writeText).toHaveBeenCalledWith("#repeat");
+		expect(writeText).not.toHaveBeenCalled();
 		expect(anchors[1]).not.toHaveAttribute("node");
 	});
 });
