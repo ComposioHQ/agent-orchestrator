@@ -195,7 +195,8 @@ it. We shell out once to the user's own shell and adopt its result.
 - `frontend/scripts/build-tmux.mjs` - pinned, checksum-verified static dependency
   build copied into the macOS/Linux package.
 - `frontend/src/shared/bundled-tmux.ts` and `frontend/src/main.ts` - packaged
-  resource resolution and `AO_TMUX_BINARY`/AO-owned socket injection.
+  resource resolution, durable versioned staging under the AO data directory,
+  and `AO_TMUX_BINARY`/AO-owned socket injection.
 - `backend/internal/adapters/runtime/tmux/tmux.go` - honors
   `AO_TMUX_BINARY`; standalone runs fall back to `exec.LookPath("tmux")`.
 - `backend/internal/observe/reaper/reaper.go`,

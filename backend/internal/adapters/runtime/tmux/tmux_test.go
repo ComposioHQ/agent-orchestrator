@@ -695,6 +695,39 @@ func TestRestartRejectsMismatchedSessionHandle(t *testing.T) {
 	}
 }
 
+func TestIsAliveAdoptsSessionFromLegacyDefaultSocket(t *testing.T) {
+	r := New(Options{Binary: "tmux-test", SocketName: "ao", Timeout: time.Second})
+	fr := &fakeRunnerSequence{results: []fakeRunnerResult{
+		{out: []byte("can't find session: sess-1"), err: &exec.ExitError{}},
+		{}, // legacy default-socket discovery
+		{}, // first has-session call after discovery
+		{}, // cached second has-session call
+	}}
+	r.runner = fr
+	handle := ports.RuntimeHandle{ID: "sess-1"}
+
+	for i := 0; i < 2; i++ {
+		alive, err := r.IsAlive(context.Background(), handle)
+		if err != nil || !alive {
+			t.Fatalf("IsAlive call %d = (%v, %v), want (true, nil)", i+1, alive, err)
+		}
+	}
+	want := [][]string{
+		append([]string{"-L", "ao"}, hasSessionArgs("sess-1")...),
+		hasSessionArgs("sess-1"),
+		hasSessionArgs("sess-1"),
+		hasSessionArgs("sess-1"),
+	}
+	if len(fr.calls) != len(want) {
+		t.Fatalf("calls = %d, want %d: %+v", len(fr.calls), len(want), fr.calls)
+	}
+	for i := range want {
+		if !reflect.DeepEqual(fr.calls[i].args, want[i]) {
+			t.Fatalf("call %d args = %#v, want %#v", i, fr.calls[i].args, want[i])
+		}
+	}
+}
+
 // -- Destroy tests --
 
 func TestDestroyIsIdempotentWhenSessionMissing(t *testing.T) {
