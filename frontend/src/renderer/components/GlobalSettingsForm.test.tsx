@@ -312,12 +312,13 @@ describe("GlobalSettingsForm", () => {
 
 	it("shows the current app version", async () => {
 		renderForm();
-		expect(await screen.findByText(/Current version - v1\.4\.0/)).toBeInTheDocument();
+		expect(await screen.findByText("Current version")).toBeInTheDocument();
+		expect(screen.getByTestId("app-version")).toHaveTextContent("v1.4.0");
 	});
 
 	it("shows an explicit idle update state and triggers a manual check", async () => {
 		renderForm();
-		expect(await screen.findByText(/Current version - v1\.4\.0/)).toBeInTheDocument();
+		expect(await screen.findByTestId("app-version")).toHaveTextContent("v1.4.0");
 		expect(screen.getByText("No update check yet.")).toBeInTheDocument();
 		await userEvent.click(screen.getByRole("button", { name: "Check for updates" }));
 		expect(updCheck).toHaveBeenCalled();
@@ -373,11 +374,12 @@ describe("GlobalSettingsForm", () => {
 		renderForm();
 
 		const formatted = new Intl.DateTimeFormat("en", { dateStyle: "medium", timeStyle: "short" }).format(checkedAt);
-		expect(await screen.findByTestId("update-checked-at")).toHaveTextContent(`Last checked ${formatted}`);
+		expect(await screen.findByText("Last checked")).toBeInTheDocument();
+		expect(screen.getByTestId("update-checked-at")).toHaveTextContent(formatted);
 		expect(screen.getByRole("status")).toHaveTextContent("You're on the latest version.");
 	});
 
-	it("offers an Update button when an update is available and downloads it", async () => {
+	it("lets automatic updates download in the background without a redundant action", async () => {
 		let emit: (s: { state: string; version?: string; requestId?: string }) => void = () => undefined;
 		updOnStatus.mockImplementation((cb: (s: unknown) => void) => {
 			emit = cb as typeof emit;
@@ -386,9 +388,30 @@ describe("GlobalSettingsForm", () => {
 		renderForm();
 		await screen.findByRole("button", { name: "Check for updates" });
 		act(() => emit({ state: "available", version: "1.2.3" }));
-		const updateBtn = await screen.findByRole("button", { name: "Update to v1.2.3" });
+		expect(await screen.findByText("Downloads automatically in the background.")).toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: /Update to/ })).not.toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: "Check for updates" })).not.toBeInTheDocument();
+		expect(updDownload).not.toHaveBeenCalled();
+	});
+
+	it("immediately acknowledges a manual download while updater startup is pending", async () => {
+		updDownload.mockReturnValue(new Promise<void>(() => undefined));
+		let emit: (s: { state: string; version?: string; requestId?: string }) => void = () => undefined;
+		updOnStatus.mockImplementation((cb: (s: unknown) => void) => {
+			emit = cb as typeof emit;
+			return () => undefined;
+		});
+		renderForm();
+		await screen.findByRole("button", { name: "Check for updates" });
+		act(() => emit({ state: "available", version: "1.2.3", requestId: "manual-update-1" }));
+		expect(await screen.findByText("Downloads automatically in the background.")).toBeInTheDocument();
+		const updateBtn = await screen.findByRole("button", { name: "Download now" });
 		await userEvent.click(updateBtn);
-		expect(updDownload).toHaveBeenCalled();
+
+		expect(updDownload).toHaveBeenCalledWith("manual-update-1");
+		expect(updateBtn).toBeDisabled();
+		expect(updateBtn).toHaveTextContent("Downloading… 0%");
+		expect(screen.getByRole("status")).toHaveTextContent("Downloading… 0%");
 	});
 
 	it("offers Restart & install once downloaded and installs it", async () => {
