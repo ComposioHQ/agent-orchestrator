@@ -377,7 +377,7 @@ export function ShellTopbar({
 						    remains a separate visual target in the outer top-bar row. */}
 						{!isOrchestrator && session && (sessionAction || sessionIsActive(session)) ? (
 							<div
-								className="inline-flex shrink-0 items-center gap-2"
+								className="inline-flex shrink-0 items-center gap-1"
 								data-testid="session-local-actions"
 								style={noDragStyle}
 							>

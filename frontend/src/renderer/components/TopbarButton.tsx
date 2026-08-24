@@ -2,7 +2,7 @@ import { cva, type VariantProps } from "class-variance-authority";
 import { cn } from "@/lib/utils";
 
 const topbarButtonVariants = cva(
-	"topbar-control topbar-control--disabled-affordance inline-flex items-center transition-[filter,background,color,border-color] duration-fast",
+	"topbar-control topbar-control--disabled-affordance inline-flex items-center transition-[transform,filter,background-color,color,border-color] duration-fast ease-out active:scale-[0.96] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60",
 	{
 		variants: {
 			variant: {

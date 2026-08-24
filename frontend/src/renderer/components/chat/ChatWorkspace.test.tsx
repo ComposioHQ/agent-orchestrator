@@ -362,7 +362,9 @@ describe("ChatWorkspace timeline", () => {
 
 		expect(screen.getByLabelText("Chat")).toHaveAttribute("data-session-role", "orchestrator");
 		expect(screen.getByTestId("session-workspace-topbar")).toBeInTheDocument();
-		expect(screen.getByTestId("session-action-region")).toBeInTheDocument();
+		const actionRegion = screen.getByTestId("session-action-region");
+		expect(actionRegion).toHaveClass("px-1");
+		expect(actionRegion).not.toHaveClass("px-3");
 	});
 
 	it("clears the fixed titlebar nav when the sidebar is collapsed, like the terminal session", () => {

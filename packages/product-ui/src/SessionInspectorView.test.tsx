@@ -88,9 +88,10 @@ describe("SessionInspectorShellView", () => {
 
 
 		expect(screen.getByRole("complementary", { name: "Session inspector" })).toBeInTheDocument();
-		expect(screen.getByRole("tablist")).toHaveClass("session-inspector__tablist", "gap-2");
-		expect(screen.getByRole("tablist").parentElement).toHaveClass("pl-2");
-		expect(screen.getByRole("tablist").parentElement).not.toHaveClass("pl-2.5");
+		expect(screen.getByRole("tablist")).toHaveClass("session-inspector__tablist", "gap-1");
+		expect(screen.getByRole("tablist")).not.toHaveClass("gap-2");
+		expect(screen.getByRole("tablist").parentElement).toHaveClass("pl-1");
+		expect(screen.getByRole("tablist").parentElement).not.toHaveClass("pl-2", "pl-2.5");
 		expect(screen.getByRole("tablist").parentElement?.nextElementSibling).toHaveClass(
 			"board-scrollbar",
 			"overflow-x-hidden",

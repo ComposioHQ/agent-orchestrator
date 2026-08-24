@@ -247,7 +247,7 @@ describe("ShellTopbar status pill", () => {
 		expect(screen.queryByText("ao/sess-1")).toBeNull();
 		expect(screen.queryByText("Working")).toBeNull();
 		const localActions = screen.getByTestId("session-local-actions");
-		expect(localActions).toHaveClass("gap-2");
+		expect(localActions).toHaveClass("gap-1");
 		expect(localActions).not.toHaveClass("gap-px", "mr-0.5");
 		expect(localActions.contains(screen.getByRole("button", { name: "New terminal" }))).toBe(true);
 		expect(localActions.contains(screen.getByRole("button", { name: "Switch agent" }))).toBe(true);
