@@ -3,6 +3,7 @@ package systemcheck
 import (
 	"context"
 	"errors"
+	"runtime"
 	"testing"
 
 	agentsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/agent"
@@ -172,6 +173,39 @@ func TestCheck_TmuxMissing(t *testing.T) {
 	}
 	if tmux.Detail == "" {
 		t.Fatalf("tmux.Detail is empty, want a not-found message")
+	}
+}
+
+func TestCheck_UsesBundledTmuxOverride(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("tmux is not required on Windows")
+	}
+	const bundled = "/opt/ao/resources/tmux/bin/tmux"
+	t.Setenv("AO_TMUX_BINARY", bundled)
+	catalog := &fakeHarnessCatalog{inventory: agentsvc.Inventory{
+		Installed: []agentsvc.Info{{ID: "claude-code", Label: "Claude Code"}},
+	}}
+	var requested string
+	svc := NewWithLookPath(catalog, func(name string) (string, error) {
+		if name == "git" {
+			return "/usr/bin/git", nil
+		}
+		if name == bundled {
+			requested = name
+			return bundled, nil
+		}
+		return "", errors.New("not found")
+	})
+
+	report, err := svc.Check(context.Background())
+	if err != nil {
+		t.Fatalf("Check() error = %v", err)
+	}
+	if requested != bundled {
+		t.Fatalf("tmux lookup = %q, want bundled path %q", requested, bundled)
+	}
+	if tmux := requirementByID(t, report, "tmux"); !tmux.Satisfied || tmux.Detail != bundled {
+		t.Fatalf("tmux requirement = %+v, want satisfied bundled path", tmux)
 	}
 }
 
