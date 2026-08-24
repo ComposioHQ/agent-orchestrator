@@ -223,7 +223,6 @@ func TestMigrateRepairsQueuedTurnPromotionWhenVersion88WasClaimed(t *testing.T) 
 
 	for table, column := range map[string]string{
 		"sessions": "auto_inject_ci",
-		"pr":       "auto_inject_ci",
 	} {
 		var columns int
 		if err := db.QueryRow(
@@ -234,6 +233,15 @@ func TestMigrateRepairsQueuedTurnPromotionWhenVersion88WasClaimed(t *testing.T) 
 		if columns != 1 {
 			t.Fatalf("%s.%s count = %d, want 1", table, column, columns)
 		}
+	}
+	var prPolicyColumns int
+	if err := db.QueryRow(
+		`SELECT COUNT(*) FROM pragma_table_info('pr') WHERE name = 'auto_inject_ci'`,
+	).Scan(&prPolicyColumns); err != nil {
+		t.Fatalf("query pr.auto_inject_ci: %v", err)
+	}
+	if prPolicyColumns != 0 {
+		t.Fatalf("pr.auto_inject_ci count = %d, want removed session-only policy", prPolicyColumns)
 	}
 	for _, version := range []int64{88, 89} {
 		var applied int

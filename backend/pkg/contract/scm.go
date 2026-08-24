@@ -79,7 +79,9 @@ type PullRequestFailingCheck struct {
 type PullRequestCISummary struct {
 	State         CIState                   `json:"state"`
 	FailingChecks []PullRequestFailingCheck `json:"failingChecks"`
-	AutoInjectCI  bool                      `json:"autoInjectCI"`
+	// AutoInjectCI mirrors the owning session's policy for display alongside
+	// each PR; it is not persisted on the PR itself.
+	AutoInjectCI bool `json:"autoInjectCI"`
 }
 
 // PullRequestReviewCommentLink points to one review comment.

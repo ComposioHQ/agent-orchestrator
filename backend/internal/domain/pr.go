@@ -90,7 +90,6 @@ type PullRequest struct {
 	ObservedAt       time.Time
 	CIObservedAt     time.Time
 	ReviewObservedAt time.Time
-	AutoInjectCI     bool
 }
 
 // PullRequestCheck is one normalized CI check run for a pull request.

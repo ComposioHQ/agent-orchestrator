@@ -225,37 +225,19 @@ func (s *Store) SetSessionAutoInjectReview(ctx context.Context, id domain.Sessio
 }
 
 // SetSessionAutoInjectCI persists the CI-failure injection policy for the
-// session and every PR currently owned by it. Future PRs still inherit this
-// value from the session row when first observed.
+// session and therefore every PR currently or subsequently owned by it.
 func (s *Store) SetSessionAutoInjectCI(ctx context.Context, id domain.SessionID, autoInject bool, updatedAt time.Time) (bool, error) {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
-	var updated bool
-	err := s.inTx(ctx, fmt.Sprintf("set auto-inject CI for session %s", id), func(q *gen.Queries) error {
-		rows, err := q.SetSessionAutoInjectCI(ctx, gen.SetSessionAutoInjectCIParams{
-			ID:           id,
-			AutoInjectCI: autoInject,
-			UpdatedAt:    updatedAt,
-		})
-		if err != nil {
-			return err
-		}
-		if rows == 0 {
-			return nil
-		}
-		updated = true
-		if err := q.SetPRAutoInjectCIBySession(ctx, gen.SetPRAutoInjectCIBySessionParams{
-			AutoInjectCI: autoInject,
-			SessionID:    id,
-		}); err != nil {
-			return err
-		}
-		return nil
+	rows, err := s.qw.SetSessionAutoInjectCI(ctx, gen.SetSessionAutoInjectCIParams{
+		ID:           id,
+		AutoInjectCI: autoInject,
+		UpdatedAt:    updatedAt,
 	})
 	if err != nil {
-		return false, err
+		return false, fmt.Errorf("set auto-inject CI for session %s: %w", id, err)
 	}
-	return updated, nil
+	return rows > 0, nil
 }
 
 // SetSessionReviewerHarness persists the reviewer preference for one session.

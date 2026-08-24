@@ -6,10 +6,9 @@ INSERT INTO pr (
     is_draft, is_merged, is_closed,
     provider_state, provider_mergeable, provider_merge_state_status, html_url,
     created_at_provider, updated_at_provider, merged_at_provider, closed_at_provider,
-    metadata_hash, ci_hash, review_hash, observed_at, ci_observed_at, review_observed_at, auto_inject_ci
+    metadata_hash, ci_hash, review_hash, observed_at, ci_observed_at, review_observed_at
 )
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-    COALESCE((SELECT auto_inject_ci FROM sessions WHERE id = ?), TRUE))
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT (url) DO UPDATE SET
     number = excluded.number,
     state_changed_at = CASE
@@ -62,10 +61,9 @@ ON CONFLICT (url) DO UPDATE SET
 -- name: UpsertLegacyPR :exec
 INSERT INTO pr (
     url, session_id, number, pr_state, review_decision, ci_state, mergeability, updated_at, state_changed_at,
-    is_draft, is_merged, is_closed, auto_inject_ci
+    is_draft, is_merged, is_closed
 )
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-    COALESCE((SELECT auto_inject_ci FROM sessions WHERE id = ?), TRUE))
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT (url) DO UPDATE SET
     number = excluded.number,
     state_changed_at = CASE
@@ -184,9 +182,6 @@ SELECT last_nudge_signature FROM pr WHERE url = ?;
 
 -- name: UpdatePRLastNudgeSignature :exec
 UPDATE pr SET last_nudge_signature = ? WHERE url = ?;
-
--- name: SetPRAutoInjectCIBySession :exec
-UPDATE pr SET auto_inject_ci = ? WHERE session_id = ?;
 
 -- name: GetDisplayPRFactsBySession :one
 SELECT
@@ -425,9 +420,8 @@ JOIN wanted_session ON wanted_session.session_id = pr.session_id
 ORDER BY pr.session_id, pr.updated_at DESC;
 
 -- name: ClaimPRForSession :exec
-INSERT INTO pr (url, session_id, number, pr_state, review_decision, ci_state, mergeability, updated_at, state_changed_at, auto_inject_ci)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?,
-    COALESCE((SELECT auto_inject_ci FROM sessions WHERE id = ?), TRUE))
+INSERT INTO pr (url, session_id, number, pr_state, review_decision, ci_state, mergeability, updated_at, state_changed_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT (url) DO UPDATE SET
     session_id = excluded.session_id,
     state_changed_at = CASE

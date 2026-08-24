@@ -547,7 +547,7 @@ func TestSessionSetAutoInjectReviewUnknownSession(t *testing.T) {
 	}
 }
 
-func TestSessionSetAutoInjectCIPersistsDefault(t *testing.T) {
+func TestSessionSetAutoInjectCIPersistsPolicy(t *testing.T) {
 	st := newFakeStore()
 	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer", Kind: domain.KindWorker, AutoInjectCI: true}
 
@@ -4095,32 +4095,38 @@ func TestListPRSummariesSuppressesFailingChecksUnlessCIFailing(t *testing.T) {
 	}
 }
 
-func TestListPRSummariesExposesPerPRAutoInjectCIPolicy(t *testing.T) {
+func TestListPRSummariesExposeCurrentSessionAutoInjectCIPolicyForEveryPR(t *testing.T) {
 	st := newFakeStore()
-	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer", Kind: domain.KindWorker}
+	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer", Kind: domain.KindWorker, AutoInjectCI: true}
 	stList := &multiPRFakeStore{fakeStore: st, prs: []domain.PullRequest{
-		{URL: "enabled-failing", SessionID: "mer-1", CI: domain.CIFailing, AutoInjectCI: true},
-		{URL: "disabled-failing", SessionID: "mer-1", CI: domain.CIFailing, AutoInjectCI: false},
-		{URL: "enabled-passing", SessionID: "mer-1", CI: domain.CIPassing, AutoInjectCI: true},
-		{URL: "enabled-merged", SessionID: "mer-1", CI: domain.CIPassing, Merged: true, AutoInjectCI: true},
+		{URL: "first-failing", SessionID: "mer-1", CI: domain.CIFailing},
+		{URL: "second-failing", SessionID: "mer-1", CI: domain.CIFailing},
+		{URL: "passing", SessionID: "mer-1", CI: domain.CIPassing},
+		{URL: "merged", SessionID: "mer-1", CI: domain.CIPassing, Merged: true},
 	}}
 
-	got, err := (&Service{store: stList}).ListPRSummaries(context.Background(), "mer-1")
+	svc := &Service{store: stList}
+	got, err := svc.ListPRSummaries(context.Background(), "mer-1")
 	if err != nil {
 		t.Fatal(err)
 	}
-	byURL := map[string]PRSummary{}
 	for _, pr := range got {
-		byURL[pr.URL] = pr
+		if !pr.CI.AutoInjectCI {
+			t.Fatalf("PR %q did not inherit enabled session policy", pr.URL)
+		}
 	}
-	if !byURL["enabled-failing"].CI.AutoInjectCI || byURL["disabled-failing"].CI.AutoInjectCI {
-		t.Fatalf("failing CI policies = enabled:%v disabled:%v", byURL["enabled-failing"].CI.AutoInjectCI, byURL["disabled-failing"].CI.AutoInjectCI)
+
+	if _, err := svc.SetAutoInjectCI(context.Background(), "mer-1", false); err != nil {
+		t.Fatal(err)
 	}
-	if !byURL["enabled-passing"].CI.AutoInjectCI {
-		t.Fatal("passing PR lost its enabled CI injection policy")
+	got, err = svc.ListPRSummaries(context.Background(), "mer-1")
+	if err != nil {
+		t.Fatal(err)
 	}
-	if !byURL["enabled-merged"].CI.AutoInjectCI {
-		t.Fatal("terminal PR lost its enabled CI injection policy")
+	for _, pr := range got {
+		if pr.CI.AutoInjectCI {
+			t.Fatalf("existing PR %q retained enabled policy after session toggle", pr.URL)
+		}
 	}
 }
 

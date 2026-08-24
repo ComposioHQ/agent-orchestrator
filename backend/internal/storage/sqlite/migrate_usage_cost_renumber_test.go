@@ -79,8 +79,17 @@ SELECT COALESCE((
 			).Scan(&triggerSQL); err != nil {
 				t.Fatalf("read pr_cdc_update: %v", err)
 			}
-			if !strings.Contains(triggerSQL, "auto_inject_ci") {
-				t.Fatalf("pr_cdc_update was not upgraded: %s", triggerSQL)
+			if strings.Contains(triggerSQL, "auto_inject_ci") {
+				t.Fatalf("pr_cdc_update retained removed PR policy: %s", triggerSQL)
+			}
+			var prPolicyColumn int
+			if err := db.QueryRow(
+				`SELECT COUNT(*) FROM pragma_table_info('pr') WHERE name = 'auto_inject_ci'`,
+			).Scan(&prPolicyColumn); err != nil {
+				t.Fatalf("read pr.auto_inject_ci: %v", err)
+			}
+			if prPolicyColumn != 0 {
+				t.Fatalf("pr.auto_inject_ci count = %d, want session-only policy", prPolicyColumn)
 			}
 			if err := migrate(db); err != nil {
 				t.Fatalf("second migration pass: %v", err)

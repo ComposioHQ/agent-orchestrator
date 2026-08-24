@@ -87,7 +87,7 @@ func (s *Store) ClaimPR(ctx context.Context, pr domain.PullRequest, checks []dom
 		if err := q.ClaimPRForSession(ctx, gen.ClaimPRForSessionParams{
 			URL: pr.URL, SessionID: pr.SessionID, Number: int64(pr.Number), PRState: prState(pr),
 			ReviewDecision: reviewOrDefault(pr.Review), CIState: ciOrDefault(pr.CI), Mergeability: mergeabilityOrDefault(pr.Mergeability), UpdatedAt: pr.UpdatedAt,
-			StateChangedAt: nullTime(initialPRStateChangedAt(pr)), ID: pr.SessionID,
+			StateChangedAt: nullTime(initialPRStateChangedAt(pr)),
 		}); err != nil {
 			return err
 		}
@@ -588,7 +588,6 @@ func genPRParams(r domain.PullRequest) gen.UpsertPRParams {
 		ObservedAt:               nullTime(r.ObservedAt),
 		CIObservedAt:             nullTime(r.CIObservedAt),
 		ReviewObservedAt:         nullTime(r.ReviewObservedAt),
-		ID:                       r.SessionID,
 	}
 }
 
@@ -606,7 +605,6 @@ func genLegacyPRParams(r domain.PullRequest) gen.UpsertLegacyPRParams {
 		IsDraft:        boolInt(r.Draft),
 		IsMerged:       boolInt(r.Merged),
 		IsClosed:       boolInt(r.Closed),
-		ID:             r.SessionID,
 	}
 }
 
@@ -688,7 +686,6 @@ func prRowFromGen(p gen.PR) domain.PullRequest {
 		ObservedAt:               timeFromNull(p.ObservedAt),
 		CIObservedAt:             timeFromNull(p.CIObservedAt),
 		ReviewObservedAt:         timeFromNull(p.ReviewObservedAt),
-		AutoInjectCI:             p.AutoInjectCI,
 	}
 }
 

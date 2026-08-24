@@ -190,27 +190,18 @@ func (m *Manager) ApplyPRObservation(ctx context.Context, id domain.SessionID, o
 	// persisted their own dedup signature so the next poll retries only the rest.
 	ident := prIdentity(o)
 	var nudges []pendingNudge
-	var ciPolicyErr error
 
-	if o.CI == domain.CIFailing {
-		pr, ok, err := m.store.GetPR(ctx, o.URL)
-		switch {
-		case err != nil:
-			ciPolicyErr = fmt.Errorf("load CI injection policy for %s: %w", o.URL, err)
-		case !ok:
-			ciPolicyErr = fmt.Errorf("load CI injection policy for %s: PR not found", o.URL)
-		case pr.AutoInjectCI:
-			checks := failedPRChecks(o.Checks)
-			if len(checks) > 0 {
-				msg := formatCIFailureMessage(checks)
-				if ident != "your PR" {
-					msg = strings.Replace(msg, "your PR", ident, 1)
-				}
-				if o.URL != "" {
-					msg += "\nPR: " + domain.SanitizeControlChars(o.URL)
-				}
-				nudges = append(nudges, pendingNudge{key: "ci:" + o.URL, sig: ciFailureSignature(checks), msg: msg, maxAttempts: 0})
+	if o.CI == domain.CIFailing && rec.AutoInjectCI {
+		checks := failedPRChecks(o.Checks)
+		if len(checks) > 0 {
+			msg := formatCIFailureMessage(checks)
+			if ident != "your PR" {
+				msg = strings.Replace(msg, "your PR", ident, 1)
 			}
+			if o.URL != "" {
+				msg += "\nPR: " + domain.SanitizeControlChars(o.URL)
+			}
+			nudges = append(nudges, pendingNudge{key: "ci:" + o.URL, sig: ciFailureSignature(checks), msg: msg, maxAttempts: 0})
 		}
 	}
 
@@ -284,11 +275,8 @@ func (m *Manager) ApplyPRObservation(ctx context.Context, id domain.SessionID, o
 			return err
 		}
 	}
-	// Surface deferred policy/parent-stack read errors only after independent
+	// Surface deferred parent-stack read errors only after independent
 	// nudges have been sent, so one failed lookup cannot hide another reaction.
-	if ciPolicyErr != nil {
-		return ciPolicyErr
-	}
 	return blockedCheckErr
 }
 

@@ -839,7 +839,6 @@ func TestPRCRUD(t *testing.T) {
 	pr := domain.PullRequest{
 		URL: "https://gh/pr/1", SessionID: r.ID, Number: 1,
 		Review: domain.ReviewRequired, CI: domain.CIFailing, Mergeability: domain.MergeBlocked, UpdatedAt: now, StateChangedAt: now,
-		AutoInjectCI: true,
 	}
 	if err := s.WritePR(ctx, pr, nil, nil); err != nil {
 		t.Fatal(err)
@@ -853,20 +852,15 @@ func TestPRCRUD(t *testing.T) {
 	}
 }
 
-func TestPRAutoInjectCITracksSessionPolicyChanges(t *testing.T) {
+func TestSessionAutoInjectCIIsIndependentOfExistingPRRows(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
 	seedProject(t, s, "mer")
 	owner, _ := s.CreateSession(ctx, sampleRecord("mer"))
 	now := time.Now().UTC().Truncate(time.Second)
-	first := domain.PullRequest{URL: "https://github.com/o/r/pull/1", SessionID: owner.ID, Number: 1, CI: domain.CIFailing, UpdatedAt: now}
-
-	if err := s.WritePR(ctx, first, nil, nil); err != nil {
+	pr := domain.PullRequest{URL: "https://github.com/o/r/pull/1", SessionID: owner.ID, Number: 1, CI: domain.CIFailing, UpdatedAt: now}
+	if err := s.WritePR(ctx, pr, nil, nil); err != nil {
 		t.Fatal(err)
-	}
-	got, found, err := s.GetPR(ctx, first.URL)
-	if err != nil || !found || !got.AutoInjectCI {
-		t.Fatalf("new PR policy = found:%v err:%v value:%v, want enabled", found, err, got.AutoInjectCI)
 	}
 
 	base, _ := s.LatestSeq(ctx)
@@ -884,8 +878,8 @@ func TestPRAutoInjectCITracksSessionPolicyChanges(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(events) != 2 {
-		t.Fatalf("policy change events = %+v, want session and PR updates", events)
+	if len(events) != 1 {
+		t.Fatalf("policy change events = %+v, want one session update", events)
 	}
 	var sessionPayload []byte
 	for i := range events {
@@ -905,36 +899,14 @@ func TestPRAutoInjectCITracksSessionPolicyChanges(t *testing.T) {
 		t.Fatalf("autoInjectCI payload = %#v, want false", payload["autoInjectCI"])
 	}
 
-	// Re-observing the first PR after changing the session policy must preserve
-	// the currently selected policy.
-	first.UpdatedAt = changedAt.Add(time.Minute)
-	if err := s.WritePR(ctx, first, nil, nil); err != nil {
+	// Existing PR observations remain writable after the session-wide policy
+	// changes; there is no PR-level policy copy to reconcile.
+	pr.UpdatedAt = changedAt.Add(time.Minute)
+	if err := s.WritePR(ctx, pr, nil, nil); err != nil {
 		t.Fatal(err)
 	}
-	got, _, _ = s.GetPR(ctx, first.URL)
-	if got.AutoInjectCI {
-		t.Fatal("session toggle did not rewrite the first PR's enabled policy")
-	}
-
-	second := domain.PullRequest{URL: "https://github.com/o/r/pull/2", SessionID: owner.ID, Number: 2, UpdatedAt: changedAt}
-	if err := s.WritePR(ctx, second, nil, nil); err != nil {
-		t.Fatal(err)
-	}
-	got, _, _ = s.GetPR(ctx, second.URL)
-	if got.AutoInjectCI {
-		t.Fatal("PR created while disabled did not inherit the disabled session policy")
-	}
-
-	if ok, err := s.SetSessionAutoInjectCI(ctx, owner.ID, true, changedAt.Add(time.Minute)); err != nil || !ok {
-		t.Fatalf("enable session CI policy: ok=%v err=%v", ok, err)
-	}
-	second.UpdatedAt = changedAt.Add(2 * time.Minute)
-	if err := s.WritePR(ctx, second, nil, nil); err != nil {
-		t.Fatal(err)
-	}
-	got, _, _ = s.GetPR(ctx, second.URL)
-	if !got.AutoInjectCI {
-		t.Fatal("later session enable did not rewrite the second PR's disabled policy")
+	if got, found, err := s.GetPR(ctx, pr.URL); err != nil || !found || !got.UpdatedAt.Equal(pr.UpdatedAt) {
+		t.Fatalf("existing PR after session policy change = found:%v err:%v got:%+v", found, err, got)
 	}
 }
 
