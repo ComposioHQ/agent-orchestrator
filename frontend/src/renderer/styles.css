@@ -1902,6 +1902,30 @@ body.is-resizing-x [data-slot="inspector-container"] {
 	transition: none;
 }
 
+/* Browser is an automatic co-work canvas, while Summary/Reviews/Files retain
+ * the utility rail width. Interpolate the shared gap + panel boxes together;
+ * direct pointer resizing remains immediate. */
+.session-split[data-workspace-resizing="true"] [data-slot="inspector-gap"],
+.session-split[data-workspace-resizing="true"] [data-slot="inspector-container"] {
+	transition:
+		width var(--session-inspector-motion-duration, 300ms)
+			var(--session-inspector-motion-easing, ease-out),
+		max-width var(--session-inspector-motion-duration, 300ms)
+			var(--session-inspector-motion-easing, ease-out);
+}
+
+body.is-resizing-x .session-split[data-workspace-resizing="true"] [data-slot="inspector-gap"],
+body.is-resizing-x .session-split[data-workspace-resizing="true"] [data-slot="inspector-container"] {
+	transition: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.session-split[data-workspace-resizing="true"] [data-slot="inspector-gap"],
+	.session-split[data-workspace-resizing="true"] [data-slot="inspector-container"] {
+		transition: none;
+	}
+}
+
 /* Keep keyboard focus visible without adding a ring to the sidebar chrome. */
 .sidebar-focusless :focus-visible {
 	background-color: var(--color-interactive-hover) !important;

@@ -20,6 +20,15 @@ describe("adaptiveSidebarShouldCompact", () => {
 		).toBe(false);
 	});
 
+	it("can reclaim navigation for Browser comfort before utility views need it", () => {
+		expect(
+			adaptiveSidebarShouldCompact({ expandedContentWidth: 1160, workspaceDemand: 1068, isCompact: false }),
+		).toBe(false);
+		expect(
+			adaptiveSidebarShouldCompact({ expandedContentWidth: 1160, workspaceDemand: 1628, isCompact: false }),
+		).toBe(true);
+	});
+
 	it("releases immediately when no workspace owns a demand", () => {
 		expect(
 			adaptiveSidebarShouldCompact({ expandedContentWidth: 900, workspaceDemand: null, isCompact: true }),

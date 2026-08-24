@@ -60,7 +60,21 @@ import { useResolvedTheme, useUiStore, type InspectorView } from "../stores/ui-s
 const WORKSPACE_DEFAULT_PX = 500;
 const WORKSPACE_MIN_PX = 340;
 const WORKSPACE_MAX_PERCENT = 55;
+// Browser is the primary creation surface when selected. Its generous preferred
+// width is progressively capped by the live workspace, so laptop layouts land
+// at the chat safety floor while larger windows get a canvas-like split.
+const BROWSER_WORKSPACE_DEFAULT_PX = 900;
+const BROWSER_WORKSPACE_MIN_PX = 460;
+const BROWSER_WORKSPACE_MAX_PERCENT = 68;
 const CHAT_READABLE_MIN_PX = 560;
+// Browser mode deliberately turns chat into a compact companion column, like a
+// canvas workflow. This is still wide enough for the timeline and composer, and
+// is separate from the roomier utility-view floor above.
+const BROWSER_CHAT_MIN_PX = 440;
+// Browser is a co-working surface, so reclaim navigation space before chat
+// reaches its survival floor. Utility inspector views keep the compact 560px
+// target; Browser protects a comfortable conversation column instead.
+const BROWSER_CHAT_COMFORT_PX = 720;
 const WORKSPACE_ABSOLUTE_MIN_PX = 300;
 const INSPECTOR_SEPARATOR_RESERVE_PX = 8;
 // The inspector tab labels respond to the tablist's remaining width. The
@@ -69,6 +83,9 @@ const INSPECTOR_SEPARATOR_RESERVE_PX = 8;
 const INSPECTOR_COMPACT_MAX_PX = 325;
 const TOPBAR_SECONDARY_COMPACT_MAX_PX = 759;
 const inspectorWidthStorageKey = "ao.inspector.widthPx";
+// The canvas profile has different constraints from the earlier Browser rail;
+// use a new preference namespace so an old narrow width cannot silently pin it.
+const browserWorkspaceWidthStorageKey = "ao.workspace.browser.canvasWidthPx";
 const inspectorWidthVar = "--ao-inspector-w";
 // Closely matches SHELL_PANEL_SPRING's visual settle time. Keeping the CSS
 // width interpolation on the same clock prevents the sidebar from stopping
@@ -88,6 +105,7 @@ type ReviewerTerminalTarget = { handleId: string; harness: string };
 type WorkspaceLayoutMode = "utility" | "browser" | "files";
 
 type InspectorSizing = {
+	chatMinWidth: number;
 	defaultWidth: number;
 	minWidth: number;
 	maxPercent: number;
@@ -96,24 +114,39 @@ type InspectorSizing = {
 };
 
 function inspectorSizing(view: InspectorView): InspectorSizing {
+	if (view === "browser") {
+		return {
+			chatMinWidth: BROWSER_CHAT_MIN_PX,
+			defaultWidth: BROWSER_WORKSPACE_DEFAULT_PX,
+			minWidth: BROWSER_WORKSPACE_MIN_PX,
+			maxPercent: BROWSER_WORKSPACE_MAX_PERCENT,
+			mode: "browser",
+			storageKey: browserWorkspaceWidthStorageKey,
+		};
+	}
 	return {
+		chatMinWidth: CHAT_READABLE_MIN_PX,
 		defaultWidth: WORKSPACE_DEFAULT_PX,
 		minWidth: WORKSPACE_MIN_PX,
 		maxPercent: WORKSPACE_MAX_PERCENT,
-		mode: view === "browser" ? "browser" : view === "files" ? "files" : "utility",
+		mode: view === "files" ? "files" : "utility",
 		storageKey: inspectorWidthStorageKey,
 	};
 }
 
-function inspectorMaxWidthPx(availableWidth?: number, maxPercent = WORKSPACE_MAX_PERCENT): number | undefined {
+function inspectorMaxWidthPx(
+	availableWidth?: number,
+	maxPercent = WORKSPACE_MAX_PERCENT,
+	chatMinWidth = CHAT_READABLE_MIN_PX,
+): number | undefined {
 	if (!Number.isFinite(availableWidth) || !availableWidth || availableWidth <= 0) return undefined;
 	const percentageCap = Math.floor((availableWidth * maxPercent) / 100);
-	const readableChatCap = Math.max(WORKSPACE_ABSOLUTE_MIN_PX, availableWidth - CHAT_READABLE_MIN_PX);
+	const readableChatCap = Math.max(WORKSPACE_ABSOLUTE_MIN_PX, availableWidth - chatMinWidth);
 	return Math.min(availableWidth, percentageCap, readableChatCap);
 }
 
-function inspectorMaxWidthCss(maxPercent: number): string {
-	return `min(${maxPercent}%, max(${WORKSPACE_ABSOLUTE_MIN_PX}px, calc(100% - ${CHAT_READABLE_MIN_PX}px)))`;
+function inspectorMaxWidthCss(maxPercent: number, chatMinWidth: number): string {
+	return `min(${maxPercent}%, max(${WORKSPACE_ABSOLUTE_MIN_PX}px, calc(100% - ${chatMinWidth}px)))`;
 }
 
 function initialInspectorSize(sizing: InspectorSizing, availableWidth?: number): string {
@@ -122,13 +155,24 @@ function initialInspectorSize(sizing: InspectorSizing, availableWidth?: number):
 	const requestedWidth = Number.isFinite(parsed)
 		? Math.max(sizing.minWidth, Math.round(parsed))
 		: sizing.defaultWidth;
-	const maxWidth = inspectorMaxWidthPx(availableWidth, sizing.maxPercent);
+	const maxWidth = inspectorMaxWidthPx(availableWidth, sizing.maxPercent, sizing.chatMinWidth);
 	return maxWidth === undefined ? `${requestedWidth}px` : `${Math.min(requestedWidth, maxWidth)}px`;
 }
 
-function workspaceDemandPx(sizing: InspectorSizing): number {
+function sizingGeometryEqual(a: InspectorSizing, b: InspectorSizing): boolean {
 	return (
-		CHAT_READABLE_MIN_PX +
+		a.chatMinWidth === b.chatMinWidth &&
+		a.defaultWidth === b.defaultWidth &&
+		a.minWidth === b.minWidth &&
+		a.maxPercent === b.maxPercent &&
+		a.storageKey === b.storageKey
+	);
+}
+
+function workspaceDemandPx(sizing: InspectorSizing): number {
+	const chatTarget = sizing.mode === "browser" ? BROWSER_CHAT_COMFORT_PX : CHAT_READABLE_MIN_PX;
+	return (
+		chatTarget +
 		Number.parseFloat(initialInspectorSize(sizing)) +
 		INSPECTOR_SEPARATOR_RESERVE_PX
 	);
@@ -222,7 +266,9 @@ function SessionInspectorRail({
 		if (!split) return;
 		const updateRange = () => {
 			const availableWidth = Math.max(0, split.clientWidth - INSPECTOR_SEPARATOR_RESERVE_PX);
-			const maxWidth = inspectorMaxWidthPx(availableWidth, sizing.maxPercent) ?? sizing.defaultWidth;
+			const maxWidth =
+				inspectorMaxWidthPx(availableWidth, sizing.maxPercent, sizing.chatMinWidth) ??
+				sizing.defaultWidth;
 			const minWidth = Math.min(sizing.minWidth, maxWidth);
 			rangeRef.current = { min: minWidth, max: maxWidth };
 		};
@@ -231,7 +277,7 @@ function SessionInspectorRail({
 		const observer = new ResizeObserver(updateRange);
 		observer.observe(split);
 		return () => observer.disconnect();
-	}, [sizing.defaultWidth, sizing.maxPercent, sizing.minWidth, splitRef]);
+	}, [sizing.chatMinWidth, sizing.defaultWidth, sizing.maxPercent, sizing.minWidth, splitRef]);
 
 	const transition = prefersReducedMotion ? { duration: 0 } : SHELL_PANEL_SPRING;
 	const hidden = !isOpen && settledClosed;
@@ -300,8 +346,9 @@ function SessionInspectorRail({
 // handle gets a clean xterm/mux binding.
 //
 // The inspector uses the same Motion spring as the left sidebar (gap width +
-// x-transform). Summary, Files, and Browser share one stable divider position;
-// chat readability clamps the rail before it can become unusably narrow.
+// x-transform). Summary/Reviews/Files share a utility width, while Browser
+// automatically grows into a co-work canvas. Chat readability clamps either
+// profile before the conversation can become unusably narrow.
 export function SessionView({ sessionId }: SessionViewProps) {
 	const { t } = useTranslation();
 	const workspaceQuery = useWorkspaceQuery();
@@ -320,6 +367,8 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	const previewBaselineRef = useRef<{ sessionId: string; key: string } | null>(null);
 	const sessionSplitRef = useRef<HTMLDivElement | null>(null);
 	const terminalLiveResizeTimerRef = useRef<number | null>(null);
+	const workspaceResizeTimerRef = useRef<number | null>(null);
+	const browserPopOutHandoffFrameRef = useRef<number | null>(null);
 	const initializedInspectorSessionIdRef = useRef<string | null>(null);
 	const [inspectorSettledClosed, setInspectorSettledClosed] = useState(!isInspectorOpen);
 	const inspectorPanelVisible = isInspectorOpen || !inspectorSettledClosed;
@@ -543,6 +592,29 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	const adaptiveWorkspaceActive =
 		hasInspector && isInspectorOpen && !browserPoppedOut && !filesPoppedOut;
 
+	// Arm the shared width transition before the selected inspector surface
+	// changes its CSS variable. Browser becomes a co-work canvas; utility views
+	// return to their stable rail width on the same spring as the shell sidebar.
+	const armWorkspaceTransition = useCallback(() => {
+		const split = sessionSplitRef.current;
+		if (!split) return;
+		if (workspaceResizeTimerRef.current !== null) window.clearTimeout(workspaceResizeTimerRef.current);
+		split.setAttribute("data-workspace-resizing", "true");
+		void split.offsetWidth;
+		workspaceResizeTimerRef.current = window.setTimeout(() => {
+			split.removeAttribute("data-workspace-resizing");
+			workspaceResizeTimerRef.current = null;
+		}, INSPECTOR_SPRING_MS);
+	}, []);
+
+	useEffect(
+		() => () => {
+			if (workspaceResizeTimerRef.current !== null) window.clearTimeout(workspaceResizeTimerRef.current);
+			sessionSplitRef.current?.removeAttribute("data-workspace-resizing");
+		},
+		[],
+	);
+
 	const publishWorkspaceDemand = useCallback(
 		(nextSizing: InspectorSizing, active = adaptiveWorkspaceActive) => {
 			setSidebarWorkspaceDemand(active ? workspaceDemandPx(nextSizing) : null);
@@ -550,18 +622,35 @@ export function SessionView({ sessionId }: SessionViewProps) {
 		[adaptiveWorkspaceActive, setSidebarWorkspaceDemand],
 	);
 
+	const prepareWorkspaceProfile = useCallback(
+		(nextSizing: InspectorSizing) => {
+			armWorkspaceTransition();
+			const groupWidth = sessionSplitRef.current?.clientWidth || window.innerWidth;
+			const availableWidth = Math.max(0, groupWidth - INSPECTOR_SEPARATOR_RESERVE_PX);
+			const targetInspectorWidth = Number.parseFloat(initialInspectorSize(nextSizing, availableWidth));
+			startTerminalLiveResize(
+				targetInspectorWidth <= INSPECTOR_COMPACT_MAX_PX ? "compact" : "expanded",
+				topbarSecondaryLabelMode(Math.max(0, availableWidth - targetInspectorWidth)),
+			);
+		},
+		[armWorkspaceTransition, startTerminalLiveResize],
+	);
+
 	const transitionInspectorView = useCallback(
 		(next: InspectorView) => {
 			if (next === inspectorView) return;
 			const nextSizing = inspectorSizing(next);
+			if (!sizingGeometryEqual(sizing, nextSizing)) prepareWorkspaceProfile(nextSizing);
 			publishWorkspaceDemand(nextSizing);
 			setInspectorViewForSession(sessionId, next);
 		},
 		[
 			inspectorView,
+			prepareWorkspaceProfile,
 			publishWorkspaceDemand,
 			sessionId,
 			setInspectorViewForSession,
+			sizing,
 		],
 	);
 
@@ -833,13 +922,36 @@ export function SessionView({ sessionId }: SessionViewProps) {
 		return () => window.cancelAnimationFrame(frame);
 	}, [browserPopOutPhase, sessionId]);
 
-	const finishBrowserPopOutClose = useCallback(() => {
+	const commitBrowserPopOutClose = useCallback(() => {
 		setBrowserPopOutState((current) =>
 			current.sessionId === sessionId && current.phase === "closing"
 				? { sessionId, phase: "docked" }
 				: current,
 		);
 	}, [sessionId]);
+
+	const finishBrowserPopOutClose = useCallback(() => {
+		if (browserPopOutHandoffFrameRef.current !== null) return;
+		// Hold the portal at the exact destination for two painted frames. Electron's
+		// native WebContentsView bounds update trails the DOM transition slightly;
+		// handing back to the dock immediately exposes that final compositor step.
+		browserPopOutHandoffFrameRef.current = window.requestAnimationFrame(() => {
+			browserPopOutHandoffFrameRef.current = window.requestAnimationFrame(() => {
+				browserPopOutHandoffFrameRef.current = null;
+				commitBrowserPopOutClose();
+			});
+		});
+	}, [commitBrowserPopOutClose]);
+
+	useEffect(
+		() => () => {
+			if (browserPopOutHandoffFrameRef.current !== null) {
+				window.cancelAnimationFrame(browserPopOutHandoffFrameRef.current);
+				browserPopOutHandoffFrameRef.current = null;
+			}
+		},
+		[],
+	);
 
 	// transitionend is the normal path; the timer protects restore when a window
 	// resize or compositor interruption suppresses that DOM event.
@@ -1012,7 +1124,10 @@ export function SessionView({ sessionId }: SessionViewProps) {
 				ref={sessionSplitRef}
 				style={
 					{
-						"--session-inspector-max-width": inspectorMaxWidthCss(sizing.maxPercent),
+						"--session-inspector-max-width": inspectorMaxWidthCss(
+							sizing.maxPercent,
+							sizing.chatMinWidth,
+						),
 						"--session-inspector-motion-duration": `${INSPECTOR_SPRING_MS}ms`,
 						"--session-inspector-motion-easing": INSPECTOR_SPRING_EASING,
 					} as CSSProperties
