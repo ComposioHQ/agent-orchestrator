@@ -624,8 +624,12 @@ describe("CenterPane toolbar session label", () => {
 		const scrollRegion = document.querySelector(".overflow-x-auto");
 		const avatar = ownerCard?.querySelector('img[aria-hidden="true"]');
 
-		expect(ownerCard).toHaveClass("min-w-0", "shrink", "overflow-hidden");
+		expect(ownerCard).toHaveClass("w-full", "max-w-full", "min-w-0", "shrink", "overflow-hidden");
 		expect(ownerCard).not.toHaveClass("min-w-shell-tab-min", "shrink-0");
+		expect(ownerTab).toHaveClass("min-w-0");
+		expect(ownerTab).not.toHaveClass("min-w-flex-min");
+		expect(ownerCard?.parentElement).toHaveClass("min-w-0");
+		expect(ownerCard?.parentElement).not.toHaveClass("min-w-flex-min");
 		expect(scrollRegion?.contains(ownerCard)).toBe(false);
 		expect(avatar?.classList.contains("size-terminal-agent-icon")).toBe(true);
 	});

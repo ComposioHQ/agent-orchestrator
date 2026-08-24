@@ -541,7 +541,7 @@ export function CenterPane({
 				>
 					<div
 							aria-label={t("terminal.tabsAria")}
-							className="flex h-full min-w-flex-min flex-1 items-center"
+							className="flex h-full min-w-0 flex-1 items-center"
 							onKeyDown={handleTerminalTabListKeyDown}
 							role="tablist"
 						>
@@ -883,7 +883,7 @@ function SessionPaneTab({
 				"group relative inline-flex self-stretch items-center gap-1.5 transition-colors",
 				connected
 					? "w-shell-tab-connected min-w-shell-tab-min shrink-0 border-x border-transparent px-2"
-					: "min-w-0 shrink overflow-hidden border-r border-border bg-surface px-3 text-foreground",
+					: "w-full max-w-full min-w-0 shrink overflow-hidden border-r border-border bg-surface text-foreground",
 				connected
 					? isActive
 						? "border-border-strong bg-overlay text-foreground after:absolute after:inset-x-0 after:bottom-0 after:h-0.5 after:bg-foreground/80"
@@ -902,7 +902,7 @@ function SessionPaneTab({
 					"inline-flex items-center gap-1.5 truncate text-control leading-none transition-colors",
 					connected
 						? "min-w-0 w-full text-left font-normal"
-						: "min-w-flex-min max-w-shell-tab-max font-medium",
+						: "min-w-0 max-w-shell-tab-max px-3 font-medium",
 					isActive ? "text-foreground" : "text-passive group-hover:text-foreground",
 				)}
 				onClick={onSelect}

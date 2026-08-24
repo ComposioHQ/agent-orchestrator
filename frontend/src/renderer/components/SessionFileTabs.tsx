@@ -1,4 +1,5 @@
 import { MoreHorizontal, X } from "lucide-react";
+import { useTranslation } from "react-i18next";
 import { cn } from "../lib/utils";
 import type { SessionFileTabState } from "../lib/session-file-tabs";
 import { Button } from "./ui/button";
@@ -20,6 +21,7 @@ export function SessionFileTabs({
 	onCloseFile: (path: string) => void;
 	onCloseAll: () => void;
 }) {
+	const { t } = useTranslation();
 	if (state.openPaths.length === 0) return null;
 	return (
 		<>
@@ -50,7 +52,7 @@ export function SessionFileTabs({
 							{name}
 						</button>
 						<button
-							aria-label={`Close ${name}`}
+							aria-label={t("files.closeTab", { name })}
 							className="grid size-5 shrink-0 place-items-center rounded-sm text-passive opacity-70 hover:bg-interactive-hover hover:text-foreground hover:opacity-100"
 							onClick={(event) => {
 								event.stopPropagation();
@@ -65,12 +67,12 @@ export function SessionFileTabs({
 			})}
 			<DropdownMenu>
 				<DropdownMenuTrigger asChild>
-					<Button aria-label="File tab actions" className="mx-1 self-center" size="icon-sm" type="button" variant="ghost">
+					<Button aria-label={t("files.tabActions")} className="mx-1 self-center" size="icon-sm" type="button" variant="ghost">
 						<MoreHorizontal className="size-icon-sm" aria-hidden="true" />
 					</Button>
 				</DropdownMenuTrigger>
 				<DropdownMenuContent align="end">
-					<DropdownMenuItem onSelect={onCloseAll}>Close all files</DropdownMenuItem>
+					<DropdownMenuItem onSelect={onCloseAll}>{t("files.closeAllTabs")}</DropdownMenuItem>
 				</DropdownMenuContent>
 			</DropdownMenu>
 		</>
