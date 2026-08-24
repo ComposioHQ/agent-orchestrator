@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -29,6 +30,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/controllers"
 	"github.com/aoagents/agent-orchestrator/backend/internal/mobilebridge"
 	"github.com/aoagents/agent-orchestrator/backend/internal/notify"
+	"github.com/aoagents/agent-orchestrator/backend/internal/observe/sentryobs"
 	usagepipeline "github.com/aoagents/agent-orchestrator/backend/internal/observe/usage"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 	"github.com/aoagents/agent-orchestrator/backend/internal/presence"
@@ -52,6 +54,22 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite"
 	"github.com/aoagents/agent-orchestrator/backend/internal/terminal"
 )
+
+// sentryEnvironment maps the daemon's app version to a Sentry environment so a
+// nightly/edge build's issues do not mix with stable release health.
+func sentryEnvironment(version string) string {
+	v := strings.ToLower(strings.TrimSpace(version))
+	switch {
+	case v == "":
+		return "unknown"
+	case strings.Contains(v, "nightly"):
+		return "nightly"
+	case strings.Contains(v, "edge") || strings.Contains(v, "pr"):
+		return "development"
+	default:
+		return "stable"
+	}
+}
 
 // Run starts the daemon and blocks until it exits. SIGINT/SIGTERM drive
 // graceful shutdown through the HTTP server and background workers.
@@ -117,6 +135,16 @@ func Run() error {
 
 	telemetrySink := newTelemetrySink(cfg, store, log)
 	defer func() { _ = telemetrySink.Close(context.Background()) }()
+	// Daemon Sentry: captures genuine 5xx/panics with their Go stack. No-op
+	// unless AO_SENTRY_DSN is set. Flushed on shutdown so buffered faults send.
+	if err := sentryobs.Init(sentryobs.Config{
+		DSN:         cfg.Telemetry.SentryDSN,
+		Release:     cfg.Telemetry.AppVersion,
+		Environment: sentryEnvironment(cfg.Telemetry.AppVersion),
+	}); err != nil {
+		log.Warn("daemon sentry disabled", "err", err)
+	}
+	defer sentryobs.Flush(2 * time.Second)
 	telemetrySink.Emit(context.Background(), ports.TelemetryEvent{
 		Name:       "ao.daemon.started",
 		Source:     "daemon",
