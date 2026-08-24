@@ -47,6 +47,13 @@ type countingResolverAgent struct {
 	calls atomic.Int32
 }
 
+type startupPresenceAgent struct {
+	fakeAgent
+	normalResolveCalls *atomic.Int32
+	presenceCalls      *atomic.Int32
+	authCalls          *atomic.Int32
+}
+
 type mutableInstallAgent struct {
 	fakeAgent
 	installed atomic.Bool
@@ -277,6 +284,21 @@ func (f fakeAuthAgent) AuthStatus(ctx context.Context) (ports.AgentAuthStatus, e
 	return f.status, f.authErr
 }
 
+func (f startupPresenceAgent) ResolveBinary(context.Context) (string, error) {
+	f.normalResolveCalls.Add(1)
+	return "", errors.New("normal resolution must not run during startup")
+}
+
+func (f startupPresenceAgent) ResolveBinaryPresence(context.Context) (string, error) {
+	f.presenceCalls.Add(1)
+	return "/usr/local/bin/muse", nil
+}
+
+func (f startupPresenceAgent) AuthStatus(context.Context) (ports.AgentAuthStatus, error) {
+	f.authCalls.Add(1)
+	return ports.AgentAuthStatusAuthorized, nil
+}
+
 func TestListReturnsInitialSupportedInventoryWithoutProbing(t *testing.T) {
 	probed := false
 	svc := NewWithAgents([]agentregistry.HarnessAgent{
@@ -331,6 +353,38 @@ func TestFindInstalledBinary_ResolvesWithoutRefreshingInventory(t *testing.T) {
 	}
 	if len(inventory.Installed) != 0 || len(inventory.Authorized) != 0 {
 		t.Fatalf("inventory = %#v, want no inventory/auth refresh", inventory)
+	}
+}
+
+func TestFindInstalledBinaryUsesPresenceResolverWithoutAuthOrNormalResolution(t *testing.T) {
+	var normalResolveCalls atomic.Int32
+	var presenceCalls atomic.Int32
+	var authCalls atomic.Int32
+	svc := NewWithAgents([]agentregistry.HarnessAgent{
+		{
+			Harness:  domain.AgentHarness("muse"),
+			Manifest: adapters.Manifest{ID: "muse", Name: "Muse"},
+			Agent: startupPresenceAgent{
+				fakeAgent:          fakeAgent{},
+				normalResolveCalls: &normalResolveCalls,
+				presenceCalls:      &presenceCalls,
+				authCalls:          &authCalls,
+			},
+		},
+	})
+
+	got, ok := svc.FindInstalledBinary(context.Background())
+	if !ok || got.ID != "muse" {
+		t.Fatalf("FindInstalledBinary() = (%#v, %v), want Muse", got, ok)
+	}
+	if got := presenceCalls.Load(); got != 1 {
+		t.Fatalf("presence resolver calls = %d, want 1", got)
+	}
+	if got := normalResolveCalls.Load(); got != 0 {
+		t.Fatalf("normal resolver calls = %d, want 0", got)
+	}
+	if got := authCalls.Load(); got != 0 {
+		t.Fatalf("auth calls = %d, want 0", got)
 	}
 }
 
