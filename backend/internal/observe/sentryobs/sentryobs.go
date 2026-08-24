@@ -77,6 +77,11 @@ func Init(cfg Config) error {
 // Enabled reports whether Sentry is active (a DSN was configured).
 func Enabled() bool { return enabled.Load() }
 
+// Disable turns capture back into a no-op. Every capture short-circuits on the
+// enabled flag, so this is sufficient to quiesce reporting without touching the
+// bound client. Symmetric with Init; used to restore a clean state in tests.
+func Disable() { enabled.Store(false) }
+
 func scrubEvent(event *sentry.Event) *sentry.Event {
 	event.Message = scrub(event.Message)
 	event.ServerName = "" // never leak the machine hostname
@@ -93,36 +98,70 @@ func scrubEvent(event *sentry.Event) *sentry.Event {
 	return event
 }
 
-// ShouldCaptureStatus reports whether an HTTP status is a genuine server fault
-// worth an issue. 5xx qualifies, except 503 (transient/retryable contention).
-func ShouldCaptureStatus(status int) bool {
-	return status >= http.StatusInternalServerError && status != http.StatusServiceUnavailable
+// BackpressureCode is the one 503 that is deliberate, retryable contention
+// rather than a fault: the daemon's SERVICE_UNAVAILABLE backpressure signal.
+// Every other 5xx — including typed 503 outages such as SCM_UNAVAILABLE,
+// BROWSER_RUNTIME_UNAVAILABLE, or DEVICE_REGISTRY_UNAVAILABLE — is a genuine
+// fault worth an issue.
+const BackpressureCode = "SERVICE_UNAVAILABLE"
+
+// ShouldCapture reports whether an HTTP status paired with its normalized daemon
+// error code is a genuine server fault worth an issue. 5xx qualifies, except a
+// 503 that carries the deliberate SERVICE_UNAVAILABLE backpressure code. A 503
+// with any other (or no) code is a real outage and is captured.
+func ShouldCapture(status int, errorCode string) bool {
+	if status < http.StatusInternalServerError {
+		return false
+	}
+	if status == http.StatusServiceUnavailable && errorCode == BackpressureCode {
+		return false
+	}
+	return true
+}
+
+// hubFromContext returns an isolated Sentry hub for this capture. The
+// package-level sentry.WithScope / sentry.CaptureException operate on the
+// process-global CurrentHub, whose scope stack is shared: two concurrent
+// requests can interleave push/callback/pop and stamp one request's tags,
+// fingerprint, and request id onto another's event. A hub carried on the
+// request context is used when present; otherwise the current hub is cloned so
+// each capture gets its own scope stack.
+func hubFromContext(ctx context.Context) *sentry.Hub {
+	if ctx != nil {
+		if hub := sentry.GetHubFromContext(ctx); hub != nil {
+			return hub
+		}
+	}
+	return sentry.CurrentHub().Clone()
 }
 
 // CaptureHTTPError captures a server-fault error with the given tags and a
-// fingerprint identical to the PostHog grouping key. No-op when disabled or the
-// error is nil.
-func CaptureHTTPError(_ context.Context, err error, tags map[string]string, fingerprint string) {
+// fingerprint identical to the PostHog grouping key, on a hub isolated to this
+// request. No-op when disabled or the error is nil.
+func CaptureHTTPError(ctx context.Context, err error, tags map[string]string, fingerprint string) {
 	if !enabled.Load() || err == nil {
 		return
 	}
-	sentry.WithScope(func(scope *sentry.Scope) {
+	hub := hubFromContext(ctx)
+	hub.WithScope(func(scope *sentry.Scope) {
 		scope.SetLevel(sentry.LevelError)
 		applyTags(scope, tags)
 		if fingerprint != "" {
 			scope.SetFingerprint([]string{fingerprint})
 		}
-		sentry.CaptureException(err)
+		hub.CaptureException(err)
 	})
 }
 
-// CapturePanic captures a recovered panic with its Go stack (as scrubbed extra)
-// at fatal level. No-op when disabled.
-func CapturePanic(_ context.Context, recovered any, stack string, tags map[string]string, fingerprint string) {
+// CapturePanic captures a recovered panic with its Go stack (as scrubbed
+// context) at fatal level, on a hub isolated to this request. No-op when
+// disabled.
+func CapturePanic(ctx context.Context, recovered any, stack string, tags map[string]string, fingerprint string) {
 	if !enabled.Load() {
 		return
 	}
-	sentry.WithScope(func(scope *sentry.Scope) {
+	hub := hubFromContext(ctx)
+	hub.WithScope(func(scope *sentry.Scope) {
 		scope.SetLevel(sentry.LevelFatal)
 		applyTags(scope, tags)
 		if stack != "" {
@@ -131,7 +170,7 @@ func CapturePanic(_ context.Context, recovered any, stack string, tags map[strin
 		if fingerprint != "" {
 			scope.SetFingerprint([]string{fingerprint})
 		}
-		sentry.CaptureException(fmt.Errorf("panic: %v", recovered))
+		hub.CaptureException(fmt.Errorf("panic: %v", recovered))
 	})
 }
 
