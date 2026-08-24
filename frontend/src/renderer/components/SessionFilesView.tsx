@@ -537,6 +537,7 @@ function FileAccordionList({
 	files,
 	onExpandedPathsChange,
 	revealFile,
+	section,
 	sessionId,
 	split,
 	wrap,
@@ -546,6 +547,7 @@ function FileAccordionList({
 	files: WorkspaceFileSummary[];
 	onExpandedPathsChange: (next: Set<string>) => void;
 	revealFile?: ReviewFileTarget;
+	section?: WorkspaceSectionKey;
 	sessionId: string;
 	split: boolean;
 	wrap: boolean;
@@ -580,6 +582,7 @@ function FileAccordionList({
 								? { line: revealFile.line, requestId: revealFile.requestId }
 								: undefined
 						}
+						section={section}
 						sessionId={sessionId}
 						split={split}
 						wrap={wrap}
@@ -661,6 +664,7 @@ function SectionedFileList({
 						onExpandedPathsChange={onExpandedPathsChange}
 						onToggleCollapsed={() => toggleSection(group.key)}
 						revealFile={revealFile}
+						section={group.key}
 						sessionId={sessionId}
 						split={split}
 						wrap={wrap}
@@ -681,6 +685,7 @@ function SectionGroup({
 	onExpandedPathsChange,
 	onToggleCollapsed,
 	revealFile,
+	section,
 	sessionId,
 	split,
 	wrap,
@@ -694,6 +699,7 @@ function SectionGroup({
 	onExpandedPathsChange: (next: Set<string>) => void;
 	onToggleCollapsed: () => void;
 	revealFile?: ReviewFileTarget;
+	section: WorkspaceSectionKey;
 	sessionId: string;
 	split: boolean;
 	wrap: boolean;
@@ -725,6 +731,7 @@ function SectionGroup({
 						files={files}
 						onExpandedPathsChange={onExpandedPathsChange}
 						revealFile={revealFile}
+						section={section}
 						sessionId={sessionId}
 						split={split}
 						wrap={wrap}
@@ -787,6 +794,7 @@ function ReviewFileCard({
 	expanded,
 	file,
 	revealLine,
+	section,
 	sessionId,
 	split,
 	wrap,
@@ -795,6 +803,7 @@ function ReviewFileCard({
 	expanded: boolean;
 	file: WorkspaceFileSummary;
 	revealLine?: ReviewLineTarget;
+	section?: WorkspaceSectionKey;
 	sessionId: string;
 	split: boolean;
 	wrap: boolean;
@@ -805,9 +814,12 @@ function ReviewFileCard({
 	// out from under them and blow away the browser's native selection.
 	const [selectionOrMenuActive, setSelectionOrMenuActive] = useState(false);
 	const detailQuery = useQuery({
-		queryKey: ["session-workspace-file", sessionId, file.path],
+		// section is part of the key: a partially staged file has one row under
+		// Staged and another under Unstaged, and each must resolve its own diff
+		// rather than sharing a cache entry keyed on path alone.
+		queryKey: ["session-workspace-file", sessionId, file.path, section],
 		enabled: expanded && !selectionOrMenuActive,
-		queryFn: () => loadWorkspaceFile(sessionId, file.path, t),
+		queryFn: () => loadWorkspaceFile(sessionId, file.path, section, t),
 	});
 
 	return (
@@ -912,9 +924,9 @@ function emptyDiffMessage(compareMode: WorkspaceCompareMode | undefined, t: TFun
 	return compareMode === "base" ? t("files.noChangesBase") : t("files.noChangesHead");
 }
 
-async function loadWorkspaceFile(sessionId: string, path: string, t: TFunction) {
+async function loadWorkspaceFile(sessionId: string, path: string, section: WorkspaceSectionKey | undefined, t: TFunction) {
 	const { data, error } = await apiClient.GET("/api/v1/sessions/{sessionId}/workspace/file", {
-		params: { path: { sessionId }, query: { path } },
+		params: { path: { sessionId }, query: { path, section } },
 	});
 	if (error) throw new Error(apiErrorMessage(error, t("files.error.loadWorkspaceFile")));
 	if (!data) throw new Error(t("files.error.emptyResponse"));

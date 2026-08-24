@@ -1343,6 +1343,62 @@ describe("SessionFilesView", () => {
 			expect(screen.getAllByText("README.md").length).toBeGreaterThanOrEqual(2);
 		});
 
+		it("requests and renders each section's own diff for a partially staged file", async () => {
+			getMock.mockImplementation(async (path: string, options?: unknown) => {
+				if (path === "/api/v1/sessions/{sessionId}/workspace/files") return sectionedWorkspaceFilesResponse();
+				if (path === "/api/v1/sessions/{sessionId}/workspace/file") {
+					const query = (options as { params?: { query?: { path?: string; section?: string } } }).params?.query;
+					const diff =
+						query?.section === "staged"
+							? "@@ -1,1 +1,2 @@\n context line\n+only in staged\n"
+							: "@@ -1,1 +1,2 @@\n context line\n+only in unstaged\n";
+					return {
+						data: {
+							sessionId: "sess-1",
+							path: query?.path ?? "README.md",
+							status: "modified",
+							additions: 1,
+							deletions: 0,
+							size: 80,
+							binary: false,
+							deleted: false,
+							content: "context line\n",
+							contentTruncated: false,
+							diff,
+							diffTruncated: false,
+							compareBaseSha: "base-sha",
+							compareBaseRef: "main",
+							compareMode: "base",
+						},
+					};
+				}
+				return { data: undefined };
+			});
+
+			renderWithQuery(<SessionFilesView sessionId="sess-1" />);
+
+			// README.md is partially staged, so it has one row under Staged and
+			// another under Unstaged; clicking either expands both (they share
+			// expand/collapse state by path). What must NOT happen is what the
+			// pre-fix combined diff did: each row still resolves and renders its
+			// own section-scoped diff rather than one shared base..worktree diff.
+			const [stagedRow] = await screen.findAllByRole("button", { name: "Expand README.md" });
+			await userEvent.click(stagedRow);
+
+			await waitFor(() =>
+				expect(getMock).toHaveBeenCalledWith("/api/v1/sessions/{sessionId}/workspace/file", {
+					params: { path: { sessionId: "sess-1" }, query: { path: "README.md", section: "staged" } },
+				}),
+			);
+			await waitFor(() =>
+				expect(getMock).toHaveBeenCalledWith("/api/v1/sessions/{sessionId}/workspace/file", {
+					params: { path: { sessionId: "sess-1" }, query: { path: "README.md", section: "unstaged" } },
+				}),
+			);
+			expect(await screen.findByText(diffLine("only in staged"))).toBeInTheDocument();
+			expect(await screen.findByText(diffLine("only in unstaged"))).toBeInTheDocument();
+		});
+
 		it("shows the workspace summary and ahead/behind counts in the header", async () => {
 			getMock.mockImplementation(async (path: string) => {
 				if (path === "/api/v1/sessions/{sessionId}/workspace/files") return sectionedWorkspaceFilesResponse();

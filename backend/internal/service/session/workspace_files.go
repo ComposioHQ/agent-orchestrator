@@ -91,6 +91,19 @@ type WorkspaceFileSections struct {
 	Committed []WorkspaceFileSummary
 }
 
+// WorkspaceFileSection identifies which of WorkspaceFileSections a
+// GetWorkspaceFile request's diff should be scoped to. A partially staged
+// file has independent staged and unstaged diffs, so the caller must say
+// which one it opened.
+type WorkspaceFileSection string
+
+const (
+	WorkspaceFileSectionStaged    WorkspaceFileSection = "staged"
+	WorkspaceFileSectionUnstaged  WorkspaceFileSection = "unstaged"
+	WorkspaceFileSectionUntracked WorkspaceFileSection = "untracked"
+	WorkspaceFileSectionCommitted WorkspaceFileSection = "committed"
+)
+
 // CommitSummary is one commit between the compare base and HEAD.
 type CommitSummary struct {
 	SHA       string
@@ -238,8 +251,11 @@ func (s *Service) ListWorkspaceFiles(ctx context.Context, id domain.SessionID) (
 }
 
 // GetWorkspaceFile returns one session-worktree file's current text content and
-// the git diff for that path. Binary or deleted files omit content.
-func (s *Service) GetWorkspaceFile(ctx context.Context, id domain.SessionID, rawPath string) (WorkspaceFileDetail, error) {
+// the git diff for that path. Binary or deleted files omit content. section
+// scopes the diff to the git-state section the caller opened the file from
+// (see WorkspaceFileSection) since a partially staged file's staged and
+// unstaged changes are different diffs.
+func (s *Service) GetWorkspaceFile(ctx context.Context, id domain.SessionID, rawPath string, section WorkspaceFileSection) (WorkspaceFileDetail, error) {
 	target, err := s.resolveWorkspaceFileTarget(ctx, id, rawPath)
 	if err != nil {
 		return WorkspaceFileDetail{}, err
@@ -247,7 +263,7 @@ func (s *Service) GetWorkspaceFile(ctx context.Context, id domain.SessionID, raw
 	if target.scratch {
 		return scratchWorkspaceFile(target.root, id, target.rel)
 	}
-	return workspaceFileDetail(ctx, id, target.root, target.prefix, target.rel, target.compare, target.changes)
+	return workspaceFileDetail(ctx, id, target.root, target.prefix, target.rel, section, target.compare, target.changes)
 }
 
 // workspaceFileTarget is one resolved workspace path: the worktree that owns
@@ -949,7 +965,7 @@ func (s *Service) resolveWorkspaceChanges(
 	return entry.compare, entry.changes, nil
 }
 
-func workspaceFileDetail(ctx context.Context, id domain.SessionID, root, prefix, rel string, compare workspaceCompareTarget, changes workspaceChangeSet) (WorkspaceFileDetail, error) {
+func workspaceFileDetail(ctx context.Context, id domain.SessionID, root, prefix, rel string, section WorkspaceFileSection, compare workspaceCompareTarget, changes workspaceChangeSet) (WorkspaceFileDetail, error) {
 	status := changes.statuses[rel]
 	if status == "" {
 		status = WorkspaceFileUnmodified
@@ -986,7 +1002,7 @@ func workspaceFileDetail(ctx context.Context, id domain.SessionID, root, prefix,
 	}
 	detail.ImageMediaType = workspaceImageDetailMediaType(rel, detail.Binary, detail.Deleted)
 	_, untracked := changes.untracked[rel]
-	diff, truncated, err := workspaceFileDiff(ctx, root, compare.gitBase(), rel, status, previousPath, detail.Content, detail.Binary, untracked)
+	diff, truncated, err := workspaceFileDiff(ctx, root, compare.gitBase(), rel, status, section, previousPath, detail.Content, detail.Binary, untracked)
 	if err != nil {
 		return WorkspaceFileDetail{}, err
 	}
@@ -1798,7 +1814,7 @@ func workspaceFileSizeAndBinary(root, rel string, status WorkspaceFileStatus) (i
 	return info.Size(), binary
 }
 
-func workspaceFileDiff(ctx context.Context, root, base, rel string, status WorkspaceFileStatus, previousPath, content string, binary, untracked bool) (string, bool, error) {
+func workspaceFileDiff(ctx context.Context, root, base, rel string, status WorkspaceFileStatus, section WorkspaceFileSection, previousPath, content string, binary, untracked bool) (string, bool, error) {
 	if status == WorkspaceFileUnmodified {
 		return "", false, nil
 	}
@@ -1810,7 +1826,20 @@ func workspaceFileDiff(ctx context.Context, root, base, rel string, status Works
 		truncatedDiff, truncated := truncateUTF8(diff, maxWorkspaceDiffBytes)
 		return truncatedDiff, truncated, nil
 	}
-	args := []string{"diff", "--no-ext-diff", "--find-renames", "--unified=3", base, "--"}
+	// staged mirrors the `--cached` diff sections.Staged is built from (index
+	// vs HEAD); unstaged mirrors the bare diff sections.Unstaged is built from
+	// (worktree vs index). Anything else falls back to base..worktree, the
+	// combined change shown before per-section diffs existed.
+	args := []string{"diff", "--no-ext-diff", "--find-renames", "--unified=3"}
+	switch section {
+	case WorkspaceFileSectionStaged:
+		args = append(args, "--cached")
+	case WorkspaceFileSectionUnstaged:
+		// No revision arg: worktree vs index.
+	default:
+		args = append(args, base)
+	}
+	args = append(args, "--")
 	if status == WorkspaceFileRenamed && previousPath != "" {
 		args = append(args, previousPath)
 	}

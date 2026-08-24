@@ -138,6 +138,12 @@ type CleanupSessionsQuery struct {
 // WorkspaceFileQuery is the query string accepted by GET /api/v1/sessions/{sessionId}/workspace/file.
 type WorkspaceFileQuery struct {
 	Path string `query:"path" description:"Session-worktree-relative file path."`
+	// Section scopes the diff to one git-state section (see WorkspaceFileSections):
+	// staged compares the index against HEAD, unstaged compares the worktree
+	// against the index. A file can carry independent changes in both. Omit (or
+	// pass committed/untracked) to diff the worktree against the compare base,
+	// as before this field existed.
+	Section string `query:"section,omitempty" enum:"committed,staged,unstaged,untracked" description:"Git-state section the file was opened from (see WorkspaceFileSections). staged diffs the index against HEAD; unstaged diffs the worktree against the index; omitted/committed/untracked diff the worktree against the compare base."`
 }
 
 // WorkspaceFileBlobQuery is the query string accepted by GET /api/v1/sessions/{sessionId}/workspace/file/blob.

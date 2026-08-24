@@ -33,35 +33,36 @@ import (
 )
 
 type fakeSessionService struct {
-	sessions            map[domain.SessionID]domain.Session
-	sent                string
-	sentAttachment      *ports.SpawnAttachment
-	delegationInput     sessionsvc.DelegateTaskInput
-	delegationErr       error
-	cleanupProjects     []domain.ProjectID
-	cleanupResult       []domain.SessionID
-	cleanupSkipped      []sessionsvc.CleanupSkipped
-	workspaceFiles      sessionsvc.WorkspaceFiles
-	workspaceFile       sessionsvc.WorkspaceFileDetail
-	workspaceBlob       sessionsvc.WorkspaceFileBlob
-	workspacePaths      []string
-	spawnErr            error
-	lastSpawn           ports.SpawnConfig
-	orchestratorMode    domain.SessionMode
-	claimErr            error
-	listPRErr           error
-	workspaceErr        error
-	staged              []ports.SpawnAttachment
-	stagedPaths         []string
-	stageErr            error
-	agentSwitches       map[domain.AgentSwitchID]domain.AgentSwitch
-	switchConfig        sessionsvc.SwitchAgentInput
-	switchErr           error
-	recoveredSwitch     domain.AgentSwitchID
-	handoff             json.RawMessage
-	handoffSource       domain.AgentGenerationID
-	autoInjectCISession domain.SessionID
-	autoInjectCIEnabled bool
+	sessions             map[domain.SessionID]domain.Session
+	sent                 string
+	sentAttachment       *ports.SpawnAttachment
+	delegationInput      sessionsvc.DelegateTaskInput
+	delegationErr        error
+	cleanupProjects      []domain.ProjectID
+	cleanupResult        []domain.SessionID
+	cleanupSkipped       []sessionsvc.CleanupSkipped
+	workspaceFiles       sessionsvc.WorkspaceFiles
+	workspaceFile        sessionsvc.WorkspaceFileDetail
+	workspaceFileSection sessionsvc.WorkspaceFileSection
+	workspaceBlob        sessionsvc.WorkspaceFileBlob
+	workspacePaths       []string
+	spawnErr             error
+	lastSpawn            ports.SpawnConfig
+	orchestratorMode     domain.SessionMode
+	claimErr             error
+	listPRErr            error
+	workspaceErr         error
+	staged               []ports.SpawnAttachment
+	stagedPaths          []string
+	stageErr             error
+	agentSwitches        map[domain.AgentSwitchID]domain.AgentSwitch
+	switchConfig         sessionsvc.SwitchAgentInput
+	switchErr            error
+	recoveredSwitch      domain.AgentSwitchID
+	handoff              json.RawMessage
+	handoffSource        domain.AgentGenerationID
+	autoInjectCISession  domain.SessionID
+	autoInjectCIEnabled  bool
 }
 
 type fakeInterfaceTransitionSessionService struct {
@@ -559,7 +560,8 @@ func (f *fakeSessionService) WorkspaceWatchPaths(_ context.Context, id domain.Se
 	return []string{session.Metadata.WorkspacePath}, nil
 }
 
-func (f *fakeSessionService) GetWorkspaceFile(_ context.Context, id domain.SessionID, path string) (sessionsvc.WorkspaceFileDetail, error) {
+func (f *fakeSessionService) GetWorkspaceFile(_ context.Context, id domain.SessionID, path string, section sessionsvc.WorkspaceFileSection) (sessionsvc.WorkspaceFileDetail, error) {
+	f.workspaceFileSection = section
 	if f.workspaceErr != nil {
 		return sessionsvc.WorkspaceFileDetail{}, f.workspaceErr
 	}
@@ -2206,6 +2208,26 @@ func TestSessionsAPI_GetWorkspaceFile(t *testing.T) {
 	}
 	if got.PreviousPath != "README.old.md" || got.CompareMode != "base" || got.CompareBaseSHA != "base-sha" || got.CompareBaseRef != "main" {
 		t.Fatalf("workspace file metadata = %#v", got)
+	}
+}
+
+// TestSessionsAPI_GetWorkspaceFileSection verifies the section query param
+// reaches the service unchanged, so a staged-section request and an
+// unstaged-section request for the same path resolve to different diffs
+// instead of colliding on one combined base..worktree diff.
+func TestSessionsAPI_GetWorkspaceFileSection(t *testing.T) {
+	svc := newFakeSessionService()
+	srv := newSessionTestServer(t, svc)
+
+	for _, section := range []sessionsvc.WorkspaceFileSection{sessionsvc.WorkspaceFileSectionStaged, sessionsvc.WorkspaceFileSectionUnstaged} {
+		body, status, _ := doRequest(t, srv, "GET",
+			"/api/v1/sessions/ao-1/workspace/file?path="+url.QueryEscape("README.md")+"&section="+string(section), "")
+		if status != http.StatusOK {
+			t.Fatalf("section=%s: GET workspace file = %d, want 200; body=%s", section, status, body)
+		}
+		if svc.workspaceFileSection != section {
+			t.Fatalf("section=%s: service received section %q", section, svc.workspaceFileSection)
+		}
 	}
 }
 
