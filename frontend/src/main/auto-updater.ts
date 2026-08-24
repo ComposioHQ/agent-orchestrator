@@ -278,18 +278,27 @@ async function fetchLatestCompletedNightlyTag(
   }
 }
 
+function usesDirectNightlyFeed(
+  settings: Pick<UpdateSettings, "channel" | "feature">,
+): boolean {
+  return settings.channel === "nightly" && settings.feature === null;
+}
+
 /**
- * Point one manual Nightly check directly at the newest completed release.
+ * Point one Nightly check directly at the newest completed release. Applies to
+ * automatic checks as well as manual ones: an atom feed that lags a fresh
+ * release makes a background check answer "not-available" and the install goes
+ * silently stale, and an entry whose manifest has not finished uploading 404s
+ * a check whose error the automatic path deliberately swallows — in both cases
+ * the sidebar never learns an update exists.
  * The returned reset restores the normal GitHub provider for later background
  * checks; electron-updater retains the direct provider with the discovered
  * update, so a subsequent Download action still uses the correct asset URLs.
  */
-async function configureDirectManualNightlyFeed(
+async function configureDirectNightlyFeed(
   settings: UpdateSettings,
 ): Promise<(() => void) | undefined> {
-  if (settings.channel !== "nightly" || settings.feature !== null) {
-    return undefined;
-  }
+  if (!usesDirectNightlyFeed(settings)) return undefined;
   const coordinates = await readAppUpdateYml();
   if (!coordinates) return undefined;
   const tag = await fetchLatestCompletedNightlyTag(
@@ -730,6 +739,11 @@ async function runAutomaticUpdateCheck(
       configureFeed(settings);
       autoUpdater.autoDownload = true;
       applyInstallOnQuitPolicy();
+      // Only nightly resolves a direct feed. Skipping the await entirely on the
+      // other channels keeps this check's event ordering exactly as it was.
+      const restoreFeed = usesDirectNightlyFeed(settings)
+        ? await configureDirectNightlyFeed(settings)
+        : undefined;
       try {
         const result = await autoUpdater.checkForUpdates();
         if (result?.downloadPromise) await result.downloadPromise;
@@ -742,6 +756,11 @@ async function runAutomaticUpdateCheck(
         recordAutomaticCheckFailure(err);
         restoreAutomaticCheckPreviousStatus();
         throw err;
+      } finally {
+        // After the download too: the staged build is already resolved against
+        // the direct provider, and later background checks start from the
+        // normal GitHub feed again.
+        restoreFeed?.();
       }
     });
   } catch (err) {
@@ -876,7 +895,7 @@ export async function checkForUpdatesNow(
         autoUpdater.autoDownload = false;
         applyInstallOnQuitPolicy();
         broadcastUpdaterStatus({ state: "checking" });
-        const restoreFeed = await configureDirectManualNightlyFeed(settings);
+        const restoreFeed = await configureDirectNightlyFeed(settings);
         try {
           await autoUpdater.checkForUpdates();
         } finally {

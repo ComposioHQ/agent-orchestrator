@@ -1104,17 +1104,44 @@ function CloudAccountRailButton({ tabIndex }: { tabIndex: number }) {
 	);
 }
 
-// UpdateStatusRow makes automatic update activity visible before the build is
-// staged, then becomes the existing restart action once installation is ready.
-// Idle/checking states stay quiet so routine background checks do not flash in
-// the sidebar.
+// UpdateStatusRow makes update activity visible and actionable from the
+// sidebar: an available build downloads on click, progress reports itself, and
+// a staged build becomes the restart action. Idle/checking states stay quiet so
+// routine background checks do not flash in the sidebar.
 function UpdateStatusRow({ status, tabIndex }: { status: UpdateStatus; tabIndex: number }) {
 	const { t } = useTranslation();
-	if (status.state === "available" || status.state === "downloading") {
-		const label =
-			status.state === "available"
-				? t("settings.updates.available", { version: status.version ? ` (v${status.version})` : "" })
-				: t("settings.updates.downloading", { percent: status.percent ?? 0 });
+	if (status.state === "available") {
+		// A manual check leaves autoDownload off, so without this the row would
+		// announce an update and offer nothing to act on.
+		return (
+			<button
+				aria-label={
+					status.version
+						? t("shell.downloadUpdateVersion", { version: status.version })
+						: t("shell.downloadUpdate")
+				}
+				className={cn(
+					"flex w-full items-center gap-2.5 rounded-lg p-2.5 text-left text-control font-medium transition-colors",
+					"text-passive hover:bg-interactive-hover hover:text-foreground [&_svg]:text-passive",
+				)}
+				onClick={() => void aoBridge.updates.download()}
+				tabIndex={tabIndex}
+				type="button"
+			>
+				<Download aria-hidden="true" className="size-icon-lg shrink-0" />
+				<span className="min-w-0 flex-1">
+					<span className="block truncate tracking-tight">{t("shell.updateAvailable")}</span>
+					{status.version && (
+						<span className="block truncate text-caption font-normal text-passive">
+							{t("shell.versionAvailable", { version: status.version })}
+						</span>
+					)}
+				</span>
+				<span aria-hidden="true" className="h-1.5 w-1.5 shrink-0 rounded-full bg-passive" />
+			</button>
+		);
+	}
+	if (status.state === "downloading") {
 		return (
 			<div
 				aria-live="polite"
@@ -1122,8 +1149,8 @@ function UpdateStatusRow({ status, tabIndex }: { status: UpdateStatus; tabIndex:
 				role="status"
 			>
 				<Download aria-hidden="true" className="size-icon-lg shrink-0" />
-				<span className={cn("min-w-0 flex-1 truncate", status.state === "downloading" && "tabular-nums")}>
-					{label}
+				<span className="min-w-0 flex-1 truncate tabular-nums">
+					{t("settings.updates.downloading", { percent: status.percent ?? 0 })}
 				</span>
 			</div>
 		);
@@ -1164,15 +1191,35 @@ function UpdateStatusRow({ status, tabIndex }: { status: UpdateStatus; tabIndex:
 	);
 }
 
-// Icon-rail variant of UpdateStatusRow. Pre-download states are informational;
-// only a staged update becomes a button.
+// Icon-rail variant of UpdateStatusRow. An available build downloads on click
+// and a staged one installs; an in-flight download is informational.
 function UpdateStatusRail({ status, tabIndex }: { status: UpdateStatus; tabIndex: number }) {
 	const { t } = useTranslation();
-	if (status.state === "available" || status.state === "downloading") {
-		const label =
-			status.state === "available"
-				? t("settings.updates.available", { version: status.version ? ` (v${status.version})` : "" })
-				: t("settings.updates.downloading", { percent: status.percent ?? 0 });
+	if (status.state === "available") {
+		const label = t("settings.updates.available", { version: status.version ? ` (v${status.version})` : "" });
+		return (
+			<Tooltip>
+				<TooltipTrigger asChild>
+					<button
+						aria-label={
+							status.version
+								? t("shell.downloadUpdateVersion", { version: status.version })
+								: t("shell.downloadUpdate")
+						}
+						className="grid size-9 place-items-center rounded-lg text-passive transition-colors hover:bg-interactive-hover hover:text-foreground [&_svg]:size-4"
+						onClick={() => void aoBridge.updates.download()}
+						tabIndex={tabIndex}
+						type="button"
+					>
+						<Download aria-hidden="true" />
+					</button>
+				</TooltipTrigger>
+				<TooltipContent side="right">{label}</TooltipContent>
+			</Tooltip>
+		);
+	}
+	if (status.state === "downloading") {
+		const label = t("settings.updates.downloading", { percent: status.percent ?? 0 });
 		return (
 			<Tooltip>
 				<TooltipTrigger asChild>

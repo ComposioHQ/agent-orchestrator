@@ -22,7 +22,17 @@ import type { WorkspaceSession, WorkspaceSummary } from "../types/workspace";
 import { agentsQueryKey } from "../hooks/useAgentsQuery";
 import { useUiStore } from "../stores/ui-store";
 
-const { cloudSessionState, getMock, navigateMock, mockParams, renameSessionMock, spawnMock, updateStatusMock, commandPaletteEnabled } = vi.hoisted(
+const {
+	cloudSessionState,
+	downloadUpdateMock,
+	getMock,
+	navigateMock,
+	mockParams,
+	renameSessionMock,
+	spawnMock,
+	updateStatusMock,
+	commandPaletteEnabled,
+} = vi.hoisted(
 	() => ({
 		cloudSessionState: {
 			configured: false,
@@ -37,6 +47,7 @@ const { cloudSessionState, getMock, navigateMock, mockParams, renameSessionMock,
 		renameSessionMock: vi.fn().mockResolvedValue(undefined),
 		spawnMock: vi.fn(),
 		updateStatusMock: vi.fn(),
+		downloadUpdateMock: vi.fn(),
 		commandPaletteEnabled: { current: true },
 	}),
 );
@@ -65,7 +76,7 @@ vi.mock("../lib/bridge", async (importOriginal) => {
 	return {
 		aoBridge: {
 			...actual.aoBridge,
-			updates: { ...actual.aoBridge.updates, getStatus: updateStatusMock },
+			updates: { ...actual.aoBridge.updates, getStatus: updateStatusMock, download: downloadUpdateMock },
 		},
 	};
 });
@@ -277,6 +288,7 @@ beforeEach(() => {
 	renameSessionMock.mockReset().mockResolvedValue(undefined);
 	spawnMock.mockReset();
 	updateStatusMock.mockReset().mockResolvedValue({ state: "idle" });
+	downloadUpdateMock.mockReset().mockResolvedValue(undefined);
 	mockParams.projectId = undefined;
 	mockParams.sessionId = undefined;
 });
@@ -1623,13 +1635,20 @@ describe("Sidebar", () => {
 		expect(screen.queryByLabelText("Open merged terminated task")).not.toBeInTheDocument();
 	});
 
-	it("shows update activity before an available update finishes downloading", async () => {
+	it("downloads the update when the available row is clicked", async () => {
 		updateStatusMock.mockResolvedValue({ state: "available", version: "9.9.9" });
 		renderSidebar();
 
-		await waitFor(() => expect(updateStatusMock).toHaveBeenCalled());
-		expect(screen.getByText("Update available (v9.9.9).")).toBeInTheDocument();
+		// Both footer variants (expanded row and collapsed rail icon) are mounted.
+		const buttons = await screen.findAllByLabelText("Download update v9.9.9");
+		expect(buttons.length).toBeGreaterThan(0);
+		expect(screen.getByText("Update available")).toBeInTheDocument();
+		expect(screen.getByText("v9.9.9 available")).toBeInTheDocument();
+		// Nothing is staged yet, so the restart action must not be offered.
 		expect(screen.queryByLabelText(/Restart to install update/)).not.toBeInTheDocument();
+
+		await userEvent.click(buttons[0]);
+		expect(downloadUpdateMock).toHaveBeenCalledTimes(1);
 	});
 
 	it("keeps showing update activity while the automatic download is in progress", async () => {
@@ -1639,6 +1658,8 @@ describe("Sidebar", () => {
 		await waitFor(() => expect(updateStatusMock).toHaveBeenCalled());
 		expect(screen.getByText("Downloading… 42%")).toBeInTheDocument();
 		expect(screen.queryByLabelText(/Restart to install update/)).not.toBeInTheDocument();
+		// A download already in flight must not offer a second one.
+		expect(screen.queryByLabelText(/Download update/)).not.toBeInTheDocument();
 	});
 
 	it("renders the restart-to-update row with the working-orange treatment when escalated", async () => {

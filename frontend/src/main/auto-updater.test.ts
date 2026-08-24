@@ -327,6 +327,85 @@ describe("startAutoUpdates", () => {
     }
   });
 
+  it("automatic nightly checks resolve the newest completed release without the Atom feed", async () => {
+    const platformManifest =
+      process.platform === "darwin"
+        ? "nightly-mac.yml"
+        : process.platform === "linux"
+          ? "nightly-linux.yml"
+          : "nightly.yml";
+    const resourcesPath = mkdtempSync(
+      nodePath.join(os.tmpdir(), "ao-nightly-feed-"),
+    );
+    writeFileSync(
+      nodePath.join(resourcesPath, "app-update.yml"),
+      "provider: github\nowner: Untrivial-ai\nrepo: agent-orchestrator\n",
+    );
+    const originalResourcesPath = Object.getOwnPropertyDescriptor(
+      process,
+      "resourcesPath",
+    );
+    Object.defineProperty(process, "resourcesPath", {
+      configurable: true,
+      value: resourcesPath,
+    });
+    // The newest entry is still uploading its manifest: the Atom feed would
+    // point electron-updater at it and 404, and the automatic path swallows
+    // that error, so the install would go silently stale (no sidebar row).
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify([
+          {
+            tag_name: "v1.0.1-nightly.202608231518",
+            draft: false,
+            prerelease: true,
+            assets: [{ name: "Agent.Orchestrator.dmg" }],
+          },
+          {
+            tag_name: "v1.0.1-nightly.202608231517",
+            draft: false,
+            prerelease: true,
+            assets: [{ name: platformManifest }],
+          },
+        ]),
+        { status: 200 },
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    try {
+      const { module, autoUpdater } = await importAutoUpdater({
+        enabled: true,
+        channel: "nightly",
+        nightlyAck: true,
+        feature: null,
+      });
+
+      await module.startAutoUpdates(stateDir);
+
+      expect(autoUpdater.setFeedURL).toHaveBeenNthCalledWith(1, {
+        provider: "generic",
+        url: "https://github.com/Untrivial-ai/agent-orchestrator/releases/download/v1.0.1-nightly.202608231517",
+        channel: "nightly",
+        useMultipleRangeRequest: false,
+      });
+      expect(autoUpdater.checkForUpdates).toHaveBeenCalledTimes(1);
+      // Later background checks start from the normal provider again.
+      expect(autoUpdater.setFeedURL).toHaveBeenNthCalledWith(2, {
+        provider: "github",
+        owner: "Untrivial-ai",
+        repo: "agent-orchestrator",
+      });
+    } finally {
+      if (originalResourcesPath) {
+        Object.defineProperty(process, "resourcesPath", originalResourcesPath);
+      } else {
+        Reflect.deleteProperty(process, "resourcesPath");
+      }
+      rmSync(resourcesPath, { recursive: true, force: true });
+    }
+  });
+
   it("schedules only feature-pin retirement polling when automatic updates are disabled", async () => {
     vi.useFakeTimers();
     const setIntervalSpy = vi.spyOn(globalThis, "setInterval");
