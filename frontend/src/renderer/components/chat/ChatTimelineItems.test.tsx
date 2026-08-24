@@ -8,6 +8,11 @@ describe("TurnOutcome", () => {
 		expect(screen.getByText("Outcome unknown")).toBeInTheDocument();
 		expect(screen.queryByText("Done")).not.toBeInTheDocument();
 	});
+
+	it("renders a daemon-reported state this build does not recognize instead of crashing", () => {
+		render(<TurnOutcome state="orphaned" />);
+		expect(screen.getByText("orphaned")).toBeInTheDocument();
+	});
 });
 
 describe("ActivityRow", () => {
