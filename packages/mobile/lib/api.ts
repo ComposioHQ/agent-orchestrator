@@ -320,8 +320,9 @@ async function req(cfg: ServerConfig, path: string, init?: RequestInit, timeoutM
 		} catch {
 			/* ignore */
 		}
-		// Server answered with an error: classify by status + daemon code.
-		captureMobileApiError(path, httpCategory(res.status), res.status, code);
+		// Server answered with an error: classify by status + daemon code, and tag
+		// the requestId so a mobile event pivots to the daemon's own capture.
+		captureMobileApiError(path, httpCategory(res.status), res.status, code, requestId);
 		throw new ApiError(
 			res.status,
 			`${res.status} ${res.statusText}${detail ? ` - ${detail}` : ""}`,

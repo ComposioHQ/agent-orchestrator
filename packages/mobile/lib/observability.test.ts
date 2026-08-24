@@ -30,6 +30,26 @@ describe("classifyError — severity + owner", () => {
 		}
 	});
 
+	it("daemon 503 backpressure is a breadcrumb, not a paged issue", () => {
+		for (const meta of [
+			{ code: "SERVICE_UNAVAILABLE", httpStatus: 503 },
+			{ category: "http_5xx", code: "SERVICE_UNAVAILABLE", httpStatus: 503 },
+			{ category: "http_5xx", httpStatus: 503 },
+		]) {
+			const t = classifyError(meta);
+			expect(t.transient).toBe(true);
+			expect(t.report).toBe(false);
+			expect(t.severity).toBe("P2");
+		}
+	});
+
+	it("a genuinely unreachable daemon (503 synthetic) still pages as P1", () => {
+		const t = classifyError({ category: "daemon_unavailable", httpStatus: 503 });
+		expect(t.severity).toBe("P1");
+		expect(t.owner).toBe("environment");
+		expect(t.report).toBe(true);
+	});
+
 	it("validation / 4xx / not_found ride as P3 breadcrumbs", () => {
 		expect(classifyError({ category: "validation" })).toMatchObject({ severity: "P3", owner: "user", report: false });
 		expect(classifyError({ category: "http_4xx" })).toMatchObject({ severity: "P3", report: false });

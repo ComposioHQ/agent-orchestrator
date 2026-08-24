@@ -112,7 +112,7 @@ export async function initMobileSentry(context: MobileObservabilityContext = {})
 	}
 }
 
-type CaptureMeta = ClassifyInput & { operation?: string; surface?: string; domain?: string };
+type CaptureMeta = ClassifyInput & { operation?: string; surface?: string; domain?: string; requestId?: string };
 
 function tagsFor(meta: CaptureMeta, triage: Triage) {
 	return {
@@ -124,6 +124,8 @@ function tagsFor(meta: CaptureMeta, triage: Triage) {
 		code: meta.code,
 		http_status: meta.httpStatus,
 		apierr_kind: meta.kind,
+		// Correlates with the daemon's own request_id tag on the matching capture.
+		request_id: meta.requestId,
 		severity: triage.severity,
 		owner: triage.owner,
 		daemon_version: ctx.daemonVersion,
@@ -149,13 +151,19 @@ export function captureMobileException(error: unknown, meta: CaptureMeta = {}): 
 }
 
 /** Capture a classified API failure from the mobile request helper. */
-export function captureMobileApiError(path: string, category: string, status?: number, code?: string): void {
+export function captureMobileApiError(
+	path: string,
+	category: string,
+	status?: number,
+	code?: string,
+	requestId?: string,
+): void {
 	if (!sentry) return;
 	const template = normalizePath(path.split("?")[0]);
 	// domain = first meaningful path segment (…/api/v1/<domain>/…)
 	const parts = template.split("/").filter(Boolean);
 	const domain = parts.includes("v1") ? parts[parts.indexOf("v1") + 1] : parts[0];
-	const meta: CaptureMeta = { operation: template, domain, category, httpStatus: status, code };
+	const meta: CaptureMeta = { operation: template, domain, category, httpStatus: status, code, requestId };
 	const triage = classifyError(meta);
 	const tags = tagsFor(meta, triage);
 	if (triage.report) sentry.captureMessage(`${meta.operation} failed: ${category}${status ? ` (${status})` : ""}`, { level: triage.level, tags });
