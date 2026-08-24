@@ -1,5 +1,6 @@
 import { Plus } from "lucide-react";
 import { useTranslation } from "react-i18next";
+import { useNavigate } from "@tanstack/react-router";
 import { useShell } from "../lib/shell-context";
 import { CreateProjectFlow } from "./CreateProjectFlow";
 import { TopbarButton } from "./TopbarButton";
@@ -10,6 +11,7 @@ import { OrchestratorIcon } from "./icons";
 // with no worker sessions yet (`ProjectBoardEmpty`).
 export function BoardWelcome() {
 	const { cloneProject, createProject, initializeProjectRepository } = useShell();
+	const navigate = useNavigate();
 	return (
 		<WelcomePanel>
 			<div
@@ -22,6 +24,7 @@ export function BoardWelcome() {
 					onCloneProject={cloneProject}
 					onCreateProject={createProject}
 					onInitializeProject={initializeProjectRepository}
+					onOpenCloudProject={() => void navigate({ to: "/cloud" })}
 				/>
 			</div>
 		</WelcomePanel>

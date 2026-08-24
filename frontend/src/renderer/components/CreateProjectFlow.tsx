@@ -5,6 +5,7 @@ import {
 	ArrowRight,
 	CheckCircle2,
 	ChevronRight,
+	Cloud,
 	Folder,
 	FolderOpen,
 	FolderPlus,
@@ -21,6 +22,7 @@ import type { ProjectKind } from "../types/workspace";
 import { CreateProjectAgentSheet, type CreateProjectAgentSelection } from "./CreateProjectAgentSheet";
 import type { CloneRepositoryDetails, CloneRepositorySelection } from "./CloneRepositoryDialog";
 import { Button } from "./ui/button";
+import { useCloudBetaStore } from "../stores/cloud-beta-store";
 
 export type CreateProjectInput = { path: string; asWorkspace?: boolean } & CreateProjectAgentSelection;
 export type CloneProjectInput = Pick<CloneRepositorySelection, "remoteUrl" | "destinationParent"> &
@@ -43,6 +45,7 @@ export function CreateProjectFlow({
 	onCloneProject,
 	onCreateProject,
 	onInitializeProject,
+	onOpenCloudProject,
 	openSignal,
 }: {
 	children?: (state: { choosePath: () => void; disabled: boolean; error: string | null; label: string }) => ReactNode;
@@ -58,12 +61,15 @@ export function CreateProjectFlow({
 	onCloneProject: (input: CloneProjectInput) => Promise<void>;
 	onCreateProject: (input: CreateProjectInput) => Promise<void>;
 	onInitializeProject: (path: string) => Promise<void>;
+	/** Opens the project-level Cloud creation surface when the beta is enabled. */
+	onOpenCloudProject?: () => void;
 	// Monotonic counter: each new value opens the flow programmatically (the ⌘N
 	// "no project in scope" fallback). Lets the shortcut reuse the sidebar's own
 	// create-project flow instead of a separate delegating component.
 	openSignal?: number;
 }) {
 	const { t } = useTranslation();
+	const cloudBetaEnabled = useCloudBetaStore((state) => state.enabled);
 	const resolvedIdleLabel = idleLabel ?? t("createProject.newProject");
 	const [error, setError] = useState<string | null>(null);
 	const [modePickerOpen, setModePickerOpen] = useState(false);
@@ -95,6 +101,11 @@ export function CreateProjectFlow({
 		setPendingDropPath(null);
 		setError(null);
 		setValidationScan(null);
+		if (source === "cloud") {
+			setModePickerOpen(false);
+			onOpenCloudProject?.();
+			return;
+		}
 		if (source === "clone") {
 			setModePickerOpen(false);
 			setCloneDialogOpen(true);
@@ -263,7 +274,7 @@ export function CreateProjectFlow({
 				})}
 			{hasModePicker && embedded && !modePickerOpen && !cloneDialogOpen && selectedPath === null && (
 				<div className="flex w-full flex-col items-center gap-3">
-					<ImportSourcePicker disabled={isBusy} onSelect={selectSource} />
+					<ImportSourcePicker disabled={isBusy} onSelect={selectSource} showCloud={cloudBetaEnabled && Boolean(onOpenCloudProject)} />
 					{error && !folderPickerOpen && selectedPath === null && (
 						<p className="text-caption leading-body text-error" role="status">
 							{error}
@@ -284,6 +295,7 @@ export function CreateProjectFlow({
 							if (!open) setPendingDropPath(null);
 						}}
 						onSelect={selectSource}
+						showCloud={cloudBetaEnabled && Boolean(onOpenCloudProject)}
 					/>
 					{cloneDialogOpen ? (
 						<Suspense fallback={<CloneRepositoryDialogSkeleton />}>
@@ -430,18 +442,20 @@ function CreateProjectSourceDialog({
 	onOpenChange,
 	onSelect,
 	open,
+	showCloud,
 }: {
 	disabled: boolean;
 	onOpenChange: (open: boolean) => void;
 	onSelect: (source: ProjectSource) => void;
 	open: boolean;
+	showCloud: boolean;
 }) {
 	return (
 		<Dialog.Root open={open} onOpenChange={onOpenChange}>
 			<Dialog.Portal>
 				<Dialog.Overlay className="dialog-overlay data-[state=open]:animate-overlay-in" />
 				<Dialog.Content className="fixed left-1/2 top-1/2 z-overlay w-[min(var(--size-import-modal-max),calc(100vw-24px))] -translate-x-1/2 -translate-y-1/2 border-0 bg-transparent p-0 shadow-none outline-none data-[state=open]:animate-modal-in">
-					<ImportSourcePicker disabled={disabled} onClose={() => onOpenChange(false)} onSelect={onSelect} dialog />
+					<ImportSourcePicker disabled={disabled} onClose={() => onOpenChange(false)} onSelect={onSelect} showCloud={showCloud} dialog />
 				</Dialog.Content>
 			</Dialog.Portal>
 		</Dialog.Root>
@@ -454,11 +468,13 @@ function ImportSourcePicker({
 	disabled,
 	onClose,
 	onSelect,
+	showCloud = false,
 }: {
 	dialog?: boolean;
 	disabled: boolean;
 	onClose?: () => void;
 	onSelect: (source: ProjectSource) => void;
+	showCloud?: boolean;
 }) {
 	const { t } = useTranslation();
 	return (
@@ -470,6 +486,7 @@ function ImportSourcePicker({
 				</>
 			)}
 			<ProjectSourcePickerView
+				cloudIcon={<Cloud className="size-5" aria-hidden="true" />}
 				dialog={dialog}
 				disabled={disabled}
 				onClose={onClose}
@@ -492,6 +509,12 @@ function ImportSourcePicker({
 					localBranchExample: "main",
 					workspace: t("createProject.addWorkspace"),
 					workspaceDescription: t("createProject.workspaceDesc"),
+					...(showCloud
+						? {
+							cloud: t("createProject.cloud"),
+							cloudDescription: t("createProject.cloudDesc"),
+						}
+						: {}),
 					close: t("createProject.closeDialog"),
 				}}
 			/>

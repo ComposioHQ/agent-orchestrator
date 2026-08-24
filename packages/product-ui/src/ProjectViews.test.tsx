@@ -78,6 +78,20 @@ describe("project presentation", () => {
 		expect(screen.getByText("github.com/acme/web-app")).toBeInTheDocument();
 	});
 
+	it("offers an optional Cloud project path", () => {
+		const onSelect = vi.fn();
+		render(
+			<ProjectSourcePickerView
+				disabled={false}
+				labels={{ ...modeLabels, cloud: "Create Cloud project", cloudDescription: "Run it remotely" }}
+				onSelect={onSelect}
+			/>,
+		);
+
+		fireEvent.click(screen.getByRole("button", { name: "Create Cloud project" }));
+		expect(onSelect).toHaveBeenCalledWith("cloud");
+	});
+
 	it("submits the controlled setup form and exposes setup feedback", () => {
 		const onSubmit = vi.fn();
 		render(

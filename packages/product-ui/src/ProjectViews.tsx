@@ -18,7 +18,7 @@ type ProjectExternalLink = ComponentType<{
 	title?: string;
 }>;
 
-export type ProjectSource = "clone" | "local" | "workspace";
+export type ProjectSource = "clone" | "local" | "workspace" | "cloud";
 
 export type ProjectSourcePickerLabels = {
 	title: string;
@@ -33,6 +33,8 @@ export type ProjectSourcePickerLabels = {
 	localBranchExample: string;
 	workspace: string;
 	workspaceDescription: string;
+	cloud?: string;
+	cloudDescription?: string;
 	close: string;
 };
 
@@ -43,6 +45,7 @@ export type ProjectSourcePickerViewProps = {
 	dialog?: boolean;
 	disabled: boolean;
 	folderIcon?: ReactNode;
+	cloudIcon?: ReactNode;
 	labels: ProjectSourcePickerLabels;
 	onClose?: () => void;
 	onSelect: (source: ProjectSource) => void;
@@ -56,6 +59,7 @@ export function ProjectSourcePickerView({
 	dialog = false,
 	disabled,
 	folderIcon,
+	cloudIcon,
 	labels,
 	onClose,
 	onSelect,
@@ -89,6 +93,30 @@ export function ProjectSourcePickerView({
 					onClick={() => onSelect("local")}
 				/>
 			</div>
+			{labels.cloud && labels.cloudDescription ? (
+				<button
+					type="button"
+					aria-label={labels.cloud}
+					className="relative z-[2] flex min-h-18 w-full items-center gap-4 rounded-welcome-panel border border-accent/40 bg-accent/5 px-5 py-4 text-left transition-colors hover:bg-accent/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 disabled:pointer-events-none disabled:opacity-50"
+					disabled={disabled}
+					onClick={() => onSelect("cloud")}
+				>
+					<span className="grid size-10 shrink-0 place-items-center rounded-lg border border-accent/30 bg-accent/10 text-accent">
+						{cloudIcon}
+					</span>
+					<span className="min-w-0 flex-1">
+						<span className="block text-[15px] font-bold leading-5 text-[var(--color-text-import-title)]">
+							{labels.cloud}
+						</span>
+						<span className="mt-1 block text-pretty text-[13px] leading-5 text-[var(--color-text-import-muted)]">
+							{labels.cloudDescription}
+						</span>
+					</span>
+					<span className="shrink-0 text-[var(--color-text-import-muted)]" aria-hidden="true">
+						{arrowIcon}
+					</span>
+				</button>
+			) : null}
 			<button
 				type="button"
 				aria-label={labels.workspace}
@@ -137,7 +165,7 @@ function ProjectSourceButton({
 	description: string;
 	disabled: boolean;
 	icon?: ReactNode;
-	kind: Exclude<ProjectSource, "workspace">;
+	kind: "clone" | "local";
 	labels: ProjectSourcePickerLabels;
 	onClick: () => void;
 }) {

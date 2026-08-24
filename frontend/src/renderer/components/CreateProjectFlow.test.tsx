@@ -2,6 +2,7 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { CreateProjectFlow, type CloneProjectInput, type CreateProjectInput } from "./CreateProjectFlow";
+import { useCloudBetaStore } from "../stores/cloud-beta-store";
 
 const bridgeMocks = vi.hoisted(() => ({
 	checkAncestorRepo: vi.fn(),
@@ -68,9 +69,23 @@ beforeEach(() => {
 	bridgeMocks.checkAncestorRepo.mockReset().mockResolvedValue(undefined);
 	bridgeMocks.chooseDirectory.mockReset();
 	bridgeMocks.scanImportFolder.mockReset().mockImplementation(async ({ path }: { path: string }) => okScan(path));
+	useCloudBetaStore.setState({ enabled: false, loaded: true, saving: false, saveError: false });
 });
 
 describe("CreateProjectFlow droppedPath", () => {
+	it("shows Cloud project creation only after the beta opt-in", async () => {
+		const user = userEvent.setup();
+		const onOpenCloudProject = vi.fn();
+		useCloudBetaStore.setState({ enabled: true });
+		const { rerender } = render(
+			<CreateProjectFlow mode="choose" {...noop} onOpenCloudProject={onOpenCloudProject} openSignal={0} />,
+		);
+		rerender(<CreateProjectFlow mode="choose" {...noop} onOpenCloudProject={onOpenCloudProject} openSignal={1} />);
+
+		await user.click(await screen.findByRole("button", { name: "Create Cloud project" }));
+		expect(onOpenCloudProject).toHaveBeenCalledOnce();
+	});
+
 	it("does not open on mount", () => {
 		render(<CreateProjectFlow mode="choose" {...noop} droppedPath={null} />);
 		expect(screen.queryByRole("button", { name: "Add a workspace folder" })).not.toBeInTheDocument();
