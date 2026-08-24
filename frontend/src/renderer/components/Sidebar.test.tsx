@@ -22,7 +22,7 @@ import type { WorkspaceSession, WorkspaceSummary } from "../types/workspace";
 import { agentsQueryKey } from "../hooks/useAgentsQuery";
 import { useUiStore } from "../stores/ui-store";
 
-const { cloudSessionState, fetchMobileDevicesMock, getMock, navigateMock, mockParams, renameSessionMock, spawnMock, updateStatusMock, commandPaletteEnabled } = vi.hoisted(
+const { cloudSessionState, getMock, navigateMock, mockParams, renameSessionMock, spawnMock, updateStatusMock, commandPaletteEnabled } = vi.hoisted(
 	() => ({
 		cloudSessionState: {
 			configured: false,
@@ -31,7 +31,6 @@ const { cloudSessionState, fetchMobileDevicesMock, getMock, navigateMock, mockPa
 			signIn: vi.fn(),
 			signOut: vi.fn().mockResolvedValue(undefined),
 		},
-		fetchMobileDevicesMock: vi.fn(),
 		getMock: vi.fn(),
 		navigateMock: vi.fn(),
 		mockParams: { projectId: undefined as string | undefined, sessionId: undefined as string | undefined },
@@ -45,11 +44,6 @@ const { cloudSessionState, fetchMobileDevicesMock, getMock, navigateMock, mockPa
 vi.mock("../lib/rename-session", () => ({ renameSession: renameSessionMock }));
 vi.mock("../lib/spawn-orchestrator", () => ({ spawnOrchestrator: spawnMock }));
 vi.mock("../lib/cloud-session", () => ({ useCloudSession: () => cloudSessionState }));
-vi.mock("./settings/MobileDevicesSection", () => ({
-	mobileDevicesQueryKey: ["mobile-devices"],
-	fetchDevices: fetchMobileDevicesMock,
-}));
-
 vi.mock("../hooks/useCommandPaletteEnabled", () => ({
 	useCommandPaletteEnabled: () => commandPaletteEnabled.current,
 }));
@@ -260,7 +254,6 @@ beforeEach(() => {
 	cloudSessionState.signIn.mockReset();
 	cloudSessionState.signOut.mockReset().mockResolvedValue(undefined);
 	useUiStore.setState({ isCommandPaletteOpen: false, isConnectMobileOpen: false, settingsModal: null });
-	fetchMobileDevicesMock.mockReset().mockResolvedValue([]);
 	getMock.mockReset();
 	getMock.mockResolvedValue({
 		data: {
@@ -1237,12 +1230,10 @@ describe("Sidebar", () => {
 		expect(navigateMock).not.toHaveBeenCalled();
 	});
 
-	it("hides Connect Mobile once a phone is paired", async () => {
-		fetchMobileDevicesMock.mockResolvedValue([{ installId: "phone-1" }]);
+	it("always shows Connect Mobile", () => {
 		renderSidebar();
 
-		await waitFor(() => expect(fetchMobileDevicesMock).toHaveBeenCalled());
-		await waitFor(() => expect(screen.queryByRole("button", { name: "Connect Mobile" })).not.toBeInTheDocument());
+		expect(screen.getByRole("button", { name: "Connect Mobile" })).toBeVisible();
 	});
 
 	it("opens the command palette when Search is clicked", async () => {

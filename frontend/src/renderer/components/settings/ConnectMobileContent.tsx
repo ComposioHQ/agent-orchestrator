@@ -137,15 +137,6 @@ export function ConnectMobileContent({ active }: { active: boolean }) {
 		onSuccess: invalidate,
 	});
 
-	const disable = useMutation({
-		mutationFn: async () => {
-			const { data, error } = await apiClient.POST("/api/v1/mobile/disable");
-			if (error) throw new Error(apiErrorMessage(error));
-			return data;
-		},
-		onSuccess: invalidate,
-	});
-
 	const regenerate = useMutation({
 		mutationFn: async () => {
 			const { data, error } = await apiClient.POST("/api/v1/mobile/regenerate");
@@ -174,11 +165,10 @@ export function ConnectMobileContent({ active }: { active: boolean }) {
 			: (status?.host ?? "");
 	const activePort = secureActive ? status!.securePairing.port : (status?.port ?? 0);
 	const secureBlocked = mode === "tailscale" && (status?.securePairing?.enabled ?? false) && !secureActive;
-	const busy = enable.isPending || disable.isPending || regenerate.isPending || setSecure.isPending;
+	const busy = enable.isPending || regenerate.isPending || setSecure.isPending;
 
 	const clearActionErrors = () => {
 		enable.reset();
-		disable.reset();
 		regenerate.reset();
 		setSecure.reset();
 	};
@@ -208,18 +198,8 @@ export function ConnectMobileContent({ active }: { active: boolean }) {
 		});
 	};
 
-	const stopBridge = () => {
-		if (busy || !enabled) return;
-		clearActionErrors();
-		disable.mutate(undefined, {
-			onSuccess: () => reportToggle(false, "succeeded"),
-			onError: () => reportToggle(false, "failed"),
-		});
-	};
-
 	const actionError =
 		(enable.error instanceof Error && enable.error.message) ||
-		(disable.error instanceof Error && disable.error.message) ||
 		(regenerate.error instanceof Error && regenerate.error.message) ||
 		(setSecure.error instanceof Error && setSecure.error.message) ||
 		null;
@@ -448,20 +428,6 @@ export function ConnectMobileContent({ active }: { active: boolean }) {
 							</>
 						)}
 					</div>
-					{enabled && (
-						<div className="flex items-center justify-between gap-3 px-1">
-							<span className="text-caption text-settings-muted">{t("mobile.enable")}</span>
-							<Switch
-								checked
-								disabled={busy}
-								aria-label={t("mobile.enable")}
-								onCheckedChange={(next) => {
-									if (!next) stopBridge();
-								}}
-							/>
-						</div>
-					)}
-
 					</div>
 			</div>
 		</div>

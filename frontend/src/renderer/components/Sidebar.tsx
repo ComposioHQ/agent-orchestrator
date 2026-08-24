@@ -1,7 +1,4 @@
-import {
-	useQuery,
-	useQueryClient,
-} from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { useNavigate, useParams, useRouterState } from "@tanstack/react-router";
 import {
@@ -86,7 +83,6 @@ import { CreateProjectFlow, type CloneProjectInput, type CreateProjectInput } fr
 import { ResizeHandle } from "./ResizeHandle";
 import { isMacPlatform, isWindowsPlatform } from "../lib/platform";
 import { useCloudSession } from "../lib/cloud-session";
-import { fetchDevices, mobileDevicesQueryKey } from "./settings/MobileDevicesSection";
 
 // macOS paints framed chrome: the fixed TitlebarNav cluster carries the
 // sidebar toggle + history arrows above this surface. Windows hangs the sidebar
@@ -195,13 +191,6 @@ export function Sidebar({
 	const daemonStatus = useShellMaybe()?.daemonStatus ?? null;
 	const commandPaletteEnabled = useCommandPaletteEnabled();
 	const setCommandPaletteOpen = useUiStore((s) => s.setCommandPaletteOpen);
-	const { data: mobileDevices, isError: mobileDevicesUnavailable } = useQuery({
-		queryKey: mobileDevicesQueryKey,
-		queryFn: fetchDevices,
-		refetchInterval: (query) => query.state.data?.length ? false : 3000,
-	});
-	const showConnectMobile = mobileDevicesUnavailable || mobileDevices?.length === 0;
-
 	useLayoutEffect(() => {
 		// Offcanvas: the panel slides off-screen on collapse — no need to hide content.
 		// Reveal immediately on expand so there's no fade-in delay.
@@ -436,7 +425,7 @@ export function Sidebar({
 				>
 					<UpdateStatusRow status={updateStatus} tabIndex={isCollapsed ? -1 : 0} />
 					<CloudAccountRow tabIndex={isCollapsed ? -1 : 0} />
-					{showConnectMobile ? <button
+					<button
 						aria-label={t("settings.connectMobile")}
 						className={cn(
 							NAV_ROW_CLASS,
@@ -448,7 +437,7 @@ export function Sidebar({
 					>
 						<Smartphone aria-hidden="true" />
 						<span className="tracking-tight">{t("settings.connectMobile")}</span>
-					</button> : null}
+					</button>
 					<button
 						aria-label={t("shell.settings")}
 						className={cn(
@@ -469,7 +458,7 @@ export function Sidebar({
 				>
 					<UpdateStatusRail status={updateStatus} tabIndex={isCollapsed ? 0 : -1} />
 					<CloudAccountRailButton tabIndex={isCollapsed ? 0 : -1} />
-					{showConnectMobile ? <Tooltip>
+					<Tooltip>
 						<TooltipTrigger asChild>
 							<button
 								aria-label={t("settings.connectMobile")}
@@ -482,7 +471,7 @@ export function Sidebar({
 							</button>
 						</TooltipTrigger>
 						<TooltipContent side="right">{t("settings.connectMobile")}</TooltipContent>
-					</Tooltip> : null}
+					</Tooltip>
 					<Tooltip>
 						<TooltipTrigger asChild>
 							<button
