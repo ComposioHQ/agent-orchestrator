@@ -3779,6 +3779,8 @@ export interface operations {
             /** @description OK */
             200: {
                 headers: {
+                    /** @description Effective replay cursor selected by the daemon. Clients must adopt it when it differs from their requested cursor. */
+                    "X-AO-Event-After": number;
                     [name: string]: unknown;
                 };
                 content: {

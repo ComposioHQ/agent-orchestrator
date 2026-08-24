@@ -13,22 +13,30 @@ export type ConversationEvent = {
 // backend/internal/httpd/events.go eventsCursorResetEvent.
 export const EVENTS_CURSOR_RESET = "events_cursor_reset";
 
-export const cursorResetEvent = (seq: number): ConversationEvent => ({
+export type ConversationCursorReset = {
+	seq: number;
+	type: typeof EVENTS_CURSOR_RESET;
+	event: typeof EVENTS_CURSOR_RESET;
+	sessionId?: undefined;
+	payload?: undefined;
+};
+
+export type ConversationStreamEvent = ConversationEvent | ConversationCursorReset;
+
+export const cursorResetEvent = (seq: number): ConversationCursorReset => ({
 	seq,
-	projectId: "",
 	type: EVENTS_CURSOR_RESET,
 	event: EVENTS_CURSOR_RESET,
-	createdAt: "",
 });
 
 export type ConversationEventRegistry = {
-	subscribe(sessionId: string, listener: (event: ConversationEvent) => void): () => void;
+	subscribe(sessionId: string, listener: (event: ConversationStreamEvent) => void): () => void;
 	publish(event: ConversationEvent): void;
 	publishReset(cursor: number): void;
 };
 
 export function createConversationEventRegistry(): ConversationEventRegistry {
-	const listeners = new Map<string, Set<(event: ConversationEvent) => void>>();
+	const listeners = new Map<string, Set<(event: ConversationStreamEvent) => void>>();
 	return {
 		subscribe(sessionId, listener) {
 			const sessionListeners = listeners.get(sessionId) ?? new Set();

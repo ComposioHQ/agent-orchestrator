@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/cdc"
 	"github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite/gen"
@@ -36,13 +37,24 @@ func (s *Store) LatestSeq(ctx context.Context) (int64, error) {
 // refetch state on reconnect instead of replaying history (see httpd.events).
 const ChangeLogRetentionRows = 100_000
 
+const (
+	// Keep each writer-lock hold small enough for interactive writes to run
+	// between retention batches. A bloated log may need hundreds of batches;
+	// one bulk DELETE would otherwise block ao send for the whole prune.
+	changeLogPruneBatchRows = 1_000
+	changeLogPruneYield     = time.Millisecond
+	changeLogVacuumPages    = 4_096
+)
+
 // PruneChangeLog deletes acknowledged change_log rows beyond the newest keep
 // events so the CDC log cannot grow unbounded (#3963). broadcastThrough is the
 // live poller's watermark: rows newer than it have not reached connected
 // subscribers and must not be removed. The delete runs by the seq PK directly
 // rather than through sqlc because sqlc 1.31 mangles this nullable-table DELETE
-// shape (see queries/changelog.sql). Incremental vacuuming and a truncating WAL
-// checkpoint return freed pages to the OS after a successful prune.
+// shape (see queries/changelog.sql). Deletes run in bounded batches and yield
+// the writer lock between batches so interactive writes are not starved.
+// Incremental vacuuming is page-bounded and the passive checkpoint never waits
+// for readers, keeping post-prune maintenance bounded too.
 func (s *Store) PruneChangeLog(ctx context.Context, keep, broadcastThrough int64) (int64, error) {
 	if keep <= 0 {
 		keep = ChangeLogRetentionRows
@@ -50,13 +62,10 @@ func (s *Store) PruneChangeLog(ctx context.Context, keep, broadcastThrough int64
 	if broadcastThrough <= 0 {
 		return 0, nil
 	}
-	s.writeMu.Lock()
-	defer s.writeMu.Unlock()
-
 	// Select the (keep+1)th newest row rather than subtracting sequence numbers:
 	// session deletion can leave gaps in the AUTOINCREMENT sequence.
 	var pruneThrough int64
-	if err := s.writeDB.QueryRowContext(ctx, `
+	if err := s.readDB.QueryRowContext(ctx, `
 SELECT COALESCE((
     SELECT seq FROM change_log ORDER BY seq DESC LIMIT 1 OFFSET ?
 ), 0)`, keep).Scan(&pruneThrough); err != nil {
@@ -68,23 +77,77 @@ SELECT COALESCE((
 	if broadcastThrough < pruneThrough {
 		pruneThrough = broadcastThrough
 	}
-	res, err := s.writeDB.ExecContext(ctx, `DELETE FROM change_log WHERE seq <= ?`, pruneThrough)
-	if err != nil {
-		return 0, fmt.Errorf("prune change_log through %d: %w", pruneThrough, err)
-	}
-	n, err := res.RowsAffected()
-	if err != nil {
-		return 0, fmt.Errorf("prune change_log through %d: rows affected: %w", pruneThrough, err)
-	}
-	if n > 0 {
-		if _, err := s.writeDB.ExecContext(ctx, `PRAGMA incremental_vacuum`); err != nil {
-			return n, fmt.Errorf("incremental vacuum after change_log prune: %w", err)
+
+	var total int64
+	for {
+		if err := s.lockChangeLogPrune(ctx); err != nil {
+			return total, err
 		}
-		if _, err := s.writeDB.ExecContext(ctx, `PRAGMA wal_checkpoint(TRUNCATE)`); err != nil {
-			return n, fmt.Errorf("checkpoint after change_log prune: %w", err)
+		res, err := s.writeDB.ExecContext(ctx, `
+DELETE FROM change_log
+WHERE seq IN (
+    SELECT seq FROM change_log WHERE seq <= ? ORDER BY seq LIMIT ?
+)`, pruneThrough, changeLogPruneBatchRows)
+		s.writeMu.Unlock()
+		if err != nil {
+			return total, fmt.Errorf("prune change_log through %d: %w", pruneThrough, err)
+		}
+		n, err := res.RowsAffected()
+		if err != nil {
+			return total, fmt.Errorf("prune change_log through %d: rows affected: %w", pruneThrough, err)
+		}
+		total += n
+		if n < changeLogPruneBatchRows {
+			break
+		}
+		if err := waitChangeLogPruneYield(ctx); err != nil {
+			return total, err
 		}
 	}
-	return n, nil
+	if total == 0 {
+		return 0, nil
+	}
+
+	if err := s.lockChangeLogPrune(ctx); err != nil {
+		return total, err
+	}
+	_, vacuumErr := s.writeDB.ExecContext(ctx, fmt.Sprintf("PRAGMA incremental_vacuum(%d)", changeLogVacuumPages))
+	var checkpointErr error
+	if vacuumErr == nil {
+		_, checkpointErr = s.writeDB.ExecContext(ctx, `PRAGMA wal_checkpoint(PASSIVE)`)
+	}
+	s.writeMu.Unlock()
+	if vacuumErr != nil {
+		return total, fmt.Errorf("incremental vacuum after change_log prune: %w", vacuumErr)
+	}
+	if checkpointErr != nil {
+		return total, fmt.Errorf("checkpoint after change_log prune: %w", checkpointErr)
+	}
+	return total, nil
+}
+
+// lockChangeLogPrune is context-aware because retention is background work: it
+// should abandon a pass instead of waiting indefinitely behind user writes.
+func (s *Store) lockChangeLogPrune(ctx context.Context) error {
+	for !s.writeMu.TryLock() {
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("acquire change_log prune writer: %w", ctx.Err())
+		case <-time.After(changeLogPruneYield):
+		}
+	}
+	return nil
+}
+
+func waitChangeLogPruneYield(ctx context.Context) error {
+	timer := time.NewTimer(changeLogPruneYield)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return fmt.Errorf("yield change_log prune writer: %w", ctx.Err())
+	case <-timer.C:
+		return nil
+	}
 }
 
 func changeLogEventFromGen(r gen.ChangeLog) cdc.Event {

@@ -112,6 +112,9 @@ func Build() ([]byte, error) {
 			if op.contentTypes != nil && op.contentTypes[resp.status] != "" {
 				opts = append(opts, openapi.WithContentType(op.contentTypes[resp.status]))
 			}
+			if op.responseCustomizers != nil && op.responseCustomizers[resp.status] != nil {
+				opts = append(opts, openapi.WithCustomize(op.responseCustomizers[resp.status]))
+			}
 			oc.AddRespStructure(resp.body, opts...)
 		}
 		if err := r.AddOperation(oc); err != nil {
@@ -450,6 +453,9 @@ type operation struct {
 	optionalReqBody bool
 	resps           []respUnit
 	contentTypes    map[int]string // optional non-JSON response content types by status
+	// responseCustomizers models response metadata (such as headers) that is
+	// not part of the response body reflected by AddRespStructure.
+	responseCustomizers map[int]func(openapi.ContentOrReference)
 }
 
 func operations() []operation {
@@ -1304,8 +1310,31 @@ func eventOperations() []operation {
 				{status: http.StatusNotImplemented, body: envelope.APIError{}},
 			},
 			contentTypes: map[int]string{http.StatusOK: "text/event-stream"},
+			responseCustomizers: map[int]func(openapi.ContentOrReference){
+				http.StatusOK: addEventAfterResponseHeader,
+			},
 		},
 	}
+}
+
+func addEventAfterResponseHeader(cor openapi.ContentOrReference) {
+	response, ok := cor.(*openapi31.ResponseOrReference)
+	if !ok || response.Response == nil {
+		return
+	}
+	description := "Effective replay cursor selected by the daemon. Clients must adopt it when it differs from their requested cursor."
+	required := true
+	response.Response.WithHeadersItem("X-AO-Event-After", openapi31.HeaderOrReference{
+		Header: &openapi31.Header{
+			Description: &description,
+			Required:    &required,
+			Schema: map[string]interface{}{
+				"type":    "integer",
+				"format":  "int64",
+				"minimum": 0,
+			},
+		},
+	})
 }
 
 // projectOperations declares the canonical /projects operations. The set must

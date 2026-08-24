@@ -5,7 +5,7 @@ import { streamGlobalConversationEvents } from "./api";
 import {
 	createConversationEventRegistry,
 	createCursorPersister,
-	type ConversationEvent,
+	type ConversationStreamEvent,
 } from "./sse";
 
 const RECONNECT_MIN_MS = 1_000;
@@ -14,7 +14,7 @@ const registry = createConversationEventRegistry();
 
 export function subscribeConversationEvents(
 	sessionId: string,
-	listener: (event: ConversationEvent) => void,
+	listener: (event: ConversationStreamEvent) => void,
 ): () => void {
 	return registry.subscribe(sessionId, listener);
 }
@@ -30,7 +30,11 @@ export function useConversationEventTransport(cfg: ServerConfig | null): void {
 			AsyncStorage.setItem(cursorKey, String(cursor)),
 		);
 		const run = async () => {
-			let cursor = Number(await AsyncStorage.getItem(cursorKey)) || 0;
+			const storedCursor = await AsyncStorage.getItem(cursorKey);
+			const parsedCursor = storedCursor === null ? undefined : Number(storedCursor);
+			let cursor = parsedCursor !== undefined && Number.isSafeInteger(parsedCursor) && parsedCursor >= 0
+				? parsedCursor
+				: undefined;
 			let delay = RECONNECT_MIN_MS;
 			while (!stopped) {
 				controller = new AbortController();
@@ -40,18 +44,18 @@ export function useConversationEventTransport(cfg: ServerConfig | null): void {
 						cursor,
 						controller.signal,
 						(event) => {
-							cursor = Math.max(cursor, event.seq);
+							cursor = Math.max(cursor ?? 0, event.seq);
 							cursorPersister.update(cursor);
 							registry.publish(event);
 						},
-					(resetCursor) => {
-						cursor = resetCursor;
-						cursorPersister.replace(resetCursor);
-						// The snap skipped durable payloads for every session: fan a
-						// reset sentinel to all subscribers so active conversations
-						// refetch instead of waiting for the next event.
-						registry.publishReset(resetCursor);
-					},
+						(resetCursor) => {
+							cursor = resetCursor;
+							cursorPersister.replace(resetCursor);
+							// The snap skipped durable payloads for every session: fan a
+							// reset sentinel to all subscribers so active conversations
+							// refetch instead of waiting for the next event.
+							registry.publishReset(resetCursor);
+						},
 					);
 					delay = RECONNECT_MIN_MS;
 				} catch {

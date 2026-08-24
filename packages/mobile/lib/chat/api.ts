@@ -305,12 +305,13 @@ export async function closeShellTerminal(cfg: ServerConfig, handleId: string): P
  */
 export async function streamGlobalConversationEvents(
 	cfg: ServerConfig,
-	after: number,
+	after: number | undefined,
 	signal: AbortSignal,
 	onEvent: (event: ConversationEvent) => void,
 	onCursorReset?: (cursor: number) => void,
 ): Promise<number> {
-	const res = await expoFetch(`${httpBase(cfg)}${API}/events?after=${Math.max(0, after)}`, {
+	const afterQuery = after === undefined ? "" : `?after=${Math.max(0, after)}`;
+	const res = await expoFetch(`${httpBase(cfg)}${API}/events${afterQuery}`, {
 		headers: { ...authHeaders(cfg), Accept: "text/event-stream" },
 		signal,
 	});
@@ -320,8 +321,17 @@ export async function streamGlobalConversationEvents(
 	const advertisedAfter = advertisedAfterHeader === null ? Number.NaN : Number(advertisedAfterHeader);
 	const effectiveAfter = Number.isSafeInteger(advertisedAfter) && advertisedAfter >= 0
 		? advertisedAfter
-		: after;
-	if (effectiveAfter !== after) onCursorReset?.(effectiveAfter);
+		: (after ?? 0);
+	let lastResetCursor: number | undefined;
+	const notifyCursorReset = (cursor: number) => {
+		if (cursor === lastResetCursor) return;
+		lastResetCursor = cursor;
+		onCursorReset?.(cursor);
+	};
+	// An explicit stored cursor can be corrected by older daemons using only
+	// this header. Fresh clients omit `after` and consume the reset control frame
+	// emitted by current daemons, avoiding a duplicate reset on header + frame.
+	if (after !== undefined && effectiveAfter !== after) notifyCursorReset(effectiveAfter);
 
 	const decoder = new TextDecoder();
 	const reader = res.body.getReader();
@@ -342,7 +352,7 @@ export async function streamGlobalConversationEvents(
 					// subscribers refetch, and do not route it to session listeners
 					// as a conversation event.
 					if (parsed.event === EVENTS_CURSOR_RESET) {
-						onCursorReset?.(cursor);
+						notifyCursorReset(cursor);
 						continue;
 					}
 					onEvent(parsed);

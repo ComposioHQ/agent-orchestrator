@@ -442,6 +442,16 @@ paths:
               schema:
                 type: string
           description: OK
+          headers:
+            X-AO-Event-After:
+              description: Effective replay cursor selected by the daemon. Clients
+                must adopt it when it differs from their requested cursor.
+              required: true
+              schema:
+                format: int64
+                minimum: 0
+                type: integer
+              style: simple
         "400":
           content:
             application/json:

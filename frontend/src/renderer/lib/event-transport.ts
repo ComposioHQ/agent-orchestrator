@@ -174,7 +174,7 @@ export function createEventTransport(queryClient: QueryClient): EventTransport {
 						setEventsConnectionState("disconnected");
 						if (source?.readyState === EVENTSOURCE_CLOSED) scheduleRetry();
 					};
-				source.onmessage = refreshWorkspaces; // unnamed events, if any
+					source.onmessage = refreshWorkspaces; // unnamed events, if any
 					for (const type of CDC_EVENT_TYPES) {
 						source.addEventListener(type, refreshWorkspaces);
 					}

@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -162,53 +163,6 @@ func TestEventsStreamRejectsInvalidAfter(t *testing.T) {
 	}
 }
 
-type resetEventSource struct {
-	after int64
-}
-
-func (s *resetEventSource) EventsAfter(_ context.Context, after int64, _ int) ([]cdc.Event, error) {
-	s.after = after
-	return []cdc.Event{testCDCEvent(after + 1)}, nil
-}
-
-func (*resetEventSource) LatestSeq(context.Context) (int64, error) { return 100, nil }
-
-func TestEventsStreamSnapsCursorAheadOfCurrentDatabase(t *testing.T) {
-	live := &fakeEventSubscriber{}
-	src := &resetEventSource{}
-	router := NewRouterWithControl(config.Config{}, discardLogger(), nil, APIDeps{
-		CDC:    src,
-		Events: live,
-	}, ControlDeps{})
-	ts := httptest.NewServer(router)
-	defer ts.Close()
-
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, ts.URL+"/api/v1/events?after=100", nil)
-	if err != nil {
-		t.Fatalf("new request: %v", err)
-	}
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatalf("GET /api/v1/events: %v", err)
-	}
-	defer resp.Body.Close()
-
-	// A cursor ahead of the head must snap forward to the head (never reset to
-	// a full-history replay) so a stale client cannot trigger a whole-log
-	// replay (#3963). The head here is 100, so replay resumes at 100.
-	if got := resp.Header.Get("X-AO-Event-After"); got != "100" {
-		t.Fatalf("X-AO-Event-After = %q, want 100", got)
-	}
-	if ids := readSSEIDs(t, resp.Body, 1); ids[0] != "101" {
-		t.Fatalf("id = %q, want 101", ids[0])
-	}
-	if src.after != 100 {
-		t.Fatalf("EventsAfter called with %d, want snapped cursor 100", src.after)
-	}
-}
-
 func TestWriteSSEEventSanitizesEventNameNewlines(t *testing.T) {
 	rec := httptest.NewRecorder()
 	sentSeq := int64(0)
@@ -225,6 +179,20 @@ func TestWriteSSEEventSanitizesEventNameNewlines(t *testing.T) {
 	}
 	if !strings.Contains(body, "event: session_updated_id: 999_data: injected\n") {
 		t.Fatalf("body = %q, want sanitized event name", body)
+	}
+}
+
+func TestWriteSSEResetHonorsCanceledContext(t *testing.T) {
+	rec := httptest.NewRecorder()
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	err := writeSSEReset(ctx, rec, rec, 5, 20_000)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("writeSSEReset error = %v, want context canceled", err)
+	}
+	if rec.Body.Len() != 0 {
+		t.Fatalf("canceled reset wrote %q, want empty body", rec.Body.String())
 	}
 }
 

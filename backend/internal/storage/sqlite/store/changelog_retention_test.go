@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -173,6 +174,85 @@ func TestPruneChangeLogPreservesRowsBeyondPollerWatermark(t *testing.T) {
 	}
 	if got, want := len(events), int(head-watermark); got != want {
 		t.Fatalf("remaining events = %d, want %d", got, want)
+	}
+}
+
+func TestPruneChangeLogYieldsToConcurrentWrites(t *testing.T) {
+	s := newTestStore(t)
+	head := seedChangeLogRows(t, s, "concurrent-prune", 5_000)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	start := make(chan struct{})
+	stop := make(chan struct{})
+	errs := make(chan error, 8)
+	var wg sync.WaitGroup
+	var completedMu sync.Mutex
+	var completed []time.Time
+	for range 8 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			for {
+				select {
+				case <-stop:
+					return
+				default:
+				}
+				if _, err := s.CreateSession(ctx, sampleRecord("concurrent-prune")); err != nil {
+					errs <- err
+					return
+				}
+				completedMu.Lock()
+				completed = append(completed, time.Now())
+				completedMu.Unlock()
+				time.Sleep(time.Millisecond)
+			}
+		}()
+	}
+	close(start)
+	// Let every writer prove it can reach the store before retention begins.
+	waitUntil := time.Now().Add(2 * time.Second)
+	for {
+		completedMu.Lock()
+		ready := len(completed) >= 8
+		completedMu.Unlock()
+		if ready {
+			break
+		}
+		if time.Now().After(waitUntil) {
+			close(stop)
+			wg.Wait()
+			t.Fatal("concurrent writers did not start")
+		}
+		time.Sleep(time.Millisecond)
+	}
+
+	pruneStarted := time.Now()
+	if _, err := s.PruneChangeLog(ctx, 50, head); err != nil {
+		close(stop)
+		wg.Wait()
+		t.Fatalf("prune under writes: %v", err)
+	}
+	pruneFinished := time.Now()
+	close(stop)
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		t.Fatalf("concurrent write failed: %v", err)
+	}
+
+	completedMu.Lock()
+	defer completedMu.Unlock()
+	var duringPrune int
+	for _, at := range completed {
+		if at.After(pruneStarted) && at.Before(pruneFinished) {
+			duringPrune++
+		}
+	}
+	if duringPrune < 2 {
+		t.Fatalf("writes completed during prune = %d, want at least 2 (retention starved interactive writes)", duringPrune)
 	}
 }
 

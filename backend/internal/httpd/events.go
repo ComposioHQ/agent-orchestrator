@@ -117,7 +117,9 @@ func (c *EventsController) stream(w http.ResponseWriter, r *http.Request) {
 	// transitions) before live delivery resumes. The id field adopts the
 	// effective cursor for native EventSource auto-reconnect.
 	if after != requested {
-		writeSSEReset(w, flusher, requested, after)
+		if err := writeSSEReset(ctx, w, flusher, requested, after); err != nil {
+			return
+		}
 	}
 
 	sentSeq := after
@@ -177,20 +179,29 @@ func parseEventsAfter(r *http.Request) (int64, bool, error) {
 
 // writeSSEReset emits the cursor-reset control event. It carries no CDC
 // payload; its id adopts the effective cursor so reconnects resume from there.
-func writeSSEReset(w http.ResponseWriter, flusher http.Flusher, requested, after int64) {
+func writeSSEReset(
+	ctx context.Context,
+	w http.ResponseWriter,
+	flusher http.Flusher,
+	requested, after int64,
+) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	data, err := json.Marshal(struct {
 		Requested int64 `json:"requested"`
 		After     int64 `json:"after"`
 	}{Requested: requested, After: after})
 	if err != nil {
-		return
+		return err
 	}
 	// #nosec G705 -- the frame carries two JSON-marshaled int64 cursors; no
 	// request-controlled strings reach the response body.
 	if _, err := fmt.Fprintf(w, "event: %s\nid: %d\ndata: %s\n\n", eventsCursorResetEvent, after, data); err != nil {
-		return
+		return err
 	}
 	flusher.Flush()
+	return ctx.Err()
 }
 
 func writeSSEEvent(w http.ResponseWriter, flusher http.Flusher, e cdc.Event, sentSeq *int64) error {
