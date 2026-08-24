@@ -91,15 +91,15 @@ export function SessionFileExplorer({
 	return (
 		<section
 			ref={rootRef}
-			className="flex h-full min-h-0 flex-col rounded-none bg-background text-foreground"
+			className="flex h-full min-h-0 flex-col bg-background text-foreground"
 			aria-label={t("files.sessionFiles")}
 		>
-			<header className="flex h-10 shrink-0 items-center gap-0.5 rounded-none border-b border-border bg-surface px-2">
+			<header className="flex h-10 shrink-0 items-center gap-0.5 border-b border-border bg-surface px-2">
 				<label className="relative mr-1 min-w-0 flex-1">
 					<Search className="pointer-events-none absolute left-2.5 top-1/2 size-icon-sm -translate-y-1/2 text-passive" />
 					<Input
 						aria-label={t("files.explorer.filter")}
-						className="h-8 rounded-l-none pl-8 font-mono text-xs"
+						className="h-8 pl-8 font-mono text-xs"
 						onChange={(event) => setFilter(event.target.value)}
 						placeholder={t("files.explorer.filterPlaceholder")}
 						value={filter}
