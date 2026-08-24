@@ -450,7 +450,7 @@ export function HumanMessage({
 				<div className="mt-1 flex h-7 items-center gap-1">
 					<div className="flex items-center gap-1 opacity-0 transition-opacity duration-150 ease-out focus-within:opacity-100 group-hover/message:opacity-100 motion-reduce:transition-none">
 						<span
-							className="w-12 shrink-0 -translate-x-1 px-1 text-[11px] tabular-nums text-muted-foreground/75 transition-[opacity,translate] duration-150 ease-out group-hover/message:translate-x-0 group-focus-within/message:translate-x-0 motion-reduce:transform-none motion-reduce:transition-none"
+							className="shrink-0 px-0.5 text-[11px] tabular-nums text-muted-foreground/75"
 							aria-label={`Sent ${formatMessageTimestamp(message.createdAt)}`}
 						>
 							{formatMessageTimestamp(message.createdAt)}
@@ -567,9 +567,9 @@ export function AssistantMessage({
 			<ChatMarkdown text={visibleText} streaming={renderingStreaming} />
 			{showActions ? (
 				// One action row for the completed answer, not one after every prose
-				// fragment the provider emitted while working. Always visible: hover-only
-				// chrome is easy to miss next to a short reply.
-				<div className="mt-1 flex h-7 items-center gap-0.5">
+				// fragment the provider emitted while working. Reveal the controls only
+				// when the message is being inspected, keeping the answer visually quiet.
+				<div className="mt-1 flex h-7 items-center gap-0.5 opacity-0 transition-opacity duration-150 ease-out group-hover/message:opacity-100 group-focus-within/message:opacity-100 motion-reduce:transition-none">
 					{showCopy ? (
 						/* The stored markdown, not a re-serialization of what was rendered:
 						   pasting it into an editor has to give back what the agent wrote. */
@@ -593,7 +593,7 @@ export function AssistantMessage({
 					) : null}
 					{hasDuration ? <TurnDuration durationMs={durationMs} /> : null}
 					<span
-						className="w-12 shrink-0 translate-x-1 px-1 text-[11px] tabular-nums text-muted-foreground/75 opacity-0 transition-[opacity,translate] duration-150 ease-out group-hover/message:translate-x-0 group-hover/message:opacity-100 group-focus-within/message:translate-x-0 group-focus-within/message:opacity-100 motion-reduce:transform-none motion-reduce:transition-none"
+						className="w-auto shrink-0 px-1 text-[11px] tabular-nums text-muted-foreground/75"
 						aria-label={`Sent ${formatMessageTimestamp(message.createdAt)}`}
 					>
 						{formatMessageTimestamp(message.createdAt)}
