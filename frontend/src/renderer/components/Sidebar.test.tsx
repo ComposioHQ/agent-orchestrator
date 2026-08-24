@@ -21,6 +21,7 @@ import {
 import type { WorkspaceSession, WorkspaceSummary } from "../types/workspace";
 import { agentsQueryKey } from "../hooks/useAgentsQuery";
 import { useUiStore } from "../stores/ui-store";
+import { useCloudBetaStore } from "../stores/cloud-beta-store";
 
 const {
 	checkUpdateMock,
@@ -270,6 +271,7 @@ beforeEach(() => {
 	document.documentElement.style.removeProperty("--ao-sidebar-w");
 	commandPaletteEnabled.current = true;
 	cloudSessionState.configured = false;
+	useCloudBetaStore.setState({ enabled: false, loaded: true, saving: false, saveError: false });
 	cloudSessionState.session = null;
 	cloudSessionState.status = "unauthenticated";
 	cloudSessionState.signIn.mockReset();
@@ -320,6 +322,7 @@ describe("Sidebar", () => {
 		cloudSessionState.configured = true;
 		cloudSessionState.status = "authenticated";
 		cloudSessionState.session = { user: { email: "user@example.com" } };
+		useCloudBetaStore.setState({ enabled: true });
 		renderSidebar();
 
 		expect(screen.getAllByLabelText("Signed in as user@example.com")).toHaveLength(2);

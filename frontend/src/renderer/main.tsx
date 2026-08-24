@@ -16,6 +16,7 @@ import { startUpdateTelemetry } from "./lib/update-telemetry";
 import { appI18n } from "./i18n";
 import { useLocaleStore } from "./stores/locale-store";
 import { useSoundNotificationsStore } from "./stores/sound-notifications-store";
+import { useCloudBetaStore } from "./stores/cloud-beta-store";
 
 const router = createAppRouter(queryClient);
 
@@ -75,6 +76,9 @@ async function renderApp(): Promise<void> {
 	// window blank while its IPC read completes. The router's pending screen
 	// renders immediately, then i18n updates if the user chose another locale.
 	void useLocaleStore.getState().load();
+	// Cloud is opt-in. Resolve the persisted gate before mounting so beta-only
+	// navigation and project creation never flash for users who left it off.
+	await useCloudBetaStore.getState().load();
 	// The sound-notifications toggle only needs to be right by the time
 	// Settings renders, so it loads in the background rather than blocking mount.
 	void useSoundNotificationsStore.getState().load();

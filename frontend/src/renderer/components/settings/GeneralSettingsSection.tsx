@@ -3,6 +3,7 @@ import type { ThemePreference, ThemeStyle } from "../../lib/theme";
 import type { AppLocale } from "../../i18n";
 import { useLocaleStore } from "../../stores/locale-store";
 import { useSoundNotificationsStore } from "../../stores/sound-notifications-store";
+import { useCloudBetaStore } from "../../stores/cloud-beta-store";
 import { useUiStore } from "../../stores/ui-store";
 import { SettingsOptionMenu, type SettingsOption } from "./SettingsOptionMenu";
 import { SettingsRow } from "./SettingsRow";
@@ -86,6 +87,10 @@ export function GeneralSettingsSection({
 	const setSoundNotificationsEnabled = useSoundNotificationsStore((state) => state.setEnabled);
 	const soundNotificationsSaving = useSoundNotificationsStore((state) => state.saving);
 	const soundNotificationsSaveError = useSoundNotificationsStore((state) => state.saveError);
+	const cloudBetaEnabled = useCloudBetaStore((state) => state.enabled);
+	const cloudBetaSaving = useCloudBetaStore((state) => state.saving);
+	const cloudBetaSaveError = useCloudBetaStore((state) => state.saveError);
+	const setCloudBetaEnabled = useCloudBetaStore((state) => state.setEnabled);
 	const developerMode = useUiStore((state) => state.developerMode);
 	const setDeveloperMode = useUiStore((state) => state.setDeveloperMode);
 
@@ -166,6 +171,25 @@ export function GeneralSettingsSection({
 
 			{/* Advanced */}
 			<SettingsSection title={t("settings.advanced")} grouped>
+				{import.meta.env.VITE_AO_CLOUD_BETA === "true" ? (
+					<>
+						<SettingsRow label={t("settings.cloudBeta")}>
+							<Switch
+								aria-label={t("settings.cloudBeta")}
+								checked={cloudBetaEnabled}
+								disabled={cloudBetaSaving}
+								onCheckedChange={(next) => {
+									void setCloudBetaEnabled(next);
+								}}
+							/>
+						</SettingsRow>
+						{cloudBetaSaveError ? (
+							<p role="alert" className="px-3 text-caption leading-4 text-error">
+								{t("settings.cloudBetaSaveFailed")}
+							</p>
+						) : null}
+					</>
+				) : null}
 				<SettingsRow label={t("settings.developerMode")}>
 					<Switch
 						aria-label={t("settings.developerMode")}

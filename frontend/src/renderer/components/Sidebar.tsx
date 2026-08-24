@@ -83,6 +83,7 @@ import { CreateProjectFlow, type CloneProjectInput, type CreateProjectInput } fr
 import { ResizeHandle } from "./ResizeHandle";
 import { isMacPlatform, isWindowsPlatform } from "../lib/platform";
 import { useCloudSession } from "../lib/cloud-session";
+import { useCloudBetaStore } from "../stores/cloud-beta-store";
 
 // macOS paints framed chrome: the fixed TitlebarNav cluster carries the
 // sidebar toggle + history arrows above this surface. Windows hangs the sidebar
@@ -1068,8 +1069,9 @@ function CloudAccountRow({ tabIndex }: { tabIndex: number }) {
 	const { t } = useTranslation();
 	const navigate = useNavigate();
 	const { configured, session, status, signIn } = useCloudSession();
+	const cloudBetaEnabled = useCloudBetaStore((state) => state.enabled);
 	const authenticated = status === "authenticated";
-	if (!configured || (!authenticated && import.meta.env.VITE_AO_CLOUD_BETA !== "true")) return null;
+	if (!configured || !cloudBetaEnabled) return null;
 	return <button aria-label={authenticated ? t("shell.signedInAs", { email: session?.user.email ?? "AO Cloud" }) : "Sign in to AO Cloud"} className={cn(NAV_ROW_CLASS, "flex h-9 w-full items-center text-left [&_svg]:size-icon-md [&_svg]:shrink-0")} onClick={() => authenticated ? void navigate({ to: "/cloud" }) : signIn()} tabIndex={tabIndex} type="button"><Cloud aria-hidden="true" /><span className="min-w-0 flex-1 truncate tracking-tight">{authenticated ? "AO Cloud" : "Sign in to AO Cloud"}</span><span className="rounded bg-accent/10 px-1 text-[10px] font-medium text-accent">BETA</span></button>;
 }
 
@@ -1078,8 +1080,9 @@ function CloudAccountRailButton({ tabIndex }: { tabIndex: number }) {
 	const { t } = useTranslation();
 	const navigate = useNavigate();
 	const { configured, session, status, signIn } = useCloudSession();
+	const cloudBetaEnabled = useCloudBetaStore((state) => state.enabled);
 	const authenticated = status === "authenticated";
-	if (!configured || (!authenticated && import.meta.env.VITE_AO_CLOUD_BETA !== "true")) return null;
+	if (!configured || !cloudBetaEnabled) return null;
 
 	return (
 		<Tooltip>
@@ -1430,6 +1433,7 @@ function CreateProjectButton({
 	onInitializeProject,
 }: Pick<SidebarProps, "onCloneProject" | "onCreateProject" | "onInitializeProject"> & { hideTrigger?: boolean }) {
 	const { t } = useTranslation();
+	const navigate = useNavigate();
 	// Single CreateProjectFlow owner for the sidebar: the header "+" stays mounted
 	// (CSS-hidden when collapsed or on the empty start page) so it can own
 	// openSignal for ⌘N on every shell route. The collapsed rail button below
@@ -1442,7 +1446,8 @@ function CreateProjectButton({
 			mode="choose"
 			onCloneProject={onCloneProject}
 			onCreateProject={onCreateProject}
-			onInitializeProject={onInitializeProject}
+				onInitializeProject={onInitializeProject}
+				onOpenCloudProject={() => void navigate({ to: "/cloud" })}
 			openSignal={createProjectNonce}
 		>
 			{({ disabled, choosePath, label }) => (

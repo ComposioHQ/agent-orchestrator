@@ -26,18 +26,21 @@ describe("ui-settings", () => {
 
 	it("round-trips written locale", async () => {
 		await writeUiSettings(dir, { locale: "zh-CN" });
-		expect(await readUiSettings(dir)).toEqual({ locale: "zh-CN", soundNotificationsEnabled: true });
+		expect(await readUiSettings(dir)).toEqual({ locale: "zh-CN", soundNotificationsEnabled: true, cloudBetaEnabled: false });
 		await writeUiSettings(dir, { locale: "en" });
-		expect(await readUiSettings(dir)).toEqual({ locale: "en", soundNotificationsEnabled: true });
+		expect(await readUiSettings(dir)).toEqual({ locale: "en", soundNotificationsEnabled: true, cloudBetaEnabled: false });
 	});
 
 	it("merges a partial write with previously persisted settings instead of replacing them", async () => {
 		await writeUiSettings(dir, { locale: "zh-CN" });
 		await writeUiSettings(dir, { soundNotificationsEnabled: false });
-		expect(await readUiSettings(dir)).toEqual({ locale: "zh-CN", soundNotificationsEnabled: false });
+		expect(await readUiSettings(dir)).toEqual({ locale: "zh-CN", soundNotificationsEnabled: false, cloudBetaEnabled: false });
 
 		await writeUiSettings(dir, { locale: "ja" });
-		expect(await readUiSettings(dir)).toEqual({ locale: "ja", soundNotificationsEnabled: false });
+		expect(await readUiSettings(dir)).toEqual({ locale: "ja", soundNotificationsEnabled: false, cloudBetaEnabled: false });
+
+		await writeUiSettings(dir, { cloudBetaEnabled: true });
+		expect(await readUiSettings(dir)).toEqual({ locale: "ja", soundNotificationsEnabled: false, cloudBetaEnabled: true });
 	});
 
 	it("falls back to defaults on garbage", async () => {
@@ -46,13 +49,13 @@ describe("ui-settings", () => {
 	});
 
 	it("coerces unknown locale to en and accepts supported locales", () => {
-		expect(coerceUiSettings({ locale: "xx" })).toEqual({ locale: "en", soundNotificationsEnabled: true });
-		expect(coerceUiSettings({ locale: "zh" })).toEqual({ locale: "en", soundNotificationsEnabled: true });
-		expect(coerceUiSettings({})).toEqual({ locale: "en", soundNotificationsEnabled: true });
-		expect(coerceUiSettings(null)).toEqual({ locale: "en", soundNotificationsEnabled: true });
-		expect(coerceUiSettings({ locale: "zh-CN" })).toEqual({ locale: "zh-CN", soundNotificationsEnabled: true });
-		expect(coerceUiSettings({ locale: "fr" })).toEqual({ locale: "fr", soundNotificationsEnabled: true });
-		expect(coerceUiSettings({ locale: "pt-BR" })).toEqual({ locale: "pt-BR", soundNotificationsEnabled: true });
+		expect(coerceUiSettings({ locale: "xx" })).toEqual({ locale: "en", soundNotificationsEnabled: true, cloudBetaEnabled: false });
+		expect(coerceUiSettings({ locale: "zh" })).toEqual({ locale: "en", soundNotificationsEnabled: true, cloudBetaEnabled: false });
+		expect(coerceUiSettings({})).toEqual({ locale: "en", soundNotificationsEnabled: true, cloudBetaEnabled: false });
+		expect(coerceUiSettings(null)).toEqual({ locale: "en", soundNotificationsEnabled: true, cloudBetaEnabled: false });
+		expect(coerceUiSettings({ locale: "zh-CN" })).toEqual({ locale: "zh-CN", soundNotificationsEnabled: true, cloudBetaEnabled: false });
+		expect(coerceUiSettings({ locale: "fr" })).toEqual({ locale: "fr", soundNotificationsEnabled: true, cloudBetaEnabled: false });
+		expect(coerceUiSettings({ locale: "pt-BR", cloudBetaEnabled: true })).toEqual({ locale: "pt-BR", soundNotificationsEnabled: true, cloudBetaEnabled: true });
 	});
 
 	it("atomic write leaves no temp file behind", async () => {

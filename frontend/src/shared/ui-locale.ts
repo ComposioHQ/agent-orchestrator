@@ -9,9 +9,15 @@ export interface UiSettings {
 	locale: AppLocale;
 	/** Whether attention-worthy notifications (needs input, ready to merge) also play a sound. */
 	soundNotificationsEnabled: boolean;
+	/** Opt-in gate for the AO Cloud beta surfaces. */
+	cloudBetaEnabled: boolean;
 }
 
-export const DEFAULT_UI_SETTINGS: UiSettings = { locale: DEFAULT_LOCALE, soundNotificationsEnabled: true };
+export const DEFAULT_UI_SETTINGS: UiSettings = {
+	locale: DEFAULT_LOCALE,
+	soundNotificationsEnabled: true,
+	cloudBetaEnabled: false,
+};
 
 /** Normalize an unknown value to a supported UI locale. */
 export function coerceLocale(raw: unknown): AppLocale {
@@ -29,5 +35,9 @@ export function coerceUiSettings(raw: unknown): UiSettings {
 		typeof record.soundNotificationsEnabled === "boolean"
 			? record.soundNotificationsEnabled
 			: DEFAULT_UI_SETTINGS.soundNotificationsEnabled;
-	return { locale: coerceLocale(record.locale), soundNotificationsEnabled };
+	const cloudBetaEnabled =
+		typeof record.cloudBetaEnabled === "boolean"
+			? record.cloudBetaEnabled
+			: DEFAULT_UI_SETTINGS.cloudBetaEnabled;
+	return { locale: coerceLocale(record.locale), soundNotificationsEnabled, cloudBetaEnabled };
 }

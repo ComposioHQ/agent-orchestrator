@@ -17,6 +17,7 @@ import {
   createCloudSession,
   loadCloudBetaOverview,
 } from "./cloud-beta";
+import { readUiSettings } from "./ui-settings";
 
 const CLIENT_ID =
   import.meta.env.VITE_WORKOS_CLIENT_ID?.trim() ||
@@ -411,26 +412,41 @@ export function installCloudIPC(
   notifyRenderers: (session: CloudAccount | null) => void,
 ): void {
   ipcMain.handle("cloud:getSession", () => getCloudSession(getDataDir()));
-  ipcMain.handle("cloud:isBetaEnabled", () => cloudBetaEnabled());
-  ipcMain.handle("cloud:getOverview", async () =>
-    loadCloudBetaOverview(await getCloudAccessToken(getDataDir())),
-  );
+  const betaEnabled = async () =>
+    cloudBetaEnabled() && (await readUiSettings(getDataDir())).cloudBetaEnabled;
+  const requireBetaEnabled = async () => {
+    if (!(await betaEnabled())) {
+      throw new Error("Enable AO Cloud Beta in Settings to continue.");
+    }
+  };
+  ipcMain.handle("cloud:isBetaEnabled", betaEnabled);
+  ipcMain.handle("cloud:getOverview", async () => {
+    await requireBetaEnabled();
+    return loadCloudBetaOverview(await getCloudAccessToken(getDataDir()));
+  });
   ipcMain.handle(
     "cloud:createProject",
-    async (_event, orgId: string, input: CreateCloudProjectInput) =>
-      createCloudProject(await getCloudAccessToken(getDataDir()), orgId, input),
+    async (_event, orgId: string, input: CreateCloudProjectInput) => {
+      await requireBetaEnabled();
+      return createCloudProject(await getCloudAccessToken(getDataDir()), orgId, input);
+    },
   );
   ipcMain.handle(
     "cloud:createSession",
-    async (_event, input: CreateCloudSessionInput) =>
-      createCloudSession(await getCloudAccessToken(getDataDir()), input),
+    async (_event, input: CreateCloudSessionInput) => {
+      await requireBetaEnabled();
+      return createCloudSession(await getCloudAccessToken(getDataDir()), input);
+    },
   );
   ipcMain.handle(
     "cloud:connectLocalHarness",
-    async (_event, harness: CloudHarness) =>
-      connectLocalHarness(await getCloudAccessToken(getDataDir()), harness),
+    async (_event, harness: CloudHarness) => {
+      await requireBetaEnabled();
+      return connectLocalHarness(await getCloudAccessToken(getDataDir()), harness);
+    },
   );
   ipcMain.handle("cloud:signIn", async () => {
+    await requireBetaEnabled();
     if (!workos) {
       await dialog.showMessageBox({
         type: "info",

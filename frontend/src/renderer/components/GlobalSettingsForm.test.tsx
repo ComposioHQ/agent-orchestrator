@@ -8,6 +8,7 @@ import { useLocaleStore } from "../stores/locale-store";
 import { useSoundNotificationsStore } from "../stores/sound-notifications-store";
 import { useUiStore } from "../stores/ui-store";
 import { TooltipProvider } from "./ui/tooltip";
+import { useCloudBetaStore } from "../stores/cloud-beta-store";
 
 const {
 	getUpdate,
@@ -124,10 +125,11 @@ beforeEach(async () => {
 	}
 	getUpdate.mockResolvedValue({ enabled: true, channel: "latest", nightlyAck: false, feature: null });
 	setUpdate.mockResolvedValue(undefined);
-	getUiSettings.mockResolvedValue({ locale: "en", soundNotificationsEnabled: true });
-	setUiSettings.mockImplementation(async (settings: { locale?: string; soundNotificationsEnabled?: boolean }) => ({
+	getUiSettings.mockResolvedValue({ locale: "en", soundNotificationsEnabled: true, cloudBetaEnabled: false });
+	setUiSettings.mockImplementation(async (settings: { locale?: string; soundNotificationsEnabled?: boolean; cloudBetaEnabled?: boolean }) => ({
 		locale: "en",
 		soundNotificationsEnabled: true,
+		cloudBetaEnabled: false,
 		...settings,
 	}));
 	updGetStatus.mockResolvedValue({ state: "idle" });
@@ -149,6 +151,7 @@ beforeEach(async () => {
 	await appI18n.changeLanguage("en");
 	useLocaleStore.setState({ locale: "en", loaded: false, saving: false, saveError: false });
 	useSoundNotificationsStore.setState({ enabled: true, loaded: false, saving: false, saveError: false });
+	useCloudBetaStore.setState({ enabled: false, loaded: true, saving: false, saveError: false });
 	useUiStore.setState({ developerMode: false });
 	document.documentElement.lang = "en";
 });
@@ -176,6 +179,18 @@ describe("GlobalSettingsForm", () => {
 		expect(window.localStorage.getItem("ao.developerMode")).toBe("true");
 		await user.click(screen.getByLabelText("Updates channel"));
 		expect(await screen.findByRole("menuitem", { name: "Feature Releases" })).toBeInTheDocument();
+	});
+
+	it("persists the AO Cloud beta opt-in", async () => {
+		vi.stubEnv("VITE_AO_CLOUD_BETA", "true");
+		const user = userEvent.setup();
+		renderForm();
+		const toggle = await screen.findByRole("switch", { name: "AO Cloud Beta" });
+		expect(toggle).toHaveAttribute("aria-checked", "false");
+
+		await user.click(toggle);
+		await waitFor(() => expect(setUiSettings).toHaveBeenCalledWith({ cloudBetaEnabled: true }));
+		expect(useCloudBetaStore.getState().enabled).toBe(true);
 	});
 
 	it("shows the available feature builds after choosing Feature Releases", async () => {
