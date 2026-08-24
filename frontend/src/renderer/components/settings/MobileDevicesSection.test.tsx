@@ -38,7 +38,7 @@ describe("MobileDevicesSection", () => {
 		await appI18n.changeLanguage("en");
 	});
 
-	it("shows a live device and a last-seen fallback", async () => {
+	it("shows devices as a compact, single-line management list", async () => {
 		vi.spyOn(apiClient, "GET").mockResolvedValue(twoDevices as never);
 		renderSection();
 
@@ -47,9 +47,9 @@ describe("MobileDevicesSection", () => {
 		const deviceList = screen.getByRole("list");
 		expect(deviceList).toHaveClass("rounded-md", "border", "divide-y");
 		expect(screen.getAllByRole("listitem")[0]).not.toHaveClass("rounded-lg", "border", "bg-[var(--color-bg-settings-input)]");
-		expect(screen.getByText("Live")).toBeInTheDocument();
 		expect(screen.getByText("M31s")).toBeInTheDocument();
-		expect(screen.getByText(/2 hours ago/)).toBeInTheDocument();
+		expect(screen.queryByText("Live")).not.toBeInTheDocument();
+		expect(screen.queryByText(/2 hours ago/)).not.toBeInTheDocument();
 	});
 
 	it("mutes a device", async () => {
@@ -179,7 +179,7 @@ describe("MobileDevicesSection", () => {
 		expect(names).toEqual(["iPhone", "M31s"]);
 	});
 
-	it("shows a disabled switch and explanatory line for a device with no push token, but keeps live/last-seen and removal working", async () => {
+	it("keeps a device without a push token manageable without extra status copy", async () => {
 		const noToken = {
 			data: {
 				devices: [
@@ -196,10 +196,8 @@ describe("MobileDevicesSection", () => {
 		renderSection();
 
 		expect(await screen.findByText("Pixel Announce")).toBeInTheDocument();
-		// Still shows live state even with no token.
-		expect(screen.getByText("Live")).toBeInTheDocument();
-		// Explanatory line for the disabled-notifications state.
-		expect(screen.getByText(/Notifications not enabled on this device/i)).toBeInTheDocument();
+		expect(screen.queryByText("Live")).not.toBeInTheDocument();
+		expect(screen.queryByText(/Notifications not enabled on this device/i)).not.toBeInTheDocument();
 
 		const toggle = screen.getByRole("switch", { name: /notifications for Pixel Announce/i });
 		expect(toggle).toBeDisabled();
@@ -210,16 +208,4 @@ describe("MobileDevicesSection", () => {
 		await waitFor(() => expect(del).toHaveBeenCalledTimes(1));
 	});
 
-	it("formats last-seen relative to the app's language, not the OS locale", async () => {
-		await appI18n.changeLanguage("ja");
-		vi.spyOn(apiClient, "GET").mockResolvedValue(twoDevices as never);
-		renderSection();
-
-		await screen.findByText("M31s");
-		// Japanese Intl.RelativeTimeFormat renders "2 時間前" for 2 hours ago —
-		// distinct from the English "2 hours ago" the OS-locale default would
-		// have produced on an en-US machine regardless of the app's own language.
-		expect(screen.getByText(/時間前/)).toBeInTheDocument();
-		expect(screen.queryByText(/2 hours ago/i)).not.toBeInTheDocument();
-	});
 });

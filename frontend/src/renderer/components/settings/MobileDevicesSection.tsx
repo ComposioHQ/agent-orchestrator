@@ -3,7 +3,6 @@ import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Loader2, Smartphone, Trash2 } from "lucide-react";
 import { apiClient, apiErrorCode, apiErrorMessage } from "../../lib/api-client";
-import { cn } from "../../lib/utils";
 import { Switch } from "../ui/switch";
 
 export const mobileDevicesQueryKey = ["mobile-devices"] as const;
@@ -36,33 +35,6 @@ class MobileDevicesQueryError extends Error {
 	}
 }
 
-// Relative time is rendered here, on the desktop, and must stay here: Hermes has
-// no Intl.RelativeTimeFormat, so reusing this in the mobile app crashes at runtime
-// and vitest would not catch it.
-//
-// The formatter locale is threaded through as a parameter (i18next's resolved
-// language) rather than left to default: `new Intl.RelativeTimeFormat(undefined, ...)`
-// resolves to the OS locale, which can disagree with the app's own language
-// setting (e.g. app running in `ja` on an en-US machine) — exactly the mismatch
-// the multi-locale translation work above is meant to prevent.
-function lastSeenLabel(iso: string, language: string): string {
-	const relative = new Intl.RelativeTimeFormat(language, { numeric: "auto" });
-	const seconds = Math.round((Date.parse(iso) - Date.now()) / 1000);
-	const units: [Intl.RelativeTimeFormatUnit, number][] = [
-		["second", 60],
-		["minute", 60],
-		["hour", 24],
-		["day", 30],
-		["month", 12],
-	];
-	let value = seconds;
-	for (const [unit, size] of units) {
-		if (Math.abs(value) < size) return relative.format(Math.round(value), unit);
-		value /= size;
-	}
-	return relative.format(Math.round(value), "year");
-}
-
 export async function fetchDevices(): Promise<MobileDevice[]> {
 	const { data, error } = await apiClient.GET("/api/v1/mobile/devices");
 	if (error || !data) throw new MobileDevicesQueryError(apiErrorMessage(error), apiErrorCode(error));
@@ -73,7 +45,7 @@ export async function fetchDevices(): Promise<MobileDevice[]> {
 // now, a per-device mute switch, and a remove action. Live status comes from the
 // daemon's presence tracker, which is fed by each phone's own REST poll.
 export function MobileDevicesSection() {
-	const { t, i18n } = useTranslation();
+	const { t } = useTranslation();
 	const queryClient = useQueryClient();
 	const [confirmingRemoval, setConfirmingRemoval] = useState<string | null>(null);
 
@@ -139,9 +111,8 @@ export function MobileDevicesSection() {
 		null;
 
 	return (
-		<section className="mt-8 border-t border-[var(--color-border-settings-input)] pt-5">
-			<h3 className="text-xs font-medium leading-4 text-settings-muted">{t("mobile.devices.title")}</h3>
-			<p className="mt-1 text-caption text-settings-muted">{t("mobile.devices.description")}</p>
+		<section className="mt-6">
+			<h3 className="text-sm font-medium text-settings-label">{t("mobile.devices.title")}</h3>
 
 			{query.isLoading ? (
 				<div className="mt-3 flex items-center gap-2 text-caption text-settings-muted">
@@ -156,7 +127,7 @@ export function MobileDevicesSection() {
 			) : (
 				<>
 					{queryError && <p className="mt-3 text-caption text-error">{queryError.message}</p>}
-					<ul className="mt-3 overflow-hidden rounded-md border border-[var(--color-border-settings-input)] divide-y divide-[var(--color-border-settings-input)]">
+					<ul className="mt-2 overflow-hidden rounded-md border border-[var(--color-border-settings-input)] divide-y divide-[var(--color-border-settings-input)]">
 						{sortedDevices.map((device) => {
 							const name = device.deviceName || t("mobile.devices.unnamed");
 							return (
@@ -167,21 +138,6 @@ export function MobileDevicesSection() {
 									<Smartphone className="size-4 shrink-0 text-settings-muted" />
 									<div className="min-w-0 flex-1">
 										<div className="truncate text-sm">{name}</div>
-										<div className="flex items-center gap-1.5 text-caption text-settings-muted">
-											{device.live ? (
-												<>
-													<span className={cn("size-1.5 rounded-full bg-success")} aria-hidden />
-													<span>{t("mobile.devices.live")}</span>
-												</>
-											) : (
-												<span>{lastSeenLabel(device.lastSeenAt, i18n.language)}</span>
-											)}
-										</div>
-										{!device.notificationsEnabled && (
-											<div className="text-caption text-settings-muted">
-												{t("mobile.devices.notificationsNotEnabled")}
-											</div>
-										)}
 									</div>
 
 									<Switch
