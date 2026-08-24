@@ -65,6 +65,7 @@ import {
 	OriginMessage,
 	SteerMessage,
 	TurnChangedFiles,
+	TurnDuration,
 	TurnOutcome,
 } from "./ChatTimelineItems";
 import { HumanMessageEditor } from "./HumanMessageEditor";
@@ -227,6 +228,10 @@ export interface ChatWorkspaceProps {
 	onRollback?: (turnId: string) => void | Promise<unknown>;
 	rollbackPending?: boolean;
 	rollbackError?: string;
+	/** Opens the session Files inspector from a turn's changed-files Review control. */
+	onOpenFiles?: () => void;
+	/** Opens the Files inspector focused on one changed path. */
+	onOpenFile?: (path: string) => void;
 	/** Create a conversation branch by replacing a prior human prompt. */
 	onEditMessage?: (turnId: string, text: string) => void | Promise<unknown>;
 	editMessagePending?: boolean;
@@ -314,6 +319,8 @@ export function ChatWorkspace({
 	onRollback,
 	rollbackPending,
 	rollbackError,
+	onOpenFiles,
+	onOpenFile,
 	onEditMessage,
 	editMessagePending,
 	editMessageError,
@@ -746,6 +753,8 @@ export function ChatWorkspace({
 							onResolveInput={onResolveInput}
 							busy={busy}
 							onRollback={rollbackTarget}
+							onOpenFiles={onOpenFiles}
+							onOpenFile={onOpenFile}
 							onEditHumanMessage={editHumanMessage}
 							editPending={editMessagePending}
 							editBusy={Boolean(turn)}
@@ -1244,6 +1253,8 @@ function Timeline({
 	onResolveInput,
 	busy,
 	onRollback,
+	onOpenFiles,
+	onOpenFile,
 	onEditHumanMessage,
 	editPending,
 	editBusy,
@@ -1260,6 +1271,8 @@ function Timeline({
 	onResolveInput?: ChatWorkspaceProps["onResolveInput"];
 	busy?: boolean;
 	onRollback?: (turnId: string) => void;
+	onOpenFiles?: () => void;
+	onOpenFile?: (path: string) => void;
 	onEditHumanMessage?: (turnId: string, text: string) => Promise<unknown> | void;
 	editPending?: boolean;
 	editBusy?: boolean;
@@ -1292,6 +1305,8 @@ function Timeline({
 	const decide = useStableCallback(onDecide);
 	const resolveInput = useStableCallback(onResolveInput);
 	const rollback = useStableCallback(onRollback);
+	const openFiles = useStableCallback(onOpenFiles);
+	const openFile = useStableCallback(onOpenFile);
 	const apiBaseUrl = useSyncExternalStore(subscribeApiBaseUrl, getApiBaseUrl, getApiBaseUrl);
 	const editHumanMessage = useStableCallback(onEditHumanMessage);
 	const activateBranch = useStableCallback(onActivateBranch);
@@ -1593,6 +1608,8 @@ function Timeline({
 								onDecide={decide}
 								onResolveInput={resolveInput}
 								onRollback={rollback}
+								onOpenFiles={onOpenFiles ? openFiles : undefined}
+								onOpenFile={onOpenFile ? openFile : undefined}
 								onEditHumanMessage={canEditHumanMessage ? editHumanMessage : undefined}
 								messageEdit={messageEdit}
 								onStartMessageEdit={startMessageEdit}
@@ -1757,6 +1774,8 @@ const TurnGroup = memo(function TurnGroup({
 	onDecide,
 	onResolveInput,
 	onRollback,
+	onOpenFiles,
+	onOpenFile,
 	onEditHumanMessage,
 	messageEdit,
 	onStartMessageEdit,
@@ -1781,6 +1800,8 @@ const TurnGroup = memo(function TurnGroup({
 	onDecide: (requestId: string, decisionId: string) => void;
 	onResolveInput: NonNullable<ChatWorkspaceProps["onResolveInput"]>;
 	onRollback: (turnId: string) => void;
+	onOpenFiles?: () => void;
+	onOpenFile?: (path: string) => void;
 	onEditHumanMessage?: (turnId: string, text: string) => Promise<unknown> | void;
 	messageEdit?: MessageEditDraft;
 	onStartMessageEdit: (message: ConversationMessage) => void;
@@ -1848,6 +1869,11 @@ const TurnGroup = memo(function TurnGroup({
 								? () => onRollback(group.turnId as string)
 								: undefined
 						}
+						durationMs={
+							run.items[0]?.id === copyableMessageId
+								? group.outcome?.durationMs
+								: undefined
+						}
 						showStreamingIndicator={group.live && run.items[0]?.id === latestItemId}
 					/>
 				),
@@ -1859,31 +1885,46 @@ const TurnGroup = memo(function TurnGroup({
 			{group.plan ? <TurnPlan plan={group.plan} live={group.live} /> : null}
 			{/* Above the outcome divider: the changed files are part of what the turn
 			    did, and belong inside it rather than after it closes. */}
-			{group.diff ? <TurnChangedFiles diff={group.diff} live={group.live} /> : null}
+			{group.diff ? (
+				<TurnChangedFiles
+					diff={group.diff}
+					live={group.live}
+					items={group.items}
+					onReview={onOpenFiles}
+					onOpenFile={onOpenFile}
+				/>
+			) : null}
 			{group.live ? (
 				<TurnLiveStatus startedAt={group.liveStartedAt} blocked={group.blocked} />
 			) : null}
-			{/* No assistant prose to hang the undo on — still offer it before the outcome
-			    divider so a tool-only turn is not stuck without a way back. */}
-			{canRollback && !copyableMessageId ? (
-				<div className="mt-2 flex h-[18px] items-center">
-					<button
-						type="button"
-						onClick={() => onRollback(group.turnId as string)}
-						aria-label="Roll back to here"
-						title="Roll back to here"
-						className="flex items-center rounded px-1.5 py-0.5 text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground"
-					>
-						<Undo2 aria-hidden="true" className="size-3" />
-					</button>
+			{/* No assistant prose to hang the undo / duration on — still offer them
+			    before the outcome divider so a tool-only turn is not stuck without a
+			    way back or a record of how long it took. */}
+			{!copyableMessageId &&
+			(canRollback ||
+				(group.outcome?.durationMs !== undefined && group.outcome.durationMs > 0)) ? (
+				<div className="mt-2 flex h-[18px] items-center gap-0.5">
+					{canRollback ? (
+						<button
+							type="button"
+							onClick={() => onRollback(group.turnId as string)}
+							aria-label="Roll back to here"
+							title="Roll back to here"
+							className="flex items-center rounded px-1.5 py-0.5 text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground"
+						>
+							<Undo2 aria-hidden="true" className="size-3" />
+						</button>
+					) : null}
+					{group.outcome?.durationMs !== undefined && group.outcome.durationMs > 0 ? (
+						<TurnDuration durationMs={group.outcome.durationMs} />
+					) : null}
 				</div>
 			) : null}
-			{group.outcome ? (
-				<TurnOutcome
-					state={group.outcome.state}
-					durationMs={group.outcome.durationMs}
-					error={group.outcome.error}
-				/>
+			{/* Completed turns need no divider — duration lives on the action row.
+			    Interrupted/failed still get a labelled boundary so the reader can see
+			    how the turn ended. */}
+			{group.outcome && group.outcome.state !== "completed" ? (
+				<TurnOutcome state={group.outcome.state} error={group.outcome.error} />
 			) : null}
 		</div>
 	);
@@ -1958,6 +1999,7 @@ function TimelineItem({
 	queued,
 	showCopy,
 	onRollback,
+	durationMs,
 	showStreamingIndicator,
 }: {
 	item: ConversationItem;
@@ -1989,6 +2031,8 @@ function TimelineItem({
 	showCopy?: boolean;
 	/** Undo this finished turn from the answer that owns its copy action. */
 	onRollback?: () => void;
+	/** Finished-turn duration; shown next to rollback on the final answer. */
+	durationMs?: number;
 	/** This message is the live edge of its turn, rather than an earlier fragment
 	 * followed by tool activity. */
 	showStreamingIndicator?: boolean;
@@ -2000,6 +2044,7 @@ function TimelineItem({
 					message={item}
 					showCopy={showCopy}
 					onRollback={onRollback}
+					durationMs={durationMs}
 					showStreamingIndicator={showStreamingIndicator}
 				/>
 			);
@@ -2119,7 +2164,7 @@ type TimelineGroup = {
 	/** Where this group sits in the timeline: the lowest sequence it contains. */
 	anchor: number;
 	items: ConversationItem[];
-	outcome?: { state: "completed" | "interrupted" | "failed"; durationMs?: number; error?: string };
+	outcome?: { state: "completed" | "recovered" | "interrupted" | "failed"; durationMs?: number; error?: string };
 	/** What the turn changed on disk, when the daemon reported anything. */
 	diff?: TurnDiff;
 	/** The agent's plan for this turn, when it made one. */

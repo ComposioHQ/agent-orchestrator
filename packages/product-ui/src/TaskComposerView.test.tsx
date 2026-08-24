@@ -12,7 +12,7 @@ function viewProps(overrides: Partial<TaskComposerViewProps> = {}): TaskComposer
 		onPromptChange: vi.fn(),
 		labels: {
 			addFile: "Add file",
-			createAsTui: "Create as Terminal UI",
+			fallbackAction: "Create as Terminal UI",
 			removeFile: (name) => `Remove ${name}`,
 			runsWith: "Runs with",
 			start: "Start task",
@@ -50,10 +50,10 @@ function viewProps(overrides: Partial<TaskComposerViewProps> = {}): TaskComposer
 			onRemove: vi.fn(),
 		},
 		submission: {
-			canCreateAsTui: false,
+			showFallbackAction: false,
 			isSubmitting: false,
+			onFallbackAction: vi.fn(),
 			onSubmit: vi.fn(),
-			onSubmitAsTui: vi.fn(),
 		},
 		renderAgentControl: (control) => (
 			<button type="button" aria-label={control.label} onClick={() => control.onChange("claude-code")}>
@@ -140,8 +140,8 @@ describe("TaskComposerView", () => {
 		expect(onAddFiles).toHaveBeenLastCalledWith([file]);
 	});
 
-	it("shows attachment and submission errors with the TUI retry", () => {
-		const onSubmitAsTui = vi.fn();
+	it("shows attachment and submission errors with a fallback action", () => {
+		const onFallbackAction = vi.fn();
 		render(
 			<TaskComposerView
 				{...viewProps({
@@ -152,12 +152,12 @@ describe("TaskComposerView", () => {
 						onRemove: vi.fn(),
 					},
 					submission: {
-						canCreateAsTui: true,
+						showFallbackAction: true,
 						error: "Chat unavailable",
 						isSubmitting: false,
 						modelWarning: "Hidden while the submission error is visible",
+						onFallbackAction,
 						onSubmit: vi.fn(),
-						onSubmitAsTui,
 					},
 				})}
 			/>,
@@ -167,6 +167,6 @@ describe("TaskComposerView", () => {
 		expect(screen.getByText("Chat unavailable")).toBeInTheDocument();
 		expect(screen.queryByText("Hidden while the submission error is visible")).not.toBeInTheDocument();
 		fireEvent.click(screen.getByRole("button", { name: "Create as Terminal UI" }));
-		expect(onSubmitAsTui).toHaveBeenCalledOnce();
+		expect(onFallbackAction).toHaveBeenCalledOnce();
 	});
 });

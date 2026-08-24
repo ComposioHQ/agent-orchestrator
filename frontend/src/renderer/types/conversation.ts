@@ -14,7 +14,7 @@
 export type SessionMode = "chat" | "tui";
 
 /** One request and the agent work that followed it. */
-export type TurnState = "queued" | "running" | "completed" | "interrupted" | "failed";
+export type TurnState = "queued" | "running" | "completed" | "recovered" | "interrupted" | "failed";
 
 export type MessageRole = "user" | "assistant";
 
@@ -47,9 +47,17 @@ export type ActivityKind =
 
 /**
  * `cancelled` means the enclosing turn stopped before the provider completed the
- * item. It is intentionally distinct from `failed`: the user stopped the work.
+ * item. `recovered` means replay proved the item is historical but carried no
+ * portable outcome. Both are intentionally distinct from `failed`.
  */
-export type ActivityStatus = "running" | "completed" | "failed" | "cancelled" | "pending" | "resolved";
+export type ActivityStatus =
+	| "running"
+	| "completed"
+	| "recovered"
+	| "failed"
+	| "cancelled"
+	| "pending"
+	| "resolved";
 
 /**
  * Delivery state for a message AO sent. `uncertain` is deliberately not merged

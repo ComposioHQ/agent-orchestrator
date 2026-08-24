@@ -141,6 +141,7 @@ func schemaName(_ reflect.Type, defaultName string) string {
 // the drift test fails until the spec is regenerated, which flags the gap.
 var schemaNames = map[string]string{
 	"ControllersSettingsResponse":                     "SettingsResponse",
+	"ControllersDesktopWorkspaceLocationResponse":     "DesktopWorkspaceLocationResponse",
 	"ControllersUpdateSessionInterfaceRequest":        "UpdateSessionInterfaceRequest",
 	"ControllersConversationSnapshotResponse":         "ConversationSnapshotResponse",
 	"ControllersConversationTurnResponse":             "ConversationTurnResponse",
@@ -252,6 +253,10 @@ var schemaNames = map[string]string{
 	"ControllersWorkspaceCommitSummary":                   "WorkspaceCommitSummary",
 	"ControllersWorkspaceSummary":                         "WorkspaceSummary",
 	"ControllersWorkspaceFileResponse":                    "WorkspaceFileResponse",
+	"ControllersListEditorsResponse":                      "ListEditorsResponse",
+	"ControllersEditorSummary":                            "EditorSummary",
+	"ControllersOpenSessionEditorRequest":                 "OpenSessionEditorRequest",
+	"ControllersOpenSessionEditorResponse":                "OpenSessionEditorResponse",
 	"ControllersKillSessionResponse":                      "KillSessionResponse",
 	"ControllersRollbackSessionResponse":                  "RollbackSessionResponse",
 	"ControllersSendSessionMessageRequest":                "SendSessionMessageRequest",
@@ -1588,6 +1593,17 @@ func sessionOperations() []operation {
 			resps: []respUnit{
 				{http.StatusOK, controllers.WorkspaceFileResponse{}},
 				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodGet, path: "/api/v1/desktop/sessions/{sessionId}/workspace", id: "getDesktopSessionWorkspace", tag: "sessions",
+			summary:    "Resolve a session workspace for the loopback desktop supervisor",
+			pathParams: []any{controllers.SessionIDParam{}},
+			resps: []respUnit{
+				{http.StatusOK, controllers.DesktopWorkspaceLocationResponse{}},
 				{http.StatusNotFound, envelope.APIError{}},
 				{http.StatusInternalServerError, envelope.APIError{}},
 				{http.StatusNotImplemented, envelope.APIError{}},
