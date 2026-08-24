@@ -25,11 +25,17 @@ import { agentsQueryKey } from "../hooks/useAgentsQuery";
 import { useUiStore } from "../stores/ui-store";
 import { hydrateSidebarOrderFromStorage, useSidebarOrderStore } from "../stores/sidebar-order-store";
 
-const { cloudSessionState, dragEndHandlers, getMock, navigateMock, mockParams, renameSessionMock, spawnMock, updateStatusMock, commandPaletteEnabled } = vi.hoisted(
+type CapturedDragContext = {
+	accessibility?: { screenReaderInstructions?: { draggable?: string } };
+	onDragEnd: (event: { active: { id: string }; over: { id: string } | null }) => void;
+	sensors?: Array<{ options?: unknown }>;
+};
+
+const { cloudSessionState, dragContexts, getMock, navigateMock, mockParams, renameSessionMock, spawnMock, updateStatusMock, commandPaletteEnabled } = vi.hoisted(
 	() => ({
-		// Captured per DndContext id so a test can fire the exact drop the pointer
-		// sensor would produce — jsdom has no layout for dnd-kit to measure.
-		dragEndHandlers: new Map<string, (event: { active: { id: string }; over: { id: string } | null }) => void>(),
+		// Captured per DndContext id so tests can inspect the real sensor/options
+		// and fire the exact drop jsdom has no layout for dnd-kit to measure.
+		dragContexts: new Map<string, CapturedDragContext>(),
 		cloudSessionState: {
 			configured: false,
 			session: null as null | { user: { email: string } },
@@ -54,15 +60,19 @@ vi.mock("@dnd-kit/core", async (importOriginal) => {
 	return {
 		...actual,
 		DndContext: ({
+			accessibility,
 			children,
 			id,
 			onDragEnd,
+			sensors,
 		}: {
+			accessibility?: CapturedDragContext["accessibility"];
 			children: React.ReactNode;
 			id?: string;
 			onDragEnd?: (event: { active: { id: string }; over: { id: string } | null }) => void;
+			sensors?: CapturedDragContext["sensors"];
 		}) => {
-			if (id && onDragEnd) dragEndHandlers.set(id, onDragEnd);
+			if (id && onDragEnd) dragContexts.set(id, { accessibility, onDragEnd, sensors });
 			return children;
 		},
 	};
@@ -274,7 +284,7 @@ async function openCreateProjectDialog(
 
 beforeEach(() => {
 	window.localStorage.clear();
-	dragEndHandlers.clear();
+	dragContexts.clear();
 	useSidebarOrderStore.setState({ projectOrder: [], sessionOrderByProject: {} });
 	document.documentElement.style.removeProperty("--ao-sidebar-w");
 	commandPaletteEnabled.current = true;
@@ -1707,9 +1717,9 @@ describe("Sidebar reordering", () => {
 	}
 
 	function dragTo(contextId: string, activeId: string, overId: string | null) {
-		const handler = dragEndHandlers.get(contextId);
-		if (!handler) throw new Error(`No drag context registered for ${contextId}`);
-		act(() => handler({ active: { id: activeId }, over: overId === null ? null : { id: overId } }));
+		const context = dragContexts.get(contextId);
+		if (!context) throw new Error(`No drag context registered for ${contextId}`);
+		act(() => context.onDragEnd({ active: { id: activeId }, over: overId === null ? null : { id: overId } }));
 	}
 
 	it("reorders projects by dragging one onto another and persists the result", () => {
@@ -1783,8 +1793,24 @@ describe("Sidebar reordering", () => {
 			],
 		});
 
-		expect(dragEndHandlers.has(sessionDndId("proj-a"))).toBe(true);
-		expect(dragEndHandlers.has(sessionDndId("proj-b"))).toBe(true);
+		expect(dragContexts.has(sessionDndId("proj-a"))).toBe(true);
+		expect(dragContexts.has(sessionDndId("proj-b"))).toBe(true);
+	});
+
+	it("requires pointer movement before dragging and describes the actual keyboard fallback", () => {
+		renderSidebar({
+			workspaces: [{ ...projectA, sessions: [workerSession("proj-a", "a-1", "alpha task", 1)] }, projectB],
+		});
+
+		for (const contextId of [PROJECT_DND_ID, sessionDndId("proj-a")]) {
+			const context = dragContexts.get(contextId);
+			expect(context?.sensors).toEqual([
+				expect.objectContaining({ options: { activationConstraint: { distance: 4 } } }),
+			]);
+			expect(context?.accessibility?.screenReaderInstructions?.draggable).toBe(
+				"To reorder, press Alt plus Up Arrow or Alt plus Down Arrow.",
+			);
+		}
 	});
 
 	it("ignores a drop that names a session from another project", () => {
@@ -1881,6 +1907,32 @@ describe("Sidebar reordering", () => {
 		expect(screen.queryByRole("button", { name: "Reorder first" })).not.toBeInTheDocument();
 		expect(projectActivator("Alpha")).toHaveClass("cursor-grab");
 		expect(sessionActivator("first")).toHaveClass("cursor-grab");
+	});
+
+	it("does not navigate from the click synthesized after a project drag", () => {
+		renderSidebar({ workspaces: [projectA, projectB] });
+
+		dragTo(PROJECT_DND_ID, "proj-b", "proj-a");
+		fireEvent.click(projectActivator("Bravo"));
+
+		expect(navigateMock).not.toHaveBeenCalled();
+		fireEvent.click(projectActivator("Bravo"));
+		expect(navigateMock).toHaveBeenCalledWith({ to: "/projects/$projectId", params: { projectId: "proj-b" } });
+	});
+
+	it("does not navigate from the click synthesized after a session drag", () => {
+		const sessions = [workerSession("proj-a", "a-1", "first", 1), workerSession("proj-a", "a-2", "second", 2)];
+		renderSidebar({ workspaces: [{ ...projectA, sessions }] });
+
+		dragTo(sessionDndId("proj-a"), "a-2", "a-1");
+		fireEvent.click(sessionActivator("second"));
+
+		expect(navigateMock).not.toHaveBeenCalled();
+		fireEvent.click(sessionActivator("second"));
+		expect(navigateMock).toHaveBeenCalledWith({
+			to: "/projects/$projectId/sessions/$sessionId",
+			params: { projectId: "proj-a", sessionId: "a-2" },
+		});
 	});
 
 	it("keeps the project row's own click behaviour after reordering", async () => {

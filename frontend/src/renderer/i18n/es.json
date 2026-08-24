@@ -861,6 +861,7 @@
 	"shell.removeProjectTitle": "Eliminar proyecto",
 	"shell.removingNamed": "Eliminando {{name}}…",
 	"shell.reorderMoved": "{{name}} se movió a la posición {{position}} de {{total}}",
+	"shell.reorderInstructions": "Para reordenar, pulsa Alt más Flecha arriba o Alt más Flecha abajo.",
 	"shell.renameSession": "Renombrar {{title}}",
 	"shell.restartToUpdate": "Reiniciar para actualizar",
 	"shell.restartInstallUpdate": "Reiniciar para instalar la actualización",

@@ -853,6 +853,7 @@
 	"shell.removeProjectTitle": "Remove project",
 	"shell.removingNamed": "Removing {{name}}…",
 	"shell.reorderMoved": "{{name}} moved to position {{position}} of {{total}}",
+	"shell.reorderInstructions": "To reorder, press Alt plus Up Arrow or Alt plus Down Arrow.",
 	"shell.renameSession": "Rename {{title}}",
 	"shell.restartToUpdate": "Restart to update",
 	"shell.restartInstallUpdate": "Restart to install update",

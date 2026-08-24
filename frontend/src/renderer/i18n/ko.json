@@ -850,6 +850,7 @@
 	"shell.removeProjectTitle": "프로젝트 제거",
 	"shell.removingNamed": "{{name}} 제거 중…",
 	"shell.reorderMoved": "{{name}}을(를) {{total}}개 중 {{position}}번째로 이동했습니다",
+	"shell.reorderInstructions": "순서를 변경하려면 Alt와 위쪽 화살표 또는 Alt와 아래쪽 화살표를 누르세요.",
 	"shell.renameSession": "{{title}} 이름 바꾸기",
 	"shell.restartToUpdate": "다시 시작하여 업데이트",
 	"shell.restartInstallUpdate": "다시 시작하여 업데이트 설치",

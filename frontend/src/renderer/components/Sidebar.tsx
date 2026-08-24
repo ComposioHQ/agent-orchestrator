@@ -150,6 +150,39 @@ function useReorderSensors() {
 	return useSensors(useSensor(PointerSensor, { activationConstraint: { distance: REORDER_ACTIVATION_DISTANCE } }));
 }
 
+// Browsers dispatch a click after pointerup even when dnd-kit has just completed
+// a drag. Suppress only that same-turn synthetic click; if no click follows,
+// clear the guard before the next user interaction.
+function usePostDragClickGuard() {
+	const guardedIdRef = useRef<string | null>(null);
+	const clearTimerRef = useRef<number | null>(null);
+
+	const markDragEnded = useCallback((id: string) => {
+		guardedIdRef.current = id;
+		if (clearTimerRef.current !== null) window.clearTimeout(clearTimerRef.current);
+		clearTimerRef.current = window.setTimeout(() => {
+			guardedIdRef.current = null;
+			clearTimerRef.current = null;
+		}, 0);
+	}, []);
+
+	const consumeClick = useCallback((id: string) => {
+		if (guardedIdRef.current !== id) return false;
+		guardedIdRef.current = null;
+		if (clearTimerRef.current !== null) {
+			window.clearTimeout(clearTimerRef.current);
+			clearTimerRef.current = null;
+		}
+		return true;
+	}, []);
+
+	useEffect(() => () => {
+		if (clearTimerRef.current !== null) window.clearTimeout(clearTimerRef.current);
+	}, []);
+
+	return useMemo(() => ({ consumeClick, markDragEnded }), [consumeClick, markDragEnded]);
+}
+
 type SortableRow = ReturnType<typeof useSortable>;
 
 /** Vertical-only transform: a dragged row must never drift out of the rail. */
@@ -298,6 +331,7 @@ export function Sidebar({
 	);
 	const projectIds = useMemo(() => orderedWorkspaces.map((workspace) => workspace.id), [orderedWorkspaces]);
 	const reorderSensors = useReorderSensors();
+	const projectDragClickGuard = usePostDragClickGuard();
 	const [projectAnnouncement, setProjectAnnouncement] = useState("");
 
 	const commitProjectOrder = useCallback(
@@ -314,11 +348,12 @@ export function Sidebar({
 
 	const onProjectDragEnd = useCallback(
 		({ active, over }: DragEndEvent) => {
-			if (!over) return;
 			const projectId = String(active.id);
+			projectDragClickGuard.markDragEnded(projectId);
+			if (!over) return;
 			commitProjectOrder(reorderById(projectIds, projectId, String(over.id)), projectId);
 		},
-		[commitProjectOrder, projectIds],
+		[commitProjectOrder, projectDragClickGuard, projectIds],
 	);
 
 	const pinnedSessions = workspaces
@@ -486,6 +521,9 @@ export function Sidebar({
 								    structurally impossible, which is the semantics we want — this is
 								    ordering, not moving a session between projects. */}
 								<DndContext
+									accessibility={{
+										screenReaderInstructions: { draggable: t("shell.reorderInstructions") },
+									}}
 									collisionDetection={closestCenter}
 									id={PROJECT_DND_ID}
 									onDragEnd={onProjectDragEnd}
@@ -499,6 +537,7 @@ export function Sidebar({
 													workspace={workspace}
 													expanded={!collapsedIds.has(workspace.id)}
 													selection={selection}
+													consumeDragClick={projectDragClickGuard.consumeClick}
 													onMove={(offset) =>
 														commitProjectOrder(moveByOffset(projectIds, workspace.id, offset), workspace.id)
 													}
@@ -602,6 +641,7 @@ function ProjectItem({
 	workspace,
 	expanded,
 	selection,
+	consumeDragClick,
 	onMove,
 	onToggle,
 	onRemoveProject,
@@ -609,6 +649,7 @@ function ProjectItem({
 	workspace: WorkspaceSummary;
 	expanded: boolean;
 	selection: Selection;
+	consumeDragClick: (id: string) => boolean;
 	/** Keyboard fallback for the focused row: nudge this project one slot up or down. */
 	onMove: (offset: number) => void;
 	onToggle: () => void;
@@ -663,6 +704,7 @@ function ProjectItem({
 	);
 	const sessionIds = useMemo(() => sessions.map((session) => session.id), [sessions]);
 	const sessionSensors = useReorderSensors();
+	const sessionDragClickGuard = usePostDragClickGuard();
 	const [sessionAnnouncement, setSessionAnnouncement] = useState("");
 
 	const commitSessionOrder = (next: string[] | null, sessionId: string) => {
@@ -675,8 +717,9 @@ function ProjectItem({
 	};
 
 	const onSessionDragEnd = ({ active, over }: DragEndEvent) => {
-		if (!over) return;
 		const sessionId = String(active.id);
+		sessionDragClickGuard.markDragEnded(sessionId);
+		if (!over) return;
 		// reorderById rejects any id that is not in THIS project's list, so a stray
 		// cross-project drop leaves both projects' orders untouched.
 		commitSessionOrder(reorderById(sessionIds, sessionId, String(over.id)), sessionId);
@@ -717,6 +760,7 @@ function ProjectItem({
 	// Do not treat orchestratorActive like the board: the project row is the
 	// one-click path back from the orchestrator button.
 	const onProjectClick = () => {
+		if (consumeDragClick(workspace.id)) return;
 		if (!expanded) {
 			onToggle();
 			selection.goProject(workspace.id);
@@ -801,10 +845,11 @@ function ProjectItem({
 		<div>
 		{/* project-sidebar__proj-row */}
 	<SidebarMenuButton
-		{...attributes}
 		aria-current={dashboardActive ? "page" : undefined}
+		aria-describedby={attributes["aria-describedby"]}
 		aria-expanded={expanded}
 		aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown"
+		aria-roledescription={attributes["aria-roledescription"]}
 		isActive={projectActive}
 		tooltip={workspace.name}
 		{...listeners}
@@ -974,6 +1019,9 @@ function ProjectItem({
 						    project's sessions, so nothing from another project can be dropped
 						    here and nothing here can be dropped elsewhere. */}
 						<DndContext
+							accessibility={{
+								screenReaderInstructions: { draggable: t("shell.reorderInstructions") },
+							}}
 							collisionDetection={closestCenter}
 							id={sessionDndId(workspace.id)}
 							onDragEnd={onSessionDragEnd}
@@ -989,6 +1037,7 @@ function ProjectItem({
 											key={session.id}
 											session={session}
 											active={selection.activeSessionId === session.id}
+											consumeDragClick={sessionDragClickGuard.consumeClick}
 											onMove={(offset) => commitSessionOrder(moveByOffset(sessionIds, session.id, offset), session.id)}
 											onOpen={() => selection.goSession(workspace.id, session.id)}
 										/>
@@ -1047,11 +1096,13 @@ function ProjectItem({
 function SortableSessionRow({
 	session,
 	active,
+	consumeDragClick,
 	onMove,
 	onOpen,
 }: {
 	session: WorkspaceSession;
 	active: boolean;
+	consumeDragClick: (id: string) => boolean;
 	onMove: (offset: number) => void;
 	onOpen: () => void;
 }) {
@@ -1062,7 +1113,9 @@ function SortableSessionRow({
 		<SessionRow
 			session={session}
 			active={active}
-			onOpen={onOpen}
+			onOpen={() => {
+				if (!consumeDragClick(session.id)) onOpen();
+			}}
 			reorder={{ attributes, isDragging, listeners, onMove, setActivatorNodeRef, setNodeRef, transform, transition }}
 		/>
 	);
@@ -1095,6 +1148,10 @@ function SessionRow({
 		? t(switchPresentation.compactLabelKey, switchPresentation.values)
 		: undefined;
 	const switchStatusId = useId();
+	const reorderDescriptionId = reorder?.attributes["aria-describedby"];
+	const describedBy = [switchLabel ? switchStatusId : undefined, reorderDescriptionId]
+		.filter((id): id is string => Boolean(id))
+		.join(" ") || undefined;
 	const [isEditing, setIsEditing] = useState(false);
 	const [draft, setDraft] = useState(session.title);
 	// Escape must not be swallowed by the blur-to-save path: the keydown handler
@@ -1177,11 +1234,11 @@ function SessionRow({
 				{/* Scale wrapper — only around the open button so action buttons don't trigger press animation */}
 				<div className="flex min-w-0 flex-1 transition-[transform] duration-[100ms] ease-out active:scale-[0.97]">
 					<button
-						{...(reorder?.attributes ?? {})}
 						aria-current={active ? "page" : undefined}
-						aria-describedby={switchLabel ? switchStatusId : undefined}
+						aria-describedby={describedBy}
 						aria-keyshortcuts={reorder ? "Alt+ArrowUp Alt+ArrowDown" : undefined}
 						aria-label={t("shell.openSession", { title: session.title })}
+						aria-roledescription={reorder?.attributes["aria-roledescription"]}
 						className={cn(
 							"flex h-8 min-w-0 flex-1 items-center gap-1.5 rounded-lg px-2.5 py-0 text-left text-sm outline-hidden focus-visible:ring-2 focus-visible:ring-sidebar-ring",
 							reorder && "cursor-grab active:cursor-grabbing",
