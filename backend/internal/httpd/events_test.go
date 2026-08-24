@@ -172,7 +172,11 @@ func (s *resetEventSource) EventsAfter(_ context.Context, after int64, _ int) ([
 
 func (*resetEventSource) LatestSeq(context.Context) (int64, error) { return 1, nil }
 
-func TestEventsStreamResetsCursorAheadOfCurrentDatabase(t *testing.T) {
+// A cursor ahead of head means the change_log was truncated or replaced. Such a
+// client is sent to head, not to zero: replaying from zero costs it the entire
+// backlog, and because every connected client is reset at the same moment, they
+// stampede together. The gap is recovered from the next snapshot fetch instead.
+func TestEventsStreamClampsCursorAheadOfCurrentDatabaseToHead(t *testing.T) {
 	live := &fakeEventSubscriber{}
 	src := &resetEventSource{}
 	router := NewRouterWithControl(config.Config{}, discardLogger(), nil, APIDeps{
@@ -194,14 +198,19 @@ func TestEventsStreamResetsCursorAheadOfCurrentDatabase(t *testing.T) {
 	}
 	defer resp.Body.Close()
 
-	if got := resp.Header.Get("X-AO-Event-After"); got != "0" {
-		t.Fatalf("X-AO-Event-After = %q, want 0", got)
+	// resetEventSource reports a head of 1, so a cursor of 100 lands on 1.
+	if got := resp.Header.Get("X-AO-Event-After"); got != "1" {
+		t.Fatalf("X-AO-Event-After = %q, want 1 (head, not a replay from zero)", got)
 	}
-	if ids := readSSEIDs(t, resp.Body, 1); ids[0] != "1" {
-		t.Fatalf("id = %q, want 1", ids[0])
+
+	// The replayed event (seq 1) is at the cursor, so it is not re-sent. Only a
+	// genuinely newer event reaches the client — proving no backlog was replayed.
+	live.publish(testCDCEvent(2))
+	if ids := readSSEIDs(t, resp.Body, 1); ids[0] != "2" {
+		t.Fatalf("id = %q, want 2 (history before head must not be replayed)", ids[0])
 	}
-	if src.after != 0 {
-		t.Fatalf("EventsAfter called with %d, want reset cursor 0", src.after)
+	if src.after != 1 {
+		t.Fatalf("EventsAfter called with %d, want head cursor 1", src.after)
 	}
 }
 

@@ -627,18 +627,10 @@
 	border-block-start: 0 !important;
 }
 
-/* The updater is a compact instrument panel: status owns the visual hierarchy,
- * while the dotted field and state rail make activity legible without adding
- * decorative chrome. */
+/* Keep updater state legible without tinting the whole surface. The glyph is
+ * the single state-colored affordance; the panel otherwise matches Settings. */
 .update-status-panel {
 	--update-status-tone: var(--muted-foreground);
-	position: relative;
-	isolation: isolate;
-	overflow: hidden;
-	border: 1px solid color-mix(in oklch, var(--update-status-tone) 24%, var(--color-border-settings-dialog));
-	background:
-		linear-gradient(108deg, color-mix(in oklch, var(--update-status-tone) 9%, transparent), transparent 48%),
-		var(--color-bg-settings-input);
 	box-shadow: inset 0 1px 0 color-mix(in oklch, var(--foreground) 5%, transparent);
 }
 
@@ -658,81 +650,11 @@
 	--update-status-tone: var(--color-error);
 }
 
-.update-status-panel::before {
-	position: absolute;
-	inset-block: 0;
-	inset-inline-start: 0;
-	width: 2px;
-	background: var(--update-status-tone);
-	content: "";
-}
-
-.update-status-panel::after {
-	position: absolute;
-	inset-block: 0;
-	inset-inline-end: 0;
-	width: 46%;
-	background-image: radial-gradient(
-		circle,
-		color-mix(in oklch, var(--update-status-tone) 27%, transparent) 0.7px,
-		transparent 0.8px
-	);
-	background-size: 14px 14px;
-	content: "";
-	mask-image: linear-gradient(to left, rgb(0 0 0 / 0.72), transparent);
-	pointer-events: none;
-}
-
 .update-status-glyph {
 	border: 1px solid color-mix(in oklch, var(--update-status-tone) 30%, transparent);
 	background: color-mix(in oklch, var(--update-status-tone) 11%, transparent);
 	color: var(--update-status-tone);
 	box-shadow: inset 0 1px 0 color-mix(in oklch, var(--foreground) 5%, transparent);
-}
-
-.update-status-content {
-	animation: update-status-content-in 180ms var(--ease-out);
-}
-
-.update-download-progress {
-	transition: transform 240ms var(--ease-out);
-}
-
-.update-policy-details {
-	animation: update-policy-details-in 160ms var(--ease-out);
-}
-
-@keyframes update-status-content-in {
-	from {
-		opacity: 0.45;
-		transform: translateY(3px);
-	}
-	to {
-		opacity: 1;
-		transform: translateY(0);
-	}
-}
-
-@keyframes update-policy-details-in {
-	from {
-		opacity: 0;
-		transform: translateY(-3px);
-	}
-	to {
-		opacity: 1;
-		transform: translateY(0);
-	}
-}
-
-@media (prefers-reduced-motion: reduce) {
-	.update-status-content,
-	.update-policy-details {
-		animation: none;
-	}
-
-	.update-download-progress {
-		transition: none;
-	}
 }
 
 /* Tailwind preflight clears button backgrounds; keep settings rows filled. */
@@ -1906,6 +1828,30 @@ body.is-resizing-x [data-slot="sidebar-container"],
 body.is-resizing-x [data-slot="inspector-gap"],
 body.is-resizing-x [data-slot="inspector-container"] {
 	transition: none;
+}
+
+/* Browser is an automatic co-work canvas, while Summary/Reviews/Files retain
+ * the utility rail width. Interpolate the shared gap + panel boxes together;
+ * direct pointer resizing remains immediate. */
+.session-split[data-workspace-resizing="true"] [data-slot="inspector-gap"],
+.session-split[data-workspace-resizing="true"] [data-slot="inspector-container"] {
+	transition:
+		width var(--session-inspector-motion-duration, 300ms)
+			var(--session-inspector-motion-easing, ease-out),
+		max-width var(--session-inspector-motion-duration, 300ms)
+			var(--session-inspector-motion-easing, ease-out);
+}
+
+body.is-resizing-x .session-split[data-workspace-resizing="true"] [data-slot="inspector-gap"],
+body.is-resizing-x .session-split[data-workspace-resizing="true"] [data-slot="inspector-container"] {
+	transition: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.session-split[data-workspace-resizing="true"] [data-slot="inspector-gap"],
+	.session-split[data-workspace-resizing="true"] [data-slot="inspector-container"] {
+		transition: none;
+	}
 }
 
 /* Keep keyboard focus visible without adding a ring to the sidebar chrome. */
@@ -3886,7 +3832,6 @@ body.is-resizing-x [data-slot="inspector-container"] {
    hides the shell topbar; windowed mode reserves the native traffic-light band,
    while native fullscreen keeps a 0px top inset. Linux keeps its ShellTopbar
    offset below. */
-.browser-popout-overlay,
 .files-popout-overlay {
 	position: fixed;
 	inset: env(titlebar-area-height, 0px) 0 0;
@@ -3898,10 +3843,80 @@ body.is-resizing-x [data-slot="inspector-container"] {
 	-webkit-app-region: no-drag;
 }
 
-/* Keep native browser/files surfaces below the custom Windows titlebar. */
+/* Browser maximize is a real geometry transition, not a full-screen layer that
+   appears after the docked panel disappears. The portal spans the viewport;
+   its frame begins at the measured inspector rect and the native browser slot
+   follows that box on every animation frame. */
+.browser-popout-overlay {
+	--browser-popout-top: env(titlebar-area-height, 0px);
+	--browser-popout-easing: linear(0, 0.333 12.5%, 0.642 25%, 0.813 37.5%, 0.902 50%, 0.949 62.5%, 0.974 75%, 0.986 87.5%, 1);
+	position: fixed;
+	inset: var(--browser-popout-top) 0 0;
+	z-index: 40;
+	overflow: hidden;
+	background: transparent;
+	-webkit-app-region: no-drag;
+}
+
+.browser-popout-backdrop {
+	position: absolute;
+	top: 0;
+	right: 0;
+	bottom: 0;
+	left: 0;
+	background: color-mix(in srgb, var(--bg) 94%, black);
+	opacity: 1;
+	transition: opacity 240ms ease-out;
+}
+
+.browser-popout-frame {
+	position: absolute;
+	top: 0;
+	left: 0;
+	width: 100vw;
+	height: 100%;
+	overflow: hidden;
+	border-radius: 0;
+	background: var(--bg);
+	box-shadow: none;
+	transition:
+		top 320ms var(--browser-popout-easing),
+		left 320ms var(--browser-popout-easing),
+		width 320ms var(--browser-popout-easing),
+		height 320ms var(--browser-popout-easing),
+		border-radius 240ms ease-out,
+		box-shadow 240ms ease-out;
+	will-change: top, left, width, height, border-radius;
+}
+
+.browser-popout-overlay[data-phase="opening"] .browser-popout-frame,
+.browser-popout-overlay[data-phase="closing"] .browser-popout-frame {
+	top: calc(
+		var(--browser-popout-dock-top, var(--browser-popout-top)) - var(--browser-popout-top)
+	);
+	left: var(--browser-popout-dock-left, 0px);
+	width: var(--browser-popout-dock-width, 100vw);
+	height: var(--browser-popout-dock-height, 100%);
+	border-radius: var(--radius-lg);
+	box-shadow: 0 18px 55px color-mix(in srgb, black 30%, transparent);
+}
+
+.browser-popout-overlay[data-phase="opening"] .browser-popout-frame {
+	transition: none;
+}
+
+.browser-popout-overlay[data-phase="opening"] .browser-popout-backdrop,
+.browser-popout-overlay[data-phase="closing"] .browser-popout-backdrop {
+	opacity: 0;
+}
+
+/* Keep native browser/files surfaces below the custom Windows titlebar. The
+   Browser frame is positioned inside that inset overlay, so its measured dock
+   top subtracts this same value during the geometry transition. */
 html[data-native-browser-composition="true"][data-ao-platform="win32"] .browser-popout-overlay,
 html[data-native-browser-composition="true"][data-ao-platform="win32"] .files-popout-overlay {
 	top: var(--size-window-titlebar);
+	--browser-popout-top: var(--size-window-titlebar);
 }
 
 /* Web preview has no preload platform attribute. The popouts are direct body
@@ -3910,6 +3925,7 @@ html[data-native-browser-composition="true"][data-ao-platform="win32"] .files-po
 body:has(#root .platform-windows) > .browser-popout-overlay,
 body:has(#root .platform-windows) > .files-popout-overlay {
 	top: var(--size-window-titlebar);
+	--browser-popout-top: var(--size-window-titlebar);
 }
 
 /* macOS keeps the native traffic lights visible while the window is not in
@@ -3917,6 +3933,7 @@ body:has(#root .platform-windows) > .files-popout-overlay {
 .browser-popout-overlay--mac-windowed,
 .files-popout-overlay--mac-windowed {
 	top: var(--size-traffic-light-clearance);
+	--browser-popout-top: var(--size-traffic-light-clearance);
 }
 
 .browser-popout-overlay .browser-panel__toolbar,
@@ -3927,6 +3944,12 @@ body:has(#root .platform-windows) > .files-popout-overlay {
 .platform-linux .browser-popout-overlay,
 .platform-linux .files-popout-overlay {
 	top: var(--size-shell-topbar);
+	--browser-popout-top: var(--size-shell-topbar);
+}
+
+body:has(#root .platform-linux) > .browser-popout-overlay {
+	top: var(--size-shell-topbar);
+	--browser-popout-top: var(--size-shell-topbar);
 }
 
 .browser-popout-overlay .browser-panel {
@@ -4192,20 +4215,14 @@ html[data-native-browser-composition="true"] .browser-popout-overlay {
 	background: transparent;
 }
 
-@keyframes browser-popout-in {
-	from {
-		opacity: 0.94;
-		transform: scale(0.992);
-	}
-	to {
-		opacity: 1;
-		transform: scale(1);
-	}
+html[data-native-browser-composition="true"] .browser-popout-backdrop {
+	background: transparent;
 }
 
 @media (prefers-reduced-motion: reduce) {
-	.browser-popout-overlay {
-		animation: none;
+	.browser-popout-frame,
+	.browser-popout-backdrop {
+		transition: none;
 	}
 
 	.browser-panel,

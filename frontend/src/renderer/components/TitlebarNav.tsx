@@ -3,7 +3,7 @@ import { ArrowLeft, ArrowRight, PanelLeft } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { isLinuxPlatform, isMacPlatform } from "../lib/platform";
-import { useUiStore } from "../stores/ui-store";
+import { sidebarIsVisible, sidebarOccupiesLayout, useUiStore } from "../stores/ui-store";
 
 const isMac = isMacPlatform();
 const isLinux = isLinuxPlatform();
@@ -48,7 +48,9 @@ export function TitlebarNav({
   isFullScreen?: boolean;
 }) {
   const { t } = useTranslation();
-  const { isSidebarOpen, toggleSidebar } = useUiStore();
+  const toggleSidebar = useUiStore((state) => state.toggleSidebar);
+  const isSidebarOpen = useUiStore(sidebarIsVisible);
+  const sidebarHasLayout = useUiStore(sidebarOccupiesLayout);
   const router = useRouter();
   const canGoBack = useCanGoBack();
   const canGoForward = useCanGoForward();
@@ -73,7 +75,7 @@ export function TitlebarNav({
   // 1px) so the cluster shares its centerline with the project title.
   const topClass = !isMac
     ? "top-0.75"
-    : isFullScreen && hasSessionTopbar && !isSidebarOpen
+    : isFullScreen && hasSessionTopbar && !sidebarHasLayout
       ? "top-1.5"
       : isFullScreen
         ? "top-0"

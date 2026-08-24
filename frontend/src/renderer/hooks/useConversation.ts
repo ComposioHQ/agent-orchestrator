@@ -52,8 +52,10 @@ export interface ConversationSendInput {
 	resources?: WireResourceContent[];
 }
 
+export const conversationQueryRoot = ["conversation"] as const;
+
 export function conversationQueryKey(sessionId: string) {
-	return ["conversation", sessionId] as const;
+	return [...conversationQueryRoot, sessionId] as const;
 }
 
 export function conversationModelsQueryKey(sessionId: string) {

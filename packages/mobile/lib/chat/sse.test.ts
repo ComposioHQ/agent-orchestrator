@@ -20,6 +20,14 @@ describe("mobile conversation SSE", () => {
 		expect(parseSseFrame('id: 9\ndata: {"projectId":"p","type":"session_updated"}')?.seq).toBe(9);
 		expect(parseSseFrame("id: 10\ndata: nope")).toBeUndefined();
 	});
+
+	// The cursor only needs the `id:` line. Skipping JSON.parse for frames nobody is
+	// subscribed to is what keeps a 200k-event replay off the JS thread's critical path.
+	it("reads a frame's sequence without parsing its payload", () => {
+		expect(sse.readSseFrameSeq('id: 42\ndata: {"seq":42,"projectId":"p"}')).toBe(42);
+		expect(sse.readSseFrameSeq("id: 43\r\ndata: nonsense-that-is-never-parsed")).toBe(43);
+		expect(sse.readSseFrameSeq("data: {}")).toBeUndefined();
+	});
 });
 
 describe("conversation cursor persistence", () => {
@@ -64,6 +72,21 @@ describe("conversation cursor persistence", () => {
 		expect(persisted).toEqual([7]);
 	});
 
+	// A large cold-start replay saturates the JS thread, and the 500ms debounce is a
+	// macrotask — the very thing a saturated thread never gets to. Progress therefore
+	// has to commit on event count too, or a replay that is interrupted (or crashes the
+	// app) resumes from zero on the next launch and repeats forever.
+	it("persists progress by event count while timers are starved", () => {
+		vi.useFakeTimers();
+		const persisted: number[] = [];
+		const persister = sse.createCursorPersister((cursor) => { persisted.push(cursor); });
+
+		for (let seq = 1; seq <= sse.CURSOR_PERSIST_EVENTS; seq++) persister.update(seq);
+
+		// No timer has been advanced: the count alone must have committed.
+		expect(persisted).toEqual([sse.CURSOR_PERSIST_EVENTS]);
+	});
+
 	it("replaces a higher persisted cursor when the daemon reports a reset", () => {
 		vi.useFakeTimers();
 		const persisted: number[] = [];
@@ -97,6 +120,17 @@ describe("conversation event subscriptions", () => {
 		registry?.publish(event("session-2", 4));
 
 		expect(received).toEqual(["session-2"]);
+	});
+
+	it("reports whether anything is listening, so the stream can skip parsing", () => {
+		const registry = sse.createConversationEventRegistry();
+		expect(registry.hasListeners()).toBe(false);
+
+		const unsubscribe = registry.subscribe("session-1", () => {});
+		expect(registry.hasListeners()).toBe(true);
+
+		unsubscribe();
+		expect(registry.hasListeners()).toBe(false);
 	});
 
 	it("stops publishing after a listener unsubscribes", () => {

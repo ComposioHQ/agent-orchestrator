@@ -22,6 +22,8 @@
 // normalization. Sentry's cache resolves under Electron userData, which AO has
 // already pinned to ~/.ao/electron, so it honors the app-data rule.
 
+import { DEFAULT_SENTRY_DSN } from "../shared/sentry-config";
+
 const DENY_INTEGRATIONS = new Set([
 	"SentryMinidump",
 	"Screenshots",
@@ -71,7 +73,7 @@ let started = false;
  */
 export async function initMainSentry(version: string): Promise<void> {
 	if (started) return;
-	const dsn = (process.env.AO_SENTRY_DSN ?? "").trim();
+	const dsn = (process.env.AO_SENTRY_DSN ?? "").trim() || DEFAULT_SENTRY_DSN;
 	if (!dsn) return;
 	started = true;
 	try {

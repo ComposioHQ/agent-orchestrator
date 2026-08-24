@@ -44,9 +44,16 @@ export type InspectorSessionState = {
 // is the single source of truth, read via route params. This store holds only
 // ephemeral UI: theme, sidebar collapse, command palette, per-session inspector
 // state, and the active workbench tab within a session.
-type UiState = {
+export type UiState = {
 	workbenchTab: WorkbenchTab;
+	/** The user's durable sidebar preference. Workspace pressure never mutates it. */
 	isSidebarOpen: boolean;
+	/** A live workspace may temporarily reclaim the sidebar's width. */
+	isSidebarAutoCollapsed: boolean;
+	/** The user explicitly reopened the sidebar while auto-collapse is active. */
+	sidebarAutoCollapseOverride: boolean;
+	/** Active workspace width needed beside a fully expanded sidebar; owned by the shell. */
+	sidebarWorkspaceDemandPx: number | null;
 	inspectorSessions: Record<string, InspectorSessionState>;
 	isCommandPaletteOpen: boolean;
 	settingsModal: SettingsModal | null;
@@ -100,6 +107,9 @@ type UiState = {
 	/** Refresh resolvedTheme from OS without writing light/dark to storage. */
 	syncSystemTheme: () => void;
 	toggleSidebar: () => void;
+	setSidebarAutoCollapsed: (collapsed: boolean) => void;
+	clearSidebarAutoCollapse: () => void;
+	setSidebarWorkspaceDemand: (demandPx: number | null) => void;
 	setInspectorOpen: (sessionId: string, isOpen: boolean) => void;
 	toggleInspector: (sessionId: string) => void;
 	setInspectorView: (sessionId: string, view: InspectorView) => void;
@@ -151,12 +161,34 @@ function inspectorState(sessions: Record<string, InspectorSessionState>, session
 	return sessions[sessionId] ?? { isOpen: true, view: "summary" };
 }
 
+/** Effective visibility keeps temporary workspace pressure out of the persisted preference. */
+export function sidebarIsVisible(
+	state: Pick<UiState, "isSidebarOpen" | "isSidebarAutoCollapsed" | "sidebarAutoCollapseOverride">,
+): boolean {
+	return state.isSidebarOpen && (!state.isSidebarAutoCollapsed || state.sidebarAutoCollapseOverride);
+}
+
+/** Auto pressure keeps navigation available as an icon rail; only the user's durable close hides it. */
+export function sidebarIsCompact(
+	state: Pick<UiState, "isSidebarOpen" | "isSidebarAutoCollapsed" | "sidebarAutoCollapseOverride">,
+): boolean {
+	return state.isSidebarOpen && state.isSidebarAutoCollapsed && !state.sidebarAutoCollapseOverride;
+}
+
+/** Expanded and compact rails both occupy shell layout; a durable user close does not. */
+export function sidebarOccupiesLayout(state: Pick<UiState, "isSidebarOpen">): boolean {
+	return state.isSidebarOpen;
+}
+
 const initialThemePreference = readStoredThemePreference();
 const initialThemeStyle = readStoredThemeStyle();
 
 export const useUiStore = create<UiState>((set, get) => ({
 	workbenchTab: "changes",
 	isSidebarOpen: initialSidebarOpen(),
+	isSidebarAutoCollapsed: false,
+	sidebarAutoCollapseOverride: false,
+	sidebarWorkspaceDemandPx: null,
 	inspectorSessions: {},
 	isCommandPaletteOpen: false,
 	settingsModal: null,
@@ -210,10 +242,32 @@ export const useUiStore = create<UiState>((set, get) => ({
 	},
 	toggleSidebar: () =>
 		set((state) => {
-			const isSidebarOpen = !state.isSidebarOpen;
+			const wasVisible = sidebarIsVisible(state);
+			const isSidebarOpen = !wasVisible;
 			getLocalStorage()?.setItem(sidebarStorageKey, String(isSidebarOpen));
-			return { isSidebarOpen };
+			return {
+				isSidebarOpen,
+				// Reopening under active workspace pressure is an explicit override.
+				// Closing clears it so the next open follows the current layout policy.
+				sidebarAutoCollapseOverride: isSidebarOpen && state.isSidebarAutoCollapsed,
+			};
 		}),
+	setSidebarAutoCollapsed: (isSidebarAutoCollapsed) =>
+		set((state) => {
+			if (state.isSidebarAutoCollapsed === isSidebarAutoCollapsed) return state;
+			// Pressure can cross its threshold while the rail is still moving. Never
+			// discard an explicit expansion here; the shell clears it only when the
+			// workspace that created the pressure actually closes.
+			return { isSidebarAutoCollapsed };
+		}),
+	clearSidebarAutoCollapse: () =>
+		set({ isSidebarAutoCollapsed: false, sidebarAutoCollapseOverride: false }),
+	setSidebarWorkspaceDemand: (sidebarWorkspaceDemandPx) =>
+		set((state) =>
+			state.sidebarWorkspaceDemandPx === sidebarWorkspaceDemandPx
+				? state
+				: { sidebarWorkspaceDemandPx },
+		),
 	setInspectorOpen: (sessionId, isOpen) =>
 		set((state) => {
 			const current = inspectorState(state.inspectorSessions, sessionId);
