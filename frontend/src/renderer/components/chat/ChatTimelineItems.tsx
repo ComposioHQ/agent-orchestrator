@@ -348,7 +348,7 @@ function formatMessageTimestamp(iso: string, now = new Date()): string {
 	const today = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
 	const daysAgo = Math.round((today - messageDay) / 86_400_000);
 	if (daysAgo === 0) return timeFormatter.format(parsed);
-	if (daysAgo === 1) return "Yesterday";
+	if (daysAgo === 1) return `Yesterday · ${timeFormatter.format(parsed)}`;
 	return dateFormatter.format(parsed);
 }
 
