@@ -1,13 +1,14 @@
 import type { QueryClient } from "@tanstack/react-query";
 import { getApiBaseUrl, hasTrustedApiBaseUrl, subscribeApiBaseUrl } from "./api-client";
+import { computeBackoffDelayMs } from "./sse-backoff";
 
 const INVALIDATE_DEBOUNCE_MS = 150;
-const SSE_RETRY_MS = 5_000;
 const EVENTSOURCE_CLOSED = 2;
 
 type WorkspaceStream = {
 	refs: number;
 	disposed: boolean;
+	failures: number;
 	source?: EventSource;
 	sourceBaseUrl?: string;
 	debounce?: ReturnType<typeof setTimeout>;
@@ -51,13 +52,19 @@ function createWorkspaceStream(sessionId: string, queryClient: QueryClient): Wor
 	};
 	const scheduleRetry = () => {
 		if (stream.disposed || stream.retry) return;
+		// Exponential backoff + jitter, keyed on consecutive failures, so a
+		// persistently failing stream slows down instead of hammering the daemon
+		// every 5s forever. Reset to a fast retry on a successful open.
+		const delay = computeBackoffDelayMs(stream.failures);
+		stream.failures += 1;
 		stream.retry = setTimeout(() => {
 			stream.retry = undefined;
 			stream.connect();
-		}, SSE_RETRY_MS);
+		}, delay);
 	};
 	stream.refs = 0;
 	stream.disposed = false;
+	stream.failures = 0;
 	stream.connect = () => {
 		if (stream.disposed || typeof EventSource === "undefined") return;
 		if (!hasTrustedApiBaseUrl()) {
@@ -76,7 +83,10 @@ function createWorkspaceStream(sessionId: string, queryClient: QueryClient): Wor
 			);
 			stream.source = source;
 			source.onopen = () => {
-				if (!stream.disposed && stream.source === source) invalidate();
+				if (!stream.disposed && stream.source === source) {
+					stream.failures = 0; // healthy again: next retry starts fast
+					invalidate();
+				}
 			};
 			source.onerror = () => {
 				if (!stream.disposed && stream.source === source && source.readyState === EVENTSOURCE_CLOSED) scheduleRetry();
