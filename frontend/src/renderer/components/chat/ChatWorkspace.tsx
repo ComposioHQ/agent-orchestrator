@@ -68,6 +68,7 @@ import {
 	TurnChangedFiles,
 	TurnDuration,
 	TurnOutcome,
+	type TurnOutcomeRetryControl,
 } from "./ChatTimelineItems";
 import { HumanMessageEditor } from "./HumanMessageEditor";
 import { ChatLinkProvider } from "./ChatMarkdown";
@@ -112,6 +113,13 @@ const CHAT_FONT_SIZE_DEFAULT = 14;
 const terminalFontSizeStorageKey = "ao.terminal.fontSize";
 const WHEEL_ZOOM_THRESHOLD = 80;
 const WHEEL_ZOOM_RESET_MS = 250;
+
+export interface ChatRetryControl {
+	retry: (turnId: string) => void | Promise<unknown>;
+	pending?: boolean;
+	error?: string;
+	turnId?: string;
+}
 
 function clampTerminalFontSize(size: number): number {
 	return Math.min(TERMINAL_FONT_SIZE_MAX, Math.max(TERMINAL_FONT_SIZE_MIN, size));
@@ -233,6 +241,12 @@ export interface ChatWorkspaceProps {
 	onOpenFiles?: () => void;
 	/** Opens the Files inspector focused on one changed path. */
 	onOpenFile?: (path: string) => void;
+	/**
+	 * Re-dispatch a failed turn's durable prompt as a new turn. Offered only for
+	 * eligible failed human turns, so the affordance is drawn on the failed-turn
+	 * boundary and never for a turn that is running or already succeeded.
+	 */
+	retryControl?: ChatRetryControl;
 	/** Create a conversation branch by replacing a prior human prompt. */
 	onEditMessage?: (turnId: string, text: string) => void | Promise<unknown>;
 	editMessagePending?: boolean;
@@ -322,6 +336,7 @@ export function ChatWorkspace({
 	rollbackError,
 	onOpenFiles,
 	onOpenFile,
+	retryControl,
 	onEditMessage,
 	editMessagePending,
 	editMessageError,
@@ -783,6 +798,7 @@ export function ChatWorkspace({
 							onRollback={rollbackTarget}
 							onOpenFiles={onOpenFiles}
 							onOpenFile={onOpenFile}
+							retryControl={retryControl}
 							onEditHumanMessage={editHumanMessage}
 							editPending={editMessagePending}
 							editBusy={Boolean(turn)}
@@ -1284,6 +1300,7 @@ function Timeline({
 	onRollback,
 	onOpenFiles,
 	onOpenFile,
+	retryControl,
 	onEditHumanMessage,
 	editPending,
 	editBusy,
@@ -1302,6 +1319,7 @@ function Timeline({
 	onRollback?: (turnId: string) => void;
 	onOpenFiles?: () => void;
 	onOpenFile?: (path: string) => void;
+	retryControl?: ChatRetryControl;
 	onEditHumanMessage?: (turnId: string, text: string) => Promise<unknown> | void;
 	editPending?: boolean;
 	editBusy?: boolean;
@@ -1336,6 +1354,7 @@ function Timeline({
 	const rollback = useStableCallback(onRollback);
 	const openFiles = useStableCallback(onOpenFiles);
 	const openFile = useStableCallback(onOpenFile);
+	const retryTurn = useStableCallback(retryControl?.retry);
 	const apiBaseUrl = useSyncExternalStore(subscribeApiBaseUrl, getApiBaseUrl, getApiBaseUrl);
 	const editHumanMessage = useStableCallback(onEditHumanMessage);
 	const activateBranch = useStableCallback(onActivateBranch);
@@ -1348,6 +1367,21 @@ function Timeline({
 	const editableTurns = useMemo(
 		() => new Set(snapshot.turns.filter((turn) => turn.providerTurnId).map((turn) => turn.id)),
 		[snapshot.turns],
+	);
+	const consumedRetrySources = useMemo(() => retrySourceTurnIds(snapshot), [snapshot]);
+	const retryableTurns = useMemo(
+		() =>
+			new Set(
+				snapshot.turns
+					.filter(
+						(turn) =>
+							turn.state === "failed" &&
+							Boolean(turn.providerTurnId) &&
+							!consumedRetrySources.has(turn.id),
+					)
+					.map((turn) => turn.id),
+			),
+		[snapshot.turns, consumedRetrySources],
 	);
 
 	useEffect(() => setMessageEdit(undefined), [snapshot.sessionId]);
@@ -1652,8 +1686,24 @@ function Timeline({
 							</Button>
 						</div>
 					) : null}
-					{groups.map((group) => (
-						<div
+					{groups.map((group) => {
+						const retrySelected = !retryControl?.turnId || retryControl.turnId === group.turnId;
+						const retry =
+							group.turnId &&
+							retryControl &&
+							retryableTurns.has(group.turnId) &&
+							groupHasHumanPrompt(group)
+								? {
+									onRetry: () => {
+										void Promise.resolve(retryTurn(group.turnId as string)).catch(() => undefined);
+									},
+									pending: retryControl.pending && retrySelected,
+									error: retrySelected ? retryControl.error : undefined,
+									disabled: Boolean(turn) || Boolean(retryControl.pending),
+								}
+								: undefined;
+						return (
+							<div
 							key={group.key}
 							data-chat-scroll-anchor={groupHasHumanPrompt(group) ? "" : undefined}
 						>
@@ -1666,6 +1716,7 @@ function Timeline({
 								onRollback={rollback}
 								onOpenFiles={onOpenFiles ? openFiles : undefined}
 								onOpenFile={onOpenFile ? openFile : undefined}
+								retry={retry}
 								onEditHumanMessage={canEditHumanMessage ? editHumanMessage : undefined}
 								messageEdit={messageEdit}
 								onStartMessageEdit={startMessageEdit}
@@ -1688,8 +1739,9 @@ function Timeline({
 								busy={busy}
 								queued={Boolean(group.turnId && queued.has(group.turnId))}
 							/>
-						</div>
-					))}
+							</div>
+						);
+					})}
 					{turn && !groups.some((group) => group.turnId === turn.id) ? (
 						<TurnLiveStatus startedAt={turn.startedAt ?? turn.requestedAt} />
 					) : null}
@@ -1848,6 +1900,7 @@ const TurnGroup = memo(function TurnGroup({
 	activateBranchPending,
 	activateBranchError,
 	canRollback,
+	retry,
 	busy,
 	queued,
 	newHumanMessageIds,
@@ -1876,6 +1929,8 @@ const TurnGroup = memo(function TurnGroup({
 	activateBranchError?: string;
 	/** The daemon would accept a rollback of this turn, so offer the affordance. */
 	canRollback: boolean;
+	/** Present only when this failed turn is eligible for a new attempt. */
+	retry?: TurnOutcomeRetryControl;
 	busy?: boolean;
 	/** This turn was recorded but not sent, so its message can say so. */
 	queued: boolean;
@@ -1979,7 +2034,11 @@ const TurnGroup = memo(function TurnGroup({
 				</div>
 			) : null}
 			{group.outcome && group.outcome.state !== "completed" ? (
-				<TurnOutcome state={group.outcome.state} error={group.outcome.error} />
+				<TurnOutcome
+					state={group.outcome.state}
+					error={group.outcome.error}
+					retry={group.outcome.state === "failed" ? retry : undefined}
+				/>
 			) : null}
 		</div>
 	);
@@ -2259,6 +2318,19 @@ function groupPreview(group: TimelineGroup): GroupPreview {
 
 function groupHasHumanPrompt(group: TimelineGroup): boolean {
 	return group.items.some((item) => item.kind === "message" && item.role === "user" && item.origin === "human");
+}
+
+// Retry correlation is daemon-owned rather than inferred from repeated text.
+// Match it against turn ids in this snapshot before consuming an affordance.
+function retrySourceTurnIds(snapshot: ConversationSnapshot): Set<string> {
+	const turnIds = new Set(snapshot.turns.map((turn) => turn.id));
+	const sources = new Set<string>();
+	for (const turn of snapshot.turns) {
+		if (turn.hasRetryAttempt) sources.add(turn.id);
+		const source = turn.retryOfTurnId;
+		if (source && turnIds.has(source)) sources.add(source);
+	}
+	return sources;
 }
 
 /** How tall the trailing spacer must be to park `anchorOffset` near the top when scrolled to the end. */

@@ -378,6 +378,9 @@ func conversationCapabilities(
 	}
 	caps[ports.ChatCapabilityImages] = init.AgentCapabilities.PromptCapabilities.Image
 	caps[ports.ChatCapabilityEmbeddedContext] = init.AgentCapabilities.PromptCapabilities.EmbeddedContext
+	// ResourceLink is a baseline ACP content block rather than an optional prompt
+	// capability. Every ACP conversation preserves it natively.
+	caps[ports.ChatCapabilityResourceLinks] = true
 	// These are facilities AO itself negotiated as the ACP client. An agent that
 	// never uses them simply produces no matching events.
 	caps[ports.ChatCapabilityElicitation] = true

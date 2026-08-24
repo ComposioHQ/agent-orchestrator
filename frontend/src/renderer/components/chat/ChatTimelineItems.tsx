@@ -7,7 +7,7 @@
  * re-sorting. Those belong to the daemon.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
 	AlertTriangle,
 	Brain,
@@ -239,11 +239,13 @@ function TwoRowTimelineMarker({
 	detail,
 	tone = "text-muted-foreground/70",
 	detailTone = "text-muted-foreground/70",
+	action,
 }: {
 	message: string;
 	detail?: string;
 	tone?: string;
 	detailTone?: string;
+	action?: ReactNode;
 }) {
 	return (
 		<div className="flex min-w-0 flex-col gap-1 py-1">
@@ -254,6 +256,7 @@ function TwoRowTimelineMarker({
 						{detail}
 					</span>
 				) : null}
+				{action}
 			</div>
 			<span aria-hidden="true" className="h-px w-full bg-border" />
 		</div>
@@ -275,12 +278,21 @@ export function CompactionMarker({ activity }: { activity: ConversationActivity 
 	);
 }
 
+export interface TurnOutcomeRetryControl {
+	onRetry: () => void;
+	pending?: boolean;
+	error?: string;
+	disabled?: boolean;
+}
+
 export function TurnOutcome({
 	state,
 	error,
+	retry,
 }: {
 	state: "recovered" | "interrupted" | "failed";
 	error?: string;
+	retry?: TurnOutcomeRetryControl;
 }) {
 	const copy = {
 		recovered: {
@@ -300,6 +312,28 @@ export function TurnOutcome({
 			detail={error}
 			tone={copy.tone}
 			detailTone={state === "failed" ? "text-destructive" : undefined}
+			action={
+				retry ? (
+					<>
+						{retry.error ? (
+							<span role="alert" className="max-w-[50%] text-pretty text-right text-[10px] leading-tight text-destructive">
+								{retry.error}
+							</span>
+						) : null}
+						<button
+							type="button"
+							onClick={retry.onRetry}
+							disabled={retry.pending || retry.disabled}
+							aria-label="Retry this turn"
+							title={retry.error ?? (retry.disabled ? "Wait for the current turn to finish" : "Send this prompt again as a new turn")}
+							data-testid="retry-turn"
+							className="shrink-0 rounded px-1.5 py-0.5 text-[10px] text-muted-foreground/70 transition-colors hover:text-foreground focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring disabled:pointer-events-none disabled:opacity-50"
+						>
+							{retry.pending ? "Retrying…" : "Retry"}
+						</button>
+					</>
+				) : undefined
+			}
 		/>
 	);
 }

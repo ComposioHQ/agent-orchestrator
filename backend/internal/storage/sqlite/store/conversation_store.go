@@ -525,10 +525,51 @@ func (s *Store) AppendUserMessage(
 	turnID string,
 	now time.Time,
 ) (created bool, err error) {
+	return s.appendUserMessage(ctx, conversationID, session, generation, msg, turnID, "", now)
+}
+
+// AppendRetryUserMessage records a retry and its source as one transaction.
+// Idempotency is owned by the explicit retry relation, not by caller-controlled
+// client message ids.
+func (s *Store) AppendRetryUserMessage(
+	ctx context.Context,
+	conversationID string,
+	session domain.SessionID,
+	generation string,
+	msg domain.ConversationMessage,
+	turnID string,
+	retryOfTurnID string,
+	now time.Time,
+) (created bool, err error) {
+	return s.appendUserMessage(ctx, conversationID, session, generation, msg, turnID, retryOfTurnID, now)
+}
+
+func (s *Store) appendUserMessage(
+	ctx context.Context,
+	conversationID string,
+	session domain.SessionID,
+	generation string,
+	msg domain.ConversationMessage,
+	turnID string,
+	retryOfTurnID string,
+	now time.Time,
+) (created bool, err error) {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
 
-	if msg.ClientMessageID != "" {
+	if retryOfTurnID != "" {
+		_, lookupErr := s.qr.SelectConversationRetryTurnIDBySource(ctx,
+			gen.SelectConversationRetryTurnIDBySourceParams{
+				ConversationID: conversationID,
+				RetryOfTurnID:  sql.NullString{String: retryOfTurnID, Valid: true},
+			})
+		if lookupErr == nil {
+			return false, nil
+		}
+		if !errors.Is(lookupErr, sql.ErrNoRows) {
+			return false, fmt.Errorf("lookup retry of turn %s: %w", retryOfTurnID, lookupErr)
+		}
+	} else if msg.ClientMessageID != "" {
 		existing, lookupErr := s.qr.SelectConversationMessageByClientID(ctx,
 			gen.SelectConversationMessageByClientIDParams{
 				ConversationID:  conversationID,
@@ -557,6 +598,7 @@ func (s *Store) AppendUserMessage(
 			ConversationID:       conversationID,
 			HandledBySessionID:   session,
 			ControllerGeneration: generation,
+			RetryOfTurnID:        nullableString(retryOfTurnID),
 			State:                domain.TurnStateQueued,
 			RequestedAt:          now,
 		}); err != nil {
@@ -1999,6 +2041,10 @@ func (s *Store) LoadConversationSnapshotPage(
 	if err != nil {
 		return ConversationSnapshot{}, fmt.Errorf("select turn page: %w", err)
 	}
+	retriedSources, err := s.conversationRetriedSources(ctx, conversationID)
+	if err != nil {
+		return ConversationSnapshot{}, err
+	}
 
 	snapshot := ConversationSnapshot{
 		Conversation:               conversationToDomain(conv),
@@ -2012,6 +2058,7 @@ func (s *Store) LoadConversationSnapshotPage(
 			continue
 		}
 		turn := turnToDomain(row)
+		turn.HasRetryAttempt = retriedSources[turn.ID]
 		presentation.filterInactiveProviderTurn(&turn)
 		snapshot.Turns = append(snapshot.Turns, turn)
 	}
@@ -2111,6 +2158,10 @@ func (s *Store) LoadConversationSnapshot(
 	if err != nil {
 		return ConversationSnapshot{}, fmt.Errorf("select turns: %w", err)
 	}
+	retriedSources, err := s.conversationRetriedSources(ctx, conversationID)
+	if err != nil {
+		return ConversationSnapshot{}, err
+	}
 	// Messages and activities exclude anything attached to a rolled-back turn: the
 	// agent has forgotten those, and a timeline that still showed them would be
 	// describing a conversation the agent is not in.
@@ -2131,6 +2182,7 @@ func (s *Store) LoadConversationSnapshot(
 	}
 	for _, row := range turnRows {
 		turn := turnToDomain(row)
+		turn.HasRetryAttempt = retriedSources[turn.ID]
 		presentation.filterInactiveProviderTurn(&turn)
 		snapshot.Turns = append(snapshot.Turns, turn)
 	}
@@ -2141,6 +2193,18 @@ func (s *Store) LoadConversationSnapshot(
 		snapshot.Activities = append(snapshot.Activities, activityToDomain(row))
 	}
 	return snapshot, nil
+}
+
+func (s *Store) conversationRetriedSources(ctx context.Context, conversationID string) (map[string]bool, error) {
+	rows, err := s.qr.SelectConversationRetriedSourceTurnIDs(ctx, conversationID)
+	if err != nil {
+		return nil, fmt.Errorf("select retried conversation sources: %w", err)
+	}
+	sources := make(map[string]bool, len(rows))
+	for _, sourceTurnID := range rows {
+		sources[sourceTurnID] = true
+	}
+	return sources, nil
 }
 
 type conversationHistoryPresentation struct {
@@ -2411,6 +2475,9 @@ func turnToDomain(row gen.ConversationTurn) domain.ConversationTurn {
 		ErrorMessage:       row.ErrorMessage,
 		RequestedAt:        row.RequestedAt,
 	}
+	if row.RetryOfTurnID.Valid {
+		turn.RetryOfTurnID = row.RetryOfTurnID.String
+	}
 	if row.StartedAt.Valid {
 		started := row.StartedAt.Time
 		turn.StartedAt = &started
@@ -2511,4 +2578,37 @@ func (s *Store) ProviderEventsSince(
 		return nil, fmt.Errorf("select provider events for %s: %w", conversationID, err)
 	}
 	return rows, nil
+}
+
+// RetryPrompt returns the durable human prompt of a failed turn, for
+// re-dispatching it as a new turn. The content is loaded from AO's own rows
+// rather than from a client request that could be stale or substituted.
+func (s *Store) RetryPrompt(ctx context.Context, conversationID, turnID string) (domain.RetryPrompt, error) {
+	row, err := s.qr.SelectRetryableConversationPrompt(ctx, gen.SelectRetryableConversationPromptParams{
+		ID: turnID, ConversationID: conversationID,
+	})
+	if err != nil {
+		return domain.RetryPrompt{}, err
+	}
+	return domain.RetryPrompt{
+		Text:                row.Text,
+		Origin:              row.Origin,
+		DeliveryContentJSON: row.DeliveryContentJson,
+		ActiveLineage:       row.ActiveLineage,
+	}, nil
+}
+
+// RetryTurnIDForSource returns the retry attempt already linked to a source.
+func (s *Store) RetryTurnIDForSource(ctx context.Context, conversationID, sourceTurnID string) (string, bool, error) {
+	row, err := s.qr.SelectConversationRetryTurnIDBySource(ctx, gen.SelectConversationRetryTurnIDBySourceParams{
+		ConversationID: conversationID,
+		RetryOfTurnID:  sql.NullString{String: sourceTurnID, Valid: true},
+	})
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, err
+	}
+	return row, true, nil
 }
