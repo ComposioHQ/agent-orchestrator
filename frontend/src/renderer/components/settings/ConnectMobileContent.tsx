@@ -13,7 +13,7 @@ import { reasonMessage, type SetupMode } from "./ConnectMobileSetup";
 import { StyledQRCode } from "./StyledQRCode";
 import { Button } from "../ui/button";
 import { Switch } from "../ui/switch";
-import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/tooltip";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "../ui/tooltip";
 
 const QR_CODE_SIZE = 204;
 const TESTFLIGHT_QR_SIZE = 140;
@@ -274,7 +274,8 @@ export function ConnectMobileContent({ active }: { active: boolean }) {
 								<li>{t("mobile.ios.step1")}</li>
 								<li>
 									{t("mobile.ios.step2")}{" "}
-									<Tooltip>
+									<TooltipProvider delayDuration={0}>
+										<Tooltip>
 										<TooltipTrigger asChild>
 											<button
 												type="button"
@@ -291,14 +292,16 @@ export function ConnectMobileContent({ active }: { active: boolean }) {
 												<StyledQRCode value={TESTFLIGHT_URL} size={TESTFLIGHT_QR_SIZE} showLogo={false} className="block" />
 											</div>
 										</TooltipContent>
-									</Tooltip>
+										</Tooltip>
+									</TooltipProvider>
 								</li>
 							</>
 						) : (
 							<>
 								<li>
 									{t("mobile.android.step1")}{" "}
-									<Tooltip>
+									<TooltipProvider delayDuration={0}>
+										<Tooltip>
 										<TooltipTrigger asChild>
 											<button
 												type="button"
@@ -315,7 +318,8 @@ export function ConnectMobileContent({ active }: { active: boolean }) {
 												<StyledQRCode value={ANDROID_PLAY_STORE_URL} size={TESTFLIGHT_QR_SIZE} showLogo={false} className="block" />
 											</div>
 										</TooltipContent>
-									</Tooltip>
+										</Tooltip>
+									</TooltipProvider>
 								</li>
 							</>
 						)}
