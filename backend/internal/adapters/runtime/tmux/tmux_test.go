@@ -780,7 +780,7 @@ func TestIsAliveAdoptsSessionFromLegacyDefaultSocket(t *testing.T) {
 	}
 }
 
-func TestIsAliveReportsMissingLegacyClientAsRuntimeUnavailable(t *testing.T) {
+func TestIsAliveReportsMissingLegacyClientAsProbeInconclusive(t *testing.T) {
 	r := New(Options{Binary: "bundled-tmux-test", SocketName: "ao", Timeout: time.Second})
 	r.legacyBinary = ""
 	fr := &fakeRunnerSequence{results: []fakeRunnerResult{
@@ -789,8 +789,8 @@ func TestIsAliveReportsMissingLegacyClientAsRuntimeUnavailable(t *testing.T) {
 	r.runner = fr
 
 	alive, err := r.IsAlive(context.Background(), ports.RuntimeHandle{ID: "sess-1"})
-	if !errors.Is(err, ports.ErrRuntimeUnavailable) {
-		t.Fatalf("IsAlive err = %v, want ports.ErrRuntimeUnavailable", err)
+	if !errors.Is(err, ports.ErrRuntimeProbeInconclusive) {
+		t.Fatalf("IsAlive err = %v, want ports.ErrRuntimeProbeInconclusive", err)
 	}
 	if alive {
 		t.Fatal("alive = true, want false with inconclusive error")
@@ -800,7 +800,7 @@ func TestIsAliveReportsMissingLegacyClientAsRuntimeUnavailable(t *testing.T) {
 	}
 }
 
-func TestIsAliveReportsIncompatibleLegacyClientAsRuntimeUnavailable(t *testing.T) {
+func TestIsAliveReportsIncompatibleLegacyClientAsProbeInconclusive(t *testing.T) {
 	r := New(Options{
 		Binary:       "bundled-tmux-test",
 		LegacyBinary: "system-tmux-test",
@@ -814,14 +814,39 @@ func TestIsAliveReportsIncompatibleLegacyClientAsRuntimeUnavailable(t *testing.T
 	r.runner = fr
 
 	alive, err := r.IsAlive(context.Background(), ports.RuntimeHandle{ID: "sess-1"})
-	if !errors.Is(err, ports.ErrRuntimeUnavailable) {
-		t.Fatalf("IsAlive err = %v, want ports.ErrRuntimeUnavailable", err)
+	if !errors.Is(err, ports.ErrRuntimeProbeInconclusive) {
+		t.Fatalf("IsAlive err = %v, want ports.ErrRuntimeProbeInconclusive", err)
 	}
 	if alive {
 		t.Fatal("alive = true, want false with inconclusive error")
 	}
 	if !strings.Contains(err.Error(), "server exited unexpectedly") {
 		t.Fatalf("IsAlive err = %v, want actionable legacy client failure", err)
+	}
+	if len(fr.calls) != 2 {
+		t.Fatalf("calls = %d, want private then legacy probes only", len(fr.calls))
+	}
+}
+
+func TestIsAliveReportsTransientLegacyConnectionAsProbeInconclusive(t *testing.T) {
+	r := New(Options{
+		Binary:       "bundled-tmux-test",
+		LegacyBinary: "system-tmux-test",
+		SocketName:   "ao",
+		Timeout:      time.Second,
+	})
+	fr := &fakeRunnerSequence{results: []fakeRunnerResult{
+		{out: []byte("can't find session: sess-1"), err: &exec.ExitError{}},
+		{out: []byte("error connecting to /tmp/tmux-1000/default (Connection refused)"), err: &exec.ExitError{}},
+	}}
+	r.runner = fr
+
+	alive, err := r.IsAlive(context.Background(), ports.RuntimeHandle{ID: "sess-1"})
+	if !errors.Is(err, ports.ErrRuntimeProbeInconclusive) {
+		t.Fatalf("IsAlive err = %v, want ports.ErrRuntimeProbeInconclusive", err)
+	}
+	if alive {
+		t.Fatal("alive = true, want false with inconclusive error")
 	}
 	if len(fr.calls) != 2 {
 		t.Fatalf("calls = %d, want private then legacy probes only", len(fr.calls))
@@ -1031,11 +1056,10 @@ func TestIsAliveReturnsFalseNilOnCantFindSession(t *testing.T) {
 	}
 }
 
-// A server-level failure says nothing about one session: the whole server is
-// gone (or unreachable), and the agent may still be alive as an orphan. It
-// must surface as ports.ErrRuntimeUnavailable — an inconclusive probe — never
-// as a definitive "this session is dead" (issue #3475: reading it as death
-// archived every session on the board in one pass).
+// A conclusively absent server means the tmux runtime handle is gone, although
+// the agent may still be alive as an orphan. Surface the infrastructure-level
+// sentinel rather than a per-session false result: the reaper treats errors as
+// failed probes, while explicit recovery paths may recreate the missing server.
 func TestIsAliveReportsNoServerAsRuntimeUnavailable(t *testing.T) {
 	r, fr := newTestRuntime(0)
 	fr.outputs = [][]byte{[]byte("no server running on /tmp/tmux-1000/default")}
@@ -1050,14 +1074,14 @@ func TestIsAliveReportsNoServerAsRuntimeUnavailable(t *testing.T) {
 	}
 }
 
-func TestIsAliveReportsErrorConnectingAsRuntimeUnavailable(t *testing.T) {
+func TestIsAliveReportsErrorConnectingAsProbeInconclusive(t *testing.T) {
 	r, fr := newTestRuntime(0)
 	fr.outputs = [][]byte{[]byte("error connecting to /tmp/tmux-1000/default (No such file or directory)")}
 	fr.err = &exec.ExitError{}
 
 	alive, err := r.IsAlive(context.Background(), ports.RuntimeHandle{ID: "sess-1"})
-	if !errors.Is(err, ports.ErrRuntimeUnavailable) {
-		t.Fatalf("IsAlive err = %v, want ports.ErrRuntimeUnavailable", err)
+	if !errors.Is(err, ports.ErrRuntimeProbeInconclusive) {
+		t.Fatalf("IsAlive err = %v, want ports.ErrRuntimeProbeInconclusive", err)
 	}
 	if alive {
 		t.Fatal("alive = true, want false")

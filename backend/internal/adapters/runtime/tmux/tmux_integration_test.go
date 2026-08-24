@@ -69,8 +69,8 @@ func TestRuntimeIntegration(t *testing.T) {
 
 	// Destroy and verify liveness goes false. When this was the server's last
 	// session the server itself exits with it, and the probe reports the
-	// server-level outage as an inconclusive ErrRuntimeUnavailable rather than
-	// a per-session death (issue #3475); both outcomes mean the handle is gone.
+	// server-level outage as ErrRuntimeUnavailable rather than a per-session
+	// false result (issue #3475); both outcomes mean the tmux handle is gone.
 	if err := r.Destroy(ctx, h); err != nil {
 		t.Fatalf("Destroy: %v", err)
 	}

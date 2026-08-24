@@ -7528,6 +7528,52 @@ func TestReconcileLive_ProbeErrorIsNotDeath(t *testing.T) {
 	}
 }
 
+func TestReconcileLive_InconclusiveRuntimeProbeDoesNotRelaunch(t *testing.T) {
+	st := newFakeStore()
+	st.projects["p1"] = domain.ProjectRecord{ID: "p1", Config: testRoleAgents()}
+	rt := &fakeRuntime{aliveErr: fmt.Errorf("legacy client mismatch: %w", ports.ErrRuntimeProbeInconclusive)}
+	ws := &fakeWorkspace{}
+	lcm := &fakeLCM{store: st}
+	m := New(Deps{
+		Runtime: rt, Agents: fakeAgents{}, Workspace: ws, Store: st,
+		Messenger: &fakeMessenger{}, Lifecycle: lcm,
+		LookPath: func(string) (string, error) { return "/bin/true", nil },
+	})
+	rec := domain.SessionRecord{
+		ID: "s-inconclusive", ProjectID: "p1", Harness: domain.HarnessClaudeCode,
+		Metadata: domain.SessionMetadata{
+			Branch: "ao/s-inconclusive/root", WorkspacePath: "/wt/s-inconclusive", RuntimeHandleID: "s-inconclusive",
+		},
+	}
+	st.sessions[rec.ID] = rec
+
+	err := m.reconcileLive(context.Background(), rec)
+	if !errors.Is(err, ports.ErrRuntimeProbeInconclusive) {
+		t.Fatalf("reconcileLive err = %v, want ErrRuntimeProbeInconclusive", err)
+	}
+	if rt.created != 0 || rt.destroyed != 0 {
+		t.Fatalf("inconclusive probe changed runtime: created=%d destroyed=%d", rt.created, rt.destroyed)
+	}
+	if ws.stashCalls != 0 || lcm.terminated[rec.ID] != 0 {
+		t.Fatalf("inconclusive probe changed lifecycle: stash=%d terminated=%d", ws.stashCalls, lcm.terminated[rec.ID])
+	}
+}
+
+func TestRestartRuntime_InconclusiveProbeDoesNotCreateReplacement(t *testing.T) {
+	rt := &fakeRuntime{aliveErr: fmt.Errorf("legacy client unavailable: %w", ports.ErrRuntimeProbeInconclusive)}
+	m := New(Deps{Runtime: rt})
+
+	_, err := m.restartRuntime(context.Background(), ports.RuntimeHandle{ID: "legacy-live"}, ports.RuntimeConfig{
+		SessionID: "legacy-live",
+	})
+	if !errors.Is(err, ports.ErrRuntimeProbeInconclusive) {
+		t.Fatalf("restartRuntime err = %v, want ErrRuntimeProbeInconclusive", err)
+	}
+	if rt.created != 0 || rt.destroyed != 0 {
+		t.Fatalf("inconclusive probe replaced runtime: created=%d destroyed=%d", rt.created, rt.destroyed)
+	}
+}
+
 func TestReconcileLive_ScratchDeadRuntimeTerminatesWithoutWorkspaceTeardown(t *testing.T) {
 	st := newFakeStore()
 	st.projects["scratch"] = domain.ProjectRecord{ID: "scratch", Kind: domain.ProjectKindScratch, Config: testRoleAgents()}

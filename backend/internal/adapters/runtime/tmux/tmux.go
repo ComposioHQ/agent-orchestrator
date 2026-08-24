@@ -525,13 +525,11 @@ func (r *Runtime) paneSessionIDs(ctx context.Context, id string) []int {
 
 // IsAlive reports whether the handle's session still exists via `tmux
 // has-session`. Exit 0 means alive. A non-zero exit with output naming this
-// session as missing is a definitive false, nil. A server-level failure ("no
-// server running", "error connecting") wraps ports.ErrRuntimeUnavailable: the
-// probe learned nothing about this session — the agent process may well still
-// be running as an orphan of the dead server — so it must never be read as
-// per-session death (issue #3475). Any other non-zero exit is a plain probe
-// error so callers (the reaper feeding the LCM) treat it as a failed probe
-// and never kill a session on a transient error.
+// session as missing is a definitive false, nil. A conclusively absent server
+// wraps ports.ErrRuntimeUnavailable so recovery may recreate it. A transient
+// connection or protocol/client failure wraps ErrRuntimeProbeInconclusive so
+// no caller can treat a possibly-live session as absent. Any other non-zero
+// exit is a plain probe error, which is likewise never per-session death.
 func (r *Runtime) IsAlive(ctx context.Context, handle ports.RuntimeHandle) (bool, error) {
 	id, err := handleID(handle)
 	if err != nil {
@@ -544,9 +542,13 @@ func (r *Runtime) IsAlive(ctx context.Context, handle ports.RuntimeHandle) (bool
 			if sessionMissingOutput(string(out)) {
 				return false, nil
 			}
-			if serverUnreachableOutput(string(out)) {
+			if serverNotRunningOutput(string(out)) {
 				return false, fmt.Errorf("tmux runtime: probe session %s: %w: %s",
 					id, ports.ErrRuntimeUnavailable, strings.TrimSpace(string(out)))
+			}
+			if transientServerFailureOutput(string(out)) {
+				return false, fmt.Errorf("tmux runtime: probe session %s: %w: %s",
+					id, ports.ErrRuntimeProbeInconclusive, strings.TrimSpace(string(out)))
 			}
 		}
 		return false, fmt.Errorf("tmux runtime: probe session %s: %w", id, err)
@@ -865,13 +867,13 @@ func (r *Runtime) socketForSession(ctx context.Context, id string) (string, erro
 	// Only cross the migration boundary when the private server definitively
 	// lacks this session. An ambiguous probe stays on the private socket so a
 	// transient error cannot redirect a live session elsewhere.
-	if !sessionMissingOutput(string(out)) && !serverAbsentOutput(string(out)) {
+	if !sessionMissingOutput(string(out)) && !serverNotRunningOutput(string(out)) {
 		return r.socketName, nil
 	}
 	if r.legacyBinary == "" {
 		return "", fmt.Errorf(
 			"%w: cannot inspect legacy default-socket session %s because system tmux is unavailable",
-			ports.ErrRuntimeUnavailable,
+			ports.ErrRuntimeProbeInconclusive,
 			id,
 		)
 	}
@@ -883,14 +885,14 @@ func (r *Runtime) socketForSession(ctx context.Context, id string) (string, erro
 	if ctx.Err() != nil {
 		return "", ctx.Err()
 	}
-	if sessionMissingOutput(string(legacyOut)) || serverAbsentOutput(string(legacyOut)) {
+	if sessionMissingOutput(string(legacyOut)) || serverNotRunningOutput(string(legacyOut)) {
 		// Both known sockets definitively lack the session. Return the private
 		// target so IsAlive's ordinary exact-session handling reports false.
 		return r.socketName, nil
 	}
 	return "", fmt.Errorf(
 		"%w: system tmux %q could not inspect legacy default-socket session %s: %w",
-		ports.ErrRuntimeUnavailable,
+		ports.ErrRuntimeProbeInconclusive,
 		r.legacyBinary,
 		id,
 		legacyErr,
@@ -1107,13 +1109,19 @@ func sessionMissingOutput(out string) bool {
 // server itself could not be reached, which is inconclusive for any single
 // session's liveness.
 func serverUnreachableOutput(out string) bool {
-	s := strings.ToLower(out)
-	return serverAbsentOutput(s) || strings.Contains(s, "protocol version mismatch")
+	return serverNotRunningOutput(out) || transientServerFailureOutput(out)
 }
 
-func serverAbsentOutput(out string) bool {
+func serverNotRunningOutput(out string) bool {
 	s := strings.ToLower(out)
-	return strings.Contains(s, "no server running") || strings.Contains(s, "error connecting")
+	return strings.Contains(s, "no server running")
+}
+
+func transientServerFailureOutput(out string) bool {
+	s := strings.ToLower(out)
+	return strings.Contains(s, "error connecting") ||
+		strings.Contains(s, "protocol version mismatch") ||
+		strings.Contains(s, "server exited unexpectedly")
 }
 
 // killSessionMissingOutput reports whether a non-zero `tmux kill-session`
