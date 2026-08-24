@@ -186,6 +186,28 @@ func TestRetryTurnRouteDispatchesANewTurn(t *testing.T) {
 	}
 }
 
+func TestRetryTurnRouteReturnsAnExistingRecoveredAttempt(t *testing.T) {
+	svc := &fakeChatService{retryTurn: domain.ConversationTurn{
+		ID: "turn-retry", ProviderTurnID: "provider-retry", State: domain.TurnStateRecovered,
+	}}
+	srv := newChatTestServer(t, svc)
+
+	body, status, headers := doRequest(t, srv, http.MethodPost,
+		"/api/v1/sessions/ao-1/conversation/turns/turn-failed/retry", "")
+	assertJSON(t, headers)
+	if status != http.StatusAccepted {
+		t.Fatalf("status = %d, want 202; body=%s", status, body)
+	}
+	var got struct {
+		TurnID string           `json:"turnId"`
+		State  domain.TurnState `json:"state"`
+	}
+	mustJSON(t, body, &got)
+	if got.TurnID != "turn-retry" || got.State != domain.TurnStateRecovered {
+		t.Fatalf("response = %+v, want recovered replay", got)
+	}
+}
+
 func TestRetryTurnRouteRefusalsAreTyped(t *testing.T) {
 	cases := []struct {
 		name       string

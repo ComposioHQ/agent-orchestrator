@@ -1409,7 +1409,7 @@ type EditConversationMessageResponse struct {
 type RetryTurnResponse struct {
 	TurnID         string           `json:"turnId,omitempty"`
 	ProviderTurnID string           `json:"providerTurnId,omitempty"`
-	State          domain.TurnState `json:"state,omitempty" enum:"queued,running,completed,interrupted,failed"`
+	State          domain.TurnState `json:"state,omitempty" enum:"queued,running,completed,recovered,interrupted,failed"`
 }
 
 // ActivateConversationBranchResponse reports the durable head after switching.

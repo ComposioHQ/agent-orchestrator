@@ -2695,7 +2695,7 @@ export interface components {
         RetryTurnResponse: {
             providerTurnId?: string;
             /** @enum {string} */
-            state?: "queued" | "running" | "completed" | "interrupted" | "failed";
+            state?: "queued" | "running" | "completed" | "recovered" | "interrupted" | "failed";
             turnId?: string;
         };
         ReviewRun: {

@@ -1089,6 +1089,9 @@ func retryPromptContent(raw string, capabilities ports.ChatCapabilities) ([]port
 			if item.URI == "" || item.Name == "" {
 				return nil, fmt.Errorf("%w: resource links require a URI and name", ErrRetryContentInvalid)
 			}
+			if !capabilities.Has(ports.ChatCapabilityResourceLinks) {
+				return nil, fmt.Errorf("%w: resource links are unsupported", ErrRetryUnsupported)
+			}
 		default:
 			return nil, fmt.Errorf("%w: unsupported attachment type %q", ErrRetryContentInvalid, item.Type)
 		}

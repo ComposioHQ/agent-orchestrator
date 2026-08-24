@@ -159,6 +159,7 @@ func TestRetryTurnReplaysResourceLinkWithoutEmbeddedContextCapability(t *testing
 	ctx := context.Background()
 	caps := productionCaps()
 	delete(caps, ports.ChatCapabilityEmbeddedContext)
+	caps[ports.ChatCapabilityResourceLinks] = true
 	h.conv.setCapabilities(caps)
 
 	turn, err := h.svc.Send(ctx, testSession, ports.ChatUserMessage{
@@ -184,6 +185,39 @@ func TestRetryTurnReplaysResourceLinkWithoutEmbeddedContextCapability(t *testing
 	sent := h.conv.sentMessages()
 	if len(sent) != 2 || len(sent[1].Content) != 1 || sent[1].Content[0].Type != "resource_link" || sent[1].Content[0].URI != "file:///worktree/build.log" {
 		t.Fatalf("retried resource link = %+v, want the original link", sent)
+	}
+}
+
+func TestRetryTurnRefusesResourceLinkUnsupportedByCurrentProvider(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	caps := productionCaps()
+	caps[ports.ChatCapabilityResourceLinks] = true
+	h.conv.setCapabilities(caps)
+
+	turn, err := h.svc.Send(ctx, testSession, ports.ChatUserMessage{
+		Text: "inspect the linked log", ClientMessageID: "resource-link-provider-switch", Origin: domain.MessageOriginHuman,
+		Content: []ports.ChatContent{{
+			Type: "resource_link", URI: "file:///worktree/build.log", Name: "build.log",
+		}},
+	})
+	if err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	h.conv.emit(ports.ChatEvent{
+		Kind: ports.ChatEventTurnCompleted, ProviderTurnID: turn.ProviderTurnID,
+		TurnState: domain.TurnStateFailed, Err: errors.New("source failed"),
+	})
+	failedTurnSnapshot(t, h, turn.ID)
+
+	// A provider selected in place may not preserve resource-link blocks. Refuse
+	// clearly instead of silently re-sending only the prompt text.
+	h.conv.setCapabilities(productionCaps())
+	if _, err := h.svc.RetryTurn(ctx, testSession, turn.ID); !errors.Is(err, chatsvc.ErrRetryUnsupported) {
+		t.Fatalf("RetryTurn unsupported resource link = %v, want ErrRetryUnsupported", err)
+	}
+	if sent := h.conv.sentMessages(); len(sent) != 1 {
+		t.Fatalf("provider received %d sends after unsupported retry, want original only", len(sent))
 	}
 }
 
@@ -427,22 +461,22 @@ func TestRetryTurnReplaysReturnExistingAttempt(t *testing.T) {
 		t.Fatalf("provider received %d sends after replay, want exactly 2: %v", len(sent), sent)
 	}
 
-	// Even after the first attempt settles, the source keeps answering with it
-	// instead of minting another attempt.
+	// Even when restart history can only recover the attempt as terminal, the
+	// source keeps answering with it instead of minting another attempt.
 	h.conv.emit(ports.ChatEvent{
 		Kind:           ports.ChatEventTurnCompleted,
 		ProviderTurnID: first.ProviderTurnID,
-		TurnState:      domain.TurnStateCompleted,
+		TurnState:      domain.TurnStateRecovered,
 	})
 	h.awaitSnapshot(t, func(s store.ConversationSnapshot) bool {
 		t, ok := turnByID(s, first.ID)
-		return ok && t.State == domain.TurnStateCompleted
+		return ok && t.State == domain.TurnStateRecovered
 	})
 	third, err := h.svc.RetryTurn(ctx, testSession, turn.ID)
 	if err != nil {
 		t.Fatalf("post-settlement RetryTurn: %v", err)
 	}
-	if third.ID != first.ID {
+	if third.ID != first.ID || third.State != domain.TurnStateRecovered {
 		t.Fatalf("post-settlement replay opened turn %q, want the existing attempt %q", third.ID, first.ID)
 	}
 	if got := h.conv.sentTexts(); len(got) != 2 {

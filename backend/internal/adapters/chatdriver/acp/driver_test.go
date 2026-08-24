@@ -643,6 +643,7 @@ func TestACPDriverNegotiatesRichClientCapabilitiesAndNativePromptContent(t *test
 	}
 	if !conv.Capabilities().Has(ports.ChatCapabilityImages) ||
 		!conv.Capabilities().Has(ports.ChatCapabilityEmbeddedContext) ||
+		!conv.Capabilities().Has(ports.ChatCapabilityResourceLinks) ||
 		!conv.Capabilities().Has(ports.ChatCapabilityElicitation) {
 		t.Fatalf("conversation capabilities = %#v", conv.Capabilities())
 	}
