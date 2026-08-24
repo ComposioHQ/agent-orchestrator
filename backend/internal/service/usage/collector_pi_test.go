@@ -3,8 +3,10 @@ package usage
 import (
 	"context"
 	"fmt"
+	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 )
@@ -58,7 +60,8 @@ func TestCollectorReconcilePiPathMatchesLiveWorkspace(t *testing.T) {
 	root := t.TempDir()
 	path := filepath.Join(root, "project", "session.jsonl")
 	writeUsageFixture(t, path, fmt.Sprintf(
-		`{"type":"session","id":%q,"cwd":%q,"version":3}`+"\n", nativeID, workspace,
+		`{"type":"session","id":%q,"timestamp":%q,"cwd":%q,"version":3}`+"\n",
+		nativeID, session.CreatedAt.Add(time.Second).Format(time.RFC3339Nano), workspace,
 	))
 
 	collector := NewCollector(store, SourceRoots{PiSessions: root}, nil)
@@ -66,5 +69,66 @@ func TestCollectorReconcilePiPathMatchesLiveWorkspace(t *testing.T) {
 	bindings, err := store.ListUsageBindingsForSession(context.Background(), session.ID)
 	if err != nil || len(bindings) != 1 || bindings[0].NativeRootID != nativeID {
 		t.Fatalf("bindings=%+v err=%v", bindings, err)
+	}
+}
+
+// TestCollectorPiBackfillBindsOnlyCurrentWorkspaceSession catches importing
+// every historical Pi file merely because it shares the live AO workspace.
+func TestCollectorPiBackfillBindsOnlyCurrentWorkspaceSession(t *testing.T) {
+	store := collectorTestStore(t)
+	workspace := t.TempDir()
+	session := collectorTestSession(t, store, domain.HarnessPi, "", false)
+	session.Metadata.WorkspacePath = workspace
+	mustNoError(t, store.UpdateSession(context.Background(), session))
+
+	root := t.TempDir()
+	oldPath := filepath.Join(root, "project", "old.jsonl")
+	currentPath := filepath.Join(root, "project", "current.jsonl")
+	writeUsageFixture(t, oldPath, fmt.Sprintf(
+		`{"type":"session","id":"pi-old","timestamp":%q,"cwd":%q,"version":3}`+"\n",
+		session.CreatedAt.Add(-time.Hour).Format(time.RFC3339Nano), workspace,
+	))
+	writeUsageFixture(t, currentPath, fmt.Sprintf(
+		`{"type":"session","id":"pi-current","timestamp":%q,"cwd":%q,"version":3}`+"\n",
+		session.CreatedAt.Add(time.Second).Format(time.RFC3339Nano), workspace,
+	))
+	mustNoError(t, os.Chtimes(oldPath, session.CreatedAt.Add(-time.Hour), session.CreatedAt.Add(-time.Hour)))
+	mustNoError(t, os.Chtimes(currentPath, session.CreatedAt.Add(time.Second), session.CreatedAt.Add(time.Second)))
+
+	collector := NewCollector(store, SourceRoots{PiSessions: root}, nil)
+	mustNoError(t, collector.BackfillActive(context.Background()))
+	bindings, err := store.ListUsageBindingsForSession(context.Background(), session.ID)
+	if err != nil || len(bindings) != 1 || bindings[0].NativeRootID != "pi-current" {
+		t.Fatalf("bindings=%+v err=%v, want only current Pi session", bindings, err)
+	}
+}
+
+func TestReadPiSessionMetaHonorsCanceledContext(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "session.jsonl")
+	writeUsageFixture(t, path, `{"type":"session","id":"pi-context","timestamp":"2026-08-24T10:00:00Z","cwd":"/repo","version":3}`+"\n")
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	if _, ok := readPiSessionMeta(ctx, path); ok {
+		t.Fatal("canceled Pi metadata read succeeded")
+	}
+}
+
+func TestSourceKindForHarness(t *testing.T) {
+	tests := []struct {
+		harness domain.AgentHarness
+		want    domain.UsageSourceKind
+		ok      bool
+	}{
+		{harness: domain.HarnessClaudeCode, want: domain.UsageSourceClaudeMain, ok: true},
+		{harness: domain.HarnessCodex, want: domain.UsageSourceCodexRollout, ok: true},
+		{harness: domain.HarnessPi, want: domain.UsageSourcePiSession, ok: true},
+		{harness: domain.HarnessAider, ok: false},
+	}
+	for _, tt := range tests {
+		got, ok := sourceKindForHarness(tt.harness)
+		if got != tt.want || ok != tt.ok {
+			t.Fatalf("sourceKindForHarness(%q) = %q, %v; want %q, %v", tt.harness, got, ok, tt.want, tt.ok)
+		}
 	}
 }

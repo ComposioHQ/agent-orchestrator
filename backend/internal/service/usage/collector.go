@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log/slog"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -125,7 +124,7 @@ type Collector struct {
 	notifyRouteResolved     func()
 	codexLogicalSourceLimit int
 	now                     func() time.Time
-	mu                      sync.Mutex
+	mu                      contextMutex
 	// Guarded separately from mu, which RecordHook holds across the whole hook.
 	routeMu sync.RWMutex
 }
@@ -149,6 +148,33 @@ func (c *Collector) routeResolvedHandler() func() {
 	return c.notifyRouteResolved
 }
 
+type contextMutex struct {
+	token chan struct{}
+}
+
+func newContextMutex() contextMutex {
+	token := make(chan struct{}, 1)
+	token <- struct{}{}
+	return contextMutex{token: token}
+}
+
+func (m *contextMutex) Lock() {
+	<-m.token
+}
+
+func (m *contextMutex) LockContext(ctx context.Context) error {
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-m.token:
+		return nil
+	}
+}
+
+func (m *contextMutex) Unlock() {
+	m.token <- struct{}{}
+}
+
 // NewCollector constructs a transcript source registrar.
 func NewCollector(store collectorStore, roots SourceRoots, notifySourcesChanged func(reconcile bool)) *Collector {
 	return newCollectorWithCodexSourceLimit(store, roots, notifySourcesChanged, defaultCodexLogicalSourceLimit)
@@ -169,6 +195,7 @@ func newCollectorWithCodexSourceLimit(
 		notifySourcesChanged:    notifySourcesChanged,
 		codexLogicalSourceLimit: limit,
 		now:                     time.Now,
+		mu:                      newContextMutex(),
 	}
 }
 
@@ -215,19 +242,8 @@ func (c *Collector) ReactivateSession(
 	sessionID domain.SessionID,
 	expectedRuntimeLaunchID string,
 ) error {
-	if !c.mu.TryLock() {
-		go func() {
-			c.mu.Lock()
-			defer c.mu.Unlock()
-			if err := c.reactivateSessionLocked(context.WithoutCancel(ctx), sessionID, expectedRuntimeLaunchID); err != nil {
-				slog.Default().Warn(
-					"usage: reactivate session after concurrent finalization",
-					"session", sessionID,
-					"err", err,
-				)
-			}
-		}()
-		return nil
+	if err := c.mu.LockContext(ctx); err != nil {
+		return err
 	}
 	defer c.mu.Unlock()
 	return c.reactivateSessionLocked(ctx, sessionID, expectedRuntimeLaunchID)
@@ -798,9 +814,13 @@ func (c *Collector) reconcilePiPath(ctx context.Context, path string) error {
 	if err != nil {
 		return nil //nolint:nilerr // Watch notifications may target another provider.
 	}
-	meta, ok := readPiSessionMeta(resolved)
+	meta, ok := readPiSessionMeta(ctx, resolved)
 	if !ok {
 		return nil
+	}
+	startedAt, validTimestamp := piSessionStartedAt(meta)
+	if !validTimestamp {
+		return nil // Pi session attribution requires its provider timestamp.
 	}
 	workspace, err := filepath.EvalSymlinks(filepath.Clean(meta.CWD))
 	if err != nil {
@@ -813,7 +833,8 @@ func (c *Collector) reconcilePiPath(ctx context.Context, path string) error {
 	matches := make([]domain.SessionRecord, 0, 1)
 	for _, session := range sessions {
 		if session.Harness != domain.HarnessPi || session.IsTerminated ||
-			session.Activity.State == domain.ActivityExited || session.Metadata.WorkspacePath == "" {
+			session.Activity.State == domain.ActivityExited || session.Metadata.WorkspacePath == "" ||
+			startedAt.Before(session.CreatedAt.Add(-5*time.Second)) {
 			continue
 		}
 		candidate, candidateErr := filepath.EvalSymlinks(filepath.Clean(session.Metadata.WorkspacePath))
@@ -823,6 +844,15 @@ func (c *Collector) reconcilePiPath(ctx context.Context, path string) error {
 	}
 	if len(matches) != 1 {
 		return nil
+	}
+	existing, err := c.store.ListUsageBindingsForSession(ctx, matches[0].ID)
+	if err != nil {
+		return err
+	}
+	for _, binding := range existing {
+		if binding.Harness == domain.HarnessPi && binding.NativeRootID != meta.ID {
+			return nil
+		}
 	}
 	now := c.now().UTC()
 	binding, err := c.store.UpsertUsageBinding(ctx, domain.UsageBindingRecord{
@@ -1233,6 +1263,7 @@ func (c *Collector) registerHookSource(
 		expectedParentID = binding.NativeRootID
 	}
 	if err := c.validateSourceAttribution(
+		ctx,
 		binding,
 		kind,
 		nativeSessionID,
@@ -1278,6 +1309,7 @@ func (c *Collector) registerSourceWithExpectedParent(
 		return false, err
 	}
 	if err := c.validateSourceAttribution(
+		ctx,
 		binding,
 		kind,
 		nativeSessionID,
@@ -1324,6 +1356,7 @@ func (c *Collector) registerSourceWithInventory(
 		return false, err
 	}
 	if err := c.validateSourceAttribution(
+		ctx,
 		binding,
 		kind,
 		nativeSessionID,
@@ -1838,6 +1871,7 @@ func (c *Collector) validateSourcePath(ctx context.Context, harness domain.Agent
 }
 
 func validateSourceAttribution(
+	ctx context.Context,
 	binding domain.UsageBindingRecord,
 	kind domain.UsageSourceKind,
 	nativeSessionID string,
@@ -1891,7 +1925,7 @@ func validateSourceAttribution(
 			return rejected()
 		}
 	case domain.UsageSourcePiSession:
-		meta, ok := readPiSessionMeta(resolved)
+		meta, ok := readPiSessionMeta(ctx, resolved)
 		if binding.Harness != domain.HarnessPi || nativeSessionID != binding.NativeRootID ||
 			subagentID != "" || !ok || meta.ID != nativeSessionID {
 			return rejected()
@@ -1903,6 +1937,7 @@ func validateSourceAttribution(
 }
 
 func (c *Collector) validateSourceAttribution(
+	ctx context.Context,
 	binding domain.UsageBindingRecord,
 	kind domain.UsageSourceKind,
 	nativeSessionID string,
@@ -1911,6 +1946,7 @@ func (c *Collector) validateSourceAttribution(
 	expectedParentID string,
 ) error {
 	if err := validateSourceAttribution(
+		ctx,
 		binding,
 		kind,
 		nativeSessionID,
@@ -2093,12 +2129,24 @@ func (c *Collector) discoverKimiPath(ctx context.Context, nativeID string) (stri
 }
 
 type piSessionMeta struct {
-	Type string `json:"type"`
-	ID   string `json:"id"`
-	CWD  string `json:"cwd"`
+	Type      string `json:"type"`
+	ID        string `json:"id"`
+	Timestamp string `json:"timestamp"`
+	CWD       string `json:"cwd"`
 }
 
-func readPiSessionMeta(path string) (piSessionMeta, bool) {
+func piSessionStartedAt(meta piSessionMeta) (time.Time, bool) {
+	startedAt, err := time.Parse(time.RFC3339Nano, meta.Timestamp)
+	if err != nil {
+		return time.Time{}, false
+	}
+	return startedAt.UTC(), true
+}
+
+func readPiSessionMeta(ctx context.Context, path string) (piSessionMeta, bool) {
+	if ctx.Err() != nil {
+		return piSessionMeta{}, false
+	}
 	file, err := os.Open(path) //nolint:gosec // validated provider-owned path.
 	if err != nil {
 		return piSessionMeta{}, false
@@ -2107,6 +2155,9 @@ func readPiSessionMeta(path string) (piSessionMeta, bool) {
 	reader := bufio.NewReader(io.LimitReader(file, 64<<10))
 	line, err := reader.ReadBytes('\n')
 	if err != nil && !errors.Is(err, io.EOF) {
+		return piSessionMeta{}, false
+	}
+	if ctx.Err() != nil {
 		return piSessionMeta{}, false
 	}
 	var meta piSessionMeta
@@ -2126,7 +2177,7 @@ func (c *Collector) discoverPiPath(ctx context.Context, nativeID string) (string
 		if err := ctx.Err(); err != nil {
 			return "", err
 		}
-		if meta, ok := readPiSessionMeta(path); ok && meta.ID == nativeID {
+		if meta, ok := readPiSessionMeta(ctx, path); ok && meta.ID == nativeID {
 			return path, nil
 		}
 	}

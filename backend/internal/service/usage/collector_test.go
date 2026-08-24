@@ -3,6 +3,7 @@ package usage
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -581,6 +582,40 @@ func TestCollectorReactivateSessionRejectsStaleLaunch(t *testing.T) {
 	}
 }
 
+func TestCollectorReactivateSessionWaitsForLockAndHonorsCancellation(t *testing.T) {
+	store := collectorTestStore(t)
+	session := collectorTestSession(t, store, domain.HarnessCodex, "native-contended", false)
+	session.Metadata.RuntimeLaunchID = "launch-current"
+	mustNoError(t, store.UpdateSession(context.Background(), session))
+	collector := NewCollector(store, SourceRoots{}, nil)
+
+	t.Run("waits and reports completion", func(t *testing.T) {
+		collector.mu.Lock()
+		done := make(chan error, 1)
+		go func() {
+			done <- collector.ReactivateSession(context.Background(), session.ID, "launch-current")
+		}()
+		select {
+		case err := <-done:
+			collector.mu.Unlock()
+			t.Fatalf("reactivation returned before serialized work ran: %v", err)
+		case <-time.After(50 * time.Millisecond):
+		}
+		collector.mu.Unlock()
+		mustNoError(t, <-done)
+	})
+
+	t.Run("canceled waiter returns context error", func(t *testing.T) {
+		collector.mu.Lock()
+		defer collector.mu.Unlock()
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		if err := collector.ReactivateSession(ctx, session.ID, "launch-current"); !errors.Is(err, context.Canceled) {
+			t.Fatalf("ReactivateSession error = %v, want context.Canceled", err)
+		}
+	})
+}
+
 func TestCollectorHookLifecycleTransitions(t *testing.T) {
 	complete, active := domain.UsageSourceComplete, domain.UsageSourceActive
 	tests := []struct {
@@ -751,7 +786,6 @@ func TestCollectorCurrentActivityReactivatesBindingDuringReaperFinalization(t *t
 		t.Fatalf("binding during finalization=%s, want finalizing", during.State)
 	}
 
-	activityApplied := make(chan struct{})
 	hookDone := make(chan error, 1)
 	go func() {
 		err := manager.ApplyActivitySignal(context.Background(), session.ID, ports.ActivitySignal{
@@ -762,7 +796,6 @@ func TestCollectorCurrentActivityReactivatesBindingDuringReaperFinalization(t *t
 			AgentSessionID: "native-race",
 			LaunchID:       "launch-current",
 		})
-		close(activityApplied)
 		if err == nil {
 			err = collector.RecordHook(context.Background(), session.ID, HookSignal{
 				Event:           "post-tool-use",
@@ -772,10 +805,19 @@ func TestCollectorCurrentActivityReactivatesBindingDuringReaperFinalization(t *t
 		}
 		hookDone <- err
 	}()
-	select {
-	case <-activityApplied:
-	case <-time.After(2 * time.Second):
-		t.Fatal("current activity did not persist while finalizer was blocked")
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		persisted, ok, err := store.GetSession(context.Background(), session.ID)
+		if err != nil || !ok {
+			t.Fatalf("session during contention ok=%v err=%v", ok, err)
+		}
+		if persisted.Activity.State == domain.ActivityActive {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("current activity did not persist while finalizer was blocked")
+		}
+		time.Sleep(5 * time.Millisecond)
 	}
 	close(release)
 	mustNoError(t, <-reaperDone)
