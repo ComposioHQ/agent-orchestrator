@@ -640,7 +640,7 @@ function FilePathLabel({ file }: { file: WorkspaceFileSummary }) {
 	return (
 		<span className="min-w-0 flex-1 truncate font-mono text-xs font-medium text-foreground">
 			<span className="text-passive line-through decoration-border">{file.previousPath}</span>
-			<span className="px-1 text-passive">-&gt;</span>
+			<span className="px-1 text-passive">→</span>
 			<span>{file.path}</span>
 		</span>
 	);
