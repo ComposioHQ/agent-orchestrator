@@ -16,6 +16,7 @@ const account = {
 	organizations: [{ id: "org-1", slug: "acme", displayName: "Acme", role: "owner" }],
 	storedAt: "2026-08-23T00:00:00.000Z",
 };
+let currentAccount: typeof account | (Omit<typeof account, "organizations"> & { organizations?: unknown[] }) = account;
 
 vi.mock("../lib/bridge", () => ({
 	aoBridge: { cloud: bridge },
@@ -25,7 +26,7 @@ vi.mock("../lib/cloud-session", () => ({
 	useCloudSession: () => ({
 		enabled: true,
 		available: true,
-		session: account,
+		session: currentAccount,
 		status: "authenticated",
 		signIn: vi.fn(),
 		signOut: vi.fn(),
@@ -48,6 +49,7 @@ const pending = {
 describe("CloudProjectFlow", () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
+		currentAccount = account;
 		bridge.listProjects.mockResolvedValue(emptySnapshot);
 		bridge.startProjectSession.mockResolvedValue({ session: { id: "session-1" } });
 	});
@@ -94,6 +96,19 @@ describe("CloudProjectFlow", () => {
 		await user.type(screen.getByLabelText("Repository URL"), "https://github.com/acme/app.git");
 		await user.type(screen.getByLabelText("Default branch"), "main");
 
+		expect(screen.getByLabelText("Organization")).toHaveValue("org-1");
+		expect(screen.getByRole("button", { name: "Create cloud project" })).toBeEnabled();
+	});
+
+	it("accepts the control-plane orgId shape without leaving the create action inert", async () => {
+		currentAccount = {
+			...account,
+			organizations: [{ orgId: "org-1", orgSlug: "acme", displayName: "Acme", role: "owner" }],
+		};
+		bridge.listProjects.mockResolvedValue({ groups: [] });
+		render(<CloudProjectFlow open onOpenChange={vi.fn()} />);
+
+		await screen.findByText("No cloud projects yet.");
 		expect(screen.getByLabelText("Organization")).toHaveValue("org-1");
 		expect(screen.getByRole("button", { name: "Create cloud project" })).toBeEnabled();
 	});

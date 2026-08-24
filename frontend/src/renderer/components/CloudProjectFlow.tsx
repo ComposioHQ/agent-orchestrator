@@ -2,20 +2,24 @@ import * as Dialog from "@radix-ui/react-dialog";
 import { Cloud, LoaderCircle, RefreshCw, X } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
-import type {
-	CloudProjectOperation,
-	CloudProjectSessionResult,
-	CloudProjectSnapshot,
-} from "../../shared/cloud-projects";
+import type { CloudOrganization } from "../../shared/cloud-account";
+import type { CloudProjectOperation, CloudProjectSessionResult, CloudProjectSnapshot } from "../../shared/cloud-projects";
 import { aoBridge } from "../lib/bridge";
 import { useCloudSession } from "../lib/cloud-session";
 import { Button } from "./ui/button";
 
 const INITIAL_POLL_DELAY_MS = 500;
 const MAX_POLL_DELAY_MS = 4_000;
+const NO_ORGANIZATIONS: CloudOrganization[] = [];
 
 function errorMessage(error: unknown, fallback: string): string {
 	return error instanceof Error ? error.message : fallback;
+}
+
+function organizationID(organization: CloudOrganization | undefined): string {
+	if (!organization) return "";
+	const candidate = organization as CloudOrganization & { orgId?: string };
+	return candidate.id || candidate.orgId || "";
 }
 
 export function CloudProjectFlow({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
@@ -37,7 +41,8 @@ export function CloudProjectFlow({ open, onOpenChange }: { open: boolean; onOpen
 	const [repositoryUrl, setRepositoryUrl] = useState("");
 	const [defaultBranch, setDefaultBranch] = useState("");
 	const requestGeneration = useRef(0);
-	const selectedOrganizationId = organizationId || cloud.session?.organizations[0]?.id || "";
+	const organizations = cloud.session?.organizations ?? NO_ORGANIZATIONS;
+	const selectedOrganizationId = organizationId || organizationID(organizations[0]);
 
 	const loadProjects = useCallback(async () => {
 		const generation = ++requestGeneration.current;
@@ -47,13 +52,13 @@ export function CloudProjectFlow({ open, onOpenChange }: { open: boolean; onOpen
 			const next = await aoBridge.cloud.listProjects();
 			if (generation !== requestGeneration.current) return;
 			setSnapshot(next);
-			setOrganizationId((current) => current || next.groups[0]?.organization.id || cloud.session?.organizations[0]?.id || "");
+			setOrganizationId((current) => current || organizationID(next.groups[0]?.organization) || organizationID(organizations[0]));
 		} catch (error) {
 			if (generation === requestGeneration.current) setListError(errorMessage(error, t("cloudProject.requestFailed")));
 		} finally {
 			if (generation === requestGeneration.current) setLoading(false);
 		}
-	}, [cloud.session?.organizations, t]);
+	}, [organizations, t]);
 
 	useEffect(() => {
 		if (!open || cloud.status !== "authenticated") return;
@@ -197,12 +202,12 @@ export function CloudProjectFlow({ open, onOpenChange }: { open: boolean; onOpen
 									</section>
 								) : (
 									<form className="grid gap-4" onSubmit={createProject}>
-										<label className="grid gap-1.5 text-sm font-medium">{t("cloudProject.organization")}<select aria-label={t("cloudProject.organization")} className="h-10 rounded-md border border-input bg-background px-3" required value={selectedOrganizationId} onChange={(event) => setOrganizationId(event.target.value)}>{(cloud.session?.organizations ?? []).map((organization) => <option key={organization.id} value={organization.id}>{organization.displayName}</option>)}</select></label>
+										<label className="grid gap-1.5 text-sm font-medium">{t("cloudProject.organization")}<select aria-label={t("cloudProject.organization")} className="h-10 rounded-md border border-input bg-background px-3" required value={selectedOrganizationId} onChange={(event) => setOrganizationId(event.target.value)}>{organizations.map((organization) => { const id = organizationID(organization); return <option key={id || organization.displayName} value={id}>{organization.displayName}</option>; })}</select></label>
 										<label className="grid gap-1.5 text-sm font-medium">{t("cloudProject.projectName")}<input aria-label={t("cloudProject.projectName")} className="h-10 rounded-md border border-input bg-background px-3" required value={displayName} onChange={(event) => setDisplayName(event.target.value)} /></label>
 										<label className="grid gap-1.5 text-sm font-medium">{t("cloudProject.repositoryUrl")}<input aria-label={t("cloudProject.repositoryUrl")} className="h-10 rounded-md border border-input bg-background px-3 font-mono text-sm" type="url" required placeholder={t("cloudProject.repositoryPlaceholder")} value={repositoryUrl} onChange={(event) => setRepositoryUrl(event.target.value)} /></label>
 										<label className="grid gap-1.5 text-sm font-medium">{t("cloudProject.defaultBranch")}<input aria-label={t("cloudProject.defaultBranch")} className="h-10 rounded-md border border-input bg-background px-3 font-mono text-sm" required placeholder={t("cloudProject.branchPlaceholder")} value={defaultBranch} onChange={(event) => setDefaultBranch(event.target.value)} /></label>
 										{createError ? <ActionError message={createError} action={t("cloudProject.retryCreate")} onAction={() => setCreateError(null)} /> : null}
-										<div className="flex justify-end"><Button type="submit" disabled={creating || !selectedOrganizationId}>{creating ? t("cloudProject.creating") : t("cloudProject.create")}</Button></div>
+										<div className="flex justify-end"><Button type="submit" disabled={creating || organizations.length === 0}>{creating ? t("cloudProject.creating") : t("cloudProject.create")}</Button></div>
 									</form>
 								)}
 							</div>
