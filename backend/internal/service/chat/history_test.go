@@ -621,6 +621,40 @@ type blockingEditAnchorStore struct {
 	release   chan struct{}
 }
 
+type blockingEditReplacementStore struct {
+	*store.Store
+	mu      sync.Mutex
+	entered chan struct{}
+	release chan struct{}
+}
+
+func (s *blockingEditReplacementStore) blockReplacement() (<-chan struct{}, chan<- struct{}) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.entered = make(chan struct{})
+	s.release = make(chan struct{})
+	return s.entered, s.release
+}
+
+func (s *blockingEditReplacementStore) UpdateConversationBranchReplacement(
+	ctx context.Context,
+	branchID, turnID string,
+) error {
+	s.mu.Lock()
+	entered, release := s.entered, s.release
+	s.entered, s.release = nil, nil
+	s.mu.Unlock()
+	if entered != nil {
+		close(entered)
+		select {
+		case <-release:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	return s.Store.UpdateConversationBranchReplacement(ctx, branchID, turnID)
+}
+
 func (s *blockingEditAnchorStore) blockAnchor(read int) (<-chan struct{}, chan<- struct{}) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -1639,6 +1673,104 @@ func TestEditFencesConcurrentBranchActivation(t *testing.T) {
 	}
 	if got := source.ProviderConversationID(); got != "thread-forked" {
 		t.Fatalf("provider binding after edit race = %q, want thread-forked", got)
+	}
+}
+
+func TestEditSendCleanupDoesNotAbortNewerHandoff(t *testing.T) {
+	for _, retry := range []bool{false, true} {
+		name := "bound fork"
+		if retry {
+			name = "retry"
+		}
+		t.Run(name, func(t *testing.T) {
+			var replacementStore *blockingEditReplacementStore
+			h, source, _ := newEditHarnessWithStore(t, false, func(st *store.Store) chatsvc.Store {
+				replacementStore = &blockingEditReplacementStore{Store: st}
+				return replacementStore
+			})
+			ctx := context.Background()
+			completeTurn(t, h, "A", "provider-turn-1")
+			h.awaitSnapshot(t, func(s store.ConversationSnapshot) bool { return len(s.Messages) == 2 })
+			second := completeTurn(t, h, "B", "provider-turn-2")
+			h.awaitSnapshot(t, func(s store.ConversationSnapshot) bool { return len(s.Messages) == 4 })
+
+			if retry {
+				conversation, err := h.st.ConversationForSession(ctx, testSession)
+				if err != nil {
+					t.Fatalf("ConversationForSession: %v", err)
+				}
+				anchor, err := h.st.ConversationEditAnchor(ctx, conversation.ID, second)
+				if err != nil {
+					t.Fatalf("ConversationEditAnchor: %v", err)
+				}
+				sourceBranch, err := h.st.ConversationBranch(ctx, conversation.ID, anchor.SourceBranchID)
+				if err != nil {
+					t.Fatalf("ConversationBranch: %v", err)
+				}
+				forkAnchor := anchor.PreviousProviderTurnID
+				providerConversationID, err := source.Fork(ctx, &forkAnchor)
+				if err != nil || !source.BindProviderConversation(providerConversationID) {
+					t.Fatalf("prepare pending provider fork: id=%q err=%v", providerConversationID, err)
+				}
+				child := domain.ConversationBranch{
+					ID: "pending-edit", ConversationID: conversation.ID, SessionID: testSession,
+					ProviderConversationID: providerConversationID,
+					ParentBranchID:         anchor.SourceBranchID,
+					ReplacedTurnID:         second,
+					ForkAfterSequence:      anchor.ForkAfterSequence,
+					Strategy:               domain.ConversationBranchStrategyNative,
+					ProviderBindingID:      sourceBranch.ProviderBindingID,
+					ProviderScopeID:        sourceBranch.ProviderScopeID,
+					CreatedAt:              h.clock,
+				}
+				const generation = "pending-edit-generation"
+				if err := h.st.CreateAndActivateConversationBranch(
+					ctx, testSession, child, generation, h.clock); err != nil {
+					t.Fatalf("CreateAndActivateConversationBranch: %v", err)
+				}
+				if err := h.ctrl.BeginIdleBranchHandoff(ctx); err != nil {
+					t.Fatalf("fence pending edit branch: %v", err)
+				}
+				h.ctrl.CommitIdleBranchHandoff(child.ID, generation)
+			}
+
+			source.mu.Lock()
+			source.sendErr = errors.New("provider unavailable")
+			source.mu.Unlock()
+			replacementEntered, releaseReplacement := replacementStore.blockReplacement()
+			editDone := make(chan error, 1)
+			go func() {
+				_, editErr := h.svc.EditMessage(ctx, testSession, second, ports.ChatUserMessage{
+					Text: "B edited", ClientMessageID: "edit-cleanup-race", Origin: domain.MessageOriginHuman,
+				})
+				editDone <- editErr
+			}()
+			select {
+			case <-replacementEntered:
+			case <-time.After(3 * time.Second):
+				t.Fatal("EditMessage did not reach replacement metadata update")
+			}
+
+			if err := h.ctrl.BeginIdleBranchHandoff(ctx); err != nil {
+				t.Fatalf("establish newer branch handoff: %v", err)
+			}
+			close(releaseReplacement)
+			select {
+			case editErr := <-editDone:
+				if editErr == nil {
+					t.Fatal("EditMessage succeeded after provider send failure")
+				}
+			case <-time.After(3 * time.Second):
+				t.Fatal("EditMessage did not finish after releasing replacement update")
+			}
+
+			if _, err := h.ctrl.Send(ctx, ports.ChatUserMessage{
+				Text: "must remain fenced", ClientMessageID: "edit-cleanup-probe",
+			}); !errors.Is(err, chatsvc.ErrControllerHandoff) {
+				t.Fatalf("Send after newer handoff = %v, want ErrControllerHandoff", err)
+			}
+			h.ctrl.AbortHandoff()
+		})
 	}
 }
 
