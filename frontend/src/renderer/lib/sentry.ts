@@ -112,7 +112,7 @@ function scrubEvent(event: Record<string, unknown>): Record<string, unknown> {
 	return event;
 }
 
-function tagsFor(meta: ClassifyInput & { operation?: string; surface?: string; domain?: string }, triage: Triage) {
+function tagsFor(meta: CaptureMeta, triage: Triage) {
 	return {
 		platform: ctx.platform ?? "desktop",
 		surface: meta.surface,
@@ -122,12 +122,19 @@ function tagsFor(meta: ClassifyInput & { operation?: string; surface?: string; d
 		code: meta.code,
 		http_status: meta.httpStatus,
 		apierr_kind: meta.kind,
+		// Correlates with the daemon's own request_id tag on the matching capture.
+		request_id: meta.requestId,
 		severity: triage.severity,
 		owner: triage.owner,
 	};
 }
 
-export type CaptureMeta = ClassifyInput & { operation?: string; surface?: string; domain?: string };
+export type CaptureMeta = ClassifyInput & {
+	operation?: string;
+	surface?: string;
+	domain?: string;
+	requestId?: string;
+};
 
 /** Capture an exception (from a boundary or unhandled handler). */
 export function captureExceptionToSentry(error: unknown, meta: CaptureMeta = {}): void {
@@ -144,9 +151,10 @@ export function captureApiErrorToSentry(
 	category: string,
 	status?: number,
 	code?: string,
+	requestId?: string,
 ): void {
 	if (!sentry) return;
-	const meta: CaptureMeta = { operation, category, httpStatus: status, code, domain: domainOf(operation) };
+	const meta: CaptureMeta = { operation, category, httpStatus: status, code, requestId, domain: domainOf(operation) };
 	const triage = classifyError(meta);
 	const tags = tagsFor(meta, triage);
 	if (triage.report) sentry.captureMessage(`${operation} failed: ${category}${status ? ` (${status})` : ""}`, { level: triage.level, tags });

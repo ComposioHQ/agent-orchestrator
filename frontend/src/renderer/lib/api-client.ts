@@ -182,7 +182,13 @@ type ApiErrorCategory = "daemon_unavailable" | "network_error" | "http_4xx" | "h
 const API_ERROR_DEDUPE_MS = 30_000;
 const lastApiErrorAt = new Map<string, number>();
 
-function reportApiError(operation: string, category: ApiErrorCategory, status?: number, code?: string): void {
+function reportApiError(
+	operation: string,
+	category: ApiErrorCategory,
+	status?: number,
+	code?: string,
+	requestId?: string,
+): void {
 	const key = `${operation}|${category}|${status ?? ""}`;
 	const now = Date.now();
 	const last = lastApiErrorAt.get(key);
@@ -194,8 +200,10 @@ function reportApiError(operation: string, category: ApiErrorCategory, status?: 
 		status,
 	});
 	// Mirror into Sentry (no-op unless a DSN is configured). The daemon `code`
-	// is what drives the fine-grained severity/owner classification.
-	captureApiErrorToSentry(operation, category, status, code);
+	// is what drives the fine-grained severity/owner classification; `requestId`
+	// (when present) is tagged so a client event pivots to the daemon's own
+	// capture of the same request, which carries the matching request_id.
+	captureApiErrorToSentry(operation, category, status, code, requestId);
 }
 
 async function runtimeFetch(input: Request): Promise<Response> {
@@ -255,13 +263,15 @@ async function runtimeFetch(input: Request): Promise<Response> {
 		// Best-effort read the daemon error envelope's `code` (via a clone so the
 		// caller still gets an unconsumed body) to drive classification.
 		let code: string | undefined;
+		let requestId: string | undefined;
 		try {
-			const body = (await response.clone().json()) as { code?: unknown };
+			const body = (await response.clone().json()) as { code?: unknown; requestId?: unknown };
 			if (typeof body?.code === "string" && body.code !== "") code = body.code;
+			if (typeof body?.requestId === "string" && body.requestId !== "") requestId = body.requestId;
 		} catch {
 			// Non-JSON or empty body: fall back to status-only classification.
 		}
-		reportApiError(operation, response.status >= 500 ? "http_5xx" : "http_4xx", response.status, code);
+		reportApiError(operation, response.status >= 500 ? "http_5xx" : "http_4xx", response.status, code, requestId);
 	}
 	return response;
 }
