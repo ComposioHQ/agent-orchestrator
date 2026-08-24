@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
@@ -81,6 +82,35 @@ type Workspace struct {
 	managedRoot string
 	repos       RepoResolver
 	run         commandRunner
+
+	// repoLocksMu guards repoLocks. repoLocks serializes git operations that
+	// mutate shared repo state (.git/config, worktree registrations, packed
+	// refs) per repository path: concurrent spawns each run `git worktree add
+	// -b`, which writes branch.<name> config at the end of checkout, and the
+	// losers of the .git/config.lock race fail with exit 255 (#4350). Tests
+	// construct Workspace as a zero value, so access is nil-map safe.
+	repoLocksMu sync.Mutex
+	repoLocks   map[string]*sync.Mutex
+}
+
+// lockRepo returns a release function for the per-repo git mutation lock. Every
+// caller must be safe to serialize against any other caller on the same repo
+// path; cross-repo spawns still run concurrently. Paths are cleaned so
+// equivalent spellings of one repo share one lock.
+func (w *Workspace) lockRepo(repo string) func() {
+	key := filepath.Clean(repo)
+	w.repoLocksMu.Lock()
+	if w.repoLocks == nil {
+		w.repoLocks = map[string]*sync.Mutex{}
+	}
+	mu, ok := w.repoLocks[key]
+	if !ok {
+		mu = &sync.Mutex{}
+		w.repoLocks[key] = mu
+	}
+	w.repoLocksMu.Unlock()
+	mu.Lock()
+	return mu.Unlock
 }
 
 type commandRunner func(ctx context.Context, binary string, args ...string) ([]byte, error)
@@ -178,6 +208,12 @@ func (w *Workspace) FetchDefaultBranch(ctx context.Context, repoPath string, tar
 	if err := w.validateBranch(ctx, repo, target.Branch); err != nil {
 		return err
 	}
+	// Serialize with worktree adds on the same repo: a fetch rewrites
+	// packed-refs (packed-refs.lock) and can also take .git/config.lock, so
+	// concurrent spawn-time fetches race worktree adds on the same clone
+	// (#4350).
+	unlock := w.lockRepo(repo)
+	defer unlock()
 	if _, err := w.run(ctx, w.binary, fetchBranchArgs(repo, target.Remote, target.Branch)...); err != nil {
 		return fmt.Errorf("gitworktree: fetch %s %s: %w", target.Remote, target.Branch, err)
 	}
@@ -969,6 +1005,12 @@ func registeredWorktreeDirMissing(rec worktreeRecord) (bool, error) {
 }
 
 func (w *Workspace) addWorktree(ctx context.Context, repo, path, branch, baseBranch, baseRef string, resolveExistingBase bool) (string, error) {
+	// Serialize worktree mutations per repo: `git worktree add -b` writes
+	// branch.<name> config under .git/config.lock, and concurrent adds on one
+	// repo race on that lock (#4350). The ref-resolution reads inside are safe
+	// to hold the lock across: they are local reads with a bounded budget.
+	unlock := w.lockRepo(repo)
+	defer unlock()
 	// Refuse early if the branch is already checked out in another worktree:
 	// `git worktree add` will fail, but its stderr leaks through as an opaque
 	// 500. A typed sentinel lets the HTTP layer surface a 409.
@@ -1009,7 +1051,7 @@ func (w *Workspace) addWorktree(ctx context.Context, repo, path, branch, baseBra
 			baseRef = refs.baseRef
 		}
 		if _, err := w.run(ctx, w.binary, worktreeAddBranchArgs(repo, path, branch, force)...); err != nil {
-			return "", fmt.Errorf("gitworktree: worktree add existing branch %q: %w", branch, err)
+			return "", fmt.Errorf("%w: gitworktree: worktree add existing branch %q: %w", ports.ErrWorkspaceCreateFailed, branch, err)
 		}
 		return baseRef, nil
 	}
@@ -1024,7 +1066,7 @@ func (w *Workspace) addWorktree(ctx context.Context, repo, path, branch, baseBra
 		}
 		baseRef = refs.baseRef
 		if err := w.addNewBranchWorktree(ctx, repo, branch, path, refs.seedRef, force); err != nil {
-			return "", fmt.Errorf("gitworktree: worktree add branch %q from %q: %w", branch, refs.seedRef, err)
+			return "", fmt.Errorf("%w: gitworktree: worktree add branch %q from %q: %w", ports.ErrWorkspaceCreateFailed, branch, refs.seedRef, err)
 		}
 		return baseRef, nil
 	}
@@ -1040,7 +1082,7 @@ func (w *Workspace) addWorktree(ctx context.Context, repo, path, branch, baseBra
 	// comparison ref remains. Fresh creation returns above after resolving its
 	// seed and comparison refs independently.
 	if err := w.addNewBranchWorktree(ctx, repo, branch, path, seedRef, force); err != nil {
-		return "", fmt.Errorf("gitworktree: worktree add branch %q from %q: %w", branch, seedRef, err)
+		return "", fmt.Errorf("%w: gitworktree: worktree add branch %q from %q: %w", ports.ErrWorkspaceCreateFailed, branch, seedRef, err)
 	}
 	return baseRef, nil
 }
@@ -1172,6 +1214,10 @@ func (w *Workspace) workspaceProjectBranchFree(ctx context.Context, repos []work
 }
 
 func (w *Workspace) createWorkspaceProjectRepo(ctx context.Context, repo workspaceProjectRepo, branch string) (string, error) {
+	// Same per-repo serialization as addWorktree: this path runs its own
+	// `git worktree add -b` and races the same .git/config.lock (#4350).
+	unlock := w.lockRepo(repo.repoPath)
+	defer unlock()
 	baseRef := strings.TrimSpace(repo.baseRef)
 	if baseRef == "" {
 		return "", errors.New("gitworktree: workspace repository base was not resolved before creation")
@@ -1199,7 +1245,7 @@ func (w *Workspace) createWorkspaceProjectRepo(ctx context.Context, repo workspa
 	// prune this used to run, which would also drop sibling sessions'
 	// registrations.
 	if err := w.addNewBranchWorktree(ctx, repo.repoPath, branch, repo.outputPath, seedRef, force); err != nil {
-		return "", fmt.Errorf("gitworktree: workspace repo %q worktree add branch %q from %q: %w", repo.name, branch, seedRef, err)
+		return "", fmt.Errorf("%w: gitworktree: workspace repo %q worktree add branch %q from %q: %w", ports.ErrWorkspaceCreateFailed, repo.name, branch, seedRef, err)
 	}
 	return baseSHA, nil
 }
