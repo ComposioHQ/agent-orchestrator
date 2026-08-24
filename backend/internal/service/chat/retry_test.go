@@ -154,6 +154,39 @@ func TestRetryTurnDispatchesFailedPromptAsNewTurn(t *testing.T) {
 	}
 }
 
+func TestRetryTurnReplaysResourceLinkWithoutEmbeddedContextCapability(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	caps := productionCaps()
+	delete(caps, ports.ChatCapabilityEmbeddedContext)
+	h.conv.setCapabilities(caps)
+
+	turn, err := h.svc.Send(ctx, testSession, ports.ChatUserMessage{
+		Text:            "inspect the linked log",
+		ClientMessageID: "resource-link-source",
+		Origin:          domain.MessageOriginHuman,
+		Content: []ports.ChatContent{{
+			Type: "resource_link", URI: "file:///worktree/build.log", Name: "build.log",
+		}},
+	})
+	if err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	h.conv.emit(ports.ChatEvent{
+		Kind: ports.ChatEventTurnCompleted, ProviderTurnID: turn.ProviderTurnID,
+		TurnState: domain.TurnStateFailed, Err: errors.New("source failed"),
+	})
+	failedTurnSnapshot(t, h, turn.ID)
+
+	if _, err := h.svc.RetryTurn(ctx, testSession, turn.ID); err != nil {
+		t.Fatalf("RetryTurn resource link: %v", err)
+	}
+	sent := h.conv.sentMessages()
+	if len(sent) != 2 || len(sent[1].Content) != 1 || sent[1].Content[0].Type != "resource_link" || sent[1].Content[0].URI != "file:///worktree/build.log" {
+		t.Fatalf("retried resource link = %+v, want the original link", sent)
+	}
+}
+
 func TestRetryTurnRejectsInvalidDurableContentClearly(t *testing.T) {
 	cases := []struct {
 		name string
@@ -414,6 +447,59 @@ func TestRetryTurnReplaysReturnExistingAttempt(t *testing.T) {
 	}
 	if got := h.conv.sentTexts(); len(got) != 2 {
 		t.Fatalf("provider received %d sends after all replays, want exactly 2: %v", len(got), got)
+	}
+}
+
+func TestRetryTurnIgnoresCallerControlledRetryLikeClientID(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+
+	source, err := h.svc.Send(ctx, testSession, ports.ChatUserMessage{
+		Text: "retry the real source", ClientMessageID: "collision-source", Origin: domain.MessageOriginHuman,
+	})
+	if err != nil {
+		t.Fatalf("Send source: %v", err)
+	}
+	h.conv.emit(ports.ChatEvent{
+		Kind: ports.ChatEventTurnCompleted, ProviderTurnID: source.ProviderTurnID,
+		TurnState: domain.TurnStateFailed, Err: errors.New("source failed"),
+	})
+	failedTurnSnapshot(t, h, source.ID)
+
+	// Before retry lineage was explicit, this caller-controlled id could be
+	// mistaken for the retry of source and consume the retry action.
+	counterfeit, err := h.svc.Send(ctx, testSession, ports.ChatUserMessage{
+		Text: "unrelated ordinary message", ClientMessageID: "retry/" + source.ID, Origin: domain.MessageOriginHuman,
+	})
+	if err != nil {
+		t.Fatalf("Send counterfeit id: %v", err)
+	}
+	h.conv.emit(ports.ChatEvent{
+		Kind: ports.ChatEventTurnCompleted, ProviderTurnID: counterfeit.ProviderTurnID,
+		TurnState: domain.TurnStateCompleted,
+	})
+	h.awaitSnapshot(t, func(s store.ConversationSnapshot) bool {
+		turn, ok := turnByID(s, counterfeit.ID)
+		return ok && turn.State == domain.TurnStateCompleted
+	})
+
+	retried, err := h.svc.RetryTurn(ctx, testSession, source.ID)
+	if err != nil {
+		t.Fatalf("RetryTurn after counterfeit id: %v", err)
+	}
+	if retried.ID == counterfeit.ID {
+		t.Fatalf("retry returned unrelated turn %q", counterfeit.ID)
+	}
+	snapshot := h.awaitSnapshot(t, func(s store.ConversationSnapshot) bool {
+		turn, ok := turnByID(s, retried.ID)
+		return ok && turn.RetryOfTurnID == source.ID
+	})
+	linked, _ := turnByID(snapshot, retried.ID)
+	if linked.RetryOfTurnID != source.ID {
+		t.Fatalf("retry source = %q, want %q", linked.RetryOfTurnID, source.ID)
+	}
+	if sent := h.conv.sentTexts(); len(sent) != 3 {
+		t.Fatalf("provider received %d sends, want source + ordinary message + retry: %v", len(sent), sent)
 	}
 }
 

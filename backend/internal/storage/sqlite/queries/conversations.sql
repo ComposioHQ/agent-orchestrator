@@ -320,8 +320,8 @@ RETURNING latest_sequence;
 -- name: InsertConversationTurn :exec
 INSERT INTO conversation_turns (
     id, conversation_id, handled_by_session_id, provider_turn_id,
-    controller_generation, state, requested_at
-) VALUES (?, ?, ?, ?, ?, ?, ?);
+    controller_generation, retry_of_turn_id, state, requested_at
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?);
 
 -- A turn the PROVIDER started that AO never dispatched: a compaction runs as its
 -- own turn, and so does work resumed inside the provider's own history. Without a
@@ -1099,22 +1099,10 @@ WHERE conversation_turns.id = sqlc.arg(id)
   AND conversation_turns.state = 'failed'
 LIMIT 1;
 
--- A retry re-dispatches a failed turn's durable prompt as a NEW turn. Returns
--- the turn id (if any) that is already associated with a given clientMessageId,
--- so the controller can derive a free idempotency key without races.
--- name: SelectConversationTurnIDByClientMessageID :one
-SELECT turn_id FROM conversation_messages
+-- A replayed retry request returns the attempt already linked to its source.
+-- The relation is daemon-owned rather than inferred from caller-controlled text.
+-- name: SelectConversationRetryTurnIDBySource :one
+SELECT id FROM conversation_turns
 WHERE conversation_id = sqlc.arg(conversation_id)
-  AND client_message_id = sqlc.arg(client_message_id)
+  AND retry_of_turn_id = sqlc.arg(retry_of_turn_id)
 LIMIT 1;
-
--- Retry correlation remains readable even when rollback hides the retry's
--- message from the visible timeline. The source affordance must stay consumed:
--- replaying it only returns this existing attempt and never starts new work.
--- name: SelectConversationRetryRelations :many
-SELECT CAST(turn_id AS TEXT) AS retry_turn_id,
-       CAST(substr(client_message_id, length('retry/') + 1) AS TEXT) AS source_turn_id
-FROM conversation_messages
-WHERE conversation_id = sqlc.arg(conversation_id)
-  AND turn_id IS NOT NULL
-  AND client_message_id LIKE 'retry/%';

@@ -3079,6 +3079,12 @@ paths:
               schema:
                 $ref: '#/components/schemas/RetryTurnResponse'
           description: Accepted
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
         "404":
           content:
             application/json:

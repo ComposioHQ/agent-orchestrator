@@ -32,7 +32,7 @@ import (
 const (
 	nativeHistorySettlePoll  = 100 * time.Millisecond
 	nativeHistorySettleLimit = 45 * time.Second
-	retryClientMessagePrefix = "retry/"
+	retryClientMessagePrefix = "retry-attempt/"
 )
 
 // Store is the durable conversation surface the controller needs. Implemented by
@@ -52,6 +52,7 @@ type Store interface {
 	AppendImportedUserMessage(ctx context.Context, conversationID, providerTurnID string, msg domain.ConversationMessage, now time.Time) error
 
 	AppendUserMessage(ctx context.Context, conversationID string, session domain.SessionID, generation string, msg domain.ConversationMessage, turnID string, now time.Time) (bool, error)
+	AppendRetryUserMessage(ctx context.Context, conversationID string, session domain.SessionID, generation string, msg domain.ConversationMessage, turnID, retryOfTurnID string, now time.Time) (bool, error)
 	BindTurnToProvider(ctx context.Context, turnID, providerTurnID string, now time.Time) error
 	SettleTurn(ctx context.Context, conversationID, providerTurnID string, state domain.TurnState, errMessage string, now time.Time) error
 	SettleTurnByID(ctx context.Context, turnID string, state domain.TurnState, errMessage string, now time.Time) error
@@ -74,7 +75,7 @@ type Store interface {
 	CancelAllQueuedTurns(ctx context.Context, conversationID string, now time.Time) error
 
 	RetryPrompt(ctx context.Context, conversationID, turnID string) (domain.RetryPrompt, error)
-	TurnIDForClientMessage(ctx context.Context, conversationID, clientMessageID string) (string, bool, error)
+	RetryTurnIDForSource(ctx context.Context, conversationID, sourceTurnID string) (string, bool, error)
 
 	TurnByID(ctx context.Context, turnID string) (domain.ConversationTurn, error)
 	RollbackTurns(ctx context.Context, conversationID, turnID string, now time.Time) (int, error)
@@ -956,14 +957,13 @@ func (c *Controller) Send(ctx context.Context, msg ports.ChatUserMessage) (domai
 // owns what gets sent again. The original failed turn is never mutated or
 // relabeled: the retry is a brand-new turn and both attempts stay in history.
 //
-// Idempotency: one deterministic client message id per source turn
-// ("retry/<turnID>"). A replayed request — an uncertain network round trip, a
-// double-click, a client retry — looks the attempt up before anything else and
-// returns the turn that already exists, so one request can never execute the
-// work twice. A deliberate further attempt is expressed by retrying the failed
-// retry turn itself, which owns its own key: the chain A -> B -> C is built
-// from distinct sources, never by re-sending A. The current next-turn settings
-// apply.
+// Idempotency: each retry turn stores an explicit, unique link to its source.
+// A replayed request — an uncertain network round trip, a double-click, a
+// client retry — looks that relation up before anything else and returns the
+// turn that already exists, so caller-controlled message ids cannot counterfeit
+// or consume a retry. A deliberate further attempt retries the failed child:
+// the chain A -> B -> C is built from distinct sources, never by re-sending A.
+// The current next-turn settings apply.
 func (c *Controller) RetryTurn(ctx context.Context, turnID string) (domain.ConversationTurn, error) {
 	c.sendMu.Lock()
 	defer c.sendMu.Unlock()
@@ -1003,8 +1003,7 @@ func (c *Controller) RetryTurn(ctx context.Context, turnID string) (domain.Conve
 
 	// The replay check comes before the busy check on purpose: returning an
 	// already-recorded attempt must stay true even while that attempt runs.
-	key := retryClientMessagePrefix + turnID
-	if existingID, found, lookupErr := c.store.TurnIDForClientMessage(ctx, c.conversation.ID, key); lookupErr != nil {
+	if existingID, found, lookupErr := c.store.RetryTurnIDForSource(ctx, c.conversation.ID, turnID); lookupErr != nil {
 		return domain.ConversationTurn{}, lookupErr
 	} else if found {
 		existing, existingErr := c.store.TurnByID(ctx, existingID)
@@ -1025,21 +1024,22 @@ func (c *Controller) RetryTurn(ctx context.Context, turnID string) (domain.Conve
 
 	now := c.now()
 	newTurnID := c.newID()
-	created, err := c.store.AppendUserMessage(ctx, c.conversation.ID, c.sessionID, c.generation,
+	key := retryClientMessagePrefix + newTurnID
+	created, err := c.store.AppendRetryUserMessage(ctx, c.conversation.ID, c.sessionID, c.generation,
 		domain.ConversationMessage{
 			ID:                  c.newID(),
 			Text:                prompt.Text,
 			Origin:              prompt.Origin,
 			ClientMessageID:     key,
 			DeliveryContentJSON: prompt.DeliveryContentJSON,
-		}, newTurnID, now)
+		}, newTurnID, turnID, now)
 	if err != nil {
 		return domain.ConversationTurn{}, fmt.Errorf("record retried message: %w", err)
 	}
 	if !created {
 		// Lost a race with a concurrent identical click. Report the turn it
 		// created rather than opening a second one.
-		if existingID, found, lookupErr := c.store.TurnIDForClientMessage(ctx, c.conversation.ID, key); lookupErr == nil && found {
+		if existingID, found, lookupErr := c.store.RetryTurnIDForSource(ctx, c.conversation.ID, turnID); lookupErr == nil && found {
 			if existing, existingErr := c.store.TurnByID(ctx, existingID); existingErr == nil {
 				return existing, nil
 			}
@@ -1088,9 +1088,6 @@ func retryPromptContent(raw string, capabilities ports.ChatCapabilities) ([]port
 		case "resource_link":
 			if item.URI == "" || item.Name == "" {
 				return nil, fmt.Errorf("%w: resource links require a URI and name", ErrRetryContentInvalid)
-			}
-			if !capabilities.Has(ports.ChatCapabilityEmbeddedContext) {
-				return nil, fmt.Errorf("%w: resource links are unsupported", ErrRetryUnsupported)
 			}
 		default:
 			return nil, fmt.Errorf("%w: unsupported attachment type %q", ErrRetryContentInvalid, item.Type)

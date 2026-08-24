@@ -826,6 +826,7 @@ func shellTerminalOperations() []operation {
 			pathParams: []any{controllers.SessionIDParam{}, controllers.ConversationTurnIDParam{}},
 			resps: []respUnit{
 				{http.StatusAccepted, controllers.RetryTurnResponse{}},
+				{http.StatusBadRequest, envelope.APIError{}},
 				{http.StatusNotFound, envelope.APIError{}},
 				{http.StatusConflict, envelope.APIError{}},
 				{http.StatusInternalServerError, envelope.APIError{}},
