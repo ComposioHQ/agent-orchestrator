@@ -448,9 +448,9 @@ export function HumanMessage({
 			)}
 			{editing ? null : (
 				<div className="mt-1 flex h-7 items-center gap-1">
-					<div className="flex items-center gap-1 opacity-0 transition-opacity duration-150 focus-within:opacity-100 group-hover/message:opacity-100">
+					<div className="flex items-center gap-1 opacity-0 transition-opacity duration-150 ease-out focus-within:opacity-100 group-hover/message:opacity-100 motion-reduce:transition-none">
 						<span
-							className="w-12 shrink-0 px-1 text-[11px] tabular-nums text-muted-foreground/75"
+							className="w-12 shrink-0 -translate-x-1 px-1 text-[11px] tabular-nums text-muted-foreground/75 transition-[opacity,translate] duration-150 ease-out group-hover/message:translate-x-0 group-focus-within/message:translate-x-0 motion-reduce:transform-none motion-reduce:transition-none"
 							aria-label={`Sent ${formatMessageTimestamp(message.createdAt)}`}
 						>
 							{formatMessageTimestamp(message.createdAt)}
@@ -461,7 +461,7 @@ export function HumanMessage({
 								onClick={onEditStart}
 								aria-label="Edit user message"
 								title="Edit user message"
-								className="flex size-7 items-center justify-center rounded-md text-muted-foreground transition-[background-color,color,transform] hover:bg-interactive-hover hover:text-foreground"
+								className="flex size-7 items-center justify-center rounded-md text-muted-foreground transition-[scale,background-color,color] duration-150 ease-out hover:bg-interactive-hover hover:text-foreground active:scale-[0.96] motion-reduce:transition-none motion-reduce:active:scale-100"
 							>
 								<Pencil aria-hidden="true" className="size-3" />
 							</button>
@@ -470,7 +470,7 @@ export function HumanMessage({
 							text={message.text}
 							label="Copy user message"
 							compact
-							className="size-7 justify-center rounded-md px-0 py-0"
+							className="size-7 justify-center rounded-md px-0 py-0 transition-[scale,background-color,color] duration-150 ease-out hover:bg-interactive-hover hover:text-foreground active:scale-[0.96] motion-reduce:transition-none motion-reduce:active:scale-100"
 						/>
 					</div>
 					{branchPoint && onActivateBranch ? (
@@ -577,7 +577,7 @@ export function AssistantMessage({
 							text={message.text}
 							label="Copy message as markdown"
 							compact
-							className="-ml-1.5 size-7 justify-center rounded-md px-0 py-0"
+							className="-ml-1.5 size-7 justify-center rounded-md px-0 py-0 transition-[scale,background-color,color] duration-150 ease-out hover:bg-interactive-hover hover:text-foreground active:scale-[0.96] motion-reduce:transition-none motion-reduce:active:scale-100"
 						/>
 					) : null}
 					{onRollback ? (
@@ -586,14 +586,14 @@ export function AssistantMessage({
 							onClick={onRollback}
 							aria-label="Roll back to here"
 							title="Roll back to here"
-							className="flex size-7 items-center justify-center rounded-md text-muted-foreground transition-[background-color,color,transform] hover:bg-interactive-hover hover:text-foreground"
+							className="flex size-7 items-center justify-center rounded-md text-muted-foreground transition-[scale,background-color,color] duration-150 ease-out hover:bg-interactive-hover hover:text-foreground active:scale-[0.96] motion-reduce:transition-none motion-reduce:active:scale-100"
 						>
 							<Undo2 aria-hidden="true" className="size-3" />
 						</button>
 					) : null}
 					{hasDuration ? <TurnDuration durationMs={durationMs} /> : null}
 					<span
-						className="w-12 shrink-0 px-1 text-[11px] tabular-nums text-muted-foreground/75 opacity-0 transition-opacity duration-150 group-hover/message:opacity-100 group-focus-within/message:opacity-100"
+						className="w-12 shrink-0 translate-x-1 px-1 text-[11px] tabular-nums text-muted-foreground/75 opacity-0 transition-[opacity,translate] duration-150 ease-out group-hover/message:translate-x-0 group-hover/message:opacity-100 group-focus-within/message:translate-x-0 group-focus-within/message:opacity-100 motion-reduce:transform-none motion-reduce:transition-none"
 						aria-label={`Sent ${formatMessageTimestamp(message.createdAt)}`}
 					>
 						{formatMessageTimestamp(message.createdAt)}
