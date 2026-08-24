@@ -1,15 +1,14 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { useEffect, useRef, useState } from "react";
-import { ArrowUpRight, Check, Copy, Info, Loader2, RotateCcw } from "lucide-react";
-import { motion } from "motion/react";
-import { RadioGroup } from "radix-ui";
+import { ArrowUpRight, Check, Copy, Loader2, RotateCcw } from "lucide-react";
 import { apiClient, apiErrorMessage } from "../../lib/api-client";
 import { aoBridge } from "../../lib/bridge";
 import { captureRendererEvent } from "../../lib/telemetry";
 import { cn } from "../../lib/utils";
 import { ANDROID_PLAY_STORE_URL, TESTFLIGHT_URL } from "./ConnectMobileGetApp";
 import { reasonMessage, type SetupMode } from "./ConnectMobileSetup";
+import { SettingsOptionMenu, type SettingsOption } from "./SettingsOptionMenu";
 import { StyledQRCode } from "./StyledQRCode";
 import { Button } from "../ui/button";
 import { Switch } from "../ui/switch";
@@ -37,40 +36,6 @@ type MobilePlatform = "ios" | "android";
  *  instead of text-decoration so the underline runs under the arrow too. */
 const STEP_LINK_CLASS =
 	"inline-flex items-center gap-0.5 border-b border-[color-mix(in_oklch,var(--color-settings-label)_45%,transparent)] align-baseline text-settings-label transition-colors hover:border-current hover:text-settings-title";
-
-/** Radix segment item whose checked highlight is a shared motion layout
- *  element, so the indicator slides between options instead of jumping. */
-function SegmentItem({
-	value,
-	indicatorId,
-	selected,
-	children,
-}: {
-	value: string;
-	indicatorId: string;
-	selected: boolean;
-	children: React.ReactNode;
-}) {
-	return (
-		<RadioGroup.Item
-			value={value}
-			className="settings-segment-item relative rounded-[calc(var(--radius-settings-action)-2px)] data-[state=checked]:!bg-transparent"
-		>
-			{selected && (
-				<motion.span
-					layoutId={indicatorId}
-					layout="position"
-					className="absolute inset-0 rounded-[calc(var(--radius-settings-action)-2px)] bg-[color-mix(in_oklch,var(--color-bg-settings-menu-selected)_78%,var(--color-text-settings-title))]"
-					transition={{ type: "spring", duration: 0.3, bounce: 0 }}
-					transformTemplate={({ x, scaleX, scaleY }) =>
-						`translateX(${x}) scaleX(${scaleX}) scaleY(${scaleY})`
-					}
-				/>
-			)}
-			<span className="relative">{children}</span>
-		</RadioGroup.Item>
-	);
-}
 
 interface MobileStatus {
 	enabled: boolean;
@@ -102,6 +67,14 @@ export function ConnectMobileContent({ active }: { active: boolean }) {
 	const copiedTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 	const [platform, setPlatform] = useState<MobilePlatform>("ios");
 	const [mode, setMode] = useState<SetupMode>("lan");
+	const platformOptions = [
+		{ value: "ios", label: t("mobile.ios") },
+		{ value: "android", label: t("mobile.android") },
+	] satisfies SettingsOption<MobilePlatform>[];
+	const modeOptions = [
+		{ value: "lan", label: t("mobile.lan") },
+		{ value: "tailscale", label: t("mobile.tailscale") },
+	] satisfies SettingsOption<SetupMode>[];
 
 	useEffect(() => {
 		return () => {
@@ -226,43 +199,25 @@ export function ConnectMobileContent({ active }: { active: boolean }) {
 	return (
 		<div className="flex flex-col gap-4">
 			<p className="text-xs leading-4 text-settings-muted">{t("mobile.description")}</p>
-			{enabled && status.warning && !secureActive && (
-				<p className="flex items-start gap-2 text-caption leading-(--leading-settings-mobile-warning) text-warning">
-					<Info className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
-					<span>{status.warning}</span>
-				</p>
-			)}
 
 			<div className="flex flex-col gap-6 sm:flex-row sm:items-start">
 				{/* Left: platform + connection pickers above one combined walkthrough. */}
 				<div className="flex min-w-0 flex-1 flex-col">
 					<div className="flex flex-wrap items-center gap-2">
-						<RadioGroup.Root
-							value={platform}
-							onValueChange={(value) => setPlatform(value as MobilePlatform)}
+						<SettingsOptionMenu
 							aria-label={t("mobile.getApp")}
-							className="settings-segment"
-						>
-							<SegmentItem value="ios" indicatorId="mobile-platform-indicator" selected={platform === "ios"}>
-								{t("mobile.ios")}
-							</SegmentItem>
-							<SegmentItem value="android" indicatorId="mobile-platform-indicator" selected={platform === "android"}>
-								{t("mobile.android")}
-							</SegmentItem>
-						</RadioGroup.Root>
-						<RadioGroup.Root
-							value={mode}
-							onValueChange={(value) => setMode(value as SetupMode)}
+							value={platform}
+							options={platformOptions}
+							onChange={setPlatform}
+							menuAlign="start"
+						/>
+						<SettingsOptionMenu
 							aria-label={t("mobile.connectionMethod")}
-							className="settings-segment"
-						>
-							<SegmentItem value="lan" indicatorId="mobile-mode-indicator" selected={mode === "lan"}>
-								{t("mobile.lan")}
-							</SegmentItem>
-							<SegmentItem value="tailscale" indicatorId="mobile-mode-indicator" selected={mode === "tailscale"}>
-								{t("mobile.tailscale")}
-							</SegmentItem>
-						</RadioGroup.Root>
+							value={mode}
+							options={modeOptions}
+							onChange={setMode}
+							menuAlign="start"
+						/>
 					</div>
 
 					{/* One walkthrough per platform × connection combo. Steps are plain

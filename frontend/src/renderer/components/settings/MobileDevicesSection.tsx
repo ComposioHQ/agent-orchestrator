@@ -127,13 +127,13 @@ export function MobileDevicesSection() {
 			) : (
 				<>
 					{queryError && <p className="mt-3 text-caption text-error">{queryError.message}</p>}
-					<ul className="mt-2 overflow-hidden rounded-md border border-[var(--color-border-settings-input)] divide-y divide-[var(--color-border-settings-input)]">
+					<ul className="mt-2 divide-y divide-[var(--color-border-settings-input)]">
 						{sortedDevices.map((device) => {
 							const name = device.deviceName || t("mobile.devices.unnamed");
 							return (
 								<li
 									key={device.installId}
-									className="flex min-h-12 items-center gap-3 px-3 py-2.5"
+									className="flex min-h-12 items-center gap-3 py-2.5"
 								>
 									<Smartphone className="size-4 shrink-0 text-settings-muted" />
 									<div className="min-w-0 flex-1">

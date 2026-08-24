@@ -42,10 +42,10 @@ export function GlobalSettingsForm({
 
 			{(all || section === "mobile") && (
 				<SettingsSection title={t("settings.mobile")} titleHidden={titleHidden}>
-					<SettingsContentPanel>
+					<div className="rounded-md bg-[var(--color-bg-settings-row)] px-4 pb-4 pt-0">
 						<ConnectMobileContent active />
 						<MobileDevicesSection />
-					</SettingsContentPanel>
+					</div>
 				</SettingsSection>
 			)}
 

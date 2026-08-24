@@ -56,6 +56,16 @@ function qrPayload(): string | null {
 	return qr?.getAttribute("data-qr-value") ?? null;
 }
 
+async function selectPlatform(platform: "iOS" | "Android") {
+	await userEvent.click(await screen.findByRole("button", { name: "Get the app" }));
+	await userEvent.click(await screen.findByRole("menuitem", { name: platform }));
+}
+
+async function selectConnectionMethod(mode: "LAN" | "Tailscale") {
+	await userEvent.click(await screen.findByRole("button", { name: "Connection method" }));
+	await userEvent.click(await screen.findByRole("menuitem", { name: mode }));
+}
+
 beforeEach(() => {
 	mobileStatus.enabled = true;
 	mobileStatus.host = "192.168.1.42";
@@ -84,7 +94,7 @@ test("encodes the LAN address by default", async () => {
 
 test("shows a square Google Play QR tooltip for Android", async () => {
 	renderMobileSettings();
-	await userEvent.click(await screen.findByRole("radio", { name: "Android" }));
+	await selectPlatform("Android");
 	await userEvent.hover(screen.getByRole("button", { name: "Open Agent Orchestrator on Google Play" }));
 
 	expect(await screen.findByTestId("android-play-qr")).toHaveClass("p-2");
@@ -103,7 +113,7 @@ test("re-encodes the QR with the Tailscale address when that mode is selected", 
 	renderMobileSettings();
 	await waitFor(() => expect(qrPayload()).not.toBeNull());
 
-	await userEvent.click(screen.getByRole("radio", { name: "Tailscale" }));
+	await selectConnectionMethod("Tailscale");
 
 	await waitFor(() => expect(JSON.parse(qrPayload()!).host).toBe("100.72.46.7"));
 	// The password and port are unchanged — only the address differs.
@@ -120,7 +130,7 @@ test("shows a hint instead of a QR when Tailscale is not running", async () => {
 	renderMobileSettings();
 	await waitFor(() => expect(qrPayload()).not.toBeNull());
 
-	await userEvent.click(screen.getByRole("radio", { name: "Tailscale" }));
+	await selectConnectionMethod("Tailscale");
 
 	await waitFor(() => expect(screen.getByText(/Tailscale isn't running/i)).toBeInTheDocument());
 	expect(qrPayload()).toBeNull();
@@ -141,29 +151,8 @@ test("the address line follows the selected mode", async () => {
 	const address = await screen.findByTestId("mobile-pairing-address");
 	expect(within(address).getByText("192.168.1.42:3011")).toBeInTheDocument();
 
-	await userEvent.click(screen.getByRole("radio", { name: "Tailscale" }));
+	await selectConnectionMethod("Tailscale");
 	await waitFor(() => expect(within(address).getByText("100.72.46.7:3011")).toBeInTheDocument());
-});
-
-test("shows the unencrypted-traffic warning for plaintext pairing", async () => {
-	mobileStatus.warning = "Traffic on this connection is not encrypted.";
-	renderMobileSettings();
-
-	expect(await screen.findByText(mobileStatus.warning)).toBeInTheDocument();
-});
-
-test("hides the unencrypted-traffic warning when secure pairing is active", async () => {
-	mobileStatus.warning = "Traffic on this connection is not encrypted.";
-	mobileStatus.securePairing = {
-		enabled: true, available: true, active: true,
-		host: "prasads-macbook-pro.tail057d04.ts.net", port: 443, reason: "",
-	};
-	renderMobileSettings();
-	await screen.findByText(mobileStatus.warning);
-
-	await userEvent.click(screen.getByRole("radio", { name: "Tailscale" }));
-
-	await waitFor(() => expect(screen.queryByText(mobileStatus.warning)).not.toBeInTheDocument());
 });
 
 test("omits the secure key entirely for plaintext pairing", () => {
@@ -185,7 +174,7 @@ test("Tailscale tab encodes the MagicDNS host over 443 when secure pairing is ac
 	};
 	renderMobileSettings();
 	await waitFor(() => expect(qrPayload()).not.toBeNull());
-	await userEvent.click(screen.getByRole("radio", { name: "Tailscale" }));
+	await selectConnectionMethod("Tailscale");
 
 	await waitFor(() => {
 		const p = JSON.parse(qrPayload()!);
@@ -202,7 +191,7 @@ test("shows setup steps and no QR when certs are not enabled", async () => {
 	};
 	renderMobileSettings();
 	await waitFor(() => expect(qrPayload()).not.toBeNull());
-	await userEvent.click(screen.getByRole("radio", { name: "Tailscale" }));
+	await selectConnectionMethod("Tailscale");
 
 	await waitFor(() => expect(screen.getByText(/HTTPS certificates/i)).toBeInTheDocument());
 	expect(qrPayload()).toBeNull();
@@ -218,7 +207,7 @@ test("shows an error message when the secure-pairing toggle fails", async () => 
 	}));
 	renderMobileSettings();
 	await waitFor(() => expect(qrPayload()).not.toBeNull());
-	await userEvent.click(screen.getByRole("radio", { name: "Tailscale" }));
+	await selectConnectionMethod("Tailscale");
 
 	const secureSwitch = await screen.findByRole("switch", { name: "Secure pairing (TLS)" });
 	await userEvent.click(secureSwitch);
