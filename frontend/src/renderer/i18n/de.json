@@ -1135,6 +1135,7 @@
 	"files.splitDiff": "Geteilte Diff-Ansicht",
 	"files.sourceDiff": "Quelldiff",
 	"files.rendered": "Gerendert",
+	"files.renderedTruncated": "Gerenderte Vorschau gekürzt.",
 	"files.addFileFeedback": "Feedback für Datei {{file}} hinzufügen",
 	"files.addLineFeedback": "Feedback zu {{side}}-Zeile {{line}} in {{file}} hinzufügen",
 	"files.oldSide": "alt",

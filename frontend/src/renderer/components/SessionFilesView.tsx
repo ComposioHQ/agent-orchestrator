@@ -115,6 +115,7 @@ function canSplitCompare(status: WorkspaceFileStatus): boolean {
 }
 
 const MARKDOWN_EXTENSIONS = [".md", ".markdown"];
+type FileViewMode = "source" | "rendered";
 
 // A deleted file has no current worktree content — the Rendered view shows the
 // file as it stands now, not a historical revision — so there's nothing for it
@@ -519,7 +520,7 @@ function ReviewFileCard({
 	const [selectionOrMenuActive, setSelectionOrMenuActive] = useState(false);
 	// Keyed by file.path in ReviewFileList's .map(), so this naturally resets to
 	// "source" for a different file while surviving this file's own re-renders.
-	const [viewMode, setViewMode] = useState<"source" | "rendered">("source");
+	const [viewMode, setViewMode] = useState<FileViewMode>("source");
 	const detailQuery = useQuery({
 		queryKey: ["session-workspace-file", sessionId, file.path],
 		enabled: expanded && !selectionOrMenuActive,
@@ -649,6 +650,7 @@ function FileDetailBody({
 	file,
 	onActiveSelectionChange,
 	onViewModeChange,
+	revealLine,
 	sessionId,
 	split,
 	viewMode,
@@ -659,10 +661,11 @@ function FileDetailBody({
 	detailLoadedAt: number;
 	file: WorkspaceFileSummary;
 	onActiveSelectionChange: (active: boolean) => void;
-	onViewModeChange: (mode: "source" | "rendered") => void;
+	onViewModeChange: (mode: FileViewMode) => void;
+	revealLine?: ReviewLineTarget;
 	sessionId: string;
 	split: boolean;
-	viewMode: "source" | "rendered";
+	viewMode: FileViewMode;
 	wrap: boolean;
 }) {
 	const { t } = useTranslation();
@@ -673,6 +676,7 @@ function FileDetailBody({
 			detailLoadedAt={detailLoadedAt}
 			filePath={file.path}
 			onActiveSelectionChange={onActiveSelectionChange}
+			revealLine={revealLine}
 			sessionId={sessionId}
 			split={split && canSplitCompare(file.status)}
 			wrap={wrap}
@@ -680,13 +684,14 @@ function FileDetailBody({
 	);
 	if (!canRenderMarkdown(file.path, file.status)) return diffBody;
 	return (
-		<Tabs value={viewMode} onValueChange={(next) => onViewModeChange(next as "source" | "rendered")}>
+		<Tabs value={viewMode} onValueChange={(next) => onViewModeChange(next === "rendered" ? "rendered" : "source")}>
 			<TabsList className="mx-2.5 mt-2">
 				<TabsTrigger value="source">{t("files.sourceDiff")}</TabsTrigger>
 				<TabsTrigger value="rendered">{t("files.rendered")}</TabsTrigger>
 			</TabsList>
 			<TabsContent value="source">{diffBody}</TabsContent>
 			<TabsContent value="rendered">
+				{detail.contentTruncated ? <PanelMessage compact>{t("files.renderedTruncated")}</PanelMessage> : null}
 				<MarkdownFileView content={detail.content} filePath={file.path} sessionId={sessionId} />
 			</TabsContent>
 		</Tabs>

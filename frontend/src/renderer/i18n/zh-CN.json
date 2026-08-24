@@ -1131,6 +1131,7 @@
 	"files.splitDiff": "拆分差异视图",
 	"files.sourceDiff": "源码差异",
 	"files.rendered": "渲染视图",
+	"files.renderedTruncated": "渲染预览已截断。",
 	"files.addFileFeedback": "为文件 {{file}} 添加反馈",
 	"files.addLineFeedback": "为 {{file}} 的{{side}}第 {{line}} 行添加反馈",
 	"files.oldSide": "旧侧",

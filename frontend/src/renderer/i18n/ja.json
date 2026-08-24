@@ -1135,6 +1135,7 @@
 	"files.splitDiff": "分割 diff 表示",
 	"files.sourceDiff": "ソース diff",
 	"files.rendered": "プレビュー",
+	"files.renderedTruncated": "レンダリングプレビューは切り詰められました。",
 	"files.addFileFeedback": "ファイル {{file}} にフィードバックを追加",
 	"files.addLineFeedback": "{{file}} の {{side}} 側 {{line}} 行にフィードバックを追加",
 	"files.oldSide": "旧",

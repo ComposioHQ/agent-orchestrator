@@ -1149,6 +1149,7 @@
 	"files.splitDiff": "Vista de diff dividida",
 	"files.sourceDiff": "Diff de origen",
 	"files.rendered": "Renderizado",
+	"files.renderedTruncated": "Vista previa renderizada truncada.",
 	"files.addFileFeedback": "Añadir comentarios para el archivo {{file}}",
 	"files.addLineFeedback": "Añadir comentarios en la línea {{side}} {{line}} de {{file}}",
 	"files.oldSide": "antigua",

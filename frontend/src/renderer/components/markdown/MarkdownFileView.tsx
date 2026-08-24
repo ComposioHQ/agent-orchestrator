@@ -100,7 +100,7 @@ const COMPONENTS: Components = {
 	// externally; a relative link to another repo file (`./OTHER.md`) has no
 	// in-app navigation target today, so it renders as inert text rather than a
 	// link that would silently do nothing (or worse, navigate the app shell).
-	a: ({ href, children, ...rest }) => {
+	a: ({ href, children, node: _node, ...rest }) => {
 		if (!href) return <>{children}</>;
 		if (href.startsWith("#")) {
 			return (
@@ -109,7 +109,7 @@ const COMPONENTS: Components = {
 					{...rest}
 					onClick={(event) => {
 						event.preventDefault();
-						document.getElementById(href.slice(1))?.scrollIntoView({ behavior: "smooth", block: "start" });
+						event.currentTarget.parentElement?.scrollIntoView({ behavior: "smooth", block: "start" });
 						void aoBridge.clipboard.writeText(href);
 					}}
 				>

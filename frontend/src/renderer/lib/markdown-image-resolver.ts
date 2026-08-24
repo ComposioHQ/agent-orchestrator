@@ -14,7 +14,7 @@ import { getApiBaseUrl } from "./api-client";
 const ABSOLUTE_SRC = /^[a-z][a-z0-9+.-]*:/i;
 
 /** True for a scheme-qualified URL (`https:`, `data:`, ...) or a root-relative path. */
-export function isAbsoluteMarkdownAssetSrc(src: string): boolean {
+function isAbsoluteMarkdownAssetSrc(src: string): boolean {
 	return ABSOLUTE_SRC.test(src) || src.startsWith("/");
 }
 
@@ -38,18 +38,28 @@ function normalizeSegments(joined: string): string {
 }
 
 /** The workspace-relative path a markdown-relative `src` refers to. */
-export function resolveMarkdownAssetPath(markdownFilePath: string, rawSrc: string): string {
+function resolveMarkdownAssetPath(markdownFilePath: string, rawSrc: string): string {
 	// A trailing query/fragment on the image reference isn't meaningful once
 	// folded into the blob route's own `path=`/`side=` query string.
 	const withoutQueryOrFragment = rawSrc.replace(/[?#].*$/, "");
+	// react-markdown URI-encodes path characters before the img override sees
+	// them. Decode once here so URLSearchParams does not turn `%20` into `%2520`
+	// and ask the daemon for a file whose name literally contains "%20".
+	let decodedPath = withoutQueryOrFragment;
+	try {
+		decodedPath = decodeURIComponent(withoutQueryOrFragment);
+	} catch {
+		// Keep malformed input inert rather than letting one bad image abort the
+		// entire Markdown render. The blob route still confines the final path.
+	}
 	const lastSlash = markdownFilePath.lastIndexOf("/");
 	const markdownDir = lastSlash === -1 ? "" : markdownFilePath.slice(0, lastSlash);
-	const joined = markdownDir ? `${markdownDir}/${withoutQueryOrFragment}` : withoutQueryOrFragment;
+	const joined = markdownDir ? `${markdownDir}/${decodedPath}` : decodedPath;
 	return normalizeSegments(joined);
 }
 
 /** Matches `ImageDiffView.tsx`'s `workspaceImageUrl` — the same blob route, `side=after` for current content. */
-export function buildWorkspaceBlobUrl(sessionId: string, path: string): string {
+function buildWorkspaceBlobUrl(sessionId: string, path: string): string {
 	const query = new URLSearchParams({ path, side: "after" });
 	return `${getApiBaseUrl()}/api/v1/sessions/${encodeURIComponent(sessionId)}/workspace/file/blob?${query}`;
 }
