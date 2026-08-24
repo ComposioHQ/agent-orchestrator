@@ -2,6 +2,7 @@ package codexappserver
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"os"
 	"os/exec"
@@ -167,6 +168,7 @@ collect:
 	}); err != nil {
 		t.Fatalf("SendTurn on loaded fork: %v", err)
 	}
+forkComplete:
 	for {
 		select {
 		case ev, ok := <-resumed.Events():
@@ -177,7 +179,7 @@ collect:
 				if ev.TurnState != domain.TurnStateCompleted {
 					t.Fatalf("fork turn state = %q", ev.TurnState)
 				}
-				return
+				break forkComplete
 			}
 			if ev.Kind == ports.ChatEventControllerState && ev.ControllerState == ports.ChatControllerStopped {
 				t.Fatalf("controller stopped before fork turn completed: %v", ev.Err)
@@ -186,6 +188,39 @@ collect:
 			t.Fatalf("waiting for fork turn: %v", ctx.Err())
 		}
 	}
+
+	// A fork is loaded and writer-owned by the app-server that created it. Starting
+	// another app-server against the same thread must fail until that creator exits;
+	// this is the production boundary that made resume-after-fork lose edited sends.
+	forkResumeConfig := ports.ChatResumeConfig{
+		SessionID:              "ao-live-fork-resume",
+		ProviderConversationID: forkedID,
+		WorkspacePath:          workspace,
+		Env:                    envMap(),
+		Permissions:            ports.PermissionModeDefault,
+	}
+	contender, err := d.Resume(ctx, forkResumeConfig)
+	if err == nil {
+		_ = contender.Close()
+		t.Fatalf("second app-server resumed writer-owned fork %s", forkedID)
+	}
+	if !errors.Is(err, ports.ErrChatResumeFailed) {
+		t.Fatalf("resume writer-owned fork error = %v, want ErrChatResumeFailed", err)
+	}
+	t.Logf("second app-server rejected while fork owner remained open: %v", err)
+
+	if err := resumed.Close(); err != nil {
+		t.Fatalf("Close fork owner: %v", err)
+	}
+	released, err := d.Resume(ctx, forkResumeConfig)
+	if err != nil {
+		t.Fatalf("Resume fork after owner close: %v", err)
+	}
+	defer func() { _ = released.Close() }()
+	if got := released.ProviderConversationID(); got != forkedID {
+		t.Fatalf("resumed released fork = %q, want %q", got, forkedID)
+	}
+	t.Logf("resumed fork %s after creator app-server closed", forkedID)
 }
 
 // livePlugin stands in for AO's Codex agent plugin so this test exercises the
