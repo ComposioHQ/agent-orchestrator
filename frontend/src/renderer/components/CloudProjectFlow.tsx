@@ -37,6 +37,7 @@ export function CloudProjectFlow({ open, onOpenChange }: { open: boolean; onOpen
 	const [repositoryUrl, setRepositoryUrl] = useState("");
 	const [defaultBranch, setDefaultBranch] = useState("");
 	const requestGeneration = useRef(0);
+	const selectedOrganizationId = organizationId || cloud.session?.organizations[0]?.id || "";
 
 	const loadProjects = useCallback(async () => {
 		const generation = ++requestGeneration.current;
@@ -46,13 +47,13 @@ export function CloudProjectFlow({ open, onOpenChange }: { open: boolean; onOpen
 			const next = await aoBridge.cloud.listProjects();
 			if (generation !== requestGeneration.current) return;
 			setSnapshot(next);
-			setOrganizationId((current) => current || next.groups[0]?.organization.id || "");
+			setOrganizationId((current) => current || next.groups[0]?.organization.id || cloud.session?.organizations[0]?.id || "");
 		} catch (error) {
 			if (generation === requestGeneration.current) setListError(errorMessage(error, t("cloudProject.requestFailed")));
 		} finally {
 			if (generation === requestGeneration.current) setLoading(false);
 		}
-	}, [t]);
+	}, [cloud.session?.organizations, t]);
 
 	useEffect(() => {
 		if (!open || cloud.status !== "authenticated") return;
@@ -109,7 +110,7 @@ export function CloudProjectFlow({ open, onOpenChange }: { open: boolean; onOpen
 		setCreating(true);
 		try {
 			const next = await aoBridge.cloud.createProject({
-				organizationId,
+				organizationId: selectedOrganizationId,
 				displayName,
 				repositoryUrl,
 				defaultBranch,
@@ -196,12 +197,12 @@ export function CloudProjectFlow({ open, onOpenChange }: { open: boolean; onOpen
 									</section>
 								) : (
 									<form className="grid gap-4" onSubmit={createProject}>
-										<label className="grid gap-1.5 text-sm font-medium">{t("cloudProject.organization")}<select aria-label={t("cloudProject.organization")} className="h-10 rounded-md border border-input bg-background px-3" required value={organizationId} onChange={(event) => setOrganizationId(event.target.value)}>{(cloud.session?.organizations ?? []).map((organization) => <option key={organization.id} value={organization.id}>{organization.displayName}</option>)}</select></label>
+										<label className="grid gap-1.5 text-sm font-medium">{t("cloudProject.organization")}<select aria-label={t("cloudProject.organization")} className="h-10 rounded-md border border-input bg-background px-3" required value={selectedOrganizationId} onChange={(event) => setOrganizationId(event.target.value)}>{(cloud.session?.organizations ?? []).map((organization) => <option key={organization.id} value={organization.id}>{organization.displayName}</option>)}</select></label>
 										<label className="grid gap-1.5 text-sm font-medium">{t("cloudProject.projectName")}<input aria-label={t("cloudProject.projectName")} className="h-10 rounded-md border border-input bg-background px-3" required value={displayName} onChange={(event) => setDisplayName(event.target.value)} /></label>
 										<label className="grid gap-1.5 text-sm font-medium">{t("cloudProject.repositoryUrl")}<input aria-label={t("cloudProject.repositoryUrl")} className="h-10 rounded-md border border-input bg-background px-3 font-mono text-sm" type="url" required placeholder={t("cloudProject.repositoryPlaceholder")} value={repositoryUrl} onChange={(event) => setRepositoryUrl(event.target.value)} /></label>
 										<label className="grid gap-1.5 text-sm font-medium">{t("cloudProject.defaultBranch")}<input aria-label={t("cloudProject.defaultBranch")} className="h-10 rounded-md border border-input bg-background px-3 font-mono text-sm" required placeholder={t("cloudProject.branchPlaceholder")} value={defaultBranch} onChange={(event) => setDefaultBranch(event.target.value)} /></label>
 										{createError ? <ActionError message={createError} action={t("cloudProject.retryCreate")} onAction={() => setCreateError(null)} /> : null}
-										<div className="flex justify-end"><Button type="submit" disabled={creating || loading || !organizationId}>{creating ? t("cloudProject.creating") : t("cloudProject.create")}</Button></div>
+										<div className="flex justify-end"><Button type="submit" disabled={creating || !selectedOrganizationId}>{creating ? t("cloudProject.creating") : t("cloudProject.create")}</Button></div>
 									</form>
 								)}
 							</div>

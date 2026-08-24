@@ -84,6 +84,20 @@ describe("CloudProjectFlow", () => {
 		expect(screen.getByRole("button", { name: "Retry create" })).toBeInTheDocument();
 	});
 
+	it("selects the first account organization when the project list is empty", async () => {
+		bridge.listProjects.mockResolvedValue({ groups: [] });
+		const user = userEvent.setup();
+		render(<CloudProjectFlow open onOpenChange={vi.fn()} />);
+		await screen.findByText("No cloud projects yet.");
+
+		await user.type(screen.getByLabelText("Project name"), "App");
+		await user.type(screen.getByLabelText("Repository URL"), "https://github.com/acme/app.git");
+		await user.type(screen.getByLabelText("Default branch"), "main");
+
+		expect(screen.getByLabelText("Organization")).toHaveValue("org-1");
+		expect(screen.getByRole("button", { name: "Create cloud project" })).toBeEnabled();
+	});
+
 	it("polls pending placement with backoff, refreshes canonical projects at ready, and preserves DefaultBranch", async () => {
 		vi.useFakeTimers();
 		bridge.createProject.mockResolvedValue(pending);
