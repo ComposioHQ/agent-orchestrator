@@ -320,7 +320,7 @@ describe("Sidebar", () => {
 		renderSidebar();
 
 		const footer = document.querySelector('[data-sidebar="footer"]');
-		expect(footer).toHaveClass("border-t", "border-border-strong", "!py-2");
+		expect(footer).toHaveClass("border-t", "border-border-strong", "!pt-2", "!pb-0.5");
 		expect(screen.getAllByRole("button", { name: "Settings" })[0]).toHaveClass("h-[42px]");
 		expect(footer?.className).not.toContain("--size-center-panel-bottom-inset");
 		expect(footer?.className).not.toContain("--size-center-panel-inset-mac");
