@@ -23,7 +23,10 @@ type Store interface {
 	// A row in StateDeleting must NOT be resurrected: implementations return
 	// the existing record with created=false, and the caller maps that to
 	// ErrDeleting.
-	Ensure(ctx context.Context, ref Ref, now time.Time) (record Record, created bool, err error)
+	// Reserve is Ensure plus an atomic quota reservation. Implementations must
+	// serialize quota checks with insertion so concurrent callers cannot both
+	// observe the last free slot. Existing rows bypass quota evaluation.
+	Reserve(ctx context.Context, ref Ref, quotas Quotas, now time.Time) (record Record, created bool, err error)
 	// Get loads the placement for a ref, returning ErrNotFound when absent.
 	Get(ctx context.Context, ref Ref) (Record, error)
 	// GetByID loads a placement by row id, returning ErrNotFound when absent.

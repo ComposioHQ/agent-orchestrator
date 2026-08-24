@@ -186,10 +186,11 @@ func TestAccountFoundationAgainstPostgres(t *testing.T) {
 		var runtimeID string
 		if queryErr := runtimeTx.QueryRow(
 			ctx,
-			`INSERT INTO ao_cloud_session_runtimes (workspace_id, org_id, session_id)
-			 VALUES ($1, $2, $3) RETURNING id`,
+			`INSERT INTO ao_cloud_session_runtimes (workspace_id, org_id, owner_user_id, session_id)
+			 VALUES ($1, $2, $3, $4) RETURNING id`,
 			workspaceID,
 			bobMemberships[0].OrgID,
+			bob.UserID,
 			sessionID,
 		).Scan(&runtimeID); queryErr != nil {
 			t.Fatal(queryErr)

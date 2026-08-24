@@ -50,12 +50,17 @@ func (s *MemoryStore) findLocked(ref runtime.Ref) (runtime.Record, bool) {
 	return runtime.Record{}, false
 }
 
-// Ensure inserts a placement row when absent.
-func (s *MemoryStore) Ensure(_ context.Context, ref runtime.Ref, now time.Time) (runtime.Record, bool, error) {
+// Reserve atomically checks quota and inserts a placement row when absent.
+func (s *MemoryStore) Reserve(_ context.Context, ref runtime.Ref, quotas runtime.Quotas, now time.Time) (runtime.Record, bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if existing, ok := s.findLocked(ref); ok {
 		return existing, false, nil
+	}
+	if err := quotas.CheckCountsForStore(ref, func(filter runtime.Filter) (int, error) {
+		return len(s.matchLocked(filter)), nil
+	}); err != nil {
+		return runtime.Record{}, false, err
 	}
 	s.nextID++
 	record := runtime.Record{

@@ -13,7 +13,7 @@ func TestCloudMigrationsAreTenantScoped(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantVersions := []int64{1, 2, 3, 4, 5, 6, 7, 8, 9, 30, 31, 32}
+	wantVersions := []int64{1, 2, 3, 4, 5, 6, 7, 8, 9, 12, 20, 30, 31, 32}
 	if len(migrations) != len(wantVersions) {
 		t.Fatalf("migrations = %#v", migrations)
 	}

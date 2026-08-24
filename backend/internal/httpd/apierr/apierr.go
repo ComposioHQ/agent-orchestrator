@@ -22,6 +22,11 @@ const (
 	KindConflict
 	// KindForbidden is an authenticated ownership failure; it maps to 403.
 	KindForbidden
+	// KindNotImplemented means the route belongs to this API composition but
+	// its required adapter has not been installed. It maps to 501 and lets a
+	// partially composed resource keep its available read operations live while
+	// unsupported mutations continue to fail closed.
+	KindNotImplemented
 )
 
 // Error is the structured error every service returns. Code is a stable machine
@@ -65,6 +70,11 @@ func Conflict(code, message string, details map[string]any) *Error {
 // Forbidden is a 403-class ownership failure.
 func Forbidden(code, message string) *Error {
 	return New(KindForbidden, code, message, nil)
+}
+
+// NotImplemented is a 501-class adapter/composition failure.
+func NotImplemented(code, message string) *Error {
+	return New(KindNotImplemented, code, message, nil)
 }
 
 // Internal is a 500-class error.

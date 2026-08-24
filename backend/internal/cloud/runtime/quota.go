@@ -1,9 +1,6 @@
 package runtime
 
-import (
-	"context"
-	"fmt"
-)
+import "fmt"
 
 // Quotas bound how much compute one tenant can hold at once. A zero limit
 // means "unbounded" so a deployment can opt out of a dimension explicitly;
@@ -63,7 +60,7 @@ func (q Quotas) Validate() error {
 // create behind a tenant lock would be a far worse trade than occasionally
 // running one sandbox over a soft limit, and the reconciler reports the excess.
 // A hard cap belongs in the provider account's own limits.
-func (q Quotas) check(ctx context.Context, store Store, ref Ref) error {
+func (q Quotas) checkCounts(ref Ref, count func(Filter) (int, error)) error {
 	checks := []struct {
 		limit    int
 		scope    QuotaScope
@@ -88,7 +85,7 @@ func (q Quotas) check(ctx context.Context, store Store, ref Ref) error {
 		if check.limit <= 0 {
 			continue
 		}
-		inUse, err := store.Count(ctx, check.filter)
+		inUse, err := count(check.filter)
 		if err != nil {
 			return err
 		}
@@ -103,6 +100,13 @@ func (q Quotas) check(ctx context.Context, store Store, ref Ref) error {
 		}
 	}
 	return nil
+}
+
+// CheckCountsForStore exposes quota evaluation to Store adapters while
+// keeping the queries beneath the adapter's transaction or lock. Callers must
+// hold the same exclusion boundary they use for the subsequent insertion.
+func (q Quotas) CheckCountsForStore(ref Ref, count func(Filter) (int, error)) error {
+	return q.checkCounts(ref, count)
 }
 
 func (q Quotas) workspaceLimit(role Role) int {

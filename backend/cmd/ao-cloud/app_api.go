@@ -7,6 +7,8 @@ import (
 	cloudconfig "github.com/aoagents/agent-orchestrator/backend/internal/cloud/config"
 	"github.com/aoagents/agent-orchestrator/backend/internal/config"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd"
+	projectsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/project"
+	sessionsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/session"
 )
 
 // buildAppAPI composes the shared AO application API for the hosted control
@@ -14,12 +16,10 @@ import (
 // routes classified ScopeCloud, and served behind the control plane's
 // authentication and tenant resolution.
 //
-// This is the one injection point for the hosted composition. APIDeps is
-// deliberately empty today: every field is an interface, so each controller
-// answers 501 NOT_IMPLEMENTED with its OpenAPI-backed envelope until an
-// implementation is supplied. That makes the route surface, the auth chain and
-// the tenant plumbing deployable and verifiable ahead of the ports themselves,
-// and leaves exactly one place to fill in:
+// This is the one injection point for the hosted composition. Durable project
+// and session reads are backed by the tenant-scoped PostgreSQL store. Commands
+// that require the compute plane still answer 501 until a SessionExecution is
+// injected; they never fall back to local process or filesystem adapters.
 //
 //   - storage ports (sessions, projects, notifications, reviews, PRs, chat,
 //     settings, CDC) — Postgres-backed, org-scoped by reading the request's
@@ -35,10 +35,16 @@ import (
 // refuses those routes even if a local implementation were injected by
 // mistake, so a wrong entry below cannot expose the user's filesystem or a
 // host process to a hosted tenant.
-func buildAppAPI(cfg cloudconfig.Config, logger *slog.Logger) http.Handler {
+func buildAppAPI(cfg cloudconfig.Config, logger *slog.Logger, store hostedAppStore) http.Handler {
 	if !cfg.AppAPIEnabled {
 		return nil
 	}
+	projects := newHostedProjectManager(store)
+	sessions := sessionsvc.NewWithDeps(sessionsvc.Deps{
+		Manager: &unavailableHostedSessionCommands{},
+		Store:   hostedSessionStore{hostedAppStore: store},
+		Logger:  logger,
+	})
 	return httpd.NewCloudAPIHandler(
 		//nolint:exhaustruct // see below: the hosted composition is filled in as ports land
 		config.Config{
@@ -48,6 +54,6 @@ func buildAppAPI(cfg cloudconfig.Config, logger *slog.Logger) http.Handler {
 			RequestTimeout: config.DefaultRequestTimeout,
 		},
 		logger,
-		httpd.APIDeps{},
+		httpd.APIDeps{Projects: projectsvc.Manager(projects), Sessions: sessions},
 	)
 }

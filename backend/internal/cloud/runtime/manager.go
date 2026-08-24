@@ -190,13 +190,9 @@ func (m *Manager) Ensure(ctx context.Context, ref Ref) (Placement, error) {
 		return Placement{}, err
 	}
 
-	// Quotas are checked only on the path that adds compute. An attach or a
-	// repair of an existing placement must never fail because a limit was
-	// lowered underneath a running session.
-	if err := m.quotas.check(ctx, m.store, ref); err != nil {
-		return Placement{}, err
-	}
-	record, created, err := m.store.Ensure(ctx, ref, now)
+	// Reserve combines quota accounting and insertion. An attach or repair of
+	// an existing placement never fails merely because a limit was lowered.
+	record, created, err := m.store.Reserve(ctx, ref, m.quotas, now)
 	if err != nil {
 		return Placement{}, err
 	}

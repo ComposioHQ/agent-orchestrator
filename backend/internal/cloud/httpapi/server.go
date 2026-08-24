@@ -54,6 +54,7 @@ type Options struct {
 	TrustSourceIPHeader bool
 	Logger              *slog.Logger
 	SCM                 SCMOptions
+	Placement           WorkspacePlacementService
 
 	// App is the shared AO application API — build it with
 	// httpd.NewCloudAPIHandler, composed with cloud storage and runtime ports.
@@ -75,6 +76,7 @@ type Server struct {
 	logger              *slog.Logger
 	app                 http.Handler
 	scm                 SCMOptions
+	placement           WorkspacePlacementService
 	handler             http.Handler
 }
 
@@ -102,6 +104,7 @@ func New(options Options) (*Server, error) {
 		logger:              options.Logger,
 		app:                 options.App,
 		scm:                 options.SCM,
+		placement:           options.Placement,
 	}
 	server.handler = server.routes()
 	return server, nil
@@ -154,6 +157,7 @@ func (s *Server) routes() http.Handler {
 	router.With(authRateLimit).Post("/api/cloud/v1/auth/logout", s.logout)
 	router.With(s.requirePrincipal).Get("/api/cloud/v1/me", s.me)
 	s.registerSCMRoutes(router, authRateLimit)
+	s.registerWorkspacePlacementRoutes(router)
 
 	app := s.appHandler()
 	if app == nil {

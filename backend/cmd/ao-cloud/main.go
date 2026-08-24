@@ -14,6 +14,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/cloud/auth"
 	cloudconfig "github.com/aoagents/agent-orchestrator/backend/internal/cloud/config"
 	"github.com/aoagents/agent-orchestrator/backend/internal/cloud/httpapi"
+	"github.com/aoagents/agent-orchestrator/backend/internal/cloud/placement"
 	cloudpostgres "github.com/aoagents/agent-orchestrator/backend/internal/cloud/postgres"
 	cloudscm "github.com/aoagents/agent-orchestrator/backend/internal/cloud/scm"
 )
@@ -62,6 +63,11 @@ func run(logger *slog.Logger) error {
 			InstallCompletionURL: scmBundle.InstallCompletionURL,
 		}
 	}
+	placementExecutor := newDurablePlacementExecutor(ctx, store, logger)
+	placementManager, err := placement.New(store, placementExecutor)
+	if err != nil {
+		return err
+	}
 	api, err := httpapi.New(httpapi.Options{
 		Store:               store,
 		Google:              google,
@@ -70,8 +76,9 @@ func run(logger *slog.Logger) error {
 		RefreshTokenTTL:     cfg.RefreshTokenTTL,
 		TrustSourceIPHeader: cfg.TrustSourceIPHeader,
 		Logger:              logger,
-		App:                 buildAppAPI(cfg, logger),
+		App:                 buildAppAPI(cfg, logger, store),
 		SCM:                 scmOptions,
+		Placement:           placementManager,
 	})
 	if err != nil {
 		return err
