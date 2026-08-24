@@ -49,6 +49,13 @@ function renderWithQuery(children: ReactNode) {
 }
 
 describe("SessionFileExplorer", () => {
+	it("keeps the docked inspector seam square", () => {
+		const { container } = renderWithQuery(<SessionFileExplorer sessionId="sess-1" />);
+
+		expect(container.querySelector("section")).toHaveClass("rounded-none");
+		expect(container.querySelector("header")).toHaveClass("rounded-none");
+	});
+
 	beforeEach(() => {
 		getMock.mockReset().mockResolvedValue({ data: { sessionId: "sess-1", files: [], truncated: false } });
 		postMock.mockReset();
