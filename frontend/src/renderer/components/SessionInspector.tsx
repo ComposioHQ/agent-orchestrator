@@ -471,7 +471,7 @@ function UsageAgentAttribution({ harness }: { harness: SessionUsage["harnesses"]
 	const canExpand = harness.models.length > 1;
 	const modelSummary =
 		harness.models.length === 1
-			? billingModelName(harness.models[0])
+			? formatModelName(harness.models[0].modelId)
 			: harness.models.length > 1
 				? t("inspector.usage.models", { count: harness.models.length })
 				: null;
@@ -701,7 +701,7 @@ function UsageModelRow({
 	showCost: boolean;
 }) {
 	const { t } = useTranslation();
-	const modelName = billingModelName(model);
+	const modelName = formatModelName(model.modelId);
 
 	return (
 		<UsageDisclosureRow
@@ -967,13 +967,9 @@ function formatHarnessName(harness: string): string {
 		.join(" ");
 }
 
-// billingModelName is the model's display name. The billing provider stays out
-// of it: the row already sits under its agent, so the prefix only repeated
-// context the reader had. The exact model id remains available as the title.
-function billingModelName(model: SessionUsage["harnesses"][number]["models"][number]): string {
-	return formatModelName(model.modelId);
-}
-
+// The billing provider stays out of the display name: the row already sits
+// under its agent, so the prefix only repeats context the reader has. The exact
+// model id remains available as the title.
 function formatModelName(modelID: string): string {
 	let parts = modelID.trim().split(/[-_]+/).filter(Boolean);
 	const isClaude = parts[0]?.toLowerCase() === "claude";

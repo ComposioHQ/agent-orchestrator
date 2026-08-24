@@ -18,7 +18,7 @@ func TestRefresherPublishesLKGImmediatelyButDelaysActivationsUntilRemoteAttempt(
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := cache.Install(oldCatalog); err != nil {
+	if err := cache.Install(t.Context(), oldCatalog); err != nil {
 		t.Fatal(err)
 	}
 
@@ -143,7 +143,7 @@ func TestRefresherFailureReleasesCachedActivationsAndRetriesExponentially(t *tes
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := cache.Install(catalog); err != nil {
+	if err := cache.Install(t.Context(), catalog); err != nil {
 		t.Fatal(err)
 	}
 	var attempts atomic.Int64
@@ -330,7 +330,7 @@ func TestRefresherShutdownDoesNotDeliverPendingCachedActivation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := cache.Install(catalog); err != nil {
+	if err := cache.Install(t.Context(), catalog); err != nil {
 		t.Fatal(err)
 	}
 	started := make(chan struct{})

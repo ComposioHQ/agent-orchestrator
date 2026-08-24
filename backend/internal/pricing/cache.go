@@ -2,6 +2,7 @@ package pricing
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -27,7 +28,10 @@ func NewCache(dataDir string) *Cache {
 func (c *Cache) Root() string { return c.root }
 
 // Load reads and validates the complete last-known-good catalog synchronously.
-func (c *Cache) Load() (*Catalog, error) {
+func (c *Cache) Load(ctx context.Context) (*Catalog, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	manifestPath := filepath.Join(c.root, "manifest.json")
 	manifestBytes, err := readBoundedFile(manifestPath, ManifestMaxBytes)
 	if errors.Is(err, os.ErrNotExist) {
@@ -45,6 +49,9 @@ func (c *Cache) Load() (*Catalog, error) {
 	}
 	providers := make(map[string][]byte, len(manifest.Providers))
 	for _, ref := range manifest.Providers {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		contents, err := readBoundedFile(filepath.Join(c.root, filepath.FromSlash(ref.Path)), ProviderMaxBytes)
 		if err != nil {
 			return nil, fmt.Errorf("read cached provider %q: %w", ref.ProviderID, err)
@@ -56,7 +63,10 @@ func (c *Cache) Load() (*Catalog, error) {
 
 // Install commits a complete validated candidate with immutable blobs first
 // and an atomic manifest replacement last.
-func (c *Cache) Install(catalog *Catalog) error {
+func (c *Cache) Install(ctx context.Context, catalog *Catalog) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if catalog == nil || catalog.snapshot == nil {
 		return errors.New("pricing catalog is nil")
 	}
@@ -67,6 +77,9 @@ func (c *Cache) Install(catalog *Catalog) error {
 		return err
 	}
 	for _, ref := range catalog.manifest.Providers {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		directory := filepath.Join(c.root, filepath.FromSlash(filepath.Dir(ref.Path)))
 		if err := ensurePrivateDir(directory); err != nil {
 			return err
@@ -75,6 +88,9 @@ func (c *Cache) Install(catalog *Catalog) error {
 		if err := installImmutableFile(providerPath, catalog.providerBytes[ref.Path], c.rename); err != nil {
 			return fmt.Errorf("install provider %q: %w", ref.ProviderID, err)
 		}
+	}
+	if err := ctx.Err(); err != nil {
+		return err
 	}
 	manifestPath := filepath.Join(c.root, "manifest.json")
 	if err := atomicReplaceFile(manifestPath, catalog.manifestBytes, c.rename); err != nil {

@@ -23,7 +23,7 @@ import (
 // changes with the daily refresh, and a fixture would stop covering it.
 func TestEveryWriteRatedOpenAIModelPricesBothCodexPayloadShapes(t *testing.T) {
 	root := repositoryRoot(t)
-	catalog, err := pricing.NewCache(root).Load()
+	catalog, err := pricing.NewCache(root).Load(t.Context())
 	if err != nil {
 		t.Fatalf("load shipped catalog: %v", err)
 	}

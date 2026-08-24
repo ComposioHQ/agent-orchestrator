@@ -305,6 +305,33 @@ func TestParseCodexCumulativeDeltasAndRepeats(t *testing.T) {
 	}
 }
 
+// Break caught: rejecting an oversized native object must not leave behind an
+// AO-only fragment that looks like the complete provider usage record.
+func TestParseCodexOversizedCumulativeUsageStaysAbsent(t *testing.T) {
+	source := usageSource(domain.UsageSourceCodexRollout)
+	padding := strings.Repeat("x", maxProviderUsageBytes)
+	records := []jsonlRecord{
+		{Data: codexTokenLine("2026-07-01T10:00:00Z", 100, 60, 10, 20, 5)},
+		{Data: []byte(fmt.Sprintf(
+			`{"timestamp":"2026-07-01T10:00:01Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":160,"cached_input_tokens":90,"cache_write_input_tokens":15,"output_tokens":35,"reasoning_output_tokens":8,"total_tokens":195},"padding":%q}}}`,
+			padding,
+		))},
+	}
+
+	result := parseRecords(source, records, 20_000, time.Unix(1700000000, 0).UTC())
+	if len(result.Events) != 2 {
+		t.Fatalf("events = %d, want 2", len(result.Events))
+	}
+	got := result.Events[1]
+	if got.ProviderUsageJSON != "" {
+		t.Fatalf("oversized provider usage became a partial object: %s", got.ProviderUsageJSON)
+	}
+	if tokenValue(got.Tokens.InputTokens) != 60 || tokenValue(got.Tokens.CachedInputTokens) != 30 ||
+		tokenValue(got.Tokens.UncachedInputTokens) != 30 || tokenValue(got.Tokens.OutputTokens) != 15 {
+		t.Fatalf("dropping the object must not drop the neutral delta: %+v", got.Tokens)
+	}
+}
+
 func TestParseCodexSessionMetaProviderAppliesOnlyToSubsequentEvents(t *testing.T) {
 	source := usageSource(domain.UsageSourceCodexRollout)
 	result := parseRecords(source, []jsonlRecord{

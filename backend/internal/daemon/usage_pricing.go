@@ -25,6 +25,7 @@ type usagePricingRuntime struct {
 	backfiller *usagesvc.CostBackfiller
 	repairer   *usagepipeline.LegacyRepairer
 	refresher  *pricing.Refresher
+	logger     *slog.Logger
 	started    atomic.Bool
 	cancel     context.CancelFunc
 }
@@ -53,15 +54,12 @@ func newUsagePricingRuntime(config usagePricingRuntimeConfig) (*usagePricingRunt
 	repairer := usagepipeline.NewLegacyRepairer(config.Store, manager, usagepipeline.LegacyRepairerConfig{
 		OnError: func(err error) { logger.Warn("legacy usage pricing repair failed", "err", err) },
 	})
+	runtime := &usagePricingRuntime{manager: manager, backfiller: backfiller, repairer: repairer, logger: logger}
 	refresher, err := pricing.NewRefresher(pricing.RefreshConfig{
-		Cache:   pricing.NewCache(config.DataDir),
-		Fetcher: fetcher,
-		Manager: manager,
-		OnActivate: func(ctx context.Context, activations []pricing.ProviderActivation) {
-			if err := backfiller.Enqueue(ctx, manager.Snapshot(), activations); err != nil && ctx.Err() == nil {
-				logger.Warn("enqueue usage pricing backfill", "err", err)
-			}
-		},
+		Cache:      pricing.NewCache(config.DataDir),
+		Fetcher:    fetcher,
+		Manager:    manager,
+		OnActivate: runtime.onCatalogActivation,
 		AfterInitialAttempt: func(ctx context.Context) {
 			if err := repairer.Start(ctx); err != nil && ctx.Err() == nil {
 				logger.Warn("start legacy usage pricing repair", "err", err)
@@ -72,9 +70,18 @@ func newUsagePricingRuntime(config usagePricingRuntimeConfig) (*usagePricingRunt
 	if err != nil {
 		return nil, err
 	}
-	return &usagePricingRuntime{
-		manager: manager, backfiller: backfiller, repairer: repairer, refresher: refresher,
-	}, nil
+	runtime.refresher = refresher
+	return runtime, nil
+}
+
+func (r *usagePricingRuntime) onCatalogActivation(ctx context.Context, activations []pricing.ProviderActivation) {
+	// A later catalog can make a previously unknown model attributable. Those
+	// rows are still provider-null, so the cost backfiller cannot select them;
+	// replay attribution before relying on cost-only work.
+	r.repairer.Repair()
+	if err := r.backfiller.Enqueue(ctx, r.manager.Snapshot(), activations); err != nil && ctx.Err() == nil {
+		r.logger.Warn("enqueue usage pricing backfill", "err", err)
+	}
 }
 
 func (r *usagePricingRuntime) Manager() *pricing.Manager {

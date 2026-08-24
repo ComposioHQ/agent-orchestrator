@@ -82,7 +82,7 @@ func (r *Refresher) Start(ctx context.Context) error {
 	}
 	var pending []ProviderActivation
 	cacheAvailable := false
-	catalog, err := r.config.Cache.Load()
+	catalog, err := r.config.Cache.Load(ctx)
 	if err == nil {
 		pending, err = r.config.Manager.Activate(ctx, catalog.Snapshot())
 		if err != nil {
@@ -164,7 +164,7 @@ func (r *Refresher) refresh(ctx context.Context, cacheAvailable bool) (success, 
 	if result.Catalog == nil {
 		return false, false, nil, errors.New("refresh pricing catalog returned no catalog")
 	}
-	if err := r.config.Cache.Install(result.Catalog); err != nil {
+	if err := r.config.Cache.Install(ctx, result.Catalog); err != nil {
 		return false, false, nil, fmt.Errorf("install pricing catalog: %w", err)
 	}
 	activations, err = r.config.Manager.Activate(ctx, result.Catalog.Snapshot())

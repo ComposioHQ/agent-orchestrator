@@ -198,10 +198,10 @@ func TestCacheInstallsPrivateManifestLastAndLoadsLKG(t *testing.T) {
 		t.Fatal(err)
 	}
 	cache := NewCache(dataDir)
-	if err := cache.Install(catalog); err != nil {
+	if err := cache.Install(t.Context(), catalog); err != nil {
 		t.Fatalf("Install: %v", err)
 	}
-	loaded, err := cache.Load()
+	loaded, err := cache.Load(t.Context())
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -222,6 +222,56 @@ func TestCacheInstallsPrivateManifestLastAndLoadsLKG(t *testing.T) {
 	}
 }
 
+// Break caught: shutdown cancellation was dropped at the cache boundary, so a
+// refresh kept walking provider files and could still commit its manifest.
+func TestCacheHonorsCancellationBeforeLoadAndBetweenProviderInstalls(t *testing.T) {
+	fixture := testCandidate(t, testBaseModels("0.1"))
+	catalog, err := ParseCatalog(fixture.manifest, fixture.providers)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	t.Run("load already canceled", func(t *testing.T) {
+		cache := NewCache(t.TempDir())
+		if err := cache.Install(context.Background(), catalog); err != nil {
+			t.Fatal(err)
+		}
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		if _, err := cache.Load(ctx); !errors.Is(err, context.Canceled) {
+			t.Fatalf("Load error = %v, want context canceled", err)
+		}
+	})
+
+	t.Run("install canceled between providers", func(t *testing.T) {
+		cache := NewCache(t.TempDir())
+		ctx, cancel := context.WithCancel(context.Background())
+		realRename := cache.rename
+		providerRenames := 0
+		cache.rename = func(oldPath, newPath string) error {
+			if err := realRename(oldPath, newPath); err != nil {
+				return err
+			}
+			if filepath.Base(newPath) != "manifest.json" {
+				providerRenames++
+				if providerRenames == 1 {
+					cancel()
+				}
+			}
+			return nil
+		}
+		if err := cache.Install(ctx, catalog); !errors.Is(err, context.Canceled) {
+			t.Fatalf("Install error = %v, want context canceled", err)
+		}
+		if providerRenames != 1 {
+			t.Fatalf("provider installs after cancellation = %d, want 1", providerRenames)
+		}
+		if _, err := os.Stat(filepath.Join(cache.Root(), "manifest.json")); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("manifest committed after cancellation: %v", err)
+		}
+	})
+}
+
 func TestCacheManifestReplaceFailurePreservesOldLKG(t *testing.T) {
 	dataDir := t.TempDir()
 	cache := NewCache(dataDir)
@@ -230,7 +280,7 @@ func TestCacheManifestReplaceFailurePreservesOldLKG(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := cache.Install(oldCatalog); err != nil {
+	if err := cache.Install(t.Context(), oldCatalog); err != nil {
 		t.Fatal(err)
 	}
 	newFixture := testCandidate(t, testBaseModels("0.2"))
@@ -245,11 +295,11 @@ func TestCacheManifestReplaceFailurePreservesOldLKG(t *testing.T) {
 		}
 		return realRename(oldPath, newPath)
 	}
-	if err := cache.Install(newCatalog); err == nil {
+	if err := cache.Install(t.Context(), newCatalog); err == nil {
 		t.Fatal("Install error = nil")
 	}
 	cache.rename = realRename
-	loaded, err := cache.Load()
+	loaded, err := cache.Load(t.Context())
 	if err != nil {
 		t.Fatalf("Load old LKG: %v", err)
 	}
@@ -260,7 +310,7 @@ func TestCacheManifestReplaceFailurePreservesOldLKG(t *testing.T) {
 
 func TestCacheMissingOrCorruptLKGIsUnavailable(t *testing.T) {
 	cache := NewCache(t.TempDir())
-	if _, err := cache.Load(); !errors.Is(err, ErrNoCachedCatalog) {
+	if _, err := cache.Load(t.Context()); !errors.Is(err, ErrNoCachedCatalog) {
 		t.Fatalf("missing Load error = %v", err)
 	}
 	if err := os.MkdirAll(cache.Root(), 0o700); err != nil {
@@ -269,7 +319,7 @@ func TestCacheMissingOrCorruptLKGIsUnavailable(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(cache.Root(), "manifest.json"), []byte("{"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := cache.Load(); err == nil || errors.Is(err, ErrNoCachedCatalog) {
+	if _, err := cache.Load(t.Context()); err == nil || errors.Is(err, ErrNoCachedCatalog) {
 		t.Fatalf("corrupt Load error = %v", err)
 	}
 }
@@ -287,7 +337,7 @@ func TestCacheInstallRepairsCorruptProviderBlob(t *testing.T) {
 		t.Fatal(err)
 	}
 	cache := NewCache(dataDir)
-	if err := cache.Install(catalog); err != nil {
+	if err := cache.Install(t.Context(), catalog); err != nil {
 		t.Fatalf("first Install: %v", err)
 	}
 
@@ -295,14 +345,14 @@ func TestCacheInstallRepairsCorruptProviderBlob(t *testing.T) {
 	if err := os.WriteFile(corrupted, []byte(`{"providerId":"openai","models":[]}`+"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := cache.Load(); err == nil {
+	if _, err := cache.Load(t.Context()); err == nil {
 		t.Fatal("corrupt provider blob loaded successfully")
 	}
 
-	if err := cache.Install(catalog); err != nil {
+	if err := cache.Install(t.Context(), catalog); err != nil {
 		t.Fatalf("reinstall over corrupt blob: %v", err)
 	}
-	loaded, err := cache.Load()
+	loaded, err := cache.Load(t.Context())
 	if err != nil {
 		t.Fatalf("Load after repair: %v", err)
 	}

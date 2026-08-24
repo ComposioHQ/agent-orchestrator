@@ -640,7 +640,7 @@ func claudePricingSnapshot(t *testing.T) *pricing.Snapshot {
 		Path:       "model_prices_and_context_window.json",
 	})
 	mustNoError(t, err)
-	catalog, err := pricing.NewCache(root).Load()
+	catalog, err := pricing.NewCache(root).Load(t.Context())
 	mustNoError(t, err)
 	return catalog.Snapshot()
 }

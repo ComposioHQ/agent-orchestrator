@@ -364,15 +364,11 @@ func parseClaude(source domain.UsageSourceContext, records []jsonlRecord, state 
 // provider identifier. Unknown or conflicting routing stays empty so the event
 // is stored unattributed rather than priced against the wrong provider.
 func canonicalBillingProvider(observed string) string {
-	provider := strings.ToLower(strings.TrimSpace(observed))
-	switch provider {
-	case "", "unknown":
+	provider := pricing.CanonicalProviderID(observed)
+	if provider == "unknown" {
 		return ""
-	case "z.ai":
-		return "zai"
-	default:
-		return provider
 	}
+	return provider
 }
 
 type codexEnvelope struct {
@@ -817,15 +813,13 @@ func isJSONObject(raw json.RawMessage) bool {
 // from what AO worked out.
 func codexProviderUsage(raw json.RawMessage, derivedCacheWrite *int64) string {
 	stored := boundedProviderUsage(raw)
-	if derivedCacheWrite == nil {
+	if stored == "" || derivedCacheWrite == nil {
 		return stored
 	}
 	derived := json.RawMessage(strconv.FormatInt(*derivedCacheWrite, 10))
 	object := map[string]json.RawMessage{}
-	if stored != "" {
-		if err := json.Unmarshal([]byte(stored), &object); err != nil {
-			return stored
-		}
+	if err := json.Unmarshal([]byte(stored), &object); err != nil {
+		return stored
 	}
 	object[derivedCacheWriteKey] = derived
 	encoded, err := json.Marshal(object)

@@ -30,7 +30,7 @@ func TestGeneratedFractionalRatesLoadInRuntime(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	catalog, err := pricing.NewCache(root).Load()
+	catalog, err := pricing.NewCache(root).Load(t.Context())
 	if err != nil {
 		t.Fatalf("runtime load generated catalog: %v", err)
 	}
@@ -86,7 +86,7 @@ func TestGeneratedCatalogLoadsThroughRuntimeFetcherAndCache(t *testing.T) {
 	}
 
 	catalogDir := filepath.Join(root, "pricing", "catalog", "v1")
-	generated, err := pricing.NewCache(root).Load()
+	generated, err := pricing.NewCache(root).Load(t.Context())
 	if err != nil {
 		t.Fatalf("load generated catalog from disk: %v", err)
 	}
@@ -111,10 +111,10 @@ func TestGeneratedCatalogLoadsThroughRuntimeFetcherAndCache(t *testing.T) {
 	}
 
 	cache := pricing.NewCache(t.TempDir())
-	if err := cache.Install(result.Catalog); err != nil {
+	if err := cache.Install(t.Context(), result.Catalog); err != nil {
 		t.Fatalf("install fetched catalog: %v", err)
 	}
-	reloaded, err := cache.Load()
+	reloaded, err := cache.Load(t.Context())
 	if err != nil {
 		t.Fatalf("reload installed catalog: %v", err)
 	}
