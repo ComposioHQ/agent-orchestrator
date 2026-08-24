@@ -85,7 +85,9 @@ describe("subscribeWorkspaceFileChanges", () => {
 		const unsubscribeMaximized = subscribeWorkspaceFileChanges("session/a", queryClient);
 
 		expect(EventSourceStub.instances).toHaveLength(1);
-		expect(EventSourceStub.instances[0].url).toBe("http://127.0.0.1:3001/api/v1/sessions/session%2Fa/workspace/events");
+		expect(EventSourceStub.instances[0].url).toBe(
+			"http://127.0.0.1:3001/api/v1/sessions/session%2Fa/workspace/events",
+		);
 
 		unsubscribeRail();
 		expect(EventSourceStub.instances[0].closed).toBe(false);
@@ -107,12 +109,8 @@ describe("subscribeWorkspaceFileChanges", () => {
 		vi.advanceTimersByTime(1);
 
 		expect(queryClient.invalidateQueries).toHaveBeenCalledTimes(2);
-		expect(queryClient.invalidateQueries).toHaveBeenCalledWith({
-			queryKey: ["session-workspace-files", "sess-1"],
-		});
-		expect(queryClient.invalidateQueries).toHaveBeenCalledWith({
-			queryKey: ["session-workspace-file", "sess-1"],
-		});
+		expect(queryClient.invalidateQueries).toHaveBeenCalledWith({ queryKey: ["session-workspace-files", "sess-1"] });
+		expect(queryClient.invalidateQueries).toHaveBeenCalledWith({ queryKey: ["session-workspace-file", "sess-1"] });
 		unsubscribe();
 	});
 
@@ -149,7 +147,7 @@ describe("subscribeWorkspaceFileChanges", () => {
 		unsubscribe();
 	});
 
-	it("reports connecting while EventSource performs its native reconnect", () => {
+	it("degrades after repeated native reconnect failures and recovers on open", () => {
 		const unsubscribe = subscribeWorkspaceFileChanges("sess-native-retry", fakeQueryClient());
 		const source = EventSourceStub.instances[0];
 
@@ -157,8 +155,10 @@ describe("subscribeWorkspaceFileChanges", () => {
 		expect(getWorkspaceFileConnectionState("sess-native-retry")).toBe("connected");
 
 		source.readyState = 0;
-		source.onerror?.();
-		expect(getWorkspaceFileConnectionState("sess-native-retry")).toBe("connecting");
+		for (let failure = 0; failure < 3; failure += 1) {
+			source.onerror?.();
+			expect(getWorkspaceFileConnectionState("sess-native-retry")).toBe(failure < 2 ? "connecting" : "degraded");
+		}
 
 		source.onopen?.();
 		expect(getWorkspaceFileConnectionState("sess-native-retry")).toBe("connected");

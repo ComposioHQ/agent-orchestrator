@@ -79,12 +79,8 @@ function createWorkspaceStream(sessionId: string, queryClient: QueryClient): Wor
 	const invalidate = () => {
 		if (stream.debounce) clearTimeout(stream.debounce);
 		stream.debounce = setTimeout(() => {
-			void queryClient.invalidateQueries({
-				queryKey: ["session-workspace-files", sessionId],
-			});
-			void queryClient.invalidateQueries({
-				queryKey: ["session-workspace-file", sessionId],
-			});
+			void queryClient.invalidateQueries({ queryKey: ["session-workspace-files", sessionId] });
+			void queryClient.invalidateQueries({ queryKey: ["session-workspace-file", sessionId] });
 		}, INVALIDATE_DEBOUNCE_MS);
 	};
 	const scheduleRetry = (generation: number) => {
@@ -161,7 +157,8 @@ function createWorkspaceStream(sessionId: string, queryClient: QueryClient): Wor
 					handleTerminalFailure(generation);
 					return;
 				}
-				setWorkspaceFileConnectionState(sessionId, "connecting");
+				stream.failures += 1;
+				setWorkspaceFileConnectionState(sessionId, stream.failures >= 3 ? "degraded" : "connecting");
 			};
 			source.addEventListener("workspace_changed", () => {
 				if (!stream.disposed && generation === stream.generation && stream.source === source) invalidate();
