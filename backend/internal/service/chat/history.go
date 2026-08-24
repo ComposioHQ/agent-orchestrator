@@ -160,18 +160,34 @@ func (s *Service) EditMessage(
 		return EditMessageResult{}, err
 	}
 	forker, canFork := source.conv.(ports.ChatForker)
-	canReplay := supportsApproximateReplay(source.conv)
-	anchor, err := s.store.ConversationEditAnchor(ctx, source.conversation.ID, turnID)
-	if err != nil {
-		return EditMessageResult{}, fmt.Errorf("%w: %w", ErrEditTurnInvalid, err)
+	// Preserve fast validation for missing turns and corrupt stored content, but
+	// do not make any branch-dependent decision from this unfenced snapshot.
+	if _, _, err := s.editMessageAnchor(ctx, source.conversation.ID, turnID); err != nil {
+		return EditMessageResult{}, err
 	}
-	var content []ports.ChatContent
-	if anchor.OriginalDeliveryContentJSON != "" {
-		if err := json.Unmarshal([]byte(anchor.OriginalDeliveryContentJSON), &content); err != nil {
-			return EditMessageResult{}, fmt.Errorf("%w: decode stored prompt content: %w", ErrEditTurnInvalid, err)
+	if err := source.BeginIdleBranchHandoff(ctx); err != nil {
+		return EditMessageResult{}, err
+	}
+	abortSource := true
+	defer func() {
+		if abortSource {
+			source.AbortHandoff()
 		}
+	}()
+
+	// Controller lookup and the active lineage can both change during a branch
+	// activation. Validate that this fenced controller is still published, then
+	// resolve the authoritative anchor while activation is unable to move it.
+	cfg, driver, err := s.branchLaunchConfig(id, source)
+	if err != nil {
+		return EditMessageResult{}, err
+	}
+	anchor, content, err := s.editMessageAnchor(ctx, source.conversation.ID, turnID)
+	if err != nil {
+		return EditMessageResult{}, err
 	}
 	msg.Content = withoutInternalReplayContent(content)
+	canReplay := supportsApproximateReplay(source.conv)
 	if anchor.RetryActiveBranch {
 		branch, err := s.store.ConversationBranch(ctx, source.conversation.ID, anchor.SourceBranchID)
 		if err != nil {
@@ -188,7 +204,11 @@ func (s *Service) EditMessage(
 			}
 			msg.Content = append([]ports.ChatContent{replay}, msg.Content...)
 		}
-		return s.sendEditedMessage(ctx, branch.ParentBranchID, branch.ID, source, msg, true)
+		// The helper owns fence cleanup from this point. Disarm the generic
+		// defer so it cannot erase a newer handoff after the send returns.
+		abortSource = false
+		turn, sendErr := source.sendAfterIdleBranchHandoff(ctx, anchor.SourceBranchID, msg)
+		return s.finishEditedMessage(ctx, branch.ParentBranchID, branch.ID, source, turn, sendErr, true)
 	}
 	sourceBranch, err := s.store.ConversationBranch(ctx, source.conversation.ID, anchor.SourceBranchID)
 	if err != nil {
@@ -199,20 +219,6 @@ func (s *Service) EditMessage(
 	needsReplay := !canNativeFork && needsPriorContext
 	if needsReplay && !canReplay {
 		return EditMessageResult{}, ErrForkUnsupported
-	}
-	if err := source.BeginIdleBranchHandoff(ctx); err != nil {
-		return EditMessageResult{}, err
-	}
-	abortSource := true
-	defer func() {
-		if abortSource {
-			source.AbortHandoff()
-		}
-	}()
-
-	cfg, driver, err := s.branchLaunchConfig(id, source)
-	if err != nil {
-		return EditMessageResult{}, err
 	}
 	sourceProviderConversationID := source.ProviderConversationID()
 	var providerConversationID string
@@ -299,9 +305,12 @@ func (s *Service) EditMessage(
 			}
 			return EditMessageResult{}, fmt.Errorf("activate edited conversation: %w", err)
 		}
-		source.CommitIdleBranchHandoff(branchID, generation)
+		// The helper owns fence cleanup from this point. Disarm the generic
+		// defer so it cannot erase a newer handoff after the send returns.
 		abortSource = false
-		return s.sendEditedMessage(ctx, anchor.SourceBranchID, branchID, source, msg, true)
+		turn, sendErr := source.commitIdleBranchHandoffAndSend(
+			ctx, anchor.SourceBranchID, branchID, generation, msg)
+		return s.finishEditedMessage(ctx, anchor.SourceBranchID, branchID, source, turn, sendErr, true)
 	}
 	replacement := newController(id, conversation, generation, provider, s.store, s.activity, s.log, s.newID, s.now)
 	if err := s.store.CreateAndActivateConversationBranch(ctx, id, branch, generation, s.now()); err != nil {
@@ -341,6 +350,24 @@ func (s *Service) EditMessage(
 	}
 	abortSource = false
 	return result, sendErr
+}
+
+func (s *Service) editMessageAnchor(
+	ctx context.Context,
+	conversationID, turnID string,
+) (domain.ConversationEditAnchor, []ports.ChatContent, error) {
+	anchor, err := s.store.ConversationEditAnchor(ctx, conversationID, turnID)
+	if err != nil {
+		return domain.ConversationEditAnchor{}, nil, fmt.Errorf("%w: %w", ErrEditTurnInvalid, err)
+	}
+	var content []ports.ChatContent
+	if anchor.OriginalDeliveryContentJSON != "" {
+		if err := json.Unmarshal([]byte(anchor.OriginalDeliveryContentJSON), &content); err != nil {
+			return domain.ConversationEditAnchor{}, nil,
+				fmt.Errorf("%w: decode stored prompt content: %w", ErrEditTurnInvalid, err)
+		}
+	}
+	return anchor, content, nil
 }
 
 // approximateReplayContent renders only the durable textual transcript before the
@@ -465,6 +492,18 @@ func (s *Service) sendEditedMessage(
 	restoreConclusiveFailure bool,
 ) (EditMessageResult, error) {
 	turn, sendErr := controller.Send(ctx, msg)
+	return s.finishEditedMessage(
+		ctx, sourceBranchID, activeBranchID, controller, turn, sendErr, restoreConclusiveFailure)
+}
+
+func (s *Service) finishEditedMessage(
+	ctx context.Context,
+	sourceBranchID, activeBranchID string,
+	controller *Controller,
+	turn domain.ConversationTurn,
+	sendErr error,
+	restoreConclusiveFailure bool,
+) (EditMessageResult, error) {
 	result := EditMessageResult{
 		SourceBranchID: sourceBranchID,
 		ActiveBranchID: activeBranchID,

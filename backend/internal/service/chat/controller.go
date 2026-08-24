@@ -977,6 +977,72 @@ func (c *Controller) Send(ctx context.Context, msg ports.ChatUserMessage) (domai
 	if handoff {
 		return domain.ConversationTurn{}, ErrControllerHandoff
 	}
+	return c.sendLocked(ctx, msg)
+}
+
+// sendAfterIdleBranchHandoff atomically consumes an edit fence and sends on the
+// branch that was validated while the fence was held. ActivateBranch also takes
+// sendMu, so it cannot rebind the provider between this check and SendTurn.
+func (c *Controller) sendAfterIdleBranchHandoff(
+	ctx context.Context,
+	expectedBranchID string,
+	msg ports.ChatUserMessage,
+) (domain.ConversationTurn, error) {
+	c.sendMu.Lock()
+	defer c.sendMu.Unlock()
+	if err := c.finishIdleBranchHandoff(expectedBranchID, "", ""); err != nil {
+		return domain.ConversationTurn{}, err
+	}
+	return c.sendLocked(ctx, msg)
+}
+
+// commitIdleBranchHandoffAndSend moves a reused controller to its durable fork
+// and sends the edited prompt without reopening an activation window between
+// those operations.
+func (c *Controller) commitIdleBranchHandoffAndSend(
+	ctx context.Context,
+	expectedBranchID, branchID, generation string,
+	msg ports.ChatUserMessage,
+) (domain.ConversationTurn, error) {
+	c.sendMu.Lock()
+	defer c.sendMu.Unlock()
+	if err := c.finishIdleBranchHandoff(expectedBranchID, branchID, generation); err != nil {
+		return domain.ConversationTurn{}, err
+	}
+	return c.sendLocked(ctx, msg)
+}
+
+// finishIdleBranchHandoff validates and consumes an edit fence. Callers hold
+// sendMu. A branch mismatch reopens intake before returning: leaving a published
+// controller fenced after detecting stale state would turn a refused edit into a
+// permanently wedged session.
+func (c *Controller) finishIdleBranchHandoff(
+	expectedBranchID, branchID, generation string,
+) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.handoff != controllerHandoffIdleBranch {
+		return ErrControllerHandoff
+	}
+	if c.conversation.ActiveBranchID != expectedBranchID {
+		c.handoff = controllerHandoffNone
+		return fmt.Errorf("%w: active branch changed from %s to %s",
+			ErrControllerHandoff, expectedBranchID, c.conversation.ActiveBranchID)
+	}
+	if branchID != "" {
+		c.conversation.ActiveBranchID = branchID
+		c.generation = generation
+	}
+	c.handoff = controllerHandoffNone
+	return nil
+}
+
+// sendLocked records and dispatches one message. Callers hold sendMu and have
+// already established that no controller handoff can redirect the provider.
+func (c *Controller) sendLocked(
+	ctx context.Context,
+	msg ports.ChatUserMessage,
+) (domain.ConversationTurn, error) {
 
 	now := c.now()
 	turnID := c.newID()

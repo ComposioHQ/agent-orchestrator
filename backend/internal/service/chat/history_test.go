@@ -613,6 +613,53 @@ type editDriverState struct {
 	resumed      map[string]*ownedFakeConversation
 }
 
+type blockingEditAnchorStore struct {
+	*store.Store
+	mu        sync.Mutex
+	remaining int
+	entered   chan struct{}
+	release   chan struct{}
+}
+
+func (s *blockingEditAnchorStore) blockAnchor(read int) (<-chan struct{}, chan<- struct{}) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.remaining = read
+	s.entered = make(chan struct{})
+	s.release = make(chan struct{})
+	return s.entered, s.release
+}
+
+func (s *blockingEditAnchorStore) ConversationEditAnchor(
+	ctx context.Context,
+	conversationID, replacedTurnID string,
+) (domain.ConversationEditAnchor, error) {
+	anchor, err := s.Store.ConversationEditAnchor(ctx, conversationID, replacedTurnID)
+	if err != nil {
+		return domain.ConversationEditAnchor{}, err
+	}
+	s.mu.Lock()
+	if s.entered == nil {
+		s.mu.Unlock()
+		return anchor, nil
+	}
+	s.remaining--
+	if s.remaining > 0 {
+		s.mu.Unlock()
+		return anchor, nil
+	}
+	entered, release := s.entered, s.release
+	s.entered, s.release = nil, nil
+	s.mu.Unlock()
+	close(entered)
+	select {
+	case <-release:
+		return anchor, nil
+	case <-ctx.Done():
+		return domain.ConversationEditAnchor{}, ctx.Err()
+	}
+}
+
 type ownedFakeConversation struct {
 	*fakeConversation
 	writers *providerWriterRegistry
@@ -655,8 +702,20 @@ func (s *editDriverState) resumeConversation(
 }
 
 func newEditHarness(t *testing.T, supportsPromptReplay bool) (*harness, *historyRecorder, *editDriverState) {
+	return newEditHarnessWithStore(t, supportsPromptReplay, nil)
+}
+
+func newEditHarnessWithStore(
+	t *testing.T,
+	supportsPromptReplay bool,
+	wrapStore func(*store.Store) chatsvc.Store,
+) (*harness, *historyRecorder, *editDriverState) {
 	t.Helper()
 	st := openStore(t)
+	chatStore := chatsvc.Store(st)
+	if wrapStore != nil {
+		chatStore = wrapStore(st)
+	}
 	source := newHistoryRecorder()
 	if supportsPromptReplay {
 		sourceCapabilities := productionCaps()
@@ -724,7 +783,7 @@ func newEditHarness(t *testing.T, supportsPromptReplay bool) (*harness, *history
 	var idMu sync.Mutex
 	nextID := 0
 	svc := chatsvc.New(chatsvc.Options{
-		Store: st, Sessions: st,
+		Store: chatStore, Sessions: st,
 		Reader: chatsvc.SnapshotReaderFunc(func(ctx context.Context, conversationID string) (chatsvc.ConversationRows, error) {
 			snapshot, err := st.LoadConversationSnapshot(ctx, conversationID)
 			if err != nil {
@@ -1510,6 +1569,76 @@ func TestEditMessageUndispatchedAttemptRestoresSourceBranch(t *testing.T) {
 	requireMessageTexts(t, snapshot.Messages, []string{"A", "reply to A", "B", "reply to B"})
 	if _, err := h.svc.Send(ctx, testSession, ports.ChatUserMessage{Text: "source remains usable"}); err != nil {
 		t.Fatalf("Send on restored source: %v", err)
+	}
+}
+
+func TestEditFencesConcurrentBranchActivation(t *testing.T) {
+	var anchorStore *blockingEditAnchorStore
+	h, source, _ := newEditHarnessWithStore(t, false, func(st *store.Store) chatsvc.Store {
+		anchorStore = &blockingEditAnchorStore{Store: st}
+		return anchorStore
+	})
+	ctx := context.Background()
+	completeTurn(t, h, "A", "provider-turn-1")
+	h.awaitSnapshot(t, func(s store.ConversationSnapshot) bool { return len(s.Messages) == 2 })
+	second := completeTurn(t, h, "B", "provider-turn-2")
+	h.awaitSnapshot(t, func(s store.ConversationSnapshot) bool { return len(s.Messages) == 4 })
+
+	source.mu.Lock()
+	source.sendErr = refusedError{msg: "provider declined edit"}
+	source.mu.Unlock()
+	failed, err := h.svc.EditMessage(ctx, testSession, second, ports.ChatUserMessage{
+		Text: "B refused", ClientMessageID: "edit-race-refused", Origin: domain.MessageOriginHuman,
+	})
+	if !errors.Is(err, chatsvc.ErrProviderRefused) {
+		t.Fatalf("priming EditMessage error = %v, want ErrProviderRefused", err)
+	}
+	source.mu.Lock()
+	source.sendErr = nil
+	source.mu.Unlock()
+
+	// The first read preserves fast validation. The second is authoritative and
+	// must happen only after EditMessage owns the idle-branch fence.
+	anchorRead, releaseAnchor := anchorStore.blockAnchor(2)
+	type editOutcome struct {
+		result chatsvc.EditMessageResult
+		err    error
+	}
+	editDone := make(chan editOutcome, 1)
+	go func() {
+		result, editErr := h.svc.EditMessage(ctx, testSession, second, ports.ChatUserMessage{
+			Text: "B edited", ClientMessageID: "edit-race-success", Origin: domain.MessageOriginHuman,
+		})
+		editDone <- editOutcome{result: result, err: editErr}
+	}()
+	select {
+	case <-anchorRead:
+	case outcome := <-editDone:
+		t.Fatalf("EditMessage finished before fenced anchor read: result=%+v err=%v", outcome.result, outcome.err)
+	case <-time.After(3 * time.Second):
+		t.Fatal("EditMessage did not reach the fenced anchor read")
+	}
+
+	_, activateErr := h.svc.ActivateBranch(ctx, testSession, failed.ActiveBranchID)
+	close(releaseAnchor)
+	var retried editOutcome
+	select {
+	case retried = <-editDone:
+	case <-time.After(3 * time.Second):
+		t.Fatal("EditMessage did not finish after releasing the anchor read")
+	}
+	if !errors.Is(activateErr, chatsvc.ErrControllerHandoff) {
+		t.Fatalf("concurrent ActivateBranch error = %v, want ErrControllerHandoff", activateErr)
+	}
+	if retried.err != nil {
+		t.Fatalf("EditMessage after releasing anchor: %v", retried.err)
+	}
+	if retried.result.SourceBranchID != failed.SourceBranchID ||
+		retried.result.ActiveBranchID == failed.ActiveBranchID {
+		t.Fatalf("edit used stale lineage: refused=%+v edited=%+v", failed, retried.result)
+	}
+	if got := source.ProviderConversationID(); got != "thread-forked" {
+		t.Fatalf("provider binding after edit race = %q, want thread-forked", got)
 	}
 }
 
