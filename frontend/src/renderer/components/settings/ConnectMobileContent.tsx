@@ -59,8 +59,12 @@ function SegmentItem({
 			{selected && (
 				<motion.span
 					layoutId={indicatorId}
+					layout="position"
 					className="absolute inset-0 rounded-[calc(var(--radius-settings-action)-2px)] bg-[color-mix(in_oklch,var(--color-bg-settings-menu-selected)_78%,var(--color-text-settings-title))]"
 					transition={{ type: "spring", duration: 0.3, bounce: 0 }}
+					transformTemplate={({ x, scaleX, scaleY }) =>
+						`translateX(${x}) scaleX(${scaleX}) scaleY(${scaleY})`
+					}
 				/>
 			)}
 			<span className="relative">{children}</span>
