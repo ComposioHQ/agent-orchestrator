@@ -845,6 +845,39 @@ describe("startAutoUpdates", () => {
     );
   });
 
+  it("restores an earlier staged status immediately after the owned manual-check failure", async () => {
+    vi.spyOn(console, "info").mockImplementation(() => undefined);
+    const { module, autoUpdater, updaterEvents, statusMessages } =
+      await importAutoUpdater();
+    const err = new Error(
+      'Cannot find latest-mac.yml in the latest release artifacts (https://github.com/AgentWrapper/agent-orchestrator/releases/download/v0.10.1/latest-mac.yml):\nHttpError: 404 "method: GET url: https://github.com/AgentWrapper/agent-orchestrator/releases/download/v0.10.1/latest-mac.yml"',
+    );
+    autoUpdater.checkForUpdates.mockImplementationOnce(() => {
+      updaterEvents.get("update-downloaded")?.({ version: "2.1.0" });
+      return Promise.resolve();
+    });
+    await module.checkForUpdatesNow(stateDir, {
+      requestId: "earlier-download",
+    });
+
+    autoUpdater.checkForUpdates.mockRejectedValueOnce(err);
+    await module.checkForUpdatesNow(stateDir, {
+      requestId: "manual-update",
+    });
+
+    expect(statusMessages().slice(-2).map((message) => message.payload)).toEqual([
+      expect.objectContaining({
+        state: "error",
+        requestId: "manual-update",
+      }),
+      expect.objectContaining({
+        state: "downloaded",
+        version: "2.1.0",
+        requestId: "earlier-download",
+      }),
+    ]);
+  });
+
   it("still surfaces non-manifest 404 errors", async () => {
     const { module, updaterEvents } = await importAutoUpdater();
     const err = new Error(

@@ -627,18 +627,10 @@
 	border-block-start: 0 !important;
 }
 
-/* The updater is a compact instrument panel: status owns the visual hierarchy,
- * while the dotted field and state rail make activity legible without adding
- * decorative chrome. */
+/* Keep updater state legible without tinting the whole surface. The glyph is
+ * the single state-colored affordance; the panel otherwise matches Settings. */
 .update-status-panel {
 	--update-status-tone: var(--muted-foreground);
-	position: relative;
-	isolation: isolate;
-	overflow: hidden;
-	border: 1px solid color-mix(in oklch, var(--update-status-tone) 24%, var(--color-border-settings-dialog));
-	background:
-		linear-gradient(108deg, color-mix(in oklch, var(--update-status-tone) 9%, transparent), transparent 48%),
-		var(--color-bg-settings-input);
 	box-shadow: inset 0 1px 0 color-mix(in oklch, var(--foreground) 5%, transparent);
 }
 
@@ -658,81 +650,11 @@
 	--update-status-tone: var(--color-error);
 }
 
-.update-status-panel::before {
-	position: absolute;
-	inset-block: 0;
-	inset-inline-start: 0;
-	width: 2px;
-	background: var(--update-status-tone);
-	content: "";
-}
-
-.update-status-panel::after {
-	position: absolute;
-	inset-block: 0;
-	inset-inline-end: 0;
-	width: 46%;
-	background-image: radial-gradient(
-		circle,
-		color-mix(in oklch, var(--update-status-tone) 27%, transparent) 0.7px,
-		transparent 0.8px
-	);
-	background-size: 14px 14px;
-	content: "";
-	mask-image: linear-gradient(to left, rgb(0 0 0 / 0.72), transparent);
-	pointer-events: none;
-}
-
 .update-status-glyph {
 	border: 1px solid color-mix(in oklch, var(--update-status-tone) 30%, transparent);
 	background: color-mix(in oklch, var(--update-status-tone) 11%, transparent);
 	color: var(--update-status-tone);
 	box-shadow: inset 0 1px 0 color-mix(in oklch, var(--foreground) 5%, transparent);
-}
-
-.update-status-content {
-	animation: update-status-content-in 180ms var(--ease-out);
-}
-
-.update-download-progress {
-	transition: transform 240ms var(--ease-out);
-}
-
-.update-policy-details {
-	animation: update-policy-details-in 160ms var(--ease-out);
-}
-
-@keyframes update-status-content-in {
-	from {
-		opacity: 0.45;
-		transform: translateY(3px);
-	}
-	to {
-		opacity: 1;
-		transform: translateY(0);
-	}
-}
-
-@keyframes update-policy-details-in {
-	from {
-		opacity: 0;
-		transform: translateY(-3px);
-	}
-	to {
-		opacity: 1;
-		transform: translateY(0);
-	}
-}
-
-@media (prefers-reduced-motion: reduce) {
-	.update-status-content,
-	.update-policy-details {
-		animation: none;
-	}
-
-	.update-download-progress {
-		transition: none;
-	}
 }
 
 /* Tailwind preflight clears button backgrounds; keep settings rows filled. */

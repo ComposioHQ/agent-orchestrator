@@ -367,6 +367,30 @@ describe("GlobalSettingsForm", () => {
 		expect(button).toBeEnabled();
 	});
 
+	it("stops manual loading when a completed check is immediately followed by the restored staged update", async () => {
+		let emit: (status: { state: string; version?: string; requestId?: string }) => void = () => undefined;
+		updOnStatus.mockImplementation((listener: (status: unknown) => void) => {
+			emit = listener as typeof emit;
+			return () => undefined;
+		});
+		updCheck.mockReturnValue(new Promise<void>(() => undefined));
+		renderForm();
+		const button = await screen.findByRole("button", { name: "Check for updates" });
+
+		await userEvent.click(button);
+		const requestId = updCheck.mock.calls[0]?.[0]?.requestId;
+		expect(requestId).toMatch(/^manual-update-/);
+
+		act(() => {
+			emit({ state: "error", requestId });
+			emit({ state: "downloaded", version: "1.2.3", requestId: "earlier-download" });
+		});
+
+		expect(screen.getByRole("status")).toHaveTextContent("Downloaded. Restart to finish updating.");
+		expect(screen.getByRole("button", { name: "Check for updates" })).toBeEnabled();
+		expect(screen.getByRole("button", { name: "Restart & install" })).toBeInTheDocument();
+	});
+
 	it("shows when the updater last completed a check", async () => {
 		const checkedAt = new Date("2026-08-19T12:51:00.000Z").getTime();
 		updGetStatus.mockResolvedValue({ state: "not-available", checkedAt });
