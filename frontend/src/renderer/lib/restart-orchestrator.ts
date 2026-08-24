@@ -4,15 +4,15 @@ import type { SessionMode } from "../types/conversation";
 import { OrchestratorSpawnError, spawnOrchestrator } from "./spawn-orchestrator";
 import type { OrchestratorReplacementFailure } from "../stores/ui-store";
 
-type NavigateToSession = (options: {
-	to: "/projects/$projectId/sessions/$sessionId";
-	params: { projectId: string; sessionId: string };
+type NavigateToOrchestrator = (options: {
+	to: "/projects/$projectId/orchestrator";
+	params: { projectId: string };
 }) => unknown;
 
 type RestartProjectOrchestratorOptions = {
 	projectId: string;
 	queryClient: QueryClient;
-	navigate: NavigateToSession;
+	navigate: NavigateToOrchestrator;
 	setProjectRestarting: (projectId: string, restarting: boolean) => void;
 	setOrchestratorReplacementError: (projectId: string, failure: OrchestratorReplacementFailure | null) => void;
 	onError?: (error: unknown) => void;
@@ -40,11 +40,11 @@ export async function restartProjectOrchestrator({
 	setProjectRestarting(projectId, true);
 	setOrchestratorReplacementError(projectId, null);
 	try {
-		const sessionId = await spawnOrchestrator(projectId, "restart", true, mode);
+		await spawnOrchestrator(projectId, "restart", true, mode);
 		await refreshWorkspaceState(queryClient);
 		void navigate({
-			to: "/projects/$projectId/sessions/$sessionId",
-			params: { projectId, sessionId },
+			to: "/projects/$projectId/orchestrator",
+			params: { projectId },
 		});
 	} catch (error) {
 		await refreshWorkspaceState(queryClient);

@@ -4,8 +4,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { useUiStore } from "../stores/ui-store";
 import { TooltipProvider } from "./ui/tooltip";
 
-const { paramsMock, useWorkspaceQueryMock } = vi.hoisted(() => ({
+const { paramsMock, pathnameMock, useWorkspaceQueryMock } = vi.hoisted(() => ({
 	paramsMock: { projectId: undefined as string | undefined, sessionId: undefined as string | undefined },
+	pathnameMock: { current: "/" },
 	useWorkspaceQueryMock: vi.fn(),
 }));
 
@@ -15,6 +16,8 @@ vi.mock("@tanstack/react-router", async (importOriginal) => {
 		...actual,
 		useNavigate: () => vi.fn(),
 		useParams: () => paramsMock,
+		useRouterState: ({ select }: { select: (state: { location: { pathname: string } }) => unknown }) =>
+			select({ location: { pathname: pathnameMock.current } }),
 	};
 });
 
@@ -44,6 +47,7 @@ describe("ShellTopbar on Linux", () => {
 	beforeEach(() => {
 		paramsMock.projectId = undefined;
 		paramsMock.sessionId = undefined;
+		pathnameMock.current = "/";
 		useWorkspaceQueryMock.mockReturnValue({ data: [], isError: false, isLoading: false });
 		useUiStore.setState({ isSidebarOpen: true });
 	});

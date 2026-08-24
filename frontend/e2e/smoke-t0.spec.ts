@@ -191,6 +191,28 @@ test("renderer: route nav home to board to session detail and back @T0 @BRD", as
 	await expect(page.getByTestId("board")).toBeVisible();
 });
 
+test("renderer: stable orchestrator destination links to and from delegated workers @T0 @ORC", async ({ page }) => {
+	await installFakeAgent(page, {
+		workers: [{ id: "delegated", title: "Delegated worker", status: "working" }],
+	});
+	await page.goto("/#/");
+
+	await page.getByTestId("sidebar-orchestrator").click();
+	await expect(page).toHaveURL(/projects\/fake-proj\/orchestrator$/);
+	await expect(page.getByTestId("orchestrator-route")).toHaveAttribute("data-orchestrator-state", "running");
+	await expect(page.getByTestId("orchestrator-workers")).toContainText("Delegated worker");
+
+	await page
+		.getByTestId("orchestrator-workers")
+		.getByRole("button", { name: /Delegated worker/ })
+		.click();
+	await expect(page).toHaveURL(/projects\/fake-proj\/sessions\/delegated$/);
+	await expect(page.getByTestId("worker-orchestrator-origin")).toContainText("From Orchestrator");
+
+	await page.getByTestId("worker-orchestrator-origin").click();
+	await expect(page).toHaveURL(/projects\/fake-proj\/orchestrator$/);
+});
+
 // ── SET: settings ────────────────────────────────────────────────────────────
 
 // #2483 SET-001.

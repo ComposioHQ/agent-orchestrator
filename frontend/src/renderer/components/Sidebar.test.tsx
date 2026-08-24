@@ -10,7 +10,7 @@ vi.mock("motion/react", async (importOriginal) => {
 		AnimatePresence: ({ children }: { children: React.ReactNode }) => children,
 	};
 });
-import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
@@ -22,7 +22,7 @@ import type { WorkspaceSession, WorkspaceSummary } from "../types/workspace";
 import { agentsQueryKey } from "../hooks/useAgentsQuery";
 import { useUiStore } from "../stores/ui-store";
 
-const { cloudSessionState, getMock, navigateMock, mockParams, renameSessionMock, spawnMock, updateStatusMock, commandPaletteEnabled } = vi.hoisted(
+const { cloudSessionState, getMock, navigateMock, mockParams, mockPathname, renameSessionMock, updateStatusMock, commandPaletteEnabled } = vi.hoisted(
 	() => ({
 		cloudSessionState: {
 			configured: false,
@@ -34,15 +34,14 @@ const { cloudSessionState, getMock, navigateMock, mockParams, renameSessionMock,
 		getMock: vi.fn(),
 		navigateMock: vi.fn(),
 		mockParams: { projectId: undefined as string | undefined, sessionId: undefined as string | undefined },
+		mockPathname: { current: "/" },
 		renameSessionMock: vi.fn().mockResolvedValue(undefined),
-		spawnMock: vi.fn(),
 		updateStatusMock: vi.fn(),
 		commandPaletteEnabled: { current: true },
 	}),
 );
 
 vi.mock("../lib/rename-session", () => ({ renameSession: renameSessionMock }));
-vi.mock("../lib/spawn-orchestrator", () => ({ spawnOrchestrator: spawnMock }));
 vi.mock("../lib/cloud-session", () => ({ useCloudSession: () => cloudSessionState }));
 
 vi.mock("../hooks/useCommandPaletteEnabled", () => ({
@@ -56,7 +55,7 @@ vi.mock("@tanstack/react-router", async (importOriginal) => {
 		useNavigate: () => navigateMock,
 		useParams: () => ({ ...mockParams }),
 		useRouterState: ({ select }: { select: (state: { location: { pathname: string } }) => unknown }) =>
-			select({ location: { pathname: "/" } }),
+			select({ location: { pathname: mockPathname.current } }),
 	};
 });
 
@@ -275,10 +274,10 @@ beforeEach(() => {
 	});
 	navigateMock.mockReset();
 	renameSessionMock.mockReset().mockResolvedValue(undefined);
-	spawnMock.mockReset();
 	updateStatusMock.mockReset().mockResolvedValue({ state: "idle" });
 	mockParams.projectId = undefined;
 	mockParams.sessionId = undefined;
+	mockPathname.current = "/";
 });
 
 afterEach(() => {
@@ -365,15 +364,18 @@ describe("Sidebar", () => {
 		expect(content).not.toContainElement(screen.getByText("Projects"));
 	});
 
-	it("opens project settings instead of spawning when no orchestrator agent is configured", async () => {
+	it("keeps the orchestrator destination available when no agent is configured", async () => {
 		const user = userEvent.setup();
 		renderSidebar({ workspaces: [{ ...workspace, orchestratorAgent: undefined }] });
 
-		await user.click(screen.getByRole("button", { name: "Spawn Project One orchestrator" }));
+		const entry = screen.getByRole("button", { name: "Open Project One orchestrator" });
+		expect(entry).toHaveAttribute("data-orchestrator-state", "missing");
+		await user.click(entry);
 
-		expect(useUiStore.getState().settingsModal).toEqual({ scope: "project", projectId: "proj-1" });
-		expect(navigateMock).not.toHaveBeenCalled();
-		expect(spawnMock).not.toHaveBeenCalled();
+		expect(navigateMock).toHaveBeenCalledWith({
+			to: "/projects/$projectId/orchestrator",
+			params: { projectId: "proj-1" },
+		});
 	});
 
 	it("shows a ConfirmDialog and calls onRemoveProject when confirmed", async () => {
@@ -481,12 +483,33 @@ describe("Sidebar", () => {
 		expect(await screen.findByRole("dialog", { name: "Add code to Agent Orchestrator" })).toBeInTheDocument();
 	});
 
-	it("reveals orchestrator and kebab buttons on the project row (no dashboard button)", () => {
+	it("renders a permanent orchestrator child and keeps project actions on the project row", () => {
 		renderSidebar();
 
 		expect(screen.queryByLabelText("Open Project One dashboard")).not.toBeInTheDocument();
-		expect(screen.getByLabelText("Spawn Project One orchestrator")).toBeInTheDocument();
+		expect(screen.getByLabelText("Open Project One orchestrator")).toHaveTextContent("Missing");
 		expect(screen.getByLabelText("Project actions for Project One")).toBeInTheDocument();
+	});
+
+	it("shows stopped and running activity states on the permanent entry", () => {
+		const stopped = {
+			...session,
+			id: "orch-stopped",
+			kind: "orchestrator" as const,
+			isTerminated: true,
+		};
+		renderSidebar({ workspaces: [{ ...workspace, sessions: [stopped] }] });
+		expect(screen.getByTestId("sidebar-orchestrator")).toHaveTextContent("Stopped");
+
+		cleanup();
+		const running = {
+			...stopped,
+			id: "orch-running",
+			isTerminated: false,
+			activity: { state: "active" as const, lastActivityAt: "2026-08-01T00:00:00Z" },
+		};
+		renderSidebar({ workspaces: [{ ...workspace, sessions: [running] }] });
+		expect(screen.getByTestId("sidebar-orchestrator")).toHaveTextContent("Running · Working");
 	});
 
 	it("toggles project sessions from the folder icon without selecting the project first", async () => {
@@ -616,7 +639,7 @@ describe("Sidebar", () => {
 		expect(screen.getByText("Project One").closest("button")).toHaveAttribute("aria-expanded", "false");
 	});
 
-	it("expands a collapsed project when opening its orchestrator", async () => {
+	it("opens the stable orchestrator route after a collapsed project is expanded", async () => {
 		const user = userEvent.setup();
 		const orchestrator: WorkspaceSession = {
 			...session,
@@ -632,11 +655,12 @@ describe("Sidebar", () => {
 		expect(screen.queryByLabelText("Open fix login")).not.toBeInTheDocument();
 		expect(screen.getByText("Project One").closest("button")).toHaveAttribute("aria-expanded", "false");
 
+		await user.click(screen.getByRole("button", { name: "Toggle Project One sessions" }));
 		await user.click(screen.getByRole("button", { name: "Open Project One orchestrator" }));
 
 		expect(navigateMock).toHaveBeenCalledWith({
-			to: "/projects/$projectId/sessions/$sessionId",
-			params: { projectId: "proj-1", sessionId: "proj-1-orc" },
+			to: "/projects/$projectId/orchestrator",
+			params: { projectId: "proj-1" },
 		});
 		expect(screen.getByLabelText("Open fix login")).toBeInTheDocument();
 		expect(screen.getByText("Project One").closest("button")).toHaveAttribute("aria-expanded", "true");
@@ -1314,7 +1338,7 @@ describe("Sidebar", () => {
 		expect(projectRow).toHaveClass("pr-sidebar-project-actions");
 		expect(actionCluster).toHaveAttribute("data-project-actions");
 		expect(actionCluster).toHaveClass("right-0.5", "gap-px");
-		expect(within(actionCluster as HTMLElement).getAllByRole("button")).toHaveLength(2);
+		expect(within(actionCluster as HTMLElement).getAllByRole("button")).toHaveLength(1);
 		expect(screen.getByLabelText("Project actions for Project One")).not.toHaveClass("opacity-0");
 	});
 

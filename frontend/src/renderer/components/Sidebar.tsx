@@ -25,8 +25,6 @@ import { useEffect, useId, useLayoutEffect, useRef, useState, type KeyboardEvent
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import type { UpdateStatus } from "../../main/update-settings";
 import {
-	hasConfiguredOrchestratorAgent,
-	newestActiveOrchestrator,
 	type WorkspaceSession,
 	type WorkspaceSummary,
 	sortedWorkerSessions,
@@ -38,7 +36,7 @@ import { aoBridge } from "../lib/bridge";
 import { useCommandPaletteEnabled } from "../hooks/useCommandPaletteEnabled";
 import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { usePinSession, useUnpinSession } from "../hooks/usePinSession";
-import { spawnOrchestrator } from "../lib/spawn-orchestrator";
+import { latestProjectOrchestrator, orchestratorState } from "../lib/orchestrator-state";
 import { renameSession } from "../lib/rename-session";
 import { useTerminateSession } from "../hooks/useTerminateSession";
 import { useResizable } from "../hooks/useResizable";
@@ -93,7 +91,7 @@ const isMac = isMacPlatform();
 const isWindows = isWindowsPlatform();
 const noDragStyle = isMac ? ({ WebkitAppRegion: "no-drag" } as React.CSSProperties) : undefined;
 
-// Shared styling for the per-project hover action buttons (orchestrator, kebab):
+// Shared styling for the per-project kebab action:
 // a 20px square icon button that tints on hover, matching the old
 // SidebarMenuAction footprint.
 const HOVER_ACTION_CLASS =
@@ -138,8 +136,12 @@ function useSelection() {
 	const openProjectSettings = useUiStore((state) => state.openProjectSettings);
 	const params = useParams({ strict: false }) as { projectId?: string; sessionId?: string };
 	const pathname = useRouterState({ select: (state) => state.location.pathname });
+	const isOrchestratorRoute = Boolean(
+		params.projectId && pathname === `/projects/${params.projectId}/orchestrator`,
+	);
 	return {
 		isHome: pathname === "/",
+		isOrchestratorRoute,
 		activeProjectId: params.projectId,
 		activeSessionId: params.sessionId,
 		goHome: () => void navigate({ to: "/" }),
@@ -148,6 +150,8 @@ function useSelection() {
 		goGlobalSettings: () => openGlobalSettings(),
 		goSettings: (projectId: string) => openProjectSettings(projectId),
 		goProject: (projectId: string) => void navigate({ to: "/projects/$projectId", params: { projectId } }),
+		goOrchestrator: (projectId: string) =>
+			void navigate({ to: "/projects/$projectId/orchestrator", params: { projectId } }),
 		goSession: (projectId: string, sessionId: string) =>
 			void navigate({ to: "/projects/$projectId/sessions/$sessionId", params: { projectId, sessionId } }),
 	};
@@ -509,18 +513,17 @@ function ProjectItem({
 	const { t } = useTranslation();
 	const prefersReducedMotion = useReducedMotion();
 	const activeProjectMatches = selection.activeProjectId === workspace.id;
-	const dashboardActive = activeProjectMatches && !selection.activeSessionId;
+	const dashboardActive = activeProjectMatches && !selection.activeSessionId && !selection.isOrchestratorRoute;
 	const orchestratorActive =
-		activeProjectMatches &&
-		workspace.sessions.some(
-			(session) => session.id === selection.activeSessionId && session.kind === "orchestrator",
-		);
+		(activeProjectMatches && selection.isOrchestratorRoute) ||
+		(activeProjectMatches &&
+			workspace.sessions.some(
+				(session) => session.id === selection.activeSessionId && session.kind === "orchestrator",
+			));
 	const projectActive = dashboardActive || orchestratorActive;
-	const queryClient = useQueryClient();
 	const [removeError, setRemoveError] = useState<string | null>(null);
 	const [isRemoving, setIsRemoving] = useState(false);
 	const [confirmOpen, setConfirmOpen] = useState(false);
-	const [isSpawning, setIsSpawning] = useState(false);
 	const [projectPressed, setProjectPressed] = useState(false);
 	const [rowHovered, setRowHovered] = useState(false);
 	// Skip enter animation on first mount — sessions arrive async and we don't
@@ -538,35 +541,12 @@ function ProjectItem({
 	// Only termination removes a worker from the sidebar; archived sessions stay
 	// reachable through SessionsBoard.
 	const sessions = sortedWorkerSessions(workspace.sessions).filter((session) => session.isTerminated !== true);
-	// The project's live orchestrator (if any) backs the hover Orchestrator
-	// button: navigate to it when present, otherwise spawn one first.
-	const orchestrator = newestActiveOrchestrator(workspace.sessions);
+	const orchestrator = latestProjectOrchestrator(workspace.sessions);
 
-	// Mirrors ShellTopbar's launcher: attach to the running orchestrator, or
-	// spawn one via the daemon and follow it once the workspace refetches.
-	// Expand a collapsed project so opening the orchestrator also reveals its
-	// session list — otherwise the tree stays shut while you're inside it.
-	const openOrchestrator = async () => {
-		if (isProjectRestarting) return;
+	// The route owns missing/stopped/configuration/preflight states and launch semantics.
+	const openOrchestrator = () => {
 		if (!expanded) onToggle();
-		if (orchestrator) {
-			selection.goSession(workspace.id, orchestrator.id);
-			return;
-		}
-		if (!hasConfiguredOrchestratorAgent(workspace)) {
-			selection.goSettings(workspace.id);
-			return;
-		}
-		setIsSpawning(true);
-		try {
-			const sessionId = await spawnOrchestrator(workspace.id, "sidebar");
-			await queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
-			selection.goSession(workspace.id, sessionId);
-		} catch (err) {
-			console.error("Failed to spawn orchestrator:", err);
-		} finally {
-			setIsSpawning(false);
-		}
+		selection.goOrchestrator(workspace.id);
 	};
 
 	// Expanded + already on the project board → collapse. Expanded + on a
@@ -710,7 +690,7 @@ function ProjectItem({
 		type="button"
 	/>
 		</div>
-		{/* Per-project actions: orchestrator and kebab menu. Inside the scaled visual
+		{/* Per-project actions: kebab menu. Inside the scaled visual
 		row, but outside its navigation surface so their own presses stay independent.
 		Always visible (not hover-gated) to avoid CSS :hover group propagation in Chromium. */}
 		<div
@@ -722,33 +702,6 @@ function ProjectItem({
 			onClick={(event) => event.stopPropagation()}
 			onPointerDown={(event) => event.stopPropagation()}
 		>
-			<Tooltip>
-				<TooltipTrigger asChild>
-					<button
-						aria-current={orchestratorActive ? "page" : undefined}
-						aria-label={
-							orchestrator
-								? t("shell.openProjectOrchestrator", { name: workspace.name })
-								: t("shell.spawnProjectOrchestrator", { name: workspace.name })
-						}
-						className={cn(HOVER_ACTION_CLASS, orchestratorActive && "text-foreground")}
-						disabled={isSpawning || isProjectRestarting}
-						onClick={() => void openOrchestrator()}
-						type="button"
-					>
-						<OrchestratorIcon aria-hidden="true" strokeWidth={orchestratorActive ? 2.5 : 2} />
-					</button>
-				</TooltipTrigger>
-				<TooltipContent>
-					{isProjectRestarting
-						? t("shell.restarting")
-						: isSpawning
-							? t("shell.spawning")
-							: orchestrator
-								? t("shell.orchestrator")
-								: t("shell.spawnOrchestratorLower")}
-				</TooltipContent>
-			</Tooltip>
 			<DropdownMenu>
 				<DropdownMenuTrigger asChild>
 					<button aria-label={t("shell.projectActions", { name: workspace.name })} className={HOVER_ACTION_CLASS} type="button">
@@ -787,10 +740,10 @@ function ProjectItem({
 				{removeError}
 			</div>
 		) : null}
-		{/* project-sidebar__sessions: indented under the project parent so worker
-          sessions read as children without adding a persistent guide rail. */}
+		{/* The permanent orchestrator destination and worker sessions are children
+		    of the project, without a persistent guide rail. */}
 		<AnimatePresence initial={false}>
-			{expanded && sessions.length > 0 && (
+			{expanded && (
 				<motion.div
 					key="sessions"
 					initial={animReady ? { height: 0 } : false}
@@ -807,6 +760,12 @@ function ProjectItem({
 						transition={prefersReducedMotion ? { duration: 0 } : { duration: 0.14, ease: [0.25, 0.46, 0.45, 0.94] }}
 					>
 						<SidebarMenuSub className="mx-0 ml-3.5 translate-x-0 gap-px border-l-0 px-0 py-1">
+							<OrchestratorRow
+								active={orchestratorActive}
+								onOpen={openOrchestrator}
+								orchestrator={orchestrator}
+								workspace={workspace}
+							/>
 							{sessions.map((session) => (
 								<SessionRow
 									key={session.id}
@@ -859,6 +818,49 @@ function ProjectItem({
 			</ContextMenuItem>
 		</ContextMenuContent>
 		</ContextMenu>
+	);
+}
+
+function OrchestratorRow({
+	workspace,
+	orchestrator,
+	active,
+	onOpen,
+}: {
+	workspace: WorkspaceSummary;
+	orchestrator?: WorkspaceSession;
+	active: boolean;
+	onOpen: () => void;
+}) {
+	const { t } = useTranslation();
+	const state = orchestratorState(orchestrator);
+	const activity = state === "running" ? getAgentActivityView(orchestrator?.activity, t) : undefined;
+	const detail =
+		state === "running"
+			? `Running · ${activity?.label ?? "Online"}`
+			: state === "stopped"
+				? "Stopped"
+				: "Missing";
+
+	return (
+		<SidebarMenuSubItem>
+			<button
+				aria-current={active ? "page" : undefined}
+				aria-label={t("shell.openProjectOrchestrator", { name: workspace.name })}
+				className={cn(
+					"flex h-8 w-full min-w-0 items-center gap-1.5 rounded-lg px-2.5 text-left text-sm transition-[background-color,color] hover:bg-interactive-hover hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring",
+					active ? "bg-interactive-active text-foreground" : "text-muted-foreground",
+				)}
+				data-orchestrator-state={state}
+				data-testid="sidebar-orchestrator"
+				onClick={onOpen}
+				type="button"
+			>
+				<OrchestratorIcon className="size-3.5 shrink-0" aria-hidden="true" />
+				<span className="min-w-0 flex-1 truncate">{t("shell.orchestrator")}</span>
+				<span className="max-w-24 shrink-0 truncate text-2xs text-passive">{detail}</span>
+			</button>
+		</SidebarMenuSubItem>
 	);
 }
 

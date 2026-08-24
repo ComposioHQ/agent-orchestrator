@@ -1,26 +1,23 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { useNavigate, useParams } from "@tanstack/react-router";
+import { useNavigate, useParams, useRouterState } from "@tanstack/react-router";
 import { Folder, LayoutDashboard, Plus, Trash2 } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 import { animate, LayoutGroup, motion, useMotionValue, useReducedMotion } from "motion/react";
 import { NotificationCenter } from "./NotificationCenter";
 import {
 	findProjectOrchestrator,
-	hasConfiguredOrchestratorAgent,
 	isOrchestratorSession,
 	sessionIsActive,
 	type WorkspaceSession,
 } from "../types/workspace";
-import { useWorkspaceQuery, workspaceQueryKey } from "../hooks/useWorkspaceQuery";
+import { useWorkspaceQuery } from "../hooks/useWorkspaceQuery";
 import {
 	clearTerminateSessionState,
 	useProjectTerminateSessionStates,
 	useTerminateSession,
 	useTerminateSessionState,
 } from "../hooks/useTerminateSession";
-import { spawnOrchestrator } from "../lib/spawn-orchestrator";
-import { addRendererExceptionStep, captureRendererEvent, captureRendererException } from "../lib/telemetry";
 import { useUiStore } from "../stores/ui-store";
 import { OrchestratorIcon } from "./icons";
 import { OrchestratorActivityIndicator } from "./OrchestratorActivityIndicator";
@@ -74,9 +71,17 @@ export function ShellTopbar({
 } = {}) {
 	const { t } = useTranslation();
 	const navigate = useNavigate();
-	const queryClient = useQueryClient();
 	const params = useParams({ strict: false }) as { projectId?: string; sessionId?: string };
-	const currentSessionId = params.sessionId;
+	const pathname = useRouterState({ select: (state) => state.location.pathname });
+	const isStableOrchestratorRoute = Boolean(
+		params.projectId && pathname === `/projects/${params.projectId}/orchestrator`,
+	);
+	const all = useWorkspaceQuery().data ?? [];
+	const stableOrchestrator =
+		isStableOrchestratorRoute && params.projectId
+			? findProjectOrchestrator(all, params.projectId)
+			: undefined;
+	const currentSessionId = params.sessionId ?? stableOrchestrator?.id;
 	const isInspectorOpen = useUiStore((state) =>
 		currentSessionId ? (state.inspectorSessions[currentSessionId]?.isOpen ?? true) : false,
 	);
@@ -104,15 +109,10 @@ export function ShellTopbar({
 		);
 		return controls.stop;
 	}, [targetPaddingLeft, paddingLeft, prefersReducedMotion]);
-	const [isSpawning, setIsSpawning] = useState(false);
-	// Board-scope spawn failures surface where the board actions render.
-	const [boardSpawnError, setBoardSpawnError] = useState<string | null>(null);
-	const all = useWorkspaceQuery().data ?? [];
-
-	const session = params.sessionId
-		? all.flatMap((workspace) => workspace.sessions).find((s) => s.id === params.sessionId)
+	const session = currentSessionId
+		? all.flatMap((workspace) => workspace.sessions).find((s) => s.id === currentSessionId)
 		: undefined;
-	const isSessionRoute = Boolean(params.sessionId);
+	const isSessionRoute = Boolean(params.sessionId) || isStableOrchestratorRoute;
 	const isOrchestrator = session ? isOrchestratorSession(session) : false;
 	// Project in scope: the session's workspace wins over the route param so the
 	// cross-project /sessions/$sessionId route still resolves a crumb. A
@@ -127,12 +127,8 @@ export function ShellTopbar({
 	const orchestrator = projectId ? findProjectOrchestrator(all, projectId) : undefined;
 	const orchestratorActivityLabel = orchestrator ? getAgentActivityView(orchestrator.activity, t).label : undefined;
 	const isProjectRestarting = projectId ? restartingProjectIds.has(projectId) : false;
-	const orchestratorActionLabel = orchestrator ? t("shell.openOrchestrator") : t("shell.spawnOrchestrator");
-	const orchestratorTooltip = isProjectRestarting
-		? t("shell.restarting")
-		: isSpawning
-			? t("shell.spawning")
-			: orchestratorActionLabel;
+	const orchestratorActionLabel = t("shell.openOrchestrator");
+	const orchestratorTooltip = isProjectRestarting ? t("shell.restarting") : orchestratorActionLabel;
 
 	const openBoard = () =>
 		projectId ? void navigate({ to: "/projects/$projectId", params: { projectId } }) : void navigate({ to: "/" });
@@ -142,49 +138,9 @@ export function ShellTopbar({
 		requestNewTask(projectId);
 	};
 
-	const openOrchestrator = async () => {
+	const openOrchestrator = () => {
 		if (!projectId) return;
-		setBoardSpawnError(null);
-		void addRendererExceptionStep("Orchestrator open requested", {
-			source: "orchestrator-open",
-			operation: "open_orchestrator",
-			surface: isSessionRoute ? "session_detail" : "project_board",
-			project_id: projectId,
-		});
-		void captureRendererEvent("ao.renderer.orchestrator_open_requested", { project_id: projectId });
-		if (orchestrator) {
-			void navigate({
-				to: "/projects/$projectId/sessions/$sessionId",
-				params: { projectId, sessionId: orchestrator.id },
-			});
-			return;
-		}
-		if (!hasConfiguredOrchestratorAgent(project)) {
-			if (project) {
-				useUiStore.getState().openProjectSettings(projectId);
-			}
-			return;
-		}
-		setIsSpawning(true);
-		try {
-			const sessionId = await spawnOrchestrator(projectId, "topbar");
-			await queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
-			void navigate({
-				to: "/projects/$projectId/sessions/$sessionId",
-				params: { projectId, sessionId },
-			});
-		} catch (error) {
-			void captureRendererException(error, {
-				source: "orchestrator-open",
-				operation: "open_orchestrator",
-				surface: isSessionRoute ? "session_detail" : "project_board",
-				project_id: projectId,
-			});
-			console.error("Failed to spawn orchestrator:", error);
-			setBoardSpawnError(error instanceof Error ? error.message : t("shell.couldNotSpawn"));
-		} finally {
-			setIsSpawning(false);
-		}
+		void navigate({ to: "/projects/$projectId/orchestrator", params: { projectId } });
 	};
 
 	return (
@@ -230,11 +186,6 @@ export function ShellTopbar({
 			<div className="workspace-topbar-actions flex shrink-0 items-center" data-testid="workspace-topbar-actions">
 				{!boardActionsInPanel && isProjectBoardRoute ? (
 					<>
-						{boardSpawnError ? (
-							<TopbarActionError className="max-w-content-max truncate" title={boardSpawnError}>
-								{boardSpawnError}
-							</TopbarActionError>
-						) : null}
 						<Tooltip>
 							<TooltipTrigger asChild>
 								<span className="inline-flex" style={noDragStyle}>
@@ -262,10 +213,10 @@ export function ShellTopbar({
 												? t("shell.orchestratorWithActivity", { activity: orchestratorActivityLabel })
 												: orchestratorActionLabel
 										}
-										className="topbar-control--labeled"
-										data-priority="secondary"
-										disabled={isSpawning || isProjectRestarting}
-										onClick={() => void openOrchestrator()}
+									className="topbar-control--labeled"
+									data-priority="secondary"
+									disabled={isProjectRestarting}
+									onClick={openOrchestrator}
 										variant="primary"
 									>
 										<OrchestratorIcon className="size-icon-md" aria-hidden="true" />
@@ -354,15 +305,11 @@ export function ShellTopbar({
 										key={session.id}
 										session={session}
 										orchestratorId={orchestrator?.id}
-										onKilled={(workspaceId, orchestratorId) => {
-											if (orchestratorId) {
-												void navigate({
-													to: "/projects/$projectId/sessions/$sessionId",
-													params: { projectId: workspaceId, sessionId: orchestratorId },
-												});
-												return;
-											}
-											void navigate({ to: "/projects/$projectId", params: { projectId: workspaceId } });
+										onKilled={(workspaceId) => {
+											void navigate({
+												to: "/projects/$projectId/orchestrator",
+												params: { projectId: workspaceId },
+											});
 										}}
 									/>
 								) : null}
@@ -373,15 +320,18 @@ export function ShellTopbar({
 								<TooltipTrigger asChild>
 									<span className="inline-flex" style={noDragStyle}>
 										<TopbarButton
-											aria-label={t("shell.openOrchestrator")}
-											className="topbar-control--labeled"
-											data-priority="secondary"
-											disabled={isSpawning || isProjectRestarting}
-											onClick={() => void openOrchestrator()}
-											variant="primary"
-										>
-											<OrchestratorIcon className="size-icon-md" aria-hidden="true" />
-											<span data-compact-label>{t("shell.orchestrator")}</span>
+										aria-label={t("shell.openOrchestrator")}
+										className="topbar-control--labeled"
+										data-priority="secondary"
+										disabled={isProjectRestarting}
+										onClick={openOrchestrator}
+										variant="primary"
+										data-testid="worker-orchestrator-origin"
+									>
+										<OrchestratorIcon className="size-icon-md" aria-hidden="true" />
+										<span data-compact-label>
+											{t("shell.orchestratorOrigin", { name: t("shell.orchestrator") })}
+										</span>
 										</TopbarButton>
 									</span>
 								</TooltipTrigger>

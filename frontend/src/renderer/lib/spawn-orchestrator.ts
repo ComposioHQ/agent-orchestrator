@@ -1,5 +1,5 @@
 import { apiClient, apiErrorCode, apiErrorMessage, apiErrorRequestId } from "./api-client";
-import type { OrchestratorSpawnSource } from "./orchestrator-spawn-sources";
+import type { OrchestratorSpawnSource as ExistingOrchestratorSpawnSource } from "./orchestrator-spawn-sources";
 import { captureRendererEvent } from "./telemetry";
 import type { SessionMode } from "../types/conversation";
 
@@ -8,7 +8,10 @@ import type { SessionMode } from "../types/conversation";
 // right after a project is added. Emitting the triad from inside
 // spawnOrchestrator (keyed by source) guarantees each path reports, instead of
 // each call site remembering to instrument itself.
-export type { OrchestratorSpawnSource };
+export type OrchestratorSpawnSource =
+	| ExistingOrchestratorSpawnSource
+	| "orchestrator_route"
+	| "project_clone";
 
 const CHAT_PREFLIGHT_CODES = new Set([
 	"SESSION_MODE_UNSUPPORTED",
@@ -36,6 +39,22 @@ export function isChatPreflightCode(code?: string): boolean {
 
 export function isChatPreflightError(error: unknown): error is OrchestratorSpawnError {
 	return error instanceof OrchestratorSpawnError && isChatPreflightCode(error.code);
+}
+
+/** Honest, actionable copy for Chat preflight failures on the orchestrator destination. */
+export function chatPreflightGuidance(code?: string): string | undefined {
+	switch (code) {
+		case "SESSION_MODE_UNSUPPORTED":
+			return "The configured orchestrator agent does not support Chat sessions.";
+		case "CHAT_DRIVER_UNAVAILABLE":
+			return "The configured orchestrator agent has no Chat driver available on this machine.";
+		case "CHAT_DRIVER_INCOMPATIBLE":
+			return "The configured orchestrator agent's Chat driver is incompatible with this AO build.";
+		case "CHAT_AUTH_REQUIRED":
+			return "The configured orchestrator agent must be signed in before it can start a Chat session.";
+		default:
+			return undefined;
+	}
 }
 
 /** Spawn the project's orchestrator session via the daemon API. When clean is

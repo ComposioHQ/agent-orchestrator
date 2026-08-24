@@ -31,6 +31,7 @@ import { usesPreviewWorkspaceData } from "../lib/preview-mode";
 import { addRendererExceptionStep, captureRendererEvent, captureRendererException } from "../lib/telemetry";
 import { ShellProvider } from "../lib/shell-context";
 import { restartProjectOrchestrator } from "../lib/restart-orchestrator";
+import { spawnOrchestrator } from "../lib/spawn-orchestrator";
 import { captureOrchestratorReplacementFailure } from "../lib/orchestrator-replacement-telemetry";
 import { applyDocumentTheme, applyDocumentThemeStyle } from "../lib/theme";
 import { aoBridge } from "../lib/bridge";
@@ -45,7 +46,7 @@ import {
 } from "../lib/platform";
 import { useUiStore } from "../stores/ui-store";
 import { matchesRendererShortcut } from "../stores/keybindings-store";
-import { sessionIsActive, toProjectKind, type WorkspaceSummary } from "../types/workspace";
+import { findProjectOrchestrator, sessionIsActive, toProjectKind, type WorkspaceSummary } from "../types/workspace";
 import type { components } from "../../api/schema";
 import { useAgentInventoryTelemetry } from "../hooks/useAgentInventoryTelemetry";
 
@@ -141,6 +142,13 @@ function ShellLayout() {
 	const [isKeyboardShortcutsOpen, setIsKeyboardShortcutsOpen] = useState(false);
 	const [isKeyboardShortcutsSettingsOpen, setIsKeyboardShortcutsSettingsOpen] = useState(false);
 	const routeParams = useParams({ strict: false }) as { projectId?: string; sessionId?: string };
+	const isOrchestratorRoute = Boolean(matchRoute({ to: "/projects/$projectId/orchestrator" }));
+	const orchestratorRouteSessionId =
+		isOrchestratorRoute && routeParams.projectId
+			? findProjectOrchestrator(workspaces, routeParams.projectId)?.id
+			: undefined;
+	const activeSessionId = routeParams.sessionId ?? orchestratorRouteSessionId;
+	const isSessionSurface = Boolean(routeParams.sessionId) || isOrchestratorRoute;
 	useEffect(() => {
 		document.addEventListener("click", handleModifierLinkClick);
 		return () => document.removeEventListener("click", handleModifierLinkClick);
@@ -206,8 +214,8 @@ function ShellLayout() {
 	// detail view, where the URL carries only a sessionId).
 	const scopedProjectId = routeParams.projectId
 		? routeParams.projectId
-		: routeParams.sessionId
-			? workspaces.find((workspace) => workspace.sessions.some((session) => session.id === routeParams.sessionId))?.id
+		: activeSessionId
+			? workspaces.find((workspace) => workspace.sessions.some((session) => session.id === activeSessionId))?.id
 			: undefined;
 	// Warms the New Task composer's model-catalog cache while the user is just
 	// looking at the project, so the picker never shows a loading flash the
@@ -265,7 +273,7 @@ function ShellLayout() {
 				sessionIsActive,
 			);
 			if (sessions.length === 0) return;
-			const currentIndex = sessions.findIndex((session) => session.id === routeParams.sessionId);
+			const currentIndex = sessions.findIndex((session) => session.id === activeSessionId);
 			const nextIndex =
 				currentIndex === -1
 					? direction === 1
@@ -273,13 +281,13 @@ function ShellLayout() {
 						: sessions.length - 1
 					: (currentIndex + direction + sessions.length) % sessions.length;
 			const session = sessions[nextIndex];
-			if (!session || session.id === routeParams.sessionId) return;
+			if (!session || session.id === activeSessionId) return;
 			void navigate({
 				to: "/projects/$projectId/sessions/$sessionId",
 				params: { projectId: scopedProjectId, sessionId: session.id },
 			});
 		},
-		[navigate, routeParams.sessionId, scopedProjectId, workspaces],
+		[activeSessionId, navigate, scopedProjectId, workspaces],
 	);
 
 	const updateWorkspaces = useCallback(
@@ -309,43 +317,17 @@ function ShellLayout() {
 			updateWorkspaces((current) => [workspace, ...current.filter((item) => item.id !== workspace.id)]);
 			setOrchestratorStartupError(workspace.id, null);
 			try {
-				void captureRendererEvent("ao.renderer.orchestrator_spawn_requested", {
-					project_id: workspace.id,
-					source,
-				});
-				const {
-					data: spawnData,
-					error: spawnError,
-					response: spawnResponse,
-				} = await apiClient.POST("/api/v1/sessions", {
-					body: {
-						projectId: workspace.id,
-						kind: "orchestrator",
-						harness: input.orchestratorAgent as components["schemas"]["SpawnSessionRequest"]["harness"],
-					},
-				});
-				if (spawnError || !spawnData?.session?.id) {
-					const message = spawnError
-						? apiErrorMessage(spawnError, `Failed to spawn orchestrator (${spawnResponse.status})`)
-						: `Failed to spawn orchestrator (${spawnResponse.status})`;
-					throw new Error(message);
-				}
-				void captureRendererEvent("ao.renderer.orchestrator_spawn_succeeded", {
-					project_id: workspace.id,
-					source,
-				});
-				const sessionId = spawnData.session.id;
+				await spawnOrchestrator(workspace.id, source, false, "chat");
 				await queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
 				void navigate({
-					to: "/projects/$projectId/sessions/$sessionId",
-					params: { projectId: workspace.id, sessionId },
+					to: "/projects/$projectId/orchestrator",
+					params: { projectId: workspace.id },
 				});
 			} catch (spawnError) {
-				void captureRendererEvent("ao.renderer.orchestrator_spawn_failed", {
-					project_id: workspace.id,
-					source,
+				void navigate({
+					to: "/projects/$projectId/orchestrator",
+					params: { projectId: workspace.id },
 				});
-				void navigate({ to: "/projects/$projectId", params: { projectId: workspace.id } });
 				const message = spawnError instanceof Error ? spawnError.message : "Could not start orchestrator";
 				const startupMessage = `Project added, but orchestrator did not start: ${message}`;
 				setOrchestratorStartupError(workspace.id, startupMessage);
@@ -648,11 +630,11 @@ function ShellLayout() {
 		if (handledShellNonceRef.current === newShellTerminalNonce) return;
 		handledShellNonceRef.current = newShellTerminalNonce;
 		openShellTerminal.mutate(
-			{ projectId: scopedProjectId, sessionId: routeParams.sessionId },
+			{ projectId: scopedProjectId, sessionId: activeSessionId },
 			{
 				onSuccess: (shell) => {
 					setActiveShellTerminal(shell.handleId);
-					if (!routeParams.sessionId) {
+					if (!activeSessionId) {
 						void navigate({ to: "/terminals" });
 					}
 				},
@@ -662,7 +644,7 @@ function ShellLayout() {
 		newShellTerminalNonce,
 		openShellTerminal,
 		scopedProjectId,
-		routeParams.sessionId,
+		activeSessionId,
 		navigate,
 		setActiveShellTerminal,
 	]);
@@ -757,7 +739,7 @@ function ShellLayout() {
             macOS/Linux. */}
 				<WindowTitlebar />
 				{/* App routes render their topbar inside the framed panel, matching the board chrome across platforms while leaving OS titlebars native. */}
-				{!framedAppTopbar && !hideShellTopbar && !routeParams.sessionId ? <ShellTopbar /> : null}
+				{!framedAppTopbar && !hideShellTopbar && !isSessionSurface ? <ShellTopbar /> : null}
 				{/* Controlled by the ui-store so TitlebarNav / Topbar toggles (which
             call the store directly) stay in sync. --sidebar-width chains to
             the drag-resizable --ao-sidebar-w set on :root by useResizable. */}
@@ -798,15 +780,15 @@ function ShellLayout() {
 									<Outlet />
 								) : (
 							// Platform hides shell topbar: full-height panel; session mounts actions in-panel.
-							<CenterPanelShell className={routeParams.sessionId ? "center-panel-shell--session" : undefined}>
+							<CenterPanelShell className={isSessionSurface ? "center-panel-shell--session" : undefined}>
 								<div className="flex min-h-0 flex-1 flex-col">
 									<Outlet />
 								</div>
 							</CenterPanelShell>
 						)
 					) : framedAppTopbar ? (
-						<CenterPanelShell className={routeParams.sessionId ? "center-panel-shell--session" : undefined}>
-							{routeParams.sessionId ? null : (
+						<CenterPanelShell className={isSessionSurface ? "center-panel-shell--session" : undefined}>
+							{isSessionSurface ? null : (
 								<ShellTopbar />
 							)}
 							<div className="flex min-h-0 flex-1 flex-col">
@@ -814,7 +796,7 @@ function ShellLayout() {
 							</div>
 						</CenterPanelShell>
 					) : (
-						<CenterPanelShell className={routeParams.sessionId ? "center-panel-shell--session" : undefined}>
+						<CenterPanelShell className={isSessionSurface ? "center-panel-shell--session" : undefined}>
 							<div className="flex min-h-0 flex-1 flex-col">
 								<Outlet />
 							</div>
@@ -848,7 +830,7 @@ function ShellLayout() {
               Rendered first, real clicks get swallowed by window-drag even
               though DOM hit-testing looks correct. */}
 					<TitlebarNav
-						hasSessionTopbar={Boolean(routeParams.sessionId)}
+						hasSessionTopbar={isSessionSurface}
 						historyLocked={isWelcomeBoard}
 						isFullScreen={isFullScreen}
 					/>
