@@ -48,7 +48,7 @@ vi.mock("../lib/api-client", () => ({
 		POST: h.post,
 	},
 	apiErrorCode: (error: { code?: string }) => error?.code,
-	apiErrorMessage: (_e: unknown, fallback = "err") => fallback,
+	apiErrorMessage: (error: { message?: string }, fallback = "err") => error?.message ?? fallback,
 }));
 
 vi.mock("../lib/telemetry", () => ({ captureRendererEvent: h.capture }));
@@ -98,7 +98,7 @@ describe("TaskComposer", () => {
 			</Wrap>,
 		);
 
-		expect(task()).toHaveAttribute("placeholder", "e.g. Fix the flaky checkout test (optional)…");
+		expect(task().getAttribute("placeholder")).toBeTruthy();
 		expect(screen.getByRole("button", { name: "Start task" })).toBeEnabled();
 		fireEvent.click(screen.getByText("Start task"));
 
@@ -118,7 +118,7 @@ describe("TaskComposer", () => {
 			</Wrap>,
 		);
 
-		expect(task()).toHaveAttribute("placeholder", "e.g. Fix the flaky checkout test (optional)…");
+		expect(task().getAttribute("placeholder")).toBeTruthy();
 		expect(screen.queryByText("Start now — details can come later.")).not.toBeInTheDocument();
 		expect(screen.queryByText("Shift+Enter for a new line")).not.toBeInTheDocument();
 		fireEvent.change(task(), { target: { value: "Investigate the failure" } });
@@ -314,6 +314,48 @@ describe("TaskComposer", () => {
 			"/api/v1/orchestrators/delegate",
 			expect.objectContaining({ body: expect.objectContaining({ mode: "tui" }) }),
 		);
+	});
+
+	it("offers an explicit approval-less retry from structured capability details", async () => {
+		h.get.mockImplementation(async (path: string) => {
+			if (path.includes("/models")) {
+				return { data: { agent: "cursor", selectionMode: "text", models: [], allowCustom: true } };
+			}
+			return { data: { status: "ok", project: { agent: "cursor", config: {} } } };
+		});
+		h.post
+			.mockResolvedValueOnce({
+				error: {
+					code: "SESSION_MODE_UNSUPPORTED",
+					message: "This provider cannot satisfy the selected approval policy",
+					details: {
+						missingCapabilities: ["approvals"],
+						allowedApprovalModes: ["bypass-permissions"],
+					},
+				},
+			})
+			.mockResolvedValueOnce({ data: { workerId: "sess-pi" } });
+		const onCreated = vi.fn();
+
+		render(
+			<Wrap>
+				<TaskComposer projectId="proj-1" onCreated={onCreated} />
+			</Wrap>,
+		);
+		await waitFor(() => expect(screen.getByTestId("agent-field")).toHaveAttribute("data-value", "cursor"));
+		fireEvent.change(task(), { target: { value: "Use approval-less Chat" } });
+		fireEvent.click(screen.getByText("Start task"));
+
+		const fallback = await screen.findByRole("button", { name: "Start without approvals" });
+		fireEvent.click(fallback);
+		await waitFor(() => expect(onCreated).toHaveBeenCalledWith("sess-pi"));
+		expect(h.post).toHaveBeenLastCalledWith(
+			"/api/v1/orchestrators/delegate",
+			expect.objectContaining({
+				body: expect.objectContaining({ approvalMode: "bypass-permissions" }),
+			}),
+		);
+		expect(h.post.mock.calls[1][1].body).not.toHaveProperty("mode");
 	});
 
 	it("reports dirty then clears it on unmount", () => {

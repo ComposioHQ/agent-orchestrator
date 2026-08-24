@@ -4,11 +4,32 @@ import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { agentSwitchesQueryKey } from "../../hooks/useAgentSwitches";
+import type { ConversationSnapshot } from "../../types/conversation";
 import type { AgentSwitchSummary, WorkspaceSession } from "../../types/workspace";
 import { useUiStore } from "../../stores/ui-store";
 import { workspaceQueryKey } from "../../hooks/useWorkspaceQuery";
 
 const LINK = "http://localhost:5173";
+
+function snapshotFor(sessionId: string): ConversationSnapshot & { capabilities: string[] } {
+	return {
+		activeBranchId: "branch-root",
+		branchPoints: [],
+		capabilities: [],
+		conversationId: `conv-${sessionId}`,
+		sessionId,
+		harness: "codex",
+		mode: "chat",
+		controller: { state: "ready" },
+		items: [],
+		turns: [],
+		settings: {},
+		mcpServers: [],
+		oldestSequence: 0,
+		latestSequence: 0,
+		hasMoreBefore: false,
+	};
+}
 
 const { getMock, postMock, conversationState, agentSwitchState } = vi.hoisted(() => ({
 	getMock: vi.fn(),
@@ -33,7 +54,12 @@ vi.mock("../../lib/api-client", () => ({
 }));
 
 vi.mock("../../hooks/useConversation", () => ({
-	useConversation: () => conversationState,
+	useConversation: (sessionId: string) => ({
+		...conversationState,
+		snapshot: conversationState.snapshot
+			? { ...snapshotFor(sessionId), ...conversationState.snapshot }
+			: snapshotFor(sessionId),
+	}),
 	useConversationCommands: () => ({}),
 	useConversationConfigOptions: () => ({ options: [] }),
 	useConversationModels: () => ({ models: [] }),
@@ -42,28 +68,41 @@ vi.mock("../../hooks/useConversation", () => ({
 	useWorkspaceFilePaths: () => ({ paths: [], truncated: false }),
 }));
 
-vi.mock("./ChatWorkspace", () => ({
-	ChatWorkspace: ({
-		agentInputDisabled,
-		onLinkOpen,
-		switchAgentControl,
-		shellTarget,
-	}: {
-		agentInputDisabled?: boolean;
-		onLinkOpen?: (url: string) => void;
-		switchAgentControl?: ReactNode;
-		shellTarget?: { handleId: string };
-	}) => (
-		<div>
-			<div data-testid="chat-agent-input" data-disabled={agentInputDisabled ? "true" : "false"} />
-			<button type="button" onClick={() => onLinkOpen?.(LINK)}>
-				Open chat link
-			</button>
-			{shellTarget ? <div data-testid="shell-target">{shellTarget.handleId}</div> : null}
-			{switchAgentControl}
-		</div>
-	),
-}));
+vi.mock("./ChatWorkspace", async () => {
+	const { useState } = await vi.importActual<typeof import("react")>("react");
+	return {
+		ChatWorkspace: ({
+			agentInputDisabled,
+			onLinkOpen,
+			snapshot,
+			switchAgentControl,
+			shellTarget,
+		}: {
+			agentInputDisabled?: boolean;
+			onLinkOpen?: (url: string) => void;
+			snapshot: { sessionId?: string };
+			switchAgentControl?: ReactNode;
+			shellTarget?: { handleId: string };
+		}) => {
+			const [mountedSessionId] = useState(snapshot.sessionId);
+			return (
+				<div>
+					<div
+						data-testid="chat-agent-input"
+						data-disabled={agentInputDisabled ? "true" : "false"}
+					/>
+					{snapshot.sessionId ? <div>Mounted {mountedSessionId}</div> : null}
+					{snapshot.sessionId ? <div>Rendered {snapshot.sessionId}</div> : null}
+					<button type="button" onClick={() => onLinkOpen?.(LINK)}>
+						Open chat link
+					</button>
+					{shellTarget ? <div data-testid="shell-target">{shellTarget.handleId}</div> : null}
+					{switchAgentControl}
+				</div>
+			);
+		},
+	};
+});
 
 vi.mock("../TerminalSwitchAgentButton", () => ({
 	TerminalSwitchAgentButton: ({ presentation }: { presentation?: { outcome: string } }) => (
@@ -426,5 +465,34 @@ describe("SessionChatSurface link routing", () => {
 
 		expect(screen.getByTestId("shell-target")).toHaveTextContent("shell-1");
 		expect(screen.queryByText("Conversation unavailable")).not.toBeInTheDocument();
+	});
+
+	it("remounts the chat workspace when switching between chat sessions", () => {
+		const first = { ...session, id: "proj-orchestrator-1", kind: "orchestrator" as const };
+		const second = { ...session, id: "proj-orchestrator-2", kind: "orchestrator" as const };
+		const queryClient = new QueryClient({
+			defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+		});
+		conversationState.snapshot = snapshotFor(first.id);
+
+		const view = render(
+			<Wrapper client={queryClient}>
+				<SessionChatSurface session={first} />
+			</Wrapper>,
+		);
+
+		expect(screen.getByText("Mounted proj-orchestrator-1")).toBeInTheDocument();
+		expect(screen.getByText("Rendered proj-orchestrator-1")).toBeInTheDocument();
+
+		conversationState.snapshot = snapshotFor(second.id);
+		view.rerender(
+			<Wrapper client={queryClient}>
+				<SessionChatSurface session={second} />
+			</Wrapper>,
+		);
+
+		expect(screen.getByText("Mounted proj-orchestrator-2")).toBeInTheDocument();
+		expect(screen.getByText("Rendered proj-orchestrator-2")).toBeInTheDocument();
+		expect(screen.queryByText("Mounted proj-orchestrator-1")).not.toBeInTheDocument();
 	});
 });

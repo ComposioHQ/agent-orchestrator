@@ -38,6 +38,7 @@ const (
 // the SQLite store.
 type Store interface {
 	CreateConversation(ctx context.Context, id string, scope domain.ConversationScope, project domain.ProjectID, session domain.SessionID, now time.Time) (domain.ConversationRecord, error)
+	CreateProjectConversationWithContextReset(ctx context.Context, id string, project domain.ProjectID, session domain.SessionID, reset domain.ConversationActivity, now time.Time) (domain.ConversationRecord, error)
 	ConversationForSession(ctx context.Context, session domain.SessionID) (domain.ConversationRecord, error)
 	ClaimChatControllerGeneration(ctx context.Context, session domain.SessionID, generation string, now time.Time) error
 	ConversationBranch(ctx context.Context, conversationID, branchID string) (domain.ConversationBranch, error)
@@ -299,6 +300,26 @@ func (p *nativeHistoryCheckpoint) captureAOHighWater(
 	messages []domain.ConversationMessage,
 	activities []domain.ConversationActivity,
 ) {
+	turnsByID := make(map[string]*domain.ConversationTurn, len(turns))
+	for i := range turns {
+		turnsByID[turns[i].ID] = &turns[i]
+	}
+	// An agent switch starts a new provider-native thread with an AO coordination
+	// turn. Completed turns before it belong to the previous provider: their
+	// opaque ids remain useful timeline facts, but the new provider cannot replay
+	// them and they must not gate this native-history import.
+	var providerBoundary time.Time
+	for _, message := range messages {
+		turn := turnsByID[message.TurnID]
+		if turn == nil || message.Role != domain.MessageRoleUser ||
+			!nativeHistoryCoordinationMessage(message.Text) {
+			continue
+		}
+		if turn.RequestedAt.After(providerBoundary) {
+			providerBoundary = turn.RequestedAt
+		}
+	}
+
 	var latest *domain.ConversationTurn
 	for i := range turns {
 		turn := &turns[i]
@@ -308,7 +329,8 @@ func (p *nativeHistoryCheckpoint) captureAOHighWater(
 		// pre-failure transcript entry, leaving the failed turn (e.g. a synthetic
 		// auth-error message) on a dead branch that session/load never replays.
 		// Requiring one of those items would make every future switch time out.
-		if turn.HandledBySessionID != sessionID || turn.State != domain.TurnStateCompleted || turn.ProviderTurnID == "" {
+		if turn.HandledBySessionID != sessionID || turn.State != domain.TurnStateCompleted || turn.ProviderTurnID == "" ||
+			(!providerBoundary.IsZero() && !turn.RequestedAt.After(providerBoundary)) {
 			continue
 		}
 		if latest == nil || turn.RequestedAt.After(latest.RequestedAt) {
@@ -744,14 +766,25 @@ func reconcileNativeHistory(
 			continue
 		}
 		event.ProviderTurnID = candidate.providerTurnID
-		// A replay has no portable ACP turn-outcome field. Do not overwrite AO's
-		// known interrupted/failed result with the adapter's synthetic "completed".
-		if event.Kind == ports.ChatEventTurnCompleted && candidate.state.Terminal() {
+		// A replay may have no portable turn-outcome field. Preserve AO's stronger
+		// known result only when the adapter reports recovered. Conversely, a known
+		// replay outcome upgrades an older recovered observation.
+		if event.Kind == ports.ChatEventTurnCompleted &&
+			event.TurnState == domain.TurnStateRecovered && knownTurnOutcome(candidate.state) {
 			event.TurnState = candidate.state
 		}
 		reconciled = append(reconciled, event)
 	}
 	return reconciled
+}
+
+func knownTurnOutcome(state domain.TurnState) bool {
+	switch state {
+	case domain.TurnStateCompleted, domain.TurnStateInterrupted, domain.TurnStateFailed:
+		return true
+	default:
+		return false
+	}
 }
 
 // rateLimitReadTimeout bounds the startup quota read. It is a local IPC call, and
@@ -2564,7 +2597,11 @@ func mergeApprovalDetail(event ports.ChatEvent) []byte {
 	}
 	decisions := make([]map[string]string, 0, len(event.Decisions))
 	for _, option := range event.Decisions {
-		decisions = append(decisions, map[string]string{"id": option.ID, "label": option.Label})
+		decision := map[string]string{"id": option.ID, "label": option.Label}
+		if option.Kind != "" {
+			decision["kind"] = string(option.Kind)
+		}
+		decisions = append(decisions, decision)
 	}
 	merged["decisions"] = decisions
 	encoded, err := json.Marshal(merged)

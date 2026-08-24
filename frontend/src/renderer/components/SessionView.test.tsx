@@ -374,12 +374,14 @@ vi.mock("./SessionInspector", () => ({
 		filesView,
 		isInspectorVisible = true,
 		onOpenFiles,
+		onOpenReviewFile,
 		onToggleBrowserPopOut,
 		view,
 	}: {
 		filesView?: ReactNode;
 		isInspectorVisible?: boolean;
 		onOpenFiles?: () => void;
+		onOpenReviewFile?: (target: { line?: number; path: string }) => void;
 		onToggleBrowserPopOut?: () => void;
 		view?: string;
 	}) => {
@@ -391,6 +393,9 @@ vi.mock("./SessionInspector", () => ({
 				</button>
 				<button type="button" onClick={onOpenFiles}>
 					open files
+				</button>
+				<button type="button" onClick={() => onOpenReviewFile?.({ path: "src/panel.tsx", line: 42 })}>
+					view review file
 				</button>
 				{view === "files" ? filesView : null}
 			</div>
@@ -788,6 +793,33 @@ describe("SessionView", () => {
 		view.unmount();
 		render(<SessionView sessionId="sess-1" />);
 		expect(screen.queryByText(transition.errorDetail)).not.toBeInTheDocument();
+	});
+
+	it("returns to the source terminal while a failed Chat switch mode refetch settles", () => {
+		const session = workerSession("sess-1");
+		// The workspace cache observed the transition's intermediate mode commit,
+		// but the durable transition already says the target failed and rolled back.
+		session.mode = "chat";
+		const transition = {
+			id: "transition-failed",
+			sessionId: "sess-1",
+			sourceMode: "tui" as const,
+			targetMode: "chat" as const,
+			policy: "drain" as const,
+			phase: "failed" as const,
+			errorCode: "TARGET_HISTORY_UNSETTLED",
+			errorDetail: "The native conversation history did not settle.",
+			createdAt: "2026-08-23T17:00:00Z",
+			updatedAt: "2026-08-23T17:01:00Z",
+			completedAt: "2026-08-23T17:01:00Z",
+		};
+		interfaceTransitionState.status = { supported: true, targetMode: "chat", transition };
+
+		render(<SessionView sessionId="sess-1" />);
+
+		expect(screen.getByText("terminal center")).toBeInTheDocument();
+		expect(screen.queryByTestId("chat-surface")).not.toBeInTheDocument();
+		expect(screen.getByText(transition.errorDetail)).toBeInTheDocument();
 	});
 
 	it.each([
@@ -1309,6 +1341,18 @@ describe("SessionView", () => {
 		fireEvent.click(screen.getByRole("button", { name: "select agent tab" }));
 		expect(screen.queryByTestId("session-file-workspace")).not.toBeInTheDocument();
 		expect(screen.getByRole("tab", { name: "App.tsx" })).toHaveAttribute("aria-selected", "false");
+	});
+
+	it("opens a review file target in a center tab and keeps the Files inspector visible", () => {
+		act(() => useUiStore.getState().setInspectorOpen("sess-1", true));
+		render(<SessionView sessionId="sess-1" />);
+
+		fireEvent.click(screen.getByRole("button", { name: "view review file" }));
+
+		expect(screen.getByRole("tab", { name: "panel.tsx" })).toHaveAttribute("aria-selected", "true");
+		expect(screen.getByTestId("session-file-workspace")).toHaveTextContent("src/panel.tsx");
+		expect(useUiStore.getState().inspectorSessions["sess-1"]?.view).toBe("files");
+		expect(screen.queryByRole("button", { name: "files center" })).not.toBeInTheDocument();
 	});
 
 	it("maximizes files over the whole app window and returns to the rail", () => {

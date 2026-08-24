@@ -30,6 +30,9 @@ import {
 import { listFeatureBuilds, getActiveFeatureBuild } from "./main/feature-builds";
 import { readUpdateSettings, type UpdateSettings, type UpdateStatus } from "./main/update-settings";
 import { readKeybindingOverrides, writeKeybindingOverrides } from "./main/keybinding-settings";
+import { readEditorSettings, writeEditorPreference } from "./main/editor-settings";
+import { createEditorHandoff } from "./main/editor-handoff";
+import { launchCommand } from "./main/launch-command";
 import {
 	decideRelocation,
 	inspectInstalledBundle,
@@ -96,7 +99,7 @@ import { keepDaemonAlive, shouldLinkOnAttach } from "./main/daemon-owner";
 import { readMigrationState, updateMigration, writeAppStateMarker, type MigrationState } from "./main/app-state";
 import { isAllowedAppExternalURL, openAllowedAppExternalURL } from "./main/external-open";
 import { dockBounceType, shouldReplaceBounce, shouldSignalAttention, shouldToast } from "./main/notification-signals";
-import { buildWindowsAppMenuTemplate } from "./main/menu";
+import { buildMacAppMenuTemplate, buildWindowsAppMenuTemplate } from "./main/menu";
 import { ancestorRepositorySetupWarning, scanImportFolder } from "./main/import-folder-scan";
 import { parseOpenFolderPathArg } from "./main/open-folder-arg";
 
@@ -441,11 +444,28 @@ async function createWindowInternal(): Promise<void> {
 	// On Windows the app paints its own title bar (WindowTitlebar), so the native
 	// menu bar is hidden (autoHideMenuBar above). The role-based menu is still
 	// installed so its accelerators keep working and act on the focused pane;
-	// setMenuBarVisibility(false) keeps the strip itself out of view. macOS/Linux
-	// keep their native menus.
+	// setMenuBarVisibility(false) keeps the strip itself out of view. macOS gets
+	// an explicit menu so DevTools avoids Electron's unsafe built-in role; Linux
+	// keeps its native menu.
 	if (process.platform === "win32") {
 		Menu.setApplicationMenu(buildWindowsAppMenu());
 		mainWindow.setMenuBarVisibility(false);
+	} else if (process.platform === "darwin") {
+		Menu.setApplicationMenu(
+			Menu.buildFromTemplate(
+				buildMacAppMenuTemplate(() => {
+					const fallback = () => getShellWebContents()?.toggleDevTools();
+					const host = browserViewHost;
+					if (!host) {
+						fallback();
+						return;
+					}
+					void host.toggleDevToolsForLastFocused().then((state) => {
+						if (!state) fallback();
+					}).catch(fallback);
+				}),
+			),
+		);
 	}
 
 	// Harden navigation: never let renderer/terminal content open in-app windows or
@@ -496,6 +516,7 @@ async function createWindowInternal(): Promise<void> {
 		isKeybindingRecording: () => keybindingRecordingActive,
 		agentBrowserRuntime,
 		isCloseShellTerminalShortcutEnabled: () => closeShellTerminalShortcutEnabled,
+		getDaemonPort: () => (daemonStatus.state === "ready" ? daemonStatus.port : undefined),
 	});
 	if (daemonStatus.state === "ready") establishBrowserRuntimeLink();
 
@@ -592,6 +613,60 @@ function runFilePath(): string | null {
 	if (isDev) return path.join(os.homedir(), ".ao", DEV_STATE_SUBDIR, "running.json");
 	return defaultRunFilePath(process.platform, process.env, os.homedir());
 }
+
+function editorStateDir(): string {
+	const runFile = runFilePath();
+	if (!runFile) throw new Error("AO state directory is not available.");
+	return path.dirname(runFile);
+}
+
+async function resolveSessionWorkspaceForDesktop(sessionId: string): Promise<string> {
+	if (daemonStatus.state !== "ready" || !daemonStatus.port) {
+		throw new Error("AO daemon is not ready.");
+	}
+	const controller = new AbortController();
+	const timer = setTimeout(() => controller.abort(), DAEMON_PROBE_TIMEOUT_MS);
+	try {
+		const response = await net.fetch(
+			`http://127.0.0.1:${daemonStatus.port}/api/v1/desktop/sessions/${encodeURIComponent(sessionId)}/workspace`,
+			{ signal: controller.signal },
+		);
+		const body = await response.json() as Record<string, unknown>;
+		if (!response.ok) {
+			const message = typeof body.message === "string" ? body.message : "Session workspace is not available.";
+			throw new Error(message);
+		}
+		const workspacePath = body.workspacePath;
+		if (typeof workspacePath !== "string" || !path.isAbsolute(workspacePath)) {
+			throw new Error("Session workspace is not available.");
+		}
+		return workspacePath;
+	} catch (error) {
+		if (error instanceof Error && error.name === "AbortError") {
+			throw new Error("Timed out while resolving the session workspace.");
+		}
+		throw error;
+	} finally {
+		clearTimeout(timer);
+	}
+}
+
+const editorHandoff = createEditorHandoff({
+	platform: process.platform,
+	env: process.env,
+	homeDir: os.homedir(),
+	resolveWorkspace: resolveSessionWorkspaceForDesktop,
+	readPreference: async () => (await readEditorSettings(editorStateDir())).preferredEditorId,
+	writePreference: async (editorId) => {
+		await writeEditorPreference(editorStateDir(), editorId);
+	},
+	launch: (command, args, cwd) => launchCommand(command, args, cwd),
+	openDirectory: async (workspacePath) => {
+		const error = await shell.openPath(workspacePath);
+		if (error) throw new Error(error);
+	},
+	logError: (message, error) => console.error(message, error),
+});
 
 // How long to wait for the login shell to print its env before giving up. A
 // misconfigured rc that blocks (or a slow nvm/pyenv chain) must not hang startup;
@@ -1526,6 +1601,14 @@ ipcMain.handle("daemon:restart", async () => {
 		return reportDaemonRestartFailure(error);
 	}
 });
+ipcMain.handle("editorHandoff:getState", (event, sessionId: string) => {
+	if (event.sender !== getShellWebContents()) throw new Error("Untrusted editor handoff request.");
+	return editorHandoff.getState(typeof sessionId === "string" ? sessionId : "");
+});
+ipcMain.handle("editorHandoff:open", (event, input) => {
+	if (event.sender !== getShellWebContents()) throw new Error("Untrusted editor handoff request.");
+	return editorHandoff.open(input && typeof input === "object" ? input : { sessionId: "" });
+});
 ipcMain.handle("app:getVersion", () => app.getVersion());
 ipcMain.handle("app:openExternal", async (_event, url: string) => {
 	await openAllowedAppExternalURL(url, shell);
@@ -1551,6 +1634,10 @@ ipcMain.on("shell:focus", () => browserViewHost?.forgetLastFocusedPanel());
 ipcMain.on("browser:overlay", (event, open: unknown) => {
 	if (event.sender !== getShellWebContents() || typeof open !== "boolean") return;
 	windowComposition?.setOverlayOpen(open);
+	// Raising the shell can leave the live page's own compositor surface stale
+	// (the same class of bug window-composition.ts already works around for
+	// the shell itself) — nudge it the same way once the shell is on top.
+	if (open) browserViewHost?.refreshLastFocusedPanelSurface();
 });
 
 ipcMain.on(SET_CLOSE_SHELL_TERMINAL_SHORTCUT_ENABLED_CHANNEL, (_event, enabled: unknown) => {

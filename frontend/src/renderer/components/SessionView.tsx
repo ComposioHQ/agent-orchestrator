@@ -683,8 +683,13 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	// targets. A terminal pane (reviewer or shell) renders as a tab inside the
 	// chat surface, so opening one never costs the user the conversation.
 	const chatTargetKind = routedTerminalTarget.kind;
+	const renderedSessionMode =
+		interfaceSwitch.transition?.phase === "failed"
+			? interfaceSwitch.transition.sourceMode
+			: session?.mode;
 	const showChatSurface =
-		session?.mode === "chat" &&
+		session !== undefined &&
+		renderedSessionMode === "chat" &&
 		(chatTargetKind === "worker" || chatTargetKind === "reviewer" || chatTargetKind === "shell");
 
 	// The pane shows one terminal at a time, so selecting a shell or the reviewer
@@ -702,6 +707,22 @@ export function SessionView({ sessionId }: SessionViewProps) {
 		setInspectorViewForSession(sessionId, "files");
 		setInspectorOpenForSession(sessionId, true);
 	}, [sessionId, setInspectorOpenForSession, setInspectorViewForSession]);
+
+	const handleOpenReviewFile = useCallback((target: { line?: number; path: string }) => {
+		setBrowserPopOutState({ sessionId, poppedOut: false });
+		setFilesPoppedOut(false);
+		setInspectorViewForSession(sessionId, "files");
+		setInspectorOpenForSession(sessionId, true);
+		openCenterFile(target.path);
+	}, [openCenterFile, sessionId, setInspectorOpenForSession, setInspectorViewForSession]);
+
+	const handleOpenFile = useCallback(
+		(path: string) => {
+			handleOpenFiles();
+			openCenterFile(path);
+		},
+		[handleOpenFiles, openCenterFile],
+	);
 
 	const handleToggleFilesPopOut = useCallback(
 		(next: boolean) => {
@@ -919,6 +940,8 @@ export function SessionView({ sessionId }: SessionViewProps) {
 									shellError={
 										openShellTerminal.error ? apiErrorMessage(openShellTerminal.error) : undefined
 									}
+									onOpenFiles={handleOpenFiles}
+									onOpenFile={handleOpenFile}
 								/>
 							) : (
 								<CenterPane
@@ -989,6 +1012,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 							}
 							isInspectorVisible={inspectorPanelVisible}
 							onOpenFiles={handleOpenFiles}
+							onOpenReviewFile={handleOpenReviewFile}
 							onOpenReviewerTerminal={selectReviewerTerminal}
 							onToggleBrowserPopOut={handleToggleBrowserPopOut}
 							onViewChange={(next: InspectorView) => setInspectorViewForSession(sessionId, next)}

@@ -30,8 +30,9 @@ import { cn } from "../lib/utils";
 import { SHELL_PANEL_SPRING } from "../lib/motion-spring";
 import { useWindowFullScreen } from "../hooks/useWindowFullScreen";
 import { StatusPill } from "./StatusPill";
-import { TopbarButton, TopbarKillError, topbarHeaderClass, topbarProjectLabelClass } from "./TopbarButton";
+import { TopbarActionError, TopbarButton, topbarHeaderClass, topbarProjectLabelClass } from "./TopbarButton";
 import { SessionTerminationPopover } from "./SessionTerminationPopover";
+import { TopbarOpenEditorButton } from "./TopbarOpenEditorButton";
 import {
 	agentSwitchStatusVisual,
 	deriveSessionAgentSwitchPresentation,
@@ -230,9 +231,9 @@ export function ShellTopbar({
 				{!boardActionsInPanel && isProjectBoardRoute ? (
 					<>
 						{boardSpawnError ? (
-							<TopbarKillError className="max-w-content-max truncate" title={boardSpawnError}>
+							<TopbarActionError className="max-w-content-max truncate" title={boardSpawnError}>
 								{boardSpawnError}
-							</TopbarKillError>
+							</TopbarActionError>
 						) : null}
 						<Tooltip>
 							<TooltipTrigger asChild>
@@ -322,6 +323,22 @@ export function ShellTopbar({
 									<TooltipContent side="bottom">{t("shell.openKanban")}</TooltipContent>
 								</Tooltip>
 							</>
+						) : null}
+						{/* Open-in-editor leads the session actions: it is the only
+						    non-destructive one, and it must sit left of Kill. Kept outside
+						    the local-actions group because Electron main independently
+						    reports whether this session has a live workspace. */}
+						{session ? (
+							// Keyed per session so a stale launch error does not carry over
+							// when switching sessions. The prefix keeps it distinct from the
+							// kill button's key: identical sibling keys make React duplicate
+							// the nodes.
+							<TopbarOpenEditorButton
+								key={`open-workspace-${session.id}`}
+								sessionId={session.id}
+								projectId={session.workspaceId}
+								style={noDragStyle}
+							/>
 						) : null}
 						{/* Local worker actions share one tight control group. Navigation
 						    remains a separate visual target in the outer top-bar row. */}
@@ -437,7 +454,7 @@ export function TopbarKillButton({
 					</TopbarButton>
 				}
 			/>
-			{error ? <TopbarKillError>{error}</TopbarKillError> : null}
+			{error ? <TopbarActionError>{error}</TopbarActionError> : null}
 		</div>
 	);
 }
@@ -451,9 +468,9 @@ function ProjectTerminationFeedback({ projectId }: { projectId: string | undefin
 		<div aria-label={t("shell.sessionTerminationStatus")} className="flex max-w-content-max items-center gap-2">
 			{states.map((state) =>
 				state.error ? (
-					<TopbarKillError className="max-w-48 truncate" key={state.session.id} title={state.error}>
+					<TopbarActionError className="max-w-48 truncate" key={state.session.id} title={state.error}>
 						{state.session.title}: {state.error}
-					</TopbarKillError>
+					</TopbarActionError>
 				) : (
 					<span
 						className="max-w-40 truncate text-caption text-muted-foreground"

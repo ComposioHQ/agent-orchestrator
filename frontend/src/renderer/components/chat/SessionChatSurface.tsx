@@ -58,6 +58,8 @@ export function SessionChatSurface({
 	onOpenShell,
 	openingShell,
 	shellError,
+	onOpenFiles,
+	onOpenFile,
 	headerActions,
 	workspaceTabs,
 	workspaceFileActive,
@@ -80,6 +82,10 @@ export function SessionChatSurface({
 	onOpenShell?: () => void;
 	openingShell?: boolean;
 	shellError?: string;
+	/** Opens the Files inspector from a turn's changed-files Review control. */
+	onOpenFiles?: () => void;
+	/** Opens the Files inspector focused on one changed path. */
+	onOpenFile?: (path: string) => void;
 	headerActions?: ReactNode;
 	workspaceTabs?: ReactNode;
 	workspaceFileActive?: boolean;
@@ -203,8 +209,9 @@ export function SessionChatSurface({
 		switchPresentation?.lockAgentTerminal && !switchPresentation.allowSourceInput,
 	);
 	const renderShellFallback = Boolean(shellTarget && session);
+	const snapshotSessionMismatch = Boolean(snapshot && snapshot.sessionId !== session.id);
 	const renderSnapshot =
-		snapshot ??
+		(snapshotSessionMismatch ? undefined : snapshot) ??
 		(renderShellFallback
 			? unavailableConversationSnapshot(session)
 			: undefined);
@@ -251,6 +258,7 @@ export function SessionChatSurface({
 	return (
 		<div className="relative h-full min-h-0">
 			<ChatWorkspace
+				key={session.id}
 				snapshot={renderSnapshot}
 				agentInputDisabled={switchLocksChat || switchSelectorOpen}
 				onLinkOpen={openLinkInBrowser}
@@ -268,6 +276,7 @@ export function SessionChatSurface({
 				onRenameShellTerminal={onRenameShellTerminal}
 				switchAgentControl={
 					<TerminalSwitchAgentButton
+						agentSwitch={selectedDurableAgentSwitch}
 						container={switchSelectorContainer}
 						onOpenChange={setSwitchSelectorOpen}
 						open={switchSelectorOpen}
@@ -312,6 +321,8 @@ export function SessionChatSurface({
 				onRollback={commands.rollback}
 				rollbackPending={commands.rollbackPending}
 				rollbackError={commands.rollbackError}
+				onOpenFiles={onOpenFiles}
+				onOpenFile={onOpenFile}
 				onEditMessage={commands.editMessage}
 				editMessagePending={commands.editMessagePending}
 				editMessageError={commands.editMessageError}

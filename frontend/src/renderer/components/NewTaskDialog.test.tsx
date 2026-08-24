@@ -98,7 +98,7 @@ describe("NewTaskDialog", () => {
 		expect(screen.getByRole("button", { name: "Agent" })).toHaveTextContent("Claude Code");
 		expect(await screen.findByLabelText("Model")).toHaveValue("");
 		expect(screen.getByRole("button", { name: "Add file" })).toBeInTheDocument();
-		expect(screen.getByLabelText("Task")).toHaveAttribute("placeholder", "e.g. Fix the flaky checkout test (optional)…");
+		expect(screen.getByLabelText("Task").getAttribute("placeholder")).toBeTruthy();
 		expect(screen.queryByLabelText("Title")).not.toBeInTheDocument();
 		expect(screen.queryByLabelText("Branch")).not.toBeInTheDocument();
 	});

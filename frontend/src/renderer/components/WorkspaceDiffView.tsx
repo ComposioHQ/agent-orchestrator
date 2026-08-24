@@ -20,13 +20,16 @@ import {
 	type WorkspaceFileSummary,
 } from "../hooks/useSessionWorkspaceFiles";
 import { useParsedDiff } from "../hooks/useParsedDiff";
+import { useDiffHighlight } from "../hooks/useDiffHighlight";
 import { cn } from "../lib/utils";
 import { statusLabel, statusTone } from "../lib/workspace-file-status";
-import type { DiffRow, DiffRowKind, DiffSegment } from "../lib/diff-parser";
+import type { DiffRow, DiffRowKind } from "../lib/diff-parser";
+import type { DiffRun } from "../lib/diff-highlight";
 import type { DiffSelectionLine } from "../../shared/diff-selection";
 import { Button } from "./ui/button";
 import { DiffSelectionMenu } from "./DiffSelectionMenu";
 import { ImageDiffView } from "./ImageDiffView";
+import "./chat/code-theme.css";
 
 type WorkspaceFileStatus = WorkspaceFileSummary["status"];
 
@@ -275,6 +278,11 @@ function DiffView({
 	const [menuState, setMenuState] = useState<DiffViewMenuState | null>(null);
 	const shouldVirtualize = !split && rows.length > ROW_VIRTUALIZE_THRESHOLD;
 	const { listRef, virtualizer } = useSharedScrollRowVirtualizer(containerRef, rows.length, shouldVirtualize);
+	const highlight = useDiffHighlight(rows, path, previousPath);
+	const runs = useMemo(
+		() => rows.map((row, index) => (row.kind === "del" ? highlight.oldSide[index] : highlight.newSide[index])),
+		[rows, highlight],
+	);
 
 	useEffect(() => {
 		const onSelectionChange = () => {
@@ -334,12 +342,20 @@ function DiffView({
 				</div>
 			) : null}
 			<div
-				className="session-files-diff-scrollbar overflow-x-auto overflow-y-visible bg-terminal font-mono text-xs leading-row text-terminal-foreground"
+				className="diff-code session-files-diff-scrollbar overflow-x-auto overflow-y-visible bg-terminal font-mono text-xs leading-row text-terminal-foreground"
 				onContextMenu={onContextMenu}
 				ref={containerRef}
 			>
 				{split ? (
-					<SplitDiff annotation={annotation} path={path} previousPath={previousPath} rows={rows} t={t} />
+					<SplitDiff
+						annotation={annotation}
+						newRuns={highlight.newSide}
+						oldRuns={highlight.oldSide}
+						path={path}
+						previousPath={previousPath}
+						rows={rows}
+						t={t}
+					/>
 				) : shouldVirtualize ? (
 					<div
 						className={cn("relative", !wrap && "min-w-max")}
@@ -367,6 +383,7 @@ function DiffView({
 										path={path}
 										previousPath={previousPath}
 										row={row}
+										runs={runs[virtualRow.index]}
 										t={t}
 										wrap={wrap}
 									/>
@@ -384,6 +401,7 @@ function DiffView({
 								path={path}
 								previousPath={previousPath}
 								row={row}
+								runs={runs[index]}
 								t={t}
 								wrap={wrap}
 							/>
@@ -419,13 +437,14 @@ type DiffRowContentProps = {
 	path: string;
 	previousPath?: string;
 	row: DiffRow;
+	runs: DiffRun[];
 	t: TFunction;
 	wrap: boolean;
 };
 
 // One unified-view diff row, shared between the plain (non-virtualized) and
 // virtualized render paths so they can't drift apart from each other.
-function DiffRowContentInner({ annotation, index, path, previousPath, row, t, wrap }: DiffRowContentProps) {
+function DiffRowContentInner({ annotation, index, path, previousPath, row, runs, t, wrap }: DiffRowContentProps) {
 	if (row.kind === "hunk") return <HunkBand row={row} />;
 	return (
 		<div>
@@ -456,7 +475,7 @@ function DiffRowContentInner({ annotation, index, path, previousPath, row, t, wr
 					{diffMarkerGlyph[row.kind]}
 				</span>
 				<span className={cn("pr-3", wrap ? "whitespace-pre-wrap break-all" : "whitespace-pre")}>
-					{row.segments ? <DiffLineSegments add={row.kind === "add"} segments={row.segments} /> : row.text || " "}
+					{renderDiffRuns(runs, row.kind === "add")}
 				</span>
 			</div>
 			{isAnnotationRow(annotation.target, path, index) ? <FileAnnotationComposer annotation={annotation} /> : null}
@@ -480,6 +499,7 @@ const DiffRowContent = memo(DiffRowContentInner, (prev, next) => {
 		prev.index !== next.index ||
 		prev.path !== next.path ||
 		prev.previousPath !== next.previousPath ||
+		prev.runs !== next.runs ||
 		prev.wrap !== next.wrap
 	) {
 		return false;
@@ -536,12 +556,16 @@ function toSplitRows(rows: DiffRow[]): SplitRow[] {
 
 function SplitDiff({
 	annotation,
+	newRuns,
+	oldRuns,
 	path,
 	previousPath,
 	rows,
 	t,
 }: {
 	annotation: FileAnnotationModel;
+	newRuns: DiffRun[][];
+	oldRuns: DiffRun[][];
 	path: string;
 	previousPath?: string;
 	rows: DiffRow[];
@@ -562,6 +586,7 @@ function SplitDiff({
 								previousPath={previousPath}
 								row={splitRow.left}
 								rowIndex={splitRow.leftIndex}
+								runs={splitRow.leftIndex === null ? null : oldRuns[splitRow.leftIndex]}
 								side="old"
 								t={t}
 							/>
@@ -571,6 +596,7 @@ function SplitDiff({
 								previousPath={previousPath}
 								row={splitRow.right}
 								rowIndex={splitRow.rightIndex}
+								runs={splitRow.rightIndex === null ? null : newRuns[splitRow.rightIndex]}
 								side="new"
 								t={t}
 							/>
@@ -592,6 +618,7 @@ function SplitSide({
 	previousPath,
 	row,
 	rowIndex,
+	runs,
 	side,
 	t,
 }: {
@@ -600,10 +627,11 @@ function SplitSide({
 	previousPath?: string;
 	row: DiffRow | null;
 	rowIndex: number | null;
+	runs: DiffRun[] | null;
 	side: "old" | "new";
 	t: TFunction;
 }) {
-	if (!row || rowIndex === null) return <div className="bg-surface-faint/20" aria-hidden="true" />;
+	if (!row || rowIndex === null || !runs) return <div className="bg-surface-faint/20" aria-hidden="true" />;
 	const lineNo = side === "old" ? row.oldNo : row.newNo;
 	const tone = row.kind === "hunk" ? "" : diffRowTone[row.kind];
 	const target = lineNo == null ? null : lineAnnotationTarget(path, previousPath, row, rowIndex, side);
@@ -627,9 +655,7 @@ function SplitSide({
 			<span className="w-9 shrink-0 select-none border-r border-border/50 bg-terminal px-1.5 text-right text-passive/70 tabular-nums">
 				{lineNo ?? ""}
 			</span>
-			<span className="min-w-0 whitespace-pre-wrap break-all px-1.5">
-				{row.segments ? <DiffLineSegments add={row.kind === "add"} segments={row.segments} /> : row.text || " "}
-			</span>
+			<span className="min-w-0 whitespace-pre-wrap break-all px-1.5">{renderDiffRuns(runs, row.kind === "add")}</span>
 		</div>
 	);
 }
@@ -766,19 +792,19 @@ function FileAnnotationComposer({ annotation }: { annotation: FileAnnotationMode
 	);
 }
 
-function DiffLineSegments({ add, segments }: { add: boolean; segments: DiffSegment[] }) {
-	return (
-		<>
-			{segments.map((segment, index) =>
-				segment.changed ? (
-					<span className={cn("rounded-sm", add ? "bg-success/35" : "bg-error/35")} key={index}>
-						{segment.text}
-					</span>
-				) : (
-					<span key={index}>{segment.text}</span>
-				),
-			)}
-		</>
+function renderDiffRuns(runs: DiffRun[], add: boolean): ReactNode {
+	return runs.map((run, index) =>
+		run.changed ? (
+			<span className={cn(run.className, "rounded-sm", add ? "bg-success/35" : "bg-error/35")} key={index}>
+				{run.text}
+			</span>
+		) : run.className ? (
+			<span className={run.className} key={index}>
+				{run.text}
+			</span>
+		) : (
+			run.text
+		),
 	);
 }
 

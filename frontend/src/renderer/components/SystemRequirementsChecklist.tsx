@@ -33,7 +33,7 @@ export function requirementDetailText(requirement: SystemRequirement, t: TFuncti
 	return key ? t(key) : requirement.detail;
 }
 
-/** Checklist of the 4 startup requirements, in the backend's stable order. */
+/** Checklist of startup requirements, in the backend's stable order. */
 export function SystemRequirementsChecklist({
 	requirements,
 	ready,
