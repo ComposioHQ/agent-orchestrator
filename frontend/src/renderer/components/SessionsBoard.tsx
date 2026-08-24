@@ -2,6 +2,7 @@ import { memo, useEffect, useRef, useState, type MouseEvent } from "react";
 import { useTranslation } from "react-i18next";
 import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
+import { toast } from "sonner";
 import {
 	SessionsArchiveView,
 	SessionsBoardGridView,
@@ -189,7 +190,9 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 			// Never fail silently: the daemon's message (e.g. a worktree/branch
 			// conflict) is the only actionable signal the user gets.
 			console.error("Failed to spawn orchestrator:", error);
-			setSpawnError(error instanceof Error ? error.message : t("shell.couldNotSpawn"));
+			const message = error instanceof Error ? error.message : t("shell.couldNotSpawn");
+			setSpawnError(message);
+			toast.error(message);
 			setCanCreateAsTui(isChatPreflightError(error));
 		} finally {
 			setIsSpawning(false);

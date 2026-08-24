@@ -21,6 +21,7 @@ const {
 	workspaceQueryMock,
 	usageQueryMock,
 	boardActionsInPanelMock,
+	spawnOrchestratorMock,
 } = vi.hoisted(() => ({
 	navigateMock: vi.fn(),
 	notificationShowMock: vi.fn(),
@@ -28,6 +29,12 @@ const {
 	workspaceQueryMock: vi.fn(),
 	usageQueryMock: vi.fn(),
 	boardActionsInPanelMock: vi.fn(() => false),
+	spawnOrchestratorMock: vi.fn(),
+}));
+
+vi.mock("../lib/spawn-orchestrator", () => ({
+	spawnOrchestrator: (...args: unknown[]) => spawnOrchestratorMock(...args),
+	isChatPreflightError: () => false,
 }));
 
 vi.mock("@tanstack/react-router", () => ({
@@ -71,6 +78,7 @@ vi.mock("../lib/platform", async (importOriginal) => {
 import { archiveToggleHeightClassName, archiveToggleOffsetClassName } from "@aoagents/product-ui";
 import { SessionsBoard } from "./SessionsBoard";
 import { TooltipProvider } from "./ui/tooltip";
+import { Toaster } from "./ui/sonner";
 
 function renderBoard(projectId?: string) {
 	const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -102,6 +110,7 @@ beforeEach(() => {
 	usageQueryMock.mockReset().mockReturnValue({ data: new Map() });
 	window.localStorage.removeItem("ao.board.archive.layout");
 	boardActionsInPanelMock.mockReset().mockReturnValue(false);
+	spawnOrchestratorMock.mockReset().mockResolvedValue("s-orchestrator");
 });
 
 describe("SessionsBoard", () => {
@@ -1327,6 +1336,47 @@ describe("SessionsBoard", () => {
 		expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
 		expect(await screen.findByRole("alert")).toHaveTextContent("Failed to terminate session (500)");
 		expect(screen.getByRole("button", { name: "Terminate merged worker" })).toBeEnabled();
+	});
+
+	// The topbar already shows spawn failures, but as caption-sized text with
+	// `truncate`, so a long daemon message — the actionable case, e.g. a worktree
+	// conflict naming the offending path — is cut off. The toast carries the whole
+	// message. Assert on the full text, since truncation is what this fixes.
+	it("toasts the full spawn failure message when the board is not empty", async () => {
+		const message =
+			'workspace: gitworktree: worktree add branch "ao/radic-7/root" failed: fatal: ' +
+			"'ao/radic-7/root' is already checked out at '/tmp/radic-worktrees/radic-7'";
+		spawnOrchestratorMock.mockRejectedValue(new Error(message));
+		// The spawn control lives in the board's own actions row, which only
+		// renders in the in-panel topbar layout.
+		boardActionsInPanelMock.mockReturnValue(true);
+		workspaceQueryMock.mockReturnValue({
+			data: [
+				{
+					...workspaceWithSessions([boardSession({ id: "s-worker", title: "worker", status: "working" })]),
+					orchestratorAgent: "claude-code",
+				},
+			],
+			isError: false,
+		});
+
+		render(
+			<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+				<TooltipProvider>
+					<SessionsBoard projectId="p1" />
+					<Toaster />
+				</TooltipProvider>
+			</QueryClientProvider>,
+		);
+
+		await userEvent.click(screen.getByRole("button", { name: "Spawn Orchestrator" }));
+
+		await waitFor(() => expect(spawnOrchestratorMock).toHaveBeenCalledTimes(1));
+
+		// Scoped to the toaster: the topbar renders this message too, so an
+		// unscoped query matches both.
+		const toaster = document.querySelector("[data-sonner-toaster]") as HTMLElement;
+		expect(await within(toaster).findByText(message)).toBeInTheDocument();
 	});
 });
 
