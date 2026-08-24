@@ -938,6 +938,35 @@ BEGIN
 		addDDL: `ALTER TABLE conversation_turns ADD COLUMN promotion_started_at TIMESTAMP`},
 	{version: 89, table: "conversation_turns", column: "promoted_to_turn_id",
 		addDDL: `ALTER TABLE conversation_turns ADD COLUMN promoted_to_turn_id TEXT REFERENCES conversation_turns(id) ON DELETE SET NULL`},
+	// 0106_pr_comment_review_id.sql. Version 106 is recorded as applied on
+	// profiles where the physical column never landed — a burned/skipped
+	// migration — and preparePRCommentReviewIDMigration only repairs the mirror
+	// case (column present, ledger entry missing). The generated PR comment
+	// queries select review_id, so every PR read then 500s.
+	{version: 106, table: "pr_comment", column: "review_id",
+		addDDL: `ALTER TABLE pr_comment ADD COLUMN review_id TEXT NOT NULL DEFAULT ''`},
+}
+
+// tableRepairs is the table-level counterpart of schemaRepairs: migrations
+// whose schema effects are whole tables, recorded as applied on installs where
+// the table never physically landed. reconcileSchema's column check cannot see
+// this drift — pragma_table_info on an absent table returns zero rows and is
+// treated as healthy — so without this list a burned version leaves the daemon
+// green while every query against the missing table 500s.
+var tableRepairs = []struct {
+	version   int64
+	table     string
+	createDDL string
+}{
+	// 0104_agent_inventory_cache.sql. Profiles that recorded version 104 as
+	// applied without the table fail every agent-catalog refresh — the preflight
+	// dependency of ao spawn — while /readyz stays green (#4335).
+	{version: 104, table: "agent_inventory_cache",
+		createDDL: `CREATE TABLE agent_inventory_cache (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    inventory_json TEXT NOT NULL,
+    observed_at TIMESTAMP NOT NULL
+)`},
 }
 
 // reconcileSchema verifies that the columns in schemaRepairs physically exist
@@ -967,6 +996,23 @@ func reconcileSchema(db *sql.DB) error {
 			if _, err := db.Exec(stmt); err != nil {
 				return fmt.Errorf("schema repair: replay skipped migration effects for %s.%s: %w", rc.table, rc.column, err)
 			}
+		}
+	}
+	for _, tr := range tableRepairs {
+		var count int
+		if err := db.QueryRow(
+			`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?`, tr.table,
+		).Scan(&count); err != nil {
+			return fmt.Errorf("schema verification: inspect table %s: %w", tr.table, err)
+		}
+		if count > 0 {
+			continue
+		}
+		if _, err := db.Exec(tr.createDDL); err != nil {
+			return fmt.Errorf(
+				"schema repair: table %s is missing (a burned goose version skipped the migration that creates it, see #3475) and could not be created: %w",
+				tr.table, err,
+			)
 		}
 	}
 	if err := reconcileHarnessConstraint(db); err != nil {
