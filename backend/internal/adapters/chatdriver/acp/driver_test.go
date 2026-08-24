@@ -1804,6 +1804,7 @@ func TestNormalizeMCPServersStillGatesNonBaselineTransports(t *testing.T) {
 		config  ports.ChatMCPServerConfig
 		caps    acpsdk.McpCapabilities
 		wantErr string
+		wantArm string
 	}{
 		{
 			name:    "http without Http capability",
@@ -1816,14 +1817,16 @@ func TestNormalizeMCPServersStillGatesNonBaselineTransports(t *testing.T) {
 			wantErr: "does not support SSE MCP server",
 		},
 		{
-			name:   "http allowed with Http capability",
-			config: ports.ChatMCPServerConfig{Name: "test", Type: "http", URL: "https://example.test"},
-			caps:   acpsdk.McpCapabilities{Http: true},
+			name:    "http allowed with Http capability",
+			config:  ports.ChatMCPServerConfig{Name: "test", Type: "http", URL: "https://example.test"},
+			caps:    acpsdk.McpCapabilities{Http: true},
+			wantArm: "http",
 		},
 		{
-			name:   "sse allowed with Sse capability",
-			config: ports.ChatMCPServerConfig{Name: "test", Type: "sse", URL: "https://example.test"},
-			caps:   acpsdk.McpCapabilities{Sse: true},
+			name:    "sse allowed with Sse capability",
+			config:  ports.ChatMCPServerConfig{Name: "test", Type: "sse", URL: "https://example.test"},
+			caps:    acpsdk.McpCapabilities{Sse: true},
+			wantArm: "sse",
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -1834,6 +1837,24 @@ func TestNormalizeMCPServersStillGatesNonBaselineTransports(t *testing.T) {
 				}
 				if len(servers) != 1 {
 					t.Fatalf("servers = %d, want 1", len(servers))
+				}
+				switch tc.wantArm {
+				case "http":
+					if servers[0].Http == nil || servers[0].Stdio != nil || servers[0].Sse != nil {
+						t.Fatalf("servers[0] = %+v, want only the Http arm populated", servers[0])
+					}
+					if servers[0].Http.Url != tc.config.URL {
+						t.Fatalf("Http.Url = %q, want %q", servers[0].Http.Url, tc.config.URL)
+					}
+				case "sse":
+					if servers[0].Sse == nil || servers[0].Stdio != nil || servers[0].Http != nil {
+						t.Fatalf("servers[0] = %+v, want only the Sse arm populated", servers[0])
+					}
+					if servers[0].Sse.Url != tc.config.URL {
+						t.Fatalf("Sse.Url = %q, want %q", servers[0].Sse.Url, tc.config.URL)
+					}
+				default:
+					t.Fatalf("test case %q has no wantArm", tc.name)
 				}
 				return
 			}
