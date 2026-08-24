@@ -126,15 +126,14 @@ WHERE seq IN (
 	return total, nil
 }
 
-// lockChangeLogPrune is context-aware because retention is background work: it
-// should abandon a pass instead of waiting indefinitely behind user writes.
+// lockChangeLogPrune uses the mutex's fair blocking acquisition so continuous
+// user writes cannot starve retention. Once acquired, an expired pass releases
+// the writer immediately without starting another batch.
 func (s *Store) lockChangeLogPrune(ctx context.Context) error {
-	for !s.writeMu.TryLock() {
-		select {
-		case <-ctx.Done():
-			return fmt.Errorf("acquire change_log prune writer: %w", ctx.Err())
-		case <-time.After(changeLogPruneYield):
-		}
+	s.writeMu.Lock()
+	if err := ctx.Err(); err != nil {
+		s.writeMu.Unlock()
+		return fmt.Errorf("acquire change_log prune writer: %w", err)
 	}
 	return nil
 }

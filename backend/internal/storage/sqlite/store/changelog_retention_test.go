@@ -2,6 +2,7 @@ package store_test
 
 import (
 	"context"
+	"database/sql"
 	"os"
 	"path/filepath"
 	"sync"
@@ -178,8 +179,18 @@ func TestPruneChangeLogPreservesRowsBeyondPollerWatermark(t *testing.T) {
 }
 
 func TestPruneChangeLogYieldsToConcurrentWrites(t *testing.T) {
-	s := newTestStore(t)
-	head := seedChangeLogRows(t, s, "concurrent-prune", 5_000)
+	dir := t.TempDir()
+	s, err := sqlite.Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = s.Close() })
+	seedProject(t, s, "concurrent-prune")
+	seedRawChangeLogRows(t, filepath.Join(dir, "ao.db"), "concurrent-prune", 5_000)
+	head, err := s.LatestSeq(context.Background())
+	if err != nil {
+		t.Fatalf("latest seq: %v", err)
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
@@ -253,6 +264,28 @@ func TestPruneChangeLogYieldsToConcurrentWrites(t *testing.T) {
 	}
 	if duringPrune < 2 {
 		t.Fatalf("writes completed during prune = %d, want at least 2 (retention starved interactive writes)", duringPrune)
+	}
+}
+
+// seedRawChangeLogRows keeps the race regression focused on concurrent pruning
+// rather than spending most of the test creating thousands of session rows.
+func seedRawChangeLogRows(t *testing.T, dbPath, project string, rows int64) {
+	t.Helper()
+	db, err := sql.Open("sqlite", "file:"+dbPath+"?_pragma=busy_timeout(5000)&_pragma=foreign_keys(ON)")
+	if err != nil {
+		t.Fatalf("open raw change_log fixture: %v", err)
+	}
+	defer func() { _ = db.Close() }()
+	if _, err := db.Exec(`
+WITH RECURSIVE seqs(n) AS (
+    SELECT 1
+    UNION ALL
+    SELECT n + 1 FROM seqs WHERE n < ?
+)
+INSERT INTO change_log (project_id, event_type, payload, created_at)
+SELECT ?, 'session_updated', '{}', '2026-08-24T00:00:00Z'
+FROM seqs`, rows, project); err != nil {
+		t.Fatalf("seed %d raw change_log rows: %v", rows, err)
 	}
 }
 
