@@ -74,17 +74,17 @@ export type TaskComposerAttachments = {
 };
 
 export type TaskComposerSubmission = {
-	canCreateAsTui: boolean;
+	showFallbackAction: boolean;
 	error?: string;
 	isSubmitting: boolean;
 	modelWarning?: string;
+	onFallbackAction: () => void;
 	onSubmit: () => void;
-	onSubmitAsTui: () => void;
 };
 
 export type TaskComposerLabels = {
 	addFile: string;
-	createAsTui: string;
+	fallbackAction: string;
 	removeFile: (name: string) => string;
 	runsWith: string;
 	start: string;
@@ -272,14 +272,14 @@ export function TaskComposerView({
 							role="alert"
 						>
 							<span>{submission.error}</span>
-							{submission.canCreateAsTui ? (
+							{submission.showFallbackAction ? (
 								<button
 									type="button"
 									disabled={submission.isSubmitting}
-									onClick={submission.onSubmitAsTui}
+									onClick={submission.onFallbackAction}
 									className="inline-flex h-control-md shrink-0 items-center justify-center rounded-md border border-border bg-background px-2.5 text-xs text-foreground transition-colors hover:bg-muted disabled:pointer-events-none disabled:opacity-50"
 								>
-									{labels.createAsTui}
+									{labels.fallbackAction}
 								</button>
 							) : null}
 						</div>

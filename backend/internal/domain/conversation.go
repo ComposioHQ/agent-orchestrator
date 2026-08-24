@@ -47,10 +47,13 @@ type TurnState string
 
 // Turn states. Interrupted is distinct from failed: the provider reports it as
 // its own terminal status when a turn is cancelled, and AO must not relabel it.
+// Recovered means history proved the turn is no longer live but did not carry a
+// portable provider outcome; it is terminal without claiming success or failure.
 const (
 	TurnStateQueued      TurnState = "queued"
 	TurnStateRunning     TurnState = "running"
 	TurnStateCompleted   TurnState = "completed"
+	TurnStateRecovered   TurnState = "recovered"
 	TurnStateInterrupted TurnState = "interrupted"
 	TurnStateFailed      TurnState = "failed"
 )
@@ -58,7 +61,7 @@ const (
 // Terminal reports whether no further work is expected on the turn.
 func (s TurnState) Terminal() bool {
 	switch s {
-	case TurnStateCompleted, TurnStateInterrupted, TurnStateFailed:
+	case TurnStateCompleted, TurnStateRecovered, TurnStateInterrupted, TurnStateFailed:
 		return true
 	default:
 		return false
@@ -130,6 +133,9 @@ type ActivityStatus string
 const (
 	ActivityStatusRunning   ActivityStatus = "running"
 	ActivityStatusCompleted ActivityStatus = "completed"
+	// ActivityStatusRecovered means replay proved the activity is historical,
+	// but the provider supplied no portable success/failure outcome.
+	ActivityStatusRecovered ActivityStatus = "recovered"
 	ActivityStatusFailed    ActivityStatus = "failed"
 	ActivityStatusCancelled ActivityStatus = "cancelled"
 	ActivityStatusPending   ActivityStatus = "pending"

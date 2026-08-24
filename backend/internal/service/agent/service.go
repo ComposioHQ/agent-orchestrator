@@ -19,8 +19,12 @@ import (
 var (
 	agentInstallProbeTimeout = 2 * time.Second
 	agentAuthProbeTimeout    = 10 * time.Second
-	agentRefreshMinInterval  = 10 * time.Second
-	modelCatalogLoadTimeout  = 30 * time.Second
+	// startupBinaryProbeTimeout bounds the first-render prerequisite check. It
+	// only resolves executable paths; it never starts an agent CLI or probes
+	// authentication.
+	startupBinaryProbeTimeout = 500 * time.Millisecond
+	agentRefreshMinInterval   = 10 * time.Second
+	modelCatalogLoadTimeout   = 30 * time.Second
 	// How long a cached catalog is trusted before AO asks a cache-first client to
 	// revalidate in the background. Long, because rediscovery runs an agent CLI:
 	// this covers drift a fingerprint cannot see, not routine correctness.
@@ -194,6 +198,63 @@ func (s *Service) Refresh(ctx context.Context) (Inventory, error) {
 // checks after an install may have changed PATH-visible binaries.
 func (s *Service) RefreshFresh(ctx context.Context) (Inventory, error) {
 	return s.refresh(ctx, true)
+}
+
+// FindInstalledBinary returns one installed agent CLI without running any
+// agent process or authentication probe. It is used by the desktop's startup
+// prerequisite gate: AO needs one usable harness before it can show the board,
+// while the richer inventory/authentication state can arrive later.
+func (s *Service) FindInstalledBinary(ctx context.Context) (Info, bool) {
+	if ctx.Err() != nil {
+		return Info{}, false
+	}
+	ctx, cancel := context.WithTimeout(ctx, startupBinaryProbeTimeout)
+	defer cancel()
+
+	type result struct {
+		info Info
+	}
+	results := make(chan result, len(s.agents))
+	var wg sync.WaitGroup
+	for _, item := range s.agents {
+		resolver, ok := item.Agent.(ports.AgentBinaryResolver)
+		presenceResolver, hasPresenceResolver := item.Agent.(ports.AgentBinaryPresenceResolver)
+		if !ok && !hasPresenceResolver {
+			continue
+		}
+		wg.Add(1)
+		go func(item agentregistry.HarnessAgent, resolver ports.AgentBinaryResolver, presenceResolver ports.AgentBinaryPresenceResolver) {
+			defer wg.Done()
+			var path string
+			var err error
+			if presenceResolver != nil {
+				path, err = presenceResolver.ResolveBinaryPresence(ctx)
+			} else {
+				path, err = resolver.ResolveBinary(ctx)
+			}
+			if err == nil && path != "" {
+				info := Info{ID: string(item.Harness), Label: item.Manifest.Name}
+				if info.Label == "" {
+					info.Label = info.ID
+				}
+				results <- result{info: info}
+			}
+		}(item, resolver, presenceResolver)
+	}
+	done := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+
+	select {
+	case found := <-results:
+		return found.info, true
+	case <-done:
+		return Info{}, false
+	case <-ctx.Done():
+		return Info{}, false
+	}
 }
 
 func (s *Service) refresh(ctx context.Context, force bool) (Inventory, error) {

@@ -3,6 +3,7 @@ import { app, BrowserWindow, dialog } from "electron";
 import { accessSync, constants as fsConstants, existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
+import semver from "semver";
 import {
   readUpdateSettings,
   updateUpdateSettings,
@@ -92,8 +93,10 @@ let stagedEscalated = false;
 let stagedRequestId: string | undefined;
 let escalationTimer: ReturnType<typeof setInterval> | undefined;
 let escalationStateDir: string | undefined;
-const AUTOMATIC_UPDATE_CHECK_INTERVAL_MS = 60 * 60 * 1000;
+const STABLE_AUTOMATIC_UPDATE_CHECK_INTERVAL_MS = 60 * 60 * 1000;
+const NIGHTLY_AUTOMATIC_UPDATE_CHECK_INTERVAL_MS = 15 * 60 * 1000;
 let automaticUpdateTimer: ReturnType<typeof setInterval> | undefined;
+let automaticUpdateTimerIntervalMs: number | undefined;
 type UpdaterOperation =
   | "automatic-check"
   | "manual-check"
@@ -111,7 +114,7 @@ let automaticCheckInFlight = false;
 // restarts, and automatic failures are UI-suppressed, so the install goes
 // silently stale (#3526). At the threshold, statuses carry staleCheckNudge so
 // the renderer can suggest a restart.
-const STALE_CHECK_NUDGE_THRESHOLD = 3; // hourly checks → ~3h of staleness
+const STALE_CHECK_NUDGE_THRESHOLD = 3;
 let consecutiveAutomaticNetFailures = 0;
 // One automatic check can both emit an "error" event and reject
 // checkForUpdates(); count that as a single failure.
@@ -221,6 +224,101 @@ async function readAppUpdateYml(): Promise<
   } catch {
     return undefined;
   }
+}
+
+interface GitHubReleaseSummary {
+  tag_name: string;
+  draft: boolean;
+  prerelease: boolean;
+  assets?: Array<{ name?: string }>;
+}
+
+/**
+ * Resolve a completed Nightly release through GitHub's API. electron-updater's
+ * GitHub provider discovers prereleases through releases.atom, which can lag
+ * behind a just-published release even when the release and manifest are ready.
+ * This is used only for user-requested checks; failures fall back to the normal
+ * provider so API rate limits or an outage never break update checks.
+ */
+async function fetchLatestCompletedNightlyTag(
+  owner: string,
+  repo: string,
+): Promise<string | undefined> {
+  try {
+    const response = await fetch(
+      `https://api.github.com/repos/${owner}/${repo}/releases?per_page=100`,
+      {
+        cache: "no-store",
+        headers: {
+          Accept: "application/vnd.github+json",
+          "X-GitHub-Api-Version": "2022-11-28",
+          "User-Agent": `ao-desktop/${app.getVersion()}`,
+        },
+        signal: AbortSignal.timeout(10000),
+      },
+    );
+    if (!response.ok) return undefined;
+    const releases = (await response.json()) as GitHubReleaseSummary[];
+    const manifestName = `nightly${platformSuffix()}.yml`;
+    return releases
+      .filter((release) => {
+        const parsed = semver.valid(release.tag_name);
+        return (
+          !release.draft &&
+          release.prerelease &&
+          parsed !== null &&
+          semver.prerelease(parsed)?.[0] === "nightly" &&
+          release.assets?.some((asset) => asset.name === manifestName) === true
+        );
+      })
+      .sort((left, right) => semver.rcompare(left.tag_name, right.tag_name))[0]
+      ?.tag_name;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Point one manual Nightly check directly at the newest completed release.
+ * The returned reset restores the normal GitHub provider for later background
+ * checks; electron-updater retains the direct provider with the discovered
+ * update, so a subsequent Download action still uses the correct asset URLs.
+ */
+async function configureDirectManualNightlyFeed(
+  settings: UpdateSettings,
+): Promise<(() => void) | undefined> {
+  if (settings.channel !== "nightly" || settings.feature !== null) {
+    return undefined;
+  }
+  const coordinates = await readAppUpdateYml();
+  if (!coordinates) return undefined;
+  const tag = await fetchLatestCompletedNightlyTag(
+    coordinates.owner,
+    coordinates.repo,
+  );
+  if (!tag) return undefined;
+  const runningVersion = app.getVersion();
+  if (
+    semver.valid(runningVersion) !== null &&
+    semver.prerelease(runningVersion)?.[0] === "nightly" &&
+    semver.lt(tag, runningVersion)
+  ) {
+    return undefined;
+  }
+
+  autoUpdater.setFeedURL({
+    provider: "generic",
+    url: `https://github.com/${coordinates.owner}/${coordinates.repo}/releases/download/${tag}`,
+    channel: "nightly",
+    useMultipleRangeRequest: false,
+  });
+  return () => {
+    autoUpdater.setFeedURL({
+      provider: "github",
+      owner: coordinates.owner,
+      repo: coordinates.repo,
+    });
+  };
 }
 
 /** Platform suffix matching the feed.mjs naming convention. */
@@ -545,7 +643,7 @@ function wireUpdaterEvents(): void {
     // Never crash on update failure (offline, unsigned macOS, etc.).
     // Automatic failures restore the previous status so the UI does not flash
     // an error the user never asked for. That suppression is a UI decision and
-    // must not suppress the telemetry: automatic checks run hourly and are the
+    // must not suppress the telemetry: automatic checks are the
     // main way an install goes silently stale.
     emitUpdateFailure(err);
     if (activeUpdaterOperation === "automatic-check") {
@@ -600,8 +698,18 @@ export function getUpdateStatus(): UpdateStatus {
     : lastStatus;
 }
 
-async function runAutomaticUpdateCheck(stateDir: string): Promise<boolean> {
+function automaticUpdateCheckInterval(settings: UpdateSettings): number {
+  return settings.channel === "nightly" && settings.feature === null
+    ? NIGHTLY_AUTOMATIC_UPDATE_CHECK_INTERVAL_MS
+    : STABLE_AUTOMATIC_UPDATE_CHECK_INTERVAL_MS;
+}
+
+async function runAutomaticUpdateCheck(
+  stateDir: string,
+): Promise<number | undefined> {
   let shouldSchedule = true;
+  let nextIntervalMs =
+    automaticUpdateTimerIntervalMs ?? STABLE_AUTOMATIC_UPDATE_CHECK_INTERVAL_MS;
   try {
     await runSerializedUpdaterOperation("automatic-check", async () => {
       const settings = await reconcileAndPersist(
@@ -615,6 +723,7 @@ async function runAutomaticUpdateCheck(stateDir: string): Promise<boolean> {
         stopPeriodicAutomaticUpdateCheck();
         return;
       }
+      nextIntervalMs = automaticUpdateCheckInterval(settings);
 
       escalationStateDir = stateDir;
       wireUpdaterEvents();
@@ -638,15 +747,27 @@ async function runAutomaticUpdateCheck(stateDir: string): Promise<boolean> {
   } catch (err) {
     console.error("auto-update check failed:", err);
   }
-  return shouldSchedule;
+  return shouldSchedule ? nextIntervalMs : undefined;
 }
 
-function schedulePeriodicAutomaticUpdateCheck(stateDir: string): void {
-  if (automaticUpdateTimer !== undefined) return;
-  automaticUpdateTimer = setInterval(
-    () => void requestAutomaticUpdateCheck(stateDir),
-    AUTOMATIC_UPDATE_CHECK_INTERVAL_MS,
-  );
+function schedulePeriodicAutomaticUpdateCheck(
+  stateDir: string,
+  intervalMs: number,
+): void {
+  if (
+    automaticUpdateTimer !== undefined &&
+    automaticUpdateTimerIntervalMs === intervalMs
+  ) {
+    return;
+  }
+  stopPeriodicAutomaticUpdateCheck();
+  automaticUpdateTimerIntervalMs = intervalMs;
+  automaticUpdateTimer = setInterval(() => {
+    void requestAutomaticUpdateCheck(stateDir).then((nextIntervalMs) => {
+      if (nextIntervalMs !== undefined)
+        schedulePeriodicAutomaticUpdateCheck(stateDir, nextIntervalMs);
+    });
+  }, intervalMs);
   automaticUpdateTimer.unref?.();
 }
 
@@ -654,19 +775,24 @@ function stopPeriodicAutomaticUpdateCheck(): void {
   if (automaticUpdateTimer === undefined) return;
   clearInterval(automaticUpdateTimer);
   automaticUpdateTimer = undefined;
+  automaticUpdateTimerIntervalMs = undefined;
 }
 
 function reconcileAutomaticUpdateSchedule(
   stateDir: string,
-  enabled: boolean,
+  settings: UpdateSettings,
 ): void {
-  if (enabled) schedulePeriodicAutomaticUpdateCheck(stateDir);
+  if (settings.enabled)
+    schedulePeriodicAutomaticUpdateCheck(
+      stateDir,
+      automaticUpdateCheckInterval(settings),
+    );
   else stopPeriodicAutomaticUpdateCheck();
 }
 
 async function requestAutomaticUpdateCheck(
   stateDir: string,
-): Promise<boolean | undefined> {
+): Promise<number | undefined> {
   if (automaticCheckInFlight) return undefined;
   automaticCheckInFlight = true;
   try {
@@ -681,8 +807,9 @@ async function requestAutomaticUpdateCheck(
 // Caller guards on app.isPackaged.
 export async function startAutoUpdates(stateDir: string): Promise<void> {
   startRetirementPollTimer(stateDir);
-  const shouldSchedule = await requestAutomaticUpdateCheck(stateDir);
-  if (shouldSchedule === true) schedulePeriodicAutomaticUpdateCheck(stateDir);
+  const intervalMs = await requestAutomaticUpdateCheck(stateDir);
+  if (intervalMs !== undefined)
+    schedulePeriodicAutomaticUpdateCheck(stateDir, intervalMs);
 }
 
 async function persistUpdaterSettings(
@@ -691,7 +818,7 @@ async function persistUpdaterSettings(
 ): Promise<void> {
   await writeUpdateSettings(stateDir, settings);
   configureFeed(settings);
-  reconcileAutomaticUpdateSchedule(stateDir, settings.enabled);
+  reconcileAutomaticUpdateSchedule(stateDir, settings);
 }
 
 /** Persist settings and reconcile the live updater feed/timer as one updater operation. */
@@ -744,12 +871,17 @@ export async function checkForUpdatesNow(
           stateDir,
           options.settings ?? (await readUpdateSettings(stateDir)),
         );
-        reconcileAutomaticUpdateSchedule(stateDir, settings.enabled);
+        reconcileAutomaticUpdateSchedule(stateDir, settings);
         configureFeed(settings);
         autoUpdater.autoDownload = false;
         applyInstallOnQuitPolicy();
         broadcastUpdaterStatus({ state: "checking" });
-        await autoUpdater.checkForUpdates();
+        const restoreFeed = await configureDirectManualNightlyFeed(settings);
+        try {
+          await autoUpdater.checkForUpdates();
+        } finally {
+          restoreFeed?.();
+        }
       },
       options.requestId,
     );
@@ -808,7 +940,7 @@ export async function returnToHome(
           current.feature ? { ...current, feature: null } : current,
         );
         const settings = await reconcileAndPersist(stateDir, cleared);
-        reconcileAutomaticUpdateSchedule(stateDir, settings.enabled);
+        reconcileAutomaticUpdateSchedule(stateDir, settings);
         configureFeed(settings);
         autoUpdater.autoDownload = false;
         applyInstallOnQuitPolicy();
