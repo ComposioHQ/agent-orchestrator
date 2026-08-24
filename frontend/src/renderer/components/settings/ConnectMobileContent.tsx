@@ -8,7 +8,7 @@ import { apiClient, apiErrorMessage } from "../../lib/api-client";
 import { aoBridge } from "../../lib/bridge";
 import { captureRendererEvent } from "../../lib/telemetry";
 import { cn } from "../../lib/utils";
-import { ANDROID_SIGNUP_URL, TESTFLIGHT_URL } from "./ConnectMobileGetApp";
+import { ANDROID_PLAY_STORE_URL, TESTFLIGHT_URL } from "./ConnectMobileGetApp";
 import { reasonMessage, type SetupMode } from "./ConnectMobileSetup";
 import { StyledQRCode } from "./StyledQRCode";
 import { Button } from "../ui/button";
@@ -301,13 +301,12 @@ export function ConnectMobileContent({ active }: { active: boolean }) {
 										type="button"
 										className={STEP_LINK_CLASS}
 										aria-label={t("mobile.androidSignupAria")}
-										onClick={() => void aoBridge.app.openExternal(ANDROID_SIGNUP_URL)}
+										onClick={() => void aoBridge.app.openExternal(ANDROID_PLAY_STORE_URL)}
 									>
-										{t("mobile.joinNow")}
+										{t("mobile.getApp")}
 										<ArrowUpRight className="size-3.5" aria-hidden="true" />
 									</button>
 								</li>
-								<li>{t("mobile.android.step2")}</li>
 							</>
 						)}
 						{mode === "lan" ? (
