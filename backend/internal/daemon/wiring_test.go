@@ -629,10 +629,12 @@ func TestProjectRepoResolver_ResolvesRegisteredProject(t *testing.T) {
 // assert the daemon wiring invokes the correct methods without needing a real
 // runtime or worktree.
 type fakeSessionLifecycle struct {
-	reconcileCalled  bool
-	restoreAllCalled bool
-	reconcileErr     error
-	restoreErr       error
+	reconcileCalled           bool
+	reconcileSafetyCalled     bool
+	reconcileBackgroundCalled bool
+	restoreAllCalled          bool
+	reconcileErr              error
+	restoreErr                error
 }
 
 func (f *fakeSessionLifecycle) Send(context.Context, domain.SessionID, string, *ports.SpawnAttachment) error {
@@ -645,6 +647,16 @@ func (f *fakeSessionLifecycle) Kill(_ context.Context, _ domain.SessionID) (bool
 
 func (f *fakeSessionLifecycle) Reconcile(_ context.Context) error {
 	f.reconcileCalled = true
+	return f.reconcileErr
+}
+
+func (f *fakeSessionLifecycle) ReconcileStartupSafety(_ context.Context) error {
+	f.reconcileSafetyCalled = true
+	return f.reconcileErr
+}
+
+func (f *fakeSessionLifecycle) ReconcileBackground(_ context.Context) error {
+	f.reconcileBackgroundCalled = true
 	return f.reconcileErr
 }
 

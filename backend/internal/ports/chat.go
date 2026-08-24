@@ -3,6 +3,7 @@ package ports
 import (
 	"context"
 	"errors"
+	"fmt"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 )
@@ -56,6 +57,10 @@ var (
 	// ErrChatConfigOptionInvalid means a client named an unknown option, sent the
 	// wrong value type, or selected a value the provider did not advertise.
 	ErrChatConfigOptionInvalid = errors.New("chat config option value is invalid")
+	// ErrChatPermissionModeUnsupported means the requested AO approval policy has
+	// no enforced mapping in this provider. Drivers must return it instead of
+	// silently running with a different permission policy.
+	ErrChatPermissionModeUnsupported = errors.New("chat permission mode is unsupported")
 	// ErrChatHistoryUnsettled means the native conversation history is not safe
 	// to project as complete. Only a ChatHistoryRefresher promises that another
 	// provider observation may make progress; rereading a snapshot need not.
@@ -65,6 +70,22 @@ var (
 	// property; session/load is required when a caller needs a transcript replay.
 	ErrChatHistoryUnavailable = errors.New("chat conversation history replay is unavailable")
 )
+
+// ChatCapabilityError reports why a harness cannot satisfy one session's Chat
+// admission policy. It unwraps to ErrChatUnsupported so existing callers keep
+// their stable error code while typed clients can render a safe recovery action
+// without parsing the message.
+type ChatCapabilityError struct {
+	Harness                domain.AgentHarness
+	Missing                []ChatCapability
+	AllowedPermissionModes []PermissionMode
+}
+
+func (e *ChatCapabilityError) Error() string {
+	return fmt.Sprintf("%s: %s lacks %v", ErrChatUnsupported, e.Harness, e.Missing)
+}
+
+func (e *ChatCapabilityError) Unwrap() error { return ErrChatUnsupported }
 
 // ChatCapability names something a driver may or may not be able to do. AO gates
 // features on these rather than on the harness name.
@@ -154,6 +175,23 @@ func MissingProductionCapabilities(caps ChatCapabilities) []ChatCapability {
 		}
 	}
 	return missing
+}
+
+// MissingCapabilitiesForPermissions applies the production floor for a
+// specific session permission mode. An explicit bypass-permissions choice does
+// not require an approval channel because the user has opted out of approvals.
+func MissingCapabilitiesForPermissions(caps ChatCapabilities, permissions PermissionMode) []ChatCapability {
+	missing := MissingProductionCapabilities(caps)
+	if NormalizePermissionMode(permissions) != PermissionModeBypassPermissions {
+		return missing
+	}
+	out := missing[:0]
+	for _, capability := range missing {
+		if capability != ChatCapabilityApprovals {
+			out = append(out, capability)
+		}
+	}
+	return out
 }
 
 // ChatStartConfig is what a driver needs to open a new provider conversation.
@@ -546,10 +584,25 @@ type ChatDecisionOption struct {
 	ID string
 	// Label is a human-readable form when the provider supplies one.
 	Label string
+	// Kind is the provider-neutral consent meaning. Provider IDs and labels may
+	// be opaque or localized, so clients must not infer approval semantics from
+	// either one.
+	Kind ChatDecisionKind
 	// Raw is the provider's own encoding, preserved so a structured decision
 	// (one carrying a policy amendment, say) can be echoed back exactly.
 	Raw []byte
 }
+
+// ChatDecisionKind is the semantic effect of a provider-owned decision.
+type ChatDecisionKind string
+
+// Provider-neutral decision kinds exposed to chat clients.
+const (
+	ChatDecisionAllowOnce    ChatDecisionKind = "allow_once"
+	ChatDecisionAllowAlways  ChatDecisionKind = "allow_always"
+	ChatDecisionRejectOnce   ChatDecisionKind = "reject_once"
+	ChatDecisionRejectAlways ChatDecisionKind = "reject_always"
+)
 
 // ChatDecision is the answer to a pending request.
 type ChatDecision struct {

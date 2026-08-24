@@ -28,6 +28,8 @@
  */
 
 import {
+	cloneElement,
+	isValidElement,
 	useCallback,
 	useEffect,
 	useId,
@@ -81,7 +83,7 @@ export function ChatComposer({
 	willQueue,
 	disabled,
 	settings,
-
+	approval,
 	skills = [],
 	filePaths = [],
 	filePathsTruncated,
@@ -105,6 +107,8 @@ export function ChatComposer({
 }: {
 	onSend: (text: string, attachments?: FileAttachmentPayload[]) => void | Promise<unknown>;
 	settings?: ReactNode;
+	/** A provider decision that temporarily replaces ordinary message entry. */
+	approval?: ReactNode;
 	/** A send is in flight. */
 	busy?: boolean;
 	/** The agent is mid-turn, so this message is held until the turn ends. */
@@ -142,7 +146,7 @@ export function ChatComposer({
 	commandError?: string;
 	/** A queued-message dock owns the shared rounded top edge. */
 	attachedTop?: boolean;
-	/** Queued messages rendered above the composer, below the delivery choice. */
+	/** Queued messages rendered above the composer. */
 	queuedDock?: ReactNode;
 	/** Run AO's built-in `/compact` command instead of sending it to the agent. */
 	onCompact?: () => void | Promise<unknown>;
@@ -541,11 +545,33 @@ export function ChatComposer({
 		canSteer && onSteer ? (
 			<DeliveryChoice value={activeDelivery} disabled={steerPending} />
 		) : null;
-	const settingsNode = settings;
+	const settingsNode =
+		settings && deliveryChoice && isValidElement(settings)
+			? cloneElement(settings, undefined, deliveryChoice)
+			: settings;
+
+	if (approval) {
+		return (
+			<>
+				{queuedDock}
+				<form
+					onSubmit={(event) => event.preventDefault()}
+					data-attached-top={attachedTop || undefined}
+					className="cursor-chat-composer relative flex flex-col gap-1.5 border border-border-strong px-3 py-3 transition-[background,border-color,box-shadow]"
+				>
+					{approval}
+					{commandError ? (
+						<p role="alert" className="px-1.5 text-[11px] leading-snug text-destructive">
+							{commandError}
+						</p>
+					) : null}
+				</form>
+			</>
+		);
+	}
 
 	return (
 		<>
-		{deliveryChoice}
 		{queuedDock}
 		<form
 			// Clicking send while Cmd/Ctrl is held has to mean what the indicator
@@ -692,6 +718,7 @@ export function ChatComposer({
 						</>
 					) : null}
 					{settingsNode}
+					{!settings && deliveryChoice}
 				</div>
 
 				<div

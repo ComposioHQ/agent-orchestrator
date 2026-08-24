@@ -12,6 +12,12 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 )
 
+type AgentInventoryCache struct {
+	ID            int64
+	InventoryJson string
+	ObservedAt    time.Time
+}
+
 type AgentModelCatalog struct {
 	AgentID       string
 	ProjectID     string
@@ -307,6 +313,7 @@ type PRComment struct {
 	URL              string
 	IsBot            int64
 	AutoInjectReview bool
+	ReviewID         string
 }
 
 type PRReview struct {
