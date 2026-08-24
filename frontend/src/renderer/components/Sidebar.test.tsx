@@ -1392,7 +1392,7 @@ describe("Sidebar", () => {
 		}
 	});
 
-	it("paints the dot from SCM state while activity drives the pulse", () => {
+	it("paints the dot from its board section while activity drives the pulse", () => {
 		renderSidebar({
 			workspaces: [
 				{
@@ -1463,14 +1463,35 @@ describe("Sidebar", () => {
 		expect(workingDot).toHaveClass("bg-status-working");
 		expect(workingDot).toHaveClass("animate-status-pulse");
 
-		// With one, the tone stays on the PR even while the agent runs. The board
-		// files these under Working (status is activity-first), so the sidebar
-		// deliberately keeps the PR tone the lane label would otherwise hide, and
-		// leaves the pulse to say the agent is busy.
-		expect(sessionDot("ci failed task")).toHaveClass("bg-status-exited", "animate-status-pulse");
+		// The board-section tone stays visible while the pulse says the agent is busy.
+		expect(sessionDot("ci failed task")).toHaveClass("bg-status-needs-you", "animate-status-pulse");
 		expect(sessionDot("review task")).toHaveClass("bg-status-in-review", "animate-status-pulse");
 		expect(sessionDot("ready task")).toHaveClass("bg-status-ready", "animate-status-pulse");
 		expect(sessionDot("merged task")).toHaveClass("bg-status-merged", "animate-status-pulse");
+	});
+
+	it("blinks blue when an idle-section session has working activity", () => {
+		renderSidebar({
+			workspaces: [
+				{
+					...workspace,
+					sessions: [
+						{
+							...session,
+							id: "proj-1-idle-working",
+							title: "idle task receiving work",
+							status: "idle",
+							activity: { state: "active", lastActivityAt: "2026-06-30T00:00:00Z" },
+						},
+					],
+				},
+			],
+		});
+
+		const dot = screen
+			.getByLabelText("Open idle task receiving work")
+			.querySelector<HTMLElement>("[data-session-status]");
+		expect(dot).toHaveClass("bg-status-working", "animate-status-pulse");
 	});
 
 	it("holds the dot still for idle activity and keeps its PR tone", async () => {
@@ -1531,7 +1552,7 @@ describe("Sidebar", () => {
 		expect(row).toHaveAccessibleDescription("Switching to Codex");
 		expect(within(row).getByText("Switching to Codex")).toBeInTheDocument();
 		const dot = row.querySelector<HTMLElement>("[data-session-status]");
-		expect(dot).toHaveClass("bg-status-exited");
+		expect(dot).toHaveClass("bg-status-needs-you");
 		expect(dot).not.toHaveClass("animate-status-pulse");
 	});
 

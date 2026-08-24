@@ -58,22 +58,29 @@ export type SessionStatusDotView = {
 	breathe: boolean;
 };
 
-// The session dot carries two independent signals. Colour comes from the SCM
-// state, which survives a running agent — `status` is activity-first, so it
-// collapses to `working` the moment an agent wakes and takes every pull request
-// tone with it. Sessions without a pull request fall back to `status`, which is
-// where working/idle/exited live. Motion stays on raw agent activity, so a
-// session being worked on breathes whatever its pull request says.
+// The session dot carries two independent signals. Colour comes from the board
+// section represented by the SCM state, which survives a running agent —
+// `status` is activity-first, so it collapses to `working` the moment an agent
+// wakes and would otherwise take every pull request tone with it. Merged keeps
+// its split-section tone instead of sharing Ready to merge's tone.
 //
-// Tones resolve through the same status table the board card reads, so a status
-// cannot mean one colour here and another there.
+// Motion stays on raw agent activity. A no-PR idle session is the exception to
+// the preserved section colour: when its agent starts working it blinks blue.
 export function getSessionStatusDotView(
 	session: { activity?: SessionActivity | null; scmStatus?: SessionStatus; status: SessionStatus },
 	t: TFunction = appI18n.t,
 ): SessionStatusDotView {
+	const working = isAgentActivityWorking(session.activity);
+	const sectionStatus = session.scmStatus ?? session.status;
+	const toneStatus = sectionStatus === "idle" && working ? "working" : sectionStatus;
+	const className =
+		toneStatus === "idle" || toneStatus === "merged"
+			? getSessionStatusView(toneStatus, t).dotClassName
+			: getAttentionZoneView(toneStatus, t).dotClassName;
+
 	return {
-		className: getSessionStatusView(session.scmStatus ?? session.status, t).dotClassName,
-		breathe: getAgentActivityView(session.activity, t).breathe,
+		className,
+		breathe: working,
 	};
 }
 

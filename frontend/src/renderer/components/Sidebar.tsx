@@ -155,11 +155,9 @@ function useSelection() {
 	};
 }
 
-// Colour tracks the session's SCM state, falling back to runtime status when
-// there is no pull request; motion stays on raw agent activity. Board status is
-// activity-first, so a running agent would repaint every row the same working
-// tone — the sidebar is the one list where every session is visible at once, so
-// it keeps the PR tone and lets the pulse carry "busy" instead.
+// Colour tracks the session's board section, preserving SCM state while the
+// agent runs; motion stays on raw agent activity. A no-PR idle session turns
+// blue when it starts working. See getSessionStatusDotView for the lane mapping.
 function SessionStatusDot({ session }: { session: WorkspaceSession }) {
 	const dot = getSessionStatusDotView(session);
 	return (

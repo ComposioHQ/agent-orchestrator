@@ -113,20 +113,19 @@ describe("session presentation", () => {
 		["idle", "bg-status-idle"],
 		["working", "bg-status-working"],
 		["needs_input", "bg-status-needs-you"],
-		["exited", "bg-status-exited"],
-		["no_signal", "bg-status-unknown"],
-		["ci_failed", "bg-status-exited"],
+		["exited", "bg-status-needs-you"],
+		["no_signal", "bg-status-needs-you"],
+		["ci_failed", "bg-status-needs-you"],
 		["changes_requested", "bg-status-needs-you"],
+		["unknown", "bg-status-needs-you"],
 		["draft", "bg-status-in-review"],
 		["pr_open", "bg-status-in-review"],
 		["review_pending", "bg-status-in-review"],
 		["approved", "bg-status-ready"],
 		["mergeable", "bg-status-ready"],
 		["merged", "bg-status-merged"],
-	] as const)("paints the session dot with the %s status tone", (status, dotClassName) => {
-		// Both surfaces read tones off the one status table, so a status can never
-		// mean amber on a card and blue in the sidebar.
-		expect(getSessionStatusView(status).dotClassName).toBe(dotClassName);
+		["terminated", "bg-status-terminated"],
+	] as const)("paints the %s session dot with its board-section tone", (status, dotClassName) => {
 		expect(getSessionStatusDotView(sessionWith({ status }))).toMatchObject({ className: dotClassName });
 	});
 
@@ -142,7 +141,7 @@ describe("session presentation", () => {
 		expect(getSessionStatusDotView(merged)).toEqual({ className: "bg-status-merged", breathe: true });
 	});
 
-	it("keeps the dot's motion on raw agent activity", () => {
+	it("keeps board-section color while raw working activity starts the motion", () => {
 		const scmStatus = "mergeable" as const;
 
 		expect(
@@ -153,6 +152,14 @@ describe("session presentation", () => {
 				sessionWith({ status: "working", scmStatus, activity: { state: "active", lastActivityAt: "" } }),
 			),
 		).toEqual({ className: "bg-status-ready", breathe: true });
+	});
+
+	it("uses a blinking blue dot when an idle-section session starts working", () => {
+		expect(
+			getSessionStatusDotView(
+				sessionWith({ status: "idle", activity: { state: "active", lastActivityAt: "" } }),
+			),
+		).toEqual({ className: "bg-status-working", breathe: true });
 	});
 
 	it("keeps activity indicator color independent from PR and CI presentation", () => {
