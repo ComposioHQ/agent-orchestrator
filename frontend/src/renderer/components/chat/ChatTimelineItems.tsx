@@ -107,6 +107,7 @@ const IMAGE_ATTACHMENT_PATH = /\.(?:png|jpe?g|gif|webp|bmp)$/i;
 const STREAM_BASE_CHARACTERS_PER_SECOND = 58;
 const STREAM_TARGET_BACKLOG_CHARACTERS = 72;
 const STREAM_MAX_CHARACTERS_PER_SECOND = 720;
+const STREAM_MAX_FRAME_DELTA_MS = 100;
 
 function useSmoothStreamingText(message: ConversationMessage): string {
 	// A snapshot can first reach the renderer after the provider has already emitted
@@ -118,6 +119,15 @@ function useSmoothStreamingText(message: ConversationMessage): string {
 	const frameRef = useRef<number | undefined>(undefined);
 	const lastFrameAtRef = useRef<number | undefined>(undefined);
 	const fractionalCharactersRef = useRef(0);
+
+	const cancelDrain = useCallback(() => {
+		if (frameRef.current !== undefined) {
+			window.cancelAnimationFrame(frameRef.current);
+			frameRef.current = undefined;
+		}
+		lastFrameAtRef.current = undefined;
+		fractionalCharactersRef.current = 0;
+	}, []);
 
 	const scheduleDrain = useCallback(() => {
 		if (frameRef.current !== undefined) return;
@@ -139,17 +149,20 @@ function useSmoothStreamingText(message: ConversationMessage): string {
 				STREAM_MAX_CHARACTERS_PER_SECOND,
 				STREAM_BASE_CHARACTERS_PER_SECOND + catchup * 2,
 			);
-			fractionalCharactersRef.current +=
-				charactersPerSecond * Math.max(0, now - previousFrameAt) / 1000;
-			const count = Math.max(1, Math.floor(fractionalCharactersRef.current));
+			const elapsedMs = Math.min(STREAM_MAX_FRAME_DELTA_MS, Math.max(0, now - previousFrameAt));
+			fractionalCharactersRef.current += charactersPerSecond * elapsedMs / 1000;
+			const count = Math.floor(fractionalCharactersRef.current);
+			if (count < 1) {
+				frameRef.current = window.requestAnimationFrame(tick);
+				return;
+			}
 			fractionalCharactersRef.current -= count;
-			setVisibleText((current) => {
-				const target = targetRef.current;
-				if (current.length >= target.length) return current;
-				const next = current + target.slice(current.length, current.length + count);
-				visibleRef.current = next;
-				return next;
-			});
+			const current = visibleRef.current;
+			const target = targetRef.current;
+			if (current.length >= target.length) return;
+			const next = current + target.slice(current.length, current.length + count);
+			visibleRef.current = next;
+			setVisibleText(next);
 			if (visibleRef.current.length < targetRef.current.length) {
 				frameRef.current = window.requestAnimationFrame(tick);
 			}
@@ -162,6 +175,7 @@ function useSmoothStreamingText(message: ConversationMessage): string {
 
 	useEffect(() => {
 		if (message.id !== messageIdRef.current) {
+			cancelDrain();
 			messageIdRef.current = message.id;
 			targetRef.current = message.text;
 			const initial = message.text;
@@ -171,6 +185,12 @@ function useSmoothStreamingText(message: ConversationMessage): string {
 		}
 
 		targetRef.current = message.text;
+		if (!message.streaming) {
+			cancelDrain();
+			visibleRef.current = message.text;
+			setVisibleText(message.text);
+			return;
+		}
 		// A provider correction or rollback can replace the current prefix. In that
 		// case the durable snapshot is authoritative and should be shown immediately.
 		if (!message.text.startsWith(visibleRef.current)) {
@@ -179,13 +199,11 @@ function useSmoothStreamingText(message: ConversationMessage): string {
 			return;
 		}
 		if (visibleRef.current.length < message.text.length) scheduleDrain();
-	}, [message.id, message.text, message.streaming, scheduleDrain]);
+	}, [cancelDrain, message.id, message.text, message.streaming, scheduleDrain]);
 
 	useEffect(
-		() => () => {
-			if (frameRef.current !== undefined) window.cancelAnimationFrame(frameRef.current);
-		},
-		[],
+		() => cancelDrain,
+		[cancelDrain],
 	);
 
 	return visibleText;
@@ -214,17 +232,19 @@ function TwoRowTimelineMarker({
 	message,
 	detail,
 	tone = "text-muted-foreground/70",
+	detailTone = "text-muted-foreground/70",
 }: {
 	message: string;
 	detail?: string;
 	tone?: string;
+	detailTone?: string;
 }) {
 	return (
 		<div className="flex min-w-0 flex-col gap-1 py-1">
 			<div className={cn("flex min-w-0 items-baseline gap-2 text-[11px]", tone)}>
 				<span className="shrink-0">{message}</span>
 				{detail ? (
-					<span className="min-w-0 truncate text-destructive" title={detail}>
+					<span className={cn("min-w-0 truncate", detailTone)} title={detail}>
 						{detail}
 					</span>
 				) : null}
@@ -268,7 +288,14 @@ export function TurnOutcome({
 		failed: { label: "The agent ran into a problem", tone: "text-destructive" },
 	}[state];
 
-	return <TwoRowTimelineMarker message={copy.label} detail={error} tone={copy.tone} />;
+	return (
+		<TwoRowTimelineMarker
+			message={copy.label}
+			detail={error}
+			tone={copy.tone}
+			detailTone={state === "failed" ? "text-destructive" : undefined}
+		/>
+	);
 }
 
 function formatTokens(tokens: number): string {

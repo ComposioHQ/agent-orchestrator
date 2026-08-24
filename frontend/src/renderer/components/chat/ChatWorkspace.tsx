@@ -39,6 +39,7 @@ import { cn } from "../../lib/utils";
 import { sameContent, useStableList } from "../../lib/stable-list";
 import { getApiBaseUrl, subscribeApiBaseUrl } from "../../lib/api-client";
 import { aoBridge } from "../../lib/bridge";
+import { isDialogOrMenuOpen } from "../../lib/dom-selectors";
 import {
 	TERMINAL_FONT_SIZE_DEFAULT,
 	TERMINAL_FONT_SIZE_MAX,
@@ -340,26 +341,31 @@ export function ChatWorkspace({
 	mcpReloadError,
 }: ChatWorkspaceProps) {
 	const turn = activeTurn(snapshot);
-	const hasPendingApproval = snapshot.items.some(
-		(item) => item.kind === "activity" && item.activityKind === "approval" && item.status === "pending",
+	const hasPendingInteraction = snapshot.items.some(
+		(item) =>
+			item.kind === "activity" &&
+			(item.activityKind === "approval" || item.activityKind === "user_input") &&
+			item.status === "pending" &&
+			(!item.turnId || item.turnId === turn?.id),
 	);
 	const handleChatKeyDown = useCallback(
 		(event: ReactKeyboardEvent<HTMLElement>) => {
 			if (
 				event.key !== "Escape" ||
 				event.defaultPrevented ||
+				isDialogOrMenuOpen() ||
 				event.altKey ||
 				event.ctrlKey ||
 				event.metaKey ||
 				turn?.state !== "running" ||
-				hasPendingApproval ||
+				hasPendingInteraction ||
 				!onInterrupt
 			)
 				return;
 			event.preventDefault();
 			onInterrupt();
 		},
-		[hasPendingApproval, onInterrupt, turn],
+		[hasPendingInteraction, onInterrupt, turn],
 	);
 	// Selection is durable UI state; availability only controls whether the tab is
 	// offered. Keeping these separate preserves a selected reviewer while an active
