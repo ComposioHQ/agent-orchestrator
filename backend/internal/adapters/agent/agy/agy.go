@@ -47,6 +47,7 @@ var _ adapters.Adapter = (*Plugin)(nil)
 var _ ports.Agent = (*Plugin)(nil)
 var _ ports.SubmitActivitySignaler = (*Plugin)(nil)
 var _ ports.BlockedActivitySignaler = (*Plugin)(nil)
+var _ ports.TerminalDecisionDetector = (*Plugin)(nil)
 
 // EmitsSubmitActivity reports that PreInvocation proves submitted work has
 // reached AGY's execution loop.

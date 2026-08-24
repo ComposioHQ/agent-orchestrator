@@ -231,6 +231,13 @@ type TerminalActivityDetector interface {
 	DetectTerminalActivity(output string) (domain.ActivityState, bool)
 }
 
+// TerminalDecisionDetector is an optional safety capability for interactive
+// adapters whose lifecycle hooks cannot report a permission picker. It is
+// sampled immediately before AO injects a message and trailing Enter.
+type TerminalDecisionDetector interface {
+	TerminalAwaitingDecision(output string) bool
+}
+
 // EmptyComposerDetector is an opt-in safety capability for unsolicited
 // coordination sent to an already-running interactive agent. It must return
 // true only when current terminal evidence positively proves that the active

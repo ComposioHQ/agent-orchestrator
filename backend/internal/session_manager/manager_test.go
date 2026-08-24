@@ -7719,6 +7719,15 @@ type submitOnlyAgent struct{ fakeAgent }
 func (submitOnlyAgent) EmitsSubmitActivity() bool  { return true }
 func (submitOnlyAgent) EmitsBlockedActivity() bool { return false }
 
+type terminalDetectingAgent struct {
+	fakeAgent
+	blocked bool
+}
+
+func (a terminalDetectingAgent) TerminalAwaitingDecision(string) bool {
+	return a.blocked
+}
+
 // newSendTestManager builds a Manager wired for Send confirmation tests with
 // fast (millisecond) confirmation timings so no test waits real seconds. The
 // returned messenger records every Send; the store is mutable so a test can
@@ -7762,6 +7771,55 @@ func TestSend_SkipsConfirmForHooklessHarness(t *testing.T) {
 	// Hookless path returns within milliseconds (no 2s+ confirmation wait).
 	if dt := time.Since(start); dt > 250*time.Millisecond {
 		t.Fatalf("Send took %s for a hookless harness; confirmActive should have been skipped", dt)
+	}
+}
+
+func TestSend_TerminalPermissionPromptRejectsDeliveryDespiteStaleIdleState(t *testing.T) {
+	st := newFakeStore()
+	st.sessions["s1"] = domain.SessionRecord{
+		ID:       "s1",
+		Harness:  domain.HarnessAgy,
+		Mode:     domain.SessionModeTUI,
+		Activity: domain.Activity{State: domain.ActivityIdle},
+		Metadata: domain.SessionMetadata{RuntimeHandleID: "h1"},
+	}
+	msg := &fakeMessenger{}
+	m := newSendTestManager(t, terminalDetectingAgent{blocked: true}, msg, st)
+	m.runtime.(*fakeRuntime).outputs = []string{`Command
+Requesting permission for:
+git status
+Do you want to proceed?
+> 1. Yes
+  2. Yes, and don't ask again
+  3. No`}
+
+	err := m.Send(context.Background(), "s1", "continue the task pack", nil)
+	if !errors.Is(err, ErrAwaitingDecision) {
+		t.Fatalf("Send error = %v, want ErrAwaitingDecision", err)
+	}
+	if len(msg.msgs) != 0 {
+		t.Fatalf("Send calls = %d, want 0 (permission picker must receive no paste or Enter)", len(msg.msgs))
+	}
+}
+
+func TestSend_UnknownTerminalActivityPreservesDelivery(t *testing.T) {
+	st := newFakeStore()
+	st.sessions["s1"] = domain.SessionRecord{
+		ID:       "s1",
+		Harness:  domain.HarnessAgy,
+		Mode:     domain.SessionModeTUI,
+		Activity: domain.Activity{State: domain.ActivityIdle},
+		Metadata: domain.SessionMetadata{RuntimeHandleID: "h1"},
+	}
+	msg := &fakeMessenger{}
+	m := newSendTestManager(t, terminalDetectingAgent{}, msg, st)
+	m.runtime.(*fakeRuntime).outputs = []string{"> current composer\nGemini 3.7 Flash · high\n"}
+
+	if err := m.Send(context.Background(), "s1", "continue the task pack", nil); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	if len(msg.msgs) != 1 {
+		t.Fatalf("Send calls = %d, want 1", len(msg.msgs))
 	}
 }
 
@@ -7937,10 +7995,11 @@ func TestSend_NoNudgeWhenBlockedAppearsBeforeNudge(t *testing.T) {
 	st := newFakeStore()
 	st.sessions["s1"] = domain.SessionRecord{ID: "s1", Harness: "claude-code",
 		Activity: domain.Activity{State: domain.ActivityIdle}}
-	// blockAfterFirstReadStore flips the session to blocked on read #4. The
+	// blockAfterFirstReadStore flips the session to blocked on read #5. The
 	// deterministic read sequence (attemptDeadline 0 makes waitForActive do
-	// exactly one poll): #1 Deliver's pre-paste read, #2 Send's harness lookup,
-	// #3 waitForActive's poll (idle → timeout), #4 the JIT pre-nudge re-read —
+	// exactly one poll): #1 terminal-safety lookup, #2 Deliver's pre-paste
+	// read, #3 Send's harness lookup, #4 waitForActive's poll (idle → timeout),
+	// #5 the JIT pre-nudge re-read —
 	// which is the first to see blocked, landing the flip in the exact
 	// post-final-poll / pre-nudge window this test exists to cover.
 	bst := &blockAfterFirstReadStore{fakeStore: st, id: "s1"}
@@ -7958,8 +8017,8 @@ func TestSend_NoNudgeWhenBlockedAppearsBeforeNudge(t *testing.T) {
 	if len(msg.msgs) != 1 {
 		t.Fatalf("Send calls = %d, want 1 (blocked appeared before nudge, JIT re-read caught it)", len(msg.msgs))
 	}
-	if bst.reads < 4 {
-		t.Fatalf("GetSession reads = %d, want >= 4 (the JIT pre-nudge re-read must have run)", bst.reads)
+	if bst.reads < 5 {
+		t.Fatalf("GetSession reads = %d, want >= 5 (the JIT pre-nudge re-read must have run)", bst.reads)
 	}
 }
 
@@ -8024,10 +8083,11 @@ func TestSwitchTargetsOnlyRetryEnterWhenActivitySignalsMakeItSafe(t *testing.T) 
 }
 
 // blockAfterFirstReadStore wraps fakeStore and flips the session to
-// ActivityBlocked on the FOURTH GetSession call, so with attemptDeadline 0 the
+// ActivityBlocked on the FIFTH GetSession call, so with attemptDeadline 0 the
 // first read to observe blocked is confirmActive's just-in-time pre-nudge
-// re-read (reads #1-#3 are Deliver's pre-paste read, Send's harness lookup,
-// and waitForActive's single poll — see TestSend_NoNudgeWhenBlockedAppearsBeforeNudge).
+// re-read (reads #1-#4 are the terminal-safety lookup, Deliver's pre-paste
+// read, Send's harness lookup, and waitForActive's single poll — see
+// TestSend_NoNudgeWhenBlockedAppearsBeforeNudge).
 type blockAfterFirstReadStore struct {
 	*fakeStore
 	id    domain.SessionID
@@ -8036,7 +8096,7 @@ type blockAfterFirstReadStore struct {
 
 func (s *blockAfterFirstReadStore) GetSession(ctx context.Context, id domain.SessionID) (domain.SessionRecord, bool, error) {
 	s.reads++
-	if s.reads >= 4 {
+	if s.reads >= 5 {
 		if rec, ok := s.sessions[s.id]; ok {
 			rec.Activity.State = domain.ActivityBlocked
 			s.sessions[s.id] = rec

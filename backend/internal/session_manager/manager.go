@@ -2962,6 +2962,9 @@ func (m *Manager) send(ctx context.Context, id domain.SessionID, message, client
 	if err != nil {
 		return err
 	}
+	if m.terminalAwaitingDecision(ctx, id) {
+		return fmt.Errorf("send %s: %w", id, ErrAwaitingDecision)
+	}
 	var afterWrite func(context.Context) error
 	if strings.TrimSpace(message) != "" {
 		if recorder, ok := m.store.(latestUserPromptRecorder); ok {
@@ -3011,6 +3014,37 @@ func (m *Manager) send(ctx context.Context, id domain.SessionID, message, client
 		m.confirmActive(ctx, m.messenger, id)
 	}
 	return nil
+}
+
+// terminalAwaitingDecision performs a just-in-time safety check immediately
+// before Deliver writes to the pane. This supplements durable activity hooks
+// for interactive harnesses such as Agy that cannot report blocked state.
+func (m *Manager) terminalAwaitingDecision(ctx context.Context, id domain.SessionID) bool {
+	if m.runtime == nil || m.agents == nil {
+		return false
+	}
+	rec, ok, err := m.store.GetSession(ctx, id)
+	if err != nil || !ok {
+		return false
+	}
+	agent, ok := m.agents.Agent(rec.Harness)
+	if !ok {
+		return false
+	}
+	detector, ok := agent.(ports.TerminalDecisionDetector)
+	if !ok {
+		return false
+	}
+	handle := runtimeHandle(rec.Metadata)
+	if handle.ID == "" {
+		return false
+	}
+	output, err := m.runtime.GetOutput(ctx, handle, 120)
+	if err != nil {
+		m.logger.Warn("send: terminal activity check failed", "sessionID", id, "error", err)
+		return false
+	}
+	return detector.TerminalAwaitingDecision(output)
 }
 
 func (m *Manager) prepareOutboundMessage(ctx context.Context, id domain.SessionID, message string) (string, error) {
