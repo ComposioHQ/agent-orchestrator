@@ -6049,6 +6049,7 @@ components:
           enum:
           - running
           - completed
+          - recovered
           - failed
           - cancelled
           - pending
@@ -6542,6 +6543,7 @@ components:
           - queued
           - running
           - completed
+          - recovered
           - interrupted
           - failed
           type: string
@@ -6649,9 +6651,17 @@ components:
           - vibe
           - pi
           - kimchi
+          - omp
           - prime-agent
           - autohand
           - fake
+          type: string
+        approvalMode:
+          enum:
+          - default
+          - accept-edits
+          - auto
+          - bypass-permissions
           type: string
         attachments:
           items:
@@ -6797,6 +6807,7 @@ components:
           - queued
           - running
           - completed
+          - recovered
           - interrupted
           - failed
           type: string
@@ -7845,6 +7856,7 @@ components:
           - queued
           - running
           - completed
+          - recovered
           - interrupted
           - failed
           type: string
@@ -8093,6 +8105,8 @@ components:
           type: string
         line:
           type: integer
+        reviewId:
+          type: string
         url:
           type: string
       required:
@@ -8620,6 +8634,7 @@ components:
           - vibe
           - pi
           - kimchi
+          - omp
           - prime-agent
           - autohand
           type: string
@@ -8845,7 +8860,7 @@ components:
             readiness.
           type: boolean
         requirements:
-          description: 'Individual checks, in stable order: git, tmux, harness, gh.'
+          description: Individual checks in stable order for the selected probe.
           items:
             $ref: '#/components/schemas/SystemRequirement'
           type: array

@@ -49,9 +49,10 @@ type recordingLauncher struct {
 	live         bool
 	afterReady   func()
 
-	preflighted []domain.AgentHarness
-	started     []ChatStart
-	turns       []string
+	preflighted          []domain.AgentHarness
+	preflightPermissions []ports.PermissionMode
+	started              []ChatStart
+	turns                []string
 	// relayed is what arrived through Manager.Send rather than as an initial
 	// prompt, kept separate so a test can tell the two apart.
 	relayed  []string
@@ -64,8 +65,13 @@ type recordingLauncher struct {
 
 func (l *recordingLauncher) SupportsChat(_ domain.AgentHarness) bool { return true }
 
-func (l *recordingLauncher) PreflightChat(_ context.Context, harness domain.AgentHarness) error {
+func (l *recordingLauncher) PreflightChat(
+	_ context.Context,
+	harness domain.AgentHarness,
+	permissions ports.PermissionMode,
+) error {
 	l.preflighted = append(l.preflighted, harness)
+	l.preflightPermissions = append(l.preflightPermissions, permissions)
 	return l.preflightErr
 }
 
@@ -432,8 +438,11 @@ func TestDefaultChatSpawnReturnsUnexpectedPreflightError(t *testing.T) {
 
 func TestDefaultChatSpawnUsesChatWhenAvailable(t *testing.T) {
 	launcher := &recordingLauncher{}
-	mgr, _, runtime := newChatManager(launcher)
+	mgr, store, runtime := newChatManager(launcher)
 	mgr.defaults = fixedSessionModeDefaults(domain.SessionModeChat)
+	project := store.projects[string(chatTestProject)]
+	project.Config.AgentConfig.Permissions = ports.PermissionModeBypassPermissions
+	store.projects[string(chatTestProject)] = project
 
 	rec, _, _, err := mgr.Spawn(context.Background(), ports.SpawnConfig{
 		ProjectID: chatTestProject,
@@ -452,6 +461,10 @@ func TestDefaultChatSpawnUsesChatWhenAvailable(t *testing.T) {
 	if len(launcher.preflighted) != 1 || len(launcher.started) != 1 {
 		t.Fatalf("default Chat dispatch: preflight=%v started=%d, want one of each",
 			launcher.preflighted, len(launcher.started))
+	}
+	if len(launcher.preflightPermissions) != 1 ||
+		launcher.preflightPermissions[0] != ports.PermissionModeBypassPermissions {
+		t.Fatalf("preflight permissions = %v, want bypass-permissions", launcher.preflightPermissions)
 	}
 }
 

@@ -20,7 +20,7 @@ type fakeSystemChecker struct {
 	calls  int
 }
 
-func (f *fakeSystemChecker) Check(context.Context) (systemcheck.Report, error) {
+func (f *fakeSystemChecker) CheckStartup(context.Context) (systemcheck.Report, error) {
 	f.calls++
 	return f.report, f.err
 }
@@ -32,7 +32,6 @@ func TestGetSystemRequirements(t *testing.T) {
 		Requirements: []systemcheck.Requirement{
 			{ID: "git", Label: "git", Satisfied: true, Required: true, Detail: "/usr/bin/git"},
 			{ID: "tmux", Label: "tmux", Satisfied: true, Required: true, Detail: "/usr/bin/tmux"},
-			{ID: "harness", Label: "agent harness", Satisfied: false, Required: true, Detail: "No agent CLI (Claude Code, Codex, etc.) was found on PATH."},
 			{ID: "gh", Label: "gh", Satisfied: false, Required: false, Detail: "gh was not found on PATH. It lets agent sessions open pull requests and read issues, but AO runs fine without it."},
 		},
 	}}
@@ -45,7 +44,7 @@ func TestGetSystemRequirements(t *testing.T) {
 	if status != http.StatusOK {
 		t.Fatalf("GET /system/requirements = %d, body=%s", status, body)
 	}
-	for _, want := range []string{`"ready":false`, `"id":"git"`, `"id":"tmux"`, `"id":"harness"`, `"id":"gh"`, `"required":false`} {
+	for _, want := range []string{`"ready":false`, `"id":"git"`, `"id":"tmux"`, `"id":"gh"`, `"required":false`} {
 		if !strings.Contains(string(body), want) {
 			t.Fatalf("body missing %s: %s", want, body)
 		}

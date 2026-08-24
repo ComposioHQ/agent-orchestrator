@@ -317,6 +317,14 @@ export const mockSessionScmSummaries: Record<string, SessionPRSummary[]> = {
 						reviewUrl: "https://github.com/acme-inc/ao-demo/pull/318#pullrequestreview-3102",
 						body: "No issues found in the terminal pane changes.",
 					},
+					{
+						reviewerId: "aditi",
+						autoInjectReview: true,
+						verdict: "none",
+						submittedAt: minutesAgo(12),
+						reviewUrl: "https://github.com/acme-inc/ao-demo/pull/318#pullrequestreview-3103",
+						body: "The compact review layout reads well. One non-blocking spacing note remains for a later pass.",
+					},
 				],
 				unresolvedBy: [
 					{
@@ -325,8 +333,18 @@ export const mockSessionScmSummaries: Record<string, SessionPRSummary[]> = {
 						reviewUrl: "https://github.com/acme-inc/ao-demo/pull/318#pullrequestreview-3101",
 						// Two comments, two separate threads — resolving addresses threads.
 						links: [
-							{ file: "frontend/src/renderer/components/TerminalPane.tsx", line: 84, body: "The reviewer terminal header wraps awkwardly at this width. Please keep the role label and controls on one line.", autoInjectReview: true },
+							{ reviewId: "31801", file: "frontend/src/renderer/components/TerminalPane.tsx", line: 84, body: "The reviewer terminal header wraps awkwardly at this width. Please keep the role label and controls on one line.", autoInjectReview: true },
 							{ file: "frontend/src/renderer/styles.css", line: 219, body: "This spacing token makes the review controls look larger than the rest of the inspector controls.", autoInjectReview: true },
+						],
+					},
+				],
+				resolvedBy: [
+					{
+						reviewerId: "prateek",
+						count: 1,
+						reviewUrl: "https://github.com/acme-inc/ao-demo/pull/318#pullrequestreview-31801",
+						links: [
+							{ reviewId: "31801", file: "frontend/src/renderer/components/TerminalPane.tsx", line: 62, body: "This earlier toolbar alignment comment has been resolved.", autoInjectReview: true },
 						],
 					},
 				],

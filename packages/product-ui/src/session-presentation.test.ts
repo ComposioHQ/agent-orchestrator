@@ -44,6 +44,32 @@ describe("session presentation", () => {
 		expect(attentionZone(status)).toBe(zone);
 	});
 
+	it.each([
+		["working", "text-status-working", "bg-status-working"],
+		["idle", "text-status-idle", "bg-status-idle"],
+		["needs_input", "text-status-needs-you", "bg-status-needs-you"],
+		["exited", "text-status-exited", "bg-status-exited"],
+		["no_signal", "text-status-unknown", "bg-status-unknown"],
+		["ci_failed", "text-status-exited", "bg-status-exited"],
+		["changes_requested", "text-status-needs-you", "bg-status-needs-you"],
+		["review_pending", "text-status-in-review", "bg-status-in-review"],
+		["draft", "text-status-in-review", "bg-status-in-review"],
+		["pr_open", "text-status-in-review", "bg-status-in-review"],
+		["approved", "text-status-ready", "bg-status-ready"],
+		["mergeable", "text-status-ready", "bg-status-ready"],
+		["merged", "text-status-merged", "bg-status-merged"],
+		["unknown", "text-status-unknown", "bg-status-unknown"],
+	] as const)("pairs the %s text tone with a matching dot tone", (status, className, dotClassName) => {
+		expect(getSessionStatusView(status)).toMatchObject({ className, dotClassName });
+	});
+
+	it("falls back to the unknown tone for an unrecognized status", () => {
+		expect(getSessionStatusView("nonsense" as never)).toMatchObject({
+			className: "text-status-unknown",
+			dotClassName: "bg-status-unknown",
+		});
+	});
+
 	it("keeps lifecycle predicates independent of presentation labels", () => {
 		expect(isAgentActivityWorking({ state: "active", lastActivityAt: "" })).toBe(true);
 		expect(isAgentActivityWorking(undefined)).toBe(false);

@@ -1755,10 +1755,12 @@ textarea,
 }
 
 .ao-startup-screen {
-	position: relative;
-	flex: 1 1 0%;
-	min-width: 0;
-	min-height: 0;
+	/* Startup precedes all app chrome, so it must not inherit the inset center
+	 * panel's asymmetric frame. Cover the renderer viewport until the board is
+	 * ready, including the sidebar and titlebar-adjacent space. */
+	position: fixed;
+	inset: 0;
+	z-index: 50;
 }
 
 .ao-startup-logo {

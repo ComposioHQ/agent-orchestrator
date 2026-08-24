@@ -21,7 +21,7 @@ import { CenterPane } from "./CenterPane";
 import { SessionChatSurface } from "./chat/SessionChatSurface";
 import { NotificationCenter } from "./NotificationCenter";
 import { ResizeHandle } from "./ResizeHandle";
-import { SessionFilesView } from "./SessionFilesView";
+import { SessionFilesView, type ReviewFileTarget } from "./SessionFilesView";
 import { SessionInspector } from "./SessionInspector";
 import {
 	SessionInterfaceActionGroup,
@@ -260,6 +260,8 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	const [terminalTarget, setTerminalTarget] = useState<TerminalTarget>({ kind: "worker" });
 	const [browserPopOutState, setBrowserPopOutState] = useState({ sessionId, poppedOut: false });
 	const [filesPoppedOut, setFilesPoppedOut] = useState(false);
+	const [reviewFileTarget, setReviewFileTarget] = useState<ReviewFileTarget | undefined>();
+	useEffect(() => setReviewFileTarget(undefined), [sessionId]);
 	const [filesFocusPath, setFilesFocusPath] = useState<string | null>(null);
 	const browserPoppedOut = browserPopOutState.sessionId === sessionId && browserPopOutState.poppedOut;
 	const [interfaceSwitchDialogOpen, setInterfaceSwitchDialogOpen] = useState(false);
@@ -626,8 +628,13 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	// targets. A terminal pane (reviewer or shell) renders as a tab inside the
 	// chat surface, so opening one never costs the user the conversation.
 	const chatTargetKind = routedTerminalTarget.kind;
+	const renderedSessionMode =
+		interfaceSwitch.transition?.phase === "failed"
+			? interfaceSwitch.transition.sourceMode
+			: session?.mode;
 	const showChatSurface =
-		session?.mode === "chat" &&
+		session !== undefined &&
+		renderedSessionMode === "chat" &&
 		(chatTargetKind === "worker" || chatTargetKind === "reviewer" || chatTargetKind === "shell");
 
 	// The pane shows one terminal at a time, so selecting a shell or the reviewer
@@ -640,6 +647,14 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	}, [clearVisibleTerminalKind, routedTerminalTarget.kind, sessionId, setVisibleTerminalKind]);
 
 	const handleOpenFiles = useCallback(() => {
+		setBrowserPopOutState({ sessionId, poppedOut: false });
+		setFilesPoppedOut(false);
+		setInspectorViewForSession(sessionId, "files");
+		setInspectorOpenForSession(sessionId, true);
+	}, [sessionId, setInspectorOpenForSession, setInspectorViewForSession]);
+
+	const handleOpenReviewFile = useCallback((target: { line?: number; path: string }) => {
+		setReviewFileTarget((current) => ({ ...target, requestId: (current?.requestId ?? 0) + 1 }));
 		setBrowserPopOutState({ sessionId, poppedOut: false });
 		setFilesPoppedOut(false);
 		setInspectorViewForSession(sessionId, "files");
@@ -924,12 +939,14 @@ export function SessionView({ sessionId }: SessionViewProps) {
 										focusPath={filesFocusPath}
 										onFocusPathConsumed={handleFilesFocusConsumed}
 										onToggleMaximized={handleToggleFilesPopOut}
+										revealFile={reviewFileTarget}
 										sessionId={session.id}
 									/>
 								) : null
 							}
 							isInspectorVisible={inspectorPanelVisible}
 							onOpenFiles={handleOpenFiles}
+							onOpenReviewFile={handleOpenReviewFile}
 							onOpenReviewerTerminal={selectReviewerTerminal}
 							onToggleBrowserPopOut={handleToggleBrowserPopOut}
 							onViewChange={(next: InspectorView) => setInspectorViewForSession(sessionId, next)}
@@ -976,6 +993,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 							<SessionFilesView
 								isMaximized
 								onToggleMaximized={handleToggleFilesPopOut}
+								revealFile={reviewFileTarget}
 								sessionId={session.id}
 							/>
 						</div>,
