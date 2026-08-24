@@ -208,7 +208,7 @@ export function SessionFileExplorer({ sessionId, isMaximized = false, onToggleMa
 				// Maximized gives the explorer the full window — plenty of room for
 				// the tree and the content side by side, like a real editor.
 				<ResizablePanelGroup className="min-h-0 flex-1">
-					<ResizablePanel defaultSize={26} minSize={18} maxSize={50}>
+					<ResizablePanel defaultSize="26%" minSize="18%" maxSize="50%">
 						<FileTree
 							changedOnly={changedOnly}
 							changedOnlyData={changedOnlyData}
@@ -219,7 +219,7 @@ export function SessionFileExplorer({ sessionId, isMaximized = false, onToggleMa
 						/>
 					</ResizablePanel>
 					<ResizableHandle />
-					<ResizablePanel defaultSize={74} minSize={40}>
+					<ResizablePanel defaultSize="74%" minSize="40%">
 						<ContentScrollArea>
 							<FileContentPane annotation={annotation} path={selectedPath} sessionId={sessionId} split={split} wrap={true} />
 						</ContentScrollArea>

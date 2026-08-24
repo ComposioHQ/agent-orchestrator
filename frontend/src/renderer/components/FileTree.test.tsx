@@ -69,6 +69,26 @@ describe("FileTree", () => {
 		});
 	});
 
+	it("renders distinct technology icons from file and folder names", async () => {
+		getMock.mockResolvedValue(
+			treeResponse("", [
+				{ name: "src", path: "src", type: "dir", hasChanges: false },
+				{ name: "App.tsx", path: "App.tsx", type: "file", status: "unmodified" },
+				{ name: "README.md", path: "README.md", type: "file", status: "unmodified" },
+			]),
+		);
+
+		renderWithQuery(
+			<FileTree changedOnly={false} changedOnlyData={[]} onSelectPath={vi.fn()} selectedPath={null} sessionId="sess-1" filterText="" />,
+		);
+
+		const sourceFolderIcon = await screen.findByTestId("folder-icon-src");
+		const reactFileIcon = screen.getByTestId("file-icon-App.tsx");
+		const markdownFileIcon = screen.getByTestId("file-icon-README.md");
+		expect(sourceFolderIcon.tagName).toBe("svg");
+		expect(reactFileIcon.innerHTML).not.toBe(markdownFileIcon.innerHTML);
+	});
+
 	it("lazily fetches a directory's children on expand", async () => {
 		getMock.mockImplementation(async (_path: string, options: unknown) => {
 			const query = (options as { params?: { query?: { path?: string } } }).params?.query?.path;

@@ -80,7 +80,8 @@ describe("SessionFileExplorer", () => {
 	});
 
 	it("keeps the tree and content side by side when maximized", async () => {
-		renderWithQuery(<SessionFileExplorer isMaximized sessionId="sess-explorer-maximized" />);
+		const widthSpy = vi.spyOn(HTMLElement.prototype, "offsetWidth", "get").mockReturnValue(500);
+		const { container } = renderWithQuery(<SessionFileExplorer isMaximized sessionId="sess-explorer-maximized" />);
 
 		// Maximized: both are mounted at once, with no back button.
 		expect(screen.getByTestId("tree-changed-only")).toBeInTheDocument();
@@ -90,6 +91,12 @@ describe("SessionFileExplorer", () => {
 		await userEvent.click(screen.getByRole("button", { name: "select src/App.tsx" }));
 		expect(screen.getByTestId("content-pane")).toHaveTextContent("src/App.tsx");
 		expect(screen.getByTestId("tree-changed-only")).toBeInTheDocument();
+
+		const panels = container.querySelectorAll('[data-slot="resizable-panel"]');
+		expect(panels).toHaveLength(2);
+		expect(panels[0]).toHaveStyle({ flexGrow: "26" });
+		expect(panels[1]).toHaveStyle({ flexGrow: "74" });
+		widthSpy.mockRestore();
 	});
 
 	it("toggles the changed-only setting in the ui store and reflects it in the tree", async () => {

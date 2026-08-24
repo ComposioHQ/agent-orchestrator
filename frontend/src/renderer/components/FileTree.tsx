@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { FileIcon, FolderIcon } from "@react-symbols/icons/utils";
 import { useTranslation } from "react-i18next";
 import { Tree, type NodeApi, type NodeRendererProps, type RowRendererProps, type TreeApi } from "react-arborist";
-import { ChevronRight, File, Folder, FolderOpen } from "lucide-react";
+import { ChevronRight } from "lucide-react";
 import { cn } from "../lib/utils";
 import { statusLabel, statusTone } from "../lib/workspace-file-status";
 import {
@@ -207,13 +208,20 @@ function FileTreeRow({ node, style, dragHandle }: NodeRendererProps<TreeNode>) {
 				<span aria-hidden="true" className="size-3 shrink-0" />
 			)}
 			{isDir ? (
-				node.isOpen ? (
-					<FolderOpen className="size-icon-sm shrink-0 text-passive" aria-hidden="true" />
-				) : (
-					<Folder className="size-icon-sm shrink-0 text-passive" aria-hidden="true" />
-				)
+				<FolderIcon
+					aria-hidden="true"
+					className="size-icon-md shrink-0"
+					data-testid={`folder-icon-${entry.name}`}
+					folderName={entry.name.toLowerCase()}
+				/>
 			) : (
-				<File className="size-icon-sm shrink-0 text-passive" aria-hidden="true" />
+				<FileIcon
+					aria-hidden="true"
+					autoAssign
+					className="size-icon-md shrink-0"
+					data-testid={`file-icon-${entry.name}`}
+					fileName={entry.name}
+				/>
 			)}
 			<span className="min-w-0 flex-1 truncate font-mono">{entry.name}</span>
 			{isDir && entry.hasChanges ? (
