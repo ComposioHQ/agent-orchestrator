@@ -232,6 +232,43 @@ describe("SessionFilesView", () => {
 		expect(await screen.findByText(diffLine("const value = 1;"))).toBeInTheDocument();
 	});
 
+	it("puts the markdown tab strip in the file's own title row, not above its body", async () => {
+		renderWithQuery(<SessionFilesView sessionId="sess-1" />);
+
+		const trigger = await screen.findByRole("button", { name: "Expand docs/guide.md" });
+		expect(screen.queryByRole("tab", { name: "Diff" })).not.toBeInTheDocument();
+
+		await userEvent.click(trigger);
+
+		const diffTab = await screen.findByRole("tab", { name: "Diff" });
+		const previewTab = screen.getByRole("tab", { name: "Preview" });
+		// Same row as the expand trigger, and a sibling of it rather than a
+		// descendant — a <button> inside a <button> would be invalid, and clicking
+		// a tab would collapse the file.
+		const row = trigger.parentElement;
+		expect(row).toContainElement(diffTab);
+		expect(trigger).not.toContainElement(diffTab);
+		expect(diffTab).toHaveAttribute("aria-selected", "true");
+
+		await userEvent.click(previewTab);
+
+		expect(previewTab).toHaveAttribute("aria-selected", "true");
+		expect(diffTab).toHaveAttribute("aria-selected", "false");
+		// The row survives the panel swap: the strip is outside the content Radix
+		// unmounts, and the ref the scroll anchor rides composes through both
+		// `asChild` roots onto the same element.
+		expect(trigger.parentElement).toContainElement(previewTab);
+	});
+
+	it("keeps the tab strip off files that cannot render as markdown", async () => {
+		renderWithQuery(<SessionFilesView sessionId="sess-1" />);
+
+		await userEvent.click(await screen.findByRole("button", { name: "Expand src/App.tsx" }));
+
+		expect(await screen.findByText(diffLine("const value = 1;"))).toBeInTheDocument();
+		expect(screen.queryByRole("tab", { name: "Diff" })).not.toBeInTheDocument();
+	});
+
 	it("keeps a chat file focus request pending through a cold files load", async () => {
 		let resolveFiles!: (value: unknown) => void;
 		const filesRequest = new Promise<unknown>((resolve) => {
