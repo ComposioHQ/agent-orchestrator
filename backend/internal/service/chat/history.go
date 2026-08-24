@@ -290,7 +290,7 @@ func (s *Service) EditMessage(
 		branch.ReplayCutoffSequence = anchor.ForkAfterSequence
 		branch.ReplayTruncated = replayTruncated
 	}
-	conversation := source.conversation
+	conversation := source.conversationSnapshot()
 	conversation.ActiveBranchID = branchID
 	if boundProvider != nil {
 		if err := s.store.CreateAndActivateConversationBranch(ctx, id, branch, generation, s.now()); err != nil {
@@ -525,23 +525,11 @@ func (s *Service) ActivateBranch(ctx context.Context, id domain.SessionID, branc
 	if err != nil {
 		return "", err
 	}
-	activeBranch, err := s.store.ConversationBranch(
-		ctx, source.conversation.ID, source.conversation.ActiveBranchID)
-	if err != nil {
-		return "", fmt.Errorf("load active conversation branch: %w", err)
-	}
-	if branch.Active {
+	// The fast path is safe through the synchronized cache. Recheck after arming
+	// the handoff below, because another branch request can commit between this
+	// read and BeginIdleBranchHandoff.
+	if branch.ID == source.ActiveBranchID() {
 		return branch.ID, nil
-	}
-	cfg, driver, err := s.branchLaunchConfig(id, source)
-	if err != nil {
-		return "", err
-	}
-	if branch.ProviderBindingID != activeBranch.ProviderBindingID {
-		// Provider scopes may differ between approximate siblings, but their
-		// durable binding epoch must match. Crossing it could hand an opaque
-		// conversation handle to a different adapter/configuration owner.
-		return "", ErrBranchProviderMismatch
 	}
 	if err := source.BeginIdleBranchHandoff(ctx); err != nil {
 		return "", err
@@ -552,6 +540,27 @@ func (s *Service) ActivateBranch(ctx context.Context, id domain.SessionID, branc
 			source.AbortHandoff()
 		}
 	}()
+	sourceBranchID := source.ActiveBranchID()
+	if branch.ID == sourceBranchID {
+		source.AbortHandoff()
+		abortSource = false
+		return branch.ID, nil
+	}
+	activeBranch, err := s.store.ConversationBranch(
+		ctx, source.conversation.ID, sourceBranchID)
+	if err != nil {
+		return "", fmt.Errorf("load active conversation branch: %w", err)
+	}
+	if branch.ProviderBindingID != activeBranch.ProviderBindingID {
+		// Provider scopes may differ between approximate siblings, but their
+		// durable binding epoch must match. Crossing it could hand an opaque
+		// conversation handle to a different adapter/configuration owner.
+		return "", ErrBranchProviderMismatch
+	}
+	cfg, driver, err := s.branchLaunchConfig(id, source)
+	if err != nil {
+		return "", err
+	}
 	sourceProviderConversationID := source.ProviderConversationID()
 	if binder, ok := source.conv.(ports.ChatConversationBinder); ok &&
 		binder.BindProviderConversation(branch.ProviderConversationID) {
@@ -578,7 +587,7 @@ func (s *Service) ActivateBranch(ctx context.Context, id domain.SessionID, branc
 		return "", fmt.Errorf("resume conversation branch %s: %w", branchID, err)
 	}
 	generation := s.newID()
-	conversation := source.conversation
+	conversation := source.conversationSnapshot()
 	conversation.ActiveBranchID = branch.ID
 	replacement := newController(id, conversation, generation, provider, s.store, s.activity, s.log, s.newID, s.now)
 	if err := s.store.ActivateConversationBranch(ctx, id, conversation.ID, branch.ID,
@@ -586,7 +595,7 @@ func (s *Service) ActivateBranch(ctx context.Context, id domain.SessionID, branc
 		_ = provider.Close()
 		return "", err
 	}
-	if err := s.installBranchController(ctx, id, source, replacement, source.conversation.ActiveBranchID); err != nil {
+	if err := s.installBranchController(ctx, id, source, replacement, sourceBranchID); err != nil {
 		return "", err
 	}
 	abortSource = false

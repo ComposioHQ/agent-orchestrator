@@ -919,6 +919,24 @@ func (c *Controller) ProviderConversationID() string { return c.conv.ProviderCon
 // ConversationID is the durable conversation this controller writes to.
 func (c *Controller) ConversationID() string { return c.conversation.ID }
 
+// ActiveBranchID reports the branch this published controller currently owns.
+// Branch binding can move without replacing the controller, so this cache field
+// follows the same mutex as generation and the handoff fence.
+func (c *Controller) ActiveBranchID() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.conversation.ActiveBranchID
+}
+
+// conversationSnapshot returns a coherent copy for constructing a replacement
+// controller. ActiveBranchID is mutable after publication; copying the record
+// directly would read that field outside the controller mutex.
+func (c *Controller) conversationSnapshot() domain.ConversationRecord {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.conversation
+}
+
 // Generation fences events from a controller that has been replaced.
 func (c *Controller) Generation() string {
 	c.mu.Lock()
@@ -1925,7 +1943,7 @@ func (c *Controller) Rollback(ctx context.Context, turnID string) (int, error) {
 			return 0, fmt.Errorf("load rollback turn branch: %w", branchErr)
 		}
 		activeBranch, branchErr := c.store.ConversationBranch(
-			ctx, c.conversation.ID, c.conversation.ActiveBranchID)
+			ctx, c.conversation.ID, c.ActiveBranchID())
 		if branchErr != nil {
 			return 0, fmt.Errorf("load active rollback branch: %w", branchErr)
 		}

@@ -2160,6 +2160,37 @@ func TestStaleControllerEventsDoNotReachTheTimeline(t *testing.T) {
 	}
 }
 
+func TestCommitIdleBranchHandoffSynchronizesPublishedBranchState(t *testing.T) {
+	h := newHarness(t)
+
+	const commits = 500
+	done := make(chan struct{})
+	var readers sync.WaitGroup
+	for range 4 {
+		readers.Add(1)
+		go func() {
+			defer readers.Done()
+			for {
+				select {
+				case <-done:
+					return
+				default:
+					_ = h.ctrl.ActiveBranchID()
+				}
+			}
+		}()
+	}
+	for i := range commits {
+		h.ctrl.CommitIdleBranchHandoff(fmt.Sprintf("branch-%03d", i), fmt.Sprintf("generation-%03d", i))
+	}
+	close(done)
+	readers.Wait()
+
+	if got, want := h.ctrl.ActiveBranchID(), "branch-499"; got != want {
+		t.Fatalf("active branch = %q, want %q", got, want)
+	}
+}
+
 /* ---- tests ------------------------------------------------------------- */
 
 // The whole point: a message goes out, provider events come back, and the durable
