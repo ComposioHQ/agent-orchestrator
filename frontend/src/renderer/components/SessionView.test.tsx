@@ -783,6 +783,33 @@ describe("SessionView", () => {
 		expect(screen.queryByText(transition.errorDetail)).not.toBeInTheDocument();
 	});
 
+	it("returns to the source terminal while a failed Chat switch mode refetch settles", () => {
+		const session = workerSession("sess-1");
+		// The workspace cache observed the transition's intermediate mode commit,
+		// but the durable transition already says the target failed and rolled back.
+		session.mode = "chat";
+		const transition = {
+			id: "transition-failed",
+			sessionId: "sess-1",
+			sourceMode: "tui" as const,
+			targetMode: "chat" as const,
+			policy: "drain" as const,
+			phase: "failed" as const,
+			errorCode: "TARGET_HISTORY_UNSETTLED",
+			errorDetail: "The native conversation history did not settle.",
+			createdAt: "2026-08-23T17:00:00Z",
+			updatedAt: "2026-08-23T17:01:00Z",
+			completedAt: "2026-08-23T17:01:00Z",
+		};
+		interfaceTransitionState.status = { supported: true, targetMode: "chat", transition };
+
+		render(<SessionView sessionId="sess-1" />);
+
+		expect(screen.getByText("terminal center")).toBeInTheDocument();
+		expect(screen.queryByTestId("chat-surface")).not.toBeInTheDocument();
+		expect(screen.getByText(transition.errorDetail)).toBeInTheDocument();
+	});
+
 	it.each([
 		["worker", "sess-1"],
 		["orchestrator", "sess-orch"],

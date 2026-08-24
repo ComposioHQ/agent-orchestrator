@@ -71,6 +71,14 @@ type AgentBinaryResolver interface {
 	ResolveBinary(ctx context.Context) (path string, err error)
 }
 
+// AgentBinaryPresenceResolver is an optional startup-only refinement for an
+// adapter whose normal binary resolution performs additional validation. It
+// must only inspect local executable paths; it must not start the agent CLI.
+// AO uses it for the first-render prerequisite gate, where existence is enough.
+type AgentBinaryPresenceResolver interface {
+	ResolveBinaryPresence(ctx context.Context) (path string, err error)
+}
+
 // AgentNativeSessionTerminator is an optional adapter capability used before
 // AO destroys a terminal runtime or worktree whose agent may keep running in a
 // detached native process. Implementations must affect only the supplied

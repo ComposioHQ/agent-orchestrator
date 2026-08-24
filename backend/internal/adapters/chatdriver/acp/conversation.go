@@ -50,7 +50,7 @@ type interruptAttempt struct {
 }
 
 type parkedPermission struct {
-	options map[string]acpsdk.PermissionOption
+	options map[string]json.RawMessage
 	result  chan string
 }
 
@@ -78,30 +78,39 @@ type nestedMessageState struct {
 }
 
 type conversation struct {
-	conn *acpsdk.ClientSideConnection
-	proc *process
-	log  *slog.Logger
+	conn       *acpsdk.ClientSideConnection
+	legacyWire *legacyACPTransport
+	proc       *process
+	log        *slog.Logger
 
-	mu             sync.Mutex
-	sessionID      string
-	capabilities   ports.ChatCapabilities
-	prepared       *preparedTurn
-	activeTurn     string
-	settlingTurn   string
-	turnCancel     context.CancelFunc
-	interrupt      *interruptAttempt
-	pending        map[string]*parkedPermission
-	pendingInputs  map[string]*parkedInput
-	messages       map[string]string
-	thoughts       map[string]string
-	nestedMessages map[string]nestedMessageState
-	tools          map[string]*toolState
-	configOptions  []ports.ChatConfigOption
-	skills         []ports.ChatSkill
-	skillsKnown    bool
-	closed         bool
-	modeFor        func(ports.PermissionMode) string
-	optionsFor     func(ports.ChatTurnSettings) []SessionOption
+	mu                sync.Mutex
+	sessionID         string
+	capabilities      ports.ChatCapabilities
+	prepared          *preparedTurn
+	activeTurn        string
+	settlingTurn      string
+	turnCancel        context.CancelFunc
+	interrupt         *interruptAttempt
+	pending           map[string]*parkedPermission
+	pendingInputs     map[string]*parkedInput
+	messages          map[string]string
+	thoughts          map[string]string
+	nestedMessages    map[string]nestedMessageState
+	tools             map[string]*toolState
+	configOptions     []ports.ChatConfigOption
+	skills            []ports.ChatSkill
+	skillsKnown       bool
+	closed            bool
+	modeFor           func(ports.PermissionMode) string
+	optionsFor        func(ports.ChatTurnSettings) []SessionOption
+	permissionMode    ports.PermissionMode
+	permissionFor     PermissionPolicy
+	initialPermission ports.PermissionMode
+	validateSettings  TurnSettingsValidator
+	extensionFor      ClientExtensionHandler
+	extensionMethods  map[string]string
+	legacyModel       bool
+	legacyMode        bool
 
 	eventMu      sync.RWMutex
 	events       chan ports.ChatEvent
@@ -124,21 +133,37 @@ var _ ports.ChatSteerer = (*conversation)(nil)
 var _ ports.ChatInputResponder = (*conversation)(nil)
 var _ acpsdk.Client = (*conversation)(nil)
 var _ acpsdk.ClientExperimental = (*conversation)(nil)
+var _ acpsdk.ExtensionMethodHandler = (*conversation)(nil)
 
-func newConversation(proc *process, log *slog.Logger) *conversation {
-	c := &conversation{
-		proc:           proc,
-		log:            log,
-		pending:        make(map[string]*parkedPermission),
-		pendingInputs:  make(map[string]*parkedInput),
-		capabilities:   make(ports.ChatCapabilities),
-		messages:       make(map[string]string),
-		thoughts:       make(map[string]string),
-		nestedMessages: make(map[string]nestedMessageState),
-		tools:          make(map[string]*toolState),
-		events:         make(chan ports.ChatEvent, eventBuffer),
+func newConversation(
+	proc *process,
+	log *slog.Logger,
+	extensionFor ClientExtensionHandler,
+	extensionAliases map[string]string,
+) *conversation {
+	reverseAliases := make(map[string]string, len(extensionAliases))
+	for method, alias := range extensionAliases {
+		reverseAliases[alias] = method
 	}
-	c.conn = acpsdk.NewClientSideConnection(c, proc.stdin, proc.stdout)
+	c := &conversation{
+		proc:             proc,
+		log:              log,
+		pending:          make(map[string]*parkedPermission),
+		pendingInputs:    make(map[string]*parkedInput),
+		capabilities:     make(ports.ChatCapabilities),
+		messages:         make(map[string]string),
+		thoughts:         make(map[string]string),
+		nestedMessages:   make(map[string]nestedMessageState),
+		tools:            make(map[string]*toolState),
+		events:           make(chan ports.ChatEvent, eventBuffer),
+		extensionFor:     extensionFor,
+		extensionMethods: reverseAliases,
+	}
+	legacyWire, sdkWriter, sdkReader := newLegacyACPTransport(proc.stdin, proc.stdout)
+	c.legacyWire = legacyWire
+	c.conn = acpsdk.NewClientSideConnection(
+		c, sdkWriter, newExtensionMethodReader(sdkReader, extensionAliases),
+	)
 	c.conn.SetLogger(log)
 	go c.watchConnection()
 	return c
@@ -149,7 +174,12 @@ func (c *conversation) start(
 	capabilities ports.ChatCapabilities,
 	modeFor func(ports.PermissionMode) string,
 	optionsFor func(ports.ChatTurnSettings) []SessionOption,
+	permissionFor PermissionPolicy,
+	initialPermission ports.PermissionMode,
+	validateSettings TurnSettingsValidator,
 	configOptions []acpsdk.SessionConfigOption,
+	models *legacySessionModelState,
+	modes *acpsdk.SessionModeState,
 ) {
 	c.mu.Lock()
 	c.sessionID = sessionID
@@ -158,8 +188,8 @@ func (c *conversation) start(
 	// An agent may send config_option_update before start() runs; only overwrite
 	// the catalog when the response actually carries one, so an early update is
 	// not lost to an empty response snapshot.
-	if len(configOptions) > 0 {
-		c.configOptions = normalizeConfigOptions(configOptions)
+	if len(configOptions) > 0 || models != nil || modes != nil {
+		c.configOptions = normalizeSessionOptions(configOptions, models, modes)
 	}
 	if len(c.configOptions) > 0 {
 		c.capabilities[ports.ChatCapabilityConfigOptions] = true
@@ -169,6 +199,12 @@ func (c *conversation) start(
 	}
 	c.modeFor = modeFor
 	c.optionsFor = optionsFor
+	c.permissionFor = permissionFor
+	c.initialPermission = ports.NormalizePermissionMode(initialPermission)
+	c.permissionMode = c.initialPermission
+	c.validateSettings = validateSettings
+	c.legacyModel = models != nil
+	c.legacyMode = modes != nil
 	c.mu.Unlock()
 	c.emit(ports.ChatEvent{Kind: ports.ChatEventControllerState, ControllerState: ports.ChatControllerReady})
 }
@@ -232,9 +268,27 @@ func (c *conversation) applyTurnSettings(ctx context.Context, settings ports.Cha
 	sessionID := c.sessionID
 	modeFor := c.modeFor
 	optionsFor := c.optionsFor
+	initialPermission := c.initialPermission
+	validateSettings := c.validateSettings
+	legacyModel := c.legacyModel
+	legacyMode := c.legacyMode
 	c.mu.Unlock()
 	if sessionID == "" {
 		return errors.New("ACP session is not open")
+	}
+	if validateSettings != nil {
+		if err := validateSettings(initialPermission, settings); err != nil {
+			return err
+		}
+	}
+	if legacyModel && settings.Model != "" {
+		if err := c.legacyWire.setModel(ctx, sessionID, settings.Model); err != nil {
+			if isACPMethodNotFound(err) {
+				return fmt.Errorf("%w: session/set_model %q", ErrACPSetterUnsupported, settings.Model)
+			}
+			return fmt.Errorf("set ACP session model %q: %w", settings.Model, err)
+		}
+		c.applyAcceptedConfigOption("model", ports.ChatConfigOptionValue{Select: settings.Model})
 	}
 	if modeFor != nil {
 		if mode := modeFor(settings.Approval); mode != "" {
@@ -253,6 +307,9 @@ func (c *conversation) applyTurnSettings(ctx context.Context, settings ports.Cha
 			if option.ID == "" || option.Value == "" {
 				continue
 			}
+			if (option.ID == "model" && legacyModel) || (option.ID == "mode" && legacyMode) {
+				continue
+			}
 			resp, err := c.conn.SetSessionConfigOption(ctx, acpsdk.SetSessionConfigOptionRequest{
 				ValueId: &acpsdk.SetSessionConfigOptionValueId{
 					SessionId: acpsdk.SessionId(sessionID), ConfigId: acpsdk.SessionConfigId(option.ID),
@@ -267,6 +324,11 @@ func (c *conversation) applyTurnSettings(ctx context.Context, settings ports.Cha
 			}
 			c.replaceConfigOptions(resp.ConfigOptions)
 		}
+	}
+	if settings.Approval != "" {
+		c.mu.Lock()
+		c.permissionMode = ports.NormalizePermissionMode(settings.Approval)
+		c.mu.Unlock()
 	}
 	return nil
 }
@@ -441,13 +503,12 @@ func (c *conversation) ResolveRequest(
 		c.mu.Unlock()
 		return ports.ErrChatRequestNotPending
 	}
-	option, offered := request.options[decision.ID]
+	offeredRaw, offered := request.options[decision.ID]
 	if !offered {
 		c.mu.Unlock()
 		return ports.ErrChatDecisionNotOffered
 	}
 	if len(decision.Raw) > 0 {
-		offeredRaw, _ := json.Marshal(option)
 		if !bytes.Equal(bytes.TrimSpace(decision.Raw), bytes.TrimSpace(offeredRaw)) {
 			c.mu.Unlock()
 			return ports.ErrChatDecisionNotOffered
@@ -526,13 +587,18 @@ func (c *conversation) emit(event ports.ChatEvent) {
 	}
 }
 
-func (c *conversation) settleOpenItems(turnID string) {
+func (c *conversation) settleOpenItems(turnID string, turnState ...domain.TurnState) {
 	c.mu.Lock()
 	messages := c.messages
 	thoughts := c.thoughts
 	nestedMessages := c.nestedMessages
 	tools := c.tools
 	c.mu.Unlock()
+	recovered := len(turnState) > 0 && turnState[0] == domain.TurnStateRecovered
+	activityStatus := domain.ActivityStatusCompleted
+	if recovered {
+		activityStatus = domain.ActivityStatusRecovered
+	}
 	messageIDs := sortedKeys(messages)
 	for _, id := range messageIDs {
 		text := messages[id]
@@ -543,7 +609,7 @@ func (c *conversation) settleOpenItems(turnID string) {
 		text := thoughts[id]
 		c.emit(ports.ChatEvent{Kind: ports.ChatEventActivityCompleted, ProviderTurnID: turnID,
 			ProviderItemID: id, ActivityKind: domain.ActivityKindReasoning,
-			ActivityStatus: domain.ActivityStatusCompleted, Summary: "Reasoning", Text: text})
+			ActivityStatus: activityStatus, Summary: "Reasoning", Text: text})
 	}
 	nestedIDs := sortedKeys(nestedMessages)
 	for _, id := range nestedIDs {
@@ -551,7 +617,7 @@ func (c *conversation) settleOpenItems(turnID string) {
 		detail, _ := json.Marshal(map[string]any{"parentProviderItemId": item.parentID, "nestedAgent": true})
 		c.emit(ports.ChatEvent{Kind: ports.ChatEventActivityCompleted, ProviderTurnID: turnID,
 			ProviderItemID: id, ActivityKind: domain.ActivityKindMCPTool,
-			ActivityStatus: domain.ActivityStatusCompleted, Summary: "Subagent response",
+			ActivityStatus: activityStatus, Summary: "Subagent response",
 			Text: item.text, Detail: detail})
 	}
 	toolIDs := sortedKeys(tools)
@@ -560,7 +626,11 @@ func (c *conversation) settleOpenItems(turnID string) {
 		if tool.status == acpsdk.ToolCallStatusPending || tool.status == acpsdk.ToolCallStatusInProgress || tool.status == "" {
 			snapshot := *tool
 			snapshot.status = acpsdk.ToolCallStatusFailed
-			c.emit(c.toolEvent(turnID, &snapshot, true))
+			event := c.toolEvent(turnID, &snapshot, true)
+			if recovered {
+				event.ActivityStatus = domain.ActivityStatusRecovered
+			}
+			c.emit(event)
 		}
 	}
 }

@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { chmodSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import nodePath from "node:path";
 
@@ -28,6 +28,7 @@ type AutoUpdaterMock = {
   checkForUpdates: ReturnType<typeof vi.fn>;
   downloadUpdate: ReturnType<typeof vi.fn>;
   quitAndInstall: ReturnType<typeof vi.fn>;
+  setFeedURL: ReturnType<typeof vi.fn>;
   channel: string;
   allowPrerelease: boolean;
   allowDowngrade: boolean;
@@ -41,6 +42,7 @@ function createAutoUpdaterMock(): AutoUpdaterMock {
     checkForUpdates: vi.fn(() => Promise.resolve()),
     downloadUpdate: vi.fn(() => Promise.resolve()),
     quitAndInstall: vi.fn(),
+    setFeedURL: vi.fn(),
     channel: "",
     allowPrerelease: false,
     allowDowngrade: false,
@@ -202,7 +204,7 @@ describe("startAutoUpdates", () => {
     expect(autoUpdater.checkForUpdates).toHaveBeenCalledTimes(1);
   });
 
-  it("schedules the next automatic check only after the fixed 1-2 hour cadence", async () => {
+  it("keeps stable automatic checks on the hourly cadence", async () => {
     vi.useFakeTimers();
     const setIntervalSpy = vi.spyOn(globalThis, "setInterval");
     const { module, autoUpdater } = await importAutoUpdater();
@@ -217,6 +219,112 @@ describe("startAutoUpdates", () => {
 
     await vi.advanceTimersByTimeAsync(1);
     expect(autoUpdater.checkForUpdates).toHaveBeenCalledTimes(2);
+  });
+
+  it("rechecks the nightly channel within 15 minutes", async () => {
+    vi.useFakeTimers();
+    const setIntervalSpy = vi.spyOn(globalThis, "setInterval");
+    const { module, autoUpdater } = await importAutoUpdater({
+      enabled: true,
+      channel: "nightly",
+      nightlyAck: true,
+      feature: null,
+    });
+
+    await module.startAutoUpdates(stateDir);
+    const { delay } = latestInterval(setIntervalSpy);
+
+    expect(delay).toBe(15 * 60 * 1000);
+    await vi.advanceTimersByTimeAsync(delay - 1);
+    expect(autoUpdater.checkForUpdates).toHaveBeenCalledTimes(1);
+
+    await vi.advanceTimersByTimeAsync(1);
+    expect(autoUpdater.checkForUpdates).toHaveBeenCalledTimes(2);
+  });
+
+  it("manual nightly checks resolve the newest completed release without the Atom feed", async () => {
+    const platformManifest =
+      process.platform === "darwin"
+        ? "nightly-mac.yml"
+        : process.platform === "linux"
+          ? "nightly-linux.yml"
+          : "nightly.yml";
+    const resourcesPath = mkdtempSync(
+      nodePath.join(os.tmpdir(), "ao-nightly-feed-"),
+    );
+    writeFileSync(
+      nodePath.join(resourcesPath, "app-update.yml"),
+      "provider: github\nowner: Untrivial-ai\nrepo: agent-orchestrator\n",
+    );
+    const originalResourcesPath = Object.getOwnPropertyDescriptor(
+      process,
+      "resourcesPath",
+    );
+    Object.defineProperty(process, "resourcesPath", {
+      configurable: true,
+      value: resourcesPath,
+    });
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify([
+          {
+            tag_name: "v1.0.1-nightly.202608231518",
+            draft: false,
+            prerelease: true,
+            assets: [{ name: "Agent.Orchestrator.dmg" }],
+          },
+          {
+            tag_name: "v1.0.1-nightly.202608231517",
+            draft: false,
+            prerelease: true,
+            assets: [{ name: platformManifest }],
+          },
+          {
+            tag_name: "v1.0.1-nightly.202608231350",
+            draft: false,
+            prerelease: true,
+            assets: [{ name: platformManifest }],
+          },
+        ]),
+        { status: 200 },
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    try {
+      const { module, autoUpdater } = await importAutoUpdater({
+        enabled: true,
+        channel: "nightly",
+        nightlyAck: true,
+        feature: null,
+      });
+
+      await module.checkForUpdatesNow(stateDir);
+
+      expect(fetchMock).toHaveBeenCalledWith(
+        "https://api.github.com/repos/Untrivial-ai/agent-orchestrator/releases?per_page=100",
+        expect.objectContaining({ signal: expect.any(AbortSignal) }),
+      );
+      expect(autoUpdater.setFeedURL).toHaveBeenNthCalledWith(1, {
+        provider: "generic",
+        url: "https://github.com/Untrivial-ai/agent-orchestrator/releases/download/v1.0.1-nightly.202608231517",
+        channel: "nightly",
+        useMultipleRangeRequest: false,
+      });
+      expect(autoUpdater.checkForUpdates).toHaveBeenCalledTimes(1);
+      expect(autoUpdater.setFeedURL).toHaveBeenNthCalledWith(2, {
+        provider: "github",
+        owner: "Untrivial-ai",
+        repo: "agent-orchestrator",
+      });
+    } finally {
+      if (originalResourcesPath) {
+        Object.defineProperty(process, "resourcesPath", originalResourcesPath);
+      } else {
+        Reflect.deleteProperty(process, "resourcesPath");
+      }
+      rmSync(resourcesPath, { recursive: true, force: true });
+    }
   });
 
   it("schedules only feature-pin retirement polling when automatic updates are disabled", async () => {
@@ -1252,7 +1360,7 @@ describe("startAutoUpdates", () => {
     );
   });
 
-  it("starts and stops the hourly scheduler when settings are enabled at runtime", async () => {
+  it("reconciles the automatic scheduler when settings change at runtime", async () => {
     vi.useFakeTimers();
     const setIntervalSpy = vi.spyOn(globalThis, "setInterval");
     const clearIntervalSpy = vi.spyOn(globalThis, "clearInterval");
@@ -1278,6 +1386,13 @@ describe("startAutoUpdates", () => {
     expect(setIntervalSpy.mock.calls.map(([, delay]) => delay)).toContain(
       60 * 60 * 1000,
     );
+
+    await module.setUpdateSettings(stateDir, {
+      ...current,
+      channel: "nightly",
+      nightlyAck: true,
+    });
+    expect(latestInterval(setIntervalSpy).delay).toBe(15 * 60 * 1000);
 
     await module.setUpdateSettings(stateDir, { ...current, enabled: false });
     expect(clearIntervalSpy).toHaveBeenCalled();

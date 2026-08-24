@@ -608,6 +608,7 @@ export function CenterPane({
 			{session ? (
 				<TerminalSwitchAgentButton
 					key={session.id}
+					agentSwitch={selectedCurrentAgentSwitch}
 					container={switchSelectorContainer}
 					onOpenChange={setSwitchSelectorOpen}
 					open={switchSelectorOpen}
