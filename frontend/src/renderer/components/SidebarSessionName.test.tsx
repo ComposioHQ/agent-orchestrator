@@ -102,8 +102,9 @@ describe("SidebarSessionName", () => {
 		expect(text()?.style.getPropertyValue("--ao-marquee-shift")).toBe("-360px");
 		expect(text()?.style.getPropertyValue("--ao-marquee-duration")).toBe(`${marqueeDurationMs(360)}ms`);
 
-		// Leaving resets cleanly: the custom properties go with the animation, so
-		// the text returns to its resting transform rather than holding mid-slide.
+		// Leaving resets cleanly: the custom properties go with the active
+		// transition, so the text returns to its resting transform rather than
+		// holding mid-slide.
 		rerender(<SidebarSessionName active={false} title={LONG_NAME} />);
 		expect(label()).not.toHaveAttribute("data-marquee");
 		expect(text()?.style.getPropertyValue("--ao-marquee-shift")).toBe("");
@@ -126,18 +127,16 @@ describe("SidebarSessionName", () => {
 		stubWidths({ trackPx: 120, textPx: 480 });
 		render(<SidebarSessionName active title={LONG_NAME} />);
 
-		// min-w-0 + overflow-hidden is what stops a 120-character label from
-		// widening its flex parent; the text inside is the only thing sized to
-		// the content.
+		// min-w-0 + overflow-hidden keeps a 120-character label within the full
+		// card-width track; the separately layered actions do not resize it.
 		expect(label()).toHaveClass("min-w-0", "overflow-hidden", "flex-1");
 		expect(text()).toHaveClass("w-max");
 	});
 
-	it("scales the cycle with the distance so travel speed stays constant", () => {
-		// A typical long sidebar name travels 360px. Keep the full round trip
-		// deliberately unhurried (at least six seconds each way, plus the endpoint
-		// dwells) so the label remains readable while it moves.
-		expect(marqueeDurationMs(360)).toBeGreaterThanOrEqual(17_000);
+	it("scales the one-way travel time with distance so speed stays constant", () => {
+		// A typical long sidebar name travels 360px. Keep that single pass
+		// deliberately unhurried so the label remains readable while it moves.
+		expect(marqueeDurationMs(360)).toBe(7_500);
 		// Twice the overflow takes about twice as long, within the clamps.
 		expect(marqueeDurationMs(600)).toBeGreaterThan(marqueeDurationMs(300));
 		expect(marqueeDurationMs(600) / marqueeDurationMs(300)).toBeCloseTo(2, 1);

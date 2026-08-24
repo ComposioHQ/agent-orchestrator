@@ -1723,72 +1723,74 @@ textarea,
  * name is usually its tail, so hovering the row (or focusing its open button)
  * slides the text far enough to read that tail and eases it back.
  *
- * The edges are faded with a mask rather than a background-coloured gradient.
- * A gradient would have to name a colour, and the row sits on three different
- * backgrounds (rest, hover, active) across two themes; the mask fades whatever
- * is actually painted, so it is correct in every one of those combinations and
- * hard-codes nothing. */
-.ao-session-name {
-	/* Widened only while the text is travelling, so the resting label starts
-	 * flush at the row's left edge. */
-	--ao-session-name-fade-start: 0px;
-	/* Keep the fade to a narrow edge cue. The action strip remains separately
-	 * reserved for stable layout, but it must not make the shadow look as wide
-	 * as the whole button cluster. */
-	--ao-session-name-fade-end: 10px;
+ * At rest the label uses the full card-width track and its shadow sits at the
+ * right edge only when the name overflows. On hover/focus the fixed action
+ * layer overlays that track, and the same shadow moves to the action layer's
+ * measured left boundary. Nothing resizes, and the gradient takes its surface
+ * from the row state below so it follows every theme without hard-coding
+ * black. */
+[data-session-row] {
+	--ao-session-row-surface: var(--color-bg-sidebar);
 }
 
-.ao-session-name[data-overflowing] {
-	mask-image: linear-gradient(
-		to right,
-		transparent 0,
-		#000 var(--ao-session-name-fade-start),
-		#000 calc(100% - var(--ao-session-name-fade-end)),
-		transparent 100%
-	);
-	-webkit-mask-image: linear-gradient(
-		to right,
-		transparent 0,
-		#000 var(--ao-session-name-fade-start),
-		#000 calc(100% - var(--ao-session-name-fade-end)),
-		transparent 100%
-	);
+[data-session-row]:hover,
+[data-session-row]:focus-within {
+	--ao-session-row-surface: color-mix(in oklch, var(--foreground) 4%, var(--color-bg-sidebar));
 }
 
-.ao-session-name[data-marquee="running"] {
-	--ao-session-name-fade-start: 12px;
+[data-session-row][data-active="true"] {
+	--ao-session-row-surface: color-mix(in oklch, var(--foreground) 7%, var(--color-bg-sidebar));
 }
 
-/* Off the animation, transform returns to 0 as a transition rather than a
- * snap, so leaving the row mid-travel reads as the label settling back. */
+.ao-session-name[data-marquee="running"]::before {
+	position: absolute;
+	inset-block: 0;
+	z-index: 1;
+	content: "";
+	pointer-events: none;
+}
+
+/* One explicit shadow layer: at rest inset 0 places it at the card edge; while
+ * actions are visible the component supplies their measured overlap as the
+ * inset, placing the shadow immediately to their left. */
+.ao-session-name__shadow {
+	position: absolute;
+	inset-block: 0;
+	inset-inline-end: var(--ao-session-name-shadow-inset, 0px);
+	z-index: 1;
+	width: 12px;
+	background: linear-gradient(to right, transparent, var(--ao-session-row-surface));
+	pointer-events: none;
+}
+
+/* At rest the hidden action cluster remains transparent. While revealed, it is
+ * an opaque layer above the full-width name; the label's single shadow now sits
+ * directly to its left. */
+[data-session-row]:hover [data-session-actions],
+[data-session-row]:focus-within [data-session-actions] {
+	background: var(--ao-session-row-surface);
+}
+
+/* Once the label starts moving, soften only its clipped leading edge. */
+.ao-session-name[data-marquee="running"]::before {
+	inset-inline-start: 0;
+	width: 8px;
+	background: linear-gradient(to right, var(--ao-session-row-surface), transparent);
+}
+
+/* Removing hover/focus returns from the current travel position with a soft,
+ * slightly longer ease instead of snapping or rushing back to the start. */
 .ao-session-name__text {
 	transform: translateX(0);
-	transition: transform 200ms ease-out;
+	transition: transform 360ms cubic-bezier(0.22, 1, 0.36, 1);
 	will-change: transform;
 }
 
 .ao-session-name[data-marquee="running"] .ao-session-name__text {
-	animation: ao-session-name-marquee var(--ao-marquee-duration, 4s) linear infinite;
-	transition: none;
-}
-
-/* Dwell at each end (0-10% and 90-100%, plus the 45-55% hold at the tail) so
- * both the start of the name and its tail are readable before the direction
- * flips. --ao-marquee-shift is the exact overflow, so the travel stops with the
- * last character at the track edge and never overshoots. */
-@keyframes ao-session-name-marquee {
-	0%,
-	10% {
-		transform: translateX(0);
-	}
-	45%,
-	55% {
-		transform: translateX(var(--ao-marquee-shift, 0));
-	}
-	90%,
-	100% {
-		transform: translateX(0);
-	}
+	transform: translateX(var(--ao-marquee-shift, 0));
+	transition-delay: 450ms;
+	transition-duration: var(--ao-marquee-duration, 4s);
+	transition-timing-function: linear;
 }
 
 @media (prefers-reduced-motion: reduce) {

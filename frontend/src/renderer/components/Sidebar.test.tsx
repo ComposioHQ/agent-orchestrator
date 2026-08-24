@@ -1342,7 +1342,7 @@ describe("Sidebar", () => {
 		}
 	});
 
-	it("reserves the session action strip so revealing it cannot reflow the label", () => {
+	it("overlays session actions without resizing the full-width label track", () => {
 		const workspaceWithSession = { ...workspace, sessions: [session] };
 		renderSidebar({ workspaces: [workspaceWithSession] });
 
@@ -1351,9 +1351,11 @@ describe("Sidebar", () => {
 		const actions = row?.querySelector<HTMLElement>("[data-session-actions]");
 		if (!row || !actions) throw new Error("session action cluster not found");
 
-		// Padding is reserved on the open button at rest, and the cluster is taken
-		// out of flow above it — so hover changes opacity only, never width.
-		expect(openButton).toHaveClass("pr-sidebar-session-actions");
+		// The label receives ordinary card padding rather than reserving the action
+		// width. The cluster is taken out of flow above it, so hover changes opacity
+		// only and the name keeps the full available card width.
+		expect(openButton).not.toHaveClass("pr-sidebar-session-actions");
+		expect(openButton).toHaveClass("px-2.5");
 		expect(actions).toHaveClass("absolute", "z-chrome", "opacity-0", "pointer-events-none");
 		expect(actions.className).toContain("group-hover/session-row:opacity-100");
 		expect(actions.className).toContain("group-focus-within/session-row:opacity-100");

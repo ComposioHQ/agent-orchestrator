@@ -985,6 +985,7 @@ function SessionRow({
 					"hover:bg-interactive-hover hover:text-foreground focus-within:bg-interactive-hover",
 					active && "bg-interactive-active text-foreground",
 				)}
+				data-active={active ? "true" : undefined}
 				data-session-row=""
 				onPointerEnter={() => setRowHovered(true)}
 				onPointerLeave={() => setRowHovered(false)}
@@ -995,7 +996,7 @@ function SessionRow({
 						aria-current={active ? "page" : undefined}
 						aria-describedby={switchLabel ? switchStatusId : undefined}
 						aria-label={t("shell.openSession", { title: session.title })}
-						className="flex h-8 min-w-0 flex-1 items-center gap-1.5 rounded-lg py-0 pr-sidebar-session-actions pl-2.5 text-left text-sm outline-hidden focus-visible:ring-2 focus-visible:ring-sidebar-ring"
+						className="flex h-8 min-w-0 flex-1 items-center gap-1.5 rounded-lg px-2.5 py-0 text-left text-sm outline-hidden focus-visible:ring-2 focus-visible:ring-sidebar-ring"
 						onBlur={() => setOpenFocused(false)}
 						onClick={onOpen}
 						onFocus={() => setOpenFocused(true)}
@@ -1020,16 +1021,14 @@ function SessionRow({
 					</button>
 				</div>{/* end scale wrapper */}
 				{/* Pin, rename, kill. Outside the scale wrapper so clicking them doesn't
-				    trigger the press animation, and stacked above the label so a long
-				    name slides under them instead of colliding with them. The cluster
-				    occupies reserved padding, so revealing it never reflows the row. */}
+				    trigger the press animation, and absolutely stacked over the full-width
+				    label. Revealing this overlay never resizes or reflows the name. */}
 				<div
 					className={cn(
 						"absolute top-0 right-1 z-chrome flex h-8 items-center gap-px",
-						// Hidden means non-interactive: the cluster now always occupies
-						// its reserved strip, so without this a tap on the row's right
-						// edge could land on an invisible Kill button. Keyboard focus is
-						// unaffected, and focus-within reveals the cluster anyway.
+						// Hidden means non-interactive: without this, a tap on the row's
+						// right edge could land on an invisible Kill button. Keyboard focus
+						// is unaffected, and focus-within reveals the cluster anyway.
 						"pointer-events-none opacity-0 transition-opacity",
 						"group-hover/session-row:pointer-events-auto group-hover/session-row:opacity-100",
 						"group-focus-within/session-row:pointer-events-auto group-focus-within/session-row:opacity-100",
