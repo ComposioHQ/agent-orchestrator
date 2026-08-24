@@ -427,6 +427,8 @@ const api = {
 			ipcRenderer.invoke("cloud:createSession", input) as Promise<CloudSessionSummary>,
 		connectLocalHarness: (harness: CloudHarness) =>
 			ipcRenderer.invoke("cloud:connectLocalHarness", harness) as Promise<ConnectCloudHarnessResult>,
+		disconnectHarness: (harness: CloudHarness) =>
+			ipcRenderer.invoke("cloud:disconnectHarness", harness) as Promise<void>,
 		signIn: () => ipcRenderer.invoke("cloud:signIn") as Promise<void>,
 		signOut: () => ipcRenderer.invoke("cloud:signOut") as Promise<void>,
 		onSessionChanged: (listener: (account: CloudAccount | null) => void) => {

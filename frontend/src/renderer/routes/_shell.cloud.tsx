@@ -83,6 +83,19 @@ function CloudBetaPage() {
 		}
 	};
 
+	const disconnectHarness = async (harness: CloudHarness) => {
+		setBusy(`disconnect-${harness}`);
+		setError(null);
+		try {
+			await aoBridge.cloud.disconnectHarness(harness);
+			await refresh();
+		} catch (disconnectError) {
+			setError(errorMessage(disconnectError));
+		} finally {
+			setBusy(null);
+		}
+	};
+
 	const submitProject = async (event: FormEvent) => {
 		event.preventDefault();
 		if (!overview) return;
@@ -166,7 +179,7 @@ function CloudBetaPage() {
 						const label = harness === "claude-code" ? "Claude Code" : "Codex";
 						return <div className="flex items-center justify-between rounded-xl border border-border bg-surface p-4" key={harness}>
 							<div><div className="flex items-center gap-2 text-sm font-medium">{connection?.connected ? <Check className="size-4 text-success" /> : <Unplug className="size-4 text-muted-foreground" />}{label}</div><p className="mt-1 text-xs text-muted-foreground">{connection?.connected ? `Connected · ${connection.credentialType ?? "subscription"}` : "Not connected"}</p></div>
-							<button className="h-8 rounded-lg border border-border px-3 text-xs font-medium hover:bg-interactive-hover disabled:opacity-50" disabled={busy !== null || connection?.connected} onClick={() => void connectHarness(harness)} type="button">{busy === `connect-${harness}` ? "Connecting…" : connection?.connected ? "Ready" : "Use local login"}</button>
+							<button className="h-8 rounded-lg border border-border px-3 text-xs font-medium hover:bg-interactive-hover disabled:opacity-50" disabled={busy !== null} onClick={() => void (connection?.connected ? disconnectHarness(harness) : connectHarness(harness))} type="button">{busy === `connect-${harness}` ? "Connecting…" : busy === `disconnect-${harness}` ? "Disconnecting…" : connection?.connected ? "Disconnect" : "Use local login"}</button>
 						</div>;
 					})}
 				</div>

@@ -15,6 +15,7 @@ import {
   connectLocalHarness,
   createCloudProject,
   createCloudSession,
+  disconnectCloudHarness,
   loadCloudBetaOverview,
 } from "./cloud-beta";
 import { readUiSettings } from "./ui-settings";
@@ -443,6 +444,13 @@ export function installCloudIPC(
     async (_event, harness: CloudHarness) => {
       await requireBetaEnabled();
       return connectLocalHarness(await getCloudAccessToken(getDataDir()), harness);
+    },
+  );
+  ipcMain.handle(
+    "cloud:disconnectHarness",
+    async (_event, harness: CloudHarness) => {
+      await requireBetaEnabled();
+      return disconnectCloudHarness(await getCloudAccessToken(getDataDir()), harness);
     },
   );
   ipcMain.handle("cloud:signIn", async () => {

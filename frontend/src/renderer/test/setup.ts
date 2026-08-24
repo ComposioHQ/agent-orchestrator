@@ -290,6 +290,7 @@ if (typeof window !== "undefined") {
 			createProject: async () => { throw new Error("AO Cloud is disabled in tests."); },
 			createSession: async () => { throw new Error("AO Cloud is disabled in tests."); },
 			connectLocalHarness: async () => { throw new Error("AO Cloud is disabled in tests."); },
+			disconnectHarness: async () => { throw new Error("AO Cloud is disabled in tests."); },
 			signIn: async () => undefined,
 			signOut: async () => undefined,
 			onSessionChanged: () => () => undefined,

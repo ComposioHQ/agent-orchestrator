@@ -218,3 +218,14 @@ export async function connectLocalHarness(
 	);
 	return { harness, connected: true, source: credential.source };
 }
+
+export async function disconnectCloudHarness(
+	accessToken: string,
+	harness: CloudHarness,
+): Promise<void> {
+	await cloudRequest(
+		accessToken,
+		`/api/cloud/v1/me/providers/${encodeURIComponent(harness)}`,
+		{ method: "DELETE" },
+	);
+}
