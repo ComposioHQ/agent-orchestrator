@@ -190,12 +190,18 @@ async function removeAuthStore(dataDir: string): Promise<void> {
 function normalizeCurrentAccount(account: CurrentAccount): Pick<StoredSession, "user" | "organizations"> {
 	return {
 		user: account.user,
-		organizations: account.organizations.map((organization) => ({
-			id: organization.orgId,
-			slug: organization.orgSlug,
-			displayName: organization.displayName,
-			role: organization.role,
-		})),
+		organizations: account.organizations.map((organization) => {
+			// Staging originally returned id/slug even though the generated cloud
+			// contract names these fields orgId/orgSlug. Accept that deployed shape
+			// while corrected control planes roll out, but keep one renderer shape.
+			const membership = organization as typeof organization & { id?: string; slug?: string };
+			return {
+				id: membership.orgId || membership.id || "",
+				slug: membership.orgSlug || membership.slug || "",
+				displayName: membership.displayName,
+				role: membership.role,
+			};
+		}),
 	};
 }
 

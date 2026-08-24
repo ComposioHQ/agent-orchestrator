@@ -27,8 +27,8 @@ type currentUser struct {
 }
 
 type organizationMembership struct {
-	ID          string `json:"id"`
-	Slug        string `json:"slug"`
+	ID          string `json:"orgId"`
+	Slug        string `json:"orgSlug"`
 	DisplayName string `json:"displayName"`
 	Role        string `json:"role"`
 }

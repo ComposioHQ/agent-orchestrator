@@ -62,6 +62,13 @@ function currentAccount() {
 	};
 }
 
+function legacyCurrentAccount() {
+	return {
+		user: { id: "user_1", email: "dev@example.com", displayName: "Dev" },
+		organizations: [{ id: "org_1", slug: "dev", displayName: "Dev", role: "owner" }],
+	};
+}
+
 function jsonResponse(body: unknown, status = 200): Response {
 	return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
 }
@@ -156,6 +163,16 @@ describe("AO Cloud desktop credential custody", () => {
 		expect(authorize.searchParams.get("redirect_uri")).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/callback$/);
 
 		await expect(getCloudAccessToken(dataDir)).resolves.toBe("ao_access_1");
+	});
+
+	it("normalizes the deployed id and slug membership shape", async () => {
+		routes.set("https://cloud.example/api/cloud/v1/me", () => jsonResponse(legacyCurrentAccount()));
+
+		const account = await beginCloudSignIn(dataDir);
+
+		expect(account.organizations).toEqual([
+			{ id: "org_1", slug: "dev", displayName: "Dev", role: "owner" },
+		]);
 	});
 
 	it("writes the encrypted store under the AO data dir with owner-only permissions", async () => {
