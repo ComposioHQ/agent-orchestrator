@@ -1106,3 +1106,10 @@ SELECT id FROM conversation_turns
 WHERE conversation_id = sqlc.arg(conversation_id)
   AND retry_of_turn_id = sqlc.arg(retry_of_turn_id)
 LIMIT 1;
+
+-- Retry attempts outside the active branch still consume their source action.
+-- name: SelectConversationRetriedSourceTurnIDs :many
+SELECT CAST(retry_of_turn_id AS TEXT) AS retry_of_turn_id
+FROM conversation_turns
+WHERE conversation_id = sqlc.arg(conversation_id)
+  AND retry_of_turn_id IS NOT NULL;

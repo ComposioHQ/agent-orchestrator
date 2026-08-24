@@ -2306,6 +2306,7 @@ function retrySourceTurnIds(snapshot: ConversationSnapshot): Set<string> {
 	const turnIds = new Set(snapshot.turns.map((turn) => turn.id));
 	const sources = new Set<string>();
 	for (const turn of snapshot.turns) {
+		if (turn.hasRetryAttempt) sources.add(turn.id);
 		const source = turn.retryOfTurnId;
 		if (source && turnIds.has(source)) sources.add(source);
 	}

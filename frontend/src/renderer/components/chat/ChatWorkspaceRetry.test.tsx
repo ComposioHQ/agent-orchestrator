@@ -143,4 +143,15 @@ describe("ChatWorkspace retry", () => {
 
 		expect(screen.queryByRole("button", { name: "Retry this turn" })).toBeNull();
 	});
+
+	it("hides a source retry when its attempt is outside the active branch", () => {
+		const snapshot = failedSnapshot();
+		snapshot.turns = snapshot.turns.map((turn) =>
+			turn.id === "turn-1" ? { ...turn, hasRetryAttempt: true } : turn,
+		);
+
+		render(<ChatWorkspace snapshot={snapshot} retryControl={{ retry: vi.fn() }} />);
+
+		expect(screen.queryByRole("button", { name: "Retry this turn" })).toBeNull();
+	});
 });

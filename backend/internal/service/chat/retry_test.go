@@ -397,6 +397,60 @@ func TestRetryTurnRefusesFailedTurnOutsideActiveBranch(t *testing.T) {
 	}
 }
 
+func TestRetrySourceRemainsConsumedWhenAttemptIsEditedOntoAnotherBranch(t *testing.T) {
+	h, _, _ := newEditHarness(t)
+	ctx := context.Background()
+
+	source, err := h.svc.Send(ctx, testSession, ports.ChatUserMessage{
+		Text: "original failed work", ClientMessageID: "branch-retry-source", Origin: domain.MessageOriginHuman,
+	})
+	if err != nil {
+		t.Fatalf("Send source: %v", err)
+	}
+	h.conv.emit(ports.ChatEvent{
+		Kind: ports.ChatEventTurnCompleted, ProviderTurnID: source.ProviderTurnID,
+		TurnState: domain.TurnStateFailed, Err: errors.New("source failed"),
+	})
+	failedTurnSnapshot(t, h, source.ID)
+
+	attempt, err := h.svc.RetryTurn(ctx, testSession, source.ID)
+	if err != nil {
+		t.Fatalf("RetryTurn: %v", err)
+	}
+	h.conv.emit(ports.ChatEvent{
+		Kind: ports.ChatEventTurnCompleted, ProviderTurnID: attempt.ProviderTurnID,
+		TurnState: domain.TurnStateFailed, Err: errors.New("attempt failed"),
+	})
+	failedTurnSnapshot(t, h, attempt.ID)
+
+	if _, err := h.svc.EditMessage(ctx, testSession, attempt.ID, ports.ChatUserMessage{
+		Text: "edited retry prompt", ClientMessageID: "branch-retry-edit", Origin: domain.MessageOriginHuman,
+	}); err != nil {
+		t.Fatalf("EditMessage retry attempt: %v", err)
+	}
+
+	snapshot, err := h.st.LoadConversationSnapshot(ctx, h.ctrl.ConversationID())
+	if err != nil {
+		t.Fatalf("LoadConversationSnapshot: %v", err)
+	}
+	sourceAfter, ok := turnByID(snapshot, source.ID)
+	if !ok || !sourceAfter.HasRetryAttempt {
+		t.Fatalf("source after retry branch edit = %+v, want consumed retry fact", sourceAfter)
+	}
+	if _, visible := turnByID(snapshot, attempt.ID); visible {
+		t.Fatalf("inactive retry attempt %q remained in active snapshot", attempt.ID)
+	}
+
+	// A replay remains daemon-idempotent even while the replacement turn runs.
+	replayed, err := h.svc.RetryTurn(ctx, testSession, source.ID)
+	if err != nil {
+		t.Fatalf("RetryTurn after branch edit: %v", err)
+	}
+	if replayed.ID != attempt.ID {
+		t.Fatalf("branch replay returned %q, want existing attempt %q", replayed.ID, attempt.ID)
+	}
+}
+
 func TestRetryTurnRefusesNonHumanPrompt(t *testing.T) {
 	h := newHarness(t)
 	ctx := context.Background()

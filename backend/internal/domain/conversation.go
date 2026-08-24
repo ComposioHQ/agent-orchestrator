@@ -451,8 +451,11 @@ type ConversationTurn struct {
 	ProviderTurnID string `json:"providerTurnId,omitempty"`
 	// RetryOfTurnID is the failed source whose durable prompt created this turn.
 	// It remains present after rollback so the source cannot offer a dead action.
-	RetryOfTurnID string    `json:"retryOfTurnId,omitempty"`
-	State         TurnState `json:"state"`
+	RetryOfTurnID string `json:"retryOfTurnId,omitempty"`
+	// HasRetryAttempt is a snapshot-only fact derived from every durable retry
+	// relation, including attempts outside the active provider branch.
+	HasRetryAttempt bool      `json:"hasRetryAttempt,omitempty"`
+	State           TurnState `json:"state"`
 	// ErrorMessage is set for failed turns. Interrupted turns are not errors.
 	ErrorMessage string     `json:"errorMessage,omitempty"`
 	RequestedAt  time.Time  `json:"requestedAt"`

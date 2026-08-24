@@ -157,9 +157,10 @@ func TestConversationSnapshotExposesSafeEditContentAndBranchMetadata(t *testing.
 	body := conversationSnapshotBody(t, chatsvc.Snapshot{
 		Conversation: domain.ConversationRecord{ID: "conversation-1", ActiveBranchID: "branch-child"},
 		SessionID:    domain.SessionID("p1-1"),
-		Turns: []domain.ConversationTurn{{
-			ID: "turn-retry", State: domain.TurnStateCompleted, RetryOfTurnID: "turn-source", RequestedAt: now,
-		}},
+		Turns: []domain.ConversationTurn{
+			{ID: "turn-source", State: domain.TurnStateFailed, HasRetryAttempt: true, RequestedAt: now},
+			{ID: "turn-retry", State: domain.TurnStateCompleted, RetryOfTurnID: "turn-source", RequestedAt: now},
+		},
 		Messages: []domain.ConversationMessage{
 			{
 				ID: "valid", Role: domain.MessageRoleUser, Origin: domain.MessageOriginHuman,
@@ -216,8 +217,11 @@ func TestConversationSnapshotExposesSafeEditContentAndBranchMetadata(t *testing.
 		t.Fatalf("malformed message is editable: %#v", messages[2])
 	}
 	turns := body["turns"].([]any)
-	if turns[0].(map[string]any)["retryOfTurnId"] != "turn-source" {
-		t.Fatalf("retry source correlation = %#v", turns[0])
+	if turns[0].(map[string]any)["hasRetryAttempt"] != true {
+		t.Fatalf("consumed retry source = %#v", turns[0])
+	}
+	if turns[1].(map[string]any)["retryOfTurnId"] != "turn-source" {
+		t.Fatalf("retry source correlation = %#v", turns[1])
 	}
 }
 

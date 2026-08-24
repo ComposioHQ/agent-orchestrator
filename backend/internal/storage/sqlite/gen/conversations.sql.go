@@ -1873,6 +1873,37 @@ func (q *Queries) SelectConversationProviderEvents(ctx context.Context, arg Sele
 	return items, nil
 }
 
+const selectConversationRetriedSourceTurnIDs = `-- name: SelectConversationRetriedSourceTurnIDs :many
+SELECT CAST(retry_of_turn_id AS TEXT) AS retry_of_turn_id
+FROM conversation_turns
+WHERE conversation_id = ?1
+  AND retry_of_turn_id IS NOT NULL
+`
+
+// Retry attempts outside the active branch still consume their source action.
+func (q *Queries) SelectConversationRetriedSourceTurnIDs(ctx context.Context, conversationID string) ([]string, error) {
+	rows, err := q.db.QueryContext(ctx, selectConversationRetriedSourceTurnIDs, conversationID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var retry_of_turn_id string
+		if err := rows.Scan(&retry_of_turn_id); err != nil {
+			return nil, err
+		}
+		items = append(items, retry_of_turn_id)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const selectConversationRetryTurnIDBySource = `-- name: SelectConversationRetryTurnIDBySource :one
 SELECT id FROM conversation_turns
 WHERE conversation_id = ?1
