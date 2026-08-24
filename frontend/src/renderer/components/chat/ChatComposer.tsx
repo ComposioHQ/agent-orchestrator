@@ -28,6 +28,8 @@
  */
 
 import {
+	cloneElement,
+	isValidElement,
 	useCallback,
 	useEffect,
 	useId,
@@ -144,7 +146,7 @@ export function ChatComposer({
 	commandError?: string;
 	/** A queued-message dock owns the shared rounded top edge. */
 	attachedTop?: boolean;
-	/** Queued messages rendered above the composer, below the delivery choice. */
+	/** Queued messages rendered above the composer. */
 	queuedDock?: ReactNode;
 	/** Run AO's built-in `/compact` command instead of sending it to the agent. */
 	onCompact?: () => void | Promise<unknown>;
@@ -543,7 +545,10 @@ export function ChatComposer({
 		canSteer && onSteer ? (
 			<DeliveryChoice value={activeDelivery} disabled={steerPending} />
 		) : null;
-	const settingsNode = settings;
+	const settingsNode =
+		settings && deliveryChoice && isValidElement(settings)
+			? cloneElement(settings, undefined, deliveryChoice)
+			: settings;
 
 	if (approval) {
 		return (
@@ -567,7 +572,6 @@ export function ChatComposer({
 
 	return (
 		<>
-		{deliveryChoice}
 		{queuedDock}
 		<form
 			// Clicking send while Cmd/Ctrl is held has to mean what the indicator
@@ -714,6 +718,7 @@ export function ChatComposer({
 						</>
 					) : null}
 					{settingsNode}
+					{!settings && deliveryChoice}
 				</div>
 
 				<div

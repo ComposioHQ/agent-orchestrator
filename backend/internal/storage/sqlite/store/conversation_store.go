@@ -750,6 +750,8 @@ func terminalActivityStatus(state domain.TurnState) domain.ActivityStatus {
 	switch state {
 	case domain.TurnStateCompleted:
 		return domain.ActivityStatusCompleted
+	case domain.TurnStateRecovered:
+		return domain.ActivityStatusRecovered
 	case domain.TurnStateInterrupted:
 		return domain.ActivityStatusCancelled
 	default:

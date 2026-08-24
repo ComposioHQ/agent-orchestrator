@@ -303,6 +303,7 @@ type PRComment struct {
 	URL              string
 	IsBot            int64
 	AutoInjectReview bool
+	ReviewID         string
 }
 
 type PRReview struct {

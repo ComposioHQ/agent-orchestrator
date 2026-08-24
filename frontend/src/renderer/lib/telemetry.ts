@@ -3,6 +3,7 @@ import { aoBridge } from "./bridge";
 import { isLoopbackHostname } from "./loopback";
 import { ORCHESTRATOR_SPAWN_SOURCES } from "./orchestrator-spawn-sources";
 import { DEFAULT_POSTHOG_HOST, DEFAULT_POSTHOG_PROJECT_KEY } from "../../shared/posthog-config";
+import { EDITOR_IDS } from "../../shared/editor-handoff";
 
 const POSTHOG_KEY = import.meta.env.VITE_AO_POSTHOG_KEY?.trim() || DEFAULT_POSTHOG_PROJECT_KEY;
 const POSTHOG_HOST = import.meta.env.VITE_AO_POSTHOG_HOST?.trim() || DEFAULT_POSTHOG_HOST;
@@ -441,6 +442,9 @@ async function sanitizeRendererContextProperties(properties?: TelemetryPropertie
 
 const ORCHESTRATOR_SPAWN_SOURCE_SET = new Set<string>(ORCHESTRATOR_SPAWN_SOURCES);
 
+const EDITOR_ID_SET = new Set<string>(EDITOR_IDS);
+const OPEN_TARGET_KIND_SET = new Set(["editor", "file_manager", "terminal"]);
+
 export async function sanitizeRendererProperties(
 	event: string,
 	properties?: TelemetryProperties,
@@ -517,6 +521,33 @@ export async function sanitizeRendererProperties(
 			if (typeof properties?.authorized_agents === "string") {
 				safe.authorized_agents = properties.authorized_agents;
 			}
+			break;
+		}
+		case "ao.renderer.open_in_editor_requested": {
+			const projectIDHash = await hashedTelemetryID(properties?.project_id);
+			if (projectIDHash) safe.project_id_hash = projectIDHash;
+			if (typeof properties?.editor_id === "string" && EDITOR_ID_SET.has(properties.editor_id)) {
+				safe.editor_id = properties.editor_id;
+			}
+			if (typeof properties?.target_kind === "string" && OPEN_TARGET_KIND_SET.has(properties.target_kind)) {
+				safe.target_kind = properties.target_kind;
+			}
+			break;
+		}
+		case "ao.renderer.open_in_editor_succeeded": {
+			const projectIDHash = await hashedTelemetryID(properties?.project_id);
+			if (projectIDHash) safe.project_id_hash = projectIDHash;
+			if (typeof properties?.editor_id === "string" && EDITOR_ID_SET.has(properties.editor_id)) {
+				safe.editor_id = properties.editor_id;
+			}
+			if (typeof properties?.target_kind === "string" && OPEN_TARGET_KIND_SET.has(properties.target_kind)) {
+				safe.target_kind = properties.target_kind;
+			}
+			break;
+		}
+		case "ao.renderer.open_in_editor_failed": {
+			const projectIDHash = await hashedTelemetryID(properties?.project_id);
+			if (projectIDHash) safe.project_id_hash = projectIDHash;
 			break;
 		}
 		case "ao.renderer.session_state_unknown":
