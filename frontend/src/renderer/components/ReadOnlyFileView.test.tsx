@@ -1,12 +1,14 @@
 import { render, screen } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { ReadOnlyFileView } from "./ReadOnlyFileView";
 import type { WorkspaceFileDetail } from "../hooks/useSessionWorkspaceFiles";
 
-const { highlightMock } = vi.hoisted(() => ({ highlightMock: vi.fn() }));
-
 vi.mock("../lib/api-client", () => ({ getApiBaseUrl: () => "" }));
-vi.mock("../hooks/useShikiHtml", () => ({ useShikiHtml: highlightMock }));
+vi.mock("./chat/HighlightedCode", () => ({
+	HighlightedCode: ({ code, language }: { code: string; language?: string }) => (
+		<span data-language={language}>{code}</span>
+	),
+}));
 
 function baseDetail(overrides: Partial<WorkspaceFileDetail> = {}): WorkspaceFileDetail {
 	return {
@@ -27,20 +29,19 @@ function baseDetail(overrides: Partial<WorkspaceFileDetail> = {}): WorkspaceFile
 }
 
 describe("ReadOnlyFileView", () => {
-	beforeEach(() => {
-		highlightMock.mockReset().mockReturnValue(null);
-	});
-
-	it("renders plain content immediately while Shiki tokenization is pending", () => {
+	it("renders plain content through the shared syntax renderer", () => {
 		render(<ReadOnlyFileView detail={baseDetail()} sessionId="sess-1" />);
 		expect(screen.getByText("hello world")).toBeInTheDocument();
 	});
 
-	it("renders the Shiki-highlighted markup once available", () => {
-		highlightMock.mockReturnValue('<pre class="shiki"><code>highlighted</code></pre>');
-		const { container } = render(<ReadOnlyFileView detail={baseDetail()} sessionId="sess-1" />);
-		expect(container.querySelector("pre.shiki")).toBeInTheDocument();
-		expect(screen.getByText("highlighted")).toBeInTheDocument();
+	it("selects the JSON grammar from the opened file path", () => {
+		render(
+			<ReadOnlyFileView
+				detail={baseDetail({ content: '{"enabled": true}', path: "frontend/package.json" })}
+				sessionId="sess-1"
+			/>,
+		);
+		expect(screen.getByText('{"enabled": true}')).toHaveAttribute("data-language", "json");
 	});
 
 	it("shows an image preview for a binary image file instead of a placeholder", () => {
@@ -63,6 +64,5 @@ describe("ReadOnlyFileView", () => {
 	it("shows a too-large fallback instead of attempting to render truncated content", () => {
 		render(<ReadOnlyFileView detail={baseDetail({ contentTruncated: true, size: 5_000_000 })} sessionId="sess-1" />);
 		expect(screen.getByText(/too large to preview/i)).toBeInTheDocument();
-		expect(highlightMock).not.toHaveBeenCalled();
 	});
 });

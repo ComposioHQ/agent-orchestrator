@@ -883,7 +883,7 @@ function SessionPaneTab({
 				"group relative inline-flex self-stretch items-center gap-1.5 transition-colors",
 				connected
 					? "w-shell-tab-connected min-w-shell-tab-min shrink-0 border-x border-transparent px-2"
-					: "w-full max-w-full min-w-0 shrink overflow-hidden border-r border-border bg-surface text-foreground",
+					: "min-w-0 shrink overflow-hidden border-r border-border bg-surface text-foreground",
 				connected
 					? isActive
 						? "border-border-strong bg-overlay text-foreground after:absolute after:inset-x-0 after:bottom-0 after:h-0.5 after:bg-foreground/80"

@@ -1,7 +1,8 @@
 import { useTranslation } from "react-i18next";
 import { getApiBaseUrl } from "../lib/api-client";
 import type { WorkspaceFileDetail } from "../hooks/useSessionWorkspaceFiles";
-import { useShikiHtml } from "../hooks/useShikiHtml";
+import { canonicalLanguage } from "../lib/code-highlight";
+import { HighlightedCode } from "./chat/HighlightedCode";
 import { PanelMessage } from "./WorkspaceDiffView";
 
 function formatBytes(bytes: number): string {
@@ -40,25 +41,17 @@ export function ReadOnlyFileView({ detail, sessionId }: { detail: WorkspaceFileD
 	return <HighlightedContent content={detail.content} path={detail.path} />;
 }
 
-// Shiki tokenization is async; render the plain content immediately so the
-// file is readable right away, then swap in the highlighted markup once it
-// resolves (near-instant on a cache hit, one frame later on a miss).
+// Reuse AO's CSP-compatible highlight.js pipeline so file previews and code
+// shown elsewhere in the renderer share grammars, colors, and caching.
 function HighlightedContent({ content, path }: { content: string; path: string }) {
-	const html = useShikiHtml(path, content);
-	if (html) {
-		return (
-			<div
-				className="[&_pre]:min-h-0 [&_pre]:flex-1 [&_pre]:overflow-auto [&_pre]:!bg-transparent [&_pre]:p-3 [&_pre]:font-mono [&_pre]:text-xs [&_pre]:leading-5"
-				// Shiki's own HTML output — tokenized from source the daemon read
-				// off disk, not user-supplied markup.
-				dangerouslySetInnerHTML={{ __html: html }}
-			/>
-		);
-	}
+	const extension = path.split("/").pop()?.split(".").pop();
+	const language = canonicalLanguage(extension);
 	return (
-		<div className="min-h-0 flex-1 overflow-auto p-3">
+		<div className="chat-code min-h-0 flex-1 overflow-auto p-3">
 			<pre className="whitespace-pre font-mono text-xs leading-5 text-foreground">
-				<code>{content}</code>
+				<code>
+					<HighlightedCode code={content} language={language} />
+				</code>
 			</pre>
 		</div>
 	);
