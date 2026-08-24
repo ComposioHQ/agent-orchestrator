@@ -18,17 +18,18 @@ import { cn } from "../lib/utils";
 //   - A mask fades the leading and trailing edges, so the text reads as passing
 //     under the row chrome instead of being chopped at a hard border.
 
-// About ordinary reading pace (~200wpm over 14px type). Faster outruns the
-// reader; slower makes a long name feel stuck.
-const MARQUEE_SPEED_PX_PER_SEC = 100;
+// Keep the label comfortably below ordinary reading pace. At 60px/s, a typical
+// 360px overflow takes six seconds to cross, so the user can follow the text
+// rather than chase it.
+const MARQUEE_SPEED_PX_PER_SEC = 60;
 // Share of the cycle spent moving. The rest is the dwell at each end that makes
 // the start and the tail legible before the direction flips.
 const MARQUEE_TRAVEL_FRACTION = 0.7;
 const MARQUEE_MIN_DURATION_MS = 1400;
-// A 120-character name in a narrow sidebar overflows by roughly 600px, which
-// lands just under this. The clamp is the backstop for an extreme sidebar width
-// rather than a limit the normal case hits.
-const MARQUEE_MAX_DURATION_MS = 20000;
+// A 120-character name in a narrow sidebar overflows by roughly 600px and now
+// takes about 29s for the complete out-and-back cycle. Leave headroom for that
+// normal case; the clamp only guards pathological measurements.
+const MARQUEE_MAX_DURATION_MS = 40000;
 
 // A round trip covers the overflow twice.
 export function marqueeDurationMs(overflowPx: number): number {

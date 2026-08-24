@@ -134,12 +134,17 @@ describe("SidebarSessionName", () => {
 	});
 
 	it("scales the cycle with the distance so travel speed stays constant", () => {
+		// A typical long sidebar name travels 360px. Keep the full round trip
+		// deliberately unhurried (at least six seconds each way, plus the endpoint
+		// dwells) so the label remains readable while it moves.
+		expect(marqueeDurationMs(360)).toBeGreaterThanOrEqual(17_000);
 		// Twice the overflow takes about twice as long, within the clamps.
 		expect(marqueeDurationMs(600)).toBeGreaterThan(marqueeDurationMs(300));
 		expect(marqueeDurationMs(600) / marqueeDurationMs(300)).toBeCloseTo(2, 1);
 		// A tiny overflow still gets a readable minimum rather than a flicker, and
-		// a very long name is capped rather than crawling for a minute.
+		// a pathological measurement is still capped rather than crawling for a
+		// minute.
 		expect(marqueeDurationMs(1)).toBe(1400);
-		expect(marqueeDurationMs(100000)).toBe(20000);
+		expect(marqueeDurationMs(100000)).toBe(40000);
 	});
 });

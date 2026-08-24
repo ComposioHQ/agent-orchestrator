@@ -1732,9 +1732,10 @@ textarea,
 	/* Widened only while the text is travelling, so the resting label starts
 	 * flush at the row's left edge. */
 	--ao-session-name-fade-start: 0px;
-	/* Roughly a character and a half, enough to read as passing under the
-	 * action cluster rather than being cut at a hard border. */
-	--ao-session-name-fade-end: 18px;
+	/* Keep the fade to a narrow edge cue. The action strip remains separately
+	 * reserved for stable layout, but it must not make the shadow look as wide
+	 * as the whole button cluster. */
+	--ao-session-name-fade-end: 10px;
 }
 
 .ao-session-name[data-overflowing] {
