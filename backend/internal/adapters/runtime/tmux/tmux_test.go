@@ -159,7 +159,7 @@ func TestNewUsesSystemTmuxForLegacyDefaultSocket(t *testing.T) {
 	}
 }
 
-func TestNewFallsBackToPrimaryTmuxForLegacySocketWithoutSystemTmux(t *testing.T) {
+func TestNewLeavesLegacyTmuxUnavailableWithoutSystemTmux(t *testing.T) {
 	bundledTmux := filepath.Join(t.TempDir(), "bundled-tmux")
 	if err := os.WriteFile(bundledTmux, []byte("#!/bin/sh\n"), 0o755); err != nil {
 		t.Fatal(err)
@@ -169,8 +169,8 @@ func TestNewFallsBackToPrimaryTmuxForLegacySocketWithoutSystemTmux(t *testing.T)
 	t.Setenv("AO_TMUX_SOCKET_NAME", "ao")
 
 	r := New(Options{})
-	if got := r.legacyBinary; got != bundledTmux {
-		t.Fatalf("legacy binary = %q, want primary fallback %q", got, bundledTmux)
+	if got := r.legacyBinary; got != "" {
+		t.Fatalf("legacy binary = %q, want unavailable", got)
 	}
 }
 
@@ -757,9 +757,9 @@ func TestIsAliveAdoptsSessionFromLegacyDefaultSocket(t *testing.T) {
 	}
 	want := [][]string{
 		append([]string{"-L", "ao"}, hasSessionArgs("sess-1")...),
-		hasSessionArgs("sess-1"),
-		hasSessionArgs("sess-1"),
-		hasSessionArgs("sess-1"),
+		append([]string{"-L", "default"}, hasSessionArgs("sess-1")...),
+		append([]string{"-L", "default"}, hasSessionArgs("sess-1")...),
+		append([]string{"-L", "default"}, hasSessionArgs("sess-1")...),
 	}
 	wantBinaries := []string{
 		"bundled-tmux-test",
@@ -777,6 +777,54 @@ func TestIsAliveAdoptsSessionFromLegacyDefaultSocket(t *testing.T) {
 		if !reflect.DeepEqual(fr.calls[i].args, want[i]) {
 			t.Fatalf("call %d args = %#v, want %#v", i, fr.calls[i].args, want[i])
 		}
+	}
+}
+
+func TestIsAliveReportsMissingLegacyClientAsRuntimeUnavailable(t *testing.T) {
+	r := New(Options{Binary: "bundled-tmux-test", SocketName: "ao", Timeout: time.Second})
+	r.legacyBinary = ""
+	fr := &fakeRunnerSequence{results: []fakeRunnerResult{
+		{out: []byte("can't find session: sess-1"), err: &exec.ExitError{}},
+	}}
+	r.runner = fr
+
+	alive, err := r.IsAlive(context.Background(), ports.RuntimeHandle{ID: "sess-1"})
+	if !errors.Is(err, ports.ErrRuntimeUnavailable) {
+		t.Fatalf("IsAlive err = %v, want ports.ErrRuntimeUnavailable", err)
+	}
+	if alive {
+		t.Fatal("alive = true, want false with inconclusive error")
+	}
+	if len(fr.calls) != 1 {
+		t.Fatalf("calls = %d, want only the private-socket probe", len(fr.calls))
+	}
+}
+
+func TestIsAliveReportsIncompatibleLegacyClientAsRuntimeUnavailable(t *testing.T) {
+	r := New(Options{
+		Binary:       "bundled-tmux-test",
+		LegacyBinary: "system-tmux-test",
+		SocketName:   "ao",
+		Timeout:      time.Second,
+	})
+	fr := &fakeRunnerSequence{results: []fakeRunnerResult{
+		{out: []byte("can't find session: sess-1"), err: &exec.ExitError{}},
+		{out: []byte("server exited unexpectedly"), err: &exec.ExitError{}},
+	}}
+	r.runner = fr
+
+	alive, err := r.IsAlive(context.Background(), ports.RuntimeHandle{ID: "sess-1"})
+	if !errors.Is(err, ports.ErrRuntimeUnavailable) {
+		t.Fatalf("IsAlive err = %v, want ports.ErrRuntimeUnavailable", err)
+	}
+	if alive {
+		t.Fatal("alive = true, want false with inconclusive error")
+	}
+	if !strings.Contains(err.Error(), "server exited unexpectedly") {
+		t.Fatalf("IsAlive err = %v, want actionable legacy client failure", err)
+	}
+	if len(fr.calls) != 2 {
+		t.Fatalf("calls = %d, want private then legacy probes only", len(fr.calls))
 	}
 }
 
@@ -1337,7 +1385,7 @@ func TestAttachCommandUsesSystemTmuxForLegacyDefaultSocket(t *testing.T) {
 		Timeout:      time.Second,
 	})
 	argv := r.attachCommandForSocket("sess-1", "")
-	want := []string{"/opt/homebrew/bin/tmux", "-u", "-T", "RGB", "attach-session", "-t", "sess-1"}
+	want := []string{"/opt/homebrew/bin/tmux", "-L", "default", "-u", "-T", "RGB", "attach-session", "-t", "sess-1"}
 	if !reflect.DeepEqual(argv, want) {
 		t.Fatalf("argv = %#v, want %#v", argv, want)
 	}

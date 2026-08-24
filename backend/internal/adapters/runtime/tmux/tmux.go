@@ -289,7 +289,9 @@ func New(opts Options) *Runtime {
 		socketName = strings.TrimSpace(getenv("AO_TMUX_SOCKET_NAME"))
 	}
 	legacyBinary := opts.LegacyBinary
-	if legacyBinary == "" && socketName != "" {
+	if socketName == "" {
+		legacyBinary = binary
+	} else if legacyBinary == "" {
 		// Sessions created before AO introduced its private socket were started by
 		// the machine tmux from PATH. Use that matching client for the legacy
 		// default socket: tmux's client/server protocol is not guaranteed across
@@ -297,9 +299,6 @@ func New(opts Options) *Runtime {
 		if systemTmux, err := exec.LookPath("tmux"); err == nil {
 			legacyBinary = systemTmux
 		}
-	}
-	if legacyBinary == "" {
-		legacyBinary = binary
 	}
 	return &Runtime{
 		binary:         binary,
@@ -740,7 +739,11 @@ func (r *Runtime) Attach(ctx context.Context, handle ports.RuntimeHandle, rows, 
 	if err != nil {
 		return nil, err
 	}
-	argv := r.attachCommandForSocket(id, r.socketForSession(ctx, id))
+	socketName, err := r.socketForSession(ctx, id)
+	if err != nil {
+		return nil, fmt.Errorf("tmux runtime: attach session %s: %w", id, err)
+	}
+	argv := r.attachCommandForSocket(id, socketName)
 	return ptyexec.Spawn(ctx, argv, attachEnv(os.Environ()), rows, cols)
 }
 
@@ -777,6 +780,10 @@ func (r *Runtime) attachCommandForSocket(id, socketName string) []string {
 	argv := []string{r.binaryForSocket(socketName)}
 	if socketName != "" {
 		argv = append(argv, "-L", socketName)
+	} else if r.socketName != "" {
+		// A legacy session means tmux's historical machine default, never the
+		// socket named by an inherited TMUX from an AO worker or nested shell.
+		argv = append(argv, "-L", "default")
 	}
 	return append(argv, "-u", "-T", "RGB", "attach-session", "-t", id)
 }
@@ -812,6 +819,11 @@ func (r *Runtime) run(ctx context.Context, args ...string) ([]byte, error) {
 func (r *Runtime) runOnSocket(ctx context.Context, socketName string, args ...string) ([]byte, error) {
 	if socketName != "" {
 		args = append([]string{"-L", socketName}, args...)
+	} else if r.socketName != "" {
+		// Pin legacy discovery and commands to the historical machine default.
+		// Without -L, tmux honors inherited TMUX and may target an unrelated
+		// nested server whose session name happens to collide with AO's handle.
+		args = append([]string{"-L", "default"}, args...)
 	}
 	return r.runCommand(ctx, r.binaryForSocket(socketName), args...)
 }
@@ -827,36 +839,62 @@ func (r *Runtime) binaryForSocket(socketName string) string {
 // socket back to tmux's legacy default socket. The decision is discovered once
 // per daemon lifetime and cached. New sessions always use socketName.
 func (r *Runtime) runForSession(ctx context.Context, id string, args ...string) ([]byte, error) {
-	return r.runOnSocket(ctx, r.socketForSession(ctx, id), args...)
+	socketName, err := r.socketForSession(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	return r.runOnSocket(ctx, socketName, args...)
 }
 
-func (r *Runtime) socketForSession(ctx context.Context, id string) string {
+func (r *Runtime) socketForSession(ctx context.Context, id string) (string, error) {
 	if r.socketName == "" {
-		return ""
+		return "", nil
 	}
 	r.socketMu.RLock()
 	socketName, ok := r.sessionSockets[id]
 	r.socketMu.RUnlock()
 	if ok {
-		return socketName
+		return socketName, nil
 	}
 
 	out, err := r.runOnSocket(ctx, r.socketName, hasSessionArgs(id)...)
 	if err == nil {
 		r.rememberSessionSocket(id, r.socketName)
-		return r.socketName
+		return r.socketName, nil
 	}
 	// Only cross the migration boundary when the private server definitively
 	// lacks this session. An ambiguous probe stays on the private socket so a
 	// transient error cannot redirect a live session elsewhere.
 	if !sessionMissingOutput(string(out)) && !serverAbsentOutput(string(out)) {
-		return r.socketName
+		return r.socketName, nil
 	}
-	if _, legacyErr := r.runOnSocket(ctx, "", hasSessionArgs(id)...); legacyErr == nil {
+	if r.legacyBinary == "" {
+		return "", fmt.Errorf(
+			"%w: cannot inspect legacy default-socket session %s because system tmux is unavailable",
+			ports.ErrRuntimeUnavailable,
+			id,
+		)
+	}
+	legacyOut, legacyErr := r.runOnSocket(ctx, "", hasSessionArgs(id)...)
+	if legacyErr == nil {
 		r.rememberSessionSocket(id, "")
-		return ""
+		return "", nil
 	}
-	return r.socketName
+	if ctx.Err() != nil {
+		return "", ctx.Err()
+	}
+	if sessionMissingOutput(string(legacyOut)) || serverAbsentOutput(string(legacyOut)) {
+		// Both known sockets definitively lack the session. Return the private
+		// target so IsAlive's ordinary exact-session handling reports false.
+		return r.socketName, nil
+	}
+	return "", fmt.Errorf(
+		"%w: system tmux %q could not inspect legacy default-socket session %s: %w",
+		ports.ErrRuntimeUnavailable,
+		r.legacyBinary,
+		id,
+		legacyErr,
+	)
 }
 
 func (r *Runtime) rememberSessionSocket(id, socketName string) {
