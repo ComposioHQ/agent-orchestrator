@@ -795,6 +795,8 @@ function toSnapshot(wire: WireSnapshot): ConversationSnapshot {
 			id: turn.id,
 			state: turn.state as TurnState,
 			providerTurnId: turn.providerTurnId,
+			retryOfTurnId: turn.retryOfTurnId,
+			hasRetryAttempt: turn.hasRetryAttempt,
 			errorMessage: turn.errorMessage,
 			requestedAt: turn.requestedAt,
 			startedAt: turn.startedAt ?? undefined,
