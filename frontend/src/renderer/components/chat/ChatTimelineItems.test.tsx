@@ -114,6 +114,20 @@ describe("AssistantMessage streaming", () => {
 		expect(screen.getByLabelText(/^Sent \d{2}:\d{2}$/)).toBeInTheDocument();
 	});
 
+	it("labels yesterday and older messages by date", () => {
+		const now = new Date();
+		const yesterday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1, 12).toISOString();
+		const older = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 3, 12).toISOString();
+		const view = render(
+			<AssistantMessage message={message({ createdAt: yesterday, streaming: false })} showCopy />,
+		);
+
+		expect(view.container.querySelector('[title="Yesterday"]')).not.toBeNull();
+		view.rerender(<AssistantMessage message={message({ createdAt: older, streaming: false })} showCopy />);
+		expect(view.container.querySelector('[title="Yesterday"]')).toBeNull();
+		expect(view.container.querySelector("[title]")?.getAttribute("title")).toMatch(/^[A-Z][a-z]{2} \d{1,2}, \d{4}$/);
+	});
+
 	it("survives StrictMode effect cleanup and keeps draining", () => {
 		const view = render(
 			<StrictMode>

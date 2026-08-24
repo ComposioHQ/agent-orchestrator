@@ -447,7 +447,7 @@ export function HumanMessage({
 				</div>
 			)}
 			{editing ? null : (
-				<div className="mt-2 flex h-[18px] items-center gap-1">
+				<div className="mt-1 flex h-7 items-center gap-1">
 					<div className="flex items-center gap-1 opacity-0 transition-opacity duration-150 focus-within:opacity-100 group-hover/message:opacity-100">
 						<span
 							className="w-12 shrink-0 px-1 text-[11px] tabular-nums text-muted-foreground/75"
@@ -461,12 +461,17 @@ export function HumanMessage({
 								onClick={onEditStart}
 								aria-label="Edit user message"
 								title="Edit user message"
-								className="flex items-center rounded px-1.5 py-0.5 text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground"
+								className="flex size-7 items-center justify-center rounded-md text-muted-foreground transition-[background-color,color,transform] hover:bg-interactive-hover hover:text-foreground"
 							>
 								<Pencil aria-hidden="true" className="size-3" />
 							</button>
 						) : null}
-						<CopyButton text={message.text} label="Copy user message" compact />
+						<CopyButton
+							text={message.text}
+							label="Copy user message"
+							compact
+							className="size-7 justify-center rounded-md px-0 py-0"
+						/>
 					</div>
 					{branchPoint && onActivateBranch ? (
 						<ConversationBranchNavigator
@@ -564,7 +569,7 @@ export function AssistantMessage({
 				// One action row for the completed answer, not one after every prose
 				// fragment the provider emitted while working. Always visible: hover-only
 				// chrome is easy to miss next to a short reply.
-				<div className="mt-2 flex h-[18px] items-center gap-0.5">
+				<div className="mt-1 flex h-7 items-center gap-0.5">
 					{showCopy ? (
 						/* The stored markdown, not a re-serialization of what was rendered:
 						   pasting it into an editor has to give back what the agent wrote. */
@@ -572,7 +577,7 @@ export function AssistantMessage({
 							text={message.text}
 							label="Copy message as markdown"
 							compact
-							className="-ml-1.5"
+							className="-ml-1.5 size-7 justify-center rounded-md px-0 py-0"
 						/>
 					) : null}
 					{onRollback ? (
@@ -581,7 +586,7 @@ export function AssistantMessage({
 							onClick={onRollback}
 							aria-label="Roll back to here"
 							title="Roll back to here"
-							className="flex items-center rounded px-1.5 py-0.5 text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground"
+							className="flex size-7 items-center justify-center rounded-md text-muted-foreground transition-[background-color,color,transform] hover:bg-interactive-hover hover:text-foreground"
 						>
 							<Undo2 aria-hidden="true" className="size-3" />
 						</button>
