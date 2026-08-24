@@ -104,7 +104,7 @@ import {
 	type TurnSettings,
 } from "../../types/conversation";
 
-const CHAT_FONT_SIZE_DEFAULT = 12;
+const CHAT_FONT_SIZE_DEFAULT = 14;
 
 // Reviewer panes share the terminal font-size preference with CenterPane, so a
 // reviewer opened inside the Chat surface matches a reviewer opened in TUI mode.
@@ -767,8 +767,9 @@ export function ChatWorkspace({
 
 					<div
 						ref={composerDockRef}
-						className="cursor-chat-composer-dock shrink-0 px-4 pb-3 pt-2"
+						className="cursor-chat-composer-dock shrink-0 px-4 pb-3"
 					>
+						<div aria-hidden="true" className="chat-composer-fade" />
 						<div
 							data-empty={conversationEmpty || undefined}
 							className="mx-auto flex w-full max-w-3xl flex-col gap-2 transition-[max-width] duration-500 ease-out data-[empty]:max-w-2xl"
@@ -1350,12 +1351,39 @@ function Timeline({
 
 	const readable = useMemo(() => readableItems(snapshot), [snapshot]);
 	const items = useStableList(readable, itemKey, sameContent);
+	const seenHumanMessageIds = useRef<Set<string> | undefined>(undefined);
+	const lastSeenLatestSequence = useRef<number | undefined>(undefined);
+	const [newHumanMessageIds, setNewHumanMessageIds] = useState<ReadonlySet<string>>(new Set());
 	const editedMessageVisible = Boolean(
 		messageEdit &&
 			items.some(
 				(item) => item.kind === "message" && item.role === "user" && item.turnId === messageEdit.turnId,
 			),
 	);
+	useEffect(() => {
+		const humanMessages = items.filter(
+			(item): item is ConversationMessage =>
+				item.kind === "message" && item.role === "user" && item.origin === "human",
+		);
+		const humanMessageIds = new Set(humanMessages.map((item) => item.id));
+		if (!seenHumanMessageIds.current) {
+			seenHumanMessageIds.current = humanMessageIds;
+			lastSeenLatestSequence.current = snapshot.latestSequence;
+			return;
+		}
+		const added = new Set(
+			humanMessages
+				.filter(
+					(item) =>
+						!seenHumanMessageIds.current?.has(item.id) &&
+						item.sequence > (lastSeenLatestSequence.current ?? -Infinity),
+				)
+				.map((item) => item.id),
+		);
+		seenHumanMessageIds.current = humanMessageIds;
+		lastSeenLatestSequence.current = snapshot.latestSequence;
+		if (added.size > 0) setNewHumanMessageIds(added);
+	}, [items, snapshot.latestSequence]);
 	const grouped = useMemo(() => groupByTurn({ ...snapshot, items }), [snapshot, items]);
 	const groups = useStableList(grouped, groupKey, sameGroup);
 	const navigableGroups = useMemo(() => groups.filter(groupHasHumanPrompt), [groups]);
@@ -1621,6 +1649,7 @@ function Timeline({
 								editError={editError}
 								branchPoints={branchPoints}
 								editableTurns={editableTurns}
+								newHumanMessageIds={newHumanMessageIds}
 								onActivateBranch={canActivateBranch ? activateBranch : undefined}
 								activateBranchPending={activateBranchPending}
 								activateBranchError={activateBranchError}
@@ -1688,7 +1717,7 @@ function Timeline({
 				onBlur={() => setHoveredMarker(null)}
 				onPointerLeave={() => setHoveredMarker(null)}
 				className={cn(
-					"group/scroll absolute inset-y-3 right-1 z-10 w-4 touch-none rounded-full outline-none transition-opacity focus-visible:ring-1 focus-visible:ring-logo-accent/60",
+					"group/scroll absolute inset-y-3 right-1 z-10 w-6 touch-none rounded-full outline-none transition-opacity focus-visible:ring-1 focus-visible:ring-logo-accent/60",
 					scrollbar.visible ? "cursor-pointer opacity-100" : "pointer-events-none opacity-0",
 				)}
 			>
@@ -1793,6 +1822,7 @@ const TurnGroup = memo(function TurnGroup({
 	canRollback,
 	busy,
 	queued,
+	newHumanMessageIds,
 }: {
 	group: TimelineGroup;
 	sessionId: string;
@@ -1821,6 +1851,7 @@ const TurnGroup = memo(function TurnGroup({
 	busy?: boolean;
 	/** This turn was recorded but not sent, so its message can say so. */
 	queued: boolean;
+	newHumanMessageIds: ReadonlySet<string>;
 }) {
 	const runs = useMemo(() => runsOf(group.items), [group.items]);
 	const copyableMessageId = group.outcome
@@ -1861,8 +1892,9 @@ const TurnGroup = memo(function TurnGroup({
 						onActivateBranch={onActivateBranch}
 						activateBranchPending={activateBranchPending}
 						activateBranchError={activateBranchError}
-						busy={busy}
-						queued={queued}
+										busy={busy}
+										queued={queued}
+										newHumanMessageIds={newHumanMessageIds}
 						showCopy={run.items[0]?.id === copyableMessageId}
 						onRollback={
 							canRollback && run.items[0]?.id === copyableMessageId
@@ -1997,6 +2029,7 @@ function TimelineItem({
 	activateBranchError,
 	busy,
 	queued,
+	newHumanMessageIds,
 	showCopy,
 	onRollback,
 	durationMs,
@@ -2027,6 +2060,7 @@ function TimelineItem({
 	 * so. A group is one turn, so this holds for every item in it.
 	 */
 	queued?: boolean;
+	newHumanMessageIds: ReadonlySet<string>;
 	/** This is the final assistant response of a turn that has finished. */
 	showCopy?: boolean;
 	/** Undo this finished turn from the answer that owns its copy action. */
@@ -2062,6 +2096,7 @@ function TimelineItem({
 					sessionId={sessionId}
 					apiBaseUrl={apiBaseUrl}
 					queued={queued}
+					animateIn={newHumanMessageIds.has(item.id)}
 					onEdit={editAvailable ? (_turnID, text) => onSubmitMessageEdit(text) : undefined}
 					editing={editing}
 					editText={editing ? messageEdit?.text : undefined}

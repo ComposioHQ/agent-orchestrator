@@ -25,7 +25,7 @@ import (
 const (
 	maxUsageMetadataBytes          = 256
 	maxUsagePathBytes              = 4096
-	maxCodexSessionMeta            = 64 << 10
+	maxCodexSessionMeta            = 1 << 20
 	maxCodexChildIDs               = 4096
 	defaultCodexLogicalSourceLimit = 4096
 	defaultDiscoveryLimit          = 64

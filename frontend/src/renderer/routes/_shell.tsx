@@ -20,7 +20,6 @@ import { SidebarProvider } from "../components/ui/sidebar";
 import { TitlebarNav } from "../components/TitlebarNav";
 import { WindowTitlebar } from "../components/WindowTitlebar";
 import { TerminalCacheProvider } from "../components/TerminalPane";
-import { agentsQueryKey, agentsQueryOptions, refreshAgents } from "../hooks/useAgentsQuery";
 import { agentModelsQueryOptions } from "../hooks/useAgentModelsQuery";
 import { useDaemonStatus } from "../hooks/useDaemonStatus";
 import { useOpenShellTerminal } from "../hooks/useShellTerminals";
@@ -108,7 +107,6 @@ function ShellLayout() {
 	const daemonStatus = useDaemonStatus(queryClient);
 	const [workspaceStartupState, setWorkspaceStartupState] = useState<"loading" | "ready" | "error">("loading");
 	const workspaceStartupBaselineRef = useRef(0);
-	const agentCatalogPortRef = useRef<number | undefined>(undefined);
 	const { themePreference, resolvedTheme, themeStyle, toggleSidebar } = useUiStore();
 	const isSidebarOpen = useUiStore(sidebarIsVisible);
 	const isSidebarCompact = useUiStore(sidebarIsCompact);
@@ -615,15 +613,6 @@ function ShellLayout() {
 	useEffect(() => {
 		void aoBridge.theme?.set(themePreference);
 	}, [themePreference]);
-
-	useEffect(() => {
-		if (daemonStatus.state !== "ready" || !daemonStatus.port) return;
-		if (agentCatalogPortRef.current === daemonStatus.port) return;
-
-		agentCatalogPortRef.current = daemonStatus.port;
-		void queryClient.invalidateQueries({ queryKey: agentsQueryKey });
-		void queryClient.fetchQuery({ ...agentsQueryOptions, queryFn: refreshAgents });
-	}, [daemonStatus.port, daemonStatus.state, queryClient]);
 
 	// Follow OS appearance while the user keeps Theme on System — updates
 	// resolvedTheme (and thus React consumers) without writing light/dark to storage.

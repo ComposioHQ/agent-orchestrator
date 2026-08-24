@@ -135,20 +135,16 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 	const isDaemonReady = usesPreviewWorkspaceData || (shell ? shell.daemonStatus.state === "ready" : true);
 	const daemonHasFailed = Boolean(shell?.daemonStatus.code);
 	const workspaceStartupState = shell?.workspaceStartupState ?? "ready";
-	// Requirements blocking (missing git/tmux/coding agent) must keep the
-	// startup screen up even after the daemon and workspace query are both
-	// otherwise ready — see useSystemRequirementsGate. Without this, the gate
-	// was purely cosmetic: it would unmount on its own timer regardless of
-	// whether the machine actually satisfied the requirements it was showing.
 	const { blocked: requirementsBlocked } = useSystemRequirementsGate();
 	const isLoaded = isDaemonReady && workspaceStartupState === "ready" && workspaceQuery.isSuccess && !requirementsBlocked;
+	// The shell deliberately keeps its sidebar closed until this same readiness
+	// boundary. Keep the full-screen loader up until then so the first visible
+	// frame contains the restored sidebar and center pane together, rather than
+	// showing a collapsed layout that expands a moment later.
 	const showStartup =
 		shell !== null &&
 		!daemonHasFailed &&
-		(!isDaemonReady ||
-			workspaceStartupState === "loading" ||
-			(!workspaceQuery.isSuccess && !workspaceQuery.isError) ||
-			requirementsBlocked);
+		(!isDaemonReady || workspaceStartupState === "loading" || (!workspaceQuery.isSuccess && !workspaceQuery.isError) || requirementsBlocked);
 	const showWelcome = !projectId && isLoaded && all.length === 0;
 	const showProjectEmpty = projectId !== undefined && isLoaded && workspaces.length > 0 && sessions.length === 0;
 	const hasArchive = archived.length > 0;
@@ -290,7 +286,7 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 			    Win/Linux keep the crumb and actions in the framed ShellTopbar.
 			    Welcome skips the row — a dangling "Board" above the import
 			    chooser was review feedback on #2432. */}
-			{!showWelcome && !showStartup && boardActionsInPanel && (boardLabel || actions) ? (
+			{!showWelcome && boardActionsInPanel && (boardLabel || actions) ? (
 				<div
 					className="workspace-topbar-container center-panel-titlebar flex h-toolbar shrink-0 items-center gap-2 border-b border-border-strong pr-4"
 					style={dragStyle}
@@ -328,9 +324,7 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 						) : null}
 					</div>
 				) : null}
-				{showStartup ? (
-					<DaemonStartupLoader />
-				) : workspaceStartupState === "error" || workspaceQuery.isError ? (
+				{workspaceStartupState === "error" || workspaceQuery.isError ? (
 					<p className="py-10 text-center text-xs text-passive">{t("shell.couldNotLoadSessions")}</p>
 				) : showWelcome ? (
 					<BoardWelcome />
@@ -370,6 +364,7 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 					usageBySession={usageBySession}
 				/>
 			) : null}
+			{showStartup ? <DaemonStartupLoader /> : null}
 		</div>
 	);
 }

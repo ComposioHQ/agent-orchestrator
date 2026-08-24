@@ -6651,6 +6651,7 @@ components:
           - vibe
           - pi
           - kimchi
+          - omp
           - prime-agent
           - autohand
           - fake
@@ -8633,6 +8634,7 @@ components:
           - vibe
           - pi
           - kimchi
+          - omp
           - prime-agent
           - autohand
           type: string
@@ -8858,7 +8860,7 @@ components:
             readiness.
           type: boolean
         requirements:
-          description: 'Individual checks, in stable order: git, tmux, harness, gh.'
+          description: Individual checks in stable order for the selected probe.
           items:
             $ref: '#/components/schemas/SystemRequirement'
           type: array

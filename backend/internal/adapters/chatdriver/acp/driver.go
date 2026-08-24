@@ -64,7 +64,29 @@ type Config struct {
 	SessionMode func(ports.PermissionMode) string
 	// SessionOptions maps AO's per-turn choices onto ACP config option ids.
 	SessionOptions func(ports.ChatTurnSettings) []SessionOption
+	// PermissionPolicy lets a provider binding resolve permission requests that
+	// have an exact AO policy mapping before the generic client parks them for a
+	// human. Returning handled=false preserves the ordinary approval flow.
+	PermissionPolicy PermissionPolicy
+	// ClientExtension handles provider-defined agent-to-client JSON-RPC methods.
+	ClientExtension ClientExtensionHandler
+	// ClientExtensionAliases maps explicitly supported legacy wire methods onto
+	// ACP-compliant underscore extension names handled by the pinned SDK.
+	ClientExtensionAliases map[string]string
+	// ValidateTurnSettings rejects provider settings that cannot be applied to a
+	// live process. The initial permission mode is the launch-time value.
+	ValidateTurnSettings TurnSettingsValidator
 }
+
+// TurnSettingsValidator validates live turn settings against launch-time state.
+type TurnSettingsValidator func(ports.PermissionMode, ports.ChatTurnSettings) error
+
+// PermissionPolicy maps the active AO permission mode and the provider's exact
+// offered choices to an automatic response when the mapping is unambiguous.
+type PermissionPolicy func(
+	ports.PermissionMode,
+	acpsdk.RequestPermissionRequest,
+) (acpsdk.PermissionOptionId, bool)
 
 // SessionOption is one ACP session configuration selection.
 type SessionOption struct {
@@ -107,6 +129,13 @@ func (d *Driver) Probe(ctx context.Context) (ports.ChatCapabilities, error) {
 func (d *Driver) Start(ctx context.Context, cfg ports.ChatStartConfig) (ports.ChatConversation, error) {
 	if !filepath.IsAbs(cfg.WorkspacePath) {
 		return nil, fmt.Errorf("workspace path must be absolute, got %q", cfg.WorkspacePath)
+	}
+	if d.cfg.ValidateTurnSettings != nil {
+		if err := d.cfg.ValidateTurnSettings(cfg.Permissions, ports.ChatTurnSettings{
+			Model: cfg.Model, Approval: cfg.Permissions,
+		}); err != nil {
+			return nil, fmt.Errorf("validate ACP session settings: %w", err)
+		}
 	}
 	launchCfg := LaunchConfig{
 		SessionID: cfg.SessionID, DataDir: cfg.DataDir, WorkspacePath: cfg.WorkspacePath,
@@ -154,7 +183,9 @@ func (d *Driver) Start(ctx context.Context, cfg ports.ChatStartConfig) (ports.Ch
 	}
 	conv.start(
 		string(resp.SessionId), conversationCapabilities(d.cfg.Capabilities, init),
-		d.cfg.SessionMode, d.cfg.SessionOptions, resp.ConfigOptions,
+		d.cfg.SessionMode, d.cfg.SessionOptions, d.cfg.PermissionPolicy,
+		cfg.Permissions, d.cfg.ValidateTurnSettings, resp.ConfigOptions,
+		conv.legacyWire.modelState(), resp.Modes,
 	)
 	if err := conv.applyTurnSettings(ctx, ports.ChatTurnSettings{Model: cfg.Model, Approval: cfg.Permissions}); err != nil {
 		// Initial model and permission mode may have been applied via launch-time
@@ -180,6 +211,13 @@ func (d *Driver) Resume(ctx context.Context, cfg ports.ChatResumeConfig) (ports.
 	if !filepath.IsAbs(cfg.WorkspacePath) {
 		return nil, fmt.Errorf("workspace path must be absolute, got %q", cfg.WorkspacePath)
 	}
+	if d.cfg.ValidateTurnSettings != nil {
+		if err := d.cfg.ValidateTurnSettings(cfg.Permissions, ports.ChatTurnSettings{
+			Model: cfg.Model, Approval: cfg.Permissions,
+		}); err != nil {
+			return nil, fmt.Errorf("%w: validate ACP session settings: %w", ports.ErrChatResumeFailed, err)
+		}
+	}
 	launchCfg := LaunchConfig{
 		SessionID: cfg.SessionID, DataDir: cfg.DataDir, WorkspacePath: cfg.WorkspacePath,
 		Env: cfg.Env, Model: cfg.Model, Permissions: cfg.Permissions, SystemPrompt: cfg.SystemPrompt,
@@ -188,7 +226,7 @@ func (d *Driver) Resume(ctx context.Context, cfg ports.ChatResumeConfig) (ports.
 	if err != nil {
 		return nil, err
 	}
-	if !init.AgentCapabilities.LoadSession && init.AgentCapabilities.SessionCapabilities.Resume == nil {
+	if !supportsSessionRestore(init) {
 		_ = conv.Close()
 		return nil, fmt.Errorf("%w: ACP agent supports neither session/load nor session/resume", ports.ErrChatResumeFailed)
 	}
@@ -214,6 +252,7 @@ func (d *Driver) Resume(ctx context.Context, cfg ports.ChatResumeConfig) (ports.
 		meta = d.cfg.SessionMeta(launchCfg)
 	}
 	var configOptions []acpsdk.SessionConfigOption
+	var modes *acpsdk.SessionModeState
 	if init.AgentCapabilities.LoadSession {
 		conv.beginHistoryReplay(cfg.ProviderConversationID)
 		resp, err := conv.conn.LoadSession(resumeCtx, acpsdk.LoadSessionRequest{
@@ -230,6 +269,7 @@ func (d *Driver) Resume(ctx context.Context, cfg ports.ChatResumeConfig) (ports.
 		}
 		conv.finishHistoryReplay()
 		configOptions = resp.ConfigOptions
+		modes = resp.Modes
 	} else {
 		resp, err := conv.conn.ResumeSession(resumeCtx, acpsdk.ResumeSessionRequest{
 			Meta:                  meta,
@@ -243,10 +283,13 @@ func (d *Driver) Resume(ctx context.Context, cfg ports.ChatResumeConfig) (ports.
 			return nil, fmt.Errorf("%w: %w", ports.ErrChatResumeFailed, err)
 		}
 		configOptions = resp.ConfigOptions
+		modes = resp.Modes
 	}
 	conv.start(
 		cfg.ProviderConversationID, conversationCapabilities(d.cfg.Capabilities, init),
-		d.cfg.SessionMode, d.cfg.SessionOptions, configOptions,
+		d.cfg.SessionMode, d.cfg.SessionOptions, d.cfg.PermissionPolicy,
+		cfg.Permissions, d.cfg.ValidateTurnSettings, configOptions,
+		conv.legacyWire.modelState(), modes,
 	)
 	if err := conv.applyTurnSettings(ctx, ports.ChatTurnSettings{Model: cfg.Model, Approval: cfg.Permissions}); err != nil {
 		if !errors.Is(err, ErrACPSetterUnsupported) {
@@ -272,7 +315,7 @@ func (d *Driver) connect(
 	if err != nil {
 		return nil, acpsdk.InitializeResponse{}, fmt.Errorf("%w: launch ACP agent: %w", ports.ErrChatDriverUnavailable, err)
 	}
-	conv := newConversation(proc, d.log)
+	conv := newConversation(proc, d.log, d.cfg.ClientExtension, d.cfg.ClientExtensionAliases)
 
 	initCtx, cancel := context.WithTimeout(ctx, handshakeTimeout)
 	defer cancel()
@@ -326,7 +369,7 @@ func conversationCapabilities(
 	init acpsdk.InitializeResponse,
 ) ports.ChatCapabilities {
 	caps := cloneCapabilities(configured)
-	if init.AgentCapabilities.SessionCapabilities.Resume == nil {
+	if !supportsSessionRestore(init) {
 		caps[ports.ChatCapabilityResume] = false
 	}
 	caps[ports.ChatCapabilityHistory] = init.AgentCapabilities.LoadSession
@@ -341,6 +384,11 @@ func conversationCapabilities(
 	caps[ports.ChatCapabilityNestedAgents] = true
 	caps[ports.ChatCapabilityTerminalOutput] = true
 	return caps
+}
+
+func supportsSessionRestore(init acpsdk.InitializeResponse) bool {
+	return init.AgentCapabilities.LoadSession ||
+		init.AgentCapabilities.SessionCapabilities.Resume != nil
 }
 
 func extensionSupported(meta map[string]any, name string) bool {
