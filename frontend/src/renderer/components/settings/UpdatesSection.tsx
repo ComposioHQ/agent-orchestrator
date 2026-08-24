@@ -395,6 +395,13 @@ function UpdateActions({ status }: { status: UpdateStatus }) {
 					</div>
 				)}
 
+				{!status.staleCheckNudge && status.checksFailing && (
+					<p className="flex items-start gap-2 border-t border-[color-mix(in_oklch,var(--update-status-tone)_18%,transparent)] pt-3 text-xs leading-5 text-warning">
+						<AlertTriangle className="mt-0.5 size-icon-sm shrink-0" aria-hidden="true" />
+						<span>{t("settings.updates.checksFailing")}</span>
+					</p>
+				)}
+
 				{status.staleCheckNudge && (
 					<p className="flex items-start gap-2 border-t border-[color-mix(in_oklch,var(--update-status-tone)_18%,transparent)] pt-3 text-xs leading-5 text-warning">
 						<AlertTriangle className="mt-0.5 size-icon-sm shrink-0" aria-hidden="true" />

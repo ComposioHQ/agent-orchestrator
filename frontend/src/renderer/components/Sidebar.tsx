@@ -5,6 +5,7 @@ import {
 import { useTranslation } from "react-i18next";
 import { useNavigate, useParams, useRouterState } from "@tanstack/react-router";
 import {
+	AlertTriangle,
 	ChevronRight,
 	Download,
 	Folder,
@@ -1155,7 +1156,30 @@ function UpdateStatusRow({ status, tabIndex }: { status: UpdateStatus; tabIndex:
 			</div>
 		);
 	}
-	if (status.state !== "downloaded") return null;
+	// Ranked below a staged build on purpose: an update ready to install is more
+	// actionable than "checks are failing". Only when there is nothing better to
+	// show does the failure take the row — it used to render nothing at all,
+	// which reads as "up to date" rather than "checks are not getting through".
+	if (status.state !== "downloaded") {
+		if (status.checksFailing !== true) return null;
+		return (
+			<button
+				aria-label={t("shell.retryUpdateCheck")}
+				className="flex w-full items-center gap-2.5 rounded-lg border border-warning/35 bg-warning/12 p-2.5 text-left text-control font-medium text-warning transition-colors hover:bg-warning/18 [&_svg]:text-warning"
+				onClick={() => void aoBridge.updates.check()}
+				tabIndex={tabIndex}
+				type="button"
+			>
+				<AlertTriangle aria-hidden="true" className="size-icon-lg shrink-0" />
+				<span className="min-w-0 flex-1">
+					<span className="block truncate tracking-tight">{t("shell.updateCheckFailed")}</span>
+					<span className="block truncate text-caption font-normal text-warning">
+						{t("shell.retryUpdateCheck")}
+					</span>
+				</span>
+			</button>
+		);
+	}
 	const escalated = status.escalated === true;
 	return (
 		<button
@@ -1236,7 +1260,28 @@ function UpdateStatusRail({ status, tabIndex }: { status: UpdateStatus; tabIndex
 			</Tooltip>
 		);
 	}
-	if (status.state !== "downloaded") return null;
+	// Same ranking as the expanded row: a staged build outranks the failure.
+	if (status.state !== "downloaded") {
+		if (status.checksFailing !== true) return null;
+		return (
+			<Tooltip>
+				<TooltipTrigger asChild>
+					<button
+						aria-label={t("shell.retryUpdateCheck")}
+						className="grid size-9 place-items-center rounded-lg bg-warning/12 text-warning transition-colors hover:bg-warning/18 [&_svg]:size-4"
+						onClick={() => void aoBridge.updates.check()}
+						tabIndex={tabIndex}
+						type="button"
+					>
+						<AlertTriangle aria-hidden="true" />
+					</button>
+				</TooltipTrigger>
+				<TooltipContent side="right">
+					{t("shell.updateCheckFailed")} · {t("shell.retryUpdateCheck")}
+				</TooltipContent>
+			</Tooltip>
+		);
+	}
 	const escalated = status.escalated === true;
 	return (
 		<Tooltip>
