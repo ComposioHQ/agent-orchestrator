@@ -74,6 +74,7 @@ describe("compaction in the timeline", () => {
 
 		expect(screen.getByText("The conversation history was compacted")).toBeInTheDocument();
 		expect(screen.getByText("−11.0k · 2% full")).toBeInTheDocument();
+		expect(screen.getByText("−11.0k · 2% full")).toHaveClass("text-muted-foreground/70");
 	});
 
 	// A compaction right after a daemon restart genuinely does not know what it
