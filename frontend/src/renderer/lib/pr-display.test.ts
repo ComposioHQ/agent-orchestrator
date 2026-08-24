@@ -204,16 +204,15 @@ describe("prDiffSummary", () => {
 
 describe("prCardPresentation", () => {
 	const priorityCases: Array<[string, Partial<SessionPRSummary>, string]> = [
-		["conflict + passing + approval", { mergeability: { state: "conflicting", reasons: [], prUrl: "" } }, "Not mergeable yet"],
-		["clean + passing + approval", { mergeability: { state: "mergeable", reasons: [], prUrl: "" } }, "Mergeable"],
-		["clean + failing + approval", { ci: { autoInjectCI: true, state: "failing", failingChecks: [] }, mergeability: { state: "mergeable", reasons: [], prUrl: "" } }, "Not mergeable yet"],
+		["conflict + passing + approval", { mergeability: { state: "conflicting", reasons: [], prUrl: "" } }, "Merge conflict"],
+		["clean + passing + approval", { mergeability: { state: "mergeable", reasons: [], prUrl: "" } }, "Ready to merge"],
+		["clean + failing + approval", { ci: { autoInjectCI: true, state: "failing", failingChecks: [] }, mergeability: { state: "mergeable", reasons: [], prUrl: "" } }, "Checks failing"],
 	];
-	it.each(priorityCases)("renders the priority stack for %s", (_name, overrides, readiness) => {
+	it.each(priorityCases)("reduces %s to one priority status", (_name, overrides, primaryLabel) => {
 		const presentation = prCardPresentation(summary(overrides));
-		expect(presentation.statusRows?.map((status) => status.label)).toEqual(
-			readiness === "Mergeable" ? ["Checks passing", "Review status"] : overrides.mergeability?.state === "conflicting" ? ["Merge conflict", "Checks passing", "Review status"] : ["Checks failing", "Review status"],
-		);
-		expect(presentation.readiness?.label).toBe(readiness);
+		expect(presentation.primary.label).toBe(primaryLabel);
+		expect(presentation.statusRows).toBeUndefined();
+		expect(presentation.readiness).toBeUndefined();
 	});
 
 	it("shows a required review once instead of repeating it as a merge blocker", () => {
@@ -237,7 +236,7 @@ describe("prCardPresentation", () => {
 		expect(presentation.supporting.map((status) => status.label)).toEqual(["Checks passing"]);
 	});
 
-	it("shows checking merge readiness while provider state is pending", () => {
+	it("uses the primary status while provider state is pending", () => {
 		const presentation = prCardPresentation(
 			summary({
 				ci: { autoInjectCI: true, state: "pending", failingChecks: [] },
@@ -245,8 +244,9 @@ describe("prCardPresentation", () => {
 			}),
 		);
 
-		expect(presentation.readiness?.label).toBe("Checking merge readiness");
-		expect(presentation.readiness?.detail).toBe("Waiting for the latest checks and review state.");
+		expect(presentation.primary.label).toBe("Checks running");
+		expect(presentation.statusRows).toBeUndefined();
+		expect(presentation.readiness).toBeUndefined();
 	});
 
 	it("prioritizes failing checks over lower-priority review and merge facts", () => {

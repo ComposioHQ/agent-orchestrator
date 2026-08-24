@@ -48,6 +48,7 @@ describe("portable leaf components", () => {
 			<PRSummaryMeta
 				countNounLabel={(count, noun) => `${count} localized-${noun}`}
 				externalLink={ExternalLink}
+				leading={<span>PR #7</span>}
 				pr={{
 					provider: "github",
 					author: "ada",
@@ -64,6 +65,9 @@ describe("portable leaf components", () => {
 		expect(screen.getByText("2 localized-file")).toBeInTheDocument();
 		expect(screen.getByRole("link", { name: "ada" })).toHaveAttribute("href", "https://github.com/ada");
 		expect(screen.getByText("feature → main")).toHaveClass("break-words");
+		const metadata = screen.getByText("feature → main").closest("div.font-mono");
+		expect(metadata).toHaveClass("flex", "flex-wrap");
+		expect(metadata).toContainElement(screen.getByText("PR #7"));
 	});
 
 	it("renders precomputed PR presentation without controller dependencies", () => {
