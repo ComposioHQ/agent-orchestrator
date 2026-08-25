@@ -40,10 +40,7 @@ import type {
 	TurnSettings,
 } from "../../types/conversation";
 
-/**
- * AO's four approval modes, in increasing order of what the agent may do without
- * asking. The hints say what each actually permits rather than naming a policy.
- */
+/** AO's generic approval modes, used by harnesses without a native vocabulary. */
 const APPROVAL_COPY: Record<ApprovalMode, { label: string }> = {
 	default: { label: "Default approvals" },
 	"accept-edits": { label: "Accept edits" },
@@ -58,6 +55,22 @@ const APPROVAL_ORDER: ApprovalMode[] = [
 	"bypass-permissions",
 ];
 
+// Codex has three distinct permission profiles. Its default is already full
+// access in AO's isolated worktree posture, so expose it as that rather than a
+// fourth, ambiguous "default" option.
+const CODEX_APPROVAL_COPY: Record<ApprovalMode, { label: string }> = {
+	default: { label: "Full access" },
+	"accept-edits": { label: "Ask for approval" },
+	auto: { label: "Approve for me" },
+	"bypass-permissions": { label: "Full access" },
+};
+
+const CODEX_APPROVAL_ORDER: ApprovalMode[] = [
+	"accept-edits",
+	"auto",
+	"bypass-permissions",
+];
+
 const TRIGGER_CLASS =
 	"h-7 gap-1 bg-transparent rounded-lg px-3 text-[12px]! leading-none text-muted-foreground hover:bg-white/5 hover:text-foreground data-[state=open]:bg-white/5 data-[state=open]:text-foreground";
 const CHAT_MENU_CLASS = "chat-settings-menu text-[12px]!";
@@ -65,6 +78,7 @@ const CHAT_MENU_CLASS = "chat-settings-menu text-[12px]!";
 export function TurnSettingsBar({
 	models,
 	settings,
+	harness,
 	reroute,
 	onChange,
 	configOptions,
@@ -75,6 +89,8 @@ export function TurnSettingsBar({
 }: {
 	models: ChatModel[];
 	settings: TurnSettings;
+	/** The active provider selects its own supported permission vocabulary. */
+	harness?: string;
 	/**
 	 * The provider answered with a different model than the one chosen. Separate from
 	 * `settings` all the way down: settings are what the user asked for, this is what
@@ -106,7 +122,9 @@ export function TurnSettingsBar({
 	const efforts = (selected ?? fallback)?.efforts ?? [];
 	const effortLabel =
 		settings.reasoningEffort ?? (selected ?? fallback)?.defaultEffort ?? undefined;
-	const approvalLabel = APPROVAL_COPY[settings.approvalMode ?? "default"].label;
+	const approvalCopy = harness === "codex" ? CODEX_APPROVAL_COPY : APPROVAL_COPY;
+	const approvalOrder = harness === "codex" ? CODEX_APPROVAL_ORDER : APPROVAL_ORDER;
+	const approvalLabel = approvalCopy[settings.approvalMode ?? "default"].label;
 	const modelGroupLabel = effortLabel
 		? `${modelLabel} ${capitalize(effortLabel)}`
 		: modelLabel;
@@ -176,7 +194,7 @@ export function TurnSettingsBar({
 								title="Approval policy for the next turn"
 								disabled={disabled}
 							>
-								{APPROVAL_ORDER.map((mode) => (
+								{approvalOrder.map((mode) => (
 									<OptionMenuItem
 										key={mode}
 										onSelect={() => onChange({ ...settings, approvalMode: mode })}
@@ -190,7 +208,7 @@ export function TurnSettingsBar({
 													: "text-muted-foreground",
 											)}
 										>
-											{APPROVAL_COPY[mode].label}
+											{approvalCopy[mode].label}
 										</span>
 									</OptionMenuItem>
 								))}

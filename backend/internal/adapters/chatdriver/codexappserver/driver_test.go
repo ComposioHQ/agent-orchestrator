@@ -712,18 +712,19 @@ func TestProbeReportsMissingBinary(t *testing.T) {
 // Chat must not be quietly stricter than the terminal path for the same setting.
 func TestApprovalSettingsMirrorTUIPosture(t *testing.T) {
 	for _, tc := range []struct {
-		mode            ports.PermissionMode
-		policy, sandbox string
+		mode                      ports.PermissionMode
+		policy, sandbox, reviewer string
 	}{
-		{ports.PermissionModeDefault, "never", "danger-full-access"},
-		{ports.PermissionModeBypassPermissions, "never", "danger-full-access"},
-		{ports.PermissionModeAcceptEdits, "on-request", "workspace-write"},
-		{ports.PermissionModeAuto, "on-request", "workspace-write"},
-		{ports.PermissionMode("nonsense"), "never", "danger-full-access"},
+		{ports.PermissionModeDefault, "never", "danger-full-access", "user"},
+		{ports.PermissionModeBypassPermissions, "never", "danger-full-access", "user"},
+		{ports.PermissionModeAcceptEdits, "on-request", "workspace-write", "user"},
+		{ports.PermissionModeAuto, "on-request", "workspace-write", "auto_review"},
+		{ports.PermissionMode("nonsense"), "never", "danger-full-access", "user"},
 	} {
 		policy, sandbox := approvalSettings(tc.mode)
-		if policy != tc.policy || sandbox != tc.sandbox {
-			t.Errorf("approvalSettings(%q) = %q/%q, want %q/%q", tc.mode, policy, sandbox, tc.policy, tc.sandbox)
+		reviewer := approvalReviewer(tc.mode)
+		if policy != tc.policy || sandbox != tc.sandbox || reviewer != tc.reviewer {
+			t.Errorf("approval settings(%q) = %q/%q/%q, want %q/%q/%q", tc.mode, policy, sandbox, reviewer, tc.policy, tc.sandbox, tc.reviewer)
 		}
 	}
 }

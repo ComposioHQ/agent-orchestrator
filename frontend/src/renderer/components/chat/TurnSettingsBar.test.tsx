@@ -186,9 +186,38 @@ describe("ACP session config options", () => {
 		expect(onChange).toHaveBeenCalledWith("model", { value: "sonnet" });
 	});
 
+	it("shows Codex's three native permission choices", async () => {
+		const user = userEvent.setup();
+		const onChange = vi.fn();
+		render(
+			<TurnSettingsBar
+				harness="codex"
+				models={[]}
+				settings={{}}
+				onChange={onChange}
+			/>,
+		);
+
+		expect(screen.getByRole("button", { name: "Approval policy for the next turn" })).toHaveTextContent(
+			"Full access",
+		);
+		await user.click(screen.getByRole("button", { name: "Approval policy for the next turn" }));
+		expect(screen.getByRole("menuitem", { name: "Ask for approval" })).toBeInTheDocument();
+		expect(screen.getByRole("menuitem", { name: "Approve for me" })).toBeInTheDocument();
+		expect(screen.getByRole("menuitem", { name: "Full access" })).toBeInTheDocument();
+		expect(screen.queryByRole("menuitem", { name: "Default approvals" })).not.toBeInTheDocument();
+		expect(screen.queryByRole("menuitem", { name: "Accept edits" })).not.toBeInTheDocument();
+		expect(screen.queryByRole("menuitem", { name: "Auto-approve" })).not.toBeInTheDocument();
+		expect(screen.queryByRole("menuitem", { name: "Bypass permissions" })).not.toBeInTheDocument();
+
+		await user.click(screen.getByRole("menuitem", { name: "Approve for me" }));
+		expect(onChange).toHaveBeenCalledWith({ approvalMode: "auto" });
+	});
+
 	it("keeps Codex native model+effort in one trigger when the provider has no catalog", () => {
 		render(
 			<TurnSettingsBar
+				harness="codex"
 				models={[
 					{ id: "gpt-5.6-terra", displayName: "gpt-5.6-terra", default: true, efforts: ["high"] },
 				]}
@@ -201,7 +230,7 @@ describe("ACP session config options", () => {
 			screen.getByRole("button", { name: "Model and reasoning effort for the next turn" }),
 		).toHaveTextContent("gpt-5.6-terra High");
 		expect(screen.getByRole("button", { name: "Approval policy for the next turn" })).toHaveTextContent(
-			"Default approvals",
+			"Full access",
 		);
 	});
 
