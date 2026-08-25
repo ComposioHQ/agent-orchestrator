@@ -1403,6 +1403,15 @@ type EditConversationMessageResponse struct {
 	State          domain.TurnState `json:"state,omitempty" enum:"queued,running,completed,recovered,interrupted,failed"`
 }
 
+// RetryTurnResponse reports the new turn a retry dispatched. The original failed
+// turn is not referenced here: it stays failed and unchanged, and both attempts
+// remain separately visible in history.
+type RetryTurnResponse struct {
+	TurnID         string           `json:"turnId,omitempty"`
+	ProviderTurnID string           `json:"providerTurnId,omitempty"`
+	State          domain.TurnState `json:"state,omitempty" enum:"queued,running,completed,recovered,interrupted,failed"`
+}
+
 // ActivateConversationBranchResponse reports the durable head after switching.
 type ActivateConversationBranchResponse struct {
 	ActiveBranchID string `json:"activeBranchId"`
@@ -1529,13 +1538,17 @@ type CompactConversationResponse struct {
 
 // ConversationTurnResponse is one request and the work that followed it.
 type ConversationTurnResponse struct {
-	ID             string  `json:"id"`
-	State          string  `json:"state" enum:"queued,running,completed,recovered,interrupted,failed"`
-	ProviderTurnID string  `json:"providerTurnId,omitempty"`
-	ErrorMessage   string  `json:"errorMessage,omitempty"`
-	RequestedAt    string  `json:"requestedAt"`
-	StartedAt      *string `json:"startedAt,omitempty"`
-	CompletedAt    *string `json:"completedAt,omitempty"`
+	ID             string `json:"id"`
+	State          string `json:"state" enum:"queued,running,completed,recovered,interrupted,failed"`
+	ProviderTurnID string `json:"providerTurnId,omitempty"`
+	// RetryOfTurnID is the failed source whose durable prompt created this turn.
+	RetryOfTurnID string `json:"retryOfTurnId,omitempty"`
+	// HasRetryAttempt remains true when the attempt is outside the active branch.
+	HasRetryAttempt bool    `json:"hasRetryAttempt,omitempty"`
+	ErrorMessage    string  `json:"errorMessage,omitempty"`
+	RequestedAt     string  `json:"requestedAt"`
+	StartedAt       *string `json:"startedAt,omitempty"`
+	CompletedAt     *string `json:"completedAt,omitempty"`
 	// RolledBack marks a turn an undo discarded. Its messages and activities are
 	// absent from this snapshot because the agent no longer remembers them; the turn
 	// is still reported so a client can say what was taken back rather than letting

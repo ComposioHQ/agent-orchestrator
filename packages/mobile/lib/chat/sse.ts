@@ -10,6 +10,8 @@ export type ConversationEvent = {
 export type ConversationEventRegistry = {
 	subscribe(sessionId: string, listener: (event: ConversationEvent) => void): () => void;
 	publish(event: ConversationEvent): void;
+	/** Whether any session has a listener, i.e. whether payloads are worth parsing. */
+	hasListeners(): boolean;
 };
 
 export function createConversationEventRegistry(): ConversationEventRegistry {
@@ -24,6 +26,9 @@ export function createConversationEventRegistry(): ConversationEventRegistry {
 				if (sessionListeners.size === 0) listeners.delete(sessionId);
 			};
 		},
+		hasListeners() {
+			return listeners.size > 0;
+		},
 		publish(event) {
 			if (!event.sessionId) return;
 			for (const listener of listeners.get(event.sessionId) ?? []) listener(event);
@@ -33,12 +38,24 @@ export function createConversationEventRegistry(): ConversationEventRegistry {
 
 const CURSOR_PERSIST_DELAY_MS = 500;
 
+/**
+ * Events after which progress commits regardless of the debounce timer.
+ *
+ * The timer alone is not enough. A large cold-start replay keeps the JS thread
+ * busy, and `setTimeout` is a macrotask — so under exactly the conditions where
+ * saving progress matters most, the debounce never fires. A replay interrupted
+ * before its first commit then restarts from the same cursor on the next launch,
+ * forever. Counting events is immune to that, because it runs inline.
+ */
+export const CURSOR_PERSIST_EVENTS = 256;
+
 export function createCursorPersister(
 	persist: (cursor: number) => void | Promise<void>,
 ): { update(cursor: number): void; replace(cursor: number): void; flush(): void } {
 	let latest = 0;
 	let persisted = 0;
 	let timer: ReturnType<typeof setTimeout> | undefined;
+	let sinceCommit = 0;
 
 	const save = (cursor: number) => {
 		try {
@@ -49,7 +66,9 @@ export function createCursorPersister(
 		}
 	};
 	const commit = () => {
+		if (timer) clearTimeout(timer);
 		timer = undefined;
+		sinceCommit = 0;
 		if (latest <= persisted) return;
 		persisted = latest;
 		save(latest);
@@ -58,17 +77,23 @@ export function createCursorPersister(
 	return {
 		update(cursor) {
 			latest = Math.max(latest, cursor);
+			// Whichever comes first: a quiet moment (the debounce) or enough events
+			// that we refuse to risk losing the progress (the count).
+			if (++sinceCommit >= CURSOR_PERSIST_EVENTS) {
+				commit();
+				return;
+			}
 			if (!timer) timer = setTimeout(commit, CURSOR_PERSIST_DELAY_MS);
 		},
 		replace(cursor) {
 			if (timer) clearTimeout(timer);
 			timer = undefined;
+			sinceCommit = 0;
 			latest = cursor;
 			persisted = cursor;
 			save(cursor);
 		},
 		flush() {
-			if (timer) clearTimeout(timer);
 			commit();
 		},
 	};
@@ -85,6 +110,23 @@ export function takeSseFrames(buffer: string): { frames: string[]; remainder: st
 		boundary = /\r?\n\r?\n/.exec(remainder);
 	}
 	return { frames, remainder };
+}
+
+/**
+ * The frame's sequence from its `id:` line alone, without touching `data:`.
+ *
+ * Advancing the cursor is all a frame is worth when nothing is subscribed to its
+ * session, and that is the common case: the app subscribes only to the chat it
+ * currently has open. Parsing the payload anyway is what makes a large replay
+ * expensive, so this is the cheap path.
+ */
+export function readSseFrameSeq(frame: string): number | undefined {
+	for (const raw of frame.split("\n")) {
+		if (!raw.startsWith("id:")) continue;
+		const seq = Number(raw.slice(3).trim());
+		return Number.isFinite(seq) ? seq : undefined;
+	}
+	return undefined;
 }
 
 export function parseSseFrame(frame: string): ConversationEvent | undefined {

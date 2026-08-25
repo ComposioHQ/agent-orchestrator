@@ -37,8 +37,9 @@ func Resolve() (Resolution, error) {
 }
 
 // ResolveWith is Resolve with process lookups injected for callers and tests.
-// A configured path is fail-closed: packaged builds must never silently fall
-// back to a machine tmux when their bundled resource is missing or broken.
+// Configured paths and recognizable packaged layouts are fail-closed: a
+// packaged daemon must never silently fall back to a machine tmux when its
+// bundled resource is missing or broken.
 func ResolveWith(configured string, executable func() (string, error), lookPath func(string) (string, error)) (Resolution, error) {
 	if configured = strings.TrimSpace(configured); configured != "" {
 		path, err := lookPath(configured)
@@ -51,7 +52,7 @@ func ResolveWith(configured string, executable func() (string, error), lookPath 
 		return Resolution{}, errors.Join(err, errTmuxNotFound)
 	}
 
-	var bundledErr error
+	var executableErr error
 	if self, err := executable(); err == nil && self != "" {
 		if resolved, resolveErr := filepath.EvalSymlinks(self); resolveErr == nil {
 			self = resolved
@@ -61,10 +62,17 @@ func ResolveWith(configured string, executable func() (string, error), lookPath 
 			if lookupErr == nil && path != "" {
 				return Resolution{Path: path, Source: SourceBundled}, nil
 			}
-			bundledErr = lookupErr
+			if lookupErr == nil {
+				lookupErr = errTmuxNotFound
+			}
+			// Once the running executable proves this is a packaged desktop
+			// layout, the sibling resource is authoritative. Falling through to
+			// PATH here would silently mix AO's packaged daemon with an arbitrary
+			// user-installed tmux when the package is incomplete or damaged.
+			return Resolution{}, errors.Join(lookupErr, errTmuxNotFound)
 		}
 	} else if err != nil {
-		bundledErr = err
+		executableErr = err
 	}
 
 	path, err := lookPath("tmux")
@@ -74,7 +82,7 @@ func ResolveWith(configured string, executable func() (string, error), lookPath 
 	if err == nil {
 		err = errTmuxNotFound
 	}
-	return Resolution{}, errors.Join(bundledErr, err, errTmuxNotFound)
+	return Resolution{}, errors.Join(executableErr, err, errTmuxNotFound)
 }
 
 // bundledCandidate recognizes Electron's resource layout on macOS and Linux:

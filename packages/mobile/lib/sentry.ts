@@ -18,6 +18,7 @@
 // Until then this file compiles and runs as a no-op with no native dependency.
 
 import { classifyError, type ClassifyInput, type Triage } from "./observability";
+import { DEFAULT_SENTRY_DSN } from "./sentry-config";
 
 type SentryLike = {
 	init: (opts: Record<string, unknown>) => void;
@@ -31,9 +32,9 @@ let initStarted = false;
 
 function dsn(): string {
 	try {
-		return process.env.EXPO_PUBLIC_SENTRY_DSN ?? "";
+		return process.env.EXPO_PUBLIC_SENTRY_DSN?.trim() || DEFAULT_SENTRY_DSN;
 	} catch {
-		return "";
+		return DEFAULT_SENTRY_DSN;
 	}
 }
 

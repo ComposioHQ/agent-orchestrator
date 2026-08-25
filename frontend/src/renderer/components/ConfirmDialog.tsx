@@ -26,9 +26,9 @@ type ConfirmDialogProps = {
 	onOpenChange: (open: boolean) => void;
 };
 
-// Shared confirmation modal styled exactly like the settings dialogs
-// (ReportProblemDialog) — same frame, header typography, and footer buttons
-// via the shared settingsDialog* class constants. Destructive confirms fill
+// Shared confirmation modal styled exactly like the settings dialogs — same
+// frame, header typography, and footer buttons via the shared
+// settingsDialog* class constants. Destructive confirms fill
 // with the deep danger-strong token instead of the settings accent.
 export function ConfirmDialog({
 	open,

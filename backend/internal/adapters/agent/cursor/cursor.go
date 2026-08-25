@@ -40,6 +40,13 @@ func New() *Plugin {
 
 var _ adapters.Adapter = (*Plugin)(nil)
 var _ ports.Agent = (*Plugin)(nil)
+var _ ports.StartupInputReadinessSignaler = (*Plugin)(nil)
+
+// FirstSignalProvesInputReady reports that Cursor's sessionStart hook is
+// emitted only after pre-session startup dialogs, including project MCP server
+// approval, have cleared. Before that signal, pane input may be consumed by a
+// dialog instead of the agent composer.
+func (p *Plugin) FirstSignalProvesInputReady() bool { return true }
 
 // cursorDataDir returns the isolated Cursor profile AO uses for managed Cursor
 // sessions. This keeps Cursor's trust/cache state under AO_DATA_DIR instead of

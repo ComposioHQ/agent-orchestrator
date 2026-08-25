@@ -180,6 +180,7 @@ var schemaNames = map[string]string{
 	"ControllersReloadConversationMCPServersResponse": "ReloadConversationMCPServersResponse",
 	"ControllersCompactConversationResponse":          "CompactConversationResponse",
 	"ControllersRollbackConversationResponse":         "RollbackConversationResponse",
+	"ControllersRetryTurnResponse":                    "RetryTurnResponse",
 	"ControllersSetConversationTitleRequest":          "SetConversationTitleRequest",
 	"ControllersSetConversationTitleResponse":         "SetConversationTitleResponse",
 	"ControllersSteerConversationRequest":             "SteerConversationRequest",
@@ -813,6 +814,19 @@ func shellTerminalOperations() []operation {
 			pathParams: []any{controllers.SessionIDParam{}, controllers.ConversationTurnIDParam{}},
 			resps: []respUnit{
 				{http.StatusOK, controllers.RollbackConversationResponse{}},
+				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusConflict, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodPost, path: "/api/v1/sessions/{sessionId}/conversation/turns/{turnId}/retry", id: "retrySessionConversationTurn", tag: "conversations",
+			summary:    "Re-dispatch a failed turn's durable prompt as a new turn",
+			pathParams: []any{controllers.SessionIDParam{}, controllers.ConversationTurnIDParam{}},
+			resps: []respUnit{
+				{http.StatusAccepted, controllers.RetryTurnResponse{}},
+				{http.StatusBadRequest, envelope.APIError{}},
 				{http.StatusNotFound, envelope.APIError{}},
 				{http.StatusConflict, envelope.APIError{}},
 				{http.StatusInternalServerError, envelope.APIError{}},

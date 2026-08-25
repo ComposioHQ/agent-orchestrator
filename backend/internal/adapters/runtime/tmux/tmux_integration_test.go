@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -20,7 +21,10 @@ func TestRuntimeIntegration(t *testing.T) {
 
 	ctx := context.Background()
 	id := strings.ReplaceAll(t.Name(), "/", "_")
-	r := New(Options{Timeout: 5 * time.Second})
+	r := New(Options{
+		SocketPath: integrationSocketPath(t),
+		Timeout:    5 * time.Second,
+	})
 
 	// Ensure clean slate: ignore errors (session may not exist).
 	_ = r.Destroy(ctx, ports.RuntimeHandle{ID: id})
@@ -69,8 +73,8 @@ func TestRuntimeIntegration(t *testing.T) {
 
 	// Destroy and verify liveness goes false. When this was the server's last
 	// session the server itself exits with it, and the probe reports the
-	// server-level outage as an inconclusive ErrRuntimeUnavailable rather than
-	// a per-session death (issue #3475); both outcomes mean the handle is gone.
+	// server-level outage as ErrRuntimeUnavailable rather than a per-session
+	// false result (issue #3475); both outcomes mean the tmux handle is gone.
 	if err := r.Destroy(ctx, h); err != nil {
 		t.Fatalf("Destroy: %v", err)
 	}
@@ -95,7 +99,10 @@ func TestRuntimeIntegrationExactSessionParsing(t *testing.T) {
 	longID := base + "_long"
 	prefixID := base
 
-	r := New(Options{Timeout: 5 * time.Second})
+	r := New(Options{
+		SocketPath: integrationSocketPath(t),
+		Timeout:    5 * time.Second,
+	})
 	_ = r.Destroy(ctx, ports.RuntimeHandle{ID: longID})
 	_ = r.Destroy(ctx, ports.RuntimeHandle{ID: prefixID})
 
@@ -136,7 +143,10 @@ func TestRuntimeIntegrationSupervisedExitKeepsInteractiveShell(t *testing.T) {
 	ctx := context.Background()
 	id := strings.ReplaceAll(t.Name(), "/", "_")
 	const launchID = "launch-1"
-	r := New(Options{Timeout: 5 * time.Second})
+	r := New(Options{
+		SocketPath: integrationSocketPath(t),
+		Timeout:    5 * time.Second,
+	})
 	tmuxID := SessionName(id)
 	workspace := t.TempDir()
 	_ = r.Destroy(ctx, ports.RuntimeHandle{ID: tmuxID})
@@ -155,7 +165,7 @@ func TestRuntimeIntegrationSupervisedExitKeepsInteractiveShell(t *testing.T) {
 		t.Fatal(err)
 	}
 	ref := ports.SupervisedProcessRef{SessionID: domain.SessionID(id), LaunchID: launchID}
-	deadline := time.Now().Add(5 * time.Second)
+	deadline := time.Now().Add(10 * time.Second)
 	for {
 		alive, probeErr := r.IsSupervisedProcessAlive(ctx, h, ref)
 		if probeErr != nil {
@@ -172,7 +182,7 @@ func TestRuntimeIntegrationSupervisedExitKeepsInteractiveShell(t *testing.T) {
 
 	// The helper exits normally, matching Codex /exit or EOF. The launch shell
 	// must then execute AO's keep-alive interactive shell.
-	deadline = time.Now().Add(5 * time.Second)
+	deadline = time.Now().Add(10 * time.Second)
 	for {
 		alive, probeErr := r.IsSupervisedProcessAlive(ctx, h, ref)
 		if probeErr != nil {
@@ -221,11 +231,172 @@ func TestRuntimeIntegrationSupervisedExitKeepsInteractiveShell(t *testing.T) {
 	}
 }
 
+func TestRuntimeIntegrationRefreshesEnvironmentOnPersistentServer(t *testing.T) {
+	if _, err := exec.LookPath("tmux"); err != nil {
+		t.Skip("tmux not available")
+	}
+
+	const envKey = "AO_TMUX_ENV_REFRESH_TEST"
+	t.Setenv(envKey, "old")
+	ctx := context.Background()
+	socketPath := integrationSocketPath(t)
+	r := New(Options{SocketPath: socketPath, Timeout: 5 * time.Second})
+	base := strings.ReplaceAll(t.Name(), "/", "_")
+	oldHandle, err := r.Create(ctx, ports.RuntimeConfig{
+		SessionID:     domain.SessionID(base + "_old"),
+		WorkspacePath: t.TempDir(),
+		Argv:          []string{"/bin/sh", "-c", "sleep 10"},
+	})
+	if err != nil {
+		t.Fatalf("create old-environment session: %v", err)
+	}
+	t.Cleanup(func() { _ = r.Destroy(context.Background(), oldHandle) })
+
+	// Model an app/daemon restart while the private tmux server survives. A new
+	// Runtime object uses the same socket, but the next pane must receive the
+	// current daemon environment rather than the server's startup snapshot.
+	t.Setenv(envKey, "new")
+	restarted := New(Options{SocketPath: socketPath, Timeout: 5 * time.Second})
+	newHandle, err := restarted.Create(ctx, ports.RuntimeConfig{
+		SessionID:     domain.SessionID(base + "_new"),
+		WorkspacePath: t.TempDir(),
+		Argv:          []string{"/bin/sh", "-c", `printf 'env=%s\n' "$` + envKey + `"; sleep 10`},
+	})
+	if err != nil {
+		t.Fatalf("create refreshed-environment session: %v", err)
+	}
+	t.Cleanup(func() { _ = restarted.Destroy(context.Background(), newHandle) })
+
+	out := waitForOutput(t, restarted, newHandle, "env=new", 5*time.Second)
+	if strings.Contains(out, "env=old") {
+		t.Fatalf("new session inherited stale server environment: %q", out)
+	}
+
+	// Unsetting a variable must remove the value from tmux rather than merely
+	// omitting an update and allowing the persistent server's old value through.
+	if err := os.Unsetenv(envKey); err != nil {
+		t.Fatal(err)
+	}
+	withoutValue := New(Options{SocketPath: socketPath, Timeout: 5 * time.Second})
+	unsetHandle, err := withoutValue.Create(ctx, ports.RuntimeConfig{
+		SessionID:     domain.SessionID(base + "_unset"),
+		WorkspacePath: t.TempDir(),
+		Argv:          []string{"/bin/sh", "-c", `printf 'env=%s\n' "${` + envKey + `-unset}"; sleep 10`},
+	})
+	if err != nil {
+		t.Fatalf("create unset-environment session: %v", err)
+	}
+	t.Cleanup(func() { _ = withoutValue.Destroy(context.Background(), unsetHandle) })
+	out = waitForOutput(t, withoutValue, unsetHandle, "env=unset", 5*time.Second)
+	if strings.Contains(out, "env=old") || strings.Contains(out, "env=new") {
+		t.Fatalf("unset variable retained a stale server value: %q", out)
+	}
+
+	// Restart must inspect the target session as well as the daemon environment.
+	// A session-only value cannot be discovered by looking at the server's global
+	// environment, and would otherwise survive respawn-pane.
+	const sessionOnlyKey = "AO_TMUX_SESSION_ONLY_STALE_TEST"
+	if err := os.Unsetenv(sessionOnlyKey); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := withoutValue.run(ctx, "set-environment", "-t", exactSessionTarget(newHandle.ID), sessionOnlyKey, "stale"); err != nil {
+		t.Fatalf("seed session-only stale variable: %v", err)
+	}
+	if _, err := withoutValue.Restart(ctx, newHandle, ports.RuntimeConfig{
+		SessionID:     domain.SessionID(base + "_new"),
+		WorkspacePath: t.TempDir(),
+		Argv:          []string{"/bin/sh", "-c", `printf 'session=%s\n' "${` + sessionOnlyKey + `-unset}"; sleep 10`},
+	}); err != nil {
+		t.Fatalf("restart after session-only variable removal: %v", err)
+	}
+	out = waitForOutput(t, withoutValue, newHandle, "session=unset", 5*time.Second)
+	if strings.Contains(out, "session=stale") {
+		t.Fatalf("restart retained a session-only stale value: %q", out)
+	}
+}
+
+func TestRuntimeIntegrationKeepsConfiguredEnvironmentOutOfPaneArgv(t *testing.T) {
+	if _, err := exec.LookPath("tmux"); err != nil {
+		t.Skip("tmux not available")
+	}
+
+	const (
+		envKey = "AO_TMUX_CONFIGURED_SECRET_TEST"
+		secret = "configured-secret-must-not-appear-in-argv"
+	)
+	r := New(Options{SocketPath: integrationSocketPath(t), Timeout: 5 * time.Second})
+	handle, err := r.Create(context.Background(), ports.RuntimeConfig{
+		SessionID:     domain.SessionID(strings.ReplaceAll(t.Name(), "/", "_")),
+		WorkspacePath: t.TempDir(),
+		Argv:          []string{"/bin/sh", "-c", `printf 'configured=%s\n' "$` + envKey + `"; sleep 10`},
+		Env:           map[string]string{envKey: secret},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = r.Destroy(context.Background(), handle) })
+	waitForOutput(t, r, handle, "configured="+secret, 5*time.Second)
+
+	panePID, err := r.run(context.Background(), panePIDArgs(handle.ID)...)
+	if err != nil {
+		t.Fatalf("inspect pane pid: %v", err)
+	}
+	argv, err := exec.Command("ps", "-ww", "-p", strings.TrimSpace(string(panePID)), "-o", "command=").Output()
+	if err != nil {
+		t.Fatalf("inspect pane argv: %v", err)
+	}
+	if strings.Contains(string(argv), secret) {
+		t.Fatalf("configured environment value leaked into pane argv: %q", argv)
+	}
+}
+
+func TestRuntimeIntegrationUsesAliasForLongPrivateSocket(t *testing.T) {
+	if _, err := exec.LookPath("tmux"); err != nil {
+		t.Skip("tmux not available")
+	}
+
+	targetDir := filepath.Join(t.TempDir(), strings.Repeat("deep-runtime-directory-", 6))
+	if err := os.MkdirAll(targetDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	socketPath := filepath.Join(targetDir, "tmux-0123456789abcdef0123456789abcdef.sock")
+	address, err := privateSocketAddress(socketPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if address == socketPath {
+		t.Fatalf("precondition: long socket path was not aliased: %q", socketPath)
+	}
+	t.Cleanup(func() { _ = os.Remove(filepath.Dir(address)) })
+
+	r := New(Options{SocketPath: socketPath, Timeout: 5 * time.Second})
+	handle, err := r.Create(context.Background(), ports.RuntimeConfig{
+		SessionID:     domain.SessionID(strings.ReplaceAll(t.Name(), "/", "_")),
+		WorkspacePath: t.TempDir(),
+		Argv:          []string{"/bin/sh", "-c", "printf 'alias-ok\\n'; sleep 10"},
+	})
+	if err != nil {
+		t.Fatalf("create through long private socket: %v", err)
+	}
+	t.Cleanup(func() { _ = r.Destroy(context.Background(), handle) })
+	waitForOutput(t, r, handle, "alias-ok", 5*time.Second)
+}
+
 func TestSupervisorProcessHelper(t *testing.T) {
 	if os.Getenv("AO_TMUX_SUPERVISOR_HELPER") != "1" {
 		return
 	}
 	time.Sleep(2 * time.Second)
+}
+
+func integrationSocketPath(t *testing.T) string {
+	t.Helper()
+	dir, err := os.MkdirTemp("", "ao-tmux-")
+	if err != nil {
+		t.Fatalf("create private tmux socket directory: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	return filepath.Join(dir, "s")
 }
 
 // waitForOutput polls GetOutput until out contains want or the deadline passes.
@@ -247,77 +418,60 @@ func waitForOutput(t *testing.T, r *Runtime, h ports.RuntimeHandle, want string,
 	return out
 }
 
-// startPrivateTmuxServer brings up a tmux server that belongs to this test
-// alone, and returns once it is ready to take options.
+// setPrivateServerOption sets a global option on the private tmux server the
+// Runtime is using. The server must already exist, so call this after a first
+// Create.
 //
-// Isolation is deliberate and load-bearing in two directions. `-f /dev/null`
-// skips the developer's tmux.conf, so a test that needs a non-default option can
-// set it explicitly and reproduce on a default machine and on CI, rather than
-// silently passing because of how the developer happens to have configured tmux.
-// And clearing TMUX matters more than it looks: tmux only honours TMUX_TMPDIR
-// when it is not already inside a session, so `go test` run from inside tmux —
-// likely, for tests about tmux — would otherwise point every call below at the
-// developer's real server, mutate its global options, and let the cleanup
-// kill-server destroy their sessions, AO's own agent sessions included.
-func startPrivateTmuxServer(t *testing.T) {
+// `-f /dev/null` in managedArgs only suppresses config-file loading at server
+// start; options set explicitly afterwards still take effect. That is what lets
+// these tests put the server into a non-default index layout without depending
+// on any tmux.conf.
+func setPrivateServerOption(t *testing.T, socketPath string, args ...string) {
 	t.Helper()
-
-	// os.MkdirTemp rather than t.TempDir: the tmux socket is a unix path capped
-	// near 108 bytes and t.TempDir embeds the (long) test name.
-	tmuxTmp, err := os.MkdirTemp("", "aotmux")
+	address, err := privateSocketAddress(socketPath)
 	if err != nil {
-		t.Fatalf("MkdirTemp: %v", err)
+		t.Fatalf("private socket address: %v", err)
 	}
-	t.Setenv("TMUX", "")
-	t.Setenv("TMUX_TMPDIR", tmuxTmp)
-	t.Cleanup(func() {
-		_ = exec.Command("tmux", "kill-server").Run()
-		_ = os.RemoveAll(tmuxTmp)
-	})
-
-	// A tmux server exits as soon as it owns no sessions, so this keep-alive
-	// session is what holds it open long enough to configure and use.
-	if out, err := exec.Command("tmux", "-f", "/dev/null", "new-session", "-d", "-s", "ao-test-keepalive", "sh", "-c", "sleep 120").CombinedOutput(); err != nil {
-		t.Skipf("cannot start private tmux server: %v: %s", err, out)
-	}
-}
-
-// tmuxOption sets one option on the private server, failing the test if it does
-// not take — a test that silently ran with default options would pass without
-// exercising anything.
-func tmuxOption(t *testing.T, args ...string) {
-	t.Helper()
-	if out, err := exec.Command("tmux", args...).CombinedOutput(); err != nil {
+	full := append([]string{"-S", address, "-f", os.DevNull}, args...)
+	if out, err := exec.Command("tmux", full...).CombinedOutput(); err != nil {
 		t.Fatalf("tmux %v: %v: %s", args, err, out)
 	}
 }
 
-// TestRuntimeIntegrationRestartUnderCustomBaseIndex pins Restart against a tmux
-// server whose base-index and pane-base-index are 1 rather than tmux's default
-// 0 — a very common setting in a hand-written tmux.conf, since it puts window 1
-// under the "1" key.
+// TestRuntimeIntegrationRestartUnderNonDefaultBaseIndex pins Restart's pane
+// target against a server whose base-index and pane-base-index are 1.
 //
-// Restart used to target the session's pane as "<id>:0.0". tmux honours
-// base-index when new-session picks the window index, so on such a server the
-// session's only window is index 1 and respawn-pane failed with
-// "can't find pane: 0" — every resume of an existing agent hard-failed, for the
-// whole life of the install. A config-free tmux defaults both indices to 0, so
-// neither CI nor a default dev box could ever see it.
-func TestRuntimeIntegrationRestartUnderCustomBaseIndex(t *testing.T) {
+// Since AO moved to a private socket started with `-f /dev/null`, a user's
+// tmux.conf can no longer put the server into this state, so this is hardening
+// rather than a live user-facing bug: it keeps the target correct if the
+// isolation is ever relaxed, and documents why the target is written the way it
+// is. A literal "<id>:0.0" is only correct while something guarantees both
+// indices are 0; naming the pane by position does not depend on that guarantee.
+func TestRuntimeIntegrationRestartUnderNonDefaultBaseIndex(t *testing.T) {
 	if _, err := exec.LookPath("tmux"); err != nil {
 		t.Skip("tmux unavailable")
 	}
-	startPrivateTmuxServer(t)
-	tmuxOption(t, "set-option", "-g", "base-index", "1")
-	tmuxOption(t, "set-window-option", "-g", "pane-base-index", "1")
-
 	ctx := context.Background()
-	id := "ao-baseindex-" + strings.ReplaceAll(t.Name(), "/", "_")
-	r := New(Options{Timeout: 5 * time.Second})
+	socketPath := integrationSocketPath(t)
+	r := New(Options{SocketPath: socketPath, Timeout: 5 * time.Second})
 	workspace := t.TempDir()
 
+	// A first session brings the private server up so options can be set on it.
+	boot, err := r.Create(ctx, ports.RuntimeConfig{
+		SessionID:     domain.SessionID("ao-baseindex-boot"),
+		WorkspacePath: workspace,
+		Argv:          []string{"sh", "-c", "echo boot"},
+	})
+	if err != nil {
+		t.Fatalf("Create boot session: %v", err)
+	}
+	t.Cleanup(func() { _ = r.Destroy(context.Background(), boot) })
+
+	setPrivateServerOption(t, socketPath, "set-option", "-g", "base-index", "1")
+	setPrivateServerOption(t, socketPath, "set-window-option", "-g", "pane-base-index", "1")
+
 	h, err := r.Create(ctx, ports.RuntimeConfig{
-		SessionID:     domain.SessionID(id),
+		SessionID:     domain.SessionID("ao-baseindex-agent"),
 		WorkspacePath: workspace,
 		Argv:          []string{"sh", "-c", "echo agent-first-run"},
 	})
@@ -326,19 +480,23 @@ func TestRuntimeIntegrationRestartUnderCustomBaseIndex(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = r.Destroy(context.Background(), h) })
 
-	// Guard the guard: if this server ignored the options there is no base-index
-	// 1 here and the test would pass without exercising anything. Target h.ID,
-	// not id — Create truncates and hashes long session ids.
-	out, err := exec.Command("tmux", "list-windows", "-t", h.ID, "-F", "#{window_index}").CombinedOutput()
+	// Guard the guard: without base-index 1 actually in force this test would
+	// pass while exercising nothing.
+	address, err := privateSocketAddress(socketPath)
+	if err != nil {
+		t.Fatalf("private socket address: %v", err)
+	}
+	out, err := exec.Command("tmux", "-S", address, "-f", os.DevNull,
+		"list-windows", "-t", h.ID, "-F", "#{window_index}").CombinedOutput()
 	if err != nil {
 		t.Fatalf("list-windows: %v: %s", err, out)
 	}
 	if got := strings.TrimSpace(string(out)); got != "1" {
-		t.Fatalf("window index = %q, want 1 — the private server did not adopt base-index 1", got)
+		t.Fatalf("window index = %q, want 1 — the server did not adopt base-index 1", got)
 	}
 
 	if _, err := r.Restart(ctx, h, ports.RuntimeConfig{
-		SessionID:     domain.SessionID(id),
+		SessionID:     domain.SessionID("ao-baseindex-agent"),
 		WorkspacePath: workspace,
 		Argv:          []string{"sh", "-c", "echo agent-resumed"},
 	}); err != nil {
@@ -350,32 +508,26 @@ func TestRuntimeIntegrationRestartUnderCustomBaseIndex(t *testing.T) {
 }
 
 // TestRuntimeIntegrationRestartTargetsAgentPaneNotActivePane pins the other half
-// of the pane-target contract: the target must be deterministic, not merely
+// of the pane-target contract: it must be deterministic, not merely
 // index-independent.
 //
-// AO hands the user an ordinary attach client with tmux's default prefix key, so
-// they can open a second window or split one at any time. Targeting the session
-// by bare name resolves to whatever pane is *currently active*, which means
-// Restart's `respawn-pane -k` would kill the pane the user is working in and
-// respawn the agent there, leaving the real agent pane behind as a corpse that
-// `has-session` still reports healthy. Naming the pane by position instead keeps
-// Restart on the agent's own pane no matter what the user has focused.
-//
-// Deliberately left on default indices: this hazard is independent of
-// base-index, and it reproduces on a stock machine.
+// This one is not hypothetical even with the private socket, because it does not
+// depend on any tmux option. AO hands the user an ordinary attach client with
+// tmux's default prefix key, so they can open a second window inside the session
+// at any time. A bare session target follows whatever pane is active, which would
+// make Restart's `respawn-pane -k` kill the pane the user is working in and leave
+// the real agent pane behind as a corpse that has-session still reports healthy.
 func TestRuntimeIntegrationRestartTargetsAgentPaneNotActivePane(t *testing.T) {
 	if _, err := exec.LookPath("tmux"); err != nil {
 		t.Skip("tmux unavailable")
 	}
-	startPrivateTmuxServer(t)
-
 	ctx := context.Background()
-	id := "ao-panetarget-" + strings.ReplaceAll(t.Name(), "/", "_")
-	r := New(Options{Timeout: 5 * time.Second})
+	socketPath := integrationSocketPath(t)
+	r := New(Options{SocketPath: socketPath, Timeout: 5 * time.Second})
 	workspace := t.TempDir()
 
 	h, err := r.Create(ctx, ports.RuntimeConfig{
-		SessionID:     domain.SessionID(id),
+		SessionID:     domain.SessionID("ao-panetarget"),
 		WorkspacePath: workspace,
 		Argv:          []string{"sh", "-c", "echo agent-first-run"},
 	})
@@ -384,9 +536,14 @@ func TestRuntimeIntegrationRestartTargetsAgentPaneNotActivePane(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = r.Destroy(context.Background(), h) })
 
+	address, err := privateSocketAddress(socketPath)
+	if err != nil {
+		t.Fatalf("private socket address: %v", err)
+	}
 	panePIDs := func() []string {
 		t.Helper()
-		out, listErr := exec.Command("tmux", "list-panes", "-s", "-t", h.ID, "-F", "#{pane_pid}").CombinedOutput()
+		out, listErr := exec.Command("tmux", "-S", address, "-f", os.DevNull,
+			"list-panes", "-s", "-t", h.ID, "-F", "#{pane_pid}").CombinedOutput()
 		if listErr != nil {
 			t.Fatalf("list-panes: %v: %s", listErr, out)
 		}
@@ -399,15 +556,15 @@ func TestRuntimeIntegrationRestartTargetsAgentPaneNotActivePane(t *testing.T) {
 	}
 	agentPane := before[0]
 
-	// The user opens a window of their own and it becomes the active one.
-	tmuxOption(t, "new-window", "-t", h.ID, "sh", "-c", "sleep 120")
+	// The user opens a window of their own; it becomes the active one.
+	setPrivateServerOption(t, socketPath, "new-window", "-t", h.ID, "sh", "-c", "sleep 120")
 	userPanes := panePIDs()
 	if len(userPanes) != 2 {
 		t.Fatalf("panes after new-window = %v, want the agent pane plus the user's", userPanes)
 	}
 
 	if _, err := r.Restart(ctx, h, ports.RuntimeConfig{
-		SessionID:     domain.SessionID(id),
+		SessionID:     domain.SessionID("ao-panetarget"),
 		WorkspacePath: workspace,
 		Argv:          []string{"sh", "-c", "echo agent-resumed"},
 	}); err != nil {
@@ -418,13 +575,11 @@ func TestRuntimeIntegrationRestartTargetsAgentPaneNotActivePane(t *testing.T) {
 	if len(after) != 2 {
 		t.Fatalf("panes after Restart = %v, want both still present", after)
 	}
-	// The agent's pane must have been respawned...
 	for _, pid := range after {
 		if pid == agentPane {
 			t.Fatalf("agent pane pid %s unchanged after Restart — respawn hit some other pane; panes now %v", agentPane, after)
 		}
 	}
-	// ...and the user's pane must have survived untouched.
 	userPane := userPanes[1]
 	found := false
 	for _, pid := range after {

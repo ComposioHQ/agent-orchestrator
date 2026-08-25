@@ -699,7 +699,15 @@ describe("BrowserPanel", () => {
 
 		await userEvent.click(screen.getByRole("button", { name: /pop out/i }));
 
-		expect(onTogglePopOut).toHaveBeenCalledWith(true);
+		expect(onTogglePopOut.mock.calls[0]?.[0]).toBe(true);
+		expect(onTogglePopOut.mock.calls[0]?.[1]).toEqual(expect.objectContaining({ width: expect.any(Number) }));
+	});
+
+	it("keeps workspace sizing controls out of the browser toolbar", () => {
+		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
+
+		expect(screen.queryByRole("button", { name: /focus browser workspace/i })).not.toBeInTheDocument();
+		expect(screen.getByRole("button", { name: /pop out/i })).toBeInTheDocument();
 	});
 
 	it("pops out an empty browser", async () => {
@@ -710,7 +718,7 @@ describe("BrowserPanel", () => {
 		expect(popOut).not.toBeDisabled();
 		await userEvent.click(popOut);
 
-		expect(onTogglePopOut).toHaveBeenCalledWith(true);
+		expect(onTogglePopOut.mock.calls[0]?.[0]).toBe(true);
 	});
 
 	it("enables annotation mode from the toolbar when a page is loaded", async () => {

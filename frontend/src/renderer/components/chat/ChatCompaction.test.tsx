@@ -2,6 +2,7 @@ import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { ChatWorkspace } from "./ChatWorkspace";
+import { typeInLexicalEditor } from "../../test/lexical";
 import type {
 	ConversationActivity,
 	ConversationItem,
@@ -120,7 +121,6 @@ describe("the compact control", () => {
 	// Compaction lives on `/compact` rather than a toolbar button: the composer
 	// tools stay for attach/settings, and compact is an AO slash command.
 	it("is offered in the slash menu, not the message tools", async () => {
-		const user = userEvent.setup();
 		render(<ChatWorkspace snapshot={snapshot([assistantSaid])} onCompact={vi.fn()} />);
 
 		const tools = screen.getByRole("group", { name: "Message tools" });
@@ -128,15 +128,14 @@ describe("the compact control", () => {
 			within(tools).queryByRole("button", { name: "Compact conversation history" }),
 		).not.toBeInTheDocument();
 
-		await user.type(screen.getByLabelText("Message the agent"), "/");
+		await typeInLexicalEditor(screen.getByLabelText("Message the agent"), "/");
 		expect(screen.getByRole("option", { name: /compact/i })).toBeInTheDocument();
 	});
 
 	it("offers compact alongside provider skills in the slash menu", async () => {
-		const user = userEvent.setup();
 		render(<ChatWorkspace snapshot={snapshot([assistantSaid])} onCompact={vi.fn()} />);
 
-		await user.type(screen.getByLabelText("Message the agent"), "/");
+		await typeInLexicalEditor(screen.getByLabelText("Message the agent"), "/");
 		expect(screen.getByRole("option", { name: /compact/i })).toBeInTheDocument();
 	});
 
@@ -156,11 +155,11 @@ describe("the compact control", () => {
 		);
 
 		const field = screen.getByLabelText("Message the agent");
-		await user.type(field, "/compact");
+		await typeInLexicalEditor(field, "/compact");
 		await user.keyboard("{Enter}");
 
 		expect(onCompact).not.toHaveBeenCalled();
-		expect(field).toHaveValue("/compact");
+		expect(field).toHaveTextContent("/compact");
 		expect(screen.getByRole("alert")).toHaveTextContent("Stop the current turn");
 	});
 
@@ -175,7 +174,7 @@ describe("the compact control", () => {
 		);
 
 		expect(screen.queryByText("This agent cannot compact its history")).not.toBeInTheDocument();
-		await user.type(screen.getByLabelText("Message the agent"), "/compact");
+		await typeInLexicalEditor(screen.getByLabelText("Message the agent"), "/compact");
 		await user.keyboard("{Enter}");
 		expect(screen.getByRole("alert")).toHaveTextContent("This agent cannot compact its history");
 	});
@@ -187,7 +186,7 @@ describe("the compact control", () => {
 			<ChatWorkspace snapshot={snapshot([assistantSaid])} onCompact={onCompact} compacting />,
 		);
 
-		await user.type(screen.getByLabelText("Message the agent"), "/compact");
+		await typeInLexicalEditor(screen.getByLabelText("Message the agent"), "/compact");
 		await user.keyboard("{Enter}");
 		expect(onCompact).not.toHaveBeenCalled();
 		expect(screen.getByRole("alert")).toHaveTextContent("already being compacted");
