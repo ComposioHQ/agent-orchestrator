@@ -386,6 +386,9 @@ export function ChatWorkspace({
 	const handleChatSurfaceClick = useCallback((event: ReactMouseEvent<HTMLElement>) => {
 		const target = event.target;
 		if (!(target instanceof Element)) return;
+		// A click fires after a drag selection ends. Focusing the composer here would
+		// collapse the range the user just selected in the transcript.
+		if (window.getSelection()?.isCollapsed === false) return;
 		if (
 			target.closest(
 				"button, a, input, textarea, select, [contenteditable='true'], [role='button'], [role='option'], [role='menuitem'], [role='dialog'], [data-testid='session-terminal'], .xterm, .terminal-surface",

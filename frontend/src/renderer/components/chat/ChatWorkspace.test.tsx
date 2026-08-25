@@ -384,6 +384,26 @@ describe("ChatWorkspace timeline", () => {
 		expect(document.activeElement).toBe(stop);
 	});
 
+	it("does not steal focus from a text selection in the conversation", () => {
+		const snapshot = structuredClone(chatFixture);
+		snapshot.items = snapshot.items.filter(
+			(item) => !(item.kind === "activity" && item.activityKind === "approval" && item.status === "pending"),
+		);
+		render(<ChatWorkspace snapshot={snapshot} onInterrupt={vi.fn()} />);
+
+		const selection = window.getSelection();
+		const range = document.createRange();
+		const text = screen.getByRole("log", { name: "Conversation" }).querySelector("p")?.firstChild;
+		expect(text).not.toBeNull();
+		range.setStart(text as Text, 0);
+		range.setEnd(text as Text, Math.min(4, text?.textContent?.length ?? 0));
+		selection?.removeAllRanges();
+		selection?.addRange(range);
+
+		fireEvent.click(screen.getByRole("log", { name: "Conversation" }));
+		expect(selection?.isCollapsed).toBe(false);
+	});
+
 	it("does not interrupt while a menu or elicitation is open", () => {
 		const onInterrupt = vi.fn();
 		const snapshot = structuredClone(chatFixture);
