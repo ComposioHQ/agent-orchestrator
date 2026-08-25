@@ -1,26 +1,39 @@
 import type { MessageBoxSyncOptions } from "electron";
+import {
+	CHAT_DRAFT_BOUNDARY_COPY,
+	type ChatDraftBoundaryKind,
+} from "../shared/chat-draft-risk";
 
-export const CHAT_DRAFT_UNLOAD_DIALOG: MessageBoxSyncOptions = {
-	type: "warning",
-	title: "Unsaved Chat draft",
-	message: "This Chat draft is not safely saved yet.",
-	detail:
-		"Leaving now can discard unsaved text or attachments that AO is still writing, or interrupt unresolved delivery recovery. Stay to copy the draft, wait for saving, or finish delivery recovery.",
-	buttons: ["Stay", "Leave anyway"],
-	defaultId: 0,
-	cancelId: 0,
-	noLink: true,
-};
+export function chatDraftUnloadDialog(
+	risks: readonly ChatDraftBoundaryKind[],
+): MessageBoxSyncOptions {
+	const detail = [...new Set(risks)]
+		.map((risk) => CHAT_DRAFT_BOUNDARY_COPY[risk])
+		.join("\n\n");
+	return {
+		type: "warning",
+		title: "Unsaved Chat draft",
+		message: "This Chat draft is not safely saved yet.",
+		detail,
+		buttons: ["Stay", "Leave anyway"],
+		defaultId: 0,
+		cancelId: 0,
+		noLink: true,
+	};
+}
 
-export function confirmUnsafeChatDraftLeave(showMessageBoxSync: (options: MessageBoxSyncOptions) => number): boolean {
-	return showMessageBoxSync(CHAT_DRAFT_UNLOAD_DIALOG) === 1;
+export function confirmUnsafeChatDraftLeave(
+	risks: readonly ChatDraftBoundaryKind[],
+	showMessageBoxSync: (options: MessageBoxSyncOptions) => number,
+): boolean {
+	return risks.length === 0 || showMessageBoxSync(chatDraftUnloadDialog(risks)) === 1;
 }
 
 export function shouldPreventUnsafeChatDraftClose(
-	riskActive: boolean,
+	risks: readonly ChatDraftBoundaryKind[],
 	alreadyConfirmed: boolean,
 	showMessageBoxSync: (options: MessageBoxSyncOptions) => number,
 ): boolean {
-	if (!riskActive || alreadyConfirmed) return false;
-	return !confirmUnsafeChatDraftLeave(showMessageBoxSync);
+	if (risks.length === 0 || alreadyConfirmed) return false;
+	return !confirmUnsafeChatDraftLeave(risks, showMessageBoxSync);
 }

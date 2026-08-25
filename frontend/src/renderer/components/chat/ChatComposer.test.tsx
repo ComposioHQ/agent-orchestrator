@@ -9,7 +9,10 @@ import {
 	readChatSessionDraft,
 	writeChatComposerText,
 } from "../../lib/chat-drafts";
-import { getChatDraftBoundary } from "../../lib/chat-draft-boundary";
+import {
+	getChatDraftBoundaries,
+	getChatDraftBoundary,
+} from "../../lib/chat-draft-boundary";
 import {
 	lexicalEditorText,
 	placeLexicalCaret,
@@ -301,7 +304,10 @@ describe("send keys", () => {
 			await waitFor(() => expect(onSend).toHaveBeenCalledTimes(1));
 			expect(await screen.findByRole("alert")).toHaveTextContent("couldn’t be cleared");
 			expect(field).toHaveAttribute("contenteditable", "false");
-			expect(getChatDraftBoundary(sessionId)).toBe("pending-delivery");
+			expect(getChatDraftBoundaries(sessionId)).toEqual([
+				"persistence-failed",
+				"pending-delivery",
+			]);
 
 			fireEvent.keyDown(field, { key: "Enter" });
 			expect(onSend).toHaveBeenCalledTimes(1);
@@ -1188,6 +1194,53 @@ describe("attachments", () => {
 			fireEvent.paste(field, { clipboardData: clipboardData([png("safe-attachment.png")]) });
 			await screen.findByLabelText("Remove safe-attachment.png");
 			expect(getChatDraftBoundary(sessionId)).toBe("persistence-failed");
+		} finally {
+			view.unmount();
+			localStorage.mockRestore();
+		}
+	});
+
+	it("reports failed text persistence and pending attachment staging together", async () => {
+		const sessionId = "composer-mixed-storage-failure";
+		const durableStorage = window.localStorage;
+		let failTextWrite = true;
+		let finishStaging!: (paths: string[]) => void;
+		const storage = {
+			getItem: durableStorage.getItem.bind(durableStorage),
+			removeItem: durableStorage.removeItem.bind(durableStorage),
+			setItem: (key: string, value: string) => {
+				if (failTextWrite && key.includes(encodeURIComponent(sessionId))) {
+					failTextWrite = false;
+					throw new DOMException("full", "QuotaExceededError");
+				}
+				durableStorage.setItem(key, value);
+			},
+		} as Storage;
+		const localStorage = vi.spyOn(window, "localStorage", "get").mockReturnValue(storage);
+		const view = render(
+			<ChatComposer
+				onSend={vi.fn()}
+				draftSessionId={sessionId}
+				onStageAttachments={() =>
+					new Promise<string[]>((resolve) => {
+						finishStaging = resolve;
+					})
+				}
+			/>,
+		);
+		try {
+			const field = screen.getByLabelText("Message the agent");
+			await typeInComposer(field, "unsafe text");
+			await waitFor(() => expect(getChatDraftBoundary(sessionId)).toBe("persistence-failed"));
+
+			fireEvent.paste(field, { clipboardData: clipboardData([png("pending.png")]) });
+			await waitFor(() => expect(finishStaging).toBeTypeOf("function"));
+			expect(getChatDraftBoundaries(sessionId)).toEqual([
+				"persistence-failed",
+				"pending-attachments",
+			]);
+
+			await act(async () => finishStaging([".ao/attachments/pending.png"]));
 		} finally {
 			view.unmount();
 			localStorage.mockRestore();

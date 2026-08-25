@@ -1530,11 +1530,10 @@ function Timeline({
 		setChatDraftBoundary(
 			snapshot.sessionId,
 			"inline-edit",
-			durableInlineEditDelivery
-				? "pending-delivery"
-				: draftPersistenceError
-					? "persistence-failed"
-					: undefined,
+			[
+				...(draftPersistenceError ? (["persistence-failed"] as const) : []),
+				...(durableInlineEditDelivery ? (["pending-delivery"] as const) : []),
+			],
 		);
 	}, [draftPersistenceError, durableInlineEditDelivery, snapshot.sessionId]);
 	useEffect(

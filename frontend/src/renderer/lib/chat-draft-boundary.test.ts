@@ -26,16 +26,52 @@ describe("Chat draft destructive-boundary state", () => {
 	});
 
 	it("preserves every active risk kind for mixed boundary decisions", () => {
-		setChatDraftBoundary("session-mixed", "inline-edit", "pending-delivery");
-		setChatDraftBoundary("session-mixed", "composer", "pending-attachments");
+		setChatDraftBoundary("session-mixed", "inline-edit", "pending-attachments");
+		setChatDraftBoundary("session-mixed", "composer", [
+			"pending-delivery",
+			"persistence-failed",
+		]);
 
 		expect(getChatDraftBoundaries("session-mixed")).toEqual([
+			"persistence-failed",
 			"pending-delivery",
 			"pending-attachments",
 		]);
 
 		setChatDraftBoundary("session-mixed", "inline-edit", undefined);
 		setChatDraftBoundary("session-mixed", "composer", undefined);
+	});
+
+	it("preserves simultaneous risks reported by the same composer", () => {
+		setChatDraftBoundary("session-same-source", "composer", [
+			"persistence-failed",
+			"pending-attachments",
+		]);
+
+		expect(getChatDraftBoundary("session-same-source")).toBe("persistence-failed");
+		expect(getChatDraftBoundaries("session-same-source")).toEqual([
+			"persistence-failed",
+			"pending-attachments",
+		]);
+
+		setChatDraftBoundary("session-same-source", "composer", undefined);
+	});
+
+	it("keeps one stable aggregate snapshot across equivalent updates", () => {
+		setChatDraftBoundary("session-stable", "composer", [
+			"pending-attachments",
+			"persistence-failed",
+		]);
+		const first = getChatDraftBoundaries("session-stable");
+
+		setChatDraftBoundary("session-stable", "composer", [
+			"persistence-failed",
+			"pending-attachments",
+			"pending-attachments",
+		]);
+		expect(getChatDraftBoundaries("session-stable")).toBe(first);
+
+		setChatDraftBoundary("session-stable", "composer", undefined);
 	});
 
 	it("notifies subscribers only when the effective source state changes", () => {

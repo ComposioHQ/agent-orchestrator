@@ -54,7 +54,6 @@ import { aoBridge } from "../lib/bridge";
 import { discardPendingFileAttachmentsForSession } from "../hooks/useFileAttachments";
 import {
 	confirmDiscardChatDrafts,
-	getChatDraftBoundary,
 	getChatDraftBoundaries,
 	subscribeChatDraftBoundaries,
 } from "../lib/chat-draft-boundary";
@@ -361,14 +360,14 @@ function SessionInspectorRail({
 // profile before the conversation can become unusably narrow.
 export function SessionView({ sessionId }: SessionViewProps) {
 	const { t } = useTranslation();
-	const getCurrentChatDraftBoundary = useCallback(
-		() => getChatDraftBoundary(sessionId),
+	const getCurrentChatDraftBoundaries = useCallback(
+		() => getChatDraftBoundaries(sessionId),
 		[sessionId],
 	);
-	const chatDraftBoundary = useSyncExternalStore(
+	const chatDraftBoundaries = useSyncExternalStore(
 		subscribeChatDraftBoundaries,
-		getCurrentChatDraftBoundary,
-		getCurrentChatDraftBoundary,
+		getCurrentChatDraftBoundaries,
+		getCurrentChatDraftBoundaries,
 	);
 	const confirmUnsafeDraftLeave = useCallback(() => {
 		const activeBoundaries = getChatDraftBoundaries(sessionId);
@@ -380,14 +379,17 @@ export function SessionView({ sessionId }: SessionViewProps) {
 		return true;
 	}, [sessionId]);
 	useBlocker({
-		disabled: !chatDraftBoundary,
-		enableBeforeUnload: Boolean(chatDraftBoundary),
+		disabled: chatDraftBoundaries.length === 0,
+		enableBeforeUnload: chatDraftBoundaries.length > 0,
 		shouldBlockFn: () => !confirmUnsafeDraftLeave(),
 	});
 	useEffect(() => {
-		aoBridge.app.setChatDraftRisk?.(Boolean(chatDraftBoundary));
-		return () => aoBridge.app.setChatDraftRisk?.(false);
-	}, [chatDraftBoundary]);
+		aoBridge.app.setChatDraftRisk?.(chatDraftBoundaries);
+	}, [chatDraftBoundaries]);
+	useEffect(
+		() => () => aoBridge.app.setChatDraftRisk?.([]),
+		[sessionId],
+	);
 	const workspaceQuery = useWorkspaceQuery();
 	const workspaces = workspaceQuery.data ?? [];
 	const theme = useResolvedTheme();

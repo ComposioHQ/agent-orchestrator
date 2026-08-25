@@ -797,6 +797,36 @@ describe("SessionView", () => {
 		confirm.mockRestore();
 	});
 
+	it("publishes the full stable native risk set and clears it only on unmount", async () => {
+		const publishRisk = vi.spyOn(window.ao!.app, "setChatDraftRisk");
+		const view = render(<SessionView sessionId="sess-1" />);
+		await waitFor(() => expect(publishRisk).toHaveBeenLastCalledWith([]));
+
+		act(() => setChatDraftBoundary("sess-1", "composer", "persistence-failed"));
+		await waitFor(() =>
+			expect(publishRisk).toHaveBeenLastCalledWith(["persistence-failed"]),
+		);
+		publishRisk.mockClear();
+
+		act(() =>
+			setChatDraftBoundary("sess-1", "composer", [
+				"persistence-failed",
+				"pending-attachments",
+			]),
+		);
+		await waitFor(() =>
+			expect(publishRisk).toHaveBeenCalledWith([
+				"persistence-failed",
+				"pending-attachments",
+			]),
+		);
+		expect(publishRisk).not.toHaveBeenCalledWith([]);
+
+		view.unmount();
+		expect(publishRisk).toHaveBeenLastCalledWith([]);
+		publishRisk.mockRestore();
+	});
+
 	it("does not start a Chat-to-Terminal switch until unsafe-draft discard is confirmed", () => {
 		interfaceTransitionState.status = { supported: true, targetMode: "tui" };
 		const session = workerSession("sess-1");
