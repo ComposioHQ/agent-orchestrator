@@ -218,6 +218,22 @@ export async function installFakeBridge(page: Page, opts: FakeBridgeOptions = {}
 				},
 				cloud: {
 					getSession: async () => null,
+					isBetaEnabled: async () => false,
+					getOverview: async () => {
+						throw new Error("AO Cloud is disabled in tests.");
+					},
+					createProject: async () => {
+						throw new Error("AO Cloud is disabled in tests.");
+					},
+					createSession: async () => {
+						throw new Error("AO Cloud is disabled in tests.");
+					},
+					connectLocalHarness: async () => {
+						throw new Error("AO Cloud is disabled in tests.");
+					},
+					disconnectHarness: async () => {
+						throw new Error("AO Cloud is disabled in tests.");
+					},
 					signIn: async () => undefined,
 					signOut: async () => undefined,
 					onSessionChanged: unsubscribe,
@@ -655,6 +671,22 @@ export async function installFakeAgent(page: Page, opts: FakeAgentOptions = {}):
 				},
 				cloud: {
 					getSession: async () => null,
+					isBetaEnabled: async () => false,
+					getOverview: async () => {
+						throw new Error("AO Cloud is disabled in tests.");
+					},
+					createProject: async () => {
+						throw new Error("AO Cloud is disabled in tests.");
+					},
+					createSession: async () => {
+						throw new Error("AO Cloud is disabled in tests.");
+					},
+					connectLocalHarness: async () => {
+						throw new Error("AO Cloud is disabled in tests.");
+					},
+					disconnectHarness: async () => {
+						throw new Error("AO Cloud is disabled in tests.");
+					},
 					signIn: async () => undefined,
 					signOut: async () => undefined,
 					onSessionChanged: unsubscribe,
