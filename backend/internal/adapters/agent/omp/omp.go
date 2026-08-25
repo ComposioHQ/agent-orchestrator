@@ -1,6 +1,10 @@
 // Package omp implements AO's OMP agent adapter. OMP is a terminal-first
 // coding harness, so AO launches it interactively inside the session terminal
 // pane and keeps protocol-level RPC/ACP integration out of this adapter.
+//
+// Hooks/activity: AO installs a workspace-local TypeScript extension and
+// passes it explicitly with --extension. It reports OMP's session and agent
+// lifecycle without depending on project-local extension auto-discovery.
 package omp
 
 import (
@@ -55,15 +59,16 @@ func (p *Plugin) GetConfigSpec(ctx context.Context) (ports.ConfigSpec, error) {
 
 // GetLaunchCommand builds the argv to start a fresh interactive OMP session:
 //
-//	omp [--append-system-prompt <system prompt>] [--model <model>] [<prompt>]
+//	omp [--extension <path>] [--append-system-prompt <system prompt>] [--model <model>] [<prompt>]
 func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) ([]string, error) {
 	binary, err := p.ompBinary(ctx)
 	if err != nil {
 		return nil, err
 	}
 
-	cmd := make([]string, 0, 5)
+	cmd := make([]string, 0, 7)
 	cmd = append(cmd, binary)
+	appendOmpExtensionFlag(&cmd, cfg.WorkspacePath)
 	if err := appendSystemPrompt(&cmd, cfg.SystemPrompt, cfg.SystemPromptFile); err != nil {
 		return nil, err
 	}
@@ -90,8 +95,9 @@ func (p *Plugin) GetRestoreCommand(ctx context.Context, cfg ports.RestoreConfig)
 	if err != nil {
 		return nil, false, err
 	}
-	cmd := make([]string, 0, 5)
+	cmd := make([]string, 0, 8)
 	cmd = append(cmd, binary)
+	appendOmpExtensionFlag(&cmd, cfg.Session.WorkspacePath)
 	if err := appendSystemPrompt(&cmd, cfg.SystemPrompt, cfg.SystemPromptFile); err != nil {
 		return nil, false, err
 	}

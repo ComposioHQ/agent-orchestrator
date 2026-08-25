@@ -22,7 +22,7 @@ func TestDeriverTokensAreKnownHarnesses(t *testing.T) {
 }
 
 func TestSupportsHarness(t *testing.T) {
-	for _, h := range []domain.AgentHarness{domain.HarnessCodex, domain.HarnessClaudeCode, domain.HarnessGrok, domain.HarnessMuse, domain.HarnessOpenCode, domain.HarnessKimi, domain.HarnessVibe, domain.HarnessPrimeAgent, domain.HarnessAmp, domain.HarnessPi, domain.HarnessAuggie} {
+	for _, h := range []domain.AgentHarness{domain.HarnessCodex, domain.HarnessClaudeCode, domain.HarnessGrok, domain.HarnessMuse, domain.HarnessOpenCode, domain.HarnessKimi, domain.HarnessVibe, domain.HarnessPrimeAgent, domain.HarnessAmp, domain.HarnessPi, domain.HarnessOMP, domain.HarnessAuggie} {
 		if !SupportsHarness(h) {
 			t.Errorf("SupportsHarness(%q) = false, want true", h)
 		}
@@ -45,6 +45,7 @@ func TestAmpPiAndAuggieDispatchActivity(t *testing.T) {
 	}{
 		{agent: "amp", event: "thread-state", payload: `{"state":"awaiting-approval"}`, want: domain.ActivityWaitingInput},
 		{agent: "pi", event: "user-prompt-submit", payload: `{}`, want: domain.ActivityActive},
+		{agent: "omp", event: "user-prompt-submit", payload: `{}`, want: domain.ActivityActive},
 		{agent: "auggie", event: "stop", payload: `{"agent_stop_cause":"error"}`, want: domain.ActivityWaitingInput},
 	}
 
