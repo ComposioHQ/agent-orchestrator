@@ -292,6 +292,8 @@ sql:
             go_type:
               import: "github.com/aoagents/agent-orchestrator/backend/internal/domain"
               type: "TurnState"
+          - column: "conversation_turns.imported_from_terminal"
+            go_type: "bool"
           - column: "conversation_messages.role"
             go_type:
               import: "github.com/aoagents/agent-orchestrator/backend/internal/domain"

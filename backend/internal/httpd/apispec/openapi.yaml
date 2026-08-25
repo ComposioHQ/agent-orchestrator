@@ -6628,6 +6628,8 @@ components:
           type: boolean
         id:
           type: string
+        importedFromTerminal:
+          type: boolean
         plan:
           $ref: '#/components/schemas/ConversationPlanResponse'
         providerTurnId:

@@ -143,7 +143,13 @@ describe("useConversation snapshot mapping", () => {
 	});
 
 	it("maps the provider state the timeline cannot express", async () => {
-		getMock.mockResolvedValue({ data: WIRE, error: undefined });
+		getMock.mockResolvedValue({
+			data: {
+				...WIRE,
+				turns: [{ ...WIRE.turns[0], importedFromTerminal: true }],
+			},
+			error: undefined,
+		});
 
 		const { result } = renderHook(() => useConversation("ao-1"), { wrapper });
 		await waitFor(() => expect(result.current.snapshot).toBeDefined());
@@ -168,6 +174,7 @@ describe("useConversation snapshot mapping", () => {
 			{ text: "one", status: "completed" },
 			{ text: "two", status: "in_progress" },
 		]);
+		expect(snapshot.turns[0]!.importedFromTerminal).toBe(true);
 	});
 
 	it("maps retry lineage and consumed-source facts from the daemon", async () => {

@@ -208,6 +208,7 @@ type ConversationTurn struct {
 	PromotionStartedAt   sql.NullTime
 	PromotedToTurnID     sql.NullString
 	RetryOfTurnID        sql.NullString
+	ImportedFromTerminal bool
 }
 
 type ModelUsageEvent struct {

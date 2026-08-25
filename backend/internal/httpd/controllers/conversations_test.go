@@ -161,7 +161,7 @@ func TestConversationSnapshotExposesSafeEditContentAndBranchMetadata(t *testing.
 		},
 		SessionID: domain.SessionID("p1-1"),
 		Turns: []domain.ConversationTurn{
-			{ID: "turn-source", State: domain.TurnStateFailed, HasRetryAttempt: true, RequestedAt: now},
+			{ID: "turn-source", State: domain.TurnStateFailed, HasRetryAttempt: true, ImportedFromTerminal: true, RequestedAt: now},
 			{ID: "turn-retry", State: domain.TurnStateCompleted, RetryOfTurnID: "turn-source", RequestedAt: now},
 		},
 		Messages: []domain.ConversationMessage{
@@ -232,6 +232,9 @@ func TestConversationSnapshotExposesSafeEditContentAndBranchMetadata(t *testing.
 	turns := body["turns"].([]any)
 	if turns[0].(map[string]any)["hasRetryAttempt"] != true {
 		t.Fatalf("consumed retry source = %#v", turns[0])
+	}
+	if turns[0].(map[string]any)["importedFromTerminal"] != true {
+		t.Fatalf("Terminal import provenance = %#v", turns[0])
 	}
 	if turns[1].(map[string]any)["retryOfTurnId"] != "turn-source" {
 		t.Fatalf("retry source correlation = %#v", turns[1])

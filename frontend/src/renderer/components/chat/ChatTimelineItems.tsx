@@ -332,14 +332,18 @@ export function TurnOutcome({
 	state,
 	error,
 	retry,
+	importedFromTerminal,
 }: {
 	state: "recovered" | "interrupted" | "failed";
 	error?: string;
 	retry?: TurnOutcomeRetryControl;
+	importedFromTerminal?: boolean;
 }) {
 	const copy = {
 		recovered: {
-			label: "Imported from Terminal UI — completion status unavailable",
+			label: importedFromTerminal
+				? "Imported from Terminal UI — completion status unavailable"
+				: "This turn was recovered from an earlier session",
 			tone: "text-muted-foreground/70",
 		},
 		interrupted: {

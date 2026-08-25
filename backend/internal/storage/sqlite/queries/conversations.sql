@@ -456,8 +456,9 @@ INSERT INTO conversation_turns (
 -- name: AdoptProviderConversationTurn :exec
 INSERT OR IGNORE INTO conversation_turns (
     id, conversation_id, handled_by_session_id, provider_turn_id,
-    controller_generation, state, requested_at, started_at
-) VALUES (?, ?, ?, ?, ?, 'running', ?, ?);
+    controller_generation, state, requested_at, started_at,
+    imported_from_terminal
+) VALUES (?, ?, ?, ?, ?, 'running', ?, ?, ?);
 
 -- Correlating a provider notification back to its turn happens on every streamed
 -- event, so it is a keyed lookup rather than a scan.

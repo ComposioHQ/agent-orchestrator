@@ -835,6 +835,7 @@ func (s *Store) AdoptProviderTurn(
 	conversationID string,
 	session domain.SessionID,
 	generation, turnID, providerTurnID string,
+	importedFromTerminal bool,
 	now time.Time,
 ) error {
 	q, unlock := s.conversationWriter(ctx)
@@ -847,6 +848,7 @@ func (s *Store) AdoptProviderTurn(
 		ControllerGeneration: generation,
 		RequestedAt:          now,
 		StartedAt:            sql.NullTime{Time: now, Valid: true},
+		ImportedFromTerminal: importedFromTerminal,
 	}); err != nil {
 		return fmt.Errorf("adopt provider turn %s: %w", providerTurnID, err)
 	}
@@ -2769,14 +2771,15 @@ func rateLimitsFromRow(row gen.Conversation) *domain.ConversationRateLimits {
 
 func turnToDomain(row gen.ConversationTurn) domain.ConversationTurn {
 	turn := domain.ConversationTurn{
-		ID:                 row.ID,
-		ConversationID:     row.ConversationID,
-		BranchID:           row.BranchID,
-		HandledBySessionID: row.HandledBySessionID,
-		ProviderTurnID:     row.ProviderTurnID,
-		State:              row.State,
-		ErrorMessage:       row.ErrorMessage,
-		RequestedAt:        row.RequestedAt,
+		ID:                   row.ID,
+		ConversationID:       row.ConversationID,
+		BranchID:             row.BranchID,
+		HandledBySessionID:   row.HandledBySessionID,
+		ProviderTurnID:       row.ProviderTurnID,
+		State:                row.State,
+		ImportedFromTerminal: row.ImportedFromTerminal,
+		ErrorMessage:         row.ErrorMessage,
+		RequestedAt:          row.RequestedAt,
 	}
 	if row.RetryOfTurnID.Valid {
 		turn.RetryOfTurnID = row.RetryOfTurnID.String
