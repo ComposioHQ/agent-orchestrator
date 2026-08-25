@@ -50,6 +50,8 @@ export interface ConversationSendInput {
 	text: string;
 	attachments?: WireImageContent[];
 	resources?: WireResourceContent[];
+	/** Caller-owned durable idempotency key used for crash-safe retries. */
+	clientMessageId?: string;
 }
 
 export const conversationQueryRoot = ["conversation"] as const;
@@ -174,7 +176,7 @@ export function useConversationCommands(sessionId: string | undefined) {
 					params: { path: { sessionId: sessionId as string } },
 					// A stable id per attempt makes a retry idempotent: the daemon
 					// answers `duplicate` instead of opening a second provider turn.
-					body: { ...input, clientMessageId: crypto.randomUUID() },
+					body: { ...input, clientMessageId: input.clientMessageId ?? crypto.randomUUID() },
 				},
 			);
 			if (error) throw error;
@@ -303,12 +305,12 @@ export function useConversationCommands(sessionId: string | undefined) {
 	 * means "wait and try again", and one means this harness cannot do it at all.
 	 */
 	const steer = useMutation({
-		mutationFn: async (text: string) => {
+		mutationFn: async ({ text, clientMessageId }: { text: string; clientMessageId?: string }) => {
 			const { data, error } = await apiClient.POST(
 				"/api/v1/sessions/{sessionId}/conversation/steer",
 				{
 					params: { path: { sessionId: sessionId as string } },
-					body: { text, clientMessageId: crypto.randomUUID() },
+					body: { text, clientMessageId: clientMessageId ?? crypto.randomUUID() },
 				},
 			);
 			if (error) throw error;
@@ -374,12 +376,20 @@ export function useConversationCommands(sessionId: string | undefined) {
 	});
 
 	const editMessage = useMutation({
-		mutationFn: async ({ turnId, text }: { turnId: string; text: string }) => {
+		mutationFn: async ({
+			turnId,
+			text,
+			clientMessageId,
+		}: {
+			turnId: string;
+			text: string;
+			clientMessageId?: string;
+		}) => {
 			const { data, error } = await apiClient.POST(
 				"/api/v1/sessions/{sessionId}/conversation/turns/{turnId}/edit",
 				{
 					params: { path: { sessionId: sessionId as string, turnId } },
-					body: { text, clientMessageId: crypto.randomUUID() },
+					body: { text, clientMessageId: clientMessageId ?? crypto.randomUUID() },
 				},
 			);
 			if (error) throw error;
@@ -439,7 +449,8 @@ export function useConversationCommands(sessionId: string | undefined) {
 			error: retryTurn.error ? apiErrorMessage(retryTurn.error) : undefined,
 			turnId: retryTurn.variables,
 		},
-		editMessage: (turnId: string, text: string) => editMessage.mutateAsync({ turnId, text }),
+		editMessage: (turnId: string, text: string, clientMessageId?: string) =>
+			editMessage.mutateAsync({ turnId, text, clientMessageId }),
 		editMessagePending: editMessage.isPending,
 		editMessageError: editMessage.error ? apiErrorMessage(editMessage.error) : undefined,
 		activateBranch: (branchId: string) => activateBranch.mutateAsync(branchId),
@@ -447,7 +458,8 @@ export function useConversationCommands(sessionId: string | undefined) {
 		activateBranchError: activateBranch.error
 			? apiErrorMessage(activateBranch.error)
 			: undefined,
-		steer: (text: string) => steer.mutateAsync(text),
+		steer: (text: string, clientMessageId?: string) =>
+			steer.mutateAsync({ text, clientMessageId }),
 		promoteQueuedTurn: (turnId: string) => promoteQueuedTurn.mutateAsync(turnId),
 		steerPending: steer.isPending,
 		/**

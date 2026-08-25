@@ -73,6 +73,11 @@ import {
 	TRAY_RENDERER_READY_CHANNEL,
 	TRAY_SET_ATTENTION_STATE_CHANNEL,
 } from "./shared/tray";
+import { SET_CHAT_DRAFT_RISK_CHANNEL } from "./shared/chat-draft-risk";
+import {
+	confirmUnsafeChatDraftLeave,
+	shouldPreventUnsafeChatDraftClose,
+} from "./main/chat-draft-unload";
 import {
 	type DaemonProbe,
 	expectedDaemonPort,
@@ -201,6 +206,9 @@ let keybindingOverrides: KeybindingOverrides = {};
 let keybindingRecordingActive = false;
 let closeShellTerminalShortcutEnabled = false;
 let terminalFocused = false;
+let chatDraftRiskActive = false;
+let chatDraftQuitConfirmed = false;
+let chatDraftWindowCloseConfirmed = false;
 // Held for the app lifetime. Dropping it (on any exit) triggers daemon self-stop.
 let supervisorLink: SupervisorLinkHandle | null = null;
 // Guard: prevents stacking multiple flashFrame(true) calls when notifications arrive rapidly.
@@ -493,6 +501,32 @@ async function createWindowInternal(): Promise<void> {
 		}
 	});
 
+	shellWebContents.on("will-prevent-unload", (event) => {
+		if (!chatDraftRiskActive) return;
+		if (
+			chatDraftQuitConfirmed ||
+			chatDraftWindowCloseConfirmed ||
+			confirmUnsafeChatDraftLeave((options) => dialog.showMessageBoxSync(options))
+		) {
+			// Electron uses preventDefault here to ignore beforeunload and continue
+			// leaving. Doing nothing honors the renderer's request to stay.
+			event.preventDefault();
+		}
+	});
+
+	mainWindow.on("close", (event) => {
+		const preventClose = shouldPreventUnsafeChatDraftClose(
+			chatDraftRiskActive,
+			chatDraftQuitConfirmed || chatDraftWindowCloseConfirmed,
+			(options) => dialog.showMessageBoxSync(options),
+		);
+		if (preventClose) {
+			event.preventDefault();
+			return;
+		}
+		if (chatDraftRiskActive) chatDraftWindowCloseConfirmed = true;
+	});
+
 	// Application shortcuts are handled here so they fire no matter which web
 	// contents holds focus — the shell renderer, xterm's helper textarea, or a
 	// browser-preview view (wired per-view in the browser host).
@@ -565,6 +599,9 @@ async function createWindowInternal(): Promise<void> {
 	shellWebContents.on("render-process-gone", () => trayLifecycle.clear());
 
 	mainWindow.on("closed", () => {
+		chatDraftRiskActive = false;
+		chatDraftQuitConfirmed = false;
+		chatDraftWindowCloseConfirmed = false;
 		disposeBrowserRuntimeLink();
 		keybindingRecordingActive = false;
 		if (windowComposition === composition) windowComposition = null;
@@ -1704,6 +1741,15 @@ ipcMain.on(SET_TERMINAL_FOCUSED_CHANNEL, (event, focused: unknown) => {
 	terminalFocused = focused;
 });
 
+ipcMain.on(SET_CHAT_DRAFT_RISK_CHANNEL, (event, active: unknown) => {
+	if (event.sender !== getShellWebContents() || typeof active !== "boolean") return;
+	chatDraftRiskActive = active;
+	if (!active) {
+		chatDraftQuitConfirmed = false;
+		chatDraftWindowCloseConfirmed = false;
+	}
+});
+
 // Backs the custom title-bar menu (WindowTitlebar). Each item maps to the same
 // action the native default menu would have performed.
 ipcMain.handle("menu:action", (_event, action: string) => {
@@ -2260,6 +2306,14 @@ app.whenReady().then(async () => {
 // The supervisorLink fd is NOT explicitly closed on quit; the OS closes it when
 // the process exits for any reason (Cmd+Q, crash, SIGKILL). Sessions survive.
 app.on("before-quit", (event) => {
+	if (chatDraftRiskActive && !chatDraftQuitConfirmed) {
+		event.preventDefault();
+		if (confirmUnsafeChatDraftLeave((options) => dialog.showMessageBoxSync(options))) {
+			chatDraftQuitConfirmed = true;
+			app.quit();
+		}
+		return;
+	}
 	browserQuitRequested = true;
 	disposeBrowserRuntimeLink();
 	trayLifecycle.dispose();

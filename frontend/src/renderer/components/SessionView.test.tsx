@@ -7,6 +7,7 @@ import { SessionTopbarProvider } from "./SessionTopbarPortal";
 import { TooltipProvider } from "./ui/tooltip";
 import { useUiStore } from "../stores/ui-store";
 import type { WorkspaceSession, WorkspaceSummary } from "../types/workspace";
+import { setChatDraftBoundary } from "../lib/chat-draft-boundary";
 
 const navigateMock = vi.hoisted(() => vi.fn());
 const openShellTerminalMock = vi.hoisted(() => vi.fn());
@@ -44,9 +45,21 @@ const interfaceTransitionState = vi.hoisted(() => ({
 }));
 const reviewGetMock = vi.hoisted(() => vi.fn());
 const inspectorVisibilityRenders = vi.hoisted(() => [] as boolean[]);
+const routeBlockerState = vi.hoisted(() => ({
+	options: undefined as
+		| {
+				disabled: boolean;
+				enableBeforeUnload: boolean;
+				shouldBlockFn: () => boolean | Promise<boolean>;
+			}
+		| undefined,
+}));
 
 vi.mock("@tanstack/react-router", () => ({
 	useNavigate: () => navigateMock,
+	useBlocker: (options: NonNullable<typeof routeBlockerState.options>) => {
+		routeBlockerState.options = options;
+	},
 }));
 
 vi.mock("../lib/platform", () => ({
@@ -464,6 +477,11 @@ function render(ui: ReactNode) {
 
 describe("SessionView", () => {
 	beforeEach(() => {
+		for (const sessionId of ["sess-1", "sess-2", "sess-orch", "sess-cross-project"]) {
+			setChatDraftBoundary(sessionId, "composer", undefined);
+			setChatDraftBoundary(sessionId, "inline-edit", undefined);
+		}
+		routeBlockerState.options = undefined;
 		inspectorVisibilityRenders.length = 0;
 		nativeFullScreenMock.mockReturnValue(false);
 		window.localStorage.clear();
@@ -753,6 +771,50 @@ describe("SessionView", () => {
 
 		expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
 		expect(interfaceTransitionMock.start).toHaveBeenCalledWith({ targetMode: "tui", policy: "interrupt" });
+	});
+
+	it("blocks route unload while a Chat draft is unsafe and uses explicit discard copy", async () => {
+		setChatDraftBoundary("sess-1", "composer", "persistence-failed");
+		const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+		render(<SessionView sessionId="sess-1" />);
+
+		expect(routeBlockerState.options).toMatchObject({
+			disabled: false,
+			enableBeforeUnload: true,
+		});
+		expect(await routeBlockerState.options?.shouldBlockFn()).toBe(true);
+		expect(confirm).toHaveBeenCalledWith(expect.stringContaining("discard the unsaved changes"));
+
+		confirm.mockReturnValue(true);
+		expect(await routeBlockerState.options?.shouldBlockFn()).toBe(false);
+		act(() => setChatDraftBoundary("sess-1", "composer", undefined));
+		expect(routeBlockerState.options).toMatchObject({
+			disabled: true,
+			enableBeforeUnload: false,
+		});
+		confirm.mockRestore();
+	});
+
+	it("does not start a Chat-to-Terminal switch until unsafe-draft discard is confirmed", () => {
+		interfaceTransitionState.status = { supported: true, targetMode: "tui" };
+		const session = workerSession("sess-1");
+		session.mode = "chat";
+		setChatDraftBoundary("sess-1", "composer", "pending-attachments");
+		const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+		render(<SessionView sessionId="sess-1" />);
+
+		fireEvent.click(screen.getByRole("button", { name: "Switch to terminal UI" }));
+		expect(interfaceTransitionMock.start).not.toHaveBeenCalled();
+		expect(confirm).toHaveBeenCalledWith(expect.stringContaining("still being saved"));
+
+		confirm.mockReturnValue(true);
+		fireEvent.click(screen.getByRole("button", { name: "Switch to terminal UI" }));
+		expect(interfaceTransitionMock.start).toHaveBeenCalledWith({
+			targetMode: "tui",
+			policy: "interrupt",
+		});
+		setChatDraftBoundary("sess-1", "composer", undefined);
+		confirm.mockRestore();
 	});
 
 	it("checks only the selected session when deciding whether to show the policy dialog", () => {

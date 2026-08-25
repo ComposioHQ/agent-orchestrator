@@ -1,4 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
+import { useBlocker } from "@tanstack/react-router";
 import { PanelRight, Plus } from "lucide-react";
 import { motion, useReducedMotion } from "motion/react";
 import {
@@ -8,6 +9,7 @@ import {
 	useMemo,
 	useRef,
 	useState,
+	useSyncExternalStore,
 	type CSSProperties,
 	type ReactNode,
 	type RefObject,
@@ -48,6 +50,13 @@ import {
 import { useWorkspaceQuery } from "../hooks/useWorkspaceQuery";
 import { useWindowFullScreen } from "../hooks/useWindowFullScreen";
 import { apiClient, apiErrorMessage } from "../lib/api-client";
+import { aoBridge } from "../lib/bridge";
+import { discardPendingFileAttachments } from "../hooks/useFileAttachments";
+import {
+	confirmDiscardChatDraft,
+	getChatDraftBoundary,
+	subscribeChatDraftBoundaries,
+} from "../lib/chat-draft-boundary";
 import { SHELL_PANEL_SPRING } from "../lib/motion-spring";
 import { hidesShellTopbar, isMacPlatform } from "../lib/platform";
 import { useShell } from "../lib/shell-context";
@@ -351,6 +360,32 @@ function SessionInspectorRail({
 // profile before the conversation can become unusably narrow.
 export function SessionView({ sessionId }: SessionViewProps) {
 	const { t } = useTranslation();
+	const getCurrentChatDraftBoundary = useCallback(
+		() => getChatDraftBoundary(sessionId),
+		[sessionId],
+	);
+	const chatDraftBoundary = useSyncExternalStore(
+		subscribeChatDraftBoundaries,
+		getCurrentChatDraftBoundary,
+		getCurrentChatDraftBoundary,
+	);
+	const confirmUnsafeDraftLeave = useCallback(() => {
+		if (!chatDraftBoundary) return true;
+		if (!confirmDiscardChatDraft(chatDraftBoundary)) return false;
+		if (chatDraftBoundary === "pending-attachments") {
+			discardPendingFileAttachments(sessionId);
+		}
+		return true;
+	}, [chatDraftBoundary, sessionId]);
+	useBlocker({
+		disabled: !chatDraftBoundary,
+		enableBeforeUnload: Boolean(chatDraftBoundary),
+		shouldBlockFn: () => !confirmUnsafeDraftLeave(),
+	});
+	useEffect(() => {
+		aoBridge.app.setChatDraftRisk?.(Boolean(chatDraftBoundary));
+		return () => aoBridge.app.setChatDraftRisk?.(false);
+	}, [chatDraftBoundary]);
 	const workspaceQuery = useWorkspaceQuery();
 	const workspaces = workspaceQuery.data ?? [];
 	const theme = useResolvedTheme();
@@ -691,6 +726,9 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	);
 	const beginInterfaceSwitch = useCallback(
 		async (policy: "drain" | "interrupt") => {
+			if (chatToTerminal && !confirmUnsafeDraftLeave()) {
+				return;
+			}
 			try {
 				await interfaceSwitch.start({ targetMode: interfaceTarget, policy });
 				setInterfaceSwitchDialogOpen(false);
@@ -699,7 +737,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 				// open stays open; a direct switch must not open one on failure.
 			}
 		},
-		[interfaceSwitch, interfaceTarget],
+		[chatToTerminal, confirmUnsafeDraftLeave, interfaceSwitch, interfaceTarget],
 	);
 	const requestInterfaceSwitch = useCallback(() => {
 		interfaceSwitch.resetStartError();

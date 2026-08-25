@@ -10,6 +10,10 @@ export interface HumanMessageEditorProps {
 	text: string;
 	content: ConversationContentSummary[];
 	pending: boolean;
+	/** Durable unresolved delivery: lock edits, but allow explicit safe recovery. */
+	locked?: boolean;
+	recoveryLabel?: string;
+	sendBlocked?: boolean;
 	busy: boolean;
 	error?: string;
 	onDraftChange?: (text: string) => void;
@@ -21,6 +25,9 @@ export function HumanMessageEditor({
 	text,
 	content,
 	pending,
+	locked = false,
+	recoveryLabel,
+	sendBlocked = false,
 	busy,
 	error,
 	onDraftChange,
@@ -30,7 +37,8 @@ export function HumanMessageEditor({
 	const { t } = useTranslation();
 	const [draft, setDraft] = useState(text);
 	const textarea = useRef<HTMLTextAreaElement>(null);
-	const sendDisabled = pending || busy || draft.trim().length === 0;
+	const sendDisabled =
+		pending || sendBlocked || busy || draft.trim().length === 0 || (locked && !recoveryLabel);
 	const busyMessage = busy ? t("chat.edit.stopCurrentTurn") : undefined;
 
 	useEffect(() => {
@@ -68,6 +76,7 @@ export function HumanMessageEditor({
 			}}
 			onKeyDown={onKeyDown}
 			aria-label={t("chat.edit.label")}
+			disabled={pending || locked}
 			autoFocus
 			rows={2}
 			className="chat-composer-scrollbar max-h-56 min-h-[3.25rem] w-full resize-none overflow-y-auto overscroll-contain bg-transparent px-0 py-1 text-sm leading-relaxed text-foreground outline-none"
@@ -91,7 +100,7 @@ export function HumanMessageEditor({
 				size="icon-sm"
 				variant="ghost"
 				onClick={onCancel}
-				disabled={pending}
+				disabled={pending || locked}
 				aria-label={t("chat.edit.cancel")}
 				title={t("chat.edit.cancel")}
 				className="size-7"
@@ -104,8 +113,8 @@ export function HumanMessageEditor({
 				size="icon-sm"
 				onClick={submit}
 				disabled={sendDisabled}
-				aria-label={t("chat.edit.send")}
-				title={busyMessage ?? t("chat.edit.sendShortcut")}
+				aria-label={recoveryLabel ?? t("chat.edit.send")}
+				title={busyMessage ?? recoveryLabel ?? t("chat.edit.sendShortcut")}
 				className={cn(
 					"size-7 rounded-full border-transparent",
 					sendDisabled

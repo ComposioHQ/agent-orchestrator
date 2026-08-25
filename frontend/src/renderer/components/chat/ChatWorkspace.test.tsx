@@ -16,6 +16,8 @@ import type { ConversationMessage, ConversationSnapshot } from "../../types/conv
 import { setApiBaseUrl } from "../../lib/api-client";
 import { useUiStore } from "../../stores/ui-store";
 import type { WorkspaceSession } from "../../types/workspace";
+import { readChatSessionDraft, writeChatInlineEdit } from "../../lib/chat-drafts";
+import { getChatDraftBoundary } from "../../lib/chat-draft-boundary";
 
 const writeText = vi.fn(async (_text: string) => undefined);
 const menuAction = vi.fn(async (_action: string) => undefined);
@@ -1056,6 +1058,478 @@ describe("automation reports", () => {
 });
 
 describe("ChatWorkspace message actions", () => {
+	it("restores the latest composer text after the same session fully remounts", async () => {
+		const first = idleSnapshot();
+		const draft = "persist every character across a full surface remount";
+		const firstView = render(<ChatWorkspace snapshot={first} onSend={vi.fn()} />);
+		await typeInLexicalEditor(screen.getByLabelText("Message the agent"), draft);
+
+		firstView.unmount();
+		render(
+			<ChatWorkspace
+				snapshot={{ ...first, conversationId: "replacement-controller-conversation" }}
+				onSend={vi.fn()}
+			/>,
+		);
+
+		await waitFor(() =>
+			expect(screen.getByLabelText("Message the agent")).toHaveTextContent(draft),
+		);
+	});
+
+	it("keeps independent composer drafts for remounted sessions", async () => {
+		const sessionA = idleSnapshot();
+		const sessionB = {
+			...sessionA,
+			sessionId: "independent-draft-session",
+			conversationId: "independent-draft-conversation",
+		};
+
+		const firstView = render(<ChatWorkspace snapshot={sessionA} onSend={vi.fn()} />);
+		await typeInLexicalEditor(screen.getByLabelText("Message the agent"), "session A draft");
+		firstView.unmount();
+
+		const secondView = render(<ChatWorkspace snapshot={sessionB} onSend={vi.fn()} />);
+		const secondComposer = screen.getByLabelText("Message the agent");
+		expect(secondComposer).toHaveTextContent("");
+		await typeInLexicalEditor(secondComposer, "session B draft");
+		secondView.unmount();
+
+		const restoredA = render(<ChatWorkspace snapshot={sessionA} onSend={vi.fn()} />);
+		expect(screen.getByLabelText("Message the agent")).toHaveTextContent("session A draft");
+		restoredA.unmount();
+
+		render(<ChatWorkspace snapshot={sessionB} onSend={vi.fn()} />);
+		expect(screen.getByLabelText("Message the agent")).toHaveTextContent("session B draft");
+	});
+
+	it("retains a rejected send and removes only the accepted session draft", async () => {
+		const snapshot = idleSnapshot();
+		const onSend = vi
+			.fn()
+			.mockRejectedValueOnce(new Error("offline"))
+			.mockResolvedValueOnce(undefined);
+		const firstView = render(<ChatWorkspace snapshot={snapshot} onSend={onSend} />);
+		const composer = screen.getByLabelText("Message the agent");
+		await typeInLexicalEditor(composer, "retry this exact draft");
+		fireEvent.keyDown(composer, { key: "Enter" });
+		await screen.findByText(/delivery wasn’t confirmed/);
+		const firstClientMessageId = onSend.mock.calls[0]?.[2];
+		expect(firstClientMessageId).toEqual(expect.any(String));
+		firstView.unmount();
+
+		const retryView = render(<ChatWorkspace snapshot={snapshot} onSend={onSend} />);
+		const restored = screen.getByLabelText("Message the agent");
+		expect(restored).toHaveTextContent("retry this exact draft");
+		await userEvent.click(screen.getByRole("button", { name: "Retry message safely" }));
+		await waitFor(() => expect(onSend).toHaveBeenCalledTimes(2));
+		expect(onSend.mock.calls[1]?.[2]).toBe(firstClientMessageId);
+		await waitFor(() =>
+			expect(readChatSessionDraft(snapshot.sessionId).composer.text).toBe(""),
+		);
+		await waitFor(() => expect(restored).toHaveTextContent(""));
+		retryView.unmount();
+
+		render(<ChatWorkspace snapshot={snapshot} onSend={onSend} />);
+		expect(screen.getByLabelText("Message the agent")).toHaveTextContent("");
+	});
+
+	it("locks and clears an accepted composer draft across a same-session remount", async () => {
+		const snapshot = idleSnapshot();
+		let acceptSend!: () => void;
+		const onSend = vi.fn(
+			() =>
+				new Promise<void>((resolve) => {
+					acceptSend = resolve;
+				}),
+		);
+		const firstView = render(<ChatWorkspace snapshot={snapshot} onSend={onSend} />);
+		const firstComposer = screen.getByLabelText("Message the agent");
+		await typeInLexicalEditor(firstComposer, "send exactly once");
+		fireEvent.keyDown(firstComposer, { key: "Enter" });
+		await waitFor(() => expect(onSend).toHaveBeenCalledTimes(1));
+		firstView.unmount();
+
+		render(<ChatWorkspace snapshot={snapshot} onSend={onSend} />);
+		const replacement = screen.getByLabelText("Message the agent");
+		expect(replacement).toHaveTextContent("send exactly once");
+		expect(replacement).toHaveAttribute("contenteditable", "false");
+		fireEvent.keyDown(replacement, { key: "Enter" });
+		expect(onSend).toHaveBeenCalledTimes(1);
+
+		await act(async () => acceptSend());
+		await waitFor(() => expect(replacement).toHaveTextContent(""));
+		expect(readChatSessionDraft(snapshot.sessionId).composer.text).toBe("");
+	});
+
+	it("restores an inline edit independently and cancelling it preserves the composer draft", async () => {
+		const user = userEvent.setup();
+		const snapshot = idleSnapshot();
+		const common = {
+			snapshot,
+			onEditMessage: vi.fn(async () => undefined),
+		};
+		const firstView = render(<ChatWorkspace {...common} />);
+		const composer = screen.getByLabelText("Message the agent");
+		await typeInLexicalEditor(composer, "independent composer draft");
+		await user.click(screen.getAllByRole("button", { name: "Edit user message" })[0]!);
+		const edit = screen.getByRole("textbox", { name: "Edit message" });
+		await user.clear(edit);
+		await user.type(edit, "persist this inline edit");
+		firstView.unmount();
+
+		const restoredView = render(<ChatWorkspace {...common} />);
+		expect(screen.getByLabelText("Message the agent")).toHaveTextContent(
+			"independent composer draft",
+		);
+		expect(await screen.findByRole("textbox", { name: "Edit message" })).toHaveValue(
+			"persist this inline edit",
+		);
+		await user.click(screen.getByRole("button", { name: "Cancel edit" }));
+		expect(screen.queryByRole("textbox", { name: "Edit message" })).not.toBeInTheDocument();
+		expect(screen.getByLabelText("Message the agent")).toHaveTextContent(
+			"independent composer draft",
+		);
+		restoredView.unmount();
+
+		render(<ChatWorkspace {...common} />);
+		expect(screen.queryByRole("textbox", { name: "Edit message" })).not.toBeInTheDocument();
+		expect(screen.getByLabelText("Message the agent")).toHaveTextContent(
+			"independent composer draft",
+		);
+	});
+
+	it("locks and clears an accepted inline edit across a same-session remount", async () => {
+		const user = userEvent.setup();
+		const snapshot = idleSnapshot();
+		let acceptEdit!: () => void;
+		const editPending = new Promise<void>((resolve) => {
+			acceptEdit = resolve;
+		});
+		const onEditMessage = vi.fn(() => editPending);
+		const common = { snapshot, onEditMessage };
+
+		const firstView = render(<ChatWorkspace {...common} />);
+		await user.click(screen.getAllByRole("button", { name: "Edit user message" })[0]!);
+		const firstEditor = screen.getByRole("textbox", { name: "Edit message" });
+		await user.clear(firstEditor);
+		await user.type(firstEditor, "accepted edit");
+		fireEvent.keyDown(firstEditor, { key: "Enter", ctrlKey: true });
+		await waitFor(() =>
+			expect(onEditMessage).toHaveBeenCalledWith(
+				"turn-1",
+				"accepted edit",
+				expect.any(String),
+			),
+		);
+		firstView.unmount();
+
+		render(<ChatWorkspace {...common} />);
+		const remountedEditor = await screen.findByRole("textbox", { name: "Edit message" });
+		expect(remountedEditor).toBeDisabled();
+		expect(remountedEditor).toHaveValue("accepted edit");
+
+		await act(async () => acceptEdit());
+		await waitFor(() =>
+			expect(screen.queryByRole("textbox", { name: "Edit message" })).not.toBeInTheDocument(),
+		);
+		expect(readChatSessionDraft(snapshot.sessionId).inlineEdit).toBeUndefined();
+	});
+
+	it("reconciles an accepted inline delivery without clearing or blocking a later edit", async () => {
+		const user = userEvent.setup();
+		const snapshot = idleSnapshot();
+		let acceptEdit!: () => void;
+		const onEditMessage = vi.fn(
+			() =>
+				new Promise<void>((resolve) => {
+					acceptEdit = resolve;
+				}),
+		);
+		const first = render(<ChatWorkspace snapshot={snapshot} onEditMessage={onEditMessage} />);
+		await user.click(screen.getAllByRole("button", { name: "Edit user message" })[0]!);
+		const editor = screen.getByRole("textbox", { name: "Edit message" });
+		await user.clear(editor);
+		await user.type(editor, "submitted edit revision");
+		fireEvent.keyDown(editor, { key: "Enter", ctrlKey: true });
+		await waitFor(() => expect(onEditMessage).toHaveBeenCalledTimes(1));
+		first.unmount();
+		writeChatInlineEdit(snapshot.sessionId, {
+			turnId: "turn-1",
+			text: "later edit revision",
+			content: [],
+		});
+
+		render(<ChatWorkspace snapshot={snapshot} onEditMessage={onEditMessage} />);
+		const restored = await screen.findByRole("textbox", { name: "Edit message" });
+		expect(restored).toHaveValue("later edit revision");
+		expect(restored).toBeDisabled();
+
+		await act(async () => acceptEdit());
+		await waitFor(() => expect(restored).not.toBeDisabled());
+		expect(restored).toHaveValue("later edit revision");
+		expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+		await waitFor(() => expect(getChatDraftBoundary(snapshot.sessionId)).toBeUndefined());
+	});
+
+	it("locks an accepted inline edit whose durable clear failed and clears without redispatch", async () => {
+		const user = userEvent.setup();
+		const snapshot = idleSnapshot();
+		const durableStorage = window.localStorage;
+		let failRemoval = true;
+		const storage = {
+			getItem: durableStorage.getItem.bind(durableStorage),
+			setItem: durableStorage.setItem.bind(durableStorage),
+			removeItem: (key: string) => {
+				if (failRemoval) throw new DOMException("blocked", "SecurityError");
+				durableStorage.removeItem(key);
+			},
+		} as unknown as Storage;
+		const localStorage = vi.spyOn(window, "localStorage", "get").mockReturnValue(storage);
+		const onEditMessage = vi.fn(async () => undefined);
+		const view = render(<ChatWorkspace snapshot={snapshot} onEditMessage={onEditMessage} />);
+		try {
+			await user.click(screen.getAllByRole("button", { name: "Edit user message" })[0]!);
+			const editor = screen.getByRole("textbox", { name: "Edit message" });
+			await user.clear(editor);
+			await user.type(editor, "accepted but not cleared");
+			fireEvent.keyDown(editor, { key: "Enter", ctrlKey: true });
+			await waitFor(() => expect(onEditMessage).toHaveBeenCalledTimes(1));
+			expect(await screen.findByRole("alert")).toHaveTextContent("couldn’t be cleared");
+			expect(getChatDraftBoundary(snapshot.sessionId)).toBe("pending-delivery");
+
+			fireEvent.keyDown(editor, { key: "Enter", ctrlKey: true });
+			expect(onEditMessage).toHaveBeenCalledTimes(1);
+
+			expect(editor).toBeDisabled();
+			failRemoval = false;
+			await user.click(
+				screen.getByRole("button", { name: "Finish clearing accepted edit" }),
+			);
+			await waitFor(() => expect(editor).not.toBeInTheDocument());
+			expect(onEditMessage).toHaveBeenCalledTimes(1);
+
+			await user.click(screen.getAllByRole("button", { name: "Edit user message" })[0]!);
+			const nextEditor = screen.getByRole("textbox", { name: "Edit message" });
+			await user.clear(nextEditor);
+			await user.type(nextEditor, "new edit after recovery");
+			fireEvent.keyDown(nextEditor, { key: "Enter", ctrlKey: true });
+			await waitFor(() => expect(onEditMessage).toHaveBeenCalledTimes(2));
+		} finally {
+			view.unmount();
+			localStorage.mockRestore();
+		}
+	});
+
+	it.each(["read", "write"] as const)(
+		"does not dispatch an inline edit until its exact draft survives a storage %s failure",
+		async (failure) => {
+			const user = userEvent.setup();
+			const snapshot = idleSnapshot();
+			const durableStorage = window.localStorage;
+			let storageAvailable = true;
+			const storage = {
+				getItem: (key: string) => {
+					if (!storageAvailable && failure === "read") {
+						throw new DOMException("blocked", "SecurityError");
+					}
+					return durableStorage.getItem(key);
+				},
+				setItem: (key: string, value: string) => {
+					if (!storageAvailable && failure === "write") {
+						throw new DOMException("full", "QuotaExceededError");
+					}
+					durableStorage.setItem(key, value);
+				},
+				removeItem: durableStorage.removeItem.bind(durableStorage),
+			} as Storage;
+			const localStorage = vi.spyOn(window, "localStorage", "get").mockReturnValue(storage);
+			const onEditMessage = vi.fn(async () => undefined);
+			const view = render(<ChatWorkspace snapshot={snapshot} onEditMessage={onEditMessage} />);
+			try {
+				await user.click(screen.getAllByRole("button", { name: "Edit user message" })[0]!);
+				const editor = screen.getByRole("textbox", { name: "Edit message" });
+				await user.clear(editor);
+				await user.type(editor, "prove exact inline edit");
+				storageAvailable = false;
+				fireEvent.keyDown(editor, { key: "Enter", ctrlKey: true });
+
+				await waitFor(() =>
+					expect(screen.getByRole("alert")).toHaveTextContent("Nothing was sent"),
+				);
+				expect(onEditMessage).not.toHaveBeenCalled();
+
+				storageAvailable = true;
+				fireEvent.keyDown(editor, { key: "Enter", ctrlKey: true });
+				await waitFor(() => expect(onEditMessage).toHaveBeenCalledTimes(1));
+				expect(onEditMessage).toHaveBeenCalledWith(
+					"turn-1",
+					"prove exact inline edit",
+					expect.any(String),
+				);
+			} finally {
+				view.unmount();
+				localStorage.mockRestore();
+			}
+		},
+	);
+
+	it("blocks destructive boundaries when an inline edit cannot be persisted", async () => {
+		const user = userEvent.setup();
+		const snapshot = idleSnapshot();
+		const durableStorage = window.localStorage;
+		const storage = {
+			getItem: durableStorage.getItem.bind(durableStorage),
+			removeItem: durableStorage.removeItem.bind(durableStorage),
+			setItem: (key: string, value: string) => {
+				if (key.includes(encodeURIComponent(snapshot.sessionId))) {
+					throw new DOMException("full", "QuotaExceededError");
+				}
+				durableStorage.setItem(key, value);
+			},
+		} as Storage;
+		const localStorage = vi.spyOn(window, "localStorage", "get").mockReturnValue(storage);
+		const view = render(
+			<ChatWorkspace snapshot={snapshot} onEditMessage={vi.fn(async () => undefined)} />,
+		);
+		try {
+			await user.click(screen.getAllByRole("button", { name: "Edit user message" })[0]!);
+			await waitFor(() =>
+				expect(getChatDraftBoundary(snapshot.sessionId)).toBe("persistence-failed"),
+			);
+			expect(screen.getByRole("alert")).toHaveTextContent("Inline edit couldn’t be saved");
+		} finally {
+			view.unmount();
+			localStorage.mockRestore();
+		}
+		expect(getChatDraftBoundary(snapshot.sessionId)).toBeUndefined();
+	});
+
+	it("carries pending attachment staging through a same-session remount", async () => {
+		const snapshot = idleSnapshot();
+		let finishStaging!: (paths: string[]) => void;
+		const onStageAttachments = vi.fn(
+			() =>
+				new Promise<string[]>((resolve) => {
+					finishStaging = resolve;
+				}),
+		);
+		const common = { snapshot, onSend: vi.fn(), onStageAttachments };
+		const firstView = render(<ChatWorkspace {...common} />);
+		fireEvent.paste(screen.getByLabelText("Message the agent"), {
+			clipboardData: {
+				files: [new File([new Uint8Array([1, 2, 3])], "pending.txt", { type: "text/plain" })],
+				items: [],
+			},
+		});
+		await waitFor(() => expect(onStageAttachments).toHaveBeenCalledTimes(1));
+		expect(screen.getByRole("status")).toHaveTextContent("Saving attachments");
+		firstView.unmount();
+
+		render(<ChatWorkspace {...common} />);
+		expect(screen.getByRole("status")).toHaveTextContent("Saving attachments");
+		await act(async () => finishStaging([".ao/attachments/attachment-pending.txt"]));
+
+		expect(await screen.findByLabelText("Remove pending.txt")).toBeInTheDocument();
+		await waitFor(() => expect(screen.queryByText("Saving attachments… Wait before leaving this chat.")).toBeNull());
+		expect(readChatSessionDraft(snapshot.sessionId).composer.attachments).toEqual([
+			expect.objectContaining({
+				name: "pending.txt",
+				path: ".ao/attachments/attachment-pending.txt",
+			}),
+		]);
+	});
+
+	it("keeps the replacement surface unsafe when remounted attachment persistence fails", async () => {
+		const snapshot = idleSnapshot();
+		const durableStorage = window.localStorage;
+		const storage = {
+			getItem: durableStorage.getItem.bind(durableStorage),
+			removeItem: durableStorage.removeItem.bind(durableStorage),
+			setItem: (key: string, value: string) => {
+				if (key.includes(encodeURIComponent(snapshot.sessionId))) {
+					throw new DOMException("full", "QuotaExceededError");
+				}
+				durableStorage.setItem(key, value);
+			},
+		} as Storage;
+		const localStorage = vi.spyOn(window, "localStorage", "get").mockReturnValue(storage);
+		let finishStaging!: (paths: string[]) => void;
+		const onStageAttachments = vi.fn(
+			() =>
+				new Promise<string[]>((resolve) => {
+					finishStaging = resolve;
+				}),
+		);
+		const common = { snapshot, onSend: vi.fn(), onStageAttachments };
+		const firstView = render(<ChatWorkspace {...common} />);
+		fireEvent.paste(screen.getByLabelText("Message the agent"), {
+			clipboardData: {
+				files: [new File([new Uint8Array([1])], "unsafe.txt", { type: "text/plain" })],
+				items: [],
+			},
+		});
+		await waitFor(() => expect(onStageAttachments).toHaveBeenCalledTimes(1));
+		firstView.unmount();
+		await act(async () => {
+			finishStaging([".ao/attachments/attachment-unsafe.txt"]);
+			await Promise.resolve();
+			await Promise.resolve();
+		});
+
+		const replacement = render(<ChatWorkspace {...common} />);
+		try {
+			expect(await screen.findByLabelText("Remove unsafe.txt")).toBeInTheDocument();
+			expect(await screen.findByRole("alert")).toHaveTextContent("Draft couldn’t be saved");
+			await waitFor(() =>
+				expect(getChatDraftBoundary(snapshot.sessionId)).toBe("persistence-failed"),
+			);
+		} finally {
+			replacement.unmount();
+			localStorage.mockRestore();
+		}
+	});
+
+	it("restores only durably staged attachments and does not resurrect them after an accepted send", async () => {
+		const snapshot = idleSnapshot();
+		const onStageAttachments = vi.fn(async () => [
+			".ao/attachments/attachment-durable.png",
+		]);
+		const onSend = vi.fn(async (_text: string) => undefined);
+		const common = { snapshot, onSend, onStageAttachments };
+		const firstView = render(<ChatWorkspace {...common} />);
+		const composer = screen.getByLabelText("Message the agent");
+		fireEvent.paste(composer, {
+			clipboardData: {
+				files: [
+					new File([new Uint8Array([137, 80, 78, 71])], "durable.png", {
+						type: "image/png",
+					}),
+				],
+				items: [],
+			},
+		});
+		await waitFor(() => expect(onStageAttachments).toHaveBeenCalledTimes(1));
+		await screen.findByLabelText("Remove durable.png");
+		firstView.unmount();
+
+		const restoredView = render(<ChatWorkspace {...common} />);
+		expect(await screen.findByLabelText("Remove durable.png")).toBeInTheDocument();
+		const restoredComposer = screen.getByLabelText("Message the agent");
+		await typeInLexicalEditor(restoredComposer, "send the restored attachment");
+		await userEvent.click(screen.getByRole("button", { name: "Send message" }));
+		await waitFor(() => expect(onSend).toHaveBeenCalledTimes(1));
+		expect(onSend.mock.calls[0]?.[0]).toContain(
+			".ao/attachments/attachment-durable.png",
+		);
+		expect(onStageAttachments).toHaveBeenCalledTimes(1);
+		restoredView.unmount();
+
+		render(<ChatWorkspace {...common} />);
+		expect(screen.queryByLabelText("Remove durable.png")).not.toBeInTheDocument();
+		expect(screen.getByLabelText("Message the agent")).toHaveTextContent("");
+	});
+
 	it("copies a human message as the exact text the user sent", async () => {
 		const user = userEvent.setup();
 		render(<ChatWorkspace snapshot={chatFixture} />);
@@ -1097,6 +1571,7 @@ describe("ChatWorkspace message actions", () => {
 			expect(onEditMessage).toHaveBeenCalledWith(
 				"turn-1",
 				"Check worktree state, including staged files.",
+				expect.any(String),
 			),
 		);
 		expect(onRollback).not.toHaveBeenCalled();
@@ -1142,7 +1617,13 @@ describe("ChatWorkspace message actions", () => {
 		await user.type(editor, "keep this draft");
 		fireEvent.keyDown(editor, { key: "Enter", ctrlKey: true });
 
-		await waitFor(() => expect(onEditMessage).toHaveBeenCalledWith("turn-1", "keep this draft"));
+		await waitFor(() =>
+			expect(onEditMessage).toHaveBeenCalledWith(
+				"turn-1",
+				"keep this draft",
+				expect.any(String),
+			),
+		);
 		expect(screen.getByRole("textbox", { name: "Edit message" })).toHaveValue("keep this draft");
 		expect(screen.getByRole("alert")).toHaveTextContent("branch failed");
 
@@ -1249,7 +1730,9 @@ describe("ChatWorkspace reviewer tabs", () => {
 			onOpenReviewerTerminal: vi.fn(),
 			onSelectChat: vi.fn(),
 			onEditMessage: vi.fn(async () => undefined),
-			onStageAttachments: vi.fn(async () => []),
+			onStageAttachments: vi.fn(async () => [
+				".ao/attachments/attachment-review.png",
+			]),
 		};
 		const view = render(<ChatWorkspace {...common} />);
 		const composer = screen.getByRole("combobox", { name: "Message the agent" });

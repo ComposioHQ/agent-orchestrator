@@ -205,6 +205,30 @@ describe("useConversation snapshot mapping", () => {
 });
 
 describe("conversation branching commands", () => {
+	it("threads caller-owned idempotency ids through send, steer, and inline edit", async () => {
+		postMock.mockResolvedValue({ data: {}, error: undefined });
+		const { result } = renderHook(() => useConversationCommands("ao-1"), { wrapper });
+
+		await act(async () => {
+			await result.current.send({ text: "send once", clientMessageId: "send-stable-1" });
+			await result.current.steer("steer once", "steer-stable-1");
+			await result.current.editMessage("turn-2", "edit once", "edit-stable-1");
+		});
+
+		expect(postMock).toHaveBeenCalledWith(
+			"/api/v1/sessions/{sessionId}/conversation/messages",
+			expect.objectContaining({ body: expect.objectContaining({ clientMessageId: "send-stable-1" }) }),
+		);
+		expect(postMock).toHaveBeenCalledWith(
+			"/api/v1/sessions/{sessionId}/conversation/steer",
+			expect.objectContaining({ body: { text: "steer once", clientMessageId: "steer-stable-1" } }),
+		);
+		expect(postMock).toHaveBeenCalledWith(
+			"/api/v1/sessions/{sessionId}/conversation/turns/{turnId}/edit",
+			expect.objectContaining({ body: { text: "edit once", clientMessageId: "edit-stable-1" } }),
+		);
+	});
+
 	it("edits through the dedicated endpoint without rolling back", async () => {
 		postMock.mockResolvedValue({ data: {}, error: undefined });
 		const { result } = renderHook(() => useConversationCommands("ao-1"), { wrapper });

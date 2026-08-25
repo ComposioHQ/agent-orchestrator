@@ -1,12 +1,14 @@
-import { renderHook } from "@testing-library/react";
+import { renderHook, waitFor } from "@testing-library/react";
 import { act } from "react";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
+	discardPendingFileAttachments,
 	MAX_ATTACHMENTS,
 	MAX_ATTACHMENT_BYTES,
 	MAX_ATTACHMENTS_BYTES,
 	useFileAttachments,
+	type FileAttachment,
 } from "./useFileAttachments";
 
 const file = (name: string, bytes = 8, type = "text/plain") =>
@@ -24,6 +26,182 @@ describe("useFileAttachments", () => {
 		expect(result.current.attachments[0]?.mimeType).toBe("text/plain");
 		expect(result.current.attachments[0]?.name).toBe("notes.txt");
 		expect(result.current.error).toBeNull();
+	});
+
+	it("keeps the whole read-and-stage window pending and serializes concurrent batches", async () => {
+		const releases: Array<() => void> = [];
+		let activePreparations = 0;
+		let maxActivePreparations = 0;
+		const prepareAttachments = vi.fn(
+			(attachments: FileAttachment[]) =>
+				new Promise<FileAttachment[]>((resolve) => {
+					activePreparations += 1;
+					maxActivePreparations = Math.max(maxActivePreparations, activePreparations);
+					releases.push(() => {
+						activePreparations -= 1;
+						resolve(
+							attachments.map((attachment) => ({
+								...attachment,
+								stagedPath: `.ao/attachments/${attachment.name}`,
+							})),
+						);
+					});
+				}),
+		);
+		const { result } = renderHook(() => useFileAttachments({ prepareAttachments }));
+		let first!: Promise<void>;
+		let second!: Promise<void>;
+		act(() => {
+			first = result.current.addFiles([file("first.txt")]);
+			second = result.current.addFiles([file("second.txt")]);
+		});
+
+		expect(result.current.preparing).toBe(true);
+		expect(result.current.attachments).toHaveLength(0);
+		await waitFor(() => expect(prepareAttachments).toHaveBeenCalledTimes(1));
+		await act(async () => releases.shift()?.());
+		await waitFor(() => expect(prepareAttachments).toHaveBeenCalledTimes(2));
+		expect(result.current.preparing).toBe(true);
+		await act(async () => {
+			releases.shift()?.();
+			await Promise.all([first, second]);
+		});
+
+		expect(maxActivePreparations).toBe(1);
+		expect(result.current.preparing).toBe(false);
+		expect(result.current.attachments.map((attachment) => attachment.name)).toEqual([
+			"first.txt",
+			"second.txt",
+		]);
+	});
+
+	it("waits for every rapidly queued batch before returning the settled payload", async () => {
+		const releases: Array<() => void> = [];
+		const prepareAttachments = vi.fn(
+			(attachments: FileAttachment[]) =>
+				new Promise<FileAttachment[]>((resolve) => {
+					releases.push(() => resolve(attachments));
+				}),
+		);
+		const { result } = renderHook(() => useFileAttachments({ prepareAttachments }));
+		let first!: Promise<void>;
+		let second!: Promise<void>;
+		let settled: Awaited<ReturnType<typeof result.current.toSettledPayload>> | undefined;
+		act(() => {
+			first = result.current.addFiles([file("first.txt")]);
+			second = result.current.addFiles([file("second.txt")]);
+			void result.current.toSettledPayload().then((payload) => {
+				settled = payload;
+			});
+		});
+
+		await waitFor(() => expect(prepareAttachments).toHaveBeenCalledTimes(1));
+		await act(async () => releases.shift()?.());
+		await waitFor(() => expect(prepareAttachments).toHaveBeenCalledTimes(2));
+		expect(settled).toBeUndefined();
+
+		await act(async () => {
+			releases.shift()?.();
+			await Promise.all([first, second]);
+		});
+		await waitFor(() => expect(settled).toHaveLength(2));
+		expect(settled?.every((attachment) => attachment.mimeType === "text/plain")).toBe(true);
+	});
+
+	it("does not resurrect pending attachments after their session is explicitly discarded", async () => {
+		const sessionId = "discard-pending-attachments";
+		let finishStaging!: (attachments: FileAttachment[]) => void;
+		const prepareAttachments = vi.fn(
+			() =>
+				new Promise<FileAttachment[]>((resolve) => {
+					finishStaging = resolve;
+				}),
+		);
+		const first = renderHook(() =>
+			useFileAttachments({ initialKey: sessionId, prepareAttachments }),
+		);
+		let pending!: Promise<void>;
+		act(() => {
+			pending = first.result.current.addFiles([file("discard-me.txt")]);
+		});
+		await waitFor(() => expect(prepareAttachments).toHaveBeenCalledTimes(1));
+
+		act(() => discardPendingFileAttachments(sessionId));
+		await act(async () => {
+			finishStaging([
+				{
+					id: "discarded",
+					mimeType: "text/plain",
+					bytes: 8,
+					name: "discard-me.txt",
+					data: "AQ==",
+					stagedPath: ".ao/attachments/discard-me.txt",
+				},
+			]);
+			await pending;
+		});
+		expect(first.result.current.attachments).toEqual([]);
+		expect(first.result.current.preparing).toBe(false);
+		first.unmount();
+
+		const replacement = renderHook(() => useFileAttachments({ initialKey: sessionId }));
+		expect(replacement.result.current.attachments).toEqual([]);
+		expect(replacement.result.current.preparing).toBe(false);
+	});
+
+	it("ignores a discarded completion that resolves after a replacement attachment", async () => {
+		const sessionId = "discard-out-of-order-attachments";
+		let finishOld!: (attachments: FileAttachment[]) => void;
+		const first = renderHook(() =>
+			useFileAttachments({
+				initialKey: sessionId,
+				prepareAttachments: () =>
+					new Promise<FileAttachment[]>((resolve) => {
+						finishOld = resolve;
+					}),
+			}),
+		);
+		let oldPending!: Promise<void>;
+		act(() => {
+			oldPending = first.result.current.addFiles([file("old.txt")]);
+		});
+		await waitFor(() => expect(first.result.current.preparing).toBe(true));
+		await waitFor(() => expect(finishOld).toBeTypeOf("function"));
+		act(() => discardPendingFileAttachments(sessionId));
+		first.unmount();
+
+		const replacement = renderHook(() =>
+			useFileAttachments({
+				initialKey: sessionId,
+				prepareAttachments: async (attachments) =>
+					attachments.map((attachment) => ({
+						...attachment,
+						stagedPath: `.ao/attachments/${attachment.name}`,
+					})),
+			}),
+		);
+		await act(async () => {
+			await replacement.result.current.addFiles([file("new.txt")]);
+		});
+		expect(replacement.result.current.attachments.map((attachment) => attachment.name)).toEqual([
+			"new.txt",
+		]);
+
+		await act(async () => {
+			finishOld([
+				{
+					id: "old",
+					mimeType: "text/plain",
+					bytes: 8,
+					name: "old.txt",
+					stagedPath: ".ao/attachments/old.txt",
+				},
+			]);
+			await oldPending;
+		});
+		expect(replacement.result.current.attachments.map((attachment) => attachment.name)).toEqual([
+			"new.txt",
+		]);
 	});
 
 	it("rejects unsupported SVG files with inline feedback", async () => {
