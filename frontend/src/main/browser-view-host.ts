@@ -1372,12 +1372,12 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 							: undefined;
 					const nth = typeof args.nth === "number" && Number.isFinite(args.nth) ? Math.trunc(args.nth) : undefined;
 					const nativeArgsForRef = (ref: string) => (value !== undefined ? { ref, text: value } : { ref });
-					const snapshotOnce = async (): Promise<string> => {
+					const snapshotOnce = async (): Promise<{ text: string; refs: unknown }> => {
 						const result = await runNative("snapshot", { interactive: true });
 						if (typeof result.snapshot !== "string") {
 							throw browserError("BROWSER_AUTOMATION_INVALID_OUTPUT", "Browser snapshot output was invalid");
 						}
-						return result.snapshot;
+						return { text: result.snapshot, refs: result.refs };
 					};
 					const unresolved = (outcome: "ambiguous" | "no-match", candidates: unknown, snapshot: string) => ({
 						outcome,
@@ -1388,8 +1388,8 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 					});
 
 					const snapshot1 = await snapshotOnce();
-					const match1 = matchInstruction(instruction, snapshot1, { nth });
-					if (match1.outcome !== "matched") return unresolved(match1.outcome, "candidates" in match1 ? match1.candidates : undefined, snapshot1);
+					const match1 = matchInstruction(instruction, snapshot1.refs, { nth });
+					if (match1.outcome !== "matched") return unresolved(match1.outcome, "candidates" in match1 ? match1.candidates : undefined, snapshot1.text);
 
 					try {
 						const result = await runNative(verb, nativeArgsForRef(match1.candidate.ref));
@@ -1415,9 +1415,9 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 						// reality" convention elsewhere in this file).
 						if (!isStaleReferenceError(error)) throw error;
 						const snapshot2 = await snapshotOnce();
-						const match2 = matchInstruction(instruction, snapshot2, { nth });
+						const match2 = matchInstruction(instruction, snapshot2.refs, { nth });
 						if (match2.outcome !== "matched") {
-							return unresolved(match2.outcome, "candidates" in match2 ? match2.candidates : undefined, snapshot2);
+							return unresolved(match2.outcome, "candidates" in match2 ? match2.candidates : undefined, snapshot2.text);
 						}
 						const result = await runNative(verb, nativeArgsForRef(match2.candidate.ref));
 						return {
@@ -1672,18 +1672,7 @@ function isAgentBrowserCommandFailure(error: unknown): boolean {
 const ACT_VERBS = new Set(["click", "dblclick", "focus", "hover", "fill", "type", "check", "uncheck"]);
 
 function isStaleReferenceError(error: unknown): boolean {
-	if (!error || typeof error !== "object" || !("code" in error)) return false;
-	if (error.code === "STALE_REFERENCE") return true;
-	// Defensive fallback: parseAgentBrowserJSON (agent-browser-runtime.ts) does
-	// not yet reliably preserve a structured error code from the real
-	// agent-browser binary's JSON output for every failure shape, so a genuine
-	// stale ref can still surface as the generic AGENT_BROWSER_COMMAND_FAILED.
-	return (
-		error.code === "AGENT_BROWSER_COMMAND_FAILED" &&
-		"message" in error &&
-		typeof error.message === "string" &&
-		/stale|no longer|expired/i.test(error.message)
-	);
+	return Boolean(error && typeof error === "object" && "code" in error && error.code === "STALE_REFERENCE");
 }
 
 function tabResult(entry: BrowserEntry, active: boolean): BrowserTabState & { untrustedExternalContent: true } {

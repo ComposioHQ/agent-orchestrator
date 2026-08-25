@@ -111,7 +111,7 @@ func newBrowserCommand(ctx *commandContext) *cobra.Command {
 		Args: exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			actArgs := map[string]any{"instruction": args[0], "action": actVerb}
-			if actValue != "" {
+			if cmd.Flags().Changed("value") {
 				actArgs["value"] = actValue
 			}
 			if actNthSet {
@@ -706,7 +706,7 @@ func writeBrowserActResult(cmd *cobra.Command, result map[string]any) error {
 		if retried {
 			suffix = " (after retrying a stale reference)"
 		}
-		_, err := fmt.Fprintf(cmd.OutOrStdout(), "Acted on: %s %q [ref=%s]%s\n", role, browserUntrustedText(name), ref, suffix)
+		_, err := fmt.Fprintf(cmd.OutOrStdout(), "Acted on: %s [ref=%s]%s\n%s\n", role, ref, suffix, browserUntrustedText(name))
 		return err
 	case "ambiguous":
 		candidates, _ := result["candidates"].([]any)
@@ -718,7 +718,7 @@ func writeBrowserActResult(cmd *cobra.Command, result map[string]any) error {
 			role, _ := candidate["role"].(string)
 			name, _ := candidate["name"].(string)
 			ref, _ := candidate["ref"].(string)
-			if _, err := fmt.Fprintf(cmd.OutOrStdout(), "  %s %q [ref=%s]\n", role, browserUntrustedText(name), ref); err != nil {
+			if _, err := fmt.Fprintf(cmd.OutOrStdout(), "  %s [ref=%s]\n%s\n", role, ref, browserUntrustedText(name)); err != nil {
 				return err
 			}
 		}

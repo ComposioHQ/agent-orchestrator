@@ -482,7 +482,9 @@ describe("browser:act", () => {
 
 	it("resolves an instruction to a ref via snapshot, then performs the action", async () => {
 		const { host, runAction } = setupActHost(async (_sessionId, action, args) => {
-			if (action === "snapshot") return { snapshot: '- button "Submit" [ref=e3]', refs: {} };
+			if (action === "snapshot") {
+				return { snapshot: '- button "Wrong display text" [ref=e99]', refs: { e3: { role: "button", name: "Submit" } } };
+			}
 			if (action === "click") return { clicked: args.ref };
 			return {};
 		});
@@ -505,7 +507,7 @@ describe("browser:act", () => {
 			if (action === "snapshot") {
 				snapshotCalls += 1;
 				const ref = snapshotCalls === 1 ? "e3" : "e5";
-				return { snapshot: `- button "Submit" [ref=${ref}]`, refs: {} };
+				return { snapshot: `- button "Submit" [ref=${ref}]`, refs: { [ref]: { role: "button", name: "Submit" } } };
 			}
 			if (action === "click") {
 				if (args.ref === "e3") throw Object.assign(new Error("Reference no longer resolves"), { code: "STALE_REFERENCE" });
@@ -529,7 +531,7 @@ describe("browser:act", () => {
 		const { host } = setupActHost(async (_sessionId, action) => {
 			if (action === "snapshot") {
 				snapshotCalls += 1;
-				return { snapshot: '- button "Submit" [ref=e3]', refs: {} };
+				return { snapshot: '- button "Submit" [ref=e3]', refs: { e3: { role: "button", name: "Submit" } } };
 			}
 			throw Object.assign(new Error("Reference no longer resolves"), { code: "STALE_REFERENCE" });
 		});
@@ -540,10 +542,32 @@ describe("browser:act", () => {
 		expect(snapshotCalls).toBe(2);
 	});
 
+	it("does not retry a generic command failure whose message says expired", async () => {
+		let snapshotCalls = 0;
+		let clickCalls = 0;
+		const { host } = setupActHost(async (_sessionId, action) => {
+			if (action === "snapshot") {
+				snapshotCalls += 1;
+				return { snapshot: '- button "Submit" [ref=e3]', refs: { e3: { role: "button", name: "Submit" } } };
+			}
+			clickCalls += 1;
+			throw Object.assign(new Error("Browser session expired"), { code: "AGENT_BROWSER_COMMAND_FAILED" });
+		});
+
+		await expect(host.execute("sess-1", "act", { instruction: "the submit button" })).rejects.toMatchObject({
+			code: "AGENT_BROWSER_COMMAND_FAILED",
+		});
+		expect(snapshotCalls).toBe(1);
+		expect(clickCalls).toBe(1);
+	});
+
 	it("reports ambiguous without performing an action when multiple elements match equally", async () => {
 		const { host, runAction } = setupActHost(async (_sessionId, action) => {
 			if (action === "snapshot") {
-				return { snapshot: ['- button "Add to Cart" [ref=e1]', '- button "Add to Cart" [ref=e2]'].join("\n"), refs: {} };
+				return {
+					snapshot: ['- button "Add to Cart" [ref=e1]', '- button "Add to Cart" [ref=e2]'].join("\n"),
+					refs: { e1: { role: "button", name: "Add to Cart" }, e2: { role: "button", name: "Add to Cart" } },
+				};
 			}
 			return {};
 		});
@@ -569,7 +593,10 @@ describe("browser:act", () => {
 	it("uses --nth to disambiguate a tie instead of declining", async () => {
 		const { host } = setupActHost(async (_sessionId, action, args) => {
 			if (action === "snapshot") {
-				return { snapshot: ['- button "Add to Cart" [ref=e1]', '- button "Add to Cart" [ref=e2]'].join("\n"), refs: {} };
+				return {
+					snapshot: ['- button "Add to Cart" [ref=e1]', '- button "Add to Cart" [ref=e2]'].join("\n"),
+					refs: { e1: { role: "button", name: "Add to Cart" }, e2: { role: "button", name: "Add to Cart" } },
+				};
 			}
 			if (action === "click") return { clicked: args.ref };
 			return {};

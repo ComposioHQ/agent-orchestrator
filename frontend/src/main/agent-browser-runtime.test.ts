@@ -432,6 +432,30 @@ describe("agent-browser structured output", () => {
 		expect(result._boundary).toBeUndefined();
 		expect(result.untrustedExternalContent).toBe(true);
 	});
+
+	it("keeps non-stale native command failures on the generic recovery code", () => {
+		let thrown: unknown;
+		try {
+			parseAgentBrowserJSON(
+				JSON.stringify({ success: false, error: { code: "TAB_NOT_FOUND", message: "Tab t2 not found" } }),
+			);
+		} catch (error) {
+			thrown = error;
+		}
+		expect(thrown).toMatchObject({ code: "AGENT_BROWSER_COMMAND_FAILED", message: "Tab t2 not found" });
+	});
+
+	it("preserves the stale-reference code used by act retry", () => {
+		let thrown: unknown;
+		try {
+			parseAgentBrowserJSON(
+				JSON.stringify({ success: false, error: { code: "STALE_REFERENCE", message: "Reference expired" } }),
+			);
+		} catch (error) {
+			thrown = error;
+		}
+		expect(thrown).toMatchObject({ code: "STALE_REFERENCE", message: "Reference expired" });
+	});
 });
 
 const nativeBinary = process.env.AO_AGENT_BROWSER_TEST_BINARY;
