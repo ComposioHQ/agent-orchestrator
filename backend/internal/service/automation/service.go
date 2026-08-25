@@ -14,7 +14,7 @@ import (
 
 const (
 	maxDisplayNameRunes = 120
-	maxPromptRunes      = 4096
+	maxPromptBytes      = 4096
 )
 
 // Store is the persistence surface needed for definition management.
@@ -100,8 +100,8 @@ func (s *Service) Create(ctx context.Context, input CreateInput) (domain.Automat
 		return domain.Automation{}, apierr.Invalid("INVALID_AUTOMATION_NAME", "Automation name must be between 1 and 120 characters", nil)
 	}
 	prompt := strings.TrimSpace(input.Prompt)
-	if prompt == "" || utf8.RuneCountInString(prompt) > maxPromptRunes {
-		return domain.Automation{}, apierr.Invalid("INVALID_AUTOMATION_PROMPT", "Automation prompt must be between 1 and 4096 characters", nil)
+	if prompt == "" || len(prompt) > maxPromptBytes {
+		return domain.Automation{}, apierr.Invalid("INVALID_AUTOMATION_PROMPT", "Automation prompt must be between 1 and 4096 bytes", nil)
 	}
 	if input.Kind != domain.KindWorker && input.Kind != domain.KindOrchestrator {
 		return domain.Automation{}, apierr.Invalid("INVALID_AUTOMATION_KIND", "Automation kind must be worker or orchestrator", nil)
@@ -183,8 +183,8 @@ func (s *Service) Update(ctx context.Context, id domain.AutomationID, input Upda
 	}
 	if input.Prompt != nil {
 		rec.Prompt = strings.TrimSpace(*input.Prompt)
-		if rec.Prompt == "" || utf8.RuneCountInString(rec.Prompt) > maxPromptRunes {
-			return domain.Automation{}, apierr.Invalid("INVALID_AUTOMATION_PROMPT", "Automation prompt must be between 1 and 4096 characters", nil)
+		if rec.Prompt == "" || len(rec.Prompt) > maxPromptBytes {
+			return domain.Automation{}, apierr.Invalid("INVALID_AUTOMATION_PROMPT", "Automation prompt must be between 1 and 4096 bytes", nil)
 		}
 	}
 	if input.Kind != nil {

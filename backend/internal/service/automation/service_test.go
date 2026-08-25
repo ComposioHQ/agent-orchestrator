@@ -3,12 +3,29 @@ package automation
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/apierr"
 )
+
+func TestCreateRejectsPromptOverSessionSpawnByteLimit(t *testing.T) {
+	svc := New(Deps{Store: newFakeStore(), Clock: func() time.Time {
+		return time.Date(2026, time.March, 6, 15, 0, 0, 0, time.UTC)
+	}})
+
+	_, err := svc.Create(context.Background(), CreateInput{
+		ProjectID: "scheduled", DisplayName: "Unicode overflow",
+		Prompt: strings.Repeat("界", 1366), Kind: domain.KindWorker,
+		RRule: "FREQ=DAILY;BYHOUR=9;BYMINUTE=0;BYSECOND=0", Timezone: "UTC",
+	})
+	var apiErr *apierr.Error
+	if !errors.As(err, &apiErr) || apiErr.Code != "INVALID_AUTOMATION_PROMPT" {
+		t.Fatalf("Create error = %v, want INVALID_AUTOMATION_PROMPT", err)
+	}
+}
 
 type fakeStore struct {
 	projects    map[string]domain.ProjectRecord

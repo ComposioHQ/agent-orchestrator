@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("@tanstack/react-router", () => ({ useNavigate: () => vi.fn() }));
+vi.mock("../hooks/useAgentsQuery", () => ({ useAgentsQuery: () => ({ data: { supported: [{ id: "codex", label: "Codex" }] } }) }));
 vi.mock("../hooks/useWorkspaceQuery", () => ({ useWorkspaceQuery: () => ({ data: [{ id: "demo", name: "Demo" }] }) }));
 vi.mock("../hooks/useAutomations", () => ({
 	useAutomations: () => ({ data: mocks.automations, isLoading: false, error: null }),
@@ -25,6 +26,13 @@ describe("AutomationsView", () => {
 		expect(screen.getByRole("heading", { name: "Automations" })).toBeInTheDocument();
 		expect(screen.getByText("No automations yet")).toBeInTheDocument();
 		expect(screen.getAllByRole("button", { name: /create automation/i })).not.toHaveLength(0);
+	});
+
+	it("offers the daemon agent catalog when creating an automation", async () => {
+		render(<AutomationsView />);
+		screen.getAllByRole("button", { name: /create automation/i })[0].click();
+		expect(await screen.findByRole("option", { name: "Project default" })).toBeInTheDocument();
+		expect(screen.getByRole("option", { name: "Codex" })).toBeInTheDocument();
 	});
 
 	it("exposes accessible toggle, delete, and run-history controls", () => {
