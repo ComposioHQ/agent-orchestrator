@@ -24,6 +24,10 @@ function repositoryName(repositoryUrl: string): string {
 	return pathname.replace(/\.git$/i, "");
 }
 
+function repositoryKey(repositoryUrl: string): string {
+	return repositoryUrl.trim().replace(/\/+$/, "").replace(/\.git$/i, "");
+}
+
 export function CreateCloudProjectDialog({
 	onBack,
 	onOpenChange,
@@ -121,22 +125,34 @@ export function CreateCloudProjectDialog({
 				if (connectionFailure) throw connectionFailure;
 				throw new Error(t("createProject.cloudNoHarness"));
 			}
-			project = await aoBridge.cloud.createProject(overview.organization.id, {
-				...form,
-				workerAgent: harness,
-				orchestratorAgent: harness,
-			});
+			project = overview.projects.find(
+				(candidate) => repositoryKey(candidate.repositoryUrl) === repositoryKey(form.repositoryUrl),
+			) ?? null;
+			if (!project) {
+				project = await aoBridge.cloud.createProject(overview.organization.id, {
+					...form,
+					workerAgent: harness,
+					orchestratorAgent: harness,
+				});
+			}
 			// The project is durable before its initial orchestrator finishes
 			// provisioning. Refresh the normal project list immediately so a slow or
 			// interrupted sandbox create cannot leave a successfully created project
 			// hidden from the user.
 			await queryClient.invalidateQueries({ queryKey: cloudWorkspaceQueryKey });
+			const existingOrchestrator = overview.sessions.find(
+				(session) => session.projectId === project?.id && session.kind === "orchestrator" && !session.isTerminated,
+			);
+			if (existingOrchestrator) {
+				setCreated({ project, session: existingOrchestrator });
+				return;
+			}
 			const session = await aoBridge.cloud.createSession({
 				orgId: overview.organization.id,
 				projectId: project.id,
 				kind: "orchestrator",
 				harness,
-				displayName: `${form.displayName} orchestrator`,
+				displayName: `${project.displayName} orchestrator`,
 				prompt: "",
 			});
 			setCreated({ project, session });

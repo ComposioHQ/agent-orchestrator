@@ -154,6 +154,7 @@ async function fetchCloudWorkspaces(): Promise<WorkspaceSummary[]> {
 				orchestratorAgent: orchestratorAgent ? toAgentProvider(orchestratorAgent) : undefined,
 				sessions: sessions.map((session) => ({
 					id: session.id,
+					terminalHandleId: session.id,
 					executionLocation: "cloud" as const,
 					workspaceId: project.id,
 					workspaceName: project.displayName,

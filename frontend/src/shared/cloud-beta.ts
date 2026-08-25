@@ -39,6 +39,22 @@ export interface CloudSessionSummary {
 	updatedAt: string;
 }
 
+export interface CloudTerminalOpenInput {
+	connectionId: string;
+	orgId: string;
+	sessionId: string;
+	kind: "agent" | "workspace";
+	cols: number;
+	rows: number;
+}
+
+export type CloudTerminalEvent =
+	| { connectionId: string; type: "opened" }
+	| { connectionId: string; type: "data"; data: string }
+	| { connectionId: string; type: "exited" }
+	| { connectionId: string; type: "error"; message: string }
+	| { connectionId: string; type: "connection"; state: "open" | "closed" };
+
 export interface CloudHarnessConnection {
 	harness: CloudHarness;
 	connected: boolean;

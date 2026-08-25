@@ -30,6 +30,8 @@ import type {
 	CloudHarness,
 	CloudProject,
 	CloudSessionSummary,
+	CloudTerminalEvent,
+	CloudTerminalOpenInput,
 	ConnectCloudHarnessResult,
 	CreateCloudProjectInput,
 	CreateCloudSessionInput,
@@ -429,6 +431,21 @@ const api = {
 			ipcRenderer.invoke("cloud:connectLocalHarness", harness) as Promise<ConnectCloudHarnessResult>,
 		disconnectHarness: (harness: CloudHarness) =>
 			ipcRenderer.invoke("cloud:disconnectHarness", harness) as Promise<void>,
+		openTerminal: (input: CloudTerminalOpenInput) =>
+			ipcRenderer.invoke("cloud:terminalOpen", input) as Promise<void>,
+		sendTerminalInput: (connectionId: string, input: string) =>
+			ipcRenderer.send("cloud:terminalInput", connectionId, input),
+		resizeTerminal: (connectionId: string, cols: number, rows: number) =>
+			ipcRenderer.send("cloud:terminalResize", connectionId, cols, rows),
+		closeTerminal: (connectionId: string) =>
+			ipcRenderer.send("cloud:terminalClose", connectionId),
+		onTerminalEvent: (listener: (event: CloudTerminalEvent) => void) => {
+			const wrapped = (_event: Electron.IpcRendererEvent, terminalEvent: CloudTerminalEvent) => listener(terminalEvent);
+			ipcRenderer.on("cloud:terminalEvent", wrapped);
+			return () => {
+				ipcRenderer.off("cloud:terminalEvent", wrapped);
+			};
+		},
 		signIn: () => ipcRenderer.invoke("cloud:signIn") as Promise<void>,
 		signOut: () => ipcRenderer.invoke("cloud:signOut") as Promise<void>,
 		onSessionChanged: (listener: (account: CloudAccount | null) => void) => {

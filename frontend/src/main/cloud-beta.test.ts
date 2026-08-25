@@ -56,8 +56,8 @@ describe("cloud harness credentials", () => {
 		};
 		await writeFile(path.join(codexHome, "auth.json"), JSON.stringify(auth), { mode: 0o600 });
 		vi.stubEnv("CODEX_HOME", codexHome);
-		vi.stubEnv("CODEX_ACCESS_TOKEN", "");
-		vi.stubEnv("OPENAI_API_KEY", "");
+		vi.stubEnv("CODEX_ACCESS_TOKEN", "inherited-short-lived-token");
+		vi.stubEnv("OPENAI_API_KEY", "inherited-api-key");
 		const fetchMock = vi.fn().mockResolvedValue(
 			new Response(JSON.stringify({ providerConnection: { id: "connection_1" } }), {
 				status: 200,

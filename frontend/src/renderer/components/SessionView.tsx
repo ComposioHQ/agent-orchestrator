@@ -49,6 +49,7 @@ import { useWorkspaceQuery } from "../hooks/useWorkspaceQuery";
 import { useWindowFullScreen } from "../hooks/useWindowFullScreen";
 import { apiClient, apiErrorMessage } from "../lib/api-client";
 import { SHELL_PANEL_SPRING } from "../lib/motion-spring";
+import { createCloudTerminalMux } from "../lib/cloud-terminal-mux";
 import { hidesShellTopbar, isMacPlatform } from "../lib/platform";
 import { useShell } from "../lib/shell-context";
 import { cn } from "../lib/utils";
@@ -416,7 +417,16 @@ export function SessionView({ sessionId }: SessionViewProps) {
 
 	useEffect(() => stopTerminalLiveResize, [stopTerminalLiveResize]);
 
-	const session = workspaces.flatMap((workspace) => workspace.sessions).find((s) => s.id === sessionId);
+	const sessionWorkspace = workspaces.find((workspace) =>
+		workspace.sessions.some((candidate) => candidate.id === sessionId),
+	);
+	const session = sessionWorkspace?.sessions.find((candidate) => candidate.id === sessionId);
+	const createSessionMux = useMemo(
+		() => sessionWorkspace?.executionLocation === "cloud" && sessionWorkspace.cloudOrgId
+			? () => createCloudTerminalMux(sessionWorkspace.cloudOrgId!, sessionId)
+			: undefined,
+		[sessionId, sessionWorkspace?.cloudOrgId, sessionWorkspace?.executionLocation],
+	);
 	const interfaceSwitch = useSessionInterfaceTransition(session?.id);
 	const reviewerQuery = useQuery({
 		queryKey: ["session-reviews", sessionId],
@@ -1169,6 +1179,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 								/>
 							) : (
 								<CenterPane
+									createMux={createSessionMux}
 									agentInputDisabled={
 										(interfaceSwitch.starting || activeInterfaceTransition) && session?.mode === "tui"
 									}

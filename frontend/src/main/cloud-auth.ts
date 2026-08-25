@@ -19,6 +19,7 @@ import {
   loadCloudBetaOverview,
 } from "./cloud-beta";
 import { readUiSettings } from "./ui-settings";
+import { installCloudTerminalIPC } from "./cloud-terminal";
 
 const CLIENT_ID =
   import.meta.env.VITE_WORKOS_CLIENT_ID?.trim() ||
@@ -420,6 +421,10 @@ export function installCloudIPC(
       throw new Error("Enable AO Cloud Beta in Settings to continue.");
     }
   };
+  const cloudTerminals = installCloudTerminalIPC({
+    getAccessToken: () => getCloudAccessToken(getDataDir()),
+    requireEnabled: requireBetaEnabled,
+  });
   ipcMain.handle("cloud:isBetaEnabled", betaEnabled);
   ipcMain.handle("cloud:getOverview", async () => {
     await requireBetaEnabled();
@@ -468,6 +473,7 @@ export function installCloudIPC(
     await beginCloudSignIn(getDataDir());
   });
   ipcMain.handle("cloud:signOut", async () => {
+    cloudTerminals.closeAll();
     await signOutCloud(getDataDir());
     notifyRenderers(null);
   });

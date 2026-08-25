@@ -92,6 +92,27 @@ describe("CreateCloudProjectDialog", () => {
 		expect(await screen.findByText("repository is a Cloud project")).toBeInTheDocument();
 	});
 
+	it("reuses an existing Cloud project instead of failing with a duplicate", async () => {
+		mocks.cloudSession.status = "authenticated";
+		mocks.cloudSession.session = { user: { email: "person@example.com" } };
+		mocks.getOverview.mockResolvedValue({
+			organization: { id: "org-1", displayName: "Example", role: "owner" },
+			projects: [{ id: "project-existing", displayName: "repository", repositoryUrl: "https://github.com/acme/repository" }],
+			sessions: [],
+			harnesses: [{ harness: "claude-code", connected: true }],
+		});
+		const user = userEvent.setup();
+		renderDialog();
+
+		await user.type(await screen.findByLabelText("Git repository"), "https://github.com/acme/repository.git");
+		await user.click(screen.getByRole("button", { name: "Create Cloud project" }));
+
+		await waitFor(() => expect(mocks.createSession).toHaveBeenCalledWith(
+			expect.objectContaining({ projectId: "project-existing" }),
+		));
+		expect(mocks.createProject).not.toHaveBeenCalled();
+	});
+
 	it("uses Codex when Claude Code is not signed in locally", async () => {
 		mocks.cloudSession.status = "authenticated";
 		mocks.cloudSession.session = { user: { email: "person@example.com" } };

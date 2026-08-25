@@ -146,6 +146,19 @@ export async function createCloudSession(
 	return response.session;
 }
 
+export async function createCloudTerminalTicket(
+	accessToken: string,
+	orgId: string,
+	sessionId: string,
+	kind: "agent" | "workspace",
+): Promise<{ ticket: string; expiresIn: number; scopes: string[] }> {
+	return cloudRequest(
+		accessToken,
+		`/api/cloud/v1/orgs/${encodeURIComponent(orgId)}/sessions/${encodeURIComponent(sessionId)}/terminal-ticket`,
+		{ method: "POST", body: JSON.stringify({ kind }) },
+	);
+}
+
 function stringAt(value: unknown, keys: string[]): string | null {
 	let current: unknown = value;
 	for (const key of keys) {
@@ -190,17 +203,22 @@ async function localClaudeCredential(): Promise<LocalCredential | null> {
 }
 
 async function localCodexCredential(): Promise<LocalCredential | null> {
+	// Prefer Codex's complete subscription login bundle. AO itself can inherit a
+	// short-lived CODEX_ACCESS_TOKEN from the agent that launched it; choosing
+	// that first loses the refresh/account context in auth.json and can leave the
+	// Cloud worker unable to start Codex after the token rotates.
+	const stored = await readJSON(path.join(process.env.CODEX_HOME?.trim() || path.join(os.homedir(), ".codex"), "auth.json"));
+	const token =
+		stringAt(stored, ["tokens", "access_token"]) ||
+		stringAt(stored, ["access_token"]);
+	if (token) return { secret: JSON.stringify(stored), credentialType: "auth_json", source: "codex-auth" };
 	if (process.env.CODEX_ACCESS_TOKEN?.trim()) {
 		return { secret: process.env.CODEX_ACCESS_TOKEN.trim(), credentialType: "access_token", source: "environment" };
 	}
 	if (process.env.OPENAI_API_KEY?.trim()) {
 		return { secret: process.env.OPENAI_API_KEY.trim(), credentialType: "api_key", source: "environment" };
 	}
-	const stored = await readJSON(path.join(process.env.CODEX_HOME?.trim() || path.join(os.homedir(), ".codex"), "auth.json"));
-	const token =
-		stringAt(stored, ["tokens", "access_token"]) ||
-		stringAt(stored, ["access_token"]);
-	return token ? { secret: JSON.stringify(stored), credentialType: "auth_json", source: "codex-auth" } : null;
+	return null;
 }
 
 export async function connectLocalHarness(

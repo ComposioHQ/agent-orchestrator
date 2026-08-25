@@ -71,6 +71,8 @@ export type UseTerminalSessionOptions = {
 	isVisible?: boolean;
 	/** Test seam: build the mux client. Defaults to a fresh socket against the current API base. */
 	createMux?: () => TerminalMux;
+	/** Override the local-daemon attach deadline for slower remote transports. */
+	openTimeoutMs?: number;
 	/**
 	 * Attach to a standalone shell terminal (POST /api/v1/shell-terminals)
 	 * instead of a session's pane. When set it wins over `session`, which
@@ -704,7 +706,7 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 			transition("reattaching");
 			teardownMux();
 			scheduleReattach();
-		}, OPEN_TIMEOUT_MS);
+		}, optionsRef.current.openTimeoutMs ?? OPEN_TIMEOUT_MS);
 	}, [
 		clearOpenTimer,
 		clearReplayTimers,

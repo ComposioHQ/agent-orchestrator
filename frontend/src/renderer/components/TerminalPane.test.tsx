@@ -6,6 +6,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { shellTerminalsQueryKey, type ShellTerminal } from "../hooks/useShellTerminals";
 import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import type { AttachableTerminal } from "../hooks/useTerminalSession";
+import type { TerminalMux } from "../lib/terminal-mux";
 import type { TerminalTarget } from "../types/terminal";
 import type { WorkspaceSession } from "../types/workspace";
 import { useUiStore } from "../stores/ui-store";
@@ -35,7 +36,11 @@ const {
 		terminalError: { value: undefined as string | undefined },
 		terminalState: { value: "idle" },
 		replaySettled: { value: true },
-		terminalSessionOptions: [] as Array<{ coverInitialReplay?: boolean }>,
+		terminalSessionOptions: [] as Array<{
+			coverInitialReplay?: boolean;
+			createMux?: () => TerminalMux;
+			openTimeoutMs?: number;
+		}>,
 		xtermMounts: { value: 0 },
 		xtermUnmounts: { value: 0 },
 	}),
@@ -87,7 +92,7 @@ vi.mock("./XtermTerminal", () => ({
 vi.mock("../hooks/useTerminalSession", () => ({
 	useTerminalSession: (
 		_session: WorkspaceSession | undefined,
-		options: { coverInitialReplay?: boolean },
+		options: { coverInitialReplay?: boolean; createMux?: () => TerminalMux; openTimeoutMs?: number },
 	) => {
 		terminalSessionOptions.push(options);
 		return {
@@ -172,11 +177,15 @@ function renderCachedPane({
 	sessions,
 	shellTerminals = [],
 	terminalTarget,
+	createMux,
+	openTimeoutMs,
 }: {
 	session?: WorkspaceSession;
 	sessions: WorkspaceSession[];
 	shellTerminals?: ShellTerminal[];
 	terminalTarget?: TerminalTarget;
+	createMux?: () => TerminalMux;
+	openTimeoutMs?: number;
 }) {
 	const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 	queryClient.setQueryData(workspaceQueryKey, workspaceWithSessions(sessions));
@@ -189,8 +198,10 @@ function renderCachedPane({
 			<TerminalCacheProvider daemonReady theme="dark">
 				{showPane ? (
 					<TerminalPane
+						createMux={createMux}
 						daemonReady
 						fontSize={12}
+						openTimeoutMs={openTimeoutMs}
 						session={nextSession}
 						terminalTarget={nextTarget}
 						theme="dark"
@@ -377,6 +388,23 @@ describe("TerminalPane replay cover", () => {
 describe("TerminalCacheProvider", () => {
 	const sessionA = { ...worker, id: "sess-a", title: "session A", terminalHandleId: "handle-a" };
 	const sessionB = { ...worker, id: "sess-b", title: "session B", terminalHandleId: "handle-b" };
+
+	it("preserves a remote mux through the retained terminal cache", async () => {
+		const createMux = vi.fn() as unknown as () => TerminalMux;
+		const view = renderCachedPane({
+			createMux,
+			openTimeoutMs: 25_000,
+			session: sessionA,
+			sessions: [sessionA],
+		});
+		try {
+			await waitFor(() => expect(terminalSessionOptions.length).toBeGreaterThan(0));
+			expect(terminalSessionOptions.at(-1)).toMatchObject({ createMux, openTimeoutMs: 25_000 });
+			expect(document.querySelector("[data-terminal-cache-key]")).toBeInTheDocument();
+		} finally {
+			view.restore();
+		}
+	});
 
 	it("removes externally-created terminal hosts when the shell provider unmounts", async () => {
 		const view = renderCachedPane({ session: sessionA, sessions: [sessionA, sessionB] });

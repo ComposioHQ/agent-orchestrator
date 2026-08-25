@@ -38,6 +38,7 @@ import { handleTerminalTabListKeyDown } from "../lib/terminal-tabs";
 import { cn } from "../lib/utils";
 import { sidebarOccupiesLayout, useUiStore, type Theme } from "../stores/ui-store";
 import type { TerminalTarget } from "../types/terminal";
+import type { TerminalMux } from "../lib/terminal-mux";
 import {
 	isOrchestratorSession,
 	type AgentSwitchSummary,
@@ -67,6 +68,8 @@ type CenterPaneProps = {
 	topbarActions?: ReactNode;
 	/** Stop forwarding the agent pane's keystrokes while its controller drains. */
 	agentInputDisabled?: boolean;
+	/** Cloud sessions supply a main-process-backed terminal transport. */
+	createMux?: () => TerminalMux;
 };
 
 type AuxiliaryTerminal =
@@ -130,6 +133,7 @@ export function CenterPane({
 	onRenameShellTerminal,
 	topbarActions,
 	agentInputDisabled = false,
+	createMux,
 }: CenterPaneProps) {
 	const { t } = useTranslation();
 	const paneRef = useRef<HTMLDivElement | null>(null);
@@ -643,6 +647,7 @@ export function CenterPane({
 					inert={workerInputDisabled ? true : undefined}
 				>
 					<TerminalPane
+						createMux={target.kind === "worker" ? createMux : undefined}
 						daemonReady={daemonReady}
 						fontSize={fontSize}
 						focusRequested={
@@ -653,6 +658,7 @@ export function CenterPane({
 						inputDisabled={workerInputDisabled}
 						onChangeFontSize={updateFontSize}
 						onToggleFullscreen={toggleFullscreen}
+						openTimeoutMs={createMux && target.kind === "worker" ? 25_000 : undefined}
 						session={session}
 						terminalTarget={target}
 						theme={theme}

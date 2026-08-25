@@ -55,6 +55,8 @@ type TerminalPaneProps = {
 	focusRequested?: boolean;
 	/** Provider-owned shared transport lease factory. */
 	createMux?: () => TerminalMux;
+	/** Remote transports may need longer than the loopback daemon to attach. */
+	openTimeoutMs?: number;
 };
 
 type TerminalCacheDescriptor = {
@@ -117,6 +119,7 @@ function terminalPropsMatch(left: TerminalPaneProps, right: TerminalPaneProps): 
 		left.inputDisabled === right.inputDisabled &&
 		left.focusRequested === right.focusRequested &&
 		left.createMux === right.createMux &&
+		left.openTimeoutMs === right.openTimeoutMs &&
 		terminalTargetMatches(left.terminalTarget, right.terminalTarget)
 	);
 }
@@ -340,7 +343,7 @@ export function TerminalCacheProvider({
 		(descriptor: TerminalCacheDescriptor, props: TerminalPaneProps, slot: HTMLDivElement) => {
 			const parking = parkingRef.current;
 			if (!parking) return;
-			const cachedProps = { ...props, createMux: muxPool.acquire };
+			const cachedProps = { ...props, createMux: props.createMux ?? muxPool.acquire };
 
 			const previous = activeRef.current;
 			if (previous && previous.key !== descriptor.cacheKey) {
@@ -416,7 +419,7 @@ export function TerminalCacheProvider({
 	const update = useCallback(
 		(cacheKey: string, props: TerminalPaneProps) => {
 			const entry = entriesRef.current.get(cacheKey);
-			const cachedProps = { ...props, createMux: muxPool.acquire };
+			const cachedProps = { ...props, createMux: props.createMux ?? muxPool.acquire };
 			if (!entry || terminalPropsMatch(entry.props, cachedProps)) return;
 			entry.props = cachedProps;
 			rerender();
@@ -654,6 +657,8 @@ export function TerminalPane({
 	onToggleFullscreen,
 	inputDisabled,
 	focusRequested,
+	createMux,
+	openTimeoutMs,
 }: TerminalPaneProps) {
 	const terminalTarget =
 		requestedTerminalTarget &&
@@ -728,6 +733,8 @@ export function TerminalPane({
 		onToggleFullscreen,
 		inputDisabled,
 		focusRequested,
+		createMux,
+		openTimeoutMs,
 	};
 	const descriptor = cacheDescriptor(session, terminalTarget);
 	if (cache && descriptor) {
@@ -746,6 +753,8 @@ export function TerminalPane({
 			onChangeFontSize={onChangeFontSize}
 			onToggleFullscreen={onToggleFullscreen}
 			focusRequested={focusRequested}
+			createMux={createMux}
+			openTimeoutMs={openTimeoutMs}
 			terminalTarget={terminalTarget}
 		/>
 	);
@@ -894,6 +903,7 @@ function AttachedTerminal({
 	inputDisabled,
 	focusRequested,
 	createMux,
+	openTimeoutMs,
 	isVisible = true,
 	onFatal,
 	onTerminalReady,
@@ -926,6 +936,7 @@ function AttachedTerminal({
 		daemonReady,
 		inputDisabled,
 		isVisible,
+		openTimeoutMs,
 		shellTerminalHandleId,
 	});
 	// xterm's write callback means the replay has been parsed, not that the
