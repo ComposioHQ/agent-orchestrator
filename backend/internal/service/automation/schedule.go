@@ -49,6 +49,9 @@ func CanonicalizeSchedule(input ScheduleInput, now time.Time) (Schedule, error) 
 			return Schedule{}, err
 		}
 	}
+	if embedded := embeddedTimezone(rruleText); embedded != "" && embedded != zone {
+		return Schedule{}, fmt.Errorf("rrule timezone %q conflicts with schedule timezone %q", embedded, zone)
+	}
 
 	option, err := rrule.StrToROptionInLocation(rruleText, loc)
 	if err != nil {
@@ -56,6 +59,9 @@ func CanonicalizeSchedule(input ScheduleInput, now time.Time) (Schedule, error) 
 	}
 	if option.Freq == rrule.SECONDLY {
 		return Schedule{}, fmt.Errorf("schedule frequency cannot be faster than one minute")
+	}
+	if option.Count > 0 || !option.Until.IsZero() {
+		return Schedule{}, fmt.Errorf("finite COUNT and UNTIL schedules are not supported")
 	}
 	if option.Dtstart.IsZero() {
 		option.Dtstart = now.In(loc).Truncate(time.Minute).Add(time.Minute)
@@ -68,7 +74,25 @@ func CanonicalizeSchedule(input ScheduleInput, now time.Time) (Schedule, error) 
 	if next.IsZero() {
 		return Schedule{}, fmt.Errorf("schedule has no future occurrence")
 	}
+	following := rule.After(next, false)
+	if !following.IsZero() && following.Sub(next) < time.Minute {
+		return Schedule{}, fmt.Errorf("schedule frequency cannot be faster than one minute")
+	}
 	return Schedule{RRuleText: option.String(), Timezone: zone, NextRunAt: next.UTC()}, nil
+}
+
+func embeddedTimezone(value string) string {
+	const marker = "DTSTART;TZID="
+	start := strings.Index(value, marker)
+	if start < 0 {
+		return ""
+	}
+	start += len(marker)
+	end := strings.IndexByte(value[start:], ':')
+	if end < 0 {
+		return ""
+	}
+	return value[start : start+end]
 }
 
 // NextOccurrence calculates the first logical occurrence strictly after the

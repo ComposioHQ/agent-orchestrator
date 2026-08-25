@@ -85,6 +85,15 @@ func (f *fakeStore) CreateSession(_ context.Context, rec domain.SessionRecord) (
 	f.sessions[rec.ID] = rec
 	return rec, nil
 }
+func (f *fakeStore) CreateAutomationSession(ctx context.Context, rec domain.SessionRecord) (domain.SessionRecord, bool, error) {
+	for _, existing := range f.sessions {
+		if existing.AutomationRunID != nil && rec.AutomationRunID != nil && *existing.AutomationRunID == *rec.AutomationRunID {
+			return existing, false, nil
+		}
+	}
+	created, err := f.CreateSession(ctx, rec)
+	return created, err == nil, err
+}
 func (f *fakeStore) UpdateSession(_ context.Context, rec domain.SessionRecord) error {
 	f.sessions[rec.ID] = rec
 	return nil
@@ -202,6 +211,9 @@ func (l *fakeLCM) MarkSpawned(_ context.Context, id domain.SessionID, metadata d
 	rec.Activity = domain.Activity{State: domain.ActivityIdle, LastActivityAt: time.Now()}
 	rec.FirstSignalAt = time.Now()
 	rec.Metadata = metadata
+	if rec.AutomationRunID != nil {
+		rec.AutomationLaunchCompleted = true
+	}
 	l.store.sessions[id] = rec
 	return nil
 }
@@ -1861,6 +1873,39 @@ func TestSpawn_AssignsIDAndGoesIdle(t *testing.T) {
 	}
 	if st.sessions["mer-1"].Metadata.RuntimeHandleID != "h1" {
 		t.Fatal("handle not folded")
+	}
+}
+
+func TestSpawnAutomationAdoptsOnlyCompletedLaunch(t *testing.T) {
+	m, st, rt, _ := newManager()
+	runID := domain.AutomationRunID("run-1")
+	cfg := ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Harness: domain.HarnessClaudeCode, Prompt: "do it", AutomationRunID: &runID}
+	first, _, _, err := m.Spawn(ctx, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !st.sessions[first.ID].AutomationLaunchCompleted {
+		t.Fatal("successful automation spawn did not persist launch completion")
+	}
+	adopted, _, _, err := m.Spawn(ctx, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if adopted.ID != first.ID || rt.created != 1 {
+		t.Fatalf("retry session=%q runtime creates=%d, want %q and 1", adopted.ID, rt.created, first.ID)
+	}
+}
+
+func TestSpawnAutomationRejectsIncompletePriorLaunch(t *testing.T) {
+	m, st, rt, ws := newManager()
+	runID := domain.AutomationRunID("run-1")
+	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer", AutomationRunID: &runID}
+	_, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Harness: domain.HarnessClaudeCode, AutomationRunID: &runID})
+	if err == nil || !strings.Contains(err.Error(), "incomplete prior launch") {
+		t.Fatalf("Spawn error = %v, want incomplete prior launch", err)
+	}
+	if rt.created != 0 || ws.lastCfg.SessionID != "" {
+		t.Fatalf("runtime creates=%d workspace session=%q, want no duplicate launch", rt.created, ws.lastCfg.SessionID)
 	}
 }
 

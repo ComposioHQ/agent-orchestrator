@@ -375,14 +375,14 @@ export function Sidebar({
 				<SidebarMenu className="mb-3 gap-0.5 group-data-[collapsible=icon]:gap-1">
 					<SidebarMenuItem>
 						<SidebarMenuButton
-							aria-label="Automations"
+							aria-label={t("automations.title")}
 							className={NAV_ROW_CLASS}
 							isActive={selection.isAutomations}
 							onClick={selection.goAutomations}
-							tooltip={isCollapsed ? "Automations" : undefined}
+							tooltip={isCollapsed ? t("automations.title") : undefined}
 						>
 							<CalendarClock aria-hidden="true" />
-							<span className="sidebar-expanded-chrome group-data-[collapsible=icon]:hidden">Automations</span>
+							<span className="sidebar-expanded-chrome group-data-[collapsible=icon]:hidden">{t("automations.title")}</span>
 						</SidebarMenuButton>
 					</SidebarMenuItem>
 				</SidebarMenu>

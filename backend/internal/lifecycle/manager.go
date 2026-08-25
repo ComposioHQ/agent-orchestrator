@@ -993,6 +993,9 @@ func (m *Manager) MarkSpawned(ctx context.Context, id domain.SessionID, metadata
 		// a stale "signals worked once" fact.
 		rec.FirstSignalAt = time.Time{}
 		rec.Metadata = mergeMetadata(rec.Metadata, metadata)
+		if rec.AutomationRunID != nil {
+			rec.AutomationLaunchCompleted = true
+		}
 		rec.UpdatedAt = now
 		if err := m.store.UpdateSession(ctx, rec); err != nil {
 			return nil, err

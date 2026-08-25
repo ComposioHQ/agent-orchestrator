@@ -30,6 +30,9 @@ func TestCreateRejectsPromptOverSessionSpawnByteLimit(t *testing.T) {
 type fakeStore struct {
 	projects    map[string]domain.ProjectRecord
 	automations map[domain.AutomationID]domain.Automation
+	latestRuns  map[domain.AutomationID]domain.AutomationRun
+	latestCalls int
+	latestErr   error
 }
 
 func newFakeStore() *fakeStore {
@@ -38,7 +41,22 @@ func newFakeStore() *fakeStore {
 			"scheduled": {ID: "scheduled", Path: "/tmp/scheduled"},
 		},
 		automations: map[domain.AutomationID]domain.Automation{},
+		latestRuns:  map[domain.AutomationID]domain.AutomationRun{},
 	}
+}
+
+func (f *fakeStore) ListLatestAutomationRuns(_ context.Context, ids []domain.AutomationID) (map[domain.AutomationID]domain.AutomationRun, error) {
+	f.latestCalls++
+	if f.latestErr != nil {
+		return nil, f.latestErr
+	}
+	out := make(map[domain.AutomationID]domain.AutomationRun)
+	for _, id := range ids {
+		if run, ok := f.latestRuns[id]; ok {
+			out[id] = run
+		}
+	}
+	return out, nil
 }
 
 func (f *fakeStore) GetProject(_ context.Context, id string) (domain.ProjectRecord, bool, error) {
@@ -82,6 +100,29 @@ func (f *fakeStore) DeleteAutomation(_ context.Context, id domain.AutomationID) 
 
 func (f *fakeStore) ListAutomationRuns(_ context.Context, filter domain.AutomationRunFilter) (domain.AutomationRunPage, error) {
 	return domain.AutomationRunPage{}, nil
+}
+
+func TestListLoadsLatestRunsInOneStoreCall(t *testing.T) {
+	store := newFakeStore()
+	store.automations["automation-1"] = domain.Automation{ID: "automation-1"}
+	store.automations["automation-2"] = domain.Automation{ID: "automation-2"}
+	store.latestRuns["automation-2"] = domain.AutomationRun{ID: "run-2", AutomationID: "automation-2"}
+	page, err := New(Deps{Store: store}).List(context.Background(), domain.AutomationFilter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if store.latestCalls != 1 {
+		t.Fatalf("latest-run queries = %d, want 1", store.latestCalls)
+	}
+	found := false
+	for _, item := range page.Items {
+		if item.ID == "automation-2" {
+			found = item.LatestRun != nil && item.LatestRun.ID == "run-2"
+		}
+	}
+	if !found {
+		t.Fatalf("page = %#v, want latest run attached", page)
+	}
 }
 
 // Removing server-side canonicalization, default enabling, or injected durable

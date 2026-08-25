@@ -138,6 +138,7 @@ func (f *schedulerMemoryStore) ReleaseAutomationRun(_ context.Context, id domain
 type recordingSpawner struct {
 	store *schedulerMemoryStore
 	calls []ports.SpawnConfig
+	kills []domain.SessionID
 }
 
 func (s *recordingSpawner) Spawn(_ context.Context, cfg ports.SpawnConfig) (domain.Session, int, int, error) {
@@ -146,6 +147,16 @@ func (s *recordingSpawner) Spawn(_ context.Context, cfg ports.SpawnConfig) (doma
 	rec := domain.SessionRecord{ID: id, ProjectID: cfg.ProjectID, AutomationRunID: cfg.AutomationRunID}
 	s.store.sessions[id] = rec
 	return domain.Session{SessionRecord: rec}, 0, 0, nil
+}
+
+func (s *recordingSpawner) Kill(_ context.Context, id domain.SessionID) (bool, error) {
+	s.kills = append(s.kills, id)
+	rec, ok := s.store.sessions[id]
+	if ok {
+		rec.IsTerminated = true
+		s.store.sessions[id] = rec
+	}
+	return ok, nil
 }
 
 // Catch-up is capped at three durable rows but advances past the whole missed
@@ -203,7 +214,7 @@ func TestReconcileAdoptsSessionForExpiredClaim(t *testing.T) {
 	runID, sessionID := domain.AutomationRunID("run-1"), domain.SessionID("session-1")
 	lease := now.Add(-time.Minute)
 	store.runs[runID] = domain.AutomationRun{ID: runID, AutomationID: "automation-1", Status: domain.AutomationRunSpawning, LeaseExpiresAt: &lease}
-	store.sessions[sessionID] = domain.SessionRecord{ID: sessionID, AutomationRunID: &runID}
+	store.sessions[sessionID] = domain.SessionRecord{ID: sessionID, AutomationRunID: &runID, AutomationLaunchCompleted: true}
 	spawner := &recordingSpawner{store: store}
 	svc := New(Deps{Store: store, Spawner: spawner, Clock: func() time.Time { return now }})
 
@@ -212,5 +223,28 @@ func TestReconcileAdoptsSessionForExpiredClaim(t *testing.T) {
 	}
 	if store.runs[runID].Status != domain.AutomationRunRunning || store.runs[runID].SessionID == nil || *store.runs[runID].SessionID != sessionID || len(spawner.calls) != 0 {
 		t.Fatalf("run=%#v calls=%d", store.runs[runID], len(spawner.calls))
+	}
+}
+
+// A seed row is not a completed launch. Reconciliation must tear it down and
+// fail the occurrence instead of adopting it or starting a duplicate runtime.
+func TestReconcileRollsBackIncompleteAutomationSession(t *testing.T) {
+	now := time.Date(2026, time.August, 25, 9, 0, 0, 0, time.UTC)
+	store := newSchedulerStore()
+	runID, sessionID := domain.AutomationRunID("run-1"), domain.SessionID("session-1")
+	lease := now.Add(-time.Second)
+	store.runs[runID] = domain.AutomationRun{ID: runID, AutomationID: "automation-1", Status: domain.AutomationRunSpawning, LeaseExpiresAt: &lease}
+	store.sessions[sessionID] = domain.SessionRecord{ID: sessionID, AutomationRunID: &runID}
+	spawner := &recordingSpawner{store: store}
+	svc := New(Deps{Store: store, Spawner: spawner, Clock: func() time.Time { return now }})
+
+	if err := svc.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if len(spawner.kills) != 1 || spawner.kills[0] != sessionID {
+		t.Fatalf("killed sessions = %v, want [%s]", spawner.kills, sessionID)
+	}
+	if got := store.runs[runID].Status; got != domain.AutomationRunFailed {
+		t.Fatalf("run status = %s, want failed", got)
 	}
 }

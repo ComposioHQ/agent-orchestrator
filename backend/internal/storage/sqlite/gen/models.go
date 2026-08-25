@@ -462,6 +462,7 @@ type Session struct {
 	AgentSessionIDLaunchID    string
 	Model                     string
 	AutomationRunID           *domain.AutomationRunID
+	AutomationLaunchCompleted bool
 }
 
 type SessionCleanupFact struct {

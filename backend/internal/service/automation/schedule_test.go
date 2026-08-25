@@ -26,6 +26,10 @@ func TestCanonicalizeScheduleRejectsUnsafeTimezoneAndFrequency(t *testing.T) {
 	for _, input := range []ScheduleInput{
 		{RRule: "FREQ=DAILY", Timezone: "IST"},
 		{RRule: "FREQ=SECONDLY", Timezone: "UTC"},
+		{RRule: "FREQ=MINUTELY;BYSECOND=0,30", Timezone: "UTC"},
+		{RRule: "DTSTART;TZID=America/New_York:20260306T090000\nRRULE:FREQ=DAILY", Timezone: "Europe/London"},
+		{RRule: "FREQ=DAILY;COUNT=3", Timezone: "UTC"},
+		{RRule: "FREQ=DAILY;UNTIL=20260310T090000Z", Timezone: "UTC"},
 	} {
 		if _, err := CanonicalizeSchedule(input, now); err == nil {
 			t.Fatalf("CanonicalizeSchedule(%+v) succeeded, want validation error", input)

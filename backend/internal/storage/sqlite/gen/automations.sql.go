@@ -8,6 +8,7 @@ package gen
 import (
 	"context"
 	"database/sql"
+	"strings"
 	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
@@ -617,6 +618,69 @@ ORDER BY scheduled_for, id
 
 func (q *Queries) ListExpiredSpawningAutomationRuns(ctx context.Context, leaseExpiresAt sql.NullTime) ([]AutomationRun, error) {
 	rows, err := q.db.QueryContext(ctx, listExpiredSpawningAutomationRuns, leaseExpiresAt)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []AutomationRun{}
+	for rows.Next() {
+		var i AutomationRun
+		if err := rows.Scan(
+			&i.ID,
+			&i.AutomationID,
+			&i.ScheduledFor,
+			&i.SessionID,
+			&i.Status,
+			&i.AttemptCount,
+			&i.ClaimedAt,
+			&i.LeaseExpiresAt,
+			&i.StartedAt,
+			&i.FinishedAt,
+			&i.ErrorMessage,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listLatestAutomationRuns = `-- name: ListLatestAutomationRuns :many
+SELECT r.id, r.automation_id, r.scheduled_for, r.session_id, r.status,
+    r.attempt_count, r.claimed_at, r.lease_expires_at, r.started_at,
+    r.finished_at, r.error_message, r.created_at, r.updated_at
+FROM automation_runs r
+WHERE r.automation_id IN (/*SLICE:automation_ids*/?)
+  AND r.id = (
+      SELECT newest.id
+      FROM automation_runs newest
+      WHERE newest.automation_id = r.automation_id
+      ORDER BY newest.scheduled_for DESC, newest.id DESC
+      LIMIT 1
+  )
+ORDER BY r.automation_id
+`
+
+func (q *Queries) ListLatestAutomationRuns(ctx context.Context, automationIds []domain.AutomationID) ([]AutomationRun, error) {
+	query := listLatestAutomationRuns
+	var queryParams []interface{}
+	if len(automationIds) > 0 {
+		for _, v := range automationIds {
+			queryParams = append(queryParams, v)
+		}
+		query = strings.Replace(query, "/*SLICE:automation_ids*/?", strings.Repeat(",?", len(automationIds))[1:], 1)
+	} else {
+		query = strings.Replace(query, "/*SLICE:automation_ids*/?", "NULL", 1)
+	}
+	rows, err := q.db.QueryContext(ctx, query, queryParams...)
 	if err != nil {
 		return nil, err
 	}

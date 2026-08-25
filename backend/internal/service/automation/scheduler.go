@@ -23,6 +23,7 @@ const (
 // SessionSpawner is the existing user-facing session launch boundary.
 type SessionSpawner interface {
 	Spawn(context.Context, ports.SpawnConfig) (domain.Session, int, int, error)
+	Kill(context.Context, domain.SessionID) (bool, error)
 }
 
 // schedulerStore is deliberately separate from CRUD Store so focused CRUD
@@ -105,20 +106,25 @@ func (s *Service) materializeDefinition(ctx context.Context, store schedulerStor
 	occurrence := definition.NextRunAt.UTC()
 	runs := make([]domain.AutomationRun, 0, catchupLimit)
 	var last time.Time
-	for !occurrence.After(now) {
-		if len(runs) < catchupLimit {
-			runs = append(runs, domain.AutomationRun{
-				ID: domain.AutomationRunID("automation-run-" + s.newID()), AutomationID: definition.ID,
-				ScheduledFor: occurrence, Status: domain.AutomationRunPending,
-				CreatedAt: now, UpdatedAt: now,
-			})
-			last = occurrence
-		}
+	for !occurrence.After(now) && len(runs) < catchupLimit {
+		runs = append(runs, domain.AutomationRun{
+			ID: domain.AutomationRunID("automation-run-" + s.newID()), AutomationID: definition.ID,
+			ScheduledFor: occurrence, Status: domain.AutomationRunPending,
+			CreatedAt: now, UpdatedAt: now,
+		})
+		last = occurrence
 		next, err := NextOccurrence(definition.RRuleText, definition.Timezone, occurrence)
 		if err != nil {
 			return err
 		}
 		occurrence = next
+	}
+	if !occurrence.After(now) {
+		var err error
+		occurrence, err = NextOccurrence(definition.RRuleText, definition.Timezone, now)
+		if err != nil {
+			return err
+		}
 	}
 	if len(runs) == 0 {
 		return nil
@@ -177,8 +183,10 @@ func (s *Service) Reconcile(ctx context.Context) error {
 				problems = append(problems, lookupErr)
 				continue
 			}
-			if ok {
+			if ok && session.AutomationLaunchCompleted {
 				_, lookupErr = store.MarkAutomationRunRunning(ctx, run.ID, session.ID, now)
+			} else if ok {
+				lookupErr = s.rollbackIncompleteLaunch(ctx, store, run, session, now)
 			} else {
 				_, lookupErr = store.ReleaseAutomationRun(ctx, run.ID, "Recovered expired spawn claim", now)
 			}
@@ -214,9 +222,13 @@ func (s *Service) completeAndAdoptActive(ctx context.Context, store schedulerSto
 			session, ok, lookupErr := store.GetSessionByAutomationRunID(ctx, run.ID)
 			if lookupErr != nil {
 				problems = append(problems, lookupErr)
-			} else if ok {
+			} else if ok && session.AutomationLaunchCompleted {
 				_, lookupErr = store.MarkAutomationRunRunning(ctx, run.ID, session.ID, now)
 				if lookupErr != nil {
+					problems = append(problems, lookupErr)
+				}
+			} else if ok && run.LeaseExpiresAt != nil && !run.LeaseExpiresAt.After(now) {
+				if lookupErr = s.rollbackIncompleteLaunch(ctx, store, run, session, now); lookupErr != nil {
 					problems = append(problems, lookupErr)
 				}
 			}
@@ -252,6 +264,17 @@ func (s *Service) completeAndAdoptActive(ctx context.Context, store schedulerSto
 		}
 	}
 	return errors.Join(problems...)
+}
+
+func (s *Service) rollbackIncompleteLaunch(ctx context.Context, store schedulerStore, run domain.AutomationRun, session domain.SessionRecord, now time.Time) error {
+	if s.spawner == nil {
+		return fmt.Errorf("cannot roll back incomplete automation session %s: session spawner is unavailable", session.ID)
+	}
+	if _, err := s.spawner.Kill(ctx, session.ID); err != nil {
+		return fmt.Errorf("roll back incomplete automation session %s: %w", session.ID, err)
+	}
+	_, err := store.FailAutomationRun(ctx, run.ID, "Recovered incomplete session launch", now)
+	return err
 }
 
 func runError(err error) string {

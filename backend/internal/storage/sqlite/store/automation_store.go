@@ -68,6 +68,24 @@ func (s *Store) ListAutomations(ctx context.Context, filter domain.AutomationFil
 	return domain.AutomationPage{Items: items, Total: total}, nil
 }
 
+// ListLatestAutomationRuns loads at most one newest run per requested
+// definition in a single query.
+func (s *Store) ListLatestAutomationRuns(ctx context.Context, ids []domain.AutomationID) (map[domain.AutomationID]domain.AutomationRun, error) {
+	out := make(map[domain.AutomationID]domain.AutomationRun)
+	if len(ids) == 0 {
+		return out, nil
+	}
+	rows, err := s.qr.ListLatestAutomationRuns(ctx, ids)
+	if err != nil {
+		return nil, fmt.Errorf("list latest automation runs: %w", err)
+	}
+	for _, row := range rows {
+		run := automationRunFromGen(row)
+		out[run.AutomationID] = run
+	}
+	return out, nil
+}
+
 // UpdateAutomation persists a complete validated mutable definition.
 func (s *Store) UpdateAutomation(ctx context.Context, rec domain.Automation) (bool, error) {
 	s.writeMu.Lock()

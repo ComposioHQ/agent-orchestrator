@@ -45,6 +45,8 @@ CREATE INDEX idx_automation_runs_history
 
 ALTER TABLE sessions
     ADD COLUMN automation_run_id TEXT REFERENCES automation_runs (id) ON DELETE SET NULL;
+ALTER TABLE sessions
+    ADD COLUMN automation_launch_completed BOOLEAN NOT NULL DEFAULT FALSE CHECK (automation_launch_completed IN (0, 1));
 CREATE UNIQUE INDEX idx_sessions_automation_run
     ON sessions (automation_run_id)
     WHERE automation_run_id IS NOT NULL;
@@ -53,6 +55,7 @@ CREATE UNIQUE INDEX idx_sessions_automation_run
 -- +goose Down
 -- +goose StatementBegin
 DROP INDEX idx_sessions_automation_run;
+ALTER TABLE sessions DROP COLUMN automation_launch_completed;
 ALTER TABLE sessions DROP COLUMN automation_run_id;
 DROP TABLE automation_runs;
 DROP TABLE automations;

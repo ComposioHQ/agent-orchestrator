@@ -54,7 +54,7 @@ func (c *AutomationsController) create(w http.ResponseWriter, r *http.Request) {
 		envelope.WriteError(w, r, err)
 		return
 	}
-	envelope.WriteJSON(w, http.StatusCreated, AutomationEnvelope{Automation: automationResponse(rec, nil)})
+	envelope.WriteJSON(w, http.StatusCreated, AutomationEnvelope{Automation: automationResponse(rec)})
 }
 
 func (c *AutomationsController) get(w http.ResponseWriter, r *http.Request) {
@@ -68,8 +68,7 @@ func (c *AutomationsController) get(w http.ResponseWriter, r *http.Request) {
 		envelope.WriteError(w, r, err)
 		return
 	}
-	latest := c.latestRun(r.Context(), id)
-	envelope.WriteJSON(w, http.StatusOK, AutomationEnvelope{Automation: automationResponse(rec, latest)})
+	envelope.WriteJSON(w, http.StatusOK, AutomationEnvelope{Automation: automationResponse(rec)})
 }
 
 func (c *AutomationsController) list(w http.ResponseWriter, r *http.Request) {
@@ -102,7 +101,7 @@ func (c *AutomationsController) list(w http.ResponseWriter, r *http.Request) {
 	}
 	items := make([]AutomationResponse, 0, len(page.Items))
 	for _, rec := range page.Items {
-		items = append(items, automationResponse(rec, c.latestRun(r.Context(), rec.ID)))
+		items = append(items, automationResponse(rec))
 	}
 	next := ""
 	if offset+int64(len(items)) < page.Total {
@@ -135,7 +134,7 @@ func (c *AutomationsController) update(w http.ResponseWriter, r *http.Request) {
 		envelope.WriteError(w, r, err)
 		return
 	}
-	envelope.WriteJSON(w, http.StatusOK, AutomationEnvelope{Automation: automationResponse(rec, c.latestRun(r.Context(), rec.ID))})
+	envelope.WriteJSON(w, http.StatusOK, AutomationEnvelope{Automation: automationResponse(rec)})
 }
 
 func (c *AutomationsController) delete(w http.ResponseWriter, r *http.Request) {
@@ -176,17 +175,12 @@ func (c *AutomationsController) runs(w http.ResponseWriter, r *http.Request) {
 	envelope.WriteJSON(w, http.StatusOK, ListAutomationRunsResponse{Runs: items, NextCursor: next})
 }
 
-func (c *AutomationsController) latestRun(ctx context.Context, id domain.AutomationID) *AutomationRunSummaryResponse {
-	page, err := c.Svc.Runs(ctx, domain.AutomationRunFilter{AutomationID: id, Limit: 1})
-	if err != nil || len(page.Items) == 0 {
-		return nil
+func automationResponse(rec domain.Automation) AutomationResponse {
+	var latest *AutomationRunSummaryResponse
+	if rec.LatestRun != nil {
+		response := automationRunSummaryResponse(*rec.LatestRun)
+		latest = &response
 	}
-	run := page.Items[0]
-	response := automationRunSummaryResponse(run)
-	return &response
-}
-
-func automationResponse(rec domain.Automation, latest *AutomationRunSummaryResponse) AutomationResponse {
 	return AutomationResponse{ID: string(rec.ID), ProjectID: string(rec.ProjectID), DisplayName: rec.DisplayName, Prompt: rec.Prompt, Kind: string(rec.Kind), Harness: string(rec.Harness), RRule: rec.RRuleText, Timezone: rec.Timezone, Enabled: rec.Enabled, NextRunAt: rec.NextRunAt, LastRunAt: rec.LastRunAt, CreatedAt: rec.CreatedAt, UpdatedAt: rec.UpdatedAt, LatestRun: latest}
 }
 func automationRunSummaryResponse(run domain.AutomationRun) AutomationRunSummaryResponse {

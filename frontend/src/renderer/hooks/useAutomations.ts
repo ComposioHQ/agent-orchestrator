@@ -76,5 +76,6 @@ export function useAutomationRuns(id: string | null) {
 			return data?.runs ?? [];
 		},
 		enabled: Boolean(id),
+		refetchInterval: 15_000,
 	});
 }

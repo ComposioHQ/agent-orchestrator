@@ -218,7 +218,7 @@ export function ShellTopbar({
 					<div className="inline-flex min-w-0 items-center gap-1.5" data-testid="automations-topbar-label">
 						<span className={cn(topbarProjectLabelClass, "inline-flex items-center gap-1.5")}>
 							<CalendarClock aria-hidden="true" className="size-icon-md" />
-							Automations
+							{t("automations.title")}
 						</span>
 					</div>
 				) : (isProjectBoardRoute && boardActionsInPanel) ||

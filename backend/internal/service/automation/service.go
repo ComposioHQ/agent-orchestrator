@@ -26,6 +26,7 @@ type Store interface {
 	UpdateAutomation(context.Context, domain.Automation) (bool, error)
 	DeleteAutomation(context.Context, domain.AutomationID) (bool, error)
 	ListAutomationRuns(context.Context, domain.AutomationRunFilter) (domain.AutomationRunPage, error)
+	ListLatestAutomationRuns(context.Context, []domain.AutomationID) (map[domain.AutomationID]domain.AutomationRun, error)
 }
 
 // Deps are the automation service's injectable dependencies.
@@ -150,6 +151,13 @@ func (s *Service) Get(ctx context.Context, id domain.AutomationID) (domain.Autom
 	if !ok {
 		return domain.Automation{}, apierr.NotFound("AUTOMATION_NOT_FOUND", "Unknown automation")
 	}
+	latest, err := s.store.ListLatestAutomationRuns(ctx, []domain.AutomationID{id})
+	if err != nil {
+		return domain.Automation{}, apierr.Internal("AUTOMATION_READ_FAILED", "Failed to read automation")
+	}
+	if run, found := latest[id]; found {
+		rec.LatestRun = &run
+	}
 	return rec, nil
 }
 
@@ -164,6 +172,20 @@ func (s *Service) List(ctx context.Context, filter domain.AutomationFilter) (dom
 	page, err := s.store.ListAutomations(ctx, filter)
 	if err != nil {
 		return domain.AutomationPage{}, apierr.Internal("AUTOMATION_LIST_FAILED", "Failed to list automations")
+	}
+	ids := make([]domain.AutomationID, 0, len(page.Items))
+	for _, item := range page.Items {
+		ids = append(ids, item.ID)
+	}
+	latest, err := s.store.ListLatestAutomationRuns(ctx, ids)
+	if err != nil {
+		return domain.AutomationPage{}, apierr.Internal("AUTOMATION_LIST_FAILED", "Failed to list automations")
+	}
+	for i := range page.Items {
+		if run, ok := latest[page.Items[i].ID]; ok {
+			copy := run
+			page.Items[i].LatestRun = &copy
+		}
 	}
 	return page, nil
 }
@@ -240,7 +262,7 @@ func (s *Service) Update(ctx context.Context, id domain.AutomationID, input Upda
 	if !ok {
 		return domain.Automation{}, apierr.NotFound("AUTOMATION_NOT_FOUND", "Unknown automation")
 	}
-	return rec, nil
+	return s.Get(ctx, id)
 }
 
 // Delete removes a definition and its run history. Linked sessions survive by

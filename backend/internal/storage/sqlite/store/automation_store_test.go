@@ -152,6 +152,39 @@ func TestSessionCreateIsIdempotentByAutomationRun(t *testing.T) {
 	}
 }
 
+// If this created flag is lost, Session Manager cannot distinguish a fresh
+// seed from a crash-surviving seed and may launch the same occurrence twice.
+func TestAutomationSessionCreateReportsWhetherSeedWasNew(t *testing.T) {
+	store := newTestStore(t)
+	seedProject(t, store, "scheduled")
+	ctx := context.Background()
+	now := time.Date(2026, time.August, 25, 9, 0, 0, 0, time.UTC)
+	if _, err := store.CreateAutomation(ctx, domain.Automation{ID: "automation-1", ProjectID: "scheduled", DisplayName: "Triage", Prompt: "Review", Kind: domain.KindWorker, RRuleText: "FREQ=DAILY", Timezone: "UTC", Enabled: true, NextRunAt: now, CreatedAt: now, UpdatedAt: now}); err != nil {
+		t.Fatal(err)
+	}
+	runID := domain.AutomationRunID("run-1")
+	if _, _, err := store.CreateAutomationRun(ctx, domain.AutomationRun{ID: runID, AutomationID: "automation-1", ScheduledFor: now, Status: domain.AutomationRunSpawning, CreatedAt: now, UpdatedAt: now}); err != nil {
+		t.Fatal(err)
+	}
+	seed := sampleRecord("scheduled")
+	seed.AutomationRunID = &runID
+	created, fresh, err := store.CreateAutomationSession(ctx, seed)
+	if err != nil || !fresh {
+		t.Fatalf("first CreateAutomationSession: fresh=%v err=%v", fresh, err)
+	}
+	created.AutomationLaunchCompleted = true
+	if err := store.UpdateSession(ctx, created); err != nil {
+		t.Fatal(err)
+	}
+	adopted, fresh, err := store.CreateAutomationSession(ctx, seed)
+	if err != nil || fresh {
+		t.Fatalf("retry CreateAutomationSession: fresh=%v err=%v", fresh, err)
+	}
+	if adopted.ID != created.ID || !adopted.AutomationLaunchCompleted {
+		t.Fatalf("adopted session = %+v, want completed %q", adopted, created.ID)
+	}
+}
+
 // Removing either project/enabled filtering or stable page ordering must make
 // this test fail; the API must not leak definitions across projects or reshuffle
 // rows between pages.

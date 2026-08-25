@@ -101,6 +101,21 @@ FROM automation_runs
 WHERE automation_id = sqlc.arg(automation_id)
   AND (sqlc.arg(status_filter) = '' OR status = sqlc.arg(status_filter));
 
+-- name: ListLatestAutomationRuns :many
+SELECT r.id, r.automation_id, r.scheduled_for, r.session_id, r.status,
+    r.attempt_count, r.claimed_at, r.lease_expires_at, r.started_at,
+    r.finished_at, r.error_message, r.created_at, r.updated_at
+FROM automation_runs r
+WHERE r.automation_id IN (sqlc.slice('automation_ids'))
+  AND r.id = (
+      SELECT newest.id
+      FROM automation_runs newest
+      WHERE newest.automation_id = r.automation_id
+      ORDER BY newest.scheduled_for DESC, newest.id DESC
+      LIMIT 1
+  )
+ORDER BY r.automation_id;
+
 -- name: GetNextClaimableAutomationRun :one
 SELECT r.id, r.automation_id, r.scheduled_for, r.session_id, r.status,
     r.attempt_count, r.claimed_at, r.lease_expires_at, r.started_at,

@@ -1,5 +1,6 @@
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { useNavigate } from "@tanstack/react-router";
+import { useTranslation } from "react-i18next";
 import { CalendarClock, ChevronDown, ChevronRight, Plus, Trash2, TriangleAlert, X } from "lucide-react";
 import { Button } from "./ui/button";
 import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from "./ui/card";
@@ -29,17 +30,13 @@ import {
 	type Automation,
 } from "../hooks/useAutomations";
 
-function displayTime(value?: string) {
+function displayTime(value?: string, locale?: string) {
 	if (!value) return "—";
-	return new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format(new Date(value));
-}
-
-function scheduleLabel(item: Automation) {
-	const frequency = item.rrule.match(/FREQ=([^;\n]+)/)?.[1]?.toLowerCase() ?? "recurring";
-	return `${frequency} · ${item.timezone}`;
+	return new Intl.DateTimeFormat(locale, { dateStyle: "medium", timeStyle: "short" }).format(new Date(value));
 }
 
 export function AutomationsView() {
+	const { t } = useTranslation();
 	const query = useAutomations();
 	const workspaces = useWorkspaceQuery().data ?? [];
 	const harnesses = useAgentsQuery().data?.supported ?? [];
@@ -54,35 +51,39 @@ export function AutomationsView() {
 	return (
 		<div className="flex min-h-0 flex-1 flex-col overflow-auto bg-background">
 			<header className="flex items-center justify-between border-b border-border px-8 py-5">
-				<div><h1 className="text-xl font-semibold">Automations</h1><p className="mt-1 text-sm text-muted-foreground">Schedule recurring AO sessions with durable run history.</p></div>
-				<Button onClick={() => setCreateOpen(true)}><Plus aria-hidden="true" />New automation</Button>
+				<div><h1 className="text-xl font-semibold">{t("automations.title")}</h1><p className="mt-1 text-sm text-muted-foreground">{t("automations.description")}</p></div>
+				<Button onClick={() => setCreateOpen(true)}><Plus aria-hidden="true" />{t("automations.new")}</Button>
 			</header>
 			<main className="mx-auto flex w-full max-w-5xl flex-col gap-4 p-8">
 				{actionError ? <p role="alert" className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">{actionError}</p> : null}
-				{query.isLoading ? <p className="text-sm text-muted-foreground">Loading automations…</p> : null}
+				{query.isLoading ? <p className="text-sm text-muted-foreground">{t("automations.loading")}</p> : null}
 				{query.error ? <p role="alert" className="text-sm text-destructive">{query.error.message}</p> : null}
 				{!query.isLoading && !query.error && query.data?.length === 0 ? <EmptyAutomations onCreate={() => setCreateOpen(true)} /> : null}
 				{query.data?.map((item) => (
-					<AutomationCard key={item.id} item={item} expanded={expanded === item.id} onExpand={() => setExpanded(expanded === item.id ? null : item.id)} onDelete={() => setDeleteTarget(item)} onToggle={async (enabled) => { setActionError(null); try { await update.mutateAsync({ id: item.id, body: { enabled } }); } catch (error) { setActionError(error instanceof Error ? error.message : "Could not update automation"); } }} />
+					<AutomationCard key={item.id} item={item} expanded={expanded === item.id} onExpand={() => setExpanded(expanded === item.id ? null : item.id)} onDelete={() => setDeleteTarget(item)} onToggle={async (enabled) => { setActionError(null); try { await update.mutateAsync({ id: item.id, body: { enabled } }); } catch (error) { setActionError(error instanceof Error ? error.message : t("automations.updateError")); } }} />
 				))}
 			</main>
 			<CreateAutomationDialog open={createOpen} workspaces={workspaces} harnesses={harnesses} busy={create.isPending} error={create.error?.message ?? null} onOpenChange={setCreateOpen} onCreate={async (input) => { await create.mutateAsync(input); setCreateOpen(false); }} />
-			<ConfirmDialog open={Boolean(deleteTarget)} title="Delete automation?" description={<>This permanently deletes <strong>{deleteTarget?.displayName}</strong> and its run history. Linked sessions remain available.</>} confirmLabel="Delete automation" destructive busy={remove.isPending} error={remove.error?.message ?? null} onOpenChange={(open) => { if (!open) setDeleteTarget(null); }} onConfirm={() => { if (!deleteTarget) return; remove.mutate(deleteTarget.id, { onSuccess: () => setDeleteTarget(null) }); }} />
+			<ConfirmDialog open={Boolean(deleteTarget)} title={t("automations.delete.title")} description={t("automations.delete.description", { name: deleteTarget?.displayName })} confirmLabel={t("automations.delete.confirm")} destructive busy={remove.isPending} error={remove.error?.message ?? null} onOpenChange={(open) => { if (!open) setDeleteTarget(null); }} onConfirm={() => { if (!deleteTarget) return; remove.mutate(deleteTarget.id, { onSuccess: () => setDeleteTarget(null) }); }} />
 		</div>
 	);
 }
 
 function EmptyAutomations({ onCreate }: { onCreate: () => void }) {
-	return <div className="grid min-h-64 place-items-center rounded-xl border border-dashed border-border p-8 text-center"><div><CalendarClock className="mx-auto mb-3 size-8 text-muted-foreground" /><h2 className="font-medium">No automations yet</h2><p className="mt-1 text-sm text-muted-foreground">Create a daily, weekly, or custom recurring session.</p><Button className="mt-4" onClick={onCreate}>Create automation</Button></div></div>;
+	const { t } = useTranslation();
+	return <div className="grid min-h-64 place-items-center rounded-xl border border-dashed border-border p-8 text-center"><div><CalendarClock className="mx-auto mb-3 size-8 text-muted-foreground" /><h2 className="font-medium">{t("automations.empty.title")}</h2><p className="mt-1 text-sm text-muted-foreground">{t("automations.empty.description")}</p><Button className="mt-4" onClick={onCreate}>{t("automations.create")}</Button></div></div>;
 }
 
 function AutomationCard({ item, expanded, onExpand, onDelete, onToggle }: { item: Automation; expanded: boolean; onExpand: () => void; onDelete: () => void; onToggle: (enabled: boolean) => Promise<void> }) {
 	const runs = useAutomationRuns(expanded ? item.id : null);
 	const navigate = useNavigate();
+	const { t, i18n } = useTranslation();
+	const frequency = item.rrule.match(/FREQ=([^;\n]+)/)?.[1]?.toLowerCase();
+	const schedule = t(`automations.frequency.${frequency ?? "recurring"}`, { defaultValue: frequency ?? t("automations.frequency.recurring") });
 	return <Card size="sm">
-		<CardHeader><CardTitle className="flex items-center gap-2"><button type="button" className="grid size-6 place-items-center rounded hover:bg-muted" aria-label={`${expanded ? "Hide" : "Show"} run history for ${item.displayName}`} onClick={onExpand}>{expanded ? <ChevronDown /> : <ChevronRight />}</button>{item.displayName}</CardTitle><CardDescription>{item.projectId} · {scheduleLabel(item)}</CardDescription><CardAction className="flex items-center gap-3"><label className="flex items-center gap-2 text-xs text-muted-foreground"><span>{item.enabled ? "Enabled" : "Disabled"}</span><Switch size="sm" checked={item.enabled} aria-label={`${item.enabled ? "Disable" : "Enable"} ${item.displayName}`} onCheckedChange={(checked) => void onToggle(checked)} /></label><Button variant="ghost" size="icon-sm" className="text-destructive hover:bg-destructive/10 hover:text-destructive" aria-label={`Delete ${item.displayName}`} onClick={onDelete}><Trash2 /></Button></CardAction></CardHeader>
-		<CardContent><div className="grid gap-3 text-sm sm:grid-cols-3"><div><span className="block text-xs text-muted-foreground">Next run</span>{item.enabled ? displayTime(item.nextRunAt) : "Paused"}</div><div><span className="block text-xs text-muted-foreground">Latest state</span>{item.latestRun?.status ?? "Never run"}</div><div><span className="block text-xs text-muted-foreground">Agent</span>{item.harness || "Project default"} · {item.kind}</div></div>{item.latestRun?.errorMessage ? <p role="alert" className="mt-3 rounded bg-destructive/10 px-3 py-2 text-xs text-destructive">{item.latestRun.errorMessage}</p> : null}
-		{expanded ? <div className="mt-4 border-t border-border pt-4"><h3 className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">Run history</h3>{runs.isLoading ? <p className="text-sm text-muted-foreground">Loading runs…</p> : runs.data?.length ? <div className="space-y-2">{runs.data.map((run) => <div key={run.id} className="flex items-center justify-between rounded-md bg-muted/40 px-3 py-2 text-sm"><div><span className="font-medium capitalize">{run.status}</span><span className="ml-2 text-xs text-muted-foreground">{displayTime(run.scheduledFor)}</span>{run.errorMessage ? <p className="text-xs text-destructive">{run.errorMessage}</p> : null}</div>{run.sessionId ? <Button variant="outline" size="sm" onClick={() => void navigate({ to: "/sessions/$sessionId", params: { sessionId: run.sessionId! } })}>Open session</Button> : null}</div>)}</div> : <p className="text-sm text-muted-foreground">No runs yet.</p>}</div> : null}</CardContent>
+		<CardHeader><CardTitle className="flex items-center gap-2"><button type="button" className="grid size-6 place-items-center rounded hover:bg-muted" aria-label={t(expanded ? "automations.runs.hide" : "automations.runs.show", { name: item.displayName })} onClick={onExpand}>{expanded ? <ChevronDown /> : <ChevronRight />}</button>{item.displayName}</CardTitle><CardDescription>{item.projectId} · {schedule} · {item.timezone}</CardDescription><CardAction className="flex items-center gap-3"><label className="flex items-center gap-2 text-xs text-muted-foreground"><span>{t(item.enabled ? "automations.enabled" : "automations.disabled")}</span><Switch size="sm" checked={item.enabled} aria-label={t(item.enabled ? "automations.disable" : "automations.enable", { name: item.displayName })} onCheckedChange={(checked) => void onToggle(checked)} /></label><Button variant="ghost" size="icon-sm" className="text-destructive hover:bg-destructive/10 hover:text-destructive" aria-label={t("automations.delete.aria", { name: item.displayName })} onClick={onDelete}><Trash2 /></Button></CardAction></CardHeader>
+		<CardContent><div className="grid gap-3 text-sm sm:grid-cols-3"><div><span className="block text-xs text-muted-foreground">{t("automations.nextRun")}</span>{item.enabled ? displayTime(item.nextRunAt, i18n.resolvedLanguage) : t("automations.paused")}</div><div><span className="block text-xs text-muted-foreground">{t("automations.latestState")}</span>{item.latestRun?.status ?? t("automations.neverRun")}</div><div><span className="block text-xs text-muted-foreground">{t("automations.agent")}</span>{item.harness || t("automations.projectDefault")} · {item.kind}</div></div>{item.latestRun?.errorMessage ? <p role="alert" className="mt-3 rounded bg-destructive/10 px-3 py-2 text-xs text-destructive">{item.latestRun.errorMessage}</p> : null}
+		{expanded ? <div className="mt-4 border-t border-border pt-4"><h3 className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">{t("automations.runs.title")}</h3>{runs.isLoading ? <p className="text-sm text-muted-foreground">{t("automations.runs.loading")}</p> : runs.error ? <p role="alert" className="text-sm text-destructive">{runs.error.message}</p> : runs.data?.length ? <div className="space-y-2">{runs.data.map((run) => <div key={run.id} className="flex items-center justify-between rounded-md bg-muted/40 px-3 py-2 text-sm"><div><span className="font-medium capitalize">{run.status}</span><span className="ml-2 text-xs text-muted-foreground">{displayTime(run.scheduledFor, i18n.resolvedLanguage)}</span>{run.errorMessage ? <p className="text-xs text-destructive">{run.errorMessage}</p> : null}</div>{run.sessionId ? <Button variant="outline" size="sm" onClick={() => void navigate({ to: "/sessions/$sessionId", params: { sessionId: run.sessionId! } })}>{t("automations.runs.openSession")}</Button> : null}</div>)}</div> : <p className="text-sm text-muted-foreground">{t("automations.runs.empty")}</p>}</div> : null}</CardContent>
 	</Card>;
 }
 
@@ -128,6 +129,7 @@ function CreateAutomationDialog({
 	onOpenChange,
 	onCreate,
 }: CreateAutomationDialogProps) {
+	const { t } = useTranslation();
 	const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
 	const [projectId, setProjectId] = useState("");
 	const [name, setName] = useState("");
@@ -139,6 +141,20 @@ function CreateAutomationDialog({
 	const [minute, setMinute] = useState("00");
 	const [raw, setRaw] = useState("FREQ=DAILY;BYHOUR=9;BYMINUTE=0;BYSECOND=0");
 	const [validationErrors, setValidationErrors] = useState<AutomationValidationErrors>({});
+
+	useEffect(() => {
+		if (!open) return;
+		setProjectId("");
+		setName("");
+		setPrompt("");
+		setKind("worker");
+		setHarness("");
+		setPreset("daily");
+		setHour("09");
+		setMinute("00");
+		setRaw("FREQ=DAILY;BYHOUR=9;BYMINUTE=0;BYSECOND=0");
+		setValidationErrors({});
+	}, [open]);
 
 	function clearValidationError(field: AutomationField) {
 		setValidationErrors((current) => {
@@ -152,13 +168,13 @@ function CreateAutomationDialog({
 	async function submit(event: FormEvent) {
 		event.preventDefault();
 		const nextErrors: AutomationValidationErrors = {};
-		if (!projectId) nextErrors.projectId = "Select a project.";
-		if (!name.trim()) nextErrors.name = "Enter a name.";
-		if (!prompt.trim()) nextErrors.prompt = "Enter a prompt.";
-		if (preset === "raw" && !raw.trim()) nextErrors.raw = "Enter an RRule.";
+		if (!projectId) nextErrors.projectId = t("automations.validation.project");
+		if (!name.trim()) nextErrors.name = t("automations.validation.name");
+		if (!prompt.trim()) nextErrors.prompt = t("automations.validation.prompt");
+		if (preset === "raw" && !raw.trim()) nextErrors.raw = t("automations.validation.rrule");
 		if (preset !== "raw") {
-			if (!/^(?:[01]?[0-9]|2[0-3])$/.test(hour)) nextErrors.hour = "Enter an hour from 00 to 23.";
-			if (!/^[0-5]?[0-9]$/.test(minute)) nextErrors.minute = "Enter minutes from 00 to 59.";
+			if (!/^(?:[01]?[0-9]|2[0-3])$/.test(hour)) nextErrors.hour = t("automations.validation.hour");
+			if (!/^[0-5]?[0-9]$/.test(minute)) nextErrors.minute = t("automations.validation.minute");
 		}
 		setValidationErrors(nextErrors);
 		const firstInvalid = (["projectId", "name", "prompt", "raw", "hour", "minute"] as const).find(
@@ -193,15 +209,15 @@ function CreateAutomationDialog({
 						type="button"
 						disabled={busy}
 						className="settings-dialog-close-button settings-close-button"
-						aria-label="Close create automation"
+						aria-label={t("automations.create.close")}
 					>
 						<X className="size-5" aria-hidden="true" />
 					</button>
 				</DialogClose>
 				<div className={settingsDialogHeaderClass}>
-					<DialogTitle className="settings-dialog-title">Create automation</DialogTitle>
+					<DialogTitle className="settings-dialog-title">{t("automations.create")}</DialogTitle>
 					<DialogDescription className="text-control leading-4 text-settings-muted">
-						The daemon schedules sessions in the selected timezone, including daylight-saving changes.
+						{t("automations.create.description")}
 					</DialogDescription>
 				</div>
 				<form className="flex min-h-0 flex-1 flex-col" noValidate onSubmit={(event) => void submit(event)}>
@@ -209,14 +225,14 @@ function CreateAutomationDialog({
 						{Object.keys(validationErrors).length > 0 ? (
 							<div role="alert" className="flex items-start gap-2 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive">
 								<TriangleAlert className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
-								<span>Complete the highlighted fields.</span>
+								<span>{t("automations.validation.summary")}</span>
 							</div>
 						) : null}
-						<Field label="Project" id={AUTOMATION_FIELD_IDS.projectId} error={validationErrors.projectId}>
+						<Field label={t("automations.field.project")} id={AUTOMATION_FIELD_IDS.projectId} error={validationErrors.projectId}>
 							<AutomationSelect
 								id={AUTOMATION_FIELD_IDS.projectId}
-								label="Project"
-								placeholder="Select a project"
+								label={t("automations.field.project")}
+								placeholder={t("automations.projectPlaceholder")}
 								required
 								invalid={Boolean(validationErrors.projectId)}
 								describedBy={validationErrors.projectId ? `${AUTOMATION_FIELD_IDS.projectId}-error` : undefined}
@@ -225,10 +241,10 @@ function CreateAutomationDialog({
 								options={workspaces.map((item) => ({ value: item.id, label: item.name }))}
 							/>
 						</Field>
-						<Field label="Name" id={AUTOMATION_FIELD_IDS.name} error={validationErrors.name}>
+						<Field label={t("automations.field.name")} id={AUTOMATION_FIELD_IDS.name} error={validationErrors.name}>
 							<Input id={AUTOMATION_FIELD_IDS.name} required maxLength={120} value={name} aria-invalid={Boolean(validationErrors.name) || undefined} aria-describedby={validationErrors.name ? `${AUTOMATION_FIELD_IDS.name}-error` : undefined} onChange={(event) => { setName(event.target.value); if (event.target.value.trim()) clearValidationError("name"); }} />
 						</Field>
-						<Field label="Prompt" id={AUTOMATION_FIELD_IDS.prompt} error={validationErrors.prompt}>
+						<Field label={t("automations.field.prompt")} id={AUTOMATION_FIELD_IDS.prompt} error={validationErrors.prompt}>
 							<textarea
 								id={AUTOMATION_FIELD_IDS.prompt}
 								required
@@ -241,32 +257,32 @@ function CreateAutomationDialog({
 							/>
 						</Field>
 						<div className="grid grid-cols-2 gap-3">
-							<Field label="Session kind">
+							<Field label={t("automations.field.sessionKind")}>
 								<AutomationSelect
-									label="Session kind"
+									label={t("automations.field.sessionKind")}
 									value={kind}
 									onValueChange={(value) => setKind(value as typeof kind)}
 									options={[
-										{ value: "worker", label: "Worker" },
-										{ value: "orchestrator", label: "Orchestrator" },
+										{ value: "worker", label: t("automations.kind.worker") },
+										{ value: "orchestrator", label: t("automations.kind.orchestrator") },
 									]}
 								/>
 							</Field>
-							<Field label="Agent">
+							<Field label={t("automations.agent")}>
 								<AutomationSelect
-									label="Agent"
+									label={t("automations.agent")}
 									value={harness || PROJECT_DEFAULT}
 									onValueChange={(value) => setHarness(value === PROJECT_DEFAULT ? "" : value)}
 									options={[
-										{ value: PROJECT_DEFAULT, label: "Project default" },
+										{ value: PROJECT_DEFAULT, label: t("automations.projectDefault") },
 										...harnesses.map((item) => ({ value: item.id, label: item.label })),
 									]}
 								/>
 							</Field>
 						</div>
-						<Field label="Schedule">
+						<Field label={t("automations.field.schedule")}>
 							<AutomationSelect
-								label="Schedule"
+								label={t("automations.field.schedule")}
 								value={preset}
 								onValueChange={(value) => {
 									setPreset(value);
@@ -278,34 +294,34 @@ function CreateAutomationDialog({
 									}
 								}}
 								options={[
-									{ value: "daily", label: "Daily" },
-									{ value: "weekly", label: "Weekly on Monday" },
-									{ value: "raw", label: "Custom RRule" },
+									{ value: "daily", label: t("automations.schedule.daily") },
+									{ value: "weekly", label: t("automations.schedule.weekly") },
+									{ value: "raw", label: t("automations.schedule.custom") },
 								]}
 							/>
 						</Field>
 						{preset === "raw" ? (
-							<Field label="RRule" id={AUTOMATION_FIELD_IDS.raw} error={validationErrors.raw}>
+							<Field label={t("automations.field.rrule")} id={AUTOMATION_FIELD_IDS.raw} error={validationErrors.raw}>
 								<Input id={AUTOMATION_FIELD_IDS.raw} required value={raw} aria-invalid={Boolean(validationErrors.raw) || undefined} aria-describedby={validationErrors.raw ? `${AUTOMATION_FIELD_IDS.raw}-error` : undefined} onChange={(event) => { setRaw(event.target.value); if (event.target.value.trim()) clearValidationError("raw"); }} />
 							</Field>
 						) : (
-							<Field label="Local time">
+							<Field label={t("automations.field.localTime")}>
 								<div className="grid grid-cols-[1fr_auto_1fr] items-center gap-2">
-									<TimePartInput id={AUTOMATION_FIELD_IDS.hour} label="Hour" value={hour} max={23} error={validationErrors.hour} onChange={(value) => { setHour(value); if (/^(?:[01]?[0-9]|2[0-3])$/.test(value)) clearValidationError("hour"); }} />
+									<TimePartInput id={AUTOMATION_FIELD_IDS.hour} label={t("automations.field.hour")} value={hour} max={23} error={validationErrors.hour} onChange={(value) => { setHour(value); if (/^(?:[01]?[0-9]|2[0-3])$/.test(value)) clearValidationError("hour"); }} />
 									<span aria-hidden="true" className="text-center font-semibold text-muted-foreground">:</span>
-									<TimePartInput id={AUTOMATION_FIELD_IDS.minute} label="Minute" value={minute} max={59} error={validationErrors.minute} onChange={(value) => { setMinute(value); if (/^[0-5]?[0-9]$/.test(value)) clearValidationError("minute"); }} />
+									<TimePartInput id={AUTOMATION_FIELD_IDS.minute} label={t("automations.field.minute")} value={minute} max={59} error={validationErrors.minute} onChange={(value) => { setMinute(value); if (/^[0-5]?[0-9]$/.test(value)) clearValidationError("minute"); }} />
 								</div>
 							</Field>
 						)}
-						<p className="text-xs text-settings-muted">Timezone: {timezone}</p>
+						<p className="text-xs text-settings-muted">{t("automations.timezone", { timezone })}</p>
 						{error ? <p role="alert" className="text-sm text-destructive">{error}</p> : null}
 					</div>
 					<div className={settingsDialogFooterClass}>
 						<Button type="button" variant="footer" disabled={busy} onClick={() => onOpenChange(false)}>
-							Cancel
+							{t("automations.cancel")}
 						</Button>
 						<Button type="submit" variant="footer-primary" disabled={busy}>
-							{busy ? "Creating…" : "Create automation"}
+							{busy ? t("automations.creating") : t("automations.create")}
 						</Button>
 					</div>
 				</form>

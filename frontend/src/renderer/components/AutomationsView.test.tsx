@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
 	automations: [] as Array<Record<string, unknown>>,
 	create: vi.fn(),
 	update: vi.fn(),
+	runsError: null as Error | null,
 }));
 
 vi.mock("@tanstack/react-router", () => ({ useNavigate: () => vi.fn() }));
@@ -17,11 +18,11 @@ vi.mock("../hooks/useAutomations", () => ({
 	useCreateAutomation: () => ({ mutateAsync: mocks.create, isPending: false, error: null }),
 	useUpdateAutomation: () => ({ mutateAsync: mocks.update, isPending: false, error: null }),
 	useDeleteAutomation: () => ({ mutate: vi.fn(), isPending: false, error: null }),
-	useAutomationRuns: () => ({ data: [], isLoading: false }),
+	useAutomationRuns: () => ({ data: [], isLoading: false, error: mocks.runsError }),
 }));
 
 describe("AutomationsView", () => {
-	beforeEach(() => { mocks.automations = []; mocks.create.mockReset(); mocks.update.mockReset(); });
+	beforeEach(() => { mocks.automations = []; mocks.runsError = null; mocks.create.mockReset(); mocks.update.mockReset(); });
 
 	it("shows a discoverable empty state and create action", () => {
 		render(<AutomationsView />);
@@ -154,5 +155,24 @@ describe("AutomationsView", () => {
 			"hover:bg-destructive/10",
 		);
 		expect(screen.getByRole("button", { name: "Show run history for Morning triage" })).toBeInTheDocument();
+	});
+
+	it("shows run-history request failures instead of an empty history", async () => {
+		mocks.automations = [{ id: "automation-1", projectId: "demo", displayName: "Morning triage", prompt: "Review", kind: "worker", rrule: "FREQ=DAILY", timezone: "UTC", enabled: true, nextRunAt: "2026-08-27T09:00:00Z", createdAt: "2026-08-26T09:00:00Z", updatedAt: "2026-08-26T09:00:00Z" }];
+		mocks.runsError = new Error("Run history unavailable");
+		render(<AutomationsView />);
+		await userEvent.click(screen.getByRole("button", { name: "Show run history for Morning triage" }));
+		expect(screen.getByRole("alert")).toHaveTextContent("Run history unavailable");
+		expect(screen.queryByText("No runs yet.")).not.toBeInTheDocument();
+	});
+
+	it("starts with a clean form after cancellation", async () => {
+		const user = userEvent.setup();
+		render(<AutomationsView />);
+		await user.click(screen.getAllByRole("button", { name: /create automation/i })[0]);
+		await user.type(screen.getByRole("textbox", { name: "Name" }), "Temporary name");
+		await user.click(screen.getByRole("button", { name: "Cancel" }));
+		await user.click(screen.getByRole("button", { name: "New automation" }));
+		expect(screen.getByRole("textbox", { name: "Name" })).toHaveValue("");
 	});
 });

@@ -20,31 +20,48 @@ import (
 func (s *Store) CreateSession(ctx context.Context, rec domain.SessionRecord) (domain.SessionRecord, error) {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
+	created, _, err := s.createSessionLocked(ctx, rec)
+	return created, err
+}
+
+// CreateAutomationSession reports whether it inserted the seed. Callers must
+// not continue launching when fresh=false unless the returned row carries the
+// durable launch-complete marker.
+func (s *Store) CreateAutomationSession(ctx context.Context, rec domain.SessionRecord) (domain.SessionRecord, bool, error) {
+	if rec.AutomationRunID == nil {
+		return domain.SessionRecord{}, false, fmt.Errorf("automation run id is required")
+	}
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	return s.createSessionLocked(ctx, rec)
+}
+
+func (s *Store) createSessionLocked(ctx context.Context, rec domain.SessionRecord) (domain.SessionRecord, bool, error) {
 	if rec.AutomationRunID != nil {
 		existing, err := s.qw.GetSessionByAutomationRunID(ctx, rec.AutomationRunID)
 		if err == nil {
-			return rowToRecord(gen.GetSessionRow(existing)), nil
+			return rowToRecord(gen.GetSessionRow(existing)), false, nil
 		}
 		if !errors.Is(err, sql.ErrNoRows) {
-			return domain.SessionRecord{}, fmt.Errorf("find session for automation run %s: %w", *rec.AutomationRunID, err)
+			return domain.SessionRecord{}, false, fmt.Errorf("find session for automation run %s: %w", *rec.AutomationRunID, err)
 		}
 	}
 
 	num, err := s.qw.NextSessionNum(ctx, rec.ProjectID)
 	if err != nil {
-		return domain.SessionRecord{}, fmt.Errorf("next session num for %s: %w", rec.ProjectID, err)
+		return domain.SessionRecord{}, false, fmt.Errorf("next session num for %s: %w", rec.ProjectID, err)
 	}
 	rec.ID = domain.SessionID(fmt.Sprintf("%s-%d", rec.ProjectID, num))
 	if err := s.qw.InsertSession(ctx, recordToInsert(rec, num)); err != nil {
 		if rec.AutomationRunID != nil {
 			existing, reloadErr := s.qw.GetSessionByAutomationRunID(ctx, rec.AutomationRunID)
 			if reloadErr == nil {
-				return rowToRecord(gen.GetSessionRow(existing)), nil
+				return rowToRecord(gen.GetSessionRow(existing)), false, nil
 			}
 		}
-		return domain.SessionRecord{}, fmt.Errorf("insert session %s: %w", rec.ID, err)
+		return domain.SessionRecord{}, false, fmt.Errorf("insert session %s: %w", rec.ID, err)
 	}
-	return rec, nil
+	return rec, true, nil
 }
 
 // UpdateSession writes the full mutable state of an existing session. The
@@ -391,16 +408,17 @@ func mapListAllSessionsRows(rows []gen.ListAllSessionsRow) []domain.SessionRecor
 
 func rowToRecord(row gen.GetSessionRow) domain.SessionRecord {
 	return domain.SessionRecord{
-		ID:                row.ID,
-		ProjectID:         row.ProjectID,
-		AutomationRunID:   row.AutomationRunID,
-		IssueID:           row.IssueID,
-		Kind:              row.Kind,
-		Harness:           row.Harness,
-		ReviewerHarness:   row.ReviewerHarness,
-		AutoReviewEnabled: row.AutoReviewEnabled,
-		DisplayName:       row.DisplayName,
-		Mode:              domain.NormalizeSessionMode(row.SessionMode),
+		ID:                        row.ID,
+		ProjectID:                 row.ProjectID,
+		AutomationRunID:           row.AutomationRunID,
+		AutomationLaunchCompleted: row.AutomationLaunchCompleted,
+		IssueID:                   row.IssueID,
+		Kind:                      row.Kind,
+		Harness:                   row.Harness,
+		ReviewerHarness:           row.ReviewerHarness,
+		AutoReviewEnabled:         row.AutoReviewEnabled,
+		DisplayName:               row.DisplayName,
+		Mode:                      domain.NormalizeSessionMode(row.SessionMode),
 		Activity: domain.Activity{
 			State:          row.ActivityState,
 			LastActivityAt: row.ActivityLastAt,
@@ -496,6 +514,7 @@ func recordToInsert(rec domain.SessionRecord, num int64) gen.InsertSessionParams
 		CreatedAt:                 rec.CreatedAt,
 		UpdatedAt:                 rec.UpdatedAt,
 		AutomationRunID:           rec.AutomationRunID,
+		AutomationLaunchCompleted: rec.AutomationLaunchCompleted,
 	}
 }
 
@@ -538,6 +557,7 @@ func recordToUpdate(rec domain.SessionRecord) gen.UpdateSessionParams {
 		ProviderConversationID:    rec.Metadata.ProviderConversationID,
 		ControllerGeneration:      rec.Metadata.ControllerGeneration,
 		Model:                     rec.Metadata.Model,
+		AutomationLaunchCompleted: rec.AutomationLaunchCompleted,
 		UpdatedAt:                 rec.UpdatedAt,
 	}
 }
