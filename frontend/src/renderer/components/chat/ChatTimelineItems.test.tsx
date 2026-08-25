@@ -93,6 +93,20 @@ describe("AssistantMessage streaming", () => {
 		expect(document.querySelector("p")?.textContent).toBe("a👨‍👩‍👧‍👦e\u0301");
 	});
 
+	it("reconciles a grapheme when a later snapshot adds a ZWJ", () => {
+		const view = render(<AssistantMessage message={message()} />);
+		view.rerender(<AssistantMessage message={message({ text: "a👨" })} />);
+		runFrame(0);
+		runFrame(1000);
+
+		view.rerender(<AssistantMessage message={message({ text: "a👨‍👩" })} />);
+		expect(document.querySelector("p")?.textContent).toBe("a");
+		runFrame(0);
+		runFrame(1000);
+
+		expect(document.querySelector("p")?.textContent).toBe("a👨‍👩");
+	});
+
 	it("shows the latest snapshot immediately when reduced motion is requested", () => {
 		vi.spyOn(window, "matchMedia").mockImplementation((query) => ({
 			matches: query === "(prefers-reduced-motion: reduce)",

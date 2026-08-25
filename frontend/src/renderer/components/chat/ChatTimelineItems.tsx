@@ -120,6 +120,16 @@ function streamGraphemes(text: string): string[] {
 	return Array.from(STREAM_GRAPHEME_SEGMENTER.segment(text), ({ segment }) => segment);
 }
 
+function reconciledStreamPrefix(visibleText: string, targetGraphemes: string[]): string {
+	let prefix = "";
+	for (const grapheme of targetGraphemes) {
+		const candidate = prefix + grapheme;
+		if (!visibleText.startsWith(candidate)) break;
+		prefix = candidate;
+	}
+	return prefix;
+}
+
 function useSmoothStreamingText(message: ConversationMessage): string {
 	// A snapshot can first reach the renderer after the provider has already emitted
 	// text. Keep that first durable burst visible; only later deltas need smoothing.
@@ -227,6 +237,15 @@ function useSmoothStreamingText(message: ConversationMessage): string {
 			visibleGraphemesRef.current = targetGraphemesRef.current;
 			setVisibleText(message.text);
 			return;
+		}
+		// A later combining mark or ZWJ can merge the last visible grapheme into a
+		// different target grapheme. Reconcile that trailing fragment before using
+		// the old grapheme count, otherwise the drain can skip the merged suffix.
+		const reconciled = reconciledStreamPrefix(visibleRef.current, targetGraphemesRef.current);
+		if (reconciled !== visibleRef.current) {
+			visibleRef.current = reconciled;
+			visibleGraphemesRef.current = streamGraphemes(reconciled);
+			setVisibleText(reconciled);
 		}
 		if (visibleGraphemesRef.current.length < targetGraphemesRef.current.length) scheduleDrain();
 	}, [cancelDrain, message.id, message.text, message.streaming, reducedMotion, scheduleDrain]);
