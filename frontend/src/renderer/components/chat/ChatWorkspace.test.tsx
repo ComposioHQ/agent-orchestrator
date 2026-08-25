@@ -404,7 +404,7 @@ describe("ChatWorkspace timeline", () => {
 		expect(selection?.isCollapsed).toBe(false);
 	});
 
-	it("does not interrupt while a menu or elicitation is open", () => {
+	it("does not interrupt while an elicitation is open", () => {
 		const onInterrupt = vi.fn();
 		const snapshot = structuredClone(chatFixture);
 		snapshot.turns[0] = { ...snapshot.turns[0], state: "running" };
@@ -427,7 +427,16 @@ describe("ChatWorkspace timeline", () => {
 		render(<ChatWorkspace snapshot={snapshot} onInterrupt={onInterrupt} />);
 		fireEvent.keyDown(screen.getByLabelText("Message the agent"), { key: "Escape" });
 		expect(onInterrupt).not.toHaveBeenCalled();
+	});
 
+	it("does not interrupt while a menu is open", () => {
+		const onInterrupt = vi.fn();
+		const snapshot = structuredClone(chatFixture);
+		snapshot.turns[0] = { ...snapshot.turns[0], state: "running" };
+		snapshot.items = snapshot.items.filter(
+			(item) => !(item.kind === "activity" && item.activityKind === "approval" && item.status === "pending"),
+		);
+		render(<ChatWorkspace snapshot={snapshot} onInterrupt={onInterrupt} />);
 		const menu = document.createElement("div");
 		menu.setAttribute("role", "menu");
 		menu.setAttribute("data-state", "open");
