@@ -98,24 +98,24 @@ describe("ACP session config options", () => {
 		expect(onChange).toHaveBeenCalledWith("model", { value: "sonnet" });
 	});
 
-	it("qualifies provider Plan mode descriptions that promise no tool execution", async () => {
+	it("replaces every Claude Plan mode promise with AO-owned disclosure copy", async () => {
 		const user = userEvent.setup();
 		render(
 			<TurnSettingsBar
+				provider="claude-code"
 				models={[]}
 				settings={{}}
 				configOptions={[
 					{
 						id: "mode",
-						name: "Mode",
-						description: "Provider execution mode",
-						category: "mode",
+						name: "No-tool mode",
+						description: "Planning mode, no actual tool execution.",
 						type: "select",
 						currentValue: "plan",
 						choices: [
 							{
 								value: "plan",
-								name: "Plan",
+								name: "Plan (no actual tool execution)",
 								description: "Planning mode, no actual tool execution.",
 							},
 						],
@@ -125,14 +125,50 @@ describe("ACP session config options", () => {
 			/>,
 		);
 
-		await user.click(screen.getByRole("button", { name: "Provider execution mode" }));
+		const trigger = screen.getByRole("button", { name: "Claude Code permission mode" });
+		expect(trigger).toHaveTextContent("Plan Mode");
+		await user.click(trigger);
 
 		expect(screen.queryByText(/no actual tool execution/i)).not.toBeInTheDocument();
 		expect(
 			screen.getByText(
-				"Provider-native Plan mode may inspect files, use tools, and write provider-owned plan artifacts outside the workspace. AO does not enforce a no-tool or no-write boundary.",
+				"Claude Code Plan mode may inspect files, use tools, and write provider-owned plan artifacts outside the workspace. AO does not enforce a no-tool or no-write boundary.",
 			),
 		).toBeInTheDocument();
+	});
+
+	it("leaves another provider's Plan mode catalog untouched", async () => {
+		const user = userEvent.setup();
+		render(
+			<TurnSettingsBar
+				provider="codex"
+				models={[]}
+				settings={{}}
+				configOptions={[
+					{
+						id: "mode",
+						name: "Mode",
+						description: "Provider execution mode",
+						type: "select",
+						currentValue: "plan",
+						choices: [
+							{
+								value: "plan",
+								name: "Provider Plan",
+								description: "Provider-owned Plan behavior.",
+							},
+						],
+					},
+				]}
+				onChangeConfigOption={vi.fn()}
+			/>,
+		);
+
+		const trigger = screen.getByRole("button", { name: "Provider execution mode" });
+		expect(trigger).toHaveTextContent("Provider Plan");
+		await user.click(trigger);
+		expect(screen.getByText("Provider-owned Plan behavior.")).toBeInTheDocument();
+		expect(screen.queryByText(/Claude Code Plan mode/i)).not.toBeInTheDocument();
 	});
 
 	it("keeps Codex native model+effort in one trigger when the provider has no catalog", () => {

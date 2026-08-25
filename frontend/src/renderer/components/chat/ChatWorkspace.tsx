@@ -867,6 +867,7 @@ export function ChatWorkspace({
 									onChooseSettings || onChooseConfigOption
 										? (
 												<TurnSettingsBar
+													provider={snapshot.harness}
 													models={models ?? []}
 													settings={snapshot.settings}
 													reroute={snapshot.modelReroute}

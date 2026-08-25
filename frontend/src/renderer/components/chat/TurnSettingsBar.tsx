@@ -61,9 +61,12 @@ const TRIGGER_CLASS =
 	"h-7 gap-1 bg-transparent rounded-lg px-3 text-[12px]! leading-none text-muted-foreground hover:bg-white/5 hover:text-foreground data-[state=open]:bg-white/5 data-[state=open]:text-foreground";
 const CHAT_MENU_CLASS = "chat-settings-menu text-[12px]!";
 const PROVIDER_PLAN_MODE_DISCLOSURE =
-	"Provider-native Plan mode may inspect files, use tools, and write provider-owned plan artifacts outside the workspace. AO does not enforce a no-tool or no-write boundary.";
+	"Claude Code Plan mode may inspect files, use tools, and write provider-owned plan artifacts outside the workspace. AO does not enforce a no-tool or no-write boundary.";
+const CLAUDE_PLAN_MODE_LABEL = "Plan Mode";
+const CLAUDE_MODE_PICKER_TITLE = "Claude Code permission mode";
 
 export function TurnSettingsBar({
+	provider,
 	models,
 	settings,
 	reroute,
@@ -75,6 +78,8 @@ export function TurnSettingsBar({
 	disabled,
 	children,
 }: {
+	/** Provider owning this live session and its advertised config catalog. */
+	provider?: string;
 	models: ChatModel[];
 	settings: TurnSettings;
 	/**
@@ -162,6 +167,7 @@ export function TurnSettingsBar({
 						{children}
 						{modeOption && onChangeConfigOption ? (
 							<ConfigOptionPicker
+								provider={provider}
 								option={modeOption}
 								disabled={optionDisabled}
 								onChange={(value) => applyOption(modeOption.id, value)}
@@ -490,29 +496,37 @@ function OptionSubmenu({
 }
 
 function ConfigOptionPicker({
+	provider,
 	option,
 	onChange,
 	disabled,
 }: {
+	provider?: string;
 	option: ChatConfigOption;
 	onChange: (value: ChatConfigOptionValue) => void;
 	disabled?: boolean;
 }) {
 	return (
 		<Picker
-			label={optionCurrentLabel(option)}
-			title={option.description || option.name}
+			label={optionCurrentLabel(option, provider)}
+			title={
+				isClaudeModeOption(option, provider)
+					? CLAUDE_MODE_PICKER_TITLE
+					: option.description || option.name
+			}
 			disabled={disabled}
 		>
-			<ConfigOptionChoices option={option} onChange={onChange} />
+			<ConfigOptionChoices provider={provider} option={option} onChange={onChange} />
 		</Picker>
 	);
 }
 
 function ConfigOptionChoices({
+	provider,
 	option,
 	onChange,
 }: {
+	provider?: string;
 	option: ChatConfigOption;
 	onChange: (value: ChatConfigOptionValue) => void;
 }) {
@@ -545,11 +559,11 @@ function ConfigOptionChoices({
 		<>
 			{option.choices.map((choice, index) => {
 				const previousGroup = index > 0 ? option.choices[index - 1]?.group : undefined;
-				const description =
-					option.category === "mode" &&
-					/\bplan\b/i.test(`${choice.value} ${choice.name}`)
-						? PROVIDER_PLAN_MODE_DISCLOSURE
-						: choice.description;
+				const claudePlanMode = isClaudePlanChoice(option, choice, provider);
+				const name = claudePlanMode ? CLAUDE_PLAN_MODE_LABEL : choice.name;
+				const description = claudePlanMode
+					? PROVIDER_PLAN_MODE_DISCLOSURE
+					: choice.description;
 				return (
 					<Fragment key={choice.value}>
 						{choice.group && choice.group !== previousGroup ? (
@@ -571,7 +585,7 @@ function ConfigOptionChoices({
 											: "text-muted-foreground",
 									)}
 								>
-									{choice.name}
+									{name}
 								</span>
 							</span>
 							{description ? (
@@ -637,6 +651,18 @@ function isModeOption(option: ChatConfigOption): boolean {
 	return option.category === "mode" || option.id === "mode";
 }
 
+function isClaudeModeOption(option: ChatConfigOption, provider?: string): boolean {
+	return provider?.trim().toLowerCase() === "claude-code" && isModeOption(option);
+}
+
+function isClaudePlanChoice(
+	option: ChatConfigOption,
+	choice: ChatConfigOption["choices"][number],
+	provider?: string,
+): boolean {
+	return isClaudeModeOption(option, provider) && /\bplan\b/i.test(`${choice.value} ${choice.name}`);
+}
+
 function partitionConfigOptions(options: ChatConfigOption[]): {
 	model: ChatConfigOption[];
 	effort: ChatConfigOption[];
@@ -667,9 +693,11 @@ function partitionConfigOptions(options: ChatConfigOption[]): {
 	return { model: [...primaryModel, ...otherModel], effort, mode, extra };
 }
 
-function optionCurrentLabel(option: ChatConfigOption): string {
+function optionCurrentLabel(option: ChatConfigOption, provider?: string): string {
 	if (option.type === "boolean") return option.currentBoolean ? "On" : "Off";
-	return option.choices.find((choice) => choice.value === option.currentValue)?.name
-		?? option.currentValue
-		?? option.name;
+	const currentChoice = option.choices.find((choice) => choice.value === option.currentValue);
+	if (currentChoice && isClaudePlanChoice(option, currentChoice, provider)) {
+		return CLAUDE_PLAN_MODE_LABEL;
+	}
+	return currentChoice?.name ?? option.currentValue ?? option.name;
 }
