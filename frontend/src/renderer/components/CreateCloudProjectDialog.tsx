@@ -1,6 +1,7 @@
 import * as Dialog from "@radix-ui/react-dialog";
 import { CheckCircle2, ChevronLeft, Cloud, LoaderCircle, X } from "lucide-react";
 import { type FormEvent, useEffect, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import type {
 	CloudBetaOverview,
 	CloudHarness,
@@ -12,8 +13,8 @@ import { useCloudSession } from "../lib/cloud-session";
 import { aoBridge } from "../lib/bridge";
 import { Button } from "./ui/button";
 
-function errorMessage(error: unknown): string {
-	return error instanceof Error ? error.message : "AO Cloud could not complete that request.";
+function errorMessage(error: unknown, fallback: string): string {
+	return error instanceof Error ? error.message : fallback;
 }
 
 function repositoryName(repositoryUrl: string): string {
@@ -30,6 +31,7 @@ export function CreateCloudProjectDialog({
 	onOpenChange: (open: boolean) => void;
 	open: boolean;
 }) {
+	const { t } = useTranslation();
 	const cloudSession = useCloudSession();
 	const signInStarted = useRef(false);
 	const [overview, setOverview] = useState<CloudBetaOverview | null>(null);
@@ -70,7 +72,7 @@ export function CreateCloudProjectDialog({
 				if (active) setOverview(next);
 			})
 			.catch((loadError) => {
-				if (active) setError(errorMessage(loadError));
+				if (active) setError(errorMessage(loadError, t("createProject.cloudRequestFailed")));
 			})
 			.finally(() => {
 				if (active) setLoading(false);
@@ -106,7 +108,7 @@ export function CreateCloudProjectDialog({
 					? "codex"
 					: undefined;
 			if (!harness) {
-				throw new Error("No local Claude Code or Codex login was found. Sign in to either agent locally and retry.");
+				throw new Error(t("createProject.cloudNoHarness"));
 			}
 			project = await aoBridge.cloud.createProject(overview.organization.id, {
 				...form,
@@ -124,7 +126,7 @@ export function CreateCloudProjectDialog({
 			setCreated({ project, session });
 		} catch (createError) {
 			if (project) setCreated({ project, session: null });
-			setError(errorMessage(createError));
+			setError(errorMessage(createError, t("createProject.cloudRequestFailed")));
 		} finally {
 			setCreating(false);
 		}
@@ -145,19 +147,19 @@ export function CreateCloudProjectDialog({
 				<Dialog.Overlay className="dialog-overlay data-[state=open]:animate-overlay-in" />
 				<Dialog.Content className="fixed left-1/2 top-1/2 z-overlay w-[min(520px,calc(100vw-24px))] -translate-x-1/2 -translate-y-1/2 overflow-hidden rounded-welcome-panel border border-[var(--color-border-import-modal)] bg-[var(--color-bg-import-modal)] p-0 text-[var(--color-text-import-title)] shadow-[var(--shadow-import-modal)] data-[state=open]:animate-modal-in">
 					<div className="flex items-start gap-3 border-b border-[var(--color-border-import-modal)] p-(--size-import-dialog-padding)">
-						<Button aria-label="Back to project type" disabled={creating} onClick={onBack} size="icon" type="button" variant="outline">
+						<Button aria-label={t("createProject.cloudBack")} disabled={creating} onClick={onBack} size="icon" type="button" variant="outline">
 							<ChevronLeft className="size-4" aria-hidden="true" />
 						</Button>
 						<div className="min-w-0 flex-1">
 							<Dialog.Title className="flex items-center gap-2 text-[18px] font-semibold">
-								<Cloud className="size-5" aria-hidden="true" /> Create project in Cloud
+								<Cloud className="size-5" aria-hidden="true" /> {t("createProject.cloud")}
 							</Dialog.Title>
 							<Dialog.Description className="mt-1 text-[13px] leading-5 text-[var(--color-text-import-muted)]">
-								AO clones the repository and runs every session for this project in its own isolated sandbox.
+								{t("createProject.cloudDescription")}
 							</Dialog.Description>
 						</div>
 						<Dialog.Close asChild>
-							<button aria-label="Close Cloud project dialog" className="settings-close-button" disabled={creating} type="button">
+							<button aria-label={t("createProject.cloudClose")} className="settings-close-button" disabled={creating} type="button">
 								<X className="size-4" aria-hidden="true" />
 							</button>
 						</Dialog.Close>
@@ -169,29 +171,35 @@ export function CreateCloudProjectDialog({
 								<span className="grid size-11 place-items-center rounded-full bg-success/10 text-success">
 									<CheckCircle2 className="size-6" aria-hidden="true" />
 								</span>
-								<h2 className="mt-4 text-base font-semibold">{created.project.displayName} is a Cloud project</h2>
+								<h2 className="mt-4 text-base font-semibold">
+									{t("createProject.cloudCreated", { name: created.project.displayName })}
+								</h2>
 								<p className="mt-2 max-w-sm text-sm leading-6 text-[var(--color-text-import-muted)]">
 									{created.session
-										? "Its orchestrator sandbox is provisioning now."
-										: "The project was created, but its orchestrator did not start. You can retry after reopening this flow."}
+										? t("createProject.cloudProvisioning")
+										: t("createProject.cloudOrchestratorFailed")}
 								</p>
-								<Button className="mt-5" onClick={() => onOpenChange(false)} type="button">Done</Button>
+								<Button className="mt-5" onClick={() => onOpenChange(false)} type="button">
+									{t("createProject.cloudDone")}
+								</Button>
 							</div>
 						) : cloudSession.status === "loading" || loading ? (
 							<div className="flex items-center justify-center gap-2 py-12 text-sm text-[var(--color-text-import-muted)]">
-								<LoaderCircle className="size-4 animate-spin" aria-hidden="true" /> Preparing AO Cloud…
+								<LoaderCircle className="size-4 animate-spin" aria-hidden="true" /> {t("createProject.cloudPreparing")}
 							</div>
 						) : !cloudSession.configured ? (
-							<p className="py-8 text-center text-sm text-destructive">AO Cloud sign-in is not configured for this build.</p>
+							<p className="py-8 text-center text-sm text-destructive">{t("createProject.cloudNotConfigured")}</p>
 						) : !authenticated ? (
 							<div className="py-8 text-center">
-								<p className="text-sm text-[var(--color-text-import-muted)]">Finish signing in in your browser. This window will continue automatically.</p>
-								<Button className="mt-4" onClick={() => cloudSession.signIn()} type="button" variant="outline">Open sign-in again</Button>
+								<p className="text-sm text-[var(--color-text-import-muted)]">{t("createProject.cloudFinishSignIn")}</p>
+								<Button className="mt-4" onClick={() => cloudSession.signIn()} type="button" variant="outline">
+									{t("createProject.cloudSignInAgain")}
+								</Button>
 							</div>
 						) : (
 							<form className="space-y-4" onSubmit={(event) => void submit(event)}>
 								<label className="block space-y-1.5 text-sm font-medium">
-									Git repository
+									{t("createProject.cloudGitRepository")}
 									<input
 										className="h-10 w-full rounded-lg border border-border bg-background px-3 font-normal"
 										onChange={(event) => {
@@ -202,23 +210,29 @@ export function CreateCloudProjectDialog({
 												displayName: repositoryName(repositoryUrl),
 											}));
 										}}
-										placeholder="https://github.com/org/repository.git"
+										placeholder={t("createProject.cloneRepositoryUrlPlaceholder")}
 										required
 										type="url"
 										value={form.repositoryUrl}
 									/>
 								</label>
 								<label className="block space-y-1.5 text-sm font-medium">
-									Default branch
+									{t("createProject.cloudDefaultBranch")}
 									<input className="h-10 w-full rounded-lg border border-border bg-background px-3 font-normal" onChange={(event) => setForm((current) => ({ ...current, defaultBranch: event.target.value }))} required value={form.defaultBranch} />
 								</label>
 								{error ? <p className="rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive" role="status">{error}</p> : null}
 								<div className="border-t border-border pt-4">
 									<Button className="w-full" disabled={!canSubmit} type="submit">
-										{creating ? <><LoaderCircle className="size-4 animate-spin" aria-hidden="true" /> Creating Cloud project…</> : "Create project"}
+										{creating ? (
+											<>
+												<LoaderCircle className="size-4 animate-spin" aria-hidden="true" /> {t("createProject.cloudCreating")}
+											</>
+										) : (
+											t("createProject.cloud")
+										)}
 									</Button>
 									<p className="mt-2 text-center text-xs leading-5 text-[var(--color-text-import-muted)]">
-										By creating, you allow AO to securely connect any local Claude Code and Codex logins it finds. Credentials never enter the renderer.
+										{t("createProject.cloudConsent")}
 									</p>
 								</div>
 							</form>

@@ -59,16 +59,19 @@ function SessionInterfaceRow() {
 }
 
 function CloudAccountSettingsRow() {
+	const { t } = useTranslation();
 	const cloudSession = useCloudSession();
 	if (cloudSession.status !== "authenticated") return null;
 	return (
-		<SettingsRow label="AO Cloud account">
+		<SettingsRow label={t("settings.cloudAccount")}>
 			<button
 				className="rounded-md border border-border px-2.5 py-1 text-xs font-medium hover:bg-interactive-hover"
 				onClick={() => void cloudSession.signOut()}
 				type="button"
 			>
-				Sign out{cloudSession.session?.user.email ? ` ${cloudSession.session.user.email}` : ""}
+				{cloudSession.session?.user.email
+					? t("shell.signOutWithEmail", { email: cloudSession.session.user.email })
+					: t("shell.signOut")}
 			</button>
 		</SettingsRow>
 	);

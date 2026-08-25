@@ -60,7 +60,7 @@ describe("CreateCloudProjectDialog", () => {
 		render(<CreateCloudProjectDialog onBack={() => undefined} onOpenChange={() => undefined} open />);
 
 		await user.type(await screen.findByLabelText("Git repository"), "https://github.com/acme/repository.git");
-		await user.click(screen.getByRole("button", { name: "Create project" }));
+		await user.click(screen.getByRole("button", { name: "Create Cloud project" }));
 
 		await waitFor(() => expect(mocks.connectLocalHarness).toHaveBeenCalledWith("claude-code"));
 		expect(mocks.connectLocalHarness).toHaveBeenCalledWith("codex");
@@ -93,7 +93,7 @@ describe("CreateCloudProjectDialog", () => {
 		render(<CreateCloudProjectDialog onBack={() => undefined} onOpenChange={() => undefined} open />);
 
 		await user.type(await screen.findByLabelText("Git repository"), "https://github.com/acme/repository.git");
-		await user.click(screen.getByRole("button", { name: "Create project" }));
+		await user.click(screen.getByRole("button", { name: "Create Cloud project" }));
 
 		await waitFor(() =>
 			expect(mocks.createSession).toHaveBeenCalledWith(expect.objectContaining({ harness: "codex" })),
