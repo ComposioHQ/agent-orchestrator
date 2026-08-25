@@ -560,7 +560,6 @@ async function createWindowInternal(): Promise<void> {
 		browserProfileStore,
 		browserHistoryStore,
 		clearBrowserProfileData: clearElectronBrowserProfileData,
-		getDaemonPort: () => (daemonStatus.state === "ready" ? daemonStatus.port : undefined),
 	});
 	browserProfileIpc = registerBrowserProfileIpc({
 		ipcMain,
