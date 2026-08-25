@@ -93,9 +93,9 @@ function compact(entries: BrowserHistoryEntry[]): BrowserHistoryEntry[] {
 			visitCount: Math.min(Number.MAX_SAFE_INTEGER, existing.visitCount + normalized.visitCount),
 		});
 	}
-	return [...byURL.values()]
-		.sort((a, b) => Date.parse(b.lastVisited) - Date.parse(a.lastVisited))
-		.slice(0, BROWSER_IMPORT_MAX_HISTORY_ENTRIES);
+	return [...byURL.values()].sort(
+		(a, b) => Date.parse(b.lastVisited) - Date.parse(a.lastVisited) || a.url.localeCompare(b.url),
+	);
 }
 
 function fittedHistory(entries: BrowserHistoryEntry[]): { entries: BrowserHistoryEntry[]; serialized: string } {
@@ -174,17 +174,23 @@ export class BrowserHistoryStore {
 		return queued;
 	}
 
-	async mergeImportedEntries(profileId: string, imported: BrowserHistoryEntry[]): Promise<number> {
+	async mergeImportedEntries(
+		profileId: string,
+		imported: BrowserHistoryEntry[],
+	): Promise<{ imported: number; truncated: number }> {
 		let importedCount = 0;
+		let truncated = 0;
 		await this.enqueue(profileId, async () => {
 			const normalized = compact(imported);
-			importedCount = normalized.length;
-			const entries = await this.write(profileId, compact([...(await this.load(profileId)), ...normalized]));
+			const combined = compact([...(await this.load(profileId)), ...normalized])
+				.slice(0, BROWSER_IMPORT_MAX_HISTORY_ENTRIES);
+			const entries = await this.write(profileId, combined);
 			const retainedURLs = new Set(entries.map((entry) => entry.url));
 			importedCount = normalized.filter((entry) => retainedURLs.has(entry.url)).length;
+			truncated = normalized.length - importedCount;
 			this.cache.set(profileId, entries);
 		});
-		return importedCount;
+		return { imported: importedCount, truncated };
 	}
 
 	async record(profileId: string, rawURL: string, rawTitle: string, incrementVisit: boolean): Promise<void> {
@@ -206,7 +212,11 @@ export class BrowserHistoryStore {
 						visitCount: incrementVisit ? existing.visitCount + 1 : existing.visitCount,
 					}
 				: normalized;
-			const entries = await this.write(profileId, compact([nextEntry, ...current.filter((entry) => entry.url !== normalized.url)]));
+			const entries = await this.write(
+				profileId,
+				compact([nextEntry, ...current.filter((entry) => entry.url !== normalized.url)])
+					.slice(0, BROWSER_IMPORT_MAX_HISTORY_ENTRIES),
+			);
 			this.cache.set(profileId, entries);
 		});
 	}

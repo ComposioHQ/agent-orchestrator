@@ -443,38 +443,68 @@ export class BrowserProfileImportService {
 				const profile = await this.options.profileStore.createProfile(group.name);
 				created.push(profile);
 				const history = group.data.flatMap((data) => data.history);
-				const cookies = dedupeCookies(group.data.flatMap((data) => data.cookies));
-				const importedHistoryEntries = request.includeHistory
+				const cookieSelection = dedupeCookies(group.data.flatMap((data) => data.cookies));
+				const historyOutcome = request.includeHistory
 					? await this.options.historyStore.mergeImportedEntries(profile.id, history)
-					: 0;
+					: { imported: 0, truncated: 0 };
 				const cookieOutcome = request.includeCookies
-					? await setCookies(this.options.fromPartition(browserProfilePartition(profile.id)), cookies)
+					? await setCookies(this.options.fromPartition(browserProfilePartition(profile.id)), cookieSelection.cookies)
 					: { imported: 0, skipped: 0, warnings: [] };
+				const limitWarnings: BrowserImportWarning[] = [
+					...(cookieSelection.truncated > 0
+						? [{ code: "cookie-limit-truncated" as const, count: cookieSelection.truncated }]
+						: []),
+					...(historyOutcome.truncated > 0
+						? [{ code: "history-limit-truncated" as const, count: historyOutcome.truncated }]
+						: []),
+				];
 				results.push({
 					sourceProfileNames: group.data.map((data) => data.profile.name),
 					destinationProfile: profile,
 					importedCookies: cookieOutcome.imported,
-					skippedCookies: group.data.reduce((total, data) => total + data.skippedCookies, 0) + cookieOutcome.skipped,
-					importedHistoryEntries,
-					warnings: mergeWarnings([...group.data.flatMap((data) => data.warnings), ...cookieOutcome.warnings]),
+					skippedCookies: group.data.reduce((total, data) => total + data.skippedCookies, 0)
+						+ cookieSelection.truncated
+						+ cookieOutcome.skipped,
+					importedHistoryEntries: historyOutcome.imported,
+					warnings: mergeWarnings([
+						...group.data.flatMap((data) => data.warnings),
+						...limitWarnings,
+						...cookieOutcome.warnings,
+					]),
 				});
 				onProgress({ requestId: request.requestId, phase: "importing", completed: index + 1, total: groups.length });
 			}
 			return { sourceName: source.public.name, entries: results };
 		} catch (error) {
+			const cleanupFailures: string[] = [];
 			for (const profile of created.reverse()) {
 				let importedSession: ImportSession | undefined;
 				try {
 					importedSession = this.options.fromPartition(browserProfilePartition(profile.id));
 				} catch {
-					// Registry and AO-owned history cleanup must still run even if
-					// Electron cannot recreate the destination session.
+					cleanupFailures.push(`${profile.name}: browser storage cleanup could not start`);
 				}
-				await Promise.allSettled([
+				const cleanup = await Promise.allSettled([
 					this.options.historyStore.clear(profile.id),
 					...(importedSession ? [importedSession.clearStorageData(), importedSession.clearCache()] : []),
 				]);
-				await this.options.profileStore.deleteProfile(profile.id).catch(() => undefined);
+				if (cleanup.some((outcome) => outcome.status === "rejected")) {
+					cleanupFailures.push(`${profile.name}: imported data could not be fully removed`);
+					continue;
+				}
+				if (!importedSession) continue;
+				try {
+					await this.options.profileStore.deleteProfile(profile.id);
+				} catch {
+					cleanupFailures.push(`${profile.name}: profile record could not be removed`);
+				}
+			}
+			if (cleanupFailures.length > 0) {
+				const original = error instanceof Error ? error.message : "Browser data could not be imported.";
+				throw new Error(
+					`${original} Cleanup was incomplete (${cleanupFailures.join("; ")}). `
+					+ "The affected profiles remain in Browser settings so you can retry deleting them.",
+				);
 			}
 			throw error;
 		}
@@ -574,9 +604,11 @@ async function readProfileData(
 			warnings.push({ code: "history-database-missing" });
 		} else {
 			const snapshot = await snapshotSQLite(historyDatabase, profile.root, staging, budget);
-			history = source.descriptor.family === "chromium"
+			const outcome = source.descriptor.family === "chromium"
 				? readChromiumHistory(snapshot)
 				: readFirefoxHistory(snapshot);
+			history = outcome.history;
+			warnings.push(...outcome.warnings);
 		}
 	}
 	return { profile, cookies, history, warnings: mergeWarnings(warnings), skippedCookies };
@@ -663,12 +695,22 @@ function withReadOnlyDatabase<T>(file: string, read: (database: Database) => T):
 function readFirefoxCookies(file: string, now: Date): { cookies: ImportedCookie[]; skipped: number; warnings: BrowserImportWarning[] } | null {
 	return withReadOnlyDatabase(file, (database) => {
 		if (!hasTable(database, "moz_cookies")) return null;
+		const columns = tableColumns(database, "moz_cookies");
+		const hasOriginAttributes = columns.has("originAttributes");
+		const isolationWhere = hasOriginAttributes ? "WHERE COALESCE(originAttributes, '') = ''" : "";
+		const total = countRows(database, "moz_cookies");
+		const eligible = countRows(database, "moz_cookies", isolationWhere);
+		const isolatedSkipped = total - eligible;
+		const truncated = Math.max(0, eligible - BROWSER_IMPORT_MAX_COOKIES);
+		const orderBy = cookieOrder(columns, ["lastAccessed", "creationTime"]);
 		const rows = database.prepare(`
 			SELECT host, name, value, path, expiry, isSecure, isHttpOnly, sameSite
 			FROM moz_cookies
+			${isolationWhere}
+			ORDER BY ${orderBy}
 			LIMIT ${BROWSER_IMPORT_MAX_COOKIES}
 		`).all() as Record<string, unknown>[];
-		return normalizeCookieRows(rows.map((row) => ({
+		const normalized = normalizeCookieRows(rows.map((row) => ({
 			domain: row.host,
 			name: row.name,
 			value: row.value,
@@ -678,6 +720,10 @@ function readFirefoxCookies(file: string, now: Date): { cookies: ImportedCookie[
 			httpOnly: booleanValue(row.isHttpOnly),
 			sameSite: firefoxSameSite(numberValue(row.sameSite)),
 		})), now);
+		if (isolatedSkipped > 0) normalized.warnings.push({ code: "isolated-cookies-skipped", count: isolatedSkipped });
+		if (truncated > 0) normalized.warnings.push({ code: "cookie-limit-truncated", count: truncated });
+		normalized.skipped += isolatedSkipped + truncated;
+		return normalized;
 	});
 }
 
@@ -688,9 +734,19 @@ function readChromiumCookies(
 ): { cookies: ImportedCookie[]; skipped: number; warnings: BrowserImportWarning[] } {
 	return withReadOnlyDatabase(file, (database) => {
 		requireTable(database, "cookies", "The selected Chromium profile does not contain supported cookie data.");
+		const columns = tableColumns(database, "cookies");
+		const hasPartitionKey = columns.has("top_frame_site_key");
+		const isolationWhere = hasPartitionKey ? "WHERE COALESCE(top_frame_site_key, '') = ''" : "";
+		const total = countRows(database, "cookies");
+		const eligible = countRows(database, "cookies", isolationWhere);
+		const isolatedSkipped = total - eligible;
+		const truncated = Math.max(0, eligible - BROWSER_IMPORT_MAX_COOKIES);
+		const orderBy = cookieOrder(columns, ["last_access_utc", "creation_utc"]);
 		const rows = database.prepare(`
 			SELECT host_key, name, value, encrypted_value, path, expires_utc, is_secure, is_httponly, samesite
 			FROM cookies
+			${isolationWhere}
+			ORDER BY ${orderBy}
 			LIMIT ${BROWSER_IMPORT_MAX_COOKIES}
 		`).all() as Record<string, unknown>[];
 		let encryptedSkipped = 0;
@@ -719,7 +775,9 @@ function readChromiumCookies(
 		}
 		const normalized = normalizeCookieRows(raw, now);
 		if (encryptedSkipped > 0) normalized.warnings.push({ code: "encrypted-cookies-skipped", count: encryptedSkipped });
-		normalized.skipped += encryptedSkipped;
+		if (isolatedSkipped > 0) normalized.warnings.push({ code: "isolated-cookies-skipped", count: isolatedSkipped });
+		if (truncated > 0) normalized.warnings.push({ code: "cookie-limit-truncated", count: truncated });
+		normalized.skipped += encryptedSkipped + isolatedSkipped + truncated;
 		return normalized;
 	});
 }
@@ -734,7 +792,10 @@ function normalizeCookieRows(
 	for (const row of rows) {
 		const domain = stringValue(row.domain).trim().toLowerCase();
 		const hostname = domain.replace(/^\.+/, "");
-		if (!hostname) continue;
+		if (!hostname) {
+			invalid += 1;
+			continue;
+		}
 		const name = stringValue(row.name);
 		const value = stringValue(row.value);
 		if (!name) {
@@ -773,34 +834,46 @@ function normalizeCookieRows(
 	return { cookies, skipped: expired + invalid, warnings };
 }
 
-function readFirefoxHistory(file: string): BrowserHistoryEntry[] {
+function readFirefoxHistory(file: string): { history: BrowserHistoryEntry[]; warnings: BrowserImportWarning[] } {
 	return withReadOnlyDatabase(file, (database) => {
 		requireTable(database, "moz_places", "The selected Firefox profile does not contain supported history data.");
-		return (database.prepare(`
+		const eligible = countRows(database, "moz_places", "WHERE url LIKE 'http%'");
+		const truncated = Math.max(0, eligible - BROWSER_IMPORT_MAX_HISTORY_ENTRIES);
+		const history = (database.prepare(`
 			SELECT url, title, visit_count, last_visit_date
 			FROM moz_places
 			WHERE url LIKE 'http%'
-			ORDER BY last_visit_date DESC
+			ORDER BY last_visit_date DESC, rowid DESC
 			LIMIT ${BROWSER_IMPORT_MAX_HISTORY_ENTRIES}
 		`).all() as Record<string, unknown>[]).flatMap((row) => {
 			const timestamp = numberValue(row.last_visit_date) / 1_000;
 			return normalizeHistoryRow(row.url, row.title, row.visit_count, timestamp);
 		});
+		return {
+			history,
+			warnings: truncated > 0 ? [{ code: "history-limit-truncated", count: truncated }] : [],
+		};
 	});
 }
 
-function readChromiumHistory(file: string): BrowserHistoryEntry[] {
+function readChromiumHistory(file: string): { history: BrowserHistoryEntry[]; warnings: BrowserImportWarning[] } {
 	return withReadOnlyDatabase(file, (database) => {
 		requireTable(database, "urls", "The selected Chromium profile does not contain supported history data.");
-		return (database.prepare(`
+		const eligible = countRows(database, "urls", "WHERE url LIKE 'http%'");
+		const truncated = Math.max(0, eligible - BROWSER_IMPORT_MAX_HISTORY_ENTRIES);
+		const history = (database.prepare(`
 			SELECT url, title, visit_count, last_visit_time
 			FROM urls
 			WHERE url LIKE 'http%'
-			ORDER BY last_visit_time DESC
+			ORDER BY last_visit_time DESC, rowid DESC
 			LIMIT ${BROWSER_IMPORT_MAX_HISTORY_ENTRIES}
 		`).all() as Record<string, unknown>[]).flatMap((row) =>
 			normalizeHistoryRow(row.url, row.title, row.visit_count, chromiumTimestamp(numberValue(row.last_visit_time)) * 1_000),
 		);
+		return {
+			history,
+			warnings: truncated > 0 ? [{ code: "history-limit-truncated", count: truncated }] : [],
+		};
 	});
 }
 
@@ -810,6 +883,28 @@ function requireTable(database: Database, table: string, message: string): void 
 
 function hasTable(database: Database, table: string): boolean {
 	return Boolean(database.prepare("SELECT 1 AS present FROM sqlite_master WHERE type = 'table' AND name = ?").get(table));
+}
+
+function tableColumns(database: Database, table: "cookies" | "moz_cookies"): Set<string> {
+	return new Set(
+		(database.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name?: unknown }>)
+			.map((row) => stringValue(row.name))
+			.filter(Boolean),
+	);
+}
+
+function countRows(
+	database: Database,
+	table: "cookies" | "moz_cookies" | "urls" | "moz_places",
+	where = "",
+): number {
+	const row = database.prepare(`SELECT COUNT(*) AS count FROM ${table} ${where}`).get() as { count?: unknown };
+	return numberValue(row.count);
+}
+
+function cookieOrder(columns: Set<string>, preferredNewestColumns: string[]): string {
+	const newest = preferredNewestColumns.filter((column) => columns.has(column));
+	return [...newest.map((column) => `${column} DESC`), "rowid DESC"].join(", ");
 }
 
 function normalizeHistoryRow(
@@ -865,13 +960,19 @@ function booleanValue(value: unknown): boolean {
 	return value === true || value === 1 || value === 1n;
 }
 
-function dedupeCookies(cookies: ImportedCookie[]): ImportedCookie[] {
+function dedupeCookies(cookies: ImportedCookie[]): { cookies: ImportedCookie[]; truncated: number } {
 	const byKey = new Map<string, ImportedCookie>();
 	for (const cookie of cookies) {
 		const existing = byKey.get(cookie.dedupeKey);
 		if (!existing || (cookie.expirationDate ?? 0) >= (existing.expirationDate ?? 0)) byKey.set(cookie.dedupeKey, cookie);
 	}
-	return [...byKey.values()].slice(0, BROWSER_IMPORT_MAX_COOKIES);
+	const unique = [...byKey.values()].sort(
+		(a, b) => (b.expirationDate ?? 0) - (a.expirationDate ?? 0) || a.dedupeKey.localeCompare(b.dedupeKey),
+	);
+	return {
+		cookies: unique.slice(0, BROWSER_IMPORT_MAX_COOKIES),
+		truncated: Math.max(0, unique.length - BROWSER_IMPORT_MAX_COOKIES),
+	};
 }
 
 async function setCookies(

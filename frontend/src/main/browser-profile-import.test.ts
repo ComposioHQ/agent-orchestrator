@@ -31,17 +31,19 @@ async function createChromeFixture(root: string): Promise<{ localAppData: string
 	cookies.exec(`
 		CREATE TABLE cookies (
 			host_key TEXT, name TEXT, value TEXT, encrypted_value BLOB, path TEXT,
-			expires_utc INTEGER, is_secure INTEGER, is_httponly INTEGER, samesite INTEGER
+			expires_utc INTEGER, is_secure INTEGER, is_httponly INTEGER, samesite INTEGER,
+			top_frame_site_key TEXT, last_access_utc INTEGER, creation_utc INTEGER
 		)
 	`);
 	const future = chromiumMicros("2030-01-01T00:00:00.000Z");
 	const past = chromiumMicros("2020-01-01T00:00:00.000Z");
-	const insertCookie = cookies.prepare("INSERT INTO cookies VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)");
-	insertCookie.run(".github.com", "session", "usable", Buffer.alloc(0), "/", future, 1, 1, 1);
-	insertCookie.run(".github.com", "empty", "", Buffer.alloc(0), "/", future, 1, 0, 1);
-	insertCookie.run(".github.com", "app-bound", "", Buffer.from("v20-unavailable"), "/", future, 1, 1, 1);
-	insertCookie.run(".github.com", "expired", "old", Buffer.alloc(0), "/", past, 1, 0, 1);
-	insertCookie.run(".example.com", "filtered", "nope", Buffer.alloc(0), "/", future, 1, 0, 1);
+	const insertCookie = cookies.prepare("INSERT INTO cookies VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+	insertCookie.run(".github.com", "session", "usable", Buffer.alloc(0), "/", future, 1, 1, 1, "", future, future);
+	insertCookie.run(".github.com", "empty", "", Buffer.alloc(0), "/", future, 1, 0, 1, "", future - 1, future - 1);
+	insertCookie.run(".github.com", "app-bound", "", Buffer.from("v20-unavailable"), "/", future, 1, 1, 1, "", future - 2, future - 2);
+	insertCookie.run(".github.com", "expired", "old", Buffer.alloc(0), "/", past, 1, 0, 1, "", past, past);
+	insertCookie.run(".example.com", "filtered", "nope", Buffer.alloc(0), "/", future, 1, 0, 1, "", future - 3, future - 3);
+	insertCookie.run(".isolated.example", "partitioned", "private", Buffer.alloc(0), "/", future, 1, 1, 1, "https://top.example", future + 1, future + 1);
 	cookies.close();
 
 	const history = new Database(path.join(profileRoot, "History"));
@@ -67,9 +69,11 @@ async function createLiveFirefoxFixture(root: string): Promise<{
 	cookies.exec(`
 		CREATE TABLE moz_cookies (
 			host TEXT, name TEXT, value TEXT, path TEXT, expiry INTEGER,
-			isSecure INTEGER, isHttpOnly INTEGER, sameSite INTEGER
+			isSecure INTEGER, isHttpOnly INTEGER, sameSite INTEGER,
+			originAttributes TEXT, lastAccessed INTEGER, creationTime INTEGER
 		);
-		INSERT INTO moz_cookies VALUES ('.example.com', 'session', 'firefox', '/', 1893456000, 1, 1, 1);
+		INSERT INTO moz_cookies VALUES ('.example.com', 'session', 'firefox', '/', 1893456000, 1, 1, 1, '', 2, 1);
+		INSERT INTO moz_cookies VALUES ('.container.example', 'container', 'private', '/', 1893456000, 1, 1, 1, '^userContextId=2', 3, 2);
 	`);
 
 	const history = new Database(path.join(profileRoot, "places.sqlite"));
@@ -148,8 +152,9 @@ describe("BrowserProfileImportService", () => {
 			expect(result.entries[0]).toMatchObject({
 				importedCookies: 1,
 				importedHistoryEntries: 1,
-				skippedCookies: 0,
+				skippedCookies: 1,
 			});
+			expect(result.entries[0]!.warnings).toContainEqual({ code: "isolated-cookies-skipped", count: 1 });
 			expect(cookies).toHaveBeenCalledWith(expect.objectContaining({
 				name: "session",
 				value: "firefox",
@@ -245,10 +250,11 @@ describe("BrowserProfileImportService", () => {
 			destination: { mode: "merge", name: "Imported Chrome" },
 		}, progress);
 
-		expect(result.entries[0]).toMatchObject({ importedCookies: 3, skippedCookies: 2, importedHistoryEntries: 2 });
+		expect(result.entries[0]).toMatchObject({ importedCookies: 3, skippedCookies: 3, importedHistoryEntries: 2 });
 		expect(result.entries[0]!.warnings).toEqual(expect.arrayContaining([
 			expect.objectContaining({ code: "encrypted-cookies-skipped", count: 1 }),
 			expect.objectContaining({ code: "expired-cookies-skipped", count: 1 }),
+			expect.objectContaining({ code: "isolated-cookies-skipped", count: 1 }),
 		]));
 		expect([...cookiesByPartition.values()][0]).toHaveLength(3);
 		expect(progress).toHaveBeenLastCalledWith(expect.objectContaining({ phase: "importing", completed: 1, total: 1 }));
@@ -302,13 +308,17 @@ describe("BrowserProfileImportService", () => {
 		});
 	});
 
-	it("removes the destination when Electron session creation fails and permits retry", async () => {
+	it("retains a visible destination when Electron session cleanup cannot start", async () => {
 		const root = await fixtureRoot();
 		const { localAppData } = await createChromeFixture(root);
 		const stateDir = path.join(root, "ao-state");
 		const profileStore = new BrowserProfileStore({ stateDir });
 		await profileStore.load();
 		let sessionAvailable = false;
+		const fromPartition = () => {
+			if (!sessionAvailable) throw new Error("session unavailable");
+			return { cookies: { set: async () => undefined }, clearStorageData: async () => undefined, clearCache: async () => undefined };
+		};
 		const service = new BrowserProfileImportService({
 			stateDir,
 			profileStore,
@@ -316,10 +326,7 @@ describe("BrowserProfileImportService", () => {
 			platform: "win32",
 			homeDir: root,
 			env: { LOCALAPPDATA: localAppData },
-			fromPartition: () => {
-				if (!sessionAvailable) throw new Error("session unavailable");
-				return { cookies: { set: async () => undefined }, clearStorageData: async () => undefined, clearCache: async () => undefined };
-			},
+			fromPartition,
 		});
 		const source = (await service.discover()).sources[0]!;
 		const request = {
@@ -331,12 +338,154 @@ describe("BrowserProfileImportService", () => {
 			destination: { mode: "merge" as const, name: "Retry Session" },
 		};
 
-		await expect(service.import(request, vi.fn())).rejects.toThrow("session unavailable");
-		expect(profileStore.profiles).toEqual([]);
+		await expect(service.import(request, vi.fn())).rejects.toThrow("remain in Browser settings");
+		expect(profileStore.profiles).toEqual([expect.objectContaining({ name: "Retry Session" })]);
 		sessionAvailable = true;
-		await expect(service.import({ ...request, requestId: "99999999-9999-4999-8999-999999999999" }, vi.fn())).resolves.toMatchObject({
-			entries: [expect.objectContaining({ destinationProfile: expect.objectContaining({ name: "Retry Session" }) })],
+		const retained = profileStore.profiles[0]!;
+		const session = fromPartition();
+		await session.clearStorageData();
+		await session.clearCache();
+		await profileStore.deleteProfile(retained.id);
+		expect(profileStore.profiles).toEqual([]);
+	});
+
+	it("keeps a failed destination registered when rollback cannot remove all imported data", async () => {
+		const root = await fixtureRoot();
+		const { localAppData } = await createChromeFixture(root);
+		const stateDir = path.join(root, "ao-state");
+		const profileStore = new BrowserProfileStore({ stateDir });
+		await profileStore.load();
+		const historyStore = new BrowserHistoryStore({ stateDir });
+		vi.spyOn(historyStore, "mergeImportedEntries").mockRejectedValueOnce(new Error("disk full"));
+		vi.spyOn(historyStore, "clear").mockRejectedValueOnce(new Error("cleanup failed"));
+		const service = new BrowserProfileImportService({
+			stateDir,
+			profileStore,
+			historyStore,
+			platform: "win32",
+			homeDir: root,
+			env: { LOCALAPPDATA: localAppData },
+			fromPartition: () => ({
+				cookies: { set: async () => undefined },
+				clearStorageData: async () => undefined,
+				clearCache: async () => undefined,
+			}),
 		});
+		const source = (await service.discover()).sources[0]!;
+
+		await expect(service.import({
+			requestId: "12121212-1212-4212-8212-121212121212",
+			sourceId: source.id,
+			profileIds: [source.profiles[0]!.id],
+			includeCookies: false,
+			includeHistory: true,
+			destination: { mode: "merge", name: "Cleanup retry" },
+		}, vi.fn())).rejects.toThrow("remain in Browser settings");
+		expect(profileStore.profiles).toEqual([expect.objectContaining({ name: "Cleanup retry" })]);
+	});
+
+	it("reports the exact deterministic history truncation count", async () => {
+		const root = await fixtureRoot();
+		const { localAppData, profileRoot } = await createChromeFixture(root);
+		const history = new Database(path.join(profileRoot, "History"));
+		const insert = history.prepare("INSERT INTO urls VALUES (?, ?, ?, ?)");
+		history.exec("BEGIN");
+		for (let index = 0; index < 5_000; index += 1) {
+			insert.run(
+				`https://limit.example/${index}`,
+				`Limit ${index}`,
+				1,
+				chromiumMicros(new Date(Date.UTC(2027, 0, 1, 0, 0, index)).toISOString()),
+			);
+		}
+		history.exec("COMMIT");
+		history.close();
+
+		const stateDir = path.join(root, "ao-state");
+		const profileStore = new BrowserProfileStore({ stateDir });
+		await profileStore.load();
+		const service = new BrowserProfileImportService({
+			stateDir,
+			profileStore,
+			historyStore: new BrowserHistoryStore({ stateDir }),
+			platform: "win32",
+			homeDir: root,
+			env: { LOCALAPPDATA: localAppData },
+			fromPartition: () => ({ cookies: { set: async () => undefined }, clearStorageData: async () => undefined, clearCache: async () => undefined }),
+		});
+		const source = (await service.discover()).sources[0]!;
+		const result = await service.import({
+			requestId: "13131313-1313-4313-8313-131313131313",
+			sourceId: source.id,
+			profileIds: [source.profiles[0]!.id],
+			includeCookies: false,
+			includeHistory: true,
+			destination: { mode: "merge", name: "History limit" },
+		}, vi.fn());
+
+		expect(result.entries[0]).toMatchObject({ importedHistoryEntries: 5_000 });
+		expect(result.entries[0]!.warnings).toContainEqual({ code: "history-limit-truncated", count: 2 });
+	});
+
+	it("reports the exact cookie truncation count without importing partitioned cookies", async () => {
+		const root = await fixtureRoot();
+		const { localAppData, profileRoot } = await createChromeFixture(root);
+		const database = new Database(path.join(profileRoot, "Network", "Cookies"));
+		const future = chromiumMicros("2030-01-01T00:00:00.000Z");
+		const insert = database.prepare("INSERT INTO cookies VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+		database.exec("BEGIN");
+		for (let index = 0; index < 20_000; index += 1) {
+			insert.run(
+				".limit.example",
+				`cookie-${index}`,
+				`value-${index}`,
+				Buffer.alloc(0),
+				"/",
+				future,
+				1,
+				1,
+				1,
+				"",
+				future + 100 + index,
+				future + 100 + index,
+			);
+		}
+		database.exec("COMMIT");
+		database.close();
+
+		const stateDir = path.join(root, "ao-state");
+		const profileStore = new BrowserProfileStore({ stateDir });
+		await profileStore.load();
+		let importedCookies = 0;
+		const service = new BrowserProfileImportService({
+			stateDir,
+			profileStore,
+			historyStore: new BrowserHistoryStore({ stateDir }),
+			platform: "win32",
+			homeDir: root,
+			env: { LOCALAPPDATA: localAppData },
+			fromPartition: () => ({
+				cookies: { set: async () => { importedCookies += 1; } },
+				clearStorageData: async () => undefined,
+				clearCache: async () => undefined,
+			}),
+		});
+		const source = (await service.discover()).sources[0]!;
+		const result = await service.import({
+			requestId: "14141414-1414-4414-8414-141414141414",
+			sourceId: source.id,
+			profileIds: [source.profiles[0]!.id],
+			includeCookies: true,
+			includeHistory: false,
+			destination: { mode: "merge", name: "Cookie limit" },
+		}, vi.fn());
+
+		expect(importedCookies).toBe(20_000);
+		expect(result.entries[0]).toMatchObject({ importedCookies: 20_000, skippedCookies: 6 });
+		expect(result.entries[0]!.warnings).toEqual(expect.arrayContaining([
+			{ code: "isolated-cookies-skipped", count: 1 },
+			{ code: "cookie-limit-truncated", count: 5 },
+		]));
 	});
 
 	it("rejects an oversized database before reading it", async () => {

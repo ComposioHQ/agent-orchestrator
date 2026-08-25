@@ -521,6 +521,9 @@ function warningKey(code: BrowserImportWarning["code"]): MessageKey {
 	switch (code) {
 		case "cookie-database-missing": return "settings.browserImport.warning.cookie-database-missing";
 		case "history-database-missing": return "settings.browserImport.warning.history-database-missing";
+		case "isolated-cookies-skipped": return "settings.browserImport.warning.isolated-cookies-skipped";
+		case "cookie-limit-truncated": return "settings.browserImport.warning.cookie-limit-truncated";
+		case "history-limit-truncated": return "settings.browserImport.warning.history-limit-truncated";
 		case "encrypted-cookies-skipped": return "settings.browserImport.warning.encrypted-cookies-skipped";
 		case "expired-cookies-skipped": return "settings.browserImport.warning.expired-cookies-skipped";
 		case "invalid-cookies-skipped": return "settings.browserImport.warning.invalid-cookies-skipped";

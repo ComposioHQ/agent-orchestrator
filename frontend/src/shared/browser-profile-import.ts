@@ -47,6 +47,9 @@ export type BrowserImportRequest = {
 export type BrowserImportWarningCode =
 	| "cookie-database-missing"
 	| "history-database-missing"
+	| "isolated-cookies-skipped"
+	| "cookie-limit-truncated"
+	| "history-limit-truncated"
 	| "encrypted-cookies-skipped"
 	| "expired-cookies-skipped"
 	| "invalid-cookies-skipped"

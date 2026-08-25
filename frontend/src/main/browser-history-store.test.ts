@@ -24,7 +24,7 @@ describe("BrowserHistoryStore", () => {
 		await expect(store.mergeImportedEntries(profileId, [
 			{ url: "https://github.com/openai", title: "OpenAI", lastVisited: "2026-01-01T00:00:00.000Z", visitCount: 2 },
 			{ url: "file:///secret", title: "Secret", lastVisited: "2026-01-02T00:00:00.000Z", visitCount: 1 },
-		])).resolves.toBe(1);
+		])).resolves.toEqual({ imported: 1, truncated: 0 });
 
 		expect(await store.suggest(profileId, "openai")).toEqual([
 			{ url: "https://github.com/openai", title: "OpenAI" },
@@ -44,13 +44,14 @@ describe("BrowserHistoryStore", () => {
 			lastVisited: new Date(1_800_000_000_000 - index).toISOString(),
 			visitCount: 1,
 		}));
-		const retained = await store.mergeImportedEntries(profileId, entries);
+		const outcome = await store.mergeImportedEntries(profileId, entries);
 		const file = path.join(stateDir, "browser-history", `${profileId}.json`);
 		const metadata = await stat(file);
 		const parsed = JSON.parse(await readFile(file, "utf8")) as { entries: BrowserHistoryEntry[] };
 		expect(metadata.size).toBeLessThanOrEqual(4 * 1024 * 1024);
-		expect(parsed.entries.length).toBe(retained);
+		expect(parsed.entries.length).toBe(outcome.imported);
 		expect(parsed.entries.length).toBeLessThanOrEqual(5_000);
+		expect(outcome.truncated).toBe(entries.length - outcome.imported);
 		expect(await store.suggest(profileId, "entry 5099")).toEqual([]);
 	});
 });
