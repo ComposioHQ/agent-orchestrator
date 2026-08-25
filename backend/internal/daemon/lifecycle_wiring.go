@@ -62,6 +62,7 @@ func startLifecycle(ctx context.Context, store *sqlite.Store, runtime ports.Runt
 		lifecycle.WithTelemetry(telemetry),
 		lifecycle.WithContainerReaper(dockerreap.New(), store),
 		lifecycle.WithActiveSteering(activeTurnSteering(agents)),
+		lifecycle.WithStartupSignalGate(startupSignalGatesInput(agents)),
 	)
 	rp := reaper.New(lcm, store, runtime, reaper.Config{Logger: logger})
 	activityPoller := activityobserver.New(store, lcm, runtime, agents, activityobserver.Config{Logger: logger})
@@ -70,6 +71,23 @@ func startLifecycle(ctx context.Context, store *sqlite.Store, runtime ports.Runt
 		runtimeReaper: rp,
 		reaperDone:    rp.Start(ctx),
 		activityDone:  activityPoller.Start(ctx),
+	}
+}
+
+// startupSignalGatesInput resolves whether an adapter promises that its first
+// hook proves native TUI startup dialogs have cleared. Unknown and hookless
+// adapters remain ungated.
+func startupSignalGatesInput(agents ports.AgentResolver) func(domain.AgentHarness) bool {
+	return func(harness domain.AgentHarness) bool {
+		if agents == nil {
+			return false
+		}
+		agent, ok := agents.Agent(harness)
+		if !ok {
+			return false
+		}
+		signaler, ok := agent.(ports.StartupInputReadinessSignaler)
+		return ok && signaler.FirstSignalProvesInputReady()
 	}
 }
 

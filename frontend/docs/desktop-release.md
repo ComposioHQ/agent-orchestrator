@@ -26,10 +26,15 @@ on `main`; the PR-based flow below supersedes it.
 - macOS and Linux packages build and ship a pinned tmux under
   `resources/tmux/bin/tmux`. Before spawning the daemon, Electron atomically
   stages that binary in versioned storage under the AO data directory; this
-  keeps it available after a Linux AppImage mount disappears. The supervisor
-  pins new sessions to an AO-owned tmux socket. Sessions created by an older AO
-  release are discovered and kept on the legacy default socket until they end.
-  Windows uses ConPTY and carries no tmux resource.
+  keeps it available after a Linux AppImage mount disappears. The daemon
+  derives an explicit AO-private `tmux -S` socket from its run-file identity and
+  starts tmux without reading the user's tmux configuration. It never probes or
+  adopts sessions from tmux's default socket. Socket inodes remain in AO state;
+  a bounded owner-only `/tmp` directory alias handles deeply nested paths on
+  macOS, and unsafe shared-writable socket directories fail closed. Pane
+  environments are applied over stdin before the real command starts, keeping
+  configured values out of process arguments. Windows uses ConPTY and carries
+  no tmux resource.
 
 ## Hard rule: exactly one publisher
 

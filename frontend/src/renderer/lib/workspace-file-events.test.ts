@@ -15,10 +15,13 @@ vi.mock("./api-client", () => ({
 	subscribeApiBaseUrl: subscribeApiBaseUrlMock,
 }));
 
-import { subscribeWorkspaceFileChanges } from "./workspace-file-events";
+import { getWorkspaceFileConnectionState, subscribeWorkspaceFileChanges } from "./workspace-file-events";
+
+let baseUrlListener: (() => void) | undefined;
 
 class EventSourceStub {
 	static instances: EventSourceStub[] = [];
+	static throwNext = false;
 	url: string;
 	closed = false;
 	readyState = 0;
@@ -27,6 +30,10 @@ class EventSourceStub {
 	listeners = new Map<string, Set<() => void>>();
 
 	constructor(url: string) {
+		if (EventSourceStub.throwNext) {
+			EventSourceStub.throwNext = false;
+			throw new Error("connection setup failed");
+		}
 		this.url = url;
 		EventSourceStub.instances.push(this);
 	}
@@ -53,15 +60,21 @@ function fakeQueryClient() {
 
 beforeEach(() => {
 	EventSourceStub.instances = [];
+	EventSourceStub.throwNext = false;
+	baseUrlListener = undefined;
 	getApiBaseUrlMock.mockReset().mockReturnValue("http://127.0.0.1:3001");
 	hasTrustedApiBaseUrlMock.mockReset().mockReturnValue(true);
-	subscribeApiBaseUrlMock.mockReset().mockReturnValue(unsubscribeBaseUrlMock);
+	subscribeApiBaseUrlMock.mockReset().mockImplementation((listener: () => void) => {
+		baseUrlListener = listener;
+		return unsubscribeBaseUrlMock;
+	});
 	unsubscribeBaseUrlMock.mockReset();
 	(globalThis as unknown as { EventSource: unknown }).EventSource = EventSourceStub;
 });
 
 afterEach(() => {
 	vi.useRealTimers();
+	vi.restoreAllMocks();
 	delete (globalThis as unknown as { EventSource?: unknown }).EventSource;
 });
 
@@ -98,6 +111,66 @@ describe("subscribeWorkspaceFileChanges", () => {
 		expect(queryClient.invalidateQueries).toHaveBeenCalledTimes(2);
 		expect(queryClient.invalidateQueries).toHaveBeenCalledWith({ queryKey: ["session-workspace-files", "sess-1"] });
 		expect(queryClient.invalidateQueries).toHaveBeenCalledWith({ queryKey: ["session-workspace-file", "sess-1"] });
+		unsubscribe();
+	});
+
+	it("keeps one retry pending when another connect trigger arrives", () => {
+		vi.useFakeTimers();
+		vi.spyOn(Math, "random").mockReturnValue(0.5);
+		EventSourceStub.throwNext = true;
+		const unsubscribe = subscribeWorkspaceFileChanges("sess-retry", fakeQueryClient());
+
+		expect(EventSourceStub.instances).toHaveLength(0);
+		baseUrlListener?.();
+		expect(EventSourceStub.instances).toHaveLength(0);
+
+		vi.advanceTimersByTime(4_999);
+		expect(EventSourceStub.instances).toHaveLength(0);
+		vi.advanceTimersByTime(1);
+		expect(EventSourceStub.instances).toHaveLength(1);
+		unsubscribe();
+	});
+
+	it("reports degraded after three completed connection failures", () => {
+		vi.useFakeTimers();
+		vi.spyOn(Math, "random").mockReturnValue(0.5);
+		const unsubscribe = subscribeWorkspaceFileChanges("sess-degraded", fakeQueryClient());
+
+		for (let failure = 0; failure < 3; failure += 1) {
+			const source = EventSourceStub.instances.at(-1)!;
+			source.readyState = 2;
+			source.onerror?.();
+			if (failure < 2) vi.advanceTimersByTime(5_000);
+		}
+
+		expect(getWorkspaceFileConnectionState("sess-degraded")).toBe("degraded");
+		unsubscribe();
+	});
+
+	it("degrades after repeated native reconnect failures and recovers on open", () => {
+		const unsubscribe = subscribeWorkspaceFileChanges("sess-native-retry", fakeQueryClient());
+		const source = EventSourceStub.instances[0];
+
+		source.onopen?.();
+		expect(getWorkspaceFileConnectionState("sess-native-retry")).toBe("connected");
+
+		source.readyState = 0;
+		for (let failure = 0; failure < 3; failure += 1) {
+			source.onerror?.();
+			expect(getWorkspaceFileConnectionState("sess-native-retry")).toBe(failure < 2 ? "connecting" : "degraded");
+		}
+
+		source.onopen?.();
+		expect(getWorkspaceFileConnectionState("sess-native-retry")).toBe("connected");
+		unsubscribe();
+	});
+
+	it("uses degraded polling when EventSource is unavailable", () => {
+		delete (globalThis as unknown as { EventSource?: unknown }).EventSource;
+
+		const unsubscribe = subscribeWorkspaceFileChanges("sess-no-eventsource", fakeQueryClient());
+
+		expect(getWorkspaceFileConnectionState("sess-no-eventsource")).toBe("degraded");
 		unsubscribe();
 	});
 });

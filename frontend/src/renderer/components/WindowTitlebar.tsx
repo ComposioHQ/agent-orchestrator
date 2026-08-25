@@ -11,7 +11,7 @@ import {
   X,
 } from "lucide-react";
 import { useEffect, useState } from "react";
-import { useUiStore } from "../stores/ui-store";
+import { sidebarIsVisible, useUiStore } from "../stores/ui-store";
 import { useCanGoForward } from "./TitlebarNav";
 import {
   DropdownMenu,
@@ -140,7 +140,8 @@ function WindowControls({
 
 export function WindowTitlebar() {
   const { t } = useTranslation();
-  const { isSidebarOpen, toggleSidebar } = useUiStore();
+  const toggleSidebar = useUiStore((state) => state.toggleSidebar);
+  const isSidebarOpen = useUiStore(sidebarIsVisible);
   const router = useRouter();
   const canGoBack = useCanGoBack();
   const canGoForward = useCanGoForward();

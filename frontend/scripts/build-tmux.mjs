@@ -1,6 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { cpus } from "node:os";
+import { cpus, tmpdir } from "node:os";
 import {
 	chmodSync,
 	copyFileSync,
@@ -47,7 +47,7 @@ const UTF8PROC = {
 	license: "LICENSE.md",
 };
 const SOURCES = [TMUX, LIBEVENT, NCURSES, UTF8PROC];
-const BUILD_REVISION = 3;
+const BUILD_REVISION = 4;
 
 const scriptsDir = dirname(fileURLToPath(import.meta.url));
 const frontendRoot = resolve(scriptsDir, "..");
@@ -109,6 +109,7 @@ const version = run(outputBinary, ["-V"], { capture: true }).stdout.trim();
 if (version !== `tmux ${TMUX.version}`) {
 	fail(`bundled tmux reported ${JSON.stringify(version)}, expected ${JSON.stringify(`tmux ${TMUX.version}`)}`);
 }
+verifyTerminfoAttach(outputBinary);
 console.log(`Bundled ${version} at ${outputBinary}`);
 
 async function build() {
@@ -145,7 +146,6 @@ async function build() {
 			"--without-cxx",
 			"--without-cxx-binding",
 			"--without-tests",
-			"--without-progs",
 			"--without-manpages",
 			"--enable-widec",
 			"--with-termlib",
@@ -154,6 +154,26 @@ async function build() {
 		],
 		{ cwd: ncursesDir, env: commonEnv },
 	);
+	run("make", ["-j", jobs], { cwd: ncursesDir, env: commonEnv });
+	// Runtime.Attach always presents xterm-256color. Generate its fallback
+	// with the matching pinned tic/infocmp we just built: macOS's older host
+	// tools cannot compile the ncurses 6.5 entry. Rebuilding embeds the entry
+	// into libtinfo so the shipped binary needs no host terminfo database.
+	const ncursesBuildDir = join(ncursesDir, "ncurses");
+	const fallback = run(
+		"sh",
+		[
+			"-e",
+			"./tinfo/MKfallback.sh",
+			join(prefix, "share", "terminfo"),
+			"../misc/terminfo.src",
+			"../progs/tic",
+			"../progs/infocmp",
+			"xterm-256color",
+		],
+		{ cwd: ncursesBuildDir, env: commonEnv },
+	);
+	writeFileSync(join(ncursesBuildDir, "fallback.c"), fallback.stdout);
 	run("make", ["-j", jobs], { cwd: ncursesDir, env: commonEnv });
 	run("make", ["install.libs", "install.includes"], { cwd: ncursesDir, env: commonEnv });
 
@@ -188,6 +208,8 @@ async function build() {
 		...commonEnv,
 		LIBTINFO_CFLAGS: `-I${join(prefix, "include", "ncursesw")} -I${join(prefix, "include")}`,
 		LIBTINFO_LIBS: join(prefix, "lib", "libtinfow.a"),
+		LIBUTF8PROC_CFLAGS: `-I${join(prefix, "include")}`,
+		LIBUTF8PROC_LIBS: join(prefix, "lib", "libutf8proc.a"),
 	};
 	run("./configure", tmuxConfigureArgs, { cwd: tmuxDir, env: tmuxEnv });
 	run("make", ["-j", jobs], { cwd: tmuxDir, env: tmuxEnv });
@@ -253,13 +275,57 @@ function verifyPortableLinkage(binary, buildPrefix) {
 	}
 }
 
+function verifyTerminfoAttach(binary) {
+	const identity = `ao-tmux-smoke-${process.pid}`;
+	const socket = join(tmpdir(), `${identity}.sock`);
+	const session = "terminfo";
+	const missingTerminfo = join(tmpdir(), identity, "missing-terminfo");
+	const attachEnvironment = {
+		...process.env,
+		HOME: join(tmpdir(), identity, "missing-home"),
+		TERM: "xterm-256color",
+		TERMINFO: missingTerminfo,
+		TERMINFO_DIRS: missingTerminfo,
+	};
+	run(binary, ["-S", socket, "-f", "/dev/null", "new-session", "-d", "-s", session, "sleep 10"]);
+	try {
+		const tmuxArgs = [binary, "-S", socket, "-u", "-T", "RGB", "attach-session", "-t", session];
+		const result =
+			process.platform === "darwin"
+				? run("script", ["-q", "/dev/null", ...tmuxArgs], {
+						capture: true,
+						allowFailure: true,
+						ignoreStdin: true,
+						env: attachEnvironment,
+					})
+				: run("script", ["-q", "-e", "-c", tmuxArgs.map(shellQuote).join(" "), "/dev/null"], {
+						capture: true,
+						allowFailure: true,
+						ignoreStdin: true,
+						env: attachEnvironment,
+					});
+		const output = `${result.stdout}\n${result.stderr}`;
+		if (result.status !== 0 || /terminfo database/i.test(output)) {
+			fail(`bundled tmux could not attach with TERM=xterm-256color:\n${output}`);
+		}
+	} finally {
+		run(binary, ["-S", socket, "kill-server"], { capture: true, allowFailure: true });
+		rmSync(socket, { force: true });
+	}
+}
+
+function shellQuote(value) {
+	return `'${value.replaceAll("'", `'\\''`)}'`;
+}
+
 function run(command, args, options = {}) {
 	const capture = options.capture || process.env.AO_VERBOSE_NATIVE_BUILD !== "1";
 	const result = spawnSync(command, args, {
 		cwd: options.cwd,
 		env: options.env,
 		encoding: capture ? "utf8" : undefined,
-		stdio: capture ? "pipe" : "inherit",
+		maxBuffer: 64 * 1024 * 1024,
+		stdio: capture ? [options.ignoreStdin ? "ignore" : "pipe", "pipe", "pipe"] : "inherit",
 		windowsHide: true,
 	});
 	if (result.error) fail(`failed to start ${command}: ${result.error.message}`);
