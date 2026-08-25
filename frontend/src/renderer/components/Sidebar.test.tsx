@@ -1499,6 +1499,25 @@ describe("Sidebar", () => {
 		expect(pressSurface).not.toHaveClass("scale-[0.98]");
 	});
 
+	it("scales session actions with the row without scaling for action-button presses", () => {
+		renderSidebar({ workspaces: [{ ...workspace, sessions: [session] }] });
+
+		const sessionButton = screen.getByLabelText("Open fix login");
+		const pressSurface = sessionButton.closest<HTMLElement>("[data-session-press]");
+		const pinButton = screen.getByLabelText("Pin session");
+
+		if (!pressSurface) throw new Error("Session press surface not found");
+		expect(pressSurface).toContainElement(pinButton);
+
+		fireEvent.pointerDown(sessionButton);
+		expect(pressSurface).toHaveClass("scale-[0.97]");
+		fireEvent.pointerUp(sessionButton);
+		expect(pressSurface).not.toHaveClass("scale-[0.97]");
+
+		fireEvent.pointerDown(pinButton);
+		expect(pressSurface).not.toHaveClass("scale-[0.97]");
+	});
+
 	it("optically aligns the project folder and label with its action icons", () => {
 		renderSidebar();
 
@@ -2264,9 +2283,11 @@ describe("Sidebar reordering", () => {
 		expect(screen.queryByRole("button", { name: "Reorder Alpha" })).not.toBeInTheDocument();
 		expect(screen.queryByRole("button", { name: "Reorder first" })).not.toBeInTheDocument();
 		expect(projectActivator("Alpha")).toHaveClass("cursor-grab");
+		expect(projectActivator("Alpha")).toHaveClass("transition-none");
 		expect(sessionActivator("first")).toHaveClass("cursor-grab", "pr-[70px]");
 		const actionStrip = screen.getByLabelText("Open first").closest("[data-session-row]")?.querySelector("[data-session-actions]");
 		expect(actionStrip).toHaveClass("opacity-0");
+		expect(actionStrip).not.toHaveClass("transition-opacity", "duration-150");
 		expect(actionStrip?.querySelectorAll("button")).toHaveLength(3);
 		expect(actionStrip?.querySelector("button")).not.toHaveClass("hover:bg-interactive-hover");
 	});

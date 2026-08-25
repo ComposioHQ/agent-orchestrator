@@ -10,6 +10,8 @@ import {
 	PointerSensor,
 	closestCenter,
 	pointerWithin,
+	useDraggable,
+	useDroppable,
 	useSensor,
 	useSensors,
 	type CollisionDetection,
@@ -52,6 +54,7 @@ import {
 	type MouseEvent,
 	type ReactNode,
 } from "react";
+import { flushSync } from "react-dom";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import type { UpdateStatus } from "../../main/update-settings";
 import {
@@ -129,13 +132,13 @@ const noDragStyle = isMac ? ({ WebkitAppRegion: "no-drag" } as React.CSSProperti
 // a 20px square icon button that tints on hover, matching the old
 // SidebarMenuAction footprint.
 const HOVER_ACTION_CLASS =
-	"grid size-5 shrink-0 place-items-center rounded-md text-passive transition-colors hover:text-foreground disabled:pointer-events-none disabled:opacity-50 data-[state=open]:text-foreground [&_svg]:size-icon-lg";
+	"grid size-5 shrink-0 place-items-center rounded-md text-passive hover:text-foreground disabled:pointer-events-none disabled:opacity-50 data-[state=open]:text-foreground [&_svg]:size-icon-lg";
 
 // Session actions keep a stable hit strip, but the controls themselves are
 // quiet glyphs. Opacity is the only hover transition; the row should not gain
 // three filled icon-button pills or reflow its label when the strip appears.
 const SESSION_ACTION_CLASS =
-	"grid size-5 shrink-0 place-items-center rounded-md p-1 text-passive transition-opacity hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50 disabled:pointer-events-none disabled:opacity-50 [&_svg]:size-3!";
+	"grid size-5 shrink-0 place-items-center rounded-md p-1 text-passive hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50 disabled:pointer-events-none disabled:opacity-50 [&_svg]:size-3!";
 
 // Shared nav-row chrome (Codex-style): inset pill hover/selected, 14px type, no accent bar.
 const NAV_ROW_CLASS =
@@ -146,6 +149,7 @@ const SECTION_ROW_CLASS =
 	"flex h-8 w-full min-w-0 items-center gap-2 rounded-md px-2.5 text-sm font-medium text-passive [&_svg]:size-icon-md [&_svg]:shrink-0";
 // Hover fill only for collapsible section headers (Pinned). Projects is a static label.
 const SECTION_ROW_INTERACTIVE_CLASS = "transition-colors hover:bg-interactive-hover hover:text-foreground";
+const PROJECT_DRAG_OVERLAY_STYLE: CSSProperties = { willChange: "transform" };
 
 // Mirrors the daemon's display-name cap (maxDisplayNameLen) and the spawn
 // `--name` flag, so inline edits never round-trip a value the API would reject.
@@ -735,8 +739,7 @@ export function Sidebar({
 									onDragEnd={onProjectDragEnd}
 									sensors={reorderSensors}
 								>
-									<SortableContext items={projectIds} strategy={verticalListSortingStrategy}>
-										<SidebarMenu className="min-h-full gap-0.5 rounded-lg group-data-[collapsible=icon]:gap-1 group-data-[collapsible=icon]:rounded-none">
+								<SidebarMenu className="min-h-full gap-0.5 rounded-lg group-data-[collapsible=icon]:gap-1 group-data-[collapsible=icon]:rounded-none">
 											{orderedWorkspaces.map((workspace) => {
 												return (
 													<ProjectItem
@@ -754,13 +757,13 @@ export function Sidebar({
 												);
 											})}
 											{isCollapsed && <CreateProjectListItem />}
-										</SidebarMenu>
-									</SortableContext>
-									<DragOverlay
-										adjustScale={false}
-										dropAnimation={null}
-										modifiers={[restrictProjectOverlayToRows]}
-										zIndex={60}
+								</SidebarMenu>
+								<DragOverlay
+									adjustScale={false}
+									dropAnimation={null}
+									modifiers={[restrictProjectOverlayToRows]}
+									style={PROJECT_DRAG_OVERLAY_STYLE}
+									zIndex={60}
 									>
 										{activeDragWorkspace ? (
 											<ProjectDragPreview
@@ -859,17 +862,7 @@ export function Sidebar({
 
 type Selection = ReturnType<typeof useSelection>;
 
-const ProjectItem = memo(function ProjectItem({
-	workspace,
-	expanded,
-	selection,
-	draggingProjectId,
-	dropIndicator,
-	consumeDragClick,
-	onMove,
-	onToggle,
-	onRemoveProject,
-}: {
+type ProjectItemProps = {
 	workspace: WorkspaceSummary;
 	expanded: boolean;
 	selection: Selection;
@@ -880,7 +873,52 @@ const ProjectItem = memo(function ProjectItem({
 	onMove: (projectId: string, offset: number) => void;
 	onToggle: (projectId: string) => void;
 	onRemoveProject: (projectId: string) => Promise<void>;
-}) {
+};
+
+type ProjectDraggable = ReturnType<typeof useDraggable>;
+type ProjectItemDndProps = Pick<ProjectDraggable, "attributes" | "listeners" | "setActivatorNodeRef"> & {
+	setDraggableNodeRef: ProjectDraggable["setNodeRef"];
+	setDroppableNodeRef: ReturnType<typeof useDroppable>["setNodeRef"];
+};
+
+// Keep the pointer-frequency draggable subscription outside the expensive
+// project/session subtree. The content only rerenders when its visible props
+// change (drag start/end or a different drop boundary), not for every transform.
+const ProjectItem = memo(function ProjectItem(props: ProjectItemProps) {
+	const { attributes, listeners, setActivatorNodeRef, setNodeRef: setDraggableNodeRef } = useDraggable({
+		id: props.workspace.id,
+	});
+	const { setNodeRef: setDroppableNodeRef } = useDroppable({
+		id: props.workspace.id,
+	});
+	return (
+		<ProjectItemContent
+			{...props}
+			attributes={attributes}
+			listeners={listeners}
+			setActivatorNodeRef={setActivatorNodeRef}
+			setDraggableNodeRef={setDraggableNodeRef}
+			setDroppableNodeRef={setDroppableNodeRef}
+		/>
+	);
+});
+
+const ProjectItemContent = memo(function ProjectItemContent({
+	workspace,
+	expanded,
+	selection,
+	draggingProjectId,
+	dropIndicator,
+	consumeDragClick,
+	onMove,
+	onToggle,
+	onRemoveProject,
+	attributes,
+	listeners,
+	setActivatorNodeRef,
+	setDraggableNodeRef,
+	setDroppableNodeRef,
+}: ProjectItemProps & ProjectItemDndProps) {
 	const { t } = useTranslation();
 	const prefersReducedMotion = useReducedMotion();
 	const activeProjectMatches = selection.activeProjectId === workspace.id;
@@ -908,9 +946,6 @@ const ProjectItem = memo(function ProjectItem({
 	}, []);
 	const isProjectRestarting = useUiStore((state) => state.restartingProjectIds.has(workspace.id));
 	const requestNewTask = useUiStore((state) => state.requestNewTask);
-	const { attributes, listeners, setActivatorNodeRef, setDraggableNodeRef, setDroppableNodeRef } = useSortable({
-		id: workspace.id,
-	});
 	const projectIsDragging = draggingProjectId === workspace.id;
 	// Keep completed PR sessions reachable while their runtime still exists.
 	// Only termination removes a worker from the sidebar; archived sessions stay
@@ -929,6 +964,7 @@ const ProjectItem = memo(function ProjectItem({
 		[sessionOrder, visibleSessions],
 	);
 	const sessionIds = useMemo(() => sessions.map((session) => session.id), [sessions]);
+	const sessionLayoutDependency = useMemo(() => sessionIds.join("\u0000"), [sessionIds]);
 	const sessionSensors = useReorderSensors();
 	const sessionDragClickGuard = usePostDragClickGuard();
 	const [sessionAnnouncement, setSessionAnnouncement] = useState("");
@@ -948,13 +984,22 @@ const ProjectItem = memo(function ProjectItem({
 	}, [sessions, setSessionOrder, t, workspace.id]);
 
 	const onSessionDragEnd = useCallback(({ active, over }: DragEndEvent) => {
-		setSessionDragging(false);
 		const sessionId = String(active.id);
 		sessionDragClickGuard.markDragEnded(sessionId);
-		if (!over) return;
+		if (!over) {
+			setSessionDragging(false);
+			return;
+		}
 		// reorderById rejects any id that is not in THIS project's list, so a stray
 		// cross-project drop leaves both projects' orders untouched.
-		commitSessionOrder(reorderById(sessionIds, sessionId, String(over.id)), sessionId);
+		const next = reorderById(sessionIds, sessionId, String(over.id));
+		// Commit the destination DOM order before dnd-kit removes its live transform.
+		// Otherwise the row briefly snaps back to its derived (usually top) position,
+		// then Motion animates it forward to the persisted destination.
+		flushSync(() => {
+			commitSessionOrder(next, sessionId);
+			setSessionDragging(false);
+		});
 	}, [commitSessionOrder, sessionDragClickGuard, sessionIds]);
 	const moveSession = useCallback((sessionId: string, offset: number) => {
 		commitSessionOrder(moveByOffset(sessionIds, sessionId, offset), sessionId);
@@ -1119,6 +1164,7 @@ const ProjectItem = memo(function ProjectItem({
 										// gap-2 matches SectionDisclosure so project icons/labels share the
 										// Projects header's left edge (NAV_ROW defaults to gap-2.5).
 										"cursor-grab gap-2 pr-sidebar-project-actions active:cursor-grabbing [&_svg]:size-icon-md",
+										"transition-none",
 										projectIsDragging && "!cursor-grabbing",
 										draggingProjectId && "hover:bg-transparent hover:text-muted-foreground active:bg-transparent active:text-muted-foreground",
 										"group-data-[collapsible=icon]:size-control-board! group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:rounded-lg group-data-[collapsible=icon]:p-0! group-data-[collapsible=icon]:font-semibold",
@@ -1315,6 +1361,7 @@ const ProjectItem = memo(function ProjectItem({
 														session={session}
 														active={selection.activeSessionId === session.id}
 														consumeDragClick={sessionDragClickGuard.consumeClick}
+														layoutDependency={sessionLayoutDependency}
 														listIsDragging={sessionDragging}
 														onMove={moveSession}
 														onOpen={openSession}
@@ -1441,6 +1488,7 @@ const SortableSessionRow = memo(function SortableSessionRow({
 	session,
 	active,
 	consumeDragClick,
+	layoutDependency,
 	listIsDragging,
 	onMove,
 	onOpen,
@@ -1448,6 +1496,7 @@ const SortableSessionRow = memo(function SortableSessionRow({
 	session: WorkspaceSession;
 	active: boolean;
 	consumeDragClick: (id: string) => boolean;
+	layoutDependency: string;
 	listIsDragging: boolean;
 	onMove: (sessionId: string, offset: number) => void;
 	onOpen: (sessionId: string) => void;
@@ -1462,6 +1511,7 @@ const SortableSessionRow = memo(function SortableSessionRow({
 			onOpen={() => {
 				if (!consumeDragClick(session.id)) onOpen(session.id);
 			}}
+			layoutDependency={layoutDependency}
 			listIsDragging={listIsDragging}
 			reorder={{
 				attributes,
@@ -1488,6 +1538,7 @@ function SessionRow({
 	session,
 	active,
 	indented = true,
+	layoutDependency,
 	listIsDragging = false,
 	onOpen,
 	reorder,
@@ -1495,6 +1546,7 @@ function SessionRow({
 	session: WorkspaceSession;
 	active: boolean;
 	indented?: boolean;
+	layoutDependency?: string;
 	listIsDragging?: boolean;
 	onOpen: () => void;
 	/** Present only for rows inside a reorderable project list. */
@@ -1514,6 +1566,7 @@ function SessionRow({
 		.join(" ") || undefined;
 	const [isEditing, setIsEditing] = useState(false);
 	const [draft, setDraft] = useState(session.title);
+	const [sessionPressed, setSessionPressed] = useState(false);
 	// Escape must not be swallowed by the blur-to-save path: the keydown handler
 	// blurs the input, so it flags a cancel here for onBlur to honour.
 	const cancelledRef = useRef(false);
@@ -1581,25 +1634,26 @@ function SessionRow({
 		>
 			<motion.div
 				layout={listIsDragging ? false : "position"}
+				layoutDependency={layoutDependency}
 				transition={prefersReducedMotion ? { duration: 0 } : { type: "spring", stiffness: 520, damping: 42, mass: 0.55 }}
 			>
 				<div
 					className={cn(
-						"group/session-row flex h-8 w-full items-center rounded-lg transition-[background-color,color]",
+						"group/session-row flex h-8 w-full items-center rounded-lg transition-[transform] duration-[100ms] ease-out",
 						"hover:bg-interactive-hover hover:text-foreground focus-within:bg-interactive-hover",
 						active && "bg-interactive-active text-foreground",
+						sessionPressed && !reorder?.isDragging && "scale-[0.97]",
+						reorder?.isDragging && "transition-none",
 					)}
+					data-session-press=""
 					data-session-row=""
 					data-dragging={reorder?.isDragging ? "true" : undefined}
+					onPointerCancel={() => setSessionPressed(false)}
+					onPointerDown={() => setSessionPressed(true)}
+					onPointerLeave={() => setSessionPressed(false)}
+					onPointerUp={() => setSessionPressed(false)}
 				>
-					{/* Scale wrapper — only around the open button so action buttons don't trigger press animation */}
-					<div
-						className={cn(
-							"flex min-w-0 flex-1 transition-[transform] duration-[100ms] ease-out",
-							!reorder?.isDragging && "active:scale-[0.97]",
-							reorder?.isDragging && "cursor-grabbing transition-none",
-						)}
-					>
+					<div className={cn("flex min-w-0 flex-1", reorder?.isDragging && "cursor-grabbing")}>
 						<button
 							aria-current={active ? "page" : undefined}
 							aria-describedby={describedBy}
@@ -1626,7 +1680,7 @@ function SessionRow({
 							<span className="flex min-w-0 flex-1 items-center gap-1.5">
 								<span
 									className={cn(
-										"min-w-0 flex-1 truncate transition-colors",
+										"min-w-0 flex-1 truncate",
 										active ? "text-foreground" : "text-muted-foreground group-hover/session-row:text-foreground",
 									)}
 								>
@@ -1640,7 +1694,6 @@ function SessionRow({
 							</span>
 						</button>
 					</div>
-					{/* end scale wrapper */}
 					{/* Pin, rename, kill stay in a reserved strip so showing them never
 				    changes the label width. The strip fades as a group; its glyphs
 				    remain transparent/no-fill until focused or hovered. */}
@@ -1672,12 +1725,12 @@ const SessionActions = memo(function SessionActions({
 	return (
 		<div
 			className={cn(
-				"pointer-events-none absolute inset-y-0 right-0 z-chrome flex items-center gap-px px-1 opacity-0 transition-opacity duration-150",
+				"pointer-events-none absolute inset-y-0 right-0 z-chrome flex items-center gap-px px-1 opacity-0",
 				!isDragging &&
 					"group-hover/session-row:pointer-events-auto group-hover/session-row:opacity-100 group-focus-within/session-row:pointer-events-auto group-focus-within/session-row:opacity-100",
-				isDragging && "transition-none",
 			)}
 			data-session-actions=""
+			onPointerDown={(event) => event.stopPropagation()}
 		>
 			<button
 				aria-label={session.isPinned ? t("shell.unpinSession") : t("shell.pinSession")}
