@@ -17,7 +17,11 @@ vi.mock("../lib/api-client", () => ({
 	apiErrorMessage: apiErrorMessageMock,
 }));
 
-import { useConversation, useConversationCommands } from "./useConversation";
+import {
+	forgetConversationSendTrackingForDeletedSession,
+	useConversation,
+	useConversationCommands,
+} from "./useConversation";
 import { workspaceQueryKey } from "./useWorkspaceQuery";
 
 function wrapper({ children }: { children: ReactNode }) {
@@ -198,6 +202,113 @@ describe("accepted conversation sends", () => {
 		});
 	});
 
+	it("clears an in-flight sentinel when the daemon confirms a duplicate without a turn id", async () => {
+		postMock.mockResolvedValue({
+			data: { duplicate: true },
+			error: undefined,
+		});
+		const queryClient = new QueryClient({
+			defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+		});
+		const HookWrapper = ({ children }: { children: ReactNode }) => (
+			<QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+		);
+		const firstMount = renderHook(() => useConversationCommands("ao-duplicate-send"), {
+			wrapper: HookWrapper,
+		});
+
+		await act(async () => {
+			await firstMount.result.current.send("idempotent retry");
+		});
+		firstMount.unmount();
+		const secondMount = renderHook(() => useConversationCommands("ao-duplicate-send"), {
+			wrapper: HookWrapper,
+		});
+
+		expect(secondMount.result.current.pendingLocalSend).toBe(false);
+		expect(secondMount.result.current.pendingAcceptedSendTurnId).toBeUndefined();
+		expect(secondMount.result.current.busy).toBe(false);
+	});
+
+	it("retains an accepted turn when its follow-up conversation refresh fails", async () => {
+		postMock.mockResolvedValue({
+			data: { duplicate: false, turnId: "turn-refresh-failed" },
+			error: undefined,
+		});
+		const queryClient = new QueryClient({
+			defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+		});
+		vi.spyOn(queryClient, "invalidateQueries").mockRejectedValue(new Error("refresh failed"));
+		const HookWrapper = ({ children }: { children: ReactNode }) => (
+			<QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+		);
+		const firstMount = renderHook(() => useConversationCommands("ao-refresh-failure"), {
+			wrapper: HookWrapper,
+		});
+
+		let sendError: unknown;
+		await act(async () => {
+			try {
+				await firstMount.result.current.send("accepted before refresh failed");
+			} catch (error) {
+				sendError = error;
+			}
+		});
+		expect(sendError).toBeUndefined();
+
+		firstMount.unmount();
+		const secondMount = renderHook(() => useConversationCommands("ao-refresh-failure"), {
+			wrapper: HookWrapper,
+		});
+		expect(secondMount.result.current.pendingAcceptedSendTurnId).toBe("turn-refresh-failed");
+		expect(secondMount.result.current.busy).toBe(true);
+	});
+
+	it("admits only one same-session send before React can publish busy state", async () => {
+		const firstResponse = deferred<{
+			data: { duplicate: false; turnId: string };
+			error: undefined;
+		}>();
+		postMock
+			.mockImplementationOnce(() => firstResponse.promise)
+			.mockResolvedValueOnce({
+				data: { duplicate: false, turnId: "turn-overlap-second" },
+				error: undefined,
+			});
+		const queryClient = new QueryClient({
+			defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+		});
+		const HookWrapper = ({ children }: { children: ReactNode }) => (
+			<QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+		);
+		const { result } = renderHook(() => useConversationCommands("ao-overlap"), {
+			wrapper: HookWrapper,
+		});
+
+		let firstSend!: Promise<unknown>;
+		let secondSend!: Promise<unknown>;
+		act(() => {
+			firstSend = result.current.send("first");
+			secondSend = result.current.send("second").catch((error) => error);
+		});
+		await waitFor(() => expect(postMock).toHaveBeenCalled());
+		firstResponse.resolve({
+			data: { duplicate: false, turnId: "turn-overlap-first" },
+			error: undefined,
+		});
+		let secondOutcome: unknown;
+		await act(async () => {
+			await firstSend;
+			secondOutcome = await secondSend;
+		});
+
+		expect(postMock).toHaveBeenCalledTimes(1);
+		expect(secondOutcome).toBeInstanceOf(Error);
+		await waitFor(() => {
+			expect(result.current.pendingAcceptedSendTurnId).toBe("turn-overlap-first");
+		});
+	});
+
 	it("retains accepted work across a full chat surface unmount and remount", async () => {
 		postMock.mockResolvedValue({
 			data: { turnId: "turn-after-remount" },
@@ -232,6 +343,129 @@ describe("accepted conversation sends", () => {
 		await waitFor(() => {
 			expect(secondMount.result.current.pendingAcceptedSendTurnId).toBeUndefined();
 		});
+	});
+
+	it("forgets only a session whose durable row was explicitly deleted", async () => {
+		postMock.mockImplementation(
+			(_path: string, request: { params: { path: { sessionId: string } } }) =>
+				Promise.resolve({
+					data: {
+						duplicate: false,
+						turnId: `turn-${request.params.path.sessionId}`,
+					},
+					error: undefined,
+				}),
+		);
+		const queryClient = new QueryClient({
+			defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+		});
+		const HookWrapper = ({ children }: { children: ReactNode }) => (
+			<QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+		);
+		const deletedMount = renderHook(
+			() => useConversationCommands("ao-durably-deleted"),
+			{ wrapper: HookWrapper },
+		);
+		await act(async () => {
+			await deletedMount.result.current.send("deleted session work");
+		});
+		deletedMount.unmount();
+		const retainedMount = renderHook(() => useConversationCommands("ao-still-present"), {
+			wrapper: HookWrapper,
+		});
+		await act(async () => {
+			await retainedMount.result.current.send("retained session work");
+		});
+		retainedMount.unmount();
+
+		forgetConversationSendTrackingForDeletedSession(queryClient, "ao-durably-deleted");
+
+		const deletedAgain = renderHook(
+			() => useConversationCommands("ao-durably-deleted"),
+			{ wrapper: HookWrapper },
+		);
+		const retainedAgain = renderHook(() => useConversationCommands("ao-still-present"), {
+			wrapper: HookWrapper,
+		});
+		expect(deletedAgain.result.current.pendingLocalSend).toBe(false);
+		expect(retainedAgain.result.current.pendingAcceptedSendTurnId).toBe(
+			"turn-ao-still-present",
+		);
+	});
+});
+
+describe("session-scoped conversation commands", () => {
+	it("keeps send mutation state and completion scoped to its initiating session", async () => {
+		const response = deferred<{
+			data: { turnId: string };
+			error: undefined;
+		}>();
+		postMock.mockReturnValue(response.promise);
+		const queryClient = new QueryClient({
+			defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+		});
+		const invalidate = vi.spyOn(queryClient, "invalidateQueries").mockResolvedValue(undefined);
+		const HookWrapper = ({ children }: { children: ReactNode }) => (
+			<QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+		);
+		const { result, rerender } = renderHook(
+			({ sessionId }) => useConversationCommands(sessionId),
+			{ initialProps: { sessionId: "ao-send-a" }, wrapper: HookWrapper },
+		);
+
+		let request!: Promise<unknown>;
+		act(() => {
+			request = result.current.send("work for A");
+		});
+		await waitFor(() => expect(result.current.busy).toBe(true));
+
+		rerender({ sessionId: "ao-send-b" });
+		expect(result.current.busy).toBe(false);
+		expect(result.current.error).toBeUndefined();
+
+		response.resolve({ data: { turnId: "turn-send-a" }, error: undefined });
+		await act(async () => {
+			await request;
+		});
+		expect(invalidate).toHaveBeenCalledWith({ queryKey: ["conversation", "ao-send-a"] });
+		expect(invalidate).not.toHaveBeenCalledWith({ queryKey: ["conversation", "ao-send-b"] });
+		expect(result.current.pendingAcceptedSendTurnId).toBeUndefined();
+	});
+
+	it("does not publish an initiating session's pending state, error, or refresh after navigation", async () => {
+		const response = deferred<{
+			data: undefined;
+			error: { code: string };
+		}>();
+		postMock.mockReturnValue(response.promise);
+		const queryClient = new QueryClient({
+			defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+		});
+		const invalidate = vi.spyOn(queryClient, "invalidateQueries").mockResolvedValue(undefined);
+		const HookWrapper = ({ children }: { children: ReactNode }) => (
+			<QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+		);
+		const { result, rerender } = renderHook(
+			({ sessionId }) => useConversationCommands(sessionId),
+			{ initialProps: { sessionId: "ao-command-a" }, wrapper: HookWrapper },
+		);
+
+		act(() => {
+			result.current.interrupt();
+		});
+		await waitFor(() => expect(result.current.busy).toBe(true));
+
+		rerender({ sessionId: "ao-command-b" });
+		expect(result.current.busy).toBe(false);
+		expect(result.current.error).toBeUndefined();
+
+		response.resolve({ data: undefined, error: { code: "CHAT_NO_ACTIVE_TURN" } });
+		await waitFor(() => {
+			expect(invalidate).toHaveBeenCalledWith({ queryKey: ["conversation", "ao-command-a"] });
+		});
+		expect(invalidate).not.toHaveBeenCalledWith({ queryKey: ["conversation", "ao-command-b"] });
+		expect(result.current.busy).toBe(false);
+		expect(result.current.error).toBeUndefined();
 	});
 });
 

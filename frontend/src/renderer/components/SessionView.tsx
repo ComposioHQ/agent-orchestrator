@@ -1258,6 +1258,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 							>
 							{showChatSurface ? (
 								<SessionChatSurface
+									key={session.id}
 									session={session}
 									reviewerTerminal={reviewerTerminal}
 									onOpenReviewerTerminal={selectReviewerTerminal}

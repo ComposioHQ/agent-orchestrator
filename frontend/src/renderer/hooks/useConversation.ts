@@ -9,7 +9,13 @@
  * in bounded pages only when the reader asks for it.
  */
 
-import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+	type QueryClient,
+	useInfiniteQuery,
+	useMutation,
+	useQuery,
+	useQueryClient,
+} from "@tanstack/react-query";
 import { useCallback, useState } from "react";
 import type { components } from "../../api/schema";
 import { apiClient, apiErrorCode, apiErrorMessage } from "../lib/api-client";
@@ -58,6 +64,10 @@ interface ConversationSendMutationInput {
 	input: ConversationSendInput;
 }
 
+interface ConversationSessionMutationInput {
+	targetSessionId: string;
+}
+
 export const conversationQueryRoot = ["conversation"] as const;
 
 export function conversationQueryKey(sessionId: string) {
@@ -77,6 +87,50 @@ type ConversationSendTracking =
 	| { clientMessageId: string; state: "pending" }
 	| { clientMessageId: string; state: "accepted"; turnId: string };
 type ConversationSendTrackingBySession = Record<string, ConversationSendTracking>;
+
+function claimConversationSend(
+	queryClient: QueryClient,
+	targetSessionId: string,
+	clientMessageId: string,
+): boolean {
+	const current =
+		queryClient.getQueryData<ConversationSendTrackingBySession>(
+			conversationSendTrackingQueryKey,
+		) ?? {};
+	if (current[targetSessionId]) return false;
+	queryClient.setQueryData<ConversationSendTrackingBySession>(
+		conversationSendTrackingQueryKey,
+		{
+			...current,
+			[targetSessionId]: { clientMessageId, state: "pending" },
+		},
+	);
+	return true;
+}
+
+/**
+ * Removes renderer-lifetime send safety state after an authoritative durable
+ * session deletion. A successful workspace fetch that happens not to contain a
+ * session is not that signal, and `/kill` only terminates a restorable session,
+ * so neither may call this API.
+ *
+ * The frontend currently has no hard-delete endpoint or typed deletion event;
+ * this explicit seam keeps cleanup safe until one exists.
+ */
+export function forgetConversationSendTrackingForDeletedSession(
+	queryClient: QueryClient,
+	sessionId: string,
+): void {
+	queryClient.setQueryData<ConversationSendTrackingBySession>(
+		conversationSendTrackingQueryKey,
+		(current = {}) => {
+			if (!current[sessionId]) return current;
+			const next = { ...current };
+			delete next[sessionId];
+			return next;
+		},
+	);
+}
 
 const CONVERSATION_PAGE_SIZE = 200;
 const CONFIG_OPTIONS_POLL_INTERVAL_MS = 5_000;
@@ -210,13 +264,17 @@ export function useConversationCommands(sessionId: string | undefined) {
 		onMutate: (variables: ConversationSendMutationInput) => {
 			queryClient.setQueryData<ConversationSendTrackingBySession>(
 				conversationSendTrackingQueryKey,
-				(current = {}) => ({
-					...current,
-					[variables.targetSessionId]: {
-						clientMessageId: variables.clientMessageId,
-						state: "pending",
-					},
-				}),
+				(current = {}) => {
+					const tracked = current[variables.targetSessionId];
+					if (tracked && tracked.clientMessageId !== variables.clientMessageId) return current;
+					return {
+						...current,
+						[variables.targetSessionId]: {
+							clientMessageId: variables.clientMessageId,
+							state: "pending",
+						},
+					};
+				},
 			);
 		},
 		mutationFn: async ({
@@ -256,8 +314,29 @@ export function useConversationCommands(sessionId: string | undefined) {
 						};
 					},
 				);
+			} else {
+				// A duplicate response intentionally has no turn id: the daemon already
+				// delivered this idempotency key, so there is no exact new row this
+				// renderer can wait to observe. Release only this request's sentinel.
+				queryClient.setQueryData<ConversationSendTrackingBySession>(
+					conversationSendTrackingQueryKey,
+					(current = {}) => {
+						if (
+							current[variables.targetSessionId]?.clientMessageId !==
+							variables.clientMessageId
+						) {
+							return current;
+						}
+						const next = { ...current };
+						delete next[variables.targetSessionId];
+						return next;
+					},
+				);
 			}
-			await invalidateSession(variables.targetSessionId);
+			// Delivery is already authoritative at this point. A failed follow-up
+			// refresh must not reject the mutation: TanStack would then run onError
+			// and misclassify transport success, clearing the accepted safety marker.
+			await invalidateSession(variables.targetSessionId).catch(() => {});
 		},
 		onError: (_error, variables) => {
 			queryClient.setQueryData<ConversationSendTrackingBySession>(
@@ -317,20 +396,18 @@ export function useConversationCommands(sessionId: string | undefined) {
 	});
 
 	const interrupt = useMutation({
-		mutationFn: async () => {
+		mutationFn: async ({ targetSessionId }: ConversationSessionMutationInput) => {
 			const { error } = await apiClient.POST(
 				"/api/v1/sessions/{sessionId}/conversation/interrupt",
-				{
-					params: { path: { sessionId: sessionId as string } },
-				},
+				{ params: { path: { sessionId: targetSessionId } } },
 			);
 			if (error) throw error;
 		},
-		onSuccess: invalidate,
+		onSuccess: (_data, variables) => invalidateSession(variables.targetSessionId),
 		// A failed interrupt (e.g. CHAT_NO_ACTIVE_TURN) means the cached turn
 		// state is wrong. Refetch so the UI discovers the real state instead of
 		// keeping a Working bar the user cannot dismiss.
-		onError: invalidate,
+		onError: (_error, variables) => invalidateSession(variables.targetSessionId),
 	});
 
 	const resume = useMutation({
@@ -546,14 +623,25 @@ export function useConversationCommands(sessionId: string | undefined) {
 		},
 		[queryClient, sessionId],
 	);
+	const sendTargetsCurrentSession = send.variables?.targetSessionId === sessionId;
+	const interruptTargetsCurrentSession = interrupt.variables?.targetSessionId === sessionId;
 
 	return {
-		send: (input: string | ConversationSendInput) =>
-			send.mutateAsync({
-				targetSessionId: sessionId as string,
-				clientMessageId: crypto.randomUUID(),
+		send: (input: string | ConversationSendInput) => {
+			if (!sessionId) return Promise.reject(new Error("No conversation session is selected."));
+			const clientMessageId = crypto.randomUUID();
+			// React cannot disable the composer until its next render. Claim the
+			// session in the shared registry synchronously so two Enter events in the
+			// same tick cannot both cross the transport boundary.
+			if (!claimConversationSend(queryClient, sessionId, clientMessageId)) {
+				return Promise.reject(new Error("A message is already being sent for this session."));
+			}
+			return send.mutateAsync({
+				targetSessionId: sessionId,
+				clientMessageId,
 				input: typeof input === "string" ? { text: input } : input,
-			}),
+			});
+		},
 		pendingLocalSend: Boolean(trackedSend),
 		pendingAcceptedSendTurnId:
 			trackedSend?.state === "accepted" ? trackedSend.turnId : undefined,
@@ -564,7 +652,7 @@ export function useConversationCommands(sessionId: string | undefined) {
 			action: "accept" | "decline" | "cancel",
 			content?: Record<string, unknown>,
 		) => resolveInput.mutateAsync({ requestId, action, content }),
-		interrupt: () => interrupt.mutate(),
+		interrupt: () => interrupt.mutate({ targetSessionId: sessionId as string }),
 		resumeAgent: () => resume.mutateAsync(),
 		resumingAgent: resume.isPending,
 		resumeError: resume.error ? apiErrorMessage(resume.error) : undefined,
@@ -624,13 +712,21 @@ export function useConversationCommands(sessionId: string | undefined) {
 				: undefined,
 		busy:
 			Boolean(trackedSend) ||
-			send.isPending ||
+			(send.isPending && sendTargetsCurrentSession) ||
 			resolve.isPending ||
 			resolveInput.isPending ||
-			interrupt.isPending,
+			(interrupt.isPending && interruptTargetsCurrentSession),
 		error:
-			send.error || resolve.error || interrupt.error || chooseSettings.error
-				? apiErrorMessage(send.error ?? resolve.error ?? interrupt.error ?? chooseSettings.error)
+			(sendTargetsCurrentSession && send.error) ||
+			resolve.error ||
+			(interruptTargetsCurrentSession && interrupt.error) ||
+			chooseSettings.error
+				? apiErrorMessage(
+							(sendTargetsCurrentSession ? send.error : undefined) ??
+							resolve.error ??
+							(interruptTargetsCurrentSession ? interrupt.error : undefined) ??
+							chooseSettings.error,
+					)
 				: undefined,
 	};
 }

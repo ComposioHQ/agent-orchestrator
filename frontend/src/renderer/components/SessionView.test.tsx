@@ -612,6 +612,17 @@ describe("SessionView", () => {
 		expect(screen.queryByTestId("terminal-target")).not.toBeInTheDocument();
 	});
 
+	it("remounts the session-owned Chat surface when navigation selects another Chat session", () => {
+		workerSession("sess-1").mode = "chat";
+		workerSession("sess-2").mode = "chat";
+		const view = render(<SessionView sessionId="sess-1" />);
+		const firstSurface = screen.getByTestId("chat-surface");
+
+		view.rerender(<SessionView sessionId="sess-2" />);
+
+		expect(screen.getByTestId("chat-surface")).not.toBe(firstSurface);
+	});
+
 	// The strip only ever shows the session on screen — pinning another session's
 	// terminal as a tab (and the cross-project picker that did it) is gone (#3208).
 	it("shows only the session on screen in the tab strip", () => {
