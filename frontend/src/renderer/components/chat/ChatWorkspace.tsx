@@ -221,7 +221,6 @@ export interface ChatWorkspaceProps {
 		optionId: string,
 		value: ChatConfigOptionValue,
 	) => Promise<unknown> | void;
-	configOptionPending?: boolean;
 	configOptionError?: string;
 	/** Summarize earlier history to reclaim context. */
 	onCompact?: () => void;
@@ -325,7 +324,6 @@ export function ChatWorkspace({
 	onChooseSettings,
 	configOptions,
 	onChooseConfigOption,
-	configOptionPending,
 	configOptionError,
 	onCompact,
 	compacting,
@@ -826,11 +824,10 @@ export function ChatWorkspace({
 													reroute={snapshot.modelReroute}
 													onChange={onChooseSettings}
 													configOptions={configOptions ?? []}
-													onChangeConfigOption={onChooseConfigOption}
-													configPending={configOptionPending}
+												onChangeConfigOption={onChooseConfigOption}
 													error={configOptionError}
-													disabled={
-														snapshot.controller.state === "stopped" || configOptionPending
+												disabled={
+														snapshot.controller.state === "stopped"
 													}
 												/>
 											)

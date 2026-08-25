@@ -4,20 +4,21 @@ import { act } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ReactNode } from "react";
 
-const { getMock, postMock, apiErrorCodeMock, apiErrorMessageMock } = vi.hoisted(() => ({
+const { getMock, postMock, patchMock, apiErrorCodeMock, apiErrorMessageMock } = vi.hoisted(() => ({
 	getMock: vi.fn(),
 	postMock: vi.fn(),
+	patchMock: vi.fn(),
 	apiErrorCodeMock: vi.fn(),
 	apiErrorMessageMock: vi.fn(),
 }));
 
 vi.mock("../lib/api-client", () => ({
-	apiClient: { GET: getMock, POST: postMock, PATCH: vi.fn() },
+	apiClient: { GET: getMock, POST: postMock, PATCH: patchMock },
 	apiErrorCode: apiErrorCodeMock,
 	apiErrorMessage: apiErrorMessageMock,
 }));
 
-import { useConversation, useConversationCommands } from "./useConversation";
+import { useConversation, useConversationCommands, useConversationConfigOptions } from "./useConversation";
 import { workspaceQueryKey } from "./useWorkspaceQuery";
 
 function wrapper({ children }: { children: ReactNode }) {
@@ -75,8 +76,53 @@ const WIRE = {
 beforeEach(() => {
 	getMock.mockReset();
 	postMock.mockReset();
+	patchMock.mockReset();
 	apiErrorCodeMock.mockReset().mockReturnValue(undefined);
 	apiErrorMessageMock.mockReset().mockReturnValue("failed");
+});
+
+describe("conversation config options", () => {
+	it("updates the selected value before a slow provider response returns", async () => {
+		getMock.mockResolvedValue({
+			data: {
+				options: [
+					{
+						id: "model",
+						name: "Model",
+						type: "select",
+						currentValue: "sonnet",
+						choices: [],
+					},
+				],
+			},
+			error: undefined,
+		});
+		let resolvePatch: (result: { data: { options: unknown[] }; error: undefined }) => void;
+		patchMock.mockReturnValue(
+			new Promise((resolve) => {
+				resolvePatch = resolve;
+			}),
+		);
+
+		const { result } = renderHook(() => useConversationConfigOptions("ao-1", true), { wrapper });
+		await waitFor(() => expect(result.current.options[0]?.currentValue).toBe("sonnet"));
+
+		act(() => {
+			void result.current.setOption("model", { value: "opus" });
+		});
+		await waitFor(() => expect(result.current.options[0]?.currentValue).toBe("opus"));
+
+		await act(async () => {
+			resolvePatch!({
+				data: {
+					options: [
+						{ id: "model", name: "Model", type: "select", currentValue: "opus", choices: [] },
+					],
+				},
+				error: undefined,
+			});
+		});
+	});
 });
 
 describe("useConversation snapshot mapping", () => {

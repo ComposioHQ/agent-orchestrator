@@ -570,10 +570,25 @@ export function useConversationConfigOptions(sessionId: string | undefined, enab
 		},
 	});
 	const mutation = useMutation({
-		// Held across the whole write, paired with the cancel below: `onMutate`
-		// runs before the request and `onSettled` after the result is committed,
-		// so no poll can start or land inside that window.
-		onMutate: () => setWriting(true),
+		// Update the selected label before the round trip. The provider response
+		// remains authoritative and can replace the entire catalog afterwards.
+		onMutate: async ({ optionId, value }) => {
+			setWriting(true);
+			await queryClient.cancelQueries({ queryKey });
+			const previous = queryClient.getQueryData<ChatConfigOption[]>(queryKey);
+			queryClient.setQueryData<ChatConfigOption[]>(queryKey, (options) =>
+				options?.map((option) => {
+					if (option.id !== optionId) return option;
+					return "enabled" in value
+						? { ...option, currentBoolean: value.enabled }
+						: { ...option, currentValue: value.value };
+				}),
+			);
+			return { previous };
+		},
+		onError: (_error, _variables, context) => {
+			if (context?.previous) queryClient.setQueryData(queryKey, context.previous);
+		},
 		onSettled: () => setWriting(false),
 		mutationFn: async ({
 			optionId,
@@ -582,10 +597,6 @@ export function useConversationConfigOptions(sessionId: string | undefined, enab
 			optionId: string;
 			value: ChatConfigOptionValue;
 		}) => {
-			// A read already in flight when the user picked would otherwise land
-			// after this mutation's setQueryData and put the pre-change catalog
-			// back, reverting the picker to the old value until the next poll.
-			await queryClient.cancelQueries({ queryKey });
 			const { data, error } = await apiClient.PATCH(
 				"/api/v1/sessions/{sessionId}/conversation/config-options/{configId}",
 				{

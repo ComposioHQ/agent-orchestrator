@@ -29,8 +29,12 @@ const OPTIONS: ChatConfigOption[] = [
 		name: "Permission mode",
 		category: "mode",
 		type: "select",
-		currentValue: "ask",
-		choices: [{ value: "ask", name: "Ask before edits" }],
+		currentValue: "bypass",
+		choices: [
+			{ value: "plan", name: "Plan Mode" },
+			{ value: "manual", name: "Manual" },
+			{ value: "bypass", name: "Bypass Permissions" },
+		],
 	},
 	{
 		id: "fast",
@@ -49,7 +53,7 @@ const OPTIONS: ChatConfigOption[] = [
 ];
 
 describe("ACP session config options", () => {
-	it("clubs model, effort, and extras into the Codex two-trigger chrome", async () => {
+	it("keeps model, effort, and provider mode explicit while hiding ACP agent internals", async () => {
 		const user = userEvent.setup();
 		render(
 			<TurnSettingsBar
@@ -65,7 +69,7 @@ describe("ACP session config options", () => {
 			within(tools).getByRole("button", { name: "Model and reasoning effort for the next turn" }),
 		).toHaveTextContent("Opus 5 High");
 		expect(within(tools).getByRole("button", { name: "Permission mode" })).toHaveTextContent(
-			"Ask before edits",
+			"Bypass Permissions",
 		);
 		expect(within(tools).queryByRole("button", { name: "Fast mode" })).not.toBeInTheDocument();
 		expect(within(tools).queryByRole("button", { name: "Agent" })).not.toBeInTheDocument();
@@ -77,8 +81,92 @@ describe("ACP session config options", () => {
 		);
 		expect(screen.getByText("Model")).toBeInTheDocument();
 		expect(screen.getByText("Effort")).toBeInTheDocument();
-		expect(screen.getByText("Agent")).toBeInTheDocument();
-		expect(screen.getByText("More")).toBeInTheDocument();
+		expect(screen.getByRole("switch", { name: "Plan Mode" })).toBeInTheDocument();
+		expect(screen.getByRole("switch", { name: "Fast mode" })).toBeInTheDocument();
+		expect(screen.queryByText("Agent")).not.toBeInTheDocument();
+		expect(screen.queryByText("More")).not.toBeInTheDocument();
+	});
+
+	it("maps Agent Mode back to the provider's Manual value", async () => {
+		const onChange = vi.fn();
+		const user = userEvent.setup();
+		render(
+			<TurnSettingsBar
+				models={[]}
+				settings={{}}
+				configOptions={[OPTIONS[0], { ...OPTIONS[2], currentValue: "plan" }]}
+				onChangeConfigOption={onChange}
+			/>,
+		);
+
+		await user.click(screen.getByRole("button", { name: "Model and reasoning effort for the next turn" }));
+		await user.click(screen.getByRole("switch", { name: "Plan Mode" }));
+		expect(onChange).toHaveBeenCalledWith("mode", { value: "manual" });
+	});
+
+	it("keeps a select-based Fast Mode beside Plan Mode instead of nesting it under More", async () => {
+		const onChange = vi.fn();
+		const user = userEvent.setup();
+		render(
+			<TurnSettingsBar
+				models={[]}
+				settings={{}}
+				configOptions={[
+					OPTIONS[0],
+					OPTIONS[2],
+					{
+						id: "fast-mode",
+						name: "Fast mode",
+						type: "select",
+						currentValue: "off",
+						choices: [
+							{ value: "on", name: "On" },
+							{ value: "off", name: "Off" },
+						],
+					},
+				]}
+				onChangeConfigOption={onChange}
+			/>,
+		);
+
+		await user.click(screen.getByRole("button", { name: "Model and reasoning effort for the next turn" }));
+		expect(screen.getByRole("switch", { name: "Plan Mode" })).toBeInTheDocument();
+		expect(screen.getByRole("switch", { name: "Fast mode" })).toBeInTheDocument();
+		expect(screen.queryByText("More")).not.toBeInTheDocument();
+		await user.click(screen.getByRole("switch", { name: "Fast mode" }));
+		expect(onChange).toHaveBeenCalledWith("fast-mode", { value: "on" });
+	});
+
+	it("hides permissions while the provider is in plan mode", () => {
+		render(
+			<TurnSettingsBar
+				models={[]}
+				settings={{}}
+				configOptions={[OPTIONS[0], { ...OPTIONS[2], currentValue: "plan" }]}
+				onChangeConfigOption={vi.fn()}
+			/>,
+		);
+
+		expect(screen.getByRole("button", { name: "Model and reasoning effort for the next turn" })).toHaveTextContent("Opus 5");
+		expect(screen.queryByRole("button", { name: "Permission mode" })).not.toBeInTheDocument();
+	});
+
+	it("keeps plan and agent modes out of the permissions menu", async () => {
+		const user = userEvent.setup();
+		render(
+			<TurnSettingsBar
+				models={[]}
+				settings={{}}
+				configOptions={[OPTIONS[2]]}
+				onChangeConfigOption={vi.fn()}
+			/>,
+		);
+
+		await user.click(screen.getByRole("button", { name: "Permission mode" }));
+		expect(screen.getByRole("menuitem", { name: "Manual" })).toBeInTheDocument();
+		expect(screen.getByRole("menuitem", { name: "Bypass Permissions" })).toBeInTheDocument();
+		expect(screen.queryByRole("menuitem", { name: "Plan Mode" })).not.toBeInTheDocument();
+		expect(screen.queryByRole("menuitem", { name: "Agent Mode" })).not.toBeInTheDocument();
 	});
 
 	it("sends the provider's opaque value id when a selection changes", async () => {
@@ -112,8 +200,22 @@ describe("ACP session config options", () => {
 		expect(
 			screen.getByRole("button", { name: "Model and reasoning effort for the next turn" }),
 		).toHaveTextContent("gpt-5.6-terra High");
-		expect(screen.getByRole("button", { name: "What the agent may do without asking" })).toHaveTextContent(
-			"Default",
+		expect(screen.getByRole("button", { name: "Approval policy for the next turn" })).toHaveTextContent(
+			"Default approvals",
+		);
+	});
+
+	it("labels bypass permission policy plainly", () => {
+		render(
+			<TurnSettingsBar
+				models={[]}
+				settings={{ approvalMode: "bypass-permissions" }}
+				onChange={vi.fn()}
+			/>,
+		);
+
+		expect(screen.getByRole("button", { name: "Approval policy for the next turn" })).toHaveTextContent(
+			"Bypass permissions",
 		);
 	});
 	it("keeps a lone extra option as its own picker rather than inventing a model menu", () => {

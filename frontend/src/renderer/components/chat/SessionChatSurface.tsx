@@ -110,7 +110,7 @@ export function SessionChatSurface({
 		(option) => option.category === "mode" || option.id === "mode",
 	);
 	const hasProviderModel = providerOptions.some(
-		(option) => option.category === "model" || option.id === "model" || option.id === "agent",
+		(option) => option.category === "model" || option.id === "model",
 	);
 	// Only asked for once the conversation is actually readable: the catalog comes
 	// from the live controller, so there is nothing to fetch before then.
@@ -307,7 +307,6 @@ export function SessionChatSurface({
 				onChooseSettings={hasProviderMode ? undefined : commands.chooseSettings}
 				configOptions={configOptions.options}
 				onChooseConfigOption={configOptions.setOption}
-				configOptionPending={configOptions.pending}
 				configOptionError={configOptions.error}
 				onCompact={commands.compact}
 				compacting={commands.compacting}
