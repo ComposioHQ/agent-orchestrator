@@ -173,6 +173,7 @@ function renderSidebar({
 	workspaces = [workspace],
 	initialOpen = true,
 	autoCompact = false,
+	topbarOffset = "toolbar",
 }: {
 	onCloneProject?: CloneProjectHandler;
 	onCreateProject?: CreateProjectHandler;
@@ -182,6 +183,7 @@ function renderSidebar({
 	workspaces?: WorkspaceSummary[];
 	initialOpen?: boolean;
 	autoCompact?: boolean;
+	topbarOffset?: "toolbar" | "titlebar" | "trafficLights" | "session";
 } = {}) {
 	const queryClient = new QueryClient({
 		defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
@@ -207,6 +209,7 @@ function renderSidebar({
 				<SidebarProvider defaultOpen={initialOpen}>
 					<Sidebar
 						autoCompact={autoCompact}
+						topbarOffset={topbarOffset}
 						onCloneProject={onCloneProject}
 						onCreateProject={onCreateProject}
 					onInitializeProject={onInitializeProject}
@@ -1390,11 +1393,15 @@ describe("Sidebar", () => {
 		expect(document.documentElement.style.getPropertyValue("--ao-sidebar-w")).toBe(`${SIDEBAR_MIN_WIDTH}px`);
 	});
 
-	it("keeps an icon navigation rail when workspace pressure compacts the sidebar", () => {
-		renderSidebar({ autoCompact: true, initialOpen: false });
+	it("keeps the compact icon rail below the macOS traffic-light band", () => {
+		renderSidebar({ autoCompact: true, initialOpen: false, topbarOffset: "trafficLights" });
 
 		const sidebar = document.querySelector('[data-slot="sidebar"][data-state="collapsed"]');
 		expect(sidebar).toHaveAttribute("data-collapsible", "icon");
+		expect(document.querySelector('[data-slot="sidebar-container"]')).toHaveAttribute(
+			"data-topbar-offset",
+			"trafficLights",
+		);
 		expect(document.querySelector('[data-slot="sidebar-gap"]')).toHaveStyle({
 			width: "var(--sidebar-width-icon)",
 		});
