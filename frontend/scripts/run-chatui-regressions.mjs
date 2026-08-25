@@ -101,6 +101,11 @@ export const goContractDefinitions = Object.freeze([
 		playwrightMarker:
 			"ChatUI interface switching › MQA-06 failed target-history checkpoint › offers a retryable, announced action for the interface-switch failure",
 	},
+	{
+		name: "TestInterfaceHandoffImportsOutcomeUnknownNativeHistoryAsRecovered",
+		playwrightMarker:
+			"ChatUI interface switching › MQA-08 imported Terminal outcome › uses a neutral imported-history label when completion metadata is unavailable",
+	},
 ]);
 export const requiredGoContracts = Object.freeze(
 	goContractDefinitions.map((contract) => contract.name),
@@ -658,6 +663,7 @@ export async function runChatUIRegressions(options, now = new Date()) {
 							"chatui_regression",
 							"./internal/httpd/controllers",
 							"./internal/session_manager",
+							"./internal/service/chat",
 							"-count=1",
 							"-run",
 							`^(?:${goContracts.join("|")})$`,

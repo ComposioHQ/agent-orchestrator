@@ -151,6 +151,10 @@ describe("focused contract lanes", () => {
 				name: requiredGoContracts[1],
 				playwrightMarker: expect.stringContaining("MQA-06"),
 			}),
+			expect.objectContaining({
+				name: requiredGoContracts[2],
+				playwrightMarker: expect.stringContaining("MQA-08"),
+			}),
 		]);
 	});
 });
@@ -369,8 +373,8 @@ function goContractLog(actions) {
 
 describe("assessGoContractLog", () => {
 	it("accepts complete known-red and all-green contract results", () => {
-		expect(assessGoContractLog(goContractLog(["fail", "fail"]), 1)).toEqual([]);
-		expect(assessGoContractLog(goContractLog(["pass", "pass"]), 0)).toEqual([]);
+		expect(assessGoContractLog(goContractLog(requiredGoContracts.map(() => "fail")), 1)).toEqual([]);
+		expect(assessGoContractLog(goContractLog(requiredGoContracts.map(() => "pass")), 0)).toEqual([]);
 	});
 
 	it("rejects zero-test and incomplete executions", () => {
@@ -381,16 +385,16 @@ describe("assessGoContractLog", () => {
 				expect.stringContaining(requiredGoContracts[1]),
 			]),
 		);
-		expect(assessGoContractLog(goContractLog(["fail", undefined]), 1)).toContainEqual(
+		expect(assessGoContractLog(goContractLog(["fail", undefined, "pass"]), 1)).toContainEqual(
 			expect.stringContaining(`terminal result: ${requiredGoContracts[1]}`),
 		);
 	});
 
 	it("rejects skipped contracts and package-level failures after green contracts", () => {
-		expect(assessGoContractLog(goContractLog(["skip", "pass"]), 0)).toContainEqual(
+		expect(assessGoContractLog(goContractLog(["skip", "pass", "pass"]), 0)).toContainEqual(
 			expect.stringContaining(`was skipped: ${requiredGoContracts[0]}`),
 		);
-		expect(assessGoContractLog(goContractLog(["pass", "pass"]), 1)).toContainEqual(
+		expect(assessGoContractLog(goContractLog(requiredGoContracts.map(() => "pass")), 1)).toContainEqual(
 			expect.stringContaining("failed outside the completed ChatUI contract tests"),
 		);
 	});
