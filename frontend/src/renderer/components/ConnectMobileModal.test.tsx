@@ -109,11 +109,11 @@ test("keeps the mobile setup dropdowns at a shared width", async () => {
 		screen.getByRole("button", { name: "Get the app" }),
 		screen.getByRole("button", { name: "Connection method" }),
 	];
-	expect(controls[0]).toHaveClass("w-48", "justify-between");
-	expect(controls[1]).toHaveClass("w-48", "justify-between");
+	expect(controls[0]).toHaveClass("w-44", "justify-between");
+	expect(controls[1]).toHaveClass("w-44", "justify-between");
 
 	await userEvent.click(controls[0]);
-	expect(screen.getByRole("menu")).toHaveClass("w-48", "min-w-0");
+	expect(screen.getByRole("menu")).toHaveClass("!w-44", "!min-w-0");
 });
 
 test("shows a square Google Play QR tooltip for Android", async () => {

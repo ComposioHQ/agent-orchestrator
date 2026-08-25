@@ -241,10 +241,10 @@ export function ConnectMobileContent({ active }: { active: boolean }) {
 							value={platform}
 							options={platformOptions}
 							onChange={setPlatform}
-							triggerClassName="w-48 justify-between"
+							triggerClassName="w-44 justify-between"
 							renderMenuItem={renderPlatformOption}
 							renderTrigger={(selected) => selected && renderPlatformOption(selected)}
-							menuClassName="w-48 min-w-0"
+							menuClassName="!w-44 !min-w-0"
 							menuAlign="start"
 						/>
 						<SettingsOptionMenu
@@ -252,8 +252,8 @@ export function ConnectMobileContent({ active }: { active: boolean }) {
 							value={mode}
 							options={modeOptions}
 							onChange={setMode}
-							triggerClassName="w-48 justify-between"
-							menuClassName="w-48 min-w-0"
+							triggerClassName="w-44 justify-between"
+							menuClassName="!w-44 !min-w-0"
 							menuAlign="start"
 						/>
 					</div>
