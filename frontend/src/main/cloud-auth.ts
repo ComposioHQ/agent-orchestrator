@@ -7,17 +7,31 @@ import {
   rm,
   writeFile,
 } from "node:fs/promises";
+import { createServer, type Server } from "node:http";
 import path from "node:path";
 import type { CloudAccount } from "../shared/cloud-account";
 
 const CLIENT_ID =
   import.meta.env.VITE_WORKOS_CLIENT_ID?.trim() ||
   (process.env.VITEST ? "client_test" : "");
-const REDIRECT_URI = "ao-app://callback";
+// The packaged app receives the WorkOS callback through the ao-app:// deep link.
+// A development build cannot: macOS routes ao-app:// to the installed app, not
+// the unpackaged Electron binary. Setting AO_CLOUD_AUTH_REDIRECT to a loopback
+// http(s) URL switches sign-in to a local callback server, the standard desktop
+// OAuth pattern, so the dev build receives its own callback.
+const REDIRECT_URI =
+  process.env.AO_CLOUD_AUTH_REDIRECT?.trim() || "ao-app://callback";
+const useLoopbackRedirect = /^https?:\/\//i.test(REDIRECT_URI);
 const AUTH_STORE_FILE = "cloud-auth.bin";
 const LEGACY_SESSION_FILE = "cloud-session.json";
 const PKCE_TTL_MS = 10 * 60 * 1000;
 const workos = CLIENT_ID ? createWorkOS({ clientId: CLIENT_ID }) : null;
+
+// Set by installCloudIPC so the loopback callback server can push the new
+// session to the renderer exactly like the deep-link path does.
+let notifyRenderersFn: ((session: CloudAccount | null) => void) | null = null;
+// At most one loopback callback server is armed at a time.
+let loopbackServer: Server | null = null;
 
 interface StoredSession extends CloudAccount {
   accessToken: string;
@@ -318,24 +332,20 @@ export async function beginCloudSignIn(dataDir: string): Promise<void> {
       expiresAt: Date.now() + PKCE_TTL_MS,
     },
   });
+  if (useLoopbackRedirect) {
+    startLoopbackCallbackServer(dataDir);
+  }
   await shell.openExternal(url);
 }
 
-export async function handleCloudDeepLink(
-  rawURL: string,
+// completeCloudSignIn validates the pending PKCE state and exchanges the code
+// for a session. Shared by the deep-link path and the loopback callback server.
+async function completeCloudSignIn(
+  code: string | null,
+  callbackState: string | null,
   dataDir: string,
-): Promise<CloudAccount | null> {
+): Promise<CloudAccount> {
   if (!workos) throw new Error("WorkOS is not configured.");
-  const url = new URL(rawURL);
-  if (url.protocol !== "ao-app:" || url.hostname !== "callback") return null;
-  const error = url.searchParams.get("error");
-  if (error) {
-    throw new Error(
-      url.searchParams.get("error_description") || `WorkOS sign-in failed: ${error}`,
-    );
-  }
-  const code = url.searchParams.get("code");
-  const callbackState = url.searchParams.get("state");
   if (!code || !callbackState) throw new Error("WorkOS callback is incomplete.");
 
   const store = await readAuthStore(dataDir);
@@ -360,6 +370,98 @@ export async function handleCloudDeepLink(
   );
   await writeAuthStore(dataDir, { session, pkce: null });
   return publicAccount(session);
+}
+
+export async function handleCloudDeepLink(
+  rawURL: string,
+  dataDir: string,
+): Promise<CloudAccount | null> {
+  if (!workos) throw new Error("WorkOS is not configured.");
+  const url = new URL(rawURL);
+  if (url.protocol !== "ao-app:" || url.hostname !== "callback") return null;
+  const error = url.searchParams.get("error");
+  if (error) {
+    throw new Error(
+      url.searchParams.get("error_description") || `WorkOS sign-in failed: ${error}`,
+    );
+  }
+  return completeCloudSignIn(
+    url.searchParams.get("code"),
+    url.searchParams.get("state"),
+    dataDir,
+  );
+}
+
+const CALLBACK_HTML = (title: string, body: string): string =>
+  `<!doctype html><meta charset="utf-8"><title>${title}</title>` +
+  `<body style="font:15px -apple-system,system-ui,sans-serif;max-width:32rem;margin:15vh auto;padding:0 1.5rem;color:#111">` +
+  `<h1 style="font-size:1.25rem">${title}</h1><p style="color:#555">${body}</p></body>`;
+
+function closeLoopbackServer(): void {
+  if (loopbackServer) {
+    loopbackServer.close();
+    loopbackServer = null;
+  }
+}
+
+// startLoopbackCallbackServer arms a one-shot local HTTP server that receives
+// the WorkOS redirect for a development build, exchanges the code, and hands the
+// session to the renderer. It closes itself after the first callback or the PKCE
+// window, whichever comes first.
+function startLoopbackCallbackServer(dataDir: string): void {
+  const redirect = new URL(REDIRECT_URI);
+  closeLoopbackServer();
+  const server = createServer((req, res) => {
+    const requestURL = new URL(req.url ?? "/", `http://${redirect.host}`);
+    if (requestURL.pathname !== redirect.pathname) {
+      res.writeHead(404, { "Content-Type": "text/plain" });
+      res.end("Not found");
+      return;
+    }
+    void (async () => {
+      try {
+        const error = requestURL.searchParams.get("error");
+        if (error) {
+          throw new Error(
+            requestURL.searchParams.get("error_description") ||
+              `WorkOS sign-in failed: ${error}`,
+          );
+        }
+        const account = await completeCloudSignIn(
+          requestURL.searchParams.get("code"),
+          requestURL.searchParams.get("state"),
+          dataDir,
+        );
+        notifyRenderersFn?.(account);
+        res.writeHead(200, { "Content-Type": "text/html" });
+        res.end(
+          CALLBACK_HTML(
+            "Signed in to AO Cloud",
+            "You can close this tab and return to Agent Orchestrator.",
+          ),
+        );
+      } catch (callbackError) {
+        console.error("WorkOS loopback callback failed:", callbackError);
+        res.writeHead(400, { "Content-Type": "text/html" });
+        res.end(
+          CALLBACK_HTML(
+            "Sign-in failed",
+            "Return to Agent Orchestrator and try signing in again.",
+          ),
+        );
+      } finally {
+        closeLoopbackServer();
+      }
+    })();
+  });
+  server.on("error", (error) => {
+    console.error("WorkOS loopback callback server error:", error);
+    closeLoopbackServer();
+  });
+  server.listen(Number(redirect.port) || 80, redirect.hostname);
+  loopbackServer = server;
+  const timer = setTimeout(closeLoopbackServer, PKCE_TTL_MS);
+  timer.unref?.();
 }
 
 export async function signOutCloud(dataDir: string): Promise<void> {
@@ -411,6 +513,7 @@ export function installCloudIPC(
   getDataDir: () => string,
   notifyRenderers: (session: CloudAccount | null) => void,
 ): void {
+  notifyRenderersFn = notifyRenderers;
   ipcMain.handle("cloud:getSession", () => getCloudSession(getDataDir()));
   ipcMain.handle("cloud:signIn", async () => {
     if (!workos) {

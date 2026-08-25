@@ -120,6 +120,12 @@ export type WorkspaceSession = {
 	 * done server-side, so {@link status} already reflects all of these.
 	 */
 	prs: PullRequestFacts[];
+	/**
+	 * Present only for sessions that run in a control-plane sandbox. Carries the
+	 * org the session is scoped to so its terminal can be opened against the CP;
+	 * absent for local sessions, which route through the local daemon.
+	 */
+	cloud?: { orgId: string };
 };
 
 // Tracker providers whose ids the intake daemon stamps sessions with, in

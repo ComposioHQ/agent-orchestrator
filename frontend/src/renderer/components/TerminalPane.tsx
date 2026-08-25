@@ -35,6 +35,8 @@ import { cn } from "../lib/utils";
 import { useWorkspaceQuery, workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { useRestoreSession } from "../hooks/useRestoreSession";
 import { useShellTerminals } from "../hooks/useShellTerminals";
+import { useCloudCp } from "../hooks/useCloudCp";
+import { createCloudTerminalMux } from "../lib/cloud-terminal-mux";
 import { XtermTerminal } from "./XtermTerminal";
 import { RestoreUnavailableDialog } from "./RestoreUnavailableDialog";
 
@@ -316,6 +318,35 @@ export function TerminalCacheProvider({
 		);
 	}
 	const muxPool = muxPoolRef.current;
+	// Cloud sessions do not share the pooled local-daemon socket: each runs in its
+	// own control-plane sandbox reached over its own ticketed WebSocket. Resolve a
+	// stable, per-session cloud mux factory so terminal props stay referentially
+	// equal across renders; local sessions keep the pooled daemon mux untouched.
+	const { client: cloudClient, baseUrl: cloudBaseUrl } = useCloudCp();
+	const cloudMuxFactoriesRef = useRef(new Map<string, () => TerminalMux>());
+	const resolveCreateMux = useCallback(
+		(paneSession?: WorkspaceSession): (() => TerminalMux) => {
+			const cloud = paneSession?.cloud;
+			if (!cloud || cloudBaseUrl === "") return muxPool.acquire;
+			const cached = cloudMuxFactoriesRef.current.get(paneSession.id);
+			if (cached) return cached;
+			const wsBaseUrl = `${cloudBaseUrl.replace(/^http/i, "ws").replace(/\/+$/, "")}/api/cloud/v1`;
+			const sessionId = paneSession.id;
+			const orgId = cloud.orgId;
+			const factory = () =>
+				createCloudTerminalMux({
+					wsBaseUrl,
+					kind: "agent",
+					mintTicket: async () => {
+						const response = await cloudClient.createTerminalTicket(orgId, sessionId, { kind: "agent" });
+						return response.ticket;
+					},
+				});
+			cloudMuxFactoriesRef.current.set(sessionId, factory);
+			return factory;
+		},
+		[muxPool, cloudBaseUrl, cloudClient],
+	);
 	const [, setRevision] = useState(0);
 	const rerender = useCallback(() => setRevision((current) => current + 1), []);
 
@@ -340,7 +371,7 @@ export function TerminalCacheProvider({
 		(descriptor: TerminalCacheDescriptor, props: TerminalPaneProps, slot: HTMLDivElement) => {
 			const parking = parkingRef.current;
 			if (!parking) return;
-			const cachedProps = { ...props, createMux: muxPool.acquire };
+			const cachedProps = { ...props, createMux: resolveCreateMux(props.session) };
 
 			const previous = activeRef.current;
 			if (previous && previous.key !== descriptor.cacheKey) {
@@ -416,7 +447,7 @@ export function TerminalCacheProvider({
 	const update = useCallback(
 		(cacheKey: string, props: TerminalPaneProps) => {
 			const entry = entriesRef.current.get(cacheKey);
-			const cachedProps = { ...props, createMux: muxPool.acquire };
+			const cachedProps = { ...props, createMux: resolveCreateMux(props.session) };
 			if (!entry || terminalPropsMatch(entry.props, cachedProps)) return;
 			entry.props = cachedProps;
 			rerender();
