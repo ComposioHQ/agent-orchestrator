@@ -32,17 +32,14 @@ export function CreateCloudProjectDialog({
 }) {
 	const cloudSession = useCloudSession();
 	const signInStarted = useRef(false);
-	const nameTouched = useRef(false);
 	const [overview, setOverview] = useState<CloudBetaOverview | null>(null);
 	const [form, setForm] = useState<CreateCloudProjectInput>({
 		displayName: "",
 		repositoryUrl: "",
 		defaultBranch: "main",
 	});
-	const [harness, setHarness] = useState<CloudHarness>("claude-code");
 	const [loading, setLoading] = useState(false);
 	const [creating, setCreating] = useState(false);
-	const [disconnecting, setDisconnecting] = useState(false);
 	const [error, setError] = useState<string | null>(null);
 	const [created, setCreated] = useState<{
 		project: CloudProject;
@@ -90,8 +87,27 @@ export function CreateCloudProjectDialog({
 		setError(null);
 		let project: CloudProject | null = null;
 		try {
-			const connection = overview.harnesses.find((item) => item.harness === harness);
-			if (!connection?.connected) await aoBridge.cloud.connectLocalHarness(harness);
+			const availableHarnesses = new Set<CloudHarness>(
+				overview.harnesses.filter((item) => item.connected).map((item) => item.harness),
+			);
+			for (const candidate of ["claude-code", "codex"] as const) {
+				if (availableHarnesses.has(candidate)) continue;
+				try {
+					await aoBridge.cloud.connectLocalHarness(candidate);
+					availableHarnesses.add(candidate);
+				} catch {
+					// A user may have only one harness installed or signed in. Connect as
+					// many as are available and continue with the first usable one.
+				}
+			}
+			const harness: CloudHarness | undefined = availableHarnesses.has("claude-code")
+				? "claude-code"
+				: availableHarnesses.has("codex")
+					? "codex"
+					: undefined;
+			if (!harness) {
+				throw new Error("No local Claude Code or Codex login was found. Sign in to either agent locally and retry.");
+			}
 			project = await aoBridge.cloud.createProject(overview.organization.id, {
 				...form,
 				workerAgent: harness,
@@ -122,28 +138,6 @@ export function CreateCloudProjectDialog({
 		form.repositoryUrl.trim() !== "" &&
 		form.defaultBranch.trim() !== "" &&
 		!creating;
-	const selectedConnection = overview?.harnesses.find((item) => item.harness === harness);
-	const disconnect = async () => {
-		setDisconnecting(true);
-		setError(null);
-		try {
-			await aoBridge.cloud.disconnectHarness(harness);
-			setOverview((current) =>
-				current
-					? {
-							...current,
-							harnesses: current.harnesses.map((item) =>
-								item.harness === harness ? { ...item, connected: false, validationState: undefined } : item,
-							),
-						}
-					: current,
-			);
-		} catch (disconnectError) {
-			setError(errorMessage(disconnectError));
-		} finally {
-			setDisconnecting(false);
-		}
-	};
 
 	return (
 		<Dialog.Root open={open} onOpenChange={(next) => !creating && onOpenChange(next)}>
@@ -205,7 +199,7 @@ export function CreateCloudProjectDialog({
 											setForm((current) => ({
 												...current,
 												repositoryUrl,
-												displayName: nameTouched.current ? current.displayName : repositoryName(repositoryUrl),
+												displayName: repositoryName(repositoryUrl),
 											}));
 										}}
 										placeholder="https://github.com/org/repository.git"
@@ -214,29 +208,9 @@ export function CreateCloudProjectDialog({
 										value={form.repositoryUrl}
 									/>
 								</label>
-								<div className="grid grid-cols-[minmax(0,1fr)_140px] gap-3">
-									<label className="block space-y-1.5 text-sm font-medium">
-										Project name
-										<input className="h-10 w-full rounded-lg border border-border bg-background px-3 font-normal" onChange={(event) => { nameTouched.current = true; setForm((current) => ({ ...current, displayName: event.target.value })); }} required value={form.displayName} />
-									</label>
-									<label className="block space-y-1.5 text-sm font-medium">
-										Default branch
-										<input className="h-10 w-full rounded-lg border border-border bg-background px-3 font-normal" onChange={(event) => setForm((current) => ({ ...current, defaultBranch: event.target.value }))} required value={form.defaultBranch} />
-									</label>
-								</div>
 								<label className="block space-y-1.5 text-sm font-medium">
-									<span className="flex items-center justify-between gap-3">
-										Agent subscription
-										{selectedConnection?.connected ? (
-											<button className="text-xs font-normal text-muted-foreground underline-offset-2 hover:underline" disabled={disconnecting || creating} onClick={() => void disconnect()} type="button">
-												{disconnecting ? "Disconnecting…" : "Disconnect Cloud login"}
-											</button>
-										) : null}
-									</span>
-									<select className="h-10 w-full rounded-lg border border-border bg-background px-3 font-normal" onChange={(event) => setHarness(event.target.value as CloudHarness)} value={harness}>
-										<option value="claude-code">Claude Code</option>
-										<option value="codex">Codex</option>
-									</select>
+									Default branch
+									<input className="h-10 w-full rounded-lg border border-border bg-background px-3 font-normal" onChange={(event) => setForm((current) => ({ ...current, defaultBranch: event.target.value }))} required value={form.defaultBranch} />
 								</label>
 								{error ? <p className="rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive" role="status">{error}</p> : null}
 								<div className="border-t border-border pt-4">
@@ -244,7 +218,7 @@ export function CreateCloudProjectDialog({
 										{creating ? <><LoaderCircle className="size-4 animate-spin" aria-hidden="true" /> Creating Cloud project…</> : "Create project"}
 									</Button>
 									<p className="mt-2 text-center text-xs leading-5 text-[var(--color-text-import-muted)]">
-										By creating, you allow AO to securely copy your local {harness === "claude-code" ? "Claude Code" : "Codex"} login to your Cloud account. The credential never enters the renderer.
+										By creating, you allow AO to securely connect any local Claude Code and Codex logins it finds. Credentials never enter the renderer.
 									</p>
 								</div>
 							</form>

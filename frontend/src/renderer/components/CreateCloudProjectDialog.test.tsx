@@ -63,6 +63,7 @@ describe("CreateCloudProjectDialog", () => {
 		await user.click(screen.getByRole("button", { name: "Create project" }));
 
 		await waitFor(() => expect(mocks.connectLocalHarness).toHaveBeenCalledWith("claude-code"));
+		expect(mocks.connectLocalHarness).toHaveBeenCalledWith("codex");
 		expect(mocks.createProject).toHaveBeenCalledWith("org-1", {
 			displayName: "repository",
 			repositoryUrl: "https://github.com/acme/repository.git",
@@ -79,5 +80,23 @@ describe("CreateCloudProjectDialog", () => {
 			prompt: "",
 		});
 		expect(await screen.findByText("repository is a Cloud project")).toBeInTheDocument();
+	});
+
+	it("uses Codex when Claude Code is not signed in locally", async () => {
+		mocks.cloudSession.status = "authenticated";
+		mocks.cloudSession.session = { user: { email: "person@example.com" } };
+		mocks.connectLocalHarness.mockImplementation(async (harness: string) => {
+			if (harness === "claude-code") throw new Error("not signed in");
+			return { connected: true };
+		});
+		const user = userEvent.setup();
+		render(<CreateCloudProjectDialog onBack={() => undefined} onOpenChange={() => undefined} open />);
+
+		await user.type(await screen.findByLabelText("Git repository"), "https://github.com/acme/repository.git");
+		await user.click(screen.getByRole("button", { name: "Create project" }));
+
+		await waitFor(() =>
+			expect(mocks.createSession).toHaveBeenCalledWith(expect.objectContaining({ harness: "codex" })),
+		);
 	});
 });
