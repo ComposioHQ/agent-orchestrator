@@ -1475,6 +1475,9 @@ describe("Sidebar", () => {
 		// Only orchestrator + kebab are present; dragging uses the row itself and
 		// does not add another action or consume the reserved label space.
 		expect(within(actionCluster as HTMLElement).getAllByRole("button")).toHaveLength(2);
+		for (const action of within(actionCluster as HTMLElement).getAllByRole("button")) {
+			expect(action).toHaveClass("bg-transparent", "focus-visible:bg-transparent", "data-[state=open]:bg-transparent");
+		}
 		expect(screen.getByLabelText("Project actions for Project One")).not.toHaveClass("opacity-0");
 		expect(projectRow).toHaveClass("cursor-grab");
 		expect(projectRow).toHaveAttribute("aria-keyshortcuts", "Alt+ArrowUp Alt+ArrowDown");
@@ -2289,7 +2292,11 @@ describe("Sidebar reordering", () => {
 		expect(actionStrip).toHaveClass("opacity-0");
 		expect(actionStrip).not.toHaveClass("transition-opacity", "duration-150");
 		expect(actionStrip?.querySelectorAll("button")).toHaveLength(3);
-		expect(actionStrip?.querySelector("button")).not.toHaveClass("hover:bg-interactive-hover");
+		for (const action of actionStrip?.querySelectorAll("button") ?? []) {
+			expect(action).toHaveClass("bg-transparent", "focus-visible:bg-transparent", "data-[state=open]:bg-transparent");
+			expect(action).not.toHaveClass("hover:bg-interactive-hover");
+		}
+		expect(screen.getByLabelText("Open first").closest("[data-session-row]")).not.toHaveClass("focus-within:bg-interactive-hover");
 	});
 
 	it("does not navigate from the click synthesized after a project drag", () => {
@@ -2319,6 +2326,22 @@ describe("Sidebar reordering", () => {
 			to: "/projects/$projectId/sessions/$sessionId",
 			params: { projectId: "proj-a", sessionId: "a-2" },
 		});
+	});
+
+	it("hides session actions when a focused row drag ends", () => {
+		const sessions = [workerSession("proj-a", "a-1", "first", 1), workerSession("proj-a", "a-2", "second", 2)];
+		renderSidebar({ workspaces: [{ ...projectA, sessions }] });
+
+		const draggedRow = sessionActivator("second").closest<HTMLElement>("[data-session-row]");
+		const actions = draggedRow?.querySelector<HTMLElement>("[data-session-actions]");
+		if (!draggedRow || !actions) throw new Error("Session action strip not found");
+		fireEvent.focus(sessionActivator("second"));
+		expect(actions).toHaveClass("group-focus-within/session-row:opacity-100");
+
+		dragTo(sessionDndId("proj-a"), "a-2", "a-1");
+
+		expect(document.activeElement).not.toBe(sessionActivator("second"));
+		expect(actions).toHaveClass("opacity-0");
 	});
 
 	it("keeps the project row's own click behaviour after reordering", async () => {

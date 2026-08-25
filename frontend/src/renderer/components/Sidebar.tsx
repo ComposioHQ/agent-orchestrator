@@ -132,13 +132,13 @@ const noDragStyle = isMac ? ({ WebkitAppRegion: "no-drag" } as React.CSSProperti
 // a 20px square icon button that tints on hover, matching the old
 // SidebarMenuAction footprint.
 const HOVER_ACTION_CLASS =
-	"grid size-5 shrink-0 place-items-center rounded-md text-passive hover:text-foreground disabled:pointer-events-none disabled:opacity-50 data-[state=open]:text-foreground [&_svg]:size-icon-lg";
+	"grid size-5 shrink-0 place-items-center rounded-md bg-transparent text-passive hover:bg-transparent focus:bg-transparent focus-visible:bg-transparent active:bg-transparent data-[state=open]:bg-transparent hover:text-foreground disabled:pointer-events-none disabled:opacity-50 data-[state=open]:text-foreground [&_svg]:size-icon-lg";
 
 // Session actions keep a stable hit strip, but the controls themselves are
 // quiet glyphs. Opacity is the only hover transition; the row should not gain
 // three filled icon-button pills or reflow its label when the strip appears.
 const SESSION_ACTION_CLASS =
-	"grid size-5 shrink-0 place-items-center rounded-md p-1 text-passive hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50 disabled:pointer-events-none disabled:opacity-50 [&_svg]:size-3!";
+	"grid size-5 shrink-0 place-items-center rounded-md bg-transparent p-1 text-passive hover:bg-transparent focus:bg-transparent focus-visible:bg-transparent active:bg-transparent data-[state=open]:bg-transparent hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50 disabled:pointer-events-none disabled:opacity-50 [&_svg]:size-3!";
 
 // Shared nav-row chrome (Codex-style): inset pill hover/selected, 14px type, no accent bar.
 const NAV_ROW_CLASS =
@@ -208,10 +208,13 @@ function usePostDragClickGuard() {
 type SortableRow = ReturnType<typeof useSortable>;
 
 /** Session sorting stays vertical and never inherits dnd-kit's scale correction. */
-function sortableRowStyle({ transform, transition, isDragging }: Pick<SortableRow, "transform" | "transition" | "isDragging">): CSSProperties {
+function sortableRowStyle({ transform }: Pick<SortableRow, "transform">): CSSProperties {
 	return {
 		transform: transform ? CSS.Transform.toString({ ...transform, x: 0, scaleX: 1, scaleY: 1 }) : undefined,
-		transition: isDragging ? "none" : (transition ?? "transform 180ms cubic-bezier(0.22, 1, 0.36, 1)"),
+		// Motion owns the committed reorder animation. Letting dnd-kit add its
+		// post-drop transform transition creates a visible intermediate snap,
+		// especially when moving a row upward.
+		transition: "none",
 	};
 }
 
@@ -988,6 +991,7 @@ const ProjectItemContent = memo(function ProjectItemContent({
 		sessionDragClickGuard.markDragEnded(sessionId);
 		if (!over) {
 			setSessionDragging(false);
+			if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
 			return;
 		}
 		// reorderById rejects any id that is not in THIS project's list, so a stray
@@ -1000,7 +1004,12 @@ const ProjectItemContent = memo(function ProjectItemContent({
 			commitSessionOrder(next, sessionId);
 			setSessionDragging(false);
 		});
+		if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
 	}, [commitSessionOrder, sessionDragClickGuard, sessionIds]);
+	const onSessionDragCancel = useCallback(() => {
+		setSessionDragging(false);
+		if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
+	}, []);
 	const moveSession = useCallback((sessionId: string, offset: number) => {
 		commitSessionOrder(moveByOffset(sessionIds, sessionId, offset), sessionId);
 	}, [commitSessionOrder, sessionIds]);
@@ -1209,16 +1218,17 @@ const ProjectItemContent = memo(function ProjectItemContent({
 								</SidebarMenuButton>
 								{/* Folder disclosure toggle: sibling of the nav button, absolutely positioned over
 	    the icon area so it intercepts clicks there without nesting buttons. */}
-								<button
+								<div
 									aria-label={t("shell.toggleProject", {
 										name: workspace.name,
 									})}
 									aria-expanded={expanded}
-							className="absolute inset-y-0 left-0 z-10 w-9 group-data-[collapsible=icon]:hidden focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring rounded-sm"
-							data-project-folder=""
-							{...listeners}
+									className="absolute inset-y-0 left-0 z-10 w-9 cursor-pointer group-data-[collapsible=icon]:hidden"
+									data-project-folder=""
+									{...listeners}
 									onClick={onFolderClick}
-									type="button"
+									role="button"
+									tabIndex={-1}
 								/>
 							</div>
 							{/* Per-project actions: orchestrator and kebab menu. Inside the scaled visual
@@ -1247,10 +1257,11 @@ const ProjectItemContent = memo(function ProjectItemContent({
 															name: workspace.name,
 														})
 											}
-											className={cn(HOVER_ACTION_CLASS, orchestratorActive && "text-foreground")}
-											disabled={isSpawning || isProjectRestarting}
-											onClick={() => void openOrchestrator()}
-											type="button"
+														className={cn(HOVER_ACTION_CLASS, orchestratorActive && "text-foreground")}
+														disabled={isSpawning || isProjectRestarting}
+														onClick={() => void openOrchestrator()}
+														tabIndex={-1}
+														type="button"
 										>
 											<OrchestratorIcon aria-hidden="true" strokeWidth={orchestratorActive ? 2.5 : 2} />
 										</button>
@@ -1271,8 +1282,9 @@ const ProjectItemContent = memo(function ProjectItemContent({
 											aria-label={t("shell.projectActions", {
 												name: workspace.name,
 											})}
-											className={HOVER_ACTION_CLASS}
-											type="button"
+													className={HOVER_ACTION_CLASS}
+													tabIndex={-1}
+													type="button"
 										>
 											<MoreVertical aria-hidden="true" />
 										</button>
@@ -1346,7 +1358,7 @@ const ProjectItemContent = memo(function ProjectItemContent({
 										modifiers={[restrictToListBounds]}
 										id={sessionDndId(workspace.id)}
 										onDragStart={() => setSessionDragging(true)}
-										onDragCancel={() => setSessionDragging(false)}
+									onDragCancel={onSessionDragCancel}
 										onDragEnd={onSessionDragEnd}
 										sensors={sessionSensors}
 									>
@@ -1640,7 +1652,7 @@ function SessionRow({
 				<div
 					className={cn(
 						"group/session-row flex h-8 w-full items-center rounded-lg transition-[transform] duration-[100ms] ease-out",
-						"hover:bg-interactive-hover hover:text-foreground focus-within:bg-interactive-hover",
+						"hover:bg-interactive-hover hover:text-foreground",
 						active && "bg-interactive-active text-foreground",
 						sessionPressed && !reorder?.isDragging && "scale-[0.97]",
 						reorder?.isDragging && "transition-none",
@@ -1734,7 +1746,8 @@ const SessionActions = memo(function SessionActions({
 		>
 			<button
 				aria-label={session.isPinned ? t("shell.unpinSession") : t("shell.pinSession")}
-				className={cn(SESSION_ACTION_CLASS, session.isPinned && "text-foreground")}
+								className={cn(SESSION_ACTION_CLASS, session.isPinned && "text-foreground")}
+								tabIndex={-1}
 				onClick={(event) => {
 					event.stopPropagation();
 					session.isPinned ? unpinSession(session) : pinSession(session);
@@ -1745,7 +1758,8 @@ const SessionActions = memo(function SessionActions({
 			</button>
 			<button
 				aria-label={t("shell.renameSession", { title: session.title })}
-				className={SESSION_ACTION_CLASS}
+								className={SESSION_ACTION_CLASS}
+								tabIndex={-1}
 				onClick={(event) => {
 					event.stopPropagation();
 					onStartEditing();
@@ -1756,8 +1770,9 @@ const SessionActions = memo(function SessionActions({
 			</button>
 			<button
 				aria-label={t("shell.killSession")}
-				className={cn(SESSION_ACTION_CLASS, "hover:text-destructive")}
-				disabled={isKilling}
+								className={cn(SESSION_ACTION_CLASS, "hover:text-destructive")}
+								disabled={isKilling}
+								tabIndex={-1}
 				onClick={(event) => {
 					event.stopPropagation();
 					terminateSession(session);
