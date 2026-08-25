@@ -1,7 +1,7 @@
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, expect, test, vi } from "vitest";
-import { ANDROID_SIGNUP_URL, ConnectMobileGetApp, TESTFLIGHT_URL } from "./ConnectMobileGetApp";
+import { ANDROID_PLAY_STORE_URL, ConnectMobileGetApp, TESTFLIGHT_URL } from "./ConnectMobileGetApp";
 
 const { openExternal } = vi.hoisted(() => ({ openExternal: vi.fn() }));
 
@@ -21,12 +21,12 @@ test("TestFlight button opens the join link through the app bridge", async () =>
 	expect(TESTFLIGHT_URL).toBe("https://testflight.apple.com/join/t4U3fu2H");
 });
 
-test("Android signup button opens the internal-testing form", async () => {
+test("Android button opens the Google Play listing", async () => {
 	render(<ConnectMobileGetApp />);
 	expect(screen.getByText("Android")).toBeInTheDocument();
-	await userEvent.click(screen.getByRole("button", { name: "Sign up for Android internal testing" }));
-	expect(openExternal).toHaveBeenCalledWith("https://forms.gle/pWLWoxTPXySAN4Ws8");
-	expect(ANDROID_SIGNUP_URL).toBe("https://forms.gle/pWLWoxTPXySAN4Ws8");
+	await userEvent.click(screen.getByRole("button", { name: "Open Agent Orchestrator on Google Play" }));
+	expect(openExternal).toHaveBeenCalledWith("https://play.google.com/store/apps/details?id=aoagents.dev&pcampaignid=web_share");
+	expect(ANDROID_PLAY_STORE_URL).toBe("https://play.google.com/store/apps/details?id=aoagents.dev&pcampaignid=web_share");
 });
 
 // The join link is useless without Apple's TestFlight app, and "TestFlight beta"

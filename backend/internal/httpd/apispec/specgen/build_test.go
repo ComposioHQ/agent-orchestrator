@@ -60,6 +60,45 @@ func TestBuild_DelegateAgentEnumIncludesPrimeAgent(t *testing.T) {
 	}
 }
 
+func TestBuild_OMPIsPubliclySpawnable(t *testing.T) {
+	doc := buildSchemas(t)
+	harnesses := doc.Components.Schemas["SpawnSessionRequest"].Properties["harness"].Enum
+	if !slices.Contains(harnesses, "omp") {
+		t.Fatalf("SpawnSessionRequest harness enum = %v, want omp", harnesses)
+	}
+}
+
+func TestBuild_OMPIsPubliclyDelegatable(t *testing.T) {
+	doc := buildSchemas(t)
+	agents := doc.Components.Schemas["DelegateTaskRequest"].Properties["agent"].Enum
+	if !slices.Contains(agents, "omp") {
+		t.Fatalf("DelegateTaskRequest agent enum = %v, want omp", agents)
+	}
+}
+
+type schemaDocument struct {
+	Components struct {
+		Schemas map[string]struct {
+			Properties map[string]struct {
+				Enum []string `yaml:"enum"`
+			} `yaml:"properties"`
+		} `yaml:"schemas"`
+	} `yaml:"components"`
+}
+
+func buildSchemas(t *testing.T) schemaDocument {
+	t.Helper()
+	got, err := specgen.Build()
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	var doc schemaDocument
+	if err := yaml.Unmarshal(got, &doc); err != nil {
+		t.Fatalf("parse generated OpenAPI: %v", err)
+	}
+	return doc
+}
+
 // TestBuild_Deterministic guards against nondeterministic output (which would
 // make the drift check flaky in CI).
 func TestBuild_Deterministic(t *testing.T) {

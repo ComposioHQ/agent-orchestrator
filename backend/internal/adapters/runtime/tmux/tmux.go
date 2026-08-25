@@ -2,6 +2,7 @@
 package tmux
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -11,7 +12,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -20,6 +20,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/runtime/ptyexec"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
+	"github.com/aoagents/agent-orchestrator/backend/internal/tmuxbin"
 )
 
 const (
@@ -46,10 +47,12 @@ var sessionIDPattern = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
 
 var getenv = os.Getenv
 
-// Options configures a tmux Runtime. Every field has a sensible default (see
-// New), so the zero value is usable.
+// Options configures a tmux Runtime. SocketPath is required: AO must always use
+// an explicitly managed server socket and must never fall back to tmux's
+// per-user default server.
 type Options struct {
-	Binary     string        // default "tmux" (resolved via exec.LookPath)
+	Binary     string        // default configured/bundled/system tmux resolution
+	SocketPath string        // required private socket path, passed to every tmux client with -S
 	Shell      string        // default $SHELL else /bin/sh
 	Timeout    time.Duration // default 5s
 	ChunkSize  int           // default 16*1024
@@ -60,21 +63,24 @@ type Options struct {
 // Runtime runs agent sessions inside tmux sessions, driving them via the tmux
 // CLI. It implements ports.Runtime.
 type Runtime struct {
-	binary       string
-	shell        string
-	timeout      time.Duration
-	chunkSize    int
-	enterDelay   time.Duration
-	reapGrace    time.Duration
-	runner       runner
-	reapSessions func(ctx context.Context, pids []int, grace time.Duration)
+	binary           string
+	binaryResolveErr error
+	socketPath       string
+	shell            string
+	timeout          time.Duration
+	chunkSize        int
+	enterDelay       time.Duration
+	reapGrace        time.Duration
+	runner           runner
+	reapSessions     func(ctx context.Context, pids []int, grace time.Duration)
+	syncEnvironment  func(ctx context.Context, sessionID string, configured map[string]string) error
 }
 
 var _ ports.Runtime = (*Runtime)(nil)
 var _ ports.Attacher = (*Runtime)(nil)
 
 type runner interface {
-	Run(ctx context.Context, env []string, name string, args ...string) ([]byte, error)
+	Run(ctx context.Context, env []string, stdin []byte, name string, args ...string) ([]byte, error)
 }
 
 // killSessionsByPID force-terminates every process in each pid's tmux pane
@@ -193,9 +199,19 @@ func sessionsHaveProcesses(ctx context.Context, pids []int) bool {
 
 type execRunner struct{}
 
-func (execRunner) Run(ctx context.Context, env []string, name string, args ...string) ([]byte, error) {
+func (execRunner) Run(ctx context.Context, env []string, stdin []byte, name string, args ...string) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, name, args...)
-	cmd.Env = append(append([]string(nil), os.Environ()...), env...)
+	// A non-nil environment is a complete, already-sanitized control
+	// environment. Do not append os.Environ here: doing so would silently
+	// reintroduce a surrounding TMUX identity and AO's internal tmux selectors.
+	// Nil retains os/exec's ordinary inherited-environment behavior for narrow
+	// callers and tests that do not supply an environment.
+	if env != nil {
+		cmd.Env = append([]string(nil), env...)
+	}
+	if stdin != nil {
+		cmd.Stdin = bytes.NewReader(stdin)
+	}
 	// Run from a stable directory, not whatever the daemon process's cwd happens
 	// to be. The first tmux CLI call auto-starts tmux's persistent server, which
 	// inherits ITS launching process's cwd and keeps it for the server's entire
@@ -236,16 +252,22 @@ func stableRunDir() string {
 	return ""
 }
 
-// New builds a tmux Runtime, filling unset Options with defaults: binary "tmux"
-// (resolved via exec.LookPath), shell from $SHELL (else /bin/sh), and the
+// New builds a tmux Runtime, filling unset Options with defaults: binary from
+// AO's configured/bundled/system resolver; shell from $SHELL (else /bin/sh); and the
 // default timeout and output chunk size.
 func New(opts Options) *Runtime {
 	binary := opts.Binary
+	var binaryResolveErr error
 	if binary == "" {
-		if path, err := exec.LookPath("tmux"); err == nil {
-			binary = path
+		resolution, err := tmuxbin.Resolve()
+		if err == nil {
+			binary = resolution.Path
 		} else {
-			binary = "tmux"
+			binaryResolveErr = fmt.Errorf("tmux runtime: resolve tmux binary: %w", err)
+			// Retain the configured value for diagnostics, but managedArgs returns
+			// binaryResolveErr before any execution. In particular, a damaged
+			// packaged layout can never fall through to a machine tmux on PATH.
+			binary = strings.TrimSpace(getenv("AO_TMUX_BINARY"))
 		}
 	}
 	timeout := opts.Timeout
@@ -271,16 +293,20 @@ func New(opts Options) *Runtime {
 	if reapGrace <= 0 {
 		reapGrace = defaultReapGrace
 	}
-	return &Runtime{
-		binary:       binary,
-		shell:        shellPath,
-		timeout:      timeout,
-		chunkSize:    chunkSize,
-		enterDelay:   enterDelay,
-		reapGrace:    reapGrace,
-		runner:       execRunner{},
-		reapSessions: killSessionsByPID,
+	runtime := &Runtime{
+		binary:           binary,
+		binaryResolveErr: binaryResolveErr,
+		socketPath:       opts.SocketPath,
+		shell:            shellPath,
+		timeout:          timeout,
+		chunkSize:        chunkSize,
+		enterDelay:       enterDelay,
+		reapGrace:        reapGrace,
+		runner:           execRunner{},
+		reapSessions:     killSessionsByPID,
 	}
+	runtime.syncEnvironment = runtime.syncCurrentEnvironment
+	return runtime
 }
 
 // Create starts a new tmux session in the workspace, running the agent's
@@ -300,13 +326,26 @@ func (r *Runtime) Create(ctx context.Context, cfg ports.RuntimeConfig) (ports.Ru
 		return ports.RuntimeHandle{}, err
 	}
 
-	launchCmd := buildLaunchCommand(cfg)
-	args := newSessionArgs(id, cfg.WorkspacePath, r.shell, launchCmd)
+	// Start a harmless bootstrap pane first, then populate the session's
+	// environment over tmux's stdin channel before launching the real command.
+	// This keeps cfg.Env values out of both the tmux client's argv and the
+	// long-lived pane shell's argv.
+	args := newSessionArgs(id, cfg.WorkspacePath, r.shell, "exec cat >/dev/null")
 	if _, err := r.run(ctx, args...); err != nil {
 		return ports.RuntimeHandle{}, fmt.Errorf("tmux runtime: create session %s: %w", id, err)
 	}
+	handle := ports.RuntimeHandle{ID: id}
+	if err := r.syncEnvironment(ctx, id, cfg.Env); err != nil {
+		_ = r.Destroy(context.Background(), handle)
+		return ports.RuntimeHandle{}, fmt.Errorf("tmux runtime: refresh environment for session %s: %w", id, err)
+	}
+	launchCmd := buildLaunchCommand(cfg)
+	if _, err := r.run(ctx, respawnPaneArgs(id, cfg.WorkspacePath, r.shell, launchCmd)...); err != nil {
+		_ = r.Destroy(context.Background(), handle)
+		return ports.RuntimeHandle{}, fmt.Errorf("tmux runtime: launch session %s: %w", id, err)
+	}
 	if err := r.verifyPaneWorkingDirectory(ctx, id, cfg.WorkspacePath); err != nil {
-		_ = r.Destroy(context.Background(), ports.RuntimeHandle{ID: id})
+		_ = r.Destroy(context.Background(), handle)
 		return ports.RuntimeHandle{}, err
 	}
 
@@ -332,7 +371,6 @@ func (r *Runtime) Create(ctx context.Context, cfg ports.RuntimeConfig) (ports.Ru
 		return ports.RuntimeHandle{}, fmt.Errorf("tmux runtime: set window-size %s: %w", id, err)
 	}
 
-	handle := ports.RuntimeHandle{ID: id}
 	alive, err := r.IsAlive(ctx, handle)
 	if err != nil {
 		_ = r.Destroy(context.Background(), handle)
@@ -370,6 +408,9 @@ func (r *Runtime) Restart(ctx context.Context, handle ports.RuntimeHandle, cfg p
 		return ports.RuntimeHandle{}, err
 	}
 
+	if err := r.syncEnvironment(ctx, id, cfg.Env); err != nil {
+		return ports.RuntimeHandle{}, fmt.Errorf("tmux runtime: refresh environment for session %s: %w", id, err)
+	}
 	launchCmd := buildLaunchCommand(cfg)
 	if _, err := r.run(ctx, respawnPaneArgs(id, cfg.WorkspacePath, r.shell, launchCmd)...); err != nil {
 		return ports.RuntimeHandle{}, fmt.Errorf("tmux runtime: restart session %s: %w", id, err)
@@ -490,13 +531,11 @@ func (r *Runtime) paneSessionIDs(ctx context.Context, id string) []int {
 
 // IsAlive reports whether the handle's session still exists via `tmux
 // has-session`. Exit 0 means alive. A non-zero exit with output naming this
-// session as missing is a definitive false, nil. A server-level failure ("no
-// server running", "error connecting") wraps ports.ErrRuntimeUnavailable: the
-// probe learned nothing about this session — the agent process may well still
-// be running as an orphan of the dead server — so it must never be read as
-// per-session death (issue #3475). Any other non-zero exit is a plain probe
-// error so callers (the reaper feeding the LCM) treat it as a failed probe
-// and never kill a session on a transient error.
+// session as missing is a definitive false, nil. A conclusively absent server
+// wraps ports.ErrRuntimeUnavailable so recovery may recreate it. A transient
+// connection or protocol/client failure wraps ErrRuntimeProbeInconclusive so
+// no caller can treat a possibly-live session as absent. Any other non-zero
+// exit is a plain probe error, which is likewise never per-session death.
 func (r *Runtime) IsAlive(ctx context.Context, handle ports.RuntimeHandle) (bool, error) {
 	id, err := handleID(handle)
 	if err != nil {
@@ -509,9 +548,13 @@ func (r *Runtime) IsAlive(ctx context.Context, handle ports.RuntimeHandle) (bool
 			if sessionMissingOutput(string(out)) {
 				return false, nil
 			}
-			if serverUnreachableOutput(string(out)) {
+			if serverNotRunningOutput(string(out)) {
 				return false, fmt.Errorf("tmux runtime: probe session %s: %w: %s",
 					id, ports.ErrRuntimeUnavailable, strings.TrimSpace(string(out)))
+			}
+			if transientServerFailureOutput(string(out)) {
+				return false, fmt.Errorf("tmux runtime: probe session %s: %w: %s",
+					id, ports.ErrRuntimeProbeInconclusive, strings.TrimSpace(string(out)))
 			}
 		}
 		return false, fmt.Errorf("tmux runtime: probe session %s: %w", id, err)
@@ -704,7 +747,7 @@ func (r *Runtime) Attach(ctx context.Context, handle ports.RuntimeHandle, rows, 
 	if err != nil {
 		return nil, err
 	}
-	return ptyexec.Spawn(ctx, argv, attachEnv(os.Environ()), rows, cols)
+	return ptyexec.Spawn(ctx, argv, controlEnv(os.Environ()), rows, cols)
 }
 
 // attachCommand returns the argv to attach a terminal to the session.
@@ -733,41 +776,82 @@ func (r *Runtime) attachCommand(handle ports.RuntimeHandle) ([]string, error) {
 	// The embedded xterm renderer supports 24-bit SGR colors. Tell this tmux
 	// client explicitly so tmux forwards RGB instead of quantizing it to the
 	// xterm-256color palette. -T is available in AO's minimum tmux version (3.2).
-	return []string{r.binary, "-u", "-T", "RGB", "attach-session", "-t", id}, nil
+	args, err := r.managedArgs("-u", "-T", "RGB", "attach-session", "-t", id)
+	if err != nil {
+		return nil, err
+	}
+	return append([]string{r.binary}, args...), nil
 }
 
-func attachEnv(base []string) []string {
-	env := append([]string(nil), base...)
-	hasTerm := false
-	hasColorTerm := false
-	for i, kv := range env {
+// controlEnv returns the complete environment for tmux control and attach
+// clients. Workload-relevant values (PATH, HOME, credentials, locale, SSH agent
+// sockets, TERMINFO, TMUX_TMPDIR, and so on) are preserved because the tmux
+// server is also the parent of AO's pane workloads. The inherited identity of
+// a surrounding tmux client and AO's internal binary/socket selectors are
+// removed. TERM and COLORTERM describe AO's embedded xterm surface and are
+// forced exactly once.
+func controlEnv(base []string) []string {
+	env := make([]string, 0, len(base)+2)
+	for _, kv := range base {
+		key, _, ok := strings.Cut(kv, "=")
+		if !ok {
+			continue
+		}
 		switch {
-		case strings.HasPrefix(kv, "TERM="):
-			env[i] = "TERM=xterm-256color"
-			hasTerm = true
-		case strings.HasPrefix(kv, "COLORTERM="):
-			env[i] = "COLORTERM=truecolor"
-			hasColorTerm = true
+		case isolatedTmuxEnvironmentKey(key), key == "TERM", key == "COLORTERM":
+			continue
+		default:
+			env = append(env, kv)
 		}
 	}
-	if !hasTerm {
-		env = append(env, "TERM=xterm-256color")
+	return append(env, "TERM=xterm-256color", "COLORTERM=truecolor")
+}
+
+// managedArgs pins every tmux client to AO's explicit socket and an empty
+// private config. A missing socket path fails closed: omitting -S would connect
+// to the user's default tmux server.
+func (r *Runtime) managedArgs(args ...string) ([]string, error) {
+	if strings.TrimSpace(r.socketPath) == "" {
+		return nil, errors.New("tmux runtime: private socket path is required")
 	}
-	if !hasColorTerm {
-		env = append(env, "COLORTERM=truecolor")
+	if !filepath.IsAbs(r.socketPath) {
+		return nil, errors.New("tmux runtime: private socket path must be absolute")
 	}
-	return env
+	if r.binaryResolveErr != nil {
+		return nil, r.binaryResolveErr
+	}
+	address, err := privateSocketAddress(r.socketPath)
+	if err != nil {
+		return nil, err
+	}
+	managed := make([]string, 0, 4+len(args))
+	managed = append(managed, "-S", address, "-f", os.DevNull)
+	return append(managed, args...), nil
 }
 
 // run wraps runner.Run with a per-call timeout context.
 func (r *Runtime) run(ctx context.Context, args ...string) ([]byte, error) {
-	return r.runCommand(ctx, r.binary, args...)
+	return r.runWithInput(ctx, nil, args...)
+}
+
+// runWithInput is run with bytes connected to the tmux client's stdin. It is
+// used for source-file so environment values never appear in process argv.
+func (r *Runtime) runWithInput(ctx context.Context, input []byte, args ...string) ([]byte, error) {
+	managed, err := r.managedArgs(args...)
+	if err != nil {
+		return nil, err
+	}
+	return r.runCommandWithInput(ctx, input, r.binary, managed...)
 }
 
 func (r *Runtime) runCommand(ctx context.Context, name string, args ...string) ([]byte, error) {
+	return r.runCommandWithInput(ctx, nil, name, args...)
+}
+
+func (r *Runtime) runCommandWithInput(ctx context.Context, input []byte, name string, args ...string) ([]byte, error) {
 	cmdCtx, cancel := context.WithTimeout(ctx, r.timeout)
 	defer cancel()
-	out, err := r.runner.Run(cmdCtx, nil, name, args...)
+	out, err := r.runner.Run(cmdCtx, controlEnv(os.Environ()), input, name, args...)
 	if cmdCtx.Err() != nil {
 		return out, cmdCtx.Err()
 	}
@@ -962,9 +1046,19 @@ func sessionMissingOutput(out string) bool {
 // server itself could not be reached, which is inconclusive for any single
 // session's liveness.
 func serverUnreachableOutput(out string) bool {
+	return serverNotRunningOutput(out) || transientServerFailureOutput(out)
+}
+
+func serverNotRunningOutput(out string) bool {
 	s := strings.ToLower(out)
-	return strings.Contains(s, "no server running") ||
-		strings.Contains(s, "error connecting")
+	return strings.Contains(s, "no server running")
+}
+
+func transientServerFailureOutput(out string) bool {
+	s := strings.ToLower(out)
+	return strings.Contains(s, "error connecting") ||
+		strings.Contains(s, "protocol version mismatch") ||
+		strings.Contains(s, "server exited unexpectedly")
 }
 
 // killSessionMissingOutput reports whether a non-zero `tmux kill-session`
@@ -1059,33 +1153,17 @@ func validEnvKey(key string) bool {
 	return true
 }
 
-func sortedKeys(m map[string]string) []string {
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	return keys
-}
-
 func shellQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
 }
 
-// buildLaunchCommand builds the shell command string passed to `sh -c`. It
-// exports env vars, runs argv, then keeps the tmux session alive. Supervised
-// launches park on a non-interpreting stdin sink after exit so bytes racing a
-// process exit can never become shell commands; legacy/unsupervised launches
-// retain the interactive-shell fallback used by manual recovery.
-//
-// PATH from cfg.Env is exported last, after all other keys, so an explicit
-// override takes effect.
+// buildLaunchCommand builds the shell command string passed to `sh -c`. The
+// caller installs cfg.Env in tmux's session environment over stdin before this
+// command is launched, so no configured values are embedded in process argv.
+// Supervised launches park on a non-interpreting stdin sink after exit so bytes
+// racing a process exit can never become shell commands; legacy/unsupervised
+// launches retain the interactive-shell fallback used by manual recovery.
 func buildLaunchCommand(cfg ports.RuntimeConfig) string {
-	path := cfg.Env["PATH"]
-	if path == "" {
-		path = getenv("PATH")
-	}
-
 	var b strings.Builder
 	b.WriteString("cd ")
 	b.WriteString(shellQuote(cfg.WorkspacePath))
@@ -1097,25 +1175,11 @@ func buildLaunchCommand(cfg ports.RuntimeConfig) string {
 		// opt out of color explicitly through its configured environment.
 		b.WriteString("unset NO_COLOR; ")
 	}
-	for _, key := range sortedKeys(cfg.Env) {
-		if key == "PATH" || key == "COLORTERM" {
-			continue
-		}
-		b.WriteString("export ")
-		b.WriteString(key)
-		b.WriteString("=")
-		b.WriteString(shellQuote(cfg.Env[key]))
-		b.WriteString("; ")
-	}
 	// The AO web terminal and tmux attach client both support 24-bit SGR color.
-	// Export this after caller env so agent color detection cannot accidentally
-	// downgrade rich syntax/diff colors to ANSI-256.
+	// Keep this constant defense in the launch command as well as the session
+	// environment so agent color detection cannot accidentally downgrade rich
+	// syntax/diff colors to ANSI-256.
 	b.WriteString("export COLORTERM='truecolor'; ")
-	if path != "" {
-		b.WriteString("export PATH=")
-		b.WriteString(shellQuote(path))
-		b.WriteString("; ")
-	}
 	// Quote each argv word so spaces inside a word are preserved.
 	parts := make([]string, len(cfg.Argv))
 	for i, a := range cfg.Argv {

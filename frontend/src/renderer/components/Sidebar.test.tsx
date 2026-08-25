@@ -22,7 +22,19 @@ import type { WorkspaceSession, WorkspaceSummary } from "../types/workspace";
 import { agentsQueryKey } from "../hooks/useAgentsQuery";
 import { useUiStore } from "../stores/ui-store";
 
-const { cloudSessionState, dragEnds, getMock, navigateMock, mockParams, renameSessionMock, spawnMock, updateStatusMock, commandPaletteEnabled } = vi.hoisted(
+const {
+	checkUpdateMock,
+	cloudSessionState,
+	dragEnds,
+	downloadUpdateMock,
+	getMock,
+	navigateMock,
+	mockParams,
+	renameSessionMock,
+	spawnMock,
+	updateStatusMock,
+	commandPaletteEnabled,
+} = vi.hoisted(
 	() => ({
 		cloudSessionState: {
 			configured: false,
@@ -38,6 +50,8 @@ const { cloudSessionState, dragEnds, getMock, navigateMock, mockParams, renameSe
 		renameSessionMock: vi.fn().mockResolvedValue(undefined),
 		spawnMock: vi.fn(),
 		updateStatusMock: vi.fn(),
+		downloadUpdateMock: vi.fn(),
+		checkUpdateMock: vi.fn(),
 		commandPaletteEnabled: { current: true },
 	}),
 );
@@ -61,7 +75,6 @@ vi.mock("@dnd-kit/core", async (importOriginal) => {
 vi.mock("../lib/rename-session", () => ({ renameSession: renameSessionMock }));
 vi.mock("../lib/spawn-orchestrator", () => ({ spawnOrchestrator: spawnMock }));
 vi.mock("../lib/cloud-session", () => ({ useCloudSession: () => cloudSessionState }));
-
 vi.mock("../hooks/useCommandPaletteEnabled", () => ({
 	useCommandPaletteEnabled: () => commandPaletteEnabled.current,
 }));
@@ -82,7 +95,12 @@ vi.mock("../lib/bridge", async (importOriginal) => {
 	return {
 		aoBridge: {
 			...actual.aoBridge,
-			updates: { ...actual.aoBridge.updates, getStatus: updateStatusMock },
+			updates: {
+				...actual.aoBridge.updates,
+				getStatus: updateStatusMock,
+				download: downloadUpdateMock,
+				check: checkUpdateMock,
+			},
 		},
 	};
 });
@@ -172,6 +190,8 @@ function renderSidebar({
 	seedAgents = true,
 	workspaces = [workspace],
 	initialOpen = true,
+	autoCompact = false,
+	expandedProjectIds,
 }: {
 	onCloneProject?: CloneProjectHandler;
 	onCreateProject?: CreateProjectHandler;
@@ -180,7 +200,15 @@ function renderSidebar({
 	seedAgents?: boolean;
 	workspaces?: WorkspaceSummary[];
 	initialOpen?: boolean;
+	autoCompact?: boolean;
+	expandedProjectIds?: string[];
 } = {}) {
+	// Most legacy sidebar tests exercise session rows and assume their fixture
+	// project was previously open. Tests for the empty-store behavior opt out.
+	window.localStorage.setItem(
+		"ao.sidebar.expanded-projects",
+		JSON.stringify(expandedProjectIds ?? workspaces.map(({ id }) => id)),
+	);
 	const queryClient = new QueryClient({
 		defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
 	});
@@ -202,10 +230,11 @@ function renderSidebar({
 	}
 	render(
 		<QueryClientProvider client={queryClient}>
-				<SidebarProvider defaultOpen={initialOpen}>
-					<Sidebar
-						onCloneProject={onCloneProject}
-						onCreateProject={onCreateProject}
+			<SidebarProvider defaultOpen={initialOpen}>
+				<Sidebar
+					autoCompact={autoCompact}
+					onCloneProject={onCloneProject}
+					onCreateProject={onCreateProject}
 					onInitializeProject={onInitializeProject}
 					onRemoveProject={onRemoveProject}
 					workspaces={workspaces}
@@ -216,7 +245,7 @@ function renderSidebar({
 	return onRemoveProject;
 }
 
-/** Projects render collapsed; open one to list all of its sessions. */
+/** Projects restore their persisted disclosure state. */
 
 async function chooseOption(trigger: HTMLElement, optionName: string) {
 	await userEvent.click(trigger);
@@ -295,6 +324,8 @@ beforeEach(() => {
 	renameSessionMock.mockReset().mockResolvedValue(undefined);
 	spawnMock.mockReset();
 	updateStatusMock.mockReset().mockResolvedValue({ state: "idle" });
+	downloadUpdateMock.mockReset().mockResolvedValue(undefined);
+	checkUpdateMock.mockReset().mockResolvedValue(undefined);
 	mockParams.projectId = undefined;
 	mockParams.sessionId = undefined;
 });
@@ -328,22 +359,14 @@ describe("Sidebar", () => {
 		expect(screen.getAllByRole("button", { name: "Settings" })[0]).toHaveAttribute("tabindex", "0");
 	});
 
-	it("aligns the Settings footer hairline and row height with the board Archive bar", () => {
+	it("keeps the Settings footer flush with the bottom edge", () => {
 		renderSidebar();
 
 		const footer = document.querySelector('[data-sidebar="footer"]');
 		expect(footer).toHaveClass("border-t", "border-border-strong", "!py-2");
 		expect(screen.getAllByRole("button", { name: "Settings" })[0]).toHaveClass("h-[42px]");
-		// Windowed: lift the hairline by the framed panel inset + 1px surface
-		// border. macOS also collapses that inset in native fullscreen.
-		if (footer?.className.includes("--size-center-panel-inset-mac")) {
-			expect(footer).toHaveClass(
-				"mb-[calc(var(--size-center-panel-inset-mac)+1px)]",
-				"in-[.native-fullscreen]:mb-px",
-			);
-		} else {
-			expect(footer).toHaveClass("mb-[calc(var(--size-center-panel-bottom-inset)+1px)]");
-		}
+		expect(footer?.className).not.toContain("--size-center-panel-bottom-inset");
+		expect(footer?.className).not.toContain("--size-center-panel-inset-mac");
 	});
 
 	it("keeps only the expanded Settings control keyboard-accessible while expanded", () => {
@@ -1248,6 +1271,20 @@ describe("Sidebar", () => {
 		expect(navigateMock).not.toHaveBeenCalled();
 	});
 
+	it("opens the Mobile settings page from the footer", async () => {
+		const user = userEvent.setup();
+		renderSidebar();
+		await user.click((await screen.findAllByRole("button", { name: "Connect Mobile" }))[0]);
+		expect(useUiStore.getState().settingsModal).toEqual({ scope: "global", section: "mobile" });
+		expect(navigateMock).not.toHaveBeenCalled();
+	});
+
+	it("always shows Connect Mobile", () => {
+		renderSidebar();
+
+		expect(screen.getByRole("button", { name: "Connect Mobile" })).toBeVisible();
+	});
+
 	it("opens the command palette when Search is clicked", async () => {
 		const user = userEvent.setup();
 		renderSidebar();
@@ -1380,6 +1417,16 @@ describe("Sidebar", () => {
 		expect(document.documentElement.style.getPropertyValue("--ao-sidebar-w")).toBe(`${SIDEBAR_MIN_WIDTH}px`);
 	});
 
+	it("keeps an icon navigation rail when workspace pressure compacts the sidebar", () => {
+		renderSidebar({ autoCompact: true, initialOpen: false });
+
+		const sidebar = document.querySelector('[data-slot="sidebar"][data-state="collapsed"]');
+		expect(sidebar).toHaveAttribute("data-collapsible", "icon");
+		expect(document.querySelector('[data-slot="sidebar-gap"]')).toHaveStyle({
+			width: "var(--sidebar-width-icon)",
+		});
+	});
+
 	it("flushes any queued rAF frame on pointer-up and persists the clamped width", async () => {
 		let queuedFrame: FrameRequestCallback | undefined;
 		const requestAnimationFrameSpy = vi.spyOn(window, "requestAnimationFrame").mockImplementation((callback) => {
@@ -1410,7 +1457,7 @@ describe("Sidebar", () => {
 		}
 	});
 
-	it("renders active activity as pulsing blue regardless of PR context", () => {
+	it("paints the dot from its board section while activity drives the pulse", () => {
 		renderSidebar({
 			workspaces: [
 				{
@@ -1473,6 +1520,7 @@ describe("Sidebar", () => {
 		const sessionDot = (title: string) =>
 			screen.getByLabelText(`Open ${title}`).querySelector<HTMLElement>("[data-session-status]");
 
+		// No pull request: the dot falls back to runtime status.
 		expect(sessionDot("idle task")).toHaveClass("bg-status-idle");
 		expect(sessionDot("idle task")).not.toHaveClass("animate-status-pulse");
 
@@ -1480,16 +1528,38 @@ describe("Sidebar", () => {
 		expect(workingDot).toHaveClass("bg-status-working");
 		expect(workingDot).toHaveClass("animate-status-pulse");
 
-		const ciFailedDot = sessionDot("ci failed task");
-		expect(ciFailedDot).toHaveClass("bg-status-working");
-		expect(ciFailedDot).toHaveClass("animate-status-pulse");
-
-		expect(sessionDot("review task")).toHaveClass("bg-status-working", "animate-status-pulse");
-		expect(sessionDot("ready task")).toHaveClass("bg-status-working", "animate-status-pulse");
-		expect(sessionDot("merged task")).toHaveClass("bg-status-working", "animate-status-pulse");
+		// The board-section tone stays visible while the pulse says the agent is busy.
+		expect(sessionDot("ci failed task")).toHaveClass("bg-status-needs-you", "animate-status-pulse");
+		expect(sessionDot("review task")).toHaveClass("bg-status-in-review", "animate-status-pulse");
+		expect(sessionDot("ready task")).toHaveClass("bg-status-ready", "animate-status-pulse");
+		expect(sessionDot("merged task")).toHaveClass("bg-status-merged", "animate-status-pulse");
 	});
 
-	it("renders a static gray dot for idle activity across session statuses", async () => {
+	it("blinks blue when an idle-section session has working activity", () => {
+		renderSidebar({
+			workspaces: [
+				{
+					...workspace,
+					sessions: [
+						{
+							...session,
+							id: "proj-1-idle-working",
+							title: "idle task receiving work",
+							status: "idle",
+							activity: { state: "active", lastActivityAt: "2026-06-30T00:00:00Z" },
+						},
+					],
+				},
+			],
+		});
+
+		const dot = screen
+			.getByLabelText("Open idle task receiving work")
+			.querySelector<HTMLElement>("[data-session-status]");
+		expect(dot).toHaveClass("bg-status-working", "animate-status-pulse");
+	});
+
+	it("holds the dot still for idle activity and keeps its PR tone", async () => {
 		renderSidebar({
 			workspaces: [
 				{
@@ -1499,7 +1569,7 @@ describe("Sidebar", () => {
 							...session,
 							id: "proj-1-idle-activity",
 							title: "idle activity task",
-							status: "working",
+							status: "idle",
 							activity: { state: "idle", lastActivityAt: "2026-06-30T00:00:00Z" },
 						},
 						{
@@ -1507,7 +1577,9 @@ describe("Sidebar", () => {
 							id: "proj-1-idle-draft",
 							title: "idle draft task",
 							status: "draft",
+							scmStatus: "draft",
 							activity: { state: "idle", lastActivityAt: "2026-06-30T00:00:00Z" },
+							prs: [sidebarPR({ state: "draft" })],
 						},
 					],
 				},
@@ -1520,8 +1592,10 @@ describe("Sidebar", () => {
 			.querySelector<HTMLElement>("span.rounded-full");
 		const idleDraftDot = screen.getByLabelText("Open idle draft task").querySelector<HTMLElement>("span.rounded-full");
 
+		// An idle session with no pull request stays gray; a parked draft keeps
+		// the in-review tone the board gives it, without any motion.
 		expect(idleActivityDot).toHaveClass("bg-status-idle");
-		expect(idleDraftDot).toHaveClass("bg-status-idle");
+		expect(idleDraftDot).toHaveClass("bg-status-in-review");
 		expect(idleActivityDot).not.toHaveClass("animate-status-pulse");
 		expect(idleDraftDot).not.toHaveClass("animate-status-pulse");
 	});
@@ -1543,7 +1617,7 @@ describe("Sidebar", () => {
 		expect(row).toHaveAccessibleDescription("Switching to Codex");
 		expect(within(row).getByText("Switching to Codex")).toBeInTheDocument();
 		const dot = row.querySelector<HTMLElement>("[data-session-status]");
-		expect(dot).toHaveClass("bg-status-exited");
+		expect(dot).toHaveClass("bg-status-needs-you");
 		expect(dot).not.toHaveClass("animate-status-pulse");
 	});
 
@@ -1565,6 +1639,62 @@ describe("Sidebar", () => {
 
 		expect(screen.queryByLabelText("Open fix login")).not.toBeInTheDocument();
 		expect(screen.queryByLabelText("Open second task")).not.toBeInTheDocument();
+	});
+
+	it("starts every project collapsed when the expanded-project store is empty", () => {
+		renderSidebar({
+			expandedProjectIds: [],
+			workspaces: [{ ...workspace, sessions: [session] }],
+		});
+
+		expect(screen.queryByLabelText("Open fix login")).not.toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "Toggle Project One sessions" })).toHaveAttribute(
+			"aria-expanded",
+			"false",
+		);
+	});
+
+	it("reveals the active project when opening a worker-session deep link", async () => {
+		const user = userEvent.setup();
+		mockParams.projectId = workspace.id;
+		mockParams.sessionId = session.id;
+		renderSidebar({
+			expandedProjectIds: [],
+			workspaces: [{ ...workspace, sessions: [session] }],
+		});
+
+		expect(screen.getByLabelText("Open fix login")).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "Toggle Project One sessions" })).toHaveAttribute(
+			"aria-expanded",
+			"true",
+		);
+
+		await user.click(screen.getByRole("button", { name: "Toggle Project One sessions" }));
+		expect(screen.queryByLabelText("Open fix login")).not.toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "Toggle Project One sessions" })).toHaveAttribute(
+			"aria-expanded",
+			"false",
+		);
+	});
+
+	it("restores only the projects saved as expanded and persists toggles", async () => {
+		const user = userEvent.setup();
+		const secondWorkspace = {
+			...workspace,
+			id: "proj-2",
+			name: "Project Two",
+			sessions: [{ ...session, id: "proj-2-1", title: "second task" }],
+		};
+		renderSidebar({
+			expandedProjectIds: [workspace.id],
+			workspaces: [{ ...workspace, sessions: [session] }, secondWorkspace],
+		});
+
+		expect(screen.getByLabelText("Open fix login")).toBeInTheDocument();
+		expect(screen.queryByLabelText("Open second task")).not.toBeInTheDocument();
+
+		await user.click(screen.getByRole("button", { name: "Toggle Project One sessions" }));
+		expect(JSON.parse(window.localStorage.getItem("ao.sidebar.expanded-projects") ?? "null")).toEqual([]);
 	});
 
 	it("hides all sessions when project is collapsed via folder icon", async () => {
@@ -1614,13 +1744,20 @@ describe("Sidebar", () => {
 		expect(screen.queryByLabelText("Open merged terminated task")).not.toBeInTheDocument();
 	});
 
-	it("shows update activity before an available update finishes downloading", async () => {
+	it("downloads the update when the available row is clicked", async () => {
 		updateStatusMock.mockResolvedValue({ state: "available", version: "9.9.9" });
 		renderSidebar();
 
-		await waitFor(() => expect(updateStatusMock).toHaveBeenCalled());
-		expect(screen.getByText("Update available (v9.9.9).")).toBeInTheDocument();
+		// Both footer variants (expanded row and collapsed rail icon) are mounted.
+		const buttons = await screen.findAllByLabelText("Download update v9.9.9");
+		expect(buttons.length).toBeGreaterThan(0);
+		expect(screen.getByText("Update available")).toBeInTheDocument();
+		expect(screen.getByText("v9.9.9")).toBeInTheDocument();
+		// Nothing is staged yet, so the restart action must not be offered.
 		expect(screen.queryByLabelText(/Restart to install update/)).not.toBeInTheDocument();
+
+		await userEvent.click(buttons[0]);
+		expect(downloadUpdateMock).toHaveBeenCalledTimes(1);
 	});
 
 	it("keeps showing update activity while the automatic download is in progress", async () => {
@@ -1630,6 +1767,46 @@ describe("Sidebar", () => {
 		await waitFor(() => expect(updateStatusMock).toHaveBeenCalled());
 		expect(screen.getByText("Downloading… 42%")).toBeInTheDocument();
 		expect(screen.queryByLabelText(/Restart to install update/)).not.toBeInTheDocument();
+		// A download already in flight must not offer a second one.
+		expect(screen.queryByLabelText(/Download update/)).not.toBeInTheDocument();
+	});
+
+	it("offers a retry when automatic update checks keep failing", async () => {
+		// The state stays truthful (the suppressed automatic failure never
+		// replaced it); the flag is what makes the dead end visible.
+		updateStatusMock.mockResolvedValue({ state: "idle", checksFailing: true });
+		renderSidebar();
+
+		// Both footer variants (expanded row and collapsed rail icon) are mounted.
+		const buttons = await screen.findAllByLabelText("Retry update check");
+		expect(buttons.length).toBeGreaterThan(0);
+		expect(screen.getByText("Update check failed")).toBeInTheDocument();
+
+		await userEvent.click(buttons[0]);
+		expect(checkUpdateMock).toHaveBeenCalledTimes(1);
+	});
+
+	it("keeps a staged build's restart action ahead of the failing-checks retry", async () => {
+		updateStatusMock.mockResolvedValue({
+			state: "downloaded",
+			version: "9.9.9",
+			stagedAt: Date.now(),
+			checksFailing: true,
+		});
+		renderSidebar();
+
+		// A build ready to install is more actionable than "checks are failing".
+		expect(await screen.findAllByLabelText("Restart to install update v9.9.9")).not.toHaveLength(0);
+		expect(screen.queryByLabelText("Retry update check")).not.toBeInTheDocument();
+	});
+
+	it("stays quiet for a one-off update failure that has not become a streak", async () => {
+		updateStatusMock.mockResolvedValue({ state: "idle" });
+		renderSidebar();
+
+		await waitFor(() => expect(updateStatusMock).toHaveBeenCalled());
+		expect(screen.queryByLabelText("Retry update check")).not.toBeInTheDocument();
+		expect(screen.queryByText("Update check failed")).not.toBeInTheDocument();
 	});
 
 	it("renders the restart-to-update row with the working-orange treatment when escalated", async () => {

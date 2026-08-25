@@ -162,6 +162,30 @@ describe("useConversation snapshot mapping", () => {
 		]);
 	});
 
+	it("maps retry lineage and consumed-source facts from the daemon", async () => {
+		getMock.mockResolvedValue({
+			data: {
+				...WIRE,
+				turns: [
+					{
+						...WIRE.turns[0],
+						retryOfTurnId: "turn-source",
+						hasRetryAttempt: true,
+					},
+				],
+			},
+			error: undefined,
+		});
+
+		const { result } = renderHook(() => useConversation("ao-1"), { wrapper });
+		await waitFor(() => expect(result.current.snapshot).toBeDefined());
+
+		expect(result.current.snapshot!.turns[0]).toMatchObject({
+			retryOfTurnId: "turn-source",
+			hasRetryAttempt: true,
+		});
+	});
+
 	// Absent must stay absent: a client has to tell "the provider said nothing" from
 	// "the provider said everything is fine".
 	it("leaves the new fields undefined when the daemon omits them", async () => {

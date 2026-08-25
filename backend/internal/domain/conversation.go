@@ -448,8 +448,14 @@ type ConversationTurn struct {
 	// replaced; the conversation identity does not.
 	HandledBySessionID SessionID `json:"handledBySessionId"`
 	// ProviderTurnID correlates back to the provider's own turn. Opaque.
-	ProviderTurnID string    `json:"providerTurnId,omitempty"`
-	State          TurnState `json:"state"`
+	ProviderTurnID string `json:"providerTurnId,omitempty"`
+	// RetryOfTurnID is the failed source whose durable prompt created this turn.
+	// It remains present after rollback so the source cannot offer a dead action.
+	RetryOfTurnID string `json:"retryOfTurnId,omitempty"`
+	// HasRetryAttempt is a snapshot-only fact derived from every durable retry
+	// relation, including attempts outside the active provider branch.
+	HasRetryAttempt bool      `json:"hasRetryAttempt,omitempty"`
+	State           TurnState `json:"state"`
 	// ErrorMessage is set for failed turns. Interrupted turns are not errors.
 	ErrorMessage string     `json:"errorMessage,omitempty"`
 	RequestedAt  time.Time  `json:"requestedAt"`
@@ -527,6 +533,16 @@ type QueuedTurn struct {
 	// DeliveryContentJSON carries provider-neutral native prompt blocks through
 	// the durable queue. It is not rendered and never contains provider DTOs.
 	DeliveryContentJSON string
+}
+
+// RetryPrompt is the durable human-authored content of a failed turn that may
+// be dispatched again. Unlike QueuedTurn, its source was already sent and
+// settled; ActiveLineage says whether it still belongs to the visible branch.
+type RetryPrompt struct {
+	Text                string
+	Origin              MessageOrigin
+	DeliveryContentJSON string
+	ActiveLineage       bool
 }
 
 // ConversationMessage is one readable block of text.

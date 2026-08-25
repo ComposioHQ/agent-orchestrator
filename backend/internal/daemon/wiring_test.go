@@ -170,6 +170,27 @@ func TestWiring_ActiveTurnSteeringComesFromAdapters(t *testing.T) {
 	}
 }
 
+func TestWiring_StartupSignalGateComesFromAdapters(t *testing.T) {
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	agents, err := buildAgentResolver(config.DefaultAgent, log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gates := startupSignalGatesInput(agents)
+
+	if !gates(domain.HarnessCursor) {
+		t.Error("cursor declares startup-ready signaling; want its TUI input gated")
+	}
+	for _, harness := range []domain.AgentHarness{domain.HarnessAider, domain.HarnessOMP, "definitely-not-an-agent", ""} {
+		if gates(harness) {
+			t.Errorf("harness %q must not require a startup signal", harness)
+		}
+	}
+	if startupSignalGatesInput(nil)(domain.HarnessCursor) {
+		t.Error("a nil resolver must leave startup input ungated")
+	}
+}
+
 // TestWiring_StartSessionBuildsSessionService asserts the daemon's startSession
 // constructs a real controller-facing session service end to end (resolver +
 // gitworktree workspace + session manager over the shared store/LCM), which is
@@ -559,7 +580,9 @@ func TestWiring_StartLifecycleThreadsMessengerIntoLCM(t *testing.T) {
 
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	messenger := &captureMessenger{}
-	stack := startLifecycle(ctx, store, tmux.New(tmux.Options{}), messenger, nil, nil, nil, log)
+	stack := startLifecycle(ctx, store, tmux.New(tmux.Options{
+		SocketPath: shortPrivateTmuxSocket(t),
+	}), messenger, nil, nil, nil, log)
 	t.Cleanup(stack.Stop)
 	t.Cleanup(cancel)
 
@@ -590,6 +613,16 @@ func TestWiring_StartLifecycleThreadsMessengerIntoLCM(t *testing.T) {
 	if messenger.msgs[0].id != rec.ID {
 		t.Fatalf("nudge sent to %q, want %q", messenger.msgs[0].id, rec.ID)
 	}
+}
+
+func shortPrivateTmuxSocket(t *testing.T) string {
+	t.Helper()
+	dir, err := os.MkdirTemp("", "ao-tmux-")
+	if err != nil {
+		t.Fatalf("create private tmux socket directory: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	return filepath.Join(dir, "s")
 }
 
 // TestProjectRepoResolver_ResolvesRegisteredProject asserts the DB-backed repo
@@ -629,10 +662,12 @@ func TestProjectRepoResolver_ResolvesRegisteredProject(t *testing.T) {
 // assert the daemon wiring invokes the correct methods without needing a real
 // runtime or worktree.
 type fakeSessionLifecycle struct {
-	reconcileCalled  bool
-	restoreAllCalled bool
-	reconcileErr     error
-	restoreErr       error
+	reconcileCalled           bool
+	reconcileSafetyCalled     bool
+	reconcileBackgroundCalled bool
+	restoreAllCalled          bool
+	reconcileErr              error
+	restoreErr                error
 }
 
 func (f *fakeSessionLifecycle) Send(context.Context, domain.SessionID, string, *ports.SpawnAttachment) error {
@@ -645,6 +680,16 @@ func (f *fakeSessionLifecycle) Kill(_ context.Context, _ domain.SessionID) (bool
 
 func (f *fakeSessionLifecycle) Reconcile(_ context.Context) error {
 	f.reconcileCalled = true
+	return f.reconcileErr
+}
+
+func (f *fakeSessionLifecycle) ReconcileStartupSafety(_ context.Context) error {
+	f.reconcileSafetyCalled = true
+	return f.reconcileErr
+}
+
+func (f *fakeSessionLifecycle) ReconcileBackground(_ context.Context) error {
+	f.reconcileBackgroundCalled = true
 	return f.reconcileErr
 }
 
