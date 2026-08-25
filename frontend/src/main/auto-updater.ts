@@ -116,6 +116,16 @@ let automaticCheckInFlight = false;
 // the renderer can suggest a restart.
 const STALE_CHECK_NUDGE_THRESHOLD = 3;
 let consecutiveAutomaticNetFailures = 0;
+// Consecutive automatic-check failures of ANY kind. The net:: streak above
+// exists to suggest a restart, and it resets on every non-net error, so the
+// failure mode that actually strands an install — a manifest 404 on every
+// check — can never trip it. This counter does not care why the check failed:
+// past the threshold the renderer is told, because an updater that has failed
+// this many times in a row is indistinguishable from a healthy one otherwise.
+const FAILING_CHECK_THRESHOLD = 3;
+let consecutiveAutomaticCheckFailures = 0;
+let automaticCheckFailureCounted = false;
+let failingChecksPublished = false;
 // One automatic check can both emit an "error" event and reject
 // checkForUpdates(); count that as a single failure.
 let automaticCheckNetFailureCounted = false;
@@ -160,10 +170,15 @@ function broadcast(
     lastCheckedAtMs === undefined || status.checkedAt !== undefined
       ? status
       : { ...status, checkedAt: lastCheckedAtMs };
-  const stamped: UpdateStatus =
-    consecutiveAutomaticNetFailures >= STALE_CHECK_NUDGE_THRESHOLD
-      ? { ...statusWithCheckTime, staleCheckNudge: true }
-      : statusWithCheckTime;
+  const stamped: UpdateStatus = {
+    ...statusWithCheckTime,
+    ...(consecutiveAutomaticNetFailures >= STALE_CHECK_NUDGE_THRESHOLD
+      ? { staleCheckNudge: true }
+      : {}),
+    ...(consecutiveAutomaticCheckFailures >= FAILING_CHECK_THRESHOLD
+      ? { checksFailing: true }
+      : {}),
+  };
   if (owner === "independent") {
     independentStatusRevision += 1;
     if (
@@ -278,18 +293,27 @@ async function fetchLatestCompletedNightlyTag(
   }
 }
 
+function usesDirectNightlyFeed(
+  settings: Pick<UpdateSettings, "channel" | "feature">,
+): boolean {
+  return settings.channel === "nightly" && settings.feature === null;
+}
+
 /**
- * Point one manual Nightly check directly at the newest completed release.
+ * Point one Nightly check directly at the newest completed release. Applies to
+ * automatic checks as well as manual ones: an atom feed that lags a fresh
+ * release makes a background check answer "not-available" and the install goes
+ * silently stale, and an entry whose manifest has not finished uploading 404s
+ * a check whose error the automatic path deliberately swallows — in both cases
+ * the sidebar never learns an update exists.
  * The returned reset restores the normal GitHub provider for later background
  * checks; electron-updater retains the direct provider with the discovered
  * update, so a subsequent Download action still uses the correct asset URLs.
  */
-async function configureDirectManualNightlyFeed(
+async function configureDirectNightlyFeed(
   settings: UpdateSettings,
 ): Promise<(() => void) | undefined> {
-  if (settings.channel !== "nightly" || settings.feature !== null) {
-    return undefined;
-  }
+  if (!usesDirectNightlyFeed(settings)) return undefined;
   const coordinates = await readAppUpdateYml();
   if (!coordinates) return undefined;
   const tag = await fetchLatestCompletedNightlyTag(
@@ -441,7 +465,10 @@ async function runSerializedUpdaterOperation(
     activeUpdaterRequestId = requestId;
     activeUpdaterPhase = operation === "manual-download" ? "download" : "check";
     pendingUpdateVersion = undefined;
-    if (operation === "automatic-check") automaticCheckNetFailureCounted = false;
+    if (operation === "automatic-check") {
+      automaticCheckNetFailureCounted = false;
+      automaticCheckFailureCounted = false;
+    }
     try {
       await runOperation();
     } finally {
@@ -531,6 +558,30 @@ function recordAutomaticNetFailure(): void {
 function recordAutomaticCheckFailure(err: unknown): void {
   if (isNetError(err)) recordAutomaticNetFailure();
   else consecutiveAutomaticNetFailures = 0;
+  // Guarded like the net streak: one check can surface as both an "error" event
+  // and a checkForUpdates() rejection, and that is one failure, not two.
+  if (!automaticCheckFailureCounted) {
+    automaticCheckFailureCounted = true;
+    consecutiveAutomaticCheckFailures += 1;
+  }
+}
+
+/** True once automatic checks have failed enough times to be worth surfacing. */
+function automaticChecksAreFailing(): boolean {
+  return consecutiveAutomaticCheckFailures >= FAILING_CHECK_THRESHOLD;
+}
+
+// publishFailingChecks re-sends the current status once the streak crosses the
+// threshold. The suppressed automatic failure deliberately leaves the state
+// alone — an error the user never asked for must not replace a truthful idle or
+// not-available — but the flag itself is news, and restoring produces no
+// broadcast at all when there was no prior status to restore. Without this the
+// renderer only learns on its next mount, which is why a stranded install looks
+// identical to a healthy one. Sent once per streak, not once per failure.
+function publishFailingChecks(): void {
+  if (!automaticChecksAreFailing() || failingChecksPublished) return;
+  failingChecksPublished = true;
+  broadcast(lastStatus);
 }
 
 // errorMessage extracts the user-facing message for an update error status,
@@ -582,6 +633,8 @@ function wireUpdaterEvents(): void {
   autoUpdater.on("update-available", (info) => {
     // A successful check proves the network stack is healthy.
     consecutiveAutomaticNetFailures = 0;
+    consecutiveAutomaticCheckFailures = 0;
+    failingChecksPublished = false;
     // A manual re-check reports the already-staged build as merely "available"
     // (autoDownload is off on that path). It is still in cache and installs on
     // quit, so keep the richer downloaded status instead of hiding the row.
@@ -595,6 +648,8 @@ function wireUpdaterEvents(): void {
   autoUpdater.on("update-not-available", () => {
     // A successful check proves the network stack is healthy.
     consecutiveAutomaticNetFailures = 0;
+    consecutiveAutomaticCheckFailures = 0;
+    failingChecksPublished = false;
     broadcastCompletedCheck({ state: "not-available" });
     // The staged build outlives a "nothing newer" answer (e.g. after a channel
     // switch); follow up so the restart row returns.
@@ -606,6 +661,8 @@ function wireUpdaterEvents(): void {
     // succeeded, so a later error is a download failure even when the
     // operation began life as a check.
     consecutiveAutomaticNetFailures = 0;
+    consecutiveAutomaticCheckFailures = 0;
+    failingChecksPublished = false;
     activeUpdaterPhase = "download";
     return broadcastUpdaterStatus({
       state: "downloading",
@@ -641,15 +698,16 @@ function wireUpdaterEvents(): void {
   });
   autoUpdater.on("error", (err) => {
     // Never crash on update failure (offline, unsigned macOS, etc.).
-    // Automatic failures restore the previous status so the UI does not flash
-    // an error the user never asked for. That suppression is a UI decision and
-    // must not suppress the telemetry: automatic checks are the
+    // A one-off automatic failure restores the previous status so the UI does
+    // not flash an error the user never asked for. That suppression is a UI
+    // decision and must not suppress the telemetry: automatic checks are the
     // main way an install goes silently stale.
     emitUpdateFailure(err);
     if (activeUpdaterOperation === "automatic-check") {
       console.error("auto-update check failed:", err);
       recordAutomaticCheckFailure(err);
       restoreAutomaticCheckPreviousStatus();
+      publishFailingChecks();
       return;
     }
     // Manifest 404 (missing latest-mac.yml etc.) is a routine condition,
@@ -693,9 +751,15 @@ export function getUpdateStatus(): UpdateStatus {
   // Derive the nudge at read time: a streak can cross the threshold without
   // any broadcast (no checking-for-update → restore no-ops), and Settings
   // seeds from this getter (#3526).
-  return consecutiveAutomaticNetFailures >= STALE_CHECK_NUDGE_THRESHOLD
-    ? { ...lastStatus, staleCheckNudge: true }
-    : lastStatus;
+  return {
+    ...lastStatus,
+    ...(consecutiveAutomaticNetFailures >= STALE_CHECK_NUDGE_THRESHOLD
+      ? { staleCheckNudge: true }
+      : {}),
+    ...(consecutiveAutomaticCheckFailures >= FAILING_CHECK_THRESHOLD
+      ? { checksFailing: true }
+      : {}),
+  };
 }
 
 function automaticUpdateCheckInterval(settings: UpdateSettings): number {
@@ -730,6 +794,11 @@ async function runAutomaticUpdateCheck(
       configureFeed(settings);
       autoUpdater.autoDownload = true;
       applyInstallOnQuitPolicy();
+      // Only nightly resolves a direct feed. Skipping the await entirely on the
+      // other channels keeps this check's event ordering exactly as it was.
+      const restoreFeed = usesDirectNightlyFeed(settings)
+        ? await configureDirectNightlyFeed(settings)
+        : undefined;
       try {
         const result = await autoUpdater.checkForUpdates();
         if (result?.downloadPromise) await result.downloadPromise;
@@ -741,7 +810,13 @@ async function runAutomaticUpdateCheck(
         // (#3526). Record before restoring so the restore broadcast is stamped.
         recordAutomaticCheckFailure(err);
         restoreAutomaticCheckPreviousStatus();
+        publishFailingChecks();
         throw err;
+      } finally {
+        // After the download too: the staged build is already resolved against
+        // the direct provider, and later background checks start from the
+        // normal GitHub feed again.
+        restoreFeed?.();
       }
     });
   } catch (err) {
@@ -876,7 +951,7 @@ export async function checkForUpdatesNow(
         autoUpdater.autoDownload = false;
         applyInstallOnQuitPolicy();
         broadcastUpdaterStatus({ state: "checking" });
-        const restoreFeed = await configureDirectManualNightlyFeed(settings);
+        const restoreFeed = await configureDirectNightlyFeed(settings);
         try {
           await autoUpdater.checkForUpdates();
         } finally {

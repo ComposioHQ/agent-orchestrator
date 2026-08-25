@@ -111,7 +111,8 @@ var shippedMigrations = map[int64]string{
 	105: "0105_default_session_mode_chat.sql",
 	106: "0106_pr_comment_review_id.sql",
 	107: "0107_recovered_conversation_turns.sql",
-	108: "0108_change_log_retention.sql",
+	108: "0108_conversation_retry_source.sql",
+	109: "0109_change_log_retention.sql",
 }
 
 // burnedVersion reports version numbers that must never be (re)used: they
@@ -174,6 +175,58 @@ func TestMigrationVersionLedger(t *testing.T) {
 		if _, ok := present[version]; !ok {
 			t.Errorf("ledgered migration %q (version %d) was deleted: installs that have not applied it yet will silently miss its schema, and the number is burned for reuse", name, version)
 		}
+	}
+}
+
+// Before this PR was merged, its retention migration used version 108. Main
+// subsequently shipped conversation retry lineage under that same version.
+// Preserve databases opened by a development build of the PR: goose sees 108
+// as applied and would otherwise skip the retry column and index permanently.
+func TestPRRetentionVersion108DatabaseReceivesRetrySchema(t *testing.T) {
+	db, err := sql.Open("sqlite", "file:"+filepath.Join(t.TempDir(), "ao.db")+pragmas)
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	db.SetMaxOpenConns(1)
+	t.Cleanup(func() { _ = db.Close() })
+	upTo(t, db, 107)
+
+	if _, err := db.Exec(`PRAGMA auto_vacuum=INCREMENTAL`); err != nil {
+		t.Fatalf("seed PR retention auto_vacuum: %v", err)
+	}
+	if _, err := db.Exec(`VACUUM`); err != nil {
+		t.Fatalf("seed PR retention vacuum: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO goose_db_version (version_id, is_applied) VALUES (108, 1)`); err != nil {
+		t.Fatalf("seed PR retention migration ledger: %v", err)
+	}
+
+	if err := migrate(db); err != nil {
+		t.Fatalf("migrate PR retention v108 database: %v", err)
+	}
+
+	var retryColumn, retryIndex, retention109 int
+	if err := db.QueryRow(
+		`SELECT COUNT(*) FROM pragma_table_info('conversation_turns') WHERE name = 'retry_of_turn_id'`,
+	).Scan(&retryColumn); err != nil {
+		t.Fatalf("inspect retry column: %v", err)
+	}
+	if err := db.QueryRow(
+		`SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = 'idx_conversation_turns_retry_source'`,
+	).Scan(&retryIndex); err != nil {
+		t.Fatalf("inspect retry index: %v", err)
+	}
+	if err := db.QueryRow(`
+SELECT COUNT(*) FROM goose_db_version
+WHERE version_id = 109 AND is_applied = 1`,
+	).Scan(&retention109); err != nil {
+		t.Fatalf("inspect retention migration ledger: %v", err)
+	}
+	if retryColumn != 1 || retryIndex != 1 || retention109 != 1 {
+		t.Fatalf(
+			"repaired schema = retry column:%d index:%d retention109:%d, want 1/1/1",
+			retryColumn, retryIndex, retention109,
+		)
 	}
 }
 

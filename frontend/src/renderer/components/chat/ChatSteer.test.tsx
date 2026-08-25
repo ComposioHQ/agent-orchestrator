@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 import { ChatComposer } from "./ChatComposer";
 import { ChatWorkspace } from "./ChatWorkspace";
 import { chatFixture } from "../../lib/chat-fixture";
+import { typeInLexicalEditor } from "../../test/lexical";
 
 // Steering sends guidance INTO the running turn instead of queueing behind it. The
 // thing these tests protect is that the choice is legible: Enter changing meaning
@@ -28,7 +29,8 @@ describe("ChatComposer steering", () => {
 		const onSend = vi.fn();
 		composer({ onSteer, onSend });
 
-		await userEvent.type(screen.getByRole("combobox"), "use the unit tests only{Enter}");
+		await typeInLexicalEditor(screen.getByRole("combobox"), "use the unit tests only");
+		await userEvent.keyboard("{Enter}");
 		expect(onSend).toHaveBeenCalledWith("use the unit tests only");
 		expect(onSteer).not.toHaveBeenCalled();
 	});

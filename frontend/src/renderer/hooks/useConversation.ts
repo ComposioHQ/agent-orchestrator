@@ -52,8 +52,10 @@ export interface ConversationSendInput {
 	resources?: WireResourceContent[];
 }
 
+export const conversationQueryRoot = ["conversation"] as const;
+
 export function conversationQueryKey(sessionId: string) {
-	return ["conversation", sessionId] as const;
+	return [...conversationQueryRoot, sessionId] as const;
 }
 
 export function conversationModelsQueryKey(sessionId: string) {
@@ -359,6 +361,18 @@ export function useConversationCommands(sessionId: string | undefined) {
 		onSuccess: invalidate,
 	});
 
+	const retryTurn = useMutation({
+		mutationFn: async (turnId: string) => {
+			const { data, error } = await apiClient.POST(
+				"/api/v1/sessions/{sessionId}/conversation/turns/{turnId}/retry",
+				{ params: { path: { sessionId: sessionId as string, turnId } } },
+			);
+			if (error) throw error;
+			return data;
+		},
+		onSuccess: invalidate,
+	});
+
 	const editMessage = useMutation({
 		mutationFn: async ({ turnId, text }: { turnId: string; text: string }) => {
 			const { data, error } = await apiClient.POST(
@@ -419,6 +433,12 @@ export function useConversationCommands(sessionId: string | undefined) {
 		rollback: (turnId: string) => rollback.mutateAsync(turnId),
 		rollbackPending: rollback.isPending,
 		rollbackError: rollback.error ? apiErrorMessage(rollback.error) : undefined,
+		retryControl: {
+			retry: (turnId: string) => retryTurn.mutateAsync(turnId),
+			pending: retryTurn.isPending,
+			error: retryTurn.error ? apiErrorMessage(retryTurn.error) : undefined,
+			turnId: retryTurn.variables,
+		},
 		editMessage: (turnId: string, text: string) => editMessage.mutateAsync({ turnId, text }),
 		editMessagePending: editMessage.isPending,
 		editMessageError: editMessage.error ? apiErrorMessage(editMessage.error) : undefined,
@@ -777,6 +797,8 @@ function toSnapshot(wire: WireSnapshot): ConversationSnapshot {
 			id: turn.id,
 			state: turn.state as TurnState,
 			providerTurnId: turn.providerTurnId,
+			retryOfTurnId: turn.retryOfTurnId,
+			hasRetryAttempt: turn.hasRetryAttempt,
 			errorMessage: turn.errorMessage,
 			requestedAt: turn.requestedAt,
 			startedAt: turn.startedAt ?? undefined,

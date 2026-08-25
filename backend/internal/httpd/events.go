@@ -72,9 +72,11 @@ func (c *EventsController) stream(w http.ResponseWriter, r *http.Request) {
 	// The log is an invalidation feed: clients refetch state on connect (the
 	// renderer invalidates its queries in onopen), so a missing, stale, or
 	// deep-gap cursor must never trigger a whole-log replay. Snap those to the
-	// head; only genuine small-gap resumes replay durable history. Unbounded
-	// replay here re-marshaled the entire change_log on every cursor-less UI
-	// reconnect and starved the writer under GC/mutex load (#3963).
+	// head; only genuine small-gap resumes replay durable history. A cursor ahead
+	// of head means the log was truncated or replaced and must also land at head,
+	// never zero. Unbounded replay here re-marshaled the entire change_log on
+	// every cursor-less UI reconnect and starved the writer under GC/mutex load
+	// (#3963, #4276).
 	if !positioned || after > latestSeq || latestSeq-after > maxReplayGap {
 		after = latestSeq
 	}

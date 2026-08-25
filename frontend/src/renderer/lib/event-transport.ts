@@ -4,7 +4,7 @@ import { getApiBaseUrl, hasTrustedApiBaseUrl, subscribeApiBaseUrl } from "./api-
 import { setEventsConnectionState } from "./events-connection";
 import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { sessionScmSummaryQueryKey } from "../hooks/useSessionScmSummary";
-import { conversationQueryKey } from "../hooks/useConversation";
+import { conversationQueryKey, conversationQueryRoot } from "../hooks/useConversation";
 import { agentSwitchesQueryRoot } from "../hooks/useAgentSwitches";
 import { sessionUsageQueryRoot } from "../hooks/useSessionUsageSummaries";
 
@@ -57,11 +57,23 @@ export function createEventTransport(queryClient: QueryClient): EventTransport {
 			const pendingConversationSessions = new Set<string>();
 			const pendingInterfaceTransitionSessions = new Set<string>();
 			let workspaceInvalidationPending = false;
+			let allConversationsInvalidationPending = false;
+			let allInterfaceTransitionsInvalidationPending = false;
 			let retryTimer: ReturnType<typeof setTimeout> | undefined;
 			let source: EventSource | undefined;
 			let sourceBaseUrl: string | undefined;
-			const refreshWorkspaces = (event?: Event) => {
+			const refreshWorkspaces = (event?: Event, resetTargetedProjections = false) => {
 				let conversationOnly = false;
+				if (event === undefined) {
+					// A lifecycle refresh -- reconnect, daemon status change, base-URL change --
+					// carries no event, so we cannot know which conversations moved. Normally the
+					// replay that follows tells us, but when the event log has been truncated the
+					// daemon starts us at head and no CDC arrives at all. EventSource cannot read
+					// the header reporting that clamp, so refresh every conversation instead of
+					// leaving an open chat frozen on its pre-gap snapshot.
+					allConversationsInvalidationPending = true;
+				}
+				if (resetTargetedProjections) allInterfaceTransitionsInvalidationPending = true;
 				if (event && "data" in event) {
 					try {
 						const decoded = JSON.parse(String((event as MessageEvent).data)) as {
@@ -78,7 +90,7 @@ export function createEventTransport(queryClient: QueryClient): EventTransport {
 								? (decoded.payload as {
 										conversationId?: unknown;
 										interfaceTransitionId?: unknown;
-								  })
+									})
 								: undefined;
 						if (
 							typeof decoded.sessionId === "string" &&
@@ -105,23 +117,47 @@ export function createEventTransport(queryClient: QueryClient): EventTransport {
 				if (!conversationOnly) workspaceInvalidationPending = true;
 				if (debounce) clearTimeout(debounce);
 				debounce = setTimeout(() => {
+					if (allConversationsInvalidationPending) {
+						void queryClient.invalidateQueries({
+							queryKey: conversationQueryRoot,
+						});
+						allConversationsInvalidationPending = false;
+						pendingConversationSessions.clear();
+					} else {
+						for (const sessionId of pendingConversationSessions) {
+							void queryClient.invalidateQueries({
+								queryKey: conversationQueryKey(sessionId),
+							});
+						}
+						pendingConversationSessions.clear();
+					}
 					if (workspaceInvalidationPending) {
 						void queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
-						void queryClient.invalidateQueries({ queryKey: agentSwitchesQueryRoot });
-						void queryClient.invalidateQueries({ queryKey: sessionScmSummaryQueryKey() });
-						void queryClient.invalidateQueries({ queryKey: sessionUsageQueryRoot });
+						void queryClient.invalidateQueries({
+							queryKey: agentSwitchesQueryRoot,
+						});
+						void queryClient.invalidateQueries({
+							queryKey: sessionScmSummaryQueryKey(),
+						});
+						void queryClient.invalidateQueries({
+							queryKey: sessionUsageQueryRoot,
+						});
 						workspaceInvalidationPending = false;
 					}
-					for (const sessionId of pendingConversationSessions) {
-						void queryClient.invalidateQueries({ queryKey: conversationQueryKey(sessionId) });
-					}
-					pendingConversationSessions.clear();
-					for (const sessionId of pendingInterfaceTransitionSessions) {
+					if (allInterfaceTransitionsInvalidationPending) {
 						void queryClient.invalidateQueries({
-							queryKey: ["session-interface-transition", sessionId],
+							queryKey: ["session-interface-transition"],
 						});
+						allInterfaceTransitionsInvalidationPending = false;
+						pendingInterfaceTransitionSessions.clear();
+					} else {
+						for (const sessionId of pendingInterfaceTransitionSessions) {
+							void queryClient.invalidateQueries({
+								queryKey: ["session-interface-transition", sessionId],
+							});
+						}
+						pendingInterfaceTransitionSessions.clear();
 					}
-					pendingInterfaceTransitionSessions.clear();
 				}, INVALIDATE_DEBOUNCE_MS);
 			};
 
@@ -133,14 +169,11 @@ export function createEventTransport(queryClient: QueryClient): EventTransport {
 				}, SSE_RETRY_MS);
 			};
 
-			// A cursor reset skipped durable payloads. Broad roots are covered by
-			// refreshWorkspaces, but conversation and interface-transition caches
-			// are normally targeted from CDC payload fields that will never arrive
-			// for the skipped range — invalidate them wholesale by key prefix.
+			// A cursor reset skipped durable payloads. Queue all invalidations through
+			// the same debounce as onopen so reset + reconnect cannot refetch every
+			// conversation twice.
 			const handleCursorReset = () => {
-				refreshWorkspaces();
-				void queryClient.invalidateQueries({ queryKey: ["conversation"] });
-				void queryClient.invalidateQueries({ queryKey: ["session-interface-transition"] });
+				refreshWorkspaces(undefined, true);
 			};
 
 			const connectSource = () => {

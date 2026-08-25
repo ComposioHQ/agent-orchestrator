@@ -39,6 +39,7 @@ import {
 import type { components } from "../../api/schema";
 import { apiClient, apiErrorMessage } from "../lib/api-client";
 import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
+import { captureRendererEvent } from "../lib/telemetry";
 import { formatTimeCompact } from "../lib/format-time";
 import { AgentAvatar } from "./AgentAvatar";
 import { ProductExternalLink } from "./ProductExternalLink";
@@ -75,6 +76,7 @@ import {
 	openReviewStatesFor,
 	reviewIsRunning,
 	reviewRunDisabled,
+	reviewRunActionKind,
 	reviewSessionRunAction,
 	sessionReviewsQueryOptions,
 	type PRReviewState,
@@ -157,7 +159,7 @@ export function SessionInspector({
 	browserPoppedOut?: boolean;
 	browserAnnotationQueue?: BrowserAnnotationQueueModel;
 	isInspectorVisible?: boolean;
-	onToggleBrowserPopOut?: (next: boolean) => void;
+	onToggleBrowserPopOut?: (next: boolean, sourceRect?: DOMRectReadOnly) => void;
 	onOpenFiles?: () => void;
 	onOpenReviewFile?: (target: { line?: number; path: string }) => void;
 	filesView?: ReactNode;
@@ -1434,6 +1436,9 @@ function ReviewsSection({
 	});
 	const saveAutoReview = useMutation({
 		mutationFn: async (enabled: boolean) => {
+			// Intent, not effect: emitted before the PUT, so a failed save still
+			// counts as the user reaching for the switch.
+			void captureRendererEvent("ao.renderer.review_auto_review_toggled", { enabled });
 			const { error } = await apiClient.PUT("/api/v1/sessions/{sessionId}/auto-review", {
 				params: { path: { sessionId: session.id } },
 				body: { enabled },
@@ -1446,6 +1451,13 @@ function ReviewsSection({
 	});
 	const triggerReview = useMutation({
 		mutationFn: async () => {
+			// Emitted before the request: these renderer events count INTENT, and the
+			// daemon's ao.review.* events are the ground truth for what actually ran.
+			void captureRendererEvent("ao.renderer.review_triggered", {
+				action: reviewRunActionKind(openReviewStatesFor(session, reviewsQuery.data?.reviews ?? []), false),
+				has_override: reviewerOverride !== "",
+				source: "inspector",
+			});
 			// No override sends no body at all, leaving the default path on the wire
 			// exactly as it was.
 			const { data, error, response } = await apiClient.POST("/api/v1/sessions/{sessionId}/reviews/trigger", {
@@ -2312,7 +2324,7 @@ function BrowserView({
 	isActive: boolean;
 	browserPoppedOut: boolean;
 	browserAnnotationQueue?: BrowserAnnotationQueueModel;
-	onTogglePopOut?: (next: boolean) => void;
+	onTogglePopOut?: (next: boolean, sourceRect?: DOMRectReadOnly) => void;
 	browserView?: BrowserViewModel;
 }) {
 	// While maximized, the browser is a full-window overlay that covers the rail,
@@ -2322,7 +2334,7 @@ function BrowserView({
 	const { t } = useTranslation();
 	if (browserPoppedOut) {
 		return (
-			<div role="tabpanel">
+			<div className="h-full min-h-0" data-browser-dock-target="" role="tabpanel">
 				<div className={cn(inspectorEmptyClass, "flex flex-col items-center gap-2 py-10 px-5 text-center")}>
 					<p className="text-md-sm text-muted-foreground">{t("inspector.browserInCenter")}</p>
 					<Button onClick={() => onTogglePopOut?.(false)} size="sm" type="button" variant="outline">
@@ -2342,7 +2354,7 @@ function BrowserView({
 			active={isActive}
 			annotationQueue={browserAnnotationQueue}
 			browserView={browserView}
-			onTogglePopOut={(next) => onTogglePopOut?.(next)}
+			onTogglePopOut={(next, sourceRect) => onTogglePopOut?.(next, sourceRect)}
 			poppedOut={false}
 			session={session}
 		/>

@@ -6,6 +6,7 @@ import (
 	"context"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -27,7 +28,10 @@ func TestAttachmentStreamsRealTmuxPane(t *testing.T) {
 	t.Setenv("TERM", "xterm-256color")
 
 	name := "ao-term-it-" + strconv.Itoa(os.Getpid())
-	rt := tmux.New(tmux.Options{Timeout: 10 * time.Second})
+	rt := tmux.New(tmux.Options{
+		SocketPath: shortPrivateTmuxSocket(t),
+		Timeout:    10 * time.Second,
+	})
 	handle, err := rt.Create(context.Background(), ports.RuntimeConfig{
 		SessionID:     domain.SessionID(name),
 		WorkspacePath: t.TempDir(),
@@ -70,7 +74,10 @@ func TestAttachmentReattachAdoptsNewSize(t *testing.T) {
 	t.Setenv("TERM", "xterm-256color")
 
 	name := "ao-term-size-it-" + strconv.Itoa(os.Getpid())
-	rt := tmux.New(tmux.Options{Timeout: 10 * time.Second})
+	rt := tmux.New(tmux.Options{
+		SocketPath: shortPrivateTmuxSocket(t),
+		Timeout:    10 * time.Second,
+	})
 	handle, err := rt.Create(context.Background(), ports.RuntimeConfig{
 		SessionID:     domain.SessionID(name),
 		WorkspacePath: t.TempDir(),
@@ -148,4 +155,14 @@ func TestAttachmentReattachAdoptsNewSize(t *testing.T) {
 	if !gotWidth {
 		t.Fatalf("reattached pane never reported B's width (cols>130) within 30s; captured:\n%q", captured)
 	}
+}
+
+func shortPrivateTmuxSocket(t *testing.T) string {
+	t.Helper()
+	dir, err := os.MkdirTemp("", "ao-tmux-")
+	if err != nil {
+		t.Fatalf("create private tmux socket directory: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	return filepath.Join(dir, "s")
 }

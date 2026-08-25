@@ -969,8 +969,79 @@ func reconcileSchema(db *sql.DB) error {
 			}
 		}
 	}
+	if err := reconcilePRRetentionMigrationCollision(db); err != nil {
+		return err
+	}
 	if err := reconcileHarnessConstraint(db); err != nil {
 		return err
+	}
+	return nil
+}
+
+// reconcilePRRetentionMigrationCollision repairs development databases opened
+// by this PR before its retention migration moved from 0108 to 0109. Those
+// databases record version 108 as applied, so goose skips main's
+// 0108_conversation_retry_source.sql even though its physical column and index
+// are absent. Scope the repair to that exact ledger/schema mismatch so partial
+// legacy schemas can continue through their normal migrations untouched.
+func reconcilePRRetentionMigrationCollision(db *sql.DB) error {
+	var gooseTable int
+	if err := db.QueryRow(
+		`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'goose_db_version'`,
+	).Scan(&gooseTable); err != nil {
+		return fmt.Errorf("schema verification: inspect migration ledger: %w", err)
+	}
+	if gooseTable == 0 {
+		return nil
+	}
+
+	var applied108 int
+	if err := db.QueryRow(`
+SELECT COALESCE((
+    SELECT is_applied FROM goose_db_version
+    WHERE version_id = 108 ORDER BY id DESC LIMIT 1
+), 0)`).Scan(&applied108); err != nil {
+		return fmt.Errorf("schema verification: inspect migration 108: %w", err)
+	}
+	if applied108 == 0 {
+		return nil
+	}
+
+	var conversationIDColumn, retryColumn int
+	if err := db.QueryRow(
+		`SELECT COUNT(*) FROM pragma_table_info('conversation_turns') WHERE name = 'conversation_id'`,
+	).Scan(&conversationIDColumn); err != nil {
+		return fmt.Errorf("schema verification: inspect conversation_turns.conversation_id: %w", err)
+	}
+	if conversationIDColumn == 0 {
+		return nil
+	}
+	if err := db.QueryRow(
+		`SELECT COUNT(*) FROM pragma_table_info('conversation_turns') WHERE name = 'retry_of_turn_id'`,
+	).Scan(&retryColumn); err != nil {
+		return fmt.Errorf("schema verification: inspect conversation_turns.retry_of_turn_id: %w", err)
+	}
+
+	tx, err := db.Begin()
+	if err != nil {
+		return fmt.Errorf("schema repair: begin migration 108 collision repair: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	if retryColumn == 0 {
+		if _, err := tx.Exec(
+			`ALTER TABLE conversation_turns ADD COLUMN retry_of_turn_id TEXT REFERENCES conversation_turns(id) ON DELETE RESTRICT`,
+		); err != nil {
+			return fmt.Errorf("schema repair: add conversation_turns.retry_of_turn_id: %w", err)
+		}
+	}
+	if _, err := tx.Exec(`
+CREATE UNIQUE INDEX IF NOT EXISTS idx_conversation_turns_retry_source
+    ON conversation_turns(conversation_id, retry_of_turn_id)
+    WHERE retry_of_turn_id IS NOT NULL`); err != nil {
+		return fmt.Errorf("schema repair: create retry-source index: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("schema repair: commit migration 108 collision repair: %w", err)
 	}
 	return nil
 }

@@ -20,12 +20,7 @@ import type {
 	DecisionOption,
 	TurnSettings,
 } from "./types";
-import {
-	EVENTS_CURSOR_RESET,
-	parseSseFrame,
-	takeSseFrames,
-	type ConversationEvent,
-} from "./sse";
+import { EVENTS_CURSOR_RESET, parseSseFrame, readSseFrameSeq, takeSseFrames, type ConversationEvent } from "./sse";
 import { mergeConversationPages, type ConversationPage } from "./snapshot";
 
 export { parseSseFrame } from "./sse";
@@ -93,10 +88,7 @@ export async function startSessionInterfaceTransition(
 	return body.transition;
 }
 
-export async function cancelSessionInterfaceTransition(
-	cfg: ServerConfig,
-	sessionId: string,
-): Promise<void> {
+export async function cancelSessionInterfaceTransition(cfg: ServerConfig, sessionId: string): Promise<void> {
 	await apiRequest(cfg, `${API}/sessions/${encodeURIComponent(sessionId)}/interface-transition`, {
 		method: "DELETE",
 	});
@@ -119,11 +111,25 @@ export async function acknowledgeSessionInterfaceTransitionNotice(
 type WireSnapshot = Omit<ConversationSnapshot, "items" | "controller"> & {
 	controller: ControllerState;
 	messages?: ConversationMessage[];
-	activities?: Array<Omit<ConversationActivity, "detail" | "decisions"> & { detail?: Record<string, unknown> }>;
+	activities?: Array<
+		Omit<ConversationActivity, "detail" | "decisions"> & {
+			detail?: Record<string, unknown>;
+		}
+	>;
 };
 
-export type SendMessageInput = { text: string; clientMessageId: string; attachments?: ChatImage[]; resources?: ChatResource[] };
-export type SendMessageResult = { turnId?: string; providerTurnId?: string; state?: string; duplicate: boolean };
+export type SendMessageInput = {
+	text: string;
+	clientMessageId: string;
+	attachments?: ChatImage[];
+	resources?: ChatResource[];
+};
+export type SendMessageResult = {
+	turnId?: string;
+	providerTurnId?: string;
+	state?: string;
+	duplicate: boolean;
+};
 
 export async function getConversationPage(
 	cfg: ServerConfig,
@@ -161,11 +167,15 @@ export async function steerConversation(cfg: ServerConfig, sessionId: string, te
 }
 
 export async function interruptConversation(cfg: ServerConfig, sessionId: string): Promise<void> {
-	await apiRequest(cfg, conversationPath(sessionId, "/interrupt"), { method: "POST" });
+	await apiRequest(cfg, conversationPath(sessionId, "/interrupt"), {
+		method: "POST",
+	});
 }
 
 export async function compactConversation(cfg: ServerConfig, sessionId: string): Promise<void> {
-	await apiRequest(cfg, conversationPath(sessionId, "/compact"), { method: "POST" });
+	await apiRequest(cfg, conversationPath(sessionId, "/compact"), {
+		method: "POST",
+	});
 }
 
 export async function resolveApproval(
@@ -202,7 +212,10 @@ export async function rollbackConversation(cfg: ServerConfig, sessionId: string,
 }
 
 export async function setConversationTitle(cfg: ServerConfig, sessionId: string, title: string): Promise<void> {
-	await apiRequest(cfg, conversationPath(sessionId, "/title"), { method: "PUT", body: JSON.stringify({ title }) });
+	await apiRequest(cfg, conversationPath(sessionId, "/title"), {
+		method: "PUT",
+		body: JSON.stringify({ title }),
+	});
 }
 
 export async function getConversationModels(cfg: ServerConfig, sessionId: string): Promise<ChatModel[]> {
@@ -211,8 +224,15 @@ export async function getConversationModels(cfg: ServerConfig, sessionId: string
 	return body.models ?? [];
 }
 
-export async function setConversationSettings(cfg: ServerConfig, sessionId: string, settings: TurnSettings): Promise<void> {
-	await apiRequest(cfg, conversationPath(sessionId, "/settings"), { method: "PATCH", body: JSON.stringify(settings) });
+export async function setConversationSettings(
+	cfg: ServerConfig,
+	sessionId: string,
+	settings: TurnSettings,
+): Promise<void> {
+	await apiRequest(cfg, conversationPath(sessionId, "/settings"), {
+		method: "PATCH",
+		body: JSON.stringify(settings),
+	});
 }
 
 export async function getConversationConfigOptions(cfg: ServerConfig, sessionId: string): Promise<ChatConfigOption[]> {
@@ -242,7 +262,9 @@ export async function getConversationSkills(cfg: ServerConfig, sessionId: string
 }
 
 export async function reloadMcpServers(cfg: ServerConfig, sessionId: string): Promise<void> {
-	await apiRequest(cfg, conversationPath(sessionId, "/mcp/reload"), { method: "POST" });
+	await apiRequest(cfg, conversationPath(sessionId, "/mcp/reload"), {
+		method: "POST",
+	});
 }
 
 export async function stageConversationAttachments(
@@ -250,18 +272,32 @@ export async function stageConversationAttachments(
 	sessionId: string,
 	attachments: ChatImage[],
 ): Promise<string[]> {
-	const res = await apiRequest(cfg, `${API}/sessions/${encodeURIComponent(sessionId)}/attachments`, {
-		method: "POST",
-		body: JSON.stringify({ attachments }),
-	}, 60_000);
+	const res = await apiRequest(
+		cfg,
+		`${API}/sessions/${encodeURIComponent(sessionId)}/attachments`,
+		{
+			method: "POST",
+			body: JSON.stringify({ attachments }),
+		},
+		60_000,
+	);
 	const body = (await res.json()) as { paths?: string[] };
 	return body.paths ?? [];
 }
 
-export async function getWorkspacePaths(cfg: ServerConfig, sessionId: string): Promise<{ paths: string[]; truncated: boolean }> {
+export async function getWorkspacePaths(
+	cfg: ServerConfig,
+	sessionId: string,
+): Promise<{ paths: string[]; truncated: boolean }> {
 	const res = await apiRequest(cfg, `${API}/sessions/${encodeURIComponent(sessionId)}/workspace/files`);
-	const body = (await res.json()) as { files?: Array<{ path: string; status?: string }>; truncated?: boolean };
-	return { paths: (body.files ?? []).filter((file) => file.status !== "deleted").map((file) => file.path), truncated: Boolean(body.truncated) };
+	const body = (await res.json()) as {
+		files?: Array<{ path: string; status?: string }>;
+		truncated?: boolean;
+	};
+	return {
+		paths: (body.files ?? []).filter((file) => file.status !== "deleted").map((file) => file.path),
+		truncated: Boolean(body.truncated),
+	};
 }
 
 export type ShellTerminal = {
@@ -303,12 +339,35 @@ export async function closeShellTerminal(cfg: ServerConfig, handleId: string): P
  * deliberately because React Native's global fetch does not expose a streaming
  * response body consistently under Hermes.
  */
+export type ConversationStreamOptions = {
+	/** Frames handled between cooperative yields back to the event loop. */
+	yieldEvery?: number;
+	/** When this returns false, frames advance the cursor without being parsed. */
+	wantsPayload?: () => boolean;
+	/** A frame that advanced the cursor without being parsed. */
+	onCursorAdvance?: (seq: number) => void;
+};
+
+/**
+ * Frames handled before the reader hands the event loop back.
+ *
+ * React Native services touches on the JS thread, and `await`ing an
+ * already-buffered read only queues a microtask — which the runtime drains
+ * completely before any touch is delivered. A replay big enough to keep that
+ * queue fed therefore renders the UI untappable for its whole duration. Yielding
+ * a macrotask periodically bounds that stall no matter how large the backlog is.
+ */
+const STREAM_YIELD_EVERY = 256;
+
+const yieldToEventLoop = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
+
 export async function streamGlobalConversationEvents(
 	cfg: ServerConfig,
 	after: number | undefined,
 	signal: AbortSignal,
 	onEvent: (event: ConversationEvent) => void,
 	onCursorReset?: (cursor: number) => void,
+	options?: ConversationStreamOptions,
 ): Promise<number> {
 	const afterQuery = after === undefined ? "" : `?after=${Math.max(0, after)}`;
 	const res = await expoFetch(`${httpBase(cfg)}${API}/events${afterQuery}`, {
@@ -319,9 +378,7 @@ export async function streamGlobalConversationEvents(
 	if (!res.body) throw new Error("The mobile network stack did not provide an event stream");
 	const advertisedAfterHeader = res.headers.get("X-AO-Event-After");
 	const advertisedAfter = advertisedAfterHeader === null ? Number.NaN : Number(advertisedAfterHeader);
-	const effectiveAfter = Number.isSafeInteger(advertisedAfter) && advertisedAfter >= 0
-		? advertisedAfter
-		: (after ?? 0);
+	const effectiveAfter = Number.isSafeInteger(advertisedAfter) && advertisedAfter >= 0 ? advertisedAfter : (after ?? 0);
 	let lastResetCursor: number | undefined;
 	const notifyCursorReset = (cursor: number) => {
 		if (cursor === lastResetCursor) return;
@@ -337,6 +394,9 @@ export async function streamGlobalConversationEvents(
 	const reader = res.body.getReader();
 	let buffer = "";
 	let cursor = effectiveAfter;
+	const yieldEvery = Math.max(1, options?.yieldEvery ?? STREAM_YIELD_EVERY);
+	const wantsPayload = options?.wantsPayload;
+	let sinceYield = 0;
 	try {
 		while (!signal.aborted) {
 			const { done, value } = await reader.read();
@@ -345,17 +405,28 @@ export async function streamGlobalConversationEvents(
 			const split = takeSseFrames(buffer);
 			buffer = split.remainder;
 			for (const frame of split.frames) {
-				const parsed = parseSseFrame(frame);
-				if (parsed) {
-					cursor = Math.max(cursor, parsed.seq);
-					// A snapped cursor skipped durable payloads: surface the reset so
-					// subscribers refetch, and do not route it to session listeners
-					// as a conversation event.
-					if (parsed.event === EVENTS_CURSOR_RESET) {
-						notifyCursorReset(cursor);
-						continue;
+				if (wantsPayload && !wantsPayload()) {
+					// Nothing is subscribed, so the payload has no reader. Take the
+					// sequence and skip the parse entirely.
+					const seq = readSseFrameSeq(frame);
+					if (seq !== undefined && seq > cursor) {
+						cursor = seq;
+						options?.onCursorAdvance?.(seq);
 					}
-					onEvent(parsed);
+				} else {
+					const parsed = parseSseFrame(frame);
+					if (parsed) {
+						cursor = Math.max(cursor, parsed.seq);
+						// A snapped cursor skipped durable payloads: surface the reset so
+						// subscribers refetch, and do not route it as a conversation event.
+						if (parsed.event === EVENTS_CURSOR_RESET) notifyCursorReset(cursor);
+						else onEvent(parsed);
+					}
+				}
+				if (++sinceYield >= yieldEvery) {
+					sinceYield = 0;
+					await yieldToEventLoop();
+					if (signal.aborted) break;
 				}
 			}
 		}
@@ -375,7 +446,10 @@ function conversationPath(sessionId: string, suffix = ""): string {
 }
 
 function toSnapshot(wire: WireSnapshot): ConversationSnapshot {
-	const messages = (wire.messages ?? []).map((message) => ({ ...message, kind: "message" as const }));
+	const messages = (wire.messages ?? []).map((message) => ({
+		...message,
+		kind: "message" as const,
+	}));
 	const activities = (wire.activities ?? []).map((activity): ConversationActivity => {
 		const detail = (activity.detail ?? {}) as ActivityDetail;
 		return {
@@ -406,7 +480,12 @@ function readDecisions(detail: ActivityDetail): DecisionOption[] | undefined {
 	if (!Array.isArray(detail.decisions)) return undefined;
 	const decisions = detail.decisions.flatMap((option): DecisionOption[] => {
 		if (!option || typeof option !== "object" || typeof option.id !== "string" || !option.id) return [];
-		return [{ id: option.id, label: typeof option.label === "string" && option.label ? option.label : option.id }];
+		return [
+			{
+				id: option.id,
+				label: typeof option.label === "string" && option.label ? option.label : option.id,
+			},
+		];
 	});
 	return decisions.length > 0 ? decisions : undefined;
 }
@@ -415,7 +494,11 @@ async function streamError(res: Response): Promise<ApiError> {
 	let message = `${res.status} ${res.statusText}`;
 	let code: string | undefined;
 	try {
-		const body = (await res.json()) as { message?: string; error?: string; code?: string };
+		const body = (await res.json()) as {
+			message?: string;
+			error?: string;
+			code?: string;
+		};
 		const detail = body.message ?? body.error;
 		if (detail) message += ` - ${detail}`;
 		code = body.code;

@@ -50,18 +50,18 @@ func TestMigrateEnablesIncrementalAutoVacuum(t *testing.T) {
 	}
 }
 
-func TestMigration0108KeepsNewestHundredThousandRowsAcrossSequenceGaps(t *testing.T) {
-	db := openMigration107TestDB(t)
+func TestMigration0109KeepsNewestHundredThousandRowsAcrossSequenceGaps(t *testing.T) {
+	db := openMigration108TestDB(t)
 	seedMigrationChangeLog(t, db, 100_005)
 	// Simulate gaps left by session deletion. There are 100,002 actual rows, so
-	// migration 0108 must delete the two oldest remaining rows (seq 1 and 3)
+	// migration 0109 must delete the two oldest remaining rows (seq 1 and 3)
 	// rather than deriving a boundary from MAX(seq).
 	if _, err := db.Exec(`DELETE FROM change_log WHERE seq IN (2, 4, 6)`); err != nil {
 		t.Fatalf("seed change_log gaps: %v", err)
 	}
 
 	if err := migrate(db); err != nil {
-		t.Fatalf("migrate v107 database: %v", err)
+		t.Fatalf("migrate v108 database: %v", err)
 	}
 
 	var count, oldest, newest int64
@@ -73,12 +73,12 @@ func TestMigration0108KeepsNewestHundredThousandRowsAcrossSequenceGaps(t *testin
 	}
 }
 
-func TestMigration0108LeavesBelowCapChangeLogUntouched(t *testing.T) {
-	db := openMigration107TestDB(t)
+func TestMigration0109LeavesBelowCapChangeLogUntouched(t *testing.T) {
+	db := openMigration108TestDB(t)
 	seedMigrationChangeLog(t, db, 10)
 
 	if err := migrate(db); err != nil {
-		t.Fatalf("migrate v107 database: %v", err)
+		t.Fatalf("migrate v108 database: %v", err)
 	}
 
 	var count, oldest, newest int64
@@ -90,7 +90,7 @@ func TestMigration0108LeavesBelowCapChangeLogUntouched(t *testing.T) {
 	}
 }
 
-func openMigration107TestDB(t *testing.T) *sql.DB {
+func openMigration108TestDB(t *testing.T) *sql.DB {
 	t.Helper()
 	db, err := sql.Open("sqlite", "file:"+filepath.Join(t.TempDir(), "ao.db")+pragmas)
 	if err != nil {
@@ -98,7 +98,7 @@ func openMigration107TestDB(t *testing.T) *sql.DB {
 	}
 	db.SetMaxOpenConns(1)
 	t.Cleanup(func() { _ = db.Close() })
-	upTo(t, db, 107)
+	upTo(t, db, 108)
 	return db
 }
 

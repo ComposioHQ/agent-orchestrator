@@ -138,6 +138,12 @@ type CleanupSessionsQuery struct {
 // WorkspaceFileQuery is the query string accepted by GET /api/v1/sessions/{sessionId}/workspace/file.
 type WorkspaceFileQuery struct {
 	Path string `query:"path" description:"Session-worktree-relative file path."`
+	// Section scopes the diff to one git-state section (see WorkspaceFileSections):
+	// staged compares the index against HEAD, unstaged compares the worktree
+	// against the index. A file can carry independent changes in both. Omit (or
+	// pass committed/untracked) to diff the worktree against the compare base,
+	// as before this field existed.
+	Section string `query:"section,omitempty" enum:"committed,staged,unstaged,untracked" description:"Git-state section the file was opened from (see WorkspaceFileSections). staged diffs the index against HEAD; unstaged diffs the worktree against the index; omitted/committed/untracked diff the worktree against the compare base."`
 }
 
 // WorkspaceFileBlobQuery is the query string accepted by GET /api/v1/sessions/{sessionId}/workspace/file/blob.
@@ -310,6 +316,44 @@ type ListWorkspaceFilesResponse struct {
 	CompareMode    sessionsvc.WorkspaceCompareMode `json:"compareMode,omitempty" enum:"base,head_fallback"`
 	Files          []WorkspaceFileSummary          `json:"files"`
 	Truncated      bool                            `json:"truncated"`
+	// Sections groups the same working tree into git-state sections. Only
+	// populated for single-repo sessions; empty for workspace-project
+	// (multi-repo) and scratch sessions.
+	Sections WorkspaceFileSections `json:"sections"`
+	// Commits are the commits between the compare base and HEAD, oldest first.
+	Commits []WorkspaceCommitSummary `json:"commits"`
+	Summary WorkspaceSummary         `json:"summary"`
+	// Ahead and Behind are omitted when no push/pull data is available (no
+	// upstream, detached HEAD).
+	Ahead  *int `json:"ahead,omitempty"`
+	Behind *int `json:"behind,omitempty"`
+}
+
+// WorkspaceFileSections groups a session workspace's changed files by git
+// state: staged (index vs HEAD), unstaged (worktree vs index), untracked, and
+// committed (HEAD vs the compare base). A partially staged file can appear in
+// both staged and unstaged.
+type WorkspaceFileSections struct {
+	Staged    []WorkspaceFileSummary `json:"staged"`
+	Unstaged  []WorkspaceFileSummary `json:"unstaged"`
+	Untracked []WorkspaceFileSummary `json:"untracked"`
+	Committed []WorkspaceFileSummary `json:"committed"`
+}
+
+// WorkspaceCommitSummary is one commit between the compare base and HEAD.
+type WorkspaceCommitSummary struct {
+	SHA       string    `json:"sha"`
+	Subject   string    `json:"subject"`
+	Author    string    `json:"author"`
+	Timestamp time.Time `json:"timestamp"`
+}
+
+// WorkspaceSummary aggregates a session workspace's base..worktree diff into
+// totals for the Files panel header.
+type WorkspaceSummary struct {
+	Files     int `json:"files"`
+	Additions int `json:"additions"`
+	Deletions int `json:"deletions"`
 }
 
 // WorkspaceFileSummary is one file row in the session workspace browser.
@@ -1403,6 +1447,15 @@ type EditConversationMessageResponse struct {
 	State          domain.TurnState `json:"state,omitempty" enum:"queued,running,completed,recovered,interrupted,failed"`
 }
 
+// RetryTurnResponse reports the new turn a retry dispatched. The original failed
+// turn is not referenced here: it stays failed and unchanged, and both attempts
+// remain separately visible in history.
+type RetryTurnResponse struct {
+	TurnID         string           `json:"turnId,omitempty"`
+	ProviderTurnID string           `json:"providerTurnId,omitempty"`
+	State          domain.TurnState `json:"state,omitempty" enum:"queued,running,completed,recovered,interrupted,failed"`
+}
+
 // ActivateConversationBranchResponse reports the durable head after switching.
 type ActivateConversationBranchResponse struct {
 	ActiveBranchID string `json:"activeBranchId"`
@@ -1529,13 +1582,17 @@ type CompactConversationResponse struct {
 
 // ConversationTurnResponse is one request and the work that followed it.
 type ConversationTurnResponse struct {
-	ID             string  `json:"id"`
-	State          string  `json:"state" enum:"queued,running,completed,recovered,interrupted,failed"`
-	ProviderTurnID string  `json:"providerTurnId,omitempty"`
-	ErrorMessage   string  `json:"errorMessage,omitempty"`
-	RequestedAt    string  `json:"requestedAt"`
-	StartedAt      *string `json:"startedAt,omitempty"`
-	CompletedAt    *string `json:"completedAt,omitempty"`
+	ID             string `json:"id"`
+	State          string `json:"state" enum:"queued,running,completed,recovered,interrupted,failed"`
+	ProviderTurnID string `json:"providerTurnId,omitempty"`
+	// RetryOfTurnID is the failed source whose durable prompt created this turn.
+	RetryOfTurnID string `json:"retryOfTurnId,omitempty"`
+	// HasRetryAttempt remains true when the attempt is outside the active branch.
+	HasRetryAttempt bool    `json:"hasRetryAttempt,omitempty"`
+	ErrorMessage    string  `json:"errorMessage,omitempty"`
+	RequestedAt     string  `json:"requestedAt"`
+	StartedAt       *string `json:"startedAt,omitempty"`
+	CompletedAt     *string `json:"completedAt,omitempty"`
 	// RolledBack marks a turn an undo discarded. Its messages and activities are
 	// absent from this snapshot because the agent no longer remembers them; the turn
 	// is still reported so a client can say what was taken back rather than letting

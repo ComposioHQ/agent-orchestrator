@@ -8,9 +8,21 @@ desktop platform)
 
 When the desktop app is launched from Finder/Dock/Spotlight, the daemon it spawns
 inherits a stunted environment (minimal `PATH`, no shell-exported credentials).
-The daemon then cannot find `tmux`/`git`/the agent CLIs, and the agents it
-launches cannot see API keys. The same app launched from a terminal works,
-because a terminal-started process inherits the shell's fully-populated
+The daemon then cannot find `git`/the agent CLIs, and the agents it launches
+cannot see API keys. Packaged macOS/Linux builds carry their own tmux and do
+not depend on a machine installation; development and standalone daemon runs
+still resolve tmux from `PATH`. On Unix, every daemon derives an explicit
+AO-private `tmux -S` socket from its run-file identity, starts tmux without the
+user's tmux configuration, and never probes the default socket. The socket
+inode stays beside the run file; deeply nested state paths use a validated,
+bounded, owner-only `/tmp` directory alias to satisfy macOS's Unix-socket path
+limit. Socket paths are canonicalized and fail closed if their directory or an
+ancestor is owned by an untrusted user or is shared-writable. Before a pane's
+real command starts, AO refreshes its merged daemon/project environment over
+tmux client stdin, including explicit removal of stale variables; environment
+values never become tmux or pane-shell arguments.
+Windows uses ConPTY instead of tmux. The same app launched from a terminal
+works, because a terminal-started process inherits the shell's fully-populated
 environment. The fix is to resolve the user's login-shell environment once at
 startup and use it as the base for the daemon's environment.
 
@@ -79,7 +91,8 @@ single most common macOS-Electron footgun; it is why packages like `fix-path` an
 
 Forwarding the environment is not the bug. The daemon and agents genuinely need:
 
-- `PATH` to resolve `tmux`, `git`, `node`, and the agent CLIs;
+- `PATH` to resolve `git`, `node`, and the agent CLIs (plus tmux in development
+  and standalone daemon runs);
 - `HOME` for config/credentials (`~/.gitconfig`, `~/.claude`, `~/.codex`, ssh
   keys);
 - shell-exported credentials (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GH_TOKEN`,
@@ -179,9 +192,11 @@ it. We shell out once to the user's own shell and adopt its result.
   is correct and the noise is dropped.
 - Fallback test: simulate probe failure/timeout; assert the static PATH floor and
   credential pass-through are applied.
-- Manual: launch the packaged app from Finder (not a terminal) and confirm a new
-  session spawns, the terminal attaches, and `tmux`/`git`/agent binaries
-  resolve.
+- Manual: launch the packaged app from Finder (not a terminal) on a machine
+  without tmux on `PATH`; confirm a new session spawns and attaches through the
+  bundled `resources/tmux/bin/tmux` on the daemon's explicit private socket,
+  while `git`/agent binaries still resolve. Confirm a user `~/.tmux.conf` is
+  ignored and sessions on tmux's default socket are not discovered.
 
 ## Relevant code
 
@@ -189,8 +204,18 @@ it. We shell out once to the user's own shell and adopt its result.
   spawn.
 - `backend/internal/session_manager/manager.go` - `runtimeEnv` / `HookPATH`
   (agent `PATH` derived from the daemon's `PATH`); `spawnEnv`.
-- `backend/internal/adapters/runtime/tmux/tmux.go` - `defaultBinary()`
-  (`exec.LookPath("tmux")` against the daemon's `PATH`).
+- `frontend/scripts/build-tmux.mjs` - pinned, checksum-verified static dependency
+  build copied into the macOS/Linux package.
+- `frontend/src/shared/bundled-tmux.ts` and `frontend/src/main.ts` - packaged
+  resource resolution, durable versioned staging under the AO data directory,
+  and `AO_TMUX_BINARY` injection.
+- `backend/internal/adapters/runtime/tmux/tmux.go` - honors
+  `AO_TMUX_BINARY`; standalone runs fall back to `exec.LookPath("tmux")`. The
+  daemon derives its explicit private `-S` socket from the run-file identity,
+  ignores user tmux configuration, refreshes the workload environment per pane,
+  and never probes tmux's default socket. A value-free bootstrap pane lets the
+  adapter apply project environment values over stdin before launching the real
+  command.
 - `backend/internal/observe/reaper/reaper.go`,
   `backend/internal/lifecycle/runtime.go` - liveness -> termination
   (`ProbeFailed` never terminates, so a daemon that cannot run `tmux` strands

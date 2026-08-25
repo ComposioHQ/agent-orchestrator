@@ -135,6 +135,9 @@ const (
 	// ChatCapabilityEmbeddedContext means the provider accepts embedded resources
 	// (for example the contents selected through an @ mention) in a prompt.
 	ChatCapabilityEmbeddedContext ChatCapability = "embedded_context"
+	// ChatCapabilityResourceLinks means the provider preserves URI/name resource
+	// links as native prompt content rather than silently reducing them to text.
+	ChatCapabilityResourceLinks ChatCapability = "resource_links"
 	// ChatCapabilityElicitation means the provider can stop a turn to request a
 	// structured form or an explicitly-consented external URL interaction.
 	ChatCapabilityElicitation ChatCapability = "elicitation"

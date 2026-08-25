@@ -105,6 +105,10 @@ func (f *fakeConversationService) Rollback(context.Context, domain.SessionID, st
 	return 0, nil
 }
 
+func (f *fakeConversationService) RetryTurn(context.Context, domain.SessionID, string) (domain.ConversationTurn, error) {
+	return domain.ConversationTurn{}, nil
+}
+
 func (f *fakeConversationService) SetTitle(context.Context, domain.SessionID, string) (string, error) {
 	return "", nil
 }
@@ -153,6 +157,10 @@ func TestConversationSnapshotExposesSafeEditContentAndBranchMetadata(t *testing.
 	body := conversationSnapshotBody(t, chatsvc.Snapshot{
 		Conversation: domain.ConversationRecord{ID: "conversation-1", ActiveBranchID: "branch-child"},
 		SessionID:    domain.SessionID("p1-1"),
+		Turns: []domain.ConversationTurn{
+			{ID: "turn-source", State: domain.TurnStateFailed, HasRetryAttempt: true, RequestedAt: now},
+			{ID: "turn-retry", State: domain.TurnStateCompleted, RetryOfTurnID: "turn-source", RequestedAt: now},
+		},
 		Messages: []domain.ConversationMessage{
 			{
 				ID: "valid", Role: domain.MessageRoleUser, Origin: domain.MessageOriginHuman,
@@ -161,6 +169,10 @@ func TestConversationSnapshotExposesSafeEditContentAndBranchMetadata(t *testing.
 			},
 			{ID: "legacy", Role: domain.MessageRoleUser, Origin: domain.MessageOriginHuman, Text: "legacy", CreatedAt: now},
 			{ID: "malformed", Role: domain.MessageRoleUser, Origin: domain.MessageOriginHuman, Text: "broken", DeliveryContentJSON: `{broken`, CreatedAt: now},
+			{
+				ID: "retry", TurnID: "turn-retry", Role: domain.MessageRoleUser, Origin: domain.MessageOriginHuman,
+				Text: "inspect", ClientMessageID: "retry/turn-source", CreatedAt: now,
+			},
 		},
 		BranchPoints: []domain.ConversationBranchPoint{{
 			TurnID: "turn-edited", Position: 2, Total: 2, PreviousBranchID: "branch-root",
@@ -203,6 +215,13 @@ func TestConversationSnapshotExposesSafeEditContentAndBranchMetadata(t *testing.
 	}
 	if messages[2].(map[string]any)["editAvailable"] != false {
 		t.Fatalf("malformed message is editable: %#v", messages[2])
+	}
+	turns := body["turns"].([]any)
+	if turns[0].(map[string]any)["hasRetryAttempt"] != true {
+		t.Fatalf("consumed retry source = %#v", turns[0])
+	}
+	if turns[1].(map[string]any)["retryOfTurnId"] != "turn-source" {
+		t.Fatalf("retry source correlation = %#v", turns[1])
 	}
 }
 

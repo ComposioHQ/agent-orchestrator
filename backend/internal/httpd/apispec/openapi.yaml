@@ -3073,6 +3073,65 @@ paths:
       summary: Branch before and replace an earlier human prompt
       tags:
       - conversations
+  /api/v1/sessions/{sessionId}/conversation/turns/{turnId}/retry:
+    post:
+      operationId: retrySessionConversationTurn
+      parameters:
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      - description: AO conversation turn identifier, from the snapshot's turns array.
+        in: path
+        name: turnId
+        required: true
+        schema:
+          description: AO conversation turn identifier, from the snapshot's turns
+            array.
+          type: string
+      responses:
+        "202":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RetryTurnResponse'
+          description: Accepted
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Re-dispatch a failed turn's durable prompt as a new turn
+      tags:
+      - conversations
   /api/v1/sessions/{sessionId}/conversation/turns/{turnId}/rollback:
     post:
       operationId: rollbackSessionConversation
@@ -4765,6 +4824,23 @@ paths:
         name: path
         schema:
           description: Session-worktree-relative file path.
+          type: string
+      - description: Git-state section the file was opened from (see WorkspaceFileSections).
+          staged diffs the index against HEAD; unstaged diffs the worktree against
+          the index; omitted/committed/untracked diff the worktree against the compare
+          base.
+        in: query
+        name: section
+        schema:
+          description: Git-state section the file was opened from (see WorkspaceFileSections).
+            staged diffs the index against HEAD; unstaged diffs the worktree against
+            the index; omitted/committed/untracked diff the worktree against the compare
+            base.
+          enum:
+          - committed
+          - staged
+          - unstaged
+          - untracked
           type: string
       responses:
         "200":
@@ -6544,6 +6620,8 @@ components:
           $ref: '#/components/schemas/ConversationTurnDiffResponse'
         errorMessage:
           type: string
+        hasRetryAttempt:
+          type: boolean
         id:
           type: string
         plan:
@@ -6551,6 +6629,8 @@ components:
         providerTurnId:
           type: string
         requestedAt:
+          type: string
+        retryOfTurnId:
           type: string
         rolledBack:
           type: boolean
@@ -7084,6 +7164,18 @@ components:
       type: object
     ListWorkspaceFilesResponse:
       properties:
+        ahead:
+          type:
+          - "null"
+          - integer
+        behind:
+          type:
+          - "null"
+          - integer
+        commits:
+          items:
+            $ref: '#/components/schemas/WorkspaceCommitSummary'
+          type: array
         compareBaseRef:
           type: string
         compareBaseSha:
@@ -7097,14 +7189,21 @@ components:
           items:
             $ref: '#/components/schemas/WorkspaceFileSummary'
           type: array
+        sections:
+          $ref: '#/components/schemas/WorkspaceFileSections'
         sessionId:
           type: string
+        summary:
+          $ref: '#/components/schemas/WorkspaceSummary'
         truncated:
           type: boolean
       required:
       - sessionId
       - files
       - truncated
+      - sections
+      - commits
+      - summary
       type: object
     MarkAllNotificationsReadRequest:
       properties:
@@ -7749,6 +7848,22 @@ components:
       - sessionId
       - resumeMode
       - session
+      type: object
+    RetryTurnResponse:
+      properties:
+        providerTurnId:
+          type: string
+        state:
+          enum:
+          - queued
+          - running
+          - completed
+          - recovered
+          - interrupted
+          - failed
+          type: string
+        turnId:
+          type: string
       type: object
     ReviewRun:
       properties:
@@ -8880,7 +8995,7 @@ components:
             readiness.
           type: boolean
         requirements:
-          description: 'Individual checks, in stable order: git, tmux, harness, gh.'
+          description: Individual checks in stable order for the selected probe.
           items:
             $ref: '#/components/schemas/SystemRequirement'
           type: array
@@ -9152,6 +9267,23 @@ components:
       - provenance
       - providerDetails
       type: object
+    WorkspaceCommitSummary:
+      properties:
+        author:
+          type: string
+        sha:
+          type: string
+        subject:
+          type: string
+        timestamp:
+          format: date-time
+          type: string
+      required:
+      - sha
+      - subject
+      - author
+      - timestamp
+      type: object
     WorkspaceFileResponse:
       properties:
         additions:
@@ -9212,6 +9344,30 @@ components:
       - diff
       - diffTruncated
       type: object
+    WorkspaceFileSections:
+      properties:
+        committed:
+          items:
+            $ref: '#/components/schemas/WorkspaceFileSummary'
+          type: array
+        staged:
+          items:
+            $ref: '#/components/schemas/WorkspaceFileSummary'
+          type: array
+        unstaged:
+          items:
+            $ref: '#/components/schemas/WorkspaceFileSummary'
+          type: array
+        untracked:
+          items:
+            $ref: '#/components/schemas/WorkspaceFileSummary'
+          type: array
+      required:
+      - staged
+      - unstaged
+      - untracked
+      - committed
+      type: object
     WorkspaceFileSummary:
       properties:
         additions:
@@ -9257,6 +9413,19 @@ components:
       - name
       - relativePath
       - repo
+      type: object
+    WorkspaceSummary:
+      properties:
+        additions:
+          type: integer
+        deletions:
+          type: integer
+        files:
+          type: integer
+      required:
+      - files
+      - additions
+      - deletions
       type: object
 tags:
 - description: Supported and locally runnable agent adapters
