@@ -1,19 +1,19 @@
-// Package systemcheck reports whether the local machine satisfies the
-// prerequisites AO needs before the desktop app shows the board: git, tmux
-// (macOS/Linux only), and at least one installed agent-harness CLI. It also
-// probes for gh (the GitHub CLI), which is advisory only and never blocks
-// readiness. It is the backend gate the Electron loading screen polls; the
-// checks are pure existence probes (LookPath), not the deeper
-// version/compatibility checks `ao doctor` runs.
+// Package systemcheck reports lightweight executable prerequisites the desktop
+// app checks before showing the board: git, tmux (macOS/Linux only), one agent
+// executable, and the advisory GitHub CLI. It also supports a deeper,
+// user-triggered agent-harness inventory check, which is intentionally
+// excluded from first-render startup.
 package systemcheck
 
 import (
 	"context"
+	"os"
 	"runtime"
 	"strings"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 	agentsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/agent"
+	"github.com/aoagents/agent-orchestrator/backend/internal/tmuxbin"
 )
 
 // Requirement is one named startup gate check.
@@ -25,10 +25,11 @@ type Requirement struct {
 	Detail    string `json:"detail,omitempty" description:"Extra context: the resolved path when satisfied, or why it is not."`
 }
 
-// Report is the full startup requirements gate result.
+// Report is a requirements result suitable for either the lightweight startup
+// preflight or a deeper, user-triggered environment check.
 type Report struct {
 	Ready        bool          `json:"ready" description:"True iff every requirement with Required=true is satisfied. Requirements with Required=false (e.g. gh) are advisory and never block readiness."`
-	Requirements []Requirement `json:"requirements" description:"Individual checks, in stable order: git, tmux, harness, gh."`
+	Requirements []Requirement `json:"requirements" description:"Individual checks in stable order for the selected probe."`
 }
 
 // HarnessCatalog is the subset of agent.Service the harness requirement needs.
@@ -36,6 +37,7 @@ type Report struct {
 // recheck cannot be answered by the normal short-lived inventory cache.
 type HarnessCatalog interface {
 	RefreshFresh(ctx context.Context) (agentsvc.Inventory, error)
+	FindInstalledBinary(ctx context.Context) (agentsvc.Info, bool)
 }
 
 // Service runs the startup requirements gate.
@@ -60,9 +62,25 @@ func NewWithLookPath(harnesses HarnessCatalog, lookPath func(string) (string, er
 	return New(harnesses, executableFinderFunc(lookPath))
 }
 
-// Check runs the four startup requirement probes and reports whether the
-// machine is ready to run AO sessions. gh is advisory (Required: false) and
-// never affects Ready.
+// CheckStartup runs only the inexpensive executable lookups that must be
+// known before AO presents its primary session UI. It deliberately excludes
+// agent inventory/authentication: those provider probes can invoke several
+// CLIs and have their own timeouts, so they belong in a later background or
+// launch-time check rather than the first-render critical path.
+func (s *Service) CheckStartup(ctx context.Context) (Report, error) {
+	if err := ctx.Err(); err != nil {
+		return Report{}, err
+	}
+	return reportFor([]Requirement{
+		s.checkGit(),
+		s.checkTmux(),
+		s.checkStartupHarness(ctx),
+		s.checkGH(),
+	}), nil
+}
+
+// Check runs the complete, user-triggered requirements probe, including a
+// fresh agent inventory. Startup callers should use CheckStartup instead.
 func (s *Service) Check(ctx context.Context) (Report, error) {
 	if err := ctx.Err(); err != nil {
 		return Report{}, err
@@ -75,6 +93,10 @@ func (s *Service) Check(ctx context.Context) (Report, error) {
 		s.checkGH(),
 	}
 
+	return reportFor(requirements), nil
+}
+
+func reportFor(requirements []Requirement) Report {
 	ready := true
 	for _, req := range requirements {
 		if req.Required && !req.Satisfied {
@@ -82,7 +104,7 @@ func (s *Service) Check(ctx context.Context) (Report, error) {
 			break
 		}
 	}
-	return Report{Ready: ready, Requirements: requirements}, nil
+	return Report{Ready: ready, Requirements: requirements}
 }
 
 func (s *Service) checkGit() Requirement {
@@ -102,14 +124,19 @@ func (s *Service) checkTmux() Requirement {
 			Detail: "Not required on Windows — AO uses the built-in ConPTY terminal runtime instead of tmux.",
 		}
 	}
-	path, err := s.executables.LookPath("tmux")
-	if err != nil || path == "" {
+	configured := strings.TrimSpace(os.Getenv("AO_TMUX_BINARY"))
+	resolution, err := tmuxbin.ResolveWith(configured, os.Executable, s.executables.LookPath)
+	if err != nil || resolution.Path == "" {
+		detail := "tmux was not found on PATH; it is required on macOS/Linux to start sessions."
+		if configured != "" {
+			detail = "AO's bundled tmux is missing or not executable: " + configured
+		}
 		return Requirement{
 			ID: "tmux", Label: "tmux", Required: true,
-			Detail: "tmux was not found on PATH; it is required on macOS/Linux to start sessions.",
+			Detail: detail,
 		}
 	}
-	return Requirement{ID: "tmux", Label: "tmux", Satisfied: true, Required: true, Detail: path}
+	return Requirement{ID: "tmux", Label: "tmux", Satisfied: true, Required: true, Detail: resolution.Path}
 }
 
 func (s *Service) checkHarness(ctx context.Context) Requirement {
@@ -129,6 +156,21 @@ func (s *Service) checkHarness(ctx context.Context) Requirement {
 		labels = append(labels, info.Label)
 	}
 	return Requirement{ID: "harness", Label: label, Satisfied: true, Required: true, Detail: strings.Join(labels, ", ")}
+}
+
+// checkStartupHarness verifies only that one supported agent executable can
+// be resolved. Authentication is intentionally deferred: many agent CLIs
+// determine it by starting a process, which must not delay first render.
+func (s *Service) checkStartupHarness(ctx context.Context) Requirement {
+	const label = "agent harness"
+	info, ok := s.harnesses.FindInstalledBinary(ctx)
+	if !ok {
+		return Requirement{
+			ID: "harness", Label: label, Required: true,
+			Detail: "No agent CLI (Claude Code, Codex, etc.) was found on PATH or in a supported install location.",
+		}
+	}
+	return Requirement{ID: "harness", Label: label, Satisfied: true, Required: true, Detail: info.Label}
 }
 
 // checkGH probes for the GitHub CLI. It is advisory only (Required: false):

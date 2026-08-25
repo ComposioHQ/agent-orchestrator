@@ -1,6 +1,5 @@
 import { RadioGroup } from "radix-ui";
 import { useTranslation } from "react-i18next";
-import { X } from "lucide-react";
 import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import {
 	collectReportProblemDiagnostics,
@@ -12,22 +11,6 @@ import {
 import { aoBridge } from "../../lib/bridge";
 import { captureRendererEvent } from "../../lib/telemetry";
 import { Button } from "../ui/button";
-import {
-	Dialog,
-	DialogClose,
-	DialogContent,
-	DialogDescription,
-	DialogTitle,
-	settingsDialogBodyClass,
-	settingsDialogContentClass,
-	settingsDialogFooterClass,
-	settingsDialogHeaderClass,
-} from "../ui/dialog";
-
-type ReportProblemDialogProps = {
-	open: boolean;
-	onOpenChange: (open: boolean) => void;
-};
 
 type DestinationIconProps = {
 	className?: string;
@@ -73,7 +56,7 @@ type DestinationOption = {
 	icon: (props: DestinationIconProps) => ReactNode;
 };
 
-export function ReportProblemDialog({ open, onOpenChange }: ReportProblemDialogProps) {
+export function ReportProblemContent({ active }: { active: boolean }) {
 	const { t } = useTranslation();
 	const destinations: DestinationOption[] = [
 		{ value: "github", label: t("report.github"), action: t("report.githubAction"), icon: GithubIcon },
@@ -93,7 +76,7 @@ export function ReportProblemDialog({ open, onOpenChange }: ReportProblemDialogP
 	const copiedLabel = destinations.find((option) => option.value === copiedOutput)?.label;
 
 	useEffect(() => {
-		if (!open) {
+		if (!active) {
 			setSummary("");
 			setDetails("");
 			setSelectedOutput("github");
@@ -101,17 +84,15 @@ export function ReportProblemDialog({ open, onOpenChange }: ReportProblemDialogP
 			setCopyError(null);
 			return;
 		}
-		// Reported here rather than on the settings row so any future entry point
-		// into this dialog is counted too.
 		void captureRendererEvent("ao.renderer.support_opened");
-		let active = true;
+		let cancelled = false;
 		void collectReportProblemDiagnostics().then((nextDiagnostics) => {
-			if (active) setDiagnostics(nextDiagnostics);
+			if (!cancelled) setDiagnostics(nextDiagnostics);
 		});
 		return () => {
-			active = false;
+			cancelled = true;
 		};
-	}, [open]);
+	}, [active]);
 
 	const input = { summary, details };
 	const draft = formatReportProblemDraft(input, diagnostics, selectedOutput);
@@ -137,9 +118,6 @@ export function ReportProblemDialog({ open, onOpenChange }: ReportProblemDialogP
 			setSummary("");
 			setDetails("");
 			setSelectedOutput("github");
-			// Only which destination was chosen. The summary, details, and the
-			// diagnostics block are the user's own words and machine state, and
-			// none of them may be reported.
 			void captureRendererEvent("ao.renderer.support_submitted", { destination: output, outcome: "succeeded" });
 		} catch (err) {
 			setCopyError(err instanceof Error ? err.message : t("report.copyFailed"));
@@ -149,121 +127,90 @@ export function ReportProblemDialog({ open, onOpenChange }: ReportProblemDialogP
 	};
 
 	return (
-		<Dialog open={open} onOpenChange={onOpenChange}>
-			<DialogContent
-				showCloseButton={false}
-				className={settingsDialogContentClass}
-				onOpenAutoFocus={(event) => {
+		<div
+			className="flex flex-col gap-4"
+			onKeyDown={(event) => {
+				if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
 					event.preventDefault();
-					titleRef.current?.focus();
+					void copyDraft();
+				}
+			}}
+		>
+			<p className="text-xs leading-4 text-settings-muted">{t("report.subtitle")}</p>
+
+			<div className="flex flex-col gap-1.5">
+				<label className="settings-field-label" htmlFor={titleId}>
+					{t("report.titleLabel")}
+				</label>
+				<input
+					ref={titleRef}
+					id={titleId}
+					className="settings-field-control h-(--size-settings-action-height)"
+					value={summary}
+					onChange={(event) => {
+						setSummary(event.target.value);
+						clearStatus();
+					}}
+					placeholder={t("report.titlePlaceholder")}
+				/>
+			</div>
+
+			<div className="flex flex-col gap-1.5">
+				<label className="settings-field-label" htmlFor={detailsId}>
+					{t("report.whatHappened")}
+				</label>
+				<textarea
+					id={detailsId}
+					className="settings-field-control min-h-(--size-textarea-min) resize-y py-2.5"
+					value={details}
+					onChange={(event) => {
+						setDetails(event.target.value);
+						clearStatus();
+					}}
+					placeholder={t("report.detailsPlaceholder")}
+				/>
+			</div>
+
+			<RadioGroup.Root
+				value={selectedOutput}
+				onValueChange={(value) => {
+					setSelectedOutput(value as ReportProblemOutput);
+					clearStatus();
 				}}
-				onKeyDown={(event) => {
-					// Only Cmd/Ctrl+Enter submits — a plain Enter in the textarea
-					// must keep inserting newlines.
-					if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
-						event.preventDefault();
-						void copyDraft();
-					}
-				}}
+				aria-label={t("report.destination")}
+				className="settings-segment self-start"
 			>
-				<DialogClose asChild>
-					<button
-						type="button"
-						className="settings-dialog-close-button settings-close-button"
-						aria-label={t("report.close")}
-						title={t("report.closeEsc")}
-					>
-						<X className="size-5" aria-hidden="true" />
-					</button>
-				</DialogClose>
+				{destinations.map((option) => (
+					<RadioGroup.Item key={option.value} value={option.value} className="settings-segment-item">
+						<option.icon className="size-icon-sm" aria-hidden="true" />
+						{option.label}
+					</RadioGroup.Item>
+				))}
+			</RadioGroup.Root>
 
-				<div className={settingsDialogHeaderClass}>
-					<DialogTitle className="settings-dialog-title">{t("report.title")}</DialogTitle>
-					<DialogDescription className="text-control leading-4 text-settings-muted">
-						{t("report.subtitle")}
-					</DialogDescription>
-				</div>
+			{copyError && (
+				<p role="alert" className="text-caption leading-4 text-error">
+					{copyError}
+				</p>
+			)}
+			{copiedLabel && !copyError && (
+				<p className="text-caption leading-4 text-success">{t("report.draftCopied", { label: copiedLabel })}</p>
+			)}
 
-				<div className={settingsDialogBodyClass}>
-					<div className="flex flex-col gap-1.5">
-						<label className="settings-field-label" htmlFor={titleId}>
-							{t("report.titleLabel")}
-						</label>
-						<input
-							ref={titleRef}
-							id={titleId}
-							className="settings-field-control h-(--size-settings-action-height)"
-							value={summary}
-							onChange={(event) => {
-								setSummary(event.target.value);
-								clearStatus();
-							}}
-							placeholder={t("report.titlePlaceholder")}
-						/>
-					</div>
-
-					<div className="flex flex-col gap-1.5">
-						<label className="settings-field-label" htmlFor={detailsId}>
-							{t("report.whatHappened")}
-						</label>
-						<textarea
-							id={detailsId}
-							className="settings-field-control min-h-(--size-textarea-min) resize-y py-2.5"
-							value={details}
-							onChange={(event) => {
-								setDetails(event.target.value);
-								clearStatus();
-							}}
-							placeholder={t("report.detailsPlaceholder")}
-						/>
-					</div>
-
-					<RadioGroup.Root
-						value={selectedOutput}
-						onValueChange={(value) => {
-							setSelectedOutput(value as ReportProblemOutput);
-							clearStatus();
-						}}
-						aria-label={t("report.destination")}
-						className="settings-segment self-start"
-					>
-						{destinations.map((option) => (
-							<RadioGroup.Item key={option.value} value={option.value} className="settings-segment-item">
-								<option.icon className="size-icon-sm" aria-hidden="true" />
-								{option.label}
-							</RadioGroup.Item>
-						))}
-					</RadioGroup.Root>
-
-					{copyError && (
-						<p role="alert" className="text-caption leading-4 text-error">
-							{copyError}
-						</p>
-					)}
-					{copiedLabel && !copyError && (
-						<p className="text-caption leading-4 text-success">{t("report.draftCopied", { label: copiedLabel })}</p>
-					)}
-				</div>
-
-				<div className={settingsDialogFooterClass}>
-					<DialogClose asChild>
-						<Button type="button" variant="footer">
-							{t("report.cancel")}
-						</Button>
-					</DialogClose>
-					<Button
-						type="button"
-						variant="footer-primary"
-						disabled={!canSubmit}
-						onClick={() => {
-							if (!canSubmit) return;
-							void copyDraft();
-						}}
-					>
-						{destination.action}
-					</Button>
-				</div>
-			</DialogContent>
-		</Dialog>
+			<div className="flex items-center justify-end gap-3">
+				<Button
+					type="button"
+					variant="footer-primary"
+					className="rounded-md"
+					disabled={!canSubmit}
+					onClick={() => {
+						if (!canSubmit) return;
+						void copyDraft();
+					}}
+				>
+					{destination.action}
+				</Button>
+			</div>
+		</div>
 	);
 }

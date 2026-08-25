@@ -1,10 +1,8 @@
-import {
-	useQuery,
-	useQueryClient,
-} from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { useNavigate, useParams, useRouterState } from "@tanstack/react-router";
 import {
+	AlertTriangle,
 	ChevronRight,
 	Download,
 	Folder,
@@ -18,6 +16,7 @@ import {
 	RefreshCw,
 	Search,
 	Settings,
+	Smartphone,
 	Trash2,
 	User,
 } from "lucide-react";
@@ -115,10 +114,23 @@ const MAX_DISPLAY_NAME_LEN = 20;
 export const SIDEBAR_DEFAULT_WIDTH = 240;
 export const SIDEBAR_MIN_WIDTH = 200;
 export const SIDEBAR_MAX_WIDTH = 420;
+const expandedProjectsStorageKey = "ao.sidebar.expanded-projects";
+
+function readExpandedProjectIds(): ReadonlySet<string> {
+	if (typeof window === "undefined" || !window.localStorage) return new Set();
+	try {
+		const value: unknown = JSON.parse(window.localStorage.getItem(expandedProjectsStorageKey) ?? "null");
+		return new Set(Array.isArray(value) ? value.filter((id): id is string => typeof id === "string") : []);
+	} catch {
+		return new Set();
+	}
+}
 
 type SidebarProps = {
 	/** Hide the sidebar's right edge stroke on the welcome board inset chrome. */
 	hideEdgeBorder?: boolean;
+	/** Preserve navigation as an icon rail when workspace pressure collapses the expanded sidebar. */
+	autoCompact?: boolean;
 	underTopbar?: boolean;
 	/** Chrome height to clear when underTopbar is set. Defaults to --size-toolbar. */
 	topbarOffset?: "toolbar" | "titlebar" | "trafficLights" | "session";
@@ -146,6 +158,7 @@ function useSelection() {
 		// Settings is a modal — open it in place so the current page (session
 		// terminal, board, etc.) stays underneath.
 		goGlobalSettings: () => openGlobalSettings(),
+		goConnectMobile: () => openGlobalSettings("mobile"),
 		goSettings: (projectId: string) => openProjectSettings(projectId),
 		goProject: (projectId: string) => void navigate({ to: "/projects/$projectId", params: { projectId } }),
 		goSession: (projectId: string, sessionId: string) =>
@@ -175,6 +188,7 @@ function SessionStatusDot({ session }: { session: WorkspaceSession }) {
 // _shell owns the persistent open state. Collapsed sidebars move fully off-canvas.
 export function Sidebar({
 	hideEdgeBorder = false,
+	autoCompact = false,
 	underTopbar = true,
 	topbarOffset = "toolbar",
 	workspaceError,
@@ -196,7 +210,9 @@ export function Sidebar({
 	const daemonStatus = useShellMaybe()?.daemonStatus ?? null;
 	const commandPaletteEnabled = useCommandPaletteEnabled();
 	const setCommandPaletteOpen = useUiStore((s) => s.setCommandPaletteOpen);
-
+	const initialActiveSessionProjectId = useRef(
+		selection.activeSessionId ? selection.activeProjectId : undefined,
+	).current;
 	useLayoutEffect(() => {
 		// Offcanvas: the panel slides off-screen on collapse — no need to hide content.
 		// Reveal immediately on expand so there's no fade-in delay.
@@ -205,15 +221,31 @@ export function Sidebar({
 		}
 	}, [isCollapsed]);
 
-	// Disclosure state: projects are expanded by default; a project id present in
-	// this set is collapsed (sessions hidden).
-	const [collapsedIds, setCollapsedIds] = useState<ReadonlySet<string>>(() => new Set());
-	const toggleCollapsed = (id: string) =>
-		setCollapsedIds((prev) => {
+	// Disclosure state is persisted as the IDs of projects that were expanded.
+	// An empty/missing store intentionally means all projects start collapsed.
+	const [expandedIds, setExpandedIds] = useState<ReadonlySet<string>>(() => readExpandedProjectIds());
+	const [dismissedInitialActiveProjectIds, setDismissedInitialActiveProjectIds] = useState<ReadonlySet<string>>(
+		() => new Set(),
+	);
+	const toggleProjectDisclosure = (id: string) => {
+		const routeFallbackActive =
+			initialActiveSessionProjectId === id && !dismissedInitialActiveProjectIds.has(id);
+		const currentlyExpanded = expandedIds.has(id) || routeFallbackActive;
+		setExpandedIds((prev) => {
 			const next = new Set(prev);
-			next.has(id) ? next.delete(id) : next.add(id);
+			currentlyExpanded ? next.delete(id) : next.add(id);
+			if (typeof window !== "undefined") {
+				window.localStorage?.setItem(expandedProjectsStorageKey, JSON.stringify([...next]));
+			}
 			return next;
 		});
+		setDismissedInitialActiveProjectIds((prev) => {
+			if (initialActiveSessionProjectId !== id) return prev;
+			const next = new Set(prev);
+			currentlyExpanded ? next.add(id) : next.delete(id);
+			return next;
+		});
+	};
 	// Section disclosure: Pinned header collapses its body. Projects stays open.
 	const [pinnedOpen, setPinnedOpen] = useState(true);
 	// Fetch the running app version to derive the build channel. Channel is
@@ -257,7 +289,7 @@ export function Sidebar({
 	return (
 		// Pinned sidebars start below shell chrome.
 		<SidebarRoot
-			collapsible="offcanvas"
+			collapsible={autoCompact ? "icon" : "offcanvas"}
 			data-expanded-chrome={expandedChromeVisible ? "visible" : "hidden"}
 			data-topbar-offset={underTopbar ? topbarOffset : undefined}
 			className={cn(
@@ -398,9 +430,14 @@ export function Sidebar({
 									<ProjectItem
 										key={workspace.id}
 										workspace={workspace}
-										expanded={!collapsedIds.has(workspace.id)}
+										expanded={
+											expandedIds.has(workspace.id) ||
+											(initialActiveSessionProjectId === workspace.id &&
+												!dismissedInitialActiveProjectIds.has(workspace.id))
+										}
+										suppressInitialExpandAnimation={expandedIds.has(workspace.id)}
 										selection={selection}
-										onToggle={() => toggleCollapsed(workspace.id)}
+										onToggle={() => toggleProjectDisclosure(workspace.id)}
 										onRemoveProject={onRemoveProject}
 									/>
 								))}
@@ -413,16 +450,10 @@ export function Sidebar({
 
 			{/* Footer — Settings opens the global settings page directly.
 			    Its hairline and row height match the board Archive bar. Bottom
-			    margin matches the framed center-panel inset plus the 1px surface
-			    border so the two hairlines meet. Native fullscreen drops the
-			    mac inset, so the footer collapses to the 1px surface border. */}
+			    spacing stays inside the footer so there is no empty strip beneath
+			    the final action. */}
 			<SidebarFooter
-				className={cn(
-					"relative mt-auto gap-0 overflow-hidden border-t border-border-strong px-2 !py-2 transition-[padding] duration-200 ease-linear group-data-[collapsible=icon]:min-h-16 group-data-[collapsible=icon]:items-center group-data-[collapsible=icon]:border-t-0 group-data-[collapsible=icon]:px-1.5 group-data-[collapsible=icon]:!pb-0 group-data-[collapsible=icon]:!pt-1.5",
-					isMac
-						? "mb-[calc(var(--size-center-panel-inset-mac)+1px)] in-[.native-fullscreen]:mb-px"
-						: "mb-[calc(var(--size-center-panel-bottom-inset)+1px)]",
-				)}
+				className="relative mt-auto gap-0 overflow-hidden border-t border-border-strong px-2 !py-2 transition-[padding] duration-200 ease-linear group-data-[collapsible=icon]:min-h-20 group-data-[collapsible=icon]:items-center group-data-[collapsible=icon]:border-t-0 group-data-[collapsible=icon]:px-1.5 group-data-[collapsible=icon]:!pb-0 group-data-[collapsible=icon]:!pt-1.5"
 			>
 				{/* Always-present daemon status mirror for the smoke suite: no visible
 				    daemon-state copy is guaranteed to be mounted elsewhere. */}
@@ -437,6 +468,19 @@ export function Sidebar({
 				>
 					<UpdateStatusRow status={updateStatus} tabIndex={isCollapsed ? -1 : 0} />
 					<CloudAccountRow tabIndex={isCollapsed ? -1 : 0} />
+					<button
+						aria-label={t("settings.connectMobile")}
+						className={cn(
+							NAV_ROW_CLASS,
+							"flex h-9 w-full items-center text-left [&_svg]:size-icon-md [&_svg]:shrink-0",
+						)}
+						onClick={() => selection.goConnectMobile()}
+						tabIndex={isCollapsed ? -1 : 0}
+						type="button"
+					>
+						<Smartphone aria-hidden="true" />
+						<span className="tracking-tight">{t("settings.connectMobile")}</span>
+					</button>
 					<button
 						aria-label={t("shell.settings")}
 						className={cn(
@@ -457,6 +501,20 @@ export function Sidebar({
 				>
 					<UpdateStatusRail status={updateStatus} tabIndex={isCollapsed ? 0 : -1} />
 					<CloudAccountRailButton tabIndex={isCollapsed ? 0 : -1} />
+					<Tooltip>
+						<TooltipTrigger asChild>
+							<button
+								aria-label={t("settings.connectMobile")}
+								className="grid size-control-board place-items-center rounded-lg text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground [&_svg]:size-icon-base"
+								onClick={() => selection.goConnectMobile()}
+								tabIndex={isCollapsed ? 0 : -1}
+								type="button"
+							>
+								<Smartphone aria-hidden="true" />
+							</button>
+						</TooltipTrigger>
+						<TooltipContent side="right">{t("settings.connectMobile")}</TooltipContent>
+					</Tooltip>
 					<Tooltip>
 						<TooltipTrigger asChild>
 							<button
@@ -499,12 +557,14 @@ function ProjectItem({
 	selection,
 	onToggle,
 	onRemoveProject,
+	suppressInitialExpandAnimation,
 }: {
 	workspace: WorkspaceSummary;
 	expanded: boolean;
 	selection: Selection;
 	onToggle: () => void;
 	onRemoveProject: (projectId: string) => Promise<void>;
+	suppressInitialExpandAnimation: boolean;
 }) {
 	const { t } = useTranslation();
 	const prefersReducedMotion = useReducedMotion();
@@ -527,6 +587,7 @@ function ProjectItem({
 	// want them to slide in on every sidebar load. Only animate on subsequent
 	// expand/collapse toggles.
 	const [animReady, setAnimReady] = useState(false);
+	const hasInteractedWithDisclosure = useRef(false);
 	useEffect(() => {
 		const id = requestAnimationFrame(() => setAnimReady(true));
 		return () => cancelAnimationFrame(id);
@@ -541,6 +602,10 @@ function ProjectItem({
 	// The project's live orchestrator (if any) backs the hover Orchestrator
 	// button: navigate to it when present, otherwise spawn one first.
 	const orchestrator = newestActiveOrchestrator(workspace.sessions);
+	const toggleDisclosure = () => {
+		hasInteractedWithDisclosure.current = true;
+		onToggle();
+	};
 
 	// Mirrors ShellTopbar's launcher: attach to the running orchestrator, or
 	// spawn one via the daemon and follow it once the workspace refetches.
@@ -548,7 +613,7 @@ function ProjectItem({
 	// session list — otherwise the tree stays shut while you're inside it.
 	const openOrchestrator = async () => {
 		if (isProjectRestarting) return;
-		if (!expanded) onToggle();
+		if (!expanded) toggleDisclosure();
 		if (orchestrator) {
 			selection.goSession(workspace.id, orchestrator.id);
 			return;
@@ -575,10 +640,10 @@ function ProjectItem({
 	// one-click path back from the orchestrator button.
 	const onProjectClick = () => {
 		if (!expanded) {
-			onToggle();
+			toggleDisclosure();
 			selection.goProject(workspace.id);
 		} else if (dashboardActive) {
-			onToggle();
+			toggleDisclosure();
 		} else {
 			selection.goProject(workspace.id);
 		}
@@ -589,7 +654,7 @@ function ProjectItem({
 	// select click then a second click (felt like a double-click).
 	const onFolderClick = (event: MouseEvent) => {
 		event.stopPropagation();
-		onToggle();
+		toggleDisclosure();
 	};
 
 	const onProjectKeyDown = (event: KeyboardEvent<HTMLButtonElement>) => {
@@ -793,7 +858,9 @@ function ProjectItem({
 			{expanded && sessions.length > 0 && (
 				<motion.div
 					key="sessions"
-					initial={animReady ? { height: 0 } : false}
+					initial={
+						animReady && (!suppressInitialExpandAnimation || hasInteractedWithDisclosure.current) ? { height: 0 } : false
+					}
 					animate={{ height: "auto" }}
 					exit={{ height: 0 }}
 					transition={prefersReducedMotion ? { duration: 0 } : { duration: 0.14, ease: [0.25, 0.46, 0.45, 0.94] }}
@@ -801,7 +868,11 @@ function ProjectItem({
 					className="sidebar-expanded-chrome"
 				>
 					<motion.div
-						initial={animReady ? { y: -12, opacity: 0 } : false}
+						initial={
+							animReady && (!suppressInitialExpandAnimation || hasInteractedWithDisclosure.current)
+								? { y: -12, opacity: 0 }
+								: false
+						}
 						animate={{ y: 0, opacity: 1 }}
 						exit={{ y: -12, opacity: 0 }}
 						transition={prefersReducedMotion ? { duration: 0 } : { duration: 0.14, ease: [0.25, 0.46, 0.45, 0.94] }}
@@ -1104,17 +1175,44 @@ function CloudAccountRailButton({ tabIndex }: { tabIndex: number }) {
 	);
 }
 
-// UpdateStatusRow makes automatic update activity visible before the build is
-// staged, then becomes the existing restart action once installation is ready.
-// Idle/checking states stay quiet so routine background checks do not flash in
-// the sidebar.
+// UpdateStatusRow makes update activity visible and actionable from the
+// sidebar: an available build downloads on click, progress reports itself, and
+// a staged build becomes the restart action. Idle/checking states stay quiet so
+// routine background checks do not flash in the sidebar.
 function UpdateStatusRow({ status, tabIndex }: { status: UpdateStatus; tabIndex: number }) {
 	const { t } = useTranslation();
-	if (status.state === "available" || status.state === "downloading") {
-		const label =
-			status.state === "available"
-				? t("settings.updates.available", { version: status.version ? ` (v${status.version})` : "" })
-				: t("settings.updates.downloading", { percent: status.percent ?? 0 });
+	if (status.state === "available") {
+		// A manual check leaves autoDownload off, so without this the row would
+		// announce an update and offer nothing to act on.
+		return (
+			<button
+				aria-label={
+					status.version
+						? t("shell.downloadUpdateVersion", { version: status.version })
+						: t("shell.downloadUpdate")
+				}
+				className={cn(
+					"flex w-full items-center gap-2.5 rounded-lg p-2.5 text-left text-control font-medium transition-colors",
+					"text-passive hover:bg-interactive-hover hover:text-foreground [&_svg]:text-passive",
+				)}
+				onClick={() => void aoBridge.updates.download()}
+				tabIndex={tabIndex}
+				type="button"
+			>
+				<Download aria-hidden="true" className="size-icon-lg shrink-0" />
+				<span className="min-w-0 flex-1">
+					<span className="block truncate tracking-tight">{t("shell.updateAvailable")}</span>
+					{status.version && (
+						<span className="block truncate text-caption font-normal text-passive">
+							{t("shell.versionAvailable", { version: status.version })}
+						</span>
+					)}
+				</span>
+				<span aria-hidden="true" className="h-1.5 w-1.5 shrink-0 rounded-full bg-passive" />
+			</button>
+		);
+	}
+	if (status.state === "downloading") {
 		return (
 			<div
 				aria-live="polite"
@@ -1122,13 +1220,36 @@ function UpdateStatusRow({ status, tabIndex }: { status: UpdateStatus; tabIndex:
 				role="status"
 			>
 				<Download aria-hidden="true" className="size-icon-lg shrink-0" />
-				<span className={cn("min-w-0 flex-1 truncate", status.state === "downloading" && "tabular-nums")}>
-					{label}
+				<span className="min-w-0 flex-1 truncate tabular-nums">
+					{t("settings.updates.downloading", { percent: status.percent ?? 0 })}
 				</span>
 			</div>
 		);
 	}
-	if (status.state !== "downloaded") return null;
+	// Ranked below a staged build on purpose: an update ready to install is more
+	// actionable than "checks are failing". Only when there is nothing better to
+	// show does the failure take the row — it used to render nothing at all,
+	// which reads as "up to date" rather than "checks are not getting through".
+	if (status.state !== "downloaded") {
+		if (status.checksFailing !== true) return null;
+		return (
+			<button
+				aria-label={t("shell.retryUpdateCheck")}
+				className="flex w-full items-center gap-2.5 rounded-lg border border-warning/35 bg-warning/12 p-2.5 text-left text-control font-medium text-warning transition-colors hover:bg-warning/18 [&_svg]:text-warning"
+				onClick={() => void aoBridge.updates.check()}
+				tabIndex={tabIndex}
+				type="button"
+			>
+				<AlertTriangle aria-hidden="true" className="size-icon-lg shrink-0" />
+				<span className="min-w-0 flex-1">
+					<span className="block truncate tracking-tight">{t("shell.updateCheckFailed")}</span>
+					<span className="block truncate text-caption font-normal text-warning">
+						{t("shell.retryUpdateCheck")}
+					</span>
+				</span>
+			</button>
+		);
+	}
 	const escalated = status.escalated === true;
 	return (
 		<button
@@ -1164,15 +1285,35 @@ function UpdateStatusRow({ status, tabIndex }: { status: UpdateStatus; tabIndex:
 	);
 }
 
-// Icon-rail variant of UpdateStatusRow. Pre-download states are informational;
-// only a staged update becomes a button.
+// Icon-rail variant of UpdateStatusRow. An available build downloads on click
+// and a staged one installs; an in-flight download is informational.
 function UpdateStatusRail({ status, tabIndex }: { status: UpdateStatus; tabIndex: number }) {
 	const { t } = useTranslation();
-	if (status.state === "available" || status.state === "downloading") {
-		const label =
-			status.state === "available"
-				? t("settings.updates.available", { version: status.version ? ` (v${status.version})` : "" })
-				: t("settings.updates.downloading", { percent: status.percent ?? 0 });
+	if (status.state === "available") {
+		const label = t("settings.updates.available", { version: status.version ? ` (v${status.version})` : "" });
+		return (
+			<Tooltip>
+				<TooltipTrigger asChild>
+					<button
+						aria-label={
+							status.version
+								? t("shell.downloadUpdateVersion", { version: status.version })
+								: t("shell.downloadUpdate")
+						}
+						className="grid size-9 place-items-center rounded-lg text-passive transition-colors hover:bg-interactive-hover hover:text-foreground [&_svg]:size-4"
+						onClick={() => void aoBridge.updates.download()}
+						tabIndex={tabIndex}
+						type="button"
+					>
+						<Download aria-hidden="true" />
+					</button>
+				</TooltipTrigger>
+				<TooltipContent side="right">{label}</TooltipContent>
+			</Tooltip>
+		);
+	}
+	if (status.state === "downloading") {
+		const label = t("settings.updates.downloading", { percent: status.percent ?? 0 });
 		return (
 			<Tooltip>
 				<TooltipTrigger asChild>
@@ -1189,7 +1330,28 @@ function UpdateStatusRail({ status, tabIndex }: { status: UpdateStatus; tabIndex
 			</Tooltip>
 		);
 	}
-	if (status.state !== "downloaded") return null;
+	// Same ranking as the expanded row: a staged build outranks the failure.
+	if (status.state !== "downloaded") {
+		if (status.checksFailing !== true) return null;
+		return (
+			<Tooltip>
+				<TooltipTrigger asChild>
+					<button
+						aria-label={t("shell.retryUpdateCheck")}
+						className="grid size-9 place-items-center rounded-lg bg-warning/12 text-warning transition-colors hover:bg-warning/18 [&_svg]:size-4"
+						onClick={() => void aoBridge.updates.check()}
+						tabIndex={tabIndex}
+						type="button"
+					>
+						<AlertTriangle aria-hidden="true" />
+					</button>
+				</TooltipTrigger>
+				<TooltipContent side="right">
+					{t("shell.updateCheckFailed")} · {t("shell.retryUpdateCheck")}
+				</TooltipContent>
+			</Tooltip>
+		);
+	}
 	const escalated = status.escalated === true;
 	return (
 		<Tooltip>

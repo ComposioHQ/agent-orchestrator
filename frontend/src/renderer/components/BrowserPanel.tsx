@@ -80,7 +80,7 @@ type BrowserPanelProps = {
 	session: WorkspaceSession;
 	active: boolean;
 	poppedOut: boolean;
-	onTogglePopOut: (next: boolean) => void;
+	onTogglePopOut: (next: boolean, sourceRect?: DOMRectReadOnly) => void;
 };
 
 type AnnotationStatus = "idle" | "picking" | "queued" | "sending" | "sent" | "error";
@@ -248,7 +248,12 @@ export function useBrowserAnnotationQueue({
 	};
 }
 
-export function BrowserPanel({ session, active, poppedOut, onTogglePopOut }: BrowserPanelProps) {
+export function BrowserPanel({
+	session,
+	active,
+	poppedOut,
+	onTogglePopOut,
+}: BrowserPanelProps) {
 	const browserView = useBrowserView({
 		sessionId: session.id,
 		active,
@@ -320,6 +325,7 @@ export function BrowserPanelView({
 			? clampDeviceFrameWidth(Number(customDeviceWidth))
 			: DEVICE_PRESETS.find((preset) => preset.id === devicePreset)?.width;
 	const railRef = useRef<BrowserTabsRailHandle>(null);
+	const panelRef = useRef<HTMLDivElement>(null);
 	const urlInputRef = useRef<HTMLInputElement>(null);
 	const [pinned, setPinned] = useState(() => window.localStorage.getItem(RAIL_PINNED_STORAGE_KEY) === "1");
 	const showTabsTrigger = !poppedOut && !pinned && tabs.length >= 2;
@@ -433,8 +439,10 @@ export function BrowserPanelView({
 				poppedOut && "browser-panel--popped-out",
 				agentStatusLabel && "browser-panel--agent-active",
 			)}
+			data-browser-dock-target={poppedOut ? undefined : ""}
 			data-browser-native-page={navState.url ? "live" : "empty"}
 			data-testid="browser-panel"
+			ref={panelRef}
 			role="tabpanel"
 		>
 			<form
@@ -636,8 +644,9 @@ export function BrowserPanelView({
 				</Button>
 				<Button
 					aria-label={poppedOut ? t("browser.returnToPanel") : t("browser.popOut")}
-					onClick={() => onTogglePopOut(!poppedOut)}
+					onClick={() => onTogglePopOut(!poppedOut, panelRef.current?.getBoundingClientRect())}
 					size="icon-sm"
+					title={poppedOut ? t("browser.returnToPanel") : t("browser.popOut")}
 					type="button"
 					variant="ghost"
 				>

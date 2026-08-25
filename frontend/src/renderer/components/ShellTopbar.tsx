@@ -21,7 +21,7 @@ import {
 } from "../hooks/useTerminateSession";
 import { spawnOrchestrator } from "../lib/spawn-orchestrator";
 import { addRendererExceptionStep, captureRendererEvent, captureRendererException } from "../lib/telemetry";
-import { useUiStore } from "../stores/ui-store";
+import { sidebarOccupiesLayout, useUiStore } from "../stores/ui-store";
 import { OrchestratorIcon } from "./icons";
 import { OrchestratorActivityIndicator } from "./OrchestratorActivityIndicator";
 import { getAgentActivityView } from "../lib/session-presentation";
@@ -63,7 +63,11 @@ const noDragStyle = isMac ? ({ WebkitAppRegion: "no-drag" } as React.CSSProperti
 const PADDING_DEFAULT = 18; // 1.125rem
 const PADDING_CLEARANCE = 170;
 const PADDING_CLEARANCE_FULLSCREEN = 112;
-const PADDING_CLEARANCE_LINUX = 94;
+// Off-canvas the Linux cluster shifts right to clear the framed panel border, so
+// measure the reserve from that inset, relative to the panel's own left edge:
+// --size-titlebar-cluster-left-linux-panel (26) + --size-titlebar-cluster-width
+// (92) + --size-titlebar-content-gap (12) - --size-center-panel-inline-inset (16).
+const PADDING_CLEARANCE_LINUX = 114;
 
 export function ShellTopbar({
 	embedded = false,
@@ -82,7 +86,7 @@ export function ShellTopbar({
 	);
 	const restartingProjectIds = useUiStore((state) => state.restartingProjectIds);
 	const requestNewTask = useUiStore((state) => state.requestNewTask);
-	const isSidebarOpen = useUiStore((state) => state.isSidebarOpen);
+	const isSidebarOpen = useUiStore(sidebarOccupiesLayout);
 	const isFullScreen = useWindowFullScreen();
 	const prefersReducedMotion = useReducedMotion();
 	const mac = isMacPlatform();

@@ -55,8 +55,13 @@ func (c *EventsController) stream(w http.ResponseWriter, r *http.Request) {
 			"Could not inspect the event cursor", nil)
 		return
 	}
+	// A cursor ahead of head means the change_log was truncated or replaced. Fall
+	// back to head rather than zero: replaying from zero costs the client the whole
+	// backlog, and since every connected client is reset at the same moment, they
+	// stampede together. Falling back to head loses at most the events in the gap,
+	// which clients recover from their next snapshot fetch.
 	if after > latestSeq {
-		after = 0
+		after = latestSeq
 	}
 
 	flusher, ok := w.(http.Flusher)

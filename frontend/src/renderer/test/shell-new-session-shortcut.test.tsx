@@ -80,6 +80,7 @@ const shellMocks = vi.hoisted(() => {
 			prefetchQuery: vi.fn(async () => undefined),
 			setQueryData: vi.fn(),
 		},
+		refreshAgents: vi.fn(),
 		state,
 	};
 });
@@ -147,8 +148,8 @@ vi.mock("../hooks/useShellTerminals", () => ({
 
 vi.mock("../hooks/useAgentsQuery", () => ({
 	agentsQueryKey: ["agents"],
-	agentsQueryOptions: {},
-	refreshAgents: vi.fn(),
+	agentsQueryOptions: { queryKey: ["agents"] },
+	refreshAgents: shellMocks.refreshAgents,
 	// The shell reports the install's agent inventory once per launch, so the
 	// mock has to answer this too. Undefined data means the hook reports nothing,
 	// which keeps these shortcut tests free of telemetry side effects.
@@ -160,10 +161,12 @@ vi.mock("../components/CommandPalette", () => ({ CommandPalette: () => null }));
 vi.mock("../components/OrchestratorReplacementDialog", () => ({ OrchestratorReplacementDialog: () => null }));
 vi.mock("../components/ShellTopbar", () => ({ ShellTopbar: () => null }));
 vi.mock("../components/TitlebarNav", async () => {
-	const { useUiStore: useStore } = await vi.importActual<typeof import("../stores/ui-store")>("../stores/ui-store");
+	const { sidebarIsVisible, useUiStore: useStore } = await vi.importActual<
+		typeof import("../stores/ui-store")
+	>("../stores/ui-store");
 	return {
 		TitlebarNav: () => {
-			const isSidebarOpen = useStore((state) => state.isSidebarOpen);
+			const isSidebarOpen = useStore(sidebarIsVisible);
 			const toggleSidebar = useStore((state) => state.toggleSidebar);
 			return (
 				<button
@@ -207,6 +210,7 @@ vi.mock("../components/GlobalNewTaskDialog", async () => {
 vi.mock("../components/Sidebar", async () => {
 	const { useUiStore: useStore } = await vi.importActual<typeof import("../stores/ui-store")>("../stores/ui-store");
 	return {
+		SIDEBAR_DEFAULT_WIDTH: 240,
 		Sidebar: ({ topbarOffset }: { topbarOffset?: string }) => {
 			const nonce = useStore((state) => state.createProjectNonce);
 			const folderDropRequest = useStore((state) => state.folderDropRequest);
@@ -301,18 +305,33 @@ beforeEach(() => {
 	shellMocks.state.daemonStatus = { state: "error", code: "not_ready" };
 	shellMocks.state.shellValue = undefined;
 	shellMocks.queryClient.fetchQuery.mockReset();
+	shellMocks.refreshAgents.mockReset();
 	shellMocks.queryClient.getQueryState.mockReset().mockReturnValue({ dataUpdatedAt: 0 });
 	useUiStore.setState({
 		createProjectNonce: 0,
 		folderDropRequest: null,
+		isSidebarAutoCollapsed: false,
 		isSidebarOpen: true,
 		newTaskRequest: null,
 		newShellTerminalNonce: 0,
 		settingsModal: null,
+		sidebarAutoCollapseOverride: false,
+		sidebarWorkspaceDemandPx: null,
 	});
 });
 
 describe("shell workspace startup", () => {
+	it("does not schedule an all-agent auth refresh when the daemon becomes ready", async () => {
+		shellMocks.state.daemonStatus = { state: "ready", port: 4777 };
+		shellMocks.queryClient.fetchQuery.mockResolvedValue(workspaces);
+
+		await renderShell();
+
+		expect(shellMocks.queryClient.fetchQuery).not.toHaveBeenCalledWith(
+			expect.objectContaining({ queryFn: shellMocks.refreshAgents }),
+		);
+	});
+
 	it("leaves the session topbar row to the session split instead of reserving a full-width shell row", async () => {
 		shellMocks.state.routeParams = { sessionId: "sess-1" };
 		await renderShell();
@@ -424,6 +443,40 @@ describe("shell workspace startup", () => {
 });
 
 describe("shell sidebar toggle", () => {
+	it("keeps a manual expansion open while workspace pressure is active", async () => {
+		const clientWidth = vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1280);
+		useUiStore.setState({
+			isSidebarAutoCollapsed: false,
+			isSidebarOpen: true,
+			sidebarAutoCollapseOverride: false,
+			sidebarWorkspaceDemandPx: 1068,
+		});
+
+		try {
+			await renderShell();
+			await waitFor(() => expect(useUiStore.getState().isSidebarAutoCollapsed).toBe(true));
+			expect(screen.getByTestId("sidebar-provider")).toHaveAttribute("data-open", "false");
+
+			fireEvent.click(screen.getByRole("button", { name: "Expand sidebar" }));
+
+			expect(useUiStore.getState().sidebarAutoCollapseOverride).toBe(true);
+			expect(screen.getByTestId("sidebar-provider")).toHaveAttribute("data-open", "true");
+
+			// ResizeObserver can report transient geometry while the rail animates.
+			// Automatic pressure changes must never revoke the user's explicit choice.
+			act(() => {
+				useUiStore.getState().setSidebarAutoCollapsed(false);
+				useUiStore.getState().setSidebarAutoCollapsed(true);
+			});
+
+			expect(useUiStore.getState().sidebarAutoCollapseOverride).toBe(true);
+			expect(screen.getByTestId("sidebar-provider")).toHaveAttribute("data-open", "true");
+			expect(screen.getByRole("button", { name: "Collapse sidebar" })).toBeInTheDocument();
+		} finally {
+			clientWidth.mockRestore();
+		}
+	});
+
 	it("does not open a collapsed sidebar on titlebar hover", async () => {
 		useUiStore.setState({ isSidebarOpen: false });
 		await renderShell();

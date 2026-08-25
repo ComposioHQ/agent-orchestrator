@@ -97,6 +97,7 @@ type WorkspaceFileSections struct {
 // which one it opened.
 type WorkspaceFileSection string
 
+// Git-state sections a workspace file row can belong to.
 const (
 	WorkspaceFileSectionStaged    WorkspaceFileSection = "staged"
 	WorkspaceFileSectionUnstaged  WorkspaceFileSection = "unstaged"

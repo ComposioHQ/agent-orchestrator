@@ -56,7 +56,9 @@ export function CopyButton({
 			// tooltip carries the label there and only there.
 			title={compact ? label : undefined}
 			className={cn(
-				"flex items-center gap-1 rounded px-1.5 py-0.5 text-[10.5px] text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground",
+				compact
+					? "flex size-7 items-center justify-center rounded-md text-muted-foreground transition-[background-color,color,transform] hover:bg-interactive-hover hover:text-foreground"
+					: "flex h-7 items-center gap-1 rounded-md px-2 text-[10.5px] text-muted-foreground transition-[background-color,color,transform] hover:bg-interactive-hover hover:text-foreground",
 				className,
 			)}
 		>
