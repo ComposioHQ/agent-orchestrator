@@ -114,6 +114,17 @@ const MAX_DISPLAY_NAME_LEN = 20;
 export const SIDEBAR_DEFAULT_WIDTH = 240;
 export const SIDEBAR_MIN_WIDTH = 200;
 export const SIDEBAR_MAX_WIDTH = 420;
+const expandedProjectsStorageKey = "ao.sidebar.expanded-projects";
+
+function readExpandedProjectIds(): ReadonlySet<string> {
+	if (typeof window === "undefined" || !window.localStorage) return new Set();
+	try {
+		const value: unknown = JSON.parse(window.localStorage.getItem(expandedProjectsStorageKey) ?? "null");
+		return new Set(Array.isArray(value) ? value.filter((id): id is string => typeof id === "string") : []);
+	} catch {
+		return new Set();
+	}
+}
 
 type SidebarProps = {
 	/** Hide the sidebar's right edge stroke on the welcome board inset chrome. */
@@ -199,6 +210,9 @@ export function Sidebar({
 	const daemonStatus = useShellMaybe()?.daemonStatus ?? null;
 	const commandPaletteEnabled = useCommandPaletteEnabled();
 	const setCommandPaletteOpen = useUiStore((s) => s.setCommandPaletteOpen);
+	const initialActiveSessionProjectId = useRef(
+		selection.activeSessionId ? selection.activeProjectId : undefined,
+	).current;
 	useLayoutEffect(() => {
 		// Offcanvas: the panel slides off-screen on collapse — no need to hide content.
 		// Reveal immediately on expand so there's no fade-in delay.
@@ -207,15 +221,31 @@ export function Sidebar({
 		}
 	}, [isCollapsed]);
 
-	// Disclosure state: projects are expanded by default; a project id present in
-	// this set is collapsed (sessions hidden).
-	const [collapsedIds, setCollapsedIds] = useState<ReadonlySet<string>>(() => new Set());
-	const toggleCollapsed = (id: string) =>
-		setCollapsedIds((prev) => {
+	// Disclosure state is persisted as the IDs of projects that were expanded.
+	// An empty/missing store intentionally means all projects start collapsed.
+	const [expandedIds, setExpandedIds] = useState<ReadonlySet<string>>(() => readExpandedProjectIds());
+	const [dismissedInitialActiveProjectIds, setDismissedInitialActiveProjectIds] = useState<ReadonlySet<string>>(
+		() => new Set(),
+	);
+	const toggleProjectDisclosure = (id: string) => {
+		const routeFallbackActive =
+			initialActiveSessionProjectId === id && !dismissedInitialActiveProjectIds.has(id);
+		const currentlyExpanded = expandedIds.has(id) || routeFallbackActive;
+		setExpandedIds((prev) => {
 			const next = new Set(prev);
-			next.has(id) ? next.delete(id) : next.add(id);
+			currentlyExpanded ? next.delete(id) : next.add(id);
+			if (typeof window !== "undefined") {
+				window.localStorage?.setItem(expandedProjectsStorageKey, JSON.stringify([...next]));
+			}
 			return next;
 		});
+		setDismissedInitialActiveProjectIds((prev) => {
+			if (initialActiveSessionProjectId !== id) return prev;
+			const next = new Set(prev);
+			currentlyExpanded ? next.add(id) : next.delete(id);
+			return next;
+		});
+	};
 	// Section disclosure: Pinned header collapses its body. Projects stays open.
 	const [pinnedOpen, setPinnedOpen] = useState(true);
 	// Fetch the running app version to derive the build channel. Channel is
@@ -400,9 +430,14 @@ export function Sidebar({
 									<ProjectItem
 										key={workspace.id}
 										workspace={workspace}
-										expanded={!collapsedIds.has(workspace.id)}
+										expanded={
+											expandedIds.has(workspace.id) ||
+											(initialActiveSessionProjectId === workspace.id &&
+												!dismissedInitialActiveProjectIds.has(workspace.id))
+										}
+										suppressInitialExpandAnimation={expandedIds.has(workspace.id)}
 										selection={selection}
-										onToggle={() => toggleCollapsed(workspace.id)}
+										onToggle={() => toggleProjectDisclosure(workspace.id)}
 										onRemoveProject={onRemoveProject}
 									/>
 								))}
@@ -522,12 +557,14 @@ function ProjectItem({
 	selection,
 	onToggle,
 	onRemoveProject,
+	suppressInitialExpandAnimation,
 }: {
 	workspace: WorkspaceSummary;
 	expanded: boolean;
 	selection: Selection;
 	onToggle: () => void;
 	onRemoveProject: (projectId: string) => Promise<void>;
+	suppressInitialExpandAnimation: boolean;
 }) {
 	const { t } = useTranslation();
 	const prefersReducedMotion = useReducedMotion();
@@ -550,6 +587,7 @@ function ProjectItem({
 	// want them to slide in on every sidebar load. Only animate on subsequent
 	// expand/collapse toggles.
 	const [animReady, setAnimReady] = useState(false);
+	const hasInteractedWithDisclosure = useRef(false);
 	useEffect(() => {
 		const id = requestAnimationFrame(() => setAnimReady(true));
 		return () => cancelAnimationFrame(id);
@@ -564,6 +602,10 @@ function ProjectItem({
 	// The project's live orchestrator (if any) backs the hover Orchestrator
 	// button: navigate to it when present, otherwise spawn one first.
 	const orchestrator = newestActiveOrchestrator(workspace.sessions);
+	const toggleDisclosure = () => {
+		hasInteractedWithDisclosure.current = true;
+		onToggle();
+	};
 
 	// Mirrors ShellTopbar's launcher: attach to the running orchestrator, or
 	// spawn one via the daemon and follow it once the workspace refetches.
@@ -571,7 +613,7 @@ function ProjectItem({
 	// session list — otherwise the tree stays shut while you're inside it.
 	const openOrchestrator = async () => {
 		if (isProjectRestarting) return;
-		if (!expanded) onToggle();
+		if (!expanded) toggleDisclosure();
 		if (orchestrator) {
 			selection.goSession(workspace.id, orchestrator.id);
 			return;
@@ -598,10 +640,10 @@ function ProjectItem({
 	// one-click path back from the orchestrator button.
 	const onProjectClick = () => {
 		if (!expanded) {
-			onToggle();
+			toggleDisclosure();
 			selection.goProject(workspace.id);
 		} else if (dashboardActive) {
-			onToggle();
+			toggleDisclosure();
 		} else {
 			selection.goProject(workspace.id);
 		}
@@ -612,7 +654,7 @@ function ProjectItem({
 	// select click then a second click (felt like a double-click).
 	const onFolderClick = (event: MouseEvent) => {
 		event.stopPropagation();
-		onToggle();
+		toggleDisclosure();
 	};
 
 	const onProjectKeyDown = (event: KeyboardEvent<HTMLButtonElement>) => {
@@ -816,7 +858,9 @@ function ProjectItem({
 			{expanded && sessions.length > 0 && (
 				<motion.div
 					key="sessions"
-					initial={animReady ? { height: 0 } : false}
+					initial={
+						animReady && (!suppressInitialExpandAnimation || hasInteractedWithDisclosure.current) ? { height: 0 } : false
+					}
 					animate={{ height: "auto" }}
 					exit={{ height: 0 }}
 					transition={prefersReducedMotion ? { duration: 0 } : { duration: 0.14, ease: [0.25, 0.46, 0.45, 0.94] }}
@@ -824,7 +868,11 @@ function ProjectItem({
 					className="sidebar-expanded-chrome"
 				>
 					<motion.div
-						initial={animReady ? { y: -12, opacity: 0 } : false}
+						initial={
+							animReady && (!suppressInitialExpandAnimation || hasInteractedWithDisclosure.current)
+								? { y: -12, opacity: 0 }
+								: false
+						}
 						animate={{ y: 0, opacity: 1 }}
 						exit={{ y: -12, opacity: 0 }}
 						transition={prefersReducedMotion ? { duration: 0 } : { duration: 0.14, ease: [0.25, 0.46, 0.45, 0.94] }}

@@ -174,6 +174,7 @@ function renderSidebar({
 	initialOpen = true,
 	autoCompact = false,
 	topbarOffset = "toolbar",
+	expandedProjectIds,
 }: {
 	onCloneProject?: CloneProjectHandler;
 	onCreateProject?: CreateProjectHandler;
@@ -184,7 +185,14 @@ function renderSidebar({
 	initialOpen?: boolean;
 	autoCompact?: boolean;
 	topbarOffset?: "toolbar" | "titlebar" | "trafficLights" | "session";
+	expandedProjectIds?: string[];
 } = {}) {
+	// Most legacy sidebar tests exercise session rows and assume their fixture
+	// project was previously open. Tests for the empty-store behavior opt out.
+	window.localStorage.setItem(
+		"ao.sidebar.expanded-projects",
+		JSON.stringify(expandedProjectIds ?? workspaces.map(({ id }) => id)),
+	);
 	const queryClient = new QueryClient({
 		defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
 	});
@@ -206,12 +214,12 @@ function renderSidebar({
 	}
 	render(
 		<QueryClientProvider client={queryClient}>
-				<SidebarProvider defaultOpen={initialOpen}>
-					<Sidebar
-						autoCompact={autoCompact}
-						topbarOffset={topbarOffset}
-						onCloneProject={onCloneProject}
-						onCreateProject={onCreateProject}
+			<SidebarProvider defaultOpen={initialOpen}>
+				<Sidebar
+					autoCompact={autoCompact}
+					topbarOffset={topbarOffset}
+					onCloneProject={onCloneProject}
+					onCreateProject={onCreateProject}
 					onInitializeProject={onInitializeProject}
 					onRemoveProject={onRemoveProject}
 					workspaces={workspaces}
@@ -222,7 +230,7 @@ function renderSidebar({
 	return onRemoveProject;
 }
 
-/** Projects render collapsed; open one to list all of its sessions. */
+/** Projects restore their persisted disclosure state. */
 
 async function chooseOption(trigger: HTMLElement, optionName: string) {
 	await userEvent.click(trigger);
@@ -1619,6 +1627,62 @@ describe("Sidebar", () => {
 
 		expect(screen.queryByLabelText("Open fix login")).not.toBeInTheDocument();
 		expect(screen.queryByLabelText("Open second task")).not.toBeInTheDocument();
+	});
+
+	it("starts every project collapsed when the expanded-project store is empty", () => {
+		renderSidebar({
+			expandedProjectIds: [],
+			workspaces: [{ ...workspace, sessions: [session] }],
+		});
+
+		expect(screen.queryByLabelText("Open fix login")).not.toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "Toggle Project One sessions" })).toHaveAttribute(
+			"aria-expanded",
+			"false",
+		);
+	});
+
+	it("reveals the active project when opening a worker-session deep link", async () => {
+		const user = userEvent.setup();
+		mockParams.projectId = workspace.id;
+		mockParams.sessionId = session.id;
+		renderSidebar({
+			expandedProjectIds: [],
+			workspaces: [{ ...workspace, sessions: [session] }],
+		});
+
+		expect(screen.getByLabelText("Open fix login")).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "Toggle Project One sessions" })).toHaveAttribute(
+			"aria-expanded",
+			"true",
+		);
+
+		await user.click(screen.getByRole("button", { name: "Toggle Project One sessions" }));
+		expect(screen.queryByLabelText("Open fix login")).not.toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "Toggle Project One sessions" })).toHaveAttribute(
+			"aria-expanded",
+			"false",
+		);
+	});
+
+	it("restores only the projects saved as expanded and persists toggles", async () => {
+		const user = userEvent.setup();
+		const secondWorkspace = {
+			...workspace,
+			id: "proj-2",
+			name: "Project Two",
+			sessions: [{ ...session, id: "proj-2-1", title: "second task" }],
+		};
+		renderSidebar({
+			expandedProjectIds: [workspace.id],
+			workspaces: [{ ...workspace, sessions: [session] }, secondWorkspace],
+		});
+
+		expect(screen.getByLabelText("Open fix login")).toBeInTheDocument();
+		expect(screen.queryByLabelText("Open second task")).not.toBeInTheDocument();
+
+		await user.click(screen.getByRole("button", { name: "Toggle Project One sessions" }));
+		expect(JSON.parse(window.localStorage.getItem("ao.sidebar.expanded-projects") ?? "null")).toEqual([]);
 	});
 
 	it("hides all sessions when project is collapsed via folder icon", async () => {
