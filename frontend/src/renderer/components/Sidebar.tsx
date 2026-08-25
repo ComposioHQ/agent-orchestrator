@@ -489,6 +489,7 @@ export function Sidebar({
 	});
 
 	const [projectOrder, setProjectOrder] = useState<string[]>([]);
+	const [sessionOrderByProject, setSessionOrderByProject] = useState<Record<string, string[]>>({});
 	const orderedWorkspaces = useMemo(
 		() => applyOrder(workspaces, (workspace) => workspace.id, projectOrder, "end"),
 		[projectOrder, workspaces],
@@ -509,6 +510,20 @@ export function Sidebar({
 		() => orderedWorkspaces.find((workspace) => workspace.id === projectDragState.activeId) ?? null,
 		[orderedWorkspaces, projectDragState.activeId],
 	);
+	const activeDragSessions = useMemo(
+		() => activeDragWorkspace
+			? applyOrder(
+				sortedWorkerSessions(activeDragWorkspace.sessions).filter((session) => session.isTerminated !== true),
+				(session) => session.id,
+				sessionOrderByProject[activeDragWorkspace.id] ?? [],
+				"start",
+			)
+			: [],
+		[activeDragWorkspace, sessionOrderByProject],
+	);
+	const recordSessionOrder = useCallback((projectId: string, order: string[]) => {
+		setSessionOrderByProject((previous) => ({ ...previous, [projectId]: order }));
+	}, []);
 	const restrictProjectOverlayToRows = useCallback<Modifier>(({ transform }) => {
 		const bounds = projectDragBoundsRef.current;
 		return {
@@ -546,13 +561,14 @@ export function Sidebar({
 		const projectId = String(active.id);
 		projectDragBoundsRef.current = null;
 		projectDropTargetRef.current = null;
-		const rows = Array.from(document.querySelectorAll<HTMLElement>("[data-project-drag-row]"));
-		const activeRow = rows.find((row) => row.dataset.projectId === projectId);
-		if (activeRow && rows.length > 0) {
+		const blocks = Array.from(document.querySelectorAll<HTMLElement>("[data-project-drop-target]"));
+		const activeRow = blocks.find((block) => block.dataset.projectId === projectId)
+			?.querySelector<HTMLElement>("[data-project-drag-row]");
+		if (activeRow && blocks.length > 0) {
 			const activeTop = activeRow.getBoundingClientRect().top;
 			projectDragBoundsRef.current = {
-				minY: rows[0].getBoundingClientRect().top - activeTop,
-				maxY: rows[rows.length - 1].getBoundingClientRect().top - activeTop,
+				minY: blocks[0].getBoundingClientRect().top - activeTop,
+				maxY: blocks[blocks.length - 1].getBoundingClientRect().bottom - activeTop,
 			};
 		}
 		setProjectDragState({ activeId: projectId, overId: projectId, placement: null });
@@ -764,6 +780,7 @@ export function Sidebar({
 											draggingProjectId={projectDragState.activeId}
 											dropIndicator={projectDragState.overId === workspace.id ? projectDragState.placement ?? undefined : undefined}
 											consumeDragClick={projectDragClickGuard.consumeClick}
+											onSessionOrderChange={recordSessionOrder}
 											onToggle={() => toggleProjectDisclosure(workspace.id)}
 											onRemoveProject={onRemoveProject}
 										/>
@@ -771,7 +788,7 @@ export function Sidebar({
 									{isCollapsed && <CreateProjectListItem />}
 								</SidebarMenu>
 								<DragOverlay adjustScale={false} dropAnimation={null} modifiers={[restrictProjectOverlayToRows]} style={PROJECT_DRAG_OVERLAY_STYLE} zIndex={60}>
-									{activeDragWorkspace ? <ProjectDragPreview expanded={expandedIds.has(activeDragWorkspace.id) || (initialActiveSessionProjectId === activeDragWorkspace.id && !dismissedInitialActiveProjectIds.has(activeDragWorkspace.id))} selection={selection} workspace={activeDragWorkspace} /> : null}
+									{activeDragWorkspace ? <ProjectDragPreview expanded={expandedIds.has(activeDragWorkspace.id) || (initialActiveSessionProjectId === activeDragWorkspace.id && !dismissedInitialActiveProjectIds.has(activeDragWorkspace.id))} selection={selection} sessions={activeDragSessions} workspace={activeDragWorkspace} /> : null}
 								</DragOverlay>
 							</DndContext>
 						)}
@@ -889,6 +906,7 @@ type ProjectItemProps = {
 	draggingProjectId?: string | null;
 	dropIndicator?: "before" | "after";
 	consumeDragClick: (id: string) => boolean;
+	onSessionOrderChange: (projectId: string, order: string[]) => void;
 	onToggle: () => void;
 	onRemoveProject: (projectId: string) => Promise<void>;
 	suppressInitialExpandAnimation: boolean;
@@ -928,6 +946,7 @@ const ProjectItemContent = memo(function ProjectItemContent({
 	draggingProjectId,
 	dropIndicator,
 	consumeDragClick,
+	onSessionOrderChange,
 	onToggle,
 	onRemoveProject,
 	suppressInitialExpandAnimation,
@@ -987,7 +1006,8 @@ const ProjectItemContent = memo(function ProjectItemContent({
 	const commitSessionOrder = useCallback((next: string[] | null) => {
 		if (!next) return;
 		setSessionOrder(next);
-	}, []);
+		onSessionOrderChange(workspace.id, next);
+	}, [onSessionOrderChange, workspace.id]);
 
 	const onSessionDragEnd = useCallback(({ active, over }: DragEndEvent) => {
 		const sessionId = String(active.id);
@@ -1076,6 +1096,7 @@ const ProjectItemContent = memo(function ProjectItemContent({
 	// select click then a second click (felt like a double-click).
 	const onFolderClick = (event: MouseEvent) => {
 		event.stopPropagation();
+		if (consumeDragClick(workspace.id)) return;
 		toggleDisclosure();
 	};
 
@@ -1416,12 +1437,8 @@ const ProjectItemContent = memo(function ProjectItemContent({
 
 /** Non-interactive drag snapshot: the project row is the anchor, while its
  * visible sessions travel with it without becoming collision targets. */
-const ProjectDragPreview = memo(function ProjectDragPreview({ workspace, expanded, selection }: { workspace: WorkspaceSummary; expanded: boolean; selection: Selection }) {
+const ProjectDragPreview = memo(function ProjectDragPreview({ workspace, expanded, selection, sessions }: { workspace: WorkspaceSummary; expanded: boolean; selection: Selection; sessions: WorkspaceSession[] }) {
 	const { t } = useTranslation();
-	const sessions = useMemo(
-		() => sortedWorkerSessions(workspace.sessions).filter((session) => session.isTerminated !== true),
-		[workspace.sessions],
-	);
 	const activeProjectMatches = selection.activeProjectId === workspace.id;
 	const projectActive =
 		(activeProjectMatches && !selection.activeSessionId) ||

@@ -26,6 +26,7 @@ const {
 	checkUpdateMock,
 	cloudSessionState,
 	dragEnds,
+	dragStarts,
 	downloadUpdateMock,
 	getMock,
 	navigateMock,
@@ -44,6 +45,7 @@ const {
 			signOut: vi.fn().mockResolvedValue(undefined),
 		},
 		dragEnds: new Map<string, (event: { active: { id: string }; over: { id: string } | null }) => void>(),
+		dragStarts: new Map<string, (event: { active: { id: string } }) => void>(),
 		getMock: vi.fn(),
 		navigateMock: vi.fn(),
 		mockParams: { projectId: undefined as string | undefined, sessionId: undefined as string | undefined },
@@ -60,12 +62,14 @@ vi.mock("@dnd-kit/core", async (importOriginal) => {
 	const actual = await importOriginal<typeof import("@dnd-kit/core")>();
 	return {
 		...actual,
-		DndContext: ({ children, id, onDragEnd }: {
+		DndContext: ({ children, id, onDragEnd, onDragStart }: {
 			children: React.ReactNode;
 			id?: string;
 			onDragEnd?: (event: { active: { id: string }; over: { id: string } | null }) => void;
+			onDragStart?: (event: { active: { id: string } }) => void;
 		}) => {
 			if (id && onDragEnd) dragEnds.set(id, onDragEnd);
+			if (id && onDragStart) dragStarts.set(id, onDragStart);
 			return children;
 		},
 		DragOverlay: ({ children }: { children: React.ReactNode }) => children,
@@ -294,6 +298,7 @@ async function openCreateProjectDialog(
 beforeEach(() => {
 	window.localStorage.clear();
 	dragEnds.clear();
+	dragStarts.clear();
 	document.documentElement.style.removeProperty("--ao-sidebar-w");
 	commandPaletteEnabled.current = true;
 	cloudSessionState.configured = false;
@@ -1857,5 +1862,38 @@ describe("Sidebar", () => {
 			"Open Second",
 			"Open First",
 		]);
+	});
+
+	it("does not toggle disclosure from the click synthesized after a folder drag", () => {
+		vi.useFakeTimers();
+		try {
+			renderSidebar({ workspaces: [{ ...workspace, id: "alpha", name: "Alpha" }] });
+			const projectRow = screen.getByText("Alpha").closest("button");
+			const initialDisclosure = projectRow?.getAttribute("aria-expanded");
+
+			act(() => dragEnds.get("sidebar-projects")?.({ active: { id: "alpha" }, over: null }));
+			act(() => fireEvent.click(screen.getByRole("button", { name: "Toggle Alpha sessions" })));
+
+			expect(projectRow).toHaveAttribute("aria-expanded", initialDisclosure ?? "false");
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it("keeps reordered sessions in an expanded project drag preview", () => {
+		renderSidebar({
+			workspaces: [{
+				...workspace,
+				sessions: [
+					{ ...session, id: "first", title: "First", updatedAt: "2026-06-30T01:00:00Z" },
+					{ ...session, id: "second", title: "Second", updatedAt: "2026-06-30T00:00:00Z" },
+				],
+			}],
+		});
+
+		act(() => dragEnds.get("sidebar-sessions-proj-1")?.({ active: { id: "second" }, over: { id: "first" } }));
+		act(() => dragStarts.get("sidebar-projects")?.({ active: { id: "proj-1" } }));
+
+		expect(document.querySelector("[data-project-drag-overlay]")).toHaveTextContent(/Project One.*Second.*First/);
 	});
 });
