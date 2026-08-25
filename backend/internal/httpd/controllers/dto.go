@@ -1125,6 +1125,100 @@ type StartInstallResponse = systeminstall.Job
 // InstallStatusResponse is the body of GET /api/v1/system/install/{target}.
 type InstallStatusResponse = systeminstall.Job
 
+// AutomationIDParam identifies a recurring definition.
+type AutomationIDParam struct {
+	AutomationID string `path:"automationId" description:"Automation identifier."`
+}
+
+type ListAutomationsQuery struct {
+	ProjectID string `query:"projectId,omitempty"`
+	Enabled   *bool  `query:"enabled,omitempty"`
+	Limit     int    `query:"limit,omitempty" minimum:"1" maximum:"100"`
+	Cursor    string `query:"cursor,omitempty"`
+}
+
+type ListAutomationRunsQuery struct {
+	Limit  int    `query:"limit,omitempty" minimum:"1" maximum:"100"`
+	Cursor string `query:"cursor,omitempty"`
+}
+
+type CreateAutomationRequest struct {
+	ProjectID   string `json:"projectId"`
+	DisplayName string `json:"displayName"`
+	Prompt      string `json:"prompt"`
+	Kind        string `json:"kind" enum:"worker,orchestrator"`
+	Harness     string `json:"harness,omitempty"`
+	RRule       string `json:"rrule,omitempty"`
+	Cron        string `json:"cron,omitempty"`
+	Timezone    string `json:"timezone"`
+	Enabled     *bool  `json:"enabled,omitempty"`
+}
+
+type UpdateAutomationRequest struct {
+	DisplayName *string `json:"displayName,omitempty"`
+	Prompt      *string `json:"prompt,omitempty"`
+	Kind        *string `json:"kind,omitempty" enum:"worker,orchestrator"`
+	Harness     *string `json:"harness,omitempty"`
+	RRule       *string `json:"rrule,omitempty"`
+	Cron        *string `json:"cron,omitempty"`
+	Timezone    *string `json:"timezone,omitempty"`
+	Enabled     *bool   `json:"enabled,omitempty"`
+}
+
+type AutomationRunSummaryResponse struct {
+	ID           string     `json:"id"`
+	Status       string     `json:"status" enum:"pending,spawning,running,completed,failed"`
+	ScheduledFor time.Time  `json:"scheduledFor"`
+	SessionID    string     `json:"sessionId,omitempty"`
+	ErrorMessage string     `json:"errorMessage,omitempty"`
+	StartedAt    *time.Time `json:"startedAt,omitempty"`
+	FinishedAt   *time.Time `json:"finishedAt,omitempty"`
+}
+
+type AutomationResponse struct {
+	ID          string                        `json:"id"`
+	ProjectID   string                        `json:"projectId"`
+	DisplayName string                        `json:"displayName"`
+	Prompt      string                        `json:"prompt"`
+	Kind        string                        `json:"kind" enum:"worker,orchestrator"`
+	Harness     string                        `json:"harness,omitempty"`
+	RRule       string                        `json:"rrule"`
+	Timezone    string                        `json:"timezone"`
+	Enabled     bool                          `json:"enabled"`
+	NextRunAt   time.Time                     `json:"nextRunAt"`
+	LastRunAt   *time.Time                    `json:"lastRunAt,omitempty"`
+	CreatedAt   time.Time                     `json:"createdAt"`
+	UpdatedAt   time.Time                     `json:"updatedAt"`
+	LatestRun   *AutomationRunSummaryResponse `json:"latestRun,omitempty"`
+}
+
+type AutomationEnvelope struct {
+	Automation AutomationResponse `json:"automation"`
+}
+type ListAutomationsResponse struct {
+	Automations []AutomationResponse `json:"automations"`
+	NextCursor  string               `json:"nextCursor,omitempty"`
+}
+type AutomationRunResponse struct {
+	ID             string     `json:"id"`
+	AutomationID   string     `json:"automationId"`
+	ScheduledFor   time.Time  `json:"scheduledFor"`
+	SessionID      string     `json:"sessionId,omitempty"`
+	Status         string     `json:"status" enum:"pending,spawning,running,completed,failed"`
+	AttemptCount   int64      `json:"attemptCount"`
+	ClaimedAt      *time.Time `json:"claimedAt,omitempty"`
+	LeaseExpiresAt *time.Time `json:"leaseExpiresAt,omitempty"`
+	StartedAt      *time.Time `json:"startedAt,omitempty"`
+	FinishedAt     *time.Time `json:"finishedAt,omitempty"`
+	ErrorMessage   string     `json:"errorMessage,omitempty"`
+	CreatedAt      time.Time  `json:"createdAt"`
+	UpdatedAt      time.Time  `json:"updatedAt"`
+}
+type ListAutomationRunsResponse struct {
+	Runs       []AutomationRunResponse `json:"runs"`
+	NextCursor string                  `json:"nextCursor,omitempty"`
+}
+
 // ListNotificationsQuery is the query string accepted by GET /api/v1/notifications.
 type ListNotificationsQuery struct {
 	Status string `query:"status,omitempty" enum:"unread,all,unresolved" description:"Notification filter. Defaults to unread (unseen); unresolved returns notifications whose underlying issue is still open; all includes read history."`
