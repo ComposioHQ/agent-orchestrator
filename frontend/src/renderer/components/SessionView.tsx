@@ -18,7 +18,10 @@ import type { components } from "../../api/schema";
 import { defaultShortcutBindings, shortcutBindingLabel } from "../../shared/shortcuts";
 import { BrowserPanelView, useBrowserAnnotationQueue } from "./BrowserPanel";
 import { CenterPane } from "./CenterPane";
-import { SessionChatSurface } from "./chat/SessionChatSurface";
+import {
+	SessionChatSurface,
+	type ConversationWorkState,
+} from "./chat/SessionChatSurface";
 import { NotificationCenter } from "./NotificationCenter";
 import { ResizeHandle } from "./ResizeHandle";
 import { SessionFileExplorer } from "./SessionFileExplorer";
@@ -395,6 +398,29 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	const browserPopOutPhase = browserPopOutState.sessionId === sessionId ? browserPopOutState.phase : "docked";
 	const browserPoppedOut = browserPopOutPhase !== "docked";
 	const [interfaceSwitchDialogOpen, setInterfaceSwitchDialogOpen] = useState(false);
+	const [chatConversationWork, setChatConversationWork] = useState<
+		ConversationWorkState & { sessionId?: string }
+	>({
+		controllerBusy: false,
+		hasRunningTurn: false,
+		queuedTurnCount: 0,
+	});
+	const handleConversationWorkChange = useCallback(
+		(next: ConversationWorkState) => {
+			setChatConversationWork((current) => {
+				if (
+					current.sessionId === sessionId &&
+					current.controllerBusy === next.controllerBusy &&
+					current.hasRunningTurn === next.hasRunningTurn &&
+					current.queuedTurnCount === next.queuedTurnCount
+				) {
+					return current;
+				}
+				return { sessionId, ...next };
+			});
+		},
+		[sessionId],
+	);
 	const isNativeFullScreen = useWindowFullScreen();
 	const stopTerminalLiveResize = useCallback(() => {
 		if (terminalLiveResizeTimerRef.current !== null) {
@@ -718,14 +744,24 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	const interfaceTarget =
 		(activeInterfaceTransition ? interfaceSwitch.transition?.targetMode : interfaceSwitch.status?.targetMode) ??
 		(session?.mode === "chat" ? "tui" : "chat");
-	const chatToTerminal = session?.mode === "chat" && interfaceTarget === "tui";
+	const selectedChatConversationWork =
+		chatConversationWork.sessionId === session?.id ? chatConversationWork : undefined;
+	const chatToTerminalNeedsPolicy = Boolean(
+		session?.mode === "chat" &&
+		interfaceTarget === "tui" &&
+		(!selectedChatConversationWork ||
+			selectedChatConversationWork.controllerBusy ||
+			selectedChatConversationWork.hasRunningTurn ||
+			selectedChatConversationWork.queuedTurnCount),
+	);
 	const interfaceBusy = Boolean(
 		session &&
 		(session.status === "working" ||
 			session.status === "needs_input" ||
 			session.activity?.state === "active" ||
 			session.activity?.state === "waiting_input" ||
-			session.activity?.state === "blocked"),
+			session.activity?.state === "blocked" ||
+			chatToTerminalNeedsPolicy),
 	);
 	const interfaceWaitingForInput = Boolean(
 		session &&
@@ -747,21 +783,12 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	);
 	const requestInterfaceSwitch = useCallback(() => {
 		interfaceSwitch.resetStartError();
-		// Terminal UI is the escape hatch for a runaway Chat turn. The session
-		// projection can briefly report idle while the Chat controller is busy, so
-		// this direction must always apply the explicit interrupt policy instead
-		// of relying on interfaceBusy. TUI -> Chat keeps the choice dialog because
-		// leaving a live terminal is not itself a recovery action.
-		if (chatToTerminal) {
-			void beginInterfaceSwitch("interrupt");
-			return;
-		}
 		if (!interfaceBusy) {
 			void beginInterfaceSwitch("drain");
 			return;
 		}
 		setInterfaceSwitchDialogOpen(true);
-	}, [beginInterfaceSwitch, chatToTerminal, interfaceBusy, interfaceSwitch]);
+	}, [beginInterfaceSwitch, interfaceBusy, interfaceSwitch]);
 	// Adapters without a Chat driver cannot offer a switch into Chat UI; hide
 	// the button entirely rather than showing a permanently disabled control.
 	const interfaceSwitchUnsupported = interfaceSwitch.status?.reasonCode === "CHAT_UNSUPPORTED";
@@ -1221,6 +1248,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 									workspaceTabs={centerFileTabs}
 									workspaceFileActive={Boolean(fileTabs.activePath)}
 									controllerTransitioning={chatControllerTransitioning}
+									onConversationWorkChange={handleConversationWorkChange}
 									onOpenShell={addShellTerminal}
 									openingShell={openShellTerminal.isPending}
 									shellError={

@@ -37,7 +37,7 @@ const { getMock, postMock, conversationState, agentSwitchState } = vi.hoisted(()
 	agentSwitchState: { data: [] as AgentSwitchSummary[] },
 	conversationState: {
 		snapshot: { capabilities: [] } as
-			| { capabilities: string[]; controller?: { state: string } }
+			| (Partial<ConversationSnapshot> & { capabilities: string[] })
 			| undefined,
 		isLoading: false,
 		unavailable: undefined as { message: string } | undefined,
@@ -58,7 +58,7 @@ vi.mock("../../hooks/useConversation", () => ({
 		...conversationState,
 		snapshot: conversationState.snapshot
 			? { ...snapshotFor(sessionId), ...conversationState.snapshot }
-			: snapshotFor(sessionId),
+			: undefined,
 	}),
 	useConversationCommands: () => ({}),
 	useConversationConfigOptions: () => ({ options: [] }),
@@ -157,6 +157,58 @@ afterEach(() => {
 });
 
 describe("SessionChatSurface link routing", () => {
+	it("does not report idle work before the conversation snapshot loads", () => {
+		conversationState.snapshot = undefined;
+		conversationState.isLoading = true;
+		const onConversationWorkChange = vi.fn();
+		const queryClient = new QueryClient({
+			defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+		});
+
+		render(
+			<Wrapper client={queryClient}>
+				<SessionChatSurface
+					session={session}
+					onConversationWorkChange={onConversationWorkChange}
+				/>
+			</Wrapper>,
+		);
+
+		expect(onConversationWorkChange).not.toHaveBeenCalled();
+	});
+
+	it("reports live and queued Chat work to the interface-switch owner", async () => {
+		conversationState.snapshot = {
+			capabilities: [],
+			controller: { state: "busy" },
+			turns: [
+				{ id: "turn-running", state: "running", requestedAt: "2026-08-25T09:00:00Z" },
+				{ id: "turn-queued", state: "queued", requestedAt: "2026-08-25T09:00:01Z" },
+			],
+		};
+		const onConversationWorkChange = vi.fn();
+		const queryClient = new QueryClient({
+			defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+		});
+
+		render(
+			<Wrapper client={queryClient}>
+				<SessionChatSurface
+					session={session}
+					onConversationWorkChange={onConversationWorkChange}
+				/>
+			</Wrapper>,
+		);
+
+		await waitFor(() => {
+			expect(onConversationWorkChange).toHaveBeenLastCalledWith({
+				controllerBusy: true,
+				hasRunningTurn: true,
+				queuedTurnCount: 1,
+			});
+		});
+	});
+
 	it("opens a plain Chat link in the active worker AO Browser", async () => {
 		const user = userEvent.setup();
 		const queryClient = new QueryClient({
