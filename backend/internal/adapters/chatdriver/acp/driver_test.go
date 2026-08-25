@@ -57,12 +57,15 @@ type fakeAgent struct {
 }
 
 type legacyKimiAgent struct {
-	mu          sync.Mutex
-	model       string
-	modelCalls  int
-	mode        string
-	modeCalls   int
-	configCalls int
+	mu                 sync.Mutex
+	currentModel       string
+	availableModels    []legacyModelInfo
+	rejectUnknownModel bool
+	model              string
+	modelCalls         int
+	mode               string
+	modeCalls          int
+	configCalls        int
 }
 
 func fakeLegacyKimiSpawn(agent *legacyKimiAgent) spawnFunc {
@@ -109,14 +112,21 @@ func serveLegacyKimi(agent *legacyKimiAgent, in io.Reader, out io.Writer) {
 				},
 			}
 		case "session/new":
+			currentModel := agent.currentModel
+			availableModels := agent.availableModels
+			if currentModel == "" {
+				currentModel = "kimi-code/kimi-for-coding"
+			}
+			if len(availableModels) == 0 {
+				availableModels = []legacyModelInfo{{
+					ModelID: "kimi-code/kimi-for-coding", Name: "Kimi for Coding",
+				}}
+			}
 			result = map[string]any{
 				"sessionId": "kimi-session-1",
 				"models": map[string]any{
-					"currentModelId": "kimi-code/kimi-for-coding",
-					"availableModels": []map[string]any{{
-						"modelId": "kimi-code/kimi-for-coding",
-						"name":    "Kimi for Coding", "description": "Kimi coding model",
-					}},
+					"currentModelId":  currentModel,
+					"availableModels": availableModels,
 				},
 				"modes": map[string]any{
 					"currentModeId": "default",
@@ -131,8 +141,19 @@ func serveLegacyKimi(agent *legacyKimiAgent, in io.Reader, out io.Writer) {
 			}
 			_ = json.Unmarshal(request.Params, &params)
 			agent.mu.Lock()
-			agent.model = params.ModelID
-			agent.modelCalls++
+			accepted := !agent.rejectUnknownModel
+			for _, model := range agent.availableModels {
+				accepted = accepted || model.ModelID == params.ModelID
+			}
+			if accepted {
+				agent.model = params.ModelID
+				agent.modelCalls++
+			} else {
+				responseError = map[string]any{
+					"code": -32602, "message": "Invalid params",
+					"data": map[string]any{"message": "Invalid model value: " + params.ModelID},
+				}
+			}
 			agent.mu.Unlock()
 		case "session/set_mode":
 			var params struct {
@@ -1440,6 +1461,46 @@ func TestACPDriverConsumesLegacyKimiSelectorsOnSDK0135(t *testing.T) {
 		mode != "default" || modeCalls != 1 || configCalls != 0 {
 		t.Fatalf("legacy setters: model=%q/%d mode=%q/%d config=%d",
 			model, modelCalls, mode, modeCalls, configCalls)
+	}
+}
+
+func TestACPDriverResolvesCLIModelToAdvertisedParameterizedLegacyChoice(t *testing.T) {
+	agent := &legacyKimiAgent{
+		currentModel: "auto",
+		availableModels: []legacyModelInfo{
+			{ModelID: "auto", Name: "Auto"},
+			{ModelID: "composer-2.5[fast=false]", Name: "Composer 2.5"},
+			{ModelID: "composer-2.5[fast=true]", Name: "Composer 2.5 Fast"},
+		},
+		rejectUnknownModel: true,
+	}
+	driver := New(Config{
+		Harness:      domain.HarnessCursor,
+		Capabilities: ports.ChatCapabilities{ports.ChatCapabilityStreaming: true},
+		Probe:        func(context.Context) error { return nil },
+		Launch:       func(context.Context, LaunchConfig) (Launch, error) { return Launch{Command: "fake"}, nil },
+		SessionOptions: func(settings ports.ChatTurnSettings) []SessionOption {
+			if settings.Model == "" {
+				return nil
+			}
+			return []SessionOption{{ID: "model", Value: settings.Model}}
+		},
+	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	driver.spawn = fakeLegacyKimiSpawn(agent)
+
+	conv, err := driver.Start(context.Background(), ports.ChatStartConfig{
+		WorkspacePath: t.TempDir(), Model: "composer-2.5",
+	})
+	if err != nil {
+		t.Fatalf("Start with CLI model alias: %v", err)
+	}
+	defer conv.Close()
+
+	agent.mu.Lock()
+	model, calls := agent.model, agent.modelCalls
+	agent.mu.Unlock()
+	if model != "composer-2.5[fast=false]" || calls != 1 {
+		t.Fatalf("legacy model setter = %q across %d calls, want advertised non-fast value", model, calls)
 	}
 }
 

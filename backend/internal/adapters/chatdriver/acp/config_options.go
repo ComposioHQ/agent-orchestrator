@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	acpsdk "github.com/coder/acp-go-sdk"
 
@@ -296,6 +297,61 @@ func choiceOffered(choices []ports.ChatConfigOptionChoice, value string) bool {
 		}
 	}
 	return false
+}
+
+// resolveLegacyModelChoice translates a CLI-facing model alias into the exact
+// opaque value an ACP agent advertised. Cursor's CLI lists composer-2.5 while
+// its legacy ACP selector offers composer-2.5[fast=false]; session/set_model
+// accepts only the latter. Exact provider values always win, and an alias is
+// accepted only when it identifies one advertised choice unambiguously.
+func resolveLegacyModelChoice(choices []ports.ChatConfigOptionChoice, requested string) (string, bool) {
+	if choiceOffered(choices, requested) {
+		return requested, true
+	}
+
+	matched := ""
+	for _, choice := range choices {
+		base, fast, parameterized := parameterizedModelAlias(choice.Value)
+		if !parameterized {
+			continue
+		}
+		alias := base
+		if fast {
+			alias += "-fast"
+		}
+		if alias != requested {
+			continue
+		}
+		if matched != "" {
+			return "", false
+		}
+		matched = choice.Value
+	}
+	return matched, matched != ""
+}
+
+func parameterizedModelAlias(value string) (base string, fast bool, ok bool) {
+	open := strings.IndexByte(value, '[')
+	if open <= 0 || !strings.HasSuffix(value, "]") {
+		return "", false, false
+	}
+	base = value[:open]
+	params := strings.Split(value[open+1:len(value)-1], ",")
+	for _, param := range params {
+		key, raw, found := strings.Cut(strings.TrimSpace(param), "=")
+		if !found || strings.TrimSpace(key) != "fast" {
+			continue
+		}
+		switch strings.TrimSpace(raw) {
+		case "true":
+			return base, true, true
+		case "false":
+			return base, false, true
+		default:
+			return "", false, false
+		}
+	}
+	return "", false, false
 }
 
 func cloneConfigOptions(options []ports.ChatConfigOption) []ports.ChatConfigOption {

@@ -272,6 +272,7 @@ func (c *conversation) applyTurnSettings(ctx context.Context, settings ports.Cha
 	validateSettings := c.validateSettings
 	legacyModel := c.legacyModel
 	legacyMode := c.legacyMode
+	configOptions := cloneConfigOptions(c.configOptions)
 	c.mu.Unlock()
 	if sessionID == "" {
 		return errors.New("ACP session is not open")
@@ -282,13 +283,25 @@ func (c *conversation) applyTurnSettings(ctx context.Context, settings ports.Cha
 		}
 	}
 	if legacyModel && settings.Model != "" {
-		if err := c.legacyWire.setModel(ctx, sessionID, settings.Model); err != nil {
-			if isACPMethodNotFound(err) {
-				return fmt.Errorf("%w: session/set_model %q", ErrACPSetterUnsupported, settings.Model)
+		model := settings.Model
+		for _, option := range configOptions {
+			if option.ID != "model" {
+				continue
 			}
-			return fmt.Errorf("set ACP session model %q: %w", settings.Model, err)
+			resolved, ok := resolveLegacyModelChoice(option.Choices, model)
+			if !ok {
+				return fmt.Errorf("%w: ACP session model does not offer %q", ports.ErrChatConfigOptionInvalid, model)
+			}
+			model = resolved
+			break
 		}
-		c.applyAcceptedConfigOption("model", ports.ChatConfigOptionValue{Select: settings.Model})
+		if err := c.legacyWire.setModel(ctx, sessionID, model); err != nil {
+			if isACPMethodNotFound(err) {
+				return fmt.Errorf("%w: session/set_model %q", ErrACPSetterUnsupported, model)
+			}
+			return fmt.Errorf("set ACP session model %q: %w", model, err)
+		}
+		c.applyAcceptedConfigOption("model", ports.ChatConfigOptionValue{Select: model})
 	}
 	if modeFor != nil {
 		if mode := modeFor(settings.Approval); mode != "" {
