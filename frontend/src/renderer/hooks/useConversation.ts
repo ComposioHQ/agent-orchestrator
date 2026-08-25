@@ -52,6 +52,12 @@ export interface ConversationSendInput {
 	resources?: WireResourceContent[];
 }
 
+interface ConversationSendMutationInput {
+	targetSessionId: string;
+	clientMessageId: string;
+	input: ConversationSendInput;
+}
+
 export const conversationQueryRoot = ["conversation"] as const;
 
 export function conversationQueryKey(sessionId: string) {
@@ -66,8 +72,11 @@ export function conversationConfigOptionsQueryKey(sessionId: string) {
 	return ["conversation-config-options", sessionId] as const;
 }
 
-const acceptedConversationSendsQueryKey = ["conversation-accepted-sends"] as const;
-type AcceptedConversationSends = Record<string, string>;
+const conversationSendTrackingQueryKey = ["conversation-send-tracking"] as const;
+type ConversationSendTracking =
+	| { clientMessageId: string; state: "pending" }
+	| { clientMessageId: string; state: "accepted"; turnId: string };
+type ConversationSendTrackingBySession = Record<string, ConversationSendTracking>;
 
 const CONVERSATION_PAGE_SIZE = 200;
 const CONFIG_OPTIONS_POLL_INTERVAL_MS = 5_000;
@@ -163,16 +172,25 @@ export function useConversation(sessionId: string | undefined): ConversationQuer
 /** Commands against a conversation. Each refetches the snapshot on success. */
 export function useConversationCommands(sessionId: string | undefined) {
 	const queryClient = useQueryClient();
-	const acceptedSends = useQuery({
-		queryKey: acceptedConversationSendsQueryKey,
-		queryFn: async (): Promise<AcceptedConversationSends> => ({}),
-		initialData: {} as AcceptedConversationSends,
+	const trackedSends = useQuery({
+		queryKey: conversationSendTrackingQueryKey,
+		queryFn: async (): Promise<ConversationSendTrackingBySession> => ({}),
+		initialData: {} as ConversationSendTrackingBySession,
 		enabled: false,
-		// Accepted work is a safety boundary for Chat -> Terminal. Keep it until the
-		// exact durable turn is observed, even if the Chat surface is unmounted.
+		// Dispatched work is a safety boundary for Chat -> Terminal. Keep both the
+		// in-flight request and its accepted turn until the exact durable row is
+		// observed, even if the Chat surface is unmounted.
+		//
+		// This cache is intentionally renderer-lifetime, not persisted. A full reload
+		// starts with work unknown (which already requires a policy choice) and then a
+		// fresh daemon snapshot; any later direct switch is drain-only, whose daemon
+		// gate atomically rejects new intake or drains work admitted before it. Without
+		// a durable request-reconciliation API, persisting an unresolved HTTP sentinel
+		// would instead leave sessions permanently and incorrectly busy.
 		gcTime: Number.POSITIVE_INFINITY,
 		staleTime: Number.POSITIVE_INFINITY,
 	}).data;
+	const trackedSend = sessionId ? trackedSends[sessionId] : undefined;
 	const invalidateSession = useCallback(
 		async (targetSessionId: string) => {
 			await queryClient.invalidateQueries({ queryKey: conversationQueryKey(targetSessionId) });
@@ -189,20 +207,30 @@ export function useConversationCommands(sessionId: string | undefined) {
 	}, [invalidateSession, sessionId]);
 
 	const send = useMutation({
+		onMutate: (variables: ConversationSendMutationInput) => {
+			queryClient.setQueryData<ConversationSendTrackingBySession>(
+				conversationSendTrackingQueryKey,
+				(current = {}) => ({
+					...current,
+					[variables.targetSessionId]: {
+						clientMessageId: variables.clientMessageId,
+						state: "pending",
+					},
+				}),
+			);
+		},
 		mutationFn: async ({
 			targetSessionId,
+			clientMessageId,
 			input,
-		}: {
-			targetSessionId: string;
-			input: ConversationSendInput;
-		}) => {
+		}: ConversationSendMutationInput) => {
 			const { data, error } = await apiClient.POST(
 				"/api/v1/sessions/{sessionId}/conversation/messages",
 				{
 					params: { path: { sessionId: targetSessionId } },
 					// A stable id per attempt makes a retry idempotent: the daemon
 					// answers `duplicate` instead of opening a second provider turn.
-					body: { ...input, clientMessageId: crypto.randomUUID() },
+					body: { ...input, clientMessageId },
 				},
 			);
 			if (error) throw error;
@@ -213,15 +241,36 @@ export function useConversationCommands(sessionId: string | undefined) {
 			if (acceptedTurnId) {
 				// A refetch can briefly return the pre-send snapshot. Keep the accepted
 				// turn locally visible as pending until that exact durable row arrives.
-				queryClient.setQueryData<AcceptedConversationSends>(
-					acceptedConversationSendsQueryKey,
-					(current = {}) => ({
-						...current,
-						[variables.targetSessionId]: acceptedTurnId,
-					}),
+				queryClient.setQueryData<ConversationSendTrackingBySession>(
+					conversationSendTrackingQueryKey,
+					(current = {}) => {
+						const tracked = current[variables.targetSessionId];
+						if (tracked && tracked.clientMessageId !== variables.clientMessageId) return current;
+						return {
+							...current,
+							[variables.targetSessionId]: {
+								clientMessageId: variables.clientMessageId,
+								state: "accepted",
+								turnId: acceptedTurnId,
+							},
+						};
+					},
 				);
 			}
 			await invalidateSession(variables.targetSessionId);
+		},
+		onError: (_error, variables) => {
+			queryClient.setQueryData<ConversationSendTrackingBySession>(
+				conversationSendTrackingQueryKey,
+				(current = {}) => {
+					if (current[variables.targetSessionId]?.clientMessageId !== variables.clientMessageId) {
+						return current;
+					}
+					const next = { ...current };
+					delete next[variables.targetSessionId];
+					return next;
+				},
+			);
 		},
 	});
 
@@ -484,10 +533,11 @@ export function useConversationCommands(sessionId: string | undefined) {
 	const acknowledgeAcceptedSend = useCallback(
 		(turnId: string) => {
 			if (!sessionId) return;
-			queryClient.setQueryData<AcceptedConversationSends>(
-				acceptedConversationSendsQueryKey,
+			queryClient.setQueryData<ConversationSendTrackingBySession>(
+				conversationSendTrackingQueryKey,
 				(current = {}) => {
-					if (current[sessionId] !== turnId) return current;
+					const tracked = current[sessionId];
+					if (tracked?.state !== "accepted" || tracked.turnId !== turnId) return current;
 					const next = { ...current };
 					delete next[sessionId];
 					return next;
@@ -501,9 +551,12 @@ export function useConversationCommands(sessionId: string | undefined) {
 		send: (input: string | ConversationSendInput) =>
 			send.mutateAsync({
 				targetSessionId: sessionId as string,
+				clientMessageId: crypto.randomUUID(),
 				input: typeof input === "string" ? { text: input } : input,
 			}),
-		pendingAcceptedSendTurnId: sessionId ? acceptedSends[sessionId] : undefined,
+		pendingLocalSend: Boolean(trackedSend),
+		pendingAcceptedSendTurnId:
+			trackedSend?.state === "accepted" ? trackedSend.turnId : undefined,
 		acknowledgeAcceptedSend,
 		resolve: (requestId: string, decisionId: string) => resolve.mutate({ requestId, decisionId }),
 		resolveInput: (
@@ -569,7 +622,12 @@ export function useConversationCommands(sessionId: string | undefined) {
 			reloadMcp.error && apiErrorCode(reloadMcp.error) !== "CHAT_MCP_RELOAD_UNSUPPORTED"
 				? apiErrorMessage(reloadMcp.error)
 				: undefined,
-		busy: send.isPending || resolve.isPending || resolveInput.isPending || interrupt.isPending,
+		busy:
+			Boolean(trackedSend) ||
+			send.isPending ||
+			resolve.isPending ||
+			resolveInput.isPending ||
+			interrupt.isPending,
 		error:
 			send.error || resolve.error || interrupt.error || chooseSettings.error
 				? apiErrorMessage(send.error ?? resolve.error ?? interrupt.error ?? chooseSettings.error)

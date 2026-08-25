@@ -128,6 +128,76 @@ describe("accepted conversation sends", () => {
 		expect(result.current.pendingAcceptedSendTurnId).toBe("turn-1");
 	});
 
+	it("retains an in-flight send when Chat unmounts before the response", async () => {
+		const response = deferred<{
+			data: { turnId: string };
+			error: undefined;
+		}>();
+		postMock.mockReturnValue(response.promise);
+		const queryClient = new QueryClient({
+			defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+		});
+		const HookWrapper = ({ children }: { children: ReactNode }) => (
+			<QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+		);
+		const firstMount = renderHook(() => useConversationCommands("ao-in-flight-remount"), {
+			wrapper: HookWrapper,
+		});
+
+		let sendRequest!: Promise<unknown>;
+		act(() => {
+			sendRequest = firstMount.result.current.send("still posting");
+		});
+		await waitFor(() => {
+			expect(firstMount.result.current.pendingLocalSend).toBe(true);
+			expect(firstMount.result.current.busy).toBe(true);
+		});
+		firstMount.unmount();
+
+		const secondMount = renderHook(() => useConversationCommands("ao-in-flight-remount"), {
+			wrapper: HookWrapper,
+		});
+		expect(secondMount.result.current.pendingLocalSend).toBe(true);
+		expect(secondMount.result.current.busy).toBe(true);
+		expect(secondMount.result.current.pendingAcceptedSendTurnId).toBeUndefined();
+
+		response.resolve({ data: { turnId: "turn-after-deferred-response" }, error: undefined });
+		await act(async () => {
+			await sendRequest;
+		});
+		await waitFor(() => {
+			expect(secondMount.result.current.pendingAcceptedSendTurnId).toBe(
+				"turn-after-deferred-response",
+			);
+		});
+	});
+
+	it("clears an in-flight send sentinel when the request fails", async () => {
+		postMock.mockResolvedValue({
+			data: undefined,
+			error: { code: "CHAT_SEND_FAILED" },
+		});
+		const queryClient = new QueryClient({
+			defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+		});
+		const HookWrapper = ({ children }: { children: ReactNode }) => (
+			<QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+		);
+		const { result } = renderHook(() => useConversationCommands("ao-send-failure"), {
+			wrapper: HookWrapper,
+		});
+
+		await act(async () => {
+			await result.current.send("this will fail").catch(() => {});
+		});
+
+		await waitFor(() => {
+			expect(result.current.pendingLocalSend).toBe(false);
+			expect(result.current.pendingAcceptedSendTurnId).toBeUndefined();
+			expect(result.current.busy).toBe(false);
+		});
+	});
+
 	it("retains accepted work across a full chat surface unmount and remount", async () => {
 		postMock.mockResolvedValue({
 			data: { turnId: "turn-after-remount" },

@@ -116,6 +116,10 @@ const newTerminalShortcutLabel = shortcutBindingLabel(defaultShortcutBindings("n
 
 type ReviewsResponse = components["schemas"]["ListReviewsResponse"];
 type ReviewerTerminalTarget = { handleId: string; harness: string };
+type InterfaceSwitchDialogScope = {
+	sessionId: string;
+	targetMode: "chat" | "tui";
+};
 
 type WorkspaceLayoutMode = "utility" | "browser" | "files";
 
@@ -397,7 +401,8 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	const fileTabs = fileTabsBySession[sessionId] ?? EMPTY_SESSION_FILE_TABS;
 	const browserPopOutPhase = browserPopOutState.sessionId === sessionId ? browserPopOutState.phase : "docked";
 	const browserPoppedOut = browserPopOutPhase !== "docked";
-	const [interfaceSwitchDialogOpen, setInterfaceSwitchDialogOpen] = useState(false);
+	const [interfaceSwitchDialogScope, setInterfaceSwitchDialogScope] =
+		useState<InterfaceSwitchDialogScope>();
 	const [chatConversationWork, setChatConversationWork] = useState<
 		ConversationWorkState & { sessionId?: string }
 	>({
@@ -744,6 +749,15 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	const interfaceTarget =
 		(activeInterfaceTransition ? interfaceSwitch.transition?.targetMode : interfaceSwitch.status?.targetMode) ??
 		(session?.mode === "chat" ? "tui" : "chat");
+	const interfaceSwitchDialogOpen = Boolean(
+		interfaceSwitchDialogScope &&
+			session &&
+			interfaceSwitchDialogScope.sessionId === session.id &&
+			interfaceSwitchDialogScope.targetMode === interfaceTarget,
+	);
+	useEffect(() => {
+		setInterfaceSwitchDialogScope(undefined);
+	}, [interfaceTarget, sessionId]);
 	const selectedChatConversationWork =
 		chatConversationWork.sessionId === session?.id ? chatConversationWork : undefined;
 	const chatToTerminalNeedsPolicy = Boolean(
@@ -770,25 +784,41 @@ export function SessionView({ sessionId }: SessionViewProps) {
 			session.activity?.state === "blocked"),
 	);
 	const beginInterfaceSwitch = useCallback(
-		async (policy: "drain" | "interrupt") => {
+		async (policy: "drain" | "interrupt", targetMode: "chat" | "tui") => {
 			try {
-				await interfaceSwitch.start({ targetMode: interfaceTarget, policy });
-				setInterfaceSwitchDialogOpen(false);
+				await interfaceSwitch.start({ targetMode, policy });
+				setInterfaceSwitchDialogScope(undefined);
 			} catch {
 				// The mutation owns the typed error. A policy dialog that was already
 				// open stays open; a direct switch must not open one on failure.
 			}
 		},
-		[interfaceSwitch, interfaceTarget],
+		[interfaceSwitch],
 	);
 	const requestInterfaceSwitch = useCallback(() => {
 		interfaceSwitch.resetStartError();
 		if (!interfaceBusy) {
-			void beginInterfaceSwitch("drain");
+			void beginInterfaceSwitch("drain", interfaceTarget);
 			return;
 		}
-		setInterfaceSwitchDialogOpen(true);
-	}, [beginInterfaceSwitch, interfaceBusy, interfaceSwitch]);
+		if (!session) return;
+		setInterfaceSwitchDialogScope({ sessionId: session.id, targetMode: interfaceTarget });
+	}, [beginInterfaceSwitch, interfaceBusy, interfaceSwitch, interfaceTarget, session]);
+	const chooseInterfaceSwitchPolicy = useCallback(
+		(policy: "drain" | "interrupt") => {
+			if (
+				!session ||
+				!interfaceSwitchDialogScope ||
+				interfaceSwitchDialogScope.sessionId !== session.id ||
+				interfaceSwitchDialogScope.targetMode !== interfaceTarget
+			) {
+				setInterfaceSwitchDialogScope(undefined);
+				return;
+			}
+			void beginInterfaceSwitch(policy, interfaceSwitchDialogScope.targetMode);
+		},
+		[beginInterfaceSwitch, interfaceSwitchDialogScope, interfaceTarget, session],
+	);
 	// Adapters without a Chat driver cannot offer a switch into Chat UI; hide
 	// the button entirely rather than showing a permanently disabled control.
 	const interfaceSwitchUnsupported = interfaceSwitch.status?.reasonCode === "CHAT_UNSUPPORTED";
@@ -1295,7 +1325,8 @@ export function SessionView({ sessionId }: SessionViewProps) {
 									}}
 									onSwitchWithInterrupt={() => {
 										interfaceSwitch.resetStartError();
-										void beginInterfaceSwitch("interrupt");
+										const targetMode = interfaceSwitch.transition?.targetMode;
+										if (targetMode) void beginInterfaceSwitch("interrupt", targetMode);
 									}}
 									interrupting={interfaceSwitch.starting}
 								/>
@@ -1356,12 +1387,14 @@ export function SessionView({ sessionId }: SessionViewProps) {
 			) : null}
 			<SessionInterfaceSwitchDialog
 				open={interfaceSwitchDialogOpen}
-				target={interfaceTarget}
+				target={interfaceSwitchDialogScope?.targetMode ?? interfaceTarget}
 				waitingForInput={interfaceWaitingForInput}
 				busy={interfaceSwitch.starting}
 				error={interfaceSwitch.startError}
-				onOpenChange={setInterfaceSwitchDialogOpen}
-				onChoose={(policy) => void beginInterfaceSwitch(policy)}
+				onOpenChange={(open) => {
+					if (!open) setInterfaceSwitchDialogScope(undefined);
+				}}
+				onChoose={chooseInterfaceSwitchPolicy}
 			/>
 			{filesPoppedOut && session
 				? createPortal(

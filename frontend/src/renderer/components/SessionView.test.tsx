@@ -858,6 +858,48 @@ describe("SessionView", () => {
 		expect(interfaceTransitionMock.start).toHaveBeenCalledWith({ targetMode: "tui", policy });
 	});
 
+	it("discards one session's switch consent dialog when navigating to another session", () => {
+		interfaceTransitionState.status = { supported: true, targetMode: "tui" };
+		for (const sessionId of ["sess-1", "sess-2"]) {
+			const session = workerSession(sessionId);
+			session.mode = "chat";
+			session.status = "working";
+			session.activity = { state: "active", lastActivityAt: "2026-08-06T00:00:00Z" };
+		}
+		const view = render(<SessionView sessionId="sess-1" />);
+
+		fireEvent.click(screen.getByRole("button", { name: "Switch to terminal UI" }));
+		expect(screen.getByRole("dialog", { name: "Switch to Terminal UI?" })).toBeInTheDocument();
+
+		view.rerender(<SessionView sessionId="sess-2" />);
+		expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+		expect(interfaceTransitionMock.start).not.toHaveBeenCalled();
+
+		view.rerender(<SessionView sessionId="sess-1" />);
+		expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+	});
+
+	it("discards switch consent when the requested target changes", () => {
+		interfaceTransitionState.status = { supported: true, targetMode: "tui" };
+		const session = workerSession("sess-1");
+		session.mode = "chat";
+		session.status = "working";
+		session.activity = { state: "active", lastActivityAt: "2026-08-06T00:00:00Z" };
+		const view = render(<SessionView sessionId="sess-1" />);
+
+		fireEvent.click(screen.getByRole("button", { name: "Switch to terminal UI" }));
+		expect(screen.getByRole("dialog", { name: "Switch to Terminal UI?" })).toBeInTheDocument();
+
+		interfaceTransitionState.status = { supported: true, targetMode: "chat" };
+		view.rerender(<SessionView sessionId="sess-1" />);
+		expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+		expect(interfaceTransitionMock.start).not.toHaveBeenCalled();
+
+		interfaceTransitionState.status = { supported: true, targetMode: "tui" };
+		view.rerender(<SessionView sessionId="sess-1" />);
+		expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+	});
+
 	it("checks only the selected session when deciding whether to show the policy dialog", () => {
 		interfaceTransitionState.status = { supported: true, targetMode: "chat" };
 		const selected = workerSession("sess-1");
