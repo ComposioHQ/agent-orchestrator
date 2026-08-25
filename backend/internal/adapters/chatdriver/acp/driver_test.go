@@ -1504,6 +1504,75 @@ func TestACPDriverResolvesCLIModelToAdvertisedParameterizedLegacyChoice(t *testi
 	}
 }
 
+func TestACPDriverRejectsLegacyModelAliasWithoutAdvertisedModelCatalog(t *testing.T) {
+	agent := &legacyKimiAgent{
+		currentModel: "auto",
+		availableModels: []legacyModelInfo{
+			{ModelID: "auto", Name: "Auto"},
+			{ModelID: "composer-2.5[fast=false]", Name: "Composer 2.5"},
+		},
+		rejectUnknownModel: true,
+	}
+	driver := New(Config{
+		Harness:      domain.HarnessCursor,
+		Capabilities: ports.ChatCapabilities{ports.ChatCapabilityStreaming: true},
+		Probe:        func(context.Context) error { return nil },
+		Launch:       func(context.Context, LaunchConfig) (Launch, error) { return Launch{Command: "fake"}, nil },
+	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	driver.spawn = fakeLegacyKimiSpawn(agent)
+
+	conv, err := driver.Start(context.Background(), ports.ChatStartConfig{WorkspacePath: t.TempDir()})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer conv.Close()
+
+	conv.(*conversation).replaceConfigOptions(nil)
+	_, err = conv.SendTurn(context.Background(), ports.ChatUserMessage{
+		Text: "hello", Settings: ports.ChatTurnSettings{Model: "composer-2.5"},
+	})
+	if !errors.Is(err, ports.ErrChatConfigOptionInvalid) {
+		t.Fatalf("SendTurn without advertised model catalog: err = %v, want ErrChatConfigOptionInvalid", err)
+	}
+	agent.mu.Lock()
+	calls := agent.modelCalls
+	agent.mu.Unlock()
+	if calls != 0 {
+		t.Fatalf("legacy model setter called %d times, want 0", calls)
+	}
+}
+
+func TestACPDriverRejectsAmbiguousLegacyModelAlias(t *testing.T) {
+	agent := &legacyKimiAgent{
+		currentModel: "auto",
+		availableModels: []legacyModelInfo{
+			{ModelID: "composer-2.5[fast=false]", Name: "Composer 2.5"},
+			{ModelID: "composer-2.5[context=1m,fast=false]", Name: "Composer 2.5 1M"},
+		},
+		rejectUnknownModel: true,
+	}
+	driver := New(Config{
+		Harness:      domain.HarnessCursor,
+		Capabilities: ports.ChatCapabilities{ports.ChatCapabilityStreaming: true},
+		Probe:        func(context.Context) error { return nil },
+		Launch:       func(context.Context, LaunchConfig) (Launch, error) { return Launch{Command: "fake"}, nil },
+	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	driver.spawn = fakeLegacyKimiSpawn(agent)
+
+	_, err := driver.Start(context.Background(), ports.ChatStartConfig{
+		WorkspacePath: t.TempDir(), Model: "composer-2.5",
+	})
+	if !errors.Is(err, ports.ErrChatConfigOptionInvalid) {
+		t.Fatalf("Start with ambiguous model alias: err = %v, want ErrChatConfigOptionInvalid", err)
+	}
+	agent.mu.Lock()
+	calls := agent.modelCalls
+	agent.mu.Unlock()
+	if calls != 0 {
+		t.Fatalf("legacy model setter called %d times, want 0", calls)
+	}
+}
+
 func TestACPDriverExposesDynamicAvailableCommandsAsSkills(t *testing.T) {
 	agent := &fakeAgent{}
 	driver := New(Config{

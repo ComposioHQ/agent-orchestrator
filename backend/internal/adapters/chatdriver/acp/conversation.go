@@ -284,16 +284,21 @@ func (c *conversation) applyTurnSettings(ctx context.Context, settings ports.Cha
 	}
 	if legacyModel && settings.Model != "" {
 		model := settings.Model
+		modelOptionFound := false
 		for _, option := range configOptions {
 			if option.ID != "model" {
 				continue
 			}
+			modelOptionFound = true
 			resolved, ok := resolveLegacyModelChoice(option.Choices, model)
 			if !ok {
 				return fmt.Errorf("%w: ACP session model does not offer %q", ports.ErrChatConfigOptionInvalid, model)
 			}
 			model = resolved
 			break
+		}
+		if !modelOptionFound {
+			return fmt.Errorf("%w: ACP session does not advertise a model option", ports.ErrChatConfigOptionInvalid)
 		}
 		if err := c.legacyWire.setModel(ctx, sessionID, model); err != nil {
 			if isACPMethodNotFound(err) {
