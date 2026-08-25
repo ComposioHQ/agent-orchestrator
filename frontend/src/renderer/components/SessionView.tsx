@@ -55,7 +55,7 @@ import { useWorkspaceQuery } from "../hooks/useWorkspaceQuery";
 import { useWindowFullScreen } from "../hooks/useWindowFullScreen";
 import { apiClient, apiErrorMessage } from "../lib/api-client";
 import { aoBridge } from "../lib/bridge";
-import { discardPendingFileAttachments } from "../hooks/useFileAttachments";
+import { discardPendingFileAttachmentsForSession } from "../hooks/useFileAttachments";
 import {
 	confirmDiscardChatDraft,
 	getChatDraftBoundary,
@@ -385,7 +385,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 		if (!chatDraftBoundary) return true;
 		if (!confirmDiscardChatDraft(chatDraftBoundary)) return false;
 		if (chatDraftBoundary === "pending-attachments") {
-			discardPendingFileAttachments(sessionId);
+			discardPendingFileAttachmentsForSession(sessionId);
 		}
 		return true;
 	}, [chatDraftBoundary, sessionId]);

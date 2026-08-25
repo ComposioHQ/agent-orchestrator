@@ -4,12 +4,15 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
 	discardPendingFileAttachments,
+	discardPendingFileAttachmentsForSession,
 	MAX_ATTACHMENTS,
 	MAX_ATTACHMENT_BYTES,
 	MAX_ATTACHMENTS_BYTES,
+	purgeFileAttachmentsForSession,
 	useFileAttachments,
 	type FileAttachment,
 } from "./useFileAttachments";
+import { chatDraftScopeKey } from "../lib/chat-drafts";
 
 const file = (name: string, bytes = 8, type = "text/plain") =>
 	new File([new Uint8Array(bytes).fill(1)], name, { type });
@@ -151,10 +154,18 @@ describe("useFileAttachments", () => {
 
 	it("ignores a discarded completion that resolves after a replacement attachment", async () => {
 		const sessionId = "discard-out-of-order-attachments";
+		const firstKey = chatDraftScopeKey({
+			sessionId,
+			incarnation: "2026-08-25T09:00:00.000Z",
+		});
+		const replacementKey = chatDraftScopeKey({
+			sessionId,
+			incarnation: "2026-08-26T09:00:00.000Z",
+		});
 		let finishOld!: (attachments: FileAttachment[]) => void;
 		const first = renderHook(() =>
 			useFileAttachments({
-				initialKey: sessionId,
+				initialKey: firstKey,
 				prepareAttachments: () =>
 					new Promise<FileAttachment[]>((resolve) => {
 						finishOld = resolve;
@@ -167,12 +178,12 @@ describe("useFileAttachments", () => {
 		});
 		await waitFor(() => expect(first.result.current.preparing).toBe(true));
 		await waitFor(() => expect(finishOld).toBeTypeOf("function"));
-		act(() => discardPendingFileAttachments(sessionId));
+		act(() => purgeFileAttachmentsForSession(sessionId));
 		first.unmount();
 
 		const replacement = renderHook(() =>
 			useFileAttachments({
-				initialKey: sessionId,
+				initialKey: replacementKey,
 				prepareAttachments: async (attachments) =>
 					attachments.map((attachment) => ({
 						...attachment,
@@ -202,6 +213,73 @@ describe("useFileAttachments", () => {
 		expect(replacement.result.current.attachments.map((attachment) => attachment.name)).toEqual([
 			"new.txt",
 		]);
+	});
+
+	it("cancels pending work for every incarnation of one logical session", async () => {
+		const sessionId = "discard-all-session-incarnations";
+		const releases = new Map<string, (attachments: FileAttachment[]) => void>();
+		const hook = (key: string, name: string) =>
+			renderHook(() =>
+				useFileAttachments({
+					initialKey: key,
+					prepareAttachments: () =>
+						new Promise<FileAttachment[]>((resolve) => releases.set(name, resolve)),
+				}),
+			);
+		const first = hook(
+			chatDraftScopeKey({ sessionId, incarnation: "2026-08-25T09:00:00.000Z" }),
+			"first",
+		);
+		const replacement = hook(
+			chatDraftScopeKey({ sessionId, incarnation: "2026-08-26T09:00:00.000Z" }),
+			"replacement",
+		);
+		const other = hook(
+			chatDraftScopeKey({ sessionId: "other-session", incarnation: "2026-08-26T09:00:00.000Z" }),
+			"other",
+		);
+		let firstPending!: Promise<void>;
+		let replacementPending!: Promise<void>;
+		let otherPending!: Promise<void>;
+		act(() => {
+			firstPending = first.result.current.addFiles([file("first.txt")]);
+			replacementPending = replacement.result.current.addFiles([file("replacement.txt")]);
+			otherPending = other.result.current.addFiles([file("other.txt")]);
+		});
+		await waitFor(() => expect(releases.size).toBe(3));
+
+		act(() => discardPendingFileAttachmentsForSession(sessionId));
+		await act(async () => {
+			releases.get("first")?.([{ id: "first", mimeType: "text/plain", bytes: 8, name: "first.txt", stagedPath: ".ao/attachments/first.txt" }]);
+			releases.get("replacement")?.([{ id: "replacement", mimeType: "text/plain", bytes: 8, name: "replacement.txt", stagedPath: ".ao/attachments/replacement.txt" }]);
+			releases.get("other")?.([{ id: "other", mimeType: "text/plain", bytes: 8, name: "other.txt", stagedPath: ".ao/attachments/other.txt" }]);
+			await Promise.all([firstPending, replacementPending, otherPending]);
+		});
+
+		expect(first.result.current.attachments).toEqual([]);
+		expect(replacement.result.current.attachments).toEqual([]);
+		expect(other.result.current.attachments.map((attachment) => attachment.name)).toEqual([
+			"other.txt",
+		]);
+	});
+
+	it("purges shared descriptors for a recreated logical session", async () => {
+		const sessionId = "purge-shared-session-descriptors";
+		const key = chatDraftScopeKey({
+			sessionId,
+			incarnation: "2026-08-25T09:00:00.000Z",
+		});
+		const first = renderHook(() => useFileAttachments({ initialKey: key }));
+		await act(async () => {
+			await first.result.current.addFiles([file("old.txt")]);
+		});
+		expect(first.result.current.attachments).toHaveLength(1);
+		first.unmount();
+
+		act(() => purgeFileAttachmentsForSession(sessionId));
+		const staleRemount = renderHook(() => useFileAttachments({ initialKey: key }));
+		expect(staleRemount.result.current.attachments).toEqual([]);
+		expect(staleRemount.result.current.preparing).toBe(false);
 	});
 
 	it("rejects unsupported SVG files with inline feedback", async () => {

@@ -42,6 +42,8 @@ import {
 	getChatInlineEditMutation,
 	markChatInlineEditDeliveryAccepted,
 	prepareChatInlineEditDelivery,
+	activateChatDraftScope,
+	chatDraftScopeKey,
 	readChatSessionDraft,
 	subscribeChatDraftRuntime,
 	writeChatInlineEdit,
@@ -50,6 +52,7 @@ import {
 	type ChatDraftScope,
 	type ChatInlineEditDelivery,
 } from "../../lib/chat-drafts";
+import { purgeFileAttachmentsForSession } from "../../hooks/useFileAttachments";
 import { setChatDraftBoundary } from "../../lib/chat-draft-boundary";
 import { sameContent, useStableList } from "../../lib/stable-list";
 import { getApiBaseUrl, subscribeApiBaseUrl } from "../../lib/api-client";
@@ -317,7 +320,85 @@ export interface ChatWorkspaceProps {
 	mcpReloadError?: string;
 }
 
-export function ChatWorkspace({
+type ChatWorkspaceActivation =
+	| { key: string; state: "active" }
+	| { key: string; state: "failed"; reason: "obsolete" | "storage" };
+
+/**
+ * Do not mount any renderer draft owner until the daemon incarnation has
+ * authoritatively claimed its storage scope. The activation transition itself
+ * owns cleanup of the predecessor; callbacks from that obsolete surface can
+ * then only fail closed against the successor lease.
+ */
+export function ChatWorkspace(props: ChatWorkspaceProps) {
+	const { snapshot, session } = props;
+	const draftScope = useMemo<ChatDraftScope>(
+		() => ({
+			sessionId: snapshot.sessionId,
+			// Live surfaces carry the daemon-created session timestamp. Snapshot-only
+			// fixtures retain the legacy logical scope for deterministic previews.
+			incarnation: session?.createdAt ?? snapshot.sessionId,
+		}),
+		[session?.createdAt, snapshot.sessionId],
+	);
+	const scopeKey = chatDraftScopeKey(draftScope);
+	const [activation, setActivation] = useState<ChatWorkspaceActivation>();
+	const [activationAttempt, setActivationAttempt] = useState(0);
+
+	useLayoutEffect(() => {
+		// Snapshot-only previews have no daemon session incarnation to arbitrate.
+		// Their legacy logical scope remains isolated to fixture/demo surfaces.
+		if (!session?.createdAt) {
+			setActivation({ key: scopeKey, state: "active" });
+			return;
+		}
+		const result = activateChatDraftScope(draftScope);
+		if (!result.ok) {
+			setActivation({ key: scopeKey, state: "failed", reason: result.reason });
+			return;
+		}
+		if (result.replaced) purgeFileAttachmentsForSession(draftScope.sessionId);
+		setActivation({ key: scopeKey, state: "active" });
+	}, [activationAttempt, draftScope, scopeKey, session?.createdAt]);
+
+	if (activation?.key !== scopeKey || activation.state !== "active") {
+		const failure = activation?.key === scopeKey && activation.state === "failed"
+			? activation.reason
+			: undefined;
+		return (
+			<section
+				aria-label="Chat"
+				className="cursor-chat-surface flex h-full min-h-0 flex-col items-center justify-center px-6 [font-size:var(--chat-font-size)]"
+				data-session-mode={snapshot.mode}
+				style={{ "--chat-font-size": `${CHAT_FONT_SIZE_DEFAULT}px` } as CSSProperties}
+			>
+				{failure ? (
+					<div className="max-w-lg rounded-lg border border-border bg-card p-4">
+						<p className="text-sm text-foreground" role="alert">
+							{failure === "obsolete"
+								? "This Chat view belongs to an older session incarnation. Reopen the current session to continue."
+								: "Chat draft storage could not be activated. Restore access to local storage, then retry before chatting."}
+						</p>
+						{failure === "storage" ? (
+							<Button
+								className="mt-3"
+								onClick={() => setActivationAttempt((attempt) => attempt + 1)}
+								type="button"
+								variant="outline"
+							>
+								Retry draft restore
+							</Button>
+						) : null}
+					</div>
+				) : null}
+			</section>
+		);
+	}
+
+	return <ChatWorkspaceContent key={scopeKey} {...props} draftScope={draftScope} />;
+}
+
+function ChatWorkspaceContent({
 	snapshot,
 	sessionRole = "worker",
 	headerActions,
@@ -387,19 +468,10 @@ export function ChatWorkspace({
 	onReloadMcpServers,
 	reloadingMcpServers,
 	mcpReloadError,
-}: ChatWorkspaceProps) {
+	draftScope,
+}: ChatWorkspaceProps & { draftScope: ChatDraftScope }) {
 	const { t } = useTranslation();
-	const draftScope = useMemo<ChatDraftScope>(
-		() => ({
-			sessionId: snapshot.sessionId,
-			// Live surfaces always carry the daemon session record. Snapshot-only
-			// fixtures use the legacy scope because a conversation controller may be
-			// replaced without creating a new session incarnation.
-			incarnation: session?.createdAt ?? snapshot.sessionId,
-		}),
-		[session?.createdAt, snapshot.sessionId],
-	);
-	const draftScopeKey = `${draftScope.sessionId}\u0000${draftScope.incarnation}`;
+	const draftScopeKey = chatDraftScopeKey(draftScope);
 	const turn = activeTurn(snapshot);
 	const hasPendingInteraction = snapshot.items.some(
 		(item) =>
