@@ -1,6 +1,10 @@
 import { useQuery } from "@tanstack/react-query";
+import { useMemo } from "react";
 import type { components } from "../../api/schema";
 import { apiClient, hasTrustedApiBaseUrl } from "../lib/api-client";
+import type { CloudCpProject } from "../lib/cloud-cp";
+import { useCloudCp } from "./useCloudCp";
+import { useCloudOrg } from "./useCloudOrg";
 import { mockWorkspaces } from "../lib/mock-data";
 import { usesPreviewWorkspaceData } from "../lib/preview-mode";
 import { toReviewerHarnessId } from "../lib/reviewer-harnesses";
@@ -143,6 +147,51 @@ export const workspaceQueryOptions = {
 	refetchInterval: 15_000,
 };
 
+// Cloud projects are a separate query so a control-plane failure can never
+// break the local list: on error TanStack keeps this query's last known data,
+// and until the first successful fetch the merge below simply omits cloud
+// items. Invalidated by the cloud create flow (CreateProjectFlow).
+export const cloudProjectsQueryKey = ["cloud-projects"] as const;
+
+function toCloudWorkspace(project: CloudCpProject): WorkspaceSummary {
+	return {
+		id: project.id,
+		name: project.displayName,
+		kind: "cloud",
+		// Cloud projects run in control-plane sandboxes; there is no local folder.
+		path: "",
+		sessions: [],
+	};
+}
+
+export function useCloudProjectsQuery() {
+	const { client, ready, baseUrl } = useCloudCp();
+	const { org } = useCloudOrg();
+	const orgId = org?.id;
+	return useQuery({
+		queryKey: [...cloudProjectsQueryKey, baseUrl, orgId ?? ""],
+		enabled: ready && orgId !== undefined,
+		retry: 1,
+		queryFn: async (): Promise<CloudCpProject[]> => {
+			if (orgId === undefined) return [];
+			// First page only (control-plane max page size); pagination UI is a
+			// later phase alongside cloud sessions.
+			const response = await client.listProjects(orgId, { limit: 100 });
+			return response.items;
+		},
+	});
+}
+
 export function useWorkspaceQuery() {
-	return useQuery(workspaceQueryOptions);
+	const local = useQuery(workspaceQueryOptions);
+	const cloud = useCloudProjectsQuery();
+	const localData = local.data;
+	const cloudData = cloud.data;
+	const data = useMemo(() => {
+		// Local stays authoritative for loading/error semantics: cloud items only
+		// render once the local list exists, and never replace it.
+		if (localData === undefined || cloudData === undefined || cloudData.length === 0) return localData;
+		return [...localData, ...cloudData.map(toCloudWorkspace)];
+	}, [localData, cloudData]);
+	return { ...local, data };
 }

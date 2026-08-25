@@ -266,7 +266,13 @@ export type { AttentionZone } from "../lib/session-presentation";
 export type WorkspaceSummary = {
 	id: string;
 	name: string;
-	kind?: ProjectKind;
+	/**
+	 * Discriminator for where the project lives. Local projects carry the
+	 * daemon's ProjectKind (or undefined for older daemons); projects hosted by
+	 * the AO cloud control plane carry "cloud" — branch on `kind === "cloud"`.
+	 */
+	kind?: ProjectKind | "cloud";
+	/** Local checkout path; empty string for cloud projects (no local folder). */
 	path: string;
 	workspaceRepos?: WorkspaceRepoSummary[];
 	type?: "main" | "worktree";

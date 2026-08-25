@@ -109,6 +109,7 @@ import {
 } from "./ui/sidebar";
 import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
 import { OrchestratorIcon } from "./icons";
+import { Badge } from "./ui/badge";
 import aoLogo from "../../../assets/ao-logo.svg";
 import { cn } from "../lib/utils";
 import { useUiStore } from "../stores/ui-store"
@@ -1242,6 +1243,14 @@ const ProjectItemContent = memo(function ProjectItemContent({
 									>
 										{workspace.name}
 									</span>
+									{workspace.kind === "cloud" && (
+										<Badge
+											variant="outline"
+											className="sidebar-expanded-chrome h-4 shrink-0 px-1.5 text-2xs group-data-[collapsible=icon]:hidden"
+										>
+											{t("shell.cloudProjectBadge")}
+										</Badge>
+									)}
 								</SidebarMenuButton>
 								{/* Folder disclosure toggle: sibling of the nav button, absolutely positioned over
 	    the icon area so it intercepts clicks there without nesting buttons. */}
