@@ -255,9 +255,10 @@ interface GitHubReleaseSummary {
  * This is used only for user-requested checks; failures fall back to the normal
  * provider so API rate limits or an outage never break update checks.
  */
-async function fetchLatestCompletedNightlyTag(
+async function fetchLatestCompletedPrereleaseTag(
   owner: string,
   repo: string,
+  channel: string,
 ): Promise<string | undefined> {
   try {
     const response = await fetch(
@@ -274,7 +275,7 @@ async function fetchLatestCompletedNightlyTag(
     );
     if (!response.ok) return undefined;
     const releases = (await response.json()) as GitHubReleaseSummary[];
-    const manifestName = `nightly${platformSuffix()}.yml`;
+    const manifestName = `${channel}${platformSuffix()}.yml`;
     return releases
       .filter((release) => {
         const parsed = semver.valid(release.tag_name);
@@ -282,7 +283,7 @@ async function fetchLatestCompletedNightlyTag(
           !release.draft &&
           release.prerelease &&
           parsed !== null &&
-          semver.prerelease(parsed)?.[0] === "nightly" &&
+          semver.prerelease(parsed)?.[0] === channel &&
           release.assets?.some((asset) => asset.name === manifestName) === true
         );
       })
@@ -293,14 +294,21 @@ async function fetchLatestCompletedNightlyTag(
   }
 }
 
-function usesDirectNightlyFeed(
+// Which prerelease channel this install tracks, or undefined for stable.
+// Stable resolves through GitHub's /releases/latest, which already excludes
+// drafts and prereleases; every prerelease channel otherwise falls back to
+// electron-updater's releases.atom scan, and that feed LISTS DRAFTS. A draft's
+// assets are not public, so the manifest 404s and the automatic path swallows
+// it: the install goes stale against a release the user can never download.
+function directFeedChannel(
   settings: Pick<UpdateSettings, "channel" | "feature">,
-): boolean {
-  return settings.channel === "nightly" && settings.feature === null;
+): string | undefined {
+  if (settings.feature != null) return `pr${settings.feature.pr}`;
+  return settings.channel === "nightly" ? "nightly" : undefined;
 }
 
 /**
- * Point one Nightly check directly at the newest completed release. Applies to
+ * Point one prerelease check directly at the newest completed release. Applies to
  * automatic checks as well as manual ones: an atom feed that lags a fresh
  * release makes a background check answer "not-available" and the install goes
  * silently stale, and an entry whose manifest has not finished uploading 404s
@@ -310,21 +318,23 @@ function usesDirectNightlyFeed(
  * checks; electron-updater retains the direct provider with the discovered
  * update, so a subsequent Download action still uses the correct asset URLs.
  */
-async function configureDirectNightlyFeed(
+async function configureDirectPrereleaseFeed(
   settings: UpdateSettings,
 ): Promise<(() => void) | undefined> {
-  if (!usesDirectNightlyFeed(settings)) return undefined;
+  const channel = directFeedChannel(settings);
+  if (channel === undefined) return undefined;
   const coordinates = await readAppUpdateYml();
   if (!coordinates) return undefined;
-  const tag = await fetchLatestCompletedNightlyTag(
+  const tag = await fetchLatestCompletedPrereleaseTag(
     coordinates.owner,
     coordinates.repo,
+    channel,
   );
   if (!tag) return undefined;
   const runningVersion = app.getVersion();
   if (
     semver.valid(runningVersion) !== null &&
-    semver.prerelease(runningVersion)?.[0] === "nightly" &&
+    semver.prerelease(runningVersion)?.[0] === channel &&
     semver.lt(tag, runningVersion)
   ) {
     return undefined;
@@ -333,7 +343,7 @@ async function configureDirectNightlyFeed(
   autoUpdater.setFeedURL({
     provider: "generic",
     url: `https://github.com/${coordinates.owner}/${coordinates.repo}/releases/download/${tag}`,
-    channel: "nightly",
+    channel,
     useMultipleRangeRequest: false,
   });
   return () => {
@@ -794,11 +804,12 @@ async function runAutomaticUpdateCheck(
       configureFeed(settings);
       autoUpdater.autoDownload = true;
       applyInstallOnQuitPolicy();
-      // Only nightly resolves a direct feed. Skipping the await entirely on the
-      // other channels keeps this check's event ordering exactly as it was.
-      const restoreFeed = usesDirectNightlyFeed(settings)
-        ? await configureDirectNightlyFeed(settings)
-        : undefined;
+      // Only prerelease channels resolve a direct feed. Skipping the await
+      // entirely on stable keeps its check's event ordering exactly as it was.
+      const restoreFeed =
+        directFeedChannel(settings) !== undefined
+          ? await configureDirectPrereleaseFeed(settings)
+          : undefined;
       try {
         const result = await autoUpdater.checkForUpdates();
         if (result?.downloadPromise) await result.downloadPromise;
@@ -951,7 +962,7 @@ export async function checkForUpdatesNow(
         autoUpdater.autoDownload = false;
         applyInstallOnQuitPolicy();
         broadcastUpdaterStatus({ state: "checking" });
-        const restoreFeed = await configureDirectNightlyFeed(settings);
+        const restoreFeed = await configureDirectPrereleaseFeed(settings);
         try {
           await autoUpdater.checkForUpdates();
         } finally {
