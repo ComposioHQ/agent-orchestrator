@@ -589,10 +589,26 @@ export async function sanitizeRendererProperties(
 			// Manual review is the low-commitment on-ramp for users who will not
 			// enable the automatic pass, so its volume relative to auto runs is the
 			// adoption signal. action mirrors the button's own label.
-			if (properties?.action === "run" || properties?.action === "rerun" || properties?.action === "run_latest") {
+			//
+			// All four values reviewRunActionKind can return are accepted, "reviewing"
+			// included: a trigger that lands while a pass is already running is a real
+			// thing to report, and narrowing this list to three would drop the
+			// property silently rather than record what happened.
+			if (
+				properties?.action === "run" ||
+				properties?.action === "rerun" ||
+				properties?.action === "run_latest" ||
+				properties?.action === "reviewing"
+			) {
 				safe.action = properties.action;
 			}
 			if (typeof properties?.has_override === "boolean") safe.has_override = properties.has_override;
+			// Which surface the user reached for. The command palette and the
+			// inspector are separate on-ramps, and only one of them was instrumented
+			// before, so palette runs went uncounted.
+			if (properties?.source === "inspector" || properties?.source === "command_palette") {
+				safe.source = properties.source;
+			}
 			break;
 		case "ao.renderer.mobile_bridge_toggled":
 			// The host, port, and connection password in the QR never leave the

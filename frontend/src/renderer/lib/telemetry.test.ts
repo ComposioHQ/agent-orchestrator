@@ -169,14 +169,35 @@ describe("telemetry sanitizers", () => {
 		const safe = await sanitizeRendererProperties("ao.renderer.review_triggered", {
 			action: "rerun",
 			has_override: true,
+			source: "inspector",
 			// Must be dropped: the button's translated label and the PR it targets.
 			label: "Re-review",
 			pr_url: "https://github.com/acme/secret-repo/pull/7",
 		});
-		expect(safe).toEqual({ action: "rerun", has_override: true });
+		expect(safe).toEqual({ action: "rerun", has_override: true, source: "inspector" });
 
 		const bogus = await sanitizeRendererProperties("ao.renderer.review_triggered", { action: "resume" });
 		expect(bogus.action).toBeUndefined();
+	});
+
+	// The emit sites pass reviewRunActionKind's result straight through, so any
+	// value it can return has to survive here. Narrowing this list drops the
+	// property silently, leaving a hole in the adoption signal the event exists
+	// to measure.
+	it("accepts every action reviewRunActionKind can return", async () => {
+		for (const action of ["run", "run_latest", "rerun", "reviewing"] as const) {
+			const safe = await sanitizeRendererProperties("ao.renderer.review_triggered", { action });
+			expect(safe.action).toBe(action);
+		}
+	});
+
+	it("keeps the two manual on-ramps apart and drops an unknown one", async () => {
+		for (const source of ["inspector", "command_palette"] as const) {
+			const safe = await sanitizeRendererProperties("ao.renderer.review_triggered", { source });
+			expect(safe.source).toBe(source);
+		}
+		const bogus = await sanitizeRendererProperties("ao.renderer.review_triggered", { source: "keyboard" });
+		expect(bogus.source).toBeUndefined();
 	});
 
 	it("reports the session auto-review switch with only its direction", async () => {

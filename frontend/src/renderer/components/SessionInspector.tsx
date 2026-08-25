@@ -1428,6 +1428,8 @@ function ReviewsSection({
 	});
 	const saveAutoReview = useMutation({
 		mutationFn: async (enabled: boolean) => {
+			// Intent, not effect: emitted before the PUT, so a failed save still
+			// counts as the user reaching for the switch.
 			void captureRendererEvent("ao.renderer.review_auto_review_toggled", { enabled });
 			const { error } = await apiClient.PUT("/api/v1/sessions/{sessionId}/auto-review", {
 				params: { path: { sessionId: session.id } },
@@ -1441,9 +1443,12 @@ function ReviewsSection({
 	});
 	const triggerReview = useMutation({
 		mutationFn: async () => {
+			// Emitted before the request: these renderer events count INTENT, and the
+			// daemon's ao.review.* events are the ground truth for what actually ran.
 			void captureRendererEvent("ao.renderer.review_triggered", {
 				action: reviewRunActionKind(openReviewStatesFor(session, reviewsQuery.data?.reviews ?? []), false),
 				has_override: reviewerOverride !== "",
+				source: "inspector",
 			});
 			// No override sends no body at all, leaving the default path on the wire
 			// exactly as it was.
