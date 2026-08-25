@@ -83,6 +83,34 @@ describe("AssistantMessage streaming", () => {
 		expect(rendered?.textContent?.length).toBeLessThan(100);
 	});
 
+	it("keeps emoji and combining sequences intact while streaming", () => {
+		const view = render(<AssistantMessage message={message()} />);
+		view.rerender(<AssistantMessage message={message({ text: "a👨‍👩‍👧‍👦e\u0301" })} />);
+
+		runFrame(0);
+		runFrame(1000);
+
+		expect(document.querySelector("p")?.textContent).toBe("a👨‍👩‍👧‍👦e\u0301");
+	});
+
+	it("shows the latest snapshot immediately when reduced motion is requested", () => {
+		vi.spyOn(window, "matchMedia").mockImplementation((query) => ({
+			matches: query === "(prefers-reduced-motion: reduce)",
+			media: query,
+			onchange: null,
+			addEventListener: vi.fn(),
+			removeEventListener: vi.fn(),
+			addListener: vi.fn(),
+			removeListener: vi.fn(),
+			dispatchEvent: vi.fn(() => false),
+		}));
+		const view = render(<AssistantMessage message={message()} />);
+		view.rerender(<AssistantMessage message={message({ text: "The complete snapshot" })} />);
+
+		expect(screen.getByText("The complete snapshot")).toBeInTheDocument();
+		expect(frames.size).toBe(0);
+	});
+
 	it("flushes buffered text when streaming completes and restores actions", () => {
 		const view = render(<AssistantMessage message={message()} showCopy />);
 		view.rerender(<AssistantMessage message={message({ text: "aThe complete answer", streaming: true })} showCopy />);
@@ -103,7 +131,7 @@ describe("AssistantMessage streaming", () => {
 	});
 
 	it("shows the message timestamp on hover", () => {
-		const view = render(
+		render(
 			<AssistantMessage
 				message={message({ createdAt: new Date().toISOString(), text: "Timestamped answer", streaming: false })}
 				showCopy

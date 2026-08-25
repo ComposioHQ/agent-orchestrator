@@ -114,6 +114,11 @@ const STREAM_BASE_CHARACTERS_PER_SECOND = 58;
 const STREAM_TARGET_BACKLOG_CHARACTERS = 72;
 const STREAM_MAX_CHARACTERS_PER_SECOND = 720;
 const STREAM_MAX_FRAME_DELTA_MS = 100;
+const STREAM_GRAPHEME_SEGMENTER = new Intl.Segmenter(undefined, { granularity: "grapheme" });
+
+function streamGraphemes(text: string): string[] {
+	return Array.from(STREAM_GRAPHEME_SEGMENTER.segment(text), ({ segment }) => segment);
+}
 
 function useSmoothStreamingText(message: ConversationMessage): string {
 	// A snapshot can first reach the renderer after the provider has already emitted
@@ -121,10 +126,22 @@ function useSmoothStreamingText(message: ConversationMessage): string {
 	const [visibleText, setVisibleText] = useState(() => message.text);
 	const visibleRef = useRef(visibleText);
 	const targetRef = useRef(message.text);
+	const visibleGraphemesRef = useRef(streamGraphemes(visibleText));
+	const targetGraphemesRef = useRef(streamGraphemes(message.text));
 	const messageIdRef = useRef(message.id);
 	const frameRef = useRef<number | undefined>(undefined);
 	const lastFrameAtRef = useRef<number | undefined>(undefined);
 	const fractionalCharactersRef = useRef(0);
+	const [reducedMotion, setReducedMotion] = useState(
+		() => typeof window !== "undefined" && window.matchMedia("(prefers-reduced-motion: reduce)").matches,
+	);
+
+	useEffect(() => {
+		const mediaQuery = window.matchMedia("(prefers-reduced-motion: reduce)");
+		const update = () => setReducedMotion(mediaQuery.matches);
+		mediaQuery.addEventListener("change", update);
+		return () => mediaQuery.removeEventListener("change", update);
+	}, []);
 
 	const cancelDrain = useCallback(() => {
 		if (frameRef.current !== undefined) {
@@ -142,7 +159,7 @@ function useSmoothStreamingText(message: ConversationMessage): string {
 			frameRef.current = undefined;
 			const previousFrameAt = lastFrameAtRef.current ?? now;
 			lastFrameAtRef.current = now;
-			const backlog = targetRef.current.length - visibleRef.current.length;
+			const backlog = targetGraphemesRef.current.length - visibleGraphemesRef.current.length;
 			if (backlog <= 0) {
 				fractionalCharactersRef.current = 0;
 				return;
@@ -163,13 +180,15 @@ function useSmoothStreamingText(message: ConversationMessage): string {
 				return;
 			}
 			fractionalCharactersRef.current -= count;
-			const current = visibleRef.current;
-			const target = targetRef.current;
+			const current = visibleGraphemesRef.current;
+			const target = targetGraphemesRef.current;
 			if (current.length >= target.length) return;
-			const next = current + target.slice(current.length, current.length + count);
+			const nextGraphemes = target.slice(current.length, current.length + count);
+			const next = current.concat(nextGraphemes).join("");
 			visibleRef.current = next;
+			visibleGraphemesRef.current = current.concat(nextGraphemes);
 			setVisibleText(next);
-			if (visibleRef.current.length < targetRef.current.length) {
+			if (visibleGraphemesRef.current.length < targetGraphemesRef.current.length) {
 				frameRef.current = window.requestAnimationFrame(tick);
 			}
 		};
@@ -184,16 +203,20 @@ function useSmoothStreamingText(message: ConversationMessage): string {
 			cancelDrain();
 			messageIdRef.current = message.id;
 			targetRef.current = message.text;
+			targetGraphemesRef.current = streamGraphemes(message.text);
 			const initial = message.text;
 			visibleRef.current = initial;
+			visibleGraphemesRef.current = streamGraphemes(initial);
 			setVisibleText(initial);
 			return;
 		}
 
 		targetRef.current = message.text;
-		if (!message.streaming) {
+		targetGraphemesRef.current = streamGraphemes(message.text);
+		if (!message.streaming || reducedMotion) {
 			cancelDrain();
 			visibleRef.current = message.text;
+			visibleGraphemesRef.current = targetGraphemesRef.current;
 			setVisibleText(message.text);
 			return;
 		}
@@ -201,11 +224,12 @@ function useSmoothStreamingText(message: ConversationMessage): string {
 		// case the durable snapshot is authoritative and should be shown immediately.
 		if (!message.text.startsWith(visibleRef.current)) {
 			visibleRef.current = message.text;
+			visibleGraphemesRef.current = targetGraphemesRef.current;
 			setVisibleText(message.text);
 			return;
 		}
-		if (visibleRef.current.length < message.text.length) scheduleDrain();
-	}, [cancelDrain, message.id, message.text, message.streaming, scheduleDrain]);
+		if (visibleGraphemesRef.current.length < targetGraphemesRef.current.length) scheduleDrain();
+	}, [cancelDrain, message.id, message.text, message.streaming, reducedMotion, scheduleDrain]);
 
 	useEffect(
 		() => cancelDrain,
