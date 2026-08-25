@@ -6,6 +6,7 @@ import { XtermTerminal } from "./XtermTerminal";
 
 const state = vi.hoisted(() => ({
 	fit: vi.fn(),
+	webglAddons: [] as Array<{ disposed: boolean }>,
 	linkHandler: null as null | ((event: MouseEvent, uri: string) => void),
 	lastTerminal: null as null | {
 		keyHandler?: (event: KeyboardEvent) => boolean;
@@ -13,7 +14,7 @@ const state = vi.hoisted(() => ({
 		selection: string;
 		options: Record<string, unknown>;
 		modes: { bracketedPasteMode: boolean; mouseTrackingMode: string };
-		buffer: { active: { type: string } };
+		buffer: { active: { type: string }; normal: { length: number } };
 		scrollLines: ReturnType<typeof vi.fn>;
 		scrollToBottom: ReturnType<typeof vi.fn>;
 		refresh: ReturnType<typeof vi.fn>;
@@ -43,7 +44,7 @@ vi.mock("@xterm/xterm", () => ({
 		keyHandler?: (event: KeyboardEvent) => boolean;
 		wheelHandler?: (event: WheelEvent) => boolean;
 		modes = { bracketedPasteMode: false, mouseTrackingMode: "vt200" };
-		buffer = { active: { type: "normal" } };
+		buffer = { active: { type: "normal" }, normal: { length: 0 } };
 		scrollLines = vi.fn();
 		scrollToBottom = vi.fn();
 		refresh = vi.fn();
@@ -113,6 +114,9 @@ vi.mock("@xterm/addon-fit", () => ({
 		fit() {
 			state.fit();
 		}
+		proposeDimensions() {
+			return undefined;
+		}
 	},
 }));
 
@@ -138,8 +142,14 @@ vi.mock("@xterm/addon-canvas", () => ({
 
 vi.mock("@xterm/addon-webgl", () => ({
 	WebglAddon: class FakeWebglAddon {
+		disposed = false;
+		constructor() {
+			state.webglAddons.push(this);
+		}
 		onContextLoss() {}
-		dispose() {}
+		dispose() {
+			this.disposed = true;
+		}
 	},
 }));
 
@@ -157,6 +167,7 @@ function setNavigatorPlatform(platform: string) {
 describe("XtermTerminal", () => {
 	beforeEach(() => {
 		state.fit.mockReset();
+		state.webglAddons = [];
 		state.lastTerminal = null;
 		state.linkHandler = null;
 		setNavigatorPlatform("Linux x86_64");
@@ -166,40 +177,109 @@ describe("XtermTerminal", () => {
 		window.ao!.terminal.onFontSizeShortcut = () => () => undefined;
 	});
 
-	it("fits on each observed frame while an ancestor requests live terminal resizing", () => {
-		const callbacks: ResizeObserverCallback[] = [];
-		const originalResizeObserver = window.ResizeObserver;
-		class CapturingResizeObserver implements ResizeObserver {
-			constructor(callback: ResizeObserverCallback) {
-				callbacks.push(callback);
-			}
-			disconnect() {}
-			observe() {}
-			unobserve() {}
-		}
-		Object.defineProperty(window, "ResizeObserver", {
-			configurable: true,
-			writable: true,
-			value: CapturingResizeObserver,
-		});
-		try {
-			render(
-				<div data-terminal-live-resize="true">
-					<XtermTerminal theme="dark" />
-				</div>,
+	// The WebGL renderer is loaded once at mount and kept for the terminal's
+	// whole lifetime. A visibility-scoped GPU context was tried and reverted:
+	// releasing it while a pane was reported not-visible could leave an
+	// on-screen pane rendering with the DOM renderer (visibly different text).
+	it("loads the WebGL renderer at mount and keeps it while visibility changes", () => {
+		const { rerender } = render(<XtermTerminal theme="dark" />);
+		expect(state.webglAddons).toHaveLength(1);
+		expect(state.webglAddons[0]!.disposed).toBe(false);
+
+		rerender(<XtermTerminal isVisible={false} theme="dark" />);
+		rerender(<XtermTerminal isVisible theme="dark" />);
+		expect(state.webglAddons).toHaveLength(1);
+		expect(state.webglAddons[0]!.disposed).toBe(false);
+	});
+
+	// VS Code TerminalResizeDebouncer semantics. A small normal buffer (the
+	// alt-screen agent TUI case) makes resizing cheap, so the grid tracks every
+	// observed drag frame live. A large normal buffer makes the column reflow
+	// expensive, so the burst collapses into a single fit released early by the
+	// pointer that ended the drag.
+	describe("drag resize", () => {
+		const withDragHarness = (
+			normalBufferLength: number,
+			run: (observe: ResizeObserverCallback | undefined) => void,
+		) => {
+			vi.useFakeTimers();
+			vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) =>
+				window.setTimeout(() => callback(performance.now()), 0),
 			);
-			state.fit.mockClear();
-
-			act(() => callbacks.at(-1)?.([], {} as ResizeObserver));
-
-			expect(state.fit).toHaveBeenCalledTimes(1);
-		} finally {
+			vi.stubGlobal("cancelAnimationFrame", (id: number) => window.clearTimeout(id));
+			const callbacks: ResizeObserverCallback[] = [];
+			const originalResizeObserver = window.ResizeObserver;
+			class CapturingResizeObserver implements ResizeObserver {
+				constructor(callback: ResizeObserverCallback) {
+					callbacks.push(callback);
+				}
+				disconnect() {}
+				observe() {}
+				unobserve() {}
+			}
 			Object.defineProperty(window, "ResizeObserver", {
 				configurable: true,
 				writable: true,
-				value: originalResizeObserver,
+				value: CapturingResizeObserver,
 			});
-		}
+			try {
+				render(<XtermTerminal theme="dark" />);
+				state.lastTerminal!.buffer.normal.length = normalBufferLength;
+				// Let the mount-time settle timers (rAF, 50/250/600/1200ms) run out
+				// first, so the burst below is measured against a terminal at rest.
+				act(() => vi.advanceTimersByTime(2_000));
+				state.fit.mockClear();
+				run(callbacks.at(-1));
+			} finally {
+				Object.defineProperty(window, "ResizeObserver", {
+					configurable: true,
+					writable: true,
+					value: originalResizeObserver,
+				});
+				vi.unstubAllGlobals();
+				vi.useRealTimers();
+			}
+		};
+
+		it("fits live on every observed frame while the normal buffer is small", () => {
+			withDragHarness(0, (observe) => {
+				for (let frame = 0; frame < 10; frame++) {
+					act(() => {
+						observe?.([], {} as ResizeObserver);
+						vi.advanceTimersByTime(16);
+					});
+				}
+				expect(state.fit).toHaveBeenCalledTimes(10);
+
+				// No quiet window is armed in live mode, so release adds nothing.
+				act(() => {
+					window.dispatchEvent(new Event("pointerup"));
+					vi.advanceTimersByTime(500);
+				});
+				expect(state.fit).toHaveBeenCalledTimes(10);
+			});
+		});
+
+		it("collapses the burst into one fit flushed on pointer release when scrollback is large", () => {
+			withDragHarness(5_000, (observe) => {
+				for (let frame = 0; frame < 10; frame++) {
+					act(() => {
+						observe?.([], {} as ResizeObserver);
+						vi.advanceTimersByTime(16);
+					});
+				}
+				expect(state.fit).not.toHaveBeenCalled();
+
+				act(() => {
+					window.dispatchEvent(new Event("pointerup"));
+				});
+				expect(state.fit).toHaveBeenCalledTimes(1);
+
+				// The window was consumed by the release; nothing lands afterwards.
+				act(() => vi.advanceTimersByTime(500));
+				expect(state.fit).toHaveBeenCalledTimes(1);
+			});
+		});
 	});
 
 	it("finishes retained activation when xterm emits no render event", async () => {

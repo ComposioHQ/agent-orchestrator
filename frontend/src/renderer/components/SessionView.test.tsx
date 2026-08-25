@@ -1113,22 +1113,22 @@ describe("SessionView", () => {
 		expect(screen.getByTestId("panel-inspector")).toHaveAttribute("data-state", "collapsed");
 	});
 
-	it("marks the split for live terminal fitting throughout the inspector transition", () => {
+	it("marks the split for the inspector label transition until the spring settles", () => {
 		vi.useFakeTimers();
 		try {
 			render(<SessionView sessionId="sess-1" />);
 
 			fireEvent.keyDown(window, { key: "B", ctrlKey: true, shiftKey: true });
 			const split = screen.getByTestId("panel-group");
-			expect(split).toHaveAttribute("data-terminal-live-resize", "true");
+			expect(split).toHaveAttribute("data-inspector-transition", "true");
 			expect(split).toHaveAttribute("data-topbar-secondary-label-mode", "expanded");
 
-			act(() => vi.advanceTimersByTime(299));
-			expect(split).toHaveAttribute("data-terminal-live-resize", "true");
+			act(() => vi.advanceTimersByTime(399));
+			expect(split).toHaveAttribute("data-inspector-transition", "true");
 			expect(split).toHaveAttribute("data-topbar-secondary-label-mode", "expanded");
 
 			act(() => vi.advanceTimersByTime(1));
-			expect(split).not.toHaveAttribute("data-terminal-live-resize");
+			expect(split).not.toHaveAttribute("data-inspector-transition");
 			expect(split).not.toHaveAttribute("data-topbar-secondary-label-mode");
 		} finally {
 			vi.useRealTimers();
@@ -1144,7 +1144,7 @@ describe("SessionView", () => {
 			act(() => useUiStore.getState().setInspectorOpen("sess-1", true));
 
 			const split = screen.getByTestId("panel-group");
-			expect(split).toHaveAttribute("data-terminal-live-resize", "true");
+			expect(split).toHaveAttribute("data-inspector-transition", "true");
 			expect(split).toHaveAttribute("data-inspector-label-mode", "expanded");
 			expect(split).toHaveAttribute("data-topbar-secondary-label-mode", "compact");
 

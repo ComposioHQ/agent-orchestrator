@@ -28,6 +28,7 @@ import { SearchAddon } from "@xterm/addon-search";
 import { Unicode11Addon } from "@xterm/addon-unicode11";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import { WebglAddon } from "@xterm/addon-webgl";
+import { diag } from "../lib/diag";
 import { terminalFontSizeDelta as shortcutFontSizeDelta } from "../../shared/shortcuts";
 import type {
 	AttachableTerminal,
@@ -82,9 +83,16 @@ export type XtermTerminalProps = {
 	onReady?: (terminal: AttachableTerminal) => void;
 };
 
-// Prefer the WebGL renderer, fall back to 2D canvas. Both rasterize box-drawing
-// glyphs themselves onto a fixed cell grid; the DOM renderer does not, so TUI
-// borders would drift. Loaded after open().
+// Prefer the WebGL renderer, fall back to 2D canvas — the same renderer choice
+// VS Code and Superset ship. Both draw the grid onto a GPU-composited surface,
+// so a repaint is a texture update instead of the DOM renderer's relayout of
+// every row span (which reads as the whole terminal "reloading" on resize).
+// Both also rasterize box-drawing glyphs themselves onto a fixed cell grid;
+// the DOM renderer does not, so TUI borders would drift. Loaded once after
+// open(), for the terminal's whole lifetime — a visibility-scoped variant was
+// tried and reverted: releasing the context while a pane was reported
+// not-visible could leave an on-screen pane on the DOM renderer, which the
+// user immediately noticed as the terminal "looking different".
 function loadRenderer(term: Terminal): void {
 	let fallbackLoaded = false;
 	const loadCanvasFallback = () => {
@@ -99,6 +107,7 @@ function loadRenderer(term: Terminal): void {
 	try {
 		const webgl = new WebglAddon();
 		webgl.onContextLoss(() => {
+			diag("gpu CONTEXT LOSS -> canvas fallback");
 			webgl.dispose();
 			loadCanvasFallback();
 		});
@@ -215,8 +224,25 @@ type XtermInternal = Terminal & {
 			enable: () => void;
 			shouldForceSelection: (event: MouseEvent) => boolean;
 		};
+		_renderService?: {
+			_renderRows?: (start: number, end: number) => void;
+		};
 	};
 };
+
+// Backport of xterm.js#5529 (shipped in 6.1, which Superset runs): resizing the
+// WebGL canvas clears it synchronously but repaints through an animation-frame
+// debouncer, so every resize composites one blank frame first — the flicker of
+// xterm.js#4922. Rendering synchronously right after a resize paints the new
+// canvas in the same frame. ResizeObserver callbacks run before paint, so a fit
+// plus this call never lets the cleared canvas reach the screen.
+function forceSyncRender(term: Terminal): void {
+	try {
+		(term as XtermInternal)._core?._renderService?._renderRows?.(0, term.rows - 1);
+	} catch {
+		// Private API: on an xterm upgrade this degrades to the debounced repaint.
+	}
+}
 
 type DevXtermHost = HTMLDivElement & {
 	__aoXtermForTest?: Terminal;
@@ -635,19 +661,31 @@ export function XtermTerminal(props: XtermTerminalProps) {
 			// output, but must not refit or emit PTY resizes while hidden.
 			if (callbacksRef.current.isVisible === false) return;
 			try {
+				const before = `${term.cols}x${term.rows}`;
 				fit.fit();
+				if (`${term.cols}x${term.rows}` !== before) {
+					diag(`fit ${before} -> ${term.cols}x${term.rows}`);
+				}
+				forceSyncRender(term);
 			} catch {
 				// Container momentarily has no size (hidden/unmounting) — a later
 				// trigger retries.
 			}
 		};
-		// ResizeObserver fires for every intermediate box during native fullscreen,
-		// sidebar drags and other animated application layout. Fitting on every
-		// callback repeatedly reallocates xterm's WebGL surface, so those changes
-		// normally settle through the debounce below. A short, explicit live-resize
-		// marker lets controlled layout animations keep xterm visually in step.
-		const FIT_QUIET_MS = 120;
-		const FIT_CAP_MS = 500;
+		// VS Code's TerminalResizeDebouncer semantics, verbatim thresholds:
+		// - Normal buffer under 200 lines → resizing is CHEAP (an alt-screen agent
+		//   TUI never grows the normal buffer), so fit fully live on every observed
+		//   frame. This is why VS Code's terminal tracks a splitter drag smoothly —
+		//   the grid follows the pane in the same frame, no freeze and no snap.
+		// - Normal buffer at/over 200 lines → the column reflow rewraps all of
+		//   scrollback, so rows still apply live but columns wait for a 100ms quiet
+		//   window (flushed early on pointer release).
+		// Each geometry change is followed by forceSyncRender so the resized canvas
+		// never composites blank (xterm.js#4922 / #5529).
+		const CHEAP_RESIZE_NORMAL_BUFFER_LINES = 200;
+		const FIT_QUIET_MS = 100;
+		// Hidden activation must reveal promptly even if its slot never goes quiet.
+		const FIT_HIDDEN_CAP_MS = 500;
 		let fitQuietTimer: ReturnType<typeof setTimeout> | null = null;
 		let fitCapTimer: ReturnType<typeof setTimeout> | null = null;
 		let fitAllowsHidden = false;
@@ -665,7 +703,12 @@ export function XtermTerminal(props: XtermTerminalProps) {
 			}
 			if (fitAllowsHidden || callbacksRef.current.isVisible !== false) {
 				try {
+					const before = `${term.cols}x${term.rows}`;
 					fit.fit();
+					if (`${term.cols}x${term.rows}` !== before) {
+						diag(`debounced-fit ${before} -> ${term.cols}x${term.rows} hidden=${fitAllowsHidden}`);
+					}
+					forceSyncRender(term);
 				} catch {
 					// The next observer/window event retries if the host is transiently
 					// unmeasurable (for example while entering fullscreen).
@@ -682,18 +725,56 @@ export function XtermTerminal(props: XtermTerminalProps) {
 			if (onSettled) fitSettledListeners.add(onSettled);
 			if (fitQuietTimer !== null) clearTimeout(fitQuietTimer);
 			fitQuietTimer = setTimeout(flushScheduledFit, FIT_QUIET_MS);
-			if (fitCapTimer === null) fitCapTimer = setTimeout(flushScheduledFit, FIT_CAP_MS);
+			if (fitAllowsHidden && fitCapTimer === null) {
+				fitCapTimer = setTimeout(flushScheduledFit, FIT_HIDDEN_CAP_MS);
+			}
+		};
+		// Rows never rewrap the buffer, so they track the drag live even when the
+		// column reflow is being debounced.
+		const applyLiveRowResize = () => {
+			if (callbacksRef.current.isVisible === false) return;
+			const proposed = fit.proposeDimensions();
+			if (!proposed || !proposed.cols || !proposed.rows) return;
+			if (proposed.rows !== term.rows) {
+				term.resize(term.cols, proposed.rows);
+				forceSyncRender(term);
+			}
 		};
 		// While activation preparation is pending, observer/window events must keep
 		// extending the same quiet window even though the container is intentionally
 		// hidden behind the cover. A normally parked terminal still ignores them.
-		const scheduleVisibleFit = () => scheduleStableFit(fitAllowsHidden);
+		const scheduleVisibleFit = () => {
+			if (fitAllowsHidden) {
+				scheduleStableFit(true);
+				return;
+			}
+			if (term.buffer.normal.length < CHEAP_RESIZE_NORMAL_BUFFER_LINES) {
+				if (fitQuietTimer !== null) {
+					clearTimeout(fitQuietTimer);
+					fitQuietTimer = null;
+				}
+				fitTerminal();
+				return;
+			}
+			applyLiveRowResize();
+			scheduleStableFit(false);
+		};
 		fitRef.current = scheduleVisibleFit;
+		// A separator drag ends on pointer release, not on a quiet box: collapse the
+		// remaining quiet window so the single reflow lands on the same gesture. An
+		// activation window (fitAllowsHidden) is left alone — it must still reveal
+		// only after the cache has finished preparing the real slot.
+		const flushFitOnPointerRelease = () => {
+			if (fitAllowsHidden || fitQuietTimer === null) return;
+			flushScheduledFit();
+		};
+		window.addEventListener("pointerup", flushFitOnPointerRelease, true);
+		window.addEventListener("pointercancel", flushFitOnPointerRelease, true);
 
 		const raf = requestAnimationFrame(fitTerminal);
 		// 50/250ms catch the common settle; 600/1200ms are a session-bounded
-		// backstop. By 600ms the WebGL atlas and font metrics are unambiguously
-		// warm, so even if the convergence loop below detached at a briefly-stable
+		// backstop. By 600ms the font metrics are unambiguously stable, so even if
+		// the convergence loop below detached at a briefly-stable
 		// wrong measurement, this re-measures the real cell box and corrects,
 		// firing the PTY resize that makes the pane repaint cleanly (clearing
 		// any ghost frame). fit() is idempotent: a no-op when the grid is already
@@ -702,21 +783,15 @@ export function XtermTerminal(props: XtermTerminalProps) {
 		if (document.fonts?.ready) {
 			void document.fonts.ready.then(() => scheduleStableFit());
 		}
-		const observer = new ResizeObserver(() => {
-			if (host.closest('[data-terminal-live-resize="true"]')) {
-				fitTerminal();
-				return;
-			}
-			scheduleVisibleFit();
-		});
+		const observer = new ResizeObserver(scheduleVisibleFit);
 		observer.observe(host);
 
 		// Recovery re-fit that does NOT depend on the host box changing size.
 		//
 		// FitAddon derives the grid by dividing the pane box by the renderer's
-		// measured cell box. That box is measured asynchronously: the WebGL
-		// renderer loads after open() and the monospace font's real metrics
-		// resolve a frame or more later, so the early fits above can divide by a
+		// measured cell box. That box is measured asynchronously: the monospace
+		// font's real metrics resolve a frame or more after open(), so the early fits
+		// above can divide by a
 		// not-yet-final cell box, mis-count cols/rows, and clip the grid inside the
 		// pane. The fixed settle window (rAF, timeouts, fonts.ready) may all run
 		// before the cell box is final, and the ResizeObserver never fires to
@@ -726,8 +801,8 @@ export function XtermTerminal(props: XtermTerminalProps) {
 		// onRender fires on every renderer repaint, including the repaint after
 		// the metrics settle. Each fire re-proposes dimensions from the *current*
 		// measured cell box. Crucially we never re-fit straight off a single
-		// frame's proposal: the WebGL atlas warm-up can emit a one-frame transient
-		// cell box (e.g. a doubled box on a HiDPI display) that halves the grid,
+		// frame's proposal: font or DPI settling can emit a one-frame transient cell
+		// box (e.g. a doubled box on a HiDPI display) that halves the grid,
 		// and committing it would lock the terminal at half size and detach (the
 		// #313 ghost). So a differing proposal must REPEAT identically across two
 		// consecutive renders — proving the measurement settled — before we apply
@@ -741,6 +816,15 @@ export function XtermTerminal(props: XtermTerminalProps) {
 		let refits = 0;
 		let pending: { cols: number; rows: number } | null = null;
 		const stabilizer = term.onRender(() => {
+			// A scheduled fit already owns the geometry. Without this the mid-drag
+			// pause between two pointer frames looks like a settled measurement, and
+			// this listener commits a reflow the debounce was deliberately holding —
+			// two geometry owners fighting, which is the churn we are removing.
+			if (fitQuietTimer !== null || fitCapTimer !== null) {
+				pending = null;
+				stableFrames = 0;
+				return;
+			}
 			const proposed = fit.proposeDimensions();
 			if (!proposed || !proposed.cols || !proposed.rows) return;
 			if (proposed.cols !== term.cols || proposed.rows !== term.rows) {
@@ -900,6 +984,7 @@ export function XtermTerminal(props: XtermTerminalProps) {
 
 		let cancelActivationPreparation: (() => void) | null = null;
 		const prepareForActivation = (): Promise<void> => {
+			diag("prepareForActivation (pane hidden behind cover)");
 			cancelActivationPreparation?.();
 			return new Promise((resolve) => {
 				let firstFrame: number | null = null;
@@ -977,6 +1062,8 @@ export function XtermTerminal(props: XtermTerminalProps) {
 			observer.disconnect();
 			stabilizer.dispose();
 			window.removeEventListener("resize", scheduleVisibleFit);
+			window.removeEventListener("pointerup", flushFitOnPointerRelease, true);
+			window.removeEventListener("pointercancel", flushFitOnPointerRelease, true);
 			shell.removeEventListener("copy", copyInput);
 			window.removeEventListener("keydown", copyShortcut, true);
 			selectionChange.dispose();

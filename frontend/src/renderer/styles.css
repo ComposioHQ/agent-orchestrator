@@ -2512,11 +2512,11 @@ body.is-resizing-x .session-split[data-workspace-resizing="true"] [data-slot="in
 /* The session topbar lives inside the panel that grows while the inspector
  * moves. Lock the Orchestrator button's final responsive state for that motion
  * so its label starts changing with the panel instead of at a late breakpoint. */
-.session-split[data-terminal-live-resize="true"]
+.session-split[data-inspector-transition="true"]
 	.workspace-topbar-actions
 	[data-priority="secondary"]
 	[data-compact-label],
-.session-split[data-terminal-live-resize="true"]
+.session-split[data-inspector-transition="true"]
 	.workspace-topbar-actions
 	[data-priority="secondary"].topbar-control {
 	transition-duration: var(--session-inspector-motion-duration);
@@ -2526,7 +2526,7 @@ body.is-resizing-x .session-split[data-workspace-resizing="true"] [data-slot="in
 	);
 }
 
-.session-split[data-terminal-live-resize="true"][data-topbar-secondary-label-mode="expanded"]
+.session-split[data-inspector-transition="true"][data-topbar-secondary-label-mode="expanded"]
 	.workspace-topbar-actions
 	[data-priority="secondary"]
 	[data-compact-label] {
@@ -2535,14 +2535,14 @@ body.is-resizing-x .session-split[data-workspace-resizing="true"] [data-slot="in
 	transform: translateX(0);
 }
 
-.session-split[data-terminal-live-resize="true"][data-topbar-secondary-label-mode="expanded"]
+.session-split[data-inspector-transition="true"][data-topbar-secondary-label-mode="expanded"]
 	.workspace-topbar-actions
 	[data-priority="secondary"].topbar-control {
 	gap: var(--space-1_5);
 	padding-inline: var(--space-2_5);
 }
 
-.session-split[data-terminal-live-resize="true"][data-topbar-secondary-label-mode="compact"]
+.session-split[data-inspector-transition="true"][data-topbar-secondary-label-mode="compact"]
 	.workspace-topbar-actions
 	[data-priority="secondary"]
 	[data-compact-label] {
@@ -2551,7 +2551,7 @@ body.is-resizing-x .session-split[data-workspace-resizing="true"] [data-slot="in
 	transform: translateX(-2px);
 }
 
-.session-split[data-terminal-live-resize="true"][data-topbar-secondary-label-mode="compact"]
+.session-split[data-inspector-transition="true"][data-topbar-secondary-label-mode="compact"]
 	.workspace-topbar-actions
 	[data-priority="secondary"].topbar-control {
 	gap: 0;
@@ -2562,10 +2562,10 @@ body.is-resizing-x .session-split[data-workspace-resizing="true"] [data-slot="in
 	.workspace-topbar-actions .topbar-control,
 	.workspace-topbar-actions [data-compact-label],
 	.session-pinned-actions-reserve,
-	.session-split[data-terminal-live-resize="true"]
+	.session-split[data-inspector-transition="true"]
 		.workspace-topbar-actions
 		[data-priority="secondary"].topbar-control,
-	.session-split[data-terminal-live-resize="true"]
+	.session-split[data-inspector-transition="true"]
 		.workspace-topbar-actions
 		[data-priority="secondary"]
 		[data-compact-label] {
@@ -3192,7 +3192,7 @@ body.is-resizing-x .session-split[data-workspace-resizing="true"] [data-slot="in
 /* Keep one label layout for the full automatic panel transition. Without this
  * lock, crossing the compact container threshold near the end of the resize
  * makes the tab text reflow after the inspector itself has nearly settled. */
-.session-split[data-terminal-live-resize="true"][data-inspector-label-mode="expanded"]
+.session-split[data-inspector-transition="true"][data-inspector-label-mode="expanded"]
 	.session-inspector__responsive-label {
 	max-width: 5.5rem;
 	margin-left: var(--space-0_5);
@@ -3200,7 +3200,7 @@ body.is-resizing-x .session-split[data-workspace-resizing="true"] [data-slot="in
 	transform: translateX(0);
 }
 
-.session-split[data-terminal-live-resize="true"][data-inspector-label-mode="compact"]
+.session-split[data-inspector-transition="true"][data-inspector-label-mode="compact"]
 	.session-inspector__responsive-label {
 	max-width: 0;
 	margin-left: 0;

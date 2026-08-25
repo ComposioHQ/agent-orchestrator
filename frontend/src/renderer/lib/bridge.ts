@@ -54,10 +54,19 @@ export const aoBridge: AoBridge =
 			readText: async () => (navigator.clipboard?.readText ? navigator.clipboard.readText() : ""),
 		},
 		daemon: {
-			getStatus: async () => ({
-				state: "stopped",
-				message: "Electron preload is not available in browser preview.",
-			}),
+			// Browser preview normally has no daemon. With an explicit
+			// VITE_AO_API_BASE_URL the renderer is deliberately pointed at a
+			// running daemon (see the /api + /mux dev proxy in
+			// vite.renderer.config.ts), so report ready and leave the port unset —
+			// applyDaemonStatus then keeps the explicit base instead of deriving
+			// a direct 127.0.0.1 origin that would fail CORS from a browser tab.
+			getStatus: async () =>
+				import.meta.env.VITE_AO_API_BASE_URL
+					? { state: "ready" }
+					: {
+							state: "stopped",
+							message: "Electron preload is not available in browser preview.",
+						},
 			start: async () => ({ state: "starting" }),
 			stop: async () => ({ state: "stopped" }),
 			restart: async () => ({ state: "starting" }),

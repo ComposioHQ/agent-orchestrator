@@ -219,9 +219,8 @@ type SessionViewProps = {
 	sessionId: string;
 };
 
-// Mirrors the left sidebar: a Motion gap takes layout width while a sibling
-// panel slides on `x` with SHELL_PANEL_SPRING. Dragging uses useResizable
-// (clamped at min, never auto-collapse). Collapse is the explicit toggle only.
+// Reserve layout space in one update while the inspector itself slides on `x`.
+// Animating the gap width would relayout xterm on every spring frame.
 function SessionInspectorRail({
 	children,
 	isOpen,
@@ -281,6 +280,7 @@ function SessionInspectorRail({
 
 	const transition = prefersReducedMotion ? { duration: 0 } : SHELL_PANEL_SPRING;
 	const hidden = !isOpen && settledClosed;
+	const reservesSpace = isOpen || !settledClosed;
 
 	const handleAnimationComplete = useCallback(() => {
 		if (!isOpen) onCloseAnimationComplete?.();
@@ -288,13 +288,11 @@ function SessionInspectorRail({
 
 	return (
 		<>
-			<motion.div
+			<div
 				aria-hidden="true"
 				className="relative max-w-(--session-inspector-max-width) shrink-0"
 				data-slot="inspector-gap"
-				initial={false}
-				animate={{ width: isOpen ? `var(${inspectorWidthVar}, ${sizing.defaultWidth}px)` : 0 }}
-				transition={transition}
+				style={{ width: reservesSpace ? `var(${inspectorWidthVar}, ${sizing.defaultWidth}px)` : 0 }}
 			/>
 			<motion.div
 				aria-hidden={hidden}
@@ -367,7 +365,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	const { daemonStatus } = useShell();
 	const previewBaselineRef = useRef<{ sessionId: string; key: string } | null>(null);
 	const sessionSplitRef = useRef<HTMLDivElement | null>(null);
-	const terminalLiveResizeTimerRef = useRef<number | null>(null);
+	const inspectorTransitionTimerRef = useRef<number | null>(null);
 	const workspaceResizeTimerRef = useRef<number | null>(null);
 	const browserPopOutHandoffFrameRef = useRef<number | null>(null);
 	const [inspectorSettledClosed, setInspectorSettledClosed] = useState(!isInspectorOpen);
@@ -385,36 +383,36 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	const browserPoppedOut = browserPopOutPhase !== "docked";
 	const [interfaceSwitchDialogOpen, setInterfaceSwitchDialogOpen] = useState(false);
 	const isNativeFullScreen = useWindowFullScreen();
-	const stopTerminalLiveResize = useCallback(() => {
-		if (terminalLiveResizeTimerRef.current !== null) {
-			window.clearTimeout(terminalLiveResizeTimerRef.current);
-			terminalLiveResizeTimerRef.current = null;
+	const stopInspectorTransition = useCallback(() => {
+		if (inspectorTransitionTimerRef.current !== null) {
+			window.clearTimeout(inspectorTransitionTimerRef.current);
+			inspectorTransitionTimerRef.current = null;
 		}
-		sessionSplitRef.current?.removeAttribute("data-terminal-live-resize");
+		sessionSplitRef.current?.removeAttribute("data-inspector-transition");
 		sessionSplitRef.current?.removeAttribute("data-inspector-label-mode");
 		sessionSplitRef.current?.removeAttribute("data-topbar-secondary-label-mode");
 	}, []);
-	const startTerminalLiveResize = useCallback(
+	const startInspectorTransition = useCallback(
 		(labelMode: "compact" | "expanded", topbarLabelMode: "compact" | "expanded") => {
 			const split = sessionSplitRef.current;
 			if (!split) return;
-			if (terminalLiveResizeTimerRef.current !== null) {
-				window.clearTimeout(terminalLiveResizeTimerRef.current);
+			if (inspectorTransitionTimerRef.current !== null) {
+				window.clearTimeout(inspectorTransitionTimerRef.current);
 			}
-			split.setAttribute("data-terminal-live-resize", "true");
+			split.setAttribute("data-inspector-transition", "true");
 			split.setAttribute("data-inspector-label-mode", labelMode);
 			split.setAttribute("data-topbar-secondary-label-mode", topbarLabelMode);
-			terminalLiveResizeTimerRef.current = window.setTimeout(() => {
-				split.removeAttribute("data-terminal-live-resize");
+			inspectorTransitionTimerRef.current = window.setTimeout(() => {
+				split.removeAttribute("data-inspector-transition");
 				split.removeAttribute("data-inspector-label-mode");
 				split.removeAttribute("data-topbar-secondary-label-mode");
-				terminalLiveResizeTimerRef.current = null;
+				inspectorTransitionTimerRef.current = null;
 			}, INSPECTOR_SPRING_MS);
 		},
 		[],
 	);
 
-	useEffect(() => stopTerminalLiveResize, [stopTerminalLiveResize]);
+	useEffect(() => stopInspectorTransition, [stopInspectorTransition]);
 
 	const session = workspaces.flatMap((workspace) => workspace.sessions).find((s) => s.id === sessionId);
 	const interfaceSwitch = useSessionInterfaceTransition(session?.id);
@@ -628,12 +626,12 @@ export function SessionView({ sessionId }: SessionViewProps) {
 			const groupWidth = sessionSplitRef.current?.clientWidth || window.innerWidth;
 			const availableWidth = Math.max(0, groupWidth - INSPECTOR_SEPARATOR_RESERVE_PX);
 			const targetInspectorWidth = Number.parseFloat(initialInspectorSize(nextSizing, availableWidth));
-			startTerminalLiveResize(
+			startInspectorTransition(
 				targetInspectorWidth <= INSPECTOR_COMPACT_MAX_PX ? "compact" : "expanded",
 				topbarSecondaryLabelMode(Math.max(0, availableWidth - targetInspectorWidth)),
 			);
 		},
-		[armWorkspaceTransition, startTerminalLiveResize],
+		[armWorkspaceTransition, startInspectorTransition],
 	);
 
 	const transitionInspectorView = useCallback(
@@ -1066,13 +1064,13 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	useLayoutEffect(() => {
 		if (!hasInspector) {
 			setInspectorSettledClosed(true);
-			stopTerminalLiveResize();
+			stopInspectorTransition();
 			return;
 		}
 		if (!inspectorMotionReadyRef.current) {
 			setInspectorSettledClosed(!isInspectorOpen);
 		}
-	}, [hasInspector, isInspectorOpen, stopTerminalLiveResize]);
+	}, [hasInspector, isInspectorOpen, stopInspectorTransition]);
 	useEffect(() => {
 		if (!hasInspector || !inspectorMotionReadyRef.current) return;
 		if (isInspectorOpen) {
@@ -1080,15 +1078,15 @@ export function SessionView({ sessionId }: SessionViewProps) {
 			const groupWidth = sessionSplitRef.current?.clientWidth || window.innerWidth;
 			const availableWidth = Math.max(0, groupWidth - INSPECTOR_SEPARATOR_RESERVE_PX);
 			const targetInspectorWidth = Number.parseFloat(initialInspectorSize(sizing, availableWidth));
-			startTerminalLiveResize(
+			startInspectorTransition(
 				targetInspectorWidth <= INSPECTOR_COMPACT_MAX_PX ? "compact" : "expanded",
 				topbarSecondaryLabelMode(Math.max(0, availableWidth - targetInspectorWidth)),
 			);
 			return;
 		}
 		const groupWidth = sessionSplitRef.current?.clientWidth || window.innerWidth;
-		startTerminalLiveResize("expanded", topbarSecondaryLabelMode(groupWidth));
-	}, [hasInspector, isInspectorOpen, sizing, startTerminalLiveResize]);
+		startInspectorTransition("expanded", topbarSecondaryLabelMode(groupWidth));
+	}, [hasInspector, isInspectorOpen, sizing, startInspectorTransition]);
 	useEffect(() => {
 		if (!hasInspector) {
 			inspectorMotionReadyRef.current = false;
