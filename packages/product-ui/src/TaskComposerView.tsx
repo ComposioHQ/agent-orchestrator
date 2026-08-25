@@ -180,7 +180,8 @@ export function TaskComposerView({
 				ref={textareaRef}
 				id={promptId}
 				autoFocus={autoFocusPrompt}
-				className="min-h-[calc(2lh+1.75rem)] max-h-[calc(8lh+1.75rem)] w-full resize-none overflow-y-auto bg-transparent px-4 pb-3 pt-4 text-md leading-relaxed text-foreground outline-none placeholder:text-passive"
+				className="min-h-[calc(2lh+1.75rem)] max-h-[calc(8lh+1.75rem)] w-full resize-none overflow-y-auto bg-transparent px-4 pb-3 pt-4 text-md leading-relaxed text-foreground outline-none placeholder:text-passive disabled:cursor-not-allowed disabled:opacity-50"
+				disabled={submission.isSubmitting}
 				placeholder={labels.taskPlaceholder}
 				value={prompt}
 				onChange={(event) => onPromptChange(event.target.value)}
