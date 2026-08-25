@@ -201,7 +201,28 @@ func normalizeConfigOptions(options []acpsdk.SessionConfigOption) []ports.ChatCo
 			})
 		}
 	}
+	addAgentModeChoice(out)
 	return out
+}
+
+// Some ACP providers expose their normal operating mode only implicitly when
+// they advertise Plan. Keep the standard Agent mode available in that case so
+// the chat picker can leave planning and return to normal execution.
+func addAgentModeChoice(options []ports.ChatConfigOption) {
+	for i := range options {
+		option := &options[i]
+		if option.Type != ports.ChatConfigOptionSelect || (option.Category != "mode" && option.ID != "mode") {
+			continue
+		}
+		hasPlan, hasAgent := false, false
+		for _, choice := range option.Choices {
+			hasPlan = hasPlan || choice.Value == "plan"
+			hasAgent = hasAgent || choice.Value == "agent"
+		}
+		if hasPlan && !hasAgent {
+			option.Choices = append(option.Choices, ports.ChatConfigOptionChoice{Value: "agent", Name: "Agent"})
+		}
+	}
 }
 
 func normalizeSessionOptions(
@@ -238,6 +259,7 @@ func normalizeSessionOptions(
 			Current: ports.ChatConfigOptionValue{Select: string(modes.CurrentModeId)}, Choices: choices,
 		})
 	}
+	addAgentModeChoice(out)
 	return out
 }
 

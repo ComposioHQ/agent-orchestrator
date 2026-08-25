@@ -30,7 +30,10 @@ const OPTIONS: ChatConfigOption[] = [
 		category: "mode",
 		type: "select",
 		currentValue: "ask",
-		choices: [{ value: "ask", name: "Ask before edits" }],
+		choices: [
+			{ value: "ask", name: "Ask before edits" },
+			{ value: "agent", name: "Agent" },
+		],
 	},
 	{
 		id: "fast",
@@ -72,6 +75,9 @@ describe("ACP session config options", () => {
 		expect(screen.queryByText("Default")).not.toBeInTheDocument();
 		expect(screen.queryByText("Provider default")).not.toBeInTheDocument();
 
+		await user.click(screen.getByRole("button", { name: "Permission mode" }));
+		expect(screen.getByRole("menuitem", { name: "Agent" })).toBeInTheDocument();
+		await user.keyboard("{Escape}");
 		await user.click(
 			screen.getByRole("button", { name: "Model and reasoning effort for the next turn" }),
 		);

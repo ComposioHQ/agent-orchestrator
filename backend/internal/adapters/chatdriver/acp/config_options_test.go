@@ -80,6 +80,20 @@ func TestReplaceConfigOptionsReplacesWholesale(t *testing.T) {
 	}
 }
 
+func TestNormalizeSessionOptionsAddsAgentAlongsidePlan(t *testing.T) {
+	options := normalizeSessionOptions(nil, nil, &acpsdk.SessionModeState{
+		CurrentModeId:  "plan",
+		AvailableModes: []acpsdk.SessionMode{{Id: "plan", Name: "Plan"}},
+	})
+
+	if len(options) != 1 || len(options[0].Choices) != 2 {
+		t.Fatalf("mode options = %#v, want Plan and Agent", options)
+	}
+	if options[0].Choices[1].Value != "agent" || options[0].Choices[1].Name != "Agent" {
+		t.Fatalf("mode choices = %#v, want Agent appended", options[0].Choices)
+	}
+}
+
 // The bug this guards: an agent accepts session/set_config_option but answers
 // without the rebuilt catalog. Wiping made the picker vanish; returning the
 // pre-change catalog would show the old value for a change the agent already
