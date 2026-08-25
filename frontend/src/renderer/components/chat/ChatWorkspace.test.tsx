@@ -1677,6 +1677,70 @@ describe("ChatWorkspace message actions", () => {
 		expect(readChatSessionDraft(snapshot.sessionId).inlineEdit).toBeUndefined();
 	});
 
+	it("durably unlocks a definitively rejected inline edit without consuming its text", async () => {
+		const user = userEvent.setup();
+		const snapshot = idleSnapshot();
+		const onEditMessage = vi.fn(async () => ({
+			status: "not-accepted" as const,
+			reason: "The provider rejected this edit before accepting it.",
+		}));
+		const first = render(<ChatWorkspace snapshot={snapshot} onEditMessage={onEditMessage} />);
+		await user.click(screen.getAllByRole("button", { name: "Edit user message" })[0]!);
+		const editor = screen.getByRole("textbox", { name: "Edit message" });
+		await user.clear(editor);
+		await user.type(editor, "preserve rejected edit");
+		await user.click(screen.getByRole("button", { name: "Send edited message" }));
+
+		await waitFor(() => expect(onEditMessage).toHaveBeenCalledTimes(1));
+		await waitFor(() => expect(editor).not.toBeDisabled());
+		expect(editor).toHaveValue("preserve rejected edit");
+		expect(screen.getByRole("alert")).toHaveTextContent("provider rejected this edit");
+		expect(screen.queryByRole("button", { name: "Retry edit safely" })).not.toBeInTheDocument();
+		expect(readChatSessionDraft(snapshot.sessionId).inlineEditDelivery).toBeUndefined();
+		first.unmount();
+
+		render(<ChatWorkspace snapshot={snapshot} onEditMessage={onEditMessage} />);
+		expect(await screen.findByRole("textbox", { name: "Edit message" })).toHaveValue(
+			"preserve rejected edit",
+		);
+		expect(screen.queryByRole("button", { name: "Retry edit safely" })).not.toBeInTheDocument();
+		expect(onEditMessage).toHaveBeenCalledTimes(1);
+	});
+
+	it("warns before explicitly abandoning uncertain inline-edit recovery after remount", async () => {
+		const user = userEvent.setup();
+		const snapshot = idleSnapshot();
+		const onEditMessage = vi.fn().mockRejectedValue(new Error("outcome unknown"));
+		const common = { snapshot, onEditMessage };
+		const first = render(<ChatWorkspace {...common} />);
+		await user.click(screen.getAllByRole("button", { name: "Edit user message" })[0]!);
+		const editor = screen.getByRole("textbox", { name: "Edit message" });
+		await user.clear(editor);
+		await user.type(editor, "possibly delivered edit");
+		await user.click(screen.getByRole("button", { name: "Send edited message" }));
+
+		await waitFor(() => expect(onEditMessage).toHaveBeenCalledTimes(1));
+		await waitFor(() =>
+			expect(screen.getByRole("alert")).toHaveTextContent("may already have been delivered"),
+		);
+		expect(screen.getByRole("alert")).toHaveTextContent("may duplicate it");
+		first.unmount();
+
+		render(<ChatWorkspace {...common} />);
+		const restored = await screen.findByRole("textbox", { name: "Edit message" });
+		expect(restored).toBeDisabled();
+		expect(restored).toHaveValue("possibly delivered edit");
+		expect(onEditMessage).toHaveBeenCalledTimes(1);
+		await user.click(screen.getByRole("button", { name: "Abandon edit recovery" }));
+
+		await waitFor(() => expect(restored).not.toBeDisabled());
+		expect(restored).toHaveValue("possibly delivered edit");
+		expect(onEditMessage).toHaveBeenCalledTimes(1);
+		expect(screen.queryByRole("button", { name: "Retry edit safely" })).not.toBeInTheDocument();
+		expect(screen.getByRole("alert")).toHaveTextContent("may already have been delivered");
+		expect(readChatSessionDraft(snapshot.sessionId).inlineEditDelivery).toBeUndefined();
+	});
+
 	it("reconciles an accepted inline delivery without clearing or blocking a later edit", async () => {
 		const user = userEvent.setup();
 		const snapshot = idleSnapshot();

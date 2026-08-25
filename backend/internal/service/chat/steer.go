@@ -268,6 +268,24 @@ func (c *Controller) Steer(ctx context.Context, msg ports.ChatUserMessage) (Stee
 		}
 	}
 	if c.handoffActive() {
+		if msg.ClientMessageID != "" {
+			delivery, created, reserveErr := c.store.ReserveSteerDelivery(
+				ctx, c.conversation.ID, msg.ClientMessageID, requestJSON, c.now())
+			if reserveErr != nil {
+				return SteerResult{}, fmt.Errorf("%w: reserve interface-transition refusal: %w",
+					ErrSteerDeliveryUncertain, reserveErr)
+			}
+			if !created {
+				return replaySteerDelivery(delivery, requestJSON)
+			}
+			if rejectErr := c.store.RejectSteerDelivery(
+				context.WithoutCancel(ctx), c.conversation.ID, msg.ClientMessageID,
+				domain.ConversationSteerRejectedInterfaceTransition,
+				ErrControllerHandoff.Error(), c.now()); rejectErr != nil {
+				return SteerResult{}, fmt.Errorf("%w: persist interface-transition refusal: %w",
+					ErrSteerDeliveryUncertain, rejectErr)
+			}
+		}
 		return SteerResult{}, ErrControllerHandoff
 	}
 	steerer, ok := c.conv.(ports.ChatSteerer)
@@ -451,6 +469,8 @@ func replaySteerRejection(delivery domain.ConversationSteerDelivery) error {
 		cause = ErrSteerContentUnsupported
 	case domain.ConversationSteerRejectedByProvider:
 		cause = ErrProviderRefused
+	case domain.ConversationSteerRejectedInterfaceTransition:
+		cause = ErrControllerHandoff
 	default:
 		return fmt.Errorf("%w: invalid durable rejection %q",
 			ErrSteerDeliveryUncertain, delivery.RejectionKind)

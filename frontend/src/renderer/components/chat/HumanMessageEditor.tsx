@@ -13,6 +13,7 @@ export interface HumanMessageEditorProps {
 	/** Durable unresolved delivery: lock edits, but allow explicit safe recovery. */
 	locked?: boolean;
 	recoveryLabel?: string;
+	onAbandonRecovery?: () => void;
 	sendBlocked?: boolean;
 	busy: boolean;
 	reconstructedContext?: boolean;
@@ -28,6 +29,7 @@ export function HumanMessageEditor({
 	pending,
 	locked = false,
 	recoveryLabel,
+	onAbandonRecovery,
 	sendBlocked = false,
 	busy,
 	reconstructedContext = false,
@@ -103,6 +105,16 @@ export function HumanMessageEditor({
 				</span>
 			) : busyMessage ? (
 				<span className="mr-auto text-[11px] text-muted-foreground">{busyMessage}</span>
+			) : null}
+			{onAbandonRecovery ? (
+				<Button
+					type="button"
+					size="sm"
+					variant="outline"
+					onClick={onAbandonRecovery}
+				>
+					{t("chat.edit.abandonRecovery")}
+				</Button>
 			) : null}
 			<Button
 				type="button"

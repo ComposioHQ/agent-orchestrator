@@ -1273,6 +1273,7 @@
 	"chat.edit.preservedContent": "已保留的消息内容",
 	"chat.edit.image": "图像",
 	"chat.edit.cancel": "取消编辑",
+	"chat.edit.abandonRecovery": "放弃编辑恢复",
 	"chat.edit.send": "发送编辑后的消息",
 	"chat.edit.sendShortcut": "发送编辑后的消息（⌘/Ctrl+Enter）",
 	"pr.card.reviewStatus": "Review status",

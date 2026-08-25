@@ -8,6 +8,9 @@ import {
 	clearAcceptedChatComposer,
 	clearAcceptedChatInlineEdit,
 	clearRejectedChatComposerDelivery,
+	clearRejectedChatInlineEditDelivery,
+	clearUncertainChatInlineEditDelivery,
+	clearUncertainChatComposerDelivery,
 	finishChatComposerMutation,
 	getChatComposerMutation,
 	getChatInlineEditMutation,
@@ -20,6 +23,7 @@ import {
 	writeChatComposerText,
 	writeChatInlineEdit,
 	type DraftStorage,
+	type ChatDraftScope,
 } from "./chat-drafts";
 
 class MemoryStorage implements DraftStorage {
@@ -39,6 +43,121 @@ class MemoryStorage implements DraftStorage {
 }
 
 describe("Chat draft storage", () => {
+	it("purges every renderer draft registry before restoring a recreated session id", () => {
+		const storage = new MemoryStorage();
+		const first: ChatDraftScope = {
+			sessionId: "session-recreated",
+			incarnation: "2026-08-25T09:00:00.000Z",
+		};
+		const replacement: ChatDraftScope = {
+			sessionId: first.sessionId,
+			incarnation: "2026-08-26T09:00:00.000Z",
+		};
+		writeChatComposerText(first, "belongs to deleted session", storage);
+		writeChatAttachments(
+			first,
+			[
+				{
+					id: "old-attachment",
+					path: ".ao/attachments/old.png",
+					name: "old.png",
+					mimeType: "image/png",
+					bytes: 10,
+				},
+			],
+			storage,
+		);
+		prepareChatComposerDelivery(
+			first,
+			{
+				kind: "steer",
+				composerText: "belongs to deleted session",
+				attachments: [],
+				requestText: "belongs to deleted session",
+				clientMessageId: "old-unresolved-delivery",
+			},
+			storage,
+		);
+		expect(beginChatComposerMutation(first)).toBeTypeOf("symbol");
+
+		const restored = readChatSessionDraft(replacement, storage);
+
+		expect(restored).toMatchObject({
+			sessionId: replacement.sessionId,
+			incarnation: replacement.incarnation,
+			composer: { text: "", attachments: [] },
+		});
+		expect(restored.composer.delivery).toBeUndefined();
+		expect(getChatComposerMutation(first)).toEqual({ pending: false });
+		expect(storage.values.has(`ao.chat.draft:${encodeURIComponent(first.sessionId)}`)).toBe(false);
+	});
+
+	it("fails closed when an obsolete incarnation cannot be durably purged", () => {
+		const backing = new MemoryStorage();
+		const first: ChatDraftScope = { sessionId: "session-purge", incarnation: "first" };
+		const replacement: ChatDraftScope = { sessionId: first.sessionId, incarnation: "second" };
+		writeChatComposerText(first, "obsolete", backing);
+		const blockedRemoval: DraftStorage = {
+			getItem: backing.getItem.bind(backing),
+			setItem: backing.setItem.bind(backing),
+			removeItem: () => {
+				throw new DOMException("blocked", "SecurityError");
+			},
+		};
+
+		expect(
+			prepareChatComposerDelivery(
+				replacement,
+				{
+					kind: "send",
+					composerText: "replacement draft",
+					attachments: [],
+					requestText: "replacement draft",
+					clientMessageId: "replacement-delivery",
+				},
+				blockedRemoval,
+			),
+		).toMatchObject({ ok: false });
+		expect(readChatSessionDraft(first, backing).composer.text).toBe("obsolete");
+	});
+
+	it("warned abandon clears only an uncertain steer journal", () => {
+		const storage = new MemoryStorage();
+		const scope: ChatDraftScope = { sessionId: "session-abandon", incarnation: "one" };
+		const attachment = {
+			id: "staged",
+			path: ".ao/attachments/staged.png",
+			name: "staged.png",
+			mimeType: "image/png",
+			bytes: 10,
+		};
+		const prepared = prepareChatComposerDelivery(
+			scope,
+			{
+				kind: "steer",
+				composerText: "possibly delivered",
+				attachments: [attachment],
+				requestText: "possibly delivered",
+				clientMessageId: "uncertain-steer",
+			},
+			storage,
+		);
+		expect(prepared.ok).toBe(true);
+
+		expect(
+			clearUncertainChatComposerDelivery(
+				scope,
+				"uncertain-steer",
+				prepared.mutation!.revision,
+				storage,
+			),
+		).toMatchObject({ ok: true });
+		expect(readChatSessionDraft(scope, storage).composer).toMatchObject({
+			text: "possibly delivered",
+			attachments: [attachment],
+		});
+		expect(readChatSessionDraft(scope, storage).composer.delivery).toBeUndefined();
+	});
 	it("round-trips independent composer, attachment, and inline-edit state per session", () => {
 		const storage = new MemoryStorage();
 		writeChatComposerText("session/a", "composer A", storage);
@@ -433,6 +552,64 @@ describe("Chat draft storage", () => {
 		expect(readChatSessionDraft("session-edit-proof", storage).inlineEditDelivery?.state).toBe(
 			"accepted",
 		);
+	});
+
+	it("clears only a definitively rejected inline-edit journal", () => {
+		const storage = new MemoryStorage();
+		const prepared = prepareChatInlineEditDelivery(
+			"session-edit-rejected",
+			{
+				turnId: "turn-1",
+				text: "keep rejected edit",
+				content: [],
+				clientMessageId: "edit-rejected-1",
+			},
+			storage,
+		);
+		expect(prepared.ok).toBe(true);
+
+		expect(
+			clearRejectedChatInlineEditDelivery(
+				"session-edit-rejected",
+				"edit-rejected-1",
+				prepared.mutation!.revision,
+				storage,
+			),
+		).toMatchObject({ ok: true });
+		const restored = readChatSessionDraft("session-edit-rejected", storage);
+		expect(restored.inlineEdit?.text).toBe("keep rejected edit");
+		expect(restored.inlineEditDelivery).toBeUndefined();
+	});
+
+	it("explicitly abandons only an uncertain inline-edit journal", () => {
+		const storage = new MemoryStorage();
+		const prepared = prepareChatInlineEditDelivery(
+			"session-edit-uncertain",
+			{
+				turnId: "turn-1",
+				text: "possibly delivered edit",
+				content: [{ type: "image", name: "preserved.png" }],
+				clientMessageId: "edit-uncertain-1",
+			},
+			storage,
+		);
+		expect(prepared.ok).toBe(true);
+
+		expect(
+			clearUncertainChatInlineEditDelivery(
+				"session-edit-uncertain",
+				"edit-uncertain-1",
+				prepared.mutation!.revision,
+				storage,
+			),
+		).toMatchObject({ ok: true });
+		const restored = readChatSessionDraft("session-edit-uncertain", storage);
+		expect(restored.inlineEdit).toMatchObject({
+			turnId: "turn-1",
+			text: "possibly delivered edit",
+			content: [{ type: "image", name: "preserved.png" }],
+		});
+		expect(restored.inlineEditDelivery).toBeUndefined();
 	});
 
 	it("clears only the accepted delivery journal when a later inline edit exists", () => {

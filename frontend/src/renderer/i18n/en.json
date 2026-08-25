@@ -1286,6 +1286,7 @@
 	"chat.edit.preservedContent": "Preserved message content",
 	"chat.edit.image": "Image",
 	"chat.edit.cancel": "Cancel edit",
+	"chat.edit.abandonRecovery": "Abandon edit recovery",
 	"chat.edit.send": "Send edited message",
 	"chat.edit.sendShortcut": "Send edited message (⌘/Ctrl+Enter)",
 	"inspector.usage.agent": "Agent",

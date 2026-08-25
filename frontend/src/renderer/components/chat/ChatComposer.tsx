@@ -66,6 +66,7 @@ import {
 	cancelChatComposerMutation,
 	clearAcceptedChatComposer,
 	clearRejectedChatComposerDelivery,
+	clearUncertainChatComposerDelivery,
 	finishChatComposerMutation,
 	getChatComposerMutation,
 	markChatComposerDeliveryAccepted,
@@ -76,6 +77,7 @@ import {
 	writeChatComposerText,
 	type ChatDraftMutationToken,
 	type ChatComposerDelivery,
+	type ChatDraftScope,
 	type DraftClearResult,
 } from "../../lib/chat-drafts";
 import { setChatDraftBoundary } from "../../lib/chat-draft-boundary";
@@ -119,6 +121,7 @@ export function ChatComposer({
 	autoFocusKey,
 	autoFocus = true,
 	draftSessionId,
+	draftSessionIncarnation,
 	acceptedClientMessageIds,
 }: {
 	onSend: (
@@ -182,9 +185,24 @@ export function ChatComposer({
 	autoFocus?: boolean;
 	/** Durable AO session identity used to scope unsent composer state. */
 	draftSessionId?: string;
+	/** Immutable daemon identity for this exact incarnation of the session id. */
+	draftSessionIncarnation?: string;
 	/** Client ids already present in daemon-authoritative conversation history. */
 	acceptedClientMessageIds?: ReadonlySet<string>;
 }) {
+	const draftScope = useMemo<ChatDraftScope | undefined>(
+		() =>
+			draftSessionId
+				? {
+						sessionId: draftSessionId,
+						incarnation: draftSessionIncarnation ?? draftSessionId,
+					}
+				: undefined,
+		[draftSessionId, draftSessionIncarnation],
+	);
+	const draftScopeKey = draftScope
+		? `${draftScope.sessionId}\u0000${draftScope.incarnation}`
+		: undefined;
 	const [hasText, setHasText] = useState(false);
 	const hasTextRef = useRef(false);
 	const [trigger, setTrigger] = useState<ComposerTrigger>();
@@ -200,14 +218,19 @@ export function ChatComposer({
 	const [dragging, setDragging] = useState(false);
 	const [sendError, setSendError] = useState<string | null>(null);
 	const [steerOutcomeNotice, setSteerOutcomeNotice] = useState<string | null>(null);
+	const [deliveryUncertain, setDeliveryUncertain] = useState(
+		() =>
+			draftScope !== undefined &&
+			readChatSessionDraft(draftScope).composer.delivery?.state === "dispatching",
+	);
 	const [textDraftPersistenceError, setTextDraftPersistenceError] = useState<string | null>(null);
 	const [attachmentDraftPersistenceError, setAttachmentDraftPersistenceError] = useState<
 		string | null
 	>(null);
 	const [submitting, setSubmitting] = useState(false);
 	const [durableDelivery, setDurableDelivery] = useState<ChatComposerDelivery | undefined>(() =>
-		draftSessionId
-			? readChatSessionDraft(draftSessionId).composer.delivery
+		draftScope
+			? readChatSessionDraft(draftScope).composer.delivery
 			: undefined,
 	);
 	// The DOM event is the source of truth while React catches up with the draft
@@ -230,16 +253,16 @@ export function ChatComposer({
 	const restoredSeedKey = useRef<string | undefined>(undefined);
 	const restoredSessionId = useRef<string | undefined>(undefined);
 	const persistedDraft = useMemo(
-		() => (draftSessionId ? readChatSessionDraft(draftSessionId) : undefined),
-		[draftSessionId],
+		() => (draftScope ? readChatSessionDraft(draftScope) : undefined),
+		[draftScope],
 	);
 	const subscribeComposerMutation = useCallback(
-		(listener: () => void) => subscribeChatDraftRuntime(draftSessionId ?? "", listener),
-		[draftSessionId],
+		(listener: () => void) => subscribeChatDraftRuntime(draftScope ?? "", listener),
+		[draftScope],
 	);
 	const getComposerMutation = useCallback(
-		() => getChatComposerMutation(draftSessionId ?? ""),
-		[draftSessionId],
+		() => getChatComposerMutation(draftScope ?? ""),
+		[draftScope],
 	);
 	const composerMutation = useSyncExternalStore(
 		subscribeComposerMutation,
@@ -261,9 +284,9 @@ export function ChatComposer({
 	);
 	const persistAttachments = useCallback(
 		(attachments: FileAttachment[]) => {
-			if (!draftSessionId) return;
+			if (!draftScope) return;
 			const result = writeChatAttachments(
-				draftSessionId,
+				draftScope,
 				attachments.flatMap((attachment) =>
 					attachment.stagedPath
 						? [{
@@ -283,7 +306,7 @@ export function ChatComposer({
 					: "Draft couldn’t be saved. Keep this chat open or copy it before leaving.",
 			);
 		},
-		[draftSessionId],
+		[draftScope],
 	);
 	const prepareAttachments = useCallback(
 		async (attachments: FileAttachment[]): Promise<FileAttachment[]> => {
@@ -304,9 +327,9 @@ export function ChatComposer({
 		[onStageAttachments],
 	);
 	useEffect(() => {
-		if (restoredSessionId.current === draftSessionId) return;
-		restoredSessionId.current = draftSessionId;
-		const currentDraft = draftSessionId ? readChatSessionDraft(draftSessionId) : undefined;
+		if (restoredSessionId.current === draftScopeKey) return;
+		restoredSessionId.current = draftScopeKey;
+		const currentDraft = draftScope ? readChatSessionDraft(draftScope) : undefined;
 		composerRevision.current = currentDraft?.composer.revision ?? 0;
 		setDurableDelivery(currentDraft?.composer.delivery);
 		setAppliedAcceptanceSequence(0);
@@ -314,15 +337,18 @@ export function ChatComposer({
 			currentDraft?.composer.delivery
 				? currentDraft.composer.delivery.state === "accepted"
 					? "Message was accepted, but its local draft still needs to be cleared."
-					: "Message delivery wasn’t confirmed before Chat restarted. Retry safely to reuse the same delivery ID."
+					: currentDraft.composer.delivery.kind === "steer"
+						? "AO can’t determine whether the agent may already have received this guidance before Chat restarted. Retry safely with the same delivery ID, or abandon recovery to edit it. Sending it again after abandonment may duplicate it."
+						: "Message delivery wasn’t confirmed before Chat restarted. Retry safely to reuse the same delivery ID."
 				: null,
 		);
+		setDeliveryUncertain(currentDraft?.composer.delivery?.state === "dispatching");
 		setAttachmentDraftPersistenceError(null);
 		automaticDeliveryRecoveryAttempted.current = undefined;
-	}, [draftSessionId]);
+	}, [draftScope, draftScopeKey]);
 	const fileAttachments = useFileAttachments({
 		initialAttachments: restoredAttachments,
-		initialKey: draftSessionId,
+		initialKey: draftScopeKey,
 		prepareAttachments: onStageAttachments ? prepareAttachments : undefined,
 		onAttachmentsChange: persistAttachments,
 	});
@@ -373,6 +399,13 @@ export function ChatComposer({
 	const canRecoverDelivery = Boolean(
 		durableDelivery && !busy && !disabled && !steerPending && !submitting && !composerMutation.pending,
 	);
+	const canAbandonUncertainSteer = Boolean(
+		deliveryUncertain &&
+			durableDelivery?.kind === "steer" &&
+			durableDelivery.state === "dispatching" &&
+			draftScope &&
+			!submitting,
+	);
 	const canSend =
 		(hasText || staged) &&
 		!busy &&
@@ -402,7 +435,7 @@ export function ChatComposer({
 				? "⏎ queue"
 				: "Enter to send";
 	const persistedText = persistedDraft?.composer.text;
-	const draftSeedId = draftSeed?.id ?? (draftSessionId ? `session:${draftSessionId}` : undefined);
+	const draftSeedId = draftSeed?.id ?? (draftScopeKey ? `session:${draftScopeKey}` : undefined);
 	const draftSeedText = draftSeed?.text ?? persistedText;
 	const draftPersistenceError =
 		textDraftPersistenceError ?? attachmentDraftPersistenceError;
@@ -489,39 +522,39 @@ export function ChatComposer({
 
 	const clearAcceptedDraft = useCallback(
 		(acceptedRevision: number, mutationToken?: ChatDraftMutationToken) => {
-			if (!draftSessionId) {
+			if (!draftScope) {
 				clearEditorView();
 				fileAttachments.clear();
 				return true;
 			}
-			const result = clearAcceptedChatComposer(draftSessionId, acceptedRevision);
+			const result = clearAcceptedChatComposer(draftScope, acceptedRevision);
 			if (mutationToken) {
 				finishChatComposerMutation(
-					draftSessionId,
+					draftScope,
 					mutationToken,
 					acceptedRevision,
 					result,
 				);
-				const accepted = getChatComposerMutation(draftSessionId).accepted;
+				const accepted = getChatComposerMutation(draftScope).accepted;
 				if (accepted?.revision === acceptedRevision) {
 					setAppliedAcceptanceSequence(accepted.sequence);
 				}
 			}
 			return applyAcceptedDraftResult(result);
 		},
-		[applyAcceptedDraftResult, clearEditorView, draftSessionId, fileAttachments],
+		[applyAcceptedDraftResult, clearEditorView, draftScope, fileAttachments],
 	);
 
 	const acceptAndClearDurableDelivery = useCallback(
 		(delivery: ChatComposerDelivery, mutationToken?: ChatDraftMutationToken) => {
-			if (!draftSessionId) return clearAcceptedDraft(delivery.revision, mutationToken);
+			if (!draftScope) return clearAcceptedDraft(delivery.revision, mutationToken);
 			const accepted = markChatComposerDeliveryAccepted(
-				draftSessionId,
+				draftScope,
 				delivery.clientMessageId,
 				delivery.revision,
 			);
 			if (!accepted.ok) {
-				if (mutationToken) cancelChatComposerMutation(draftSessionId, mutationToken);
+				if (mutationToken) cancelChatComposerMutation(draftScope, mutationToken);
 				setDurableDelivery(delivery);
 				setTextDraftPersistenceError(
 					"Message acceptance couldn’t be recorded locally. Retry safely to reconcile it with the same delivery ID.",
@@ -535,8 +568,29 @@ export function ChatComposer({
 			setDurableDelivery(acceptedDelivery);
 			return clearAcceptedDraft(delivery.revision, mutationToken);
 		},
-		[clearAcceptedDraft, draftSessionId],
+		[clearAcceptedDraft, draftScope],
 	);
+
+	const abandonUncertainSteer = useCallback(() => {
+		if (!draftScope || !durableDelivery || durableDelivery.kind !== "steer") return;
+		const result = clearUncertainChatComposerDelivery(
+			draftScope,
+			durableDelivery.clientMessageId,
+			durableDelivery.revision,
+		);
+		setDurableDelivery(result.draft.composer.delivery);
+		if (!result.ok) {
+			setTextDraftPersistenceError(
+				"Recovery couldn’t be abandoned because its local record could not be cleared. Nothing will be resent automatically.",
+			);
+			return;
+		}
+		setDeliveryUncertain(false);
+		setTextDraftPersistenceError(null);
+		setSteerOutcomeNotice(
+			"Recovery was abandoned. The earlier guidance may already have been delivered; sending this draft now may duplicate it.",
+		);
+	}, [draftScope, durableDelivery]);
 
 	useEffect(() => {
 		const accepted = composerMutation.accepted;
@@ -566,8 +620,8 @@ export function ChatComposer({
 		// A history action intentionally creates a new draft and must be persisted.
 		// A session restore is already durable; writing it again here needlessly
 		// changes the accepted-send revision during mount.
-		if (draftSessionId && draftSeed) {
-			const result = writeChatComposerText(draftSessionId, draftSeedText);
+		if (draftScope && draftSeed) {
+			const result = writeChatComposerText(draftScope, draftSeedText);
 			composerRevision.current = result.draft.composer.revision;
 			setTextDraftPersistenceError(
 				result.ok
@@ -575,10 +629,10 @@ export function ChatComposer({
 					: "Draft couldn’t be saved. Keep this chat open or copy it before leaving.",
 			);
 		}
-	}, [draftSeed, draftSeedId, draftSeedText, draftSessionId]);
+	}, [draftScope, draftSeed, draftSeedId, draftSeedText]);
 
 	useEffect(() => {
-		if (!durableDelivery || !draftSessionId) return;
+		if (!durableDelivery || !draftScope) return;
 		const observedSteer =
 			durableDelivery.kind === "steer" &&
 			acceptedClientMessageIds?.has(durableDelivery.clientMessageId);
@@ -589,7 +643,7 @@ export function ChatComposer({
 	}, [
 		acceptAndClearDurableDelivery,
 		acceptedClientMessageIds,
-		draftSessionId,
+		draftScope,
 		durableDelivery,
 	]);
 
@@ -604,8 +658,8 @@ export function ChatComposer({
 
 	const onEditorChange = useCallback((snapshot: ComposerEditorSnapshot) => {
 		textRef.current = snapshot.text;
-		if (draftSessionId) {
-			const result = writeChatComposerText(draftSessionId, snapshot.text);
+		if (draftScope) {
+			const result = writeChatComposerText(draftScope, snapshot.text);
 			composerRevision.current = result.draft.composer.revision;
 			// A disabled Lexical editor can still publish an internal state update
 			// while its editability changes. It must not erase the recovery notice
@@ -641,7 +695,7 @@ export function ChatComposer({
 			dismissedKeyRef.current = null;
 			setDismissedKey(null);
 		}
-	}, [draftSessionId]);
+	}, [draftScope]);
 
 	const pick = useCallback((value: string) => {
 		const currentTrigger = triggerRef.current;
@@ -704,7 +758,7 @@ export function ChatComposer({
 			!composerMutation.pending &&
 			(!draftMutationPending || Boolean(recoveringDelivery)) &&
 			(Boolean(recoveringDelivery) ||
-				getChatComposerMutation(draftSessionId ?? "").accepted?.result.ok !== false) &&
+				getChatComposerMutation(draftScope ?? "").accepted?.result.ok !== false) &&
 			!fileAttachments.preparing;
 		if (!canSubmitNow) return;
 		setSendError(null);
@@ -717,10 +771,10 @@ export function ChatComposer({
 		);
 
 		if (!recoveringDelivery && body === "/compact" && onCompact) {
-			const mutationToken = draftSessionId
-				? beginChatComposerMutation(draftSessionId)
+			const mutationToken = draftScope
+				? beginChatComposerMutation(draftScope)
 				: undefined;
-			if (draftSessionId && !mutationToken) return;
+			if (draftScope && !mutationToken) return;
 			let mutationFinished = false;
 			setSubmitting(true);
 			try {
@@ -744,15 +798,15 @@ export function ChatComposer({
 			} catch {
 				setSendError("Conversation history could not be compacted. Try again.");
 			} finally {
-				if (draftSessionId && mutationToken && !mutationFinished) {
-					cancelChatComposerMutation(draftSessionId, mutationToken);
+				if (draftScope && mutationToken && !mutationFinished) {
+					cancelChatComposerMutation(draftScope, mutationToken);
 				}
 				setSubmitting(false);
 			}
 			return;
 		}
 
-		if (!draftSessionId) {
+		if (!draftScope) {
 			setSubmitting(true);
 			try {
 				if (shouldSteer && onSteer) {
@@ -795,7 +849,7 @@ export function ChatComposer({
 			: shouldSteer
 				? body
 				: withAttachmentReferences(body, acceptedPaths);
-		const prepared = prepareChatComposerDelivery(draftSessionId, {
+		const prepared = prepareChatComposerDelivery(draftScope, {
 			kind: recoveringDelivery?.kind ?? (shouldSteer ? "steer" : "send"),
 			composerText: currentText,
 			attachments: fileAttachments.attachments.flatMap((attachment) =>
@@ -819,6 +873,7 @@ export function ChatComposer({
 			return;
 		}
 		const delivery = prepared.mutation;
+		setDeliveryUncertain(false);
 		composerRevision.current = prepared.draft.composer.revision;
 		setDurableDelivery(delivery);
 		setTextDraftPersistenceError(
@@ -831,7 +886,7 @@ export function ChatComposer({
 			return;
 		}
 
-		const mutationToken = beginChatComposerMutation(draftSessionId);
+		const mutationToken = beginChatComposerMutation(draftScope);
 		if (!mutationToken) return;
 		let mutationFinished = false;
 		setSubmitting(true);
@@ -841,7 +896,7 @@ export function ChatComposer({
 				const outcome = await onSteer(delivery.requestText, delivery.clientMessageId);
 				if (outcome?.status === "not-accepted") {
 					const cleared = clearRejectedChatComposerDelivery(
-						draftSessionId,
+						draftScope,
 						delivery.clientMessageId,
 						delivery.revision,
 					);
@@ -874,11 +929,14 @@ export function ChatComposer({
 			setDismissedKey(null);
 			setHighlighted(0);
 		} catch {
+			setDeliveryUncertain(true);
 			setTextDraftPersistenceError(
-				"Message delivery wasn’t confirmed. Retry safely to reuse the same delivery ID; your draft remains locked until it is reconciled.",
+				delivery.kind === "steer"
+					? "AO can’t determine whether the agent may already have received this guidance. Retry safely with the same delivery ID, or abandon recovery to edit it. Sending it again after abandonment may duplicate it."
+					: "Message delivery wasn’t confirmed. Retry safely to reuse the same delivery ID; your draft remains locked until it is reconciled.",
 			);
 		} finally {
-			if (!mutationFinished) cancelChatComposerMutation(draftSessionId, mutationToken);
+			if (!mutationFinished) cancelChatComposerMutation(draftScope, mutationToken);
 			setSubmitting(false);
 		}
 	}
@@ -1119,6 +1177,18 @@ export function ChatComposer({
 					<p role="alert" className="px-1.5 text-[11px] leading-snug text-destructive">
 						{attachmentError}
 					</p>
+				) : null}
+				{canAbandonUncertainSteer ? (
+					<div className="px-1.5">
+						<Button
+							type="button"
+							variant="outline"
+							size="sm"
+							onClick={abandonUncertainSteer}
+						>
+							Abandon recovery
+						</Button>
+					</div>
 				) : null}
 				{fileAttachments.preparing ? (
 					<p role="status" className="px-1.5 text-[11px] leading-snug text-muted-foreground">

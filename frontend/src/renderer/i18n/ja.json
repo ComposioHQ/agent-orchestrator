@@ -1291,6 +1291,7 @@
 	"chat.edit.preservedContent": "保持されたメッセージ内容",
 	"chat.edit.image": "画像",
 	"chat.edit.cancel": "編集をキャンセル",
+	"chat.edit.abandonRecovery": "編集の復旧を中止",
 	"chat.edit.send": "編集したメッセージを送信",
 	"chat.edit.sendShortcut": "編集したメッセージを送信（⌘/Ctrl+Enter）",
 	"pr.card.reviewStatus": "Review status",
