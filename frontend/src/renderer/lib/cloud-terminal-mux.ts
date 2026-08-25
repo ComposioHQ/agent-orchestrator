@@ -96,10 +96,14 @@ export function createCloudTerminalMux(options: CloudTerminalMuxOptions): Termin
 		let ticket: string;
 		try {
 			ticket = await options.mintTicket();
-		} catch (err) {
+		} catch {
 			if (disposed) return;
-			const message = err instanceof Error ? err.message : "could not authorize the cloud terminal";
-			errorListeners.forEach((listener) => listener(message));
+			// A freshly created session's worker may not be connected yet while its
+			// sandbox provisions; the control plane reports that as 409
+			// WORKER_UNAVAILABLE on the ticket request. Treat a mint failure as a
+			// transient disconnect so the hook reattaches with backoff and the
+			// terminal streams once the worker checks in, instead of surfacing a
+			// permanent "worker is not connected" error the user must reload past.
 			setConnectionState("closed");
 			return;
 		}
