@@ -323,29 +323,38 @@ export function TerminalCacheProvider({
 	// stable, per-session cloud mux factory so terminal props stay referentially
 	// equal across renders; local sessions keep the pooled daemon mux untouched.
 	const { client: cloudClient, baseUrl: cloudBaseUrl } = useCloudCp();
+	// A cloud pane must never fall back to the local daemon mux, even during the
+	// startup window before settings resolve the control-plane URL: the local
+	// daemon does not know a cloud session's handle and would report it as exited.
+	// Read the control-plane client/URL through a ref so the factory (cached once
+	// per session for referential stability) always uses the current values at
+	// connect time rather than whatever was resolved on first render.
+	const cloudCpRef = useRef({ client: cloudClient, baseUrl: cloudBaseUrl });
+	cloudCpRef.current = { client: cloudClient, baseUrl: cloudBaseUrl };
 	const cloudMuxFactoriesRef = useRef(new Map<string, () => TerminalMux>());
 	const resolveCreateMux = useCallback(
 		(paneSession?: WorkspaceSession): (() => TerminalMux) => {
 			const cloud = paneSession?.cloud;
-			if (!cloud || cloudBaseUrl === "") return muxPool.acquire;
+			if (!cloud) return muxPool.acquire;
 			const cached = cloudMuxFactoriesRef.current.get(paneSession.id);
 			if (cached) return cached;
-			const wsBaseUrl = `${cloudBaseUrl.replace(/^http/i, "ws").replace(/\/+$/, "")}/api/cloud/v1`;
 			const sessionId = paneSession.id;
 			const orgId = cloud.orgId;
 			const factory = () =>
 				createCloudTerminalMux({
-					wsBaseUrl,
+					wsBaseUrl: `${cloudCpRef.current.baseUrl.replace(/^http/i, "ws").replace(/\/+$/, "")}/api/cloud/v1`,
 					kind: "agent",
 					mintTicket: async () => {
-						const response = await cloudClient.createTerminalTicket(orgId, sessionId, { kind: "agent" });
+						const response = await cloudCpRef.current.client.createTerminalTicket(orgId, sessionId, {
+							kind: "agent",
+						});
 						return response.ticket;
 					},
 				});
 			cloudMuxFactoriesRef.current.set(sessionId, factory);
 			return factory;
 		},
-		[muxPool, cloudBaseUrl, cloudClient],
+		[muxPool],
 	);
 	const [, setRevision] = useState(0);
 	const rerender = useCallback(() => setRevision((current) => current + 1), []);

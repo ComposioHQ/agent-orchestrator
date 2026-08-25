@@ -30,6 +30,13 @@ export interface Settings {
 export function useSettings() {
 	const query = useQuery({
 		queryKey: settingsQueryKey,
+		// Settings gate the cloud sign-in UI, so this query must recover from a
+		// transient startup failure. The daemon can still be booting on first
+		// fetch ("AO daemon is starting"); without a refetch the whole cloud
+		// offering stays hidden until a manual reload. Poll like the workspace
+		// query so it self-heals once the daemon is ready.
+		refetchInterval: 15_000,
+		retry: 5,
 		queryFn: async (): Promise<Settings> => {
 			const { data, error } = await apiClient.GET("/api/v1/settings");
 			if (error) throw error;
