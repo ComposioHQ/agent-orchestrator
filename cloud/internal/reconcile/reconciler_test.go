@@ -535,6 +535,116 @@ func TestStartupTimeoutNotReachedLeavesSandboxAlone(t *testing.T) {
 	}
 }
 
+func TestWorkerThatNeverChecksInIsTerminatedAtTheCeiling(t *testing.T) {
+	startedAt := time.Now().Add(-11 * time.Minute)
+	record := runningSandbox()
+	record.ProviderEnvironmentID = "env-1"
+	record.ObservedState = domain.SandboxObservedBootstrapping
+	record.StartupStartedAt = &startedAt
+	record.WorkerLastSeenAt = nil
+	store := &fakeStore{pending: []domain.Sandbox{record}}
+	// A recreating provider proves termination short-circuits repair: without
+	// the ceiling this sandbox would be recreated on every tick forever.
+	provider := &recreatingProvider{newFakeProvider()}
+	provider.setState("env-1", sandbox.StateRunning)
+	reconciler := newReconciler(store, provider)
+	reconciler.options.WorkerBinary = []byte("worker")
+
+	if err := reconciler.ReconcileOnce(context.Background()); err != nil {
+		t.Fatalf("ReconcileOnce() error = %v", err)
+	}
+
+	if len(provider.recreated) != 0 {
+		t.Fatalf("a terminated sandbox was recreated %d times", len(provider.recreated))
+	}
+	if got := provider.stopped; len(got) != 1 || got[0] != "env-1" {
+		t.Fatalf("stopped = %v, want [env-1] to halt billing", got)
+	}
+	if len(store.disconnected) != 1 || store.disconnected[0] != "session-1" {
+		t.Fatalf("disconnected = %v, want [session-1]", store.disconnected)
+	}
+	last := store.lastObservation(t)
+	if last.state != domain.SandboxObservedTerminated {
+		t.Fatalf("observed state = %q, want %q", last.state, domain.SandboxObservedTerminated)
+	}
+	if last.lastError == "" {
+		t.Fatal("terminated sandbox recorded no explanatory error")
+	}
+}
+
+func TestTerminatedSandboxIsParkedAndNeverResumed(t *testing.T) {
+	record := runningSandbox()
+	record.ProviderEnvironmentID = "env-1"
+	record.ObservedState = domain.SandboxObservedTerminated
+	record.LastError = "worker never started"
+	store := &fakeStore{pending: []domain.Sandbox{record}}
+	// A paused environment would normally be resumed; a parked terminated
+	// sandbox must not probe or wake its compute.
+	provider := &recreatingProvider{newFakeProvider()}
+	provider.setState("env-1", sandbox.StatePaused)
+	reconciler := newReconciler(store, provider)
+	reconciler.options.WorkerBinary = []byte("worker")
+
+	if err := reconciler.ReconcileOnce(context.Background()); err != nil {
+		t.Fatalf("ReconcileOnce() error = %v", err)
+	}
+
+	if len(provider.resumed) != 0 || len(provider.started) != 0 || len(provider.recreated) != 0 {
+		t.Fatalf("terminated sandbox was revived: resumed=%v started=%v recreated=%v",
+			provider.resumed, provider.started, provider.recreated)
+	}
+	last := store.lastObservation(t)
+	if last.state != domain.SandboxObservedTerminated {
+		t.Fatalf("observed state = %q, want it to stay %q", last.state, domain.SandboxObservedTerminated)
+	}
+	if last.lastError != "worker never started" {
+		t.Fatalf("parked observation dropped the failure cause: %q", last.lastError)
+	}
+}
+
+func TestTerminatedSandboxStillHonoursDeletion(t *testing.T) {
+	record := runningSandbox()
+	record.ProviderEnvironmentID = "env-1"
+	record.ObservedState = domain.SandboxObservedTerminated
+	record.DesiredState = domain.SandboxDesiredDeleted
+	store := &fakeStore{pending: []domain.Sandbox{record}}
+	provider := newFakeProvider()
+	provider.setState("env-1", sandbox.StateRunning)
+	reconciler := newReconciler(store, provider)
+
+	if err := reconciler.ReconcileOnce(context.Background()); err != nil {
+		t.Fatalf("ReconcileOnce() error = %v", err)
+	}
+
+	if len(provider.deleted) != 1 || provider.deleted[0] != "env-1" {
+		t.Fatalf("deleted = %v, want a terminated sandbox to still be removed on delete", provider.deleted)
+	}
+}
+
+func TestWorkerNeverCheckedInButWithinCeilingIsRepaired(t *testing.T) {
+	startedAt := time.Now().Add(-31 * time.Second)
+	record := runningSandbox()
+	record.ProviderEnvironmentID = "env-1"
+	record.ObservedState = domain.SandboxObservedBootstrapping
+	record.StartupStartedAt = &startedAt
+	record.WorkerLastSeenAt = nil
+	store := &fakeStore{pending: []domain.Sandbox{record}}
+	provider := &recreatingProvider{newFakeProvider()}
+	provider.setState("env-1", sandbox.StateRunning)
+	reconciler := newReconciler(store, provider)
+
+	if err := reconciler.ReconcileOnce(context.Background()); err != nil {
+		t.Fatalf("ReconcileOnce() error = %v", err)
+	}
+
+	if len(provider.recreated) != 1 {
+		t.Fatalf("Recreate called %d times, want 1: past the startup deadline but well inside the terminal ceiling", len(provider.recreated))
+	}
+	if len(provider.stopped) != 0 {
+		t.Fatal("a repairable sandbox was stopped as if terminated")
+	}
+}
+
 func TestHeartbeatGapRecreates(t *testing.T) {
 	seen := time.Now().Add(-2 * time.Minute)
 	record := runningSandbox()

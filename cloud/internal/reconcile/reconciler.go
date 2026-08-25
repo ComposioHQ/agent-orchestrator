@@ -51,6 +51,12 @@ type Options struct {
 	WorkerHelperDestination string
 	// WorkerUser is the unprivileged account used to run hosted workers.
 	WorkerUser string
+	// AllowAnonymousCheckout lets a worker clone a public repository directly,
+	// with no GitHub App grant, when the checkout broker denies a grant. The
+	// docker provider always allows this for local development; this extends it
+	// to real providers (e.g. NodeOps) for public-repo projects that have not
+	// been connected through the GitHub App yet.
+	AllowAnonymousCheckout bool
 	// Interval is the reconcile tick.
 	Interval time.Duration
 	// StartupTimeout is the budget from Create to the first worker heartbeat.
@@ -58,6 +64,13 @@ type Options struct {
 	// produces a recreate storm where every cycle replaces a sandbox that was
 	// still booting.
 	StartupTimeout time.Duration
+	// TerminalStartupTimeout is the hard ceiling on repairing a worker that has
+	// never checked in. Past it the sandbox is terminated rather than
+	// re-bootstrapped forever, which is what stops a permanently broken session
+	// (for example a private repository with no GitHub App grant) from burning
+	// compute in an endless repair storm. Must comfortably exceed StartupTimeout
+	// so a slow-but-healthy cold start is never mistaken for a dead worker.
+	TerminalStartupTimeout time.Duration
 	// HeartbeatTimeout is how long a silent worker is tolerated before repair.
 	HeartbeatTimeout time.Duration
 	// BatchSize is the maximum number of sandboxes claimed per tick.
@@ -84,6 +97,7 @@ type Options struct {
 const (
 	DefaultInterval                = 2 * time.Second
 	DefaultStartupTimeout          = 180 * time.Second
+	DefaultTerminalStartupTimeout  = 10 * time.Minute
 	DefaultHeartbeatTimeout        = time.Minute
 	DefaultBatchSize               = 20
 	DefaultMaxConcurrentOperations = 4
@@ -113,6 +127,14 @@ func New(store Store, providers Resolver, options Options) *Reconciler {
 	}
 	if options.StartupTimeout <= 0 {
 		options.StartupTimeout = DefaultStartupTimeout
+	}
+	if options.TerminalStartupTimeout <= 0 {
+		options.TerminalStartupTimeout = DefaultTerminalStartupTimeout
+	}
+	// A terminal ceiling below the startup deadline would kill healthy cold
+	// starts, so clamp it up to at least the startup timeout.
+	if options.TerminalStartupTimeout < options.StartupTimeout {
+		options.TerminalStartupTimeout = options.StartupTimeout
 	}
 	if options.HeartbeatTimeout <= 0 {
 		options.HeartbeatTimeout = DefaultHeartbeatTimeout
@@ -412,6 +434,15 @@ func (r *Reconciler) reconcileSandbox(ctx context.Context, record domain.Sandbox
 		return r.reconcileDeletion(ctx, record, provider)
 	}
 
+	// A terminated sandbox is parked: repairs have been abandoned, so do not
+	// probe or resume its compute (a probe would resume an auto-paused VM and
+	// restart the very repair storm termination stopped). It stays down until a
+	// deleted desired state, handled above, cleans it up.
+	if record.ObservedState == domain.SandboxObservedTerminated {
+		return r.observe(ctx, record, record.ProviderEnvironmentID,
+			domain.SandboxObservedTerminated, record.LastError, 24*time.Hour)
+	}
+
 	if record.ProviderEnvironmentID == "" {
 		return r.provision(ctx, record, provider)
 	}
@@ -429,6 +460,19 @@ func (r *Reconciler) reconcileSandbox(ctx context.Context, record domain.Sandbox
 		// provider ID, and try again — a provider outage must leave healthy
 		// sessions alone.
 		return r.fail(ctx, record, err)
+	}
+
+	// A worker that never checked in is repaired in place until a hard ceiling.
+	// Past it the session is permanently broken (a private repository with no
+	// GitHub App grant, a crash-looping harness), so stop repairing it: an
+	// endless re-bootstrap storm otherwise keeps resetting the provider's
+	// auto-pause timer and billing forever. This is deliberately gated on
+	// "never checked in" so a once-healthy worker that goes silent is still
+	// repaired normally.
+	if record.DesiredState == domain.SandboxDesiredRunning &&
+		record.WorkerLastSeenAt == nil &&
+		r.terminalStartupDeadlineElapsed(record) {
+		return r.terminate(ctx, record, environment, provider)
 	}
 
 	if record.DesiredState == domain.SandboxDesiredPaused ||
@@ -692,6 +736,53 @@ func (r *Reconciler) startupDeadlineElapsed(record domain.Sandbox) bool {
 	return time.Since(startedAt) >= r.options.StartupTimeout
 }
 
+// terminalStartupDeadlineElapsed reports whether a worker that has never checked
+// in has been under repair longer than the terminal ceiling. It measures from
+// StartupStartedAt, which the store preserves across in-place re-bootstraps, so
+// the ceiling bounds the whole repair storm rather than a single attempt.
+func (r *Reconciler) terminalStartupDeadlineElapsed(record domain.Sandbox) bool {
+	startedAt := record.UpdatedAt
+	if record.StartupStartedAt != nil {
+		startedAt = *record.StartupStartedAt
+	}
+	return time.Since(startedAt) >= r.options.TerminalStartupTimeout
+}
+
+// terminate abandons a permanently broken session. It best-effort stops the
+// compute so billing halts immediately rather than waiting for the provider's
+// auto-pause, then records a terminal observation the reconcile entry parks. It
+// never writes desired state: tearing the record down is the control plane's
+// call, made when a user deletes the session.
+func (r *Reconciler) terminate(
+	ctx context.Context,
+	record domain.Sandbox,
+	environment sandbox.Environment,
+	provider sandbox.Provider,
+) error {
+	r.log.Warn("terminating sandbox after startup ceiling",
+		"session_id", record.SessionID,
+		"provider", record.Provider,
+		"provider_id", environment.ID,
+		"ceiling", r.options.TerminalStartupTimeout,
+	)
+	if err := r.store.DisconnectSessionWorkers(ctx, record.OrgID, record.SessionID); err != nil {
+		r.log.Warn("disconnect terminated worker", "session_id", record.SessionID, "err", err)
+	}
+	switch environment.State {
+	case sandbox.StateStopped, sandbox.StatePaused, sandbox.StateDeleted, sandbox.StateDeleting:
+	default:
+		if err := provider.Stop(ctx, environment.ID); err != nil && !errors.Is(err, sandbox.ErrNotFound) {
+			r.log.Warn("stop terminated sandbox", "session_id", record.SessionID, "err", err)
+		}
+	}
+	message := fmt.Sprintf(
+		"The session's worker never started within %s and has been stopped. This usually means the repository could not be checked out (for example a private repository not connected through the GitHub App).",
+		r.options.TerminalStartupTimeout,
+	)
+	return r.observe(ctx, record, string(environment.ID),
+		domain.SandboxObservedTerminated, message, 24*time.Hour)
+}
+
 func (r *Reconciler) providerStartupTimeoutError() error {
 	return fmt.Errorf(
 		"The NodeOps VM did not become ready within %s. AO kept the existing VM and will retry.",
@@ -861,7 +952,7 @@ func (r *Reconciler) workerSpec(ctx context.Context, record domain.Sandbox) (san
 		"CODEX_HOME":                "/workspace/.ao/home/.codex",
 		"DISABLE_AUTOUPDATER":       "1",
 	}
-	if record.Provider == sandbox.ProviderDocker {
+	if record.Provider == sandbox.ProviderDocker || r.options.AllowAnonymousCheckout {
 		workerEnvironment["AO_CLOUD_ALLOW_ANONYMOUS_GITHUB_CHECKOUT"] = "true"
 	}
 	return sandbox.Spec{

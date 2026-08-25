@@ -33,6 +33,7 @@ type Config struct {
 	LocalAuthEnabled        bool
 	LocalSessionTTL         time.Duration
 	SandboxProvider         string
+	AllowAnonymousCheckout  bool
 	ProviderSecretKey       []byte
 	Release                 string
 	RepositoryBrokerURL     string
@@ -127,18 +128,19 @@ func Load() (Config, error) {
 		defaultHTTPAddress = "127.0.0.1:8080"
 	}
 	cfg := Config{
-		Environment:          environment,
-		HTTPAddress:          envOrDefault("AO_CLOUD_HTTP_ADDRESS", defaultHTTPAddress),
-		DatabaseURL:          strings.TrimSpace(os.Getenv("AO_CLOUD_DATABASE_URL")),
-		MigrationDatabaseURL: strings.TrimSpace(os.Getenv("AO_CLOUD_MIGRATION_DATABASE_URL")),
-		MigrateOnStartup:     boolEnv("AO_CLOUD_MIGRATE_ON_STARTUP", !hosted),
-		MigrationTimeout:     durationEnv("AO_CLOUD_MIGRATION_TIMEOUT", 15*time.Minute),
-		WorkOSIssuer:         strings.TrimSpace(os.Getenv("AO_CLOUD_WORKOS_ISSUER")),
-		WorkOSClientID:       strings.TrimSpace(os.Getenv("AO_CLOUD_WORKOS_CLIENT_ID")),
-		WorkOSAPIKey:         strings.TrimSpace(os.Getenv("AO_CLOUD_WORKOS_API_KEY")),
-		WorkOSJWKSURL:        strings.TrimSpace(os.Getenv("AO_CLOUD_WORKOS_JWKS_URL")),
-		LocalAuthEnabled:     boolEnv("AO_CLOUD_LOCAL_AUTH", false),
-		LocalSessionTTL:      durationEnv("AO_CLOUD_LOCAL_SESSION_TTL", 24*time.Hour),
+		Environment:            environment,
+		HTTPAddress:            envOrDefault("AO_CLOUD_HTTP_ADDRESS", defaultHTTPAddress),
+		DatabaseURL:            strings.TrimSpace(os.Getenv("AO_CLOUD_DATABASE_URL")),
+		MigrationDatabaseURL:   strings.TrimSpace(os.Getenv("AO_CLOUD_MIGRATION_DATABASE_URL")),
+		MigrateOnStartup:       boolEnv("AO_CLOUD_MIGRATE_ON_STARTUP", !hosted),
+		MigrationTimeout:       durationEnv("AO_CLOUD_MIGRATION_TIMEOUT", 15*time.Minute),
+		WorkOSIssuer:           strings.TrimSpace(os.Getenv("AO_CLOUD_WORKOS_ISSUER")),
+		WorkOSClientID:         strings.TrimSpace(os.Getenv("AO_CLOUD_WORKOS_CLIENT_ID")),
+		WorkOSAPIKey:           strings.TrimSpace(os.Getenv("AO_CLOUD_WORKOS_API_KEY")),
+		WorkOSJWKSURL:          strings.TrimSpace(os.Getenv("AO_CLOUD_WORKOS_JWKS_URL")),
+		LocalAuthEnabled:       boolEnv("AO_CLOUD_LOCAL_AUTH", false),
+		LocalSessionTTL:        durationEnv("AO_CLOUD_LOCAL_SESSION_TTL", 24*time.Hour),
+		AllowAnonymousCheckout: boolEnv("AO_CLOUD_ALLOW_ANONYMOUS_GITHUB_CHECKOUT", false),
 		SandboxProvider: strings.ToLower(
 			envOrDefault("AO_CLOUD_SANDBOX_PROVIDER", defaultSandboxProvider(hosted)),
 		),

@@ -138,13 +138,14 @@ func newSandboxReconciler(
 		dockerProvider = provider
 	}
 	return reconcile.New(store, sandboxresolve.New(nodeOpsProvider, dockerProvider), reconcile.Options{
-		PublicURL:          cfg.PublicURL,
-		WorkerBinary:       workerBinary,
-		WorkerHelperBinary: workerHelperBinary,
-		Interval:           cfg.ReconcileInterval,
-		StartupTimeout:     cfg.SandboxStartupTimeout,
-		HeartbeatTimeout:   cfg.WorkerHeartbeatTimeout,
-		Logger:             logger,
+		PublicURL:              cfg.PublicURL,
+		WorkerBinary:           workerBinary,
+		WorkerHelperBinary:     workerHelperBinary,
+		Interval:               cfg.ReconcileInterval,
+		StartupTimeout:         cfg.SandboxStartupTimeout,
+		HeartbeatTimeout:       cfg.WorkerHeartbeatTimeout,
+		AllowAnonymousCheckout: cfg.AllowAnonymousCheckout,
+		Logger:                 logger,
 	}), nil
 }
 

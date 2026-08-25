@@ -35,6 +35,12 @@ const (
 	SandboxObservedFailed        = "failed"
 	SandboxObservedDeleting      = "deleting"
 	SandboxObservedDeleted       = "deleted"
+	// SandboxObservedTerminated is a terminal reconciler verdict: a worker that
+	// never checked in has exhausted its startup ceiling and will not be
+	// repaired again. Unlike `failed`, which schedules a retry, a terminated
+	// sandbox is parked so idle compute is reclaimed instead of resurrected
+	// every tick. Only a `deleted` desired state moves it afterwards.
+	SandboxObservedTerminated = "terminated"
 )
 
 // ResourceProfile is the compute a sandbox is asked for or reported to hold.

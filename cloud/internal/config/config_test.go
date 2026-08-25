@@ -75,8 +75,28 @@ func TestLoadLocalDevelopmentConfiguration(t *testing.T) {
 		cfg.DockerWorkerImage != "ao-cloud-worker:test" ||
 		cfg.WorkerTokenTTL() != 10*time.Minute ||
 		cfg.Release != "dev" ||
+		cfg.AllowAnonymousCheckout ||
 		cfg.MigrationDatabaseURL != cfg.DatabaseURL {
 		t.Fatalf("config = %#v", cfg)
+	}
+}
+
+func TestLoadEnablesAnonymousCheckout(t *testing.T) {
+	t.Setenv("AO_CLOUD_ENV", "development")
+	t.Setenv("AO_CLOUD_DATABASE_URL", "postgres://localhost/ao")
+	t.Setenv("AO_CLOUD_LOCAL_AUTH", "true")
+	t.Setenv("AO_CLOUD_SANDBOX_PROVIDER", "docker")
+	t.Setenv("AO_CLOUD_DOCKER_WORKER_IMAGE", "ao-cloud-worker:test")
+	t.Setenv("AO_CLOUD_PUBLIC_URL", "http://control-plane:8080")
+	t.Setenv("AO_CLOUD_WORKER_SIGNING_KEY", strings.Repeat("d", 64))
+	t.Setenv("AO_CLOUD_ALLOW_ANONYMOUS_GITHUB_CHECKOUT", "true")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.AllowAnonymousCheckout {
+		t.Fatal("AO_CLOUD_ALLOW_ANONYMOUS_GITHUB_CHECKOUT=true did not enable anonymous checkout")
 	}
 }
 

@@ -136,6 +136,17 @@ func run(logger *slog.Logger) error {
 		checkoutGrant, err := client.checkoutGrant(ctx)
 		if err != nil {
 			if !anonymousCheckoutEnabled() {
+				if errors.Is(err, errCheckoutForbidden) {
+					// A permanent fault: the session has no repository grant, so
+					// no amount of restarting this worker will make progress.
+					// Surface the cause plainly; the reconciler's startup ceiling
+					// stops the sandbox once repairs stay fruitless.
+					logger.Error("checkout grant refused; session cannot start without a repository grant",
+						"session_id", bootstrap.SessionID,
+						"repository_url", bootstrap.Launch.RepositoryURL,
+						"hint", "connect the repository through the GitHub App, or set AO_CLOUD_ALLOW_ANONYMOUS_GITHUB_CHECKOUT for a public repository",
+					)
+				}
 				return fmt.Errorf("request checkout grant: %w", err)
 			}
 			checkoutGrant = worker.CheckoutGrantResponse{
@@ -275,6 +286,12 @@ func run(logger *slog.Logger) error {
 }
 
 var errStaleWorker = errors.New("worker credential replaced")
+
+// errCheckoutForbidden marks a checkout grant the control plane refused. It is a
+// permanent configuration fault (the session has no repository grant, e.g. a
+// private repository not connected through the GitHub App), not a transient
+// error, so retrying the worker cannot make progress.
+var errCheckoutForbidden = errors.New("checkout grant not authorized")
 
 type client struct {
 	baseURL   string
@@ -636,6 +653,10 @@ func (c *client) doMethod(
 		if response.StatusCode == http.StatusUnauthorized &&
 			bytes.Contains(snippet, []byte("STALE_WORKER_TOKEN")) {
 			return errStaleWorker
+		}
+		if response.StatusCode == http.StatusForbidden &&
+			bytes.Contains(snippet, []byte("CHECKOUT_NOT_AUTHORIZED")) {
+			return errCheckoutForbidden
 		}
 		return fmt.Errorf("%s returned %d: %s", path, response.StatusCode, strings.TrimSpace(string(snippet)))
 	}
