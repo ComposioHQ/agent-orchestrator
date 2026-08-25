@@ -41,7 +41,10 @@ var _ Runtime = (*conpty.Runtime)(nil)
 // terminal runtime state.
 func New(_ *slog.Logger, runFilePath string) Runtime {
 	if runtime.GOOS != "windows" {
-		return tmux.New(tmux.Options{SocketPath: privateTmuxSocketPath(runFilePath)})
+		return tmux.New(tmux.Options{
+			SocketPath:  privateTmuxSocketPath(runFilePath),
+			RunFilePath: runFilePath,
+		})
 	}
 	return conpty.New(conpty.Options{RunFilePath: runFilePath})
 }

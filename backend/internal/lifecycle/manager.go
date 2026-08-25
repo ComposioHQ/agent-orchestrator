@@ -1006,6 +1006,46 @@ func (m *Manager) MarkSpawned(ctx context.Context, id domain.SessionID, metadata
 	return nil
 }
 
+// ReconcileRuntimeIdentity repairs the durable generation after boot adopts an
+// ownership-verified pre-private-socket runtime. The expected handle and launch
+// form a compare-and-swap fence: a concurrent restore, switch, or kill wins and
+// this stale observation becomes a no-op.
+func (m *Manager) ReconcileRuntimeIdentity(
+	ctx context.Context,
+	id domain.SessionID,
+	expectedHandleID string,
+	expectedLaunchID string,
+	actualLaunchID string,
+) error {
+	actualLaunchID = strings.TrimSpace(actualLaunchID)
+	if actualLaunchID == "" {
+		return errors.New("lifecycle: reconciled runtime launch id is required")
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	rec, ok, err := m.store.GetSession(ctx, id)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return fmt.Errorf("lifecycle: reconcile runtime identity for unknown session %q", id)
+	}
+	if rec.IsTerminated || rec.Metadata.RuntimeHandleID != expectedHandleID ||
+		rec.Metadata.RuntimeLaunchID != expectedLaunchID {
+		return nil
+	}
+	if rec.Metadata.RuntimeLaunchID == actualLaunchID {
+		return nil
+	}
+	rec.Metadata.RuntimeLaunchID = actualLaunchID
+	if rec.Metadata.AgentSessionID != "" &&
+		(rec.Metadata.AgentSessionIDLaunchID == "" || rec.Metadata.AgentSessionIDLaunchID == expectedLaunchID) {
+		rec.Metadata.AgentSessionIDLaunchID = actualLaunchID
+	}
+	rec.UpdatedAt = m.clock()
+	return m.store.UpdateSession(ctx, rec)
+}
+
 // CommitControllerEpoch atomically changes which controller owns a live
 // session. Session Manager coordinates the external-process saga, but only
 // Lifecycle Manager is allowed to write the durable controller/activity facts.

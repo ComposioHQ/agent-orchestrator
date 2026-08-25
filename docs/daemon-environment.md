@@ -13,7 +13,11 @@ cannot see API keys. Packaged macOS/Linux builds carry their own tmux and do
 not depend on a machine installation; development and standalone daemon runs
 still resolve tmux from `PATH`. On Unix, every daemon derives an explicit
 AO-private `tmux -S` socket from its run-file identity, starts tmux without the
-user's tmux configuration, and never probes the default socket. The socket
+user's tmux configuration, and creates every new session there. During the
+private-socket upgrade bridge, an existing session may be recovered from the
+system tmux default socket only when its immutable pane start command proves
+the same AO run-file, session id, supervised marker, and launch generation;
+same-named user sessions fail closed. The socket
 inode stays beside the run file; deeply nested state paths use a validated,
 bounded, owner-only `/tmp` directory alias to satisfy macOS's Unix-socket path
 limit. Socket paths are canonicalized and fail closed if their directory or an
@@ -196,7 +200,10 @@ it. We shell out once to the user's own shell and adopt its result.
   without tmux on `PATH`; confirm a new session spawns and attaches through the
   bundled `resources/tmux/bin/tmux` on the daemon's explicit private socket,
   while `git`/agent binaries still resolve. Confirm a user `~/.tmux.conf` is
-  ignored and sessions on tmux's default socket are not discovered.
+  ignored. In an isolated `TMUX_TMPDIR`, confirm an ownership-stamped session
+  from the historical default socket remains attachable after upgrade, its
+  durable launch generation is repaired, a foreign same-named session is not
+  adopted, and all post-upgrade sessions stay on the private socket.
 
 ## Relevant code
 
@@ -213,7 +220,8 @@ it. We shell out once to the user's own shell and adopt its result.
   `AO_TMUX_BINARY`; standalone runs fall back to `exec.LookPath("tmux")`. The
   daemon derives its explicit private `-S` socket from the run-file identity,
   ignores user tmux configuration, refreshes the workload environment per pane,
-  and never probes tmux's default socket. A value-free bootstrap pane lets the
+  and uses the system tmux client only for ownership-verified recovery of
+  pre-cutover default-socket sessions. A value-free bootstrap pane lets the
   adapter apply project environment values over stdin before launching the real
   command.
 - `backend/internal/observe/reaper/reaper.go`,

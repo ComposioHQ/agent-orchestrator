@@ -153,6 +153,21 @@ type ExactSupervisedProcessInspector interface {
 	IsExactSupervisedProcessAlive(ctx context.Context, handle RuntimeHandle, ref SupervisedProcessRef) (bool, error)
 }
 
+// RuntimeIdentity is provenance recovered from a surviving runtime during an
+// upgrade. Legacy is true only after the adapter has proved that the runtime
+// belongs to this AO run-file identity rather than a same-named user session.
+type RuntimeIdentity struct {
+	LaunchID string
+	Legacy   bool
+}
+
+// RuntimeIdentityInspector is an optional upgrade capability. It lets boot
+// reconciliation repair a stale durable generation after safely adopting a
+// pre-private-socket runtime that survived one or more desktop updates.
+type RuntimeIdentityInspector interface {
+	InspectRuntimeIdentity(ctx context.Context, handle RuntimeHandle, sessionID domain.SessionID) (RuntimeIdentity, error)
+}
+
 // ContainerReaper removes Docker containers a worker session owns, identified
 // by the ao.session=<id> label convention (see EnvSessionID). It is an
 // optional capability: nil wiring means container reaping is a no-op, not an

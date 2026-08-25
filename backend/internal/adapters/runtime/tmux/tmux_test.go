@@ -788,7 +788,7 @@ func TestRestartRejectsMismatchedSessionHandle(t *testing.T) {
 	}
 }
 
-func TestIsAliveNeverProbesDefaultSocket(t *testing.T) {
+func TestIsAliveNeverProbesDefaultSocketWhenLegacyAdoptionIsDisabled(t *testing.T) {
 	r := New(Options{Binary: "tmux-test", SocketPath: testSocketPath, Timeout: time.Second})
 	fr := &fakeRunnerSequence{results: []fakeRunnerResult{{
 		out: []byte("can't find session: sess-1"), err: &exec.ExitError{},
@@ -806,6 +806,142 @@ func TestIsAliveNeverProbesDefaultSocket(t *testing.T) {
 	want := append([]string{"-S", testSocketPath, "-f", os.DevNull}, hasSessionArgs("sess-1")...)
 	if !reflect.DeepEqual(fr.calls[0].args, want) {
 		t.Fatalf("args = %#v, want %#v", fr.calls[0].args, want)
+	}
+}
+
+func legacyOwnedPaneCommand(runFile, sessionID, launchID string) string {
+	return `/bin/zsh -c "cd '/tmp/worktree' || exit; ` +
+		"export AO_RUN_FILE=" + shellQuote(runFile) + "; " +
+		"export AO_SESSION_ID=" + shellQuote(sessionID) + "; " +
+		"export AO_SUPERVISED_PROCESS='1'; " +
+		"'/Applications/Agent Orchestrator.app/Contents/Resources/daemon/ao' 'agent-process' 'supervise' " +
+		"'--session' " + shellQuote(sessionID) + " '--launch' " + shellQuote(launchID) + " '--' 'codex'" + `"`
+}
+
+func TestIsAliveAdoptsOwnershipVerifiedLegacyDefaultSession(t *testing.T) {
+	const (
+		runFile  = "/tmp/ao/running.json"
+		session  = "sess-1"
+		launchID = "legacy-launch"
+	)
+	r := New(Options{
+		Binary:       "bundled-tmux",
+		LegacyBinary: "system-tmux",
+		SocketPath:   testSocketPath,
+		RunFilePath:  runFile,
+		Timeout:      time.Second,
+	})
+	fr := &fakeRunnerSequence{results: []fakeRunnerResult{
+		{out: []byte("can't find session: " + session), err: &exec.ExitError{}},
+		{},
+		{out: []byte(legacyOwnedPaneCommand(runFile, session, launchID) + "\n")},
+		{out: []byte("can't find session: " + session), err: &exec.ExitError{}},
+		{},
+	}}
+	r.runner = fr
+
+	alive, err := r.IsAlive(context.Background(), ports.RuntimeHandle{ID: session})
+	if err != nil || !alive {
+		t.Fatalf("IsAlive = (%v, %v), want (true, nil)", alive, err)
+	}
+	identity, err := r.InspectRuntimeIdentity(context.Background(), ports.RuntimeHandle{ID: session}, session)
+	if err != nil || !identity.Legacy || identity.LaunchID != launchID {
+		t.Fatalf("identity = (%+v, %v), want legacy launch %q", identity, err, launchID)
+	}
+	if len(fr.calls) != 5 {
+		t.Fatalf("calls = %d, want private probe + legacy probe/provenance + private race probe + final probe", len(fr.calls))
+	}
+	if fr.calls[0].name != "bundled-tmux" || fr.calls[1].name != "system-tmux" || fr.calls[2].name != "system-tmux" || fr.calls[3].name != "bundled-tmux" || fr.calls[4].name != "system-tmux" {
+		t.Fatalf("client routing = %q, %q, %q, %q, %q", fr.calls[0].name, fr.calls[1].name, fr.calls[2].name, fr.calls[3].name, fr.calls[4].name)
+	}
+	for _, call := range []runnerCall{fr.calls[1], fr.calls[2], fr.calls[4]} {
+		if len(call.args) < 4 || !reflect.DeepEqual(call.args[:4], []string{"-L", "default", "-f", os.DevNull}) {
+			t.Fatalf("legacy args = %#v, want explicit default socket and empty config", call.args)
+		}
+	}
+}
+
+func TestIsAliveRejectsSameNamedForeignLegacySession(t *testing.T) {
+	r := New(Options{
+		Binary:       "bundled-tmux",
+		LegacyBinary: "system-tmux",
+		SocketPath:   testSocketPath,
+		RunFilePath:  "/tmp/ao/running.json",
+		Timeout:      time.Second,
+	})
+	fr := &fakeRunnerSequence{results: []fakeRunnerResult{
+		{out: []byte("can't find session: sess-1"), err: &exec.ExitError{}},
+		{},
+		{out: []byte("/bin/zsh -c 'exec user-shell'\n")},
+	}}
+	r.runner = fr
+
+	alive, err := r.IsAlive(context.Background(), ports.RuntimeHandle{ID: "sess-1"})
+	if alive || !errors.Is(err, ports.ErrRuntimeProbeInconclusive) {
+		t.Fatalf("IsAlive = (%v, %v), want inconclusive foreign collision", alive, err)
+	}
+}
+
+func TestPrivateSessionWinsOverSameNamedLegacySession(t *testing.T) {
+	r := New(Options{
+		Binary:       "bundled-tmux",
+		LegacyBinary: "system-tmux",
+		SocketPath:   testSocketPath,
+		RunFilePath:  "/tmp/ao/running.json",
+		Timeout:      time.Second,
+	})
+	fr := &fakeRunnerSequence{results: []fakeRunnerResult{{}, {}}}
+	r.runner = fr
+
+	alive, err := r.IsAlive(context.Background(), ports.RuntimeHandle{ID: "sess-1"})
+	if err != nil || !alive {
+		t.Fatalf("IsAlive = (%v, %v), want private live session", alive, err)
+	}
+	if len(fr.calls) != 2 || fr.calls[0].name != "bundled-tmux" || fr.calls[1].name != "bundled-tmux" {
+		t.Fatalf("calls = %#v, want private client only", fr.calls)
+	}
+}
+
+func TestPrivateSessionAppearingDuringLegacyInspectionWins(t *testing.T) {
+	const (
+		runFile = "/tmp/ao/running.json"
+		session = "sess-1"
+	)
+	r := New(Options{
+		Binary:       "bundled-tmux",
+		LegacyBinary: "system-tmux",
+		SocketPath:   testSocketPath,
+		RunFilePath:  runFile,
+		Timeout:      time.Second,
+	})
+	fr := &fakeRunnerSequence{results: []fakeRunnerResult{
+		{out: []byte("can't find session: " + session), err: &exec.ExitError{}},
+		{},
+		{out: []byte(legacyOwnedPaneCommand(runFile, session, "legacy-launch") + "\n")},
+		{}, // A private session appeared before adoption was committed.
+		{}, // IsAlive's routed probe remains private.
+	}}
+	r.runner = fr
+
+	alive, err := r.IsAlive(context.Background(), ports.RuntimeHandle{ID: session})
+	if err != nil || !alive {
+		t.Fatalf("IsAlive = (%v, %v), want private live session", alive, err)
+	}
+	if len(fr.calls) != 5 || fr.calls[3].name != "bundled-tmux" || fr.calls[4].name != "bundled-tmux" {
+		t.Fatalf("calls = %#v, want private race probe and final private probe", fr.calls)
+	}
+}
+
+func TestLegacyPaneIdentityRequiresExactRunFileAndSupervisor(t *testing.T) {
+	command := legacyOwnedPaneCommand("/tmp/ao/running.json", "sess-1", "launch-1")
+	if launchID, ok := legacyPaneIdentity(command, "sess-1", "/tmp/ao/running.json"); !ok || launchID != "launch-1" {
+		t.Fatalf("legacyPaneIdentity = (%q, %v), want launch-1, true", launchID, ok)
+	}
+	if _, ok := legacyPaneIdentity(command, "sess-1", "/tmp/other/running.json"); ok {
+		t.Fatal("pane with another AO run-file identity was accepted")
+	}
+	if _, ok := legacyPaneIdentity(strings.Replace(command, "'agent-process'", "'other-process'", 1), "sess-1", "/tmp/ao/running.json"); ok {
+		t.Fatal("pane without the AO supervisor was accepted")
 	}
 }
 

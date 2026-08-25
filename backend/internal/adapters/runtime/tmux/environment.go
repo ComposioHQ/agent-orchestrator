@@ -33,12 +33,12 @@ func (r *Runtime) syncCurrentEnvironment(ctx context.Context, sessionID string, 
 		{scope: "session", args: []string{"show-environment", "-t", exactSessionTarget(sessionID)}},
 	}
 	for _, query := range queries {
-		out, err := r.run(ctx, query.args...)
+		out, err := r.runForSession(ctx, sessionID, query.args...)
 		if err != nil {
 			if serverUnreachableOutput(string(out)) {
-				return fmt.Errorf("private tmux server unavailable while refreshing session %s", sessionID)
+				return fmt.Errorf("tmux server unavailable while refreshing session %s", sessionID)
 			}
-			return fmt.Errorf("inspect private tmux %s environment %s: %w", query.scope, sessionID, err)
+			return fmt.Errorf("inspect tmux %s environment %s: %w", query.scope, sessionID, err)
 		}
 		for _, key := range parseTmuxEnvironmentNames(string(out)) {
 			names[key] = struct{}{}
@@ -49,8 +49,8 @@ func (r *Runtime) syncCurrentEnvironment(ctx context.Context, sessionID string, 
 	if script == "" {
 		return nil
 	}
-	if _, err := r.runWithInput(ctx, []byte(script), "source-file", "-"); err != nil {
-		return fmt.Errorf("apply private tmux environment: %w", err)
+	if _, err := r.runWithInputForSession(ctx, sessionID, []byte(script), "source-file", "-"); err != nil {
+		return fmt.Errorf("apply tmux session environment: %w", err)
 	}
 	return nil
 }

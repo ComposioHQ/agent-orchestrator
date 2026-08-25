@@ -1580,6 +1580,44 @@ func TestMarkSpawnedStoresRuntimeMetadata(t *testing.T) {
 	}
 }
 
+func TestReconcileRuntimeIdentityRepairsMatchingLiveGeneration(t *testing.T) {
+	store := newFakeStore()
+	store.sessions["mer-1"] = domain.SessionRecord{
+		ID: "mer-1",
+		Metadata: domain.SessionMetadata{
+			RuntimeHandleID:        "mer-1",
+			RuntimeLaunchID:        "stale-launch",
+			AgentSessionID:         "native-1",
+			AgentSessionIDLaunchID: "stale-launch",
+		},
+	}
+	m := New(store, nil)
+
+	if err := m.ReconcileRuntimeIdentity(ctx, "mer-1", "mer-1", "stale-launch", "legacy-live-launch"); err != nil {
+		t.Fatal(err)
+	}
+	got := store.sessions["mer-1"]
+	if got.Metadata.RuntimeLaunchID != "legacy-live-launch" || got.Metadata.AgentSessionIDLaunchID != "legacy-live-launch" {
+		t.Fatalf("metadata = %+v", got.Metadata)
+	}
+}
+
+func TestReconcileRuntimeIdentityIgnoresStaleObservation(t *testing.T) {
+	store := newFakeStore()
+	store.sessions["mer-1"] = domain.SessionRecord{
+		ID:       "mer-1",
+		Metadata: domain.SessionMetadata{RuntimeHandleID: "mer-1", RuntimeLaunchID: "newer-launch"},
+	}
+	m := New(store, nil)
+
+	if err := m.ReconcileRuntimeIdentity(ctx, "mer-1", "mer-1", "stale-launch", "legacy-live-launch"); err != nil {
+		t.Fatal(err)
+	}
+	if got := store.sessions["mer-1"].Metadata.RuntimeLaunchID; got != "newer-launch" {
+		t.Fatalf("launch id = %q, want newer-launch", got)
+	}
+}
+
 func TestMarkSpawnedPersistsAndPreservesDiffBase(t *testing.T) {
 	m, st, _ := newManager()
 	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer", IsTerminated: true}

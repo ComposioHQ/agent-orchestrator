@@ -382,11 +382,101 @@ func TestRuntimeIntegrationUsesAliasForLongPrivateSocket(t *testing.T) {
 	waitForOutput(t, r, handle, "alias-ok", 5*time.Second)
 }
 
+// TestRuntimeIntegrationAdoptsLegacyDefaultSocketAcrossPrivateSocketUpgrade
+// models the desktop update boundary which moved AO from the system tmux
+// default socket to its hashed private socket. The old, ownership-stamped pane
+// must remain reachable while every newly-created session stays isolated on
+// the private socket.
+func TestRuntimeIntegrationAdoptsLegacyDefaultSocketAcrossPrivateSocketUpgrade(t *testing.T) {
+	systemTmux, err := exec.LookPath("tmux")
+	if err != nil {
+		t.Skip("tmux not available")
+	}
+
+	// Never inspect or mutate the developer's real default server. TMUX_TMPDIR
+	// gives this test an isolated server which still exercises tmux's -L default
+	// naming path exactly as an upgraded desktop install does.
+	legacySocketRoot, err := os.MkdirTemp("", "ao-legacy-")
+	if err != nil {
+		t.Fatalf("create isolated legacy socket directory: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(legacySocketRoot) })
+	t.Setenv("TMUX_TMPDIR", legacySocketRoot)
+	ctx := context.Background()
+	runFile := filepath.Join(t.TempDir(), "running.json")
+	r := New(Options{
+		Binary:       systemTmux,
+		LegacyBinary: systemTmux,
+		SocketPath:   integrationSocketPath(t),
+		RunFilePath:  runFile,
+		Timeout:      5 * time.Second,
+	})
+	base := strings.ReplaceAll(t.Name(), "/", "_")
+	legacyID := base + "_legacy"
+	privateID := base + "_private"
+	const legacyLaunchID = "launch-before-update"
+
+	legacyCommand := "cd " + shellQuote(t.TempDir()) + " || exit; " +
+		"export AO_RUN_FILE=" + shellQuote(runFile) + "; " +
+		"export AO_SESSION_ID=" + shellQuote(legacyID) + "; " +
+		"export AO_SUPERVISED_PROCESS='1'; " +
+		"export AO_TMUX_LEGACY_UPGRADE_HELPER='1'; " +
+		shellQuote(os.Args[0]) + " '-test.run=TestLegacyUpgradeProcessHelper' '--' " +
+		"'agent-process' 'supervise' '--session' " + shellQuote(legacyID) +
+		" '--launch' " + shellQuote(legacyLaunchID) + " '--'"
+	if out, createErr := r.runOnLegacy(ctx, nil, newSessionArgs(legacyID, t.TempDir(), "/bin/sh", legacyCommand)...); createErr != nil {
+		t.Fatalf("create isolated legacy session: %v: %s", createErr, out)
+	}
+	t.Cleanup(func() {
+		_, _ = r.runOnLegacy(context.Background(), nil, killSessionArgs(legacyID)...)
+	})
+
+	legacyHandle := ports.RuntimeHandle{ID: legacyID}
+	if alive, aliveErr := r.IsAlive(ctx, legacyHandle); aliveErr != nil || !alive {
+		t.Fatalf("legacy IsAlive = (%v, %v), want (true, nil)", alive, aliveErr)
+	}
+	waitForOutput(t, r, legacyHandle, "legacy-upgrade-ready", 5*time.Second)
+	identity, err := r.InspectRuntimeIdentity(ctx, legacyHandle, domain.SessionID(legacyID))
+	if err != nil || !identity.Legacy || identity.LaunchID != legacyLaunchID {
+		t.Fatalf("legacy identity = (%+v, %v), want launch %q", identity, err, legacyLaunchID)
+	}
+	attachArgv, err := r.attachCommandForRoute(legacyID, routeLegacyDefault)
+	if err != nil || len(attachArgv) < 5 || attachArgv[0] != systemTmux || attachArgv[1] != "-L" || attachArgv[2] != "default" {
+		t.Fatalf("legacy attach argv = (%#v, %v), want system tmux -L default", attachArgv, err)
+	}
+
+	privateHandle, err := r.Create(ctx, ports.RuntimeConfig{
+		SessionID:     domain.SessionID(privateID),
+		WorkspacePath: t.TempDir(),
+		Argv:          []string{"/bin/sh", "-c", "printf 'private-upgrade-ready\\n'; sleep 30"},
+	})
+	if err != nil {
+		t.Fatalf("create private post-update session: %v", err)
+	}
+	t.Cleanup(func() { _ = r.Destroy(context.Background(), privateHandle) })
+	waitForOutput(t, r, privateHandle, "private-upgrade-ready", 5*time.Second)
+
+	if out, probeErr := r.run(ctx, hasSessionArgs(legacyID)...); probeErr == nil || !sessionMissingOutput(string(out)) {
+		t.Fatalf("legacy session unexpectedly exists on private socket: (%q, %v)", out, probeErr)
+	}
+	if out, probeErr := r.runOnLegacy(ctx, nil, hasSessionArgs(privateID)...); probeErr == nil || !sessionMissingOutput(string(out)) {
+		t.Fatalf("new session unexpectedly exists on legacy socket: (%q, %v)", out, probeErr)
+	}
+}
+
 func TestSupervisorProcessHelper(t *testing.T) {
 	if os.Getenv("AO_TMUX_SUPERVISOR_HELPER") != "1" {
 		return
 	}
 	time.Sleep(2 * time.Second)
+}
+
+func TestLegacyUpgradeProcessHelper(t *testing.T) {
+	if os.Getenv("AO_TMUX_LEGACY_UPGRADE_HELPER") != "1" {
+		return
+	}
+	_, _ = os.Stdout.WriteString("legacy-upgrade-ready\n")
+	time.Sleep(30 * time.Second)
 }
 
 func integrationSocketPath(t *testing.T) string {

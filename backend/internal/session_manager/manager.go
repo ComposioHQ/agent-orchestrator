@@ -234,6 +234,16 @@ type lifecycleRecorder interface {
 	MarkTerminated(ctx context.Context, id domain.SessionID) error
 }
 
+type runtimeIdentityReconciler interface {
+	ReconcileRuntimeIdentity(
+		ctx context.Context,
+		id domain.SessionID,
+		expectedHandleID string,
+		expectedLaunchID string,
+		actualLaunchID string,
+	) error
+}
+
 // ShellTerminalCloser gates a session's scoped shell terminals around every
 // path that releases its worktree (Kill, Cleanup, RetireForReplacement, the
 // reconcile/shutdown save-and-teardown path), so none of them removes a
@@ -2265,6 +2275,9 @@ func (m *Manager) reconcileLive(ctx context.Context, rec domain.SessionRecord) e
 				return fmt.Errorf("reconcile %s: probe: %w", rec.ID, err)
 			}
 			if alive {
+				if err := m.reconcileSurvivingRuntimeIdentity(ctx, rec, handle); err != nil {
+					return fmt.Errorf("reconcile %s: runtime identity: %w", rec.ID, err)
+				}
 				return nil // adopt: the session survived the crash.
 			}
 		}
@@ -2296,6 +2309,36 @@ func (m *Manager) reconcileLive(ctx context.Context, rec domain.SessionRecord) e
 		}
 	}
 	return nil
+}
+
+func (m *Manager) reconcileSurvivingRuntimeIdentity(
+	ctx context.Context,
+	rec domain.SessionRecord,
+	handle ports.RuntimeHandle,
+) error {
+	inspector, ok := m.runtime.(ports.RuntimeIdentityInspector)
+	if !ok {
+		return nil
+	}
+	identity, err := inspector.InspectRuntimeIdentity(ctx, handle, rec.ID)
+	if err != nil {
+		return err
+	}
+	if !identity.Legacy || strings.TrimSpace(identity.LaunchID) == "" ||
+		identity.LaunchID == rec.Metadata.RuntimeLaunchID {
+		return nil
+	}
+	reconciler, ok := m.lcm.(runtimeIdentityReconciler)
+	if !ok {
+		return errors.New("lifecycle manager cannot reconcile an adopted legacy runtime identity")
+	}
+	return reconciler.ReconcileRuntimeIdentity(
+		ctx,
+		rec.ID,
+		rec.Metadata.RuntimeHandleID,
+		rec.Metadata.RuntimeLaunchID,
+		identity.LaunchID,
+	)
 }
 
 func (m *Manager) liveRelaunchCommitted(ctx context.Context, before domain.SessionRecord) (bool, error) {

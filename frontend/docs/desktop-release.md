@@ -28,8 +28,12 @@ on `main`; the PR-based flow below supersedes it.
   stages that binary in versioned storage under the AO data directory; this
   keeps it available after a Linux AppImage mount disappears. The daemon
   derives an explicit AO-private `tmux -S` socket from its run-file identity and
-  starts tmux without reading the user's tmux configuration. It never probes or
-  adopts sessions from tmux's default socket. Socket inodes remain in AO state;
+  starts tmux without reading the user's tmux configuration. New sessions never
+  leave that socket. For updates from pre-cutover releases, the daemon may route
+  an existing session to the system tmux default socket only after its immutable
+  pane command proves the same AO run-file, session id, supervised marker, and
+  launch generation; it then repairs the stale durable generation during boot.
+  A same-named user session is never adopted. Socket inodes remain in AO state;
   a bounded owner-only `/tmp` directory alias handles deeply nested paths on
   macOS, and unsafe shared-writable socket directories fail closed. Pane
   environments are applied over stdin before the real command starts, keeping
