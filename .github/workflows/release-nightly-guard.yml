@@ -1,0 +1,77 @@
+name: Release nightly guard
+
+# The stable channel has release-latest-guard.yml. Nightly had nothing, and it
+# is the channel that actually breaks: three of the six nightlies cut between
+# 2026-08-23 and 2026-08-25 shipped without their updater manifests, and one of
+# those was still a draft. Any of them strands every nightly install.
+#
+# Why the newest release is the only one that matters: electron-updater
+# discovers prereleases through releases.atom, takes the FIRST entry matching
+# the channel, fetches that release's <channel>-<platform>.yml, and on 404
+# retries exactly one fallback before giving up. It never walks to the next
+# entry. So one bad release at the top of the feed wedges every client, even
+# with a perfectly good release directly beneath it.
+#
+# Drafts count. releases.atom lists them, but their assets are not public, so a
+# draft at the top of the feed 404s for everyone.
+on:
+  release:
+    types: [published, edited, released, created, prereleased]
+  schedule:
+    - cron: "23 * * * *"
+  workflow_dispatch:
+
+jobs:
+  nightly-feed:
+    # Forks copy this workflow but cut no nightlies, so the hourly schedule
+    # would fail red forever. Same guard as release-latest-guard.yml.
+    if: github.repository == 'Untrivial-ai/agent-orchestrator'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Verify the nightly feed head is installable
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # Read the same feed the client reads, rather than the API, so this
+          # checks what users actually resolve to (the API omits drafts; the
+          # Atom feed does not).
+          atom="$(curl -fsSL "https://github.com/$REPO/releases.atom")"
+          tag="$(grep -oE '/tag/[^\"]+' <<<"$atom" | sed 's|/tag/||' | grep -m1 -- '-nightly\.' || true)"
+
+          if [[ -z "$tag" ]]; then
+            echo "No nightly release in the feed yet; nothing to guard."
+            exit 0
+          fi
+
+          echo "Nightly feed head: $tag"
+
+          release_json="$(gh release view "$tag" --repo "$REPO" --json isDraft,assets)"
+          draft="$(jq -r '.isDraft' <<<"$release_json")"
+
+          if [[ "$draft" == "true" ]]; then
+            echo "::error::Nightly feed head '$tag' is a DRAFT. releases.atom lists drafts, but their assets 404, so every nightly install fails its update check against this release. Publish it with its updater manifests or delete it."
+            exit 1
+          fi
+
+          mapfile -t assets < <(jq -r '.assets[].name' <<<"$release_json")
+
+          missing=()
+          for required in nightly.yml nightly-mac.yml nightly-linux.yml; do
+            if ! printf '%s\n' "${assets[@]}" | grep -Fxq "$required"; then
+              missing+=("$required")
+            fi
+          done
+
+          if (( ${#missing[@]} > 0 )); then
+            echo "::error::Nightly feed head '$tag' is missing updater manifest(s): ${missing[*]}. Every nightly install 404s its update check against this release. Generate and upload them (frontend/scripts/feed.mjs <dir> <version> nightly) or delete the release."
+            printf 'Assets present:\n%s\n' "${assets[@]}"
+            exit 1
+          fi
+
+          echo "OK: $tag is published and carries nightly.yml, nightly-mac.yml, nightly-linux.yml."
