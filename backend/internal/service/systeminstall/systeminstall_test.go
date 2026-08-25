@@ -97,12 +97,20 @@ func TestPlanFor(t *testing.T) {
 			wantUnsupported: true, wantReasonHas: "No supported Linux package manager",
 		},
 		{
-			name: "gh windows uses winget", target: TargetGH, goos: "windows", found: []string{"winget"},
-			wantCommand: []string{"winget", "install", "-e", "--id", "GitHub.cli"},
+			name: "gh windows uses pinned winget source", target: TargetGH, goos: "windows", found: []string{"winget"},
+			wantCommand: []string{
+				"winget", "install", "-e", "--id", "GitHub.cli",
+				"--source", "winget",
+				"--accept-package-agreements",
+				"--accept-source-agreements",
+			},
 		},
 		{
-			name: "gh windows without winget is unsupported", target: TargetGH, goos: "windows",
-			wantUnsupported: true, wantReasonHas: "winget was not found",
+			// gh without winget no longer dead-ends as Unsupported; the
+			// direct-download fallback is covered in detail by
+			// TestGHWindowsFallsBackToDirectDownload below.
+			name: "gh windows without winget still resolves a runnable plan", target: TargetGH, goos: "windows",
+			wantCommand: nil,
 		},
 		{
 			name: "gh darwin uses brew", target: TargetGH, goos: "darwin", found: []string{"brew"},
@@ -129,8 +137,21 @@ func TestPlanFor(t *testing.T) {
 			wantCommand: []string{"npm", "install", "-g", "@github/copilot"},
 		},
 		{
-			name: "opencode windows uses winget", target: TargetOpencode, goos: "windows", found: []string{"winget"},
-			wantCommand: []string{"winget", "install", "-e", "--id", "SST.opencode"},
+			name: "opencode windows uses pinned winget source", target: TargetOpencode, goos: "windows", found: []string{"winget"},
+			wantCommand: []string{
+				"winget", "install", "-e", "--id", "SST.opencode",
+				"--source", "winget",
+				"--accept-package-agreements",
+				"--accept-source-agreements",
+			},
+		},
+		{
+			// The direct-download fallback is gh-only: opencode on Windows
+			// still requires winget, so a missing winget must stay Unsupported
+			// with the manual remedy rather than silently changing install
+			// routes for this target.
+			name: "opencode windows without winget is unsupported", target: TargetOpencode, goos: "windows",
+			wantUnsupported: true, wantReasonHas: "winget was not found",
 		},
 		{
 			name: "opencode darwin uses the curl pipeline via bash", target: TargetOpencode, goos: "darwin", found: []string{"curl", "bash"},
@@ -168,6 +189,32 @@ func TestPlanFor(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestGHWindowsFallsBackToDirectDownload pins the shape of the no-winget gh
+// plan: a hardcoded, fully non-interactive PowerShell run that downloads the
+// official windows_amd64 zip from cli/cli GitHub Releases and copies
+// bin\*.exe into %LOCALAPPDATA%\Microsoft\WindowsApps — on the default
+// per-user PATH, so the post-run LookPath verification succeeds without
+// registry edits or shell restarts (#4449).
+func TestGHWindowsFallsBackToDirectDownload(t *testing.T) {
+	plan := newTestService("windows").planFor(TargetGH)
+	if plan.Unsupported {
+		t.Fatalf("Unsupported = true, want a runnable fallback plan (reason=%q)", plan.Reason)
+	}
+	if got := strings.Join(plan.Command, " "); !strings.HasPrefix(got, "powershell -NoProfile -NonInteractive") {
+		t.Fatalf("Command = %v, want a non-interactive powershell invocation", plan.Command)
+	}
+	script := plan.Command[len(plan.Command)-1]
+	for _, want := range []string{
+		"https://api.github.com/repos/cli/cli/releases/latest",
+		"gh_*_windows_amd64.zip",
+		"Microsoft\\WindowsApps",
+	} {
+		if !strings.Contains(script, want) {
+			t.Fatalf("download script missing %q:\n%s", want, script)
+		}
 	}
 }
 

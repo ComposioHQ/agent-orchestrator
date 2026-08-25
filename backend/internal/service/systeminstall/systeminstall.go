@@ -343,7 +343,7 @@ func (s *Service) planTmux() Plan {
 func (s *Service) planGH() Plan {
 	switch s.goos {
 	case "windows":
-		return s.planWinget(TargetGH, "GitHub.cli")
+		return s.planGHWindows()
 	case "darwin":
 		return s.planBrew(TargetGH, "gh")
 	case "linux":
@@ -355,6 +355,46 @@ func (s *Service) planGH() Plan {
 		})
 	default:
 		return Plan{Target: TargetGH, Unsupported: true, Reason: "gh installation is not supported on this platform."}
+	}
+}
+
+// ghWindowsDownloadScript installs GitHub CLI without winget: it fetches the
+// latest official windows_amd64 zip from the cli/cli GitHub Releases and
+// copies bin\*.exe into %LOCALAPPDATA%\Microsoft\WindowsApps, which is on the
+// default per-user PATH, so the post-run LookPath("gh") verification in run()
+// succeeds without touching the registry or requiring a shell restart. The
+// script is a hardcoded constant — same security invariant as every other
+// argv in this package; no caller-supplied string ever reaches it.
+const ghWindowsDownloadScript = `$ErrorActionPreference = 'Stop'
+[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+$release = Invoke-RestMethod -Uri 'https://api.github.com/repos/cli/cli/releases/latest'
+$asset = $release.assets | Where-Object { $_.name -like 'gh_*_windows_amd64.zip' } | Select-Object -First 1
+if (-not $asset) { throw 'no gh windows_amd64 asset found in the latest cli/cli release' }
+$stage = Join-Path ([IO.Path]::GetTempPath()) ('ao-gh-' + [Guid]::NewGuid().ToString('N'))
+Invoke-WebRequest -Uri $asset.browser_download_url -OutFile "$stage.zip"
+Expand-Archive -Path "$stage.zip" -DestinationPath $stage -Force
+$dest = Join-Path $env:LOCALAPPDATA 'Microsoft\WindowsApps'
+New-Item -ItemType Directory -Force -Path $dest | Out-Null
+Copy-Item -Path (Join-Path $stage '*\bin\*.exe') -Destination $dest -Force
+Remove-Item -Recurse -Force $stage
+Remove-Item -Force "$stage.zip"
+Write-Output ("installed gh " + $release.tag_name + " to " + $dest)`
+
+// planGHWindows resolves gh on Windows. Winget with a pinned --source winget
+// is preferred (see planWinget); machines without winget at all — LTSC/Server
+// or stripped installs, exactly the fresh machines this installer targets —
+// fall back to the hardcoded direct download above instead of dead-ending as
+// Unsupported.
+func (s *Service) planGHWindows() Plan {
+	if _, err := s.executables.LookPath("winget"); err == nil {
+		return s.planWinget(TargetGH, "GitHub.cli")
+	}
+	return Plan{
+		Target: TargetGH,
+		Command: []string{
+			"powershell", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
+			"-Command", ghWindowsDownloadScript,
+		},
 	}
 }
 
@@ -396,11 +436,29 @@ func (s *Service) planBrew(target Target, pkg string) Plan {
 	return Plan{Target: target, Command: []string{"brew", "install", pkg}}
 }
 
+// planWinget resolves target via winget with the source pinned to the winget
+// community repository and every agreement flag set. Without --source, winget
+// also queries msstore; on a fresh Windows profile that source has never been
+// initialized, so its very first use blocks on an interactive Y/N prompt to
+// accept the Terms of Transaction and region sharing. The daemon runs
+// installs with no TTY attached, so that prompt can never be answered and
+// winget exits 0x8a150042 (APPINSTALLER_CLI_ERROR_PROMPT_INPUT_ERROR) — see
+// issue #4449 and upstream microsoft/winget-cli#2819. Pinning --source winget
+// bypasses msstore entirely, and the two accept flags ensure no remaining
+// source- or package-agreement prompt can block a non-interactive run.
 func (s *Service) planWinget(target Target, id string) Plan {
 	if _, err := s.executables.LookPath("winget"); err != nil {
 		return Plan{Target: target, Unsupported: true, Reason: "winget was not found on PATH."}
 	}
-	return Plan{Target: target, Command: []string{"winget", "install", "-e", "--id", id}}
+	return Plan{
+		Target: target,
+		Command: []string{
+			"winget", "install", "-e", "--id", id,
+			"--source", "winget",
+			"--accept-package-agreements",
+			"--accept-source-agreements",
+		},
+	}
 }
 
 // linuxPackageManagers is probed in this fixed order; the first one found on
