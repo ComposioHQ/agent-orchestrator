@@ -385,9 +385,9 @@ export function assessExecutionInfrastructure(steps) {
 	const failures = steps
 		.filter((step) => step.spawnError)
 		.map((step) => `${step.label}: ${step.spawnError}`);
-	const typecheckStep = steps.find((step) => step.id === "frontend-e2e-typecheck");
+	const typecheckStep = steps.find((step) => step.id === "frontend-chatui-typecheck");
 	if (typecheckStep && typecheckStep.exitCode !== 0 && !typecheckStep.spawnError) {
-		failures.push("Frontend E2E typecheck failed; contract results are not trustworthy");
+		failures.push("Frontend ChatUI typecheck failed; contract results are not trustworthy");
 	}
 	return failures;
 }
@@ -607,10 +607,10 @@ export async function runChatUIRegressions(options, now = new Date()) {
 
 	const steps = [
 		{
-			id: "frontend-e2e-typecheck",
-			label: "Frontend E2E typecheck",
+			id: "frontend-chatui-typecheck",
+			label: "Frontend ChatUI typecheck",
 			executable: npmExecutable(),
-			args: ["run", "typecheck:e2e"],
+			args: ["run", "typecheck:chatui"],
 			cwd: frontendRoot,
 			env: commonEnvironment,
 		},

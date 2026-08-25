@@ -181,10 +181,14 @@ describe("run report", () => {
 });
 
 describe("execution prerequisites", () => {
-	it("treats E2E typecheck failures as infrastructure in capture mode", () => {
+	it("treats local ChatUI typecheck failures as infrastructure in capture mode", () => {
 		expect(
 			assessExecutionInfrastructure([
-				{ id: "frontend-e2e-typecheck", label: "Frontend E2E typecheck", exitCode: 2 },
+				{
+					id: "frontend-chatui-typecheck",
+					label: "Frontend ChatUI typecheck",
+					exitCode: 2,
+				},
 			]),
 		).toContainEqual(expect.stringContaining("contract results are not trustworthy"));
 	});
@@ -193,13 +197,13 @@ describe("execution prerequisites", () => {
 		expect(
 			assessExecutionInfrastructure([
 				{
-					id: "frontend-e2e-typecheck",
-					label: "Frontend E2E typecheck",
+					id: "frontend-chatui-typecheck",
+					label: "Frontend ChatUI typecheck",
 					exitCode: 2,
 					spawnError: "npm missing",
 				},
 			]),
-		).toEqual(["Frontend E2E typecheck: npm missing"]);
+		).toEqual(["Frontend ChatUI typecheck: npm missing"]);
 	});
 });
 

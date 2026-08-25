@@ -85,7 +85,7 @@ summary exists, the capture did not complete and must be treated as an
 infrastructure failure. A fixed scenario must pass in strict mode before it is
 considered certified.
 
-A persisted run with an E2E typecheck failure, a process that could not start,
+A persisted run with a ChatUI typecheck failure, a process that could not start,
 or missing configured Playwright reports uses `outcome: "infrastructure_failed"`
 and exits 2 even under `--capture`.
 
@@ -102,7 +102,7 @@ failure, zero-test match, skipped test, or interrupted/incomplete test is an
 infrastructure failure even if capture mode was requested.
 
 The deterministic runner does not short-circuit after the first red step. It
-runs the frontend E2E typecheck, Playwright contracts, and tagged Go contracts so
+runs the local-only frontend ChatUI typecheck, Playwright contracts, and tagged Go contracts so
 one failure cannot conceal another. The tagged backend contracts can also be run
 directly:
 
@@ -121,7 +121,7 @@ e2e-artifacts/chatui-regression/<ISO timestamp>/
 ├── summary.md
 ├── run.log
 ├── logs/
-│   ├── frontend-e2e-typecheck.log
+│   ├── frontend-chatui-typecheck.log
 │   ├── playwright-contracts.log
 │   └── go-contracts.log
 └── playwright/
