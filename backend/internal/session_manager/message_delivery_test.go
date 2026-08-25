@@ -60,3 +60,35 @@ func TestWaitForMessageDeliveryReadyHonorsContextWhileTerminalStarts(t *testing.
 		t.Fatalf("WaitForMessageDeliveryReady error = %v, want context deadline", err)
 	}
 }
+
+func TestWaitForMessageDeliveryReadyWaitsForFirstHookSignal(t *testing.T) {
+	st := newFakeStore()
+	st.sessions["cursor-1"] = domain.SessionRecord{
+		ID:        "cursor-1",
+		ProjectID: "phoenix",
+		Harness:   domain.HarnessCursor,
+		Mode:      domain.SessionModeTUI,
+		Activity:  domain.Activity{State: domain.ActivityIdle},
+		Metadata:  domain.SessionMetadata{RuntimeHandleID: "cursor-1"},
+	}
+	m := New(Deps{Runtime: &fakeRuntime{}, Agents: singleAgent{agent: fakeAgent{}}, Store: st})
+
+	done := make(chan error, 1)
+	go func() {
+		done <- m.WaitForMessageDeliveryReady(context.Background(), "cursor-1")
+	}()
+
+	time.Sleep(30 * time.Millisecond)
+	rec := st.sessions["cursor-1"]
+	rec.FirstSignalAt = time.Now()
+	st.sessions["cursor-1"] = rec
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("WaitForMessageDeliveryReady: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for readiness after first hook signal")
+	}
+}

@@ -378,7 +378,12 @@ func newManager() (*Manager, *fakeStore, *fakeMessenger) {
 }
 
 func working(id domain.SessionID) domain.SessionRecord {
-	return domain.SessionRecord{ID: id, ProjectID: "mer", Activity: domain.Activity{State: domain.ActivityActive, LastActivityAt: time.Now()}, AutoInjectReview: true}
+	return domain.SessionRecord{
+		ID: id, ProjectID: "mer",
+		Activity:         domain.Activity{State: domain.ActivityActive, LastActivityAt: time.Now()},
+		AutoInjectReview: true,
+		FirstSignalAt:    time.Now(),
+	}
 }
 
 func TestRuntimeObservation_ConfirmedRuntimeDeathTerminates(t *testing.T) {
