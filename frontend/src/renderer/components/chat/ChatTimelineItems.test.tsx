@@ -110,7 +110,6 @@ describe("AssistantMessage streaming", () => {
 			/>,
 		);
 
-		expect(view.container.querySelector("[title]")?.getAttribute("title")).toMatch(/^\d{2}:\d{2}$/);
 		expect(screen.getByLabelText(/^Sent \d{2}:\d{2}$/)).toBeInTheDocument();
 	});
 
@@ -122,10 +121,10 @@ describe("AssistantMessage streaming", () => {
 			<AssistantMessage message={message({ createdAt: yesterday, streaming: false })} showCopy />,
 		);
 
-		expect(view.container.querySelector('[title^="Yesterday · "]')).not.toBeNull();
+		expect(screen.getByLabelText(/^Sent Yesterday · \d{2}:\d{2}$/)).toBeInTheDocument();
 		view.rerender(<AssistantMessage message={message({ createdAt: older, streaming: false })} showCopy />);
-		expect(view.container.querySelector('[title^="Yesterday · "]')).toBeNull();
-		expect(view.container.querySelector("[title]")?.getAttribute("title")).toMatch(/^[A-Z][a-z]{2} \d{1,2}, \d{4}$/);
+		expect(screen.queryByLabelText(/^Sent Yesterday ·/)).toBeNull();
+		expect(screen.getByLabelText(/^Sent [A-Z][a-z]{2} \d{1,2}, \d{4}$/)).toBeInTheDocument();
 	});
 
 	it("survives StrictMode effect cleanup and keeps draining", () => {

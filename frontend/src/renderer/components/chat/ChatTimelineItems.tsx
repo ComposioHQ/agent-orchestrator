@@ -455,7 +455,6 @@ export function HumanMessage({
 				/>
 			) : (
 				<div
-					title={formatMessageTimestamp(message.createdAt) || undefined}
 					className={cn(
 						"cursor-chat-human-message w-fit max-w-[min(78%,560px)] rounded-[10px] px-3 py-2.5 text-sm leading-[1.55]",
 						animateIn && "chat-human-message-enter",
@@ -601,7 +600,7 @@ export function AssistantMessage({
 	const hasDuration = durationMs !== undefined && durationMs > 0;
 	const showActions = !renderingStreaming && (showCopy || Boolean(onRollback) || hasDuration);
 	return (
-		<div className="group/message relative" title={formatMessageTimestamp(message.createdAt) || undefined}>
+		<div className="group/message relative">
 			<ChatMarkdown text={visibleText} streaming={renderingStreaming} />
 			{showActions ? (
 				// One action row for the completed answer, not one after every prose

@@ -235,21 +235,14 @@ describe("Chat message timestamps", () => {
 			origin: "provider",
 			text: "assistant message",
 		} satisfies ConversationMessage;
-		const { container } = render(
+		render(
 			<>
 				<HumanMessage message={user} sessionId="ao-1" />
-				<AssistantMessage message={assistant} />
+				<AssistantMessage message={assistant} showCopy />
 			</>,
 		);
 
-		const messageTimes = Array.from(container.querySelectorAll("div[title]")).map((element) =>
-			element.getAttribute("title"),
-		);
-		expect(messageTimes).toHaveLength(2);
-		for (const time of messageTimes) {
-			expect(time).toHaveLength(5);
-			expect(time?.[2]).toBe(":");
-		}
+		expect(screen.getAllByLabelText(/^Sent \d{2}:\d{2}$/)).toHaveLength(2);
 	});
 
 	it("labels yesterday and older messages with calendar dates", () => {
@@ -263,7 +256,7 @@ describe("Chat message timestamps", () => {
 			{ ...humanMessage("yesterday"), id: "yesterday", createdAt: relativeDate(1) },
 			{ ...humanMessage("older"), id: "older", createdAt: relativeDate(3) },
 		];
-		const { container } = render(
+		render(
 			<>
 				{messages.map((message) => (
 					<HumanMessage key={message.id} message={message} sessionId="ao-1" />
@@ -271,10 +264,8 @@ describe("Chat message timestamps", () => {
 			</>,
 		);
 
-		const titles = Array.from(container.querySelectorAll("div[title]"), (element) => element.getAttribute("title"));
-		expect(titles[0]).toMatch(/^Yesterday · \d{2}:\d{2}$/);
-		expect(titles[1]).not.toMatch(/^Yesterday/);
-		expect(titles[1]?.includes(":")).toBe(false);
+		expect(screen.getByLabelText(/^Sent Yesterday · \d{2}:\d{2}$/)).toBeInTheDocument();
+		expect(screen.getByLabelText(/^Sent [A-Z][a-z]{2} \d{1,2}, \d{4}$/)).toBeInTheDocument();
 	});
 });
 
