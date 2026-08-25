@@ -378,6 +378,7 @@
 	"mobile.connectionMethod": "连接方式",
 	"mobile.copyPassword": "复制密码",
 	"mobile.description": "通过局域网将 Agent Orchestrator 手机应用与此桌面配对。",
+	"mobile.disable": "关闭移动连接",
 	"mobile.devices.confirmRemove": "确认移除",
 	"mobile.devices.empty": "尚未配对任何设备。",
 	"mobile.devices.loading": "正在加载设备…",
