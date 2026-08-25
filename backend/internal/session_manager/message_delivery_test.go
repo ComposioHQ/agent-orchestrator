@@ -71,7 +71,7 @@ func TestWaitForMessageDeliveryReadyWaitsForFirstHookSignal(t *testing.T) {
 		Activity:  domain.Activity{State: domain.ActivityIdle},
 		Metadata:  domain.SessionMetadata{RuntimeHandleID: "cursor-1"},
 	}
-	m := New(Deps{Runtime: &fakeRuntime{}, Agents: singleAgent{agent: fakeAgent{}}, Store: st})
+	m := New(Deps{Runtime: &fakeRuntime{}, Agents: singleAgent{agent: startupReadySignalingAgent{}}, Store: st})
 
 	done := make(chan error, 1)
 	go func() {

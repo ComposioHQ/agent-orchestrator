@@ -123,6 +123,7 @@ func TestGuard_TUIStartupPendingBlocksDeliver(t *testing.T) {
 		Activity: domain.Activity{State: domain.ActivityIdle},
 	}
 	g := New(&fakeStore{rec: rec, ok: true}, msgr, nil)
+	g.SetStartupSignalGate(func(domain.AgentHarness) bool { return true })
 
 	got, err := g.Deliver(context.Background(), "s1", "follow-up")
 	if err != nil {
@@ -143,6 +144,29 @@ func TestGuard_TUIStartupPendingBlocksDeliver(t *testing.T) {
 	}
 	if got != Sent {
 		t.Fatalf("outcome after signal = %v, want Sent", got)
+	}
+}
+
+func TestGuard_TUIWithoutStartupCapabilityAllowsDelivery(t *testing.T) {
+	msgr := &fakeMessenger{}
+	rec := domain.SessionRecord{
+		ID:       "s1",
+		Harness:  domain.HarnessAider,
+		Mode:     domain.SessionModeTUI,
+		Activity: domain.Activity{State: domain.ActivityIdle},
+	}
+	g := New(&fakeStore{rec: rec, ok: true}, msgr, nil)
+	g.SetStartupSignalGate(func(domain.AgentHarness) bool { return false })
+
+	got, err := g.Deliver(context.Background(), "s1", "follow-up")
+	if err != nil {
+		t.Fatalf("Deliver: %v", err)
+	}
+	if got != Sent {
+		t.Fatalf("outcome = %v, want Sent for adapter without startup capability", got)
+	}
+	if len(msgr.sent) != 1 {
+		t.Fatalf("messenger sends = %d, want 1", len(msgr.sent))
 	}
 }
 

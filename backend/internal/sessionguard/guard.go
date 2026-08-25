@@ -98,32 +98,6 @@ func (o Outcome) String() string {
 	}
 }
 
-// tuiAwaitingStartupInput reports whether a TUI session is still in its native
-// startup sequence before the first hook callback arrives.
-func tuiAwaitingStartupInput(rec domain.SessionRecord) bool {
-	return domain.NormalizeSessionMode(rec.Mode) == domain.SessionModeTUI && rec.FirstSignalAt.IsZero()
-}
-
-func refuseDeliver(rec domain.SessionRecord) (Outcome, bool) {
-	if tuiAwaitingStartupInput(rec) {
-		return SuppressedStartupPending, true
-	}
-	if rec.Activity.State == domain.ActivityBlocked {
-		return SuppressedAwaitingUser, true
-	}
-	return SuppressedUnknown, false
-}
-
-func refuseNudge(rec domain.SessionRecord) (Outcome, bool) {
-	if tuiAwaitingStartupInput(rec) {
-		return SuppressedStartupPending, true
-	}
-	if rec.Activity.State.NeedsInput() {
-		return SuppressedAwaitingUser, true
-	}
-	return SuppressedUnknown, false
-}
-
 // Guard is the guarded pane-write primitive shared by the session manager and
 // lifecycle. Its small lease lock only protects late binding; it is never held
 // across a store read or pane write. It implements
@@ -136,9 +110,42 @@ type Guard struct {
 
 	leaseMu sync.RWMutex
 	lease   InputLease
+
+	startupGateMu           sync.RWMutex
+	startupSignalGatesInput func(domain.AgentHarness) bool
 }
 
 var _ ports.AgentMessenger = (*Guard)(nil)
+
+func (g *Guard) tuiAwaitingStartupInput(rec domain.SessionRecord) bool {
+	if domain.NormalizeSessionMode(rec.Mode) != domain.SessionModeTUI || !rec.FirstSignalAt.IsZero() {
+		return false
+	}
+	g.startupGateMu.RLock()
+	requiresSignal := g.startupSignalGatesInput
+	g.startupGateMu.RUnlock()
+	return requiresSignal != nil && requiresSignal(rec.Harness)
+}
+
+func (g *Guard) refuseDeliver(rec domain.SessionRecord) (Outcome, bool) {
+	if g.tuiAwaitingStartupInput(rec) {
+		return SuppressedStartupPending, true
+	}
+	if rec.Activity.State == domain.ActivityBlocked {
+		return SuppressedAwaitingUser, true
+	}
+	return SuppressedUnknown, false
+}
+
+func (g *Guard) refuseNudge(rec domain.SessionRecord) (Outcome, bool) {
+	if g.tuiAwaitingStartupInput(rec) {
+		return SuppressedStartupPending, true
+	}
+	if rec.Activity.State.NeedsInput() {
+		return SuppressedAwaitingUser, true
+	}
+	return SuppressedUnknown, false
+}
 
 // New builds a Guard over the store it re-reads and the messenger it writes
 // through. A nil logger falls back to slog.Default().
@@ -156,6 +163,15 @@ func (g *Guard) SetInputLease(lease InputLease) {
 	g.leaseMu.Lock()
 	g.lease = lease
 	g.leaseMu.Unlock()
+}
+
+// SetStartupSignalGate supplies the adapter capability predicate that decides
+// whether a TUI session must receive its first hook before pane input is safe.
+// A nil predicate leaves hookless and unknown adapters ungated.
+func (g *Guard) SetStartupSignalGate(pred func(domain.AgentHarness) bool) {
+	g.startupGateMu.Lock()
+	g.startupSignalGatesInput = pred
+	g.startupGateMu.Unlock()
 }
 
 // Send satisfies ports.AgentMessenger so a Guard can sit in for the raw
@@ -178,7 +194,7 @@ func (g *Guard) Send(ctx context.Context, id domain.SessionID, msg string) error
 // sitting at an idle prompt is exactly where a user message (or the Enter that
 // submits its unsent draft) belongs.
 func (g *Guard) Deliver(ctx context.Context, id domain.SessionID, msg string) (Outcome, error) {
-	return g.send(ctx, id, msg, refuseDeliver)
+	return g.send(ctx, id, msg, g.refuseDeliver)
 }
 
 // DeliverWithPostWrite is Deliver plus a callback that runs only after a
@@ -186,7 +202,7 @@ func (g *Guard) Deliver(ctx context.Context, id domain.SessionID, msg string) (O
 // Manager uses it to persist narrow message facts before a provider switch can
 // close admission and snapshot handoff context.
 func (g *Guard) DeliverWithPostWrite(ctx context.Context, id domain.SessionID, msg string, after func(context.Context) error) (Outcome, error) {
-	return g.sendThen(ctx, id, msg, refuseDeliver, after)
+	return g.sendThen(ctx, id, msg, g.refuseDeliver, after)
 }
 
 // DeliverUnderMutation applies the same just-in-time session safety checks as
@@ -261,7 +277,7 @@ func (g *Guard) coordinationUnderMutation(
 // decision or waiting at the prompt — because an automated paste+Enter there
 // either answers a dialog or submits text the user never saw.
 func (g *Guard) Nudge(ctx context.Context, id domain.SessionID, msg string) (Outcome, error) {
-	return g.send(ctx, id, msg, refuseNudge)
+	return g.send(ctx, id, msg, g.refuseNudge)
 }
 
 // NudgeCoordination writes an AO-initiated coordination message under the full
@@ -273,7 +289,7 @@ func (g *Guard) Nudge(ctx context.Context, id domain.SessionID, msg string) (Out
 // unsolicited write during a live turn.
 func (g *Guard) NudgeCoordination(ctx context.Context, id domain.SessionID, msg string, steersActiveTurn func(domain.AgentHarness) bool) (Outcome, error) {
 	return g.send(ctx, id, msg, func(rec domain.SessionRecord) (Outcome, bool) {
-		if tuiAwaitingStartupInput(rec) {
+		if g.tuiAwaitingStartupInput(rec) {
 			return SuppressedStartupPending, true
 		}
 		if rec.Activity.State.NeedsInput() {

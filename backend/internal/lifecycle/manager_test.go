@@ -2613,6 +2613,39 @@ func TestLifecycleNudgeUsesLateBoundSessionInputLease(t *testing.T) {
 	}
 }
 
+func TestLifecycleNudgeStartupGateUsesAdapterCapability(t *testing.T) {
+	tests := []struct {
+		name     string
+		harness  domain.AgentHarness
+		gate     bool
+		wantSent bool
+	}{
+		{name: "startup-signaling adapter is gated", harness: domain.HarnessCursor, gate: true, wantSent: false},
+		{name: "hookless adapter remains deliverable", harness: domain.HarnessAider, gate: false, wantSent: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			st := newFakeStore()
+			msg := &fakeMessenger{}
+			m := New(st, msg, WithStartupSignalGate(func(harness domain.AgentHarness) bool {
+				return harness == tt.harness && tt.gate
+			}))
+			st.sessions["mer-1"] = domain.SessionRecord{
+				ID: "mer-1", Harness: tt.harness, Mode: domain.SessionModeTUI,
+				Activity: domain.Activity{State: domain.ActivityIdle},
+			}
+
+			outcome, err := m.sendOnce(ctx, "mer-1", "", "tracker-comment:1", "1", "review this", 0)
+			if err != nil {
+				t.Fatalf("sendOnce: %v", err)
+			}
+			if got := len(msg.msgs) == 1; got != tt.wantSent {
+				t.Fatalf("sent = %v, want %v (outcome %v)", got, tt.wantSent, outcome)
+			}
+		})
+	}
+}
+
 func TestApplyTrackerFacts_AssigneeChangedIsLogOnly(t *testing.T) {
 	m, st, msg := newManager()
 	st.sessions["mer-1"] = working("mer-1")

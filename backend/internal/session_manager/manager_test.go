@@ -7756,6 +7756,10 @@ type signalingAgent struct{ fakeAgent }
 func (signalingAgent) EmitsSubmitActivity() bool  { return true }
 func (signalingAgent) EmitsBlockedActivity() bool { return true }
 
+type startupReadySignalingAgent struct{ fakeAgent }
+
+func (startupReadySignalingAgent) FirstSignalProvesInputReady() bool { return true }
+
 // submitOnlyAgent advertises a prompt-submit signal but NOT a blocked one — a
 // harness like goose/opencode/agy that submits yet installs no permission hook.
 // confirmActive must refuse to nudge it (it could Enter into a decision the
@@ -7935,7 +7939,7 @@ func TestSend_TUIStartupPendingRejectsDelivery(t *testing.T) {
 		Metadata: domain.SessionMetadata{RuntimeHandleID: "h1"},
 	}
 	msg := &fakeMessenger{}
-	m := newSendTestManager(t, fakeAgent{}, msg, st)
+	m := newSendTestManager(t, startupReadySignalingAgent{}, msg, st)
 
 	err := m.Send(context.Background(), "s1", "follow-up after spawn", nil)
 	if !errors.Is(err, ErrStartupPending) {
@@ -7943,6 +7947,24 @@ func TestSend_TUIStartupPendingRejectsDelivery(t *testing.T) {
 	}
 	if len(msg.msgs) != 0 {
 		t.Fatalf("Send calls = %d, want 0 before first hook signal", len(msg.msgs))
+	}
+}
+
+func TestSend_HooklessTUIStartupAllowsDelivery(t *testing.T) {
+	st := newFakeStore()
+	st.sessions["s1"] = domain.SessionRecord{
+		ID: "s1", Harness: domain.HarnessAider, Mode: domain.SessionModeTUI,
+		Activity: domain.Activity{State: domain.ActivityIdle},
+		Metadata: domain.SessionMetadata{RuntimeHandleID: "h1"},
+	}
+	msg := &fakeMessenger{}
+	m := newSendTestManager(t, fakeAgent{}, msg, st)
+
+	if err := m.Send(context.Background(), "s1", "follow-up after spawn", nil); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	if len(msg.msgs) != 1 {
+		t.Fatalf("Send calls = %d, want 1 for hookless TUI harness", len(msg.msgs))
 	}
 }
 
