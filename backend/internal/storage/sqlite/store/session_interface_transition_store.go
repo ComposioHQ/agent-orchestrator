@@ -18,6 +18,10 @@ func (s *Store) CreateSessionInterfaceTransition(
 	ctx context.Context,
 	rec domain.SessionInterfaceTransition,
 ) (domain.SessionInterfaceTransition, bool, error) {
+	if !rec.HistoryPolicy.Valid() {
+		return domain.SessionInterfaceTransition{}, false,
+			fmt.Errorf("create interface transition: history policy %q is invalid", rec.HistoryPolicy)
+	}
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
 	row, err := s.qw.InsertSessionInterfaceTransition(ctx, gen.InsertSessionInterfaceTransitionParams{
@@ -26,6 +30,7 @@ func (s *Store) CreateSessionInterfaceTransition(
 		SourceMode:           rec.SourceMode,
 		TargetMode:           rec.TargetMode,
 		Policy:               rec.Policy,
+		HistoryPolicy:        rec.HistoryPolicy,
 		Phase:                rec.Phase,
 		NativeConversationID: rec.NativeConversationID,
 		CreatedAt:            rec.CreatedAt,
@@ -188,17 +193,56 @@ func (s *Store) CommitSessionControllerEpoch(
 	nativeID string,
 	now time.Time,
 ) (bool, error) {
+	return s.commitSessionControllerEpoch(ctx, id, source, target, nativeID, false, now)
+}
+
+// RestoreSessionControllerEpoch atomically restores the source interface after
+// a failed or interrupted handoff. Unlike an accepted Chat-to-TUI handoff, a
+// rollback must retain the checkpoint that caused target replay to fail so an
+// ordinary retry cannot silently bypass it.
+func (s *Store) RestoreSessionControllerEpoch(
+	ctx context.Context,
+	id domain.SessionID,
+	source, target domain.SessionMode,
+	nativeID string,
+	now time.Time,
+) (bool, error) {
+	return s.commitSessionControllerEpoch(ctx, id, source, target, nativeID, true, now)
+}
+
+func (s *Store) commitSessionControllerEpoch(
+	ctx context.Context,
+	id domain.SessionID,
+	source, target domain.SessionMode,
+	nativeID string,
+	restore bool,
+	now time.Time,
+) (bool, error) {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
-	rows, err := s.qw.CommitSessionControllerEpoch(ctx, gen.CommitSessionControllerEpochParams{
-		SessionMode:            target,
-		AgentSessionID:         nativeID,
-		ProviderConversationID: nativeID,
-		ActivityLastAt:         now,
-		UpdatedAt:              now,
-		ID:                     id,
-		SessionMode_2:          source,
-	})
+	var rows int64
+	var err error
+	if restore {
+		rows, err = s.qw.RestoreSessionControllerEpoch(ctx, gen.RestoreSessionControllerEpochParams{
+			TargetMode:             target,
+			AgentSessionID:         nativeID,
+			ProviderConversationID: nativeID,
+			ActivityLastAt:         now,
+			UpdatedAt:              now,
+			ID:                     id,
+			SourceMode:             source,
+		})
+	} else {
+		rows, err = s.qw.CommitSessionControllerEpoch(ctx, gen.CommitSessionControllerEpochParams{
+			TargetMode:             target,
+			AgentSessionID:         nativeID,
+			ProviderConversationID: nativeID,
+			ActivityLastAt:         now,
+			UpdatedAt:              now,
+			ID:                     id,
+			SourceMode:             source,
+		})
+	}
 	if err != nil {
 		return false, fmt.Errorf("commit controller epoch for %s: %w", id, err)
 	}
@@ -266,7 +310,7 @@ func interfaceTransitionToDomain(row gen.SessionInterfaceTransition) domain.Sess
 	return domain.SessionInterfaceTransition{
 		ID: row.ID, SessionID: row.SessionID,
 		SourceMode: row.SourceMode, TargetMode: row.TargetMode,
-		Policy: row.Policy, Phase: row.Phase,
+		Policy: row.Policy, HistoryPolicy: row.HistoryPolicy, Phase: row.Phase,
 		NativeConversationID: row.NativeConversationID,
 		ErrorCode:            row.ErrorCode, ErrorDetail: row.ErrorDetail,
 		CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt,

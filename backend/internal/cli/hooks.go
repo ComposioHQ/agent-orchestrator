@@ -185,25 +185,41 @@ type hookConversationSnapshot struct {
 	TranscriptPath        string
 }
 
-func hookConversationFacts(payload []byte) hookConversationSnapshot {
+func hookConversationFacts(agent domain.AgentHarness, event string, payload []byte) hookConversationSnapshot {
 	var p struct {
-		Prompt                    string `json:"prompt"`
-		UserPrompt                string `json:"user_prompt"`
-		UserPromptCamel           string `json:"userPrompt"`
-		LastAssistantMessage      string `json:"last_assistant_message"`
-		LastAssistantMessageCamel string `json:"lastAssistantMessage"`
-		AssistantMessage          string `json:"assistant_message"`
-		AssistantMessageCamel     string `json:"assistantMessage"`
-		TranscriptPath            string `json:"transcript_path"`
-		TranscriptPathCamel       string `json:"transcriptPath"`
+		Prompt               string `json:"prompt"`
+		UserPrompt           string `json:"user_prompt"`
+		UserPromptCamel      string `json:"userPrompt"`
+		LastAssistantMessage string `json:"last_assistant_message"`
+		TranscriptPath       string `json:"transcript_path"`
+		TranscriptPathCamel  string `json:"transcriptPath"`
+		SubagentID           string `json:"agent_id"`
 	}
 	_ = json.Unmarshal(payload, &p)
-	userPrompt := firstHookValue(p.Prompt, p.UserPrompt, p.UserPromptCamel)
-	assistant := firstHookValue(p.LastAssistantMessage, p.LastAssistantMessageCamel, p.AssistantMessage, p.AssistantMessageCamel)
+	observedPrompt := firstHookValue(p.Prompt, p.UserPrompt, p.UserPromptCamel)
+	var userPrompt, assistant string
+	// Conversation checkpoints are trusted only at the main-turn boundaries that
+	// own each fact. Several Claude payloads repeat prompt/assistant aliases on
+	// unrelated events, and SubagentStop uses the same shape as the main Stop.
+	// Treating those copies as current main-thread facts can permanently make an
+	// otherwise healthy provider replay look incomplete.
+	if strings.TrimSpace(p.SubagentID) == "" {
+		switch event {
+		case "user-prompt-submit":
+			userPrompt = observedPrompt
+		case "stop":
+			// Claude documents last_assistant_message on Stop. Similar-looking
+			// fields from Codex and other providers do not carry the same main-turn
+			// guarantee, so they must never become a hard replay checkpoint.
+			if agent == domain.HarnessClaudeCode {
+				assistant = p.LastAssistantMessage
+			}
+		}
+	}
 	// AO's own handoff request and continuation kickoff are coordination turns,
 	// not the latest real user instruction. They remain in provider history but
 	// must not overwrite deterministic user intent.
-	if strings.HasPrefix(strings.TrimSpace(userPrompt), "<ao-handoff-request") {
+	if strings.HasPrefix(strings.TrimSpace(observedPrompt), "<ao-handoff-request") {
 		assistant = ""
 	}
 	if isAOCoordinationMessage(userPrompt) {
@@ -325,7 +341,7 @@ func (c *commandContext) runHook(ctx context.Context, agent, event string) error
 	conversation := hookConversationSnapshot{}
 	switch domain.AgentHarness(agent) {
 	case domain.HarnessClaudeCode, domain.HarnessCodex:
-		conversation = hookConversationFacts(payload)
+		conversation = hookConversationFacts(domain.AgentHarness(agent), event, payload)
 	}
 	path := "sessions/" + url.PathEscape(sessionID) + "/activity"
 	req := setActivityAPIRequest{

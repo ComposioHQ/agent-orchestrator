@@ -1285,7 +1285,7 @@ func TestAgentSwitchSourceStopAndTargetActivationAreAtomicAndNarrow(t *testing.T
 	lateSource.Metadata.AgentSessionID = "late-source-native"
 	lateSource.Metadata.LatestAssistantUpdate = "late source callback"
 	lateSource.UpdatedAt = now.Add(2500 * time.Millisecond)
-	if applied, err := s.UpdateSessionFromActivitySignal(ctx, lateSource); err != nil || applied {
+	if applied, err := s.UpdateSessionFromActivitySignal(ctx, lateSource, exited.UpdatedAt); err != nil || applied {
 		t.Fatalf("late source activity after stop confirmation: applied=%v err=%v", applied, err)
 	}
 	stillExited, ok, err := s.GetSession(ctx, session.ID)
@@ -1386,7 +1386,7 @@ func TestAgentSwitchSourceStopAndTargetActivationAreAtomicAndNarrow(t *testing.T
 	}
 	lateSource.Activity = domain.Activity{State: domain.ActivityActive, LastActivityAt: now.Add(5 * time.Second)}
 	lateSource.UpdatedAt = now.Add(5 * time.Second)
-	if applied, err := s.UpdateSessionFromActivitySignal(ctx, lateSource); err != nil || applied {
+	if applied, err := s.UpdateSessionFromActivitySignal(ctx, lateSource, exited.UpdatedAt); err != nil || applied {
 		t.Fatalf("late source activity after target activation: applied=%v err=%v", applied, err)
 	}
 	stillActivated, ok, err := s.GetSession(ctx, session.ID)
@@ -1409,7 +1409,7 @@ func TestAgentSwitchSourceStopAndTargetActivationAreAtomicAndNarrow(t *testing.T
 	targetSignal.Activity = domain.Activity{State: domain.ActivityActive, LastActivityAt: now.Add(7 * time.Second)}
 	targetSignal.FirstSignalAt = now.Add(7 * time.Second)
 	targetSignal.UpdatedAt = now.Add(7 * time.Second)
-	if applied, err := s.UpdateSessionFromActivitySignal(ctx, targetSignal); err != nil || !applied {
+	if applied, err := s.UpdateSessionFromActivitySignal(ctx, targetSignal, activated.UpdatedAt); err != nil || !applied {
 		t.Fatalf("target activity during delivery: applied=%v err=%v", applied, err)
 	}
 	acknowledgedAt := now.Add(8 * time.Second)

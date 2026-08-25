@@ -232,6 +232,10 @@ export function SessionInterfaceTransitionNotice({
 	dismissError,
 	onSwitchWithInterrupt,
 	interrupting,
+	onRetry,
+	retrying,
+	onUseProviderHistory,
+	recoveryError,
 }: {
 	transition?: SessionInterfaceTransition;
 	onDismiss: () => void;
@@ -239,6 +243,10 @@ export function SessionInterfaceTransitionNotice({
 	dismissError?: string;
 	onSwitchWithInterrupt?: () => void;
 	interrupting?: boolean;
+	onRetry?: () => void;
+	retrying?: boolean;
+	onUseProviderHistory?: () => void;
+	recoveryError?: string;
 }) {
 	if (
 		!transition ||
@@ -249,8 +257,27 @@ export function SessionInterfaceTransitionNotice({
 	}
 	const recovered =
 		transition.phase === "recovery_required" && transition.errorCode === "DAEMON_RESTARTED";
+	const legacyTextMismatch =
+		transition.phase === "failed" &&
+		transition.errorCode === "TARGET_HISTORY_UNTRUSTED_TEXT_MISMATCH" &&
+		transition.sourceMode === "tui" &&
+		transition.targetMode === "chat";
+	const interruptedProviderRecovery =
+		recovered &&
+		transition.historyPolicy === "provider_history" &&
+		transition.sourceMode === "tui" &&
+		transition.targetMode === "chat";
+	const historyUnsettled =
+		interruptedProviderRecovery ||
+		(transition.phase === "failed" &&
+			(transition.errorCode === "TARGET_HISTORY_UNSETTLED" || legacyTextMismatch) &&
+			transition.sourceMode === "tui" &&
+			transition.targetMode === "chat");
 	return (
 		<div
+			role={recovered ? "status" : "alert"}
+			aria-live={recovered ? "polite" : "assertive"}
+			aria-atomic="true"
 			className={cn(
 				"absolute left-1/2 top-3 z-20 flex w-[min(34rem,calc(100%-1.5rem))] -translate-x-1/2 items-start gap-2 rounded-lg border bg-popover px-3 py-2.5 shadow-md",
 				recovered ? "border-success/30" : "border-warning/30",
@@ -290,6 +317,48 @@ export function SessionInterfaceTransitionNotice({
 							? "Discard draft and switch"
 							: "Cancel request and switch"}
 					</Button>
+				) : null}
+				{historyUnsettled && onRetry ? (
+					<div className="mt-2 flex flex-wrap items-center gap-2">
+						<Button
+							type="button"
+							size="sm"
+							variant="outline"
+							className="h-7 text-[11px]"
+							disabled={retrying || dismissing}
+							onClick={onRetry}
+						>
+							{retrying ? <Loader2 aria-hidden="true" className="size-3 animate-spin" /> : null}
+							Retry switch to Chat UI
+						</Button>
+						{(legacyTextMismatch || interruptedProviderRecovery) && onUseProviderHistory ? (
+							<Button
+								type="button"
+								size="sm"
+								variant="outline"
+								className="h-7 text-[11px]"
+								disabled={retrying || dismissing}
+								onClick={onUseProviderHistory}
+							>
+								Use provider history and switch
+							</Button>
+						) : null}
+						<Button
+							type="button"
+							size="sm"
+							variant="ghost"
+							className="h-7 text-[11px]"
+							disabled={retrying || dismissing}
+							onClick={onDismiss}
+						>
+							Stay in Terminal
+						</Button>
+					</div>
+				) : null}
+				{recoveryError ? (
+					<p role="alert" aria-live="assertive" className="mt-1 text-[11px] leading-4 text-destructive">
+						Recovery attempt failed: {recoveryError}
+					</p>
 				) : null}
 				{dismissError ? (
 					<p role="alert" className="mt-1 text-[11px] leading-4 text-destructive">

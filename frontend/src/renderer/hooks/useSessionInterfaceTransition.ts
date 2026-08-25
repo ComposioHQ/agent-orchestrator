@@ -9,6 +9,7 @@ export type SessionInterfaceTransition = components["schemas"]["SessionInterface
 export type SessionInterfaceTransitionStatus =
 	components["schemas"]["SessionInterfaceTransitionStatusResponse"];
 export type SessionInterfaceTransitionPolicy = "drain" | "interrupt";
+export type SessionInterfaceTransitionHistoryPolicy = "strict" | "provider_history";
 export type SessionInterfaceMode = "chat" | "tui";
 
 const activePhases = new Set<SessionInterfaceTransition["phase"]>([
@@ -91,6 +92,7 @@ export function useSessionInterfaceTransition(sessionId: string | undefined) {
 		mutationFn: async (input: {
 			targetMode: SessionInterfaceMode;
 			policy: SessionInterfaceTransitionPolicy;
+			historyPolicy?: SessionInterfaceTransitionHistoryPolicy;
 		}) => {
 			const { data, error } = await apiClient.POST(
 				"/api/v1/sessions/{sessionId}/interface-transition",

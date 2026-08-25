@@ -600,26 +600,28 @@ type ResumeAgentResponse struct {
 // StartSessionInterfaceTransitionRequest is the body of POST
 // /api/v1/sessions/{sessionId}/interface-transition.
 type StartSessionInterfaceTransitionRequest struct {
-	TargetMode domain.SessionMode                      `json:"targetMode" enum:"chat,tui"`
-	Policy     domain.SessionInterfaceTransitionPolicy `json:"policy" enum:"drain,interrupt"`
+	TargetMode    domain.SessionMode                             `json:"targetMode" enum:"chat,tui"`
+	Policy        domain.SessionInterfaceTransitionPolicy        `json:"policy" enum:"drain,interrupt"`
+	HistoryPolicy domain.SessionInterfaceTransitionHistoryPolicy `json:"historyPolicy,omitempty" enum:"strict,provider_history"`
 }
 
 // SessionInterfaceTransitionView is the client-facing progress record. The
 // provider-native conversation id is intentionally not exposed: clients need
 // controller state, not an adapter implementation detail.
 type SessionInterfaceTransitionView struct {
-	ID                   string                                  `json:"id"`
-	SessionID            domain.SessionID                        `json:"sessionId"`
-	SourceMode           domain.SessionMode                      `json:"sourceMode" enum:"chat,tui"`
-	TargetMode           domain.SessionMode                      `json:"targetMode" enum:"chat,tui"`
-	Policy               domain.SessionInterfaceTransitionPolicy `json:"policy" enum:"drain,interrupt"`
-	Phase                domain.SessionInterfaceTransitionPhase  `json:"phase" enum:"requested,preflighting,draining,source_stopping,source_stopped,target_starting,activating,completed,failed,cancelled,recovery_required"`
-	ErrorCode            string                                  `json:"errorCode,omitempty"`
-	ErrorDetail          string                                  `json:"errorDetail,omitempty"`
-	CreatedAt            time.Time                               `json:"createdAt"`
-	UpdatedAt            time.Time                               `json:"updatedAt"`
-	CompletedAt          *time.Time                              `json:"completedAt,omitempty"`
-	NoticeAcknowledgedAt *time.Time                              `json:"noticeAcknowledgedAt,omitempty"`
+	ID                   string                                         `json:"id"`
+	SessionID            domain.SessionID                               `json:"sessionId"`
+	SourceMode           domain.SessionMode                             `json:"sourceMode" enum:"chat,tui"`
+	TargetMode           domain.SessionMode                             `json:"targetMode" enum:"chat,tui"`
+	Policy               domain.SessionInterfaceTransitionPolicy        `json:"policy" enum:"drain,interrupt"`
+	HistoryPolicy        domain.SessionInterfaceTransitionHistoryPolicy `json:"historyPolicy" enum:"strict,provider_history"`
+	Phase                domain.SessionInterfaceTransitionPhase         `json:"phase" enum:"requested,preflighting,draining,source_stopping,source_stopped,target_starting,activating,completed,failed,cancelled,recovery_required"`
+	ErrorCode            string                                         `json:"errorCode,omitempty"`
+	ErrorDetail          string                                         `json:"errorDetail,omitempty"`
+	CreatedAt            time.Time                                      `json:"createdAt"`
+	UpdatedAt            time.Time                                      `json:"updatedAt"`
+	CompletedAt          *time.Time                                     `json:"completedAt,omitempty"`
+	NoticeAcknowledgedAt *time.Time                                     `json:"noticeAcknowledgedAt,omitempty"`
 }
 
 // SessionInterfaceTransitionStatusResponse is the body of GET

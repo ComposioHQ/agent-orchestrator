@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"maps"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -1490,8 +1491,444 @@ func TestInterfaceHandoffRejectsSettledReplayBeforeLatestSessionCheckpoint(t *te
 	if !errors.Is(err, ports.ErrChatHistoryUnsettled) {
 		t.Fatalf("Start error = %v, want ErrChatHistoryUnsettled for stale settled replay", err)
 	}
+	if !ports.ChatHistoryMismatchOnlyUntrustedText(err) {
+		t.Fatalf("Start mismatch = %v, want only untrusted legacy text dimensions", err)
+	}
 	if reads := conv.historyReads(); reads != 1 {
 		t.Fatalf("immutable history reads = %d, want exactly one", reads)
+	}
+}
+
+func TestInterfaceHandoffExplicitProviderHistoryIgnoresOnlyLegacyText(t *testing.T) {
+	st := openStore(t)
+	rec, found, err := st.GetSession(context.Background(), testSession)
+	if err != nil || !found {
+		t.Fatalf("load session: found=%v err=%v", found, err)
+	}
+	// Empty provenance models a checkpoint written before scoped main-turn
+	// capture. Its poisoned text remains a strict gate until explicit consent.
+	rec.Metadata.LatestUserPrompt = "poisoned user checkpoint"
+	rec.Metadata.LatestAssistantUpdate = "poisoned assistant checkpoint"
+	rec.Metadata.ConversationCheckpointState = domain.ConversationCheckpointLegacy
+	if err := st.UpdateSession(context.Background(), rec); err != nil {
+		t.Fatalf("seed legacy checkpoint: %v", err)
+	}
+	conv := &nativeHistoryConversation{fakeConversation: newFakeConversation()}
+	svc := chatsvc.New(chatsvc.Options{
+		Store: st, Sessions: st,
+		Drivers: fakeRegistry{driver: fakeDriver{conv: conv}},
+		Log:     slog.New(slog.DiscardHandler),
+		NewID:   func() string { return fmt.Sprintf("provider-history-%d", time.Now().UnixNano()) },
+	})
+	t.Cleanup(func() { _ = svc.Stop(context.Background(), testSession) })
+
+	ctrl, err := svc.Start(context.Background(), chatsvc.StartConfig{
+		SessionID: testSession, ProjectID: testProject, Harness: domain.HarnessCodex,
+		WorkspacePath: t.TempDir(), ProviderConversationID: "thread-1", RequireNativeHistory: true,
+		HistoryPolicy: domain.SessionInterfaceTransitionHistoryProvider,
+	})
+	if err != nil {
+		t.Fatalf("Start with explicit provider history: %v", err)
+	}
+	if ctrl == nil {
+		t.Fatal("provider-history recovery returned no controller")
+	}
+}
+
+func TestInterfaceHandoffProviderHistoryCannotWaiveTrustedText(t *testing.T) {
+	st := openStore(t)
+	rec, found, err := st.GetSession(context.Background(), testSession)
+	if err != nil || !found {
+		t.Fatalf("load session: found=%v err=%v", found, err)
+	}
+	rec.Metadata.LatestUserPrompt = "trusted current user checkpoint"
+	rec.Metadata.LatestAssistantUpdate = "trusted current assistant checkpoint"
+	rec.Metadata.ConversationCheckpointState = domain.ConversationCheckpointComplete
+	rec.Metadata.ConversationCheckpointGeneration = "terminal-generation"
+	rec.Metadata.ConversationCheckpointNativeID = "thread-1"
+	if err := st.UpdateSession(context.Background(), rec); err != nil {
+		t.Fatalf("seed trusted checkpoint: %v", err)
+	}
+	conv := &nativeHistoryConversation{fakeConversation: newFakeConversation()}
+	svc := chatsvc.New(chatsvc.Options{
+		Store: st, Sessions: st,
+		Drivers: fakeRegistry{driver: fakeDriver{conv: conv}},
+		Log:     slog.New(slog.DiscardHandler),
+		NewID:   func() string { return fmt.Sprintf("trusted-history-%d", time.Now().UnixNano()) },
+	})
+
+	_, err = svc.Start(context.Background(), chatsvc.StartConfig{
+		SessionID: testSession, ProjectID: testProject, Harness: domain.HarnessCodex,
+		WorkspacePath: t.TempDir(), ProviderConversationID: "thread-1", RequireNativeHistory: true,
+		HistoryPolicy: domain.SessionInterfaceTransitionHistoryProvider,
+	})
+	if !errors.Is(err, ports.ErrChatHistoryUnsettled) {
+		t.Fatalf("Start error = %v, want trusted checkpoint mismatch", err)
+	}
+	if ports.ChatHistoryMismatchOnlyUntrustedText(err) {
+		t.Fatalf("trusted mismatch was marked recoverable: %v", err)
+	}
+	dimensions := ports.ChatHistoryMismatchDimensions(err)
+	if !slices.Contains(dimensions, ports.ChatHistoryMismatchTrustedUserText) ||
+		!slices.Contains(dimensions, ports.ChatHistoryMismatchTrustedAssistantText) {
+		t.Fatalf("trusted mismatch dimensions = %v", dimensions)
+	}
+}
+
+func TestInterfaceHandoffTrustedCheckpointMustMatchOneCompletedTurn(t *testing.T) {
+	st := openStore(t)
+	rec, found, err := st.GetSession(context.Background(), testSession)
+	if err != nil || !found {
+		t.Fatalf("load session: found=%v err=%v", found, err)
+	}
+	rec.Metadata.LatestUserPrompt = "latest trusted user"
+	rec.Metadata.LatestAssistantUpdate = "repeated trusted assistant"
+	rec.Metadata.ConversationCheckpointState = domain.ConversationCheckpointComplete
+	rec.Metadata.ConversationCheckpointGeneration = "terminal-generation"
+	rec.Metadata.ConversationCheckpointNativeID = "thread-1"
+	if err := st.UpdateSession(context.Background(), rec); err != nil {
+		t.Fatalf("seed trusted checkpoint: %v", err)
+	}
+	conv := &nativeHistoryConversation{
+		fakeConversation: newFakeConversation(),
+		events: []ports.ChatEvent{
+			{Kind: ports.ChatEventTurnStarted, ProviderEventID: "older-start", ProviderTurnID: "older-turn"},
+			{Kind: ports.ChatEventUserMessageCompleted, ProviderEventID: "older-user", ProviderTurnID: "older-turn", ProviderItemID: "older-user-item", Text: "older user"},
+			{Kind: ports.ChatEventMessageCompleted, ProviderEventID: "older-assistant", ProviderTurnID: "older-turn", ProviderItemID: "older-assistant-item", Text: "repeated trusted assistant"},
+			{Kind: ports.ChatEventTurnCompleted, ProviderEventID: "older-complete", ProviderTurnID: "older-turn", TurnState: domain.TurnStateCompleted},
+			{Kind: ports.ChatEventTurnStarted, ProviderEventID: "latest-start", ProviderTurnID: "latest-turn"},
+			{Kind: ports.ChatEventUserMessageCompleted, ProviderEventID: "latest-user", ProviderTurnID: "latest-turn", ProviderItemID: "latest-user-item", Text: "latest trusted user"},
+			{Kind: ports.ChatEventTurnCompleted, ProviderEventID: "latest-complete", ProviderTurnID: "latest-turn", TurnState: domain.TurnStateCompleted},
+		},
+	}
+	svc := chatsvc.New(chatsvc.Options{
+		Store: st, Sessions: st,
+		Drivers: fakeRegistry{driver: fakeDriver{conv: conv}},
+		Log:     slog.New(slog.DiscardHandler),
+		NewID:   func() string { return fmt.Sprintf("single-turn-checkpoint-%d", time.Now().UnixNano()) },
+	})
+	t.Cleanup(func() { _ = svc.Stop(context.Background(), testSession) })
+
+	_, err = svc.Start(context.Background(), chatsvc.StartConfig{
+		SessionID: testSession, ProjectID: testProject, Harness: domain.HarnessCodex,
+		WorkspacePath: t.TempDir(), ProviderConversationID: "thread-1", RequireNativeHistory: true,
+		HistoryPolicy: domain.SessionInterfaceTransitionHistoryProvider,
+	})
+	if !errors.Is(err, ports.ErrChatHistoryUnsettled) {
+		t.Fatalf("Start error = %v, want trusted checkpoint mismatch across completed turns", err)
+	}
+	if dimensions := ports.ChatHistoryMismatchDimensions(err); !slices.Contains(dimensions, ports.ChatHistoryMismatchTrustedAssistantText) {
+		t.Fatalf("mismatch dimensions = %v, want trusted assistant text", dimensions)
+	}
+}
+
+func TestInterfaceHandoffAOHighWaterFallbackMustStayInItsTurn(t *testing.T) {
+	ctx := context.Background()
+	st := openStore(t)
+	now := time.Date(2026, 8, 26, 2, 0, 0, 0, time.UTC)
+	conversation, err := st.CreateConversation(
+		ctx, "high-water-turn-conversation", domain.ConversationScopeSession,
+		testProject, testSession, now,
+	)
+	if err != nil {
+		t.Fatalf("create conversation: %v", err)
+	}
+	if err := st.ClaimChatControllerGeneration(ctx, testSession, "chat-generation", now); err != nil {
+		t.Fatalf("claim generation: %v", err)
+	}
+	created, err := st.AppendUserMessage(
+		ctx, conversation.ID, testSession, "chat-generation",
+		domain.ConversationMessage{
+			ID: "expected-user", Text: "expected user", Origin: domain.MessageOriginHuman,
+			ClientMessageID: "expected-client",
+		},
+		"expected-turn", now,
+	)
+	if err != nil || !created {
+		t.Fatalf("append user: created=%v err=%v", created, err)
+	}
+	if err := st.BindTurnToProvider(ctx, "expected-turn", "expected-provider-turn", now); err != nil {
+		t.Fatalf("bind turn: %v", err)
+	}
+	if err := st.SettleAssistantMessage(
+		ctx, conversation.ID, "expected-assistant-item", "expected-provider-turn",
+		"repeated high water", "expected-assistant", now,
+	); err != nil {
+		t.Fatalf("settle assistant: %v", err)
+	}
+	if err := st.SettleTurn(
+		ctx, conversation.ID, "expected-provider-turn", domain.TurnStateCompleted, "", now,
+	); err != nil {
+		t.Fatalf("settle turn: %v", err)
+	}
+	conv := &nativeHistoryConversation{
+		fakeConversation: newFakeConversation(),
+		events: []ports.ChatEvent{
+			{Kind: ports.ChatEventTurnStarted, ProviderEventID: "older-start", ProviderTurnID: "older-provider-turn"},
+			{Kind: ports.ChatEventUserMessageCompleted, ProviderEventID: "older-user", ProviderTurnID: "older-provider-turn", ProviderItemID: "older-user-item", Text: "older user"},
+			{Kind: ports.ChatEventMessageCompleted, ProviderEventID: "older-assistant", ProviderTurnID: "older-provider-turn", ProviderItemID: "older-assistant-item", Text: "repeated high water"},
+			{Kind: ports.ChatEventTurnCompleted, ProviderEventID: "older-complete", ProviderTurnID: "older-provider-turn", TurnState: domain.TurnStateCompleted},
+			{Kind: ports.ChatEventTurnStarted, ProviderEventID: "expected-start", ProviderTurnID: "expected-provider-turn"},
+			{Kind: ports.ChatEventUserMessageCompleted, ProviderEventID: "expected-replayed-user", ProviderTurnID: "expected-provider-turn", ProviderItemID: "expected-replayed-user-item", Text: "expected user"},
+			{Kind: ports.ChatEventTurnCompleted, ProviderEventID: "expected-complete", ProviderTurnID: "expected-provider-turn", TurnState: domain.TurnStateCompleted},
+		},
+	}
+	svc := chatsvc.New(chatsvc.Options{
+		Store: st, Sessions: st,
+		Reader: chatsvc.SnapshotReaderFunc(func(ctx context.Context, conversationID string) (chatsvc.ConversationRows, error) {
+			rows, err := st.LoadConversationSnapshot(ctx, conversationID)
+			if err != nil {
+				return chatsvc.ConversationRows{}, err
+			}
+			return chatsvc.ConversationRows{
+				Conversation: rows.Conversation,
+				Turns:        rows.Turns,
+				Messages:     rows.Messages,
+				Activities:   rows.Activities,
+			}, nil
+		}),
+		Drivers: fakeRegistry{driver: fakeDriver{conv: conv}},
+		Log:     slog.New(slog.DiscardHandler),
+		NewID:   func() string { return fmt.Sprintf("high-water-turn-%d", time.Now().UnixNano()) },
+	})
+	t.Cleanup(func() { _ = svc.Stop(context.Background(), testSession) })
+
+	_, err = svc.Start(ctx, chatsvc.StartConfig{
+		SessionID: testSession, ProjectID: testProject, Harness: domain.HarnessCodex,
+		WorkspacePath: t.TempDir(), ProviderConversationID: "thread-1", RequireNativeHistory: true,
+	})
+	if !errors.Is(err, ports.ErrChatHistoryUnsettled) {
+		t.Fatalf("Start error = %v, want AO high-water mismatch from its completed turn", err)
+	}
+	if dimensions := ports.ChatHistoryMismatchDimensions(err); !slices.Contains(dimensions, ports.ChatHistoryMismatchAOHighWater) {
+		t.Fatalf("mismatch dimensions = %v, want AO high water", dimensions)
+	}
+}
+
+func TestInterfaceHandoffAOHighWaterAcceptsMappedReassignedTurn(t *testing.T) {
+	ctx := context.Background()
+	st := openStore(t)
+	now := time.Date(2026, 8, 26, 2, 30, 0, 0, time.UTC)
+	conversation, err := st.CreateConversation(
+		ctx, "high-water-reassigned-conversation", domain.ConversationScopeSession,
+		testProject, testSession, now,
+	)
+	if err != nil {
+		t.Fatalf("create conversation: %v", err)
+	}
+	if err := st.ClaimChatControllerGeneration(ctx, testSession, "chat-generation", now); err != nil {
+		t.Fatalf("claim generation: %v", err)
+	}
+	created, err := st.AppendUserMessage(
+		ctx, conversation.ID, testSession, "chat-generation",
+		domain.ConversationMessage{
+			ID: "expected-user", Text: "expected user", Origin: domain.MessageOriginHuman,
+			ClientMessageID: "expected-client",
+		},
+		"expected-turn", now,
+	)
+	if err != nil || !created {
+		t.Fatalf("append user: created=%v err=%v", created, err)
+	}
+	if err := st.BindTurnToProvider(ctx, "expected-turn", "expected-provider-turn", now); err != nil {
+		t.Fatalf("bind turn: %v", err)
+	}
+	if err := st.SettleAssistantMessage(
+		ctx, conversation.ID, "expected-assistant-item", "expected-provider-turn",
+		"reassigned high water", "expected-assistant", now,
+	); err != nil {
+		t.Fatalf("settle assistant: %v", err)
+	}
+	if err := st.SettleTurn(
+		ctx, conversation.ID, "expected-provider-turn", domain.TurnStateCompleted, "", now,
+	); err != nil {
+		t.Fatalf("settle turn: %v", err)
+	}
+
+	conv := &nativeHistoryConversation{
+		fakeConversation: newFakeConversation(),
+		events: []ports.ChatEvent{
+			{Kind: ports.ChatEventTurnStarted, ProviderEventID: "reassigned-start", ProviderTurnID: "reassigned-provider-turn"},
+			{Kind: ports.ChatEventUserMessageCompleted, ProviderEventID: "reassigned-user", ProviderTurnID: "reassigned-provider-turn", ProviderItemID: "reassigned-user-item", ClientMessageID: "expected-client", Text: "expected user"},
+			{Kind: ports.ChatEventMessageCompleted, ProviderEventID: "reassigned-assistant", ProviderTurnID: "reassigned-provider-turn", ProviderItemID: "expected-assistant-item", Text: "reassigned high water"},
+			{Kind: ports.ChatEventTurnCompleted, ProviderEventID: "reassigned-complete", ProviderTurnID: "reassigned-provider-turn", TurnState: domain.TurnStateCompleted},
+		},
+	}
+	svc := chatsvc.New(chatsvc.Options{
+		Store: st, Sessions: st,
+		Reader: chatsvc.SnapshotReaderFunc(func(ctx context.Context, conversationID string) (chatsvc.ConversationRows, error) {
+			rows, err := st.LoadConversationSnapshot(ctx, conversationID)
+			if err != nil {
+				return chatsvc.ConversationRows{}, err
+			}
+			return chatsvc.ConversationRows{
+				Conversation: rows.Conversation,
+				Turns:        rows.Turns,
+				Messages:     rows.Messages,
+				Activities:   rows.Activities,
+			}, nil
+		}),
+		Drivers: fakeRegistry{driver: fakeDriver{conv: conv}},
+		Log:     slog.New(slog.DiscardHandler),
+		NewID:   func() string { return fmt.Sprintf("high-water-reassigned-%d", time.Now().UnixNano()) },
+	})
+	t.Cleanup(func() { _ = svc.Stop(context.Background(), testSession) })
+
+	if _, err := svc.Start(ctx, chatsvc.StartConfig{
+		SessionID: testSession, ProjectID: testProject, Harness: domain.HarnessCodex,
+		WorkspacePath: t.TempDir(), ProviderConversationID: "thread-1", RequireNativeHistory: true,
+	}); err != nil {
+		t.Fatalf("Start with mapped reassigned provider turn: %v", err)
+	}
+}
+
+func TestInterfaceHandoffProviderHistoryCannotWaiveTrustedCheckpointNativeIdentityMismatch(t *testing.T) {
+	tests := []struct {
+		name      string
+		state     domain.ConversationCheckpointState
+		assistant string
+	}{
+		{name: "pending prompt", state: domain.ConversationCheckpointPrompt},
+		{name: "completed turn", state: domain.ConversationCheckpointComplete, assistant: "trusted answer"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			st := openStore(t)
+			rec, found, err := st.GetSession(context.Background(), testSession)
+			if err != nil || !found {
+				t.Fatalf("load session: found=%v err=%v", found, err)
+			}
+			rec.Metadata.LatestUserPrompt = "trusted prompt from the prior native thread"
+			rec.Metadata.LatestAssistantUpdate = tt.assistant
+			rec.Metadata.ConversationCheckpointState = tt.state
+			rec.Metadata.ConversationCheckpointGeneration = "terminal-generation"
+			rec.Metadata.ConversationCheckpointNativeID = "thread-before-clear"
+			if err := st.UpdateSession(context.Background(), rec); err != nil {
+				t.Fatalf("seed trusted checkpoint: %v", err)
+			}
+
+			conv := &nativeHistoryConversation{fakeConversation: newFakeConversation()}
+			svc := chatsvc.New(chatsvc.Options{
+				Store: st, Sessions: st,
+				Drivers: fakeRegistry{driver: fakeDriver{conv: conv}},
+				Log:     slog.New(slog.DiscardHandler),
+				NewID:   func() string { return fmt.Sprintf("native-identity-%d", time.Now().UnixNano()) },
+			})
+			t.Cleanup(func() { _ = svc.Stop(context.Background(), testSession) })
+
+			_, err = svc.Start(context.Background(), chatsvc.StartConfig{
+				SessionID: testSession, ProjectID: testProject, Harness: domain.HarnessCodex,
+				WorkspacePath: t.TempDir(), ProviderConversationID: "thread-after-clear",
+				RequireNativeHistory: true,
+				HistoryPolicy:        domain.SessionInterfaceTransitionHistoryProvider,
+			})
+			if !errors.Is(err, ports.ErrChatHistoryUnsettled) {
+				t.Fatalf("Start error = %v, want hard native-identity mismatch", err)
+			}
+			if ports.ChatHistoryMismatchOnlyUntrustedText(err) {
+				t.Fatalf("native-identity mismatch was marked recoverable: %v", err)
+			}
+			if dimensions := ports.ChatHistoryMismatchDimensions(err); !slices.Contains(dimensions, ports.ChatHistoryMismatchNativeIdentity) {
+				t.Fatalf("mismatch dimensions = %v, want native identity", dimensions)
+			}
+		})
+	}
+}
+
+func TestInterfaceHandoffRoundTripRetiresTrustedTerminalCheckpointAfterChatTurn(t *testing.T) {
+	ctx := context.Background()
+	st := openStore(t)
+	now := time.Date(2026, 8, 26, 1, 0, 0, 0, time.UTC)
+	rec, found, err := st.GetSession(ctx, testSession)
+	if err != nil || !found {
+		t.Fatalf("load session: found=%v err=%v", found, err)
+	}
+	// Terminal turn A was the trusted checkpoint used for the first TUI -> Chat
+	// admission. It must not remain the text gate after Chat completes turn B and
+	// hands the same native conversation back to Terminal.
+	rec.Metadata.AgentSessionID = "thread-1"
+	rec.Metadata.ProviderConversationID = "thread-1"
+	rec.Metadata.LatestUserPrompt = "Terminal turn A"
+	rec.Metadata.LatestAssistantUpdate = "Terminal answer A"
+	rec.Metadata.ConversationCheckpointState = domain.ConversationCheckpointComplete
+	rec.Metadata.ConversationCheckpointGeneration = "tui-generation-a"
+	rec.Metadata.ConversationCheckpointNativeID = "thread-1"
+	if err := st.UpdateSession(ctx, rec); err != nil {
+		t.Fatalf("seed trusted Terminal checkpoint: %v", err)
+	}
+
+	conversation, err := st.CreateConversation(
+		ctx, "round-trip-conversation", domain.ConversationScopeSession,
+		testProject, testSession, now,
+	)
+	if err != nil {
+		t.Fatalf("create Chat conversation: %v", err)
+	}
+	if err := st.ClaimChatControllerGeneration(ctx, testSession, "chat-generation-b", now); err != nil {
+		t.Fatalf("claim Chat generation: %v", err)
+	}
+	created, err := st.AppendUserMessage(
+		ctx, conversation.ID, testSession, "chat-generation-b",
+		domain.ConversationMessage{
+			ID: "chat-user-b", Text: "Chat turn B", Origin: domain.MessageOriginHuman,
+			ClientMessageID: "chat-client-b",
+		},
+		"chat-turn-b", now,
+	)
+	if err != nil || !created {
+		t.Fatalf("append Chat turn B: created=%v err=%v", created, err)
+	}
+	if err := st.BindTurnToProvider(ctx, "chat-turn-b", "provider-turn-b", now); err != nil {
+		t.Fatalf("bind Chat turn B: %v", err)
+	}
+	if err := st.SettleAssistantMessage(
+		ctx, conversation.ID, "provider-assistant-b", "provider-turn-b",
+		"Chat answer B", "chat-assistant-b", now,
+	); err != nil {
+		t.Fatalf("settle Chat answer B: %v", err)
+	}
+	if err := st.SettleTurn(
+		ctx, conversation.ID, "provider-turn-b", domain.TurnStateCompleted, "", now,
+	); err != nil {
+		t.Fatalf("settle Chat turn B: %v", err)
+	}
+
+	changed, err := st.CommitSessionControllerEpoch(
+		ctx, testSession, domain.SessionModeChat, domain.SessionModeTUI, "thread-1", now.Add(time.Second),
+	)
+	if err != nil || !changed {
+		t.Fatalf("commit Chat -> TUI: changed=%v err=%v", changed, err)
+	}
+	changed, err = st.CommitSessionControllerEpoch(
+		ctx, testSession, domain.SessionModeTUI, domain.SessionModeChat, "thread-1", now.Add(2*time.Second),
+	)
+	if err != nil || !changed {
+		t.Fatalf("commit TUI -> Chat: changed=%v err=%v", changed, err)
+	}
+
+	provider := &nativeHistoryConversation{
+		fakeConversation: newFakeConversation(),
+		events: []ports.ChatEvent{
+			{Kind: ports.ChatEventTurnStarted, ProviderEventID: "provider-start-b", ProviderTurnID: "provider-turn-b"},
+			{Kind: ports.ChatEventUserMessageCompleted, ProviderEventID: "provider-user-b", ProviderTurnID: "provider-turn-b", ProviderItemID: "provider-user-item-b", Text: "Chat turn B"},
+			{Kind: ports.ChatEventMessageCompleted, ProviderEventID: "provider-assistant-b", ProviderTurnID: "provider-turn-b", ProviderItemID: "provider-assistant-item-b", Text: "Chat answer B"},
+			{Kind: ports.ChatEventTurnCompleted, ProviderEventID: "provider-complete-b", ProviderTurnID: "provider-turn-b", TurnState: domain.TurnStateCompleted},
+		},
+	}
+	svc := chatsvc.New(chatsvc.Options{
+		Store: st, Sessions: st,
+		Drivers: fakeRegistry{driver: fakeDriver{conv: provider}},
+		Log:     slog.New(slog.DiscardHandler),
+		NewID:   func() string { return fmt.Sprintf("round-trip-%d", time.Now().UnixNano()) },
+	})
+	t.Cleanup(func() { _ = svc.Stop(context.Background(), testSession) })
+
+	if _, err := svc.Start(ctx, chatsvc.StartConfig{
+		SessionID: testSession, ProjectID: testProject, Harness: domain.HarnessCodex,
+		WorkspacePath: t.TempDir(), ProviderConversationID: "thread-1", RequireNativeHistory: true,
+		HistoryPolicy: domain.SessionInterfaceTransitionHistoryStrict,
+	}); err != nil {
+		t.Fatalf("round-trip TUI -> Chat admission: %v", err)
 	}
 }
 

@@ -13,7 +13,9 @@ import (
 
 	codexagent "github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/codex"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
+	"github.com/aoagents/agent-orchestrator/backend/internal/lifecycle"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
+	"github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite"
 )
 
 type transitionStore struct {
@@ -401,6 +403,137 @@ type transitionChat struct {
 	supportsChat     bool
 }
 
+type historyPolicyTransitionChat struct {
+	*transitionChat
+	policies []domain.SessionInterfaceTransitionHistoryPolicy
+}
+
+// sqliteTransitionLifecycle keeps this restart regression at the public
+// Manager/SQLite boundary without pulling Lifecycle Manager internals into the
+// fixture. Every method delegates the durable writes production wiring owns.
+type sqliteTransitionLifecycle struct {
+	store *sqlite.Store
+}
+
+func (*sqliteTransitionLifecycle) PrepareLaunch(domain.SessionID, string) error { return nil }
+func (*sqliteTransitionLifecycle) CancelLaunch(domain.SessionID, string)        {}
+func (*sqliteTransitionLifecycle) ReleaseLaunch(domain.SessionID, string)       {}
+func (l *sqliteTransitionLifecycle) MarkSpawned(
+	ctx context.Context,
+	id domain.SessionID,
+	metadata domain.SessionMetadata,
+) error {
+	rec, ok, err := l.store.GetSession(ctx, id)
+	if err != nil || !ok {
+		if err != nil {
+			return err
+		}
+		return ErrNotFound
+	}
+	rec.Metadata = preserveCheckpointOnFakeMarkSpawned(rec.Metadata, metadata)
+	rec.Activity = domain.Activity{State: domain.ActivityIdle, LastActivityAt: time.Now()}
+	rec.FirstSignalAt = time.Now()
+	return l.store.UpdateSession(ctx, rec)
+}
+func (l *sqliteTransitionLifecycle) CommitControllerEpoch(
+	ctx context.Context,
+	id domain.SessionID,
+	source, target domain.SessionMode,
+	nativeConversationID string,
+	_ bool,
+) (bool, error) {
+	return l.store.CommitSessionControllerEpoch(
+		ctx, id, source, target, nativeConversationID, time.Now(),
+	)
+}
+func (l *sqliteTransitionLifecycle) RestoreControllerEpoch(
+	ctx context.Context,
+	id domain.SessionID,
+	source, target domain.SessionMode,
+	nativeConversationID string,
+	_ bool,
+) (bool, error) {
+	return l.store.RestoreSessionControllerEpoch(
+		ctx, id, source, target, nativeConversationID, time.Now(),
+	)
+}
+func (l *sqliteTransitionLifecycle) ConfirmAgentSwitchSourceStopped(
+	ctx context.Context,
+	confirmation domain.AgentSwitchSourceStopConfirmation,
+) (bool, error) {
+	return l.store.ConfirmAgentSwitchSourceStopped(ctx, confirmation)
+}
+func (l *sqliteTransitionLifecycle) ActivateAgentSwitchTarget(
+	ctx context.Context,
+	activation domain.AgentSwitchTargetActivation,
+) (bool, error) {
+	return l.store.ActivateAgentSwitchTarget(ctx, activation)
+}
+func (l *sqliteTransitionLifecycle) ActivateChatAgentSwitchTarget(
+	ctx context.Context,
+	activation domain.AgentSwitchChatTargetActivation,
+) (bool, error) {
+	return l.store.ActivateChatAgentSwitchTarget(ctx, activation)
+}
+func (l *sqliteTransitionLifecycle) MarkTerminated(
+	ctx context.Context,
+	id domain.SessionID,
+) error {
+	rec, ok, err := l.store.GetSession(ctx, id)
+	if err != nil || !ok {
+		if err != nil {
+			return err
+		}
+		return ErrNotFound
+	}
+	rec.IsTerminated = true
+	return l.store.UpdateSession(ctx, rec)
+}
+
+func (c *historyPolicyTransitionChat) StartChat(ctx context.Context, cfg ChatStart) (ChatStarted, error) {
+	c.policies = append(c.policies, cfg.HistoryPolicy)
+	if cfg.HistoryPolicy != domain.SessionInterfaceTransitionHistoryProvider {
+		c.start = cfg
+		*c.log = append(*c.log, "start:chat")
+		return ChatStarted{}, &ports.ChatHistoryUnsettledError{Dimensions: []ports.ChatHistoryMismatchDimension{
+			ports.ChatHistoryMismatchUntrustedUserText,
+			ports.ChatHistoryMismatchUntrustedAssistantText,
+		}}
+	}
+	return c.transitionChat.StartChat(ctx, cfg)
+}
+
+// checkpointAwareHistoryTransitionChat models the public Chat replay seam: a
+// strict launch fails only while the session still carries the poisoned legacy
+// checkpoint. This prevents the transition test from manufacturing the same
+// failure after rollback has accidentally erased the fact it was meant to
+// recover from.
+type checkpointAwareHistoryTransitionChat struct {
+	*transitionChat
+	store    *transitionStore
+	policies []domain.SessionInterfaceTransitionHistoryPolicy
+}
+
+func (c *checkpointAwareHistoryTransitionChat) StartChat(
+	ctx context.Context,
+	cfg ChatStart,
+) (ChatStarted, error) {
+	c.policies = append(c.policies, cfg.HistoryPolicy)
+	rec := c.store.sessions[cfg.SessionID]
+	checkpoint := rec.Metadata
+	if cfg.HistoryPolicy == domain.SessionInterfaceTransitionHistoryStrict &&
+		checkpoint.ConversationCheckpointState == domain.ConversationCheckpointLegacy &&
+		(checkpoint.LatestUserPrompt != "" || checkpoint.LatestAssistantUpdate != "") {
+		c.start = cfg
+		*c.log = append(*c.log, "start:chat")
+		return ChatStarted{}, &ports.ChatHistoryUnsettledError{Dimensions: []ports.ChatHistoryMismatchDimension{
+			ports.ChatHistoryMismatchUntrustedUserText,
+			ports.ChatHistoryMismatchUntrustedAssistantText,
+		}}
+	}
+	return c.transitionChat.StartChat(ctx, cfg)
+}
+
 func (c *transitionChat) SupportsChat(_ domain.AgentHarness) bool {
 	return c.supportsChat
 }
@@ -486,6 +619,17 @@ func (g *transitionInputGate) BeginInputDrain(terminalID string) (time.Time, fun
 	g.acquired <- terminalID
 	var once sync.Once
 	return g.lastInputAt, func() { once.Do(func() { g.released <- terminalID }) }
+}
+
+type blockingTransitionInputGate struct {
+	acquired chan string
+	release  chan struct{}
+}
+
+func (g *blockingTransitionInputGate) BeginInputDrain(terminalID string) (time.Time, func()) {
+	g.acquired <- terminalID
+	<-g.release
+	return time.Time{}, func() {}
 }
 
 func TestTUIIdleAfterInputRequiresANewerIdleFact(t *testing.T) {
@@ -611,8 +755,7 @@ func TestInterfaceTransitionRejectsNativeIdentityNotConfirmedByCurrentTUILaunch(
 		t.Fatalf("reasonCode = %q, want NATIVE_SESSION_UNVERIFIED", status.ReasonCode)
 	}
 	if _, err := manager.StartInterfaceTransition(
-		context.Background(), "session-1", domain.SessionModeChat, domain.SessionInterfaceTransitionDrain,
-	); err == nil {
+		context.Background(), "session-1", domain.SessionModeChat, domain.SessionInterfaceTransitionDrain, domain.SessionInterfaceTransitionHistoryStrict); err == nil {
 		t.Fatal("interface transition started without current-launch native identity proof")
 	}
 }
@@ -701,7 +844,7 @@ func awaitTransition(t *testing.T, store *transitionStore, id string) domain.Ses
 
 func TestInterfaceTransitionTUIToChatStopsBeforeStartingAndReusesNativeConversation(t *testing.T) {
 	manager, store, runtime, chat, log := newTransitionManager(t, domain.SessionModeTUI)
-	transition, err := manager.StartInterfaceTransition(context.Background(), "session-1", domain.SessionModeChat, domain.SessionInterfaceTransitionDrain)
+	transition, err := manager.StartInterfaceTransition(context.Background(), "session-1", domain.SessionModeChat, domain.SessionInterfaceTransitionDrain, domain.SessionInterfaceTransitionHistoryStrict)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -734,8 +877,8 @@ func TestInterfaceTransitionRollbackClearsStaleTUIRuntimeBeforeRestore(t *testin
 	runtime.aliveByHandle = map[string]bool{"runtime-1": false}
 	chat.startErr = errors.New("ACP session/new: spawn EINVAL")
 
-	transition, err := manager.StartInterfaceTransition(context.Background(), "session-1",
-		domain.SessionModeChat, domain.SessionInterfaceTransitionDrain)
+	transition, err := manager.StartInterfaceTransition(context.Background(), "session-1", domain.SessionModeChat, domain.SessionInterfaceTransitionDrain, domain.SessionInterfaceTransitionHistoryStrict)
+
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -757,21 +900,26 @@ func TestInterfaceTransitionRollbackClearsStaleTUIRuntimeBeforeRestore(t *testin
 
 func TestInterfaceTransitionReportsNativeHistoryReplayFailure(t *testing.T) {
 	tests := []struct {
-		name string
-		err  error
-		code string
+		name       string
+		err        error
+		code       string
+		wantStarts int
 	}{
-		{name: "unavailable", err: ports.ErrChatHistoryUnavailable, code: "TARGET_HISTORY_UNAVAILABLE"},
-		{name: "unsettled", err: ports.ErrChatHistoryUnsettled, code: "TARGET_HISTORY_UNSETTLED"},
+		{name: "unavailable", err: ports.ErrChatHistoryUnavailable, code: "TARGET_HISTORY_UNAVAILABLE", wantStarts: 1},
+		{name: "unsettled", err: ports.ErrChatHistoryUnsettled, code: "TARGET_HISTORY_UNSETTLED", wantStarts: 2},
+		{name: "legacy text mismatch", err: &ports.ChatHistoryUnsettledError{Dimensions: []ports.ChatHistoryMismatchDimension{
+			ports.ChatHistoryMismatchUntrustedUserText,
+			ports.ChatHistoryMismatchUntrustedAssistantText,
+		}}, code: "TARGET_HISTORY_UNTRUSTED_TEXT_MISMATCH", wantStarts: 1},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			manager, store, runtime, chat, _ := newTransitionManager(t, domain.SessionModeTUI)
+			manager, store, runtime, chat, log := newTransitionManager(t, domain.SessionModeTUI)
 			runtime.aliveByHandle = map[string]bool{"runtime-1": true}
 			chat.startErr = tt.err
 
-			transition, err := manager.StartInterfaceTransition(context.Background(), "session-1",
-				domain.SessionModeChat, domain.SessionInterfaceTransitionDrain)
+			transition, err := manager.StartInterfaceTransition(context.Background(), "session-1", domain.SessionModeChat, domain.SessionInterfaceTransitionDrain, domain.SessionInterfaceTransitionHistoryStrict)
+
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -782,7 +930,389 @@ func TestInterfaceTransitionReportsNativeHistoryReplayFailure(t *testing.T) {
 			if got := store.sessions["session-1"].Mode; got != domain.SessionModeTUI {
 				t.Fatalf("mode = %s, want restored TUI", got)
 			}
+			if got := strings.Count(fmt.Sprint(*log), "start:chat"); got != tt.wantStarts {
+				t.Fatalf("target starts = %d, want %d before failing closed", got, tt.wantStarts)
+			}
 		})
+	}
+}
+
+func TestInterfaceTransitionProviderHistoryRecoveryRequiresTypedLegacyFailure(t *testing.T) {
+	manager, store, runtime, baseChat, _ := newTransitionManager(t, domain.SessionModeTUI)
+	chat := &checkpointAwareHistoryTransitionChat{transitionChat: baseChat, store: store}
+	manager.chat = chat
+	runtime.aliveByHandle = map[string]bool{"runtime-1": true}
+	rec := store.sessions["session-1"]
+	rec.Metadata.LatestUserPrompt = "poisoned user checkpoint"
+	rec.Metadata.LatestAssistantUpdate = "poisoned assistant checkpoint"
+	rec.Metadata.ConversationCheckpointState = domain.ConversationCheckpointLegacy
+	store.sessions[rec.ID] = rec
+
+	strict, err := manager.StartInterfaceTransition(context.Background(), "session-1", domain.SessionModeChat, domain.SessionInterfaceTransitionInterrupt, domain.SessionInterfaceTransitionHistoryStrict)
+
+	if err != nil {
+		t.Fatalf("start strict transition: %v", err)
+	}
+	strict = awaitTransition(t, store, strict.ID)
+	if strict.ErrorCode != "TARGET_HISTORY_UNTRUSTED_TEXT_MISMATCH" {
+		t.Fatalf("strict transition = %+v, want typed legacy mismatch", strict)
+	}
+	afterStrict := store.sessions["session-1"].Metadata
+	if afterStrict.ConversationCheckpointState != domain.ConversationCheckpointLegacy ||
+		afterStrict.LatestUserPrompt != "poisoned user checkpoint" ||
+		afterStrict.LatestAssistantUpdate != "poisoned assistant checkpoint" {
+		t.Fatalf("rollback checkpoint = %+v, want original poisoned legacy facts retained", afterStrict)
+	}
+	confirmRestoredNativeOwner := func() {
+		rec := store.sessions["session-1"]
+		rec.Metadata.AgentSessionIDLaunchID = rec.Metadata.RuntimeLaunchID
+		store.sessions["session-1"] = rec
+	}
+	confirmRestoredNativeOwner()
+
+	ordinaryRetry, err := manager.StartInterfaceTransition(context.Background(), "session-1", domain.SessionModeChat, domain.SessionInterfaceTransitionDrain, domain.SessionInterfaceTransitionHistoryStrict)
+
+	if err != nil {
+		t.Fatalf("start ordinary retry: %v", err)
+	}
+	ordinaryRetry = awaitTransition(t, store, ordinaryRetry.ID)
+	if ordinaryRetry.ErrorCode != "TARGET_HISTORY_UNTRUSTED_TEXT_MISMATCH" {
+		t.Fatalf("ordinary retry = %+v, want failure to remain closed", ordinaryRetry)
+	}
+	confirmRestoredNativeOwner()
+
+	recovery, err := manager.StartInterfaceTransition(context.Background(), "session-1",
+		domain.SessionModeChat, domain.SessionInterfaceTransitionDrain,
+		domain.SessionInterfaceTransitionHistoryProvider)
+	if err != nil {
+		t.Fatalf("start provider-history recovery: %v", err)
+	}
+	recovery = awaitTransition(t, store, recovery.ID)
+	if recovery.Phase != domain.SessionInterfaceTransitionCompleted ||
+		recovery.HistoryPolicy != domain.SessionInterfaceTransitionHistoryProvider {
+		t.Fatalf("provider-history recovery = %+v, want completed persisted recovery", recovery)
+	}
+	if got := fmt.Sprint(chat.policies); got != "[strict strict provider_history]" {
+		t.Fatalf("target history policies = %s", got)
+	}
+}
+
+func TestInterfaceTransitionStrictRefreshesNativeIdentityAfterTerminalGate(t *testing.T) {
+	manager, store, runtime, chat, _ := newTransitionManager(t, domain.SessionModeTUI)
+	useFastInterfaceTransitionTimings(manager)
+	runtime.aliveByHandle = map[string]bool{"runtime-1": true}
+	gate := &blockingTransitionInputGate{
+		acquired: make(chan string, 1),
+		release:  make(chan struct{}),
+	}
+	manager.SetTerminalInputGate(gate)
+	t.Cleanup(func() {
+		select {
+		case <-gate.release:
+		default:
+			close(gate.release)
+		}
+	})
+
+	transition, err := manager.StartInterfaceTransition(context.Background(), "session-1",
+		domain.SessionModeChat, domain.SessionInterfaceTransitionDrain,
+		domain.SessionInterfaceTransitionHistoryStrict)
+	if err != nil {
+		t.Fatalf("start strict transition: %v", err)
+	}
+	select {
+	case <-gate.acquired:
+	case <-time.After(time.Second):
+		t.Fatal("transition did not acquire the terminal input gate")
+	}
+	rec := store.sessions["session-1"]
+	rec.Metadata.AgentSessionID = "native-after-admission"
+	rec.Metadata.AgentSessionIDLaunchID = rec.Metadata.RuntimeLaunchID
+	store.sessions[rec.ID] = rec
+	close(gate.release)
+
+	settled := awaitTransition(t, store, transition.ID)
+	if settled.Phase != domain.SessionInterfaceTransitionCompleted {
+		t.Fatalf("strict transition = %+v, want current identity admitted", settled)
+	}
+	if settled.NativeConversationID != "native-after-admission" ||
+		chat.start.ProviderConversationID != "native-after-admission" {
+		t.Fatalf("strict transition resumed stale identity: transition=%q chat=%q",
+			settled.NativeConversationID, chat.start.ProviderConversationID)
+	}
+}
+
+func TestInterfaceTransitionProviderHistoryRejectsNativeIdentityChangeAfterAdmission(t *testing.T) {
+	manager, store, runtime, chat, _ := newTransitionManager(t, domain.SessionModeTUI)
+	useFastInterfaceTransitionTimings(manager)
+	runtime.aliveByHandle = map[string]bool{"runtime-1": true}
+	now := time.Now().Add(-time.Minute)
+	store.transitions["failed-native-1"] = domain.SessionInterfaceTransition{
+		ID: "failed-native-1", SessionID: "session-1",
+		SourceMode: domain.SessionModeTUI, TargetMode: domain.SessionModeChat,
+		Policy:               domain.SessionInterfaceTransitionDrain,
+		HistoryPolicy:        domain.SessionInterfaceTransitionHistoryStrict,
+		Phase:                domain.SessionInterfaceTransitionFailed,
+		NativeConversationID: "native-1",
+		ErrorCode:            "TARGET_HISTORY_UNTRUSTED_TEXT_MISMATCH",
+		CreatedAt:            now, UpdatedAt: now, CompletedAt: now,
+	}
+	gate := &blockingTransitionInputGate{
+		acquired: make(chan string, 1),
+		release:  make(chan struct{}),
+	}
+	manager.SetTerminalInputGate(gate)
+	t.Cleanup(func() {
+		select {
+		case <-gate.release:
+		default:
+			close(gate.release)
+		}
+	})
+
+	transition, err := manager.StartInterfaceTransition(context.Background(), "session-1",
+		domain.SessionModeChat, domain.SessionInterfaceTransitionDrain,
+		domain.SessionInterfaceTransitionHistoryProvider)
+	if err != nil {
+		t.Fatalf("admit provider-history recovery: %v", err)
+	}
+	select {
+	case <-gate.acquired:
+	case <-time.After(time.Second):
+		t.Fatal("transition did not acquire the terminal input gate")
+	}
+	rec := store.sessions["session-1"]
+	rec.Metadata.AgentSessionID = "native-after-admission"
+	rec.Metadata.AgentSessionIDLaunchID = rec.Metadata.RuntimeLaunchID
+	store.sessions[rec.ID] = rec
+	close(gate.release)
+
+	settled := awaitTransition(t, store, transition.ID)
+	if settled.Phase != domain.SessionInterfaceTransitionFailed ||
+		settled.ErrorCode != "PROVIDER_HISTORY_RECOVERY_UNAVAILABLE" {
+		t.Fatalf("identity-changed provider recovery = %+v, want rejected before source stop", settled)
+	}
+	if runtime.destroyed != 0 || chat.start.ProviderConversationID != "" {
+		t.Fatalf("rejected provider recovery touched controllers: destroyed=%d chat=%+v",
+			runtime.destroyed, chat.start)
+	}
+	current := store.sessions["session-1"]
+	if current.Mode != domain.SessionModeTUI || current.Metadata.AgentSessionID != "native-after-admission" {
+		t.Fatalf("rejected provider recovery overwrote current source identity: %+v", current)
+	}
+}
+
+func TestInterfaceTransitionProviderHistoryRecoveryRejectsConsentAfterNativeIdentityChanges(t *testing.T) {
+	manager, store, runtime, chat, _ := newTransitionManager(t, domain.SessionModeTUI)
+	now := time.Now()
+	store.transitions["failed-before-clear"] = domain.SessionInterfaceTransition{
+		ID: "failed-before-clear", SessionID: "session-1",
+		SourceMode: domain.SessionModeTUI, TargetMode: domain.SessionModeChat,
+		Policy:               domain.SessionInterfaceTransitionDrain,
+		HistoryPolicy:        domain.SessionInterfaceTransitionHistoryStrict,
+		Phase:                domain.SessionInterfaceTransitionFailed,
+		NativeConversationID: "native-before-clear",
+		ErrorCode:            "TARGET_HISTORY_UNTRUSTED_TEXT_MISMATCH",
+		CreatedAt:            now, UpdatedAt: now, CompletedAt: now,
+	}
+	rec := store.sessions["session-1"]
+	rec.Metadata.AgentSessionID = "native-after-clear"
+	rec.Metadata.AgentSessionIDLaunchID = rec.Metadata.RuntimeLaunchID
+	store.sessions[rec.ID] = rec
+
+	beforeDestroyed := runtime.destroyed
+	transition, err := manager.StartInterfaceTransition(context.Background(), rec.ID,
+		domain.SessionModeChat, domain.SessionInterfaceTransitionDrain,
+		domain.SessionInterfaceTransitionHistoryProvider)
+	if err == nil {
+		settled := awaitTransition(t, store, transition.ID)
+		t.Fatalf("stale provider-history consent started transition: %+v", settled)
+	}
+	if !errors.Is(err, ErrInterfaceProviderHistoryRecoveryUnavailable) {
+		t.Fatalf("provider-history request error = %v, want stale consent rejected", err)
+	}
+	if runtime.destroyed != beforeDestroyed || chat.start.ProviderConversationID != "" {
+		t.Fatalf("rejected stale consent touched controllers: destroyed=%d chat=%+v",
+			runtime.destroyed, chat.start)
+	}
+}
+
+func TestInterfaceTransitionProviderHistoryRecoverySurvivesDaemonRestart(t *testing.T) {
+	dataDir := t.TempDir()
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Millisecond)
+
+	beforeRestart, err := sqlite.Open(dataDir)
+	if err != nil {
+		t.Fatalf("open pre-restart store: %v", err)
+	}
+	if err := beforeRestart.UpsertProject(ctx, domain.ProjectRecord{
+		ID: "proj", Path: "/repo", RegisteredAt: now,
+	}); err != nil {
+		t.Fatalf("seed project: %v", err)
+	}
+	created, err := beforeRestart.CreateSession(ctx, domain.SessionRecord{
+		ID: "session-1", ProjectID: "proj", Kind: domain.KindWorker,
+		Harness: domain.HarnessClaudeCode, Mode: domain.SessionModeTUI,
+		Metadata: domain.SessionMetadata{
+			WorkspacePath: "/ws/session-1", Branch: "ao/session-1",
+			RuntimeHandleID: "runtime-1", RuntimeLaunchID: "tui-generation-1",
+			AgentSessionID: "native-1", AgentSessionIDLaunchID: "tui-generation-1",
+		},
+		Activity:      domain.Activity{State: domain.ActivityIdle, LastActivityAt: now},
+		FirstSignalAt: now, CreatedAt: now, UpdatedAt: now,
+	})
+	if err != nil {
+		t.Fatalf("seed session: %v", err)
+	}
+	_, inserted, err := beforeRestart.CreateSessionInterfaceTransition(ctx, domain.SessionInterfaceTransition{
+		ID: "interrupted-provider-recovery", SessionID: created.ID,
+		SourceMode: domain.SessionModeTUI, TargetMode: domain.SessionModeChat,
+		Policy:               domain.SessionInterfaceTransitionDrain,
+		HistoryPolicy:        domain.SessionInterfaceTransitionHistoryProvider,
+		Phase:                domain.SessionInterfaceTransitionPreflighting,
+		NativeConversationID: "native-1", CreatedAt: now, UpdatedAt: now,
+	})
+	if err != nil || !inserted {
+		t.Fatalf("seed interrupted provider recovery: inserted=%v err=%v", inserted, err)
+	}
+	if err := beforeRestart.Close(); err != nil {
+		t.Fatalf("close pre-restart store: %v", err)
+	}
+
+	afterRestart, err := sqlite.Open(dataDir)
+	if err != nil {
+		t.Fatalf("reopen durable store: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := afterRestart.Close(); err != nil {
+			t.Errorf("close reopened store: %v", err)
+		}
+	})
+	log := &[]string{}
+	runtime := &transitionRuntime{fakeRuntime: &fakeRuntime{}, log: log}
+	runtime.aliveByHandle = map[string]bool{"runtime-1": true}
+	baseChat := &transitionChat{
+		log: log, supportsChat: true,
+		armed:   make(chan domain.SessionInterfaceTransitionPolicy, 1),
+		aborted: make(chan struct{}, 1),
+	}
+	chat := &historyPolicyTransitionChat{transitionChat: baseChat}
+	reconcileCtx, cancelReconcile := context.WithCancel(context.Background())
+	t.Cleanup(cancelReconcile)
+	restarted := New(Deps{
+		Runtime: runtime, Agents: singleAgent{agent: transitionAgent{}}, Workspace: &fakeWorkspace{},
+		Store: afterRestart, Messenger: &fakeMessenger{}, Chat: chat,
+		Lifecycle:         &sqliteTransitionLifecycle{store: afterRestart},
+		LookPath:          func(string) (string, error) { return "/bin/true", nil },
+		NewLaunchID:       func() string { return "provider-retry-after-restart" },
+		BackgroundContext: reconcileCtx,
+	})
+	useFastInterfaceTransitionTimings(restarted)
+
+	if err := restarted.ReconcileStartupSafety(reconcileCtx); err != nil {
+		t.Fatalf("reconcile startup safety: %v", err)
+	}
+	recovered, ok, err := afterRestart.GetLatestSessionInterfaceTransition(ctx, created.ID)
+	if err != nil || !ok {
+		t.Fatalf("read recovered transition: ok=%v err=%v", ok, err)
+	}
+	if recovered.Phase != domain.SessionInterfaceTransitionRecovery ||
+		recovered.ErrorCode != "DAEMON_RESTARTED" ||
+		recovered.HistoryPolicy != domain.SessionInterfaceTransitionHistoryProvider {
+		t.Fatalf("recovered durable provider consent = %+v", recovered)
+	}
+
+	retry, err := restarted.StartInterfaceTransition(
+		ctx,
+		created.ID,
+		domain.SessionModeChat,
+		domain.SessionInterfaceTransitionDrain,
+		domain.SessionInterfaceTransitionHistoryProvider,
+	)
+	if err != nil {
+		t.Fatalf("restart provider-history recovery: %v", err)
+	}
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		settled, found, readErr := afterRestart.GetSessionInterfaceTransition(ctx, retry.ID)
+		if readErr != nil {
+			t.Fatalf("read restarted transition: %v", readErr)
+		}
+		if found && settled.Phase.Terminal() {
+			if settled.Phase != domain.SessionInterfaceTransitionCompleted {
+				t.Fatalf("restarted provider recovery = %+v", settled)
+			}
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("restarted provider recovery did not settle: %+v", settled)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if got := fmt.Sprint(chat.policies); got != "[provider_history]" {
+		t.Fatalf("target history policies after restart = %s", got)
+	}
+}
+
+func TestInterfaceTransitionProviderHistoryRecoveryDoesNotSurviveUnconsentedRestart(t *testing.T) {
+	manager, store, runtime, _, _ := newTransitionManager(t, domain.SessionModeTUI)
+	now := time.Now()
+	store.transitions["interrupted-strict-attempt"] = domain.SessionInterfaceTransition{
+		ID: "interrupted-strict-attempt", SessionID: "session-1",
+		SourceMode: domain.SessionModeTUI, TargetMode: domain.SessionModeChat,
+		Policy:               domain.SessionInterfaceTransitionDrain,
+		HistoryPolicy:        domain.SessionInterfaceTransitionHistoryStrict,
+		Phase:                domain.SessionInterfaceTransitionPreflighting,
+		NativeConversationID: "native-1", CreatedAt: now, UpdatedAt: now,
+	}
+	reconcileCtx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if err := manager.ReconcileStartupSafety(reconcileCtx); err != nil {
+		t.Fatalf("reconcile startup safety: %v", err)
+	}
+
+	beforeDestroyed := runtime.destroyed
+	_, err := manager.StartInterfaceTransition(
+		context.Background(),
+		"session-1",
+		domain.SessionModeChat,
+		domain.SessionInterfaceTransitionDrain,
+		domain.SessionInterfaceTransitionHistoryProvider,
+	)
+	if !errors.Is(err, ErrInterfaceProviderHistoryRecoveryUnavailable) {
+		t.Fatalf("unconsented post-restart provider recovery error = %v", err)
+	}
+	if runtime.destroyed != beforeDestroyed {
+		t.Fatalf("rejected recovery touched source runtime: destroyed %d -> %d", beforeDestroyed, runtime.destroyed)
+	}
+}
+
+func TestInterfaceTransitionProviderHistoryRecoveryRejectsGenericOrTrustedFailure(t *testing.T) {
+	manager, store, runtime, chat, _ := newTransitionManager(t, domain.SessionModeTUI)
+	runtime.aliveByHandle = map[string]bool{"runtime-1": true}
+	chat.startErr = &ports.ChatHistoryUnsettledError{Dimensions: []ports.ChatHistoryMismatchDimension{
+		ports.ChatHistoryMismatchTrustedUserText,
+	}}
+
+	strict, err := manager.StartInterfaceTransition(context.Background(), "session-1", domain.SessionModeChat, domain.SessionInterfaceTransitionInterrupt, domain.SessionInterfaceTransitionHistoryStrict)
+
+	if err != nil {
+		t.Fatalf("start strict transition: %v", err)
+	}
+	strict = awaitTransition(t, store, strict.ID)
+	if strict.ErrorCode != "TARGET_HISTORY_UNSETTLED" {
+		t.Fatalf("trusted mismatch = %+v, want generic closed error code", strict)
+	}
+	beforeDestroyed := runtime.destroyed
+	_, err = manager.StartInterfaceTransition(context.Background(), "session-1",
+		domain.SessionModeChat, domain.SessionInterfaceTransitionDrain,
+		domain.SessionInterfaceTransitionHistoryProvider)
+	if !errors.Is(err, ErrInterfaceProviderHistoryRecoveryUnavailable) {
+		t.Fatalf("provider-history request error = %v, want recovery unavailable", err)
+	}
+	if runtime.destroyed != beforeDestroyed {
+		t.Fatalf("rejected provider recovery touched source runtime: destroyed %d -> %d", beforeDestroyed, runtime.destroyed)
 	}
 }
 
@@ -802,8 +1332,8 @@ func TestInterfaceTransitionTUIToChatDrainsAVisibleIdleComposerAfterNonSubmittin
 		lastInputAt: now,
 	})
 
-	transition, err := manager.StartInterfaceTransition(context.Background(), "session-1",
-		domain.SessionModeChat, domain.SessionInterfaceTransitionDrain)
+	transition, err := manager.StartInterfaceTransition(context.Background(), "session-1", domain.SessionModeChat, domain.SessionInterfaceTransitionDrain, domain.SessionInterfaceTransitionHistoryStrict)
+
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -838,8 +1368,8 @@ func TestInterfaceTransitionTUIToChatPreservesAVisibleDraftEvenAfterFreshIdle(t 
 	}
 	manager.SetTerminalInputGate(gate)
 
-	transition, err := manager.StartInterfaceTransition(context.Background(), "session-1",
-		domain.SessionModeChat, domain.SessionInterfaceTransitionDrain)
+	transition, err := manager.StartInterfaceTransition(context.Background(), "session-1", domain.SessionModeChat, domain.SessionInterfaceTransitionDrain, domain.SessionInterfaceTransitionHistoryStrict)
+
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -879,8 +1409,8 @@ func TestInterfaceTransitionTUIToChatPreservesDraftWhenSurfaceAlsoLooksActive(t 
 	}
 	manager.SetTerminalInputGate(gate)
 
-	transition, err := manager.StartInterfaceTransition(context.Background(), "session-1",
-		domain.SessionModeChat, domain.SessionInterfaceTransitionDrain)
+	transition, err := manager.StartInterfaceTransition(context.Background(), "session-1", domain.SessionModeChat, domain.SessionInterfaceTransitionDrain, domain.SessionInterfaceTransitionHistoryStrict)
+
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -914,8 +1444,8 @@ func TestInterfaceTransitionTUIToChatReportsAPendingDecisionBeforeComposerDraft(
 	}
 	manager.SetTerminalInputGate(gate)
 
-	transition, err := manager.StartInterfaceTransition(context.Background(), "session-1",
-		domain.SessionModeChat, domain.SessionInterfaceTransitionDrain)
+	transition, err := manager.StartInterfaceTransition(context.Background(), "session-1", domain.SessionModeChat, domain.SessionInterfaceTransitionDrain, domain.SessionInterfaceTransitionHistoryStrict)
+
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -938,8 +1468,8 @@ func TestInterfaceTransitionTUIToChatReportsAPendingDecisionBeforeComposerDraft(
 		t.Fatal("terminal input gate remained closed after decision detection")
 	}
 
-	recovery, err := manager.StartInterfaceTransition(context.Background(), "session-1",
-		domain.SessionModeChat, domain.SessionInterfaceTransitionInterrupt)
+	recovery, err := manager.StartInterfaceTransition(context.Background(), "session-1", domain.SessionModeChat, domain.SessionInterfaceTransitionInterrupt, domain.SessionInterfaceTransitionHistoryStrict)
+
 	if err != nil {
 		t.Fatalf("start decision cancellation: %v", err)
 	}
@@ -966,8 +1496,8 @@ func TestInterfaceTransitionTUIToChatCanInterruptAfterDraftDrainFailure(t *testi
 		acquired: make(chan string, 2), released: make(chan string, 2), lastInputAt: now,
 	})
 
-	drain, err := manager.StartInterfaceTransition(context.Background(), "session-1",
-		domain.SessionModeChat, domain.SessionInterfaceTransitionDrain)
+	drain, err := manager.StartInterfaceTransition(context.Background(), "session-1", domain.SessionModeChat, domain.SessionInterfaceTransitionDrain, domain.SessionInterfaceTransitionHistoryStrict)
+
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -979,8 +1509,8 @@ func TestInterfaceTransitionTUIToChatCanInterruptAfterDraftDrainFailure(t *testi
 		t.Fatalf("source runtime destroyed %d times before explicit discard", runtime.destroyed)
 	}
 
-	recovery, err := manager.StartInterfaceTransition(context.Background(), "session-1",
-		domain.SessionModeChat, domain.SessionInterfaceTransitionInterrupt)
+	recovery, err := manager.StartInterfaceTransition(context.Background(), "session-1", domain.SessionModeChat, domain.SessionInterfaceTransitionInterrupt, domain.SessionInterfaceTransitionHistoryStrict)
+
 	if err != nil {
 		t.Fatalf("start interrupt recovery: %v", err)
 	}
@@ -1014,8 +1544,8 @@ func TestInterfaceTransitionTUIToChatUsesANewerIdleFactWithoutReadingTerminalOut
 		lastInputAt: now,
 	})
 
-	transition, err := manager.StartInterfaceTransition(context.Background(), "session-1",
-		domain.SessionModeChat, domain.SessionInterfaceTransitionDrain)
+	transition, err := manager.StartInterfaceTransition(context.Background(), "session-1", domain.SessionModeChat, domain.SessionInterfaceTransitionDrain, domain.SessionInterfaceTransitionHistoryStrict)
+
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1078,8 +1608,8 @@ func TestInterfaceTransitionTUIToChatFailsClosedWhenStaleIdleCannotBeVerified(t 
 			}
 			manager.SetTerminalInputGate(gate)
 
-			transition, err := manager.StartInterfaceTransition(context.Background(), "session-1",
-				domain.SessionModeChat, domain.SessionInterfaceTransitionDrain)
+			transition, err := manager.StartInterfaceTransition(context.Background(), "session-1", domain.SessionModeChat, domain.SessionInterfaceTransitionDrain, domain.SessionInterfaceTransitionHistoryStrict)
+
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -1141,8 +1671,8 @@ func TestInterfaceTransitionTUIToChatFallsBackWhenStyledOutputIsUnavailable(t *t
 				acquired: make(chan string, 1), released: make(chan string, 1), lastInputAt: inputAt,
 			})
 
-			transition, err := manager.StartInterfaceTransition(context.Background(), "session-1",
-				domain.SessionModeChat, domain.SessionInterfaceTransitionDrain)
+			transition, err := manager.StartInterfaceTransition(context.Background(), "session-1", domain.SessionModeChat, domain.SessionInterfaceTransitionDrain, domain.SessionInterfaceTransitionHistoryStrict)
+
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -1195,8 +1725,8 @@ func TestInterfaceTransitionTUIToChatFallsBackForARecoveredHostWithoutStyledOutp
 				acquired: make(chan string, 1), released: make(chan string, 1), lastInputAt: inputAt,
 			})
 
-			transition, err := manager.StartInterfaceTransition(context.Background(), "session-1",
-				domain.SessionModeChat, domain.SessionInterfaceTransitionDrain)
+			transition, err := manager.StartInterfaceTransition(context.Background(), "session-1", domain.SessionModeChat, domain.SessionInterfaceTransitionDrain, domain.SessionInterfaceTransitionHistoryStrict)
+
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -1232,8 +1762,8 @@ func TestInterfaceTransitionTUIToChatUnstyledFallbackDoesNotApproveAnIdleDraft(t
 		acquired: make(chan string, 1), released: make(chan string, 1), lastInputAt: inputAt,
 	})
 
-	transition, err := manager.StartInterfaceTransition(context.Background(), "session-1",
-		domain.SessionModeChat, domain.SessionInterfaceTransitionDrain)
+	transition, err := manager.StartInterfaceTransition(context.Background(), "session-1", domain.SessionModeChat, domain.SessionInterfaceTransitionDrain, domain.SessionInterfaceTransitionHistoryStrict)
+
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1257,8 +1787,8 @@ func TestInterfaceTransitionTUIToChatTreatsCurrentSurfaceActivityAsBusy(t *testi
 	runtime.aliveByHandle = map[string]bool{"runtime-1": true}
 	runtime.outputs = []string{activeTerminalOutput}
 
-	transition, err := manager.StartInterfaceTransition(context.Background(), "session-1",
-		domain.SessionModeChat, domain.SessionInterfaceTransitionDrain)
+	transition, err := manager.StartInterfaceTransition(context.Background(), "session-1", domain.SessionModeChat, domain.SessionInterfaceTransitionDrain, domain.SessionInterfaceTransitionHistoryStrict)
+
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1292,8 +1822,8 @@ func TestInterfaceTransitionTUIToChatAcceptsConfirmedRuntimeExitDuringStaleIdle(
 		lastInputAt: now,
 	})
 
-	transition, err := manager.StartInterfaceTransition(context.Background(), "session-1",
-		domain.SessionModeChat, domain.SessionInterfaceTransitionDrain)
+	transition, err := manager.StartInterfaceTransition(context.Background(), "session-1", domain.SessionModeChat, domain.SessionInterfaceTransitionDrain, domain.SessionInterfaceTransitionHistoryStrict)
+
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1322,8 +1852,8 @@ func TestInterfaceTransitionTUIToChatDoesNotTimeOutActiveWork(t *testing.T) {
 	}
 	manager.SetTerminalInputGate(gate)
 
-	transition, err := manager.StartInterfaceTransition(context.Background(), "session-1",
-		domain.SessionModeChat, domain.SessionInterfaceTransitionDrain)
+	transition, err := manager.StartInterfaceTransition(context.Background(), "session-1", domain.SessionModeChat, domain.SessionInterfaceTransitionDrain, domain.SessionInterfaceTransitionHistoryStrict)
+
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1388,8 +1918,8 @@ func TestInterfaceTransitionGatesTUIInputBeforePreflightAndReleasesIt(t *testing
 	chat.preflightStarted = make(chan struct{}, 1)
 	chat.preflightRelease = make(chan struct{})
 
-	transition, err := manager.StartInterfaceTransition(context.Background(), "session-1",
-		domain.SessionModeChat, domain.SessionInterfaceTransitionDrain)
+	transition, err := manager.StartInterfaceTransition(context.Background(), "session-1", domain.SessionModeChat, domain.SessionInterfaceTransitionDrain, domain.SessionInterfaceTransitionHistoryStrict)
+
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1433,8 +1963,8 @@ func TestInterfaceTransitionReleasesTUIInputAfterPreflightFailure(t *testing.T) 
 	manager.SetTerminalInputGate(gate)
 	chat.preflightErr = errors.New("provider unavailable")
 
-	transition, err := manager.StartInterfaceTransition(context.Background(), "session-1",
-		domain.SessionModeChat, domain.SessionInterfaceTransitionDrain)
+	transition, err := manager.StartInterfaceTransition(context.Background(), "session-1", domain.SessionModeChat, domain.SessionInterfaceTransitionDrain, domain.SessionInterfaceTransitionHistoryStrict)
+
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1458,8 +1988,8 @@ func TestInterfaceTransitionTUIToChatRebuildsOrchestratorStandingContext(t *test
 	rec.Kind = domain.KindOrchestrator
 	store.sessions["session-1"] = rec
 
-	transition, err := manager.StartInterfaceTransition(context.Background(), "session-1",
-		domain.SessionModeChat, domain.SessionInterfaceTransitionDrain)
+	transition, err := manager.StartInterfaceTransition(context.Background(), "session-1", domain.SessionModeChat, domain.SessionInterfaceTransitionDrain, domain.SessionInterfaceTransitionHistoryStrict)
+
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1476,8 +2006,8 @@ func TestInterfaceTransitionTUIToChatRejectsReservedIDWhenHistoryIsMissing(t *te
 	manager, store, runtime, chat, log := newTransitionManager(t, domain.SessionModeTUI)
 	manager.agents = singleAgent{agent: emptyTransitionAgent{}}
 
-	_, err := manager.StartInterfaceTransition(context.Background(), "session-1",
-		domain.SessionModeChat, domain.SessionInterfaceTransitionDrain)
+	_, err := manager.StartInterfaceTransition(context.Background(), "session-1", domain.SessionModeChat, domain.SessionInterfaceTransitionDrain, domain.SessionInterfaceTransitionHistoryStrict)
+
 	if !errors.Is(err, ErrNativeConversationMissing) {
 		t.Fatalf("StartInterfaceTransition error = %v, want ErrNativeConversationMissing", err)
 	}
@@ -1493,8 +2023,8 @@ func TestInterfaceTransitionTUIToChatStartsFreshWithPositiveUntouchedSurfaceProo
 	manager.agents = singleAgent{agent: untouchedEmptyTransitionAgent{}}
 	runtime.aliveByHandle = map[string]bool{"runtime-1": true}
 
-	transition, err := manager.StartInterfaceTransition(context.Background(), "session-1",
-		domain.SessionModeChat, domain.SessionInterfaceTransitionDrain)
+	transition, err := manager.StartInterfaceTransition(context.Background(), "session-1", domain.SessionModeChat, domain.SessionInterfaceTransitionDrain, domain.SessionInterfaceTransitionHistoryStrict)
+
 	if err != nil {
 		t.Fatalf("StartInterfaceTransition: %v", err)
 	}
@@ -1518,8 +2048,8 @@ func TestInterfaceTransitionTUIToChatRejectsExistingCodexIDWhenRolloutIsMissing(
 	rec.Metadata.LatestUserPrompt = "keep the completed terminal work"
 	store.sessions["session-1"] = rec
 
-	_, err := manager.StartInterfaceTransition(context.Background(), "session-1",
-		domain.SessionModeChat, domain.SessionInterfaceTransitionDrain)
+	_, err := manager.StartInterfaceTransition(context.Background(), "session-1", domain.SessionModeChat, domain.SessionInterfaceTransitionDrain, domain.SessionInterfaceTransitionHistoryStrict)
+
 	if !errors.Is(err, ErrNativeConversationMissing) {
 		t.Fatalf("StartInterfaceTransition error = %v, want ErrNativeConversationMissing", err)
 	}
@@ -1557,8 +2087,8 @@ func TestInterfaceTransitionPromptlessCodexStartsFreshWithoutNativeID(t *testing
 		t.Fatalf("promptless initial Codex TUI should be switchable: %+v", status)
 	}
 
-	transition, err := manager.StartInterfaceTransition(context.Background(), "session-1",
-		domain.SessionModeChat, domain.SessionInterfaceTransitionDrain)
+	transition, err := manager.StartInterfaceTransition(context.Background(), "session-1", domain.SessionModeChat, domain.SessionInterfaceTransitionDrain, domain.SessionInterfaceTransitionHistoryStrict)
+
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1615,8 +2145,8 @@ func TestInterfaceTransitionRefreshesNativeIDAfterPromptlessAdmission(t *testing
 	rec.Metadata.AgentSessionIDLaunchID = ""
 	store.sessions["session-1"] = rec
 
-	transition, err := manager.StartInterfaceTransition(context.Background(), "session-1",
-		domain.SessionModeChat, domain.SessionInterfaceTransitionDrain)
+	transition, err := manager.StartInterfaceTransition(context.Background(), "session-1", domain.SessionModeChat, domain.SessionInterfaceTransitionDrain, domain.SessionInterfaceTransitionHistoryStrict)
+
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1663,8 +2193,8 @@ func TestInterfaceTransitionPromptlessAdmissionFailsBeforeStoppingWhenTurnStarts
 	rec.Metadata.AgentSessionIDLaunchID = ""
 	store.sessions["session-1"] = rec
 
-	transition, err := manager.StartInterfaceTransition(context.Background(), "session-1",
-		domain.SessionModeChat, domain.SessionInterfaceTransitionDrain)
+	transition, err := manager.StartInterfaceTransition(context.Background(), "session-1", domain.SessionModeChat, domain.SessionInterfaceTransitionDrain, domain.SessionInterfaceTransitionHistoryStrict)
+
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1699,8 +2229,8 @@ func TestInterfaceTransitionTUIToChatReusesPersistedCodexRollout(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	transition, err := manager.StartInterfaceTransition(context.Background(), "session-1",
-		domain.SessionModeChat, domain.SessionInterfaceTransitionDrain)
+	transition, err := manager.StartInterfaceTransition(context.Background(), "session-1", domain.SessionModeChat, domain.SessionInterfaceTransitionDrain, domain.SessionInterfaceTransitionHistoryStrict)
+
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1756,8 +2286,8 @@ func TestInterfaceTransitionFreshTUISessionResumesAfterHookCapture(t *testing.T)
 		t.Fatal(err)
 	}
 
-	transition, err := manager.StartInterfaceTransition(context.Background(), "session-1",
-		domain.SessionModeChat, domain.SessionInterfaceTransitionDrain)
+	transition, err := manager.StartInterfaceTransition(context.Background(), "session-1", domain.SessionModeChat, domain.SessionInterfaceTransitionDrain, domain.SessionInterfaceTransitionHistoryStrict)
+
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1779,8 +2309,8 @@ func TestInterfaceTransitionChatToTUIRejectsReservedIDWhenHistoryIsMissing(t *te
 	manager, store, runtime, chat, log := newTransitionManager(t, domain.SessionModeChat)
 	manager.agents = singleAgent{agent: emptyTransitionAgent{}}
 
-	_, err := manager.StartInterfaceTransition(context.Background(), "session-1",
-		domain.SessionModeTUI, domain.SessionInterfaceTransitionDrain)
+	_, err := manager.StartInterfaceTransition(context.Background(), "session-1", domain.SessionModeTUI, domain.SessionInterfaceTransitionDrain, domain.SessionInterfaceTransitionHistoryStrict)
+
 	if !errors.Is(err, ErrNativeConversationMissing) {
 		t.Fatalf("StartInterfaceTransition error = %v, want ErrNativeConversationMissing", err)
 	}
@@ -1792,7 +2322,7 @@ func TestInterfaceTransitionChatToTUIRejectsReservedIDWhenHistoryIsMissing(t *te
 
 func TestInterfaceTransitionChatToTUIInterruptsThenStopsBeforeStarting(t *testing.T) {
 	manager, store, runtime, chat, log := newTransitionManager(t, domain.SessionModeChat)
-	transition, err := manager.StartInterfaceTransition(context.Background(), "session-1", domain.SessionModeTUI, domain.SessionInterfaceTransitionInterrupt)
+	transition, err := manager.StartInterfaceTransition(context.Background(), "session-1", domain.SessionModeTUI, domain.SessionInterfaceTransitionInterrupt, domain.SessionInterfaceTransitionHistoryStrict)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1833,8 +2363,8 @@ func TestInterfaceTransitionChatToTUIArmsInterruptBeforeReturning(t *testing.T) 
 	manager, store, _, chat, _ := newTransitionManager(t, domain.SessionModeChat)
 	transition, err := manager.StartInterfaceTransition(
 		context.Background(), "session-1", domain.SessionModeTUI,
-		domain.SessionInterfaceTransitionInterrupt,
-	)
+		domain.SessionInterfaceTransitionInterrupt, domain.SessionInterfaceTransitionHistoryStrict)
+
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1860,8 +2390,8 @@ func TestInterfaceTransitionChatToTUIFailsBeforeBackgroundWorkWhenArmFails(t *te
 
 	_, err := manager.StartInterfaceTransition(
 		context.Background(), "session-1", domain.SessionModeTUI,
-		domain.SessionInterfaceTransitionInterrupt,
-	)
+		domain.SessionInterfaceTransitionInterrupt, domain.SessionInterfaceTransitionHistoryStrict)
+
 	if err == nil || !strings.Contains(err.Error(), "controller unavailable") {
 		t.Fatalf("start transition error = %v, want source-fence failure", err)
 	}
@@ -1887,8 +2417,8 @@ func TestInterfaceTransitionChatToTUIPreflightFailureReopensArmedSource(t *testi
 
 	transition, err := manager.StartInterfaceTransition(
 		context.Background(), "session-1", domain.SessionModeTUI,
-		domain.SessionInterfaceTransitionInterrupt,
-	)
+		domain.SessionInterfaceTransitionInterrupt, domain.SessionInterfaceTransitionHistoryStrict)
+
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1938,8 +2468,8 @@ func TestTransitionMessagesReturnToSourceAfterPreflightFailure(t *testing.T) {
 
 	transition, err := manager.StartInterfaceTransition(
 		context.Background(), "session-1", domain.SessionModeChat,
-		domain.SessionInterfaceTransitionDrain,
-	)
+		domain.SessionInterfaceTransitionDrain, domain.SessionInterfaceTransitionHistoryStrict)
+
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2032,7 +2562,7 @@ func TestTransitionDeliveryWaitsForFirstTUISignal(t *testing.T) {
 func TestInterfaceTransitionRequiresExplicitAdapterCapability(t *testing.T) {
 	manager, store, runtime, chat, _ := newTransitionManager(t, domain.SessionModeTUI)
 	manager.agents = singleAgent{agent: fakeAgent{}}
-	_, err := manager.StartInterfaceTransition(context.Background(), "session-1", domain.SessionModeChat, domain.SessionInterfaceTransitionDrain)
+	_, err := manager.StartInterfaceTransition(context.Background(), "session-1", domain.SessionModeChat, domain.SessionInterfaceTransitionDrain, domain.SessionInterfaceTransitionHistoryStrict)
 	if !errors.Is(err, ErrInterfaceHandoffUnsupported) {
 		t.Fatalf("error = %v, want ErrInterfaceHandoffUnsupported", err)
 	}
@@ -2043,8 +2573,8 @@ func TestInterfaceTransitionRequiresExplicitAdapterCapability(t *testing.T) {
 
 func TestInterfaceTransitionRejectsAlreadySelectedModeWithoutMutation(t *testing.T) {
 	manager, store, runtime, chat, _ := newTransitionManager(t, domain.SessionModeTUI)
-	_, err := manager.StartInterfaceTransition(context.Background(), "session-1",
-		domain.SessionModeTUI, domain.SessionInterfaceTransitionDrain)
+	_, err := manager.StartInterfaceTransition(context.Background(), "session-1", domain.SessionModeTUI, domain.SessionInterfaceTransitionDrain, domain.SessionInterfaceTransitionHistoryStrict)
+
 	if !errors.Is(err, ErrInterfaceAlreadySelected) {
 		t.Fatalf("error = %v, want ErrInterfaceAlreadySelected", err)
 	}
@@ -2180,8 +2710,8 @@ func TestInterfaceTransitionRetriesAnAmbiguousSourceStopBeforeStartingTarget(t *
 	runtime.stopErrors = []error{errors.New("tmux command timed out"), nil}
 	runtime.aliveByHandle = map[string]bool{"runtime-1": true}
 
-	transition, err := manager.StartInterfaceTransition(context.Background(), "session-1",
-		domain.SessionModeChat, domain.SessionInterfaceTransitionDrain)
+	transition, err := manager.StartInterfaceTransition(context.Background(), "session-1", domain.SessionModeChat, domain.SessionInterfaceTransitionDrain, domain.SessionInterfaceTransitionHistoryStrict)
+
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2199,8 +2729,8 @@ func TestInterfaceTransitionDoesNotStartTargetWhenSourceStopRemainsAmbiguous(t *
 	runtime.stopErrors = []error{errors.New("first stop failed"), errors.New("retry failed")}
 	runtime.aliveByHandle = map[string]bool{"runtime-1": true}
 
-	transition, err := manager.StartInterfaceTransition(context.Background(), "session-1",
-		domain.SessionModeChat, domain.SessionInterfaceTransitionDrain)
+	transition, err := manager.StartInterfaceTransition(context.Background(), "session-1", domain.SessionModeChat, domain.SessionInterfaceTransitionDrain, domain.SessionInterfaceTransitionHistoryStrict)
+
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2242,5 +2772,132 @@ func TestRecoverInterruptedTUIToChatRollsBackCommittedModeBeforeReconcile(t *tes
 	}
 	if rec.Metadata.AgentSessionID != "native-1" {
 		t.Fatalf("source native conversation = %q, want native-1", rec.Metadata.AgentSessionID)
+	}
+}
+
+func TestRecoverInterruptedClaudeTUIToChatPreservesPoisonedCheckpointThroughResumeSessionStart(t *testing.T) {
+	dataDir := t.TempDir()
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Millisecond)
+
+	st, err := sqlite.Open(dataDir)
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := st.Close(); err != nil {
+			t.Errorf("close store: %v", err)
+		}
+	})
+	if err := st.UpsertProject(ctx, domain.ProjectRecord{
+		ID: "proj", Path: "/repo", RegisteredAt: now,
+	}); err != nil {
+		t.Fatalf("seed project: %v", err)
+	}
+	created, err := st.CreateSession(ctx, domain.SessionRecord{
+		ID: "session-1", ProjectID: "proj", Kind: domain.KindWorker,
+		Harness: domain.HarnessClaudeCode, Mode: domain.SessionModeChat,
+		Metadata: domain.SessionMetadata{
+			WorkspacePath: "/ws/session-1", Branch: "ao/session-1",
+			AgentSessionID: "native-1", ProviderConversationID: "native-1",
+			LatestUserPrompt:            "poisoned user checkpoint",
+			LatestAssistantUpdate:       "poisoned assistant checkpoint",
+			ConversationCheckpointState: domain.ConversationCheckpointLegacy,
+		},
+		Activity:      domain.Activity{State: domain.ActivityIdle, LastActivityAt: now},
+		FirstSignalAt: now, CreatedAt: now, UpdatedAt: now,
+	})
+	if err != nil {
+		t.Fatalf("seed session: %v", err)
+	}
+	_, inserted, err := st.CreateSessionInterfaceTransition(ctx, domain.SessionInterfaceTransition{
+		ID: "interrupted-target-start", SessionID: created.ID,
+		SourceMode: domain.SessionModeTUI, TargetMode: domain.SessionModeChat,
+		Policy:               domain.SessionInterfaceTransitionDrain,
+		HistoryPolicy:        domain.SessionInterfaceTransitionHistoryStrict,
+		Phase:                domain.SessionInterfaceTransitionTargetStarting,
+		NativeConversationID: "native-1", CreatedAt: now, UpdatedAt: now,
+	})
+	if err != nil || !inserted {
+		t.Fatalf("seed interrupted transition: inserted=%v err=%v", inserted, err)
+	}
+
+	lcm := lifecycle.New(st, nil)
+	log := &[]string{}
+	runtime := &transitionRuntime{fakeRuntime: &fakeRuntime{}, log: log}
+	baseChat := &transitionChat{
+		log: log, supportsChat: true,
+		armed:   make(chan domain.SessionInterfaceTransitionPolicy, 1),
+		aborted: make(chan struct{}, 1),
+	}
+	chat := &historyPolicyTransitionChat{transitionChat: baseChat}
+	reconcileCtx, cancelReconcile := context.WithCancel(context.Background())
+	t.Cleanup(cancelReconcile)
+	manager := New(Deps{
+		Runtime: runtime, Agents: singleAgent{agent: transitionAgent{}}, Workspace: &fakeWorkspace{},
+		Store: st, Messenger: &fakeMessenger{}, Chat: chat, Lifecycle: lcm,
+		LookPath:          func(string) (string, error) { return "/bin/true", nil },
+		NewLaunchID:       func() string { return "claude-resume-generation" },
+		BackgroundContext: reconcileCtx,
+	})
+	useFastInterfaceTransitionTimings(manager)
+
+	if err := manager.ReconcileStartupSafety(reconcileCtx); err != nil {
+		t.Fatalf("reconcile startup safety: %v", err)
+	}
+	if err := manager.ReconcileBackground(reconcileCtx); err != nil {
+		t.Fatalf("reconcile background: %v", err)
+	}
+	relaunched, ok, err := st.GetSession(ctx, created.ID)
+	if err != nil || !ok {
+		t.Fatalf("read relaunched source: ok=%v err=%v", ok, err)
+	}
+	if relaunched.Mode != domain.SessionModeTUI ||
+		relaunched.Metadata.RuntimeLaunchID != "claude-resume-generation" {
+		t.Fatalf("relaunched source = %+v", relaunched)
+	}
+	if relaunched.Metadata.AgentSessionIDLaunchID != "claude-resume-generation" {
+		t.Fatalf("resumed native identity launch = %q, want exact Claude resume generation",
+			relaunched.Metadata.AgentSessionIDLaunchID)
+	}
+
+	if err := lcm.ApplyActivitySignal(ctx, created.ID, ports.ActivitySignal{
+		Event: "session-start", AgentSessionID: "native-1",
+		LaunchID: "claude-resume-generation", Valid: true, State: domain.ActivityIdle,
+	}); err != nil {
+		t.Fatalf("apply Claude resume SessionStart: %v", err)
+	}
+	afterSessionStart, ok, err := st.GetSession(ctx, created.ID)
+	if err != nil || !ok {
+		t.Fatalf("read resumed session: ok=%v err=%v", ok, err)
+	}
+	checkpoint := afterSessionStart.Metadata
+	if checkpoint.ConversationCheckpointState != domain.ConversationCheckpointLegacy ||
+		checkpoint.LatestUserPrompt != "poisoned user checkpoint" ||
+		checkpoint.LatestAssistantUpdate != "poisoned assistant checkpoint" {
+		t.Fatalf("checkpoint after exact Claude resume SessionStart = %+v, want poison retained", checkpoint)
+	}
+
+	retry, err := manager.StartInterfaceTransition(ctx, created.ID, domain.SessionModeChat,
+		domain.SessionInterfaceTransitionDrain, domain.SessionInterfaceTransitionHistoryStrict)
+	if err != nil {
+		t.Fatalf("start ordinary strict retry: %v", err)
+	}
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		settled, found, readErr := st.GetSessionInterfaceTransition(ctx, retry.ID)
+		if readErr != nil {
+			t.Fatalf("read strict retry: %v", readErr)
+		}
+		if found && settled.Phase.Terminal() {
+			if settled.ErrorCode != "TARGET_HISTORY_UNTRUSTED_TEXT_MISMATCH" {
+				t.Fatalf("ordinary strict retry = %+v, want poisoned checkpoint to remain closed", settled)
+			}
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("ordinary strict retry did not settle: %+v", settled)
+		}
+		time.Sleep(5 * time.Millisecond)
 	}
 }

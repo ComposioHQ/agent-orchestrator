@@ -334,6 +334,9 @@ type nativeHistoryHighWater struct {
 type nativeHistoryCheckpoint struct {
 	latestUserPrompt      string
 	latestAssistantUpdate string
+	userMismatch          ports.ChatHistoryMismatchDimension
+	assistantMismatch     ports.ChatHistoryMismatchDimension
+	hardMismatches        []ports.ChatHistoryMismatchDimension
 	aoHighWater           nativeHistoryHighWater
 }
 
@@ -428,7 +431,12 @@ func (p *nativeHistoryCheckpoint) captureAOHighWater(
 	}
 }
 
-func (p nativeHistoryCheckpoint) reached(events []ports.ChatEvent) bool {
+func (p nativeHistoryCheckpoint) mismatches(
+	events []ports.ChatEvent,
+	existingTurns []domain.ConversationTurn,
+	existingMessages []domain.ConversationMessage,
+	existingActivities []domain.ConversationActivity,
+) []ports.ChatHistoryMismatchDimension {
 	completedTurns := make(map[string]bool)
 	coordinationTurns := make(map[string]bool)
 	for _, event := range events {
@@ -440,9 +448,20 @@ func (p nativeHistoryCheckpoint) reached(events []ports.ChatEvent) bool {
 		}
 	}
 
+	latestCompletedTurnID := ""
+	for _, event := range events {
+		if event.Kind == ports.ChatEventTurnCompleted && event.ProviderTurnID != "" &&
+			!coordinationTurns[event.ProviderTurnID] {
+			latestCompletedTurnID = event.ProviderTurnID
+		}
+	}
+
+	// A trusted checkpoint describes one main-thread turn. Selecting the latest
+	// user and assistant independently can splice an older repeated answer onto a
+	// newer incomplete turn and incorrectly admit a truncated provider replay.
 	var latestUser, latestAssistant ports.ChatEvent
 	for _, event := range events {
-		if coordinationTurns[event.ProviderTurnID] || !completedTurns[event.ProviderTurnID] {
+		if event.ProviderTurnID != latestCompletedTurnID {
 			continue
 		}
 		switch event.Kind {
@@ -452,44 +471,54 @@ func (p nativeHistoryCheckpoint) reached(events []ports.ChatEvent) bool {
 			latestAssistant = event
 		}
 	}
-	if p.latestUserPrompt != "" &&
-		!nativeHistoryTextMatches(p.latestUserPrompt, latestUser.Text) {
-		return false
+	mismatches := append([]ports.ChatHistoryMismatchDimension(nil), p.hardMismatches...)
+	if p.latestUserPrompt != "" && !nativeHistoryTextMatches(p.latestUserPrompt, latestUser.Text) {
+		mismatches = append(mismatches, p.userMismatch)
 	}
-	if p.latestAssistantUpdate != "" &&
-		!nativeHistoryTextMatches(p.latestAssistantUpdate, latestAssistant.Text) {
-		return false
+	if p.latestAssistantUpdate != "" && !nativeHistoryTextMatches(p.latestAssistantUpdate, latestAssistant.Text) {
+		mismatches = append(mismatches, p.assistantMismatch)
 	}
 
 	highWater := p.aoHighWater
 	if highWater.providerTurnID == "" {
-		return true
+		return mismatches
+	}
+	mappedHighWaterTurns := make(map[string]bool)
+	for replayTurnID, candidate := range mapNativeHistoryTurns(
+		events, existingTurns, existingMessages, existingActivities,
+	) {
+		if candidate.providerTurnID == highWater.providerTurnID && completedTurns[replayTurnID] {
+			mappedHighWaterTurns[replayTurnID] = true
+		}
 	}
 	if highWater.providerItemID == "" && highWater.kind == "" {
-		return completedTurns[highWater.providerTurnID]
+		if len(mappedHighWaterTurns) == 0 {
+			mismatches = append(mismatches, ports.ChatHistoryMismatchAOHighWater)
+		}
+		return mismatches
 	}
 	for _, event := range events {
-		if !completedTurns[event.ProviderTurnID] {
+		if !mappedHighWaterTurns[event.ProviderTurnID] {
 			continue
 		}
 		if event.ProviderItemID == highWater.providerItemID {
-			return true
+			return mismatches
 		}
 		// ACP identifiers are opaque and can be reassigned by a conforming
 		// provider during load. Exact settled content is the fallback identity
 		// used by reconciliation for that same reason.
 		if highWater.kind != "" && event.Kind == highWater.kind &&
 			nativeHistoryTextMatches(highWater.text, event.Text) {
-			return true
+			return mismatches
 		}
 		if highWater.kind == "" &&
 			event.ActivityKind == highWater.activityKind &&
 			event.ActivityStatus == highWater.activityStatus &&
 			event.Summary == highWater.summary && bytes.Equal(event.Detail, highWater.detail) {
-			return true
+			return mismatches
 		}
 	}
-	return false
+	return append(mismatches, ports.ChatHistoryMismatchAOHighWater)
 }
 
 func nativeHistoryCoordinationMessage(text string) bool {
@@ -535,21 +564,30 @@ func (c *Controller) importNativeHistory(
 	events, err := reader.ReadHistory(historyCtx)
 	refresher, refreshable := reader.(ports.ChatHistoryRefresher)
 	sawUnsettled := false
-	for err != nil || (required && !checkpoint.reached(events)) {
+	var lastUnsettled error
+	for {
+		if err == nil && required {
+			if mismatches := checkpoint.mismatches(
+				events, existingTurns, existingMessages, existingActivities,
+			); len(mismatches) > 0 {
+				err = &ports.ChatHistoryUnsettledError{Dimensions: mismatches}
+			}
+		}
 		if err == nil {
-			err = ports.ErrChatHistoryUnsettled
+			break
 		}
 		if errors.Is(err, ports.ErrChatHistoryUnavailable) && !required {
 			return nil
 		}
 		if sawUnsettled && (errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)) {
 			return fmt.Errorf("wait for settled native conversation history: %w: %w",
-				ports.ErrChatHistoryUnsettled, err)
+				lastUnsettled, err)
 		}
 		if !errors.Is(err, ports.ErrChatHistoryUnsettled) {
 			return fmt.Errorf("read native conversation history: %w", err)
 		}
 		sawUnsettled = true
+		lastUnsettled = err
 		if !refreshable {
 			return fmt.Errorf("native conversation history snapshot is incomplete and cannot be refreshed: %w", err)
 		}
@@ -559,7 +597,7 @@ func (c *Controller) importNativeHistory(
 		case <-historyCtx.Done():
 			timer.Stop()
 			return fmt.Errorf("wait for settled native conversation history: %w: %w",
-				ports.ErrChatHistoryUnsettled, historyCtx.Err())
+				lastUnsettled, historyCtx.Err())
 		case <-timer.C:
 		}
 		events, err = refresher.RefreshHistory(historyCtx)
@@ -617,23 +655,17 @@ func nativeHistoryActivityFingerprint(
 	return string(kind) + "\x00" + string(status) + "\x00" + summary + "\x00" + string(detail)
 }
 
-// reconcileNativeHistory maps a provider replay onto AO's existing durable
-// turns before any event is projected.
-//
-// ACP intentionally treats message ids as opaque. Well-behaved agents may echo
-// the client's id, while others persist their own user uuid. Assistant/tool item
-// ids are usually replay-stable, so they are the strongest cross-restart signal;
-// the original client id is next, and exact prompt text in conversation order is
-// the compatibility fallback. This belongs above every driver: Codex history is
-// already identity-stable, while all ACP bindings need the same reconciliation.
-func reconcileNativeHistory(
+// mapNativeHistoryTurns identifies which durable AO turn owns each raw replay
+// turn before reconciliation rewrites provider turn ids or drops duplicates.
+func mapNativeHistoryTurns(
 	events []ports.ChatEvent,
 	existingTurns []domain.ConversationTurn,
 	existingMessages []domain.ConversationMessage,
 	existingActivities []domain.ConversationActivity,
-) []ports.ChatEvent {
+) map[string]*nativeHistoryTurn {
+	mapped := make(map[string]*nativeHistoryTurn)
 	if len(events) == 0 || len(existingTurns) == 0 {
-		return events
+		return mapped
 	}
 
 	byAOTurnID := make(map[string]*nativeHistoryTurn, len(existingTurns))
@@ -654,7 +686,7 @@ func reconcileNativeHistory(
 		ordered = append(ordered, candidate)
 	}
 	if len(ordered) == 0 {
-		return events
+		return mapped
 	}
 
 	// A provider item is useful only when it identifies exactly one durable turn.
@@ -696,7 +728,6 @@ func reconcileNativeHistory(
 		rememberProviderItem(activity.ProviderItemID, candidate)
 	}
 
-	mapped := make(map[string]*nativeHistoryTurn)
 	bind := func(replayTurnID string, candidate *nativeHistoryTurn) {
 		if replayTurnID == "" || candidate == nil {
 			return
@@ -797,7 +828,32 @@ func reconcileNativeHistory(
 		}
 		bind(event.ProviderTurnID, match)
 	}
+	return mapped
+}
 
+// reconcileNativeHistory maps a provider replay onto AO's existing durable
+// turns before any event is projected.
+//
+// ACP intentionally treats message ids as opaque. Well-behaved agents may echo
+// the client's id, while others persist their own user uuid. Assistant/tool item
+// ids are usually replay-stable, so they are the strongest cross-restart signal;
+// the original client id is next, and exact prompt text in conversation order is
+// the compatibility fallback. This belongs above every driver: Codex history is
+// already identity-stable, while all ACP bindings need the same reconciliation.
+func reconcileNativeHistory(
+	events []ports.ChatEvent,
+	existingTurns []domain.ConversationTurn,
+	existingMessages []domain.ConversationMessage,
+	existingActivities []domain.ConversationActivity,
+) []ports.ChatEvent {
+	if len(events) == 0 || len(existingTurns) == 0 {
+		return events
+	}
+
+	mapped := mapNativeHistoryTurns(events, existingTurns, existingMessages, existingActivities)
+	if len(mapped) == 0 {
+		return events
+	}
 	// A native provider may omit persisted item ids even though its live stream
 	// supplied them. Codex does this today: a live assistant message can be
 	// `msg_...`, while thread/read later calls the same item `item-2`. Stable turn

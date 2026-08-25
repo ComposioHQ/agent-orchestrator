@@ -20,15 +20,42 @@ func TestSessionInterfaceTransitionClaimModeCASAndOutbox(t *testing.T) {
 	rec.Metadata.RuntimeHandleID = "tmux-switch-1"
 	rec.Metadata.RuntimeLaunchID = "tui-generation-1"
 	rec.Metadata.AgentSessionID = "native-conversation-1"
+	rec.Metadata.LatestUserPrompt = "poisoned user checkpoint"
+	rec.Metadata.LatestAssistantUpdate = "poisoned assistant checkpoint"
+	rec.Metadata.ConversationCheckpointState = domain.ConversationCheckpointLegacy
 	createdSession, err := st.CreateSession(ctx, rec)
 	if err != nil {
 		t.Fatalf("create session: %v", err)
+	}
+	createdSession.Metadata.LatestUserPrompt = rec.Metadata.LatestUserPrompt
+	createdSession.Metadata.LatestAssistantUpdate = rec.Metadata.LatestAssistantUpdate
+	createdSession.Metadata.ConversationCheckpointState = rec.Metadata.ConversationCheckpointState
+	if err := st.UpdateSession(ctx, createdSession); err != nil {
+		t.Fatalf("seed replay checkpoint: %v", err)
+	}
+	seeded, ok, err := st.GetSession(ctx, createdSession.ID)
+	if err != nil || !ok {
+		t.Fatalf("get seeded session: ok=%v err=%v", ok, err)
+	}
+	if seeded.Metadata.ConversationCheckpointState != domain.ConversationCheckpointLegacy ||
+		seeded.Metadata.LatestUserPrompt != "poisoned user checkpoint" ||
+		seeded.Metadata.LatestAssistantUpdate != "poisoned assistant checkpoint" {
+		t.Fatalf("seeded replay checkpoint = %+v", seeded.Metadata)
+	}
+	if _, _, err := st.CreateSessionInterfaceTransition(ctx, domain.SessionInterfaceTransition{
+		ID: "transition-without-history-policy", SessionID: createdSession.ID,
+		SourceMode: domain.SessionModeTUI, TargetMode: domain.SessionModeChat,
+		Policy: domain.SessionInterfaceTransitionDrain, Phase: domain.SessionInterfaceTransitionRequested,
+		CreatedAt: now, UpdatedAt: now,
+	}); err == nil {
+		t.Fatal("internal transition store accepted an omitted history policy")
 	}
 
 	transition, created, err := st.CreateSessionInterfaceTransition(ctx, domain.SessionInterfaceTransition{
 		ID: "transition-1", SessionID: createdSession.ID,
 		SourceMode: domain.SessionModeTUI, TargetMode: domain.SessionModeChat,
-		Policy: domain.SessionInterfaceTransitionDrain, Phase: domain.SessionInterfaceTransitionRequested,
+		Policy: domain.SessionInterfaceTransitionDrain, HistoryPolicy: domain.SessionInterfaceTransitionHistoryStrict,
+		Phase:                domain.SessionInterfaceTransitionRequested,
 		NativeConversationID: "native-conversation-1", CreatedAt: now, UpdatedAt: now,
 	})
 	if err != nil || !created {
@@ -41,7 +68,8 @@ func TestSessionInterfaceTransitionClaimModeCASAndOutbox(t *testing.T) {
 	winner, created, err := st.CreateSessionInterfaceTransition(ctx, domain.SessionInterfaceTransition{
 		ID: "transition-racer", SessionID: createdSession.ID,
 		SourceMode: domain.SessionModeTUI, TargetMode: domain.SessionModeChat,
-		Policy: domain.SessionInterfaceTransitionInterrupt, Phase: domain.SessionInterfaceTransitionRequested,
+		Policy: domain.SessionInterfaceTransitionInterrupt, HistoryPolicy: domain.SessionInterfaceTransitionHistoryStrict,
+		Phase:                domain.SessionInterfaceTransitionRequested,
 		NativeConversationID: "native-conversation-1", CreatedAt: now.Add(time.Second), UpdatedAt: now.Add(time.Second),
 	})
 	if err != nil || created || winner.ID != transition.ID {
@@ -66,8 +94,27 @@ func TestSessionInterfaceTransitionClaimModeCASAndOutbox(t *testing.T) {
 	if err != nil || !changed {
 		t.Fatalf("switch mode: changed=%v err=%v", changed, err)
 	}
+	restored, err := st.RestoreSessionControllerEpoch(ctx, createdSession.ID,
+		domain.SessionModeChat, domain.SessionModeTUI, transition.NativeConversationID, now.Add(5*time.Second))
+	if err != nil || !restored {
+		t.Fatalf("restore source mode: restored=%v err=%v", restored, err)
+	}
+	afterRestore, ok, err := st.GetSession(ctx, createdSession.ID)
+	if err != nil || !ok {
+		t.Fatalf("get restored session: ok=%v err=%v", ok, err)
+	}
+	if afterRestore.Metadata.ConversationCheckpointState != domain.ConversationCheckpointLegacy ||
+		afterRestore.Metadata.LatestUserPrompt != "poisoned user checkpoint" ||
+		afterRestore.Metadata.LatestAssistantUpdate != "poisoned assistant checkpoint" {
+		t.Fatalf("restored source lost replay checkpoint: %+v", afterRestore.Metadata)
+	}
+	changed, err = st.CommitSessionControllerEpoch(ctx, createdSession.ID,
+		domain.SessionModeTUI, domain.SessionModeChat, transition.NativeConversationID, now.Add(6*time.Second))
+	if err != nil || !changed {
+		t.Fatalf("switch mode after restore: changed=%v err=%v", changed, err)
+	}
 	changedAgain, err := st.CommitSessionControllerEpoch(ctx, createdSession.ID,
-		domain.SessionModeTUI, domain.SessionModeChat, transition.NativeConversationID, now.Add(5*time.Second))
+		domain.SessionModeTUI, domain.SessionModeChat, transition.NativeConversationID, now.Add(7*time.Second))
 	if err != nil || changedAgain {
 		t.Fatalf("stale mode CAS: changed=%v err=%v", changedAgain, err)
 	}
@@ -138,7 +185,8 @@ func TestSessionInterfaceTransitionNoticeAcknowledgementRoundTripAndCDC(t *testi
 	transition, created, err := st.CreateSessionInterfaceTransition(ctx, domain.SessionInterfaceTransition{
 		ID: "transition-notice", SessionID: createdSession.ID,
 		SourceMode: domain.SessionModeChat, TargetMode: domain.SessionModeTUI,
-		Policy: domain.SessionInterfaceTransitionDrain, Phase: domain.SessionInterfaceTransitionRequested,
+		Policy: domain.SessionInterfaceTransitionDrain, HistoryPolicy: domain.SessionInterfaceTransitionHistoryStrict,
+		Phase:     domain.SessionInterfaceTransitionRequested,
 		CreatedAt: now, UpdatedAt: now,
 	})
 	if err != nil || !created {

@@ -22,6 +22,28 @@ const (
 	KindOrchestrator SessionKind = "orchestrator"
 )
 
+// ConversationCheckpointState records which main-turn boundaries AO has
+// durably observed for the hook-derived replay checkpoint. The legacy value is
+// intentionally distinct: rows written before owner/event scoping may still be
+// enforced by an ordinary switch, but only those text dimensions may be waived
+// by explicit provider-history consent.
+type ConversationCheckpointState string
+
+// Conversation checkpoint states, from unscoped legacy data through a fully
+// observed main-turn boundary.
+const (
+	ConversationCheckpointLegacy   ConversationCheckpointState = "legacy"
+	ConversationCheckpointEmpty    ConversationCheckpointState = "empty"
+	ConversationCheckpointPrompt   ConversationCheckpointState = "prompt"
+	ConversationCheckpointComplete ConversationCheckpointState = "complete"
+)
+
+// Trusted reports whether the checkpoint was collected by the scoped
+// main-turn state machine rather than inherited from pre-provenance storage.
+func (s ConversationCheckpointState) Trusted() bool {
+	return s == ConversationCheckpointPrompt || s == ConversationCheckpointComplete
+}
+
 // SessionMetadata is the typed, off-status metadata for a session: operational
 // handles and seed inputs used by Session Manager and reaper.
 type SessionMetadata struct {
@@ -50,6 +72,12 @@ type SessionMetadata struct {
 	// LatestAssistantUpdate is the latest user-facing assistant update observed
 	// before any internal agent-switch coordination turn.
 	LatestAssistantUpdate string `json:"latestAssistantUpdate,omitempty"`
+	// ConversationCheckpointState and its owner provenance are internal replay
+	// safety facts. They survive daemon restart but are not part of the session
+	// presentation model.
+	ConversationCheckpointState      ConversationCheckpointState `json:"-"`
+	ConversationCheckpointGeneration string                      `json:"-"`
+	ConversationCheckpointNativeID   string                      `json:"-"`
 	// NativeTranscriptPath is the read-only transcript path for the currently
 	// active native agent session when its provider exposes one. Retained
 	// provider-specific paths also live on AgentNativeSession records.
