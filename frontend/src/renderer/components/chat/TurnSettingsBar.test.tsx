@@ -130,7 +130,7 @@ describe("ACP session config options", () => {
 		expect(screen.queryByText(/no actual tool execution/i)).not.toBeInTheDocument();
 		expect(
 			screen.getByText(
-				"Provider-native Plan mode may still read or write files and use tools under normal permissions.",
+				"Provider-native Plan mode may inspect files, use tools, and write provider-owned plan artifacts outside the workspace. AO does not enforce a no-tool or no-write boundary.",
 			),
 		).toBeInTheDocument();
 	});

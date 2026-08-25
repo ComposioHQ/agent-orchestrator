@@ -61,7 +61,7 @@ const TRIGGER_CLASS =
 	"h-7 gap-1 bg-transparent rounded-lg px-3 text-[12px]! leading-none text-muted-foreground hover:bg-white/5 hover:text-foreground data-[state=open]:bg-white/5 data-[state=open]:text-foreground";
 const CHAT_MENU_CLASS = "chat-settings-menu text-[12px]!";
 const PROVIDER_PLAN_MODE_DISCLOSURE =
-	"Provider-native Plan mode may still read or write files and use tools under normal permissions.";
+	"Provider-native Plan mode may inspect files, use tools, and write provider-owned plan artifacts outside the workspace. AO does not enforce a no-tool or no-write boundary.";
 
 export function TurnSettingsBar({
 	models,
@@ -575,7 +575,7 @@ function ConfigOptionChoices({
 								</span>
 							</span>
 							{description ? (
-								<span className="text-[11px] leading-snug text-muted-foreground">
+								<span className="max-w-[20rem] whitespace-normal text-[11px] leading-snug text-muted-foreground">
 									{description}
 								</span>
 							) : null}
