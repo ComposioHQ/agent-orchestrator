@@ -17,8 +17,9 @@ There are two different test lanes:
 
 The machine-readable live catalog is
 [`frontend/chatui-regression/live/scenarios.json`](../../frontend/chatui-regression/live/scenarios.json).
-The original observations and screenshots remain in
-[`docs/qa/chatui-2026-08-25`](../qa/chatui-2026-08-25/README.md).
+Original observations, screenshots, and generated captures are intentionally
+kept outside the repository. The tracked issues are the durable source for each
+finding; new runs write evidence beneath the gitignored `e2e-artifacts/` tree.
 
 ## Quick start: deterministic contracts
 

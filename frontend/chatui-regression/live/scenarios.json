@@ -4,7 +4,6 @@
   "catalogId": "chatui-regression-2026-08-25",
   "title": "ChatUI packaged-Electron and deterministic regression certification",
   "source": {
-    "report": "docs/qa/chatui-2026-08-25/manual-qa-report.md",
     "baselineCommit": "d71acca1e13ddd9ab3a01a43f029853686f4c693",
     "fixtureRepositoryEnv": "AO_CHATUI_E2E_REPO",
     "defaultFixtureRepository": "/Users/dhruvsharma/Development/todo-app"
