@@ -235,7 +235,7 @@ export function ConnectMobileContent({ active }: { active: boolean }) {
 			<div className="flex flex-col gap-6 sm:flex-row sm:items-start">
 				{/* Left: platform + connection pickers above one combined walkthrough. */}
 				<div className="flex min-w-0 flex-1 flex-col">
-					<div className="flex flex-wrap items-center gap-2">
+					<div className="flex flex-nowrap items-center gap-2">
 						<SettingsOptionMenu
 							aria-label={t("mobile.getApp")}
 							value={platform}
@@ -244,6 +244,7 @@ export function ConnectMobileContent({ active }: { active: boolean }) {
 							triggerClassName="w-48 justify-between"
 							renderMenuItem={renderPlatformOption}
 							renderTrigger={(selected) => selected && renderPlatformOption(selected)}
+							menuClassName="w-48 min-w-0"
 							menuAlign="start"
 						/>
 						<SettingsOptionMenu
@@ -252,6 +253,7 @@ export function ConnectMobileContent({ active }: { active: boolean }) {
 							options={modeOptions}
 							onChange={setMode}
 							triggerClassName="w-48 justify-between"
+							menuClassName="w-48 min-w-0"
 							menuAlign="start"
 						/>
 					</div>
