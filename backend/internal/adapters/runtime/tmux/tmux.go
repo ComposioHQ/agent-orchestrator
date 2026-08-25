@@ -955,7 +955,7 @@ func (r *Runtime) routeForSession(ctx context.Context, id string) (sessionRoute,
 		}
 		if !privateSessionDefinitelyAbsent(string(privateOut)) {
 			return routePrivate, fmt.Errorf(
-				"%w: private tmux session %s changed while inspecting its legacy predecessor: %v",
+				"%w: private tmux session %s changed while inspecting its legacy predecessor: %w",
 				ports.ErrRuntimeProbeInconclusive,
 				id,
 				privateErr,
@@ -973,7 +973,7 @@ func (r *Runtime) routeForSession(ctx context.Context, id string) (sessionRoute,
 		return routePrivate, nil
 	}
 	return routePrivate, fmt.Errorf(
-		"%w: system tmux %q could not inspect legacy default-socket session %s: %v",
+		"%w: system tmux %q could not inspect legacy default-socket session %s: %w",
 		ports.ErrRuntimeProbeInconclusive,
 		r.legacyBinary,
 		id,
@@ -998,7 +998,7 @@ func privateSocketMissingOutput(out string) bool {
 func (r *Runtime) inspectLegacyPaneIdentity(ctx context.Context, id string) (string, bool, error) {
 	out, err := r.runOnLegacy(ctx, nil, paneStartCommandsArgs(id)...)
 	if err != nil {
-		return "", false, fmt.Errorf("%w: inspect legacy pane provenance for %s: %v", ports.ErrRuntimeProbeInconclusive, id, err)
+		return "", false, fmt.Errorf("%w: inspect legacy pane provenance for %s: %w", ports.ErrRuntimeProbeInconclusive, id, err)
 	}
 	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
 	if len(lines) != 1 {
