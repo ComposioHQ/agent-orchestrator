@@ -1,7 +1,7 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { useNavigate, useParams } from "@tanstack/react-router";
-import { Folder, LayoutDashboard, Plus, Trash2 } from "lucide-react";
+import { useLocation, useNavigate, useParams } from "@tanstack/react-router";
+import { CalendarClock, Folder, LayoutDashboard, Plus, Trash2 } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 import { animate, LayoutGroup, motion, useMotionValue, useReducedMotion } from "motion/react";
 import { NotificationCenter } from "./NotificationCenter";
@@ -78,6 +78,7 @@ export function ShellTopbar({
 } = {}) {
 	const { t } = useTranslation();
 	const navigate = useNavigate();
+	const location = useLocation();
 	const queryClient = useQueryClient();
 	const params = useParams({ strict: false }) as { projectId?: string; sessionId?: string };
 	const currentSessionId = params.sessionId;
@@ -117,6 +118,7 @@ export function ShellTopbar({
 		? all.flatMap((workspace) => workspace.sessions).find((s) => s.id === params.sessionId)
 		: undefined;
 	const isSessionRoute = Boolean(params.sessionId);
+	const isAutomationsRoute = location.pathname === "/automations";
 	const isOrchestrator = session ? isOrchestratorSession(session) : false;
 	// Project in scope: the session's workspace wins over the route param so the
 	// cross-project /sessions/$sessionId route still resolves a crumb. A
@@ -125,7 +127,7 @@ export function ShellTopbar({
 	// route slug. "Board" is the root-board crumb only.
 	const projectId = session?.workspaceId ?? params.projectId;
 	const isProjectBoardRoute = !isSessionRoute && Boolean(projectId);
-	const isRootBoardRoute = !isSessionRoute && !isProjectBoardRoute;
+	const isRootBoardRoute = !isSessionRoute && !isProjectBoardRoute && !isAutomationsRoute;
 	const project = projectId ? all.find((workspace) => workspace.id === projectId) : undefined;
 	const projectLabel = project?.name ?? session?.workspaceName ?? (projectId ? "" : t("shell.board"));
 	const orchestrator = projectId ? findProjectOrchestrator(all, projectId) : undefined;
@@ -211,6 +213,13 @@ export function ShellTopbar({
 						)}
 						<span aria-hidden="true" className="workspace-topbar__identity-separator" />
 						<SessionStatusPill session={session} />
+					</div>
+				) : isAutomationsRoute ? (
+					<div className="inline-flex min-w-0 items-center gap-1.5" data-testid="automations-topbar-label">
+						<span className={cn(topbarProjectLabelClass, "inline-flex items-center gap-1.5")}>
+							<CalendarClock aria-hidden="true" className="size-icon-md" />
+							Automations
+						</span>
 					</div>
 				) : (isProjectBoardRoute && boardActionsInPanel) ||
 				  (isMac && isRootBoardRoute && boardActionsInPanel) ? null : (

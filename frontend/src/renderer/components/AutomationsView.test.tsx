@@ -1,4 +1,5 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { AutomationsView } from "./AutomationsView";
 
@@ -30,16 +31,77 @@ describe("AutomationsView", () => {
 
 	it("offers the daemon agent catalog when creating an automation", async () => {
 		render(<AutomationsView />);
-		screen.getAllByRole("button", { name: /create automation/i })[0].click();
+		await userEvent.click(screen.getAllByRole("button", { name: /create automation/i })[0]);
+		await userEvent.click(screen.getByRole("combobox", { name: "Agent" }));
 		expect(await screen.findByRole("option", { name: "Project default" })).toBeInTheDocument();
 		expect(screen.getByRole("option", { name: "Codex" })).toBeInTheDocument();
+	});
+
+	it("uses AO popup controls instead of native browser selects", async () => {
+		const view = render(<AutomationsView />);
+		await userEvent.click(screen.getAllByRole("button", { name: /create automation/i })[0]);
+
+		const dialog = screen.getByRole("dialog", { name: "Create automation" });
+		// Radix keeps an aria-hidden select for form semantics; only a visible
+		// browser-native select would reintroduce the white Chromium popup.
+		expect(dialog.querySelector('select:not([aria-hidden="true"])')).toBeNull();
+		expect(within(dialog).getByRole("combobox", { name: "Project" })).toBeInTheDocument();
+		expect(within(dialog).getByRole("combobox", { name: "Schedule" })).toBeInTheDocument();
+		expect(view.container.querySelector('[data-slot="select-content"]')).toBeNull();
+	});
+
+	it("accepts and normalizes keyboard entry in AO-styled 24-hour fields", async () => {
+		render(<AutomationsView />);
+		await userEvent.click(screen.getAllByRole("button", { name: /create automation/i })[0]);
+
+		const dialog = screen.getByRole("dialog", { name: "Create automation" });
+		expect(dialog.querySelector('input[type="time"]')).toBeNull();
+		const hour = within(dialog).getByRole("textbox", { name: "Hour" });
+		const minute = within(dialog).getByRole("textbox", { name: "Minute" });
+		await userEvent.clear(hour);
+		await userEvent.type(hour, "7");
+		await userEvent.tab();
+		await userEvent.clear(minute);
+		await userEvent.type(minute, "5");
+		await userEvent.tab();
+
+		expect(hour).toHaveValue("07");
+		expect(minute).toHaveValue("05");
+	});
+
+	it("rejects out-of-range keyboard time values", async () => {
+		render(<AutomationsView />);
+		await userEvent.click(screen.getAllByRole("button", { name: /create automation/i })[0]);
+
+		const hour = screen.getByRole("textbox", { name: "Hour" });
+		const minute = screen.getByRole("textbox", { name: "Minute" });
+		await userEvent.clear(hour);
+		await userEvent.type(hour, "24");
+		await userEvent.clear(minute);
+		await userEvent.type(minute, "60");
+
+		expect(hour).toBeInvalid();
+		expect(minute).toBeInvalid();
+	});
+
+	it("uses the shared AO settings-dialog frame", async () => {
+		render(<AutomationsView />);
+		await userEvent.click(screen.getAllByRole("button", { name: /create automation/i })[0]);
+
+		expect(screen.getByRole("dialog", { name: "Create automation" })).toHaveClass(
+			"border-[var(--color-border-settings-dialog)]",
+			"bg-popover",
+		);
 	});
 
 	it("exposes accessible toggle, delete, and run-history controls", () => {
 		mocks.automations = [{ id: "automation-1", projectId: "demo", displayName: "Morning triage", prompt: "Review", kind: "worker", rrule: "FREQ=DAILY", timezone: "UTC", enabled: true, nextRunAt: "2026-08-27T09:00:00Z", createdAt: "2026-08-26T09:00:00Z", updatedAt: "2026-08-26T09:00:00Z" }];
 		render(<AutomationsView />);
 		expect(screen.getByRole("switch", { name: "Disable Morning triage" })).toBeInTheDocument();
-		expect(screen.getByRole("button", { name: "Delete Morning triage" })).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "Delete Morning triage" })).toHaveClass(
+			"text-destructive",
+			"hover:bg-destructive/10",
+		);
 		expect(screen.getByRole("button", { name: "Show run history for Morning triage" })).toBeInTheDocument();
 	});
 });
