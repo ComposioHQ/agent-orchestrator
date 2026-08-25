@@ -141,6 +141,10 @@ var (
 	// would answer it on the user's behalf. The API maps it to a 409; the
 	// caller retries once the user has answered in the terminal.
 	ErrAwaitingDecision = errors.New("session: awaiting a user decision")
+	// ErrStartupPending means a TUI session has not yet received its first
+	// agent hook callback, so the native startup sequence (including pre-session
+	// approval dialogs) may still be consuming pane input.
+	ErrStartupPending = errors.New("session: agent startup not ready for input")
 
 	// Spawn-stage sentinels. Each is the existing log word after "spawn" /
 	// "spawn <id>:" so wrapping them does not change daemon-log wording, while
@@ -727,6 +731,7 @@ func New(d Deps) *Manager {
 	// is built after the logger default).
 	m.messenger = sessionguard.New(d.Store, d.Messenger, m.logger)
 	m.messenger.SetInputLease(m)
+	m.messenger.SetStartupSignalGate(m.harnessStartupSignalGatesInput)
 	return m
 }
 
@@ -2986,6 +2991,8 @@ func (m *Manager) send(ctx context.Context, id domain.SessionID, message, client
 		return fmt.Errorf("send %s: %w", id, ErrAgentExited)
 	case sessionguard.SuppressedAwaitingUser:
 		return fmt.Errorf("send %s: %w", id, ErrAwaitingDecision)
+	case sessionguard.SuppressedStartupPending:
+		return fmt.Errorf("send %s: %w", id, ErrStartupPending)
 	case sessionguard.SuppressedInputGated:
 		return fmt.Errorf("send %s: %w", id, ErrSwitchInProgress)
 	}
@@ -3066,6 +3073,18 @@ func (m *Manager) harnessNudgeSafe(harness domain.AgentHarness) bool {
 	}
 	blk, ok := agent.(ports.BlockedActivitySignaler)
 	return ok && blk.EmitsBlockedActivity()
+}
+
+func (m *Manager) harnessStartupSignalGatesInput(harness domain.AgentHarness) bool {
+	if m.agents == nil {
+		return false
+	}
+	agent, ok := m.agents.Agent(harness)
+	if !ok {
+		return false
+	}
+	signaler, ok := agent.(ports.StartupInputReadinessSignaler)
+	return ok && signaler.FirstSignalProvesInputReady()
 }
 
 // waitOutcome is one poll round's verdict on whether confirmActive should
@@ -4053,6 +4072,8 @@ func (m *Manager) deliverAfterStartPrompt(ctx context.Context, agent ports.Agent
 		return fmt.Errorf("send %s: %w", id, ErrAgentExited)
 	case sessionguard.SuppressedAwaitingUser:
 		return fmt.Errorf("send %s: %w", id, ErrAwaitingDecision)
+	case sessionguard.SuppressedStartupPending:
+		return fmt.Errorf("send %s: %w", id, ErrStartupPending)
 	case sessionguard.SuppressedInputGated:
 		return fmt.Errorf("send %s: %w", id, ErrSwitchInProgress)
 	case sessionguard.SuppressedUnknown:

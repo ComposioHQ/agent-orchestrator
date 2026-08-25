@@ -1,14 +1,12 @@
-import { Bot, CircleHelp, GitBranch, Inbox, MonitorCog, RefreshCw, Settings2, TriangleAlert, X } from "lucide-react";
+import { Bot, CircleHelp, GitBranch, Inbox, Keyboard, MonitorCog, RefreshCw, Settings2, Smartphone, TriangleAlert, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { GlobalSettingsForm, type GlobalSettingsSection } from "./GlobalSettingsForm";
+import { GlobalSettingsForm } from "./GlobalSettingsForm";
 import {
 	ProjectSettingsForm,
 	type ProjectSettingsSaveState,
 	type ProjectSettingsSection,
 } from "./ProjectSettingsForm";
-import { ConnectMobileModal } from "./ConnectMobileModal";
-import { KeyboardShortcutsSettingsDialog } from "./settings/KeyboardShortcutsSettingsDialog";
 import {
 	Dialog,
 	DialogClose,
@@ -20,7 +18,7 @@ import {
 	settingsDialogContentClass,
 	settingsDialogHeaderClass,
 } from "./ui/dialog";
-import { type SettingsModal, useUiStore } from "../stores/ui-store";
+import { type GlobalSettingsSection, type SettingsModal, useUiStore } from "../stores/ui-store";
 import { cn } from "../lib/utils";
 import { Button } from "./ui/button";
 
@@ -39,12 +37,6 @@ export function SettingsDialog() {
 	const { t } = useTranslation();
 	const settingsModal = useUiStore((state) => state.settingsModal);
 	const closeSettings = useUiStore((state) => state.closeSettings);
-	const openGlobalSettings = useUiStore((state) => state.openGlobalSettings);
-	const openProjectSettings = useUiStore((state) => state.openProjectSettings);
-	const [keyboardShortcutsOpen, setKeyboardShortcutsOpen] = useState(false);
-	const [connectMobileOpen, setConnectMobileOpen] = useState(false);
-	const keyboardShortcutsRestoreRef = useRef<SettingsModal | null>(null);
-	const connectMobileRestoreRef = useRef<SettingsModal | null>(null);
 
 	// Keep the last non-null settings so the content stays rendered during the
 	// exit animation (when settingsModal is already null but the dialog hasn't
@@ -56,8 +48,10 @@ export function SettingsDialog() {
 	if (settingsModal !== null) lastSettingsRef.current = settingsModal;
 	const displaySettings = lastSettingsRef.current;
 
-	const globalSections: Array<{ id: Exclude<GlobalSettingsSection, "all">; label: string; icon: typeof Settings2 }> = [
+	const globalSections: Array<{ id: GlobalSettingsSection; label: string; icon: typeof Settings2 }> = [
 		{ id: "general", label: t("settings.general"), icon: Settings2 },
+		{ id: "mobile", label: t("settings.mobile"), icon: Smartphone },
+		{ id: "shortcuts", label: t("settings.shortcuts"), icon: Keyboard },
 		{ id: "updates", label: t("settings.updates"), icon: RefreshCw },
 		{ id: "help", label: t("settings.help"), icon: CircleHelp },
 	];
@@ -70,7 +64,7 @@ export function SettingsDialog() {
 	];
 
 	const isProjectSettings = displaySettings?.scope === "project";
-	const [activeSection, setActiveSection] = useState<Exclude<GlobalSettingsSection, "all">>("general");
+	const [activeSection, setActiveSection] = useState<GlobalSettingsSection>("general");
 	const [activeProjectSection, setActiveProjectSection] = useState<ProjectSettingsSection>("general");
 	const [projectSaveState, setProjectSaveState] = useState<ProjectSettingsSaveState>(initialProjectSaveState);
 
@@ -78,43 +72,13 @@ export function SettingsDialog() {
 		? (projectSections.find((s) => s.id === activeProjectSection)?.label ?? t("settings.project.identity"))
 		: (globalSections.find((section) => section.id === activeSection)?.label ?? t("settings.general"));
 
-	const openKeyboardShortcuts = () => {
-		if (!settingsModal) return;
-		keyboardShortcutsRestoreRef.current = settingsModal;
-		setKeyboardShortcutsOpen(true);
-		closeSettings();
-	};
-
-	const restoreSettings = () => {
-		const previousSettings = keyboardShortcutsRestoreRef.current;
-		keyboardShortcutsRestoreRef.current = null;
-		if (!previousSettings) return;
-		if (previousSettings.scope === "global") openGlobalSettings();
-		else openProjectSettings(previousSettings.projectId);
-	};
-
-	const openConnectMobile = () => {
-		if (!settingsModal) return;
-		connectMobileRestoreRef.current = settingsModal;
-		setConnectMobileOpen(true);
-		closeSettings();
-	};
-
-	const restoreConnectMobileSettings = () => {
-		const previousSettings = connectMobileRestoreRef.current;
-		connectMobileRestoreRef.current = null;
-		if (!previousSettings) return;
-		if (previousSettings.scope === "global") openGlobalSettings();
-		else openProjectSettings(previousSettings.projectId);
-	};
-
 	const closeSettingsDialog = () => {
 		if (isProjectSettings && projectSaveState.isPending) return;
 		closeSettings();
 	};
 
 	useEffect(() => {
-		if (settingsModal?.scope === "global") setActiveSection("general");
+		if (settingsModal?.scope === "global") setActiveSection(settingsModal.section ?? "general");
 		if (settingsModal?.scope === "project") {
 			setActiveProjectSection("general");
 			setProjectSaveState(initialProjectSaveState());
@@ -122,8 +86,7 @@ export function SettingsDialog() {
 	}, [settingsModal]);
 
 	return (
-		<>
-			<Dialog open={settingsModal !== null} onOpenChange={(open) => !open && closeSettingsDialog()}>
+		<Dialog open={settingsModal !== null} onOpenChange={(open) => !open && closeSettingsDialog()}>
 			<DialogContent
 				className={cn(
 					settingsDialogContentClass,
@@ -223,8 +186,6 @@ export function SettingsDialog() {
 							) : (
 								<GlobalSettingsForm
 									section={activeSection}
-									onOpenKeyboardShortcuts={openKeyboardShortcuts}
-									onOpenConnectMobile={openConnectMobile}
 								/>
 							)}
 						</div>
@@ -233,21 +194,6 @@ export function SettingsDialog() {
 				)}
 		</DialogContent>
 			</Dialog>
-			<KeyboardShortcutsSettingsDialog
-				open={keyboardShortcutsOpen}
-				onOpenChange={(open) => {
-					setKeyboardShortcutsOpen(open);
-					if (!open) restoreSettings();
-				}}
-			/>
-			<ConnectMobileModal
-				open={connectMobileOpen}
-				onOpenChange={(open) => {
-					setConnectMobileOpen(open);
-					if (!open) restoreConnectMobileSettings();
-				}}
-			/>
-		</>
 	);
 }
 

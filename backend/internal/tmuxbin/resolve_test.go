@@ -68,6 +68,44 @@ func TestResolveWithFindsPackagedTmuxOnMacOSAndLinuxLayouts(t *testing.T) {
 	}
 }
 
+func TestResolveWithDoesNotFallbackFromBrokenPackagedTmux(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		lookupErr error
+	}{
+		{name: "missing", lookupErr: errors.New("not found")},
+		{name: "empty resolution"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			self := filepath.Join(t.TempDir(), "AO.app", "Contents", "Resources", "daemon", "ao")
+			bundled := filepath.Join(filepath.Dir(filepath.Dir(self)), "tmux", "bin", "tmux")
+			var lookups []string
+
+			_, err := ResolveWith("", func() (string, error) { return self, nil }, func(name string) (string, error) {
+				lookups = append(lookups, name)
+				if name == bundled {
+					return "", tc.lookupErr
+				}
+				// A system tmux is deliberately available: packaged resolution must
+				// still fail closed before consulting it.
+				if name == "tmux" {
+					return "/usr/bin/tmux", nil
+				}
+				return "", errors.New("unexpected lookup")
+			})
+			if err == nil {
+				t.Fatal("ResolveWith error = nil, want broken packaged tmux error")
+			}
+			if !errors.Is(err, errTmuxNotFound) {
+				t.Fatalf("ResolveWith error = %v, want errTmuxNotFound", err)
+			}
+			if !reflect.DeepEqual(lookups, []string{bundled}) {
+				t.Fatalf("lookups = %v, want packaged candidate only", lookups)
+			}
+		})
+	}
+}
+
 func TestResolveWithFollowsExecutableSymlinkIntoBundle(t *testing.T) {
 	daemonDir := filepath.Join(t.TempDir(), "AO.app", "Contents", "Resources", "daemon")
 	if err := os.MkdirAll(daemonDir, 0o755); err != nil {

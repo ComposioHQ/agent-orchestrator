@@ -98,6 +98,10 @@ export interface ConversationTurn {
 	 */
 	rolledBack?: boolean;
 	providerTurnId?: string;
+	/** Failed source whose durable prompt created this retry attempt. */
+	retryOfTurnId?: string;
+	/** A retry attempt exists, even if that child is outside the active branch. */
+	hasRetryAttempt?: boolean;
 	errorMessage?: string;
 	requestedAt: string;
 	startedAt?: string;

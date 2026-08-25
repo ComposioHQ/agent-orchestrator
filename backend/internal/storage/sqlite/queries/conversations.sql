@@ -320,8 +320,8 @@ RETURNING latest_sequence;
 -- name: InsertConversationTurn :exec
 INSERT INTO conversation_turns (
     id, conversation_id, handled_by_session_id, provider_turn_id,
-    controller_generation, state, requested_at
-) VALUES (?, ?, ?, ?, ?, ?, ?);
+    controller_generation, retry_of_turn_id, state, requested_at
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?);
 
 -- A turn the PROVIDER started that AO never dispatched: a compaction runs as its
 -- own turn, and so does work resumed inside the provider's own history. Without a
@@ -1062,3 +1062,54 @@ WHERE conversation_provider_events.conversation_id = sqlc.arg(conversation_id)
   AND conversation_provider_events.id > sqlc.arg(id)
 ORDER BY conversation_provider_events.id
 LIMIT sqlc.arg(page_limit);
+-- A retry re-dispatches a failed turn's durable prompt as a NEW turn. Content is
+-- loaded from AO's own rows, never from the caller, so the daemon owns what gets
+-- sent again.
+-- name: SelectRetryableConversationPrompt :one
+WITH RECURSIVE active_path(branch_id, max_sequence) AS (
+    SELECT conversations.active_branch_id, CAST(NULL AS INTEGER)
+    FROM conversations
+    WHERE conversations.id = sqlc.arg(conversation_id)
+    UNION ALL
+    SELECT branch.parent_branch_id,
+           CASE
+               WHEN path.max_sequence IS NULL THEN branch.fork_after_sequence
+               WHEN branch.fork_after_sequence < path.max_sequence THEN branch.fork_after_sequence
+               ELSE path.max_sequence
+           END
+    FROM active_path AS path
+    JOIN conversation_branches AS branch ON branch.id = path.branch_id
+    WHERE branch.parent_branch_id IS NOT NULL
+)
+SELECT conversation_messages.text,
+       conversation_messages.origin,
+       conversation_messages.delivery_content_json,
+       EXISTS (
+           SELECT 1
+           FROM active_path AS path
+           WHERE path.branch_id = conversation_messages.branch_id
+             AND (path.max_sequence IS NULL OR conversation_messages.sequence <= path.max_sequence)
+       ) AS active_lineage
+FROM conversation_turns
+JOIN conversation_messages
+    ON conversation_messages.turn_id = conversation_turns.id
+    AND conversation_messages.role = 'user'
+WHERE conversation_turns.id = sqlc.arg(id)
+  AND conversation_turns.conversation_id = sqlc.arg(conversation_id)
+  AND conversation_turns.state = 'failed'
+LIMIT 1;
+
+-- A replayed retry request returns the attempt already linked to its source.
+-- The relation is daemon-owned rather than inferred from caller-controlled text.
+-- name: SelectConversationRetryTurnIDBySource :one
+SELECT id FROM conversation_turns
+WHERE conversation_id = sqlc.arg(conversation_id)
+  AND retry_of_turn_id = sqlc.arg(retry_of_turn_id)
+LIMIT 1;
+
+-- Retry attempts outside the active branch still consume their source action.
+-- name: SelectConversationRetriedSourceTurnIDs :many
+SELECT CAST(retry_of_turn_id AS TEXT) AS retry_of_turn_id
+FROM conversation_turns
+WHERE conversation_id = sqlc.arg(conversation_id)
+  AND retry_of_turn_id IS NOT NULL;

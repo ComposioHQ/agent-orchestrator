@@ -26,7 +26,7 @@ export function ConversationBranchNavigator({
 				}}
 				aria-label={t("chat.branch.previous")}
 				title={t("chat.branch.previous")}
-				className="rounded p-0.5 transition-colors hover:bg-interactive-hover hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-logo-accent/40 disabled:opacity-45"
+				className="flex size-7 items-center justify-center rounded-md transition-[background-color,color,transform] hover:bg-interactive-hover hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-logo-accent/40 disabled:opacity-45"
 			>
 				<ChevronLeft aria-hidden="true" className="size-3.5" />
 			</button>
@@ -46,7 +46,7 @@ export function ConversationBranchNavigator({
 				}}
 				aria-label={t("chat.branch.next")}
 				title={t("chat.branch.next")}
-				className="rounded p-0.5 transition-colors hover:bg-interactive-hover hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-logo-accent/40 disabled:opacity-45"
+				className="flex size-7 items-center justify-center rounded-md transition-[background-color,color,transform] hover:bg-interactive-hover hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-logo-accent/40 disabled:opacity-45"
 			>
 				<ChevronRight aria-hidden="true" className="size-3.5" />
 			</button>

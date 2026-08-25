@@ -3,11 +3,31 @@ package sessionmanager
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 )
+
+type synchronizedSessionStore struct {
+	*fakeStore
+	mu sync.RWMutex
+}
+
+func (s *synchronizedSessionStore) GetSession(ctx context.Context, id domain.SessionID) (domain.SessionRecord, bool, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.fakeStore.GetSession(ctx, id)
+}
+
+func (s *synchronizedSessionStore) markFirstSignal(id domain.SessionID, at time.Time) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	rec := s.sessions[id]
+	rec.FirstSignalAt = at
+	s.sessions[id] = rec
+}
 
 type terminalReadyAgent struct{ fakeAgent }
 
@@ -58,5 +78,35 @@ func TestWaitForMessageDeliveryReadyHonorsContextWhileTerminalStarts(t *testing.
 	err := m.WaitForMessageDeliveryReady(ctx, "orch")
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("WaitForMessageDeliveryReady error = %v, want context deadline", err)
+	}
+}
+
+func TestWaitForMessageDeliveryReadyWaitsForFirstHookSignal(t *testing.T) {
+	st := &synchronizedSessionStore{fakeStore: newFakeStore()}
+	st.sessions["cursor-1"] = domain.SessionRecord{
+		ID:        "cursor-1",
+		ProjectID: "phoenix",
+		Harness:   domain.HarnessCursor,
+		Mode:      domain.SessionModeTUI,
+		Activity:  domain.Activity{State: domain.ActivityIdle},
+		Metadata:  domain.SessionMetadata{RuntimeHandleID: "cursor-1"},
+	}
+	m := New(Deps{Runtime: &fakeRuntime{}, Agents: singleAgent{agent: startupReadySignalingAgent{}}, Store: st})
+
+	done := make(chan error, 1)
+	go func() {
+		done <- m.WaitForMessageDeliveryReady(context.Background(), "cursor-1")
+	}()
+
+	time.Sleep(30 * time.Millisecond)
+	st.markFirstSignal("cursor-1", time.Now())
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("WaitForMessageDeliveryReady: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for readiness after first hook signal")
 	}
 }

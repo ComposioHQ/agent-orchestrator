@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -3669,6 +3670,51 @@ func TestReconcileAgentSwitchesUsesDurableBoundaries(t *testing.T) {
 				t.Fatal("resolved recovery left input gated")
 			}
 		})
+	}
+}
+
+func TestReconcileStartingTargetPreservesInconclusiveRuntime(t *testing.T) {
+	probeErr := fmt.Errorf("legacy target inspection failed: %w", ports.ErrRuntimeProbeInconclusive)
+	runtime := &fakeRestartRuntime{fakeRuntime: &fakeRuntime{aliveErr: probeErr}}
+	manager, store, messenger := newSwitchTestManager(t, runtime)
+	target := manager.agents.(switchTestAgents)[domain.HarnessCodex].(*switchTestAgent)
+	now := time.Now().UTC()
+	targetRef := domain.AgentNativeSessionID("native-target")
+	sw := domain.AgentSwitch{
+		ID: "switch-inconclusive-target", SessionID: "proj-1", IdempotencyKey: "inconclusive-target",
+		RequestFingerprint: domain.ComputeAgentSwitchRequestFingerprint("proj-1", domain.HarnessCodex, ""),
+		FromHarness:        domain.HarnessClaudeCode, TargetHarness: domain.HarnessCodex,
+		TargetNativeSessionRef: &targetRef, TargetStartMode: domain.AgentSwitchTargetStartFresh,
+		State: domain.AgentSwitchStartingTarget, AgentHandoffStatus: domain.AgentHandoffUnavailable,
+		SourceGenerationID: "source-generation", TargetGenerationID: "target-generation",
+		TargetRuntimeHandleID: "durable-target-handle", RequestedAt: now, UpdatedAt: now,
+	}
+	store.switches[sw.ID] = sw
+	recBefore := store.sessions[sw.SessionID]
+	recBefore.Activity = domain.Activity{State: domain.ActivityExited, LastActivityAt: now}
+	store.sessions[recBefore.ID] = recBefore
+
+	err := manager.ReconcileAgentSwitches(context.Background())
+	if !errors.Is(err, ports.ErrRuntimeProbeInconclusive) {
+		t.Fatalf("reconcile error = %v, want ErrRuntimeProbeInconclusive", err)
+	}
+	if got := store.switches[sw.ID]; got != sw {
+		t.Fatalf("inconclusive recovery mutated switch:\n got  %+v\n want %+v", got, sw)
+	}
+	if got := store.sessions[recBefore.ID]; !reflect.DeepEqual(got, recBefore) {
+		t.Fatalf("inconclusive recovery mutated session:\n got  %+v\n want %+v", got, recBefore)
+	}
+	if len(runtime.destroyedIDs) != 0 {
+		t.Fatalf("inconclusive recovery destroyed runtimes: %v", runtime.destroyedIDs)
+	}
+	if target.cleanupCalls != 0 {
+		t.Fatalf("inconclusive recovery cleaned target workspace %d times, want 0", target.cleanupCalls)
+	}
+	if len(messenger.msgs) != 0 {
+		t.Fatalf("inconclusive recovery sent continuation: %#v", messenger.msgs)
+	}
+	if !manager.SessionMutationInProgress(sw.SessionID) {
+		t.Fatal("inconclusive recovery reopened session input")
 	}
 }
 

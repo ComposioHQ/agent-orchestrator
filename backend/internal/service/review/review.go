@@ -75,6 +75,10 @@ type Service struct {
 	lifecycle Reducer
 	clock     func() time.Time
 	telemetry ports.EventSink
+	// engineTrigger indirects the engine's source-tagged trigger so the
+	// instrumented path can be exercised without standing up a full engine and
+	// its eighteen-method store. Defaulted in New; only tests replace it.
+	engineTrigger func(context.Context, domain.SessionID, domain.ReviewerHarness, domain.ReviewTriggerSource) (reviewcore.TriggerResult, error)
 }
 
 var _ Manager = (*Service)(nil)
@@ -162,6 +166,16 @@ func New(engine *reviewcore.Engine, store Store, opts ...Option) *Service {
 	}
 	for _, opt := range opts {
 		opt(s)
+	}
+	if s.engineTrigger == nil {
+		s.engineTrigger = func(
+			ctx context.Context,
+			workerID domain.SessionID,
+			harness domain.ReviewerHarness,
+			source domain.ReviewTriggerSource,
+		) (reviewcore.TriggerResult, error) {
+			return s.engine.TriggerWithSource(ctx, workerID, harness, source)
+		}
 	}
 	return s
 }
@@ -377,12 +391,43 @@ func (s *Service) Trigger(
 	workerID domain.SessionID,
 	harness domain.ReviewerHarness,
 ) (reviewcore.TriggerResult, error) {
-	result, err := s.engine.Trigger(ctx, workerID, harness)
+	return s.triggerWithSource(ctx, workerID, harness, domain.ReviewTriggerManual)
+}
+
+// TriggerAuto starts a daemon-initiated review pass.
+func (s *Service) TriggerAuto(ctx context.Context, workerID domain.SessionID, harness domain.ReviewerHarness) (reviewcore.TriggerResult, error) {
+	return s.triggerWithSource(ctx, workerID, harness, domain.ReviewTriggerAuto)
+}
+
+// triggerWithSource is the single instrumented trigger path. Both entry points
+// route through it so an automatic pass is never invisible: before this, only
+// the manual Trigger emitted, which made auto-review indistinguishable from
+// manual review in every downstream funnel even though the two answer
+// completely different product questions.
+func (s *Service) triggerWithSource(
+	ctx context.Context,
+	workerID domain.SessionID,
+	harness domain.ReviewerHarness,
+	source domain.ReviewTriggerSource,
+) (reviewcore.TriggerResult, error) {
+	result, err := s.engineTrigger(ctx, workerID, harness, source)
 	if err != nil {
 		s.emit("ao.review.trigger_failed", workerID, map[string]any{
 			"error_kind": reviewErrorKind(err),
+			"trigger":    string(source),
 		})
 		return result, err
+	}
+	// An automatic pass that did no work must not be reported as a trigger. Two
+	// shapes reach here: the coordinator's read of the session lost a race with
+	// the user (SkipReason), or the sweep found a review already running or the
+	// current head already covered (nothing created). Counting either inflates
+	// how often auto-review actually reviews anything, by one event per sweep for
+	// the whole life of a long review, and spends the per-name daily rate limit
+	// that real triggers need. A manual reuse is a different fact: the user
+	// pressed the button, and that is worth counting.
+	if source == domain.ReviewTriggerAuto && (result.SkipReason != "" || len(result.CreatedRuns) == 0) {
+		return result, nil
 	}
 	// created_runs distinguishes a genuinely new pass from a reuse of a running
 	// or up-to-date one, which the engine also reports as success. harness is the
@@ -392,13 +437,9 @@ func (s *Service) Trigger(
 		"harness":      string(result.Run.Harness),
 		"created_runs": len(result.CreatedRuns),
 		"reused":       len(result.CreatedRuns) == 0,
+		"trigger":      string(source),
 	})
 	return result, nil
-}
-
-// TriggerAuto starts a daemon-initiated review pass.
-func (s *Service) TriggerAuto(ctx context.Context, workerID domain.SessionID, harness domain.ReviewerHarness) (reviewcore.TriggerResult, error) {
-	return s.engine.TriggerWithSource(ctx, workerID, harness, domain.ReviewTriggerAuto)
 }
 
 // Cancel stops the live reviewer pane and marks running review passes as failed.
@@ -589,6 +630,17 @@ func (s *Service) submitOne(ctx context.Context, workerID domain.SessionID, revi
 			"verdict":            string(verdict),
 			"duration_ms":        s.clock().Sub(run.CreatedAt).Milliseconds(),
 			"posted_to_provider": githubReviewID != "",
+			// Which pass produced this verdict. A manual and an automatic review
+			// mean different things about how the feature is being used, and the
+			// verdict split between them is the whole question.
+			"trigger": string(run.TriggerSource),
+			// A size, never the text. Review depth is otherwise unobservable: a
+			// changes-requested verdict with a two-line body and one with a full
+			// findings list are the same event without it.
+			"body_bytes": len(body),
+			// Whether the session policy will let this result reach the worker at
+			// all, recorded at the moment it is snapshotted onto the run.
+			"auto_inject": session.AutoInjectReview,
 		})
 	case domain.ReviewRunComplete:
 		if run.Verdict != verdict {

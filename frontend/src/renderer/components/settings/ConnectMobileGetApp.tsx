@@ -9,8 +9,8 @@ import { Button } from "../ui/button";
 /** TestFlight beta for the Agent Orchestrator iOS app. */
 export const TESTFLIGHT_URL = "https://testflight.apple.com/join/t4U3fu2H";
 
-/** Android internal-testing signup form. */
-export const ANDROID_SIGNUP_URL = "https://forms.gle/pWLWoxTPXySAN4Ws8";
+/** Public Google Play listing for the Agent Orchestrator Android app. */
+export const ANDROID_PLAY_STORE_URL = "https://play.google.com/store/apps/details?id=aoagents.dev&pcampaignid=web_share";
 
 /** Deliberately smaller than the pairing QR so it never competes with it. */
 const TESTFLIGHT_QR_SIZE = 140;
@@ -84,7 +84,7 @@ export function ConnectMobileGetApp() {
 				</div>
 			</div>
 
-			{/* Android — internal testing signup until a Play Store beta is live. */}
+			{/* Android — available directly from Google Play. */}
 			<div className="flex items-center justify-between gap-3 px-3 py-3">
 				<div className="flex min-w-0 flex-col">
 					<span className="text-sm leading-5 text-settings-label">{t("mobile.android")}</span>
@@ -97,9 +97,9 @@ export function ConnectMobileGetApp() {
 					variant="footer"
 					className="rounded-md"
 					aria-label={t("mobile.androidSignupAria")}
-					onClick={() => void aoBridge.app.openExternal(ANDROID_SIGNUP_URL)}
+					onClick={() => void aoBridge.app.openExternal(ANDROID_PLAY_STORE_URL)}
 				>
-					{t("mobile.joinWaitlist")}
+					{t("mobile.getApp")}
 				</Button>
 			</div>
 		</div>

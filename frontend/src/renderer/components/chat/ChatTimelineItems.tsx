@@ -88,8 +88,14 @@ import {
 } from "../../types/conversation";
 
 const timeFormatter = new Intl.DateTimeFormat(undefined, {
-	hour: "numeric",
+	hour: "2-digit",
 	minute: "2-digit",
+	hourCycle: "h23",
+});
+const dateFormatter = new Intl.DateTimeFormat(undefined, {
+	month: "short",
+	day: "numeric",
+	year: "numeric",
 });
 
 const ORIGIN_REPORT_COLLAPSE_AT = 600;
@@ -153,6 +159,18 @@ function formatTime(iso: string): string {
 	return Number.isNaN(parsed.getTime()) ? "" : timeFormatter.format(parsed);
 }
 
+function formatMessageTimestamp(iso: string, now = new Date()): string {
+	const parsed = new Date(iso);
+	if (Number.isNaN(parsed.getTime())) return "";
+
+	const messageDay = new Date(parsed.getFullYear(), parsed.getMonth(), parsed.getDate()).getTime();
+	const today = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+	const daysAgo = Math.round((today - messageDay) / 86_400_000);
+	if (daysAgo === 0) return timeFormatter.format(parsed);
+	if (daysAgo === 1) return "Yesterday";
+	return dateFormatter.format(parsed);
+}
+
 /* -------------------------------------------------------------------------- */
 /* messages                                                                    */
 /* -------------------------------------------------------------------------- */
@@ -163,6 +181,7 @@ export function HumanMessage({
 	sessionId,
 	apiBaseUrl = getApiBaseUrl(),
 	queued,
+	animateIn = false,
 	onEdit,
 	editing = false,
 	editText,
@@ -184,6 +203,8 @@ export function HumanMessage({
 	apiBaseUrl?: string;
 	/** Typed while the agent was busy, and not sent yet. */
 	queued?: boolean;
+	/** True only for a human message added after the timeline first mounted. */
+	animateIn?: boolean;
 	onEdit?: (turnId: string, text: string) => Promise<unknown> | void;
 	editing?: boolean;
 	editText?: string;
@@ -219,10 +240,12 @@ export function HumanMessage({
 				/>
 			) : (
 				<div
+					title={formatMessageTimestamp(message.createdAt) || undefined}
 					className={cn(
-						"cursor-chat-human-message w-fit max-w-[min(78%,560px)] rounded-[10px] px-3 py-2.5 text-sm leading-[1.55]",
+						"cursor-chat-human-message w-fit max-w-[min(78%,560px)] rounded-[10px] px-3 py-2 text-sm leading-[1.55]",
+						animateIn && "chat-human-message-enter",
 						queued
-							? "border border-dashed border-border-strong bg-transparent text-muted-foreground"
+							? "bg-transparent text-muted-foreground"
 							: "bg-raised text-foreground",
 					)}
 				>
@@ -247,7 +270,7 @@ export function HumanMessage({
 				</div>
 			)}
 			{editing ? null : (
-				<div className="mt-2 flex h-[18px] items-center gap-1">
+				<div className="mt-1 flex h-7 items-center gap-1">
 					<div className="flex items-center gap-1 opacity-0 transition-opacity duration-150 focus-within:opacity-100 group-hover/message:opacity-100">
 						{onEdit && onEditStart && message.turnId ? (
 							<button
@@ -255,11 +278,17 @@ export function HumanMessage({
 								onClick={onEditStart}
 								aria-label="Edit user message"
 								title="Edit user message"
-								className="flex items-center rounded px-1.5 py-0.5 text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground"
+								className="flex size-7 items-center justify-center rounded-md text-muted-foreground transition-[background-color,color,transform] hover:bg-interactive-hover hover:text-foreground"
 							>
 								<Pencil aria-hidden="true" className="size-3" />
 							</button>
 						) : null}
+						<span
+							className="w-12 shrink-0 px-1 text-right text-[11px] tabular-nums text-muted-foreground/75 opacity-0 transition-opacity group-hover/message:opacity-100 group-focus-within/message:opacity-100"
+							aria-label={`Sent ${formatMessageTimestamp(message.createdAt)}`}
+						>
+							{formatMessageTimestamp(message.createdAt)}
+						</span>
 						<CopyButton text={message.text} label="Copy user message" compact />
 					</div>
 					{branchPoint && onActivateBranch ? (
@@ -356,7 +385,10 @@ export function AssistantMessage({
 	const hasDuration = durationMs !== undefined && durationMs > 0;
 	const showActions = !visiblyStreaming && (showCopy || Boolean(onRollback) || hasDuration);
 	return (
-		<div className={cn("group/message relative", visiblyStreaming && hasText && "chat-assistant-streaming")}>
+		<div
+			title={formatMessageTimestamp(message.createdAt) || undefined}
+			className={cn("group/message relative", visiblyStreaming && hasText && "chat-assistant-streaming")}
+		>
 			<ChatMarkdown text={message.text} streaming={message.streaming} />
 			{visiblyStreaming ? (
 				hasText ? (
@@ -375,16 +407,18 @@ export function AssistantMessage({
 				// One action row for the completed answer, not one after every prose
 				// fragment the provider emitted while working. Always visible: hover-only
 				// chrome is easy to miss next to a short reply.
-				<div className="mt-2 flex h-[18px] items-center gap-0.5">
+				<div className="mt-1 flex h-7 items-center gap-0.5">
 					{showCopy ? (
-						/* The stored markdown, not a re-serialization of what was rendered:
-						   pasting it into an editor has to give back what the agent wrote. */
-						<CopyButton
-							text={message.text}
-							label="Copy message as markdown"
-							compact
-							className="-ml-1.5"
-						/>
+						<>
+							{/* The stored markdown, not a re-serialization of what was rendered:
+							   pasting it into an editor has to give back what the agent wrote. */}
+							<CopyButton
+								text={message.text}
+								label="Copy message as markdown"
+								compact
+								className="-ml-1.5"
+							/>
+						</>
 					) : null}
 					{onRollback ? (
 						<button
@@ -392,12 +426,18 @@ export function AssistantMessage({
 							onClick={onRollback}
 							aria-label="Roll back to here"
 							title="Roll back to here"
-							className="flex items-center rounded px-1.5 py-0.5 text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground"
+							className="flex size-7 items-center justify-center rounded-md text-muted-foreground transition-[background-color,color,transform] hover:bg-interactive-hover hover:text-foreground"
 						>
 							<Undo2 aria-hidden="true" className="size-3" />
 						</button>
 					) : null}
 					{hasDuration ? <TurnDuration durationMs={durationMs} /> : null}
+					<span
+						className="w-12 shrink-0 px-1 text-[11px] tabular-nums text-muted-foreground/75 opacity-0 transition-opacity group-hover/message:opacity-100 group-focus-within/message:opacity-100"
+						aria-label={`Sent ${formatMessageTimestamp(message.createdAt)}`}
+					>
+						{formatMessageTimestamp(message.createdAt)}
+					</span>
 				</div>
 			) : null}
 		</div>
@@ -2185,6 +2225,13 @@ export function TurnDuration({ durationMs }: { durationMs: number }) {
 	);
 }
 
+export interface TurnOutcomeRetryControl {
+	onRetry: () => void;
+	pending?: boolean;
+	error?: string;
+	disabled?: boolean;
+}
+
 /**
  * How a turn ended when it did not complete cleanly. Successful turns skip this —
  * their duration already sits on the answer action row. `interrupted` is kept
@@ -2194,9 +2241,12 @@ export function TurnDuration({ durationMs }: { durationMs: number }) {
 export function TurnOutcome({
 	state,
 	error,
+	retry,
 }: {
 	state: "recovered" | "interrupted" | "failed";
 	error?: string;
+	/** Re-dispatch this failed turn's prompt. Absent when retry is ineligible. */
+	retry?: TurnOutcomeRetryControl;
 }) {
 	const copy = {
 		recovered: { label: "Outcome unknown", tone: "text-muted-foreground/70" },
@@ -2214,6 +2264,30 @@ export function TurnOutcome({
 				<span className="max-w-[40%] shrink truncate text-[10px] text-destructive" title={error}>
 					{error}
 				</span>
+			) : null}
+			{retry?.error ? (
+				<span
+					role="alert"
+					className="max-w-[50%] text-pretty text-right text-[10px] leading-tight text-destructive"
+				>
+					{retry.error}
+				</span>
+			) : null}
+			{retry ? (
+				<button
+					type="button"
+					onClick={retry.onRetry}
+					disabled={retry.pending || retry.disabled}
+					aria-label="Retry this turn"
+					title={
+						retry.error ??
+						(retry.disabled ? "Wait for the current turn to finish" : "Send this prompt again as a new turn")
+					}
+					data-testid="retry-turn"
+					className="shrink-0 rounded px-1.5 py-0.5 text-[10px] uppercase tracking-[0.08em] text-muted-foreground/70 transition-colors hover:text-foreground focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring disabled:pointer-events-none disabled:opacity-50"
+				>
+					{retry.pending ? "Retrying…" : "Retry"}
+				</button>
 			) : null}
 			<span aria-hidden="true" className="h-px min-w-0 flex-1 bg-border" />
 		</div>
