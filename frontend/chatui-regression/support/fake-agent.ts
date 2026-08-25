@@ -1,256 +1,12 @@
 import type { Page } from "@playwright/test";
 
-import type { UpdateSettings, UpdateStatus } from "../../src/main/update-settings";
 import type { AoBridge } from "../../src/preload";
 import type { DaemonStatus } from "../../src/shared/daemon-status";
 import { coerceUiSettings, DEFAULT_UI_SETTINGS } from "../../src/shared/ui-locale";
 
-// The e2e suite runs the renderer under `dev:web` (VITE_NO_ELECTRON=1) with no
-// Electron preload, so `window.ao` is undefined and lib/bridge.ts falls back to
-// a browser stub that reports the daemon as permanently "stopped" and the app
-// version as "0.0.0-preview". The daemon/version smoke cases (DMN-*, INS-004)
-// need a deterministic *ready* daemon and a known version string, so we inject
-// a complete `window.ao` before any page script runs — the same seam the real
-// Electron preload fills. This is a fake *bridge*, not a fake agent: no worker
-// process and no GitHub repo are involved, matching the T0 POD constraints.
-//
-// In a real Linux pod running the packaged Electron build, `window.ao` is the
-// live preload; the injected bridge is only the deterministic stand-in for the
-// browser harness.
-//
-// SCOPE / CAVEAT — renderer smoke, not full e2e. Because `window.ao`,
-// `EventSource`, and the workspace snapshot are all faked here, this harness
-// CANNOT catch daemon, storage, API, preload, PTY, or filesystem regressions —
-// those are the packaged-app pod gate's job (#2697). In particular,
-// `useWorkspaceQuery` reads an already-shaped `WorkspaceSummary` straight from
-// `window.__aoFakeAgent.snapshot()`, BYPASSING the generated API client + DTO
-// mapping; DTO/client coverage comes from the pod gate + unit tests, never from
-// these specs. Treat green here as "the renderer renders the injected state,"
-// not "the boundary works."
-
-export type FakeBridgeOptions = {
-	/** Version string surfaced by app.getVersion() (Settings > Updates). */
-	version?: string;
-	/** Daemon lifecycle state the renderer should observe. */
-	daemonState?: "ready" | "starting" | "stopped" | "error";
-	/** REST port advertised when ready (mock data is served regardless). */
-	daemonPort?: number;
-	/** Desktop updater state surfaced in Settings > Updates. */
-	updateStatus?: UpdateStatus;
-	/** Persisted automatic-update policy surfaced in Settings > Updates. */
-	updateSettings?: UpdateSettings;
-};
-
-export async function installFakeBridge(page: Page, opts: FakeBridgeOptions = {}): Promise<void> {
-	const version = opts.version ?? "9.9.9-test";
-	const daemonState = opts.daemonState ?? "ready";
-	const daemonPort = opts.daemonPort ?? 8080;
-	const updateStatus = opts.updateStatus ?? ({ state: "idle" } satisfies UpdateStatus);
-	const updateSettings =
-		opts.updateSettings ??
-		({ enabled: false, channel: "latest", nightlyAck: false, feature: null } satisfies UpdateSettings);
-
-	await page.addInitScript(
-		({ version, daemonState, daemonPort, updateStatus, updateSettings }) => {
-			const unsubscribe = () => () => undefined;
-			const status: DaemonStatus =
-				daemonState === "ready" ? { state: "ready", port: daemonPort } : { state: daemonState };
-			const navState = (viewId: string) => ({
-				viewId,
-				url: "",
-				title: "",
-				canGoBack: false,
-				canGoForward: false,
-				isLoading: false,
-			});
-
-			// Full AoBridge surface (mirrors src/preload.ts) so any renderer call
-			// resolves — an incomplete object would throw the moment the app touched
-			// a missing method.
-			const ao = {
-				app: {
-					getVersion: async () => version,
-					chooseDirectory: async () => null,
-					openExternal: async () => undefined,
-					scanImportFolder: async ({ path }: { path: string }) => ({ path, repos: [] }),
-					checkAncestorRepo: async () => undefined,
-					getPathForFile: () => "",
-					onOpenFolderPath: () => () => undefined,
-					onNewSessionShortcut: unsubscribe,
-					onKeyboardShortcutsHelp: unsubscribe,
-					onNewShellTerminalShortcut: unsubscribe,
-					onCloseShellTerminalShortcut: unsubscribe,
-					setCloseShellTerminalShortcutEnabled: () => undefined,
-					onOpenSettingsShortcut: unsubscribe,
-					onPreviousSessionShortcut: unsubscribe,
-					onNextSessionShortcut: unsubscribe,
-					onPreviousTabShortcut: unsubscribe,
-					onNextTabShortcut: unsubscribe,
-					onFocusTerminalShortcut: unsubscribe,
-				},
-				terminal: {
-					saveDroppedFile: async () => "",
-					setFocused: () => undefined,
-					onFontSizeShortcut: () => () => undefined,
-				},
-				window: {
-					isMaximized: async () => false,
-					onMaximized: () => () => undefined,
-					isFullScreen: async () => false,
-					onFullScreen: () => () => undefined,
-				},
-				theme: { set: async () => undefined },
-				menu: { action: async () => undefined, notifyShellFocus: () => undefined },
-				clipboard: {
-					writeText: async () => undefined,
-					readText: async () => "",
-				},
-				daemon: {
-					getStatus: async () => status,
-					start: async () => status,
-					stop: async () => ({ state: "stopped" }),
-					restart: async () => status,
-					onStatus: (listener: (s: typeof status) => void) => {
-						listener(status);
-						return unsubscribe();
-					},
-				},
-				editorHandoff: {
-					getState: async () => ({
-						targets: [
-							{ id: "cursor" as const, name: "Cursor", kind: "editor" as const },
-							{ id: "file-manager" as const, name: "File Manager", kind: "file_manager" as const },
-							{ id: "terminal" as const, name: "Terminal", kind: "terminal" as const },
-						],
-						preferredEditorId: "cursor" as const,
-						workspaceAvailable: true,
-					}),
-					open: async () => ({ id: "cursor" as const, name: "Cursor", kind: "editor" as const }),
-				},
-				telemetry: {
-					getBootstrap: async () => null,
-				},
-				browser: {
-					nativeCompositionEnabled: true,
-					ensure: async (sessionId: string) => navState(`preview:${sessionId}`),
-					setBounds: () => undefined,
-					setOverlayOpen: () => undefined,
-					navigate: async ({ viewId }: { viewId: string }) => navState(viewId),
-					clear: async (viewId: string) => navState(viewId),
-					goBack: async (viewId: string) => navState(viewId),
-					goForward: async (viewId: string) => navState(viewId),
-					reload: async (viewId: string) => navState(viewId),
-					stop: async (viewId: string) => navState(viewId),
-					getTabs: async (viewId: string) => ({
-						viewId,
-						activeTabId: "t1",
-						tabs: [{ id: "t1", url: "", title: "", active: true }],
-					}),
-					selectTab: async ({ viewId, tabId }: { viewId: string; tabId: string }) => ({
-						viewId,
-						activeTabId: tabId,
-						tabs: [{ id: tabId, url: "", title: "", active: true }],
-					}),
-					closeTab: async ({ viewId }: { viewId: string; tabId: string }) => ({
-						viewId,
-						activeTabId: "t1",
-						tabs: [{ id: "t1", url: "", title: "", active: true }],
-					}),
-					openTab: async ({ viewId }: { viewId: string; url?: string }) => ({
-						viewId,
-						activeTabId: "t1",
-						tabs: [{ id: "t1", url: "", title: "", active: true }],
-					}),
-					devtools: async (input: { viewId: string }) => ({ viewId: input.viewId, open: false, activeTabId: "" }),
-					destroy: () => undefined,
-					// Annotation contract (mirrors src/preload.ts): useBrowserView subscribes
-					// to these whenever SessionView mounts with window.ao.browser present, so
-					// an incomplete browser shape would crash the session-detail/preview specs.
-					setAnnotationMode: async () => undefined,
-					onAnnotationSubmit: unsubscribe,
-					onAnnotationCancel: unsubscribe,
-					onNavState: unsubscribe,
-					onTabsState: unsubscribe,
-					onAgentActivity: unsubscribe,
-					onDevToolsState: unsubscribe,
-				},
-				notifications: {
-					show: async () => undefined,
-					setBadge: async (_count: number) => undefined,
-					devBounce: async () => undefined,
-					onClick: unsubscribe,
-				},
-				tray: {
-					setAttentionState: () => undefined,
-					onOpenSession: unsubscribe,
-				},
-				appState: {
-					getMigration: async () => ({ status: "completed" }),
-					setMigration: async () => undefined,
-				},
-				updateSettings: {
-					get: async () => updateSettings,
-					set: async () => undefined,
-				},
-				uiSettings: {
-					get: async () => ({ ...DEFAULT_UI_SETTINGS }),
-					set: async (settings) => coerceUiSettings({ ...DEFAULT_UI_SETTINGS, ...settings }),
-				},
-				keybindings: {
-					get: async () => ({}),
-					set: async (overrides) => overrides,
-					setRecording: async () => undefined,
-				},
-				updates: {
-					getStatus: async () => updateStatus,
-					check: async () => undefined,
-					returnHome: async () => undefined,
-					download: async () => undefined,
-					install: async () => undefined,
-					onStatus: unsubscribe,
-					onTelemetry: unsubscribe,
-				},
-				// UpdatesSection calls featureBuilds.getActive() immediately on mount; an
-				// omitted namespace would surface as a swallowed React Query error.
-				featureBuilds: {
-					list: async () => [],
-					getActive: async () => null,
-				},
-				cloud: {
-					getSession: async () => null,
-					signIn: async () => undefined,
-					signOut: async () => undefined,
-					onSessionChanged: unsubscribe,
-				},
-			} satisfies AoBridge;
-			(window as unknown as { ao: unknown }).ao = ao;
-		},
-		{ version, daemonState, daemonPort, updateStatus, updateSettings },
-	);
-}
-
-// ── Fake-agent timeline harness (FAKE tier) ─────────────────────────────────
-//
-// The FAKE cases in #2483 need an agent to *do* something over time (spawn a
-// session, go active, hit waiting_input, move board columns, stream a terminal,
-// raise a needs-input notification). Under the browser harness there is no Go
-// daemon and no agent, so we simulate that timeline at the bridge:
-//
-//   1. A `window.ao` whose daemon is ready on a port — so the renderer sets its
-//      REST base URL and opens its SSE streams (the same seam the packaged app
-//      fills). The `browser.*` IPC is driven off a shared in-page state so the
-//      preview surface is controllable.
-//   2. A fake `window.EventSource` — the daemon's CDC (`/api/v1/events`) and
-//      notification (`/api/v1/notifications/stream`) SSE streams. The controller
-//      pushes `session_updated` / `notification_created` frames into it, which is
-//      exactly what drives the renderer's cache-invalidation → refetch path (no
-//      manual refresh), matching the real daemon's behaviour.
-//   3. A mutable workspace snapshot read by `useWorkspaceQuery` via
-//      `window.__aoFakeAgent.snapshot()` (dev:web seam). Controller mutations +
-//      an SSE push = the card the renderer repaints.
-//
-// The real Go fake-agent plugin drives the same states in the later real-daemon
-// pod run; here the same specs run against this bridge-level simulation.
+// Local fork of the renderer fake-agent boundary. ChatUI needs interface-mode
+// mutation and arbitrary CDC emission, but those capabilities must stay outside
+// the ordinary E2E source graph so the opt-in harness remains local-only.
 
 export type FakeWorker = {
 	id: string;
@@ -285,9 +41,15 @@ export type FakeAgentController = {
 	createWorker: (worker: FakeWorker) => void;
 	removeWorker: (id: string) => void;
 	setStatus: (id: string, status: string, activity?: string) => void;
+	setMode: (id: string, mode: "chat" | "tui", terminalHandleId?: string) => void;
 	setTerminalHandle: (id: string, handleId: string) => void;
 	setPreview: (id: string, previewUrl: string, previewRevision?: number) => void;
 	setBrowserError: (message: string | null) => void;
+	emitCDC: (input: {
+		type?: string;
+		sessionId?: string;
+		conversationId?: string;
+	}) => void;
 	notify: (n: { id: string; type: string; title: string; body?: string; sessionId?: string }) => void;
 };
 
@@ -468,6 +230,18 @@ export async function installFakeAgent(page: Page, opts: FakeAgentOptions = {}):
 					touch(s);
 					pushWorkspaces();
 				},
+				setMode: (id, mode, terminalHandleId) => {
+					const s = findSession(id);
+					if (!s) return;
+					s.mode = mode;
+					if (mode === "tui") {
+						s.terminalHandleId = terminalHandleId || `${id}/terminal_0`;
+					} else {
+						delete s.terminalHandleId;
+					}
+					touch(s);
+					pushWorkspaces();
+				},
 				setTerminalHandle: (id, handleId) => {
 					const s = findSession(id);
 					if (!s) return;
@@ -485,6 +259,24 @@ export async function installFakeAgent(page: Page, opts: FakeAgentOptions = {}):
 				},
 				setBrowserError: (message) => {
 					state.browserError = message;
+				},
+				emitCDC: ({
+					type = "session_updated",
+					sessionId,
+					conversationId,
+				}) => {
+					const stream =
+						type === "workspace_changed" && sessionId
+							? `/api/v1/sessions/${encodeURIComponent(sessionId)}/workspace/events`
+							: "/api/v1/events";
+					emit(
+						stream,
+						type,
+						JSON.stringify({
+							sessionId,
+							payload: { conversationId },
+						}),
+					);
 				},
 				notify: (n) => {
 					const payload = JSON.stringify({

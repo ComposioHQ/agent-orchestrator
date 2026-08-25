@@ -7,8 +7,8 @@ import {
 	type TestInfo,
 } from "@playwright/test";
 
-import { installFakeAgent } from "../../e2e/support/fake-bridge";
 import { installFakeTerminalMux } from "../../e2e/support/fake-terminal-mux";
+import { installFakeAgent } from "./fake-agent";
 
 export type JsonObject = Record<string, unknown>;
 

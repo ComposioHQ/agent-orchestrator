@@ -160,6 +160,7 @@ export default defineConfig({
 			"dist-electron/**",
 			"e2e/**",
 			"chatui-regression/contracts/**",
+			"scripts/run-chatui-regressions.test.mjs",
 		],
 		globals: true,
 		setupFiles: "./src/renderer/test/setup.ts",

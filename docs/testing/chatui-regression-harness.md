@@ -182,6 +182,11 @@ fully certified there (`MQA-02`, `MQA-04`, `MQA-05`, `MQA-06`, `MQA-07`,
 `MQA-03`, `MQA-08`, and `MQA-10`) for the boundary the browser companion cannot
 observe.
 
+Strict certification also requires both `GAP-01` observability contracts found
+during the audit: mounted context/quota signals and actionable credit-exhaustion
+detail. These are additional required checks, so a strict run remains red until
+they pass even when every `MQA-01` through `MQA-12` contract is green.
+
 The deterministic `MQA-06` contract injects unsettled history and checks retry
 convergence. Its live Claude canary remains a high-value confidence check because
 the original failure survived a native recovery turn, daemon/Electron restart, and
