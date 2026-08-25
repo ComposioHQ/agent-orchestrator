@@ -2243,16 +2243,21 @@ export function TurnOutcome({
 	error,
 	retry,
 }: {
-	state: "recovered" | "interrupted" | "failed";
+	state: "recovered" | "interrupted" | "failed" | (string & {});
 	error?: string;
 	/** Re-dispatch this failed turn's prompt. Absent when retry is ineligible. */
 	retry?: TurnOutcomeRetryControl;
 }) {
-	const copy = {
-		recovered: { label: "Outcome unknown", tone: "text-muted-foreground/70" },
-		interrupted: { label: "Stopped", tone: "text-muted-foreground/70" },
-		failed: { label: "Failed", tone: "text-destructive" },
-	}[state];
+	// `state` is cast from the wire response (see useConversation.ts toSnapshot),
+	// not validated at runtime — a daemon reporting a TurnState this build predates
+	// must not crash the whole timeline, just show it as-is.
+	const copy = (
+		{
+			recovered: { label: "Outcome unknown", tone: "text-muted-foreground/70" },
+			interrupted: { label: "Stopped", tone: "text-muted-foreground/70" },
+			failed: { label: "Failed", tone: "text-destructive" },
+		} as Record<string, { label: string; tone: string }>
+	)[state] ?? { label: state, tone: "text-muted-foreground/70" };
 
 	return (
 		<div className="flex items-center gap-2 pt-1">
