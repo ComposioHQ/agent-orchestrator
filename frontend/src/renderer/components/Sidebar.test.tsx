@@ -1596,6 +1596,11 @@ describe("Sidebar", () => {
 
 		const sidebar = document.querySelector('[data-slot="sidebar"][data-state="collapsed"]');
 		expect(sidebar).toHaveAttribute("data-collapsible", "icon");
+		const compactToggle = document.querySelector('[data-slot="sidebar-header"] button[aria-label="Expand sidebar"]');
+		expect(compactToggle).toBeInTheDocument();
+		expect(compactToggle?.querySelector("svg")).toBeInTheDocument();
+		expect(screen.queryByText("Connect Mobile")).not.toBeVisible();
+		expect(screen.queryByText("Settings")).not.toBeVisible();
 		expect(document.querySelector('[data-slot="sidebar-container"]')).toHaveAttribute(
 			"data-topbar-offset",
 			"trafficLights",
