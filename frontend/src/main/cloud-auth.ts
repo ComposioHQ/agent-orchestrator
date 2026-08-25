@@ -237,6 +237,22 @@ export async function getCloudSession(
   }
 }
 
+/**
+ * Raw bearer token for the main-process control-plane proxy
+ * (cloud-cp-proxy.ts). Runs the same refresh-if-expiring path as
+ * getCloudSession, then reads the (possibly rotated) token back out of the
+ * store. Main-process only: the token must never be sent to a renderer or
+ * exposed over IPC.
+ */
+export async function getCloudAccessToken(
+  dataDir: string,
+): Promise<string | null> {
+  const account = await getCloudSession(dataDir);
+  if (account === null) return null;
+  const store = await readAuthStore(dataDir);
+  return store.session?.accessToken ?? null;
+}
+
 async function refreshCloudSession(
   dataDir: string,
   storedSession: StoredSession,
