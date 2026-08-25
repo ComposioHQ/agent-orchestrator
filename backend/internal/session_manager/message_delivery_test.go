@@ -3,11 +3,31 @@ package sessionmanager
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 )
+
+type synchronizedSessionStore struct {
+	*fakeStore
+	mu sync.RWMutex
+}
+
+func (s *synchronizedSessionStore) GetSession(ctx context.Context, id domain.SessionID) (domain.SessionRecord, bool, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.fakeStore.GetSession(ctx, id)
+}
+
+func (s *synchronizedSessionStore) markFirstSignal(id domain.SessionID, at time.Time) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	rec := s.sessions[id]
+	rec.FirstSignalAt = at
+	s.sessions[id] = rec
+}
 
 type terminalReadyAgent struct{ fakeAgent }
 
@@ -62,7 +82,7 @@ func TestWaitForMessageDeliveryReadyHonorsContextWhileTerminalStarts(t *testing.
 }
 
 func TestWaitForMessageDeliveryReadyWaitsForFirstHookSignal(t *testing.T) {
-	st := newFakeStore()
+	st := &synchronizedSessionStore{fakeStore: newFakeStore()}
 	st.sessions["cursor-1"] = domain.SessionRecord{
 		ID:        "cursor-1",
 		ProjectID: "phoenix",
@@ -79,9 +99,7 @@ func TestWaitForMessageDeliveryReadyWaitsForFirstHookSignal(t *testing.T) {
 	}()
 
 	time.Sleep(30 * time.Millisecond)
-	rec := st.sessions["cursor-1"]
-	rec.FirstSignalAt = time.Now()
-	st.sessions["cursor-1"] = rec
+	st.markFirstSignal("cursor-1", time.Now())
 
 	select {
 	case err := <-done:
