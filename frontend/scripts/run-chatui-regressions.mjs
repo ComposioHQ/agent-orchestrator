@@ -90,10 +90,21 @@ export const requiredPlaywrightContracts = Object.freeze([
 		expectedFailureMarker: "MQA-12-SYNTHETIC-PAGE-ERROR",
 	},
 ]);
-export const requiredGoContracts = Object.freeze([
-	"TestChatUIRegressionEncodedSyntheticBranchIDIsDecoded",
-	"TestChatUIRegressionTUIToChatRetriesFreshTargetAfterUnsettledHistory",
+export const goContractDefinitions = Object.freeze([
+	{
+		name: "TestChatUIRegressionEncodedSyntheticBranchIDIsDecoded",
+		playwrightMarker:
+			"ChatUI conversation integrity › MQA-07 synthetic root branch › activates the advertised synthetic root as one encoded route segment",
+	},
+	{
+		name: "TestChatUIRegressionTUIToChatRetriesFreshTargetAfterUnsettledHistory",
+		playwrightMarker:
+			"ChatUI interface switching › MQA-06 failed target-history checkpoint › offers a retryable, announced action for the interface-switch failure",
+	},
 ]);
+export const requiredGoContracts = Object.freeze(
+	goContractDefinitions.map((contract) => contract.name),
+);
 
 const usage = `Usage: npm run qa:chatui -- [options]
 
@@ -335,11 +346,11 @@ export function assessPlaywrightArtifacts({
 	return failures;
 }
 
-export function assessGoContractLog(logText, exitCode) {
+export function assessGoContractLog(logText, exitCode, expectedContracts = requiredGoContracts) {
 	const failures = [];
 	let jsonEvents = 0;
 	const states = new Map(
-		requiredGoContracts.map((name) => [name, { ran: false, terminalAction: undefined }]),
+		expectedContracts.map((name) => [name, { ran: false, terminalAction: undefined }]),
 	);
 	for (const line of String(logText ?? "").split(/\r?\n/)) {
 		let event;
@@ -604,6 +615,18 @@ export async function runChatUIRegressions(options, now = new Date()) {
 	];
 	if (options.headed) playwrightArgs.push("--headed");
 	if (options.grep) playwrightArgs.push("--grep", options.grep);
+	let goContracts = [...requiredGoContracts];
+	if (options.grep) {
+		try {
+			const matcher = new RegExp(options.grep, "i");
+			goContracts = goContractDefinitions
+				.filter((contract) => matcher.test(contract.playwrightMarker))
+				.map((contract) => contract.name);
+		} catch {
+			// Playwright rejects malformed filters. Preserve every backend gate so
+			// invalid input cannot accidentally weaken certification.
+		}
+	}
 
 	const steps = [
 		{
@@ -622,24 +645,28 @@ export async function runChatUIRegressions(options, now = new Date()) {
 			cwd: frontendRoot,
 			env: commonEnvironment,
 		},
-		{
-			id: "go-contracts",
-			label: "Go opt-in ChatUI contracts",
-			executable: "go",
-			args: [
-				"test",
-				"-json",
-				"-tags",
-				"chatui_regression",
-				"./internal/httpd/controllers",
-				"./internal/session_manager",
-				"-count=1",
-				"-run",
-				"TestChatUIRegression",
-			],
-			cwd: backendRoot,
-			env: commonEnvironment,
-		},
+		...(goContracts.length > 0
+			? [
+					{
+						id: "go-contracts",
+						label: "Go opt-in ChatUI contracts",
+						executable: "go",
+						args: [
+							"test",
+							"-json",
+							"-tags",
+							"chatui_regression",
+							"./internal/httpd/controllers",
+							"./internal/session_manager",
+							"-count=1",
+							"-run",
+							`^(?:${goContracts.join("|")})$`,
+						],
+						cwd: backendRoot,
+						env: commonEnvironment,
+					},
+				]
+			: []),
 	];
 
 	const results = [];
@@ -694,7 +721,9 @@ export async function runChatUIRegressions(options, now = new Date()) {
 	if (goStep) {
 		try {
 			const goLog = await readFile(path.join(runDir, goStep.logPath), "utf8");
-			infrastructureFailures.push(...assessGoContractLog(goLog, goStep.exitCode));
+			infrastructureFailures.push(
+				...assessGoContractLog(goLog, goStep.exitCode, goContracts),
+			);
 		} catch (error) {
 			infrastructureFailures.push(
 				`Go contract log could not be read: ${error instanceof Error ? error.message : String(error)}`,

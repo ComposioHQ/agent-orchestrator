@@ -7,6 +7,7 @@ import {
 	assessPlaywrightArtifacts,
 	buildRunReport,
 	formatRunStamp,
+	goContractDefinitions,
 	main,
 	parseRunnerArgs,
 	requiredGoContracts,
@@ -136,6 +137,21 @@ describe("parseRunnerArgs", () => {
 			consoleError.mockRestore();
 			stderrWrite.mockRestore();
 		}
+	});
+});
+
+describe("focused contract lanes", () => {
+	it("maps each tagged Go contract to its matching Playwright scenario", () => {
+		expect(goContractDefinitions).toEqual([
+			expect.objectContaining({
+				name: requiredGoContracts[0],
+				playwrightMarker: expect.stringContaining("MQA-07"),
+			}),
+			expect.objectContaining({
+				name: requiredGoContracts[1],
+				playwrightMarker: expect.stringContaining("MQA-06"),
+			}),
+		]);
 	});
 });
 
@@ -377,6 +393,15 @@ describe("assessGoContractLog", () => {
 		expect(assessGoContractLog(goContractLog(["pass", "pass"]), 1)).toContainEqual(
 			expect.stringContaining("failed outside the completed ChatUI contract tests"),
 		);
+	});
+
+	it("validates only the backend contracts selected by a focused filter", () => {
+		const selected = [requiredGoContracts[1]];
+		const log = [
+			JSON.stringify({ Action: "run", Package: "example/package", Test: selected[0] }),
+			JSON.stringify({ Action: "pass", Package: "example/package", Test: selected[0] }),
+		].join("\n");
+		expect(assessGoContractLog(log, 0, selected)).toEqual([]);
 	});
 });
 
