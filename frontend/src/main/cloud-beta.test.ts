@@ -1,4 +1,7 @@
 // @vitest-environment node
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { connectLocalHarness, createCloudProject, disconnectCloudHarness } from "./cloud-beta";
 
@@ -40,6 +43,41 @@ describe("cloud harness credentials", () => {
 		const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
 		expect(url).toContain("/api/cloud/v1/me/providers/codex");
 		expect(init.method).toBe("DELETE");
+	});
+
+	it("sends the local Codex auth bundle without exposing it in the result", async () => {
+		const codexHome = await mkdtemp(path.join(os.tmpdir(), "ao-codex-auth-test-"));
+		const auth = {
+			tokens: {
+				access_token: "fake-local-codex-access",
+				refresh_token: "fake-local-codex-refresh",
+				account_id: "account-123",
+			},
+		};
+		await writeFile(path.join(codexHome, "auth.json"), JSON.stringify(auth), { mode: 0o600 });
+		vi.stubEnv("CODEX_HOME", codexHome);
+		vi.stubEnv("CODEX_ACCESS_TOKEN", "");
+		vi.stubEnv("OPENAI_API_KEY", "");
+		const fetchMock = vi.fn().mockResolvedValue(
+			new Response(JSON.stringify({ providerConnection: { id: "connection_1" } }), {
+				status: 200,
+				headers: { "Content-Type": "application/json" },
+			}),
+		);
+		vi.stubGlobal("fetch", fetchMock);
+
+		try {
+			const result = await connectLocalHarness("fake-cloud-access-token", "codex");
+			expect(result).toEqual({ harness: "codex", connected: true, source: "codex-auth" });
+			expect(result).not.toHaveProperty("secret");
+			const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+			expect(JSON.parse(String(init.body))).toEqual({
+				credentialType: "auth_json",
+				secret: JSON.stringify(auth),
+			});
+		} finally {
+			await rm(codexHome, { recursive: true, force: true });
+		}
 	});
 
 	it("stores Cloud agent defaults in the project config", async () => {

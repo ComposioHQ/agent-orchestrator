@@ -29,7 +29,7 @@ interface ProviderConnection {
 
 interface LocalCredential {
 	secret: string;
-	credentialType: "oauth_token" | "api_key" | "access_token";
+	credentialType: "oauth_token" | "api_key" | "access_token" | "auth_json";
 	source: ConnectCloudHarnessResult["source"];
 }
 
@@ -200,7 +200,7 @@ async function localCodexCredential(): Promise<LocalCredential | null> {
 	const token =
 		stringAt(stored, ["tokens", "access_token"]) ||
 		stringAt(stored, ["access_token"]);
-	return token ? { secret: token, credentialType: "access_token", source: "codex-auth" } : null;
+	return token ? { secret: JSON.stringify(stored), credentialType: "auth_json", source: "codex-auth" } : null;
 }
 
 export async function connectLocalHarness(
