@@ -222,6 +222,16 @@ func TestSteerRouteRefusalsAreTypedAndCoded(t *testing.T) {
 			wantStatus: http.StatusBadRequest, wantCode: "CHAT_STEER_TEXT_REQUIRED",
 		},
 		{
+			name:       "delivery outcome uncertain",
+			err:        chatsvc.ErrSteerDeliveryUncertain,
+			wantStatus: http.StatusConflict, wantCode: "CHAT_STEER_UNCERTAIN",
+		},
+		{
+			name:       "client handle reused for different guidance",
+			err:        chatsvc.ErrSteerIdempotencyConflict,
+			wantStatus: http.StatusConflict, wantCode: "CHAT_STEER_IDEMPOTENCY_CONFLICT",
+		},
+		{
 			name:       "terminal-mode session",
 			err:        chatsvc.ErrNotChatMode,
 			wantStatus: http.StatusConflict, wantCode: "SESSION_MODE_MISMATCH",

@@ -60,11 +60,12 @@ import {
 	type FileAttachmentPayload,
 } from "../../hooks/useFileAttachments";
 import { File } from "lucide-react";
-import type { ChatSkill } from "../../types/conversation";
+import type { ChatSkill, ChatSteerOutcome } from "../../types/conversation";
 import {
 	beginChatComposerMutation,
 	cancelChatComposerMutation,
 	clearAcceptedChatComposer,
+	clearRejectedChatComposerDelivery,
 	finishChatComposerMutation,
 	getChatComposerMutation,
 	markChatComposerDeliveryAccepted,
@@ -151,7 +152,7 @@ export function ChatComposer({
 	 * Deliver this text into the turn already running. Absent means the harness
 	 * cannot steer and the choice is never offered.
 	 */
-	onSteer?: (text: string, clientMessageId?: string) => Promise<unknown>;
+	onSteer?: (text: string, clientMessageId?: string) => Promise<ChatSteerOutcome | void>;
 	/** Stop the turn already running when there is no draft to send. */
 	onInterrupt?: () => void;
 	/** A turn is actually running, so there is something to steer into. */
@@ -198,6 +199,7 @@ export function ChatComposer({
 	const [isComposing, setIsComposing] = useState(false);
 	const [dragging, setDragging] = useState(false);
 	const [sendError, setSendError] = useState<string | null>(null);
+	const [steerOutcomeNotice, setSteerOutcomeNotice] = useState<string | null>(null);
 	const [textDraftPersistenceError, setTextDraftPersistenceError] = useState<string | null>(null);
 	const [attachmentDraftPersistenceError, setAttachmentDraftPersistenceError] = useState<
 		string | null
@@ -560,6 +562,7 @@ export function ChatComposer({
 		highlightedRef.current = 0;
 		setHighlighted(0);
 		setSendError(null);
+		setSteerOutcomeNotice(null);
 		// A history action intentionally creates a new draft and must be persisted.
 		// A session restore is already durable; writing it again here needlessly
 		// changes the accepted-send revision during mount.
@@ -705,6 +708,7 @@ export function ChatComposer({
 			!fileAttachments.preparing;
 		if (!canSubmitNow) return;
 		setSendError(null);
+		setSteerOutcomeNotice(null);
 
 		const shouldSteer = forceSteer ?? false;
 		const body = currentText.trim();
@@ -834,7 +838,25 @@ export function ChatComposer({
 		try {
 			if (delivery.kind === "steer") {
 				if (!onSteer) throw new Error("Steering is unavailable");
-				await onSteer(delivery.requestText, delivery.clientMessageId);
+				const outcome = await onSteer(delivery.requestText, delivery.clientMessageId);
+				if (outcome?.status === "not-accepted") {
+					const cleared = clearRejectedChatComposerDelivery(
+						draftSessionId,
+						delivery.clientMessageId,
+						delivery.revision,
+					);
+					setDurableDelivery(cleared.draft.composer.delivery);
+					composerRevision.current = cleared.draft.composer.revision;
+					if (cleared.ok) {
+						setTextDraftPersistenceError(null);
+						setSteerOutcomeNotice(outcome.reason);
+					} else {
+						setTextDraftPersistenceError(
+							"The steer was refused, but its local recovery record couldn’t be cleared. Nothing will be resent automatically.",
+						);
+					}
+					return;
+				}
 			} else {
 				const nativePayloads = prepared.recovered
 					? []
@@ -1107,9 +1129,9 @@ export function ChatComposer({
 				{/* A refused steer is an ordinary outcome, not a failure: the text is still
 			    in the box and the message says which of "send it instead" and "try again
 			    in a moment" applies. */}
-				{steerRefusal ? (
+				{steerRefusal ?? steerOutcomeNotice ? (
 					<p role="status" className="px-1.5 text-[11px] leading-snug text-warning">
-						{steerRefusal}
+						{steerRefusal ?? steerOutcomeNotice}
 					</p>
 				) : null}
 

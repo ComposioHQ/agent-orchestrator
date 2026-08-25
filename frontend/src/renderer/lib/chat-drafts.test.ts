@@ -7,6 +7,7 @@ import {
 	cancelChatInlineEditMutation,
 	clearAcceptedChatComposer,
 	clearAcceptedChatInlineEdit,
+	clearRejectedChatComposerDelivery,
 	finishChatComposerMutation,
 	getChatComposerMutation,
 	getChatInlineEditMutation,
@@ -367,6 +368,35 @@ describe("Chat draft storage", () => {
 		).toMatchObject({ ok: true, cleared: false });
 		const restored = readChatSessionDraft("session-later-composer", storage);
 		expect(restored.composer.text).toBe("newer draft");
+		expect(restored.composer.delivery).toBeUndefined();
+	});
+
+	it("clears only a refused steer journal while preserving a later composer revision", () => {
+		const storage = new MemoryStorage();
+		const prepared = prepareChatComposerDelivery(
+			"session-refused-later-composer",
+			{
+				kind: "steer",
+				composerText: "submitted steer",
+				attachments: [],
+				requestText: "submitted steer",
+				clientMessageId: "refused-steer-1",
+			},
+			storage,
+		);
+		expect(prepared.ok).toBe(true);
+		writeChatComposerText("session-refused-later-composer", "newer unsent draft", storage);
+
+		expect(
+			clearRejectedChatComposerDelivery(
+				"session-refused-later-composer",
+				"refused-steer-1",
+				prepared.mutation!.revision,
+				storage,
+			),
+		).toMatchObject({ ok: true });
+		const restored = readChatSessionDraft("session-refused-later-composer", storage);
+		expect(restored.composer.text).toBe("newer unsent draft");
 		expect(restored.composer.delivery).toBeUndefined();
 	});
 

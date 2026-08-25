@@ -106,6 +106,7 @@ import {
 	type ChatConfigOptionValue,
 	type ChatModel,
 	type ChatSkill,
+	type ChatSteerOutcome,
 	type ConversationActivity,
 	type ConversationBranchPoint,
 	type ConversationItem,
@@ -302,7 +303,7 @@ export interface ChatWorkspaceProps {
 	 * Claude answers `CHAT_STEER_UNSUPPORTED`, and an affordance that only ever fails
 	 * is worse than none.
 	 */
-	onSteer?: (text: string, clientMessageId?: string) => Promise<unknown>;
+	onSteer?: (text: string, clientMessageId?: string) => Promise<ChatSteerOutcome | void>;
 	steerPending?: boolean;
 	/** Why the last steer was refused, from the daemon's typed answer. */
 	steerRefusal?: string;
