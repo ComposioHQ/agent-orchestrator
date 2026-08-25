@@ -208,13 +208,12 @@ function usePostDragClickGuard() {
 type SortableRow = ReturnType<typeof useSortable>;
 
 /** Session sorting stays vertical and never inherits dnd-kit's scale correction. */
-function sortableRowStyle({ transform }: Pick<SortableRow, "transform">): CSSProperties {
+function sortableRowStyle({ transform, transition, isDragging, dropTransitionDisabled }: Pick<SortableRow, "transform" | "transition" | "isDragging"> & { dropTransitionDisabled?: boolean }): CSSProperties {
 	return {
 		transform: transform ? CSS.Transform.toString({ ...transform, x: 0, scaleX: 1, scaleY: 1 }) : undefined,
-		// Motion owns the committed reorder animation. Letting dnd-kit add its
-		// post-drop transform transition creates a visible intermediate snap,
-		// especially when moving a row upward.
-		transition: "none",
+		// The active row must clear its drag transform immediately on drop; its
+		// siblings retain dnd-kit's smooth displacement while the pointer moves.
+		transition: isDragging || dropTransitionDisabled ? "none" : (transition ?? "transform 180ms cubic-bezier(0.22, 1, 0.36, 1)"),
 	};
 }
 
@@ -972,6 +971,7 @@ const ProjectItemContent = memo(function ProjectItemContent({
 	const sessionDragClickGuard = usePostDragClickGuard();
 	const [sessionAnnouncement, setSessionAnnouncement] = useState("");
 	const [sessionDragging, setSessionDragging] = useState(false);
+	const [dropTransitionDisabledId, setDropTransitionDisabledId] = useState<string | null>(null);
 
 	const commitSessionOrder = useCallback((next: string[] | null, sessionId: string) => {
 		if (!next) return;
@@ -991,6 +991,7 @@ const ProjectItemContent = memo(function ProjectItemContent({
 		sessionDragClickGuard.markDragEnded(sessionId);
 		if (!over) {
 			setSessionDragging(false);
+			setDropTransitionDisabledId(null);
 			if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
 			return;
 		}
@@ -1003,11 +1004,14 @@ const ProjectItemContent = memo(function ProjectItemContent({
 		flushSync(() => {
 			commitSessionOrder(next, sessionId);
 			setSessionDragging(false);
+			setDropTransitionDisabledId(sessionId);
 		});
+		requestAnimationFrame(() => setDropTransitionDisabledId(null));
 		if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
 	}, [commitSessionOrder, sessionDragClickGuard, sessionIds]);
 	const onSessionDragCancel = useCallback(() => {
 		setSessionDragging(false);
+		setDropTransitionDisabledId(null);
 		if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
 	}, []);
 	const moveSession = useCallback((sessionId: string, offset: number) => {
@@ -1375,6 +1379,7 @@ const ProjectItemContent = memo(function ProjectItemContent({
 														consumeDragClick={sessionDragClickGuard.consumeClick}
 														layoutDependency={sessionLayoutDependency}
 														listIsDragging={sessionDragging}
+														dropTransitionDisabled={dropTransitionDisabledId === session.id}
 														onMove={moveSession}
 														onOpen={openSession}
 													/>
@@ -1502,6 +1507,7 @@ const SortableSessionRow = memo(function SortableSessionRow({
 	consumeDragClick,
 	layoutDependency,
 	listIsDragging,
+	dropTransitionDisabled,
 	onMove,
 	onOpen,
 }: {
@@ -1510,6 +1516,7 @@ const SortableSessionRow = memo(function SortableSessionRow({
 	consumeDragClick: (id: string) => boolean;
 	layoutDependency: string;
 	listIsDragging: boolean;
+	dropTransitionDisabled: boolean;
 	onMove: (sessionId: string, offset: number) => void;
 	onOpen: (sessionId: string) => void;
 }) {
@@ -1534,12 +1541,14 @@ const SortableSessionRow = memo(function SortableSessionRow({
 				setNodeRef,
 				transform,
 				transition,
+				dropTransitionDisabled,
 			}}
 		/>
 	);
 });
 
 type SessionReorder = Pick<SortableRow, "attributes" | "isDragging" | "listeners" | "setActivatorNodeRef" | "setNodeRef" | "transform" | "transition"> & {
+	dropTransitionDisabled: boolean;
 	onMove: (offset: number) => void;
 };
 
