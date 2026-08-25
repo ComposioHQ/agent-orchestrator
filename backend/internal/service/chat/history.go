@@ -236,7 +236,7 @@ func (s *Service) EditMessage(
 		ReplacedTurnID: anchor.ReplacedTurnID, ForkAfterSequence: anchor.ForkAfterSequence,
 		CreatedAt: s.now(),
 	}
-	conversation := source.conversation
+	conversation := source.conversationForReplacement()
 	conversation.ActiveBranchID = branchID
 	replacement := newController(id, conversation, generation, provider, s.store, s.activity, s.log, s.newID, s.now)
 	if err := s.store.CreateAndActivateConversationBranch(ctx, id, branch, generation, s.now()); err != nil {
@@ -337,7 +337,7 @@ func (s *Service) ActivateBranch(ctx context.Context, id domain.SessionID, branc
 		return "", fmt.Errorf("resume conversation branch %s: %w", branchID, err)
 	}
 	generation := s.newID()
-	conversation := source.conversation
+	conversation := source.conversationForReplacement()
 	conversation.ActiveBranchID = branch.ID
 	replacement := newController(id, conversation, generation, provider, s.store, s.activity, s.log, s.newID, s.now)
 	if err := s.store.ActivateConversationBranch(ctx, id, conversation.ID, branch.ID,
