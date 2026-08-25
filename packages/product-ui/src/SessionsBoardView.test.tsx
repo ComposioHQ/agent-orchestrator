@@ -179,9 +179,13 @@ describe("SessionsBoardView", () => {
 				"animate-attention-card-pulse",
 				"border-status-needs-you",
 				"bg-[color-mix(in_srgb,var(--color-status-needs-you)_8%,var(--color-surface))]",
-				"hover:border-status-needs-you",
-				"focus-within:border-status-needs-you",
 			);
+			if (status === "needs_input") {
+				expect(screen.getByTestId("session-status")).toHaveClass("text-status-needs-you");
+				expect(screen.getByTestId("session-status")).toHaveStyle({
+					"--session-status-tone": "var(--color-status-needs-you)",
+				});
+			}
 		},
 	);
 
@@ -204,7 +208,8 @@ describe("SessionsBoardView", () => {
 		);
 
 		const card = screen.getByTestId("board-session-card");
-		expect(card).toHaveClass("border-border", "bg-surface");
+		expect(card).toHaveClass("border", "border-border", "bg-surface");
+		expect(card).toHaveClass("rounded-lg");
 		expect(card).not.toHaveClass("animate-attention-card-pulse", "border-status-needs-you");
 	});
 
@@ -239,7 +244,9 @@ describe("SessionsBoardView", () => {
 		expect(screen.getByLabelText("#10, #11 open")).toHaveTextContent("PR#10,#11open");
 		expect(screen.getByLabelText("#12 merged")).toHaveTextContent("PR#12merged");
 		expect(screen.getByText("12.4K tok")).toHaveAccessibleName("12,400 tokens");
+		expect(screen.getByText("feat/portable")).toHaveClass("text-muted-foreground");
 		expect(screen.getByText("5m ago")).toHaveAttribute("title", "Updated 2026-08-09T10:00:00Z");
+		expect(screen.getByText("5m ago")).toHaveClass("tabular-nums", "text-muted-foreground");
 		expect(screen.getByText("github:42")).toHaveAttribute("title", "Issue github:42");
 
 		fireEvent.click(screen.getByRole("button", { name: "portable task" }));
@@ -272,7 +279,7 @@ describe("SessionsBoardView", () => {
 		expect(statusLabel).toHaveClass("min-w-0", "truncate");
 		expect(status).toHaveClass("min-w-0", "max-w-full");
 		expect(statusSlot).toHaveClass("min-w-0", "flex-1");
-		expect(metadataRow).toHaveClass("flex", "items-center", "gap-2");
+		expect(metadataRow).toHaveClass("grid", "grid-cols-[minmax(0,1fr)_auto]", "items-center");
 		expect(metadataRow).not.toHaveClass("flex-wrap");
 		expect(screen.getByText("24.6M tok").parentElement).toHaveClass("shrink-0", "whitespace-nowrap");
 	});
@@ -399,7 +406,7 @@ describe("SessionsBoardView", () => {
 			"bg-[color-mix(in_srgb,var(--session-status-tone)_10%,transparent)]",
 		);
 		expect(status?.style.getPropertyValue("--session-status-tone")).toBe(
-			"var(--color-status-in-review)",
+			"var(--color-status-needs-you)",
 		);
 		expect(status?.querySelector(".rounded-full")).toBeNull();
 	});

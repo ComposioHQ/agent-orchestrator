@@ -337,15 +337,19 @@ describe("SessionsBoard", () => {
 
 		renderBoard("p1");
 
-		const activeUsage = screen.getByText("12.3K processed");
+		const activeUsage = screen.getByLabelText("12,300 tokens processed");
 		expect(activeUsage).toHaveAttribute("aria-label", "12,300 tokens processed");
-		expect(screen.queryByText("0 processed")).not.toBeInTheDocument();
+		const activeCard = screen
+			.getAllByTestId("board-session-card")
+			.find((card) => card.getAttribute("data-session-id") === "s-active");
+		expect(activeCard).not.toBeNull();
+		expect(within(activeCard!).queryByText("0")).not.toBeInTheDocument();
 		expect(usageQueryMock).toHaveBeenCalledWith("p1");
 		await userEvent.hover(activeUsage);
 		expect((await screen.findAllByText("12,300 tokens processed")).length).toBeGreaterThan(0);
 
 		const archive = await expandArchive();
-		const archivedUsage = within(archive).getByText("1.9K processed");
+		const archivedUsage = within(archive).getByLabelText("1,900 tokens processed");
 		expect(archivedUsage).toHaveAttribute("aria-label", "1,900 tokens processed");
 	});
 
@@ -684,7 +688,7 @@ describe("SessionsBoard", () => {
 			"https://github.com/example/radic/pull/42",
 		);
 		expect(within(terminatedCard!).getByRole("button", { name: "Copy branch ao/dead-worker" })).toBeInTheDocument();
-		const divider = terminatedCard!.querySelector("div[aria-hidden='true'].h-px.bg-border");
+		const divider = terminatedCard!.querySelector("div.border-t.border-border");
 		expect(divider).not.toBeNull();
 		expect(divider!.compareDocumentPosition(prStatus) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0);
 		expect(

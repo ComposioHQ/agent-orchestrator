@@ -4,7 +4,6 @@ import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
 import {
 	SessionCardView,
-	SessionUsageMetricView,
 	type BoardPullRequestLabels,
 	type BoardSessionPresentation,
 	type BoardColumnLabels,
@@ -153,6 +152,7 @@ function DesktopSessionCard({
 	const showTerminate = interactive && session.isTerminated !== true && onTerminate;
 	const keepTerminateVisible = session.status === "merged";
 	const usagePresentation = toUsagePresentation(usage, t);
+	const detailRows = prDetailRows(summaries, t);
 	const translate: ProductUITranslator = (key, values) => t(key as MessageKey, values);
 
 	const terminationOverlay = showTerminate ? (
@@ -200,6 +200,7 @@ function DesktopSessionCard({
 			action={action}
 			branchAction={branchAction}
 			branchIcon={<GitBranch aria-hidden="true" className="size-icon-2xs shrink-0" />}
+			details={detailRows}
 			error={termination.error ?? undefined}
 			externalLink={ProductExternalLink}
 			footer={footer}
@@ -226,6 +227,32 @@ function DesktopSessionCard({
 	);
 }
 
+function prDetailRows(summaries: ReturnType<typeof sessionPRDisplaySummaries>, t: TFunction): ReactNode {
+		const ciStates = new Set(summaries.map((pr) => pr.ci.state));
+		const reviewDecisions = new Set(summaries.map((pr) => pr.review.decision));
+		const ciLabel = ciStates.has("failing")
+			? t("pr.ci.failing")
+			: ciStates.has("pending")
+				? t("pr.ci.pending")
+				: ciStates.has("passing")
+					? t("pr.ci.passing")
+					: undefined;
+		const reviewLabel = reviewDecisions.has("changes_requested")
+			? t("pr.review.changesRequested")
+			: reviewDecisions.has("review_required")
+				? t("pr.review.requiredNotSubmitted")
+				: reviewDecisions.has("approved")
+					? t("pr.review.approved")
+					: undefined;
+		if (!ciLabel && !reviewLabel) return null;
+		return (
+			<div className="col-span-2 flex flex-wrap items-center gap-x-3 gap-y-1 font-mono text-2xs text-muted-foreground">
+				{ciLabel ? <span>CI · {ciLabel}</span> : null}
+				{reviewLabel ? <span>Review · {reviewLabel}</span> : null}
+			</div>
+		);
+}
+
 function pullRequestLabels(t: TFunction): BoardPullRequestLabels {
 	return {
 		short: t("pr.short"),
@@ -248,7 +275,7 @@ function toUsagePresentation(
 		accessibleLabel: t("shell.usageProcessed", {
 			count: usage.processedTokens.toLocaleString("en-US"),
 		}),
-		compactLabel: t("shell.usageProcessedCompact", { count: compactCount }),
+		compactLabel: compactCount,
 	};
 }
 
@@ -256,7 +283,12 @@ function DesktopUsageMetric({ usage }: { usage: BoardUsagePresentation }) {
 	return (
 		<Tooltip>
 			<TooltipTrigger asChild>
-				<SessionUsageMetricView usage={usage} />
+				<span
+					aria-label={usage.accessibleLabel}
+					className="inline-flex shrink-0 items-center whitespace-nowrap font-mono text-2xs tabular-nums text-muted-foreground"
+				>
+					{usage.compactLabel}
+				</span>
 			</TooltipTrigger>
 			<TooltipContent side="top">{usage.accessibleLabel}</TooltipContent>
 		</Tooltip>

@@ -166,7 +166,7 @@ function BoardColumnView<TSession extends BoardSessionPresentation>({
 				</span>
 				<span className="ml-auto tabular-nums text-xs leading-none text-passive">{ordered.length}</span>
 			</div>
-			<div className="board-scrollbar min-h-0 flex-1 overflow-y-auto px-3 pb-3 pt-3">
+			<div className="board-scrollbar min-h-0 flex-1 overflow-y-auto pl-3 pr-2 pb-3 pt-3">
 				<div className="flex min-h-full flex-col gap-2.5">
 					{ordered.map((session) => (
 						<Fragment key={session.id}>{renderSessionCard(session)}</Fragment>
@@ -178,9 +178,10 @@ function BoardColumnView<TSession extends BoardSessionPresentation>({
 }
 
 export type SessionCardViewProps = {
-	action?: ReactNode;
+		action?: ReactNode;
 	branchAction?: ReactNode;
 	branchIcon?: ReactNode;
+	details?: ReactNode;
 	error?: string;
 	externalLink: ExternalLinkComponent;
 	footer?: ReactNode;
@@ -205,6 +206,7 @@ export function SessionCardView({
 	action,
 	branchAction,
 	branchIcon,
+	details,
 	error,
 	externalLink,
 	footer,
@@ -222,8 +224,11 @@ export function SessionCardView({
 	const badge = getSessionStatusView(session.status, translate);
 	const needsAttention = attentionZone(session.status) === "action";
 	const statusPresentation = session.statusPresentation;
+	const needsAttentionChip = needsAttention && !statusPresentation;
 	const column = getKanbanColumnView(toKanbanColumn(session.kanbanColumn, session.status), translate);
-	const statusTone = statusPresentation?.tone ?? (!statusPresentation ? column.dot : undefined);
+	const statusTone = needsAttentionChip
+		? "var(--color-status-needs-you)"
+		: (statusPresentation?.tone ?? (!statusPresentation ? column.dot : undefined));
 	const branch = session.branch ?? "";
 	const showBranch = branch !== "" && !sameLabel(branch, session.title) && !sameLabel(branch, session.id);
 
@@ -232,12 +237,12 @@ export function SessionCardView({
 			onClick={interactive ? onOpen : undefined}
 			role={interactive ? undefined : "listitem"}
 			className={cn(
-				"group relative w-full rounded-lg border text-left transition-[border-color,box-shadow]",
+				"group relative w-full rounded-lg border border-border text-left transition-[background-color,box-shadow,transform] duration-[120ms] ease-out",
 				badge.cardClassName ?? "border-border bg-surface",
 				interactive &&
-					"cursor-pointer hover:border-border-strong hover:shadow-sm focus-within:border-border-strong focus-within:ring-2 focus-within:ring-ring/60",
+					"cursor-pointer hover:bg-interactive-hover focus-within:bg-interactive-hover focus-within:ring-2 focus-within:ring-ring/60 active:scale-[0.99]",
 				needsAttention &&
-					"animate-attention-card-pulse border-status-needs-you bg-[color-mix(in_srgb,var(--color-status-needs-you)_8%,var(--color-surface))] hover:border-status-needs-you focus-within:border-status-needs-you",
+					"animate-attention-card-pulse border-status-needs-you bg-[color-mix(in_srgb,var(--color-status-needs-you)_8%,var(--color-surface))]",
 			)}
 			data-testid="board-session-card"
 			data-session-id={session.id}
@@ -245,75 +250,76 @@ export function SessionCardView({
 			{interactive && onOpen ? (
 				<button
 					aria-label={session.title}
-					className="pointer-events-none absolute inset-0 rounded-lg outline-none"
+					className="pointer-events-none absolute inset-0 outline-none"
 					type="button"
 				/>
 			) : null}
 			{overlay}
 			{action ? <div className="absolute right-2 top-1.5 z-10">{action}</div> : null}
-			<div className="flex items-start gap-2.5 px-3.5 pb-2.5 pt-3">
-				{renderAvatar(session.provider)}
-				<div className="min-w-0 flex-1">
-					<div
-						className={cn(
-							"line-clamp-2 overflow-hidden text-sm-md font-semibold leading-tight tracking-tight text-foreground",
-							(overlay || action) && "pr-6",
-						)}
-						title={session.title}
-					>
-						{session.title}
-					</div>
-					{showBranch && (
-						<div className="mt-1.5 flex min-w-0 items-center gap-1.5 font-mono text-2xs text-passive">
-							{branchIcon ?? <GitBranchIcon aria-hidden="true" className="size-icon-2xs shrink-0" />}
-							<span className="truncate">{branch}</span>
-							{branchAction}
-						</div>
-					)}
-				</div>
-			</div>
-			<div aria-hidden="true" className="mx-3.5 my-px h-px bg-border" />
-			<div className="flex flex-col gap-1.5 px-3.5 py-2">
-				<div className="flex items-center gap-2">
-					<div className="flex min-w-0 flex-1">
-						<span
+			<div className="px-3.5 pb-2.5 pt-3">
+				<div className="flex min-w-0 items-start gap-2.5">
+					{renderAvatar(session.provider)}
+					<div className="min-w-0 flex-1">
+						<div
 							className={cn(
-								"inline-flex min-w-0 max-w-full items-center gap-1.5 rounded-sm border border-[color-mix(in_srgb,var(--session-status-tone)_24%,transparent)] bg-[color-mix(in_srgb,var(--session-status-tone)_10%,transparent)] px-1.5 py-0.5 text-2xs font-medium",
-								!statusTone && "border-border bg-overlay",
-								statusPresentation?.className ?? column.titleClassName,
+								"line-clamp-2 overflow-hidden text-balance text-sm-md font-semibold leading-tight tracking-tight text-foreground",
+								(overlay || action) && "pr-6",
 							)}
-							data-kanban-column={statusPresentation ? undefined : column.column}
-							data-testid="session-status"
-							style={statusTone ? ({ "--session-status-tone": statusTone } as CSSProperties) : undefined}
+							title={session.title}
 						>
-							{statusPresentation ? (
-								<span
-									aria-hidden="true"
-									className={cn("size-dot-sm shrink-0 rounded-full", statusPresentation.indicatorClassName)}
-								/>
-							) : (
-								<span
-									aria-hidden="true"
-									className="size-[var(--size-swatch)] shrink-0 rounded-[var(--radius-swatch)]"
-									style={{ backgroundColor: column.dot }}
-								/>
-							)}
-							<span className="min-w-0 truncate">
-								{statusPresentation?.label ??
-									(session.displayStatus
-										? getDisplayStatusLabel(session.displayStatus, translate)
-										: badge.label)}
-							</span>
+							{session.title}
+						</div>
+					</div>
+				</div>
+				{showBranch && (
+					<div className="mt-1.5 flex min-w-0 items-center gap-1.5 font-mono text-2xs text-muted-foreground">
+						{branchIcon ?? <GitBranchIcon aria-hidden="true" className="size-icon-2xs shrink-0" />}
+						<span className="truncate text-muted-foreground">{branch}</span>
+						{branchAction}
+					</div>
+				)}
+			</div>
+			<div className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-2 border-t border-border pl-2 pr-3.5 py-2.5">
+				<div className="flex min-w-0 flex-1">
+					<span
+						className={cn(
+							"inline-flex min-w-0 max-w-full items-center gap-1.5 rounded-sm border border-[color-mix(in_srgb,var(--session-status-tone)_24%,transparent)] bg-[color-mix(in_srgb,var(--session-status-tone)_10%,transparent)] px-1.5 py-0.5 text-2xs font-medium",
+							!statusTone && "border-border bg-overlay",
+							needsAttentionChip ? "text-status-needs-you" : (statusPresentation?.className ?? column.titleClassName),
+						)}
+						data-kanban-column={statusPresentation ? undefined : column.column}
+						data-testid="session-status"
+						style={statusTone ? ({ "--session-status-tone": statusTone } as CSSProperties) : undefined}
+					>
+						{statusPresentation ? (
+							<span
+								aria-hidden="true"
+								className={cn("size-dot-sm shrink-0 rounded-full", statusPresentation.indicatorClassName)}
+							/>
+						) : (
+							<span
+								aria-hidden="true"
+								className="size-[var(--size-swatch)] shrink-0 rounded-[var(--radius-swatch)]"
+								style={{ backgroundColor: statusTone ?? column.dot }}
+							/>
+						)}
+						<span className="min-w-0 truncate">
+							{statusPresentation?.label ??
+								(session.displayStatus
+									? getDisplayStatusLabel(session.displayStatus, translate)
+									: badge.label)}
 						</span>
-					</div>
-					<div className="ml-auto flex shrink-0 items-center gap-1.5 whitespace-nowrap font-mono text-2xs text-passive">
-						{usage ? renderUsage(usage) : null}
-						{usage ? <span aria-hidden="true">·</span> : null}
-						<span title={labels.updatedAt(session.updatedAt)}>{labels.formatTime(session.updatedAt)}</span>
-					</div>
+					</span>
+				</div>
+				<div className="ml-auto flex shrink-0 items-center gap-2 whitespace-nowrap text-2xs text-muted-foreground">
+					{usage ? renderUsage(usage) : null}
+					{usage ? <span aria-hidden="true" className="text-border-strong">·</span> : null}
+					<span className="tabular-nums text-muted-foreground" title={labels.updatedAt(session.updatedAt)}>
+						{labels.formatTime(session.updatedAt)}
+					</span>
 				</div>
 				{prs.length > 0 && (
-					<div className="flex flex-wrap items-center gap-x-2 gap-y-1 font-mono text-2xs text-passive">
+					<div className="col-span-2 flex flex-wrap items-center gap-x-2 gap-y-1 font-mono text-2xs text-muted-foreground">
 						{groupBoardPullRequests(prs).map((group) => (
 							<BoardPullRequestGroup
 								externalLink={externalLink}
@@ -324,9 +330,10 @@ export function SessionCardView({
 						))}
 					</div>
 				)}
+				{details}
 				{session.trackerIssueId && (
 					<span
-						className="inline-flex max-w-branch-chip items-center self-start truncate rounded-sm bg-accent/12 px-1.5 py-0.5 font-mono text-micro text-accent"
+						className="col-span-2 inline-flex max-w-branch-chip items-center self-start truncate rounded-sm bg-accent/12 px-1.5 py-0.5 font-mono text-micro text-accent"
 						title={labels.intakeIssue(session.trackerIssueId)}
 					>
 						{session.trackerIssueId}
