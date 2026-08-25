@@ -327,10 +327,29 @@ func resolveLegacyModelChoice(choices []ports.ChatConfigOptionChoice, requested 
 		}
 		matched = choice.Value
 	}
+	if matched != "" {
+		return matched, true
+	}
+
+	// Cursor may advertise only one parameterized value for a model base, with
+	// flags reflecting the session's current account/runtime state. The CLI still
+	// exposes the stable base id. Selecting that id is safe when exactly one
+	// advertised opaque value has the same base; multiple variants remain
+	// ambiguous and are rejected.
+	for _, choice := range choices {
+		open := strings.IndexByte(choice.Value, '[')
+		if open <= 0 || !strings.HasSuffix(choice.Value, "]") || choice.Value[:open] != requested {
+			continue
+		}
+		if matched != "" {
+			return "", false
+		}
+		matched = choice.Value
+	}
 	return matched, matched != ""
 }
 
-func parameterizedModelAlias(value string) (base string, fast bool, ok bool) {
+func parameterizedModelAlias(value string) (base string, fast, ok bool) {
 	open := strings.IndexByte(value, '[')
 	if open <= 0 || !strings.HasSuffix(value, "]") {
 		return "", false, false
