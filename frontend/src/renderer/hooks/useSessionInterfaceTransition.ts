@@ -11,6 +11,24 @@ export type SessionInterfaceTransitionStatus =
 export type SessionInterfaceTransitionPolicy = "drain" | "interrupt";
 export type SessionInterfaceMode = "chat" | "tui";
 
+type StartInterfaceTransitionInput = {
+	targetMode: SessionInterfaceMode;
+	policy: SessionInterfaceTransitionPolicy;
+};
+
+type StartInterfaceTransitionMutationInput = StartInterfaceTransitionInput & {
+	targetSessionId: string;
+};
+
+type InterfaceTransitionMutationTarget = {
+	targetSessionId: string;
+};
+
+type AcknowledgeInterfaceTransitionNoticeMutationInput =
+	InterfaceTransitionMutationTarget & {
+		transitionId: string;
+	};
+
 const activePhases = new Set<SessionInterfaceTransition["phase"]>([
 	"requested",
 	"preflighting",
@@ -88,75 +106,71 @@ export function useSessionInterfaceTransition(sessionId: string | undefined) {
 	});
 
 	const start = useMutation({
-		mutationFn: async (input: {
-			targetMode: SessionInterfaceMode;
-			policy: SessionInterfaceTransitionPolicy;
-		}) => {
+		mutationFn: async ({
+			targetSessionId,
+			...input
+		}: StartInterfaceTransitionMutationInput) => {
 			const { data, error } = await apiClient.POST(
 				"/api/v1/sessions/{sessionId}/interface-transition",
 				{
-					params: { path: { sessionId: sessionId as string } },
+					params: { path: { sessionId: targetSessionId } },
 					body: input,
 				},
 			);
 			if (error) throw error;
 			return data;
 		},
-		onSuccess: () => {
-			if (sessionId) {
-				void queryClient.invalidateQueries({
-					queryKey: sessionInterfaceTransitionQueryKey(sessionId),
-				});
-			}
+		onSuccess: (_data, variables) => {
+			void queryClient.invalidateQueries({
+				queryKey: sessionInterfaceTransitionQueryKey(variables.targetSessionId),
+			});
 		},
 	});
 
 	const cancel = useMutation({
-		mutationFn: async () => {
+		mutationFn: async ({ targetSessionId }: InterfaceTransitionMutationTarget) => {
 			const { error } = await apiClient.DELETE(
 				"/api/v1/sessions/{sessionId}/interface-transition",
-				{ params: { path: { sessionId: sessionId as string } } },
+				{ params: { path: { sessionId: targetSessionId } } },
 			);
 			if (error) throw error;
 		},
-		onSuccess: () => {
-			if (sessionId) {
-				void queryClient.invalidateQueries({
-					queryKey: sessionInterfaceTransitionQueryKey(sessionId),
-				});
-			}
+		onSuccess: (_data, variables) => {
+			void queryClient.invalidateQueries({
+				queryKey: sessionInterfaceTransitionQueryKey(variables.targetSessionId),
+			});
 		},
 	});
 
 	const acknowledgeNotice = useMutation({
-		mutationFn: async (transitionId: string) => {
+		mutationFn: async ({
+			targetSessionId,
+			transitionId,
+		}: AcknowledgeInterfaceTransitionNoticeMutationInput) => {
 			const { data, error } = await apiClient.PUT(
 				"/api/v1/sessions/{sessionId}/interface-transition/{transitionId}/notice-acknowledgement",
 				{
 					params: {
-						path: { sessionId: sessionId as string, transitionId },
+						path: { sessionId: targetSessionId, transitionId },
 					},
 				},
 			);
 			if (error) throw error;
 			return data;
 		},
-		onSuccess: (response) => {
-			if (!sessionId) return;
+		onSuccess: (response, variables) => {
 			queryClient.setQueryData<SessionInterfaceTransitionStatus>(
-				sessionInterfaceTransitionQueryKey(sessionId),
+				sessionInterfaceTransitionQueryKey(variables.targetSessionId),
 				(current) =>
 					current?.transition?.id === response.transition.id
 						? { ...current, transition: response.transition }
 						: current,
 			);
 		},
-		onSettled: () => {
-			if (sessionId) {
-				void queryClient.invalidateQueries({
-					queryKey: sessionInterfaceTransitionQueryKey(sessionId),
-				});
-			}
+		onSettled: (_data, _error, variables) => {
+			void queryClient.invalidateQueries({
+				queryKey: sessionInterfaceTransitionQueryKey(variables.targetSessionId),
+			});
 		},
 	});
 
@@ -193,6 +207,10 @@ export function useSessionInterfaceTransition(sessionId: string | undefined) {
 			current = false;
 		};
 	}, [queryClient, sessionId, transitionActive, transitionID]);
+	const startTargetsCurrentSession = start.variables?.targetSessionId === sessionId;
+	const cancelTargetsCurrentSession = cancel.variables?.targetSessionId === sessionId;
+	const acknowledgementTargetsCurrentSession =
+		acknowledgeNotice.variables?.targetSessionId === sessionId;
 
 	return {
 		status: query.data,
@@ -200,16 +218,29 @@ export function useSessionInterfaceTransition(sessionId: string | undefined) {
 		settling,
 		isLoading: query.isLoading,
 		statusError: query.error ? apiErrorMessage(query.error) : undefined,
-		start: start.mutateAsync,
-		starting: start.isPending,
-		startError: start.error ? apiErrorMessage(start.error) : undefined,
+		start: (input: StartInterfaceTransitionInput) => {
+			if (!sessionId) return Promise.reject(new Error("No session is selected."));
+			return start.mutateAsync({ ...input, targetSessionId: sessionId });
+		},
+		starting: start.isPending && startTargetsCurrentSession,
+		startError:
+			startTargetsCurrentSession && start.error ? apiErrorMessage(start.error) : undefined,
 		resetStartError: start.reset,
-		cancel: cancel.mutateAsync,
-		cancelling: cancel.isPending,
-		cancelError: cancel.error ? apiErrorMessage(cancel.error) : undefined,
-		acknowledgeNotice: acknowledgeNotice.mutateAsync,
-		acknowledgingNotice: acknowledgeNotice.isPending,
-		acknowledgeNoticeError: acknowledgeNotice.error
+		cancel: () => {
+			if (!sessionId) return Promise.reject(new Error("No session is selected."));
+			return cancel.mutateAsync({ targetSessionId: sessionId });
+		},
+		cancelling: cancel.isPending && cancelTargetsCurrentSession,
+		cancelError:
+			cancelTargetsCurrentSession && cancel.error ? apiErrorMessage(cancel.error) : undefined,
+		acknowledgeNotice: (transitionId: string) => {
+			if (!sessionId) return Promise.reject(new Error("No session is selected."));
+			return acknowledgeNotice.mutateAsync({ targetSessionId: sessionId, transitionId });
+		},
+		acknowledgingNotice:
+			acknowledgeNotice.isPending && acknowledgementTargetsCurrentSession,
+		acknowledgeNoticeError:
+			acknowledgementTargetsCurrentSession && acknowledgeNotice.error
 			? apiErrorMessage(acknowledgeNotice.error)
 			: undefined,
 	};

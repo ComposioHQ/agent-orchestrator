@@ -3,10 +3,15 @@ import { act, renderHook, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { getMock, putMock } = vi.hoisted(() => ({ getMock: vi.fn(), putMock: vi.fn() }));
+const { deleteMock, getMock, postMock, putMock } = vi.hoisted(() => ({
+	deleteMock: vi.fn(),
+	getMock: vi.fn(),
+	postMock: vi.fn(),
+	putMock: vi.fn(),
+}));
 
 vi.mock("../lib/api-client", () => ({
-	apiClient: { GET: getMock, POST: vi.fn(), PUT: putMock, DELETE: vi.fn() },
+	apiClient: { GET: getMock, POST: postMock, PUT: putMock, DELETE: deleteMock },
 	apiErrorMessage: () => "request failed",
 	hasTrustedApiBaseUrl: () => true,
 }));
@@ -20,9 +25,283 @@ function wrapper({ children }: { children: ReactNode }) {
 	return <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>;
 }
 
+function deferred<T>() {
+	let resolve!: (value: T) => void;
+	const promise = new Promise<T>((resolvePromise) => {
+		resolve = resolvePromise;
+	});
+	return { promise, resolve };
+}
+
 beforeEach(() => {
+	deleteMock.mockReset();
 	getMock.mockReset();
+	postMock.mockReset();
 	putMock.mockReset();
+});
+
+describe("session-scoped interface transition mutations", () => {
+	it("keeps a deferred start attached to its initiating session after navigation", async () => {
+		const response = deferred<{
+			data: { ok: boolean };
+			error: undefined;
+		}>();
+		getMock.mockResolvedValue({
+			data: { supported: true, targetMode: "tui" },
+			error: undefined,
+		});
+		postMock.mockReturnValue(response.promise);
+		const queryClient = new QueryClient({
+			defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+		});
+		const invalidate = vi.spyOn(queryClient, "invalidateQueries").mockResolvedValue(undefined);
+		const HookWrapper = ({ children }: { children: ReactNode }) => (
+			<QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+		);
+		const { result, rerender } = renderHook(
+			({ sessionId }) => useSessionInterfaceTransition(sessionId),
+			{ initialProps: { sessionId: "session-a" }, wrapper: HookWrapper },
+		);
+
+		let startRequest!: Promise<unknown>;
+		act(() => {
+			startRequest = result.current.start({ targetMode: "tui", policy: "drain" });
+		});
+		await waitFor(() => expect(result.current.starting).toBe(true));
+
+		rerender({ sessionId: "session-b" });
+		expect(result.current.starting).toBe(false);
+		expect(result.current.startError).toBeUndefined();
+
+		response.resolve({ data: { ok: true }, error: undefined });
+		await act(async () => {
+			await startRequest;
+		});
+		expect(postMock).toHaveBeenCalledWith(
+			"/api/v1/sessions/{sessionId}/interface-transition",
+			{
+				params: { path: { sessionId: "session-a" } },
+				body: { targetMode: "tui", policy: "drain" },
+			},
+		);
+		expect(invalidate).toHaveBeenCalledWith({
+			queryKey: ["session-interface-transition", "session-a"],
+		});
+		expect(invalidate).not.toHaveBeenCalledWith({
+			queryKey: ["session-interface-transition", "session-b"],
+		});
+	});
+
+	it("keeps a deferred cancellation attached to its initiating session after navigation", async () => {
+		const response = deferred<{
+			data: undefined;
+			error: undefined;
+		}>();
+		getMock.mockResolvedValue({
+			data: { supported: true, targetMode: "tui" },
+			error: undefined,
+		});
+		deleteMock.mockReturnValue(response.promise);
+		const queryClient = new QueryClient({
+			defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+		});
+		const invalidate = vi.spyOn(queryClient, "invalidateQueries").mockResolvedValue(undefined);
+		const HookWrapper = ({ children }: { children: ReactNode }) => (
+			<QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+		);
+		const { result, rerender } = renderHook(
+			({ sessionId }) => useSessionInterfaceTransition(sessionId),
+			{ initialProps: { sessionId: "session-a" }, wrapper: HookWrapper },
+		);
+
+		let cancelRequest!: Promise<unknown>;
+		act(() => {
+			cancelRequest = result.current.cancel();
+		});
+		await waitFor(() => expect(result.current.cancelling).toBe(true));
+
+		rerender({ sessionId: "session-b" });
+		expect(result.current.cancelling).toBe(false);
+		expect(result.current.cancelError).toBeUndefined();
+
+		response.resolve({ data: undefined, error: undefined });
+		await act(async () => {
+			await cancelRequest;
+		});
+		expect(deleteMock).toHaveBeenCalledWith(
+			"/api/v1/sessions/{sessionId}/interface-transition",
+			{ params: { path: { sessionId: "session-a" } } },
+		);
+		expect(invalidate).toHaveBeenCalledWith({
+			queryKey: ["session-interface-transition", "session-a"],
+		});
+		expect(invalidate).not.toHaveBeenCalledWith({
+			queryKey: ["session-interface-transition", "session-b"],
+		});
+	});
+
+	it("keeps a deferred notice acknowledgement attached to its initiating session", async () => {
+		const transitionA = {
+			id: "transition-a",
+			sessionId: "session-a",
+			sourceMode: "chat" as const,
+			targetMode: "tui" as const,
+			policy: "drain" as const,
+			phase: "recovery_required" as const,
+			createdAt: "2026-08-12T10:00:00Z",
+			updatedAt: "2026-08-12T10:01:00Z",
+		};
+		const transitionB = {
+			...transitionA,
+			id: "transition-b",
+			sessionId: "session-b",
+		};
+		const acknowledgedA = {
+			...transitionA,
+			noticeAcknowledgedAt: "2026-08-13T08:00:00Z",
+		};
+		const response = deferred<{
+			data: { ok: boolean; sessionId: string; transition: typeof acknowledgedA };
+			error: undefined;
+		}>();
+		getMock.mockImplementation(
+			(_path: string, request: { params: { path: { sessionId: string } } }) =>
+				Promise.resolve({
+					data: {
+						supported: true,
+						targetMode: "tui",
+						transition:
+							request.params.path.sessionId === "session-a" ? transitionA : transitionB,
+					},
+					error: undefined,
+				}),
+		);
+		putMock.mockReturnValue(response.promise);
+		const queryClient = new QueryClient({
+			defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+		});
+		const invalidate = vi.spyOn(queryClient, "invalidateQueries").mockResolvedValue(undefined);
+		const HookWrapper = ({ children }: { children: ReactNode }) => (
+			<QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+		);
+		const { result, rerender } = renderHook(
+			({ sessionId }) => useSessionInterfaceTransition(sessionId),
+			{ initialProps: { sessionId: "session-a" }, wrapper: HookWrapper },
+		);
+		await waitFor(() => expect(result.current.transition?.id).toBe("transition-a"));
+
+		let acknowledgeRequest!: Promise<unknown>;
+		act(() => {
+			acknowledgeRequest = result.current.acknowledgeNotice("transition-a");
+		});
+		await waitFor(() => expect(result.current.acknowledgingNotice).toBe(true));
+
+		rerender({ sessionId: "session-b" });
+		await waitFor(() => expect(result.current.transition?.id).toBe("transition-b"));
+		expect(result.current.acknowledgingNotice).toBe(false);
+		expect(result.current.acknowledgeNoticeError).toBeUndefined();
+
+		response.resolve({
+			data: { ok: true, sessionId: "session-a", transition: acknowledgedA },
+			error: undefined,
+		});
+		await act(async () => {
+			await acknowledgeRequest;
+		});
+		expect(putMock).toHaveBeenCalledWith(
+			"/api/v1/sessions/{sessionId}/interface-transition/{transitionId}/notice-acknowledgement",
+			{
+				params: {
+					path: { sessionId: "session-a", transitionId: "transition-a" },
+				},
+			},
+		);
+		expect(
+			queryClient.getQueryData<{ transition?: typeof acknowledgedA }>([
+				"session-interface-transition",
+				"session-a",
+			])?.transition?.noticeAcknowledgedAt,
+		).toBe("2026-08-13T08:00:00Z");
+		expect(result.current.transition?.id).toBe("transition-b");
+		expect(result.current.transition?.noticeAcknowledgedAt).toBeUndefined();
+		expect(invalidate).toHaveBeenCalledWith({
+			queryKey: ["session-interface-transition", "session-a"],
+		});
+		expect(invalidate).not.toHaveBeenCalledWith({
+			queryKey: ["session-interface-transition", "session-b"],
+		});
+	});
+
+	it.each(["start", "cancel", "acknowledge"] as const)(
+		"does not expose session A's deferred %s failure while session B is selected",
+		async (operation) => {
+			const response = deferred<{
+				data: undefined;
+				error: { code: string };
+			}>();
+			getMock.mockResolvedValue({
+				data: { supported: true, targetMode: "tui" },
+				error: undefined,
+			});
+			if (operation === "start") postMock.mockReturnValue(response.promise);
+			if (operation === "cancel") deleteMock.mockReturnValue(response.promise);
+			if (operation === "acknowledge") putMock.mockReturnValue(response.promise);
+			const queryClient = new QueryClient({
+				defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+			});
+			const HookWrapper = ({ children }: { children: ReactNode }) => (
+				<QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+			);
+			const { result, rerender } = renderHook(
+				({ sessionId }) => useSessionInterfaceTransition(sessionId),
+				{ initialProps: { sessionId: "session-a" }, wrapper: HookWrapper },
+			);
+
+			let request!: Promise<unknown>;
+			act(() => {
+				const mutation =
+					operation === "start"
+						? result.current.start({ targetMode: "tui", policy: "drain" })
+						: operation === "cancel"
+							? result.current.cancel()
+							: result.current.acknowledgeNotice("transition-a");
+				request = mutation.catch((error) => error);
+			});
+			await waitFor(() => {
+				const pending =
+					operation === "start"
+						? result.current.starting
+						: operation === "cancel"
+							? result.current.cancelling
+							: result.current.acknowledgingNotice;
+				expect(pending).toBe(true);
+			});
+
+			rerender({ sessionId: "session-b" });
+			response.resolve({ data: undefined, error: { code: "TRANSITION_FAILED" } });
+			await act(async () => {
+				await request;
+			});
+			const destinationError =
+				operation === "start"
+					? result.current.startError
+					: operation === "cancel"
+						? result.current.cancelError
+						: result.current.acknowledgeNoticeError;
+			expect(destinationError).toBeUndefined();
+
+			rerender({ sessionId: "session-a" });
+			await waitFor(() => {
+				const initiatingError =
+					operation === "start"
+						? result.current.startError
+						: operation === "cancel"
+							? result.current.cancelError
+							: result.current.acknowledgeNoticeError;
+				expect(initiatingError).toBe("request failed");
+			});
+		},
+	);
 });
 
 describe("interface switch readiness", () => {
